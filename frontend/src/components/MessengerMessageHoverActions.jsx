@@ -135,6 +135,7 @@ export default function MessengerMessageHoverActions({
       }
       hasText={hasText}
       img={img}
+      images={images}
       file={file}
       showRecallRow={showRecallRow}
       canRecall={canRecall}
@@ -270,6 +271,7 @@ function MoreMenuPanel({
   style,
   hasText,
   img,
+  images = [],
   file,
   showRecallRow,
   canRecall,

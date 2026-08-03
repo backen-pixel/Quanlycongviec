@@ -16,25 +16,27 @@ async function resolveLogisticsCompanyAdminUserId(logisticsCompanyId) {
 }
 
 /**
- * @returns {Promise<{ responsibleUserId: string|null, installerUserId: string|null }>}
+ * @returns {Promise<{ responsibleUserId: string|null, installerUserId: string|null, handoverConfirmUserId: string|null }>}
  */
 async function loadLogisticsHandoverMaps(logisticsCompanyId) {
   if (!logisticsCompanyId) {
-    return { responsibleUserId: null, installerUserId: null };
+    return { responsibleUserId: null, installerUserId: null, handoverConfirmUserId: null };
   }
   try {
     const { data: set } = await supabase
       .from('logistics_handover_settings')
-      .select('responsible_user_id, installer_user_id')
+      .select('responsible_user_id, installer_user_id, handover_confirm_user_id')
       .eq('logistics_company_id', logisticsCompanyId)
       .maybeSingle();
     return {
       responsibleUserId: set?.responsible_user_id || null,
       installerUserId: set?.installer_user_id || null,
+      handoverConfirmUserId: set?.handover_confirm_user_id || null,
     };
   } catch (e) {
-    if (String(e.message || '').includes('logistics_handover_settings')) {
-      return { responsibleUserId: null, installerUserId: null };
+    if (String(e.message || '').includes('logistics_handover_settings')
+      || String(e.message || '').includes('handover_confirm_user_id')) {
+      return { responsibleUserId: null, installerUserId: null, handoverConfirmUserId: null };
     }
     throw e;
   }
@@ -52,9 +54,18 @@ async function resolveLogisticsHandoverInstallerUserId(logisticsCompanyId) {
   return resolveLogisticsHandoverResponsibleUserId(logisticsCompanyId);
 }
 
+/** Người bấm xác nhận phía VC/LĐ — cấu hình riêng, fallback phụ trách VC. */
+async function resolveLogisticsHandoverConfirmUserId(logisticsCompanyId, fallbackLogisticsPersonId = null) {
+  const maps = await loadLogisticsHandoverMaps(logisticsCompanyId);
+  if (maps.handoverConfirmUserId) return maps.handoverConfirmUserId;
+  if (fallbackLogisticsPersonId) return fallbackLogisticsPersonId;
+  return resolveLogisticsHandoverResponsibleUserId(logisticsCompanyId);
+}
+
 module.exports = {
   loadLogisticsHandoverMaps,
   resolveLogisticsCompanyAdminUserId,
   resolveLogisticsHandoverResponsibleUserId,
   resolveLogisticsHandoverInstallerUserId,
+  resolveLogisticsHandoverConfirmUserId,
 };

@@ -1526,7 +1526,7 @@ r.put('/handover-settings/:companyId', requirePermission('projects', 'edit'), as
       return res.status(403).json({ error: 'Không có quyền sửa cấu hình công ty này' });
     }
 
-    const { responsible_user_id, installer_user_id } = req.body || {};
+    const { responsible_user_id, installer_user_id, handover_confirm_user_id } = req.body || {};
     const now = new Date().toISOString();
 
     const validateUser = async (uid, label) => {
@@ -1553,17 +1553,59 @@ r.put('/handover-settings/:companyId', requirePermission('projects', 'edit'), as
       const chk = await validateUser(installer_user_id, 'Người lắp đặt');
       if (chk?.error) return res.status(400).json({ error: chk.error });
     }
+    if (handover_confirm_user_id) {
+      const chk = await validateUser(handover_confirm_user_id, 'Người xác nhận VC/LĐ');
+      if (chk?.error) return res.status(400).json({ error: chk.error });
+    }
+
+    const { data: existing } = await supabase
+      .from('logistics_handover_settings')
+      .select('responsible_user_id, installer_user_id, handover_confirm_user_id')
+      .eq('logistics_company_id', companyId)
+      .maybeSingle();
+
+    const upsertRow = {
+      logistics_company_id: companyId,
+      responsible_user_id: responsible_user_id !== undefined
+        ? (responsible_user_id || null)
+        : (existing?.responsible_user_id || null),
+      installer_user_id: installer_user_id !== undefined
+        ? (installer_user_id || null)
+        : (existing?.installer_user_id || null),
+      handover_confirm_user_id: handover_confirm_user_id !== undefined
+        ? (handover_confirm_user_id || null)
+        : (existing?.handover_confirm_user_id || null),
+      updated_at: now,
+    };
 
     const { error: upErr } = await supabase.from('logistics_handover_settings').upsert(
-      {
-        logistics_company_id: companyId,
-        responsible_user_id: responsible_user_id || null,
-        installer_user_id: installer_user_id || null,
-        updated_at: now,
-      },
+      upsertRow,
       { onConflict: 'logistics_company_id' },
     );
     if (upErr) {
+      if (String(upErr.message || '').includes('handover_confirm_user_id')) {
+        // Cột chưa migrate — lưu 2 field cũ.
+        const { error: upErr2 } = await supabase.from('logistics_handover_settings').upsert(
+          {
+            logistics_company_id: companyId,
+            responsible_user_id: upsertRow.responsible_user_id,
+            installer_user_id: upsertRow.installer_user_id,
+            updated_at: now,
+          },
+          { onConflict: 'logistics_company_id' },
+        );
+        if (upErr2) {
+          if (String(upErr2.message || '').includes('logistics_handover_settings')) {
+            return res.status(503).json({
+              error: 'Chưa cài đặt bảng logistics_handover_settings. Chạy migration database/415_logistics_handover_settings_ngoc_linh.sql',
+            });
+          }
+          throw upErr2;
+        }
+        return res.status(503).json({
+          error: 'Chưa có cột người xác nhận VC/LĐ. Chạy migration database/494_handover_confirm_users.sql',
+        });
+      }
       if (String(upErr.message || '').includes('logistics_handover_settings')) {
         return res.status(503).json({
           error: 'Chưa cài đặt bảng logistics_handover_settings. Chạy migration database/415_logistics_handover_settings_ngoc_linh.sql',

@@ -4289,7 +4289,8 @@ function parseCrmLeadsPageRpc(raw) {
 
 /**
  * Gắn `crm_next_open_task_deadline`: ngày hẹn đang chạy của NV CRM mở
- * (pending/in_progress) — lấy **hạn sớm nhất** trong các NV đã có deadline
+ * (pending/in_progress) thuộc cột hiện tại (hoặc NV không gắn cột)
+ * — lấy **hạn sớm nhất** trong các NV đã có deadline
  * (deadline tuần tự: thường chỉ 1 NV/stage đang đếm).
  */
 async function attachCrmNextOpenTaskDeadline(rows) {
@@ -4304,12 +4305,49 @@ async function attachCrmNextOpenTaskDeadline(rows) {
     const chunk = list.slice(i, i + chunkSize).map((r) => String(r.id)).filter(Boolean);
     if (chunk.length) idChunks.push(chunk);
   }
+  const currentStageByLead = new Map();
+  const missingStageIds = [];
+  for (const row of list) {
+    const leadId = String(row.id);
+    if (Object.prototype.hasOwnProperty.call(row, 'stage_id')) {
+      currentStageByLead.set(leadId, row.stage_id == null ? null : String(row.stage_id));
+    } else {
+      missingStageIds.push(leadId);
+    }
+  }
+  if (missingStageIds.length) {
+    const missingChunks = [];
+    for (let i = 0; i < missingStageIds.length; i += chunkSize) {
+      missingChunks.push(missingStageIds.slice(i, i + chunkSize));
+    }
+    const stageRows = (
+      await Promise.all(
+        missingChunks.map(async (chunk) => {
+          const { data, error } = await supabase
+            .from('crm_leads')
+            .select('id, stage_id')
+            .in('id', chunk);
+          if (error) {
+            console.warn('[crm] attachCrmNextOpenTaskDeadline stages:', error.message);
+            return [];
+          }
+          return data || [];
+        }),
+      )
+    ).flat();
+    for (const row of stageRows) {
+      currentStageByLead.set(
+        String(row.id),
+        row.stage_id == null ? null : String(row.stage_id),
+      );
+    }
+  }
   const taskRows = (
     await Promise.all(
       idChunks.map(async (chunk) => {
     const { data, error } = await supabase
       .from('crm_tasks')
-      .select('id, lead_id, deadline, order_index, created_at')
+      .select('id, lead_id, pipeline_stage_id, deadline, order_index, created_at')
       .in('lead_id', chunk)
       .in('status', ['pending', 'in_progress'])
       .not('deadline', 'is', null);
@@ -4324,6 +4362,13 @@ async function attachCrmNextOpenTaskDeadline(rows) {
   for (const t of taskRows) {
       if (t.deadline == null || t.deadline === '') continue;
       const lid = String(t.lead_id);
+      const currentStageId = currentStageByLead.get(lid);
+      if (
+        t.pipeline_stage_id != null
+        && String(t.pipeline_stage_id) !== String(currentStageId || '')
+      ) {
+        continue;
+      }
       const deadlineTs = new Date(t.deadline).getTime();
       if (Number.isNaN(deadlineTs)) continue;
       const orderIndex = Number(t.order_index) || 0;

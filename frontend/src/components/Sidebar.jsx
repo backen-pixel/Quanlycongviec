@@ -364,6 +364,8 @@ const CALC_MENU_GROUPS = [
     items: [
       { to: '/calc', icon: Sigma, label: 'Trang chính', end: true },
       { to: '/calc/run', icon: Calculator, label: 'Tính nhanh' },
+      { to: '/calc/hop-cung/thiet-ke', icon: LayoutGrid, label: 'Thiết kế hộp cứng' },
+      { to: '/calc/hop-cung', icon: Package, label: 'Tính hộp cứng' },
       { to: '/calc/import-3d', icon: FileUp, label: 'Tính từ file 3D' },
       { to: '/calc/history', icon: HistoryIcon, label: 'Lịch sử tính' },
     ],
@@ -459,6 +461,7 @@ const VC_MENU_GROUPS = [
       { to: '/vc/pipeline-settings', icon: Settings, label: 'Pipeline VC' },
       { to: '/vc/teams', icon: Users, label: 'Quản lý Đội nhóm' },
       { to: '/vc/task-templates', icon: ListChecks, label: 'Bộ nhiệm vụ VC' },
+      { to: '/vc/assignments', icon: ClipboardList, label: 'Giao việc VC' },
       { to: { pathname: '/admin/trash', search: '?tab=vc' }, icon: Trash2, label: 'Thùng rác VC', adminOnly: true, strictAdminOnly: true },
     ]
   },
@@ -533,6 +536,7 @@ function badgeForMenuLink(to, {
   updatesUnread = 0,
   assignmentsUnread = 0,
   sxAssignmentsUnread = 0,
+  vcAssignmentsUnread = 0,
   socialUnread = 0,
   unifiedTasksOpen = 0,
 } = {}) {
@@ -540,6 +544,7 @@ function badgeForMenuLink(to, {
   if (key === '/updates') return updatesUnread;
   if (key === '/crm/assignments') return assignmentsUnread;
   if (key === '/sx/assignments') return sxAssignmentsUnread;
+  if (key === '/vc/assignments') return vcAssignmentsUnread;
   if (key === '/social') return socialUnread;
   if (key === '/work/unified') return unifiedTasksOpen;
   return 0;
@@ -560,6 +565,11 @@ function SideLink({
 }) {
   const location = useLocation();
   const resolvedKey = linkKey || serializeMenuLinkTo(to);
+  const dataTour = to === '/crm/dashboard'
+    ? 'nav-crm-dashboard'
+    : to === '/crm/events'
+      ? 'nav-crm-events'
+      : undefined;
   const onNavClick = () => {
     const p = location.pathname;
     if (p === '/crm/dashboard' || p === '/crm/pipeline') {
@@ -573,6 +583,7 @@ function SideLink({
       state={moduleContext ? { moduleContext } : undefined}
       onClick={onNavClick}
       end={to === '/' || end}
+      data-tour={dataTour}
       className={({ isActive }) =>
         `flex items-center gap-3 rounded-lg px-3 py-2 text-[14px] font-medium transition-all min-w-0 flex-1 ${
           isActive
@@ -642,6 +653,7 @@ function PinnedMenuBar({
   updatesUnread,
   assignmentsUnread,
   sxAssignmentsUnread,
+  vcAssignmentsUnread,
   socialUnread,
   unifiedTasksOpen,
 }) {
@@ -650,6 +662,7 @@ function PinnedMenuBar({
     updatesUnread,
     assignmentsUnread,
     sxAssignmentsUnread,
+    vcAssignmentsUnread,
     socialUnread,
     unifiedTasksOpen,
   };
@@ -683,7 +696,7 @@ function PinnedMenuBar({
   );
 }
 
-function MenuGroup({ group, collapsed, moduleScope, isAdmin, isPlatformAdminUser, isWorkModuleAdmin, isStrictAdminUser, isExecutive, canAccessModule, canAccessSocialInbox, userRole, userTenantId, updatesUnread = 0, assignmentsUnread = 0, sxAssignmentsUnread = 0, socialUnread = 0, unifiedTasksOpen = 0, pinnedLinkKeys = [], onTogglePin }) {
+function MenuGroup({ group, collapsed, moduleScope, isAdmin, isPlatformAdminUser, isWorkModuleAdmin, isStrictAdminUser, isExecutive, canAccessModule, canAccessSocialInbox, userRole, userTenantId, updatesUnread = 0, assignmentsUnread = 0, sxAssignmentsUnread = 0, vcAssignmentsUnread = 0, socialUnread = 0, unifiedTasksOpen = 0, pinnedLinkKeys = [], onTogglePin }) {
   const [open, setOpen] = useState(false);
   const moduleContext = resolveGroupModuleContext(group);
 
@@ -691,6 +704,14 @@ function MenuGroup({ group, collapsed, moduleScope, isAdmin, isPlatformAdminUser
   useEffect(() => {
     setOpen(false);
   }, [moduleScope]);
+
+  useEffect(() => {
+    const onOpenGroup = (e) => {
+      if (e.detail?.groupId === group.id) setOpen(true);
+    };
+    window.addEventListener('product-tour:open-menu-group', onOpenGroup);
+    return () => window.removeEventListener('product-tour:open-menu-group', onOpenGroup);
+  }, [group.id]);
   const moduleAdmin = resolveMenuGroupAdmin(moduleContext, { isAdmin, isWorkModuleAdmin });
 
   const items = filterVisibleMenuItems(group.items, {
@@ -716,6 +737,7 @@ function MenuGroup({ group, collapsed, moduleScope, isAdmin, isPlatformAdminUser
     updatesUnread,
     assignmentsUnread,
     sxAssignmentsUnread,
+    vcAssignmentsUnread,
     socialUnread,
     unifiedTasksOpen,
   };
@@ -765,7 +787,9 @@ function MenuGroup({ group, collapsed, moduleScope, isAdmin, isPlatformAdminUser
 }
 
 export default function Sidebar() {
-  const { updatesUnread, assignmentsUnread, sxAssignmentsUnread, socialUnread, unifiedTasksOpen } = useSidebarUnreadBadges();
+  const {
+    updatesUnread, assignmentsUnread, sxAssignmentsUnread, vcAssignmentsUnread, socialUnread, unifiedTasksOpen,
+  } = useSidebarUnreadBadges();
   const { canAccessModule, crmOnly } = useModuleAccess();
   const [collapsed, setCollapsed] = useState(false);
   const [userPanelHidden, setUserPanelHidden] = useState(() => {
@@ -1004,11 +1028,24 @@ export default function Sidebar() {
   useEffect(() => {
     const handler = (e) => {
       if (e.target.closest('[data-module-access-denied-modal]')) return;
+      // Tour overlay dimmers are outside the panel — don't close while guiding
+      if (document.querySelector('[data-product-tour-overlay]')) return;
       if (appSwitcherRef.current && !appSwitcherRef.current.contains(e.target)) setShowAppSwitcher(false);
     };
     if (showAppSwitcher) document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [showAppSwitcher]);
+
+  useEffect(() => {
+    const openSwitcher = () => setShowAppSwitcher(true);
+    const closeSwitcher = () => setShowAppSwitcher(false);
+    window.addEventListener('product-tour:open-app-switcher', openSwitcher);
+    window.addEventListener('product-tour:close-app-switcher', closeSwitcher);
+    return () => {
+      window.removeEventListener('product-tour:open-app-switcher', openSwitcher);
+      window.removeEventListener('product-tour:close-app-switcher', closeSwitcher);
+    };
+  }, []);
 
   const doLogout = async () => {
     await logout();
@@ -1092,6 +1129,7 @@ export default function Sidebar() {
           updatesUnread={updatesUnread}
           assignmentsUnread={assignmentsUnread}
           sxAssignmentsUnread={sxAssignmentsUnread}
+          vcAssignmentsUnread={vcAssignmentsUnread}
           socialUnread={socialUnread}
           unifiedTasksOpen={unifiedTasksOpen}
         />
@@ -1115,6 +1153,7 @@ export default function Sidebar() {
                 updatesUnread={updatesUnread}
                 assignmentsUnread={assignmentsUnread}
                 sxAssignmentsUnread={sxAssignmentsUnread}
+                vcAssignmentsUnread={vcAssignmentsUnread}
                 socialUnread={socialUnread}
                 unifiedTasksOpen={unifiedTasksOpen}
                 {...menuPinProps}
@@ -1141,9 +1180,10 @@ export default function Sidebar() {
                     userTenantId={user?.tenant_id}
                     updatesUnread={updatesUnread}
                     assignmentsUnread={assignmentsUnread}
-                sxAssignmentsUnread={sxAssignmentsUnread}
-                socialUnread={socialUnread}
-                unifiedTasksOpen={unifiedTasksOpen}
+                    sxAssignmentsUnread={sxAssignmentsUnread}
+                    vcAssignmentsUnread={vcAssignmentsUnread}
+                    socialUnread={socialUnread}
+                    unifiedTasksOpen={unifiedTasksOpen}
                     {...menuPinProps}
                   />
                 );
@@ -1169,6 +1209,7 @@ export default function Sidebar() {
                 updatesUnread={updatesUnread}
                 assignmentsUnread={assignmentsUnread}
                 sxAssignmentsUnread={sxAssignmentsUnread}
+                vcAssignmentsUnread={vcAssignmentsUnread}
                 socialUnread={socialUnread}
                 unifiedTasksOpen={unifiedTasksOpen}
                 {...menuPinProps}

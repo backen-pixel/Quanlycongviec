@@ -1487,6 +1487,8 @@ const AppModuleKanbanCard = memo(function AppModuleKanbanCard({
     const badgeContent = (
       <>
         <Clock className={isUrgent ? 'h-3.5 w-3.5' : 'h-3 w-3'} strokeWidth={2.6} />
+        <span className="font-extrabold tracking-wide uppercase">Setup</span>
+        <span className="opacity-80" aria-hidden>·</span>
         {isOverdue ? <>Quá hạn {deadlineDateLabel}</> : <>Hạn {deadlineDateLabel}</>}
       </>
     );
@@ -1497,13 +1499,13 @@ const AppModuleKanbanCard = memo(function AppModuleKanbanCard({
           data-kanban-deadline-btn
           onClick={(ev) => { ev.stopPropagation(); onOpenDeadline(item); }}
           className={`${badgeCls} hover:opacity-90 cursor-pointer transition-opacity`}
-          title={`Hạn: ${deadlineDateLabel}\nNguồn: Deadline tự setup`}
+          title={`Hạn: ${deadlineDateLabel}\nLoại: Deadline tự setup`}
         >
           {badgeContent}
         </button>
       );
     }
-    return <span className={badgeCls}>{badgeContent}</span>;
+    return <span className={badgeCls} title={`Hạn: ${deadlineDateLabel}\nLoại: Deadline tự setup`}>{badgeContent}</span>;
   })();
 
   const startEditValue = (ev) => {

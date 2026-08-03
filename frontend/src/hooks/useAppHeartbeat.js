@@ -52,6 +52,7 @@ export function useAppHeartbeat({ enabled, user, onUpdate }) {
         onUpdateRef.current({
           assignmentsCrm: badges.assignments_crm || EMPTY_ASSIGN,
           assignmentsProduction: badges.assignments_production || EMPTY_ASSIGN,
+          assignmentsLogistics: badges.assignments_logistics || EMPTY_ASSIGN,
           social: Number(badges.social?.unread) || 0,
           releaseNotesDb: Number(badges.release_notes?.unread) || 0,
           notifications: badges.notifications || null,

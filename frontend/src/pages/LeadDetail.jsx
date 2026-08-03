@@ -86,8 +86,10 @@ import {
   ArrowLeft, Phone, Mail, MapPin, Calendar, DollarSign, User, Target,
   Plus, Clock, MessageSquare, MessageCircle, Edit2, Trash2, X, Save, Building2, FolderKanban,
   FileUp, FileText, Zap, ChevronDown, Send, RefreshCw, Users, ClipboardCheck, Loader2, Mic, RotateCcw, Download,
-  Pin, CheckCircle2, ShoppingCart, Package, Search, Eye,
+  Pin, CheckCircle2, ShoppingCart, Package, Search, Eye, BookOpen,
 } from 'lucide-react';
+import { useProductTour } from '../components/productTour/ProductTourProvider';
+import { CRM_LEAD_DEAL_DETAIL_TOUR_ID } from '../lib/productTour/tours';
 
 function formatLeadDealEventTitle(lead, customer) {
   const title = (lead?.title || '').trim() || (lead?.code ? String(lead.code).trim() : '') || (lead?.type === 'deal' ? 'Deal' : 'Lead');
@@ -155,6 +157,7 @@ const ACTIVITY_TYPES = [
 
 export default function LeadDetail() {
   const { id } = useParams();
+  const productTour = useProductTour();
   const [searchParams, setSearchParams] = useSearchParams();
   const { socket, user } = useAuth();
   const isAdminUser = isAdminLike(user);
@@ -989,6 +992,46 @@ export default function LeadDetail() {
     if (activeTab === 'activities') setActiveTab('notes');
     else if (activeTab === 'kpi_ledger' || activeTab === 'approvals') setActiveTab('tasks');
   }, [activeTab]);
+
+  /** Tour hướng dẫn — mở đúng tab hồ sơ (vd. tự vào Công việc ở bước task). */
+  useEffect(() => {
+    const TOUR_TAB = {
+      'lead-tab-tasks': 'tasks',
+      'lead-tab-shared': 'shared-workspace',
+      'lead-tab-orders': 'purchase_orders',
+      'lead-tab-documents': 'documents',
+      'lead-tab-drive': 'drive',
+      'lead-tab-notes': 'notes',
+      'lead-tab-facebook': 'facebook',
+      'lead-tab-zalo': 'zalo',
+      'lead-tab-team': 'team',
+      'lead-tab-comments': 'comments',
+      'lead-tab-voice': 'voice_crm',
+      'lead-tab-scores': 'deal_scores',
+    };
+    const onSetTab = (e) => {
+      const tourId = e?.detail?.tourId;
+      const tab = TOUR_TAB[tourId] || e?.detail?.tab;
+      if (!tab) return;
+      setActiveTab(tab);
+    };
+    window.addEventListener('product-tour:set-lead-tab', onSetTab);
+    return () => window.removeEventListener('product-tour:set-lead-tab', onSetTab);
+  }, []);
+
+  /** Tour — mở form Tạo sự kiện gắn Lead/Deal */
+  useEffect(() => {
+    const onOpenEvent = () => {
+      setShowCreateEvent(true);
+      setCreateEventTypes((prev) => {
+        if (prev?.length) return prev;
+        api.get('/events/event-types').then((r) => setCreateEventTypes(r.data || [])).catch(() => {});
+        return prev;
+      });
+    };
+    window.addEventListener('product-tour:open-lead-event-modal', onOpenEvent);
+    return () => window.removeEventListener('product-tour:open-lead-event-modal', onOpenEvent);
+  }, []);
 
   const noteActivities = useMemo(
     () => (activities || []).filter((a) => a.type === 'note'),
@@ -1944,10 +1987,11 @@ export default function LeadDetail() {
         </div>
       )}
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between" data-tour="lead-detail-header">
         <div className="flex items-center gap-2.5">
           <button
             type="button"
+            data-tour="lead-detail-back"
             title="Quay lại Kanban CRM"
             onClick={() => { persistCrmPipelineUiNow(); if (lead?.type === 'deal') localStorage.setItem('crm_pinned_tab', 'deal'); markCrmPipelineCardFocus(id); navigate('/crm/dashboard'); }}
             className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm hover:bg-slate-50 hover:border-slate-300 hover:shadow-md hover:text-indigo-600 transition-all cursor-pointer"
@@ -1957,6 +2001,7 @@ export default function LeadDetail() {
           {/* Per-user flags: ghim + đã tương tác (manual toggle) */}
           <button
             type="button"
+            data-tour="lead-detail-pin"
             title={lead?.is_pinned ? 'Bỏ ghim' : 'Ghim lead/deal lên đầu Kanban'}
             onClick={async () => {
               const next = !lead?.is_pinned;
@@ -1979,6 +2024,7 @@ export default function LeadDetail() {
           </button>
           <button
             type="button"
+            data-tour="lead-detail-interact"
             title={lead?.is_interacted ? 'Bỏ đã tương tác' : 'Đánh dấu đã tương tác với khách'}
             onClick={async () => {
               const next = !lead?.is_interacted;
@@ -2100,15 +2146,49 @@ export default function LeadDetail() {
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center gap-2 flex-wrap" data-tour="lead-detail-actions">
+          <button
+            type="button"
+            data-tour="lead-detail-tour-btn"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              // Event toàn cục — không phụ thuộc context (tránh HMR / null context)
+              window.dispatchEvent(new CustomEvent('product-tour:start', {
+                detail: {
+                  id: CRM_LEAD_DEAL_DETAIL_TOUR_ID || 'crm-lead-deal-detail',
+                  preferCurrentPath: true,
+                },
+              }));
+              // Fallback nếu listener chưa gắn
+              window.setTimeout(() => {
+                if (!document.querySelector('[data-product-tour-overlay]')) {
+                  productTour?.startTour?.(CRM_LEAD_DEAL_DETAIL_TOUR_ID || 'crm-lead-deal-detail', {
+                    preferCurrentPath: true,
+                  });
+                }
+              }, 50);
+            }}
+            className="h-9 px-3 bg-sky-50 text-sky-800 border border-sky-200 hover:bg-sky-100 rounded-lg text-sm font-medium flex items-center gap-1.5 cursor-pointer"
+            title="Hướng dẫn chi tiết trang Lead / Deal"
+          >
+            <BookOpen className="h-4 w-4" />
+            Hướng dẫn chi tiết
+          </button>
           {canConvert && (
-            <button onClick={() => setShowConvertModal(true)} className="h-9 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium flex items-center gap-1.5 cursor-pointer">
+            <button
+              type="button"
+              data-tour="lead-convert-deal"
+              onClick={() => setShowConvertModal(true)}
+              className="h-9 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium flex items-center gap-1.5 cursor-pointer"
+            >
               <Zap className="h-4 w-4" /> Chuyển Deal
             </button>
           )}
           {canRevertToLead && (
             <button
               type="button"
+              data-tour="lead-revert-lead"
               onClick={() => setShowRevertModal(true)}
               title="Trả deal lại về Lead và chọn lại người phụ trách"
               className="h-9 px-3 bg-amber-100 text-amber-800 border border-amber-200 hover:bg-amber-200 rounded-lg text-sm font-medium flex items-center gap-1.5 cursor-pointer"
@@ -2119,6 +2199,7 @@ export default function LeadDetail() {
           {canTransferRegion && (
             <button
               type="button"
+              data-tour="lead-transfer-assignee"
               onClick={openTransferRegionModal}
               title="Chuyển công ty/khu vực và người phụ trách"
               className="h-9 px-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium flex items-center gap-1.5 cursor-pointer"
@@ -2128,6 +2209,7 @@ export default function LeadDetail() {
           )}
           <button
             type="button"
+            data-tour="lead-create-event"
             onClick={() => {
               setShowCreateEvent(true);
               if (!createEventTypes.length) {
@@ -2139,7 +2221,12 @@ export default function LeadDetail() {
           >
             <Calendar className="h-4 w-4" /> Tạo sự kiện
           </button>
-          <button onClick={() => setShowExcelImport(true)} className="h-9 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium flex items-center gap-1.5 cursor-pointer">
+          <button
+            type="button"
+            data-tour="lead-import-excel"
+            onClick={() => setShowExcelImport(true)}
+            className="h-9 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium flex items-center gap-1.5 cursor-pointer"
+          >
             📥 Import Excel
           </button>
         </div>
@@ -2198,19 +2285,21 @@ export default function LeadDetail() {
           Deal đã có dự án — đổi giai đoạn trên thanh bước hoặc kéo thả trên Kanban CRM. Tiến độ xưởng/vận chuyển vẫn hiển thị qua badge SX/VC và có thể cập nhật tại module xưởng/VC.
         </p>
       )}
-      <PipelineStepper
-        stages={stages}
-        currentStageId={lead.stage_id}
-        currentStageName={lead.stage?.name}
-        onMoveToStage={moveStage}
-        visitedStageIds={visitedStageIds}
-      />
+      <div data-tour="lead-pipeline-stepper">
+        <PipelineStepper
+          stages={stages}
+          currentStageId={lead.stage_id}
+          currentStageName={lead.stage?.name}
+          onMoveToStage={moveStage}
+          visitedStageIds={visitedStageIds}
+        />
+      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
         {/* Left: Customer Info */}
-        <div className="lg:col-span-1 space-y-4 min-w-0">
+        <div className="lg:col-span-1 space-y-4 min-w-0" data-tour="lead-sidebar">
           {/* Customer Card - Inline Edit */}
-          <div className="bg-white rounded-xl border p-5 space-y-4">
+          <div className="bg-white rounded-xl border p-5 space-y-4" data-tour="lead-info-customer">
             <h3 className="text-sm font-bold uppercase" style={{ color: '#000000' }}>Khách hàng</h3>
             
             {customer ? (
@@ -2347,9 +2436,11 @@ export default function LeadDetail() {
         {/* Right: Documents + Activities with Tabs */}
         <div className="lg:col-span-3 space-y-4 min-w-0">
           {/* Tab Switcher */}
-          <div className="bg-white rounded-xl border">
+          <div className="bg-white rounded-xl border" data-tour="lead-detail-tabs">
             <div className="flex border-b">
               <button
+                type="button"
+                data-tour="lead-tab-tasks"
                 onClick={() => setActiveTab('tasks')}
                 className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all ${
                   activeTab === 'tasks'
@@ -2361,6 +2452,8 @@ export default function LeadDetail() {
                 ✅ Công việc
               </button>
               <button
+                type="button"
+                data-tour="lead-tab-shared"
                 onClick={() => setActiveTab('shared-workspace')}
                 className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all ${
                   activeTab === 'shared-workspace'
@@ -2372,6 +2465,8 @@ export default function LeadDetail() {
                 🤝 Không gian chung
               </button>
               <button
+                type="button"
+                data-tour="lead-tab-orders"
                 onClick={() => setActiveTab('purchase_orders')}
                 className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all ${
                   activeTab === 'purchase_orders'
@@ -2390,6 +2485,8 @@ export default function LeadDetail() {
                 )}
               </button>
               <button
+                type="button"
+                data-tour="lead-tab-documents"
                 onClick={() => setActiveTab('documents')}
                 className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all ${
                   activeTab === 'documents'
@@ -2407,6 +2504,8 @@ export default function LeadDetail() {
                 )}
               </button>
               <button
+                type="button"
+                data-tour="lead-tab-drive"
                 onClick={() => setActiveTab('drive')}
                 className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all ${
                   activeTab === 'drive'
@@ -2425,6 +2524,8 @@ export default function LeadDetail() {
                 )}
               </button>
               <button
+                type="button"
+                data-tour="lead-tab-notes"
                 onClick={() => setActiveTab('notes')}
                 className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all ${
                   activeTab === 'notes'
@@ -2444,6 +2545,8 @@ export default function LeadDetail() {
               </button>
               {inboxChannel === 'facebook' && (
               <button
+                type="button"
+                data-tour="lead-tab-facebook"
                 onClick={() => setActiveTab('facebook')}
                 className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all ${
                   activeTab === 'facebook'
@@ -2456,6 +2559,8 @@ export default function LeadDetail() {
               )}
               {inboxChannel === 'zalo' && (
               <button
+                type="button"
+                data-tour="lead-tab-zalo"
                 onClick={() => setActiveTab('zalo')}
                 className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all ${
                   activeTab === 'zalo'
@@ -2467,6 +2572,8 @@ export default function LeadDetail() {
               </button>
               )}
               <button
+                type="button"
+                data-tour="lead-tab-team"
                 onClick={() => setActiveTab('team')}
                 className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all ${
                   activeTab === 'team'
@@ -2492,6 +2599,8 @@ export default function LeadDetail() {
                 </span>
               </button>
               <button
+                type="button"
+                data-tour="lead-tab-comments"
                 onClick={() => setActiveTab('comments')}
                 className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all ${
                   activeTab === 'comments'
@@ -2509,6 +2618,8 @@ export default function LeadDetail() {
                 )}
               </button>
               <button
+                type="button"
+                data-tour="lead-tab-voice"
                 onClick={() => setActiveTab('voice_crm')}
                 className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all inline-flex items-center justify-center gap-1 ${
                   activeTab === 'voice_crm'
@@ -2521,6 +2632,8 @@ export default function LeadDetail() {
               </button>
               {lead?.type === 'deal' && isDealHoanThanhForZalo && (
                 <button
+                  type="button"
+                  data-tour="lead-tab-scores"
                   onClick={() => setActiveTab('deal_scores')}
                   className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all ${
                     activeTab === 'deal_scores'
@@ -3278,11 +3391,13 @@ export default function LeadDetail() {
                   onOpenSharedWorkspace={() => setActiveTab('shared-workspace')}
                 />
               ) : activeTab === 'comments' ? (
-                <CrmLeadCommentsPanel
-                  leadId={id}
-                  onCountChange={setCommentCount}
-                  quickReplyTemplates={lead?.type === 'deal' ? CRM_DEAL_COMMENT_QUICK_REPLIES : []}
-                />
+                <div data-tour="lead-comments-panel">
+                  <CrmLeadCommentsPanel
+                    leadId={id}
+                    onCountChange={setCommentCount}
+                    quickReplyTemplates={lead?.type === 'deal' ? CRM_DEAL_COMMENT_QUICK_REPLIES : []}
+                  />
+                </div>
               ) : activeTab === 'chat' ? (
                 <LeadChatTab leadId={id} socket={socket} />
               ) : activeTab === 'voice_crm' ? (
@@ -5210,7 +5325,7 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
   const prob = lead?.probability ?? 0;
 
   return (
-    <div className="bg-white rounded-xl border p-5 space-y-1 overflow-visible">
+    <div className="bg-white rounded-xl border p-5 space-y-1 overflow-visible" data-tour="lead-info-panel">
       <h3 className="text-sm font-bold uppercase mb-2" style={{ color: '#000000' }}>Thông tin</h3>
 
       <LeadInfoEditableRow {...editableRowProps} icon="💰" label="Giá trị" field="estimated_value"

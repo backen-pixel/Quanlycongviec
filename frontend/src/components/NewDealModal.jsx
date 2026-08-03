@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { User, X, Loader2 } from 'lucide-react';
 import api from '../lib/api';
 import { isAdminLike } from '../lib/adminRole';
@@ -477,9 +478,13 @@ export default function NewDealModal({
   const probBadgeClass = isProduction ? 'text-blue-700 bg-blue-50' : 'text-purple-700 bg-purple-50';
   const submitBtnClass = isProduction ? 'bg-blue-600 hover:bg-blue-700' : 'bg-purple-600 hover:bg-purple-700';
 
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl w-full max-w-4xl shadow-2xl flex overflow-hidden max-h-[92vh]">
+  // Portal ra body — tránh bị Sidebar (z-30) đè vì modal nằm trong cột main (z-10)
+  return createPortal(
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[10050] p-4">
+      <div
+        data-tour="new-deal-modal"
+        className="bg-white rounded-2xl w-full max-w-4xl shadow-2xl flex overflow-hidden max-h-[92vh]"
+      >
 
         <div className="flex-1 flex flex-col min-w-0 border-r border-gray-100">
           <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
@@ -495,6 +500,7 @@ export default function NewDealModal({
             </div>
             <button
               type="button"
+              data-tour="new-deal-modal-close"
               onClick={onClose}
               disabled={saving}
               className="p-1.5 hover:bg-gray-100 rounded-lg transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
@@ -512,7 +518,7 @@ export default function NewDealModal({
 
           <div className="flex-1 overflow-y-auto px-6 py-4">
             <form id="deal-form" onSubmit={handleSubmit} className="space-y-3.5">
-              <div>
+              <div data-tour="new-deal-title">
                 <label className="block text-xs font-semibold text-gray-700 mb-1">Tên Deal <span className="text-red-500">*</span></label>
                 <input
                   type="text"
@@ -884,6 +890,7 @@ export default function NewDealModal({
             <button
               type="submit"
               form="deal-form"
+              data-tour="new-deal-save"
               disabled={saving || (isProduction && !visibleWorkTypes.length)}
               className={`px-5 py-2 text-white rounded-lg text-sm font-semibold transition disabled:opacity-50 cursor-pointer shrink-0 ${submitBtnClass}`}
             >
@@ -988,6 +995,7 @@ export default function NewDealModal({
         </div>
 
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

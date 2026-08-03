@@ -51,7 +51,7 @@ import {
 import { isProjectAlreadyInLogistics } from '../lib/projectLogistics';
 import { buildCrmLeadDocTaskSections, normalizeCrmChecklist } from '../lib/crmTaskDocumentTree';
 import { fetchPipelineStagesById } from '../lib/crmPipelineStages';
-import { buildSxPipelineStageMeta, getSxOrderDeliveryDateUrgency, resolveSxDisplayColumnId, TEMP_SX_FREE_DRAG } from '../lib/sxPipelineRevenue';
+import { buildSxPipelineStageMeta, resolveSxDisplayColumnId, TEMP_SX_FREE_DRAG } from '../lib/sxPipelineRevenue';
 import { CrmLeadCommentsPanel, ProjectCommentsPanel } from '../components/CommentsPanels';
 import SharedCRMNotes from '../components/SharedCRMNotes';
 import DriveAttachments from '../components/drive/DriveAttachments';
@@ -146,22 +146,43 @@ function WorkshopInfoPanel({
     || '',
   ).trim() || null;
 
-  const deliveryDate = project.delivery_date || null;
+  const pickupAt = project.pickup_at || null;
   const installDate = project.install_date || null;
 
-  const sxStage = project.sx_pipeline_stage || crmDeal?.sx_pipeline_stage || null;
-  const deliveryUrgency = getSxOrderDeliveryDateUrgency(deliveryDate, sxStage);
-  const deliveryOverdue = deliveryUrgency?.overdue;
-  const deliverySoon = deliveryUrgency?.soon;
+  const pickupDateObj = pickupAt ? new Date(pickupAt) : null;
+  const pickupOverdue = pickupDateObj && !Number.isNaN(pickupDateObj.getTime()) && pickupDateObj < new Date();
+  const pickupSoon = pickupDateObj && !pickupOverdue && !Number.isNaN(pickupDateObj.getTime())
+    && pickupDateObj < new Date(Date.now() + 3 * 86400000);
 
   const installDateObj = installDate ? new Date(installDate) : null;
-  const installOverdue = installDateObj && installDateObj < new Date();
-  const installSoon = installDateObj && !installOverdue && installDateObj < new Date(Date.now() + 3 * 86400000);
+  const installOverdue = installDateObj && !Number.isNaN(installDateObj.getTime()) && installDateObj < new Date();
+  const installSoon = installDateObj && !installOverdue && !Number.isNaN(installDateObj.getTime())
+    && installDateObj < new Date(Date.now() + 3 * 86400000);
+
+  const toDateInputValue = (raw) => {
+    if (!raw) return '';
+    const s = String(raw);
+    if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+    try {
+      const d = new Date(s);
+      if (Number.isNaN(d.getTime())) return '';
+      return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' });
+    } catch {
+      return '';
+    }
+  };
 
   const save = async (field, value) => {
     setSaving(true);
     try {
-      const payloadValue = value || null;
+      let payloadValue = value || null;
+      // pickup_at là timestamptz — input date → giữ giờ cũ hoặc mặc định 09:00 VN
+      if (field === 'pickup_at' && payloadValue && /^\d{4}-\d{2}-\d{2}$/.test(payloadValue)) {
+        const prev = project.pickup_at ? String(project.pickup_at) : '';
+        const prevTime = prev.match(/T(\d{2}:\d{2})/)?.[1];
+        payloadValue = `${payloadValue}T${prevTime || '09:00'}:00+07:00`;
+      }
+
       await api.put(`/projects/${project.id}`, { [field]: payloadValue });
 
       // Đồng bộ sang deal CRM (cùng nguồn với phiếu/bàn giao VC của sale).
@@ -242,15 +263,15 @@ function WorkshopInfoPanel({
         </div>
       </div>
 
-      {/* Ngày giao hàng */}
+      {/* Ngày lấy hàng (VC) */}
       <div
-        className={`flex items-start gap-2 py-2 px-1 rounded-lg -mx-1 transition-colors group cursor-pointer ${deliveryOverdue ? 'bg-red-50 hover:bg-red-100' : 'hover:bg-gray-50'}`}
-        onClick={() => editing !== 'delivery_date' && startEdit('delivery_date', deliveryDate ? String(deliveryDate).substring(0, 10) : '')}
+        className={`flex items-start gap-2 py-2 px-1 rounded-lg -mx-1 transition-colors group cursor-pointer ${pickupOverdue ? 'bg-red-50 hover:bg-red-100' : 'hover:bg-gray-50'}`}
+        onClick={() => editing !== 'pickup_at' && startEdit('pickup_at', toDateInputValue(pickupAt))}
       >
         <span className="text-sm mt-0.5 shrink-0">🚚</span>
         <div className="flex-1 min-w-0">
-          <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Ngày giao hàng</p>
-          {editing === 'delivery_date' ? (
+          <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Ngày lấy hàng</p>
+          {editing === 'pickup_at' ? (
             <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
               <input
                 type="date"
@@ -259,15 +280,15 @@ function WorkshopInfoPanel({
                 autoFocus
                 className="px-2 py-1 border border-blue-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-400"
               />
-              <button type="button" onClick={() => save('delivery_date', draft)} disabled={saving} className="px-2 py-1 bg-blue-600 text-white rounded text-xs cursor-pointer disabled:opacity-50">✓</button>
+              <button type="button" onClick={() => save('pickup_at', draft)} disabled={saving} className="px-2 py-1 bg-blue-600 text-white rounded text-xs cursor-pointer disabled:opacity-50">✓</button>
               <button type="button" onClick={cancelEdit} className="px-2 py-1 bg-gray-100 rounded text-xs cursor-pointer">✕</button>
             </div>
           ) : (
-            <p className={`text-sm font-medium flex items-center gap-1 ${deliveryOverdue ? 'text-red-600' : deliverySoon ? 'text-amber-600' : 'text-gray-900'}`}>
-              {deliveryDate ? formatDate(deliveryDate) : '—'}
-              {deliveryOverdue && <span className="text-[10px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded font-bold">Trễ!</span>}
-              {deliverySoon && <span className="text-[10px] bg-amber-100 text-amber-600 px-1.5 py-0.5 rounded font-bold">Sắp tới</span>}
-              <Edit2 className="h-3 w-3 text-gray-300 opacity-0 group-hover:opacity-100" />
+            <p className={`text-sm font-medium flex items-center gap-1 ${pickupOverdue ? 'text-red-600' : pickupSoon ? 'text-amber-600' : 'text-gray-900'}`}>
+              <span className="flex-1 min-w-0">{pickupAt ? formatDate(pickupAt) : '—'}</span>
+              {pickupOverdue && <span className="text-[10px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded font-bold">Trễ!</span>}
+              {pickupSoon && <span className="text-[10px] bg-amber-100 text-amber-600 px-1.5 py-0.5 rounded font-bold">Sắp tới</span>}
+              <Edit2 className="h-3 w-3 text-gray-300 opacity-0 group-hover:opacity-100 shrink-0" />
             </p>
           )}
         </div>
@@ -276,7 +297,7 @@ function WorkshopInfoPanel({
       {/* Ngày lắp đặt */}
       <div
         className={`flex items-start gap-2 py-2 px-1 rounded-lg -mx-1 transition-colors group cursor-pointer ${installOverdue ? 'bg-red-50 hover:bg-red-100' : 'hover:bg-gray-50'}`}
-        onClick={() => editing !== 'install_date' && startEdit('install_date', installDate ? String(installDate).substring(0, 10) : '')}
+        onClick={() => editing !== 'install_date' && startEdit('install_date', toDateInputValue(installDate))}
       >
         <span className="text-sm mt-0.5 shrink-0">🔧</span>
         <div className="flex-1 min-w-0">
@@ -295,10 +316,10 @@ function WorkshopInfoPanel({
             </div>
           ) : (
             <p className={`text-sm font-medium flex items-center gap-1 ${installOverdue ? 'text-red-600' : installSoon ? 'text-amber-600' : 'text-gray-900'}`}>
-              {installDate ? formatDate(installDate) : '—'}
+              <span className="flex-1 min-w-0">{installDate ? formatDate(installDate) : '—'}</span>
               {installOverdue && <span className="text-[10px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded font-bold">Trễ!</span>}
               {installSoon && <span className="text-[10px] bg-amber-100 text-amber-600 px-1.5 py-0.5 rounded font-bold">Sắp tới</span>}
-              <Edit2 className="h-3 w-3 text-gray-300 opacity-0 group-hover:opacity-100" />
+              <Edit2 className="h-3 w-3 text-gray-300 opacity-0 group-hover:opacity-100 shrink-0" />
             </p>
           )}
         </div>
@@ -1110,7 +1131,11 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   const [ensuringCrmDeal, setEnsuringCrmDeal] = useState(false);
   const tabFromUrl = searchParams.get('tab');
   const normalizedUrlTab = LEGACY_TAB_MAP[tabFromUrl] || tabFromUrl;
-  const tabAllowed = (t) => DEAL_TAB_KEYS.has(t);
+  const tabAllowed = (t) => {
+    if (!DEAL_TAB_KEYS.has(t)) return false;
+    if (moduleKey === 'vc' && (t === 'approvals' || t === 'procurement')) return false;
+    return true;
+  };
   const [activeTab, setActiveTab] = useState(
     tabAllowed(normalizedUrlTab) ? normalizedUrlTab : 'tasks',
   );
@@ -1967,7 +1992,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
         if (!TEMP_SX_FREE_DRAG && sxStage?.is_handover_to_logistics === true && !isProjectAlreadyInLogistics(project)) {
           try {
             await api.post(`/vc-handover/projects/${id}/request`, { sx_stage_id: String(sxStage?.id || stageId) });
-            alert('Đã gửi thông báo cho Sale CRM phụ trách deal — họ cần chọn công ty VC/LĐ và tạo sự kiện Lấy hàng / Lắp đặt (trong bình luận deal).');
+            alert('Đã gửi thông báo cho Sale CRM phụ trách deal — họ cần chọn công ty VC/LĐ và ngày lấy/lắp (trong bình luận deal). 3 sự kiện lịch sẽ tạo sau khi Xưởng & VC/LĐ xác nhận.');
             refreshProjectSilently?.();
           } catch (e) {
             alert(e.response?.data?.error || 'Không gửi được yêu cầu bàn giao VC/LĐ');
@@ -2785,7 +2810,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                 : '⚠️ Sự cố')}
               {moduleKey !== 'vc' && tabBtn('procurement', '📦 Vật tư / Mua hàng')}
               {tabBtn('team', teamTabLabel)}
-              {tabBtn('approvals', '✅ Gửi duyệt')}
+              {moduleKey !== 'vc' && tabBtn('approvals', '✅ Gửi duyệt')}
             </div>
 
             <div className="p-5">
@@ -3281,7 +3306,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
               )}
 
               {/* Gửi duyệt — dùng ProjectApprovalsTab thật */}
-              {activeTab === 'approvals' && (
+              {moduleKey !== 'vc' && activeTab === 'approvals' && (
                 <ProjectApprovalsTab
                   variant="workshop"
                   projectId={project.id}

@@ -524,7 +524,7 @@ r.delete('/:taskId/attachments/:attId', async (req, res) => {
       .eq('entity_type', 'task')
       .maybeSingle();
     if (!att) return res.status(404).json({ error: 'Không tìm thấy file' });
-    if (!assertFileAttachmentMutation(req, res, att)) return;
+    if (!(await assertFileAttachmentMutation(req, res, att))) return;
 
     const { data: task } = await supabase.from('tasks').select('id, title, project_id').eq('id', req.params.taskId).maybeSingle();
     await supabase.from('file_attachments').delete().eq('id', req.params.attId).eq('entity_type', 'task');

@@ -1795,7 +1795,7 @@ const WORKSHOP_TYPE_SCALAR = 'workshop_type_id,';
 const WORKSHOP_TYPE_EMBED = 'workshop_type:workshop_project_types(id, name, applies_to),';
 
 const PROJECT_DETAIL_SELECT = `
-        id, company_id, code, name, description, estimated_value, production_value, deposit_amount, collected_amount, priority, deadline, install_address, install_date, ${MIGRATION_300_COLS} ${MIGRATION_76_COLS} status, notes, created_at,
+        id, company_id, code, name, description, estimated_value, production_value, deposit_amount, collected_amount, priority, deadline, install_address, install_date, pickup_at, pickup_notes, ${MIGRATION_300_COLS} ${MIGRATION_76_COLS} status, notes, created_at,
         current_stage_id, ${WORKSHOP_TYPE_SCALAR}
         ${WORKSHOP_TYPE_EMBED}
         current_stage:workflow_stages(id, slug, name, color, icon),
@@ -1827,7 +1827,7 @@ const PROJECT_DETAIL_SELECT = `
 // Fallback select khi DB thiếu cột/relationship mới (FK users, task_checklists, participants…)
 // Mục tiêu: vẫn mở được chi tiết dự án + hiển thị stage/tag đúng.
 const PROJECT_DETAIL_SELECT_MIN = `
-        id, company_id, code, name, description, estimated_value, production_value, priority, deadline, install_address, install_date, ${MIGRATION_300_COLS} status, notes, created_at,
+        id, company_id, code, name, description, estimated_value, production_value, priority, deadline, install_address, install_date, pickup_at, pickup_notes, ${MIGRATION_300_COLS} status, notes, created_at,
         current_stage_id, ${WORKSHOP_TYPE_SCALAR}
         ${WORKSHOP_TYPE_EMBED}
         current_stage:workflow_stages(id, slug, name, color, icon),
@@ -4560,7 +4560,7 @@ r.put('/handover-settings/:companyId', requirePermission('projects', 'edit'), as
     if (!v.ok) return res.status(400).json({ error: v.error });
     if (!userCanAccessProductionHandover(req, companyId)) return res.status(403).json({ error: 'Không có quyền sửa cấu hình công ty này' });
 
-    const { responsible_user_id, default_production_team_id, assignments } = req.body || {};
+    const { responsible_user_id, default_production_team_id, delivery_confirm_user_id, assignments } = req.body || {};
 
     if (default_production_team_id) {
       const { data: wt } = await supabase
@@ -4586,16 +4586,59 @@ r.put('/handover-settings/:companyId', requirePermission('projects', 'edit'), as
       }
     }
 
+    if (delivery_confirm_user_id) {
+      const { data: du } = await supabase
+        .from('users')
+        .select('id, company_id, department:departments!users_department_id_fkey(id, company_id)')
+        .eq('id', delivery_confirm_user_id)
+        .maybeSingle();
+      const resolvedCompanyId = du?.company_id || du?.department?.company_id || null;
+      if (!du || String(resolvedCompanyId || '') !== String(companyId)) {
+        return res.status(400).json({ error: 'Quản lý giao hàng phải thuộc đúng công ty sản xuất' });
+      }
+    }
+
+    const { data: existingSettings } = await supabase
+      .from('production_handover_settings')
+      .select('responsible_user_id, default_production_team_id, delivery_confirm_user_id')
+      .eq('production_company_id', companyId)
+      .maybeSingle();
+
     const now = new Date().toISOString();
-    const { error: upErr } = await supabase.from('production_handover_settings').upsert(
-      {
-        production_company_id: companyId,
-        responsible_user_id: responsible_user_id || null,
-        default_production_team_id: default_production_team_id || null,
-        updated_at: now,
-      },
+    const upsertRow = {
+      production_company_id: companyId,
+      responsible_user_id: responsible_user_id !== undefined
+        ? (responsible_user_id || null)
+        : (existingSettings?.responsible_user_id || null),
+      default_production_team_id: default_production_team_id !== undefined
+        ? (default_production_team_id || null)
+        : (existingSettings?.default_production_team_id || null),
+      delivery_confirm_user_id: delivery_confirm_user_id !== undefined
+        ? (delivery_confirm_user_id || null)
+        : (existingSettings?.delivery_confirm_user_id || null),
+      updated_at: now,
+    };
+
+    let { error: upErr } = await supabase.from('production_handover_settings').upsert(
+      upsertRow,
       { onConflict: 'production_company_id' },
     );
+    if (upErr && String(upErr.message || '').includes('delivery_confirm_user_id')) {
+      ({ error: upErr } = await supabase.from('production_handover_settings').upsert(
+        {
+          production_company_id: companyId,
+          responsible_user_id: upsertRow.responsible_user_id,
+          default_production_team_id: upsertRow.default_production_team_id,
+          updated_at: now,
+        },
+        { onConflict: 'production_company_id' },
+      ));
+      if (!upErr && delivery_confirm_user_id !== undefined) {
+        return res.status(503).json({
+          error: 'Chưa có cột Quản lý giao hàng. Chạy migration database/494_handover_confirm_users.sql',
+        });
+      }
+    }
     if (upErr) throw upErr;
 
     await supabase.from('production_handover_task_assignments').delete().eq('production_company_id', companyId);
@@ -4661,7 +4704,7 @@ r.get('/workshop-type-staff-defaults/:companyId', requirePermission('projects', 
 
     const { data: settings } = await supabase
       .from('production_handover_settings')
-      .select('responsible_user_id')
+      .select('responsible_user_id, delivery_confirm_user_id')
       .eq('production_company_id', companyId)
       .maybeSingle();
 
@@ -4675,6 +4718,7 @@ r.get('/workshop-type-staff-defaults/:companyId', requirePermission('projects', 
       workshop_types: types || [],
       defaults,
       fallback_responsible_user_id: settings?.responsible_user_id || null,
+      delivery_confirm_user_id: settings?.delivery_confirm_user_id || null,
     });
   } catch (e) {
     console.error(e);
@@ -4714,29 +4758,56 @@ r.put('/workshop-type-staff-defaults/:companyId', requirePermission('projects', 
       return res.status(403).json({ error: 'Không có quyền sửa cấu hình công ty này' });
     }
 
-    const { defaults, fallback_responsible_user_id } = req.body || {};
+    const { defaults, fallback_responsible_user_id, delivery_confirm_user_id } = req.body || {};
     const { saveWorkshopTypeDefaultStaff, userBelongsToProductionCompany } = require('../helpers/productionWorkshopTypeStaff');
 
-    if (fallback_responsible_user_id !== undefined) {
+    if (fallback_responsible_user_id !== undefined || delivery_confirm_user_id !== undefined) {
       if (fallback_responsible_user_id) {
         const ok = await userBelongsToProductionCompany(fallback_responsible_user_id, companyId);
         if (!ok) return res.status(400).json({ error: 'Người dự phòng phải thuộc đúng công ty sản xuất' });
       }
+      if (delivery_confirm_user_id) {
+        const ok = await userBelongsToProductionCompany(delivery_confirm_user_id, companyId);
+        if (!ok) return res.status(400).json({ error: 'Quản lý giao hàng phải thuộc đúng công ty sản xuất' });
+      }
       const now = new Date().toISOString();
       const { data: existing } = await supabase
         .from('production_handover_settings')
-        .select('default_production_team_id')
+        .select('responsible_user_id, default_production_team_id, delivery_confirm_user_id')
         .eq('production_company_id', companyId)
         .maybeSingle();
-      await supabase.from('production_handover_settings').upsert(
-        {
-          production_company_id: companyId,
-          responsible_user_id: fallback_responsible_user_id || null,
-          default_production_team_id: existing?.default_production_team_id || null,
-          updated_at: now,
-        },
+      const upsertRow = {
+        production_company_id: companyId,
+        responsible_user_id: fallback_responsible_user_id !== undefined
+          ? (fallback_responsible_user_id || null)
+          : (existing?.responsible_user_id || null),
+        default_production_team_id: existing?.default_production_team_id || null,
+        delivery_confirm_user_id: delivery_confirm_user_id !== undefined
+          ? (delivery_confirm_user_id || null)
+          : (existing?.delivery_confirm_user_id || null),
+        updated_at: now,
+      };
+      let { error: upErr } = await supabase.from('production_handover_settings').upsert(
+        upsertRow,
         { onConflict: 'production_company_id' },
       );
+      if (upErr && String(upErr.message || '').includes('delivery_confirm_user_id')) {
+        ({ error: upErr } = await supabase.from('production_handover_settings').upsert(
+          {
+            production_company_id: companyId,
+            responsible_user_id: upsertRow.responsible_user_id,
+            default_production_team_id: upsertRow.default_production_team_id,
+            updated_at: now,
+          },
+          { onConflict: 'production_company_id' },
+        ));
+        if (!upErr && delivery_confirm_user_id !== undefined) {
+          return res.status(503).json({
+            error: 'Chưa có cột Quản lý giao hàng. Chạy migration database/494_handover_confirm_users.sql',
+          });
+        }
+      }
+      if (upErr) throw upErr;
     }
 
     const result = await saveWorkshopTypeDefaultStaff(companyId, defaults);

@@ -50,6 +50,7 @@ class ErrorBoundary extends Component {
   }
 }
 import Sidebar from './components/Sidebar';
+import ProductTourProvider from './components/productTour/ProductTourProvider';
 
 const AnimatedBackground = lazy(() => import('./components/AnimatedBackground'));
 const EarthExperienceBackground = lazy(() => import('./components/EarthExperienceBackground.jsx'));
@@ -99,6 +100,7 @@ const WorkshopTaskTemplatesPage = lazyWithRetry(() => import('./pages/WorkshopTa
 const ProductionHandoverSettingsPage = lazyWithRetry(() => import('./pages/ProductionHandoverSettingsPage'));
 const ProductionBackupSyncPage = lazyWithRetry(() => import('./pages/ProductionBackupSyncPage'));
 const ProductionAssignmentsPage = lazyWithRetry(() => import('./pages/ProductionAssignmentsPage'));
+const LogisticsAssignmentsPage = lazyWithRetry(() => import('./pages/LogisticsAssignmentsPage'));
 const ProductionRegionsPage = lazyWithRetry(() => import('./pages/ProductionRegionsPage'));
 const LogisticsDashboard = lazyWithRetry(() => import('./pages/LogisticsDashboard'));
 const LogisticsDetail = lazyWithRetry(() => import('./pages/LogisticsDetail'));
@@ -189,6 +191,8 @@ const CalcSetupPage = lazyWithRetry(() => import('./pages/calc/CalcSetupPage'));
 const CalcRunPage = lazyWithRetry(() => import('./pages/calc/CalcRunPage'));
 const CalcImport3DPage = lazyWithRetry(() => import('./pages/calc/CalcImport3DPage'));
 const CalcHistoryPage = lazyWithRetry(() => import('./pages/calc/CalcHistoryPage'));
+const HopCungCostPage = lazyWithRetry(() => import('./pages/calc/HopCungCostPage'));
+const HopCungDesignWizardPage = lazyWithRetry(() => import('./pages/calc/HopCungDesignWizardPage'));
 const AccountingDashboard = lazyWithRetry(() => import('./pages/AccountingDashboard'));
 const AccountingDealDetail = lazyWithRetry(() => import('./pages/AccountingDealDetail'));
 const AccountingBankAccountsPage = lazyWithRetry(() => import('./pages/AccountingBankAccountsPage'));
@@ -310,6 +314,7 @@ function ProtectedLayout() {
 
   return (
     <CrmNotesFabProvider>
+      <ProductTourProvider>
         <ReleaseNoteLoginModal />
         <SupabaseSwitchCountdownBanner />
         <div className="flex h-screen bg-[var(--color-page-bg)] relative">
@@ -353,6 +358,7 @@ function ProtectedLayout() {
           </div>
           {!crmOnly && <PinnedProjectsWidget />}
         </div>
+      </ProductTourProvider>
     </CrmNotesFabProvider>
   );
 }
@@ -531,6 +537,7 @@ export default function App() {
               <Route path="pipeline-settings" element={<LogisticsPipelineSettingsPage />} />
               <Route path="task-templates" element={<LogisticsTaskTemplatesPage />} />
               <Route path="teams" element={<WorkshopTeamsPage />} />
+              <Route path="assignments" element={<LogisticsAssignmentsPage />} />
               <Route path="events" element={<EventsFeedPage lockedModule="logistics" />} />
               <Route path="trash" element={<Navigate to="/admin/trash?tab=vc" replace />} />
               <Route path="projects/:id" element={<LogisticsDetail />} />
@@ -540,6 +547,8 @@ export default function App() {
             <Route path="/calc/run" element={<CalcRunPage />} />
             <Route path="/calc/import-3d" element={<CalcImport3DPage />} />
             <Route path="/calc/history" element={<CalcHistoryPage />} />
+            <Route path="/calc/hop-cung/thiet-ke" element={<HopCungDesignWizardPage />} />
+            <Route path="/calc/hop-cung" element={<HopCungCostPage />} />
             <Route path="/ketoan" element={<AccountingLayout />}>
               <Route index element={<Navigate to="dashboard" replace />} />
               <Route path="dashboard" element={<AccountingDashboard />} />

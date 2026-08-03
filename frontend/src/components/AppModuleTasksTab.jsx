@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import api from '../lib/api';
-import { formatDateTime, PRIORITY_LABELS, PRIORITY_COLORS } from '../lib/utils';
+import { formatDateTime, PRIORITY_LABELS, TASK_PRIORITY_COLORS as PRIORITY_COLORS } from '../lib/utils';
 import { isoToDatetimeLocalValue, datetimeLocalValueToIso } from '../lib/datetimeLocal';
 import {
   CheckCircle2, Circle, Loader2, Plus, Trash2, List, Calendar,
@@ -378,7 +378,7 @@ export default function AppModuleTasksTab({
             </div>
           </div>
 
-          <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium shrink-0 ${TASK_PRIORITY_COLORS[task.priority] || TASK_PRIORITY_COLORS.medium}`}>
+          <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium shrink-0 ${PRIORITY_COLORS[task.priority] || PRIORITY_COLORS.medium}`}>
             {PRIORITY_LABELS[task.priority] || task.priority || 'TB'}
           </span>
 

@@ -375,6 +375,13 @@ async function runAutoCreateProjectFromWonDeal({ req, dealId, userId, production
     }
   } catch (staffErr) {
     console.warn('[auto-project] production default staff:', staffErr.message);
+    // Staff sync lỗi vẫn prune thành viên CRM thừa — chỉ giữ người chịu trách nhiệm CRM.
+    try {
+      const { pruneNonResponsibleCrmLeadMembersForDeal } = require('./productionWorkshopTypeStaff');
+      await pruneNonResponsibleCrmLeadMembersForDeal(dealId);
+    } catch (pruneErr) {
+      console.warn('[auto-project] prune CRM members:', pruneErr.message);
+    }
   }
 
   // NOTE: Không tự tạo Đơn 1/2/... từ deal thắng. Đơn hàng chỉ tạo thủ công tại tab Đơn hàng.

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  Building2, ChevronRight, EyeOff, GripVertical, Info, ListChecks, Loader2,
+  Building2, CheckCircle2, ChevronRight, EyeOff, GripVertical, Info, ListChecks, Loader2,
   Pencil, Plus, RefreshCw, Save, Settings, ShieldCheck, Trash2, Truck, UserCircle, Wrench,
 } from 'lucide-react';
 import api from '../lib/api';
@@ -105,6 +105,7 @@ export default function LogisticsPipelineSettingsPage() {
   const [handoverUsers, setHandoverUsers] = useState([]);
   const [vcResponsibleId, setVcResponsibleId] = useState('');
   const [ldResponsibleId, setLdResponsibleId] = useState('');
+  const [vcConfirmUserId, setVcConfirmUserId] = useState('');
   const [form, setForm] = useState({
     name: '',
     color: COLORS[0],
@@ -178,6 +179,7 @@ export default function LogisticsPipelineSettingsPage() {
       setHandoverUsers([]);
       setVcResponsibleId('');
       setLdResponsibleId('');
+      setVcConfirmUserId('');
       return;
     }
     setHandoverLoading(true);
@@ -186,10 +188,12 @@ export default function LogisticsPipelineSettingsPage() {
       setHandoverUsers(data?.users || []);
       setVcResponsibleId(data?.settings?.responsible_user_id ? String(data.settings.responsible_user_id) : '');
       setLdResponsibleId(data?.settings?.installer_user_id ? String(data.settings.installer_user_id) : '');
+      setVcConfirmUserId(data?.settings?.handover_confirm_user_id ? String(data.settings.handover_confirm_user_id) : '');
     } catch {
       setHandoverUsers([]);
       setVcResponsibleId('');
       setLdResponsibleId('');
+      setVcConfirmUserId('');
     }
     setHandoverLoading(false);
   }, [settingsCompanyId]);
@@ -203,6 +207,7 @@ export default function LogisticsPipelineSettingsPage() {
       await api.put(`/logistics/handover-settings/${settingsCompanyId}`, {
         responsible_user_id: vcResponsibleId || null,
         installer_user_id: ldResponsibleId || null,
+        handover_confirm_user_id: vcConfirmUserId || null,
       });
       await loadHandoverSettings();
       alert('Đã lưu cấu hình bàn giao SX → VC/LĐ.');
@@ -1032,6 +1037,7 @@ export default function LogisticsPipelineSettingsPage() {
                   <h2 className="text-sm font-bold text-gray-900">Bàn giao Sản xuất → Vận chuyển & Lắp đặt</h2>
                   <p className="text-[11px] text-gray-600 mt-0.5 leading-snug">
                     Khi dự án chuyển từ SX sang VC, hệ thống gán người phụ trách VC và người lắp đặt.
+                    Riêng người bấm xác nhận trên thẻ bàn giao cấu hình ở ô «Người xác nhận bàn giao VC/LĐ».
                   </p>
                 </div>
               </div>
@@ -1084,6 +1090,24 @@ export default function LogisticsPipelineSettingsPage() {
                         <option key={u.id} value={u.id}>{u.full_name || u.email}</option>
                       ))}
                     </select>
+                  </label>
+                  <label className="flex flex-col gap-1 sm:col-span-2">
+                    <span className="text-[10px] font-semibold text-emerald-700 uppercase tracking-wide flex items-center gap-1">
+                      <CheckCircle2 className="h-3 w-3" /> Người xác nhận bàn giao VC/LĐ
+                    </span>
+                    <select
+                      value={vcConfirmUserId}
+                      onChange={(e) => setVcConfirmUserId(e.target.value)}
+                      className="h-9 px-2 border border-emerald-200 rounded-lg text-sm bg-white max-w-md"
+                    >
+                      <option value="">— Dùng người phụ trách VC —</option>
+                      {handoverUsers.map((u) => (
+                        <option key={u.id} value={u.id}>{u.full_name || u.email}</option>
+                      ))}
+                    </select>
+                    <span className="text-[10px] text-gray-500">
+                      Người được bấm «Xác nhận» phía VC/LĐ trên thẻ bàn giao. Để trống thì dùng Người phụ trách VC.
+                    </span>
                   </label>
                 </div>
                 {handoverUsers.length === 0 && (

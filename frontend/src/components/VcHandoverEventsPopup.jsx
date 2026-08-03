@@ -107,6 +107,7 @@ const TYPE_FALLBACK = {
   delivery: { name: 'Giao hàng', icon: '🚚', color: '#ea580c' },
   installation: { name: 'Lắp đặt', icon: '🔧', color: '#d97706' },
   site_visit: { name: 'Khảo sát', icon: '📍', color: '#3b82f6' },
+  video_shoot: { name: 'Đi quay hình', icon: '🎥', color: '#7C3AED' },
 };
 
 const STATUS_LABEL = {
@@ -125,6 +126,23 @@ function resolveTypeSlug(eventTypes, slugs) {
     if (eventTypes.some((t) => t.slug === slug)) return slug;
   }
   return slugs[0] || 'pickup';
+}
+
+/** Chuẩn hoá datetime-local / ISO → ISO string để vẽ lịch tạm */
+function toPreviewIso(raw) {
+  if (!raw) return null;
+  const s = String(raw).trim();
+  if (!s) return null;
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(s) && !/[zZ]|[+-]\d{2}:?\d{2}$/.test(s)) {
+    return datetimeLocalValueToIso(s) || null;
+  }
+  try {
+    const d = new Date(s);
+    if (Number.isNaN(d.getTime())) return null;
+    return d.toISOString();
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -302,6 +320,22 @@ export default function VcHandoverEventsPopup({
     return () => clearTimeout(t);
   }, [toast]);
 
+  // Đồng bộ ngày đề xuất từ thẻ bàn giao → form/preview trên lịch.
+  useEffect(() => {
+    if (anchorPickupAt) {
+      const local = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(String(anchorPickupAt))
+        ? String(anchorPickupAt).slice(0, 16)
+        : ymdToLocal(parseDay(anchorPickupAt) || '', 9);
+      if (local) setVcAt(local);
+    }
+    if (anchorInstallAt) {
+      const local = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(String(anchorInstallAt))
+        ? String(anchorInstallAt).slice(0, 16)
+        : ymdToLocal(parseDay(anchorInstallAt) || '', 14);
+      if (local) setInstallAt(local);
+    }
+  }, [anchorPickupAt, anchorInstallAt]);
+
   const calendarEvents = useMemo(() => {
     const byId = new Map();
     for (const e of monthEvents) if (e?.id) byId.set(String(e.id), e);
@@ -309,10 +343,66 @@ export default function VcHandoverEventsPopup({
     return [...byId.values()];
   }, [monthEvents, dealEvents]);
 
+  /** 3 sự kiện tạm (chưa lưu DB) — hiện trên lịch khi đang chọn ngày / chờ xác nhận. */
+  const draftEvents = useMemo(() => {
+    const hasRealHandoverEvents = idList.length > 0;
+    if (hasRealHandoverEvents && !pickMode) return [];
+
+    const pickupIso = toPreviewIso(vcAt) || toPreviewIso(anchorPickupAt);
+    const installIso = toPreviewIso(installAt) || toPreviewIso(anchorInstallAt) || pickupIso;
+    if (!pickupIso) return [];
+
+    const pickupDay = parseDay(pickupIso);
+    const installDay = parseDay(installIso);
+    const sameDay = !!(pickupDay && installDay && pickupDay === installDay);
+
+    const drafts = [
+      {
+        id: '__draft_sx_delivery__',
+        _draft: true,
+        module: 'production',
+        event_type: 'delivery',
+        title: 'Giao hàng xưởng (tạm)',
+        short_label: 'SX tạm',
+        start_time: pickupIso,
+        status: 'planned',
+        color: '#7c3aed',
+      },
+      {
+        id: '__draft_vc_pickup__',
+        _draft: true,
+        module: 'logistics',
+        event_type: 'pickup',
+        title: 'Vận chuyển / nhận hàng (tạm)',
+        short_label: 'VC tạm',
+        start_time: pickupIso,
+        status: 'planned',
+        color: '#ea580c',
+      },
+      {
+        id: '__draft_install__',
+        _draft: true,
+        module: 'logistics',
+        event_type: 'installation',
+        title: sameDay ? 'Lắp đặt (tạm · cùng ngày VC)' : 'Lắp đặt (tạm)',
+        short_label: 'Lắp tạm',
+        start_time: installIso || pickupIso,
+        status: 'planned',
+        color: '#d97706',
+      },
+    ];
+    return drafts;
+  }, [vcAt, installAt, anchorPickupAt, anchorInstallAt, idList, pickMode]);
+
   const filteredCalendarEvents = useMemo(() => {
-    if (moduleTab === 'all') return calendarEvents;
-    return calendarEvents.filter((e) => String(e.module || '').toLowerCase() === moduleTab);
-  }, [calendarEvents, moduleTab]);
+    const base = moduleTab === 'all'
+      ? calendarEvents
+      : calendarEvents.filter((e) => String(e.module || '').toLowerCase() === moduleTab);
+    const drafts = moduleTab === 'all'
+      ? draftEvents
+      : draftEvents.filter((e) => String(e.module || '').toLowerCase() === moduleTab);
+    return [...base, ...drafts];
+  }, [calendarEvents, draftEvents, moduleTab]);
 
   const eventsByDayNum = useMemo(() => {
     const map = {};
@@ -331,7 +421,7 @@ export default function VcHandoverEventsPopup({
 
   const sxCountByDay = useMemo(() => {
     const map = new Map();
-    for (const ev of calendarEvents) {
+    for (const ev of [...calendarEvents, ...draftEvents]) {
       if (String(ev.status || '') === 'cancelled') continue;
       if (String(ev.module || '').toLowerCase() !== 'production') continue;
       const day = parseDay(ev.start_time);
@@ -339,12 +429,12 @@ export default function VcHandoverEventsPopup({
       map.set(day, (map.get(day) || 0) + 1);
     }
     return map;
-  }, [calendarEvents]);
+  }, [calendarEvents, draftEvents]);
 
   /** Lịch vận chuyển / nhận hàng VC (module logistics hoặc pickup/delivery) */
   const vcCountByDay = useMemo(() => {
     const map = new Map();
-    for (const ev of calendarEvents) {
+    for (const ev of [...calendarEvents, ...draftEvents]) {
       if (String(ev.status || '') === 'cancelled') continue;
       const mod = String(ev.module || '').toLowerCase();
       const t = String(ev.event_type || '').toLowerCase();
@@ -355,12 +445,12 @@ export default function VcHandoverEventsPopup({
       map.set(day, (map.get(day) || 0) + 1);
     }
     return map;
-  }, [calendarEvents]);
+  }, [calendarEvents, draftEvents]);
 
   /** Lịch lắp đặt */
   const installCountByDay = useMemo(() => {
     const map = new Map();
-    for (const ev of calendarEvents) {
+    for (const ev of [...calendarEvents, ...draftEvents]) {
       if (String(ev.status || '') === 'cancelled') continue;
       if (String(ev.event_type || '').toLowerCase() !== 'installation') continue;
       const day = parseDay(ev.start_time);
@@ -368,7 +458,7 @@ export default function VcHandoverEventsPopup({
       map.set(day, (map.get(day) || 0) + 1);
     }
     return map;
-  }, [calendarEvents]);
+  }, [calendarEvents, draftEvents]);
 
   const selectedDayNum = useMemo(() => {
     if (!selectedDay) return null;
@@ -709,13 +799,15 @@ export default function VcHandoverEventsPopup({
             <p className="text-[11px] text-gray-500 truncate">
               {pickMode
                 ? (pickTarget === 'install'
-                  ? 'Ngày xám = ngày VC đã chọn · bấm ngày ≥ VC để chọn lắp đặt'
+                  ? 'Ngày xám = ngày VC đã chọn · bấm ngày ≥ VC để chọn lắp đặt · khung đứt = lịch tạm'
                   : pickTarget === 'pickup'
-                    ? 'Bấm một ngày để chọn ngày nhận hàng (tự gắn lắp cùng ngày)'
-                    : 'Bấm ngày hoặc + để chọn nhận hàng & lắp đặt')
+                    ? 'Bấm một ngày — lịch tạm SX/VC/Lắp hiện trên ô ngày (chưa tạo)'
+                    : 'Bấm ngày hoặc + để chọn — lịch tạm SX/VC/Lắp hiện trên lịch')
                 : (loading
                   ? 'Đang tải…'
-                  : `${dealEvents.length} sự kiện deal · tháng này ${filteredCalendarEvents.length} mốc`)}
+                  : draftEvents.length
+                    ? `${dealEvents.length} sự kiện deal · ${draftEvents.length} lịch tạm đề xuất`
+                    : `${dealEvents.length} sự kiện deal · tháng này ${filteredCalendarEvents.length} mốc`)}
             </p>
           </div>
           <button type="button" onClick={onClose} className="h-8 w-8 rounded-lg hover:bg-gray-100 text-gray-600 inline-flex items-center justify-center">
@@ -889,17 +981,35 @@ export default function VcHandoverEventsPopup({
                           ) : null}
                         </div>
                         <div className="flex-1 min-h-0 p-0.5 space-y-0.5 overflow-hidden">
-                          {dayEvents.slice(0, 2).map((ev) => {
+                          {dayEvents.slice(0, 3).map((ev) => {
                             const t = typeInfo(ev);
-                            const isDeal = dealIds.has(String(ev.id));
+                            const isDraft = !!ev._draft;
+                            const isDeal = !isDraft && dealIds.has(String(ev.id));
+                            const color = ev.color || t.color || '#3B82F6';
+                            if (isDraft) {
+                              return (
+                                <div
+                                  key={ev.id}
+                                  className="w-full text-left text-[9px] leading-tight px-1 py-0.5 rounded truncate font-semibold border border-dashed"
+                                  style={{
+                                    backgroundColor: `${color}18`,
+                                    color,
+                                    borderColor: `${color}88`,
+                                  }}
+                                  title={`${ev.title} — ${formatTime(ev.start_time)} (chưa tạo trên lịch)`}
+                                >
+                                  {t.icon} {ev.short_label || ev.title}
+                                </div>
+                              );
+                            }
                             return (
                               <button
                                 key={ev.id}
                                 type="button"
                                 className="w-full text-left text-[9px] leading-tight px-1 py-0.5 rounded truncate font-medium"
                                 style={{
-                                  backgroundColor: `${t.color || '#3B82F6'}22`,
-                                  color: t.color || '#3B82F6',
+                                  backgroundColor: `${color}22`,
+                                  color,
                                   outline: isDeal ? '1px solid currentColor' : undefined,
                                 }}
                                 title={`${ev.title} — ${formatTime(ev.start_time)}`}
@@ -913,8 +1023,8 @@ export default function VcHandoverEventsPopup({
                               </button>
                             );
                           })}
-                          {dayEvents.length > 2 && (
-                            <div className="text-[9px] font-semibold text-gray-500 px-1">+{dayEvents.length - 2}</div>
+                          {dayEvents.length > 3 && (
+                            <div className="text-[9px] font-semibold text-gray-500 px-1">+{dayEvents.length - 3}</div>
                           )}
                         </div>
                       </div>
@@ -929,11 +1039,16 @@ export default function VcHandoverEventsPopup({
                     <span className="text-xs font-semibold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full">
                       {selectedDayEvents.length} sự kiện
                     </span>
+                    {selectedDayEvents.some((e) => e._draft) && (
+                      <span className="text-[10px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">
+                        Có lịch tạm (chưa tạo)
+                      </span>
+                    )}
                   </h3>
                   {selectedDayEvents.length === 0 ? (
                     <p className="text-sm text-gray-400 py-4 text-center border border-dashed border-gray-200 rounded-xl bg-gray-50">
                       {pickMode
-                        ? 'Bấm một ô ngày trên lịch để chọn.'
+                        ? 'Bấm một ô ngày trên lịch để chọn — lịch tạm SX/VC/Lắp sẽ hiện trên ô ngày.'
                         : 'Không có sự kiện trong ngày này — bấm + trên ô ngày để tạo lịch nhận hàng & lắp đặt.'}
                     </p>
                   ) : (
@@ -943,23 +1058,32 @@ export default function VcHandoverEventsPopup({
                         const badge = moduleBadge(ev.module);
                         const BadgeIcon = badge.Icon;
                         const curMod = String(ev.module || '').toLowerCase();
-                        const isDeal = dealIds.has(String(ev.id));
+                        const isDraft = !!ev._draft;
+                        const isDeal = !isDraft && dealIds.has(String(ev.id));
+                        const color = ev.color || t.color || '#3B82F6';
                         return (
                           <div
                             key={ev.id}
                             className={`rounded-xl border px-3 py-2.5 ${
-                              isDeal ? 'border-orange-100 bg-orange-50/40' : 'border-gray-100 bg-gray-50/80'
+                              isDraft
+                                ? 'border-dashed border-amber-300 bg-amber-50/50'
+                                : isDeal ? 'border-orange-100 bg-orange-50/40' : 'border-gray-100 bg-gray-50/80'
                             }`}
                           >
                             <button
                               type="button"
                               className="w-full text-left"
-                              onClick={() => { setEditEvent(ev); setShowEdit(true); }}
+                              disabled={isDraft}
+                              onClick={() => {
+                                if (isDraft) return;
+                                setEditEvent(ev);
+                                setShowEdit(true);
+                              }}
                             >
                               <div className="flex items-start gap-2">
                                 <span
                                   className="h-9 w-9 rounded-lg flex items-center justify-center text-base shrink-0"
-                                  style={{ backgroundColor: `${t.color || '#3B82F6'}22` }}
+                                  style={{ backgroundColor: `${color}22` }}
                                 >
                                   {t.icon || '📋'}
                                 </span>
@@ -968,13 +1092,20 @@ export default function VcHandoverEventsPopup({
                                     <span className={`inline-flex items-center gap-0.5 text-[9px] font-bold px-1.5 py-0.5 rounded ${badge.cls}`}>
                                       <BadgeIcon className="h-2.5 w-2.5" /> {badge.label}
                                     </span>
+                                    {isDraft && (
+                                      <span className="text-[9px] font-bold uppercase tracking-wide text-amber-800 bg-amber-100 px-1.5 py-0.5 rounded">
+                                        Tạm
+                                      </span>
+                                    )}
                                     {isDeal && <span className="text-[9px] font-semibold text-emerald-700">Deal này</span>}
                                     <span className="text-[10px] font-semibold text-gray-500">{t.name || ev.event_type}</span>
                                   </div>
                                   <p className="text-sm font-bold text-gray-900 truncate">{ev.title}</p>
                                   <p className="text-[11px] text-gray-600 mt-0.5">
                                     {formatTime(ev.start_time)}
-                                    {ev.status ? ` · ${STATUS_LABEL[ev.status] || ev.status}` : ''}
+                                    {isDraft
+                                      ? ' · Chưa tạo trên lịch (sau khi Xưởng & VC/LĐ xác nhận)'
+                                      : (ev.status ? ` · ${STATUS_LABEL[ev.status] || ev.status}` : '')}
                                   </p>
                                 </div>
                               </div>

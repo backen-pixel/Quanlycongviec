@@ -966,20 +966,28 @@ export default function NotificationCenter({ socket }) {
   }, [open, settingsOpen]);
 
   const markAllRead = async () => {
+    const channel = tab === 'deadlines' ? 'deadlines'
+      : tab === 'events' ? 'events'
+        : tab === 'messages' ? 'messages'
+          : tab === 'assignments' ? 'assignments'
+            : 'activity';
     try {
-      const channel = tab === 'deadlines' ? 'deadlines'
-        : tab === 'events' ? 'events'
-          : tab === 'messages' ? 'messages'
-            : tab === 'assignments' ? 'assignments'
-              : 'activity';
       await api.put('/dashboard/notifications/read-all', {}, { params: { channel } });
-      await loadCount();
+      // Zero badge tab hiện tại ngay — tránh badge kẹt vì cache / loadCount chậm
+      if (channel === 'deadlines') setUnreadDeadlines(0);
+      else if (channel === 'events') setUnreadEvents(0);
+      else if (channel === 'messages') setUnreadChat(0);
+      else if (channel === 'assignments') setUnreadAssignments(0);
+      else setUnreadActivity(0);
       if (listModeRef.current === 'unread') {
         setNotifications([]);
       } else {
-        setNotifications(prev => prev.map(n => ({ ...n, is_read: true })));
+        setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
       }
-    } catch { }
+      await loadCount({ includeCskh: false });
+    } catch (e) {
+      console.error('Mark all notifications read failed:', e);
+    }
   };
 
   const markRead = async (id) => {

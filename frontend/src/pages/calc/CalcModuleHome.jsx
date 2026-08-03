@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { useEffect, useState } from 'react';
-import { Calculator, Settings, FileUp, History, FolderTree, Boxes, Sigma } from 'lucide-react';
+import { Calculator, Settings, FileUp, History, FolderTree, Boxes, Sigma, Package, LayoutGrid } from 'lucide-react';
 import api from '../../lib/api';
 
 export default function CalcModuleHome() {
@@ -36,6 +36,20 @@ export default function CalcModuleHome() {
       title: 'Tính nhanh',
       desc: 'Chọn loại sản phẩm, nhập kích thước → ra kết quả tức thì',
       color: 'from-emerald-500 to-teal-600',
+    },
+    {
+      to: '/calc/hop-cung/thiet-ke',
+      icon: LayoutGrid,
+      title: 'Thiết kế hộp cứng',
+      desc: 'Quy trình → chọn mẫu → thông số → bóc tách dieline/3D (trước khi tính giá)',
+      color: 'from-indigo-500 to-violet-600',
+    },
+    {
+      to: '/calc/hop-cung',
+      icon: Package,
+      title: 'Tính hộp cứng',
+      desc: 'Báo giá hộp cứng NEXTGO: L×W×H + SL → COST và giá bán 300/500/1000',
+      color: 'from-rose-500 to-pink-600',
     },
     {
       to: '/calc/import-3d',

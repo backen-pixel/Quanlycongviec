@@ -1,4 +1,5 @@
 import { useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef, useDeferredValue, memo, startTransition } from 'react';
+import { createPortal } from 'react-dom';
 import { Link, useNavigate } from 'react-router-dom';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import api from '../lib/api';
@@ -14,8 +15,10 @@ import {
   Zap, CheckCircle2, TrendingUp, TrendingDown, AlertTriangle, Building2, Rocket, Pin,
   Clock, List, LayoutGrid, GitMerge, UserCheck, Trash2, CheckSquare, BarChart3,
   MessageSquare, MinusSquare, Settings, Pencil, RotateCcw, Save, Briefcase, XCircle, Layers, Factory,
-  Loader2,
+  Loader2, BookOpen,
 } from 'lucide-react';
+import { useProductTour } from '../components/productTour/ProductTourProvider';
+import TourMissionsPanel from '../components/productTour/TourMissionsPanel';
 import { ListView, PlannerView, DeadlineView, CommentsView } from '../components/CRMViews';
 import AssignedTasksToolbarButton from '../components/AssignedTasksToolbarButton';
 import KanbanCardQuickMove from '../components/KanbanCardQuickMove';
@@ -127,6 +130,7 @@ import CrmStageAssigneeModal from '../components/CrmStageAssigneeModal';
 import { stageNeedsAssigneeConfirm } from '../lib/crmStageAssigneeConfirm';
 import {
   formatCrmRemainingMs,
+  getCrmDeadlineSourceMeta,
   getCrmDeadlineUrgencyBadgeClass,
   getCrmDeadlineUrgencyFromIso,
   getCrmDeadlineUrgencyFromTs,
@@ -1093,6 +1097,8 @@ function dedupeCrmKanbanRows(rows) {
 
 export default function CRMDashboard() {
   const { user } = useAuth();
+  const productTour = useProductTour();
+  const [showTourMissions, setShowTourMissions] = useState(false);
   const seesAllCrmDeals = userSeesAllCrmDealsScoped(user);
   const isAdmin = isAdminLike(user);
   /** Admin công ty (khác admin hệ thống): backend khóa API + GET /companies chỉ trả một công ty. */
@@ -5302,6 +5308,25 @@ export default function CRMDashboard() {
     navigate(`/crm/leads/${itemId}`);
   }, [navigate, pipelineType, persistCrmPipelineUiNow]);
 
+  /** Tour «Chi tiết Lead/Deal» — mở hồ sơ thẻ đang hiện trên Kanban (không phụ thuộc click xuyên overlay). */
+  useEffect(() => {
+    const openFromTour = () => {
+      if (String(window.location.pathname || '').startsWith('/crm/leads/')) return;
+      const card = document.querySelector('[data-tour="kanban-card"][data-crm-pipeline-card]');
+      const fromDom = card?.getAttribute?.('data-crm-pipeline-card');
+      const fromList = (activeItems || []).find((x) => x?.id)?.id;
+      const id = fromDom || fromList;
+      if (!id) return;
+      prefetchCrmLeadDetail(api, id);
+      persistCrmPipelineUiNow();
+      localStorage.setItem('crm_pinned_tab', pipelineType);
+      markCrmPipelineCardFocus(id);
+      navigate(`/crm/leads/${id}`);
+    };
+    window.addEventListener('product-tour:open-lead-detail', openFromTour);
+    return () => window.removeEventListener('product-tour:open-lead-detail', openFromTour);
+  }, [activeItems, navigate, pipelineType, persistCrmPipelineUiNow]);
+
   const focusCrmSearchResult = useCallback((itemId) => {
     persistCrmPipelineUiNow();
     setSearchSuggestDismissed(true);
@@ -6644,6 +6669,11 @@ export default function CRMDashboard() {
 
   return (
     <div className={`min-h-screen ${compactLeadUi ? 'space-y-2' : 'space-y-6'}`}>
+      <TourMissionsPanel
+        open={showTourMissions}
+        onClose={() => setShowTourMissions(false)}
+        onStartTour={(tourId) => productTour?.startTour(tourId)}
+      />
       {/* Auto-create project banner */}
       {autoCreateStatus === 'loading' && (
         <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-xl p-4 text-white shadow-lg flex items-center gap-4">
@@ -6706,6 +6736,7 @@ export default function CRMDashboard() {
           <div data-tour="pipeline-tabs" className="inline-flex gap-px p-0.5 bg-slate-200/60 border border-slate-300/50 rounded-lg shrink-0">
             <button
               type="button"
+              data-tour="pipeline-tab-lead"
               onClick={() => switchTab('lead')}
               className={`rounded-md font-semibold transition-colors flex items-center gap-1 px-2 py-1 text-[11px] whitespace-nowrap ${
                 pipelineType === 'lead'
@@ -6718,6 +6749,7 @@ export default function CRMDashboard() {
             </button>
             <button
               type="button"
+              data-tour="pipeline-tab-deal"
               onClick={() => switchTab('deal')}
               className={`rounded-md font-semibold transition-colors flex items-center gap-1 px-2 py-1 text-[11px] whitespace-nowrap ${
                 pipelineType === 'deal'
@@ -6862,6 +6894,15 @@ export default function CRMDashboard() {
           ) : null}
           <button
             type="button"
+            onClick={() => setShowTourMissions(true)}
+            className={`${ctrlIcon} shrink-0 border border-sky-200 text-sky-600 hover:bg-sky-50 hover:border-sky-300 rounded-md flex items-center justify-center cursor-pointer transition-colors`}
+            title="Nhiệm vụ hướng dẫn CRM"
+            aria-label="Nhiệm vụ hướng dẫn CRM"
+          >
+            <BookOpen className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="button"
             onClick={() => navigate('/admin/trash?tab=crm')}
             className={`${ctrlIcon} shrink-0 border border-slate-200 text-slate-500 hover:bg-red-50 hover:text-red-600 hover:border-red-200 rounded-md flex items-center justify-center cursor-pointer transition-colors`}
             title="Thùng rác — lead/deal đã xóa"
@@ -6888,9 +6929,13 @@ export default function CRMDashboard() {
       </div>
 
       {/* Hàng 2 — tìm kiếm & công cụ */}
-      <div className="flex flex-wrap items-center gap-1 px-2.5 py-1 sm:px-3 border-t border-slate-200/50">
+      <div
+        data-tour="crm-toolbar"
+        className="flex flex-wrap items-center gap-1 px-2.5 py-1 sm:px-3 border-t border-slate-200/50"
+      >
         <div
             ref={searchBoxRef}
+            data-tour="crm-search"
             className={`group/search flex items-center shrink-0 flex-1 min-w-0 max-w-none sm:max-w-[22rem] lg:max-w-[28rem] rounded-md border transition-colors ${
               searchFocused
                 ? 'border-violet-400 bg-white ring-1 ring-violet-200/60'
@@ -7013,6 +7058,7 @@ export default function CRMDashboard() {
             <div className="shrink-0 pr-1">
               <button
                 type="button"
+                data-tour="crm-filter"
                 onClick={openCrmFilterModal}
                 aria-expanded={showAdvSearch}
                 className={`relative h-6 w-6 flex items-center justify-center rounded border transition-colors cursor-pointer ${
@@ -7031,7 +7077,10 @@ export default function CRMDashboard() {
             </div>
           </div>
 
-          <div className="flex items-center gap-0.5 shrink-0 ml-auto pl-1 border-l border-slate-200/80">
+          <div
+            data-tour="crm-view-mode"
+            className="flex items-center gap-0.5 shrink-0 ml-auto pl-1 border-l border-slate-200/80"
+          >
             <div className="inline-flex items-center gap-px p-0.5 rounded-md bg-slate-100 border border-slate-200/80">
               <button
                 type="button"
@@ -7049,6 +7098,7 @@ export default function CRMDashboard() {
                 <button
                   ref={viewModeTriggerRef}
                   type="button"
+                  data-tour="crm-view-mode-more"
                   onClick={() => setShowViewModeMenu((v) => !v)}
                   className={`${toolbarBtn} ${
                     viewMode !== 'kanban'
@@ -7086,11 +7136,17 @@ export default function CRMDashboard() {
                 />
               </div>
             </div>
-            <AssignedTasksToolbarButton compact={compactLeadUi} variant="outlined" className="!rounded-md !px-2" />
+            <AssignedTasksToolbarButton
+              compact={compactLeadUi}
+              variant="outlined"
+              className="!rounded-md !px-2"
+              data-tour="crm-assign-tasks"
+            />
             <div className="relative">
               <button
                 ref={kanbanSettingsTriggerRef}
                 type="button"
+                data-tour="crm-kanban-settings"
                 onClick={() => setShowKanbanSettings((v) => !v)}
                 className={`${toolbarBtn} border ${
                   showKanbanSettings
@@ -7108,6 +7164,7 @@ export default function CRMDashboard() {
                 open={showKanbanSettings}
                 onClose={() => setShowKanbanSettings(false)}
                 anchorRef={kanbanSettingsTriggerRef}
+                data-tour="crm-kanban-settings-menu"
                 className="rounded-xl border-gray-200 p-3 w-[min(100vw-1.5rem,18rem)] max-h-[min(80vh,32rem)] overflow-y-auto"
                 align="right"
               >
@@ -7301,6 +7358,7 @@ export default function CRMDashboard() {
         {showAdvSearch && (
           <div
             ref={filterPanelRef}
+            data-tour="crm-filter-panel"
             className="ui-solid-white fixed z-[75] max-sm:left-4 max-sm:right-4 max-sm:bottom-4 max-sm:top-auto w-[min(100vw-2rem,400px)] max-h-[min(calc(100vh-5rem),620px)] flex flex-col rounded-xl border border-gray-200 bg-white shadow-2xl overflow-hidden animate-fade-in"
             style={filterPanelPos
               ? { left: filterPanelPos.x, top: filterPanelPos.y }
@@ -7319,6 +7377,7 @@ export default function CRMDashboard() {
                 <p id="crm-filter-dialog-title" className="text-sm font-bold text-violet-950 tracking-tight flex-1 min-w-0">Bộ lọc</p>
                 <button
                   type="button"
+                  data-tour="crm-filter-close"
                   onMouseDown={(e) => e.stopPropagation()}
                   onClick={closeCrmFilterModal}
                   className="h-7 w-7 rounded-md text-violet-500 hover:text-violet-800 hover:bg-violet-200/60 cursor-pointer flex items-center justify-center shrink-0 transition-colors"
@@ -7328,7 +7387,10 @@ export default function CRMDashboard() {
                   <X className="h-3.5 w-3.5" />
                 </button>
               </div>
-              <div className="mt-2 flex p-0.5 rounded-lg bg-gray-50 border border-gray-200 gap-0.5">
+              <div
+                data-tour="crm-filter-tabs"
+                className="mt-2 flex p-0.5 rounded-lg bg-gray-50 border border-gray-200 gap-0.5"
+              >
                   {crmFilterTabs.map((tab) => (
                     <button
                       key={tab.id}
@@ -8011,7 +8073,10 @@ export default function CRMDashboard() {
         <div className="relative min-h-[min(700px,calc(100vh-128px))]">
         <>
           {(viewMode === 'kanban' || viewMode === 'deadline') && manualMergeIds.length > 0 && (
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-2 mb-3 px-4 py-3 bg-amber-50 border border-amber-200 rounded-xl text-sm">
+            <div
+              data-tour="crm-bulk-bar"
+              className="flex flex-wrap items-center gap-x-3 gap-y-2 mb-3 px-4 py-3 bg-amber-50 border border-amber-200 rounded-xl text-sm"
+            >
               <GitMerge className="h-4 w-4 text-amber-700 shrink-0" />
               <span className="text-amber-900">
                 Đã chọn <strong>{manualMergeIds.length}</strong> {crmPipelineTabEntityLabel(pipelineType)}
@@ -8020,6 +8085,7 @@ export default function CRMDashboard() {
               {manualMergeIds.length >= 2 && (
                 <button
                   type="button"
+                  data-tour="crm-bulk-merge"
                   onClick={() => setManualMergeModalOpen(true)}
                   className="h-9 px-4 rounded-lg bg-amber-600 text-white text-xs font-bold hover:bg-amber-700 cursor-pointer shadow-sm"
                 >
@@ -8029,6 +8095,7 @@ export default function CRMDashboard() {
               {isAdmin && (
                 <button
                   type="button"
+                  data-tour="crm-bulk-assign"
                   onClick={() => setBulkAssignModalOpen(true)}
                   className="h-9 px-4 rounded-lg bg-white border border-amber-400 text-amber-900 text-xs font-bold hover:bg-amber-100 cursor-pointer shadow-sm flex items-center gap-1.5"
                 >
@@ -8039,6 +8106,7 @@ export default function CRMDashboard() {
               {canBulkDeleteSelected && (
                 <button
                   type="button"
+                  data-tour="crm-bulk-delete"
                   onClick={bulkDeleteSelected}
                   disabled={bulkDeleting}
                   className="h-9 px-4 rounded-lg bg-rose-600 text-white text-xs font-bold hover:bg-rose-700 disabled:opacity-50 cursor-pointer shadow-sm flex items-center gap-1.5"
@@ -8049,6 +8117,7 @@ export default function CRMDashboard() {
               )}
               <button
                 type="button"
+                data-tour="crm-bulk-clear"
                 onClick={() => setManualMergeIds([])}
                 className="h-9 px-3 rounded-lg border border-amber-300 text-amber-800 text-xs font-medium hover:bg-amber-100 cursor-pointer"
               >
@@ -8057,6 +8126,7 @@ export default function CRMDashboard() {
               <span className="hidden sm:block w-px h-6 shrink-0 bg-amber-300/70 self-center" aria-hidden />
               <span className="text-xs font-semibold text-amber-900 shrink-0 whitespace-nowrap">Chuyển sang giai đoạn:</span>
               <select
+                data-tour="crm-bulk-stage"
                 value={bulkStageTarget}
                 onChange={(e) => setBulkStageTarget(e.target.value)}
                 disabled={bulkMoving}
@@ -9807,6 +9877,7 @@ const KanbanStageCard = memo(function KanbanStageCard({
             {columnItemIds.length > 0 && onToggleSelectAllInColumn && (
               <button
                 type="button"
+                data-tour="kanban-column-select-all"
                 onClick={() => onToggleSelectAllInColumn(columnItemIds)}
                 aria-label={allInColumnSelected ? 'Bỏ chọn mọi lead/deal trong cột này' : 'Chọn tất cả trong cột'}
                 className={`inline-flex items-center justify-center rounded-lg border transition-colors ${
@@ -9965,24 +10036,24 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
     const deadlineDateLabel = formatDate(new Date(unifiedSchedule.deadlineTs).toISOString());
     const isOverdue = cardToneLevel === 'overdue';
     const tonePalette = getCrmDeadlineUrgencyBadgeClass(cardToneLevel);
-    const sourceLabel =
-      unifiedSchedule.source === 'deadline' ? 'Deadline tự setup'
-      : unifiedSchedule.source === 'task' ? 'Deadline nhiệm vụ'
-      : unifiedSchedule.source === 'expected_close' ? 'Chốt dự kiến'
-      : 'SLA cột';
+    const sourceMeta = getCrmDeadlineSourceMeta(unifiedSchedule.source);
+    const sourceLabel = sourceMeta?.label || 'Deadline';
+    const sourceShort = sourceMeta?.shortLabel || sourceLabel;
     const isUrgent = cardToneLevel === 'overdue' || cardToneLevel === 'soon';
     const badgeCls = `shrink-0 inline-flex items-center gap-1 rounded-md border tabular-nums leading-none ${
       isUrgent ? 'px-2 py-1 text-[11px]' : 'px-1.5 py-0.5 text-[10px] font-semibold'
     } ${tonePalette}`;
     const badgeTitle = [
       `Hạn: ${deadlineDateLabel}`,
-      `Nguồn: ${sourceLabel}`,
+      `Loại: ${sourceLabel}`,
       isOverdue ? 'Đã quá hạn' : '',
       unifiedSchedule.source === 'deadline' ? 'Bấm để sửa deadline thẻ' : '',
     ].filter(Boolean).join('\n');
     const badgeContent = (
       <>
         <Clock className={isUrgent ? 'h-3.5 w-3.5' : 'h-3 w-3'} strokeWidth={2.6} />
+        <span className="font-extrabold tracking-wide uppercase">{sourceShort}</span>
+        <span className="opacity-80" aria-hidden>·</span>
         {isOverdue ? <>Quá hạn {deadlineDateLabel}</> : <>Hạn {deadlineDateLabel}</>}
       </>
     );
@@ -10118,6 +10189,7 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
     <div
       ref={cardRef}
       data-crm-pipeline-card={item.id}
+      data-tour="kanban-card"
       draggable={!dealDragLocked}
       onDragStart={handleDragStart}
       title={dealDragLocked ? 'Cột Sản xuất/Vận chuyển trên CRM — kéo về Thắng hoặc giai đoạn trước; tiến độ xưởng/VC qua badge' : undefined}
@@ -10158,6 +10230,7 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
       {canMergeSelect && (
         <button
           type="button"
+          data-tour="kanban-card-select"
           data-kanban-select-zone
           title={selectedForMerge ? 'Bỏ chọn thẻ này' : 'Chọn để gộp / xóa / chuyển hàng loạt'}
           onClick={(ev) => {
@@ -10386,7 +10459,10 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
               </>
             )}
           </div>
-          <div className="flex items-center gap-0.5 shrink-0 rounded-full border border-indigo-100 bg-white px-1 py-0.5 shadow-sm">
+          <div
+            data-tour="kanban-card-actions"
+            className="flex items-center gap-0.5 shrink-0 rounded-full border border-indigo-100 bg-white px-1 py-0.5 shadow-sm"
+          >
             {typeof onOpenSxTransfer === 'function' && pipelineType === 'deal' && stage?.show_sx_transfer && !item.project_id && (
               <button
                 type="button"
@@ -10965,9 +11041,13 @@ function NewLeadModal({ onClose, onSuccess, leadTypes, companies, type, defaultC
   const leadTypeName = visibleLeadTypes.find((t) => String(t.id) === String(formData.lead_type_id))?.name || '';
   const referrerDisplayName = resolvedReferrerName || '';
 
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl w-full max-w-4xl shadow-2xl flex overflow-hidden max-h-[92vh]">
+  // Portal ra body — tránh bị Sidebar (z-30) đè vì modal nằm trong cột main (z-10)
+  return createPortal(
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[10050] p-4">
+      <div
+        data-tour="new-lead-modal"
+        className="bg-white rounded-2xl w-full max-w-4xl shadow-2xl flex overflow-hidden max-h-[92vh]"
+      >
 
         {/* ── LEFT: Form ── */}
         <div className="flex-1 flex flex-col min-w-0 border-r border-gray-100">
@@ -10977,13 +11057,20 @@ function NewLeadModal({ onClose, onSuccess, leadTypes, companies, type, defaultC
               <h2 className="text-lg font-bold text-gray-900">🚀 Thêm Lead mới</h2>
               <p className="text-xs text-gray-400 mt-0.5">Điền thông tin — chi tiết bổ sung sau ở trang Lead</p>
             </div>
-            <button onClick={onClose} className="p-1.5 hover:bg-gray-100 rounded-lg transition cursor-pointer"><X className="h-5 w-5 text-gray-400" /></button>
+            <button
+              type="button"
+              data-tour="new-lead-modal-close"
+              onClick={onClose}
+              className="p-1.5 hover:bg-gray-100 rounded-lg transition cursor-pointer"
+            >
+              <X className="h-5 w-5 text-gray-400" />
+            </button>
           </div>
 
           {/* Scrollable form */}
           <div className="flex-1 overflow-y-auto px-6 py-4">
             <form id="lead-form" onSubmit={handleSubmit} className="space-y-3.5">
-              <div>
+              <div data-tour="new-lead-title">
                 <label className="block text-xs font-semibold text-gray-700 mb-1">Tên lead <span className="text-red-500">*</span></label>
                 <input type="text" required value={formData.title}
                   onChange={(e) => setFormData({ ...formData, title: e.target.value })}
@@ -10991,7 +11078,7 @@ function NewLeadModal({ onClose, onSuccess, leadTypes, companies, type, defaultC
                   placeholder="VD: Tủ bếp gỗ sồi nhà anh A..." autoFocus />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-2 gap-3" data-tour="new-lead-company">
                 <div>
                   <label className="block text-xs font-semibold text-gray-700 mb-1">🏢 Công ty <span className="text-red-500">*</span></label>
                   {isAdmin ? (
@@ -11022,7 +11109,7 @@ function NewLeadModal({ onClose, onSuccess, leadTypes, companies, type, defaultC
                 )}
               </div>
 
-              <div className="bg-blue-50 rounded-xl p-3.5 space-y-2.5">
+              <div className="bg-blue-50 rounded-xl p-3.5 space-y-2.5" data-tour="new-lead-customer">
                 <p className="text-[11px] font-bold text-blue-700 uppercase tracking-wide">👤 Khách hàng</p>
                 <div>
                   <label className="block text-xs font-medium text-gray-600 mb-1">Tên khách hàng <span className="text-red-500">*</span></label>
@@ -11031,7 +11118,7 @@ function NewLeadModal({ onClose, onSuccess, leadTypes, companies, type, defaultC
                     className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-400 text-sm bg-white"
                     placeholder="Nguyễn Văn A" />
                 </div>
-                <div>
+                <div data-tour="new-lead-phone">
                   <label className="block text-xs font-medium text-gray-600 mb-1">Số điện thoại</label>
                   <input type="text" value={formData.customer_phone}
                     onChange={(e) => setFormData({ ...formData, customer_phone: e.target.value })}
@@ -11048,7 +11135,7 @@ function NewLeadModal({ onClose, onSuccess, leadTypes, companies, type, defaultC
                 <p className="text-[10px] text-blue-500">Thông tin chi tiết sẽ nhập thêm ở trang Lead</p>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-2 gap-3" data-tour="new-lead-source">
                 <div>
                   <label className="block text-xs font-semibold text-gray-700 mb-1">Nguồn</label>
                   <select value={formData.source_id}
@@ -11133,8 +11220,13 @@ function NewLeadModal({ onClose, onSuccess, leadTypes, companies, type, defaultC
               className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-200 rounded-lg transition cursor-pointer shrink-0">
               Hủy
             </button>
-            <button type="submit" form="lead-form" disabled={saving}
-              className="px-5 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition disabled:opacity-50 cursor-pointer shrink-0">
+            <button
+              type="submit"
+              form="lead-form"
+              data-tour="new-lead-save"
+              disabled={saving}
+              className="px-5 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition disabled:opacity-50 cursor-pointer shrink-0"
+            >
               {saving ? 'Đang tạo...' : '🚀 Tạo Lead'}
             </button>
           </div>
@@ -11209,6 +11301,7 @@ function NewLeadModal({ onClose, onSuccess, leadTypes, companies, type, defaultC
         </div>
 
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

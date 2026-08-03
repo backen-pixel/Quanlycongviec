@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <title>Hướng dẫn — Chuyển Lead/Deal sang công ty CRM khác</title>
+  <style>
+    @page { size: A4; margin: 16mm 14mm 18mm 14mm; }
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+      font-size: 10.5pt;
+      line-height: 1.55;
+      color: #1e293b;
+      margin: 0;
+      padding: 24px;
+      max-width: 820px;
+      margin-inline: auto;
+      background: #fff;
+    }
+    h1 {
+      font-size: 20pt;
+      color: #4338ca;
+      margin: 0 0 6px;
+      line-height: 1.25;
+    }
+    .subtitle { font-size: 11pt; color: #475569; margin-bottom: 4px; }
+    .meta {
+      font-size: 9pt;
+      color: #64748b;
+      margin-bottom: 18px;
+      padding-bottom: 12px;
+      border-bottom: 2px solid #a5b4fc;
+    }
+    h2 {
+      font-size: 13pt;
+      color: #4338ca;
+      margin: 20px 0 10px;
+      page-break-after: avoid;
+      border-left: 4px solid #6366f1;
+      padding-left: 10px;
+    }
+    h3 {
+      font-size: 11pt;
+      color: #334155;
+      margin: 14px 0 8px;
+      page-break-after: avoid;
+    }
+    p { margin: 6px 0; }
+    ul, ol { margin: 6px 0 10px; padding-left: 22px; }
+    li { margin: 3px 0; }
+    .flow {
+      background: #eef2ff;
+      border: 1px solid #c7d2fe;
+      border-radius: 8px;
+      padding: 12px 14px;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 9pt;
+      line-height: 1.7;
+      white-space: pre-wrap;
+      margin: 10px 0 16px;
+    }
+    .roles {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin: 12px 0 16px;
+    }
+    .role-card {
+      background: #eef2ff;
+      border: 1px solid #a5b4fc;
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 9.5pt;
+      page-break-inside: avoid;
+    }
+    .role-card strong { display: block; color: #4338ca; margin-bottom: 4px; }
+    .step {
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      padding: 12px 14px;
+      margin: 12px 0;
+      page-break-inside: avoid;
+      background: #f8fafc;
+    }
+    .step .badge {
+      display: inline-block;
+      background: #4f46e5;
+      color: #fff;
+      font-size: 9pt;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 999px;
+      margin-bottom: 6px;
+    }
+    .note {
+      background: #eff6ff;
+      border: 1px solid #bfdbfe;
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 9.5pt;
+      color: #1e3a8a;
+      margin: 10px 0;
+      page-break-inside: avoid;
+    }
+    .warn {
+      background: #fffbeb;
+      border: 1px solid #fde68a;
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 9.5pt;
+      color: #92400e;
+      margin: 10px 0;
+      page-break-inside: avoid;
+    }
+    figure {
+      margin: 12px 0 16px;
+      page-break-inside: avoid;
+    }
+    figure img {
+      width: 100%;
+      max-height: 380px;
+      object-fit: contain;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      background: #fff;
+    }
+    figcaption {
+      font-size: 9pt;
+      color: #64748b;
+      margin-top: 6px;
+      font-style: italic;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 9.5pt;
+      margin: 10px 0 14px;
+    }
+    th, td {
+      border: 1px solid #cbd5e1;
+      padding: 7px 8px;
+      vertical-align: top;
+      text-align: left;
+    }
+    th { background: #e0e7ff; color: #3730a3; }
+    .footer {
+      margin-top: 28px;
+      padding-top: 10px;
+      border-top: 1px solid #e2e8f0;
+      font-size: 8.5pt;
+      color: #94a3b8;
+    }
+    @media print {
+      body { padding: 0; max-width: none; }
+      .no-print { display: none !important; }
+      a { color: inherit; text-decoration: none; }
+    }
+    .toolbar.no-print {
+      position: sticky; top: 0; z-index: 10;
+      background: #eef2ff; border-bottom: 1px solid #a5b4fc;
+      padding: 10px 14px; margin: -24px -24px 18px;
+      display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+    }
+    .toolbar button {
+      background: #4f46e5; color: #fff; border: 0; border-radius: 8px;
+      padding: 8px 14px; font-weight: 600; cursor: pointer; font-size: 13px;
+    }
+    .toolbar button.secondary { background: #fff; color: #4338ca; border: 1px solid #a5b4fc; }
+  </style>
+</head>
+<body>
+  <div class="toolbar no-print">
+    <strong style="color:#4338ca;margin-right:auto">Hướng dẫn chuyển công ty Lead/Deal</strong>
+    <button type="button" onclick="window.print()">In / Xuất PDF</button>
+    <button type="button" class="secondary" onclick="window.close()">Đóng</button>
+  </div>
+
+  <h1>Hướng dẫn — Chuyển Lead/Deal<br/>sang công ty CRM khác</h1>
+  <p class="subtitle">TuBep Pro — Admin chuyển Lead hoặc Deal từ công ty A sang công ty B (cùng hệ sinh thái)</p>
+  <div class="meta">
+    Ngày lập: 03/08/2026 · Module: CRM · Nút UI: «Chuyển người phụ trách»
+    · Ví dụ minh họa: LEAD-2026-999 · Công Ty Metalla → công ty CRM khác
+  </div>
+
+  <h2>1. Tổng quan luồng</h2>
+  <div class="flow">Mở chi tiết Lead / Deal
+        ↓
+Bấm «Chuyển người phụ trách»
+        ↓
+Chọn Công ty đích → Khu vực → Nhân viên phụ trách
+        ↓
+Xác nhận
+        ↓
+Hệ thống remap pipeline/stage, sao chép KH (nếu cần), ghi hoạt động</div>
+
+  <div class="roles">
+    <div class="role-card">
+      <strong>Admin / Admin-like</strong>
+      Được chọn công ty CRM khác trong modal. Nhân viên thường chỉ chuyển khu vực / người phụ trách trong cùng công ty.
+    </div>
+    <div class="role-card">
+      <strong>NVKD / Sales</strong>
+      Sau khi admin chuyển, thẻ biến mất khỏi Kanban công ty cũ và xuất hiện ở công ty mới (khu vực + người phụ trách đã chọn).
+    </div>
+  </div>
+
+  <h2>2. Điều kiện &amp; hạn chế</h2>
+  <ul>
+    <li>Lead/Deal phải <strong>đã có công ty</strong>.</li>
+    <li>Công ty đích phải thuộc <strong>module CRM</strong>, đang hoạt động, và trong phạm vi hệ sinh thái.</li>
+    <li>Người phụ trách phải thuộc <strong>công ty đích</strong> và đã gắn <strong>khu vực</strong> được chọn.</li>
+    <li><strong>Không chuyển sang công ty khác</strong> nếu Deal đã có <strong>đơn hàng</strong> hoặc <strong>hóa đơn</strong>.</li>
+  </ul>
+  <div class="warn">
+    <strong>Lưu ý:</strong> Khi đổi công ty, hệ thống có thể remap pipeline/stage, đồng bộ lại nhiệm vụ CRM theo pipeline mới,
+    và sao chép / liên kết khách hàng sang công ty đích (theo SĐT nếu trùng).
+  </div>
+
+  <h2>3. Các bước thao tác</h2>
+
+  <div class="step">
+    <span class="badge">Bước 1</span>
+    <h3 style="margin-top:4px">Mở chi tiết Lead hoặc Deal</h3>
+    <ol>
+      <li>Vào <strong>CRM → Dashboard</strong> (Kanban).</li>
+      <li>Chọn tab <strong>Leads</strong> hoặc <strong>Deals</strong>.</li>
+      <li>Bấm vào thẻ cần chuyển để mở trang chi tiết.</li>
+      <li>Bấm nút tím <strong>Chuyển người phụ trách</strong> (thanh thao tác hoặc dòng NGƯỜI PHỤ TRÁCH bên trái).</li>
+    </ol>
+    <div class="note">
+      Tooltip nút: «Chuyển công ty/khu vực và người phụ trách».
+    </div>
+  </div>
+
+  <div class="step">
+    <span class="badge">Bước 2</span>
+    <h3 style="margin-top:4px">Mở popup và chọn công ty đích</h3>
+    <ol>
+      <li>Bấm <strong>Chuyển người phụ trách</strong>.</li>
+      <li>Popup hiện công ty / khu vực / phụ trách hiện tại.</li>
+      <li>Ở ô <strong>Công ty *</strong>, chọn công ty CRM đích (không chọn «— hiện tại» nếu muốn đổi công ty).</li>
+      <li>Chọn <strong>Khu vực *</strong> thuộc công ty đích.</li>
+      <li>Chọn <strong>nhân viên phụ trách *</strong> (phải thuộc khu vực đó).</li>
+    </ol>
+    <figure>
+      <img src="02-modal-chuyen-cong-ty.png" alt="Modal chuyển người phụ trách — chọn công ty, khu vực, nhân viên" />
+      <figcaption>Hình 1 — Modal «Chuyển người phụ trách»: (1) mở nút → (2) Công ty → Khu vực → Nhân viên → (3) Xác nhận</figcaption>
+    </figure>
+  </div>
+
+  <div class="step">
+    <span class="badge">Bước 3</span>
+    <h3 style="margin-top:4px">Xác nhận</h3>
+    <ol>
+      <li>Kiểm tra lại công ty / khu vực / nhân viên.</li>
+      <li>Bấm <strong>Xác nhận</strong> (nút chỉ bật khi đã chọn đủ 3 trường).</li>
+      <li>Hệ thống báo thành công; hoạt động được ghi trên thẻ (ví dụ: đã chuyển sang công ty «…»).</li>
+      <li>Lọc Kanban theo <strong>công ty mới</strong> để thấy thẻ; công ty cũ sẽ không còn thẻ đó.</li>
+    </ol>
+  </div>
+
+  <h2>4. Hệ thống làm gì khi đổi công ty?</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Hạng mục</th>
+        <th>Hành vi</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Công ty, khu vực, phụ trách</td>
+        <td>Cập nhật theo lựa chọn trong modal</td>
+      </tr>
+      <tr>
+        <td>Khách hàng</td>
+        <td>Sao chép sang công ty đích, hoặc liên kết bản ghi trùng SĐT nếu đã có</td>
+      </tr>
+      <tr>
+        <td>Pipeline / stage</td>
+        <td>Remap theo pipeline CRM của công ty + khu vực đích</td>
+      </tr>
+      <tr>
+        <td>Nguồn / loại lead</td>
+        <td>Map taxonomy tương ứng (nếu có) sang công ty đích</td>
+      </tr>
+      <tr>
+        <td>Nhiệm vụ CRM</td>
+        <td>Có thể đồng bộ lại theo bộ mẫu pipeline mới khi pipeline đổi</td>
+      </tr>
+      <tr>
+        <td>Đơn hàng / hóa đơn</td>
+        <td>Nếu đã có → <strong>chặn</strong> chuyển sang công ty khác</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>5. Sự cố thường gặp</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Triệu chứng</th>
+        <th>Nguyên nhân / cách xử lý</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Không thấy ô chọn Công ty</td>
+        <td>Tài khoản không phải admin-like, hoặc chỉ có 1 công ty CRM trong phạm vi</td>
+      </tr>
+      <tr>
+        <td>«Công ty chưa có khu vực»</td>
+        <td>Vào CRM → Khu vực, thêm khu vực cho công ty đích trước</td>
+      </tr>
+      <tr>
+        <td>Không chọn được nhân viên</td>
+        <td>NV chưa gắn khu vực đích (user_company_regions) hoặc không thuộc công ty đích</td>
+      </tr>
+      <tr>
+        <td>«Đã có đơn hàng hoặc hóa đơn»</td>
+        <td>Không được chuyển công ty — giữ nguyên hoặc xử lý chứng từ trước</td>
+      </tr>
+      <tr>
+        <td>Thẻ «biến mất» sau khi chuyển</td>
+        <td>Đổi bộ lọc Công ty trên Kanban sang công ty đích</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>6. Không nhầm với các nút khác</h2>
+  <ul>
+    <li><strong>Chuyển Deal</strong> (nút xanh): chuyển Lead → Deal (cùng công ty), không đổi công ty CRM.</li>
+    <li><strong>Chuyển công ty SX</strong> (trên Deal thắng / dự án): gắn xưởng sản xuất, khác với chuyển công ty CRM ở hướng dẫn này.</li>
+  </ul>
+
+  <div class="footer">
+    TuBep Pro · Hướng dẫn chuyển Lead/Deal sang công ty CRM khác · 03/08/2026<br />
+    Nguồn UI: CRM Lead Detail → «Chuyển người phụ trách» · API: <code>GET/POST …/crm/leads/:id/transfer-*</code>
+  </div>
+</body>
+</html>

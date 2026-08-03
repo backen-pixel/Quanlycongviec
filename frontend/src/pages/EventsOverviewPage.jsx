@@ -37,6 +37,12 @@ import {
 
 import ScopeFilterBar from '../shared/components/ScopeFilterBar';
 import { useScopeFilter } from '../shared/hooks/useScopeFilter';
+import EventsSurveyMap from '../components/EventsSurveyMap';
+import { EVENT_MODULE_OPTIONS } from '../components/EventCreateModal';
+
+function moduleMeta(v) {
+  return EVENT_MODULE_OPTIONS.find((o) => o.value === String(v || '')) || EVENT_MODULE_OPTIONS[1];
+}
 
 function pad(n) {
   return String(n).padStart(2, '0');
@@ -136,6 +142,7 @@ export default function EventsOverviewPage() {
   const [filterUser, setFilterUser] = useState('');
   const [filterType, setFilterType] = useState('');
   const [filterRegionId, setFilterRegionId] = useState('');
+  const [filterModule, setFilterModule] = useState('');
   const [granularity, setGranularity] = useState('');
 
   const [eventTypes, setEventTypes] = useState([]);
@@ -143,6 +150,9 @@ export default function EventsOverviewPage() {
   const [regions, setRegions] = useState([]);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [mapPoints, setMapPoints] = useState([]);
+  const [mapStats, setMapStats] = useState(null);
+  const [mapLoading, setMapLoading] = useState(false);
 
   const listParams = useMemo(
     () => (canPickCompany && filterCompanyId ? { company_id: filterCompanyId } : {}),
@@ -162,16 +172,42 @@ export default function EventsOverviewPage() {
   useEffect(() => {
     if (!effectiveCompanyIdForUsers) {
       setUsers([]);
-      setRegions([]);
       return;
     }
     api.get('/users', { params: { company_id: effectiveCompanyIdForUsers } })
       .then((r) => setUsers(r.data.users || r.data || []))
       .catch(() => setUsers([]));
-    api.get('/crm/company-regions', { params: { company_id: effectiveCompanyIdForUsers } })
-      .then((r) => setRegions(Array.isArray(r.data) ? r.data : []))
-      .catch(() => setRegions([]));
   }, [effectiveCompanyIdForUsers]);
+
+  // Khu vực công ty theo khối đang chọn (for_module=crm|production|logistics)
+  useEffect(() => {
+    if (!effectiveCompanyIdForUsers) {
+      setRegions([]);
+      return;
+    }
+    let cancelled = false;
+    const params = { company_id: effectiveCompanyIdForUsers };
+    if (filterModule && ['crm', 'production', 'logistics'].includes(filterModule)) {
+      params.for_module = filterModule;
+    }
+    api.get('/crm/company-regions', { params })
+      .then((r) => {
+        if (cancelled) return;
+        const list = Array.isArray(r.data) ? r.data : [];
+        setRegions(list);
+        setFilterRegionId((cur) => {
+          if (!cur) return '';
+          return list.some((rg) => String(rg.id) === String(cur)) ? cur : '';
+        });
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setRegions([]);
+          setFilterRegionId('');
+        }
+      });
+    return () => { cancelled = true; };
+  }, [effectiveCompanyIdForUsers, filterModule]);
 
   const applyPreset = (id) => {
     setPreset(id);
@@ -196,6 +232,7 @@ export default function EventsOverviewPage() {
       if (filterUser) params.user_id = filterUser;
       if (filterType) params.type = filterType;
       if (filterRegionId) params.region_id = filterRegionId;
+      if (filterModule) params.module = filterModule;
       if (granularity) params.granularity = granularity;
       const { data: res } = await api.get('/events/overview', { params });
       setData(res);
@@ -204,12 +241,38 @@ export default function EventsOverviewPage() {
       setData(null);
     }
     setLoading(false);
-  }, [rangeFrom, rangeTo, listParams, filterUser, filterType, filterRegionId, granularity]);
+  }, [rangeFrom, rangeTo, listParams, filterUser, filterType, filterRegionId, filterModule, granularity]);
+
+  const loadSurveyMap = useCallback(async () => {
+    setMapLoading(true);
+    try {
+      const params = {
+        date_from: rangeFrom,
+        date_to: rangeTo,
+        ...listParams,
+      };
+      if (filterUser) params.user_id = filterUser;
+      if (filterRegionId) params.region_id = filterRegionId;
+      if (filterModule) params.module = filterModule;
+      // Bản đồ mặc định Khảo sát + Đo đạc; nếu user lọc 1 loại thì chỉ loại đó
+      if (filterType) params.type = filterType;
+      else params.types = 'site_visit,measurement';
+      const { data: res } = await api.get('/events/map', { params });
+      setMapPoints(Array.isArray(res?.points) ? res.points : []);
+      setMapStats(res?.stats || null);
+    } catch (e) {
+      console.error(e);
+      setMapPoints([]);
+      setMapStats(null);
+    }
+    setMapLoading(false);
+  }, [rangeFrom, rangeTo, listParams, filterUser, filterType, filterRegionId, filterModule]);
 
   useEffect(() => {
     if (!rangeFrom || !rangeTo) return;
     loadOverview();
-  }, [loadOverview, rangeFrom, rangeTo]);
+    loadSurveyMap();
+  }, [loadOverview, loadSurveyMap, rangeFrom, rangeTo]);
 
   const typeChartData = useMemo(() => {
     if (!data?.by_type) return [];
@@ -233,6 +296,36 @@ export default function EventsOverviewPage() {
       created: s.as_creator,
       assigned: s.as_assignee,
     }));
+  }, [data]);
+
+  /** Phân bổ theo khu vực của người tạo ∪ người phụ trách (1 sự kiện có thể thuộc nhiều khu vực nếu NV thuộc nhiều vùng). */
+  const regionChartData = useMemo(() => {
+    if (!data?.by_region) return [];
+    const palette = ['#0EA5E9', '#8B5CF6', '#10B981', '#F59E0B', '#EF4444', '#6366F1', '#14B8A6', '#F97316'];
+    return data.by_region.slice(0, 16).map((r, i) => ({
+      name: (r.name || '—').length > 22 ? `${String(r.name).slice(0, 20)}…` : (r.name || '—'),
+      fullName: r.name || '—',
+      count: r.count || 0,
+      created: r.as_creator || 0,
+      assigned: r.as_assignee || 0,
+      fill: r.region_id ? palette[i % palette.length] : '#94A3B8',
+      regionId: r.region_id,
+    }));
+  }, [data]);
+
+  const moduleChartData = useMemo(() => {
+    if (!data?.by_module) return [];
+    return data.by_module.map((m) => {
+      const meta = moduleMeta(m.module);
+      return {
+        name: `${m.icon || meta.emoji || ''} ${m.name || meta.label}`.trim(),
+        fullName: m.name || meta.label,
+        module: m.module,
+        count: m.count || 0,
+        completed: m.completed || 0,
+        fill: m.color || '#64748B',
+      };
+    });
   }, [data]);
 
   const StaffTooltip = ({ active, payload }) => {
@@ -333,6 +426,27 @@ export default function EventsOverviewPage() {
             )}
           </div>
 
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-[10px] text-gray-500 font-medium uppercase tracking-wide mr-0.5">Khối</span>
+            {EVENT_MODULE_OPTIONS.map((m) => {
+              const active = filterModule === m.value;
+              return (
+                <button
+                  key={m.value || 'all'}
+                  type="button"
+                  onClick={() => setFilterModule(m.value)}
+                  className={`h-8 px-2.5 inline-flex items-center gap-1 text-xs font-medium rounded-md border transition-colors cursor-pointer ${
+                    active ? `${m.color}` : 'bg-white text-gray-600 border-gray-200 hover:border-blue-300'
+                  }`}
+                  title={m.label}
+                >
+                  <span>{m.emoji}</span>
+                  <span>{m.label}</span>
+                </button>
+              );
+            })}
+          </div>
+
           <div className="flex flex-wrap items-end gap-2">
             <div>
               <label className="block text-[10px] text-gray-500 mb-0.5">Người tạo / phụ trách</label>
@@ -364,14 +478,25 @@ export default function EventsOverviewPage() {
             </div>
             <div>
               <label className="block text-[10px] text-gray-500 mb-0.5 flex items-center gap-1">
-                <MapPin className="h-3 w-3" /> Khu vực (tạo / phụ trách)
+                <MapPin className="h-3 w-3" /> Khu vực
+                {filterModule && ['crm', 'production', 'logistics'].includes(filterModule) ? (
+                  <span className="normal-case font-normal text-slate-400">
+                    ({moduleMeta(filterModule).label})
+                  </span>
+                ) : null}
               </label>
               <select
                 value={filterRegionId}
                 onChange={(e) => setFilterRegionId(e.target.value)}
                 disabled={!effectiveCompanyIdForUsers}
                 className="h-9 px-3 border rounded-lg text-sm min-w-[140px] disabled:bg-gray-100"
-                title={!effectiveCompanyIdForUsers ? 'Chọn công ty để lọc khu vực' : 'Lọc theo khu vực của người tạo hoặc người phụ trách'}
+                title={
+                  !effectiveCompanyIdForUsers
+                    ? 'Chọn công ty để lọc khu vực'
+                    : filterModule && ['crm', 'production', 'logistics'].includes(filterModule)
+                      ? `Chỉ khu vực công ty thuộc khối ${moduleMeta(filterModule).label}`
+                      : 'Lọc theo khu vực NV tạo/phụ trách hoặc khu vực Lead/Deal'
+                }
               >
                 <option value="">Tất cả</option>
                 {regions.map((rg) => (
@@ -395,6 +520,19 @@ export default function EventsOverviewPage() {
           </div>
         </div>
 
+        <div className="p-4 border-b border-gray-100">
+          <EventsSurveyMap
+            points={mapPoints}
+            loading={mapLoading}
+            stats={mapStats}
+            heightClass="h-[min(480px,55vh)]"
+            regions={regions}
+            regionId={filterRegionId}
+            onRegionChange={setFilterRegionId}
+            regionFilterDisabled={!effectiveCompanyIdForUsers}
+          />
+        </div>
+
         {loading ? (
           <div className="flex justify-center py-20">
             <Loader2 className="h-9 w-9 animate-spin text-blue-500" />
@@ -403,7 +541,7 @@ export default function EventsOverviewPage() {
           <div className="text-center py-16 text-gray-400 text-sm">Không tải được dữ liệu</div>
         ) : (
           <div className="p-4 space-y-6">
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-3">
               <StatCard icon={Calendar} label="Tổng sự kiện" value={summary.total ?? 0} color="blue" />
               <StatCard
                 icon={CheckCircle2}
@@ -422,6 +560,20 @@ export default function EventsOverviewPage() {
                 color="violet"
               />
               <StatCard icon={Users} label="Nhân viên tham gia" value={summary.unique_staff ?? 0} color="blue" />
+              <StatCard
+                icon={MapPin}
+                label="Khu vực có sự kiện"
+                value={summary.unique_regions ?? (data.by_region || []).filter((r) => r.region_id).length}
+                sub="Theo NV tạo / phụ trách"
+                color="violet"
+              />
+              <StatCard
+                icon={Building2}
+                label="Khối có sự kiện"
+                value={summary.unique_modules ?? (data.by_module || []).length}
+                sub={filterModule ? `Đang lọc: ${moduleMeta(filterModule).label}` : 'CRM · SX · VC · Chung'}
+                color="violet"
+              />
             </div>
 
             <div className="bg-white rounded-xl border p-4">
@@ -448,6 +600,62 @@ export default function EventsOverviewPage() {
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               <div className="bg-white rounded-xl border p-4">
+                <div className="flex items-center justify-between mb-1">
+                  <h2 className="text-sm font-bold text-gray-800">Theo khối (module)</h2>
+                  <span className="text-[11px] text-gray-500 flex items-center gap-1">
+                    <Info className="h-3 w-3" /> CRM · SX · VC · Chung
+                  </span>
+                </div>
+                <p className="text-[11px] text-gray-500 mb-3">
+                  Bấm cột để lọc thống kê & bản đồ theo khối.
+                </p>
+                {moduleChartData.length === 0 ? (
+                  <p className="text-sm text-gray-400 py-8 text-center">—</p>
+                ) : (
+                  <ResponsiveContainer width="100%" height={Math.max(200, moduleChartData.length * 48)}>
+                    <BarChart
+                      data={moduleChartData}
+                      layout="vertical"
+                      margin={{ left: 8, right: 16 }}
+                      style={{ cursor: 'pointer' }}
+                      onClick={(state) => {
+                        const mod = state?.activePayload?.[0]?.payload?.module;
+                        if (!mod) return;
+                        setFilterModule((cur) => (String(cur) === String(mod) ? '' : String(mod)));
+                      }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                      <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11 }} />
+                      <YAxis type="category" dataKey="name" width={128} tick={{ fontSize: 11 }} />
+                      <Tooltip
+                        formatter={(v, name) => {
+                          if (name === 'count') return [`${v}`, 'Sự kiện'];
+                          if (name === 'completed') return [`${v}`, 'Hoàn thành'];
+                          return [v, name];
+                        }}
+                        labelFormatter={(_, payload) => payload?.[0]?.payload?.fullName || ''}
+                      />
+                      <Bar dataKey="count" name="Sự kiện" radius={[0, 4, 4, 0]}>
+                        {moduleChartData.map((entry) => (
+                          <Cell
+                            key={entry.module}
+                            fill={
+                              filterModule && String(filterModule) === String(entry.module)
+                                ? '#0369A1'
+                                : entry.fill
+                            }
+                            opacity={
+                              filterModule && String(filterModule) !== String(entry.module) ? 0.35 : 1
+                            }
+                          />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
+              </div>
+
+              <div className="bg-white rounded-xl border p-4">
                 <h2 className="text-sm font-bold text-gray-800 mb-3">Theo loại sự kiện</h2>
                 {typeChartData.length === 0 ? (
                   <p className="text-sm text-gray-400 py-8 text-center">—</p>
@@ -467,34 +675,210 @@ export default function EventsOverviewPage() {
                   </ResponsiveContainer>
                 )}
               </div>
+            </div>
 
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               <div className="bg-white rounded-xl border p-4">
                 <div className="flex items-center justify-between mb-1">
-                  <h2 className="text-sm font-bold text-gray-800">Theo nhân viên</h2>
+                  <h2 className="text-sm font-bold text-gray-800 flex items-center gap-1.5">
+                    <MapPin className="h-4 w-4 text-sky-600" /> Theo khu vực
+                  </h2>
                   <span className="text-[11px] text-gray-500 flex items-center gap-1">
-                    <Info className="h-3 w-3" /> So sánh số sự kiện đã tạo & được giao
+                    <Info className="h-3 w-3" /> Theo vùng của NV tạo / phụ trách
                   </span>
                 </div>
                 <p className="text-[11px] text-gray-500 mb-3">
-                  «Đã tạo» = nhân viên là người tạo sự kiện. «Được giao» = nhân viên là người phụ trách.
+                  Theo vùng của NV tạo / phụ trách. Bấm cột để lọc bản đồ & thống kê.
+                  {canPickCompany && !filterCompanyId ? ' Chọn công ty để lọc danh sách khu vực chính xác hơn.' : ''}
                 </p>
-                {staffChartData.length === 0 ? (
+                {regionChartData.length === 0 ? (
                   <p className="text-sm text-gray-400 py-8 text-center">—</p>
                 ) : (
-                  <ResponsiveContainer width="100%" height={Math.max(240, staffChartData.length * 34)}>
-                    <BarChart data={staffChartData} margin={{ bottom: 4 }} barCategoryGap="20%">
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="name" tick={{ fontSize: 10 }} interval={0} angle={-25} textAnchor="end" height={72} />
-                      <YAxis allowDecimals={false} tick={{ fontSize: 11 }} width={28} />
-                      <Tooltip content={<StaffTooltip />} />
-                      <Legend wrapperStyle={{ fontSize: 11 }} />
-                      <Bar dataKey="created" name="Đã tạo" fill="#3B82F6" radius={[4, 4, 0, 0]} />
-                      <Bar dataKey="assigned" name="Được giao" fill="#8B5CF6" radius={[4, 4, 0, 0]} />
+                  <ResponsiveContainer width="100%" height={Math.max(220, regionChartData.length * 36)}>
+                    <BarChart
+                      data={regionChartData}
+                      layout="vertical"
+                      margin={{ left: 8, right: 16 }}
+                      style={{ cursor: 'pointer' }}
+                      onClick={(state) => {
+                        const rid = state?.activePayload?.[0]?.payload?.regionId;
+                        if (!rid) return;
+                        setFilterRegionId((cur) => (String(cur) === String(rid) ? '' : String(rid)));
+                      }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                      <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11 }} />
+                      <YAxis type="category" dataKey="name" width={128} tick={{ fontSize: 10 }} />
+                      <Tooltip
+                        formatter={(v, name) => {
+                          if (name === 'count') return [`${v}`, 'Sự kiện'];
+                          return [v, name];
+                        }}
+                        labelFormatter={(_, payload) => payload?.[0]?.payload?.fullName || ''}
+                      />
+                      <Bar dataKey="count" name="Sự kiện" radius={[0, 4, 4, 0]}>
+                        {regionChartData.map((entry) => (
+                          <Cell
+                            key={`${entry.regionId || 'none'}-${entry.name}`}
+                            fill={
+                              filterRegionId && String(filterRegionId) === String(entry.regionId)
+                                ? '#0284C7'
+                                : entry.fill
+                            }
+                            opacity={
+                              filterRegionId && entry.regionId && String(filterRegionId) !== String(entry.regionId)
+                                ? 0.35
+                                : 1
+                            }
+                          />
+                        ))}
+                      </Bar>
                     </BarChart>
                   </ResponsiveContainer>
                 )}
               </div>
+
+              <div className="bg-white rounded-xl border overflow-hidden">
+                <div className="px-4 py-3 border-b bg-gray-50 flex items-center justify-between flex-wrap gap-2">
+                  <h2 className="text-sm font-bold text-gray-800">Chi tiết theo khối</h2>
+                  <span className="text-[11px] text-gray-500">Bấm dòng để lọc</span>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b text-xs text-gray-500 uppercase bg-gray-50/50">
+                        <th className="py-2.5 px-4 text-left">Khối</th>
+                        <th className="py-2.5 px-4 text-right">Tổng</th>
+                        <th className="py-2.5 px-4 text-right">HT</th>
+                        <th className="py-2.5 px-4 text-right">KH / Đang</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(data.by_module || []).length === 0 ? (
+                        <tr>
+                          <td colSpan={4} className="py-8 text-center text-gray-400">—</td>
+                        </tr>
+                      ) : (
+                        (data.by_module || []).map((row) => {
+                          const active = filterModule && String(filterModule) === String(row.module);
+                          return (
+                            <tr
+                              key={row.module}
+                              className={`border-b border-gray-100 hover:bg-sky-50/70 cursor-pointer ${active ? 'bg-sky-50' : ''}`}
+                              onClick={() => {
+                                setFilterModule((cur) => (
+                                  String(cur) === String(row.module) ? '' : String(row.module)
+                                ));
+                              }}
+                            >
+                              <td className="py-2.5 px-4 font-medium text-gray-900">
+                                {row.icon} {row.name}
+                                {active && (
+                                  <span className="ml-2 text-[10px] font-semibold text-sky-700">đang lọc</span>
+                                )}
+                              </td>
+                              <td className="py-2.5 px-4 text-right font-semibold">{row.count}</td>
+                              <td className="py-2.5 px-4 text-right text-emerald-700">{row.completed ?? 0}</td>
+                              <td className="py-2.5 px-4 text-right text-amber-700">
+                                {(row.planned || 0) + (row.in_progress || 0)}
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
             </div>
+
+            <div className="bg-white rounded-xl border p-4">
+              <div className="flex items-center justify-between mb-1">
+                <h2 className="text-sm font-bold text-gray-800">Theo nhân viên</h2>
+                <span className="text-[11px] text-gray-500 flex items-center gap-1">
+                  <Info className="h-3 w-3" /> So sánh số sự kiện đã tạo & được giao
+                </span>
+              </div>
+              <p className="text-[11px] text-gray-500 mb-3">
+                «Đã tạo» = nhân viên là người tạo sự kiện. «Được giao» = nhân viên là người phụ trách.
+              </p>
+              {staffChartData.length === 0 ? (
+                <p className="text-sm text-gray-400 py-8 text-center">—</p>
+              ) : (
+                <ResponsiveContainer width="100%" height={Math.max(240, staffChartData.length * 34)}>
+                  <BarChart data={staffChartData} margin={{ bottom: 4 }} barCategoryGap="20%">
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="name" tick={{ fontSize: 10 }} interval={0} angle={-25} textAnchor="end" height={72} />
+                    <YAxis allowDecimals={false} tick={{ fontSize: 11 }} width={28} />
+                    <Tooltip content={<StaffTooltip />} />
+                    <Legend wrapperStyle={{ fontSize: 11 }} />
+                    <Bar dataKey="created" name="Đã tạo" fill="#3B82F6" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="assigned" name="Được giao" fill="#8B5CF6" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+
+            {data.by_region?.length > 0 && (
+              <div className="bg-white rounded-xl border overflow-hidden">
+                <div className="px-4 py-3 border-b bg-gray-50 flex items-center justify-between flex-wrap gap-2">
+                  <h2 className="text-sm font-bold text-gray-800 flex items-center gap-1.5">
+                    <MapPin className="h-4 w-4 text-sky-600" /> Chi tiết theo khu vực
+                  </h2>
+                  <span className="text-[11px] text-gray-500 flex items-center gap-1">
+                    <Info className="h-3 w-3" />
+                    Một sự kiện có thể thuộc nhiều khu vực nếu NV tạo/phụ trách gắn nhiều vùng
+                  </span>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b text-xs text-gray-500 uppercase bg-gray-50/50">
+                        <th className="py-2.5 px-4 text-left">Khu vực</th>
+                        <th className="py-2.5 px-4 text-right">Sự kiện</th>
+                        <th className="py-2.5 px-4 text-right">NV tạo thuộc vùng</th>
+                        <th className="py-2.5 px-4 text-right">NV phụ trách thuộc vùng</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.by_region.map((row) => {
+                        const active = row.region_id && String(filterRegionId) === String(row.region_id);
+                        return (
+                          <tr
+                            key={row.region_id || 'none'}
+                            className={`border-b border-gray-100 ${
+                              row.region_id
+                                ? 'hover:bg-sky-50/70 cursor-pointer'
+                                : 'hover:bg-gray-50/50'
+                            } ${active ? 'bg-sky-50' : ''}`}
+                            onClick={() => {
+                              if (!row.region_id) return;
+                              setFilterRegionId((cur) => (
+                                String(cur) === String(row.region_id) ? '' : String(row.region_id)
+                              ));
+                            }}
+                            title={row.region_id ? 'Bấm để lọc theo khu vực này' : undefined}
+                          >
+                            <td className="py-2.5 px-4 font-medium text-gray-900">
+                              {row.name}
+                              {!row.region_id && (
+                                <span className="ml-2 text-[10px] font-normal text-slate-400">không có vùng trên NV</span>
+                              )}
+                              {active && (
+                                <span className="ml-2 text-[10px] font-semibold text-sky-700">đang lọc</span>
+                              )}
+                            </td>
+                            <td className="py-2.5 px-4 text-right font-semibold">{row.count}</td>
+                            <td className="py-2.5 px-4 text-right text-blue-700">{row.as_creator}</td>
+                            <td className="py-2.5 px-4 text-right text-violet-700">{row.as_assignee}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
 
             {data.by_staff?.length > 0 && (
               <div className="bg-white rounded-xl border overflow-hidden">

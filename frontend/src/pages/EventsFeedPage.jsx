@@ -15,7 +15,7 @@ import {
   Calendar, List, Plus, Search, Filter, MapPin, Clock, Users, MessageSquare,
   Check, X, ChevronLeft, ChevronRight, Settings, Trash2, Edit3, Send, CheckCircle2,
   XCircle, AlertCircle, Loader2, Building2, Ban, BarChart3, Table2, FileSpreadsheet,
-  CalendarRange,
+  CalendarRange, BookOpen,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import DateRangePickerPopover from '../components/DateRangePickerPopover';
@@ -277,12 +277,15 @@ export default function EventsFeedPage({ lockedModule = '' } = {}) {
     return cid || '';
   }, [canPickCompany, filterCompanyId, user?.company_id]);
 
-  const [view, setView] = useState('calendar'); // feed | calendar | list | types — mặc định Lịch khi vào trang
+  const [view, setView] = useState('calendar'); // feed | calendar | list | types | report — mặc định Lịch khi vào trang
   const [events, setEvents] = useState([]);
   const [eventTypes, setEventTypes] = useState([]);
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [calLoading, setCalLoading] = useState(false);
+  const [reportLoading, setReportLoading] = useState(false);
+  const [reportData, setReportData] = useState(null);
+  const [reportError, setReportError] = useState('');
   const [search, setSearch] = useState('');
   const [filterType, setFilterType] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
@@ -323,18 +326,45 @@ export default function EventsFeedPage({ lockedModule = '' } = {}) {
   useEffect(() => {
     if (!effectiveCompanyIdForUsers) {
       setUsers([]);
-      setRegions([]);
       return;
     }
     api
       .get('/users', { params: { company_id: effectiveCompanyIdForUsers } })
       .then((r) => setUsers(r.data.users || r.data || []))
       .catch(() => setUsers([]));
-    api
-      .get('/crm/company-regions', { params: { company_id: effectiveCompanyIdForUsers } })
-      .then((r) => setRegions(Array.isArray(r.data) ? r.data : []))
-      .catch(() => setRegions([]));
   }, [effectiveCompanyIdForUsers]);
+
+  // Khu vực theo khối sự kiện đang xem (CRM / SX / VC)
+  useEffect(() => {
+    if (!effectiveCompanyIdForUsers) {
+      setRegions([]);
+      return;
+    }
+    let cancelled = false;
+    const mod = forcedModule || filterModule;
+    const params = { company_id: effectiveCompanyIdForUsers };
+    if (mod && ['crm', 'production', 'logistics'].includes(mod)) {
+      params.for_module = mod;
+    }
+    api
+      .get('/crm/company-regions', { params })
+      .then((r) => {
+        if (cancelled) return;
+        const list = Array.isArray(r.data) ? r.data : [];
+        setRegions(list);
+        setFilterRegionId((cur) => {
+          if (!cur) return '';
+          return list.some((rg) => String(rg.id) === String(cur)) ? cur : '';
+        });
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setRegions([]);
+          setFilterRegionId('');
+        }
+      });
+    return () => { cancelled = true; };
+  }, [effectiveCompanyIdForUsers, filterModule, forcedModule]);
 
   const monthRangeBounds = useMemo(() => {
     const y = calYear;
@@ -351,11 +381,36 @@ export default function EventsFeedPage({ lockedModule = '' } = {}) {
     setRangeTo(monthRangeBounds.to);
   }, [view, monthRangeBounds.from, monthRangeBounds.to]);
 
+  /** Tour trang Sự kiện — mở form tạo */
+  useEffect(() => {
+    const onOpenCreate = () => {
+      setEditEvent(null);
+      setCreatePresetDay(null);
+      setShowCreate(true);
+    };
+    const onSetView = (e) => {
+      const v = e?.detail?.view;
+      if (v === 'calendar' || v === 'feed' || v === 'list' || v === 'types' || v === 'report') setView(v);
+    };
+    window.addEventListener('product-tour:open-events-create-modal', onOpenCreate);
+    window.addEventListener('product-tour:set-events-view', onSetView);
+    return () => {
+      window.removeEventListener('product-tour:open-events-create-modal', onOpenCreate);
+      window.removeEventListener('product-tour:set-events-view', onSetView);
+    };
+  }, []);
+
   useEffect(() => {
     if (view !== 'feed' && view !== 'calendar' && view !== 'list') return;
     loadFeed();
     if (view === 'calendar') loadCalendar();
   }, [view, filterType, filterStatus, filterUser, filterRegionId, calMonth, calYear, listParams, rangeFrom, rangeTo]);
+
+  useEffect(() => {
+    if (view !== 'report') return;
+    loadMonthlyReport();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, calMonth, calYear, listParams, filterType, filterUser, filterRegionId]);
 
   // Debounce search 300ms — tự tìm khi gõ, không cần Enter
   useEffect(() => {
@@ -415,11 +470,61 @@ export default function EventsFeedPage({ lockedModule = '' } = {}) {
     setCalLoading(false);
   };
 
+  const loadMonthlyReport = async () => {
+    setReportLoading(true);
+    setReportError('');
+    try {
+      const params = {
+        date_from: monthRangeBounds.from,
+        date_to: monthRangeBounds.to,
+        granularity: 'month',
+        ...listParams,
+      };
+      if (filterType) params.type = filterType;
+      if (filterUser) params.user_id = filterUser;
+      if (filterRegionId) params.region_id = filterRegionId;
+      const { data } = await api.get('/events/overview', { params });
+      setReportData(data || null);
+    } catch (e) {
+      console.error(e);
+      setReportData(null);
+      setReportError(e.response?.data?.error || e.message || 'Không tải được báo cáo tháng');
+    }
+    setReportLoading(false);
+  };
+
+  const handleExportReportExcel = () => {
+    const rows = reportData?.by_staff || [];
+    if (!rows.length) {
+      alert('Không có dữ liệu nhân viên để xuất');
+      return;
+    }
+    const sheetRows = rows.map((r, idx) => ({
+      STT: idx + 1,
+      'Nhân viên': r.full_name || '',
+      'Sự kiện đã tạo': r.as_creator || 0,
+      'Sự kiện được giao': r.as_assignee || 0,
+      'Tổng sự kiện': r.total || 0,
+    }));
+    const ws = XLSX.utils.json_to_sheet(sheetRows);
+    ws['!cols'] = [{ wch: 6 }, { wch: 28 }, { wch: 16 }, { wch: 18 }, { wch: 14 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'BC tháng');
+    const pad = (n) => String(n).padStart(2, '0');
+    const coName = canPickCompany && filterCompanyId
+      ? (companies?.find((c) => String(c.id) === String(filterCompanyId))?.short_name
+          || companies?.find((c) => String(c.id) === String(filterCompanyId))?.name)
+      : '';
+    const coPart = coName ? `_${String(coName).replace(/[^\p{L}\d_-]+/gu, '_')}` : '';
+    XLSX.writeFile(wb, `bc_su_kien_thang${coPart}_${calYear}${pad(calMonth)}.xlsx`);
+  };
+
   const refreshEventsData = () => {
     if (view === 'feed' || view === 'calendar' || view === 'list') {
       loadFeed();
       if (view === 'calendar') loadCalendar();
     }
+    if (view === 'report') loadMonthlyReport();
   };
 
   const handleRespond = async (eventId, status) => {
@@ -451,7 +556,9 @@ export default function EventsFeedPage({ lockedModule = '' } = {}) {
     try {
       await api.put(`/events/${id}`, { status });
       refreshEventsData();
-    } catch (e) { alert('Lỗi'); }
+    } catch (e) {
+      alert(e?.response?.data?.error || (status === 'completed' ? 'Không hoàn thành được sự kiện' : 'Lỗi đổi trạng thái'));
+    }
   };
 
   const clearFilters = () => {
@@ -710,7 +817,7 @@ export default function EventsFeedPage({ lockedModule = '' } = {}) {
         </div>
       )}
       {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
+      <div className="flex items-center justify-between flex-wrap gap-3" data-tour="events-page-header">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
             <Calendar className="h-6 w-6 text-blue-600" />
@@ -722,11 +829,23 @@ export default function EventsFeedPage({ lockedModule = '' } = {}) {
           </h1>
           <p className="text-sm text-gray-500 mt-0.5 flex items-center gap-2 flex-wrap">
             <span>
-              {totalEvents > (events || []).length && (events || []).length >= 500
-                ? `Hiển thị ${(events || []).length} / ${totalEvents} sự kiện (giới hạn 500)`
-                : `${totalEvents || (events || []).length} sự kiện`}
-              {view === 'calendar' && (
-                <span className="text-gray-400"> — khoảng {monthRangeBounds.from} → {monthRangeBounds.to}</span>
+              {view === 'report' ? (
+                <>
+                  Báo cáo tháng {String(calMonth).padStart(2, '0')}/{calYear}
+                  <span className="text-gray-400"> — {monthRangeBounds.from} → {monthRangeBounds.to}</span>
+                  {reportData?.summary?.total != null && (
+                    <span className="text-gray-400"> · {reportData.summary.total} sự kiện · {reportData.summary.unique_staff || 0} NV</span>
+                  )}
+                </>
+              ) : (
+                <>
+                  {totalEvents > (events || []).length && (events || []).length >= 500
+                    ? `Hiển thị ${(events || []).length} / ${totalEvents} sự kiện (giới hạn 500)`
+                    : `${totalEvents || (events || []).length} sự kiện`}
+                  {view === 'calendar' && (
+                    <span className="text-gray-400"> — khoảng {monthRangeBounds.from} → {monthRangeBounds.to}</span>
+                  )}
+                </>
               )}
             </span>
             {view !== 'calendar' && timeFilterLabel && (
@@ -817,23 +936,65 @@ export default function EventsFeedPage({ lockedModule = '' } = {}) {
             </Link>
           )}
           {/* View toggle */}
-          <div className="flex bg-gray-100 rounded-lg p-0.5">
-          <button onClick={() => setView('calendar')} className={`px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-1.5 cursor-pointer transition ${view === 'calendar' ? 'bg-white shadow text-blue-700' : 'text-gray-500 hover:text-gray-700'}`}>
+          <div className="flex bg-gray-100 rounded-lg p-0.5" data-tour="events-view-toggle">
+          <button
+            type="button"
+            data-tour="events-view-calendar"
+            onClick={() => setView('calendar')}
+            className={`px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-1.5 cursor-pointer transition ${view === 'calendar' ? 'bg-white shadow text-blue-700' : 'text-gray-500 hover:text-gray-700'}`}
+          >
               <Calendar className="h-4 w-4" /> Lịch
             </button>
-            <button onClick={() => setView('feed')} className={`px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-1.5 cursor-pointer transition ${view === 'feed' ? 'bg-white shadow text-blue-700' : 'text-gray-500 hover:text-gray-700'}`}>
+            <button
+              type="button"
+              data-tour="events-view-feed"
+              onClick={() => setView('feed')}
+              className={`px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-1.5 cursor-pointer transition ${view === 'feed' ? 'bg-white shadow text-blue-700' : 'text-gray-500 hover:text-gray-700'}`}
+            >
               <List className="h-4 w-4" /> Feed
             </button>
-            <button onClick={() => setView('list')} className={`px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-1.5 cursor-pointer transition ${view === 'list' ? 'bg-white shadow text-blue-700' : 'text-gray-500 hover:text-gray-700'}`}>
+            <button
+              type="button"
+              data-tour="events-view-list"
+              onClick={() => setView('list')}
+              className={`px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-1.5 cursor-pointer transition ${view === 'list' ? 'bg-white shadow text-blue-700' : 'text-gray-500 hover:text-gray-700'}`}
+            >
               <Table2 className="h-4 w-4" /> Danh sách
             </button>
-            <button onClick={() => setView('types')} className={`px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-1.5 cursor-pointer transition ${view === 'types' ? 'bg-white shadow text-blue-700' : 'text-gray-500 hover:text-gray-700'}`}>
+            <button
+              type="button"
+              data-tour="events-view-report"
+              onClick={() => setView('report')}
+              className={`px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-1.5 cursor-pointer transition ${view === 'report' ? 'bg-white shadow text-blue-700' : 'text-gray-500 hover:text-gray-700'}`}
+            >
+              <BarChart3 className="h-4 w-4" /> Báo cáo tháng
+            </button>
+            <button
+              type="button"
+              data-tour="events-view-types"
+              onClick={() => setView('types')}
+              className={`px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-1.5 cursor-pointer transition ${view === 'types' ? 'bg-white shadow text-blue-700' : 'text-gray-500 hover:text-gray-700'}`}
+            >
               <Settings className="h-4 w-4" /> Loại
             </button>
           </div>
+          {view === 'report' && (
+            <button
+              type="button"
+              data-tour="events-export-report-excel"
+              onClick={handleExportReportExcel}
+              disabled={reportLoading || !(reportData?.by_staff || []).length}
+              title={`Xuất Excel báo cáo nhân viên tháng ${String(calMonth).padStart(2, '0')}/${calYear}`}
+              className="h-9 px-3 inline-flex items-center gap-1.5 text-sm font-medium border border-emerald-300 text-emerald-700 rounded-lg bg-white hover:bg-emerald-50 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+            >
+              <FileSpreadsheet className="h-4 w-4" />
+              Xuất Excel
+            </button>
+          )}
           {(view === 'feed' || view === 'calendar' || view === 'list') && (
             <button
               type="button"
+              data-tour="events-export-excel"
               onClick={handleExportExcel}
               disabled={exporting}
               title={`Xuất Excel sự kiện${rangeFrom || rangeTo ? ` (${rangeFrom || '...'} → ${rangeTo || '...'})` : ' (theo bộ lọc)'}`}
@@ -843,7 +1004,26 @@ export default function EventsFeedPage({ lockedModule = '' } = {}) {
               Xuất Excel
             </button>
           )}
-          <button onClick={() => {
+          {!forcedModule && (
+            <button
+              type="button"
+              data-tour="events-tour-btn"
+              onClick={() => {
+                window.dispatchEvent(new CustomEvent('product-tour:start', {
+                  detail: { id: 'crm-events-page', preferCurrentPath: true },
+                }));
+              }}
+              className="h-9 px-3 inline-flex items-center gap-1.5 text-sm font-medium border border-sky-200 bg-sky-50 text-sky-800 rounded-lg hover:bg-sky-100 cursor-pointer"
+              title="Hướng dẫn dùng trang Sự kiện"
+            >
+              <BookOpen className="h-4 w-4" />
+              Hướng dẫn
+            </button>
+          )}
+          <button
+            type="button"
+            data-tour="events-create-btn"
+            onClick={() => {
             if (canPickCompany && !filterCompanyId) {
               alert('Chọn công ty ở bộ lọc phía trên trước khi tạo sự kiện — nếu không, sự kiện sẽ không hiện trên lịch khi đang lọc theo công ty.');
               return;
@@ -860,9 +1040,10 @@ export default function EventsFeedPage({ lockedModule = '' } = {}) {
 
       {/* Toolbar lọc gọn kiểu CRM Dashboard */}
       {(view === 'feed' || view === 'calendar' || view === 'list') && (
-        <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden relative">
+        <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden relative" data-tour="events-toolbar">
           <div className="flex flex-wrap items-center gap-1 px-2.5 py-1.5 border-b border-slate-200/60 bg-slate-50/40">
             <div
+              data-tour="events-search"
               className={`group/search flex items-center shrink-0 flex-1 min-w-[12rem] max-w-md rounded-md border transition-colors ${
                 search.trim()
                   ? 'border-violet-300 bg-violet-50/80'
@@ -894,6 +1075,7 @@ export default function EventsFeedPage({ lockedModule = '' } = {}) {
 
             <button
               type="button"
+              data-tour="events-filter"
               onClick={() => setShowAdvFilters((v) => !v)}
               title={showAdvFilters ? 'Thu gọn bộ lọc' : 'Bộ lọc'}
               className={`${ctrlH} px-2 rounded-md ${ctrlTxt} font-medium inline-flex items-center gap-1 cursor-pointer transition-colors shrink-0 border ${
@@ -1009,7 +1191,7 @@ export default function EventsFeedPage({ lockedModule = '' } = {}) {
             </div>
           )}
 
-          <div className={`p-4 ${view === 'calendar' ? 'space-y-4' : ''}`}>
+          <div className={`p-4 ${view === 'calendar' ? 'space-y-4' : ''}`} data-tour="events-board">
             {view === 'calendar' && calendarMode !== 'hidden' && (
               <CalendarView
                 month={calMonth} year={calYear} events={calEvents} eventTypes={eventTypes}
@@ -1123,6 +1305,38 @@ export default function EventsFeedPage({ lockedModule = '' } = {}) {
         </div>
       )}
 
+      {/* Báo cáo tháng — tổng sự kiện theo nhân viên */}
+      {view === 'report' && (
+        <MonthlyStaffReport
+          year={calYear}
+          month={calMonth}
+          periodFrom={monthRangeBounds.from}
+          periodTo={monthRangeBounds.to}
+          loading={reportLoading}
+          error={reportError}
+          data={reportData}
+          filterType={filterType}
+          filterUser={filterUser}
+          filterRegionId={filterRegionId}
+          eventTypes={eventTypes}
+          users={users}
+          regions={regions}
+          effectiveCompanyIdForUsers={effectiveCompanyIdForUsers}
+          onPrevMonth={() => {
+            if (calMonth === 1) { setCalMonth(12); setCalYear((y) => y - 1); }
+            else setCalMonth((m) => m - 1);
+          }}
+          onNextMonth={() => {
+            if (calMonth === 12) { setCalMonth(1); setCalYear((y) => y + 1); }
+            else setCalMonth((m) => m + 1);
+          }}
+          onFilterType={setFilterType}
+          onFilterUser={setFilterUser}
+          onFilterRegion={setFilterRegionId}
+          onExport={handleExportReportExcel}
+        />
+      )}
+
       {/* Event Types Manager */}
       {view === 'types' && (
         <EventTypesManager types={eventTypes} onReload={loadEventTypes} />
@@ -1211,11 +1425,19 @@ function EventCard({ event: ev, eventTypes, currentUser, pageModule = 'crm', onR
   const [comments, setComments] = useState([]);
   const [showComments, setShowComments] = useState(false);
   const [sending, setSending] = useState(false);
+  const [completing, setCompleting] = useState(false);
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
   /** Quyền hủy/xóa: chỉ người tạo (`created_by`) hoặc admin. */
   const canManage = isAdminLike(currentUser)
     || String(ev.created_by || '') === String(currentUser?.id || '');
+  /** Hoàn thành: người tạo, người phụ trách, hoặc admin. */
+  const canComplete = canManage
+    || String(ev.assignee_id || '') === String(currentUser?.id || '');
+  const canCompleteNow = canComplete
+    && ev.status !== 'cancelled'
+    && ev.status !== 'completed'
+    && typeof onStatusChange === 'function';
 
   const typeInfo = eventTypes.find(t => t.slug === ev.event_type) || ev.event_type_ref || { icon: '📋', name: ev.event_type, color: '#6B7280' };
   const statusInfo = STATUS_MAP[ev.status] || STATUS_MAP.planned;
@@ -1223,6 +1445,17 @@ function EventCard({ event: ev, eventTypes, currentUser, pageModule = 'crm', onR
   const declined = (ev.participants || []).filter(p => p.status === 'declined');
   const pending = (ev.participants || []).filter(p => p.status === 'pending');
   const myParticipation = (ev.participants || []).find(p => p.user_id === currentUser.id);
+
+  const handleComplete = async () => {
+    if (!canCompleteNow || completing) return;
+    if (!window.confirm(`Đánh dấu hoàn thành sự kiện «${ev.title || ''}»?`)) return;
+    setCompleting(true);
+    try {
+      await onStatusChange(ev.id, 'completed');
+    } finally {
+      setCompleting(false);
+    }
+  };
 
   const loadComments = async () => {
     try {
@@ -1264,6 +1497,17 @@ function EventCard({ event: ev, eventTypes, currentUser, pageModule = 'crm', onR
         </div>
         <div className="flex items-center gap-0.5 shrink-0">
           <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${statusInfo.color}`}>{statusInfo.label}</span>
+          {canCompleteNow && (
+            <button
+              type="button"
+              onClick={handleComplete}
+              disabled={completing}
+              title="Hoàn thành sự kiện"
+              className="p-1 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 rounded cursor-pointer disabled:opacity-50"
+            >
+              {completing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+            </button>
+          )}
           <button onClick={onEdit} title="Sửa" className="p-1 text-gray-400 hover:text-blue-600 rounded cursor-pointer"><Edit3 className="h-3.5 w-3.5" /></button>
           {canManage && ev.status !== 'cancelled' && ev.status !== 'completed' && typeof onCancel === 'function' && (
             <button
@@ -1451,13 +1695,30 @@ function EventCard({ event: ev, eventTypes, currentUser, pageModule = 'crm', onR
         )}
 
         {/* Status quick actions */}
-        {ev.status === 'planned' && ev.created_by === currentUser.id && (
-          <button onClick={() => onStatusChange(ev.id, 'in_progress')}
-            className="text-[11px] text-amber-600 hover:underline cursor-pointer font-medium">▶ Bắt đầu</button>
+        {ev.status === 'planned' && canComplete && (
+          <button
+            type="button"
+            onClick={() => onStatusChange(ev.id, 'in_progress')}
+            className="h-7 px-2.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded text-[11px] font-semibold cursor-pointer inline-flex items-center gap-1"
+          >
+            ▶ Bắt đầu
+          </button>
         )}
-        {ev.status === 'in_progress' && (
-          <button onClick={() => onStatusChange(ev.id, 'completed')}
-            className="text-[11px] text-emerald-600 hover:underline cursor-pointer font-medium">✅ Hoàn thành</button>
+        {canCompleteNow && (
+          <button
+            type="button"
+            onClick={handleComplete}
+            disabled={completing}
+            className="h-7 px-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-[11px] font-bold cursor-pointer inline-flex items-center gap-1 disabled:opacity-50"
+          >
+            {completing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+            Hoàn thành
+          </button>
+        )}
+        {ev.status === 'completed' && (
+          <span className="h-7 px-2.5 inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded">
+            <CheckCircle2 className="h-3.5 w-3.5" /> Đã hoàn thành
+          </span>
         )}
       </div>
 
@@ -2071,22 +2332,38 @@ function EventListView({
                       </td>
                       <td className="px-3 py-2 whitespace-nowrap text-xs text-right">
                         <div className="inline-flex items-center gap-0.5" onClick={(e) => e.stopPropagation()}>
-                          {ev.status === 'planned' && (
-                            <button
-                              onClick={() => onStatusChange(ev.id, 'in_progress')}
-                              title="Bắt đầu"
-                              className="p-1 text-amber-600 hover:bg-amber-50 rounded cursor-pointer"
-                            >▶</button>
-                          )}
-                          {ev.status === 'in_progress' && (
-                            <button
-                              onClick={() => onStatusChange(ev.id, 'completed')}
-                              title="Hoàn thành"
-                              className="p-1 text-emerald-600 hover:bg-emerald-50 rounded cursor-pointer"
-                            >
-                              <CheckCircle2 className="h-3.5 w-3.5" />
-                            </button>
-                          )}
+                          {(() => {
+                            const rowCanComplete = (
+                              isAdminLike(currentUser)
+                              || String(ev.created_by || '') === String(currentUser?.id || '')
+                              || String(ev.assignee_id || '') === String(currentUser?.id || '')
+                            ) && ev.status !== 'cancelled' && ev.status !== 'completed';
+                            return (
+                              <>
+                                {ev.status === 'planned' && rowCanComplete && (
+                                  <button
+                                    type="button"
+                                    onClick={() => onStatusChange(ev.id, 'in_progress')}
+                                    title="Bắt đầu"
+                                    className="p-1 text-amber-600 hover:bg-amber-50 rounded cursor-pointer"
+                                  >▶</button>
+                                )}
+                                {rowCanComplete && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      if (!window.confirm(`Đánh dấu hoàn thành sự kiện «${ev.title || ''}»?`)) return;
+                                      onStatusChange(ev.id, 'completed');
+                                    }}
+                                    title="Hoàn thành"
+                                    className="p-1 text-emerald-600 hover:bg-emerald-50 rounded cursor-pointer"
+                                  >
+                                    <CheckCircle2 className="h-3.5 w-3.5" />
+                                  </button>
+                                )}
+                              </>
+                            );
+                          })()}
                           <button
                             onClick={() => onEdit(ev)}
                             title="Sửa"
@@ -2162,6 +2439,228 @@ function EventListView({
                 className="px-3 py-1.5 text-sm bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-medium disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
               >Xác nhận hủy</button>
             </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// BÁO CÁO THÁNG — tổng sự kiện theo nhân viên
+// ═══════════════════════════════════════════════════════════════
+function MonthlyStaffReport({
+  year,
+  month,
+  periodFrom,
+  periodTo,
+  loading,
+  error,
+  data,
+  filterType,
+  filterUser,
+  filterRegionId,
+  eventTypes,
+  users,
+  regions,
+  effectiveCompanyIdForUsers,
+  onPrevMonth,
+  onNextMonth,
+  onFilterType,
+  onFilterUser,
+  onFilterRegion,
+  onExport,
+}) {
+  const staff = data?.by_staff || [];
+  const summary = data?.summary || {};
+  const maxTotal = staff.reduce((m, r) => Math.max(m, r.total || 0), 0) || 1;
+  const monthLabel = new Date(year, month - 1, 1).toLocaleDateString('vi-VN', { month: 'long', year: 'numeric' });
+
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden" data-tour="events-monthly-report">
+      <div className="px-4 py-3 border-b border-gray-100 bg-slate-50/80 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onPrevMonth}
+            className="h-8 w-8 inline-flex items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 cursor-pointer"
+            title="Tháng trước"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </button>
+          <div>
+            <div className="text-sm font-bold text-gray-900 capitalize flex items-center gap-1.5">
+              <BarChart3 className="h-4 w-4 text-blue-600" />
+              Báo cáo tháng — {monthLabel}
+            </div>
+            <div className="text-[11px] text-gray-500 tabular-nums">{periodFrom} → {periodTo}</div>
+          </div>
+          <button
+            type="button"
+            onClick={onNextMonth}
+            className="h-8 w-8 inline-flex items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 cursor-pointer"
+            title="Tháng sau"
+          >
+            <ChevronRight className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="flex flex-wrap items-end gap-2">
+          <div>
+            <label className="block text-[10px] text-gray-500 mb-0.5">Loại</label>
+            <select
+              value={filterType}
+              onChange={(e) => onFilterType(e.target.value)}
+              className="h-8 px-2 border border-gray-200 rounded-lg text-xs min-w-[120px] bg-white"
+            >
+              <option value="">Tất cả loại</option>
+              {eventTypes.map((t) => (
+                <option key={t.slug} value={t.slug}>{t.icon} {t.name}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-[10px] text-gray-500 mb-0.5">Nhân viên</label>
+            <select
+              value={filterUser}
+              onChange={(e) => onFilterUser(e.target.value)}
+              disabled={!effectiveCompanyIdForUsers}
+              className="h-8 px-2 border border-gray-200 rounded-lg text-xs min-w-[140px] bg-white disabled:bg-gray-100"
+            >
+              <option value="">Tất cả</option>
+              {users.map((u) => (
+                <option key={u.id} value={u.id}>{u.full_name}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-[10px] text-gray-500 mb-0.5">Khu vực</label>
+            <select
+              value={filterRegionId}
+              onChange={(e) => onFilterRegion(e.target.value)}
+              disabled={!effectiveCompanyIdForUsers}
+              className="h-8 px-2 border border-gray-200 rounded-lg text-xs min-w-[120px] bg-white disabled:bg-gray-100"
+            >
+              <option value="">Tất cả</option>
+              {regions.map((rg) => (
+                <option key={rg.id} value={rg.id}>{rg.name}</option>
+              ))}
+            </select>
+          </div>
+          <button
+            type="button"
+            onClick={onExport}
+            disabled={loading || !staff.length}
+            className="h-8 px-2.5 inline-flex items-center gap-1 text-xs font-medium border border-emerald-300 text-emerald-700 rounded-lg bg-white hover:bg-emerald-50 disabled:opacity-50 cursor-pointer"
+          >
+            <FileSpreadsheet className="h-3.5 w-3.5" /> Excel
+          </button>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="flex justify-center py-20">
+          <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
+        </div>
+      ) : error ? (
+        <div className="px-4 py-12 text-center text-sm text-red-600 flex flex-col items-center gap-2">
+          <AlertCircle className="h-5 w-5" />
+          {error}
+        </div>
+      ) : (
+        <div className="p-4 space-y-4">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="rounded-xl border border-blue-100 bg-blue-50/60 px-3 py-3">
+              <div className="text-[11px] font-medium text-blue-700/80 flex items-center gap-1">
+                <Calendar className="h-3.5 w-3.5" /> Tổng sự kiện
+              </div>
+              <div className="mt-1 text-2xl font-bold text-blue-900 tabular-nums">{summary.total ?? 0}</div>
+            </div>
+            <div className="rounded-xl border border-violet-100 bg-violet-50/60 px-3 py-3">
+              <div className="text-[11px] font-medium text-violet-700/80 flex items-center gap-1">
+                <Users className="h-3.5 w-3.5" /> Nhân viên
+              </div>
+              <div className="mt-1 text-2xl font-bold text-violet-900 tabular-nums">{summary.unique_staff ?? 0}</div>
+            </div>
+            <div className="rounded-xl border border-emerald-100 bg-emerald-50/60 px-3 py-3">
+              <div className="text-[11px] font-medium text-emerald-700/80 flex items-center gap-1">
+                <CheckCircle2 className="h-3.5 w-3.5" /> Hoàn thành
+              </div>
+              <div className="mt-1 text-2xl font-bold text-emerald-900 tabular-nums">{summary.completed ?? 0}</div>
+              <div className="text-[10px] text-emerald-700/70 mt-0.5">{summary.completion_rate ?? 0}% tỷ lệ</div>
+            </div>
+            <div className="rounded-xl border border-amber-100 bg-amber-50/60 px-3 py-3">
+              <div className="text-[11px] font-medium text-amber-700/80 flex items-center gap-1">
+                <Clock className="h-3.5 w-3.5" /> Đang / kế hoạch
+              </div>
+              <div className="mt-1 text-2xl font-bold text-amber-900 tabular-nums">
+                {(summary.planned ?? 0) + (summary.in_progress ?? 0)}
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-gray-200 overflow-hidden">
+            <div className="px-4 py-2.5 border-b bg-gray-50 flex items-center justify-between gap-2 flex-wrap">
+              <h2 className="text-sm font-bold text-gray-800 flex items-center gap-1.5">
+                <Users className="h-4 w-4 text-gray-500" />
+                Nhân viên theo tổng sự kiện
+              </h2>
+              <span className="text-[11px] text-gray-500">
+                Đếm sự kiện nhân viên tạo hoặc được giao phụ trách (mỗi sự kiện tối đa 1 lần/NV)
+              </span>
+            </div>
+            {staff.length === 0 ? (
+              <div className="py-14 text-center text-sm text-gray-400">
+                Không có nhân viên nào có sự kiện trong tháng này
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b text-[11px] uppercase tracking-wide text-gray-500 bg-gray-50/60">
+                      <th className="py-2.5 px-3 text-left w-12">#</th>
+                      <th className="py-2.5 px-3 text-left">Nhân viên</th>
+                      <th className="py-2.5 px-3 text-left min-w-[140px]">Tỷ lệ</th>
+                      <th className="py-2.5 px-3 text-right" title="Số sự kiện do NV tạo">Đã tạo</th>
+                      <th className="py-2.5 px-3 text-right" title="Số sự kiện NV được giao phụ trách">Được giao</th>
+                      <th className="py-2.5 px-3 text-right font-semibold">Tổng</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {staff.map((row, idx) => {
+                      const pct = Math.round(((row.total || 0) / maxTotal) * 100);
+                      return (
+                        <tr key={row.user_id} className="border-b border-gray-100 hover:bg-slate-50/70">
+                          <td className="py-2.5 px-3 text-gray-400 tabular-nums">{idx + 1}</td>
+                          <td className="py-2.5 px-3">
+                            <div className="flex items-center gap-2 min-w-0">
+                              {row.avatar ? (
+                                <img src={row.avatar} alt="" className="h-7 w-7 rounded-full object-cover shrink-0" />
+                              ) : (
+                                <span className="h-7 w-7 rounded-full bg-blue-100 text-blue-700 text-[11px] font-bold inline-flex items-center justify-center shrink-0">
+                                  {(row.full_name || '?').slice(0, 1).toUpperCase()}
+                                </span>
+                              )}
+                              <span className="font-medium text-gray-900 truncate">{row.full_name}</span>
+                            </div>
+                          </td>
+                          <td className="py-2.5 px-3">
+                            <div className="h-2 rounded-full bg-gray-100 overflow-hidden max-w-[180px]">
+                              <div
+                                className="h-full rounded-full bg-blue-500"
+                                style={{ width: `${pct}%` }}
+                              />
+                            </div>
+                          </td>
+                          <td className="py-2.5 px-3 text-right text-blue-700 tabular-nums">{row.as_creator || 0}</td>
+                          <td className="py-2.5 px-3 text-right text-violet-700 tabular-nums">{row.as_assignee || 0}</td>
+                          <td className="py-2.5 px-3 text-right font-bold text-gray-900 tabular-nums">{row.total || 0}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         </div>
       )}

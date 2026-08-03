@@ -30,6 +30,7 @@ const {
 const { promoteNextAssignmentAfterComplete } = require('../helpers/crmSequentialAssignment');
 const { emitCrmTaskChanged } = require('../helpers/crmTaskRealtime');
 const { responseCache, invalidateTags: rcInvalidateTags } = require('../middleware/responseCache');
+const { listSharedWorkspaceInboxTasks } = require('../helpers/sharedWorkspaceInbox');
 
 /** Mobile SX Work tab lắng nghe crm:task_changed — emit khi assignment gắn lead/deal. */
 async function emitAssignmentTaskChanged(req, assignment, action = 'updated') {
@@ -471,9 +472,9 @@ function assignmentNotifCopy(assignment) {
         ? '📋 Bạn vừa được giao nhiệm vụ VC/LĐ'
         : '📋 Bạn vừa được giao nhiệm vụ CRM',
     metadata: {
-      module_key: isProd ? 'production' : (isLogistics ? 'vc' : 'crm'),
+      module_key: isProd ? 'production' : (isLogistics ? 'logistics' : 'crm'),
       ecosystem_module_key: isLogistics ? 'logistics' : (isProd ? 'production' : 'crm'),
-      nav_path: isProd ? '/sx/assignments' : '/crm/assignments',
+      nav_path: isProd ? '/sx/assignments' : (isLogistics ? '/vc/assignments' : '/crm/assignments'),
       open: assignment?.id,
       lead_id: assignment?.lead_id || null,
       task_source_type: assignment?.task_source_type || null,
@@ -1024,7 +1025,7 @@ r.get('/unread-count', responseCache({ ttl: 30, scope: 'user', tags: ['crm:assig
       .select('id, status, deadline')
       .in('id', ids)
       .neq('status', 'completed');
-    if (moduleFilter === 'production' || moduleFilter === 'crm') {
+    if (moduleFilter === 'production' || moduleFilter === 'crm' || moduleFilter === 'logistics') {
       q = q.eq('assignment_module', moduleFilter);
     }
     let { data: items, error: listErr } = await q;
@@ -1380,11 +1381,25 @@ r.delete('/:id/comments/:cid', async (req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi xóa bình luận' }); }
 });
 
+// GET /api/crm/assignments/shared-workspace-tasks?assignment_module=crm|production|logistics
+r.get('/shared-workspace-tasks', async (req, res) => {
+  try {
+    const result = await listSharedWorkspaceInboxTasks(req, {
+      assignmentModule: req.query.assignment_module,
+    });
+    res.json(result);
+  } catch (e) {
+    console.error('[shared-workspace-tasks]', e);
+    res.status(500).json({ error: e.message || 'Lỗi tải công việc chung' });
+  }
+});
+
 // ─── SCHEDULES — giao việc theo lịch / lặp lại ───────────────────────────────
-// GET /api/crm/assignments/schedules?assignment_module=crm|production
+// GET /api/crm/assignments/schedules?assignment_module=crm|production|logistics
 r.get('/schedules', async (req, res) => {
   try {
-    const moduleFilter = req.query.assignment_module === 'production' ? 'production' : 'crm';
+    const rawMod = String(req.query.assignment_module || 'crm').toLowerCase();
+    const moduleFilter = ['production', 'logistics'].includes(rawMod) ? rawMod : 'crm';
     let q = supabase
       .from('crm_assignment_schedules')
       .select('*')

@@ -32,9 +32,21 @@ export default function ZaloChatTab({ leadId }) {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
   const [imageLightboxIndex, setImageLightboxIndex] = useState(null);
-  const messagesEndRef = useRef(null);
+  const messagesContainerRef = useRef(null);
   const contactRef = useRef(null);
   contactRef.current = contact;
+
+  /** Chỉ cuộn trong khung chat — không dùng scrollIntoView (kéo cả trang LeadDetail). */
+  const scrollChatToBottom = useCallback((smooth = true) => {
+    const box = messagesContainerRef.current;
+    if (!box) return;
+    const top = box.scrollHeight;
+    if (typeof box.scrollTo === 'function') {
+      box.scrollTo({ top, behavior: smooth ? 'smooth' : 'auto' });
+    } else {
+      box.scrollTop = top;
+    }
+  }, []);
 
   const uniqueMessages = useMemo(() => {
     const seen = new Set();
@@ -91,7 +103,7 @@ export default function ZaloChatTab({ leadId }) {
       if (c0?.id && looksLikePlaceholderName(c0.display_name, c0.user_id)) {
         await syncProfile(c0.id);
       }
-      setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+      setTimeout(() => scrollChatToBottom(false), 100);
     } catch {
       setLoadError('error');
       setMessages([]);
@@ -99,7 +111,7 @@ export default function ZaloChatTab({ leadId }) {
     } finally {
       setLoading(false);
     }
-  }, [leadId, syncProfile]);
+  }, [leadId, syncProfile, scrollChatToBottom]);
 
   useEffect(() => {
     loadMessages();
@@ -116,11 +128,11 @@ export default function ZaloChatTab({ leadId }) {
           : [...prev, { ...payload.message, contact: contactRef.current }],
       );
       if (payload.contact) setContact((c) => ({ ...c, ...payload.contact }));
-      setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+      setTimeout(() => scrollChatToBottom(true), 100);
     };
     socket.on('zalo_message', h);
     return () => socket.off('zalo_message', h);
-  }, [socket]);
+  }, [socket, scrollChatToBottom]);
 
   const sendReply = async () => {
     if (!reply.trim() || !contact?.id || sending) return;
@@ -140,7 +152,7 @@ export default function ZaloChatTab({ leadId }) {
         setMessages((prev) => [...prev, { ...d.message, contact }]);
       }
       setReply('');
-      setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+      setTimeout(() => scrollChatToBottom(true), 100);
     } catch {
       alert('Lỗi mạng');
     } finally {
@@ -223,7 +235,7 @@ export default function ZaloChatTab({ leadId }) {
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto space-y-2 pr-1">
+      <div ref={messagesContainerRef} className="flex-1 overflow-y-auto space-y-2 pr-1">
         {uniqueMessages.map((m, i) => {
           const isOut = m.direction === 'outbound';
           const showDate =
@@ -277,7 +289,6 @@ export default function ZaloChatTab({ leadId }) {
             </div>
           );
         })}
-        <div ref={messagesEndRef} />
       </div>
 
       <div className="pt-3 border-t mt-3 shrink-0">

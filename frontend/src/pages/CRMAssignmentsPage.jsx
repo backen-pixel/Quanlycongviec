@@ -31,15 +31,151 @@ import {
   assignmentDealCardLabel,
   assignmentSourceFieldLabel,
   isProductionAssignmentsPage,
+  isLogisticsAssignmentsPage,
+  normalizeAssignmentPageModule,
 } from '../lib/assignmentSourceLink';
 import CommentDisplayHiddenBanner, { useCommentShowOnScreenEnabled } from '../components/CommentDisplayHiddenBanner';
 import TaskFillFormModal from '../components/TaskFillFormModal';
+
+const SOURCE_TYPE_LABELS = {
+  customer_request: 'Yêu cầu KH',
+  employee_error: 'Lỗi NV',
+};
 
 /** Modal phải portal ra body — tránh bị sidebar (z-30) đè vì main nằm trong stacking context z-10. */
 const ASSIGNMENTS_MODAL_Z = 'z-[100]';
 function portalAssignmentsModal(node) {
   if (typeof document === 'undefined') return null;
   return createPortal(node, document.body);
+}
+
+function SharedWorkspaceInbox({ tasks, loading, assignmentModule, search, onSearchChange }) {
+  const q = String(search || '').trim().toLowerCase();
+  const filtered = useMemo(() => {
+    const list = Array.isArray(tasks) ? tasks : [];
+    if (!q) return list;
+    return list.filter((t) => {
+      const hay = [
+        t.title,
+        t.lead?.code,
+        t.lead?.title,
+        t.lead?.project_code,
+        t.lead?.project_name,
+        t.assignee?.full_name,
+        t.executor_company_name,
+        t.owner_company_name,
+        SOURCE_TYPE_LABELS[t.task_source_type],
+      ].filter(Boolean).join(' ').toLowerCase();
+      return hay.includes(q);
+    });
+  }, [tasks, q]);
+
+  const statusLabel = (s) => STATUS_MAP[s]?.label || s || '—';
+  const sourceLabel = (t) => {
+    if (!t?.task_source_type) return null;
+    const base = SOURCE_TYPE_LABELS[t.task_source_type] || t.task_source_type;
+    if (t.task_source_type === 'employee_error' && t.employee_error_module) {
+      return `${base} · ${t.employee_error_module}`;
+    }
+    return base;
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="relative max-w-md">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+        <input
+          value={search}
+          onChange={(e) => onSearchChange?.(e.target.value)}
+          placeholder="Tìm deal, nhiệm vụ, công ty…"
+          className="w-full h-9 pl-9 pr-3 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-blue-400"
+        />
+      </div>
+
+      {loading ? (
+        <div className="flex items-center justify-center py-16">
+          <div className="animate-spin h-8 w-8 border-3 border-blue-600 border-t-transparent rounded-full" />
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 px-4 py-10 text-center text-sm text-gray-500">
+          Chưa có công việc chung phù hợp module này.
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {filtered.map((t) => {
+            const StIcon = STATUS_MAP[t.status]?.icon || Circle;
+            const stColor = STATUS_MAP[t.status]?.color || 'text-gray-400';
+            const dealLabel = assignmentDealCardLabel(t.lead) || t.lead?.title || 'Deal';
+            const src = sourceLabel(t);
+            return (
+              <div
+                key={t.id}
+                className="rounded-xl border border-gray-200 bg-white p-3 sm:p-4 flex flex-col sm:flex-row sm:items-center gap-3 hover:border-blue-200 hover:shadow-sm transition"
+              >
+                <div className="flex-1 min-w-0 space-y-1">
+                  <div className="flex items-start gap-2">
+                    <StIcon className={`h-4 w-4 mt-0.5 shrink-0 ${stColor}`} />
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-gray-900 truncate">{t.title || 'Nhiệm vụ'}</p>
+                      <p className="text-xs text-gray-500 truncate">
+                        {dealLabel}
+                        {t.lead?.project_code ? ` · ${t.lead.project_code}` : ''}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5 pl-6">
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-700">
+                      {statusLabel(t.status)}
+                    </span>
+                    {t.deadline && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-800 inline-flex items-center gap-0.5">
+                        <Calendar className="h-2.5 w-2.5" />
+                        {formatDate(t.deadline)}
+                      </span>
+                    )}
+                    {t.assignee?.full_name && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-800 inline-flex items-center gap-0.5">
+                        <UserIcon className="h-2.5 w-2.5" />
+                        {t.assignee.full_name}
+                      </span>
+                    )}
+                    {t.executor_company_name && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-teal-50 text-teal-800">
+                        TH: {t.executor_company_name}
+                      </span>
+                    )}
+                    {t.owner_company_name && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-50 text-slate-700">
+                        Chủ: {t.owner_company_name}
+                      </span>
+                    )}
+                    {src && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-violet-50 text-violet-800">
+                        {src}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                {t.href ? (
+                  <Link
+                    to={t.href}
+                    className="shrink-0 h-8 px-3 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium inline-flex items-center justify-center"
+                  >
+                    Mở không gian chung
+                  </Link>
+                ) : (
+                  <span className="text-[11px] text-gray-400 shrink-0">Không có liên kết</span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+      <p className="text-[11px] text-gray-400">
+        Module {normalizeAssignmentPageModule(assignmentModule)} — nhiệm vụ tạo từ tab Không gian chung trên deal.
+      </p>
+    </div>
+  );
 }
 
 /**
@@ -198,22 +334,31 @@ function LeadAssignmentLink({ assignment, className = '', variant = 'chip' }) {
   const href = buildAssignmentSourceHref(assignment, assignmentModule);
   if (!href) return null;
   const isSx = isProductionAssignmentsPage(assignmentModule);
+  const isVc = isLogisticsAssignmentsPage(assignmentModule);
   const label = variant === 'card' ? assignmentDealCardLabel(lead) : assignmentSourceLabel(lead);
   const tooltip = assignmentSourceTooltip(lead, assignmentModule);
   const taskHint = assignment?.crm_task_id
-    ? `${tooltip}${isSx ? '' : ''} (focus nhiệm vụ pipeline)`
+    ? `${tooltip} (focus nhiệm vụ pipeline)`
     : tooltip;
   const isDeal = String(lead.type || '').toLowerCase() === 'deal';
-  const icon = isSx ? '🏭' : (isDeal ? '🎯' : '💼');
+  const icon = isSx ? '🏭' : isVc ? '🚚' : (isDeal ? '🎯' : '💼');
+  const tone = isSx
+    ? 'text-teal-800 hover:text-teal-950'
+    : isVc
+      ? 'text-orange-800 hover:text-orange-950'
+      : 'text-indigo-800 hover:text-indigo-950';
+  const chipTone = isSx
+    ? 'border-teal-200 bg-teal-50 text-teal-800 hover:bg-teal-100'
+    : isVc
+      ? 'border-orange-200 bg-orange-50 text-orange-800 hover:bg-orange-100'
+      : 'border-indigo-200 bg-indigo-50 text-indigo-800 hover:bg-indigo-100';
 
   if (variant === 'card') {
     return (
       <Link
         to={href}
         onClick={(e) => e.stopPropagation()}
-        className={`flex items-center gap-1 mt-1 min-w-0 text-[11px] font-medium hover:underline ${
-          isSx ? 'text-teal-800 hover:text-teal-950' : 'text-indigo-800 hover:text-indigo-950'
-        } ${className}`}
+        className={`flex items-center gap-1 mt-1 min-w-0 text-[11px] font-medium hover:underline ${tone} ${className}`}
         title={taskHint}
       >
         <span className="shrink-0" aria-hidden>{icon}</span>
@@ -226,11 +371,7 @@ function LeadAssignmentLink({ assignment, className = '', variant = 'chip' }) {
     <Link
       to={href}
       onClick={(e) => e.stopPropagation()}
-      className={`inline-flex items-center gap-0.5 rounded border px-1.5 py-0.5 text-[10px] font-medium max-w-[200px] truncate ${
-        isSx
-          ? 'border-teal-200 bg-teal-50 text-teal-800 hover:bg-teal-100'
-          : 'border-indigo-200 bg-indigo-50 text-indigo-800 hover:bg-indigo-100'
-      } ${className}`}
+      className={`inline-flex items-center gap-0.5 rounded border px-1.5 py-0.5 text-[10px] font-medium max-w-[200px] truncate ${chipTone} ${className}`}
       title={taskHint}
     >
       {icon} {label}
@@ -256,9 +397,14 @@ export default function CRMAssignmentsPage({
   const canManageTask = useCallback((t) => isAssignmentCreator(t, uid), [uid]);
   const canMoveTask = useCallback((t) => canMoveAssignment(t, uid), [uid]);
 
+  const [pageTab, setPageTab] = useState(() => (
+    String(searchParams.get('pageTab') || '').toLowerCase() === 'shared' ? 'shared' : 'assignments'
+  ));
   const [view, setView] = useState('kanban');
   const [columns, setColumns] = useState([]);
   const [items, setItems] = useState([]);
+  const [sharedTasks, setSharedTasks] = useState([]);
+  const [sharedLoading, setSharedLoading] = useState(false);
   const [users, setUsers] = useState([]);
   const [companies, setCompanies] = useState([]);
   const [departments, setDepartments] = useState([]);
@@ -444,6 +590,42 @@ export default function CRMAssignmentsPage({
   }, [isAdmin, filterCompanyId, filterDepartmentId, filterAssignee, filterStatus, filterPriority, searchDebounced, apiBase, assignmentModule, uid]);
 
   useEffect(() => { void load({ soft: true }); }, [load]);
+
+  const loadSharedTasks = useCallback(async () => {
+    setSharedLoading(true);
+    try {
+      const { data } = await api.get(`${apiBase}/shared-workspace-tasks`, {
+        params: { assignment_module: assignmentModule },
+      });
+      setSharedTasks(Array.isArray(data?.tasks) ? data.tasks : []);
+    } catch (e) {
+      console.error(e);
+      setSharedTasks([]);
+    }
+    setSharedLoading(false);
+  }, [apiBase, assignmentModule]);
+
+  useEffect(() => {
+    if (pageTab !== 'shared') return undefined;
+    void loadSharedTasks();
+    return undefined;
+  }, [pageTab, loadSharedTasks]);
+
+  const setPageTabAndUrl = useCallback((tab) => {
+    const next = tab === 'shared' ? 'shared' : 'assignments';
+    setPageTab(next);
+    setSearchParams((prev) => {
+      const p = new URLSearchParams(prev);
+      if (next === 'shared') p.set('pageTab', 'shared');
+      else p.delete('pageTab');
+      return p;
+    }, { replace: true });
+  }, [setSearchParams]);
+
+  useEffect(() => {
+    const t = String(searchParams.get('pageTab') || '').toLowerCase() === 'shared' ? 'shared' : 'assignments';
+    setPageTab((prev) => (prev === t ? prev : t));
+  }, [searchParams]);
 
   // Mở chi tiết từ thông báo / liên kết (?open=id)
   const openHandledRef = useRef(null);
@@ -789,6 +971,12 @@ export default function CRMAssignmentsPage({
     );
   }
 
+  const moduleHint = assignmentModule === 'production'
+    ? 'Module riêng — chỉ nhiệm vụ Sản xuất (sx_*). Không lẫn với Giao việc CRM / VC.'
+    : assignmentModule === 'logistics'
+      ? 'Module riêng — chỉ nhiệm vụ Vận chuyển (vc_*). Không lẫn với Giao việc CRM / SX.'
+      : 'Module riêng — chỉ nhiệm vụ CRM / deal. Không lẫn với Giao việc SX / VC.';
+
   return (
     <AssignmentsPageContext.Provider value={{ apiBase, assignmentModule }}>
     <div className="space-y-5">
@@ -796,52 +984,92 @@ export default function CRMAssignmentsPage({
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold" style={{ color: '#000000' }}>{pageTitle}</h1>
-          <p className="text-sm text-gray-500">
-            {stats.total} nhiệm vụ — {stats.completed} hoàn thành — {stats.inProgress} đang làm
-          </p>
-          <p className="text-xs text-gray-500 mt-0.5">
-            {assignmentModule === 'production'
-              ? 'Module riêng — chỉ nhiệm vụ Sản xuất (sx_*). Không lẫn với Giao việc CRM.'
-              : 'Module riêng — chỉ nhiệm vụ CRM / deal. Không lẫn với Giao việc Sản xuất.'}
-          </p>
-          <p className="text-[11px] text-gray-400 mt-0.5">
-            Kanban: cột dùng chung. Planner / Deadline: cột cá nhân (chỉ bạn thấy) — bấm <strong>Thêm cột</strong>.
-          </p>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <div className="flex items-center gap-1">
-            {[
-              { id: 'kanban',   icon: LayoutGrid,     label: 'Kanban' },
-              { id: 'list',     icon: ListIcon,       label: 'List' },
-              { id: 'planner',  icon: UsersIcon,      label: 'Planner' },
-              { id: 'deadline', icon: AlertTriangle,  label: 'Deadline' },
-            ].map((v) => (
-              <button
-                key={v.id}
-                onClick={() => setView(v.id)}
-                className={`h-8 px-3 rounded-lg text-xs font-medium flex items-center gap-1.5 cursor-pointer ${
-                  view === v.id ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                }`}
-              >
-                <v.icon className="h-3.5 w-3.5" />{v.label}
-              </button>
-            ))}
-          </div>
-          <button
-            onClick={() => { setEditingItem(null); setShowItemModal(true); }}
-            className="h-8 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium flex items-center gap-1 cursor-pointer"
-          >
-            <Plus className="h-4 w-4" />Giao việc
-          </button>
-          {schedules.length > 0 && (
+          <div className="mt-2 inline-flex items-center gap-1 p-0.5 rounded-lg bg-gray-100 border border-gray-200">
             <button
               type="button"
-              onClick={() => setShowSchedulesPanel((v) => !v)}
-              className="h-8 px-3 rounded-lg bg-violet-50 hover:bg-violet-100 text-violet-800 text-xs font-medium flex items-center gap-1 cursor-pointer border border-violet-200"
+              onClick={() => setPageTabAndUrl('assignments')}
+              className={`h-8 px-3 rounded-md text-xs font-semibold cursor-pointer ${
+                pageTab === 'assignments' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-600 hover:text-gray-900'
+              }`}
             >
-              <CalendarClock className="h-3.5 w-3.5" />
-              Lịch ({schedules.length})
-              <ChevronDown className={`h-3.5 w-3.5 transition ${showSchedulesPanel ? 'rotate-180' : ''}`} />
+              Giao việc
+            </button>
+            <button
+              type="button"
+              onClick={() => setPageTabAndUrl('shared')}
+              className={`h-8 px-3 rounded-md text-xs font-semibold cursor-pointer ${
+                pageTab === 'shared' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              Công việc chung
+              {sharedTasks.length > 0 && pageTab === 'shared' ? (
+                <span className="ml-1 text-[10px] text-gray-500">({sharedTasks.length})</span>
+              ) : null}
+            </button>
+          </div>
+          {pageTab === 'assignments' ? (
+            <>
+              <p className="text-sm text-gray-500 mt-1.5">
+                {stats.total} nhiệm vụ — {stats.completed} hoàn thành — {stats.inProgress} đang làm
+              </p>
+              <p className="text-xs text-gray-500 mt-0.5">{moduleHint}</p>
+              <p className="text-[11px] text-gray-400 mt-0.5">
+                Kanban: cột dùng chung. Planner / Deadline: cột cá nhân (chỉ bạn thấy) — bấm <strong>Thêm cột</strong>.
+              </p>
+            </>
+          ) : (
+            <p className="text-sm text-gray-500 mt-1.5">
+              Nhiệm vụ không gian chung từ deal (ủy thác chéo công ty) — {sharedTasks.length} mục
+            </p>
+          )}
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          {pageTab === 'assignments' && (
+            <>
+              <div className="flex items-center gap-1">
+                {[
+                  { id: 'kanban',   icon: LayoutGrid,     label: 'Kanban' },
+                  { id: 'list',     icon: ListIcon,       label: 'List' },
+                  { id: 'planner',  icon: UsersIcon,      label: 'Planner' },
+                  { id: 'deadline', icon: AlertTriangle,  label: 'Deadline' },
+                ].map((v) => (
+                  <button
+                    key={v.id}
+                    onClick={() => setView(v.id)}
+                    className={`h-8 px-3 rounded-lg text-xs font-medium flex items-center gap-1.5 cursor-pointer ${
+                      view === v.id ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    }`}
+                  >
+                    <v.icon className="h-3.5 w-3.5" />{v.label}
+                  </button>
+                ))}
+              </div>
+              <button
+                onClick={() => { setEditingItem(null); setShowItemModal(true); }}
+                className="h-8 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium flex items-center gap-1 cursor-pointer"
+              >
+                <Plus className="h-4 w-4" />Giao việc
+              </button>
+              {schedules.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setShowSchedulesPanel((v) => !v)}
+                  className="h-8 px-3 rounded-lg bg-violet-50 hover:bg-violet-100 text-violet-800 text-xs font-medium flex items-center gap-1 cursor-pointer border border-violet-200"
+                >
+                  <CalendarClock className="h-3.5 w-3.5" />
+                  Lịch ({schedules.length})
+                  <ChevronDown className={`h-3.5 w-3.5 transition ${showSchedulesPanel ? 'rotate-180' : ''}`} />
+                </button>
+              )}
+            </>
+          )}
+          {pageTab === 'shared' && (
+            <button
+              type="button"
+              onClick={() => void loadSharedTasks()}
+              className="h-8 px-3 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-medium cursor-pointer"
+            >
+              Làm mới
             </button>
           )}
         </div>
@@ -881,6 +1109,18 @@ export default function CRMAssignmentsPage({
         </div>
       )}
 
+      {pageTab === 'shared' && (
+        <SharedWorkspaceInbox
+          tasks={sharedTasks}
+          loading={sharedLoading}
+          assignmentModule={assignmentModule}
+          search={search}
+          onSearchChange={setSearch}
+        />
+      )}
+
+      {pageTab === 'assignments' && (
+      <>
       {/* KPI */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
@@ -1110,6 +1350,8 @@ export default function CRMAssignmentsPage({
           onDeletePersonalColumn={(colId) => removePersonalColumn('deadline', colId)}
           onDropPersonalColumn={(taskId, colId) => pinTaskToPersonalColumn('deadline', taskId, colId)}
         />
+      )}
+      </>
       )}
 
       {showItemModal && (

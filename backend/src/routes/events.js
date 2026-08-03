@@ -20,6 +20,13 @@ const r = Router();
 r.use(auth);
 
 const { normalizeTimestamp: normalizeEventTimestamp } = require('../helpers/normalizeTimestamp');
+const {
+  forwardGeocode,
+  extractLatLngFromMapUrl,
+} = require('../helpers/forwardGeocode');
+
+/** Loại sự kiện hiện trên bản đồ khảo sát (mặc định). */
+const SURVEY_MAP_EVENT_TYPES = ['site_visit', 'measurement'];
 
 /** Lead IDs của một công ty (đủ trang) — dùng lọc sự kiện legacy thiếu company_id. */
 async function fetchAllLeadIdsForCompany(companyId) {
@@ -96,12 +103,15 @@ function escapeEventsOrFilterValue(s) {
  * Phải đồng bộ (không async) — builder Supabase là thenable.
  *
  * personIds: khớp `created_by` HOẶC `assignee_id` (người tạo hoặc người phụ trách).
+ * regionLeadIds: lead thuộc khu vực — mặc định OR với personIds; nếu regionLeadAnd thì AND.
  */
 function applyEventsCombinedOrFilters(queryBuilder, {
   companyId = null,
   leadIdsForCompany = null,
   search = null,
   personIds = null,
+  regionLeadIds = null,
+  regionLeadAnd = false,
 } = {}) {
   const orGroups = [];
 
@@ -121,14 +131,27 @@ function applyEventsCombinedOrFilters(queryBuilder, {
     );
   }
 
+  const personParts = [];
   if (personIds && personIds.length) {
     if (personIds.length === 1) {
       const id = personIds[0];
-      orGroups.push(`created_by.eq.${id},assignee_id.eq.${id}`);
+      personParts.push(`created_by.eq.${id}`, `assignee_id.eq.${id}`);
     } else {
       const list = personIds.join(',');
-      orGroups.push(`created_by.in.(${list}),assignee_id.in.(${list})`);
+      personParts.push(`created_by.in.(${list})`, `assignee_id.in.(${list})`);
     }
+  }
+  const cappedRegionLeads = (regionLeadIds && regionLeadIds.length)
+    ? regionLeadIds.slice(0, EVENTS_LEGACY_LEAD_OR_MAX)
+    : [];
+  if (cappedRegionLeads.length && !regionLeadAnd) {
+    personParts.push(`lead_id.in.(${cappedRegionLeads.join(',')})`);
+  }
+  if (personParts.length) {
+    orGroups.push(personParts.join(','));
+  }
+  if (cappedRegionLeads.length && regionLeadAnd) {
+    orGroups.push(`lead_id.in.(${cappedRegionLeads.join(',')})`);
   }
 
   if (orGroups.length === 0) return queryBuilder;
@@ -154,17 +177,41 @@ function eventsDateToBound(dateTo) {
 }
 
 /**
- * Lọc theo người liên quan sự kiện (tạo HOẶC phụ trách) + khu vực của họ (user_company_regions).
+ * Lead thuộc khu vực (crm_leads.region_id) — dùng lọc sự kiện theo vùng địa bàn Lead.
+ */
+async function resolveLeadIdsForRegion(regionId, companyId = null) {
+  const rid = regionId && String(regionId).trim() ? String(regionId).trim() : null;
+  if (!rid) return [];
+  const ids = [];
+  const pageSize = 1000;
+  let from = 0;
+  for (;;) {
+    let q = supabase.from('crm_leads').select('id').eq('region_id', rid);
+    if (companyId) q = q.eq('company_id', companyId);
+    q = q.range(from, from + pageSize - 1);
+    const { data, error } = await q;
+    if (error) throw error;
+    const chunk = data || [];
+    ids.push(...chunk.map((r) => String(r.id)).filter(Boolean));
+    if (chunk.length < pageSize || ids.length >= EVENTS_CREATOR_IN_MAX) break;
+    from += pageSize;
+  }
+  return ids.slice(0, EVENTS_CREATOR_IN_MAX);
+}
+
+/**
+ * Lọc theo người liên quan sự kiện (tạo HOẶC phụ trách) + khu vực.
  * - user_id → created_by = user HOẶC assignee_id = user
- * - region_id → created_by/assignee ∈ NV được gán khu vực (không phụ thuộc users.company_id)
- * - cả hai → giao: user đã chọn phải thuộc khu vực đã chọn
- * @returns {{ empty: true } | { personIds: string[] | null }}
+ * - region_id → (created_by/assignee ∈ NV gán khu vực) HOẶC (lead.region_id = khu vực)
+ * - cả hai → sự kiện của NV đó trong khu vực (NV thuộc vùng, hoặc sự kiện gắn Lead thuộc vùng)
+ * @returns {{ empty: true } | { personIds: string[] | null, regionLeadIds: string[] | null, regionLeadAnd?: boolean }}
  */
 async function resolveEventPersonFilter({ companyId = null, regionId = null, userId = null } = {}) {
   const uid = userId && String(userId).trim() ? String(userId).trim() : null;
   const rid = regionId && String(regionId).trim() ? String(regionId).trim() : null;
 
   let regionPersonIds = null;
+  let regionLeadIds = null;
   if (rid) {
     // Đảm bảo khu vực thuộc đúng công ty đang xem (nếu có scope công ty)
     if (companyId) {
@@ -185,19 +232,32 @@ async function resolveEventPersonFilter({ companyId = null, regionId = null, use
     if (error) throw error;
     const ids = [...new Set((links || []).map((r) => r.user_id).filter(Boolean).map(String))]
       .slice(0, EVENTS_CREATOR_IN_MAX);
-    if (ids.length === 0) return { empty: true };
     regionPersonIds = ids;
+    regionLeadIds = await resolveLeadIdsForRegion(rid, companyId);
+    if (!regionPersonIds.length && !regionLeadIds.length) return { empty: true };
   }
 
   if (uid) {
-    if (regionPersonIds && !regionPersonIds.includes(uid)) {
-      return { empty: true };
+    if (!rid) return { personIds: [uid], regionLeadIds: null };
+    if (regionPersonIds.includes(uid)) {
+      // NV thuộc khu vực → mọi sự kiện họ tạo/phụ trách
+      return { personIds: [uid], regionLeadIds: null };
     }
-    return { personIds: [uid] };
+    // NV ngoài danh sách vùng: chỉ sự kiện họ liên quan trên Lead thuộc vùng
+    if (regionLeadIds.length) {
+      return { personIds: [uid], regionLeadIds, regionLeadAnd: true };
+    }
+    return { empty: true };
   }
 
-  if (regionPersonIds) return { personIds: regionPersonIds };
-  return { personIds: null };
+  if (rid) {
+    return {
+      personIds: regionPersonIds.length ? regionPersonIds : null,
+      regionLeadIds: regionLeadIds.length ? regionLeadIds : null,
+      regionLeadAnd: false,
+    };
+  }
+  return { personIds: null, regionLeadIds: null };
 }
 
 async function fetchMyParticipantEventIds(userId) {
@@ -428,6 +488,8 @@ r.get('/', async (req, res) => {
       leadIdsForCompany: companyLeadIds,
       search,
       personIds: personScope.personIds,
+      regionLeadIds: personScope.regionLeadIds,
+      regionLeadAnd: !!personScope.regionLeadAnd,
     });
 
     if (type) q = q.eq('event_type', type);
@@ -452,6 +514,8 @@ r.get('/', async (req, res) => {
         leadIdsForCompany: companyLeadIds,
         search,
         personIds: personScope.personIds,
+      regionLeadIds: personScope.regionLeadIds,
+      regionLeadAnd: !!personScope.regionLeadAnd,
       });
       if (type) q2 = q2.eq('event_type', type);
       if (status) q2 = q2.eq('status', status);
@@ -549,6 +613,15 @@ r.get('/overview', async (req, res) => {
       granularity: granularityQ,
     } = req.query;
 
+    let moduleFilter = normalizeModuleParam(req.query.module);
+    let modulesFilter = moduleFilter ? null : normalizeModulesParam(req.query.modules);
+    const modScope = await resolveEventModulesQueryFilter(req.user, moduleFilter, modulesFilter);
+    if (modScope.error) {
+      return res.status(403).json({ error: modScope.error.message });
+    }
+    moduleFilter = modScope.moduleFilter;
+    modulesFilter = modScope.modulesFilter;
+
     const pad = (n) => String(n).padStart(2, '0');
     const now = new Date();
     const defaultTo = vnDateKey(now.toISOString()) || `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
@@ -576,21 +649,33 @@ r.get('/overview', async (req, res) => {
 
     const pageSize = 1000;
     let from = 0;
-    const selectCols = 'id, event_type, event_type_id, status, start_time, created_by, assignee_id, lead_id';
+    const selectCols = 'id, event_type, event_type_id, status, start_time, created_by, assignee_id, lead_id, module';
     const rawEvents = [];
+    let skipModuleFilter = false;
     for (;;) {
       let q = supabase.from('crm_events').select(selectCols);
       q = applyEventsCombinedOrFilters(q, {
         companyId: sc.companyId,
         leadIdsForCompany: companyLeadIds,
         personIds: personScope.personIds,
+      regionLeadIds: personScope.regionLeadIds,
+      regionLeadAnd: !!personScope.regionLeadAnd,
       });
       q = q.gte('start_time', `${dateFrom}T00:00:00+07:00`);
       q = q.lte('start_time', `${dateTo}T23:59:59.999+07:00`);
       if (eventType) q = q.eq('event_type', eventType);
+      if (!skipModuleFilter) q = applyEventsModuleScopeFilter(q, moduleFilter, modulesFilter);
       q = q.order('start_time', { ascending: true }).range(from, from + pageSize - 1);
       const { data, error } = await q;
-      if (error) throw error;
+      if (error) {
+        if (!skipModuleFilter && /column.*module.*does not exist|42703/i.test(String(error.message || ''))) {
+          skipModuleFilter = true;
+          from = 0;
+          rawEvents.length = 0;
+          continue;
+        }
+        throw error;
+      }
       const chunk = data || [];
       rawEvents.push(...chunk);
       if (chunk.length < pageSize) break;
@@ -605,11 +690,32 @@ r.get('/overview', async (req, res) => {
       else granularity = 'month';
     }
 
-    const [{ data: typeRows }, { data: userRows }] = await Promise.all([
+    // Lấy tên NV theo đúng id xuất hiện trên sự kiện — không lọc company_id/is_active
+    // (admin hệ thống thường company_id=null → bị lệch nếu chỉ load users theo company).
+    const staffIdSet = new Set();
+    for (const ev of rawEvents) {
+      if (ev.created_by) staffIdSet.add(String(ev.created_by));
+      if (ev.assignee_id) staffIdSet.add(String(ev.assignee_id));
+    }
+    const staffIdList = [...staffIdSet];
+    const userById = {};
+    const USER_IN_PAGE = 200;
+    const loadStaffUsers = async () => {
+      for (let i = 0; i < staffIdList.length; i += USER_IN_PAGE) {
+        const chunk = staffIdList.slice(i, i + USER_IN_PAGE);
+        const { data: userRows, error: userErr } = await supabase
+          .from('users')
+          .select('id, full_name, avatar')
+          .in('id', chunk);
+        if (userErr) throw userErr;
+        (userRows || []).forEach((u) => {
+          userById[String(u.id)] = u;
+        });
+      }
+    };
+    const [{ data: typeRows }] = await Promise.all([
       supabase.from('event_types').select('id, name, slug, icon, color').order('sort_order'),
-      sc.companyId
-        ? supabase.from('users').select('id, full_name, avatar').eq('company_id', sc.companyId).eq('is_active', true)
-        : supabase.from('users').select('id, full_name, avatar').eq('is_active', true),
+      loadStaffUsers(),
     ]);
 
     const typeBySlug = {};
@@ -618,17 +724,79 @@ r.get('/overview', async (req, res) => {
       typeBySlug[t.slug] = t;
       typeById[t.id] = t;
     });
-    const userById = {};
-    (userRows || []).forEach((u) => { userById[u.id] = u; });
+
+    // Khu vực của NV tạo / phụ trách → phân bổ sự kiện theo khu vực
+    const regionsByUserId = {};
+    const regionMetaById = {};
+    if (staffIdList.length) {
+      const REGION_IN_PAGE = 200;
+      for (let i = 0; i < staffIdList.length; i += REGION_IN_PAGE) {
+        const chunk = staffIdList.slice(i, i + REGION_IN_PAGE);
+        const { data: ucRows, error: ucErr } = await supabase
+          .from('user_company_regions')
+          .select('user_id, region_id')
+          .in('user_id', chunk);
+        if (ucErr) throw ucErr;
+        (ucRows || []).forEach((row) => {
+          const uid = String(row.user_id);
+          const rid = String(row.region_id);
+          if (!regionsByUserId[uid]) regionsByUserId[uid] = new Set();
+          regionsByUserId[uid].add(rid);
+        });
+      }
+      const allRegionIds = [...new Set(Object.values(regionsByUserId).flatMap((s) => [...s]))];
+      if (allRegionIds.length) {
+        let rq = supabase.from('company_regions').select('id, name, company_id').in('id', allRegionIds);
+        if (sc.companyId) rq = rq.eq('company_id', sc.companyId);
+        const { data: regionRows, error: rgErr } = await rq;
+        if (rgErr) throw rgErr;
+        const allowed = new Set((regionRows || []).map((r) => String(r.id)));
+        (regionRows || []).forEach((r) => {
+          regionMetaById[String(r.id)] = { id: String(r.id), name: r.name || 'Khu vực', company_id: r.company_id };
+        });
+        // Bỏ region ngoài công ty đang lọc khỏi map user
+        if (sc.companyId) {
+          Object.keys(regionsByUserId).forEach((uid) => {
+            const next = new Set([...regionsByUserId[uid]].filter((rid) => allowed.has(rid)));
+            regionsByUserId[uid] = next;
+          });
+        }
+      }
+    }
 
     const STATUS_KEYS = ['planned', 'in_progress', 'completed', 'cancelled'];
+    const MODULE_META = {
+      crm: { name: 'Kinh doanh', icon: '💼', color: '#0EA5E9', order: 1 },
+      production: { name: 'Sản xuất', icon: '🏭', color: '#8B5CF6', order: 2 },
+      logistics: { name: 'Vận chuyển', icon: '🚚', color: '#F97316', order: 3 },
+      general: { name: 'Chung công ty', icon: '🏢', color: '#10B981', order: 4 },
+    };
     const byStatus = {};
     STATUS_KEYS.forEach((s) => { byStatus[s] = 0; });
 
     const byType = {};
     const byStaff = {};
+    const byRegion = {};
+    const byModule = {};
     const timelineMap = {};
     const staffSeen = new Set();
+
+    const bumpRegion = (rid, patch) => {
+      const key = rid || '__none__';
+      if (!byRegion[key]) {
+        const meta = rid && regionMetaById[rid];
+        byRegion[key] = {
+          region_id: rid || null,
+          name: meta?.name || (rid ? 'Khu vực' : 'Chưa gán khu vực'),
+          count: 0,
+          as_creator: 0,
+          as_assignee: 0,
+        };
+      }
+      if (patch.count) byRegion[key].count += patch.count;
+      if (patch.as_creator) byRegion[key].as_creator += patch.as_creator;
+      if (patch.as_assignee) byRegion[key].as_assignee += patch.as_assignee;
+    };
 
     const bucketKey = (iso) => {
       if (granularity === 'week') return vnWeekStartKey(iso);
@@ -663,6 +831,28 @@ r.get('/overview', async (req, res) => {
       }
       byType[slug].count += 1;
 
+      const modKey = normalizeEventModule(ev.module) || 'crm';
+      if (!byModule[modKey]) {
+        const meta = MODULE_META[modKey] || { name: modKey, icon: '📋', color: '#94A3B8', order: 99 };
+        byModule[modKey] = {
+          module: modKey,
+          name: meta.name,
+          icon: meta.icon,
+          color: meta.color,
+          order: meta.order,
+          count: 0,
+          completed: 0,
+          planned: 0,
+          in_progress: 0,
+          cancelled: 0,
+        };
+      }
+      byModule[modKey].count += 1;
+      if (st === 'completed') byModule[modKey].completed += 1;
+      else if (st === 'planned') byModule[modKey].planned += 1;
+      else if (st === 'in_progress') byModule[modKey].in_progress += 1;
+      else if (st === 'cancelled') byModule[modKey].cancelled += 1;
+
       const bKey = bucketKey(ev.start_time);
       if (bKey) {
         if (!timelineMap[bKey]) timelineMap[bKey] = { bucket: bKey, label: formatBucketLabel(bKey), count: 0 };
@@ -670,8 +860,8 @@ r.get('/overview', async (req, res) => {
       }
 
       const staffIds = new Set();
-      if (ev.created_by) staffIds.add(ev.created_by);
-      if (ev.assignee_id) staffIds.add(ev.assignee_id);
+      if (ev.created_by) staffIds.add(String(ev.created_by));
+      if (ev.assignee_id) staffIds.add(String(ev.assignee_id));
       staffIds.forEach((uid) => {
         staffSeen.add(uid);
         if (!byStaff[uid]) {
@@ -685,10 +875,28 @@ r.get('/overview', async (req, res) => {
             total: 0,
           };
         }
-        if (ev.created_by === uid) byStaff[uid].as_creator += 1;
-        if (ev.assignee_id === uid) byStaff[uid].as_assignee += 1;
+        if (String(ev.created_by || '') === uid) byStaff[uid].as_creator += 1;
+        if (String(ev.assignee_id || '') === uid) byStaff[uid].as_assignee += 1;
         byStaff[uid].total += 1;
       });
+
+      // Phân theo khu vực: sự kiện thuộc mọi khu vực của người tạo ∪ người phụ trách (đếm 1 lần / khu vực)
+      const regionIdsForEvent = new Set();
+      const creatorRegions = ev.created_by ? (regionsByUserId[String(ev.created_by)] || new Set()) : new Set();
+      const assigneeRegions = ev.assignee_id ? (regionsByUserId[String(ev.assignee_id)] || new Set()) : new Set();
+      creatorRegions.forEach((rid) => regionIdsForEvent.add(rid));
+      assigneeRegions.forEach((rid) => regionIdsForEvent.add(rid));
+      if (regionIdsForEvent.size === 0) {
+        bumpRegion(null, { count: 1 });
+        if (ev.created_by) bumpRegion(null, { as_creator: 1 });
+        if (ev.assignee_id) bumpRegion(null, { as_assignee: 1 });
+      } else {
+        regionIdsForEvent.forEach((rid) => {
+          bumpRegion(rid, { count: 1 });
+          if (ev.created_by && creatorRegions.has(rid)) bumpRegion(rid, { as_creator: 1 });
+          if (ev.assignee_id && assigneeRegions.has(rid)) bumpRegion(rid, { as_assignee: 1 });
+        });
+      }
     }
 
     const total = rawEvents.length;
@@ -696,6 +904,15 @@ r.get('/overview', async (req, res) => {
     const timeline = Object.values(timelineMap).sort((a, b) => a.bucket.localeCompare(b.bucket));
     const byTypeList = Object.values(byType).sort((a, b) => b.count - a.count);
     const byStaffList = Object.values(byStaff).sort((a, b) => b.total - a.total);
+    const byRegionList = Object.values(byRegion).sort((a, b) => {
+      if (!a.region_id && b.region_id) return 1;
+      if (a.region_id && !b.region_id) return -1;
+      return b.count - a.count;
+    });
+    const byModuleList = Object.values(byModule).sort((a, b) => {
+      if (a.order !== b.order) return a.order - b.order;
+      return b.count - a.count;
+    });
 
     res.json({
       period: { from: dateFrom, to: dateTo, days: daySpan, weeks: weeksBetweenInclusive(dateFrom, dateTo) },
@@ -710,6 +927,8 @@ r.get('/overview', async (req, res) => {
         avg_per_day: total > 0 ? Math.round((total / daySpan) * 100) / 100 : 0,
         avg_per_week: total > 0 ? Math.round((total / weeksBetweenInclusive(dateFrom, dateTo)) * 100) /  100 : 0,
         unique_staff: staffSeen.size,
+        unique_regions: byRegionList.filter((r) => r.region_id).length,
+        unique_modules: byModuleList.length,
       },
       by_status: STATUS_KEYS.map((status) => ({
         status,
@@ -717,6 +936,8 @@ r.get('/overview', async (req, res) => {
       })),
       by_type: byTypeList,
       by_staff: byStaffList,
+      by_region: byRegionList,
+      by_module: byModuleList,
       timeline,
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -735,14 +956,222 @@ function emptyOverviewPayload(dateFrom, dateTo, granularityQ) {
     granularity,
     summary: {
       total: 0, planned: 0, in_progress: 0, completed: 0, cancelled: 0,
-      completion_rate: 0, avg_per_day: 0, avg_per_week: 0, unique_staff: 0,
+      completion_rate: 0, avg_per_day: 0, avg_per_week: 0, unique_staff: 0, unique_regions: 0,
+      unique_modules: 0,
     },
     by_status: ['planned', 'in_progress', 'completed', 'cancelled'].map((status) => ({ status, count: 0 })),
     by_type: [],
     by_staff: [],
+    by_region: [],
+    by_module: [],
     timeline: [],
   };
 }
+
+/**
+ * GET /events/map — Điểm khảo sát / đo đạc trên bản đồ.
+ * Geocode địa chỉ sự kiện (hoặc địa chỉ khách) → lat/lng (cache + Nominatim/Google).
+ */
+r.get('/map', async (req, res) => {
+  try {
+    const sc = resolveEventsCompanyScope(req, res);
+    if (!sc.ok) return;
+    const {
+      date_from: dateFromQ,
+      date_to: dateToQ,
+      user_id: userId,
+      region_id: regionId,
+      type: eventType,
+      types: typesQ,
+      status: statusQ,
+      limit: limitQ,
+    } = req.query;
+
+    let moduleFilter = normalizeModuleParam(req.query.module);
+    let modulesFilter = moduleFilter ? null : normalizeModulesParam(req.query.modules);
+    const modScope = await resolveEventModulesQueryFilter(req.user, moduleFilter, modulesFilter);
+    if (modScope.error) {
+      return res.status(403).json({ error: modScope.error.message });
+    }
+    moduleFilter = modScope.moduleFilter;
+    modulesFilter = modScope.modulesFilter;
+
+    const pad = (n) => String(n).padStart(2, '0');
+    const now = new Date();
+    const defaultTo = vnDateKey(now.toISOString()) || `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+    const defaultFrom = `${defaultTo.slice(0, 7)}-01`;
+    const dateFrom = (dateFromQ && String(dateFromQ).trim()) || defaultFrom;
+    const dateTo = (dateToQ && String(dateToQ).trim()) || defaultTo;
+    if (dateFrom > dateTo) {
+      return res.status(400).json({ error: 'date_from phải trước hoặc bằng date_to' });
+    }
+
+    let typeSlugs = SURVEY_MAP_EVENT_TYPES;
+    if (eventType && String(eventType).trim()) {
+      typeSlugs = [String(eventType).trim()];
+    } else if (typesQ != null && String(typesQ).trim()) {
+      typeSlugs = String(typesQ).split(',').map((s) => s.trim()).filter(Boolean);
+      if (!typeSlugs.length) typeSlugs = SURVEY_MAP_EVENT_TYPES;
+    }
+
+    let companyLeadIds = [];
+    if (sc.companyId) {
+      companyLeadIds = await resolveCompanyLeadIdsForEvents(sc.companyId);
+    }
+
+    const personScope = await resolveEventPersonFilter({
+      companyId: sc.companyId,
+      regionId,
+      userId,
+    });
+    if (personScope.empty) {
+      return res.json({
+        period: { from: dateFrom, to: dateTo },
+        types: typeSlugs,
+        points: [],
+        stats: { total: 0, with_location: 0, plotted: 0, no_location: 0, geocode_failed: 0 },
+      });
+    }
+
+    const maxEvents = Math.min(Math.max(parseInt(limitQ, 10) || 200, 1), 400);
+    const selectCols = `
+      id, title, location, start_time, end_time, status, event_type, event_type_id,
+      created_by, assignee_id, lead_id, customer_id,
+      assignee:users!crm_events_assignee_id_fkey(id, full_name),
+      lead:crm_leads(id, title, code, type),
+      customer:customers(id, full_name, phone, address),
+      event_type_ref:event_types(id, name, slug, icon, color)
+    `;
+
+    let skipModuleFilter = false;
+    const rawEvents = [];
+    let from = 0;
+    const pageSize = 500;
+    for (;;) {
+      let q = supabase.from('crm_events').select(selectCols);
+      q = applyEventsCombinedOrFilters(q, {
+        companyId: sc.companyId,
+        leadIdsForCompany: companyLeadIds,
+        personIds: personScope.personIds,
+      regionLeadIds: personScope.regionLeadIds,
+      regionLeadAnd: !!personScope.regionLeadAnd,
+      });
+      q = q.gte('start_time', `${dateFrom}T00:00:00+07:00`);
+      q = q.lte('start_time', `${dateTo}T23:59:59.999+07:00`);
+      q = q.in('event_type', typeSlugs);
+      if (statusQ) q = q.eq('status', statusQ);
+      if (!skipModuleFilter) q = applyEventsModuleScopeFilter(q, moduleFilter, modulesFilter);
+      q = q.order('start_time', { ascending: false }).range(from, from + pageSize - 1);
+      const { data, error } = await q;
+      if (error) {
+        if (!skipModuleFilter && /column.*module.*does not exist|42703/i.test(String(error.message || ''))) {
+          skipModuleFilter = true;
+          from = 0;
+          rawEvents.length = 0;
+          continue;
+        }
+        throw error;
+      }
+      const chunk = data || [];
+      rawEvents.push(...chunk);
+      if (chunk.length < pageSize || rawEvents.length >= maxEvents) break;
+      from += pageSize;
+    }
+
+    const events = rawEvents.slice(0, maxEvents);
+    let noLocation = 0;
+    let geocodeFailed = 0;
+    const candidates = [];
+
+    for (const ev of events) {
+      // Ưu tiên địa chỉ trên sự kiện; fallback địa chỉ khách
+      const locText = String(ev.location || '').trim();
+      const custAddr = String(ev.customer?.address || '').trim();
+      const address = locText || custAddr;
+      if (!address) {
+        noLocation += 1;
+        continue;
+      }
+      const fromUrl = extractLatLngFromMapUrl(address);
+      candidates.push({
+        ev,
+        address,
+        addressSource: locText ? 'event' : 'customer',
+        preLatLng: fromUrl,
+      });
+    }
+
+    // Geocode song song nhẹ (alias VN nhanh; Nominatim giới hạn concurrency)
+    const points = [];
+    const CONCURRENCY = 6;
+    for (let i = 0; i < candidates.length; i += CONCURRENCY) {
+      const chunk = candidates.slice(i, i + CONCURRENCY);
+      const settled = await Promise.all(chunk.map(async (c) => {
+        let lat = c.preLatLng?.lat;
+        let lng = c.preLatLng?.lng;
+        let geoSource = c.preLatLng ? 'map_url' : null;
+        let geoAddress = null;
+        if (lat == null || lng == null) {
+          const hit = await forwardGeocode({ address: c.address, map_url: c.address });
+          if (hit) {
+            lat = hit.lat;
+            lng = hit.lng;
+            geoSource = hit.source;
+            geoAddress = hit.address || null;
+          }
+        }
+        if (lat == null || lng == null) return { failed: true };
+        const typeRef = c.ev.event_type_ref || {};
+        return {
+          failed: false,
+          point: {
+            id: c.ev.id,
+            lat,
+            lng,
+            title: c.ev.title,
+            location: c.ev.location || null,
+            address: geoAddress || c.address,
+            address_source: c.addressSource,
+            geo_source: geoSource,
+            start_time: c.ev.start_time,
+            status: c.ev.status,
+            event_type: c.ev.event_type,
+            event_type_name: typeRef.name || c.ev.event_type,
+            event_type_icon: typeRef.icon || '🏠',
+            event_type_color: typeRef.color || '#F59E0B',
+            assignee_name: c.ev.assignee?.full_name || null,
+            customer_name: c.ev.customer?.full_name || null,
+            customer_phone: c.ev.customer?.phone || null,
+            lead_id: c.ev.lead_id || null,
+            lead_code: c.ev.lead?.code || null,
+            lead_title: c.ev.lead?.title || null,
+            lead_type: c.ev.lead?.type || null,
+          },
+        };
+      }));
+      for (const r of settled) {
+        if (r.failed) geocodeFailed += 1;
+        else points.push(r.point);
+      }
+    }
+
+    res.json({
+      period: { from: dateFrom, to: dateTo },
+      types: typeSlugs,
+      points,
+      stats: {
+        total: events.length,
+        with_location: candidates.length,
+        plotted: points.length,
+        no_location: noLocation,
+        geocode_failed: geocodeFailed,
+      },
+    });
+  } catch (e) {
+    console.error('GET /events/map:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
 
 // GET /events/calendar — Calendar view (events in date range)
 r.get('/calendar', async (req, res) => {
@@ -787,6 +1216,8 @@ r.get('/calendar', async (req, res) => {
       leadIdsForCompany: companyLeadIds,
       search,
       personIds: personScope.personIds,
+      regionLeadIds: personScope.regionLeadIds,
+      regionLeadAnd: !!personScope.regionLeadAnd,
     });
 
     if (type) cq = cq.eq('event_type', type);
@@ -802,6 +1233,8 @@ r.get('/calendar', async (req, res) => {
         leadIdsForCompany: companyLeadIds,
         search,
         personIds: personScope.personIds,
+      regionLeadIds: personScope.regionLeadIds,
+      regionLeadAnd: !!personScope.regionLeadAnd,
       });
       if (type) cq2 = cq2.eq('event_type', type);
       if (status) cq2 = cq2.eq('status', status);

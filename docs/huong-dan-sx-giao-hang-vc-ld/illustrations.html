@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <title>Minh họa hướng dẫn — khoanh đỏ</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; padding: 24px;
+      font-family: "Segoe UI", system-ui, sans-serif;
+      background: #e2e8f0;
+      color: #0f172a;
+    }
+    .panel {
+      width: 920px;
+      background: #f8fafc;
+      border-radius: 12px;
+      margin: 0 auto 48px;
+      padding: 20px;
+      box-shadow: 0 8px 24px rgba(15,23,42,.12);
+      position: relative;
+      overflow: hidden;
+    }
+    .panel-title {
+      font-size: 13px; font-weight: 700; color: #c2410c;
+      margin: 0 0 12px; letter-spacing: .02em;
+    }
+    /* Kanban */
+    .board { display: flex; gap: 12px; }
+    .col {
+      flex: 1; background: #fff; border: 1px solid #e2e8f0;
+      border-radius: 10px; padding: 10px; min-height: 220px;
+    }
+    .col.hot { border: 2px solid #f97316; background: #fff7ed; }
+    .col h4 { margin: 0 0 10px; font-size: 12px; color: #475569; }
+    .col.hot h4 { color: #c2410c; }
+    .card {
+      background: #fff; border: 1px solid #cbd5e1; border-radius: 8px;
+      padding: 10px; font-size: 12px; margin-bottom: 8px;
+      box-shadow: 0 1px 2px rgba(0,0,0,.04);
+    }
+    .card .code { font-weight: 700; color: #0f172a; }
+    .card .meta { color: #64748b; font-size: 11px; margin-top: 4px; }
+    .arrow {
+      position: absolute; left: 58%; top: 118px;
+      font-size: 28px; color: #ef4444; font-weight: 700;
+      text-shadow: 0 1px 0 #fff;
+      z-index: 5;
+    }
+    /* Handover card */
+    .vc-card {
+      max-width: 420px; margin: 0 auto;
+      background: linear-gradient(180deg, #fff7ed, #fff);
+      border: 1px solid #fdba74; border-radius: 12px; padding: 14px;
+    }
+    .vc-card .badge {
+      display: inline-block; background: #f97316; color: #fff;
+      font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 999px;
+      margin-bottom: 8px;
+    }
+    .vc-card h3 { margin: 0 0 8px; font-size: 14px; }
+    .field { margin: 8px 0; font-size: 12px; }
+    .field label { display: block; color: #64748b; margin-bottom: 3px; font-size: 11px; }
+    .field .box {
+      border: 1px solid #cbd5e1; border-radius: 8px; padding: 8px 10px; background: #fff;
+    }
+    .btn-row { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+    .btn {
+      border: 0; border-radius: 8px; padding: 8px 12px; font-size: 12px; font-weight: 700; cursor: default;
+    }
+    .btn-primary { background: #ea580c; color: #fff; }
+    .btn-sky { background: #e0f2fe; color: #075985; border: 1px solid #7dd3fc; }
+    .btn-orange { background: #fff; color: #c2410c; border: 1px solid #fdba74; }
+    .btn-green { background: #16a34a; color: #fff; }
+    .status-line { font-size: 12px; color: #9a3412; margin: 6px 0; }
+    .info-box {
+      background: #fff; border: 1px solid #ffedd5; border-radius: 8px;
+      padding: 8px 10px; font-size: 12px; margin: 8px 0;
+    }
+    /* Settings */
+    .settings {
+      background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px;
+      max-width: 520px; margin: 0 auto;
+    }
+    .settings h3 { margin: 0 0 6px; font-size: 14px; }
+    .settings .hint { font-size: 11px; color: #64748b; margin-bottom: 12px; }
+    .settings .label {
+      font-size: 10px; font-weight: 700; color: #6d28d9; text-transform: uppercase;
+      letter-spacing: .04em; margin-bottom: 4px;
+    }
+    .settings select, .settings .fake-select {
+      width: 100%; border: 1px solid #c4b5fd; border-radius: 8px;
+      padding: 10px 12px; background: #f5f3ff; font-size: 13px;
+    }
+    /* Project info */
+    .info-panel {
+      background: #fff; border: 1px solid #e2e8f0; border-radius: 12px;
+      padding: 16px; max-width: 360px; margin: 0 auto;
+    }
+    .info-panel h3 { margin: 0 0 12px; font-size: 13px; color: #334155; }
+    .row {
+      display: flex; justify-content: space-between; gap: 12px;
+      padding: 10px 0; border-bottom: 1px solid #f1f5f9; font-size: 13px;
+    }
+    .row .k { color: #64748b; }
+    .row .v { font-weight: 700; color: #0f172a; }
+    .row.hl .k { color: #c2410c; font-weight: 700; }
+    .row.hl .v { color: #ea580c; }
+    /* Calendar chips */
+    .cal {
+      background: #fff; border: 1px solid #e2e8f0; border-radius: 12px;
+      padding: 14px; max-width: 640px; margin: 0 auto;
+    }
+    .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
+    .day {
+      min-height: 72px; border: 1px solid #e2e8f0; border-radius: 8px;
+      padding: 6px; font-size: 11px; background: #f8fafc;
+    }
+    .day.today { border-color: #f97316; background: #fff7ed; }
+    .chip {
+      display: block; margin-top: 4px; border-radius: 4px; padding: 2px 4px;
+      font-size: 10px; font-weight: 700; color: #fff;
+    }
+    .chip.sx { background: #ea580c; }
+    .chip.vc { background: #0284c7; }
+    .chip.ld { background: #16a34a; }
+    /* Red circle overlay */
+    .ring {
+      position: absolute;
+      border: 3px solid #ef4444;
+      border-radius: 50%;
+      pointer-events: none;
+      box-shadow: 0 0 0 2px rgba(239,68,68,.25);
+      z-index: 20;
+    }
+    .callout {
+      position: absolute; z-index: 21;
+      background: #ef4444; color: #fff;
+      font-size: 11px; font-weight: 700;
+      padding: 4px 8px; border-radius: 6px;
+      white-space: nowrap;
+      box-shadow: 0 2px 8px rgba(239,68,68,.35);
+    }
+    .callout::after {
+      content: ""; position: absolute; left: 16px; bottom: -6px;
+      border: 6px solid transparent; border-top-color: #ef4444; border-bottom: 0;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- 1. SX kéo cột bàn giao -->
+  <section class="panel" id="fig1">
+    <p class="panel-title">Hình 1 · SX kéo thẻ sang cột Bàn giao VC</p>
+    <div class="board">
+      <div class="col">
+        <h4>KT KCS SẢN PHẨM</h4>
+        <div class="card" style="opacity:.45">
+          <div class="code">TB-2026-558</div>
+          <div class="meta">Đang kiểm tra…</div>
+        </div>
+      </div>
+      <div class="col hot" data-mark="col">
+        <h4>🚚 ĐƠN HÀNG ĐÃ CHUẨN BỊ XONG<br/><span style="font-weight:600;font-size:10px">Cờ: Bàn giao VC</span></h4>
+        <div class="card" data-mark="card">
+          <div class="code">TB-2026-559</div>
+          <div class="meta">Khách: Nguyễn A · Hàng sẵn sàng</div>
+        </div>
+      </div>
+      <div class="col">
+        <h4>ĐÃ BÀN GIAO</h4>
+        <div class="card" style="opacity:.35">
+          <div class="code">TB-2026-540</div>
+          <div class="meta">Đã xong</div>
+        </div>
+      </div>
+    </div>
+    <div class="arrow">➜</div>
+  </section>
+
+  <!-- 2. Sale chọn & bàn giao -->
+  <section class="panel" id="fig2">
+    <p class="panel-title">Hình 2 · Sale CRM — thẻ bàn giao → Chọn &amp; bàn giao</p>
+    <div class="vc-card">
+      <span class="badge">Bàn giao VC/LĐ</span>
+      <h3>Chọn công ty &amp; ngày đề xuất</h3>
+      <div class="field">
+        <label>Công ty VC/LĐ</label>
+        <div class="box">Công ty ABC Vận chuyển</div>
+      </div>
+      <div class="field" data-mark="pickup">
+        <label>Ngày lấy hàng</label>
+        <div class="box">03/08/2026 · 09:00</div>
+      </div>
+      <div class="field" data-mark="install">
+        <label>Ngày lắp đặt</label>
+        <div class="box">04/08/2026 · 14:00</div>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-orange">Xem lịch đề xuất</button>
+        <button class="btn btn-primary" data-mark="submit">Chọn &amp; bàn giao</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3. Chờ xác nhận + Sửa ngày -->
+  <section class="panel" id="fig3">
+    <p class="panel-title">Hình 3 · Chờ xác nhận — Sửa ngày &amp; Xác nhận 2 bên</p>
+    <div class="vc-card">
+      <span class="badge">Chờ xác nhận</span>
+      <h3>Đã đề xuất lịch · chưa tạo sự kiện</h3>
+      <div class="info-box">
+        <div>Công ty: ABC Vận chuyển</div>
+        <div>Lấy hàng: 03/08/2026 09:00</div>
+        <div>Lắp đặt: 04/08/2026 14:00</div>
+        <div class="status-line">SX: chưa xác nhận · VC/LĐ: chưa xác nhận</div>
+      </div>
+      <p style="font-size:11px;color:#9a3412;margin:8px 0">
+        Chỉ Quản lý giao hàng SX / người xác nhận VC/LĐ được bấm. Đủ 2 bên mới tạo 3 sự kiện.
+      </p>
+      <div class="btn-row">
+        <button class="btn btn-orange" data-mark="cal">Xem lịch đề xuất</button>
+        <button class="btn btn-sky" data-mark="edit">Sửa ngày</button>
+        <button class="btn btn-green" data-mark="ok">Xác nhận</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 4. Cấu hình Quản lý giao hàng -->
+  <section class="panel" id="fig4">
+    <p class="panel-title">Hình 4 · Cấu hình người xác nhận (Pipeline SX / VC)</p>
+    <div class="settings">
+      <h3>Cấu hình NV · Phân loại Data đầu ra</h3>
+      <div class="hint">/sx/pipeline-settings → Cấu hình NV · tương tự tab Bàn giao ở /vc/pipeline-settings</div>
+      <div class="label">Quản lý giao hàng (xác nhận bàn giao VC)</div>
+      <div class="fake-select" data-mark="user">Sang Thiết Kế VPT 1</div>
+      <div style="height:14px"></div>
+      <div class="label" style="color:#0369a1">Người xác nhận bàn giao VC/LĐ</div>
+      <div class="fake-select" style="background:#e0f2fe;border-color:#7dd3fc" data-mark="vcuser">Nguyễn Ngọc Linh</div>
+    </div>
+  </section>
+
+  <!-- 5. Ngày lấy / lắp trên dự án + lịch -->
+  <section class="panel" id="fig5">
+    <p class="panel-title">Hình 5 · Sau khi đủ 2 bên: ngày trên dự án + 3 sự kiện lịch</p>
+    <div style="display:flex;gap:16px;align-items:flex-start;justify-content:center;flex-wrap:wrap">
+      <div class="info-panel">
+        <h3>Thông tin dự án</h3>
+        <div class="row"><span class="k">Mã</span><span class="v">TB-2026-559</span></div>
+        <div class="row hl" data-mark="pickup"><span class="k">Ngày lấy hàng</span><span class="v">03/08 09:00</span></div>
+        <div class="row hl" data-mark="install"><span class="k">Ngày lắp đặt</span><span class="v">04/08 14:00</span></div>
+      </div>
+      <div class="cal" style="flex:1;min-width:320px">
+        <div style="font-size:12px;font-weight:700;margin-bottom:8px">Lịch đề xuất / sự kiện</div>
+        <div class="cal-grid">
+          <div class="day"><div>1</div></div>
+          <div class="day"><div>2</div></div>
+          <div class="day today" data-mark="day3">
+            <div>3</div>
+            <span class="chip sx">SX giao</span>
+            <span class="chip vc">VC nhận</span>
+          </div>
+          <div class="day" data-mark="day4">
+            <div>4</div>
+            <span class="chip ld">Lắp đặt</span>
+          </div>
+          <div class="day"><div>5</div></div>
+          <div class="day"><div>6</div></div>
+          <div class="day"><div>7</div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <script>
+    function ringAround(el, pad = 8, label, labelOffset = { x: 0, y: -28 }) {
+      if (!el) return;
+      const panel = el.closest('.panel');
+      const pr = panel.getBoundingClientRect();
+      const r = el.getBoundingClientRect();
+      const ring = document.createElement('div');
+      ring.className = 'ring';
+      const w = r.width + pad * 2;
+      const h = r.height + pad * 2;
+      const size = Math.max(w, h) + 6;
+      ring.style.width = size + 'px';
+      ring.style.height = size + 'px';
+      ring.style.left = (r.left - pr.left + r.width / 2 - size / 2) + 'px';
+      ring.style.top = (r.top - pr.top + r.height / 2 - size / 2) + 'px';
+      panel.appendChild(ring);
+      if (label) {
+        const c = document.createElement('div');
+        c.className = 'callout';
+        c.textContent = label;
+        c.style.left = (r.left - pr.left + labelOffset.x) + 'px';
+        c.style.top = (r.top - pr.top + labelOffset.y) + 'px';
+        panel.appendChild(c);
+      }
+    }
+
+    // fig1
+    ringAround(document.querySelector('#fig1 [data-mark=col]'), 10, '① Kéo thẻ vào đây', { x: 40, y: -8 });
+    ringAround(document.querySelector('#fig1 [data-mark=card]'), 10, '② Thẻ dự án', { x: -10, y: -30 });
+
+    // fig2
+    ringAround(document.querySelector('#fig2 [data-mark=pickup]'), 6, 'Ngày lấy', { x: 260, y: 4 });
+    ringAround(document.querySelector('#fig2 [data-mark=install]'), 6, 'Ngày lắp', { x: 260, y: 4 });
+    ringAround(document.querySelector('#fig2 [data-mark=submit]'), 10, 'Bấm ở đây', { x: -20, y: -32 });
+
+    // fig3
+    ringAround(document.querySelector('#fig3 [data-mark=edit]'), 8, 'CRM phụ trách', { x: -30, y: -32 });
+    ringAround(document.querySelector('#fig3 [data-mark=ok]'), 10, 'SX / VC xác nhận', { x: -40, y: -32 });
+
+    // fig4
+    ringAround(document.querySelector('#fig4 [data-mark=user]'), 8, 'Người xác nhận SX', { x: 0, y: -30 });
+    ringAround(document.querySelector('#fig4 [data-mark=vcuser]'), 8, 'Người xác nhận VC', { x: 0, y: -30 });
+
+    // fig5
+    ringAround(document.querySelector('#fig5 [data-mark=pickup]'), 4, null);
+    ringAround(document.querySelector('#fig5 [data-mark=install]'), 4, 'Ngày trên dự án', { x: 180, y: -8 });
+    ringAround(document.querySelector('#fig5 [data-mark=day3]'), 6, '2 sự kiện ngày lấy', { x: -20, y: -32 });
+    ringAround(document.querySelector('#fig5 [data-mark=day4]'), 6, 'Lắp đặt', { x: -10, y: -32 });
+  </script>
+</body>
+</html>

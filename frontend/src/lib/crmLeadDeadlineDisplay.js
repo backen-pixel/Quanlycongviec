@@ -74,21 +74,32 @@ export function isCrmPipelineStageLost(stage) {
 export const CRM_DEADLINE_SOURCE_META = {
   kanban: {
     label: 'Deadline tự setup',
+    shortLabel: 'Setup',
     className: 'bg-rose-50 text-rose-700 border-rose-200',
   },
   task: {
     label: 'Deadline nhiệm vụ',
+    shortLabel: 'NV',
     className: 'bg-indigo-50 text-indigo-700 border-indigo-200',
   },
   sla: {
     label: 'SLA cột',
+    shortLabel: 'SLA',
     className: 'bg-amber-50 text-amber-800 border-amber-200',
   },
   expected_close: {
     label: 'Ngày chốt dự kiến',
+    shortLabel: 'Chốt',
     className: 'bg-violet-50 text-violet-700 border-violet-200',
   },
 };
+
+/** Map source nội bộ (kể cả alias `deadline` trên Kanban) → meta hiển thị. */
+export function getCrmDeadlineSourceMeta(source) {
+  if (!source) return null;
+  if (source === 'deadline') return CRM_DEADLINE_SOURCE_META.kanban;
+  return CRM_DEADLINE_SOURCE_META[source] || null;
+}
 
 /**
  * Hạn SLA cột.

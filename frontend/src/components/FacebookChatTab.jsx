@@ -24,7 +24,7 @@ export default function FacebookChatTab({ leadId, companyId }) {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
   const [imageSetOpen, setImageSetOpen] = useState(false);
-  const messagesEndRef = useRef(null);
+  const messagesContainerRef = useRef(null);
   const fileInputRef = useRef(null);
   const imageInputRef = useRef(null);
   const contactRef = useRef(null);
@@ -34,6 +34,18 @@ export default function FacebookChatTab({ leadId, companyId }) {
     () => (companyId ? `?company_id=${encodeURIComponent(companyId)}` : ''),
     [companyId],
   );
+
+  /** Chỉ cuộn trong khung chat — không dùng scrollIntoView (kéo cả trang LeadDetail xuống giữa). */
+  const scrollChatToBottom = useCallback((smooth = true) => {
+    const box = messagesContainerRef.current;
+    if (!box) return;
+    const top = box.scrollHeight;
+    if (typeof box.scrollTo === 'function') {
+      box.scrollTo({ top, behavior: smooth ? 'smooth' : 'auto' });
+    } else {
+      box.scrollTop = top;
+    }
+  }, []);
 
   const tryAutoSync = useCallback(
     (c, count) => {
@@ -54,12 +66,12 @@ export default function FacebookChatTab({ leadId, companyId }) {
         .then((fresh) => {
           if (Array.isArray(fresh) && fresh.length) {
             setMessages(fresh.map((m) => ({ ...m, contact: c })));
-            setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+            setTimeout(() => scrollChatToBottom(true), 100);
           }
         })
         .catch(() => {});
     },
-    [companyQs],
+    [companyQs, scrollChatToBottom],
   );
 
   const loadMessages = useCallback(() => {
@@ -88,7 +100,7 @@ export default function FacebookChatTab({ leadId, companyId }) {
         const c0 = list.find((m) => m.contact)?.contact;
         if (c0) setContact(c0);
         else setContact(null);
-        setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+        setTimeout(() => scrollChatToBottom(false), 100);
         if (c0 && list.length < 5) tryAutoSync(c0, list.length);
       })
       .catch(() => {
@@ -97,7 +109,7 @@ export default function FacebookChatTab({ leadId, companyId }) {
         setContact(null);
       })
       .finally(() => setLoading(false));
-  }, [leadId, tryAutoSync]);
+  }, [leadId, tryAutoSync, scrollChatToBottom]);
 
   const uniqueMessages = useMemo(() => {
     const seen = new Set();
@@ -134,13 +146,13 @@ export default function FacebookChatTab({ leadId, companyId }) {
       setMessages((prev) =>
         prev.some((m) => m.id === data.message.id) ? prev : [...prev, { ...data.message, contact: contactRef.current }],
       );
-      setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+      setTimeout(() => scrollChatToBottom(true), 100);
     };
     socket.on('fb_message', h);
     return () => {
       socket.off('fb_message', h);
     };
-  }, [socket]);
+  }, [socket, scrollChatToBottom]);
 
   const sendReply = async () => {
     if (!reply.trim() || !contact || sending) return;
@@ -155,7 +167,7 @@ export default function FacebookChatTab({ leadId, companyId }) {
         const msg = await res.json();
         setMessages((prev) => [...prev, { ...msg, contact }]);
         setReply('');
-        setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+        setTimeout(() => scrollChatToBottom(true), 100);
       }
     } catch (e) {
       console.error(e);
@@ -195,7 +207,7 @@ export default function FacebookChatTab({ leadId, companyId }) {
       if (res.ok) {
         const msg = await res.json();
         setMessages((prev) => [...prev, { ...msg, contact }]);
-        setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+        setTimeout(() => scrollChatToBottom(true), 100);
       }
     } catch (e) {
       alert('Lỗi gửi file: ' + e.message);
@@ -290,7 +302,7 @@ export default function FacebookChatTab({ leadId, companyId }) {
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto space-y-2 pr-1">
+      <div ref={messagesContainerRef} className="flex-1 overflow-y-auto space-y-2 pr-1">
         {uniqueMessages.map((m, i) => {
           const isOut = m.direction === 'outbound';
           const showDate =
@@ -356,7 +368,6 @@ export default function FacebookChatTab({ leadId, companyId }) {
             </div>
           );
         })}
-        <div ref={messagesEndRef} />
       </div>
 
       <div className="pt-3 border-t mt-3 shrink-0">
@@ -430,7 +441,7 @@ export default function FacebookChatTab({ leadId, companyId }) {
           disabled={uploading || sending || !contact}
           onMessagesSent={(msgs) => {
             setMessages((prev) => [...prev, ...msgs.map((m) => ({ ...m, contact }))]);
-            setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+            setTimeout(() => scrollChatToBottom(true), 100);
           }}
         />
       )}

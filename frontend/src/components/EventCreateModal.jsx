@@ -585,14 +585,21 @@ export default function EventCreateModal({
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[10040] p-4" data-tour="event-create-modal">
       <div className="bg-white rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b sticky top-0 bg-white z-10">
           <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
             {selectedType.icon || '📋'} {isEdit ? 'Sửa sự kiện' : 'Tạo sự kiện mới'}
           </h2>
-          <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-lg cursor-pointer"><X className="h-5 w-5 text-gray-500" /></button>
+          <button
+            type="button"
+            data-tour="event-create-modal-close"
+            onClick={onClose}
+            className="p-2 hover:bg-gray-100 rounded-lg cursor-pointer"
+          >
+            <X className="h-5 w-5 text-gray-500" />
+          </button>
         </div>
 
         <div className="p-6 space-y-4">
@@ -606,7 +613,7 @@ export default function EventCreateModal({
             });
             if (visibleModules.length <= 1) return null;
             return (
-              <div>
+              <div data-tour="event-create-module">
                 <label className="text-xs font-medium text-gray-600 block mb-2">Khối / Module</label>
                 <div className="flex flex-wrap gap-2">
                   {visibleModules.map((m) => {
@@ -631,7 +638,7 @@ export default function EventCreateModal({
           })()}
 
           {/* Event type selector */}
-          <div>
+          <div data-tour="event-create-type">
             <label className="text-xs font-medium text-gray-600 block mb-2">Loại sự kiện</label>
             <div className="flex flex-wrap gap-2">
               {eventTypes.map(t => (
@@ -646,7 +653,7 @@ export default function EventCreateModal({
           </div>
 
           {/* Title */}
-          <div>
+          <div data-tour="event-create-title">
             <label className="text-xs font-medium text-gray-600 block mb-1">Tiêu đề sự kiện *</label>
             <input value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
               placeholder="VD: Khảo sát chị Quỳnh Hóc Môn - KS Tủ bếp Q3"
@@ -654,7 +661,7 @@ export default function EventCreateModal({
           </div>
 
           {/* Ngày + giờ 24h (dropdown giờ 00–23, phút bước 5) — không AM/PM */}
-          <div className="rounded-xl border border-gray-200 bg-gray-50/90 p-4 space-y-4">
+          <div data-tour="event-create-datetime" className="rounded-xl border border-gray-200 bg-gray-50/90 p-4 space-y-4">
             <p className="text-[11px] text-gray-600">
               Chọn <strong className="text-gray-800">ngày</strong> trên lịch, sau đó chọn <strong className="text-gray-800">giờ · phút</strong> theo đồng hồ{' '}
               <strong className="text-emerald-800">24 giờ</strong> (vd. 14 = 2 giờ chiều).
@@ -676,7 +683,7 @@ export default function EventCreateModal({
           </div>
 
           {/* Location */}
-          <div>
+          <div data-tour="event-create-location">
             <label className="text-xs font-medium text-gray-600 block mb-1">Địa điểm</label>
             <input value={form.location} onChange={e => setForm(f => ({ ...f, location: e.target.value }))}
               placeholder="VD: 123 Nguyễn Văn A, Q.3, TP.HCM"
@@ -684,7 +691,7 @@ export default function EventCreateModal({
           </div>
 
           {/* Link Lead/Deal + Khách hàng */}
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-2 gap-4" data-tour="event-create-links">
             <div>
               <label className="text-xs font-medium text-gray-600 block mb-1">
                 Liên kết {defaultLead?.type === 'lead' ? 'Lead' : 'Deal'}
@@ -723,13 +730,13 @@ export default function EventCreateModal({
           </div>
 
           {/* Assignee */}
-          <div>
+          <div data-tour="event-create-assignee">
             <label className="text-xs font-medium text-gray-600 block mb-1">Người phụ trách</label>
             <UserSearchSelect users={users} value={form.assignee_id} onChange={v => setForm(f => ({ ...f, assignee_id: v }))} placeholder="👤 Chọn người phụ trách..." />
           </div>
 
           {/* Participants */}
-          <div>
+          <div data-tour="event-create-participants">
             <div className="flex items-center justify-between mb-2">
               <label className="text-xs font-medium text-gray-600">Người tham gia ({participantIds.length})</label>
               <button type="button" onClick={() => {
@@ -764,9 +771,14 @@ export default function EventCreateModal({
 
         {/* Footer */}
         <div className="px-6 py-4 border-t bg-gray-50 rounded-b-2xl flex justify-end gap-2">
-          <button onClick={onClose} className="h-9 px-4 text-gray-600 hover:bg-gray-100 rounded-lg text-sm font-medium cursor-pointer">Hủy</button>
-          <button onClick={save} disabled={saving}
-            className="h-9 px-6 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-bold cursor-pointer disabled:opacity-50">
+          <button type="button" onClick={onClose} className="h-9 px-4 text-gray-600 hover:bg-gray-100 rounded-lg text-sm font-medium cursor-pointer">Hủy</button>
+          <button
+            type="button"
+            data-tour="event-create-save"
+            onClick={save}
+            disabled={saving}
+            className="h-9 px-6 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-bold cursor-pointer disabled:opacity-50"
+          >
             {saving ? 'Đang lưu...' : isEdit ? '💾 Cập nhật' : '✅ Tạo sự kiện'}
           </button>
         </div>

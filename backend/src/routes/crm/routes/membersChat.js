@@ -91,6 +91,16 @@ r.get('/leads/:id/assignments', async (req, res) => {
         position, created_at, updated_at, completed_at,
         assignee:users!crm_assignments_assignee_id_fkey(id, full_name, email, avatar, role, drive_module),
         created_by:users!crm_assignments_created_by_id_fkey(id, full_name, email, avatar),
+        lead:crm_leads(id, code, title, type),
+        crm_task:crm_tasks(id, notes)
+      `;
+    const ASSIGN_LIST_SELECT_NO_TASK = `
+        id, company_id, column_id, lead_id, crm_task_id, assignment_module,
+        task_source_type, employee_error_module, title, description,
+        assignee_id, created_by_id, priority, status, deadline,
+        position, created_at, updated_at, completed_at,
+        assignee:users!crm_assignments_assignee_id_fkey(id, full_name, email, avatar, role, drive_module),
+        created_by:users!crm_assignments_created_by_id_fkey(id, full_name, email, avatar),
         lead:crm_leads(id, code, title, type)
       `;
     const ASSIGN_LIST_SELECT_LEGACY = `
@@ -107,6 +117,13 @@ r.get('/leads/:id/assignments', async (req, res) => {
       .eq('lead_id', req.params.id)
       .order('created_at', { ascending: false });
     let { data, error } = await q;
+    if (error && /crm_task/.test(error.message || '')) {
+      ({ data, error } = await supabase
+        .from('crm_assignments')
+        .select(ASSIGN_LIST_SELECT_NO_TASK)
+        .eq('lead_id', req.params.id)
+        .order('created_at', { ascending: false }));
+    }
     if (error && /task_source_type|employee_error_module|crm_task_id/.test(error.message || '')) {
       ({ data, error } = await supabase
         .from('crm_assignments')
@@ -172,7 +189,9 @@ r.post('/leads/:id/assignments', async (req, res) => {
       : mod === 'logistics'
         ? '📋 Bạn vừa được giao nhiệm vụ VC/LĐ'
         : '📋 Bạn vừa được giao nhiệm vụ CRM';
-    const navPath = mod === 'production' ? '/sx/assignments' : '/crm/assignments';
+    const navPath = mod === 'production'
+      ? '/sx/assignments'
+      : (mod === 'logistics' ? '/vc/assignments' : '/crm/assignments');
     for (const uid of assigneeIds) {
       if (String(uid) === String(req.user.userId)) continue;
       const message = `"${data.title}"${leadSuffix}${data.deadline ? ' — hạn ' + new Date(data.deadline).toLocaleString('vi-VN') : ''}`;

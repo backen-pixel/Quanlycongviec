@@ -45,6 +45,7 @@
   "license": "ISC",
   "dependencies": {
     "@socket.io/redis-adapter": "^8.3.0",
+    "@supabase/server": "^1.4.1",
     "@supabase/supabase-js": "^2.98.0",
     "axios": "^1.15.1",
     "bcryptjs": "^3.0.3",

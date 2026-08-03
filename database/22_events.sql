@@ -26,7 +26,8 @@ INSERT INTO event_types (name, slug, icon, color, stage_slug, is_system, sort_or
   ('Giao hàng',      'delivery',       '🚚', '#F97316', 'shipping',     TRUE, 6),
   ('Lắp đặt',        'installation',   '🔧', '#EF4444', 'installation', TRUE, 7),
   ('Nghiệm thu',     'inspection',     '🔍', '#06B6D4', 'customer-care',TRUE, 8),
-  ('Khác',           'other',          '📋', '#6B7280', NULL,           TRUE, 9)
+  ('Khác',           'other',          '📋', '#6B7280', NULL,           TRUE, 9),
+  ('Đi quay hình',   'video_shoot',    '🎥', '#7C3AED', NULL,           TRUE, 10)
 ON CONFLICT (slug) DO NOTHING;
 
 -- Bảng sự kiện chính

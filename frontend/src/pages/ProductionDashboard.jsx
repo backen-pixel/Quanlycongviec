@@ -1916,7 +1916,7 @@ export default function ProductionDashboard() {
       : p)));
     try {
       await api.post(`/vc-handover/projects/${projectId}/request`, { sx_stage_id: sxColId || undefined });
-      alert('Đã gửi thông báo cho Sale CRM phụ trách deal — họ cần chọn công ty VC/LĐ và tạo sự kiện Lấy hàng / Lắp đặt (trong bình luận deal).');
+      alert('Đã gửi thông báo cho Sale CRM phụ trách deal — họ cần chọn công ty VC/LĐ và ngày lấy/lắp (trong bình luận deal). 3 sự kiện lịch sẽ tạo sau khi Xưởng & VC/LĐ xác nhận.');
       scheduleBoardRefresh(1500, { bustCache: true });
     } catch (e) {
       forgetPendingStageMove(projectId);
@@ -2520,7 +2520,7 @@ export default function ProductionDashboard() {
                 <Plus className="h-3.5 w-3.5" />
                 Tạo deal
           </button>
-              <AssignedTasksToolbarButton to="/sx/assignments" variant="outlined" className="!h-8 !rounded-lg !text-sm" />
+              <AssignedTasksToolbarButton to="/sx/assignments" assignmentModule="production" variant="outlined" className="!h-8 !rounded-lg !text-sm" />
       </div>
 
             {/* Tìm kiếm — giữa toolbar, chiếm phần trống còn lại */}

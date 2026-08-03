@@ -51,7 +51,7 @@ let _ckSeq = 0;
 const genChecklistId = () => `ck_${Date.now().toString(36)}_${(_ckSeq++).toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
 const normalizeChecklist = (arr) => (Array.isArray(arr) ? arr : []).map((c, i) => (
   typeof c === 'string'
-    ? { id: `ckidx_${i}_${c.slice(0, 8)}`, title: c, description: '', notes: '', done: false, priority: 'medium', assignee_id: null, executor_company_id: null, completion_requires_file_or_note: false, required_evidence_file_types: [], shared_to_project: false, allowed_share_modules: null }
+    ? { id: `ckidx_${i}_${c.slice(0, 8)}`, title: c, description: '', notes: '', done: false, priority: 'medium', assignee_id: null, executor_company_id: null, completion_requires_file_or_note: false, required_evidence_file_types: [], shared_to_project: false, allowed_share_modules: null, attachments: [] }
     : {
         id: c?.id || `ckidx_${i}`,
         title: c?.title || c?.label || '',
@@ -65,6 +65,7 @@ const normalizeChecklist = (arr) => (Array.isArray(arr) ? arr : []).map((c, i) =
         required_evidence_file_types: Array.isArray(c?.required_evidence_file_types) ? c.required_evidence_file_types : [],
         shared_to_project: !!c?.shared_to_project,
         allowed_share_modules: Array.isArray(c?.allowed_share_modules) ? c.allowed_share_modules : null,
+        attachments: Array.isArray(c?.attachments) ? c.attachments : [],
       }
 ));
 const ckStateKey = (taskId, ckId) => `${taskId}:${ckId}`;
@@ -230,21 +231,37 @@ function isSxProductionTask(task) {
 }
 
 const SX_ASSIGNMENTS_PATH = '/sx/assignments';
+const VC_ASSIGNMENTS_PATH = '/vc/assignments';
 
-function assignmentNavForTask(task, isProductionScope = false, forceProduction = null) {
+function assignmentNavForTask(task, isProductionScope = false, forceProduction = null, isLogisticsScope = false) {
+  const storedMod = String(task?.crm_assignment_module || '').toLowerCase();
+  const isLogistics = forceProduction == null && (
+    isLogisticsScope
+    || storedMod === 'logistics'
+    || String(task?.stage_slug || '').startsWith('vc_')
+  );
   const isProduction = forceProduction != null
     ? !!forceProduction
     : (
-      isProductionScope
-      || isSxProductionTask(task)
-      || String(task?.crm_assignment_module || '').toLowerCase() === 'production'
+      !isLogistics && (
+        isProductionScope
+        || isSxProductionTask(task)
+        || storedMod === 'production'
+      )
     );
-  const base = isProduction ? SX_ASSIGNMENTS_PATH : '/crm/assignments';
+  const base = isProduction
+    ? SX_ASSIGNMENTS_PATH
+    : isLogistics
+      ? VC_ASSIGNMENTS_PATH
+      : '/crm/assignments';
   return {
     isProduction,
+    isLogistics,
     base,
-    label: isProduction ? 'Giao việc Sản xuất' : 'Giao việc CRM',
-    title: isProduction ? 'Mở trên trang Giao việc Sản xuất' : 'Mở trên trang Giao việc CRM',
+    label: isProduction ? 'Giao việc Sản xuất' : (isLogistics ? 'Giao việc VC' : 'Giao việc CRM'),
+    title: isProduction
+      ? 'Mở trên trang Giao việc Sản xuất'
+      : (isLogistics ? 'Mở trên trang Giao việc Vận chuyển' : 'Mở trên trang Giao việc CRM'),
     openUrl: (id) => `${base}?open=${id}`,
   };
 }
@@ -896,6 +913,20 @@ export default function CRMTasksTab({
     const t = tasks.find((x) => String(x.id) === tid);
     return (t?.lead_id && String(t.lead_id)) || leadId;
   };
+
+  /** Nhiệm vụ bảng `tasks` (VC/LĐ xưởng) — không dùng /crm/leads/.../attachments */
+  const findTaskRow = (taskId) => tasks.find((x) => String(x.id) === String(taskId || ''));
+  const isWorkshopTaskId = (taskId) => isWorkshopProjectTaskRow(findTaskRow(taskId));
+  const workshopShareModule = isLogisticsScope ? 'logistics' : 'production';
+  const workshopAttachmentItems = (uploads) => uploads.map((up) => ({
+    original_name: up.original_name || up.file_name || 'File',
+    file_name: up.file_name,
+    file_url: up.file_url,
+    file_size: up.file_size,
+    mime_type: up.mime_type,
+    doc_type: inferAttachmentDocType(up),
+    allowed_share_modules: [workshopShareModule],
+  }));
 
   const notifyArtifactsSynced = (optTaskId) => {
     try {
@@ -2279,7 +2310,7 @@ export default function CRMTasksTab({
     setExpandedTask(task.id);
     setFocusHighlightId(fid);
     const scrollT = window.setTimeout(() => {
-      document.getElementById(`crm-task-row-${fid}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      document.getElementById(`crm-task-row-${fid}`)?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
     }, 150);
     const clearT = window.setTimeout(() => setFocusHighlightId(null), 5000);
     return () => {
@@ -2316,9 +2347,16 @@ export default function CRMTasksTab({
   const loadAttachments = async (task) => {
     const taskId = task.id;
     try {
+      if (isWorkshopProjectTaskRow(task) || isWorkshopTaskId(taskId)) {
+        const { data } = await api.get(`/tasks/${taskId}/attachments`, {
+          params: { for_module: workshopShareModule },
+        });
+        setTaskAttachments((p) => ({ ...p, [taskId]: data?.attachments || [] }));
+        return;
+      }
       const lid = apiLeadIdForTaskId(taskId);
       const { data } = await api.get(`/crm/leads/${lid}/tasks/${taskId}/attachments`);
-      setTaskAttachments(p => ({ ...p, [taskId]: data || [] }));
+      setTaskAttachments((p) => ({ ...p, [taskId]: data || [] }));
     } catch (e) { console.error(e); }
   };
 
@@ -2413,24 +2451,32 @@ export default function CRMTasksTab({
 
         // Tạo attachments — dedupe theo file_url để tránh insert trùng
         const seenUrls = new Set();
-        const items = [];
+        const dedupedUploads = [];
         for (const up of successUploads) {
           const url = String(up.file_url);
           if (seenUrls.has(url)) continue;
           seenUrls.add(url);
-          items.push({
-            name: (up.original_name || up.file_name || 'File').replace(/\.[^.]+$/, ''),
-            doc_type: inferAttachmentDocType(up),
-            file_url: up.file_url,
-            file_name: up.file_name,
-            file_size: up.file_size,
-            mime_type: up.mime_type,
+          dedupedUploads.push(up);
+        }
+        if (isWorkshopTaskId(taskId)) {
+          await api.post(`/tasks/${taskId}/attachments/bulk`, {
+            items: workshopAttachmentItems(dedupedUploads),
+          });
+        } else {
+          await api.post(`/crm/leads/${apiLeadIdForTaskId(taskId)}/tasks/${taskId}/attachments/bulk`, {
+            items: dedupedUploads.map((up) => ({
+              name: (up.original_name || up.file_name || 'File').replace(/\.[^.]+$/, ''),
+              doc_type: inferAttachmentDocType(up),
+              file_url: up.file_url,
+              file_name: up.file_name,
+              file_size: up.file_size,
+              mime_type: up.mime_type,
+            })),
           });
         }
-        await api.post(`/crm/leads/${apiLeadIdForTaskId(taskId)}/tasks/${taskId}/attachments/bulk`, { items });
         setExpandedTask(taskId);
-        loadAttachments({ id: taskId });
-        bumpTaskAttachmentCount(taskId, items.length);
+        loadAttachments({ id: taskId, _workshop_project_task: isWorkshopTaskId(taskId) || undefined });
+        bumpTaskAttachmentCount(taskId, dedupedUploads.length);
         notifyArtifactsSynced(taskId);
       } catch (err) {
         setUploadProgress(p => { const n = { ...p }; delete n[taskId]; return n; });
@@ -2443,6 +2489,9 @@ export default function CRMTasksTab({
 
   const addAttachmentNote = async (taskId) => {
     if (!attNoteText.trim()) return alert('Nhập nội dung ghi chú');
+    if (isWorkshopTaskId(taskId)) {
+      return alert('Ghi chú dạng đính kèm chỉ hỗ trợ nhiệm vụ CRM. Hãy dùng ghi chú nhiệm vụ xưởng.');
+    }
     try {
       await api.post(`/crm/leads/${apiLeadIdForTaskId(taskId)}/tasks/${taskId}/attachments`, {
         name: attNoteName.trim() || 'Ghi chú',
@@ -2465,24 +2514,48 @@ export default function CRMTasksTab({
       alert('Không xác định được file cần xóa');
       return;
     }
-    const att = (taskAttachments[tid] || []).find((a) => String(a.id) === aid)
+    const task = findTaskRow(tid);
+    const workshopCkAtt = isWorkshopProjectTaskRow(task)
+      ? normalizeChecklist(task?.checklist)
+        .flatMap((ck) => normalizeWorkshopChecklistAttachments(ck))
+        .find((a) => String(a.id) === aid)
+      : null;
+    const att = workshopCkAtt
+      || (taskAttachments[tid] || []).find((a) => String(a.id) === aid)
       || Object.values(taskAttachments).flat().find((a) => String(a.id) === aid);
     if (!skipConfirm && !confirm('Xóa đính kèm này?')) return;
+    const workshop = isWorkshopTaskId(tid) || String(att?.entity_type || '') === 'task';
     const lid = att?.lead_id ? String(att.lead_id) : apiLeadIdForTaskId(tid);
-    const resolvedTaskId = att?.task_id ? String(att.task_id) : tid;
+    const resolvedTaskId = att?.task_id || att?.entity_id ? String(att.task_id || att.entity_id) : tid;
     try {
-      await api.delete(`/crm/leads/${lid}/tasks/${resolvedTaskId}/attachments/${aid}`);
-      setTaskAttachments((p) => ({
-        ...p,
-        [tid]: (p[tid] || []).filter((a) => String(a.id) !== aid),
-      }));
+      if (att?._workshop_checklist && att.checklist_id) {
+        const ck = normalizeChecklist(task?.checklist).find((c) => String(c.id) === String(att.checklist_id));
+        const byId = (Array.isArray(ck?.attachments) ? ck.attachments : []).filter((a, i) => (
+          String(a.id || `wck_${ck.id}_${i}`) !== aid
+        ));
+        await patchWorkshopChecklist(tid, att.checklist_id, { attachments: byId });
+      } else if (workshop) {
+        await api.delete(`/tasks/${resolvedTaskId}/attachments/${aid}`);
+        setTaskAttachments((p) => ({
+          ...p,
+          [tid]: (p[tid] || []).filter((a) => String(a.id) !== aid),
+        }));
+      } else {
+        await api.delete(`/crm/leads/${lid}/tasks/${resolvedTaskId}/attachments/${aid}`);
+        setTaskAttachments((p) => ({
+          ...p,
+          [tid]: (p[tid] || []).filter((a) => String(a.id) !== aid),
+        }));
+      }
       const noteTypes = new Set(['task_note', 'task_inline_note', 'checklist_inline_note']);
       bumpTaskAttachmentCount(tid, -1, noteTypes.has(String(att?.doc_type || '')) ? 'note' : 'file');
       notifyArtifactsSynced(tid);
     } catch (e) {
       alert(e.response?.data?.error || e.message || 'Lỗi xóa file');
     }
-    loadAttachments({ id: tid });
+    if (!att?._workshop_checklist) {
+      loadAttachments({ id: tid, _workshop_project_task: workshop || undefined });
+    }
   };
 
   const uploadOneRawFile = async (file) => {
@@ -2521,11 +2594,34 @@ export default function CRMTasksTab({
       try {
         const up = await uploadOneRawFile(file);
         if (!up?.file_url) throw new Error('Upload không trả về file');
-        await api.post(`/crm/leads/${apiLeadIdForTaskId(taskId)}/tasks/${taskId}/attachments/bulk`, {
-          items: [buildAttachmentItemFromUpload(up)],
-          ...(checklistId ? { checklist_id: checklistId } : {}),
-        });
-        await deleteAttachment(taskId, attId, { skipConfirm: true });
+        if (isWorkshopTaskId(taskId) && checklistId) {
+          const task = findTaskRow(taskId);
+          const ck = normalizeChecklist(task?.checklist).find((c) => String(c.id) === String(checklistId));
+          const prevAtts = Array.isArray(ck?.attachments) ? ck.attachments : [];
+          const nextAtts = prevAtts
+            .filter((a, i) => String(a.id || `wck_${ck.id}_${i}`) !== String(attId))
+            .concat([{
+              id: `wck_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
+              name: (up.original_name || up.file_name || 'File').replace(/\.[^.]+$/, ''),
+              file_name: up.file_name || up.original_name || 'File',
+              file_url: up.file_url,
+              file_size: up.file_size,
+              mime_type: up.mime_type,
+              doc_type: inferAttachmentDocType(up),
+            }]);
+          await patchWorkshopChecklist(taskId, checklistId, { attachments: nextAtts });
+        } else if (isWorkshopTaskId(taskId)) {
+          await api.post(`/tasks/${taskId}/attachments/bulk`, {
+            items: workshopAttachmentItems([up]),
+          });
+          await deleteAttachment(taskId, attId, { skipConfirm: true });
+        } else {
+          await api.post(`/crm/leads/${apiLeadIdForTaskId(taskId)}/tasks/${taskId}/attachments/bulk`, {
+            items: [buildAttachmentItemFromUpload(up)],
+            ...(checklistId ? { checklist_id: checklistId } : {}),
+          });
+          await deleteAttachment(taskId, attId, { skipConfirm: true });
+        }
       } catch (err) {
         alert(err.response?.data?.error || err.message || 'Thay thế file lỗi');
       }
@@ -2539,6 +2635,51 @@ export default function CRMTasksTab({
   const filterTaskLevelAttachments = (atts) => (
     (atts || []).filter((a) => !a.checklist_id)
   );
+
+  /** Checklist xưởng lưu file trong task_checklists.attachments (JSONB), không có checklist_id trên file_attachments */
+  const normalizeWorkshopChecklistAttachments = (ck) => (
+    (Array.isArray(ck?.attachments) ? ck.attachments : []).map((a, i) => ({
+      id: a.id || `wck_${ck.id}_${i}`,
+      name: a.name || (a.file_name || 'File').replace(/\.[^.]+$/, ''),
+      file_name: a.file_name || a.name || 'File',
+      file_url: a.file_url,
+      file_size: a.file_size,
+      mime_type: a.mime_type,
+      doc_type: a.doc_type || (a.file_url ? inferAttachmentDocType(a) : 'task_note'),
+      notes: a.notes || null,
+      checklist_id: ck.id,
+      _workshop_checklist: true,
+    }))
+  );
+
+  const resolveChecklistAttachments = (task, ck) => {
+    if (isWorkshopProjectTaskRow(task)) return normalizeWorkshopChecklistAttachments(ck);
+    return filterChecklistAttachments(taskAttachments[task.id] || [], ck.id);
+  };
+
+  const patchWorkshopChecklist = async (taskId, ckId, patch) => {
+    const { data } = await api.patch(`/tasks/${taskId}/checklists/${ckId}`, patch);
+    const row = data?.checklist || data;
+    setTasks((prev) => prev.map((t) => {
+      if (String(t.id) !== String(taskId)) return t;
+      return {
+        ...t,
+        checklist: normalizeChecklist(t.checklist).map((c) => (
+          String(c.id) === String(ckId)
+            ? {
+              ...c,
+              notes: patch.notes !== undefined ? (row?.notes ?? patch.notes) : c.notes,
+              attachments: patch.attachments !== undefined
+                ? (Array.isArray(row?.attachments) ? row.attachments : patch.attachments)
+                : c.attachments,
+              done: patch.is_completed !== undefined ? !!patch.is_completed : c.done,
+            }
+            : c
+        )),
+      };
+    }));
+    return row;
+  };
 
   const toggleExpandChecklist = (task, ck) => {
     const key = ckStateKey(task.id, ck.id);
@@ -2591,11 +2732,16 @@ export default function CRMTasksTab({
     const key = ckStateKey(taskId, ckId);
     setSavingChecklistNote(key);
     try {
-      const { data } = await api.put(
-        `/crm/leads/${apiLeadIdForTaskId(taskId)}/tasks/${taskId}/checklist/${ckId}/notes`,
-        { notes: checklistNoteText[key] || '' },
-      );
-      setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, checklist: data.checklist } : t)));
+      const notes = checklistNoteText[key] || '';
+      if (isWorkshopTaskId(taskId)) {
+        await patchWorkshopChecklist(taskId, ckId, { notes });
+      } else {
+        const { data } = await api.put(
+          `/crm/leads/${apiLeadIdForTaskId(taskId)}/tasks/${taskId}/checklist/${ckId}/notes`,
+          { notes },
+        );
+        setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, checklist: data.checklist } : t)));
+      }
       notifyArtifactsSynced(taskId);
       setSavingChecklistNote(`saved-${key}`);
       setTimeout(() => setSavingChecklistNote(null), 1500);
@@ -2648,26 +2794,51 @@ export default function CRMTasksTab({
         const successUploads = allUploaded.filter((up) => up?.file_url && !String(up.file_url).startsWith('data:'));
         if (!successUploads.length) throw new Error('Upload không trả về file');
         const seenUrls = new Set();
-        const items = [];
+        const dedupedUploads = [];
         for (const up of successUploads) {
           const url = String(up.file_url);
           if (seenUrls.has(url)) continue;
           seenUrls.add(url);
-          items.push({
-            name: (up.original_name || up.file_name || 'File').replace(/\.[^.]+$/, ''),
-            doc_type: inferAttachmentDocType(up),
-            file_url: up.file_url,
-            file_name: up.file_name,
-            file_size: up.file_size,
-            mime_type: up.mime_type,
-          });
+          dedupedUploads.push(up);
         }
-        await api.post(`/crm/leads/${apiLeadIdForTaskId(taskId)}/tasks/${taskId}/attachments/bulk`, {
-          items,
-          checklist_id: ckId,
-        });
-        loadAttachments({ id: taskId });
-        bumpTaskAttachmentCount(taskId, items.length);
+        if (isWorkshopTaskId(taskId)) {
+          const task = findTaskRow(taskId);
+          const ck = normalizeChecklist(task?.checklist).find((c) => String(c.id) === String(ckId));
+          const prevAtts = Array.isArray(ck?.attachments) ? [...ck.attachments] : [];
+          const seen = new Set(prevAtts.map((a) => String(a.file_url || '')));
+          const added = [];
+          for (const up of dedupedUploads) {
+            const url = String(up.file_url || '');
+            if (!url || seen.has(url)) continue;
+            seen.add(url);
+            added.push({
+              id: `wck_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
+              name: (up.original_name || up.file_name || 'File').replace(/\.[^.]+$/, ''),
+              file_name: up.file_name || up.original_name || 'File',
+              file_url: up.file_url,
+              file_size: up.file_size,
+              mime_type: up.mime_type,
+              doc_type: inferAttachmentDocType(up),
+            });
+          }
+          if (!added.length) throw new Error('Không có file mới để gắn checklist');
+          await patchWorkshopChecklist(taskId, ckId, { attachments: [...prevAtts, ...added] });
+          bumpTaskAttachmentCount(taskId, added.length);
+        } else {
+          await api.post(`/crm/leads/${apiLeadIdForTaskId(taskId)}/tasks/${taskId}/attachments/bulk`, {
+            items: dedupedUploads.map((up) => ({
+              name: (up.original_name || up.file_name || 'File').replace(/\.[^.]+$/, ''),
+              doc_type: inferAttachmentDocType(up),
+              file_url: up.file_url,
+              file_name: up.file_name,
+              file_size: up.file_size,
+              mime_type: up.mime_type,
+            })),
+            checklist_id: ckId,
+          });
+          loadAttachments({ id: taskId });
+          bumpTaskAttachmentCount(taskId, dedupedUploads.length);
+        }
         notifyArtifactsSynced(taskId);
       } catch (err) {
         alert(err.response?.data?.error || err.message || 'Upload lỗi');
@@ -3064,8 +3235,7 @@ export default function CRMTasksTab({
   // Mục checklist giao chéo — không lộ bộ nhiệm vụ nội bộ
   const renderSharedChecklistEntry = (task, ck) => {
     const ckKey = ckStateKey(task.id, ck.id);
-    const allAtts = taskAttachments[task.id] || [];
-    const ckAtts = filterChecklistAttachments(allAtts, ck.id);
+    const ckAtts = resolveChecklistAttachments(task, ck);
     const ckFileCount = ckAtts.filter((a) => a.doc_type !== 'checklist_inline_note' && a.doc_type !== 'task_note' && a.doc_type !== 'task_inline_note').length;
     const ckHasNotes = !!(ck.notes?.trim() || ckAtts.some((a) => (a.doc_type === 'checklist_inline_note' || a.doc_type === 'task_inline_note' || a.doc_type === 'task_note') && a.notes?.trim()));
     const isCkExpanded = expandedChecklistKey === ckKey;
@@ -3277,7 +3447,7 @@ export default function CRMTasksTab({
         isExpanded ? 'bg-gray-50 border border-gray-200' : 'hover:bg-gray-50'
       } ${delegated && taskCompanyScope === 'shared' ? 'border border-teal-200 bg-teal-50/25' : ''} ${isOver ? 'ring-2 ring-blue-300 ring-offset-1' : ''} ${String(focusHighlightId) === String(task.id) ? 'ring-2 ring-indigo-500 ring-offset-1 bg-indigo-50/40' : ''}`}>
         {/* Main row */}
-        <div className="flex items-center gap-2 py-2 px-3 group">
+        <div className="flex items-center gap-2 py-2 px-3 group" data-tour="crm-task-row" data-tour-task-id={task.id}>
           {viewMode === 'list' && (
           <button
             type="button"
@@ -3289,7 +3459,13 @@ export default function CRMTasksTab({
             <GripVertical className="h-4 w-4" />
           </button>
           )}
-          <button onClick={() => toggleStatus(task)} className="cursor-pointer shrink-0">
+          <button
+            type="button"
+            data-tour="crm-task-complete"
+            onClick={() => toggleStatus(task)}
+            className="cursor-pointer shrink-0"
+            title="Đánh dấu hoàn thành / chưa xong"
+          >
             <StatusIcon className={`h-4 w-4 ${task.status === 'completed' ? 'text-emerald-500' : task.status === 'in_progress' ? 'text-blue-500' : 'text-gray-300'}`} />
           </button>
           <div
@@ -3378,16 +3554,22 @@ export default function CRMTasksTab({
             )}
             <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
               {task.deadline && editingDeadline !== task.id && (
-                <span onClick={(e) => { e.stopPropagation(); setEditingDeadline(task.id); }}
+                <span
+                  data-tour="crm-task-deadline"
+                  onClick={(e) => { e.stopPropagation(); setEditingDeadline(task.id); }}
                   className={`text-xs font-semibold flex items-center gap-1 cursor-pointer hover:bg-gray-100 px-1.5 py-0.5 rounded ${isOverdue ? 'text-red-600' : 'text-gray-700'}`}
-                  title="Click để đổi ngày giờ hẹn">
+                  title="Click để đổi ngày giờ hẹn"
+                >
                   <Calendar className="h-3.5 w-3.5" />{formatDateTime(task.deadline)}
                 </span>
               )}
               {!task.deadline && editingDeadline !== task.id && (
-                <span onClick={(e) => { e.stopPropagation(); setEditingDeadline(task.id); }}
+                <span
+                  data-tour="crm-task-deadline"
+                  onClick={(e) => { e.stopPropagation(); setEditingDeadline(task.id); }}
                   className="text-xs font-medium text-gray-400 flex items-center gap-1 cursor-pointer hover:text-blue-500 hover:bg-blue-50 px-1.5 py-0.5 rounded"
-                  title="Chọn ngày giờ hẹn">
+                  title="Chọn ngày giờ hẹn"
+                >
                   <Calendar className="h-3.5 w-3.5" />+ Ngày hẹn
                 </span>
               )}
@@ -3416,7 +3598,12 @@ export default function CRMTasksTab({
                 </span>
               ))}
               {task.crm_assignment_id && (() => {
-                const asnNav = assignmentNavForTask(task, isProductionScope || showSxTasksInUi);
+                const asnNav = assignmentNavForTask(
+                  task,
+                  isProductionScope || showSxTasksInUi,
+                  null,
+                  isLogisticsScope || showLogisticsWorkshopInUi,
+                );
                 return (
                 <Link
                   to={asnNav.openUrl(task.crm_assignment_id)}
@@ -3519,18 +3706,28 @@ export default function CRMTasksTab({
             </div>
           </div>
           <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium shrink-0 ${PRIORITY_COLORS[task.priority]}`}>{PRIORITY_LABELS[task.priority]}</span>
-          <div className="flex items-center gap-0.5 shrink-0 border-l border-gray-100 pl-1.5 ml-0.5">
+          <div
+            data-tour="crm-task-actions"
+            className="flex items-center gap-0.5 shrink-0 border-l border-gray-100 pl-1.5 ml-0.5"
+          >
             <button type="button" onClick={(e) => { e.stopPropagation(); handleShareClick(task.id); }}
               onDoubleClick={(e) => { e.stopPropagation(); if (task.shared_to_project) openShareModal(task.id); }}
               className={`p-1.5 rounded-md cursor-pointer ${task.shared_to_project ? 'text-green-600 hover:bg-green-50' : 'text-gray-500 hover:bg-gray-100 hover:text-green-600'}`}
               title={task.shared_to_project ? 'Click: tắt chia sẻ · Double-click: đổi khối được xem' : 'Chia sẻ ghi chú sang SX / VC / Công việc dự án'}>
               {task.shared_to_project ? <Share2 className="h-3.5 w-3.5" /> : <Lock className="h-3.5 w-3.5" />}
             </button>
-            <button type="button" onClick={(e) => { e.stopPropagation(); toggleExpand(task); }} className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-md cursor-pointer" title="Ghi chú & file">
+            <button
+              type="button"
+              data-tour="crm-task-notes-files"
+              onClick={(e) => { e.stopPropagation(); toggleExpand(task); }}
+              className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-md cursor-pointer"
+              title="Ghi chú & file"
+            >
               <Paperclip className="h-3.5 w-3.5" />
             </button>
             <button
               type="button"
+              data-tour="crm-task-assign"
               onClick={(e) => { e.stopPropagation(); openAssignModal(task, e.currentTarget); }}
               className={`p-1.5 rounded-md cursor-pointer ${
                 taskAssigneeList(task).length
@@ -3543,6 +3740,7 @@ export default function CRMTasksTab({
             </button>
             <button
               type="button"
+              data-tour="crm-task-verdict"
               onClick={async (e) => {
                 e.stopPropagation();
                 try {
@@ -3567,6 +3765,7 @@ export default function CRMTasksTab({
             </button>
             <button
               type="button"
+              data-tour="crm-task-file-note"
               onClick={async (e) => {
                 e.stopPropagation();
                 try {
@@ -3593,10 +3792,24 @@ export default function CRMTasksTab({
             >
               {task.file_note_recorded ? <CheckSquare className="h-3.5 w-3.5" /> : <Square className="h-3.5 w-3.5" />}
             </button>
-            <button type="button" onClick={(e) => { e.stopPropagation(); openEditModal(task, e.currentTarget); }} className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-md cursor-pointer" title="Chỉnh sửa nhiệm vụ">
+            <button
+              type="button"
+              data-tour="crm-task-edit"
+              onClick={(e) => { e.stopPropagation(); openEditModal(task, e.currentTarget); }}
+              className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-md cursor-pointer"
+              title="Chỉnh sửa nhiệm vụ"
+            >
               <Edit3 className="h-3.5 w-3.5" />
             </button>
-            <button type="button" onClick={(e) => { e.stopPropagation(); deleteTask(task.id); }} className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-md cursor-pointer" title="Xóa nhiệm vụ"><Trash2 className="h-3.5 w-3.5" /></button>
+            <button
+              type="button"
+              data-tour="crm-task-delete"
+              onClick={(e) => { e.stopPropagation(); deleteTask(task.id); }}
+              className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-md cursor-pointer"
+              title="Xóa nhiệm vụ"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
           </div>
         </div>
 
@@ -3615,7 +3828,10 @@ export default function CRMTasksTab({
 
         {/* Expanded: Notes + Attachments (gộp 1 khu vực) */}
         {isExpanded && (
-          <div className="px-3 pb-3 space-y-3 border-t border-gray-200 mx-3 pt-3">
+          <div
+            data-tour="crm-task-notes-panel"
+            className="px-3 pb-3 space-y-3 border-t border-gray-200 mx-3 pt-3"
+          >
             {!!task.show_fill_form && hasFilledFormData(task.form_data) && renderFillFormSummary(task)}
             {hasDesc && (
               <div className="rounded-lg bg-slate-50 border border-slate-200 p-3">
@@ -3658,7 +3874,7 @@ export default function CRMTasksTab({
                   <div className="space-y-1.5">
                     {ckItems.map((ck) => {
                       const ckKey = ckStateKey(task.id, ck.id);
-                      const ckAtts = filterChecklistAttachments(allAtts, ck.id);
+                      const ckAtts = resolveChecklistAttachments(task, ck);
                       const ckFileCount = ckAtts.filter((a) => a.doc_type !== 'checklist_inline_note' && a.doc_type !== 'task_note' && a.doc_type !== 'task_inline_note').length;
                       const ckHasNotes = !!(ck.notes?.trim() || ckAtts.some((a) => (a.doc_type === 'checklist_inline_note' || a.doc_type === 'task_inline_note' || a.doc_type === 'task_note') && a.notes?.trim()));
                       const isCkExpanded = expandedChecklistKey === ckKey;

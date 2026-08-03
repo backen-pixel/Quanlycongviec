@@ -9,6 +9,7 @@ export function UnreadBadgesProvider({ children }) {
   const { user, socket } = useAuth();
   const [assignmentsCrm, setAssignmentsCrm] = useState(EMPTY_ASSIGN);
   const [assignmentsSx, setAssignmentsSx] = useState(EMPTY_ASSIGN);
+  const [assignmentsVc, setAssignmentsVc] = useState(EMPTY_ASSIGN);
   const [socialUnread, setSocialUnread] = useState(0);
   const [dbUnread, setDbUnread] = useState(0);
   const [unifiedTasksOpen, setUnifiedTasksOpen] = useState(0);
@@ -17,6 +18,7 @@ export function UnreadBadgesProvider({ children }) {
   const resetBadgeState = useCallback(() => {
     setAssignmentsCrm(EMPTY_ASSIGN);
     setAssignmentsSx(EMPTY_ASSIGN);
+    setAssignmentsVc(EMPTY_ASSIGN);
     setSocialUnread(0);
     setDbUnread(0);
     setUnifiedTasksOpen(0);
@@ -38,6 +40,7 @@ export function UnreadBadgesProvider({ children }) {
     if (!payload) return;
     setAssignmentsCrm(payload.assignmentsCrm || EMPTY_ASSIGN);
     setAssignmentsSx(payload.assignmentsProduction || EMPTY_ASSIGN);
+    setAssignmentsVc(payload.assignmentsLogistics || EMPTY_ASSIGN);
     setSocialUnread(Number(payload.social) || 0);
     setDbUnread(Number(payload.releaseNotesDb) || 0);
     setUnifiedTasksOpen(Number(payload.unifiedTasks?.open) || 0);
@@ -120,6 +123,8 @@ export function UnreadBadgesProvider({ children }) {
       assignmentsDetail: assignmentsCrm,
       sxAssignments: assignmentsSx.unread,
       sxAssignmentsDetail: assignmentsSx,
+      vcAssignments: assignmentsVc.unread,
+      vcAssignmentsDetail: assignmentsVc,
       social: socialUnread,
       socialDetail: { unread: socialUnread, refresh: () => refreshHeartbeat({ fresh: true }) },
       unifiedTasksOpen,
@@ -130,9 +135,10 @@ export function UnreadBadgesProvider({ children }) {
       refreshSocial: () => refreshHeartbeat({ fresh: true }),
       refreshAssignments: () => refreshHeartbeat({ fresh: true }),
       refreshSxAssignments: () => refreshHeartbeat({ fresh: true }),
+      refreshVcAssignments: () => refreshHeartbeat({ fresh: true }),
       refreshUpdates: refreshReleaseNotes,
     }),
-    [release, assignmentsCrm, assignmentsSx, socialUnread, unifiedTasksOpen, refreshHeartbeat, refreshReleaseNotes, user],
+    [release, assignmentsCrm, assignmentsSx, assignmentsVc, socialUnread, unifiedTasksOpen, refreshHeartbeat, refreshReleaseNotes, user],
   );
 
   return (
@@ -165,6 +171,7 @@ export function useSidebarUnreadBadges() {
     updatesUnread: b.updates,
     assignmentsUnread: b.assignments,
     sxAssignmentsUnread: b.sxAssignments ?? 0,
+    vcAssignmentsUnread: b.vcAssignments ?? 0,
     socialUnread: b.social,
     unifiedTasksOpen: b.unifiedTasksOpen ?? 0,
   };

@@ -46,6 +46,7 @@ export default function ViewModeDropdownMenu({
       anchorRef={anchorRef}
       align="right"
       fitContent
+      data-tour="crm-view-mode-menu"
       className={`rounded-xl py-1.5 px-1 ${t.shell}`}
     >
       <div className={`mb-1 rounded-lg border px-2.5 py-1.5 ${t.header}`}>

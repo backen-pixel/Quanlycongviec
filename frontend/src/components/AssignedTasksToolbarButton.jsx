@@ -3,16 +3,24 @@ import { ClipboardList } from 'lucide-react';
 import { useUnreadBadges } from '../shared/context/UnreadBadgesContext';
 
 /**
- * Nút «Giao việc» + badge nhấp nháy — đặt cạnh toolbar Kanban (CRM / SX pipeline).
+ * Nút «Giao việc» + badge nhấp nháy — đặt cạnh toolbar Kanban (CRM / SX / VC pipeline).
  */
 export default function AssignedTasksToolbarButton({
   to = '/crm/assignments',
   compact = false,
   variant = 'filled',
   className = '',
+  assignmentModule = 'crm',
+  ...rest
 }) {
-  const { assignmentsDetail } = useUnreadBadges();
-  const { unread, overdue, dueSoon, pending } = assignmentsDetail || { unread: 0, overdue: 0, dueSoon: 0, pending: 0 };
+  const badges = useUnreadBadges();
+  const mod = String(assignmentModule || 'crm').toLowerCase();
+  const detail = mod === 'production'
+    ? (badges.sxAssignmentsDetail || badges.assignmentsDetail)
+    : mod === 'logistics'
+      ? (badges.vcAssignmentsDetail || badges.assignmentsDetail)
+      : badges.assignmentsDetail;
+  const { unread, overdue, dueSoon, pending } = detail || { unread: 0, overdue: 0, dueSoon: 0, pending: 0 };
 
   const parts = [];
   if (overdue > 0) parts.push(`${overdue} quá hạn`);
@@ -30,6 +38,7 @@ export default function AssignedTasksToolbarButton({
       to={to}
       title={hint}
       className={`relative inline-flex items-center gap-1.5 rounded-lg font-medium cursor-pointer transition-colors shrink-0 ${sizeCls} ${variantCls} ${className}`}
+      {...rest}
     >
       <ClipboardList className="h-3.5 w-3.5 shrink-0" />
       <span>Giao việc</span>

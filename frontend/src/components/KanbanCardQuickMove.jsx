@@ -260,6 +260,7 @@ export default function KanbanCardQuickMove({
         type="button"
         disabled={disabled || movableStages.length === 0}
         className={btnClass}
+        data-tour="kanban-quick-move"
         data-kanban-quick-move
         data-sx-quick-btn
         title={btnTipLabel}

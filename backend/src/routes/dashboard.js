@@ -5,6 +5,7 @@ const { lookupCache } = require('../helpers/ttlCache');
 const {
   pgDashboardNotificationStats,
   pgDashboardNotificationsList,
+  pgDashboardNotificationsReadAll,
   pgDashboardOverview,
   pgDashboardWorkload,
   pgDashboardCustomers,
@@ -377,37 +378,61 @@ r.get('/notifications/deadlines', async (req, res) => {
 r.put('/notifications/read-all', async (req, res) => {
   try {
     const channel = req.query.channel ? String(req.query.channel).toLowerCase() : '';
+    const userId = req.user.userId;
 
-    let q = supabase
-      .from('notifications')
-      .update({ is_read: true })
-      .eq('user_id', req.user.userId)
-      .eq('is_read', false);
-
-    if (channel === 'activity') {
-      const { data: unreadRows, error: readFilterErr } = await supabase
-        .from('notifications')
-        .select('id, type, entity_type, metadata')
-        .eq('user_id', req.user.userId)
-        .eq('is_read', false)
-        .limit(2000);
-      if (readFilterErr) return res.status(500).json({ error: readFilterErr.message });
-      const ids = (unreadRows || []).filter((n) => !isProjectModuleNotification(n) && isDealActivityNotification(n)).map((n) => n.id);
-      if (!ids.length) return res.json({ ok: true });
-      q = q.in('id', ids);
-    } else if (channel === 'messages') {
-      q = q.or(MESSAGES_CHANNEL_OR_FILTER);
-    } else if (channel === 'events') {
-      q = q.in('type', EVENT_NOTIFICATION_TYPES);
-    } else if (channel === 'assignments') {
-      q = q.or(`type.in.(${ASSIGNMENT_NOTIFICATION_TYPES.join(',')}),entity_type.eq.crm_assignment`);
-    } else if (channel === 'deadlines') {
-      q = q.in('type', EXPIRY_DEADLINE_NOTIFICATION_TYPES_LIST);
+    const pgResult = await pgDashboardNotificationsReadAll(userId, channel);
+    if (pgResult) {
+      await invalidateTags(['notifications', `user:${userId}`]);
+      return res.json(pgResult);
     }
 
-    const { error } = await q;
-    if (error) return res.status(500).json({ error: error.message });
-    await invalidateTags(['notifications', `user:${req.user.userId}`]);
+    // Fallback Supabase — activity dùng filter type/entity (không select 2000 id)
+    if (channel === 'activity') {
+      const excluded = postgrestInTypesList([
+        ...EXPIRY_DEADLINE_NOTIFICATION_TYPES_LIST,
+        ...CHAT_NOTIFICATION_TYPES,
+        ...EVENT_NOTIFICATION_TYPES,
+        ...ASSIGNMENT_NOTIFICATION_TYPES,
+      ]);
+      const { error: errTypes } = await supabase
+        .from('notifications')
+        .update({ is_read: true })
+        .eq('user_id', userId)
+        .eq('is_read', false)
+        .in('type', DEAL_ACTIVITY_NOTIFICATION_TYPES);
+      if (errTypes) return res.status(500).json({ error: errTypes.message });
+
+      const { error: errDeal } = await supabase
+        .from('notifications')
+        .update({ is_read: true })
+        .eq('user_id', userId)
+        .eq('is_read', false)
+        .eq('entity_type', 'crm_deal')
+        .neq('type', 'comment_added')
+        .not('type', 'in', excluded);
+      if (errDeal) return res.status(500).json({ error: errDeal.message });
+    } else {
+      let q = supabase
+        .from('notifications')
+        .update({ is_read: true })
+        .eq('user_id', userId)
+        .eq('is_read', false);
+
+      if (channel === 'messages') {
+        q = q.or(MESSAGES_CHANNEL_OR_FILTER);
+      } else if (channel === 'events') {
+        q = q.in('type', EVENT_NOTIFICATION_TYPES);
+      } else if (channel === 'assignments') {
+        q = q.or(`type.in.(${ASSIGNMENT_NOTIFICATION_TYPES.join(',')}),entity_type.eq.crm_assignment`);
+      } else if (channel === 'deadlines') {
+        q = q.in('type', EXPIRY_DEADLINE_NOTIFICATION_TYPES_LIST);
+      }
+
+      const { error } = await q;
+      if (error) return res.status(500).json({ error: error.message });
+    }
+
+    await invalidateTags(['notifications', `user:${userId}`]);
     res.json({ ok: true });
   } catch (e) {
     console.error('Dashboard mark all read error:', e);

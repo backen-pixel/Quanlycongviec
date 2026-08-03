@@ -38,6 +38,7 @@ export function AppSwitcherButton({ open, onClick, collapsed }) {
   return (
     <button
       type="button"
+      data-tour="app-switcher"
       onClick={onClick}
       title="Tất cả ứng dụng"
       aria-label="Tất cả ứng dụng"
@@ -207,6 +208,7 @@ export default function AppSwitcherPanel({
         key={mod.id}
         role="button"
         tabIndex={0}
+        data-tour={mod.id === 'crm' ? 'app-switcher-crm' : undefined}
         onClick={() => openModule(mod)}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') openModule(mod); }}
         className={`group relative flex items-center gap-2 rounded-xl border px-2 py-2 text-left shadow-sm transition-all ${
@@ -326,6 +328,7 @@ export default function AppSwitcherPanel({
                       key={mod.id}
                       role="button"
                       tabIndex={0}
+                      data-tour={mod.id === 'crm' ? 'app-switcher-crm' : undefined}
                       onClick={() => openModule(mod)}
                       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') openModule(mod); }}
                       className={`relative shrink-0 w-[86px] rounded-xl border px-2 py-2.5 text-center shadow-sm transition-all ${

@@ -23,7 +23,7 @@ export function useCrmAssignmentsUnread(assignmentModule = 'crm') {
       return;
     }
     try {
-      const params = mod === 'production' || mod === 'crm' ? { assignment_module: mod } : {};
+      const params = ['production', 'crm', 'logistics'].includes(mod) ? { assignment_module: mod } : {};
       const { data } = await api.get('/crm/assignments/unread-count', { params });
       setUnread(Number(data?.unread) || 0);
       setDetail({

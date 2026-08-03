@@ -20,6 +20,7 @@ import {
   Loader2,
   Package,
   Paperclip,
+  Pencil,
   Truck,
 } from 'lucide-react';
 import api from '../lib/api';
@@ -712,16 +713,19 @@ function toDatetimeLocalValue(raw) {
 }
 
 /** Bình luận tương tác bàn giao VC/LĐ (chọn công ty + ngày → sự kiện + xác nhận 2 phụ trách). */
-function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm }) {
+function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onReschedule }) {
   const md = comment?.metadata || {};
   const state = md.state || 'awaiting_company';
   const selfUid = String(user?.userId || user?.id || '');
   // Chỉ Sale CRM phụ trách deal (assigned_to / lead_owner) được chọn công ty + ngày.
   const saleIds = (md.sale_user_ids || []).map(String);
   const canSale = saleIds.includes(selfUid);
-  // Chỉ đúng phụ trách chính mới được tích xác nhận (không bypass admin).
-  const canConfirmProduction = selfUid === String(md.production_person_id || '');
-  const canConfirmLogistics = selfUid === String(md.logistics_person_id || '');
+  // Chỉ người chịu trách nhiệm CRM chính (assigned_to) được sửa ngày đề xuất.
+  const crmResponsibleId = String(md.crm_responsible_user_id || saleIds[0] || '');
+  const canEditAsCrmOwner = !!crmResponsibleId && selfUid === crmResponsibleId;
+  // Chỉ đúng người cấu hình xác nhận mới được tích (fallback phụ trách dự án).
+  const canConfirmProduction = selfUid === String(md.production_confirm_user_id || md.production_person_id || '');
+  const canConfirmLogistics = selfUid === String(md.logistics_confirm_user_id || md.logistics_person_id || '');
 
   const [companies, setCompanies] = useState([]);
   const [companyId, setCompanyId] = useState('');
@@ -734,16 +738,20 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm }) {
   const [err, setErr] = useState('');
   const [eventsPopupOpen, setEventsPopupOpen] = useState(false);
   const [eventsPopupFocus, setEventsPopupFocus] = useState(null);
-  /** null | 'pickup' | 'install' — mở lịch để chọn ngày cho thẻ */
+  /** null | 'pickup' | 'install' | 'both' — mở lịch để chọn ngày cho thẻ */
   const [datePickTarget, setDatePickTarget] = useState(null);
+  /** true = đang sửa ngày đề xuất sau khi đã bàn giao (awaiting_confirm) */
+  const [rescheduleMode, setRescheduleMode] = useState(false);
 
   const openEventsCalendar = useCallback((dateIso) => {
+    setRescheduleMode(false);
     setDatePickTarget(null);
     setEventsPopupFocus(dateIso || pickupAt || md.pickup_at || installDate || md.install_date || null);
     setEventsPopupOpen(true);
   }, [pickupAt, installDate, md.pickup_at, md.install_date]);
 
   const openDatePickCalendar = useCallback((target) => {
+    setRescheduleMode(false);
     setDatePickTarget(target);
     const focus = target === 'install'
       ? (installDate || pickupAt || md.install_date || md.pickup_at || null)
@@ -751,6 +759,25 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm }) {
     setEventsPopupFocus(focus);
     setEventsPopupOpen(true);
   }, [pickupAt, installDate, md.pickup_at, md.install_date]);
+
+  const openRescheduleCalendar = useCallback(() => {
+    if (md.pickup_at) setPickupAt(toDatetimeLocalValue(md.pickup_at));
+    if (md.install_date) setInstallDate(toDatetimeLocalValue(md.install_date));
+    else if (md.pickup_at) {
+      const day = toDatetimeLocalValue(md.pickup_at).slice(0, 10);
+      setInstallDate(`${day}T14:00`);
+    }
+    setRescheduleMode(true);
+    setDatePickTarget('both');
+    setEventsPopupFocus(md.pickup_at || md.install_date || null);
+    setEventsPopupOpen(true);
+  }, [md.pickup_at, md.install_date]);
+
+  const canEditProposedDates = state === 'awaiting_confirm'
+    && canEditAsCrmOwner
+    && typeof onReschedule === 'function'
+    && !(Array.isArray(md.event_ids) && md.event_ids.length > 0)
+    && !md.event_id;
 
   const formatDatetimeLocalLabel = (v) => {
     if (!v) return '';
@@ -915,8 +942,10 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm }) {
     setErr('');
     try {
       await fn();
+      return true;
     } catch (e) {
       setErr(e?.response?.data?.error || e?.message || 'Có lỗi xảy ra');
+      return false;
     } finally {
       setBusy('');
     }
@@ -1052,7 +1081,7 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm }) {
                   </div>
                   {(pickupAt || installDate) ? (
                     <div className="rounded-md border border-orange-100 bg-orange-50/50 px-2 py-1.5 space-y-1">
-                      <p className="text-[10px] font-semibold text-orange-800">3 sự kiện sẽ tạo</p>
+                      <p className="text-[10px] font-semibold text-orange-800">3 sự kiện sẽ tạo sau khi Xưởng & VC/LĐ xác nhận</p>
                       <div className="space-y-1">
                         <div className="flex items-start gap-1.5 text-[11px] text-gray-800">
                           <span className="shrink-0 mt-0.5 h-4 w-4 rounded bg-violet-100 text-violet-700 text-[9px] font-bold inline-flex items-center justify-center">SX</span>
@@ -1173,7 +1202,7 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm }) {
                   className="w-full h-9 rounded-lg bg-sky-600 text-white text-[13px] font-semibold hover:bg-sky-700 disabled:opacity-50 flex items-center justify-center gap-2"
                 >
                   {busy === 'schedule' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Package className="h-4 w-4" />}
-                  Tạo sự kiện lấy hàng
+                  Lưu ngày & chờ xác nhận
                 </button>
               </>
             ) : (
@@ -1198,20 +1227,39 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm }) {
                 <p><span className="text-gray-500">Ngày lắp đặt:</span> <strong>{formatVcDateTime(md.install_date)}</strong></p>
               ) : null}
               <p className="text-[11px] text-orange-700/80 pt-0.5">
-                Chỉ phụ trách chính Xưởng và VC/LĐ được xác nhận.
+                Chỉ người được cấu hình xác nhận (Quản lý giao hàng SX / xác nhận VC/LĐ) được bấm.
+                {state === 'awaiting_confirm' && !(Array.isArray(md.event_ids) && md.event_ids.length)
+                  ? ' Sau khi đủ 2 bên xác nhận, hệ thống mới tạo 3 sự kiện trên lịch.'
+                  : null}
               </p>
-              <button
-                type="button"
-                onClick={() => openEventsCalendar(md.pickup_at || md.install_date || null)}
-                className="mt-1.5 w-full h-8 inline-flex items-center justify-center gap-1.5 rounded-lg border border-orange-200 bg-orange-50 text-[12px] font-semibold text-orange-800 hover:bg-orange-100"
-              >
-                <Calendar className="h-3.5 w-3.5" />
-                {md.events_mode === 'triple' || (Array.isArray(md.event_ids) && md.event_ids.length >= 3)
-                  ? 'Mở lịch sự kiện (3 sự kiện: SX + VC + Lắp)'
-                  : md.events_mode === 'split'
-                    ? 'Mở lịch sự kiện VC/LĐ (2 sự kiện)'
-                    : 'Mở lịch sự kiện VC/LĐ'}
-              </button>
+              <div className="mt-1.5 grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => openEventsCalendar(md.pickup_at || md.install_date || null)}
+                  className="w-full h-8 inline-flex items-center justify-center gap-1.5 rounded-lg border border-orange-200 bg-orange-50 text-[12px] font-semibold text-orange-800 hover:bg-orange-100"
+                >
+                  <Calendar className="h-3.5 w-3.5" />
+                  {md.events_mode === 'triple' || (Array.isArray(md.event_ids) && md.event_ids.length >= 3)
+                    ? 'Mở lịch (3 sự kiện)'
+                    : md.events_mode === 'split'
+                      ? 'Mở lịch VC/LĐ'
+                      : state === 'awaiting_confirm'
+                        ? 'Xem lịch đề xuất'
+                        : 'Mở lịch sự kiện'}
+                </button>
+                {canEditProposedDates ? (
+                  <button
+                    type="button"
+                    disabled={busy === 'reschedule'}
+                    onClick={() => openRescheduleCalendar()}
+                    className="w-full h-8 inline-flex items-center justify-center gap-1.5 rounded-lg border border-sky-200 bg-sky-50 text-[12px] font-semibold text-sky-800 hover:bg-sky-100 disabled:opacity-50"
+                    title="Sửa ngày nhận hàng / lắp đặt đề xuất"
+                  >
+                    {busy === 'reschedule' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Pencil className="h-3.5 w-3.5" />}
+                    Sửa ngày
+                  </button>
+                ) : null}
+              </div>
             </div>
             {state === 'done' ? (
               <div className="flex items-center gap-2 rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2 text-[12px] font-semibold text-emerald-800">
@@ -1224,14 +1272,14 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm }) {
                   {
                     side: 'production',
                     label: 'Xưởng (SX)',
-                    personName: md.production_person_name,
+                    personName: md.production_confirm_user_name || md.production_person_name,
                     confirmed: md.confirmed_production,
                     can: canConfirmProduction,
                   },
                   {
                     side: 'logistics',
                     label: 'VC/LĐ',
-                    personName: md.logistics_person_name,
+                    personName: md.logistics_confirm_user_name || md.logistics_person_name,
                     confirmed: md.confirmed_logistics,
                     can: canConfirmLogistics,
                   },
@@ -1277,10 +1325,38 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm }) {
           eventIds={eventIdsForPopup}
           focusDate={eventsPopupFocus || md.pickup_at || md.install_date || null}
           pickMode={!!datePickTarget}
-          pickTarget={datePickTarget || 'both'}
-          anchorPickupAt={pickupAt || null}
-          anchorInstallAt={installDate || null}
+          pickTarget={datePickTarget === 'both' || rescheduleMode ? 'both' : (datePickTarget || 'both')}
+          anchorPickupAt={
+            pickupAt
+            || (md.pickup_at ? toDatetimeLocalValue(md.pickup_at) : null)
+            || null
+          }
+          anchorInstallAt={
+            installDate
+            || (md.install_date ? toDatetimeLocalValue(md.install_date) : null)
+            || null
+          }
           onPickDate={(local) => {
+            if (rescheduleMode) {
+              // Fallback single-date trong chế độ sửa → coi là VC + lắp cùng ngày
+              const day = String(local).slice(0, 10);
+              const nextPickup = local;
+              const nextInstall = `${day}T14:00`;
+              void (async () => {
+                const ok = await run('reschedule', () => onReschedule(comment.id, {
+                  pickup_at: new Date(nextPickup).toISOString(),
+                  install_date: new Date(nextInstall).toISOString(),
+                }));
+                if (!ok) return;
+                setPickupAt(nextPickup);
+                setInstallDate(nextInstall);
+                setEventsPopupOpen(false);
+                setEventsPopupFocus(null);
+                setDatePickTarget(null);
+                setRescheduleMode(false);
+              })();
+              return;
+            }
             if (datePickTarget === 'install') {
               const vcDay = pickupAt ? String(pickupAt).slice(0, 10) : null;
               const installDay = local ? String(local).slice(0, 10) : null;
@@ -1302,6 +1378,7 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm }) {
             setEventsPopupOpen(false);
             setEventsPopupFocus(null);
             setDatePickTarget(null);
+            setRescheduleMode(false);
           }}
           onPickDates={({ pickupAt: p, installAt: i }) => {
             if (p && i) {
@@ -1311,6 +1388,30 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm }) {
                 alert('Ngày lắp đặt phải bằng hoặc sau ngày nhận hàng VC.');
                 return;
               }
+            }
+            if (rescheduleMode) {
+              if (!p) {
+                alert('Chọn ngày nhận hàng VC.');
+                return;
+              }
+              const nextInstall = i || (() => {
+                const day = String(p).slice(0, 10);
+                return `${day}T14:00`;
+              })();
+              void (async () => {
+                const ok = await run('reschedule', () => onReschedule(comment.id, {
+                  pickup_at: new Date(p).toISOString(),
+                  install_date: new Date(nextInstall).toISOString(),
+                }));
+                if (!ok) return;
+                setPickupAt(p);
+                setInstallDate(nextInstall);
+                setEventsPopupOpen(false);
+                setEventsPopupFocus(null);
+                setDatePickTarget(null);
+                setRescheduleMode(false);
+              })();
+              return;
             }
             if (p) {
               setPickupAt(p);
@@ -1325,11 +1426,13 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm }) {
             setEventsPopupOpen(false);
             setEventsPopupFocus(null);
             setDatePickTarget(null);
+            setRescheduleMode(false);
           }}
           onClose={() => {
             setEventsPopupOpen(false);
             setEventsPopupFocus(null);
             setDatePickTarget(null);
+            setRescheduleMode(false);
           }}
         />
       )}
@@ -1383,6 +1486,7 @@ function CommentThread({
   onVcSelect,
   onVcSchedule,
   onVcConfirm,
+  onVcReschedule,
 }) {
   const selfUid = user?.userId || user?.id;
   const commentsByParent = useMemo(() => groupByParent(comments), [comments]);
@@ -1461,6 +1565,7 @@ function CommentThread({
             onSelect={onVcSelect}
             onSchedule={onVcSchedule}
             onConfirm={onVcConfirm}
+            onReschedule={onVcReschedule}
           />
         );
       }
@@ -2056,6 +2161,19 @@ export function CrmLeadCommentsPanel({
     return applyVcRow(r.data?.comment);
   }, [applyVcRow]);
 
+  const vcReschedule = useCallback(async (commentId, payload) => {
+    const r = await api.patch(`/vc-handover/comments/${commentId}/reschedule`, payload);
+    applyVcRow(r.data?.comment);
+    const hist = r.data?.history_comment;
+    if (hist?.id) {
+      setComments((prev) => {
+        if (prev.some((c) => String(c.id) === String(hist.id))) return prev;
+        return [...prev, { ...hist, reactions: hist.reactions || { summary: [], mine: null } }];
+      });
+    }
+    return r.data?.comment;
+  }, [applyVcRow]);
+
   const vcConfirm = useCallback(async (commentId, side) => {
     const r = await api.patch(`/vc-handover/comments/${commentId}/confirm`, { side });
     return applyVcRow(r.data?.comment);
@@ -2110,6 +2228,7 @@ export function CrmLeadCommentsPanel({
       onVcSelect={vcSelect}
       onVcSchedule={vcSchedule}
       onVcConfirm={vcConfirm}
+      onVcReschedule={vcReschedule}
     />
   );
 }

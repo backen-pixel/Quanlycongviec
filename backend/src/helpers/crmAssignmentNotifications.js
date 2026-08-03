@@ -10,19 +10,25 @@ function assignmentIdStr(assignmentId) {
   return String(assignmentId);
 }
 
-/** Metadata module CRM vs Sản xuất — dùng chung assign / overdue / due-soon. */
+/** Metadata module CRM / SX / VC — dùng chung assign / overdue / due-soon. */
 function assignmentModuleMeta(assignmentModule, extra = {}) {
-  const isProduction = String(assignmentModule || '').toLowerCase() === 'production'
-    || String(extra.stageSlug || '').startsWith('sx_');
-  const moduleKey = isProduction ? 'production' : 'crm';
+  const raw = String(assignmentModule || '').toLowerCase();
+  const stage = String(extra.stageSlug || '');
+  const isProduction = raw === 'production' || stage.startsWith('sx_');
+  const isLogistics = raw === 'logistics' || stage.startsWith('vc_');
+  const moduleKey = isProduction ? 'production' : (isLogistics ? 'logistics' : 'crm');
+  const nav_path = isProduction
+    ? '/sx/assignments'
+    : (isLogistics ? '/vc/assignments' : '/crm/assignments');
   return {
     isProduction,
+    isLogistics,
     moduleKey,
     metadata: {
       module_key: moduleKey,
       ecosystem_module_key: moduleKey,
       assignment_module: moduleKey,
-      nav_path: isProduction ? '/sx/assignments' : '/crm/assignments',
+      nav_path,
       ...extra.metadata,
     },
   };
@@ -88,11 +94,17 @@ async function notifyNewCrmAssignmentAssignees(req, {
 
   const isProduction = assignmentModule === 'production'
     || String(stageSlug || '').startsWith('sx_');
-  const moduleKey = isProduction ? 'production' : 'crm';
-  const navPath = isProduction ? '/sx/assignments' : '/crm/assignments';
+  const isLogistics = assignmentModule === 'logistics'
+    || String(stageSlug || '').startsWith('vc_');
+  const moduleKey = isProduction ? 'production' : (isLogistics ? 'logistics' : 'crm');
+  const navPath = isProduction
+    ? '/sx/assignments'
+    : (isLogistics ? '/vc/assignments' : '/crm/assignments');
   const notifTitle = isProduction
     ? '📋 Bạn vừa được giao nhiệm vụ Sản xuất'
-    : '📋 Bạn vừa được giao nhiệm vụ CRM';
+    : isLogistics
+      ? '📋 Bạn vừa được giao nhiệm vụ VC/LĐ'
+      : '📋 Bạn vừa được giao nhiệm vụ CRM';
 
   const leadLabel = [lead?.code, lead?.title].filter(Boolean).join(' ').trim();
   const leadSuffix = leadLabel ? ` (${leadLabel})` : '';

@@ -3,10 +3,34 @@ import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { formatDate } from '../lib/utils';
 import { memberModulesFromUser } from '../lib/memberModuleCounts';
+import { compressImage } from '../lib/compressImage';
+import { publicFileUrl } from '../lib/publicFileUrl';
+import { AttachmentFileIcon, inferAttachmentDocType, TASK_ATTACHMENT_FILE_ACCEPT } from '../lib/attachmentFileIcon';
+import { mergeUploadProgressState, uploadSingleFileWithProgress } from '../lib/uploadProgressEta';
+import UploadProgressBubble from './UploadProgressBubble';
+import { FilePreviewOpenLink } from '../context/FilePreviewContext';
 import {
   ClipboardList, Plus, Calendar, CheckCircle2, Circle, Clock, X, Pencil, Trash2, Save,
-  LayoutGrid, Target, Factory, Truck, ExternalLink,
+  LayoutGrid, Target, Factory, Truck, ExternalLink, MessageSquare, Paperclip, FileUp,
 } from 'lucide-react';
+
+const NOTE_DOC_TYPES = new Set(['task_inline_note', 'task_note', 'checklist_inline_note']);
+
+function filterFileAttachments(atts) {
+  return (atts || []).filter((a) => a?.file_url && !NOTE_DOC_TYPES.has(a.doc_type));
+}
+
+function isImageAtt(att) {
+  if (!att?.file_url) return false;
+  if (att.doc_type === 'image') return true;
+  return !!(att.mime_type && String(att.mime_type).startsWith('image/'));
+}
+
+function isVideoAtt(att) {
+  if (!att?.file_url) return false;
+  if (att.doc_type === 'video') return true;
+  return !!(att.mime_type && String(att.mime_type).startsWith('video/'));
+}
 
 const ASSIGN_PRIORITIES = [
   { value: 'low', label: 'Thấp' },
@@ -93,10 +117,16 @@ function memberBelongsToCompany(member, scopeCompanyId) {
 }
 
 function memberMatchesAssignPool(member, moduleId, companyScope) {
-  if (!memberBelongsToModule(member, moduleId === 'all' ? 'all' : moduleId)) return false;
-  if (moduleId === 'all') return true;
+  if (!moduleId || moduleId === 'all') return true;
   const cid = companyIdForAssignModule(moduleId, companyScope);
-  return memberBelongsToCompany(member, cid);
+  if (!memberBelongsToCompany(member, cid)) return false;
+  if (memberBelongsToModule(member, moduleId)) return true;
+  // Admin/staff cùng công ty khối SX/VC thường có role CRM — vẫn cho giao việc khối đó.
+  if ((moduleId === 'logistics' || moduleId === 'production') && cid) {
+    const uidCompany = member?.user?.company_id ?? member?.company_id ?? null;
+    return !!(uidCompany && String(uidCompany) === String(cid));
+  }
+  return false;
 }
 
 /** Ưu tiên assignment_module; fallback theo module của người được giao. */
@@ -121,6 +151,30 @@ function assignmentModuleLabel(mod) {
   if (mod === 'production') return 'SX';
   if (mod === 'logistics') return 'VC';
   return 'CRM';
+}
+
+/** Trang Giao việc đúng khối của phân công. */
+function assignmentBoardHref(assignment, fallbackModule = 'crm') {
+  const mod = String(assignment?.assignment_module || fallbackModule || '').toLowerCase();
+  const base = mod === 'production'
+    ? '/sx/assignments'
+    : mod === 'logistics'
+      ? '/vc/assignments'
+      : '/crm/assignments';
+  return assignment?.id ? `${base}?open=${assignment.id}` : base;
+}
+
+function assignmentBoardTitle(assignment, fallbackModule = 'crm') {
+  const mod = String(assignment?.assignment_module || fallbackModule || '').toLowerCase();
+  if (mod === 'production') return 'Đi tới Giao việc Sản xuất';
+  if (mod === 'logistics') return 'Đi tới Giao việc Vận chuyển';
+  return 'Đi tới Giao việc CRM';
+}
+
+function assignmentsBoardHome(moduleId) {
+  if (moduleId === 'production') return '/sx/assignments';
+  if (moduleId === 'logistics') return '/vc/assignments';
+  return '/crm/assignments';
 }
 
 function taskSourceLabel(type) {
@@ -169,6 +223,12 @@ export default function LeadMemberAssignmentsPanel({
   const [memberIds, setMemberIds] = useState(() => new Set());
   const [taskSourceType, setTaskSourceType] = useState('customer_request');
   const [employeeErrorModule, setEmployeeErrorModule] = useState('crm');
+  const [expandedNotesId, setExpandedNotesId] = useState(null);
+  const [noteDrafts, setNoteDrafts] = useState({});
+  const [savingNoteId, setSavingNoteId] = useState(null);
+  const [taskAttachments, setTaskAttachments] = useState({});
+  const [uploadingAssignId, setUploadingAssignId] = useState(null);
+  const [uploadProgress, setUploadProgress] = useState({});
 
   const companyId = companyIdProp || leadCompanyId || null;
   const companyScope = useMemo(
@@ -431,11 +491,168 @@ export default function LeadMemberAssignmentsPanel({
   };
 
   const updateStatus = async (id, nextStatus) => {
+    const prev = assignments;
+    setAssignments((list) => list.map((a) => (a.id === id ? { ...a, status: nextStatus } : a)));
     try {
       await api.put(`/crm/assignments/${id}`, { status: nextStatus });
-      await loadAssignments();
     } catch (e) {
+      setAssignments(prev);
       alert(e.response?.data?.error || 'Lỗi cập nhật trạng thái');
+    }
+  };
+
+  /** Giống nhiệm vụ Công việc: Chờ → Đang làm → Xong → Chờ */
+  const cycleStatus = (a) => {
+    const next = a.status === 'completed'
+      ? 'pending'
+      : a.status === 'pending'
+        ? 'in_progress'
+        : 'completed';
+    return updateStatus(a.id, next);
+  };
+
+  const loadTaskAttachments = async (a) => {
+    if (!a?.crm_task_id || !leadId) return;
+    try {
+      const { data } = await api.get(`/crm/leads/${leadId}/tasks/${a.crm_task_id}/attachments`);
+      setTaskAttachments((p) => ({ ...p, [a.id]: Array.isArray(data) ? data : (data?.attachments || []) }));
+    } catch {
+      setTaskAttachments((p) => ({ ...p, [a.id]: [] }));
+    }
+  };
+
+  const toggleNotes = (a) => {
+    if (expandedNotesId === a.id) {
+      setExpandedNotesId(null);
+      return;
+    }
+    setExpandedNotesId(a.id);
+    setNoteDrafts((p) => ({
+      ...p,
+      [a.id]: a.crm_task?.notes ?? p[a.id] ?? '',
+    }));
+    void loadTaskAttachments(a);
+  };
+
+  const saveNotes = async (a) => {
+    if (!a.crm_task_id) {
+      alert('Phân công chưa liên kết nhiệm vụ — không lưu được ghi chú đồng bộ.');
+      return;
+    }
+    const notes = noteDrafts[a.id] ?? a.crm_task?.notes ?? '';
+    setSavingNoteId(a.id);
+    try {
+      await api.put(`/crm/leads/${leadId}/tasks/${a.crm_task_id}/notes`, { notes });
+      setAssignments((list) => list.map((row) => (
+        row.id === a.id
+          ? { ...row, crm_task: { ...(row.crm_task || { id: a.crm_task_id }), notes } }
+          : row
+      )));
+      setSavingNoteId(`saved-${a.id}`);
+      setTimeout(() => setSavingNoteId((cur) => (cur === `saved-${a.id}` ? null : cur)), 1500);
+    } catch (e) {
+      alert(e.response?.data?.error || 'Lỗi lưu ghi chú');
+      setSavingNoteId(null);
+    }
+  };
+
+  const uploadTaskFile = (a) => {
+    if (!a?.crm_task_id) return;
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.multiple = true;
+    input.accept = TASK_ATTACHMENT_FILE_ACCEPT;
+    input.onchange = async (e) => {
+      const rawFiles = Array.from(e.target.files || []).slice(0, 20);
+      if (!rawFiles.length) return;
+      const assignId = a.id;
+      const taskId = a.crm_task_id;
+      setUploadingAssignId(assignId);
+      try {
+        const imageFiles = rawFiles.filter((f) => f.type.startsWith('image/'));
+        const otherFiles = rawFiles.filter((f) => !f.type.startsWith('image/'));
+        const allUploaded = [];
+
+        if (imageFiles.length) {
+          const compressed = await Promise.all(imageFiles.map((f) => compressImage(f)));
+          const formData = new FormData();
+          compressed.forEach((f) => formData.append('files', f));
+          const { data: uploadRes } = await api.post('/upload', formData);
+          const ok = uploadRes.uploaded || uploadRes.files || (Array.isArray(uploadRes) ? uploadRes : [uploadRes]);
+          allUploaded.push(...(Array.isArray(ok) ? ok : [ok]));
+        }
+
+        for (const file of otherFiles) {
+          setUploadProgress((p) => ({ ...p, [assignId]: { percent: 0, name: file.name, size: file.size } }));
+          const isLarge = file.size > 10 * 1024 * 1024;
+          const result = await uploadSingleFileWithProgress({
+            file,
+            endpoint: isLarge ? '/upload/stream' : '/upload/single',
+            baseURL: api.defaults.baseURL,
+            token: localStorage.getItem('token'),
+            onProgress: (stats) => {
+              setUploadProgress((p) => ({
+                ...p,
+                [assignId]: mergeUploadProgressState({
+                  percent: 0,
+                  name: file.name,
+                  size: file.size,
+                }, stats),
+              }));
+            },
+          });
+          allUploaded.push(result);
+        }
+
+        setUploadProgress((p) => {
+          const n = { ...p };
+          delete n[assignId];
+          return n;
+        });
+
+        const successUploads = allUploaded.filter((up) => up?.file_url && !String(up.file_url).startsWith('data:'));
+        if (!successUploads.length) throw new Error('Upload không trả về file');
+
+        const seenUrls = new Set();
+        const items = [];
+        for (const up of successUploads) {
+          const url = String(up.file_url);
+          if (seenUrls.has(url)) continue;
+          seenUrls.add(url);
+          items.push({
+            name: (up.original_name || up.file_name || 'File').replace(/\.[^.]+$/, ''),
+            doc_type: inferAttachmentDocType(up),
+            file_url: up.file_url,
+            file_name: up.file_name,
+            file_size: up.file_size,
+            mime_type: up.mime_type,
+          });
+        }
+        await api.post(`/crm/leads/${leadId}/tasks/${taskId}/attachments/bulk`, { items });
+        await loadTaskAttachments(a);
+      } catch (err) {
+        setUploadProgress((p) => {
+          const n = { ...p };
+          delete n[assignId];
+          return n;
+        });
+        alert(err.response?.data?.error || err.message || 'Upload lỗi');
+      }
+      setUploadingAssignId(null);
+    };
+    input.click();
+  };
+
+  const deleteTaskAttachment = async (a, attachmentId) => {
+    if (!a?.crm_task_id || !confirm('Xóa file đính kèm này?')) return;
+    try {
+      await api.delete(`/crm/leads/${leadId}/tasks/${a.crm_task_id}/attachments/${attachmentId}`);
+      setTaskAttachments((p) => ({
+        ...p,
+        [a.id]: (p[a.id] || []).filter((att) => att.id !== attachmentId),
+      }));
+    } catch (e) {
+      alert(e.response?.data?.error || 'Lỗi xóa file');
     }
   };
 
@@ -444,6 +661,12 @@ export default function LeadMemberAssignmentsPanel({
     try {
       await api.delete(`/crm/assignments/${id}`);
       if (editingId === id) resetForm();
+      if (expandedNotesId === id) setExpandedNotesId(null);
+      setTaskAttachments((p) => {
+        const n = { ...p };
+        delete n[id];
+        return n;
+      });
       await loadAssignments();
     } catch (e) {
       alert(e.response?.data?.error || 'Lỗi xóa phân công');
@@ -487,8 +710,9 @@ export default function LeadMemberAssignmentsPanel({
         </div>
         <nav className="flex items-center gap-1 ml-auto flex-wrap">
           <Link
-            to="/crm/assignments"
+            to={assignmentsBoardHome(moduleTab === 'all' ? 'crm' : moduleTab)}
             className="h-8 px-2 rounded-md text-[11px] text-slate-500 hover:text-slate-800 hover:bg-slate-50 inline-flex items-center gap-1"
+            title={assignmentBoardTitle(null, moduleTab === 'all' ? 'crm' : moduleTab)}
           >
             <ExternalLink className="h-3.5 w-3.5" />
             <span className="hidden sm:inline">Giao việc</span>
@@ -497,16 +721,24 @@ export default function LeadMemberAssignmentsPanel({
             type="button"
             disabled={createDisabled}
             onClick={openCreate}
-            title={createDisabled ? 'Chưa có NV đúng khối + công ty để giao' : undefined}
-            className="h-8 px-2.5 rounded-md text-[11px] font-semibold inline-flex items-center gap-1 bg-violet-600 text-white hover:bg-violet-700 shadow-sm disabled:opacity-40 cursor-pointer"
+            title={createDisabled
+              ? `Chưa có NV khối ${assignmentModuleLabel(formModule)}${formCompanyId ? ' đúng công ty' : ''} trên deal — thêm ở tab Thành viên / giao bàn giao VC`
+              : undefined}
+            className="h-8 px-2.5 rounded-md text-[11px] font-semibold inline-flex items-center gap-1 bg-violet-600 text-white hover:bg-violet-700 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
           >
             <Plus className="h-3.5 w-3.5" strokeWidth={2.5} />
             Thêm
             {moduleTab !== 'all' && (
-              <span className="opacity-90 hidden sm:inline">· {assignmentModuleLabel(formModule)}</span>
+              <span className="opacity-90">· {assignmentModuleLabel(formModule)}</span>
             )}
           </button>
         </nav>
+        {createDisabled && moduleTab !== 'all' && (
+          <p className="w-full text-[10px] text-amber-700 bg-amber-50 border border-amber-100 rounded-md px-2 py-1">
+            Nút Thêm đang khóa: chưa có thành viên khối {assignmentModuleLabel(formModule)}
+            {formCompanyId ? ' đúng công ty' : ''} trên deal. Thêm NV ở tab Thành viên (hoặc nhân sự VC trên dự án) rồi tải lại.
+          </p>
+        )}
       </header>
 
       {/* Hàng tab phân loại — giống AppModuleDashboard */}
@@ -727,10 +959,17 @@ export default function LeadMemberAssignmentsPanel({
       {loading ? (
         <p className="text-xs text-gray-400 text-center py-4">Đang tải…</p>
       ) : filteredAssignments.length === 0 ? (
-        <p className="text-[11px] text-violet-700/70 text-center py-4 border border-dashed border-violet-100 rounded-xl">
+        <p className="text-[11px] text-violet-700/70 text-center py-4 border border-dashed border-violet-100 rounded-xl leading-relaxed px-3">
           {moduleTab === 'all'
-            ? 'Chưa có phân công cho thành viên deal này'
-            : `Chưa có phân công khối ${assignmentModuleLabel(moduleTab)}`}
+            ? 'Chưa có phân công cho thành viên deal này. Bấm «Thêm» để giao việc từ Không gian chung.'
+            : (
+              <>
+                Chưa có phân công khối <strong>{assignmentModuleLabel(moduleTab)}</strong>
+                {' '}(chưa có bản ghi Giao việc gắn module này trên deal).
+                <br />
+                Bấm <strong>Thêm · {assignmentModuleLabel(moduleTab)}</strong> để tạo — hoặc chuyển tab CRM/SX/Tất cả nếu việc đã giao ở khối khác.
+              </>
+            )}
         </p>
       ) : (
         <div className="space-y-1.5">
@@ -750,13 +989,27 @@ export default function LeadMemberAssignmentsPanel({
             return (
               <div
                 key={a.id}
-                className="flex items-start gap-2 p-2.5 bg-white border border-violet-100 rounded-lg hover:border-violet-200 transition"
+                className="bg-white border border-violet-100 rounded-lg hover:border-violet-200 transition overflow-hidden"
               >
-                <StIcon className={`h-4 w-4 shrink-0 mt-0.5 ${
-                  a.status === 'completed' ? 'text-emerald-500'
-                    : a.status === 'in_progress' ? 'text-blue-500'
-                      : 'text-gray-300'
-                }`} />
+                <div className="flex items-start gap-2 p-2.5">
+                <button
+                  type="button"
+                  onClick={() => cycleStatus(a)}
+                  className="shrink-0 mt-0.5 cursor-pointer rounded-full p-0.5 hover:bg-violet-50"
+                  title={
+                    a.status === 'completed'
+                      ? 'Đánh dấu chờ lại'
+                      : a.status === 'pending'
+                        ? 'Chuyển sang đang làm'
+                        : 'Đánh dấu hoàn thành'
+                  }
+                >
+                  <StIcon className={`h-4 w-4 ${
+                    a.status === 'completed' ? 'text-emerald-500'
+                      : a.status === 'in_progress' ? 'text-blue-500'
+                        : 'text-gray-300'
+                  }`} />
+                </button>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
                     <p className={`text-sm font-medium truncate ${a.status === 'completed' ? 'line-through text-gray-400' : 'text-gray-900'}`}>
@@ -786,7 +1039,17 @@ export default function LeadMemberAssignmentsPanel({
                         Có CV
                       </span>
                     )}
+                    {!!(a.crm_task?.notes || '').trim() && expandedNotesId !== a.id && (
+                      <span className="shrink-0 text-[9px] px-1.5 py-0.5 rounded-full font-medium text-amber-700 bg-amber-50 flex items-center gap-0.5">
+                        <MessageSquare className="h-2.5 w-2.5" />Có ghi chú
+                      </span>
+                    )}
                   </div>
+                  {!!(a.crm_task?.notes || '').trim() && expandedNotesId !== a.id && (
+                    <p className="text-[11px] text-amber-700/90 mt-0.5 line-clamp-1 italic">
+                      💬 {String(a.crm_task.notes).slice(0, 80)}{String(a.crm_task.notes).length > 80 ? '…' : ''}
+                    </p>
+                  )}
                   <div className="flex flex-wrap items-center gap-2 mt-0.5 text-[10px] text-gray-500">
                     {col && <span style={{ color: col.color }}>{col.name}</span>}
                     {assigneeNames && <span>👤 {assigneeNames}</span>}
@@ -796,24 +1059,23 @@ export default function LeadMemberAssignmentsPanel({
                       </span>
                     )}
                   </div>
-                  <div className="flex flex-wrap items-center gap-1 mt-1.5">
-                    {ASSIGN_STATUSES.filter((s) => s.value !== 'cancelled').map((s) => (
-                      <button
-                        key={s.value}
-                        type="button"
-                        onClick={() => updateStatus(a.id, s.value)}
-                        className={`h-6 px-1.5 rounded text-[10px] cursor-pointer border ${
-                          a.status === s.value
-                            ? 'bg-violet-100 border-violet-300 text-violet-800 font-semibold'
-                            : 'bg-white border-gray-200 text-gray-500 hover:bg-gray-50'
-                        }`}
-                      >
-                        {s.label}
-                      </button>
-                    ))}
-                  </div>
                 </div>
                 <div className="flex items-center gap-0.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => toggleNotes(a)}
+                    className={`p-1.5 rounded-lg cursor-pointer ${
+                      expandedNotesId === a.id
+                        ? 'text-blue-600 bg-blue-50'
+                        : a.crm_task_id
+                          ? 'text-gray-400 hover:text-blue-600 hover:bg-blue-50'
+                          : 'text-gray-300 cursor-not-allowed'
+                    }`}
+                    title={a.crm_task_id ? 'Ghi chú & file' : 'Chưa liên kết nhiệm vụ'}
+                    disabled={!a.crm_task_id}
+                  >
+                    <Paperclip size={14} />
+                  </button>
                   <button
                     type="button"
                     onClick={() => openEdit(a)}
@@ -831,13 +1093,149 @@ export default function LeadMemberAssignmentsPanel({
                     <Trash2 size={14} />
                   </button>
                   <Link
-                    to={`/crm/assignments?open=${a.id}`}
+                    to={assignmentBoardHref(a)}
                     className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg"
-                    title="Mở chi tiết"
+                    title={assignmentBoardTitle(a)}
                   >
-                    <ClipboardList size={14} />
+                    <ExternalLink size={14} />
                   </Link>
                 </div>
+                </div>
+
+                {expandedNotesId === a.id && a.crm_task_id && (() => {
+                  const atts = filterFileAttachments(taskAttachments[a.id]);
+                  const prog = uploadProgress[a.id];
+                  return (
+                  <div className="px-3 pb-3 space-y-3 border-t border-gray-200 mx-2.5 pt-3" onClick={(e) => e.stopPropagation()}>
+                    <div>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <label className="text-[10px] font-semibold text-gray-500 uppercase">
+                          📝 Ghi chú &amp; Đính kèm ({atts.length})
+                        </label>
+                        <div className="flex items-center gap-1">
+                          {uploadingAssignId === a.id ? (
+                            <span className="text-[10px] text-orange-600 flex items-center gap-1 px-1.5 py-0.5">
+                              <span className="animate-spin h-3 w-3 border-2 border-orange-600 border-t-transparent rounded-full" />
+                              {prog ? `${prog.name} — ${prog.percent || 0}%` : 'Đang nén ảnh...'}
+                            </span>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => uploadTaskFile(a)}
+                              className="text-[10px] text-blue-600 hover:text-blue-800 flex items-center gap-0.5 cursor-pointer px-1.5 py-0.5 rounded hover:bg-blue-50"
+                            >
+                              <FileUp className="h-3 w-3" /> Upload file
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      <textarea
+                        value={noteDrafts[a.id] ?? a.crm_task?.notes ?? ''}
+                        onChange={(e) => setNoteDrafts((p) => ({ ...p, [a.id]: e.target.value }))}
+                        placeholder="Nhập ghi chú cho nhiệm vụ này..."
+                        rows={2}
+                        className="w-full px-2.5 py-1.5 border rounded-lg text-xs outline-none focus:border-blue-400 resize-none mb-1.5"
+                      />
+                      <div className="flex justify-end mb-2">
+                        <button
+                          type="button"
+                          onClick={() => saveNotes(a)}
+                          disabled={savingNoteId === a.id}
+                          className={`px-2.5 py-1 rounded text-[10px] font-medium cursor-pointer flex items-center gap-1 disabled:opacity-50 ${
+                            savingNoteId === `saved-${a.id}`
+                              ? 'bg-emerald-600 text-white'
+                              : 'bg-blue-600 text-white hover:bg-blue-700'
+                          }`}
+                        >
+                          <Save className="h-2.5 w-2.5" />
+                          {savingNoteId === a.id
+                            ? 'Đang lưu...'
+                            : savingNoteId === `saved-${a.id}`
+                              ? '✓ Đã lưu'
+                              : 'Lưu ghi chú'}
+                        </button>
+                      </div>
+
+                      {prog && (
+                        <UploadProgressBubble
+                          variant="inline"
+                          fileName={prog.name}
+                          fileSize={prog.size}
+                          percent={prog.percent}
+                          bytesPerSec={prog.bytesPerSec}
+                          remainingSec={prog.remainingSec}
+                        />
+                      )}
+
+                      {atts.length > 0 ? (
+                        <div className="space-y-1.5">
+                          {atts.map((att) => {
+                            const img = isImageAtt(att);
+                            const video = isVideoAtt(att);
+                            return (
+                              <div key={att.id} className="py-1.5 px-2 rounded bg-white border">
+                                <div className="flex items-start gap-2">
+                                  <AttachmentFileIcon att={att} className="h-4 w-4 mt-0.5" />
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-xs font-medium text-gray-800 truncate">{att.name || att.file_name}</p>
+                                    {att.file_url && !img && (
+                                      <FilePreviewOpenLink
+                                        fileUrl={att.file_url}
+                                        fileName={att.file_name || att.name}
+                                        mimeType={att.mime_type}
+                                        className="text-[10px] text-blue-600 hover:underline cursor-pointer"
+                                      >
+                                        {att.file_name || 'Xem file'}
+                                      </FilePreviewOpenLink>
+                                    )}
+                                    {att.creator?.full_name && (
+                                      <span className="text-[9px] text-gray-400 ml-1">{att.creator.full_name}</span>
+                                    )}
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => deleteTaskAttachment(a, att.id)}
+                                    className="text-[10px] font-medium text-red-500 hover:text-red-700 px-1.5 py-0.5 rounded hover:bg-red-50 cursor-pointer shrink-0"
+                                  >
+                                    Xóa
+                                  </button>
+                                </div>
+                                {att.file_url && img && (
+                                  <a
+                                    href={publicFileUrl(att.file_url)}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="block mt-1.5 ml-5"
+                                  >
+                                    <img
+                                      src={publicFileUrl(att.file_url)}
+                                      alt={att.file_name || ''}
+                                      className="max-h-80 max-w-full rounded-lg border border-gray-200 object-contain"
+                                    />
+                                  </a>
+                                )}
+                                {att.file_url && video && (
+                                  <div className="mt-1.5 ml-5">
+                                    <video
+                                      src={publicFileUrl(att.file_url)}
+                                      controls
+                                      preload="metadata"
+                                      className="max-h-[26rem] max-w-full rounded-lg border border-gray-200 bg-black"
+                                    />
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <p className="text-[10px] text-gray-400 italic">Chưa có đính kèm</p>
+                      )}
+                    </div>
+                  </div>
+                  );
+                })()}
               </div>
             );
           })}

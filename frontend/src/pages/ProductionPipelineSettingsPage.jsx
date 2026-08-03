@@ -44,6 +44,7 @@ export default function ProductionPipelineSettingsPage() {
   const [bulkSaving, setBulkSaving] = useState(false);
   const [handoverData, setHandoverData] = useState(null);
   const [intakeAssigneeId, setIntakeAssigneeId] = useState('');
+  const [deliveryConfirmUserId, setDeliveryConfirmUserId] = useState('');
   const [intakeAssigneeLoading, setIntakeAssigneeLoading] = useState(false);
   const [typeStaffDefaults, setTypeStaffDefaults] = useState({});
   const [typeStaffPrimary, setTypeStaffPrimary] = useState({});
@@ -123,6 +124,7 @@ export default function ProductionPipelineSettingsPage() {
     if (!settingsCompanyId) {
       setHandoverData(null);
       setIntakeAssigneeId('');
+      setDeliveryConfirmUserId('');
       return;
     }
     setIntakeAssigneeLoading(true);
@@ -130,9 +132,11 @@ export default function ProductionPipelineSettingsPage() {
       const { data } = await api.get(`/production/handover-settings/${settingsCompanyId}`);
       setHandoverData(data);
       setIntakeAssigneeId(data?.settings?.responsible_user_id ? String(data.settings.responsible_user_id) : '');
+      setDeliveryConfirmUserId(data?.settings?.delivery_confirm_user_id ? String(data.settings.delivery_confirm_user_id) : '');
     } catch {
       setHandoverData(null);
       setIntakeAssigneeId('');
+      setDeliveryConfirmUserId('');
     }
     setIntakeAssigneeLoading(false);
   }, [settingsCompanyId]);
@@ -166,6 +170,9 @@ export default function ProductionPipelineSettingsPage() {
       setTypeStaffPrimary(primary);
       if (data?.fallback_responsible_user_id != null) {
         setIntakeAssigneeId(data.fallback_responsible_user_id ? String(data.fallback_responsible_user_id) : '');
+      }
+      if (data?.delivery_confirm_user_id != null) {
+        setDeliveryConfirmUserId(data.delivery_confirm_user_id ? String(data.delivery_confirm_user_id) : '');
       }
     } catch {
       setTypeStaffDefaults({});
@@ -443,6 +450,7 @@ export default function ProductionPipelineSettingsPage() {
       await api.put(`/production/workshop-type-staff-defaults/${settingsCompanyId}`, {
         defaults,
         fallback_responsible_user_id: intakeAssigneeId || null,
+        delivery_confirm_user_id: deliveryConfirmUserId || null,
       });
       await loadTypeStaffDefaults();
       await loadHandoverSettings();
@@ -1352,6 +1360,20 @@ export default function ProductionPipelineSettingsPage() {
                       <option key={u.id} value={u.id}>{u.full_name || u.email}</option>
                     ))}
                   </select>
+                </label>
+                <label className="flex flex-col gap-1 flex-1 min-w-[240px] max-w-md">
+                  <span className="text-[10px] font-semibold text-violet-700 uppercase tracking-wide">Quản lý giao hàng (xác nhận bàn giao VC)</span>
+                  <select
+                    value={deliveryConfirmUserId}
+                    onChange={(e) => setDeliveryConfirmUserId(e.target.value)}
+                    className="h-9 px-2.5 border border-violet-200 rounded-lg text-sm bg-white"
+                  >
+                    <option value="">— Dùng phụ trách SX của dự án —</option>
+                    {(typeStaffUserList).map((u) => (
+                      <option key={u.id} value={u.id}>{u.full_name || u.email}</option>
+                    ))}
+                  </select>
+                  <span className="text-[10px] text-gray-500">Người được bấm «Xác nhận» phía Xưởng trên thẻ bàn giao VC/LĐ.</span>
                 </label>
                 <button
                   type="button"

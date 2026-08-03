@@ -1,14 +1,21 @@
 /**
  * Liên kết từ thẻ Giao việc → nguồn nhiệm vụ pipeline.
- * CRM và Sản xuất là hai module Giao việc riêng — routing theo trang đang xem, không suy đoán chéo.
+ * CRM / SX / VC là ba module Giao việc riêng — routing theo trang đang xem.
  */
 
 export function normalizeAssignmentPageModule(pageModule) {
-  return String(pageModule || 'crm').toLowerCase() === 'production' ? 'production' : 'crm';
+  const m = String(pageModule || 'crm').toLowerCase();
+  if (m === 'production') return 'production';
+  if (m === 'logistics') return 'logistics';
+  return 'crm';
 }
 
 export function isProductionAssignmentsPage(pageModule) {
   return normalizeAssignmentPageModule(pageModule) === 'production';
+}
+
+export function isLogisticsAssignmentsPage(pageModule) {
+  return normalizeAssignmentPageModule(pageModule) === 'logistics';
 }
 
 /** URL mở đúng nhiệm vụ nguồn — luôn theo module trang Giao việc hiện tại. */
@@ -28,6 +35,16 @@ export function buildAssignmentSourceHref(item, pageModule = 'crm') {
         qs.set('deal_lead', String(lead.id));
       }
       return `/sx/projects/${lead.project_id}?${qs.toString()}`;
+    }
+    return `/crm/leads/${lead.id}?${qs.toString()}`;
+  }
+
+  if (mod === 'logistics') {
+    if (lead.project_id) {
+      if (String(lead.id) !== String(lead.project_id)) {
+        qs.set('deal_lead', String(lead.id));
+      }
+      return `/vc/projects/${lead.project_id}?${qs.toString()}`;
     }
     return `/crm/leads/${lead.id}?${qs.toString()}`;
   }
@@ -67,13 +84,21 @@ export function assignmentDealCardLabel(lead) {
 
 export function assignmentSourceTooltip(lead, pageModule = 'crm') {
   const parts = [lead?.title, lead?.code].filter(Boolean);
-  const base = parts.length ? parts.join(' · ') : (isProductionAssignmentsPage(pageModule) ? 'Dự án / deal SX' : 'Lead / deal CRM');
-  if (isProductionAssignmentsPage(pageModule)) {
-    return `${base} — mở tab Công việc trên dự án Sản xuất`;
-  }
+  const mod = normalizeAssignmentPageModule(pageModule);
+  const fallback = mod === 'production'
+    ? 'Dự án / deal SX'
+    : mod === 'logistics'
+      ? 'Dự án / deal VC'
+      : 'Lead / deal CRM';
+  const base = parts.length ? parts.join(' · ') : fallback;
+  if (mod === 'production') return `${base} — mở tab Công việc trên dự án Sản xuất`;
+  if (mod === 'logistics') return `${base} — mở tab Công việc trên dự án Vận chuyển`;
   return `${base} — mở tab Nhiệm vụ trên deal CRM`;
 }
 
 export function assignmentSourceFieldLabel(pageModule = 'crm') {
-  return isProductionAssignmentsPage(pageModule) ? 'Dự án / Deal SX' : 'Lead / Deal CRM';
+  const mod = normalizeAssignmentPageModule(pageModule);
+  if (mod === 'production') return 'Dự án / Deal SX';
+  if (mod === 'logistics') return 'Dự án / Deal VC';
+  return 'Lead / Deal CRM';
 }

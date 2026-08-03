@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <title>Hướng dẫn — SX chuẩn bị giao hàng đến hết VC/LĐ</title>
+  <style>
+    @page { size: A4; margin: 16mm 14mm 18mm 14mm; }
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+      font-size: 10.5pt;
+      line-height: 1.55;
+      color: #1e293b;
+      margin: 0;
+      padding: 24px;
+      max-width: 820px;
+      margin-inline: auto;
+      background: #fff;
+    }
+    h1 {
+      font-size: 20pt;
+      color: #c2410c;
+      margin: 0 0 6px;
+      line-height: 1.25;
+    }
+    .subtitle { font-size: 11pt; color: #475569; margin-bottom: 4px; }
+    .meta {
+      font-size: 9pt;
+      color: #64748b;
+      margin-bottom: 18px;
+      padding-bottom: 12px;
+      border-bottom: 2px solid #fdba74;
+    }
+    h2 {
+      font-size: 13pt;
+      color: #c2410c;
+      margin: 20px 0 10px;
+      page-break-after: avoid;
+      border-left: 4px solid #f97316;
+      padding-left: 10px;
+    }
+    h3 {
+      font-size: 11pt;
+      color: #334155;
+      margin: 14px 0 8px;
+      page-break-after: avoid;
+    }
+    p { margin: 6px 0; }
+    ul, ol { margin: 6px 0 10px; padding-left: 22px; }
+    li { margin: 3px 0; }
+    .flow {
+      background: #fff7ed;
+      border: 1px solid #ffedd5;
+      border-radius: 8px;
+      padding: 12px 14px;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 9pt;
+      line-height: 1.7;
+      white-space: pre-wrap;
+      margin: 10px 0 16px;
+    }
+    .roles {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin: 12px 0 16px;
+    }
+    .role-card {
+      background: #fff7ed;
+      border: 1px solid #fdba74;
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 9.5pt;
+      page-break-inside: avoid;
+    }
+    .role-card strong { display: block; color: #c2410c; margin-bottom: 4px; }
+    .step {
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      padding: 12px 14px;
+      margin: 12px 0;
+      page-break-inside: avoid;
+      background: #f8fafc;
+    }
+    .step .badge {
+      display: inline-block;
+      background: #f97316;
+      color: #fff;
+      font-size: 9pt;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 999px;
+      margin-bottom: 6px;
+    }
+    .note {
+      background: #eff6ff;
+      border: 1px solid #bfdbfe;
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 9.5pt;
+      color: #1e3a8a;
+      margin: 10px 0;
+      page-break-inside: avoid;
+    }
+    .warn {
+      background: #fffbeb;
+      border: 1px solid #fde68a;
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 9.5pt;
+      color: #92400e;
+      margin: 10px 0;
+      page-break-inside: avoid;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 9.5pt;
+      margin: 10px 0 14px;
+    }
+    th, td {
+      border: 1px solid #cbd5e1;
+      padding: 7px 8px;
+      vertical-align: top;
+      text-align: left;
+    }
+    th { background: #ffedd5; color: #9a3412; }
+    .footer {
+      margin-top: 28px;
+      padding-top: 10px;
+      border-top: 1px solid #e2e8f0;
+      font-size: 8.5pt;
+      color: #94a3b8;
+    }
+    @media print {
+      body { padding: 0; max-width: none; }
+      .no-print { display: none !important; }
+      a { color: inherit; text-decoration: none; }
+    }
+    .toolbar.no-print {
+      position: sticky; top: 0; z-index: 10;
+      background: #fff7ed; border-bottom: 1px solid #fdba74;
+      padding: 10px 14px; margin: -24px -24px 18px;
+      display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+    }
+    .toolbar button {
+      background: #ea580c; color: #fff; border: 0; border-radius: 8px;
+      padding: 8px 14px; font-weight: 600; cursor: pointer; font-size: 13px;
+    }
+    .toolbar button.secondary { background: #fff; color: #c2410c; border: 1px solid #fdba74; }
+    figure.shot {
+      margin: 12px 0 4px;
+      padding: 0;
+      page-break-inside: avoid;
+      text-align: center;
+    }
+    figure.shot img {
+      max-width: 100%;
+      height: auto;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(15,23,42,.06);
+    }
+    figure.shot figcaption {
+      margin-top: 6px;
+      font-size: 9pt;
+      color: #64748b;
+      text-align: left;
+    }
+  </style>
+</head>
+<body>
+  <div class="toolbar no-print">
+    <strong style="color:#c2410c;margin-right:auto">Hướng dẫn SX → VC/LĐ</strong>
+    <button type="button" onclick="window.print()">In / Xuất PDF</button>
+    <button type="button" class="secondary" onclick="window.close()">Đóng</button>
+  </div>
+
+  <h1>Hướng dẫn quy trình<br/>SX chuẩn bị giao hàng → hết VC/LĐ</h1>
+  <p class="subtitle">TuBep Pro — Bàn giao sản xuất sang vận chuyển &amp; lắp đặt</p>
+  <div class="meta">
+    Ngày lập: 03/08/2026 · Module: Sản xuất (SX) · CRM · Vận chuyển/Lắp đặt (VC/LĐ)
+  </div>
+
+  <h2>1. Tổng quan luồng</h2>
+  <div class="flow">SX kéo cột bàn giao
+        ↓
+Sale chọn công ty VC + ngày đề xuất
+        ↓
+Xưởng &amp; VC/LĐ xác nhận lịch
+        ↓
+Tạo 3 sự kiện trên lịch
+        ↓
+VC nhận hàng → Lắp đặt → hoàn tất</div>
+
+  <div class="roles">
+    <div class="role-card">
+      <strong>Sản xuất (Xưởng)</strong>
+      Kéo thẻ vào cột bàn giao; Quản lý giao hàng bấm xác nhận lịch.
+    </div>
+    <div class="role-card">
+      <strong>Sale CRM</strong>
+      Chọn công ty VC/LĐ + ngày lấy/lắp; chỉ người chịu trách nhiệm CRM được sửa ngày.
+    </div>
+    <div class="role-card">
+      <strong>VC/LĐ</strong>
+      Người xác nhận bàn giao chốt lịch; đội VC nhận hàng &amp; lắp đặt theo lịch.
+    </div>
+    <div class="role-card">
+      <strong>Hệ thống</strong>
+      Thông báo các bên; chỉ tạo 3 sự kiện sau khi đủ 2 bên xác nhận.
+    </div>
+  </div>
+
+  <h2>2. Bước chi tiết</h2>
+
+  <div class="step">
+    <div class="badge">Bước 1</div>
+    <h3 style="margin-top:0">Sản xuất chuẩn bị giao hàng</h3>
+    <ol>
+      <li>Mở module <strong>Sản xuất</strong> → Kanban công ty xưởng.</li>
+      <li>Khi hàng sẵn sàng, kéo thẻ dự án sang cột có cờ <strong>Bàn giao VC</strong>
+        (ví dụ: «ĐƠN HÀNG ĐÃ CHUẨN BỊ XONG»).</li>
+      <li>Hệ thống đăng <strong>thẻ bàn giao</strong> trên bình luận deal CRM và thông báo Sale CRM.</li>
+    </ol>
+    <div class="note">Chưa bàn giao thật sang module VC · Chưa tạo sự kiện lịch.</div>
+    <figure class="shot">
+      <img src="imgs/fig1.png" alt="Hình 1 — Kéo thẻ sang cột Bàn giao VC (ảnh thật)" />
+      <figcaption>Hình 1 (ảnh thật Kanban SX). Khoanh đỏ: cột «ĐƠN HÀNG ĐÃ CHUẨN BỊ XONG» (cờ →VC) và thẻ dự án.</figcaption>
+    </figure>
+  </div>
+
+  <div class="step">
+    <div class="badge">Bước 2</div>
+    <h3 style="margin-top:0">Sale CRM chọn công ty &amp; ngày</h3>
+    <ol>
+      <li>Mở deal CRM → tab <strong>Bình luận</strong> → thẻ bàn giao màu cam.</li>
+      <li>Chọn công ty VC/LĐ, <strong>ngày lấy hàng</strong>, <strong>ngày lắp đặt</strong> (≥ ngày lấy), địa chỉ lắp.</li>
+      <li>Có thể bấm mở lịch để xem <strong>lịch tạm</strong> (SX / VC / Lắp) trước khi chốt.</li>
+      <li>Bấm <strong>Chọn &amp; bàn giao</strong>.</li>
+    </ol>
+    <p><strong>Hệ thống sẽ:</strong></p>
+    <ul>
+      <li>Đưa dự án vào module VC/LĐ của công ty đã chọn</li>
+      <li>Lưu ngày đề xuất trên dự án (Ngày lấy hàng / Ngày lắp đặt)</li>
+      <li>Thông báo Xưởng + VC/LĐ + Sale</li>
+      <li>Chuyển thẻ sang trạng thái <strong>Chờ xác nhận</strong></li>
+    </ul>
+    <div class="warn">Vẫn <strong>chưa tạo</strong> 3 sự kiện thật trên lịch — tránh phải sửa lịch khi còn đổi giờ.</div>
+    <figure class="shot">
+      <img src="imgs/fig2.png" alt="Hình 2 — Chọn công ty và ngày, bấm Chọn &amp; bàn giao (ảnh thật)" />
+      <figcaption>Hình 2 (ảnh thật CRM). Khoanh đỏ: công ty VC/LĐ, ngày lấy, ngày lắp, nút «Chọn &amp; bàn giao».</figcaption>
+    </figure>
+  </div>
+
+  <div class="step">
+    <div class="badge">Bước 2b</div>
+    <h3 style="margin-top:0">Sửa ngày đề xuất (nếu cần)</h3>
+    <ul>
+      <li>Chỉ <strong>người chịu trách nhiệm CRM</strong> của deal (<code>assigned_to</code>) thấy nút <strong>Sửa ngày</strong>.</li>
+      <li>Sau khi sửa: reset xác nhận cũ, thông báo lại toàn bộ bên liên quan, đăng lịch sử trên deal.</li>
+    </ul>
+    <figure class="shot">
+      <img src="imgs/fig3.png" alt="Hình 3 — Sửa ngày và Xác nhận khi chờ xác nhận (ảnh thật)" />
+      <figcaption>Hình 3 (ảnh thật CRM). Khoanh đỏ: «Xem lịch đề xuất», «Sửa ngày», «Xác nhận» Xưởng / VC/LĐ.</figcaption>
+    </figure>
+  </div>
+
+  <div class="step">
+    <div class="badge">Bước 3</div>
+    <h3 style="margin-top:0">Hai bên xác nhận lịch</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Bên</th>
+          <th>Ai bấm xác nhận</th>
+          <th>Cấu hình</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Xưởng (SX)</td>
+          <td><strong>Quản lý giao hàng</strong></td>
+          <td><code>/sx/pipeline-settings</code> → Cấu hình NV</td>
+        </tr>
+        <tr>
+          <td>VC/LĐ</td>
+          <td><strong>Người xác nhận bàn giao</strong></td>
+          <td><code>/vc/pipeline-settings</code> → tab Bàn giao SX→VC</td>
+        </tr>
+      </tbody>
+    </table>
+    <ol>
+      <li>Mỗi bên bấm <strong>Xác nhận</strong> trên thẻ bàn giao.</li>
+      <li>Bên còn lại nhận thông báo «chờ bạn xác nhận».</li>
+      <li>Khi <strong>đủ 2 bên</strong>, hệ thống tạo <strong>3 sự kiện</strong>:</li>
+    </ol>
+    <table>
+      <thead>
+        <tr><th>#</th><th>Sự kiện</th><th>Module</th><th>Thời điểm</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>1</td><td>Giao hàng xưởng</td><td>Sản xuất</td><td>Ngày lấy hàng</td></tr>
+        <tr><td>2</td><td>Vận chuyển / nhận hàng</td><td>VC/LĐ</td><td>Ngày lấy hàng</td></tr>
+        <tr><td>3</td><td>Lắp đặt</td><td>VC/LĐ</td><td>Ngày lắp đặt</td></tr>
+      </tbody>
+    </table>
+    <figure class="shot">
+      <img src="imgs/fig4.png" alt="Hình 4 — Cấu hình Quản lý giao hàng SX (ảnh thật)" />
+      <figcaption>Hình 4 (ảnh thật /sx/pipeline-settings → Cấu hình NV). Khoanh đỏ: «Quản lý giao hàng (xác nhận bàn giao VC)».</figcaption>
+    </figure>
+  </div>
+
+  <div class="step">
+    <div class="badge">Bước 4</div>
+    <h3 style="margin-top:0">Vận chuyển &amp; lắp đặt đến hoàn tất</h3>
+    <ol>
+      <li>Mở module <strong>VC/LĐ</strong> → board công ty đã chọn — dự án đã hiện trên Kanban.</li>
+      <li>Panel <strong>Thông tin</strong> dự án: <strong>Ngày lấy hàng</strong>, <strong>Ngày lắp đặt</strong>.</li>
+      <li>Đội VC theo lịch nhận hàng từ xưởng → vận chuyển tới công trình.</li>
+      <li>Đội LĐ theo lịch lắp đặt → lắp, nghiệm thu.</li>
+      <li>Kéo thẻ qua các cột pipeline VC/LĐ tới cột hoàn tất (theo cấu hình từng công ty).</li>
+    </ol>
+    <figure class="shot">
+      <img src="imgs/fig5b.png" alt="Hình 5a — Ngày lấy hàng / lắp đặt trên dự án (ảnh thật)" />
+      <figcaption>Hình 5a (ảnh thật chi tiết dự án). Khoanh đỏ: «Ngày lấy hàng» và «Ngày lắp đặt».</figcaption>
+    </figure>
+    <figure class="shot">
+      <img src="imgs/fig5.png" alt="Hình 5b — Đã xác nhận và mở 3 sự kiện lịch (ảnh thật)" />
+      <figcaption>Hình 5b (ảnh thật tab Bình luận). Khoanh đỏ: sau đủ 2 bên xác nhận — nút «Mở lịch (3 sự kiện)».</figcaption>
+    </figure>
+  </div>
+
+  <h2>3. Cấu hình cần có trước</h2>
+  <table>
+    <thead>
+      <tr><th>Nơi</th><th>Thiết lập</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Pipeline SX</td>
+        <td>Cột có bật «Bàn giao VC» · Quản lý giao hàng (người xác nhận SX)</td>
+      </tr>
+      <tr>
+        <td>Pipeline VC</td>
+        <td>Người phụ trách VC · Người lắp đặt · Người xác nhận bàn giao VC/LĐ</td>
+      </tr>
+      <tr>
+        <td>Deal CRM</td>
+        <td>Có dự án SX liên kết · Người chịu trách nhiệm CRM (<code>assigned_to</code>)</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>4. Lưu ý quan trọng</h2>
+  <ul>
+    <li>Sự kiện lịch <strong>chỉ khóa sau khi đủ 2 bên xác nhận</strong>.</li>
+    <li>Sale chỉ <strong>đề xuất</strong> ngày; Xưởng &amp; VC mới <strong>chốt</strong>.</li>
+    <li>Đổi ngày trước khi đủ xác nhận → thông báo lại + xác nhận lại từ đầu.</li>
+    <li>Trên thẻ: «Xem lịch đề xuất» (xem tạm) · «Sửa ngày» (chỉ CRM phụ trách) · «Xác nhận» (đúng người cấu hình).</li>
+  </ul>
+
+  <div class="footer">
+    TuBep Pro · Hướng dẫn nội bộ · Xuất từ tài liệu quy trình SX → VC/LĐ (03/08/2026)
+  </div>
+
+  <script>
+    // Cho phép gọi print từ automation Chrome MCP
+    window.__printGuide = () => window.print();
+  </script>
+</body>
+</html>

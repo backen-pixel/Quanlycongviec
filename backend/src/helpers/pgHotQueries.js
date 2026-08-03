@@ -680,9 +680,63 @@ async function pgCrmDuplicateLeadIds({ uid, seeAllLeads, seeAllDeals, maxGroups 
   return { leadIds };
 }
 
+/**
+ * PUT /api/dashboard/notifications/read-all — mark unread by channel via SQL.
+ * Tránh pattern Supabase «select 2000 id rồi .in()» (bỏ sót khi user có nhiều unread).
+ * @returns {{ ok: true, updated?: number }|null}
+ */
+async function pgDashboardNotificationsReadAll(userId, channel) {
+  if (!isPgEnabled() || !userId) return null;
+
+  const ch = channel ? String(channel).toLowerCase() : '';
+  const expiryList = EXPIRY_DEADLINE_NOTIFICATION_TYPES_LIST.map((t) => `'${t}'`).join(',');
+  const dealActivityList = DEAL_ACTIVITY_NOTIFICATION_TYPES.map((t) => `'${t}'`).join(',');
+  const assignmentList = ASSIGNMENT_NOTIFICATION_TYPES.map((t) => `'${t}'`).join(',');
+
+  const conditions = [
+    'user_id = $1',
+    'is_read = false',
+  ];
+
+  if (ch === 'messages') {
+    conditions.push(MESSAGES_CHANNEL_SQL);
+  } else if (ch === 'events') {
+    conditions.push(`type IN ('event_created', 'event_completed')`);
+  } else if (ch === 'assignments') {
+    conditions.push(
+      `(type IN (${assignmentList}) OR entity_type = 'crm_assignment')`,
+    );
+  } else if (ch === 'deadlines') {
+    conditions.push(`type IN (${expiryList})`);
+  } else if (ch === 'activity') {
+    // Khớp isDealActivityNotification + loại trừ các tab khác
+    conditions.push(
+      `type NOT IN (${expiryList},'lead_chat','messenger_chat','event_created','event_completed',${assignmentList})`,
+    );
+    conditions.push(
+      `(type IN (${dealActivityList}) OR (entity_type = 'crm_deal' AND type IS DISTINCT FROM 'comment_added'))`,
+    );
+    conditions.push(`entity_type IS DISTINCT FROM 'project'`);
+    conditions.push(
+      `(metadata->>'ecosystem_module_key' IS NULL OR metadata->>'ecosystem_module_key' <> 'projects')`,
+    );
+  }
+  // channel rỗng / không nhận diện → đánh dấu tất cả unread của user
+
+  const sql = `
+    UPDATE notifications
+    SET is_read = true
+    WHERE ${conditions.join(' AND ')}`;
+
+  const result = await pgQuerySafe(sql, [userId]);
+  if (!result) return null;
+  return { ok: true, updated: result.rowCount != null ? Number(result.rowCount) : undefined };
+}
+
 module.exports = {
   pgDashboardNotificationStats,
   pgDashboardNotificationsList,
+  pgDashboardNotificationsReadAll,
   pgUsersActivityStats,
   pgKpiDefinitions,
   pgDashboardMainStats,

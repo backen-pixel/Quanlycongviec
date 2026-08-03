@@ -83,17 +83,32 @@ async function assignProductionCompanyDealResponsibility({ dealId, productionCom
 }
 
 /**
- * @returns {Promise<{ responsibleUserId: string|null, assigneeByTemplateItemId: Map<string, string|null> }>}
+ * @returns {Promise<{ responsibleUserId: string|null, deliveryConfirmUserId: string|null, assigneeByTemplateItemId: Map<string, string|null> }>}
  */
 async function loadProductionHandoverMaps(productionCompanyId) {
   if (!productionCompanyId) {
-    return { responsibleUserId: null, assigneeByTemplateItemId: new Map() };
+    return { responsibleUserId: null, deliveryConfirmUserId: null, assigneeByTemplateItemId: new Map() };
   }
-  const { data: set } = await supabase
-    .from('production_handover_settings')
-    .select('responsible_user_id')
-    .eq('production_company_id', productionCompanyId)
-    .maybeSingle();
+  let set = null;
+  try {
+    const { data } = await supabase
+      .from('production_handover_settings')
+      .select('responsible_user_id, delivery_confirm_user_id')
+      .eq('production_company_id', productionCompanyId)
+      .maybeSingle();
+    set = data;
+  } catch (e) {
+    if (String(e.message || '').includes('delivery_confirm_user_id')) {
+      const { data } = await supabase
+        .from('production_handover_settings')
+        .select('responsible_user_id')
+        .eq('production_company_id', productionCompanyId)
+        .maybeSingle();
+      set = data;
+    } else {
+      throw e;
+    }
+  }
   const { data: assigns } = await supabase
     .from('production_handover_task_assignments')
     .select('template_item_id, assignee_user_id')
@@ -104,8 +119,18 @@ async function loadProductionHandoverMaps(productionCompanyId) {
   }
   return {
     responsibleUserId: set?.responsible_user_id || null,
+    deliveryConfirmUserId: set?.delivery_confirm_user_id || null,
     assigneeByTemplateItemId,
   };
+}
+
+/** Quản lý giao hàng — người bấm xác nhận phía SX; fallback phụ trách SX / admin công ty. */
+async function resolveProductionDeliveryConfirmUserId(productionCompanyId, fallbackProductionPersonId = null) {
+  const maps = await loadProductionHandoverMaps(productionCompanyId);
+  if (maps.deliveryConfirmUserId) return maps.deliveryConfirmUserId;
+  if (fallbackProductionPersonId) return fallbackProductionPersonId;
+  if (maps.responsibleUserId) return maps.responsibleUserId;
+  return resolveProductionCompanyAdminUserId(productionCompanyId);
 }
 
 /**
@@ -134,5 +159,6 @@ module.exports = {
   resolveSxAssigneesForTemplateItem,
   resolveProductionCompanyAdminUserId,
   resolveProductionHandoverResponsibleUserId,
+  resolveProductionDeliveryConfirmUserId,
   assignProductionCompanyDealResponsibility,
 };

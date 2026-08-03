@@ -9,6 +9,7 @@
  */
 const { supabase } = require('../config/supabase');
 const { inVietnam } = require('./geoBounds');
+const { lookupVnPlace } = require('./vnPlaceLookup');
 
 const NOMINATIM_URL = 'https://nominatim.openstreetmap.org/search';
 const USER_AGENT = 'Quanlycongviec/1.0 (branch-geocode)';
@@ -154,6 +155,21 @@ async function geocodeNominatim(address) {
  * @param {{ address?: string|null, map_url?: string|null }} input
  * @returns {Promise<{ lat: number, lng: number, address?: string|null, source: string } | null>}
  */
+function buildGeocodeQueries(address) {
+  const a = String(address || '').trim();
+  if (!a) return [];
+  const queries = [a];
+  const hasVn = /việt\s*nam|vietnam|\bvn\b/i.test(a);
+  if (!hasVn) {
+    queries.push(`${a}, Việt Nam`);
+    // Địa chỉ ngắn kiểu "Gò Vấp" / "Bình Tân" — bổ sung TP.HCM để Nominatim ổn định hơn
+    if (a.length <= 48 && !/hồ chí minh|ho chi minh|hcm|sài gòn|sai gon/i.test(a)) {
+      queries.push(`${a}, Thành phố Hồ Chí Minh, Việt Nam`);
+    }
+  }
+  return [...new Set(queries)];
+}
+
 async function forwardGeocode(input) {
   if (!input) return null;
 
@@ -164,14 +180,26 @@ async function forwardGeocode(input) {
 
   const address = input.address ? String(input.address).trim() : '';
   if (!address) return null;
+
+  // Alias quận/tỉnh VN — ưu tiên trước API ngoài (nhanh, ổn định)
+  const alias = lookupVnPlace(address);
+  if (alias && isValidCoord(alias.lat, alias.lng)) {
+    return alias;
+  }
+
   const key = cacheKey(address);
   const cached = await lookupCache(key);
   if (cached) return { ...cached, source: 'cache' };
 
   let hit = null;
+  const queries = buildGeocodeQueries(address);
   try {
-    hit = await geocodeGoogle(address);
-    if (!hit) hit = await geocodeNominatim(address);
+    for (const q of queries) {
+      hit = await geocodeGoogle(q);
+      if (hit) break;
+      hit = await geocodeNominatim(q);
+      if (hit) break;
+    }
   } catch {
     hit = null;
   }

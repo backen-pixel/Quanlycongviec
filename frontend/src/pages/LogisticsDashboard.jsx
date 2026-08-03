@@ -38,6 +38,7 @@ import SearchInlineFilterChips, { SearchClearButton } from '../components/Search
 import DateRangePickerPopover from '../components/DateRangePickerPopover';
 import ViewModeDropdownMenu from '../components/ViewModeDropdownMenu';
 import AnchoredDropdownMenu from '../components/AnchoredDropdownMenu';
+import AssignedTasksToolbarButton from '../components/AssignedTasksToolbarButton';
 import { useWorkshopStaffFilter } from '../hooks/useWorkshopStaffFilter';
 import {
   peekWorkshopPipelineCardFocus, clearWorkshopPipelineCardFocus, markWorkshopPipelineCardFocus,
@@ -1118,6 +1119,12 @@ export default function LogisticsDashboard() {
                   {filteredProjectCount.toLocaleString('vi-VN')} thẻ · TB {tabKpis.avgProgress}%
                 </span>
               )}
+              <AssignedTasksToolbarButton
+                to="/vc/assignments"
+                assignmentModule="logistics"
+                variant="outlined"
+                className="!h-7 !rounded-md !text-[11px]"
+              />
               <button
                 type="button"
                 onClick={() => navigate('/admin/trash?tab=vc')}

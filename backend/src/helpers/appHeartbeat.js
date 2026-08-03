@@ -31,10 +31,21 @@ async function getUserInvolvedAssignmentIds(uid) {
   return [...ids];
 }
 
+function normalizeHeartbeatAssignModule(raw) {
+  const m = String(raw || 'crm').toLowerCase();
+  if (m === 'production') return 'production';
+  if (m === 'logistics') return 'logistics';
+  return 'crm';
+}
+
 function tallyAssignments(list, nowIso, in24hIso) {
-  const out = { crm: { ...EMPTY_ASSIGN }, production: { ...EMPTY_ASSIGN } };
+  const out = {
+    crm: { ...EMPTY_ASSIGN },
+    production: { ...EMPTY_ASSIGN },
+    logistics: { ...EMPTY_ASSIGN },
+  };
   for (const item of list || []) {
-    const mod = String(item.assignment_module || 'crm').toLowerCase() === 'production' ? 'production' : 'crm';
+    const mod = normalizeHeartbeatAssignModule(item.assignment_module);
     const bucket = out[mod];
     if (item.deadline && item.deadline < nowIso) bucket.overdue += 1;
     else if (item.deadline && item.deadline >= nowIso && item.deadline < in24hIso) bucket.dueSoon += 1;
@@ -46,7 +57,13 @@ function tallyAssignments(list, nowIso, in24hIso) {
 
 async function countAssignmentsBothModules(uid) {
   const ids = await getUserInvolvedAssignmentIds(uid);
-  if (!ids.length) return { crm: { ...EMPTY_ASSIGN }, production: { ...EMPTY_ASSIGN } };
+  if (!ids.length) {
+    return {
+      crm: { ...EMPTY_ASSIGN },
+      production: { ...EMPTY_ASSIGN },
+      logistics: { ...EMPTY_ASSIGN },
+    };
+  }
 
   const now = new Date();
   const nowIso = now.toISOString();
@@ -188,6 +205,7 @@ async function computeHeartbeatBadges(req, socialCompanyId) {
   return {
     assignments_crm: assignments.crm,
     assignments_production: assignments.production,
+    assignments_logistics: assignments.logistics || EMPTY_ASSIGN,
     social,
     release_notes: releaseNotes,
     notifications,

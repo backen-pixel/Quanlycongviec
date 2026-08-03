@@ -6,10 +6,11 @@ function mapChecklistRows(rows) {
     .map((c, i) => ({
       id: c.id,
       title: c.title || '',
-      description: c.notes || '',
+      description: '',
       notes: c.notes || '',
       done: !!c.is_completed,
       order_index: c.order_index ?? i,
+      attachments: Array.isArray(c.attachments) ? c.attachments : [],
     }));
 }
 
@@ -68,7 +69,7 @@ async function loadWorkshopLogisticsTasksForCrmLead(leadId, projectId) {
       id, title, description, status, priority, due_date, order_index, assignee_id, blocks_stage_advance, file_note_recorded, metadata, created_at,
       assignee:users!tasks_assignee_id_fkey(id, full_name, avatar),
       stage:workflow_stages(id, name, slug),
-      checklists:task_checklists(id, title, is_completed, order_index, notes)
+      checklists:task_checklists(id, title, is_completed, order_index, notes, attachments)
     `)
     .eq('project_id', projectId)
     .order('order_index')
@@ -79,6 +80,20 @@ async function loadWorkshopLogisticsTasksForCrmLead(leadId, projectId) {
       .from('tasks')
       .select(`
         id, title, description, status, priority, due_date, order_index, assignee_id, blocks_stage_advance, metadata, created_at,
+        assignee:users!tasks_assignee_id_fkey(id, full_name, avatar),
+        stage:workflow_stages(id, name, slug),
+        checklists:task_checklists(id, title, is_completed, order_index, notes, attachments)
+      `)
+      .eq('project_id', projectId)
+      .order('order_index')
+      .order('created_at'));
+  }
+
+  if (error && /task_checklists.*attachments|column.*attachments/i.test(String(error.message || ''))) {
+    ({ data: rows, error } = await supabase
+      .from('tasks')
+      .select(`
+        id, title, description, status, priority, due_date, order_index, assignee_id, blocks_stage_advance, file_note_recorded, metadata, created_at,
         assignee:users!tasks_assignee_id_fkey(id, full_name, avatar),
         stage:workflow_stages(id, name, slug),
         checklists:task_checklists(id, title, is_completed, order_index, notes)

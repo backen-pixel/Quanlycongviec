@@ -116,17 +116,19 @@ function CrmCommentReactionCornerBadge({ comment }) {
 // ── LIST VIEW (cột cấu hình + lịch sử stage) ───────────────────────────────
 export { ListView } from './CrmListView';
 
-/** Badge nguồn hạn: nhiệm vụ / SLA cột / ngày chốt dự kiến */
-export function CrmDeadlineSourceBadge({ source, className = '' }) {
+/** Badge nguồn hạn: NV / SLA / Setup / Chốt */
+export function CrmDeadlineSourceBadge({ source, className = '', short = false }) {
   if (!source) return null;
-  const meta = CRM_DEADLINE_SOURCE_META[source];
+  const meta = source === 'deadline'
+    ? CRM_DEADLINE_SOURCE_META.kanban
+    : CRM_DEADLINE_SOURCE_META[source];
   if (!meta) return null;
   return (
     <span
       className={`inline-flex items-center shrink-0 rounded border px-1.5 py-px text-[9px] font-semibold leading-tight ${meta.className} ${className}`}
       title={`Hạn từ: ${meta.label}`}
     >
-      {meta.label}
+      {short ? (meta.shortLabel || meta.label) : meta.label}
     </span>
   );
 }
@@ -866,11 +868,17 @@ export function DeadlineView({
       let bucket = localOverride[String(it.id)];
       let ts = null;
       let source = null;
+      const picked = resolveCrmLeadDeadlineViewSource(it, it._stage, cfg);
+      ts = picked.deadlineTs;
+      source = picked.source;
       if (!bucket) {
-        const picked = resolveCrmLeadDeadlineViewSource(it, it._stage, cfg);
-        ts = picked.deadlineTs;
-        source = picked.source;
-        bucket = resolveBucket(ts, cfg.buckets);
+        // Ưu tiên bucket server (deadline-bucket-pages) để khớp số đếm header.
+        const serverBucket = it._deadline_bucket || it.deadline_bucket;
+        if (serverBucket && BUCKET_ORDER.includes(String(serverBucket))) {
+          bucket = String(serverBucket);
+        } else {
+          bucket = resolveBucket(ts, cfg.buckets);
+        }
       }
       const enriched = { ...it, _deadlineTs: ts, _deadlineSource: source, _bucket: bucket };
       (out[bucket] || (out[bucket] = [])).push(enriched);
