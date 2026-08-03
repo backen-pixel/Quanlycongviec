@@ -11,7 +11,8 @@ function isRestTableMissingError(err) {
   return code === '42P01'
     || code === 'PGRST205'
     || /push_device_tokens/i.test(msg)
-    || /schema cache/i.test(msg);
+    || /schema cache/i.test(msg)
+    || /app_key/i.test(msg);
 }
 
 async function pgRun(sql, params = []) {
@@ -24,11 +25,20 @@ async function probePushTokensTablePg() {
   return !!result;
 }
 
-async function fetchUserTokensPg(userId) {
-  const result = await pgRun(
-    'SELECT token, platform, device_id, last_seen_at FROM public.push_device_tokens WHERE user_id = $1::uuid',
-    [userId],
-  );
+/**
+ * @param {string} userId
+ * @param {{ appKeys?: string[] | null }} [opts]
+ *   appKeys = null/undefined → mọi app; mảng → chỉ các app_key đó (bỏ token chưa gắn app).
+ */
+async function fetchUserTokensPg(userId, opts = {}) {
+  const appKeys = opts.appKeys;
+  let sql = 'SELECT token, platform, device_id, last_seen_at, app_key FROM public.push_device_tokens WHERE user_id = $1::uuid';
+  const params = [userId];
+  if (Array.isArray(appKeys) && appKeys.length) {
+    sql += ' AND app_key = ANY($2::text[])';
+    params.push(appKeys);
+  }
+  const result = await pgRun(sql, params);
   if (!result) return null;
   const rows = (result.rows || []).filter((r) => r.token);
   return {
@@ -37,16 +47,17 @@ async function fetchUserTokensPg(userId) {
   };
 }
 
-async function upsertDeviceTokenPg(userId, token, platform, deviceId) {
+async function upsertDeviceTokenPg(userId, token, platform, deviceId, appKey) {
   const result = await pgRun(
-    `INSERT INTO public.push_device_tokens (user_id, token, platform, device_id, last_seen_at)
-     VALUES ($1::uuid, $2, $3, $4, now())
+    `INSERT INTO public.push_device_tokens (user_id, token, platform, device_id, app_key, last_seen_at)
+     VALUES ($1::uuid, $2, $3, $4, $5, now())
      ON CONFLICT (user_id, token) DO UPDATE SET
        platform = EXCLUDED.platform,
        device_id = COALESCE(EXCLUDED.device_id, push_device_tokens.device_id),
+       app_key = COALESCE(EXCLUDED.app_key, push_device_tokens.app_key),
        last_seen_at = now()
-     RETURNING id, platform, last_seen_at`,
-    [userId, token, platform, deviceId || null],
+     RETURNING id, platform, app_key, last_seen_at`,
+    [userId, token, platform, deviceId || null, appKey || null],
   );
   return result?.rows?.[0] || null;
 }

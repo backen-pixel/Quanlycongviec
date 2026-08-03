@@ -385,6 +385,11 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       const lid = evt.lead_id ? String(evt.lead_id) : '';
       if (!lid) return;
       const pid = dealToProjectRef.current.get(lid) || '';
+      // Cùng nguồn crm_lead_comments với web — emit cả lead + project để modal/tab reload kịp.
+      emitSync({
+        type: 'lead:comment_changed',
+        payload: { lead_id: lid, action: evt.action || 'created' },
+      });
       emitSync({
         type: 'project:comment_changed',
         payload: {
@@ -491,13 +496,29 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
         ]);
         if (dealTypes.has(String(n?.type || ''))) {
           const eco = String(n.metadata?.ecosystem_module_key || '');
-          // Chỉ nhận hoạt động VC — bỏ SX / CRM
+          const type = String(n.type || '');
+          // Chỉ nhận hoạt động VC — bỏ SX / CRM và workshop intake xưởng
           if (eco === 'production' || eco === 'crm') return;
-          if (eco && eco !== 'logistics' && String(n.type) !== 'logistics_stage_changed') return;
-          if (String(n.type) === 'workshop_new_deal' && eco !== 'logistics' && !n.metadata?.vc_handover) return;
+          if (type === 'workshop_new_deal') {
+            if (eco !== 'logistics' && !n.metadata?.vc_handover) return;
+          } else if (type.startsWith('logistics_')) {
+            // OK
+          } else if (type === 'project_assigned' || type === 'project_created') {
+            if (eco && eco !== 'logistics') return;
+            const metaPid = (n.metadata as Record<string, unknown> | undefined)?.project_id;
+            const pid = metaPid != null
+              ? String(metaPid)
+              : n.entity_type === 'project' && n.entity_id
+                ? String(n.entity_id)
+                : '';
+            // Không có eco logistics → chỉ nhận nếu dự án đang trong board VC
+            if (eco !== 'logistics' && (!pid || !projectMetaRef.current.has(pid))) return;
+          } else if (eco && eco !== 'logistics') {
+            return;
+          }
           const enriched = enrichNotificationPreview({
             id: String(n.id || `srv:${Date.now()}`),
-            type: String(n.type || 'workshop_new_deal'),
+            type: type || 'workshop_new_deal',
             title: String(n.title || 'Vận chuyển'),
             message: String(n.message || ''),
             entity_type: n.entity_type,
@@ -523,10 +544,20 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
         }
         return;
       }
-      const eco = n.metadata?.ecosystem_module_key;
+      const eco = String(n.metadata?.ecosystem_module_key || '');
       // App VC: chỉ bình luận module logistics (bỏ production / crm)
       if (eco === 'production' || eco === 'crm') return;
       if (eco && eco !== 'logistics' && eco !== 'projects') return;
+      // Thiếu eco → chỉ nhận nếu đã biết dự án trên board VC
+      if (!eco) {
+        const metaPid = (n.metadata as Record<string, unknown> | undefined)?.project_id;
+        const pid = metaPid != null
+          ? String(metaPid)
+          : n.entity_type === 'project' && n.entity_id
+            ? String(n.entity_id)
+            : '';
+        if (!pid || !projectMetaRef.current.has(pid)) return;
+      }
       const enriched = enrichNotificationPreview({
         id: String(n.id || `srv:${Date.now()}`),
         type: 'comment_added',

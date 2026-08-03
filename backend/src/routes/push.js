@@ -428,6 +428,8 @@ r.post('/device-token', async (req, res) => {
     const token = String(req.body?.token || '').trim();
     const platform = String(req.body?.platform || 'expo').trim().toLowerCase();
     const deviceId = req.body?.device_id != null ? String(req.body.device_id).trim() : null;
+    const rawAppKey = req.body?.app_key != null ? String(req.body.app_key).trim() : '';
+    const appKey = rawAppKey || null;
 
     if (!token) return res.status(400).json({ error: 'Thiếu token' });
     if (!['expo', 'fcm', 'apns'].includes(platform)) {
@@ -440,15 +442,31 @@ r.post('/device-token', async (req, res) => {
         token,
         platform,
         device_id: deviceId || null,
+        app_key: appKey,
         last_seen_at: new Date().toISOString(),
       },
       { onConflict: 'user_id,token' },
-    ).select('id, platform, last_seen_at').single();
+    ).select('id, platform, app_key, last_seen_at').single();
 
     if (error) {
+      // Cột app_key chưa migrate — upsert không app_key để không chặn đăng ký.
+      const missingAppKey = /app_key/i.test(String(error.message || error.code || ''));
+      if (missingAppKey) {
+        const retry = await supabase.from('push_device_tokens').upsert(
+          {
+            user_id: uid,
+            token,
+            platform,
+            device_id: deviceId || null,
+            last_seen_at: new Date().toISOString(),
+          },
+          { onConflict: 'user_id,token' },
+        ).select('id, platform, last_seen_at').single();
+        if (!retry.error) return res.json({ ok: true, registration: retry.data, warning: 'app_key column missing' });
+      }
       if (isRestTableMissingError(error)) {
         const { upsertDeviceTokenPg } = require('../helpers/pushDeviceTokensPg');
-        const row = await upsertDeviceTokenPg(uid, token, platform, deviceId);
+        const row = await upsertDeviceTokenPg(uid, token, platform, deviceId, appKey);
         if (row) return res.json({ ok: true, registration: row });
         return res.status(503).json({
           error: 'PostgREST chưa thấy bảng push_device_tokens — chạy NOTIFY pgrst, \'reload schema\'; hoặc thêm SUPABASE_DB_URL trên server',

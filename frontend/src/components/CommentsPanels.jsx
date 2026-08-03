@@ -1236,10 +1236,17 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm }) {
                     can: canConfirmLogistics,
                   },
                 ].map((s) => (
-                  <div key={s.side} className="rounded-lg border border-orange-100 bg-white px-2 py-2 text-center">
-                    <p className="text-[11px] font-semibold text-gray-600">{s.label}</p>
+                  <div
+                    key={s.side}
+                    className={`rounded-lg border px-2 py-2 text-center ${
+                      s.confirmed
+                        ? 'border-emerald-300 bg-emerald-100'
+                        : 'border-orange-100 bg-white'
+                    }`}
+                  >
+                    <p className={`text-[11px] font-semibold ${s.confirmed ? 'text-emerald-800' : 'text-gray-600'}`}>{s.label}</p>
                     {s.personName ? (
-                      <p className="text-[10px] text-gray-500 mb-1 truncate" title={s.personName}>{s.personName}</p>
+                      <p className={`text-[10px] mb-1 truncate ${s.confirmed ? 'text-emerald-700 font-semibold' : 'text-gray-500'}`} title={s.personName}>{s.personName}</p>
                     ) : (
                       <p className="text-[10px] text-gray-400 mb-1">Chưa gán phụ trách</p>
                     )}

@@ -1,8 +1,8 @@
 {
   "expo": {
-    "name": "Vận chuyển lắp đặt",
+    "name": "Vận chuyển & Lắp đặt",
     "slug": "vc-mobile",
-    "version": "1.0.11",
+    "version": "1.1.14",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
@@ -16,19 +16,19 @@
       "fallbackToCacheTimeout": 0
     },
     "splash": {
-      "image": "./assets/icon.png",
+      "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#EA580C"
+      "backgroundColor": "#00071F"
     },
     "android": {
       "package": "vn.tubeppro.vcmobile",
-      "versionCode": 12,
+      "versionCode": 34,
       "usesCleartextTraffic": true,
       "edgeToEdgeEnabled": false,
       "softwareKeyboardLayoutMode": "resize",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon-foreground.png",
-        "backgroundColor": "#EA580C"
+        "backgroundColor": "#00071F"
       },
       "googleServicesFile": "./google-services.json",
       "permissions": [
@@ -79,6 +79,7 @@
       "./plugins/withFloatingBubbleAndroid.js",
       "./plugins/withIncomingCallAndroid.js",
       "./plugins/withApkInstallAndroid.js",
+      "./plugins/withApkSizeOptimizations.js",
       [
         "expo-share-intent",
         {

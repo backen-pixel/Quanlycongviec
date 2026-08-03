@@ -4,6 +4,7 @@ import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 import { PermissionsAndroid, Platform } from 'react-native';
 import { api } from '../api/client';
+import { APP_KEY } from './appUpdate';
 
 const EXPO_TOKEN_KEY = 'sx_expo_push_token_v1';
 const FCM_TOKEN_KEY = 'sx_fcm_push_token_v1';
@@ -57,7 +58,7 @@ export async function ensureNotificationPermission(): Promise<boolean> {
 }
 
 async function postDeviceToken(token: string, platform: 'expo' | 'fcm'): Promise<void> {
-  await api.post('/push/device-token', { token, platform });
+  await api.post('/push/device-token', { token, platform, app_key: APP_KEY });
 }
 
 /** FCM native — hiển thị notification trên thanh hệ thống khi app nền/kill (không cần EAS projectId). */

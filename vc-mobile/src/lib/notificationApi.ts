@@ -6,9 +6,9 @@ import {
   fetchProjectComments,
 } from './logisticsApi';
 
-const USER_KEY = 'sx_user_json';
-const SEEN_KEY = 'sx_comment_seen_v1';
-const DISMISSED_KEY = 'sx_comment_dismissed_v1';
+const USER_KEY = 'vc_user_json';
+const SEEN_KEY = 'vc_comment_seen_v1';
+const DISMISSED_KEY = 'vc_comment_dismissed_v1';
 
 export type SxCommentNotification = {
   id: string;
@@ -28,6 +28,7 @@ export type SxCommentNotification = {
     deal_title?: string | null;
     nav_tab?: string;
     ecosystem_module_key?: string;
+    vc_handover?: boolean;
   } | null;
 };
 
@@ -42,6 +43,58 @@ const WORKSHOP_DEAL_TYPES = new Set([
 
 export function isWorkshopDealNotification(n: Pick<SxCommentNotification, 'type'>): boolean {
   return WORKSHOP_DEAL_TYPES.has(String(n.type || ''));
+}
+
+/** Thông báo thuộc module VC — loại trừ SX (production) / CRM. */
+export function isVcRelevantNotification(
+  n: Pick<SxCommentNotification, 'type' | 'metadata'> | null | undefined,
+): boolean {
+  if (!n) return false;
+  const type = String(n.type || '');
+  const meta = n.metadata && typeof n.metadata === 'object' ? n.metadata : {};
+  const eco = String(meta.ecosystem_module_key || '').trim();
+  if (eco === 'production' || eco === 'crm') return false;
+
+  if (type === 'comment_added') {
+    return !eco || eco === 'logistics' || eco === 'projects';
+  }
+  if (type === 'workshop_new_deal') {
+    return eco === 'logistics' || Boolean(meta.vc_handover);
+  }
+  if (
+    type === 'logistics_stage_changed'
+    || type === 'logistics_task_deadline_warning'
+    || type === 'logistics_task_deadline_overdue'
+  ) {
+    return true;
+  }
+  if (type === 'project_assigned' || type === 'project_created') {
+    return !eco || eco === 'logistics';
+  }
+  if (type === 'messenger_chat' || type === 'incoming_call') return true;
+  return false;
+}
+
+/** Payload FCM/Expo — quyết định có hiện trên app VC không. */
+export function isVcRelevantPushData(data: Record<string, unknown> | null | undefined): boolean {
+  if (!data) return true;
+  const type = String(data.type || '');
+  if (!type) return true;
+  const metaRaw = data.metadata;
+  const meta = metaRaw && typeof metaRaw === 'object' && !Array.isArray(metaRaw)
+    ? metaRaw as Record<string, unknown>
+    : {};
+  const channelId = String(data.channelId || data.channel_id || '');
+  if (channelId === 'sx_comments') return false;
+  return isVcRelevantNotification({
+    type,
+    metadata: {
+      ecosystem_module_key: meta.ecosystem_module_key != null
+        ? String(meta.ecosystem_module_key)
+        : undefined,
+      vc_handover: Boolean(meta.vc_handover),
+    },
+  });
 }
 
 export function notificationCategoryLabel(n: SxCommentNotification): string {
@@ -144,6 +197,18 @@ async function setSeenAt(projectId: string, at: string): Promise<void> {
   const map = await getSeenMap();
   map[String(projectId)] = at;
   await AsyncStorage.setItem(SEEN_KEY, JSON.stringify(map));
+}
+
+/** Map projectId → ISO thời điểm đã xem bình luận (local). */
+export async function loadCommentSeenMap(): Promise<Record<string, string>> {
+  return getSeenMap();
+}
+
+/** Đánh dấu đã xem bình luận dự án — badge Kanban sẽ ẩn. */
+export async function markProjectCommentsSeen(projectId: string, at?: string): Promise<void> {
+  const pid = String(projectId || '').trim();
+  if (!pid) return;
+  await setSeenAt(pid, at || new Date().toISOString());
 }
 
 export function notificationDismissKey(n: SxCommentNotification): string {

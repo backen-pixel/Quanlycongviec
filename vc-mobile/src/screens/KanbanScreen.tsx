@@ -2,6 +2,7 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   Pressable,
   RefreshControl,
@@ -22,14 +23,12 @@ import MoveColumnModal from '../components/MoveColumnModal';
 import ProjectCommentModal from '../components/ProjectCommentModal';
 import Toast, { type ToastKind, type ToastState } from '../components/Toast';
 import { useAuth } from '../context/AuthContext';
-import { useMessenger } from '../context/MessengerContext';
 import { useNotifications } from '../context/NotificationContext';
 import { useRootNavigation } from '../navigation/useRootNavigation';
 import {
   fetchCompanies,
   fetchClientCompanies,
   fetchWorkshopOptionsForDeal,
-  assignProjectWorkshopType,
   fetchProductionBoard,
   fetchProductionProject,
   fetchCommentsIndexForProjects,
@@ -43,15 +42,19 @@ import {
 } from '../lib/logisticsApi';
 import {
   isMetallaOrHucabiCompanyId,
+  isInstallVcStage,
   isSystemAdmin,
   productionCreateCompanyOptions,
   projectMatchesDealCompanyExternalFilter,
   resolveDealCompanyExternalFilter,
   resolveDealCompanyParam,
-  shouldShowDealCompanyFilter,
   workshopCompaniesForCrossViewer,
+  VC_PIPELINE_TABS,
   type ClientCompanyOption,
+  type VcPipelineTab,
 } from '../lib/productionFilters';
+import { loadKanbanFilters, saveKanbanFilters } from '../lib/kanbanFilterStorage';
+import { loadCommentSeenMap, markProjectCommentsSeen } from '../lib/notificationApi';
 import { ensureNotificationPermission } from '../lib/pushRegistration';
 import { useProductionRealtime } from '../hooks/useProductionRealtime';
 import { useTheme } from '../context/ThemeContext';
@@ -71,17 +74,6 @@ function shortFilterLabel(label: string | undefined, fallback: string, max = 15)
 const CARD_PAGE_SIZE = 10;
 
 const INTAKE_BUCKET = 'delivery_pending';
-const ORPHAN_COL_ID = '__orphan_no_type__';
-/** Cột ảo gom project chưa có workshop_type_id — giống web. */
-const ORPHAN_STAGE: KanbanStage = {
-  id: ORPHAN_COL_ID,
-  name: 'Chưa phân loại',
-  icon: '📦',
-  color: '#94A3B8',
-  order_index: -1,
-  bucket_slug: 'orphan',
-  workflow_stage_id: null,
-};
 
 function formatDate(value?: string | null): string {
   if (!value) return '';
@@ -95,9 +87,11 @@ function formatDate(value?: string | null): string {
 
 type VcTag = { label: 'Chờ VC' | 'Đang VC' | 'Lắp đặt' | 'Bảo hành'; bg: string; border: string; color: string };
 
+/** Nhãn trạng thái VC trên card — chờ VC (intake) / đang VC (shipping) / lắp đặt / bảo hành. */
 function getVcTag(p: ProductionProject): VcTag | null {
   const status = String(p.status || '');
-  if (p.vc_intake || status === 'shipping') {
+  if (status === 'completed') return null;
+  if (p.vc_intake) {
     return { label: 'Chờ VC', bg: '#33415533', border: '#94A3B8', color: '#CBD5E1' };
   }
   if (status === 'installing') {
@@ -106,10 +100,7 @@ function getVcTag(p: ProductionProject): VcTag | null {
   if (status === 'warranty') {
     return { label: 'Bảo hành', bg: '#0EA5E933', border: '#38BDF8', color: '#7DD3FC' };
   }
-  if (['shipping', 'installing', 'warranty'].includes(status)) {
-    return { label: 'Đang VC', bg: '#0EA5E933', border: '#38BDF8', color: '#7DD3FC' };
-  }
-  return null;
+  return { label: 'Đang VC', bg: '#0EA5E933', border: '#38BDF8', color: '#7DD3FC' };
 }
 
 function initials(name?: string | null): string {
@@ -159,10 +150,9 @@ export default function KanbanScreen() {
   const styles = useMemo(() => createKanbanStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
-  const { unreadCount, refreshUnread, commentToast, dismissCommentToast, projectMetaRef, subscribeComment, subscribeSync, joinLeadRooms } = useNotifications();
-  const { openProjectDetail, openMessages } = useRootNavigation();
+  const { refreshUnread, commentToast, dismissCommentToast, projectMetaRef, subscribeComment, subscribeSync, joinLeadRooms } = useNotifications();
+  const { openProjectDetail } = useRootNavigation();
   const myId = user?.id || user?.userId || null;
-  const { unreadTotal: messageUnread } = useMessenger();
 
   const [board, setBoard] = useState<ProductionBoard>({ stages: [], projects: [], kpis: null });
   const [loading, setLoading] = useState(true);
@@ -193,10 +183,13 @@ export default function KanbanScreen() {
   const [colPickerOpen, setColPickerOpen] = useState(false);
   const [visibleCount, setVisibleCount] = useState(CARD_PAGE_SIZE);
   const [moveModalProject, setMoveModalProject] = useState<ProductionProject | null>(null);
-  const [classifyModalProject, setClassifyModalProject] = useState<ProductionProject | null>(null);
   const [commentProject, setCommentProject] = useState<ProductionProject | null>(null);
+  /** Tab pipeline VC — Vận chuyển / Lắp đặt. Khởi tạo từ filter đã lưu (async). */
+  const [vcPipelineTab, setVcPipelineTab] = useState<VcPipelineTab>('shipping');
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [commentIndex, setCommentIndex] = useState<Record<string, CommentIndexEntry>>({});
+  /** projectId → ISO đã xem bình luận (local) — badge ẩn sau khi mở. */
+  const [commentSeen, setCommentSeen] = useState<Record<string, string>>({});
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Refs để load() luôn dùng giá trị filter mới nhất mà không cần thêm vào deps array.
@@ -207,10 +200,9 @@ export default function KanbanScreen() {
 
   const isAdmin = user?.role === 'admin';
   const isSysAdmin = isSystemAdmin(user);
-  const showDealCompanyFilter = useMemo(
-    () => shouldShowDealCompanyFilter(user, companies),
-    [user, companies],
-  );
+  // Bộ lọc «Công ty đặt hàng» tạm ẩn — API fetchClientCompanies/fetchWorkshopOptionsForDeal
+  // chưa có cho VC (luôn trả rỗng), hiện UI sẽ không có lựa chọn nào để chọn.
+  const showDealCompanyFilter = false;
   const canPickDealCompany = isSysAdmin && showDealCompanyFilter;
 
   const dealCompanyParam = useMemo(
@@ -266,28 +258,44 @@ export default function KanbanScreen() {
     toastTimer.current = setTimeout(() => setToast(null), 2600);
   }, []);
 
+  useEffect(() => {
+    void loadCommentSeenMap().then(setCommentSeen).catch(() => {});
+  }, []);
+
+  const markCommentsSeen = useCallback(async (projectId: string, at?: string) => {
+    const pid = String(projectId || '').trim();
+    if (!pid) return;
+    const stamp = at || new Date().toISOString();
+    setCommentSeen((prev) => ({ ...prev, [pid]: stamp }));
+    try {
+      await markProjectCommentsSeen(pid, stamp);
+    } catch {
+      /* local badge vẫn ẩn */
+    }
+  }, []);
+
+  const openCommentsForProject = useCallback((project: ProductionProject) => {
+    setCommentProject(project);
+    const entry = commentIndex[project.id];
+    void markCommentsSeen(project.id, entry?.last_at || new Date().toISOString());
+  }, [commentIndex, markCommentsSeen]);
+
   const openCommentForProjectId = useCallback(
     async (projectId: string) => {
       const local = board.projects.find((p) => String(p.id) === String(projectId));
       if (local) {
-        setCommentProject(local);
+        openCommentsForProject(local);
         return;
       }
       try {
         const proj = await fetchProductionProject(projectId);
-        setCommentProject(proj);
+        openCommentsForProject(proj);
       } catch (e) {
         showToast(formatApiError(e), 'error');
       }
     },
-    [board.projects, showToast],
+    [board.projects, openCommentsForProject, showToast],
   );
-
-  const openNotifications = useCallback(async () => {
-    void ensureNotificationPermission();
-    setNotificationsOpen(true);
-    void refreshUnread();
-  }, [refreshUnread]);
 
   useEffect(() => {
     for (const p of board.projects) {
@@ -413,6 +421,20 @@ export default function KanbanScreen() {
       .catch(() => setCompanies([]));
   }, []);
 
+  // Khôi phục tab pipeline VC đã lưu (không ghi đè state khác — chỉ đọc riêng field này).
+  useEffect(() => {
+    void loadKanbanFilters().then((snap) => {
+      if (snap?.vcPipelineTab === 'install') setVcPipelineTab('install');
+    });
+  }, []);
+
+  // Lưu lại tab pipeline VC mỗi khi đổi — merge để không mất các field filter khác đã lưu.
+  useEffect(() => {
+    void loadKanbanFilters().then((prev) => {
+      void saveKanbanFilters({ ...(prev || {}), vcPipelineTab });
+    });
+  }, [vcPipelineTab]);
+
   useEffect(() => {
     if (!dealCompanyParam) {
       setWorkshopOptionsForDeal([]);
@@ -519,7 +541,7 @@ export default function KanbanScreen() {
       }
     }
     const base = showWorkshopPicker
-      ? [{ id: '', label: 'Tất cả xưởng' }, ...fromApi.map((c) => ({ id: c.id, label: c.name }))]
+      ? [{ id: '', label: 'Tất cả công ty' }, ...fromApi.map((c) => ({ id: c.id, label: c.name }))]
       : fromApi.map((c) => ({ id: c.id, label: c.name }));
     return base;
   }, [companies, board.projects, workshopCompanyPickerList, showWorkshopPicker]);
@@ -581,14 +603,8 @@ export default function KanbanScreen() {
   const workTypeOptions = useMemo(
     () => [
       { id: '', label: 'Tất cả phân loại' },
-      { id: 'none', label: 'Chưa phân loại' },
       ...workTypes.map((t) => ({ id: t.id, label: t.name })),
     ],
-    [workTypes],
-  );
-
-  const classifyWorkTypeOptions = useMemo(
-    () => workTypes.map((t) => ({ id: t.id, label: t.name })),
     [workTypes],
   );
 
@@ -613,16 +629,9 @@ export default function KanbanScreen() {
         if (!isMine) return false;
       }
       if (quickFilter === 'overdue' && !p.is_overdue) return false;
-      if (quickFilter === 'today' && !isToday(p.production_deadline || p.deadline)) return false;
-      // filterCompany: server-side.
-      // filterWorkTypeId: client-side.
-      //   - 'none' → chỉ project chưa phân loại (hiện cột ảo)
-      //   - uuid  → chỉ project có đúng loại đó
-      if (filterWorkTypeId === 'none') {
-        if (p.workshop_type_id) return false;
-      } else if (filterWorkTypeId) {
-        if (String(p.workshop_type_id || '') !== String(filterWorkTypeId)) return false;
-      }
+      if (quickFilter === 'today' && !isToday(p.deadline)) return false;
+      // filterCompany: server-side. filterWorkTypeId: client-side, lọc theo loại đã chọn.
+      if (filterWorkTypeId && String(p.workshop_type_id || '') !== String(filterWorkTypeId)) return false;
       if (dealCompanyExternalFilter && !projectMatchesDealCompanyExternalFilter(p, dealCompanyExternalFilter)) {
         return false;
       }
@@ -630,20 +639,30 @@ export default function KanbanScreen() {
     });
   }, [board.projects, search, quickFilter, myId, filterWorkTypeId, dealCompanyExternalFilter]);
 
-  /** Cột ảo «Chưa phân loại» — chỉ hiện khi bộ lọc phân loại chọn «Chưa phân loại». */
-  const showOrphanCol = filterWorkTypeId === 'none';
+  /** Số dự án theo từng tab «Vận chuyển» / «Lắp đặt» — hiện badge trên tab. */
+  const vcTabCounts = useMemo(() => {
+    let shipping = 0;
+    let install = 0;
+    filteredProjects.forEach((p) => {
+      const stage = stages.find((s) => String(s.id) === String(p.resolved_column_id));
+      if (isInstallVcStage(stage)) install += 1;
+      else shipping += 1;
+    });
+    return { shipping, install };
+  }, [filteredProjects, stages]);
 
-  /**
-   * Stages để hiển thị (navigation, dots, cột active).
-   * Khi lọc «Chưa phân loại» chỉ hiện cột ảo; các bộ lọc khác dùng stages từ API.
-   */
+  /** Stages để hiển thị (navigation, dots, cột active) — lọc theo tab pipeline VC đang mở. */
   const displayStages = useMemo<KanbanStage[]>(
-    () => (showOrphanCol ? [ORPHAN_STAGE] : stages),
-    [stages, showOrphanCol],
+    () => stages.filter((s) => (vcPipelineTab === 'install' ? isInstallVcStage(s) : !isInstallVcStage(s))),
+    [stages, vcPipelineTab],
   );
 
+  // Khi đổi tab, nếu cột đang chọn không còn thuộc tab mới → quay về cột đầu.
+  useEffect(() => {
+    setActiveIndex(0);
+  }, [vcPipelineTab]);
+
   const activeStage: KanbanStage | undefined = displayStages[activeIndex];
-  const isOrphanColumn = activeStage?.id === ORPHAN_COL_ID;
   const canPrev = activeIndex > 0;
   const canNext = activeIndex < displayStages.length - 1;
   const accent = stageColor(activeStage?.color, activeIndex);
@@ -652,11 +671,6 @@ export default function KanbanScreen() {
     const map = new Map<string, ProductionProject[]>();
     displayStages.forEach((s) => map.set(s.id, []));
     filteredProjects.forEach((p) => {
-      // Orphan project → vào cột ảo (nếu có)
-      if (!p.workshop_type_id && map.has(ORPHAN_COL_ID)) {
-        map.get(ORPHAN_COL_ID)!.push(p);
-        return;
-      }
       const key = p.resolved_column_id;
       if (key && map.has(key)) map.get(key)!.push(p);
     });
@@ -712,10 +726,8 @@ export default function KanbanScreen() {
     setFilterWorkTypeId('');
   }, []);
 
-  const moveCardTo = useCallback(
-    async (project: ProductionProject, targetStageId: string) => {
-      const target = stages.find((s) => String(s.id) === String(targetStageId));
-      if (!target) return;
+  const performMove = useCallback(
+    async (project: ProductionProject, target: KanbanStage) => {
       const fromColId = project.resolved_column_id ?? project.vc_kanban_column_id ?? null;
       const isIntake = target.bucket_slug === INTAKE_BUCKET;
       setMovingId(project.id);
@@ -732,6 +744,7 @@ export default function KanbanScreen() {
           currentStageId: fromColId,
           isIntake,
           companyId: project.company_id ?? user?.company_id ?? null,
+          workflowStageId: target.workflow_stage_id ?? null,
         });
         const newColId = result.vc_kanban_column_id ?? target.id;
         setBoard((prev) => ({
@@ -744,11 +757,20 @@ export default function KanbanScreen() {
                   resolved_column_id: newColId,
                   vc_intake: isIntake,
                   current_stage_id: result.current_stage_id ?? p.current_stage_id,
+                  ...(result.jumped_to_install ? { status: 'installing' } : {}),
                 }
               : p,
           ),
         }));
-        showToast(`Đã chuyển ${project.code} → ${target.name}`, 'success');
+        if (result.jumped_to_install) {
+          setVcPipelineTab('install');
+          showToast(
+            `Đã chuyển ${project.code} sang Lắp đặt${result.install_stage_name ? ` · ${result.install_stage_name}` : ''}`,
+            'success',
+          );
+        } else {
+          showToast(`Đã chuyển ${project.code} → ${target.name}`, 'success');
+        }
       } catch (e) {
         setBoard((prev) => ({
           ...prev,
@@ -763,53 +785,109 @@ export default function KanbanScreen() {
         setMovingId(null);
       }
     },
-    [stages, showToast, user?.company_id],
+    [showToast, user?.company_id],
   );
 
-  const assignWorkType = useCallback(
-    async (project: ProductionProject, typeId: string) => {
-      const type = workTypes.find((w) => String(w.id) === String(typeId));
-      if (!type) return;
-      setMovingId(project.id);
-      try {
-        await assignProjectWorkshopType(project.id, typeId);
-        setBoard((prev) => ({
-          ...prev,
-          projects: prev.projects.map((p) =>
-            p.id === project.id
-              ? { ...p, workshop_type_id: typeId, workshop_type_name: type.name }
-              : p,
-          ),
-        }));
-        showToast(`Đã gắn phân loại «${type.name}» cho ${project.code}`, 'success');
-      } catch (e) {
-        showToast(formatApiError(e), 'error');
-      } finally {
-        setMovingId(null);
+  /** Chuyển cột — nếu cột đích gắn cờ «Chuyển LĐ» (nhảy sang Lắp đặt), xác nhận trước khi gọi API. */
+  const moveCardTo = useCallback(
+    (project: ProductionProject, targetStageId: string) => {
+      const target = stages.find((s) => String(s.id) === String(targetStageId));
+      if (!target) return;
+      const willJumpToInstall = !!target.is_handover_to_install && !isInstallVcStage(target);
+      if (willJumpToInstall) {
+        Alert.alert(
+          'Chuyển sang Lắp đặt',
+          `Chuyển «${project.name || project.code}» từ Vận chuyển sang Lắp đặt?`,
+          [
+            { text: 'Hủy', style: 'cancel' },
+            { text: 'Chuyển', onPress: () => void performMove(project, target) },
+          ],
+        );
+        return;
       }
+      void performMove(project, target);
     },
-    [workTypes, showToast],
+    [stages, performMove],
   );
 
   const statPills = useMemo(() => {
-    const list = filteredProjects;
-    const intakeStage = stages.find((s) => s.bucket_slug === INTAKE_BUCKET);
-    const shipping = list.filter((p) => p.status === 'shipping' || p.stage_slug === 'delivery').length;
-    const installing = list.filter((p) => p.status === 'installing' || p.stage_slug === 'installation').length;
-    const warranty = list.filter((p) => p.status === 'warranty' || p.stage_slug === 'customer-care').length;
-    const completed = list.filter((p) => p.status === 'completed').length;
-    const intake = list.filter((p) => p.resolved_column_id === intakeStage?.id || p.vc_intake).length;
-    const overdue = list.filter((p) => p.is_overdue).length;
+    // KPI theo số thẻ trên từng cột của tab đang mở (không suy từ status chồng chéo).
+    const countOn = (match: (s: KanbanStage) => boolean) =>
+      displayStages
+        .filter(match)
+        .reduce((n, s) => n + (projectsByStage.get(s.id)?.length || 0), 0);
+
+    const listCount = displayStages.reduce(
+      (n, s) => n + (projectsByStage.get(s.id)?.length || 0),
+      0,
+    );
+    const overdue = filteredProjects.filter((p) => {
+      if (!p.is_overdue) return false;
+      const sid = p.resolved_column_id ? String(p.resolved_column_id) : '';
+      return displayStages.some((s) => String(s.id) === sid);
+    }).length;
+
+    const isIntakeCol = (s: KanbanStage) => {
+      if (s.bucket_slug === INTAKE_BUCKET) return true;
+      const name = String(s.name || '').toLowerCase();
+      return (
+        name.includes('chờ vc')
+        || name.includes('chờ vận')
+        || name.includes('chờ xác nhận')
+        || name.includes('cho xac nhan')
+        || name.includes('tiếp nhận')
+        || name.includes('tiep nhan')
+      );
+    };
+    const isShippingCol = (s: KanbanStage) => {
+      if (isIntakeCol(s) || isInstallVcStage(s)) return false;
+      const name = String(s.name || '').toLowerCase();
+      const slug = String(s.bucket_slug || s.slug || s.workflow_stage?.slug || '').toLowerCase();
+      return (
+        name.includes('đang vận chuyển')
+        || name.includes('dang van chuyen')
+        || slug === 'delivery'
+        || slug === 'shipping'
+        || (name.includes('vận chuyển') && !name.includes('chờ') && !name.includes('bàn giao'))
+      );
+    };
+    const isWarrantyCol = (s: KanbanStage) => {
+      const name = String(s.name || '').toLowerCase();
+      const slug = String(s.bucket_slug || s.slug || s.workflow_stage?.slug || '').toLowerCase();
+      return (
+        slug === 'customer-care'
+        || slug.includes('warranty')
+        || name.includes('bảo hành')
+        || name.includes('bao hanh')
+      );
+    };
+    const isDoneCol = (s: KanbanStage) => {
+      const name = String(s.name || '').toLowerCase();
+      const slug = String(s.bucket_slug || s.slug || '').toLowerCase();
+      return slug === 'completed' || name.includes('hoàn thành') || name.includes('hoàn tất');
+    };
+
+    if (vcPipelineTab === 'install') {
+      const installing = displayStages
+        .filter((s) => !isDoneCol(s))
+        .reduce((n, s) => n + (projectsByStage.get(s.id)?.length || 0), 0);
+      return [
+        { label: 'Tổng', value: listCount, color: colors.text },
+        { label: 'Lắp đặt', value: installing, color: '#F59E0B' },
+        { label: 'Hoàn tất', value: countOn(isDoneCol), color: colors.success },
+        ...(overdue > 0 ? [{ label: 'Quá hạn', value: overdue, color: colors.danger }] : []),
+      ];
+    }
+
     return [
-      { label: 'Tổng', value: list.length, color: colors.text },
-      { label: 'Chờ VC', value: intake, color: '#94A3B8' },
-      { label: 'Vận chuyển', value: shipping, color: colors.primary },
-      { label: 'Lắp đặt', value: installing, color: '#F59E0B' },
-      { label: 'Bảo hành', value: warranty, color: '#38BDF8' },
-      { label: 'Hoàn tất', value: completed, color: colors.success },
+      { label: 'Tổng', value: listCount, color: colors.text },
+      { label: 'Chờ VC', value: countOn(isIntakeCol), color: '#94A3B8' },
+      { label: 'Vận chuyển', value: countOn(isShippingCol), color: colors.primary },
+      { label: 'Bảo hành', value: countOn(isWarrantyCol), color: '#38BDF8' },
+      { label: 'Hoàn tất', value: countOn(isDoneCol), color: colors.success },
       ...(overdue > 0 ? [{ label: 'Quá hạn', value: overdue, color: colors.danger }] : []),
     ];
-  }, [filteredProjects, stages, colors]);
+  }, [displayStages, projectsByStage, filteredProjects, vcPipelineTab, colors]);
 
   if (loading) {
     return (
@@ -844,27 +922,33 @@ export default function KanbanScreen() {
           <Text style={styles.appTitle}>Vận chuyển lắp đặt</Text>
           <Text style={styles.appSub}>Bảng điều hành vận chuyển lắp đặt</Text>
         </View>
-        <View style={styles.headerBtns}>
-          <TapHighlight style={styles.iconBtn} onPress={() => openMessages('chats')} hitSlop={8}>
-            <Ionicons name="chatbubbles-outline" size={20} color={colors.text} />
-            {messageUnread > 0 ? (
-              <View style={[styles.notifBadge, styles.msgBadge]}>
-                <Text style={styles.notifBadgeText}>{messageUnread > 99 ? '99+' : messageUnread}</Text>
-              </View>
-            ) : null}
-          </TapHighlight>
-          <TapHighlight style={styles.iconBtn} onPress={() => void openNotifications()} hitSlop={8}>
-            <Ionicons name="notifications-outline" size={20} color={colors.text} />
-            {unreadCount > 0 ? (
-              <View style={styles.notifBadge}>
-                <Text style={styles.notifBadgeText}>{unreadCount > 99 ? '99+' : unreadCount}</Text>
-              </View>
-            ) : null}
-          </TapHighlight>
-          <TapHighlight style={styles.iconBtn} onPress={() => load('refresh')} hitSlop={8}>
-            <Ionicons name="refresh-outline" size={20} color={colors.text} />
-          </TapHighlight>
-        </View>
+      </View>
+
+      {/* ── PIPELINE TABS: Vận chuyển / Lắp đặt ── */}
+      <View style={styles.pipelineTabsRow}>
+        {VC_PIPELINE_TABS.map((tab) => {
+          const active = vcPipelineTab === tab.id;
+          const count = tab.id === 'install' ? vcTabCounts.install : vcTabCounts.shipping;
+          return (
+            <TapHighlight
+              key={tab.id}
+              style={[styles.pipelineTab, active && styles.pipelineTabActive]}
+              onPress={() => setVcPipelineTab(tab.id)}
+            >
+              <Text style={styles.pipelineTabIcon}>{tab.icon}</Text>
+              <Text style={[styles.pipelineTabText, active && styles.pipelineTabTextActive]}>
+                {tab.label}
+              </Text>
+              {count > 0 ? (
+                <View style={[styles.pipelineTabBadge, active && styles.pipelineTabBadgeActive]}>
+                  <Text style={[styles.pipelineTabBadgeText, active && styles.pipelineTabBadgeTextActive]}>
+                    {count}
+                  </Text>
+                </View>
+              ) : null}
+            </TapHighlight>
+          );
+        })}
       </View>
 
       {commentToast && !notificationsOpen ? (
@@ -975,7 +1059,7 @@ export default function KanbanScreen() {
                 style={[styles.compactPillText, filterCompany ? styles.compactPillTextActive : null]}
                 numberOfLines={1}
               >
-                {shortFilterLabel(selectedWorkshopLabel, 'Xưởng')}
+                {shortFilterLabel(selectedWorkshopLabel, 'Công ty')}
               </Text>
               <Ionicons name="chevron-down" size={11} color={colors.textFaint} />
             </Pressable>
@@ -1148,7 +1232,14 @@ export default function KanbanScreen() {
           </View>
         }
         renderItem={({ item }) => {
-          const progress = Math.max(0, Math.min(100, Number(item.progress || 0)));
+          const isInstallTab = vcPipelineTab === 'install';
+          const doneTasks = isInstallTab
+            ? (item.done_tasks_install ?? 0)
+            : (item.done_tasks_vc ?? item.done_tasks ?? 0);
+          const totalTasks = isInstallTab
+            ? (item.task_total_install ?? 0)
+            : (item.task_total_vc ?? item.task_total ?? 0);
+          const progress = totalTasks > 0 ? Math.max(0, Math.min(100, Math.round((doneTasks / totalTasks) * 100))) : 0;
           const progressColor = getTaskProgressColor(progress, colors);
           const isMoving = movingId === item.id;
           const workTypeName = item.workshop_type_name;
@@ -1156,14 +1247,22 @@ export default function KanbanScreen() {
           const stageName = item.stage_name;
           const avatarBg = avatarColor(item.customer_name);
           const avatarLetters = initials(item.customer_name);
-          const deadlineStr = formatDate(item.production_deadline || item.deadline);
+          const deadlineStr = formatDate(item.deadline);
           const createdStr = formatDate(item.created_at);
           const vcTag = getVcTag(item);
           const personName =
             item.logistics_person_name?.trim()
             || item.installer_person_name?.trim()
             || null;
-          const commentCount = commentIndex[item.id]?.count ?? 0;
+          const commentEntry = commentIndex[item.id];
+          const commentCount = commentEntry?.count ?? 0;
+          const seenAt = commentSeen[item.id];
+          const lastIsMine = Boolean(
+            myId && commentEntry?.last_user_id && String(commentEntry.last_user_id) === String(myId),
+          );
+          const hasUnreadComments = commentCount > 0
+            && !lastIsMine
+            && (!seenAt || (commentEntry?.last_at ? String(commentEntry.last_at) > String(seenAt) : true));
 
           return (
             <View style={[styles.card, { borderLeftColor: accent }]}>
@@ -1235,14 +1334,16 @@ export default function KanbanScreen() {
                 <Text style={styles.stageHint}>Chưa phân giao đoạn</Text>
               ) : null}
 
-              {/* Tasks + progress */}
-              {(item.task_total || 0) > 0 ? (
+              {/* Tasks + progress — theo tab pipeline VC đang mở (Vận chuyển / Lắp đặt) */}
+              {totalTasks > 0 ? (
                 <View style={styles.progressSection}>
                   <View style={styles.taskCountRow}>
                     <Ionicons name="checkbox-outline" size={13} color={progressColor} />
                     <Text style={styles.taskCount}>
-                      <Text style={{ color: progressColor, fontWeight: '800' }}>{item.done_tasks || 0}</Text>
-                      <Text style={{ color: colors.textMuted }}>/{item.task_total} nhiệm vụ</Text>
+                      <Text style={{ color: progressColor, fontWeight: '800' }}>{doneTasks}</Text>
+                      <Text style={{ color: colors.textMuted }}>
+                        /{totalTasks} nhiệm vụ {isInstallTab ? 'Lắp đặt' : 'Vận chuyển'}
+                      </Text>
                     </Text>
                   </View>
                   <View style={styles.progressRow}>
@@ -1271,7 +1372,7 @@ export default function KanbanScreen() {
                         color={item.is_overdue ? colors.danger : colors.primary}
                       />
                       <View style={styles.dateMetaTextWrap}>
-                        <Text style={styles.dateMetaLabel}>Deadline</Text>
+                        <Text style={styles.dateMetaLabel}>Hạn giao</Text>
                         <Text
                           style={[
                             styles.dateMetaValue,
@@ -1302,11 +1403,11 @@ export default function KanbanScreen() {
                 <View style={styles.cardActions}>
                   <TapHighlight
                     style={styles.cardActionBtn}
-                    onPress={() => setCommentProject(item)}
+                    onPress={() => openCommentsForProject(item)}
                     accessibilityLabel="Bình luận"
                   >
                     <Ionicons name="chatbubble-ellipses-outline" size={18} color={colors.primary} />
-                    {commentCount > 0 ? (
+                    {hasUnreadComments ? (
                       <View style={styles.actionBadge}>
                         <Text style={styles.actionBadgeText}>
                           {commentCount > 99 ? '99+' : commentCount}
@@ -1314,39 +1415,18 @@ export default function KanbanScreen() {
                       </View>
                     ) : null}
                   </TapHighlight>
-                  {isOrphanColumn ? (
-                    <TapHighlight
-                      style={[styles.cardActionBtn, styles.cardActionBtnClassify]}
-                      onPress={() => {
-                        if (!classifyWorkTypeOptions.length) {
-                          showToast('Chưa cấu hình phân loại cho công ty này', 'error');
-                          return;
-                        }
-                        setClassifyModalProject(item);
-                      }}
-                      disabled={isMoving}
-                      accessibilityLabel="Phân loại"
-                    >
-                      {isMoving ? (
-                        <ActivityIndicator size="small" color={colors.white} />
-                      ) : (
-                        <Ionicons name="layers-outline" size={18} color={colors.white} />
-                      )}
-                    </TapHighlight>
-                  ) : (
-                    <TapHighlight
-                      style={[styles.cardActionBtn, styles.cardActionBtnPrimary]}
-                      onPress={() => setMoveModalProject(item)}
-                      disabled={isMoving}
-                      accessibilityLabel="Chuyển cột"
-                    >
-                      {isMoving ? (
-                        <ActivityIndicator size="small" color={colors.white} />
-                      ) : (
-                        <Ionicons name="swap-horizontal" size={18} color={colors.white} />
-                      )}
-                    </TapHighlight>
-                  )}
+                  <TapHighlight
+                    style={[styles.cardActionBtn, styles.cardActionBtnPrimary]}
+                    onPress={() => setMoveModalProject(item)}
+                    disabled={isMoving}
+                    accessibilityLabel="Chuyển cột"
+                  >
+                    {isMoving ? (
+                      <ActivityIndicator size="small" color={colors.white} />
+                    ) : (
+                      <Ionicons name="swap-horizontal" size={18} color={colors.white} />
+                    )}
+                  </TapHighlight>
                 </View>
               </View>
             </View>
@@ -1365,32 +1445,31 @@ export default function KanbanScreen() {
         onClose={() => setMoveModalProject(null)}
       />
 
-      <FilterPickerModal
-        visible={!!classifyModalProject}
-        title="Gắn phân loại"
-        options={classifyWorkTypeOptions}
-        selectedId={classifyModalProject?.workshop_type_id || ''}
-        onSelect={(id) => {
-          if (classifyModalProject && id) void assignWorkType(classifyModalProject, id);
-          setClassifyModalProject(null);
-        }}
-        onClose={() => setClassifyModalProject(null)}
-      />
-
       <ProjectCommentModal
         visible={!!commentProject}
         project={commentProject}
-        onClose={() => setCommentProject(null)}
+        onClose={() => {
+          if (commentProject) {
+            const entry = commentIndex[commentProject.id];
+            void markCommentsSeen(
+              commentProject.id,
+              entry?.last_at || new Date().toISOString(),
+            );
+          }
+          setCommentProject(null);
+        }}
         onPosted={(count) => {
           if (!commentProject) return;
+          const at = new Date().toISOString();
           setCommentIndex((prev) => ({
             ...prev,
             [commentProject.id]: {
               count,
-              last_at: new Date().toISOString(),
+              last_at: at,
               last_user_id: myId,
             },
           }));
+          void markCommentsSeen(commentProject.id, at);
         }}
       />
 
@@ -1525,6 +1604,28 @@ function createKanbanStyles(c: AppColors) {
   },
   commentToastTitle: { color: c.text, fontSize: 13, fontWeight: '800' },
   commentToastBody: { color: c.textMuted, fontSize: 12, marginTop: 2, lineHeight: 16 },
+
+  // Pipeline tabs — Vận chuyển / Lắp đặt
+  pipelineTabsRow: {
+    flexDirection: 'row', gap: 8, flexShrink: 0,
+    paddingHorizontal: Spacing.lg, paddingBottom: 8,
+  },
+  pipelineTab: {
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5,
+    paddingVertical: 9, borderRadius: Radii.md,
+    backgroundColor: c.card, borderWidth: 1, borderColor: c.border,
+  },
+  pipelineTabActive: { backgroundColor: c.primary, borderColor: c.primary },
+  pipelineTabIcon: { fontSize: 13 },
+  pipelineTabText: { color: c.textMuted, fontSize: 13, fontWeight: '700' },
+  pipelineTabTextActive: { color: c.white },
+  pipelineTabBadge: {
+    minWidth: 18, height: 18, borderRadius: 9, paddingHorizontal: 4,
+    backgroundColor: c.cardAlt, alignItems: 'center', justifyContent: 'center',
+  },
+  pipelineTabBadgeActive: { backgroundColor: 'rgba(255,255,255,0.25)' },
+  pipelineTabBadgeText: { color: c.textMuted, fontSize: 10, fontWeight: '800' },
+  pipelineTabBadgeTextActive: { color: c.white },
 
   // Search
   searchRow: { paddingHorizontal: Spacing.lg, paddingBottom: 8, flexShrink: 0 },

@@ -110,13 +110,22 @@ class MainApplication : Application(), ReactApplication {
     )
     mgr.createNotificationChannel(
       NotificationChannel(
-        "sx_comments",
-        "Bình luận xưởng SX",
+        "vc_comments",
+        "Bình luận Vận chuyển & Lắp đặt",
         NotificationManager.IMPORTANCE_HIGH,
       ).apply {
-        description = "Thông báo khi có bình luận mới trên dự án sản xuất"
+        description = "Thông báo bình luận / hoạt động module Vận chuyển & Lắp đặt"
         enableVibration(true)
         vibrationPattern = longArrayOf(0, 250, 250, 250)
+      },
+    )
+    mgr.createNotificationChannel(
+      NotificationChannel(
+        "crm_system_tray_v3",
+        "Thông báo hệ thống",
+        NotificationManager.IMPORTANCE_DEFAULT,
+      ).apply {
+        description = "Thông báo chung từ hệ thống"
       },
     )
   }

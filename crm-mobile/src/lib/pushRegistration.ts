@@ -16,6 +16,7 @@ import * as Device from 'expo-device';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { api } from '../api/client';
 import Constants from 'expo-constants';
+import { APP_KEY } from './appUpdate';
 
 const EXPO_TOKEN_KEY = 'crm_expo_push_token_v1';
 const FCM_TOKEN_KEY = 'crm_fcm_push_token_v1';
@@ -48,7 +49,7 @@ async function ensurePermission(): Promise<boolean> {
 
 async function postDeviceToken(token: string, platform: 'expo' | 'fcm'): Promise<{ ok: boolean; error?: string }> {
   try {
-    await api.post('/push/device-token', { token, platform });
+    await api.post('/push/device-token', { token, platform, app_key: APP_KEY });
     return { ok: true };
   } catch (e: unknown) {
     const ax = e as { response?: { data?: { error?: string }; status?: number } };
