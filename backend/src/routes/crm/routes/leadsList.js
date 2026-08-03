@@ -804,7 +804,9 @@ r.post('/deadline-bucket-pages', async (req, res) => {
         data: ids
           .map((id) => {
             const row = rowsById.get(id);
-            return row ? { ...row, _deadline_bucket: bucket } : null;
+            return row
+              ? { ...row, _deadline_bucket: bucket, deadline_bucket: bucket }
+              : null;
           })
           .filter(Boolean),
         total: Number(page?.total) || 0,

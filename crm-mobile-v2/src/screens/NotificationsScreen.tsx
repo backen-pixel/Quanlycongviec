@@ -29,6 +29,7 @@ import { formatBadgeCount } from '../components/NotificationBadge';
 import ReportRecentActivityFeed from '../components/reports/ReportRecentActivityFeed';
 import SpinningLoader from '../components/SpinningLoader';
 import { useAuth } from '../context/AuthContext';
+import { getPerfTier } from '../lib/devicePerf';
 import type { ActivityFeedItem } from '../lib/reportActivityFeed';
 import { timeLabel } from '../lib/media';
 import { defaultMonthRange } from '../lib/reportFormat';
@@ -272,6 +273,10 @@ export default function NotificationsScreen() {
     const channels: NotificationChannel[] = ['activity', 'assignments', 'events', 'deadlines'];
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
+    // Máy yếu: prefetch muộn hơn + thưa hơn.
+    const tier = getPerfTier();
+    const delayMs = tier === 'low' ? 4000 : tier === 'mid' ? 2200 : 1200;
+    const gapMs = tier === 'low' ? 700 : tier === 'mid' ? 450 : 300;
     timer = setTimeout(() => {
       (async () => {
         for (const ch of channels) {
@@ -286,10 +291,10 @@ export default function NotificationsScreen() {
           } catch {
             // Bỏ qua lỗi tải ngầm, tab sẽ tự tải lại khi người dùng mở.
           }
-          await new Promise((resolve) => setTimeout(resolve, 300));
+          await new Promise((resolve) => setTimeout(resolve, gapMs));
         }
       })();
-    }, 1200);
+    }, delayMs);
     return () => {
       cancelled = true;
       if (timer) clearTimeout(timer);
@@ -491,6 +496,11 @@ export default function NotificationsScreen() {
           keyExtractor={(n) => n.id}
           contentContainerStyle={{ paddingBottom: insets.bottom + 40 }}
           stickySectionHeadersEnabled={false}
+          initialNumToRender={10}
+          maxToRenderPerBatch={8}
+          windowSize={5}
+          updateCellsBatchingPeriod={50}
+          removeClippedSubviews
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={() => void load({ refresh: true })} tintColor={Colors.blue} />
           }

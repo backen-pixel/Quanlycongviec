@@ -5,6 +5,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   FlatList,
+  InteractionManager,
   Modal,
   PanResponder,
   Pressable,
@@ -19,13 +20,13 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatApiError } from '../api/client';
 import {
-  DEADLINE_BG_SYNC_LIMIT,
-  DEADLINE_FIRST_PAINT_LIMIT,
   DEADLINE_MAX_BUFFER,
   fetchDeadlineBucketCounts,
+  fetchDeadlineBucketPages,
   fetchDeadlineConfig,
   fetchDeadlineSectionPage,
   fetchPipelineStages,
+  invalidateDeadlineBucketCounts,
   isDeadlineBucketCountsFresh,
   moveCrmItemStage,
   peekDeadlineBucketCounts,
@@ -86,12 +87,13 @@ import {
   readStoredDealKhSplitPreference,
   storeDealKhSplitPreference,
 } from '../lib/crmDealKhSplit';
-import { isOpenPipelineValueStage } from '../lib/crmPipelineTabs';
+import { isDeadlineMembershipStage } from '../lib/crmPipelineTabs';
 import {
   clearDeadlineOverdueBreakdown,
   publishDeadlineOverdueCounts,
   publishDeadlineOverdueFromItems,
 } from '../lib/deadlineOverdueStore';
+import { getDeadlinePerfLimits } from '../lib/devicePerf';
 import { colorFromName, initialsFromName } from '../lib/media';
 import { Radii, useColors, type ThemeColors } from '../theme';
 import type { RootStackParamList } from '../navigation/types';
@@ -145,7 +147,7 @@ const DeadlineCard = React.memo(function DeadlineCard({
   canAssign,
   isAssigning,
   isMoving,
-  onPress,
+  onOpen,
   onAssign,
   onMove,
 }: {
@@ -154,9 +156,10 @@ const DeadlineCard = React.memo(function DeadlineCard({
   canAssign: boolean;
   isAssigning: boolean;
   isMoving: boolean;
-  onPress: () => void;
-  onAssign: () => void;
-  onMove: () => void;
+  /** Callback ổn định theo ref — không tạo lambda mới mỗi lần render FlatList. */
+  onOpen: (item: PlannerItem) => void;
+  onAssign: (item: PlannerItem) => void;
+  onMove: (item: PlannerItem) => void;
 }) {
   const Colors = useColors();
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
@@ -165,7 +168,7 @@ const DeadlineCard = React.memo(function DeadlineCard({
     <View style={[styles.card, { borderLeftColor: accent }]}>
       <Pressable
         style={({ pressed }) => [pressed && styles.cardPressed]}
-        onPress={onPress}
+        onPress={() => onOpen(item)}
       >
         <View style={styles.cardTop}>
           <Text style={styles.cardCode}>{item.code}</Text>
@@ -207,7 +210,7 @@ const DeadlineCard = React.memo(function DeadlineCard({
         {canAssign ? (
           <TouchableOpacity
             style={styles.cardActionBtn}
-            onPress={onAssign}
+            onPress={() => onAssign(item)}
             disabled={isAssigning || isMoving}
             activeOpacity={0.75}
             hitSlop={6}
@@ -225,7 +228,7 @@ const DeadlineCard = React.memo(function DeadlineCard({
         ) : null}
         <TouchableOpacity
           style={[styles.cardActionBtn, styles.cardActionBtnPrimary]}
-          onPress={onMove}
+          onPress={() => onMove(item)}
           disabled={isMoving || isAssigning}
           activeOpacity={0.75}
           hitSlop={6}
@@ -264,6 +267,17 @@ export default function DeadlineScreen() {
     lead: null,
     deal: null,
   });
+  /** Phân trang theo cột bucket — khớp web deadline-bucket-pages. */
+  const [bucketPageState, setBucketPageState] = useState<Record<string, {
+    nextOffset: number;
+    hasMore: boolean;
+    loading: boolean;
+    total: number;
+  }>>({});
+  const bucketPageStateRef = useRef(bucketPageState);
+  bucketPageStateRef.current = bucketPageState;
+  const bucketPagesLoadingRef = useRef(new Set<string>());
+  const bucketPagesGenRef = useRef(0);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [deadlineConfig, setDeadlineConfig] = useState<DeadlineConfig | null>(null);
@@ -295,6 +309,15 @@ export default function DeadlineScreen() {
   const [movingId, setMovingId] = useState<string | null>(null);
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Giới hạn tải theo máy — low/mid giảm buffer + song song để tránh giật. */
+  const perf = useMemo(() => getDeadlinePerfLimits(), []);
+  /** Đang cuộn list — tạm dừng setState từ drain để khỏi giật. */
+  const listScrollingRef = useRef(false);
+  const pendingProgressRef = useRef<{
+    section: PlannerKind;
+    partial: { items: PlannerItem[]; total: number; hasMore: boolean; nextOffset: number };
+    mode: 'safe' | 'merge';
+  } | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
   /** Mỗi loại một controller — Lead/Deal drain song song, không hủy lẫn nhau. */
@@ -494,7 +517,7 @@ export default function DeadlineScreen() {
   ) => {
     if (serverFilterKeyRef.current !== fk) return;
     const cached = peekDeadlineBucketCounts(section, fk);
-    if (cached) setCountsByKind((prev) => ({ ...prev, [section]: cached }));
+    if (cached && !force) setCountsByKind((prev) => ({ ...prev, [section]: cached }));
     if (!force && isDeadlineBucketCountsFresh(section, fk)) return;
 
     countsAbortRef.current[section]?.abort();
@@ -505,13 +528,14 @@ export default function DeadlineScreen() {
         const res = await fetchDeadlineBucketCounts(section, fk, {
           ...optsBase,
           signal: ac.signal,
+          force,
         });
         if (ac.signal.aborted) return;
         if (serverFilterKeyRef.current !== fk) return;
         setCountsByKind((prev) => {
           const cur = prev[section];
-          // Số chưa quét hết (cận dưới) không được đè số đã đủ.
-          if (cur?.complete && !res.complete) return prev;
+          // Số chưa quét hết (cận dưới) không được đè số đã đủ — trừ khi force realtime.
+          if (!force && cur?.complete && !res.complete) return prev;
           return { ...prev, [section]: res };
         });
       } catch {
@@ -528,6 +552,8 @@ export default function DeadlineScreen() {
     /** Chỉ tải các tab này; mặc định là tab đang xem. */
     kinds?: PlannerKind[];
     force?: boolean;
+    /** Realtime: luôn đếm lại badge cột + reset trang bucket. */
+    forceCounts?: boolean;
   }) => {
     if (!filtersReady) return;
     if (!userId && !viewAll) return;
@@ -628,6 +654,10 @@ export default function DeadlineScreen() {
       section: PlannerKind,
       partial: { items: PlannerItem[]; total: number; hasMore: boolean; nextOffset: number },
     ) => {
+      if (listScrollingRef.current) {
+        pendingProgressRef.current = { section, partial, mode: 'safe' };
+        return;
+      }
       const prev = section === 'lead' ? leadStateRef.current : dealStateRef.current;
       if (prev.items.length > 0 && partial.items.length < prev.items.length) return;
       applySectionPage(section, partial);
@@ -639,7 +669,8 @@ export default function DeadlineScreen() {
       optsBase: typeof deadlineOptsBase,
       fk: string,
     ) => {
-      const room = DEADLINE_BG_SYNC_LIMIT - startPage.items.length;
+      const bgLimit = perf.bgSync;
+      const room = bgLimit - startPage.items.length;
       if (!startPage.hasMore || room <= 0) {
         if (section === 'lead') setDrainingLead(false);
         else setDrainingDeal(false);
@@ -652,31 +683,43 @@ export default function DeadlineScreen() {
       if (section === 'lead') setDrainingLead(true);
       else setDrainingDeal(true);
 
+      const uiThrottleMs = perf.tier === 'low' ? 1200 : 600;
       let lastUiAt = 0;
       const publishMerged = (
         partial: { items: PlannerItem[]; total: number; hasMore: boolean; nextOffset: number },
         force = false,
       ) => {
         if (drainAc.signal.aborted) return;
+        if (listScrollingRef.current) {
+          pendingProgressRef.current = { section, partial, mode: 'merge' };
+          return;
+        }
         const now = Date.now();
-        if (!force && now - lastUiAt < 600) return;
+        if (!force && now - lastUiAt < uiThrottleMs) return;
         lastUiAt = now;
         const prev = section === 'lead' ? leadStateRef.current : dealStateRef.current;
         applySectionPage(section, mergeSectionPage(section, prev, partial));
       };
 
       void (async () => {
+        // Máy yếu: đợi animation/scroll xong rồi mới drain nền.
+        if (perf.tier !== 'high') {
+          await new Promise<void>((resolve) => {
+            InteractionManager.runAfterInteractions(() => resolve());
+          });
+        }
+        if (drainAc.signal.aborted) return;
         try {
           // Quét lại từ đầu (không bỏ qua theo offset): thứ tự cột mở giữa 2 lượt
           // có thể khác nhau nên «skip N bản ghi đầu» dễ làm mất thẻ. Trùng thì gộp theo id.
           const pageRes = await fetchDeadlineSectionPage(
             section,
             0,
-            DEADLINE_BG_SYNC_LIMIT,
+            bgLimit,
             {
               ...optsBase,
               signal: drainAc.signal,
-              progressEvery: 150,
+              progressEvery: perf.progressEvery,
               onProgress: (partial) => publishMerged(partial, false),
             },
           );
@@ -685,7 +728,7 @@ export default function DeadlineScreen() {
           const merged = mergeSectionPage(section, prev, pageRes);
           const capped: SectionState = {
             ...merged,
-            hasMore: merged.hasMore || merged.items.length >= DEADLINE_BG_SYNC_LIMIT,
+            hasMore: merged.hasMore || merged.items.length >= bgLimit,
           };
           applySectionPage(section, capped);
           setDeadlineResultCache(section, fk, capped);
@@ -702,11 +745,13 @@ export default function DeadlineScreen() {
 
     const runOne = async (section: PlannerKind) => {
       const hadExisting = (section === 'lead' ? leadStateRef.current : dealStateRef.current).items.length > 0;
+      const firstPaintLimit = perf.firstPaint;
+      const bgLimit = perf.bgSync;
       try {
         const pageRes = await fetchDeadlineSectionPage(
           section,
           0,
-          DEADLINE_FIRST_PAINT_LIMIT,
+          firstPaintLimit,
           {
             ...deadlineOptsBase,
             firstPaintOnly: true,
@@ -734,16 +779,16 @@ export default function DeadlineScreen() {
           else setDrainingDeal(true);
           void (async () => {
             try {
-              const full = await fetchDeadlineSectionPage(section, 0, DEADLINE_BG_SYNC_LIMIT, {
+              const full = await fetchDeadlineSectionPage(section, 0, bgLimit, {
                 ...deadlineOptsBase,
                 signal: drainAc.signal,
-                progressEvery: 150,
+                progressEvery: perf.progressEvery,
                 onProgress: (partial) => {
                   if (drainAc.signal.aborted) return;
                   // Chỉ đổi UI khi snapshot mới không nhỏ hơn list đang hiện.
                   applyProgressSafe(section, {
                     ...partial,
-                    hasMore: partial.hasMore || partial.items.length >= DEADLINE_BG_SYNC_LIMIT,
+                    hasMore: partial.hasMore || partial.items.length >= bgLimit,
                   });
                 },
               });
@@ -751,13 +796,13 @@ export default function DeadlineScreen() {
               applySectionPage(section, {
                 items: full.items,
                 total: full.total,
-                hasMore: full.hasMore || full.items.length >= DEADLINE_BG_SYNC_LIMIT,
+                hasMore: full.hasMore || full.items.length >= bgLimit,
                 nextOffset: full.nextOffset,
               });
               setDeadlineResultCache(section, fkAtStart, {
                 items: full.items,
                 total: full.total,
-                hasMore: full.hasMore || full.items.length >= DEADLINE_BG_SYNC_LIMIT,
+                hasMore: full.hasMore || full.items.length >= bgLimit,
                 nextOffset: full.nextOffset,
               });
             } catch {
@@ -798,15 +843,46 @@ export default function DeadlineScreen() {
       }
     };
 
-    // Lead + Deal chạy song song như Kanban — mỗi mục hiện ngay khi có dữ liệu riêng.
-    await Promise.all(kinds.map((k) => runOne(k)));
+    // Máy yếu: chỉ tải tab đang xem trước — tránh 2× API + drain tranh CPU.
+    // Máy mạnh: Lead + Deal song song như Kanban.
+    if (perf.parallelKinds || kinds.length === 1) {
+      await Promise.all(kinds.map((k) => runOne(k)));
+    } else {
+      const active = kindRef.current;
+      const ordered = [active, ...kinds.filter((k) => k !== active)];
+      for (const k of ordered) {
+        if (ac.signal.aborted) break;
+        await runOne(k);
+      }
+    }
 
-    // Đếm badge cột sau first-paint — refresh ngầm (socket/focus) dùng lại cache còn mới.
+    // Đếm badge cột sau first-paint — máy yếu trễ hơn để nhường UI.
+    // Realtime / refresh: luôn force đếm lại (bỏ cache 90s).
     if (!ac.signal.aborted) {
-      const forceCounts = isRefresh && !silent;
+      const forceCounts = !!opts?.forceCounts || isRefresh;
+      if (forceCounts) {
+        invalidateDeadlineBucketCounts();
+        bucketPagesGenRef.current += 1;
+        bucketPagesLoadingRef.current.clear();
+        bucketPageStateRef.current = {};
+        setBucketPageState({});
+        const stripStamp = (rows: PlannerItem[]) => rows.map((row) => (
+          row.deadlineBucket ? { ...row, deadlineBucket: undefined } : row
+        ));
+        setLeadState((prev) => {
+          const next = { ...prev, items: stripStamp(prev.items) };
+          leadStateRef.current = next;
+          return next;
+        });
+        setDealState((prev) => {
+          const next = { ...prev, items: stripStamp(prev.items) };
+          dealStateRef.current = next;
+          return next;
+        });
+      }
       setTimeout(() => {
         for (const k of kinds) refreshBucketCounts(k, deadlineOptsBase, fkAtStart, forceCounts);
-      }, 400);
+      }, forceCounts ? 0 : perf.countsDelayMs);
     }
 
     if (!ac.signal.aborted) {
@@ -818,7 +894,7 @@ export default function DeadlineScreen() {
     }
     loadingRef.current = false;
     if (!silent) setRefreshing(false);
-  }, [filtersReady, userId, viewAll, applySectionPage, abortAllDrains, refreshBucketCounts]);
+  }, [filtersReady, userId, viewAll, applySectionPage, abortAllDrains, refreshBucketCounts, perf]);
 
   /** Reload server chỉ khi lọc server đổi — search/due/searchField lọc client, không gọi lại API. */
   useEffect(() => {
@@ -873,8 +949,13 @@ export default function DeadlineScreen() {
   useCrmRealtimeRefresh(
     useCallback(() => {
       if (!filtersReady) return;
-      // Đồng bộ cả Lead + Deal khi CRM đổi (socket / live-version / push).
-      void load({ refresh: true, silent: true, kinds: ['lead', 'deal'] });
+      // Đồng bộ list + badge counts + trang cột (socket / live-version / push).
+      void load({
+        refresh: true,
+        silent: true,
+        kinds: ['lead', 'deal'],
+        forceCounts: true,
+      });
     }, [load, filtersReady]),
     Boolean(filtersReady && (userId || viewAll)),
   );
@@ -935,12 +1016,14 @@ export default function DeadlineScreen() {
       no_deadline: [],
     };
     for (const it of filteredItems) {
-      const ts = deadlineIsoToTs(it.dueIso);
-      const key = resolveDeadlineBucket(ts, deadlineConfig?.buckets);
+      const stamped = it.deadlineBucket;
+      const key = (stamped && buckets.includes(stamped))
+        ? stamped
+        : resolveDeadlineBucket(deadlineIsoToTs(it.dueIso), deadlineConfig?.buckets);
       out[key].push(it);
     }
     return out;
-  }, [filteredItems, deadlineConfig]);
+  }, [filteredItems, deadlineConfig, buckets]);
 
   const loadedBucketCounts = useMemo(() => {
     const counts: DeadlineBucketCountMap = {};
@@ -973,6 +1056,10 @@ export default function DeadlineScreen() {
 
   useEffect(() => {
     bucketInitRef.current = false;
+    bucketPagesGenRef.current += 1;
+    bucketPagesLoadingRef.current.clear();
+    bucketPageStateRef.current = {};
+    setBucketPageState({});
   }, [kind, filters.phone, filters.assignee, filters.companyId, filters.regionId, search]);
 
   const safeBucket = buckets.includes(bucketKey) ? bucketKey : (buckets[0] || 'overdue');
@@ -987,6 +1074,12 @@ export default function DeadlineScreen() {
   const columnBadgePending = useScannedCounts
     ? !kindCounts?.complete
     : (loading || draining) && rawState.hasMore;
+  const columnPageKey = `${kind}:${safeBucket}`;
+  const columnPageState = bucketPageState[columnPageKey];
+  const columnHasMore = columnPageState
+    ? columnPageState.hasMore !== false
+      && (columnItems.length < (Number(bucketCounts[safeBucket]) || 0) || !!columnPageState.hasMore)
+    : rawState.hasMore && rawState.items.length < DEADLINE_MAX_BUFFER;
 
   const goPrevBucket = useCallback(() => {
     setBucketKey((cur) => {
@@ -1003,33 +1096,176 @@ export default function DeadlineScreen() {
     });
   }, [buckets]);
 
+  /**
+   * Tải thẻ đúng cột qua `/crm/deadline-bucket-pages` (khớp web) —
+   * stamp deadlineBucket để badge và list không lệch.
+   */
+  const loadBucketColumn = useCallback(async (
+    bucket: DeadlineBucketKey,
+    { initialOnly = false }: { initialOnly?: boolean } = {},
+  ) => {
+    if (!filtersReady) return;
+    if (!userId && !viewAll) return;
+    const pageKey = `${kind}:${bucket}`;
+    if (bucketPagesLoadingRef.current.has(pageKey)) return;
+    const state = bucketPageStateRef.current[pageKey] || { nextOffset: 0, hasMore: true, loading: false, total: 0 };
+    const total = Number(kindCounts?.counts?.[bucket]);
+    if (Number.isFinite(total) && total <= 0) return;
+    if (state.hasMore === false) return;
+    const offset = Math.max(Number(state.nextOffset) || 0, 0);
+    if (initialOnly && offset > 0) return;
+    if (Number.isFinite(total) && offset >= total) return;
+
+    const generation = bucketPagesGenRef.current;
+    bucketPagesLoadingRef.current.add(pageKey);
+    setBucketPageState((prev) => {
+      const next = {
+        ...prev,
+        [pageKey]: { ...(prev[pageKey] || { nextOffset: 0, hasMore: true, total: 0 }), loading: true },
+      };
+      bucketPageStateRef.current = next;
+      return next;
+    });
+    setLoadingMore(true);
+    try {
+      const listOpts = buildStageFetchOpts(filtersRef.current, '', userId || '');
+      const companiesList = companiesRef.current;
+      const pages = await fetchDeadlineBucketPages(
+        kind,
+        [{ bucket, offset, limit: initialOnly ? 20 : 15 }],
+        {
+          ...listOpts,
+          deadlineConfig: configRef.current,
+          dealKhSplitEnabled: dealKhSplitRef.current,
+          allowedCompanyIds:
+            listOpts.companyId || !companiesList.length
+              ? null
+              : companiesList.map((c) => c.id).filter(Boolean),
+        },
+      );
+      if (generation !== bucketPagesGenRef.current) return;
+      const page = pages[bucket];
+      if (!page) return;
+
+      const mergeItems = (prevItems: PlannerItem[]) => {
+        const map = new Map(prevItems.map((i) => [String(i.id), i]));
+        for (const row of page.items) {
+          const id = String(row.id);
+          const prev = map.get(id);
+          map.set(id, prev
+            ? { ...prev, ...row, deadlineBucket: row.deadlineBucket || prev.deadlineBucket }
+            : row);
+        }
+        return [...map.values()].sort(byDeadlineAsc).slice(0, DEADLINE_MAX_BUFFER);
+      };
+
+      if (kind === 'lead') {
+        const prev = leadStateRef.current;
+        const next = {
+          items: mergeItems(prev.items),
+          total: Math.max(prev.total, page.total, prev.items.length),
+          hasMore: page.hasMore,
+          nextOffset: page.nextOffset,
+        };
+        leadStateRef.current = next;
+        setLeadState(next);
+      } else {
+        const prev = dealStateRef.current;
+        const next = {
+          items: mergeItems(prev.items),
+          total: Math.max(prev.total, page.total, prev.items.length),
+          hasMore: page.hasMore,
+          nextOffset: page.nextOffset,
+        };
+        dealStateRef.current = next;
+        setDealState(next);
+      }
+
+      setBucketPageState((prev) => {
+        const next = {
+          ...prev,
+          [pageKey]: {
+            loading: false,
+            nextOffset: page.nextOffset,
+            hasMore: page.hasMore,
+            total: page.total,
+          },
+        };
+        bucketPageStateRef.current = next;
+        return next;
+      });
+    } catch {
+      /* giữ list cũ */
+    } finally {
+      bucketPagesLoadingRef.current.delete(pageKey);
+      if (generation === bucketPagesGenRef.current) setLoadingMore(false);
+      setBucketPageState((prev) => {
+        if (!prev[pageKey]?.loading) return prev;
+        const next = { ...prev, [pageKey]: { ...prev[pageKey], loading: false } };
+        bucketPageStateRef.current = next;
+        return next;
+      });
+    }
+  }, [filtersReady, userId, viewAll, kind, kindCounts]);
+
+  useEffect(() => {
+    if (!filtersReady || !kindCounts) return;
+    void loadBucketColumn(safeBucket, { initialOnly: true });
+  }, [filtersReady, kindCounts, safeBucket, kind, serverFilterKey, loadBucketColumn]);
+
   const canPrevRef = useRef(canPrev);
   const canNextRef = useRef(canNext);
   canPrevRef.current = canPrev;
   canNextRef.current = canNext;
+  /** Đã nhận diện vuốt ngang — không nhường FlatList (tránh lúc được lúc không). */
+  const swipeClaimedRef = useRef(false);
 
-  /** Vuốt ngang trên danh sách → đổi cột (không tranh cuộn dọc FlatList). */
+  const trySwipeColumn = useCallback((dx: number, vx: number) => {
+    const distance = 40;
+    const fling = 0.35;
+    if ((dx <= -distance || vx <= -fling) && canNextRef.current) {
+      goNextBucket();
+      return;
+    }
+    if ((dx >= distance || vx >= fling) && canPrevRef.current) {
+      goPrevBucket();
+    }
+  }, [goNextBucket, goPrevBucket]);
+
+  /**
+   * Vuốt ngang đổi cột — gắn lên View bọc FlatList (giống CrmHub),
+   * không gắn thẳng lên FlatList (ScrollView hay cướp gesture → lúc được lúc không).
+   */
   const columnSwipe = useMemo(
     () =>
       PanResponder.create({
-        onMoveShouldSetPanResponder: (_, g) =>
-          Math.abs(g.dx) > 14 && Math.abs(g.dx) > Math.abs(g.dy) * 1.5,
-        onMoveShouldSetPanResponderCapture: (_, g) =>
-          Math.abs(g.dx) > 22 && Math.abs(g.dx) > Math.abs(g.dy) * 1.8,
-        onPanResponderTerminationRequest: () => true,
+        onStartShouldSetPanResponder: () => false,
+        onMoveShouldSetPanResponder: (_, g) => {
+          const ok = Math.abs(g.dx) > 12 && Math.abs(g.dx) > Math.abs(g.dy) * 1.2;
+          if (ok) swipeClaimedRef.current = true;
+          return ok;
+        },
+        onMoveShouldSetPanResponderCapture: (_, g) => {
+          const ok = Math.abs(g.dx) > 18 && Math.abs(g.dx) > Math.abs(g.dy) * 1.35;
+          if (ok) swipeClaimedRef.current = true;
+          return ok;
+        },
+        onPanResponderTerminationRequest: () => !swipeClaimedRef.current,
         onPanResponderRelease: (_, g) => {
-          const distance = 48;
-          const fling = 0.45;
-          if ((g.dx <= -distance || g.vx <= -fling) && canNextRef.current) {
-            goNextBucket();
-            return;
-          }
-          if ((g.dx >= distance || g.vx >= fling) && canPrevRef.current) {
-            goPrevBucket();
-          }
+          const claimed = swipeClaimedRef.current;
+          swipeClaimedRef.current = false;
+          if (!claimed) return;
+          trySwipeColumn(g.dx, g.vx);
+        },
+        onPanResponderTerminate: (_, g) => {
+          const claimed = swipeClaimedRef.current;
+          swipeClaimedRef.current = false;
+          // FlatList / RefreshControl xen ngang — vẫn đổi cột nếu đã vuốt đủ.
+          if (!claimed) return;
+          trySwipeColumn(g.dx, g.vx);
         },
       }),
-    [goNextBucket, goPrevBucket],
+    [trySwipeColumn],
   );
 
   const filterBadge = countActiveFilters(filters, search);
@@ -1050,8 +1286,20 @@ export default function DeadlineScreen() {
   );
 
   const loadMore = useCallback(async () => {
-    if (loadingMore || !rawState.hasMore) return;
+    if (loadingMore) return;
     if (!userId && !viewAll) return;
+    const pageKey = `${kind}:${safeBucket}`;
+    const pageState = bucketPageStateRef.current[pageKey];
+    // Ưu tiên phân trang theo cột bucket (khớp web).
+    if (pageState?.hasMore !== false) {
+      const total = Number(kindCounts?.counts?.[safeBucket]);
+      const loadedInCol = (grouped[safeBucket] || []).length;
+      if (!Number.isFinite(total) || loadedInCol < total || pageState?.hasMore) {
+        await loadBucketColumn(safeBucket, { initialOnly: false });
+        return;
+      }
+    }
+    if (!rawState.hasMore) return;
     if (rawState.items.length >= DEADLINE_MAX_BUFFER) return;
     setLoadingMore(true);
     try {
@@ -1084,7 +1332,7 @@ export default function DeadlineScreen() {
     } finally {
       setLoadingMore(false);
     }
-  }, [loadingMore, rawState, kind, userId]);
+  }, [loadingMore, rawState, kind, userId, viewAll, safeBucket, kindCounts, grouped, loadBucketColumn]);
 
   const goDetail = useCallback((item: PlannerItem) => {
     navigation.navigate('LeadDealDetail', {
@@ -1094,6 +1342,39 @@ export default function DeadlineScreen() {
       title: item.title,
     });
   }, [navigation]);
+
+  const flushPendingProgress = useCallback(() => {
+    const pending = pendingProgressRef.current;
+    if (!pending) return;
+    pendingProgressRef.current = null;
+    const { section, partial, mode } = pending;
+    if (mode === 'safe') {
+      const prev = section === 'lead' ? leadStateRef.current : dealStateRef.current;
+      if (prev.items.length > 0 && partial.items.length < prev.items.length) return;
+      applySectionPage(section, partial);
+      return;
+    }
+    const prev = section === 'lead' ? leadStateRef.current : dealStateRef.current;
+    const seen = new Set(prev.items.map((i) => i.id));
+    const appended = partial.items.filter((i) => !seen.has(i.id));
+    const items = prev.items.length
+      ? [...prev.items, ...appended].sort(byDeadlineAsc).slice(0, DEADLINE_MAX_BUFFER)
+      : partial.items.slice(0, DEADLINE_MAX_BUFFER);
+    applySectionPage(section, {
+      items,
+      total: Math.max(prev.total, items.length, partial.total),
+      hasMore: partial.hasMore && items.length < DEADLINE_MAX_BUFFER,
+      nextOffset: Math.max(prev.nextOffset, partial.nextOffset, items.length),
+    });
+  }, [applySectionPage]);
+
+  const onListScrollBegin = useCallback(() => {
+    listScrollingRef.current = true;
+  }, []);
+  const onListScrollEnd = useCallback(() => {
+    listScrollingRef.current = false;
+    flushPendingProgress();
+  }, [flushPendingProgress]);
 
   const showToast = useCallback((msg: string, ok: boolean) => {
     setToast({ msg, ok });
@@ -1244,6 +1525,40 @@ export default function DeadlineScreen() {
     [filters.companyId, filters.regionId, user?.company_id, showToast],
   );
 
+  const renderDeadlineItem = useCallback(({ item: it }: { item: PlannerItem }) => {
+    const companyId = it.companyId || filters.companyId || user?.company_id || '';
+    const canAssign = canAssignCrmCard(
+      user,
+      plannerAsAssigneeTarget(it),
+      userId || '',
+      companyId,
+    );
+    return (
+      <View style={{ paddingHorizontal: 16 }}>
+        <DeadlineCard
+          item={it}
+          accent={accent}
+          canAssign={canAssign}
+          isAssigning={assigningId === it.id}
+          isMoving={movingId === it.id}
+          onOpen={goDetail}
+          onAssign={openAssignForItem}
+          onMove={openMoveForItem}
+        />
+      </View>
+    );
+  }, [
+    accent,
+    assigningId,
+    movingId,
+    filters.companyId,
+    user,
+    userId,
+    goDetail,
+    openAssignForItem,
+    openMoveForItem,
+  ]);
+
   const moveCardTo = useCallback(
     async (item: PlannerItem, targetStageId: string) => {
       const target = moveStages.find((s) => String(s.id) === String(targetStageId));
@@ -1251,7 +1566,7 @@ export default function DeadlineScreen() {
         showToast('Không tìm thấy cột đích', false);
         return;
       }
-      const staysOnDeadline = isOpenPipelineValueStage(target);
+      const staysOnDeadline = isDeadlineMembershipStage(target);
       setMovingId(item.id);
       if (!staysOnDeadline) {
         patchDeadlineItem(item.kind, item.id, null, { remove: true });
@@ -1293,13 +1608,6 @@ export default function DeadlineScreen() {
     <View style={styles.root}>
       {/* Header cố định — chỉ danh sách card cuộn */}
       <View style={[styles.stickyChrome, { paddingTop: insets.top + 8 }]}>
-        <View style={styles.header}>
-          <Text style={styles.h1}>Deadline</Text>
-          <Text style={styles.h1Sub}>
-            Giống CRM web · phân cột theo hạn Lead / Deal
-          </Text>
-        </View>
-
         <View style={styles.kindTabs}>
           {(['lead', 'deal'] as PlannerKind[]).map((k) => {
             const km = kindMeta(Colors)[k];
@@ -1406,7 +1714,7 @@ export default function DeadlineScreen() {
           </ScrollView>
         ) : null}
 
-        <View style={styles.colHeaderRow}>
+        <View style={styles.colHeaderRow} {...columnSwipe.panHandlers}>
           <Pressable
             onPress={goPrevBucket}
             disabled={!canPrev}
@@ -1474,6 +1782,7 @@ export default function DeadlineScreen() {
           <Text style={[styles.empty, { marginTop: 10 }]}>Đang tải…</Text>
         </View>
       ) : (
+        <View style={styles.cardListWrap} {...columnSwipe.panHandlers}>
         <FlatList
           style={styles.cardList}
           data={columnItems}
@@ -1481,7 +1790,7 @@ export default function DeadlineScreen() {
           contentContainerStyle={{ paddingBottom: 120, paddingTop: 8 }}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
-          {...columnSwipe.panHandlers}
+          directionalLockEnabled
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={() => void load({ refresh: true })} tintColor={Colors.blue} />
           }
@@ -1505,38 +1814,21 @@ export default function DeadlineScreen() {
               </Text>
             </View>
           }
-          renderItem={({ item: it }) => {
-            const companyId = it.companyId || filters.companyId || user?.company_id || '';
-            const canAssign = canAssignCrmCard(
-              user,
-              plannerAsAssigneeTarget(it),
-              userId || '',
-              companyId,
-            );
-            return (
-              <View style={{ paddingHorizontal: 16 }}>
-                <DeadlineCard
-                  item={it}
-                  accent={accent}
-                  canAssign={canAssign}
-                  isAssigning={assigningId === it.id}
-                  isMoving={movingId === it.id}
-                  onPress={() => goDetail(it)}
-                  onAssign={() => openAssignForItem(it)}
-                  onMove={() => openMoveForItem(it)}
-                />
-              </View>
-            );
-          }}
+          renderItem={renderDeadlineItem}
+          extraData={`${assigningId || ''}|${movingId || ''}|${accent}`}
+          onScrollBeginDrag={onListScrollBegin}
+          onMomentumScrollBegin={onListScrollBegin}
+          onScrollEndDrag={onListScrollEnd}
+          onMomentumScrollEnd={onListScrollEnd}
           ListFooterComponent={
-            rawState.hasMore && rawState.items.length < DEADLINE_MAX_BUFFER ? (
+            columnHasMore ? (
               <View style={{ paddingHorizontal: 16 }}>
                 <Pressable
                   style={[styles.loadMoreBtn, { borderColor: accent }]}
                   onPress={() => void loadMore()}
-                  disabled={loadingMore}
+                  disabled={loadingMore || !!columnPageState?.loading}
                 >
-                  {loadingMore ? (
+                  {loadingMore || columnPageState?.loading ? (
                     <SpinningLoader size={18} color={accent} />
                   ) : (
                     <Text style={[styles.loadMoreTxt, { color: accent }]}>Tải thêm</Text>
@@ -1549,11 +1841,13 @@ export default function DeadlineScreen() {
           onEndReached={() => {
             void loadMore();
           }}
-          initialNumToRender={8}
-          maxToRenderPerBatch={8}
-          windowSize={7}
+          initialNumToRender={perf.listInitial}
+          maxToRenderPerBatch={perf.listBatch}
+          windowSize={perf.listWindow}
+          updateCellsBatchingPeriod={perf.tier === 'low' ? 80 : 50}
           removeClippedSubviews
         />
+        </View>
       )}
 
       <CrmFilterSheet
@@ -1664,10 +1958,8 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
     paddingBottom: 6,
     zIndex: 2,
   },
+  cardListWrap: { flex: 1 },
   cardList: { flex: 1 },
-  header: { paddingHorizontal: 16, marginBottom: 8 },
-  h1: { color: Colors.text, fontSize: 26, fontWeight: '900' },
-  h1Sub: { color: Colors.textMuted, fontSize: 12, marginTop: 4, fontWeight: '600' },
   kindTabs: { flexDirection: 'row', gap: 10, paddingHorizontal: 16, marginBottom: 10 },
   kindTab: {
     flex: 1,

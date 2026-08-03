@@ -5,13 +5,17 @@ import { getSocket } from '../lib/socket';
 import { useAuth } from '../lib/auth';
 import { markCrmPipelineCardFocus, persistCrmPipelineUiNow } from '../lib/crmPipelineStorage';
 import {
+  CRM_DEADLINE_BUCKET_KEYS,
   CRM_DEADLINE_SOURCE_META,
+  crmDeadlineBucketFromTs,
+  crmDeadlineStartOfTodayVnMs,
   formatCrmRemainingMs,
   getCrmDeadlineUrgencyBadgeClass,
   getCrmDeadlineUrgencyFromTs,
   isCrmPipelineStageCompletedRevenue,
   isCrmPipelineStageLost,
   isCrmPipelineStageWon,
+  resolveCrmLeadDeadlineBucketSource,
   resolveCrmLeadDeadlineViewSource,
 } from '../lib/crmLeadDeadlineDisplay';
 import { FbCrmAvatar, formatCrmFbRelativeTime } from './crmFbCommentUi';
@@ -354,6 +358,7 @@ function KanbanColumn({
   title,
   subtitle,
   count,
+  countTitle,
   headerExtras,
   children,
   isDragOver,
@@ -377,7 +382,12 @@ function KanbanColumn({
           <h3 className="font-semibold truncate text-sm flex-1" style={{ color: '#000000' }}>{title}</h3>
           <div className="flex items-center gap-1.5 shrink-0">
             {headerExtras}
-            <span className="px-2 py-0.5 bg-gray-100 text-gray-700 font-bold rounded text-[10px]">{count}</span>
+            <span
+              className="px-2 py-0.5 bg-gray-100 text-gray-700 font-bold rounded text-[10px]"
+              title={countTitle || (count != null ? String(count) : undefined)}
+            >
+              {count}
+            </span>
           </div>
         </div>
         {subtitle && <p className="text-[10px] text-gray-500">{subtitle}</p>}
@@ -705,11 +715,7 @@ function PlannerPersonal({ allItems, pipelineType, navigate }) {
 }
 
 // ── DEADLINE VIEW (buckets) ─────────────────────────────────────────────────
-const BUCKET_ORDER = [
-  'overdue', 'today', 'tomorrow', 'this_week', 'next_week',
-  'in_2_weeks', 'in_3_weeks', 'in_4_weeks', 'in_1_month',
-  'next_month', 'no_deadline',
-];
+const BUCKET_ORDER = CRM_DEADLINE_BUCKET_KEYS;
 
 const BUCKET_COLOR = {
   overdue:     '#f43f5e',
@@ -739,31 +745,35 @@ const BUCKET_DEFAULT_LABEL = {
   no_deadline: 'Không hạn',
 };
 
-// Trả ISO date YYYY-MM-DD đại diện cho bucket khi kéo-thả (set expected_close_date).
+// Trả ISO date YYYY-MM-DD đại diện cho bucket khi kéo-thả (set expected_close_date) — lịch VN.
 function targetDateForBucket(bucketKey, buckets) {
-  const now = new Date();
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const fmt = (d) => {
-    const yy = d.getFullYear();
-    const mm = String(d.getMonth() + 1).padStart(2, '0');
-    const dd = String(d.getDate()).padStart(2, '0');
+  const startTodayMs = crmDeadlineStartOfTodayVnMs();
+  const dayMs = 86400000;
+  const fmtFromMs = (ms) => {
+    const VN_OFFSET_MS = 7 * 60 * 60 * 1000;
+    const shifted = new Date(ms + VN_OFFSET_MS);
+    const yy = shifted.getUTCFullYear();
+    const mm = String(shifted.getUTCMonth() + 1).padStart(2, '0');
+    const dd = String(shifted.getUTCDate()).padStart(2, '0');
     return `${yy}-${mm}-${dd}`;
   };
-  const addDays = (n) => { const x = new Date(startOfToday); x.setDate(x.getDate() + n); return x; };
-  const dow = (now.getDay() + 6) % 7; // Mon=0
+  const addDays = (n) => startTodayMs + n * dayMs;
+  const vnToday = new Date(startTodayMs + 7 * 60 * 60 * 1000);
+  const dow = (vnToday.getUTCDay() + 6) % 7;
   switch (bucketKey) {
-    case 'overdue':     return fmt(addDays(-1));
-    case 'today':       return fmt(startOfToday);
-    case 'tomorrow':    return fmt(addDays(1));
-    case 'this_week':   return fmt(addDays(Math.max(0, 6 - dow)));
-    case 'next_week':   return fmt(addDays(7 - dow + 3));
-    case 'in_2_weeks':  return fmt(addDays(buckets?.in_2_weeks?.days || 14));
-    case 'in_3_weeks':  return fmt(addDays(buckets?.in_3_weeks?.days || 21));
-    case 'in_4_weeks':  return fmt(addDays(buckets?.in_4_weeks?.days || 28));
-    case 'in_1_month':  return fmt(addDays(buckets?.in_1_month?.days || 30));
+    case 'overdue':     return fmtFromMs(addDays(-1));
+    case 'today':       return fmtFromMs(startTodayMs);
+    case 'tomorrow':    return fmtFromMs(addDays(1));
+    case 'this_week':   return fmtFromMs(addDays(Math.max(0, 6 - dow)));
+    case 'next_week':   return fmtFromMs(addDays(7 - dow + 3));
+    case 'in_2_weeks':  return fmtFromMs(addDays(buckets?.in_2_weeks?.days || 14));
+    case 'in_3_weeks':  return fmtFromMs(addDays(buckets?.in_3_weeks?.days || 21));
+    case 'in_4_weeks':  return fmtFromMs(addDays(buckets?.in_4_weeks?.days || 28));
+    case 'in_1_month':  return fmtFromMs(addDays(buckets?.in_1_month?.days || 30));
     case 'next_month': {
-      const x = new Date(now.getFullYear(), now.getMonth() + 1, 15);
-      return fmt(x);
+      const y = vnToday.getUTCFullYear();
+      const m = vnToday.getUTCMonth();
+      return fmtFromMs(Date.UTC(y, m + 1, 15) - 7 * 60 * 60 * 1000);
     }
     case 'no_deadline': return null;
     default: return null;
@@ -771,38 +781,7 @@ function targetDateForBucket(bucketKey, buckets) {
 }
 
 function resolveBucket(deadlineTs, buckets) {
-  if (deadlineTs == null) return 'no_deadline';
-  const now = new Date();
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  const endOfToday = startOfToday + 86400000 - 1;
-  if (deadlineTs < startOfToday) return 'overdue';
-  if (deadlineTs <= endOfToday) return 'today';
-
-  const endOfTomorrow = endOfToday + 86400000;
-  if (deadlineTs <= endOfTomorrow) return 'tomorrow';
-
-  // Tuần bắt đầu Thứ Hai — «Tuần này» = sau ngày mai đến hết tuần
-  const dow = (now.getDay() + 6) % 7;
-  const startOfThisWeek = startOfToday - dow * 86400000;
-  const endOfThisWeek = startOfThisWeek + 7 * 86400000 - 1;
-  if (deadlineTs <= endOfThisWeek) return 'this_week';
-  const endOfNextWeek = endOfThisWeek + 7 * 86400000;
-  if (deadlineTs <= endOfNextWeek) return 'next_week';
-
-  const inDays = (n) => startOfToday + n * 86400000;
-  const d2 = (buckets?.in_2_weeks?.days ?? 14);
-  const d3 = (buckets?.in_3_weeks?.days ?? 21);
-  const d4 = (buckets?.in_4_weeks?.days ?? 28);
-  const d1m = (buckets?.in_1_month?.days ?? 30);
-  if (deadlineTs <= inDays(d2)) return 'in_2_weeks';
-  if (deadlineTs <= inDays(d3)) return 'in_3_weeks';
-  if (deadlineTs <= inDays(d4)) return 'in_4_weeks';
-  if (deadlineTs <= inDays(d1m)) return 'in_1_month';
-
-  const startOfNextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1).getTime();
-  const endOfNextMonth = new Date(now.getFullYear(), now.getMonth() + 2, 1).getTime() - 1;
-  if (deadlineTs >= startOfNextMonth && deadlineTs <= endOfNextMonth) return 'next_month';
-  return 'in_1_month';
+  return crmDeadlineBucketFromTs(deadlineTs, buckets);
 }
 
 export function DeadlineView({
@@ -866,18 +845,22 @@ export function DeadlineView({
     BUCKET_ORDER.forEach(k => { out[k] = []; });
     allItems.forEach(it => {
       let bucket = localOverride[String(it.id)];
-      let ts = null;
-      let source = null;
-      const picked = resolveCrmLeadDeadlineViewSource(it, it._stage, cfg);
-      ts = picked.deadlineTs;
-      source = picked.source;
+      const viewPicked = resolveCrmLeadDeadlineViewSource(it, it._stage, cfg);
+      const bucketPicked = resolveCrmLeadDeadlineBucketSource(it, it._stage, cfg);
+      // Hiển thị hạn trên thẻ: ưu tiên view (ẩn khi không SĐT / đã tương tác…).
+      // Gom cột: ưu tiên stamp server (bucket-pages) để khớp badge; còn lại khớp BE.
+      const ts = viewPicked.deadlineTs ?? bucketPicked.deadlineTs;
+      const source = viewPicked.source ?? bucketPicked.source;
       if (!bucket) {
-        // Ưu tiên bucket server (deadline-bucket-pages) để khớp số đếm header.
-        const serverBucket = it._deadline_bucket || it.deadline_bucket;
-        if (serverBucket && BUCKET_ORDER.includes(String(serverBucket))) {
-          bucket = String(serverBucket);
+        const serverBucket = String(it._deadline_bucket || it.deadline_bucket || '').trim();
+        if (serverBucket && BUCKET_ORDER.includes(serverBucket)) {
+          bucket = serverBucket;
+        } else if (bucketPicked.forcedNoDeadline) {
+          bucket = 'no_deadline';
+        } else if (bucketPicked.deadlineTs != null) {
+          bucket = resolveBucket(bucketPicked.deadlineTs, cfg.buckets);
         } else {
-          bucket = resolveBucket(ts, cfg.buckets);
+          bucket = 'no_deadline';
         }
       }
       const enriched = { ...it, _deadlineTs: ts, _deadlineSource: source, _bucket: bucket };
@@ -947,9 +930,10 @@ export function DeadlineView({
           const exactCount = bucketCounts && Number.isFinite(Number(bucketCounts[key]))
             ? Number(bucketCounts[key])
             : null;
+          const loadedCount = list.length;
           const displayCount = exactCount != null
-            ? exactCount
-            : (bucketCountsLoading ? '…' : '—');
+            ? (loadedCount < exactCount ? `${loadedCount}/${exactCount}` : exactCount)
+            : (bucketCountsLoading ? '…' : (loadedCount || '—'));
           const pageState = bucketPageState?.[key] || {};
           const columnItemIds = list.map((x) => x.id);
           const allInColumnSelected =
@@ -964,6 +948,11 @@ export function DeadlineView({
               topBarColor={BUCKET_COLOR[key]}
               title={label}
               count={displayCount}
+              countTitle={exactCount != null
+                ? (loadedCount < exactCount
+                  ? `Đã tải ${loadedCount}/${exactCount} — cuộn xuống hoặc bấm Tải thêm`
+                  : `${exactCount} deal`)
+                : undefined}
               subtitle={`Giá trị: ${formatVND(totalValue)}`}
               headerExtras={
                 mergePick && onToggleSelectAllInColumn && list.length > 0 ? (

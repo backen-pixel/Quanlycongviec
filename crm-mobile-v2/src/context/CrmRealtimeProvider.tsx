@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { AppState } from 'react-native';
 import { api } from '../api/client';
-import { invalidateCrmHubCache, invalidatePlannerCache, evictStaleCrmCaches } from '../api/crm';
+import { invalidateCrmHubCache, invalidatePlannerCache, invalidateDeadlineBucketCounts, evictStaleCrmCaches } from '../api/crm';
 import { subscribeAppSocket } from '../lib/appSocket';
 import { emitCrmRealtime, type CrmRealtimeReason } from '../lib/crmRealtimeBus';
 
@@ -38,6 +38,7 @@ export function CrmRealtimeProvider({ children }: { children: React.ReactNode })
   const flushBump = () => {
     bumpTimerRef.current = null;
     invalidateCrmHubCache();
+    invalidateDeadlineBucketCounts();
     if (pendingPlannerRef.current) invalidatePlannerCache();
     pendingPlannerRef.current = false;
     emitCrmRealtime({ reason: pendingReasonRef.current, detail: pendingDetailRef.current });

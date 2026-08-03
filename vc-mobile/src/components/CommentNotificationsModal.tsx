@@ -27,6 +27,7 @@ import {
   notificationIconName,
   notificationActionLabel,
   isWorkshopDealNotification,
+  isVcRelevantNotification,
   type SxCommentNotification,
 } from '../lib/notificationApi';
 import { ensureNotificationPermission } from '../lib/pushRegistration';
@@ -40,6 +41,11 @@ type Props = {
   onClose: () => void;
   onOpenProject: (projectId: string) => void;
 };
+
+function keepVcNotifs(items: SxCommentNotification[], unreadOnly: boolean): SxCommentNotification[] {
+  const scoped = items.filter(isVcRelevantNotification);
+  return unreadOnly ? scoped.filter((x) => !x.is_read) : scoped;
+}
 
 function dayLabel(iso: string): string {
   const t = new Date(iso).getTime();
@@ -280,18 +286,16 @@ export default function CommentNotificationsModal({ visible, onClose, onOpenProj
     setErr('');
     try {
       const { notifications } = await fetchCommentNotifications(tab === 'unread');
-      setItems((prev) => {
-        const merged = mergeCommentNotificationLists(liveRef.current, notifications, prev);
-        if (tab === 'unread') return merged.filter((x) => !x.is_read);
-        return merged;
-      });
+      setItems((prev) => keepVcNotifs(
+        mergeCommentNotificationLists(liveRef.current, notifications, prev),
+        tab === 'unread',
+      ));
     } catch (e) {
       setErr(formatApiError(e));
-      setItems((prev) => {
-        const merged = mergeCommentNotificationLists(liveRef.current, prev);
-        if (tab === 'unread') return merged.filter((x) => !x.is_read);
-        return merged;
-      });
+      setItems((prev) => keepVcNotifs(
+        mergeCommentNotificationLists(liveRef.current, prev),
+        tab === 'unread',
+      ));
     } finally {
       if (!silent) setLoading(false);
     }
@@ -299,21 +303,20 @@ export default function CommentNotificationsModal({ visible, onClose, onOpenProj
 
   useEffect(() => {
     if (!visible) return;
-    setItems((prev) => {
-      const merged = mergeCommentNotificationLists(liveNotifications, prev);
-      if (tab === 'unread') return merged.filter((x) => !x.is_read);
-      return merged;
-    });
+    setItems((prev) => keepVcNotifs(
+      mergeCommentNotificationLists(liveNotifications, prev),
+      tab === 'unread',
+    ));
   }, [visible, liveNotifications, tab]);
 
   useEffect(() => {
     if (!visible) return undefined;
     return subscribeComment((incoming) => {
-      setItems((prev) => {
-        const merged = mergeCommentNotificationLists([incoming], prev);
-        if (tab === 'unread') return merged.filter((x) => !x.is_read);
-        return merged;
-      });
+      if (!isVcRelevantNotification(incoming)) return;
+      setItems((prev) => keepVcNotifs(
+        mergeCommentNotificationLists([incoming], prev),
+        tab === 'unread',
+      ));
     });
   }, [visible, subscribeComment, tab]);
 

@@ -19,6 +19,7 @@ import { PermissionsAndroid, Platform } from 'react-native';
 import { api } from '../api/client';
 import { invalidateCrmHubCache, invalidatePlannerCache } from '../api/crm';
 import { navigate } from '../navigation/navigationRef';
+import { APP_KEY } from './appUpdate';
 import { emitCrmRealtime } from './crmRealtimeBus';
 import { getOrCreateDeviceId } from './deviceHeartbeat';
 
@@ -226,6 +227,7 @@ export async function registerPushTokenV2(): Promise<boolean> {
         token: fcmToken,
         platform: 'fcm',
         device_id: await getOrCreateDeviceId(),
+        app_key: APP_KEY,
       });
       console.log(LOG, 'FCM registered', fcmToken.slice(0, 12) + '…');
       return true;

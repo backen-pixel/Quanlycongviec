@@ -23,6 +23,7 @@ const CHANNEL_CHAT = 'crm_chat';
 const CHANNEL_SYSTEM = 'crm_system_tray_v3';
 const CHANNEL_CALL = 'crm_call';
 const CHANNEL_SX_COMMENTS = 'sx_comments';
+const CHANNEL_VC_COMMENTS = 'vc_comments';
 
 function isChatType(type) {
   return type === 'messenger_chat' || type === 'lead_chat' || type === 'department_chat';
@@ -38,6 +39,84 @@ function isProductionCommentNotification(notification) {
     ? notification.metadata
     : {};
   return String(meta.ecosystem_module_key || '') === 'production';
+}
+
+function isLogisticsModuleNotification(notification) {
+  const type = String(notification?.type || '');
+  const meta = notification.metadata && typeof notification.metadata === 'object'
+    ? notification.metadata
+    : {};
+  const eco = String(meta.ecosystem_module_key || '');
+  if (eco === 'logistics') return true;
+  if (meta.vc_handover) return true;
+  return (
+    type === 'logistics_stage_changed'
+    || type === 'logistics_task_deadline_warning'
+    || type === 'logistics_task_deadline_overdue'
+  );
+}
+
+/**
+ * App nào được nhận push này.
+ * - null → mọi app (chat / cuộc gọi / thông báo chung)
+ * - mảng → chỉ token đã đăng ký đúng app_key (token cũ chưa có app_key bị bỏ qua)
+ */
+function resolvePushAppKeys(notification) {
+  const type = String(notification?.type || '');
+  const meta = notification?.metadata && typeof notification.metadata === 'object'
+    ? notification.metadata
+    : {};
+  const eco = String(meta.ecosystem_module_key || '').trim();
+
+  if (isChatType(type) || isIncomingCallType(type) || type === 'call_dismiss') {
+    return null;
+  }
+
+  if (eco === 'production' || isProductionCommentNotification(notification)) {
+    return ['sx-mobile'];
+  }
+  if (
+    eco === 'logistics'
+    || meta.vc_handover
+    || type.startsWith('logistics_')
+    || isLogisticsModuleNotification(notification)
+  ) {
+    return ['vc-mobile'];
+  }
+  if (eco === 'crm' || type.startsWith('crm_') || type.startsWith('crm_assignment')) {
+    return ['crm-mobile', 'crm-mobile-v2'];
+  }
+  if (type === 'workshop_new_deal') {
+    return meta.vc_handover || eco === 'logistics' ? ['vc-mobile'] : ['sx-mobile'];
+  }
+  if (type === 'project_assigned' || type === 'project_created') {
+    if (eco === 'logistics') return ['vc-mobile'];
+    if (eco === 'production') return ['sx-mobile'];
+    // Ambiguous — gửi cả SX + VC (không gửi CRM)
+    return ['sx-mobile', 'vc-mobile'];
+  }
+  if (type === 'comment_added') {
+    if (eco === 'production') return ['sx-mobile'];
+    if (eco === 'logistics') return ['vc-mobile'];
+    return ['sx-mobile', 'vc-mobile'];
+  }
+  return null;
+}
+
+function filterTokenRowsByAppKeys(rows, appKeys) {
+  if (!appKeys || !appKeys.length) return rows;
+  const set = new Set(appKeys);
+  const match = (r) => {
+    const key = String(r?.app_key || '').trim();
+    if (key && set.has(key)) return true;
+    // CRM v2 cũ dùng device_id prefix trước khi có app_key
+    if (set.has('crm-mobile-v2') && String(r?.device_id || '').startsWith('crmv2')) return true;
+    return false;
+  };
+  return {
+    expo: (rows.expo || []).filter(match),
+    fcm: (rows.fcm || []).filter(match),
+  };
 }
 
 function buildPushPayload(notification) {
@@ -76,7 +155,16 @@ function buildPushPayload(notification) {
   const chat = isChatType(notification.type);
   const isCall = isIncomingCallType(notification.type);
   const isSxComment = isProductionCommentNotification(notification);
-  const channelId = isCall ? CHANNEL_CALL : chat ? CHANNEL_CHAT : isSxComment ? CHANNEL_SX_COMMENTS : CHANNEL_SYSTEM;
+  const isVcModule = isLogisticsModuleNotification(notification);
+  const channelId = isCall
+    ? CHANNEL_CALL
+    : chat
+      ? CHANNEL_CHAT
+      : isSxComment
+        ? CHANNEL_SX_COMMENTS
+        : isVcModule
+          ? CHANNEL_VC_COMMENTS
+          : CHANNEL_SYSTEM;
 
   return {
     title: String(title).slice(0, 120),
@@ -110,15 +198,30 @@ function buildPushPayload(notification) {
   };
 }
 
-async function fetchUserTokens(userId) {
+async function fetchUserTokens(userId, opts = {}) {
   const empty = { expo: [], fcm: [] };
-  const { data, error } = await supabase
+  const appKeys = opts.appKeys;
+  let data;
+  let error;
+  ({ data, error } = await supabase
     .from('push_device_tokens')
-    .select('token, platform, last_seen_at, device_id')
-    .eq('user_id', userId);
+    .select('token, platform, last_seen_at, device_id, app_key')
+    .eq('user_id', userId));
+  if (error && /app_key/i.test(String(error.message || error.code || ''))) {
+    ({ data, error } = await supabase
+      .from('push_device_tokens')
+      .select('token, platform, last_seen_at, device_id')
+      .eq('user_id', userId));
+  }
   if (error) {
     if (isRestTableMissingError(error)) {
-      const pgRows = await fetchUserTokensPg(userId);
+      let pgRows = await fetchUserTokensPg(userId, { appKeys });
+      if (!pgRows) {
+        pgRows = await fetchUserTokensPg(userId, {});
+        if (pgRows && Array.isArray(appKeys) && appKeys.length) {
+          pgRows = filterTokenRowsByAppKeys(pgRows, appKeys);
+        }
+      }
       if (pgRows) return pgRows;
       console.error(
         '[pushSender] Bảng push_device_tokens — PostgREST chưa reload schema. Chạy: NOTIFY pgrst, \'reload schema\';',
@@ -127,11 +230,24 @@ async function fetchUserTokens(userId) {
     }
     throw error;
   }
-  const rows = (data || []).filter((r) => r.token);
-  return {
-    expo: rows.filter((r) => r.platform === 'expo'),
-    fcm: rows.filter((r) => r.platform === 'fcm'),
+  let grouped = {
+    expo: (data || []).filter((r) => r.token && r.platform === 'expo'),
+    fcm: (data || []).filter((r) => r.token && r.platform === 'fcm'),
   };
+  // Chỉ lọc khi đã có token đăng ký đúng app đích — tránh mất push trước khi user mở app mới.
+  if (Array.isArray(appKeys) && appKeys.length) {
+    const targetSet = new Set(appKeys);
+    const hasTargetTagged = [...grouped.expo, ...grouped.fcm].some((r) => {
+      const key = String(r.app_key || '').trim();
+      if (key && targetSet.has(key)) return true;
+      if (targetSet.has('crm-mobile-v2') && String(r.device_id || '').startsWith('crmv2')) return true;
+      return false;
+    });
+    if (hasTargetTagged) {
+      grouped = filterTokenRowsByAppKeys(grouped, appKeys);
+    }
+  }
+  return grouped;
 }
 
 /** Kiểm tra DB + FCM credentials (diagnostic). */
@@ -634,13 +750,17 @@ async function sendMobilePush(userId, notification) {
       if (!allowed) return;
     }
 
-    const rows = await fetchUserTokens(userId);
+    const appKeys = resolvePushAppKeys(notification);
+    const rows = await fetchUserTokens(userId, { appKeys });
     const expoRows = rows.expo.filter((r) => isExpoPushToken(r.token));
 
     // Tách token v2 (FCM native tray) khỏi token v1 để giữ nguyên hành vi app cũ.
     const allFcm = rows.fcm || [];
-    const v2FcmAll = allFcm.filter(isCrmV2Row);
-    const legacyRows = { fcm: allFcm.filter((r) => !isCrmV2Row(r)), expo: rows.expo };
+    const v2FcmAll = allFcm.filter((r) => isCrmV2Row(r) || String(r.app_key || '') === 'crm-mobile-v2');
+    const legacyRows = {
+      fcm: allFcm.filter((r) => !isCrmV2Row(r) && String(r.app_key || '') !== 'crm-mobile-v2'),
+      expo: rows.expo,
+    };
     const fcmRows = isCall ? pickFcmTokens(legacyRows) : pickActiveFcmTokens(legacyRows);
     const v2FcmRows = pickActiveFcmTokens({ fcm: v2FcmAll, expo: [] });
 

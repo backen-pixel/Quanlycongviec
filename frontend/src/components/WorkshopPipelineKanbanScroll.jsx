@@ -12,6 +12,46 @@ const EDGE_ZONE_PX = 56;
 const MIN_STEP = 5;
 const MAX_STEP = 34;
 const NUDGE_PX = 280;
+/** Chừa chỗ cho thanh cuộn ngang cố định (16px) + khoảng hở đáy màn hình. */
+const BOTTOM_RESERVE_PX = 24;
+const MIN_BOARD_H = 360;
+const MAX_BOARD_H = 1180;
+
+/** Vùng cuộn dọc gần nhất bọc ngoài board (thường là <main>). */
+function findScrollParent(el) {
+  let node = el?.parentElement || null;
+  while (node && node !== document.body && node !== document.documentElement) {
+    const overflowY = getComputedStyle(node).overflowY;
+    if (overflowY === 'auto' || overflowY === 'scroll') return node;
+    node = node.parentElement;
+  }
+  return null;
+}
+
+/**
+ * Chiều cao nội dung thật nằm dưới board (chân board, padding trang) tính tới `stopAt`.
+ * Chỉ cộng sibling + padding/margin đáy nên không phụ thuộc chiều cao board → không co lặp.
+ */
+function measureSpaceBelow(el, stopAt) {
+  let total = 0;
+  let node = el;
+  while (node && node !== stopAt && node !== document.body) {
+    for (let sib = node.nextElementSibling; sib; sib = sib.nextElementSibling) {
+      const style = getComputedStyle(sib);
+      if (style.position === 'absolute' || style.position === 'fixed' || style.display === 'none') continue;
+      total += sib.getBoundingClientRect().height
+        + (parseFloat(style.marginTop) || 0)
+        + (parseFloat(style.marginBottom) || 0);
+    }
+    const parent = node.parentElement;
+    if (!parent) break;
+    const parentStyle = getComputedStyle(parent);
+    total += (parseFloat(parentStyle.paddingBottom) || 0)
+      + (parent === stopAt ? 0 : (parseFloat(parentStyle.marginBottom) || 0));
+    node = parent;
+  }
+  return total;
+}
 
 const DEFAULT_LEFT_TITLE = 'Giữ chuột trên mép để cuộn chậm sang trái — bấm để cuộn nhanh — kéo thẻ tới mép để tự cuộn';
 const DEFAULT_RIGHT_TITLE = 'Giữ chuột trên mép để cuộn chậm sang phải — bấm để cuộn nhanh — kéo thẻ tới mép để tự cuộn';
@@ -39,6 +79,7 @@ export function useWorkshopKanbanScrollLayout() {
  * @param {'unified'|'per-column'|'off'} columnScrollMode — cuộn dọc chung / riêng từng cột / tắt
  * @param {boolean} enableViewportScroll — legacy: true = unified
  * @param {number|string} remeasureToken — token đổi khi cần đo lại chiều cao vùng cuộn
+ * @param {boolean} pauseRemeasure — tạm bỏ ResizeObserver khi board đang sync/load-more
  * @param {boolean} showLegend — chú thích màu thẻ SX ở chân board
  * @param {import('react').RefObject<HTMLElement|null>|((node: HTMLElement|null) => void)} [scrollContainerRef]
  */
@@ -49,6 +90,7 @@ export default function WorkshopPipelineKanbanScroll({
   columnScrollMode,
   enableViewportScroll = false,
   remeasureToken,
+  pauseRemeasure = false,
   showLegend = false,
   scrollContainerRef,
   leftTitle = DEFAULT_LEFT_TITLE,
@@ -149,21 +191,50 @@ export default function WorkshopPipelineKanbanScroll({
   useEffect(() => {
     if (!unifiedScroll && !perColumnScroll) return undefined;
     const measure = () => {
+      if (pauseRemeasure) return;
       const el = kanbanHScrollRef.current;
       if (!el) return;
-      const TARGET = 1180;
-      const maxByViewport = Math.max(480, window.innerHeight - 60);
-      setScrollMaxH(`${Math.min(TARGET, maxByViewport)}px`);
+      // Đo từ vị trí thật của board (dưới header + thanh lọc) để đáy board
+      // không bị tràn khỏi màn hình — nếu tràn thì thẻ cuối luôn bị cắt.
+      const rect = el.getBoundingClientRect();
+      const scrollParent = findScrollParent(el);
+      // Phần nội dung nằm dưới board (chân board, padding trang) cũng phải lọt màn hình.
+      const belowBoard = measureSpaceBelow(el, scrollParent);
+      const bottomInset = Math.max(belowBoard, BOTTOM_RESERVE_PX);
+      const viewportH = scrollParent ? scrollParent.clientHeight : window.innerHeight;
+      let fitInPlace;
+      if (scrollParent) {
+        const parentRect = scrollParent.getBoundingClientRect();
+        const topWithin = rect.top - parentRect.top + scrollParent.scrollTop;
+        fitInPlace = viewportH - topWithin - bottomInset;
+      } else {
+        fitInPlace = window.innerHeight - rect.top - bottomInset;
+      }
+      // Header quá cao khiến board còn quá ít chỗ → dùng trọn màn hình,
+      // phần dư reach được nhờ cuộn trang (overscroll đã cho nối tiếp).
+      const target = fitInPlace >= MIN_BOARD_H ? fitInPlace : (viewportH - bottomInset);
+      const maxByViewport = Math.max(MIN_BOARD_H, Math.floor(target));
+      setScrollMaxH(`${Math.min(MAX_BOARD_H, maxByViewport)}px`);
     };
     const raf = requestAnimationFrame(measure);
     const t = setTimeout(measure, 120);
+    const t2 = setTimeout(measure, 400);
     window.addEventListener('resize', measure);
+    const scrollParent = findScrollParent(kanbanHScrollRef.current);
+    const ro = new ResizeObserver(() => {
+      if (pauseRemeasure) return;
+      measure();
+    });
+    if (scrollParent) ro.observe(scrollParent);
+    if (kanbanWrapRef.current) ro.observe(kanbanWrapRef.current);
     return () => {
       cancelAnimationFrame(raf);
       clearTimeout(t);
+      clearTimeout(t2);
       window.removeEventListener('resize', measure);
+      ro.disconnect();
     };
-  }, [unifiedScroll, perColumnScroll, remeasureToken]);
+  }, [unifiedScroll, perColumnScroll, remeasureToken, pauseRemeasure]);
 
   useEffect(() => {
     const isOurCard = (e) => {

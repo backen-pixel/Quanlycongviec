@@ -1479,6 +1479,11 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
       deal_company_id: dealCompanyIdQuery,
       view: viewQuery,
       lite: liteQuery,
+      summary: summaryQuery,
+      created_from: createdFrom,
+      created_to: createdTo,
+      production_person_id: productionPersonId,
+      sx_kanban_column_id: sxKanbanColumnIdQuery,
     } = req.query;
     const viewNorm = String(viewQuery || '').toLowerCase();
     /** App SX mobile: select nhẹ + bỏ enrich tài chính/staff/CRM task stats. */
@@ -1487,6 +1492,7 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
       || String(liteQuery || '').toLowerCase() === 'true';
     /** Web Kanban dashboard: giữ CRM assignee/staff/finance; bỏ tasks embed + CRM task stats + staff backfill. */
     const kanbanBoard = !mobileLite && viewNorm === 'kanban';
+    const summaryOnly = String(summaryQuery || '') === '1' || String(summaryQuery || '').toLowerCase() === 'true';
     const company_id = effectiveWorkshopCompanyId(req, companyIdQuery);
     const deal_company_id = effectiveDealCompanyId(req, dealCompanyIdQuery, company_id);
     const sx_workshop_company_id = sxWorkshopCoQ && String(sxWorkshopCoQ).trim() ? String(sxWorkshopCoQ).trim() : null;
@@ -1496,6 +1502,37 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
     const offset = (parsedPage - 1) * parsedLimit;
     const { ids: stageIds } = await getWorkshopStageMap();
     const wonIds = await getWonDealProjectIds();
+    const sxKanbanColumnId = String(sxKanbanColumnIdQuery || '').trim();
+    const wantsNullKanbanColumn = sxKanbanColumnId === '__none__' || sxKanbanColumnId === 'null';
+    const wantsKanbanColumn = !!sxKanbanColumnId && !wantsNullKanbanColumn;
+    const wantsUnclassified = String(workshop_type_id || '').toLowerCase() === 'none';
+
+    if (summaryOnly) {
+      const { loadSxKanbanColumnSummary } = require('../helpers/sxKanbanSummary');
+      const summary = await loadSxKanbanColumnSummary({
+        req,
+        sx_intake,
+        wonIds,
+        stageIds,
+        division_id,
+        company_id,
+        scopePartnerIds,
+        workshop_type_id,
+        wantsUnclassified,
+        sx_workshop_company_id,
+        deal_company_id,
+        search,
+        priority,
+        createdFrom,
+        createdTo,
+        productionPersonId,
+        wantsNullKanbanColumn,
+        wantsKanbanColumn,
+        sxKanbanColumnId,
+      });
+      return res.json(summary);
+    }
+
     // Web cần resolve stages cho enrich; mobile tự resolve cột phía client.
     if (!mobileLite) {
       await getResolvedKanbanStages(company_id, {
@@ -1571,7 +1608,6 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
     if (division_id) query = query.eq('division_id', division_id);
     if (company_id) query = applyProductionCompanyScopeFilter(query, company_id, scopePartnerIds);
     // workshop_type_id='none' → lọc deal CHƯA phân loại (workshop_type_id IS NULL)
-    const wantsUnclassified = String(workshop_type_id || '').toLowerCase() === 'none';
     if (wantsUnclassified) query = query.is('workshop_type_id', null);
     else if (workshop_type_id) query = query.eq('workshop_type_id', workshop_type_id);
     ({ query } = await applyParticipantOnlyProductionScope(query, req.user, company_id, sx_workshop_company_id, deal_company_id));
@@ -1582,6 +1618,16 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
     }
 
     if (priority) query = query.eq('priority', priority);
+    if (createdFrom) query = query.gte('created_at', createdFrom);
+    if (createdTo) {
+      const upper = /^\d{4}-\d{2}-\d{2}$/.test(String(createdTo))
+        ? `${createdTo}T23:59:59.999Z`
+        : createdTo;
+      query = query.lte('created_at', upper);
+    }
+    if (productionPersonId) query = query.eq('production_person_id', productionPersonId);
+    if (wantsNullKanbanColumn) query = query.is('sx_kanban_column_id', null);
+    else if (wantsKanbanColumn) query = query.eq('sx_kanban_column_id', sxKanbanColumnId);
     if (stage_slug && String(sx_intake) !== '1') {
       if (stage_slug === INTAKE_BUCKET) {
         query = query.in('id', wonIds);
@@ -1653,6 +1699,16 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
       }
       if (search) fallbackQuery = fallbackQuery.or(`code.ilike.%${search}%,name.ilike.%${search}%`);
       if (priority) fallbackQuery = fallbackQuery.eq('priority', priority);
+      if (createdFrom) fallbackQuery = fallbackQuery.gte('created_at', createdFrom);
+      if (createdTo) {
+        const upper = /^\d{4}-\d{2}-\d{2}$/.test(String(createdTo))
+          ? `${createdTo}T23:59:59.999Z`
+          : createdTo;
+        fallbackQuery = fallbackQuery.lte('created_at', upper);
+      }
+      if (productionPersonId) fallbackQuery = fallbackQuery.eq('production_person_id', productionPersonId);
+      if (wantsNullKanbanColumn) fallbackQuery = fallbackQuery.is('sx_kanban_column_id', null);
+      else if (wantsKanbanColumn) fallbackQuery = fallbackQuery.eq('sx_kanban_column_id', sxKanbanColumnId);
       if (division_id) fallbackQuery = fallbackQuery.eq('division_id', division_id);
       if (company_id) fallbackQuery = applyProductionCompanyScopeFilter(fallbackQuery, company_id, scopePartnerIds);
       if (wantsUnclassified) fallbackQuery = fallbackQuery.is('workshop_type_id', null);
