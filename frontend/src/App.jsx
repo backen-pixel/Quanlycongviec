@@ -345,7 +345,7 @@ function ProtectedLayout() {
               {isFullscreen ? (
                 <Suspense fallback={<PageLoader />}><Outlet /></Suspense>
               ) : (
-                <div className={`px-6 pb-6 w-full max-w-full ${compactKanbanChrome ? 'pt-3' : 'pt-6'}`}>
+                <div className={`px-6 w-full max-w-full ${compactKanbanChrome ? 'pt-3 pb-0' : 'pt-6 pb-6'}`}>
                   <Suspense fallback={<PageLoader />}><Outlet /></Suspense>
                 </div>
               )}

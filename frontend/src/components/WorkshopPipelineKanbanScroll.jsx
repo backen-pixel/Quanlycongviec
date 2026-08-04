@@ -12,10 +12,8 @@ const EDGE_ZONE_PX = 56;
 const MIN_STEP = 5;
 const MAX_STEP = 34;
 const NUDGE_PX = 280;
-/** Chừa chỗ thanh cuộn ngang cố định (~16px) + gutter nhỏ sát đáy viewport. */
-const BOTTOM_RESERVE_PX = 12;
-/** Chiều cao ước lượng thanh cuộn ngang cố định (portal đáy màn hình). */
-const FIXED_H_SCROLLBAR_PX = 18;
+/** Gutter nhỏ sát đáy `main`. Thanh cuộn ngang cố định overlay lên board — không trừ chiều cao. */
+const BOTTOM_RESERVE_PX = 4;
 /** Legend chân board (khi showLegend) — không đo DOM để tránh co vòng. */
 const LEGEND_RESERVE_PX = 40;
 const MIN_BOARD_H = 360;
@@ -173,17 +171,18 @@ export default function WorkshopPipelineKanbanScroll({
       if (pauseRemeasure) return;
       const el = kanbanHScrollRef.current;
       if (!el) return;
-      // Lấp sát đáy viewport từ mép trên board (sau header/lọc).
-      // Không trừ measureSpaceBelow (dễ đếm nhầm dock chat / sibling lớn → board thấp, tím trống).
+      // Lấp sát đáy vùng cuộn trang (`main`), không dùng window — tránh board + padding
+      // tạo thanh cuộn page rồi lộ khoảng trống/trắng dưới Kanban.
       const rect = el.getBoundingClientRect();
+      const scrollParent = findScrollParent(el);
+      const parentBottom = scrollParent
+        ? scrollParent.getBoundingClientRect().bottom
+        : window.innerHeight;
       const bottomInset = BOTTOM_RESERVE_PX
-        + FIXED_H_SCROLLBAR_PX
         + (showLegend ? LEGEND_RESERVE_PX : 0);
-      const fitViewport = window.innerHeight - rect.top - bottomInset;
-      // Header quá cao → vẫn giữ tối thiểu; phần dư cuộn trang.
-      const target = fitViewport >= MIN_BOARD_H
-        ? fitViewport
-        : Math.max(MIN_BOARD_H, window.innerHeight - bottomInset - 48);
+      const fitInParent = parentBottom - rect.top - bottomInset;
+      const fallbackH = (scrollParent?.clientHeight || window.innerHeight) - bottomInset - 48;
+      const target = fitInParent >= MIN_BOARD_H ? fitInParent : Math.max(MIN_BOARD_H, fallbackH);
       const maxByViewport = Math.max(MIN_BOARD_H, Math.floor(target));
       setScrollMaxH(`${Math.min(MAX_BOARD_H, maxByViewport)}px`);
     };
