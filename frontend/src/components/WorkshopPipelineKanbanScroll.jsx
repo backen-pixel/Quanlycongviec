@@ -58,6 +58,7 @@ export function useWorkshopKanbanScrollLayout() {
  * @param {number|string} remeasureToken — token đổi khi cần đo lại chiều cao vùng cuộn
  * @param {boolean} pauseRemeasure — tạm bỏ ResizeObserver khi board đang sync/load-more
  * @param {boolean} showLegend — chú thích màu thẻ SX ở chân board
+ * @param {boolean} fillScrollViewport — true: cao = viewport `main` (cho phép cuộn chrome phía trên; dùng kèm sticky)
  * @param {import('react').RefObject<HTMLElement|null>|((node: HTMLElement|null) => void)} [scrollContainerRef]
  */
 export default function WorkshopPipelineKanbanScroll({
@@ -69,6 +70,7 @@ export default function WorkshopPipelineKanbanScroll({
   remeasureToken,
   pauseRemeasure = false,
   showLegend = false,
+  fillScrollViewport = false,
   scrollContainerRef,
   leftTitle = DEFAULT_LEFT_TITLE,
   rightTitle = DEFAULT_RIGHT_TITLE,
@@ -171,18 +173,25 @@ export default function WorkshopPipelineKanbanScroll({
       if (pauseRemeasure) return;
       const el = kanbanHScrollRef.current;
       if (!el) return;
-      // Lấp sát đáy vùng cuộn trang (`main`), không dùng window — tránh board + padding
-      // tạo thanh cuộn page rồi lộ khoảng trống/trắng dưới Kanban.
-      const rect = el.getBoundingClientRect();
       const scrollParent = findScrollParent(el);
-      const parentBottom = scrollParent
-        ? scrollParent.getBoundingClientRect().bottom
-        : window.innerHeight;
       const bottomInset = BOTTOM_RESERVE_PX
         + (showLegend ? LEGEND_RESERVE_PX : 0);
-      const fitInParent = parentBottom - rect.top - bottomInset;
-      const fallbackH = (scrollParent?.clientHeight || window.innerHeight) - bottomInset - 48;
-      const target = fitInParent >= MIN_BOARD_H ? fitInParent : Math.max(MIN_BOARD_H, fallbackH);
+      let target;
+      if (fillScrollViewport) {
+        // Cao = viewport của `main` (không trừ chrome phía trên) → trang còn chỗ cuộn
+        // panel KPI/toolbar lên; board sticky sẽ lấp full khi cuộn.
+        const parentH = scrollParent?.clientHeight || window.innerHeight;
+        target = parentH - bottomInset;
+      } else {
+        // Lấp sát đáy vùng cuộn trang — tránh thanh cuộn page + khoảng trắng dưới board.
+        const rect = el.getBoundingClientRect();
+        const parentBottom = scrollParent
+          ? scrollParent.getBoundingClientRect().bottom
+          : window.innerHeight;
+        const fitInParent = parentBottom - rect.top - bottomInset;
+        const fallbackH = (scrollParent?.clientHeight || window.innerHeight) - bottomInset - 48;
+        target = fitInParent >= MIN_BOARD_H ? fitInParent : Math.max(MIN_BOARD_H, fallbackH);
+      }
       const maxByViewport = Math.max(MIN_BOARD_H, Math.floor(target));
       setScrollMaxH(`${Math.min(MAX_BOARD_H, maxByViewport)}px`);
     };
@@ -206,7 +215,7 @@ export default function WorkshopPipelineKanbanScroll({
       window.visualViewport?.removeEventListener('resize', measure);
       ro.disconnect();
     };
-  }, [unifiedScroll, perColumnScroll, remeasureToken, pauseRemeasure, showLegend]);
+  }, [unifiedScroll, perColumnScroll, remeasureToken, pauseRemeasure, showLegend, fillScrollViewport]);
 
   useEffect(() => {
     const isOurCard = (e) => {

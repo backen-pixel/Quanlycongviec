@@ -3632,8 +3632,14 @@ export default function ProductionDashboard() {
       )}
 
 
-      {/* Kanban per-column tự đo chiều cao — không ép min-h 700px (gây khoảng trắng lớn dưới board). */}
-      <div className={`relative ${viewMode === 'kanban' && !sxMainContentLoading ? 'min-h-0' : 'min-h-[min(700px,calc(100vh-128px))]'}`}>
+      {/* Kanban: sticky + fill viewport → cuộn panel KPI/toolbar lên, board không bị cuộn ẩn hết. */}
+      <div
+        className={`relative ${
+          viewMode === 'kanban' && !sxMainContentLoading
+            ? 'min-h-0 sticky top-0 z-[15] self-start bg-[var(--color-page-bg)]'
+            : 'min-h-[min(700px,calc(100vh-128px))]'
+        }`}
+      >
         {sxMainContentLoading ? (
           <DashboardLoaderGate
             ref={sxLoaderGateRef}
@@ -3651,6 +3657,7 @@ export default function ProductionDashboard() {
             onOpenKanbanComment={(item) => { setKanbanCommentItem(item); setKanbanCommentBody(''); }}
             workTypes={workTypes}
             columnScrollMode={kanbanColumnScrollMode}
+            fillScrollViewport
             onSetWorkType={async (projectId, typeId) => {
               try {
                 const { data } = await api.put(`/projects/${projectId}`, { workshop_type_id: typeId || null });
@@ -4918,6 +4925,7 @@ function KanbanView({
   remeasureToken,
   pauseRemeasure = false,
   columnScrollMode = 'per-column',
+  fillScrollViewport = false,
   searchHighlightId = null,
   onLoadMore = null,
   hasMore = false,
@@ -5142,6 +5150,7 @@ function KanbanView({
       columnScrollMode={columnScrollMode}
       remeasureToken={remeasureToken}
       pauseRemeasure={pauseRemeasure}
+      fillScrollViewport={fillScrollViewport}
       scrollContainerRef={boardScrollRef}
       showLegend={false}
     >
