@@ -332,7 +332,7 @@ export default function WorkshopPipelineKanbanScroll({
 
       <div
         ref={setScrollContainerRef}
-        className={`${KANBAN_H_SCROLL_MAIN_CLASS} overscroll-behavior-contain pb-2 [scrollbar-gutter:stable] [overflow-anchor:none] ${
+        className={`${KANBAN_H_SCROLL_MAIN_CLASS} overscroll-behavior-contain pb-5 [scrollbar-gutter:stable] [overflow-anchor:none] ${
           perColumnScroll ? 'overflow-x-auto overflow-y-hidden' : unifiedScroll ? 'overflow-auto' : 'overflow-x-auto'
         }`}
         style={{
