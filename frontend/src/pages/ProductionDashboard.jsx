@@ -103,16 +103,30 @@ const LS_SX_KANBAN_COLUMN_SCROLL = 'sx_kanban_column_scroll_mode_v2';
 const KANBAN_COLUMN_SCROLL_MODES = ['unified', 'per-column'];
 /** Mặc định cuộn riêng từng cột — cuộn tới đâu tải thẻ tới đó (giống CRM). */
 const KANBAN_DEFAULT_COLUMN_SCROLL_MODE = 'per-column';
+/** Placeholder skeleton `ph`/`pr`/`cc` — không gọi API với id này (cột UUID thật). */
+const SX_KANBAN_COL_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+function isFetchableSxKanbanColumnId(id) {
+  const s = String(id || '').trim();
+  if (!s) return false;
+  if (s === '__none__' || s === 'null') return true;
+  if (s.startsWith('__')) return false; // __orphan_no_type__ và cột ảo khác
+  return SX_KANBAN_COL_UUID_RE.test(s);
+}
 const SX_KANBAN_PAGE_SIZE = 40;
 /** Số thẻ tối thiểu mỗi cột khi cột vừa vào viewport (khớp CRM ensureInitial). */
 const SX_ENSURE_INITIAL_PER_COLUMN = 12;
 
-/** Id dùng cho API phân trang cột — intake chưa map stage → `__none__`. */
+/** Id dùng cho API phân trang cột — intake / deal mới thường `sx_kanban_column_id` null → `__none__`. */
 function resolveSxKanbanLoadColumnId(stage, stageCounts) {
   if (!stage) return '';
   const id = String(stage.id || '');
-  if (stage.bucket_slug === INTAKE_BUCKET && !stageCounts?.[id]) return '__none__';
-  return id;
+  if (stage.bucket_slug !== INTAKE_BUCKET) return id;
+  const byId = Number(stageCounts?.[id]) || 0;
+  const byNone = Number(stageCounts?.__none__) || 0;
+  // Badge cột intake đọc cả id lẫn __none__ — ưu tiên nguồn có số liệu thật.
+  if (byNone > 0 && byNone >= byId) return '__none__';
+  if (byId > 0) return id;
+  return '__none__';
 }
 
 /** Đếm thẻ theo cột hiển thị (khớp Kanban), không chỉ `sx_kanban_column_id` thô. */
@@ -930,6 +944,7 @@ export default function ProductionDashboard() {
     const targets = [];
     const maxTargets = ensureInitial ? 6 : 4;
     for (const stageId of requested) {
+      if (!isFetchableSxKanbanColumnId(stageId)) continue;
       if (stagePageLoadingRef.current.has(stageId)) continue;
       const state = stageState[stageId] || {};
       // Cột đã exhausted (API trả rỗng / không tăng loaded) — dừng hẳn, tránh quay load mãi.
@@ -1039,7 +1054,7 @@ export default function ProductionDashboard() {
         ...(serverDateRange.to ? { created_to: serverDateRange.to } : {}),
         ...(filterPersonId ? { production_person_id: filterPersonId } : {}),
       };
-      const pages = await Promise.all(targets.map(async (stageId) => {
+      const fetchColPage = async (stageId) => {
         const state = stagePageStateRef.current?.[stageId] || {};
         const startPage = Math.max(Number(state.nextPage) || 1, 1);
         const payload = await fetchWorkshopProjectPages(api, '/production/projects', {
@@ -1060,13 +1075,35 @@ export default function ProductionDashboard() {
           },
         });
         return [stageId, payload];
-      }));
+      };
+      const pages = await Promise.all(targets.map(fetchColPage));
       if (seq !== loadSeqRef.current) return;
       const incoming = [];
       const pageMetaByStage = new Map();
       for (const [stageId, payload] of pages) {
         incoming.push(...(payload.projects || []));
         pageMetaByStage.set(stageId, payload);
+      }
+      // Intake: gọi nhầm UUID (thẻ thực tế null-column) → thử lại `__none__`.
+      const intakeStage = (pipelineRef.current || []).find((s) => s?.bucket_slug === INTAKE_BUCKET);
+      const intakeId = intakeStage?.id != null ? String(intakeStage.id) : '';
+      if (
+        intakeId
+        && targets.includes(intakeId)
+        && !(targets.includes('__none__'))
+        && (pageMetaByStage.get(intakeId)?.projects || []).length === 0
+        && (Number(stageCounts[intakeId]) || Number(stageCounts.__none__) || 0) > 0
+      ) {
+        const nonePage = await fetchColPage('__none__');
+        if (seq !== loadSeqRef.current) return;
+        const [, nonePayload] = nonePage;
+        if ((nonePayload?.projects || []).length) {
+          incoming.push(...nonePayload.projects);
+          pageMetaByStage.set('__none__', nonePayload);
+          // Gắn meta cho intake id để badge/loaded không kẹt 0/N.
+          pageMetaByStage.set(intakeId, nonePayload);
+          if (!targets.includes('__none__')) targets.push('__none__');
+        }
       }
       const patchedIncoming = applyPendingStageMoves(
         applyWorkshopProjectRenamePatches(incoming),
@@ -1105,7 +1142,14 @@ export default function ProductionDashboard() {
           const noProgressCount = noProgress
             ? (Number(prev[stageId]?.noProgressCount) || 0) + 1
             : 0;
-          const exhausted = fetched === 0 || noProgressCount >= 2;
+          // Không exhausted khi badge còn thiếu thẻ (total > loaded) sau 1 lần rỗng —
+          // tránh kẹt "0/6 · Chưa có dự án" khi lần đầu gọi nhầm id cột.
+          const expectMore = total > 0 && loaded < total;
+          const emptyRetries = fetched === 0
+            ? (Number(prev[stageId]?.emptyRetries) || 0) + 1
+            : 0;
+          const exhausted = (fetched === 0 && (!expectMore || emptyRetries >= 2))
+            || noProgressCount >= 2;
           const colHasMore = exhausted
             ? false
             : (total > 0
@@ -1117,6 +1161,7 @@ export default function ProductionDashboard() {
             hasMore: colHasMore,
             exhausted: exhausted || !colHasMore,
             noProgressCount,
+            emptyRetries,
             loading: false,
             total,
             loaded,
@@ -3483,7 +3528,8 @@ export default function ProductionDashboard() {
       )}
 
 
-      <div className="relative min-h-[min(700px,calc(100vh-128px))]">
+      {/* Kanban per-column tự đo chiều cao — không ép min-h 700px (gây khoảng trắng lớn dưới board). */}
+      <div className={`relative ${viewMode === 'kanban' && !sxMainContentLoading ? 'min-h-0' : 'min-h-[min(700px,calc(100vh-128px))]'}`}>
         {sxMainContentLoading ? (
           <DashboardLoaderGate
             ref={sxLoaderGateRef}
