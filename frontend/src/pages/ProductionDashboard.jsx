@@ -116,17 +116,65 @@ const SX_KANBAN_PAGE_SIZE = 40;
 /** Số thẻ tối thiểu mỗi cột khi cột vừa vào viewport (khớp CRM ensureInitial). */
 const SX_ENSURE_INITIAL_PER_COLUMN = 12;
 
-/** Id dùng cho API phân trang cột — intake / deal mới thường `sx_kanban_column_id` null → `__none__`. */
-function resolveSxKanbanLoadColumnId(stage, stageCounts) {
-  if (!stage) return '';
+/** Tổng badge cột intake = UUID cột + thẻ null (`__none__`) — không dùng `??` (sẽ bỏ một phía). */
+function intakeColumnServerTotal(stage, stageCounts) {
+  if (!stage) return NaN;
   const id = String(stage.id || '');
-  if (stage.bucket_slug !== INTAKE_BUCKET) return id;
+  const byId = Number(stageCounts?.[id]) || 0;
+  if (stage.bucket_slug !== INTAKE_BUCKET) {
+    return Number.isFinite(Number(stageCounts?.[id])) ? Number(stageCounts[id]) : NaN;
+  }
+  const byNone = Number(stageCounts?.__none__) || 0;
+  if (byId <= 0 && byNone <= 0) return NaN;
+  return byId + byNone;
+}
+
+/**
+ * Id dùng cho API phân trang cột.
+ * Intake: deal mới thường `sx_kanban_column_id` null (`__none__`) lẫn UUID cột —
+ * chỉ lấy một phía sẽ kẹt badge kiểu 1/7 trên Render.
+ */
+function resolveSxKanbanLoadColumnId(stage, stageCounts) {
+  const ids = resolveSxKanbanLoadColumnIds(stage, stageCounts);
+  return ids[0] || '';
+}
+
+function resolveSxKanbanLoadColumnIds(stage, stageCounts) {
+  if (!stage) return [];
+  const id = String(stage.id || '');
+  if (stage.bucket_slug !== INTAKE_BUCKET) {
+    return isFetchableSxKanbanColumnId(id) ? [id] : [];
+  }
   const byId = Number(stageCounts?.[id]) || 0;
   const byNone = Number(stageCounts?.__none__) || 0;
-  // Badge cột intake đọc cả id lẫn __none__ — ưu tiên nguồn có số liệu thật.
-  if (byNone > 0 && byNone >= byId) return '__none__';
-  if (byId > 0) return id;
-  return '__none__';
+  const ids = [];
+  // Luôn lấy cả hai nguồn khi có count (hoặc chưa có summary — thử cả hai).
+  if (byNone > 0 || (byId <= 0 && byNone <= 0)) ids.push('__none__');
+  if (isFetchableSxKanbanColumnId(id) && (byId > 0 || byNone <= 0)) ids.push(id);
+  if (!ids.length) ids.push('__none__');
+  return ids;
+}
+
+/** Mở rộng stageIds (có thể là id cột UI) → id API cần fetch (intake → `__none__` + UUID). */
+function expandSxKanbanLoadColumnIds(stageIds, stages, stageCounts) {
+  const out = [];
+  const seen = new Set();
+  const list = Array.isArray(stages) ? stages : [];
+  for (const raw of Array.isArray(stageIds) ? stageIds : []) {
+    const key = String(raw || '');
+    if (!key) continue;
+    const stage = list.find((s) => String(s?.id) === key)
+      || (key === '__none__' ? list.find((s) => s?.bucket_slug === INTAKE_BUCKET) : null);
+    const loadIds = stage
+      ? resolveSxKanbanLoadColumnIds(stage, stageCounts)
+      : (isFetchableSxKanbanColumnId(key) ? [key] : []);
+    for (const lid of loadIds) {
+      if (seen.has(lid)) continue;
+      seen.add(lid);
+      out.push(lid);
+    }
+  }
+  return out;
 }
 
 /** Đếm thẻ theo cột hiển thị (khớp Kanban), không chỉ `sx_kanban_column_id` thô. */
@@ -938,11 +986,22 @@ export default function ProductionDashboard() {
     const stageCounts = pipelineStageCountsRef.current || {};
     const loadedByDisplay = countSxProjectsByDisplayColumn(currentProjects, pipelineRef.current);
 
-    const requested = Array.isArray(stageIds) && stageIds.length
+    const requestedRaw = Array.isArray(stageIds) && stageIds.length
       ? stageIds.map(String)
       : Object.keys({ ...stageCounts, ...stageState });
+    // Intake: mở rộng UUID cột ↔ `__none__` trước khi lọc target.
+    const requested = expandSxKanbanLoadColumnIds(
+      requestedRaw,
+      pipelineRef.current,
+      stageCounts,
+    );
+    const intakeStage = (pipelineRef.current || []).find((s) => s?.bucket_slug === INTAKE_BUCKET);
+    const intakeId = intakeStage?.id != null ? String(intakeStage.id) : '';
+    const intakeTotalCombined = intakeStage
+      ? (Number(stageCounts[intakeId]) || 0) + (Number(stageCounts.__none__) || 0)
+      : 0;
     const targets = [];
-    const maxTargets = ensureInitial ? 6 : 4;
+    const maxTargets = ensureInitial ? 8 : 6;
     for (const stageId of requested) {
       if (!isFetchableSxKanbanColumnId(stageId)) continue;
       if (stagePageLoadingRef.current.has(stageId)) continue;
@@ -950,13 +1009,23 @@ export default function ProductionDashboard() {
       // Cột đã exhausted (API trả rỗng / không tăng loaded) — dừng hẳn, tránh quay load mãi.
       if (state.exhausted) continue;
       if (state.hasMore === false) continue;
-      const total = Number(stageCounts[stageId] ?? state.total);
+      const isIntakeLoad = stageId === '__none__' || (intakeId && stageId === intakeId);
+      const total = isIntakeLoad && intakeTotalCombined > 0
+        ? intakeTotalCombined
+        : Number(stageCounts[stageId] ?? state.total);
       if (Number.isFinite(total) && total <= 0) continue;
-      const loaded = Number(
-        loadedByDisplay[stageId]
-        ?? (stageId === '__none__' ? loadedByDisplay.__none__ : undefined)
-        ?? state.loaded,
-      ) || 0;
+      const loadedDisplay = Number(
+        (intakeId && isIntakeLoad
+          ? (loadedByDisplay[intakeId] || 0)
+          : (loadedByDisplay[stageId] || 0))
+        || (stageId === '__none__' ? loadedByDisplay.__none__ : 0)
+        || state.loaded
+        || 0,
+      );
+      // Intake: số thẻ đã hiện trên cột (UUID) là nguồn chuẩn — tránh đếm kép id+__none__.
+      const loaded = isIntakeLoad && intakeId
+        ? (Number(loadedByDisplay[intakeId]) || loadedDisplay)
+        : loadedDisplay;
       const stillNeed = Number.isFinite(total) && total > 0
         ? loaded < total
         : state.hasMore !== false;
@@ -1084,26 +1153,40 @@ export default function ProductionDashboard() {
         incoming.push(...(payload.projects || []));
         pageMetaByStage.set(stageId, payload);
       }
-      // Intake: gọi nhầm UUID (thẻ thực tế null-column) → thử lại `__none__`.
-      const intakeStage = (pipelineRef.current || []).find((s) => s?.bucket_slug === INTAKE_BUCKET);
-      const intakeId = intakeStage?.id != null ? String(intakeStage.id) : '';
-      if (
-        intakeId
-        && targets.includes(intakeId)
-        && !(targets.includes('__none__'))
-        && (pageMetaByStage.get(intakeId)?.projects || []).length === 0
-        && (Number(stageCounts[intakeId]) || Number(stageCounts.__none__) || 0) > 0
-      ) {
-        const nonePage = await fetchColPage('__none__');
-        if (seq !== loadSeqRef.current) return;
-        const [, nonePayload] = nonePage;
-        if ((nonePayload?.projects || []).length) {
-          incoming.push(...nonePayload.projects);
-          pageMetaByStage.set('__none__', nonePayload);
-          // Gắn meta cho intake id để badge/loaded không kẹt 0/N.
-          pageMetaByStage.set(intakeId, nonePayload);
-          if (!targets.includes('__none__')) targets.push('__none__');
+      // Intake: nếu chỉ gọi UUID mà rỗng / thiếu thẻ → bổ sung `__none__` (và ngược lại).
+      const missingIntakeCompanion = (() => {
+        if (!intakeId) return null;
+        const fetchedId = (pageMetaByStage.get(intakeId)?.projects || []).length;
+        const fetchedNone = (pageMetaByStage.get('__none__')?.projects || []).length;
+        const needNone = (Number(stageCounts.__none__) || 0) > 0 || intakeTotalCombined > 0;
+        const needId = (Number(stageCounts[intakeId]) || 0) > 0;
+        if (targets.includes(intakeId) && !targets.includes('__none__') && needNone && fetchedId === 0) {
+          return '__none__';
         }
+        if (targets.includes('__none__') && !targets.includes(intakeId) && needId && fetchedNone === 0) {
+          return intakeId;
+        }
+        // Đã có một phần nhưng badge intake còn thiếu — vẫn kéo phía còn lại.
+        const loadedNow = countSxProjectsByDisplayColumn(
+          [...(projectsRef.current || []), ...incoming],
+          pipelineRef.current,
+        );
+        const loadedIntake = Number(loadedNow[intakeId]) || 0;
+        if (intakeTotalCombined > loadedIntake) {
+          if (!targets.includes('__none__') && needNone) return '__none__';
+          if (!targets.includes(intakeId) && needId) return intakeId;
+        }
+        return null;
+      })();
+      if (missingIntakeCompanion) {
+        const companionPage = await fetchColPage(missingIntakeCompanion);
+        if (seq !== loadSeqRef.current) return;
+        const [, companionPayload] = companionPage;
+        if ((companionPayload?.projects || []).length) {
+          incoming.push(...companionPayload.projects);
+        }
+        pageMetaByStage.set(missingIntakeCompanion, companionPayload);
+        if (!targets.includes(missingIntakeCompanion)) targets.push(missingIntakeCompanion);
       }
       const patchedIncoming = applyPendingStageMoves(
         applyWorkshopProjectRenamePatches(incoming),
@@ -1123,14 +1206,17 @@ export default function ProductionDashboard() {
         for (const stageId of targets) {
           const payload = pageMetaByStage.get(stageId) || {};
           const prevLoaded = Number(prev[stageId]?.loaded) || 0;
-          const loaded = Number(
-            loadedByCol[stageId]
-            ?? (stageId === '__none__' ? loadedByCol.__none__ : undefined)
-            ?? 0,
-          ) || 0;
-          const total = Number(
-            stageCounts[stageId] ?? payload.total ?? next[stageId]?.total,
-          ) || 0;
+          const isIntakeLoad = stageId === '__none__' || (intakeId && stageId === intakeId);
+          const loaded = isIntakeLoad && intakeId
+            ? (Number(loadedByCol[intakeId]) || 0)
+            : (Number(
+              loadedByCol[stageId]
+              ?? (stageId === '__none__' ? loadedByCol.__none__ : undefined)
+              ?? 0,
+            ) || 0);
+          const total = isIntakeLoad && intakeTotalCombined > 0
+            ? intakeTotalCombined
+            : (Number(stageCounts[stageId] ?? payload.total ?? next[stageId]?.total) || 0);
           const startPage = Math.max(Number(prev[stageId]?.nextPage) || 1, 1);
           const fetched = (payload.projects || []).length;
           // Tiến trang khi đã nhận batch — tránh kẹt page 1 (trùng thẻ bootstrap).
@@ -1142,14 +1228,15 @@ export default function ProductionDashboard() {
           const noProgressCount = noProgress
             ? (Number(prev[stageId]?.noProgressCount) || 0) + 1
             : 0;
-          // Không exhausted khi badge còn thiếu thẻ (total > loaded) sau 1 lần rỗng —
-          // tránh kẹt "0/6 · Chưa có dự án" khi lần đầu gọi nhầm id cột.
+          // Không exhausted khi badge còn thiếu thẻ (total > loaded) —
+          // tránh kẹt "1/7" khi bootstrap trùng page hoặc chỉ fetch một phía intake.
           const expectMore = total > 0 && loaded < total;
           const emptyRetries = fetched === 0
             ? (Number(prev[stageId]?.emptyRetries) || 0) + 1
             : 0;
-          const exhausted = (fetched === 0 && (!expectMore || emptyRetries >= 2))
-            || noProgressCount >= 2;
+          const exhausted = expectMore
+            ? (fetched === 0 && emptyRetries >= 4) || noProgressCount >= 4
+            : (fetched === 0 && emptyRetries >= 2) || noProgressCount >= 2;
           const colHasMore = exhausted
             ? false
             : (total > 0
@@ -1166,6 +1253,23 @@ export default function ProductionDashboard() {
             total,
             loaded,
           };
+          // Đồng bộ loaded/total intake — không copy exhausted (mỗi phía UUID/__none__ tự hết riêng).
+          if (isIntakeLoad && intakeId) {
+            const twin = stageId === '__none__' ? intakeId : '__none__';
+            const twinPrev = next[twin] || prev[twin] || {};
+            const twinStill = twinPrev.exhausted
+              ? false
+              : (total > 0 ? loaded < total && nextProjects.length < maxRecords : twinPrev.hasMore !== false);
+            next[twin] = {
+              ...twinPrev,
+              total,
+              loaded,
+              loading: false,
+              hasMore: twinStill,
+              // Chỉ hết khi cả hai phía exhausted hoặc đã đủ badge.
+              exhausted: loaded >= total || (twinPrev.exhausted && (exhausted || !colHasMore)),
+            };
+          }
         }
         boardHasMore = Object.values(next).some((s) => s?.hasMore && !s?.exhausted);
         return next;
@@ -3969,8 +4073,9 @@ const KanbanStageCard = memo(function KanbanStageCard({
   const perColumnScroll = columnScrollMode === 'per-column';
   const pinEmptyPlaceholder = !perColumnScroll && items.length === 0;
   const emptyPlaceholderTop = useKanbanEmptyPlaceholderStickyTop(headerRef, pinEmptyPlaceholder);
-  const serverTotalRaw = stageCounts?.[String(stage?.id)]
-    ?? (stage?.bucket_slug === INTAKE_BUCKET ? stageCounts?.__none__ : undefined);
+  const serverTotalRaw = stage?.bucket_slug === INTAKE_BUCKET
+    ? intakeColumnServerTotal(stage, stageCounts)
+    : Number(stageCounts?.[String(stage?.id)]);
   const serverTotal = Number(serverTotalRaw);
   const displayCount = Number.isFinite(serverTotal) ? serverTotal : items.length;
   const showPartialLoad = Number.isFinite(serverTotal) && items.length < serverTotal;
@@ -4853,15 +4958,16 @@ function KanbanView({
   }, [onLoadMore]);
 
   const handleColumnVisibilityChange = useCallback((stageId, visible) => {
-    const loadId = resolveSxKanbanLoadColumnId(
-      (pipeline || []).find((s) => String(s?.id) === String(stageId)),
-      stageCounts,
-    ) || String(stageId || '');
-    if (!loadId) return;
-    if (visible) visibleStageIdsRef.current.add(loadId);
-    else visibleStageIdsRef.current.delete(loadId);
+    const stage = (pipeline || []).find((s) => String(s?.id) === String(stageId));
+    const loadIds = resolveSxKanbanLoadColumnIds(stage, stageCounts);
+    const ids = loadIds.length ? loadIds : (String(stageId || '') ? [String(stageId)] : []);
+    if (!ids.length) return;
+    ids.forEach((loadId) => {
+      if (visible) visibleStageIdsRef.current.add(loadId);
+      else visibleStageIdsRef.current.delete(loadId);
+    });
     if (!visible) return;
-    if (ensuredStageIdsRef.current.has(loadId)) return;
+    if (ids.every((id) => ensuredStageIdsRef.current.has(id))) return;
     if (visibleLoadTimerRef.current) window.clearTimeout(visibleLoadTimerRef.current);
     visibleLoadTimerRef.current = window.setTimeout(() => {
       visibleLoadTimerRef.current = null;
@@ -5010,7 +5116,7 @@ function KanbanView({
   const onLoadMoreRef = useRef(onLoadMore);
   onLoadMoreRef.current = onLoadMore;
   const mountedStageKey = renderedColumns
-    .map(({ stage }) => resolveSxKanbanLoadColumnId(stage, stageCounts))
+    .flatMap(({ stage }) => resolveSxKanbanLoadColumnIds(stage, stageCounts))
     .filter(Boolean)
     .join('|');
   useEffect(() => {
@@ -5053,20 +5159,28 @@ function KanbanView({
       >
         {renderedColumns.map(({ stage, columnIndex, virtualItem }) => {
           if (!stage) return null;
-          const loadColId = resolveSxKanbanLoadColumnId(stage, stageCounts);
-          const pageState = stagePageState?.[loadColId] || {};
-          const serverColTotal = Number(
-            stageCounts?.[loadColId]
-            ?? (loadColId === '__none__' ? stageCounts?.__none__ : undefined)
-            ?? pageState.total,
-          );
+          const loadColIds = resolveSxKanbanLoadColumnIds(stage, stageCounts);
+          const loadColId = loadColIds[0] || String(stage.id || '');
+          const pageStates = loadColIds.map((id) => stagePageState?.[id] || {});
+          const pageState = pageStates[0] || {};
+          const serverColTotal = stage.bucket_slug === INTAKE_BUCKET
+            ? intakeColumnServerTotal(stage, stageCounts)
+            : Number(
+              stageCounts?.[loadColId]
+              ?? (loadColId === '__none__' ? stageCounts?.__none__ : undefined)
+              ?? pageState.total,
+            );
           const loadedCount = stage.items?.length || 0;
-          const columnHasMore = !pageState.exhausted && (
+          const anyExhausted = pageStates.length
+            ? pageStates.every((s) => s.exhausted)
+            : !!pageState.exhausted;
+          const anyHasMore = pageStates.some((s) => s.hasMore !== false);
+          const columnHasMore = !anyExhausted && (
             Number.isFinite(serverColTotal)
-              ? loadedCount < serverColTotal && pageState.hasMore !== false
-              : (pageState.hasMore !== false && !!hasMore)
+              ? loadedCount < serverColTotal && anyHasMore
+              : (anyHasMore && !!hasMore)
           );
-          const columnLoading = !!pageState.loading;
+          const columnLoading = pageStates.some((s) => s.loading);
           const column = (
             <KanbanStageCard
               key={stage.id || stage.slug}
@@ -5090,7 +5204,7 @@ function KanbanView({
               boardScrollRef={boardScrollRef}
               columnHasMore={columnHasMore}
               columnLoading={columnLoading}
-              onScrollNearEnd={columnHasMore ? () => onLoadMore?.([loadColId], { ensureInitial: false }) : null}
+              onScrollNearEnd={columnHasMore ? () => onLoadMore?.(loadColIds.length ? loadColIds : [loadColId], { ensureInitial: false }) : null}
               onColumnVisibilityChange={handleColumnVisibilityChange}
               stageCounts={stageCounts}
             />
