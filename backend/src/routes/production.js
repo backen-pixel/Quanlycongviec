@@ -1504,7 +1504,20 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
     const wonIds = await getWonDealProjectIds();
     const sxKanbanColumnId = String(sxKanbanColumnIdQuery || '').trim();
     const wantsNullKanbanColumn = sxKanbanColumnId === '__none__' || sxKanbanColumnId === 'null';
-    const wantsKanbanColumn = !!sxKanbanColumnId && !wantsNullKanbanColumn;
+    /** Placeholder FE (ph/pr/cc) hoặc id ảo — không được `.eq` vào cột UUID. */
+    const SX_KANBAN_COL_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    const wantsKanbanColumn = !!sxKanbanColumnId
+      && !wantsNullKanbanColumn
+      && SX_KANBAN_COL_UUID_RE.test(sxKanbanColumnId);
+    // Placeholder ph/pr/cc: list → rỗng (không 500). Summary bỏ lọc cột.
+    if (!summaryOnly && sxKanbanColumnId && !wantsNullKanbanColumn && !wantsKanbanColumn) {
+      return res.json({
+        projects: [],
+        total: 0,
+        page: parsedPage,
+        totalPages: 1,
+      });
+    }
     const wantsUnclassified = String(workshop_type_id || '').toLowerCase() === 'none';
 
     if (summaryOnly) {

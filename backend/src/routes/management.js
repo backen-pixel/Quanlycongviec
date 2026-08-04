@@ -659,7 +659,7 @@ r.get('/deals', async (req, res) => {
           customer:customers(id, full_name, phone),
           assignee:users!crm_leads_assigned_to_fkey(id, full_name, avatar),
           lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name, avatar),
-          company:companies(id, name, short_name),
+          company:companies!crm_leads_company_id_fkey(id, name, short_name),
           project:projects(id, code, name, status, deadline, estimated_value, sx_kanban_column_id, vc_kanban_column_id, install_address)
         `;
 
@@ -780,7 +780,7 @@ r.get('/deals/:leadId', async (req, res) => {
         customer:customers(id, full_name, phone, email, address),
         assignee:users!crm_leads_assigned_to_fkey(id, full_name, avatar, phone),
         lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name, avatar, phone),
-        company:companies(id, name, short_name),
+        company:companies!crm_leads_company_id_fkey(id, name, short_name),
         project:projects(
           id, code, name, status, deadline, production_deadline, estimated_value, production_value, deposit_amount,
           notes, company_id, logistics_company_id, workshop_type_id,

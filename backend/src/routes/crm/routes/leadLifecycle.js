@@ -349,6 +349,10 @@ r.get('/leads/:id', async (req, res) => {
   try {
     const rawId = String(req.params.id || '').trim();
     if (!rawId) return res.status(400).json({ error: 'Thiếu id' });
+    // Reserved / không phải UUID (vd. path nhầm /leads/stage-counts) → 400, không 500 Postgres.
+    if (!CRM_UUID_RE.test(rawId)) {
+      return res.status(400).json({ error: 'Id lead/deal không hợp lệ', requested_id: rawId });
+    }
     const canonicalId = (await resolveCanonicalCrmLeadId(rawId)) || rawId;
     const baseFields = 'id, title, type, company_id, pipeline_id, stage_id, assigned_to, lead_owner_id, created_by, parent_lead_id, use_order_tasks, sx_template_company_id, project_id, deposit_amount, deposit_received, deposit_label';
     const projectEmbed = ', linked_project:projects!crm_leads_project_id_fkey(id, code, name, order_date, delivery_date, production_deadline)';

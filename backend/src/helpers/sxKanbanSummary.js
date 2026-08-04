@@ -10,6 +10,11 @@ const { applyWorkshopProjectVisibilityScope } = require('./dealParticipantProduc
 const { buildScopeOrFilter, WORKSHOP_STATUSES, getResolvedKanbanStages } = require('./workshopKanban');
 
 const VN_TZ = 'Asia/Ho_Chi_Minh';
+const SX_KANBAN_COL_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function isSxKanbanColumnUuid(id) {
+  return SX_KANBAN_COL_UUID_RE.test(String(id || '').trim());
+}
 
 const EMPTY_DEADLINE_COUNTS = Object.freeze({
   overdue: 0,
@@ -191,9 +196,11 @@ function applySxSummaryFiltersSync(query, ctx) {
   if (ctx.productionPersonId) q = q.eq('production_person_id', ctx.productionPersonId);
 
   if (ctx.columnMode === '__none__') q = q.is('sx_kanban_column_id', null);
-  else if (ctx.columnMode) q = q.eq('sx_kanban_column_id', ctx.columnMode);
+  else if (ctx.columnMode && isSxKanbanColumnUuid(ctx.columnMode)) q = q.eq('sx_kanban_column_id', ctx.columnMode);
   else if (ctx.wantsNullKanbanColumn) q = q.is('sx_kanban_column_id', null);
-  else if (ctx.wantsKanbanColumn) q = q.eq('sx_kanban_column_id', ctx.sxKanbanColumnId);
+  else if (ctx.wantsKanbanColumn && isSxKanbanColumnUuid(ctx.sxKanbanColumnId)) {
+    q = q.eq('sx_kanban_column_id', ctx.sxKanbanColumnId);
+  }
 
   return { empty: false, query: q };
 }
@@ -223,7 +230,9 @@ async function tryRpcColumnCounts(ctx) {
     p_created_to: createdTo,
     p_production_person_id: ctx.productionPersonId || null,
     p_sx_intake_only: String(ctx.sx_intake) === '1',
-    p_column_id: ctx.wantsKanbanColumn ? ctx.sxKanbanColumnId : null,
+    p_column_id: ctx.wantsKanbanColumn && isSxKanbanColumnUuid(ctx.sxKanbanColumnId)
+      ? ctx.sxKanbanColumnId
+      : null,
     p_null_column_only: !!ctx.wantsNullKanbanColumn,
     p_priority: ctx.priority || null,
     p_search: ctx.search || null,

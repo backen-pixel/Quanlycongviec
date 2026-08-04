@@ -143,7 +143,7 @@ r.get('/leads/picker', async (req, res) => {
   }
 });
 
-r.get('/stage-counts', responseCache({ ttl: 90, scope: 'user', tags: ['crm:list'] }), async (req, res) => {
+async function handleCrmStageCounts(req, res) {
   try {
     const ctx = await resolveCrmLeadsMergedQuery(req, res);
     if (!ctx) return;
@@ -204,7 +204,12 @@ r.get('/stage-counts', responseCache({ ttl: 90, scope: 'user', tags: ['crm:list'
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
-});
+}
+
+const stageCountsCache = responseCache({ ttl: 90, scope: 'user', tags: ['crm:list'] });
+r.get('/stage-counts', stageCountsCache, handleCrmStageCounts);
+/** Alias — client cũ / path nhầm gọi /crm/leads/stage-counts thay vì /crm/stage-counts. */
+r.get('/leads/stage-counts', stageCountsCache, handleCrmStageCounts);
 
 r.get('/filter-summary', responseCache({ ttl: 90, scope: 'user', tags: ['crm:list'] }), async (req, res) => {
   try {
@@ -313,7 +318,9 @@ r.get('/leads-deadlines', responseCache({ ttl: 30, scope: 'user', tags: ['crm:li
   try {
     // Giới hạn thấp — URL dài dễ vượt proxy (~2–8KB); client nên dùng POST.
     const leadIds = parseLeadIdsCsvQuery(req.query.lead_ids, 80);
-    const deadlines = await resolveCrmLeadsDeadlinesMap(leadIds);
+    const allowedIds = await filterAccessibleCrmLeadIds(req, res, leadIds);
+    if (allowedIds == null) return;
+    const deadlines = await resolveCrmLeadsDeadlinesMap(allowedIds);
     res.json({ deadlines });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -322,13 +329,52 @@ r.get('/leads-deadlines', responseCache({ ttl: 30, scope: 'user', tags: ['crm:li
 
 r.post('/leads-deadlines', async (req, res) => {
   try {
-    const leadIds = parseLeadIdsFromBody(req.body, 500);
-    const deadlines = await resolveCrmLeadsDeadlinesMap(leadIds);
+    const leadIds = parseLeadIdsFromBody(req.body, 200);
+    const allowedIds = await filterAccessibleCrmLeadIds(req, res, leadIds);
+    if (allowedIds == null) return;
+    const deadlines = await resolveCrmLeadsDeadlinesMap(allowedIds);
     res.json({ deadlines });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
+
+/** Chỉ trả hạn cho lead/deal trong phạm vi company + assignee của user. */
+async function filterAccessibleCrmLeadIds(req, res, leadIds) {
+  const ids = [...new Set((leadIds || []).map((id) => String(id || '').trim()).filter(Boolean))];
+  if (!ids.length) return [];
+
+  let q = supabase
+    .from('crm_leads')
+    .select('id, type, assigned_to, lead_owner_id')
+    .in('id', ids);
+  const sac = scopedAdminCompanyId(req);
+  if (sac) {
+    q = q.eq('company_id', sac);
+  } else if (!userIsAdmin(req.user?.role)) {
+    const cid = await requireUserCompanyIdResolved(req, res);
+    if (!cid) return null;
+    q = q.eq('company_id', cid);
+  }
+
+  const { data, error } = await q;
+  if (error) throw error;
+
+  const uid = req.user?.userId ? String(req.user.userId) : '';
+  const seesLead = !uid || userSeesAllCrmLeadsForScope(req.user);
+  const seesDeal = !uid || userSeesAllCrmDealsForScope(req.user);
+  if (seesLead && seesDeal) {
+    return (data || []).map((r) => String(r.id));
+  }
+
+  return (data || [])
+    .filter((row) => {
+      const mine = String(row.assigned_to || '') === uid || String(row.lead_owner_id || '') === uid;
+      if (row.type === 'deal') return seesDeal || mine;
+      return seesLead || mine;
+    })
+    .map((r) => String(r.id));
+}
 
 r.get('/web-dashboard-bootstrap', responseCache({ ttl: 15, scope: 'user', tags: ['crm:list'] }), async (req, res) => {
   try {
