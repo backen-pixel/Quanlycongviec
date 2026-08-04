@@ -4075,7 +4075,9 @@ const KanbanStageCard = memo(function KanbanStageCard({
       onDragLeave={handleColumnDragLeave}
       onDrop={handleColumnDrop}
       className={`flex flex-col flex-shrink-0 w-[15rem] max-[400px]:w-[13.5rem] rounded-lg transition-all duration-200 kanban-column-surface ${KANBAN_COLUMN_RAIL_CLASS} ${
-        perColumnScroll ? 'h-full self-stretch overflow-x-visible overflow-y-hidden' : 'overflow-visible kanban-unified-scroll-column'
+        perColumnScroll
+          ? 'h-full self-stretch overflow-x-visible overflow-y-hidden'
+          : 'min-h-full self-stretch overflow-visible kanban-unified-scroll-column'
       } ${isOverColumn ? 'ring-2 ring-blue-400 ring-dashed' : ''}`}
       style={{
         ...(perColumnScroll && columnScrollMaxH ? { height: columnScrollMaxH, maxHeight: columnScrollMaxH } : {}),
