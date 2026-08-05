@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, useRef, createContext, useContext } from 'react';
 import { createPortal } from 'react-dom';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { formatDate } from '../lib/utils';
@@ -10,8 +10,10 @@ import {
   Pencil, GripVertical, Flag, MoreVertical, MessageSquare, Send, Paperclip,
   FileText as FileIcon, Download, Upload, Repeat2, CalendarClock, ChevronDown,
   ChevronUp, ClipboardList, ChevronRight, Lock, ArrowLeft, RefreshCw, Filter, RotateCcw,
+  Eye,
 } from 'lucide-react';
 import ViewModeDropdownMenu from '../components/ViewModeDropdownMenu';
+import AnchoredDropdownMenu from '../components/AnchoredDropdownMenu';
 import {
   RequirementFilesGallery,
   SubmitFilesCompact,
@@ -178,6 +180,16 @@ function getAssignmentTheme(assignmentModule) {
       searchFocus: 'border-indigo-400 bg-white ring-1 ring-indigo-200/60',
       searchIcon: 'text-indigo-600',
       searchIconIdle: 'text-slate-400',
+      suggestShell: 'border-2 border-indigo-200 shadow-xl shadow-indigo-500/15 ring-1 ring-indigo-100',
+      suggestHeader: 'bg-gradient-to-r from-indigo-50 to-sky-50/80 border-indigo-100',
+      suggestHeaderText: 'text-indigo-800',
+      suggestHeaderMuted: 'text-indigo-600/90',
+      suggestCount: 'text-indigo-700',
+      suggestHover: 'hover:bg-indigo-50/80',
+      suggestMeta: 'text-indigo-600',
+      suggestCodeBg: 'bg-slate-100 text-slate-500 group-hover/item:bg-indigo-100 group-hover/item:text-indigo-700',
+      suggestChevron: 'text-slate-300 group-hover/item:text-indigo-400',
+      suggestEye: 'hover:bg-indigo-100 hover:text-indigo-700',
       panelRing: 'ring-1 ring-slate-900/[0.04]',
       kpiToggle: 'border-indigo-100/70',
     };
@@ -205,6 +217,16 @@ function getAssignmentTheme(assignmentModule) {
       searchFocus: 'border-orange-400 bg-white ring-1 ring-orange-200/60',
       searchIcon: 'text-orange-600',
       searchIconIdle: 'text-slate-400',
+      suggestShell: 'border-2 border-orange-200 shadow-xl shadow-orange-500/15 ring-1 ring-orange-100',
+      suggestHeader: 'bg-gradient-to-r from-orange-50 to-amber-50/80 border-orange-100',
+      suggestHeaderText: 'text-orange-800',
+      suggestHeaderMuted: 'text-orange-600/90',
+      suggestCount: 'text-orange-700',
+      suggestHover: 'hover:bg-orange-50/80',
+      suggestMeta: 'text-orange-600',
+      suggestCodeBg: 'bg-slate-100 text-slate-500 group-hover/item:bg-orange-100 group-hover/item:text-orange-700',
+      suggestChevron: 'text-slate-300 group-hover/item:text-orange-400',
+      suggestEye: 'hover:bg-orange-100 hover:text-orange-700',
       panelRing: 'ring-1 ring-slate-900/[0.04]',
       kpiToggle: 'border-orange-100/70',
     };
@@ -231,6 +253,16 @@ function getAssignmentTheme(assignmentModule) {
     searchFocus: 'border-violet-400 bg-white ring-1 ring-violet-200/60',
     searchIcon: 'text-violet-600',
     searchIconIdle: 'text-slate-400',
+    suggestShell: 'border-2 border-violet-200 shadow-xl shadow-violet-500/15 ring-1 ring-violet-100',
+    suggestHeader: 'bg-gradient-to-r from-violet-50 to-violet-100/60 border-violet-100',
+    suggestHeaderText: 'text-violet-800',
+    suggestHeaderMuted: 'text-violet-600/90',
+    suggestCount: 'text-violet-700',
+    suggestHover: 'hover:bg-violet-50/80',
+    suggestMeta: 'text-violet-600',
+    suggestCodeBg: 'bg-slate-100 text-slate-500 group-hover/item:bg-violet-100 group-hover/item:text-violet-700',
+    suggestChevron: 'text-slate-300 group-hover/item:text-violet-400',
+    suggestEye: 'hover:bg-violet-100 hover:text-violet-700',
     panelRing: '',
     kpiToggle: 'border-violet-100/70',
   };
@@ -1010,6 +1042,7 @@ export default function CRMAssignmentsPage({
   const LS_DEPARTMENT = `${storagePrefix}_department_id`;
   const LS_VIEW_SCOPE = `${storagePrefix}_view_scope`;
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const isAdmin = ['admin', 'manager', 'sales_admin'].includes(user?.role);
   const uid = String(user?.id || '');
@@ -1061,12 +1094,51 @@ export default function CRMAssignmentsPage({
   const [showAdvFilter, setShowAdvFilter] = useState(false);
   const [kpiPanelOpen, setKpiPanelOpen] = useState(true);
   const [searchFocused, setSearchFocused] = useState(false);
+  const [searchSuggestDismissed, setSearchSuggestDismissed] = useState(false);
+  const [dealSuggestResults, setDealSuggestResults] = useState([]);
+  const [dealSuggestLoading, setDealSuggestLoading] = useState(false);
   const filterPanelRef = useRef(null);
+  const searchBoxRef = useRef(null);
+  const searchInputRef = useRef(null);
 
   useEffect(() => {
     const t = setTimeout(() => setSearchDebounced(search.trim()), 300);
     return () => clearTimeout(t);
   }, [search]);
+
+  useEffect(() => {
+    setSearchSuggestDismissed(false);
+  }, [search]);
+
+  useEffect(() => {
+    const q = search.trim();
+    if (pageTab !== 'assignments' || q.length < 2 || searchSuggestDismissed) {
+      setDealSuggestResults([]);
+      setDealSuggestLoading(false);
+      return undefined;
+    }
+    let cancelled = false;
+    setDealSuggestLoading(true);
+    const timer = setTimeout(async () => {
+      try {
+        const params = new URLSearchParams();
+        params.set('type', 'deal');
+        params.set('q', q);
+        params.set('limit', '10');
+        if (isAdmin && filterCompanyId) params.set('company_id', filterCompanyId);
+        const { data } = await api.get(`/crm/leads/picker?${params.toString()}`);
+        if (!cancelled) setDealSuggestResults(Array.isArray(data?.results) ? data.results : []);
+      } catch {
+        if (!cancelled) setDealSuggestResults([]);
+      } finally {
+        if (!cancelled) setDealSuggestLoading(false);
+      }
+    }, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [search, pageTab, searchSuggestDismissed, isAdmin, filterCompanyId]);
 
   useEffect(() => {
     if (!showAdvFilter) return undefined;
@@ -1621,6 +1693,39 @@ export default function CRMAssignmentsPage({
       ? theme.searchActive
       : theme.searchIdle;
 
+  const assignTaskCountByLead = useMemo(() => {
+    const map = new Map();
+    items.forEach((t) => {
+      const id = t.lead?.id || t.lead_id;
+      if (!id) return;
+      const key = String(id);
+      map.set(key, (map.get(key) || 0) + 1);
+    });
+    return map;
+  }, [items]);
+
+  const dealSuggestItems = useMemo(() => dealSuggestResults.slice(0, 10), [dealSuggestResults]);
+  const dealSuggestOpen = pageTab === 'assignments'
+    && search.trim().length >= 2
+    && !searchSuggestDismissed
+    && (dealSuggestLoading || dealSuggestItems.length > 0);
+
+  const selectDealSuggest = useCallback((deal) => {
+    const nextQ = String(deal?.code || deal?.title || '').trim();
+    if (nextQ) setSearch(nextQ);
+    setSearchSuggestDismissed(true);
+    setSearchFocused(false);
+    searchInputRef.current?.blur();
+    const match = items.find((t) => String(t.lead?.id || t.lead_id) === String(deal?.id));
+    if (match) setViewingItem(match);
+  }, [items]);
+
+  const openDealSuggestDetail = useCallback((dealId) => {
+    setSearchSuggestDismissed(true);
+    setSearchFocused(false);
+    navigate(`/crm/leads/${dealId}`);
+  }, [navigate]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -1706,6 +1811,7 @@ export default function CRMAssignmentsPage({
             {/* Hàng tìm kiếm + chế độ xem — giống dashboard CRM */}
             <div className="flex flex-wrap items-center gap-1.5 px-2.5 py-1.5 sm:px-3 border-b border-slate-200/50">
               <div
+                ref={searchBoxRef}
                 className={`group/search flex items-center shrink-0 flex-1 min-w-0 max-w-none sm:max-w-[22rem] lg:max-w-[28rem] rounded-md border transition-colors ${searchBoxCls}`}
               >
                 <div className="relative flex-1 min-w-0 flex items-center pl-7 pr-1">
@@ -1715,11 +1821,19 @@ export default function CRMAssignmentsPage({
                     }`}
                   />
                   <input
+                    ref={searchInputRef}
                     type="text"
                     value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                    onFocus={() => setSearchFocused(true)}
-                    onBlur={() => setTimeout(() => setSearchFocused(false), 120)}
+                    onChange={(e) => {
+                      setSearch(e.target.value);
+                      setSearchSuggestDismissed(false);
+                      setSearchFocused(true);
+                    }}
+                    onFocus={() => {
+                      setSearchFocused(true);
+                      setSearchSuggestDismissed(false);
+                    }}
+                    onBlur={() => setTimeout(() => setSearchFocused(false), 180)}
                     placeholder={assignmentModule === 'production'
                       ? 'Tìm mã TB, deal, tên khách, SĐT…'
                       : assignmentModule === 'logistics'
@@ -1730,7 +1844,11 @@ export default function CRMAssignmentsPage({
                   {search ? (
                     <button
                       type="button"
-                      onClick={() => setSearch('')}
+                      onClick={() => {
+                        setSearch('');
+                        setSearchSuggestDismissed(false);
+                        setDealSuggestResults([]);
+                      }}
                       className="absolute right-1.5 top-1/2 -translate-y-1/2 p-0.5 rounded text-slate-400 hover:text-slate-700 cursor-pointer"
                       aria-label="Xóa tìm kiếm"
                     >
@@ -1741,6 +1859,85 @@ export default function CRMAssignmentsPage({
                     <span className={`absolute right-7 top-1/2 -translate-y-1/2 h-3 w-3 border-2 border-t-transparent rounded-full animate-spin ${spinBorder}`} />
                   )}
                 </div>
+                <AnchoredDropdownMenu
+                  open={dealSuggestOpen}
+                  onClose={() => setSearchSuggestDismissed(true)}
+                  anchorRef={searchBoxRef}
+                  align="left"
+                  matchAnchorWidth
+                  className={`rounded-xl p-0 overflow-hidden max-h-80 overflow-y-auto [scrollbar-width:thin] animate-fade-in ${theme.suggestShell}`}
+                >
+                  <div className={`px-3 py-2 border-b ${theme.suggestHeader}`}>
+                    <p className={`text-[11px] font-semibold ${theme.suggestHeaderText}`}>
+                      {dealSuggestLoading ? (
+                        <>Đang tìm deal…</>
+                      ) : (
+                        <>
+                          <span className={`font-bold ${theme.suggestCount}`}>{dealSuggestResults.length}</span>
+                          {' '}deal cho &ldquo;{search.trim()}&rdquo;
+                          <span className={`block text-[10px] font-normal mt-0.5 ${theme.suggestHeaderMuted}`}>
+                            Chọn dòng để lọc nhiệm vụ · biểu tượng mắt để mở deal
+                            {dealSuggestResults.length > 10 ? ' · Hiển thị 10 kết quả đầu' : ''}
+                          </span>
+                        </>
+                      )}
+                    </p>
+                  </div>
+                  {dealSuggestItems.map((deal) => {
+                    const taskCount = assignTaskCountByLead.get(String(deal.id)) || 0;
+                    return (
+                      <div
+                        key={deal.id}
+                        className="flex items-stretch border-b border-slate-50 last:border-0 group/item"
+                      >
+                        <button
+                          type="button"
+                          className={`flex-1 min-w-0 flex items-center gap-3 px-3 py-2.5 transition-colors cursor-pointer text-left ${theme.suggestHover}`}
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => selectDealSuggest(deal)}
+                        >
+                          <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[10px] font-mono font-semibold transition-colors ${theme.suggestCodeBg}`}>
+                            {(deal.code || '?').slice(0, 2)}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="text-[10px] font-mono text-slate-400">{deal.code}</span>
+                              <p className="text-sm font-medium text-slate-900 truncate">{deal.title || 'Deal'}</p>
+                            </div>
+                            <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                              {deal.customer_phone ? (
+                                <span className="text-[10px] text-emerald-600">{deal.customer_phone}</span>
+                              ) : null}
+                              {deal.customer_name ? (
+                                <span className="text-[10px] text-slate-500 truncate max-w-[8rem]">{deal.customer_name}</span>
+                              ) : null}
+                              {deal.assignee_name ? (
+                                <span className={`text-[10px] truncate max-w-[8rem] ${theme.suggestMeta}`}>{deal.assignee_name}</span>
+                              ) : null}
+                              {taskCount > 0 ? (
+                                <span className="text-[10px] text-slate-500">{taskCount} nhiệm vụ</span>
+                              ) : null}
+                            </div>
+                          </div>
+                          <ChevronRight className={`h-3.5 w-3.5 shrink-0 ${theme.suggestChevron}`} />
+                        </button>
+                        <button
+                          type="button"
+                          title="Mở chi tiết deal"
+                          aria-label={`Mở chi tiết ${deal.code || deal.title || deal.id}`}
+                          className={`shrink-0 flex items-center justify-center px-2.5 border-l border-slate-100 text-slate-400 transition-colors cursor-pointer ${theme.suggestEye}`}
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => openDealSuggestDetail(deal.id)}
+                        >
+                          <Eye className="h-4 w-4" />
+                        </button>
+                      </div>
+                    );
+                  })}
+                  {!dealSuggestLoading && dealSuggestItems.length === 0 ? (
+                    <p className="px-3 py-4 text-xs text-slate-500 text-center">Không tìm thấy deal phù hợp</p>
+                  ) : null}
+                </AnchoredDropdownMenu>
                 <div className="shrink-0 pr-1">
                   <button
                     type="button"
