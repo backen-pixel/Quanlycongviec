@@ -544,7 +544,7 @@ function portalAssignmentsModal(node) {
   return createPortal(node, document.body);
 }
 
-/** Tab «Không gian riêng» — nhiệm vụ deal được giao cho tôi, nhóm theo deal / trạng thái / deadline. */
+/** Tab «Không gian chung» — nhiệm vụ deal được giao cho tôi, nhóm theo deal / trạng thái / deadline. */
 function PrivateDealInbox({ groups, loading, assignmentModule, search, onSearchChange, theme }) {
   const t = theme || getAssignmentTheme(assignmentModule);
   const [inboxView, setInboxView] = useState('deal');
@@ -684,7 +684,7 @@ function PrivateDealInbox({ groups, loading, assignmentModule, search, onSearchC
           className="ui-solid-white fixed z-[75] max-sm:left-4 max-sm:right-4 max-sm:bottom-4 max-sm:top-auto w-[min(100vw-2rem,400px)] max-h-[min(calc(100vh-5rem),520px)] flex flex-col rounded-xl border border-gray-200 bg-white shadow-2xl overflow-hidden animate-fade-in"
           style={{ top: '4.5rem', right: '1rem' }}
           role="region"
-          aria-label="Bộ lọc không gian riêng"
+          aria-label="Bộ lọc không gian chung"
         >
           <div className="shrink-0 px-3 pt-2.5 pb-2 border-b border-gray-200 bg-white">
             <div className="flex items-center gap-2">
@@ -748,7 +748,7 @@ function PrivateDealInbox({ groups, loading, assignmentModule, search, onSearchC
           >
             <span className="text-[11px] font-semibold text-slate-700">
               KPI
-              <span className={`ml-1 font-medium ${t.activeText}`}>· Không gian riêng</span>
+              <span className={`ml-1 font-medium ${t.activeText}`}>· Không gian chung</span>
             </span>
             {!kpiPanelOpen && (
               <span className="text-[10px] text-slate-500 tabular-nums truncate">
@@ -778,7 +778,13 @@ function PrivateDealInbox({ groups, loading, assignmentModule, search, onSearchC
         </div>
       ) : filteredGroups.length === 0 ? (
         <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/80 px-4 py-10 text-center text-sm text-slate-500">
-          Chưa có nhiệm vụ deal được giao cho bạn trong module này.
+          {q || hasSelectFilters
+            ? 'Không có nhiệm vụ khớp bộ lọc / từ khóa hiện tại.'
+            : assignmentModule === 'production'
+              ? 'Chưa có nhiệm vụ deal Sản xuất được giao cho bạn (cột CRM Sản xuất, task SX, hoặc Giao việc gắn deal).'
+              : assignmentModule === 'logistics'
+                ? 'Chưa có nhiệm vụ deal VC/LD được giao cho bạn (Vận chuyển · Lắp đặt, hoặc Giao việc gắn deal).'
+                : 'Chưa có nhiệm vụ deal được giao cho bạn.'}
         </div>
       ) : inboxView === 'status' ? (
         <InboxStatusBoard tasks={flatTasks} actionLabel="Mở nhiệm vụ" />
@@ -1065,6 +1071,7 @@ export default function CRMAssignmentsPage({
   const [refreshing, setRefreshing] = useState(false);
 
   const [search, setSearch] = useState('');
+  const [privateSearch, setPrivateSearch] = useState('');
   const [searchDebounced, setSearchDebounced] = useState('');
   const [filterAssignee, setFilterAssignee] = useState('');
   const [filterPriority, setFilterPriority] = useState('');
@@ -1318,10 +1325,9 @@ export default function CRMAssignmentsPage({
   }, [apiBase, assignmentModule]);
 
   useEffect(() => {
-    if (pageTab !== 'private') return undefined;
+    // Prefetch badge + sẵn dữ liệu tab Không gian chung (CRM / SX / VC)
     void loadPrivateTasks();
-    return undefined;
-  }, [pageTab, loadPrivateTasks]);
+  }, [loadPrivateTasks]);
 
   const setPageTabAndUrl = useCallback((tab) => {
     const next = tab === 'private' ? 'private' : 'assignments';
@@ -1765,7 +1771,7 @@ export default function CRMAssignmentsPage({
                 activeText={theme.activeText}
                 options={[
                   { id: 'assignments', label: 'Giao việc' },
-                  { id: 'private', label: 'Không gian riêng', badge: privateTaskCount },
+                  { id: 'private', label: 'Không gian chung', badge: privateTaskCount },
                 ]}
               />
             </div>
@@ -2173,8 +2179,8 @@ export default function CRMAssignmentsPage({
           groups={privateGroups}
           loading={privateLoading}
           assignmentModule={assignmentModule}
-          search={search}
-          onSearchChange={setSearch}
+          search={privateSearch}
+          onSearchChange={setPrivateSearch}
           theme={theme}
         />
       )}

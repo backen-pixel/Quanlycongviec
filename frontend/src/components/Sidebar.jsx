@@ -294,6 +294,7 @@ const SX_MENU_GROUPS = [
     emoji: '🏭',
     items: [
       { to: '/sx/dashboard', icon: LayoutDashboard, label: 'Dashboard xưởng', end: true },
+      { to: '/sx/assignments', icon: ClipboardList, label: 'Giao việc Sản xuất' },
       { to: '/drive?module=sx', icon: HardDrive, label: 'Drive Sản xuất' },
     ]
   },
@@ -314,7 +315,6 @@ const SX_MENU_GROUPS = [
       { to: '/sx/pipeline-settings', icon: Settings, label: 'Pipeline xưởng' },
       { to: '/sx/regions', icon: MapPin, label: 'Khu vực', adminOnly: true },
       { to: '/sx/task-templates', icon: ListChecks, label: 'Bộ mẫu nhiệm vụ xưởng' },
-      { to: '/sx/assignments', icon: ClipboardList, label: 'Giao việc Sản xuất' },
       { to: '/sx/handover-settings', icon: UserCog, label: 'Bàn giao CRM → SX (nâng cao)' },
       { to: { pathname: '/admin/trash', search: '?tab=sx' }, icon: Trash2, label: 'Thùng rác SX', adminOnly: true, strictAdminOnly: true },
     ]
@@ -442,6 +442,7 @@ const VC_MENU_GROUPS = [
     emoji: '🚚',
     items: [
       { to: '/vc/dashboard', icon: LayoutDashboard, label: 'Dashboard VC', end: true },
+      { to: '/vc/assignments', icon: ClipboardList, label: 'Giao việc VC' },
       { to: '/drive?module=vc', icon: HardDrive, label: 'Drive Vận chuyển' },
     ]
   },
@@ -461,7 +462,6 @@ const VC_MENU_GROUPS = [
       { to: '/vc/pipeline-settings', icon: Settings, label: 'Pipeline VC' },
       { to: '/vc/teams', icon: Users, label: 'Quản lý Đội nhóm' },
       { to: '/vc/task-templates', icon: ListChecks, label: 'Bộ nhiệm vụ VC' },
-      { to: '/vc/assignments', icon: ClipboardList, label: 'Giao việc VC' },
       { to: { pathname: '/admin/trash', search: '?tab=vc' }, icon: Trash2, label: 'Thùng rác VC', adminOnly: true, strictAdminOnly: true },
     ]
   },
