@@ -153,11 +153,12 @@ function toPreviewIso(raw) {
  *  eventIds?: string[],
  *  focusDate?: string|null,
  *  pickMode?: boolean,
- *  pickTarget?: 'pickup'|'install'|'both',
+ *  pickTarget?: 'pickup'|'arrive'|'install'|'both',
  *  anchorPickupAt?: string|null,
+ *  anchorArriveAt?: string|null,
  *  anchorInstallAt?: string|null,
  *  onPickDate?: (datetimeLocal: string) => void,
- *  onPickDates?: (dates: { pickupAt: string, installAt: string }) => void,
+ *  onPickDates?: (dates: { pickupAt: string, installAt: string, vcArriveAt?: string }) => void,
  *  onClose: () => void,
  * }} props
  */
@@ -170,6 +171,7 @@ export default function VcHandoverEventsPopup({
   pickMode = false,
   pickTarget = 'both',
   anchorPickupAt = null,
+  anchorArriveAt = null,
   anchorInstallAt = null,
   onPickDate = null,
   onPickDates = null,
@@ -196,6 +198,7 @@ export default function VcHandoverEventsPopup({
   /** Form tạo VC + lắp đặt (+ SX giao hàng) */
   const [showSchedule, setShowSchedule] = useState(false);
   const [vcAt, setVcAt] = useState(() => anchorPickupAt || ymdToLocal(initialDay, 9));
+  const [arriveAt, setArriveAt] = useState(() => anchorArriveAt || ymdToLocal(initialDay, 11));
   const [installAt, setInstallAt] = useState(() => anchorInstallAt || ymdToLocal(initialDay, 14));
   const [scheduleNotes, setScheduleNotes] = useState('');
   const [createSxDelivery, setCreateSxDelivery] = useState(true);
@@ -349,7 +352,8 @@ export default function VcHandoverEventsPopup({
     if (hasRealHandoverEvents && !pickMode) return [];
 
     const pickupIso = toPreviewIso(vcAt) || toPreviewIso(anchorPickupAt);
-    const installIso = toPreviewIso(installAt) || toPreviewIso(anchorInstallAt) || pickupIso;
+    const arriveIso = toPreviewIso(arriveAt) || toPreviewIso(anchorArriveAt) || pickupIso;
+    const installIso = toPreviewIso(installAt) || toPreviewIso(anchorInstallAt) || arriveIso || pickupIso;
     if (!pickupIso) return [];
 
     const pickupDay = parseDay(pickupIso);
@@ -373,9 +377,9 @@ export default function VcHandoverEventsPopup({
         _draft: true,
         module: 'logistics',
         event_type: 'pickup',
-        title: 'Vận chuyển / nhận hàng (tạm)',
+        title: 'VC tới nơi LĐ (tạm)',
         short_label: 'VC tạm',
-        start_time: pickupIso,
+        start_time: arriveIso || pickupIso,
         status: 'planned',
         color: '#ea580c',
       },
@@ -392,7 +396,7 @@ export default function VcHandoverEventsPopup({
       },
     ];
     return drafts;
-  }, [vcAt, installAt, anchorPickupAt, anchorInstallAt, idList, pickMode]);
+  }, [vcAt, arriveAt, installAt, anchorPickupAt, anchorArriveAt, anchorInstallAt, idList, pickMode]);
 
   const filteredCalendarEvents = useMemo(() => {
     const base = moduleTab === 'all'
@@ -548,6 +552,7 @@ export default function VcHandoverEventsPopup({
   const openScheduleForDay = (ymd) => {
     setSelectedDay(ymd);
     setVcAt(ymdToLocal(ymd, 9));
+    setArriveAt(ymdToLocal(ymd, 11));
     setInstallAt(ymdToLocal(ymd, 14));
     setCreateSxDelivery(true);
     setShowSchedule(true);
@@ -561,7 +566,7 @@ export default function VcHandoverEventsPopup({
     }
     setSelectedDay(ymd);
 
-    // Chọn ngày VC → mở form giờ VC + lắp (mặc định cùng ngày), có thể chỉnh rồi Áp dụng
+    // Chọn ngày VC → mở form giờ VC + tới nơi + lắp (mặc định cùng ngày), có thể chỉnh rồi Áp dụng
     if (pickTarget === 'pickup' || pickTarget === 'both') {
       if (!confirmBusyVcDay(ymd)) return;
       const existingInstallDay = parseDay(anchorInstallAt)
@@ -570,10 +575,52 @@ export default function VcHandoverEventsPopup({
       setVcAt(ymdToLocal(ymd, 9));
       if (existingInstallDay && compareYmd(existingInstallDay, ymd) >= 0) {
         setInstallAt(anchorInstallAt || installAt || ymdToLocal(existingInstallDay, 14));
+        const arriveDay = parseDay(anchorArriveAt) || existingInstallDay;
+        setArriveAt(
+          (arriveDay && compareYmd(arriveDay, ymd) >= 0 && compareYmd(arriveDay, existingInstallDay) <= 0)
+            ? (anchorArriveAt || arriveAt || ymdToLocal(arriveDay, 11))
+            : ymdToLocal(ymd, 11),
+        );
       } else {
+        setArriveAt(ymdToLocal(ymd, 11));
         setInstallAt(ymdToLocal(ymd, 14));
       }
       setCreateSxDelivery(true);
+      setShowSchedule(true);
+      return;
+    }
+
+    // Chọn VC tới nơi LĐ (≥ nhận hàng, ≤ lắp)
+    if (pickTarget === 'arrive') {
+      const vcDay = parseDay(anchorPickupAt)
+        || parseDay(datetimeLocalValueToIso(anchorPickupAt) || '')
+        || (anchorPickupAt && String(anchorPickupAt).match(/^(\d{4}-\d{2}-\d{2})/)?.[1])
+        || null;
+      if (!vcDay) {
+        alert('Chọn ngày nhận hàng trước, rồi mới chọn VC tới nơi LĐ.');
+        return;
+      }
+      if (compareYmd(ymd, vcDay) < 0) {
+        alert(`VC tới nơi LĐ phải bằng hoặc sau ngày nhận hàng (${formatDayLabel(vcDay)}).`);
+        return;
+      }
+      const installDay = parseDay(anchorInstallAt)
+        || parseDay(installAt)
+        || parseDay(datetimeLocalValueToIso(installAt) || '');
+      if (installDay && compareYmd(ymd, installDay) > 0) {
+        alert(`VC tới nơi LĐ phải bằng hoặc trước ngày lắp đặt (${formatDayLabel(installDay)}).`);
+        return;
+      }
+      let hour = 11;
+      let minute = 0;
+      const prev = String(arriveAt || anchorArriveAt || '').match(/T(\d{2}):(\d{2})/);
+      if (prev) {
+        hour = Number(prev[1]);
+        minute = Number(prev[2]);
+      }
+      setVcAt(anchorPickupAt || ymdToLocal(vcDay, 9));
+      setArriveAt(ymdToLocal(ymd, hour, minute));
+      setInstallAt(anchorInstallAt || installAt || ymdToLocal(installDay || ymd, 14));
       setShowSchedule(true);
       return;
     }
@@ -604,6 +651,12 @@ export default function VcHandoverEventsPopup({
       }
       setVcAt(anchorPickupAt || ymdToLocal(vcDay, 9));
       setInstallAt(ymdToLocal(ymd, hour, minute));
+      const arriveDay = parseDay(arriveAt) || parseDay(anchorArriveAt);
+      if (!arriveDay || compareYmd(arriveDay, ymd) > 0) {
+        setArriveAt(ymdToLocal(ymd, 11));
+      } else {
+        setArriveAt(anchorArriveAt || arriveAt || ymdToLocal(arriveDay, 11));
+      }
       setShowSchedule(true);
     }
   };
@@ -614,9 +667,11 @@ export default function VcHandoverEventsPopup({
       return;
     }
     const vcDay = parseDay(datetimeLocalValueToIso(vcAt) || vcAt);
-    if (pickTarget !== 'install' && !confirmBusyVcDay(vcDay)) return;
+    if (pickTarget !== 'install' && pickTarget !== 'arrive' && !confirmBusyVcDay(vcDay)) return;
     let nextInstall = installAt || '';
     if (!nextInstall && vcDay) nextInstall = ymdToLocal(vcDay, 14);
+    let nextArrive = arriveAt || '';
+    if (!nextArrive && vcDay) nextArrive = ymdToLocal(vcDay, 11);
     if (nextInstall) {
       const installDay = parseDay(datetimeLocalValueToIso(nextInstall) || nextInstall);
       const chk = assertInstallOnOrAfterVc(vcDay, installDay);
@@ -628,12 +683,30 @@ export default function VcHandoverEventsPopup({
         if (!confirmBusyInstallDay(installDay)) return;
       }
     }
+    if (nextArrive) {
+      const arriveDay = parseDay(datetimeLocalValueToIso(nextArrive) || nextArrive);
+      if (arriveDay && vcDay && compareYmd(arriveDay, vcDay) < 0) {
+        alert('VC tới nơi LĐ phải bằng hoặc sau ngày nhận hàng.');
+        return;
+      }
+      if (nextInstall) {
+        const installDay = parseDay(datetimeLocalValueToIso(nextInstall) || nextInstall);
+        if (arriveDay && installDay && compareYmd(arriveDay, installDay) > 0) {
+          alert('VC tới nơi LĐ phải bằng hoặc trước ngày lắp đặt.');
+          return;
+        }
+      }
+    }
     if (typeof onPickDates === 'function') {
-      onPickDates({ pickupAt: vcAt, installAt: nextInstall });
+      onPickDates({ pickupAt: vcAt, installAt: nextInstall, vcArriveAt: nextArrive });
       return;
     }
     if (typeof onPickDate === 'function') {
-      onPickDate(pickTarget === 'install' ? nextInstall : vcAt);
+      onPickDate(
+        pickTarget === 'install' ? nextInstall
+          : pickTarget === 'arrive' ? nextArrive
+            : vcAt,
+      );
       return;
     }
     onClose?.();
@@ -1104,7 +1177,7 @@ export default function VcHandoverEventsPopup({
                                   <p className="text-[11px] text-gray-600 mt-0.5">
                                     {formatTime(ev.start_time)}
                                     {isDraft
-                                      ? ' · Chưa tạo trên lịch (sau khi Xưởng & VC/LĐ xác nhận)'
+                                      ? ' · Chưa tạo trên lịch (sau khi VC/LĐ xác nhận)'
                                       : (ev.status ? ` · ${STATUS_LABEL[ev.status] || ev.status}` : '')}
                                   </p>
                                 </div>
@@ -1172,25 +1245,44 @@ export default function VcHandoverEventsPopup({
             <div className="p-4 space-y-3">
               <div>
                 <label className="text-xs font-semibold text-gray-700 block mb-1">
-                  Ngày / giờ nhận hàng VC
+                  Ngày / giờ nhận hàng (lấy hàng)
                 </label>
                 <input
                   type="datetime-local"
                   value={vcAt}
-                  disabled={pickMode && pickTarget === 'install'}
+                  disabled={pickMode && (pickTarget === 'install' || pickTarget === 'arrive')}
                   onChange={(e) => {
                     const next = e.target.value;
                     setVcAt(next);
                     const nextDay = parseDay(datetimeLocalValueToIso(next) || next);
                     const installDay = parseDay(datetimeLocalValueToIso(installAt) || installAt);
-                    // Mặc định: lắp cùng ngày VC (14:00) nếu chưa có hoặc đang cùng ngày cũ
+                    const arriveDay = parseDay(datetimeLocalValueToIso(arriveAt) || arriveAt);
+                    // Mặc định: tới nơi 11:00 + lắp 14:00 cùng ngày VC nếu chưa có / đang cùng ngày cũ
                     if (!installAt || !installDay || installDay === parseDay(datetimeLocalValueToIso(vcAt) || vcAt)) {
                       if (nextDay) setInstallAt(ymdToLocal(nextDay, 14));
                     } else if (nextDay && installDay && compareYmd(installDay, nextDay) < 0) {
                       setInstallAt(ymdToLocal(nextDay, 14));
                     }
+                    if (!arriveAt || !arriveDay || arriveDay === parseDay(datetimeLocalValueToIso(vcAt) || vcAt)) {
+                      if (nextDay) setArriveAt(ymdToLocal(nextDay, 11));
+                    } else if (nextDay && arriveDay && compareYmd(arriveDay, nextDay) < 0) {
+                      setArriveAt(ymdToLocal(nextDay, 11));
+                    }
                   }}
                   className="w-full h-10 px-3 rounded-lg border border-orange-200 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300 disabled:bg-gray-50 disabled:text-gray-500"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-gray-700 block mb-1">
+                  VC tới nơi LĐ
+                  <span className="font-normal text-gray-400"> (xe tới địa điểm lắp)</span>
+                </label>
+                <input
+                  type="datetime-local"
+                  value={arriveAt}
+                  disabled={pickMode && pickTarget === 'install'}
+                  onChange={(e) => setArriveAt(e.target.value)}
+                  className="w-full h-10 px-3 rounded-lg border border-sky-200 text-sm focus:outline-none focus:ring-2 focus:ring-sky-300 disabled:bg-gray-50 disabled:text-gray-500"
                 />
               </div>
               <div>
@@ -1206,7 +1298,7 @@ export default function VcHandoverEventsPopup({
                 />
                 {pickMode && (
                   <p className="mt-1 text-[10px] text-gray-500">
-                    Phải bằng hoặc sau ngày VC. Có thể chọn lại ngày lắp bằng nút «Ngày lắp đặt» trên thẻ.
+                    Lắp ≥ nhận hàng · VC tới nơi nằm giữa hai mốc. Có thể chọn lại từ thẻ bàn giao.
                   </p>
                 )}
                 {installAt && !pickMode && (

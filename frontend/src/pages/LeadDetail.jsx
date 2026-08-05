@@ -25,6 +25,7 @@ import { consumeCrmLeadDetailPrefetch } from '../lib/crmLeadDetailPrefetch';
 import { getSocket } from '../lib/socket';
 import { formatVND, formatDate, getFileEmoji } from '../lib/utils';
 import CRMTasksTab from '../components/CRMTasksTab';
+import { pickSurveyFillFormTask, hasFilledFormData, normalizeFormConfig } from '../lib/taskFillForm';
 import DealSharedWorkspaceTab from '../components/DealSharedWorkspaceTab';
 import CrmTaskDocumentsPanel from '../components/CrmTaskDocumentsPanel';
 import UnifiedTaskHistoryWidget from '../components/UnifiedTaskHistoryWidget';
@@ -85,7 +86,7 @@ import EventCreateModal from '../components/EventCreateModal';
 import {
   ArrowLeft, Phone, Mail, MapPin, Calendar, DollarSign, User, Target,
   Plus, Clock, MessageSquare, MessageCircle, Edit2, Trash2, X, Save, Building2, FolderKanban,
-  FileUp, FileText, Zap, ChevronDown, Send, RefreshCw, Users, ClipboardCheck, Loader2, Mic, RotateCcw, Download,
+  FileUp, FileText, Zap, ChevronDown, Send, RefreshCw, Users, ClipboardCheck, ClipboardPen, Loader2, Mic, RotateCcw, Download,
   Pin, CheckCircle2, ShoppingCart, Package, Search, Eye, BookOpen,
 } from 'lucide-react';
 import { useProductTour } from '../components/productTour/ProductTourProvider';
@@ -398,6 +399,42 @@ export default function LeadDetail() {
   const [deletingLead, setDeletingLead] = useState(false);
   /** Tăng khi cần tab Công việc refetch (ví dụ sau kéo giai đoạn) mà không «tải lại» cả trang. */
   const [crmTasksRefreshKey, setCrmTasksRefreshKey] = useState(0);
+  /** Meta phiếu khảo sát (show_fill_form) — nút Thêm trên header */
+  const [surveyFillMeta, setSurveyFillMeta] = useState(null);
+  const [openFillFormToken, setOpenFillFormToken] = useState(0);
+  const handleSurveyFillMetaChange = useCallback((meta) => {
+    setSurveyFillMeta(meta);
+  }, []);
+
+  // Khi chưa vào tab Công việc, vẫn hiện nút Thêm phiếu KS trên header
+  useEffect(() => {
+    if (!id) {
+      setSurveyFillMeta(null);
+      return undefined;
+    }
+    let cancelled = false;
+    api.get(`/crm/leads/${id}/tasks`)
+      .then((r) => {
+        if (cancelled) return;
+        const list = Array.isArray(r.data) ? r.data : (r.data?.tasks || []);
+        const task = pickSurveyFillFormTask(list);
+        if (!task) {
+          setSurveyFillMeta(null);
+          return;
+        }
+        const cfg = normalizeFormConfig(task.form_config);
+        setSurveyFillMeta({
+          taskId: task.id,
+          title: cfg.title || cfg.button_label || 'Phiếu khảo sát',
+          filled: hasFilledFormData(task.form_data),
+        });
+      })
+      .catch(() => {
+        if (!cancelled) setSurveyFillMeta(null);
+      });
+    return () => { cancelled = true; };
+  }, [id, crmTasksRefreshKey]);
+
   const [reopeningLost, setReopeningLost] = useState(false);
   const [driveFileCount, setDriveFileCount] = useState(0);
 
@@ -2221,6 +2258,27 @@ export default function LeadDetail() {
           >
             <Calendar className="h-4 w-4" /> Tạo sự kiện
           </button>
+          {surveyFillMeta ? (
+            <button
+              type="button"
+              data-tour="lead-survey-fill-form"
+              onClick={() => {
+                setActiveTab('tasks');
+                setOpenFillFormToken((n) => n + 1);
+              }}
+              className={`h-11 px-5 rounded-xl text-sm font-bold flex items-center gap-2 cursor-pointer shadow-sm ${
+                surveyFillMeta.filled
+                  ? 'bg-orange-100 text-orange-900 border-2 border-orange-300 hover:bg-orange-200'
+                  : 'bg-orange-600 hover:bg-orange-700 text-white border-2 border-orange-600'
+              }`}
+              title={surveyFillMeta.title}
+            >
+              {surveyFillMeta.filled
+                ? <ClipboardPen className="h-5 w-5" />
+                : <Plus className="h-5 w-5" />}
+              {surveyFillMeta.filled ? 'Sửa phiếu khảo sát' : 'Thêm phiếu khảo sát'}
+            </button>
+          ) : null}
           <button
             type="button"
             data-tour="lead-import-excel"
@@ -2657,11 +2715,16 @@ export default function LeadDetail() {
                   users={allUsers}
                   focusTaskId={searchParams.get('crm_task') || null}
                   onArtifactsSynced={refreshTaskSyncedDocuments}
-                  onLeadSynced={() => load({ silent: true })}
+                  onLeadSynced={() => {
+                    load({ silent: true });
+                    setCrmTasksRefreshKey((k) => k + 1);
+                  }}
                   refreshKey={crmTasksRefreshKey}
                   sxTemplateCompanyId={lead?.sx_template_company_id || null}
                   linkedProjectId={lead?.project_id || null}
                   dealResponsible={lead}
+                  openFillFormToken={openFillFormToken}
+                  onSurveyFillMetaChange={handleSurveyFillMetaChange}
                 />
                 <div className="mt-6">
                   <UnifiedTaskHistoryWidget

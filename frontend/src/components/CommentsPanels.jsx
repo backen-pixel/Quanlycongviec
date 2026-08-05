@@ -732,46 +732,59 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
   const [selectNotes, setSelectNotes] = useState('');
   const [pickupAt, setPickupAt] = useState('');
   const [pickupNotes, setPickupNotes] = useState('');
+  const [vcArriveAt, setVcArriveAt] = useState('');
   const [installDate, setInstallDate] = useState('');
   const [installAddress, setInstallAddress] = useState('');
   const [busy, setBusy] = useState('');
   const [err, setErr] = useState('');
   const [eventsPopupOpen, setEventsPopupOpen] = useState(false);
   const [eventsPopupFocus, setEventsPopupFocus] = useState(null);
-  /** null | 'pickup' | 'install' | 'both' — mở lịch để chọn ngày cho thẻ */
+  /** null | 'pickup' | 'arrive' | 'install' | 'both' — mở lịch để chọn ngày cho thẻ */
   const [datePickTarget, setDatePickTarget] = useState(null);
   /** true = đang sửa ngày đề xuất sau khi đã bàn giao (awaiting_confirm) */
   const [rescheduleMode, setRescheduleMode] = useState(false);
 
+  const defaultArriveLocal = useCallback((pickupLocal, installLocal) => {
+    const day = String(installLocal || pickupLocal || '').slice(0, 10);
+    if (!day) return '';
+    return `${day}T11:00`;
+  }, []);
+
   const openEventsCalendar = useCallback((dateIso) => {
     setRescheduleMode(false);
     setDatePickTarget(null);
-    setEventsPopupFocus(dateIso || pickupAt || md.pickup_at || installDate || md.install_date || null);
+    setEventsPopupFocus(
+      dateIso || pickupAt || vcArriveAt || md.pickup_at || md.vc_arrive_at || installDate || md.install_date || null,
+    );
     setEventsPopupOpen(true);
-  }, [pickupAt, installDate, md.pickup_at, md.install_date]);
+  }, [pickupAt, vcArriveAt, installDate, md.pickup_at, md.vc_arrive_at, md.install_date]);
 
   const openDatePickCalendar = useCallback((target) => {
     setRescheduleMode(false);
     setDatePickTarget(target);
     const focus = target === 'install'
-      ? (installDate || pickupAt || md.install_date || md.pickup_at || null)
-      : (pickupAt || md.pickup_at || installDate || md.install_date || null);
+      ? (installDate || vcArriveAt || pickupAt || md.install_date || md.vc_arrive_at || md.pickup_at || null)
+      : target === 'arrive'
+        ? (vcArriveAt || installDate || pickupAt || md.vc_arrive_at || md.install_date || md.pickup_at || null)
+        : (pickupAt || md.pickup_at || vcArriveAt || installDate || md.install_date || null);
     setEventsPopupFocus(focus);
     setEventsPopupOpen(true);
-  }, [pickupAt, installDate, md.pickup_at, md.install_date]);
+  }, [pickupAt, vcArriveAt, installDate, md.pickup_at, md.vc_arrive_at, md.install_date]);
 
   const openRescheduleCalendar = useCallback(() => {
     if (md.pickup_at) setPickupAt(toDatetimeLocalValue(md.pickup_at));
+    if (md.vc_arrive_at) setVcArriveAt(toDatetimeLocalValue(md.vc_arrive_at));
     if (md.install_date) setInstallDate(toDatetimeLocalValue(md.install_date));
     else if (md.pickup_at) {
       const day = toDatetimeLocalValue(md.pickup_at).slice(0, 10);
       setInstallDate(`${day}T14:00`);
+      if (!md.vc_arrive_at) setVcArriveAt(`${day}T11:00`);
     }
     setRescheduleMode(true);
     setDatePickTarget('both');
-    setEventsPopupFocus(md.pickup_at || md.install_date || null);
+    setEventsPopupFocus(md.pickup_at || md.vc_arrive_at || md.install_date || null);
     setEventsPopupOpen(true);
-  }, [md.pickup_at, md.install_date]);
+  }, [md.pickup_at, md.vc_arrive_at, md.install_date]);
 
   const canEditProposedDates = state === 'awaiting_confirm'
     && canEditAsCrmOwner
@@ -879,7 +892,14 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
       await Promise.all(tasks);
       if (!active) return;
       if (nextAddr) setInstallAddress((prev) => (prev.trim() ? prev : nextAddr));
-      if (nextInstall) setInstallDate((prev) => (prev.trim() ? prev : nextInstall));
+      if (nextInstall) {
+        setInstallDate((prev) => (prev.trim() ? prev : nextInstall));
+        setVcArriveAt((prev) => {
+          if (prev.trim()) return prev;
+          const day = String(nextInstall).slice(0, 10);
+          return day ? `${day}T11:00` : '';
+        });
+      }
     };
     void fill();
     return () => { active = false; };
@@ -1011,7 +1031,7 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
                       Lịch sự kiện
                     </button>
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 items-end">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-end">
                     <div className="block min-w-0">
                       <span className="block h-4 text-[11px] font-semibold text-gray-600 leading-4">
                         Ngày nhận hàng *
@@ -1024,7 +1044,7 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
                           openDatePickCalendar('pickup');
                         }}
                         className="mt-1 box-border w-full h-9 px-2 border border-orange-200 rounded-lg text-[13px] leading-9 bg-white text-left hover:border-orange-400 hover:bg-orange-50/50 focus:ring-2 focus:ring-orange-400 inline-flex items-center gap-1.5 cursor-pointer"
-                        title="Mở lịch chọn ngày nhận hàng (tự gắn ngày lắp cùng ngày)"
+                        title="Mở lịch chọn ngày nhận hàng (tự gắn tới nơi LĐ + lắp cùng ngày)"
                       >
                         <Calendar className="h-3.5 w-3.5 text-orange-600 shrink-0" />
                         <span className={`truncate ${pickupAt ? 'text-gray-900 font-medium' : 'text-gray-400'}`}>
@@ -1033,11 +1053,46 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
                       </button>
                       {pickupAt ? (
                         <label className="mt-1 flex items-center gap-1.5 text-[11px] text-gray-600">
-                          <span className="shrink-0">Giờ VC</span>
+                          <span className="shrink-0">Giờ lấy</span>
                           <input
                             type="time"
                             value={timePart(pickupAt) || '09:00'}
                             onChange={(e) => setPickupAt(setTimeOnLocal(pickupAt, e.target.value))}
+                            className="h-7 px-1.5 border border-orange-200 rounded-md bg-white"
+                          />
+                        </label>
+                      ) : null}
+                    </div>
+                    <div className="block min-w-0">
+                      <span className="block h-4 text-[11px] font-semibold text-gray-600 leading-4">
+                        VC tới nơi LĐ
+                      </span>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          if (!pickupAt) {
+                            setErr('Chọn ngày nhận hàng trước, rồi mới chọn VC tới nơi LĐ.');
+                            return;
+                          }
+                          openDatePickCalendar('arrive');
+                        }}
+                        className="mt-1 box-border w-full h-9 px-2 border border-orange-200 rounded-lg text-[13px] leading-9 bg-white text-left hover:border-orange-400 hover:bg-orange-50/50 focus:ring-2 focus:ring-orange-400 inline-flex items-center gap-1.5 cursor-pointer"
+                        title="Thời gian xe VC tới địa điểm lắp đặt"
+                      >
+                        <Calendar className="h-3.5 w-3.5 text-orange-600 shrink-0" />
+                        <span className={`truncate ${vcArriveAt ? 'text-gray-900 font-medium' : 'text-gray-400'}`}>
+                          {vcArriveAt ? formatDatetimeLocalLabel(vcArriveAt) : 'Tự điền khi chọn ngày VC'}
+                        </span>
+                      </button>
+                      {vcArriveAt ? (
+                        <label className="mt-1 flex items-center gap-1.5 text-[11px] text-gray-600">
+                          <span className="shrink-0">Giờ tới</span>
+                          <input
+                            type="time"
+                            value={timePart(vcArriveAt) || '11:00'}
+                            onChange={(e) => setVcArriveAt(setTimeOnLocal(vcArriveAt, e.target.value))}
                             className="h-7 px-1.5 border border-orange-200 rounded-md bg-white"
                           />
                         </label>
@@ -1079,9 +1134,9 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
                       ) : null}
                     </div>
                   </div>
-                  {(pickupAt || installDate) ? (
+                  {(pickupAt || installDate || vcArriveAt) ? (
                     <div className="rounded-md border border-orange-100 bg-orange-50/50 px-2 py-1.5 space-y-1">
-                      <p className="text-[10px] font-semibold text-orange-800">3 sự kiện sẽ tạo sau khi Xưởng & VC/LĐ xác nhận</p>
+                      <p className="text-[10px] font-semibold text-orange-800">Xưởng xác nhận mặc định · 3 sự kiện tạo sau khi VC/LĐ xác nhận</p>
                       <div className="space-y-1">
                         <div className="flex items-start gap-1.5 text-[11px] text-gray-800">
                           <span className="shrink-0 mt-0.5 h-4 w-4 rounded bg-violet-100 text-violet-700 text-[9px] font-bold inline-flex items-center justify-center">SX</span>
@@ -1093,8 +1148,12 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
                         <div className="flex items-start gap-1.5 text-[11px] text-gray-800">
                           <span className="shrink-0 mt-0.5 h-4 w-4 rounded bg-orange-100 text-orange-700 text-[9px] font-bold inline-flex items-center justify-center">VC</span>
                           <div className="min-w-0">
-                            <p className="font-semibold leading-tight">Vận chuyển / nhận hàng</p>
-                            <p className="text-[10px] text-gray-500">{pickupAt ? formatDatetimeLocalLabel(pickupAt) : '—'}</p>
+                            <p className="font-semibold leading-tight">VC tới nơi LĐ</p>
+                            <p className="text-[10px] text-gray-500">
+                              {vcArriveAt
+                                ? formatDatetimeLocalLabel(vcArriveAt)
+                                : (pickupAt ? formatDatetimeLocalLabel(pickupAt) : '—')}
+                            </p>
                           </div>
                         </div>
                         <div className="flex items-start gap-1.5 text-[11px] text-gray-800">
@@ -1135,10 +1194,28 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
                         return;
                       }
                     }
+                    if (vcArriveAt && pickupAt) {
+                      const vcDay = String(pickupAt).slice(0, 10);
+                      const arriveDay = String(vcArriveAt).slice(0, 10);
+                      if (arriveDay < vcDay) {
+                        setErr('VC tới nơi LĐ phải bằng hoặc sau ngày nhận hàng.');
+                        return;
+                      }
+                    }
+                    if (vcArriveAt && installDate) {
+                      const arriveDay = String(vcArriveAt).slice(0, 10);
+                      const installDay = String(installDate).slice(0, 10);
+                      if (arriveDay > installDay) {
+                        setErr('VC tới nơi LĐ phải bằng hoặc trước ngày lắp đặt.');
+                        return;
+                      }
+                    }
+                    const arriveLocal = vcArriveAt || defaultArriveLocal(pickupAt, installDate);
                     run('select', () => onSelect(comment.id, {
                     logistics_company_id: companyId,
                     notes: selectNotes.trim() || null,
                     pickup_at: new Date(pickupAt).toISOString(),
+                    vc_arrive_at: arriveLocal ? new Date(arriveLocal).toISOString() : null,
                     install_date: installDate ? new Date(installDate).toISOString() : null,
                     install_address: installAddress.trim() || null,
                   }));
@@ -1223,13 +1300,16 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
                 <p><span className="text-gray-500">Ghi chú:</span> {md.select_notes}</p>
               ) : null}
               <p><span className="text-gray-500">Ngày nhận hàng:</span> <strong>{formatVcDateTime(md.pickup_at)}</strong></p>
+              {md.vc_arrive_at ? (
+                <p><span className="text-gray-500">VC tới nơi LĐ:</span> <strong>{formatVcDateTime(md.vc_arrive_at)}</strong></p>
+              ) : null}
               {md.install_date ? (
                 <p><span className="text-gray-500">Ngày lắp đặt:</span> <strong>{formatVcDateTime(md.install_date)}</strong></p>
               ) : null}
               <p className="text-[11px] text-orange-700/80 pt-0.5">
-                Chỉ người được cấu hình xác nhận (Quản lý giao hàng SX / xác nhận VC/LĐ) được bấm.
+                Xưởng đã xác nhận mặc định khi tạo bàn giao. Chỉ người cấu hình xác nhận VC/LĐ được bấm.
                 {state === 'awaiting_confirm' && !(Array.isArray(md.event_ids) && md.event_ids.length)
-                  ? ' Sau khi đủ 2 bên xác nhận, hệ thống mới tạo 3 sự kiện trên lịch.'
+                  ? ' Sau khi VC/LĐ xác nhận, hệ thống mới tạo 3 sự kiện trên lịch.'
                   : null}
               </p>
               <div className="mt-1.5 grid grid-cols-1 sm:grid-cols-2 gap-1.5">
@@ -1300,7 +1380,8 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
                     )}
                     {s.confirmed ? (
                       <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700">
-                        <CheckCircle2 className="h-3.5 w-3.5" /> Đã xác nhận
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                        {s.confirmed?.auto ? 'Đã xác nhận (mặc định)' : 'Đã xác nhận'}
                       </span>
                     ) : s.can ? (
                       <button
@@ -1330,12 +1411,17 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
           projectId={md.project_id || null}
           companyId={companyId || md.logistics_company_id || md.company_id || null}
           eventIds={eventIdsForPopup}
-          focusDate={eventsPopupFocus || md.pickup_at || md.install_date || null}
+          focusDate={eventsPopupFocus || md.pickup_at || md.vc_arrive_at || md.install_date || null}
           pickMode={!!datePickTarget}
           pickTarget={datePickTarget === 'both' || rescheduleMode ? 'both' : (datePickTarget || 'both')}
           anchorPickupAt={
             pickupAt
             || (md.pickup_at ? toDatetimeLocalValue(md.pickup_at) : null)
+            || null
+          }
+          anchorArriveAt={
+            vcArriveAt
+            || (md.vc_arrive_at ? toDatetimeLocalValue(md.vc_arrive_at) : null)
             || null
           }
           anchorInstallAt={
@@ -1345,17 +1431,20 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
           }
           onPickDate={(local) => {
             if (rescheduleMode) {
-              // Fallback single-date trong chế độ sửa → coi là VC + lắp cùng ngày
+              // Fallback single-date trong chế độ sửa → coi là VC + tới nơi + lắp cùng ngày
               const day = String(local).slice(0, 10);
               const nextPickup = local;
+              const nextArrive = `${day}T11:00`;
               const nextInstall = `${day}T14:00`;
               void (async () => {
                 const ok = await run('reschedule', () => onReschedule(comment.id, {
                   pickup_at: new Date(nextPickup).toISOString(),
+                  vc_arrive_at: new Date(nextArrive).toISOString(),
                   install_date: new Date(nextInstall).toISOString(),
                 }));
                 if (!ok) return;
                 setPickupAt(nextPickup);
+                setVcArriveAt(nextArrive);
                 setInstallDate(nextInstall);
                 setEventsPopupOpen(false);
                 setEventsPopupFocus(null);
@@ -1376,10 +1465,34 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
                 return;
               }
               setInstallDate(local);
+              setVcArriveAt((prev) => {
+                if (!prev) return defaultArriveLocal(pickupAt, local);
+                const prevDay = String(prev).slice(0, 10);
+                if (installDay && prevDay > installDay) return defaultArriveLocal(pickupAt, local);
+                return prev;
+              });
+            } else if (datePickTarget === 'arrive') {
+              const vcDay = pickupAt ? String(pickupAt).slice(0, 10) : null;
+              const arriveDay = local ? String(local).slice(0, 10) : null;
+              const installDay = installDate ? String(installDate).slice(0, 10) : null;
+              if (!vcDay) {
+                alert('Chọn ngày nhận hàng trước, rồi mới chọn VC tới nơi LĐ.');
+                return;
+              }
+              if (arriveDay && arriveDay < vcDay) {
+                alert('VC tới nơi LĐ phải bằng hoặc sau ngày nhận hàng.');
+                return;
+              }
+              if (installDay && arriveDay && arriveDay > installDay) {
+                alert('VC tới nơi LĐ phải bằng hoặc trước ngày lắp đặt.');
+                return;
+              }
+              setVcArriveAt(local);
             } else {
-              // Fallback: chỉ VC → tự gắn lắp cùng ngày 14:00
+              // Fallback: chỉ VC → tự gắn tới nơi 11:00 + lắp 14:00 cùng ngày
               setPickupAt(local);
               const day = String(local).slice(0, 10);
+              setVcArriveAt(`${day}T11:00`);
               setInstallDate(`${day}T14:00`);
             }
             setEventsPopupOpen(false);
@@ -1387,7 +1500,7 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
             setDatePickTarget(null);
             setRescheduleMode(false);
           }}
-          onPickDates={({ pickupAt: p, installAt: i }) => {
+          onPickDates={({ pickupAt: p, installAt: i, vcArriveAt: a }) => {
             if (p && i) {
               const vcDay = String(p).slice(0, 10);
               const installDay = String(i).slice(0, 10);
@@ -1396,6 +1509,7 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
                 return;
               }
             }
+            const nextArrive = a || defaultArriveLocal(p, i);
             if (rescheduleMode) {
               if (!p) {
                 alert('Chọn ngày nhận hàng VC.');
@@ -1408,10 +1522,12 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
               void (async () => {
                 const ok = await run('reschedule', () => onReschedule(comment.id, {
                   pickup_at: new Date(p).toISOString(),
+                  vc_arrive_at: nextArrive ? new Date(nextArrive).toISOString() : null,
                   install_date: new Date(nextInstall).toISOString(),
                 }));
                 if (!ok) return;
                 setPickupAt(p);
+                setVcArriveAt(nextArrive);
                 setInstallDate(nextInstall);
                 setEventsPopupOpen(false);
                 setEventsPopupFocus(null);
@@ -1427,8 +1543,12 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
                 const day = String(p).slice(0, 10);
                 setInstallDate(`${day}T14:00`);
               }
+              setVcArriveAt(nextArrive || defaultArriveLocal(p, i));
             } else if (i) {
               setInstallDate(i);
+              if (a) setVcArriveAt(a);
+            } else if (a) {
+              setVcArriveAt(a);
             }
             setEventsPopupOpen(false);
             setEventsPopupFocus(null);

@@ -30,7 +30,7 @@ const {
 const { promoteNextAssignmentAfterComplete } = require('../helpers/crmSequentialAssignment');
 const { emitCrmTaskChanged } = require('../helpers/crmTaskRealtime');
 const { responseCache, invalidateTags: rcInvalidateTags } = require('../middleware/responseCache');
-const { listSharedWorkspaceInboxTasks } = require('../helpers/sharedWorkspaceInbox');
+const { listSharedWorkspaceInboxTasks, listPrivateDealInboxTasks } = require('../helpers/sharedWorkspaceInbox');
 
 /** Mobile SX Work tab lắng nghe crm:task_changed — emit khi assignment gắn lead/deal. */
 async function emitAssignmentTaskChanged(req, assignment, action = 'updated') {
@@ -1391,6 +1391,19 @@ r.get('/shared-workspace-tasks', async (req, res) => {
   } catch (e) {
     console.error('[shared-workspace-tasks]', e);
     res.status(500).json({ error: e.message || 'Lỗi tải công việc chung' });
+  }
+});
+
+// GET /api/crm/assignments/private-deal-tasks?assignment_module=crm|production|logistics
+r.get('/private-deal-tasks', async (req, res) => {
+  try {
+    const result = await listPrivateDealInboxTasks(req, {
+      assignmentModule: req.query.assignment_module,
+    });
+    res.json(result);
+  } catch (e) {
+    console.error('[private-deal-tasks]', e);
+    res.status(500).json({ error: e.message || 'Lỗi tải không gian riêng' });
   }
 });
 

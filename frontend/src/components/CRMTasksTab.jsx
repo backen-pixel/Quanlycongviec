@@ -29,6 +29,7 @@ import {
   hasFilledFormData,
   summarizeFormAnswers,
   collectFormFileItems,
+  pickSurveyFillFormTask,
 } from '../lib/taskFillForm';
 import CrmArtifactShareModal from './CrmArtifactShareModal';
 import { shareModuleLabels } from '../lib/documentShareScope';
@@ -561,6 +562,10 @@ export default function CRMTasksTab({
   /** Tab VC/LĐ khi taskScope=logistics: shipping | install | all */
   initialVcAreaTab = null,
   onVcAreaTabChange = null,
+  /** LeadDetail: tăng token → mở phiếu khảo sát (show_fill_form) */
+  openFillFormToken = 0,
+  /** Báo meta phiếu KS lên header LeadDetail */
+  onSurveyFillMetaChange = null,
 }) {
   const { user } = useAuth();
   const canManageDeal = workshopProject
@@ -2337,6 +2342,38 @@ export default function CRMTasksTab({
   const [uploadProgress, setUploadProgress] = useState({}); // { taskId: { percent, name } }
   const [excelImportTaskId, setExcelImportTaskId] = useState(null); // taskId đang mở Excel import modal
   const [fillFormTaskId, setFillFormTaskId] = useState(null); // taskId đang mở popup điền form
+  const pendingOpenFillTokenRef = useRef(0);
+
+  // Đồng bộ meta phiếu KS lên header (khi đang ở tab Công việc)
+  useEffect(() => {
+    if (typeof onSurveyFillMetaChange !== 'function') return undefined;
+    const task = pickSurveyFillFormTask(tasks);
+    if (!task) {
+      onSurveyFillMetaChange(null);
+      return undefined;
+    }
+    const cfg = normalizeFormConfig(task.form_config);
+    onSurveyFillMetaChange({
+      taskId: task.id,
+      title: cfg.title || cfg.button_label || 'Phiếu khảo sát',
+      filled: hasFilledFormData(task.form_data),
+    });
+    return undefined;
+  }, [tasks, onSurveyFillMetaChange]);
+
+  // LeadDetail bấm Thêm → mở modal (đợi tasks load nếu vừa đổi tab)
+  useEffect(() => {
+    if (!openFillFormToken) return;
+    pendingOpenFillTokenRef.current = openFillFormToken;
+  }, [openFillFormToken]);
+
+  useEffect(() => {
+    if (!pendingOpenFillTokenRef.current) return;
+    const task = pickSurveyFillFormTask(tasks);
+    if (!task) return;
+    setFillFormTaskId(task.id);
+    pendingOpenFillTokenRef.current = 0;
+  }, [tasks, openFillFormToken]);
   const [importingExcel, setImportingExcel] = useState(null); // taskId đang import
   const [importToast, setImportToast] = useState(null); // { message, type }
   const [attLightboxIndex, setAttLightboxIndex] = useState(null);
@@ -3103,33 +3140,7 @@ export default function CRMTasksTab({
     );
   };
 
-  /** Icon mở form điền/sửa — hàng chip; nội dung phiếu xem khi bung NV. */
-  const renderFillFormChip = (task) => {
-    if (!task.show_fill_form) return null;
-    const filled = hasFilledFormData(task.form_data);
-    const cfg = normalizeFormConfig(task.form_config);
-    const title = cfg.title || cfg.button_label || 'Phiếu form';
-    const formData = normalizeFormData(task.form_data);
-    const tip = filled
-      ? [title, formData.submitted_at ? formatDateTime(formData.submitted_at) : '', 'Bấm để sửa · xem chi tiết khi mở nhiệm vụ'].filter(Boolean).join(' · ')
-      : (cfg.button_label || 'Điền form');
-
-    return (
-      <button
-        type="button"
-        onClick={(e) => { e.stopPropagation(); setFillFormTaskId(task.id); }}
-        className={`inline-flex items-center justify-center h-5 w-5 rounded-md border cursor-pointer ${
-          filled
-            ? 'text-orange-800 bg-orange-100 hover:bg-orange-200 border-orange-300'
-            : 'text-orange-600 bg-orange-50 hover:bg-orange-100 border-orange-200'
-        }`}
-        title={tip}
-        aria-label={tip}
-      >
-        <ClipboardPen className="h-3 w-3" />
-      </button>
-    );
-  };
+  /** Phiếu KS mở từ header LeadDetail — không hiện nút trên dòng NV. */
 
   const renderAttachmentActionButtons = (taskId, att, checklistId = null, { lightboxAtts = null } = {}) => {
     const canManage = canManageDeal;
@@ -3702,7 +3713,6 @@ export default function CRMTasksTab({
                   <FileSpreadsheet className="h-3 w-3" />
                 </button>
               )}
-              {renderFillFormChip(task)}
             </div>
           </div>
           <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium shrink-0 ${PRIORITY_COLORS[task.priority]}`}>{PRIORITY_LABELS[task.priority]}</span>

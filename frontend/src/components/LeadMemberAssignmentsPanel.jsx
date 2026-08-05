@@ -223,6 +223,10 @@ export default function LeadMemberAssignmentsPanel({
   const [memberIds, setMemberIds] = useState(() => new Set());
   const [taskSourceType, setTaskSourceType] = useState('customer_request');
   const [employeeErrorModule, setEmployeeErrorModule] = useState('crm');
+  /** Khối gắn phân công (CRM/SX/VC) — chọn trên form, không chỉ theo tab. */
+  const [assignModule, setAssignModule] = useState(
+    ['crm', 'production', 'logistics'].includes(initialModule) ? initialModule : 'crm',
+  );
   const [expandedNotesId, setExpandedNotesId] = useState(null);
   const [noteDrafts, setNoteDrafts] = useState({});
   const [savingNoteId, setSavingNoteId] = useState(null);
@@ -259,7 +263,11 @@ export default function LeadMemberAssignmentsPanel({
     }
     return {
       ...base,
-      total: new Set([...seen.crm, ...seen.production, ...seen.logistics]).size,
+      total: new Set(
+        (members || [])
+          .map((m) => String(m?.user_id || m?.user?.id || '').trim())
+          .filter(Boolean),
+      ).size,
     };
   }, [members, companyScope]);
 
@@ -269,10 +277,13 @@ export default function LeadMemberAssignmentsPanel({
     [members, moduleTab, companyScope],
   );
 
-  /** NV trong form tạo/sửa — luôn theo khối form (kể cả khi tab = Tất cả → CRM). */
-  const formModule = moduleTab === 'all' ? 'crm' : moduleTab;
+  /** Khối gắn phân công — ưu tiên chọn trên form; tab chỉ gợi ý mặc định. */
+  const formModule = ['crm', 'production', 'logistics'].includes(assignModule)
+    ? assignModule
+    : (moduleTab === 'all' ? 'crm' : moduleTab);
+  /** Form giao việc: lọc NV theo khối đã chọn (+ công ty khối nếu có). */
   const formMembers = useMemo(
-    () => members.filter((m) => memberMatchesAssignPool(m, formModule, companyScope)),
+    () => (members || []).filter((m) => m?.user_id && memberMatchesAssignPool(m, formModule, companyScope)),
     [members, formModule, companyScope],
   );
 
@@ -303,9 +314,10 @@ export default function LeadMemberAssignmentsPanel({
     setMemberIds(new Set());
     setTaskSourceType('customer_request');
     setEmployeeErrorModule('crm');
+    setAssignModule(moduleTab === 'all' ? 'crm' : moduleTab);
     setEditingId(null);
     setShowForm(false);
-  }, [columns]);
+  }, [columns, moduleTab]);
 
   const loadMembers = useCallback(async () => {
     if (!leadId) return;
@@ -374,7 +386,7 @@ export default function LeadMemberAssignmentsPanel({
     }
   }, [defaultModule, leadId]);
 
-  /** Khi đổi tab / scope cty — bỏ chọn NV không còn thuộc pool. */
+  /** Khi đổi danh sách thành viên deal — bỏ chọn NV đã rời deal. */
   useEffect(() => {
     if (!showForm || editingId) return;
     setMemberIds((prev) => {
@@ -394,23 +406,30 @@ export default function LeadMemberAssignmentsPanel({
     });
   };
 
+  const allFormMembersSelected = formMembers.length > 0
+    && formMembers.every((m) => memberIds.has(String(m.user_id)));
+
   const selectAllFilteredMembers = () => {
+    if (allFormMembersSelected) {
+      setMemberIds(new Set());
+      return;
+    }
     setMemberIds(new Set(formMembers.map((m) => String(m.user_id)).filter(Boolean)));
   };
 
   const openCreate = () => {
     resetForm();
+    setAssignModule(moduleTab === 'all' ? 'crm' : moduleTab);
     setShowForm(true);
-    const pool = formMembers;
-    if (pool.length) {
-      setMemberIds(new Set(pool.map((m) => String(m.user_id)).filter(Boolean)));
-    }
   };
 
   const openEdit = (a) => {
     const mod = String(a.assignment_module || '').toLowerCase();
     if (mod === 'crm' || mod === 'production' || mod === 'logistics') {
       setModuleTab(mod);
+      setAssignModule(mod);
+    } else {
+      setAssignModule(moduleTab === 'all' ? 'crm' : moduleTab);
     }
     setEditingId(a.id);
     setShowForm(true);
@@ -437,6 +456,9 @@ export default function LeadMemberAssignmentsPanel({
     if (!title.trim()) return alert('Nhập tiêu đề nhiệm vụ');
     if (!memberIds.size) return alert('Chọn ít nhất một thành viên');
     if (!taskSourceType) return alert('Chọn loại nhiệm vụ');
+    if (!['crm', 'production', 'logistics'].includes(String(assignModule || ''))) {
+      return alert('Chọn khối phân công: CRM / Xưởng / VC-LĐ');
+    }
     if (taskSourceType === 'employee_error' && !employeeErrorModule) {
       return alert('Chọn khối phát sinh lỗi: CRM / Xưởng / VC-LĐ');
     }
@@ -681,12 +703,10 @@ export default function LeadMemberAssignmentsPanel({
     );
   }
 
-  const createDisabled = !formMembers.length;
+  const createDisabled = !members.length;
 
   const activeModuleMeta = MODULE_TABS.find((t) => t.id === moduleTab) || MODULE_TABS[0];
-  const scopeHint = formCompanyId
-    ? ` · cùng công ty khối ${assignmentModuleLabel(formModule)}`
-    : '';
+  const scopeHint = ` · khối ${assignmentModuleLabel(formModule)}`;
 
   return (
     <div className="rounded-xl border border-slate-200/90 bg-white shadow-sm overflow-hidden">
@@ -722,7 +742,7 @@ export default function LeadMemberAssignmentsPanel({
             disabled={createDisabled}
             onClick={openCreate}
             title={createDisabled
-              ? `Chưa có NV khối ${assignmentModuleLabel(formModule)}${formCompanyId ? ' đúng công ty' : ''} trên deal — thêm ở tab Thành viên / giao bàn giao VC`
+              ? 'Chưa có thành viên tham gia deal — thêm ở tab Thành viên'
               : undefined}
             className="h-8 px-2.5 rounded-md text-[11px] font-semibold inline-flex items-center gap-1 bg-violet-600 text-white hover:bg-violet-700 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
           >
@@ -733,10 +753,9 @@ export default function LeadMemberAssignmentsPanel({
             )}
           </button>
         </nav>
-        {createDisabled && moduleTab !== 'all' && (
+        {createDisabled && (
           <p className="w-full text-[10px] text-amber-700 bg-amber-50 border border-amber-100 rounded-md px-2 py-1">
-            Nút Thêm đang khóa: chưa có thành viên khối {assignmentModuleLabel(formModule)}
-            {formCompanyId ? ' đúng công ty' : ''} trên deal. Thêm NV ở tab Thành viên (hoặc nhân sự VC trên dự án) rồi tải lại.
+            Nút Thêm đang khóa: chưa có thành viên tham gia deal. Thêm NV ở tab Thành viên rồi tải lại.
           </p>
         )}
       </header>
@@ -796,6 +815,7 @@ export default function LeadMemberAssignmentsPanel({
           </p>
           <p className="text-[10px] text-violet-700/80">
             Giao việc sẽ tự tạo nhiệm vụ và gán cho người được chọn (đồng bộ Giao việc ↔ Công việc).
+            Đổi «Khối phân công» để lọc danh sách nhân viên khối đó.
           </p>
           <input
             value={title}
@@ -825,8 +845,22 @@ export default function LeadMemberAssignmentsPanel({
                 ))}
               </select>
             </div>
+            <div>
+              <label className="block text-[10px] font-semibold text-slate-600 mb-0.5">
+                Khối phân công *
+              </label>
+              <select
+                value={assignModule}
+                onChange={(e) => setAssignModule(e.target.value)}
+                className="w-full h-8 px-2 border border-violet-200 rounded-lg text-xs bg-white"
+              >
+                {ERROR_MODULE_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </div>
             {taskSourceType === 'employee_error' && (
-              <div>
+              <div className="sm:col-span-2">
                 <label className="block text-[10px] font-semibold text-slate-600 mb-0.5">
                   Khối phát sinh lỗi *
                 </label>
@@ -840,7 +874,7 @@ export default function LeadMemberAssignmentsPanel({
                   ))}
                 </select>
                 <p className="text-[9px] text-amber-700 mt-0.5">
-                  Độc lập với khối người nhận ({assignmentModuleLabel(formModule)})
+                  Có thể khác khối phân công ({assignmentModuleLabel(formModule)})
                 </p>
               </div>
             )}
@@ -884,18 +918,20 @@ export default function LeadMemberAssignmentsPanel({
           </div>
           <div className="flex items-center justify-between gap-2">
             <span className="text-[10px] font-semibold text-slate-600">
-              Giao cho thành viên · {assignmentModuleLabel(formModule)}
-              {formCompanyId ? ' · lọc theo công ty' : ''}
+              Giao cho thành viên khối {assignmentModuleLabel(formModule)} ({formMembers.length})
+              {formCompanyId ? ' · đúng công ty khối' : ''}
             </span>
             <button
               type="button"
               onClick={selectAllFilteredMembers}
               className="text-[10px] text-violet-700 hover:underline cursor-pointer"
             >
-              Chọn tất cả ({formMembers.length})
+              {allFormMembersSelected
+                ? `Bỏ chọn tất cả (${formMembers.length})`
+                : `Chọn tất cả (${formMembers.length})`}
             </button>
           </div>
-          <div className="max-h-40 overflow-y-auto rounded border border-gray-100 divide-y">
+          <div className="max-h-56 overflow-y-auto rounded border border-gray-100 divide-y">
             {formMembers.map((m) => {
               const checked = memberIds.has(String(m.user_id));
               const mods = memberModulesFromUser(m.user || m);
@@ -931,7 +967,7 @@ export default function LeadMemberAssignmentsPanel({
             {!formMembers.length && (
               <p className="text-[11px] text-gray-400 text-center py-3">
                 Không có NV khối {assignmentModuleLabel(formModule)}
-                {formCompanyId ? ' đúng công ty' : ''}
+                {formCompanyId ? ' đúng công ty' : ''} trên deal
               </p>
             )}
           </div>

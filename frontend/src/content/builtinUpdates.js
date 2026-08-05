@@ -9,6 +9,105 @@ export const NEXTGO_COMPANY_ID = '87479a83-1145-43b7-b090-3e40812cb5a9';
 
 export const BUILTIN_UPDATES = [
   {
+    id: '2026-08-huong-dan-ban-giao-sx-crm-vc',
+    version: '2.5.0',
+    category: 'guide',
+    publishedAt: '2026-08-05T02:00:00.000Z',
+    title: '🚚 Hướng dẫn — Bàn giao SX → CRM → VC/LĐ (form bình luận)',
+    content: `## Mục đích
+
+Khi xưởng **hoàn thành sản xuất**, cần báo Sale CRM chọn công ty Vận chuyển/Lắp đặt và ngày giao–lắp. Hệ thống tạo **form bàn giao** trên tab Bình luận của deal; sau khi Sale chọn công ty thì đơn vào module **VC/LĐ**. Đủ 2 bên (Xưởng + VC/LĐ) xác nhận thì khóa lịch (3 sự kiện).
+
+Luồng: **Xưởng SX** gửi yêu cầu → **CRM Sale** điền form → **VC/LĐ** xác nhận & kéo Kanban.
+
+
+## Tổng quan các bên
+
+| Bên | Việc phải làm |
+| --- | --- |
+| **Xưởng SX** | Kéo thẻ vào cột badge **→VC** (VD HCB: «ĐƠN HÀNG ĐÃ CHUẨN BỊ XONG») hoặc bấm **Bàn giao VC** |
+| **Sale CRM** | Mở deal → tab **Bình luận** → chọn công ty VC/LĐ + ngày nhận hàng (+ lắp/địa chỉ) → **Chọn & bàn giao** |
+| **VC/LĐ** | Xác nhận trên thẻ bàn giao (CRM) → nhận thẻ trên Kanban VC → kéo theo pipeline |
+| **Xưởng (xác nhận)** | Người cấu hình xác nhận SX bấm trên thẻ; đủ 2 bên mới khóa lịch |
+
+
+## Bước 1 — Xưởng SX: gửi yêu cầu bàn giao
+
+1. Vào module **Xưởng SX** → Kanban, lọc xưởng **HCB** (+ phân loại **Tủ bếp** nếu cần).
+2. Tìm cột **ĐƠN HÀNG ĐÃ CHUẨN BỊ XONG** (badge **→VC**).
+3. Khi đơn sẵn sàng: **kéo thẻ** vào cột đó, hoặc bấm **Chuyển cột nhanh** / **Bàn giao VC**.
+4. Hệ thống đăng thẻ «Bàn giao Vận chuyển / Lắp đặt» lên deal CRM — **chưa** bàn giao thật sang module VC.
+
+![Kanban SX HCB — cột ĐƠN HÀNG ĐÃ CHUẨN BỊ XONG](/release-notes/vc-hd-01-sx-cot-ban-giao.png)
+
+Cách khác: trên thẻ bấm **Chuyển cột nhanh** → chọn **ĐƠN HÀNG ĐÃ CHUẨN BỊ XONG**.
+
+![Menu chuyển cột nhanh — chọn cột chuẩn bị xong](/release-notes/vc-hd-01b-sx-chuyen-cot-nhanh.png)
+
+
+## Bước 2 — CRM Sale: điền form bàn giao
+
+1. Mở **deal CRM** liên kết dự án (thông báo hoặc badge SX trên deal).
+2. Mở tab **💬 Bình luận**.
+3. Tìm thẻ cam **Bàn giao Vận chuyển / Lắp đặt**.
+4. Chỉ **Sale phụ trách deal** thấy form đầy đủ. Điền:
+   - **Công ty VC/LĐ** (bắt buộc)
+   - **Ngày nhận hàng** (bắt buộc) — mở lịch chọn ngày
+   - Ngày lắp đặt / địa chỉ (tuỳ chọn, thường tự điền)
+   - Ghi chú
+5. Bấm **Chọn & bàn giao** → bàn giao thật: dự án gắn công ty VC, badge VC trên deal, thẻ xuất hiện Kanban VC.
+
+![Form Sale CRM — chọn công ty & ngày](/release-notes/vc-hd-02b-crm-form-sale-dien.png)
+
+Nếu không phải Sale phụ trách, thẻ chỉ hiện thông báo (không có form chọn công ty):
+
+![Thẻ bàn giao — chỉ Sale phụ trách được chọn](/release-notes/vc-hd-02-crm-form-ban-giao.png)
+
+
+## Bước 3 — Xác nhận 2 bên (khóa lịch)
+
+Sau khi Sale chọn công ty:
+
+- **Xưởng**: thường **Đã xác nhận** (mặc định khi Sale tạo bàn giao).
+- **VC/LĐ**: người được cấu hình xác nhận bấm **xác nhận** trên thẻ.
+- Đủ 2 bên → hệ thống tạo **3 sự kiện lịch**: Giao hàng xưởng · VC tới nơi LĐ · Lắp đặt.
+- Deal CRM có badge **🚚 VẬN CHUYỂN** (VD: Chờ vận chuyển).
+
+![CRM — chờ VC/LĐ xác nhận](/release-notes/vc-hd-03-crm-cho-xac-nhan.png)
+
+
+## Bước 4 — Module VC/LĐ: nhận đơn & kéo pipeline
+
+1. Vào module **Vận chuyển** → chọn đúng **công ty VC/LĐ** đã bàn giao.
+2. Thẻ mới nằm cột tiếp nhận (VD: **Chờ xác nhận**), giữ mã dự án **TB-…**.
+3. NV VC/LĐ xác nhận trên form CRM (bước 3) rồi kéo thẻ theo pipeline: kiểm tra → vận chuyển → giao → lắp đặt.
+
+![Kanban VC — cột Chờ xác nhận](/release-notes/vc-hd-04-vc-kanban-cho-xac-nhan.png)
+
+
+## Checklist nhanh
+
+**Xưởng SX**
+- [ ] Đơn đã đủ hàng / đóng gói
+- [ ] Kéo vào cột **→VC** hoặc bấm **Bàn giao VC**
+- [ ] Không cần chọn công ty VC tại bước này
+
+**Sale CRM**
+- [ ] Mở deal → tab Bình luận → thẻ bàn giao
+- [ ] Chọn công ty VC/LĐ + ngày nhận hàng
+- [ ] Bấm **Chọn & bàn giao**
+- [ ] Theo dõi xác nhận VC/LĐ / sửa ngày nếu chưa khóa lịch
+
+**VC/LĐ**
+- [ ] Xác nhận trên thẻ bàn giao (CRM)
+- [ ] Kiểm tra thẻ trên Kanban VC đúng công ty
+- [ ] Kéo cột theo tiến độ giao–lắp
+
+**Admin**
+- [ ] Pipeline SX: bật cờ bàn giao VC trên đúng cột (\`is_handover_to_logistics\`)
+- [ ] Cấu hình người xác nhận giao hàng SX / VC trong cài đặt bàn giao`,
+  },
+  {
     id: '2026-07-huong-dan-gop-lead',
     version: '2.4.7',
     category: 'guide',

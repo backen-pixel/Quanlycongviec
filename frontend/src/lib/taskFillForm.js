@@ -415,6 +415,24 @@ export function hasFilledFormData(raw) {
   });
 }
 
+/** Chọn nhiệm vụ phiếu khảo sát (show_fill_form) ưu tiên form KS. */
+export function pickSurveyFillFormTask(tasks) {
+  const list = (Array.isArray(tasks) ? tasks : []).filter((t) => t && t.show_fill_form);
+  if (!list.length) return null;
+  const scored = list.map((t) => {
+    const cfg = normalizeFormConfig(t.form_config);
+    const title = `${cfg.title || ''} ${cfg.button_label || ''} ${t.title || ''}`;
+    const fields = cfg.fields || [];
+    let score = 0;
+    if (/khảo sát|khao sat|phiếu khảo/i.test(title)) score += 5;
+    if (fields.some((f) => f.id === 'survey_address' || f.id === 'cabinet_type' || f.id === 'site_photos')) score += 4;
+    if (hasFilledFormData(t.form_data)) score += 1;
+    return { t, score };
+  });
+  scored.sort((a, b) => b.score - a.score);
+  return scored[0]?.t || list[0];
+}
+
 function optionLabel(field, id) {
   const opt = (field.options || []).find((o) => String(o.id) === String(id));
   return opt?.label || String(id || '');

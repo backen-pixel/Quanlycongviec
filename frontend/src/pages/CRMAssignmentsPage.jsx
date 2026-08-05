@@ -9,8 +9,9 @@ import {
   Building2, X, CheckCircle2, Circle, Clock, Calendar, User as UserIcon, Trash2,
   Pencil, GripVertical, Flag, MoreVertical, MessageSquare, Send, Paperclip,
   FileText as FileIcon, Download, Upload, Repeat2, CalendarClock, ChevronDown,
-  ClipboardList,
+  ChevronUp, ClipboardList, ChevronRight, Lock, ArrowLeft, RefreshCw, Filter, RotateCcw,
 } from 'lucide-react';
+import ViewModeDropdownMenu from '../components/ViewModeDropdownMenu';
 import {
   RequirementFilesGallery,
   SubmitFilesCompact,
@@ -37,152 +38,6 @@ import {
 import CommentDisplayHiddenBanner, { useCommentShowOnScreenEnabled } from '../components/CommentDisplayHiddenBanner';
 import TaskFillFormModal from '../components/TaskFillFormModal';
 
-const SOURCE_TYPE_LABELS = {
-  customer_request: 'Yêu cầu KH',
-  employee_error: 'Lỗi NV',
-};
-
-/** Modal phải portal ra body — tránh bị sidebar (z-30) đè vì main nằm trong stacking context z-10. */
-const ASSIGNMENTS_MODAL_Z = 'z-[100]';
-function portalAssignmentsModal(node) {
-  if (typeof document === 'undefined') return null;
-  return createPortal(node, document.body);
-}
-
-function SharedWorkspaceInbox({ tasks, loading, assignmentModule, search, onSearchChange }) {
-  const q = String(search || '').trim().toLowerCase();
-  const filtered = useMemo(() => {
-    const list = Array.isArray(tasks) ? tasks : [];
-    if (!q) return list;
-    return list.filter((t) => {
-      const hay = [
-        t.title,
-        t.lead?.code,
-        t.lead?.title,
-        t.lead?.project_code,
-        t.lead?.project_name,
-        t.assignee?.full_name,
-        t.executor_company_name,
-        t.owner_company_name,
-        SOURCE_TYPE_LABELS[t.task_source_type],
-      ].filter(Boolean).join(' ').toLowerCase();
-      return hay.includes(q);
-    });
-  }, [tasks, q]);
-
-  const statusLabel = (s) => STATUS_MAP[s]?.label || s || '—';
-  const sourceLabel = (t) => {
-    if (!t?.task_source_type) return null;
-    const base = SOURCE_TYPE_LABELS[t.task_source_type] || t.task_source_type;
-    if (t.task_source_type === 'employee_error' && t.employee_error_module) {
-      return `${base} · ${t.employee_error_module}`;
-    }
-    return base;
-  };
-
-  return (
-    <div className="space-y-3">
-      <div className="relative max-w-md">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-        <input
-          value={search}
-          onChange={(e) => onSearchChange?.(e.target.value)}
-          placeholder="Tìm deal, nhiệm vụ, công ty…"
-          className="w-full h-9 pl-9 pr-3 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-blue-400"
-        />
-      </div>
-
-      {loading ? (
-        <div className="flex items-center justify-center py-16">
-          <div className="animate-spin h-8 w-8 border-3 border-blue-600 border-t-transparent rounded-full" />
-        </div>
-      ) : filtered.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 px-4 py-10 text-center text-sm text-gray-500">
-          Chưa có công việc chung phù hợp module này.
-        </div>
-      ) : (
-        <div className="space-y-2">
-          {filtered.map((t) => {
-            const StIcon = STATUS_MAP[t.status]?.icon || Circle;
-            const stColor = STATUS_MAP[t.status]?.color || 'text-gray-400';
-            const dealLabel = assignmentDealCardLabel(t.lead) || t.lead?.title || 'Deal';
-            const src = sourceLabel(t);
-            return (
-              <div
-                key={t.id}
-                className="rounded-xl border border-gray-200 bg-white p-3 sm:p-4 flex flex-col sm:flex-row sm:items-center gap-3 hover:border-blue-200 hover:shadow-sm transition"
-              >
-                <div className="flex-1 min-w-0 space-y-1">
-                  <div className="flex items-start gap-2">
-                    <StIcon className={`h-4 w-4 mt-0.5 shrink-0 ${stColor}`} />
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold text-gray-900 truncate">{t.title || 'Nhiệm vụ'}</p>
-                      <p className="text-xs text-gray-500 truncate">
-                        {dealLabel}
-                        {t.lead?.project_code ? ` · ${t.lead.project_code}` : ''}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-1.5 pl-6">
-                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-700">
-                      {statusLabel(t.status)}
-                    </span>
-                    {t.deadline && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-800 inline-flex items-center gap-0.5">
-                        <Calendar className="h-2.5 w-2.5" />
-                        {formatDate(t.deadline)}
-                      </span>
-                    )}
-                    {t.assignee?.full_name && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-800 inline-flex items-center gap-0.5">
-                        <UserIcon className="h-2.5 w-2.5" />
-                        {t.assignee.full_name}
-                      </span>
-                    )}
-                    {t.executor_company_name && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-teal-50 text-teal-800">
-                        TH: {t.executor_company_name}
-                      </span>
-                    )}
-                    {t.owner_company_name && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-50 text-slate-700">
-                        Chủ: {t.owner_company_name}
-                      </span>
-                    )}
-                    {src && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-violet-50 text-violet-800">
-                        {src}
-                      </span>
-                    )}
-                  </div>
-                </div>
-                {t.href ? (
-                  <Link
-                    to={t.href}
-                    className="shrink-0 h-8 px-3 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium inline-flex items-center justify-center"
-                  >
-                    Mở không gian chung
-                  </Link>
-                ) : (
-                  <span className="text-[11px] text-gray-400 shrink-0">Không có liên kết</span>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-      <p className="text-[11px] text-gray-400">
-        Module {normalizeAssignmentPageModule(assignmentModule)} — nhiệm vụ tạo từ tab Không gian chung trên deal.
-      </p>
-    </div>
-  );
-}
-
-/**
- * Trang "Giao việc CRM" — độc lập với module Công việc và CRM tasks gắn lead.
- * 4 chế độ xem: Kanban (tự quản lý cột), List, Planner (theo NV), Deadline.
- */
-
 const PRIORITY_OPTIONS = [
   { value: 'low',    label: 'Thấp',   color: 'bg-gray-100 text-gray-600' },
   { value: 'medium', label: 'TB',     color: 'bg-blue-100 text-blue-700' },
@@ -192,12 +47,783 @@ const PRIORITY_OPTIONS = [
 const PRIORITY_MAP = Object.fromEntries(PRIORITY_OPTIONS.map((p) => [p.value, p]));
 
 const STATUS_OPTIONS = [
-  { value: 'pending',     label: 'Chờ',       icon: Circle,        color: 'text-gray-400' },
+  { value: 'pending',     label: 'Chưa làm',  icon: Circle,        color: 'text-gray-400' },
   { value: 'in_progress', label: 'Đang làm',  icon: Clock,         color: 'text-blue-500' },
-  { value: 'completed',   label: 'Xong',      icon: CheckCircle2,  color: 'text-emerald-500' },
+  { value: 'completed',   label: 'Đã làm',    icon: CheckCircle2,  color: 'text-emerald-500' },
   { value: 'cancelled',   label: 'Huỷ',       icon: X,             color: 'text-gray-400' },
 ];
 const STATUS_MAP = Object.fromEntries(STATUS_OPTIONS.map((s) => [s.value, s]));
+
+const STATUS_BOARD_META = [
+  {
+    key: 'pending',
+    label: 'Chưa làm',
+    color: '#94A3B8',
+    headerBg: 'bg-slate-50',
+    border: 'border-slate-200',
+    statuses: ['pending', 'cancelled'],
+  },
+  {
+    key: 'in_progress',
+    label: 'Đang làm',
+    color: '#3B82F6',
+    headerBg: 'bg-blue-50',
+    border: 'border-blue-200',
+    statuses: ['in_progress'],
+  },
+  {
+    key: 'completed',
+    label: 'Đã làm',
+    color: '#10B981',
+    headerBg: 'bg-emerald-50',
+    border: 'border-emerald-200',
+    statuses: ['completed'],
+  },
+];
+
+const DEADLINE_BUCKET_META = [
+  { key: 'overdue',    label: '🔴 Quá hạn',     color: '#EF4444' },
+  { key: 'today',      label: '🟡 Hôm nay',     color: '#F59E0B' },
+  { key: 'thisWeek',   label: '🔵 Tuần này',    color: '#3B82F6' },
+  { key: 'later',      label: '⚪ Sau đó',      color: '#94A3B8' },
+  { key: 'noDeadline', label: '⏳ Chưa có hạn', color: '#6B7280' },
+];
+
+function normalizeTaskStatus(status) {
+  const s = String(status || 'pending').toLowerCase();
+  if (s === 'completed' || s === 'done') return 'completed';
+  if (s === 'in_progress' || s === 'doing') return 'in_progress';
+  if (s === 'cancelled' || s === 'canceled') return 'cancelled';
+  return 'pending';
+}
+
+function groupTasksByStatus(tasks) {
+  const g = { pending: [], in_progress: [], completed: [] };
+  (tasks || []).forEach((t) => {
+    const s = normalizeTaskStatus(t.status);
+    if (s === 'completed') g.completed.push(t);
+    else if (s === 'in_progress') g.in_progress.push(t);
+    else g.pending.push(t); // cancelled → chưa làm / chưa xong
+  });
+  return g;
+}
+
+function groupTasksByDeadline(tasks) {
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const weekEnd = new Date(today);
+  weekEnd.setDate(weekEnd.getDate() + 7);
+  const g = { overdue: [], today: [], thisWeek: [], later: [], noDeadline: [] };
+  (tasks || []).forEach((t) => {
+    if (normalizeTaskStatus(t.status) === 'completed') return;
+    if (!t.deadline) { g.noDeadline.push(t); return; }
+    const d = new Date(t.deadline);
+    if (Number.isNaN(d.getTime())) { g.noDeadline.push(t); return; }
+    if (d < today) g.overdue.push(t);
+    else if (d < new Date(today.getTime() + 86400000)) g.today.push(t);
+    else if (d < weekEnd) g.thisWeek.push(t);
+    else g.later.push(t);
+  });
+  return g;
+}
+
+function computeTaskStats(tasks) {
+  const list = Array.isArray(tasks) ? tasks : [];
+  const pending = list.filter((t) => {
+    const s = normalizeTaskStatus(t.status);
+    return s === 'pending' || s === 'cancelled';
+  }).length;
+  const inProgress = list.filter((t) => normalizeTaskStatus(t.status) === 'in_progress').length;
+  const completed = list.filter((t) => normalizeTaskStatus(t.status) === 'completed').length;
+  const overdue = list.filter((t) => (
+    t.deadline
+    && new Date(t.deadline) < new Date()
+    && normalizeTaskStatus(t.status) !== 'completed'
+  )).length;
+  return { total: list.length, pending, inProgress, completed, overdue };
+}
+
+/** Theme theo module — đồng bộ CRM (violet) / SX (indigo) / VC (orange). */
+const ASSIGN_VIEW_MODES = [
+  { id: 'kanban', icon: LayoutGrid, label: 'Kanban' },
+  { id: 'status', icon: ClipboardList, label: 'Trạng thái' },
+  { id: 'list', icon: ListIcon, label: 'List' },
+  { id: 'planner', icon: UsersIcon, label: 'Planner' },
+  { id: 'deadline', icon: AlertTriangle, label: 'Deadline' },
+];
+const ASSIGN_ALT_VIEW_MODES = ASSIGN_VIEW_MODES.filter((v) => v.id !== 'kanban');
+
+function getAssignmentTheme(assignmentModule) {
+  const mod = normalizeAssignmentPageModule(assignmentModule);
+  if (mod === 'production') {
+    return {
+      mod,
+      shortTitle: 'Giao việc Sản xuất',
+      viewTheme: 'indigo',
+      activeText: 'text-indigo-700',
+      headerGrad: 'from-indigo-50/70 via-white to-sky-50/60',
+      cta: 'bg-indigo-600 hover:bg-indigo-700 shadow-indigo-500/20',
+      kpiBorder: 'border-indigo-200/80 hover:border-indigo-300/80',
+      kpiLabel: 'text-indigo-700/80',
+      filterField: 'border-indigo-200 focus:ring-indigo-300/80 focus:border-indigo-400',
+      filterLabel: 'text-indigo-800/90',
+      filterActiveBtn: 'bg-indigo-100 text-indigo-700 border-indigo-300',
+      filterDot: 'bg-indigo-600',
+      filterTitle: 'text-indigo-950',
+      filterIcon: 'text-indigo-600',
+      filterClose: 'text-indigo-500 hover:text-indigo-800 hover:bg-indigo-200/60',
+      filterReset: 'border-indigo-300 text-indigo-700 hover:bg-indigo-100',
+      searchIdle: 'border-slate-200 bg-white hover:border-slate-300',
+      searchActive: 'border-indigo-300 bg-indigo-50/80',
+      searchFocus: 'border-indigo-400 bg-white ring-1 ring-indigo-200/60',
+      searchIcon: 'text-indigo-600',
+      searchIconIdle: 'text-slate-400',
+      panelRing: 'ring-1 ring-slate-900/[0.04]',
+      kpiToggle: 'border-indigo-100/70',
+    };
+  }
+  if (mod === 'logistics') {
+    return {
+      mod,
+      shortTitle: 'Giao việc Vận chuyển',
+      viewTheme: 'orange',
+      activeText: 'text-orange-700',
+      headerGrad: 'from-orange-50/70 via-white to-amber-50/50',
+      cta: 'bg-orange-600 hover:bg-orange-700 shadow-orange-500/20',
+      kpiBorder: 'border-orange-200/80 hover:border-orange-300/80',
+      kpiLabel: 'text-orange-700/80',
+      filterField: 'border-orange-200 focus:ring-orange-300/80 focus:border-orange-400',
+      filterLabel: 'text-orange-800/90',
+      filterActiveBtn: 'bg-orange-100 text-orange-700 border-orange-300',
+      filterDot: 'bg-orange-600',
+      filterTitle: 'text-orange-950',
+      filterIcon: 'text-orange-600',
+      filterClose: 'text-orange-500 hover:text-orange-800 hover:bg-orange-200/60',
+      filterReset: 'border-orange-300 text-orange-700 hover:bg-orange-100',
+      searchIdle: 'border-slate-200 bg-white hover:border-slate-300',
+      searchActive: 'border-orange-300 bg-orange-50/80',
+      searchFocus: 'border-orange-400 bg-white ring-1 ring-orange-200/60',
+      searchIcon: 'text-orange-600',
+      searchIconIdle: 'text-slate-400',
+      panelRing: 'ring-1 ring-slate-900/[0.04]',
+      kpiToggle: 'border-orange-100/70',
+    };
+  }
+  return {
+    mod: 'crm',
+    shortTitle: 'Giao việc CRM',
+    viewTheme: 'violet',
+    activeText: 'text-violet-700',
+    headerGrad: 'from-violet-50/70 via-white to-indigo-50/40',
+    cta: 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-500/20',
+    kpiBorder: 'border-violet-200/80 hover:border-violet-300/80',
+    kpiLabel: 'text-violet-700/80',
+    filterField: 'border-violet-200 focus:ring-violet-300/80 focus:border-violet-400',
+    filterLabel: 'text-violet-800/90',
+    filterActiveBtn: 'bg-violet-100 text-violet-700 border-violet-300',
+    filterDot: 'bg-violet-600',
+    filterTitle: 'text-violet-950',
+    filterIcon: 'text-violet-600',
+    filterClose: 'text-violet-500 hover:text-violet-800 hover:bg-violet-200/60',
+    filterReset: 'border-violet-300 text-violet-700 hover:bg-violet-100',
+    searchIdle: 'border-slate-200 bg-white hover:border-slate-300',
+    searchActive: 'border-violet-300 bg-violet-50/80',
+    searchFocus: 'border-violet-400 bg-white ring-1 ring-violet-200/60',
+    searchIcon: 'text-violet-600',
+    searchIconIdle: 'text-slate-400',
+    panelRing: '',
+    kpiToggle: 'border-violet-100/70',
+  };
+}
+
+function SegmentedControl({ value, onChange, options, activeText = 'text-violet-700' }) {
+  return (
+    <div className="inline-flex items-center gap-px p-0.5 rounded-md bg-slate-100 border border-slate-200/80 shrink-0">
+      {options.map((opt) => {
+        const active = value === opt.id;
+        const Icon = opt.icon;
+        return (
+          <button
+            key={opt.id}
+            type="button"
+            onClick={() => onChange(opt.id)}
+            className={`h-8 px-2 rounded-md text-xs font-medium inline-flex items-center gap-1 whitespace-nowrap cursor-pointer transition-colors ${
+              active
+                ? `bg-white ${activeText} shadow-sm`
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            {Icon ? <Icon className="h-3.5 w-3.5 shrink-0" /> : null}
+            {opt.label}
+            {opt.badge != null && opt.badge > 0 ? (
+              <span className={`tabular-nums ${active ? 'opacity-70' : 'text-slate-400'}`}>({opt.badge})</span>
+            ) : null}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+const PRIVATE_INBOX_VIEW_MODES = [
+  { id: 'deal', icon: Building2, label: 'Theo deal' },
+  { id: 'status', icon: ClipboardList, label: 'Trạng thái' },
+  { id: 'deadline', icon: AlertTriangle, label: 'Deadline' },
+];
+
+/** Primary + dropdown chế độ xem khác — giống CRM dashboard. */
+function ViewModeSwitcher({ view, onChange, theme, modes, primaryId, fallbackIcon: FallbackIcon = ListIcon }) {
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef(null);
+  const primary = modes.find((v) => v.id === primaryId) || modes[0];
+  const altModes = modes.filter((v) => v.id !== primary.id);
+  const activeAlt = altModes.find((v) => v.id === view);
+  const PrimaryIcon = primary?.icon || FallbackIcon;
+  const AltIcon = activeAlt?.icon || FallbackIcon;
+  const toolbarBtn = 'h-8 px-2 rounded-md text-xs font-medium inline-flex items-center gap-1 cursor-pointer transition-colors shrink-0';
+  return (
+    <div className="inline-flex items-center gap-px p-0.5 rounded-md bg-slate-100 border border-slate-200/80">
+      <button
+        type="button"
+        onClick={() => onChange(primary.id)}
+        className={`${toolbarBtn} ${
+          view === primary.id ? `bg-white ${theme.activeText} shadow-sm` : 'text-slate-600 hover:text-slate-900'
+        }`}
+      >
+        <PrimaryIcon className="h-3.5 w-3.5" />
+        <span className="hidden md:inline">{primary.label}</span>
+      </button>
+      <div className="relative">
+        <button
+          ref={triggerRef}
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className={`${toolbarBtn} ${
+            view !== primary.id ? `bg-white ${theme.activeText} shadow-sm` : 'text-slate-600 hover:text-slate-900'
+          }`}
+          title="Chế độ xem khác"
+          aria-expanded={open}
+        >
+          <AltIcon className="h-3.5 w-3.5" />
+          <span className="hidden md:inline max-w-[5rem] truncate">{activeAlt?.label || 'Thêm'}</span>
+          <ChevronDown className={`h-3 w-3 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
+        </button>
+        <ViewModeDropdownMenu
+          open={open}
+          onClose={() => setOpen(false)}
+          anchorRef={triggerRef}
+          modes={altModes}
+          activeId={view}
+          theme={theme.viewTheme || 'violet'}
+          onSelect={(id) => {
+            onChange(id);
+            setOpen(false);
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function AssignViewModeSwitcher({ view, onChange, theme }) {
+  return (
+    <ViewModeSwitcher
+      view={view}
+      onChange={onChange}
+      theme={theme}
+      modes={ASSIGN_VIEW_MODES}
+      primaryId="kanban"
+      fallbackIcon={ListIcon}
+    />
+  );
+}
+
+function AssignKpiCard({
+  icon: Icon, label, value, iconBg, iconColor, borderCls, labelCls, onClick, compact = false,
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={!onClick}
+      className={`group relative h-full min-w-0 flex flex-col items-center justify-center text-center rounded-lg border bg-white shadow-sm outline-none transition-all duration-200 ${borderCls} ${
+        onClick ? 'cursor-pointer hover:shadow-md' : 'cursor-default'
+      } ${compact ? 'gap-1 px-2 py-2' : 'gap-1.5 px-2 py-2.5'}`}
+    >
+      <div className={`shrink-0 rounded-md p-1 ${iconBg} ${iconColor}`}>
+        <Icon className="h-3.5 w-3.5" />
+      </div>
+      <div className="min-w-0 w-full flex flex-col items-center gap-0.5">
+        <p className={`font-semibold uppercase tracking-wide leading-tight max-w-full truncate px-0.5 text-[9px] ${labelCls}`}>
+          {label}
+        </p>
+        <p className="text-sm font-bold tabular-nums leading-snug text-slate-900">{value}</p>
+      </div>
+    </button>
+  );
+}
+
+function InboxStatsBar({ stats, theme }) {
+  const t = theme || getAssignmentTheme('crm');
+  const cards = [
+    { label: 'Chưa làm', value: stats.pending, icon: Circle, iconBg: 'bg-slate-100', iconColor: 'text-slate-600' },
+    { label: 'Đang làm', value: stats.inProgress, icon: Clock, iconBg: 'bg-blue-100', iconColor: 'text-blue-700' },
+    { label: 'Đã làm', value: stats.completed, icon: CheckCircle2, iconBg: 'bg-emerald-100', iconColor: 'text-emerald-700' },
+    { label: 'Quá hạn', value: stats.overdue, icon: AlertTriangle, iconBg: 'bg-red-100', iconColor: 'text-red-700' },
+  ];
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+      {cards.map((c) => (
+        <AssignKpiCard
+          key={c.label}
+          icon={c.icon}
+          label={c.label}
+          value={c.value}
+          iconBg={c.iconBg}
+          iconColor={c.iconColor}
+          borderCls={t.kpiBorder}
+          labelCls={t.kpiLabel}
+          compact
+        />
+      ))}
+    </div>
+  );
+}
+
+function InboxTaskRow({ task, actionLabel = 'Mở', extraMeta = null }) {
+  const StIcon = STATUS_MAP[normalizeTaskStatus(task.status)]?.icon || Circle;
+  const stColor = STATUS_MAP[normalizeTaskStatus(task.status)]?.color || 'text-slate-400';
+  const dealLabel = assignmentDealCardLabel(task.lead) || task.lead?.title || null;
+  const statusLabel = STATUS_MAP[normalizeTaskStatus(task.status)]?.label || '—';
+  return (
+    <div className="rounded-lg border border-slate-200/90 bg-white px-3 py-2.5 flex flex-col sm:flex-row sm:items-center gap-2 hover:border-violet-200 hover:shadow-sm transition">
+      <div className="flex-1 min-w-0 space-y-1">
+        <div className="flex items-start gap-2">
+          <StIcon className={`h-4 w-4 mt-0.5 shrink-0 ${stColor}`} />
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-slate-900 truncate">{task.title || 'Nhiệm vụ'}</p>
+            {dealLabel ? (
+              <p className="text-xs text-slate-500 truncate">
+                {dealLabel}
+                {task.lead?.project_code ? ` · ${task.lead.project_code}` : ''}
+              </p>
+            ) : null}
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5 pl-6">
+          <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-slate-100 text-slate-700 font-medium">{statusLabel}</span>
+          {task.deadline && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-800 inline-flex items-center gap-0.5 font-medium">
+              <Calendar className="h-2.5 w-2.5" />
+              {formatDate(task.deadline)}
+            </span>
+          )}
+          {task.assignee?.full_name && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-indigo-50 text-indigo-800 inline-flex items-center gap-0.5 font-medium">
+              <UserIcon className="h-2.5 w-2.5" />
+              {task.assignee.full_name}
+            </span>
+          )}
+          {extraMeta}
+        </div>
+      </div>
+      {task.href ? (
+        <Link
+          to={task.href}
+          className="shrink-0 h-7 px-2.5 rounded-md border border-slate-200 bg-white hover:bg-slate-50 text-slate-800 text-[11px] font-semibold inline-flex items-center justify-center shadow-sm"
+        >
+          {actionLabel}
+        </Link>
+      ) : null}
+    </div>
+  );
+}
+
+function InboxStatusBoard({ tasks, actionLabel }) {
+  const grouped = useMemo(() => groupTasksByStatus(tasks), [tasks]);
+  return (
+    <div className="flex gap-3 overflow-x-auto pb-2" style={{ minHeight: 280 }}>
+      {STATUS_BOARD_META.map((col) => {
+        const list = grouped[col.key] || [];
+        return (
+          <div
+            key={col.key}
+            className="w-72 shrink-0 rounded-xl border border-slate-200/90 bg-white flex flex-col shadow-sm"
+          >
+            <div
+              className={`px-3 py-2.5 flex items-center gap-2 border-b border-slate-100 ${col.headerBg} rounded-t-xl`}
+              style={{ borderTopColor: col.color, borderTopWidth: 3 }}
+            >
+              <span className="text-sm font-semibold flex-1" style={{ color: col.color }}>{col.label}</span>
+              <span className="text-[11px] font-semibold text-gray-500 tabular-nums">{list.length}</span>
+            </div>
+            <div className="flex-1 p-2 space-y-2 min-h-[100px] max-h-[60vh] overflow-y-auto">
+              {list.map((t) => (
+                <InboxTaskRow key={t.id} task={t} actionLabel={actionLabel} />
+              ))}
+              {!list.length && (
+                <p className="text-[11px] text-gray-400 text-center py-8">Không có nhiệm vụ</p>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function InboxDeadlineBoard({ tasks, actionLabel }) {
+  const grouped = useMemo(() => groupTasksByDeadline(tasks), [tasks]);
+  return (
+    <div className="flex gap-3 overflow-x-auto pb-2" style={{ minHeight: 280 }}>
+      {DEADLINE_BUCKET_META.map((col) => {
+        const list = grouped[col.key] || [];
+        return (
+          <div
+            key={col.key}
+            className="w-72 shrink-0 rounded-xl border border-slate-200/90 bg-white flex flex-col shadow-sm"
+          >
+            <div
+              className="px-3 py-2.5 flex items-center gap-2 border-b border-slate-100 bg-slate-50/80 rounded-t-xl"
+              style={{ borderTopColor: col.color, borderTopWidth: 3 }}
+            >
+              <span className="text-sm font-semibold flex-1 text-slate-800">{col.label}</span>
+              <span className="text-[11px] font-semibold text-slate-500 tabular-nums">{list.length}</span>
+            </div>
+            <div className="flex-1 p-2 space-y-2 min-h-[100px] max-h-[60vh] overflow-y-auto">
+              {list.map((t) => (
+                <InboxTaskRow key={t.id} task={t} actionLabel={actionLabel} />
+              ))}
+              {!list.length && (
+                <p className="text-[11px] text-slate-400 text-center py-8">Không có nhiệm vụ</p>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Modal phải portal ra body — tránh bị sidebar (z-30) đè vì main nằm trong stacking context z-10. */
+const ASSIGNMENTS_MODAL_Z = 'z-[100]';
+function portalAssignmentsModal(node) {
+  if (typeof document === 'undefined') return null;
+  return createPortal(node, document.body);
+}
+
+/** Tab «Không gian riêng» — nhiệm vụ deal được giao cho tôi, nhóm theo deal / trạng thái / deadline. */
+function PrivateDealInbox({ groups, loading, assignmentModule, search, onSearchChange, theme }) {
+  const t = theme || getAssignmentTheme(assignmentModule);
+  const [inboxView, setInboxView] = useState('deal');
+  const [collapsed, setCollapsed] = useState({});
+  const [searchFocused, setSearchFocused] = useState(false);
+  const [kpiPanelOpen, setKpiPanelOpen] = useState(true);
+  const [showAdvFilter, setShowAdvFilter] = useState(false);
+  const [filterStatus, setFilterStatus] = useState('');
+  const [filterPriority, setFilterPriority] = useState('');
+  const q = String(search || '').trim().toLowerCase();
+  const hasSelectFilters = !!(filterStatus || filterPriority);
+  const activeFilterCount = [filterStatus, filterPriority].filter(Boolean).length;
+  const searchBoxCls = searchFocused
+    ? t.searchFocus
+    : (q || hasSelectFilters)
+      ? t.searchActive
+      : t.searchIdle;
+  const spinBorder = t.mod === 'logistics' ? 'border-orange-600' : t.mod === 'production' ? 'border-indigo-600' : 'border-violet-600';
+  const filterFieldCls = `h-8 w-full min-w-0 px-2.5 bg-white border rounded-md text-xs font-medium text-slate-800 shadow-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 transition-shadow ${t.filterField}`;
+  const filterSelectCls = `${filterFieldCls} cursor-pointer appearance-none pr-7`;
+  const filterLabelCls = `text-[10px] font-semibold uppercase tracking-wide mb-1 block ${t.filterLabel}`;
+
+  useEffect(() => {
+    if (!showAdvFilter) return undefined;
+    const onKey = (e) => {
+      if (e.key === 'Escape') setShowAdvFilter(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [showAdvFilter]);
+
+  const clearFilters = () => {
+    setFilterStatus('');
+    setFilterPriority('');
+    onSearchChange?.('');
+  };
+
+  const filteredGroups = useMemo(() => {
+    const list = Array.isArray(groups) ? groups : [];
+    const matchTask = (task) => {
+      if (filterStatus && normalizeTaskStatus(task.status) !== filterStatus) return false;
+      if (filterPriority && String(task.priority || '') !== filterPriority) return false;
+      return true;
+    };
+    return list
+      .map((g) => {
+        const dealHay = [
+          g.lead?.code,
+          g.lead?.title,
+          g.lead?.project_code,
+          g.lead?.project_name,
+        ].filter(Boolean).join(' ').toLowerCase();
+        const dealMatch = !q || dealHay.includes(q);
+        const tasks = (g.tasks || []).filter((task) => {
+          if (!matchTask(task)) return false;
+          if (!q || dealMatch) return true;
+          const hay = [task.title, task.assignee?.full_name, task.stage_slug]
+            .filter(Boolean).join(' ').toLowerCase();
+          return hay.includes(q);
+        });
+        if (!tasks.length) return null;
+        return { ...g, tasks };
+      })
+      .filter(Boolean);
+  }, [groups, q, filterStatus, filterPriority]);
+
+  const flatTasks = useMemo(
+    () => filteredGroups.flatMap((g) => g.tasks || []),
+    [filteredGroups],
+  );
+  const stats = useMemo(() => computeTaskStats(flatTasks), [flatTasks]);
+
+  return (
+    <div className="space-y-0 rounded-2xl border border-slate-200/90 bg-white shadow-sm overflow-hidden">
+      <div className="flex flex-wrap items-center gap-1.5 px-2.5 py-1.5 sm:px-3 border-b border-slate-200/50">
+        <div className={`group/search flex items-center shrink-0 flex-1 min-w-0 max-w-none sm:max-w-[22rem] lg:max-w-[28rem] rounded-md border transition-colors ${searchBoxCls}`}>
+          <div className="relative flex-1 min-w-0 flex items-center pl-7 pr-1">
+            <Search
+              className={`absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 pointer-events-none ${
+                searchFocused || q ? t.searchIcon : t.searchIconIdle
+              }`}
+            />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => onSearchChange?.(e.target.value)}
+              onFocus={() => setSearchFocused(true)}
+              onBlur={() => setTimeout(() => setSearchFocused(false), 120)}
+              placeholder="Tìm deal hoặc nhiệm vụ…"
+              className={`flex-1 min-w-[3.5rem] h-8 bg-transparent border-0 text-xs font-medium text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-0 ${q ? 'pr-7' : ''}`}
+            />
+            {q ? (
+              <button
+                type="button"
+                onClick={() => onSearchChange?.('')}
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 p-0.5 rounded text-slate-400 hover:text-slate-700 cursor-pointer"
+                aria-label="Xóa tìm kiếm"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            ) : null}
+          </div>
+          <div className="shrink-0 pr-1">
+            <button
+              type="button"
+              onClick={() => setShowAdvFilter((v) => !v)}
+              aria-expanded={showAdvFilter}
+              className={`relative h-6 w-6 flex items-center justify-center rounded border transition-colors cursor-pointer ${
+                showAdvFilter || hasSelectFilters
+                  ? t.filterActiveBtn
+                  : 'bg-slate-50 text-slate-500 border-slate-200 hover:bg-slate-100 hover:text-slate-700'
+              }`}
+              title={showAdvFilter ? 'Thu gọn bộ lọc' : 'Bộ lọc'}
+              aria-label="Bộ lọc"
+            >
+              <Filter className="h-3 w-3" />
+              {activeFilterCount > 0 && (
+                <span className={`absolute -top-0.5 -right-0.5 h-1.5 w-1.5 rounded-full ring-1 ring-white ${t.filterDot}`} />
+              )}
+            </button>
+          </div>
+        </div>
+        <div className="flex items-center gap-0.5 shrink-0 ml-auto pl-1 border-l border-slate-200/80">
+          <ViewModeSwitcher
+            view={inboxView}
+            onChange={setInboxView}
+            theme={t}
+            modes={PRIVATE_INBOX_VIEW_MODES}
+            primaryId="deal"
+            fallbackIcon={Building2}
+          />
+        </div>
+      </div>
+
+      {showAdvFilter && portalAssignmentsModal(
+        <div
+          className="ui-solid-white fixed z-[75] max-sm:left-4 max-sm:right-4 max-sm:bottom-4 max-sm:top-auto w-[min(100vw-2rem,400px)] max-h-[min(calc(100vh-5rem),520px)] flex flex-col rounded-xl border border-gray-200 bg-white shadow-2xl overflow-hidden animate-fade-in"
+          style={{ top: '4.5rem', right: '1rem' }}
+          role="region"
+          aria-label="Bộ lọc không gian riêng"
+        >
+          <div className="shrink-0 px-3 pt-2.5 pb-2 border-b border-gray-200 bg-white">
+            <div className="flex items-center gap-2">
+              <Filter className={`h-4 w-4 shrink-0 ${t.filterIcon}`} aria-hidden />
+              <p className={`text-sm font-bold tracking-tight flex-1 min-w-0 ${t.filterTitle}`}>
+                Bộ lọc
+                {activeFilterCount > 0 ? (
+                  <span className={`ml-1.5 text-[11px] font-medium ${t.activeText}`}>
+                    · {activeFilterCount} đang bật
+                  </span>
+                ) : null}
+              </p>
+              <button
+                type="button"
+                onClick={() => setShowAdvFilter(false)}
+                className={`h-7 w-7 rounded-md cursor-pointer flex items-center justify-center shrink-0 transition-colors ${t.filterClose}`}
+                aria-label="Thu gọn bộ lọc"
+                title="Thu gọn"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
+          <div className="flex-1 min-h-0 overflow-y-auto px-3 py-1 bg-white [scrollbar-width:thin]">
+            <div className="py-2.5 grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div className="min-w-0">
+                <label className={filterLabelCls}>Trạng thái</label>
+                <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className={filterSelectCls}>
+                  <option value="">Tất cả trạng thái</option>
+                  {STATUS_OPTIONS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+                </select>
+              </div>
+              <div className="min-w-0">
+                <label className={filterLabelCls}>Ưu tiên</label>
+                <select value={filterPriority} onChange={(e) => setFilterPriority(e.target.value)} className={filterSelectCls}>
+                  <option value="">Tất cả ưu tiên</option>
+                  {PRIORITY_OPTIONS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+                </select>
+              </div>
+            </div>
+          </div>
+          <div className="shrink-0 border-t border-gray-200 bg-white px-3 py-2">
+            <button
+              type="button"
+              onClick={clearFilters}
+              className={`h-8 px-3 rounded-lg border bg-white text-xs font-semibold cursor-pointer transition-colors inline-flex items-center gap-1 shadow-sm ${t.filterReset}`}
+            >
+              <RotateCcw className="h-3 w-3" />
+              Đặt lại
+            </button>
+          </div>
+        </div>,
+      )}
+
+      {!loading && flatTasks.length > 0 && (
+        <>
+          <button
+            type="button"
+            onClick={() => setKpiPanelOpen((v) => !v)}
+            className={`w-full flex items-center gap-2 px-3 py-1.5 sm:px-4 text-left border-b ${t.kpiToggle} bg-white/40 hover:bg-slate-50/80 cursor-pointer transition-colors`}
+          >
+            <span className="text-[11px] font-semibold text-slate-700">
+              KPI
+              <span className={`ml-1 font-medium ${t.activeText}`}>· Không gian riêng</span>
+            </span>
+            {!kpiPanelOpen && (
+              <span className="text-[10px] text-slate-500 tabular-nums truncate">
+                {stats.total} tổng · {stats.pending} chưa · {stats.inProgress} đang · {stats.completed} xong
+                {stats.overdue > 0 ? ` · ${stats.overdue} quá hạn` : ''}
+              </span>
+            )}
+            <span className="shrink-0 ml-auto flex items-center gap-0.5 text-[10px] font-medium text-slate-500">
+              <span className="hidden sm:inline">{kpiPanelOpen ? 'Thu gọn' : 'Mở rộng'}</span>
+              {kpiPanelOpen
+                ? <ChevronUp className="h-3.5 w-3.5" aria-hidden />
+                : <ChevronDown className="h-3.5 w-3.5" aria-hidden />}
+            </span>
+          </button>
+          {kpiPanelOpen && (
+            <div className={`border-b ${t.kpiToggle} bg-white/40 px-2 sm:px-3 pb-2 pt-2`}>
+              <InboxStatsBar stats={stats} theme={t} />
+            </div>
+          )}
+        </>
+      )}
+
+      <div className="p-2.5 sm:p-3 space-y-3">
+      {loading ? (
+        <div className="flex items-center justify-center py-16">
+          <div className={`animate-spin h-8 w-8 border-3 border-t-transparent rounded-full ${spinBorder}`} />
+        </div>
+      ) : filteredGroups.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/80 px-4 py-10 text-center text-sm text-slate-500">
+          Chưa có nhiệm vụ deal được giao cho bạn trong module này.
+        </div>
+      ) : inboxView === 'status' ? (
+        <InboxStatusBoard tasks={flatTasks} actionLabel="Mở nhiệm vụ" />
+      ) : inboxView === 'deadline' ? (
+        <InboxDeadlineBoard tasks={flatTasks} actionLabel="Mở nhiệm vụ" />
+      ) : (
+        <div className="space-y-2">
+          {filteredGroups.map((g) => {
+            const dealLabel = assignmentDealCardLabel(g.lead) || g.lead?.title || 'Deal';
+            const isCollapsed = !!collapsed[g.lead_id];
+            const gStats = computeTaskStats(g.tasks || []);
+            const allDone = gStats.completed === gStats.total && gStats.total > 0;
+            return (
+              <div key={g.lead_id} className="rounded-xl border border-slate-200/90 overflow-hidden bg-white shadow-sm">
+                <div className="flex items-center gap-1 bg-slate-50/80 border-b border-slate-200/60">
+                  <button
+                    type="button"
+                    onClick={() => setCollapsed((prev) => ({ ...prev, [g.lead_id]: !prev[g.lead_id] }))}
+                    className="flex-1 flex items-center gap-2 px-3 py-2.5 text-left hover:bg-white/80 cursor-pointer min-w-0"
+                  >
+                    {isCollapsed
+                      ? <ChevronRight className="h-4 w-4 text-slate-400 shrink-0" />
+                      : <ChevronDown className="h-4 w-4 text-slate-400 shrink-0" />}
+                    <Lock className="h-3.5 w-3.5 text-slate-500 shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-semibold text-slate-900 truncate">{dealLabel}</p>
+                      {g.lead?.project_code ? (
+                        <p className="text-[11px] text-slate-500 truncate">{g.lead.project_code}</p>
+                      ) : null}
+                    </div>
+                    <div className="hidden sm:flex items-center gap-1 shrink-0 text-[10px]">
+                      <span className="px-1.5 py-0.5 rounded-md bg-slate-100 text-slate-700 font-medium">{gStats.pending} chưa</span>
+                      <span className="px-1.5 py-0.5 rounded-md bg-blue-50 text-blue-700 font-medium">{gStats.inProgress} đang</span>
+                      <span className="px-1.5 py-0.5 rounded-md bg-emerald-50 text-emerald-700 font-medium">{gStats.completed} xong</span>
+                      {gStats.overdue > 0 && (
+                        <span className="px-1.5 py-0.5 rounded-md bg-red-50 text-red-700 font-medium">{gStats.overdue} quá hạn</span>
+                      )}
+                    </div>
+                    {allDone ? (
+                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-emerald-100 text-emerald-700 shrink-0">
+                        Xong hết
+                      </span>
+                    ) : null}
+                  </button>
+                  {g.href ? (
+                    <Link
+                      to={g.href}
+                      className={`shrink-0 mr-2 h-7 px-2.5 rounded-md text-white text-[11px] font-semibold inline-flex items-center shadow-sm ${t.cta}`}
+                    >
+                      Mở deal
+                    </Link>
+                  ) : null}
+                </div>
+                {!isCollapsed && (
+                  <div className="p-2.5 space-y-2 bg-white">
+                    {(g.tasks || []).map((task) => (
+                      <InboxTaskRow key={task.id} task={task} actionLabel="Mở nhiệm vụ" />
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+      <p className="text-[11px] text-slate-400">
+        {stats.total} nhiệm vụ · {filteredGroups.length} deal — tab Công việc trên deal
+      </p>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Trang "Giao việc CRM" — độc lập với module Công việc và CRM tasks gắn lead.
+ * Chế độ xem: Kanban, Trạng thái, List, Planner, Deadline.
+ */
 
 const COLUMN_COLORS = ['#3B82F6', '#8B5CF6', '#F59E0B', '#10B981', '#EF4444', '#EC4899', '#6B7280', '#0EA5E9'];
 
@@ -213,19 +839,12 @@ const DEFAULT_LS_VIEW_SCOPE = 'crm_assignments_view_scope';
 const AssignmentsPageContext = createContext({
   apiBase: '/crm/assignments',
   assignmentModule: 'crm',
+  theme: getAssignmentTheme('crm'),
 });
 
 function useAssignmentsPageContext() {
   return useContext(AssignmentsPageContext);
 }
-
-const DEADLINE_BUCKET_META = [
-  { key: 'overdue',    label: '🔴 Quá hạn',     color: '#EF4444' },
-  { key: 'today',      label: '🟡 Hôm nay',     color: '#F59E0B' },
-  { key: 'thisWeek',   label: '🔵 Tuần này',    color: '#3B82F6' },
-  { key: 'later',      label: '⚪ Sau đó',      color: '#94A3B8' },
-  { key: 'noDeadline', label: '⏳ Chưa có hạn', color: '#6B7280' },
-];
 
 function isAssignmentCreator(task, userId) {
   return String(task?.created_by_id || '') === String(userId || '');
@@ -247,7 +866,7 @@ function canMoveAssignment(task, userId) {
 const PIPELINE_STATUS_STAGES = [
   { value: 'pending', label: 'Chưa làm', icon: Circle, activeClass: 'bg-gray-100 border-gray-300 text-gray-700' },
   { value: 'in_progress', label: 'Đang làm', icon: Clock, activeClass: 'bg-blue-100 border-blue-400 text-blue-800' },
-  { value: 'completed', label: 'Hoàn thành', icon: CheckCircle2, activeClass: 'bg-emerald-100 border-emerald-400 text-emerald-800' },
+  { value: 'completed', label: 'Đã làm', icon: CheckCircle2, activeClass: 'bg-emerald-100 border-emerald-400 text-emerald-800' },
 ];
 
 function AssignmentStatusStages({ status, canEdit, onChange, compact = false }) {
@@ -381,7 +1000,7 @@ function LeadAssignmentLink({ assignment, className = '', variant = 'chip' }) {
 
 export default function CRMAssignmentsPage({
   apiBase = '/crm/assignments',
-  pageTitle = '📋 Giao việc CRM',
+  pageTitle = 'Giao việc CRM',
   companiesModule = 'crm',
   assignmentModule = 'crm',
   storagePrefix = 'crm_assignments',
@@ -398,13 +1017,14 @@ export default function CRMAssignmentsPage({
   const canMoveTask = useCallback((t) => canMoveAssignment(t, uid), [uid]);
 
   const [pageTab, setPageTab] = useState(() => (
-    String(searchParams.get('pageTab') || '').toLowerCase() === 'shared' ? 'shared' : 'assignments'
+    String(searchParams.get('pageTab') || '').toLowerCase() === 'private' ? 'private' : 'assignments'
   ));
   const [view, setView] = useState('kanban');
   const [columns, setColumns] = useState([]);
   const [items, setItems] = useState([]);
-  const [sharedTasks, setSharedTasks] = useState([]);
-  const [sharedLoading, setSharedLoading] = useState(false);
+  const [privateGroups, setPrivateGroups] = useState([]);
+  const [privateLoading, setPrivateLoading] = useState(false);
+  const [privateTaskCount, setPrivateTaskCount] = useState(0);
   const [users, setUsers] = useState([]);
   const [companies, setCompanies] = useState([]);
   const [departments, setDepartments] = useState([]);
@@ -438,11 +1058,24 @@ export default function CRMAssignmentsPage({
   const [personalDeadlineMap, setPersonalDeadlineMap] = useState({});
   const [schedules, setSchedules] = useState([]);
   const [showSchedulesPanel, setShowSchedulesPanel] = useState(false);
+  const [showAdvFilter, setShowAdvFilter] = useState(false);
+  const [kpiPanelOpen, setKpiPanelOpen] = useState(true);
+  const [searchFocused, setSearchFocused] = useState(false);
+  const filterPanelRef = useRef(null);
 
   useEffect(() => {
     const t = setTimeout(() => setSearchDebounced(search.trim()), 300);
     return () => clearTimeout(t);
   }, [search]);
+
+  useEffect(() => {
+    if (!showAdvFilter) return undefined;
+    const onKey = (e) => {
+      if (e.key === 'Escape') setShowAdvFilter(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [showAdvFilter]);
 
   // NV thường: chỉ xem việc giao cho mình
   useEffect(() => {
@@ -591,39 +1224,48 @@ export default function CRMAssignmentsPage({
 
   useEffect(() => { void load({ soft: true }); }, [load]);
 
-  const loadSharedTasks = useCallback(async () => {
-    setSharedLoading(true);
+  const loadPrivateTasks = useCallback(async () => {
+    setPrivateLoading(true);
     try {
-      const { data } = await api.get(`${apiBase}/shared-workspace-tasks`, {
+      const { data } = await api.get(`${apiBase}/private-deal-tasks`, {
         params: { assignment_module: assignmentModule },
       });
-      setSharedTasks(Array.isArray(data?.tasks) ? data.tasks : []);
+      const groups = Array.isArray(data?.groups) ? data.groups : [];
+      setPrivateGroups(groups);
+      setPrivateTaskCount(
+        Array.isArray(data?.tasks)
+          ? data.tasks.length
+          : groups.reduce((n, g) => n + (g.tasks?.length || 0), 0),
+      );
     } catch (e) {
       console.error(e);
-      setSharedTasks([]);
+      setPrivateGroups([]);
+      setPrivateTaskCount(0);
     }
-    setSharedLoading(false);
+    setPrivateLoading(false);
   }, [apiBase, assignmentModule]);
 
   useEffect(() => {
-    if (pageTab !== 'shared') return undefined;
-    void loadSharedTasks();
+    if (pageTab !== 'private') return undefined;
+    void loadPrivateTasks();
     return undefined;
-  }, [pageTab, loadSharedTasks]);
+  }, [pageTab, loadPrivateTasks]);
 
   const setPageTabAndUrl = useCallback((tab) => {
-    const next = tab === 'shared' ? 'shared' : 'assignments';
+    const next = tab === 'private' ? 'private' : 'assignments';
     setPageTab(next);
     setSearchParams((prev) => {
       const p = new URLSearchParams(prev);
-      if (next === 'shared') p.set('pageTab', 'shared');
+      if (next === 'private') p.set('pageTab', 'private');
       else p.delete('pageTab');
       return p;
     }, { replace: true });
   }, [setSearchParams]);
 
   useEffect(() => {
-    const t = String(searchParams.get('pageTab') || '').toLowerCase() === 'shared' ? 'shared' : 'assignments';
+    const raw = String(searchParams.get('pageTab') || '').toLowerCase();
+    // pageTab=shared cũ → về Giao việc
+    const t = raw === 'private' ? 'private' : 'assignments';
     setPageTab((prev) => (prev === t ? prev : t));
   }, [searchParams]);
 
@@ -675,13 +1317,9 @@ export default function CRMAssignmentsPage({
   }, [pendingOpenId, items, isAdmin, searchParams, setSearchParams]);
 
   // ─── Stats ──
-  const stats = useMemo(() => {
-    const total = items.length;
-    const completed = items.filter((t) => t.status === 'completed').length;
-    const inProgress = items.filter((t) => t.status === 'in_progress').length;
-    const overdue = items.filter((t) => t.deadline && new Date(t.deadline) < new Date() && t.status !== 'completed').length;
-    return { total, completed, inProgress, overdue };
-  }, [items]);
+  const stats = useMemo(() => computeTaskStats(items), [items]);
+
+  const itemsByStatus = useMemo(() => groupTasksByStatus(items), [items]);
 
   // ─── Group items by column (kanban) ──
   const itemsByColumn = useMemo(() => {
@@ -950,8 +1588,16 @@ export default function CRMAssignmentsPage({
   };
   const allowDrop = (e) => e.preventDefault();
 
-  const hasFilters = search || filterPriority || filterStatus
-    || (isAdmin && (filterCompanyId || filterDepartmentId || filterAssignee));
+  const hasSelectFilters = !!(filterPriority || filterStatus
+    || (isAdmin && (filterCompanyId || filterDepartmentId || filterAssignee)));
+  const hasFilters = !!(search || hasSelectFilters);
+  const activeFilterCount = [
+    filterStatus,
+    filterPriority,
+    isAdmin ? filterCompanyId : '',
+    isAdmin ? filterDepartmentId : '',
+    isAdmin ? filterAssignee : '',
+  ].filter(Boolean).length;
   const clearFilters = () => {
     setSearch(''); setFilterPriority(''); setFilterStatus('');
     if (isAdmin) {
@@ -963,120 +1609,336 @@ export default function CRMAssignmentsPage({
     }
   };
 
+  const theme = useMemo(() => getAssignmentTheme(assignmentModule), [assignmentModule]);
+  const filterFieldCls = `h-8 w-full min-w-0 px-2.5 bg-white border rounded-md text-xs font-medium text-slate-800 shadow-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 transition-shadow disabled:opacity-50 ${theme.filterField}`;
+  const filterSelectCls = `${filterFieldCls} cursor-pointer appearance-none pr-7`;
+  const filterLabelCls = `text-[10px] font-semibold uppercase tracking-wide mb-1 block ${theme.filterLabel}`;
+  const displayTitle = theme.shortTitle || String(pageTitle || '').replace(/^[^\wÀ-ỹ]+/, '').trim() || 'Giao việc';
+  const spinBorder = theme.mod === 'logistics' ? 'border-orange-600' : theme.mod === 'production' ? 'border-indigo-600' : 'border-violet-600';
+  const searchBoxCls = searchFocused
+    ? theme.searchFocus
+    : (search.trim() || hasSelectFilters)
+      ? theme.searchActive
+      : theme.searchIdle;
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="animate-spin h-8 w-8 border-3 border-blue-600 border-t-transparent rounded-full" />
+        <div className={`animate-spin h-8 w-8 border-3 border-t-transparent rounded-full ${spinBorder}`} />
       </div>
     );
   }
 
-  const moduleHint = assignmentModule === 'production'
-    ? 'Module riêng — chỉ nhiệm vụ Sản xuất (sx_*). Không lẫn với Giao việc CRM / VC.'
-    : assignmentModule === 'logistics'
-      ? 'Module riêng — chỉ nhiệm vụ Vận chuyển (vc_*). Không lẫn với Giao việc CRM / SX.'
-      : 'Module riêng — chỉ nhiệm vụ CRM / deal. Không lẫn với Giao việc SX / VC.';
-
   return (
-    <AssignmentsPageContext.Provider value={{ apiBase, assignmentModule }}>
-    <div className="space-y-5">
-      {/* HEADER */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-2xl font-bold" style={{ color: '#000000' }}>{pageTitle}</h1>
-          <div className="mt-2 inline-flex items-center gap-1 p-0.5 rounded-lg bg-gray-100 border border-gray-200">
-            <button
-              type="button"
-              onClick={() => setPageTabAndUrl('assignments')}
-              className={`h-8 px-3 rounded-md text-xs font-semibold cursor-pointer ${
-                pageTab === 'assignments' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-600 hover:text-gray-900'
-              }`}
-            >
-              Giao việc
-            </button>
-            <button
-              type="button"
-              onClick={() => setPageTabAndUrl('shared')}
-              className={`h-8 px-3 rounded-md text-xs font-semibold cursor-pointer ${
-                pageTab === 'shared' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-600 hover:text-gray-900'
-              }`}
-            >
-              Công việc chung
-              {sharedTasks.length > 0 && pageTab === 'shared' ? (
-                <span className="ml-1 text-[10px] text-gray-500">({sharedTasks.length})</span>
+    <AssignmentsPageContext.Provider value={{ apiBase, assignmentModule, theme }}>
+    <div className="space-y-3">
+      {/* Panel điều khiển — đồng bộ dashboard CRM / SX / VC */}
+      <div className={`ui-solid-white rounded-2xl border border-slate-200/90 bg-white shadow-md overflow-hidden ${theme.panelRing}`}>
+        <div className={`border-b border-slate-200/80 bg-gradient-to-r ${theme.headerGrad}`}>
+          <div className="flex flex-col gap-2 px-3 py-2.5 sm:px-4 lg:flex-row lg:items-center lg:justify-between lg:gap-3">
+            <div className="flex flex-wrap items-center gap-2 min-w-0">
+              {dashboardLink ? (
+                <Link
+                  to={dashboardLink}
+                  className="h-8 w-8 inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 hover:text-slate-800 hover:border-slate-300 shadow-sm shrink-0"
+                  title="Về dashboard"
+                >
+                  <ArrowLeft className="h-3.5 w-3.5" />
+                </Link>
               ) : null}
-            </button>
-          </div>
-          {pageTab === 'assignments' ? (
-            <>
-              <p className="text-sm text-gray-500 mt-1.5">
-                {stats.total} nhiệm vụ — {stats.completed} hoàn thành — {stats.inProgress} đang làm
-              </p>
-              <p className="text-xs text-gray-500 mt-0.5">{moduleHint}</p>
-              <p className="text-[11px] text-gray-400 mt-0.5">
-                Kanban: cột dùng chung. Planner / Deadline: cột cá nhân (chỉ bạn thấy) — bấm <strong>Thêm cột</strong>.
-              </p>
-            </>
-          ) : (
-            <p className="text-sm text-gray-500 mt-1.5">
-              Nhiệm vụ không gian chung từ deal (ủy thác chéo công ty) — {sharedTasks.length} mục
-            </p>
-          )}
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          {pageTab === 'assignments' && (
-            <>
-              <div className="flex items-center gap-1">
-                {[
-                  { id: 'kanban',   icon: LayoutGrid,     label: 'Kanban' },
-                  { id: 'list',     icon: ListIcon,       label: 'List' },
-                  { id: 'planner',  icon: UsersIcon,      label: 'Planner' },
-                  { id: 'deadline', icon: AlertTriangle,  label: 'Deadline' },
-                ].map((v) => (
-                  <button
-                    key={v.id}
-                    onClick={() => setView(v.id)}
-                    className={`h-8 px-3 rounded-lg text-xs font-medium flex items-center gap-1.5 cursor-pointer ${
-                      view === v.id ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                    }`}
-                  >
-                    <v.icon className="h-3.5 w-3.5" />{v.label}
-                  </button>
-                ))}
+              <div className="min-w-0">
+                <h1 className="text-sm font-bold text-slate-900 leading-tight truncate">{displayTitle}</h1>
+                <p className="text-[10px] text-slate-500 leading-tight">
+                  {pageTab === 'assignments'
+                    ? `${stats.total} việc · ${stats.pending} chưa · ${stats.inProgress} đang · ${stats.completed} xong`
+                    : `${privateTaskCount} nhiệm vụ deal · ${privateGroups.length} deal`}
+                </p>
               </div>
-              <button
-                onClick={() => { setEditingItem(null); setShowItemModal(true); }}
-                className="h-8 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium flex items-center gap-1 cursor-pointer"
-              >
-                <Plus className="h-4 w-4" />Giao việc
-              </button>
-              {schedules.length > 0 && (
+              <SegmentedControl
+                value={pageTab}
+                onChange={setPageTabAndUrl}
+                activeText={theme.activeText}
+                options={[
+                  { id: 'assignments', label: 'Giao việc' },
+                  { id: 'private', label: 'Không gian riêng', badge: privateTaskCount },
+                ]}
+              />
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 justify-end">
+              {pageTab === 'assignments' && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => { setEditingItem(null); setShowItemModal(true); }}
+                    className={`h-8 px-3 rounded-md text-white text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer shadow-sm ${theme.cta}`}
+                  >
+                    <Plus className="h-3.5 w-3.5" strokeWidth={2.5} />Giao việc
+                  </button>
+                  {schedules.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setShowSchedulesPanel((v) => !v)}
+                      className="h-8 px-2.5 rounded-md bg-white border border-violet-200 text-violet-800 text-xs font-medium inline-flex items-center gap-1 cursor-pointer hover:bg-violet-50"
+                    >
+                      <CalendarClock className="h-3.5 w-3.5" />
+                      Lịch ({schedules.length})
+                      <ChevronDown className={`h-3.5 w-3.5 transition ${showSchedulesPanel ? 'rotate-180' : ''}`} />
+                    </button>
+                  )}
+                </>
+              )}
+              {pageTab === 'private' && (
                 <button
                   type="button"
-                  onClick={() => setShowSchedulesPanel((v) => !v)}
-                  className="h-8 px-3 rounded-lg bg-violet-50 hover:bg-violet-100 text-violet-800 text-xs font-medium flex items-center gap-1 cursor-pointer border border-violet-200"
+                  onClick={() => void loadPrivateTasks()}
+                  className="h-8 px-3 rounded-md bg-white border border-slate-200 text-slate-700 text-xs font-medium inline-flex items-center gap-1.5 cursor-pointer hover:bg-slate-50 shadow-sm"
                 >
-                  <CalendarClock className="h-3.5 w-3.5" />
-                  Lịch ({schedules.length})
-                  <ChevronDown className={`h-3.5 w-3.5 transition ${showSchedulesPanel ? 'rotate-180' : ''}`} />
+                  <RefreshCw className="h-3.5 w-3.5" />Làm mới
                 </button>
               )}
-            </>
-          )}
-          {pageTab === 'shared' && (
+            </div>
+          </div>
+        </div>
+
+        {pageTab === 'assignments' && (
+          <>
+            {/* Hàng tìm kiếm + chế độ xem — giống dashboard CRM */}
+            <div className="flex flex-wrap items-center gap-1.5 px-2.5 py-1.5 sm:px-3 border-b border-slate-200/50">
+              <div
+                className={`group/search flex items-center shrink-0 flex-1 min-w-0 max-w-none sm:max-w-[22rem] lg:max-w-[28rem] rounded-md border transition-colors ${searchBoxCls}`}
+              >
+                <div className="relative flex-1 min-w-0 flex items-center pl-7 pr-1">
+                  <Search
+                    className={`absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 pointer-events-none ${
+                      searchFocused || search.trim() ? theme.searchIcon : theme.searchIconIdle
+                    }`}
+                  />
+                  <input
+                    type="text"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    onFocus={() => setSearchFocused(true)}
+                    onBlur={() => setTimeout(() => setSearchFocused(false), 120)}
+                    placeholder={assignmentModule === 'production'
+                      ? 'Tìm mã TB, deal, tên khách, SĐT…'
+                      : assignmentModule === 'logistics'
+                        ? 'Tìm mã TB, deal, nhiệm vụ VC…'
+                        : 'Tìm nhiệm vụ, mã deal, tên khách, SĐT…'}
+                    className={`flex-1 min-w-[3.5rem] h-8 bg-transparent border-0 text-xs font-medium text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-0 ${search ? 'pr-7' : ''}`}
+                  />
+                  {search ? (
+                    <button
+                      type="button"
+                      onClick={() => setSearch('')}
+                      className="absolute right-1.5 top-1/2 -translate-y-1/2 p-0.5 rounded text-slate-400 hover:text-slate-700 cursor-pointer"
+                      aria-label="Xóa tìm kiếm"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  ) : null}
+                  {refreshing && (
+                    <span className={`absolute right-7 top-1/2 -translate-y-1/2 h-3 w-3 border-2 border-t-transparent rounded-full animate-spin ${spinBorder}`} />
+                  )}
+                </div>
+                <div className="shrink-0 pr-1">
+                  <button
+                    type="button"
+                    onClick={() => setShowAdvFilter((v) => !v)}
+                    aria-expanded={showAdvFilter}
+                    className={`relative h-6 w-6 flex items-center justify-center rounded border transition-colors cursor-pointer ${
+                      showAdvFilter || hasSelectFilters
+                        ? theme.filterActiveBtn
+                        : 'bg-slate-50 text-slate-500 border-slate-200 hover:bg-slate-100 hover:text-slate-700'
+                    }`}
+                    title={showAdvFilter ? 'Thu gọn bộ lọc' : 'Bộ lọc'}
+                    aria-label="Bộ lọc"
+                  >
+                    <Filter className="h-3 w-3" />
+                    {activeFilterCount > 0 && (
+                      <span className={`absolute -top-0.5 -right-0.5 h-1.5 w-1.5 rounded-full ring-1 ring-white ${theme.filterDot}`} />
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-0.5 shrink-0 ml-auto pl-1 border-l border-slate-200/80">
+                <AssignViewModeSwitcher view={view} onChange={setView} theme={theme} />
+              </div>
+            </div>
+
+            {/* KPI thu gọn / mở rộng — giống dashboard */}
             <button
               type="button"
-              onClick={() => void loadSharedTasks()}
-              className="h-8 px-3 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-medium cursor-pointer"
+              onClick={() => setKpiPanelOpen((v) => !v)}
+              className={`w-full flex items-center gap-2 px-3 py-1.5 sm:px-4 text-left border-b ${theme.kpiToggle} bg-white/40 hover:bg-slate-50/80 cursor-pointer transition-colors`}
             >
-              Làm mới
+              <span className="text-[11px] font-semibold text-slate-700">
+                KPI
+                <span className={`ml-1 font-medium ${theme.activeText}`}>· {displayTitle}</span>
+              </span>
+              {!kpiPanelOpen && (
+                <span className="text-[10px] text-slate-500 tabular-nums truncate">
+                  {stats.total} tổng · {stats.pending} chưa · {stats.inProgress} đang · {stats.completed} xong
+                  {stats.overdue > 0 ? ` · ${stats.overdue} quá hạn` : ''}
+                </span>
+              )}
+              <span className="shrink-0 ml-auto flex items-center gap-0.5 text-[10px] font-medium text-slate-500">
+                <span className="hidden sm:inline">{kpiPanelOpen ? 'Thu gọn' : 'Mở rộng'}</span>
+                {kpiPanelOpen
+                  ? <ChevronUp className="h-3.5 w-3.5" aria-hidden />
+                  : <ChevronDown className="h-3.5 w-3.5" aria-hidden />}
+              </span>
             </button>
-          )}
-        </div>
+            {kpiPanelOpen && (
+              <div className={`border-b ${theme.kpiToggle} bg-white/40 px-2 sm:px-3 pb-2 pt-2 grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-2`}>
+                {[
+                  { label: 'Tổng', value: stats.total, icon: ListIcon, iconBg: 'bg-slate-100', iconColor: 'text-slate-600', viewId: null },
+                  { label: 'Chưa làm', value: stats.pending, icon: Circle, iconBg: 'bg-slate-100', iconColor: 'text-slate-600', viewId: 'status' },
+                  { label: 'Đang làm', value: stats.inProgress, icon: Clock, iconBg: 'bg-blue-100', iconColor: 'text-blue-700', viewId: 'status' },
+                  { label: 'Đã làm', value: stats.completed, icon: CheckCircle2, iconBg: 'bg-emerald-100', iconColor: 'text-emerald-700', viewId: 'status' },
+                  { label: 'Quá hạn', value: stats.overdue, icon: AlertTriangle, iconBg: 'bg-red-100', iconColor: 'text-red-700', viewId: 'deadline' },
+                ].map((kpi) => (
+                  <AssignKpiCard
+                    key={kpi.label}
+                    icon={kpi.icon}
+                    label={kpi.label}
+                    value={kpi.value}
+                    iconBg={kpi.iconBg}
+                    iconColor={kpi.iconColor}
+                    borderCls={theme.kpiBorder}
+                    labelCls={theme.kpiLabel}
+                    onClick={kpi.viewId ? () => setView(kpi.viewId) : undefined}
+                    compact
+                  />
+                ))}
+              </div>
+            )}
+          </>
+        )}
       </div>
 
+      {/* Bộ lọc — panel nổi giống CRM dashboard */}
+      {showAdvFilter && pageTab === 'assignments' && portalAssignmentsModal(
+        <div
+          ref={filterPanelRef}
+          className="ui-solid-white fixed z-[75] max-sm:left-4 max-sm:right-4 max-sm:bottom-4 max-sm:top-auto w-[min(100vw-2rem,400px)] max-h-[min(calc(100vh-5rem),620px)] flex flex-col rounded-xl border border-gray-200 bg-white shadow-2xl overflow-hidden animate-fade-in"
+          style={{ top: '4.5rem', right: '1rem' }}
+          role="region"
+          aria-label="Bộ lọc giao việc"
+        >
+          <div className="shrink-0 px-3 pt-2.5 pb-2 border-b border-gray-200 bg-white">
+            <div className="flex items-center gap-2">
+              <Filter className={`h-4 w-4 shrink-0 ${theme.filterIcon}`} aria-hidden />
+              <p className={`text-sm font-bold tracking-tight flex-1 min-w-0 ${theme.filterTitle}`}>
+                Bộ lọc
+                {activeFilterCount > 0 ? (
+                  <span className={`ml-1.5 text-[11px] font-medium ${theme.activeText}`}>
+                    · {activeFilterCount} đang bật
+                  </span>
+                ) : null}
+              </p>
+              <button
+                type="button"
+                onClick={() => setShowAdvFilter(false)}
+                className={`h-7 w-7 rounded-md cursor-pointer flex items-center justify-center shrink-0 transition-colors ${theme.filterClose}`}
+                aria-label="Thu gọn bộ lọc"
+                title="Thu gọn"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
+
+          <div className="flex-1 min-h-0 overflow-y-auto px-3 py-1 bg-white [scrollbar-width:thin]">
+            <div className="py-2.5 space-y-2.5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {isAdmin && (
+                  <>
+                    <div className="min-w-0">
+                      <label className={filterLabelCls}>Công ty</label>
+                      <select
+                        value={filterCompanyId}
+                        onChange={(e) => setFilterCompanyId(e.target.value)}
+                        className={filterSelectCls}
+                      >
+                        <option value="">Tất cả công ty</option>
+                        {companies.map((co) => (
+                          <option key={co.id} value={co.id}>{co.short_name || co.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="min-w-0">
+                      <label className={filterLabelCls}>Phòng ban</label>
+                      <select
+                        value={filterDepartmentId}
+                        onChange={(e) => setFilterDepartmentId(e.target.value)}
+                        disabled={!filterCompanyId}
+                        className={filterSelectCls}
+                        title={filterCompanyId ? 'Lọc theo phòng ban' : 'Chọn công ty trước'}
+                      >
+                        <option value="">{filterCompanyId ? 'Tất cả phòng ban' : 'Chọn công ty trước'}</option>
+                        {departments.map((d) => (
+                          <option key={d.id} value={d.id}>{d.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </>
+                )}
+                <div className="min-w-0 sm:col-span-2">
+                  <label className={filterLabelCls}>Nhân viên</label>
+                  {isAdmin ? (
+                    <select
+                      value={filterAssignee}
+                      onChange={(e) => setFilterAssignee(e.target.value)}
+                      className={filterSelectCls}
+                    >
+                      <option value="">Tất cả nhân viên</option>
+                      {filteredAssigneeOptions.map((u) => (
+                        <option key={u.id} value={u.id}>{u.full_name}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <div className={`${filterFieldCls} flex items-center bg-slate-50 text-slate-700 cursor-default`}>
+                      {user?.full_name || 'Việc của tôi'}
+                    </div>
+                  )}
+                </div>
+                <div className="min-w-0">
+                  <label className={filterLabelCls}>Trạng thái</label>
+                  <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className={filterSelectCls}>
+                    <option value="">Tất cả trạng thái</option>
+                    {STATUS_OPTIONS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+                  </select>
+                </div>
+                <div className="min-w-0">
+                  <label className={filterLabelCls}>Ưu tiên</label>
+                  <select value={filterPriority} onChange={(e) => setFilterPriority(e.target.value)} className={filterSelectCls}>
+                    <option value="">Tất cả ưu tiên</option>
+                    {PRIORITY_OPTIONS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+                  </select>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="shrink-0 border-t border-gray-200 bg-white px-3 py-2">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <button
+                type="button"
+                onClick={clearFilters}
+                className={`h-8 px-3 rounded-lg border bg-white text-xs font-semibold cursor-pointer transition-colors inline-flex items-center gap-1 shadow-sm ${theme.filterReset}`}
+              >
+                <RotateCcw className="h-3 w-3" />
+                Đặt lại
+              </button>
+            </div>
+          </div>
+        </div>,
+      )}
+
       {showSchedulesPanel && schedules.length > 0 && (
-        <div className="rounded-xl border border-violet-200 bg-violet-50/60 p-3 space-y-2">
+        <div className="ui-solid-white rounded-xl border border-violet-200/80 bg-violet-50/40 p-3 space-y-2 shadow-sm">
           <p className="text-xs font-semibold text-violet-900 flex items-center gap-1">
             <CalendarClock className="h-3.5 w-3.5" /> Lịch giao việc đang chờ
           </p>
@@ -1084,8 +1946,8 @@ export default function CRMAssignmentsPage({
             {schedules.map((s) => (
               <div key={s.id} className="flex items-center justify-between gap-2 bg-white rounded-lg border border-violet-100 px-3 py-2 text-xs">
                 <div className="min-w-0">
-                  <p className="font-medium text-gray-900 truncate">{s.title}</p>
-                  <p className="text-gray-500">
+                  <p className="font-medium text-slate-900 truncate">{s.title}</p>
+                  <p className="text-slate-500">
                     {new Date(s.next_run_at).toLocaleString('vi-VN')}
                     {s.recurrence_type && (
                       <span className="ml-1 text-violet-600">
@@ -1109,168 +1971,19 @@ export default function CRMAssignmentsPage({
         </div>
       )}
 
-      {pageTab === 'shared' && (
-        <SharedWorkspaceInbox
-          tasks={sharedTasks}
-          loading={sharedLoading}
+      {pageTab === 'private' && (
+        <PrivateDealInbox
+          groups={privateGroups}
+          loading={privateLoading}
           assignmentModule={assignmentModule}
           search={search}
           onSearchChange={setSearch}
+          theme={theme}
         />
       )}
 
       {pageTab === 'assignments' && (
       <>
-      {/* KPI */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        {[
-          {
-            label: 'Tổng',
-            value: stats.total,
-            icon: ListIcon,
-            gradient: 'from-slate-100 via-gray-50 to-white',
-            border: 'border-slate-300',
-            iconBg: 'bg-slate-200',
-            iconColor: 'text-slate-700',
-            accent: 'bg-slate-500',
-          },
-          {
-            label: 'Đang làm',
-            value: stats.inProgress,
-            icon: Clock,
-            gradient: 'from-blue-100 via-sky-50 to-white',
-            border: 'border-blue-300',
-            iconBg: 'bg-blue-200',
-            iconColor: 'text-blue-700',
-            accent: 'bg-blue-500',
-          },
-          {
-            label: 'Quá hạn',
-            value: stats.overdue,
-            icon: AlertTriangle,
-            gradient: 'from-red-100 via-rose-50 to-white',
-            border: 'border-red-300',
-            iconBg: 'bg-red-200',
-            iconColor: 'text-red-700',
-            accent: 'bg-red-500',
-          },
-          {
-            label: 'Hoàn thành',
-            value: stats.completed,
-            icon: CheckCircle2,
-            gradient: 'from-emerald-100 via-green-50 to-white',
-            border: 'border-emerald-300',
-            iconBg: 'bg-emerald-200',
-            iconColor: 'text-emerald-700',
-            accent: 'bg-emerald-500',
-          },
-        ].map((kpi) => {
-          const Icon = kpi.icon;
-          return (
-            <div
-              key={kpi.label}
-              className={`relative overflow-hidden bg-gradient-to-br ${kpi.gradient} border ${kpi.border} rounded-2xl p-4 shadow-md hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200`}
-            >
-              <div className={`absolute top-0 left-0 right-0 h-1 ${kpi.accent}`} />
-              <div className="flex items-center gap-3">
-                <div className={`h-11 w-11 rounded-xl ${kpi.iconBg} flex items-center justify-center shrink-0 shadow-sm`}>
-                  <Icon className={`h-5 w-5 ${kpi.iconColor}`} />
-                </div>
-                <div className="flex-1 min-w-0 text-left">
-                  <p className="text-3xl font-extrabold leading-none tracking-tight" style={{ color: '#000000' }}>
-                    {kpi.value}
-                  </p>
-                  <p className="text-xs font-semibold mt-1 uppercase tracking-wide" style={{ color: '#000000' }}>
-                    {kpi.label}
-                  </p>
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* FILTERS */}
-      <div className="flex items-center gap-2 flex-wrap">
-        <div className="relative flex-1 min-w-[200px]">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder={assignmentModule === 'production'
-              ? 'Tìm mã TB, deal, tên khách, SĐT, nhiệm vụ…'
-              : 'Tìm nhiệm vụ, mã deal, tên khách, SĐT…'}
-            className="w-full h-9 pl-9 pr-3 rounded-lg border text-sm outline-none focus:border-blue-500"
-          />
-          {refreshing && (
-            <span className="absolute right-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-          )}
-        </div>
-        {isAdmin && (
-          <>
-            <select
-              value={filterCompanyId}
-              onChange={(e) => setFilterCompanyId(e.target.value)}
-              className="h-9 min-w-[160px] px-3 rounded-lg border text-xs bg-white"
-              title="Lọc theo công ty"
-            >
-              <option value="">Tất cả công ty</option>
-              {companies.map((co) => (
-                <option key={co.id} value={co.id}>{co.short_name || co.name}</option>
-              ))}
-            </select>
-            <select
-              value={filterDepartmentId}
-              onChange={(e) => setFilterDepartmentId(e.target.value)}
-              disabled={!filterCompanyId}
-              className="h-9 min-w-[160px] px-3 rounded-lg border text-xs bg-white disabled:opacity-50 disabled:cursor-not-allowed"
-              title={filterCompanyId ? 'Lọc theo phòng ban' : 'Chọn công ty trước'}
-            >
-              <option value="">{filterCompanyId ? 'Tất cả phòng ban' : 'Phòng ban'}</option>
-              {departments.map((d) => (
-                <option key={d.id} value={d.id}>{d.name}</option>
-              ))}
-            </select>
-          </>
-        )}
-        <select
-          value={filterAssignee}
-          onChange={(e) => setFilterAssignee(e.target.value)}
-          disabled={!isAdmin}
-          className="h-9 min-w-[160px] max-w-[220px] px-3 rounded-lg border text-xs bg-white disabled:opacity-80"
-          title={isAdmin ? 'Lọc theo người nhận' : 'Chỉ hiển thị việc giao cho bạn'}
-        >
-          {isAdmin ? (
-            <>
-              <option value="">Tất cả nhân viên</option>
-              {filteredAssigneeOptions.map((u) => (
-                <option key={u.id} value={u.id}>{u.full_name}</option>
-              ))}
-            </>
-          ) : (
-            <option value={uid}>{user?.full_name || 'Việc của tôi'}</option>
-          )}
-        </select>
-        <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="h-9 px-3 rounded-lg border text-xs">
-          <option value="">Trạng thái</option>
-          {STATUS_OPTIONS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-        </select>
-        <select value={filterPriority} onChange={(e) => setFilterPriority(e.target.value)} className="h-9 px-3 rounded-lg border text-xs">
-          <option value="">Ưu tiên</option>
-          {PRIORITY_OPTIONS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
-        </select>
-        {!isAdmin && (
-          <span className="text-[11px] text-gray-500 px-2 py-1 rounded-lg bg-gray-100">
-            Chỉ việc giao cho bạn
-          </span>
-        )}
-        {hasFilters && (
-          <button onClick={clearFilters} className="h-9 px-3 text-xs text-red-500 hover:bg-red-50 rounded-lg cursor-pointer flex items-center gap-1">
-            <X className="h-3 w-3" />Xóa lọc
-          </button>
-        )}
-      </div>
-
       {/* VIEWS */}
       {view === 'kanban' && (
         <KanbanView
@@ -1290,6 +2003,18 @@ export default function CRMAssignmentsPage({
           onDragStart={onDragStart}
           onDropCol={onDropCol}
           allowDrop={allowDrop}
+        />
+      )}
+
+      {view === 'status' && (
+        <StatusBoardView
+          itemsByStatus={itemsByStatus}
+          onOpen={(t) => setViewingItem(t)}
+          onEdit={(t) => { if (!canManageTask(t)) return; setEditingItem(t); setShowItemModal(true); }}
+          onDelete={removeItem}
+          onUpdate={updateItem}
+          canManageTask={canManageTask}
+          canMoveTask={canMoveTask}
         />
       )}
 
@@ -1410,29 +2135,31 @@ function KanbanView({
         return (
           <div
             key={col.id}
-            className="w-72 shrink-0 rounded-xl border border-white/40 flex flex-col shadow-sm backdrop-blur-md"
-            style={{ background: 'rgba(255,255,255,0.35)' }}
+            className="w-72 shrink-0 rounded-xl border border-slate-200/90 bg-white flex flex-col shadow-sm"
             onDragOver={allowDrop}
             onDrop={onDropCol(col.id)}
           >
-            <div className="px-3 py-2 flex items-center gap-2 border-b border-white/40 rounded-t-xl" style={{ borderTopColor: col.color, borderTopWidth: 3, background: 'rgba(255,255,255,0.45)' }}>
-              <GripVertical className="h-3.5 w-3.5 text-gray-300" />
+            <div
+              className="px-3 py-2 flex items-center gap-2 border-b border-slate-100 rounded-t-xl bg-slate-50/80"
+              style={{ borderTopColor: col.color, borderTopWidth: 3 }}
+            >
+              <GripVertical className="h-3.5 w-3.5 text-slate-300" />
               <span className="text-sm font-semibold flex-1 truncate" style={{ color: col.color }}>
                 {col.name}
                 {col.is_in_progress_column ? <Clock className="h-3 w-3 inline ml-0.5 text-blue-500" title="Cột đang làm" /> : null}
                 {col.is_done_column ? <CheckCircle2 className="h-3 w-3 inline ml-0.5 text-emerald-500" title="Cột hoàn thành" /> : null}
               </span>
-              <span className="text-[11px] text-gray-400">{list.length}</span>
-              <button onClick={() => onEditColumn(col)} className="text-gray-400 hover:text-blue-600 cursor-pointer"><Pencil className="h-3.5 w-3.5" /></button>
-              <button onClick={() => onDeleteColumn(col.id)} className="text-gray-400 hover:text-red-500 cursor-pointer"><Trash2 className="h-3.5 w-3.5" /></button>
+              <span className="text-[11px] text-slate-400 tabular-nums">{list.length}</span>
+              <button onClick={() => onEditColumn(col)} className="text-slate-400 hover:text-violet-600 cursor-pointer"><Pencil className="h-3.5 w-3.5" /></button>
+              <button onClick={() => onDeleteColumn(col.id)} className="text-slate-400 hover:text-red-500 cursor-pointer"><Trash2 className="h-3.5 w-3.5" /></button>
             </div>
-            <div className="flex-1 p-2 space-y-2 min-h-[80px]">
+            <div className="flex-1 p-2 space-y-2 min-h-[80px] bg-white">
               {list.map((t) => (
                 <Card key={t.id} task={t} canManage={canManageTask(t)} canMove={canMoveTask(t)} onDragStart={onDragStart} onOpen={onOpenCard} onEdit={onEditCard} onDelete={onDeleteCard} onUpdate={onUpdateCard} />
               ))}
               <button
                 onClick={() => onAddCard(col.id)}
-                className="w-full h-8 rounded-lg text-xs text-gray-500 hover:bg-white hover:text-blue-600 flex items-center justify-center gap-1 cursor-pointer"
+                className="w-full h-8 rounded-lg text-xs text-slate-500 hover:bg-slate-50 hover:text-violet-700 flex items-center justify-center gap-1 cursor-pointer border border-dashed border-transparent hover:border-slate-200"
               >
                 <Plus className="h-3.5 w-3.5" />Thêm việc
               </button>
@@ -1442,9 +2169,9 @@ function KanbanView({
       })}
 
       {noneList.length > 0 && (
-        <div className="w-72 shrink-0 bg-gray-50 rounded-xl border border-dashed" onDragOver={allowDrop} onDrop={onDropCol('__none__')}>
-          <div className="px-3 py-2 border-b text-sm font-semibold text-gray-500">
-            Chưa phân loại <span className="text-[11px] text-gray-400">{noneList.length}</span>
+        <div className="w-72 shrink-0 bg-slate-50 rounded-xl border border-dashed border-slate-300" onDragOver={allowDrop} onDrop={onDropCol('__none__')}>
+          <div className="px-3 py-2 border-b border-slate-200 text-sm font-semibold text-slate-500">
+            Chưa phân loại <span className="text-[11px] text-slate-400">{noneList.length}</span>
           </div>
           <div className="p-2 space-y-2">
             {noneList.map((t) => (
@@ -1456,7 +2183,7 @@ function KanbanView({
 
       <button
         onClick={onAddColumn}
-        className="w-72 shrink-0 rounded-xl border-2 border-dashed border-gray-300 hover:border-blue-500 hover:bg-blue-50 text-sm text-gray-500 hover:text-blue-700 flex items-center justify-center gap-2 cursor-pointer"
+        className="w-72 shrink-0 rounded-xl border-2 border-dashed border-slate-300 hover:border-violet-400 hover:bg-violet-50/50 text-sm text-slate-500 hover:text-violet-700 flex items-center justify-center gap-2 cursor-pointer bg-white/60"
       >
         <Plus className="h-4 w-4" />Thêm cột
       </button>
@@ -1472,7 +2199,7 @@ function Card({ task, canManage, canMove, onDragStart, onOpen, onEdit, onDelete,
       draggable={!!canMove}
       onDragStart={canMove ? onDragStart(task.id) : undefined}
       onClick={() => onOpen?.(task)}
-      className="bg-white rounded-lg border p-2.5 shadow-sm hover:shadow-md cursor-pointer group"
+      className="bg-white rounded-lg border border-slate-200/90 p-2.5 shadow-sm hover:shadow-md hover:border-violet-200 cursor-pointer group"
       title={canMove ? 'Click xem chi tiết — kéo để chuyển cột' : 'Click xem chi tiết (chỉ người tạo / người được giao mới kéo được)'}
     >
       <div className="flex items-start gap-1.5">
@@ -1589,7 +2316,7 @@ function TaskRow({ task, canManage, canMove, onOpen, onEdit, onDelete, onUpdate,
           type="button"
           onClick={() => onUpdate(task.id, { status: task.status === 'completed' ? 'pending' : 'completed' })}
           className={`p-1 rounded cursor-pointer ${task.status === 'completed' ? 'text-emerald-600 bg-emerald-50' : 'text-gray-300 hover:text-emerald-500'}`}
-          title="Hoàn thành"
+          title="Đã làm"
         >
           <CheckCircle2 className="h-4 w-4" />
         </button>
@@ -1631,10 +2358,80 @@ function TaskRow({ task, canManage, canMove, onOpen, onEdit, onDelete, onUpdate,
 }
 
 function ListView({ items, columns, onOpen, onEdit, onDelete, onUpdate, canManageTask, canMoveTask }) {
-  if (!items.length) return <p className="text-center text-sm text-gray-400 py-12">Chưa có nhiệm vụ nào</p>;
+  if (!items.length) return <p className="text-center text-sm text-slate-400 py-12">Chưa có nhiệm vụ nào</p>;
   return (
-    <div className="bg-white rounded-xl border divide-y">
+    <div className="ui-solid-white bg-white rounded-xl border border-slate-200/90 shadow-sm divide-y divide-slate-100">
       {items.map((t) => <TaskRow key={t.id} task={t} canManage={canManageTask(t)} canMove={canMoveTask(t)} columns={columns} onOpen={onOpen} onEdit={onEdit} onDelete={onDelete} onUpdate={onUpdate} />)}
+    </div>
+  );
+}
+
+/** Board 3 cột: Chưa làm / Đang làm / Đã làm — kéo thả đổi trạng thái. */
+function StatusBoardView({
+  itemsByStatus, onOpen, onEdit, onDelete, onUpdate, canManageTask, canMoveTask,
+}) {
+  const [dragId, setDragId] = useState(null);
+  const onDragStart = (id) => () => setDragId(id);
+  const allowDrop = (e) => e.preventDefault();
+  const onDropStatus = (status) => (e) => {
+    e.preventDefault();
+    if (!dragId) return;
+    void onUpdate(dragId, { status });
+    setDragId(null);
+  };
+
+  const total = STATUS_BOARD_META.reduce(
+    (n, col) => n + ((itemsByStatus?.[col.key] || []).length),
+    0,
+  );
+  if (!total) {
+    return <p className="text-center text-sm text-gray-400 py-12">Chưa có nhiệm vụ nào</p>;
+  }
+
+  return (
+    <div className="space-y-2">
+      <p className="text-[11px] text-gray-500">
+        Kéo thẻ sang cột để đổi trạng thái: <strong>Chưa làm</strong> · <strong>Đang làm</strong> · <strong>Đã làm</strong>
+      </p>
+      <div className="flex gap-3 overflow-x-auto pb-3" style={{ minHeight: 360 }}>
+        {STATUS_BOARD_META.map((col) => {
+          const list = itemsByStatus?.[col.key] || [];
+          return (
+            <div
+              key={col.key}
+              className="w-80 shrink-0 rounded-xl border border-slate-200/90 bg-white flex flex-col shadow-sm"
+              onDragOver={allowDrop}
+              onDrop={onDropStatus(col.key === 'pending' ? 'pending' : col.key)}
+            >
+              <div
+                className={`px-3 py-2.5 flex items-center gap-2 border-b border-slate-100 ${col.headerBg} rounded-t-xl`}
+                style={{ borderTopColor: col.color, borderTopWidth: 3 }}
+              >
+                <span className="text-sm font-semibold flex-1" style={{ color: col.color }}>{col.label}</span>
+                <span className="text-[11px] font-semibold text-gray-500 tabular-nums">{list.length}</span>
+              </div>
+              <div className="flex-1 p-2 space-y-2 min-h-[120px] max-h-[65vh] overflow-y-auto">
+                {list.map((t) => (
+                  <Card
+                    key={t.id}
+                    task={t}
+                    canManage={canManageTask(t)}
+                    canMove={canMoveTask(t)}
+                    onDragStart={onDragStart}
+                    onOpen={onOpen}
+                    onEdit={onEdit}
+                    onDelete={onDelete}
+                    onUpdate={onUpdate}
+                  />
+                ))}
+                {!list.length && (
+                  <p className="text-[11px] text-gray-400 text-center py-8">Kéo việc vào đây</p>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -1642,40 +2439,35 @@ function ListView({ items, columns, onOpen, onEdit, onDelete, onUpdate, canManag
 function PersonalViewToolbar({
   view, viewScope, onViewScopeChange, showCompletedOpen, onShowCompletedOpenChange, onAddColumn,
 }) {
+  const { theme } = useAssignmentsPageContext();
+  const t = theme || getAssignmentTheme('crm');
   return (
-    <div className="flex flex-wrap items-center gap-2 px-3 py-2 rounded-xl border border-indigo-100 bg-indigo-50/60">
-      <span className="text-[11px] font-semibold text-indigo-800 uppercase tracking-wide">
+    <div className="flex flex-wrap items-center gap-2 px-3 py-2 rounded-xl border border-slate-200/90 bg-white shadow-sm">
+      <span className={`text-[11px] font-semibold uppercase tracking-wide ${t.activeText}`}>
         {view === 'deadline' ? 'Deadline' : 'Planner'} — giao diện cá nhân
       </span>
-      <div className="flex items-center gap-1 rounded-lg border border-indigo-200 bg-white p-0.5">
-        <button
-          type="button"
-          onClick={() => onViewScopeChange('personal')}
-          className={`h-7 px-2.5 rounded-md text-[11px] font-medium cursor-pointer ${viewScope === 'personal' ? 'bg-indigo-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}
-        >
-          Của tôi
-        </button>
-        <button
-          type="button"
-          onClick={() => onViewScopeChange('team')}
-          className={`h-7 px-2.5 rounded-md text-[11px] font-medium cursor-pointer ${viewScope === 'team' ? 'bg-indigo-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}
-        >
-          Toàn team
-        </button>
-      </div>
-      <label className="flex items-center gap-1.5 text-[11px] text-gray-600 cursor-pointer select-none">
+      <SegmentedControl
+        value={viewScope}
+        onChange={onViewScopeChange}
+        activeText={t.activeText}
+        options={[
+          { id: 'personal', label: 'Của tôi' },
+          { id: 'team', label: 'Toàn team' },
+        ]}
+      />
+      <label className="flex items-center gap-1.5 text-[11px] text-slate-600 cursor-pointer select-none">
         <input
           type="checkbox"
           checked={showCompletedOpen}
           onChange={(e) => onShowCompletedOpenChange(e.target.checked)}
-          className="rounded border-gray-300"
+          className="rounded border-slate-300"
         />
         Hiện việc đã xong
       </label>
       <button
         type="button"
         onClick={onAddColumn}
-        className="ml-auto h-8 px-3 rounded-lg border-2 border-dashed border-indigo-300 hover:border-indigo-500 hover:bg-white text-xs text-indigo-700 font-medium flex items-center gap-1.5 cursor-pointer"
+        className="ml-auto h-8 px-3 rounded-lg border border-dashed border-slate-300 hover:border-violet-400 hover:bg-violet-50/50 text-xs text-slate-600 hover:text-violet-700 font-medium flex items-center gap-1.5 cursor-pointer bg-white"
       >
         <Plus className="h-3.5 w-3.5" />Thêm cột cá nhân
       </button>
@@ -1699,17 +2491,16 @@ function PersonalColumnBoard({
 
   return (
     <div
-      className="w-72 shrink-0 rounded-xl border border-white/40 flex flex-col shadow-sm backdrop-blur-md"
-      style={{ background: 'rgba(255,255,255,0.35)' }}
+      className="w-72 shrink-0 rounded-xl border border-slate-200/90 bg-white flex flex-col shadow-sm"
       onDragOver={allowDrop}
       onDrop={onDrop}
     >
       <div
-        className="px-3 py-2 flex items-center gap-2 border-b border-white/40 rounded-t-xl"
-        style={{ borderTopColor: column.color, borderTopWidth: 3, background: 'rgba(255,255,255,0.45)' }}
+        className="px-3 py-2 flex items-center gap-2 border-b border-slate-100 rounded-t-xl bg-slate-50/80"
+        style={{ borderTopColor: column.color, borderTopWidth: 3 }}
       >
         <span className="text-sm font-semibold flex-1 truncate" style={{ color: column.color }}>{column.name}</span>
-        <span className="text-[11px] text-gray-400">{tasks.length}</span>
+        <span className="text-[11px] text-slate-400 tabular-nums">{tasks.length}</span>
         {onEditColumn && (
           <button type="button" onClick={() => onEditColumn(column)} className="text-gray-400 hover:text-blue-600 cursor-pointer">
             <Pencil className="h-3.5 w-3.5" />

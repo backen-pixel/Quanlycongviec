@@ -248,20 +248,20 @@ function MediaPreviewTile({ file, onRemove }) {
 
 function FieldLabel({ field, linkHint }) {
   return (
-    <div className="flex items-start gap-1">
-      <span className="text-xs font-semibold text-gray-800 flex-1">
+    <div className="flex items-start gap-1.5">
+      <span className="text-sm font-semibold text-gray-800 flex-1">
         {field.label}
         {field.required && <span className="text-red-500 ml-0.5">*</span>}
         {linkHint && (
-          <span className="ml-1.5 inline-flex items-center gap-0.5 text-[9px] font-medium text-sky-700 bg-sky-50 border border-sky-200 px-1 py-0.5 rounded">
-            <Link2 className="h-2.5 w-2.5" /> {linkHint}
+          <span className="ml-1.5 inline-flex items-center gap-0.5 text-[10px] font-medium text-sky-700 bg-sky-50 border border-sky-200 px-1.5 py-0.5 rounded">
+            <Link2 className="h-3 w-3" /> {linkHint}
           </span>
         )}
       </span>
       {field.help_text ? (
         <span className="relative inline-flex group/tip shrink-0 mt-0.5">
-          <HelpCircle className="h-3.5 w-3.5 text-gray-400 hover:text-orange-600 cursor-help" />
-          <span className="pointer-events-none absolute right-0 bottom-full mb-1 z-50 w-64 max-w-[70vw] rounded-lg bg-gray-900 text-white text-[11px] leading-snug px-2.5 py-2 opacity-0 group-hover/tip:opacity-100 transition-opacity shadow-xl">
+          <HelpCircle className="h-4 w-4 text-gray-400 hover:text-orange-600 cursor-help" />
+          <span className="pointer-events-none absolute right-0 bottom-full mb-1 z-50 w-72 max-w-[70vw] rounded-lg bg-gray-900 text-white text-xs leading-snug px-3 py-2 opacity-0 group-hover/tip:opacity-100 transition-opacity shadow-xl">
             {field.help_text}
           </span>
         </span>
@@ -274,11 +274,26 @@ function SectionHeader({ groupKey }) {
   const meta = FIELD_GROUP_META[groupKey];
   if (!meta) return null;
   return (
-    <div className={`rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold ${meta.className}`}>
+    <div className={`rounded-xl border px-3 py-2 text-sm font-semibold ${meta.className}`}>
       Nhóm {groupKey} — {meta.label}
-      <span className="font-normal opacity-80 ml-1">· {meta.hint}</span>
+      <span className="font-normal opacity-80 ml-1.5 text-xs">· {meta.hint}</span>
     </div>
   );
+}
+
+/** Nhóm B đã có dữ liệu nhập sau chưa? */
+function groupBHasValues(fields, values) {
+  for (const f of fields || []) {
+    const v = values?.[f.id];
+    if (v == null || v === '') continue;
+    if (typeof v === 'object') {
+      if (Array.isArray(v) && v.length) return true;
+      if (!Array.isArray(v) && Object.keys(v).length) return true;
+      continue;
+    }
+    return true;
+  }
+  return false;
 }
 
 function fieldLinkHint(fieldId) {
@@ -351,6 +366,11 @@ export default function TaskFillFormModal({
   const [leadInfo, setLeadInfo] = useState(null);
   const [surveyEvent, setSurveyEvent] = useState(null);
   const [linkNote, setLinkNote] = useState('');
+  /** Nhóm B (nhập sau khảo sát) — chỉ bung khi bấm «Thêm» (hoặc đã có dữ liệu). */
+  const [showLaterSection, setShowLaterSection] = useState(() => {
+    const bFields = (visibleFields || []).filter((f) => f.group === 'B');
+    return groupBHasValues(bFields, existing.values);
+  });
   const fileInputRefs = useRef({});
   const fileMapRef = useRef(fileMap);
   fileMapRef.current = fileMap;
@@ -1252,74 +1272,123 @@ export default function TaskFillFormModal({
 
   const grouped = groupFormFields(configView.fields);
   const hasGroups = grouped.A.length || grouped.B.length || grouped.C.length;
-  const sections = hasGroups
-    ? [
-        ...(grouped.A.length ? [{ key: 'A', fields: grouped.A }] : []),
-        ...(grouped.B.length ? [{ key: 'B', fields: grouped.B }] : []),
-        ...(grouped.C.length ? [{ key: 'C', fields: grouped.C }] : []),
-        ...(grouped.other.length ? [{ key: null, fields: grouped.other }] : []),
-      ]
-    : [{ key: null, fields: configView.fields }];
+  const laterOpen = showLaterSection;
 
   return createPortal(
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/40" onClick={onClose}>
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-3 sm:p-5 bg-black/45" onClick={onClose}>
       <div
-        className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col"
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[92vh] flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="px-5 py-4 border-b flex items-start justify-between gap-3 shrink-0">
+        <div className="px-5 sm:px-7 py-4 sm:py-5 border-b flex items-start justify-between gap-3 shrink-0">
           <div className="min-w-0">
-            <h3 className="text-base font-bold text-gray-900 truncate">{config.title}</h3>
-            <p className="text-[11px] text-gray-500 mt-0.5 truncate">{task.title}</p>
-            <p className="text-[10px] text-gray-400 mt-1">
-              <span className="text-red-500">*</span> bắt buộc · hover <HelpCircle className="h-3 w-3 inline text-gray-400" /> để xem gợi ý
+            <h3 className="text-lg sm:text-xl font-bold text-gray-900 truncate">{config.title}</h3>
+            <p className="text-sm text-gray-500 mt-0.5 truncate">{task.title}</p>
+            <p className="text-xs text-gray-400 mt-1.5">
+              <span className="text-red-500">*</span> bắt buộc · hover <HelpCircle className="h-3.5 w-3.5 inline text-gray-400" /> để xem gợi ý
+              {grouped.B.length > 0 ? ' · Ngân sách / kích thước: bấm «Thêm» bên dưới' : ''}
             </p>
             {loadingLink ? (
-              <p className="text-[10px] text-sky-600 mt-1 flex items-center gap-1">
-                <Loader2 className="h-3 w-3 animate-spin" /> Đang lấy lead & sự kiện khảo sát…
+              <p className="text-xs text-sky-600 mt-1.5 flex items-center gap-1">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" /> Đang lấy lead & sự kiện khảo sát…
               </p>
             ) : linkNote ? (
-              <p className="text-[10px] text-sky-700 mt-1 flex items-start gap-1">
-                <Calendar className="h-3 w-3 shrink-0 mt-0.5" />
+              <p className="text-xs text-sky-700 mt-1.5 flex items-start gap-1">
+                <Calendar className="h-3.5 w-3.5 shrink-0 mt-0.5" />
                 <span>{linkNote}</span>
               </p>
             ) : null}
             {existing.submitted_at && (
-              <p className="text-[10px] text-emerald-700 mt-1 flex items-center gap-1">
-                <CheckCircle2 className="h-3 w-3" />
+              <p className="text-xs text-emerald-700 mt-1.5 flex items-center gap-1">
+                <CheckCircle2 className="h-3.5 w-3.5" />
                 Đã lưu {formatDateTime(existing.submitted_at)}
               </p>
             )}
           </div>
-          <button type="button" onClick={onClose} className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg cursor-pointer shrink-0">
-            <X className="h-4 w-4" />
+          <button type="button" onClick={onClose} className="p-2 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-xl cursor-pointer shrink-0">
+            <X className="h-5 w-5" />
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
+        <div className="flex-1 overflow-y-auto px-5 sm:px-7 py-5 space-y-6">
           {configView.fields.length === 0 ? (
-            <p className="text-sm text-gray-500 text-center py-8">
+            <p className="text-sm text-gray-500 text-center py-10">
               Form chưa có trường. Ở bộ mẫu bấm «Mẫu khảo sát» để nạp preset.
             </p>
+          ) : !hasGroups ? (
+            <div className="space-y-4">
+              {configView.fields.map(renderField)}
+            </div>
           ) : (
-            sections.map((sec) => (
-              <div key={sec.key || 'other'} className="space-y-3">
-                {sec.key && <SectionHeader groupKey={sec.key} />}
-                {sec.fields.map(renderField)}
-              </div>
-            ))
+            <>
+              {grouped.A.length > 0 && (
+                <div className="space-y-4">
+                  <SectionHeader groupKey="A" />
+                  {grouped.A.map(renderField)}
+                </div>
+              )}
+
+              {grouped.B.length > 0 && (
+                <div className="rounded-2xl border-2 border-dashed border-amber-300 bg-amber-50/40 p-4 sm:p-5 space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-bold text-amber-900">Nhập sau khảo sát</p>
+                      <p className="text-xs text-amber-800/80 mt-0.5">
+                        Ngân sách, kích thước… — chỉ hiện khi bấm Thêm
+                      </p>
+                    </div>
+                    {!laterOpen ? (
+                      <button
+                        type="button"
+                        onClick={() => setShowLaterSection(true)}
+                        className="h-11 px-5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-sm font-bold inline-flex items-center gap-2 cursor-pointer shadow-sm shrink-0"
+                      >
+                        <Plus className="h-4 w-4" /> Thêm
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setShowLaterSection(false)}
+                        className="h-9 px-3 rounded-lg border border-amber-300 bg-white text-amber-900 text-xs font-semibold hover:bg-amber-50 cursor-pointer shrink-0"
+                      >
+                        Thu gọn
+                      </button>
+                    )}
+                  </div>
+                  {laterOpen && (
+                    <div className="space-y-4 rounded-xl border border-amber-200 bg-white p-4 sm:p-5 shadow-sm">
+                      <SectionHeader groupKey="B" />
+                      {grouped.B.map(renderField)}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {grouped.C.length > 0 && (
+                <div className="space-y-4">
+                  <SectionHeader groupKey="C" />
+                  {grouped.C.map(renderField)}
+                </div>
+              )}
+
+              {grouped.other.length > 0 && (
+                <div className="space-y-4">
+                  {grouped.other.map(renderField)}
+                </div>
+              )}
+            </>
           )}
         </div>
 
-        <div className="px-5 py-4 border-t bg-gray-50 rounded-b-2xl flex items-center justify-between gap-2 shrink-0">
-          <p className="text-[10px] text-gray-500 hidden sm:block max-w-[200px]">
+        <div className="px-5 sm:px-7 py-4 border-t bg-gray-50 rounded-b-2xl flex items-center justify-between gap-2 shrink-0">
+          <p className="text-xs text-gray-500 hidden sm:block max-w-xs">
             Lưu sẽ cập nhật địa chỉ lead + sự kiện khảo sát
           </p>
           <div className="flex items-center gap-2 ml-auto">
             <button
               type="button"
               onClick={onClose}
-              className="h-9 px-4 text-gray-600 hover:bg-gray-200 rounded-lg text-sm font-medium cursor-pointer"
+              className="h-10 px-5 text-gray-600 hover:bg-gray-200 rounded-xl text-sm font-medium cursor-pointer"
             >
               Đóng
             </button>
@@ -1327,9 +1396,9 @@ export default function TaskFillFormModal({
               type="button"
               onClick={handleSave}
               disabled={saving || configView.fields.filter((f) => f.type !== 'button').length === 0}
-              className="h-9 px-5 bg-orange-600 hover:bg-orange-700 disabled:opacity-50 text-white rounded-lg text-sm font-bold flex items-center gap-1.5 cursor-pointer"
+              className="h-10 px-6 bg-orange-600 hover:bg-orange-700 disabled:opacity-50 text-white rounded-xl text-sm font-bold flex items-center gap-2 cursor-pointer"
             >
-              {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
               Lưu form
             </button>
           </div>

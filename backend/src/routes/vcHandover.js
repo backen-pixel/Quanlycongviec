@@ -5,13 +5,23 @@
  *   1. SX kéo thẻ vào cột is_handover_to_logistics → POST /projects/:id/request
  *      → đăng bình luận tương tác (comment_type='vc_handover') cho sale CRM, KHÔNG bàn giao thật.
  *   2. Sale chọn công ty VC/LĐ + ngày lấy/lắp → PATCH /comments/:cid/select
- *      → bàn giao thật + lưu ngày đề xuất trên project/metadata + chờ xác nhận 2 phụ trách.
+ *      → bàn giao thật + lưu ngày đề xuất; Xưởng mặc định đã xác nhận; chờ VC/LĐ xác nhận.
  *      (Chưa tạo 3 sự kiện lịch — tránh phải sửa lịch khi còn đổi giờ.)
  *   3. (Legacy) Sale chỉ chọn ngày → PATCH /comments/:cid/schedule nếu còn bình luận awaiting_date.
  *   3b. Sale sửa ngày đề xuất → PATCH /comments/:cid/reschedule (khi awaiting_confirm, chưa có sự kiện).
- *   4. Đúng phụ trách SX + VC/LĐ xác nhận → PATCH /comments/:cid/confirm
+ *      → giữ Xưởng đã xác nhận (mặc định); reset xác nhận VC/LĐ.
+ *   4. Đúng phụ trách VC/LĐ xác nhận → PATCH /comments/:cid/confirm
  *      → đủ 2 bên: tạo 3 sự kiện (Giao hàng xưởng + Vận chuyển + Lắp đặt) rồi khóa lịch.
  */
+
+/** Xưởng mặc định xác nhận khi Sale tạo/đặt ngày bàn giao (SX đã chủ động kéo cột). */
+function defaultProductionConfirmMeta(meta, atIso = new Date().toISOString()) {
+  return {
+    user_id: meta?.production_confirm_user_id || meta?.production_person_id || null,
+    at: atIso,
+    auto: true,
+  };
+}
 const { Router } = require('express');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
@@ -327,12 +337,12 @@ async function syncProjectHandoverDates(projectId, { pickupAt, installAt = null,
 
 /**
  * Tạo 3 sự kiện sau khi Xưởng + VC/LĐ đều xác nhận:
- *  1. Giao hàng xưởng (module production) — ngày VC
- *  2. Vận chuyển / nhận hàng (module logistics) — ngày VC
+ *  1. Giao hàng xưởng (module production) — ngày nhận hàng / lấy hàng
+ *  2. VC tới nơi LĐ (module logistics) — vc_arrive_at (fallback = nhận hàng)
  *  3. Lắp đặt (module logistics) — ngày lắp (≥ VC, mặc định = VC)
  */
 async function createVcHandoverEvents({
-  userId, leadId, projectId, pickupAt, installAt = null, pickupNotes, meta, logisticsPersonId,
+  userId, leadId, projectId, pickupAt, installAt = null, vcArriveAt = null, pickupNotes, meta, logisticsPersonId,
 }) {
   await syncProjectHandoverDates(projectId, { pickupAt, installAt, pickupNotes });
 
@@ -353,6 +363,7 @@ async function createVcHandoverEvents({
   const notes = pickupNotes || meta.select_notes || null;
   const addr = meta.install_address ? `Địa chỉ: ${meta.install_address}` : null;
   const installStart = installAt || pickupAt;
+  const arriveStart = vcArriveAt || meta.vc_arrive_at || pickupAt;
 
   const pickupDay = vnCalendarDayKey(pickupAt);
   const installDay = vnCalendarDayKey(installStart);
@@ -392,18 +403,18 @@ async function createVcHandoverEvents({
   }, participantIds, userId);
   if (sxEventId) eventIds.push(sxEventId);
 
-  // 2) Vận chuyển / nhận hàng (VC)
+  // 2) VC tới nơi LĐ (vận chuyển)
   transportEventId = await insertCrmEventWithParticipants({
     ...baseShared,
     module: 'logistics',
     event_type_id: pickupType.id,
     event_type: pickupType.slug || 'pickup',
-    title: `Vận chuyển / nhận hàng — ${projLabel}`,
+    title: `VC tới nơi LĐ — ${projLabel}`,
     description: [
-      notes || `Sự kiện vận chuyển / nhận hàng cho dự án ${projLabel}.`,
+      notes || `Xe VC tới địa điểm lắp đặt cho dự án ${projLabel}.`,
       addr,
     ].filter(Boolean).join('\n'),
-    start_time: pickupAt,
+    start_time: arriveStart,
     assignee_id: logisticsPersonId || meta.logistics_person_id || null,
   }, participantIds, userId);
   if (transportEventId) eventIds.push(transportEventId);
@@ -697,6 +708,7 @@ r.patch('/comments/:cid/select', async (req, res) => {
     const pickupAtRaw = req.body?.pickup_at;
     const pickupNotes = req.body?.pickup_notes != null ? String(req.body.pickup_notes).trim() : null;
     const deliveryDateRaw = req.body?.delivery_date ? String(req.body.delivery_date).trim().slice(0, 10) : null;
+    const vcArriveAtRaw = req.body?.vc_arrive_at != null ? String(req.body.vc_arrive_at).trim() : null;
     const installDateRaw = req.body?.install_date != null ? String(req.body.install_date).trim() : null;
     const installAddress = req.body?.install_address != null ? String(req.body.install_address).trim() : null;
     const otherName = req.body?.external_company_name != null ? String(req.body.external_company_name).trim() : null;
@@ -718,6 +730,12 @@ r.patch('/comments/:cid/select', async (req, res) => {
         installDate = id.toISOString();
       }
     }
+    let vcArriveAt = null;
+    if (vcArriveAtRaw) {
+      const ad = new Date(vcArriveAtRaw);
+      if (Number.isNaN(ad.getTime())) return res.status(400).json({ error: 'Thời gian VC tới nơi LĐ không hợp lệ.' });
+      vcArriveAt = ad.toISOString();
+    }
     if (installDate) {
       const pickupDay = vnCalendarDayKey(pickupAt);
       const installDay = vnCalendarDayKey(installDate);
@@ -726,6 +744,22 @@ r.patch('/comments/:cid/select', async (req, res) => {
           error: 'Ngày lắp đặt phải bằng hoặc sau ngày nhận hàng / lấy hàng VC.',
         });
       }
+    }
+    if (vcArriveAt) {
+      const pickupDay = vnCalendarDayKey(pickupAt);
+      const arriveDay = vnCalendarDayKey(vcArriveAt);
+      if (pickupDay && arriveDay && arriveDay < pickupDay) {
+        return res.status(400).json({ error: 'VC tới nơi LĐ phải bằng hoặc sau ngày nhận hàng.' });
+      }
+      if (installDate) {
+        const installDay = vnCalendarDayKey(installDate);
+        if (arriveDay && installDay && arriveDay > installDay) {
+          return res.status(400).json({ error: 'VC tới nơi LĐ phải bằng hoặc trước ngày lắp đặt.' });
+        }
+      }
+    } else {
+      // Client không gửi → dùng giờ nhận hàng (frontend thường gửi sẵn 11:00).
+      vcArriveAt = pickupAt;
     }
 
     const comment = await loadVcComment(cid);
@@ -851,6 +885,7 @@ r.patch('/comments/:cid/select', async (req, res) => {
     }
 
     const pickupLabel = formatVnDateTime(pickupDate);
+    const arriveLabel = vcArriveAt ? formatVnDateTime(new Date(vcArriveAt)) : pickupLabel;
     const installLabel = installDate ? formatVnDateTime(installDate) : pickupLabel;
     const notesSuffix = selectNotes ? ` · ${selectNotes}` : '';
     const nextMeta = {
@@ -875,6 +910,7 @@ r.patch('/comments/:cid/select', async (req, res) => {
       vc_company_deal_created: !!vcCompanyDeal?.created,
       pickup_at: pickupAt,
       pickup_notes: pickupNotes || null,
+      vc_arrive_at: vcArriveAt || null,
       event_id: null,
       event_ids: [],
       sx_event_id: null,
@@ -885,17 +921,22 @@ r.patch('/comments/:cid/select', async (req, res) => {
       install_date: installDate || pickupAt,
       install_address: installAddress || null,
       external_company_name: otherName || null,
-      confirmed_production: null,
+      confirmed_production: defaultProductionConfirmMeta({
+        production_confirm_user_id: productionConfirmUserId,
+        production_person_id: productionPersonId,
+      }),
       confirmed_logistics: null,
     };
     const body = [
       comment.body.split('\n')[0],
       `— Đã chọn: ${companyName}${notesSuffix}`,
       `— Ngày nhận hàng: ${pickupLabel}`,
+      `— VC tới nơi LĐ: ${arriveLabel}`,
       installLabel ? `— Ngày lắp đặt: ${installLabel}` : null,
       installAddress ? `— Địa chỉ lắp: ${installAddress}` : null,
-      '— 3 sự kiện lịch (Giao hàng xưởng + Vận chuyển + Lắp đặt) sẽ tạo sau khi Xưởng & VC/LĐ xác nhận.',
-      '— Chờ xác nhận Xưởng & VC/LĐ.',
+      '— Xưởng đã xác nhận (mặc định).',
+      '— 3 sự kiện lịch (Giao hàng xưởng + VC tới nơi LĐ + Lắp đặt) sẽ tạo sau khi VC/LĐ xác nhận.',
+      '— Chờ xác nhận VC/LĐ.',
     ].filter(Boolean).join('\n');
 
     const { data: updated, error } = await supabase
@@ -940,6 +981,7 @@ r.patch('/comments/:cid/select', async (req, res) => {
       const historyBody = [
         `📋 ${actorName || 'Sale CRM'} đã bàn giao «${projLabel}» sang ${companyName}.`,
         `• Nhận hàng: ${pickupLabel}`,
+        `• VC tới nơi LĐ: ${arriveLabel}`,
         installLabel ? `• Lắp đặt: ${installLabel}` : null,
         installAddress ? `• Địa chỉ: ${installAddress}` : null,
         logisticsPersonName ? `• Phụ trách VC/LĐ: ${logisticsPersonName}` : null,
@@ -949,9 +991,10 @@ r.patch('/comments/:cid/select', async (req, res) => {
         vcCompanyDeal?.created
           ? `• Đã tạo deal CRM cho công ty VC/LĐ: ${vcCompanyDeal.code || vcCompanyDeal.dealId}.`
           : null,
-        '• Lịch: 3 sự kiện sẽ tạo sau khi Xưởng & VC/LĐ xác nhận (Giao hàng xưởng + Vận chuyển + Lắp đặt).',
+        '• Xưởng đã xác nhận (mặc định khi Sale tạo bàn giao).',
+        '• Lịch: 3 sự kiện sẽ tạo sau khi VC/LĐ xác nhận (Giao hàng xưởng + VC tới nơi LĐ + Lắp đặt).',
         '• Module VC/LĐ: mở board công ty đã chọn — dự án giữ mã SX, gắn công ty VC.',
-        'Chờ Xưởng và VC/LĐ xác nhận trên thẻ bàn giao.',
+        'Chờ VC/LĐ xác nhận trên thẻ bàn giao.',
       ].filter(Boolean).join('\n');
       const { data: histIns, error: histErr } = await supabase
         .from('crm_lead_comments')
@@ -964,6 +1007,7 @@ r.patch('/comments/:cid/select', async (req, res) => {
             project_id: projectId,
             logistics_company_id: logisticsCompanyId,
             pickup_at: pickupAt,
+            vc_arrive_at: vcArriveAt || null,
             install_date: installDate || pickupAt,
             event_id: null,
             event_ids: [],
@@ -997,12 +1041,15 @@ r.patch('/comments/:cid/select', async (req, res) => {
       const msgParts = [
         `Công ty: ${companyName}.`,
         `Lấy hàng đề xuất: ${pickupLabel}.`,
+        `VC tới nơi LĐ: ${arriveLabel}.`,
         installLabel ? `Nhận/lắp đề xuất: ${installLabel}.` : null,
         installAddress ? `Địa chỉ: ${installAddress}.` : null,
-        productionConfirmUserName ? `Xác nhận Xưởng: ${productionConfirmUserName}.` : null,
-        logisticsConfirmUserName ? `Xác nhận VC/LĐ: ${logisticsConfirmUserName}.` : null,
+        productionConfirmUserName
+          ? `Xưởng: ${productionConfirmUserName} (đã xác nhận mặc định).`
+          : 'Xưởng đã xác nhận (mặc định).',
+        logisticsConfirmUserName ? `Chờ xác nhận VC/LĐ: ${logisticsConfirmUserName}.` : null,
         vcCompanyDeal?.created ? `Deal VC: ${vcCompanyDeal.code}.` : null,
-        'Xác nhận trên thẻ bàn giao — sau khi đủ 2 bên, hệ thống mới tạo 3 sự kiện trên lịch.',
+        'VC/LĐ xác nhận trên thẻ bàn giao — sau đó hệ thống mới tạo 3 sự kiện trên lịch.',
       ].filter(Boolean);
       if (notifyIds.length) {
         await notifyMultiple(
@@ -1108,12 +1155,12 @@ r.patch('/comments/:cid/schedule', async (req, res) => {
       events_mode: 'pending_confirm',
       production_person_name: productionPersonName || meta.production_person_name || null,
       logistics_person_name: logisticsPersonName || meta.logistics_person_name || null,
-      confirmed_production: null,
+      confirmed_production: defaultProductionConfirmMeta(meta),
       confirmed_logistics: null,
     };
     const pickupLabel = pickupDate.toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
     const notesLine = meta.select_notes ? ` · ${meta.select_notes}` : '';
-    const body = `${comment.body.split('\n')[0]}\n— ${meta.logistics_company_name || 'VC/LĐ'}${notesLine}\n— Ngày lấy hàng đề xuất: ${pickupLabel}. 3 sự kiện lịch sẽ tạo sau khi Xưởng & VC/LĐ xác nhận.`;
+    const body = `${comment.body.split('\n')[0]}\n— ${meta.logistics_company_name || 'VC/LĐ'}${notesLine}\n— Ngày lấy hàng đề xuất: ${pickupLabel}. Xưởng đã xác nhận (mặc định). 3 sự kiện lịch sẽ tạo sau khi VC/LĐ xác nhận.`;
 
     const { data: updated, error } = await supabase
       .from('crm_lead_comments')
@@ -1135,7 +1182,7 @@ r.patch('/comments/:cid/schedule', async (req, res) => {
         await notifyMultiple(
           req, notifyIds, 'vc_handover_assigned',
           `📦 Bàn giao VC/LĐ: ${projLabel}`,
-          `Ngày lấy hàng đề xuất ${pickupLabel}. Xác nhận trên thẻ bàn giao — sau khi đủ 2 bên mới tạo lịch sự kiện.`,
+          `Ngày lấy hàng đề xuất ${pickupLabel}. Xưởng đã xác nhận (mặc định). VC/LĐ xác nhận trên thẻ bàn giao — sau đó mới tạo lịch sự kiện.`,
           'lead', leadId, { lead_id: leadId, nav_tab: 'comments', pickup_at: pickupAt, vc_handover: true },
         );
       }
@@ -1155,6 +1202,7 @@ r.patch('/comments/:cid/reschedule', async (req, res) => {
     const cid = Number(req.params.cid);
     const pickupAtRaw = req.body?.pickup_at;
     const installDateRaw = req.body?.install_date != null ? String(req.body.install_date).trim() : null;
+    const vcArriveAtRaw = req.body?.vc_arrive_at != null ? String(req.body.vc_arrive_at).trim() : null;
     const pickupNotes = req.body?.pickup_notes != null ? String(req.body.pickup_notes).trim() : null;
 
     if (!pickupAtRaw) return res.status(400).json({ error: 'Vui lòng chọn ngày nhận hàng.' });
@@ -1172,6 +1220,12 @@ r.patch('/comments/:cid/reschedule', async (req, res) => {
         installDate = id.toISOString();
       }
     }
+    let vcArriveAt = null;
+    if (vcArriveAtRaw) {
+      const ad = new Date(vcArriveAtRaw);
+      if (Number.isNaN(ad.getTime())) return res.status(400).json({ error: 'Thời gian VC tới nơi LĐ không hợp lệ.' });
+      vcArriveAt = ad.toISOString();
+    }
     if (installDate) {
       const pickupDay = vnCalendarDayKey(pickupAt);
       const installDay = vnCalendarDayKey(installDate);
@@ -1181,6 +1235,19 @@ r.patch('/comments/:cid/reschedule', async (req, res) => {
         });
       }
     }
+    if (vcArriveAt) {
+      const pickupDay = vnCalendarDayKey(pickupAt);
+      const arriveDay = vnCalendarDayKey(vcArriveAt);
+      if (pickupDay && arriveDay && arriveDay < pickupDay) {
+        return res.status(400).json({ error: 'VC tới nơi LĐ phải bằng hoặc sau ngày nhận hàng.' });
+      }
+      if (installDate) {
+        const installDay = vnCalendarDayKey(installDate);
+        if (arriveDay && installDay && arriveDay > installDay) {
+          return res.status(400).json({ error: 'VC tới nơi LĐ phải bằng hoặc trước ngày lắp đặt.' });
+        }
+      }
+    }
 
     const comment = await loadVcComment(cid);
     if (!comment || comment.comment_type !== 'vc_handover') {
@@ -1188,7 +1255,7 @@ r.patch('/comments/:cid/reschedule', async (req, res) => {
     }
     const meta = comment.metadata || {};
     if (meta.state !== 'awaiting_confirm') {
-      return res.status(409).json({ error: 'Chỉ sửa được ngày khi đang chờ xác nhận Xưởng & VC/LĐ.' });
+      return res.status(409).json({ error: 'Chỉ sửa được ngày khi đang chờ xác nhận VC/LĐ.' });
     }
     const hasExistingEvents = !!(
       meta.event_id
@@ -1216,6 +1283,7 @@ r.patch('/comments/:cid/reschedule', async (req, res) => {
 
     const projectId = meta.project_id;
     const installAt = installDate || pickupAt;
+    if (!vcArriveAt) vcArriveAt = installAt || pickupAt;
     try {
       await syncProjectHandoverDates(projectId, {
         pickupAt,
@@ -1227,14 +1295,16 @@ r.patch('/comments/:cid/reschedule', async (req, res) => {
     }
 
     const pickupLabel = formatVnDateTime(pickupDate);
+    const arriveLabel = formatVnDateTime(new Date(vcArriveAt));
     const installLabel = formatVnDateTime(installAt);
     const nextMeta = {
       ...meta,
       crm_responsible_user_id: crmResponsibleId,
       pickup_at: pickupAt,
       pickup_notes: pickupNotes != null ? pickupNotes : (meta.pickup_notes || null),
+      vc_arrive_at: vcArriveAt,
       install_date: installAt,
-      confirmed_production: null,
+      confirmed_production: defaultProductionConfirmMeta(meta),
       confirmed_logistics: null,
       event_id: null,
       event_ids: [],
@@ -1248,11 +1318,13 @@ r.patch('/comments/:cid/reschedule', async (req, res) => {
       String(comment.body || '').split('\n')[0],
       `— Đã chọn: ${meta.logistics_company_name || 'VC/LĐ'}${meta.select_notes ? ` · ${meta.select_notes}` : ''}`,
       `— Ngày nhận hàng: ${pickupLabel}`,
+      `— VC tới nơi LĐ: ${arriveLabel}`,
       `— Ngày lắp đặt: ${installLabel}`,
       meta.install_address ? `— Địa chỉ lắp: ${meta.install_address}` : null,
-      '— Đã cập nhật ngày đề xuất — xác nhận trước đó (nếu có) đã được reset.',
-      '— 3 sự kiện lịch sẽ tạo sau khi Xưởng & VC/LĐ xác nhận.',
-      '— Chờ xác nhận Xưởng & VC/LĐ.',
+      '— Đã cập nhật ngày đề xuất — xác nhận VC/LĐ (nếu có) đã được reset.',
+      '— Xưởng vẫn xác nhận (mặc định).',
+      '— 3 sự kiện lịch sẽ tạo sau khi VC/LĐ xác nhận.',
+      '— Chờ xác nhận VC/LĐ.',
     ].filter(Boolean).join('\n');
 
     const { data: updated, error } = await supabase
@@ -1276,10 +1348,12 @@ r.patch('/comments/:cid/reschedule', async (req, res) => {
       const historyBody = [
         `📅 ${actorName || 'Sale CRM'} đã đổi ngày đề xuất bàn giao «${projLabel}» (${companyName}).`,
         `• Nhận hàng mới: ${pickupLabel}`,
+        `• VC tới nơi LĐ: ${arriveLabel}`,
         `• Lắp đặt mới: ${installLabel}`,
         meta.install_address ? `• Địa chỉ: ${meta.install_address}` : null,
-        '• Xác nhận trước đó (nếu có) đã được reset — Xưởng & VC/LĐ cần xác nhận lại.',
-        '• 3 sự kiện lịch vẫn chỉ tạo sau khi đủ 2 bên xác nhận.',
+        '• Xác nhận VC/LĐ trước đó (nếu có) đã được reset — VC/LĐ cần xác nhận lại.',
+        '• Xưởng vẫn xác nhận (mặc định).',
+        '• 3 sự kiện lịch vẫn chỉ tạo sau khi VC/LĐ xác nhận.',
       ].filter(Boolean).join('\n');
       const { data: histIns, error: histErr } = await supabase
         .from('crm_lead_comments')
@@ -1294,6 +1368,7 @@ r.patch('/comments/:cid/reschedule', async (req, res) => {
             logistics_company_id: meta.logistics_company_id || null,
             pickup_at: pickupAt,
             install_date: installAt,
+            vc_arrive_at: vcArriveAt,
             source_comment_id: cid,
           },
         })
@@ -1340,9 +1415,10 @@ r.patch('/comments/:cid/reschedule', async (req, res) => {
         `${actorName || 'Sale CRM'} vừa đổi ngày đề xuất bàn giao «${projLabel}».`,
         `Công ty: ${companyName}.`,
         `Nhận hàng mới: ${pickupLabel}.`,
+        `VC tới nơi LĐ: ${arriveLabel}.`,
         `Lắp đặt mới: ${installLabel}.`,
         meta.install_address ? `Địa chỉ: ${meta.install_address}.` : null,
-        'Xác nhận trước đó đã reset — vui lòng mở thẻ bàn giao và xác nhận lại.',
+        'Xác nhận VC/LĐ trước đó đã reset — vui lòng mở thẻ bàn giao và xác nhận lại (Xưởng vẫn xác nhận mặc định).',
       ].filter(Boolean);
 
       if (notifyIds.length) {
@@ -1360,6 +1436,7 @@ r.patch('/comments/:cid/reschedule', async (req, res) => {
             ecosystem_module_key: 'logistics',
             pickup_at: pickupAt,
             install_date: installAt,
+            vc_arrive_at: vcArriveAt,
             vc_handover: true,
             reschedule: true,
             project_id: projectId ? String(projectId) : null,
@@ -1384,6 +1461,7 @@ r.patch('/comments/:cid/reschedule', async (req, res) => {
       comment: row,
       history_comment: historyRow,
       pickup_at: pickupAt,
+      vc_arrive_at: vcArriveAt,
       install_date: installAt,
     });
   } catch (e) {
@@ -1444,6 +1522,7 @@ r.patch('/comments/:cid/confirm', async (req, res) => {
           projectId: meta.project_id,
           pickupAt: meta.pickup_at,
           installAt: meta.install_date || null,
+          vcArriveAt: meta.vc_arrive_at || null,
           pickupNotes: meta.pickup_notes || meta.select_notes || null,
           meta: nextMeta,
           logisticsPersonId: meta.logistics_person_id || null,
@@ -1469,7 +1548,7 @@ r.patch('/comments/:cid/confirm', async (req, res) => {
         ? new Date(meta.pickup_at).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
         : '(chưa rõ)';
       const eventLine = nextMeta.event_ids?.length >= 3
-        ? '— Đã tạo 3 sự kiện trên lịch: Giao hàng xưởng + Vận chuyển + Lắp đặt.'
+        ? '— Đã tạo 3 sự kiện trên lịch: Giao hàng xưởng + VC tới nơi LĐ + Lắp đặt.'
         : (eventsCreateError
           ? `— Chưa tạo được lịch sự kiện: ${eventsCreateError}`
           : '— Đã xác nhận lịch giao nhận hàng.');
@@ -1477,6 +1556,7 @@ r.patch('/comments/:cid/confirm', async (req, res) => {
         String(comment.body || '').split('\n')[0],
         `— Công ty: ${meta.logistics_company_name || 'VC/LĐ'}`,
         `— Ngày nhận hàng: ${pickupLabel}`,
+        meta.vc_arrive_at ? `— VC tới nơi LĐ: ${formatVnDateTime(new Date(meta.vc_arrive_at))}` : null,
         meta.install_date ? `— Ngày lắp đặt: ${formatVnDateTime(new Date(meta.install_date))}` : null,
         eventLine,
         '— Đã xác nhận giữa Xưởng & VC/LĐ.',

@@ -8,7 +8,7 @@ export default function ProductionAssignmentsPage() {
   return (
     <CRMAssignmentsPage
       apiBase="/crm/assignments"
-      pageTitle="🏭 Giao việc Sản xuất"
+      pageTitle="Giao việc Sản xuất"
       companiesModule="production"
       assignmentModule="production"
       storagePrefix="sx_assignments"

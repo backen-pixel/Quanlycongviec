@@ -461,6 +461,7 @@ export default function App() {
             <Route path="/crm/messenger" element={<MessengerHubPage />} />
             <Route path="/crm/activity" element={<ActiveUsersPage />} />
             <Route path="/crm/dashboard" element={<CRMDashboard />} />
+            <Route path="/crm/lead-journey" element={<LeadJourneyPage />} />
             <Route path="/crm/executive-kpi" element={<RequireExecutive><ExecutiveKpiPage /></RequireExecutive>} />
             <Route path="/crm/kpi/sales-admin" element={<KpiSalesAdminDashboard />} />
             <Route path="/crm/kpi/deal" element={<KpiDealDashboard />} />

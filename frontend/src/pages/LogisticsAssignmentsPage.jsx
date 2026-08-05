@@ -7,7 +7,7 @@ export default function LogisticsAssignmentsPage() {
   return (
     <CRMAssignmentsPage
       apiBase="/crm/assignments"
-      pageTitle="🚚 Giao việc Vận chuyển"
+      pageTitle="Giao việc Vận chuyển"
       companiesModule="logistics"
       assignmentModule="logistics"
       storagePrefix="vc_assignments"
