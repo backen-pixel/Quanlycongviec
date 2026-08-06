@@ -74,6 +74,14 @@ r.get('/leads/:id/comments', async (req, res) => {
         });
       }
     } catch (_) { /* cột chưa migrate — bỏ qua */ }
+    // Bình luận riêng tư: chỉ tác giả + người trong visible_user_ids thấy (admin cũng không thấy).
+    list = list.filter((c) => {
+      const meta = c?.metadata && typeof c.metadata === 'object' ? c.metadata : null;
+      if (!meta || meta.visibility !== 'private') return true;
+      if (String(c.user_id || '') === String(userId)) return true;
+      const audience = Array.isArray(meta.visible_user_ids) ? meta.visible_user_ids : [];
+      return audience.map(String).includes(String(userId));
+    });
     if (!list.length) return res.json([]);
     const ids = list.map((c) => c.id);
     let rxMap = await fetchCrmCommentReactionsAggregate(supabase, ids, userId);
@@ -177,11 +185,35 @@ r.post('/leads/:id/comments', async (req, res) => {
     const insertRow = { lead_id: leadId, user_id: userId, body, parent_id: parentId };
     if (attachments.length) insertRow.attachments = attachments;
 
+    // Bình luận riêng tư: chỉ người được chọn (+ tác giả, + admin) thấy.
+    const rawVisibility = String(req.body?.visibility || '').toLowerCase();
+    const rawVisibleIds = Array.isArray(req.body?.visible_user_ids) ? req.body.visible_user_ids : [];
+    const visibleIds = [...new Set(
+      rawVisibleIds.map((x) => String(x || '').trim()).filter((x) => CRM_UUID_RE.test(x)),
+    )];
+    let privateAudience = null;
+    if (rawVisibility === 'private') {
+      const withAuthor = [...new Set([...visibleIds, String(userId)])];
+      insertRow.metadata = { visibility: 'private', visible_user_ids: withAuthor };
+      privateAudience = new Set(withAuthor.map(String));
+    }
+
     let { data, error } = await supabase
       .from('crm_lead_comments')
       .insert(insertRow)
-      .select('id, lead_id, user_id, parent_id, body, attachments, created_at, updated_at, user:users!crm_lead_comments_user_id_fkey(id,full_name,avatar)')
+      .select('id, lead_id, user_id, parent_id, body, attachments, comment_type, metadata, created_at, updated_at, user:users!crm_lead_comments_user_id_fkey(id,full_name,avatar)')
       .single();
+    // Cột metadata/comment_type chưa migrate → thử lại không kèm (sẽ mất tính năng private cho môi trường cũ).
+    if (error && (String(error.message || '').includes('metadata') || String(error.message || '').includes('comment_type'))) {
+      const fallbackRow = { ...insertRow };
+      delete fallbackRow.metadata;
+      ({ data, error } = await supabase
+        .from('crm_lead_comments')
+        .insert(fallbackRow)
+        .select('id, lead_id, user_id, parent_id, body, attachments, created_at, updated_at, user:users!crm_lead_comments_user_id_fkey(id,full_name,avatar)')
+        .single());
+      privateAudience = null;
+    }
     if (error && crmLeadCommentAttachmentsColumnMissing(error)) {
       return res.status(500).json({
         error: 'Cột attachments chưa có. Chạy migration database/362_crm_lead_comments_attachments.sql trên Supabase.',
@@ -201,12 +233,26 @@ r.post('/leads/:id/comments', async (req, res) => {
       reactions: { summary: [], mine: null },
     };
     const io = req.app.get('io');
-    if (io) io.to(`lead:${leadId}`).emit('lead:comment', { lead_id: leadId, action: 'created', comment: row });
+    if (io) {
+      if (privateAudience && privateAudience.size) {
+        // Riêng tư: chỉ emit cho user room của người trong danh sách + admin CRM.
+        for (const uid of privateAudience) {
+          io.to(`user:${uid}`).emit('lead:comment', { lead_id: leadId, action: 'created', comment: row });
+        }
+      } else {
+        io.to(`lead:${leadId}`).emit('lead:comment', { lead_id: leadId, action: 'created', comment: row });
+      }
+    }
 
     try {
       const leadMembers = await fetchLeadCommentAudienceMembers(supabase, leadId);
-      const mentionIds = resolveLeadCommentMentionIds(req.body, body, leadMembers, userId);
-      const notifyIds = await fetchCrmLeadCommentNotifyUserIds(supabase, leadId);
+      let mentionIds = resolveLeadCommentMentionIds(req.body, body, leadMembers, userId);
+      let notifyIds = await fetchCrmLeadCommentNotifyUserIds(supabase, leadId);
+      if (privateAudience && privateAudience.size) {
+        // Riêng tư: giới hạn notify trong tập audience.
+        notifyIds = (notifyIds || []).filter((uid) => privateAudience.has(String(uid)));
+        mentionIds = (mentionIds || []).filter((uid) => privateAudience.has(String(uid)));
+      }
 
       await notifyDealCommentParticipants(req, notifyMultiple, leadId, userId, row, notifyIds, mentionIds);
 

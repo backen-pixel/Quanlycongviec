@@ -711,7 +711,8 @@ export function LeadMembersTab({ leadId, onMembersChange, onOpenSharedWorkspace 
     companies,
     filterCompany,
     setFilterCompany,
-    forModule: 'crm',
+    forModule: 'all',
+    aggregateWhenUnscoped: true,
   });
 
   const {
@@ -766,10 +767,22 @@ export function LeadMembersTab({ leadId, onMembersChange, onOpenSharedWorkspace 
   useEffect(() => {
     void load();
     void loadAssignments();
-    api.get('/companies', { params: { for_module: 'crm' } }).then((r) => {
-      const cos = r.data?.companies || r.data || [];
-      setCompanies(Array.isArray(cos) ? cos : []);
-    }).catch(() => {});
+    // Công ty thuộc hệ sinh thái: gộp CRM + SX (và VC nếu có) để thêm NV xưởng khác
+    Promise.all([
+      api.get('/companies', { params: { for_module: 'crm' } }).catch(() => ({ data: { companies: [] } })),
+      api.get('/companies', { params: { for_module: 'production' } }).catch(() => ({ data: { companies: [] } })),
+      api.get('/companies', { params: { for_module: 'logistics' } }).catch(() => ({ data: { companies: [] } })),
+    ]).then(([crmR, sxR, vcR]) => {
+      const map = new Map();
+      for (const r of [crmR, sxR, vcR]) {
+        const list = r.data?.companies || r.data || [];
+        for (const c of Array.isArray(list) ? list : []) {
+          if (c?.id) map.set(String(c.id), c);
+        }
+      }
+      setCompanies([...map.values()].sort((a, b) =>
+        String(a.short_name || a.name || '').localeCompare(String(b.short_name || b.name || ''), 'vi')));
+    }).catch(() => setCompanies([]));
   }, [leadId, load, loadAssignments]);
 
   const blockedUserIds = useMemo(() => {
@@ -866,6 +879,7 @@ export function LeadMembersTab({ leadId, onMembersChange, onOpenSharedWorkspace 
       <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 space-y-3">
         <p className="text-xs font-medium text-blue-700 flex items-center gap-1">
           <Building2 size={12} /> Thêm thành viên
+          <span className="font-normal text-blue-600/80">— NV mọi công ty trong hệ sinh thái</span>
         </p>
 
         <WorkshopStaffFilterPanel
@@ -891,6 +905,8 @@ export function LeadMembersTab({ leadId, onMembersChange, onOpenSharedWorkspace 
           companyEmployees={companyEmployees}
           hidePersonSelect
           hidePersonName
+          allowEcosystemCompanyPick
+          panelTitle="Chọn công ty hệ sinh thái → khu vực → NV"
         />
 
         <div className="flex flex-wrap items-center gap-2">
@@ -929,18 +945,22 @@ export function LeadMembersTab({ leadId, onMembersChange, onOpenSharedWorkspace 
         </div>
 
         <div className="max-h-52 overflow-y-auto rounded-lg border border-blue-100 bg-white divide-y divide-slate-100">
-          {!dashboardScopeCompanyId && isAdmin && !isCompanyScopedAdmin ? (
-            <p className="text-xs text-amber-700 px-3 py-4 text-center">Chọn công ty để hiện danh sách nhân viên</p>
-          ) : pickableEmployees.length === 0 ? (
+          {pickableEmployees.length === 0 ? (
             <p className="text-xs text-gray-400 px-3 py-4 text-center">
               {employeeFilterListByRegion.length === 0
-                ? 'Công ty chưa có nhân viên CRM'
+                ? (companies.length
+                  ? 'Không có nhân viên theo bộ lọc (thử «Tất cả công ty» / đổi khu vực)'
+                  : 'Chưa tải được danh sách công ty hệ sinh thái')
                 : 'Không còn NV phù hợp (đã là thành viên hoặc đã chọn)'}
             </p>
           ) : (
             pickableEmployees.map((u) => {
               const checked = checkedUserIds.has(String(u.id));
               const deptName = companyDepts.find((d) => d.id === u.department_id)?.name || '';
+              const coName = u.company_name
+                || companies.find((c) => String(c.id) === String(u.company_id))?.short_name
+                || companies.find((c) => String(c.id) === String(u.company_id))?.name
+                || '';
               return (
                 <label
                   key={u.id}
@@ -955,7 +975,7 @@ export function LeadMembersTab({ leadId, onMembersChange, onOpenSharedWorkspace 
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-medium text-gray-800 truncate">{u.full_name}</p>
                     <p className="text-[10px] text-gray-400 truncate">
-                      {[deptName, u.position, u.email].filter(Boolean).join(' · ')}
+                      {[coName, deptName, u.position, u.email].filter(Boolean).join(' · ')}
                     </p>
                   </div>
                 </label>
@@ -979,7 +999,9 @@ export function LeadMembersTab({ leadId, onMembersChange, onOpenSharedWorkspace 
             <p className="text-[10px] text-blue-600 font-medium">Đang chọn {selectedUsers.length} người:</p>
             {selectedUsers.map((su) => (
               <div key={su.user_id} className="flex items-center gap-2 bg-white rounded-lg px-2 py-1.5 border border-blue-100">
-                <span className="flex-1 text-xs text-gray-700 truncate">{su.name || su.user_id}</span>
+                <span className="flex-1 text-xs text-gray-700 truncate" title={su.name}>
+                  {su.name || su.user_id}
+                </span>
                 <select
                   value={su.role}
                   onChange={(e) => updateQueueRole(su.user_id, e.target.value)}

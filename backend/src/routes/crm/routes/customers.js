@@ -82,11 +82,13 @@ r.get('/company-regions', async (req, res) => {
     if (!co && coIds.length === 0) return res.status(400).json({ error: 'Thiếu company_id' });
 
     const sac = scopedAdminCompanyId(req);
+    // for_module=all: khu vực khi thêm thành viên HST — không khóa theo công ty admin.
+    const ecosystemRegions = forModuleRaw === 'all';
     const checkOne = (id) => {
-      if (sac && String(id) !== String(sac)) return false;
-      if (isCrmRegionAdminUser(req.user)) {
+      if (!ecosystemRegions && sac && String(id) !== String(sac)) return false;
+      if (!ecosystemRegions && isCrmRegionAdminUser(req.user)) {
         if (String(id) !== String(req.user.company_id)) return false;
-      } else if (!userIsAdmin(req.user?.role)) {
+      } else if (!ecosystemRegions && !userIsAdmin(req.user?.role)) {
         if (String(id) !== String(req.user?.company_id || '')) return false;
       }
       return true;

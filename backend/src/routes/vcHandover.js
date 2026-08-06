@@ -463,7 +463,7 @@ r.post('/projects/:id/request', async (req, res) => {
 
     const { data: project } = await supabase
       .from('projects')
-      .select('id, code, name, production_person_id, sales_person_id, company_id, install_address, customer_id')
+      .select('id, code, name, production_person_id, sales_person_id, company_id, install_address, customer_id, workshop_type_id')
       .eq('id', projectId)
       .maybeSingle();
     if (!project) return res.status(404).json({ error: 'Không tìm thấy dự án' });
@@ -617,6 +617,16 @@ r.post('/projects/:id/request', async (req, res) => {
         .maybeSingle();
       workshopCompanyName = wsCo?.short_name || wsCo?.name || null;
     }
+    // Phân loại xưởng (Cửa / Tủ bếp / …) — hiển thị rõ xưởng nào yêu cầu.
+    let workshopTypeName = null;
+    if (project.workshop_type_id) {
+      const { data: wsType } = await supabase
+        .from('workshop_project_types')
+        .select('name')
+        .eq('id', project.workshop_type_id)
+        .maybeSingle();
+      workshopTypeName = wsType?.name || null;
+    }
 
     const metadata = {
       state: 'awaiting_company',
@@ -633,6 +643,8 @@ r.post('/projects/:id/request', async (req, res) => {
       lead_type_name: leadTypeName,
       workshop_company_id: project.company_id || null,
       workshop_company_name: workshopCompanyName,
+      workshop_type_id: project.workshop_type_id || null,
+      workshop_type_name: workshopTypeName,
       install_address: installAddressPrefill,
     };
     const mentionText = await formatSaleMentionText(deal.id, saleUserIds);

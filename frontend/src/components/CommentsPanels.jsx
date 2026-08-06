@@ -972,6 +972,10 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
   };
 
   const projLabel = md.project_name || md.project_code || 'dự án';
+  const sxOriginLabel = [md.workshop_company_name, md.workshop_type_name]
+    .map((s) => String(s || '').trim())
+    .filter(Boolean)
+    .join(' · ');
 
   return (
     <div className="my-2 flex justify-center">
@@ -981,7 +985,14 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
             <Truck className="h-4 w-4" />
           </span>
           <div className="min-w-0">
-            <p className="text-[13px] font-bold text-orange-800 leading-tight">Bàn giao Vận chuyển / Lắp đặt</p>
+            <p className="text-[13px] font-bold text-orange-800 leading-tight">
+              Bàn giao Vận chuyển / Lắp đặt
+              {sxOriginLabel ? (
+                <span className="ml-1.5 rounded-full bg-orange-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-orange-800 align-middle">
+                  {sxOriginLabel}
+                </span>
+              ) : null}
+            </p>
             <p className="text-[11px] text-orange-700/80 leading-tight truncate">Dự án: {projLabel}</p>
           </div>
           <span className="ml-auto shrink-0 text-[10px] text-orange-700/70" title={formatCrmCommentFullDateTime(comment.created_at)}>
@@ -1827,15 +1838,38 @@ function CommentThread({
       }
 
       const showCornerRx = editingId !== c.id && (c.reactions?.summary || []).some((s) => s.count > 0);
+      const isPrivateComment = c?.metadata?.visibility === 'private';
+      const privateAudienceIds = isPrivateComment && Array.isArray(c?.metadata?.visible_user_ids)
+        ? c.metadata.visible_user_ids.map(String)
+        : [];
+      const privateAudienceNames = isPrivateComment
+        ? privateAudienceIds
+            .map((uid) => {
+              const m = (members || []).find((mem) => String(mem?.user?.id || mem?.user_id) === String(uid));
+              return m?.user?.full_name || null;
+            })
+            .filter(Boolean)
+        : [];
+      const privateTooltip = isPrivateComment
+        ? `Bình luận riêng tư — chỉ hiện với: ${privateAudienceNames.join(', ') || '—'}`
+        : '';
       return (
         <div key={c.id} className={depth > 0 ? 'ml-5 border-l border-[#ccd0d5] pl-2.5 pt-0.5' : ''}>
           <div className="group/crx flex gap-2 rounded-lg px-1 py-1.5 transition-colors hover:bg-black/[0.025]">
             <FbCrmAvatar user={c.user} className="h-8 w-8 shrink-0" />
             <div className="min-w-0 flex-1">
               <div className={`relative inline-block max-w-full ${showCornerRx ? 'mb-2.5' : ''}`}>
-                <div className={`max-w-full rounded-2xl border border-[#e4e6eb]/90 bg-white px-3 py-2 shadow-sm ${showCornerRx ? 'pb-2.5' : ''}`}>
+                <div className={`max-w-full rounded-2xl border px-3 py-2 shadow-sm ${showCornerRx ? 'pb-2.5' : ''} ${isPrivateComment ? 'border-amber-300 bg-amber-50/70' : 'border-[#e4e6eb]/90 bg-white'}`}>
                   <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0">
                     <span className="text-[13px] font-semibold text-[#050505]">{c.user?.full_name || 'Thành viên'}</span>
+                    {isPrivateComment && (
+                      <span
+                        title={privateTooltip}
+                        className="inline-flex items-center gap-0.5 rounded-full bg-amber-200/70 px-1.5 py-0.5 text-[10px] font-semibold text-amber-900"
+                      >
+                        🔒 Riêng tư
+                      </span>
+                    )}
                     <span className="text-[11px] text-[#65676b]">
                       <time dateTime={c.created_at || ''} title={formatCrmCommentFullDateTime(c.created_at)}>
                         {formatCrmFbRelativeTime(c.created_at)}
@@ -2145,7 +2179,7 @@ export function CrmLeadCommentsPanel({
 
   useLeadCommentSocket(activeLeadId, handleLeadCommentEvent, applyReadReceipt);
 
-  const submit = useCallback(async ({ mention_user_ids, attachmentList } = {}) => {
+  const submit = useCallback(async ({ mention_user_ids, attachmentList, visibility, visible_user_ids } = {}) => {
     const v = body.trim();
     const files = attachmentList ?? pendingFiles;
     if (!activeLeadId || (!v && !files.length)) return;
@@ -2155,6 +2189,10 @@ export function CrmLeadCommentsPanel({
       if (replyTo?.id != null) payload.parent_id = replyTo.id;
       if (mention_user_ids?.length) payload.mention_user_ids = mention_user_ids;
       if (files.length) payload.attachments = files;
+      if (visibility === 'private') {
+        payload.visibility = 'private';
+        payload.visible_user_ids = Array.isArray(visible_user_ids) ? visible_user_ids : [];
+      }
       const r = await api.post(`/crm/leads/${activeLeadId}/comments`, payload);
       const row = r.data || {};
       setComments((prev) => {

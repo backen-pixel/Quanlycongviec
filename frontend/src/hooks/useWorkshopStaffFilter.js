@@ -47,7 +47,8 @@ export function getProjectAssigneeName(project, forModule = 'crm') {
 
 /**
  * Bộ lọc NV workshop (SX / VC) — cùng luồng CRM: công ty → khu vực → NV.
- * @param {{ user, isAdmin, companies, filterCompany, setFilterCompany, forModule: 'production'|'logistics', persisted?: object }} opts
+ * @param {{ user, isAdmin, companies, filterCompany, setFilterCompany, forModule: 'production'|'logistics'|'crm'|'all', persisted?: object, aggregateWhenUnscoped?: boolean }} opts
+ * aggregateWhenUnscoped: khi chưa chọn 1 công ty, gộp NV từ mọi công ty trong `companies` (thêm thành viên HST).
  */
 export function useWorkshopStaffFilter({
   user,
@@ -58,6 +59,7 @@ export function useWorkshopStaffFilter({
   dealCompanyFilter = '',
   forModule,
   persisted = null,
+  aggregateWhenUnscoped = false,
 }) {
   const isCompanyScopedAdmin = isCrmCompanyAdmin(user);
   const crossWorkshopViewer = isCrossWorkshopProductionViewer(user);
@@ -87,6 +89,13 @@ export function useWorkshopStaffFilter({
       return '';
     }
 
+    // Thêm thành viên HST: trống = gộp mọi CT; chọn CT = chỉ NV CT đó (không khóa admin 1 CT).
+    if (aggregateWhenUnscoped) {
+      if (crmDealCompanyId) return crmDealCompanyId;
+      if (workshopPick) return workshopPick;
+      return '';
+    }
+
     if (crmDealCompanyId) return crmDealCompanyId;
     if (workshopPick) return workshopPick;
     if (isCompanyScopedAdmin && userCompanyId) return userCompanyId;
@@ -94,7 +103,7 @@ export function useWorkshopStaffFilter({
     if (!isAdmin && userCompanyId) return userCompanyId;
     if (isAdmin && workshopPick) return workshopPick;
     return '';
-  }, [dealCompanyFilter, filterCompany, forModule, isCompanyScopedAdmin, crossWorkshopViewer, isAdmin, userCompanyId, user, companies]);
+  }, [dealCompanyFilter, filterCompany, forModule, isCompanyScopedAdmin, crossWorkshopViewer, isAdmin, userCompanyId, user, companies, aggregateWhenUnscoped]);
 
   const crmCompanyIdsCsv = useMemo(
     () => (companies || []).map((c) => String(c.id)).filter(Boolean).join(','),
@@ -132,8 +141,76 @@ export function useWorkshopStaffFilter({
     let cancel = false;
     (async () => {
       try {
+        // Một công ty: gọi API như cũ
+        if (dashboardScopeCompanyId) {
+          const params = { for_module: forModule, company_id: dashboardScopeCompanyId };
+          const { data } = await api.get('/crm/employees-by-company', { params });
+          if (cancel) return;
+          const co = (companies || []).find((c) => String(c.id) === String(dashboardScopeCompanyId));
+          const coName = co?.short_name || co?.name || '';
+          setCompanyEmployees((data.users || []).map((u) => ({
+            ...u,
+            company_id: u.company_id || dashboardScopeCompanyId,
+            company_name: u.company_name || coName,
+          })));
+          setCompanyDepts(data.departments || []);
+          return;
+        }
+
+        // Chưa chọn công ty: gộp NV mọi công ty trong list (hệ sinh thái)
+        if (aggregateWhenUnscoped && (companies || []).length) {
+          const ids = [...new Set((companies || []).map((c) => String(c.id)).filter(Boolean))];
+          const coById = new Map((companies || []).map((c) => [String(c.id), c]));
+          const chunks = [];
+          for (let i = 0; i < ids.length; i += 6) chunks.push(ids.slice(i, i + 6));
+          const mergedUsers = [];
+          const mergedDepts = [];
+          const seenUser = new Set();
+          const seenDept = new Set();
+          for (const chunk of chunks) {
+            const results = await Promise.all(
+              chunk.map(async (cid) => {
+                try {
+                  const { data } = await api.get('/crm/employees-by-company', {
+                    params: { for_module: forModule, company_id: cid },
+                  });
+                  return { cid, data };
+                } catch {
+                  return { cid, data: { users: [], departments: [] } };
+                }
+              }),
+            );
+            if (cancel) return;
+            for (const { cid, data } of results) {
+              const co = coById.get(String(cid));
+              const coName = co?.short_name || co?.name || '';
+              for (const u of data.users || []) {
+                if (!u?.id || seenUser.has(String(u.id))) continue;
+                seenUser.add(String(u.id));
+                mergedUsers.push({
+                  ...u,
+                  company_id: u.company_id || cid,
+                  company_name: u.company_name || coName,
+                });
+              }
+              for (const d of data.departments || []) {
+                const did = d?.id ? String(d.id) : '';
+                if (!did || seenDept.has(did)) continue;
+                seenDept.add(did);
+                mergedDepts.push({ ...d, company_id: d.company_id || cid });
+              }
+            }
+          }
+          mergedUsers.sort((a, b) => String(a.full_name || '').localeCompare(String(b.full_name || ''), 'vi'));
+          if (!cancel) {
+            setCompanyEmployees(mergedUsers);
+            setCompanyDepts(mergedDepts);
+          }
+          return;
+        }
+
+        // Fallback: API không company_id → backend lấy CT của user
         const params = { for_module: forModule };
-        if (dashboardScopeCompanyId) params.company_id = dashboardScopeCompanyId;
         const { data } = await api.get('/crm/employees-by-company', { params });
         if (cancel) return;
         setCompanyEmployees(data.users || []);
@@ -146,7 +223,7 @@ export function useWorkshopStaffFilter({
       }
     })();
     return () => { cancel = true; };
-  }, [dashboardScopeCompanyId, forModule]);
+  }, [dashboardScopeCompanyId, forModule, aggregateWhenUnscoped, companies]);
 
   useEffect(() => {
     if (!filterPersonId || companyEmployees.length === 0) return;
@@ -207,8 +284,8 @@ export function useWorkshopStaffFilter({
     setFilterPersonId('');
     setFilterPersonName('');
     setAssigneeListSearch('');
-    if (isAdmin && !isCompanyScopedAdmin) setFilterCompany('');
-  }, [isAdmin, isCompanyScopedAdmin, setFilterCompany]);
+    if (aggregateWhenUnscoped || (isAdmin && !isCompanyScopedAdmin)) setFilterCompany('');
+  }, [isAdmin, isCompanyScopedAdmin, aggregateWhenUnscoped, setFilterCompany]);
 
   const onCompanyChange = useCallback((companyId) => {
     setFilterCompany(companyId);

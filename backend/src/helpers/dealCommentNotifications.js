@@ -328,7 +328,8 @@ async function postSxTransferMentionComment(req, notifyMultiple, {
   if (mode === 'handover') {
     body = `✅ ${senderName} đã xác nhận bàn giao sản xuất${codePart}. ${mentionText} — vui lòng tiếp nhận và xử lý deal${titlePart}.`;
   } else {
-    body = `🏭 ${senderName} đã chuyển deal sang Sản xuất${workshopPart}${codePart}. ${mentionText} — bạn được giao phụ trách sản xuất deal${titlePart}.`;
+    const verb = mode === 'additional' ? 'đã thêm dự án SX' : 'đã chuyển deal sang Sản xuất';
+    body = `🏭 ${senderName} ${verb}${workshopPart}${codePart}. ${mentionText} — bạn được giao phụ trách sản xuất deal${titlePart}.`;
   }
 
   const { data, error } = await supabase

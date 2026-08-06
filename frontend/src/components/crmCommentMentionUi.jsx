@@ -28,6 +28,7 @@ export function CrmCommentMentionComposer({
   onPaste,
   quickReplyTemplates = [],
   onQuickReply,
+  allowPrivate = true,
 }) {
   const textareaRef = useRef(null);
   const pickedIdsRef = useRef(new Set());
@@ -35,8 +36,29 @@ export function CrmCommentMentionComposer({
   const [mentionOpen, setMentionOpen] = useState(false);
   const [mentionStart, setMentionStart] = useState(0);
   const [mentionPickIdx, setMentionPickIdx] = useState(0);
+  const [privateOn, setPrivateOn] = useState(false);
+  const [privatePickerOpen, setPrivatePickerOpen] = useState(false);
+  const [privateSelectedIds, setPrivateSelectedIds] = useState(() => new Set());
 
   const meId = user?.userId || user?.id;
+
+  // Đồng bộ danh sách người nhận riêng tư theo @mention hiện có trong nội dung.
+  useEffect(() => {
+    if (!privateOn) return;
+    const fromText = resolveMentionIdsFromContent(String(value || ''), members, { excludeUserId: meId });
+    if (!fromText.length) return;
+    setPrivateSelectedIds((prev) => {
+      const next = new Set(prev);
+      let changed = false;
+      for (const id of fromText) {
+        if (!next.has(String(id))) {
+          next.add(String(id));
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [value, privateOn, members, meId]);
 
   const syncHeight = useCallback(() => {
     const el = textareaRef.current;
@@ -117,9 +139,36 @@ export function CrmCommentMentionComposer({
     const fromText = resolveMentionIdsFromContent(trimmed, members, { excludeUserId: meId });
     const fromPicks = [...pickedIdsRef.current].filter((id) => String(id) !== String(meId));
     const mentionIds = [...new Set([...fromText, ...fromPicks])];
-    onSubmit?.({ mention_user_ids: mentionIds });
+    const payload = { mention_user_ids: mentionIds };
+    if (allowPrivate && privateOn) {
+      const audience = new Set([...privateSelectedIds].map(String));
+      for (const id of mentionIds) audience.add(String(id));
+      audience.delete(String(meId || ''));
+      payload.visibility = 'private';
+      payload.visible_user_ids = [...audience];
+    }
+    onSubmit?.(payload);
     pickedIdsRef.current = new Set();
+    if (privateOn) {
+      setPrivateOn(false);
+      setPrivatePickerOpen(false);
+      setPrivateSelectedIds(new Set());
+    }
   };
+
+  const togglePrivateMember = (uid) => {
+    setPrivateSelectedIds((prev) => {
+      const next = new Set(prev);
+      const key = String(uid);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const privateMemberList = (members || [])
+    .map((m) => ({ id: String(m?.user?.id || m?.user_id || ''), name: memberDisplayName(m) || 'Thành viên', mem: m }))
+    .filter((m) => m.id && m.id !== String(meId || ''));
 
   const pickerItems = mentionOpen ? mentionState.items : [];
   const showEmptyHint = mentionOpen && !pickerItems.length && (members || []).length === 0;
@@ -179,6 +228,43 @@ export function CrmCommentMentionComposer({
       {showNoMatch && (
         <div className="absolute bottom-full left-10 right-14 z-[100] mb-1 rounded-xl border border-[#e4e6eb] bg-white px-3 py-2 text-[12px] text-[#65676b] shadow-md">
           Không tìm thấy tên phù hợp «{mentionState.query}»
+        </div>
+      )}
+      {allowPrivate && privateOn && privatePickerOpen && (
+        <div className="absolute bottom-full left-10 right-14 z-[100] mb-1 max-h-64 overflow-y-auto rounded-xl border border-amber-200 bg-white py-1 shadow-xl ring-1 ring-black/5">
+          <p className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-amber-800">
+            Chọn người được xem (bình luận riêng tư)
+          </p>
+          {privateMemberList.length === 0 && (
+            <p className="px-3 py-2 text-[12px] text-[#65676b]">Chưa có thành viên khác trong lead/deal.</p>
+          )}
+          {privateMemberList.map((m) => {
+            const checked = privateSelectedIds.has(m.id);
+            return (
+              <label
+                key={m.id}
+                className={`flex w-full items-center gap-2 px-3 py-2 text-[14px] cursor-pointer ${checked ? 'bg-amber-50' : 'hover:bg-[#f0f2f5]'}`}
+              >
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 accent-amber-600"
+                  checked={checked}
+                  onChange={() => togglePrivateMember(m.id)}
+                />
+                <FbCrmAvatar user={m.mem?.user} className="h-6 w-6 shrink-0" />
+                <span className="truncate text-[#050505]">{m.name}</span>
+              </label>
+            );
+          })}
+          <div className="flex justify-end gap-2 px-3 py-2 border-t border-amber-100">
+            <button
+              type="button"
+              className="h-7 px-2 rounded-md text-[12px] font-semibold text-[#65676b] hover:bg-[#f0f2f5]"
+              onClick={() => setPrivatePickerOpen(false)}
+            >
+              Xong
+            </button>
+          </div>
         </div>
       )}
       <div className="flex items-end gap-2 px-3 py-2.5 bg-white">
@@ -254,6 +340,38 @@ export function CrmCommentMentionComposer({
           />
           </div>
         </div>
+        {allowPrivate && (
+          <div className="shrink-0 flex flex-col items-end gap-0.5">
+            <button
+              type="button"
+              onClick={() => {
+                setPrivateOn((v) => {
+                  const next = !v;
+                  setPrivatePickerOpen(next);
+                  if (!next) setPrivateSelectedIds(new Set());
+                  return next;
+                });
+              }}
+              title={privateOn ? 'Đang bật riêng tư — bấm để tắt' : 'Chỉ hiện với người được chọn'}
+              className={`h-8 px-2 rounded-full text-[11px] font-semibold border transition-colors cursor-pointer ${
+                privateOn
+                  ? 'border-amber-400 bg-amber-100 text-amber-900 hover:bg-amber-200'
+                  : 'border-[#ccd0d5] bg-white text-[#65676b] hover:bg-[#f0f2f5]'
+              }`}
+            >
+              {privateOn ? `🔒 Riêng tư (${privateSelectedIds.size})` : '🔒 Riêng tư'}
+            </button>
+            {privateOn && (
+              <button
+                type="button"
+                onClick={() => setPrivatePickerOpen((v) => !v)}
+                className="text-[10px] font-medium text-amber-800 underline hover:text-amber-900"
+              >
+                {privatePickerOpen ? 'Đóng danh sách' : 'Chọn người nhận'}
+              </button>
+            )}
+          </div>
+        )}
         <button
           type="button"
           disabled={posting || !(canSubmit ?? String(value || '').trim())}

@@ -439,6 +439,15 @@ r.get('/leads/:id/detail', async (req, res) => {
     } catch (e) {
       data.inbox_channel = null;
     }
+    try {
+      const { listDealProductionProjects } = require('../../../helpers/autoDealWonProject');
+      data.production_projects = await listDealProductionProjects(canonicalId);
+    } catch (e) {
+      console.warn('[crm/leads/:id/detail] production_projects:', e.message);
+      data.production_projects = data.project_id
+        ? [{ project_id: data.project_id, is_primary: true }]
+        : [];
+    }
     res.json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -2094,7 +2103,13 @@ r.get('/leads/:id/stage-advance-check', async (req, res) => {
 
 r.patch('/leads/:id/stage', async (req, res) => {
   try {
-    const { stage_id, lost_reason, production_company_id, workshop_type_id: bodyWorkshopTypeId } = req.body;
+    const {
+      stage_id,
+      lost_reason,
+      production_company_id,
+      workshop_type_id: bodyWorkshopTypeId,
+      targets: bodySxTargets,
+    } = req.body;
     const leadStageSelectWithBadges =
       'type, project_id, company_id, assigned_to, lead_owner_id, lead_type_id, use_order_tasks, parent_lead_id, stage_id, sx_handover_at, kanban_deadline_at'
       + ', sx_pipeline_stage:production_pipeline_stages(id, name, crm_sync_type)'
@@ -2203,11 +2218,31 @@ r.patch('/leads/:id/stage', async (req, res) => {
     const requiresProductionPick = lead?.type === 'deal' && !lead?.project_id && !!stage?.is_won;
 
     let effectiveProductionCompanyId = null;
+    const sxTargets = Array.isArray(bodySxTargets) && bodySxTargets.length
+      ? bodySxTargets
+      : null;
     if (requiresProductionPick) {
-      effectiveProductionCompanyId = await resolveProductionCompanyForDealStage(req.params.id, production_company_id);
-      const v = await validateProductionCompanyId(effectiveProductionCompanyId);
-      if (!v.ok) {
-        return res.status(400).json({ error: v.error, requires_production_company: true });
+      if (sxTargets) {
+        for (const t of sxTargets) {
+          const cid = t?.production_company_id || t?.company_id;
+          if (!cid) {
+            return res.status(400).json({ error: 'Mỗi dòng SX cần chọn công ty', requires_production_company: true });
+          }
+          if (!t?.workshop_type_id) {
+            return res.status(400).json({ error: 'Mỗi dòng SX cần chọn phân loại sản xuất' });
+          }
+          const v = await validateProductionCompanyId(cid);
+          if (!v.ok) {
+            return res.status(400).json({ error: v.error, requires_production_company: true });
+          }
+        }
+        effectiveProductionCompanyId = sxTargets[0].production_company_id || sxTargets[0].company_id;
+      } else {
+        effectiveProductionCompanyId = await resolveProductionCompanyForDealStage(req.params.id, production_company_id);
+        const v = await validateProductionCompanyId(effectiveProductionCompanyId);
+        if (!v.ok) {
+          return res.status(400).json({ error: v.error, requires_production_company: true });
+        }
       }
     }
 
@@ -2438,6 +2473,7 @@ r.patch('/leads/:id/stage', async (req, res) => {
         userId: req.user.userId,
         productionCompanyId: effectiveProductionCompanyId,
         workshopTypeId: bodyWorkshopTypeId || null,
+        targets: sxTargets,
       });
 
       if (auto.ok) {
@@ -2445,13 +2481,19 @@ r.patch('/leads/:id/stage', async (req, res) => {
           project_id: auto.project_id,
           project_code: auto.project_code,
           tasks_created: auto.tasks_created,
+          projects: auto.projects || null,
+          primary_project_id: auto.primary_project_id || auto.project_id,
         };
-        if (effectiveProductionCompanyId) {
+        const respCompanies = auto.projects?.length
+          ? [...new Set(auto.projects.map((p) => p.company_id).filter(Boolean))]
+          : (effectiveProductionCompanyId ? [effectiveProductionCompanyId] : []);
+        for (const pcId of respCompanies) {
           try {
             await assignProductionCompanyDealResponsibility({
               dealId: req.params.id,
-              productionCompanyId: effectiveProductionCompanyId,
-              projectId: auto.project_id,
+              productionCompanyId: pcId,
+              projectId: auto.projects?.find((p) => String(p.company_id) === String(pcId))?.project_id
+                || auto.project_id,
             });
           } catch (respErr) {
             console.warn('[crm/stage] assign production company responsible:', respErr.message);
@@ -3654,24 +3696,58 @@ r.put('/auto-project-config', async (req, res) => {
 
 r.post('/deals/:id/auto-create-project', async (req, res) => {
   try {
-    const resolvedPc = await resolveProductionCompanyForDealStage(req.params.id, req.body?.production_company_id);
+    const mode = String(req.body?.mode || 'create').toLowerCase() === 'additional'
+      ? 'additional'
+      : 'create';
+    const targets = Array.isArray(req.body?.targets) && req.body.targets.length
+      ? req.body.targets
+      : null;
+    let resolvedPc = req.body?.production_company_id || targets?.[0]?.production_company_id || null;
+    if (!targets && resolvedPc) {
+      resolvedPc = await resolveProductionCompanyForDealStage(req.params.id, resolvedPc);
+    }
+    if (targets) {
+      for (const t of targets) {
+        const cid = t?.production_company_id || t?.company_id;
+        if (!cid) return res.status(400).json({ error: 'Mỗi dòng SX cần chọn công ty' });
+        if (!t?.workshop_type_id) return res.status(400).json({ error: 'Mỗi dòng SX cần chọn phân loại' });
+        const v = await validateProductionCompanyId(cid);
+        if (!v.ok) return res.status(400).json({ error: v.error });
+      }
+    }
     const result = await autoCreateProjectFromWonDeal({
       req,
       dealId: req.params.id,
       userId: req.user.userId,
       productionCompanyId: resolvedPc,
       workshopTypeId: req.body?.workshop_type_id || null,
+      targets,
+      mode,
     });
     if (!result.ok) {
       if (result.existing_project_id) {
-        return res.status(400).json({ error: result.error, project_id: result.existing_project_id });
+        return res.status(400).json({
+          error: result.error,
+          project_id: result.existing_project_id,
+          projects: result.projects || undefined,
+          partial: result.partial || undefined,
+        });
       }
-      return res.status(result.statusCode || 500).json({ error: result.error });
+      return res.status(result.statusCode || 500).json({
+        error: result.error,
+        projects: result.projects || undefined,
+        partial: result.partial || undefined,
+      });
     }
     try {
       const { emitProductionBoardRealtime } = require('../../../helpers/workshopIntakeNotify');
       const io = req.app.get('io');
-      await emitProductionBoardRealtime(result.project_id, io, 'auto_create_api');
+      const emitIds = result.projects?.length
+        ? result.projects.map((p) => p.project_id)
+        : [result.project_id];
+      for (const pid of emitIds) {
+        await emitProductionBoardRealtime(pid, io, mode === 'additional' ? 'auto_create_additional' : 'auto_create_api');
+      }
     } catch (emitErr) {
       console.warn('[auto-project] emit board:', emitErr.message);
     }
@@ -3680,6 +3756,14 @@ r.post('/deals/:id/auto-create-project', async (req, res) => {
       project_code: result.project_code,
       project_name: result.project_name,
       tasks_created: result.tasks_created,
+      projects: result.projects || [{
+        project_id: result.project_id,
+        project_code: result.project_code,
+        project_name: result.project_name,
+        tasks_created: result.tasks_created,
+        is_primary: true,
+      }],
+      primary_project_id: result.primary_project_id || result.project_id,
     });
   } catch (e) {
     console.error('[auto-project] Error:', e.message);
@@ -3695,6 +3779,7 @@ r.post('/deals/:id/reassign-sx', async (req, res) => {
     }
     const productionCompanyId = req.body?.production_company_id || null;
     const workshopTypeId = req.body?.workshop_type_id || null;
+    const targetProjectId = req.body?.project_id || null;
     if (!productionCompanyId) {
       return res.status(400).json({ error: 'Vui lòng chọn công ty Sản xuất', requires_production_company: true });
     }
@@ -3707,6 +3792,7 @@ r.post('/deals/:id/reassign-sx', async (req, res) => {
       userId: req.user.userId,
       productionCompanyId,
       workshopTypeId,
+      projectId: targetProjectId,
       req,
     });
     try {
@@ -3743,6 +3829,20 @@ r.post('/leads/:id/sx-handover', async (req, res) => {
 
     const b = req.body || {};
     if (!b.sale_acknowledged) return res.status(400).json({ error: 'Cần tick xác nhận Sale' });
+
+    let handoverProjectId = lead.project_id;
+    if (b.project_id && String(b.project_id) !== String(lead.project_id)) {
+      const { data: link } = await supabase
+        .from('crm_deal_projects')
+        .select('project_id')
+        .eq('deal_id', leadId)
+        .eq('project_id', b.project_id)
+        .maybeSingle();
+      if (!link?.project_id) {
+        return res.status(400).json({ error: 'Dự án không thuộc deal này' });
+      }
+      handoverProjectId = link.project_id;
+    }
 
     const targetTaskLeadId = await resolveCrmTaskWriteLeadId(leadId);
     const { data: sxTasksAll } = await supabase
@@ -3786,11 +3886,11 @@ r.post('/leads/:id/sx-handover', async (req, res) => {
     const { data: projRow } = await supabase
       .from('projects')
       .select('workshop_type_id')
-      .eq('id', lead.project_id)
+      .eq('id', handoverProjectId)
       .maybeSingle();
     const { applyWorkshopTypeDefaultStaffToProject } = require('../../../helpers/productionWorkshopTypeStaff');
     const primaryStaffId = await applyWorkshopTypeDefaultStaffToProject(
-      lead.project_id,
+      handoverProjectId,
       pcv.company.id,
       projRow?.workshop_type_id || null,
     );
@@ -3818,7 +3918,7 @@ r.post('/leads/:id/sx-handover', async (req, res) => {
       await assignProductionCompanyDealResponsibility({
         dealId: leadId,
         productionCompanyId: pcv.company.id,
-        projectId: lead.project_id,
+        projectId: handoverProjectId,
       });
     } catch (respErr) {
       console.warn('[sx-handover] assign production responsible:', respErr.message);
@@ -3827,23 +3927,23 @@ r.post('/leads/:id/sx-handover', async (req, res) => {
         if (sxResponsible) projPatch.production_person_id = sxResponsible;
       }
     }
-    const { error: projErr } = await supabase.from('projects').update(projPatch).eq('id', lead.project_id);
+    const { error: projErr } = await supabase.from('projects').update(projPatch).eq('id', handoverProjectId);
     if (projErr) console.warn('[sx-handover] project dates:', projErr.message);
 
     try {
-      await ensureDealLeadDocumentsForModuleTransition({ leadId, projectId: lead.project_id });
+      await ensureDealLeadDocumentsForModuleTransition({ leadId, projectId: handoverProjectId });
     } catch (docEns) {
       console.warn('[sx-handover] ensure lead_documents:', docEns.message);
     }
 
     try {
-      await syncCrmLeadSxPipelineFromProject(lead.project_id);
+      await syncCrmLeadSxPipelineFromProject(handoverProjectId);
     } catch (se) {
       console.warn('[sx-handover] syncCrmLeadSxPipelineFromProject:', se.message);
     }
     try {
       const io = req.app.get('io');
-      if (io) await emitCrmBadgeUpdateForProject(lead.project_id, io);
+      if (io) await emitCrmBadgeUpdateForProject(handoverProjectId, io);
     } catch (em) {
       console.warn('[sx-handover] emit badge:', em.message);
     }
@@ -3890,10 +3990,10 @@ r.post('/leads/:id/sx-handover', async (req, res) => {
         const { count } = await supabase
           .from('tasks')
           .select('id', { count: 'exact', head: true })
-          .eq('project_id', lead.project_id)
+          .eq('project_id', handoverProjectId)
           .contains('metadata', { workshop_template_id: defTplId });
         if (!count || count === 0) {
-          const r = await applyWorkshopTemplateToProject(lead.project_id, defTplId, uid);
+          const r = await applyWorkshopTemplateToProject(handoverProjectId, defTplId, uid);
           if (!r.ok) console.warn('[sx-handover] apply workshop template:', r.error);
         }
       }
@@ -3905,7 +4005,7 @@ r.post('/leads/:id/sx-handover', async (req, res) => {
     // Idempotent theo metadata.workshop_template_id nên gọi nhiều lần vẫn an toàn.
     try {
       const forcedCompanyId = pcv?.company?.id || null;
-      const rAll = await applyAllActiveWorkshopTemplatesForArea(lead.project_id, uid, {
+      const rAll = await applyAllActiveWorkshopTemplatesForArea(handoverProjectId, uid, {
         workshopArea: 'production',
         companyId: forcedCompanyId,
       });

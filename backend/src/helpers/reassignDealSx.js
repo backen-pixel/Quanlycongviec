@@ -64,13 +64,14 @@ async function deleteWorkshopTemplateProjectTasks(projectId) {
 }
 
 /**
- * @param {{ dealId: string, userId: string, productionCompanyId: string, workshopTypeId: string, req?: object }} opts
+ * @param {{ dealId: string, userId: string, productionCompanyId: string, workshopTypeId: string, projectId?: string|null, req?: object }} opts
  */
 async function reassignDealSxCompanyAndType({
   dealId,
   userId,
   productionCompanyId,
   workshopTypeId,
+  projectId = null,
   req = null,
 }) {
   const { data: lead, error: leadErr } = await supabase
@@ -95,6 +96,22 @@ async function reassignDealSxCompanyAndType({
     throw err;
   }
 
+  let resolvedProjectId = lead.project_id;
+  if (projectId && String(projectId) !== String(lead.project_id)) {
+    const { data: link } = await supabase
+      .from('crm_deal_projects')
+      .select('project_id')
+      .eq('deal_id', dealId)
+      .eq('project_id', projectId)
+      .maybeSingle();
+    if (!link?.project_id) {
+      const err = new Error('Dự án không thuộc deal này');
+      err.status = 400;
+      throw err;
+    }
+    resolvedProjectId = link.project_id;
+  }
+
   const pcv = await validateProductionCompanyId(productionCompanyId);
   if (!pcv.ok) {
     const err = new Error(pcv.error || 'Công ty SX không hợp lệ');
@@ -107,7 +124,7 @@ async function reassignDealSxCompanyAndType({
   const { data: project, error: projErr } = await supabase
     .from('projects')
     .select('id, code, name, company_id, workshop_type_id, current_stage_id, status')
-    .eq('id', lead.project_id)
+    .eq('id', resolvedProjectId)
     .maybeSingle();
   if (projErr) throw projErr;
   if (!project) {
@@ -149,16 +166,27 @@ async function reassignDealSxCompanyAndType({
     .eq('id', project.id);
   if (updProjErr) throw updProjErr;
 
+  // Chỉ cập nhật sx_template trên deal khi reassign dự án primary
+  const isPrimaryProject = String(project.id) === String(lead.project_id);
   const leadPatch = {
-    sx_template_company_id: companyId,
     updated_at: nowIso,
   };
-  if (intakeCol?.id) leadPatch.sx_pipeline_stage_id = intakeCol.id;
+  if (isPrimaryProject) {
+    leadPatch.sx_template_company_id = companyId;
+    if (intakeCol?.id) leadPatch.sx_pipeline_stage_id = intakeCol.id;
+  }
   const { error: leadUpdErr } = await supabase
     .from('crm_leads')
     .update(leadPatch)
     .eq('id', dealId);
   if (leadUpdErr && !String(leadUpdErr.message || '').includes('sx_')) throw leadUpdErr;
+
+  // Cập nhật label trên junction
+  try {
+    await supabase.from('crm_deal_projects').update({
+      label: wt.name || null,
+    }).eq('deal_id', dealId).eq('project_id', project.id);
+  } catch (_) {}
 
   let primaryStaffId = null;
   try {

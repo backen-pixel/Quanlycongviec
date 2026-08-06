@@ -471,8 +471,11 @@ r.get('/employees-by-company', responseCache({ ttl: 120, scope: 'company', tags:
     const forModule = ['crm', 'production', 'logistics', 'all'].includes(forModuleRaw) ? forModuleRaw : 'crm';
 
     const sacEmp = scopedAdminCompanyId(req);
-    // Resolve company_id: admin gắn công ty → chỉ công ty đó; khác → query / user / department
-    let companyId = sacEmp || queryCompanyId;
+    // for_module=all: thêm thành viên deal HST — cho phép chọn CT trong query (không khóa sac).
+    // Còn lại: admin gắn công ty → chỉ công ty đó.
+    let companyId = (forModule === 'all' && queryCompanyId)
+      ? queryCompanyId
+      : (sacEmp || queryCompanyId);
     if (!companyId) {
       const { data: userData } = await supabase.from('users')
         .select('department_id, company_id')

@@ -30,14 +30,21 @@ export default function WorkshopStaffFilterPanel({
   hidePersonName = false,
   hideCompanySelect = false,
   hideAssigneeSearch = false,
+  /** Cho chọn CT hệ sinh thái (vd. thêm thành viên deal) — kể cả admin 1 CT / user thường. */
+  allowEcosystemCompanyPick = false,
 }) {
+  const showCompanySelect =
+    !hideCompanySelect
+    && companies.length > 0
+    && (allowEcosystemCompanyPick || (isAdmin && !isCompanyScopedAdmin));
+
   return (
     <div className="rounded-lg border border-slate-200 bg-slate-50/90 p-3 space-y-3">
       <div className="text-[11px] font-bold text-slate-600 uppercase tracking-wide">
         {panelTitle}
       </div>
       <div className="flex flex-wrap items-end gap-3">
-        {isAdmin && !isCompanyScopedAdmin && !hideCompanySelect && companies.length > 0 && (
+        {showCompanySelect && (
           <div className="flex flex-col gap-0.5 min-w-[10rem]">
             <label className="text-[10px] text-slate-600 font-semibold">
               <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-slate-600 text-white text-[9px] mr-1">1</span>
@@ -48,7 +55,7 @@ export default function WorkshopStaffFilterPanel({
               onChange={(e) => onCompanyChange(e.target.value)}
               className={`h-9 w-44 px-2 bg-white border border-slate-300 rounded-lg text-xs focus:outline-none focus:ring-2 ${ringFocusClass} cursor-pointer`}
             >
-              <option value="">Tất cả công ty</option>
+              <option value="">Tất cả công ty (HST)</option>
               {companies.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.short_name || c.name}
@@ -57,13 +64,13 @@ export default function WorkshopStaffFilterPanel({
             </select>
           </div>
         )}
-        {!isAdmin && userCompanyId && (
+        {!showCompanySelect && !isAdmin && userCompanyId && (
           <span className="h-9 inline-flex items-center px-2.5 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-800 self-end">
             <span className="font-semibold text-[10px] text-blue-900 mr-1.5">1</span>
             🏢 Công ty của bạn
           </span>
         )}
-        {isCompanyScopedAdmin && userCompanyId && (
+        {!showCompanySelect && isCompanyScopedAdmin && userCompanyId && (
           <span
             className="h-9 inline-flex items-center px-2.5 bg-indigo-50 border border-indigo-200 rounded-lg text-xs text-indigo-900 self-end max-w-[14rem] truncate"
             title="Admin phạm vi một công ty"

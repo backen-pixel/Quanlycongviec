@@ -48,6 +48,10 @@ import { stageNeedsAssigneeConfirm } from '../lib/crmStageAssigneeConfirm';
 import CrmLeadDeadlineOverview from '../components/CrmLeadDeadlineOverview';
 import { crmLeadMissingPhone } from '../lib/crmLeadDeadlineDisplay';
 import SxCompanyPickList from '../components/SxCompanyPickList';
+import SxMultiTargetPicker, {
+  validateSxTargets,
+  sxTargetsToApiPayload,
+} from '../components/SxMultiTargetPicker';
 import { useConfirmCountdown } from '../hooks/useConfirmCountdown';
 import {
   classifyCrmLeadTypeForSx,
@@ -286,6 +290,11 @@ export default function LeadDetail() {
   /** Kéo deal Thắng chưa có dự án: chọn công ty SX */
   const [dealStageWonPick, setDealStageWonPick] = useState(null);
   const [dealStageWonCompanyId, setDealStageWonCompanyId] = useState('');
+  const [dealStageWonTargets, setDealStageWonTargets] = useState([]);
+  const [addSxOpen, setAddSxOpen] = useState(false);
+  const [addSxTargets, setAddSxTargets] = useState([]);
+  const [addSxBusy, setAddSxBusy] = useState(false);
+  const [addSxErr, setAddSxErr] = useState('');
   const [dealStageWonWorkTypeId, setDealStageWonWorkTypeId] = useState('');
   const [dealStageWonErr, setDealStageWonErr] = useState('');
   /** Deal đã có dự án SX — kéo lại Thắng: thông báo, không mở hộp chuyển */
@@ -492,8 +501,8 @@ export default function LeadDetail() {
   const [autoCreateError, setAutoCreateError] = useState('');
   const autoCreateCalledRef = useRef(false);
 
-  const autoCreateProject = async (dealId, productionCompanyId, workshopTypeId = null) => {
-    if (!productionCompanyId) {
+  const autoCreateProject = async (dealId, productionCompanyId, workshopTypeId = null, targets = null, mode = 'create') => {
+    if (!productionCompanyId && !(Array.isArray(targets) && targets.length)) {
       setPickProjectCompanyOpen(true);
       setPickProjectCompanyErr('');
       return;
@@ -503,10 +512,14 @@ export default function LeadDetail() {
     setAutoCreateStatus('loading');
     setPickProjectCompanyOpen(false);
     try {
-      const { data } = await api.post(`/crm/deals/${dealId}/auto-create-project`, {
-        production_company_id: productionCompanyId,
-        ...(workshopTypeId ? { workshop_type_id: workshopTypeId } : {}),
-      });
+      const payload = Array.isArray(targets) && targets.length
+        ? { targets: sxTargetsToApiPayload(targets), ...(mode === 'additional' ? { mode: 'additional' } : {}) }
+        : {
+          production_company_id: productionCompanyId,
+          ...(workshopTypeId ? { workshop_type_id: workshopTypeId } : {}),
+          ...(mode === 'additional' ? { mode: 'additional' } : {}),
+        };
+      const { data } = await api.post(`/crm/deals/${dealId}/auto-create-project`, payload);
       setAutoCreateResult(data);
       setAutoCreateStatus('success');
       projectCompanyPickRef.current = false;
@@ -1547,25 +1560,30 @@ export default function LeadDetail() {
   };
 
   const confirmDealStageWonProduction = async () => {
-    if (!dealStageWonCompanyId) {
-      setDealStageWonErr('Vui lòng chọn công ty thuộc module Sản xuất.');
-      return;
-    }
-    if (parentWonTypesForSelect.length > 0 && !dealStageWonWorkTypeId) {
-      setDealStageWonErr('Công ty này có phân loại — vui lòng chọn phân loại sản xuất.');
+    const targets = dealStageWonTargets.length
+      ? dealStageWonTargets
+      : (dealStageWonCompanyId
+        ? [{ companyId: dealStageWonCompanyId, workshopTypeId: dealStageWonWorkTypeId }]
+        : []);
+    const err = validateSxTargets(targets);
+    if (err) {
+      setDealStageWonErr(err);
       return;
     }
     const ctx = dealStageWonPick;
     if (!ctx) return;
     setDealStageWonErr('');
+    const apiTargets = sxTargetsToApiPayload(targets);
     const merged = {
       ...ctx.extraData,
-      production_company_id: dealStageWonCompanyId,
-      ...(dealStageWonWorkTypeId ? { workshop_type_id: dealStageWonWorkTypeId } : {}),
+      production_company_id: apiTargets[0]?.production_company_id,
+      workshop_type_id: apiTargets[0]?.workshop_type_id,
+      targets: apiTargets,
     };
     setDealStageWonPick(null);
     setDealStageWonCompanyId('');
     setDealStageWonWorkTypeId('');
+    setDealStageWonTargets([]);
     if (ctx.targetStage.create_event_on_enter) {
       setDealDetailEventCtx({ stageId: ctx.stageId, extraData: merged, targetStage: ctx.targetStage });
     } else {
@@ -1574,17 +1592,45 @@ export default function LeadDetail() {
   };
 
   const submitPickProjectCompany = async () => {
-    if (!pickProjectCompanyId) {
-      setPickProjectCompanyErr('Vui lòng chọn công ty Sản xuất.');
-      return;
-    }
-    if (parentWonTypesForSelect.length > 0 && !pickProjectCompanyWorkTypeId) {
-      setPickProjectCompanyErr('Công ty này có phân loại — vui lòng chọn phân loại sản xuất.');
+    const targets = dealStageWonTargets.length
+      ? dealStageWonTargets
+      : (pickProjectCompanyId
+        ? [{ companyId: pickProjectCompanyId, workshopTypeId: pickProjectCompanyWorkTypeId }]
+        : []);
+    const err = validateSxTargets(targets);
+    if (err) {
+      setPickProjectCompanyErr(err);
       return;
     }
     setPickProjectCompanyErr('');
     autoCreateCalledRef.current = false;
-    await autoCreateProject(id, pickProjectCompanyId, pickProjectCompanyWorkTypeId || null);
+    await autoCreateProject(id, targets[0]?.companyId, targets[0]?.workshopTypeId || null, targets);
+  };
+
+  const submitAddSxProject = async () => {
+    const err = validateSxTargets(addSxTargets);
+    if (err) {
+      setAddSxErr(err);
+      return;
+    }
+    setAddSxBusy(true);
+    setAddSxErr('');
+    try {
+      autoCreateCalledRef.current = false;
+      await autoCreateProject(
+        id,
+        addSxTargets[0]?.companyId,
+        addSxTargets[0]?.workshopTypeId || null,
+        addSxTargets,
+        'additional',
+      );
+      setAddSxOpen(false);
+      setAddSxTargets([]);
+    } catch (e) {
+      setAddSxErr(e.response?.data?.error || e.message || 'Lỗi thêm dự án SX');
+    } finally {
+      setAddSxBusy(false);
+    }
   };
 
   const openReassignSxModal = () => {
@@ -2339,9 +2385,97 @@ export default function LeadDetail() {
 
       {/* Pipeline Progress - MISA Style Stepper */}
       {lead?.type === 'deal' && lead?.project_id && (
-        <p className="text-xs text-sky-800 bg-sky-50 border border-sky-200 rounded-lg px-3 py-2 mb-2">
-          Deal đã có dự án — đổi giai đoạn trên thanh bước hoặc kéo thả trên Kanban CRM. Tiến độ xưởng/vận chuyển vẫn hiển thị qua badge SX/VC và có thể cập nhật tại module xưởng/VC.
-        </p>
+        <div className="mb-3 space-y-2">
+          <p className="text-xs text-sky-800 bg-sky-50 border border-sky-200 rounded-lg px-3 py-2">
+            Deal đã có dự án SX — tiến độ xưởng/VC qua badge và module xưởng. Có thể thêm xưởng khác bên dưới.
+          </p>
+          <div className="rounded-xl border border-teal-200 bg-white p-3 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <h4 className="text-sm font-bold text-gray-900">Dự án sản xuất</h4>
+              <button
+                type="button"
+                className="h-8 px-3 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700"
+                onClick={() => { setAddSxErr(''); setAddSxTargets([]); setAddSxOpen(true); }}
+              >
+                + Thêm dự án SX
+              </button>
+            </div>
+            <ul className="space-y-1.5">
+              {(() => {
+                const rows = Array.isArray(lead.production_projects) && lead.production_projects.length
+                  ? lead.production_projects
+                  : [{ project_id: lead.project_id, code: lead.linked_project?.code, name: lead.linked_project?.name, is_primary: true }];
+                const showPrimary = rows.length <= 1;
+                return rows.map((pp) => (
+                <li key={pp.project_id || pp.code} className="flex items-center justify-between gap-2 text-xs rounded-lg border border-gray-100 bg-gray-50 px-2.5 py-2">
+                  <div className="min-w-0">
+                    <p className="font-semibold text-gray-900 truncate">
+                      {pp.code || '—'} {showPrimary && pp.is_primary ? <span className="text-teal-700 font-normal">(chính)</span> : null}
+                    </p>
+                    <p className="text-gray-600 truncate">
+                      {[pp.company_name, pp.workshop_type_name || pp.label, pp.name].filter(Boolean).join(' · ')}
+                    </p>
+                  </div>
+                  {pp.project_id && (
+                    <button
+                      type="button"
+                      className="shrink-0 text-teal-700 font-semibold hover:underline"
+                      onClick={() => navigate(`/sx/projects/${pp.project_id}`)}
+                    >
+                      Mở SX
+                    </button>
+                  )}
+                </li>
+              ));
+              })()}
+            </ul>
+          </div>
+        </div>
+      )}
+
+      {addSxOpen && lead?.type === 'deal' && lead?.project_id && (
+        <div
+          className="fixed inset-0 bg-black/40 flex items-center justify-center z-[60] p-4"
+          onClick={() => { if (!addSxBusy) { setAddSxOpen(false); setAddSxErr(''); setAddSxTargets([]); } }}
+        >
+          <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-2 mb-2">
+              <Building2 className="h-6 w-6 text-teal-600" />
+              <h3 className="text-lg font-bold text-gray-900">Thêm dự án SX</h3>
+            </div>
+            <p className="text-sm text-gray-600 mb-4">
+              Tạo thêm thẻ Kanban tại xưởng khác (vd. tủ ở HCB khi đã có cửa ở Phúc Đạt).
+            </p>
+            <SxMultiTargetPicker
+              key="add-sx"
+              companies={parentSxCompaniesForSelect}
+              leadTypeRow={parentSxLeadTypeRow}
+              kind={parentSxLeadKind}
+              accent="teal"
+              disabled={addSxBusy}
+              onChange={(rows) => { setAddSxTargets(rows); setAddSxErr(''); }}
+            />
+            {addSxErr && <p className="text-xs text-red-600 mt-2">{addSxErr}</p>}
+            <div className="flex gap-2 mt-4">
+              <button
+                type="button"
+                disabled={addSxBusy}
+                className="flex-1 h-10 border border-gray-200 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                onClick={() => { setAddSxOpen(false); setAddSxErr(''); setAddSxTargets([]); }}
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                disabled={addSxBusy || !!validateSxTargets(addSxTargets)}
+                className="flex-1 h-10 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-sm font-semibold disabled:opacity-40"
+                onClick={() => submitAddSxProject()}
+              >
+                {addSxBusy ? 'Đang tạo…' : 'Thêm dự án'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
       <div data-tour="lead-pipeline-stepper">
         <PipelineStepper
@@ -3936,17 +4070,58 @@ export default function LeadDetail() {
               leadTypeRow={parentSxLeadTypeRow}
               kind={parentSxLeadKind}
               accent="teal"
-              onChange={(id) => { setDealStageWonCompanyId(id); setDealStageWonWorkTypeId(''); setDealStageWonErr(''); }}
+              onChange={(id) => {
+                setDealStageWonCompanyId(id);
+                setDealStageWonWorkTypeId('');
+                setDealStageWonErr('');
+                setDealStageWonTargets([{ companyId: id, workshopTypeId: '' }]);
+              }}
             />
+            <div className="mt-2 mb-1">
+              <button
+                type="button"
+                className="text-[11px] font-semibold text-teal-700 hover:underline"
+                onClick={() => {
+                  const base = dealStageWonTargets.length
+                    ? dealStageWonTargets
+                    : [{ companyId: dealStageWonCompanyId, workshopTypeId: dealStageWonWorkTypeId }];
+                  setDealStageWonTargets([...base, { companyId: '', workshopTypeId: '' }]);
+                }}
+              >
+                + Thêm công ty SX khác
+              </button>
+            </div>
+            {dealStageWonTargets.length > 1 && (
+              <div className="mb-3">
+                <SxMultiTargetPicker
+                  key={`won-multi-${dealStageWonTargets.length}`}
+                  companies={parentSxCompaniesForSelect}
+                  leadTypeRow={parentSxLeadTypeRow}
+                  kind={parentSxLeadKind}
+                  accent="teal"
+                  initialRows={dealStageWonTargets}
+                  onChange={(rows) => {
+                    setDealStageWonTargets(rows);
+                    setDealStageWonCompanyId(rows[0]?.companyId || '');
+                    setDealStageWonWorkTypeId(rows[0]?.workshopTypeId || '');
+                    setDealStageWonErr('');
+                  }}
+                />
+              </div>
+            )}
             {/* Phân loại theo công ty SX vừa chọn */}
-            {dealStageWonCompanyId && (
+            {dealStageWonTargets.length <= 1 && dealStageWonCompanyId && (
               <div className="mt-3">
                 <label className="block text-xs font-medium text-gray-700 mb-1">
                   Phân loại sản xuất {parentWonTypesForSelect.length > 0 && <span className="text-red-600">*</span>}
                 </label>
                 <select
                   value={dealStageWonWorkTypeId}
-                  onChange={(e) => { setDealStageWonWorkTypeId(e.target.value); setDealStageWonErr(''); }}
+                  onChange={(e) => {
+                    setDealStageWonWorkTypeId(e.target.value);
+                    setDealStageWonErr('');
+                    setDealStageWonTargets([{ companyId: dealStageWonCompanyId, workshopTypeId: e.target.value }]);
+                  }}
                   disabled={wonModalWorkTypesLoading || parentWonTypesForSelect.length === 0}
                   className="w-full h-11 px-3 border border-gray-200 rounded-xl text-sm bg-white disabled:bg-gray-50 disabled:text-gray-400"
                 >
@@ -4025,10 +4200,47 @@ export default function LeadDetail() {
               leadTypeRow={parentSxLeadTypeRow}
               kind={parentSxLeadKind}
               accent="amber"
-              onChange={(id) => { setPickProjectCompanyId(id); setPickProjectCompanyWorkTypeId(''); setPickProjectCompanyErr(''); }}
+              onChange={(id) => {
+                setPickProjectCompanyId(id);
+                setPickProjectCompanyWorkTypeId('');
+                setPickProjectCompanyErr('');
+                setDealStageWonTargets([{ companyId: id, workshopTypeId: '' }]);
+              }}
             />
+            <div className="mt-2 mb-1">
+              <button
+                type="button"
+                className="text-[11px] font-semibold text-amber-700 hover:underline"
+                onClick={() => {
+                  const base = dealStageWonTargets.length
+                    ? dealStageWonTargets
+                    : [{ companyId: pickProjectCompanyId, workshopTypeId: pickProjectCompanyWorkTypeId }];
+                  setDealStageWonTargets([...base, { companyId: '', workshopTypeId: '' }]);
+                }}
+              >
+                + Thêm công ty SX khác
+              </button>
+            </div>
+            {dealStageWonTargets.length > 1 && (
+              <div className="mb-3">
+                <SxMultiTargetPicker
+                  key={`pick-multi-${dealStageWonTargets.length}`}
+                  companies={parentSxCompaniesForSelect}
+                  leadTypeRow={parentSxLeadTypeRow}
+                  kind={parentSxLeadKind}
+                  accent="amber"
+                  initialRows={dealStageWonTargets}
+                  onChange={(rows) => {
+                    setDealStageWonTargets(rows);
+                    setPickProjectCompanyId(rows[0]?.companyId || '');
+                    setPickProjectCompanyWorkTypeId(rows[0]?.workshopTypeId || '');
+                    setPickProjectCompanyErr('');
+                  }}
+                />
+              </div>
+            )}
             {/* Phân loại theo công ty SX vừa chọn */}
-            {pickProjectCompanyId && (
+            {dealStageWonTargets.length <= 1 && pickProjectCompanyId && (
               <div className="mt-3">
                 <label className="block text-xs font-medium text-gray-700 mb-1">
                   Phân loại sản xuất {parentWonTypesForSelect.length > 0 && <span className="text-red-600">*</span>}
@@ -4866,6 +5078,7 @@ function LeadInfoEditableRow({
 // LeadInfoPanel — Inline editable fields (always visible)
 // ═══════════════════════════════════════════════════════════════════════════
 function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompaniesSx = [], onOpenTransferAssignee = null }) {
+  const navigate = useNavigate();
   const [sources, setSources] = useState([]);
   const [leadTypes, setLeadTypes] = useState([]);
   const [referrers, setReferrers] = useState([]);
@@ -4890,18 +5103,52 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
   const [sxHandoverNotice, setSxHandoverNotice] = useState('');
   const [sxHandoverExpanded, setSxHandoverExpanded] = useState(false);
   const [depositDraft, setDepositDraft] = useState({ amount: '', received: '', label: '' });
-  /** Admin chuyển công ty SX — nút mở popup + đếm ngược 5s xác nhận */
+  /** Admin chuyển / thêm công ty SX — popup + đếm ngược 5s */
   const [sxAssignOpen, setSxAssignOpen] = useState(false);
+  const [sxAssignProjectId, setSxAssignProjectId] = useState('');
   const [sxAssignCompanyId, setSxAssignCompanyId] = useState('');
   const [sxAssignTypeId, setSxAssignTypeId] = useState('');
   const [sxAssignTypes, setSxAssignTypes] = useState([]);
   const [sxAssignTypesLoading, setSxAssignTypesLoading] = useState(false);
   const [sxAssignBusy, setSxAssignBusy] = useState(false);
   const [sxAssignNotice, setSxAssignNotice] = useState('');
-  const [sxAssignBaseline, setSxAssignBaseline] = useState({ companyId: '', typeId: '', typeName: '', companyName: '' });
+  const [sxAssignBaseline, setSxAssignBaseline] = useState({
+    projectId: '', companyId: '', typeId: '', typeName: '', companyName: '',
+  });
   const [sxAckChecked, setSxAckChecked] = useState(false);
+  const [sxAddOpen, setSxAddOpen] = useState(false);
+  const [sxAddTargets, setSxAddTargets] = useState([]);
+  const [sxAddBusy, setSxAddBusy] = useState(false);
+  const [sxAddErr, setSxAddErr] = useState('');
   const { wait: sxConfirmWait, start: startSxConfirmCountdown, clear: clearSxConfirmTimer } = useConfirmCountdown(5);
   const sxPendingRef = useRef(false);
+
+  const sxProjectsList = useMemo(() => {
+    const fromApi = Array.isArray(lead?.production_projects)
+      ? lead.production_projects.filter((p) => p?.project_id)
+      : [];
+    if (fromApi.length) return fromApi;
+    if (!lead?.project_id) return [];
+    return [{
+      project_id: lead.project_id,
+      code: lead.linked_project?.code || null,
+      name: lead.linked_project?.name || null,
+      company_id: sxAssignBaseline.companyId || lead.sx_template_company_id || null,
+      company_name: sxAssignBaseline.companyName || null,
+      workshop_type_id: sxAssignBaseline.typeId || null,
+      workshop_type_name: sxAssignBaseline.typeName || null,
+      is_primary: true,
+    }];
+  }, [
+    lead?.production_projects,
+    lead?.project_id,
+    lead?.linked_project,
+    lead?.sx_template_company_id,
+    sxAssignBaseline.companyId,
+    sxAssignBaseline.companyName,
+    sxAssignBaseline.typeId,
+    sxAssignBaseline.typeName,
+  ]);
 
   const crmLeadTypeNameForSx = useMemo(() => {
     const nested = lead?.lead_type?.name || lead?.lead_type_name;
@@ -4977,11 +5224,23 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
     setSxHandoverExpanded(false);
   }, [lead?.id, lead?.type, lead?.project_id, lead?.sx_handover_at, lead?.sx_template_company_id, lead?.construction_start_date, lead?.expected_production_start_date, lead?.expected_production_end_date]);
 
-  // Load công ty + phân loại hiện tại từ dự án SX
+  // Load công ty + phân loại primary (fallback khi chưa có production_projects)
   useEffect(() => {
     if (lead?.type !== 'deal' || !lead?.project_id) {
-      setSxAssignBaseline({ companyId: '', typeId: '', typeName: '', companyName: '' });
+      setSxAssignBaseline({ projectId: '', companyId: '', typeId: '', typeName: '', companyName: '' });
       setSxAssignNotice('');
+      return undefined;
+    }
+    const primary = (Array.isArray(lead.production_projects) ? lead.production_projects : [])
+      .find((p) => p.is_primary) || (lead.production_projects || [])[0];
+    if (primary?.project_id) {
+      setSxAssignBaseline({
+        projectId: String(primary.project_id),
+        companyId: primary.company_id ? String(primary.company_id) : '',
+        typeId: primary.workshop_type_id ? String(primary.workshop_type_id) : '',
+        typeName: primary.workshop_type_name || '',
+        companyName: primary.company_name || '',
+      });
       return undefined;
     }
     let cancelled = false;
@@ -4993,15 +5252,27 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
         const tid = p?.workshop_type_id ? String(p.workshop_type_id) : '';
         const tname = p?.workshop_type?.name || '';
         const cname = p?.company?.short_name || p?.company?.name || '';
-        setSxAssignBaseline({ companyId: cid, typeId: tid, typeName: tname, companyName: cname });
+        setSxAssignBaseline({
+          projectId: String(lead.project_id),
+          companyId: cid,
+          typeId: tid,
+          typeName: tname,
+          companyName: cname,
+        });
       })
       .catch(() => {
         if (cancelled) return;
         const cid = lead.sx_template_company_id ? String(lead.sx_template_company_id) : '';
-        setSxAssignBaseline({ companyId: cid, typeId: '', typeName: '', companyName: '' });
+        setSxAssignBaseline({
+          projectId: String(lead.project_id),
+          companyId: cid,
+          typeId: '',
+          typeName: '',
+          companyName: '',
+        });
       });
     return () => { cancelled = true; };
-  }, [lead?.id, lead?.type, lead?.project_id, lead?.sx_template_company_id, lead?.updated_at]);
+  }, [lead?.id, lead?.type, lead?.project_id, lead?.sx_template_company_id, lead?.updated_at, lead?.production_projects]);
 
   // Load phân loại theo công ty SX đang chọn trong popup
   useEffect(() => {
@@ -5292,14 +5563,51 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
     setSxAssignNotice('Đã hủy — chưa chuyển công ty SX.');
   };
 
-  const openSxAssignModal = () => {
+  const openSxAssignModal = (projectRow = null) => {
     sxPendingRef.current = false;
     clearSxConfirmTimer();
     setSxAckChecked(false);
-    setSxAssignCompanyId(sxAssignBaseline.companyId || '');
-    setSxAssignTypeId(sxAssignBaseline.typeId || '');
+    const row = projectRow || sxProjectsList.find((p) => p.is_primary) || sxProjectsList[0] || null;
+    const pid = row?.project_id || sxAssignBaseline.projectId || lead?.project_id || '';
+    const cid = row?.company_id ? String(row.company_id) : (sxAssignBaseline.companyId || '');
+    const tid = row?.workshop_type_id ? String(row.workshop_type_id) : (sxAssignBaseline.typeId || '');
+    setSxAssignProjectId(pid ? String(pid) : '');
+    setSxAssignCompanyId(cid);
+    setSxAssignTypeId(tid);
+    setSxAssignBaseline((prev) => ({
+      ...prev,
+      projectId: pid ? String(pid) : prev.projectId,
+      companyId: cid,
+      typeId: tid,
+      typeName: row?.workshop_type_name || prev.typeName,
+      companyName: row?.company_name || prev.companyName,
+    }));
     setSxAssignNotice('');
     setSxAssignOpen(true);
+  };
+
+  const submitSxAddProjects = async () => {
+    const err = validateSxTargets(sxAddTargets);
+    if (err) {
+      setSxAddErr(err);
+      return;
+    }
+    setSxAddBusy(true);
+    setSxAddErr('');
+    try {
+      await api.post(`/crm/deals/${lead.id}/auto-create-project`, {
+        mode: 'additional',
+        targets: sxTargetsToApiPayload(sxAddTargets),
+      });
+      setSxAddOpen(false);
+      setSxAddTargets([]);
+      setSxAssignNotice('Đã thêm dự án SX mới');
+      onUpdate();
+    } catch (e) {
+      setSxAddErr(e.response?.data?.error || e.message || 'Lỗi thêm dự án SX');
+    } finally {
+      setSxAddBusy(false);
+    }
   };
 
   const onSxCompanyChange = (nextId) => {
@@ -5338,7 +5646,8 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
     && !sxAssignBusy;
 
   const saveSxAssign = async () => {
-    if (!lead?.project_id || !sxPendingRef.current) return;
+    const targetPid = sxAssignProjectId || sxAssignBaseline.projectId || lead?.project_id;
+    if (!targetPid || !sxPendingRef.current) return;
     if (!sxAssignCompanyId || !sxAssignTypeId) return;
     sxPendingRef.current = false;
     setSxAssignBusy(true);
@@ -5347,6 +5656,7 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
       const { data } = await api.post(`/crm/deals/${lead.id}/reassign-sx`, {
         production_company_id: sxAssignCompanyId,
         workshop_type_id: sxAssignTypeId,
+        project_id: targetPid,
       });
       const typeName = data?.workshop_type_name
         || sxAssignTypes.find((t) => String(t.id) === String(sxAssignTypeId))?.name
@@ -5356,6 +5666,7 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
         || (productionCompaniesSx || []).find((c) => String(c.id) === String(sxAssignCompanyId))?.name
         || '';
       setSxAssignBaseline({
+        projectId: String(data?.project_id || targetPid),
         companyId: String(data?.to_company_id || sxAssignCompanyId),
         typeId: String(data?.to_workshop_type_id || sxAssignTypeId),
         typeName,
@@ -5861,62 +6172,155 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
 
       {lead?.type === 'deal' && lead?.project_id && (
         <div className="flex flex-col gap-1.5">
-          {/* Chuyển công ty SX — nút mở popup */}
+          {/* Công ty SX — nhiều xưởng, sửa / thêm */}
           <div className="rounded-lg border border-orange-200 bg-orange-50/50 p-2.5 my-0.5 space-y-2">
-            <p className="text-[10px] font-bold text-orange-800 uppercase tracking-wider">
-              🏭 Công ty SX
-            </p>
-            <div className="text-sm text-gray-800 space-y-0.5">
-              <p className="font-medium truncate">
-                {sxAssignBaseline.companyName
-                  || (productionCompaniesSx || []).find((c) => String(c.id) === String(sxAssignBaseline.companyId))?.short_name
-                  || (productionCompaniesSx || []).find((c) => String(c.id) === String(sxAssignBaseline.companyId))?.name
-                  || lead.sx_pipeline_stage?.company?.short_name
-                  || lead.sx_pipeline_stage?.company?.name
-                  || '—'}
-              </p>
-              <p className="text-xs text-gray-500 truncate">
-                Phân loại: {sxAssignBaseline.typeName || '—'}
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-[10px] font-bold text-orange-800 uppercase tracking-wider">
+                🏭 Công ty SX
+                {sxProjectsList.length > 1 ? (
+                  <span className="ml-1 normal-case font-semibold text-orange-700">
+                    ({sxProjectsList.length} xưởng)
+                  </span>
+                ) : null}
               </p>
             </div>
-            {sxAssignNotice && !sxAssignOpen && (
+            <ul className="space-y-1.5">
+              {sxProjectsList.map((pp) => {
+                const showPrimaryBadge = sxProjectsList.length <= 1;
+                const coName = pp.company_name
+                  || (productionCompaniesSx || []).find((c) => String(c.id) === String(pp.company_id))?.short_name
+                  || (productionCompaniesSx || []).find((c) => String(c.id) === String(pp.company_id))?.name
+                  || '—';
+                const typeName = pp.workshop_type_name || '—';
+                return (
+                  <li
+                    key={pp.project_id}
+                    className="rounded-lg border border-orange-100 bg-white/80 px-2.5 py-2 space-y-1"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-gray-900 truncate">
+                          {coName}
+                          {showPrimaryBadge && pp.is_primary ? (
+                            <span className="ml-1 text-[10px] font-semibold text-teal-700">(chính)</span>
+                          ) : null}
+                        </p>
+                        <p className="text-xs text-gray-500 truncate">
+                          Phân loại: {typeName}
+                          {pp.code ? ` · ${pp.code}` : ''}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {pp.project_id && (
+                        <button
+                          type="button"
+                          onClick={() => navigate(`/sx/projects/${pp.project_id}`)}
+                          className="h-7 px-2 rounded-md text-[11px] font-semibold border border-teal-200 text-teal-700 hover:bg-teal-50 cursor-pointer"
+                        >
+                          Mở SX
+                        </button>
+                      )}
+                      {isAdminLike(currentUser) && (
+                        <button
+                          type="button"
+                          onClick={() => openSxAssignModal(pp)}
+                          className="h-7 px-2 rounded-md text-[11px] font-semibold bg-orange-600 text-white hover:bg-orange-700 cursor-pointer"
+                        >
+                          Sửa / chuyển
+                        </button>
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+            {sxAssignNotice && !sxAssignOpen && !sxAddOpen && (
               <p className="text-[11px] text-emerald-700">{sxAssignNotice}</p>
             )}
             {isAdminLike(currentUser) && (
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch">
-                <button
-                  type="button"
-                  onClick={openSxAssignModal}
-                  className="w-full sm:w-auto sm:shrink-0 h-9 px-3 rounded-lg text-xs font-semibold bg-orange-600 text-white hover:bg-orange-700 cursor-pointer"
-                >
-                  Chuyển công ty SX
-                </button>
-                <div className="flex-1 rounded-lg border border-amber-200 bg-amber-50/90 px-2.5 py-2 text-[11px] leading-snug text-amber-950">
+              <div className="flex flex-col gap-2">
+                <div className="flex flex-wrap gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => openSxAssignModal()}
+                    className="h-9 px-3 rounded-lg text-xs font-semibold bg-orange-600 text-white hover:bg-orange-700 cursor-pointer"
+                  >
+                    Chuyển công ty SX
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setSxAddErr(''); setSxAddTargets([]); setSxAddOpen(true); }}
+                    className="h-9 px-3 rounded-lg text-xs font-semibold border border-orange-300 text-orange-800 bg-white hover:bg-orange-50 cursor-pointer"
+                  >
+                    + Thêm công ty SX
+                  </button>
+                </div>
+                <div className="rounded-lg border border-amber-200 bg-amber-50/90 px-2.5 py-2 text-[11px] leading-snug text-amber-950">
                   <p className="font-semibold text-amber-900 mb-1">Hướng dẫn chọn xưởng</p>
                   {sxHintFromCrmType ? (
                     <p className="mb-1.5 text-amber-950">{sxHintFromCrmType}</p>
                   ) : null}
-                  {sxLeadTypeRow && (
-                    <p className="mb-1.5 text-[10px] text-violet-900 bg-violet-50 border border-violet-100 rounded-md px-2 py-1">
-                      {(sxDbPref.links || []).length
-                        ? (sxDbPref.links || []).map((l) => {
-                            const co = (productionCompaniesSx || []).find((c) => String(c.id) === l.companyId);
-                            const coName = co ? (co.short_name || co.name) : '';
-                            const wt = (sxAssignTypes || []).find((t) => String(t.id) === l.workshopTypeId);
-                            return `${l.isPrimary ? '★ ' : ''}${coName || '?'} · ${wt?.name || (l.workshopTypeId ? '…' : '?')}`;
-                          }).join('  |  ')
-                        : formatCrmToSxMappingLine({
-                            leadTypeName: crmLeadTypeNameForSx || sxLeadTypeRow.name,
-                            companyName: '',
-                            workshopTypeName: '',
-                          })}
-                    </p>
-                  )}
+                  <p className="mb-1.5 text-amber-900/90">
+                    Có thể SX ở nhiều công ty (vd. cửa Phúc Đạt + tủ HCB). Bấm «+ Thêm công ty SX» để tạo thẻ Kanban mới.
+                  </p>
                   <SxPickGuideList company={lead?.company} className="space-y-0.5 list-disc pl-3.5" />
                 </div>
               </div>
             )}
           </div>
+
+          {sxAddOpen && (
+            <div
+              className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 p-4"
+              onClick={() => { if (!sxAddBusy) { setSxAddOpen(false); setSxAddErr(''); } }}
+            >
+              <div
+                className="bg-white rounded-2xl shadow-xl w-full max-w-lg p-5 space-y-3 max-h-[90vh] overflow-y-auto"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <h3 className="text-lg font-bold text-gray-900">Thêm công ty SX</h3>
+                    <p className="text-xs text-gray-500 mt-1">
+                      Tạo thêm dự án xưởng cho deal (không ghi đè dự án chính).
+                    </p>
+                  </div>
+                  <button type="button" disabled={sxAddBusy} onClick={() => { setSxAddOpen(false); setSxAddErr(''); }} className="p-1 cursor-pointer">
+                    <X className="h-5 w-5 text-gray-400" />
+                  </button>
+                </div>
+                <SxMultiTargetPicker
+                  key="leadinfo-add-sx"
+                  companies={sxCompaniesForSelect}
+                  leadTypeRow={sxLeadTypeRow}
+                  kind={sxLeadKind}
+                  accent="orange"
+                  disabled={sxAddBusy}
+                  onChange={(rows) => { setSxAddTargets(rows); setSxAddErr(''); }}
+                />
+                {sxAddErr && <p className="text-xs text-red-600">{sxAddErr}</p>}
+                <div className="flex gap-2 pt-1">
+                  <button
+                    type="button"
+                    disabled={sxAddBusy}
+                    onClick={() => { setSxAddOpen(false); setSxAddErr(''); }}
+                    className="flex-1 h-10 border rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    Hủy
+                  </button>
+                  <button
+                    type="button"
+                    disabled={sxAddBusy || !!validateSxTargets(sxAddTargets)}
+                    onClick={() => submitSxAddProjects()}
+                    className="flex-1 h-10 bg-orange-600 hover:bg-orange-700 text-white rounded-xl text-sm font-semibold disabled:opacity-40"
+                  >
+                    {sxAddBusy ? 'Đang tạo…' : 'Thêm dự án'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {sxAssignOpen && (
             <div
@@ -5929,9 +6333,11 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
               >
                 <div className="flex items-start justify-between gap-2">
                   <div>
-                    <h3 className="text-lg font-bold text-gray-900">Chuyển công ty SX</h3>
+                    <h3 className="text-lg font-bold text-gray-900">Sửa / chuyển công ty SX</h3>
                     <p className="text-xs text-gray-500 mt-1">
-                      Chọn công ty + phân loại, tích xác nhận đã kiểm tra, rồi bấm «Xác nhận chuyển» — hệ thống đếm 5 giây trước khi chuyển (có thể hủy).
+                      {sxAssignProjectId
+                        ? 'Đang sửa một dự án SX của deal. Chọn công ty + phân loại, tích xác nhận, rồi «Xác nhận chuyển» (đếm 5 giây).'
+                        : 'Chọn công ty + phân loại, tích xác nhận, rồi «Xác nhận chuyển» (đếm 5 giây).'}
                     </p>
                   </div>
                   <button type="button" onClick={closeSxAssignModal} disabled={sxAssignBusy} className="p-1 cursor-pointer disabled:opacity-40">

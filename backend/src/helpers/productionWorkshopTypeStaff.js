@@ -9,22 +9,24 @@ const {
   getDealCompanyAutoParticipantUserIds,
 } = require('./dealParticipantProduction');
 
-/** Users thuộc công ty SX (users.company_id hoặc qua departments). */
+/** Users thuộc công ty SX (users.company_id ∪ phòng ban của công ty). */
 async function loadUsersForProductionCompany(companyId) {
   if (!companyId) return [];
-  let usersCo = [];
+  const byId = new Map();
+  const select = 'id, full_name, email, role, department:departments!users_department_id_fkey(id, name, company_id)';
   try {
     const { data: direct } = await supabase
       .from('users')
-      .select('id, full_name, email, role, department:departments!users_department_id_fkey(id, name, company_id)')
+      .select(select)
       .eq('company_id', companyId)
       .eq('is_active', true)
       .order('full_name');
-    usersCo = direct || [];
-  } catch {
-    usersCo = [];
-  }
-  if (!usersCo.length) {
+    for (const u of direct || []) {
+      if (u?.id) byId.set(String(u.id), u);
+    }
+  } catch { /* ignore */ }
+
+  try {
     const { data: dpts } = await supabase
       .from('departments')
       .select('id')
@@ -34,14 +36,18 @@ async function loadUsersForProductionCompany(companyId) {
     if (deptIds.length) {
       const { data: viaDept } = await supabase
         .from('users')
-        .select('id, full_name, email, role, department:departments!users_department_id_fkey(id, name, company_id)')
+        .select(select)
         .in('department_id', deptIds)
         .eq('is_active', true)
         .order('full_name');
-      usersCo = viaDept || [];
+      for (const u of viaDept || []) {
+        if (u?.id && !byId.has(String(u.id))) byId.set(String(u.id), u);
+      }
     }
-  }
-  return usersCo;
+  } catch { /* ignore */ }
+
+  return [...byId.values()].sort((a, b) =>
+    String(a.full_name || '').localeCompare(String(b.full_name || ''), 'vi'));
 }
 
 async function userBelongsToProductionCompany(userId, companyId) {
@@ -96,18 +102,66 @@ async function loadWorkshopTypeDefaultStaffMap(companyId) {
   return out;
 }
 
+/** Role được phép auto-thêm vào tab Thành viên deal (không gồm admin/staff CRM). */
+const AUTO_LEAD_MEMBER_ROLES = new Set([
+  'production_admin', 'production_staff', 'production',
+  'crm_production_admin', 'crm_production_staff',
+  'logistics_admin', 'logistics', 'driver', 'installer', 'shipping',
+]);
+
+/** Chỉ role khối SX khi fallback gán project_production_staff. */
+const FALLBACK_STAFF_ROLES = new Set([
+  'production_admin', 'production_staff', 'production',
+  'crm_production_admin', 'crm_production_staff',
+]);
+
+/** Lọc user_id — chỉ NV SX/VC mới được auto ghi vào lead_members. */
+async function filterUserIdsEligibleForAutoLeadMembers(userIds) {
+  const ids = [...new Set((userIds || []).map(String).filter(Boolean))];
+  if (!ids.length) return [];
+  const { data: users } = await supabase
+    .from('users')
+    .select('id, role, drive_module')
+    .in('id', ids);
+  return (users || [])
+    .filter((u) => {
+      const drive = String(u.drive_module || '').trim().toLowerCase();
+      if (SX_VC_DRIVE_MODULES.has(drive)) return true;
+      return AUTO_LEAD_MEMBER_ROLES.has(String(u.role || '').trim().toLowerCase());
+    })
+    .map((u) => String(u.id));
+}
+
+/**
+ * Fallback khi chưa cấu hình NV mặc định phân loại:
+ * chỉ NV role SX — không chèn admin/sales_admin CRM làm phụ trách.
+ */
+async function resolveFallbackStaffForProductionCompany(companyId) {
+  if (!companyId) return { userIds: [], primaryUserId: null };
+
+  const users = await loadUsersForProductionCompany(companyId);
+  const preferred = users.filter((u) => FALLBACK_STAFF_ROLES.has(String(u.role || '').toLowerCase()));
+  const userIds = [...new Set(preferred.map((u) => String(u.id)).filter(Boolean))];
+  if (!userIds.length) return { userIds: [], primaryUserId: null };
+
+  const handoverId = await resolveProductionHandoverResponsibleUserId(companyId);
+  const primaryUserId = handoverId && userIds.includes(String(handoverId))
+    ? String(handoverId)
+    : userIds[0];
+  return { userIds, primaryUserId };
+}
+
 /** @returns {{ userIds: string[], primaryUserId: string|null }} */
 async function getDefaultStaffForType(companyId, workshopTypeId) {
-  if (!companyId || !workshopTypeId) {
+  if (!companyId) {
     return { userIds: [], primaryUserId: null };
   }
-  const map = await loadWorkshopTypeDefaultStaffMap(companyId);
-  const block = map.get(String(workshopTypeId));
-  if (block?.userIds?.length) return block;
-  const fallback = await resolveProductionHandoverResponsibleUserId(companyId);
-  return fallback
-    ? { userIds: [String(fallback)], primaryUserId: String(fallback) }
-    : { userIds: [], primaryUserId: null };
+  if (workshopTypeId) {
+    const map = await loadWorkshopTypeDefaultStaffMap(companyId);
+    const block = map.get(String(workshopTypeId));
+    if (block?.userIds?.length) return block;
+  }
+  return resolveFallbackStaffForProductionCompany(companyId);
 }
 
 /** @deprecated dùng getDefaultStaffForType */
@@ -130,6 +184,78 @@ async function loadProjectProductionStaffUserIds(projectId) {
     if (String(e.message || '').includes('project_production_staff')) return [];
     throw e;
   }
+}
+
+/**
+ * Deal gắn dự án SX: qua crm_leads.project_id (primary) hoặc crm_deal_projects (multi-xưởng).
+ * @returns {Promise<Array<{ id: string, company_id: string|null, assigned_to?: string|null, lead_owner_id?: string|null }>>}
+ */
+async function loadDealsLinkedToProject(projectId, { selectExtra = false } = {}) {
+  if (!projectId) return [];
+  const byId = new Map();
+
+  const primarySelect = selectExtra
+    ? 'id, company_id, assigned_to, lead_owner_id'
+    : 'id, company_id';
+  const { data: primaryDeals } = await supabase
+    .from('crm_leads')
+    .select(primarySelect)
+    .eq('project_id', projectId)
+    .eq('type', 'deal');
+  for (const d of primaryDeals || []) {
+    if (d?.id) byId.set(String(d.id), d);
+  }
+
+  try {
+    const { data: links } = await supabase
+      .from('crm_deal_projects')
+      .select('deal_id')
+      .eq('project_id', projectId);
+    const junctionIds = [...new Set((links || []).map((r) => r.deal_id).filter(Boolean))]
+      .filter((id) => !byId.has(String(id)));
+    if (junctionIds.length) {
+      const { data: junctionDeals } = await supabase
+        .from('crm_leads')
+        .select(primarySelect)
+        .in('id', junctionIds)
+        .eq('type', 'deal');
+      for (const d of junctionDeals || []) {
+        if (d?.id) byId.set(String(d.id), d);
+      }
+    }
+  } catch (e) {
+    if (!String(e.message || '').includes('crm_deal_projects')) {
+      console.warn('[productionWorkshopTypeStaff] loadDealsLinkedToProject:', e.message);
+    }
+  }
+
+  return [...byId.values()];
+}
+
+/** project_id gắn deal: primary + mọi dòng crm_deal_projects. */
+async function loadProjectIdsForDeal(leadId) {
+  if (!leadId) return [];
+  const ids = new Set();
+  const { data: lead } = await supabase
+    .from('crm_leads')
+    .select('id, project_id')
+    .eq('id', leadId)
+    .maybeSingle();
+  if (lead?.project_id) ids.add(String(lead.project_id));
+  try {
+    const { data: links } = await supabase
+      .from('crm_deal_projects')
+      .select('project_id')
+      .eq('deal_id', leadId);
+    for (const row of links || []) {
+      if (row?.project_id) ids.add(String(row.project_id));
+    }
+  } catch (e) {
+    if (!String(e.message || '').includes('crm_deal_projects')) {
+      console.warn('[productionWorkshopTypeStaff] loadProjectIdsForDeal:', e.message);
+    }
+  }
+  return [...ids];
 }
 
 function sortStaffUsers(rows) {
@@ -170,11 +296,7 @@ async function attachProductionStaffToProjects(projects) {
 }
 
 /** Role / drive_module thuộc khối SX hoặc VC — giữ lại khi prune thành viên CRM. */
-const SX_VC_MEMBER_ROLES = new Set([
-  'production_admin', 'production_staff', 'production',
-  'crm_production_admin', 'crm_production_staff',
-  'logistics_admin', 'logistics', 'driver', 'installer', 'shipping',
-]);
+const SX_VC_MEMBER_ROLES = AUTO_LEAD_MEMBER_ROLES;
 const SX_VC_DRIVE_MODULES = new Set(['sx', 'production', 'vc', 'logistics']);
 
 function isSxOrVcMemberUser(user) {
@@ -197,42 +319,49 @@ async function pruneNonResponsibleCrmLeadMembersForDeal(dealId) {
     .select('id, company_id, assigned_to, lead_owner_id, project_id')
     .eq('id', dealId)
     .maybeSingle();
-  if (!lead?.project_id) return { removed: 0 };
 
-  const { data: proj } = await supabase
-    .from('projects')
-    .select('sales_person_id, production_person_id, logistics_person_id, installer_person_id')
-    .eq('id', lead.project_id)
-    .maybeSingle();
-
-  let staffIds = [];
-  try {
-    staffIds = await loadProjectProductionStaffUserIds(lead.project_id);
-  } catch (_) {
-    staffIds = [];
-  }
+  const projectIds = await loadProjectIdsForDeal(dealId);
+  if (!projectIds.length && !lead?.project_id) return { removed: 0 };
 
   const keep = new Set(
-    [
-      lead.assigned_to,
-      lead.lead_owner_id,
+    [lead?.assigned_to, lead?.lead_owner_id].filter(Boolean).map(String),
+  );
+
+  const projectPersonCandidates = new Set();
+  for (const projectId of projectIds) {
+    const { data: proj } = await supabase
+      .from('projects')
+      .select('sales_person_id, production_person_id, logistics_person_id, installer_person_id')
+      .eq('id', projectId)
+      .maybeSingle();
+    for (const uid of [
       proj?.sales_person_id,
       proj?.production_person_id,
       proj?.logistics_person_id,
       proj?.installer_person_id,
-      ...staffIds,
-    ]
-      .filter(Boolean)
-      .map(String),
-  );
+    ]) {
+      if (uid) projectPersonCandidates.add(String(uid));
+    }
+    try {
+      // loadProjectSxLeadMemberUserIds đã lọc theo role SX/VC hợp lệ.
+      for (const uid of await loadProjectSxLeadMemberUserIds(projectId)) {
+        keep.add(String(uid));
+      }
+    } catch (_) { /* ignore */ }
+  }
+  // Người trên projects (sales/production/logistics/installer_person_id) chỉ giữ nếu role SX/VC hợp lệ.
+  if (projectPersonCandidates.size) {
+    const eligibleProjectPersons = await filterUserIdsEligibleForAutoLeadMembers([...projectPersonCandidates]);
+    for (const uid of eligibleProjectPersons) keep.add(String(uid));
+  }
 
   try {
-    const autoIds = await getDealCompanyAutoParticipantUserIds(lead.company_id);
+    const autoIds = await getDealCompanyAutoParticipantUserIds(lead?.company_id);
     for (const uid of autoIds || []) keep.add(String(uid));
   } catch (_) { /* ignore */ }
 
   // Đảm bảo người chịu trách nhiệm CRM có trong tab Thành viên.
-  const responsibleId = lead.assigned_to || lead.lead_owner_id || proj?.sales_person_id || null;
+  const responsibleId = lead?.assigned_to || lead?.lead_owner_id || null;
   if (responsibleId) {
     keep.add(String(responsibleId));
     try {
@@ -255,6 +384,7 @@ async function pruneNonResponsibleCrmLeadMembersForDeal(dealId) {
   for (const m of members || []) {
     const uid = String(m.user_id || '');
     if (!uid || keep.has(uid)) continue;
+    // Giữ NV SX/VC thêm tay; CRM thừa (không phụ trách) thì gỡ.
     if (isSxOrVcMemberUser(m.user)) continue;
     toRemove.push(uid);
   }
@@ -274,11 +404,7 @@ async function pruneNonResponsibleCrmLeadMembersForDeal(dealId) {
 
 async function pruneNonResponsibleCrmLeadMembersForProject(projectId) {
   if (!projectId) return { removed: 0, deals: 0 };
-  const { data: deals } = await supabase
-    .from('crm_leads')
-    .select('id')
-    .eq('project_id', projectId)
-    .eq('type', 'deal');
+  const deals = await loadDealsLinkedToProject(projectId);
   let removed = 0;
   for (const deal of deals || []) {
     const r = await pruneNonResponsibleCrmLeadMembersForDeal(deal.id);
@@ -294,14 +420,12 @@ async function pruneNonResponsibleCrmLeadMembersForProject(projectId) {
 async function applyWorkshopTypeDefaultStaffToProject(projectId, companyId, workshopTypeId) {
   if (!projectId || !companyId) return null;
 
-  let { userIds, primaryUserId } = workshopTypeId
-    ? await getDefaultStaffForType(companyId, workshopTypeId)
-    : { userIds: [], primaryUserId: null };
+  let { userIds, primaryUserId } = await getDefaultStaffForType(companyId, workshopTypeId);
 
   if (!userIds.length) {
-    const fb = await resolveProductionHandoverResponsibleUserId(companyId);
-    userIds = fb ? [String(fb)] : [];
-    primaryUserId = fb ? String(fb) : null;
+    const fb = await resolveFallbackStaffForProductionCompany(companyId);
+    userIds = fb.userIds || [];
+    primaryUserId = fb.primaryUserId || null;
   }
 
   if (!userIds.length) {
@@ -352,9 +476,12 @@ async function applyWorkshopTypeDefaultStaffToProject(projectId, companyId, work
     .update({ production_person_id: primaryId, updated_at: nowIso })
     .eq('id', projectId);
 
-  // Không ghi đè assigned_to / lead_owner_id trên deal CRM — giữ NVKD làm người phụ trách.
-  // NV xưởng ghi vào project_production_staff + lead_members; prune thành viên CRM khác.
-  await syncLeadMembersForProject(projectId, userIds, primaryId, { previousUserIds });
+  // Đủ NV setup phân loại → project_production_staff + tab Thành viên (role member).
+  // CRM trên deal: prune chỉ giữ 1 người chịu trách nhiệm.
+  await syncLeadMembersForProject(projectId, userIds, primaryId, {
+    previousUserIds,
+    membersAsMemberRole: true,
+  });
   await ensureProjectProductionAutoParticipants(projectId);
   await pruneNonResponsibleCrmLeadMembersForProject(projectId);
 
@@ -446,57 +573,77 @@ async function syncProductionPersonToStaffAndMembers(projectId, userId, opts = {
     return { synced: 0, error: e.message };
   }
 
-  const userIds = exists
+  // Giữ cả roster staff hiện có trên dự án + người vừa gán (đều vào tab Thành viên).
+  const staffIds = exists
     ? staffRows.map((r) => String(r.user_id)).filter(Boolean)
     : [...staffRows.map((r) => String(r.user_id)).filter(Boolean), uid];
-
-  return syncLeadMembersForProject(projectId, userIds, uid, opts);
+  if (!staffIds.includes(uid)) staffIds.unshift(uid);
+  return syncLeadMembersForProject(projectId, staffIds, uid, {
+    ...opts,
+    membersAsMemberRole: true,
+  });
 }
 
-/** Lazy backfill: deal có project → ghi thiếu NV từ project_production_staff vào lead_members. */
-async function ensureLeadMembersFromProjectStaff(leadId) {
-  if (!leadId) return { synced: 0 };
-
-  const { data: lead } = await supabase
-    .from('crm_leads')
-    .select('id, project_id')
-    .eq('id', leadId)
-    .maybeSingle();
-  if (!lead?.project_id) return { synced: 0 };
-
-  let staffRows = [];
+/**
+ * NV setup SX trên dự án (+ VC/LĐ) đủ điều kiện lên tab Thành viên.
+ * Chỉ role SX/VC hợp lệ — bỏ role `staff` / admin CRM (không tự động thêm dù có trong default staff).
+ */
+async function loadProjectSxLeadMemberUserIds(projectId) {
+  if (!projectId) return [];
+  const candidates = new Set();
   try {
-    const { data } = await supabase
-      .from('project_production_staff')
-      .select('user_id, is_primary, order_index')
-      .eq('project_id', lead.project_id)
-      .order('is_primary', { ascending: false })
-      .order('order_index');
-    staffRows = data || [];
-  } catch (e) {
-    if (String(e.message || '').includes('project_production_staff')) return { synced: 0 };
-    throw e;
-  }
-
-  let userIds = staffRows.map((r) => String(r.user_id)).filter(Boolean);
-  let primaryUserId = staffRows.find((r) => r.is_primary)?.user_id || userIds[0] || null;
+    for (const uid of await loadProjectProductionStaffUserIds(projectId)) {
+      candidates.add(String(uid));
+    }
+  } catch (_) { /* ignore */ }
 
   const { data: proj } = await supabase
     .from('projects')
     .select('production_person_id, logistics_person_id, installer_person_id')
-    .eq('id', lead.project_id)
+    .eq('id', projectId)
     .maybeSingle();
+  for (const uid of [proj?.production_person_id, proj?.logistics_person_id, proj?.installer_person_id]) {
+    if (uid) candidates.add(String(uid));
+  }
+  return filterUserIdsEligibleForAutoLeadMembers([...candidates]);
+}
 
-  if (!userIds.length && proj?.production_person_id) {
-    userIds = [String(proj.production_person_id)];
-    primaryUserId = proj.production_person_id;
+/** Lazy backfill: mọi NV setup SX (mọi dự án gắn deal) + prune CRM chỉ còn 1 người chịu trách nhiệm. */
+async function ensureLeadMembersFromProjectStaff(leadId) {
+  if (!leadId) return { synced: 0 };
+
+  const projectIds = await loadProjectIdsForDeal(leadId);
+  if (!projectIds.length) return { synced: 0 };
+
+  const userIds = [];
+  const seen = new Set();
+  const allStaffCandidates = new Set();
+  for (const projectId of projectIds) {
+    for (const uid of await loadProjectSxLeadMemberUserIds(projectId)) {
+      if (seen.has(uid)) continue;
+      seen.add(uid);
+      userIds.push(uid);
+    }
+    try {
+      for (const uid of await loadProjectProductionStaffUserIds(projectId)) {
+        allStaffCandidates.add(String(uid));
+      }
+    } catch (_) { /* ignore */ }
   }
 
-  // Nhân sự VC/LĐ trên dự án cũng phải vào lead_members để giao việc khối VC.
-  for (const uid of [proj?.logistics_person_id, proj?.installer_person_id]) {
-    if (!uid) continue;
-    const s = String(uid);
-    if (!userIds.includes(s)) userIds.push(s);
+  // Gỡ NV role không thuộc khối SX/VC (vd. staff/admin/sales) đã lỡ được ghi vào lead_members
+  // qua các luồng cũ. Không đụng NV thêm tay từ tab Thành viên (không nằm trong roster xưởng).
+  const allowedSet = new Set(userIds);
+  const surplus = [...allStaffCandidates].filter((uid) => !allowedSet.has(uid));
+  if (surplus.length) {
+    const { error: delErr } = await supabase
+      .from('lead_members')
+      .delete()
+      .eq('lead_id', leadId)
+      .in('user_id', surplus);
+    if (delErr) {
+      console.warn('[productionWorkshopTypeStaff] cleanup surplus:', delErr.message);
+    }
   }
 
   if (!userIds.length) {
@@ -513,33 +660,36 @@ async function ensureLeadMembersFromProjectStaff(leadId) {
   const missing = userIds.filter((uid) => !existingIds.has(String(uid)));
   let synced = 0;
   if (missing.length) {
-    const r = await syncProductionStaffToLeadMembers({
-      dealId: leadId,
-      userIds,
-      primaryUserId,
-    });
-    synced = r.synced || 0;
+    const r = await mergeDealLeadMembers({ dealId: leadId, userIds: missing });
+    synced = r.added || 0;
   }
   await ensureDealProductionAutoParticipants({ dealId: leadId, dealCompanyId: null });
-  // Deal đã có dự án SX: chỉ giữ người chịu trách nhiệm CRM (+ NV SX/VC/kế toán).
   await pruneNonResponsibleCrmLeadMembersForDeal(leadId);
   return { synced };
 }
 
-/** Đồng bộ lead_members cho mọi deal gắn project. */
+/** Đồng bộ lead_members cho mọi deal gắn project (primary + crm_deal_projects). */
 async function syncLeadMembersForProject(projectId, userIds, primaryUserId, opts = {}) {
-  if (!projectId || !userIds?.length) return { synced: 0 };
-  const { previousUserIds = [] } = opts;
-  const newSet = new Set(userIds.map(String));
+  if (!projectId) return { synced: 0 };
+  const { previousUserIds = [], membersAsMemberRole = false } = opts;
+  const rawIds = (userIds || []).map(String).filter(Boolean);
+  // Chỉ user role SX/VC hợp lệ mới vào tab Thành viên — bỏ role staff/admin CRM
+  // (dù có mặt trong project_production_staff hay default staff phân loại).
+  const eligible = rawIds.length
+    ? new Set(await filterUserIdsEligibleForAutoLeadMembers(rawIds))
+    : new Set();
+  const ids = rawIds.filter((uid) => eligible.has(uid));
+  if (!ids.length && !(previousUserIds || []).length) return { synced: 0 };
+  const primaryEligibleId = primaryUserId && eligible.has(String(primaryUserId))
+    ? String(primaryUserId)
+    : (ids[0] || null);
+
+  const newSet = new Set(ids);
   const staleUserIds = [...new Set(
     (previousUserIds || []).map(String).filter((uid) => uid && !newSet.has(uid)),
   )];
 
-  const { data: deals } = await supabase
-    .from('crm_leads')
-    .select('id, company_id')
-    .eq('project_id', projectId)
-    .eq('type', 'deal');
+  const deals = await loadDealsLinkedToProject(projectId);
   let total = 0;
   for (const deal of deals || []) {
     const protectedIds = new Set(
@@ -558,13 +708,24 @@ async function syncLeadMembersForProject(projectId, userIds, primaryUserId, opts
         }
       }
     }
-    const r = await syncProductionStaffToLeadMembers({
-      dealId: deal.id,
-      userIds,
-      primaryUserId,
-      addedBy: opts.addedBy || null,
-    });
-    total += r.synced || 0;
+    if (ids.length) {
+      if (membersAsMemberRole) {
+        const r = await mergeDealLeadMembers({
+          dealId: deal.id,
+          userIds: ids,
+          addedBy: opts.addedBy || null,
+        });
+        total += r.added || 0;
+      } else {
+        const r = await syncProductionStaffToLeadMembers({
+          dealId: deal.id,
+          userIds: ids,
+          primaryUserId: primaryEligibleId,
+          addedBy: opts.addedBy || null,
+        });
+        total += r.synced || 0;
+      }
+    }
     await ensureDealProductionAutoParticipants({
       dealId: deal.id,
       dealCompanyId: deal.company_id,
@@ -1002,18 +1163,16 @@ async function mergeDealLeadMembers({ dealId, userIds, addedBy = null }) {
 /** Gộp NV vào tab Thành viên deal — không ghi đè role hiện có. */
 async function mergeLeadMembersForProject(projectId, userIds, opts = {}) {
   if (!projectId || !userIds?.length) return { added: 0, added_user_ids: [] };
-  const { data: deals } = await supabase
-    .from('crm_leads')
-    .select('id, company_id, assigned_to, lead_owner_id')
-    .eq('project_id', projectId)
-    .eq('type', 'deal');
+  const eligibleIds = await filterUserIdsEligibleForAutoLeadMembers(userIds);
+  if (!eligibleIds.length) return { added: 0, added_user_ids: [] };
+  const deals = await loadDealsLinkedToProject(projectId, { selectExtra: true });
 
   let total = 0;
   const addedUserIds = new Set();
   for (const deal of deals || []) {
     const r = await mergeDealLeadMembers({
       dealId: deal.id,
-      userIds,
+      userIds: eligibleIds,
       addedBy: opts.addedBy || null,
     });
     total += r.added || 0;
@@ -1249,11 +1408,7 @@ async function applyPipelineStageDefaultStaffToProject(projectId, pipelineStageI
     ...dealMemberUserIds.map(String),
   ])];
   if (opts.req && notifyIds.length) {
-    const { data: deals } = await supabase
-      .from('crm_leads')
-      .select('id')
-      .eq('project_id', projectId)
-      .eq('type', 'deal');
+    const deals = await loadDealsLinkedToProject(projectId);
     await notifyPipelineStageAutoMembers(opts.req, {
       projectId,
       stageName,

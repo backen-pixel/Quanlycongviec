@@ -72,7 +72,11 @@ const {
 } = require('../../../helpers/accountingScope');
 const { DEFAULT_CHECKLISTS } = require('../../../helpers/defaultChecklists');
 const { generateFlowTasks, generateStepTasks } = require('../../../helpers/generateFlowTasks');
-const { autoCreateProjectFromWonDeal } = require('../../../helpers/autoDealWonProject');
+const {
+  autoCreateProjectFromWonDeal,
+  listDealProductionProjects,
+  attachProductionProjectsForList,
+} = require('../../../helpers/autoDealWonProject');
 const { isCrmDealAssigneeLocked, stripCrmAssigneeFromWonStageUpdates } = require('../../../helpers/crmDealAssigneeLock');
 const {
   normalizeCrmStageDefaultAssigneeUserId,
@@ -4725,8 +4729,9 @@ async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
     if (!skipDeadline) withDeadline = await attachCrmNextOpenTaskDeadline(page);
     const withNewFlag = attachLeadNewFlagForList(withDeadline, viewerUserId);
     const withUserFlags = await attachLeadUserFlagsForList(withNewFlag, viewerUserId);
+    const withSxProjects = await attachProductionProjectsForList(withUserFlags);
     return {
-      data: withUserFlags,
+      data: withSxProjects,
       total,
       offset: parsedOffset,
       limit: parsedLimit,
@@ -4737,7 +4742,7 @@ async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
   const pageWithDeadline = await attachCrmNextOpenTaskDeadline(page);
   const withNewFlag = attachLeadNewFlagForList(pageWithDeadline, viewerUserId);
   const withUserFlags = await attachLeadUserFlagsForList(withNewFlag, viewerUserId);
-  let enrichedStaff = withUserFlags;
+  let enrichedStaff = await attachProductionProjectsForList(withUserFlags);
   try {
     const { enrichCrmLeadsWithProductionStaff } = require('../../../helpers/productionWorkshopTypeStaff');
     enrichedStaff = await enrichCrmLeadsWithProductionStaff(withUserFlags);
@@ -6962,6 +6967,8 @@ module.exports = {
   attachLeadUserFlagsForList,
   auth,
   autoCreateProjectFromWonDeal,
+  listDealProductionProjects,
+  attachProductionProjectsForList,
   autoFlowFns,
   autoGenCrmTasksForNewLead,
   buildAssignmentNotificationInsert,

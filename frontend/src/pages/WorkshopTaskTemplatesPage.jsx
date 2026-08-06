@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -75,16 +75,7 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
   const [seedingNine, setSeedingNine] = useState(false);
   const [bundleSetting, setBundleSetting] = useState(false);
   const companyDefaultResolvedRef = useRef(false);
-  /** Tab VC: tách cột pipeline Vận chuyển / Lắp đặt giống Dashboard VC & CRM Lead/Deal. */
   const isLogisticsFixed = fixedArea === 'logistics' || activeTab === 'logistics';
-  const [vcPipelineTab, setVcPipelineTab] = useState(() => {
-    try {
-      const v = localStorage.getItem('vc_task_tpl_tab');
-      return v === 'install' ? 'install' : 'shipping';
-    } catch {
-      return 'shipping';
-    }
-  });
 
   const currentStages = activeTab === 'logistics' ? WORKSHOP_LOGISTICS_STAGES : WORKSHOP_PRODUCTION_STAGES;
   // SX: Công ty → Phân loại → Pipeline (nhiều bộ/cột). VC: Công ty → Pipeline.
@@ -97,38 +88,6 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
   const selectedPipelineStage = selectedStageKey === 'global'
     ? null
     : pipelineStages.find((s) => String(s.id) === String(selectedStageKey));
-
-  /** Cột pipeline hiển thị theo tab Vận chuyển / Lắp đặt (chỉ khi khu vực logistics). */
-  const visiblePipelineStages = useMemo(() => {
-    if (!isLogisticsFixed) return pipelineStages;
-    return pipelineStages.filter((s) => (
-      vcPipelineTab === 'install' ? isInstallVcStage(s) : !isInstallVcStage(s)
-    ));
-  }, [pipelineStages, isLogisticsFixed, vcPipelineTab]);
-
-  const vcTabStageCounts = useMemo(() => {
-    if (!isLogisticsFixed) return { shipping: 0, install: 0 };
-    let shipping = 0;
-    let install = 0;
-    pipelineStages.forEach((s) => {
-      if (isInstallVcStage(s)) install += 1;
-      else shipping += 1;
-    });
-    return { shipping, install };
-  }, [pipelineStages, isLogisticsFixed]);
-
-  const switchVcPipelineTab = useCallback((tab) => {
-    setVcPipelineTab(tab);
-    try { localStorage.setItem('vc_task_tpl_tab', tab); } catch { /* ignore */ }
-    setSelectedStageKey((prev) => {
-      if (!prev || prev === 'global') return prev;
-      const stillValid = pipelineStages.some((s) => (
-        String(s.id) === String(prev)
-        && (tab === 'install' ? isInstallVcStage(s) : !isInstallVcStage(s))
-      ));
-      return stillValid ? prev : '';
-    });
-  }, [pipelineStages]);
 
   const stageFilterParams = () => {
     const key = activeTab === 'logistics' ? 'logistics_stage_id' : 'production_stage_id';
@@ -857,7 +816,7 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
             {fixedArea === 'production'
               ? <>Gắn từng <strong>bộ nhiệm vụ</strong> vào <strong>cột pipeline</strong> (một cột có thể nhiều bộ). Khi thẻ chuyển sang cột đó, hệ thống tự sinh nhiệm vụ và gán NV theo cấu hình <Link to="/sx/handover-settings" className="text-blue-600 hover:underline">Bàn giao CRM → SX</Link>.</>
               : fixedArea === 'logistics'
-                ? <>Phân theo cột pipeline <strong>Vận chuyển</strong> / <strong>Lắp đặt</strong>. Khi dự án sang cột tương ứng, hệ thống áp bộ mẫu của cột + Global.</>
+                ? <>Phân theo cột pipeline <strong>Vận chuyển / Lắp đặt</strong>. Khi dự án sang cột tương ứng, hệ thống áp bộ mẫu của cột + Global.</>
                 : <>Phân theo <strong>cột pipeline</strong> của công ty đã chọn. Khi tạo dự án mới, hệ thống áp một lần các bộ mẫu của cột hiện tại + Global.</>}
             {' '}Ngày hẹn trên từng nhiệm vụ do nhân viên tự đặt.
           </p>
@@ -937,42 +896,6 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
           </button>
         </div>
       </div>
-
-      {/* Tab Vận chuyển / Lắp đặt — giống CRM Lead/Deal & Dashboard VC */}
-      {isLogisticsFixed && (
-        <div data-tour="vc-tpl-pipeline-tabs" className="inline-flex gap-px p-0.5 bg-slate-200/60 border border-slate-300/50 rounded-lg shrink-0">
-          {[
-            { id: 'shipping', label: 'Vận chuyển', icon: '🚚', count: vcTabStageCounts.shipping },
-            { id: 'install', label: 'Lắp đặt', icon: '🔧', count: vcTabStageCounts.install },
-          ].map((t) => {
-            const active = vcPipelineTab === t.id;
-            return (
-              <button
-                key={t.id}
-                type="button"
-                onClick={() => switchVcPipelineTab(t.id)}
-                className={`rounded-md font-semibold transition-colors flex items-center gap-1 px-2.5 py-1.5 text-[11px] whitespace-nowrap cursor-pointer ${
-                  active
-                    ? (t.id === 'install' ? 'bg-white text-amber-700 shadow-sm' : 'bg-white text-orange-700 shadow-sm')
-                    : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
-                }`}
-              >
-                <span aria-hidden>{t.icon}</span>
-                {t.label}
-                {t.count > 0 && (
-                  <span className={`text-[10px] font-bold rounded-full min-w-[1.1rem] px-1 text-center ${
-                    active
-                      ? (t.id === 'install' ? 'bg-amber-100 text-amber-700' : 'bg-orange-100 text-orange-700')
-                      : 'bg-slate-200 text-slate-600'
-                  }`}>
-                    {t.count}
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </div>
-      )}
 
       {/* Stepper — SX: Công ty → Phân loại → Bộ mẫu. VC: Công ty → Pipeline → Bộ mẫu. */}
       <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
@@ -1094,17 +1017,11 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
               <span
                 className="ml-auto text-[9px] font-semibold px-1.5 py-0.5 rounded-full"
                 style={{
-                  backgroundColor: isLogisticsFixed
-                    ? (vcPipelineTab === 'install' ? '#f59e0b20' : '#f9731620')
-                    : '#0f766e20',
-                  color: isLogisticsFixed
-                    ? (vcPipelineTab === 'install' ? '#b45309' : '#c2410c')
-                    : '#0f766e',
+                  backgroundColor: isLogisticsFixed ? '#f9731620' : '#0f766e20',
+                  color: isLogisticsFixed ? '#c2410c' : '#0f766e',
                 }}
               >
-                {isLogisticsFixed
-                  ? (vcPipelineTab === 'install' ? '🔧 Lắp đặt' : '🚚 VC')
-                  : '🏭 SX'}
+                {isLogisticsFixed ? '🚚 VC / LĐ' : '🏭 SX'}
               </span>
             )}
           </p>
@@ -1119,9 +1036,10 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
             <Globe className="h-4 w-4 shrink-0" />
             <span className="truncate">Bộ mẫu chung</span>
           </button>
-          {visiblePipelineStages.map((st) => {
+          {pipelineStages.map((st) => {
             const active = String(selectedStageKey) === String(st.id);
             const activeBorder = isLogisticsFixed ? 'border-orange-600 bg-orange-50 text-orange-900' : 'border-teal-600 bg-teal-50 text-teal-900';
+            const isLd = isLogisticsFixed && isInstallVcStage(st);
             return (
               <button
                 key={st.id}
@@ -1135,7 +1053,10 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
                 style={!active && st.color ? { borderLeft: `3px solid ${st.color}` } : {}}
               >
                 <span className="shrink-0">{st.icon || '📌'}</span>
-                <span className="truncate">{st.name}</span>
+                <span className="truncate flex-1 min-w-0">{st.name}</span>
+                {isLd && (
+                  <span className="shrink-0 text-[9px] font-semibold px-1 py-0.5 rounded bg-amber-100 text-amber-800">LĐ</span>
+                )}
               </button>
             );
           })}
@@ -1145,14 +1066,6 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
               <Link to={isLogisticsFixed ? '/vc/pipeline-settings' : '/sx/pipeline-settings'} className={isLogisticsFixed ? 'text-orange-600 hover:underline' : 'text-blue-600 hover:underline'}>
                 Cài đặt pipeline
               </Link>.
-            </p>
-          )}
-          {selectedCompanyId && activeTab && pipelineStages.length > 0 && visiblePipelineStages.length === 0 && (
-            <p className="text-xs text-amber-700 px-2 py-2">
-              Tab {vcPipelineTab === 'install' ? 'Lắp đặt' : 'Vận chuyển'} chưa có cột pipeline.
-              {vcPipelineTab === 'install'
-                ? ' Đặt tên cột chứa «lắp» hoặc mở tab Vận chuyển.'
-                : ' Chuyển tab Lắp đặt nếu cột đang ở đó.'}
             </p>
           )}
           </div>
@@ -1175,7 +1088,7 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
           <h3 className="text-sm font-semibold text-blue-800">
             Tạo bộ mẫu mới (
             {isLogisticsFixed
-              ? (vcPipelineTab === 'install' ? 'Lắp đặt' : 'Vận chuyển')
+              ? 'Vận chuyển / Lắp đặt'
               : (activeTab === 'logistics' ? 'Vận chuyển' : 'Sản xuất')}
             )
           </h3>

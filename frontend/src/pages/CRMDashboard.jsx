@@ -81,6 +81,10 @@ import {
 } from '../lib/crmDashboardRealtime';
 import { sortAndDedupePipelineStages } from '../lib/crmPipelineStages';
 import SxCompanyPickList from '../components/SxCompanyPickList';
+import SxMultiTargetPicker, {
+  validateSxTargets,
+  sxTargetsToApiPayload,
+} from '../components/SxMultiTargetPicker';
 import { useConfirmCountdown } from '../hooks/useConfirmCountdown';
 import {
   classifyCrmLeadTypeForSx,
@@ -1319,6 +1323,7 @@ export default function CRMDashboard() {
   const [dealWonProductionWorkshopTypeId, setDealWonProductionWorkshopTypeId] = useState('');
   const [dealWonProductionWorkshopTypes, setDealWonProductionWorkshopTypes] = useState([]);
   const [dealWonProductionWorkshopLoading, setDealWonProductionWorkshopLoading] = useState(false);
+  const [dealWonSxTargets, setDealWonSxTargets] = useState([]);
   const [dealWonProductionError, setDealWonProductionError] = useState('');
   const {
     wait: dealWonConfirmWait,
@@ -1408,6 +1413,7 @@ export default function CRMDashboard() {
     setDealWonProductionWorkshopTypeId('');
     setDealWonProductionWorkshopTypes([]);
     setDealWonProductionCompanyId('');
+    setDealWonSxTargets([]);
   }, [clearDealWonConfirmTimer]);
 
   const cancelDealWonPending = useCallback(() => {
@@ -1860,8 +1866,8 @@ export default function CRMDashboard() {
   const [autoCreateError, setAutoCreateError] = useState('');
   const autoCreateCalledRef = useRef(false);
 
-  const autoCreateProject = async (dealId, productionCompanyId, workshopTypeId = null) => {
-    if (!productionCompanyId) {
+  const autoCreateProject = async (dealId, productionCompanyId, workshopTypeId = null, targets = null) => {
+    if (!productionCompanyId && !(Array.isArray(targets) && targets.length)) {
       const d = allDealsRef.current.find((x) => String(x.id) === String(dealId));
       const ltRow = (() => {
         const id = d?.lead_type_id || d?.lead_type?.id;
@@ -1888,10 +1894,13 @@ export default function CRMDashboard() {
     setAutoCreateStatus('loading');
     setAutoCreateError('');
     try {
-      const { data } = await api.post(`/crm/deals/${dealId}/auto-create-project`, {
-        production_company_id: productionCompanyId,
-        workshop_type_id: workshopTypeId || null,
-      });
+      const payload = Array.isArray(targets) && targets.length
+        ? { targets: sxTargetsToApiPayload(targets) }
+        : {
+          production_company_id: productionCompanyId,
+          workshop_type_id: workshopTypeId || null,
+        };
+      const { data } = await api.post(`/crm/deals/${dealId}/auto-create-project`, payload);
       setAutoCreateResult(data);
       setAutoCreateStatus('success');
       load({ silent: true });
@@ -5873,6 +5882,9 @@ export default function CRMDashboard() {
           setDealWonProductionCompanyId(prefCompany);
           setDealWonProductionWorkshopTypeId('');
           setDealWonProductionWorkshopTypes([]);
+          setDealWonSxTargets(prefCompany
+            ? [{ companyId: prefCompany, workshopTypeId: pref.workshopTypeId || '' }]
+            : []);
           setDealWonProductionCtx({ leadId, newStageId, extraData, targetStage, deal });
           return;
         }
@@ -6019,22 +6031,21 @@ export default function CRMDashboard() {
 
   const confirmDealWonProduction = async () => {
     if (!dealWonPendingRef.current) return;
-    if (!dealWonProductionCompanyId) {
-      setDealWonProductionError('Vui lòng chọn công ty thuộc module Sản xuất.');
-      return;
-    }
-    if (!dealWonProductionWorkshopTypeId) {
-      setDealWonProductionError('Vui lòng chọn phân loại sản xuất.');
+    const err = validateSxTargets(dealWonSxTargets);
+    if (err) {
+      setDealWonProductionError(err);
       return;
     }
     const ctx = dealWonProductionCtx;
     if (!ctx) return;
     dealWonPendingRef.current = false;
     setDealWonProductionError('');
+    const apiTargets = sxTargetsToApiPayload(dealWonSxTargets);
     const nextExtra = {
       ...ctx.extraData,
-      production_company_id: dealWonProductionCompanyId,
-      workshop_type_id: dealWonProductionWorkshopTypeId,
+      production_company_id: apiTargets[0]?.production_company_id,
+      workshop_type_id: apiTargets[0]?.workshop_type_id,
+      targets: apiTargets,
     };
     clearDealWonConfirmTimer();
     setDealWonAckChecked(false);
@@ -6042,6 +6053,7 @@ export default function CRMDashboard() {
     setDealWonProductionCompanyId('');
     setDealWonProductionWorkshopTypeId('');
     setDealWonProductionWorkshopTypes([]);
+    setDealWonSxTargets([]);
     if (ctx.targetStage.create_event_on_enter) {
       setDealKanbanEventCtx({
         leadId: ctx.leadId,
@@ -6056,12 +6068,9 @@ export default function CRMDashboard() {
   };
 
   const requestDealWonProduction = () => {
-    if (!dealWonProductionCompanyId) {
-      setDealWonProductionError('Vui lòng chọn công ty thuộc module Sản xuất.');
-      return;
-    }
-    if (!dealWonProductionWorkshopTypeId) {
-      setDealWonProductionError('Vui lòng chọn phân loại sản xuất.');
+    const err = validateSxTargets(dealWonSxTargets);
+    if (err) {
+      setDealWonProductionError(err);
       return;
     }
     if (!dealWonAckChecked) {
@@ -8643,83 +8652,30 @@ export default function CRMDashboard() {
               </ul>
             </div>
 
-            <div>
-              <label className="text-xs font-medium text-gray-600">
-                Công ty sản xuất *
-                {(dashWonLeadKind || dashWonDbPref.companyIds?.length) ? (
-                  <span className="ml-1 font-normal text-gray-500">
-                    (<span className="text-red-600 font-bold">★</span> = gợi ý theo loại CRM)
-                  </span>
-                ) : null}
-              </label>
-              <SxCompanyPickList
+            <div className="max-h-[50vh] overflow-y-auto">
+              <SxMultiTargetPicker
+                key={dealWonProductionCtx?.leadId || 'won-sx'}
                 companies={dashWonCompaniesForSelect}
-                value={dealWonProductionCompanyId}
                 leadTypeRow={dashWonLeadTypeRow}
                 kind={dashWonLeadKind}
                 accent="teal"
                 disabled={dealWonConfirmWait > 0}
-                onChange={(id) => {
+                initialRows={dealWonSxTargets.length
+                  ? dealWonSxTargets
+                  : (dealWonProductionCompanyId
+                    ? [{ companyId: dealWonProductionCompanyId, workshopTypeId: dealWonProductionWorkshopTypeId }]
+                    : null)}
+                onChange={(rows) => {
                   if (dealWonConfirmWait > 0) return;
                   clearDealWonConfirmTimer();
                   dealWonPendingRef.current = false;
                   setDealWonAckChecked(false);
-                  setDealWonProductionCompanyId(id);
-                  setDealWonProductionWorkshopTypeId('');
-                  setDealWonProductionWorkshopTypes([]);
-                  setDealWonProductionWorkshopLoading(!!id);
+                  setDealWonSxTargets(rows);
+                  setDealWonProductionCompanyId(rows[0]?.companyId || '');
+                  setDealWonProductionWorkshopTypeId(rows[0]?.workshopTypeId || '');
                   setDealWonProductionError('');
                 }}
               />
-            </div>
-
-            <div>
-              <label className="text-xs font-medium text-gray-600">
-                Phân loại *
-                {(dashWonLeadKind || dashWonDbPref.workshopTypeId) ? (
-                  <span className="ml-1 font-normal text-gray-500">
-                    (<span className="text-red-600 font-bold">★</span> = gợi ý)
-                  </span>
-                ) : null}
-              </label>
-              <select
-                value={dealWonProductionWorkshopTypeId}
-                onChange={(e) => {
-                  if (dealWonConfirmWait > 0) return;
-                  setDealWonProductionWorkshopTypeId(e.target.value);
-                  setDealWonProductionError('');
-                  setDealWonAckChecked(false);
-                  clearDealWonConfirmTimer();
-                  dealWonPendingRef.current = false;
-                }}
-                disabled={!dealWonProductionCompanyId || dealWonProductionWorkshopLoading || dealWonConfirmWait > 0}
-                className="mt-1 w-full h-10 px-3 border rounded-xl text-sm bg-white disabled:bg-gray-50 disabled:text-gray-400"
-              >
-                <option value="">
-                  {!dealWonProductionCompanyId
-                    ? '— Chọn công ty trước —'
-                    : dealWonProductionWorkshopLoading
-                      ? 'Đang tải…'
-                      : dashWonTypesForSelect.length === 0
-                        ? '— Công ty chưa có phân loại —'
-                        : '— Chọn phân loại —'}
-                </option>
-                {dashWonTypesForSelect.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {workshopTypePreferredForLeadType(t.id, dashWonLeadTypeRow, dealWonProductionCompanyId)
-                      || workshopTypeMatchesSxKind(t.name, dashWonLeadKind)
-                      ? `★ ${t.name}`
-                      : t.name}
-                  </option>
-                ))}
-              </select>
-              {dealWonProductionCompanyId
-                && !dealWonProductionWorkshopLoading
-                && dashWonTypesForSelect.length === 0 && (
-                <p className="mt-1 text-[11px] text-amber-600">
-                  Công ty này chưa có phân loại — vào Cài đặt → Pipeline Sản xuất để tạo.
-                </p>
-              )}
             </div>
 
             {dealWonProductionError && (
@@ -8767,8 +8723,7 @@ export default function CRMDashboard() {
               <button
                 type="button"
                 disabled={
-                  !dealWonProductionCompanyId
-                  || !dealWonProductionWorkshopTypeId
+                  !!validateSxTargets(dealWonSxTargets)
                   || !dealWonAckChecked
                   || dealWonConfirmWait > 0
                 }
@@ -8777,11 +8732,11 @@ export default function CRMDashboard() {
               >
                 {dealWonConfirmWait > 0
                   ? `Chuyển sau ${dealWonConfirmWait}s`
-                  : !dealWonProductionCompanyId || !dealWonProductionWorkshopTypeId
+                  : validateSxTargets(dealWonSxTargets)
                     ? 'Chọn công ty + phân loại'
                     : !dealWonAckChecked
                       ? 'Tích xác nhận đã kiểm tra'
-                      : 'Xác nhận chuyển'}
+                      : (dealWonSxTargets.length > 1 ? `Xác nhận ${dealWonSxTargets.length} xưởng` : 'Xác nhận chuyển')}
               </button>
             </div>
           </div>
@@ -10182,12 +10137,18 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
     const defaultColor = isVC ? '#ea580c' : '#0369a1';
     const isPlaceholder = !vcStage && !sxStage;
     const companyHint = activeStage?.company?.short_name || activeStage?.company?.name;
+    const multiSxCount = Number(item.production_project_count)
+      || (Array.isArray(item.production_projects) ? item.production_projects.length : 0);
+    const multiSxLabel = multiSxCount > 1 ? ` · ${multiSxCount} xưởng` : '';
     return (
       <span
         className={`inline-flex items-center gap-1 max-w-full rounded border px-1.5 py-0.5 text-[10px] font-medium truncate ${isPlaceholder ? 'border-dashed' : ''}`}
         title={[
           isPlaceholder ? 'Chưa có giai đoạn xưởng' : activeStage.name,
           companyHint,
+          multiSxCount > 1
+            ? (item.production_projects || []).map((p) => p.company_name || p.label || p.code).filter(Boolean).join(' + ')
+            : null,
         ].filter(Boolean).join(' · ')}
         style={{
           backgroundColor: activeStage.color ? `${activeStage.color}12` : (isVC ? '#fff7ed' : '#f0f9ff'),
@@ -10196,7 +10157,7 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
         }}
       >
         <span className="shrink-0">{icon}</span>
-        <span className="font-bold shrink-0">{label}</span>
+        <span className="font-bold shrink-0">{label}{multiSxLabel}</span>
         <span className="truncate">{activeStage.name}</span>
       </span>
     );

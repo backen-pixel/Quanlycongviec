@@ -1,7 +1,7 @@
 const { supabase } = require('../config/supabase');
 const { normalizeTemplateItemAssigneeIds } = require('./templateItemAssignees');
 
-/** Admin công ty xưởng (role admin/sales_admin + company_id khớp). */
+/** Admin công ty xưởng: users.company_id hoặc phòng ban thuộc công ty. */
 async function resolveProductionCompanyAdminUserId(productionCompanyId) {
   if (!productionCompanyId) return null;
   const { data: admins, error } = await supabase
@@ -13,7 +13,26 @@ async function resolveProductionCompanyAdminUserId(productionCompanyId) {
     .order('created_at', { ascending: true })
     .limit(1);
   if (error) throw error;
-  return admins?.[0]?.id || null;
+  if (admins?.[0]?.id) return admins[0].id;
+
+  // Nhiều NV xưởng chỉ gắn company qua departments (company_id null).
+  const { data: depts } = await supabase
+    .from('departments')
+    .select('id')
+    .eq('company_id', productionCompanyId)
+    .eq('is_active', true);
+  const deptIds = (depts || []).map((d) => d.id).filter(Boolean);
+  if (!deptIds.length) return null;
+  const { data: viaDept, error: deptErr } = await supabase
+    .from('users')
+    .select('id')
+    .in('role', ['admin', 'sales_admin'])
+    .in('department_id', deptIds)
+    .eq('is_active', true)
+    .order('created_at', { ascending: true })
+    .limit(1);
+  if (deptErr) throw deptErr;
+  return viaDept?.[0]?.id || null;
 }
 
 /** Người phụ trách deal/dự án SX: cấu hình bàn giao → admin công ty xưởng. */
