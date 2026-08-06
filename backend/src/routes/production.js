@@ -1496,12 +1496,16 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
     const company_id = effectiveWorkshopCompanyId(req, companyIdQuery);
     const deal_company_id = effectiveDealCompanyId(req, dealCompanyIdQuery, company_id);
     const sx_workshop_company_id = sxWorkshopCoQ && String(sxWorkshopCoQ).trim() ? String(sxWorkshopCoQ).trim() : null;
-    const scopePartnerIds = company_id ? await getExecutorProjectIdsForCompany(company_id) : [];
+    // Prelude song song — summary KPI không bị chậm vì chờ tuần tự 3 query.
+    const [scopePartnerIds, stageMap, wonIds] = await Promise.all([
+      company_id ? getExecutorProjectIdsForCompany(company_id) : Promise.resolve([]),
+      getWorkshopStageMap(),
+      getWonDealProjectIds(),
+    ]);
     const parsedPage = Math.max(parseInt(page) || 1, 1);
     const parsedLimit = Math.min(Math.max(parseInt(limit) || 100, 1), 500);
     const offset = (parsedPage - 1) * parsedLimit;
-    const { ids: stageIds } = await getWorkshopStageMap();
-    const wonIds = await getWonDealProjectIds();
+    const { ids: stageIds } = stageMap;
     const sxKanbanColumnId = String(sxKanbanColumnIdQuery || '').trim();
     const wantsNullKanbanColumn = sxKanbanColumnId === '__none__' || sxKanbanColumnId === 'null';
     /** Placeholder FE (ph/pr/cc) hoặc id ảo — không được `.eq` vào cột UUID. */

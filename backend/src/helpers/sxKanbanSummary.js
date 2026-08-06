@@ -350,12 +350,15 @@ async function headCountTotalOnly(ctx) {
  * @returns {Promise<{ total: number, counts: Record<string, number>, values: Record<string, number>, deadline_counts: Record<string, number> }>}
  */
 async function loadSxKanbanColumnSummary(ctx) {
-  const restrictIds = await resolveSxVisibilityRestrictIds(
-    ctx.req.user,
-    ctx.company_id,
-    ctx.sx_workshop_company_id,
-    ctx.deal_company_id,
-  );
+  const [restrictIds, stageById] = await Promise.all([
+    resolveSxVisibilityRestrictIds(
+      ctx.req.user,
+      ctx.company_id,
+      ctx.sx_workshop_company_id,
+      ctx.deal_company_id,
+    ),
+    loadStageFlagsById(ctx.company_id, ctx.workshop_type_id),
+  ]);
   const fullCtx = { ...ctx, restrictIds };
   const empty = {
     total: 0,
@@ -372,9 +375,7 @@ async function loadSxKanbanColumnSummary(ctx) {
     return empty;
   }
 
-  const stageById = await loadStageFlagsById(fullCtx.company_id, fullCtx.workshop_type_id);
-
-  // RPC (counts) || thin-scan chạy song song — trước đây RPC xong mới scan → chậm gấp đôi.
+  // RPC counts + thin-scan (deadline + stage_kpis) song song.
   const rpcPromise = tryRpcColumnCounts(fullCtx).catch((rpcErr) => {
     if (!isMissingRpcError(rpcErr) && !isMissingSxKanbanColumnError(rpcErr)) {
       console.warn('[sxKanbanSummary] rpc:', rpcErr.message || rpcErr);

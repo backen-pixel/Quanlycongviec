@@ -98,11 +98,52 @@ const SX_ALT_VIEW_MODES = SX_VIEW_MODES.filter((v) => v.id !== 'kanban');
 
 const LS_SX = 'sx_dash_filters_v1';
 const LS_SX_FILTER_PANEL_POS = 'sx_filter_panel_pos';
+const LS_SX_STAGE_KPIS = 'sx_dash_stage_kpis_v1';
 /** v2: mặc định per-column (cuộn cột → tải thẻ); bỏ qua preference unified cũ. */
 const LS_SX_KANBAN_COLUMN_SCROLL = 'sx_kanban_column_scroll_mode_v2';
 const KANBAN_COLUMN_SCROLL_MODES = ['unified', 'per-column'];
 /** Mặc định cuộn riêng từng cột — cuộn tới đâu tải thẻ tới đó (giống CRM). */
 const KANBAN_DEFAULT_COLUMN_SCROLL_MODE = 'per-column';
+
+function readSxStageKpisCache(cacheKey) {
+  if (!cacheKey) return null;
+  try {
+    const all = JSON.parse(sessionStorage.getItem(LS_SX_STAGE_KPIS) || '{}');
+    const hit = all[cacheKey];
+    if (!hit || typeof hit !== 'object') return null;
+    return {
+      producing: Number(hit.producing) || 0,
+      awaiting_delivery: Number(hit.awaiting_delivery) || 0,
+      shipped: Number(hit.shipped) || 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeSxStageKpisCache(cacheKey, kpis) {
+  if (!cacheKey || !kpis) return;
+  try {
+    const all = JSON.parse(sessionStorage.getItem(LS_SX_STAGE_KPIS) || '{}');
+    all[cacheKey] = {
+      producing: Number(kpis.producing) || 0,
+      awaiting_delivery: Number(kpis.awaiting_delivery) || 0,
+      shipped: Number(kpis.shipped) || 0,
+      ts: Date.now(),
+    };
+    const keys = Object.keys(all);
+    if (keys.length > 40) {
+      keys
+        .map((k) => ({ k, ts: Number(all[k]?.ts) || 0 }))
+        .sort((a, b) => a.ts - b.ts)
+        .slice(0, keys.length - 40)
+        .forEach(({ k }) => { delete all[k]; });
+    }
+    sessionStorage.setItem(LS_SX_STAGE_KPIS, JSON.stringify(all));
+  } catch {
+    /* ignore quota */
+  }
+}
 /** Placeholder skeleton `ph`/`pr`/`cc` — không gọi API với id này (cột UUID thật). */
 const SX_KANBAN_COL_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 function isFetchableSxKanbanColumnId(id) {
@@ -442,8 +483,25 @@ export default function ProductionDashboard() {
   /** Tổng bucket Deadline từ summary=1 (toàn filter) — KPI Quá hạn không phụ thuộc số card đã load. */
   const [deadlineBucketCounts, setDeadlineBucketCounts] = useState({});
   /** KPI Đang SX / Chờ VC / Đã VC từ summary — cùng phạm vi Tổng/Quá hạn (không lệch khi lọc công ty). */
-  const [summaryStageKpis, setSummaryStageKpis] = useState(null);
-  /** true khi đang chờ summary=1 — giữ KPI cũ / không đếm theo card đang load. */
+  const [summaryStageKpis, setSummaryStageKpis] = useState(() => {
+    // Optimistic từ snapshot board (lần mở trước) — hiện số ngay, summary server sẽ ghi đè cho đúng.
+    const snapProjects = boardSnap0?.projects;
+    const snapPipeline = boardSnap0?.pipeline;
+    if (!Array.isArray(snapProjects) || !snapProjects.length || !Array.isArray(snapPipeline) || !snapPipeline.length) {
+      return null;
+    }
+    try {
+      const r = computeSxRevenueKpis(snapProjects, snapPipeline);
+      return {
+        producing: Number(r.producing) || 0,
+        awaiting_delivery: Number(r.awaitingDelivery) || 0,
+        shipped: Number(r.shipped) || 0,
+      };
+    } catch {
+      return null;
+    }
+  });
+  /** true khi đang chờ summary=1 — giữ KPI cũ / optimistic, không về 0. */
   const [summaryKpisPending, setSummaryKpisPending] = useState(false);
   const [stagePageState, setStagePageState] = useState({});
   const stagePageLoadingRef = useRef(new Set());
@@ -803,7 +861,6 @@ export default function ProductionDashboard() {
     setPipelineStageCounts({});
     // Giữ deadlineBucketCounts + summaryStageKpis đến khi summary mới về —
     // KPI Đang SX / Chờ VC / Đã VC / Quá hạn hiện liền, không nhảy theo card đang load.
-    setSummaryKpisPending(true);
     setStagePageState({});
     const isStale = () => seq !== loadSeqRef.current;
     const fetchCompanyId = opts.companyId || companyParam;
@@ -857,6 +914,18 @@ export default function ProductionDashboard() {
         ...(workshopTypeFilter ? { workshop_type_id: workshopTypeFilter } : {}),
         ...serverFilterParams,
       };
+      // Hiện KPI liền từ cache filter (lần xem trước) — không đợi card / summary mạng.
+      const stageKpiCacheKey = JSON.stringify({
+        company_id: fetchCompanyId || '',
+        deal_company_id: fetchDealCompanyId || '',
+        sx_workshop: fetchSxWorkshopId || '',
+        workshop_type_id: workshopTypeFilter || '',
+        ...serverFilterParams,
+      });
+      const cachedStageKpis = readSxStageKpisCache(stageKpiCacheKey);
+      if (cachedStageKpis) setSummaryStageKpis(cachedStageKpis);
+      setSummaryKpisPending(true);
+
       void api.get('/production/projects', {
         params: summaryParams,
         ...(bustCache ? { headers: { 'x-no-cache': '1' } } : {}),
@@ -870,11 +939,13 @@ export default function ProductionDashboard() {
         setDeadlineBucketCounts(dlCounts);
         const sk = data?.stage_kpis && typeof data.stage_kpis === 'object' ? data.stage_kpis : null;
         if (sk) {
-          setSummaryStageKpis({
+          const nextKpis = {
             producing: Number(sk.producing) || 0,
             awaiting_delivery: Number(sk.awaiting_delivery) || 0,
             shipped: Number(sk.shipped) || 0,
-          });
+          };
+          setSummaryStageKpis(nextKpis);
+          writeSxStageKpisCache(stageKpiCacheKey, nextKpis);
         }
         // sk thiếu (BE cũ): để summaryKpisPending=false → fallback đếm card.
         setSummaryKpisPending(false);
@@ -2329,17 +2400,17 @@ export default function ProductionDashboard() {
         ? serverOverdue
         : countSxDeadlineViewOverdue(filteredKanbanPipeline)
     );
-    // KPI giai đoạn: ưu tiên summary server. Khi đang chờ summary thì giữ số cũ
-    // (không đếm theo card đang load → tránh nhảy dần rồi mới đúng).
+    // KPI giai đoạn: ưu tiên summary server. Khi đang chờ / chưa có summary:
+    // giữ số cũ hoặc optimistic từ card/snapshot — KHÔNG về 0 (tránh trống rồi mới hiện).
     const producingCount = (canUseServerTotal && summaryStageKpis)
       ? summaryStageKpis.producing
-      : ((canUseServerTotal && summaryKpisPending) ? 0 : revenue.producing);
+      : revenue.producing;
     const awaitingCount = (canUseServerTotal && summaryStageKpis)
       ? summaryStageKpis.awaiting_delivery
-      : ((canUseServerTotal && summaryKpisPending) ? 0 : revenue.awaitingDelivery);
+      : revenue.awaitingDelivery;
     const shippedCount = (canUseServerTotal && summaryStageKpis)
       ? summaryStageKpis.shipped
-      : ((canUseServerTotal && summaryKpisPending) ? 0 : revenue.shipped);
+      : revenue.shipped;
     if (!list.length && !summaryStageKpis && !hasServerOverdue) {
       return {
         total: accurateTotal, producing: producingCount, awaiting_delivery: awaitingCount, shipped: shippedCount, completed: 0,
@@ -2380,7 +2451,7 @@ export default function ProductionDashboard() {
     };
   }, [
     scopeProjects, pipeline, filteredKanbanPipeline, projectPageState.total,
-    deadlineBucketCounts, summaryStageKpis, summaryKpisPending,
+    deadlineBucketCounts, summaryStageKpis,
     deferredPersonName, filterRegion, filterPhone, dealCompanyExternalFilter,
   ]);
 
