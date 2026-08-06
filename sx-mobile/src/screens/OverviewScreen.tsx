@@ -302,8 +302,12 @@ export default function OverviewScreen() {
         setSoonDeals(pickSoonProjects(projects, PRIORITY_FETCH_LIMIT, stages));
       };
 
+      // Đổi filter / refresh: không seed KPI từ board client (thiếu thẻ) hay số công ty cũ —
+      // chờ summary=1 rồi hiện một lần (tránh flash vài số rồi mới đúng).
+      if (mode === 'init' || mode === 'refresh') {
+        setKpis(EMPTY_KPI);
+      }
       if (cachedBoard && mode !== 'refresh') {
-        setKpis(computeSxBoardKpis(cachedBoard.projects, cachedBoard.stages));
         applyBoardPriority(cachedBoard.projects, cachedBoard.stages);
         if (mode === 'init') setLoading(false);
       }
@@ -323,8 +327,7 @@ export default function OverviewScreen() {
           : fetchProductionBoard(mode === 'refresh', boardFilters, {
               onPartial: (partial) => {
                 if (seq !== loadSeqRef.current) return;
-                // Chỉ dùng KPI client tạm khi chưa có summary server.
-                setKpis((prev) => (prev.total > 0 ? prev : computeSxBoardKpis(partial.projects, partial.stages)));
+                // Không cập nhật KPI từ partial board — chỉ summary server (đủ filter).
                 applyBoardPriority(partial.projects, partial.stages);
                 if (mode === 'init') setLoading(false);
               },
@@ -336,14 +339,14 @@ export default function OverviewScreen() {
 
       if (seq !== loadSeqRef.current) return;
       if (summary) {
-        setKpis((prev) => ({
-          ...prev,
+        setKpis({
+          ...EMPTY_KPI,
           total: summary.total,
           producing: summary.producing,
           awaitingDelivery: summary.awaitingDelivery,
           shipped: summary.shipped,
           overdue: summary.overdue,
-        }));
+        });
       } else if (board) {
         setKpis(computeSxBoardKpis(board.projects, board.stages));
       }
@@ -395,10 +398,21 @@ export default function OverviewScreen() {
       if (info?.patched) {
         const cached = getCachedBoard(boardFiltersRef.current);
         if (cached) {
-          setKpis(computeSxBoardKpis(cached.projects, cached.stages));
           setOverdueDeals(pickOverdueProjects(cached.projects, PRIORITY_FETCH_LIMIT, cached.stages));
           setSoonDeals(pickSoonProjects(cached.projects, PRIORITY_FETCH_LIMIT, cached.stages));
         }
+        // KPI chỉ từ summary — không đếm board cache (thiếu thẻ → số lệch).
+        void fetchProductionBoardSummary(boardFiltersRef.current).then((summary) => {
+          if (!summary) return;
+          setKpis({
+            ...EMPTY_KPI,
+            total: summary.total,
+            producing: summary.producing,
+            awaitingDelivery: summary.awaitingDelivery,
+            shipped: summary.shipped,
+            overdue: summary.overdue,
+          });
+        });
         return;
       }
       void load('silent');

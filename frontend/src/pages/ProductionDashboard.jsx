@@ -484,26 +484,12 @@ export default function ProductionDashboard() {
   /** Tổng bucket Deadline từ summary=1 (toàn filter) — KPI Quá hạn không phụ thuộc số card đã load. */
   const [deadlineBucketCounts, setDeadlineBucketCounts] = useState({});
   /** KPI Đang SX / Chờ VC / Đã VC từ summary — cùng phạm vi Tổng/Quá hạn (không lệch khi lọc công ty). */
-  const [summaryStageKpis, setSummaryStageKpis] = useState(() => {
-    // Optimistic từ snapshot board (lần mở trước) — hiện số ngay, summary server sẽ ghi đè cho đúng.
-    const snapProjects = boardSnap0?.projects;
-    const snapPipeline = boardSnap0?.pipeline;
-    if (!Array.isArray(snapProjects) || !snapProjects.length || !Array.isArray(snapPipeline) || !snapPipeline.length) {
-      return null;
-    }
-    try {
-      const r = computeSxRevenueKpis(snapProjects, snapPipeline);
-      return {
-        producing: Number(r.producing) || 0,
-        awaiting_delivery: Number(r.awaitingDelivery) || 0,
-        shipped: Number(r.shipped) || 0,
-      };
-    } catch {
-      return null;
-    }
-  });
-  /** true khi đang chờ summary=1 — giữ KPI cũ / optimistic, không về 0. */
-  const [summaryKpisPending, setSummaryKpisPending] = useState(false);
+  // Không seed từ snapshot board (đếm thẻ cục bộ) — tránh flash số sai rồi summary ghi đè.
+  const [summaryStageKpis, setSummaryStageKpis] = useState(null);
+  /** true khi đang chờ summary=1 — KPI filter-scoped hiện '…', không giữ số công ty/filter trước. */
+  const [summaryKpisPending, setSummaryKpisPending] = useState(true);
+  /** Seq đã áp summary total — tránh projectPage ghi đè total bằng số list lệch. */
+  const summaryTotalSeqRef = useRef(0);
   const [stagePageState, setStagePageState] = useState({});
   const stagePageLoadingRef = useRef(new Set());
   const [pipeline, setPipeline] = useState(() => boardSnap0?.pipeline || []);
@@ -923,13 +909,14 @@ export default function ProductionDashboard() {
         workshop_type_id: workshopTypeFilter || '',
         ...serverFilterParams,
       });
+      // Đổi filter: xóa KPI/total/overdue filter trước ngay — tránh flash số công ty cũ rồi mới đúng.
+      setDeadlineBucketCounts({});
+      setProjectPageState((prev) => ({ ...prev, total: null }));
       const cachedStageKpis = readSxStageKpisCache(stageKpiCacheKey);
       if (cachedStageKpis) {
-        // Hit cache đúng filter (công ty…) → hiện liền.
+        // Hit cache đúng filter này → hiện liền (cùng key); summary sẽ xác nhận.
         setSummaryStageKpis(cachedStageKpis);
       } else {
-        // Miss: xóa số công ty/filter trước — tránh kẹt KPI cũ khi đổi công ty.
-        // Không đếm card từng đợt trong lúc chờ (xem scopeKpis + summaryKpisPending).
         setSummaryStageKpis(null);
       }
       setSummaryKpisPending(true);
@@ -951,11 +938,13 @@ export default function ProductionDashboard() {
           awaiting_delivery: Number(sk?.awaiting_delivery) || 0,
           shipped: Number(sk?.shipped) || 0,
         };
-        // Luôn ghi đè theo filter hiện tại (kể cả 0) — đổi công ty phải cập nhật KPI.
+        const summaryTotal = Number(data?.total) || 0;
+        summaryTotalSeqRef.current = seq;
+        // Một lần ghi đè đồng bộ — không để list page ghi total lệch sau đó.
         setSummaryStageKpis(nextKpis);
         writeSxStageKpisCache(stageKpiCacheKey, nextKpis);
+        setProjectPageState((prev) => ({ ...prev, total: summaryTotal }));
         setSummaryKpisPending(false);
-        setProjectPageState((prev) => ({ ...prev, total: Number(data?.total) || 0 }));
         setStagePageState((prev) => {
           const next = { ...prev };
           Object.entries(counts).forEach(([stageId, totalRaw]) => {
@@ -975,7 +964,6 @@ export default function ProductionDashboard() {
       }).catch(() => {
         if (!isStale()) {
           setSummaryKpisPending(false);
-          // Giữ KPI cũ khi summary lỗi — không về đếm card cộng dồn.
         }
       });
 
@@ -997,7 +985,10 @@ export default function ProductionDashboard() {
       if (projectPage !== null) {
         const projectList = projectPage.projects || [];
         setProjectPageState((prev) => ({
-          total: projectPage.total ?? prev.total,
+          // Ưu tiên total từ summary=1 (đã áp cho seq này); không để list ghi đè số lệch.
+          total: summaryTotalSeqRef.current === seq
+            ? prev.total
+            : (projectPage.total ?? prev.total),
           nextPage: projectPage.nextPage,
           hasMore: projectPage.hasMore && projectList.length < maxRecords,
           loading: false,
@@ -2396,22 +2387,28 @@ export default function ProductionDashboard() {
       && !filterPhone
       && !dealCompanyExternalFilter
     );
-    const accurateTotal = canUseServerTotal && Number.isFinite(Number(projectPageState.total))
-      ? Number(projectPageState.total)
+    // Đổi filter đang chờ summary → '…' (không flash tổng công ty trước).
+    // Lưu ý: Number(null)===0 — phải check null/undefined trước.
+    const serverTotalRaw = projectPageState.total;
+    const hasServerTotal = serverTotalRaw != null && Number.isFinite(Number(serverTotalRaw));
+    const accurateTotal = canUseServerTotal
+      ? (hasServerTotal
+        ? Number(serverTotalRaw)
+        : (summaryKpisPending ? '…' : list.length))
       : list.length;
-    // KPI Quá hạn = tổng server (toàn filter); fallback đếm card đã load nếu chưa có summary.
+    // KPI Quá hạn = tổng server (toàn filter); đang pending → '…' (không giữ overdue filter cũ).
     const serverOverdue = Number(deadlineBucketCounts?.overdue);
     const hasServerOverdue = canUseServerTotal
       && deadlineBucketCounts
       && Object.prototype.hasOwnProperty.call(deadlineBucketCounts, 'overdue');
-    const deadlineOverdueCount = (
-      hasServerOverdue
+    const deadlineOverdueCount = canUseServerTotal
+      ? (hasServerOverdue
         ? serverOverdue
-        : countSxDeadlineViewOverdue(filteredKanbanPipeline)
-    );
+        : (summaryKpisPending ? '…' : countSxDeadlineViewOverdue(filteredKanbanPipeline)))
+      : countSxDeadlineViewOverdue(filteredKanbanPipeline);
     // Cùng nguồn summary=1 với Tổng/Quá hạn.
-    // - Có summaryStageKpis → hiện số server (đổi công ty sẽ được ghi đè).
-    // - Đang chờ summary (pending, chưa có số) → '…' — không đếm card cộng dần, không giữ số công ty cũ.
+    // - Có summaryStageKpis (cache đúng filter / server) → hiện số đó.
+    // - Đang chờ, chưa có số → '…' — không đếm card, không giữ số công ty cũ.
     // - Filter chỉ client → đếm card đã load.
     const producingCount = canUseServerTotal
       ? (summaryStageKpis
@@ -3564,7 +3561,12 @@ export default function ProductionDashboard() {
         {/* KPI */}
         <div className="px-3 py-2 sm:px-4 border-b border-slate-100 bg-slate-50/40">
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-7 gap-1.5 sm:gap-2">
-            <KPICard accent="bg-violet-500" label="Tổng dự án" value={scopeKpis.total} descriptor={scopeKpis.total > 0 ? `${scopeKpis.total} dự án` : '—'} />
+            <KPICard
+              accent="bg-violet-500"
+              label="Tổng dự án"
+              value={scopeKpis.total}
+              descriptor={typeof scopeKpis.total === 'number' && scopeKpis.total > 0 ? `${scopeKpis.total} dự án` : '—'}
+            />
             <KPICard
               accent="bg-teal-500"
               label="Đang sản xuất"
@@ -3583,7 +3585,13 @@ export default function ProductionDashboard() {
               value={scopeKpis.shipped}
               descriptor={typeof scopeKpis.shipped === 'number' && scopeKpis.shipped > 0 ? 'đang / đã giao' : '—'}
             />
-            <KPICard accent="bg-red-500" label="Quá hạn" value={scopeKpis.overdue} descriptor={scopeKpis.overdue > 0 ? 'cột Deadline Quá hạn' : 'không có'} valueTone={scopeKpis.overdue > 0 ? 'danger' : undefined} />
+            <KPICard
+              accent="bg-red-500"
+              label="Quá hạn"
+              value={scopeKpis.overdue}
+              descriptor={typeof scopeKpis.overdue === 'number' && scopeKpis.overdue > 0 ? 'cột Deadline Quá hạn' : 'không có'}
+              valueTone={typeof scopeKpis.overdue === 'number' && scopeKpis.overdue > 0 ? 'danger' : undefined}
+            />
             <KPICard
               accent="bg-amber-500"
               label="Công nợ"
