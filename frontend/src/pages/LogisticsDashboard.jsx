@@ -22,7 +22,7 @@ import {
   Filter, Clock, Layers, Trash2, Settings, BarChart3,
   ChevronDown, ChevronUp, MessageSquare, Phone, ExternalLink,
 } from 'lucide-react';
-import { LogisticsListView, LogisticsPlannerView, LogisticsCalendarView } from '../components/LogisticsViews';
+import { LogisticsListView, LogisticsPlannerView, LogisticsCalendarView, LogisticsDeadlineView } from '../components/LogisticsViews';
 import NewLogisticsProjectModal from '../components/NewLogisticsProjectModal';
 import WorkshopPipelineKanbanScroll, { useWorkshopKanbanScrollLayout } from '../components/WorkshopPipelineKanbanScroll';
 import KanbanColumnVirtualList from '../components/KanbanColumnVirtualList';
@@ -47,11 +47,12 @@ import {
 
 const INTAKE_BUCKET = 'delivery_pending';
 
-const WS_DASH_VIEW_MODES = ['kanban', 'list', 'planner', 'calendar'];
+const WS_DASH_VIEW_MODES = ['kanban', 'list', 'planner', 'deadline', 'calendar'];
 const VC_VIEW_MODE_OPTIONS = [
   { id: 'kanban', icon: LayoutGrid, label: 'Kanban' },
   { id: 'list', icon: List, label: 'Danh sách' },
   { id: 'planner', icon: Users, label: 'Planner' },
+  { id: 'deadline', icon: Clock, label: 'Deadline' },
   { id: 'calendar', icon: Calendar, label: 'Lịch' },
 ];
 const VC_ALT_VIEW_MODES = VC_VIEW_MODE_OPTIONS.filter((v) => v.id !== 'kanban');
@@ -1606,6 +1607,7 @@ export default function LogisticsDashboard() {
       )}
       {viewMode === 'list' && <LogisticsListView pipeline={filteredKanbanPipeline} calculateDays={calculateDays} />}
       {viewMode === 'planner' && <LogisticsPlannerView pipeline={filteredKanbanPipeline} />}
+      {viewMode === 'deadline' && <LogisticsDeadlineView pipeline={filteredKanbanPipeline} />}
       {viewMode === 'calendar' && <LogisticsCalendarView pipeline={filteredKanbanPipeline} />}
 
       {showNewProject && <NewLogisticsProjectModal onClose={() => { setShowNewProject(false); load(); }} />}

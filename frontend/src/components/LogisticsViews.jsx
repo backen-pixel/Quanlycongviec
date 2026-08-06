@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
+import api from '../lib/api';
 import { formatVND, formatDate } from '../lib/utils';
 import { markWorkshopPipelineCardFocus } from '../lib/workshopPipelineStorage';
+import { KanbanBoardEdgeScrollChrome } from '../lib/kanbanEdgeScrollControls';
 
 // ─── List View ───────────────────────────────────────────────────────────────
 export function LogisticsListView({ pipeline, calculateDays }) {
@@ -265,6 +267,400 @@ export function LogisticsCalendarView({ pipeline }) {
         <span>📅 Deadline dự án VC</span>
         <span className="ml-auto">{allProjects.filter(p => p.deadline).length} dự án có deadline</span>
       </div>
+    </div>
+  );
+}
+
+// ─── Deadline View (gom theo hạn — giống SX) ─────────────────────────────────
+const VC_DEADLINE_BUCKETS = [
+  { key: 'overdue', label: 'Quá hạn', color: '#dc2626' },
+  { key: 'today', label: 'Hôm nay', color: '#ea580c' },
+  { key: 'this_week', label: 'Tuần này', color: '#d97706' },
+  { key: 'next_week', label: 'Tuần sau', color: '#0891b2' },
+  { key: 'this_month', label: 'Tháng này', color: '#0d9488' },
+  { key: 'later', label: 'Sau', color: '#475569' },
+  { key: 'none', label: 'Chưa có deadline', color: '#9ca3af' },
+];
+
+function startOfDay(d) {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
+
+/** Ưu tiên deadline dự án; fallback ngày lắp đặt. */
+function resolveVcDeadlineRaw(item) {
+  if (item?.deadline) return { raw: item.deadline, source: 'deadline' };
+  if (item?.install_date) return { raw: item.install_date, source: 'install_date' };
+  return { raw: null, source: null };
+}
+
+function resolveVcDeadlineBucket(item, todayMs = Date.now()) {
+  const { raw, source } = resolveVcDeadlineRaw(item);
+  if (!raw) return { bucket: 'none', ts: null, source: null };
+  const t = new Date(raw).getTime();
+  if (!Number.isFinite(t)) return { bucket: 'none', ts: null, source: null };
+  if (item?.status === 'completed') return { bucket: 'later', ts: t, source };
+  const today = startOfDay(new Date(todayMs));
+  const dayMs = 86400000;
+  const diffDays = Math.floor((startOfDay(t).getTime() - today.getTime()) / dayMs);
+  if (diffDays < 0) return { bucket: 'overdue', ts: t, source };
+  if (diffDays === 0) return { bucket: 'today', ts: t, source };
+  const dow = today.getDay() === 0 ? 7 : today.getDay();
+  const daysToEndOfWeek = 7 - dow;
+  if (diffDays <= daysToEndOfWeek) return { bucket: 'this_week', ts: t, source };
+  if (diffDays <= daysToEndOfWeek + 7) return { bucket: 'next_week', ts: t, source };
+  const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getTime();
+  if (t <= endOfMonth) return { bucket: 'this_month', ts: t, source };
+  return { bucket: 'later', ts: t, source };
+}
+
+function targetDateForVcBucket(bucketKey) {
+  const fmt = (d) => {
+    const yy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${yy}-${mm}-${dd}`;
+  };
+  const today = startOfDay(new Date());
+  const addDays = (n) => {
+    const x = new Date(today);
+    x.setDate(x.getDate() + n);
+    return x;
+  };
+  const dow = today.getDay() === 0 ? 7 : today.getDay();
+  const daysToEndOfWeek = 7 - dow;
+  switch (bucketKey) {
+    case 'overdue': return fmt(addDays(-1));
+    case 'today': return fmt(today);
+    case 'this_week': return fmt(addDays(daysToEndOfWeek));
+    case 'next_week': return fmt(addDays(daysToEndOfWeek + 7));
+    case 'this_month': {
+      const last = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+      return fmt(last);
+    }
+    case 'later': return fmt(addDays(60));
+    case 'none': return null;
+    default: return fmt(today);
+  }
+}
+
+function shouldHideVcDeadlineCard(item, stage) {
+  if (item?.status === 'completed') return true;
+  const slug = String(stage?.bucket_slug || stage?.slug || '').toLowerCase();
+  return slug === 'completed' || slug === 'done';
+}
+
+function VcDeadlineBoardShell({ children }) {
+  const scrollRef = useRef(null);
+  const wrapRef = useRef(null);
+  const draggingRef = useRef(false);
+  const rafRef = useRef(0);
+  const pointerRef = useRef({ x: 0, y: 0 });
+  const [dragging, setDragging] = useState(false);
+
+  useEffect(() => {
+    const onDragStart = (e) => {
+      if (e.target?.closest?.('[data-vc-deadline-card]')) {
+        draggingRef.current = true;
+        setDragging(true);
+      }
+    };
+    const onDragEnd = () => {
+      draggingRef.current = false;
+      setDragging(false);
+      if (rafRef.current) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = 0;
+      }
+    };
+    const EDGE = 56;
+    const MIN = 5;
+    const MAX = 34;
+    const tick = () => {
+      rafRef.current = 0;
+      if (!draggingRef.current) return;
+      const sc = scrollRef.current;
+      const wrap = wrapRef.current;
+      if (!sc || !wrap) return;
+      const r = wrap.getBoundingClientRect();
+      const x = pointerRef.current.x;
+      const innerL = r.left + EDGE;
+      const innerR = r.right - EDGE;
+      let delta = 0;
+      if (x < innerL) {
+        const t = Math.min(1, (innerL - x) / EDGE);
+        delta = -(MIN + t * t * (MAX - MIN));
+      } else if (x > innerR) {
+        const t = Math.min(1, (x - innerR) / EDGE);
+        delta = (MIN + t * t * (MAX - MIN));
+      }
+      if (delta !== 0) {
+        const maxL = Math.max(0, sc.scrollWidth - sc.clientWidth);
+        const before = sc.scrollLeft;
+        sc.scrollLeft = Math.max(0, Math.min(maxL, before + delta));
+        if (sc.scrollLeft !== before && (x < innerL || x > innerR)) {
+          rafRef.current = requestAnimationFrame(tick);
+        }
+      }
+    };
+    const onDragOver = (e) => {
+      pointerRef.current = { x: e.clientX, y: e.clientY };
+      if (!draggingRef.current) return;
+      const wrap = wrapRef.current;
+      if (!wrap) return;
+      const r = wrap.getBoundingClientRect();
+      const innerL = r.left + EDGE;
+      const innerR = r.right - EDGE;
+      if ((e.clientX < innerL || e.clientX > innerR) && !rafRef.current) {
+        rafRef.current = requestAnimationFrame(tick);
+      }
+    };
+    document.addEventListener('dragstart', onDragStart, true);
+    document.addEventListener('dragend', onDragEnd, true);
+    document.addEventListener('dragover', onDragOver, true);
+    return () => {
+      document.removeEventListener('dragstart', onDragStart, true);
+      document.removeEventListener('dragend', onDragEnd, true);
+      document.removeEventListener('dragover', onDragOver, true);
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    };
+  }, []);
+
+  const nudge = (dir) => {
+    const sc = scrollRef.current;
+    if (!sc) return;
+    const w = 280;
+    sc.scrollLeft = Math.max(
+      0,
+      Math.min(sc.scrollWidth - sc.clientWidth, sc.scrollLeft + (dir === 'right' ? w : -w)),
+    );
+  };
+
+  return (
+    <div ref={wrapRef} className="relative">
+      <KanbanBoardEdgeScrollChrome
+        wrapRef={wrapRef}
+        scrollRef={scrollRef}
+        isDraggingCard={dragging}
+        onNudgeLeft={() => nudge('left')}
+        onNudgeRight={() => nudge('right')}
+        leftTitle="Giữ chuột để cuộn chậm sang trái — bấm để cuộn nhanh"
+        rightTitle="Giữ chuột để cuộn chậm sang phải — bấm để cuộn nhanh"
+      />
+      <div ref={scrollRef} className="overflow-x-auto pb-4 [scrollbar-gutter:stable]">
+        <div className="flex min-w-max gap-3">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+function VcDeadlineColumn({
+  topBarColor, title, subtitle, count, children, isDragOver, onDragOver, onDragLeave, onDrop,
+}) {
+  return (
+    <div
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+      className={`flex-shrink-0 w-80 rounded-lg overflow-hidden transition-all duration-200 ${isDragOver ? 'ring-2 ring-orange-500 ring-dashed' : ''}`}
+    >
+      <div className="h-1.5 w-full" style={{ backgroundColor: topBarColor || '#e5e7eb' }} />
+      <div className={`bg-white border border-gray-200 border-t-0 p-3 ${isDragOver ? 'bg-orange-50' : ''}`}>
+        <div className="flex items-start justify-between gap-2 mb-1">
+          <h3 className="font-semibold text-gray-900 text-force-black truncate text-sm flex-1">{title}</h3>
+          <span className="px-2 py-0.5 bg-gray-100 text-gray-700 font-bold rounded text-[10px] shrink-0">{count}</span>
+        </div>
+        {subtitle && <p className="text-[10px] text-gray-500">{subtitle}</p>}
+      </div>
+      <div
+        className={`border border-gray-200 border-t-0 overflow-y-auto p-2 space-y-2 bg-transparent ${isDragOver ? 'bg-orange-50/40' : ''}`}
+        style={{ maxHeight: '70vh', minHeight: '160px' }}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function VcDeadlineCard({ item, goProject }) {
+  return (
+    <div
+      data-vc-deadline-card
+      onClick={() => goProject(item.id)}
+      className="!bg-white rounded-lg border border-gray-200 p-2.5 hover:shadow-md transition-all cursor-pointer"
+      style={{ backgroundColor: '#ffffff' }}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-[11px] text-orange-600 font-medium">{item.code}</p>
+          <p className="text-sm font-medium text-gray-900 text-force-black truncate mt-0.5">{item.name}</p>
+          {item.customer?.full_name && (
+            <p className="text-[11px] text-gray-500 mt-0.5 truncate">{item.customer.full_name}</p>
+          )}
+        </div>
+        {item._stage && (
+          <span
+            className="text-[10px] px-1.5 py-0.5 rounded-full font-medium shrink-0 whitespace-nowrap"
+            style={{ backgroundColor: `${item._stage.color || '#f97316'}20`, color: item._stage.color || '#ea580c' }}
+          >
+            {item._stage.icon} {item._stage.name}
+          </span>
+        )}
+      </div>
+      <div className="mt-1.5 flex items-center justify-between gap-2 text-[11px]">
+        <span className="text-gray-500">
+          {item._deadlineTs ? formatDate(item._deadlineTs) : '—'}
+          {item._deadlineSource === 'install_date'
+            ? ' · Ngày LĐ'
+            : item._deadlineSource === 'deadline'
+              ? ' · Deadline'
+              : ''}
+        </span>
+        {Number(item.estimated_value) > 0 && (
+          <span className="font-semibold text-gray-900 text-force-black">{formatVND(item.estimated_value)}</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Deadline view VC/LĐ — gom dự án theo deadline (ưu tiên) hoặc install_date
+ * vào bucket Quá hạn / Hôm nay / Tuần này / … Giống ProductionDeadlineView.
+ */
+export function LogisticsDeadlineView({ pipeline }) {
+  const navigate = useNavigate();
+  const goProject = (projectId) => {
+    markWorkshopPipelineCardFocus(projectId, 'vc');
+    navigate(`/vc/projects/${projectId}`);
+  };
+
+  const [localOverride, setLocalOverride] = useState({});
+  const [draggingId, setDraggingId] = useState(null);
+  const [dragOverKey, setDragOverKey] = useState(null);
+  const [savingId, setSavingId] = useState(null);
+
+  const todayMs = Date.now();
+  const grouped = useMemo(() => {
+    const out = {};
+    VC_DEADLINE_BUCKETS.forEach((b) => { out[b.key] = []; });
+    (pipeline || []).forEach((s) => {
+      (s.items || []).forEach((item) => {
+        if (shouldHideVcDeadlineCard(item, s)) return;
+        let { bucket, ts, source } = resolveVcDeadlineBucket(item, todayMs);
+        const ovr = localOverride[String(item.id)];
+        if (ovr) {
+          bucket = ovr.bucket;
+          ts = ovr.ts;
+          source = ovr.source;
+        }
+        out[bucket].push({ ...item, _stage: s, _deadlineTs: ts, _deadlineSource: source });
+      });
+    });
+    Object.values(out).forEach((arr) => arr.sort((a, b) => {
+      const ax = a._deadlineTs == null ? Infinity : a._deadlineTs;
+      const bx = b._deadlineTs == null ? Infinity : b._deadlineTs;
+      return ax - bx;
+    }));
+    return out;
+  }, [pipeline, todayMs, localOverride]);
+
+  const totalCount = VC_DEADLINE_BUCKETS.reduce((n, b) => n + (grouped[b.key]?.length || 0), 0);
+
+  const handleDrop = async (toBucket) => {
+    const id = draggingId;
+    setDragOverKey(null);
+    setDraggingId(null);
+    if (!id) return;
+
+    let target = null;
+    for (const s of pipeline || []) {
+      const found = (s.items || []).find((it) => String(it.id) === String(id));
+      if (found) {
+        target = found;
+        break;
+      }
+    }
+    if (!target) return;
+
+    const newDate = targetDateForVcBucket(toBucket);
+    // Giữ field nguồn nếu đã có; mặc định ghi deadline
+    const fieldKey = target.deadline
+      ? 'deadline'
+      : target.install_date
+        ? 'install_date'
+        : 'deadline';
+    const newTs = newDate ? new Date(`${newDate}T00:00:00`).getTime() : null;
+    const newSource = newDate ? fieldKey : null;
+
+    setLocalOverride((prev) => ({
+      ...prev,
+      [String(id)]: { bucket: toBucket, ts: newTs, source: newSource },
+    }));
+    setSavingId(id);
+    try {
+      await api.put(`/projects/${id}`, { [fieldKey]: newDate });
+    } catch (e) {
+      alert(e?.response?.data?.error || 'Lỗi cập nhật deadline');
+      setLocalOverride((prev) => {
+        const next = { ...prev };
+        delete next[String(id)];
+        return next;
+      });
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  if (totalCount === 0) {
+    return <p className="text-center text-gray-400 py-12 text-sm">Không có dự án vận chuyển / lắp đặt</p>;
+  }
+
+  return (
+    <div className="space-y-2">
+      <VcDeadlineBoardShell>
+        {VC_DEADLINE_BUCKETS.map((b) => {
+          const items = grouped[b.key] || [];
+          const totalValue = items.reduce((s, it) => s + (Number(it.estimated_value) || 0), 0);
+          const isDragOver = dragOverKey === b.key;
+          return (
+            <VcDeadlineColumn
+              key={b.key}
+              topBarColor={b.color}
+              title={b.label}
+              count={items.length}
+              subtitle={totalValue > 0 ? `Giá trị: ${formatVND(totalValue)}` : undefined}
+              isDragOver={isDragOver}
+              onDragOver={(e) => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+                setDragOverKey(b.key);
+              }}
+              onDragLeave={(e) => { if (e.target === e.currentTarget) setDragOverKey(null); }}
+              onDrop={(e) => { e.preventDefault(); handleDrop(b.key); }}
+            >
+              {items.length === 0 ? (
+                <div className="flex items-center justify-center h-full text-gray-400">
+                  <p className="text-sm">{isDragOver ? '⬇️ Thả vào đây' : '—'}</p>
+                </div>
+              ) : (
+                items.map((item) => (
+                  <div
+                    key={item.id}
+                    draggable
+                    onDragStart={() => setDraggingId(item.id)}
+                    onDragEnd={() => { setDraggingId(null); setDragOverKey(null); }}
+                    className={`${draggingId === item.id ? 'opacity-40' : ''} ${savingId === item.id ? 'pointer-events-none opacity-70' : ''}`}
+                  >
+                    <VcDeadlineCard item={item} goProject={goProject} />
+                  </div>
+                ))
+              )}
+            </VcDeadlineColumn>
+          );
+        })}
+      </VcDeadlineBoardShell>
     </div>
   );
 }
