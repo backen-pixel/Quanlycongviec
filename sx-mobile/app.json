@@ -1,8 +1,8 @@
 {
   "expo": {
-    "name": "Quáº£n lÃ½ sáº£n xuáº¥t",
+    "name": "Quản lý sản xuất",
     "slug": "sx-mobile",
-    "version": "1.1.41",
+    "version": "1.1.45",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
@@ -16,19 +16,19 @@
       "fallbackToCacheTimeout": 0
     },
     "splash": {
-      "image": "./assets/icon.png",
+      "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#2568B8"
+      "backgroundColor": "#00071F"
     },
     "android": {
       "package": "vn.tubeppro.sxmobile",
-      "versionCode": 144,
+      "versionCode": 148,
       "usesCleartextTraffic": true,
       "edgeToEdgeEnabled": false,
       "softwareKeyboardLayoutMode": "resize",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon-foreground.png",
-        "backgroundColor": "#2568B8"
+        "backgroundColor": "#00071F"
       },
       "googleServicesFile": "./google-services.json",
       "permissions": [
@@ -54,7 +54,7 @@
         "expo-notifications",
         {
           "icon": "./assets/notification-icon.png",
-          "color": "#2563EB",
+          "color": "#F97316",
           "defaultChannel": "sx_comments"
         }
       ],
@@ -62,15 +62,15 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Cho phÃ©p truy cáº­p áº£nh Ä‘á»ƒ gá»­i trong tin nháº¯n.",
-          "cameraPermission": "Cho phÃ©p camera Ä‘á»ƒ chá»¥p áº£nh gá»­i tin nháº¯n."
+          "photosPermission": "Cho phép truy cập ảnh để gửi trong tin nhắn.",
+          "cameraPermission": "Cho phép camera để chụp ảnh gửi tin nhắn."
         }
       ],
       [
         "@config-plugins/react-native-webrtc",
         {
-          "cameraPermission": "Cho phÃ©p camera cho cuá»™c gá»i video.",
-          "microphonePermission": "Cho phÃ©p micro cho cuá»™c gá»i thoáº¡i."
+          "cameraPermission": "Cho phép camera cho cuộc gọi video.",
+          "microphonePermission": "Cho phép micro cho cuộc gọi thoại."
         }
       ],
       "./plugins/withGoogleServices.js",
