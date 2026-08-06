@@ -302,6 +302,58 @@ export default function WorkshopPipelineKanbanScroll({
     return () => el.removeEventListener('wheel', onWheel);
   }, [unifiedScroll, perColumnScroll, remeasureToken]);
 
+  /**
+   * Khi board sticky + fill viewport: ưu tiên cuộn `main` (ẩn/hiện panel KPI)
+   * trước khi cuộn thẻ trong board/cột — tránh thẻ bị cuộn ẩn hết còn chrome vẫn nằm trên.
+   */
+  useEffect(() => {
+    if (!fillScrollViewport) return undefined;
+    const wrap = kanbanWrapRef.current;
+    if (!wrap) return undefined;
+
+    const isColumnScrollerAtTop = (target) => {
+      const col = target instanceof Element
+        ? target.closest('.kanban-cards-body')
+        : null;
+      if (!col) return true;
+      const oy = getComputedStyle(col).overflowY;
+      if (oy !== 'auto' && oy !== 'scroll') return true;
+      return col.scrollTop <= 0;
+    };
+
+    const onWheel = (e) => {
+      if (Math.abs(e.deltaY) < 1) return;
+      if (Math.abs(e.deltaX) > Math.abs(e.deltaY) * 0.85) return;
+
+      const board = kanbanHScrollRef.current;
+      const main = findScrollParent(wrap);
+      if (!main || !board) return;
+
+      const maxPage = Math.max(0, main.scrollHeight - main.clientHeight);
+      if (maxPage < 1) return;
+
+      if (e.deltaY > 0 && main.scrollTop < maxPage - 0.5) {
+        e.preventDefault();
+        e.stopPropagation();
+        main.scrollTop = Math.min(maxPage, main.scrollTop + e.deltaY);
+        return;
+      }
+
+      if (e.deltaY < 0 && main.scrollTop > 0.5) {
+        const boardAtTop = !unifiedScroll || board.scrollTop <= 0;
+        const colAtTop = !perColumnScroll || isColumnScrollerAtTop(e.target);
+        if (boardAtTop && colAtTop) {
+          e.preventDefault();
+          e.stopPropagation();
+          main.scrollTop = Math.max(0, main.scrollTop + e.deltaY);
+        }
+      }
+    };
+
+    wrap.addEventListener('wheel', onWheel, { passive: false, capture: true });
+    return () => wrap.removeEventListener('wheel', onWheel, { capture: true });
+  }, [fillScrollViewport, unifiedScroll, perColumnScroll, remeasureToken]);
+
   const rightEdgeStyle = quickChatDockRightInset > 0 ? { right: quickChatDockRightInset } : undefined;
 
   return (

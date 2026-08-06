@@ -133,7 +133,8 @@ function emptyStageKpis() {
   return { producing: 0, awaiting_delivery: 0, shipped: 0 };
 }
 
-/** Khớp sxPipelineRevenue projectIsShipped / awaiting / producing. */
+/** Khớp sxPipelineRevenue projectIsShipped / awaiting / producing.
+ *  `sx_intake` là field enrich (không phải cột DB) — suy từ null column / won_pending. */
 function classifyRowStageKpi(row, stage) {
   const status = String(row?.status || '');
   const shipped = !!(row?.logistics_company_id || row?.vc_kanban_column_id)
@@ -142,8 +143,8 @@ function classifyRowStageKpi(row, stage) {
     || status === 'completed';
   if (shipped) return 'shipped';
   if (stage?.is_handover_to_logistics) return 'awaiting_delivery';
-  if (row?.sx_intake) return null;
-  if (stage?.bucket_slug === 'won_pending') return null;
+  // Intake / chờ vào xưởng — khớp enrich `sx_intake` trên list.
+  if (!row?.sx_kanban_column_id || stage?.bucket_slug === 'won_pending') return null;
   if (stage?.counts_as_completed_revenue) return null;
   if (stage?.counts_as_collected_revenue) return null;
   return 'producing';
@@ -283,8 +284,9 @@ async function thinScanSummary(ctx, opts = {}) {
   let cursor = 0;
   const todayYmd = formatVnYmd(new Date());
   const stageById = opts.stageById || await loadStageFlagsById(ctx.company_id, ctx.workshop_type_id);
-  // logistics/status/sx_intake/vc — cần cho KPI Đang SX / Chờ VC / Đã VC (toàn filter).
-  let selectCols = 'id, sx_kanban_column_id, delivery_date, production_deadline, deadline, status, logistics_company_id, sx_intake, vc_kanban_column_id';
+  // logistics/status/vc — KPI Đang SX / Chờ VC / Đã VC (toàn filter).
+  // Không select `sx_intake` (field enrich, không phải cột DB → 500 summary).
+  let selectCols = 'id, sx_kanban_column_id, delivery_date, production_deadline, deadline, status, logistics_company_id, vc_kanban_column_id';
   let omitVcCol = false;
 
   while (cursor < MAX) {
@@ -303,8 +305,16 @@ async function thinScanSummary(ctx, opts = {}) {
     let { data, error } = await q;
     if (error && !omitVcCol && String(error.message || '').includes('vc_kanban_column_id')) {
       omitVcCol = true;
-      selectCols = 'id, sx_kanban_column_id, delivery_date, production_deadline, deadline, status, logistics_company_id, sx_intake';
+      selectCols = 'id, sx_kanban_column_id, delivery_date, production_deadline, deadline, status, logistics_company_id';
       continue;
+    }
+    // Phòng cột enrich/legacy lỡ select — bỏ và thử lại.
+    if (error && /sx_intake|column .* does not exist/i.test(String(error.message || ''))) {
+      const msg = String(error.message || '');
+      if (msg.includes('sx_intake')) {
+        selectCols = selectCols.split(', ').filter((c) => c !== 'sx_intake').join(', ');
+        continue;
+      }
     }
     if (error) throw error;
     const batch = data || [];
