@@ -859,8 +859,7 @@ export default function ProductionDashboard() {
     stagePageLoadingRef.current.clear();
     setProjectPageState((prev) => ({ ...prev, hasMore: false, loading: false }));
     setPipelineStageCounts({});
-    // Giữ deadlineBucketCounts + summaryStageKpis đến khi summary mới về —
-    // KPI Đang SX / Chờ VC / Đã VC / Quá hạn hiện liền, không nhảy theo card đang load.
+    // KPI server (Tổng/Quá hạn/Đang SX…) gắn với filter hiện tại — không giữ số công ty cũ.
     setStagePageState({});
     const isStale = () => seq !== loadSeqRef.current;
     const fetchCompanyId = opts.companyId || companyParam;
@@ -914,7 +913,8 @@ export default function ProductionDashboard() {
         ...(workshopTypeFilter ? { workshop_type_id: workshopTypeFilter } : {}),
         ...serverFilterParams,
       };
-      // Hiện KPI liền từ cache filter (lần xem trước) — không đợi card / summary mạng.
+      // Cache theo đúng filter (công ty…). Hit → hiện liền; miss → xóa KPI filter cũ
+      // (tránh Đang SX/Chờ VC/Đã VC kẹt số công ty trước trong khi Tổng/Quá hạn đã đổi).
       const stageKpiCacheKey = JSON.stringify({
         company_id: fetchCompanyId || '',
         deal_company_id: fetchDealCompanyId || '',
@@ -923,7 +923,12 @@ export default function ProductionDashboard() {
         ...serverFilterParams,
       });
       const cachedStageKpis = readSxStageKpisCache(stageKpiCacheKey);
-      if (cachedStageKpis) setSummaryStageKpis(cachedStageKpis);
+      if (cachedStageKpis) {
+        setSummaryStageKpis(cachedStageKpis);
+      } else {
+        setSummaryStageKpis(null);
+        setDeadlineBucketCounts({});
+      }
       setSummaryKpisPending(true);
 
       void api.get('/production/projects', {
@@ -946,8 +951,10 @@ export default function ProductionDashboard() {
           };
           setSummaryStageKpis(nextKpis);
           writeSxStageKpisCache(stageKpiCacheKey, nextKpis);
+        } else {
+          // BE chưa có stage_kpis → đếm theo card của filter hiện tại (không giữ số công ty cũ).
+          setSummaryStageKpis(null);
         }
-        // sk thiếu (BE cũ): để summaryKpisPending=false → fallback đếm card.
         setSummaryKpisPending(false);
         setProjectPageState((prev) => ({ ...prev, total: Number(data?.total) || 0 }));
         setStagePageState((prev) => {
@@ -967,7 +974,10 @@ export default function ProductionDashboard() {
           return next;
         });
       }).catch(() => {
-        if (!isStale()) setSummaryKpisPending(false);
+        if (!isStale()) {
+          setSummaryKpisPending(false);
+          setSummaryStageKpis(null);
+        }
       });
 
       // Chỉ lấy 40 card đầu; tổng được tải độc lập bằng truy vấn đếm nhẹ phía trên.
@@ -2400,8 +2410,7 @@ export default function ProductionDashboard() {
         ? serverOverdue
         : countSxDeadlineViewOverdue(filteredKanbanPipeline)
     );
-    // KPI giai đoạn: ưu tiên summary server. Khi đang chờ / chưa có summary:
-    // giữ số cũ hoặc optimistic từ card/snapshot — KHÔNG về 0 (tránh trống rồi mới hiện).
+    // Cùng nguồn summary=1 với Tổng/Quá hạn. Không có summary → đếm card filter hiện tại.
     const producingCount = (canUseServerTotal && summaryStageKpis)
       ? summaryStageKpis.producing
       : revenue.producing;
