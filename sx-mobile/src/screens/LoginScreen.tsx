@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Image,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -13,6 +14,8 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { HIT_TARGET, Radii, Spacing } from '../theme';
+
+const brandLogo = require('../../assets/icon.png');
 
 export default function LoginScreen() {
   const { login } = useAuth();
@@ -29,17 +32,14 @@ export default function LoginScreen() {
         scroll: { flexGrow: 1, justifyContent: 'center', padding: Spacing.xl, paddingTop: 48 },
         brand: { alignItems: 'center', marginBottom: 28 },
         brandIcon: {
-          width: 60,
-          height: 60,
+          width: 88,
+          height: 88,
           borderRadius: Radii.xl,
-          backgroundColor: colors.primarySoft,
-          borderWidth: 1,
-          borderColor: colors.border,
-          alignItems: 'center',
-          justifyContent: 'center',
+          overflow: 'hidden',
           marginBottom: 12,
+          backgroundColor: '#00071F',
         },
-        brandIconTxt: { fontSize: 28 },
+        brandLogo: { width: '100%', height: '100%' },
         brandTitle: { fontSize: 24, fontWeight: '800', color: colors.text },
         brandTag: { fontSize: 13, color: colors.textMuted, marginTop: 6, textAlign: 'center' },
         card: {
@@ -112,7 +112,7 @@ export default function LoginScreen() {
       <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
         <View style={styles.brand}>
           <View style={styles.brandIcon}>
-            <Text style={styles.brandIconTxt}>🏭</Text>
+            <Image source={brandLogo} style={styles.brandLogo} resizeMode="cover" />
           </View>
           <Text style={styles.brandTitle}>Quản lý sản xuất</Text>
           <Text style={styles.brandTag}>Quản lý sản xuất · đồng bộ hệ thống</Text>
