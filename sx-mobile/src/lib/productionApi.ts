@@ -65,6 +65,7 @@ export function mapProjectRow(raw: Record<string, unknown>): ProductionProject {
     logistics_company_id:
       (raw.logistics_company_id as string)
       ?? ((raw.logistics_company as { id?: string } | undefined)?.id ?? null),
+    vc_kanban_column_id: (raw.vc_kanban_column_id as string) || null,
     region_id: (dealWithRegion?.region_id as string) ?? crmRegion.id ?? null,
     region_name: crmRegion.name ?? null,
     crm_deals: crmDeals.map((d) => ({
@@ -310,10 +311,57 @@ export type BoardFilters = {
   workshopTypeId?: string;
 };
 
+export type ProductionBoardSummary = {
+  total: number;
+  producing: number;
+  awaitingDelivery: number;
+  shipped: number;
+  overdue: number;
+};
+
+/** KPI Tổng / Đang SX / Chờ VC / Đã VC / Quá hạn — cùng filter với Kanban (summary=1). */
+export async function fetchProductionBoardSummary(
+  filters?: BoardFilters,
+  bustCache = false,
+): Promise<ProductionBoardSummary | null> {
+  const params: Record<string, string | number> = {
+    summary: 1,
+    view: 'mobile',
+  };
+  if (filters?.companyId) params.company_id = filters.companyId;
+  if (filters?.dealCompanyId) params.deal_company_id = filters.dealCompanyId;
+  if (filters?.workshopTypeId) params.workshop_type_id = filters.workshopTypeId;
+  try {
+    const { data } = await api.get<{
+      total?: number;
+      deadline_counts?: { overdue?: number };
+      stage_kpis?: {
+        producing?: number;
+        awaiting_delivery?: number;
+        shipped?: number;
+      };
+    }>('/production/projects', {
+      params,
+      ...(bustCache ? { headers: { 'x-no-cache': '1' } } : {}),
+    });
+    const sk = data?.stage_kpis;
+    // BE cũ chưa có stage_kpis → null để UI fallback đếm client.
+    if (!sk || typeof sk !== 'object') return null;
+    return {
+      total: Number(data?.total) || 0,
+      producing: Number(sk.producing) || 0,
+      awaitingDelivery: Number(sk.awaiting_delivery) || 0,
+      shipped: Number(sk.shipped) || 0,
+      overdue: Number(data?.deadline_counts?.overdue) || 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Tải board: stages + trang dự án đầu song song → UI sớm;
  * các trang còn lại tải nền (onPartial cập nhật dần).
- * Không gọi /dashboard (KPI app tính client-side).
  * BE tối đa limit=500/trang — khớp mặc định web.
  * `view=mobile` → payload/enrich nhẹ phía BE.
  *

@@ -441,6 +441,8 @@ export default function ProductionDashboard() {
   const [pipelineStageCounts, setPipelineStageCounts] = useState({});
   /** Tổng bucket Deadline từ summary=1 (toàn filter) — KPI Quá hạn không phụ thuộc số card đã load. */
   const [deadlineBucketCounts, setDeadlineBucketCounts] = useState({});
+  /** KPI Đang SX / Chờ VC / Đã VC từ summary — cùng phạm vi Tổng/Quá hạn (không lệch khi lọc công ty). */
+  const [summaryStageKpis, setSummaryStageKpis] = useState(null);
   const [stagePageState, setStagePageState] = useState({});
   const stagePageLoadingRef = useRef(new Set());
   const [pipeline, setPipeline] = useState(() => boardSnap0?.pipeline || []);
@@ -798,6 +800,7 @@ export default function ProductionDashboard() {
     setProjectPageState((prev) => ({ ...prev, hasMore: false, loading: false }));
     setPipelineStageCounts({});
     setDeadlineBucketCounts({});
+    setSummaryStageKpis(null);
     setStagePageState({});
     const isStale = () => seq !== loadSeqRef.current;
     const fetchCompanyId = opts.companyId || companyParam;
@@ -862,6 +865,12 @@ export default function ProductionDashboard() {
           ? data.deadline_counts
           : {};
         setDeadlineBucketCounts(dlCounts);
+        const sk = data?.stage_kpis && typeof data.stage_kpis === 'object' ? data.stage_kpis : null;
+        setSummaryStageKpis(sk ? {
+          producing: Number(sk.producing) || 0,
+          awaiting_delivery: Number(sk.awaiting_delivery) || 0,
+          shipped: Number(sk.shipped) || 0,
+        } : null);
         setProjectPageState((prev) => ({ ...prev, total: Number(data?.total) || 0 }));
         setStagePageState((prev) => {
           const next = { ...prev };
@@ -2308,7 +2317,18 @@ export default function ProductionDashboard() {
         ? serverOverdue
         : countSxDeadlineViewOverdue(filteredKanbanPipeline)
     );
-    if (!list.length) {
+    // KPI giai đoạn từ summary server (toàn filter) — tránh lệch khi Kanban chỉ load ~40 card.
+    const canUseServerStageKpis = canUseServerTotal && summaryStageKpis;
+    const producingCount = canUseServerStageKpis
+      ? summaryStageKpis.producing
+      : revenue.producing;
+    const awaitingCount = canUseServerStageKpis
+      ? summaryStageKpis.awaiting_delivery
+      : revenue.awaitingDelivery;
+    const shippedCount = canUseServerStageKpis
+      ? summaryStageKpis.shipped
+      : revenue.shipped;
+    if (!list.length && !canUseServerStageKpis) {
       return {
         total: accurateTotal, producing: 0, awaiting_delivery: 0, shipped: 0, completed: 0,
         overdue: deadlineOverdueCount,
@@ -2326,15 +2346,17 @@ export default function ProductionDashboard() {
     }
     return {
       total: accurateTotal,
-      producing: revenue.producing,
-      awaiting_delivery: revenue.awaitingDelivery,
-      shipped: revenue.shipped,
-      delivering: revenue.awaitingDelivery,
+      producing: producingCount,
+      awaiting_delivery: awaitingCount,
+      shipped: shippedCount,
+      delivering: awaitingCount,
       customer_care: list.filter((p) => p.current_stage?.slug === 'customer-care' || p.status === 'warranty').length,
       completed: list.filter((p) => p.status === 'completed').length,
       overdue: deadlineOverdueCount,
       intake_pending: list.filter((p) => p.sx_intake).length,
-      avg_progress: Math.round(list.reduce((s, p) => s + (p.progress || 0), 0) / list.length),
+      avg_progress: list.length
+        ? Math.round(list.reduce((s, p) => s + (p.progress || 0), 0) / list.length)
+        : 0,
       won_revenue_value: revenue.wonRevenue,
       completed_revenue_value: revenue.completedRevenue,
       collected_revenue_value: revenue.collectedRevenue,
@@ -2346,7 +2368,7 @@ export default function ProductionDashboard() {
     };
   }, [
     scopeProjects, pipeline, filteredKanbanPipeline, projectPageState.total,
-    deadlineBucketCounts, deferredPersonName, filterRegion, filterPhone, dealCompanyExternalFilter,
+    deadlineBucketCounts, summaryStageKpis, deferredPersonName, filterRegion, filterPhone, dealCompanyExternalFilter,
   ]);
 
   const togglePinFlag = useCallback(async (item, next) => {
@@ -3636,7 +3658,7 @@ export default function ProductionDashboard() {
       <div
         className={`relative ${
           viewMode === 'kanban' && !sxMainContentLoading
-            ? 'min-h-0 sticky top-0 z-[15] self-start bg-[var(--color-page-bg)]'
+            ? 'min-h-0 sticky top-0 z-[15] self-start bg-transparent'
             : 'min-h-[min(700px,calc(100vh-128px))]'
         }`}
       >
