@@ -374,25 +374,25 @@ async function loadSxKanbanColumnSummary(ctx) {
 
   const stageById = await loadStageFlagsById(fullCtx.company_id, fullCtx.workshop_type_id);
 
-  let columnResult = null;
-  try {
-    columnResult = await tryRpcColumnCounts(fullCtx);
-  } catch (rpcErr) {
+  // RPC (counts) || thin-scan chạy song song — trước đây RPC xong mới scan → chậm gấp đôi.
+  const rpcPromise = tryRpcColumnCounts(fullCtx).catch((rpcErr) => {
     if (!isMissingRpcError(rpcErr) && !isMissingSxKanbanColumnError(rpcErr)) {
       console.warn('[sxKanbanSummary] rpc:', rpcErr.message || rpcErr);
     }
-  }
+    return null;
+  });
+  const scanPromise = thinScanSummary(fullCtx, { needColumnCounts: true, stageById });
 
   try {
+    const [columnResult, scanned] = await Promise.all([rpcPromise, scanPromise]);
     if (columnResult) {
-      const scanned = await thinScanSummary(fullCtx, { needColumnCounts: false, stageById });
       return {
         ...columnResult,
         deadline_counts: scanned.deadline_counts || emptyDeadlineCounts(),
         stage_kpis: scanned.stage_kpis || emptyStageKpis(),
       };
     }
-    return await thinScanSummary(fullCtx, { needColumnCounts: true, stageById });
+    return scanned;
   } catch (scanErr) {
     if (isMissingSxKanbanColumnError(scanErr)) {
       const total = await headCountTotalOnly(fullCtx);

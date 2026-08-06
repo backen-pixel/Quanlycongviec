@@ -443,6 +443,8 @@ export default function ProductionDashboard() {
   const [deadlineBucketCounts, setDeadlineBucketCounts] = useState({});
   /** KPI Đang SX / Chờ VC / Đã VC từ summary — cùng phạm vi Tổng/Quá hạn (không lệch khi lọc công ty). */
   const [summaryStageKpis, setSummaryStageKpis] = useState(null);
+  /** true khi đang chờ summary=1 — giữ KPI cũ / không đếm theo card đang load. */
+  const [summaryKpisPending, setSummaryKpisPending] = useState(false);
   const [stagePageState, setStagePageState] = useState({});
   const stagePageLoadingRef = useRef(new Set());
   const [pipeline, setPipeline] = useState(() => boardSnap0?.pipeline || []);
@@ -799,8 +801,9 @@ export default function ProductionDashboard() {
     stagePageLoadingRef.current.clear();
     setProjectPageState((prev) => ({ ...prev, hasMore: false, loading: false }));
     setPipelineStageCounts({});
-    setDeadlineBucketCounts({});
-    setSummaryStageKpis(null);
+    // Giữ deadlineBucketCounts + summaryStageKpis đến khi summary mới về —
+    // KPI Đang SX / Chờ VC / Đã VC / Quá hạn hiện liền, không nhảy theo card đang load.
+    setSummaryKpisPending(true);
     setStagePageState({});
     const isStale = () => seq !== loadSeqRef.current;
     const fetchCompanyId = opts.companyId || companyParam;
@@ -866,11 +869,15 @@ export default function ProductionDashboard() {
           : {};
         setDeadlineBucketCounts(dlCounts);
         const sk = data?.stage_kpis && typeof data.stage_kpis === 'object' ? data.stage_kpis : null;
-        setSummaryStageKpis(sk ? {
-          producing: Number(sk.producing) || 0,
-          awaiting_delivery: Number(sk.awaiting_delivery) || 0,
-          shipped: Number(sk.shipped) || 0,
-        } : null);
+        if (sk) {
+          setSummaryStageKpis({
+            producing: Number(sk.producing) || 0,
+            awaiting_delivery: Number(sk.awaiting_delivery) || 0,
+            shipped: Number(sk.shipped) || 0,
+          });
+        }
+        // sk thiếu (BE cũ): để summaryKpisPending=false → fallback đếm card.
+        setSummaryKpisPending(false);
         setProjectPageState((prev) => ({ ...prev, total: Number(data?.total) || 0 }));
         setStagePageState((prev) => {
           const next = { ...prev };
@@ -888,7 +895,9 @@ export default function ProductionDashboard() {
           });
           return next;
         });
-      }).catch(() => {});
+      }).catch(() => {
+        if (!isStale()) setSummaryKpisPending(false);
+      });
 
       // Chỉ lấy 40 card đầu; tổng được tải độc lập bằng truy vấn đếm nhẹ phía trên.
       const projectPage = await fetchWorkshopProjectPages(api, '/production/projects', {
@@ -2312,25 +2321,28 @@ export default function ProductionDashboard() {
       : list.length;
     // KPI Quá hạn = tổng server (toàn filter); fallback đếm card đã load nếu chưa có summary.
     const serverOverdue = Number(deadlineBucketCounts?.overdue);
+    const hasServerOverdue = canUseServerTotal
+      && deadlineBucketCounts
+      && Object.prototype.hasOwnProperty.call(deadlineBucketCounts, 'overdue');
     const deadlineOverdueCount = (
-      canUseServerTotal && Number.isFinite(serverOverdue)
+      hasServerOverdue
         ? serverOverdue
         : countSxDeadlineViewOverdue(filteredKanbanPipeline)
     );
-    // KPI giai đoạn từ summary server (toàn filter) — tránh lệch khi Kanban chỉ load ~40 card.
-    const canUseServerStageKpis = canUseServerTotal && summaryStageKpis;
-    const producingCount = canUseServerStageKpis
+    // KPI giai đoạn: ưu tiên summary server. Khi đang chờ summary thì giữ số cũ
+    // (không đếm theo card đang load → tránh nhảy dần rồi mới đúng).
+    const producingCount = (canUseServerTotal && summaryStageKpis)
       ? summaryStageKpis.producing
-      : revenue.producing;
-    const awaitingCount = canUseServerStageKpis
+      : ((canUseServerTotal && summaryKpisPending) ? 0 : revenue.producing);
+    const awaitingCount = (canUseServerTotal && summaryStageKpis)
       ? summaryStageKpis.awaiting_delivery
-      : revenue.awaitingDelivery;
-    const shippedCount = canUseServerStageKpis
+      : ((canUseServerTotal && summaryKpisPending) ? 0 : revenue.awaitingDelivery);
+    const shippedCount = (canUseServerTotal && summaryStageKpis)
       ? summaryStageKpis.shipped
-      : revenue.shipped;
-    if (!list.length && !canUseServerStageKpis) {
+      : ((canUseServerTotal && summaryKpisPending) ? 0 : revenue.shipped);
+    if (!list.length && !summaryStageKpis && !hasServerOverdue) {
       return {
-        total: accurateTotal, producing: 0, awaiting_delivery: 0, shipped: 0, completed: 0,
+        total: accurateTotal, producing: producingCount, awaiting_delivery: awaitingCount, shipped: shippedCount, completed: 0,
         overdue: deadlineOverdueCount,
         avg_progress: 0,
         intake_pending: 0, delivering: 0, customer_care: 0,
@@ -2368,7 +2380,8 @@ export default function ProductionDashboard() {
     };
   }, [
     scopeProjects, pipeline, filteredKanbanPipeline, projectPageState.total,
-    deadlineBucketCounts, summaryStageKpis, deferredPersonName, filterRegion, filterPhone, dealCompanyExternalFilter,
+    deadlineBucketCounts, summaryStageKpis, summaryKpisPending,
+    deferredPersonName, filterRegion, filterPhone, dealCompanyExternalFilter,
   ]);
 
   const togglePinFlag = useCallback(async (item, next) => {
