@@ -43,7 +43,7 @@ function stageOf(
 
 export function projectIsShipped(p: ProductionProject): boolean {
   // Khớp web sxPipelineRevenue.projectIsShipped — không đếm status=shipping thuần.
-  if (p.logistics_company_id || (p as { vc_kanban_column_id?: string }).vc_kanban_column_id) {
+  if (p.logistics_company_id || p.vc_kanban_column_id) {
     return true;
   }
   const st = String(p.status || '');

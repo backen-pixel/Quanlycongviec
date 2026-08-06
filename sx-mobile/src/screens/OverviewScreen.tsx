@@ -32,6 +32,7 @@ import { ensureNotificationPermission } from '../lib/pushRegistration';
 import {
   fetchCompanies,
   fetchProductionBoard,
+  fetchProductionBoardSummary,
   type CompanyOption,
 } from '../lib/productionApi';
 import { getCachedBoard, isCachedBoardFresh } from '../lib/productionBoardCache';
@@ -316,25 +317,37 @@ export default function OverviewScreen() {
             }).catch(() => [] as WorkTask[])
           : fetchMyProductionTasks(userId).catch(() => [] as WorkTask[]);
 
-      const [board, myTasks, notifList] = await Promise.all([
+      const [board, summary, myTasks, notifList] = await Promise.all([
         skipBoard
           ? Promise.resolve(cachedBoard!)
           : fetchProductionBoard(mode === 'refresh', boardFilters, {
               onPartial: (partial) => {
                 if (seq !== loadSeqRef.current) return;
-                const kpi = computeSxBoardKpis(partial.projects, partial.stages);
-                setKpis(kpi);
+                // Chỉ dùng KPI client tạm khi chưa có summary server.
+                setKpis((prev) => (prev.total > 0 ? prev : computeSxBoardKpis(partial.projects, partial.stages)));
                 applyBoardPriority(partial.projects, partial.stages);
                 if (mode === 'init') setLoading(false);
               },
             }),
+        fetchProductionBoardSummary(boardFilters, mode === 'refresh').catch(() => null),
         tasksPromise,
         fetchCommentNotifications(false).catch(() => ({ notifications: [] as SxCommentNotification[], unread_count: 0 })),
       ]);
 
       if (seq !== loadSeqRef.current) return;
-      if (board) {
+      if (summary) {
+        setKpis((prev) => ({
+          ...prev,
+          total: summary.total,
+          producing: summary.producing,
+          awaitingDelivery: summary.awaitingDelivery,
+          shipped: summary.shipped,
+          overdue: summary.overdue,
+        }));
+      } else if (board) {
         setKpis(computeSxBoardKpis(board.projects, board.stages));
+      }
+      if (board) {
         applyBoardPriority(board.projects, board.stages);
       }
       setTasks(myTasks);

@@ -33,6 +33,7 @@ import {
   fetchWorkshopOptionsForDeal,
   assignProjectWorkshopType,
   fetchProductionBoard,
+  fetchProductionBoardSummary,
   fetchProductionProject,
   fetchProjectCommentIndex,
   fetchWorkshopTypes,
@@ -40,6 +41,7 @@ import {
   type BoardFilters,
   type CommentIndexEntry,
   type CompanyOption,
+  type ProductionBoardSummary,
   type WorkshopTypeOption,
   resolveColumnId,
 } from '../lib/productionApi';
@@ -183,6 +185,8 @@ export default function KanbanScreen() {
   const [board, setBoard] = useState<ProductionBoard>(
     () => ({ stages: [], projects: [], kpis: null }),
   );
+  /** KPI giai đoạn từ summary=1 (toàn filter server) — tránh lệch khi board chưa load hết. */
+  const [summaryKpis, setSummaryKpis] = useState<ProductionBoardSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -347,7 +351,7 @@ export default function KanbanScreen() {
   const load = useCallback(async (mode: 'init' | 'refresh' | 'silent' = 'init') => {
     const filters = currentBoardFilters();
     const cachedHit = getCachedBoard(filters);
-    // Cache tươi: áp dụng vào UI rồi thoát — KHÔNG return trước khi hydrate (tránh kẹt spinner).
+    // Cache tươi: hydrate UI ngay; vẫn gọi summary để KPI khớp server (toàn filter).
     if (mode === 'silent' && isCachedBoardFresh(filters) && cachedHit) {
       setBoard(cachedHit);
       setActiveIndex((prev) => Math.min(prev, Math.max(0, cachedHit.stages.length - 1)));
@@ -355,6 +359,13 @@ export default function KanbanScreen() {
       setRefreshing(false);
       setLoadingMore(false);
       lastSilentAtRef.current = Date.now();
+      const seq = ++loadSeqRef.current;
+      void fetchProductionBoardSummary(filters, false)
+        .then((summary) => {
+          if (seq !== loadSeqRef.current) return;
+          setSummaryKpis(summary);
+        })
+        .catch(() => {});
       return;
     }
     const seq = ++loadSeqRef.current;
@@ -362,6 +373,7 @@ export default function KanbanScreen() {
     if (mode === 'refresh') setRefreshing(true);
     setError(null);
     setLoadingMore(false);
+    if (mode !== 'silent') setSummaryKpis(null);
     try {
       const cached = cachedHit;
       if (cached && mode !== 'refresh') {
@@ -371,23 +383,27 @@ export default function KanbanScreen() {
         setLoading(false);
       }
       let firstPaint = Boolean(cached && mode !== 'refresh');
-      const data = await fetchProductionBoard(mode === 'refresh', filters, {
-        onPartial: (partial) => {
-          if (seq !== loadSeqRef.current) return;
-          setBoard(partial);
-          setActiveIndex((prev) => Math.min(prev, Math.max(0, partial.stages.length - 1)));
-          if (!firstPaint) {
-            firstPaint = true;
-            setLoading(false);
-            setRefreshing(false);
-            setLoadingMore(partial.projects.length >= 500);
-          } else {
-            setLoadingMore(partial.projects.length >= 500 && mode !== 'silent');
-          }
-        },
-      });
+      const [data, summary] = await Promise.all([
+        fetchProductionBoard(mode === 'refresh', filters, {
+          onPartial: (partial) => {
+            if (seq !== loadSeqRef.current) return;
+            setBoard(partial);
+            setActiveIndex((prev) => Math.min(prev, Math.max(0, partial.stages.length - 1)));
+            if (!firstPaint) {
+              firstPaint = true;
+              setLoading(false);
+              setRefreshing(false);
+              setLoadingMore(partial.projects.length >= 500);
+            } else {
+              setLoadingMore(partial.projects.length >= 500 && mode !== 'silent');
+            }
+          },
+        }),
+        fetchProductionBoardSummary(filters, mode === 'refresh').catch(() => null),
+      ]);
       if (seq !== loadSeqRef.current) return;
       setBoard(data);
+      setSummaryKpis(summary);
       setActiveIndex((prev) => Math.min(prev, Math.max(0, data.stages.length - 1)));
       setLoadingMore(false);
       lastSilentAtRef.current = Date.now();
@@ -782,33 +798,55 @@ export default function KanbanScreen() {
   canPrevRef.current = canPrev;
   canNextRef.current = canNext;
   stageCountRef.current = displayStages.length;
+  /** Đã nhận diện vuốt ngang — không nhường FlatList (tránh lúc được lúc không). */
+  const swipeClaimedRef = useRef(false);
 
-  /** Vuốt ngang trên danh sách thẻ → chuyển cột (trái = cột sau, phải = cột trước). */
-  const columnSwipeResponder = useMemo(
+  const trySwipeColumn = useCallback((dx: number, vx: number) => {
+    const distance = 40;
+    const fling = 0.35;
+    if ((dx <= -distance || vx <= -fling) && canNextRef.current) {
+      setActiveIndex((i) => Math.min(stageCountRef.current - 1, i + 1));
+      return;
+    }
+    if ((dx >= distance || vx >= fling) && canPrevRef.current) {
+      setActiveIndex((i) => Math.max(0, i - 1));
+    }
+  }, []);
+
+  /**
+   * Vuốt ngang đổi cột — gắn lên View bọc FlatList + header cột (giống CRM Deadline),
+   * không gắn thẳng lên FlatList (ScrollView hay cướp gesture → lúc được lúc không).
+   */
+  const columnSwipe = useMemo(
     () =>
       PanResponder.create({
+        onStartShouldSetPanResponder: () => false,
         onMoveShouldSetPanResponder: (_e, g) => {
-          const ax = Math.abs(g.dx);
-          const ay = Math.abs(g.dy);
-          // Ngưỡng cao hơn để ưu tiên cuộn dọc FlatList.
-          return ax > 36 && ax > ay * 1.75;
+          const ok = Math.abs(g.dx) > 12 && Math.abs(g.dx) > Math.abs(g.dy) * 1.2;
+          if (ok) swipeClaimedRef.current = true;
+          return ok;
         },
         onMoveShouldSetPanResponderCapture: (_e, g) => {
-          const ax = Math.abs(g.dx);
-          const ay = Math.abs(g.dy);
-          return ax > 56 && ax > ay * 2;
+          const ok = Math.abs(g.dx) > 18 && Math.abs(g.dx) > Math.abs(g.dy) * 1.35;
+          if (ok) swipeClaimedRef.current = true;
+          return ok;
         },
-        onPanResponderTerminationRequest: () => true,
+        onPanResponderTerminationRequest: () => !swipeClaimedRef.current,
         onPanResponderRelease: (_e, g) => {
-          if (Math.abs(g.dx) < 64 || Math.abs(g.dx) < Math.abs(g.dy) * 1.2) return;
-          if (g.dx < 0 && canNextRef.current) {
-            setActiveIndex((i) => Math.min(stageCountRef.current - 1, i + 1));
-          } else if (g.dx > 0 && canPrevRef.current) {
-            setActiveIndex((i) => Math.max(0, i - 1));
-          }
+          const claimed = swipeClaimedRef.current;
+          swipeClaimedRef.current = false;
+          if (!claimed) return;
+          trySwipeColumn(g.dx, g.vx);
+        },
+        onPanResponderTerminate: (_e, g) => {
+          const claimed = swipeClaimedRef.current;
+          swipeClaimedRef.current = false;
+          // FlatList / RefreshControl xen ngang — vẫn đổi cột nếu đã vuốt đủ.
+          if (!claimed) return;
+          trySwipeColumn(g.dx, g.vx);
         },
       }),
-    [],
+    [trySwipeColumn],
   );
 
   const accent = stageColor(activeStage?.color, activeIndex);
@@ -998,7 +1036,24 @@ export default function KanbanScreen() {
   );
 
   const statPills = useMemo(() => {
-    const kpi = computeSxBoardKpis(filteredProjects, stages);
+    const client = computeSxBoardKpis(filteredProjects, stages);
+    // Chỉ dùng summary server khi không còn lọc client-only (search / mine / overdue…).
+    const clientOnlyFilter = Boolean(
+      search.trim()
+      || quickFilter !== 'all'
+      || dealCompanyExternalFilter,
+    );
+    const useServer = !clientOnlyFilter && summaryKpis;
+    const kpi = useServer
+      ? {
+          total: summaryKpis.total,
+          producing: summaryKpis.producing,
+          awaitingDelivery: summaryKpis.awaitingDelivery,
+          shipped: summaryKpis.shipped,
+          completed: client.completed,
+          overdue: summaryKpis.overdue,
+        }
+      : client;
     return [
       { label: 'Tổng', value: kpi.total, color: colors.text },
       { label: 'Đang SX', value: kpi.producing, color: colors.primary },
@@ -1007,7 +1062,15 @@ export default function KanbanScreen() {
       { label: 'Hoàn tất', value: kpi.completed, color: colors.success },
       ...(kpi.overdue > 0 ? [{ label: 'Quá hạn', value: kpi.overdue, color: colors.danger }] : []),
     ];
-  }, [filteredProjects, stages, colors]);
+  }, [
+    filteredProjects,
+    stages,
+    colors,
+    summaryKpis,
+    search,
+    quickFilter,
+    dealCompanyExternalFilter,
+  ]);
 
   if (loading) {
     return (
@@ -1243,7 +1306,7 @@ export default function KanbanScreen() {
       </ScrollView>
 
       {/* ── COLUMN HEADER + DOT NAV ── */}
-      <View style={styles.colHeaderRow}>
+      <View style={styles.colHeaderRow} {...columnSwipe.panHandlers}>
         <Pressable
           onPress={() => setActiveIndex((i) => Math.max(0, i - 1))}
           disabled={!canPrev}
@@ -1299,11 +1362,16 @@ export default function KanbanScreen() {
           );
         })}
       </ScrollView>
+      {displayStages.length > 1 ? (
+        <Text style={styles.swipeHint}>
+          Vuốt ngang để chuyển cột · {activeIndex + 1}/{displayStages.length}
+        </Text>
+      ) : null}
 
       </View>{/* end fixedTop */}
 
       {/* ── CARD LIST (vuốt ngang đổi cột) ── */}
-      <View style={styles.listFlex} {...columnSwipeResponder.panHandlers}>
+      <View style={styles.listFlex} {...columnSwipe.panHandlers}>
       <FlatList
         style={styles.listFlex}
         data={pagedProjects}
@@ -1786,6 +1854,14 @@ function createKanbanStyles(c: AppColors) {
   },
   dotGap: { marginLeft: 5 },
   dot: { width: 7, height: 7, borderRadius: 4, backgroundColor: c.border },
+  swipeHint: {
+    textAlign: 'center',
+    color: c.textFaint,
+    fontSize: 11,
+    fontWeight: '600',
+    marginTop: 2,
+    marginBottom: 2,
+  },
 
   // Cards
   listContent: { paddingHorizontal: Spacing.md, paddingTop: 4, paddingBottom: 24 },

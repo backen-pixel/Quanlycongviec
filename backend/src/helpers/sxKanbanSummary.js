@@ -116,6 +116,9 @@ async function loadStageFlagsById(companyId, workshopTypeId) {
       if (!s?.id) continue;
       map.set(String(s.id), {
         counts_as_completed_revenue: !!s.counts_as_completed_revenue,
+        counts_as_collected_revenue: !!s.counts_as_collected_revenue,
+        is_handover_to_logistics: !!s.is_handover_to_logistics,
+        bucket_slug: s.bucket_slug || null,
         sla_days: s.sla_days,
       });
     }
@@ -124,6 +127,26 @@ async function loadStageFlagsById(companyId, workshopTypeId) {
     console.warn('[sxKanbanSummary] stage flags:', err.message || err);
     return new Map();
   }
+}
+
+function emptyStageKpis() {
+  return { producing: 0, awaiting_delivery: 0, shipped: 0 };
+}
+
+/** Khớp sxPipelineRevenue projectIsShipped / awaiting / producing. */
+function classifyRowStageKpi(row, stage) {
+  const status = String(row?.status || '');
+  const shipped = !!(row?.logistics_company_id || row?.vc_kanban_column_id)
+    || status === 'installing'
+    || status === 'warranty'
+    || status === 'completed';
+  if (shipped) return 'shipped';
+  if (stage?.is_handover_to_logistics) return 'awaiting_delivery';
+  if (row?.sx_intake) return null;
+  if (stage?.bucket_slug === 'won_pending') return null;
+  if (stage?.counts_as_completed_revenue) return null;
+  if (stage?.counts_as_collected_revenue) return null;
+  return 'producing';
 }
 
 /**
@@ -255,20 +278,34 @@ async function thinScanSummary(ctx, opts = {}) {
   const MAX = 20000;
   const counts = {};
   const deadline_counts = emptyDeadlineCounts();
+  const stage_kpis = emptyStageKpis();
   let total = 0;
   let cursor = 0;
   const todayYmd = formatVnYmd(new Date());
   const stageById = opts.stageById || await loadStageFlagsById(ctx.company_id, ctx.workshop_type_id);
-  const selectCols = 'id, sx_kanban_column_id, delivery_date, production_deadline, deadline';
+  // logistics/status/sx_intake/vc — cần cho KPI Đang SX / Chờ VC / Đã VC (toàn filter).
+  let selectCols = 'id, sx_kanban_column_id, delivery_date, production_deadline, deadline, status, logistics_company_id, sx_intake, vc_kanban_column_id';
+  let omitVcCol = false;
 
   while (cursor < MAX) {
     let q = supabase.from('projects').select(selectCols);
     const applied = applySxSummaryFiltersSync(q, { ...ctx, columnMode: undefined });
     if (applied.empty) {
-      return { total: 0, counts: {}, values: {}, deadline_counts: emptyDeadlineCounts() };
+      return {
+        total: 0,
+        counts: {},
+        values: {},
+        deadline_counts: emptyDeadlineCounts(),
+        stage_kpis: emptyStageKpis(),
+      };
     }
     q = applied.query.order('id', { ascending: true }).range(cursor, cursor + PAGE - 1);
-    const { data, error } = await q;
+    let { data, error } = await q;
+    if (error && !omitVcCol && String(error.message || '').includes('vc_kanban_column_id')) {
+      omitVcCol = true;
+      selectCols = 'id, sx_kanban_column_id, delivery_date, production_deadline, deadline, status, logistics_company_id, sx_intake';
+      continue;
+    }
     if (error) throw error;
     const batch = data || [];
     for (const row of batch) {
@@ -283,11 +320,15 @@ async function thinScanSummary(ctx, opts = {}) {
       if (bucket && Object.prototype.hasOwnProperty.call(deadline_counts, bucket)) {
         deadline_counts[bucket] += 1;
       }
+      const kpiKey = classifyRowStageKpi(row, stage);
+      if (kpiKey && Object.prototype.hasOwnProperty.call(stage_kpis, kpiKey)) {
+        stage_kpis[kpiKey] += 1;
+      }
     }
     if (batch.length < PAGE) break;
     cursor += batch.length;
   }
-  return { total, counts, values: {}, deadline_counts };
+  return { total, counts, values: {}, deadline_counts, stage_kpis };
 }
 
 async function headCountTotalOnly(ctx) {
@@ -316,7 +357,13 @@ async function loadSxKanbanColumnSummary(ctx) {
     ctx.deal_company_id,
   );
   const fullCtx = { ...ctx, restrictIds };
-  const empty = { total: 0, counts: {}, values: {}, deadline_counts: emptyDeadlineCounts() };
+  const empty = {
+    total: 0,
+    counts: {},
+    values: {},
+    deadline_counts: emptyDeadlineCounts(),
+    stage_kpis: emptyStageKpis(),
+  };
 
   if (restrictIds !== null && restrictIds !== undefined && !restrictIds.length) {
     return empty;
@@ -327,30 +374,35 @@ async function loadSxKanbanColumnSummary(ctx) {
 
   const stageById = await loadStageFlagsById(fullCtx.company_id, fullCtx.workshop_type_id);
 
-  let columnResult = null;
-  try {
-    columnResult = await tryRpcColumnCounts(fullCtx);
-  } catch (rpcErr) {
+  // RPC (counts) || thin-scan chạy song song — trước đây RPC xong mới scan → chậm gấp đôi.
+  const rpcPromise = tryRpcColumnCounts(fullCtx).catch((rpcErr) => {
     if (!isMissingRpcError(rpcErr) && !isMissingSxKanbanColumnError(rpcErr)) {
-      // RPC lỗi khác — vẫn thử thin scan trước khi fail cứng.
       console.warn('[sxKanbanSummary] rpc:', rpcErr.message || rpcErr);
     }
-  }
+    return null;
+  });
+  const scanPromise = thinScanSummary(fullCtx, { needColumnCounts: true, stageById });
 
   try {
+    const [columnResult, scanned] = await Promise.all([rpcPromise, scanPromise]);
     if (columnResult) {
-      // RPC đã có counts/total — vẫn thin-scan để lấy deadline_counts (toàn filter).
-      const scanned = await thinScanSummary(fullCtx, { needColumnCounts: false, stageById });
       return {
         ...columnResult,
         deadline_counts: scanned.deadline_counts || emptyDeadlineCounts(),
+        stage_kpis: scanned.stage_kpis || emptyStageKpis(),
       };
     }
-    return await thinScanSummary(fullCtx, { needColumnCounts: true, stageById });
+    return scanned;
   } catch (scanErr) {
     if (isMissingSxKanbanColumnError(scanErr)) {
       const total = await headCountTotalOnly(fullCtx);
-      return { total, counts: {}, values: {}, deadline_counts: emptyDeadlineCounts() };
+      return {
+        total,
+        counts: {},
+        values: {},
+        deadline_counts: emptyDeadlineCounts(),
+        stage_kpis: emptyStageKpis(),
+      };
     }
     throw scanErr;
   }
