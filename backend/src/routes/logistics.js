@@ -238,11 +238,12 @@ async function loadLogisticsPipelineRows(includeInactive = false, companyId = nu
 
 function defaultLogisticsStages() {
   return [
-    { id: '__vc_intake', name: 'Chờ vận chuyển', slug: 'delivery_pending', icon: '📦', color: '#f97316', bucket_slug: INTAKE_BUCKET, workflow_stage_id: null, order_index: 1 },
-    { id: '__vc_ship', name: 'Đang vận chuyển', slug: 'delivery', icon: '🚚', color: '#ea580c', bucket_slug: null, workflow_stage_id: null, order_index: 2 },
-    { id: '__vc_install', name: 'Đang lắp đặt', slug: 'installation', icon: '🔧', color: '#d97706', bucket_slug: null, workflow_stage_id: null, order_index: 3 },
-    { id: '__vc_warranty', name: 'Bảo hành', slug: 'customer-care', icon: '🤝', color: '#0f766e', bucket_slug: null, workflow_stage_id: null, order_index: 4 },
-    { id: '__vc_done', name: 'Hoàn thành', slug: 'completed', icon: '✅', color: '#16a34a', bucket_slug: null, workflow_stage_id: null, order_index: 5 },
+    { id: '__vc_intake', name: 'Tiếp nhận', slug: 'delivery_pending', icon: '📦', color: '#f97316', bucket_slug: INTAKE_BUCKET, workflow_stage_id: null, order_index: 1 },
+    { id: '__vc_shipping', name: 'Đang giao', slug: 'delivery', icon: '🚚', color: '#ea580c', bucket_slug: 'delivery', workflow_stage_id: null, order_index: 2 },
+    { id: '__vc_delivered', name: 'Đã giao', slug: 'delivered', icon: '📬', color: '#c2410c', bucket_slug: 'delivered', workflow_stage_id: null, order_index: 3 },
+    { id: '__vc_install', name: 'Lắp đặt', slug: 'installation', icon: '🔧', color: '#d97706', bucket_slug: 'installation', workflow_stage_id: null, order_index: 4 },
+    { id: '__vc_acceptance', name: 'Nghiệm thu - bàn giao', slug: 'acceptance', icon: '📋', color: '#0d9488', bucket_slug: 'acceptance', workflow_stage_id: null, order_index: 5 },
+    { id: '__vc_done', name: 'Hoàn thiện', slug: 'completed', icon: '✅', color: '#16a34a', bucket_slug: 'completed', workflow_stage_id: null, order_index: 6 },
   ];
 }
 
@@ -258,7 +259,7 @@ async function getResolvedLogisticsStages(companyId = null) {
   return { stages: merged };
 }
 
-function enrichOneLogisticsProject(project, sortedKanban) {
+function enrichOneLogisticsProject(project, sortedKanban, orphanColMeta = null) {
   const intakeCol = sortedKanban.find((c) => c.bucket_slug === INTAKE_BUCKET);
   const firstCol = sortedKanban[0] || null;
   const colIdSet = new Set(sortedKanban.map((c) => String(c.id)));
@@ -270,7 +271,15 @@ function enrichOneLogisticsProject(project, sortedKanban) {
     matchedCol = sortedKanban.find((c) => String(c.id) === String(project.vc_kanban_column_id)) || null;
   }
 
-  if (!matchedCol) {
+  // Cột thuộc pipeline công ty khác (hoặc cột cũ) → map theo bucket_slug, không đoán theo status.
+  if (!matchedCol && project.vc_kanban_column_id && orphanColMeta?.has(String(project.vc_kanban_column_id))) {
+    const meta = orphanColMeta.get(String(project.vc_kanban_column_id));
+    if (meta?.bucket_slug) {
+      matchedCol = sortedKanban.find((c) => c.bucket_slug === meta.bucket_slug) || null;
+    }
+  }
+
+  if (!matchedCol && !project.vc_kanban_column_id) {
     for (const col of sortedKanban) {
       if (col.bucket_slug === INTAKE_BUCKET) continue;
       const ws = col.workflow_stage;
@@ -300,6 +309,7 @@ async function enrichProjectsForLogistics(projects, filterCompanyId = null) {
   const f = normalizeWorkshopCompanyId(filterCompanyId);
   const keyFor = (p) => {
     if (f) return `__f:${f}`;
+    // Pipeline VC thuộc công ty vận chuyển đã chọn, không phải công ty SX gốc.
     const id = p.logistics_company_id || p.company_id || p.company?.id;
     return id ? String(id) : '__global__';
   };
@@ -311,7 +321,26 @@ async function enrichProjectsForLogistics(projects, filterCompanyId = null) {
     const sorted = [...stages].sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
     cache.set(key, sorted);
   }
-  const pipelineEnriched = (projects || []).map((p) => enrichOneLogisticsProject(p, cache.get(keyFor(p))));
+
+  const orphanIds = new Set();
+  for (const p of projects || []) {
+    const colId = p?.vc_kanban_column_id ? String(p.vc_kanban_column_id) : '';
+    if (!colId) continue;
+    const stages = cache.get(keyFor(p)) || [];
+    if (!stages.some((s) => String(s.id) === colId)) orphanIds.add(colId);
+  }
+  const orphanColMeta = new Map();
+  if (orphanIds.size) {
+    const { data: orphanRows } = await supabase
+      .from(VC_PIPELINE_TABLE)
+      .select('id, bucket_slug, name')
+      .in('id', [...orphanIds]);
+    for (const row of orphanRows || []) {
+      orphanColMeta.set(String(row.id), row);
+    }
+  }
+
+  const pipelineEnriched = (projects || []).map((p) => enrichOneLogisticsProject(p, cache.get(keyFor(p)), orphanColMeta));
   return attachCrmDealsToProjects(pipelineEnriched);
 }
 
@@ -1059,7 +1088,12 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
       incidents = incRes.data || [];
     } catch (_) { /* bảng chưa có hoặc lỗi tạm thời */ }
 
-    const pcid = project.company_id || project.company?.id || null;
+    // Pipeline VC theo công ty vận chuyển (logistics), không theo công ty SX gốc.
+    const pcid = project.logistics_company_id
+      || project.logistics_company?.id
+      || project.company_id
+      || project.company?.id
+      || null;
     const { stages: kStages } = await getResolvedLogisticsStages(pcid ? String(pcid) : null);
     const sortedK = [...kStages].sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
     const [vcRow] = await enrichProjectsForLogistics([project], pcid ? String(pcid) : null);
@@ -1091,9 +1125,11 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
         incidents: incidents || [],
         vcKanbanStages: sortedK.map((c) => ({
           id: c.id, name: c.name, color: c.color, icon: c.icon,
+          order_index: c.order_index,
           bucket_slug: c.bucket_slug,
           workflow_stage_id: c.workflow_stage_id || c.workflow_stage?.id,
           slug: c.workflow_stage?.slug,
+          is_handover_to_install: c.is_handover_to_install ?? false,
         })),
       },
     });
@@ -1122,7 +1158,9 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
 
     if (move_to_intake === true || move_to_intake === 'true') {
       // Tìm cột intake/first để lưu vc_kanban_column_id
-      const pcid = project.company_id ? String(project.company_id) : null;
+      const pcid = project.logistics_company_id
+        ? String(project.logistics_company_id)
+        : (project.company_id ? String(project.company_id) : null);
       const { stages: kStages } = await getResolvedLogisticsStages(pcid).catch(() => ({ stages: [] }));
       const intakeCol = kStages.find((c) => c.bucket_slug === INTAKE_BUCKET) || kStages[0] || null;
       const intakeColId = intakeCol?.id && !String(intakeCol.id).startsWith('__') ? intakeCol.id : null;

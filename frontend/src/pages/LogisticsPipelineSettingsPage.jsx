@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Building2, CheckCircle2, ChevronRight, EyeOff, GripVertical, Info, ListChecks, Loader2,
-  Pencil, Plus, RefreshCw, Save, Settings, ShieldCheck, Trash2, Truck, UserCircle, Wrench,
+  Pencil, Plus, RefreshCw, Save, Settings, Trash2, Truck, UserCircle, Wrench,
 } from 'lucide-react';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -38,6 +38,12 @@ function PipelineMiniFlowBar({ stages, className = '' }) {
   );
 }
 
+const CRM_SYNC_TYPE_BADGES = {
+  delivery: { cls: 'bg-blue-50 text-blue-700 border-blue-200', text: '🚚 Trigger → VC' },
+  installation: { cls: 'bg-amber-50 text-amber-800 border-amber-200', text: '🔧 Trigger → LĐ' },
+  customer_care: { cls: 'bg-emerald-50 text-emerald-700 border-emerald-200', text: '🤝 Trigger → CSKH' },
+};
+
 function StageBadges({ stage }) {
   const s = stage;
   const badges = [];
@@ -48,7 +54,7 @@ function StageBadges({ stage }) {
     badges.push({ key: 'to-ld', cls: 'bg-teal-50 text-teal-800 border-teal-200', text: '→ LĐ' });
   }
   if (isInstallVcStage(s)) {
-    badges.push({ key: 'tab-ld', cls: 'bg-amber-50 text-amber-800 border-amber-200', text: 'Tab LĐ' });
+    badges.push({ key: 'col-ld', cls: 'bg-amber-50 text-amber-800 border-amber-200', text: 'Cột LĐ' });
   }
   if (s.progress_percent != null && s.progress_percent !== '') {
     badges.push({ key: 'pct', cls: 'bg-violet-50 text-violet-700 border-violet-200', text: `${s.progress_percent}%` });
@@ -62,12 +68,9 @@ function StageBadges({ stage }) {
       cls: 'bg-blue-50 text-blue-700 border-blue-200',
       text: `→ ${s.crm_target_stage.icon ? `${s.crm_target_stage.icon} ` : ''}${s.crm_target_stage.name}`,
     });
-  } else if (s.crm_sync_type === 'delivery') {
-    badges.push({ key: 'sync-vc', cls: 'bg-blue-50 text-blue-700 border-blue-200', text: 'Trigger VC' });
-  } else if (s.crm_sync_type === 'installation') {
-    badges.push({ key: 'sync-ld', cls: 'bg-amber-50 text-amber-800 border-amber-200', text: 'Trigger LĐ' });
-  } else if (s.crm_sync_type === 'customer_care') {
-    badges.push({ key: 'sync-cskh', cls: 'bg-emerald-50 text-emerald-700 border-emerald-200', text: 'Trigger CSKH' });
+  } else if (s.crm_sync_type && CRM_SYNC_TYPE_BADGES[s.crm_sync_type]) {
+    const b = CRM_SYNC_TYPE_BADGES[s.crm_sync_type];
+    badges.push({ key: `sync-${s.crm_sync_type}`, cls: b.cls, text: b.text });
   }
   if (!badges.length) return null;
   return (
@@ -88,16 +91,12 @@ export default function LogisticsPipelineSettingsPage() {
   const [companies, setCompanies] = useState([]);
   const [settingsCompanyId, setSettingsCompanyId] = useState('');
   const [stages, setStages] = useState([]);
-  const [crmStages, setCrmStages] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('stages');
   const [adding, setAdding] = useState(false);
-  const [addArea, setAddArea] = useState('shipping');
   const [saving, setSaving] = useState(false);
   const [reorderBusy, setReorderBusy] = useState(false);
-  const [bulkSaving, setBulkSaving] = useState(false);
   const [editId, setEditId] = useState(null);
-  const [bulkSelected, setBulkSelected] = useState(() => new Set());
   const [draggingId, setDraggingId] = useState(null);
   const [dragOverId, setDragOverId] = useState(null);
   const [handoverLoading, setHandoverLoading] = useState(false);
@@ -130,15 +129,10 @@ export default function LogisticsPipelineSettingsPage() {
     }
     if (!silent) setLoading(true);
     try {
-      const [pipeRes, crmRes] = await Promise.all([
-        api.get('/logistics/pipeline-stages', {
-          params: { all: 'true', company_id: settingsCompanyId },
-        }),
-        api.get('/crm/pipeline-stages', { params: { type: 'deal' } }).catch(() => ({ data: [] })),
-      ]);
+      const pipeRes = await api.get('/logistics/pipeline-stages', {
+        params: { all: 'true', company_id: settingsCompanyId },
+      });
       setStages(pipeRes.data || []);
-      setCrmStages((crmRes.data || []).filter((s) => s.pipeline_type === 'deal' || !s.pipeline_type));
-      setBulkSelected((prev) => new Set([...prev].filter((id) => (pipeRes.data || []).some((s) => s.id === id))));
     } catch {
       if (!silent) setStages([]);
     } finally {
@@ -222,22 +216,7 @@ export default function LogisticsPipelineSettingsPage() {
     [stages],
   );
 
-  const shippingStages = useMemo(
-    () => sorted.filter((s) => !isInstallVcStage(s)),
-    [sorted],
-  );
-  const installStages = useMemo(
-    () => sorted.filter((s) => isInstallVcStage(s)),
-    [sorted],
-  );
-
   const editingIntake = editId && sorted.find((s) => s.id === editId)?.bucket_slug === INTAKE;
-  const editingArea = useMemo(() => {
-    if (!editId) return null;
-    const row = sorted.find((s) => s.id === editId);
-    if (!row) return null;
-    return isInstallVcStage(row) ? 'install' : 'shipping';
-  }, [editId, sorted]);
 
   const requestEdit = (stage) => {
     if (adding) {
@@ -247,17 +226,15 @@ export default function LogisticsPipelineSettingsPage() {
     startEdit(stage);
   };
 
-  const startAdd = (area = 'shipping') => {
+  const startAdd = () => {
     setAdding(true);
-    setAddArea(area);
     setEditId(null);
-    const listLen = area === 'install' ? installStages.length : shippingStages.length;
     setForm({
       name: '',
-      color: COLORS[listLen % COLORS.length],
-      icon: area === 'install' ? '🔧' : ICONS[listLen % ICONS.length],
+      color: COLORS[sorted.length % COLORS.length],
+      icon: ICONS[sorted.length % ICONS.length],
       is_active: true,
-      crm_sync_type: area === 'install' ? 'installation' : null,
+      crm_sync_type: null,
       crm_target_stage_id: '',
       progress_percent: '',
     });
@@ -280,21 +257,18 @@ export default function LogisticsPipelineSettingsPage() {
   const saveNew = async () => {
     if (!form.name.trim()) return alert('Nhập tên cột');
     if (!settingsCompanyId) return alert('Chọn công ty trước');
-    const forInstall = addArea === 'install';
+    const hardTarget = form.crm_target_stage_id || null;
     setSaving(true);
     try {
-      const syncType = form.crm_target_stage_id
-        ? null
-        : (form.crm_sync_type || (forInstall ? 'installation' : null));
       await api.post('/logistics/pipeline-stages', {
         name: form.name.trim(),
         color: form.color,
         icon: form.icon,
         is_active: form.is_active,
         progress_percent: form.progress_percent === '' ? null : Number(form.progress_percent),
-        crm_sync_type: syncType,
-        crm_target_stage_id: form.crm_target_stage_id || null,
-        bucket_slug: forInstall || syncType === 'installation' ? 'installation' : null,
+        crm_sync_type: hardTarget ? null : (form.crm_sync_type || null),
+        crm_target_stage_id: hardTarget,
+        bucket_slug: null,
         company_id: settingsCompanyId,
       });
       setAdding(false);
@@ -310,6 +284,7 @@ export default function LogisticsPipelineSettingsPage() {
   const saveEdit = async () => {
     if (!form.name.trim()) return alert('Nhập tên cột');
     const intakeRow = sorted.find((s) => s.id === editId)?.bucket_slug === INTAKE;
+    const hardTarget = intakeRow ? null : (form.crm_target_stage_id || null);
     setSaving(true);
     try {
       await api.put(`/logistics/pipeline-stages/${editId}`, {
@@ -318,8 +293,8 @@ export default function LogisticsPipelineSettingsPage() {
         icon: form.icon,
         is_active: form.is_active,
         progress_percent: form.progress_percent === '' ? null : Number(form.progress_percent),
-        crm_sync_type: intakeRow ? null : (form.crm_target_stage_id ? null : (form.crm_sync_type || null)),
-        crm_target_stage_id: intakeRow ? null : (form.crm_target_stage_id || null),
+        crm_sync_type: intakeRow || hardTarget ? null : (form.crm_sync_type || null),
+        crm_target_stage_id: hardTarget,
       });
       setEditId(null);
       setAdding(false);
@@ -354,45 +329,24 @@ export default function LogisticsPipelineSettingsPage() {
     }
   };
 
-  const toggleRowSync = async (stage, syncType) => {
-    const next = stage.crm_sync_type === syncType ? null : syncType;
-    try {
-      const patch = {
-        crm_sync_type: next,
-        ...(next ? { crm_target_stage_id: null } : {}),
-      };
-      if (syncType === 'installation') {
-        patch.bucket_slug = next === 'installation' ? 'installation' : null;
-      } else if (next && String(stage.bucket_slug || '').toLowerCase().includes('install')) {
-        patch.bucket_slug = null;
-      }
-      await api.put(`/logistics/pipeline-stages/${stage.id}`, patch);
-      await load({ silent: true });
-    } catch (e) {
-      alert(e.response?.data?.error || 'Lỗi cập nhật trigger');
-    }
-  };
-
   const toggleInstallTabColumn = async (stage) => {
-    const isOn = stage.crm_sync_type === 'installation'
-      || String(stage.bucket_slug || '').toLowerCase().includes('install');
+    const isOn = String(stage.bucket_slug || '').toLowerCase().includes('install')
+      || isInstallVcStage(stage);
     try {
       await api.put(`/logistics/pipeline-stages/${stage.id}`, {
-        crm_sync_type: isOn ? null : 'installation',
         bucket_slug: isOn ? null : 'installation',
         is_handover_to_install: false,
-        ...(isOn ? {} : { crm_target_stage_id: null }),
       });
       await load({ silent: true });
     } catch (e) {
-      alert(e.response?.data?.error || 'Lỗi cập nhật tab Lắp đặt');
+      alert(e.response?.data?.error || 'Lỗi cập nhật cột Lắp đặt');
     }
   };
 
   const toggleHandoverToInstall = async (stage) => {
     if (stage.bucket_slug === INTAKE) return;
     if (isInstallVcStage(stage)) {
-      return alert('Cột Lắp đặt không cần cờ «Chuyển LĐ» — chỉ gắn trên cột Vận chuyển.');
+      return alert('Cột Lắp đặt không cần cờ «Chuyển LĐ» — chỉ gắn trên cột trước Lắp đặt.');
     }
     try {
       await api.put(`/logistics/pipeline-stages/${stage.id}`, {
@@ -401,37 +355,6 @@ export default function LogisticsPipelineSettingsPage() {
       await load({ silent: true });
     } catch (e) {
       alert(e.response?.data?.error || 'Lỗi cập nhật chuyển LĐ');
-    }
-  };
-
-  const toggleBulk = (id) => {
-    setBulkSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
-  const bulkSetSync = async (syncType, areaList) => {
-    const eligible = (areaList || []).filter((s) => s.bucket_slug !== INTAKE);
-    const ids = eligible.map((s) => s.id).filter((id) => bulkSelected.has(id));
-    if (!ids.length) return;
-    setBulkSaving(true);
-    try {
-      await Promise.all(ids.map((id) => {
-        const patch = {
-          crm_sync_type: syncType,
-          ...(syncType ? { crm_target_stage_id: null } : {}),
-        };
-        if (syncType === 'installation') patch.bucket_slug = 'installation';
-        return api.put(`/logistics/pipeline-stages/${id}`, patch);
-      }));
-      await load({ silent: true });
-    } catch (e) {
-      alert(e.response?.data?.error || 'Lỗi gán trigger hàng loạt');
-    } finally {
-      setBulkSaving(false);
     }
   };
 
@@ -455,23 +378,17 @@ export default function LogisticsPipelineSettingsPage() {
     }
   };
 
-  const rebuildAfterGroupReorder = (area, reorderedGroup) => {
-    const inGroup = area === 'install' ? isInstallVcStage : (s) => !isInstallVcStage(s);
-    let gi = 0;
-    return sorted.map((s) => (inGroup(s) ? reorderedGroup[gi++] : s));
-  };
-
-  const moveStage = async (area, stage, dir) => {
+  const moveStage = async (stage, dir) => {
     if (reorderBusy || stage.bucket_slug === INTAKE) return;
-    const list = area === 'install' ? [...installStages] : [...shippingStages];
+    const list = [...sorted];
     const idx = list.findIndex((s) => s.id === stage.id);
     if (idx < 0) return;
     const dest = idx + dir;
     if (dest < 0 || dest >= list.length) return;
     if (dir === -1 && list[dest]?.bucket_slug === INTAKE) return;
-    const newGroup = [...list];
-    [newGroup[idx], newGroup[dest]] = [newGroup[dest], newGroup[idx]];
-    await persistStagesReorder(rebuildAfterGroupReorder(area, newGroup));
+    const newList = [...list];
+    [newList[idx], newList[dest]] = [newList[dest], newList[idx]];
+    await persistStagesReorder(newList);
   };
 
   const handleDragStart = (e, stage) => {
@@ -484,19 +401,15 @@ export default function LogisticsPipelineSettingsPage() {
     try { e.dataTransfer.setData('text/plain', stage.id); } catch { /* ignore */ }
   };
   const handleDragEnd = () => { setDraggingId(null); setDragOverId(null); };
-  const handleDragOver = (e, area, stage) => {
+  const handleDragOver = (e, stage) => {
     const sourceId = draggingId || e.dataTransfer.getData('text/plain');
     if (!sourceId || sourceId === stage.id || stage.bucket_slug === INTAKE) return;
-    const source = sorted.find((s) => s.id === sourceId);
-    if (!source) return;
-    const sourceArea = isInstallVcStage(source) ? 'install' : 'shipping';
-    if (sourceArea !== area) return;
     e.preventDefault();
     e.stopPropagation();
     e.dataTransfer.dropEffect = 'move';
     if (dragOverId !== stage.id) setDragOverId(stage.id);
   };
-  const handleDrop = async (e, area, target) => {
+  const handleDrop = async (e, target) => {
     if (reorderBusy) return;
     e.preventDefault();
     e.stopPropagation();
@@ -505,39 +418,30 @@ export default function LogisticsPipelineSettingsPage() {
     setDragOverId(null);
     if (!sourceId || sourceId === target.id || target.bucket_slug === INTAKE) return;
 
-    const list = area === 'install' ? [...installStages] : [...shippingStages];
+    const list = [...sorted];
     const fromIdx = list.findIndex((s) => s.id === sourceId);
     const toIdx = list.findIndex((s) => s.id === target.id);
     if (fromIdx < 0 || toIdx < 0 || fromIdx === toIdx || list[fromIdx]?.bucket_slug === INTAKE) return;
 
-    const newGroup = [...list];
-    const [moved] = newGroup.splice(fromIdx, 1);
+    const newList = [...list];
+    const [moved] = newList.splice(fromIdx, 1);
     const insertIdx = fromIdx < toIdx ? toIdx - 1 : toIdx;
-    newGroup.splice(insertIdx, 0, moved);
-    await persistStagesReorder(rebuildAfterGroupReorder(area, newGroup));
+    newList.splice(insertIdx, 0, moved);
+    await persistStagesReorder(newList);
   };
-
-  const vcCrmStages = crmStages.filter((cs) => !cs.is_lost && !cs.is_won);
-  const deliveryCrmStages = vcCrmStages.filter((cs) => cs.sync_role === 'vc_delivery');
-  const installationCrmStages = vcCrmStages.filter((cs) => cs.sync_role === 'vc_installation');
-  const careCrmStages = vcCrmStages.filter((cs) => cs.sync_role === 'vc_customer_care');
 
   const pillBtn = (active, activeCls, idleCls = 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100') =>
     `h-6 px-1.5 rounded-md text-[9px] font-semibold flex items-center gap-0.5 cursor-pointer border ${
       active ? activeCls : idleCls
     }`;
 
-  const renderStageForm = (area) => {
-    const show = (adding && addArea === area) || (!!editId && editingArea === area);
-    if (!show) return null;
-    const isInstall = area === 'install';
+  const renderStageForm = () => {
+    if (!adding && !editId) return null;
     return (
-      <div className={`p-3 border-t space-y-2.5 ${isInstall ? 'bg-amber-50/40' : 'bg-orange-50/40'}`}>
+      <div className="p-3 border-t space-y-2.5 bg-orange-50/40">
         <p className="text-xs font-semibold text-gray-900 flex items-center gap-1.5">
           {adding ? <Plus className="h-3.5 w-3.5" /> : <Pencil className="h-3.5 w-3.5" />}
-          {adding
-            ? `Thêm giai đoạn ${isInstall ? 'Lắp đặt' : 'Vận chuyển'}`
-            : `Sửa: ${form.name || '…'}`}
+          {adding ? 'Thêm giai đoạn VC / LĐ' : `Sửa: ${form.name || '…'}`}
         </p>
         <div>
           <label className="text-[10px] font-medium text-gray-500 block mb-1">Tên *</label>
@@ -545,7 +449,7 @@ export default function LogisticsPipelineSettingsPage() {
             value={form.name}
             onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
             className="w-full h-8 px-2.5 border border-gray-200 rounded-lg text-xs"
-            placeholder={isInstall ? 'VD: Đang lắp đặt' : 'VD: Đang vận chuyển'}
+            placeholder="VD: Đang vận chuyển / Đang lắp đặt"
           />
         </div>
         <div className="flex flex-wrap gap-1.5 items-center">
@@ -570,7 +474,7 @@ export default function LogisticsPipelineSettingsPage() {
                 onClick={() => setForm((f) => ({ ...f, icon: ic }))}
                 className={`w-7 h-7 rounded text-sm cursor-pointer ${
                   form.icon === ic
-                    ? (isInstall ? 'bg-amber-100 ring-2 ring-amber-500' : 'bg-orange-100 ring-2 ring-orange-500')
+                    ? 'bg-orange-100 ring-2 ring-orange-500'
                     : 'bg-gray-50 hover:bg-gray-100'
                 }`}
               >
@@ -591,69 +495,6 @@ export default function LogisticsPipelineSettingsPage() {
             placeholder="VD: 60"
           />
         </div>
-        {!editingIntake && (
-          <div className="space-y-1.5">
-            <p className="text-[10px] font-semibold text-gray-600">Trigger đồng bộ CRM</p>
-            <div className="flex flex-wrap gap-1.5">
-              {[
-                { value: 'delivery', label: 'Vận chuyển' },
-                { value: 'installation', label: 'Lắp đặt' },
-                { value: 'customer_care', label: 'CSKH' },
-              ].map((opt) => (
-                <label key={opt.value} className="inline-flex items-center gap-1.5 text-[10px] cursor-pointer bg-white border border-gray-200 rounded-lg px-2 py-1">
-                  <input
-                    type="checkbox"
-                    checked={form.crm_sync_type === opt.value}
-                    onChange={(e) => setForm((f) => ({
-                      ...f,
-                      crm_sync_type: e.target.checked ? opt.value : null,
-                      crm_target_stage_id: e.target.checked ? '' : f.crm_target_stage_id,
-                    }))}
-                    className="rounded"
-                  />
-                  {opt.label}
-                </label>
-              ))}
-            </div>
-            <details>
-              <summary className="text-[10px] font-medium text-gray-500 cursor-pointer hover:text-gray-700">
-                Nâng cao: gán cứng 1 cột CRM
-              </summary>
-              <select
-                value={form.crm_target_stage_id || ''}
-                onChange={(e) => setForm((f) => ({
-                  ...f,
-                  crm_target_stage_id: e.target.value,
-                  crm_sync_type: e.target.value ? null : f.crm_sync_type,
-                }))}
-                className="mt-1.5 w-full h-8 px-2 border border-blue-200 rounded-lg text-xs bg-white"
-              >
-                <option value="">— Không —</option>
-                {deliveryCrmStages.length > 0 && (
-                  <optgroup label="Vận chuyển">
-                    {deliveryCrmStages.map((cs) => (
-                      <option key={cs.id} value={cs.id}>{cs.icon ? `${cs.icon} ` : ''}{cs.name}</option>
-                    ))}
-                  </optgroup>
-                )}
-                {installationCrmStages.length > 0 && (
-                  <optgroup label="Lắp đặt">
-                    {installationCrmStages.map((cs) => (
-                      <option key={cs.id} value={cs.id}>{cs.icon ? `${cs.icon} ` : ''}{cs.name}</option>
-                    ))}
-                  </optgroup>
-                )}
-                {careCrmStages.length > 0 && (
-                  <optgroup label="CSKH">
-                    {careCrmStages.map((cs) => (
-                      <option key={cs.id} value={cs.id}>{cs.icon ? `${cs.icon} ` : ''}{cs.name}</option>
-                    ))}
-                  </optgroup>
-                )}
-              </select>
-            </details>
-          </div>
-        )}
         <label className="flex items-center gap-2 text-[11px] cursor-pointer">
           <input
             type="checkbox"
@@ -663,6 +504,32 @@ export default function LogisticsPipelineSettingsPage() {
           />
           Hiện trên Kanban
         </label>
+        {!editingIntake && (
+          <div className="space-y-1.5 p-2.5 rounded-lg bg-blue-50 border border-blue-200">
+            <label className="text-[10px] font-semibold text-blue-800 block">
+              Trigger CRM khi project vào cột
+            </label>
+            <select
+              value={form.crm_sync_type || ''}
+              onChange={(e) => setForm((f) => ({
+                ...f,
+                crm_sync_type: e.target.value || null,
+                crm_target_stage_id: e.target.value ? '' : f.crm_target_stage_id,
+              }))}
+              className="w-full h-8 px-2 border border-blue-200 rounded-lg text-xs bg-white focus:border-blue-400"
+            >
+              <option value="">— Không —</option>
+              <option value="delivery">🚚 Vận chuyển (sync_role=vc_delivery)</option>
+              <option value="installation">🔧 Lắp đặt (sync_role=vc_installation)</option>
+              <option value="customer_care">🤝 CSKH (sync_role=vc_customer_care)</option>
+            </select>
+            <p className="text-[10px] text-blue-600 leading-snug">
+              VD: «Đang giao» → Vận chuyển thì CRM deal nhảy sang cột có
+              <code className="mx-1 px-1 bg-white/70 rounded">sync_role=vc_delivery</code>
+              (cần deal đã bàn giao SX→VC).
+            </p>
+          </div>
+        )}
         <div className="flex gap-2">
           <button
             type="button"
@@ -686,33 +553,27 @@ export default function LogisticsPipelineSettingsPage() {
     );
   };
 
-  const renderPipelinePanel = (area, list) => {
-    const isInstall = area === 'install';
-    const eligible = list.filter((s) => s.bucket_slug !== INTAKE);
-    const eligibleIds = eligible.map((s) => s.id);
-    const allSelected = eligibleIds.length > 0 && eligibleIds.every((id) => bulkSelected.has(id));
-    const someSelected = eligibleIds.some((id) => bulkSelected.has(id));
-    const triggerCount = eligible.filter((s) => s.crm_sync_type).length;
-    const iconBg = isInstall ? 'bg-amber-600 ring-amber-200' : 'bg-orange-600 ring-orange-200';
+  const renderPipelinePanel = () => {
+    const list = sorted;
 
     return (
-      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm flex flex-col max-h-[min(72vh,680px)] min-h-[360px]">
+      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm flex flex-col max-h-[min(80vh,760px)] min-h-[360px]">
         <div className="px-4 py-3 border-b border-gray-100 space-y-2 shrink-0 bg-white">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 min-w-0">
-              <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-white shrink-0 ring-2 ring-offset-1 ${iconBg}`}>
-                {isInstall ? <Wrench className="h-4 w-4" /> : <Truck className="h-4 w-4" />}
+              <div className="w-8 h-8 rounded-lg flex items-center justify-center text-white shrink-0 ring-2 ring-offset-1 bg-orange-600 ring-orange-200">
+                <Truck className="h-4 w-4" />
               </div>
               <div className="min-w-0">
                 <h2 className="text-xs font-semibold text-gray-900">
-                  Pipeline {isInstall ? 'Lắp đặt' : 'Vận chuyển'}
+                  Pipeline Vận chuyển / Lắp đặt
                 </h2>
-                <p className="text-[10px] text-gray-400">{list.length} giai đoạn</p>
+                <p className="text-[10px] text-gray-400">{list.length} giai đoạn · một luồng Kanban</p>
               </div>
             </div>
             <button
               type="button"
-              onClick={() => startAdd(area)}
+              onClick={() => startAdd()}
               className="h-7 px-2.5 bg-emerald-600 text-white rounded-lg text-[10px] font-semibold hover:bg-emerald-700 flex items-center gap-1 cursor-pointer shrink-0 shadow-sm ring-1 ring-emerald-500/40"
               title="Thêm giai đoạn"
             >
@@ -748,61 +609,27 @@ export default function LogisticsPipelineSettingsPage() {
           </div>
         </div>
 
-        {eligible.length > 0 && (
-          <div className="border-b border-gray-100 px-3 py-1.5 flex flex-wrap items-center gap-2 bg-gray-50/60">
-            <label className="flex items-center gap-1.5 text-[10px] font-semibold text-gray-600 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={allSelected}
-                ref={(el) => { if (el) el.indeterminate = !allSelected && someSelected; }}
-                onChange={() => {
-                  setBulkSelected((prev) => {
-                    const next = new Set(prev);
-                    if (allSelected) eligibleIds.forEach((id) => next.delete(id));
-                    else eligibleIds.forEach((id) => next.add(id));
-                    return next;
-                  });
-                }}
-                className="rounded border-gray-300"
-              />
-              Chọn ({eligibleIds.filter((id) => bulkSelected.has(id)).length}/{eligibleIds.length})
-            </label>
-            <span className="text-[10px] text-gray-500">{triggerCount} trigger CRM</span>
-            {eligibleIds.some((id) => bulkSelected.has(id)) && (
-              <>
-                {!isInstall && (
-                  <button type="button" onClick={() => bulkSetSync('delivery', list)} disabled={bulkSaving} className="h-6 px-2 bg-blue-600 text-white rounded text-[9px] font-semibold disabled:opacity-50 cursor-pointer">→ VC</button>
-                )}
-                <button type="button" onClick={() => bulkSetSync('installation', list)} disabled={bulkSaving} className="h-6 px-2 bg-amber-600 text-white rounded text-[9px] font-semibold disabled:opacity-50 cursor-pointer">→ LĐ</button>
-                <button type="button" onClick={() => bulkSetSync('customer_care', list)} disabled={bulkSaving} className="h-6 px-2 bg-emerald-600 text-white rounded text-[9px] font-semibold disabled:opacity-50 cursor-pointer">→ CSKH</button>
-                <button type="button" onClick={() => bulkSetSync(null, list)} disabled={bulkSaving} className="h-6 px-2 bg-white border border-gray-300 text-gray-600 rounded text-[9px] font-semibold disabled:opacity-50 cursor-pointer">Bỏ</button>
-              </>
-            )}
-          </div>
-        )}
-
         <div className="divide-y divide-gray-100 overflow-y-auto flex-1 min-h-0 overscroll-contain">
           {list.length === 0 ? (
             <div className="px-4 py-12 text-center text-xs text-gray-400">
-              Chưa có giai đoạn {isInstall ? 'Lắp đặt' : 'Vận chuyển'}.
+              Chưa có giai đoạn VC / LĐ.
             </div>
           ) : list.map((s, i) => {
             const isIntake = s.bucket_slug === INTAKE;
             const isDragging = draggingId === s.id;
             const isDragOver = dragOverId === s.id && draggingId && draggingId !== s.id;
-            const onInstallTab = isInstallVcStage(s);
+            const onInstallCol = isInstallVcStage(s);
             return (
               <div
                 key={s.id}
-                onDragOver={(e) => handleDragOver(e, area, s)}
+                onDragOver={(e) => handleDragOver(e, s)}
                 onDragLeave={() => setDragOverId(null)}
-                onDrop={(e) => handleDrop(e, area, s)}
+                onDrop={(e) => handleDrop(e, s)}
                 className={`flex items-start gap-2 px-3 py-2 transition-all
                   ${isDragging ? 'opacity-40 bg-violet-50/50' : 'hover:bg-gray-50/80'}
                   ${isDragOver ? 'bg-violet-50/60 ring-1 ring-inset ring-violet-300' : ''}
                   ${!s.is_active ? 'opacity-55' : ''}
-                  ${editId === s.id ? 'bg-violet-50/40 ring-1 ring-inset ring-violet-200' : ''}
-                  ${bulkSelected.has(s.id) ? 'bg-blue-50/40' : ''}`}
+                  ${editId === s.id ? 'bg-violet-50/40 ring-1 ring-inset ring-violet-200' : ''}`}
               >
                 <div className="flex items-center gap-0.5 pt-1 shrink-0">
                   <span
@@ -817,7 +644,7 @@ export default function LogisticsPipelineSettingsPage() {
                   <div className="flex flex-col">
                     <button
                       type="button"
-                      onClick={() => moveStage(area, s, -1)}
+                      onClick={() => moveStage(s, -1)}
                       disabled={reorderBusy || i === 0 || isIntake || list[i - 1]?.bucket_slug === INTAKE}
                       className="text-gray-300 hover:text-gray-600 disabled:opacity-20 cursor-pointer text-[9px] leading-none px-0.5"
                     >
@@ -825,7 +652,7 @@ export default function LogisticsPipelineSettingsPage() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => moveStage(area, s, 1)}
+                      onClick={() => moveStage(s, 1)}
                       disabled={reorderBusy || i === list.length - 1 || isIntake}
                       className="text-gray-300 hover:text-gray-600 disabled:opacity-20 cursor-pointer text-[9px] leading-none px-0.5"
                     >
@@ -839,16 +666,7 @@ export default function LogisticsPipelineSettingsPage() {
                 />
                 <div className={`flex-1 min-w-0 py-0.5 ${draggingId ? 'pointer-events-none' : ''}`}>
                   <div className="flex items-center gap-1.5">
-                    {!isIntake && (
-                      <input
-                        type="checkbox"
-                        checked={bulkSelected.has(s.id)}
-                        onChange={() => toggleBulk(s.id)}
-                        className="rounded border-gray-300 cursor-pointer shrink-0"
-                        title="Chọn để gán trigger hàng loạt"
-                      />
-                    )}
-                    <span className="text-sm leading-none">{s.icon || (isInstall ? '🔧' : '📦')}</span>
+                    <span className="text-sm leading-none">{s.icon || (onInstallCol ? '🔧' : '📦')}</span>
                     <p className="text-xs font-bold text-gray-900 truncate">{s.name}</p>
                     <span className="text-[9px] font-semibold text-violet-600 bg-violet-50 px-1 py-0.5 rounded font-mono">
                       #{s.order_index ?? i + 1}
@@ -856,17 +674,17 @@ export default function LogisticsPipelineSettingsPage() {
                   </div>
                   <StageBadges stage={s} />
                 </div>
-                <div className="flex items-center gap-1 shrink-0 flex-wrap justify-end max-w-[260px] border-l border-gray-200 pl-1.5 ml-1">
+                <div className="flex items-center gap-1 shrink-0 flex-wrap justify-end max-w-[280px] border-l border-gray-200 pl-1.5 ml-1">
                   {!isIntake && (
                     <>
-                      {!isInstall && (
+                      {!onInstallCol && (
                         <button
                           type="button"
                           onClick={() => toggleHandoverToInstall(s)}
                           className={pillBtn(!!s.is_handover_to_install, 'bg-teal-100 text-teal-900 border-teal-300 ring-1 ring-teal-200')}
                           title={s.is_handover_to_install
-                            ? 'Đang bật: kéo dự án vào cột này → nhảy sang Lắp đặt'
-                            : 'Bật để khi kéo dự án vào cột này sẽ nhảy sang tab/cột Lắp đặt'}
+                            ? 'Đang bật: kéo dự án vào cột này → nhảy sang cột Lắp đặt'
+                            : 'Bật để khi kéo dự án vào cột này sẽ nhảy sang cột Lắp đặt'}
                         >
                           → LĐ
                         </button>
@@ -874,34 +692,10 @@ export default function LogisticsPipelineSettingsPage() {
                       <button
                         type="button"
                         onClick={() => toggleInstallTabColumn(s)}
-                        className={pillBtn(onInstallTab, 'bg-amber-100 text-amber-900 border-amber-300')}
-                        title={onInstallTab ? 'Bỏ Tab LĐ → panel Vận chuyển' : 'Đưa sang panel Lắp đặt'}
+                        className={pillBtn(onInstallCol, 'bg-amber-100 text-amber-900 border-amber-300')}
+                        title={onInstallCol ? 'Bỏ đánh dấu cột Lắp đặt' : 'Đánh dấu là cột Lắp đặt'}
                       >
-                        Tab LĐ
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => toggleRowSync(s, 'delivery')}
-                        className={pillBtn(s.crm_sync_type === 'delivery', 'bg-blue-100 text-blue-800 border-blue-300')}
-                        title="Trigger Vận chuyển → CRM"
-                      >
-                        <Truck className="h-3 w-3" /> VC
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => toggleRowSync(s, 'installation')}
-                        className={pillBtn(s.crm_sync_type === 'installation', 'bg-amber-100 text-amber-800 border-amber-300')}
-                        title="Trigger Lắp đặt → CRM"
-                      >
-                        <Wrench className="h-3 w-3" /> LĐ
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => toggleRowSync(s, 'customer_care')}
-                        className={pillBtn(s.crm_sync_type === 'customer_care', 'bg-emerald-100 text-emerald-800 border-emerald-300')}
-                        title="Trigger CSKH → CRM"
-                      >
-                        <ShieldCheck className="h-3 w-3" /> CSKH
+                        Cột LĐ
                       </button>
                     </>
                   )}
@@ -937,7 +731,7 @@ export default function LogisticsPipelineSettingsPage() {
           })}
         </div>
 
-        {renderStageForm(area)}
+        {renderStageForm()}
       </div>
     );
   };
@@ -951,7 +745,7 @@ export default function LogisticsPipelineSettingsPage() {
             <div>
               <h1 className="text-lg font-semibold text-gray-900">Cài đặt Pipeline VC / LĐ</h1>
               <p className="text-xs text-gray-500 mt-0.5">
-                Quản lý giai đoạn Vận chuyển & Lắp đặt — bố cục giống Lead / Deal CRM
+                Quản lý một pipeline Vận chuyển / Lắp đặt — khớp Kanban dashboard VC
               </p>
             </div>
           </div>
@@ -1133,10 +927,7 @@ export default function LogisticsPipelineSettingsPage() {
             Đang tải giai đoạn…
           </div>
         ) : (
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 min-h-0">
-            {renderPipelinePanel('shipping', shippingStages)}
-            {renderPipelinePanel('install', installStages)}
-          </div>
+          renderPipelinePanel()
         )}
       </div>
     </div>

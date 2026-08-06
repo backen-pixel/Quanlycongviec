@@ -101,6 +101,19 @@ function resolveSxKanbanCurrentStageId(project, stages) {
   });
 }
 
+/** Cột hiện tại VC: chỉ dùng vc_kanban_column_id (không fallback workflow stage). */
+function resolveVcKanbanCurrentStageId(project, stages) {
+  const list = Array.isArray(stages) ? stages : [];
+  const colId = project?.vc_kanban_column_id != null ? String(project.vc_kanban_column_id) : '';
+  if (colId && list.some((s) => String(s.id) === colId)) return colId;
+  if (project?.vc_intake) {
+    const intake = list.find((s) => String(s.bucket_slug || '') === 'delivery_pending');
+    if (intake?.id) return String(intake.id);
+  }
+  if (colId) return colId;
+  return null;
+}
+
 const ACTIVITY_TYPES = [
   { value: 'call', label: 'Gọi điện', icon: '📞', color: 'bg-blue-100 text-blue-700' },
   { value: 'meeting', label: 'Gặp mặt', icon: '🤝', color: 'bg-purple-100 text-purple-700' },
@@ -1520,16 +1533,19 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
 
   /**
    * Pipeline SX/VC theo công ty dự án + phân loại (workshop_type_id).
-   * GET /projects/:id đã trả sxKanbanStages — chỉ fetch thêm khi thiếu.
+   * GET /projects/:id đã trả sxKanbanStages / vcKanbanStages — chỉ fetch thêm khi thiếu.
+   * VC: ưu tiên logistics_company_id (công ty vận chuyển).
    */
   useEffect(() => {
     const embedded = project?.[MOD.stagesKey];
     if (Array.isArray(embedded) && embedded.length) return undefined;
-    const cid = project?.company_id || project?.company?.id;
+    const cid = moduleKey === 'vc'
+      ? (project?.logistics_company_id || project?.logistics_company?.id || project?.company_id || project?.company?.id)
+      : (project?.company_id || project?.company?.id);
     if (!cid) return undefined;
     const wtId = project?.workshop_type_id || project?.workshop_type?.id || null;
     const params = { company_id: cid };
-    if (wtId) params.workshop_type_id = wtId;
+    if (wtId && moduleKey !== 'vc') params.workshop_type_id = wtId;
     let cancelled = false;
     api.get(`${MOD.apiPrefix}/pipeline-stages`, { params }).then((r) => {
       if (cancelled) return;
@@ -1537,7 +1553,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
       setProductionStages(rows.length ? rows : []);
     }).catch(() => { if (!cancelled) setProductionStages([]); });
     return () => { cancelled = true; };
-  }, [MOD.apiPrefix, MOD.stagesKey, project?.company_id, project?.company?.id, project?.workshop_type_id, project?.workshop_type?.id, project?.[MOD.stagesKey]]);
+  }, [MOD.apiPrefix, MOD.stagesKey, moduleKey, project?.company_id, project?.company?.id, project?.logistics_company_id, project?.logistics_company?.id, project?.workshop_type_id, project?.workshop_type?.id, project?.[MOD.stagesKey]]);
 
   const loadProjectDocs = useCallback(async (projectId) => {
     try {
@@ -2404,10 +2420,10 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
           : defaultPipelineStages;
   const safePipelineStages = Array.isArray(pipelineStages) ? pipelineStages : [];
 
-  // VC dùng vc_kanban_column_id (logistics_pipeline_stages.id) để match stepper
+  // VC dùng vc_kanban_column_id (logistics_pipeline_stages.id) — không fallback workflow id.
   // SX phải dùng sx_kanban_column_id (production_pipeline_stages.id hoặc __fb_intake__) — không fallback workflow id.
   const currentStageId = moduleKey === 'vc'
-    ? (project.vc_kanban_column_id || project.current_stage_id || project.current_stage?.id)
+    ? resolveVcKanbanCurrentStageId(project, safePipelineStages)
     : resolveSxKanbanCurrentStageId(project, safePipelineStages);
   const primaryCrmDeal = project.crmDeals?.[0];
   const crmAssigneePerson = resolvePersonFromList(

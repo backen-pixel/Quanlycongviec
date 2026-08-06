@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
-import { formatVND, formatDate } from '../lib/utils';
+import { formatDate } from '../lib/utils';
 import { markWorkshopPipelineCardFocus } from '../lib/workshopPipelineStorage';
 import { KanbanBoardEdgeScrollChrome } from '../lib/kanbanEdgeScrollControls';
 
@@ -27,7 +27,6 @@ export function LogisticsListView({ pipeline, calculateDays }) {
               <th className={`${headerCellCls} min-w-[14rem]`}>Tên dự án</th>
               <th className={`${headerCellCls} min-w-[9rem]`}>Khách hàng</th>
               <th className={`${headerCellCls} min-w-[9rem]`}>Giai đoạn VC</th>
-              <th className={`${headerCellCls} text-right w-[7rem]`}>Giá trị</th>
               <th className={`${headerCellCls} min-w-[7.5rem]`}>CRM</th>
               <th className={`${headerCellCls} min-w-[7.5rem]`}>SX</th>
               <th className={`${headerCellCls} min-w-[7.5rem]`}>VC</th>
@@ -39,7 +38,7 @@ export function LogisticsListView({ pipeline, calculateDays }) {
           <tbody>
             {allProjects.length === 0 ? (
               <tr>
-                <td colSpan={11} className="text-center text-gray-400 py-12 text-sm border-b border-slate-200">Không có dự án nào</td>
+                <td colSpan={10} className="text-center text-gray-400 py-12 text-sm border-b border-slate-200">Không có dự án nào</td>
               </tr>
             ) : (
               allProjects.map((p) => {
@@ -74,9 +73,6 @@ export function LogisticsListView({ pipeline, calculateDays }) {
                       >
                         {p._stageName}
                       </span>
-                    </td>
-                    <td className={`${bodyCellCls} whitespace-nowrap text-right tabular-nums`}>
-                      <span className="font-semibold text-emerald-600">{formatVND(p.estimated_value)}</span>
                     </td>
                     <td className={`${bodyCellCls} max-w-[9rem]`}>
                       <span className="text-gray-600 truncate block" title={crmName}>{crmName}</span>
@@ -124,9 +120,8 @@ export function LogisticsPlannerView({ pipeline }) {
   allProjects.forEach((p) => {
     const key = p.logistics_person?.full_name || p.production_person?.full_name || '__unassigned';
     const label = p.logistics_person?.full_name || p.production_person?.full_name || '(Chưa phân công)';
-    if (!byPerson[key]) byPerson[key] = { label, projects: [], value: 0 };
+    if (!byPerson[key]) byPerson[key] = { label, projects: [] };
     byPerson[key].projects.push(p);
-    byPerson[key].value += Number(p.estimated_value) || 0;
   });
 
   const groups = Object.values(byPerson).sort((a, b) => {
@@ -149,7 +144,7 @@ export function LogisticsPlannerView({ pipeline }) {
                 </div>
                 <div>
                   <p className="text-sm font-semibold text-gray-900">{g.label}</p>
-                  <p className="text-xs text-gray-500">{g.projects.length} dự án · {formatVND(g.value)}</p>
+                  <p className="text-xs text-gray-500">{g.projects.length} dự án</p>
                 </div>
               </div>
             </div>
@@ -160,7 +155,6 @@ export function LogisticsPlannerView({ pipeline }) {
                   style={{ borderLeft: `3px solid ${p._stageColor || '#f97316'}` }}>
                   <div className="flex items-center justify-between mb-1">
                     <span className="text-xs font-mono font-semibold text-orange-600">{p.code}</span>
-                    {p.estimated_value > 0 && <span className="text-xs font-bold text-emerald-600">{formatVND(p.estimated_value)}</span>}
                   </div>
                   <p className="text-sm font-medium text-gray-900 truncate mb-1">{p.name}</p>
                   <p className="text-xs text-gray-500 truncate">{p.customer?.full_name}</p>
@@ -517,9 +511,6 @@ function VcDeadlineCard({ item, goProject }) {
               ? ' · Deadline'
               : ''}
         </span>
-        {Number(item.estimated_value) > 0 && (
-          <span className="font-semibold text-gray-900 text-force-black">{formatVND(item.estimated_value)}</span>
-        )}
       </div>
     </div>
   );
@@ -622,7 +613,6 @@ export function LogisticsDeadlineView({ pipeline }) {
       <VcDeadlineBoardShell>
         {VC_DEADLINE_BUCKETS.map((b) => {
           const items = grouped[b.key] || [];
-          const totalValue = items.reduce((s, it) => s + (Number(it.estimated_value) || 0), 0);
           const isDragOver = dragOverKey === b.key;
           return (
             <VcDeadlineColumn
@@ -630,7 +620,6 @@ export function LogisticsDeadlineView({ pipeline }) {
               topBarColor={b.color}
               title={b.label}
               count={items.length}
-              subtitle={totalValue > 0 ? `Giá trị: ${formatVND(totalValue)}` : undefined}
               isDragOver={isDragOver}
               onDragOver={(e) => {
                 e.preventDefault();

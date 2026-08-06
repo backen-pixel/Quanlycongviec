@@ -10,7 +10,6 @@ import {
   workshopCompaniesForCrossViewer,
 } from '../lib/crossWorkshopProduction';
 import { getSocket } from '../lib/socket';
-import { formatVND } from '../lib/utils';
 import {
   getWorkshopDateRange, WS_TIME_PRESETS, WS_KANBAN_LOAD_OPTIONS, WS_KANBAN_LOAD_ALL_MAX,
   workshopCreatedInRange, fetchWorkshopProjectPages,
@@ -29,7 +28,7 @@ import KanbanColumnVirtualList from '../components/KanbanColumnVirtualList';
 import KanbanCardQuickMove from '../components/KanbanCardQuickMove';
 import {
   useKanbanColumnTheme, KANBAN_CARDS_BODY_CLASS, UI_KANBAN_FIXED_CLASS,
-  KANBAN_BOARD_COLUMN_RAILS_CLASS, KANBAN_COLUMN_RAIL_CLASS, KANBAN_COLUMN_VALUE_METRIC_CLASS,
+  KANBAN_BOARD_COLUMN_RAILS_CLASS, KANBAN_COLUMN_RAIL_CLASS,
   KANBAN_CARDS_BODY_EMPTY_PIN_CLASS, KANBAN_COLUMN_EMPTY_CLASS, KANBAN_COLUMN_EMPTY_PIN_CLASS,
   useKanbanEmptyPlaceholderStickyTop,
 } from '../lib/kanbanColumnTheme';
@@ -82,16 +81,12 @@ function storeVcFilterPanelPos(pos) {
 }
 
 const DEFAULT_VC_STAGES = [
-  { id: 'vc_intake', name: 'Chờ vận chuyển', slug: 'delivery_pending', icon: '📦', color: '#f97316', bucket_slug: INTAKE_BUCKET },
-  { id: 'vc_ship', name: 'Đang vận chuyển', slug: 'delivery', icon: '🚚', color: '#ea580c' },
-  { id: 'vc_install', name: 'Đang lắp đặt', slug: 'installation', icon: '🔧', color: '#d97706' },
-  { id: 'vc_warranty', name: 'Bảo hành', slug: 'customer-care', icon: '🤝', color: '#0f766e' },
-];
-
-/** Tab pipeline VC — tách «Vận chuyển» / «Lắp đặt» giống 2 tab Deal/Đơn hàng của CRM. */
-const VC_PIPELINE_TABS = [
-  { id: 'shipping', label: 'Vận chuyển', icon: '🚚' },
-  { id: 'install', label: 'Lắp đặt', icon: '🔧' },
+  { id: 'vc_intake', name: 'Tiếp nhận', slug: 'delivery_pending', icon: '📦', color: '#f97316', bucket_slug: INTAKE_BUCKET },
+  { id: 'vc_shipping', name: 'Đang giao', slug: 'delivery', icon: '🚚', color: '#ea580c' },
+  { id: 'vc_delivered', name: 'Đã giao', slug: 'delivered', icon: '📬', color: '#c2410c' },
+  { id: 'vc_install', name: 'Lắp đặt', slug: 'installation', icon: '🔧', color: '#d97706' },
+  { id: 'vc_acceptance', name: 'Nghiệm thu - bàn giao', slug: 'acceptance', icon: '📋', color: '#0d9488' },
+  { id: 'vc_done', name: 'Hoàn thiện', slug: 'completed', icon: '✅', color: '#16a34a' },
 ];
 
 const LS_VC = 'vc_dash_filters_v1';
@@ -138,7 +133,6 @@ export default function LogisticsDashboard() {
     const v = P0?.viewMode;
     return WS_DASH_VIEW_MODES.includes(v) ? v : 'kanban';
   });
-  const [vcPipelineTab, setVcPipelineTab] = useState(() => (P0?.vcPipelineTab === 'install' ? 'install' : 'shipping'));
   const [showNewProject, setShowNewProject] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleteReason, setDeleteReason] = useState('');
@@ -380,13 +374,13 @@ export default function LogisticsDashboard() {
       localStorage.setItem(LS_VC, JSON.stringify({
         filterCompany, timePreset, customFrom, customTo, kanbanLoadKey,
         filterPersonId, filterPersonName, filterRegion, filterPhone, filterWorkTypeId,
-        searchQuery, priorityFilter, stageFilter, viewMode, vcPipelineTab,
+        searchQuery, priorityFilter, stageFilter, viewMode,
         showAdvFilter, kanbanColumnScrollMode, sortBy,
       }));
     } catch { /* ignore */ }
   }, [
     filterCompany, timePreset, customFrom, customTo, kanbanLoadKey, filterPersonId, filterPersonName,
-    filterRegion, filterPhone, filterWorkTypeId, searchQuery, priorityFilter, stageFilter, viewMode, vcPipelineTab,
+    filterRegion, filterPhone, filterWorkTypeId, searchQuery, priorityFilter, stageFilter, viewMode,
     showAdvFilter, kanbanColumnScrollMode, sortBy,
   ]);
 
@@ -572,37 +566,6 @@ export default function LogisticsDashboard() {
     }));
   }, [pipeline, scopeProjects]);
 
-  /** Số dự án theo từng tab «Vận chuyển» / «Lắp đặt» — dùng để hiện badge trên tab. */
-  const vcTabCounts = useMemo(() => {
-    let shipping = 0;
-    let install = 0;
-    kanbanPipeline.forEach((stage) => {
-      const n = stage.items?.length || 0;
-      if (isInstallVcStage(stage)) install += n;
-      else shipping += n;
-    });
-    return { shipping, install };
-  }, [kanbanPipeline]);
-
-  /** Tách pipeline VC theo tab — cột nào tên chứa "lắp" (hoặc bucket_slug chứa "install") vào tab Lắp đặt. */
-  const tabKanbanPipeline = useMemo(() => {
-    return kanbanPipeline.filter((stage) => (
-      vcPipelineTab === 'install' ? isInstallVcStage(stage) : !isInstallVcStage(stage)
-    ));
-  }, [kanbanPipeline, vcPipelineTab]);
-
-  const switchVcTab = useCallback((tab) => {
-    setVcPipelineTab(tab);
-    setStageFilter((prev) => {
-      if (!prev) return prev;
-      const baseStages = pipeline.length ? pipeline : DEFAULT_VC_STAGES;
-      const stillValid = baseStages.some((s) => (
-        String(s.id) === String(prev) && (tab === 'install' ? isInstallVcStage(s) : !isInstallVcStage(s))
-      ));
-      return stillValid ? prev : '';
-    });
-  }, [pipeline]);
-
   const filteredKanbanPipeline = useMemo(() => {
     const sortItems = (arr) => {
       const list = [...arr];
@@ -621,7 +584,7 @@ export default function LogisticsDashboard() {
       }
       return list;
     };
-    const result = tabKanbanPipeline.map((stage) => ({
+    const result = kanbanPipeline.map((stage) => ({
       ...stage,
       items: sortItems(stage.items.filter((p) => {
         if (searchQuery) {
@@ -640,7 +603,7 @@ export default function LogisticsDashboard() {
     }));
     filteredKanbanPipelineRef.current = result;
     return result;
-  }, [tabKanbanPipeline, searchQuery, priorityFilter, stageFilter, sortBy]);
+  }, [kanbanPipeline, searchQuery, priorityFilter, stageFilter, sortBy]);
 
   const filteredProjectCount = useMemo(
     () => filteredKanbanPipeline.reduce((n, s) => n + s.items.length, 0),
@@ -715,8 +678,6 @@ export default function LogisticsDashboard() {
         ...(willJumpToInstall ? { status: 'installing' } : {}),
       } : p)));
 
-    if (willJumpToInstall) setVcPipelineTab('install');
-
     try {
       // Gửi id cột gate (có cờ → LĐ); backend tự nhảy sang cột Lắp đặt
       const body = { vc_stage_id: targetCol.id };
@@ -736,7 +697,7 @@ export default function LogisticsDashboard() {
           } : p)));
       }
     } catch (e) { console.error(e); load(); }
-  }, [load, projects, kanbanPipeline, setVcPipelineTab]);
+  }, [load, projects, kanbanPipeline]);
 
   const handleDeleteCard = useCallback((projectId, projectLabel) => {
     if (!projectId) return;
@@ -898,7 +859,7 @@ export default function LogisticsDashboard() {
   }, []);
 
   const overdueItems = useMemo(() => {
-    const list = (tabKanbanPipeline || []).flatMap((s) => (s.items || []).map((p) => ({
+    const list = (kanbanPipeline || []).flatMap((s) => (s.items || []).map((p) => ({
       ...p,
       stageName: s.name,
     })));
@@ -913,7 +874,7 @@ export default function LogisticsDashboard() {
         overdueMs: Date.now() - new Date(p.deadline).getTime(),
       }))
       .sort((a, b) => b.overdueMs - a.overdueMs);
-  }, [tabKanbanPipeline]);
+  }, [kanbanPipeline]);
 
   const focusOverdueItem = useCallback((it) => {
     const el = document.querySelector(`[data-vc-kanban-card="${it.id}"]`);
@@ -945,47 +906,29 @@ export default function LogisticsDashboard() {
     });
   }, []);
 
-  /** KPI theo tab đang mở — giống CRM đổi KPI theo Lead/Deal. */
+  /** KPI toàn pipeline VC + Lắp đặt. */
   const tabKpis = useMemo(() => {
-    const list = tabKanbanPipeline.flatMap((s) => s.items || []);
+    const list = kanbanPipeline.flatMap((s) => s.items || []);
     const overdue = list.filter(
       (p) => p.deadline && new Date(p.deadline) < new Date() && p.status !== 'completed',
     ).length;
-    const valueSum = list.reduce((sum, p) => sum + (Number(p.estimated_value) || 0), 0);
-    if (vcPipelineTab === 'install') {
-      return {
-        total: list.length,
-        shipping: 0,
-        installing: list.filter((p) => p.status === 'installing' || p.current_stage?.slug === 'installation').length || list.length,
-        warranty: 0,
-        completed: list.filter((p) => p.status === 'completed').length,
-        overdue,
-        valueSum,
-        avgProgress: list.length
-          ? Math.round(list.reduce((s, p) => s + (p.progress || 0), 0) / list.length)
-          : 0,
-      };
-    }
     return {
       total: list.length,
       shipping: list.filter((p) => p.status === 'shipping' || p.current_stage?.slug === 'delivery').length,
-      installing: 0,
+      installing: list.filter((p) => p.status === 'installing' || p.current_stage?.slug === 'installation').length,
       warranty: list.filter((p) => p.status === 'warranty' || p.current_stage?.slug === 'customer-care').length,
       completed: list.filter((p) => p.status === 'completed').length,
       overdue,
-      valueSum,
       avgProgress: list.length
         ? Math.round(list.reduce((s, p) => s + (p.progress || 0), 0) / list.length)
         : 0,
     };
-  }, [tabKanbanPipeline, vcPipelineTab]);
+  }, [kanbanPipeline]);
 
   const ctrlH = 'h-8';
   const ctrlIcon = 'h-7 w-7';
   const ctrlTxt = 'text-xs';
   const toolbarBtn = `${ctrlH} px-2 rounded-md ${ctrlTxt} font-medium inline-flex items-center gap-1 cursor-pointer transition-colors shrink-0`;
-  const activeTabLabel = vcPipelineTab === 'install' ? 'Lắp đặt' : 'Vận chuyển';
-  const tabCountLabel = (n) => (n > 0 ? ` ${n.toLocaleString('vi-VN')}` : '');
 
   if (loading) {
     return (
@@ -1003,26 +946,16 @@ export default function LogisticsDashboard() {
           {/* Hàng 1 — tab pipeline & hành động */}
           <div className="flex items-center justify-between gap-1.5 flex-wrap px-2.5 py-1 sm:px-3 bg-slate-50/50">
             <div className="flex items-center gap-1 min-w-0">
-              <div data-tour="vc-pipeline-tabs" className="inline-flex gap-px p-0.5 bg-slate-200/60 border border-slate-300/50 rounded-lg shrink-0">
-                {VC_PIPELINE_TABS.map((t) => {
-                  const active = vcPipelineTab === t.id;
-                  const count = t.id === 'install' ? vcTabCounts.install : vcTabCounts.shipping;
-                  return (
-                    <button
-                      key={t.id}
-                      type="button"
-                      onClick={() => switchVcTab(t.id)}
-                      className={`rounded-md font-semibold transition-colors flex items-center gap-1 px-2 py-1 text-[11px] whitespace-nowrap cursor-pointer ${
-                        active
-                          ? (t.id === 'install' ? 'bg-white text-amber-700 shadow-sm' : 'bg-white text-orange-700 shadow-sm')
-                          : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
-                      }`}
-                    >
-                      <span aria-hidden>{t.icon}</span>
-                      {t.label}{tabCountLabel(count)}
-                    </button>
-                  );
-                })}
+              <div
+                data-tour="vc-pipeline-tabs"
+                className="inline-flex items-center gap-1.5 h-7 px-2 rounded-md border border-orange-200/80 bg-white text-[11px] font-semibold text-orange-700 shrink-0"
+                title="Pipeline Vận chuyển & Lắp đặt"
+              >
+                <Truck className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                <span className="whitespace-nowrap">Vận chuyển / Lắp đặt</span>
+                {tabKpis.total > 0 && (
+                  <span className="tabular-nums text-orange-600/80 font-bold">{tabKpis.total.toLocaleString('vi-VN')}</span>
+                )}
               </div>
               {canPickCompany && workshopCompanyPickerList.length > 0 && (
                 <label
@@ -1184,7 +1117,7 @@ export default function LogisticsDashboard() {
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder={vcPipelineTab === 'install' ? 'Tìm dự án lắp đặt, KH, SĐT, mã…' : 'Tìm dự án VC, KH, SĐT, mã…'}
+                  placeholder="Tìm dự án VC/LĐ, KH, SĐT, mã…"
                   className={`flex-1 min-w-[3.5rem] ${ctrlH} bg-transparent border-0 ${ctrlTxt} font-medium text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-0 ${searchQuery ? 'pr-7' : ''}`}
                 />
                 {searchQuery && (
@@ -1427,7 +1360,7 @@ export default function LogisticsDashboard() {
             workshopCompanyPickerList={workshopCompanyPickerList}
             showAllWorkshopOption={false}
             hideCompanySelect
-            pipeline={tabKanbanPipeline}
+            pipeline={kanbanPipeline}
             stageFilter={stageFilter}
             setStageFilter={setStageFilter}
             filterWorkTypeId={filterWorkTypeId}
@@ -1469,18 +1402,13 @@ export default function LogisticsDashboard() {
             <BarChart3 className="h-3.5 w-3.5 shrink-0 text-orange-600" aria-hidden />
             <span className="text-[11px] font-semibold text-slate-800 shrink-0 whitespace-nowrap">
               KPI
-              <span className={`ml-1 font-medium ${vcPipelineTab === 'install' ? 'text-amber-600' : 'text-orange-600'}`}>
-                · {activeTabLabel}
-              </span>
+              <span className="ml-1 font-medium text-orange-600">· VC / LĐ</span>
             </span>
             {!kpiPanelOpen && (
               <span className="min-w-0 flex-1 truncate text-[10px] text-slate-500 ml-2">
                 Tổng {tabKpis.total.toLocaleString('vi-VN')}
-                {vcPipelineTab === 'install'
-                  ? ` · Lắp đặt ${tabKpis.installing}`
-                  : ` · VC ${tabKpis.shipping} · BH ${tabKpis.warranty}`}
+                {` · VC ${tabKpis.shipping} · LĐ ${tabKpis.installing} · BH ${tabKpis.warranty}`}
                 {tabKpis.overdue > 0 ? ` · Quá hạn ${tabKpis.overdue}` : ''}
-                {' · '}{formatVND(tabKpis.valueSum)}
               </span>
             )}
             <span className="shrink-0 ml-auto flex items-center gap-0.5 text-[10px] font-medium text-slate-500">
@@ -1492,49 +1420,40 @@ export default function LogisticsDashboard() {
           </button>
 
           {kpiPanelOpen && (
-            <div className={`border-t border-orange-100/70 bg-white/40 px-2 sm:px-3 pb-2 pt-2 grid items-stretch gap-2 ${
-              vcPipelineTab === 'install'
-                ? 'grid-cols-2 sm:grid-cols-4'
-                : 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-6'
-            }`}
-            >
+            <div className="border-t border-orange-100/70 bg-white/40 px-2 sm:px-3 pb-2 pt-2 grid items-stretch gap-2 grid-cols-2 sm:grid-cols-3 lg:grid-cols-6">
+              {/* Không hiện KPI «Giá trị» trên VC/LĐ */}
               <KPICard
                 compact
                 icon={<Package className="h-3 w-3" />}
                 iconBgColor="bg-orange-100"
                 iconColor="text-orange-600"
-                label={vcPipelineTab === 'install' ? 'Tổng lắp đặt' : 'Tổng vận chuyển'}
+                label="Tổng VC / LĐ"
                 value={tabKpis.total}
               />
-              {vcPipelineTab === 'install' ? (
-                <KPICard
-                  compact
-                  icon={<Wrench className="h-3 w-3" />}
-                  iconBgColor="bg-amber-100"
-                  iconColor="text-amber-600"
-                  label="Đang lắp đặt"
-                  value={tabKpis.installing}
-                />
-              ) : (
-                <>
-                  <KPICard
-                    compact
-                    icon={<Truck className="h-3 w-3" />}
-                    iconBgColor="bg-orange-100"
-                    iconColor="text-orange-600"
-                    label="Đang vận chuyển"
-                    value={tabKpis.shipping}
-                  />
-                  <KPICard
-                    compact
-                    icon={<ShieldCheck className="h-3 w-3" />}
-                    iconBgColor="bg-teal-100"
-                    iconColor="text-teal-600"
-                    label="Bảo hành"
-                    value={tabKpis.warranty}
-                  />
-                </>
-              )}
+              <KPICard
+                compact
+                icon={<Truck className="h-3 w-3" />}
+                iconBgColor="bg-orange-100"
+                iconColor="text-orange-600"
+                label="Đang vận chuyển"
+                value={tabKpis.shipping}
+              />
+              <KPICard
+                compact
+                icon={<Wrench className="h-3 w-3" />}
+                iconBgColor="bg-amber-100"
+                iconColor="text-amber-600"
+                label="Đang lắp đặt"
+                value={tabKpis.installing}
+              />
+              <KPICard
+                compact
+                icon={<ShieldCheck className="h-3 w-3" />}
+                iconBgColor="bg-teal-100"
+                iconColor="text-teal-600"
+                label="Bảo hành"
+                value={tabKpis.warranty}
+              />
               <KPICard
                 compact
                 icon={<CheckCircle2 className="h-3 w-3" />}
@@ -1551,26 +1470,6 @@ export default function LogisticsDashboard() {
                 label="Quá hạn"
                 value={tabKpis.overdue}
               />
-              {vcPipelineTab === 'install' && (
-                <KPICard
-                  compact
-                  icon={<Package className="h-3 w-3" />}
-                  iconBgColor="bg-emerald-100"
-                  iconColor="text-emerald-600"
-                  label="Giá trị"
-                  value={formatVND(tabKpis.valueSum)}
-                />
-              )}
-              {vcPipelineTab !== 'install' && (
-                <KPICard
-                  compact
-                  icon={<Package className="h-3 w-3" />}
-                  iconBgColor="bg-emerald-100"
-                  iconColor="text-emerald-600"
-                  label="Giá trị"
-                  value={formatVND(tabKpis.valueSum)}
-                />
-              )}
             </div>
           )}
         </section>
@@ -1602,8 +1501,7 @@ export default function LogisticsDashboard() {
       {viewMode === 'kanban' && (
         <KanbanView pipeline={filteredKanbanPipeline} onMoveStage={handleMoveStage} onDelete={handleDeleteCard}
           calculateDays={calculateDays} selectedIds={selectedIds} onToggleSelect={toggleSelect}
-          onSelectColumn={selectColumn} columnScrollMode={kanbanColumnScrollMode}
-          vcPipelineTab={vcPipelineTab} />
+          onSelectColumn={selectColumn} columnScrollMode={kanbanColumnScrollMode} />
       )}
       {viewMode === 'list' && <LogisticsListView pipeline={filteredKanbanPipeline} calculateDays={calculateDays} />}
       {viewMode === 'planner' && <LogisticsPlannerView pipeline={filteredKanbanPipeline} />}
@@ -1772,7 +1670,7 @@ function KPICard({ icon, iconBgColor, iconColor, label, value, compact }) {
 // Kanban Stage Column
 const KanbanStageCard = memo(function KanbanStageCard({
   stage, items, onMoveStage, onDelete, calculateDays, selectedIds, onToggleSelect, onSelectColumn,
-  columnIndex = 0, pipelineStages = [], vcPipelineTab = 'shipping',
+  columnIndex = 0, pipelineStages = [],
   columnScrollMode = 'unified', boardScrollRef = null,
 }) {
   const [isOverColumn, setIsOverColumn] = useState(false);
@@ -1794,9 +1692,8 @@ const KanbanStageCard = memo(function KanbanStageCard({
       onDelete={onDelete}
       onMoveStage={onMoveStage}
       pipelineStages={pipelineStages}
-      vcPipelineTab={vcPipelineTab}
     />
-  ), [stage, calculateDays, selectedIds, onToggleSelect, onDelete, onMoveStage, pipelineStages, vcPipelineTab]);
+  ), [stage, calculateDays, selectedIds, onToggleSelect, onDelete, onMoveStage, pipelineStages]);
 
   return (
     <div
@@ -1855,9 +1752,6 @@ const KanbanStageCard = memo(function KanbanStageCard({
             )}
           </div>
         </div>
-        <p className={`text-xs ${KANBAN_COLUMN_VALUE_METRIC_CLASS}`}>
-          Giá trị: {formatVND(items.reduce((sum, p) => sum + (Number(p.estimated_value) || 0), 0))}
-        </p>
       </div>
       <div
         ref={containerRef}
@@ -1893,7 +1787,7 @@ const KanbanStageCard = memo(function KanbanStageCard({
 
 // Kanban Card
 const KanbanCard = memo(function KanbanCard({
-  item, stage, calculateDays, isSelected, onToggleSelect, onDelete, onMoveStage, pipelineStages = [], vcPipelineTab = 'shipping',
+  item, stage, calculateDays, isSelected, onToggleSelect, onDelete, onMoveStage, pipelineStages = [],
 }) {
   const navigate = useNavigate();
   const handleDragStart = (e) => {
@@ -1905,14 +1799,14 @@ const KanbanCard = memo(function KanbanCard({
     e.dataTransfer.setData('projectId', item.id);
   };
   const stageColor = stage.color || '#f97316';
-  const isInstallTab = vcPipelineTab === 'install';
-  const doneTasks = isInstallTab
+  const isInstallStage = isInstallVcStage(stage);
+  const doneTasks = isInstallStage
     ? (item.done_tasks_install ?? 0)
     : (item.done_tasks_vc ?? item.done_tasks ?? 0);
-  const totalTasks = isInstallTab
+  const totalTasks = isInstallStage
     ? (item.task_total_install ?? 0)
     : (item.task_total_vc ?? item.task_total ?? 0);
-  const taskBadgeTitle = isInstallTab ? 'Nhiệm vụ Lắp đặt' : 'Nhiệm vụ Vận chuyển';
+  const taskBadgeTitle = isInstallStage ? 'Nhiệm vụ Lắp đặt' : 'Nhiệm vụ Vận chuyển';
   const deals = Array.isArray(item.crm_deals) ? item.crm_deals : [];
   const primaryDeal = deals.find((d) => String(d?.type || '') === 'deal') || deals[0] || null;
   const cardTitle = (primaryDeal?.title || '').trim() || item.name || '';
@@ -1928,7 +1822,7 @@ const KanbanCard = memo(function KanbanCard({
     markWorkshopPipelineCardFocus(item.id, 'vc');
     const qs = new URLSearchParams();
     if (tab) qs.set('tab', tab);
-    qs.set('vcTab', isInstallTab ? 'install' : 'shipping');
+    qs.set('vcTab', isInstallStage ? 'install' : 'shipping');
     navigate(`/vc/projects/${item.id}?${qs.toString()}`);
   };
 
@@ -2009,9 +1903,6 @@ const KanbanCard = memo(function KanbanCard({
 
       <div className="flex items-start justify-between pr-7 mb-2">
         <p className="text-xs font-semibold text-orange-600">{item.code}</p>
-        {item.estimated_value > 0 && (
-          <p className="text-sm font-bold text-emerald-600 text-right leading-tight max-w-[55%]">{formatVND(item.estimated_value)}</p>
-        )}
       </div>
 
       <div className="flex items-start gap-1.5 min-w-0 mb-2">
@@ -2151,7 +2042,7 @@ const KanbanCard = memo(function KanbanCard({
 // Kanban View Container
 function KanbanView({
   pipeline, onMoveStage, onDelete, calculateDays, selectedIds, onToggleSelect, onSelectColumn,
-  vcPipelineTab = 'shipping', columnScrollMode = 'unified',
+  columnScrollMode = 'unified',
 }) {
   const boardScrollRef = useRef(null);
   const pipelineStages = useMemo(
@@ -2179,7 +2070,6 @@ function KanbanView({
             onToggleSelect={onToggleSelect}
             onSelectColumn={onSelectColumn}
             pipelineStages={pipelineStages}
-            vcPipelineTab={vcPipelineTab}
             columnScrollMode={columnScrollMode}
             boardScrollRef={boardScrollRef}
           />
