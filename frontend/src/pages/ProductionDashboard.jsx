@@ -159,15 +159,16 @@ const SX_ENSURE_INITIAL_PER_COLUMN = 12;
 
 /** Tổng badge cột intake = UUID cột + thẻ null (`__none__`) — không dùng `??` (sẽ bỏ một phía). */
 function intakeColumnServerTotal(stage, stageCounts) {
-  if (!stage) return NaN;
+  if (!stage || !stageCounts || typeof stageCounts !== 'object') return NaN;
   const id = String(stage.id || '');
-  const byId = Number(stageCounts?.[id]) || 0;
   if (stage.bucket_slug !== INTAKE_BUCKET) {
-    return Number.isFinite(Number(stageCounts?.[id])) ? Number(stageCounts[id]) : NaN;
+    return Number.isFinite(Number(stageCounts[id])) ? Number(stageCounts[id]) : NaN;
   }
-  const byNone = Number(stageCounts?.__none__) || 0;
-  if (byId <= 0 && byNone <= 0) return NaN;
-  return byId + byNone;
+  const hasId = Object.prototype.hasOwnProperty.call(stageCounts, id);
+  const hasNone = Object.prototype.hasOwnProperty.call(stageCounts, '__none__');
+  if (!hasId && !hasNone) return NaN;
+  // 0+0 hợp lệ (cột trống đã có summary) — không trả NaN rồi fallback đếm thẻ tải dần.
+  return (Number(stageCounts[id]) || 0) + (Number(stageCounts.__none__) || 0);
 }
 
 /**
@@ -858,7 +859,7 @@ export default function ProductionDashboard() {
     projectPageLoadingRef.current = false;
     stagePageLoadingRef.current.clear();
     setProjectPageState((prev) => ({ ...prev, hasMore: false, loading: false }));
-    setPipelineStageCounts({});
+    // Giữ pipelineStageCounts cũ đến khi summary=1 về — badge cột hiện tổng ngay, không cộng dần theo thẻ tải.
     // KPI server (Tổng/Quá hạn/Đang SX…) gắn với filter hiện tại — không giữ số công ty cũ.
     setStagePageState({});
     const isStale = () => seq !== loadSeqRef.current;
@@ -924,10 +925,12 @@ export default function ProductionDashboard() {
       });
       const cachedStageKpis = readSxStageKpisCache(stageKpiCacheKey);
       if (cachedStageKpis) {
+        // Hit cache đúng filter (công ty…) → hiện liền.
         setSummaryStageKpis(cachedStageKpis);
       } else {
+        // Miss: xóa số công ty/filter trước — tránh kẹt KPI cũ khi đổi công ty.
+        // Không đếm card từng đợt trong lúc chờ (xem scopeKpis + summaryKpisPending).
         setSummaryStageKpis(null);
-        setDeadlineBucketCounts({});
       }
       setSummaryKpisPending(true);
 
@@ -943,18 +946,14 @@ export default function ProductionDashboard() {
           : {};
         setDeadlineBucketCounts(dlCounts);
         const sk = data?.stage_kpis && typeof data.stage_kpis === 'object' ? data.stage_kpis : null;
-        if (sk) {
-          const nextKpis = {
-            producing: Number(sk.producing) || 0,
-            awaiting_delivery: Number(sk.awaiting_delivery) || 0,
-            shipped: Number(sk.shipped) || 0,
-          };
-          setSummaryStageKpis(nextKpis);
-          writeSxStageKpisCache(stageKpiCacheKey, nextKpis);
-        } else {
-          // BE chưa có stage_kpis → đếm theo card của filter hiện tại (không giữ số công ty cũ).
-          setSummaryStageKpis(null);
-        }
+        const nextKpis = {
+          producing: Number(sk?.producing) || 0,
+          awaiting_delivery: Number(sk?.awaiting_delivery) || 0,
+          shipped: Number(sk?.shipped) || 0,
+        };
+        // Luôn ghi đè theo filter hiện tại (kể cả 0) — đổi công ty phải cập nhật KPI.
+        setSummaryStageKpis(nextKpis);
+        writeSxStageKpisCache(stageKpiCacheKey, nextKpis);
         setSummaryKpisPending(false);
         setProjectPageState((prev) => ({ ...prev, total: Number(data?.total) || 0 }));
         setStagePageState((prev) => {
@@ -976,7 +975,7 @@ export default function ProductionDashboard() {
       }).catch(() => {
         if (!isStale()) {
           setSummaryKpisPending(false);
-          setSummaryStageKpis(null);
+          // Giữ KPI cũ khi summary lỗi — không về đếm card cộng dồn.
         }
       });
 
@@ -2410,15 +2409,24 @@ export default function ProductionDashboard() {
         ? serverOverdue
         : countSxDeadlineViewOverdue(filteredKanbanPipeline)
     );
-    // Cùng nguồn summary=1 với Tổng/Quá hạn. Không có summary → đếm card filter hiện tại.
-    const producingCount = (canUseServerTotal && summaryStageKpis)
-      ? summaryStageKpis.producing
+    // Cùng nguồn summary=1 với Tổng/Quá hạn.
+    // - Có summaryStageKpis → hiện số server (đổi công ty sẽ được ghi đè).
+    // - Đang chờ summary (pending, chưa có số) → '…' — không đếm card cộng dần, không giữ số công ty cũ.
+    // - Filter chỉ client → đếm card đã load.
+    const producingCount = canUseServerTotal
+      ? (summaryStageKpis
+        ? (Number(summaryStageKpis.producing) || 0)
+        : (summaryKpisPending ? '…' : revenue.producing))
       : revenue.producing;
-    const awaitingCount = (canUseServerTotal && summaryStageKpis)
-      ? summaryStageKpis.awaiting_delivery
+    const awaitingCount = canUseServerTotal
+      ? (summaryStageKpis
+        ? (Number(summaryStageKpis.awaiting_delivery) || 0)
+        : (summaryKpisPending ? '…' : revenue.awaitingDelivery))
       : revenue.awaitingDelivery;
-    const shippedCount = (canUseServerTotal && summaryStageKpis)
-      ? summaryStageKpis.shipped
+    const shippedCount = canUseServerTotal
+      ? (summaryStageKpis
+        ? (Number(summaryStageKpis.shipped) || 0)
+        : (summaryKpisPending ? '…' : revenue.shipped))
       : revenue.shipped;
     if (!list.length && !summaryStageKpis && !hasServerOverdue) {
       return {
@@ -2460,7 +2468,7 @@ export default function ProductionDashboard() {
     };
   }, [
     scopeProjects, pipeline, filteredKanbanPipeline, projectPageState.total,
-    deadlineBucketCounts, summaryStageKpis,
+    deadlineBucketCounts, summaryStageKpis, summaryKpisPending,
     deferredPersonName, filterRegion, filterPhone, dealCompanyExternalFilter,
   ]);
 
@@ -3557,9 +3565,24 @@ export default function ProductionDashboard() {
         <div className="px-3 py-2 sm:px-4 border-b border-slate-100 bg-slate-50/40">
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-7 gap-1.5 sm:gap-2">
             <KPICard accent="bg-violet-500" label="Tổng dự án" value={scopeKpis.total} descriptor={scopeKpis.total > 0 ? `${scopeKpis.total} dự án` : '—'} />
-            <KPICard accent="bg-teal-500" label="Đang sản xuất" value={scopeKpis.producing} descriptor={scopeKpis.producing > 0 ? `${scopeKpis.producing} dự án` : '—'} />
-            <KPICard accent="bg-slate-500" label="Chờ vận chuyển" value={scopeKpis.awaiting_delivery} descriptor={scopeKpis.awaiting_delivery > 0 ? 'ở cột bàn giao VC' : '—'} />
-            <KPICard accent="bg-blue-500" label="Đã vận chuyển" value={scopeKpis.shipped} descriptor={scopeKpis.shipped > 0 ? 'đang / đã giao' : '—'} />
+            <KPICard
+              accent="bg-teal-500"
+              label="Đang sản xuất"
+              value={scopeKpis.producing}
+              descriptor={typeof scopeKpis.producing === 'number' && scopeKpis.producing > 0 ? `${scopeKpis.producing} dự án` : '—'}
+            />
+            <KPICard
+              accent="bg-slate-500"
+              label="Chờ vận chuyển"
+              value={scopeKpis.awaiting_delivery}
+              descriptor={typeof scopeKpis.awaiting_delivery === 'number' && scopeKpis.awaiting_delivery > 0 ? 'ở cột bàn giao VC' : '—'}
+            />
+            <KPICard
+              accent="bg-blue-500"
+              label="Đã vận chuyển"
+              value={scopeKpis.shipped}
+              descriptor={typeof scopeKpis.shipped === 'number' && scopeKpis.shipped > 0 ? 'đang / đã giao' : '—'}
+            />
             <KPICard accent="bg-red-500" label="Quá hạn" value={scopeKpis.overdue} descriptor={scopeKpis.overdue > 0 ? 'cột Deadline Quá hạn' : 'không có'} valueTone={scopeKpis.overdue > 0 ? 'danger' : undefined} />
             <KPICard
               accent="bg-amber-500"
@@ -4177,6 +4200,8 @@ const KanbanStageCard = memo(function KanbanStageCard({
   columnHasMore = false,
   columnLoading = false,
   stageCounts = null,
+  /** Tổng server đã biết từ KanbanView (counts / pageState) — ưu tiên hơn đếm thẻ đã tải. */
+  columnServerTotal = null,
 }) {
   const [isOverColumn, setIsOverColumn] = useState(false);
   const columnRef = useRef(null);
@@ -4198,8 +4223,16 @@ const KanbanStageCard = memo(function KanbanStageCard({
   const serverTotalRaw = stage?.bucket_slug === INTAKE_BUCKET
     ? intakeColumnServerTotal(stage, stageCounts)
     : Number(stageCounts?.[String(stage?.id)]);
-  const serverTotal = Number(serverTotalRaw);
-  const displayCount = Number.isFinite(serverTotal) ? serverTotal : items.length;
+  const fromCounts = Number(serverTotalRaw);
+  const fromProp = Number(columnServerTotal);
+  const serverTotal = Number.isFinite(fromProp)
+    ? fromProp
+    : (Number.isFinite(fromCounts) ? fromCounts : NaN);
+  // Badge = tổng server; nếu summary/race trả 0 trong khi cột đang có thẻ → ít nhất bằng số thẻ hiện có.
+  // Tránh lỗi «có card mà badge = 0» khi đổi filter (counts về sớm, list card chưa kịp thay).
+  const displayCount = Number.isFinite(serverTotal)
+    ? Math.max(serverTotal, items.length)
+    : (columnLoading && items.length === 0 ? null : items.length);
   const showPartialLoad = Number.isFinite(serverTotal) && items.length < serverTotal;
 
   const requestColumnLoadMore = useCallback(() => {
@@ -4338,9 +4371,9 @@ const KanbanStageCard = memo(function KanbanStageCard({
             }}
             title={showPartialLoad
               ? `${displayCount} đơn · đã tải ${items.length} — cuộn xuống để tải thêm`
-              : `${displayCount} đơn`}
+              : (displayCount != null ? `${displayCount} đơn` : 'Đang tải tổng…')}
           >
-            {showPartialLoad ? `${items.length}/${displayCount}` : displayCount}
+            {displayCount != null ? displayCount : '…'}
           </span>
             {stage.is_handover_to_logistics && (
             <span className="px-1 py-0.5 bg-orange-100 text-orange-600 text-[9px] font-bold rounded shrink-0">→VC</span>
@@ -5287,7 +5320,7 @@ function KanbanView({
           const loadColId = loadColIds[0] || String(stage.id || '');
           const pageStates = loadColIds.map((id) => stagePageState?.[id] || {});
           const pageState = pageStates[0] || {};
-          const serverColTotal = stage.bucket_slug === INTAKE_BUCKET
+          const serverColTotalRaw = stage.bucket_slug === INTAKE_BUCKET
             ? intakeColumnServerTotal(stage, stageCounts)
             : Number(
               stageCounts?.[loadColId]
@@ -5295,6 +5328,10 @@ function KanbanView({
               ?? pageState.total,
             );
           const loadedCount = stage.items?.length || 0;
+          // Đồng bộ với badge: không tin total=0 khi cột đang có thẻ (race summary vs list).
+          const serverColTotal = Number.isFinite(serverColTotalRaw)
+            ? Math.max(serverColTotalRaw, loadedCount)
+            : serverColTotalRaw;
           const anyExhausted = pageStates.length
             ? pageStates.every((s) => s.exhausted)
             : !!pageState.exhausted;
@@ -5331,6 +5368,7 @@ function KanbanView({
               onScrollNearEnd={columnHasMore ? () => onLoadMore?.(loadColIds.length ? loadColIds : [loadColId], { ensureInitial: false }) : null}
               onColumnVisibilityChange={handleColumnVisibilityChange}
               stageCounts={stageCounts}
+              columnServerTotal={Number.isFinite(serverColTotal) ? serverColTotal : null}
             />
           );
           if (!virtualItem) return column;
