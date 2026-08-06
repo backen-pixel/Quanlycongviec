@@ -1237,7 +1237,18 @@ export default function LeadDetail() {
     try {
       const { data } = await api.patch(`/crm/leads/${id}/stage`, { stage_id: stageId, ...extraData });
       if (data?.requires_conversion) setShowConvertModal(true);
-      if (data?.deal_won) autoCreateProject(id, null);
+      // Chỉ mở form tạo dự án khi chưa có project. Nếu đã tạo 1 phần (multi-SX)
+      // thì không gọi lại mode create (sẽ lỗi «Deal đã có dự án»).
+      if (data?.deal_won && !data?.project_id && !data?.project_auto_created?.project_id) {
+        autoCreateProject(id, null);
+      } else if (data?.project_auto_created?.partial_error || data?.project_auto_created?.warning) {
+        setAutoCreateError(data.project_auto_created.partial_error || data.project_auto_created.warning);
+        setAutoCreateStatus('error');
+        setAutoCreateResult(data.project_auto_created);
+      } else if (data?.project_auto_created?.project_id) {
+        setAutoCreateResult(data.project_auto_created);
+        setAutoCreateStatus('success');
+      }
       if (data?.id) {
         setLead((prev) =>
           prev
@@ -1616,16 +1627,21 @@ export default function LeadDetail() {
     setAddSxBusy(true);
     setAddSxErr('');
     try {
-      autoCreateCalledRef.current = false;
-      await autoCreateProject(
-        id,
-        addSxTargets[0]?.companyId,
-        addSxTargets[0]?.workshopTypeId || null,
-        addSxTargets,
-        'additional',
-      );
+      const { data } = await api.post(`/crm/deals/${id}/auto-create-project`, {
+        mode: 'additional',
+        targets: sxTargetsToApiPayload(addSxTargets),
+      });
       setAddSxOpen(false);
       setAddSxTargets([]);
+      if (data?.partial_error || data?.warning) {
+        setAutoCreateError(data.partial_error || data.warning);
+        setAutoCreateStatus('error');
+        setAutoCreateResult(data);
+      } else {
+        setAutoCreateResult(data);
+        setAutoCreateStatus('success');
+      }
+      load({ silent: true });
     } catch (e) {
       setAddSxErr(e.response?.data?.error || e.message || 'Lỗi thêm dự án SX');
     } finally {

@@ -248,13 +248,28 @@ async function autoCreateProjectFromWonDeal({
       });
       if (!one.ok) {
         if (results.length) {
+          // Đã tạo được ≥1 xưởng: coi như thành công một phần — tránh FE gọi lại
+          // auto-create (mode create) → lỗi «Deal đã có dự án» lúc được lúc không.
+          const coLabel = t.production_company_id || 'xưởng';
+          const partialMsg = `Đã tạo ${results.length}/${normalized.length} dự án SX. `
+            + `Dòng còn lại lỗi: ${one.error || 'không tạo được'} (${coLabel}). `
+            + 'Có thể dùng «+ Thêm dự án SX» để tạo tiếp.';
+          try {
+            const { ensureLeadMembersFromProjectStaff } = require('./productionWorkshopTypeStaff');
+            await ensureLeadMembersFromProjectStaff(dealId);
+          } catch (_) { /* ignore */ }
+          const first = results[0];
           return {
-            ok: false,
-            error: one.error || 'Lỗi tạo dự án',
-            statusCode: one.statusCode || 500,
+            ok: true,
+            project_id: primaryProjectId || first?.project_id,
+            project_code: first?.project_code,
+            project_name: first?.project_name,
+            tasks_created: results.reduce((s, r) => s + (r.tasks_created || 0), 0),
             projects: results,
-            primary_project_id: primaryProjectId,
+            primary_project_id: primaryProjectId || first?.project_id,
             partial: true,
+            partial_error: partialMsg,
+            warning: partialMsg,
           };
         }
         return one;

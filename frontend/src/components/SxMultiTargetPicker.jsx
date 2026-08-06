@@ -50,6 +50,7 @@ export default function SxMultiTargetPicker({
       workshopTypeId: r.workshopTypeId,
       production_company_id: r.companyId,
       workshop_type_id: r.workshopTypeId || null,
+      loading: !!r.loading,
     })));
   }, [onChange]);
 
@@ -85,6 +86,7 @@ export default function SxMultiTargetPicker({
           workshopTypeId: r.workshopTypeId,
           production_company_id: r.companyId,
           workshop_type_id: r.workshopTypeId || null,
+          loading: !!r.loading,
         })));
         return next;
       });
@@ -222,14 +224,25 @@ export function validateSxTargets(rows) {
   if (!Array.isArray(rows) || !rows.length) {
     return 'Vui lòng chọn ít nhất một công ty Sản xuất.';
   }
+  const seen = new Set();
   for (let i = 0; i < rows.length; i += 1) {
     const r = rows[i];
-    if (!r.companyId && !r.production_company_id) {
+    if (r.loading) {
+      return `Dòng ${i + 1}: đang tải phân loại — đợi xong rồi xác nhận.`;
+    }
+    const cid = r.companyId || r.production_company_id;
+    const tid = r.workshopTypeId || r.workshop_type_id;
+    if (!cid) {
       return `Dòng ${i + 1}: chưa chọn công ty SX.`;
     }
-    if (!r.workshopTypeId && !r.workshop_type_id) {
+    if (!tid) {
       return `Dòng ${i + 1}: chưa chọn phân loại.`;
     }
+    const key = `${String(cid)}::${String(tid)}`;
+    if (seen.has(key)) {
+      return `Dòng ${i + 1}: trùng công ty + phân loại với dòng trước — bỏ dòng trùng hoặc đổi phân loại.`;
+    }
+    seen.add(key);
   }
   return '';
 }

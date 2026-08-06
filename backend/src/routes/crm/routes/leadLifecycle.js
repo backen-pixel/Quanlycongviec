@@ -2483,6 +2483,9 @@ r.patch('/leads/:id/stage', async (req, res) => {
           tasks_created: auto.tasks_created,
           projects: auto.projects || null,
           primary_project_id: auto.primary_project_id || auto.project_id,
+          partial: auto.partial || false,
+          partial_error: auto.partial_error || null,
+          warning: auto.warning || null,
         };
         const respCompanies = auto.projects?.length
           ? [...new Set(auto.projects.map((p) => p.company_id).filter(Boolean))]
@@ -3764,6 +3767,9 @@ r.post('/deals/:id/auto-create-project', async (req, res) => {
         is_primary: true,
       }],
       primary_project_id: result.primary_project_id || result.project_id,
+      partial: result.partial || false,
+      partial_error: result.partial_error || null,
+      warning: result.warning || null,
     });
   } catch (e) {
     console.error('[auto-project] Error:', e.message);

@@ -5702,7 +5702,8 @@ export default function CRMDashboard() {
           }
         }
 
-        if (data.deal_won) {
+        if (data.deal_won && !data.project_id && !data.project_auto_created?.project_id) {
+          // Chưa có dự án nào — mở chọn công ty SX.
           autoCreateProject(leadId, null);
         } else if (data.project_auto_created?.project_id) {
           setAutoCreateResult({
@@ -5710,7 +5711,12 @@ export default function CRMDashboard() {
             project_code: data.project_auto_created.project_code,
             tasks_created: data.project_auto_created.tasks_created,
           });
-          setAutoCreateStatus('success');
+          if (data.project_auto_created.partial_error || data.project_auto_created.warning) {
+            setAutoCreateError(data.project_auto_created.partial_error || data.project_auto_created.warning);
+            setAutoCreateStatus('error');
+          } else {
+            setAutoCreateStatus('success');
+          }
           load({ silent: true });
         }
       } catch (e) {
