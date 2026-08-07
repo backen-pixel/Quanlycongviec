@@ -31,6 +31,7 @@ import {
   CheckSquare, Eye, Clock,
 } from 'lucide-react';
 import WorkshopPipelineKanbanScroll from './WorkshopPipelineKanbanScroll';
+import DashboardMonthCalendar, { toLocalDateKey, formatCalendarDeadlineTime } from './dashboard/DashboardMonthCalendar';
 
 function formatVND(v) {
   if (!v) return '0đ';
@@ -198,7 +199,7 @@ function renderItemCard(item, navigate, extras = null, mergePick = null) {
         selected ? 'ring-2 ring-amber-400 ring-offset-1' : ''
       }`}>
       <div
-        className="pointer-events-none absolute inset-0 z-[5] flex flex-col rounded-lg opacity-0 transition-opacity duration-150 group-hover/card:opacity-100"
+        className="pointer-events-none absolute inset-0 z-[5] flex flex-col rounded-lg opacity-0 transition-opacity duration-150 group-hover/card:opacity-30"
         aria-hidden
       >
         <div className="h-[30%] min-h-[2rem] shrink-0 border-b border-dashed border-amber-300/70 bg-white" />
@@ -216,7 +217,7 @@ function renderItemCard(item, navigate, extras = null, mergePick = null) {
           selected ? 'ring-1 ring-inset ring-amber-400/70' : ''
         }`}
       >
-        <span className="pointer-events-none flex flex-col items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover/card:opacity-100">
+        <span className="pointer-events-none flex flex-col items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover/card:opacity-30">
           <CheckSquare className="h-3.5 w-3.5 text-amber-900 drop-shadow-sm" />
           <span className="font-bold text-[9px] text-amber-950 drop-shadow-sm">Chọn</span>
         </span>
@@ -231,7 +232,7 @@ function renderItemCard(item, navigate, extras = null, mergePick = null) {
         }}
         className="absolute bottom-0 left-0 right-0 top-[30%] z-[15] min-h-0 cursor-pointer border-0 bg-transparent p-0 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-500"
       >
-        <span className="pointer-events-none absolute bottom-2 left-1/2 z-10 flex -translate-x-1/2 flex-col items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover/card:opacity-100">
+        <span className="pointer-events-none absolute bottom-2 left-1/2 z-10 flex -translate-x-1/2 flex-col items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover/card:opacity-30">
           <Eye className="h-3.5 w-3.5 text-sky-900 drop-shadow-sm" />
           <span className="font-bold text-[9px] text-sky-950 drop-shadow-sm">Chi tiết</span>
         </span>
@@ -1043,6 +1044,91 @@ export function DeadlineView({
         })}
       </KanbanBoardShell>
     </div>
+  );
+}
+
+// ── CALENDAR VIEW ───────────────────────────────────────────────────────────
+export function CrmCalendarView({
+  pipeline,
+  pipelineType,
+  deadlineConfig,
+  filterFrom,
+  onVisibleMonthChange,
+}) {
+  const navigate = useNavigate();
+  const todayKey = toLocalDateKey(Date.now());
+
+  const calendarItems = useMemo(() => {
+    const cfg = deadlineConfig || {
+      primary_field: 'crm_next_open_task_deadline',
+      fallback_field: 'expected_close_date',
+      buckets: {},
+    };
+    const out = [];
+    for (const s of pipeline || []) {
+      if (isCrmPipelineStageLost(s) || isCrmPipelineStageWon(s) || isCrmPipelineStageCompletedRevenue(s)) continue;
+      for (const item of s.items || []) {
+        const picked = resolveCrmLeadDeadlineViewSource(item, s, cfg);
+        if (picked.deadlineTs == null) continue;
+        const dateKey = toLocalDateKey(picked.deadlineTs);
+        if (!dateKey) continue;
+        const source = picked.source || 'default';
+        const code = item.code || item.title || `#${item.id}`;
+        const custName = item.customer?.full_name
+          || item.customer_name
+          || item.contact_name
+          || '';
+        const srcMeta = source === 'deadline'
+          ? CRM_DEADLINE_SOURCE_META.kanban
+          : CRM_DEADLINE_SOURCE_META[source];
+        const stageName = s.name || '';
+        const phone = item.customer?.phone || item.phone || item.primary_phone || '';
+        const timeStr = formatCalendarDeadlineTime(picked.deadlineTs);
+        out.push({
+          id: item.id,
+          dateKey,
+          label: `${s.icon ? `${s.icon} ` : ''}${code}`,
+          subLabel: custName || item.title || '',
+          meta: [timeStr, srcMeta?.shortLabel || srcMeta?.label, stageName, phone]
+            .filter(Boolean)
+            .join(' · '),
+          title: [
+            code,
+            custName && `KH: ${custName}`,
+            phone && `SĐT: ${phone}`,
+            stageName && `Cột: ${stageName}`,
+            timeStr && `Hạn lúc: ${timeStr}`,
+            srcMeta && `Nguồn hạn: ${srcMeta.label}`,
+          ].filter(Boolean).join('\n'),
+          tone: source === 'deadline' ? 'kanban' : source,
+          overdue: dateKey < todayKey,
+          raw: item,
+        });
+      }
+    }
+    return out;
+  }, [pipeline, deadlineConfig, todayKey]);
+
+  return (
+    <DashboardMonthCalendar
+      accent="violet"
+      items={calendarItems}
+      filterFrom={filterFrom}
+      onVisibleMonthChange={onVisibleMonthChange}
+      onItemClick={(calItem) => {
+        persistCrmPipelineUiNow();
+        markCrmPipelineCardFocus(calItem.id);
+        navigate(`/crm/leads/${calItem.id}`);
+      }}
+      legend={[
+        { label: 'Deadline nhiệm vụ', className: 'bg-indigo-100' },
+        { label: 'Deadline tự setup', className: 'bg-rose-100' },
+        { label: 'SLA cột', className: 'bg-amber-100' },
+        { label: 'Ngày chốt dự kiến', className: 'bg-violet-100' },
+        { label: 'Đã trễ', className: 'bg-red-100' },
+      ]}
+      footerRight={`${calendarItems.length} ${pipelineType === 'lead' ? 'lead' : 'deal'} có lịch`}
+    />
   );
 }
 

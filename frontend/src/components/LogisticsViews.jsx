@@ -4,6 +4,7 @@ import api from '../lib/api';
 import { formatDate } from '../lib/utils';
 import { markWorkshopPipelineCardFocus } from '../lib/workshopPipelineStorage';
 import { KanbanBoardEdgeScrollChrome } from '../lib/kanbanEdgeScrollControls';
+import DashboardMonthCalendar, { toLocalDateKey, formatCalendarDeadlineTime } from './dashboard/DashboardMonthCalendar';
 
 // ─── List View ───────────────────────────────────────────────────────────────
 export function LogisticsListView({ pipeline, calculateDays }) {
@@ -174,94 +175,80 @@ export function LogisticsPlannerView({ pipeline }) {
   );
 }
 
+// ─── Deadline helpers (dùng chung Calendar + Deadline view) ───────────────────
+function startOfDay(d) {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
+
+/** Ưu tiên deadline dự án; fallback ngày lắp đặt. */
+function resolveVcDeadlineRaw(item) {
+  if (item?.deadline) return { raw: item.deadline, source: 'deadline' };
+  if (item?.install_date) return { raw: item.install_date, source: 'install_date' };
+  return { raw: null, source: null };
+}
+
 // ─── Calendar View (xem theo deadline) ──────────────────────────────────────
-export function LogisticsCalendarView({ pipeline }) {
+export function LogisticsCalendarView({ pipeline, filterFrom, onVisibleMonthChange }) {
   const navigate = useNavigate();
-  const goProject = (id) => {
-    markWorkshopPipelineCardFocus(id, 'vc');
-    navigate(`/vc/projects/${id}`);
-  };
-  const allProjects = pipeline?.flatMap((s) => s.items.map((p) => ({ ...p, _stageColor: s.color, _stageName: s.name }))) || [];
-  const today = new Date();
-  const [currentMonth, setCurrentMonth] = useState(today.getMonth());
-  const [currentYear, setCurrentYear] = useState(today.getFullYear());
+  const todayKey = toLocalDateKey(Date.now());
 
-  const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
-  const firstDay = new Date(currentYear, currentMonth, 1).getDay();
-
-  const projectsByDate = {};
-  allProjects.forEach((p) => {
-    const d = p.deadline;
-    if (!d) return;
-    const dt = new Date(d);
-    if (dt.getFullYear() === currentYear && dt.getMonth() === currentMonth) {
-      const key = dt.getDate();
-      if (!projectsByDate[key]) projectsByDate[key] = [];
-      projectsByDate[key].push(p);
+  const calendarItems = useMemo(() => {
+    const out = [];
+    for (const s of pipeline || []) {
+      for (const p of s.items || []) {
+        const { raw, source } = resolveVcDeadlineRaw(p);
+        if (!raw || !source) continue;
+        const dateKey = toLocalDateKey(raw);
+        if (!dateKey) continue;
+        const stageColor = s.color || '#f97316';
+        const overdue = dateKey < todayKey && p.status !== 'completed';
+        const srcLabel = source === 'install_date' ? 'Ngày lắp đặt' : 'Deadline';
+        const timeStr = formatCalendarDeadlineTime(raw);
+        out.push({
+          id: p.id,
+          dateKey,
+          label: p.code || `#${p.id}`,
+          subLabel: p.name || p.customer_name || '',
+          meta: [timeStr, srcLabel, s.name].filter(Boolean).join(' · '),
+          title: [
+            p.code,
+            p.name,
+            timeStr && `Hạn lúc: ${timeStr}`,
+            srcLabel,
+            s.name && `Cột: ${s.name}`,
+          ].filter(Boolean).join('\n'),
+          tone: overdue ? 'overdue' : (source === 'install_date' ? 'install' : 'deadline'),
+          overdue,
+          chipClassName: overdue ? undefined : 'hover:opacity-80',
+          chipStyle: overdue
+            ? undefined
+            : { backgroundColor: `${stageColor}22`, color: stageColor },
+          raw: p,
+        });
+      }
     }
-  });
-
-  const monthNames = ['Tháng 1','Tháng 2','Tháng 3','Tháng 4','Tháng 5','Tháng 6','Tháng 7','Tháng 8','Tháng 9','Tháng 10','Tháng 11','Tháng 12'];
-  const dayNames = ['CN','T2','T3','T4','T5','T6','T7'];
-
-  const prevMonth = () => { if (currentMonth === 0) { setCurrentMonth(11); setCurrentYear(y => y - 1); } else setCurrentMonth(m => m - 1); };
-  const nextMonth = () => { if (currentMonth === 11) { setCurrentMonth(0); setCurrentYear(y => y + 1); } else setCurrentMonth(m => m + 1); };
-
-  const cells = [];
-  for (let i = 0; i < firstDay; i++) cells.push(null);
-  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
-
-  const todayDate = today.getDate();
-  const isCurrentMonthYear = today.getMonth() === currentMonth && today.getFullYear() === currentYear;
+    return out;
+  }, [pipeline, todayKey]);
 
   return (
-    <div className="bg-white rounded-xl border overflow-hidden">
-      <div className="flex items-center justify-between px-4 py-3 border-b bg-orange-50">
-        <button onClick={prevMonth} className="p-1 hover:bg-orange-100 rounded cursor-pointer text-orange-600">◀</button>
-        <h2 className="text-sm font-bold text-gray-900">{monthNames[currentMonth]} {currentYear}</h2>
-        <button onClick={nextMonth} className="p-1 hover:bg-orange-100 rounded cursor-pointer text-orange-600">▶</button>
-      </div>
-      <div className="grid grid-cols-7 border-b">
-        {dayNames.map((d) => (
-          <div key={d} className="text-center text-xs font-semibold text-gray-500 py-2">{d}</div>
-        ))}
-      </div>
-      <div className="grid grid-cols-7">
-        {cells.map((day, idx) => {
-          const isToday = isCurrentMonthYear && day === todayDate;
-          const projects = day ? (projectsByDate[day] || []) : [];
-          return (
-            <div key={idx}
-              className={`min-h-[80px] border-r border-b p-1.5 last-of-type:border-r-0 ${!day ? 'bg-gray-50' : ''}`}>
-              {day && (
-                <>
-                  <div className={`text-xs font-semibold mb-1 w-6 h-6 flex items-center justify-center rounded-full ${isToday ? 'bg-orange-600 text-white' : 'text-gray-700'}`}>
-                    {day}
-                  </div>
-                  <div className="space-y-0.5">
-                    {projects.slice(0, 3).map((p) => (
-                      <div key={p.id} onClick={() => goProject(p.id)}
-                        className="text-[10px] px-1.5 py-0.5 rounded truncate cursor-pointer hover:opacity-80 font-medium"
-                        style={{ backgroundColor: `${p._stageColor || '#f97316'}20`, color: p._stageColor || '#f97316' }}
-                        title={p.name}>
-                        {p.code || p.name}
-                      </div>
-                    ))}
-                    {projects.length > 3 && (
-                      <div className="text-[10px] text-gray-400 px-1">+{projects.length - 3} thêm</div>
-                    )}
-                  </div>
-                </>
-              )}
-            </div>
-          );
-        })}
-      </div>
-      <div className="px-4 py-2 bg-gray-50 border-t flex items-center gap-4 text-xs text-gray-500">
-        <span>📅 Deadline dự án VC</span>
-        <span className="ml-auto">{allProjects.filter(p => p.deadline).length} dự án có deadline</span>
-      </div>
-    </div>
+    <DashboardMonthCalendar
+      accent="orange"
+      items={calendarItems}
+      filterFrom={filterFrom}
+      onVisibleMonthChange={onVisibleMonthChange}
+      onItemClick={(calItem) => {
+        markWorkshopPipelineCardFocus(calItem.id, 'vc');
+        navigate(`/vc/projects/${calItem.id}`);
+      }}
+      legend={[
+        { label: 'Deadline dự án', className: 'bg-purple-100' },
+        { label: 'Ngày lắp đặt', className: 'bg-teal-100' },
+        { label: 'Đã trễ', className: 'bg-red-100' },
+      ]}
+      footerRight={`${calendarItems.length} dự án có lịch`}
+    />
   );
 }
 
@@ -275,19 +262,6 @@ const VC_DEADLINE_BUCKETS = [
   { key: 'later', label: 'Sau', color: '#475569' },
   { key: 'none', label: 'Chưa có deadline', color: '#9ca3af' },
 ];
-
-function startOfDay(d) {
-  const x = new Date(d);
-  x.setHours(0, 0, 0, 0);
-  return x;
-}
-
-/** Ưu tiên deadline dự án; fallback ngày lắp đặt. */
-function resolveVcDeadlineRaw(item) {
-  if (item?.deadline) return { raw: item.deadline, source: 'deadline' };
-  if (item?.install_date) return { raw: item.install_date, source: 'install_date' };
-  return { raw: null, source: null };
-}
 
 function resolveVcDeadlineBucket(item, todayMs = Date.now()) {
   const { raw, source } = resolveVcDeadlineRaw(item);

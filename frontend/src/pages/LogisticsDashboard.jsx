@@ -402,6 +402,16 @@ export default function LogisticsDashboard() {
     setCustomTo(range.to);
   }, []);
 
+  /** Lịch tháng: prev/next/Hôm nay → lọc thời gian = cả tháng đang xem. */
+  const handleCalendarMonthChange = useCallback(({ from, to }) => {
+    if (!from || !to) return;
+    setTimePreset('custom');
+    setCustomFrom(from);
+    setCustomTo(to);
+    setShowCustomDate(true);
+    setShowDateRangePicker(false);
+  }, []);
+
   const timeFilterLabel = useMemo(() => {
     if (!timePreset) return '';
     if (timePreset === 'custom') {
@@ -1506,7 +1516,13 @@ export default function LogisticsDashboard() {
       {viewMode === 'list' && <LogisticsListView pipeline={filteredKanbanPipeline} calculateDays={calculateDays} />}
       {viewMode === 'planner' && <LogisticsPlannerView pipeline={filteredKanbanPipeline} />}
       {viewMode === 'deadline' && <LogisticsDeadlineView pipeline={filteredKanbanPipeline} />}
-      {viewMode === 'calendar' && <LogisticsCalendarView pipeline={filteredKanbanPipeline} />}
+      {viewMode === 'calendar' && (
+        <LogisticsCalendarView
+          pipeline={filteredKanbanPipeline}
+          filterFrom={customFrom}
+          onVisibleMonthChange={handleCalendarMonthChange}
+        />
+      )}
 
       {showNewProject && <NewLogisticsProjectModal onClose={() => { setShowNewProject(false); load(); }} />}
 

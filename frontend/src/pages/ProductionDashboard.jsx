@@ -1836,6 +1836,16 @@ export default function ProductionDashboard() {
     setCustomTo(range.to);
   }, []);
 
+  /** Lịch tháng: prev/next/Hôm nay → lọc thời gian = cả tháng đang xem. */
+  const handleCalendarMonthChange = useCallback(({ from, to }) => {
+    if (!from || !to) return;
+    setTimePreset('custom');
+    setCustomFrom(from);
+    setCustomTo(to);
+    setShowCustomDate(true);
+    setShowDateRangePicker(false);
+  }, []);
+
   const timeFilterLabel = useMemo(() => {
     if (!timePreset) return '';
     if (timePreset === 'custom') {
@@ -2509,7 +2519,7 @@ export default function ProductionDashboard() {
       icon: targetCol.icon,
     } : null;
 
-    const clearsDeadline = !!targetCol?.counts_as_completed_revenue;
+    const clearsDeadline = !!(targetCol?.counts_as_completed_revenue || targetCol?.counts_as_collected_revenue);
     const stageMeta = buildSxPipelineStageMeta(targetCol);
 
     const optimisticPatch = {
@@ -2695,7 +2705,7 @@ export default function ProductionDashboard() {
     const colId = targetCol?.id;
     const currentColId = current?.sx_kanban_column_id || null;
     const isSameCol = colId && currentColId && String(colId) === String(currentColId);
-    if (!isSameCol && targetCol?.requires_deadline && !targetCol?.counts_as_completed_revenue) {
+    if (!isSameCol && targetCol?.requires_deadline && !targetCol?.counts_as_completed_revenue && !targetCol?.counts_as_collected_revenue) {
       setDeadlineCtx({
         projectId,
         targetCol,
@@ -3846,7 +3856,13 @@ export default function ProductionDashboard() {
           />
         )}
 
-      {viewMode === 'calendar' && <ProductionCalendarView pipeline={filteredKanbanPipeline} />}
+      {viewMode === 'calendar' && (
+        <ProductionCalendarView
+          pipeline={filteredKanbanPipeline}
+          filterFrom={customFrom}
+          onVisibleMonthChange={handleCalendarMonthChange}
+        />
+      )}
 
       {viewMode === 'comments' && (
         <ProductionCommentsView

@@ -19,7 +19,7 @@ import {
 } from 'lucide-react';
 import { useProductTour } from '../components/productTour/ProductTourProvider';
 import TourMissionsPanel from '../components/productTour/TourMissionsPanel';
-import { ListView, PlannerView, DeadlineView, CommentsView } from '../components/CRMViews';
+import { ListView, PlannerView, DeadlineView, CommentsView, CrmCalendarView } from '../components/CRMViews';
 import AssignedTasksToolbarButton from '../components/AssignedTasksToolbarButton';
 import KanbanCardQuickMove from '../components/KanbanCardQuickMove';
 import KanbanCardOptionsMenu from '../components/KanbanCardOptionsMenu';
@@ -1926,6 +1926,15 @@ export default function CRMDashboard() {
     setShowCustomDate(!!next.showCustomDate);
   };
 
+  /** Lịch tháng: prev/next/Hôm nay → lọc thời gian = cả tháng đang xem. */
+  const handleCalendarMonthChange = useCallback(({ from, to }) => {
+    if (!from || !to) return;
+    setTimePreset('custom');
+    setCustomDateFrom(from);
+    setCustomDateTo(to);
+    setShowCustomDate(true);
+  }, []);
+
   /** Đảm bảo mở trang không có lọc thời gian → «Tất cả» (snapshot cũ / race hydrate). */
   useEffect(() => {
     if (timePreset || customDateFrom || customDateTo) return;
@@ -3777,7 +3786,7 @@ export default function CRMDashboard() {
     () =>
       !crmMainContentLoading &&
       companyHasNoPipeline &&
-      (viewMode === 'kanban' || viewMode === 'list' || viewMode === 'planner' || viewMode === 'deadline' || viewMode === 'comments'),
+      (viewMode === 'kanban' || viewMode === 'list' || viewMode === 'planner' || viewMode === 'deadline' || viewMode === 'comments' || viewMode === 'calendar'),
     [crmMainContentLoading, companyHasNoPipeline, viewMode],
   );
 
@@ -8390,13 +8399,18 @@ export default function CRMDashboard() {
               }}
             />
           )}
+
+          {/* Calendar View */}
+          {viewMode === 'calendar' && (
+            <CrmCalendarView
+              pipeline={currentPipeline}
+              pipelineType={pipelineType}
+              deadlineConfig={deadlineConfig}
+              filterFrom={customDateFrom}
+              onVisibleMonthChange={handleCalendarMonthChange}
+            />
+          )}
         </>
-        </div>
-      )}
-      {viewMode === 'calendar' && (
-        <div className="bg-white rounded-xl border p-12 text-center text-gray-500">
-          <Calendar className="h-12 w-12 mx-auto mb-3 opacity-30" />
-          <p>Chức năng Lịch đang được phát triển</p>
         </div>
       )}
 

@@ -19,6 +19,7 @@ import {
   CommentNewNotice,
   useCommentThreadLive,
 } from './commentThreadLiveUx';
+import DashboardMonthCalendar, { toLocalDateKey, formatCalendarDeadlineTime } from './dashboard/DashboardMonthCalendar';
 
 /** Bộ emoji được phép — đồng bộ với backend PROJECT_COMMENT_ALLOWED_REACTION_EMOJI */
 const PROJECT_COMMENT_REACTION_PICKER = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
@@ -361,135 +362,70 @@ export function ProductionListView({ pipeline, calculateDays }) {
   );
 }
 
-/** Calendar view — lịch tháng hiển thị production_deadline và deadline của dự án */
-export function ProductionCalendarView({ pipeline }) {
+/** Calendar view — lịch tháng theo hạn hiệu lực (delivery → production → deadline) */
+export function ProductionCalendarView({ pipeline, filterFrom, onVisibleMonthChange }) {
   const navigate = useNavigate();
-  const goProject = (projectId) => {
-    markWorkshopPipelineCardFocus(projectId, 'sx');
-    navigate(`/sx/projects/${projectId}`);
-  };
-  const allItems = useMemo(
-    () => pipeline.flatMap((s) => s.items.map((item) => ({ ...item, _stage: s }))),
-    [pipeline],
-  );
+  const todayKey = toLocalDateKey(Date.now());
 
-  const today = new Date();
-  const [year, setYear] = useState(today.getFullYear());
-  const [month, setMonth] = useState(today.getMonth()); // 0-indexed
-
-  const prevMonth = () => {
-    if (month === 0) { setYear(y => y - 1); setMonth(11); }
-    else setMonth(m => m - 1);
-  };
-  const nextMonth = () => {
-    if (month === 11) { setYear(y => y + 1); setMonth(0); }
-    else setMonth(m => m + 1);
-  };
-
-  // Build date → projects map (using production_deadline first, fallback to deadline)
-  const dateMap = useMemo(() => {
-    const map = {};
-    allItems.forEach((item) => {
-      const d = item.production_deadline || item.deadline;
-      if (!d) return;
-      const key = d.substring(0, 10);
-      if (!map[key]) map[key] = [];
-      map[key].push(item);
-    });
-    return map;
-  }, [allItems]);
-
-  // Build calendar grid
-  const firstDay = new Date(year, month, 1);
-  const lastDay = new Date(year, month + 1, 0);
-  const startDow = firstDay.getDay(); // 0=Sun
-  const daysInMonth = lastDay.getDate();
-
-  const cells = [];
-  // Pad start
-  for (let i = 0; i < startDow; i++) cells.push(null);
-  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
-  // Pad end to complete last row
-  while (cells.length % 7 !== 0) cells.push(null);
-
-  const monthNames = ['Tháng 1','Tháng 2','Tháng 3','Tháng 4','Tháng 5','Tháng 6','Tháng 7','Tháng 8','Tháng 9','Tháng 10','Tháng 11','Tháng 12'];
-  const dowLabels = ['CN','T2','T3','T4','T5','T6','T7'];
-
-  const todayKey = today.toISOString().substring(0, 10);
+  const calendarItems = useMemo(() => {
+    const out = [];
+    for (const s of pipeline || []) {
+      for (const item of s.items || []) {
+        const { ts, source } = resolveSxDeadlineBucket(item, Date.now(), s);
+        if (ts == null || !source) continue;
+        const dateKey = toLocalDateKey(ts);
+        if (!dateKey) continue;
+        const tone = source === 'delivery_date'
+          ? 'delivery'
+          : source === 'production_deadline'
+            ? 'production'
+            : 'deadline';
+        const srcLabel = source === 'delivery_date'
+          ? 'Ngày giao hàng'
+          : source === 'production_deadline'
+            ? 'Ngày giao xưởng'
+            : 'Deadline tổng';
+        const timeStr = formatCalendarDeadlineTime(ts);
+        out.push({
+          id: item.id,
+          dateKey,
+          label: `${s.icon ? `${s.icon} ` : ''}${item.code || `#${item.id}`}`,
+          subLabel: item.name || item.customer_name || '',
+          meta: [timeStr, srcLabel, s.name].filter(Boolean).join(' · '),
+          title: [
+            item.code,
+            item.name,
+            timeStr && `Hạn lúc: ${timeStr}`,
+            srcLabel,
+            s.name && `Cột: ${s.name}`,
+          ].filter(Boolean).join('\n'),
+          tone,
+          overdue: dateKey < todayKey,
+          raw: item,
+        });
+      }
+    }
+    return out;
+  }, [pipeline, todayKey]);
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 bg-gray-50 border-b border-gray-100">
-        <button onClick={prevMonth} className="h-8 w-8 flex items-center justify-center rounded-lg hover:bg-gray-200 cursor-pointer text-gray-600 font-bold text-lg">‹</button>
-        <h3 className="text-base font-bold text-gray-900">{monthNames[month]} {year}</h3>
-        <button onClick={nextMonth} className="h-8 w-8 flex items-center justify-center rounded-lg hover:bg-gray-200 cursor-pointer text-gray-600 font-bold text-lg">›</button>
-      </div>
-
-      {/* Day of week headers */}
-      <div className="grid grid-cols-7 border-b border-gray-100">
-        {dowLabels.map((d, i) => (
-          <div key={d} className={`text-center text-xs font-semibold py-2 ${i === 0 ? 'text-red-400' : 'text-gray-500'}`}>{d}</div>
-        ))}
-      </div>
-
-      {/* Grid */}
-      <div className="grid grid-cols-7">
-        {cells.map((day, idx) => {
-          if (!day) {
-            return <div key={`pad-${idx}`} className="min-h-[80px] bg-gray-50/50 border-b border-r border-gray-100" />;
-          }
-          const key = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-          const items = dateMap[key] || [];
-          const isToday = key === todayKey;
-          const isPast = key < todayKey;
-          const dow = (idx) % 7;
-          return (
-            <div key={key}
-              className={`min-h-[80px] p-1.5 border-b border-r border-gray-100 ${isPast && items.length ? 'bg-red-50/30' : isToday ? 'bg-blue-50/40' : ''}`}>
-              <div className={`text-xs font-semibold mb-1 w-6 h-6 flex items-center justify-center rounded-full ${
-                isToday ? 'bg-blue-600 text-white' : dow === 0 ? 'text-red-500' : 'text-gray-600'
-              }`}>{day}</div>
-              <div className="space-y-0.5">
-                {items.slice(0, 3).map((item) => {
-                  const usePD = !!item.production_deadline;
-                  const isOverdue = usePD
-                    ? new Date(item.production_deadline) < today
-                    : item.deadline && new Date(item.deadline) < today;
-                  return (
-                    <div
-                      key={item.id}
-                      onClick={() => goProject(item.id)}
-                      title={`${item.code} — ${item.name}${usePD ? ' (Giao xưởng)' : ' (Deadline)'}`}
-                      className={`truncate text-[10px] px-1.5 py-0.5 rounded cursor-pointer font-medium ${
-                        isOverdue
-                          ? 'bg-red-100 text-red-700 hover:bg-red-200'
-                          : usePD
-                          ? 'bg-sky-100 text-sky-700 hover:bg-sky-200'
-                          : 'bg-purple-100 text-purple-700 hover:bg-purple-200'
-                      }`}
-                    >
-                      {item._stage.icon} {item.code || item.name}
-                    </div>
-                  );
-                })}
-                {items.length > 3 && (
-                  <div className="text-[9px] text-gray-400 px-1.5">+{items.length - 3} nữa</div>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Legend */}
-      <div className="px-4 py-2.5 bg-gray-50 border-t border-gray-100 flex items-center gap-4 text-[10px] text-gray-500">
-        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-sky-100 inline-block" /> Ngày giao xưởng</span>
-        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-purple-100 inline-block" /> Deadline tổng</span>
-        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-red-100 inline-block" /> Đã trễ</span>
-        <span className="ml-auto">{allItems.filter(i => i.production_deadline || i.deadline).length} dự án có lịch</span>
-      </div>
-    </div>
+    <DashboardMonthCalendar
+      accent="indigo"
+      items={calendarItems}
+      filterFrom={filterFrom}
+      onVisibleMonthChange={onVisibleMonthChange}
+      onItemClick={(calItem) => {
+        markWorkshopPipelineCardFocus(calItem.id, 'sx');
+        navigate(`/sx/projects/${calItem.id}`);
+      }}
+      legend={[
+        { label: 'Ngày giao hàng', className: 'bg-emerald-100' },
+        { label: 'Ngày giao xưởng', className: 'bg-sky-100' },
+        { label: 'Deadline tổng', className: 'bg-purple-100' },
+        { label: 'Đã trễ', className: 'bg-red-100' },
+      ]}
+      footerRight={`${calendarItems.length} dự án có lịch`}
+    />
   );
 }
 
