@@ -16,7 +16,7 @@ import {
 import DocumentShareModulePicker from '../components/DocumentShareModulePicker';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
-import { formatDate, getInitials, avatarColor, getFileEmoji } from '../lib/utils';
+import { formatDate, formatVND, getInitials, avatarColor, getFileEmoji } from '../lib/utils';
 import { publicFileUrl as pubUrl, downloadUploadFile, printUploadImage } from '../lib/publicFileUrl';
 import { FilePreviewOpenLink } from '../context/FilePreviewContext';
 import UploadFileLightbox, {
@@ -133,6 +133,7 @@ function WorkshopInfoPanel({
   onUpdate,
   crmDeal = null,
   onDealUpdate,
+  isVC = false,
 }) {
   const [editing, setEditing] = useState(null);
   const [draft, setDraft] = useState('');
@@ -185,6 +186,22 @@ function WorkshopInfoPanel({
     }
   };
 
+  const parseMoneyDraft = (raw) => {
+    if (raw === '' || raw == null) return 0;
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  };
+
+  /** Chi phí xưởng — khác giá trị deal CRM (estimated_value). */
+  const productionTotalValue = Number(project.production_value) || 0;
+  const depositValue = editing === 'deposit_amount'
+    ? parseMoneyDraft(draft)
+    : (Number(project.deposit_amount) > 0 ? Number(project.deposit_amount) : 0);
+  const sxCostForRemaining = editing === 'production_value'
+    ? parseMoneyDraft(draft)
+    : productionTotalValue;
+  const remainingValue = Math.max(0, sxCostForRemaining - depositValue);
+
   const save = async (field, value) => {
     setSaving(true);
     try {
@@ -194,6 +211,14 @@ function WorkshopInfoPanel({
         const prev = project.pickup_at ? String(project.pickup_at) : '';
         const prevTime = prev.match(/T(\d{2}:\d{2})/)?.[1];
         payloadValue = `${payloadValue}T${prevTime || '09:00'}:00+07:00`;
+      }
+      if (field === 'deposit_amount' || field === 'production_value') {
+        const raw = value;
+        if (raw === '' || raw == null) payloadValue = null;
+        else {
+          const n = Number(raw);
+          payloadValue = Number.isFinite(n) && n > 0 ? n : null;
+        }
       }
 
       await api.put(`/projects/${project.id}`, { [field]: payloadValue });
@@ -275,6 +300,85 @@ function WorkshopInfoPanel({
           )}
         </div>
       </div>
+
+      {/* SX: chi phí xưởng / cọc / công nợ — không hiện doanh thu CRM */}
+      {!isVC && (
+        <>
+          <div
+            className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors group cursor-pointer"
+            onClick={() => editing !== 'production_value' && startEdit('production_value', project.production_value || '')}
+          >
+            <span className="text-sm mt-0.5 shrink-0">🏭</span>
+            <div className="flex-1 min-w-0">
+              <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Giá trị sản xuất</p>
+              {editing === 'production_value' ? (
+                <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                  <input
+                    type="number"
+                    min="0"
+                    value={draft}
+                    onChange={(e) => setDraft(e.target.value)}
+                    autoFocus
+                    className="w-full px-2 py-1 border border-blue-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-400"
+                    placeholder="0"
+                  />
+                  <button type="button" onClick={() => save('production_value', draft)} disabled={saving} className="px-2 py-1 bg-blue-600 text-white rounded text-xs cursor-pointer disabled:opacity-50">✓</button>
+                  <button type="button" onClick={cancelEdit} className="px-2 py-1 bg-gray-100 rounded text-xs cursor-pointer">✕</button>
+                </div>
+              ) : (
+                <p className="text-sm font-medium text-gray-900 flex items-center gap-1">
+                  <span className="flex-1 min-w-0">{productionTotalValue > 0 ? formatVND(productionTotalValue) : '—'}</span>
+                  <Edit2 className="h-3 w-3 text-gray-300 opacity-0 group-hover:opacity-100 shrink-0" />
+                </p>
+              )}
+              <p className="text-[10px] text-gray-400 mt-0.5">Chi phí xưởng — khác giá trị deal CRM</p>
+            </div>
+          </div>
+
+          <div
+            className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors group cursor-pointer"
+            onClick={() => editing !== 'deposit_amount' && startEdit('deposit_amount', project.deposit_amount ?? '')}
+          >
+            <span className="text-sm mt-0.5 shrink-0">💵</span>
+            <div className="flex-1 min-w-0">
+              <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Tiền cọc</p>
+              {editing === 'deposit_amount' ? (
+                <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                  <input
+                    type="number"
+                    min="0"
+                    value={draft}
+                    onChange={(e) => setDraft(e.target.value)}
+                    autoFocus
+                    className="w-full px-2 py-1 border border-blue-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-400"
+                    placeholder="0"
+                  />
+                  <button type="button" onClick={() => save('deposit_amount', draft)} disabled={saving} className="px-2 py-1 bg-blue-600 text-white rounded text-xs cursor-pointer disabled:opacity-50">✓</button>
+                  <button type="button" onClick={cancelEdit} className="px-2 py-1 bg-gray-100 rounded text-xs cursor-pointer">✕</button>
+                </div>
+              ) : (
+                <p className="text-sm font-medium text-gray-900 flex items-center gap-1">
+                  <span className="flex-1 min-w-0">{depositValue > 0 ? formatVND(depositValue) : '—'}</span>
+                  <Edit2 className="h-3 w-3 text-gray-300 opacity-0 group-hover:opacity-100 shrink-0" />
+                </p>
+              )}
+            </div>
+          </div>
+
+          <div className="flex items-start gap-2 py-2 px-1 rounded-lg -mx-1">
+            <span className="text-sm mt-0.5 shrink-0">📊</span>
+            <div className="flex-1 min-w-0">
+              <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Công nợ (SX)</p>
+              <p className="text-sm font-semibold text-amber-700">
+                {sxCostForRemaining > 0 || depositValue > 0
+                  ? formatVND(remainingValue)
+                  : '—'}
+              </p>
+              <p className="text-[10px] text-gray-400 mt-0.5">= Giá trị sản xuất − Tiền cọc</p>
+            </div>
+          </div>
+        </>
+      )}
 
       {/* Ngày lấy hàng (VC) */}
       <div
@@ -2058,7 +2162,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
               color: sxStage?.color,
               icon: sxStage?.icon,
             } : null,
-            ...(sxStage?.counts_as_completed_revenue ? {
+            ...(sxStage?.counts_as_completed_revenue || sxStage?.counts_as_collected_revenue ? {
               sx_kanban_deadline_at: null,
               sx_kanban_deadline_reason: null,
               production_deadline: null,
@@ -2636,6 +2740,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
             project={project}
             onUpdate={refreshProjectSilently}
             crmDeal={primaryCrmDeal}
+            isVC={isVC}
             onDealUpdate={(data) => {
               if (!data?.id) return;
               setProject((prev) => (prev ? {
