@@ -2449,22 +2449,35 @@ r.patch('/leads/:id/stage', async (req, res) => {
         .eq('id', req.params.id).single();
 
       if (stage?.is_won) {
-        const adminIds = await getCompanyScopedAdminIds(dealData?.company_id);
-        if (adminIds.length > 0) {
-          await notifyMultiple(req, adminIds, 'deal_won',
-            '🏆 Deal Thắng',
-            `Deal "${dealData?.title}" - Giá trị: ${(dealData?.estimated_value || 0).toLocaleString('vi-VN')} VND`,
-            'crm_deal', req.params.id);
-        }
-
-        try {
-          await supabase.from('crm_activities').insert({
-            lead_id: req.params.id, type: 'note',
-            title: '🎉 Deal Thắng!',
-            description: `Deal "${dealData?.title}" đã chốt thành công.`,
-            created_by: req.user.userId,
-          });
-        } catch (_) {}
+        // Notify + activity không chặn tạo dự án
+        const wonDealId = req.params.id;
+        const wonTitle = dealData?.title;
+        const wonValue = dealData?.estimated_value || 0;
+        const wonCompanyId = dealData?.company_id;
+        const wonUserId = req.user.userId;
+        setImmediate(() => {
+          void (async () => {
+            try {
+              const adminIds = await getCompanyScopedAdminIds(wonCompanyId);
+              if (adminIds.length > 0) {
+                await notifyMultiple(req, adminIds, 'deal_won',
+                  '🏆 Deal Thắng',
+                  `Deal "${wonTitle}" - Giá trị: ${Number(wonValue).toLocaleString('vi-VN')} VND`,
+                  'crm_deal', wonDealId);
+              }
+            } catch (ne) {
+              console.warn('[crm/stage] deal_won notify:', ne.message);
+            }
+            try {
+              await supabase.from('crm_activities').insert({
+                lead_id: wonDealId, type: 'note',
+                title: '🎉 Deal Thắng!',
+                description: `Deal "${wonTitle}" đã chốt thành công.`,
+                created_by: wonUserId,
+              });
+            } catch (_) { /* ignore */ }
+          })();
+        });
       }
 
       const auto = await autoCreateProjectFromWonDeal({
@@ -2486,11 +2499,12 @@ r.patch('/leads/:id/stage', async (req, res) => {
           partial: auto.partial || false,
           partial_error: auto.partial_error || null,
           warning: auto.warning || null,
+          background_pending: !!auto.background_pending,
         };
         const respCompanies = auto.projects?.length
           ? [...new Set(auto.projects.map((p) => p.company_id).filter(Boolean))]
           : (effectiveProductionCompanyId ? [effectiveProductionCompanyId] : []);
-        for (const pcId of respCompanies) {
+        await Promise.all(respCompanies.map(async (pcId) => {
           try {
             await assignProductionCompanyDealResponsibility({
               dealId: req.params.id,
@@ -2501,7 +2515,7 @@ r.patch('/leads/:id/stage', async (req, res) => {
           } catch (respErr) {
             console.warn('[crm/stage] assign production company responsible:', respErr.message);
           }
-        }
+        }));
       } else {
         const { data: flows } = await supabase.from('workflow_flows')
           .select('id, name, description, is_default').eq('is_active', true).order('is_default', { ascending: false });

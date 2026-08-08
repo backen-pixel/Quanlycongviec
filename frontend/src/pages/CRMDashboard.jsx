@@ -1329,7 +1329,7 @@ export default function CRMDashboard() {
     wait: dealWonConfirmWait,
     start: startDealWonConfirmCountdown,
     clear: clearDealWonConfirmTimer,
-  } = useConfirmCountdown(5);
+  } = useConfirmCountdown(3);
   const [dealWonAckChecked, setDealWonAckChecked] = useState(false);
   const dealWonPendingRef = useRef(false);
   /** Deal đã có dự án SX, kéo lại sang Thắng — chỉ thông báo, không mở hộp chuyển */
@@ -1496,7 +1496,7 @@ export default function CRMDashboard() {
     wait: dealAutoConfirmWait,
     start: startDealAutoConfirmCountdown,
     clear: clearDealAutoConfirmTimer,
-  } = useConfirmCountdown(5);
+  } = useConfirmCountdown(3);
   const [dealAutoAckChecked, setDealAutoAckChecked] = useState(false);
   const dealAutoPendingRef = useRef(false);
 
@@ -5713,6 +5713,8 @@ export default function CRMDashboard() {
 
         if (data.deal_won && !data.project_id && !data.project_auto_created?.project_id) {
           // Chưa có dự án nào — mở chọn công ty SX.
+          setAutoCreateStatus(null);
+          autoCreateCalledRef.current = false;
           autoCreateProject(leadId, null);
         } else if (data.project_auto_created?.project_id) {
           setAutoCreateResult({
@@ -5727,9 +5729,13 @@ export default function CRMDashboard() {
             setAutoCreateStatus('success');
           }
           load({ silent: true });
+        } else {
+          setAutoCreateStatus((prev) => (prev === 'loading' ? null : prev));
         }
       } catch (e) {
         console.error(e);
+        setAutoCreateStatus((prev) => (prev === 'loading' ? null : prev));
+        autoCreateCalledRef.current = false;
         if (pipelineType === 'lead') setAllLeads(prevLeads);
         else setAllDeals(prevDeals);
         if (e?.response?.data?.code === 'CRM_BLOCKING_TASKS_INCOMPLETE') {
@@ -6078,7 +6084,16 @@ export default function CRMDashboard() {
         deal: ctx.deal,
       });
     } else {
-      await applyKanbanStageChange(ctx.leadId, ctx.newStageId, nextExtra);
+      autoCreateCalledRef.current = true;
+      setAutoCreateStatus('loading');
+      setAutoCreateError('');
+      try {
+        await applyKanbanStageChange(ctx.leadId, ctx.newStageId, nextExtra);
+      } catch (_) {
+        setAutoCreateStatus('error');
+        setAutoCreateError('Lỗi tạo dự án');
+        autoCreateCalledRef.current = false;
+      }
     }
   };
 
@@ -6757,7 +6772,7 @@ export default function CRMDashboard() {
           <div className="animate-spin h-8 w-8 border-3 border-white/30 border-t-white rounded-full flex-shrink-0" />
           <div>
             <p className="font-bold text-lg">🚀 Đang tự động tạo dự án...</p>
-            <p className="text-sm text-white/80">Deal thắng - hệ thống đang tạo dự án và phân công nhiệm vụ</p>
+            <p className="text-sm text-white/80">Deal thắng — đang tạo dự án & phân công NV (mẫu nhiệm vụ chạy nền)</p>
           </div>
         </div>
       )}

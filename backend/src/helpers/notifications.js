@@ -157,14 +157,11 @@ async function createNotification(req, userId, type, title, message, entityType,
  */
 async function notifyMultiple(req, userIds, type, title, message, entityType, entityId, metadata = null) {
   const unique = [...new Set(userIds.filter(Boolean))];
-  const results = [];
-
-  for (const uid of unique) {
-    const n = await createNotification(req, uid, type, title, message, entityType, entityId, metadata);
-    if (n) results.push(n);
-  }
-
-  return results;
+  if (!unique.length) return [];
+  const settled = await Promise.all(
+    unique.map((uid) => createNotification(req, uid, type, title, message, entityType, entityId, metadata)),
+  );
+  return settled.filter(Boolean);
 }
 
 /**

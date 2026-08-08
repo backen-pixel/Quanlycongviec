@@ -196,6 +196,215 @@ async function attachProductionProjectsForList(rows) {
   });
 }
 
+function mapOneProjectResult(one, t) {
+  return {
+    project_id: one.project_id,
+    project_code: one.project_code,
+    project_name: one.project_name,
+    tasks_created: one.tasks_created,
+    is_primary: !!one.is_primary,
+    company_id: t.production_company_id,
+    workshop_type_id: t.workshop_type_id,
+  };
+}
+
+function buildPartialMultiResult(results, primaryProjectId, normalized, failOne, failTarget) {
+  const coLabel = failTarget?.production_company_id || 'xưởng';
+  const partialMsg = `Đã tạo ${results.length}/${normalized.length} dự án SX. `
+    + `Dòng còn lại lỗi: ${failOne.error || 'không tạo được'} (${coLabel}). `
+    + 'Có thể dùng «+ Thêm dự án SX» để tạo tiếp.';
+  const first = results[0];
+  return {
+    ok: true,
+    project_id: primaryProjectId || first?.project_id,
+    project_code: first?.project_code,
+    project_name: first?.project_name,
+    tasks_created: results.reduce((s, r) => s + (r.tasks_created || 0), 0),
+    projects: results,
+    primary_project_id: primaryProjectId || first?.project_id,
+    partial: true,
+    partial_error: partialMsg,
+    warning: partialMsg,
+  };
+}
+
+/**
+ * Template/docs/notify/order sync — không chặn response sau khi đã có project + NV.
+ */
+function scheduleAutoProjectBackground(ctx) {
+  setImmediate(() => {
+    void (async () => {
+      const {
+        req,
+        dealId,
+        projectId,
+        userId,
+        companyId,
+        companyLabel,
+        projectCode,
+        projectName,
+        dealTitle,
+        becomePrimary,
+        flowTaskCount,
+        skipOrderSync,
+        notifyStaffIds,
+        mentionStaffIds,
+      } = ctx;
+
+      await Promise.all([
+        (async () => {
+          try {
+            await ensureDealLeadDocumentsForModuleTransition({ leadId: dealId, projectId });
+          } catch (e) {
+            console.warn('[auto-project/bg] ensure lead_documents:', e.message);
+          }
+        })(),
+        (async () => {
+          if (skipOrderSync) return;
+          try {
+            const { syncExistingCrmOrdersToProject } = require('./projectOrderFulfillment');
+            await syncExistingCrmOrdersToProject({
+              projectId,
+              userId,
+              parentLeadId: dealId,
+            });
+          } catch (e) {
+            console.warn('[auto-project/bg] sync CRM orders:', e.message);
+          }
+        })(),
+        (async () => {
+          try {
+            await applyProductionTemplateToFulfillmentLead({
+              req,
+              leadId: dealId,
+              createdBy: userId,
+              assigneeId: null,
+              force: true,
+              requireTemplateCompanyMatch: true,
+              templateSourceCompanyId: companyId,
+            });
+          } catch (e) {
+            console.warn('[auto-project/bg] applyProductionTemplate:', e.message);
+          }
+        })(),
+      ]);
+
+      let workshopTemplateTaskCount = 0;
+      try {
+        workshopTemplateTaskCount = await applyDefaultWorkshopTemplatesForNewProject(projectId, userId);
+        if (workshopTemplateTaskCount) {
+          console.log(`[auto-project/bg] Workshop templates → ${workshopTemplateTaskCount} tasks`);
+        }
+      } catch (e) {
+        console.warn('[auto-project/bg] workshop templates:', e.message);
+      }
+
+      await Promise.all([
+        (async () => {
+          try {
+            const { data: dealDocs } = await supabase.from('lead_documents')
+              .select('*').eq('lead_id', dealId);
+            if (!dealDocs?.length) return;
+            const docFiles = dealDocs.filter((d) => d.file_url).map((d) => ({
+              file_url: d.file_url, file_name: d.file_name || d.name,
+              file_size: d.file_size, mime_type: d.mime_type,
+              description: `Từ Deal: ${d.name || d.file_name}`,
+            }));
+            if (docFiles.length) {
+              await supabase.from('projects').update({ quotation_files: docFiles }).eq('id', projectId);
+            }
+          } catch (e) {
+            console.error('[auto-project/bg] Copy docs:', e.message);
+          }
+        })(),
+        (async () => {
+          try {
+            const totalTasks = (flowTaskCount || 0) + workshopTemplateTaskCount;
+            await supabase.from('crm_activities').insert({
+              lead_id: dealId, type: 'note',
+              title: becomePrimary ? '📋 Dự án tự động tạo' : '📋 Thêm dự án SX',
+              description: `Dự án ${projectCode} (${companyLabel || 'SX'}) — ${totalTasks} nhiệm vụ`
+                + `${workshopTemplateTaskCount ? ` (gồm ${workshopTemplateTaskCount} từ bộ mẫu xưởng)` : ''}`,
+              created_by: userId,
+            });
+          } catch (_) { /* ignore */ }
+        })(),
+      ]);
+
+      if (!req) return;
+
+      try {
+        const { getCompanyScopedAdminIds } = require('./notifications');
+        const adminIds = (await getCompanyScopedAdminIds(companyId))
+          .filter((id) => id !== userId);
+        if (adminIds.length) {
+          await notifyMultiple(req, adminIds, 'project_created',
+            '📋 Dự án mới từ Deal',
+            `Dự án ${projectCode} — "${projectName}" (${(flowTaskCount || 0) + workshopTemplateTaskCount} nhiệm vụ)`,
+            'project', projectId, {
+              ecosystem_module_key: 'production',
+              project_id: String(projectId),
+              project_code: projectCode,
+              project_name: projectName,
+            });
+        }
+      } catch (e) {
+        console.warn('[auto-project/bg] admin notify:', e.message);
+      }
+
+      const staffToNotify = (notifyStaffIds || []).filter((sid) => String(sid) !== String(userId));
+      if (staffToNotify.length) {
+        try {
+          await notifyMultiple(req, staffToNotify, 'project_assigned',
+            '📋 Dự án SX mới',
+            `Bạn được gán vào dự án ${projectCode} — "${projectName}"`,
+            'project', projectId, {
+              ecosystem_module_key: 'production',
+              project_id: String(projectId),
+              project_code: projectCode,
+              project_name: projectName,
+            });
+        } catch (e) {
+          console.warn('[auto-project/bg] staff notify:', e.message);
+        }
+      }
+
+      if ((mentionStaffIds || []).length) {
+        try {
+          await postSxTransferMentionComment(req, notifyMultiple, {
+            dealId,
+            projectId,
+            senderId: userId,
+            mentionUserIds: mentionStaffIds,
+            projectCode,
+            dealTitle,
+            workshopLabel: companyLabel || '',
+            mode: becomePrimary ? 'transfer' : 'additional',
+          });
+        } catch (mentionErr) {
+          console.warn('[auto-project/bg] sx transfer mention:', mentionErr.message);
+        }
+      }
+
+      try {
+        const { notifyWorkshopIntakeNewDeal, emitProductionBoardRealtime } = require('./workshopIntakeNotify');
+        await notifyWorkshopIntakeNewDeal({
+          req,
+          projectId,
+          projectCode,
+          projectName,
+          dealTitle,
+          actorUserId: userId,
+        });
+        const io = req.app?.get('io');
+        await emitProductionBoardRealtime(projectId, io, becomePrimary ? 'auto_create' : 'auto_create_additional');
+      } catch (intakeNotifyErr) {
+        console.warn('[auto-project/bg] intake notify/socket:', intakeNotifyErr.message);
+      }
+    })().catch((e) => console.error('[auto-project/bg] fatal:', e.message));
+  });
+}
+
 /**
  * Tạo một hoặc nhiều dự án xưởng từ deal.
  */
@@ -228,64 +437,66 @@ async function autoCreateProjectFromWonDeal({
 
     const results = [];
     let primaryProjectId = null;
-    for (let i = 0; i < normalized.length; i += 1) {
-      const t = normalized[i];
-      const isFirst = i === 0;
-      const createMode = mode === 'additional'
-        ? 'additional'
-        : (isFirst ? 'create' : 'additional');
-      const one = await runAutoCreateProjectFromWonDeal({
-        req,
-        dealId,
-        userId,
-        productionCompanyId: t.production_company_id,
-        workshopTypeId: t.workshop_type_id,
-        mode: createMode,
-        nameSuffix: true,
-        isMultiBatch: true,
-        skipCrmTaskImport: createMode === 'additional',
-        skipOrderSync: createMode === 'additional',
-      });
-      if (!one.ok) {
-        if (results.length) {
-          // Đã tạo được ≥1 xưởng: coi như thành công một phần — tránh FE gọi lại
-          // auto-create (mode create) → lỗi «Deal đã có dự án» lúc được lúc không.
-          const coLabel = t.production_company_id || 'xưởng';
-          const partialMsg = `Đã tạo ${results.length}/${normalized.length} dự án SX. `
-            + `Dòng còn lại lỗi: ${one.error || 'không tạo được'} (${coLabel}). `
-            + 'Có thể dùng «+ Thêm dự án SX» để tạo tiếp.';
-          try {
-            const { ensureLeadMembersFromProjectStaff } = require('./productionWorkshopTypeStaff');
-            await ensureLeadMembersFromProjectStaff(dealId);
-          } catch (_) { /* ignore */ }
-          const first = results[0];
-          return {
-            ok: true,
-            project_id: primaryProjectId || first?.project_id,
-            project_code: first?.project_code,
-            project_name: first?.project_name,
-            tasks_created: results.reduce((s, r) => s + (r.tasks_created || 0), 0),
-            projects: results,
-            primary_project_id: primaryProjectId || first?.project_id,
-            partial: true,
-            partial_error: partialMsg,
-            warning: partialMsg,
-          };
-        }
-        return one;
-      }
-      results.push({
-        project_id: one.project_id,
-        project_code: one.project_code,
-        project_name: one.project_name,
-        tasks_created: one.tasks_created,
-        is_primary: !!one.is_primary,
-        company_id: t.production_company_id,
-        workshop_type_id: t.workshop_type_id,
-      });
+    const isAllAdditional = mode === 'additional';
+
+    const runOne = (t, createMode, isFirst) => runAutoCreateProjectFromWonDeal({
+      req,
+      dealId,
+      userId,
+      productionCompanyId: t.production_company_id,
+      workshopTypeId: t.workshop_type_id,
+      mode: createMode,
+      nameSuffix: true,
+      isMultiBatch: true,
+      skipCrmTaskImport: createMode === 'additional',
+      skipOrderSync: createMode === 'additional',
+    });
+
+    const pushOk = (one, t, isFirst) => {
+      results.push(mapOneProjectResult(one, t));
       if (one.is_primary) primaryProjectId = one.project_id;
-      else if (!primaryProjectId && isFirst && mode !== 'additional') {
+      else if (!primaryProjectId && isFirst && !isAllAdditional) {
         primaryProjectId = one.project_id;
+      }
+    };
+
+    if (isAllAdditional) {
+      const settled = await Promise.all(
+        normalized.map((t) => runOne(t, 'additional', false).then((one) => ({ t, one }))),
+      );
+      for (const { t, one } of settled) {
+        if (!one.ok) {
+          if (results.length) {
+            try {
+              const { ensureLeadMembersFromProjectStaff } = require('./productionWorkshopTypeStaff');
+              await ensureLeadMembersFromProjectStaff(dealId);
+            } catch (_) { /* ignore */ }
+            return buildPartialMultiResult(results, primaryProjectId, normalized, one, t);
+          }
+          return one;
+        }
+        pushOk(one, t, false);
+      }
+    } else {
+      const firstTarget = normalized[0];
+      const first = await runOne(firstTarget, 'create', true);
+      if (!first.ok) return first;
+      pushOk(first, firstTarget, true);
+
+      if (normalized.length > 1) {
+        const rest = await Promise.all(
+          normalized.slice(1).map((t) => runOne(t, 'additional', false).then((one) => ({ t, one }))),
+        );
+        for (const { t, one } of rest) {
+          if (!one.ok) {
+            try {
+              const { ensureLeadMembersFromProjectStaff } = require('./productionWorkshopTypeStaff');
+              await ensureLeadMembersFromProjectStaff(dealId);
+            } catch (_) { /* ignore */ }
+            return buildPartialMultiResult(results, primaryProjectId, normalized, one, t);
+          }
+          pushOk(one, t, false);
+        }
       }
     }
 
@@ -306,6 +517,7 @@ async function autoCreateProjectFromWonDeal({
       tasks_created: results.reduce((s, r) => s + (r.tasks_created || 0), 0),
       projects: results,
       primary_project_id: primaryProjectId || first?.project_id,
+      background_pending: true,
     };
   } catch (e) {
     console.error('[auto-project] Error:', e.message);
@@ -330,34 +542,52 @@ async function runAutoCreateProjectFromWonDeal({
     return { ok: false, error: coCheck.error, statusCode: 400 };
   }
 
-  let validatedWorkshopTypeId = null;
-  let workshopTypeName = null;
-  if (workshopTypeId) {
-    try {
-      const { data: wt } = await supabase
+  const [
+    wtRes,
+    dealRes,
+    configRes,
+    firstStageRes,
+    existing,
+    defaultFlowRes,
+  ] = await Promise.all([
+    workshopTypeId
+      ? supabase
         .from('workshop_project_types')
         .select('id, name, company_id, applies_to, is_active')
         .eq('id', workshopTypeId)
-        .maybeSingle();
-      if (
-        wt
-        && String(wt.company_id) === String(coCheck.company.id)
-        && (wt.applies_to === 'production' || wt.applies_to === 'both')
-        && wt.is_active !== false
-      ) {
-        validatedWorkshopTypeId = wt.id;
-        workshopTypeName = wt.name || null;
-      } else {
-        console.warn('[auto-project] workshop_type_id không hợp lệ — bỏ qua, project sẽ chưa phân loại');
-      }
-    } catch (e) {
-      console.warn('[auto-project] workshop_type lookup:', e.message);
+        .maybeSingle()
+      : Promise.resolve({ data: null }),
+    supabase.from('crm_leads')
+      .select('*, customer:customers(id, full_name, phone, email, address)')
+      .eq('id', dealId).single(),
+    supabase.from('auto_project_config').select('*').limit(1).maybeSingle(),
+    supabase.from('workflow_stages').select('id').eq('slug', 'consulting').maybeSingle(),
+    listDealProductionProjects(dealId).catch((e) => {
+      console.warn('[auto-project] dup check:', e.message);
+      return [];
+    }),
+    supabase.from('workflow_flows')
+      .select('id').eq('is_default', true).eq('is_active', true).limit(1).maybeSingle(),
+  ]);
+
+  let validatedWorkshopTypeId = null;
+  let workshopTypeName = null;
+  const wt = wtRes?.data;
+  if (workshopTypeId) {
+    if (
+      wt
+      && String(wt.company_id) === String(coCheck.company.id)
+      && (wt.applies_to === 'production' || wt.applies_to === 'both')
+      && wt.is_active !== false
+    ) {
+      validatedWorkshopTypeId = wt.id;
+      workshopTypeName = wt.name || null;
+    } else {
+      console.warn('[auto-project] workshop_type_id không hợp lệ — bỏ qua, project sẽ chưa phân loại');
     }
   }
 
-  const { data: deal } = await supabase.from('crm_leads')
-    .select('*, customer:customers(id, full_name, phone, email, address)')
-    .eq('id', dealId).single();
+  const deal = dealRes?.data;
   if (!deal) return { ok: false, error: 'Deal không tồn tại', statusCode: 404 };
 
   const isAdditional = mode === 'additional';
@@ -369,46 +599,30 @@ async function runAutoCreateProjectFromWonDeal({
     return { ok: false, error: 'Deal đã có dự án', statusCode: 400, existing_project_id: deal.project_id };
   }
 
-  try {
-    const existing = await listDealProductionProjects(dealId);
-    const dup = existing.find((p) =>
-      String(p.company_id || '') === String(coCheck.company.id)
-      && String(p.workshop_type_id || '') === String(validatedWorkshopTypeId || ''));
-    if (dup) {
-      return {
-        ok: false,
-        error: `Deal đã có dự án tại ${dup.company_name || 'công ty này'}${dup.workshop_type_name ? ` · ${dup.workshop_type_name}` : ''}`,
-        statusCode: 400,
-        existing_project_id: dup.project_id,
-      };
-    }
-  } catch (e) {
-    console.warn('[auto-project] dup check:', e.message);
+  const dup = (existing || []).find((p) =>
+    String(p.company_id || '') === String(coCheck.company.id)
+    && String(p.workshop_type_id || '') === String(validatedWorkshopTypeId || ''));
+  if (dup) {
+    return {
+      ok: false,
+      error: `Deal đã có dự án tại ${dup.company_name || 'công ty này'}${dup.workshop_type_name ? ` · ${dup.workshop_type_name}` : ''}`,
+      statusCode: 400,
+      existing_project_id: dup.project_id,
+    };
   }
 
-  let config = null;
-  try {
-    const { data: cfg } = await supabase.from('auto_project_config').select('*').limit(1).single();
-    config = cfg;
-  } catch (_) {}
-
-  let flowId = config?.flow_id || null;
-  if (!flowId) {
-    const { data: defaultFlow } = await supabase.from('workflow_flows')
-      .select('id').eq('is_default', true).eq('is_active', true).limit(1).single();
-    flowId = defaultFlow?.id || null;
-  }
+  const config = configRes?.data || null;
+  let flowId = config?.flow_id || defaultFlowRes?.data?.id || null;
   if (!flowId) {
     const { data: anyFlow } = await supabase.from('workflow_flows')
-      .select('id').eq('is_active', true).order('created_at').limit(1).single();
+      .select('id').eq('is_active', true).order('created_at').limit(1).maybeSingle();
     flowId = anyFlow?.id || null;
   }
   if (!flowId) {
     return { ok: false, error: 'Chưa có luồng quy trình nào. Vui lòng tạo luồng trước.', statusCode: 400 };
   }
 
-  const { data: firstStage } = await supabase.from('workflow_stages')
-    .select('id').eq('slug', 'consulting').single();
+  const firstStage = firstStageRes?.data || null;
 
   const suffixLabel = workshopTypeName
     || coCheck.company.short_name
@@ -469,32 +683,35 @@ async function runAutoCreateProjectFromWonDeal({
   const projectId = project.id;
   const becomePrimary = !isAdditional && !deal.project_id;
 
-  try {
-    const { data: hop } = await supabase
+  const [hopRes, flowStepsRes] = await Promise.all([
+    supabase
       .from('production_handover_settings')
       .select('default_production_team_id')
       .eq('production_company_id', coCheck.company.id)
-      .maybeSingle();
-    if (hop?.default_production_team_id) {
+      .maybeSingle(),
+    supabase.from('workflow_flow_steps')
+      .select('id, order_index, division_unit_id, company_unit_id, template_set_id')
+      .eq('flow_id', flowId).order('order_index'),
+  ]);
+
+  if (hopRes?.data?.default_production_team_id) {
+    try {
       await supabase.from('projects').update({
-        production_workshop_team_id: hop.default_production_team_id,
+        production_workshop_team_id: hopRes.data.default_production_team_id,
         updated_at: new Date().toISOString(),
       }).eq('id', projectId);
+    } catch (he) {
+      console.warn('[auto-project] production_handover team:', he.message);
     }
-  } catch (he) {
-    console.warn('[auto-project] production_handover team:', he.message);
   }
 
-  const { data: flowSteps } = await supabase.from('workflow_flow_steps')
-    .select('id, order_index, division_unit_id, company_unit_id, template_set_id')
-    .eq('flow_id', flowId).order('order_index');
-
+  const flowSteps = flowStepsRes?.data || [];
   let allCreatedTasks = [];
 
-  const kdStep = (flowSteps || []).find((s) => s.order_index === 0);
+  const kdStep = flowSteps.find((s) => s.order_index === 0);
   if (kdStep) {
-    if (kdStep.division_unit_id) {
-      await supabase.from('project_company_assignments').upsert({
+    const kdAssignPromise = kdStep.division_unit_id
+      ? supabase.from('project_company_assignments').upsert({
         project_id: projectId,
         division_unit_id: kdStep.division_unit_id,
         company_unit_id: kdStep.company_unit_id,
@@ -502,14 +719,16 @@ async function runAutoCreateProjectFromWonDeal({
         order_index: 0, status: 'done',
         started_at: new Date().toISOString(),
         completed_at: new Date().toISOString(),
-      }, { onConflict: 'project_id,division_unit_id' });
-    }
+      }, { onConflict: 'project_id,division_unit_id' })
+      : Promise.resolve();
 
+    let importPromise = Promise.resolve();
     if (!skipCrmTaskImport) {
-      try {
-        const { data: crmTasks } = await supabase.from('crm_tasks')
-          .select('*').eq('lead_id', dealId).order('order_index');
-        if (crmTasks?.length) {
+      importPromise = (async () => {
+        try {
+          const { data: crmTasks } = await supabase.from('crm_tasks')
+            .select('*').eq('lead_id', dealId).order('order_index');
+          if (!crmTasks?.length) return;
           const completedAt = new Date().toISOString();
           const rows = crmTasks.map((ct, i) => ({
             project_id: projectId, stage_id: firstStage?.id || null,
@@ -523,13 +742,15 @@ async function runAutoCreateProjectFromWonDeal({
           }));
           const { data: inserted } = await supabase.from('tasks').insert(rows).select('*');
           if (inserted?.length) allCreatedTasks.push(...inserted);
-        }
-      } catch (e) { console.error('[auto-project] Import CRM tasks:', e.message); }
+        } catch (e) { console.error('[auto-project] Import CRM tasks:', e.message); }
+      })();
     }
+
+    await Promise.all([kdAssignPromise, importPromise]);
   }
 
   const generatedBySteps = await Promise.all(
-    (flowSteps || [])
+    flowSteps
       .filter((s) => s.order_index > 0)
       .map(async (step) => {
         if (step.division_unit_id) {
@@ -564,109 +785,26 @@ async function runAutoCreateProjectFromWonDeal({
     }
   }
 
-  await linkDealToProject({
-    dealId,
-    projectId,
-    isPrimary: becomePrimary,
-    label: suffixLabel,
-    createdBy: userId,
-  });
-
-  try {
-    await ensureDealLeadDocumentsForModuleTransition({ leadId: dealId, projectId });
-  } catch (e) {
-    console.warn('[auto-project] ensure lead_documents:', e.message);
-  }
-
-  if (!skipOrderSync) {
-    try {
-      const { syncExistingCrmOrdersToProject } = require('./projectOrderFulfillment');
-      await syncExistingCrmOrdersToProject({
-        projectId,
-        userId,
-        parentLeadId: dealId,
-      });
-    } catch (e) {
-      console.warn('[auto-project] sync existing CRM orders:', e.message);
-    }
-  }
-
-  try {
-    await applyProductionTemplateToFulfillmentLead({
-      req,
-      leadId: dealId,
+  await Promise.all([
+    linkDealToProject({
+      dealId,
+      projectId,
+      isPrimary: becomePrimary,
+      label: suffixLabel,
       createdBy: userId,
-      assigneeId: null,
-      force: true,
-      requireTemplateCompanyMatch: true,
-      templateSourceCompanyId: coCheck.company.id,
-    });
-  } catch (e) {
-    console.warn('[auto-project] applyProductionTemplateToFulfillmentLead:', e.message);
-  }
+    }),
+    syncCrmLeadSxPipelineFromProject(projectId).catch((e) => {
+      console.warn('[auto-project] sync sx_pipeline_stage_id:', e.message);
+    }),
+  ]);
 
-  try {
-    await syncCrmLeadSxPipelineFromProject(projectId);
-  } catch (e) {
-    console.warn('[auto-project] sync sx_pipeline_stage_id:', e.message);
-  }
-
-  let workshopTemplateTaskCount = 0;
-  try {
-    workshopTemplateTaskCount = await applyDefaultWorkshopTemplatesForNewProject(projectId, userId);
-    if (workshopTemplateTaskCount) {
-      console.log(`[auto-project] Workshop default templates → ${workshopTemplateTaskCount} tasks`);
-    }
-  } catch (e) {
-    console.warn('[auto-project] workshop default templates:', e.message);
-  }
-
-  try {
-    const { data: dealDocs } = await supabase.from('lead_documents')
-      .select('*').eq('lead_id', dealId);
-    if (dealDocs?.length) {
-      const docFiles = dealDocs.filter((d) => d.file_url).map((d) => ({
-        file_url: d.file_url, file_name: d.file_name || d.name,
-        file_size: d.file_size, mime_type: d.mime_type,
-        description: `Từ Deal: ${d.name || d.file_name}`,
-      }));
-      if (docFiles.length) {
-        await supabase.from('projects').update({ quotation_files: docFiles }).eq('id', projectId);
-      }
-    }
-  } catch (e) { console.error('[auto-project] Copy docs:', e.message); }
-
-  try {
-    const totalTasks = allCreatedTasks.length + workshopTemplateTaskCount;
-    await supabase.from('crm_activities').insert({
-      lead_id: dealId, type: 'note',
-      title: becomePrimary ? '📋 Dự án tự động tạo' : '📋 Thêm dự án SX',
-      description: `Dự án ${project.code} (${suffixLabel || coCheck.company.name || 'SX'}) — ${totalTasks} nhiệm vụ${workshopTemplateTaskCount ? ` (gồm ${workshopTemplateTaskCount} từ bộ mẫu xưởng)` : ''}`,
-      created_by: userId,
-    });
-  } catch (_) {}
-
-  try {
-    const { getCompanyScopedAdminIds } = require('./notifications');
-    const adminIds = (await getCompanyScopedAdminIds(coCheck.company.id))
-      .filter((id) => id !== userId);
-    if (adminIds.length) {
-      await notifyMultiple(req, adminIds, 'project_created',
-        '📋 Dự án mới từ Deal',
-        `Dự án ${project.code} — "${projectName}" (${allCreatedTasks.length + workshopTemplateTaskCount} nhiệm vụ)`,
-        'project', projectId, {
-          ecosystem_module_key: 'production',
-          project_id: String(projectId),
-          project_code: project.code,
-          project_name: project.name,
-        });
-    }
-  } catch (_) {}
-
+  let notifyStaff = [];
+  let mentionStaffIds = [];
   try {
     const {
       applyWorkshopTypeDefaultStaffToProject,
       loadProjectProductionStaffUserIds,
+      loadProjectIdsForDeal,
     } = require('./productionWorkshopTypeStaff');
     const primaryStaffId = await applyWorkshopTypeDefaultStaffToProject(
       projectId,
@@ -674,57 +812,23 @@ async function runAutoCreateProjectFromWonDeal({
       validatedWorkshopTypeId,
     );
     const staffIds = await loadProjectProductionStaffUserIds(projectId);
-    const notifyStaff = staffIds.length ? staffIds : (primaryStaffId ? [primaryStaffId] : []);
-    // Mode 'additional' (thêm công ty SX thứ 2+): mention thêm NV các xưởng đã gắn deal trước đó
-    // trong bình luận để mọi công ty SX cùng biết deal có thêm xưởng mới.
-    // Chỉ áp cho MENTION — không gửi 'project_assigned' cho NV không thuộc dự án mới.
-    let mentionStaffIds = [...notifyStaff];
+    notifyStaff = staffIds.length ? staffIds : (primaryStaffId ? [primaryStaffId] : []);
+    mentionStaffIds = [...notifyStaff];
     if (!becomePrimary) {
       try {
-        const { loadProjectIdsForDeal } = require('./productionWorkshopTypeStaff');
         const otherProjectIds = (await loadProjectIdsForDeal(dealId))
           .map(String)
           .filter((pid) => pid !== String(projectId));
         const merged = new Set(mentionStaffIds.map(String));
-        for (const otherPid of otherProjectIds) {
-          for (const uid of await loadProjectProductionStaffUserIds(otherPid)) {
-            merged.add(String(uid));
-          }
+        const otherStaffLists = await Promise.all(
+          otherProjectIds.map((pid) => loadProjectProductionStaffUserIds(pid)),
+        );
+        for (const list of otherStaffLists) {
+          for (const uid of list) merged.add(String(uid));
         }
         mentionStaffIds = [...merged];
       } catch (mergeErr) {
         console.warn('[auto-project] merge existing sx staff for additional:', mergeErr.message);
-      }
-    }
-    for (const sid of notifyStaff) {
-      if (String(sid) === String(userId)) continue;
-      try {
-        await notifyMultiple(req, [sid], 'project_assigned',
-          '📋 Dự án SX mới',
-          `Bạn được gán vào dự án ${project.code} — "${projectName}"`,
-          'project', projectId, {
-            ecosystem_module_key: 'production',
-            project_id: String(projectId),
-            project_code: project.code,
-            project_name: project.name,
-          });
-      } catch (_) {}
-    }
-
-    if (mentionStaffIds.length) {
-      try {
-        await postSxTransferMentionComment(req, notifyMultiple, {
-          dealId,
-          projectId,
-          senderId: userId,
-          mentionUserIds: mentionStaffIds,
-          projectCode: project.code,
-          dealTitle: deal.title,
-          workshopLabel: coCheck.company.short_name || coCheck.company.name || '',
-          mode: becomePrimary ? 'transfer' : 'additional',
-        });
-      } catch (mentionErr) {
-        console.warn('[auto-project] sx transfer mention comment:', mentionErr.message);
       }
     }
   } catch (staffErr) {
@@ -739,24 +843,8 @@ async function runAutoCreateProjectFromWonDeal({
     }
   }
 
-  try {
-    const { notifyWorkshopIntakeNewDeal, emitProductionBoardRealtime } = require('./workshopIntakeNotify');
-    await notifyWorkshopIntakeNewDeal({
-      req,
-      projectId,
-      projectCode: project.code,
-      projectName: project.name,
-      dealTitle: deal.title,
-      actorUserId: userId,
-    });
-    const io = req.app?.get('io');
-    await emitProductionBoardRealtime(projectId, io, becomePrimary ? 'auto_create' : 'auto_create_additional');
-  } catch (intakeNotifyErr) {
-    console.warn('[auto-project] intake notify/socket:', intakeNotifyErr.message);
-  }
-
-  // Additional đơn lẻ: gộp lại NV mọi xưởng đã gắn deal (tránh chỉ sync project_id chính).
-  if (!becomePrimary || isMultiBatch) {
+  // Additional đơn lẻ: gộp lại NV mọi xưởng (multi-batch sync ở wrapper).
+  if (!becomePrimary && !isMultiBatch) {
     try {
       const { ensureLeadMembersFromProjectStaff } = require('./productionWorkshopTypeStaff');
       await ensureLeadMembersFromProjectStaff(dealId);
@@ -765,15 +853,34 @@ async function runAutoCreateProjectFromWonDeal({
     }
   }
 
-  console.log(`[auto-project] Deal ${dealId} → Project ${project.code} (${allCreatedTasks.length + workshopTemplateTaskCount} tasks)${becomePrimary ? '' : ' [additional]'}`);
+  const companyLabel = suffixLabel || coCheck.company.short_name || coCheck.company.name || '';
+  scheduleAutoProjectBackground({
+    req,
+    dealId,
+    projectId,
+    userId,
+    companyId: coCheck.company.id,
+    companyLabel,
+    projectCode: project.code,
+    projectName: project.name,
+    dealTitle: deal.title,
+    becomePrimary,
+    flowTaskCount: allCreatedTasks.length,
+    skipOrderSync,
+    notifyStaffIds: notifyStaff,
+    mentionStaffIds,
+  });
+
+  console.log(`[auto-project] Deal ${dealId} → Project ${project.code} (${allCreatedTasks.length} flow tasks, bg pending)${becomePrimary ? '' : ' [additional]'}`);
 
   return {
     ok: true,
     project_id: projectId,
     project_code: project.code,
     project_name: project.name,
-    tasks_created: allCreatedTasks.length + workshopTemplateTaskCount,
+    tasks_created: allCreatedTasks.length,
     is_primary: becomePrimary,
+    background_pending: true,
   };
 }
 

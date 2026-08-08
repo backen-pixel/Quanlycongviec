@@ -5136,7 +5136,7 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
   const [sxAddTargets, setSxAddTargets] = useState([]);
   const [sxAddBusy, setSxAddBusy] = useState(false);
   const [sxAddErr, setSxAddErr] = useState('');
-  const { wait: sxConfirmWait, start: startSxConfirmCountdown, clear: clearSxConfirmTimer } = useConfirmCountdown(5);
+  const { wait: sxConfirmWait, start: startSxConfirmCountdown, clear: clearSxConfirmTimer } = useConfirmCountdown(3);
   const sxPendingRef = useRef(false);
 
   const sxProjectsList = useMemo(() => {
