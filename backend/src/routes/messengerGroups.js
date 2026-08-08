@@ -45,6 +45,23 @@ async function updateGroupAvatar(gid, avatarUrl) {
   return error;
 }
 
+/** Nhóm chat: avatar có thể chưa có trên DB / schema cache PostgREST. */
+async function fetchMessengerGroupsLite(ids) {
+  if (!ids.length) return [];
+  const withAvatar = 'id, name, avatar, is_direct';
+  const withoutAvatar = 'id, name, is_direct';
+  let { data, error } = await supabase.from('messenger_groups').select(withAvatar).in('id', ids);
+  if (error && /avatar/i.test(String(error.message || ''))) {
+    await ensureMessengerGroupAvatarColumn();
+    ({ data, error } = await supabase.from('messenger_groups').select(withAvatar).in('id', ids));
+  }
+  if (error && /avatar/i.test(String(error.message || ''))) {
+    ({ data, error } = await supabase.from('messenger_groups').select(withoutAvatar).in('id', ids));
+  }
+  if (error) throw error;
+  return data || [];
+}
+
 /** Bucket Supabase Storage (mặc định giống upload CRM). */
 const { uploadBufferToStorage } = require('../helpers/storageUpload');
 const MESSENGER_STORAGE_BUCKET = process.env.SUPABASE_MESSENGER_BUCKET || 'attachments';
@@ -1497,11 +1514,7 @@ r.get('/call-history', async (req, res) => {
     if (!rows.length) return res.json({ items: [] });
 
     const hitGroupIds = [...new Set(rows.map((m) => m.group_id).filter(Boolean))];
-    const { data: groups, error: gErr } = await supabase
-      .from('messenger_groups')
-      .select('id, name, avatar, is_direct')
-      .in('id', hitGroupIds);
-    if (gErr) throw gErr;
+    const groups = await fetchMessengerGroupsLite(hitGroupIds);
     const groupById = new Map((groups || []).map((g) => [String(g.id), g]));
 
     const { data: hitMems } = await supabase
