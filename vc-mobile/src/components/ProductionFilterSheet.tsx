@@ -1,5 +1,5 @@
 /**
- * Bottom sheet bộ lọc Kanban SX — gọn, tab Phạm vi | Pipeline (đồng bộ web).
+ * Bottom sheet bộ lọc Kanban VC — gọn, tab Phạm vi | Pipeline (đồng bộ web).
  */
 import Ionicons from '@expo/vector-icons/Ionicons';
 import React, { useEffect, useMemo, useState } from 'react';
@@ -20,12 +20,16 @@ import { colorWithAlpha, HIT_TARGET, Radii, Spacing } from '../theme';
 export type FilterPickOption = { id: string; label: string; group?: string };
 
 type TabId = 'scope' | 'pipeline';
+export type QuickFilterId = 'all' | 'mine' | 'overdue' | 'today';
 
 type Props = {
   visible: boolean;
   onClose: () => void;
   onReset: () => void;
   initialTab?: TabId;
+  /** Lọc nhanh — tương đương NV phụ trách / quá hạn / deadline hôm nay trên web. */
+  quickFilter?: QuickFilterId;
+  onQuickFilterChange?: (id: QuickFilterId) => void;
   showWorkshopPicker: boolean;
   workshopOptions: FilterPickOption[];
   filterCompany: string;
@@ -35,6 +39,10 @@ type Props = {
   filterDealCompany: string;
   onDealCompanyChange: (id: string) => void;
   dealCompanyReadOnlyLabel?: string;
+  /** Khu vực — khớp web filterRegion (có «Chưa gắn khu vực»). */
+  regionOptions?: FilterPickOption[];
+  filterRegion?: string;
+  onRegionChange?: (id: string) => void;
   workTypeOptions: FilterPickOption[];
   filterWorkTypeId: string;
   onWorkTypeChange: (id: string) => void;
@@ -79,11 +87,20 @@ function Chip({
   );
 }
 
+const QUICK_FILTERS: { id: QuickFilterId; label: string }[] = [
+  { id: 'all', label: 'Tất cả' },
+  { id: 'mine', label: 'Của tôi' },
+  { id: 'overdue', label: 'Quá hạn' },
+  { id: 'today', label: 'Hôm nay' },
+];
+
 export default function ProductionFilterSheet({
   visible,
   onClose,
   onReset,
   initialTab = 'scope',
+  quickFilter = 'all',
+  onQuickFilterChange,
   showWorkshopPicker,
   workshopOptions,
   filterCompany,
@@ -93,13 +110,16 @@ export default function ProductionFilterSheet({
   filterDealCompany,
   onDealCompanyChange,
   dealCompanyReadOnlyLabel,
+  regionOptions = [],
+  filterRegion = '',
+  onRegionChange,
   workTypeOptions,
   filterWorkTypeId,
   onWorkTypeChange,
 }: Props) {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
-  const showScopeTab = showWorkshopPicker || showDealCompanyPicker;
+  const showScopeTab = showWorkshopPicker || showDealCompanyPicker || regionOptions.length > 0;
   const [tab, setTab] = useState<TabId>(showScopeTab ? initialTab : 'pipeline');
   const [query, setQuery] = useState('');
 
@@ -113,8 +133,9 @@ export default function ProductionFilterSheet({
     let n = 0;
     if (filterCompany) n += 1;
     if (filterDealCompany) n += 1;
+    if (filterRegion) n += 1;
     return n;
-  }, [filterCompany, filterDealCompany]);
+  }, [filterCompany, filterDealCompany, filterRegion]);
 
   const pipelineCount = filterWorkTypeId ? 1 : 0;
 
@@ -124,7 +145,12 @@ export default function ProductionFilterSheet({
     return opts.filter((o) => o.label.toLowerCase().includes(q));
   };
 
-  const searchPlaceholder = tab === 'pipeline' ? 'Tìm phân loại…' : 'Tìm công ty…';
+  const searchPlaceholder =
+    tab === 'pipeline'
+      ? 'Tìm phân loại…'
+      : regionOptions.length && !showWorkshopPicker
+        ? 'Tìm khu vực…'
+        : 'Tìm công ty / khu vực…';
 
   const themed = useMemo(
     () =>
@@ -313,6 +339,22 @@ export default function ProductionFilterSheet({
           )}
         </>
       ) : null}
+
+      {onRegionChange && regionOptions.length > 0 ? (
+        <>
+          <Text style={themed.sectionLabel}>Khu vực</Text>
+          <View style={themed.chipWrap}>
+            {filterOptions(regionOptions).map((opt) => (
+              <Chip
+                key={`rg-${opt.id || 'all'}`}
+                label={opt.label}
+                active={filterRegion === opt.id}
+                onPress={() => onRegionChange(opt.id)}
+              />
+            ))}
+          </View>
+        </>
+      ) : null}
     </>
   );
 
@@ -397,6 +439,22 @@ export default function ProductionFilterSheet({
           </View>
 
           <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+            {onQuickFilterChange ? (
+              <>
+                <Text style={themed.sectionLabel}>Lọc nhanh</Text>
+                <View style={themed.chipWrap}>
+                  {QUICK_FILTERS.map((opt) => (
+                    <Chip
+                      key={opt.id}
+                      label={opt.label}
+                      active={quickFilter === opt.id}
+                      onPress={() => onQuickFilterChange(opt.id)}
+                    />
+                  ))}
+                </View>
+              </>
+            ) : null}
+
             {(showScopeTab || tab === 'pipeline') && (
               <View style={themed.searchBox}>
                 <Ionicons name="search-outline" size={16} color={colors.textFaint} />

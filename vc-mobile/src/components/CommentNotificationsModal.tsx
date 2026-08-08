@@ -28,6 +28,8 @@ import {
   notificationActionLabel,
   isWorkshopDealNotification,
   isVcRelevantNotification,
+  notificationListSubtitle,
+  notificationListTitle,
   type SxCommentNotification,
 } from '../lib/notificationApi';
 import { ensureNotificationPermission } from '../lib/pushRegistration';
@@ -40,6 +42,8 @@ type Props = {
   visible: boolean;
   onClose: () => void;
   onOpenProject: (projectId: string) => void;
+  /** Ưu tiên hơn onOpenProject — deep-link theo loại TB (cột / bình luận / dự án). */
+  onOpenNotification?: (n: SxCommentNotification) => void;
 };
 
 function keepVcNotifs(items: SxCommentNotification[], unreadOnly: boolean): SxCommentNotification[] {
@@ -84,7 +88,12 @@ function groupNotifications(items: SxCommentNotification[]) {
   return groups;
 }
 
-export default function CommentNotificationsModal({ visible, onClose, onOpenProject }: Props) {
+export default function CommentNotificationsModal({
+  visible,
+  onClose,
+  onOpenProject,
+  onOpenNotification,
+}: Props) {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const {
@@ -374,9 +383,13 @@ export default function CommentNotificationsModal({ visible, onClose, onOpenProj
         }
       }
       onClose();
+      if (onOpenNotification) {
+        onOpenNotification(item);
+        return;
+      }
       if (pid) onOpenProject(pid);
     },
-    [onClose, onOpenProject, adjustUnreadCount],
+    [onClose, onOpenNotification, onOpenProject, adjustUnreadCount],
   );
 
   const requestPerm = useCallback(async () => {
@@ -456,12 +469,11 @@ export default function CommentNotificationsModal({ visible, onClose, onOpenProj
                   {g.items.map((item) => {
                     const code = item.metadata?.project_code;
                     const preview = item.metadata?.comment_preview;
-                    const author = item.metadata?.author_name;
-                    const dealTitle = item.metadata?.deal_title;
                     const isDeal = isWorkshopDealNotification(item);
                     const iconName = notificationIconName(item);
                     const catLabel = notificationCategoryLabel(item);
                     const actionLabel = notificationActionLabel(item);
+                    const subtitle = notificationListSubtitle(item);
                     return (
                       <TapHighlight
                         key={item.id}
@@ -478,16 +490,12 @@ export default function CommentNotificationsModal({ visible, onClose, onOpenProj
                           <View style={styles.cardBody}>
                             <View style={styles.metaRow}>
                               <Text style={styles.catText}>
-                                {catLabel}{code ? ` · ${code}` : dealTitle ? ` · ${dealTitle}` : ''}
+                                {catLabel}{code ? ` · ${code}` : ''}
                               </Text>
                               <Text style={styles.timeText}>{timeAgo(item.created_at)}</Text>
                             </View>
                             <Text style={[styles.notifTitle, !item.is_read && styles.notifTitleUnread]} numberOfLines={2}>
-                              {isDeal
-                                ? item.title.replace(/^[^\s]+\s*/, '').trim() || item.title
-                                : author
-                                  ? `${author}${code ? ` · ${code}` : ''}`
-                                  : item.title.replace(/^💬\s*/, '')}
+                              {notificationListTitle(item)}
                             </Text>
                             {!item.is_read ? (
                               <View style={styles.unreadBadge}>
@@ -502,7 +510,7 @@ export default function CommentNotificationsModal({ visible, onClose, onOpenProj
                               </View>
                             ) : (
                               <Text style={styles.notifMsg} numberOfLines={3}>
-                                {item.message}
+                                {subtitle || item.message}
                               </Text>
                             )}
                             <View style={styles.actionRow}>

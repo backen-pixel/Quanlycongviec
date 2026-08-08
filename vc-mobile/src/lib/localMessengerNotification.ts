@@ -1,6 +1,6 @@
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
-import { SX_CHAT_CHANNEL } from './notificationChannels';
+import { VC_CHAT_CHANNEL } from './notificationChannels';
 
 export type MessengerNotifPayload = {
   groupId: string;
@@ -30,7 +30,7 @@ export async function showLocalMessengerNotification(p: MessengerNotifPayload): 
           sender_name: p.senderName,
           message_id: p.messageId || '',
         },
-        ...(Platform.OS === 'android' ? { channelId: SX_CHAT_CHANNEL } : {}),
+        ...(Platform.OS === 'android' ? { channelId: VC_CHAT_CHANNEL } : {}),
       },
       trigger: null,
     });

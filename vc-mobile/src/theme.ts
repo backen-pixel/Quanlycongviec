@@ -1,5 +1,5 @@
 /**
- * Bảng màu Xưởng SX — Dark / Light.
+ * Bảng màu Vận chuyển & Lắp đặt (VC) — Dark / Light.
  */
 export type ThemeMode = 'dark' | 'light';
 
@@ -39,9 +39,9 @@ export const darkColors: AppColors = {
   text: '#EEF2F8',
   textMuted: '#9AA6BC',
   textFaint: '#6B7689',
-  primary: '#3B82F6',
-  primaryDark: '#1D4ED8',
-  primarySoft: '#16233B',
+  primary: '#EA580C',
+  primaryDark: '#C2410C',
+  primarySoft: '#3B1F12',
   success: '#22C55E',
   warning: '#F59E0B',
   danger: '#EF4444',
@@ -64,9 +64,9 @@ export const lightColors: AppColors = {
   text: '#0F172A',
   textMuted: '#64748B',
   textFaint: '#94A3B8',
-  primary: '#2563EB',
-  primaryDark: '#1D4ED8',
-  primarySoft: '#EFF6FF',
+  primary: '#EA580C',
+  primaryDark: '#C2410C',
+  primarySoft: '#FFF7ED',
   success: '#16A34A',
   warning: '#D97706',
   danger: '#DC2626',
@@ -114,7 +114,7 @@ export function stageColor(raw: string | null | undefined, index: number): strin
   return STAGE_FALLBACK_COLORS[index % STAGE_FALLBACK_COLORS.length];
 }
 
-/** Màu thanh tiến độ nhiệm vụ SX — đỏ → vàng → teal → xanh theo % hoàn thành */
+/** Màu thanh tiến độ nhiệm vụ VC — đỏ → vàng → teal → xanh theo % hoàn thành */
 export function getTaskProgressColor(percent: number, colors: AppColors): string {
   const p = Math.max(0, Math.min(100, Math.round(percent)));
   if (p >= 100) return colors.success;

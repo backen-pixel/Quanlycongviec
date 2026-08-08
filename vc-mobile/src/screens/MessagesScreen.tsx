@@ -160,7 +160,7 @@ export default function MessagesScreen() {
 
   const loadOnline = useCallback(async () => {
     try {
-      const list = await fetchActivityUsers();
+      const list = await fetchActivityUsers(undefined, { onlineOnly: true });
       setOnlineUsers(list.filter((u) => u.online && String(u.id) !== String(myUserId)));
       setOnlineError('');
     } catch {
@@ -328,7 +328,6 @@ export default function MessagesScreen() {
       <View style={styles.hubBar}>
         {([
           ['chats', 'chatbubbles', 'Chats'],
-          ['calls', 'call', 'Cuộc gọi'],
         ] as const).map(([key, icon, label]) => {
           const active = hub === key;
           return (

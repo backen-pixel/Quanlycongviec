@@ -82,6 +82,25 @@ r.get('/leads/:id/comments', async (req, res) => {
       const audience = Array.isArray(meta.visible_user_ids) ? meta.visible_user_ids : [];
       return audience.map(String).includes(String(userId));
     });
+    const limitRaw = parseInt(String(req.query.limit || ''), 10);
+    const before = String(req.query.before || '').trim();
+    const paged = Number.isFinite(limitRaw) && limitRaw > 0;
+    let hasMore = false;
+    if (paged) {
+      const n = Math.min(Math.max(limitRaw, 1), 200);
+      let filtered = list;
+      if (before) {
+        const beforeMs = new Date(before).getTime();
+        if (Number.isFinite(beforeMs)) {
+          filtered = filtered.filter((c) => {
+            const t = new Date(c.created_at).getTime();
+            return Number.isFinite(t) && t < beforeMs;
+          });
+        }
+      }
+      hasMore = filtered.length > n;
+      list = filtered.slice(-n);
+    }
     if (!list.length) return res.json([]);
     const ids = list.map((c) => c.id);
     let rxMap = await fetchCrmCommentReactionsAggregate(supabase, ids, userId);
@@ -94,6 +113,7 @@ r.get('/leads/:id/comments', async (req, res) => {
       attachments: normalizeCrmLeadCommentAttachments(c.attachments),
       reactions: rxMap.get(c.id) || { summary: [], mine: null },
     }));
+    if (paged) res.setHeader('X-Has-More', hasMore ? '1' : '0');
     res.json(out);
   } catch (e) {
     console.error('GET /crm/leads/:id/comments:', e);

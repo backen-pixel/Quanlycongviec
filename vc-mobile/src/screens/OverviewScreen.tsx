@@ -1,32 +1,44 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { useNavigation } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
-  TouchableOpacity,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { fetchEventsRange, type AppEvent } from '../api/events';
 import { formatApiError } from '../api/client';
 import Avatar from '../components/Avatar';
 import CommentNotificationsModal from '../components/CommentNotificationsModal';
+import FilterPickerModal from '../components/FilterPickerModal';
 import ProjectCommentModal from '../components/ProjectCommentModal';
 import TapHighlight from '../components/TapHighlight';
+import { ymd } from '../components/calendar/CalendarChrome';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
 import { useTheme } from '../context/ThemeContext';
 import { useProductionRealtime } from '../hooks/useProductionRealtime';
 import type { MainTabParamList } from '../navigation/MainTabs';
+import type { RootStackParamList } from '../navigation/RootNavigator';
 import { useRootNavigation } from '../navigation/useRootNavigation';
 import {
   fetchCommentNotifications,
   isWorkshopDealNotification,
   isVcRelevantNotification,
+  notificationCategoryLabel,
+  notificationFocusKpi,
+  notificationIconName,
+  notificationListSubtitle,
+  notificationListTitle,
+  notificationOpensComments,
+  notificationProjectId,
   type SxCommentNotification,
 } from '../lib/notificationApi';
 import { ensureNotificationPermission } from '../lib/pushRegistration';
@@ -36,53 +48,39 @@ import {
   fetchProductionProject,
   type CompanyOption,
 } from '../lib/logisticsApi';
-import { getCachedBoard, isCachedBoardFresh } from '../lib/logisticsBoardCache';
+import { getCachedBoard, isCachedBoardFresh, setCachedBoard } from '../lib/logisticsBoardCache';
 import { loadKanbanFilters, saveKanbanFilters } from '../lib/kanbanFilterStorage';
 import { REALTIME_BOARD_TASK } from '../lib/realtimeModes';
 import {
   isSystemAdmin,
+  isCompanyScopedAdmin,
   workshopCompaniesForCrossViewer,
 } from '../lib/productionFilters';
-import FilterPickerModal from '../components/FilterPickerModal';
 import {
   computeVcBoardKpis,
   formatVnWeekdayDate,
-  greetingByHour,
-  initialsFrom,
-  pickOverdueProjects,
-  pickSoonProjects,
-  projectIsDeadlineOverdue,
-  shortDateLabel,
   type VcBoardKpis,
+  type VcKpiFocusKey,
 } from '../lib/vcBoardKpis';
 import {
   assignmentDealCardLabel,
   fetchMyLogisticsTasks,
   formatTaskDeadline,
-  isTaskDone,
+  isTaskInProgress,
   isTaskOverdue,
   isTaskPending,
+  statusPillLabel,
   taskDueIso,
   workTaskFocusCrmId,
   type WorkTask,
 } from '../lib/workTasksApi';
 import type { ProductionProject } from '../types';
-import { Radii, Spacing, colorWithAlpha, getTaskProgressColor } from '../theme';
+import { Radii, Spacing, colorWithAlpha, type AppColors } from '../theme';
 
-const PRIORITY_PAGE_SIZE = 5;
-/** Lấy đủ danh sách để phân trang trên Tổng quan. */
-const PRIORITY_FETCH_LIMIT = 80;
-
-type PrioritySectionKey = 'tasks' | 'deals' | 'soon';
-
-function pageSlice<T>(items: T[], page: number, pageSize: number): T[] {
-  const start = (Math.max(1, page) - 1) * pageSize;
-  return items.slice(start, start + pageSize);
-}
-
-function totalPagesOf(count: number, pageSize: number): number {
-  return Math.max(1, Math.ceil(Math.max(0, count) / pageSize));
-}
+const TASK_PAGE_SIZE = 5;
+const PREVIEW_NOTIFS = 5;
+const KPI_CARD_W = 132;
+const KPI_CARD_GAP = 10;
 
 const EMPTY_KPI: VcBoardKpis = {
   total: 0,
@@ -90,11 +88,23 @@ const EMPTY_KPI: VcBoardKpis = {
   totalInstall: 0,
   intake: 0,
   shipping: 0,
+  delivered: 0,
   installing: 0,
   warranty: 0,
+  acceptance: 0,
   inProgress: 0,
   completed: 0,
   overdue: 0,
+};
+
+type KpiTone = 'slate' | 'orange' | 'teal' | 'amber' | 'sky' | 'violet' | 'green' | 'red';
+
+type QuickAction = {
+  key: string;
+  label: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  color: string;
+  onPress: () => void;
 };
 
 function firstName(full: string): string {
@@ -102,7 +112,13 @@ function firstName(full: string): string {
   return parts[parts.length - 1] || full || 'bạn';
 }
 
-/** Thời gian thông báo: hôm nay = giờ; hôm qua / ngày khác = có ngày để không bị hiểu nhầm. */
+function timeOf(iso: string | null): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+}
+
 function notifTime(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
@@ -119,61 +135,9 @@ function notifTime(iso: string): string {
   return `${dd}/${mm}/${d.getFullYear()}`;
 }
 
-function notifListTitle(n: SxCommentNotification): string {
-  if (isWorkshopDealNotification(n)) {
-    const name = n.metadata?.project_name || n.metadata?.deal_title || n.metadata?.project_code;
-    if (name) return String(name);
-    return String(n.title || '')
-      .replace(/^🏭\s*/, '')
-      .replace(/^Deal mới\s*·?\s*/i, '')
-      .trim() || 'Deal vận chuyển';
-  }
-  const author = n.metadata?.author_name;
-  const code = n.metadata?.project_code;
-  if (author && code) return `${author} · ${code}`;
-  if (author) return author;
-  return String(n.title || n.message || 'Thông báo')
-    .replace(/^💬\s*/, '')
-    .trim();
-}
-
-function notifListSubtitle(n: SxCommentNotification): string | null {
-  if (isWorkshopDealNotification(n)) {
-    if (n.type === 'workshop_new_deal') {
-      return n.metadata?.vc_handover
-        ? 'Bàn giao từ Xưởng SX'
-        : 'Deal mới chờ vận chuyển';
-    }
-    if (n.type === 'logistics_stage_changed') return 'Đổi cột vận chuyển';
-    if (n.type === 'logistics_task_deadline_warning') return 'Sắp đến hạn công việc';
-    if (n.type === 'logistics_task_deadline_overdue') return 'Công việc quá hạn';
-    if (n.type === 'project_assigned') return 'Được gán dự án';
-    if (n.type === 'project_created') return 'Dự án mới tạo';
-    return 'Lắp đặt';
-  }
-  const preview = n.metadata?.comment_preview;
-  if (preview) return preview;
-  const msg = String(n.message || '').trim();
-  return msg && msg !== n.title ? msg : null;
-}
-
-function priorityBadge(p: ProductionProject): { label: string; bg: string; fg: string } {
-  if (projectIsDeadlineOverdue(p)) return { label: 'Quá hạn', bg: '#7F1D1D', fg: '#FCA5A5' };
-  const raw = p.deadline;
-  if (raw) {
-    const t = new Date(raw);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const day = new Date(t);
-    day.setHours(0, 0, 0, 0);
-    const diff = Math.round((day.getTime() - today.getTime()) / 86400000);
-    if (diff >= 0 && diff <= 2) return { label: 'Sắp đến hạn', bg: '#78350F', fg: '#FCD34D' };
-  }
-  return { label: 'Đang thực hiện', bg: '#1E3A5F', fg: '#93C5FD' };
-}
-
-function personLabel(p: ProductionProject): string | null {
-  return p.logistics_person_name || p.installer_person_name || null;
+function isOpenWorkTask(t: WorkTask): boolean {
+  const st = String(t.status || 'pending');
+  return isTaskPending(st) || isTaskInProgress(st);
 }
 
 export default function OverviewScreen() {
@@ -184,28 +148,21 @@ export default function OverviewScreen() {
   const { unreadCount, refreshUnread } = useNotifications();
   const { openProjectDetail, openOverdueProjects } = useRootNavigation();
   const tabNav = useNavigation<BottomTabNavigationProp<MainTabParamList>>();
+  const rootNav = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
 
   const userName = user?.full_name || user?.fullName || user?.email || 'Bạn';
   const greetName = firstName(userName);
   const userId = user?.id || user?.userId || '';
+  const helloLine = `Xin chào, ${greetName}!`;
+  const dateLabel = formatVnWeekdayDate();
+  const wishLine = 'Chúc bạn một ngày vận chuyển & lắp đặt suôn sẻ!';
 
-  // Không seed từ getAnyCachedBoard (dễ flash KPI sai công ty); load() sẽ hydrate đúng filter.
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [kpis, setKpis] = useState<VcBoardKpis>(EMPTY_KPI);
-  const [overdueDeals, setOverdueDeals] = useState<ProductionProject[]>([]);
-  const [soonDeals, setSoonDeals] = useState<ProductionProject[]>([]);
   const [tasks, setTasks] = useState<WorkTask[]>([]);
-  const [prioOpen, setPrioOpen] = useState<Record<PrioritySectionKey, boolean>>({
-    tasks: false,
-    deals: false,
-    soon: false,
-  });
-  const [prioPage, setPrioPage] = useState<Record<PrioritySectionKey, number>>({
-    tasks: 1,
-    deals: 1,
-    soon: 1,
-  });
+  const [events, setEvents] = useState<AppEvent[]>([]);
+  const [taskVisibleCount, setTaskVisibleCount] = useState(TASK_PAGE_SIZE);
   const [notifs, setNotifs] = useState<SxCommentNotification[]>([]);
   const [companies, setCompanies] = useState<CompanyOption[]>([]);
   const [filterCompany, setFilterCompany] = useState('');
@@ -214,19 +171,22 @@ export default function OverviewScreen() {
   const [commentProject, setCommentProject] = useState<ProductionProject | null>(null);
   const [error, setError] = useState<string | null>(null);
   const boardFiltersRef = useRef<{ companyId?: string; workshopTypeId?: string }>({});
+  const loadSeqRef = useRef(0);
+  const companiesRef = useRef<CompanyOption[]>([]);
+  companiesRef.current = companies;
 
-  /** Admin (kể cả sysadmin) chọn được mọi công ty; NV chỉ công ty của mình. */
-  const isAdminLike = user?.role === 'admin' || isSystemAdmin(user);
-  const canPickCompany = Boolean(isAdminLike);
+  const isAdminLike = isSystemAdmin(user) || isCompanyScopedAdmin(user);
+  const canPickCompany = isSystemAdmin(user);
 
   const companyOptions = useMemo(() => {
-    if (canPickCompany) {
-      return [
-        { id: '', label: 'Tất cả công ty' },
-        ...companies.map((c) => ({ id: c.id, label: c.name })),
-      ];
+    if (isSystemAdmin(user)) {
+      return companies.map((c) => ({ id: c.id, label: c.name }));
     }
-    // Nhân viên: chỉ công ty gắn JWT (hoặc công ty được phép xem chéo nếu có).
+    if (isCompanyScopedAdmin(user) && user?.company_id) {
+      const ownId = String(user.company_id);
+      const own = companies.find((c) => String(c.id) === ownId);
+      return [{ id: ownId, label: own?.name || 'Công ty của tôi' }];
+    }
     const ownId = user?.company_id ? String(user.company_id) : '';
     if (ownId) {
       const own = companies.find((c) => String(c.id) === ownId);
@@ -236,31 +196,25 @@ export default function OverviewScreen() {
       id: c.id,
       label: c.name,
     }));
-  }, [canPickCompany, companies, user]);
+  }, [companies, user]);
 
   const workshopLabel = useMemo(() => {
     if (!filterCompany) {
-      return canPickCompany ? 'Tất cả công ty' : (companyOptions[0]?.label || 'Công ty');
+      return companyOptions[0]?.label || 'Công ty';
     }
     return companyOptions.find((o) => o.id === filterCompany)?.label
       || companies.find((c) => String(c.id) === String(filterCompany))?.name
       || 'Công ty';
-  }, [filterCompany, canPickCompany, companyOptions, companies]);
+  }, [filterCompany, companyOptions, companies]);
 
   const persistCompanyFilter = useCallback(async (companyId: string) => {
     const snap = (await loadKanbanFilters().catch(() => null)) || {};
     await saveKanbanFilters({
       ...snap,
       filterCompany: companyId,
-      // Đổi công ty → reset phân loại (Kanban sẽ tự chọn lại).
       filterWorkTypeId: '',
     });
   }, []);
-
-  const loadSeqRef = useRef(0);
-
-  const companiesRef = useRef<CompanyOption[]>([]);
-  companiesRef.current = companies;
 
   const load = useCallback(async (mode: 'init' | 'refresh' | 'silent' = 'init') => {
     const seq = ++loadSeqRef.current;
@@ -272,7 +226,6 @@ export default function OverviewScreen() {
       let companyId = snap?.filterCompany || '';
       const workshopTypeId = snap?.filterWorkTypeId || undefined;
 
-      // Silent: tái dùng danh sách công ty đã có — bớt 1 RTT mỗi lần realtime.
       let companyList = companiesRef.current;
       if (mode !== 'silent' || !companyList.length) {
         companyList = await fetchCompanies().catch(() => [] as CompanyOption[]);
@@ -281,17 +234,20 @@ export default function OverviewScreen() {
       }
 
       if (!canPickCompany) {
-        // NV: khóa về công ty của họ
         const ownId = user?.company_id ? String(user.company_id) : '';
         if (ownId) companyId = ownId;
         else if (!companyId && companyList[0]?.id) companyId = String(companyList[0].id);
         if (companyId && companyId !== (snap?.filterCompany || '')) {
           await persistCompanyFilter(companyId);
         }
-      } else if (companyId) {
-        // Admin: bỏ chọn nếu id không còn trong danh sách
-        const exists = companyList.some((c) => String(c.id) === String(companyId));
-        if (!exists) companyId = '';
+      } else {
+        // Sysadmin: luôn chọn 1 công ty cụ thể (không «Tất cả») — khớp web.
+        const exists = companyId
+          && companyList.some((c) => String(c.id) === String(companyId));
+        if (!exists) {
+          companyId = companyList[0]?.id ? String(companyList[0].id) : '';
+          if (companyId) await persistCompanyFilter(companyId);
+        }
       }
 
       if (seq !== loadSeqRef.current) return;
@@ -299,7 +255,6 @@ export default function OverviewScreen() {
 
       const boardFilters = {
         companyId: companyId || undefined,
-        // Khớp Kanban: chỉ lọc phân loại khi đã chọn công ty/xưởng.
         workshopTypeId:
           companyId && workshopTypeId && workshopTypeId !== 'none'
             ? workshopTypeId
@@ -307,43 +262,49 @@ export default function OverviewScreen() {
       };
       boardFiltersRef.current = boardFilters;
 
-      // Silent + cache tươi: chỉ refresh tasks/notif, không tải lại full board.
       const skipBoard = mode === 'silent' && isCachedBoardFresh(boardFilters) && !!getCachedBoard(boardFilters);
       const cachedBoard = getCachedBoard(boardFilters);
-      const applyBoardPriority = (projects: ProductionProject[]) => {
-        setOverdueDeals(pickOverdueProjects(projects, PRIORITY_FETCH_LIMIT));
-        setSoonDeals(pickSoonProjects(projects, PRIORITY_FETCH_LIMIT));
-      };
 
       if (cachedBoard && mode !== 'refresh') {
         setKpis(computeVcBoardKpis(cachedBoard.projects, cachedBoard.stages));
-        applyBoardPriority(cachedBoard.projects);
         if (mode === 'init') setLoading(false);
       }
 
-      // Section «Công việc của tôi» luôn lấy nhiệm vụ gán cho user — không lấy cả team (tránh số liệu phình như SX admin).
+      const today = ymd(new Date());
       const tasksPromise = !userId
         ? Promise.resolve([] as WorkTask[])
-        : fetchMyLogisticsTasks(userId).catch(() => [] as WorkTask[]);
+        : fetchMyLogisticsTasks(userId, { limit: 30 }).catch(() => [] as WorkTask[]);
+      const eventsPromise = fetchEventsRange({
+        dateFrom: today,
+        dateTo: today,
+        companyId: companyId || undefined,
+        module: 'logistics',
+        userId: userId || undefined,
+      }).catch(() => [] as AppEvent[]);
 
-      const [board, myTasks, notifList] = await Promise.all([
+      const [board, myTasks, todayEvents, notifList] = await Promise.all([
         skipBoard ? Promise.resolve(cachedBoard!) : fetchProductionBoard(mode === 'refresh', boardFilters),
         tasksPromise,
-        fetchCommentNotifications(false).catch(() => ({ notifications: [] as SxCommentNotification[], unread_count: 0 })),
+        eventsPromise,
+        fetchCommentNotifications(false).catch(() => ({
+          notifications: [] as SxCommentNotification[],
+          unread_count: 0,
+        })),
       ]);
 
       if (seq !== loadSeqRef.current) return;
       if (board) {
+        if (!skipBoard) setCachedBoard(boardFilters, board);
         setKpis(computeVcBoardKpis(board.projects, board.stages));
-        applyBoardPriority(board.projects);
       }
       setTasks(myTasks);
+      setEvents(todayEvents);
       setNotifs(
         (notifList.notifications || [])
           .filter(isVcRelevantNotification)
           .slice()
           .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))
-          .slice(0, 5),
+          .slice(0, PREVIEW_NOTIFS),
       );
     } catch (e) {
       if (seq !== loadSeqRef.current) return;
@@ -357,7 +318,6 @@ export default function OverviewScreen() {
   }, [userId, user?.company_id, canPickCompany, persistCompanyFilter]);
 
   useEffect(() => {
-    // Seed KPI theo cùng key filter nếu có; không dùng cache rỗng (key khác).
     void loadKanbanFilters().then((snap) => {
       const filters = {
         companyId: snap?.filterCompany || undefined,
@@ -369,6 +329,20 @@ export default function OverviewScreen() {
       void load(getCachedBoard(filters) ? 'silent' : 'init');
     });
   }, [load]);
+
+  /** Quay lại Tổng quan → đọc cache (Kanban đã patch) rồi refresh nền nếu stale. */
+  useFocusEffect(
+    useCallback(() => {
+      const filters = boardFiltersRef.current;
+      const cached = getCachedBoard(filters);
+      if (cached) {
+        setKpis(computeVcBoardKpis(cached.projects, cached.stages));
+      }
+      if (!isCachedBoardFresh(filters)) {
+        void load('silent');
+      }
+    }, [load]),
+  );
 
   const onSelectCompany = useCallback(async (id: string) => {
     setCompanyPickerOpen(false);
@@ -384,8 +358,6 @@ export default function OverviewScreen() {
         const cached = getCachedBoard(boardFiltersRef.current);
         if (cached) {
           setKpis(computeVcBoardKpis(cached.projects, cached.stages));
-          setOverdueDeals(pickOverdueProjects(cached.projects, PRIORITY_FETCH_LIMIT));
-          setSoonDeals(pickSoonProjects(cached.projects, PRIORITY_FETCH_LIMIT));
         }
         return;
       }
@@ -395,55 +367,21 @@ export default function OverviewScreen() {
     debounceMs: 1500,
   });
 
-  const overdueTasksAll = useMemo(
-    () => tasks.filter((t) => isTaskOverdue(t)),
-    [tasks],
-  );
+  const openTasks = useMemo(() => {
+    const list = tasks.filter(isOpenWorkTask);
+    return list.slice().sort((a, b) => {
+      const ao = isTaskOverdue(a) ? 0 : 1;
+      const bo = isTaskOverdue(b) ? 0 : 1;
+      if (ao !== bo) return ao - bo;
+      const ad = taskDueIso(a) || '9999';
+      const bd = taskDueIso(b) || '9999';
+      return String(ad).localeCompare(String(bd));
+    });
+  }, [tasks]);
 
-  const overdueTaskCount = overdueTasksAll.length;
-
-  const taskStats = useMemo(() => {
-    const pending = tasks.filter((t) => isTaskPending(t.status) || String(t.status) === 'in_progress').length;
-    const now = Date.now();
-    const soon = tasks.filter((t) => {
-      if (isTaskDone(t.status)) return false;
-      if (isTaskOverdue(t)) return false;
-      const raw = t.deadline || t.due_date;
-      if (!raw) return false;
-      const ts = new Date(raw).getTime();
-      if (!Number.isFinite(ts)) return false;
-      const diff = ts - now;
-      return diff >= 0 && diff <= 2 * 86400000;
-    }).length;
-    const done = tasks.filter((t) => isTaskDone(t.status)).length;
-    return { pending, soon, done, overdue: overdueTaskCount };
-  }, [tasks, overdueTaskCount]);
-
-  const priorityEmpty =
-    overdueTasksAll.length === 0 && overdueDeals.length === 0 && soonDeals.length === 0;
-
-  const togglePrio = useCallback((key: PrioritySectionKey) => {
-    setPrioOpen((prev) => ({ ...prev, [key]: !prev[key] }));
-  }, []);
-
-  const setSectionPage = useCallback((key: PrioritySectionKey, page: number) => {
-    setPrioPage((prev) => ({ ...prev, [key]: page }));
-  }, []);
-
-  const overdueTasksPage = pageSlice(overdueTasksAll, prioPage.tasks, PRIORITY_PAGE_SIZE);
-  const overdueDealsPage = pageSlice(overdueDeals, prioPage.deals, PRIORITY_PAGE_SIZE);
-  const soonDealsPage = pageSlice(soonDeals, prioPage.soon, PRIORITY_PAGE_SIZE);
-  const tasksPages = totalPagesOf(overdueTasksAll.length, PRIORITY_PAGE_SIZE);
-  const dealsPages = totalPagesOf(overdueDeals.length, PRIORITY_PAGE_SIZE);
-  const soonPages = totalPagesOf(soonDeals.length, PRIORITY_PAGE_SIZE);
-
-  useEffect(() => {
-    setPrioPage((prev) => ({
-      tasks: Math.min(prev.tasks, tasksPages),
-      deals: Math.min(prev.deals, dealsPages),
-      soon: Math.min(prev.soon, soonPages),
-    }));
-  }, [tasksPages, dealsPages, soonPages]);
+  const previewTasks = openTasks.slice(0, taskVisibleCount);
+  const hasMoreTasks = taskVisibleCount < openTasks.length;
+  const overdueTaskCount = useMemo(() => tasks.filter((t) => isTaskOverdue(t)).length, [tasks]);
 
   const openNotifs = useCallback(async () => {
     void ensureNotificationPermission();
@@ -456,7 +394,6 @@ export default function OverviewScreen() {
       const proj = await fetchProductionProject(projectId);
       setCommentProject(proj);
     } catch {
-      // fallback: vẫn mở modal với stub tối thiểu nếu fetch lỗi
       setCommentProject({
         id: projectId,
         code: '',
@@ -465,26 +402,213 @@ export default function OverviewScreen() {
     }
   }, []);
 
-  const goKanban = useCallback(() => {
-    tabNav.navigate('Kanban');
-  }, [tabNav]);
+  const goKanban = useCallback(() => tabNav.navigate('Kanban'), [tabNav]);
+  const goKanbanFocus = useCallback(
+    (focusKpi: VcKpiFocusKey) => tabNav.navigate('Kanban', { focusKpi }),
+    [tabNav],
+  );
 
-  const goWork = useCallback(() => {
-    tabNav.navigate('Work');
-  }, [tabNav]);
+  const openNotification = useCallback((n: SxCommentNotification) => {
+    const pid = notificationProjectId(n);
+    const focusRaw = notificationFocusKpi(n);
+    const focusKeys: VcKpiFocusKey[] = [
+      'intake', 'shipping', 'delivered', 'installing',
+      'warranty', 'acceptance', 'completed', 'overdue',
+    ];
+    const focus = focusRaw && focusKeys.includes(focusRaw as VcKpiFocusKey)
+      ? (focusRaw as VcKpiFocusKey)
+      : null;
+    if (notificationOpensComments(n)) {
+      if (pid) void openCommentForProjectId(pid);
+      else void openNotifs();
+      return;
+    }
+    if (focus) goKanbanFocus(focus);
+    if (pid) openProjectDetail(pid);
+    else if (!focus) void openNotifs();
+  }, [goKanbanFocus, openCommentForProjectId, openNotifs, openProjectDetail]);
+  const goWork = useCallback(() => tabNav.navigate('Work'), [tabNav]);
+  const goMessages = useCallback(() => tabNav.navigate('Messages'), [tabNav]);
+  const goMenu = useCallback(() => tabNav.navigate('Menu'), [tabNav]);
+  const goPlanner = useCallback(() => tabNav.navigate('Planner'), [tabNav]);
 
-  const kpiCards = [
-    { key: 'total', label: 'Tổng', value: kpis.total, color: colors.primary, icon: 'layers-outline' as const },
-    { key: 'intake', label: 'Chờ VC', value: kpis.intake, color: '#94A3B8', icon: 'cube-outline' as const },
-    { key: 'shipping', label: 'Đang VC', value: kpis.shipping, color: '#EA580C', icon: 'car-outline' as const },
-    { key: 'installing', label: 'Lắp đặt', value: kpis.installing, color: '#F59E0B', icon: 'construct-outline' as const },
-    { key: 'overdue', label: 'Quá hạn', value: kpis.overdue, color: colors.danger, icon: 'alert-circle-outline' as const },
+  const totalOverdueItems = overdueTaskCount + kpis.overdue;
+
+  const kpiItems: {
+    key: VcKpiFocusKey;
+    label: string;
+    value: number | string;
+    tone: KpiTone;
+    onPress: () => void;
+  }[] = [
+    {
+      key: 'intake',
+      label: 'Chờ vận chuyển',
+      value: kpis.intake,
+      tone: 'slate',
+      onPress: () => goKanbanFocus('intake'),
+    },
+    {
+      key: 'shipping',
+      label: 'Đang vận chuyển',
+      value: kpis.shipping,
+      tone: 'orange',
+      onPress: () => goKanbanFocus('shipping'),
+    },
+    {
+      key: 'delivered',
+      label: 'Đã giao',
+      value: kpis.delivered,
+      tone: 'teal',
+      onPress: () => goKanbanFocus('delivered'),
+    },
+    {
+      key: 'installing',
+      label: 'Đang lắp đặt',
+      value: kpis.installing,
+      tone: 'amber',
+      onPress: () => goKanbanFocus('installing'),
+    },
+    {
+      key: 'warranty',
+      label: 'Có vấn đề',
+      value: kpis.warranty,
+      tone: 'sky',
+      onPress: () => goKanbanFocus('warranty'),
+    },
+    {
+      key: 'acceptance',
+      label: 'Nghiệm thu-bàn giao',
+      value: kpis.acceptance,
+      tone: 'violet',
+      onPress: () => goKanbanFocus('acceptance'),
+    },
+    {
+      key: 'completed',
+      label: 'Hoàn thiện',
+      value: kpis.completed,
+      tone: 'green',
+      onPress: () => goKanbanFocus('completed'),
+    },
+    {
+      key: 'overdue',
+      label: 'Dự án quá hạn',
+      value: kpis.overdue,
+      tone: 'red',
+      onPress: () => goKanbanFocus('overdue'),
+    },
+  ];
+
+  const toneMap: Record<KpiTone, { fg: string; bg: string }> = {
+    slate: { fg: colors.textMuted, bg: colorWithAlpha(colors.textMuted, 0.14) },
+    orange: { fg: colors.primary, bg: colors.primarySoft },
+    teal: { fg: '#14B8A6', bg: colorWithAlpha('#14B8A6', 0.16) },
+    amber: { fg: colors.warning, bg: colorWithAlpha(colors.warning, 0.16) },
+    sky: { fg: '#38BDF8', bg: colorWithAlpha('#38BDF8', 0.16) },
+    violet: { fg: '#A78BFA', bg: colorWithAlpha('#A78BFA', 0.16) },
+    green: { fg: '#22C55E', bg: colorWithAlpha('#22C55E', 0.16) },
+    red: { fg: colors.danger, bg: colors.dangerSoft },
+  };
+
+  const quickActions: QuickAction[] = [
+    {
+      key: 'kanban',
+      label: 'Dự án',
+      icon: 'grid-outline',
+      color: colors.primary,
+      onPress: goKanban,
+    },
+    {
+      key: 'work',
+      label: 'Công việc',
+      icon: 'checkbox-outline',
+      color: '#22C55E',
+      onPress: goWork,
+    },
+    {
+      key: 'overdue',
+      label: 'Quá hạn',
+      icon: 'alarm-outline',
+      color: colors.danger,
+      onPress: openOverdueProjects,
+    },
+    {
+      key: 'events',
+      label: 'Sự kiện',
+      icon: 'calendar-outline',
+      color: '#06B6D4',
+      onPress: () => rootNav.navigate('Events'),
+    },
+    {
+      key: 'messages',
+      label: 'Tin nhắn',
+      icon: 'chatbubble-outline',
+      color: '#8B5CF6',
+      onPress: goMessages,
+    },
+    {
+      key: 'planner',
+      label: 'Planner',
+      icon: 'map-outline',
+      color: '#0EA5E9',
+      onPress: goPlanner,
+    },
+    {
+      key: 'leaves',
+      label: 'Lịch nghỉ',
+      icon: 'airplane-outline',
+      color: '#A855F7',
+      onPress: () => rootNav.navigate('Leaves'),
+    },
+    {
+      key: 'menu',
+      label: 'Menu',
+      icon: 'menu-outline',
+      color: '#64748B',
+      onPress: goMenu,
+    },
   ];
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
+      <View style={styles.hero}>
+        <View style={styles.heroTop}>
+          <View style={styles.heroIdentity}>
+            <Avatar name={userName} avatarUrl={user?.avatar} size={52} color={colors.primary} />
+            <View style={{ flex: 1, paddingRight: 4 }}>
+              <Text style={styles.helloLine} numberOfLines={1}>{helloLine}</Text>
+              <Text style={styles.dateLine}>{dateLabel}</Text>
+              <Text style={styles.wishLine} numberOfLines={2}>{wishLine}</Text>
+            </View>
+          </View>
+          <TapHighlight style={styles.iconBtn} onPress={() => void openNotifs()} hitSlop={8}>
+            <Ionicons name="notifications-outline" size={22} color={colors.text} />
+            {unreadCount > 0 ? (
+              <View style={styles.badge}>
+                <Text style={styles.badgeText}>{unreadCount > 99 ? '99+' : unreadCount}</Text>
+              </View>
+            ) : null}
+          </TapHighlight>
+        </View>
+
+        <Pressable
+          style={styles.companyChip}
+          onPress={() => {
+            if (canPickCompany) setCompanyPickerOpen(true);
+          }}
+          disabled={!canPickCompany}
+        >
+          <Ionicons name="business-outline" size={14} color={colors.primary} />
+          <Text style={styles.companyChipTxt} numberOfLines={1}>{workshopLabel}</Text>
+          {canPickCompany ? (
+            <Ionicons name="chevron-down" size={14} color={colors.textFaint} />
+          ) : null}
+        </Pressable>
+      </View>
+
       <ScrollView
-        contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + 100 }]}
+        style={{ flex: 1 }}
+        contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 110 }]}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -494,544 +618,308 @@ export default function OverviewScreen() {
         }
         showsVerticalScrollIndicator={false}
       >
-        {/* Header */}
-        <View style={styles.headerRow}>
-          <View style={styles.headerLeft}>
-            <Avatar name={userName} avatarUrl={user?.avatar} size={48} />
-            <View style={styles.headerTextWrap}>
-              <Text style={styles.greetTitle}>
-                {greetingByHour()}, {greetName}!
-              </Text>
-              <Text style={styles.greetSub}>Chúc bạn một ngày làm việc hiệu quả! 👋</Text>
-            </View>
+        {loading && !refreshing ? (
+          <View style={styles.centerBox}>
+            <ActivityIndicator color={colors.primary} size="large" />
+            <Text style={styles.muted}>Đang tải tổng quan…</Text>
           </View>
-          <View style={styles.headerBtns}>
-            <TapHighlight style={styles.iconBtn} onPress={() => void openNotifs()} hitSlop={8}>
-              <Ionicons name="notifications-outline" size={22} color={colors.text} />
-              {unreadCount > 0 ? (
-                <View style={styles.badge}>
-                  <Text style={styles.badgeText}>{unreadCount > 99 ? '99+' : unreadCount}</Text>
-                </View>
-              ) : null}
-            </TapHighlight>
-          </View>
-        </View>
-
-        {/* Date + company */}
-        <View style={styles.metaRow}>
-          <View style={[styles.metaCard, { flex: 1.05 }]}>
-            <View style={[styles.metaIcon, { backgroundColor: colorWithAlpha(colors.primary, 0.18) }]}>
-              <Ionicons name="calendar-outline" size={18} color={colors.primary} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.metaTitle} numberOfLines={1}>{formatVnWeekdayDate()}</Text>
-              <Text style={styles.metaSub}>Ngày làm việc</Text>
-            </View>
-          </View>
-          <TouchableOpacity
-            style={[styles.metaCard, { flex: 1 }]}
-            activeOpacity={canPickCompany ? 0.85 : 1}
-            onPress={() => {
-              if (canPickCompany) setCompanyPickerOpen(true);
-            }}
-            disabled={!canPickCompany}
-          >
-            <View style={[styles.metaIcon, { backgroundColor: colorWithAlpha('#8B5CF6', 0.18) }]}>
-              <Ionicons name="business-outline" size={18} color="#A78BFA" />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.metaTitle} numberOfLines={1}>{workshopLabel}</Text>
-              <Text style={styles.metaSub}>
-                {canPickCompany ? 'Chạm để chọn công ty' : 'Công ty của bạn'}
-              </Text>
-            </View>
-            {canPickCompany ? (
-              <Ionicons name="chevron-down" size={16} color={colors.textFaint} />
-            ) : null}
-          </TouchableOpacity>
-        </View>
-
-        {error ? (
-          <View style={styles.errorBox}>
-            <Text style={styles.errorText}>{error}</Text>
-            <TapHighlight onPress={() => void load('init')}>
-              <Text style={styles.retryText}>Thử lại</Text>
-            </TapHighlight>
-          </View>
-        ) : null}
-
-        {/* Tổng quan vận chuyển lắp đặt */}
-        <View style={styles.sectionHead}>
-          <View style={styles.sectionTitleRow}>
-            <Ionicons name="stats-chart" size={18} color={colors.primary} />
-            <Text style={styles.sectionTitle}>Tổng quan vận chuyển lắp đặt</Text>
-          </View>
-          <TapHighlight onPress={goKanban}>
-            <Text style={styles.linkText}>Xem chi tiết ›</Text>
-          </TapHighlight>
-        </View>
-
-        {loading && kpis.total === 0 ? (
-          <ActivityIndicator color={colors.primary} style={{ marginVertical: 16 }} />
         ) : (
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.kpiScroll}
-          >
-            {kpiCards.map((c) => (
-              <TouchableOpacity
-                key={c.key}
-                style={styles.kpiCard}
-                activeOpacity={c.key === 'overdue' && c.value > 0 ? 0.85 : 1}
-                onPress={() => {
-                  if (c.key === 'overdue' && c.value > 0) openOverdueProjects();
-                }}
-                disabled={!(c.key === 'overdue' && c.value > 0)}
+          <>
+            {error ? (
+              <Pressable style={styles.errorBanner} onPress={() => void load('init')}>
+                <Ionicons name="warning-outline" size={16} color={colors.danger} />
+                <Text style={styles.errorTxt} numberOfLines={2}>
+                  {error} · Chạm để thử lại
+                </Text>
+              </Pressable>
+            ) : null}
+
+            {totalOverdueItems > 0 ? (
+              <Pressable
+                style={styles.alertBanner}
+                onPress={() => (kpis.overdue > 0 ? openOverdueProjects() : goWork())}
               >
-                <Ionicons name={c.icon} size={16} color={c.color} />
-                {c.key === 'total' ? (
-                  <Text style={[styles.kpiValue, styles.kpiValueSplit, { color: c.color }]}>
-                    {kpis.totalShipping}
-                    <Text style={styles.kpiSplitSep}> || </Text>
-                    {kpis.totalInstall}
+                <View style={styles.alertIcon}>
+                  <Ionicons name="alert-circle" size={22} color={colors.danger} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.alertTitle}>
+                    {totalOverdueItems} hạng mục quá hạn
                   </Text>
-                ) : (
-                  <Text style={[styles.kpiValue, { color: c.color }]}>{c.value}</Text>
-                )}
-                <Text style={styles.kpiLabel} numberOfLines={2}>
-                  {c.key === 'total' ? 'VC || Lắp đặt' : c.label}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-        )}
-
-        {/* Overdue alert — tách công việc / deal */}
-        {(overdueTaskCount > 0 || kpis.overdue > 0) ? (
-          <View style={styles.alertCard}>
-            <View style={styles.alertLeft}>
-              <View style={styles.alertIcon}>
-                <Ionicons name="time" size={20} color={colors.danger} />
+                  <Text style={styles.alertSub}>
+                    {[
+                      overdueTaskCount > 0 ? `${overdueTaskCount} công việc` : null,
+                      kpis.overdue > 0 ? `${kpis.overdue} dự án VC/LĐ` : null,
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')}
+                    {' — xử lý sớm'}
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color={colors.danger} />
+              </Pressable>
+            ) : (
+              <View style={styles.okBanner}>
+                <Ionicons name="checkmark-circle" size={20} color={colors.success} />
+                <Text style={styles.okTxt}>Không có dự án / công việc quá hạn</Text>
               </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.alertTitle}>Cần ưu tiên xử lý quá hạn</Text>
-                <Text style={styles.alertSub}>
-                  {[
-                    overdueTaskCount > 0 ? `${overdueTaskCount} công việc` : null,
-                    kpis.overdue > 0 ? `${kpis.overdue} dự án` : null,
-                  ]
-                    .filter(Boolean)
-                    .join(' · ')}
-                </Text>
-              </View>
+            )}
+
+            <View style={styles.boardSummary}>
+              <Text style={styles.boardSummaryLbl}>Bảng VC · Lắp đặt</Text>
+              <Text style={styles.boardSummaryVal}>
+                {kpis.totalShipping}
+                <Text style={styles.boardSummarySep}> || </Text>
+                {kpis.totalInstall}
+                <Text style={styles.boardSummaryMuted}> thẻ</Text>
+              </Text>
             </View>
-            <View style={styles.alertBtnCol}>
-              {overdueTaskCount > 0 ? (
-                <TapHighlight
-                  style={styles.alertBtn}
-                  onPress={() => {
-                    setPrioOpen((prev) => ({ ...prev, tasks: true }));
-                    setSectionPage('tasks', 1);
-                  }}
-                >
-                  <Text style={styles.alertBtnText}>Công việc</Text>
-                </TapHighlight>
-              ) : null}
-              {kpis.overdue > 0 ? (
-                <TapHighlight
-                  style={[styles.alertBtn, styles.alertBtnSecondary]}
-                  onPress={() => {
-                    setPrioOpen((prev) => ({ ...prev, deals: true }));
-                    setSectionPage('deals', 1);
-                  }}
-                >
-                  <Text style={styles.alertBtnText}>Dự án</Text>
-                </TapHighlight>
-              ) : null}
-            </View>
-          </View>
-        ) : null}
 
-        {/* Công việc hôm nay */}
-        <View style={styles.sectionHead}>
-          <View style={styles.sectionTitleRow}>
-            <Ionicons name="clipboard" size={18} color={colors.warning} />
-            <Text style={styles.sectionTitle}>Công việc của tôi hôm nay</Text>
-          </View>
-          <TapHighlight onPress={goWork}>
-            <Text style={styles.linkText}>Xem tất cả ›</Text>
-          </TapHighlight>
-        </View>
-        <View style={styles.taskStatRow}>
-          <TouchableOpacity style={[styles.taskStatCard, styles.taskStatDanger]} onPress={goWork} activeOpacity={0.88}>
-            <Ionicons name="document-text" size={22} color="#FCA5A5" />
-            <Text style={styles.taskStatValue}>{taskStats.pending}</Text>
-            <Text style={styles.taskStatLabel}>Cần xử lý</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={[styles.taskStatCard, styles.taskStatWarn]} onPress={goWork} activeOpacity={0.88}>
-            <Ionicons name="hourglass" size={22} color="#FCD34D" />
-            <Text style={styles.taskStatValue}>{taskStats.soon}</Text>
-            <Text style={styles.taskStatLabel}>Sắp đến hạn</Text>
-            <Text style={styles.taskStatHint}>Trong 2 ngày</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={[styles.taskStatCard, styles.taskStatOk]} onPress={goWork} activeOpacity={0.88}>
-            <Ionicons name="checkmark-circle" size={22} color="#86EFAC" />
-            <Text style={styles.taskStatValue}>{taskStats.done}</Text>
-            <Text style={styles.taskStatLabel}>Đã hoàn thành</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Ưu tiên xử lý — dropdown + phân trang */}
-        <View style={styles.sectionHead}>
-          <View style={styles.sectionTitleRow}>
-            <Ionicons name="locate" size={20} color={colors.danger} />
-            <Text style={styles.sectionTitle}>Ưu tiên xử lý</Text>
-          </View>
-        </View>
-        <View style={styles.listCard}>
-          {priorityEmpty ? (
-            <Text style={styles.emptyText}>Không có hạng mục ưu tiên</Text>
-          ) : (
-            <>
-              {/* Quá hạn công việc */}
-              <TouchableOpacity
-                style={styles.prioAccordHead}
-                onPress={() => togglePrio('tasks')}
-                activeOpacity={0.85}
-              >
-                <View style={styles.prioGroupTitleRow}>
-                  <Ionicons name="checkbox-outline" size={18} color={colors.danger} />
-                  <Text style={styles.prioGroupTitle}>Quá hạn công việc</Text>
-                  <View style={[styles.prioCountPill, { backgroundColor: colorWithAlpha(colors.danger, 0.18) }]}>
-                    <Text style={[styles.prioCountTxt, { color: colors.danger }]}>{overdueTaskCount}</Text>
-                  </View>
-                </View>
-                <Ionicons
-                  name={prioOpen.tasks ? 'chevron-up' : 'chevron-down'}
-                  size={22}
-                  color={colors.textMuted}
-                />
-              </TouchableOpacity>
-              {prioOpen.tasks ? (
-                <View style={styles.prioAccordBody}>
-                  {overdueTasksAll.length === 0 ? (
-                    <Text style={styles.prioGroupEmpty}>Không có công việc quá hạn</Text>
-                  ) : (
-                    <>
-                      {overdueTasksPage.map((t, idx) => {
-                        const deal = assignmentDealCardLabel(t.lead);
-                        const due = formatTaskDeadline(taskDueIso(t));
-                        const assignee = t.assignee?.full_name || (t.assignees?.[0]?.full_name) || 'Chưa gán';
-                        return (
-                          <TouchableOpacity
-                            key={`task-${t.id}`}
-                            style={[styles.prioRow, idx > 0 && styles.prioRowBorder]}
-                      onPress={() => {
-                        const pid = t.lead?.project_id;
-                        if (pid) openProjectDetail(String(pid), { focusTaskId: workTaskFocusCrmId(t) });
-                        else goWork();
-                      }}
-                            activeOpacity={0.85}
-                          >
-                            <View style={[styles.prioAvatar, { backgroundColor: colorWithAlpha(colors.danger, 0.2) }]}>
-                              <Ionicons name="alert-circle" size={20} color={colors.danger} />
-                            </View>
-                            <View style={{ flex: 1, minWidth: 0 }}>
-                              <Text style={styles.prioTitle} numberOfLines={1}>{t.title}</Text>
-                              <Text style={styles.prioSub} numberOfLines={1}>
-                                {[assignee, deal].filter(Boolean).join(' · ')}
-                              </Text>
-                            </View>
-                            <View style={styles.prioRight}>
-                              <View style={[styles.prioBadge, { backgroundColor: '#7F1D1D' }]}>
-                                <Text style={[styles.prioBadgeText, { color: '#FCA5A5' }]}>Quá hạn</Text>
-                              </View>
-                              <Text style={[styles.prioDate, { color: colors.danger }]}>{due}</Text>
-                            </View>
-                          </TouchableOpacity>
-                        );
-                      })}
-                      {tasksPages > 1 ? (
-                        <View style={styles.prioPager}>
-                          <TapHighlight
-                            style={[styles.prioPageBtn, prioPage.tasks <= 1 && styles.prioPageBtnDisabled]}
-                            onPress={() => setSectionPage('tasks', Math.max(1, prioPage.tasks - 1))}
-                            disabled={prioPage.tasks <= 1}
-                          >
-                            <Ionicons name="chevron-back" size={16} color={prioPage.tasks <= 1 ? colors.textFaint : colors.text} />
-                          </TapHighlight>
-                          <Text style={styles.prioPageLabel}>
-                            Trang {Math.min(prioPage.tasks, tasksPages)}/{tasksPages}
-                          </Text>
-                          <TapHighlight
-                            style={[styles.prioPageBtn, prioPage.tasks >= tasksPages && styles.prioPageBtnDisabled]}
-                            onPress={() => setSectionPage('tasks', Math.min(tasksPages, prioPage.tasks + 1))}
-                            disabled={prioPage.tasks >= tasksPages}
-                          >
-                            <Ionicons name="chevron-forward" size={16} color={prioPage.tasks >= tasksPages ? colors.textFaint : colors.text} />
-                          </TapHighlight>
-                          <TapHighlight onPress={goWork}>
-                            <Text style={styles.linkText}>Tất cả ›</Text>
-                          </TapHighlight>
-                        </View>
-                      ) : (
-                        <View style={styles.prioPagerEnd}>
-                          <TapHighlight onPress={goWork}>
-                            <Text style={styles.linkText}>Xem tất cả ›</Text>
-                          </TapHighlight>
-                        </View>
-                      )}
-                    </>
-                  )}
-                </View>
-              ) : null}
-
-              {/* Quá hạn dự án */}
-              <TouchableOpacity
-                style={[styles.prioAccordHead, styles.prioGroupHeadBorder]}
-                onPress={() => togglePrio('deals')}
-                activeOpacity={0.85}
-              >
-                <View style={styles.prioGroupTitleRow}>
-                  <Ionicons name="briefcase-outline" size={18} color={colors.danger} />
-                  <Text style={styles.prioGroupTitle}>Quá hạn dự án</Text>
-                  <View style={[styles.prioCountPill, { backgroundColor: colorWithAlpha(colors.danger, 0.18) }]}>
-                    <Text style={[styles.prioCountTxt, { color: colors.danger }]}>{kpis.overdue}</Text>
-                  </View>
-                </View>
-                <Ionicons
-                  name={prioOpen.deals ? 'chevron-up' : 'chevron-down'}
-                  size={22}
-                  color={colors.textMuted}
-                />
-              </TouchableOpacity>
-              {prioOpen.deals ? (
-                <View style={styles.prioAccordBody}>
-                  {overdueDeals.length === 0 ? (
-                    <Text style={styles.prioGroupEmpty}>Không có dự án quá hạn</Text>
-                  ) : (
-                    <>
-                      {overdueDealsPage.map((p, idx) => {
-                        const pct = Math.max(0, Math.min(100, Number(p.progress || 0)));
-                        const done = Number(p.done_tasks || 0);
-                        const total = Number(p.task_total || 0);
-                        const accent = getTaskProgressColor(pct, colors);
-                        return (
-                          <TouchableOpacity
-                            key={`deal-${p.id}`}
-                            style={[styles.prioRow, idx > 0 && styles.prioRowBorder]}
-                            onPress={() => openProjectDetail(p.id)}
-                            activeOpacity={0.85}
-                          >
-                            <View style={[styles.prioAvatar, { backgroundColor: colorWithAlpha(accent, 0.25) }]}>
-                              <Text style={[styles.prioAvatarText, { color: accent }]}>
-                                {initialsFrom(p.customer_name || p.name || p.code)}
-                              </Text>
-                            </View>
-                            <View style={{ flex: 1, minWidth: 0 }}>
-                              <Text style={styles.prioTitle} numberOfLines={1}>{p.name || p.code}</Text>
-                              <Text style={styles.prioSub} numberOfLines={1}>
-                                {personLabel(p)
-                                  ? `Phụ trách: ${personLabel(p)}`
-                                  : (p.customer_name || p.code)}
-                              </Text>
-                              <View style={styles.progressTrack}>
-                                <View style={[styles.progressFill, { width: `${pct}%`, backgroundColor: accent }]} />
-                              </View>
-                              <Text style={styles.progressLabel}>
-                                {total > 0 ? `${done}/${total} nhiệm vụ` : `${pct}% tiến độ`}
-                              </Text>
-                            </View>
-                            <View style={styles.prioRight}>
-                              <View style={[styles.prioBadge, { backgroundColor: '#7F1D1D' }]}>
-                                <Text style={[styles.prioBadgeText, { color: '#FCA5A5' }]}>Quá hạn</Text>
-                              </View>
-                              <Text style={styles.prioDate}>
-                                {shortDateLabel(p.deadline)}
-                              </Text>
-                            </View>
-                          </TouchableOpacity>
-                        );
-                      })}
-                      {dealsPages > 1 ? (
-                        <View style={styles.prioPager}>
-                          <TapHighlight
-                            style={[styles.prioPageBtn, prioPage.deals <= 1 && styles.prioPageBtnDisabled]}
-                            onPress={() => setSectionPage('deals', Math.max(1, prioPage.deals - 1))}
-                            disabled={prioPage.deals <= 1}
-                          >
-                            <Ionicons name="chevron-back" size={16} color={prioPage.deals <= 1 ? colors.textFaint : colors.text} />
-                          </TapHighlight>
-                          <Text style={styles.prioPageLabel}>
-                            Trang {Math.min(prioPage.deals, dealsPages)}/{dealsPages}
-                          </Text>
-                          <TapHighlight
-                            style={[styles.prioPageBtn, prioPage.deals >= dealsPages && styles.prioPageBtnDisabled]}
-                            onPress={() => setSectionPage('deals', Math.min(dealsPages, prioPage.deals + 1))}
-                            disabled={prioPage.deals >= dealsPages}
-                          >
-                            <Ionicons name="chevron-forward" size={16} color={prioPage.deals >= dealsPages ? colors.textFaint : colors.text} />
-                          </TapHighlight>
-                          <TapHighlight onPress={openOverdueProjects}>
-                            <Text style={styles.linkText}>Tất cả ›</Text>
-                          </TapHighlight>
-                        </View>
-                      ) : kpis.overdue > overdueDeals.length ? (
-                        <View style={styles.prioPagerEnd}>
-                          <TapHighlight onPress={openOverdueProjects}>
-                            <Text style={styles.linkText}>Xem tất cả ›</Text>
-                          </TapHighlight>
-                        </View>
-                      ) : null}
-                    </>
-                  )}
-                </View>
-              ) : null}
-
-              {/* Dự án sắp đến hạn */}
-              {soonDeals.length > 0 ? (
-                <>
-                  <TouchableOpacity
-                    style={[styles.prioAccordHead, styles.prioGroupHeadBorder]}
-                    onPress={() => togglePrio('soon')}
-                    activeOpacity={0.85}
+            <Text style={styles.secTitle}>Trạng thái vận hành</Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              decelerationRate="fast"
+              snapToInterval={KPI_CARD_W + KPI_CARD_GAP}
+              snapToAlignment="start"
+              contentContainerStyle={styles.kpiSlide}
+              style={styles.kpiSlideWrap}
+            >
+              {kpiItems.map((k) => {
+                const tone = toneMap[k.tone];
+                return (
+                  <Pressable
+                    key={k.key}
+                    style={({ pressed }) => [styles.kpiCard, pressed && styles.pressed]}
+                    onPress={k.onPress}
                   >
-                    <View style={styles.prioGroupTitleRow}>
-                      <Ionicons name="time-outline" size={18} color={colors.warning} />
-                      <Text style={styles.prioGroupTitle}>Dự án sắp đến hạn</Text>
-                      <View style={[styles.prioCountPill, { backgroundColor: colorWithAlpha(colors.warning, 0.18) }]}>
-                        <Text style={[styles.prioCountTxt, { color: colors.warning }]}>{soonDeals.length}</Text>
+                    <View style={[styles.kpiDot, { backgroundColor: tone.bg }]}>
+                      <View style={[styles.kpiDotInner, { backgroundColor: tone.fg }]} />
+                    </View>
+                    <Text style={[styles.kpiValue, { color: tone.fg }]}>{k.value}</Text>
+                    <Text style={styles.kpiLabel} numberOfLines={2}>{k.label}</Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+
+            <View style={styles.secHead}>
+              <Text style={styles.secTitleInline}>Sự kiện hôm nay</Text>
+              <Pressable onPress={() => rootNav.navigate('Events')} hitSlop={8}>
+                <Text style={styles.link}>
+                  {events.length > 0 ? `Tất cả (${events.length})` : 'Mở lịch'}
+                </Text>
+              </Pressable>
+            </View>
+            <View style={styles.card}>
+              {events.length === 0 ? (
+                <View style={styles.emptyRow}>
+                  <Ionicons name="calendar-outline" size={20} color={colors.textFaint} />
+                  <Text style={styles.emptyTxt}>Không có sự kiện VC hôm nay</Text>
+                </View>
+              ) : (
+                events.slice(0, 5).map((e, idx) => {
+                  const timeStr = e.allDay
+                    ? 'Cả ngày'
+                    : e.endTime
+                      ? `${timeOf(e.startTime)} – ${timeOf(e.endTime)}`
+                      : timeOf(e.startTime);
+                  return (
+                    <Pressable
+                      key={e.id}
+                      style={[styles.rowItem, idx > 0 && styles.rowBorder]}
+                      onPress={() => rootNav.navigate('Events')}
+                    >
+                      <View style={[styles.rowIcon, { backgroundColor: (e.typeColor || '#06B6D4') + '22' }]}>
+                        <Text style={{ fontSize: 14 }}>{e.typeIcon || '🚚'}</Text>
                       </View>
-                    </View>
-                    <Ionicons
-                      name={prioOpen.soon ? 'chevron-up' : 'chevron-down'}
-                      size={22}
-                      color={colors.textMuted}
-                    />
-                  </TouchableOpacity>
-                  {prioOpen.soon ? (
-                    <View style={styles.prioAccordBody}>
-                      {soonDealsPage.map((p, idx) => {
-                        const badge = priorityBadge(p);
-                        const pct = Math.max(0, Math.min(100, Number(p.progress || 0)));
-                        const accent = getTaskProgressColor(pct, colors);
-                        return (
-                          <TouchableOpacity
-                            key={`soon-${p.id}`}
-                            style={[styles.prioRow, idx > 0 && styles.prioRowBorder]}
-                            onPress={() => openProjectDetail(p.id)}
-                            activeOpacity={0.85}
-                          >
-                            <View style={[styles.prioAvatar, { backgroundColor: colorWithAlpha(accent, 0.25) }]}>
-                              <Text style={[styles.prioAvatarText, { color: accent }]}>
-                                {initialsFrom(p.customer_name || p.name || p.code)}
-                              </Text>
-                            </View>
-                            <View style={{ flex: 1, minWidth: 0 }}>
-                              <Text style={styles.prioTitle} numberOfLines={1}>{p.name || p.code}</Text>
-                              <Text style={styles.prioSub} numberOfLines={1}>
-                                {personLabel(p)
-                                  ? `Phụ trách: ${personLabel(p)}`
-                                  : (p.customer_name || p.code)}
-                              </Text>
-                            </View>
-                            <View style={styles.prioRight}>
-                              <View style={[styles.prioBadge, { backgroundColor: badge.bg }]}>
-                                <Text style={[styles.prioBadgeText, { color: badge.fg }]}>{badge.label}</Text>
-                              </View>
-                              <Text style={styles.prioDate}>
-                                {shortDateLabel(p.deadline)}
-                              </Text>
-                            </View>
-                          </TouchableOpacity>
-                        );
-                      })}
-                      {soonPages > 1 ? (
-                        <View style={styles.prioPager}>
-                          <TapHighlight
-                            style={[styles.prioPageBtn, prioPage.soon <= 1 && styles.prioPageBtnDisabled]}
-                            onPress={() => setSectionPage('soon', Math.max(1, prioPage.soon - 1))}
-                            disabled={prioPage.soon <= 1}
-                          >
-                            <Ionicons name="chevron-back" size={16} color={prioPage.soon <= 1 ? colors.textFaint : colors.text} />
-                          </TapHighlight>
-                          <Text style={styles.prioPageLabel}>
-                            Trang {Math.min(prioPage.soon, soonPages)}/{soonPages}
-                          </Text>
-                          <TapHighlight
-                            style={[styles.prioPageBtn, prioPage.soon >= soonPages && styles.prioPageBtnDisabled]}
-                            onPress={() => setSectionPage('soon', Math.min(soonPages, prioPage.soon + 1))}
-                            disabled={prioPage.soon >= soonPages}
-                          >
-                            <Ionicons name="chevron-forward" size={16} color={prioPage.soon >= soonPages ? colors.textFaint : colors.text} />
-                          </TapHighlight>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.rowTitle} numberOfLines={1}>{e.title}</Text>
+                        <Text style={styles.rowSub} numberOfLines={1}>
+                          {timeStr}
+                          {e.customerName || e.leadTitle
+                            ? ` · ${e.customerName || e.leadTitle}`
+                            : ''}
+                        </Text>
+                      </View>
+                      <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
+                    </Pressable>
+                  );
+                })
+              )}
+            </View>
+
+            <View style={styles.secHead}>
+              <Text style={styles.secTitleInline}>Nhiệm vụ cần làm</Text>
+              <Pressable onPress={goWork} hitSlop={8}>
+                <Text style={styles.link}>
+                  {openTasks.length > 0 ? `Tất cả (${openTasks.length})` : 'Xem công việc'}
+                </Text>
+              </Pressable>
+            </View>
+            <View style={styles.card}>
+              {previewTasks.length === 0 ? (
+                <View style={styles.emptyRow}>
+                  <Ionicons name="checkbox-outline" size={20} color={colors.textFaint} />
+                  <Text style={styles.emptyTxt}>Không có nhiệm vụ chưa làm / đang làm</Text>
+                </View>
+              ) : (
+                <>
+                  {previewTasks.map((t, idx) => {
+                    const overdue = isTaskOverdue(t);
+                    const statusKey = String(t.status || 'pending');
+                    const statusLbl = statusPillLabel(statusKey);
+                    const deal = assignmentDealCardLabel(t.lead);
+                    const due = formatTaskDeadline(taskDueIso(t));
+                    return (
+                      <Pressable
+                        key={t.id}
+                        style={[styles.rowItem, idx > 0 && styles.rowBorder]}
+                        onPress={() => {
+                          const pid = t.lead?.project_id;
+                          if (pid) {
+                            openProjectDetail(String(pid), { focusTaskId: workTaskFocusCrmId(t) });
+                          } else {
+                            goWork();
+                          }
+                        }}
+                      >
+                        <View
+                          style={[
+                            styles.rowIcon,
+                            {
+                              backgroundColor: overdue
+                                ? colors.dangerSoft
+                                : isTaskInProgress(statusKey)
+                                  ? colors.primarySoft
+                                  : colorWithAlpha(colors.warning, 0.16),
+                            },
+                          ]}
+                        >
+                          <Ionicons
+                            name={
+                              overdue
+                                ? 'alert-circle'
+                                : isTaskInProgress(statusKey)
+                                  ? 'time'
+                                  : 'ellipse-outline'
+                            }
+                            size={18}
+                            color={
+                              overdue
+                                ? colors.danger
+                                : isTaskInProgress(statusKey)
+                                  ? colors.primary
+                                  : colors.warning
+                            }
+                          />
                         </View>
-                      ) : null}
-                    </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.rowTitle} numberOfLines={1}>{t.title || 'Nhiệm vụ'}</Text>
+                          {deal ? (
+                            <View style={styles.entityRow}>
+                              <View style={[styles.entityBadge, { backgroundColor: colors.primarySoft }]}>
+                                <Text style={[styles.entityBadgeTxt, { color: colors.primary }]}>VC</Text>
+                              </View>
+                              <Text style={styles.entityName} numberOfLines={1}>{deal}</Text>
+                            </View>
+                          ) : null}
+                          <Text style={styles.rowSub} numberOfLines={1}>
+                            {statusLbl}
+                            {overdue ? ' · Quá hạn' : ''}
+                            {due ? ` · ${due}` : ''}
+                          </Text>
+                        </View>
+                        <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
+                      </Pressable>
+                    );
+                  })}
+                  {hasMoreTasks ? (
+                    <Pressable
+                      style={styles.moreBtn}
+                      onPress={() =>
+                        setTaskVisibleCount((n) => Math.min(n + TASK_PAGE_SIZE, openTasks.length))
+                      }
+                    >
+                      <Text style={styles.moreBtnTxt}>
+                        Xem thêm ({Math.min(TASK_PAGE_SIZE, openTasks.length - taskVisibleCount)})
+                      </Text>
+                      <Ionicons name="chevron-down" size={16} color={colors.primary} />
+                    </Pressable>
+                  ) : openTasks.length > TASK_PAGE_SIZE ? (
+                    <Pressable
+                      style={styles.moreBtn}
+                      onPress={() => setTaskVisibleCount(TASK_PAGE_SIZE)}
+                    >
+                      <Text style={styles.moreBtnTxt}>Thu gọn</Text>
+                      <Ionicons name="chevron-up" size={16} color={colors.primary} />
+                    </Pressable>
                   ) : null}
                 </>
-              ) : null}
-            </>
-          )}
-        </View>
+              )}
+            </View>
 
-        {/* Thông báo mới */}
-        <View style={styles.sectionHead}>
-          <View style={styles.sectionTitleRow}>
-            <Ionicons name="notifications" size={18} color="#A78BFA" />
-            <Text style={styles.sectionTitle}>Thông báo mới</Text>
-          </View>
-          <TapHighlight onPress={() => void openNotifs()}>
-            <Text style={styles.linkText}>Xem tất cả ›</Text>
-          </TapHighlight>
-        </View>
-        <View style={styles.listCard}>
-          {notifs.length === 0 ? (
-            <Text style={styles.emptyText}>Chưa có thông báo mới</Text>
-          ) : (
-            notifs.map((n, idx) => {
-              const subtitle = notifListSubtitle(n);
-              return (
-              <TouchableOpacity
-                key={n.id}
-                style={[styles.notifRow, idx > 0 && styles.prioRowBorder]}
-                activeOpacity={0.85}
-                onPress={() => {
-                  const pid = n.metadata?.project_id || (n.entity_type === 'project' ? n.entity_id : null);
-                  if (pid) void openCommentForProjectId(String(pid));
-                  else void openNotifs();
-                }}
-              >
-                <View style={[styles.notifIcon, { backgroundColor: colorWithAlpha(colors.primary, 0.2) }]}>
-                  <Ionicons
-                    name={
-                      isWorkshopDealNotification(n)
-                        ? 'briefcase-outline'
-                        : n.type?.includes('logistics') || n.message?.includes('vận chuyển')
-                          ? 'car'
-                          : 'chatbubble-ellipses-outline'
-                    }
-                    size={18}
-                    color={colors.primary}
-                  />
+            <View style={styles.secHead}>
+              <Text style={styles.secTitleInline}>Thông báo mới</Text>
+              <Pressable onPress={() => void openNotifs()} hitSlop={8}>
+                <Text style={styles.link}>Xem tất cả</Text>
+              </Pressable>
+            </View>
+            <View style={styles.card}>
+              {notifs.length === 0 ? (
+                <View style={styles.emptyRow}>
+                  <Ionicons name="notifications-outline" size={20} color={colors.textFaint} />
+                  <Text style={styles.emptyTxt}>Chưa có thông báo mới</Text>
                 </View>
-                <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text style={styles.notifText} numberOfLines={2}>
-                    {notifListTitle(n)}
-                  </Text>
-                  {subtitle ? (
-                    <Text style={styles.notifProject} numberOfLines={1}>
-                      {subtitle}
-                    </Text>
-                  ) : null}
-                </View>
-                <Text style={styles.notifTime}>{notifTime(n.created_at)}</Text>
-              </TouchableOpacity>
-              );
-            })
-          )}
-        </View>
+              ) : (
+                notifs.map((n, idx) => {
+                  const subtitle = notificationListSubtitle(n);
+                  const cat = notificationCategoryLabel(n);
+                  const isDeal = isWorkshopDealNotification(n);
+                  return (
+                    <Pressable
+                      key={n.id}
+                      style={[styles.rowItem, idx > 0 && styles.rowBorder]}
+                      onPress={() => openNotification(n)}
+                    >
+                      <View style={[styles.rowIcon, { backgroundColor: isDeal ? colorWithAlpha('#0EA5E9', 0.16) : colors.primarySoft }]}>
+                        <Ionicons
+                          name={notificationIconName(n)}
+                          size={18}
+                          color={isDeal ? '#0EA5E9' : colors.primary}
+                        />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.notifCat} numberOfLines={1}>{cat}</Text>
+                        <Text style={styles.rowTitle} numberOfLines={1}>{notificationListTitle(n)}</Text>
+                        {subtitle ? (
+                          <Text style={styles.rowSub} numberOfLines={2}>{subtitle}</Text>
+                        ) : null}
+                      </View>
+                      <Text style={styles.notifTime}>{notifTime(n.created_at)}</Text>
+                    </Pressable>
+                  );
+                })
+              )}
+            </View>
+
+            <Text style={[styles.secTitle, { marginTop: 16 }]}>Lối tắt</Text>
+            <View style={styles.quickGrid}>
+              {quickActions.map((a) => (
+                <Pressable
+                  key={a.key}
+                  style={({ pressed }) => [styles.quickTile, pressed && styles.pressed]}
+                  onPress={a.onPress}
+                >
+                  <View style={[styles.quickIcon, { backgroundColor: a.color + '22' }]}>
+                    <Ionicons name={a.icon} size={20} color={a.color} />
+                  </View>
+                  <Text style={styles.quickLabel} numberOfLines={1}>{a.label}</Text>
+                </Pressable>
+              ))}
+            </View>
+          </>
+        )}
       </ScrollView>
 
       <CommentNotificationsModal
@@ -1039,7 +927,11 @@ export default function OverviewScreen() {
         onClose={() => setNotifOpen(false)}
         onOpenProject={(pid) => {
           setNotifOpen(false);
-          void openCommentForProjectId(pid);
+          openProjectDetail(pid);
+        }}
+        onOpenNotification={(n) => {
+          setNotifOpen(false);
+          openNotification(n);
         }}
       />
 
@@ -1062,21 +954,44 @@ export default function OverviewScreen() {
   );
 }
 
-function createStyles(colors: ReturnType<typeof useTheme>['colors'], isDark: boolean) {
+function createStyles(colors: AppColors, isDark: boolean) {
   return StyleSheet.create({
     root: { flex: 1, backgroundColor: colors.bg },
-    scroll: { paddingHorizontal: Spacing.lg, paddingTop: Spacing.md },
-    headerRow: {
+    hero: {
+      paddingHorizontal: Spacing.lg,
+      paddingTop: 12,
+      paddingBottom: 10,
+    },
+    heroTop: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 10,
+    },
+    heroIdentity: {
+      flex: 1,
       flexDirection: 'row',
       alignItems: 'center',
-      justifyContent: 'space-between',
-      marginBottom: Spacing.lg,
+      gap: 12,
     },
-    headerLeft: { flexDirection: 'row', alignItems: 'center', flex: 1, gap: 12 },
-    headerTextWrap: { flex: 1, minWidth: 0 },
-    greetTitle: { color: colors.text, fontSize: 17, fontWeight: '800' },
-    greetSub: { color: colors.textMuted, fontSize: 12, marginTop: 2 },
-    headerBtns: { flexDirection: 'row', gap: 8 },
+    helloLine: {
+      color: colors.text,
+      fontSize: 20,
+      fontWeight: '800',
+      letterSpacing: -0.3,
+    },
+    dateLine: {
+      marginTop: 3,
+      color: colors.textMuted,
+      fontSize: 13,
+      fontWeight: '600',
+    },
+    wishLine: {
+      marginTop: 4,
+      color: colors.textMuted,
+      fontSize: 13.5,
+      fontWeight: '600',
+      lineHeight: 18,
+    },
     iconBtn: {
       width: 42,
       height: 42,
@@ -1100,220 +1015,259 @@ function createStyles(colors: ReturnType<typeof useTheme>['colors'], isDark: boo
       paddingHorizontal: 4,
     },
     badgeText: { color: '#fff', fontSize: 9, fontWeight: '800' },
-    metaRow: { flexDirection: 'row', gap: 10, marginBottom: Spacing.lg },
-    metaCard: {
+    companyChip: {
+      marginTop: 12,
+      alignSelf: 'flex-start',
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 10,
+      gap: 6,
+      maxWidth: '100%',
+      paddingHorizontal: 10,
+      paddingVertical: 7,
+      borderRadius: Radii.full,
       backgroundColor: colors.card,
-      borderRadius: Radii.lg,
-      padding: 12,
       borderWidth: 1,
       borderColor: colors.border,
     },
-    metaIcon: {
+    companyChipTxt: {
+      color: colors.text,
+      fontSize: 12,
+      fontWeight: '700',
+      maxWidth: 220,
+    },
+    content: { paddingHorizontal: Spacing.lg, paddingTop: 8 },
+    centerBox: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingVertical: 80,
+      gap: 12,
+    },
+    muted: { color: colors.textMuted, fontSize: 13, fontWeight: '600' },
+    pressed: { opacity: 0.88 },
+    errorBanner: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      backgroundColor: colors.dangerSoft,
+      borderRadius: Radii.lg,
+      borderWidth: 1,
+      borderColor: colorWithAlpha(colors.danger, 0.35),
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      marginBottom: 12,
+    },
+    errorTxt: { flex: 1, color: colors.danger, fontSize: 12.5, fontWeight: '700' },
+    alertBanner: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      backgroundColor: isDark ? '#2A1518' : '#FEF2F2',
+      borderRadius: Radii.lg,
+      borderWidth: 1,
+      borderColor: isDark ? '#7F1D1D' : '#FECACA',
+      paddingHorizontal: 12,
+      paddingVertical: 12,
+      marginBottom: 14,
+    },
+    alertIcon: {
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      backgroundColor: colors.card,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    alertTitle: { color: colors.danger, fontSize: 14.5, fontWeight: '800' },
+    alertSub: { color: colors.textMuted, fontSize: 12, fontWeight: '600', marginTop: 2 },
+    okBanner: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      backgroundColor: isDark ? '#14532D33' : '#ECFDF5',
+      borderRadius: Radii.lg,
+      borderWidth: 1,
+      borderColor: colorWithAlpha(colors.success, 0.28),
+      paddingHorizontal: 12,
+      paddingVertical: 11,
+      marginBottom: 14,
+    },
+    okTxt: { color: colors.success, fontSize: 13.5, fontWeight: '700' },
+    boardSummary: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: 12,
+      paddingHorizontal: 4,
+    },
+    boardSummaryLbl: {
+      color: colors.textMuted,
+      fontSize: 12,
+      fontWeight: '700',
+    },
+    boardSummaryVal: {
+      color: colors.primary,
+      fontSize: 15,
+      fontWeight: '800',
+    },
+    boardSummarySep: { color: colors.textMuted, fontWeight: '600', fontSize: 13 },
+    boardSummaryMuted: { color: colors.textMuted, fontWeight: '600', fontSize: 12 },
+    secTitle: {
+      fontSize: 13,
+      fontWeight: '800',
+      color: colors.textMuted,
+      textTransform: 'uppercase',
+      letterSpacing: 0.6,
+      marginBottom: 10,
+      marginTop: 4,
+    },
+    secHead: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginTop: 16,
+      marginBottom: 10,
+    },
+    secTitleInline: {
+      fontSize: 13,
+      fontWeight: '800',
+      color: colors.textMuted,
+      textTransform: 'uppercase',
+      letterSpacing: 0.6,
+    },
+    link: { color: colors.primary, fontSize: 13, fontWeight: '700' },
+    kpiSlideWrap: {
+      marginHorizontal: -Spacing.lg,
+      marginBottom: 4,
+    },
+    kpiSlide: {
+      paddingHorizontal: Spacing.lg,
+      gap: KPI_CARD_GAP,
+      paddingBottom: 2,
+    },
+    kpiCard: {
+      width: KPI_CARD_W,
+      backgroundColor: colors.card,
+      borderRadius: Radii.lg,
+      borderWidth: 1,
+      borderColor: colors.border,
+      paddingHorizontal: 12,
+      paddingVertical: 12,
+      minHeight: 96,
+    },
+    kpiDot: {
+      width: 18,
+      height: 18,
+      borderRadius: 9,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginBottom: 8,
+    },
+    kpiDotInner: { width: 8, height: 8, borderRadius: 4 },
+    kpiValue: { fontSize: 26, fontWeight: '900', letterSpacing: -0.5 },
+    kpiLabel: { marginTop: 2, fontSize: 12, fontWeight: '700', color: colors.textMuted },
+    card: {
+      backgroundColor: colors.card,
+      borderRadius: Radii.lg,
+      borderWidth: 1,
+      borderColor: colors.border,
+      overflow: 'hidden',
+    },
+    emptyRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      paddingHorizontal: 14,
+      paddingVertical: 16,
+    },
+    emptyTxt: { color: colors.textFaint, fontSize: 13, fontWeight: '600' },
+    rowItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      paddingHorizontal: 12,
+      paddingVertical: 12,
+    },
+    rowBorder: {
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: colors.border,
+    },
+    rowIcon: {
       width: 36,
       height: 36,
       borderRadius: 10,
       alignItems: 'center',
       justifyContent: 'center',
     },
-    metaTitle: { color: colors.text, fontSize: 12, fontWeight: '700' },
-    metaSub: { color: colors.textFaint, fontSize: 10, marginTop: 2 },
-    sectionHead: {
+    rowTitle: { color: colors.text, fontSize: 14, fontWeight: '700' },
+    rowSub: { color: colors.textMuted, fontSize: 12, fontWeight: '600', marginTop: 2 },
+    entityRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      justifyContent: 'space-between',
-      marginBottom: 10,
+      gap: 6,
       marginTop: 4,
     },
-    sectionTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-    sectionTitle: { color: colors.text, fontSize: 17, fontWeight: '800' },
-    linkText: { color: colors.primary, fontSize: 13, fontWeight: '700' },
-    kpiScroll: { gap: 8, paddingBottom: Spacing.md },
-    kpiCard: {
-      width: 100,
-      backgroundColor: colors.card,
-      borderRadius: Radii.lg,
-      padding: 12,
-      borderWidth: 1,
-      borderColor: colors.border,
-      gap: 4,
+    entityBadge: {
+      borderRadius: Radii.sm,
+      paddingHorizontal: 6,
+      paddingVertical: 2,
     },
-    kpiValue: { fontSize: 22, fontWeight: '800', marginTop: 4 },
-    kpiValueSplit: { fontSize: 17, letterSpacing: -0.3 },
-    kpiSplitSep: { color: colors.textMuted, fontWeight: '600', fontSize: 13 },
-    kpiLabel: { color: colors.textMuted, fontSize: 11, fontWeight: '600', lineHeight: 14 },
-    alertCard: {
+    entityBadgeTxt: { fontSize: 10, fontWeight: '800' },
+    entityName: {
+      flex: 1,
+      color: colors.text,
+      fontSize: 12.5,
+      fontWeight: '700',
+    },
+    moreBtn: {
       flexDirection: 'row',
-      alignItems: 'center',
-      gap: 10,
-      backgroundColor: isDark ? '#2A1518' : '#FEF2F2',
-      borderRadius: Radii.lg,
-      padding: 14,
-      borderWidth: 1,
-      borderColor: isDark ? '#7F1D1D' : '#FECACA',
-      marginBottom: Spacing.lg,
-    },
-    alertLeft: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10 },
-    alertIcon: {
-      width: 40,
-      height: 40,
-      borderRadius: 12,
-      backgroundColor: colorWithAlpha(colors.danger, 0.2),
       alignItems: 'center',
       justifyContent: 'center',
-    },
-    alertTitle: { color: colors.text, fontSize: 13, fontWeight: '800' },
-    alertSub: { color: colors.textMuted, fontSize: 11, marginTop: 2 },
-    alertBtn: {
-      backgroundColor: colors.danger,
-      paddingHorizontal: 12,
-      paddingVertical: 8,
-      borderRadius: Radii.md,
-    },
-    alertBtnSecondary: {
-      backgroundColor: colorWithAlpha(colors.danger, 0.85),
-    },
-    alertBtnCol: { gap: 6, alignItems: 'stretch' },
-    alertBtnText: { color: '#fff', fontSize: 12, fontWeight: '700', textAlign: 'center' },
-    taskStatRow: { flexDirection: 'row', gap: 8, marginBottom: Spacing.lg },
-    taskStatCard: {
-      flex: 1,
-      borderRadius: Radii.lg,
-      padding: 12,
-      minHeight: 110,
-      justifyContent: 'space-between',
-    },
-    taskStatDanger: { backgroundColor: isDark ? '#7F1D1D' : '#DC2626' },
-    taskStatWarn: { backgroundColor: isDark ? '#78350F' : '#D97706' },
-    taskStatOk: { backgroundColor: isDark ? '#14532D' : '#16A34A' },
-    taskStatValue: { color: '#fff', fontSize: 26, fontWeight: '800', marginTop: 8 },
-    taskStatLabel: { color: 'rgba(255,255,255,0.92)', fontSize: 12, fontWeight: '700' },
-    taskStatHint: { color: 'rgba(255,255,255,0.7)', fontSize: 10, marginTop: 2 },
-    listCard: {
-      backgroundColor: colors.card,
-      borderRadius: Radii.lg,
-      borderWidth: 1,
-      borderColor: colors.border,
-      paddingHorizontal: 12,
-      marginBottom: Spacing.lg,
-      overflow: 'hidden',
-    },
-    prioAccordHead: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      paddingTop: 16,
-      paddingBottom: 16,
-      gap: 10,
-      minHeight: 56,
-    },
-    prioAccordBody: {
-      paddingBottom: 12,
-    },
-    prioGroupHeadBorder: {
-      marginTop: 2,
+      gap: 6,
+      paddingVertical: 12,
       borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: colors.border,
+      backgroundColor: colors.cardAlt,
     },
-    prioGroupTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 },
-    prioGroupTitle: { color: colors.text, fontSize: 16, fontWeight: '800', letterSpacing: -0.2 },
-    prioCountPill: {
-      minWidth: 28,
-      paddingHorizontal: 10,
-      paddingVertical: 4,
-      borderRadius: Radii.full,
-      alignItems: 'center',
+    moreBtnTxt: { color: colors.primary, fontSize: 13, fontWeight: '800' },
+    notifCat: {
+      color: colors.textMuted,
+      fontSize: 11,
+      fontWeight: '700',
+      textTransform: 'uppercase',
+      letterSpacing: 0.3,
+      marginBottom: 2,
     },
-    prioCountTxt: { fontSize: 14, fontWeight: '800' },
-    prioGroupEmpty: {
-      color: colors.textFaint,
-      fontSize: 14,
-      paddingVertical: 14,
-      paddingLeft: 2,
-    },
-    prioPager: {
+    notifTime: { color: colors.textFaint, fontSize: 11, fontWeight: '600' },
+    quickGrid: {
       flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 10,
+      marginBottom: Spacing.lg,
+    },
+    quickTile: {
+      width: '22%',
+      flexGrow: 1,
       alignItems: 'center',
-      justifyContent: 'center',
-      gap: 12,
-      paddingTop: 12,
-      paddingBottom: 6,
-    },
-    prioPagerEnd: {
-      alignItems: 'flex-end',
-      paddingTop: 10,
-      paddingBottom: 4,
-    },
-    prioPageBtn: {
-      width: 40,
-      height: 40,
-      borderRadius: 10,
+      gap: 6,
+      backgroundColor: colors.card,
+      borderRadius: Radii.lg,
       borderWidth: 1,
       borderColor: colors.border,
-      backgroundColor: colors.bgElevated,
-      alignItems: 'center',
-      justifyContent: 'center',
+      paddingVertical: 12,
+      paddingHorizontal: 4,
     },
-    prioPageBtnDisabled: { opacity: 0.45 },
-    prioPageLabel: { color: colors.textMuted, fontSize: 14, fontWeight: '700', minWidth: 88, textAlign: 'center' },
-    emptyText: {
-      color: colors.textFaint,
-      fontSize: 14,
-      textAlign: 'center',
-      paddingVertical: 22,
-    },
-    prioRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 12,
-      paddingVertical: 14,
-    },
-    prioRowBorder: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
-    prioAvatar: {
-      width: 48,
-      height: 48,
-      borderRadius: 24,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    prioAvatarText: { fontSize: 14, fontWeight: '800' },
-    prioTitle: { color: colors.text, fontSize: 15, fontWeight: '800', lineHeight: 20 },
-    prioSub: { color: colors.textMuted, fontSize: 13, marginTop: 3, fontWeight: '600' },
-    progressTrack: {
-      height: 6,
-      borderRadius: 3,
-      backgroundColor: colors.cardAlt,
-      marginTop: 10,
-      overflow: 'hidden',
-    },
-    progressFill: { height: 6, borderRadius: 3 },
-    progressLabel: { color: colors.textFaint, fontSize: 11, marginTop: 5, fontWeight: '600' },
-    prioRight: { alignItems: 'flex-end', gap: 8 },
-    prioBadge: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: Radii.full },
-    prioBadgeText: { fontSize: 12, fontWeight: '800' },
-    prioDate: { color: colors.textFaint, fontSize: 12, fontWeight: '700' },
-    notifRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 12 },
-    notifIcon: {
+    quickIcon: {
       width: 40,
       height: 40,
       borderRadius: 12,
       alignItems: 'center',
       justifyContent: 'center',
     },
-    notifText: { color: colors.text, fontSize: 13, fontWeight: '600', lineHeight: 18 },
-    notifProject: { color: colors.textMuted, fontSize: 11, marginTop: 2 },
-    notifTime: { color: colors.textFaint, fontSize: 11 },
-    errorBox: {
-      backgroundColor: colors.dangerSoft,
-      borderRadius: Radii.md,
-      padding: 12,
-      marginBottom: 12,
-      borderWidth: 1,
-      borderColor: colors.danger,
+    quickLabel: {
+      color: colors.text,
+      fontSize: 11,
+      fontWeight: '700',
+      textAlign: 'center',
     },
-    errorText: { color: colors.danger, fontSize: 13 },
-    retryText: { color: colors.primary, fontWeight: '700', marginTop: 8 },
   });
 }

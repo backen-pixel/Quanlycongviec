@@ -1,7 +1,11 @@
 import { api } from '../api/client';
 import { API_ORIGIN } from '../config';
 import { buildMessengerMessagePreview } from './messengerPreview';
-import { buildCallHistoryFromThreads, isMessengerCallLogMessage, type CallHistoryItem } from './messengerCallLog';
+import {
+  extractCallLogPayloadFromMessage,
+  type CallHistoryItem,
+  type CallLogPayload,
+} from './messengerCallLog';
 import { normalizeReactions } from './messengerReactions';
 import type { MessengerGroupRow, MessengerMessage, MessengerReadReceipt, MessengerThread } from '../types/messenger';
 
@@ -122,10 +126,36 @@ export async function fetchMessengerGroups(myUserId?: string | null): Promise<Me
     });
 }
 
+export type MessengerMessagesPage = {
+  messages: MessengerMessage[];
+  hasMore: boolean;
+};
+
+function headerHasMore(headers: Record<string, unknown> | undefined, fallback: boolean): boolean {
+  const raw = String(headers?.['x-has-more'] ?? headers?.['X-Has-More'] ?? '').toLowerCase();
+  if (raw === '1' || raw === 'true') return true;
+  if (raw === '0' || raw === 'false') return false;
+  return fallback;
+}
+
+export async function fetchMessengerMessagesPage(
+  groupId: string,
+  opts: { limit?: number; before?: string } = {},
+): Promise<MessengerMessagesPage> {
+  const limit = Math.min(Math.max(opts.limit ?? 40, 1), 200);
+  const params: Record<string, string | number> = { limit };
+  if (opts.before) params.before = opts.before;
+  const res = await api.get<unknown[]>(`/messenger/groups/${groupId}/chat`, { params });
+  const list = Array.isArray(res.data) ? res.data : [];
+  return {
+    messages: list.map((row) => mapMessageRow(row as Record<string, unknown>)),
+    hasMore: headerHasMore(res.headers as Record<string, unknown> | undefined, list.length >= limit),
+  };
+}
+
 export async function fetchMessengerMessages(groupId: string): Promise<MessengerMessage[]> {
-  const { data } = await api.get<unknown[]>(`/messenger/groups/${groupId}/chat`);
-  const list = Array.isArray(data) ? data : [];
-  return list.map((row) => mapMessageRow(row as Record<string, unknown>));
+  const page = await fetchMessengerMessagesPage(groupId, { limit: 40 });
+  return page.messages;
 }
 
 export async function sendMessengerText(
@@ -237,31 +267,46 @@ export async function updateMessengerGroupAvatar(
   return data?.avatar ? String(data.avatar) : '';
 }
 
+function mapCallHistoryApiItem(raw: unknown, myUserId: string): CallHistoryItem | null {
+  const row = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const message = mapMessageRow((row.message || row) as Record<string, unknown>);
+  if (!message.id) return null;
+  const payload = extractCallLogPayloadFromMessage(message);
+  const callerId = String(payload?.callerId || payload?.hostId || '');
+  const status = (payload?.status || row.status || 'completed') as CallLogPayload['status'];
+  return {
+    id: String(row.id || message.id),
+    groupId: String(row.group_id || message.group_id || ''),
+    groupName: String(row.group_name || 'Chat'),
+    groupAvatarUrl: row.group_avatar != null ? String(row.group_avatar) : null,
+    isDirect: !!row.is_direct,
+    message,
+    label: String(row.label || message.content || 'Cuộc gọi'),
+    status,
+    kind: String(row.kind || payload?.kind || 'audio') === 'video' ? 'video' : 'audio',
+    durationSec: Number(row.duration_sec || payload?.durationSec || 0),
+    createdAt: String(row.created_at || message.created_at || ''),
+    isOutgoing: row.is_outgoing != null
+      ? !!row.is_outgoing
+      : !!(myUserId && callerId && String(myUserId) === callerId),
+  };
+}
+
 export async function fetchCallHistoryItems(
-  threads: MessengerThread[],
+  _threads: MessengerThread[],
   myUserId: string,
-  maxThreads = 20,
 ): Promise<CallHistoryItem[]> {
-  const candidates = threads
-    .filter((t) => /cuộc gọi|📞|call/i.test(t.preview))
-    .slice(0, maxThreads);
-  if (!candidates.length) return [];
-
-  const enriched: Array<MessengerThread & { lastMessage?: MessengerMessage | null }> = [];
-  await Promise.all(
-    candidates.map(async (t) => {
-      try {
-        const msgs = await fetchMessengerMessages(t.id);
-        for (const callMsg of msgs.filter(isMessengerCallLogMessage)) {
-          enriched.push({ ...t, lastMessage: callMsg });
-        }
-      } catch {
-        /* ignore */
-      }
-    }),
-  );
-
-  return buildCallHistoryFromThreads(enriched, myUserId);
+  try {
+    const { data } = await api.get<{ items?: unknown[] }>('/messenger/call-history', {
+      params: { limit: 80 },
+    });
+    const items = Array.isArray(data?.items) ? data.items : [];
+    return items
+      .map((row) => mapCallHistoryApiItem(row, myUserId))
+      .filter((x): x is CallHistoryItem => !!x);
+  } catch {
+    return [];
+  }
 }
 
 export function patchThreadFromMessage(

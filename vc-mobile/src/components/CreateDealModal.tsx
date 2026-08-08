@@ -471,8 +471,8 @@ export default function CreateDealModal({ visible, user, onClose, onCreated }: P
   const validateStep1 = (): string | null => {
     if (!title.trim()) return 'Nhập tên Deal.';
     if (!companyId) return 'Chọn công ty VC/LĐ.';
-    if (!workTypes.length) return 'Công ty chưa cấu hình phân loại xưởng.';
-    if (!workshopTypeId) return 'Chọn phân loại xưởng.';
+    if (!workTypes.length) return 'Công ty chưa cấu hình phân loại.';
+    if (!workshopTypeId) return 'Chọn phân loại.';
     if (regions.length > 0 && !regionId) return 'Chọn khu vực.';
     if (externalPick === '__new__' && !externalNewName.trim()) {
       return 'Nhập tên công ty bên ngoài hoặc bỏ chọn.';
@@ -517,7 +517,7 @@ export default function CreateDealModal({ visible, user, onClose, onCreated }: P
       });
       reset();
       const code = res.project_code || res.deal_code || '';
-      onCreated(code ? `Đã tạo đơn xưởng ${code}` : 'Đã tạo đơn xưởng');
+      onCreated(code ? `Đã tạo dự án ${code}` : 'Đã tạo dự án vận chuyển');
       onClose();
     } catch (e) {
       setErr(formatApiError(e));
@@ -574,7 +574,7 @@ export default function CreateDealModal({ visible, user, onClose, onCreated }: P
 
   const pickerTitle =
     picker === 'company' ? 'Chọn công ty VC/LĐ'
-      : picker === 'workshop' ? 'Phân loại xưởng'
+      : picker === 'workshop' ? 'Phân loại'
         : picker === 'region' ? 'Khu vực'
           : picker === 'external' ? 'Công ty ngoài / Đối tác'
             : '';
@@ -596,9 +596,9 @@ export default function CreateDealModal({ visible, user, onClose, onCreated }: P
               <Ionicons name="business" size={22} color={colors.primary} />
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.headerTitle}>Tạo đơn xưởng</Text>
+              <Text style={styles.headerTitle}>Thêm dự án</Text>
               <Text style={styles.headerSub}>
-                Tạo trực tiếp trên Kanban SX — không qua pipeline CRM
+                Tạo dự án vận chuyển — vào cột «Chờ vận chuyển»
               </Text>
             </View>
           </View>
@@ -665,7 +665,7 @@ export default function CreateDealModal({ visible, user, onClose, onCreated }: P
 
               <View style={styles.field}>
                 <Text style={styles.label}>
-                  Phân loại xưởng <Text style={styles.required}>*</Text>
+                  Phân loại <Text style={styles.required}>*</Text>
                 </Text>
                 {workTypes.length > 0 ? (
                   <TouchableOpacity
@@ -683,7 +683,7 @@ export default function CreateDealModal({ visible, user, onClose, onCreated }: P
                   <View style={styles.warnBox}>
                     <Ionicons name="warning" size={18} color={colors.warning} />
                     <Text style={styles.warnText}>
-                      Công ty chưa cấu hình phân loại xưởng — vào Cài đặt pipeline SX để thêm.
+                      Công ty chưa cấu hình phân loại — thêm tại web module Vận chuyển.
                     </Text>
                   </View>
                 )}
@@ -878,7 +878,7 @@ export default function CreateDealModal({ visible, user, onClose, onCreated }: P
 
               <Text style={[styles.sectionTitle, { marginTop: 8 }]}>XEM TRƯỚC THẺ XƯỞNG</Text>
               <View style={styles.previewCard}>
-                <Text style={styles.previewBadge}>SX</Text>
+                <Text style={styles.previewBadge}>VC</Text>
                 <Text style={[styles.previewTitle, !title.trim() && styles.previewTitleEmpty]}>
                   {title.trim() || 'Chưa có tên...'}
                 </Text>
@@ -889,8 +889,8 @@ export default function CreateDealModal({ visible, user, onClose, onCreated }: P
                   <Text style={styles.assigneeName}>{assigneeName}</Text>
                 </View>
                 <View style={styles.kanbanHint}>
-                  <Text style={styles.kanbanHintTitle}>Kanban SX</Text>
-                  <Text style={styles.kanbanHintSub}>Cột «Chờ vào xưởng»</Text>
+                  <Text style={styles.kanbanHintTitle}>Kanban VC</Text>
+                  <Text style={styles.kanbanHintSub}>Cột «Chờ vận chuyển»</Text>
                 </View>
               </View>
 
@@ -962,7 +962,7 @@ export default function CreateDealModal({ visible, user, onClose, onCreated }: P
                 {busy ? (
                   <ActivityIndicator color={colors.white} />
                 ) : (
-                  <Text style={[styles.footerBtnText, styles.footerBtnTextPrimary]}>🏭 Tạo & vào xưởng</Text>
+                  <Text style={[styles.footerBtnText, styles.footerBtnTextPrimary]}>Thêm dự án</Text>
                 )}
               </TouchableOpacity>
             </>

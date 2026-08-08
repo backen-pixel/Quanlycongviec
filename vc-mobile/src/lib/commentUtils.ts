@@ -87,3 +87,66 @@ export function reactionTopEmojis(comment: ProjectComment, limit = 3): string[] 
     .slice(0, limit)
     .map((s) => s.emoji);
 }
+
+export type SystemFileLink = { label: string; url: string };
+
+const SYSTEM_FILE_HIDDEN_PREFIX = 'hidden:';
+
+/** Link file dạng «label|url» trong tin hệ thống (giống web CommentsPanels). */
+export function extractSystemFileLinks(text?: string | null): SystemFileLink[] {
+  const src = String(text || '');
+  if (!src.includes('«')) return [];
+  const out: SystemFileLink[] = [];
+  const re = /«([^»|]+)\|([^»]+)»/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(src)) !== null) {
+    const label = String(m[1] || '').trim();
+    let url = String(m[2] || '').trim();
+    if (!label || !url) continue;
+    if (url.startsWith(SYSTEM_FILE_HIDDEN_PREFIX)) continue;
+    out.push({ label, url });
+  }
+  return out;
+}
+
+export function extractSystemFileLink(text?: string | null): SystemFileLink | null {
+  return extractSystemFileLinks(text)[0] || null;
+}
+
+export function isImageFileName(name?: string | null): boolean {
+  return /\.(jpe?g|png|gif|webp|bmp|svg|heic|heif|avif)$/i.test(String(name || ''));
+}
+
+export type SystemBodySegment =
+  | { kind: 'text'; text: string }
+  | { kind: 'link'; label: string; url: string }
+  | { kind: 'strong'; text: string };
+
+/** Chia body hệ thống: text / «label|url» / «text» đậm. */
+export function parseSystemCommentBody(text?: string | null): SystemBodySegment[] {
+  const src = String(text || '');
+  if (!src) return [];
+  const segments: SystemBodySegment[] = [];
+  const regex = /«([^»]+)»/g;
+  let lastIdx = 0;
+  let m: RegExpExecArray | null;
+  while ((m = regex.exec(src)) !== null) {
+    if (m.index > lastIdx) segments.push({ kind: 'text', text: src.slice(lastIdx, m.index) });
+    const inner = m[1];
+    const pipeIdx = inner.indexOf('|');
+    if (pipeIdx > 0 && pipeIdx < inner.length - 1) {
+      const label = inner.slice(0, pipeIdx);
+      const url = inner.slice(pipeIdx + 1);
+      if (String(url).startsWith(SYSTEM_FILE_HIDDEN_PREFIX)) {
+        segments.push({ kind: 'strong', text: `${label} (đã ẩn)` });
+      } else {
+        segments.push({ kind: 'link', label, url });
+      }
+    } else {
+      segments.push({ kind: 'strong', text: inner });
+    }
+    lastIdx = m.index + m[0].length;
+  }
+  if (lastIdx < src.length) segments.push({ kind: 'text', text: src.slice(lastIdx) });
+  return segments;
+}

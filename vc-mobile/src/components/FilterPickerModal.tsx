@@ -105,6 +105,11 @@ export default function FilterPickerModal({
             keyExtractor={(item) => item.id || '__all__'}
             style={styles.list}
             keyboardShouldPersistTaps="handled"
+            ListEmptyComponent={
+              <Text style={[styles.rowText, { paddingHorizontal: Spacing.lg, paddingVertical: 20, color: colors.textFaint }]}>
+                Không có lựa chọn
+              </Text>
+            }
             renderItem={({ item }) => {
               const active = selectedId === item.id;
               return (

@@ -33,6 +33,8 @@ type Props = {
   projectId: string;
   dealId?: string | null;
   sharedDocuments?: unknown[];
+  /** Đồng bộ số liệu thẻ/tab «Tài liệu» trên màn chi tiết. */
+  onTotalCountChange?: (count: number) => void;
 };
 
 function fmtDate(iso?: string | null): string {
@@ -68,7 +70,12 @@ function mapSharedDoc(raw: unknown): ProjectDocument | null {
   };
 }
 
-export default function ProjectDocumentsTab({ projectId, dealId, sharedDocuments = [] }: Props) {
+export default function ProjectDocumentsTab({
+  projectId,
+  dealId,
+  sharedDocuments = [],
+  onTotalCountChange,
+}: Props) {
   const { colors } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const [workshopDocs, setWorkshopDocs] = useState<ProjectDocument[]>([]);
@@ -112,6 +119,12 @@ export default function ProjectDocumentsTab({ projectId, dealId, sharedDocuments
     void load(false);
   }, [load]);
 
+  const totalCount = crmSharedDocs.length + workshopDocs.length + crmTaskDocs.length + taskFiles.length;
+
+  useEffect(() => {
+    onTotalCountChange?.(totalCount);
+  }, [totalCount, onTotalCountChange]);
+
   const allImages = useMemo(() => {
     const out: ReturnType<typeof toGalleryImage>[] = [];
     const push = (id: string, doc: ProjectDocument | ProjectTaskFile, meta?: { title?: string; subtitle?: string }) => {
@@ -122,7 +135,7 @@ export default function ProjectDocumentsTab({ projectId, dealId, sharedDocuments
       push(`crm-${d.id}`, d, { title: d.name || d.file_name || 'Ảnh CRM', subtitle: 'Tài liệu CRM' });
     }
     for (const d of workshopDocs) {
-      push(`ws-${d.id}`, d, { title: d.file_name || d.name || 'Ảnh xưởng', subtitle: 'Tài liệu xưởng' });
+      push(`ws-${d.id}`, d, { title: d.file_name || d.name || 'Ảnh dự án', subtitle: 'Tài liệu dự án' });
     }
     for (const d of crmTaskDocs) {
       push(`ctd-${d.id}`, d, { title: d.file_name || d.name || 'Ảnh NV', subtitle: 'Nhiệm vụ CRM' });
@@ -162,7 +175,6 @@ export default function ProjectDocumentsTab({ projectId, dealId, sharedDocuments
   const workshopFiles = workshopDocs.filter((d) => !isImageFile(d));
   const crmTaskFiles = crmTaskDocs.filter((d) => !isImageFile(d));
   const taskFileRows = taskFiles.filter((f) => !isImageFile(f));
-  const totalCount = crmSharedDocs.length + workshopDocs.length + crmTaskDocs.length + taskFiles.length;
 
   if (loading && totalCount === 0) {
     return (
@@ -229,7 +241,7 @@ export default function ProjectDocumentsTab({ projectId, dealId, sharedDocuments
 
         {workshopFiles.length > 0 ? (
           <>
-            <Text style={styles.sectionTitle}>Tài liệu xưởng ({workshopFiles.length})</Text>
+            <Text style={styles.sectionTitle}>Tài liệu dự án ({workshopFiles.length})</Text>
             {workshopFiles.map((d) => (
               <DocRow
                 key={d.id}

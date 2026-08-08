@@ -1,5 +1,6 @@
 import { api } from '../api/client';
 import { isCrmProductionTaskDone } from './projectDetailApi';
+import type { AuthUserLite } from './productionFilters';
 import type { CrmTask } from '../types';
 
 export type WorkLeadRef = {
@@ -14,7 +15,40 @@ export type WorkLeadRef = {
 export type WorkTask = CrmTask & {
   lead_id: string;
   lead?: WorkLeadRef | null;
+  crm_task_id?: string | null;
 };
+
+export type WorkTasksQuery = {
+  /** null/undefined = không lọc người (team). Có id = chỉ việc của người đó. */
+  assigneeId?: string | null;
+  companyId?: string | null;
+  /** Opt-in sau filter JS phía server. */
+  limit?: number;
+};
+
+/** Nhãn deal/lead giống web Giao việc VC. */
+export function assignmentDealCardLabel(lead?: WorkLeadRef | null): string {
+  if (!lead) return '';
+  const code = String(lead.code || '').trim();
+  const title = String(lead.title || '').trim();
+  const isDeal = String(lead.type || '').toLowerCase() === 'deal';
+  if (isDeal) {
+    if (code && title) return `${code} — ${title}`;
+    return title || code || 'Deal';
+  }
+  if (code && title) return `${code} · ${title}`;
+  return title || code || '';
+}
+
+/** Khớp role admin trang Giao việc VC trên web. */
+export function canViewTeamWork(user?: AuthUserLite | null): boolean {
+  const role = String(user?.role || '').trim().toLowerCase();
+  return role === 'admin'
+    || role === 'manager'
+    || role === 'sales_admin'
+    || role === 'crm_production_admin'
+    || role === 'production_admin';
+}
 
 function mapWorkTask(raw: Record<string, unknown>): WorkTask {
   const leadRaw = raw.lead && typeof raw.lead === 'object' ? (raw.lead as Record<string, unknown>) : null;
@@ -32,6 +66,11 @@ function mapWorkTask(raw: Record<string, unknown>): WorkTask {
     order_index: raw.order_index != null ? Number(raw.order_index) : undefined,
     deadline: raw.deadline != null ? String(raw.deadline) : null,
     due_date: raw.due_date != null ? String(raw.due_date) : null,
+    description: raw.description != null ? String(raw.description) : null,
+    priority: raw.priority != null ? String(raw.priority) : null,
+    crm_task_id: raw.crm_task_id != null ? String(raw.crm_task_id) : null,
+    file_count: raw.file_count != null ? Number(raw.file_count) : undefined,
+    attachment_count: raw.attachment_count != null ? Number(raw.attachment_count) : undefined,
     lead: leadRaw
       ? {
           id: String(leadRaw.id || raw.lead_id || ''),
@@ -76,22 +115,38 @@ export function nextTaskStatus(status: string): string {
   return 'completed';
 }
 
-export async function fetchMyLogisticsTasks(userId: string): Promise<WorkTask[]> {
-  const { data } = await api.get<unknown[]>('/crm/tasks/overview', {
-    params: {
-      assignee_id: userId,
-      task_scope: 'logistics',
-    },
-  });
+/**
+ * Nhiệm vụ VC — GET /crm/tasks/overview?task_scope=logistics
+ * assigneeId rỗng/null = xem cả team (khi user có quyền canViewTeamWork).
+ */
+export async function fetchLogisticsWorkTasks(query: WorkTasksQuery = {}): Promise<WorkTask[]> {
+  const params: Record<string, string> = { task_scope: 'logistics' };
+  if (query.assigneeId) params.assignee_id = query.assigneeId;
+  if (query.companyId) params.company_id = query.companyId;
+  if (query.limit && query.limit > 0) params.limit = String(query.limit);
+
+  const { data } = await api.get<unknown[]>('/crm/tasks/overview', { params });
   const list = Array.isArray(data) ? data : [];
   return list
     .map((row) => mapWorkTask(row as Record<string, unknown>))
     .filter((t) => t.id && t.lead_id);
 }
 
+export async function fetchMyLogisticsTasks(
+  userId: string,
+  extra: Omit<WorkTasksQuery, 'assigneeId'> = {},
+): Promise<WorkTask[]> {
+  return fetchLogisticsWorkTasks({ ...extra, assigneeId: userId });
+}
+
 /** @deprecated alias — VC mobile dùng logistics */
 export async function fetchMyProductionTasks(userId: string): Promise<WorkTask[]> {
   return fetchMyLogisticsTasks(userId);
+}
+
+/** @deprecated alias — VC mobile dùng logistics */
+export async function fetchProductionWorkTasks(query: WorkTasksQuery = {}): Promise<WorkTask[]> {
+  return fetchLogisticsWorkTasks(query);
 }
 
 /** Cập nhật trạng thái nhanh từ tab Công việc — không bắt minh chứng. */
@@ -142,4 +197,58 @@ export function groupTasksByDeal(tasks: WorkTask[]): DealTaskSection[] {
       tasks: [...section.tasks].sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0)),
     }))
     .sort((a, b) => a.code.localeCompare(b.code, 'vi'));
+}
+
+export function priorityLabel(priority?: string | null): string | null {
+  const p = String(priority || '').toLowerCase();
+  if (p === 'high' || p === 'urgent') return 'Cao';
+  if (p === 'medium' || p === 'normal') return 'TB';
+  if (p === 'low') return 'Thấp';
+  return priority ? String(priority) : null;
+}
+
+export function stageSlugLabel(slug?: string | null): string | null {
+  if (!slug) return null;
+  const s = String(slug);
+  if (s.startsWith('vc_')) {
+    return s
+      .slice(3)
+      .split('_')
+      .filter(Boolean)
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+      .join(' ');
+  }
+  return s;
+}
+
+export function taskDueIso(task: WorkTask): string | null {
+  return task.deadline || task.due_date || null;
+}
+
+export function isTaskOverdue(task: WorkTask): boolean {
+  if (isTaskDone(task.status)) return false;
+  const raw = taskDueIso(task);
+  if (!raw) return false;
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return false;
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  const due = new Date(d);
+  due.setHours(0, 0, 0, 0);
+  return due.getTime() < start.getTime();
+}
+
+export function formatTaskDeadline(iso?: string | null): string {
+  if (!iso) return 'Chưa có hạn';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return 'Chưa có hạn';
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  return `${dd}/${mm}/${d.getFullYear()}`;
+}
+
+/** Id nhiệm vụ pipeline để focus trong chi tiết dự án. */
+export function workTaskFocusCrmId(task: WorkTask): string | null {
+  if (task.crm_task_id) return String(task.crm_task_id);
+  return task.id ? String(task.id) : null;
 }

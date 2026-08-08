@@ -1,7 +1,7 @@
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 import type { SxCommentNotification } from './notificationApi';
-import { SX_NOTIF_CHANNEL } from './notificationChannels';
+import { VC_NOTIF_CHANNEL } from './notificationChannels';
 
 export async function showLocalCommentNotification(n: SxCommentNotification): Promise<void> {
   try {
@@ -20,7 +20,7 @@ export async function showLocalCommentNotification(n: SxCommentNotification): Pr
           entity_id: n.entity_id,
           metadata: n.metadata,
         },
-        ...(Platform.OS === 'android' ? { channelId: SX_NOTIF_CHANNEL } : {}),
+        ...(Platform.OS === 'android' ? { channelId: VC_NOTIF_CHANNEL } : {}),
       },
       trigger: null,
     });

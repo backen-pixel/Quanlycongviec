@@ -2,13 +2,22 @@ import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { API_ORIGIN } from '../config';
 
-const TOKEN_KEY = 'sx_token';
+const TOKEN_KEY = 'vc_token';
 const API_PREFIX = `${API_ORIGIN}/api`;
 
 export const api = axios.create({
   baseURL: API_PREFIX,
   timeout: 30000,
 });
+
+/** Cache token trong RAM — tránh đọc AsyncStorage mỗi request (chậm khi tải nhiều trang). */
+let memoryToken: string | null | undefined;
+
+async function resolveAuthToken(): Promise<string | null> {
+  if (memoryToken !== undefined) return memoryToken;
+  memoryToken = await AsyncStorage.getItem(TOKEN_KEY);
+  return memoryToken;
+}
 
 let onUnauthorized: (() => void) | null = null;
 
@@ -17,7 +26,7 @@ export function setUnauthorizedHandler(fn: (() => void) | null) {
 }
 
 api.interceptors.request.use(async (config) => {
-  const token = await AsyncStorage.getItem(TOKEN_KEY);
+  const token = await resolveAuthToken();
   if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
 });
@@ -30,7 +39,7 @@ api.interceptors.response.use(
     // Bỏ qua auto-logout cho login / me (401 ở đây không phải token hỏng).
     const skip = ['/auth/login', '/auth/me'].some((p) => url.includes(p));
     if (status === 401 && !skip) {
-      await setStoredToken(null);
+      // Không xóa token ở đây — AuthContext cần token để unregister FCM trước khi clear.
       onUnauthorized?.();
     }
     return Promise.reject(error);
@@ -38,12 +47,13 @@ api.interceptors.response.use(
 );
 
 export async function setStoredToken(token: string | null) {
+  memoryToken = token;
   if (token) await AsyncStorage.setItem(TOKEN_KEY, token);
   else await AsyncStorage.removeItem(TOKEN_KEY);
 }
 
 export async function getStoredToken() {
-  return AsyncStorage.getItem(TOKEN_KEY);
+  return resolveAuthToken();
 }
 
 /** Chuẩn hoá thông báo lỗi để hiển thị toast/alert. */
@@ -76,7 +86,7 @@ export async function postMultipart<T = unknown>(
 ): Promise<{ data: T }> {
   const p = path.startsWith('/') ? path : `/${path}`;
   const url = `${API_PREFIX}${p}`;
-  const token = await AsyncStorage.getItem(TOKEN_KEY);
+  const token = await resolveAuthToken();
   const timeoutMs = options?.timeoutMs ?? 120000;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -109,7 +119,6 @@ export async function postMultipart<T = unknown>(
       parsed = { error: text || res.statusText };
     }
     if (res.status === 401 && !p.includes('/auth/login')) {
-      await setStoredToken(null);
       onUnauthorized?.();
     }
     if (!res.ok) {

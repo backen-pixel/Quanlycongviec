@@ -10,7 +10,16 @@ const CRM_DEALS_LIST_EMBED = `
   vc_pipeline_stage:logistics_pipeline_stages(id, name, color, icon, bucket_slug)
 `;
 
+/** Mobile Kanban: không avatar / pipeline stage — payload nhỏ khi 200–1000 dự án/trang. */
+const CRM_DEALS_LIST_EMBED_LITE = `
+  id, title, type, region_id, project_id, assigned_to, lead_owner_id, external_company_name,
+  crm_region:company_regions!crm_leads_region_id_fkey(id, name),
+  assignee:users!crm_leads_assigned_to_fkey(id, full_name),
+  lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name)
+`;
+
 const CRM_DEALS_LIST_MIN = 'id, code, title, type, created_at, assigned_to, lead_owner_id';
+const CRM_DEALS_LIST_MIN_LITE = 'id, title, type, region_id, project_id, assigned_to, lead_owner_id, external_company_name';
 
 async function queryCrmDealsEmbed(filterFn) {
   try {
@@ -68,33 +77,40 @@ async function loadCrmDealsForProjectDetail(projectId) {
 }
 
 /** Gắn crm_deals (kèm assignee CRM) lên danh sách dự án VC/SX. */
-async function attachCrmDealsToProjects(projects) {
+async function attachCrmDealsToProjects(projects, opts = {}) {
   const list = Array.isArray(projects) ? projects : [];
   const projectIds = [...new Set(list.map((p) => p?.id).filter(Boolean))];
   if (!projectIds.length) return list;
 
-  const embedWithProject = `${CRM_DEALS_LIST_EMBED.trim()}, project_id`;
-  const minWithProject = `${CRM_DEALS_LIST_MIN}, project_id`;
+  const lite = !!opts.lite;
+  const embedWithProject = lite
+    ? CRM_DEALS_LIST_EMBED_LITE.trim()
+    : `${CRM_DEALS_LIST_EMBED.trim()}, project_id`;
+  const minWithProject = lite ? CRM_DEALS_LIST_MIN_LITE : `${CRM_DEALS_LIST_MIN}, project_id`;
 
-  let rows = [];
-  try {
-    const { data, error } = await supabase
-      .from('crm_leads')
-      .select(embedWithProject)
-      .in('project_id', projectIds)
-      .eq('type', 'deal')
-      .order('created_at', { ascending: false });
-    if (error) throw error;
-    rows = data || [];
-  } catch (e) {
-    console.warn('[workshopCrmDeals] batch embed:', e.message);
-    const { data } = await supabase
-      .from('crm_leads')
-      .select(minWithProject)
-      .in('project_id', projectIds)
-      .eq('type', 'deal')
-      .order('created_at', { ascending: false });
-    rows = data || [];
+  const rows = [];
+  const CHUNK = 80;
+  for (let i = 0; i < projectIds.length; i += CHUNK) {
+    const chunk = projectIds.slice(i, i + CHUNK);
+    try {
+      const { data, error } = await supabase
+        .from('crm_leads')
+        .select(embedWithProject)
+        .in('project_id', chunk)
+        .eq('type', 'deal')
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      rows.push(...(data || []));
+    } catch (e) {
+      console.warn('[workshopCrmDeals] batch embed:', e.message);
+      const { data } = await supabase
+        .from('crm_leads')
+        .select(minWithProject)
+        .in('project_id', chunk)
+        .eq('type', 'deal')
+        .order('created_at', { ascending: false });
+      rows.push(...(data || []));
+    }
   }
 
   const byProject = new Map();

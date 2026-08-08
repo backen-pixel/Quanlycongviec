@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
-import { SX_NOTIF_CHANNELS } from './notificationChannels';
+import { VC_NOTIF_CHANNELS } from './notificationChannels';
 import {
   cancelNativeIncomingCallNotification,
   markNativeCallAnswered,
@@ -162,7 +162,7 @@ export async function showIncomingCallNotification(payload: IncomingCallPayload)
         group_name: payload.groupName || '',
       },
       ...(Platform.OS === 'android'
-        ? { channelId: SX_NOTIF_CHANNELS.call }
+        ? { channelId: VC_NOTIF_CHANNELS.call }
         : {}),
     },
     trigger: null,

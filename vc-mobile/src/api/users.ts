@@ -36,8 +36,12 @@ function mapActivityUser(u: ActivityUser): ActivityUserItem {
   };
 }
 
-export async function fetchActivityUsers(signal?: AbortSignal): Promise<ActivityUserItem[]> {
-  const { data } = await api.get<{ users?: ActivityUser[] }>('/users/activity', { signal });
+export async function fetchActivityUsers(
+  signal?: AbortSignal,
+  opts?: { onlineOnly?: boolean },
+): Promise<ActivityUserItem[]> {
+  const params = opts?.onlineOnly ? { online_only: '1' } : undefined;
+  const { data } = await api.get<{ users?: ActivityUser[] }>('/users/activity', { signal, params });
   const list = Array.isArray(data?.users) ? data.users : [];
   return list.filter((u) => u?.id).map(mapActivityUser);
 }

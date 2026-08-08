@@ -14,6 +14,7 @@ import { formatApiError } from '../api/client';
 import TapHighlight from '../components/TapHighlight';
 import { useTheme } from '../context/ThemeContext';
 import { fetchProductionBoard } from '../lib/logisticsApi';
+import { getCachedBoard, isCachedBoardFresh, setCachedBoard } from '../lib/logisticsBoardCache';
 import { useProductionRealtime } from '../hooks/useProductionRealtime';
 import { useRootNavigation } from '../navigation/useRootNavigation';
 import { Radii, Spacing, getTaskProgressColor, stageColor } from '../theme';
@@ -91,11 +92,19 @@ export default function ProjectListScreen() {
   );
 
   const load = useCallback(async (mode: 'init' | 'refresh' | 'silent' = 'init') => {
-    if (mode === 'init') setLoading(true);
+    const cached = getCachedBoard();
+    if (mode !== 'refresh' && cached) {
+      setBoard(cached);
+      if (mode === 'init') setLoading(false);
+    }
+    if (mode === 'silent' && isCachedBoardFresh() && cached) return;
+    if (mode === 'init' && !cached) setLoading(true);
     else if (mode === 'refresh') setRefreshing(true);
-    setError(null);
+    if (mode !== 'silent') setError(null);
     try {
-      setBoard(await fetchProductionBoard(mode === 'silent'));
+      const next = await fetchProductionBoard(mode === 'refresh');
+      setCachedBoard({}, next);
+      setBoard(next);
     } catch (e) {
       if (mode !== 'silent') setError(formatApiError(e));
     } finally {

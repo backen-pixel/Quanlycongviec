@@ -1,28 +1,39 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import React, { useMemo, useState } from 'react';
-import { Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { Platform, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import CreateDealModal from '../components/CreateDealModal';
+import EventFormModal from '../components/events/EventFormModal';
+import GlowActionFab from '../components/GlowActionFab';
 import Toast, { type ToastState } from '../components/Toast';
-import { useAuth } from '../context/AuthContext';
+import { useMessenger } from '../context/MessengerContext';
 import { useTheme } from '../context/ThemeContext';
 import KanbanScreen from '../screens/KanbanScreen';
+import MessagesScreen from '../screens/MessagesScreen';
+import OverviewScreen from '../screens/OverviewScreen';
 import PlannerScreen from '../screens/PlannerScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 import WorkScreen from '../screens/WorkScreen';
+import type { VcKpiFocusKey } from '../lib/vcBoardKpis';
 
 export type MainTabParamList = {
-  Kanban: undefined;
+  /** Trang tổng quan VC/LĐ (tab chính). */
+  Overview: undefined;
+  /** focusKpi: từ card Tổng quan → nhảy cột (Kanban) / lọc cột (List) / lọc quá hạn. */
+  Kanban: { focusKpi?: VcKpiFocusKey } | undefined;
+  /** Slot FAB giữa tab — mở tạo sự kiện. */
+  CreateEvent: undefined;
+  Messages: undefined;
+  Menu: undefined;
+  /** Danh sách công việc — mở từ Tổng quan / Menu (ẩn khỏi tab bar). */
   Work: undefined;
-  CreateDeal: undefined;
   Planner: undefined;
   Profile: undefined;
 };
 
 const Tab = createBottomTabNavigator<MainTabParamList>();
 
-function CreateDealPlaceholder() {
+function CreateEventPlaceholder() {
   const { colors } = useTheme();
   return <View style={{ flex: 1, backgroundColor: colors.bg }} />;
 }
@@ -30,11 +41,11 @@ function CreateDealPlaceholder() {
 export default function MainTabs() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
-  const { user } = useAuth();
+  const { unreadTotal: messageUnread } = useMessenger();
   const padBottom = Math.max(insets.bottom, 8);
   const tabBarHeight = 62 + padBottom;
 
-  const [dealOpen, setDealOpen] = useState(false);
+  const [eventOpen, setEventOpen] = useState(false);
   const [toast, setToast] = useState<ToastState>(null);
 
   const styles = useMemo(
@@ -52,28 +63,26 @@ export default function MainTabs() {
           flex: 1,
           alignItems: 'center',
           justifyContent: 'flex-end',
-          paddingBottom: 2,
+          paddingBottom: 0,
         },
-        fabTouchable: {
-          top: -(FAB_SIZE / 2 - 4),
+        fabLift: {
+          top: -22,
           alignItems: 'center',
           justifyContent: 'center',
         },
-        fabCircle: {
-          width: FAB_SIZE,
-          height: FAB_SIZE,
-          borderRadius: FAB_SIZE / 2,
-          backgroundColor: colors.primary,
+        badge: {
+          position: 'absolute',
+          top: -4,
+          right: -10,
+          minWidth: 16,
+          height: 16,
+          borderRadius: 8,
+          backgroundColor: colors.danger,
           alignItems: 'center',
           justifyContent: 'center',
-          borderWidth: 3,
-          borderColor: colors.bgElevated,
-          shadowColor: colors.primary,
-          shadowOpacity: 0.45,
-          shadowRadius: 8,
-          shadowOffset: { width: 0, height: 3 },
-          elevation: 12,
+          paddingHorizontal: 3,
         },
+        badgeText: { color: '#fff', fontSize: 9, fontWeight: '800' },
       }),
     [colors],
   );
@@ -86,6 +95,7 @@ export default function MainTabs() {
   return (
     <>
       <Tab.Navigator
+        initialRouteName="Overview"
         screenOptions={{
           headerShown: false,
           sceneStyle: { backgroundColor: colors.bg },
@@ -96,78 +106,110 @@ export default function MainTabs() {
         }}
       >
         <Tab.Screen
+          name="Overview"
+          component={OverviewScreen}
+          options={{
+            tabBarLabel: 'Tổng quan',
+            tabBarIcon: ({ color, focused }) => (
+              <Ionicons name={focused ? 'home' : 'home-outline'} size={22} color={color} />
+            ),
+          }}
+        />
+        <Tab.Screen
           name="Kanban"
           component={KanbanScreen}
           options={{
-            tabBarLabel: 'Kanban',
+            tabBarLabel: 'Dự án',
             tabBarIcon: ({ color, focused }) => (
               <Ionicons name={focused ? 'grid' : 'grid-outline'} size={22} color={color} />
             ),
           }}
         />
         <Tab.Screen
-          name="Work"
-          component={WorkScreen}
-          options={{
-            tabBarLabel: 'Công việc',
-            tabBarIcon: ({ color, focused }) => (
-              <Ionicons name={focused ? 'clipboard' : 'clipboard-outline'} size={22} color={color} />
-            ),
-          }}
-        />
-        <Tab.Screen
-          name="CreateDeal"
-          component={CreateDealPlaceholder}
+          name="CreateEvent"
+          component={CreateEventPlaceholder}
           options={{
             tabBarLabel: () => null,
             tabBarIcon: () => null,
             tabBarButton: () => (
               <View style={styles.fabTabSlot}>
-                <TouchableOpacity
-                  style={styles.fabTouchable}
-                  onPress={() => setDealOpen(true)}
-                  activeOpacity={0.88}
-                >
-                  <View style={styles.fabCircle}>
-                    <Ionicons name="add" size={28} color={colors.white} />
-                  </View>
-                </TouchableOpacity>
+                <View style={styles.fabLift}>
+                  <GlowActionFab
+                    variant="event"
+                    compact
+                    size={58}
+                    cutoutColor={colors.bgElevated}
+                    onPress={() => setEventOpen(true)}
+                  />
+                </View>
               </View>
             ),
           }}
         />
         <Tab.Screen
-          name="Planner"
-          component={PlannerScreen}
+          name="Messages"
+          component={MessagesScreen}
           options={{
-            tabBarLabel: 'Planner',
+            tabBarLabel: 'Tin nhắn',
             tabBarIcon: ({ color, focused }) => (
-              <Ionicons name={focused ? 'calendar' : 'calendar-outline'} size={22} color={color} />
+              <View>
+                <Ionicons name={focused ? 'chatbubbles' : 'chatbubbles-outline'} size={22} color={color} />
+                {messageUnread > 0 ? (
+                  <View style={styles.badge}>
+                    <Text style={styles.badgeText}>{messageUnread > 99 ? '99+' : messageUnread}</Text>
+                  </View>
+                ) : null}
+              </View>
             ),
+          }}
+        />
+        <Tab.Screen
+          name="Menu"
+          component={ProfileScreen}
+          options={{
+            tabBarLabel: 'Menu',
+            tabBarIcon: ({ color, focused }) => (
+              <Ionicons name={focused ? 'menu' : 'menu-outline'} size={22} color={color} />
+            ),
+          }}
+        />
+        {/* Ẩn — mở từ Tổng quan / Menu / deep-link */}
+        <Tab.Screen
+          name="Work"
+          component={WorkScreen}
+          options={{
+            tabBarButton: () => null,
+            tabBarItemStyle: { display: 'none', width: 0, height: 0 },
           }}
         />
         <Tab.Screen
           name="Profile"
           component={ProfileScreen}
           options={{
-            tabBarLabel: 'Tôi',
-            tabBarIcon: ({ color, focused }) => (
-              <Ionicons name={focused ? 'person' : 'person-outline'} size={22} color={color} />
-            ),
+            tabBarButton: () => null,
+            tabBarItemStyle: { display: 'none', width: 0, height: 0 },
+          }}
+        />
+        <Tab.Screen
+          name="Planner"
+          component={PlannerScreen}
+          options={{
+            tabBarButton: () => null,
+            tabBarItemStyle: { display: 'none', width: 0, height: 0 },
           }}
         />
       </Tab.Navigator>
 
-      <CreateDealModal
-        visible={dealOpen}
-        user={user}
-        onClose={() => setDealOpen(false)}
-        onCreated={(msg) => showToast(msg)}
+      <EventFormModal
+        visible={eventOpen}
+        onClose={() => setEventOpen(false)}
+        onSaved={() => {
+          setEventOpen(false);
+          showToast('Đã tạo sự kiện');
+        }}
       />
 
       <Toast state={toast} />
     </>
   );
 }
-
-const FAB_SIZE = 52;

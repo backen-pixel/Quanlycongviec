@@ -121,6 +121,23 @@ function Set-Arm64OnlyApk {
 
 Set-Arm64OnlyApk
 
+function Set-WebrtcVersionPin {
+  $bg = Join-Path $root 'android\build.gradle'
+  if (-not (Test-Path $bg)) { return }
+  $content = Get-Content $bg -Raw
+  if ($content -match "force 'org\.jitsi:webrtc:124\.0\.0'") {
+    Write-Host '>> WebRTC: 124.0.0 pinned (already set)'
+    return
+  }
+  if ($content -match 'allprojects \{\s+repositories \{') {
+    $content = $content -replace '(allprojects \{\s+repositories \{[^}]+\})', "`$1`r`n  configurations.all {`r`n    resolutionStrategy {`r`n      force 'org.jitsi:webrtc:124.0.0'`r`n    }`r`n  }"
+    Set-Content -Path $bg -Value $content -NoNewline
+    Write-Host '>> WebRTC: pinned org.jitsi:webrtc:124.0.0 (tranh SSL metadata fetch)'
+  }
+}
+
+Set-WebrtcVersionPin
+
 Write-Host '>> gradlew assembleRelease...'
 Set-Location android
 .\gradlew.bat assembleRelease --no-daemon

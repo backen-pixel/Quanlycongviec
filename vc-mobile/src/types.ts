@@ -5,9 +5,16 @@ export type KanbanStage = {
   color?: string | null;
   icon?: string | null;
   order_index: number;
+  slug?: string | null;
   bucket_slug?: string | null;
   workflow_stage_id?: string | null;
+  workflow_stage?: {
+    slug?: string | null;
+  } | null;
   is_handover_to_logistics?: boolean;
+  /** Cột VC gắn cờ «Chuyển LĐ» — kéo dự án vào cột này sẽ tự nhảy sang cột Lắp đặt. */
+  is_handover_to_install?: boolean;
+  crm_sync_type?: string | null;
   count?: number;
   total_value?: number;
 };
@@ -28,6 +35,11 @@ export type ProductionProject = {
   progress?: number;
   task_total?: number;
   done_tasks?: number;
+  /** Nhiệm vụ tách theo tab pipeline VC — dùng cho badge/tiến độ card theo tab đang mở. */
+  task_total_vc?: number;
+  done_tasks_vc?: number;
+  task_total_install?: number;
+  done_tasks_install?: number;
   is_overdue?: boolean;
   sx_intake?: boolean;
   sx_won_deal?: boolean;
@@ -42,6 +54,8 @@ export type ProductionProject = {
   stage_slug?: string | null;
   production_person_id?: string | null;
   production_person_name?: string | null;
+  sales_person_id?: string | null;
+  sales_person_name?: string | null;
   logistics_person_id?: string | null;
   logistics_person_name?: string | null;
   installer_person_id?: string | null;
@@ -55,8 +69,12 @@ export type ProductionProject = {
   crm_deals?: Array<{
     id?: string;
     type?: string;
+    title?: string | null;
+    region_id?: string | null;
     external_company_name?: string | null;
     external_catalog_id?: string | null;
+    assignee?: { id?: string; full_name?: string } | null;
+    lead_owner?: { id?: string; full_name?: string } | null;
   }>;
 };
 

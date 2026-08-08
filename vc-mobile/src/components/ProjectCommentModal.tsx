@@ -4,9 +4,9 @@ import * as ImagePicker from 'expo-image-picker';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Image,
   KeyboardAvoidingView,
-  Linking,
   Modal,
   Platform,
   Pressable,
@@ -20,17 +20,25 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatApiError } from '../api/client';
 import {
+  mentionNamesFromComments,
+  splitCommentMentionParts,
+} from '../lib/commentMentions';
+import {
   avatarColor,
   COMMENT_REACTION_EMOJI,
   flattenCommentTree,
   formatCommentTime,
   groupCommentsByParent,
+  isImageFileName,
+  parseSystemCommentBody,
   reactionTotal,
   userInitials,
 } from '../lib/commentUtils';
 import {
-  fetchDealComments,
-  fetchProjectComments,
+  fetchDealCommentIndex,
+  fetchDealCommentsPage,
+  fetchProjectCommentIndex,
+  fetchProjectCommentsPage,
   isCommentImageAttachment,
   postDealComment,
   postProjectComment,
@@ -41,6 +49,10 @@ import {
   type CommentAttachment,
   type ProjectComment,
 } from '../lib/logisticsApi';
+import {
+  openMessengerAttachment,
+  saveMessengerAttachment,
+} from '../lib/messengerFileOpen';
 import { fetchDealIdForProject } from '../lib/projectDetailApi';
 import { resolveMediaUrl } from '../lib/mediaUtils';
 import {
@@ -49,6 +61,7 @@ import {
 } from '../lib/notificationPrefs';
 import ImageGalleryLightbox, { type GalleryImage } from './ImageGalleryLightbox';
 import TapHighlight from './TapHighlight';
+import VcHandoverCommentCard from './VcHandoverCommentCard';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
 import { useTheme } from '../context/ThemeContext';
@@ -58,6 +71,7 @@ import type { ProductionProject } from '../types';
 type SortMode = 'newest' | 'oldest';
 
 const REPLY_DEPTH_STEP = 18;
+const COMMENT_PAGE = 50;
 
 type PendingFile = {
   key: string;
@@ -85,24 +99,96 @@ function fileIconName(att: CommentAttachment): keyof typeof Ionicons.glyphMap {
   return 'attach-outline';
 }
 
+function openCommentFile(att: CommentAttachment, uri: string) {
+  Alert.alert(
+    att.name || 'Tệp đính kèm',
+    'Xem ngay trên máy hoặc tải/lưu để gửi cho người khác.',
+    [
+      { text: 'Hủy', style: 'cancel' },
+      {
+        text: 'Tải / Lưu',
+        onPress: () => {
+          void saveMessengerAttachment(uri, { name: att.name, mime: att.mime });
+        },
+      },
+      {
+        text: 'Mở xem',
+        onPress: () => {
+          void openMessengerAttachment(uri, { name: att.name, mime: att.mime });
+        },
+      },
+    ],
+  );
+}
+
+function CommentImageThumb({
+  uri,
+  style,
+  brokenStyle,
+  brokenTxtStyle,
+  faintColor,
+  onPress,
+}: {
+  uri: string;
+  style: object;
+  brokenStyle: object;
+  brokenTxtStyle: object;
+  faintColor: string;
+  onPress: () => void;
+}) {
+  const [broken, setBroken] = useState(false);
+  return (
+    <TapHighlight style={style} onPress={onPress}>
+      {broken ? (
+        <View style={brokenStyle}>
+          <Ionicons name="image-outline" size={22} color={faintColor} />
+          <Text style={brokenTxtStyle}>Không xem được ảnh</Text>
+        </View>
+      ) : (
+        <Image
+          source={{ uri }}
+          style={{ width: '100%', height: '100%' }}
+          resizeMode="cover"
+          onError={() => setBroken(true)}
+        />
+      )}
+    </TapHighlight>
+  );
+}
+
 type Props = {
   visible: boolean;
   project: ProductionProject | null;
   onClose: () => void;
   onPosted: (count: number) => void;
+  /** Hiển thị dạng tab trong chi tiết dự án (không bọc Modal). */
+  embedded?: boolean;
+  /** Deal CRM đã resolve sẵn từ màn chi tiết. */
+  preferredDealId?: string | null;
 };
 
-export default function ProjectCommentModal({ visible, project, onClose, onPosted }: Props) {
+export default function ProjectCommentModal({
+  visible,
+  project,
+  onClose,
+  onPosted,
+  embedded = false,
+  preferredDealId = null,
+}: Props) {
   const { colors } = useTheme();
   const { user } = useAuth();
-  const { subscribeComment, subscribeSync } = useNotifications();
+  const { subscribeComment, subscribeSync, joinLeadRoom, leaveLeadRoom } = useNotifications();
   const insets = useSafeAreaInsets();
   const scrollRef = useRef<ScrollView>(null);
+  const active = embedded || visible;
   const onPostedRef = useRef(onPosted);
   onPostedRef.current = onPosted;
 
   const [comments, setComments] = useState<ProjectComment[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [hasMoreOlder, setHasMoreOlder] = useState(false);
+  const skipAutoScrollRef = useRef(false);
   const [sort, setSort] = useState<SortMode>('newest');
   const [body, setBody] = useState('');
   const [replyTo, setReplyTo] = useState<{ id: string; name: string } | null>(null);
@@ -122,6 +208,7 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
       StyleSheet.create({
         backdrop: { flex: 1, justifyContent: 'flex-end' },
         backdropTouch: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.55)' },
+        embeddedRoot: { flex: 1, backgroundColor: colors.bgElevated },
         sheet: {
           height: '88%',
           backgroundColor: colors.bgElevated,
@@ -130,6 +217,11 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
           borderWidth: 1,
           borderColor: colors.border,
           borderBottomWidth: 0,
+          overflow: 'hidden',
+        },
+        embeddedSheet: {
+          flex: 1,
+          backgroundColor: colors.bgElevated,
           overflow: 'hidden',
         },
         handle: {
@@ -148,12 +240,21 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
           borderBottomWidth: 1, borderBottomColor: colors.border,
           backgroundColor: colors.cardAlt,
         },
+        projectMetaEmbedded: {
+          paddingHorizontal: Spacing.lg,
+          paddingTop: 8,
+          paddingBottom: 6,
+          borderBottomWidth: StyleSheet.hairlineWidth,
+          borderBottomColor: colors.border,
+          backgroundColor: colors.bgElevated,
+        },
         projectName: { color: colors.text, fontSize: 14, fontWeight: '700' },
         projectCode: { color: colors.textMuted, fontSize: 12, marginTop: 2 },
         sortRow: {
           flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-          paddingHorizontal: Spacing.lg, paddingVertical: 10,
+          paddingHorizontal: Spacing.lg, paddingVertical: 8,
           borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border,
+          backgroundColor: colors.bgElevated,
         },
         sortLabel: { color: colors.textMuted, fontSize: 13, fontWeight: '600' },
         sortBtn: {
@@ -163,9 +264,21 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
           backgroundColor: colors.card,
         },
         sortBtnText: { color: colors.text, fontSize: 13, fontWeight: '700' },
+        loadMoreBtn: {
+          alignSelf: 'center',
+          marginHorizontal: Spacing.md,
+          marginBottom: 8,
+          paddingHorizontal: 14,
+          paddingVertical: 8,
+          borderRadius: Radii.md,
+          borderWidth: 1,
+          borderColor: colors.border,
+          backgroundColor: colors.card,
+        },
+        loadMoreText: { color: colors.primary, fontSize: 13, fontWeight: '700' },
         list: { flex: 1 },
-        listContent: { paddingHorizontal: Spacing.md, paddingVertical: Spacing.md, paddingBottom: 8 },
-        emptyWrap: { alignItems: 'center', paddingVertical: 40, gap: 8 },
+        listContent: { paddingHorizontal: Spacing.md, paddingTop: 8, paddingBottom: 8, flexGrow: 1 },
+        emptyWrap: { alignItems: 'center', paddingVertical: 24, gap: 8 },
         emptyText: { color: colors.textMuted, fontSize: 14 },
         emptyHint: { color: colors.textFaint, fontSize: 12, textAlign: 'center' },
         commentRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginBottom: 14 },
@@ -191,9 +304,14 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
         bubble: {
           alignSelf: 'flex-start', maxWidth: '100%',
           borderRadius: Radii.lg, borderWidth: 1, borderColor: colors.border,
+          backgroundColor: colors.card,
           paddingHorizontal: 12, paddingVertical: 8,
         },
         bubbleAuthor: { backgroundColor: colors.primarySoft, borderColor: colors.primary + '44' },
+        bubbleConfirmed: {
+          backgroundColor: colors.success + '22',
+          borderColor: colors.success + '66',
+        },
         bubbleReplyOther: {
           backgroundColor: colors.cardAlt,
           borderLeftWidth: 3,
@@ -215,11 +333,20 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
           borderRadius: Radii.full, overflow: 'hidden',
         },
         content: { color: colors.text, fontSize: 14, lineHeight: 20 },
+        mentionToken: {
+          color: colors.primary,
+          fontWeight: '800',
+          backgroundColor: colors.primarySoft,
+          borderRadius: 4,
+          overflow: 'hidden',
+        },
+        systemStrong: { color: colors.text, fontWeight: '800' },
+        systemLink: { color: colors.primary, fontWeight: '800' },
         attWrap: { marginTop: 8, gap: 6 },
         attImages: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
         attThumb: {
-          width: 88,
-          height: 88,
+          width: 110,
+          height: 110,
           borderRadius: Radii.md,
           backgroundColor: colors.cardAlt,
           overflow: 'hidden',
@@ -227,6 +354,14 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
           borderColor: colors.border,
         },
         attThumbImg: { width: '100%', height: '100%' },
+        attThumbBroken: {
+          flex: 1,
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 4,
+          padding: 8,
+        },
+        attThumbBrokenTxt: { color: colors.textFaint, fontSize: 10, fontWeight: '600', textAlign: 'center' },
         attFileRow: {
           flexDirection: 'row',
           alignItems: 'center',
@@ -344,6 +479,24 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
     [colors],
   );
 
+  const refreshCommentBadge = useCallback(async (leadId: string | null | undefined) => {
+    try {
+      if (leadId) {
+        const idx = await fetchDealCommentIndex([leadId]);
+        const hit = idx[leadId] || idx[String(leadId)];
+        onPostedRef.current(Number(hit?.count) || 0);
+        return;
+      }
+      if (project?.id) {
+        const idx = await fetchProjectCommentIndex([project.id]);
+        const hit = idx[project.id] || idx[String(project.id)];
+        onPostedRef.current(Number(hit?.count) || 0);
+      }
+    } catch {
+      /* giữ badge cũ */
+    }
+  }, [project?.id]);
+
   const loadComments = useCallback(async (silent = false, leadIdOverride?: string | null) => {
     if (!project?.id) return;
     if (!silent) setLoading(true);
@@ -353,27 +506,62 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
       setShowOnScreen(allowed);
       if (!allowed) {
         setComments([]);
+        setHasMoreOlder(false);
         onPostedRef.current(0);
         return;
       }
       const leadId = leadIdOverride !== undefined
         ? leadIdOverride
         : (dealId || resolveProjectDealId(project));
-      const rows = leadId
-        ? await fetchDealComments(leadId)
-        : await fetchProjectComments(project.id);
-      setComments(rows);
-      onPostedRef.current(rows.length);
+      const page = leadId
+        ? await fetchDealCommentsPage(leadId, { limit: COMMENT_PAGE })
+        : await fetchProjectCommentsPage(project.id, { limit: COMMENT_PAGE });
+      skipAutoScrollRef.current = false;
+      setComments(page.comments);
+      setHasMoreOlder(page.hasMore);
+      await refreshCommentBadge(leadId);
     } catch (e) {
       if (!silent) setErr(formatApiError(e));
     } finally {
       if (!silent) setLoading(false);
     }
-  }, [project, dealId]);
+  }, [project, dealId, refreshCommentBadge]);
+
+  const loadOlderComments = useCallback(async () => {
+    if (!project?.id || loadingOlder || !hasMoreOlder || !comments.length) return;
+    const oldest = comments.reduce((a, b) => (
+      new Date(a.created_at).getTime() < new Date(b.created_at).getTime() ? a : b
+    ));
+    if (!oldest?.created_at) return;
+    setLoadingOlder(true);
+    try {
+      const leadId = dealId || resolveProjectDealId(project);
+      const page = leadId
+        ? await fetchDealCommentsPage(leadId, { limit: COMMENT_PAGE, before: oldest.created_at })
+        : await fetchProjectCommentsPage(project.id, { limit: COMMENT_PAGE, before: oldest.created_at });
+      const seen = new Set(comments.map((c) => c.id));
+      const extra = page.comments.filter((c) => !seen.has(c.id));
+      skipAutoScrollRef.current = true;
+      if (!extra.length) {
+        setHasMoreOlder(false);
+      } else {
+        setComments((prev) => [...prev, ...extra]);
+        setHasMoreOlder(page.hasMore);
+      }
+    } catch (e) {
+      setErr(formatApiError(e));
+    } finally {
+      setLoadingOlder(false);
+    }
+  }, [project, dealId, comments, hasMoreOlder, loadingOlder]);
 
   useEffect(() => {
-    if (!visible || !project?.id) {
+    if (!active || !project?.id) {
       setDealId(null);
+      return undefined;
+    }
+    if (preferredDealId) {
+      setDealId(String(preferredDealId));
       return undefined;
     }
     let cancelled = false;
@@ -392,11 +580,23 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
     return () => {
       cancelled = true;
     };
-  }, [visible, project]);
+  }, [active, project, preferredDealId]);
 
   useEffect(() => {
-    if (!visible || !project?.id || !showOnScreen) return undefined;
+    if (!active || !dealId) return undefined;
+    joinLeadRoom(dealId);
+    return () => leaveLeadRoom(dealId);
+  }, [active, dealId, joinLeadRoom, leaveLeadRoom]);
+
+  useEffect(() => {
+    if (!active || !project?.id || !showOnScreen) return undefined;
     return subscribeSync((evt) => {
+      if (evt.type === 'lead:comment_changed') {
+        if (dealId && String(evt.payload.lead_id || '') === String(dealId)) {
+          void loadComments(true);
+        }
+        return;
+      }
       if (evt.type !== 'project:comment_changed') return;
       const pid = String(evt.payload.project_id || '');
       const lid = evt.payload.lead_id != null ? String(evt.payload.lead_id) : '';
@@ -408,10 +608,10 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
         void loadComments(true);
       }
     });
-  }, [visible, project?.id, dealId, showOnScreen, loadComments, subscribeSync]);
+  }, [active, project?.id, dealId, showOnScreen, loadComments, subscribeSync]);
 
   useEffect(() => {
-    if (!visible || !project?.id || !showOnScreen) return undefined;
+    if (!active || !project?.id || !showOnScreen) return undefined;
     return subscribeComment((n) => {
       const pid = n.metadata?.project_id ? String(n.metadata.project_id) : '';
       const lid = n.entity_type === 'lead' && n.entity_id
@@ -431,10 +631,10 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
         void loadComments(true);
       }
     });
-  }, [visible, project?.id, dealId, showOnScreen, loadComments, subscribeComment]);
+  }, [active, project?.id, dealId, showOnScreen, loadComments, subscribeComment]);
 
   useEffect(() => {
-    if (!visible || !project?.id) {
+    if (!active || !project?.id) {
       setComments([]);
       setBody('');
       setReplyTo(null);
@@ -445,8 +645,8 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
       setShowOnScreen(true);
       return;
     }
-    void loadComments(false, dealId ?? resolveProjectDealId(project));
-  }, [visible, project?.id, dealId, loadComments, project]);
+    void loadComments(false, dealId ?? preferredDealId ?? resolveProjectDealId(project));
+  }, [active, project?.id, dealId, preferredDealId, loadComments, project]);
 
   const commentById = useMemo(() => {
     const m = new Map<string, ProjectComment>();
@@ -458,6 +658,8 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
     const grouped = groupCommentsByParent(comments);
     return flattenCommentTree(grouped, sort);
   }, [comments, sort]);
+
+  const mentionMembers = useMemo(() => mentionNamesFromComments(comments), [comments]);
 
   const allGalleryImages = useMemo((): GalleryImage[] => {
     const out: GalleryImage[] = [];
@@ -481,6 +683,81 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
     setGalleryIndex(idx >= 0 ? idx : 0);
     setGalleryOpen(true);
   }, [allGalleryImages]);
+
+  const renderContentWithMentions = useCallback((text: string) => {
+    const parts = splitCommentMentionParts(text, mentionMembers);
+    if (!parts.length) return null;
+    return (
+      <Text style={styles.content}>
+        {parts.map((p, idx) => (
+          p.kind === 'mention' ? (
+            <Text key={`m-${idx}`} style={styles.mentionToken}>{p.value}</Text>
+          ) : (
+            <Text key={`t-${idx}`}>{p.value}</Text>
+          )
+        ))}
+      </Text>
+    );
+  }, [mentionMembers, styles.content, styles.mentionToken]);
+
+  /** Tin hệ thống web «file|url» / «tên» — highlight; ảnh đã tách sang attachments. */
+  const renderCommentBody = useCallback((text: string) => {
+    const raw = String(text || '');
+    if (!raw.trim()) return null;
+    if (raw.includes('«')) {
+      const segs = parseSystemCommentBody(raw);
+      return (
+        <Text style={styles.content}>
+          {segs.map((seg, idx) => {
+            if (seg.kind === 'link') {
+              const uri = resolveMediaUrl(seg.url);
+              return (
+                <Text
+                  key={`l-${idx}`}
+                  style={styles.systemLink}
+                  onPress={() => {
+                    if (!uri) return;
+                    if (isImageFileName(seg.label) || isImageFileName(seg.url)) {
+                      openGalleryAt(uri);
+                    } else {
+                      openCommentFile(
+                        { url: seg.url, name: seg.label, mime: undefined },
+                        uri,
+                      );
+                    }
+                  }}
+                >
+                  «{seg.label}»
+                </Text>
+              );
+            }
+            if (seg.kind === 'strong') {
+              return (
+                <Text key={`s-${idx}`} style={styles.systemStrong}>«{seg.text}»</Text>
+              );
+            }
+            const mentionParts = splitCommentMentionParts(seg.text, mentionMembers);
+            return mentionParts.map((p, j) => (
+              p.kind === 'mention' ? (
+                <Text key={`m-${idx}-${j}`} style={styles.mentionToken}>{p.value}</Text>
+              ) : (
+                <Text key={`t-${idx}-${j}`}>{p.value}</Text>
+              )
+            ));
+          })}
+        </Text>
+      );
+    }
+    return renderContentWithMentions(raw);
+  }, [
+    mentionMembers,
+    openGalleryAt,
+    renderContentWithMentions,
+    styles.content,
+    styles.mentionToken,
+    styles.systemLink,
+    styles.systemStrong,
+  ]);
 
   const close = () => {
     if (posting) return;
@@ -607,10 +884,29 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
   };
 
   const renderComment = (item: ProjectComment, depth: number) => {
+    if (depth === 0 && item.comment_type === 'vc_handover') {
+      return (
+        <VcHandoverCommentCard
+          key={item.id}
+          comment={item}
+          onUpdated={(next) => {
+            setComments((prev) => {
+              const i = prev.findIndex((c) => c.id === next.id);
+              if (i < 0) return [...prev, next];
+              const copy = [...prev];
+              copy[i] = { ...copy[i], ...next };
+              return copy;
+            });
+          }}
+        />
+      );
+    }
+
     const userName = item.user?.full_name || 'Thành viên';
     const currentUserId = user?.id || user?.userId;
+    const responsiblePersonId = project?.logistics_person_id || project?.installer_person_id;
     const isAuthor = Boolean(
-      project?.production_person_id && String(item.user_id) === String(project.production_person_id),
+      responsiblePersonId && String(item.user_id) === String(responsiblePersonId),
     );
     const parent = item.parent_id ? commentById.get(String(item.parent_id)) : null;
     const parentName = parent?.user?.full_name;
@@ -618,6 +914,7 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
     const totalRx = reactionTotal(item);
     const mineEmoji = item.reactions?.mine;
     const pickerOpen = reactionPickerId === item.id;
+    const isHandoverConfirmedNote = /đã xác nhận giữa xưởng và vc/i.test(String(item.content || ''));
     const nestOffset = depth > 0 ? Math.min(depth - 1, 3) * REPLY_DEPTH_STEP : 0;
 
     return (
@@ -635,19 +932,24 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
           </View>
         )}
         <View style={styles.commentBody}>
-          <View style={[styles.bubble, isAuthor && styles.bubbleAuthor, isOtherReply && styles.bubbleReplyOther]}>
+          <View
+            style={[
+              styles.bubble,
+              isAuthor && styles.bubbleAuthor,
+              isOtherReply && styles.bubbleReplyOther,
+              isHandoverConfirmedNote && styles.bubbleConfirmed,
+            ]}
+          >
             <View style={styles.nameRow}>
               <Text style={styles.name}>{userName}</Text>
               {parentName ? (
-                <Text style={[styles.mention, isOtherReply && styles.mentionHighlight]}>
+                <Text style={[styles.mentionHighlight]}>
                   {isOtherReply ? '↳ Trả lời ' : ''}@{parentName}
                 </Text>
               ) : null}
               {isAuthor ? <Text style={styles.authorTag}>Tác giả</Text> : null}
             </View>
-            {item.content?.trim() ? (
-              <Text style={styles.content}>{item.content}</Text>
-            ) : null}
+            {item.content?.trim() ? renderCommentBody(item.content) : null}
             {(item.attachments || []).length > 0 ? (
               <View style={styles.attWrap}>
                 {(() => {
@@ -662,13 +964,15 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
                             const uri = resolveMediaUrl(img.url);
                             if (!uri) return null;
                             return (
-                              <TapHighlight
+                              <CommentImageThumb
                                 key={`${item.id}-img-${ii}`}
+                                uri={uri}
                                 style={styles.attThumb}
+                                brokenStyle={styles.attThumbBroken}
+                                brokenTxtStyle={styles.attThumbBrokenTxt}
+                                faintColor={colors.textFaint}
                                 onPress={() => openGalleryAt(uri)}
-                              >
-                                <Image source={{ uri }} style={styles.attThumbImg} resizeMode="cover" />
-                              </TapHighlight>
+                              />
                             );
                           })}
                         </View>
@@ -681,17 +985,18 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
                             key={`${item.id}-file-${fi}`}
                             style={styles.attFileRow}
                             onPress={() => {
-                              if (uri) void Linking.openURL(uri);
+                              if (uri) openCommentFile(f, uri);
                             }}
                           >
                             <Ionicons name={fileIconName(f)} size={20} color={colors.primary} />
                             <View style={styles.attFileBody}>
                               <Text style={styles.attFileName} numberOfLines={1}>{f.name}</Text>
-                              {sizeLabel ? (
-                                <Text style={styles.attFileMeta}>{sizeLabel}</Text>
-                              ) : null}
+                              <Text style={styles.attFileMeta}>
+                                {sizeLabel ? `${sizeLabel} · ` : ''}
+                                Chạm để mở / tải
+                              </Text>
                             </View>
-                            <Ionicons name="open-outline" size={16} color={colors.textFaint} />
+                            <Ionicons name="download-outline" size={16} color={colors.primary} />
                           </TapHighlight>
                         );
                       })}
@@ -756,15 +1061,10 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
 
   const authorLabel = user?.full_name || user?.fullName || user?.email || 'bạn';
 
-  return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={close}>
-      <KeyboardAvoidingView
-        style={styles.backdrop}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 8 : 0}
-      >
-        <Pressable style={styles.backdropTouch} onPress={close} />
-        <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+  const threadBody = (
+    <>
+      {!embedded ? (
+        <>
           <View style={styles.handle} />
           <View style={styles.header}>
             <Text style={styles.title}>Bình luận</Text>
@@ -785,145 +1085,196 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
               </Text>
             ) : null}
           </View>
+        </>
+      ) : (
+        <View style={styles.projectMetaEmbedded}>
+          <Text style={styles.projectName} numberOfLines={1}>
+            {dealId ? 'Bình luận deal CRM' : 'Bình luận dự án'}
+            {comments.length ? ` · ${comments.length}` : ''}
+          </Text>
+        </View>
+      )}
 
-          <View style={styles.sortRow}>
-            <Text style={styles.sortLabel}>Hiển thị bình luận</Text>
+      <View style={styles.sortRow}>
+        <Text style={styles.sortLabel}>Hiển thị bình luận</Text>
+        <TouchableOpacity
+          style={styles.sortBtn}
+          onPress={() => setSort((s) => (s === 'newest' ? 'oldest' : 'newest'))}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.sortBtnText}>{sort === 'newest' ? 'Mới nhất' : 'Cũ nhất'}</Text>
+          <Ionicons name="chevron-down" size={14} color={colors.textMuted} />
+        </TouchableOpacity>
+      </View>
+
+      {err ? (
+        <View style={styles.errBox}>
+          <Text style={styles.errText}>{err}</Text>
+        </View>
+      ) : null}
+
+      {hasMoreOlder && showOnScreen && !loading ? (
+        <TouchableOpacity
+          style={styles.loadMoreBtn}
+          onPress={() => { void loadOlderComments(); }}
+          disabled={loadingOlder}
+          activeOpacity={0.8}
+        >
+          {loadingOlder ? (
+            <ActivityIndicator size="small" color={colors.primary} />
+          ) : (
+            <Text style={styles.loadMoreText}>Tải bình luận cũ hơn</Text>
+          )}
+        </TouchableOpacity>
+      ) : null}
+
+      <ScrollView
+        ref={scrollRef}
+        style={styles.list}
+        contentContainerStyle={styles.listContent}
+        keyboardShouldPersistTaps="handled"
+        onScrollBeginDrag={() => setReactionPickerId(null)}
+        onContentSizeChange={() => {
+          if (skipAutoScrollRef.current) return;
+          if (comments.length > 0 && sort === 'newest') {
+            scrollRef.current?.scrollTo({ y: 0, animated: false });
+          }
+        }}
+      >
+        {loading ? (
+          <View style={styles.emptyWrap}>
+            <ActivityIndicator color={colors.primary} />
+            <Text style={styles.emptyText}>Đang tải bình luận…</Text>
+          </View>
+        ) : !showOnScreen ? (
+          <View style={styles.emptyWrap}>
+            <Ionicons name="notifications-outline" size={36} color={colors.textFaint} />
+            <Text style={styles.emptyText}>Đã tắt hiện bình luận trên màn hình</Text>
+            <Text style={styles.emptyHint}>
+              Bình luận mới vẫn vào chuông Thông báo. Bật lại trong Cài đặt thông báo trên web.
+            </Text>
+          </View>
+        ) : flatList.length === 0 ? (
+          <View style={styles.emptyWrap}>
+            <Ionicons name="chatbubbles-outline" size={36} color={colors.textFaint} />
+            <Text style={styles.emptyText}>Chưa có bình luận</Text>
+            <Text style={styles.emptyHint}>Viết bình luận đầu tiên cho dự án này.</Text>
+          </View>
+        ) : (
+          flatList.map(({ comment, depth }) => renderComment(comment, depth))
+        )}
+      </ScrollView>
+
+      {showOnScreen && replyTo ? (
+        <View style={styles.replyBar}>
+          <Text style={styles.replyText} numberOfLines={1}>
+            Trả lời <Text style={styles.replyName}>{replyTo.name}</Text>
+          </Text>
+          <TouchableOpacity onPress={() => setReplyTo(null)} hitSlop={8}>
+            <Text style={{ color: colors.primary, fontWeight: '700', fontSize: 13 }}>Hủy</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
+
+      {showOnScreen && pendingFiles.length > 0 ? (
+        <View style={styles.pendingRow}>
+          {pendingFiles.map((f) => (
+            <View key={f.key} style={styles.pendingChip}>
+              {f.isImage ? (
+                <Image source={{ uri: f.uri }} style={styles.pendingChipImg} resizeMode="cover" />
+              ) : (
+                <Ionicons name="document-outline" size={22} color={colors.primary} />
+              )}
+              <Pressable
+                style={styles.pendingRemove}
+                onPress={() => setPendingFiles((prev) => prev.filter((x) => x.key !== f.key))}
+                hitSlop={6}
+              >
+                <Ionicons name="close" size={12} color="#fff" />
+              </Pressable>
+            </View>
+          ))}
+        </View>
+      ) : null}
+
+      {showOnScreen ? (
+        <View style={[styles.composer, { paddingBottom: embedded ? Math.max(insets.bottom, 10) : Math.max(insets.bottom, 10) }]}>
+          <View style={styles.composerRow}>
+            <TapHighlight style={styles.attachBtn} onPress={() => void takePhoto()} disabled={posting}>
+              <Ionicons name="camera-outline" size={20} color={colors.primary} />
+            </TapHighlight>
+            <TapHighlight style={styles.attachBtn} onPress={() => void pickImages()} disabled={posting}>
+              <Ionicons name="image-outline" size={20} color={colors.primary} />
+            </TapHighlight>
+            <TapHighlight style={styles.attachBtn} onPress={() => void pickDocuments()} disabled={posting}>
+              <Ionicons name="attach-outline" size={20} color={colors.primary} />
+            </TapHighlight>
+            <TextInput
+              style={styles.composerInput}
+              value={body}
+              onChangeText={setBody}
+              placeholder={
+                replyTo
+                  ? `Trả lời ${replyTo.name}…`
+                  : `Bình luận với tư cách ${authorLabel}…`
+              }
+              placeholderTextColor={colors.textFaint}
+              multiline
+              editable={!posting}
+            />
             <TouchableOpacity
-              style={styles.sortBtn}
-              onPress={() => setSort((s) => (s === 'newest' ? 'oldest' : 'newest'))}
-              activeOpacity={0.8}
+              style={[
+                styles.sendBtn,
+                ((!body.trim() && !pendingFiles.length) || posting) && styles.sendBtnDisabled,
+              ]}
+              onPress={submit}
+              disabled={(!body.trim() && !pendingFiles.length) || posting}
+              activeOpacity={0.85}
             >
-              <Text style={styles.sortBtnText}>{sort === 'newest' ? 'Mới nhất' : 'Cũ nhất'}</Text>
-              <Ionicons name="chevron-down" size={14} color={colors.textMuted} />
+              {posting ? (
+                <ActivityIndicator color={colors.white} size="small" />
+              ) : (
+                <Ionicons name="send" size={18} color={colors.white} />
+              )}
             </TouchableOpacity>
           </View>
+        </View>
+      ) : null}
 
-          {err ? (
-            <View style={styles.errBox}>
-              <Text style={styles.errText}>{err}</Text>
-            </View>
-          ) : null}
+    </>
+  );
 
-          <ScrollView
-            ref={scrollRef}
-            style={styles.list}
-            contentContainerStyle={styles.listContent}
-            keyboardShouldPersistTaps="handled"
-            onScrollBeginDrag={() => setReactionPickerId(null)}
-            onContentSizeChange={() => {
-              if (comments.length > 0 && sort === 'newest') {
-                scrollRef.current?.scrollTo({ y: 0, animated: false });
-              }
-            }}
-          >
-            {loading ? (
-              <View style={styles.emptyWrap}>
-                <ActivityIndicator color={colors.primary} />
-                <Text style={styles.emptyText}>Đang tải bình luận…</Text>
-              </View>
-            ) : !showOnScreen ? (
-              <View style={styles.emptyWrap}>
-                <Ionicons name="notifications-outline" size={36} color={colors.textFaint} />
-                <Text style={styles.emptyText}>Đã tắt hiện bình luận trên màn hình</Text>
-                <Text style={styles.emptyHint}>
-                  Bình luận mới vẫn vào chuông Thông báo. Bật lại trong Cài đặt thông báo trên web.
-                </Text>
-              </View>
-            ) : flatList.length === 0 ? (
-              <View style={styles.emptyWrap}>
-                <Ionicons name="chatbubbles-outline" size={36} color={colors.textFaint} />
-                <Text style={styles.emptyText}>Chưa có bình luận</Text>
-                <Text style={styles.emptyHint}>Viết bình luận đầu tiên cho dự án này.</Text>
-              </View>
-            ) : (
-              flatList.map(({ comment, depth }) => renderComment(comment, depth))
-            )}
-          </ScrollView>
+  const gallery = (
+    <ImageGalleryLightbox
+      visible={galleryOpen && allGalleryImages.length > 0}
+      images={allGalleryImages}
+      initialIndex={galleryIndex}
+      onClose={() => setGalleryOpen(false)}
+    />
+  );
 
-          {showOnScreen && replyTo ? (
-            <View style={styles.replyBar}>
-              <Text style={styles.replyText} numberOfLines={1}>
-                Trả lời <Text style={styles.replyName}>{replyTo.name}</Text>
-              </Text>
-              <TouchableOpacity onPress={() => setReplyTo(null)} hitSlop={8}>
-                <Text style={{ color: colors.primary, fontWeight: '700', fontSize: 13 }}>Hủy</Text>
-              </TouchableOpacity>
-            </View>
-          ) : null}
+  if (embedded) {
+    return (
+      <View style={styles.embeddedRoot}>
+        <View style={styles.embeddedSheet}>{threadBody}</View>
+        {gallery}
+      </View>
+    );
+  }
 
-          {showOnScreen && pendingFiles.length > 0 ? (
-            <View style={styles.pendingRow}>
-              {pendingFiles.map((f) => (
-                <View key={f.key} style={styles.pendingChip}>
-                  {f.isImage ? (
-                    <Image source={{ uri: f.uri }} style={styles.pendingChipImg} resizeMode="cover" />
-                  ) : (
-                    <Ionicons name="document-outline" size={22} color={colors.primary} />
-                  )}
-                  <Pressable
-                    style={styles.pendingRemove}
-                    onPress={() => setPendingFiles((prev) => prev.filter((x) => x.key !== f.key))}
-                    hitSlop={6}
-                  >
-                    <Ionicons name="close" size={12} color="#fff" />
-                  </Pressable>
-                </View>
-              ))}
-            </View>
-          ) : null}
-
-          {showOnScreen ? (
-          <View style={[styles.composer, { paddingBottom: Math.max(insets.bottom, 10) }]}>
-            <View style={styles.composerRow}>
-              <TapHighlight style={styles.attachBtn} onPress={() => void takePhoto()} disabled={posting}>
-                <Ionicons name="camera-outline" size={20} color={colors.primary} />
-              </TapHighlight>
-              <TapHighlight style={styles.attachBtn} onPress={() => void pickImages()} disabled={posting}>
-                <Ionicons name="image-outline" size={20} color={colors.primary} />
-              </TapHighlight>
-              <TapHighlight style={styles.attachBtn} onPress={() => void pickDocuments()} disabled={posting}>
-                <Ionicons name="attach-outline" size={20} color={colors.primary} />
-              </TapHighlight>
-              <TextInput
-                style={styles.composerInput}
-                value={body}
-                onChangeText={setBody}
-                placeholder={
-                  replyTo
-                    ? `Trả lời ${replyTo.name}…`
-                    : `Bình luận với tư cách ${authorLabel}…`
-                }
-                placeholderTextColor={colors.textFaint}
-                multiline
-                editable={!posting}
-              />
-              <TouchableOpacity
-                style={[
-                  styles.sendBtn,
-                  ((!body.trim() && !pendingFiles.length) || posting) && styles.sendBtnDisabled,
-                ]}
-                onPress={submit}
-                disabled={(!body.trim() && !pendingFiles.length) || posting}
-                activeOpacity={0.85}
-              >
-                {posting ? (
-                  <ActivityIndicator color={colors.white} size="small" />
-                ) : (
-                  <Ionicons name="send" size={18} color={colors.white} />
-                )}
-              </TouchableOpacity>
-            </View>
-          </View>
-          ) : null}
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={close}>
+      <KeyboardAvoidingView
+        style={styles.backdrop}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 8 : 0}
+      >
+        <Pressable style={styles.backdropTouch} onPress={close} />
+        <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+          {threadBody}
         </View>
       </KeyboardAvoidingView>
-
-      <ImageGalleryLightbox
-        visible={galleryOpen && allGalleryImages.length > 0}
-        images={allGalleryImages}
-        initialIndex={galleryIndex}
-        onClose={() => setGalleryOpen(false)}
-      />
+      {gallery}
     </Modal>
   );
 }

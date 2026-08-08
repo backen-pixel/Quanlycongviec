@@ -29,6 +29,12 @@ export type SxCommentNotification = {
     nav_tab?: string;
     ecosystem_module_key?: string;
     vc_handover?: boolean;
+    intake?: boolean;
+    vc_intake?: boolean;
+    stage_name?: string | null;
+    focus_kpi?: string | null;
+    vc_stage_id?: string | null;
+    mentioned?: boolean;
   } | null;
 };
 
@@ -39,6 +45,10 @@ const WORKSHOP_DEAL_TYPES = new Set([
   'logistics_task_deadline_overdue',
   'project_assigned',
   'project_created',
+  'task_assigned',
+  'vc_handover_request',
+  'vc_handover_assigned',
+  'vc_handover_confirmed',
 ]);
 
 export function isWorkshopDealNotification(n: Pick<SxCommentNotification, 'type'>): boolean {
@@ -65,10 +75,11 @@ export function isVcRelevantNotification(
     type === 'logistics_stage_changed'
     || type === 'logistics_task_deadline_warning'
     || type === 'logistics_task_deadline_overdue'
+    || type.startsWith('vc_handover_')
   ) {
     return true;
   }
-  if (type === 'project_assigned' || type === 'project_created') {
+  if (type === 'project_assigned' || type === 'project_created' || type === 'task_assigned') {
     return !eco || eco === 'logistics';
   }
   if (type === 'messenger_chat' || type === 'incoming_call') return true;
@@ -98,19 +109,97 @@ export function isVcRelevantPushData(data: Record<string, unknown> | null | unde
 }
 
 export function notificationCategoryLabel(n: SxCommentNotification): string {
+  const type = String(n.type || '');
+  const meta = n.metadata || {};
+  if (type === 'comment_added') return meta.mentioned ? 'Nhắc bạn' : 'Bình luận';
+  if (type === 'workshop_new_deal' || meta.intake || meta.vc_intake) return 'Chờ vận chuyển';
+  if (type === 'logistics_stage_changed') {
+    return meta.stage_name ? `Cột · ${meta.stage_name}` : 'Đổi cột';
+  }
+  if (type === 'logistics_task_deadline_warning') return 'Sắp hạn';
+  if (type === 'logistics_task_deadline_overdue') return 'Quá hạn';
+  if (type === 'project_assigned' || type === 'task_assigned') return 'Phân công';
+  if (type.startsWith('vc_handover_')) return 'Bàn giao';
   if (isWorkshopDealNotification(n)) return 'Lắp đặt';
-  return 'Bình luận';
+  return 'Thông báo';
 }
 
-export function notificationIconName(n: SxCommentNotification): 'chatbubble-ellipses' | 'briefcase-outline' {
-  return isWorkshopDealNotification(n) ? 'briefcase-outline' : 'chatbubble-ellipses';
+export function notificationIconName(
+  n: SxCommentNotification,
+): 'chatbubble-ellipses' | 'briefcase-outline' | 'swap-horizontal' | 'cube-outline' | 'alarm-outline' | 'person-add-outline' {
+  const type = String(n.type || '');
+  const meta = n.metadata || {};
+  if (type === 'comment_added') return 'chatbubble-ellipses';
+  if (type === 'workshop_new_deal' || meta.intake || meta.vc_intake) return 'cube-outline';
+  if (type === 'logistics_stage_changed') return 'swap-horizontal';
+  if (type.includes('deadline')) return 'alarm-outline';
+  if (type === 'project_assigned' || type === 'task_assigned') return 'person-add-outline';
+  return 'briefcase-outline';
 }
 
 export function notificationActionLabel(n: SxCommentNotification): string {
+  if (String(n.type || '') === 'comment_added') return 'Xem bình luận';
+  if (notificationProjectId(n)) return 'Xem dự án';
+  return 'Đóng';
+}
+
+/** Mở comments hay chi tiết dự án khi tap thông báo. */
+export function notificationOpensComments(n: SxCommentNotification): boolean {
+  return String(n.type || '') === 'comment_added';
+}
+
+/** focus_kpi deep-link sang tab Dự án (Kanban/List). */
+export function notificationFocusKpi(n: SxCommentNotification): string | null {
+  const raw = n.metadata?.focus_kpi;
+  if (raw && typeof raw === 'string' && raw.trim()) return raw.trim();
+  const meta = n.metadata || {};
+  if (meta.intake || meta.vc_intake || String(n.type || '') === 'workshop_new_deal') return 'intake';
+  return null;
+}
+
+export function notificationListTitle(n: SxCommentNotification): string {
   if (isWorkshopDealNotification(n)) {
-    return notificationProjectId(n) ? 'Xem dự án' : 'Đóng';
+    const name = n.metadata?.project_name || n.metadata?.deal_title || n.metadata?.project_code;
+    if (name) return String(name);
+    return String(n.title || '')
+      .replace(/^🚚\s*/, '')
+      .replace(/^🔧\s*/, '')
+      .replace(/^🏭\s*/, '')
+      .trim() || 'Dự án vận chuyển';
   }
-  return 'Xem bình luận';
+  const author = n.metadata?.author_name;
+  const code = n.metadata?.project_code;
+  if (author && code) return `${author} · ${code}`;
+  if (author) return author;
+  return String(n.title || n.message || 'Thông báo')
+    .replace(/^💬\s*/, '')
+    .trim();
+}
+
+export function notificationListSubtitle(n: SxCommentNotification): string | null {
+  const type = String(n.type || '');
+  const meta = n.metadata || {};
+  if (type === 'workshop_new_deal') {
+    return meta.vc_handover
+      ? 'Bàn giao từ Xưởng → Chờ vận chuyển'
+      : 'Deal mới chờ vận chuyển';
+  }
+  if (type === 'logistics_stage_changed') {
+    if (meta.intake || meta.vc_intake) return 'Vừa vào cột Chờ vận chuyển';
+    if (meta.stage_name) return `Chuyển sang «${meta.stage_name}»`;
+    return 'Đổi cột vận chuyển / lắp đặt';
+  }
+  if (type === 'logistics_task_deadline_warning') return 'Sắp đến hạn công việc';
+  if (type === 'logistics_task_deadline_overdue') return 'Công việc quá hạn';
+  if (type === 'project_assigned') return 'Được gán dự án VC';
+  if (type === 'task_assigned') return 'Được giao nhiệm vụ VC';
+  if (type === 'project_created') return 'Dự án mới tạo';
+  if (type.startsWith('vc_handover_')) return 'Bàn giao vận chuyển';
+  if (isWorkshopDealNotification(n)) return 'Vận chuyển & Lắp đặt';
+  const preview = meta.comment_preview;
+  if (preview) return preview;
+  const msg = String(n.message || '').trim();
+  return msg && msg !== n.title ? msg : null;
 }
 
 export function trimCommentPreview(text: string, max = 120): string {
@@ -263,7 +352,7 @@ async function enrichWithLatestComments(
       const pid = notificationProjectId(item);
       if (!pid) return;
       try {
-        const comments = await fetchProjectComments(pid);
+        const comments = await fetchProjectComments(pid, { limit: 1 });
         const latest = comments[0];
         if (!latest?.content) return;
         const author = latest.user?.full_name || 'Thành viên';
