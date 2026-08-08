@@ -328,7 +328,6 @@ export default function MessagesScreen() {
       <View style={styles.hubBar}>
         {([
           ['chats', 'chatbubbles', 'Chats'],
-          ['calls', 'call', 'Cuộc gọi'],
         ] as const).map(([key, icon, label]) => {
           const active = hub === key;
           return (

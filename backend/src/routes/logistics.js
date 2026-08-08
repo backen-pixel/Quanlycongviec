@@ -27,6 +27,11 @@ const {
 } = require('../helpers/logisticsTaskSplit');
 const { applyAllActiveWorkshopTemplatesForArea } = require('../helpers/workshopApplyTemplates');
 const { assertProjectAccessible } = require('../helpers/projectAccessScope');
+const {
+  notifyLogisticsIntakePending,
+  notifyLogisticsStageChanged,
+} = require('../helpers/vcLogisticsNotify');
+const { emitLogisticsKanbanChangedImmediate } = require('../helpers/workshopIntakeNotify');
 
 const r = Router();
 r.use(auth);
@@ -305,7 +310,7 @@ function enrichOneLogisticsProject(project, sortedKanban, orphanColMeta = null) 
 }
 
 /** Gắn vc_kanban_column_id theo pipeline VC theo công ty (filterCompanyId = dashboard filter admin). */
-async function enrichProjectsForLogistics(projects, filterCompanyId = null) {
+async function enrichProjectsForLogistics(projects, filterCompanyId = null, opts = {}) {
   const f = normalizeWorkshopCompanyId(filterCompanyId);
   const keyFor = (p) => {
     if (f) return `__f:${f}`;
@@ -341,7 +346,62 @@ async function enrichProjectsForLogistics(projects, filterCompanyId = null) {
   }
 
   const pipelineEnriched = (projects || []).map((p) => enrichOneLogisticsProject(p, cache.get(keyFor(p)), orphanColMeta));
-  return attachCrmDealsToProjects(pipelineEnriched);
+  return attachCrmDealsToProjects(pipelineEnriched, opts);
+}
+
+function stripProjectTasks(projects) {
+  return (projects || []).map((p) => {
+    if (!p || p.tasks == null) return p;
+    const { tasks, ...rest } = p;
+    return rest;
+  });
+}
+
+/** Tải tasks theo lô (không embed vào select dự án) — nhẹ hơn khi 200–1000 dự án. */
+async function loadLogisticsTasksByProjectIds(projectIds) {
+  const ids = [...new Set((projectIds || []).filter(Boolean).map((id) => String(id)))];
+  const byProject = new Map();
+  const CHUNK = 60;
+  const PAGE = 1000;
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const chunk = ids.slice(i, i + CHUNK);
+    let from = 0;
+    while (true) {
+      let rows = [];
+      const q1 = await supabase
+        .from('tasks')
+        .select('project_id, status, title, metadata, stage:workflow_stages(slug)')
+        .in('project_id', chunk)
+        .range(from, from + PAGE - 1);
+      if (q1.error) {
+        const q2 = await supabase
+          .from('tasks')
+          .select('project_id, status, title, metadata')
+          .in('project_id', chunk)
+          .range(from, from + PAGE - 1);
+        if (q2.error) break;
+        rows = q2.data || [];
+      } else {
+        rows = q1.data || [];
+      }
+      for (const t of rows) {
+        const pid = t.project_id != null ? String(t.project_id) : '';
+        if (!pid) continue;
+        if (!byProject.has(pid)) byProject.set(pid, []);
+        byProject.get(pid).push(t);
+      }
+      if (rows.length < PAGE) break;
+      from += PAGE;
+    }
+  }
+  return byProject;
+}
+
+function withLogisticsTaskStatsFromMap(projects, stages, taskMap) {
+  const installSet = buildInstallStageIdSet(stages);
+  return (projects || []).map((p) =>
+    attachSplitLogisticsTaskStats({ ...p, tasks: taskMap.get(String(p.id)) || [] }, installSet),
+  );
 }
 
 function buildLogisticsPipelineSummary(stages, projects) {
@@ -642,7 +702,14 @@ r.get('/dashboard', requirePermission('projects', 'view'), async (req, res) => {
 
 r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
   try {
-    const { search, priority, page = 1, limit = 100, division_id, company_id: companyIdQuery, workshop_type_id } = req.query;
+    const {
+      search, priority, page = 1, limit = 100, division_id, company_id: companyIdQuery, workshop_type_id,
+      view: viewQuery, lite: liteQuery,
+    } = req.query;
+    const viewNorm = String(viewQuery || '').toLowerCase();
+    const mobileLite = viewNorm === 'mobile'
+      || String(liteQuery || '') === '1'
+      || String(liteQuery || '').toLowerCase() === 'true';
     const company_id = effectiveWorkshopCompanyId(req, companyIdQuery);
     const parsedPage = Math.max(parseInt(page) || 1, 1);
     const parsedLimit = Math.min(Math.max(parseInt(limit) || 100, 1), 500);
@@ -651,12 +718,10 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
     const sortedKanban = [...kanbanStages].sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
 
     const orFilter = buildLogisticsScopeFilter(stageIds);
-    if (!orFilter) return res.json({ projects: [], total: 0 });
+    if (!orFilter) return res.json({ projects: [], total: 0, page: parsedPage, totalPages: 1 });
 
-    let query = supabase
-      .from('projects')
-      .select(`id, code, name, estimated_value, priority, deadline, created_at, status, notes, company_id, logistics_company_id,
-        current_stage_id, vc_kanban_column_id,
+    const selectFull = `id, code, name, estimated_value, priority, deadline, created_at, status, notes, company_id, logistics_company_id,
+        current_stage_id, vc_kanban_column_id, workshop_type_id,
         current_stage:workflow_stages(id, slug, name, color, icon),
         customer:customers(id, full_name, phone),
         company:companies!projects_company_id_fkey(id, name, short_name),
@@ -666,7 +731,24 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
         installer_person:users!projects_installer_person_id_fkey(id, full_name, avatar),
         sales_person:users!projects_sales_person_id_fkey(id, full_name),
         workshop_type:workshop_project_types(id, name, applies_to),
-        ${TASKS_EMBED}`, { count: 'exact' })
+        ${TASKS_EMBED}`;
+    const selectLite = `id, code, name, estimated_value, deadline, created_at, status, company_id, logistics_company_id,
+        current_stage_id, vc_kanban_column_id, workshop_type_id,
+        logistics_person_id, installer_person_id, production_person_id, sales_person_id,
+        current_stage:workflow_stages(id, slug, name),
+        customer:customers(id, full_name, phone),
+        company:companies!projects_company_id_fkey(id, name, short_name),
+        logistics_company:companies!projects_logistics_company_id_fkey(id, name, short_name),
+        logistics_person:users!projects_logistics_person_id_fkey(id, full_name),
+        production_person:users!projects_production_person_id_fkey(id, full_name),
+        installer_person:users!projects_installer_person_id_fkey(id, full_name),
+        sales_person:users!projects_sales_person_id_fkey(id, full_name),
+        workshop_type:workshop_project_types(id, name)`;
+    const selectClause = mobileLite ? selectLite : selectFull;
+
+    let query = supabase
+      .from('projects')
+      .select(selectClause, { count: 'exact' })
       .or(orFilter);
     query = applyProjectTenantScope(query, req);
     query = applyVcNotDeletedFilter(query);
@@ -678,7 +760,7 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
     if (workshop_type_id) query = query.eq('workshop_type_id', workshop_type_id);
     ({ query } = await applyWorkshopProjectVisibilityScope(query, req.user, company_id, null));
 
-    let { data: projectsRaw, error } = await query
+    let { data: projectsRaw, error, count } = await query
       .order('created_at', { ascending: false })
       .range((parsedPage - 1) * parsedLimit, parsedPage * parsedLimit - 1);
 
@@ -686,18 +768,7 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
       // Migration 242 chưa chạy — retry không có cờ
       let qNoSoft = supabase
         .from('projects')
-        .select(`id, code, name, estimated_value, priority, deadline, created_at, status, notes, company_id, logistics_company_id,
-          current_stage_id, vc_kanban_column_id,
-          current_stage:workflow_stages(id, slug, name, color, icon),
-          customer:customers(id, full_name, phone),
-          company:companies!projects_company_id_fkey(id, name, short_name),
-          logistics_company:companies!projects_logistics_company_id_fkey(id, name, short_name),
-          logistics_person:users!projects_logistics_person_id_fkey(id, full_name, avatar),
-          production_person:users!projects_production_person_id_fkey(id, full_name),
-          installer_person:users!projects_installer_person_id_fkey(id, full_name, avatar),
-          sales_person:users!projects_sales_person_id_fkey(id, full_name),
-          workshop_type:workshop_project_types(id, name, applies_to),
-          ${TASKS_EMBED}`, { count: 'exact' })
+        .select(selectClause, { count: 'exact' })
         .or(orFilter);
       if (search) qNoSoft = qNoSoft.or(`name.ilike.%${search}%,code.ilike.%${search}%`);
       if (priority) qNoSoft = qNoSoft.eq('priority', priority);
@@ -709,6 +780,7 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
         .range((parsedPage - 1) * parsedLimit, parsedPage * parsedLimit - 1);
       projectsRaw = r2.data;
       error = r2.error;
+      if (r2.count != null) count = r2.count;
     }
 
     let projects = projectsRaw || [];
@@ -720,16 +792,23 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
       err?.message?.includes('projects_logistics_person') ||
       (err?.message?.includes('relationship') && err?.message?.includes('users'));
     if (error && isLogisticsPersonError(error)) {
-      // Thử lại không có logistics_person join
-      let fb2q = supabase
-        .from('projects')
-        .select(`id, code, name, estimated_value, priority, deadline, created_at, status,
+      const fbSelect = mobileLite
+        ? `id, code, name, estimated_value, deadline, created_at, status, company_id, logistics_company_id,
+          current_stage_id, vc_kanban_column_id,
+          current_stage:workflow_stages(id, slug, name),
+          customer:customers(id, full_name, phone),
+          company:companies!projects_company_id_fkey(id, name, short_name),
+          logistics_company:companies!projects_logistics_company_id_fkey(id, name, short_name)`
+        : `id, code, name, estimated_value, priority, deadline, created_at, status,
           current_stage_id, vc_kanban_column_id,
           current_stage:workflow_stages(id, slug, name, color, icon),
           customer:customers(id, full_name, phone),
           company:companies!projects_company_id_fkey(id, name, short_name),
           logistics_company:companies!projects_logistics_company_id_fkey(id, name, short_name),
-          ${TASKS_EMBED}`, { count: 'exact' })
+          ${TASKS_EMBED}`;
+      let fb2q = supabase
+        .from('projects')
+        .select(fbSelect, { count: 'exact' })
         .or(orFilter);
       if (division_id) fb2q = fb2q.eq('division_id', division_id);
       if (company_id) fb2q = fb2q.or(`company_id.eq.${company_id},logistics_company_id.eq.${company_id}`);
@@ -741,15 +820,14 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
       if (!fb2.error) {
         projects = fb2.data || [];
         error = null;
+        if (fb2.count != null) count = fb2.count;
       } else {
-        // Thử lại tiếp không có bất kỳ user join nào
         let fb3q = supabase
           .from('projects')
           .select(`id, code, name, estimated_value, priority, deadline, created_at, status,
             current_stage_id,
             current_stage:workflow_stages(id, slug, name, color, icon),
-            customer:customers(id, full_name, phone),
-            ${TASKS_EMBED}`)
+            customer:customers(id, full_name, phone)${mobileLite ? '' : `, ${TASKS_EMBED}`}`, { count: 'exact' })
           .or(orFilter);
         if (division_id) fb3q = fb3q.eq('division_id', division_id);
         if (company_id) fb3q = fb3q.eq('company_id', company_id);
@@ -759,15 +837,28 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
           .range((parsedPage - 1) * parsedLimit, parsedPage * parsedLimit - 1);
         projects = fb3.data || [];
         error = fb3.error;
+        if (fb3.count != null) count = fb3.count;
       }
     }
 
     if (error && projects.length === 0) throw error;
 
-    const enrichedVc = await enrichProjectsForLogistics(projects, company_id);
-    const enhanced = withLogisticsTaskStats(enrichedVc, sortedKanban);
+    const enrichedVc = await enrichProjectsForLogistics(projects, company_id, { lite: mobileLite });
+    let enhanced;
+    if (mobileLite) {
+      const taskMap = await loadLogisticsTasksByProjectIds(enrichedVc.map((p) => p.id));
+      enhanced = stripProjectTasks(withLogisticsTaskStatsFromMap(enrichedVc, sortedKanban, taskMap));
+    } else {
+      enhanced = withLogisticsTaskStats(enrichedVc, sortedKanban);
+    }
 
-    res.json({ projects: enhanced, total: enhanced.length });
+    const total = count != null ? count : enhanced.length;
+    res.json({
+      projects: enhanced,
+      total,
+      page: parsedPage,
+      totalPages: Math.max(1, Math.ceil(total / parsedLimit)),
+    });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: e.message });
@@ -1186,17 +1277,48 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
 
       let updatedRes = await supabase
         .from('projects')
-        .select('id, code, name, status, current_stage_id, vc_kanban_column_id, current_stage:workflow_stages(id, slug, name, color)')
+        .select('id, code, name, status, current_stage_id, vc_kanban_column_id, company_id, logistics_company_id, current_stage:workflow_stages(id, slug, name, color)')
         .eq('id', id)
         .single();
       if (updatedRes.error && String(updatedRes.error.message || '').includes('vc_kanban_column_id')) {
         updatedRes = await supabase
           .from('projects')
-          .select('id, code, name, status, current_stage_id, current_stage:workflow_stages(id, slug, name, color)')
+          .select('id, code, name, status, current_stage_id, company_id, logistics_company_id, current_stage:workflow_stages(id, slug, name, color)')
           .eq('id', id)
           .single();
       }
-      return res.json({ project: updatedRes.data });
+      const intakeProject = updatedRes.data;
+      const intakeLabel = intakeCol?.name || 'Chờ vận chuyển';
+      const logCo = project.logistics_company_id || project.company_id || null;
+
+      try {
+        await notifyLogisticsIntakePending(req, {
+          projectId: id,
+          projectCode: project.code || intakeProject?.code,
+          projectName: project.name || intakeProject?.name,
+          logisticsCompanyId: logCo,
+          actorUserId: userId,
+          stageId: intakeColId,
+          stageName: intakeLabel,
+          reason: 'move_to_intake',
+        });
+      } catch (notifErr) {
+        console.warn('[logistics/intake] notify:', notifErr.message);
+      }
+
+      const io = req.app.get('io');
+      if (io) {
+        emitLogisticsKanbanChangedImmediate(io, {
+          projectId: id,
+          reason: 'move_to_intake',
+          project: intakeProject,
+          companyId: project.company_id || null,
+          logisticsCompanyId: logCo,
+          vcKanbanColumnId: intakeColId,
+        });
+      }
+
+      return res.json({ project: intakeProject });
     }
 
     // Cần ít nhất một trong: stage_id (workflow_stages) hoặc vc_stage_id (logistics_pipeline_stages)
@@ -1382,30 +1504,40 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
       console.warn('[logistics/stage] gen logistics templates:', tplErr.message);
     }
 
-    // Thông báo nhân viên VC
+    // Thông báo người tham gia + NV VC cùng công ty (không blast toàn hệ thống)
     try {
-      const { data: vcUsers } = await supabase
-        .from('users').select('id').in('role', ['logistics', 'installer', 'manager']).eq('is_active', true);
-      const recipientIds = (vcUsers || []).map((u) => u.id).filter((uid) => uid !== userId);
-      if (recipientIds.length) {
-        const stageName = updated.current_stage?.name || '';
-        await notifyMultipleShared(req, recipientIds, 'logistics_stage_changed',
-          `🚚 VC: ${stageName}`,
-          `Dự án ${updated.code || updated.name} vừa chuyển sang "${stageName}"`,
-          'project', id, {
-            ecosystem_module_key: 'logistics',
-            project_id: String(id),
-            project_code: updated.code || null,
-            project_name: updated.name || null,
-            nav_tab: 'kanban',
-          });
-      }
+      const stageName = vcPipeStageRow?.name
+        || updated?.current_stage?.name
+        || 'cột mới';
+      const isIntakeCol = String(vcPipeStageRow?.bucket_slug || '') === INTAKE_BUCKET
+        || String(effectiveVcStageId || '').startsWith('__vc_intake');
+      await notifyLogisticsStageChanged(req, {
+        projectId: id,
+        projectCode: updated?.code || project.code,
+        projectName: updated?.name || project.name,
+        logisticsCompanyId: project.logistics_company_id || project.company_id || null,
+        actorUserId: userId,
+        stageRow: vcPipeStageRow,
+        stageName,
+        stageId: effectiveVcStageId || resolvedStageId || null,
+        isIntake: isIntakeCol,
+        jumpedToInstall: jumpedToInstall,
+      });
     } catch (notifErr) {
       console.warn('[logistics/stage] notify:', notifErr.message);
     }
 
     const io = req.app.get('io');
-    if (io) io.emit('project:stage_changed', updated);
+    if (io) {
+      emitLogisticsKanbanChangedImmediate(io, {
+        projectId: id,
+        reason: jumpedToInstall ? 'jump_to_install' : 'stage_changed',
+        project: updated,
+        companyId: project.company_id || null,
+        logisticsCompanyId: project.logistics_company_id || project.company_id || null,
+        vcKanbanColumnId: effectiveVcStageId || updated?.vc_kanban_column_id || null,
+      });
+    }
 
     res.json({
       project: updated,
@@ -1896,6 +2028,10 @@ const VC_NOTIF_TYPES = [
   'logistics_task_deadline_overdue',
   'project_assigned',
   'project_created',
+  'task_assigned',
+  'vc_handover_request',
+  'vc_handover_assigned',
+  'vc_handover_confirmed',
 ];
 
 function notifEcoKey(n) {
@@ -1930,16 +2066,18 @@ function isVcLogisticsActivityNotification(n) {
   if (eco === 'logistics') return true;
   if (type === 'logistics_stage_changed'
     || type === 'logistics_task_deadline_warning'
-    || type === 'logistics_task_deadline_overdue') {
+    || type === 'logistics_task_deadline_overdue'
+    || type.startsWith('vc_handover_')) {
     return true;
   }
   if (type === 'workshop_new_deal') {
     const meta = n.metadata && typeof n.metadata === 'object' ? n.metadata : {};
     return Boolean(meta.vc_handover) || eco === 'logistics';
   }
-  // project_assigned / project_created — chỉ khi dự án đang ở VC (lọc sau bằng DB)
-  if (type === 'project_assigned' || type === 'project_created') {
-    return n.entity_type === 'project' || !!(n.metadata && n.metadata.project_id);
+  // project_assigned / project_created / task_assigned — lọc scope VC bằng DB nếu thiếu eco
+  if (type === 'project_assigned' || type === 'project_created' || type === 'task_assigned') {
+    return n.entity_type === 'project' || n.entity_type === 'task'
+      || !!(n.metadata && (n.metadata.project_id || n.metadata.ecosystem_module_key === 'logistics'));
   }
   return false;
 }
@@ -2043,6 +2181,7 @@ async function enrichVcLogisticsActivityNotifications(rows) {
     const type = String(n.type || '');
     if (eco === 'logistics'
       || type.startsWith('logistics_')
+      || type.startsWith('vc_handover_')
       || (type === 'workshop_new_deal' && (n.metadata?.vc_handover || eco === 'logistics'))) {
       withEco.push(n);
     } else {

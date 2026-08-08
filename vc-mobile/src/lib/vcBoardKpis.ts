@@ -37,6 +37,8 @@ export function projectIsDeadlineOverdue(
 
 function isIntakeCol(s: KanbanStage): boolean {
   if (s.bucket_slug === INTAKE_BUCKET) return true;
+  const id = String(s.id || '');
+  if (id.startsWith('__vc_intake') || id === '__vc_intake') return true;
   const name = String(s.name || '').toLowerCase();
   return (
     name.includes('chờ vc')
@@ -49,15 +51,30 @@ function isIntakeCol(s: KanbanStage): boolean {
 }
 
 function isShippingCol(s: KanbanStage): boolean {
-  if (isIntakeCol(s) || isInstallVcStage(s)) return false;
+  if (isIntakeCol(s) || isInstallVcStage(s) || isDeliveredCol(s)) return false;
   const name = String(s.name || '').toLowerCase();
   const slug = String(s.bucket_slug || s.slug || s.workflow_stage?.slug || '').toLowerCase();
   return (
     name.includes('đang vận chuyển')
     || name.includes('dang van chuyen')
+    || name.includes('đang giao')
+    || name.includes('dang giao')
     || slug === 'delivery'
     || slug === 'shipping'
-    || (name.includes('vận chuyển') && !name.includes('chờ') && !name.includes('bàn giao'))
+    || (name.includes('vận chuyển') && !name.includes('chờ') && !name.includes('bàn giao') && !name.includes('đã giao'))
+  );
+}
+
+/** Cột Đã giao — đã giao hàng, không còn «chờ / đang» VC. */
+function isDeliveredCol(s: KanbanStage): boolean {
+  const name = String(s.name || '').toLowerCase();
+  const slug = String(s.bucket_slug || s.slug || s.workflow_stage?.slug || '').toLowerCase();
+  return (
+    slug === 'delivered'
+    || slug === 'delivery_done'
+    || name.includes('đã giao')
+    || name.includes('da giao')
+    || name.includes('giao xong')
   );
 }
 
@@ -67,15 +84,41 @@ function isWarrantyCol(s: KanbanStage): boolean {
   return (
     slug === 'customer-care'
     || slug.includes('warranty')
+    || slug.includes('issue')
     || name.includes('bảo hành')
     || name.includes('bao hanh')
+    || name.includes('có vấn đề')
+    || name.includes('co van de')
+    || name.includes('vấn đề')
+  );
+}
+
+/** Nghiệm thu / bàn giao cuối — sau lắp đặt hoặc sau đã giao. */
+function isAcceptanceCol(s: KanbanStage): boolean {
+  if (isWarrantyCol(s) || isDeliveredCol(s) || isIntakeCol(s)) return false;
+  const name = String(s.name || '').toLowerCase();
+  const slug = String(s.bucket_slug || s.slug || s.workflow_stage?.slug || '').toLowerCase();
+  return (
+    slug.includes('acceptance')
+    || slug.includes('nghiem')
+    || slug.includes('handover')
+    || name.includes('nghiệm thu')
+    || name.includes('nghiem thu')
+    || (name.includes('bàn giao') && !name.includes('chờ') && !name.includes('chuyển'))
+    || (name.includes('ban giao') && !name.includes('cho') && !name.includes('chuyen'))
   );
 }
 
 function isDoneCol(s: KanbanStage): boolean {
   const name = String(s.name || '').toLowerCase();
   const slug = String(s.bucket_slug || s.slug || '').toLowerCase();
-  return slug === 'completed' || name.includes('hoàn thành') || name.includes('hoàn tất');
+  return (
+    slug === 'completed'
+    || name.includes('hoàn thành')
+    || name.includes('hoàn tất')
+    || name.includes('hoàn thiện')
+    || name.includes('hoan thien')
+  );
 }
 
 export type VcBoardKpis = {
@@ -86,17 +129,62 @@ export type VcBoardKpis = {
   totalInstall: number;
   /** Chờ VC — số thẻ cột chờ/tiếp nhận. */
   intake: number;
-  /** Đang vận chuyển — số thẻ cột Đang vận chuyển. */
+  /** Đang vận chuyển. */
   shipping: number;
+  /** Đã giao. */
+  delivered: number;
   /** Đang lắp đặt. */
   installing: number;
-  /** Bảo hành. */
+  /** Có vấn đề / bảo hành. */
   warranty: number;
+  /** Nghiệm thu · bàn giao. */
+  acceptance: number;
   /** @deprecated alias — shipping + installing. */
   inProgress: number;
+  /** Hoàn thiện / hoàn thành. */
   completed: number;
   overdue: number;
 };
+
+/** Key deep-link từ card Tổng quan → tab Dự án. */
+export type VcKpiFocusKey =
+  | 'intake'
+  | 'shipping'
+  | 'delivered'
+  | 'installing'
+  | 'warranty'
+  | 'acceptance'
+  | 'completed'
+  | 'overdue';
+
+export type VcStageBucket =
+  | 'intake'
+  | 'shipping'
+  | 'delivered'
+  | 'installing'
+  | 'warranty'
+  | 'acceptance'
+  | 'completed';
+
+/** Phân loại cột Kanban — khớp đếm KPI Tổng quan / pill Dự án. */
+export function kpiBucketForStage(stage: KanbanStage): VcStageBucket {
+  if (isDoneCol(stage)) return 'completed';
+  if (isAcceptanceCol(stage)) return 'acceptance';
+  if (isWarrantyCol(stage)) return 'warranty';
+  if (isIntakeCol(stage)) return 'intake';
+  if (isDeliveredCol(stage)) return 'delivered';
+  if (isInstallVcStage(stage)) return 'installing';
+  if (isShippingCol(stage)) return 'shipping';
+  return 'shipping';
+}
+
+/** Index cột đầu tiên khớp KPI (không gồm overdue — dùng quickFilter). */
+export function findStageIndexForKpiFocus(
+  stages: KanbanStage[],
+  key: Exclude<VcKpiFocusKey, 'overdue'>,
+): number {
+  return stages.findIndex((s) => kpiBucketForStage(s) === key);
+}
 
 export function computeVcBoardKpis(
   projects: ProductionProject[],
@@ -105,8 +193,10 @@ export function computeVcBoardKpis(
   const nowMs = Date.now();
   let intake = 0;
   let shipping = 0;
+  let delivered = 0;
   let installing = 0;
   let warranty = 0;
+  let acceptance = 0;
   let completed = 0;
   let overdue = 0;
   let totalShipping = 0;
@@ -119,32 +209,26 @@ export function computeVcBoardKpis(
       const colId = String(p.resolved_column_id || p.vc_kanban_column_id || '');
       const stage = colId ? stageById.get(colId) : undefined;
 
-      if (stage && isInstallVcStage(stage)) {
-        totalInstall += 1;
-        if (isDoneCol(stage)) completed += 1;
-        else installing += 1;
-        continue;
-      }
-
-      totalShipping += 1;
       if (!stage) {
-        // Fallback status khi chưa resolve cột.
         const status = String(p.status || '');
-        if (projectIsIntake(p)) intake += 1;
-        else if (status === 'completed') completed += 1;
-        else if (status === 'warranty') warranty += 1;
-        else if (status === 'installing') {
-          totalShipping -= 1;
-          totalInstall += 1;
-          installing += 1;
-        } else shipping += 1;
+        if (projectIsIntake(p)) { intake += 1; totalShipping += 1; }
+        else if (status === 'completed') { completed += 1; totalShipping += 1; }
+        else if (status === 'warranty') { warranty += 1; totalShipping += 1; }
+        else if (status === 'installing') { installing += 1; totalInstall += 1; }
+        else { shipping += 1; totalShipping += 1; }
         continue;
       }
 
-      if (isDoneCol(stage)) completed += 1;
-      else if (isWarrantyCol(stage)) warranty += 1;
-      else if (isIntakeCol(stage) || p.vc_intake) intake += 1;
-      else if (isShippingCol(stage)) shipping += 1;
+      if (isInstallVcStage(stage)) totalInstall += 1;
+      else totalShipping += 1;
+
+      const bucket = kpiBucketForStage(stage);
+      if (bucket === 'completed') completed += 1;
+      else if (bucket === 'acceptance') acceptance += 1;
+      else if (bucket === 'warranty') warranty += 1;
+      else if (bucket === 'intake') intake += 1;
+      else if (bucket === 'delivered') delivered += 1;
+      else if (bucket === 'installing') installing += 1;
       else shipping += 1;
     }
   } else {
@@ -176,8 +260,10 @@ export function computeVcBoardKpis(
     totalInstall,
     intake,
     shipping,
+    delivered,
     installing,
     warranty,
+    acceptance,
     inProgress: shipping + installing,
     completed,
     overdue,

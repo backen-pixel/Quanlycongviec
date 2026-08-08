@@ -1,13 +1,16 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   Dimensions,
   FlatList,
   Image,
   Modal,
   NativeScrollEvent,
   NativeSyntheticEvent,
+  Platform,
   Pressable,
+  ScrollView,
   StatusBar,
   StyleSheet,
   Text,
@@ -16,6 +19,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const SCREEN_W = Dimensions.get('window').width;
+const SCREEN_H = Dimensions.get('window').height;
 const THUMB = 56;
 
 export type GalleryImage = {
@@ -30,6 +34,70 @@ type Props = {
   initialIndex?: number;
   onClose: () => void;
 };
+
+/** Pinch-zoom (iOS) + chạm đúp phóng/thu (Android & iOS). Không mở trình duyệt. */
+function ZoomableImage({ uri }: { uri: string }) {
+  const [failed, setFailed] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [zoomed, setZoomed] = useState(false);
+  const lastTap = useRef(0);
+
+  useEffect(() => {
+    setFailed(false);
+    setLoading(true);
+    setZoomed(false);
+  }, [uri]);
+
+  const onDoubleTap = () => {
+    const now = Date.now();
+    if (now - lastTap.current < 300) {
+      setZoomed((z) => !z);
+    }
+    lastTap.current = now;
+  };
+
+  if (failed) {
+    return (
+      <View style={styles.slide}>
+        <Ionicons name="image-outline" size={48} color="rgba(255,255,255,0.45)" />
+        <Text style={styles.failTxt}>Không tải được ảnh</Text>
+      </View>
+    );
+  }
+
+  return (
+    <ScrollView
+      style={{ width: SCREEN_W, flex: 1 }}
+      contentContainerStyle={styles.zoomContent}
+      maximumZoomScale={4}
+      minimumZoomScale={1}
+      centerContent
+      bouncesZoom
+      showsHorizontalScrollIndicator={false}
+      showsVerticalScrollIndicator={false}
+    >
+      <Pressable onPress={onDoubleTap}>
+        {loading ? (
+          <ActivityIndicator color="#fff" style={styles.loader} />
+        ) : null}
+        <Image
+          source={{ uri }}
+          style={[
+            styles.mainImg,
+            zoomed && styles.mainImgZoomed,
+            loading && { opacity: 0 },
+          ]}
+          resizeMode="contain"
+          onLoadEnd={() => setLoading(false)}
+          onError={() => {
+            setLoading(false);
+            setFailed(true);
+          }}
+        />
+      </Pressable>
+    </ScrollView>
+  );
+}
 
 export default function ImageGalleryLightbox({
   visible,
@@ -81,13 +149,23 @@ export default function ImageGalleryLightbox({
   const current = images[index];
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onClose}
+      presentationStyle="overFullScreen"
+      statusBarTranslucent
+    >
       <StatusBar barStyle="light-content" />
       <View style={styles.root}>
         <View style={[styles.topBar, { paddingTop: insets.top + 4 }]}>
           <View style={styles.topMeta}>
             <Text style={styles.counter}>{index + 1} / {images.length}</Text>
             {current?.title ? <Text style={styles.title} numberOfLines={1}>{current.title}</Text> : null}
+            <Text style={styles.hint}>
+              {Platform.OS === 'ios' ? 'Chụm/duỗi để zoom · Chạm đúp phóng to' : 'Chạm đúp để phóng to / thu nhỏ'}
+            </Text>
           </View>
           <Pressable style={styles.iconBtn} onPress={onClose} hitSlop={12}>
             <Ionicons name="close" size={26} color="#fff" />
@@ -109,7 +187,7 @@ export default function ImageGalleryLightbox({
             onScrollToIndexFailed={() => {}}
             renderItem={({ item }) => (
               <View style={styles.slide}>
-                <Image source={{ uri: item.uri }} style={styles.mainImg} resizeMode="contain" />
+                <ZoomableImage uri={item.uri} />
               </View>
             )}
           />
@@ -174,6 +252,7 @@ const styles = StyleSheet.create({
   topMeta: { flex: 1, marginRight: 8 },
   counter: { color: 'rgba(255,255,255,0.75)', fontSize: 13, fontWeight: '600' },
   title: { color: '#fff', fontSize: 15, fontWeight: '600', marginTop: 2 },
+  hint: { color: 'rgba(255,255,255,0.45)', fontSize: 11, fontWeight: '500', marginTop: 2 },
   iconBtn: {
     width: 40,
     height: 40,
@@ -188,7 +267,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  mainImg: { width: SCREEN_W, height: '100%' },
+  zoomContent: {
+    flexGrow: 1,
+    width: SCREEN_W,
+    minHeight: SCREEN_H * 0.55,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  mainImg: { width: SCREEN_W, height: SCREEN_H * 0.62 },
+  mainImgZoomed: { width: SCREEN_W * 2.2, height: SCREEN_H * 0.9 },
+  loader: { position: 'absolute', alignSelf: 'center' },
+  failTxt: { color: 'rgba(255,255,255,0.55)', marginTop: 10, fontSize: 13, fontWeight: '600' },
   navBtn: {
     position: 'absolute',
     top: '45%',

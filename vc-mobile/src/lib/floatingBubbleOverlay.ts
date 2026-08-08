@@ -4,7 +4,7 @@ import { getMessengerActiveGroupId } from './messengerActiveGroup';
 import type { MessengerNotifPayload } from './localMessengerNotification';
 import type { IncomingCallPayload } from './incomingCallNotifications';
 import {
-  DEFAULT_SX_MOBILE_PREFS,
+  DEFAULT_VC_MOBILE_PREFS,
   loadVcMobilePrefs,
   type VcMobilePrefs,
 } from './vcMobilePrefs';
@@ -245,7 +245,7 @@ export function setBubbleBadge(n: number): void {
   }
 }
 
-export { DEFAULT_SX_MOBILE_PREFS };
+export { DEFAULT_VC_MOBILE_PREFS };
 
 /** Overlay nổi cuộc gọi đến (audio/video) khi app ở nền. */
 export function showCallOverlayPeek(payload: IncomingCallPayload): void {

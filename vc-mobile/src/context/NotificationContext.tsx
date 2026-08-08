@@ -493,6 +493,10 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
           'logistics_task_deadline_overdue',
           'project_assigned',
           'project_created',
+          'task_assigned',
+          'vc_handover_request',
+          'vc_handover_assigned',
+          'vc_handover_confirmed',
         ]);
         if (dealTypes.has(String(n?.type || ''))) {
           const eco = String(n.metadata?.ecosystem_module_key || '');
@@ -501,9 +505,9 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
           if (eco === 'production' || eco === 'crm') return;
           if (type === 'workshop_new_deal') {
             if (eco !== 'logistics' && !n.metadata?.vc_handover) return;
-          } else if (type.startsWith('logistics_')) {
+          } else if (type.startsWith('logistics_') || type.startsWith('vc_handover_')) {
             // OK
-          } else if (type === 'project_assigned' || type === 'project_created') {
+          } else if (type === 'project_assigned' || type === 'project_created' || type === 'task_assigned') {
             if (eco && eco !== 'logistics') return;
             const metaPid = (n.metadata as Record<string, unknown> | undefined)?.project_id;
             const pid = metaPid != null

@@ -15,6 +15,8 @@ import ProjectCrmTaskRow from '../components/projectDetail/ProjectCrmTaskRow';
 import ProjectDocumentsTab from '../components/projectDetail/ProjectDocumentsTab';
 import ProjectDriveTab from '../components/projectDetail/ProjectDriveTab';
 import ProjectMembersTab from '../components/projectDetail/ProjectMembersTab';
+import ProjectSharedWorkspaceTab from '../components/projectDetail/ProjectSharedWorkspaceTab';
+import ProjectCommentModal from '../components/ProjectCommentModal';
 import TapHighlight from '../components/TapHighlight';
 import { formatApiError } from '../api/client';
 import { useNotifications } from '../context/NotificationContext';
@@ -24,19 +26,32 @@ import {
   calcCrmProductionTaskProgress,
   fetchCrmDealTasks,
   fetchDealIdForProject,
+  fetchLeadTaskDocuments,
   fetchLogisticsWorkshopTasks,
   fetchProductionProjectDetail,
   fetchProjectActivities,
+  fetchProjectDocuments,
+  fetchProjectTaskFiles,
   groupCrmTasksByStage,
   isCrmProductionTaskDone,
   taskDeadline,
 } from '../lib/projectDetailApi';
+import {
+  fetchDealCommentIndex,
+  fetchDealComments,
+  fetchProjectCommentIndex,
+  fetchProjectComments,
+} from '../lib/logisticsApi';
 import type { RootStackParamList } from '../navigation/RootNavigator';
 import { formatMoneyAmount, Radii, Spacing, getTaskProgressColor } from '../theme';
 import type { CrmTask, ProductionProjectDetail, ProjectActivity } from '../types';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'ProjectDetail'>;
-type TabKey = 'tasks' | 'documents' | 'drive' | 'info' | 'team' | 'schedule';
+type TabKey = 'tasks' | 'shared-workspace' | 'comments' | 'documents' | 'drive' | 'info' | 'team' | 'schedule';
+
+const VALID_TABS: TabKey[] = [
+  'tasks', 'shared-workspace', 'comments', 'documents', 'drive', 'info', 'team', 'schedule',
+];
 
 function formatDate(value?: string | null): string {
   if (!value) return '';
@@ -48,15 +63,20 @@ function formatDate(value?: string | null): string {
 }
 
 export default function ProjectDetailScreen({ route, navigation }: Props) {
-  const { projectId } = route.params;
+  const { projectId, initialTab } = route.params;
   const { colors } = useTheme();
-  const { joinProjectRoom, leaveProjectRoom } = useNotifications();
+  const { joinProjectRoom, leaveProjectRoom, joinLeadRoom, leaveLeadRoom } = useNotifications();
   const insets = useSafeAreaInsets();
-  const [tab, setTab] = useState<TabKey>('tasks');
+  const [tab, setTab] = useState<TabKey>(() => {
+    const t = String(initialTab || '').trim() as TabKey;
+    return VALID_TABS.includes(t) ? t : 'tasks';
+  });
   const [project, setProject] = useState<ProductionProjectDetail | null>(null);
   const [tasks, setTasks] = useState<CrmTask[]>([]);
   const [dealId, setDealId] = useState<string | null>(null);
   const [activities, setActivities] = useState<ProjectActivity[]>([]);
+  const [commentCount, setCommentCount] = useState(0);
+  const [docCount, setDocCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [err, setErr] = useState('');
@@ -70,10 +90,42 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
       let resolvedDealId = detail.crmDeals?.[0]?.id || null;
       if (!resolvedDealId) resolvedDealId = await fetchDealIdForProject(projectId);
       setDealId(resolvedDealId);
-      const [crmTasks, workshopTasks, actRows] = await Promise.all([
+      const sharedDocCount = Array.isArray(detail.sharedDocuments) ? detail.sharedDocuments.length : 0;
+      const [crmTasks, workshopTasks, actRows, commentMeta, documentsMeta] = await Promise.all([
         resolvedDealId ? fetchCrmDealTasks(resolvedDealId) : Promise.resolve([]),
         fetchLogisticsWorkshopTasks(projectId),
         fetchProjectActivities(projectId),
+        (async () => {
+          try {
+            if (resolvedDealId) {
+              const idx = await fetchDealCommentIndex([resolvedDealId]);
+              const hit = idx[resolvedDealId] || idx[String(resolvedDealId)];
+              if (hit?.count != null) return Number(hit.count) || 0;
+              const rows = await fetchDealComments(resolvedDealId);
+              return rows.length;
+            }
+            const idx = await fetchProjectCommentIndex([projectId]);
+            const hit = idx[projectId] || idx[String(projectId)];
+            if (hit?.count != null) return Number(hit.count) || 0;
+            const rows = await fetchProjectComments(projectId);
+            return rows.length;
+          } catch {
+            return 0;
+          }
+        })(),
+        // Khớp tab Tài liệu: CRM shared + tài liệu dự án + file NV + tài liệu NV CRM
+        (async () => {
+          try {
+            const [wDocs, tFiles, crmTaskDocs] = await Promise.all([
+              fetchProjectDocuments(projectId),
+              fetchProjectTaskFiles(projectId),
+              resolvedDealId ? fetchLeadTaskDocuments(resolvedDealId) : Promise.resolve([]),
+            ]);
+            return sharedDocCount + wDocs.length + tFiles.length + crmTaskDocs.length;
+          } catch {
+            return sharedDocCount;
+          }
+        })(),
       ]);
       // Ưu tiên nhiệm vụ bộ mẫu logistics trên dự án (bảng tasks).
       // CRM API đôi khi trả cùng bộ đó nhưng thiếu source=workshop → ghi chú/file sẽ sai bảng.
@@ -83,6 +135,8 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
       else if (crmWorkshop.length) setTasks(crmWorkshop);
       else setTasks(crmOnly);
       setActivities(actRows);
+      setCommentCount(commentMeta);
+      setDocCount(documentsMeta);
     } catch (e) {
       setErr(formatApiError(e));
     } finally {
@@ -98,6 +152,12 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
     joinProjectRoom(projectId);
     return () => leaveProjectRoom(projectId);
   }, [projectId, joinProjectRoom, leaveProjectRoom]);
+
+  useEffect(() => {
+    if (!dealId) return undefined;
+    joinLeadRoom(dealId);
+    return () => leaveLeadRoom(dealId);
+  }, [dealId, joinLeadRoom, leaveLeadRoom]);
 
   useProductionRealtime({
     projectId,
@@ -131,8 +191,13 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
     [tasks, project?.productionTaskProgress, project?.progress],
   );
   const progressColor = getTaskProgressColor(progress, colors);
-  const docCount = project?.sharedDocuments?.length ?? 0;
   const valueStr = formatMoneyAmount(project?.estimated_value);
+  const isFullHeightTab =
+    tab === 'comments'
+    || tab === 'documents'
+    || tab === 'drive'
+    || tab === 'team'
+    || tab === 'shared-workspace';
 
   const styles = useMemo(
     () =>
@@ -194,12 +259,14 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
         progressFill: { height: '100%', borderRadius: Radii.full },
         progressPct: { color: colors.textFaint, fontSize: 11, fontWeight: '700', marginTop: 6, textAlign: 'right' },
         tabs: {
+          flexGrow: 0,
+          flexShrink: 0,
           borderBottomWidth: StyleSheet.hairlineWidth,
           borderBottomColor: colors.border,
           backgroundColor: colors.bgElevated,
         },
-        tabsInner: { flexDirection: 'row', paddingHorizontal: 4 },
-        tabBtn: { paddingVertical: 12, paddingHorizontal: 14, alignItems: 'center', borderBottomWidth: 2, borderBottomColor: 'transparent' },
+        tabsInner: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 4 },
+        tabBtn: { paddingVertical: 10, paddingHorizontal: 14, alignItems: 'center', borderBottomWidth: 2, borderBottomColor: 'transparent' },
         tabBtnActive: { borderBottomColor: colors.primary },
         tabText: { color: colors.textMuted, fontSize: 12, fontWeight: '700' },
         tabTextActive: { color: colors.primary },
@@ -302,6 +369,34 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
   const displayTitle = project?.crmDeals?.[0]?.title || project?.name || 'Dự án';
   const displayCode = project?.crmDeals?.[0]?.code || project?.code || '';
 
+  const tabsBar = (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      style={styles.tabs}
+      contentContainerStyle={styles.tabsInner}
+    >
+      {([
+        ['tasks', `Công việc${taskTotal ? ` (${taskTotal})` : ''}`],
+        ...(dealId ? [['shared-workspace', 'Không gian chung'] as [TabKey, string]] : []),
+        ['comments', `Bình luận${commentCount ? ` (${commentCount})` : ''}`],
+        ['documents', `Tài liệu${docCount ? ` (${docCount})` : ''}`],
+        ['drive', 'Drive'],
+        ['info', 'Thông tin'],
+        ['team', 'Đội ngũ'],
+        ['schedule', 'Lịch'],
+      ] as [TabKey, string][]).map(([key, label]) => (
+        <TapHighlight
+          key={key}
+          style={[styles.tabBtn, tab === key && styles.tabBtnActive]}
+          onPress={() => setTab(key)}
+        >
+          <Text style={[styles.tabText, tab === key && styles.tabTextActive]}>{label}</Text>
+        </TapHighlight>
+      ))}
+    </ScrollView>
+  );
+
   return (
     <View style={styles.root}>
       <View style={styles.header}>
@@ -321,10 +416,11 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
       ) : null}
 
       <View style={{ flex: 1 }}>
+        {isFullHeightTab ? tabsBar : null}
+        {isFullHeightTab ? null : (
         <ScrollView
-          scrollEnabled={tab === 'tasks' || tab === 'info' || tab === 'schedule'}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void onRefresh()} tintColor={colors.primary} />}
-          contentContainerStyle={{ paddingBottom: tab === 'documents' || tab === 'drive' || tab === 'team' ? 0 : insets.bottom + 24 }}
+          contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
           nestedScrollEnabled
         >
           <View style={styles.content}>
@@ -361,29 +457,7 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
           </View>
         </View>
 
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={styles.tabs}
-          contentContainerStyle={styles.tabsInner}
-        >
-          {([
-            ['tasks', `Công việc${taskTotal ? ` (${taskTotal})` : ''}`],
-            ['documents', `Tài liệu${docCount ? ` (${docCount})` : ''}`],
-            ['drive', 'Drive'],
-            ['info', 'Thông tin'],
-            ['team', 'Đội ngũ'],
-            ['schedule', 'Lịch'],
-          ] as [TabKey, string][]).map(([key, label]) => (
-            <TapHighlight
-              key={key}
-              style={[styles.tabBtn, tab === key && styles.tabBtnActive]}
-              onPress={() => setTab(key)}
-            >
-              <Text style={[styles.tabText, tab === key && styles.tabTextActive]}>{label}</Text>
-            </TapHighlight>
-          ))}
-        </ScrollView>
+        {tabsBar}
 
         <View style={{ padding: Spacing.lg }}>
           {tab === 'tasks' && (
@@ -418,7 +492,7 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
                 ['Khách hàng', project.customer?.full_name || project.customer_name || '—'],
                 ['Điện thoại', project.customer?.phone || project.customer_phone || '—'],
                 ['Công ty', project.company?.short_name || project.company?.name || project.company_name || '—'],
-                ['Loại xưởng', project.workshop_type?.name || project.workshop_type_name || '—'],
+                ['Loại', project.workshop_type?.name || project.workshop_type_name || '—'],
                 ['Vận chuyển (VC)', project.logistics_person?.full_name || project.logistics_person_name || '—'],
                 ['Lắp đặt (LĐ)', project.installer_person?.full_name || project.installer_person_name || '—'],
                 ['Hạn dự án', formatDate(project.deadline) || '—'],
@@ -459,25 +533,49 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
           )}
         </View>
         </ScrollView>
+        )}
+
+        {tab === 'shared-workspace' && dealId ? (
+          <View style={{ flex: 1 }}>
+            <ProjectSharedWorkspaceTab
+              leadId={dealId}
+              companyId={project?.company_id || project?.company?.id || null}
+            />
+          </View>
+        ) : null}
+
+        {tab === 'comments' && project ? (
+          <View style={{ flex: 1 }}>
+            <ProjectCommentModal
+              visible
+              embedded
+              project={project}
+              preferredDealId={dealId}
+              onClose={() => {}}
+              onPosted={setCommentCount}
+            />
+          </View>
+        ) : null}
 
         {tab === 'documents' ? (
-          <View style={{ flex: 1, minHeight: 320 }}>
+          <View style={{ flex: 1 }}>
             <ProjectDocumentsTab
               projectId={projectId}
               dealId={dealId}
               sharedDocuments={project?.sharedDocuments}
+              onTotalCountChange={setDocCount}
             />
           </View>
         ) : null}
 
         {tab === 'drive' ? (
-          <View style={{ flex: 1, minHeight: 320 }}>
+          <View style={{ flex: 1 }}>
             <ProjectDriveTab projectId={projectId} />
           </View>
         ) : null}
 
         {tab === 'team' && project ? (
-          <View style={{ flex: 1, minHeight: 320 }}>
+          <View style={{ flex: 1 }}>
             <ProjectMembersTab project={project} dealId={dealId} />
           </View>
         ) : null}

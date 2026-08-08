@@ -3,7 +3,6 @@ import type {
   KanbanStage,
   PersonalPlanner,
   ProductionBoard,
-  ProductionDashboard,
   ProductionProject,
 } from '../types';
 
@@ -17,6 +16,7 @@ export function mapProjectRow(raw: Record<string, unknown>): ProductionProject {
   const logisticsPerson = (raw.logistics_person || {}) as { id?: string; full_name?: string };
   const installerPerson = (raw.installer_person || {}) as { id?: string; full_name?: string };
   const productionPerson = (raw.production_person || {}) as { id?: string; full_name?: string };
+  const salesPerson = (raw.sales_person || {}) as { id?: string; full_name?: string };
   const company = (raw.company || raw.logistics_company || {}) as { id?: string; short_name?: string; name?: string };
   const workshopType = (raw.workshop_type || {}) as { id?: string; name?: string };
   const crmDeals = Array.isArray(raw.crm_deals) ? (raw.crm_deals as Array<Record<string, unknown>>) : [];
@@ -37,6 +37,10 @@ export function mapProjectRow(raw: Record<string, unknown>): ProductionProject {
     progress: Number(raw.progress || 0),
     task_total: Number(raw.task_total || 0),
     done_tasks: Number(raw.done_tasks || 0),
+    task_total_vc: Number(raw.task_total_vc || 0),
+    done_tasks_vc: Number(raw.done_tasks_vc || 0),
+    task_total_install: Number(raw.task_total_install || 0),
+    done_tasks_install: Number(raw.done_tasks_install || 0),
     is_overdue: Boolean(raw.is_overdue),
     vc_intake: Boolean(raw.vc_intake),
     vc_kanban_column_id: (raw.vc_kanban_column_id as string) ?? null,
@@ -50,17 +54,27 @@ export function mapProjectRow(raw: Record<string, unknown>): ProductionProject {
     installer_person_name: installerPerson.full_name ?? null,
     production_person_id: productionPerson.id ?? null,
     production_person_name: productionPerson.full_name ?? null,
+    sales_person_id: salesPerson.id ?? (raw.sales_person_id as string) ?? null,
+    sales_person_name: salesPerson.full_name ?? null,
     company_name: company.short_name || company.name || null,
     company_id: (raw.logistics_company_id as string) ?? (raw.company_id as string) ?? company.id ?? null,
     workshop_type_name: workshopType.name ?? null,
     region_id: (dealWithRegion?.region_id as string) ?? crmRegion.id ?? null,
     region_name: crmRegion.name ?? null,
-    crm_deals: crmDeals.map((d) => ({
-      id: d.id != null ? String(d.id) : undefined,
-      type: d.type != null ? String(d.type) : undefined,
-      external_company_name: d.external_company_name != null ? String(d.external_company_name) : null,
-      external_catalog_id: d.external_catalog_id != null ? String(d.external_catalog_id) : null,
-    })),
+    crm_deals: crmDeals.map((d) => {
+      const assignee = (d.assignee || {}) as { id?: string; full_name?: string };
+      const leadOwner = (d.lead_owner || {}) as { id?: string; full_name?: string };
+      return {
+        id: d.id != null ? String(d.id) : undefined,
+        type: d.type != null ? String(d.type) : undefined,
+        title: d.title != null ? String(d.title) : null,
+        region_id: d.region_id != null ? String(d.region_id) : null,
+        external_company_name: d.external_company_name != null ? String(d.external_company_name) : null,
+        external_catalog_id: d.external_catalog_id != null ? String(d.external_catalog_id) : null,
+        assignee: assignee.full_name ? { id: assignee.id, full_name: assignee.full_name } : null,
+        lead_owner: leadOwner.full_name ? { id: leadOwner.id, full_name: leadOwner.full_name } : null,
+      };
+    }),
   };
 }
 
@@ -72,8 +86,12 @@ function mapStageRow(raw: Record<string, unknown>, index: number): KanbanStage {
     color: (raw.color as string) ?? null,
     icon: (raw.icon as string) ?? null,
     order_index: Number(raw.order_index ?? index),
+    slug: (raw.slug as string) ?? wfStage.slug ?? null,
     bucket_slug: (raw.bucket_slug as string) ?? null,
     workflow_stage_id: (raw.workflow_stage_id as string) ?? wfStage.id ?? null,
+    workflow_stage: wfStage.slug ? { slug: wfStage.slug } : null,
+    is_handover_to_install: Boolean(raw.is_handover_to_install),
+    crm_sync_type: (raw.crm_sync_type as string) ?? null,
     count: raw.count != null ? Number(raw.count) : undefined,
     total_value: raw.total_value != null ? Number(raw.total_value) : undefined,
   };
@@ -131,9 +149,20 @@ const PROJECTS_PAGE_LIMIT = 200;
 const PROJECTS_MAX_PAGES = 40;
 const PROJECTS_FETCH_CONCURRENCY = 5;
 
+const boardInflight = new Map<string, Promise<ProductionBoard>>();
+
+function boardInflightKey(filters: BoardFilters = {}): string {
+  return `${filters.companyId || ''}|${filters.dealCompanyId || ''}|${filters.workshopTypeId || ''}`;
+}
+
 async function fetchAllProjects(noCache = false, filters: BoardFilters = {}): Promise<ProductionProject[]> {
   const buildParams = (page: number): Record<string, unknown> => {
-    const params: Record<string, unknown> = { page, limit: PROJECTS_PAGE_LIMIT };
+    const params: Record<string, unknown> = {
+      page,
+      limit: PROJECTS_PAGE_LIMIT,
+      lite: 1,
+      view: 'mobile',
+    };
     if (noCache) params._t = Date.now();
     if (filters.companyId) params.company_id = filters.companyId;
     if (filters.workshopTypeId) params.workshop_type_id = filters.workshopTypeId;
@@ -146,14 +175,28 @@ async function fetchAllProjects(noCache = false, filters: BoardFilters = {}): Pr
       total?: number;
     }>('/logistics/projects', { params: buildParams(page) });
     const rows = Array.isArray(data?.projects) ? data.projects : [];
-    const total = Number(data?.total || rows.length);
-    const totalPages = Math.max(1, Math.ceil(total / PROJECTS_PAGE_LIMIT));
+    const total = Number(data?.total ?? rows.length);
+    const reportedPages = Number(data?.totalPages);
+    const totalPages = Number.isFinite(reportedPages) && reportedPages > 0
+      ? reportedPages
+      : Math.max(1, Math.ceil(total / PROJECTS_PAGE_LIMIT));
     return { rows, totalPages };
   };
 
   const first = await getPage(1);
   const out: ProductionProject[] = first.rows.map(mapProjectRow);
-  const totalPages = Math.min(first.totalPages, PROJECTS_MAX_PAGES);
+  let totalPages = Math.min(first.totalPages, PROJECTS_MAX_PAGES);
+
+  // Backend cũ: total = độ dài trang → totalPages=1 dù còn data. Probe thêm trang đầy.
+  if (totalPages <= 1 && first.rows.length >= PROJECTS_PAGE_LIMIT) {
+    for (let p = 2; p <= PROJECTS_MAX_PAGES; p += 1) {
+      const next = await getPage(p);
+      for (const row of next.rows) out.push(mapProjectRow(row));
+      if (next.rows.length < PROJECTS_PAGE_LIMIT) break;
+    }
+    return out;
+  }
+
   if (totalPages <= 1 || first.rows.length < PROJECTS_PAGE_LIMIT) return out;
 
   const remaining: number[] = [];
@@ -169,18 +212,16 @@ async function fetchAllProjects(noCache = false, filters: BoardFilters = {}): Pr
   return out;
 }
 
-export async function fetchLogisticsBoard(noCache = false, filters: BoardFilters = {}): Promise<ProductionBoard> {
+async function fetchLogisticsBoardUncapped(
+  noCache = false,
+  filters: BoardFilters = {},
+): Promise<ProductionBoard> {
   const stageParams: Record<string, unknown> = {};
   if (noCache) stageParams._t = Date.now();
   if (filters.companyId) stageParams.company_id = filters.companyId;
   if (filters.workshopTypeId) stageParams.workshop_type_id = filters.workshopTypeId;
 
-  const dashParams: Record<string, unknown> = {};
-  if (noCache) dashParams._t = Date.now();
-  if (filters.companyId) dashParams.company_id = filters.companyId;
-  if (filters.workshopTypeId) dashParams.workshop_type_id = filters.workshopTypeId;
-
-  const [stageRes, projects, dashRes] = await Promise.all([
+  const [stageRes, projects] = await Promise.all([
     api
       .get<Array<Record<string, unknown>>>('/logistics/pipeline-stages', {
         params: Object.keys(stageParams).length ? stageParams : undefined,
@@ -188,23 +229,46 @@ export async function fetchLogisticsBoard(noCache = false, filters: BoardFilters
       .then((r) => (Array.isArray(r.data) ? r.data : []))
       .catch(() => [] as Array<Record<string, unknown>>),
     fetchAllProjects(noCache, filters),
-    api
-      .get<{ kpis?: ProductionDashboard; pipeline?: unknown[] }>('/logistics/dashboard', {
-        params: Object.keys(dashParams).length ? dashParams : undefined,
-      })
-      .catch(() => ({ data: { kpis: null } })),
   ]);
 
   const stages = stageRes.map((s, i) => mapStageRow(s, i)).sort((a, b) => a.order_index - b.order_index);
-  const kpis = dashRes.data?.kpis ?? null;
+  const kpis = null;
+  const stageById = new Map(stages.map((s) => [String(s.id), s]));
 
-  const resolved = projects.map((p) => ({
-    ...p,
-    resolved_column_id: p.vc_kanban_column_id && stages.some((s) => String(s.id) === String(p.vc_kanban_column_id))
-      ? p.vc_kanban_column_id
-      : resolveColumnId(p, stages),
-  }));
+  const resolved = projects.map((p) => {
+    const resolved_column_id =
+      p.vc_kanban_column_id && stageById.has(String(p.vc_kanban_column_id))
+        ? p.vc_kanban_column_id
+        : resolveColumnId(p, stages);
+    const col = resolved_column_id ? stageById.get(String(resolved_column_id)) : undefined;
+    // Chỉ đánh dấu intake khi đúng cột tiếp nhận — không suy từ thiếu workflow_stage_id
+    // (cột «Đã giao» tùy chỉnh thường không gắn workflow nhưng không phải intake).
+    const vc_intake = col
+      ? (col.bucket_slug === INTAKE_BUCKET
+        || String(col.id || '').startsWith('__vc_intake')
+        || (() => {
+          const name = String(col.name || '').toLowerCase();
+          return name.includes('tiếp nhận') || name.includes('tiep nhan')
+            || name.includes('chờ vc') || name.includes('chờ vận');
+        })())
+      : Boolean(p.vc_intake);
+    return { ...p, resolved_column_id, vc_intake };
+  });
   return { stages, projects: resolved, kpis };
+}
+
+export function fetchLogisticsBoard(
+  noCache = false,
+  filters: BoardFilters = {},
+): Promise<ProductionBoard> {
+  const key = boardInflightKey(filters);
+  const existing = boardInflight.get(key);
+  if (existing) return existing;
+  const pending = fetchLogisticsBoardUncapped(noCache, filters).finally(() => {
+    if (boardInflight.get(key) === pending) boardInflight.delete(key);
+  });
+  boardInflight.set(key, pending);
+  return pending;
 }
 
 /** Alias tương thích màn hình copy từ vc-mobile. */
@@ -218,11 +282,24 @@ export async function fetchProductionProject(projectId: string): Promise<Product
   return mapProjectRow(raw);
 }
 
+export type MoveStageResult = {
+  vc_kanban_column_id?: string;
+  current_stage_id?: string | null;
+  jumped_to_install?: boolean;
+  install_stage_id?: string | null;
+  install_stage_name?: string | null;
+};
+
 export async function moveProjectToStage(
   projectId: string,
   targetStageId: string,
-  options: { currentStageId?: string | null; isIntake?: boolean; companyId?: string | null } = {},
-): Promise<{ vc_kanban_column_id?: string; current_stage_id?: string | null }> {
+  options: {
+    currentStageId?: string | null;
+    isIntake?: boolean;
+    companyId?: string | null;
+    workflowStageId?: string | null;
+  } = {},
+): Promise<MoveStageResult> {
   if (options.isIntake) {
     const { data } = await api.patch(`/logistics/projects/${projectId}/stage`, { move_to_intake: true });
     return {
@@ -230,12 +307,15 @@ export async function moveProjectToStage(
       current_stage_id: data?.project?.current_stage_id ?? null,
     };
   }
-  const { data } = await api.patch(`/logistics/projects/${projectId}/stage`, {
-    vc_stage_id: targetStageId,
-  });
+  const body: Record<string, unknown> = { vc_stage_id: targetStageId };
+  if (options.workflowStageId) body.stage_id = options.workflowStageId;
+  const { data } = await api.patch(`/logistics/projects/${projectId}/stage`, body);
   return {
     vc_kanban_column_id: data?.project?.vc_kanban_column_id ?? targetStageId,
     current_stage_id: data?.project?.current_stage_id ?? null,
+    jumped_to_install: Boolean(data?.jumped_to_install),
+    install_stage_id: data?.install_stage_id ?? null,
+    install_stage_name: data?.install_stage_name ?? null,
   };
 }
 
@@ -344,6 +424,8 @@ export type ProjectComment = {
   content: string;
   created_at: string;
   updated_at?: string | null;
+  comment_type?: string | null;
+  metadata?: Record<string, unknown> | null;
   attachments?: CommentAttachment[];
   user?: ProjectCommentUser;
   reactions?: {
@@ -355,35 +437,162 @@ export type ProjectComment = {
 export function isCommentImageAttachment(att: CommentAttachment): boolean {
   const mime = String(att.mime || '').toLowerCase();
   if (mime.startsWith('image/')) return true;
-  return /\.(jpe?g|png|gif|webp|bmp|heic|heif|avif|svg)$/i.test(att.name || att.url || '');
+  if (
+    mime
+    && (
+      mime.includes('pdf')
+      || mime.includes('word')
+      || mime.includes('sheet')
+      || mime.includes('excel')
+      || mime.includes('presentation')
+      || mime.includes('zip')
+      || mime.startsWith('video/')
+      || mime.startsWith('audio/')
+      || mime.includes('msword')
+      || mime.includes('officedocument')
+    )
+  ) {
+    return false;
+  }
+  const path = String(att.name || att.url || '').split('?')[0].split('#')[0];
+  if (/\.(jpe?g|png|gif|webp|bmp|heic|heif|avif|svg)$/i.test(path)) return true;
+  // Ảnh chụp/chọn từ app thường đặt tên anh-*.jpg — vẫn nhận khi storage đổi tên mất đuôi.
+  if (/^anh[-_]/i.test(String(att.name || '')) || /\b(image|photo|img)[-_]/i.test(String(att.name || ''))) {
+    return true;
+  }
+  return false;
 }
 
 function mapCommentAttachment(raw: unknown): CommentAttachment | null {
   if (!raw || typeof raw !== 'object') return null;
   const a = raw as Record<string, unknown>;
   const url = String(a.url || a.file_url || '').trim();
-  if (!url) return null;
+  if (!url || url.startsWith('data:')) return null;
+  const name = String(a.name || a.file_name || 'file').trim() || 'file';
+  let mime = String(a.type || a.mime_type || '').trim() || undefined;
+  if (!mime) {
+    const path = `${name} ${url}`.split('?')[0];
+    const m = path.match(/\.(jpe?g|png|gif|webp|bmp|heic|heif|avif|svg)$/i);
+    if (m) {
+      const ext = m[1].toLowerCase();
+      mime = `image/${ext === 'jpg' ? 'jpeg' : ext}`;
+    }
+  }
   return {
-    url,
-    name: String(a.name || a.file_name || 'file').trim() || 'file',
-    mime: String(a.type || a.mime_type || '').trim() || undefined,
+    url: url.slice(0, 800),
+    name: name.slice(0, 400),
+    mime,
     size: Number.isFinite(Number(a.size ?? a.file_size)) ? Number(a.size ?? a.file_size) : undefined,
   };
 }
 
 function mapCommentAttachments(raw: unknown): CommentAttachment[] {
-  if (!Array.isArray(raw)) return [];
-  return raw.map(mapCommentAttachment).filter(Boolean) as CommentAttachment[];
+  let list: unknown[] = [];
+  if (Array.isArray(raw)) list = raw;
+  else if (typeof raw === 'string' && raw.trim()) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) list = parsed;
+    } catch {
+      return [];
+    }
+  }
+  return list.map(mapCommentAttachment).filter(Boolean) as CommentAttachment[];
 }
 
-/** Deal CRM gắn dự án — bình luận dùng crm_lead_comments (đồng bộ tab deal). */
+const RAW_URL_RE = /^(https?:\/\/|\/uploads\/)\S+$/i;
+
+function mimeFromFileName(name: string): string | undefined {
+  const m = String(name || '').split('?')[0].match(/\.(jpe?g|png|gif|webp|bmp|heic|heif|avif|svg|pdf)$/i);
+  if (!m) return undefined;
+  const ext = m[1].toLowerCase();
+  if (ext === 'pdf') return 'application/pdf';
+  return `image/${ext === 'jpg' ? 'jpeg' : ext}`;
+}
+
+/**
+ * Tin hệ thống web: «tên|https://…supabase…/t13.png»
+ * → tách thành attachment + rút gọn text «tên» (giống preview ảnh trên web).
+ */
+function enrichSystemFileLinksInContent(
+  content: string,
+  attachments: CommentAttachment[],
+): { content: string; attachments: CommentAttachment[] } {
+  if (!content.includes('«') || !content.includes('|')) {
+    return { content, attachments };
+  }
+  const existing = new Set(
+    attachments.map((a) => String(a.url || '').split('?')[0].toLowerCase()).filter(Boolean),
+  );
+  const extra: CommentAttachment[] = [];
+  const cleaned = content.replace(/«([^»|]+)\|([^»]+)»/g, (_full, labelRaw: string, urlRaw: string) => {
+    const label = String(labelRaw || '').trim();
+    let url = String(urlRaw || '').trim();
+    if (!label || !url) return _full;
+    if (url.startsWith('hidden:')) return `«${label}» (đã ẩn)`;
+    const key = url.split('?')[0].toLowerCase();
+    if (!existing.has(key)) {
+      existing.add(key);
+      extra.push({
+        url: url.slice(0, 800),
+        name: label.slice(0, 400),
+        mime: mimeFromFileName(label) || mimeFromFileName(url),
+      });
+    }
+    return `«${label}»`;
+  });
+  return {
+    content: cleaned,
+    attachments: extra.length ? [...attachments, ...extra] : attachments,
+  };
+}
+
+/** Body chỉ là URL/JSON file → chuyển sang attachments, tránh hiện link thô. */
+function sanitizeCommentContent(
+  content: string,
+  attachments: CommentAttachment[],
+): { content: string; attachments: CommentAttachment[] } {
+  const trimmed = String(content || '').trim();
+  if (!trimmed) return { content: '', attachments };
+
+  const looksLikeJson =
+    (trimmed.startsWith('[') && trimmed.endsWith(']'))
+    || (trimmed.startsWith('{') && trimmed.endsWith('}'));
+  if (looksLikeJson && trimmed.includes('url')) {
+    try {
+      const fromBody = mapCommentAttachments(JSON.parse(trimmed));
+      if (fromBody.length) {
+        return { content: '', attachments: attachments.length ? attachments : fromBody };
+      }
+    } catch {
+      /* keep */
+    }
+  }
+
+  if (RAW_URL_RE.test(trimmed)) {
+    if (attachments.length) return { content: '', attachments };
+    const url = trimmed.slice(0, 800);
+    const namePart = decodeURIComponent(url.split('/').pop()?.split('?')[0] || 'file');
+    const mapped = mapCommentAttachment({ url, name: namePart });
+    return { content: '', attachments: mapped ? [mapped] : [] };
+  }
+
+  // Bình luận hệ thống từ web: «t13.png|https://…»
+  return enrichSystemFileLinksInContent(trimmed, attachments);
+}
+
+/** Deal CRM gắn dự án — bình luận dùng crm_lead_comments (đồng bộ tab deal trên web). */
 export function resolveProjectDealId(project?: {
   crm_deals?: Array<{ id?: string; type?: string } | null> | null;
+  /** Chi tiết dự án map camelCase từ API logistics. */
+  crmDeals?: Array<{ id?: string; type?: string } | null> | null;
   crm_lead_id?: string | null;
 } | null): string | null {
   if (!project) return null;
   if (project.crm_lead_id) return String(project.crm_lead_id);
-  const deals = Array.isArray(project.crm_deals) ? project.crm_deals : [];
+  const deals = Array.isArray(project.crm_deals) && project.crm_deals.length
+    ? project.crm_deals
+    : (Array.isArray(project.crmDeals) ? project.crmDeals : []);
   const deal = deals.find((d) => String(d?.type || '') === 'deal') || deals[0];
   return deal?.id ? String(deal.id) : null;
 }
@@ -413,16 +622,23 @@ export function partitionProjectsByCommentSource(projects: ProductionProject[] =
 function mapCommentRow(raw: Record<string, unknown>): ProjectComment {
   const user = (raw.user || {}) as Record<string, unknown>;
   const reactions = (raw.reactions || { summary: [], mine: null }) as ProjectComment['reactions'];
+  const meta = raw.metadata && typeof raw.metadata === 'object' && !Array.isArray(raw.metadata)
+    ? (raw.metadata as Record<string, unknown>)
+    : null;
+  const attachments = mapCommentAttachments(raw.attachments);
+  const sanitized = sanitizeCommentContent(String(raw.content ?? raw.body ?? ''), attachments);
   return {
     id: String(raw.id || ''),
     project_id: raw.project_id != null ? String(raw.project_id) : undefined,
     lead_id: raw.lead_id != null ? String(raw.lead_id) : undefined,
     user_id: String(raw.user_id || ''),
     parent_id: raw.parent_id != null && raw.parent_id !== '' ? String(raw.parent_id) : null,
-    content: String(raw.content || raw.body || ''),
+    content: sanitized.content,
     created_at: String(raw.created_at || ''),
     updated_at: raw.updated_at != null ? String(raw.updated_at) : null,
-    attachments: mapCommentAttachments(raw.attachments),
+    comment_type: raw.comment_type != null ? String(raw.comment_type) : null,
+    metadata: meta,
+    attachments: sanitized.attachments,
     user: {
       id: user.id != null ? String(user.id) : undefined,
       full_name: user.full_name != null ? String(user.full_name) : undefined,
@@ -591,6 +807,19 @@ export async function toggleDealCommentReaction(
   return data || { summary: [], mine: null };
 }
 
+/** Xác nhận một phía (SX / VC) trên bình luận bàn giao — PATCH /vc-handover/comments/:cid/confirm */
+export async function confirmVcHandoverComment(
+  commentId: string,
+  side: 'production' | 'logistics',
+): Promise<ProjectComment> {
+  const { data } = await api.patch<{ comment?: Record<string, unknown> }>(
+    `/vc-handover/comments/${commentId}/confirm`,
+    { side },
+  );
+  const row = (data?.comment || data || {}) as Record<string, unknown>;
+  return mapCommentRow(row);
+}
+
 export async function fetchWorkshopTypes(
   companyId?: string | null,
   _clientCompanyId?: string | null,
@@ -675,6 +904,28 @@ export type WorkshopIntakeResult = {
   deal_code?: string;
 };
 
-export async function createWorkshopIntake(_input: WorkshopIntakeInput): Promise<WorkshopIntakeResult> {
-  return {};
+export async function createWorkshopIntake(input: WorkshopIntakeInput): Promise<WorkshopIntakeResult> {
+  // Tạo dự án VC — khớp web NewLogisticsProjectModal (POST /projects, status shipping).
+  const { data } = await api.post<Record<string, unknown>>('/projects', {
+    name: input.title.trim(),
+    company_id: input.company_id || null,
+    workshop_type_id: input.workshop_type_id || null,
+    estimated_value: input.estimated_value || null,
+    priority: 'medium',
+    status: 'shipping',
+    customer_name: input.customer_name || null,
+    customer_phone: input.customer_phone || null,
+    customer_email: input.customer_email || null,
+    install_address: input.install_address || null,
+    description: input.description || null,
+    region_id: input.region_id || null,
+    external_company_name: input.external_company_name || null,
+  });
+  const row = (data || {}) as Record<string, unknown>;
+  const project = (row.project || row) as Record<string, unknown>;
+  return {
+    project_id: project.id != null ? String(project.id) : undefined,
+    project_code: project.code != null ? String(project.code) : undefined,
+    project_name: project.name != null ? String(project.name) : undefined,
+  };
 }

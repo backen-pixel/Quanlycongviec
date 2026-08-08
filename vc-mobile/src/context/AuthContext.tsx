@@ -8,11 +8,13 @@ import {
   isBubbleOverlaySupported,
   startSystemBubbleOverlay,
 } from '../lib/floatingBubbleOverlay';
+import { clearKanbanFilters } from '../lib/kanbanFilterStorage';
+import { clearBoardCache, hydrateBoardCacheFromDisk } from '../lib/logisticsBoardCache';
 import { registerPushToken, unregisterPushToken } from '../lib/pushRegistration';
 import { startDeviceHeartbeat, stopDeviceHeartbeat } from '../lib/deviceHeartbeat';
 
-const USER_KEY = 'sx_user_json';
-const OVERLAY_PROMPT_KEY = 'sx_overlay_prompt_v1';
+const USER_KEY = 'vc_user_json';
+const OVERLAY_PROMPT_KEY = 'vc_overlay_prompt_v1';
 
 export type AuthUser = {
   id: string;
@@ -45,6 +47,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     (async () => {
       try {
+        await hydrateBoardCacheFromDisk();
         const [t, u] = await Promise.all([getStoredToken(), AsyncStorage.getItem(USER_KEY)]);
         if (t && u) {
           setToken(t);
@@ -120,8 +123,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     })();
   }, [token]);
 
-  const logout = useCallback(async () => {
+  const clearSessionLocal = useCallback(async () => {
     stopDeviceHeartbeat();
+    clearBoardCache();
+    await clearKanbanFilters();
     await unregisterPushToken();
     await setStoredToken(null);
     await AsyncStorage.removeItem(USER_KEY);
@@ -129,17 +134,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(null);
   }, []);
 
+  const logout = useCallback(async () => {
+    await clearSessionLocal();
+  }, [clearSessionLocal]);
+
   useEffect(() => {
     setUnauthorizedHandler(() => {
-      void (async () => {
-        stopDeviceHeartbeat();
-        await AsyncStorage.removeItem(USER_KEY);
-        setToken(null);
-        setUser(null);
-      })();
+      void clearSessionLocal();
     });
     return () => setUnauthorizedHandler(null);
-  }, []);
+  }, [clearSessionLocal]);
 
   const value = useMemo(
     () => ({ user, token, loading, login, logout }),

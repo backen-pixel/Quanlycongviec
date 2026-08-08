@@ -30,6 +30,13 @@ export function isSystemAdmin(user?: AuthUserLite | null): boolean {
     && (user?.company_id == null || String(user.company_id).trim() === '');
 }
 
+/** Admin gắn company_id — chỉ xem phạm vi công ty mình (khớp web isCompanyScopedAdmin). */
+export function isCompanyScopedAdmin(user?: AuthUserLite | null): boolean {
+  return String(user?.role || '').trim() === 'admin'
+    && user?.company_id != null
+    && String(user.company_id).trim() !== '';
+}
+
 export function isMetallaOrHucabiCompany(company?: CompanyRow | null): boolean {
   if (!company) return false;
   const sn = String(company.short_name || '').trim().toUpperCase();
@@ -57,6 +64,11 @@ export function productionCreateCompanyOptions(companies: CompanyRow[]): Company
 
 export function workshopCompaniesForCrossViewer(companies: CompanyRow[], user: AuthUserLite | null | undefined): CompanyRow[] {
   if (isSystemAdmin(user)) return companies;
+  if (isCompanyScopedAdmin(user) && user?.company_id) {
+    const cid = String(user.company_id);
+    const own = (companies || []).find((c) => String(c.id) === cid);
+    return own ? [own] : [{ id: cid, name: cid, short_name: cid }];
+  }
   return productionCreateCompanyOptions(companies);
 }
 
@@ -94,6 +106,46 @@ export function resolveDealCompanyExternalFilter(
     catalogId,
     name: String(pick.short_name || pick.name || '').trim(),
   };
+}
+
+/** Tab pipeline VC — tách «Vận chuyển» / «Lắp đặt», khớp VC_PIPELINE_TABS (web). */
+export const VC_PIPELINE_TABS = [
+  { id: 'shipping' as const, label: 'Vận chuyển', icon: '🚚' },
+  { id: 'install' as const, label: 'Lắp đặt', icon: '🔧' },
+];
+export type VcPipelineTab = 'shipping' | 'install';
+
+/** Cột Lắp đặt — khớp isInstallVcStage (frontend/src/lib/managementDashboardUtils.js). */
+export function isInstallVcStage(stage?: {
+  name?: string | null;
+  slug?: string | null;
+  bucket_slug?: string | null;
+  crm_sync_type?: string | null;
+  workflow_stage?: { slug?: string | null } | null;
+} | null): boolean {
+  if (!stage) return false;
+  const name = String(stage.name || '').toLowerCase();
+  const slug = String(stage.bucket_slug || '').toLowerCase();
+  const wfSlug = String(stage.slug || stage.workflow_stage?.slug || '').toLowerCase();
+
+  // Tên/slug Vận chuyển là tín hiệu ưu tiên. Một số cột cũ còn giữ
+  // crm_sync_type=installation nên trước đây bị đẩy nhầm sang tab Lắp đặt.
+  if (
+    name.includes('đang vận chuyển')
+    || name.includes('dang van chuyen')
+    || wfSlug === 'delivery'
+    || wfSlug === 'shipping'
+  ) {
+    return false;
+  }
+  if (String(stage.crm_sync_type || '').toLowerCase() === 'installation') return true;
+  return (
+    slug.includes('install')
+    || wfSlug.includes('install')
+    || name.includes('lắp')
+    || name.includes('lap dat')
+    || name.includes('lắp đặt')
+  );
 }
 
 /** Lọc client-side công ty đặt hàng ngoài CRM (ext:...) — khớp web. */

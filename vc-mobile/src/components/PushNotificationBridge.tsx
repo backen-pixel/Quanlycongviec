@@ -53,7 +53,11 @@ function handleNotificationData(data: Record<string, unknown> | undefined): void
     return;
   }
   const pid = extractProjectId(data);
-  if (pid) openProjectCommentFromNotif(pid);
+  if (!pid) return;
+  // Bình luận → chi tiết (tab comments nếu app hỗ trợ); hoạt động cột cũng mở dự án.
+  const type = String(data?.type || '');
+  const initialTab = type === 'comment_added' ? 'comments' as const : undefined;
+  openProjectCommentFromNotif(pid, initialTab);
 }
 
 export default function PushNotificationBridge() {

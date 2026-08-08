@@ -45,9 +45,15 @@ export function openMessagesFromBubble(): void {
   navigationRef.navigate('Messages', { tab: 'chats' });
 }
 
-export function openProjectCommentFromNotif(projectId: string): void {
+export function openProjectCommentFromNotif(
+  projectId: string,
+  initialTab?: RootStackParamList['ProjectDetail']['initialTab'],
+): void {
   if (!navigationRef.isReady()) return;
-  navigationRef.navigate('ProjectDetail', { projectId });
+  navigationRef.navigate('ProjectDetail', {
+    projectId,
+    ...(initialTab ? { initialTab } : {}),
+  });
 }
 
 export function navigateToShareToChat(): void {

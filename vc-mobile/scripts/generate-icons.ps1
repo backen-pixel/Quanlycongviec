@@ -1,4 +1,5 @@
-# Tạo icon launcher chuẩn Android adaptive (foreground trong suốt + nền riêng).
+# Generate launcher / splash / notification icons from icon-source.png
+# Same framing as CRM/SX: hex badge inset on #00071F (Android adaptive safe zone)
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
 
@@ -6,15 +7,36 @@ $root = Split-Path $PSScriptRoot -Parent
 $assets = Join-Path $root 'assets'
 $source = Join-Path $assets 'icon-source.png'
 if (-not (Test-Path $source)) {
-  $fallback = 'C:\Users\acer\.cursor\projects\d-CongViec-Quanlycongviec\assets\c__Users_acer_AppData_Roaming_Cursor_User_workspaceStorage_2ce1c907fc3a6558b26975ef2608a519_images_image-947f1d0e-db6b-46b1-b55b-5e32eca1e6ea.png'
-  if (Test-Path $fallback) { Copy-Item $fallback $source -Force }
-  else { throw "Missing icon-source.png" }
+  throw "Missing icon-source.png - put design logo at vc-mobile/assets/icon-source.png"
 }
+
+$ICON_BADGE_RATIO = 0.56
+$ADAPTIVE_BADGE_RATIO = 0.52
+$BG = [System.Drawing.Color]::FromArgb(255, 0, 7, 31) # #00071F
 
 function Test-SymbolPixel([System.Drawing.Color]$c) {
   $lum = ($c.R + $c.G + $c.B) / 3.0
   $sat = [Math]::Max($c.R, [Math]::Max($c.G, $c.B)) - [Math]::Min($c.R, [Math]::Min($c.G, $c.B))
-  return ($lum -gt 175 -and $sat -lt 95)
+  return ($lum -gt 185 -and $sat -lt 80)
+}
+
+function Get-BadgeBounds([System.Drawing.Bitmap]$img) {
+  $w = $img.Width; $h = $img.Height
+  $minX = $w; $minY = $h; $maxX = 0; $maxY = 0
+  for ($y = 0; $y -lt $h; $y++) {
+    for ($x = 0; $x -lt $w; $x++) {
+      $c = $img.GetPixel($x, $y)
+      $lum = ($c.R + $c.G + $c.B) / 3.0
+      if ($lum -gt 28 -or $c.R -gt 40 -or $c.G -gt 30) {
+        if ($x -lt $minX) { $minX = $x }
+        if ($y -lt $minY) { $minY = $y }
+        if ($x -gt $maxX) { $maxX = $x }
+        if ($y -gt $maxY) { $maxY = $y }
+      }
+    }
+  }
+  if ($maxX -le $minX) { return @{ X = 0; Y = 0; W = $w; H = $h } }
+  return @{ X = $minX; Y = $minY; W = ($maxX - $minX + 1); H = ($maxY - $minY + 1) }
 }
 
 function Extract-SymbolBitmap([System.Drawing.Bitmap]$src) {
@@ -25,8 +47,7 @@ function Extract-SymbolBitmap([System.Drawing.Bitmap]$src) {
     for ($x = 0; $x -lt $w; $x++) {
       $c = $src.GetPixel($x, $y)
       if (Test-SymbolPixel $c) {
-        $alpha = [Math]::Min(255, [int](($c.R + $c.G + $c.B) / 3.0 + 40))
-        $sym.SetPixel($x, $y, [System.Drawing.Color]::FromArgb($alpha, 255, 255, 255))
+        $sym.SetPixel($x, $y, [System.Drawing.Color]::FromArgb(255, 255, 255, 255))
         if ($x -lt $minX) { $minX = $x }
         if ($y -lt $minY) { $minY = $y }
         if ($x -gt $maxX) { $maxX = $x }
@@ -51,13 +72,14 @@ function Extract-SymbolBitmap([System.Drawing.Bitmap]$src) {
   return $crop
 }
 
-function New-SquareCanvas([int]$size) {
+function New-SquareCanvas([int]$size, [System.Drawing.Color]$fill) {
   $bmp = New-Object System.Drawing.Bitmap $size, $size, ([System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
   $g = [System.Drawing.Graphics]::FromImage($bmp)
-  $g.Clear([System.Drawing.Color]::Transparent)
+  $g.Clear($fill)
   $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
   $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
   $g.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+  $g.CompositingQuality = [System.Drawing.Drawing2D.CompositingQuality]::HighQuality
   return @{ Bitmap = $bmp; Graphics = $g }
 }
 
@@ -67,62 +89,56 @@ function Save-Png([System.Drawing.Bitmap]$bmp, [string]$path) {
   $bmp.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
 }
 
+function Write-FramedBadge([System.Drawing.Bitmap]$badge, [int]$size, [double]$fillRatio, [string]$path) {
+  $canvas = New-SquareCanvas $size $BG
+  $target = [int]($size * $fillRatio)
+  $scale = [Math]::Min($target / $badge.Width, $target / $badge.Height)
+  $dw = [int]($badge.Width * $scale)
+  $dh = [int]($badge.Height * $scale)
+  $dx = [int](($size - $dw) / 2)
+  $dy = [int](($size - $dh) / 2)
+  $canvas.Graphics.DrawImage($badge, $dx, $dy, $dw, $dh)
+  $canvas.Graphics.Dispose()
+  Save-Png $canvas.Bitmap $path
+  $canvas.Bitmap.Dispose()
+}
+
 $srcImg = [System.Drawing.Bitmap]::FromFile((Resolve-Path $source))
+$bounds = Get-BadgeBounds $srcImg
+$badge = New-Object System.Drawing.Bitmap $bounds.W, $bounds.H, ([System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+$gBadge = [System.Drawing.Graphics]::FromImage($badge)
+$gBadge.DrawImage(
+  $srcImg,
+  (New-Object System.Drawing.Rectangle 0, 0, $bounds.W, $bounds.H),
+  (New-Object System.Drawing.Rectangle $bounds.X, $bounds.Y, $bounds.W, $bounds.H),
+  [System.Drawing.GraphicsUnit]::Pixel
+)
+$gBadge.Dispose()
+
+Write-FramedBadge $badge 1024 $ICON_BADGE_RATIO (Join-Path $assets 'icon.png')
+Write-FramedBadge $badge 1024 $ICON_BADGE_RATIO (Join-Path $assets 'splash-icon.png')
+Write-FramedBadge $badge 1024 $ADAPTIVE_BADGE_RATIO (Join-Path $assets 'adaptive-icon-foreground.png')
+
 $symbol = Extract-SymbolBitmap $srcImg
-$srcImg.Dispose()
-
-# Adaptive foreground — biểu tượng ~58% canvas (nằm trong safe zone 66%)
-$fgSize = 1024
-$fg = New-SquareCanvas $fgSize
-$target = [int]($fgSize * 0.58)
-$scale = [Math]::Min($target / $symbol.Width, $target / $symbol.Height)
-$dw = [int]($symbol.Width * $scale)
-$dh = [int]($symbol.Height * $scale)
-$dx = [int](($fgSize - $dw) / 2)
-$dy = [int](($fgSize - $dh) / 2)
-$fg.Graphics.DrawImage($symbol, $dx, $dy, $dw, $dh)
-$fg.Graphics.Dispose()
-Save-Png $fg.Bitmap (Join-Path $assets 'adaptive-icon-foreground.png')
-$fg.Bitmap.Dispose()
-
-# Icon vuông đầy đủ — nền gradient xanh + biểu tượng
-$iconSize = 1024
-$icon = New-SquareCanvas $iconSize
-$rect = New-Object System.Drawing.Rectangle 0, 0, $iconSize, $iconSize
-$brush = New-Object System.Drawing.Drawing2D.LinearGradientBrush $rect, `
-  ([System.Drawing.Color]::FromArgb(255, 74, 158, 232)), `
-  ([System.Drawing.Color]::FromArgb(255, 35, 96, 185)), `
-  90
-$icon.Graphics.FillRectangle($brush, $rect)
-$brush.Dispose()
-$iconTarget = [int]($iconSize * 0.62)
-$scale2 = [Math]::Min($iconTarget / $symbol.Width, $iconTarget / $symbol.Height)
-$dw2 = [int]($symbol.Width * $scale2)
-$dh2 = [int]($symbol.Height * $scale2)
-$dx2 = [int](($iconSize - $dw2) / 2)
-$dy2 = [int](($iconSize - $dh2) / 2)
-$icon.Graphics.DrawImage($symbol, $dx2, $dy2, $dw2, $dh2)
-$icon.Graphics.Dispose()
-Save-Png $icon.Bitmap (Join-Path $assets 'icon.png')
-$icon.Bitmap.Dispose()
-
-# Notification icon — trắng trên trong suốt
-$notifSize = 96
-$notif = New-SquareCanvas $notifSize
-$nt = [int]($notifSize * 0.72)
+$notif = New-SquareCanvas 96 ([System.Drawing.Color]::Transparent)
+$nt = [int](96 * 0.72)
 $scale3 = [Math]::Min($nt / $symbol.Width, $nt / $symbol.Height)
 $dw3 = [int]($symbol.Width * $scale3)
 $dh3 = [int]($symbol.Height * $scale3)
-$dx3 = [int](($notifSize - $dw3) / 2)
-$dy3 = [int](($notifSize - $dh3) / 2)
+$dx3 = [int]((96 - $dw3) / 2)
+$dy3 = [int]((96 - $dh3) / 2)
 $notif.Graphics.DrawImage($symbol, $dx3, $dy3, $dw3, $dh3)
 $notif.Graphics.Dispose()
 Save-Png $notif.Bitmap (Join-Path $assets 'notification-icon.png')
 $notif.Bitmap.Dispose()
 
 $symbol.Dispose()
+$badge.Dispose()
+$srcImg.Dispose()
 
-Write-Host 'OK:'
-Write-Host "  $(Join-Path $assets 'adaptive-icon-foreground.png')"
+Write-Host 'OK (CRM/SX-like framed badge):'
+Write-Host "  icon/splash badge=$ICON_BADGE_RATIO adaptive=$ADAPTIVE_BADGE_RATIO bg=#00071F"
 Write-Host "  $(Join-Path $assets 'icon.png')"
+Write-Host "  $(Join-Path $assets 'splash-icon.png')"
+Write-Host "  $(Join-Path $assets 'adaptive-icon-foreground.png')"
 Write-Host "  $(Join-Path $assets 'notification-icon.png')"
