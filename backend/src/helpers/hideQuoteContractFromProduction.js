@@ -1,5 +1,5 @@
 /**
- * Ẩn file/ghi chú nhiệm vụ Báo giá & hợp đồng khỏi module Sản xuất
+ * Ẩn file/ghi chú nhiệm vụ báo giá & hợp đồng khỏi module Sản xuất / VC-LĐ
  * cho công ty VPT và Phúc Đạt (kể cả bình luận hoạt động tự sinh).
  */
 
@@ -7,6 +7,8 @@ const PHUC_DAT_COMPANY_ID = '29677f68-967e-4256-92fd-492bb580e888';
 const VPT_COMPANY_ID = '991dc79d-cbf5-49f9-a364-35227cb47635';
 
 const HIDE_COMPANY_IDS = new Set([PHUC_DAT_COMPANY_ID, VPT_COMPANY_ID]);
+
+const HIDE_QUOTE_CONTRACT_MODULES = new Set(['production', 'logistics']);
 
 function stripDiacritics(s) {
   return String(s || '')
@@ -67,7 +69,8 @@ function isHideQuoteContractCompany(companyId) {
  */
 function shouldHideQuoteContractFromProduction(opts = {}) {
   const mod = String(opts.moduleKey || '').toLowerCase().trim();
-  if (mod && mod !== 'production') return false;
+  // Áp dụng SX + VC/LĐ (giống nhau)
+  if (mod && !HIDE_QUOTE_CONTRACT_MODULES.has(mod)) return false;
   if (!isHideQuoteContractCompany(opts.companyId)) return false;
   return isQuoteContractCommercialTask(opts.task);
 }
@@ -79,7 +82,7 @@ function shouldBlockAutoShareQuoteContract(opts = {}) {
 }
 
 /**
- * Bình luận hoạt động tự sinh về nhiệm vụ Báo giá / hợp đồng.
+ * Bình luận hoạt động tự sinh về nhiệm vụ báo giá / hợp đồng.
  * Ví dụ: «đã tải lên … (nhiệm vụ: Báo giá)», «đã hoàn thành nhiệm vụ «Báo giá».»
  */
 function isQuoteContractActivityComment(body) {
@@ -122,6 +125,7 @@ module.exports = {
   PHUC_DAT_COMPANY_ID,
   VPT_COMPANY_ID,
   HIDE_COMPANY_IDS,
+  HIDE_QUOTE_CONTRACT_MODULES,
   normalizeTitle,
   isQuoteContractCommercialTaskTitle,
   isQuoteContractCommercialStage,

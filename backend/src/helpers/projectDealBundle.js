@@ -268,17 +268,23 @@ async function buildProjectDealBundle(projectId, opts = {}) {
   );
 
   const allLeadDocs = (docsRes.data || []).map(mapLeadDoc);
+  const leadCompanyId = primaryLead?.company_id || null;
+  const visOpts = { leadCompanyId };
   const crmDocuments = allLeadDocs.map((d) => ({ ...d, bucket: 'crm' }));
 
   const sxDocuments = allLeadDocs.filter((d) => {
     if (isSxTaskDoc(d)) return true;
     if (!user) return d.shared_to_workshop && (!d.allowed_share_modules || String(d.allowed_share_modules).includes('production'));
-    return leadDocVisibleForModuleAndUser(d, 'production', user);
+    return leadDocVisibleForModuleAndUser(d, 'production', user, visOpts);
   }).map((d) => ({ ...d, bucket: 'sx' }));
 
   const vcDocuments = allLeadDocs.filter((d) => {
-    if (!user) return d.shared_to_workshop && String(d.allowed_share_modules || '').includes('logistics');
-    return leadDocVisibleForModuleAndUser(d, 'logistics', user);
+    // VC/LĐ: mọi tài liệu trừ giai đoạn SX + BG/HĐ (VPT/Phúc Đạt).
+    if (!user) {
+      return !isSxTaskDoc(d)
+        && !String(d.crm_stage_slug || '').startsWith('sx_');
+    }
+    return leadDocVisibleForModuleAndUser(d, 'logistics', user, visOpts);
   }).map((d) => ({ ...d, bucket: 'vc' }));
 
   const crmTaskAttachments = crmAttachments.map((a) => ({

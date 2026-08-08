@@ -1,5 +1,7 @@
 ﻿/** Khớp backend/helpers/documentShareScope.js — lọc tài liệu CRM theo module chia sẻ */
 
+import { shouldHideQuoteContractDoc } from './hideQuoteContractFromProduction';
+
 export const SHARE_MODULE_KEYS = new Set(['production', 'logistics', 'workshop']);
 
 export const SHARE_MODULE_OPTIONS = [
@@ -68,10 +70,23 @@ export function canViewerSeeByCompanyAndDept(docOrAtt, user, taskRow = null) {
   return false;
 }
 
+/** Tài liệu / artifact thuộc giai đoạn nhiệm vụ SX — ẩn trên VC/LĐ. */
+export function isProductionLikeLeadDocument(doc) {
+  const slug = String(doc?.crm_stage_slug || '').toLowerCase().trim();
+  return slug.startsWith('sx_');
+}
+
+export function isProductionLikeCrmArtifact(artifact) {
+  const slug = String(artifact?.stage_slug || artifact?.crm_stage_slug || '').toLowerCase().trim();
+  return slug.startsWith('sx_');
+}
+
 /** null / rỗng sau chuẩn hóa = hiển thị mọi module (khi đã bật chia sẻ) */
 export function isVisibleInShareModule(artifact, moduleKey) {
   const mod = String(moduleKey || '').toLowerCase().trim();
   if (!SHARE_MODULE_KEYS.has(mod)) return true;
+  // VC/LĐ: không khóa theo danh sách module chia sẻ.
+  if (mod === 'logistics') return true;
   const arr = parseShareModules(artifact?.allowed_share_modules);
   if (!arr?.length) return true;
   const cleaned = [...new Set(arr.map((x) => String(x).toLowerCase().trim()))].filter((x) =>
@@ -89,10 +104,19 @@ export function isSxTaskDocForProject(doc) {
 }
 
 /** lead_documents trong module xưởng */
-export function isLeadDocVisibleInModule(doc, moduleKey) {
+export function isLeadDocVisibleInModule(doc, moduleKey, opts = {}) {
   const mod = String(moduleKey || '').toLowerCase().trim();
   if (!SHARE_MODULE_KEYS.has(mod)) return true;
+
+  // VC/LĐ: xem hết tài liệu, ẩn tài liệu giống/giai đoạn SX + BG/HĐ (VPT/Phúc Đạt).
+  if (mod === 'logistics') {
+    if (isProductionLikeLeadDocument(doc) || isSxTaskDocForProject(doc)) return false;
+    if (shouldHideQuoteContractDoc(doc, 'logistics', opts.leadCompanyId)) return false;
+    return true;
+  }
+
   if (!isLeadDocSharedToWorkshop(doc) && !(mod === 'production' && isSxTaskDocForProject(doc))) return false;
+  if (shouldHideQuoteContractDoc(doc, mod, opts.leadCompanyId)) return false;
   return isVisibleInShareModule(doc, mod);
 }
 
@@ -100,6 +124,13 @@ export function isLeadDocVisibleInModule(doc, moduleKey) {
 export function isCrmSharedArtifactVisibleInModule(artifact, moduleKey) {
   const mod = String(moduleKey || '').toLowerCase().trim();
   if (!SHARE_MODULE_KEYS.has(mod)) return true;
+
+  if (mod === 'logistics') {
+    if (isProductionLikeCrmArtifact(artifact)) return false;
+    // VC: ghi chú/file đã chia sẻ (mọi module) đều hiện.
+    return isCrmArtifactShared(artifact);
+  }
+
   if (!isCrmArtifactShared(artifact)) return false;
   return isVisibleInShareModule(artifact, mod);
 }

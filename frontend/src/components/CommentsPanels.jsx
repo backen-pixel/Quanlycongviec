@@ -33,7 +33,7 @@ import UploadFileLightbox from './UploadFileLightbox';
 import { downloadUploadFile, downloadUploadFilesAsZip, publicFileUrl as pubUrl } from '../lib/publicFileUrl';
 import { handleCommentFilePaste } from '../lib/chatClipboard';
 import { CommentNewNotice, useCommentThreadLive } from './commentThreadLiveUx';
-import { isQuoteContractActivityComment } from '../lib/hideQuoteContractFromProduction';
+import { isQuoteContractActivityComment, shouldHideQuoteContractComments } from '../lib/hideQuoteContractFromProduction';
 import CommentDisplayHiddenBanner, { useCommentShowOnScreenEnabled } from './CommentDisplayHiddenBanner';
 import VcHandoverEventsPopup from './VcHandoverEventsPopup';
 
@@ -667,7 +667,7 @@ function useCommentPasteUpload(onFilesUploaded) {
   const [pasteProgress, setPasteProgress] = useState(null);
 
   const handlePasteFiles = useCallback(async (rawFiles) => {
-    const files = Array.from(rawFiles || []).filter(Boolean).slice(0, 20);
+    const files = Array.from(rawFiles || []).filter(Boolean).slice(0, 50);
     if (!files.length) return;
     setUploadingPaste(true);
     setPasteProgress(null);
@@ -2158,9 +2158,9 @@ export function CrmLeadCommentsPanel({
     }
     const row = payload.comment;
     if (!row?.id) return;
-    // SX: ẩn bình luận hoạt động Báo giá / Hợp đồng (VPT & Phúc Đạt — khớp API for_module)
+    // SX / VC: ẩn bình luận hoạt động Báo giá / Hợp đồng (VPT & Phúc Đạt — khớp API for_module)
     if (
-      String(forModule || '').toLowerCase() === 'production'
+      shouldHideQuoteContractComments(forModule)
       && isQuoteContractActivityComment(row.body)
     ) {
       return;

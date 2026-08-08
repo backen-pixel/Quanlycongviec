@@ -293,10 +293,20 @@ export default function WorkshopProjectTasksPanel({
 
   const shareMod = workArea === 'logistics' ? 'logistics' : 'production';
   const sharedCrmDocs = useMemo(
-    () => (crmDealDocs || []).filter(
-      (d) => isCrmDocSharedToWorkshop(d) && isLeadDocVisibleInModule(d, shareMod),
-    ),
-    [crmDealDocs, shareMod],
+    () => {
+      const leadCompanyId = project?.crmDeals?.[0]?.company_id
+        || project?.company_id
+        || project?.company?.id
+        || null;
+      return (crmDealDocs || []).filter((d) => {
+        // VC/LĐ: xem hết tài liệu (trừ SX + BG/HĐ). SX: chỉ tài liệu đã chia sẻ xưởng.
+        if (shareMod === 'logistics') {
+          return isLeadDocVisibleInModule(d, shareMod, { leadCompanyId });
+        }
+        return isCrmDocSharedToWorkshop(d) && isLeadDocVisibleInModule(d, shareMod, { leadCompanyId });
+      });
+    },
+    [crmDealDocs, shareMod, project?.crmDeals, project?.company_id, project?.company?.id],
   );
 
   useEffect(() => {
@@ -482,7 +492,7 @@ export default function WorkshopProjectTasksPanel({
     input.multiple = true;
     input.accept = TASK_ATTACHMENT_FILE_ACCEPT;
     input.onchange = async (e) => {
-      const rawFiles = Array.from(e.target.files || []).slice(0, 20);
+      const rawFiles = Array.from(e.target.files || []).slice(0, 50);
       if (!rawFiles.length) return;
       setUploadingTask(taskId);
       try {

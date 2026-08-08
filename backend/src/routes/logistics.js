@@ -999,22 +999,6 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
       }
     }
 
-    // A) VC dùng chung tài liệu CRM (lead_documents) đã chia sẻ sang xưởng.
-    // (Tài liệu nội bộ VC nếu có sẽ nằm trong file_attachments / dự án đầy đủ.)
-    const { data: sharedRaw, error: sharedErr } = await supabase
-      .from('lead_documents')
-      .select('id, lead_id, project_id, name, doc_type, file_url, file_name, file_size, mime_type, notes, created_at, created_by, allowed_departments, allowed_companies, allowed_share_modules, shared_to_workshop, crm_stage_slug')
-      .eq('project_id', rowId)
-      .eq('shared_to_workshop', true)
-      .order('created_at', { ascending: false });
-    if (sharedErr) console.warn('[logistics/projects/:id] lead_documents shared:', sharedErr.message);
-    const sharedDocs = (Array.isArray(sharedRaw) ? sharedRaw : []).filter((d) => {
-      // Nhiệm vụ / tài liệu giai đoạn SX chỉ thuộc module Sản xuất — không hiển thị ở Vận chuyển
-      if (String(d.crm_stage_slug || '').startsWith('sx_')) return false;
-      return leadDocVisibleForModuleAndUser(d, 'logistics', req.user);
-    });
-    const docs = [];
-
     // CRM deals đầy đủ (assignee, badge SX/VC) — bình luận VC đồng bộ deal CRM.
     let crmDeals = [];
     try {
@@ -1038,6 +1022,40 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
       console.warn('[logistics/projects/:id] crmDeals:', crmDealsBadgeErr.message);
       crmDeals = [];
     }
+
+    // A) VC/LĐ xem toàn bộ lead_documents (CRM + chung), ẩn tài liệu giai đoạn SX.
+    const leadDocSelect = 'id, lead_id, project_id, name, doc_type, file_url, file_name, file_size, mime_type, notes, created_at, created_by, allowed_departments, allowed_companies, allowed_share_modules, shared_to_workshop, crm_stage_slug, source_crm_task_id';
+    const byId = new Map();
+    const { data: byProject, error: sharedErr } = await supabase
+      .from('lead_documents')
+      .select(leadDocSelect)
+      .eq('project_id', rowId)
+      .order('created_at', { ascending: false });
+    if (sharedErr) console.warn('[logistics/projects/:id] lead_documents by project:', sharedErr.message);
+    for (const d of byProject || []) {
+      if (d?.id) byId.set(String(d.id), d);
+    }
+    const dealIdsForDocs = crmDeals.map((d) => d.id).filter(Boolean);
+    if (dealIdsForDocs.length) {
+      const { data: byLead, error: byLeadErr } = await supabase
+        .from('lead_documents')
+        .select(leadDocSelect)
+        .in('lead_id', dealIdsForDocs)
+        .order('created_at', { ascending: false });
+      if (byLeadErr) console.warn('[logistics/projects/:id] lead_documents by lead:', byLeadErr.message);
+      for (const d of byLead || []) {
+        if (d?.id && !byId.has(String(d.id))) byId.set(String(d.id), d);
+      }
+    }
+    const sharedDocs = [...byId.values()]
+      .filter((d) => leadDocVisibleForModuleAndUser(d, 'logistics', req.user, {
+        leadCompanyId: crmDeals[0]?.company_id
+          || project.company_id
+          || project.company?.id
+          || null,
+      }))
+      .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+    const docs = [];
 
     // Stage transitions
     const { data: transitionsRaw, error: transErr } = await supabase

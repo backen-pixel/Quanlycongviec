@@ -1383,11 +1383,10 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
 
   const workshopShareMod = moduleKey === 'vc' ? 'logistics' : 'production';
 
-  /** Chỉ hiện hoạt động đã chia sẻ, đúng module và phân quyền xem công ty/PB */
+  /** SX: chỉ hoạt động đã chia sẻ đúng module. VC/LĐ: mọi hoạt động đã chia sẻ (ẩn kiểu SX). */
   const sharedActivities = useMemo(
     () => (crmActivities || []).filter(
-      (a) => a.shared_to_workshop === true
-        && isCrmSharedArtifactVisibleInModule(a, workshopShareMod)
+      (a) => isCrmSharedArtifactVisibleInModule(a, workshopShareMod)
         && canViewerSeeByCompanyAndDept(a, user),
     ),
     [crmActivities, workshopShareMod, user],
@@ -1398,12 +1397,25 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     [sharedActivities],
   );
 
-  const visibleCrmSharedDocs = useMemo(
-    () => (project?.sharedDocuments || []).filter(
-      (d) => isLeadDocVisibleInModule(d, workshopShareMod) && canViewerSeeByCompanyAndDept(d, user),
-    ),
-    [project?.sharedDocuments, workshopShareMod, user],
-  );
+  const visibleCrmSharedDocs = useMemo(() => {
+    const fromProject = project?.sharedDocuments || [];
+    // VC: gộp thêm tài liệu deal CRM (API lead documents) để không sót file chưa gắn project_id.
+    const merged = workshopShareMod === 'logistics'
+      ? [...fromProject, ...(crmDealDocs || [])]
+      : fromProject;
+    const leadCompanyId = project?.crmDeals?.[0]?.company_id
+      || project?.company_id
+      || project?.company?.id
+      || null;
+    const seen = new Set();
+    return merged.filter((d) => {
+      const id = d?.id != null ? String(d.id) : '';
+      if (id && seen.has(id)) return false;
+      if (id) seen.add(id);
+      return isLeadDocVisibleInModule(d, workshopShareMod, { leadCompanyId })
+        && canViewerSeeByCompanyAndDept(d, user);
+    });
+  }, [project?.sharedDocuments, project?.crmDeals, project?.company_id, project?.company?.id, crmDealDocs, workshopShareMod, user]);
 
   const docImageGallery = useMemo(
     () => collectUploadLightboxItems([
@@ -2759,7 +2771,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
             </div>
             <div className="bg-amber-50 rounded-lg border border-amber-100 p-3 text-center">
               <p className="text-xs text-gray-600 mb-1">Tài liệu</p>
-              <p className="text-xl font-bold text-amber-600">{project.sharedDocuments?.length || 0}</p>
+              <p className="text-xl font-bold text-amber-600">{visibleCrmSharedDocs.length || project.sharedDocuments?.length || 0}</p>
             </div>
             <div className="bg-purple-50 rounded-lg border border-purple-100 p-3 text-center">
               <p className="text-xs text-gray-600 mb-1">Nhiệm vụ {MOD.label}</p>
@@ -3401,7 +3413,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
               {activeTab === 'comments' && (
                 project?.id
                   ? (crmLeadId
-                    ? <CrmLeadCommentsPanel leadId={crmLeadId} forModule="production" onCountChange={setCommentCount} />
+                    ? <CrmLeadCommentsPanel leadId={crmLeadId} forModule={workshopShareMod} onCountChange={setCommentCount} />
                     : <ProjectCommentsPanel projectId={project.id} onCountChange={setCommentCount} />)
                   : <p className="text-sm text-gray-500 text-center py-8">Chưa có dữ liệu để bình luận.</p>
               )}

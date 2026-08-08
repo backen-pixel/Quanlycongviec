@@ -42,7 +42,7 @@ r.get('/leads/:id/comments', async (req, res) => {
       throw error;
     }
     let list = data || [];
-    if (forModule === 'production' && list.length) {
+    if ((forModule === 'production' || forModule === 'logistics') && list.length) {
       const {
         isHideQuoteContractCompany,
         isQuoteContractActivityComment,

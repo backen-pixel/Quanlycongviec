@@ -53,7 +53,10 @@ ok(canViewerSeeByCompanyAndDept(taskWithVis, admin) === true, 'Admin xem mọi t
 
 ok(crmTaskVisibleForModuleAndUser(taskWithVis, 'production', userHcb) === true, 'NV HCB xem ghi chú task chia sẻ SX');
 ok(crmTaskVisibleForModuleAndUser(taskWithVis, 'production', userVpt) === false, 'NV VPT không xem ghi chú task HCB-only');
-ok(crmTaskVisibleForModuleAndUser(taskWithVis, 'logistics', userHcb) === false, 'NV HCB không xem task chỉ module production');
+ok(crmTaskVisibleForModuleAndUser(taskWithVis, 'logistics', userHcb) === true, 'VC/LĐ xem task đã chia sẻ dù chỉ gắn production');
+ok(crmTaskVisibleForModuleAndUser({ ...taskWithVis, stage_slug: 'sx_san_xuat' }, 'logistics', userHcb) === false, 'VC/LĐ ẩn task giai đoạn SX');
+ok(leadDocVisibleForModuleAndUser(leadDoc, 'logistics', userHcb) === true, 'VC/LĐ xem lead_documents dù chỉ gắn production');
+ok(leadDocVisibleForModuleAndUser({ ...leadDoc, crm_stage_slug: 'sx_cat' }, 'logistics', userHcb) === false, 'VC/LĐ ẩn tài liệu giai đoạn SX');
 
 ok(
   crmAttachmentVisibleForModuleAndUser(attShared, 'production', userHcb, taskWithVis) === true,

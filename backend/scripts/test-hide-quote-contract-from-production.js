@@ -111,12 +111,20 @@ ok(
   'shouldHide production VPT',
 );
 ok(
-  !shouldHideQuoteContractFromProduction({
+  shouldHideQuoteContractFromProduction({
     companyId: VPT_COMPANY_ID,
     task: taskBg,
     moduleKey: 'logistics',
   }),
-  'Không ẩn module logistics',
+  'shouldHide logistics VPT (giống SX)',
+);
+ok(
+  !shouldHideQuoteContractFromProduction({
+    companyId: VPT_COMPANY_ID,
+    task: taskBg,
+    moduleKey: 'workshop',
+  }),
+  'Không ẩn module workshop',
 );
 
 console.log(`\n${passed} assertions passed`);
