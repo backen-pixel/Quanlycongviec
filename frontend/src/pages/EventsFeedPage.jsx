@@ -248,11 +248,19 @@ export default function EventsFeedPage({ lockedModule = '' } = {}) {
   const filterCompanyId = scope.companyId;
   const companies = scope.companies;
 
-  // Đổi khối → nếu công ty đang chọn không thuộc khối mới thì bỏ chọn.
+  // Đổi khối → chỉ giữ / khôi phục công ty nếu thuộc danh sách khối hiện tại.
+  // Không lấy crm_dash_filter khi công ty đó không nằm trong khối VC/SX (tránh ping-pong reload).
   useEffect(() => {
-    if (!canPickCompany || scope.metaLoading || !filterCompanyId) return;
-    const ok = (companies || []).some((c) => String(c.id) === String(filterCompanyId));
-    if (!ok) scope.setCompanyId('');
+    if (!canPickCompany || scope.metaLoading) return;
+    const list = companies || [];
+    if (filterCompanyId) {
+      const ok = list.some((c) => String(c.id) === String(filterCompanyId));
+      if (!ok) scope.setCompanyId('');
+      return;
+    }
+    const stored = getStoredCrmFilterCompanyId();
+    if (!stored) return;
+    if (list.some((c) => String(c.id) === String(stored))) scope.setCompanyId(stored);
   }, [canPickCompany, scope.metaLoading, companies, filterCompanyId, scope.setCompanyId]);
 
   const { moduleAccess, canAccessModule } = useModuleAccess();
@@ -296,11 +304,7 @@ export default function EventsFeedPage({ lockedModule = '' } = {}) {
     }
   }, [filterModule, forcedModule]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => {
-    if (!canPickCompany || filterCompanyId) return;
-    const stored = getStoredCrmFilterCompanyId();
-    if (stored) scope.setCompanyId(stored);
-  }, [canPickCompany, filterCompanyId, scope.setCompanyId]);
+  const allowedModulesKey = Array.isArray(allowedModules) ? allowedModules.join(',') : '';
 
   const listParams = useMemo(
     () => {
@@ -309,14 +313,16 @@ export default function EventsFeedPage({ lockedModule = '' } = {}) {
         // SX và VC cùng thấy sự kiện bàn giao / lấy hàng (khối logistics + production).
         p.modules = 'production,logistics';
         p.include_as_participant = '1';
-      } else if (filterModule) {
+        return p;
+      }
+      if (filterModule) {
         p.module = filterModule;
-      } else if (allowedModules && allowedModules.length) {
-        p.modules = allowedModules.join(',');
+      } else if (allowedModulesKey) {
+        p.modules = allowedModulesKey;
       }
       return p;
     },
-    [canPickCompany, filterCompanyId, filterModule, allowedModules, forcedModule],
+    [canPickCompany, filterCompanyId, filterModule, allowedModulesKey, forcedModule],
   );
 
   /** Danh sách nhân viên cho filter / form sự kiện — chỉ trong một công ty (không «tất cả» xuyên hệ thống). */
