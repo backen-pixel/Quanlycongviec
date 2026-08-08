@@ -273,7 +273,7 @@ export default function OverviewScreen() {
       const today = ymd(new Date());
       const tasksPromise = !userId
         ? Promise.resolve([] as WorkTask[])
-        : fetchMyLogisticsTasks(userId).catch(() => [] as WorkTask[]);
+        : fetchMyLogisticsTasks(userId, { limit: 30 }).catch(() => [] as WorkTask[]);
       const eventsPromise = fetchEventsRange({
         dateFrom: today,
         dateTo: today,

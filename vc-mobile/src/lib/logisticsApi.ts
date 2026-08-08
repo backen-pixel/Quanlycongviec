@@ -651,17 +651,74 @@ function mapCommentRow(raw: Record<string, unknown>): ProjectComment {
   };
 }
 
-export async function fetchProjectComments(projectId: string): Promise<ProjectComment[]> {
-  const { data } = await api.get<{ comments?: unknown[] }>(`/projects/${projectId}/comments`);
-  const list = Array.isArray(data?.comments) ? data.comments : [];
-  return list.map((row) => mapCommentRow(row as Record<string, unknown>));
+export type CommentListOpts = { limit?: number; before?: string };
+
+export type CommentListResult = {
+  comments: ProjectComment[];
+  hasMore: boolean;
+};
+
+function commentListParams(opts?: CommentListOpts): Record<string, string | number> | undefined {
+  if (!opts?.limit && !opts?.before) return undefined;
+  const params: Record<string, string | number> = {};
+  if (opts.limit) params.limit = opts.limit;
+  if (opts.before) params.before = opts.before;
+  return params;
+}
+
+function commentHeaderHasMore(headers: Record<string, unknown> | undefined, fallback: boolean): boolean {
+  const raw = String(headers?.['x-has-more'] ?? headers?.['X-Has-More'] ?? '').toLowerCase();
+  if (raw === '1' || raw === 'true') return true;
+  if (raw === '0' || raw === 'false') return false;
+  return fallback;
+}
+
+export async function fetchProjectCommentsPage(
+  projectId: string,
+  opts?: CommentListOpts,
+): Promise<CommentListResult> {
+  const res = await api.get<{ comments?: unknown[]; has_more?: boolean }>(
+    `/projects/${projectId}/comments`,
+    { params: commentListParams(opts) },
+  );
+  const list = Array.isArray(res.data?.comments) ? res.data.comments : [];
+  const fallback = !!(opts?.limit && list.length >= opts.limit);
+  return {
+    comments: list.map((row) => mapCommentRow(row as Record<string, unknown>)),
+    hasMore: res.data?.has_more === true || commentHeaderHasMore(res.headers as Record<string, unknown> | undefined, fallback),
+  };
+}
+
+export async function fetchProjectComments(
+  projectId: string,
+  opts?: CommentListOpts,
+): Promise<ProjectComment[]> {
+  const page = await fetchProjectCommentsPage(projectId, opts);
+  return page.comments;
 }
 
 /** Bình luận deal CRM — cùng nguồn với tab Bình luận trên LeadDetail. */
-export async function fetchDealComments(dealId: string): Promise<ProjectComment[]> {
-  const { data } = await api.get<unknown>(`/crm/leads/${dealId}/comments`);
-  const list = Array.isArray(data) ? data : [];
-  return list.map((row) => mapCommentRow(row as Record<string, unknown>));
+export async function fetchDealCommentsPage(
+  dealId: string,
+  opts?: CommentListOpts,
+): Promise<CommentListResult> {
+  const res = await api.get<unknown>(`/crm/leads/${dealId}/comments`, {
+    params: commentListParams(opts),
+  });
+  const list = Array.isArray(res.data) ? res.data : [];
+  const fallback = !!(opts?.limit && list.length >= opts.limit);
+  return {
+    comments: list.map((row) => mapCommentRow(row as Record<string, unknown>)),
+    hasMore: commentHeaderHasMore(res.headers as Record<string, unknown> | undefined, fallback),
+  };
+}
+
+export async function fetchDealComments(
+  dealId: string,
+  opts?: CommentListOpts,
+): Promise<ProjectComment[]> {
+  const page = await fetchDealCommentsPage(dealId, opts);
+  return page.comments;
 }
 
 export async function fetchProjectCommentIndex(

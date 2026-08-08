@@ -160,7 +160,7 @@ export default function MessagesScreen() {
 
   const loadOnline = useCallback(async () => {
     try {
-      const list = await fetchActivityUsers();
+      const list = await fetchActivityUsers(undefined, { onlineOnly: true });
       setOnlineUsers(list.filter((u) => u.online && String(u.id) !== String(myUserId)));
       setOnlineError('');
     } catch {

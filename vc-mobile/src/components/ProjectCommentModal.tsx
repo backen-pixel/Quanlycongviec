@@ -35,8 +35,10 @@ import {
   userInitials,
 } from '../lib/commentUtils';
 import {
-  fetchDealComments,
-  fetchProjectComments,
+  fetchDealCommentIndex,
+  fetchDealCommentsPage,
+  fetchProjectCommentIndex,
+  fetchProjectCommentsPage,
   isCommentImageAttachment,
   postDealComment,
   postProjectComment,
@@ -69,6 +71,7 @@ import type { ProductionProject } from '../types';
 type SortMode = 'newest' | 'oldest';
 
 const REPLY_DEPTH_STEP = 18;
+const COMMENT_PAGE = 50;
 
 type PendingFile = {
   key: string;
@@ -183,6 +186,9 @@ export default function ProjectCommentModal({
 
   const [comments, setComments] = useState<ProjectComment[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [hasMoreOlder, setHasMoreOlder] = useState(false);
+  const skipAutoScrollRef = useRef(false);
   const [sort, setSort] = useState<SortMode>('newest');
   const [body, setBody] = useState('');
   const [replyTo, setReplyTo] = useState<{ id: string; name: string } | null>(null);
@@ -258,6 +264,18 @@ export default function ProjectCommentModal({
           backgroundColor: colors.card,
         },
         sortBtnText: { color: colors.text, fontSize: 13, fontWeight: '700' },
+        loadMoreBtn: {
+          alignSelf: 'center',
+          marginHorizontal: Spacing.md,
+          marginBottom: 8,
+          paddingHorizontal: 14,
+          paddingVertical: 8,
+          borderRadius: Radii.md,
+          borderWidth: 1,
+          borderColor: colors.border,
+          backgroundColor: colors.card,
+        },
+        loadMoreText: { color: colors.primary, fontSize: 13, fontWeight: '700' },
         list: { flex: 1 },
         listContent: { paddingHorizontal: Spacing.md, paddingTop: 8, paddingBottom: 8, flexGrow: 1 },
         emptyWrap: { alignItems: 'center', paddingVertical: 24, gap: 8 },
@@ -461,6 +479,24 @@ export default function ProjectCommentModal({
     [colors],
   );
 
+  const refreshCommentBadge = useCallback(async (leadId: string | null | undefined) => {
+    try {
+      if (leadId) {
+        const idx = await fetchDealCommentIndex([leadId]);
+        const hit = idx[leadId] || idx[String(leadId)];
+        onPostedRef.current(Number(hit?.count) || 0);
+        return;
+      }
+      if (project?.id) {
+        const idx = await fetchProjectCommentIndex([project.id]);
+        const hit = idx[project.id] || idx[String(project.id)];
+        onPostedRef.current(Number(hit?.count) || 0);
+      }
+    } catch {
+      /* giữ badge cũ */
+    }
+  }, [project?.id]);
+
   const loadComments = useCallback(async (silent = false, leadIdOverride?: string | null) => {
     if (!project?.id) return;
     if (!silent) setLoading(true);
@@ -470,23 +506,54 @@ export default function ProjectCommentModal({
       setShowOnScreen(allowed);
       if (!allowed) {
         setComments([]);
+        setHasMoreOlder(false);
         onPostedRef.current(0);
         return;
       }
       const leadId = leadIdOverride !== undefined
         ? leadIdOverride
         : (dealId || resolveProjectDealId(project));
-      const rows = leadId
-        ? await fetchDealComments(leadId)
-        : await fetchProjectComments(project.id);
-      setComments(rows);
-      onPostedRef.current(rows.length);
+      const page = leadId
+        ? await fetchDealCommentsPage(leadId, { limit: COMMENT_PAGE })
+        : await fetchProjectCommentsPage(project.id, { limit: COMMENT_PAGE });
+      skipAutoScrollRef.current = false;
+      setComments(page.comments);
+      setHasMoreOlder(page.hasMore);
+      await refreshCommentBadge(leadId);
     } catch (e) {
       if (!silent) setErr(formatApiError(e));
     } finally {
       if (!silent) setLoading(false);
     }
-  }, [project, dealId]);
+  }, [project, dealId, refreshCommentBadge]);
+
+  const loadOlderComments = useCallback(async () => {
+    if (!project?.id || loadingOlder || !hasMoreOlder || !comments.length) return;
+    const oldest = comments.reduce((a, b) => (
+      new Date(a.created_at).getTime() < new Date(b.created_at).getTime() ? a : b
+    ));
+    if (!oldest?.created_at) return;
+    setLoadingOlder(true);
+    try {
+      const leadId = dealId || resolveProjectDealId(project);
+      const page = leadId
+        ? await fetchDealCommentsPage(leadId, { limit: COMMENT_PAGE, before: oldest.created_at })
+        : await fetchProjectCommentsPage(project.id, { limit: COMMENT_PAGE, before: oldest.created_at });
+      const seen = new Set(comments.map((c) => c.id));
+      const extra = page.comments.filter((c) => !seen.has(c.id));
+      skipAutoScrollRef.current = true;
+      if (!extra.length) {
+        setHasMoreOlder(false);
+      } else {
+        setComments((prev) => [...prev, ...extra]);
+        setHasMoreOlder(page.hasMore);
+      }
+    } catch (e) {
+      setErr(formatApiError(e));
+    } finally {
+      setLoadingOlder(false);
+    }
+  }, [project, dealId, comments, hasMoreOlder, loadingOlder]);
 
   useEffect(() => {
     if (!active || !project?.id) {
@@ -1046,6 +1113,21 @@ export default function ProjectCommentModal({
         </View>
       ) : null}
 
+      {hasMoreOlder && showOnScreen && !loading ? (
+        <TouchableOpacity
+          style={styles.loadMoreBtn}
+          onPress={() => { void loadOlderComments(); }}
+          disabled={loadingOlder}
+          activeOpacity={0.8}
+        >
+          {loadingOlder ? (
+            <ActivityIndicator size="small" color={colors.primary} />
+          ) : (
+            <Text style={styles.loadMoreText}>Tải bình luận cũ hơn</Text>
+          )}
+        </TouchableOpacity>
+      ) : null}
+
       <ScrollView
         ref={scrollRef}
         style={styles.list}
@@ -1053,6 +1135,7 @@ export default function ProjectCommentModal({
         keyboardShouldPersistTaps="handled"
         onScrollBeginDrag={() => setReactionPickerId(null)}
         onContentSizeChange={() => {
+          if (skipAutoScrollRef.current) return;
           if (comments.length > 0 && sort === 'newest') {
             scrollRef.current?.scrollTo({ y: 0, animated: false });
           }

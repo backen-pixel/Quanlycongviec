@@ -38,9 +38,7 @@ import {
 } from '../lib/projectDetailApi';
 import {
   fetchDealCommentIndex,
-  fetchDealComments,
   fetchProjectCommentIndex,
-  fetchProjectComments,
 } from '../lib/logisticsApi';
 import type { RootStackParamList } from '../navigation/RootNavigator';
 import { formatMoneyAmount, Radii, Spacing, getTaskProgressColor } from '../theme';
@@ -100,15 +98,11 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
             if (resolvedDealId) {
               const idx = await fetchDealCommentIndex([resolvedDealId]);
               const hit = idx[resolvedDealId] || idx[String(resolvedDealId)];
-              if (hit?.count != null) return Number(hit.count) || 0;
-              const rows = await fetchDealComments(resolvedDealId);
-              return rows.length;
+              return Number(hit?.count) || 0;
             }
             const idx = await fetchProjectCommentIndex([projectId]);
             const hit = idx[projectId] || idx[String(projectId)];
-            if (hit?.count != null) return Number(hit.count) || 0;
-            const rows = await fetchProjectComments(projectId);
-            return rows.length;
+            return Number(hit?.count) || 0;
           } catch {
             return 0;
           }

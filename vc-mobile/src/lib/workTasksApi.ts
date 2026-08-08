@@ -22,6 +22,8 @@ export type WorkTasksQuery = {
   /** null/undefined = không lọc người (team). Có id = chỉ việc của người đó. */
   assigneeId?: string | null;
   companyId?: string | null;
+  /** Opt-in sau filter JS phía server. */
+  limit?: number;
 };
 
 /** Nhãn deal/lead giống web Giao việc VC. */
@@ -121,6 +123,7 @@ export async function fetchLogisticsWorkTasks(query: WorkTasksQuery = {}): Promi
   const params: Record<string, string> = { task_scope: 'logistics' };
   if (query.assigneeId) params.assignee_id = query.assigneeId;
   if (query.companyId) params.company_id = query.companyId;
+  if (query.limit && query.limit > 0) params.limit = String(query.limit);
 
   const { data } = await api.get<unknown[]>('/crm/tasks/overview', { params });
   const list = Array.isArray(data) ? data : [];
@@ -129,8 +132,11 @@ export async function fetchLogisticsWorkTasks(query: WorkTasksQuery = {}): Promi
     .filter((t) => t.id && t.lead_id);
 }
 
-export async function fetchMyLogisticsTasks(userId: string): Promise<WorkTask[]> {
-  return fetchLogisticsWorkTasks({ assigneeId: userId });
+export async function fetchMyLogisticsTasks(
+  userId: string,
+  extra: Omit<WorkTasksQuery, 'assigneeId'> = {},
+): Promise<WorkTask[]> {
+  return fetchLogisticsWorkTasks({ ...extra, assigneeId: userId });
 }
 
 /** @deprecated alias — VC mobile dùng logistics */

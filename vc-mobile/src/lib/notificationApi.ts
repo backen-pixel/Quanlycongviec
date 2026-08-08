@@ -352,7 +352,7 @@ async function enrichWithLatestComments(
       const pid = notificationProjectId(item);
       if (!pid) return;
       try {
-        const comments = await fetchProjectComments(pid);
+        const comments = await fetchProjectComments(pid, { limit: 1 });
         const latest = comments[0];
         if (!latest?.content) return;
         const author = latest.user?.full_name || 'Thành viên';

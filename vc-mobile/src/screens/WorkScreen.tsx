@@ -153,7 +153,7 @@ export default function WorkScreen() {
     setError(null);
     try {
       const [mine, shared] = await Promise.all([
-        fetchMyLogisticsTasks(userId),
+        fetchMyLogisticsTasks(userId, { limit: 200 }),
         fetchPrivateDealInboxTasks('logistics').catch(() => [] as SharedInboxTask[]),
       ]);
       setTasks(mine);
@@ -172,7 +172,7 @@ export default function WorkScreen() {
     try {
       if (userId) {
         const [mine, shared] = await Promise.all([
-          fetchMyLogisticsTasks(userId),
+          fetchMyLogisticsTasks(userId, { limit: 200 }),
           fetchPrivateDealInboxTasks('logistics').catch(() => [] as SharedInboxTask[]),
         ]);
         setTasks(mine);
@@ -196,7 +196,7 @@ export default function WorkScreen() {
     if (!userId) return;
     try {
       const [mine, shared] = await Promise.all([
-        fetchMyLogisticsTasks(userId),
+        fetchMyLogisticsTasks(userId, { limit: 200 }),
         fetchPrivateDealInboxTasks('logistics').catch(() => [] as SharedInboxTask[]),
       ]);
       setTasks(mine);

@@ -61,6 +61,10 @@ r.get('/tasks/overview', async (req, res) => {
     } else if (taskScope === 'crm') {
       rows = rows.filter((t) => !String(t.stage_slug || '').startsWith('sx_'));
     }
+    const limitRaw = parseInt(String(req.query.limit || ''), 10);
+    if (Number.isFinite(limitRaw) && limitRaw > 0) {
+      rows = rows.slice(0, Math.min(limitRaw, 500));
+    }
     res.json(rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

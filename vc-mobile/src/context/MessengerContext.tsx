@@ -10,7 +10,7 @@ import React, {
 import { AppState, type AppStateStatus } from 'react-native';
 import {
   fetchMessengerGroups,
-  fetchMessengerMessages,
+  fetchMessengerMessagesPage,
   mapMessageRow,
   markMessengerGroupRead,
   patchThreadFromMessage,
@@ -281,7 +281,8 @@ export function MessengerProvider({ children }: { children: React.ReactNode }) {
   }, [upsertLocalMessage]);
 
   const loadMessages = useCallback(async (groupId: string) => {
-    return fetchMessengerMessages(groupId);
+    const page = await fetchMessengerMessagesPage(groupId, { limit: 40 });
+    return page.messages;
   }, []);
 
   const getPeerPresence = useCallback(

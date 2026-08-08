@@ -37,6 +37,7 @@ import { getAppSocket, subscribeAppSocket } from '../lib/appSocket';
 import { useTheme } from '../context/ThemeContext';
 import {
   fetchMessengerGroupDetail,
+  fetchMessengerMessagesPage,
   fetchReadReceipts,
   formatMessageTime,
   recallMessengerMessage,
@@ -90,7 +91,6 @@ export default function ChatDetailScreen({ navigation, route }: Props) {
   const mc = getMessengerColors(colors, isDark);
   const {
     threads,
-    loadMessages,
     sendText,
     subscribeGroupMessage,
     subscribeMessengerMeta,
@@ -111,6 +111,7 @@ export default function ChatDetailScreen({ navigation, route }: Props) {
   const [seenViewers, setSeenViewers] = useState<MessageViewer[]>([]);
   const [seenSheetOpen, setSeenSheetOpen] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [loadingOlder, setLoadingOlder] = useState(false);
   const [sending, setSending] = useState(false);
   const [draft, setDraft] = useState('');
   const [draftSel, setDraftSel] = useState({ start: 0, end: 0 });
@@ -127,6 +128,10 @@ export default function ChatDetailScreen({ navigation, route }: Props) {
   const [toast, setToast] = useState<ToastState>(null);
   const listRef = useRef<FlatList<MessengerMessage>>(null);
   const initialScrollDone = useRef(false);
+  const messagesRef = useRef<MessengerMessage[]>([]);
+  const loadingOlderRef = useRef(false);
+  const hasMoreOlderRef = useRef(true);
+  messagesRef.current = messages;
 
   const peerPresence: UserPresence | null = thread?.peerId
     ? getPeerPresence(thread.peerId)
@@ -281,10 +286,15 @@ export default function ChatDetailScreen({ navigation, route }: Props) {
     let cancelled = false;
     setLoading(true);
     initialScrollDone.current = false;
-    void Promise.all([loadMessages(threadId), fetchReadReceipts(threadId)])
-      .then(([rows, receipts]) => {
+    hasMoreOlderRef.current = true;
+    void Promise.all([
+      fetchMessengerMessagesPage(threadId, { limit: 40 }),
+      fetchReadReceipts(threadId),
+    ])
+      .then(([page, receipts]) => {
         if (cancelled) return;
-        setMessages(rows);
+        setMessages(page.messages);
+        hasMoreOlderRef.current = page.hasMore;
         setReadReceipts(receipts);
       })
       .catch((e) => {
@@ -296,7 +306,34 @@ export default function ChatDetailScreen({ navigation, route }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [threadId, loadMessages]);
+  }, [threadId]);
+
+  const loadOlderMessages = useCallback(async () => {
+    if (loadingOlderRef.current || !hasMoreOlderRef.current) return;
+    const oldest = messagesRef.current[0];
+    if (!oldest?.created_at) return;
+    loadingOlderRef.current = true;
+    setLoadingOlder(true);
+    try {
+      const page = await fetchMessengerMessagesPage(threadId, {
+        limit: 40,
+        before: String(oldest.created_at),
+      });
+      const seen = new Set(messagesRef.current.map((m) => m.id));
+      const extra = page.messages.filter((m) => !seen.has(m.id));
+      if (!extra.length) {
+        hasMoreOlderRef.current = false;
+      } else {
+        setMessages((prev) => [...extra, ...prev]);
+        hasMoreOlderRef.current = page.hasMore;
+      }
+    } catch {
+      /* giữ trang hiện tại */
+    } finally {
+      loadingOlderRef.current = false;
+      setLoadingOlder(false);
+    }
+  }, [threadId]);
 
   useEffect(() => {
     if (isDirect) {
@@ -743,6 +780,13 @@ export default function ChatDetailScreen({ navigation, route }: Props) {
               maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
               keyboardShouldPersistTaps="handled"
               keyboardDismissMode="on-drag"
+              onEndReached={() => { void loadOlderMessages(); }}
+              onEndReachedThreshold={0.4}
+              ListFooterComponent={
+                loadingOlder ? (
+                  <ActivityIndicator size="small" color={mc.accent} style={{ paddingVertical: 12 }} />
+                ) : null
+              }
               renderItem={({ item, index }) => {
               const mine = String(item.user_id) === String(myUserId);
               const replyParent = item.reply_to

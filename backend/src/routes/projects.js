@@ -2729,20 +2729,35 @@ async function fetchProjectCommentAudienceMembers(projectId) {
 r.get('/:id/comments', async (req, res) => {
   try {
     if (!(await assertProjectAccessible(req, res, req.params.id))) return;
-    const { data, error } = await supabase
+    const limitRaw = parseInt(String(req.query.limit || ''), 10);
+    const before = String(req.query.before || '').trim();
+    const paged = Number.isFinite(limitRaw) && limitRaw > 0;
+    const pageLimit = paged ? Math.min(Math.max(limitRaw, 1), 200) : null;
+
+    let q = supabase
       .from('project_comments')
       .select(PROJECT_COMMENT_SELECT_WITH_USER)
       .eq('project_id', req.params.id)
       .is('deleted_at', null)
       .order('created_at', { ascending: false });
+    if (paged) {
+      q = q.limit(pageLimit);
+      if (before) q = q.lt('created_at', before);
+    }
+    const { data, error } = await q;
     if (error && !String(error.message || '').includes('deleted_at')) throw error;
     let rows = data;
     if (error && String(error.message || '').includes('deleted_at')) {
-      const fb = await supabase
+      let fbQ = supabase
         .from('project_comments')
         .select(PROJECT_COMMENT_SELECT_WITH_USER)
         .eq('project_id', req.params.id)
         .order('created_at', { ascending: false });
+      if (paged) {
+        fbQ = fbQ.limit(pageLimit);
+        if (before) fbQ = fbQ.lt('created_at', before);
+      }
+      const fb = await fbQ;
       rows = fb.data || [];
     }
     rows = rows || [];
@@ -2756,7 +2771,11 @@ r.get('/:id/comments', async (req, res) => {
       ...c,
       reactions: reactions?.get(c.id) || { summary: [], mine: null },
     }));
-    res.json({ comments: out });
+    if (paged) {
+      res.json({ comments: out, has_more: out.length >= pageLimit });
+    } else {
+      res.json({ comments: out });
+    }
   } catch (e) { console.error('GET /projects/:id/comments:', e); res.status(500).json({ error: e.message || 'Lỗi' }); }
 });
 

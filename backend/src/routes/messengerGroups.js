@@ -2577,14 +2577,26 @@ r.get('/groups/:id/chat', async (req, res) => {
   try {
     const ok = await assertGroupMember(req.params.id, req.authUserId);
     if (!ok) return res.status(403).json({ error: 'Bạn không thuộc nhóm này' });
-    const { data, error } = await supabase
+    const limitRaw = parseInt(String(req.query.limit || ''), 10);
+    const paged = Number.isFinite(limitRaw) && limitRaw > 0;
+    const pageLimit = paged ? Math.min(Math.max(limitRaw, 1), 200) : 500;
+    const before = String(req.query.before || '').trim();
+
+    let q = supabase
       .from('messenger_group_messages')
       .select(MSG_USER_SELECT)
-      .eq('group_id', req.params.id)
-      .order('created_at', { ascending: true })
-      .limit(500);
+      .eq('group_id', req.params.id);
+    if (paged) {
+      q = q.order('created_at', { ascending: false }).limit(pageLimit);
+      if (before) q = q.lt('created_at', before);
+    } else {
+      q = q.order('created_at', { ascending: true }).limit(500);
+    }
+    const { data, error } = await q;
     if (error) throw error;
+    const fetchedLen = Array.isArray(data) ? data.length : 0;
     let rows = data || [];
+    if (paged) rows = [...rows].reverse();
     const missingIds = [...new Set(rows.filter((m) => m.user_id && !m.user).map((m) => String(m.user_id)))];
     if (missingIds.length) {
       const users = await fetchUsersByIdsForMessenger(missingIds);
@@ -2612,6 +2624,7 @@ r.get('/groups/:id/chat', async (req, res) => {
       rows = attachGroupDisplayNamesToMessages(rows, groupNickMap, contactNickMap);
     }
     rows = rows.map((m) => hydrateMessengerCallLogRow(m, viewerId));
+    if (paged) res.setHeader('X-Has-More', fetchedLen >= pageLimit ? '1' : '0');
     res.json(rows);
   } catch (e) {
     res.status(500).json({ error: e.message });
