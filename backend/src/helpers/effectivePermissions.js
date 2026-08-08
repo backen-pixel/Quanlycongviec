@@ -1,4 +1,8 @@
 const { supabase } = require('../config/supabase');
+const {
+  getUserModuleRolesMap,
+  resolvePermissionIdsForRoleNames,
+} = require('./userModuleRoles');
 
 /**
  * Chọn override phù hợp — khớp logic RPC user_has_permission.
@@ -67,7 +71,7 @@ async function resolveSystemRolePermissionIds(userId) {
 }
 
 /**
- * @returns {Promise<{ permissions: Array, role_permission_ids: string[], user_roles: Array, system_role: string|null }>}
+ * @returns {Promise<{ permissions: Array, role_permission_ids: string[], user_roles: Array, system_role: string|null, module_roles: Record<string,string> }>}
  */
 async function getEffectivePermissions(userId, ecosystemUnitId = null) {
   const unitId = ecosystemUnitId || null;
@@ -77,6 +81,7 @@ async function getEffectivePermissions(userId, ecosystemUnitId = null) {
     { data: overrides, error: ovErr },
     { data: userRoles, error: urErr },
     systemRoleInfo,
+    moduleRolesMap,
   ] = await Promise.all([
     supabase.from('permissions').select('id, resource, action, description').eq('is_active', true),
     supabase.from('user_permissions').select('permission_id, granted, ecosystem_unit_id').eq('user_id', userId),
@@ -85,16 +90,21 @@ async function getEffectivePermissions(userId, ecosystemUnitId = null) {
       .select('id, role_id, ecosystem_unit_id, role:roles(id, name, is_system)')
       .eq('user_id', userId),
     resolveSystemRolePermissionIds(userId),
+    getUserModuleRolesMap(userId).catch(() => ({})),
   ]);
 
   if (permErr) throw permErr;
   if (ovErr) throw ovErr;
   if (urErr) throw urErr;
 
+  const moduleRoleNames = Object.values(moduleRolesMap || {});
+  const moduleRoleInfo = await resolvePermissionIdsForRoleNames(moduleRoleNames);
+
   const assignedRoleIds = [...new Set((userRoles || []).map((ur) => ur.role_id).filter(Boolean))];
   const allRoleIds = [...new Set([
     ...assignedRoleIds,
     ...(systemRoleInfo.systemRoleId ? [systemRoleInfo.systemRoleId] : []),
+    ...moduleRoleInfo.roleIds,
   ])];
 
   let rolePermRows = [];
@@ -121,14 +131,20 @@ async function getEffectivePermissions(userId, ecosystemUnitId = null) {
     }
   }
 
+  const moduleRolePermIds = moduleRoleInfo.permissionIds;
   const systemRolePermIds = systemRoleInfo.permissionIds;
-  const rolePermissionIds = new Set([...assignedRolePermIds, ...systemRolePermIds]);
+  const rolePermissionIds = new Set([
+    ...assignedRolePermIds,
+    ...moduleRolePermIds,
+    ...systemRolePermIds,
+  ]);
 
   const permissions = (allPerms || []).map((perm) => {
     const override = pickUserOverride(overrides, perm.id, unitId);
     const fromAssigned = assignedRolePermIds.has(perm.id);
+    const fromModule = moduleRolePermIds.has(perm.id);
     const fromSystem = systemRolePermIds.has(perm.id);
-    const fromRole = fromAssigned || fromSystem;
+    const fromRole = fromAssigned || fromModule || fromSystem;
 
     let effective = false;
     let source = 'none';
@@ -139,6 +155,9 @@ async function getEffectivePermissions(userId, ecosystemUnitId = null) {
     } else if (fromAssigned) {
       effective = true;
       source = 'assigned_role';
+    } else if (fromModule) {
+      effective = true;
+      source = 'module_role';
     } else if (fromSystem) {
       effective = true;
       source = 'system_role';
@@ -152,6 +171,7 @@ async function getEffectivePermissions(userId, ecosystemUnitId = null) {
       source,
       from_role: fromRole,
       from_system_role: fromSystem,
+      from_module_role: fromModule,
       from_assigned_role: fromAssigned,
       override: override != null ? override.granted : null,
     };
@@ -162,6 +182,7 @@ async function getEffectivePermissions(userId, ecosystemUnitId = null) {
     role_permission_ids: [...rolePermissionIds],
     system_role: systemRoleInfo.systemRoleName,
     system_role_id: systemRoleInfo.systemRoleId,
+    module_roles: moduleRolesMap || {},
     user_roles: (userRoles || []).map((ur) => ({
       id: ur.id,
       role_id: ur.role_id,

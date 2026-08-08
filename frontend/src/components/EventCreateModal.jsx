@@ -1,29 +1,30 @@
-import { useState, useEffect, useRef, useLayoutEffect } from 'react';
+import { useState, useEffect, useRef, useLayoutEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import api from '../lib/api';
-import { isoToDatetimeLocalValue, datetimeLocalValueToIso } from '../lib/datetimeLocal';
+import { isoToDatetimeLocalValue, datetimeLocalValueToIso, defaultDealEventStartLocalValue } from '../lib/datetimeLocal';
 import { Search, X, Check, ChevronLeft, Users } from 'lucide-react';
+import MultiDayDatePicker from './MultiDayDatePicker';
 
 /** Module/Khối — phân loại sự kiện theo khối. */
 export const EVENT_MODULE_OPTIONS = [
   { value: '', label: 'Tất cả khối', emoji: '🌐', color: 'bg-gray-100 text-gray-700 border-gray-200' },
   { value: 'crm', label: 'Kinh doanh', emoji: '💼', color: 'bg-sky-100 text-sky-700 border-sky-200' },
   { value: 'production', label: 'Sản xuất', emoji: '🏭', color: 'bg-violet-100 text-violet-700 border-violet-200' },
-  { value: 'logistics', label: 'Vận chuyển', emoji: '🚚', color: 'bg-orange-100 text-orange-700 border-orange-200' },
+  { value: 'logistics', label: 'Lắp đặt', emoji: '🔧', color: 'bg-orange-100 text-orange-700 border-orange-200' },
   { value: 'general', label: 'Chung công ty', emoji: '🏢', color: 'bg-emerald-100 text-emerald-700 border-emerald-200' },
 ];
 
 // ═══════════════════════════════════════════════════════════════
 // SEARCH SELECT — Generic dropdown search (Deal, KH, etc.)
 // ═══════════════════════════════════════════════════════════════
-function SearchSelect({ items, value, onChange, placeholder = 'Tìm...', icon = '🔍' }) {
+function SearchSelect({ items, value, onChange, placeholder = 'Tìm...', icon = '🔍', onQueryChange = null, emptyText = 'Không tìm thấy' }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [style, setStyle] = useState({});
   const btnRef = useRef(null);
   const ddRef = useRef(null);
 
-  const selected = items.find(i => i.id === value);
+  const selected = items.find(i => String(i.id) === String(value));
 
   useLayoutEffect(() => {
     if (open && btnRef.current) {
@@ -38,21 +39,35 @@ function SearchSelect({ items, value, onChange, placeholder = 'Tìm...', icon = 
 
   useEffect(() => {
     if (!open) return;
-    const h = (e) => { if (ddRef.current && ddRef.current.contains(e.target)) return; setOpen(false); };
-    window.addEventListener('scroll', h, true);
-    window.addEventListener('resize', () => setOpen(false));
-    return () => { window.removeEventListener('scroll', h, true); window.removeEventListener('resize', () => setOpen(false)); };
+    const close = (e) => {
+      const t = e?.target;
+      if (ddRef.current?.contains(t) || btnRef.current?.contains(t)) return;
+      setOpen(false);
+    };
+    const onResize = () => setOpen(false);
+    document.addEventListener('pointerdown', close, true);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', onResize);
+    return () => {
+      document.removeEventListener('pointerdown', close, true);
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', onResize);
+    };
   }, [open]);
 
-  const filtered = items.filter(i => {
+  useEffect(() => {
+    if (!open || !onQueryChange) return undefined;
+    const t = setTimeout(() => onQueryChange(search), search ? 250 : 0);
+    return () => clearTimeout(t);
+  }, [search, open, onQueryChange]);
+
+  const filtered = onQueryChange ? items : items.filter(i => {
     if (!search) return true;
     const s = search.toLowerCase();
     return i.label?.toLowerCase().includes(s) || i.sub?.toLowerCase().includes(s);
   });
 
   const dropdown = open ? createPortal(
-    <>
-      <div className="fixed inset-0" style={{ zIndex: 99998 }} onClick={() => setOpen(false)} />
       <div ref={ddRef} style={style} className="bg-white border border-gray-200 rounded-xl shadow-2xl overflow-hidden">
         <div className="p-2 border-b">
           <div className="relative">
@@ -76,11 +91,11 @@ function SearchSelect({ items, value, onChange, placeholder = 'Tìm...', icon = 
               {value === i.id && <div className="w-2 h-2 rounded-full bg-blue-600 shrink-0" />}
             </button>
           ))}
-          {filtered.length === 0 && <div className="py-6 text-center text-sm text-gray-400">Không tìm thấy</div>}
+          {filtered.length === 0 && <div className="py-6 text-center text-sm text-gray-400">{emptyText}</div>}
         </div>
         <div className="px-3 py-1.5 border-t text-xs text-gray-400">{filtered.length}/{items.length} kết quả</div>
       </div>
-    </>, document.body) : null;
+    , document.body) : null;
 
   return (
     <div className="relative">
@@ -130,10 +145,20 @@ function UserSearchSelect({ users, value, onChange, placeholder = '👤 Chọn n
 
   useEffect(() => {
     if (!open) return;
-    const h = (e) => { if (ddRef.current && ddRef.current.contains(e.target)) return; setOpen(false); };
-    window.addEventListener('scroll', h, true);
-    window.addEventListener('resize', () => setOpen(false));
-    return () => { window.removeEventListener('scroll', h, true); window.removeEventListener('resize', () => setOpen(false)); };
+    const close = (e) => {
+      const t = e?.target;
+      if (ddRef.current?.contains(t) || btnRef.current?.contains(t)) return;
+      setOpen(false);
+    };
+    const onResize = () => setOpen(false);
+    document.addEventListener('pointerdown', close, true);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', onResize);
+    return () => {
+      document.removeEventListener('pointerdown', close, true);
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', onResize);
+    };
   }, [open]);
 
   const filtered = users.filter(u => {
@@ -143,8 +168,6 @@ function UserSearchSelect({ users, value, onChange, placeholder = '👤 Chọn n
   });
 
   const dropdown = open ? createPortal(
-    <>
-      <div className="fixed inset-0" style={{ zIndex: 99998 }} onClick={() => setOpen(false)} />
       <div ref={ddRef} style={style} className="bg-white border border-gray-200 rounded-xl shadow-2xl overflow-hidden">
         <div className="p-2 border-b">
           <div className="relative">
@@ -175,7 +198,7 @@ function UserSearchSelect({ users, value, onChange, placeholder = '👤 Chọn n
         </div>
         <div className="px-3 py-1.5 border-t text-xs text-gray-400">{filtered.length}/{users.length} nhân viên</div>
       </div>
-    </>, document.body) : null;
+    , document.body) : null;
 
   return (
     <div className="relative">
@@ -228,10 +251,20 @@ function UserMultiSelect({ users, value = [], onChange, placeholder = '👥 Ch�
 
   useEffect(() => {
     if (!open) return;
-    const h = (e) => { if (ddRef.current && ddRef.current.contains(e.target)) return; setOpen(false); };
-    window.addEventListener('scroll', h, true);
-    window.addEventListener('resize', () => setOpen(false));
-    return () => { window.removeEventListener('scroll', h, true); window.removeEventListener('resize', () => setOpen(false)); };
+    const close = (e) => {
+      const t = e?.target;
+      if (ddRef.current?.contains(t) || btnRef.current?.contains(t)) return;
+      setOpen(false);
+    };
+    const onResize = () => setOpen(false);
+    document.addEventListener('pointerdown', close, true);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', onResize);
+    return () => {
+      document.removeEventListener('pointerdown', close, true);
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', onResize);
+    };
   }, [open]);
 
   const toggle = (uid) => {
@@ -245,8 +278,6 @@ function UserMultiSelect({ users, value = [], onChange, placeholder = '👥 Ch�
   });
 
   const dropdown = open ? createPortal(
-    <>
-      <div className="fixed inset-0" style={{ zIndex: 99998 }} onClick={() => setOpen(false)} />
       <div ref={ddRef} style={style} className="bg-white border border-gray-200 rounded-xl shadow-2xl overflow-hidden">
         <div className="p-2 border-b">
           <div className="relative">
@@ -292,7 +323,7 @@ function UserMultiSelect({ users, value = [], onChange, placeholder = '👥 Ch�
           {value.length > 0 && <button onClick={() => onChange([])} className="text-red-500 hover:underline cursor-pointer">Bỏ chọn tất cả</button>}
         </div>
       </div>
-    </>, document.body) : null;
+    , document.body) : null;
 
   return (
     <div className="relative">
@@ -376,6 +407,9 @@ function joinLocalDateTime24h(date, hour, minute) {
   const m = minute != null && minute !== '' ? snapMinuteToStep5(minute) : '00';
   return `${date}T${h}:${m}`;
 }
+
+/** Loại sự kiện cho phép chọn nhiều ngày (lắp đặt / vận chuyển / lấy hàng). */
+export const MULTI_DAY_EVENT_TYPE_SLUGS = new Set(['installation', 'delivery', 'pickup']);
 
 /** Ngày (lịch) + giờ/phút chọn list — luôn dạng 24 giờ */
 function EventDateTime24hPickers({ label, required, value, onChange, hint }) {
@@ -468,62 +502,132 @@ export default function EventCreateModal({
     const pad = (n) => String(n).padStart(2, '0');
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
   };
+  const defaultStartLocal = toLocalDateTimeInput(event?.start_time) || startFromPreset() || (event ? '' : defaultDealEventStartLocalValue());
   const [form, setForm] = useState({
     title: event?.title || defaultTitle || '',
     event_type: event?.event_type || defaultEventType || 'site_visit',
     description: event?.description || defaultDescription || '',
     location: event?.location || defaultLocation || '',
-    start_time: toLocalDateTimeInput(event?.start_time) || startFromPreset(),
+    start_time: defaultStartLocal,
     end_time: toLocalDateTimeInput(event?.end_time),
     all_day: event?.all_day || false,
     lead_id: event?.lead_id || defaultLeadId || defaultLead?.id || '',
     customer_id: event?.customer_id || defaultCustomerId || defaultLead?.customer_id || '',
-    assignee_id: event?.assignee_id || defaultAssigneeId || defaultLead?.assigned_to || defaultLead?.lead_owner_id || JSON.parse(localStorage.getItem('user') || '{}').id || '',
+    assignee_id: event?.assignee_id || defaultAssigneeId || defaultLead?.assigned_to || defaultLead?.lead_owner_id || (() => {
+      try { return JSON.parse(localStorage.getItem('user') || '{}')?.id || ''; } catch { return ''; }
+    })(),
     result: event?.result || '',
     status: event?.status || 'planned',
     module: event?.module || defaultModule || 'crm',
   });
+  const initialOcc = (() => {
+    const raw = event?.occurrence_dates;
+    if (Array.isArray(raw) && raw.length) {
+      return raw.map((d) => String(d).slice(0, 10)).filter(Boolean).sort();
+    }
+    const st = defaultStartLocal;
+    const ymd = st?.slice(0, 10);
+    return ymd ? [ymd] : [];
+  })();
+  const [occurrenceDates, setOccurrenceDates] = useState(initialOcc);
   const [participantIds, setParticipantIds] = useState(
     event?.participants?.map(p => p.user_id) || []
   );
   const [leads, setLeads] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
+  const defaultLeadRef = useRef(defaultLead);
+  defaultLeadRef.current = defaultLead;
 
-  /** Tạo mới: tự mời tất cả nhân viên có trong danh sách (một lần khi load users) */
+  const linkForModule = ['logistics', 'production', 'crm'].includes(String(form.module || ''))
+    ? String(form.module)
+    : '';
+  const scopeCustomersToDeals = linkForModule === 'logistics' || linkForModule === 'production';
+
+  /** Tạo mới: mặc định mời người đang đăng nhập (không spam cả công ty). */
   useEffect(() => {
-    if (isEdit || participantsAutoFilled.current || !users?.length) return;
+    if (isEdit || participantsAutoFilled.current) return;
     participantsAutoFilled.current = true;
-    setParticipantIds(users.map((u) => u.id));
-  }, [isEdit, users]);
+    try {
+      const me = JSON.parse(localStorage.getItem('user') || '{}')?.id;
+      if (me) setParticipantIds([me]);
+    } catch { /* ignore */ }
+  }, [isEdit]);
+
+  const customersFromDeals = (list) => {
+    const map = new Map();
+    for (const l of list || []) {
+      const cid = l.customer_id || l.customer?.id;
+      if (!cid) continue;
+      map.set(String(cid), {
+        id: cid,
+        full_name: l.customer_name || l.customer?.full_name || 'Khách hàng',
+        phone: l.customer_phone || l.customer?.phone || '',
+        email: l.customer?.email || '',
+      });
+    }
+    const extra = defaultLeadRef.current;
+    if (extra?.customer_id && !map.has(String(extra.customer_id))) {
+      map.set(String(extra.customer_id), {
+        id: extra.customer_id,
+        full_name: extra.customer?.full_name || extra.customer_name || 'Khách hàng',
+        phone: extra.customer?.phone || '',
+        email: extra.customer?.email || '',
+      });
+    }
+    return [...map.values()];
+  };
+
+  const applyPickerRows = (rows) => {
+    const extra = defaultLeadRef.current;
+    let list = Array.isArray(rows) ? rows : [];
+    if (extra?.id && !list.some((l) => String(l.id) === String(extra.id))) {
+      list = [extra, ...list];
+    }
+    setLeads(list);
+    if (scopeCustomersToDeals) setCustomers(customersFromDeals(list));
+  };
+
+  const fetchLinkDeals = useCallback(async (q = '') => {
+    if (lockLead) return;
+    try {
+      const params = { type: 'deal', limit: 40 };
+      if (String(q || '').trim()) params.q = String(q).trim();
+      if (defaultCompanyId) params.company_id = defaultCompanyId;
+      if (linkForModule) params.for_module = linkForModule;
+      const { data } = await api.get('/crm/leads/picker', { params });
+      applyPickerRows(data?.results || []);
+    } catch {
+      applyPickerRows([]);
+    }
+  }, [lockLead, defaultCompanyId, linkForModule, scopeCustomersToDeals]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (!lockLead) {
-      api.get('/crm/leads', { params: { type: 'deal', limit: 200 } }).then(r => {
-        const d = r.data;
-        let list = Array.isArray(d) ? d : (d?.leads ?? d?.data ?? []);
-        list = Array.isArray(list) ? list : [];
-        if (defaultLead?.id && !list.some((l) => l.id === defaultLead.id)) {
-          list = [defaultLead, ...list];
-        }
-        setLeads(list);
-      }).catch(() => {
-        if (defaultLead?.id) setLeads([defaultLead]);
-      });
-    } else if (defaultLead?.id) {
-      setLeads([defaultLead]);
+    if (lockLead) {
+      if (defaultLead?.id) {
+        setLeads([defaultLead]);
+        if (scopeCustomersToDeals) setCustomers(customersFromDeals([defaultLead]));
+      }
+      return undefined;
     }
-    api.get('/customers', { params: { limit: 500 } }).then(r => {
-      const d = r.data;
-      const list = Array.isArray(d) ? d : (d?.customers ?? d?.data ?? []);
-      setCustomers(Array.isArray(list) ? list : []);
-    }).catch(() => {});
-  }, [lockLead, defaultLead?.id]);
+    void fetchLinkDeals('');
+    if (!scopeCustomersToDeals) {
+      const params = { limit: 500 };
+      if (defaultCompanyId) params.company_id = defaultCompanyId;
+      api.get('/customers', { params }).then((r) => {
+        const d = r.data;
+        const list = Array.isArray(d) ? d : (d?.customers ?? d?.data ?? []);
+        setCustomers(Array.isArray(list) ? list : []);
+      }).catch(() => {});
+    }
+    return undefined;
+  }, [lockLead, defaultLead?.id, fetchLinkDeals, scopeCustomersToDeals, defaultCompanyId]);
 
   const selectLead = (leadId) => {
-    setForm(f => ({ ...f, lead_id: leadId }));
-    const lead = leads.find(l => l.id === leadId);
-    if (lead?.customer_id) setForm(f => ({ ...f, customer_id: lead.customer_id }));
+    const lead = leads.find((l) => String(l.id) === String(leadId));
+    const cid = lead?.customer_id || lead?.customer?.id || '';
+    setForm((f) => ({ ...f, lead_id: leadId, ...(cid ? { customer_id: cid } : {}) }));
   };
 
   const toggleParticipant = (uid) => {
@@ -531,44 +635,122 @@ export default function EventCreateModal({
   };
 
   const save = async () => {
-    if (!form.title.trim()) return alert('Nhập tiêu đề sự kiện');
-    if (!form.start_time) return alert('Chọn ngày giờ bắt đầu');
-    if (form.end_time && new Date(form.end_time) < new Date(form.start_time)) {
-      return alert('Giờ kết thúc phải lớn hơn hoặc bằng giờ bắt đầu');
-    }
-    setSaving(true);
+    setSaveError('');
     try {
+      let title = String(form.title || '').trim().replace(/\s*-\s*$/, '').trim();
+      if (!title) {
+        const t = eventTypes.find((x) => x.slug === form.event_type);
+        title = String(t?.name || '').trim();
+      }
+      if (!title) {
+        setSaveError('Nhập tiêu đề sự kiện.');
+        return;
+      }
+
+      const multiDay = MULTI_DAY_EVENT_TYPE_SLUGS.has(String(form.event_type || ''));
+      let dates = [...occurrenceDates].filter(Boolean).sort();
+      const fallbackStart = form.start_time || startFromPreset() || defaultDealEventStartLocalValue();
+      if (multiDay && !dates.length) {
+        const ymd = String(fallbackStart).slice(0, 10);
+        if (ymd) dates = [ymd];
+      }
+      if (multiDay && !dates.length) {
+        setSaveError('Chọn ít nhất một ngày cho sự kiện lắp đặt / vận chuyển.');
+        return;
+      }
+
+      let startLocal = form.start_time || fallbackStart;
+      let endLocal = form.end_time || '';
+      if (!multiDay && !startLocal) {
+        setSaveError('Chọn ngày giờ bắt đầu.');
+        return;
+      }
+      if (endLocal && startLocal && new Date(endLocal) < new Date(startLocal) && !multiDay) {
+        setSaveError('Giờ kết thúc phải lớn hơn hoặc bằng giờ bắt đầu.');
+        return;
+      }
+
       const leadId = form.lead_id || defaultLeadId || defaultLead?.id || '';
+      const selectedLead = leads.find((l) => String(l.id) === String(leadId));
+      let localCompanyId = '';
+      try { localCompanyId = JSON.parse(localStorage.getItem('user') || '{}')?.company_id || ''; } catch { localCompanyId = ''; }
       const companyId = String(
         defaultCompanyId
         || defaultLead?.company_id
         || event?.company_id
+        || selectedLead?.company_id
+        || localCompanyId
         || '',
       ).trim();
       if (!isEdit && !leadId && !companyId) {
-        alert('Chọn công ty trên trang Sự kiện (bộ lọc phía trên) trước khi tạo sự kiện không gắn lead/deal.');
+        setSaveError('Chọn deal/lead hoặc chọn công ty trên bộ lọc trang Sự kiện trước khi tạo.');
+        return;
+      }
+
+      setSaving(true);
+      if (multiDay && dates.length) {
+        const startParts = splitLocalDateTime24h(startLocal || `${dates[0]}T09:00`);
+        const endParts = splitLocalDateTime24h(endLocal || startLocal || `${dates[0]}T17:00`);
+        startLocal = joinLocalDateTime24h(dates[0], startParts.hour, startParts.minute);
+        endLocal = joinLocalDateTime24h(dates[dates.length - 1], endParts.hour || startParts.hour, endParts.minute || startParts.minute);
+      }
+      const startIso = datetimeLocalValueToIso(startLocal);
+      if (!startIso) {
+        setSaveError('Ngày giờ bắt đầu không hợp lệ.');
         setSaving(false);
         return;
       }
+
       const payload = {
-        ...form,
-        lead_id: leadId,
+        title,
+        event_type: form.event_type,
+        description: form.description,
+        location: form.location,
+        all_day: form.all_day,
+        lead_id: leadId || null,
+        customer_id: form.customer_id || null,
+        assignee_id: form.assignee_id || null,
+        result: form.result,
+        status: form.status,
+        module: form.module,
         participant_ids: participantIds,
-        start_time: datetimeLocalValueToIso(form.start_time),
-        end_time: form.end_time ? datetimeLocalValueToIso(form.end_time) : null,
+        start_time: startIso,
+        end_time: endLocal ? datetimeLocalValueToIso(endLocal) : null,
       };
+      if (multiDay) payload.occurrence_dates = dates;
+      else if (isEdit) payload.occurrence_dates = null;
       if (companyId) payload.company_id = companyId;
+
       if (isEdit) {
         await api.put(`/events/${event.id}`, payload);
       } else {
         await api.post('/events', payload);
       }
-      onSaved();
-    } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
-    setSaving(false);
+      onSaved?.();
+    } catch (e) {
+      setSaveError(e.response?.data?.error || e.response?.data?.message || e.message || 'Không tạo được sự kiện.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const selectedType = eventTypes.find(t => t.slug === form.event_type) || {};
+  const isMultiDayType = MULTI_DAY_EVENT_TYPE_SLUGS.has(String(form.event_type || ''));
+
+  const syncOccurrenceToFormTimes = (dates) => {
+    const sorted = [...dates].filter(Boolean).sort();
+    setOccurrenceDates(sorted);
+    if (!sorted.length) return;
+    setForm((f) => {
+      const sp = splitLocalDateTime24h(f.start_time || `${sorted[0]}T09:00`);
+      const ep = splitLocalDateTime24h(f.end_time || f.start_time || `${sorted[0]}T17:00`);
+      return {
+        ...f,
+        start_time: joinLocalDateTime24h(sorted[0], sp.hour, sp.minute),
+        end_time: joinLocalDateTime24h(sorted[sorted.length - 1], ep.hour || sp.hour, ep.minute || sp.minute),
+      };
+    });
+  };
 
   const applyEventTypeAndTitle = (slug) => {
     const t = eventTypes.find((x) => x.slug === slug);
@@ -582,13 +764,17 @@ export default function EventCreateModal({
     const rest = stripEventTypeTitlePrefix(form.title, eventTypes);
     const nextTitle = rest ? `${t.name} - ${rest}` : `${t.name} - `;
     setForm((f) => ({ ...f, event_type: slug, title: nextTitle, module: nextModule }));
+    if (MULTI_DAY_EVENT_TYPE_SLUGS.has(slug) && !occurrenceDates.length) {
+      const ymd = (form.start_time || startFromPreset() || defaultDealEventStartLocalValue() || '').slice(0, 10);
+      if (ymd) syncOccurrenceToFormTimes([ymd]);
+    }
   };
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[10040] p-4" data-tour="event-create-modal">
-      <div className="bg-white rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl">
+      <div className="bg-white rounded-2xl max-w-2xl w-full max-h-[90vh] shadow-2xl flex flex-col" onClick={(e) => e.stopPropagation()}>
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b sticky top-0 bg-white z-10">
+        <div className="flex items-center justify-between px-6 py-4 border-b shrink-0 bg-white rounded-t-2xl">
           <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
             {selectedType.icon || '📋'} {isEdit ? 'Sửa sự kiện' : 'Tạo sự kiện mới'}
           </h2>
@@ -602,7 +788,12 @@ export default function EventCreateModal({
           </button>
         </div>
 
-        <div className="p-6 space-y-4">
+        <div className="p-6 space-y-4 overflow-y-auto flex-1 min-h-0">
+          {saveError ? (
+            <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 font-medium">
+              {saveError}
+            </div>
+          ) : null}
           {/* Khối / Module — chỉ hiện chọn nếu user thuộc nhiều khối, hoặc là admin */}
           {(() => {
             const visibleModules = EVENT_MODULE_OPTIONS.filter((m) => {
@@ -662,24 +853,78 @@ export default function EventCreateModal({
 
           {/* Ngày + giờ 24h (dropdown giờ 00–23, phút bước 5) — không AM/PM */}
           <div data-tour="event-create-datetime" className="rounded-xl border border-gray-200 bg-gray-50/90 p-4 space-y-4">
-            <p className="text-[11px] text-gray-600">
-              Chọn <strong className="text-gray-800">ngày</strong> trên lịch, sau đó chọn <strong className="text-gray-800">giờ · phút</strong> theo đồng hồ{' '}
-              <strong className="text-emerald-800">24 giờ</strong> (vd. 14 = 2 giờ chiều).
-            </p>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-              <EventDateTime24hPickers
-                label="Bắt đầu"
-                required
-                value={form.start_time}
-                onChange={(v) => setForm((f) => ({ ...f, start_time: v }))}
-              />
-              <EventDateTime24hPickers
-                label="Kết thúc"
-                value={form.end_time || ''}
-                onChange={(v) => setForm((f) => ({ ...f, end_time: v }))}
-                hint="Xóa ngày (để trống ô lịch) nếu chưa có giờ kết thúc."
-              />
-            </div>
+            {isMultiDayType ? (
+              <>
+                <div>
+                  <label className="text-xs font-medium text-gray-700 block mb-1.5">
+                    Ngày làm việc (nhiều ngày) *
+                  </label>
+                  <p className="text-[11px] text-gray-600 mb-2">
+                    Bấm chọn từng ngày — có thể <strong>3 ngày liên tiếp</strong> hoặc <strong>cách ngày</strong> (vd. 1, 3, 5).
+                    Trên lịch, hover một ngày sẽ làm sáng các ngày cùng sự kiện.
+                  </p>
+                  <MultiDayDatePicker
+                    selectedYmds={occurrenceDates}
+                    onChange={syncOccurrenceToFormTimes}
+                    anchorYmd={occurrenceDates[0] || form.start_time?.slice(0, 10) || ''}
+                  />
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                  <EventDateTime24hPickers
+                    label="Giờ bắt đầu (mỗi ngày)"
+                    required
+                    value={form.start_time}
+                    onChange={(v) => {
+                      const sp = splitLocalDateTime24h(v);
+                      const first = occurrenceDates[0] || sp.date;
+                      setForm((f) => ({
+                        ...f,
+                        start_time: joinLocalDateTime24h(first || sp.date, sp.hour, sp.minute),
+                      }));
+                    }}
+                    hint="Chỉ dùng phần giờ·phút; ngày lấy từ danh sách đã chọn."
+                  />
+                  <EventDateTime24hPickers
+                    label="Giờ kết thúc (mỗi ngày)"
+                    value={form.end_time || ''}
+                    onChange={(v) => {
+                      if (!v) {
+                        setForm((f) => ({ ...f, end_time: '' }));
+                        return;
+                      }
+                      const ep = splitLocalDateTime24h(v);
+                      const last = occurrenceDates[occurrenceDates.length - 1] || occurrenceDates[0] || ep.date;
+                      setForm((f) => ({
+                        ...f,
+                        end_time: joinLocalDateTime24h(last || ep.date, ep.hour, ep.minute),
+                      }));
+                    }}
+                    hint="Giờ kết thúc trong ngày (áp dụng khung giờ)."
+                  />
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="text-[11px] text-gray-600">
+                  Chọn <strong className="text-gray-800">ngày</strong> trên lịch, sau đó chọn <strong className="text-gray-800">giờ · phút</strong> theo đồng hồ{' '}
+                  <strong className="text-emerald-800">24 giờ</strong> (vd. 14 = 2 giờ chiều).
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                  <EventDateTime24hPickers
+                    label="Bắt đầu"
+                    required
+                    value={form.start_time}
+                    onChange={(v) => setForm((f) => ({ ...f, start_time: v }))}
+                  />
+                  <EventDateTime24hPickers
+                    label="Kết thúc"
+                    value={form.end_time || ''}
+                    onChange={(v) => setForm((f) => ({ ...f, end_time: v }))}
+                    hint="Xóa ngày (để trống ô lịch) nếu chưa có giờ kết thúc."
+                  />
+                </div>
+              </>
+            )}
           </div>
 
           {/* Location */}
@@ -694,7 +939,11 @@ export default function EventCreateModal({
           <div className="grid grid-cols-2 gap-4" data-tour="event-create-links">
             <div>
               <label className="text-xs font-medium text-gray-600 block mb-1">
-                Liên kết {defaultLead?.type === 'lead' ? 'Lead' : 'Deal'}
+                {form.module === 'logistics'
+                  ? 'Deal Lắp đặt'
+                  : form.module === 'production'
+                    ? 'Deal Sản xuất'
+                    : `Liên kết ${defaultLead?.type === 'lead' ? 'Lead' : 'Deal'}`}
               </label>
               {lockLead && (defaultLead || form.lead_id) ? (
                 <div className="w-full min-h-[40px] px-3 py-2 border border-blue-200 bg-blue-50 rounded-lg text-sm">
@@ -709,25 +958,50 @@ export default function EventCreateModal({
                 </div>
               ) : (
                 <SearchSelect
-                  items={leads.map(l => ({ id: l.id, label: `${l.code || ''} — ${l.title || ''}`, sub: l.customer?.full_name || '' }))}
+                  items={leads.map(l => ({
+                    id: l.id,
+                    label: `${l.code || ''} — ${l.title || ''}`,
+                    sub: [l.customer_name || l.customer?.full_name, l.project_code].filter(Boolean).join(' · '),
+                  }))}
                   value={form.lead_id}
                   onChange={v => selectLead(v)}
-                  placeholder="🔗 Tìm lead/deal..."
+                  placeholder={form.module === 'logistics' ? 'Tìm deal trên bảng Lắp đặt…' : 'Tìm lead/deal…'}
                   icon="🎯"
+                  onQueryChange={lockLead ? null : fetchLinkDeals}
+                  emptyText={form.module === 'logistics'
+                    ? 'Không có deal trên bảng Lắp đặt'
+                    : form.module === 'production'
+                      ? 'Không có deal trên bảng Sản xuất'
+                      : 'Không tìm thấy'}
                 />
               )}
             </div>
             <div>
-              <label className="text-xs font-medium text-gray-600 block mb-1">Khách hàng</label>
+              <label className="text-xs font-medium text-gray-600 block mb-1">
+                {form.module === 'logistics'
+                  ? 'Khách hàng (Lắp đặt)'
+                  : form.module === 'production'
+                    ? 'Khách hàng (Sản xuất)'
+                    : 'Khách hàng'}
+              </label>
               <SearchSelect
                 items={customers.map(c => ({ id: c.id, label: c.full_name, sub: c.phone || c.email || '' }))}
                 value={form.customer_id}
                 onChange={v => setForm(f => ({ ...f, customer_id: v }))}
-                placeholder="👤 Tìm khách hàng..."
+                placeholder="Tìm khách hàng..."
                 icon="👤"
+                onQueryChange={scopeCustomersToDeals ? fetchLinkDeals : null}
+                emptyText={form.module === 'logistics'
+                  ? 'Chỉ hiện KH của deal đang trên bảng Lắp đặt'
+                  : 'Không tìm thấy'}
               />
             </div>
           </div>
+          {scopeCustomersToDeals ? (
+            <p className="-mt-2 text-[11px] text-orange-700">
+              Chỉ deal / khách hàng đang trên bảng {form.module === 'production' ? 'Sản xuất' : 'Lắp đặt'} — không lấy lead CRM thuần.
+            </p>
+          ) : null}
 
           {/* Assignee */}
           <div data-tour="event-create-assignee">
@@ -770,12 +1044,15 @@ export default function EventCreateModal({
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 border-t bg-gray-50 rounded-b-2xl flex justify-end gap-2">
+        <div className="px-6 py-4 border-t bg-gray-50 rounded-b-2xl flex items-center justify-end gap-2 shrink-0">
+          {saveError ? (
+            <span className="mr-auto text-xs text-red-600 font-medium truncate max-w-[55%]" title={saveError}>{saveError}</span>
+          ) : null}
           <button type="button" onClick={onClose} className="h-9 px-4 text-gray-600 hover:bg-gray-100 rounded-lg text-sm font-medium cursor-pointer">Hủy</button>
           <button
             type="button"
             data-tour="event-create-save"
-            onClick={save}
+            onClick={() => { void save(); }}
             disabled={saving}
             className="h-9 px-6 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-bold cursor-pointer disabled:opacity-50"
           >
@@ -783,6 +1060,7 @@ export default function EventCreateModal({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

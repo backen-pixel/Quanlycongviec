@@ -43,7 +43,7 @@ async function ping(isLogin = false): Promise<void> {
     await api.post('/devices/ping', {
       device_id: deviceId,
       platform: Platform.OS === 'android' || Platform.OS === 'ios' ? Platform.OS : 'web',
-      device_name: `Vận chuyển lắp đặt (${Platform.OS})`,
+      device_name: `Lắp đặt (${Platform.OS})`,
       os_name: Platform.OS,
       os_version: String(Platform.Version ?? ''),
       app_version: version,

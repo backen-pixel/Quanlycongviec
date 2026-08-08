@@ -98,7 +98,7 @@ export function isVcRelevantPushData(data: Record<string, unknown> | null | unde
 }
 
 export function notificationCategoryLabel(n: SxCommentNotification): string {
-  if (isWorkshopDealNotification(n)) return 'Vận chuyển';
+  if (isWorkshopDealNotification(n)) return 'Lắp đặt';
   return 'Bình luận';
 }
 

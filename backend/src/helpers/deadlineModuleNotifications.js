@@ -66,7 +66,7 @@ function taskDeadlineTypeForModule(mod, isOverdue) {
 
 const MODULE_LABEL = {
   production: 'Xưởng',
-  logistics: 'Vận chuyển',
+  logistics: 'Lắp đặt',
   project: 'Dự án',
   crm: 'CRM',
 };

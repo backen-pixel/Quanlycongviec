@@ -184,10 +184,10 @@ export default function IntegrationLeadRoutingFields({
           <option value="">-- Chọn module --</option>
           <option value="crm">CRM</option>
           <option value="production">Sản xuất</option>
-          <option value="logistics">Vận chuyển</option>
+          <option value="logistics">Lắp đặt</option>
         </select>
         <p className="text-[10px] text-gray-500 mt-1">
-          Module <strong>Sản xuất</strong> hoặc <strong>Vận chuyển</strong> sẽ tự tạo bản ghi dạng <strong>Deal</strong>.
+          Module <strong>Sản xuất</strong> hoặc <strong>Lắp đặt</strong> sẽ tự tạo bản ghi dạng <strong>Deal</strong>.
         </p>
       </div>
 

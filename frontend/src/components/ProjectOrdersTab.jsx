@@ -72,7 +72,7 @@ export default function ProjectOrdersTab({
 
   const pushVc = async (orderId, masterProjectId) => {
     const pid = masterProjectId || projectId;
-    if (!confirm('Tạo dự án VC và chuyển deal đơn này sang module Vận chuyển?')) return;
+    if (!confirm('Tạo dự án VC và chuyển deal đơn này sang module Lắp đặt?')) return;
     setPushing(orderId);
     setMsg('');
     try {
@@ -258,7 +258,7 @@ export default function ProjectOrdersTab({
           <h3 className="text-sm font-bold text-gray-900">{logisticsView ? 'Đơn hàng trên dự án VC' : 'Đơn hàng theo dự án'}</h3>
           <p className="text-xs text-gray-600 mt-1 max-w-xl">
             {logisticsView
-              ? 'Các đơn đã bàn giao từ Sản xuất sang Vận chuyển. Cập nhật tiến độ đơn và nhiệm vụ deal con.'
+              ? 'Các đơn đã bàn giao từ Sản xuất sang Lắp đặt. Cập nhật tiến độ đơn và nhiệm vụ deal con.'
               : 'Mỗi đơn (nếu có trong hệ thống) có pipeline và nhiệm vụ CRM gắn deal con. Thêm đơn mới từ giao diện đã tắt — chỉ xem/xử lý đơn đã tồn tại. Khi sẵn sàng, đẩy đơn sang VC.'}
           </p>
         </div>

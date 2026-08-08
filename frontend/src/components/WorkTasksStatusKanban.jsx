@@ -28,7 +28,7 @@ const MODULE_KIND_STYLES = {
   'CRM-Deal': { iconBg: 'bg-emerald-100 text-emerald-600', label: 'CRM Deal' },
   'CRM-Lead': { iconBg: 'bg-teal-100 text-teal-600', label: 'CRM Lead' },
   SX: { iconBg: 'bg-orange-100 text-orange-600', label: 'Sản xuất' },
-  VC: { iconBg: 'bg-violet-100 text-violet-600', label: 'Vận chuyển' },
+  VC: { iconBg: 'bg-violet-100 text-violet-600', label: 'Lắp đặt' },
   'Giao việc': { iconBg: 'bg-blue-100 text-blue-600', label: 'Giao việc' },
   'Cá nhân': { iconBg: 'bg-slate-100 text-slate-600', label: 'Cá nhân' },
   'Dự án': { iconBg: 'bg-sky-100 text-sky-600', label: 'Dự án' },

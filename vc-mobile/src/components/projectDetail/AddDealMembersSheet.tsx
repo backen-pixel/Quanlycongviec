@@ -227,7 +227,7 @@ export default function AddDealMembersSheet({
                   </View>
                 </TapHighlight>
                 {isSysAdmin && !companyId ? (
-                  <Text style={styles.hint}>Chọn công ty vận chuyển lắp đặt để xem nhân viên</Text>
+                  <Text style={styles.hint}>Chọn công ty lắp đặt lắp đặt để xem nhân viên</Text>
                 ) : null}
               </View>
             ) : null}

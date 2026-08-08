@@ -31,7 +31,7 @@ const LEGACY_SEG_EMPLOYEES = 'Nhân viên';
 const MODULES = {
   crm: 'CRM',
   sx: 'Sản xuất',
-  vc: 'Vận chuyển',
+  vc: 'Lắp đặt',
   mkt: 'Marketing',
   other: 'Khác',
 };
@@ -357,7 +357,7 @@ const ENTITY_KIND_LABELS = {
   lead: 'Lead',
   deal: 'Deal',
   production_project: 'Dự án sản xuất',
-  vc_project: 'Dự án vận chuyển',
+  vc_project: 'Dự án lắp đặt',
   project: 'Dự án',
   task: 'Task',
 };

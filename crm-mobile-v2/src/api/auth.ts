@@ -31,7 +31,7 @@ export const ROLE_LABELS: Record<string, string> = {
   production_admin: 'Admin Sản xuất',
   crm_production_staff: 'NV CRM + Admin SX',
   crm_production_admin: 'Admin CRM + Sản xuất',
-  logistics_admin: 'Admin Vận chuyển',
+  logistics_admin: 'Admin Lắp đặt',
   driver: 'Tài xế',
   installer: 'Lắp đặt',
   customer_care: 'CSKH',

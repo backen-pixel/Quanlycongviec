@@ -12,6 +12,9 @@ const {
 } = require('../helpers/effectivePermissions');
 const r = express.Router();
 
+// Hot-reload / deploy: xóa cache catalog cũ (TTL 300s) để UI thấy module mới ngay.
+void invalidateTags(['permissions']);
+
 r.use(auth);
 r.use(enforceTenantContext);
 

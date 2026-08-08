@@ -519,7 +519,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
           const enriched = enrichNotificationPreview({
             id: String(n.id || `srv:${Date.now()}`),
             type: type || 'workshop_new_deal',
-            title: String(n.title || 'Vận chuyển'),
+            title: String(n.title || 'Lắp đặt'),
             message: String(n.message || ''),
             entity_type: n.entity_type,
             entity_id: n.entity_id,

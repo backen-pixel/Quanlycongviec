@@ -20,7 +20,7 @@ export const MODULE_APP_DOWNLOAD = {
   },
   vc: {
     appKey: 'vc-mobile',
-    title: 'App Vận chuyển lắp đặt',
+    title: 'App Lắp đặt',
     subtitle: 'Ứng dụng VC/LĐ trên điện thoại Android — Kanban, nhiệm vụ, ghi chú, camera',
     emoji: '🚚',
     accent: 'orange',

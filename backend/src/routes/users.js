@@ -6,6 +6,13 @@ const { auth } = require('../middleware/auth');
 const { normalizeRegionIdList, assertRegionBelongsToCompany } = require('../helpers/crmRegionScope');
 const { syncUserOrgToEcosystem } = require('../helpers/ecosystemSync');
 const { inferDriveModuleForNewUser, normalizeDriveModule } = require('../helpers/driveModuleDefaults');
+const {
+  syncUserModuleRoles,
+  getUserModuleRolesMap,
+  normalizeModuleRolesMap,
+  derivePrimaryRole,
+  deriveDriveModule,
+} = require('../helpers/userModuleRoles');
 const { recordUserPing, getPresenceForUserIds, listUsersWithActivity, ONLINE_THRESHOLD_MS } = require('../helpers/userPresence');
 const { getCurrentLocationForUser } = require('../helpers/userCurrentLocation');
 const { parseScopeFromQuery } = require('../helpers/scopeQueryParams');
@@ -859,7 +866,14 @@ r.get('/:id', async (req, res) => {
       crm_region_ids = [];
     }
 
-    res.json({ user: { ...user, taskStats, recentTasks, crm_region_ids } });
+    let module_roles = {};
+    try {
+      module_roles = await getUserModuleRolesMap(req.params.id);
+    } catch {
+      module_roles = {};
+    }
+
+    res.json({ user: { ...user, taskStats, recentTasks, crm_region_ids, module_roles } });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
 });
 
@@ -939,18 +953,34 @@ r.post('/', async (req, res) => {
       if (!dept?.company_id || String(dept.company_id) !== String(scopedCompanyId)) {
         return res.status(403).json({ error: 'Chỉ được tạo nhân viên trong công ty của bạn' });
       }
-      if (isElevatedStaffRole(b.role || 'staff') && !isSystemAdmin(actorForPerm)) {
-        return res.status(403).json({ error: 'Không được tạo tài khoản Admin hệ thống' });
-      }
     }
 
     const password = b.password || 'tubep123';
     const hash = await bcrypt.hash(password, 12);
 
+    const isSystemAdminFlag = b.is_system_admin === true || b.role === 'admin' || b.role === 'platform_admin';
+    const hasModuleRolesPayload = b.module_roles !== undefined && b.module_roles !== null;
+    const moduleRolesMap = hasModuleRolesPayload
+      ? normalizeModuleRolesMap(b.module_roles)
+      : null;
+    if (hasModuleRolesPayload && !Object.keys(moduleRolesMap).length && !isSystemAdminFlag) {
+      return res.status(400).json({ error: 'Chọn ít nhất một module và role tương ứng' });
+    }
+    const derivedRole = hasModuleRolesPayload
+      ? derivePrimaryRole(moduleRolesMap, { isSystemAdmin: isSystemAdminFlag })
+      : (b.role || 'staff');
+    const derivedDrive = hasModuleRolesPayload
+      ? deriveDriveModule(moduleRolesMap, b.drive_module)
+      : inferDriveModuleForNewUser({ role: derivedRole, drive_module: b.drive_module });
+
+    if (scopedCompanyId && isElevatedStaffRole(derivedRole) && !isSystemAdmin(actorForPerm)) {
+      return res.status(403).json({ error: 'Không được tạo tài khoản Admin hệ thống' });
+    }
+
     // Build insert object — only include fields that exist
     const insertObj = {
       email: b.email, password: hash, full_name: b.full_name,
-      phone: b.phone || null, role: b.role || 'staff',
+      phone: b.phone || null, role: derivedRole,
       department_id: b.department_id || null,
       team_id: b.team_id || null,
     };
@@ -962,7 +992,7 @@ r.post('/', async (req, res) => {
     }
     // Optional fields (need migration 06)
     applyOptionalUserFields(b, insertObj);
-    insertObj.drive_module = inferDriveModuleForNewUser({ role: insertObj.role, drive_module: b.drive_module });
+    insertObj.drive_module = derivedDrive;
 
     const canAssignCrmRegions = canCreateStaff(actorForPerm);
     if (b.crm_region_ids !== undefined && canAssignCrmRegions) {
@@ -989,12 +1019,23 @@ r.post('/', async (req, res) => {
       if (error.message?.includes('column')) {
         const ins2 = {
           email: b.email, password: hash, full_name: b.full_name,
-          phone: b.phone || null, role: b.role || 'staff', department_id: b.department_id || null,
+          phone: b.phone || null, role: derivedRole, department_id: b.department_id || null,
         };
         if (insertObj.avatar) ins2.avatar = insertObj.avatar;
         const { data: d2, error: e2 } = await supabase.from('users').insert(ins2)
           .select('id,email,full_name,phone,role,department_id,is_active,created_at').single();
         if (e2) throw e2;
+        if (d2?.id && hasModuleRolesPayload) {
+          try {
+            await syncUserModuleRoles(d2.id, moduleRolesMap, {
+              grantedBy: req.user?.userId || req.user?.id || null,
+              isSystemAdmin: isSystemAdminFlag,
+              explicitDrive: b.drive_module,
+            });
+          } catch (mrErr) {
+            console.warn('[users POST] syncUserModuleRoles:', mrErr.message);
+          }
+        }
         if (d2?.id && b.crm_region_ids !== undefined && canAssignCrmRegions) {
           const ids = normalizeRegionIdList(b.crm_region_ids);
           let targetCo = scopedCompanyId || null;
@@ -1010,9 +1051,31 @@ r.post('/', async (req, res) => {
             if (insErr) console.warn('[users POST] user_company_regions:', insErr.message);
           }
         }
-        return res.status(201).json({ user: d2 });
+        return res.status(201).json({ user: { ...d2, module_roles: moduleRolesMap || {} } });
       }
       throw error;
+    }
+
+    if (data?.id && hasModuleRolesPayload) {
+      try {
+        const synced = await syncUserModuleRoles(data.id, moduleRolesMap, {
+          grantedBy: req.user?.userId || req.user?.id || null,
+          isSystemAdmin: isSystemAdminFlag,
+          explicitDrive: b.drive_module,
+        });
+        if (synced.primaryRole !== data.role || synced.driveModule !== insertObj.drive_module) {
+          await supabase.from('users').update({
+            role: synced.primaryRole,
+            drive_module: synced.driveModule,
+          }).eq('id', data.id);
+          data.role = synced.primaryRole;
+        }
+        data.module_roles = synced.map;
+      } catch (mrErr) {
+        console.warn('[users POST] syncUserModuleRoles:', mrErr.message);
+      }
+    } else if (data) {
+      data.module_roles = {};
     }
 
     if (data?.id && b.crm_region_ids !== undefined && canAssignCrmRegions) {
@@ -1051,7 +1114,7 @@ r.put('/:id', async (req, res) => {
     if (!(await assertUserInRequestTenant(req, res, targetId))) return;
     const { data: beforeOrg } = await supabase
       .from('users')
-      .select('department_id, team_id, drive_module')
+      .select('department_id, team_id, drive_module, role')
       .eq('id', targetId)
       .maybeSingle();
     const update = { updated_at: new Date().toISOString() };
@@ -1063,6 +1126,29 @@ r.put('/:id', async (req, res) => {
     } else if (b.role !== undefined && !beforeOrg?.drive_module) {
       update.drive_module = inferDriveModuleForNewUser({ role: b.role });
     }
+
+    const isSystemAdminFlag = b.is_system_admin === true || b.role === 'admin' || b.role === 'platform_admin';
+    const hasModuleRolesPayload = b.module_roles !== undefined && b.module_roles !== null;
+    let syncedModuleRoles = null;
+    if (hasModuleRolesPayload) {
+      const moduleRolesMap = normalizeModuleRolesMap(b.module_roles);
+      if (!Object.keys(moduleRolesMap).length && !isSystemAdminFlag) {
+        return res.status(400).json({ error: 'Chọn ít nhất một module và role tương ứng' });
+      }
+      try {
+        syncedModuleRoles = await syncUserModuleRoles(targetId, moduleRolesMap, {
+          grantedBy: req.user?.userId || req.user?.id || null,
+          isSystemAdmin: isSystemAdminFlag,
+          explicitDrive: b.drive_module,
+        });
+        update.role = syncedModuleRoles.primaryRole;
+        update.drive_module = syncedModuleRoles.driveModule;
+      } catch (mrErr) {
+        console.warn('[users PUT] syncUserModuleRoles:', mrErr.message);
+        return res.status(500).json({ error: mrErr.message || 'Lỗi lưu module roles' });
+      }
+    }
+
     if (b.department_id !== undefined) update.department_id = b.department_id || null;
     if (b.team_id !== undefined) update.team_id = b.team_id || null;
     applyOptionalUserFields(b, update);
@@ -1097,6 +1183,15 @@ r.put('/:id', async (req, res) => {
       const mapped = mapUserWriteError(error);
       if (mapped) return res.status(mapped.status).json({ error: mapped.error });
       throw error;
+    }
+    if (data && syncedModuleRoles) {
+      data.module_roles = syncedModuleRoles.map;
+    } else if (data) {
+      try {
+        data.module_roles = await getUserModuleRolesMap(targetId);
+      } catch {
+        data.module_roles = {};
+      }
     }
 
     if (b.crm_region_ids !== undefined) {

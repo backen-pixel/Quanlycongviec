@@ -149,7 +149,7 @@ function notifListSubtitle(n: SxCommentNotification): string | null {
     if (n.type === 'logistics_task_deadline_overdue') return 'Công việc quá hạn';
     if (n.type === 'project_assigned') return 'Được gán dự án';
     if (n.type === 'project_created') return 'Dự án mới tạo';
-    return 'Vận chuyển & Lắp đặt';
+    return 'Lắp đặt';
   }
   const preview = n.metadata?.comment_preview;
   if (preview) return preview;

@@ -211,7 +211,7 @@ async function isAssignmentAssignee(req, assignmentId) {
 const ASSIGNMENT_STRUCTURAL_FIELDS = [
   'title', 'description', 'assignee_id', 'assignee_ids',
   'department_ids', 'region_ids', 'company_id', 'priority', 'deadline',
-  'task_source_type', 'employee_error_module', 'assignment_module',
+  'task_source_type', 'employee_error_module', 'assignment_module', 'lead_id',
 ];
 
 function bodyHasStructuralAssignmentChange(body) {
@@ -801,7 +801,7 @@ r.put('/:id', async (req, res) => {
     if (creator) {
       [
         'title', 'description', 'column_id',
-        'priority', 'status', 'deadline', 'position', 'company_id',
+        'priority', 'status', 'deadline', 'position', 'company_id', 'lead_id',
       ].forEach((f) => { if (req.body[f] !== undefined) update[f] = req.body[f]; });
       if (req.body.assignment_module !== undefined) {
         const mod = String(req.body.assignment_module || '').toLowerCase();

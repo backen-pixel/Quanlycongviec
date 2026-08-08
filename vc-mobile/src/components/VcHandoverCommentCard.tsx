@@ -38,6 +38,19 @@ function formatVcDateTime(raw?: unknown): string {
   });
 }
 
+function formatInstallDatesLabel(md: Record<string, unknown>): string {
+  const occ = Array.isArray(md.install_occurrence_dates)
+    ? md.install_occurrence_dates.map((d) => String(d).slice(0, 10)).filter(Boolean)
+    : [];
+  if (occ.length > 1) {
+    return occ.map((ymd) => {
+      const [, m, d] = ymd.split('-');
+      return `${d}/${m}`;
+    }).join(', ');
+  }
+  return formatVcDateTime(md.install_date);
+}
+
 function relativeDays(iso?: string | null): string {
   if (!iso) return '';
   const d = new Date(iso);
@@ -114,7 +127,7 @@ export default function VcHandoverCommentCard({ comment, onUpdated }: Props) {
             <Ionicons name="car-outline" size={16} color="#EA580C" />
           </View>
           <View style={{ flex: 1, minWidth: 0 }}>
-            <Text style={styles.title}>Bàn giao Vận chuyển / Lắp đặt</Text>
+            <Text style={styles.title}>Bàn giao Lắp đặt</Text>
             <Text style={styles.sub} numberOfLines={1}>
               Dự án: {projLabel}
             </Text>
@@ -159,10 +172,10 @@ export default function VcHandoverCommentCard({ comment, onUpdated }: Props) {
               <Text style={styles.muted}>Ngày nhận hàng: </Text>
               <Text style={styles.strong}>{formatVcDateTime(md.pickup_at)}</Text>
             </Text>
-            {md.install_date ? (
+            {(md.install_date || (Array.isArray(md.install_occurrence_dates) && md.install_occurrence_dates.length)) ? (
               <Text style={styles.row}>
                 <Text style={styles.muted}>Ngày lắp đặt: </Text>
-                <Text style={styles.strong}>{formatVcDateTime(md.install_date)}</Text>
+                <Text style={styles.strong}>{formatInstallDatesLabel(md as Record<string, unknown>)}</Text>
               </Text>
             ) : null}
             <Text style={styles.rule}>Chỉ phụ trách chính Xưởng và VC/LĐ được xác nhận.</Text>

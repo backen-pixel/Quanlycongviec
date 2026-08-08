@@ -33,7 +33,7 @@ r.patch('/leads/:id/vc-booking', requirePermission('leads', 'edit'), async (req,
     const pickupNotes = (b.pickup_notes || '').toString().trim() || null;
     const targetStageId = b.target_stage_id || null;
 
-    if (!logisticsCompanyId) return badReq(res, 'Vui lòng chọn công ty vận chuyển.');
+    if (!logisticsCompanyId) return badReq(res, 'Vui lòng chọn công ty lắp đặt.');
     if (!deliveryTeamId) return badReq(res, 'Vui lòng chọn đội vận chuyển.');
     if (!installationTeamId) return badReq(res, 'Vui lòng chọn đội lắp đặt.');
     if (!pickupAtRaw) return badReq(res, 'Vui lòng chọn thời gian đi lấy hàng.');
@@ -62,8 +62,8 @@ r.patch('/leads/:id/vc-booking', requirePermission('leads', 'edit'), async (req,
       .select('id, is_active')
       .eq('id', logisticsCompanyId)
       .maybeSingle();
-    if (!lco) return badReq(res, 'Công ty vận chuyển không tồn tại.');
-    if (lco.is_active === false) return badReq(res, 'Công ty vận chuyển đã ngưng hoạt động.');
+    if (!lco) return badReq(res, 'Công ty lắp đặt không tồn tại.');
+    if (lco.is_active === false) return badReq(res, 'Công ty lắp đặt đã ngưng hoạt động.');
 
     const { data: delTeam } = await supabase
       .from('workshop_teams')

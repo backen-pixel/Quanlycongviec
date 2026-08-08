@@ -35,7 +35,7 @@ export const FEATURE_LABELS = {
   tasks: 'Công việc',
   projects: 'Dự án',
   production: 'Sản xuất',
-  logistics: 'Vận chuyển',
+  logistics: 'Lắp đặt',
   customers: 'Khách hàng',
   ai_assistant: 'AI Bot',
   drive: 'Drive lưu trữ',

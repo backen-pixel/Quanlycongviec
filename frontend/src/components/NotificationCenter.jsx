@@ -167,7 +167,7 @@ const MODULE_FILTER_OPTIONS = [
   { id: 'all', label: 'Tất cả phân loại' },
   { id: 'crm', label: 'CRM / Lead' },
   { id: 'production', label: 'Sản xuất' },
-  { id: 'logistics', label: 'Vận chuyển' },
+  { id: 'logistics', label: 'Lắp đặt' },
   { id: 'project', label: 'Dự án' },
 ];
 

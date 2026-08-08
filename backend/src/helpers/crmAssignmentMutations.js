@@ -185,7 +185,7 @@ async function updateCrmAssignment(req, assignmentId, body) {
   } = require('./sharedWorkspaceTaskSource');
 
   const update = { updated_at: new Date().toISOString() };
-  ['title', 'description', 'column_id', 'priority', 'status', 'deadline', 'position', 'assignee_id'].forEach((f) => {
+  ['title', 'description', 'column_id', 'priority', 'status', 'deadline', 'position', 'assignee_id', 'lead_id'].forEach((f) => {
     if (body[f] !== undefined) update[f] = body[f];
   });
   if (body.assignment_module !== undefined) {

@@ -566,7 +566,7 @@ export default function LogisticsPipelineSettingsPage() {
               </div>
               <div className="min-w-0">
                 <h2 className="text-xs font-semibold text-gray-900">
-                  Pipeline Vận chuyển / Lắp đặt
+                  Pipeline Lắp đặt
                 </h2>
                 <p className="text-[10px] text-gray-400">{list.length} giai đoạn · một luồng Kanban</p>
               </div>
@@ -743,9 +743,9 @@ export default function LogisticsPipelineSettingsPage() {
           <div className="flex items-start gap-3">
             <Settings className="w-6 h-6 text-orange-600 shrink-0" strokeWidth={1.75} />
             <div>
-              <h1 className="text-lg font-semibold text-gray-900">Cài đặt Pipeline VC / LĐ</h1>
+              <h1 className="text-lg font-semibold text-gray-900">Cài đặt Pipeline Lắp đặt</h1>
               <p className="text-xs text-gray-500 mt-0.5">
-                Quản lý một pipeline Vận chuyển / Lắp đặt — khớp Kanban dashboard VC
+                Quản lý một pipeline Lắp đặt — khớp Kanban dashboard VC
               </p>
             </div>
           </div>
@@ -828,7 +828,7 @@ export default function LogisticsPipelineSettingsPage() {
               <div className="flex items-start gap-2.5 min-w-0">
                 <UserCircle className="h-5 w-5 text-orange-600 shrink-0 mt-0.5" />
                 <div>
-                  <h2 className="text-sm font-bold text-gray-900">Bàn giao Sản xuất → Vận chuyển & Lắp đặt</h2>
+                  <h2 className="text-sm font-bold text-gray-900">Bàn giao Sản xuất → Lắp đặt</h2>
                   <p className="text-[11px] text-gray-600 mt-0.5 leading-snug">
                     Khi dự án chuyển từ SX sang VC, hệ thống gán người phụ trách VC và người lắp đặt.
                     Riêng người bấm xác nhận trên thẻ bàn giao cấu hình ở ô «Người xác nhận bàn giao VC/LĐ».

@@ -92,7 +92,7 @@ async function notifyCrossModuleApprovalRequest(req, opts) {
   };
 
   if (requestSource === 'production' || requestSource === 'logistics') {
-    const moduleLabel = requestSource === 'logistics' ? 'Vận chuyển' : 'Sản xuất';
+    const moduleLabel = requestSource === 'logistics' ? 'Lắp đặt' : 'Sản xuất';
     const { recipientIds, primaryDealId } = await loadCrmApprovalRecipients(projectId);
     const targets = recipientIds.filter((id) => !exclude.has(String(id)));
     if (!targets.length) return;

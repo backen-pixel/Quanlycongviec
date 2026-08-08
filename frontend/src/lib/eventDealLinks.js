@@ -46,13 +46,13 @@ export function buildEventDealLinks(ev, pageModule = 'crm') {
     if (projectId) push('sx', `/sx/projects/${projectId}`, 'SX', 'Mở dự án / deal ở Sản xuất');
     else if (leadId) push('crm', `/crm/leads/${leadId}`, 'CRM', 'Chưa có dự án SX — mở deal CRM');
   } else if (mod === 'logistics') {
-    if (projectId) push('vc', `/vc/projects/${projectId}`, 'VC', 'Mở dự án / deal ở Vận chuyển / Lắp đặt');
+    if (projectId) push('vc', `/vc/projects/${projectId}`, 'VC', 'Mở dự án / deal ở Lắp đặt');
     else if (leadId) push('crm', `/crm/leads/${leadId}`, 'CRM', 'Chưa có dự án VC — mở deal CRM');
   } else {
     if (leadId) push('crm', `/crm/leads/${leadId}`, 'CRM', 'Mở deal CRM');
     if (projectId) {
       push('sx', `/sx/projects/${projectId}`, 'SX', 'Mở ở Sản xuất');
-      push('vc', `/vc/projects/${projectId}`, 'VC', 'Mở ở Vận chuyển / Lắp đặt');
+      push('vc', `/vc/projects/${projectId}`, 'VC', 'Mở ở Lắp đặt');
     }
   }
 

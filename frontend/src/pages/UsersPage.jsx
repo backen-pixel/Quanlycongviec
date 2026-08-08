@@ -2,15 +2,62 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import api from '../lib/api';
 import Modal from '../components/Modal';
-import UserRolesModal from '../components/UserRolesModal';
 import { useAuth } from '../lib/auth';
 import { canCreateStaff, isSystemAdmin, hasCompanyId } from '../lib/adminRole';
 import { Plus, Search, Mail, Phone, Trash2, Edit, Users as UsersIcon, MoreVertical, Building2, Layers, UsersRound, Shield, MapPin, Camera, AlertTriangle, ChevronLeft, ChevronRight, UserRound, Sparkles, Loader2 } from 'lucide-react';
 import { formatDate, getInitials, avatarColor } from '../lib/utils';
 import PermissionCatalogPanel, { cascadeTierDraft } from '../components/permissions/PermissionCatalogPanel';
 
-const ROLES = { admin: 'Admin', manager: 'Quản lý', region_admin: 'Admin khu vực', sales_admin: 'Sales Admin', sales: 'Kinh doanh (SAE)', designer: 'Thiết kế', production: 'Sản xuất', production_staff: 'NV Sản xuất (Admin CV+SX)', production_admin: 'Admin Sản xuất', crm_production_staff: 'NV CRM + Admin SX', crm_production_admin: 'Admin CRM + Sản xuất', logistics_admin: 'Admin Vận chuyển', driver: 'Tài xế', installer: 'Lắp đặt', customer_care: 'CSKH', accounting: 'Kế toán', staff: 'Nhân viên' };
+const ROLES = { admin: 'Admin', manager: 'Quản lý', region_admin: 'Admin khu vực', sales_admin: 'Sales Admin', sales: 'Kinh doanh (SAE)', designer: 'Thiết kế', production: 'Sản xuất', production_staff: 'NV Sản xuất (Admin CV+SX)', production_admin: 'Admin Sản xuất', crm_production_staff: 'NV CRM + Admin SX', crm_production_admin: 'Admin CRM + Sản xuất', logistics_admin: 'Admin Lắp đặt', driver: 'Tài xế', installer: 'Lắp đặt', customer_care: 'CSKH', accounting: 'Kế toán', staff: 'Nhân viên' };
 const ROLE_COLORS = { admin: 'bg-red-100 text-red-700', manager: 'bg-purple-100 text-purple-700', region_admin: 'bg-rose-100 text-rose-800', sales_admin: 'bg-indigo-100 text-indigo-700', sales: 'bg-blue-100 text-blue-700', designer: 'bg-pink-100 text-pink-700', production: 'bg-orange-100 text-orange-700', production_staff: 'bg-teal-100 text-teal-800', production_admin: 'bg-orange-200 text-orange-900', crm_production_staff: 'bg-sky-100 text-sky-800', crm_production_admin: 'bg-violet-100 text-violet-800', logistics_admin: 'bg-amber-100 text-amber-800', installer: 'bg-cyan-100 text-cyan-700', customer_care: 'bg-green-100 text-green-700', driver: 'bg-amber-100 text-amber-700', accounting: 'bg-emerald-100 text-emerald-800', staff: 'bg-gray-100 text-gray-600' };
+
+/** Role theo module — mỗi module chỉ chọn 1 role trong danh sách này. */
+const MODULE_ROLE_OPTIONS = {
+  crm: ['sales', 'sales_admin', 'designer', 'customer_care', 'region_admin', 'manager', 'crm_production_staff', 'crm_production_admin', 'staff'],
+  production: ['production_staff', 'production_admin', 'production', 'crm_production_staff', 'crm_production_admin'],
+  logistics: ['logistics_admin', 'driver', 'installer'],
+  accounting: ['accounting'],
+  purchasing: ['staff'],
+  tinhtoan: ['staff'],
+};
+
+const MODULE_DEFAULT_ROLE = {
+  crm: 'sales',
+  production: 'production_staff',
+  logistics: 'driver',
+  accounting: 'accounting',
+  purchasing: 'staff',
+  tinhtoan: 'staff',
+};
+
+const PRIMARY_ROLE_PRIORITY = [
+  'admin', 'platform_admin', 'sales_admin', 'crm_production_admin', 'production_admin',
+  'logistics_admin', 'crm_production_staff', 'production_staff', 'region_admin', 'manager',
+  'accounting', 'production', 'sales', 'designer', 'customer_care', 'driver', 'installer', 'staff',
+];
+
+function derivePrimaryRoleFromModules(moduleRoles = {}, isSystemAdminFlag = false) {
+  if (isSystemAdminFlag) return 'admin';
+  const roles = Object.values(moduleRoles || {}).filter(Boolean);
+  for (const p of PRIMARY_ROLE_PRIORITY) {
+    if (roles.includes(p)) return p;
+  }
+  return roles[0] || 'staff';
+}
+
+/** Suy map module→role từ 1 role hệ thống (AI fill / backfill UI). */
+function inferModuleRolesFromPrimaryRole(role) {
+  const r = String(role || '').toLowerCase();
+  if (!r || r === 'admin' || r === 'platform_admin') return {};
+  if (r === 'crm_production_staff' || r === 'crm_production_admin') {
+    return { crm: r, production: r };
+  }
+  if (MODULE_ROLE_OPTIONS.crm.includes(r)) return { crm: r };
+  if (MODULE_ROLE_OPTIONS.production.includes(r)) return { production: r };
+  if (MODULE_ROLE_OPTIONS.logistics.includes(r)) return { logistics: r };
+  if (r === 'accounting' || r === 'ketoan') return { accounting: 'accounting' };
+  return { crm: 'staff' };
+}
 
 /** Vai trò CRM thấy dữ liệu cả công ty (không bị khóa theo khu vực JWT). */
 const COMPANY_WIDE_CRM_ROLES = new Set(['admin', 'sales_admin', 'crm_production_admin']);
@@ -79,6 +126,10 @@ function resourceMatchesPreset(resource, family) {
   if (family === 'crm') return res.startsWith('crm_');
   if (family === 'vc') return res.startsWith('vc_');
   if (family === 'accounting') return res.startsWith('ketoan_');
+  if (family === 'purchasing') return res.startsWith('mua_hang_');
+  if (family === 'calc') return res.startsWith('calc_');
+  if (family === 'knowledge') return res.startsWith('knowledge_');
+  if (family === 'congviec') return res === 'work_unified' || res === 'personal_tasks';
   return false;
 }
 
@@ -161,12 +212,27 @@ function preferModuleKeyFromPresets(presets) {
   return null;
 }
 
-/** Chip form → family trong resourceMatchesPreset */
+/** Chip form (company module key) → family trong resourceMatchesPreset */
 const MODULE_KEY_TO_PERM_FAMILY = {
   crm: 'crm',
   production: 'production',
   logistics: 'vc',
   accounting: 'accounting',
+  purchasing: 'purchasing',
+  tinhtoan: 'calc',
+};
+
+/**
+ * Chip form / ecosystem module_key → key trong permission catalog UI.
+ * (tinhtoan ↔ calc; congviec/knowledge luôn hiện).
+ */
+const COMPANY_MODULE_TO_CATALOG_KEY = {
+  crm: 'crm',
+  production: 'production',
+  logistics: 'logistics',
+  accounting: 'accounting',
+  purchasing: 'purchasing',
+  tinhtoan: 'calc',
 };
 
 /** Chip form → users.drive_module */
@@ -175,9 +241,21 @@ const MODULE_KEY_TO_DRIVE = {
   production: 'sx',
   logistics: 'vc',
   accounting: 'crm',
+  purchasing: 'crm',
+  tinhtoan: 'crm',
 };
 
-const CATALOG_ALWAYS_MODULE_KEYS = new Set(['drive', 'work', 'hr', 'reports', 'system']);
+/** Module catalog luôn hiện trên form NV (không phụ thuộc chip công ty). */
+const CATALOG_ALWAYS_MODULE_KEYS = new Set([
+  'drive',
+  'work',
+  'hr',
+  'reports',
+  'system',
+  'congviec',
+  'knowledge',
+  'platform',
+]);
 
 /** Áp chọn module công ty lên draft: chọn = view+edit; bỏ chọn = tắt hết family đó. */
 function applySelectedModulesToDraft(draft, metaById, companyModuleKeys = [], selectedKeys = []) {
@@ -212,7 +290,11 @@ function filterCatalogBySelectedModules(catalog, selectedKeys = []) {
       modules: mods.filter((m) => CATALOG_ALWAYS_MODULE_KEYS.has(m.key)),
     };
   }
-  const allow = new Set([...selectedKeys.map(String), ...CATALOG_ALWAYS_MODULE_KEYS]);
+  const allow = new Set([...CATALOG_ALWAYS_MODULE_KEYS]);
+  for (const key of selectedKeys) {
+    const catalogKey = COMPANY_MODULE_TO_CATALOG_KEY[String(key)] || String(key);
+    allow.add(catalogKey);
+  }
   return {
     ...catalog,
     modules: mods.filter((m) => allow.has(m.key)),
@@ -255,7 +337,6 @@ export default function UsersPage() {
   const [menuUser, setMenuUser] = useState(null);
   const [menuPos, setMenuPos] = useState({ top: 0, left: 0 });
   const menuRef = useRef(null);
-  const [showRolesModal, setShowRolesModal] = useState(null); // { userId, userName }
   const [hardDeleteTarget, setHardDeleteTarget] = useState(null); // { id, full_name, email, role }
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
@@ -658,14 +739,6 @@ export default function UsersPage() {
 
       <StaffFormModal key={editUser?.id ?? 'new'} open={showCreate} onClose={() => { setShowCreate(false); setEditUser(null); }} onSaved={load} editUser={editUser} />
       
-      {showRolesModal && (
-        <UserRolesModal
-          userId={showRolesModal.userId}
-          userName={showRolesModal.userName}
-          onClose={() => setShowRolesModal(null)}
-          onSaved={() => { setShowRolesModal(null); load(); }}
-        />
-      )}
       <StaffDetailModal userId={showDetail} open={!!showDetail} onClose={() => setShowDetail(null)} />
       <HardDeleteUserModal target={hardDeleteTarget} onClose={() => setHardDeleteTarget(null)} onDeleted={onHardDeleted} />
 
@@ -678,12 +751,6 @@ export default function UsersPage() {
             style={{ zIndex: 99999, top: menuPos.top, left: menuPos.left }}
             onClick={(e) => e.stopPropagation()}
           >
-            <button
-              onClick={() => { setMenuUser(null); setShowRolesModal({ userId: menuUserData.id, userName: menuUserData.full_name }); }}
-              className="w-full px-3 py-2 text-xs text-left hover:bg-purple-50 flex items-center gap-2 cursor-pointer text-purple-700"
-            >
-              <Shield className="h-3 w-3" /> Phân quyền
-            </button>
             <button
               onClick={() => { setMenuUser(null); setEditUser(menuUserData); setShowCreate(true); }}
               className="w-full px-3 py-2 text-xs text-left hover:bg-gray-50 flex items-center gap-2 cursor-pointer text-gray-700"
@@ -899,10 +966,13 @@ export function StaffFormModal({
   const [permDraft, setPermDraft] = useState({});
   const [permPanelOpen, setPermPanelOpen] = useState(true);
   const [permTouched, setPermTouched] = useState(false);
-  /** Module công ty (CRM/SX/VC/Kế toán) — chip chọn nhiều */
+  /** Module công ty — map module_key → role (mỗi module 1 role) */
   const [companyModules, setCompanyModules] = useState([]);
-  const [selectedModuleKeys, setSelectedModuleKeys] = useState([]);
+  const [moduleRoles, setModuleRoles] = useState({});
+  const [isSystemAdminFlag, setIsSystemAdminFlag] = useState(false);
   const [companyModulesLoading, setCompanyModulesLoading] = useState(false);
+  const selectedModuleKeys = useMemo(() => Object.keys(moduleRoles), [moduleRoles]);
+  const actorIsSystemAdmin = isSystemAdmin(currentUser);
 
   // Selection
   const [selDivision, setSelDivision] = useState('');
@@ -932,7 +1002,8 @@ export function StaffFormModal({
     setTeams([]);
     setCompanyRegions([]);
     setCompanyModules([]);
-    setSelectedModuleKeys([]);
+    setModuleRoles({});
+    setIsSystemAdminFlag(false);
     aiPendingRef.current = {
       department_id: null,
       crm_region_ids: null,
@@ -1003,6 +1074,8 @@ export function StaffFormModal({
         ...STAFF_EMPTY_FORM,
         password: defaultNewUserPassword || '',
       });
+      setModuleRoles({});
+      setIsSystemAdminFlag(false);
       setCrmScopeMode('company');
       setRolePermPreview(null);
       setAiPrompt('');
@@ -1017,6 +1090,8 @@ export function StaffFormModal({
 
     setUserLoading(true);
     setForm({ ...STAFF_EMPTY_FORM, email: editUser?.email || '' });
+    setModuleRoles({});
+    setIsSystemAdminFlag(false);
     setPermTouched(false);
     setAiPrompt('');
     setAiSummary([]);
@@ -1030,7 +1105,13 @@ export function StaffFormModal({
         const user = r.data?.user;
         if (!user || String(user.id) !== String(editUserId)) return;
         setForm(mapUserToForm(user));
-        setCrmScopeMode(inferCrmScopeMode(user.role || 'staff', user.crm_region_ids));
+        const mr = user.module_roles && typeof user.module_roles === 'object' ? user.module_roles : {};
+        setModuleRoles(mr);
+        setIsSystemAdminFlag(user.role === 'admin' || user.role === 'platform_admin');
+        setCrmScopeMode(inferCrmScopeMode(
+          derivePrimaryRoleFromModules(mr, user.role === 'admin'),
+          user.crm_region_ids,
+        ));
         const companyId = user.department?.company_id;
         if (companyId) setSelCompany(companyId);
       })
@@ -1123,12 +1204,12 @@ export function StaffFormModal({
     };
   }, [selCompany, selDivision]);
 
-  // Module công ty → chip multi-select
+  // Module công ty → chip + 1 role / module
   useEffect(() => {
     if (!open) return;
     if (!selCompany) {
       setCompanyModules([]);
-      setSelectedModuleKeys([]);
+      if (!editUserId) setModuleRoles({});
       return;
     }
     let cancelled = false;
@@ -1141,19 +1222,30 @@ export function StaffFormModal({
       .then((r) => {
         if (cancelled) return;
         const list = Array.isArray(r.data?.modules) ? r.data.modules : [];
-        // Chỉ giữ module API trả về (đã lọc theo khối công ty)
         setCompanyModules(list);
-        const keys = list.map((m) => String(m.key));
-        setSelectedModuleKeys((prev) => {
-          const keep = (prev || []).filter((k) => keys.includes(k));
-          return keep.length ? keep : keys;
+        setModuleRoles((prev) => {
+          if (Object.keys(prev || {}).length) {
+            const next = {};
+            for (const [k, v] of Object.entries(prev)) {
+              if (list.some((m) => m.key === k)) next[k] = v;
+            }
+            return next;
+          }
+          if (!editUserId) {
+            const next = {};
+            for (const m of list) {
+              next[m.key] = MODULE_DEFAULT_ROLE[m.key] || 'staff';
+            }
+            return next;
+          }
+          return prev || {};
         });
-        if (keys[0]) setPermModuleKey(keys[0]);
+        if (list[0]?.key) setPermModuleKey(list[0].key);
       })
       .catch(() => {
         if (cancelled) return;
         setCompanyModules([]);
-        setSelectedModuleKeys([]);
+        if (!editUserId) setModuleRoles({});
       })
       .finally(() => {
         if (!cancelled) setCompanyModulesLoading(false);
@@ -1161,7 +1253,7 @@ export function StaffFormModal({
     return () => {
       cancelled = true;
     };
-  }, [open, selCompany]);
+  }, [open, selCompany, editUserId]);
 
   useEffect(() => {
     if (!companyRegions.length) return;
@@ -1223,10 +1315,38 @@ export function StaffFormModal({
   }, [companyModules, permMetaById, filteredPermCatalog]);
 
   const toggleCompanyModule = (key) => {
-    setSelectedModuleKeys((prev) => {
-      const has = prev.includes(key);
-      const next = has ? prev.filter((k) => k !== key) : [...prev, key];
-      queueMicrotask(() => applyModuleChipsToDraft(next));
+    setModuleRoles((prev) => {
+      const next = { ...prev };
+      if (next[key]) {
+        delete next[key];
+      } else {
+        next[key] = MODULE_DEFAULT_ROLE[key] || 'staff';
+      }
+      const keys = Object.keys(next);
+      queueMicrotask(() => {
+        applyModuleChipsToDraft(keys);
+        setPermTouched(false);
+        setForm((f) => ({
+          ...f,
+          role: derivePrimaryRoleFromModules(next, isSystemAdminFlag),
+        }));
+      });
+      return next;
+    });
+  };
+
+  const setModuleRole = (moduleKey, role) => {
+    setModuleRoles((prev) => {
+      const next = { ...prev, [moduleKey]: role };
+      queueMicrotask(() => {
+        setPermTouched(false);
+        setForm((f) => ({
+          ...f,
+          role: derivePrimaryRoleFromModules(next, isSystemAdminFlag),
+        }));
+        if (role === 'region_admin') setCrmScopeMode('regions');
+        else if (COMPANY_WIDE_CRM_ROLES.has(role)) setCrmScopeMode('company');
+      });
       return next;
     });
   };
@@ -1260,19 +1380,43 @@ export function StaffFormModal({
     applyPendingAiPermissions(permCatalog);
   }, [open, permCatalog, applyPendingAiPermissions]);
 
-  // Preview quyền khi đổi vai trò → seed bật/tắt theo mẫu vai trò
+  // Preview quyền khi đổi module roles → seed union mẫu vai trò
   useEffect(() => {
     if (!open) return;
-    const role = form.role || 'staff';
+    const roles = [
+      ...new Set([
+        ...Object.values(moduleRoles || {}),
+        ...(isSystemAdminFlag ? ['admin'] : []),
+      ]),
+    ].filter(Boolean);
+    if (!roles.length) {
+      setRolePermPreview(null);
+      if (!permTouched && !editUserId) {
+        setPermBaselineIds([]);
+        setPermDraft({});
+      }
+      return;
+    }
     let cancelled = false;
     setRolePermLoading(true);
-    api
-      .get(`/permissions/roles/by-name/${encodeURIComponent(role)}`)
-      .then((r) => {
+    Promise.all(
+      roles.map((role) =>
+        api.get(`/permissions/roles/by-name/${encodeURIComponent(role)}`).catch(() => ({ data: null })),
+      ),
+    )
+      .then((responses) => {
         if (cancelled) return;
-        const data = r.data || null;
-        setRolePermPreview(data);
-        const ids = (data?.permissions || []).map((p) => p.id).filter(Boolean);
+        const idSet = new Set();
+        let first = null;
+        for (const r of responses) {
+          const data = r.data || null;
+          if (!first && data) first = data;
+          for (const p of data?.permissions || []) {
+            if (p?.id) idSet.add(p.id);
+          }
+        }
+        setRolePermPreview(first);
+        const ids = [...idSet];
         setPermBaselineIds(ids);
         const pendingPresets = aiPendingRef.current.permission_presets;
         const pendingTweaks = aiPendingRef.current.permission_tweaks;
@@ -1286,6 +1430,8 @@ export function StaffFormModal({
             ? applySelectedModulesToDraft(d, meta, companyKeys, selKeys)
             : d
         );
+
+        if (editUserId && permTouched) return;
 
         if (hasPendingPerms) {
           const applied = applyPendingAiPermissions(undefined, base);
@@ -1317,9 +1463,8 @@ export function StaffFormModal({
     return () => {
       cancelled = true;
     };
-    // permTouched đọc lúc response — cố ý không đưa vào deps để tránh loop khi AI set touched
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, form.role, applyPendingAiPermissions]);
+  }, [open, moduleRoles, isSystemAdminFlag, applyPendingAiPermissions]);
 
   // Edit: nạp quyền hiệu lực hiện tại
   useEffect(() => {
@@ -1351,21 +1496,14 @@ export function StaffFormModal({
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
-  const applyRoleChange = (role) => {
-    setForm((f) => ({ ...f, role }));
-    setPermTouched(false);
-    if (role === 'region_admin') setCrmScopeMode('regions');
-    else if (COMPANY_WIDE_CRM_ROLES.has(role)) setCrmScopeMode('company');
-  };
-
   const applyCrmScopeMode = (mode) => {
     setCrmScopeMode(mode);
     if (mode === 'regions') {
-      if (COMPANY_WIDE_CRM_ROLES.has(form.role)) {
-        setForm((f) => ({ ...f, role: 'region_admin' }));
+      if (COMPANY_WIDE_CRM_ROLES.has(form.role) || moduleRoles.crm) {
+        setModuleRole('crm', 'region_admin');
       }
-    } else if (mode === 'company' && form.role === 'region_admin') {
-      setForm((f) => ({ ...f, role: 'sales_admin' }));
+    } else if (mode === 'company' && (form.role === 'region_admin' || moduleRoles.crm === 'region_admin')) {
+      setModuleRole('crm', 'sales_admin');
     }
   };
 
@@ -1457,6 +1595,12 @@ export function StaffFormModal({
         team_id: fields.team_id || '',
         crm_region_ids: Array.isArray(fields.crm_region_ids) ? fields.crm_region_ids : f.crm_region_ids,
       }));
+      if (role === 'admin' || role === 'platform_admin') {
+        setIsSystemAdminFlag(true);
+      } else {
+        setIsSystemAdminFlag(false);
+        setModuleRoles(inferModuleRolesFromPrimaryRole(role));
+      }
       setCrmScopeMode(scope);
       if (fields.company_id && !lockedCompanyId) {
         setSelCompany(String(fields.company_id));
@@ -1506,12 +1650,18 @@ export function StaffFormModal({
   const submit = async (e) => {
     e.preventDefault(); setLoading(true);
     try {
+      if (!Object.keys(moduleRoles).length && !isSystemAdminFlag) {
+        alert('Chọn ít nhất một module và role tương ứng.');
+        setLoading(false);
+        return;
+      }
       if (crmScopeMode === 'regions' && !(form.crm_region_ids || []).length) {
         alert('Chọn ít nhất một khu vực CRM khi phạm vi là «Chỉ khu vực chỉ định».');
         setLoading(false);
         return;
       }
-      const payload = { ...form };
+      const derivedRole = derivePrimaryRoleFromModules(moduleRoles, isSystemAdminFlag);
+      const payload = { ...form, role: derivedRole };
       if (!payload.password) delete payload.password;
       if (editUserId) delete payload.email;
       payload.department_id = payload.department_id || null;
@@ -1521,9 +1671,17 @@ export function StaffFormModal({
       });
       if (payload.salary === '' || payload.salary == null) payload.salary = null;
       payload.crm_region_ids = Array.isArray(form.crm_region_ids) ? form.crm_region_ids : [];
-      if (crmScopeMode === 'company' && form.role === 'region_admin') {
+      if (crmScopeMode === 'company' && derivedRole === 'region_admin') {
         payload.role = 'sales_admin';
+        if (moduleRoles.crm === 'region_admin') {
+          payload.module_roles = { ...moduleRoles, crm: 'sales_admin' };
+        } else {
+          payload.module_roles = { ...moduleRoles };
+        }
+      } else {
+        payload.module_roles = { ...moduleRoles };
       }
+      payload.is_system_admin = isSystemAdminFlag === true;
       if (payload.avatar === undefined) delete payload.avatar;
       else if (payload.avatar === null || payload.avatar === '') payload.avatar = null;
       else if (typeof payload.avatar === 'string') payload.avatar = payload.avatar.trim() || null;
@@ -1685,12 +1843,32 @@ export function StaffFormModal({
           <div><label className="block text-sm font-medium mb-1">Email *</label><input type="email" value={form.email || ''} onChange={e => set('email', e.target.value)} required className="input" disabled={!!editUserId} autoComplete="off" readOnly={!!editUserId} /></div>
           <div><label className="block text-sm font-medium mb-1">SĐT</label><input value={form.phone || ''} onChange={e => set('phone', e.target.value)} className="input" autoComplete="off" /></div>
           <div><label className="block text-sm font-medium mb-1">Mật khẩu {editUserId ? '(trống = giữ)' : '*'}</label><input type="password" value={form.password || ''} onChange={e => set('password', e.target.value)} className="input" required={!editUserId} placeholder={editUserId ? '••••••' : (defaultNewUserPassword || '123456')} autoComplete="new-password" /></div>
-          <div><label className="block text-sm font-medium mb-1">Vai trò</label>
-            <select value={form.role || 'staff'} onChange={e => applyRoleChange(e.target.value)} className="input">
-              {Object.entries(ROLES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-            </select></div>
           <div><label className="block text-sm font-medium mb-1">Chức vụ</label><input value={form.position || ''} onChange={e => set('position', e.target.value)} className="input" placeholder="VD: Trưởng phòng" /></div>
         </div>
+        {actorIsSystemAdmin && (
+          <label className="inline-flex items-center gap-2 text-sm text-gray-700">
+            <input
+              type="checkbox"
+              checked={isSystemAdminFlag}
+              onChange={(e) => {
+                const on = e.target.checked;
+                setIsSystemAdminFlag(on);
+                setForm((f) => ({
+                  ...f,
+                  role: derivePrimaryRoleFromModules(moduleRoles, on),
+                }));
+                setPermTouched(false);
+              }}
+              className="rounded border-gray-300 text-red-600 focus:ring-red-500"
+            />
+            <span>Admin hệ thống <span className="text-xs text-gray-500">(không gắn module nghiệp vụ)</span></span>
+          </label>
+        )}
+        {Object.keys(moduleRoles).length > 0 && (
+          <p className="text-xs text-gray-500">
+            Vai trò hệ thống (JWT): <span className="font-medium text-gray-800">{ROLES[derivePrimaryRoleFromModules(moduleRoles, isSystemAdminFlag)] || derivePrimaryRoleFromModules(moduleRoles, isSystemAdminFlag)}</span>
+          </p>
+        )}
 
         {/* ═══ Cascade: Khối → Cty → PB → Team ═══ */}
         <div className="bg-blue-50/50 rounded-xl border border-blue-100 p-4 space-y-3">
@@ -1762,10 +1940,10 @@ export function StaffFormModal({
             </div>
           </div>
 
-          {/* Module theo công ty (multi) */}
+          {/* Module theo công ty — mỗi module 1 role */}
           <div className="pt-1 border-t border-blue-100 space-y-1.5">
             <label className="text-[11px] font-semibold text-gray-700 block">
-              Module {selCompany ? '' : '(chọn công ty trước)'}
+              Module &amp; vai trò {selCompany ? '' : '(chọn công ty trước)'}
             </label>
             {!selCompany ? (
               <p className="text-[10px] text-gray-400">Chọn công ty để hiện module CRM / SX / VC…</p>
@@ -1776,32 +1954,46 @@ export function StaffFormModal({
                 Công ty chưa gắn khối / không có module. Kiểm tra cấu hình Module ↔ Khối.
               </p>
             ) : (
-              <div className="flex flex-wrap gap-2">
+              <div className="space-y-2">
                 {companyModules.map((m) => {
-                  const checked = selectedModuleKeys.includes(m.key);
+                  const checked = !!moduleRoles[m.key];
+                  const roleOpts = MODULE_ROLE_OPTIONS[m.key] || ['staff'];
                   return (
-                    <label
+                    <div
                       key={m.key}
-                      className={`inline-flex items-center gap-1.5 text-[11px] px-2.5 py-1.5 rounded-lg border cursor-pointer select-none ${
+                      className={`flex flex-wrap items-center gap-2 rounded-lg border px-2.5 py-2 ${
                         checked
-                          ? 'bg-blue-100 border-blue-300 text-blue-900'
-                          : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
+                          ? 'bg-blue-50 border-blue-300'
+                          : 'bg-white border-gray-200'
                       }`}
                     >
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={() => toggleCompanyModule(m.key)}
-                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                      />
-                      <span className="font-medium">{m.label}</span>
-                    </label>
+                      <label className="inline-flex items-center gap-1.5 text-[11px] cursor-pointer select-none min-w-[7rem]">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => toggleCompanyModule(m.key)}
+                          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                        />
+                        <span className="font-medium text-gray-800">{m.label}</span>
+                      </label>
+                      {checked && (
+                        <select
+                          value={moduleRoles[m.key] || roleOpts[0]}
+                          onChange={(e) => setModuleRole(m.key, e.target.value)}
+                          className="h-8 flex-1 min-w-[10rem] px-2 border rounded-lg text-[11px] bg-white"
+                        >
+                          {roleOpts.map((rk) => (
+                            <option key={rk} value={rk}>{ROLES[rk] || rk}</option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
                   );
                 })}
               </div>
             )}
             <p className="text-[10px] text-gray-500">
-              Chỉ hiện module công ty đang thuộc (CRM/SX/VC theo khối). Kế toán luôn có. Tick = làm việc (xem+sửa).
+              Bật module + chọn đúng 1 role. Công việc &amp; Kiến thức luôn hiện bên phải. Tick module = làm việc (xem+sửa).
             </p>
           </div>
 
@@ -1938,7 +2130,9 @@ export function StaffFormModal({
               <div className="min-w-0">
                 <h4 className="text-xs font-bold text-violet-800 uppercase flex items-center gap-1.5">
                   <Shield className="h-3.5 w-3.5 shrink-0" />
-                  Phân quyền «{ROLES[form.role] || form.role}»
+                  Phân quyền «{Object.keys(moduleRoles).length
+                    ? Object.entries(moduleRoles).map(([k, r]) => `${k}:${ROLES[r] || r}`).join(' · ')
+                    : (ROLES[form.role] || form.role || '—')}»
                 </h4>
                 <p className="text-[10px] text-violet-700/80 mt-0.5 leading-snug">
                   Bật/tắt từng quyền. Drive chỉ xem · SX xem tất cả · Reset theo vai trò.
@@ -2036,22 +2230,16 @@ export function StaffFormModal({
 // ═══ Staff Detail Modal ═══
 function StaffDetailModal({ userId, open, onClose }) {
   const [user, setUser] = useState(null);
-  const [userRoles, setUserRoles] = useState([]);
   const [ecosystemPath, setEcosystemPath] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [showRolesModal, setShowRolesModal] = useState(false);
   
   useEffect(() => { 
     if (!open || !userId) return; 
     setLoading(true);
     
-    Promise.all([
-      api.get(`/users/${userId}`),
-      api.get(`/permissions/users/${userId}/roles`),
-    ]).then(([userRes, rolesRes]) => {
+    api.get(`/users/${userId}`).then((userRes) => {
       const userData = userRes.data.user;
       setUser(userData);
-      setUserRoles(rolesRes.data.user_roles || []);
       
       // Build ecosystem path (Team → Dept → Company → Division)
       const path = [];
@@ -2150,51 +2338,27 @@ function StaffDetailModal({ userId, open, onClose }) {
               </div>
             )}
 
-            {/* Roles Section */}
+            {/* Module roles */}
             <div className="bg-purple-50 rounded-lg p-4 border border-purple-200">
-              <div className="flex items-center justify-between mb-3">
-                <p className="text-sm font-bold text-gray-900 flex items-center gap-2">
-                  <Shield className="h-4 w-4 text-purple-600" />
-                  Vai trò & Phân quyền
+              <p className="text-sm font-bold text-gray-900 flex items-center gap-2 mb-3">
+                <Shield className="h-4 w-4 text-purple-600" />
+                Module &amp; vai trò
+              </p>
+              {!(user.module_roles && Object.keys(user.module_roles).length) ? (
+                <p className="text-xs text-gray-500 italic">
+                  Chưa cấu hình module — primary: {ROLES[user.role] || user.role}
                 </p>
-                <button
-                  onClick={() => setShowRolesModal(true)}
-                  className="text-xs px-3 py-1.5 bg-purple-600 text-white rounded-lg hover:bg-purple-700 flex items-center gap-1"
-                >
-                  <Plus className="h-3 w-3" /> Gán vai trò
-                </button>
-              </div>
-              
-              {userRoles.length === 0 ? (
-                <p className="text-xs text-gray-500 italic">Chưa có vai trò nào được gán</p>
               ) : (
                 <div className="space-y-2">
-                  {userRoles.map(ur => {
-                    const unit = ur.ecosystem_unit;
-                    const levelLabels = { 0: 'Tập đoàn', 1: 'Khối', 2: 'Công ty', 3: 'Phòng ban', 4: 'Team' };
-                    const levelLabel = unit ? levelLabels[unit.level] : null;
-                    const icons = { 0: '🏢', 1: '📦', 2: '🏭', 3: '👥', 4: '⚡' };
-                    const icon = unit ? icons[unit.level] : '🌐';
-                    
-                    return (
-                      <div key={ur.id} className="bg-white border border-purple-200 rounded-lg p-2.5 flex items-center gap-2">
-                        <Shield className="h-4 w-4 text-purple-600 shrink-0" />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs font-bold text-gray-900">{ur.role?.name}</p>
-                          {unit ? (
-                            <p className="text-[10px] text-gray-600 flex items-center gap-1">
-                              <span>{icon}</span>
-                              <span className="font-medium">{levelLabel}</span>
-                              <span>→</span>
-                              <span className="truncate">{unit.name}</span>
-                            </p>
-                          ) : (
-                            <p className="text-[10px] text-gray-500">🌐 Toàn hệ thống</p>
-                          )}
-                        </div>
+                  {Object.entries(user.module_roles).map(([mk, role]) => (
+                    <div key={mk} className="bg-white border border-purple-200 rounded-lg p-2.5 flex items-center gap-2">
+                      <Shield className="h-4 w-4 text-purple-600 shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-bold text-gray-900 capitalize">{mk}</p>
+                        <p className="text-[10px] text-gray-600">{ROLES[role] || role}</p>
                       </div>
-                    );
-                  })}
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
@@ -2243,21 +2407,6 @@ function StaffDetailModal({ userId, open, onClose }) {
           </div>
         )}
       </Modal>
-      
-      {showRolesModal && user && (
-        <UserRolesModal
-          userId={user.id}
-          userName={user.full_name}
-          onClose={() => setShowRolesModal(false)}
-          onSaved={() => {
-            setShowRolesModal(false);
-            // Reload roles
-            api.get(`/permissions/users/${userId}/roles`).then(res => {
-              setUserRoles(res.data.user_roles || []);
-            });
-          }}
-        />
-      )}
     </>
   );
 }

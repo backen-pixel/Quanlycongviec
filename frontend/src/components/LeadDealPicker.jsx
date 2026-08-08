@@ -18,7 +18,11 @@ export default function LeadDealPicker({
   onChange,
   type = 'deal',
   customerId = null,
+  companyId = null,
+  /** Lọc deal theo công ty thuộc khối module (crm | production | logistics) — khớp /companies?for_module= */
+  forModule = null,
   placeholder = 'Tìm deal theo mã / tên / SĐT khách...',
+  emptyLabel = null,
   disabled = false,
   warnOrphan = true,
 }) {
@@ -41,6 +45,8 @@ export default function LeadDealPicker({
       params.set('limit', '20');
       if (q) params.set('q', q);
       if (customerId) params.set('customer_id', customerId);
+      if (companyId) params.set('company_id', companyId);
+      if (forModule) params.set('for_module', forModule);
       const { data } = await api.get(`/crm/leads/picker?${params.toString()}`);
       setResults(data.results || []);
     } catch (e) {
@@ -48,7 +54,7 @@ export default function LeadDealPicker({
       setLoadError(e.response?.data?.error || 'Không tải được danh sách deal');
     }
     setLoading(false);
-  }, [type, customerId]);
+  }, [type, customerId, companyId, forModule]);
 
   // Debounced search
   useEffect(() => {
@@ -125,6 +131,9 @@ export default function LeadDealPicker({
                 <span className="text-sm font-medium text-gray-900 truncate">{value.title || '—'}</span>
               </div>
               <div className="flex items-center gap-2 mt-0.5 text-[10px] text-gray-600">
+                {value.project_code && (
+                  <span className="inline-flex items-center gap-1 font-mono text-teal-700">🏭 {value.project_code}</span>
+                )}
                 {value.company_name && (
                   <span className="inline-flex items-center gap-1"><Building2 className="h-3 w-3" />{value.company_name}</span>
                 )}
@@ -140,7 +149,8 @@ export default function LeadDealPicker({
             <div className="flex-1 flex items-center gap-2">
               {warnOrphan && <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />}
               <span className={`text-sm ${warnOrphan ? 'text-amber-700 font-medium' : 'text-gray-500'}`}>
-                {warnOrphan ? `Chưa gắn ${labelText} — báo giá sẽ "mồ côi"` : `Chọn ${labelText}…`}
+                {emptyLabel
+                  || (warnOrphan ? `Chưa gắn ${labelText} — báo giá sẽ "mồ côi"` : `Chọn ${labelText}…`)}
               </span>
             </div>
           )}
@@ -180,7 +190,11 @@ export default function LeadDealPicker({
             )}
             {!loading && !loadError && results.length === 0 && (
               <div className="px-4 py-6 text-center text-sm text-gray-500">
-                Không tìm thấy {labelText} nào{customerId ? ' của khách hàng này' : ''}.
+                {forModule === 'logistics'
+                  ? 'Không có deal Lắp đặt — chỉ hiện deal đã bàn giao sang VC/LĐ (có dự án trên Kanban Lắp đặt).'
+                  : forModule === 'production'
+                    ? 'Không có deal Sản xuất — chỉ hiện deal đã có dự án trên Kanban SX.'
+                    : `Không tìm thấy ${labelText} nào${customerId ? ' của khách hàng này' : ''}.`}
               </div>
             )}
             {results.map((d, idx) => (
@@ -203,6 +217,9 @@ export default function LeadDealPicker({
                   )}
                 </div>
                 <div className="flex items-center gap-2 mt-0.5 text-[10px] text-gray-600">
+                  {d.project_code && (
+                    <span className="inline-flex items-center gap-1 font-mono text-teal-700">🏭 {d.project_code}</span>
+                  )}
                   {d.customer_name && (
                     <span className="inline-flex items-center gap-1">
                       <User className="h-3 w-3" />{d.customer_name}

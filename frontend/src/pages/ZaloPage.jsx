@@ -450,7 +450,7 @@ export default function ZaloPage() {
       return;
     }
     if (!String(form.default_module_key || '').trim()) {
-      alert('Cần chọn module tạo mới (CRM / Sản xuất / Vận chuyển)');
+      alert('Cần chọn module tạo mới (CRM / Sản xuất / Lắp đặt)');
       return;
     }
     if (!form.default_company_id) {
@@ -938,7 +938,7 @@ export default function ZaloPage() {
                           <div className="text-xs text-slate-400">{a.oa_id}</div>
                         </td>
                         <td className="py-2 pr-4 text-xs">
-                          <div>{a.default_module_key === 'production' ? 'Sản xuất' : a.default_module_key === 'logistics' ? 'Vận chuyển' : a.default_module_key === 'crm' ? 'CRM' : '—'}</div>
+                          <div>{a.default_module_key === 'production' ? 'Sản xuất' : a.default_module_key === 'logistics' ? 'Lắp đặt' : a.default_module_key === 'crm' ? 'CRM' : '—'}</div>
                           <div className="text-slate-400">{a.default_company_id ? `Công ty #${String(a.default_company_id).slice(0, 8)}…` : 'Chưa cấu hình'}</div>
                         </td>
                         <td className="py-2 pr-4">{a.app_id || '—'}</td>

@@ -21,7 +21,7 @@ const GUIDES = [
       },
       {
         title: 'Chuyển giữa Quản lý & CRM',
-        content: 'Góc trên trái sidebar có nút chuyển đổi (icon ô vuông 3x3):\n• Bấm → Hiện danh sách module: "Quản lý", "CRM", "Xưởng SX", "Vận chuyển"...\n• Chọn "CRM" → Sidebar đổi sang menu CRM\n• Chọn "Quản lý" → Quay lại menu tổng hợp dự án & nhiệm vụ',
+        content: 'Góc trên trái sidebar có nút chuyển đổi (icon ô vuông 3x3):\n• Bấm → Hiện danh sách module: "Quản lý", "CRM", "Xưởng SX", "Lắp đặt"...\n• Chọn "CRM" → Sidebar đổi sang menu CRM\n• Chọn "Quản lý" → Quay lại menu tổng hợp dự án & nhiệm vụ',
         tip: 'CRM = Quản lý bán hàng. Quản lý = Tổng hợp dự án, nhiệm vụ & vận hành.',
       },
       {

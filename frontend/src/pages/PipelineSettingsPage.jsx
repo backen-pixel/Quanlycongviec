@@ -3142,7 +3142,7 @@ function StageForm({
           {vcStages.length > 0 && (
             <div>
               <div className="flex flex-wrap items-center gap-2 mb-1">
-                <p className="text-[10px] font-semibold text-orange-700">🚚 Vận chuyển (VC)</p>
+                <p className="text-[10px] font-semibold text-orange-700">🔧 Lắp đặt (VC)</p>
                 <label className="inline-flex items-center gap-1 text-[10px] text-gray-600 cursor-pointer">
                   <input
                     type="checkbox"

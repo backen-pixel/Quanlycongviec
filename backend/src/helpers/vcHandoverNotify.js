@@ -1,5 +1,5 @@
 /**
- * Thông báo khi deal/dự án chuyển từ Sản xuất sang Vận chuyển & Lắp đặt.
+ * Thông báo khi deal/dự án chuyển từ Sản xuất sang Lắp đặt.
  * Không phụ thuộc DISABLE_PRODUCTION_PUSH_NOTIFICATIONS.
  */
 
@@ -94,11 +94,11 @@ async function notifyVcHandoverFromSx(req, {
 
     const code = projectCode || projectName || 'mới';
     const title = manual
-      ? '🚚 Vận chuyển: Deal bàn giao từ Xưởng'
-      : '🚚 Vận chuyển: Deal mới từ Xưởng';
+      ? '🔧 Lắp đặt: Deal bàn giao từ Xưởng'
+      : '🔧 Lắp đặt: Deal mới từ Xưởng';
     const message = manual
-      ? `Dự án ${code} đã bàn giao sang Vận chuyển & Lắp đặt`
-      : `Dự án ${code} đã hoàn thành sản xuất, chuyển sang Vận chuyển & Lắp đặt`;
+      ? `Dự án ${code} đã bàn giao sang Lắp đặt`
+      : `Dự án ${code} đã hoàn thành sản xuất, chuyển sang Lắp đặt`;
 
     await notifyMultiple(
       req,

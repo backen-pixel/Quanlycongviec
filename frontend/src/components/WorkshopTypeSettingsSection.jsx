@@ -34,12 +34,12 @@ export default function WorkshopTypeSettingsSection({ moduleContext, accent = 't
     if (moduleContext === 'production') {
       return [
         { value: 'production', label: 'Chỉ Sản xuất' },
-        { value: 'both', label: 'Sản xuất + Vận chuyển' },
+        { value: 'both', label: 'Sản xuất + Lắp đặt' },
       ];
     }
     return [
-      { value: 'logistics', label: 'Chỉ Vận chuyển' },
-      { value: 'both', label: 'Sản xuất + Vận chuyển' },
+      { value: 'logistics', label: 'Chỉ Lắp đặt' },
+      { value: 'both', label: 'Sản xuất + Lắp đặt' },
     ];
   }, [moduleContext]);
 

@@ -64,7 +64,7 @@ export const EVENT_MODULE_OPTIONS = [
   { value: '', label: 'Tất cả khối', emoji: '🌐' },
   { value: 'crm', label: 'Kinh doanh', emoji: '💼' },
   { value: 'production', label: 'Sản xuất', emoji: '🏭' },
-  { value: 'logistics', label: 'Vận chuyển', emoji: '🚚' },
+  { value: 'logistics', label: 'Lắp đặt', emoji: '🚚' },
   { value: 'general', label: 'Chung công ty', emoji: '🏢' },
 ] as const;
 

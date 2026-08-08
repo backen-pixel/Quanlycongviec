@@ -46,10 +46,10 @@ function crmLeadMissingPhone(lead) {
 }
 
 function isSxPipelineStageNoDeadline(stage) {
-  return !!stage?.counts_as_completed_revenue;
+  return !!(stage?.counts_as_completed_revenue || stage?.counts_as_collected_revenue);
 }
 
-/** Cột «Bỏ quá hạn» hoặc «Đã công» — không ghi nhận quá hạn ngày đặt/giao. */
+/** Cột «Bỏ quá hạn» hoặc «Đã công» / «Đã thu» — không ghi nhận quá hạn ngày đặt/giao. */
 function shouldIgnoreSxOrderDeliveryOverdue(stage) {
   if (!stage) return false;
   if (isSxPipelineStageNoDeadline(stage)) return true;
@@ -94,7 +94,7 @@ function isSxColumnSlaOverdue(project, stage) {
  * Quá hạn ngày giao/SX — khớp frontend `isSxProjectDeliveryDateOverdue`.
  * Ưu tiên: delivery_date → production_deadline → deadline.
  * So sánh theo ngày lịch (không tính «hôm nay đã qua giờ»).
- * Bỏ qua khi cột «Đã công» hoặc sla_days=0 («Bỏ quá hạn»).
+ * Bỏ qua khi cột «Đã công» / «Đã thu» hoặc sla_days=0 («Bỏ quá hạn»).
  */
 function isSxProjectDeliveryDateOverdue(project, stage) {
   const st = stage || project?.sx_pipeline_stage;

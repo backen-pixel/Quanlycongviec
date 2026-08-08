@@ -60,32 +60,86 @@ r.get('/leads/picker', async (req, res) => {
     const q = String(req.query.q || '').trim();
     const customerId = uuidQueryOrNull(req.query.customer_id);
     const limit = Math.min(Math.max(parseInt(req.query.limit) || 20, 1), 50);
+    const forModule = String(req.query.for_module || '').trim().toLowerCase();
+    const { KNOWN_MODULE_KEYS } = require('../../../helpers/ecosystemModuleScope');
+    const useModuleFilter = forModule && KNOWN_MODULE_KEYS.includes(forModule);
+    const workshopModule = forModule === 'logistics' || forModule === 'production' ? forModule : null;
 
-    // crm_leads không có cột `status` — trạng thái suy ra từ stage / actual_close_date.
-    let query = supabase
-      .from('crm_leads')
-      .select(
-        'id, code, title, type, stage_id, company_id, region_id, customer_id, ' +
+    const pickerSelect = workshopModule === 'logistics'
+      ? ('id, code, title, type, stage_id, company_id, region_id, customer_id, project_id, ' +
           'assigned_to, lead_owner_id, estimated_value, created_at, actual_close_date, ' +
           'customer:customers(id, full_name, phone), ' +
           'company:companies!crm_leads_company_id_fkey(id, name, short_name), ' +
           'region:company_regions!crm_leads_region_id_fkey(id, name, code), ' +
-          'assignee:users!crm_leads_assigned_to_fkey(id, full_name, email)',
-      )
+          'assignee:users!crm_leads_assigned_to_fkey(id, full_name, email), ' +
+          'project:projects!crm_leads_project_id_fkey(id, code, name, logistics_company_id, vc_kanban_column_id)')
+      : ('id, code, title, type, stage_id, company_id, region_id, customer_id, project_id, ' +
+          'assigned_to, lead_owner_id, estimated_value, created_at, actual_close_date, ' +
+          'customer:customers(id, full_name, phone), ' +
+          'company:companies!crm_leads_company_id_fkey(id, name, short_name), ' +
+          'region:company_regions!crm_leads_region_id_fkey(id, name, code), ' +
+          'assignee:users!crm_leads_assigned_to_fkey(id, full_name, email), ' +
+          'project:projects!crm_leads_project_id_fkey(id, code, name)');
+
+    // crm_leads không có cột `status` — trạng thái suy ra từ stage / actual_close_date.
+    let query = supabase
+      .from('crm_leads')
+      .select(pickerSelect)
       .eq('type', type)
       .order('updated_at', { ascending: false })
-      .limit(limit);
+      .limit(workshopModule ? Math.min(limit * 4, 80) : limit);
 
-    // Scope theo công ty: admin công ty / nhân viên thường khoá theo company_id của user.
     const sac = scopedAdminCompanyId(req);
-    if (sac) {
-      query = query.eq('company_id', sac);
-    } else if (!userIsAdmin(req.user?.role)) {
+    const requestedCompanyId = uuidQueryOrNull(req.query.company_id);
+    const userCompanyId = !userIsAdmin(req.user?.role) ? (req.user?.company_id || null) : null;
+    if (!userIsAdmin(req.user?.role) && !userCompanyId && !sac) {
       const cid = requireUserCompanyId(req, res);
       if (!cid) return;
-      query = query.eq('company_id', cid);
-    } else if (uuidQueryOrNull(req.query.company_id)) {
-      query = query.eq('company_id', uuidQueryOrNull(req.query.company_id));
+    }
+
+    // SX / Lắp đặt: chỉ deal gắn dự án đã vào Kanban xưởng — không lấy lead CRM thuần
+    // dù công ty CRM cũng nằm trong khối logistics.
+    let workshopProjectIds = null;
+    if (workshopModule) {
+      const { listWorkshopPickerProjectIds } = require('../../../helpers/crmModuleCompanies');
+      const scopeCompany = requestedCompanyId || sac || userCompanyId || null;
+      workshopProjectIds = await listWorkshopPickerProjectIds(workshopModule, { companyId: scopeCompany });
+      if (!workshopProjectIds.length) {
+        return res.json({ type, total: 0, results: [], scope: workshopModule });
+      }
+      if (!q) {
+        query = query.in('project_id', workshopProjectIds.slice(0, 120));
+      }
+    } else {
+      let moduleCompanyIds = null;
+      if (useModuleFilter) {
+        const { listModuleCompanyIds } = require('../../../helpers/crmModuleCompanies');
+        moduleCompanyIds = await listModuleCompanyIds(forModule);
+      }
+
+      if (sac) {
+        if (moduleCompanyIds && moduleCompanyIds.length && !moduleCompanyIds.includes(String(sac))) {
+          return res.json({ type, total: 0, results: [] });
+        }
+        query = query.eq('company_id', sac);
+      } else if (!userIsAdmin(req.user?.role)) {
+        const cid = userCompanyId || requireUserCompanyId(req, res);
+        if (!cid) return;
+        if (moduleCompanyIds && moduleCompanyIds.length && !moduleCompanyIds.includes(String(cid))) {
+          return res.json({ type, total: 0, results: [] });
+        }
+        query = query.eq('company_id', cid);
+      } else if (requestedCompanyId) {
+        if (moduleCompanyIds && moduleCompanyIds.length && !moduleCompanyIds.includes(String(requestedCompanyId))) {
+          return res.json({ type, total: 0, results: [] });
+        }
+        query = query.eq('company_id', requestedCompanyId);
+      } else if (moduleCompanyIds) {
+        if (!moduleCompanyIds.length) {
+          return res.json({ type, total: 0, results: [] });
+        }
+        query = query.in('company_id', moduleCompanyIds);
+      }
     }
 
     // Scope theo khu vực
@@ -97,27 +151,62 @@ r.get('/leads/picker', async (req, res) => {
     if (customerId) query = query.eq('customer_id', customerId);
 
     if (q) {
-      // Search theo code / title / SĐT / tên KH — crm_leads.phone hầu như luôn NULL,
-      // SĐT thật nằm ở customers.phone qua customer_id nên cần tìm thêm customer_id khớp.
+      // Search theo code / title / SĐT / tên KH / mã dự án (TB-…)
       const safe = q.replace(/[(),]/g, ' ').replace(/\s+/g, '%');
-      const { data: custMatchRows } = await supabase
-        .from('customers')
-        .select('id')
-        .or(`phone.ilike.%${safe}%,full_name.ilike.%${safe}%`)
-        .limit(1000);
-      const custMatchIds = (custMatchRows || []).map((r) => r.id);
       const orParts = [`code.ilike.%${safe}%`, `title.ilike.%${safe}%`, `phone.ilike.%${safe}%`];
-      if (custMatchIds.length) orParts.push(`customer_id.in.(${custMatchIds.join(',')})`);
+
+      // 1 ký tự → bỏ lookup KH (quá rộng, URL PostgREST dễ 400)
+      if (q.length >= 2) {
+        const { data: custMatchRows } = await supabase
+          .from('customers')
+          .select('id')
+          .or(`phone.ilike.%${safe}%,full_name.ilike.%${safe}%`)
+          .limit(40);
+        const custMatchIds = (custMatchRows || []).map((r) => r.id).filter(Boolean);
+        if (custMatchIds.length) orParts.push(`customer_id.in.(${custMatchIds.join(',')})`);
+      }
+
+      const { data: projectMatchRows } = await supabase
+        .from('projects')
+        .select('id')
+        .or(`code.ilike.%${safe}%,name.ilike.%${safe}%`)
+        .limit(40);
+      let projectMatchIds = (projectMatchRows || []).map((r) => r.id).filter(Boolean);
+
+      if (workshopProjectIds) {
+        const allow = new Set(workshopProjectIds.map(String));
+        projectMatchIds = projectMatchIds.filter((id) => allow.has(String(id)));
+        const scopedPids = [...new Set([
+          ...workshopProjectIds.slice(0, 80).map(String),
+          ...projectMatchIds.map(String),
+        ])].slice(0, 120);
+        if (!scopedPids.length) {
+          return res.json({ type, total: 0, results: [], scope: workshopModule });
+        }
+        query = query.in('project_id', scopedPids);
+      } else if (projectMatchIds.length) {
+        orParts.push(`project_id.in.(${projectMatchIds.join(',')})`);
+      }
       query = query.or(orParts.join(','));
     }
 
     const { data, error } = await query;
-    if (error) throw error;
+    if (error) {
+      console.error('[leads/picker]', error.message || error);
+      throw error;
+    }
+
+    const workshopAllow = workshopProjectIds ? new Set(workshopProjectIds.map(String)) : null;
+    const rows = (data || []).filter((l) => {
+      if (!workshopAllow) return true;
+      const pid = l.project_id || l.project?.id;
+      return pid && workshopAllow.has(String(pid));
+    }).slice(0, limit);
 
     res.json({
       type,
-      total: (data || []).length,
-      results: (data || []).map((l) => ({
+      total: rows.length,
+      results: rows.map((l) => ({
         id: l.id,
         code: l.code,
         title: l.title,
@@ -135,6 +224,9 @@ r.get('/leads/picker', async (req, res) => {
         assignee_name: l.assignee?.full_name || null,
         estimated_value: l.estimated_value || 0,
         created_at: l.created_at,
+        project_id: l.project_id || l.project?.id || null,
+        project_code: l.project?.code || null,
+        project_name: l.project?.name || null,
       })),
     });
   } catch (e) {

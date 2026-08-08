@@ -20,11 +20,11 @@ const WORKSHOP_PRODUCTION_STAGES = [
   { slug: 'production', label: 'Sản xuất', icon: '🏭', color: '#0f766e' },
 ];
 const WORKSHOP_LOGISTICS_STAGES = [
-  { slug: 'logistics', label: 'Vận chuyển', icon: '🚚', color: '#14b8a6' },
+  { slug: 'logistics', label: 'Lắp đặt', icon: '🔧', color: '#14b8a6' },
 ];
 const ALL_WORKSHOP_AREAS = [
   { slug: 'production', label: '🏭 Sản xuất', icon: '🏭', color: '#0f766e' },
-  { slug: 'logistics', label: '🚚 Vận chuyển', icon: '🚚', color: '#14b8a6' },
+  { slug: 'logistics', label: '🔧 Lắp đặt', icon: '🔧', color: '#14b8a6' },
 ];
 
 // ═══ Sortable Item component ═══
@@ -826,7 +826,7 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
             <div className="inline-flex bg-gray-100 rounded-lg p-0.5" title="Phân loại bộ mẫu">
               {[
                 { key: 'production', label: '🏭 Sản xuất' },
-                { key: 'logistics',  label: '🚚 Vận chuyển' },
+                { key: 'logistics',  label: '🔧 Lắp đặt' },
               ].map((a) => (
                 <button
                   key={a.key}
@@ -1076,7 +1076,7 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
         {!canLoadTemplates && selectedCompanyId && (
           <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50 px-4 py-8 text-center text-sm text-gray-500">
             {!activeTab
-              ? '👉 Chọn khu vực xưởng (Sản xuất / Vận chuyển) ở thanh bên trái.'
+              ? '👉 Chọn khu vực xưởng (Sản xuất / Lắp đặt) ở thanh bên trái.'
               : (usesWorkshopType && !selectedWorkshopTypeKey)
                 ? '👉 Chọn phân loại dự án (Cửa / Tủ bếp / …) hoặc "Tất cả phân loại" ở thanh bên trái.'
                 : '👉 Chọn pipeline / "Bộ mẫu chung" ở thanh bên trái để cấu hình bộ nhiệm vụ.'}
@@ -1088,8 +1088,8 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
           <h3 className="text-sm font-semibold text-blue-800">
             Tạo bộ mẫu mới (
             {isLogisticsFixed
-              ? 'Vận chuyển / Lắp đặt'
-              : (activeTab === 'logistics' ? 'Vận chuyển' : 'Sản xuất')}
+              ? 'Lắp đặt'
+              : (activeTab === 'logistics' ? 'Lắp đặt' : 'Sản xuất')}
             )
           </h3>
           <div className="flex gap-2">

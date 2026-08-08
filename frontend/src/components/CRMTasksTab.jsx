@@ -262,7 +262,7 @@ function assignmentNavForTask(task, isProductionScope = false, forceProduction =
     label: isProduction ? 'Giao việc Sản xuất' : (isLogistics ? 'Giao việc VC' : 'Giao việc CRM'),
     title: isProduction
       ? 'Mở trên trang Giao việc Sản xuất'
-      : (isLogistics ? 'Mở trên trang Giao việc Vận chuyển' : 'Mở trên trang Giao việc CRM'),
+      : (isLogistics ? 'Mở trên trang Giao việc Lắp đặt' : 'Mở trên trang Giao việc CRM'),
     openUrl: (id) => `${base}?open=${id}`,
   };
 }
@@ -2435,7 +2435,7 @@ export default function CRMTasksTab({
     input.multiple = true;
     input.accept = TASK_ATTACHMENT_FILE_ACCEPT;
     input.onchange = async (e) => {
-      const rawFiles = Array.from(e.target.files || []).slice(0, 20);
+      const rawFiles = Array.from(e.target.files || []).slice(0, 50);
       if (!rawFiles.length) return;
       setUploadingTask(taskId);
 
@@ -2794,7 +2794,7 @@ export default function CRMTasksTab({
     input.multiple = true;
     input.accept = TASK_ATTACHMENT_FILE_ACCEPT;
     input.onchange = async (e) => {
-      const rawFiles = Array.from(e.target.files || []).slice(0, 20);
+      const rawFiles = Array.from(e.target.files || []).slice(0, 50);
       if (!rawFiles.length) return;
       const upKey = ckStateKey(taskId, ckId);
       setUploadingChecklistKey(upKey);

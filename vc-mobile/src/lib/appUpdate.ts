@@ -358,7 +358,7 @@ export async function openDownloadedApk(
   const canInstall = await canInstallApkFromApp();
   if (!canInstall) {
     const err = new Error(
-      'Cần bật "Cho phép cài đặt ứng dụng không rõ nguồn" cho Vận chuyển lắp đặt.',
+      'Cần bật "Cho phép cài đặt ứng dụng không rõ nguồn" cho Lắp đặt.',
     ) as Error & { code?: string };
     err.code = INSTALL_PERMISSION_ERROR;
     throw err;
@@ -381,7 +381,7 @@ export async function openDownloadedApk(
     const msg = e instanceof Error ? e.message : String(e);
     if (msg.includes('NO_INSTALL_PERMISSION') || msg.toLowerCase().includes('không rõ nguồn')) {
       const err = new Error(
-        'Cần bật "Cho phép cài đặt ứng dụng không rõ nguồn" cho Vận chuyển lắp đặt.',
+        'Cần bật "Cho phép cài đặt ứng dụng không rõ nguồn" cho Lắp đặt.',
       ) as Error & { code?: string };
       err.code = INSTALL_PERMISSION_ERROR;
       throw err;

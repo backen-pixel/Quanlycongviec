@@ -358,8 +358,8 @@ async function buildProjectDealBundle(projectId, opts = {}) {
         },
       },
       vc: {
-        label: 'Vận chuyển',
-        emoji: '🚚',
+        label: 'Lắp đặt',
+        emoji: '🔧',
         color: '#d97706',
         tasks: vcTasks,
         documents: vcAllDocuments,

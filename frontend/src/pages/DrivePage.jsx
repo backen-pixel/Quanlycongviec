@@ -55,7 +55,7 @@ function moduleScopeLabel(key) {
   const k = String(key || '').toLowerCase();
   if (k === 'crm') return 'CRM';
   if (k === 'sx') return 'Sản xuất';
-  if (k === 'vc') return 'Vận chuyển';
+  if (k === 'vc') return 'Lắp đặt';
   if (k === 'mkt') return 'Marketing';
   return 'Khác';
 }

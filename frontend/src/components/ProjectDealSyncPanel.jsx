@@ -48,7 +48,7 @@ export default function ProjectDealSyncPanel({ bundle, projectId, onOpenAggregat
         <div>
           <h3 className="text-sm font-bold text-gray-900 flex items-center gap-2">
             <Layers className="h-4 w-4 text-blue-600" />
-            Đồng bộ CRM · Sản xuất · Vận chuyển
+            Đồng bộ CRM · Sản xuất · Lắp đặt
           </h3>
           {primary_lead ? (
             <p className="text-xs text-gray-600 mt-1">
@@ -90,7 +90,7 @@ export default function ProjectDealSyncPanel({ bundle, projectId, onOpenAggregat
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-3">
         <PipelineChip label="CRM" stage={pipelines?.crm} tone="bg-emerald-50/80 border-emerald-100" />
         <PipelineChip label="Sản xuất" stage={pipelines?.sx} tone="bg-orange-50/80 border-orange-100" />
-        <PipelineChip label="Vận chuyển" stage={pipelines?.vc} tone="bg-amber-50/80 border-amber-100" />
+        <PipelineChip label="Lắp đặt" stage={pipelines?.vc} tone="bg-amber-50/80 border-amber-100" />
       </div>
 
       {hasData ? (

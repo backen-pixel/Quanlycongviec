@@ -40,16 +40,18 @@ async function isKnownModuleKeyAsync(moduleKey) {
   }
 }
 
-/** Module hiện trên form NV (chip). CRM/SX/VC theo khối; kế toán luôn có. */
-const STAFF_FORM_MODULE_KEYS = ['crm', 'production', 'logistics', 'accounting'];
+/** Module hiện trên form NV (chip). CRM/SX/VC theo khối; kế toán / mua hàng / tính toán khi có. */
+const STAFF_FORM_MODULE_KEYS = ['crm', 'production', 'logistics', 'accounting', 'purchasing', 'tinhtoan'];
 
 /** Module mọi công ty đều có — không cần gắn khối trong ecosystem_module_scopes. */
-const STAFF_FORM_ALWAYS_MODULE_KEYS = new Set(['accounting']);
+const STAFF_FORM_ALWAYS_MODULE_KEYS = new Set(['accounting', 'purchasing', 'tinhtoan']);
 
 const STAFF_FORM_MODULE_LABELS = {
   crm: 'CRM',
+  purchasing: 'Mua hàng',
+  tinhtoan: 'Tính toán',
   production: 'Sản xuất',
-  logistics: 'VC/LD',
+  logistics: 'Lắp đặt',
   accounting: 'Kế toán',
 };
 
@@ -102,7 +104,7 @@ function invalidateEcosystemModuleScopeCache(moduleKey) {
 }
 
 /**
- * @param {{ role?: string, company_id?: string }} user — JWT / req.user
+ * @param {{ role?: string, company_id?: string, userId?: string, id?: string }} user — JWT / req.user
  */
 async function userHasEcosystemModuleAccess(user, moduleKey) {
   if (!moduleKey || moduleKey === 'core') return true;
@@ -112,6 +114,19 @@ async function userHasEcosystemModuleAccess(user, moduleKey) {
     if (!ok) return false;
   }
   if (isAdminLike(user)) return true;
+
+  // Layer mới: có row user_module_roles → được vào module (+ alias)
+  try {
+    const { getModuleAccessKeysForUser } = require('./userModuleRoles');
+    const uid = user?.userId || user?.id || null;
+    if (uid) {
+      const accessKeys = await getModuleAccessKeysForUser(uid);
+      if (accessKeys && accessKeys.size > 0 && accessKeys.has(String(moduleKey))) {
+        return true;
+      }
+    }
+  } catch { /* ignore — bảng chưa có / soft fail */ }
+
   if (isAccountingUser(user) && ACCOUNTING_VIEW_MODULES.has(String(moduleKey))) return true;
   if (isWorkshopRoleProductionParticipant(user) && WORKSHOP_PARTICIPANT_VIEW_MODULES.has(String(moduleKey))) return true;
   if (isCrmProductionAdmin(user) && CRM_PRODUCTION_DUAL_MODULES.has(String(moduleKey))) return true;

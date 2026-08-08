@@ -17,7 +17,7 @@ const TABS = [
   { id: 'tasks', label: 'Nhiệm vụ', icon: CheckSquare },
   { id: 'documents', label: 'Tài liệu', icon: FileText },
   { id: 'sx', label: 'Sản xuất', icon: Factory },
-  { id: 'vc', label: 'Vận chuyển', icon: Truck },
+  { id: 'vc', label: 'Lắp đặt', icon: Truck },
   { id: 'activity', label: 'Hoạt động', icon: Activity },
   { id: 'finance', label: 'BG / ĐH', icon: DollarSign },
 ];
@@ -183,7 +183,7 @@ export default function UnifiedDealPage() {
           <div className="grid grid-cols-3 gap-2 mb-3">
             <PipelineBadge label="CRM" stage={pipelines?.crm} />
             <PipelineBadge label="Sản xuất" stage={pipelines?.sx} colorClass="border-orange-200" />
-            <PipelineBadge label="Vận chuyển" stage={pipelines?.vc} colorClass="border-amber-200" />
+            <PipelineBadge label="Lắp đặt" stage={pipelines?.vc} colorClass="border-amber-200" />
           </div>
 
           <div className="flex gap-1 overflow-x-auto pb-1 [scrollbar-width:thin]">
@@ -360,7 +360,7 @@ export default function UnifiedDealPage() {
         {tab === 'vc' && (
           <div className="bg-white rounded-xl border p-4 space-y-3">
             <div className="flex items-center justify-between">
-              <h2 className="text-sm font-bold text-gray-900">Nhiệm vụ Vận chuyển</h2>
+              <h2 className="text-sm font-bold text-gray-900">Nhiệm vụ Lắp đặt</h2>
               {project?.id && (
                 <Link to={`/vc/projects/${project.id}`} className="text-xs text-amber-700 hover:underline flex items-center gap-1">
                   Mở chi tiết VC <ExternalLink className="h-3 w-3" />

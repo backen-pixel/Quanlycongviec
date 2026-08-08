@@ -404,7 +404,7 @@ const KETOAN_MENU_GROUPS = [
     emoji: '🏭',
     items: [
       { to: '/sx/dashboard', icon: Factory, label: 'Kanban Sản xuất' },
-      { to: '/vc/dashboard', icon: LayoutDashboard, label: 'Kanban Vận chuyển' },
+      { to: '/vc/dashboard', icon: LayoutDashboard, label: 'Kanban Lắp đặt' },
     ],
   },
 ];
@@ -433,17 +433,17 @@ const MUAHANG_MENU_GROUPS = [
   },
 ];
 
-// LOGISTICS (VẬN CHUYỂN) menu structure
+// LOGISTICS (LẮP ĐẶT) menu structure
 const VC_MENU_GROUPS = [
   {
     id: 'vc-overview',
     moduleKey: 'logistics',
     title: '1. Tổng quan',
-    emoji: '🚚',
+    emoji: '🔧',
     items: [
-      { to: '/vc/dashboard', icon: LayoutDashboard, label: 'Dashboard VC', end: true },
-      { to: '/vc/assignments', icon: ClipboardList, label: 'Giao việc VC' },
-      { to: '/drive?module=vc', icon: HardDrive, label: 'Drive Vận chuyển' },
+      { to: '/vc/dashboard', icon: LayoutDashboard, label: 'Dashboard Lắp đặt', end: true },
+      { to: '/vc/assignments', icon: ClipboardList, label: 'Giao việc Lắp đặt' },
+      { to: '/drive?module=vc', icon: HardDrive, label: 'Drive Lắp đặt' },
     ]
   },
   {
@@ -455,14 +455,14 @@ const VC_MENU_GROUPS = [
   {
     id: 'vc-projects',
     moduleKey: 'logistics',
-    title: '3. Điều hành VC',
+    title: '3. Điều hành Lắp đặt',
     emoji: '📦',
     items: [
-      { to: '/vc/dashboard', icon: FolderKanban, label: 'Dự án vận chuyển' },
-      { to: '/vc/pipeline-settings', icon: Settings, label: 'Pipeline VC' },
+      { to: '/vc/dashboard', icon: FolderKanban, label: 'Dự án lắp đặt' },
+      { to: '/vc/pipeline-settings', icon: Settings, label: 'Pipeline Lắp đặt' },
       { to: '/vc/teams', icon: Users, label: 'Quản lý Đội nhóm' },
-      { to: '/vc/task-templates', icon: ListChecks, label: 'Bộ nhiệm vụ VC' },
-      { to: { pathname: '/admin/trash', search: '?tab=vc' }, icon: Trash2, label: 'Thùng rác VC', adminOnly: true, strictAdminOnly: true },
+      { to: '/vc/task-templates', icon: ListChecks, label: 'Bộ nhiệm vụ Lắp đặt' },
+      { to: { pathname: '/admin/trash', search: '?tab=vc' }, icon: Trash2, label: 'Thùng rác Lắp đặt', adminOnly: true, strictAdminOnly: true },
     ]
   },
   {
@@ -471,7 +471,7 @@ const VC_MENU_GROUPS = [
     title: '4. Hỗ trợ',
     emoji: '🛠️',
     items: [
-      { to: '/vc/download-app', icon: Download, label: 'Tải app VC/LĐ' },
+      { to: '/vc/download-app', icon: Download, label: 'Tải app Lắp đặt' },
     ],
   },
 ];

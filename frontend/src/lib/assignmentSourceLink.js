@@ -92,13 +92,13 @@ export function assignmentSourceTooltip(lead, pageModule = 'crm') {
       : 'Lead / deal CRM';
   const base = parts.length ? parts.join(' · ') : fallback;
   if (mod === 'production') return `${base} — mở tab Công việc trên dự án Sản xuất`;
-  if (mod === 'logistics') return `${base} — mở tab Công việc trên dự án Vận chuyển`;
+  if (mod === 'logistics') return `${base} — mở tab Công việc trên dự án Lắp đặt`;
   return `${base} — mở tab Nhiệm vụ trên deal CRM`;
 }
 
 export function assignmentSourceFieldLabel(pageModule = 'crm') {
   const mod = normalizeAssignmentPageModule(pageModule);
   if (mod === 'production') return 'Dự án / Deal SX';
-  if (mod === 'logistics') return 'Dự án / Deal VC';
+  if (mod === 'logistics') return 'Dự án / Deal Lắp đặt';
   return 'Lead / Deal CRM';
 }

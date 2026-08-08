@@ -955,7 +955,6 @@ export default function ManagementDashboard() {
           {(moduleTab === 'overview' || moduleTab === 'vc') && (
             <PipelineStrip
               title="Pipeline Vận chuyển"
-              icon={Truck}
               color="text-amber-600"
               stages={pipelines.vc}
               activeStageId={moduleTab === 'vc' ? vcStageId : null}

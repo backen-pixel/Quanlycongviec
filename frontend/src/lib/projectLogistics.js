@@ -1,4 +1,4 @@
-/** Dự án đã bàn giao / đang trong module Vận chuyển — Lắp đặt.
+/** Dự án đã bàn giao / đang trong module Lắp đặt — Lắp đặt.
  * Chỉ dựa liên kết VC thật (cột Kanban VC hoặc công ty VC) —
  * không dùng projects.status vì cột SX slug delivery/customer-care cũng set shipping/warranty.
  */

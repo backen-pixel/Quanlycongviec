@@ -18,7 +18,7 @@ import {
 
 export const WORK_MODULE_LABEL = 'Quản lý';
 export const CONGVIEC_MODULE_LABEL = 'Công việc';
-export const LOGISTICS_MODULE_LABEL = 'Vận chuyển';
+export const LOGISTICS_MODULE_LABEL = 'Lắp đặt';
 export const CRM_MODULE_ICON = '/icons/crm-module.png?v=4';
 export const WORK_MODULE_ICON = '/icons/work-module.png?v=3';
 export const CONGVIEC_MODULE_ICON = '/icons/work-module.png?v=4';
@@ -115,7 +115,7 @@ export const APP_MODULE_DEFINITIONS = [
     id: 'vc',
     path: '/vc',
     name: LOGISTICS_MODULE_LABEL,
-    desc: 'Quản lý giao hàng, lắp đặt, bảo hành',
+    desc: 'Quản lý giao hàng, lắp đặt & bảo hành',
     Icon: Truck,
     imageUrl: VC_MODULE_ICON,
     iconClass: 'bg-transparent shadow-none',

@@ -11,7 +11,7 @@
  *   3b. Sale sửa ngày đề xuất → PATCH /comments/:cid/reschedule (khi awaiting_confirm, chưa có sự kiện).
  *      → giữ Xưởng đã xác nhận (mặc định); reset xác nhận VC/LĐ.
  *   4. Đúng phụ trách VC/LĐ xác nhận → PATCH /comments/:cid/confirm
- *      → đủ 2 bên: tạo 3 sự kiện (Giao hàng xưởng + Vận chuyển + Lắp đặt) rồi khóa lịch.
+ *      → đủ 2 bên: tạo 3 sự kiện (Giao hàng xưởng + Lắp đặt + Lắp đặt) rồi khóa lịch.
  */
 
 /** Xưởng mặc định xác nhận khi Sale tạo/đặt ngày bàn giao (SX đã chủ động kéo cột). */
@@ -90,6 +90,40 @@ function formatVnDateTime(isoOrDate) {
   return d.toLocaleString('vi-VN', {
     day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
   });
+}
+
+/** YYYY-MM-DD unique sorted — ngày lắp đặt nhiều ngày (liên tiếp hoặc ngắt quãng). */
+function normalizeOccurrenceYmds(raw) {
+  if (!Array.isArray(raw)) return [];
+  return [...new Set(
+    raw.map((d) => String(d || '').trim().slice(0, 10)).filter((s) => /^\d{4}-\d{2}-\d{2}$/.test(s)),
+  )].sort();
+}
+
+function formatYmdVi(ymd) {
+  const s = String(ymd || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return '';
+  const [y, m, d] = s.split('-');
+  return `${d}/${m}/${y}`;
+}
+
+function formatInstallDaysLabel(isoOrDate, occurrenceYmds) {
+  const dates = normalizeOccurrenceYmds(occurrenceYmds);
+  if (dates.length > 1) return dates.map(formatYmdVi).join(', ');
+  return formatVnDateTime(isoOrDate);
+}
+
+function vnHmFromIso(isoOrDate, fallback = '14:00') {
+  if (!isoOrDate) return fallback;
+  const d = isoOrDate instanceof Date ? isoOrDate : new Date(isoOrDate);
+  if (Number.isNaN(d.getTime())) return fallback;
+  try {
+    return d.toLocaleTimeString('en-GB', {
+      hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Ho_Chi_Minh',
+    });
+  } catch {
+    return fallback;
+  }
 }
 
 /** Người CRM chịu trách nhiệm nhận TB bàn giao VC (sale deal + sale dự án). */
@@ -295,11 +329,19 @@ async function resolveEventTypeBySlugs(slugs) {
 }
 
 async function insertCrmEventWithParticipants(eventInsert, participantIds, actorUserId) {
-  let insRes = await supabase.from('crm_events').insert(eventInsert).select('id').single();
-  if (insRes.error && /column.*module.*does not exist|42703/i.test(String(insRes.error.message || ''))) {
-    const { module: _m, ...legacy } = eventInsert;
+  let payload = eventInsert;
+  let insRes = await supabase.from('crm_events').insert(payload).select('id').single();
+  if (insRes.error && /column.*occurrence_dates/i.test(String(insRes.error.message || ''))) {
+    const { occurrence_dates: _o, ...noOcc } = payload;
+    void _o;
+    payload = noOcc;
+    insRes = await supabase.from('crm_events').insert(payload).select('id').single();
+  }
+  if (insRes.error && /column.*module.*does not exist/i.test(String(insRes.error.message || ''))) {
+    const { module: _m, ...legacy } = payload;
     void _m;
-    insRes = await supabase.from('crm_events').insert(legacy).select('id').single();
+    payload = legacy;
+    insRes = await supabase.from('crm_events').insert(payload).select('id').single();
   }
   if (insRes.error) throw insRes.error;
   const eventId = insRes.data?.id || null;
@@ -343,6 +385,7 @@ async function syncProjectHandoverDates(projectId, { pickupAt, installAt = null,
  */
 async function createVcHandoverEvents({
   userId, leadId, projectId, pickupAt, installAt = null, vcArriveAt = null, pickupNotes, meta, logisticsPersonId,
+  installOccurrenceDates = null,
 }) {
   await syncProjectHandoverDates(projectId, { pickupAt, installAt, pickupNotes });
 
@@ -368,6 +411,10 @@ async function createVcHandoverEvents({
   const pickupDay = vnCalendarDayKey(pickupAt);
   const installDay = vnCalendarDayKey(installStart);
   const sameDay = !!(pickupDay && installDay && pickupDay === installDay);
+  const occDates = normalizeOccurrenceYmds(
+    installOccurrenceDates || meta?.install_occurrence_dates,
+  );
+  if (!occDates.length && installDay) occDates.push(installDay);
 
   const baseShared = {
     status: 'planned',
@@ -419,8 +466,9 @@ async function createVcHandoverEvents({
   }, participantIds, userId);
   if (transportEventId) eventIds.push(transportEventId);
 
-  // 3) Lắp đặt (VC/LĐ)
-  installEventId = await insertCrmEventWithParticipants({
+  // 3) Lắp đặt (VC/LĐ) — có thể nhiều ngày (liên tiếp hoặc ngắt quãng)
+  const installHm = vnHmFromIso(installStart, '14:00');
+  const installInsert = {
     ...baseShared,
     module: 'logistics',
     event_type_id: installType.id,
@@ -429,11 +477,19 @@ async function createVcHandoverEvents({
     description: [
       notes || `Sự kiện lắp đặt cho dự án ${projLabel}.`,
       addr,
-      sameDay ? 'Cùng ngày với nhận hàng VC.' : null,
+      occDates.length > 1 ? `Ngày lắp: ${occDates.map(formatYmdVi).join(', ')}.` : null,
+      sameDay && occDates.length <= 1 ? 'Cùng ngày với nhận hàng VC.' : null,
     ].filter(Boolean).join('\n'),
-    start_time: installStart,
+    start_time: occDates.length
+      ? `${occDates[0]}T${installHm}:00+07:00`
+      : installStart,
+    end_time: occDates.length > 1
+      ? `${occDates[occDates.length - 1]}T${installHm}:00+07:00`
+      : null,
+    occurrence_dates: occDates.length ? occDates : null,
     assignee_id: meta.installer_person_id || logisticsPersonId || meta.logistics_person_id || null,
-  }, participantIds, userId);
+  };
+  installEventId = await insertCrmEventWithParticipants(installInsert, participantIds, userId);
   if (installEventId) eventIds.push(installEventId);
 
   return {
@@ -650,8 +706,8 @@ r.post('/projects/:id/request', async (req, res) => {
     const mentionText = await formatSaleMentionText(deal.id, saleUserIds);
     await ensureSaleUsersAsLeadMembers(deal.id, saleUserIds, actor);
     const body = mentionText
-      ? `🚚 Xưởng đề nghị bàn giao «${projLabel}» sang Vận chuyển/Lắp đặt. ${mentionText} vui lòng chọn công ty VC/LĐ, ngày lấy hàng và tạo sự kiện Lấy hàng / Lắp đặt.`
-      : `🚚 Xưởng đề nghị bàn giao «${projLabel}» sang Vận chuyển/Lắp đặt. Sale CRM vui lòng chọn công ty VC/LĐ, ngày lấy hàng và tạo sự kiện Lấy hàng / Lắp đặt.`;
+      ? `🚚 Xưởng đề nghị bàn giao «${projLabel}» sang Lắp đặt. ${mentionText} vui lòng chọn công ty VC/LĐ, ngày lấy hàng và tạo sự kiện Lấy hàng / Lắp đặt.`
+      : `🚚 Xưởng đề nghị bàn giao «${projLabel}» sang Lắp đặt. Sale CRM vui lòng chọn công ty VC/LĐ, ngày lấy hàng và tạo sự kiện Lấy hàng / Lắp đặt.`;
 
     const { data: inserted, error } = await supabase
       .from('crm_lead_comments')
@@ -722,11 +778,12 @@ r.patch('/comments/:cid/select', async (req, res) => {
     const deliveryDateRaw = req.body?.delivery_date ? String(req.body.delivery_date).trim().slice(0, 10) : null;
     const vcArriveAtRaw = req.body?.vc_arrive_at != null ? String(req.body.vc_arrive_at).trim() : null;
     const installDateRaw = req.body?.install_date != null ? String(req.body.install_date).trim() : null;
+    let installOccurrenceDates = normalizeOccurrenceYmds(req.body?.install_occurrence_dates);
     const installAddress = req.body?.install_address != null ? String(req.body.install_address).trim() : null;
     const otherName = req.body?.external_company_name != null ? String(req.body.external_company_name).trim() : null;
     // VC/LĐ là một khối — luôn thêm cả phụ trách vận chuyển và lắp đặt.
     const serviceType = 'both';
-    if (!logisticsCompanyId) return res.status(400).json({ error: 'Vui lòng chọn công ty Vận chuyển/Lắp đặt.' });
+    if (!logisticsCompanyId) return res.status(400).json({ error: 'Vui lòng chọn công ty Lắp đặt.' });
     if (!pickupAtRaw) return res.status(400).json({ error: 'Vui lòng chọn ngày lấy hàng.' });
     const pickupDate = new Date(pickupAtRaw);
     if (Number.isNaN(pickupDate.getTime())) return res.status(400).json({ error: 'Ngày lấy hàng không hợp lệ.' });
@@ -748,6 +805,13 @@ r.patch('/comments/:cid/select', async (req, res) => {
       if (Number.isNaN(ad.getTime())) return res.status(400).json({ error: 'Thời gian VC tới nơi LĐ không hợp lệ.' });
       vcArriveAt = ad.toISOString();
     }
+    if (installDate && !installOccurrenceDates.length) {
+      const d = vnCalendarDayKey(installDate);
+      if (d) installOccurrenceDates = [d];
+    }
+    if (installOccurrenceDates.length && !installDate) {
+      installDate = `${installOccurrenceDates[0]}T14:00:00+07:00`;
+    }
     if (installDate) {
       const pickupDay = vnCalendarDayKey(pickupAt);
       const installDay = vnCalendarDayKey(installDate);
@@ -755,6 +819,9 @@ r.patch('/comments/:cid/select', async (req, res) => {
         return res.status(400).json({
           error: 'Ngày lắp đặt phải bằng hoặc sau ngày nhận hàng / lấy hàng VC.',
         });
+      }
+      if (pickupDay && installOccurrenceDates.some((d) => d < pickupDay)) {
+        return res.status(400).json({ error: 'Ngày lắp đặt không được trước ngày nhận hàng VC.' });
       }
     }
     if (vcArriveAt) {
@@ -898,7 +965,9 @@ r.patch('/comments/:cid/select', async (req, res) => {
 
     const pickupLabel = formatVnDateTime(pickupDate);
     const arriveLabel = vcArriveAt ? formatVnDateTime(new Date(vcArriveAt)) : pickupLabel;
-    const installLabel = installDate ? formatVnDateTime(installDate) : pickupLabel;
+    const installLabel = installDate
+      ? formatInstallDaysLabel(installDate, installOccurrenceDates)
+      : pickupLabel;
     const notesSuffix = selectNotes ? ` · ${selectNotes}` : '';
     const nextMeta = {
       ...meta,
@@ -931,6 +1000,7 @@ r.patch('/comments/:cid/select', async (req, res) => {
       events_mode: 'pending_confirm',
       delivery_date: deliveryDate || null,
       install_date: installDate || pickupAt,
+      install_occurrence_dates: installOccurrenceDates.length ? installOccurrenceDates : null,
       install_address: installAddress || null,
       external_company_name: otherName || null,
       confirmed_production: defaultProductionConfirmMeta({
@@ -1214,6 +1284,7 @@ r.patch('/comments/:cid/reschedule', async (req, res) => {
     const cid = Number(req.params.cid);
     const pickupAtRaw = req.body?.pickup_at;
     const installDateRaw = req.body?.install_date != null ? String(req.body.install_date).trim() : null;
+    let installOccurrenceDates = normalizeOccurrenceYmds(req.body?.install_occurrence_dates);
     const vcArriveAtRaw = req.body?.vc_arrive_at != null ? String(req.body.vc_arrive_at).trim() : null;
     const pickupNotes = req.body?.pickup_notes != null ? String(req.body.pickup_notes).trim() : null;
 
@@ -1238,6 +1309,13 @@ r.patch('/comments/:cid/reschedule', async (req, res) => {
       if (Number.isNaN(ad.getTime())) return res.status(400).json({ error: 'Thời gian VC tới nơi LĐ không hợp lệ.' });
       vcArriveAt = ad.toISOString();
     }
+    if (installDate && !installOccurrenceDates.length) {
+      const d = vnCalendarDayKey(installDate);
+      if (d) installOccurrenceDates = [d];
+    }
+    if (installOccurrenceDates.length && !installDate) {
+      installDate = `${installOccurrenceDates[0]}T14:00:00+07:00`;
+    }
     if (installDate) {
       const pickupDay = vnCalendarDayKey(pickupAt);
       const installDay = vnCalendarDayKey(installDate);
@@ -1245,6 +1323,9 @@ r.patch('/comments/:cid/reschedule', async (req, res) => {
         return res.status(400).json({
           error: 'Ngày lắp đặt phải bằng hoặc sau ngày nhận hàng / lấy hàng VC.',
         });
+      }
+      if (pickupDay && installOccurrenceDates.some((d) => d < pickupDay)) {
+        return res.status(400).json({ error: 'Ngày lắp đặt không được trước ngày nhận hàng VC.' });
       }
     }
     if (vcArriveAt) {
@@ -1308,7 +1389,7 @@ r.patch('/comments/:cid/reschedule', async (req, res) => {
 
     const pickupLabel = formatVnDateTime(pickupDate);
     const arriveLabel = formatVnDateTime(new Date(vcArriveAt));
-    const installLabel = formatVnDateTime(installAt);
+    const installLabel = formatInstallDaysLabel(installAt, installOccurrenceDates);
     const nextMeta = {
       ...meta,
       crm_responsible_user_id: crmResponsibleId,
@@ -1316,6 +1397,7 @@ r.patch('/comments/:cid/reschedule', async (req, res) => {
       pickup_notes: pickupNotes != null ? pickupNotes : (meta.pickup_notes || null),
       vc_arrive_at: vcArriveAt,
       install_date: installAt,
+      install_occurrence_dates: installOccurrenceDates.length ? installOccurrenceDates : null,
       confirmed_production: defaultProductionConfirmMeta(meta),
       confirmed_logistics: null,
       event_id: null,
@@ -1644,7 +1726,7 @@ r.patch('/comments/:cid/confirm', async (req, res) => {
       const finalBody = [
         `✅ Đã xác nhận giữa Xưởng và VC/LĐ: ngày ${pickupLabel} giao nhận hàng cho «${meta.project_name || meta.project_code || 'dự án'}».`,
         nextMeta.event_ids?.length >= 3
-          ? 'Đã tạo 3 sự kiện trên lịch: Giao hàng xưởng + Vận chuyển + Lắp đặt.'
+          ? 'Đã tạo 3 sự kiện trên lịch: Giao hàng xưởng + Lắp đặt + Lắp đặt.'
           : null,
       ].filter(Boolean).join(' ');
       try {

@@ -13,7 +13,7 @@ r.use(auth);
 const MODULE_OPTIONS = [
   { key: 'crm', label: 'CRM / Bán hàng' },
   { key: 'production', label: 'Sản xuất (SX)' },
-  { key: 'logistics', label: 'Vận chuyển' },
+  { key: 'logistics', label: 'Lắp đặt' },
   { key: 'projects', label: 'Dự án / Thiết kế' },
 ];
 

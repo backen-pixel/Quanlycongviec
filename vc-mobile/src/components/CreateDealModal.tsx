@@ -983,7 +983,7 @@ export default function CreateDealModal({ visible, user, onClose, onCreated }: P
                 <View style={styles.pickerEmpty}>
                   <Text style={styles.pickerEmptyText}>
                     {picker === 'company'
-                      ? 'Không có công ty VC/LĐ — kiểm tra quyền hoặc cấu hình module Vận chuyển lắp đặt.'
+                      ? 'Không có công ty VC/LĐ — kiểm tra quyền hoặc cấu hình module Lắp đặt lắp đặt.'
                       : picker === 'external'
                         ? 'Chưa có đối tác — chọn «Nhập công ty mới» bên dưới form.'
                         : 'Không có lựa chọn.'}

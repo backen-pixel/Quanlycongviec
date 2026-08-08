@@ -1,5 +1,5 @@
 /**
- * vcHandoverCore — logic bàn giao dự án SX sang module Vận chuyển/Lắp đặt (VC/LĐ).
+ * vcHandoverCore — logic bàn giao dự án SX sang module Lắp đặt/Lắp đặt (VC/LĐ).
  *
  * Được dùng bởi:
  *   - PATCH /production/projects/:id/handover-vc (flow cũ, giữ nguyên)
@@ -226,7 +226,7 @@ async function performVcHandoverCore(req, {
       project_id: projectId,
       from_stage_id: project.current_stage_id,
       to_stage_id: null,
-      notes: 'Bàn giao sang module Vận chuyển (qua bình luận VC/LĐ)',
+      notes: 'Bàn giao sang module Lắp đặt (qua bình luận VC/LĐ)',
       transitioned_by: actorUserId,
     });
   } catch (te) { console.warn('[vcHandoverCore] stage_transitions:', te.message); }
@@ -284,7 +284,7 @@ async function performVcHandoverCore(req, {
     const { data: actor } = await supabase.from('users').select('full_name').eq('id', actorUserId).maybeSingle();
     await logDealActivityComment(req, {
       projectId,
-      body: `🚚 ${actor?.full_name || 'Người dùng'} đã bàn giao dự án sang module Vận chuyển.`,
+      body: `🚚 ${actor?.full_name || 'Người dùng'} đã bàn giao dự án sang module Lắp đặt.`,
     });
   } catch (_) { /* ignore */ }
 

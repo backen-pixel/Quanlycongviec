@@ -223,9 +223,14 @@ async function touchProjectSxPipelineStageEnteredAt(projectId, targetColId, curr
   }
 }
 
+/** Cột «Đã công» / «Đã thu» (Hoàn thành) — tắt hết deadline SX. */
+function isSxColumnClearsDeadlines(col) {
+  return !!(col?.counts_as_completed_revenue || col?.counts_as_collected_revenue);
+}
+
 /**
- * Kéo vào cột «Hoàn thành» (counts_as_completed_revenue):
- * xóa hết deadline / ngày giao xưởng + hủy lịch hẹn SX còn mở.
+ * Kéo vào cột «Hoàn thành» / Đã công / Đã thu:
+ * xóa hết deadline / ngày giao xưởng + hạn NV xưởng + hủy lịch hẹn SX còn mở.
  */
 async function clearSxSchedulesOnCompletedForProjects(projectIds) {
   const ids = [...new Set((projectIds || []).map(String).filter(Boolean))];
@@ -256,6 +261,18 @@ async function clearSxSchedulesOnCompletedForProjects(projectIds) {
     }
   }
 
+  // Hạn nhiệm vụ xưởng (tab SX / tasks.due_date)
+  {
+    const { error: taskDueErr } = await supabase
+      .from('tasks')
+      .update({ due_date: null, updated_at: nowIso })
+      .in('project_id', ids)
+      .not('due_date', 'is', null);
+    if (taskDueErr) {
+      console.warn('[production] clear workshop task due_date on complete:', taskDueErr.message);
+    }
+  }
+
   const { data: deals, error: dealErr } = await supabase
     .from('crm_leads')
     .select('id')
@@ -265,8 +282,8 @@ async function clearSxSchedulesOnCompletedForProjects(projectIds) {
   const leadIds = [...new Set((deals || []).map((d) => String(d.id)).filter(Boolean))];
 
   if (leadIds.length) {
-    try {
-      await supabase
+    {
+      const { error: dealDlErr } = await supabase
         .from('crm_leads')
         .update({
           kanban_deadline_at: null,
@@ -274,25 +291,25 @@ async function clearSxSchedulesOnCompletedForProjects(projectIds) {
           updated_at: nowIso,
         })
         .in('id', leadIds);
-    } catch (e) {
-      if (!/kanban_deadline/.test(e.message || '')) throw e;
+      if (dealDlErr && !/kanban_deadline/.test(dealDlErr.message || '')) throw dealDlErr;
     }
 
     // Deadline nhiệm vụ SX trên deal (slug sx_*)
-    try {
-      await supabase
+    {
+      const { error: crmTaskErr } = await supabase
         .from('crm_tasks')
         .update({ deadline: null, updated_at: nowIso })
         .in('lead_id', leadIds)
         .like('stage_slug', 'sx_%')
         .not('deadline', 'is', null);
-    } catch (e) {
-      console.warn('[production] clear sx task deadlines on complete:', e.message);
+      if (crmTaskErr) {
+        console.warn('[production] clear sx task deadlines on complete:', crmTaskErr.message);
+      }
     }
 
     // Hủy lịch hẹn SX còn mở gắn deal / dự án
-    try {
-      await supabase
+    {
+      const { error: evtErr } = await supabase
         .from('crm_events')
         .update({
           status: 'cancelled',
@@ -302,13 +319,14 @@ async function clearSxSchedulesOnCompletedForProjects(projectIds) {
         .in('lead_id', leadIds)
         .eq('module', 'production')
         .in('status', ['planned', 'in_progress']);
-    } catch (e) {
-      console.warn('[production] cancel production events on complete:', e.message);
+      if (evtErr) {
+        console.warn('[production] cancel production events on complete:', evtErr.message);
+      }
     }
   }
 
-  try {
-    await supabase
+  {
+    const { error: projEvtErr } = await supabase
       .from('crm_events')
       .update({
         status: 'cancelled',
@@ -318,8 +336,9 @@ async function clearSxSchedulesOnCompletedForProjects(projectIds) {
       .in('project_id', ids)
       .eq('module', 'production')
       .in('status', ['planned', 'in_progress']);
-  } catch (e) {
-    console.warn('[production] cancel project production events on complete:', e.message);
+    if (projEvtErr) {
+      console.warn('[production] cancel project production events on complete:', projEvtErr.message);
+    }
   }
 }
 
@@ -856,7 +875,8 @@ r.put('/pipeline-stages/:id', requirePermission('projects', 'edit'), async (req,
     }
     Object.assign(update, parseProductionStageKpiBody(b));
     const enablingCompletedRevenue = b.counts_as_completed_revenue === true;
-    if (enablingCompletedRevenue) {
+    const enablingCollectedRevenue = b.counts_as_collected_revenue === true;
+    if (enablingCompletedRevenue || enablingCollectedRevenue) {
       update.requires_deadline = false;
     }
     if (existingRow?.bucket_slug === INTAKE_BUCKET) {
@@ -962,11 +982,11 @@ r.put('/pipeline-stages/:id', requirePermission('projects', 'edit'), async (req,
         console.warn('[production] auto_add_members_on_enter update:', flagErr.message);
       }
     }
-    if (enablingCompletedRevenue) {
+    if (enablingCompletedRevenue || enablingCollectedRevenue) {
       try {
         await clearSxKanbanDeadlinesForPipelineColumn(req.params.id);
       } catch (clearErr) {
-        console.warn('[production] clear deadlines on completed column:', clearErr.message);
+        console.warn('[production] clear deadlines on completed/collected column:', clearErr.message);
       }
     }
     await invalidateProductionPipelineCache();
@@ -2542,13 +2562,13 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
       const colId = String(pipelineStageId);
       let { data: colRow } = await supabase
         .from('production_pipeline_stages')
-        .select('id, name, workflow_stage_id, bucket_slug, crm_target_stage_id, requires_deadline, counts_as_completed_revenue')
+        .select('id, name, workflow_stage_id, bucket_slug, crm_target_stage_id, requires_deadline, counts_as_completed_revenue, counts_as_collected_revenue')
         .eq('id', colId)
         .maybeSingle();
       if (!colRow) {
         ({ data: colRow } = await supabase
           .from('production_pipeline_stages')
-          .select('id, name, workflow_stage_id, bucket_slug, crm_target_stage_id, counts_as_completed_revenue')
+          .select('id, name, workflow_stage_id, bucket_slug, crm_target_stage_id, counts_as_completed_revenue, counts_as_collected_revenue')
           .eq('id', colId)
           .maybeSingle());
       }
@@ -2585,7 +2605,8 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
         });
       }
 
-      const isCompletedCol = !!colRow?.counts_as_completed_revenue;
+      // Đã công (completed) hoặc Đã thu / Hoàn thành (collected) → tắt hết deadline SX
+      const isCompletedCol = isSxColumnClearsDeadlines(colRow);
 
       // Gate deadline: cột bật requires_deadline → bắt buộc chọn deadline khi chuyển sang (cột mới).
       if (isColChange && colRow?.requires_deadline && !hasDeadlineInput && !isCompletedCol) {
@@ -3279,7 +3300,7 @@ r.patch('/projects/:id/switch-workshop-type', requireProductionKanbanEdit(), asy
 });
 
 // ─── PATCH /production/projects/:id/handover-vc ───────────────────────────
-// Bàn giao thủ công từ SX sang module Vận chuyển
+// Bàn giao thủ công từ SX sang module Lắp đặt
 r.patch('/projects/:id/handover-vc', requireProductionKanbanEdit(), async (req, res) => {
   try {
     const { id } = req.params;
@@ -3290,7 +3311,7 @@ r.patch('/projects/:id/handover-vc', requireProductionKanbanEdit(), async (req, 
     const deliveryTeamId = req.body?.delivery_team_id || null;
     const installationTeamId = req.body?.installation_team_id || null;
 
-    if (!logisticsCompanyId) return res.status(400).json({ error: 'Vui lòng chọn công ty Vận chuyển.' });
+    if (!logisticsCompanyId) return res.status(400).json({ error: 'Vui lòng chọn công ty Lắp đặt.' });
 
     // Validate logistics company belongs to module scope (logistics)
     const { data: lco, error: lcoErr } = await supabase
@@ -3312,7 +3333,7 @@ r.patch('/projects/:id/handover-vc', requireProductionKanbanEdit(), async (req, 
             .eq('company_id', logisticsCompanyId);
           ok = (links || []).some((r) => r?.division_unit_id && restricted.has(String(r.division_unit_id)));
         }
-        if (!ok) return res.status(400).json({ error: 'Công ty VC không thuộc phạm vi module Vận chuyển.' });
+        if (!ok) return res.status(400).json({ error: 'Công ty VC không thuộc phạm vi module Lắp đặt.' });
       }
     } catch (_e) { /* ignore */ }
 
@@ -3325,7 +3346,7 @@ r.patch('/projects/:id/handover-vc', requireProductionKanbanEdit(), async (req, 
       if (uErr || !u) return res.status(400).json({ error: 'Người nhận bàn giao không tồn tại.' });
       if (u.is_active === false) return res.status(400).json({ error: 'Người nhận bàn giao đã ngưng hoạt động.' });
       if (!['logistics', 'installer', 'manager', 'admin'].includes(String(u.role || ''))) {
-        return res.status(400).json({ error: 'Người nhận bàn giao phải thuộc nhóm Vận chuyển.' });
+        return res.status(400).json({ error: 'Người nhận bàn giao phải thuộc nhóm Lắp đặt.' });
       }
     }
 
@@ -3611,7 +3632,7 @@ r.patch('/projects/:id/handover-vc', requireProductionKanbanEdit(), async (req, 
         project_id: id,
         from_stage_id: project.current_stage_id,
         to_stage_id: null,
-        notes: 'Bàn giao sang module Vận chuyển (thủ công)',
+        notes: 'Bàn giao sang module Lắp đặt (thủ công)',
         transitioned_by: userId,
       });
     } catch (te) { console.warn('[production/handover-vc] stage_transitions:', te.message); }
@@ -3675,7 +3696,7 @@ r.patch('/projects/:id/handover-vc', requireProductionKanbanEdit(), async (req, 
       const { data: _actor } = await supabase.from('users').select('full_name').eq('id', userId).maybeSingle();
       await logDealActivityComment(req, {
         projectId: id,
-        body: `🚚 ${_actor?.full_name || 'Người dùng'} đã bàn giao dự án sang module Vận chuyển.`,
+        body: `🚚 ${_actor?.full_name || 'Người dùng'} đã bàn giao dự án sang module Lắp đặt.`,
       });
     } catch (_) {}
 

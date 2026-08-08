@@ -4633,7 +4633,7 @@ function SettingsTab({ onPagesChanged, fbCompanyQs = '' }) {
           className="w-full px-3 py-2.5 text-sm border-2 border-blue-300 rounded-lg bg-white cursor-pointer font-medium"
         >
           <option value="lead">📘 Lead — tạo trên pipeline Lead CRM</option>
-          <option value="deal">🎯 Deal — tạo trên pipeline Deal (hoặc Sản xuất / Vận chuyển)</option>
+          <option value="deal">🎯 Deal — tạo trên pipeline Deal (hoặc Sản xuất / Lắp đặt)</option>
         </select>
         <p className="text-[11px] text-blue-800 mt-2">
           {recordKind === 'deal'
@@ -4664,7 +4664,7 @@ function SettingsTab({ onPagesChanged, fbCompanyQs = '' }) {
           >
             <option value="crm">CRM — Kanban Deal (pipeline Deal công ty)</option>
             <option value="production">Sản xuất — pipeline xưởng</option>
-            <option value="logistics">Vận chuyển — pipeline vận chuyển</option>
+            <option value="logistics">Lắp đặt — pipeline lắp đặt</option>
           </select>
         </div>
       ) : (
@@ -4770,7 +4770,7 @@ function SettingsTab({ onPagesChanged, fbCompanyQs = '' }) {
           {moduleKey === 'production'
             ? 'Cột hiển thị mặc định (pipeline sản xuất theo phân loại)'
             : moduleKey === 'logistics'
-              ? 'Giai đoạn mặc định (pipeline deal cho vận chuyển)'
+              ? 'Giai đoạn mặc định (pipeline deal cho lắp đặt)'
               : `Giai đoạn mặc định (pipeline ${targetType === 'deal' ? 'deal' : 'lead'} của công ty)`}
         </label>
         <select
@@ -4888,7 +4888,7 @@ function SettingsTab({ onPagesChanged, fbCompanyQs = '' }) {
                     🧩 {String(p.default_module_key || '').toLowerCase() === 'production'
                       ? 'Module Sản xuất'
                       : String(p.default_module_key || '').toLowerCase() === 'logistics'
-                        ? 'Module Vận chuyển'
+                        ? 'Module Lắp đặt'
                         : 'Module CRM'}
                   </span>
                   <span className="text-xs px-3 py-1.5 rounded-lg bg-slate-100 text-slate-700 border border-slate-200">

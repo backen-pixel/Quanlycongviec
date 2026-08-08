@@ -1,5 +1,5 @@
 /**
- * Module Vận chuyển (VC)
+ * Module Lắp đặt (VC)
  * API prefix: /api/logistics
  * Quản lý dự án ở giai đoạn giao hàng / lắp đặt / bảo hành
  */
@@ -309,7 +309,7 @@ async function enrichProjectsForLogistics(projects, filterCompanyId = null) {
   const f = normalizeWorkshopCompanyId(filterCompanyId);
   const keyFor = (p) => {
     if (f) return `__f:${f}`;
-    // Pipeline VC thuộc công ty vận chuyển đã chọn, không phải công ty SX gốc.
+    // Pipeline VC thuộc công ty lắp đặt đã chọn, không phải công ty SX gốc.
     const id = p.logistics_company_id || p.company_id || p.company?.id;
     return id ? String(id) : '__global__';
   };
@@ -1106,7 +1106,7 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
       incidents = incRes.data || [];
     } catch (_) { /* bảng chưa có hoặc lỗi tạm thời */ }
 
-    // Pipeline VC theo công ty vận chuyển (logistics), không theo công ty SX gốc.
+    // Pipeline VC theo công ty lắp đặt (logistics), không theo công ty SX gốc.
     const pcid = project.logistics_company_id
       || project.logistics_company?.id
       || project.company_id
@@ -1596,7 +1596,7 @@ r.put('/handover-settings/:companyId', requirePermission('projects', 'edit'), as
       if (u.is_active === false) return { error: `${label} đã ngưng hoạt động.` };
       const allowed = ['logistics_admin', 'logistics', 'installer', 'manager', 'admin'];
       if (!allowed.includes(String(u.role || ''))) {
-        return { error: `${label} phải thuộc nhóm Vận chuyển / Lắp đặt.` };
+        return { error: `${label} phải thuộc nhóm Lắp đặt.` };
       }
       return { ok: true };
     };
@@ -1903,7 +1903,7 @@ r.delete('/trash/:id', requirePermission('projects', 'edit'), async (req, res) =
   }
 });
 
-// ─── VC mobile: thông báo chỉ hoạt động module Vận chuyển / Lắp đặt ─────────
+// ─── VC mobile: thông báo chỉ hoạt động module Lắp đặt / Lắp đặt ─────────
 
 const { invalidateTags: rcInvalidateTags } = require('../middleware/responseCache');
 

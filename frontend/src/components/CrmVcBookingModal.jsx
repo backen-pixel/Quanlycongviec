@@ -85,7 +85,7 @@ export default function CrmVcBookingModal({
 
   const submit = async () => {
     setErr('');
-    if (!companyId) return setErr('Vui lòng chọn công ty vận chuyển.');
+    if (!companyId) return setErr('Vui lòng chọn công ty lắp đặt.');
     if (!deliveryTeamId) return setErr('Vui lòng chọn đội vận chuyển.');
     if (!installationTeamId) return setErr('Vui lòng chọn đội lắp đặt.');
     if (!pickupAt) return setErr('Vui lòng chọn thời gian đi lấy hàng.');
@@ -133,7 +133,7 @@ export default function CrmVcBookingModal({
         <div className="px-5 py-4 space-y-3">
           <div>
             <label className="text-xs font-medium text-gray-700 block mb-1">
-              Công ty vận chuyển <span className="text-red-500">*</span>
+              Công ty lắp đặt <span className="text-red-500">*</span>
             </label>
             <select
               value={companyId}

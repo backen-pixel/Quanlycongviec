@@ -16,7 +16,7 @@ export const BUILTIN_UPDATES = [
     title: '🚚 Hướng dẫn — Bàn giao SX → CRM → VC/LĐ (form bình luận)',
     content: `## Mục đích
 
-Khi xưởng **hoàn thành sản xuất**, cần báo Sale CRM chọn công ty Vận chuyển/Lắp đặt và ngày giao–lắp. Hệ thống tạo **form bàn giao** trên tab Bình luận của deal; sau khi Sale chọn công ty thì đơn vào module **VC/LĐ**. Đủ 2 bên (Xưởng + VC/LĐ) xác nhận thì khóa lịch (3 sự kiện).
+Khi xưởng **hoàn thành sản xuất**, cần báo Sale CRM chọn công ty Lắp đặt và ngày giao–lắp. Hệ thống tạo **form bàn giao** trên tab Bình luận của deal; sau khi Sale chọn công ty thì đơn vào module **VC/LĐ**. Đủ 2 bên (Xưởng + VC/LĐ) xác nhận thì khóa lịch (3 sự kiện).
 
 Luồng: **Xưởng SX** gửi yêu cầu → **CRM Sale** điền form → **VC/LĐ** xác nhận & kéo Kanban.
 
@@ -36,7 +36,7 @@ Luồng: **Xưởng SX** gửi yêu cầu → **CRM Sale** điền form → **VC
 1. Vào module **Xưởng SX** → Kanban, lọc xưởng **HCB** (+ phân loại **Tủ bếp** nếu cần).
 2. Tìm cột **ĐƠN HÀNG ĐÃ CHUẨN BỊ XONG** (badge **→VC**).
 3. Khi đơn sẵn sàng: **kéo thẻ** vào cột đó, hoặc bấm **Chuyển cột nhanh** / **Bàn giao VC**.
-4. Hệ thống đăng thẻ «Bàn giao Vận chuyển / Lắp đặt» lên deal CRM — **chưa** bàn giao thật sang module VC.
+4. Hệ thống đăng thẻ «Bàn giao Lắp đặt» lên deal CRM — **chưa** bàn giao thật sang module VC.
 
 ![Kanban SX HCB — cột ĐƠN HÀNG ĐÃ CHUẨN BỊ XONG](/release-notes/vc-hd-01-sx-cot-ban-giao.png)
 
@@ -49,7 +49,7 @@ Cách khác: trên thẻ bấm **Chuyển cột nhanh** → chọn **ĐƠN HÀNG
 
 1. Mở **deal CRM** liên kết dự án (thông báo hoặc badge SX trên deal).
 2. Mở tab **💬 Bình luận**.
-3. Tìm thẻ cam **Bàn giao Vận chuyển / Lắp đặt**.
+3. Tìm thẻ cam **Bàn giao Lắp đặt**.
 4. Chỉ **Sale phụ trách deal** thấy form đầy đủ. Điền:
    - **Công ty VC/LĐ** (bắt buộc)
    - **Ngày nhận hàng** (bắt buộc) — mở lịch chọn ngày

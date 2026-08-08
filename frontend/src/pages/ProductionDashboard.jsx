@@ -2892,7 +2892,7 @@ export default function ProductionDashboard() {
   const confirmHandoverVC = useCallback(async () => {
     if (!handoverModal) return;
     if (!handoverLogisticsCompanyId) {
-      setHandoverErr('Vui lòng chọn công ty Vận chuyển.');
+      setHandoverErr('Vui lòng chọn công ty Lắp đặt.');
       return;
     }
     setHandoverSaving(true);

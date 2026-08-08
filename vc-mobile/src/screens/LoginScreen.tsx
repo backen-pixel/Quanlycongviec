@@ -114,7 +114,7 @@ export default function LoginScreen() {
           <View style={styles.brandIcon}>
             <Text style={styles.brandIconTxt}>🚚</Text>
           </View>
-          <Text style={styles.brandTitle}>Vận chuyển lắp đặt</Text>
+          <Text style={styles.brandTitle}>Lắp đặt</Text>
           <Text style={styles.brandTag}>Module VC · đồng bộ hệ thống</Text>
         </View>
 

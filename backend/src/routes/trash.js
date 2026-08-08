@@ -35,7 +35,7 @@ r.get('/', requireTrashAccess, async (req, res) => {
     }
     if (isLogisticsAdmin(req.user) && !isAdminLike(req.user)) {
       return res.status(403).json({
-        error: 'Thùng rác Vận chuyển dùng API /api/logistics/trash',
+        error: 'Thùng rác Lắp đặt dùng API /api/logistics/trash',
       });
     }
     const isSuper = req.user?.role === 'superadmin' || req.user?.role === 'super_admin';

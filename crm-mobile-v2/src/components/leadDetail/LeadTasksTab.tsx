@@ -360,6 +360,7 @@ export default function LeadTasksTab({ leadId, companyId }: Props) {
           mediaTypes: ['images', 'videos'],
           quality: 0.85,
           allowsMultipleSelection: true,
+          selectionLimit: 50,
         });
         if (res.canceled || !res.assets?.length) return;
         await uploadFiles(

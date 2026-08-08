@@ -2174,7 +2174,7 @@ export default function ProductionPipelineSettingsPage() {
                 {!editingIntake && (
                   <label
                     className="flex items-start gap-2 text-xs cursor-pointer"
-                    title="Khi thẻ vào cột này có thể bàn giao sang module Vận chuyển."
+                    title="Khi thẻ vào cột này có thể bàn giao sang module Lắp đặt."
                   >
                     <input
                       type="checkbox"

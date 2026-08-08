@@ -28,7 +28,7 @@ const TABS = [
   },
   {
     id: 'vc',
-    label: 'Vận chuyển',
+    label: 'Lắp đặt',
     hint: 'Dự án VC (xóa mềm trên projects)',
     icon: Truck,
     dashboardTo: '/vc/dashboard',
@@ -125,7 +125,7 @@ export default function UnifiedTrashPage() {
           <div>
             <h1 className="text-xl font-bold text-gray-900">Thùng rác — Tổng hợp</h1>
             <p className="text-sm text-gray-500">
-              Quản lý mục đã xóa theo module CRM, Sản xuất và Vận chuyển.
+              Quản lý mục đã xóa theo module CRM, Sản xuất và Lắp đặt.
             </p>
           </div>
         </div>

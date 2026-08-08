@@ -184,7 +184,7 @@ export default function KanbanScreen() {
   const [visibleCount, setVisibleCount] = useState(CARD_PAGE_SIZE);
   const [moveModalProject, setMoveModalProject] = useState<ProductionProject | null>(null);
   const [commentProject, setCommentProject] = useState<ProductionProject | null>(null);
-  /** Tab pipeline VC — Vận chuyển / Lắp đặt. Khởi tạo từ filter đã lưu (async). */
+  /** Tab pipeline VC — Lắp đặt. Khởi tạo từ filter đã lưu (async). */
   const [vcPipelineTab, setVcPipelineTab] = useState<VcPipelineTab>('shipping');
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [commentIndex, setCommentIndex] = useState<Record<string, CommentIndexEntry>>({});
@@ -919,12 +919,12 @@ export default function KanbanScreen() {
       {/* ── HEADER ── */}
       <View style={styles.header}>
         <View style={{ flex: 1 }}>
-          <Text style={styles.appTitle}>Vận chuyển lắp đặt</Text>
+          <Text style={styles.appTitle}>Lắp đặt</Text>
           <Text style={styles.appSub}>Bảng điều hành vận chuyển lắp đặt</Text>
         </View>
       </View>
 
-      {/* ── PIPELINE TABS: Vận chuyển / Lắp đặt ── */}
+      {/* ── PIPELINE TABS: Lắp đặt ── */}
       <View style={styles.pipelineTabsRow}>
         {VC_PIPELINE_TABS.map((tab) => {
           const active = vcPipelineTab === tab.id;
@@ -1334,7 +1334,7 @@ export default function KanbanScreen() {
                 <Text style={styles.stageHint}>Chưa phân giao đoạn</Text>
               ) : null}
 
-              {/* Tasks + progress — theo tab pipeline VC đang mở (Vận chuyển / Lắp đặt) */}
+              {/* Tasks + progress — theo tab pipeline VC đang mở (Lắp đặt) */}
               {totalTasks > 0 ? (
                 <View style={styles.progressSection}>
                   <View style={styles.taskCountRow}>
@@ -1512,7 +1512,7 @@ export default function KanbanScreen() {
 
       <FilterPickerModal
         visible={workshopPickerOpen}
-        title="Công ty vận chuyển"
+        title="Công ty lắp đặt"
         options={companyOptions}
         selectedId={filterCompany}
         onSelect={(id) => {
@@ -1605,7 +1605,7 @@ function createKanbanStyles(c: AppColors) {
   commentToastTitle: { color: c.text, fontSize: 13, fontWeight: '800' },
   commentToastBody: { color: c.textMuted, fontSize: 12, marginTop: 2, lineHeight: 16 },
 
-  // Pipeline tabs — Vận chuyển / Lắp đặt
+  // Pipeline tabs — Lắp đặt
   pipelineTabsRow: {
     flexDirection: 'row', gap: 8, flexShrink: 0,
     paddingHorizontal: Spacing.lg, paddingBottom: 8,

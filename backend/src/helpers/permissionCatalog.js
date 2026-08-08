@@ -1,7 +1,8 @@
 ﻿/**
  * Catalog quyền theo module — UI phân quyền nhân viên.
- * Module CRM/SX/VC/Kế toán: mỗi chức năng có 3 quyền view | edit | admin.
- * Module Công việc/Drive/Hệ thống: quyền legacy (nhiều action khác nhau).
+ * Module tiered (CRM/SX/VC/Kế toán/Mua hàng/Tính toán/Kiến thức/Công việc):
+ * mỗi chức năng có 3 quyền view | edit | admin.
+ * Module legacy (Công việc chung/Drive/HR/Báo cáo/Hệ thống/Platform): nhiều action khác nhau.
  */
 
 const TIER_ACTIONS = ['view', 'edit', 'admin'];
@@ -70,6 +71,12 @@ const TIERED_MODULES = [
         label: 'Tổng quan',
         features: [
           { key: 'crm_dashboard', label: 'Dashboard CRM', resource: 'crm_dashboard' },
+          { key: 'crm_events', label: 'Sự kiện', resource: 'crm_events' },
+          { key: 'crm_leaves', label: 'Lịch nghỉ', resource: 'crm_leaves' },
+          { key: 'crm_messenger', label: 'Nhóm chat', resource: 'crm_messenger' },
+          { key: 'crm_activity', label: 'Đang hoạt động', resource: 'crm_activity' },
+          { key: 'crm_feed', label: 'Bảng tin nội bộ', resource: 'crm_feed' },
+          { key: 'crm_voice', label: 'Cuộc gọi & ghi âm', resource: 'crm_voice' },
         ],
       },
       {
@@ -82,6 +89,8 @@ const TIERED_MODULES = [
           { key: 'crm_tasks', label: 'Công việc CRM', resource: 'crm_tasks' },
           { key: 'crm_assignments', label: 'Giao việc CRM', resource: 'crm_assignments' },
           { key: 'crm_follow_up', label: 'CSKH theo hạn', resource: 'crm_follow_up' },
+          { key: 'crm_dept_plan', label: 'Kế hoạch phòng ban', resource: 'crm_dept_plan' },
+          { key: 'crm_lead_journey', label: 'Hành trình Lead', resource: 'crm_lead_journey' },
         ],
       },
       {
@@ -99,6 +108,7 @@ const TIERED_MODULES = [
         features: [
           { key: 'crm_customers', label: 'Khách hàng', resource: 'crm_customers' },
           { key: 'crm_products', label: 'Sản phẩm', resource: 'crm_products' },
+          { key: 'crm_categories', label: 'Nhóm ngành', resource: 'crm_categories' },
           { key: 'crm_kpi', label: 'KPI CRM', resource: 'crm_kpi' },
           { key: 'crm_reports', label: 'Báo cáo CRM', resource: 'crm_reports' },
         ],
@@ -107,7 +117,7 @@ const TIERED_MODULES = [
         key: 'crm-admin',
         label: 'Quản trị & Kênh',
         features: [
-          { key: 'crm_settings', label: 'Cài đặt CRM', resource: 'crm_settings' },
+          { key: 'crm_settings', label: 'Cài đặt CRM (pipeline, nguồn, MISA…)', resource: 'crm_settings' },
           { key: 'crm_social', label: 'Facebook / Zalo', resource: 'crm_social' },
         ],
       },
@@ -125,6 +135,7 @@ const TIERED_MODULES = [
           { key: 'sx_dashboard', label: 'Dashboard xưởng', resource: 'sx_dashboard' },
           { key: 'sx_deals', label: 'Deal vào xưởng', resource: 'sx_deals' },
           { key: 'sx_assignments', label: 'Giao việc Sản xuất', resource: 'sx_assignments' },
+          { key: 'sx_approvals', label: 'Duyệt sản xuất', resource: 'sx_approvals' },
           { key: 'sx_pipeline', label: 'Pipeline xưởng', resource: 'sx_pipeline' },
           { key: 'sx_templates', label: 'Bộ mẫu nhiệm vụ', resource: 'sx_templates' },
           { key: 'sx_handover', label: 'Bàn giao CRM → SX', resource: 'sx_handover' },
@@ -135,18 +146,19 @@ const TIERED_MODULES = [
   },
   {
     key: 'logistics',
-    label: 'Vận chuyển',
-    icon: '🚚',
+    label: 'Lắp đặt',
+    icon: '🔧',
     groups: [
       {
         key: 'vc-ops',
-        label: 'Điều hành VC',
+        label: 'Điều hành Lắp đặt',
         features: [
-          { key: 'vc_dashboard', label: 'Dashboard VC', resource: 'vc_dashboard' },
-          { key: 'vc_projects', label: 'Dự án vận chuyển', resource: 'vc_projects' },
-          { key: 'vc_pipeline', label: 'Pipeline VC', resource: 'vc_pipeline' },
+          { key: 'vc_dashboard', label: 'Dashboard Lắp đặt', resource: 'vc_dashboard' },
+          { key: 'vc_projects', label: 'Dự án lắp đặt', resource: 'vc_projects' },
+          { key: 'vc_assignments', label: 'Giao việc Lắp đặt', resource: 'vc_assignments' },
+          { key: 'vc_pipeline', label: 'Pipeline Lắp đặt', resource: 'vc_pipeline' },
           { key: 'vc_teams', label: 'Quản lý đội nhóm', resource: 'vc_teams' },
-          { key: 'vc_templates', label: 'Bộ nhiệm vụ VC', resource: 'vc_templates' },
+          { key: 'vc_templates', label: 'Bộ nhiệm vụ Lắp đặt', resource: 'vc_templates' },
         ],
       },
     ],
@@ -162,6 +174,74 @@ const TIERED_MODULES = [
         features: [
           { key: 'ketoan_dashboard', label: 'Tổng hợp deal SX', resource: 'ketoan_dashboard' },
           { key: 'ketoan_finance', label: 'Báo giá / ĐH / HĐ', resource: 'ketoan_finance' },
+          { key: 'ketoan_bank_accounts', label: 'Tài khoản ngân hàng', resource: 'ketoan_bank_accounts' },
+        ],
+      },
+    ],
+  },
+  {
+    key: 'purchasing',
+    label: 'Mua hàng',
+    icon: '🛒',
+    groups: [
+      {
+        key: 'muahang-ops',
+        label: 'Lệnh đặt hàng',
+        features: [
+          { key: 'mua_hang_orders', label: 'Lệnh đặt hàng (PO)', resource: 'mua_hang_orders' },
+        ],
+      },
+      {
+        key: 'muahang-catalog',
+        label: 'Catalog',
+        features: [
+          { key: 'mua_hang_brands', label: 'Thương hiệu', resource: 'mua_hang_brands' },
+          { key: 'mua_hang_products', label: 'Sản phẩm & danh mục', resource: 'mua_hang_products' },
+        ],
+      },
+    ],
+  },
+  {
+    key: 'calc',
+    label: 'Tính toán',
+    icon: '🧮',
+    groups: [
+      {
+        key: 'calc-ops',
+        label: 'Tính & thiết kế',
+        features: [
+          { key: 'calc_run', label: 'Tính nhanh / 3D / Hộp cứng', resource: 'calc_run' },
+          { key: 'calc_setup', label: 'Cấu hình công thức / Rule', resource: 'calc_setup' },
+        ],
+      },
+    ],
+  },
+  {
+    key: 'knowledge',
+    label: 'Kiến thức',
+    icon: '🎓',
+    groups: [
+      {
+        key: 'knowledge-ops',
+        label: 'Đào tạo',
+        features: [
+          { key: 'knowledge_learn', label: 'Học tập / bài tập / chứng nhận', resource: 'knowledge_learn' },
+          { key: 'knowledge_admin', label: 'Quản trị kiến thức', resource: 'knowledge_admin' },
+        ],
+      },
+    ],
+  },
+  {
+    key: 'congviec',
+    label: 'Công việc',
+    icon: '✅',
+    groups: [
+      {
+        key: 'congviec-ops',
+        label: 'Inbox nhiệm vụ',
+        features: [
+          { key: 'work_unified', label: 'Công việc tổng hợp', resource: 'work_unified' },
+          { key: 'personal_tasks', label: 'Nhiệm vụ cá nhân', resource: 'personal_tasks' },
         ],
       },
     ],
@@ -207,6 +287,15 @@ const LEGACY_MODULES = [
     label: 'Hệ thống',
     icon: '⚙️',
     features: [{ key: 'settings', label: 'Cài đặt', resources: ['settings'] }],
+  },
+  {
+    key: 'platform',
+    label: 'Nền tảng SaaS',
+    icon: '🌐',
+    features: [
+      { key: 'tenants', label: 'Tenants / gói / billing', resources: ['tenants'] },
+      { key: 'platform_users', label: 'Users toàn nền tảng', resources: ['platform_users'] },
+    ],
   },
 ];
 

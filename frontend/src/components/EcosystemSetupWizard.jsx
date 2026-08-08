@@ -6,7 +6,7 @@ const DEPARTMENT_TEMPLATES = [
   { id: 'sales', icon: '📞', label: 'Tư vấn (Sales)', defaultCount: 3 },
   { id: 'design', icon: '🎨', label: 'Thiết kế (Design)', defaultCount: 2 },
   { id: 'production', icon: '🏭', label: 'Sản xuất (Production)', defaultCount: 5 },
-  { id: 'delivery', icon: '🚚', label: 'Vận chuyển (Delivery)', defaultCount: 4 },
+  { id: 'delivery', icon: '🚚', label: 'Lắp đặt (Installation)', defaultCount: 4 },
   { id: 'customer-care', icon: '💬', label: 'Chăm sóc KH', defaultCount: 2 },
   { id: 'accounting', icon: '💰', label: 'Kế toán', defaultCount: 1 },
 ];

@@ -19,7 +19,7 @@ export const VC_NOTIF_CHANNELS = {
 export async function setupNotificationChannels(): Promise<void> {
   if (Platform.OS !== 'android') return;
   await Notifications.setNotificationChannelAsync(VC_NOTIF_CHANNEL, {
-    name: 'Bình luận Vận chuyển & Lắp đặt',
+    name: 'Bình luận Lắp đặt',
     description: 'Thông báo khi có bình luận mới trên dự án vận chuyển lắp đặt',
     importance: Notifications.AndroidImportance.HIGH,
     vibrationPattern: [0, 250, 250, 250],
@@ -48,7 +48,7 @@ export async function setupNotificationChannels(): Promise<void> {
   });
   await Notifications.setNotificationChannelAsync(VC_SYSTEM_CHANNEL, {
     name: 'Thông báo hệ thống',
-    description: 'Thông báo chung từ hệ thống Vận chuyển & Lắp đặt',
+    description: 'Thông báo chung từ hệ thống Lắp đặt',
     importance: Notifications.AndroidImportance.DEFAULT,
     vibrationPattern: [0, 200],
     lightColor: '#EA580C',

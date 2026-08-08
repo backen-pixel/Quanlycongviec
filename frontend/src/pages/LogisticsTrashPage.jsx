@@ -44,7 +44,7 @@ export default function LogisticsTrashPage({ embedded = false, filters, showComp
 
   const restore = async (id) => {
     if (busyId) return;
-    if (!confirm('Khôi phục dự án này về Kanban Vận chuyển?')) return;
+    if (!confirm('Khôi phục dự án này về Kanban Lắp đặt?')) return;
     setBusyId(id);
     try {
       await api.post(`/logistics/trash/${id}/restore`);
@@ -78,7 +78,7 @@ export default function LogisticsTrashPage({ embedded = false, filters, showComp
           <div className="flex items-center gap-2">
             <Trash2 className="h-7 w-7 text-rose-600" />
             <div>
-              <h1 className="text-xl font-bold text-gray-900">Thùng rác Vận chuyển</h1>
+              <h1 className="text-xl font-bold text-gray-900">Thùng rác Lắp đặt</h1>
               <p className="text-sm text-gray-500">Các dự án đã xóa khỏi Kanban VC.</p>
             </div>
           </div>

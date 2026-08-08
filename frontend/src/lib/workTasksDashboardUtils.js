@@ -29,7 +29,7 @@ export function storeWorkTasksFilterPanelPos(pos) {
 export const MODULE_COLUMNS = [
   { key: 'crm', label: 'CRM', emoji: '💼', color: '#10B981', bg: 'bg-emerald-50 border-emerald-200' },
   { key: 'production', label: 'Sản xuất', emoji: '🏭', color: '#F97316', bg: 'bg-orange-50 border-orange-200' },
-  { key: 'logistics', label: 'Vận chuyển', emoji: '🚚', color: '#8B5CF6', bg: 'bg-violet-50 border-violet-200' },
+  { key: 'logistics', label: 'Lắp đặt', emoji: '🔧', color: '#8B5CF6', bg: 'bg-violet-50 border-violet-200' },
   { key: 'assignment', label: 'Giao việc', emoji: '📋', color: '#3B82F6', bg: 'bg-blue-50 border-blue-200' },
   { key: 'personal', label: 'Cá nhân', emoji: '👤', color: '#64748B', bg: 'bg-slate-50 border-slate-200' },
   { key: 'other', label: 'Khác', emoji: '📦', color: '#94A3B8', bg: 'bg-gray-50 border-gray-200' },
@@ -55,7 +55,7 @@ export const TASK_KIND_OPTIONS = [
   { value: 'CRM-Deal', label: 'CRM Deal' },
   { value: 'CRM-Lead', label: 'CRM Lead' },
   { value: 'SX', label: 'Sản xuất' },
-  { value: 'VC', label: 'Vận chuyển' },
+  { value: 'VC', label: 'Lắp đặt' },
   { value: 'Giao việc', label: 'Giao việc CRM' },
   { value: 'Cá nhân', label: 'Cá nhân' },
   { value: 'Dự án', label: 'Dự án' },

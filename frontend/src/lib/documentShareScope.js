@@ -1,4 +1,4 @@
-﻿/** Khớp backend/helpers/documentShareScope.js — lọc tài liệu CRM theo module chia sẻ */
+/** Khớp backend/helpers/documentShareScope.js — lọc tài liệu CRM theo module chia sẻ */
 
 import { shouldHideQuoteContractDoc } from './hideQuoteContractFromProduction';
 
@@ -6,7 +6,7 @@ export const SHARE_MODULE_KEYS = new Set(['production', 'logistics', 'workshop']
 
 export const SHARE_MODULE_OPTIONS = [
   { id: 'production', label: '🏭 Sản xuất (SX)' },
-  { id: 'logistics', label: '🚚 Vận chuyển (VC)' },
+  { id: 'logistics', label: '🔧 Lắp đặt (VC)' },
   { id: 'workshop', label: '📁 Công việc dự án' },
 ];
 

@@ -1,5 +1,5 @@
 /**
- * Helpers KPI board Vận chuyển & Lắp đặt (VC) — đếm theo cột Kanban
+ * Helpers KPI board Lắp đặt (VC) — đếm theo cột Kanban
  * (khớp pill KPI trên KanbanScreen).
  */
 import { isInstallVcStage } from './productionFilters';

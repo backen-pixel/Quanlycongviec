@@ -208,7 +208,7 @@ export const ROLE_LABELS = {
   admin: 'Quản trị viên', manager: 'Quản lý', sales: 'Kinh doanh',
   designer: 'Thiết kế', production: 'Sản xuất', production_staff: 'NV Sản xuất (Admin CV+SX)',
   production_admin: 'Admin Sản xuất', crm_production_staff: 'NV CRM + Admin SX',
-  crm_production_admin: 'Admin CRM + Sản xuất', logistics_admin: 'Admin Vận chuyển',
+  crm_production_admin: 'Admin CRM + Sản xuất', logistics_admin: 'Admin Lắp đặt',
   driver: 'Tài xế', customer_care: 'CSKH', accounting: 'Kế toán', staff: 'Nhân viên',
 };
 

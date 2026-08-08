@@ -2,13 +2,13 @@ const { supabase } = require('../config/supabase');
 const { getRestrictedDivisionIdsForModule } = require('./ecosystemModuleScope');
 
 /**
- * Kiểm tra công ty thuộc phạm vi module Vận chuyển & Lắp đặt.
+ * Kiểm tra công ty thuộc phạm vi module Lắp đặt & Lắp đặt.
  * @returns {Promise<{ ok: true, company: object } | { ok: false, error: string }>}
  */
 async function validateLogisticsCompanyId(rawId) {
   const id = String(rawId || '').trim();
   if (!id) {
-    return { ok: false, error: 'Vui lòng chọn công ty thuộc module Vận chuyển.' };
+    return { ok: false, error: 'Vui lòng chọn công ty thuộc module Lắp đặt.' };
   }
   const { data: co, error } = await supabase
     .from('companies')
@@ -37,7 +37,7 @@ async function validateLogisticsCompanyId(rawId) {
       } catch (_e) { /* ignore */ }
     }
     if (!ok) {
-      return { ok: false, error: 'Công ty được chọn không thuộc phạm vi module Vận chuyển.' };
+      return { ok: false, error: 'Công ty được chọn không thuộc phạm vi module Lắp đặt.' };
     }
   }
   return { ok: true, company: co };

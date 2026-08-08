@@ -37,7 +37,7 @@ const DEPT_TEMPLATES = [
   { id: 'sales', icon: '📞', label: 'Tư vấn (Sales)' },
   { id: 'design', icon: '🎨', label: 'Thiết kế (Design)' },
   { id: 'production', icon: '🏭', label: 'Sản xuất (Production)' },
-  { id: 'delivery', icon: '🚚', label: 'Vận chuyển' },
+  { id: 'delivery', icon: '🔧', label: 'Lắp đặt' },
   { id: 'customer-care', icon: '💬', label: 'Chăm sóc KH' },
   { id: 'accounting', icon: '💰', label: 'Kế toán' },
 ];

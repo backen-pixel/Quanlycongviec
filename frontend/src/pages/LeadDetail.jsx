@@ -1980,7 +1980,7 @@ export default function LeadDetail() {
     input.multiple = true;
     input.accept = TASK_ATTACHMENT_FILE_ACCEPT;
     input.onchange = async (e) => {
-      const rawFiles = Array.from(e.target.files || []).slice(0, 20);
+      const rawFiles = Array.from(e.target.files || []).slice(0, 50);
       if (!rawFiles.length) return;
       setUploadingDoc(true);
       try {
@@ -6550,7 +6550,7 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
                 <span className="text-base mt-0.5 shrink-0">{icon}</span>
                 <div className="flex-1 min-w-0">
                   <p className="text-[10px] font-bold uppercase tracking-wider mb-0.5" style={{ color: vc.color || '#ea580c' }}>
-                    🚚 Vận chuyển
+                    🔧 Lắp đặt
                   </p>
                   <p className="text-sm font-semibold" style={{ color: vc.color || '#c2410c' }}>
                     {label}

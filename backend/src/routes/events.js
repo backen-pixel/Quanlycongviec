@@ -176,6 +176,63 @@ function eventsDateToBound(dateTo) {
   return `${d}T23:59:59.999+07:00`;
 }
 
+/** Loại sự kiện hỗ trợ chọn nhiều ngày (lắp đặt / vận chuyển / lấy hàng). */
+const MULTI_DAY_EVENT_TYPES = new Set(['installation', 'delivery', 'pickup']);
+
+/**
+ * Chuẩn hoá occurrence_dates → date[] YYYY-MM-DD (sorted unique) hoặc null.
+ * @param {unknown} raw
+ * @returns {string[]|null}
+ */
+function normalizeOccurrenceDates(raw) {
+  if (raw == null || raw === '') return null;
+  const list = Array.isArray(raw) ? raw : [raw];
+  const ymds = [...new Set(
+    list
+      .map((d) => {
+        if (d == null) return '';
+        if (d instanceof Date && !Number.isNaN(d.getTime())) {
+          const pad = (n) => String(n).padStart(2, '0');
+          return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+        }
+        const s = String(d).trim();
+        const m = s.match(/^(\d{4}-\d{2}-\d{2})/);
+        return m ? m[1] : '';
+      })
+      .filter(Boolean),
+  )].sort();
+  return ymds.length ? ymds : null;
+}
+
+/**
+ * Từ occurrence_dates + giờ trong start/end → neo start_time/end_time (ngày đầu/cuối).
+ */
+function applyOccurrenceDatesToInsert(insert, occurrenceDates, bodyStart, bodyEnd) {
+  const dates = normalizeOccurrenceDates(occurrenceDates);
+  if (!dates || !dates.length) {
+    insert.occurrence_dates = null;
+    return insert;
+  }
+  insert.occurrence_dates = dates;
+  const first = dates[0];
+  const last = dates[dates.length - 1];
+  const startIso = normalizeEventTimestamp(bodyStart);
+  const endIso = bodyEnd != null && bodyEnd !== '' ? normalizeEventTimestamp(bodyEnd) : null;
+  const startHm = startIso
+    ? new Date(startIso).toLocaleTimeString('en-GB', { timeZone: 'Asia/Ho_Chi_Minh', hour: '2-digit', minute: '2-digit', hour12: false })
+    : '09:00';
+  const endHm = endIso
+    ? new Date(endIso).toLocaleTimeString('en-GB', { timeZone: 'Asia/Ho_Chi_Minh', hour: '2-digit', minute: '2-digit', hour12: false })
+    : startHm;
+  insert.start_time = normalizeEventTimestamp(`${first}T${startHm}:00+07:00`);
+  insert.end_time = normalizeEventTimestamp(`${last}T${endHm}:00+07:00`);
+  return insert;
+}
+
+function isOccurrenceDatesColumnMissingError(err) {
+  return /column.*occurrence_dates.*does not exist|42703/i.test(String(err?.message || err || ''));
+}
+
 /**
  * Lead thuộc khu vực (crm_leads.region_id) — dùng lọc sự kiện theo vùng địa bàn Lead.
  */
@@ -768,7 +825,7 @@ r.get('/overview', async (req, res) => {
     const MODULE_META = {
       crm: { name: 'Kinh doanh', icon: '💼', color: '#0EA5E9', order: 1 },
       production: { name: 'Sản xuất', icon: '🏭', color: '#8B5CF6', order: 2 },
-      logistics: { name: 'Vận chuyển', icon: '🚚', color: '#F97316', order: 3 },
+      logistics: { name: 'Lắp đặt', icon: '🔧', color: '#F97316', order: 3 },
       general: { name: 'Chung công ty', icon: '🏢', color: '#10B981', order: 4 },
     };
     const byStatus = {};
@@ -1209,8 +1266,12 @@ r.get('/calendar', async (req, res) => {
 
     let cq = supabase.from('crm_events')
       .select(EVENT_SELECT)
-      .gte('start_time', startDate)
-      .lte('start_time', endDate);
+      // Multi-day: neo start_time = ngày đầu, end_time = ngày cuối → overlap tháng
+      .lte('start_time', endDate)
+      .or(`end_time.gte.${startDate},end_time.is.null`);
+    // Giữ sự kiện 1 ngày (end null) nếu start trong tháng
+    // PostgREST: (start <= monthEnd) AND (end >= monthStart OR end is null)
+    // nhưng end null + start trước tháng sẽ lọt → lọc thêm phía dưới / client.
     cq = applyEventsCombinedOrFilters(cq, {
       companyId: sc.companyId,
       leadIdsForCompany: companyLeadIds,
@@ -1227,7 +1288,8 @@ r.get('/calendar', async (req, res) => {
     let cqRes = await cq;
     if (cqRes.error && /column.*module.*does not exist|42703/i.test(String(cqRes.error.message || ''))) {
       let cq2 = supabase.from('crm_events').select(EVENT_SELECT)
-        .gte('start_time', startDate).lte('start_time', endDate);
+        .lte('start_time', endDate)
+        .or(`end_time.gte.${startDate},end_time.is.null`);
       cq2 = applyEventsCombinedOrFilters(cq2, {
         companyId: sc.companyId,
         leadIdsForCompany: companyLeadIds,
@@ -1244,7 +1306,22 @@ r.get('/calendar', async (req, res) => {
     const { data, error } = cqRes;
     if (error) throw error;
 
-    let calOut = data || [];
+    // Lọc chính xác overlap tháng (VN): single-day chỉ khi start trong tháng;
+    // multi-day khi occurrence_dates hoặc [start,end] giao tháng.
+    const monthPrefix = `${y}-${pad(m)}`;
+    const calFiltered = (data || []).filter((ev) => {
+      const occ = Array.isArray(ev.occurrence_dates) ? ev.occurrence_dates : null;
+      if (occ && occ.length) {
+        return occ.some((d) => String(d).slice(0, 7) === monthPrefix);
+      }
+      const startMs = new Date(ev.start_time).getTime();
+      const endMs = ev.end_time ? new Date(ev.end_time).getTime() : startMs;
+      const rangeStart = new Date(startDate).getTime();
+      const rangeEnd = new Date(endDate).getTime();
+      return startMs <= rangeEnd && endMs >= rangeStart;
+    });
+
+    let calOut = calFiltered;
     const includeAsParticipant = ['1', 'true', 'yes'].includes(String(req.query.include_as_participant || '').toLowerCase());
     if (includeAsParticipant) {
       const myIds = await fetchMyParticipantEventIds(req.user.userId);
@@ -1253,13 +1330,23 @@ r.get('/calendar', async (req, res) => {
       if (missing.length) {
         let pq = supabase.from('crm_events').select(EVENT_SELECT)
           .in('id', missing.slice(0, 500))
-          .gte('start_time', startDate)
-          .lte('start_time', endDate);
+          .lte('start_time', endDate)
+          .or(`end_time.gte.${startDate},end_time.is.null`);
         if (type) pq = pq.eq('event_type', type);
         if (status) pq = pq.eq('status', status);
         const { data: extra, error: pErr } = await pq;
         if (!pErr && extra?.length) {
-          calOut = mergeEventsById(calOut, extra);
+          const monthPrefix2 = `${y}-${pad(m)}`;
+          const extraFiltered = extra.filter((ev) => {
+            const occ = Array.isArray(ev.occurrence_dates) ? ev.occurrence_dates : null;
+            if (occ && occ.length) {
+              return occ.some((d) => String(d).slice(0, 7) === monthPrefix2);
+            }
+            const startMs = new Date(ev.start_time).getTime();
+            const endMs = ev.end_time ? new Date(ev.end_time).getTime() : startMs;
+            return startMs <= new Date(endDate).getTime() && endMs >= new Date(startDate).getTime();
+          });
+          calOut = mergeEventsById(calOut, extraFiltered);
           calOut.sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
         }
       }
@@ -1319,8 +1406,16 @@ r.post('/', async (req, res) => {
       project_id: b.project_id || null,
       assignee_id: b.assignee_id || null,
       created_by: req.user.userId,
+      occurrence_dates: null,
     };
     uuidFields.forEach(f => { if (insert[f] === '') insert[f] = null; });
+
+    // Lắp đặt / vận chuyển / lấy hàng: cho phép nhiều ngày (liên tiếp hoặc cách ngày)
+    if (MULTI_DAY_EVENT_TYPES.has(String(insert.event_type || '')) && b.occurrence_dates !== undefined) {
+      applyOccurrenceDatesToInsert(insert, b.occurrence_dates, b.start_time, b.end_time);
+    } else if (Array.isArray(b.occurrence_dates) && b.occurrence_dates.length > 1) {
+      applyOccurrenceDatesToInsert(insert, b.occurrence_dates, b.start_time, b.end_time);
+    }
 
     // Lắp đặt thuộc khối VC/LĐ — tránh lưu module=crm khiến lịch SX/VC lọc mất
     if (String(insert.event_type || '') === 'installation') {
@@ -1373,6 +1468,11 @@ r.post('/', async (req, res) => {
       const { module: _omitMod, ...legacyInsert } = insert;
       void _omitMod;
       insertRes = await supabase.from('crm_events').insert(legacyInsert).select(EVENT_SELECT).single();
+    }
+    if (insertRes.error && isOccurrenceDatesColumnMissingError(insertRes.error)) {
+      const { occurrence_dates: _omitOcc, ...noOccInsert } = insert;
+      void _omitOcc;
+      insertRes = await supabase.from('crm_events').insert(noOccInsert).select(EVENT_SELECT).single();
     }
     const { data, error } = insertRes;
     if (error) throw error;
@@ -1454,6 +1554,13 @@ r.put('/:id', async (req, res) => {
       }
       update[f] = b[f];
     });
+    if (b.occurrence_dates !== undefined) {
+      const dates = normalizeOccurrenceDates(b.occurrence_dates);
+      update.occurrence_dates = dates;
+      if (dates && dates.length) {
+        applyOccurrenceDatesToInsert(update, dates, b.start_time ?? update.start_time, b.end_time ?? update.end_time);
+      }
+    }
     if (b.module !== undefined) {
       const m = normalizeModuleParam(b.module);
       if (m) {
@@ -1506,6 +1613,11 @@ r.put('/:id', async (req, res) => {
       const { module: _om, ...legacyUpdate } = update;
       void _om;
       updRes = await supabase.from('crm_events').update(legacyUpdate).eq('id', req.params.id).select(EVENT_SELECT).single();
+    }
+    if (updRes.error && isOccurrenceDatesColumnMissingError(updRes.error)) {
+      const { occurrence_dates: _oo, ...noOcc } = update;
+      void _oo;
+      updRes = await supabase.from('crm_events').update(noOcc).eq('id', req.params.id).select(EVENT_SELECT).single();
     }
     const { data, error } = updRes;
     if (error) throw error;

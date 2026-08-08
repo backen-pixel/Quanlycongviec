@@ -39,6 +39,7 @@ import {
 } from '../lib/assignmentSourceLink';
 import CommentDisplayHiddenBanner, { useCommentShowOnScreenEnabled } from '../components/CommentDisplayHiddenBanner';
 import TaskFillFormModal from '../components/TaskFillFormModal';
+import LeadDealPicker from '../components/LeadDealPicker';
 
 const PRIORITY_OPTIONS = [
   { value: 'low',    label: 'Thấp',   color: 'bg-gray-100 text-gray-600' },
@@ -197,7 +198,7 @@ function getAssignmentTheme(assignmentModule) {
   if (mod === 'logistics') {
     return {
       mod,
-      shortTitle: 'Giao việc Vận chuyển',
+      shortTitle: 'Giao việc Lắp đặt',
       viewTheme: 'orange',
       activeText: 'text-orange-700',
       headerGrad: 'from-orange-50/70 via-white to-amber-50/50',
@@ -2949,7 +2950,7 @@ function PersonalColumnModal({ column, viewLabel, onClose, onSave }) {
 
 // ─── MODALS ───────────────────────────────────────────────────────────────────
 function ItemModal({ item, users: _initialUsers, columns, companies, isAdmin, defaultCompanyId, onClose, onSave }) {
-  const { apiBase } = useAssignmentsPageContext();
+  const { apiBase, assignmentModule, theme } = useAssignmentsPageContext();
   const initialAssigneeIds = item?.assignees?.length
     ? item.assignees.map((a) => String(a.id))
     : (item?.assignee_id ? [String(item.assignee_id)] : []);
@@ -2978,8 +2979,41 @@ function ItemModal({ item, users: _initialUsers, columns, companies, isAdmin, de
   const [selDepts, setSelDepts] = useState(new Set());
   const [selUsers, setSelUsers] = useState(new Set(initialAssigneeIds));
   const [userSearch, setUserSearch] = useState('');
-  const [showAssigneePicker, setShowAssigneePicker] = useState(false);
+  const [showAssigneePicker, setShowAssigneePicker] = useState(!item?.id);
   const [stagedFiles, setStagedFiles] = useState([]);
+  const [linkedLead, setLinkedLead] = useState(() => (
+    item?.lead?.id
+      ? {
+        id: item.lead.id,
+        code: item.lead.code,
+        title: item.lead.title,
+        type: item.lead.type || 'deal',
+        project_id: item.lead.project_id || null,
+        project_code: item.lead.project_code || null,
+        company_id: item.company_id || item.lead.company_id || null,
+      }
+      : null
+  ));
+  const [filterLeadMembers, setFilterLeadMembers] = useState(() => !!(item?.lead?.id || item?.lead_id));
+  const [leadMemberIds, setLeadMemberIds] = useState(null);
+  const [loadingLeadMembers, setLoadingLeadMembers] = useState(false);
+
+  const linkFieldLabel = assignmentSourceFieldLabel(assignmentModule);
+  const isSxLink = isProductionAssignmentsPage(assignmentModule);
+  const isVcLink = isLogisticsAssignmentsPage(assignmentModule);
+  const linkPlaceholder = isSxLink
+    ? 'Tìm dự án / deal SX theo mã TB, mã deal, tên…'
+    : isVcLink
+      ? 'Tìm dự án / deal Lắp đặt theo mã TB, mã deal…'
+      : 'Tìm deal theo mã / tên / SĐT khách…';
+  const linkEmptyLabel = isSxLink
+    ? 'Chọn dự án / deal SX (tuỳ chọn)'
+    : isVcLink
+      ? 'Chọn dự án / deal Lắp đặt (tuỳ chọn)'
+      : 'Chọn lead / deal CRM (tuỳ chọn)';
+  const membersFilterLabel = isSxLink || isVcLink
+    ? 'Chỉ thành viên dự án/deal'
+    : 'Chỉ thành viên deal';
 
   // Tải lookups mỗi khi đổi công ty
   useEffect(() => {
@@ -2998,10 +3032,50 @@ function ItemModal({ item, users: _initialUsers, columns, companies, isAdmin, de
     return () => { cancel = true; };
   }, [form.company_id, apiBase]);
 
-  // Lọc danh sách NV theo region/department/search
+  // Thành viên deal/dự án — dùng để lọc NV khi đã gắn liên kết
+  useEffect(() => {
+    const leadId = linkedLead?.id;
+    if (!leadId) {
+      setLeadMemberIds(null);
+      setLoadingLeadMembers(false);
+      return undefined;
+    }
+    let cancel = false;
+    setLoadingLeadMembers(true);
+    api.get(`/crm/leads/${leadId}/members`)
+      .then((r) => {
+        if (cancel) return;
+        const list = Array.isArray(r.data) ? r.data : (r.data?.members || []);
+        const ids = new Set(
+          list.map((m) => String(m?.user_id || m?.user?.id || '')).filter(Boolean),
+        );
+        setLeadMemberIds(ids);
+      })
+      .catch(() => { if (!cancel) setLeadMemberIds(new Set()); })
+      .finally(() => { if (!cancel) setLoadingLeadMembers(false); });
+    return () => { cancel = true; };
+  }, [linkedLead?.id]);
+
+  const onPickLinkedLead = (deal) => {
+    setLinkedLead(deal);
+    if (deal) {
+      setFilterLeadMembers(true);
+      if (deal.company_id && isAdmin && !form.company_id) {
+        set('company_id', deal.company_id);
+      }
+    } else {
+      setFilterLeadMembers(false);
+      setLeadMemberIds(null);
+    }
+  };
+
+  // Lọc danh sách NV theo region/department/search (+ thành viên deal nếu bật)
   const filteredUsers = useMemo(() => {
     const all = lookups.users || [];
     return all.filter((u) => {
+      if (filterLeadMembers && leadMemberIds) {
+        if (!leadMemberIds.has(String(u.id))) return false;
+      }
       if (selDepts.size && !selDepts.has(String(u.department_id))) return false;
       if (selRegions.size) {
         const uregs = (u.region_ids || []).map(String);
@@ -3014,7 +3088,7 @@ function ItemModal({ item, users: _initialUsers, columns, companies, isAdmin, de
       }
       return true;
     });
-  }, [lookups.users, selDepts, selRegions, userSearch]);
+  }, [lookups.users, selDepts, selRegions, userSearch, filterLeadMembers, leadMemberIds]);
 
   const toggleSet = (set, value) => {
     const next = new Set(set);
@@ -3060,6 +3134,7 @@ function ItemModal({ item, users: _initialUsers, columns, companies, isAdmin, de
       column_id: form.column_id || null,
       deadline: form.deadline ? new Date(form.deadline).toISOString() : null,
       company_id: form.company_id || null,
+      lead_id: linkedLead?.id || null,
       schedule_enabled: !form.id && form.schedule_enabled,
       scheduled_start: form.schedule_enabled && form.scheduled_start
         ? new Date(form.scheduled_start).toISOString()
@@ -3079,328 +3154,415 @@ function ItemModal({ item, users: _initialUsers, columns, companies, isAdmin, de
     return [...selUsers].map((id) => byId.get(id)).filter(Boolean);
   }, [selUsers, lookups.users]);
 
+  const t = theme || getAssignmentTheme(assignmentModule);
+  const isLd = t.mod === 'logistics';
+  const isSx = t.mod === 'production';
+  const focusCls = isLd
+    ? 'focus:border-orange-400 focus:ring-2 focus:ring-orange-100'
+    : isSx
+      ? 'focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100'
+      : 'focus:border-blue-400 focus:ring-2 focus:ring-blue-100';
+  const fieldCls = `w-full h-10 px-3 border border-gray-200 rounded-xl text-sm outline-none bg-white ${focusCls}`;
+  const selectCls = `${fieldCls} cursor-pointer`;
+  const sectionTitleCls = 'text-[11px] font-bold uppercase tracking-wide text-gray-500 mb-2';
+  const ctaCls = isLd
+    ? 'bg-orange-600 hover:bg-orange-700'
+    : isSx
+      ? 'bg-indigo-600 hover:bg-indigo-700'
+      : 'bg-blue-600 hover:bg-blue-700';
+  const headerGrad = t.headerGrad || 'from-slate-50 via-white to-white';
+
+  const assigneePanel = (
+    <div className={`rounded-2xl border p-3 flex flex-col min-h-0 ${isLd ? 'border-orange-200 bg-orange-50/40' : isSx ? 'border-indigo-200 bg-indigo-50/40' : 'border-blue-200 bg-blue-50/40'}`}>
+      <div className="flex items-center justify-between gap-2 mb-2">
+        <div>
+          <p className="text-sm font-bold text-gray-900">Giao cho</p>
+          <p className="text-[11px] text-gray-500">{selUsers.size} nhân viên đã chọn</p>
+        </div>
+        <div className="flex items-center gap-1.5">
+          {selUsers.size > 0 && (
+            <button type="button" onClick={clearAllSelected} className="text-[11px] text-red-600 hover:underline cursor-pointer">Bỏ hết</button>
+          )}
+          <button
+            type="button"
+            onClick={() => setShowAssigneePicker((v) => !v)}
+            className="h-8 px-2.5 rounded-lg border border-white/80 bg-white text-gray-700 text-xs font-medium flex items-center gap-1 cursor-pointer hover:bg-gray-50 shadow-sm"
+          >
+            <Search className="h-3.5 w-3.5" />
+            {showAssigneePicker ? 'Thu gọn' : 'Tìm NV'}
+          </button>
+        </div>
+      </div>
+
+      {selectedUserObjects.length > 0 ? (
+        <div className="flex flex-wrap gap-1 mb-2 p-2 bg-white/80 rounded-xl border border-emerald-200 max-h-20 overflow-y-auto">
+          {selectedUserObjects.map((u) => (
+            <span key={u.id} className="inline-flex items-center gap-1 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5 text-xs text-emerald-900">
+              {u.full_name}
+              <button type="button" onClick={() => setSelUsers((p) => toggleSet(p, u.id))} className="text-emerald-600/70 hover:text-red-500 cursor-pointer">
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          ))}
+        </div>
+      ) : (
+        <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 mb-2">
+          Chọn ít nhất 1 nhân viên bên dưới.
+        </p>
+      )}
+
+      {showAssigneePicker && (
+        <div className="flex flex-col min-h-0 gap-2">
+          {linkedLead?.id && (
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-full text-xs cursor-pointer border border-teal-200 bg-white text-teal-800">
+                <input
+                  type="checkbox"
+                  checked={filterLeadMembers}
+                  onChange={(e) => setFilterLeadMembers(e.target.checked)}
+                  className="cursor-pointer"
+                />
+                {membersFilterLabel}
+                {loadingLeadMembers ? (
+                  <span className="text-teal-500">…</span>
+                ) : leadMemberIds ? (
+                  <span className="text-teal-600/80">({leadMemberIds.size})</span>
+                ) : null}
+              </label>
+              {filterLeadMembers && leadMemberIds && leadMemberIds.size === 0 && !loadingLeadMembers ? (
+                <span className="text-[11px] text-amber-700">Deal chưa có thành viên — tắt lọc để chọn NV khác.</span>
+              ) : null}
+            </div>
+          )}
+          {lookups.regions.length > 0 && (
+            <div>
+              <p className="text-[10px] font-semibold uppercase text-gray-400 mb-1">Khu vực</p>
+              <div className="flex flex-wrap gap-1">
+                {lookups.regions.map((r) => {
+                  const active = selRegions.has(String(r.id));
+                  return (
+                    <span key={r.id} className="inline-flex items-center">
+                      <button
+                        type="button"
+                        onClick={() => setSelRegions((p) => toggleSet(p, r.id))}
+                        className={`h-6 px-2 rounded-l-full text-[11px] cursor-pointer ${active ? 'bg-purple-600 text-white' : 'bg-white text-purple-700 border border-purple-200'}`}
+                      >
+                        {r.name}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => addUsersOfRegion(r.id)}
+                        title="Chọn cả khu vực"
+                        className="h-6 px-1.5 rounded-r-full text-[11px] bg-purple-100 hover:bg-purple-200 text-purple-700 cursor-pointer border border-l-0 border-purple-200"
+                      >
+                        +
+                      </button>
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          {lookups.departments.length > 0 && (
+            <div>
+              <p className="text-[10px] font-semibold uppercase text-gray-400 mb-1">Phòng ban</p>
+              <div className="flex flex-wrap gap-1">
+                {lookups.departments.map((d) => {
+                  const active = selDepts.has(String(d.id));
+                  return (
+                    <span key={d.id} className="inline-flex items-center">
+                      <button
+                        type="button"
+                        onClick={() => setSelDepts((p) => toggleSet(p, d.id))}
+                        className={`h-6 px-2 rounded-l-full text-[11px] cursor-pointer ${active ? 'bg-sky-600 text-white' : 'bg-white text-sky-700 border border-sky-200'}`}
+                      >
+                        {d.name}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => addUsersOfDept(d.id)}
+                        title="Chọn cả phòng"
+                        className="h-6 px-1.5 rounded-r-full text-[11px] bg-sky-100 hover:bg-sky-200 text-sky-700 cursor-pointer border border-l-0 border-sky-200"
+                      >
+                        +
+                      </button>
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          <div className="flex items-center gap-1.5">
+            <div className="relative flex-1">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
+              <input
+                value={userSearch}
+                onChange={(e) => setUserSearch(e.target.value)}
+                placeholder="Tìm tên nhân viên…"
+                className={`w-full h-9 pl-8 pr-2 border border-gray-200 rounded-xl text-xs outline-none bg-white ${focusCls}`}
+              />
+            </div>
+            <button
+              type="button"
+              onClick={addAllFiltered}
+              className="h-9 px-2.5 text-[11px] rounded-xl bg-white border border-emerald-200 text-emerald-700 hover:bg-emerald-50 cursor-pointer whitespace-nowrap"
+            >
+              + Tất cả ({filteredUsers.length})
+            </button>
+          </div>
+          <div className="max-h-52 lg:max-h-[min(22rem,42vh)] overflow-y-auto border border-gray-200 rounded-xl divide-y bg-white">
+            {loadingLk ? (
+              <p className="text-center text-xs text-gray-400 py-6">Đang tải...</p>
+            ) : filteredUsers.length === 0 ? (
+              <p className="text-center text-xs text-gray-400 py-6">Không có nhân viên phù hợp</p>
+            ) : (
+              filteredUsers.map((u) => {
+                const checked = selUsers.has(String(u.id));
+                const dept = lookups.departments.find((d) => String(d.id) === String(u.department_id));
+                return (
+                  <label key={u.id} className={`flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-gray-50 ${checked ? (isLd ? 'bg-orange-50' : isSx ? 'bg-indigo-50' : 'bg-blue-50') : ''}`}>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => setSelUsers((p) => toggleSet(p, u.id))}
+                      className="cursor-pointer"
+                    />
+                    <span className="text-sm flex-1 min-w-0 truncate">{u.full_name}</span>
+                    {dept && <span className="text-[10px] text-gray-500 shrink-0">{dept.name}</span>}
+                  </label>
+                );
+              })
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
   return portalAssignmentsModal(
-    <div className={`fixed inset-0 bg-black/40 ${ASSIGNMENTS_MODAL_Z} flex items-center justify-center p-4`} onClick={onClose}>
+    <div className={`fixed inset-0 bg-black/40 ${ASSIGNMENTS_MODAL_Z} flex items-center justify-center p-3 sm:p-4`} onClick={onClose}>
       <form
         onClick={(e) => e.stopPropagation()}
         onSubmit={submit}
-        className="bg-white rounded-2xl shadow-xl w-full max-w-5xl max-h-[92vh] flex flex-col"
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[94vh] flex flex-col overflow-hidden"
       >
-        <div className="flex items-center justify-between px-5 py-3 border-b">
-          <h3 className="text-lg font-bold">{form.id ? 'Sửa nhiệm vụ' : 'Giao việc mới'}</h3>
-          <button type="button" onClick={onClose} className="text-gray-400 hover:text-gray-600 cursor-pointer"><X className="h-5 w-5" /></button>
+        <div className={`flex items-start justify-between gap-3 px-5 py-3.5 border-b bg-gradient-to-r ${headerGrad}`}>
+          <div className="min-w-0">
+            <p className={`text-[11px] font-semibold uppercase tracking-wide mb-0.5 ${t.activeText || 'text-gray-500'}`}>
+              {t.shortTitle || 'Giao việc'}
+            </p>
+            <h3 className="text-lg font-bold text-gray-900 leading-tight">
+              {form.id ? 'Sửa nhiệm vụ' : 'Giao việc mới'}
+            </h3>
+          </div>
+          <button type="button" onClick={onClose} className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-white/80 cursor-pointer shrink-0">
+            <X className="h-5 w-5" />
+          </button>
         </div>
 
-        <div className="px-5 py-4 overflow-y-auto space-y-4">
-          {/* Cơ bản */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div className="md:col-span-2">
-              <label className="text-xs text-gray-600 block mb-1">Tiêu đề <span className="text-red-500">*</span></label>
-              <input
-                value={form.title}
-                onChange={(e) => set('title', e.target.value)}
-                className="w-full h-9 px-3 border rounded-lg text-sm outline-none focus:border-blue-500"
-                autoFocus
-                required
-              />
-            </div>
-            <div className="md:col-span-2">
-              <label className="text-xs text-gray-600 block mb-1">Mô tả</label>
-              <textarea
-                value={form.description}
-                onChange={(e) => set('description', e.target.value)}
-                rows={2}
-                className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-blue-500"
-              />
-            </div>
-            {isAdmin && (
-              <div>
-                <label className="text-xs text-gray-600 block mb-1">Công ty</label>
-                <select
-                  value={form.company_id}
-                  onChange={(e) => { set('company_id', e.target.value); setSelRegions(new Set()); setSelDepts(new Set()); setSelUsers(new Set()); }}
-                  className="w-full h-9 px-2 border rounded-lg text-sm"
-                >
-                  <option value="">-- Tất cả công ty --</option>
-                  {(companies || []).map((co) => <option key={co.id} value={co.id}>{co.short_name || co.name}</option>)}
-                </select>
-              </div>
-            )}
-            <div>
-              <label className="text-xs text-gray-600 block mb-1">Cột Kanban</label>
-              <select value={form.column_id || ''} onChange={(e) => set('column_id', e.target.value)} className="w-full h-9 px-2 border rounded-lg text-sm">
-                <option value="">-- Chưa phân loại --</option>
-                {columns.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="text-xs text-gray-600 block mb-1">Ưu tiên</label>
-              <select value={form.priority} onChange={(e) => set('priority', e.target.value)} className="w-full h-9 px-2 border rounded-lg text-sm">
-                {PRIORITY_OPTIONS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="text-xs text-gray-600 block mb-1">Trạng thái</label>
-              <select value={form.status} onChange={(e) => set('status', e.target.value)} className="w-full h-9 px-2 border rounded-lg text-sm">
-                {STATUS_OPTIONS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="text-xs text-gray-600 block mb-1">Deadline</label>
-              <input
-                type="datetime-local"
-                value={form.deadline}
-                onChange={(e) => set('deadline', e.target.value)}
-                className="w-full h-9 px-3 border rounded-lg text-sm outline-none focus:border-blue-500"
-              />
-            </div>
-            {!form.id && (
-              <div className="md:col-span-2 rounded-xl border border-violet-200 bg-violet-50/50 p-3 space-y-3">
-                <label className="flex items-center gap-2 text-sm font-medium text-violet-900 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={form.schedule_enabled}
-                    onChange={(e) => set('schedule_enabled', e.target.checked)}
-                    className="cursor-pointer"
+        <div className="px-5 py-4 overflow-y-auto flex-1 min-h-0">
+          <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_20rem] gap-4">
+            <div className="space-y-3 min-w-0">
+              <section className="rounded-2xl border border-gray-200 bg-gray-50/60 p-3.5 space-y-3">
+                <p className={sectionTitleCls}>1. Gắn dự án / deal</p>
+                {isAdmin && (
+                  <div>
+                    <label className="text-xs font-medium text-gray-600 block mb-1">Công ty</label>
+                    <select
+                      value={form.company_id}
+                      onChange={(e) => { set('company_id', e.target.value); setSelRegions(new Set()); setSelDepts(new Set()); setSelUsers(new Set()); }}
+                      className={selectCls}
+                    >
+                      <option value="">Tất cả công ty module này</option>
+                      {(companies || []).map((co) => <option key={co.id} value={co.id}>{co.short_name || co.name}</option>)}
+                    </select>
+                    <p className="text-[11px] text-gray-500 mt-1">Chọn công ty trước để danh sách deal gọn hơn.</p>
+                  </div>
+                )}
+                <div>
+                  <label className="text-xs font-medium text-gray-600 block mb-1">{linkFieldLabel}</label>
+                  <LeadDealPicker
+                    value={linkedLead}
+                    onChange={onPickLinkedLead}
+                    type="deal"
+                    companyId={form.company_id || null}
+                    forModule={assignmentModule || null}
+                    placeholder={linkPlaceholder}
+                    emptyLabel={linkEmptyLabel}
+                    warnOrphan={false}
                   />
-                  <CalendarClock className="h-4 w-4" />
-                  Giao việc theo lịch
-                </label>
-                {form.schedule_enabled && (
-                  <>
-                    <div>
-                      <label className="text-xs text-gray-600 block mb-1">Thời gian bắt đầu <span className="text-red-500">*</span></label>
-                      <input
-                        type="datetime-local"
-                        value={form.scheduled_start}
-                        onChange={(e) => set('scheduled_start', e.target.value)}
-                        className="w-full h-9 px-3 border rounded-lg text-sm outline-none focus:border-violet-500 bg-white"
-                        required={form.schedule_enabled}
-                      />
-                    </div>
-                    <label className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
+                  {linkedLead?.project_code ? (
+                    <p className="text-[11px] text-teal-700 mt-1.5 font-mono">Dự án: {linkedLead.project_code}{linkedLead.project_name ? ` — ${linkedLead.project_name}` : ''}</p>
+                  ) : null}
+                </div>
+              </section>
+
+              <section className="rounded-2xl border border-gray-200 p-3.5 space-y-3">
+                <p className={sectionTitleCls}>2. Việc cần làm</p>
+                <div>
+                  <label className="text-xs font-medium text-gray-600 block mb-1">Tiêu đề <span className="text-red-500">*</span></label>
+                  <input
+                    value={form.title}
+                    onChange={(e) => set('title', e.target.value)}
+                    className={fieldCls}
+                    placeholder="VD: Lắp đặt tủ bếp — kiểm tra hiện trường"
+                    autoFocus
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-gray-600 block mb-1">Mô tả <span className="text-gray-400 font-normal">(tuỳ chọn)</span></label>
+                  <textarea
+                    value={form.description}
+                    onChange={(e) => set('description', e.target.value)}
+                    rows={3}
+                    placeholder="Ghi chú ngắn cho người nhận việc…"
+                    className={`w-full px-3 py-2 border border-gray-200 rounded-xl text-sm outline-none bg-white resize-y min-h-[72px] ${focusCls}`}
+                  />
+                </div>
+              </section>
+
+              <section className="rounded-2xl border border-gray-200 p-3.5 space-y-3">
+                <p className={sectionTitleCls}>3. Cột · ưu tiên · hạn</p>
+                <div className="grid grid-cols-2 gap-2.5">
+                  <div>
+                    <label className="text-xs font-medium text-gray-600 block mb-1">Cột Kanban</label>
+                    <select value={form.column_id || ''} onChange={(e) => set('column_id', e.target.value)} className={selectCls}>
+                      <option value="">Chưa phân loại</option>
+                      {columns.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-gray-600 block mb-1">Ưu tiên</label>
+                    <select value={form.priority} onChange={(e) => set('priority', e.target.value)} className={selectCls}>
+                      {PRIORITY_OPTIONS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-gray-600 block mb-1">Trạng thái</label>
+                    <select value={form.status} onChange={(e) => set('status', e.target.value)} className={selectCls}>
+                      {STATUS_OPTIONS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-gray-600 block mb-1">Deadline</label>
+                    <input
+                      type="datetime-local"
+                      value={form.deadline}
+                      onChange={(e) => set('deadline', e.target.value)}
+                      className={fieldCls}
+                    />
+                  </div>
+                </div>
+                {!form.id && (
+                  <div className="rounded-xl border border-violet-200 bg-violet-50/60 p-3 space-y-2.5">
+                    <label className="flex items-center gap-2 text-sm font-medium text-violet-900 cursor-pointer">
                       <input
                         type="checkbox"
-                        checked={form.recurrence_enabled}
-                        onChange={(e) => set('recurrence_enabled', e.target.checked)}
+                        checked={form.schedule_enabled}
+                        onChange={(e) => set('schedule_enabled', e.target.checked)}
                         className="cursor-pointer"
                       />
-                      <Repeat2 className="h-3.5 w-3.5 text-violet-600" />
-                      Lặp lại định kỳ
+                      <CalendarClock className="h-4 w-4 shrink-0" />
+                      Giao việc theo lịch
                     </label>
-                    {form.recurrence_enabled && (
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    {form.schedule_enabled && (
+                      <>
                         <div>
-                          <label className="text-[11px] text-gray-500 block mb-1">Chu kỳ</label>
-                          <select
-                            value={form.recurrence_type}
-                            onChange={(e) => set('recurrence_type', e.target.value)}
-                            className="w-full h-8 px-2 border rounded-lg text-xs bg-white"
-                          >
-                            {RECURRENCE_OPTIONS.map((o) => (
-                              <option key={o.value} value={o.value}>{o.label}</option>
-                            ))}
-                          </select>
-                        </div>
-                        <div>
-                          <label className="text-[11px] text-gray-500 block mb-1">Mỗi (N lần)</label>
-                          <input
-                            type="number"
-                            min={1}
-                            max={365}
-                            value={form.recurrence_interval}
-                            onChange={(e) => set('recurrence_interval', Math.max(1, Number(e.target.value) || 1))}
-                            className="w-full h-8 px-2 border rounded-lg text-xs bg-white"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-[11px] text-gray-500 block mb-1">Kết thúc lặp (tuỳ chọn)</label>
+                          <label className="text-xs text-gray-600 block mb-1">Thời gian bắt đầu <span className="text-red-500">*</span></label>
                           <input
                             type="datetime-local"
-                            value={form.recurrence_end_at}
-                            onChange={(e) => set('recurrence_end_at', e.target.value)}
-                            className="w-full h-8 px-2 border rounded-lg text-xs bg-white"
+                            value={form.scheduled_start}
+                            onChange={(e) => set('scheduled_start', e.target.value)}
+                            className="w-full h-10 px-3 border rounded-xl text-sm outline-none focus:border-violet-500 bg-white"
+                            required={form.schedule_enabled}
                           />
                         </div>
-                      </div>
+                        <label className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={form.recurrence_enabled}
+                            onChange={(e) => set('recurrence_enabled', e.target.checked)}
+                            className="cursor-pointer"
+                          />
+                          <Repeat2 className="h-3.5 w-3.5 text-violet-600" />
+                          Lặp lại định kỳ
+                        </label>
+                        {form.recurrence_enabled && (
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                            <div>
+                              <label className="text-[11px] text-gray-500 block mb-1">Chu kỳ</label>
+                              <select
+                                value={form.recurrence_type}
+                                onChange={(e) => set('recurrence_type', e.target.value)}
+                                className="w-full h-9 px-2 border rounded-xl text-xs bg-white"
+                              >
+                                {RECURRENCE_OPTIONS.map((o) => (
+                                  <option key={o.value} value={o.value}>{o.label}</option>
+                                ))}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="text-[11px] text-gray-500 block mb-1">Mỗi (N lần)</label>
+                              <input
+                                type="number"
+                                min={1}
+                                max={365}
+                                value={form.recurrence_interval}
+                                onChange={(e) => set('recurrence_interval', Math.max(1, Number(e.target.value) || 1))}
+                                className="w-full h-9 px-2 border rounded-xl text-xs bg-white"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-[11px] text-gray-500 block mb-1">Kết thúc lặp</label>
+                              <input
+                                type="datetime-local"
+                                value={form.recurrence_end_at}
+                                onChange={(e) => set('recurrence_end_at', e.target.value)}
+                                className="w-full h-9 px-2 border rounded-xl text-xs bg-white"
+                              />
+                            </div>
+                          </div>
+                        )}
+                      </>
                     )}
-                  </>
+                  </div>
                 )}
-              </div>
-            )}
-          </div>
+              </section>
 
-          {/* Người được giao — thu gọn, bấm Tìm để mở */}
-          <div className="border-t pt-3">
-            <div className="flex items-center justify-between mb-2 gap-2">
-              <label className="text-sm font-semibold text-gray-800">
-                Giao cho ({selUsers.size} nhân viên)
-              </label>
-              <div className="flex items-center gap-2">
-                {selUsers.size > 0 && (
-                  <button type="button" onClick={clearAllSelected} className="text-xs text-red-500 hover:underline cursor-pointer">Bỏ chọn</button>
-                )}
-                <button
-                  type="button"
-                  onClick={() => setShowAssigneePicker((v) => !v)}
-                  className="h-8 px-3 rounded-lg border border-blue-200 bg-blue-50 text-blue-700 text-xs font-medium flex items-center gap-1.5 cursor-pointer hover:bg-blue-100"
-                >
-                  <Search className="h-3.5 w-3.5" />
-                  {showAssigneePicker ? 'Thu gọn' : 'Tìm nhân viên'}
-                </button>
-              </div>
+              <div className="lg:hidden">{assigneePanel}</div>
+
+              {form.id ? (
+                <AttachmentsSection
+                  assignmentId={form.id}
+                  kind="req"
+                  title="📋 File yêu cầu công việc"
+                  hint="File brief / hướng dẫn cho NV thực hiện. Người giao việc tải lên."
+                  emptyText="Chưa có file yêu cầu nào"
+                  color="blue"
+                />
+              ) : (
+                <StagedAttachmentsSection files={stagedFiles} onChange={setStagedFiles} />
+              )}
+              {form.id && <CommentSection assignmentId={form.id} />}
             </div>
 
-            {selectedUserObjects.length > 0 && (
-              <div className="flex flex-wrap gap-1 mb-2 p-2 bg-emerald-50 rounded-lg max-h-24 overflow-y-auto">
-                {selectedUserObjects.map((u) => (
-                  <span key={u.id} className="inline-flex items-center gap-1 bg-white border border-emerald-300 rounded-full px-2 py-0.5 text-xs">
-                    {u.full_name}
-                    <button type="button" onClick={() => setSelUsers((p) => toggleSet(p, u.id))} className="text-gray-400 hover:text-red-500 cursor-pointer">
-                      <X className="h-3 w-3" />
-                    </button>
-                  </span>
-                ))}
-              </div>
-            )}
-
-            {showAssigneePicker && (
-              <>
-            {/* Khu vực */}
-            {lookups.regions.length > 0 && (
-              <div className="mb-2">
-                <p className="text-[11px] text-gray-500 mb-1">Khu vực (lọc):</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {lookups.regions.map((r) => {
-                    const active = selRegions.has(String(r.id));
-                    return (
-                      <span key={r.id} className="inline-flex items-center">
-                        <button
-                          type="button"
-                          onClick={() => setSelRegions((p) => toggleSet(p, r.id))}
-                          className={`h-7 px-2.5 rounded-l-full text-xs cursor-pointer ${active ? 'bg-purple-600 text-white' : 'bg-purple-50 text-purple-700 hover:bg-purple-100'}`}
-                        >
-                          📍 {r.name}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => addUsersOfRegion(r.id)}
-                          title="Chọn cả khu vực"
-                          className="h-7 px-2 rounded-r-full text-xs bg-purple-100 hover:bg-purple-200 text-purple-700 cursor-pointer border-l border-purple-300"
-                        >
-                          + Cả KV
-                        </button>
-                      </span>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {/* Phòng ban */}
-            {lookups.departments.length > 0 && (
-              <div className="mb-2">
-                <p className="text-[11px] text-gray-500 mb-1">Phòng ban (lọc):</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {lookups.departments.map((d) => {
-                    const active = selDepts.has(String(d.id));
-                    return (
-                      <span key={d.id} className="inline-flex items-center">
-                        <button
-                          type="button"
-                          onClick={() => setSelDepts((p) => toggleSet(p, d.id))}
-                          className={`h-7 px-2.5 rounded-l-full text-xs cursor-pointer ${active ? 'bg-blue-600 text-white' : 'bg-blue-50 text-blue-700 hover:bg-blue-100'}`}
-                          style={active ? {} : { color: d.color || undefined }}
-                        >
-                          🏢 {d.name}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => addUsersOfDept(d.id)}
-                          title="Chọn cả phòng"
-                          className="h-7 px-2 rounded-r-full text-xs bg-blue-100 hover:bg-blue-200 text-blue-700 cursor-pointer border-l border-blue-300"
-                        >
-                          + Cả phòng
-                        </button>
-                      </span>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {/* Nhân viên */}
-            <div>
-              <div className="flex items-center gap-2 mb-1.5">
-                <div className="relative flex-1">
-                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
-                  <input
-                    value={userSearch}
-                    onChange={(e) => setUserSearch(e.target.value)}
-                    placeholder="Tìm nhân viên..."
-                    className="w-full h-8 pl-8 pr-2 border rounded-lg text-xs outline-none focus:border-blue-500"
-                    autoFocus
-                  />
-                </div>
-                <button
-                  type="button"
-                  onClick={addAllFiltered}
-                  className="h-8 px-3 text-xs rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 cursor-pointer whitespace-nowrap"
-                >
-                  + Chọn tất cả ({filteredUsers.length})
-                </button>
-              </div>
-
-              <div className="max-h-56 overflow-y-auto border rounded-lg divide-y">
-                {loadingLk ? (
-                  <p className="text-center text-xs text-gray-400 py-6">Đang tải...</p>
-                ) : filteredUsers.length === 0 ? (
-                  <p className="text-center text-xs text-gray-400 py-6">Không có nhân viên phù hợp</p>
-                ) : (
-                  filteredUsers.map((u) => {
-                    const checked = selUsers.has(String(u.id));
-                    const dept = lookups.departments.find((d) => String(d.id) === String(u.department_id));
-                    return (
-                      <label key={u.id} className={`flex items-center gap-2 px-3 py-1.5 cursor-pointer hover:bg-gray-50 ${checked ? 'bg-blue-50' : ''}`}>
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={() => setSelUsers((p) => toggleSet(p, u.id))}
-                          className="cursor-pointer"
-                        />
-                        <span className="text-sm flex-1">{u.full_name}</span>
-                        {dept && <span className="text-[10px] text-gray-500">🏢 {dept.name}</span>}
-                        {u.position && <span className="text-[10px] text-gray-400">{u.position}</span>}
-                      </label>
-                    );
-                  })
-                )}
-              </div>
-            </div>
-              </>
-            )}
+            <aside className="hidden lg:block min-w-0">
+              <div className="lg:sticky lg:top-0">{assigneePanel}</div>
+            </aside>
           </div>
-
-          {form.id ? (
-            <AttachmentsSection
-              assignmentId={form.id}
-              kind="req"
-              title="📋 File yêu cầu công việc"
-              hint="File brief / hướng dẫn cho NV thực hiện. Người giao việc tải lên."
-              emptyText="Chưa có file yêu cầu nào"
-              color="blue"
-            />
-          ) : (
-            <StagedAttachmentsSection files={stagedFiles} onChange={setStagedFiles} />
-          )}
-          {form.id && <CommentSection assignmentId={form.id} />}
         </div>
 
-        <div className="flex justify-end gap-2 px-5 py-3 border-t bg-gray-50 rounded-b-2xl">
-          <button type="button" onClick={onClose} className="h-9 px-4 rounded-lg border text-sm cursor-pointer">Huỷ</button>
-          <button type="submit" className="h-9 px-4 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium cursor-pointer">
-            {form.id ? 'Lưu' : form.schedule_enabled ? `Lên lịch (${selUsers.size} NV)` : `Giao cho ${selUsers.size} NV`}
-          </button>
+        <div className="flex items-center justify-between gap-2 px-5 py-3 border-t bg-gray-50">
+          <p className="text-[11px] text-gray-500 hidden sm:block">
+            {selUsers.size ? `${selUsers.size} người sẽ nhận việc` : 'Chưa chọn người nhận'}
+          </p>
+          <div className="flex justify-end gap-2 ml-auto">
+            <button type="button" onClick={onClose} className="h-10 px-4 rounded-xl border border-gray-200 bg-white text-sm cursor-pointer hover:bg-gray-50">Huỷ</button>
+            <button type="submit" className={`h-10 px-5 rounded-xl text-white text-sm font-semibold cursor-pointer shadow-sm ${ctaCls}`}>
+              {form.id ? 'Lưu thay đổi' : form.schedule_enabled ? `Lên lịch (${selUsers.size} NV)` : `Giao cho ${selUsers.size} NV`}
+            </button>
+          </div>
         </div>
       </form>
     </div>

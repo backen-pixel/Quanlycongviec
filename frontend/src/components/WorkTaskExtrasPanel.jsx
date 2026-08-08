@@ -222,7 +222,7 @@ function CrmTaskNotesAttachments({ task }) {
     input.multiple = true;
     input.accept = TASK_ATTACHMENT_FILE_ACCEPT;
     input.onchange = async (e) => {
-      const rawFiles = Array.from(e.target.files || []).slice(0, 20);
+      const rawFiles = Array.from(e.target.files || []).slice(0, 50);
       if (!rawFiles.length) return;
       setUploading(true);
       try {

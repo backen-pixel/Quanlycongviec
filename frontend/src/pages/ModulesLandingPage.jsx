@@ -29,7 +29,7 @@ const publicApi = axios.create({ baseURL: `${resolveApiOrigin()}/api/saas` });
 const FALLBACK_PLANS = [
   { id: 'free', title: 'Free', subtitle: 'Dùng thử & xưởng nhỏ', price: '0', price_monthly: 0, color: '#64748b', highlights: ['CRM cơ bản', 'Công việc & dự án', '3 người dùng'], trial_days: 14, is_purchasable: true },
   { id: 'standard', title: 'Standard', subtitle: 'Xưởng vừa', price: '990.000', price_monthly: 990000, color: '#3b82f6', badge: 'popular', highlights: ['+ Sản xuất', '+ Khách hàng', '20 người dùng'], trial_days: 14, is_purchasable: true },
-  { id: 'pro', title: 'Pro', subtitle: 'Doanh nghiệp', price: '2.490.000', price_monthly: 2490000, color: '#8b5cf6', highlights: ['+ Vận chuyển', '+ AI & Drive', '50 người dùng'], trial_days: 14, is_purchasable: true },
+  { id: 'pro', title: 'Pro', subtitle: 'Doanh nghiệp', price: '2.490.000', price_monthly: 2490000, color: '#8b5cf6', highlights: ['+ Lắp đặt', '+ AI & Drive', '50 người dùng'], trial_days: 14, is_purchasable: true },
   { id: 'ultra', title: 'Ultra', subtitle: 'Tập đoàn', price: '4.990.000', price_monthly: 4990000, color: '#f59e0b', badge: 'best', highlights: ['+ Kế toán & API', '200 người dùng', 'Hỗ trợ ưu tiên'], trial_days: 14, is_purchasable: true },
 ];
 

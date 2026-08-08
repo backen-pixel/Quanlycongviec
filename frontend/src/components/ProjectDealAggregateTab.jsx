@@ -162,7 +162,7 @@ export default function ProjectDealAggregateTab({ projectId, project, bundle: bu
           <div>
             <h2 className="text-base font-bold text-gray-900 flex items-center gap-2">
               <Layers className="h-5 w-5 text-blue-600" />
-              Tổng hợp — CRM · Sản xuất · Vận chuyển · Dữ liệu
+              Tổng hợp — CRM · Sản xuất · Lắp đặt · Dữ liệu
             </h2>
             {primary_lead ? (
               <p className="text-sm text-gray-600 mt-1">
@@ -213,7 +213,7 @@ export default function ProjectDealAggregateTab({ projectId, project, bundle: bu
           )}
           {pipelines?.vc && (
             <div className="rounded-lg border px-3 py-2 bg-amber-50/50">
-              <p className="text-[10px] text-gray-500 uppercase font-medium">Vận chuyển</p>
+              <p className="text-[10px] text-gray-500 uppercase font-medium">Lắp đặt</p>
               <p className="text-xs font-bold text-amber-700">{pipelines.vc.name}</p>
             </div>
           )}
@@ -257,7 +257,7 @@ export default function ProjectDealAggregateTab({ projectId, project, bundle: bu
 
       {!hasAny ? (
         <p className="text-center text-sm text-gray-400 py-8">
-          Chưa có nhiệm vụ hoặc tài liệu từ CRM / Sản xuất / Vận chuyển
+          Chưa có nhiệm vụ hoặc tài liệu từ CRM / Sản xuất / Lắp đặt
         </p>
       ) : (
         <div className="space-y-3">

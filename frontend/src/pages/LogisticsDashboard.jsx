@@ -959,10 +959,10 @@ export default function LogisticsDashboard() {
               <div
                 data-tour="vc-pipeline-tabs"
                 className="inline-flex items-center gap-1.5 h-7 px-2 rounded-md border border-orange-200/80 bg-white text-[11px] font-semibold text-orange-700 shrink-0"
-                title="Pipeline Vận chuyển & Lắp đặt"
+                title="Pipeline Lắp đặt"
               >
                 <Truck className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                <span className="whitespace-nowrap">Vận chuyển / Lắp đặt</span>
+                <span className="whitespace-nowrap">Lắp đặt</span>
                 {tabKpis.total > 0 && (
                   <span className="tabular-nums text-orange-600/80 font-bold">{tabKpis.total.toLocaleString('vi-VN')}</span>
                 )}
@@ -970,14 +970,14 @@ export default function LogisticsDashboard() {
               {canPickCompany && workshopCompanyPickerList.length > 0 && (
                 <label
                   className="inline-flex items-center gap-1 h-7 px-1.5 rounded-md border border-orange-200 bg-white text-orange-700 shrink-0"
-                  title="Chọn công ty Vận chuyển / Lắp đặt"
+                  title="Chọn công ty Lắp đặt"
                 >
                   <Truck className="h-3.5 w-3.5 shrink-0" />
                   <select
                     value={filterCompany}
                     onChange={(e) => handleStaffFilterCompanyChange(e.target.value)}
                     className="h-6 max-w-[13rem] border-0 bg-transparent p-0 pr-5 text-[11px] font-semibold text-slate-700 focus:ring-0 cursor-pointer"
-                    aria-label="Công ty Vận chuyển / Lắp đặt"
+                    aria-label="Công ty Lắp đặt"
                   >
                     {workshopCompanyPickerList.map((c) => (
                       <option key={c.id} value={c.id}>
@@ -1537,7 +1537,7 @@ export default function LogisticsDashboard() {
                 <Trash2 className="h-5 w-5" />
               </div>
               <div className="flex-1 min-w-0">
-                <h3 className="text-base font-bold text-gray-900">Xóa khỏi Vận chuyển?</h3>
+                <h3 className="text-base font-bold text-gray-900">Xóa khỏi Lắp đặt?</h3>
                 <p className="text-sm text-gray-600 mt-0.5 truncate" title={deleteTarget.label}>
                   Dự án: <strong className="text-gray-900">{deleteTarget.label}</strong>
                 </p>

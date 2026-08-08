@@ -113,6 +113,33 @@ function vnDayInMonth(isoStr, year, month1to12) {
   return parseInt(key.slice(-2), 10);
 }
 
+/** Các ngày trong tháng mà sự kiện xuất hiện (occurrence_dates hoặc ngày start). */
+function eventDaysInMonth(ev, year, month1to12) {
+  const pad = (n) => String(n).padStart(2, '0');
+  const prefix = `${year}-${pad(month1to12)}`;
+  const occ = Array.isArray(ev?.occurrence_dates) ? ev.occurrence_dates : [];
+  if (occ.length) {
+    return [...new Set(
+      occ
+        .map((d) => String(d).slice(0, 10))
+        .filter((d) => d.startsWith(prefix))
+        .map((d) => parseInt(d.slice(-2), 10))
+        .filter((n) => n >= 1 && n <= 31),
+    )];
+  }
+  const startDay = vnDayInMonth(ev?.start_time, year, month1to12);
+  return startDay ? [startDay] : [];
+}
+
+function formatOccurrenceDatesLabel(ev) {
+  const occ = Array.isArray(ev?.occurrence_dates) ? ev.occurrence_dates.map((d) => String(d).slice(0, 10)).filter(Boolean) : [];
+  if (occ.length <= 1) return '';
+  return occ.map((ymd) => {
+    const [, m, d] = ymd.split('-');
+    return `${d}/${m}`;
+  }).join(', ');
+}
+
 /** Khoảng ngày theo preset (đồng bộ style với CRM Dashboard). YYYY-MM-DD theo local. */
 function getEventsDateRange(preset) {
   const pad = (n) => String(n).padStart(2, '0');
@@ -186,8 +213,32 @@ export default function EventsFeedPage({ lockedModule = '' } = {}) {
   /** Admin chọn công ty (admin tổng / platform_admin — khớp CRM Dashboard, không chỉ isSystemAdmin). */
   const canPickCompany = isAdmin && !isCompanyScopedAdmin(user);
   const isSystemAdmin = checkSystemAdmin(user);
+
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialModule = useMemo(() => {
+    if (forcedModule) return forcedModule;
+    const v = String(searchParams.get('module') || '').toLowerCase();
+    return EVENT_MODULE_OPTIONS.some((o) => o.value === v) ? v : '';
+  }, [forcedModule, searchParams]);
+  const [filterModule, setFilterModule] = useState(initialModule);
+  const [loadError, setLoadError] = useState('');
+
+  /**
+   * Dropdown công ty theo khối đang chọn trong hệ sinh thái:
+   * crm / production / logistics → for_module tương ứng;
+   * «Tất cả khối» / «Chung công ty» → mọi công ty (không lọc module).
+   */
+  const companiesModule = useMemo(() => {
+    if (forcedModule === 'production' || forcedModule === 'logistics') return forcedModule;
+    if (filterModule === 'crm' || filterModule === 'production' || filterModule === 'logistics') {
+      return filterModule;
+    }
+    return false;
+  }, [forcedModule, filterModule]);
+
   const scope = useScopeFilter({
     storageKey: forcedModule ? `events_${forcedModule}` : 'crm_events',
+    companiesModule,
     showCompany: true,
     showDepartment: false,
     showSearch: false,
@@ -196,6 +247,13 @@ export default function EventsFeedPage({ lockedModule = '' } = {}) {
   });
   const filterCompanyId = scope.companyId;
   const companies = scope.companies;
+
+  // Đổi khối → nếu công ty đang chọn không thuộc khối mới thì bỏ chọn.
+  useEffect(() => {
+    if (!canPickCompany || scope.metaLoading || !filterCompanyId) return;
+    const ok = (companies || []).some((c) => String(c.id) === String(filterCompanyId));
+    if (!ok) scope.setCompanyId('');
+  }, [canPickCompany, scope.metaLoading, companies, filterCompanyId, scope.setCompanyId]);
 
   const { moduleAccess, canAccessModule } = useModuleAccess();
 
@@ -216,15 +274,6 @@ export default function EventsFeedPage({ lockedModule = '' } = {}) {
     if (canAccessModule('logistics')) list.push('logistics');
     return list;
   }, [forcedModule, moduleAccess, isAdmin, isSystemAdmin, canAccessModule, user]);
-
-  const [searchParams, setSearchParams] = useSearchParams();
-  const initialModule = useMemo(() => {
-    if (forcedModule) return forcedModule;
-    const v = String(searchParams.get('module') || '').toLowerCase();
-    return EVENT_MODULE_OPTIONS.some((o) => o.value === v) ? v : '';
-  }, [forcedModule, searchParams]);
-  const [filterModule, setFilterModule] = useState(initialModule);
-  const [loadError, setLoadError] = useState('');
 
   useEffect(() => {
     if (forcedModule) {
@@ -1024,10 +1073,6 @@ export default function EventsFeedPage({ lockedModule = '' } = {}) {
             type="button"
             data-tour="events-create-btn"
             onClick={() => {
-            if (canPickCompany && !filterCompanyId) {
-              alert('Chọn công ty ở bộ lọc phía trên trước khi tạo sự kiện — nếu không, sự kiện sẽ không hiện trên lịch khi đang lọc theo công ty.');
-              return;
-            }
             setEditEvent(null);
             setCreatePresetDay(null);
             setShowCreate(true);
@@ -1203,10 +1248,6 @@ export default function EventsFeedPage({ lockedModule = '' } = {}) {
                 onNextMonth={() => { if (calMonth === 12) { setCalMonth(1); setCalYear(y => y + 1); } else setCalMonth(m => m + 1); }}
                 onSelectDay={setSelectedDay}
                 onOpenCreateForDay={(day) => {
-                  if (canPickCompany && !filterCompanyId) {
-                    alert('Chọn công ty ở bộ lọc phía trên trước khi tạo sự kiện.');
-                    return;
-                  }
                   setEditEvent(null);
                   setCreatePresetDay({ year: calYear, month: calMonth, day });
                   setSelectedDay(day);
@@ -1614,6 +1655,9 @@ function EventCard({ event: ev, eventTypes, currentUser, pageModule = 'crm', onR
               return `${startLabel}, ${startTime} → ${endLabel}, ${endTime}`;
             })()}</span>
           </p>
+          {formatOccurrenceDatesLabel(ev) && (
+            <p className="text-[11px] text-orange-700 font-medium">📅 Nhiều ngày: {formatOccurrenceDatesLabel(ev)}</p>
+          )}
           {ev.location && (
             <p className="text-[11px] text-gray-600 flex items-center gap-1 truncate" title={ev.location}>
               <MapPin className="h-3 w-3 text-gray-400 shrink-0" />
@@ -1786,6 +1830,7 @@ function SelectedDayEventDetail({ ev, eventTypes, pageModule = 'crm', onEdit }) 
     const endLabel = isToday(ev.end_time) ? 'Hôm nay' : formatDateVN(ev.end_time);
     return `${startLabel}, ${startTime} → ${endLabel}, ${endTime}`;
   })();
+  const occLabel = formatOccurrenceDatesLabel(ev);
 
   return (
     <div
@@ -1829,6 +1874,7 @@ function SelectedDayEventDetail({ ev, eventTypes, pageModule = 'crm', onEdit }) 
           <div className="flex flex-wrap gap-x-2 gap-y-1">
             <span className="text-xs text-gray-500 shrink-0">Thời gian:</span>
             <span className="text-gray-800 font-medium">{timeRange}</span>
+            {occLabel ? <span className="text-orange-700 font-medium"> · Nhiều ngày: {occLabel}</span> : null}
           </div>
           <div className="flex flex-wrap gap-x-2 gap-y-1">
             <span className="text-xs text-gray-500 shrink-0">Người tạo:</span>
@@ -1892,6 +1938,7 @@ function CalendarView({ month, year, events, eventTypes, loading, selectedDay, o
   const isCompact = mode === 'compact';
   const selectedDayDetailRef = useRef(null);
   const [scrollToDetailNonce, setScrollToDetailNonce] = useState(0);
+  const [hoveredEventId, setHoveredEventId] = useState(null);
 
   useLayoutEffect(() => {
     if (scrollToDetailNonce === 0) return;
@@ -1919,14 +1966,21 @@ function CalendarView({ month, year, events, eventTypes, loading, selectedDay, o
   // Pad end
   while (cells.length % 7 !== 0) cells.push(null);
 
-  // Group events by day (múi giờ VN, đúng tháng đang xem)
+  // Group events by day — multi-day (occurrence_dates) hiện trên mọi ngày đã chọn
   const eventsByDay = {};
-  events.forEach(ev => {
-    const d = vnDayInMonth(ev.start_time, year, month);
-    if (!d) return;
-    if (!eventsByDay[d]) eventsByDay[d] = [];
-    eventsByDay[d].push(ev);
+  events.forEach((ev) => {
+    const days = eventDaysInMonth(ev, year, month);
+    days.forEach((d) => {
+      if (!eventsByDay[d]) eventsByDay[d] = [];
+      eventsByDay[d].push(ev);
+    });
   });
+  const hoveredDays = (() => {
+    if (!hoveredEventId) return new Set();
+    const ev = events.find((e) => String(e.id) === String(hoveredEventId));
+    if (!ev) return new Set();
+    return new Set(eventDaysInMonth(ev, year, month));
+  })();
 
   const selectedDayEvents = selectedDay
     ? [...(eventsByDay[selectedDay] || [])].sort((a, b) => new Date(a.start_time) - new Date(b.start_time))
@@ -2011,6 +2065,7 @@ function CalendarView({ month, year, events, eventTypes, loading, selectedDay, o
               const isTodayCell = isCurrentMonth && day === today.getDate();
               const isSelected = day === selectedDay;
               const isWeekend = i % 7 === 0; // CN
+              const isSiblingLit = day && hoveredDays.has(day);
               if (!day) {
                 return <div key={i} className="rounded-lg bg-gray-50/40 border border-dashed border-gray-100" style={{ minHeight: cellMinH }} />;
               }
@@ -2021,8 +2076,10 @@ function CalendarView({ month, year, events, eventTypes, loading, selectedDay, o
                   className={`group relative rounded-lg border flex flex-col overflow-hidden transition cursor-pointer ${
                     isSelected
                       ? 'ring-2 ring-blue-500 ring-offset-1 border-blue-300 shadow-md'
-                      : 'border-gray-200 hover:border-blue-300 hover:shadow-sm'
-                  } ${isTodayCell ? 'bg-blue-50/40' : 'bg-white'}`}
+                      : isSiblingLit
+                        ? 'border-amber-400 ring-2 ring-amber-300/80 shadow-md bg-amber-50/70'
+                        : 'border-gray-200 hover:border-blue-300 hover:shadow-sm'
+                  } ${isTodayCell && !isSiblingLit ? 'bg-blue-50/40' : isSiblingLit ? '' : 'bg-white'}`}
                   style={{ minHeight: cellMinH }}
                   onClick={(e) => {
                     if (e.target.closest?.('[data-cal-event-chip]') || e.target.closest?.('[data-create-btn]')) return;
@@ -2044,12 +2101,16 @@ function CalendarView({ month, year, events, eventTypes, loading, selectedDay, o
                       <div className="flex items-center gap-0.5">
                         {dayEvents.slice(0, 4).map((ev) => {
                           const typeInfo = eventTypes.find((t) => t.slug === ev.event_type) || ev.event_type_ref || {};
+                          const lit = hoveredEventId && String(hoveredEventId) === String(ev.id);
+                          const occN = Array.isArray(ev.occurrence_dates) ? ev.occurrence_dates.length : 0;
                           return (
                             <span
                               key={ev.id}
-                              className="w-1.5 h-1.5 rounded-full"
+                              className={`rounded-full transition ${lit ? 'w-2.5 h-2.5 ring-2 ring-amber-400 scale-125' : 'w-1.5 h-1.5'}`}
                               style={{ backgroundColor: typeInfo.color || '#3B82F6' }}
-                              title={`${ev.title} (${formatTime(ev.start_time)})`}
+                              title={`${ev.title}${occN > 1 ? ` · ${occN} ngày` : ''} (${formatTime(ev.start_time)})`}
+                              onMouseEnter={() => setHoveredEventId(ev.id)}
+                              onMouseLeave={() => setHoveredEventId(null)}
                             />
                           );
                         })}
@@ -2076,13 +2137,23 @@ function CalendarView({ month, year, events, eventTypes, loading, selectedDay, o
                     <div className="flex-1 min-h-0 p-0.5 space-y-0.5 overflow-hidden">
                       {dayEvents.slice(0, maxChipsPerCell).map(ev => {
                         const typeInfo = eventTypes.find(t => t.slug === ev.event_type) || ev.event_type_ref || {};
+                        const lit = hoveredEventId && String(hoveredEventId) === String(ev.id);
+                        const occN = Array.isArray(ev.occurrence_dates) ? ev.occurrence_dates.length : 0;
+                        const color = typeInfo.color || '#3B82F6';
                         return (
                           <div
                             key={ev.id}
                             data-cal-event-chip
-                            className="text-[10px] leading-tight px-1 py-0.5 rounded truncate font-medium hover:shadow-sm transition"
-                            style={{ backgroundColor: (typeInfo.color || '#3B82F6') + '22', color: typeInfo.color || '#3B82F6' }}
-                            title={`${ev.title} — ${formatTime(ev.start_time)} — Nhấn để sửa`}
+                            className={`text-[10px] leading-tight px-1 py-0.5 rounded truncate font-medium transition ${
+                              lit ? 'shadow-md ring-2 ring-amber-400 font-bold scale-[1.03]' : 'hover:shadow-sm'
+                            }`}
+                            style={{
+                              backgroundColor: lit ? `${color}55` : `${color}22`,
+                              color,
+                            }}
+                            title={`${ev.title}${occN > 1 ? ` · ${occN} ngày: ${formatOccurrenceDatesLabel(ev)}` : ''} — ${formatTime(ev.start_time)} — Nhấn để sửa`}
+                            onMouseEnter={() => setHoveredEventId(ev.id)}
+                            onMouseLeave={() => setHoveredEventId(null)}
                             onClick={(e) => {
                               e.stopPropagation();
                               onSelectDay(day);
@@ -2090,7 +2161,7 @@ function CalendarView({ month, year, events, eventTypes, loading, selectedDay, o
                               onEdit(ev);
                             }}
                           >
-                            {typeInfo.icon} {ev.title}
+                            {typeInfo.icon} {ev.title}{occN > 1 ? ` ·${occN}n` : ''}
                           </div>
                         );
                       })}

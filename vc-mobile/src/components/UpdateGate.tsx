@@ -41,7 +41,7 @@ const FOREGROUND_DEBOUNCE_MS = 60 * 1000;
 function promptInstallPermission(onRetry?: () => void) {
   Alert.alert(
     'Cần quyền cài đặt',
-    'Android cần bật "Cho phép cài đặt ứng dụng không rõ nguồn" cho Vận chuyển lắp đặt.\n\n'
+    'Android cần bật "Cho phép cài đặt ứng dụng không rõ nguồn" cho Lắp đặt.\n\n'
       + '1. Bấm "Mở cài đặt"\n'
       + '2. Bật công tắc cho phép cài đặt\n'
       + '3. Quay lại app và bấm "Cài" lại',

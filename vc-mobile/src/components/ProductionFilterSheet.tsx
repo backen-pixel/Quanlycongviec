@@ -278,7 +278,7 @@ export default function ProductionFilterSheet({
     <>
       {showWorkshopPicker && workshopOptions.length > 0 ? (
         <>
-          <Text style={themed.sectionLabel}>Công ty vận chuyển</Text>
+          <Text style={themed.sectionLabel}>Công ty lắp đặt</Text>
           <View style={themed.chipWrap}>
             {filterOptions(workshopOptions).map((opt) => (
               <Chip

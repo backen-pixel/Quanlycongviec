@@ -646,7 +646,7 @@ export default function WorkTasksUnifiedPage() {
             <span className="ml-1" aria-hidden>👋</span>
           </h1>
           <p className="text-xs text-slate-500 mt-0.5 truncate">
-            CRM · Sản xuất · Vận chuyển · Giao việc — {companyDisplayName}
+            CRM · Sản xuất · Lắp đặt · Giao việc — {companyDisplayName}
           </p>
         </div>
         <div className="flex items-center gap-1.5 flex-wrap shrink-0">

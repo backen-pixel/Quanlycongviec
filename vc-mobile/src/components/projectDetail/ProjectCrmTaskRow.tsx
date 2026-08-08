@@ -541,7 +541,7 @@ export default function ProjectCrmTaskRow({
       mediaTypes: ['images', 'videos'],
       allowsMultipleSelection: true,
       quality: 0.85,
-      selectionLimit: 20,
+      selectionLimit: 50,
     });
     if (res.canceled || !res.assets?.length) return;
     await uploadPickedFiles(

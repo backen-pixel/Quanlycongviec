@@ -20,7 +20,7 @@ const SAMPLES = [
   { slug: 'sx-sample-finishing', name: 'Sơn & hoàn thiện bề mặt', color: '#DB2777', icon: '🎨', wsOrder: 53, crm_sync_type: null, handover: false },
   { slug: 'sx-sample-internal-qa', name: 'Nghiệm thu nội bộ', color: '#4F46E5', icon: '✅', wsOrder: 54, crm_sync_type: null, handover: false },
   { slug: 'sx-sample-packaging', name: 'Đóng gói & nhãn công trình', color: '#7C3AED', icon: '📤', wsOrder: 56, crm_sync_type: null, handover: false },
-  { slug: 'sx-sample-handover-vc', name: 'Bàn giao Vận chuyển', color: '#DC2626', icon: '🚚', wsOrder: 57, crm_sync_type: null, handover: true },
+  { slug: 'sx-sample-handover-vc', name: 'Bàn giao Lắp đặt', color: '#DC2626', icon: '🚚', wsOrder: 57, crm_sync_type: null, handover: true },
 ];
 
 async function ensureSampleProductionPipelineStages(supabase, companyId = null, opts = {}) {

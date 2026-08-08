@@ -338,19 +338,24 @@ export function isSxPipelineStageCompletedRevenue(stage) {
   return !!stage?.counts_as_completed_revenue;
 }
 
-/** Cột không theo dõi deadline (Hoàn thành / Đã công). */
-export function isSxPipelineStageNoDeadline(stage) {
-  return isSxPipelineStageCompletedRevenue(stage);
+/** Cột tích «đã thu tiền» (thường là cột Hoàn thành). */
+export function isSxPipelineStageCollectedRevenue(stage) {
+  return !!stage?.counts_as_collected_revenue;
 }
 
-/** Ẩn badge deadline trên thẻ Kanban SX khi ở cột «Đã công». */
+/** Cột không theo dõi deadline (Đã công / Đã thu / Hoàn thành). */
+export function isSxPipelineStageNoDeadline(stage) {
+  return isSxPipelineStageCompletedRevenue(stage) || isSxPipelineStageCollectedRevenue(stage);
+}
+
+/** Ẩn badge deadline trên thẻ Kanban SX khi ở cột «Đã công» / «Hoàn thành». */
 export function shouldHideSxKanbanDeadlineOnCard(item, stage) {
   const st = stage || item?.sx_pipeline_stage;
   return isSxPipelineStageNoDeadline(st);
 }
 
 /**
- * Cột bật «Bỏ quá hạn» (sla_days=0) hoặc «Đã công» — không tô đỏ ngày đặt/giao/deadline dự án.
+ * Cột bật «Bỏ quá hạn» (sla_days=0) hoặc «Đã công» / «Đã thu» — không tô đỏ ngày đặt/giao/deadline dự án.
  * Khớp cấu hình pipeline setup.
  */
 export function shouldIgnoreSxOrderDeliveryOverdue(stage) {

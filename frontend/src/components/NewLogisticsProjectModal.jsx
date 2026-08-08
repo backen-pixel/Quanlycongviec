@@ -76,8 +76,8 @@ export default function NewLogisticsProjectModal({ onClose }) {
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
           <div>
-            <h2 className="text-lg font-bold text-gray-900">🚚 Tạo dự án vận chuyển mới</h2>
-            <p className="text-xs text-gray-500 mt-0.5">Điền thông tin để tạo dự án VC</p>
+            <h2 className="text-lg font-bold text-gray-900">🔧 Tạo dự án lắp đặt mới</h2>
+            <p className="text-xs text-gray-500 mt-0.5">Điền thông tin để tạo dự án Lắp đặt</p>
           </div>
           <button onClick={onClose} className="h-8 w-8 flex items-center justify-center rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 cursor-pointer transition">
             <X className="h-4 w-4" />
@@ -90,7 +90,7 @@ export default function NewLogisticsProjectModal({ onClose }) {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1.5">Tên dự án <span className="text-red-500">*</span></label>
             <input ref={nameRef} type="text" value={formData.name} onChange={e => set('name', e.target.value)}
-              placeholder="VD: Vận chuyển tủ bếp anh Minh - 123 Lê Văn Việt"
+              placeholder="VD: Lắp đặt tủ bếp anh Minh - 123 Lê Văn Việt"
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent text-sm" required />
           </div>
 
@@ -178,7 +178,7 @@ export default function NewLogisticsProjectModal({ onClose }) {
           <div className="flex items-center gap-3 pt-2 border-t border-gray-100">
             <button type="submit" disabled={saving}
               className="flex-1 px-4 py-2.5 bg-orange-600 text-white rounded-lg font-medium hover:bg-orange-700 transition-all disabled:opacity-50 text-sm cursor-pointer">
-              {saving ? 'Đang tạo...' : '🚚 Tạo dự án VC'}
+              {saving ? 'Đang tạo...' : '🔧 Tạo dự án lắp đặt'}
             </button>
             <button type="button" onClick={onClose} className="px-4 py-2.5 text-gray-600 hover:bg-gray-100 rounded-lg transition text-sm cursor-pointer">Hủy</button>
           </div>

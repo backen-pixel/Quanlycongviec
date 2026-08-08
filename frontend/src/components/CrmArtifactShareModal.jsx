@@ -1,4 +1,4 @@
-﻿import { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import api from '../lib/api';
 import { parseShareModules, cleanShareModulesForApi } from '../lib/documentShareScope';
 import DocumentShareModulePicker from './DocumentShareModulePicker';
@@ -53,7 +53,7 @@ export default function CrmArtifactShareModal({
       <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-4 space-y-3" onClick={(e) => e.stopPropagation()}>
         <p className="text-sm font-semibold text-gray-900">{title}</p>
         <p className="text-xs text-gray-500">
-          Team CRM luôn xem đủ tại đây. Chỉ khối được chọn mới thấy trên Sản xuất, Vận chuyển hoặc Công việc dự án.
+          Team CRM luôn xem đủ tại đây. Chỉ khối được chọn mới thấy trên Sản xuất, Lắp đặt hoặc Công việc dự án.
         </p>
         <label className="flex items-center gap-2 text-sm cursor-pointer">
           <input type="checkbox" checked={shared} onChange={(e) => setShared(e.target.checked)} />

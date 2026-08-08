@@ -492,7 +492,7 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
   };
 
   const addPending = (files: PendingFile[]) => {
-    setPendingFiles((prev) => [...prev, ...files].slice(0, 20));
+    setPendingFiles((prev) => [...prev, ...files].slice(0, 50));
   };
 
   const pickImages = async () => {
@@ -505,7 +505,7 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
       mediaTypes: ['images'],
       allowsMultipleSelection: true,
       quality: 0.85,
-      selectionLimit: 12,
+      selectionLimit: 50,
     });
     if (res.canceled || !res.assets?.length) return;
     addPending(

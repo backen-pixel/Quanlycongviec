@@ -151,7 +151,7 @@ const MODULE_SECTIONS = [
       },
       {
         key: 'logistics_deadlines',
-        label: 'Nhắc / quá hạn — Vận chuyển',
+        label: 'Nhắc / quá hạn — Lắp đặt',
         sub: 'Task dự án khi dự án ở giai đoạn giao hàng, lắp đặt, bảo hành — chỉ người được giao task.',
         examples: ['Sắp đến hạn giao / lắp', 'Task VC quá hạn'],
       },

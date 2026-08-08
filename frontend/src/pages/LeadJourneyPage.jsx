@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Bell, RefreshCw, GitBranch, LayoutGrid, Filter, Building2 } from 'lucide-react';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -40,10 +40,10 @@ const STEPS = [
     detail:'Kiểm tra chất lượng QC, tạo biên bản nghiệm thu, chụp ảnh sản phẩm.',
     tips:['📸 Tải ảnh sản phẩm hoàn thiện','📋 Kiểm tra đủ thông tin trước khi bàn giao'] },
   { id:9,  mod:'SX',  col:3, icon:'🚚', label:'Bàn giao VC',    sub:'Chuyển VC ✓',    color:'#1d4ed8', isWon:true, crmDealTrigger:1,
-    detail:'Nhân viên nhấn "Bàn giao VC" trên Kanban. Hệ thống tự tạo Dự án Vận chuyển. CRM deal nhảy sang "Vận chuyển".',
+    detail:'Nhân viên nhấn "Bàn giao VC" trên Kanban. Hệ thống tự tạo Dự án Lắp đặt. CRM deal nhảy sang "Vận chuyển".',
     tips:['📂 Đảm bảo hồ sơ kỹ thuật đã đính kèm','📍 Ghi chú địa điểm giao hàng'],
     event:{ icon:'🚀', type:'trigger', title:'Tự động tạo Dự án VC',
-      desc:'Dự án xuất hiện trong module Vận chuyển. Quản lý VC nhận thông báo điều phối.',
+      desc:'Dự án xuất hiện trong module Lắp đặt. Quản lý VC nhận thông báo điều phối.',
       notify:'logistics · installer', crmUpdate:'CRM deal → cột "Vận chuyển"' } },
   { id:10, mod:'VC',  col:0, icon:'📋', label:'Tiếp nhận',      sub:'Điều phối đội',  color:'#0f766e',
     detail:'Quản lý VC phân công người vận chuyển và đội lắp đặt. Gửi thông báo tới từng người được gán.',
@@ -73,7 +73,7 @@ const CRM_DEAL = [
 const LANE = {
   CRM:{ color:'#7c3aed', light:'#f5f3ff', border:'#ddd6fe', label:'CRM Pipeline', icon:'💼', gradient:'#ede9fe' },
   SX: { color:'#ea580c', light:'#fff7ed', border:'#fdba74', label:'Xưởng Sản xuất', icon:'🏭', gradient:'#ffedd5' },
-  VC: { color:'#0f766e', light:'#f0fdfa', border:'#5eead4', label:'Vận chuyển', icon:'🚚', gradient:'#ccfbf1' },
+  VC: { color:'#0f766e', light:'#f0fdfa', border:'#5eead4', label:'Lắp đặt', icon:'🔧', gradient:'#ccfbf1' },
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -352,7 +352,7 @@ function BranchFlowDiagram({ active, setActive }) {
           </circle>}
           <rect x={(fx+tx)/2-56} y={my-13} width={112} height={26} rx={13} fill={done?'#eff6ff':'#f8fafc'} stroke={done?'#93c5fd':'#e2e8f0'} strokeWidth={1.5} filter="url(#fsh)"/>
           <text x={(fx+tx)/2} y={my} textAnchor="middle" fontSize={9.5} fontWeight="800" fill={done?'#2563eb':'#94a3b8'}>🚀 Tự động tạo</text>
-          <text x={(fx+tx)/2} y={my+12} textAnchor="middle" fontSize={9} fill={done?'#3b82f6':'#b0b8c4'}>Dự án Vận chuyển</text>
+          <text x={(fx+tx)/2} y={my+12} textAnchor="middle" fontSize={9} fill={done?'#3b82f6':'#b0b8c4'}>Dự án Lắp đặt</text>
         </g>);
       })()}
 

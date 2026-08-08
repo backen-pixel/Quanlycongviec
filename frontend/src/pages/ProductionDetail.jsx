@@ -587,7 +587,7 @@ function CrmSharedDocumentsPanel({
 
   if (!docs.length) return null;
 
-  const moduleLabel = workshopModule === 'logistics' ? 'Vận chuyển' : 'Sản xuất';
+  const moduleLabel = workshopModule === 'logistics' ? 'Lắp đặt' : 'Sản xuất';
 
   return (
     <div className="mb-5 rounded-xl border-2 border-violet-200 bg-gradient-to-br from-violet-50/90 via-white to-white overflow-hidden shadow-sm">
@@ -1225,7 +1225,7 @@ function WorkshopTasksFallbackPanel({ tasks, moduleLabel, onToggleDone, onEnsure
 export default function ProductionDetail({ moduleKey = 'sx' }) {
   // moduleKey = 'sx' (sản xuất) | 'vc' (vận chuyển)
   const MOD = moduleKey === 'vc'
-    ? { apiPrefix: '/logistics', routePrefix: '/vc', label: 'Vận chuyển', icon: '🚚', stageField: 'vc_kanban_column_id', stagesKey: 'vcKanbanStages' }
+    ? { apiPrefix: '/logistics', routePrefix: '/vc', label: 'Lắp đặt', icon: '🔧', stageField: 'vc_kanban_column_id', stagesKey: 'vcKanbanStages' }
     : { apiPrefix: '/production', routePrefix: '/sx', label: 'Sản xuất', icon: '🏭', stageField: 'sx_kanban_column_id', stagesKey: 'sxKanbanStages' };
   const isVC = moduleKey === 'vc';
 
@@ -1650,7 +1650,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   /**
    * Pipeline SX/VC theo công ty dự án + phân loại (workshop_type_id).
    * GET /projects/:id đã trả sxKanbanStages / vcKanbanStages — chỉ fetch thêm khi thiếu.
-   * VC: ưu tiên logistics_company_id (công ty vận chuyển).
+   * VC: ưu tiên logistics_company_id (công ty lắp đặt).
    */
   useEffect(() => {
     const embedded = project?.[MOD.stagesKey];
@@ -1926,7 +1926,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   const confirmHandoverFromDetail = useCallback(async () => {
     if (!handoverModal?.projectId) return;
     if (!handoverLogisticsCompanyId) {
-      setHandoverErr('Vui lòng chọn công ty Vận chuyển.');
+      setHandoverErr('Vui lòng chọn công ty Lắp đặt.');
       return;
     }
     setHandoverSaving(true);
