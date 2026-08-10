@@ -1,7 +1,7 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useNavigation } from '@react-navigation/native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -29,7 +29,9 @@ import { Radii, Spacing, colorWithAlpha } from '../theme';
 import {
   type DealTaskSection,
   type WorkTask,
-  fetchMyLogisticsTasks,
+  type WorkTaskCounts,
+  WORK_TASKS_PAGE_SIZE,
+  fetchLogisticsWorkTasksPage,
   groupTasksByDeal,
   isTaskDone,
   isTaskInProgress,
@@ -129,9 +131,14 @@ export default function WorkScreen() {
 
   const [tasks, setTasks] = useState<WorkTask[]>([]);
   const [sharedTasks, setSharedTasks] = useState<SharedInboxTask[]>([]);
+  const [mineCounts, setMineCounts] = useState<WorkTaskCounts | null>(null);
+  const [hasMoreMine, setHasMoreMine] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const loadingMoreRef = useRef(false);
+  const hasMoreMineRef = useRef(false);
   const [workMode, setWorkMode] = useState<WorkMode>('mine');
   const [filter, setFilter] = useState<StatusFilter>('all');
   const [updatingId, setUpdatingId] = useState<string | null>(null);
@@ -143,20 +150,33 @@ export default function WorkScreen() {
     void refreshUnread();
   }, [refreshUnread]);
 
+  hasMoreMineRef.current = hasMoreMine;
+
+  const tasksLenRef = useRef(0);
+  tasksLenRef.current = tasks.length;
+
   const load = useCallback(async () => {
     if (!userId) {
       setTasks([]);
       setSharedTasks([]);
+      setMineCounts(null);
+      setHasMoreMine(false);
       setLoading(false);
       return;
     }
     setError(null);
     try {
-      const [mine, shared] = await Promise.all([
-        fetchMyLogisticsTasks(userId, { limit: 200 }),
+      const [minePage, shared] = await Promise.all([
+        fetchLogisticsWorkTasksPage({
+          assigneeId: userId,
+          limit: WORK_TASKS_PAGE_SIZE,
+          offset: 0,
+        }),
         fetchPrivateDealInboxTasks('logistics').catch(() => [] as SharedInboxTask[]),
       ]);
-      setTasks(mine);
+      setTasks(minePage.tasks);
+      setHasMoreMine(minePage.hasMore);
+      setMineCounts(minePage.counts);
       setSharedTasks(shared);
     } catch (e) {
       setError(formatApiError(e));
@@ -167,15 +187,48 @@ export default function WorkScreen() {
     }
   }, [userId]);
 
+  const loadMoreMine = useCallback(async () => {
+    if (!userId || loadingMoreRef.current || !hasMoreMineRef.current) return;
+    loadingMoreRef.current = true;
+    setLoadingMore(true);
+    try {
+      const page = await fetchLogisticsWorkTasksPage({
+        assigneeId: userId,
+        limit: WORK_TASKS_PAGE_SIZE,
+        offset: tasksLenRef.current,
+      });
+      let appended = 0;
+      setTasks((prev) => {
+        const seen = new Set(prev.map((t) => `${t.lead_id}:${t.id}`));
+        const extra = page.tasks.filter((t) => !seen.has(`${t.lead_id}:${t.id}`));
+        appended = extra.length;
+        return extra.length ? [...prev, ...extra] : prev;
+      });
+      setHasMoreMine(appended > 0 && page.hasMore);
+      if (page.counts) setMineCounts(page.counts);
+    } catch {
+      /* giữ trang đã tải */
+    } finally {
+      loadingMoreRef.current = false;
+      setLoadingMore(false);
+    }
+  }, [userId]);
+
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
       if (userId) {
-        const [mine, shared] = await Promise.all([
-          fetchMyLogisticsTasks(userId, { limit: 200 }),
+        const [minePage, shared] = await Promise.all([
+          fetchLogisticsWorkTasksPage({
+            assigneeId: userId,
+            limit: WORK_TASKS_PAGE_SIZE,
+            offset: 0,
+          }),
           fetchPrivateDealInboxTasks('logistics').catch(() => [] as SharedInboxTask[]),
         ]);
-        setTasks(mine);
+        setTasks(minePage.tasks);
+        setHasMoreMine(minePage.hasMore);
+        setMineCounts(minePage.counts);
         setSharedTasks(shared);
         setError(null);
       }
@@ -195,11 +248,17 @@ export default function WorkScreen() {
   const reloadSilent = useCallback(async () => {
     if (!userId) return;
     try {
-      const [mine, shared] = await Promise.all([
-        fetchMyLogisticsTasks(userId, { limit: 200 }),
+      const [minePage, shared] = await Promise.all([
+        fetchLogisticsWorkTasksPage({
+          assigneeId: userId,
+          limit: Math.min(Math.max(tasksLenRef.current, WORK_TASKS_PAGE_SIZE), 500),
+          offset: 0,
+        }),
         fetchPrivateDealInboxTasks('logistics').catch(() => [] as SharedInboxTask[]),
       ]);
-      setTasks(mine);
+      setTasks(minePage.tasks);
+      setHasMoreMine(minePage.hasMore);
+      setMineCounts(minePage.counts);
       setSharedTasks(shared);
     } catch {
       /* giữ list cũ */
@@ -212,19 +271,26 @@ export default function WorkScreen() {
     modes: ['task'],
   });
 
+  useEffect(() => {
+    if (workMode !== 'mine' || filter === 'all') return;
+    if (!hasMoreMine || loadingMore) return;
+    const visible = filterTasks(tasks, filter);
+    if (visible.length < 12) void loadMoreMine();
+  }, [workMode, filter, tasks, hasMoreMine, loadingMore, loadMoreMine]);
+
   const activeTasks = workMode === 'mine' ? tasks : sharedTasks.map((t) => ({
     id: String(t.id),
     status: String(t.status || 'pending'),
   }));
 
-  const stats = useMemo(
-    () => ({
+  const stats = useMemo(() => {
+    if (workMode === 'mine' && mineCounts) return mineCounts;
+    return {
       pending: activeTasks.filter((t) => isTaskPending(t.status)).length,
       inProgress: activeTasks.filter((t) => isTaskInProgress(t.status)).length,
       done: activeTasks.filter((t) => isTaskDone(t.status)).length,
-    }),
-    [activeTasks],
-  );
+    };
+  }, [activeTasks, mineCounts, workMode]);
 
   const sections = useMemo(() => {
     if (workMode === 'shared') return [];
@@ -782,6 +848,15 @@ export default function WorkScreen() {
           ListHeaderComponent={listHeader}
           stickySectionHeadersEnabled={false}
           contentContainerStyle={styles.listContent}
+          onEndReachedThreshold={0.4}
+          onEndReached={() => {
+            if (hasMoreMine && !loadingMore) void loadMoreMine();
+          }}
+          ListFooterComponent={
+            loadingMore ? (
+              <ActivityIndicator color={colors.primary} style={{ marginVertical: 16 }} />
+            ) : null
+          }
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={() => void onRefresh()} tintColor={colors.primary} />
           }

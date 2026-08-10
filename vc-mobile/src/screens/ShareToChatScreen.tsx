@@ -1,6 +1,6 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -15,14 +15,13 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import TapHighlight from '../components/TapHighlight';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
-import { fetchMessengerGroups } from '../lib/messengerApi';
+import { useMessengerGroupPages } from '../hooks/useMessengerGroupPages';
 import { formatFileSize, type PendingChatFile } from '../lib/messengerMedia';
 import { getMessengerColors } from '../lib/messengerTheme';
 import { sendMessengerWithFiles } from '../lib/messengerUpload';
 import { takePendingShareFiles } from '../lib/sharePending';
 import type { RootStackParamList } from '../navigation/RootNavigator';
 import { Radii, Spacing } from '../theme';
-import type { MessengerThread } from '../types/messenger';
 import MessengerAvatar from '../components/messenger/MessengerAvatar';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'ShareToChat'>;
@@ -35,8 +34,7 @@ export default function ShareToChatScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
 
   const [files, setFiles] = useState<PendingChatFile[]>(() => takePendingShareFiles());
-  const [groups, setGroups] = useState<MessengerThread[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { threads: groups, loading, loadingMore, hasMore, error: groupsError, loadMore } = useMessengerGroupPages(myId);
   const [q, setQ] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [caption, setCaption] = useState('');
@@ -50,22 +48,9 @@ export default function ShareToChatScreen({ navigation }: Props) {
     }
   }, [files.length, navigation]);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const list = await fetchMessengerGroups(myId);
-      setGroups(list);
-    } catch (e) {
-      Alert.alert('Lỗi', e instanceof Error ? e.message : 'Không tải được danh sách chat');
-      setGroups([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [myId]);
-
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (groupsError) Alert.alert('Lỗi', groupsError);
+  }, [groupsError]);
 
   const filteredGroups = useMemo(() => {
     const term = q.trim().toLowerCase();
@@ -74,6 +59,11 @@ export default function ShareToChatScreen({ navigation }: Props) {
       (g) => g.name.toLowerCase().includes(term) || g.preview.toLowerCase().includes(term),
     );
   }, [groups, q]);
+
+  useEffect(() => {
+    if (!q.trim() || loading || loadingMore || !hasMore) return;
+    if (filteredGroups.length < 8) void loadMore();
+  }, [q, filteredGroups.length, hasMore, loadingMore, loading, loadMore]);
 
   const send = async () => {
     if (!selectedId || !files.length) {
@@ -285,6 +275,13 @@ export default function ShareToChatScreen({ navigation }: Props) {
           data={filteredGroups}
           keyExtractor={(g) => g.id}
           keyboardShouldPersistTaps="handled"
+          onEndReachedThreshold={0.4}
+          onEndReached={() => {
+            if (!q.trim() && hasMore && !loadingMore) void loadMore();
+          }}
+          ListFooterComponent={
+            loadingMore ? <ActivityIndicator color={mc.accent} style={{ marginVertical: 12 }} /> : null
+          }
           ListEmptyComponent={
             <Text style={styles.empty}>Không có hội thoại nào.</Text>
           }
