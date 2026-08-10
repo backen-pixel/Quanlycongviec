@@ -33,13 +33,28 @@ export type LeadCommentChangedPayload = {
   [key: string]: unknown;
 };
 
+export type CalendarEventChangedPayload = {
+  event_id?: string | null;
+  company_id?: string | null;
+  action?: string;
+};
+
+export type KpiLeaveChangedPayload = {
+  leave_id?: string | null;
+  user_id?: string | null;
+  status?: string | null;
+  action?: string;
+};
+
 /** Sự kiện đồng bộ dữ liệu app (Kanban, Công việc, Planner, chi tiết dự án…). */
 export type SyncEvent =
   | { type: 'project:stage_changed'; payload: ProjectStageChangedPayload }
   | { type: 'crm:task_changed'; payload: CrmTaskChangedPayload }
   | { type: 'project:board_changed'; payload: ProjectBoardChangedPayload }
   | { type: 'project:comment_changed'; payload: ProjectCommentChangedPayload }
-  | { type: 'lead:comment_changed'; payload: LeadCommentChangedPayload };
+  | { type: 'lead:comment_changed'; payload: LeadCommentChangedPayload }
+  | { type: 'calendar:event_changed'; payload: CalendarEventChangedPayload }
+  | { type: 'kpi:leave_changed'; payload: KpiLeaveChangedPayload };
 
 export function projectIdFromSyncEvent(evt: SyncEvent): string | null {
   const p = evt.payload as Record<string, unknown>;

@@ -108,13 +108,6 @@ export function resolveDealCompanyExternalFilter(
   };
 }
 
-/** Tab pipeline VC — tách «Vận chuyển» / «Lắp đặt», khớp VC_PIPELINE_TABS (web). */
-export const VC_PIPELINE_TABS = [
-  { id: 'shipping' as const, label: 'Vận chuyển', icon: '🚚' },
-  { id: 'install' as const, label: 'Lắp đặt', icon: '🔧' },
-];
-export type VcPipelineTab = 'shipping' | 'install';
-
 /** Cột Lắp đặt — khớp isInstallVcStage (frontend/src/lib/managementDashboardUtils.js). */
 export function isInstallVcStage(stage?: {
   name?: string | null;

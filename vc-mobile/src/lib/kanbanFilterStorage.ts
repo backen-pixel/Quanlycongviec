@@ -6,8 +6,6 @@ export type KanbanFilterSnapshot = {
   filterCompany?: string;
   filterDealCompany?: string;
   filterWorkTypeId?: string;
-  /** Tab pipeline VC đang mở — 'shipping' (Vận chuyển) hoặc 'install' (Lắp đặt). */
-  vcPipelineTab?: 'shipping' | 'install';
 };
 
 export async function loadKanbanFilters(): Promise<KanbanFilterSnapshot | null> {

@@ -1523,6 +1523,7 @@ r.post('/', async (req, res) => {
       console.warn('[EVENT] Notification error:', notifErr.message);
     }
 
+    emitCalendarEventChanged(req, full || data, 'created');
     res.status(201).json(full);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1681,6 +1682,7 @@ r.put('/:id', async (req, res) => {
       } catch (ne) { console.warn('[EVENT] Complete notification error:', ne.message); }
     }
 
+    emitCalendarEventChanged(req, data, 'updated');
     res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1699,6 +1701,7 @@ r.put('/:id/respond', async (req, res) => {
         { onConflict: 'event_id,user_id' })
       .select('*, user:users(id, full_name, avatar)').single();
     if (error) throw error;
+    emitCalendarEventChanged(req, { id: req.params.id, company_id: req.user?.company_id || null }, 'updated');
     res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1710,8 +1713,14 @@ r.delete('/:id', async (req, res) => {
     if (!ok) return;
     const canDelete = await assertEventDeletable(req, res, req.params.id);
     if (!canDelete) return;
+    const { data: existingEv } = await supabase
+      .from('crm_events')
+      .select('id, company_id')
+      .eq('id', req.params.id)
+      .maybeSingle();
     const { error } = await supabase.from('crm_events').delete().eq('id', req.params.id);
     if (error) throw error;
+    emitCalendarEventChanged(req, existingEv || { id: req.params.id }, 'deleted');
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1756,5 +1765,20 @@ r.delete('/:eventId/comments/:commentId', async (req, res) => {
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
+
+function emitCalendarEventChanged(req, eventRow, action) {
+  try {
+    const io = req.app?.get?.('io');
+    if (!io) return;
+    const { emitScoped } = require('../helpers/socketEmit');
+    emitScoped(io, {
+      companyId: eventRow?.company_id || req.user?.company_id || null,
+    }, 'calendar:event_changed', {
+      event_id: eventRow?.id || null,
+      company_id: eventRow?.company_id || null,
+      action: action || 'updated',
+    });
+  } catch (_) { /* ignore */ }
+}
 
 module.exports = r;

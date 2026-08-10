@@ -1564,7 +1564,9 @@ r.post('/leaves', async (req, res) => {
     if (!manager && String(targetUserId) !== String(uid)) {
       return res.status(403).json({ error: 'Chỉ tạo đơn nghỉ cho chính mình' });
     }
-    const status = manager ? (b.status || 'approved') : 'pending';
+    // Tự đăng ký (kể cả admin/QL) → chờ duyệt. QL tạo hộ người khác mới được duyệt sẵn.
+    const isSelf = String(targetUserId) === String(uid);
+    const status = isSelf ? 'pending' : (manager ? (b.status || 'approved') : 'pending');
     const { data, error } = await supabase.from('kpi_user_leaves').insert({
       user_id: targetUserId,
       start_date: b.start_date,
@@ -1578,6 +1580,7 @@ r.post('/leaves', async (req, res) => {
     }).select().single();
     if (error) throw error;
     clearBizCache();
+    emitKpiLeaveChanged(req, data, 'created');
     res.json({ leave: data });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1626,6 +1629,7 @@ r.patch('/leaves/:id', async (req, res) => {
       .update(patch).eq('id', req.params.id).select().single();
     if (error) throw error;
     clearBizCache();
+    emitKpiLeaveChanged(req, data, 'updated');
     res.json({ leave: data });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1653,8 +1657,27 @@ r.delete('/leaves/:id', async (req, res) => {
     const { error } = await supabase.from('kpi_user_leaves').delete().eq('id', req.params.id);
     if (error) throw error;
     clearBizCache();
+    emitKpiLeaveChanged(req, existing, 'deleted');
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
+
+function emitKpiLeaveChanged(req, leave, action) {
+  try {
+    const io = req.app?.get?.('io');
+    if (!io) return;
+    const { emitScoped } = require('../helpers/socketEmit');
+    const payload = {
+      leave_id: leave?.id || null,
+      user_id: leave?.user_id || null,
+      status: leave?.status || null,
+      action: action || 'updated',
+    };
+    emitScoped(io, { companyId: req.user?.company_id || null }, 'kpi:leave_changed', payload);
+    if (leave?.user_id) {
+      emitScoped(io, { userId: leave.user_id }, 'kpi:leave_changed', payload);
+    }
+  } catch (_) { /* ignore */ }
+}
 
 module.exports = r;

@@ -23,6 +23,8 @@ import {
   leaveTypeLabel,
   type LeaveItem,
 } from '../api/leaves';
+import { useProductionRealtime } from '../hooks/useProductionRealtime';
+import { REALTIME_LEAVE } from '../lib/realtimeModes';
 import CalendarChrome, {
   addDays,
   fullDayLabel,
@@ -47,6 +49,22 @@ const LEAVE_TYPES = [
 
 function leaveColor(type?: string | null): string {
   return LEAVE_TYPES.find((t) => t.id === type)?.color || '#EA580C';
+}
+
+function leaveStatusFg(status: string | undefined, colors: AppColors): string {
+  const s = String(status || '');
+  if (s === 'approved') return colors.success;
+  if (s === 'rejected') return colors.danger;
+  if (s === 'cancelled') return colors.textMuted;
+  return colors.warning;
+}
+
+function leaveStatusBg(status: string | undefined, colors: AppColors): string {
+  const s = String(status || '');
+  if (s === 'approved') return colors.success + '22';
+  if (s === 'rejected') return colors.dangerSoft;
+  if (s === 'cancelled') return colors.cardAlt;
+  return colors.warning + '22';
 }
 
 function parseYmd(iso?: string | null): Date | null {
@@ -118,9 +136,11 @@ export default function LeavesScreen() {
   }, [mode, cursor]);
 
   const load = useCallback(
-    async (opts?: { refresh?: boolean }) => {
-      if (opts?.refresh) setRefreshing(true);
-      else setLoading(true);
+    async (opts?: { refresh?: boolean; silent?: boolean }) => {
+      if (!opts?.silent) {
+        if (opts?.refresh) setRefreshing(true);
+        else setLoading(true);
+      }
       setError('');
       try {
         // nới biên một chút để leave dài ngày vẫn mark đúng trong grid
@@ -141,6 +161,12 @@ export default function LeavesScreen() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useProductionRealtime({
+    onRefresh: () => void load({ silent: true }),
+    modes: REALTIME_LEAVE,
+    debounceMs: 800,
+  });
 
   const marksByDay = useMemo(() => {
     const map = new Map<string, DayMark[]>();
@@ -195,6 +221,7 @@ export default function LeavesScreen() {
       });
       setCreateOpen(false);
       await load({ refresh: true });
+      Alert.alert('Đã gửi đơn', 'Lịch nghỉ đang ở trạng thái Chờ duyệt.');
     } catch (e) {
       Alert.alert('Lỗi', formatApiError(e));
     } finally {
@@ -319,8 +346,8 @@ export default function LeavesScreen() {
                         {leaveTypeLabel(item.leave_type).toUpperCase()}
                       </Text>
                     </View>
-                    <View style={[styles.statusPill, { backgroundColor: colors.primarySoft }]}>
-                      <Text style={[styles.statusPillTxt, { color: colors.primary }]}>
+                    <View style={[styles.statusPill, { backgroundColor: leaveStatusBg(item.status, colors) }]}>
+                      <Text style={[styles.statusPillTxt, { color: leaveStatusFg(item.status, colors) }]}>
                         {leaveStatusLabel(item.status)}
                       </Text>
                     </View>
@@ -353,6 +380,7 @@ export default function LeavesScreen() {
         <View style={styles.modalBackdrop}>
           <View style={[styles.modalCard, { paddingBottom: insets.bottom + 16 }]}>
             <Text style={styles.modalTitle}>Thêm lịch nghỉ</Text>
+            <Text style={styles.modalHint}>Đơn của bạn sẽ ở trạng thái Chờ duyệt cho đến khi quản lý duyệt.</Text>
             <Text style={styles.label}>Từ ngày (YYYY-MM-DD)</Text>
             <TextInput
               style={styles.input}
@@ -507,7 +535,8 @@ function makeStyles(colors: AppColors) {
       borderTopRightRadius: 20,
       padding: 20,
     },
-    modalTitle: { color: colors.text, fontSize: 18, fontWeight: '800', marginBottom: 12 },
+    modalTitle: { color: colors.text, fontSize: 18, fontWeight: '800', marginBottom: 8 },
+    modalHint: { color: colors.textMuted, fontSize: 13, fontWeight: '600', marginBottom: 10, lineHeight: 18 },
     label: { color: colors.textMuted, fontSize: 12, fontWeight: '700', marginBottom: 6, marginTop: 8 },
     input: {
       borderWidth: 1,

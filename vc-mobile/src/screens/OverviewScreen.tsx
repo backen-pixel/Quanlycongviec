@@ -50,7 +50,7 @@ import {
 } from '../lib/logisticsApi';
 import { getCachedBoard, isCachedBoardFresh, setCachedBoard } from '../lib/logisticsBoardCache';
 import { loadKanbanFilters, saveKanbanFilters } from '../lib/kanbanFilterStorage';
-import { REALTIME_BOARD_TASK } from '../lib/realtimeModes';
+import { REALTIME_BOARD_TASK_EVENT } from '../lib/realtimeModes';
 import {
   isSystemAdmin,
   isCompanyScopedAdmin,
@@ -363,7 +363,7 @@ export default function OverviewScreen() {
       }
       void load('silent');
     },
-    modes: REALTIME_BOARD_TASK,
+    modes: REALTIME_BOARD_TASK_EVENT,
     debounceMs: 1500,
   });
 
@@ -666,13 +666,17 @@ export default function OverviewScreen() {
             )}
 
             <View style={styles.boardSummary}>
-              <Text style={styles.boardSummaryLbl}>Bảng VC · Lắp đặt</Text>
-              <Text style={styles.boardSummaryVal}>
-                {kpis.totalShipping}
-                <Text style={styles.boardSummarySep}> || </Text>
-                {kpis.totalInstall}
-                <Text style={styles.boardSummaryMuted}> thẻ</Text>
-              </Text>
+              <Text style={styles.boardSummaryLbl}>Bảng Lắp đặt</Text>
+              <View style={styles.boardSummaryRight}>
+                <Text style={styles.boardSummaryVal}>
+                  {kpis.total.toLocaleString('vi-VN')}
+                  <Text style={styles.boardSummaryMuted}> thẻ</Text>
+                </Text>
+                <Text style={styles.boardSummarySep}>
+                  {`VC ${kpis.shipping} · LĐ ${kpis.installing}`}
+                  {kpis.warranty > 0 ? ` · BH ${kpis.warranty}` : ''}
+                </Text>
+              </View>
             </View>
 
             <Text style={styles.secTitle}>Trạng thái vận hành</Text>
@@ -1104,12 +1108,13 @@ function createStyles(colors: AppColors, isDark: boolean) {
       fontSize: 12,
       fontWeight: '700',
     },
+    boardSummaryRight: { alignItems: 'flex-end', maxWidth: '62%' },
     boardSummaryVal: {
       color: colors.primary,
       fontSize: 15,
       fontWeight: '800',
     },
-    boardSummarySep: { color: colors.textMuted, fontWeight: '600', fontSize: 13 },
+    boardSummarySep: { color: colors.textMuted, fontWeight: '600', fontSize: 11, marginTop: 2 },
     boardSummaryMuted: { color: colors.textMuted, fontWeight: '600', fontSize: 12 },
     secTitle: {
       fontSize: 13,

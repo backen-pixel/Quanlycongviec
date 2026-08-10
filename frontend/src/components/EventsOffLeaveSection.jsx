@@ -592,7 +592,6 @@ export default function EventsOffLeaveSection({
           leave_type: form.leave_type,
           half_day: form.half_day,
           reason: String(form.reason).trim(),
-          status: 'approved',
         });
       }
       closeCreateForm();

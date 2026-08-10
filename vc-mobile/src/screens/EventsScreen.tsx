@@ -30,6 +30,8 @@ import CalendarChrome, {
 } from '../components/calendar/CalendarChrome';
 import EventFormModal from '../components/events/EventFormModal';
 import TapHighlight from '../components/TapHighlight';
+import { useProductionRealtime } from '../hooks/useProductionRealtime';
+import { REALTIME_EVENT } from '../lib/realtimeModes';
 import { useTheme } from '../context/ThemeContext';
 import { Radii, type AppColors } from '../theme';
 
@@ -90,9 +92,11 @@ export default function EventsScreen() {
   }, [mode, cursor]);
 
   const load = useCallback(
-    async (opts?: { refresh?: boolean }) => {
-      if (opts?.refresh) setRefreshing(true);
-      else setLoading(true);
+    async (opts?: { refresh?: boolean; silent?: boolean }) => {
+      if (!opts?.silent) {
+        if (opts?.refresh) setRefreshing(true);
+        else setLoading(true);
+      }
       setError('');
       try {
         const list = await fetchEventsRange({
@@ -113,6 +117,12 @@ export default function EventsScreen() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useProductionRealtime({
+    onRefresh: () => void load({ silent: true }),
+    modes: REALTIME_EVENT,
+    debounceMs: 800,
+  });
 
   const marksByDay = useMemo(() => {
     const map = new Map<string, DayMark[]>();

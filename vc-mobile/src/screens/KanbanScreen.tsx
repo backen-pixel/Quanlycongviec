@@ -65,9 +65,7 @@ import {
   resolveDealCompanyExternalFilter,
   resolveDealCompanyParam,
   workshopCompaniesForCrossViewer,
-  VC_PIPELINE_TABS,
   type ClientCompanyOption,
-  type VcPipelineTab,
 } from '../lib/productionFilters';
 import { loadKanbanFilters, saveKanbanFilters } from '../lib/kanbanFilterStorage';
 import { loadCommentSeenMap, markProjectCommentsSeen } from '../lib/notificationApi';
@@ -255,8 +253,6 @@ export default function KanbanScreen() {
   const [visibleCount, setVisibleCount] = useState(CARD_PAGE_SIZE);
   const [moveModalProject, setMoveModalProject] = useState<ProductionProject | null>(null);
   const [commentProject, setCommentProject] = useState<ProductionProject | null>(null);
-  /** Tab pipeline VC — Lắp đặt. Khởi tạo từ filter đã lưu (async). */
-  const [vcPipelineTab, setVcPipelineTab] = useState<VcPipelineTab>('shipping');
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [commentIndex, setCommentIndex] = useState<Record<string, CommentIndexEntry>>({});
   /** projectId → ISO đã xem bình luận (local) — badge ẩn sau khi mở. */
@@ -532,18 +528,6 @@ export default function KanbanScreen() {
     void AsyncStorage.setItem(VIEW_MODE_KEY, next).catch(() => {});
     if (next === 'list') setListVisibleCount(LIST_PAGE_SIZE);
   }, []);
-
-  useEffect(() => {
-    void loadKanbanFilters().then((snap) => {
-      if (snap?.vcPipelineTab === 'install') setVcPipelineTab('install');
-    }).catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    void loadKanbanFilters().then((prev) => {
-      void saveKanbanFilters({ ...(prev || {}), vcPipelineTab });
-    }).catch(() => {});
-  }, [vcPipelineTab]);
 
   useEffect(() => {
     if (!dealCompanyParam) {
@@ -877,25 +861,8 @@ export default function KanbanScreen() {
     });
   }, [board.projects, search, quickFilter, myId, filterWorkTypeId, filterRegion, dealCompanyExternalFilter]);
 
-  const vcTabCounts = useMemo(() => {
-    let shipping = 0;
-    let install = 0;
-    filteredProjects.forEach((p) => {
-      const stage = stages.find((s) => String(s.id) === String(p.resolved_column_id));
-      if (isInstallVcStage(stage)) install += 1;
-      else shipping += 1;
-    });
-    return { shipping, install };
-  }, [filteredProjects, stages]);
-
-  const displayStages = useMemo<KanbanStage[]>(
-    () => stages.filter((s) => (vcPipelineTab === 'install' ? isInstallVcStage(s) : !isInstallVcStage(s))),
-    [stages, vcPipelineTab],
-  );
-
-  useEffect(() => {
-    setActiveIndex(0);
-  }, [vcPipelineTab]);
+  /** Một pipeline như web LogisticsDashboard — không tách tab Vận chuyển / Lắp đặt. */
+  const displayStages = stages;
 
   /** Deep-link từ card Tổng quan: Kanban → cột; List → chip cột; Quá hạn → quickFilter. */
   useEffect(() => {
@@ -1209,33 +1176,6 @@ export default function KanbanScreen() {
             </View>
           </View>
         </View>
-      </View>
-
-      {/* ── PIPELINE TABS: Lắp đặt ── */}
-      <View style={styles.pipelineTabsRow}>
-        {VC_PIPELINE_TABS.map((tab) => {
-          const active = vcPipelineTab === tab.id;
-          const count = tab.id === 'install' ? vcTabCounts.install : vcTabCounts.shipping;
-          return (
-            <TapHighlight
-              key={tab.id}
-              style={[styles.pipelineTab, active && styles.pipelineTabActive]}
-              onPress={() => setVcPipelineTab(tab.id)}
-            >
-              <Text style={styles.pipelineTabIcon}>{tab.icon}</Text>
-              <Text style={[styles.pipelineTabText, active && styles.pipelineTabTextActive]}>
-                {tab.label}
-              </Text>
-              {count > 0 ? (
-                <View style={[styles.pipelineTabBadge, active && styles.pipelineTabBadgeActive]}>
-                  <Text style={[styles.pipelineTabBadgeText, active && styles.pipelineTabBadgeTextActive]}>
-                    {count}
-                  </Text>
-                </View>
-              ) : null}
-            </TapHighlight>
-          );
-        })}
       </View>
 
       {commentToast && !notificationsOpen ? (
@@ -1984,28 +1924,6 @@ function createKanbanStyles(c: AppColors) {
   },
   commentToastTitle: { color: c.text, fontSize: 13, fontWeight: '800' },
   commentToastBody: { color: c.textMuted, fontSize: 12, marginTop: 2, lineHeight: 16 },
-
-  // Pipeline tabs — Lắp đặt
-  pipelineTabsRow: {
-    flexDirection: 'row', gap: 8, flexShrink: 0,
-    paddingHorizontal: Spacing.lg, paddingBottom: 8,
-  },
-  pipelineTab: {
-    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5,
-    paddingVertical: 9, borderRadius: Radii.md,
-    backgroundColor: c.card, borderWidth: 1, borderColor: c.border,
-  },
-  pipelineTabActive: { backgroundColor: c.primary, borderColor: c.primary },
-  pipelineTabIcon: { fontSize: 13 },
-  pipelineTabText: { color: c.textMuted, fontSize: 13, fontWeight: '700' },
-  pipelineTabTextActive: { color: c.white },
-  pipelineTabBadge: {
-    minWidth: 18, height: 18, borderRadius: 9, paddingHorizontal: 4,
-    backgroundColor: c.cardAlt, alignItems: 'center', justifyContent: 'center',
-  },
-  pipelineTabBadgeActive: { backgroundColor: 'rgba(255,255,255,0.25)' },
-  pipelineTabBadgeText: { color: c.textMuted, fontSize: 10, fontWeight: '800' },
-  pipelineTabBadgeTextActive: { color: c.white },
 
   // Search
   searchRow: {

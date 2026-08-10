@@ -55,8 +55,9 @@ export async function createLeave(input: {
   half_day?: string | null;
   reason?: string | null;
 }): Promise<LeaveItem> {
-  const { data } = await api.post<LeaveItem>('/kpi/leaves', input);
-  return data;
+  const { data } = await api.post<{ leave?: LeaveItem } & LeaveItem>('/kpi/leaves', input);
+  if (data && typeof data === 'object' && data.leave) return data.leave;
+  return data as LeaveItem;
 }
 
 export async function deleteLeave(id: string): Promise<void> {

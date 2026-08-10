@@ -23,7 +23,7 @@ type Options = {
   onlyWhenFocused?: boolean;
   debounceMs?: number;
   /** Chỉ lắng nghe sự kiện bảng Kanban / dự án (mặc định: tất cả). Dùng hằng từ realtimeModes. */
-  modes?: ReadonlyArray<'board' | 'task' | 'comment'>;
+  modes?: ReadonlyArray<'board' | 'task' | 'comment' | 'event' | 'leave'>;
 };
 
 function eventMatchesMode(evt: SyncEvent, modes?: Options['modes']): boolean {
@@ -32,6 +32,8 @@ function eventMatchesMode(evt: SyncEvent, modes?: Options['modes']): boolean {
   if (evt.type === 'project:comment_changed' || evt.type === 'lead:comment_changed') {
     return modes.includes('comment');
   }
+  if (evt.type === 'calendar:event_changed') return modes.includes('event');
+  if (evt.type === 'kpi:leave_changed') return modes.includes('leave');
   return modes.includes('board');
 }
 

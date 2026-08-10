@@ -701,6 +701,31 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     s.on('logistics:project_restored', onBoardChanged);
     s.on('logistics:project_purged', onBoardChanged);
     s.on('crm:task_changed', onTaskChanged);
+    const onCalendarEventChanged = (raw: unknown) => {
+      const p = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+      emitSync({
+        type: 'calendar:event_changed',
+        payload: {
+          event_id: p.event_id != null ? String(p.event_id) : null,
+          company_id: p.company_id != null ? String(p.company_id) : null,
+          action: p.action != null ? String(p.action) : undefined,
+        },
+      });
+    };
+    const onKpiLeaveChanged = (raw: unknown) => {
+      const p = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+      emitSync({
+        type: 'kpi:leave_changed',
+        payload: {
+          leave_id: p.leave_id != null ? String(p.leave_id) : null,
+          user_id: p.user_id != null ? String(p.user_id) : null,
+          status: p.status != null ? String(p.status) : null,
+          action: p.action != null ? String(p.action) : undefined,
+        },
+      });
+    };
+    s.on('calendar:event_changed', onCalendarEventChanged);
+    s.on('kpi:leave_changed', onKpiLeaveChanged);
     s.on('messenger_group:chat', onMessengerChat);
     s.on('messenger_group:read', onMessengerRead);
     s.on('messenger_group:members', onMessengerMembers);
@@ -733,6 +758,8 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       s.off('logistics:project_restored', onBoardChanged);
       s.off('logistics:project_purged', onBoardChanged);
       s.off('crm:task_changed', onTaskChanged);
+      s.off('calendar:event_changed', onCalendarEventChanged);
+      s.off('kpi:leave_changed', onKpiLeaveChanged);
       s.off('messenger_group:chat', onMessengerChat);
       s.off('messenger_group:read', onMessengerRead);
       s.off('messenger_group:members', onMessengerMembers);
