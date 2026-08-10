@@ -484,7 +484,13 @@ export default function LeadDetail() {
           // Đồng bộ targets: UI select dùng workTypeId, nhưng confirm validate qua targets
           // (khi chọn công ty targets bị ghi workshopTypeId='' rồi auto-gợi ý chỉ cập nhật select).
           setDealStageWonTargets((prev) => {
-            if (prev.length > 1) return prev;
+            if (prev.length > 1) {
+              return prev.map((row, i) => (
+                i === 0 && nextTypeId && !(row.workshopTypeId || row.workshop_type_id)
+                  ? { ...row, workshopTypeId: nextTypeId }
+                  : row
+              ));
+            }
             if (!activeCompanyId) return prev;
             const tid = nextTypeId || '';
             if (

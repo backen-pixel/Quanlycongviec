@@ -499,6 +499,11 @@ export default function ProductionDashboard() {
   pipelineStageCountsRef.current = pipelineStageCounts;
   const projectsRef = useRef(projects);
   projectsRef.current = projects;
+  /** Phân trang Deadline theo bucket — khai báo sớm vì `load()` reset khi đổi filter. */
+  const deadlineBucketPageRef = useRef({});
+  const deadlineBucketLoadingRef = useRef(new Set());
+  const [deadlineBucketLoading, setDeadlineBucketLoading] = useState({});
+  const [deadlineBucketMeta, setDeadlineBucketMeta] = useState({});
   const pipelineRef = useRef(pipeline);
   pipelineRef.current = pipeline;
   const [loading, setLoading] = useState(() => !(boardSnap0?.projects?.length));
@@ -534,6 +539,8 @@ export default function ProductionDashboard() {
   /** Công ty đặt hàng theo xưởng — CRM + danh mục ngoài (giống modal Tạo deal). */
   const [clientCompaniesForDeal, setClientCompaniesForDeal] = useState([]);
   const [filterCompany, setFilterCompany] = useState(() => P0?.filterCompany ?? '');
+  /** Admin chọn «Tất cả xưởng» — chặn effect auto-pick ghi đè về 1 xưởng. */
+  const [filterAllWorkshops, setFilterAllWorkshops] = useState(() => !!P0?.filterAllWorkshops);
   const [filterDealCompany, setFilterDealCompany] = useState(() => P0?.filterDealCompany ?? '');
   const [filterSxWorkshopCompany, setFilterSxWorkshopCompany] = useState(() => P0?.filterSxWorkshopCompany ?? '');
   const [timePreset, setTimePreset] = useState(() => P0?.timePreset ?? '');
@@ -761,6 +768,8 @@ export default function ProductionDashboard() {
   const handleStaffFilterCompanyChange = useCallback((companyId) => {
     const next = companyId ? String(companyId) : '';
     const prev = String(filterCompany || '');
+    // «Tất cả xưởng» (value="") — nhớ lựa chọn để không bị effect auto-pick ép lại.
+    setFilterAllWorkshops(!next);
     onStaffFilterCompanyChange(companyId);
     // Chỉ xóa phân loại khi user đổi xưởng (không xóa lúc khởi tạo công ty từ localStorage).
     if (next && prev && next !== prev) {
@@ -844,6 +853,10 @@ export default function ProductionDashboard() {
     const seq = ++loadSeqRef.current;
     projectPageLoadingRef.current = false;
     stagePageLoadingRef.current.clear();
+    deadlineBucketPageRef.current = {};
+    deadlineBucketLoadingRef.current.clear();
+    setDeadlineBucketLoading({});
+    setDeadlineBucketMeta({});
     setProjectPageState((prev) => ({ ...prev, hasMore: false, loading: false }));
     // Giữ pipelineStageCounts cũ đến khi summary=1 về — badge cột hiện tổng ngay, không cộng dần theo thẻ tải.
     // KPI server (Tổng/Quá hạn/Đang SX…) gắn với filter hiện tại — không giữ số công ty cũ.
@@ -1396,6 +1409,92 @@ export default function ProductionDashboard() {
     filterPersonId,
   ]);
 
+  /** Phân trang Deadline theo bucket (API riêng) — không phụ thuộc loadMore cột Kanban. */
+  const loadDeadlineBucketMore = useCallback(async (bucketKey) => {
+    const key = String(bucketKey || '').trim();
+    if (!key) return;
+    if (deadlineBucketLoadingRef.current.has(key)) return;
+    const state = deadlineBucketPageRef.current[key] || { nextOffset: 0, hasMore: true };
+    if (state.hasMore === false) return;
+
+    deadlineBucketLoadingRef.current.add(key);
+    setDeadlineBucketLoading((prev) => ({ ...prev, [key]: true }));
+    try {
+      const serverDateRange = timePreset === 'custom'
+        ? (customFrom && customTo ? { from: customFrom, to: customTo } : { from: '', to: '' })
+        : (timePreset ? getWorkshopDateRange(timePreset) : { from: '', to: '' });
+      const rawWorkshopType = filterWorkTypeIdRef.current;
+      const workshopTypeFilter = (() => {
+        const s = rawWorkshopType == null ? '' : String(rawWorkshopType).trim();
+        return s || undefined;
+      })();
+      const fetchSxWorkshopId = showVptSxWorkshopFilter && filterSxWorkshopCompany
+        ? filterSxWorkshopCompany
+        : undefined;
+
+      const { data } = await api.get('/production/deadline-bucket-page', {
+        params: {
+          bucket: key,
+          offset: state.nextOffset || 0,
+          limit: 24,
+          view: 'kanban',
+          ...(companyParam ? { company_id: companyParam } : {}),
+          ...(dealCompanyParam ? { deal_company_id: dealCompanyParam } : {}),
+          ...(fetchSxWorkshopId ? { sx_workshop_company_id: fetchSxWorkshopId } : {}),
+          ...(workshopTypeFilter ? { workshop_type_id: workshopTypeFilter } : {}),
+          ...(serverDateRange.from ? { created_from: serverDateRange.from } : {}),
+          ...(serverDateRange.to ? { created_to: serverDateRange.to } : {}),
+          ...(filterPersonId ? { production_person_id: filterPersonId } : {}),
+        },
+      });
+
+      const incoming = Array.isArray(data?.projects) ? data.projects : [];
+      if (incoming.length) {
+        setProjects((prev) => {
+          const byId = new Map((prev || []).map((row) => [String(row.id), row]));
+          let changed = false;
+          for (const row of incoming) {
+            const id = String(row?.id || '');
+            if (!id) continue;
+            if (!byId.has(id)) {
+              byId.set(id, row);
+              changed = true;
+            }
+          }
+          if (!changed) return prev;
+          const next = Array.from(byId.values());
+          projectsRef.current = next;
+          return next;
+        });
+      }
+
+      const nextMeta = {
+        nextOffset: Number(data?.nextOffset) || ((state.nextOffset || 0) + incoming.length),
+        hasMore: data?.hasMore !== false && incoming.length > 0,
+        total: Number(data?.total) || state.total || 0,
+      };
+      if (data?.hasMore === false || !incoming.length) {
+        nextMeta.hasMore = false;
+      }
+      deadlineBucketPageRef.current[key] = nextMeta;
+      setDeadlineBucketMeta((prev) => ({ ...prev, [key]: nextMeta }));
+    } catch (error) {
+      console.error('[deadline bucket page]', error);
+    } finally {
+      deadlineBucketLoadingRef.current.delete(key);
+      setDeadlineBucketLoading((prev) => ({ ...prev, [key]: false }));
+    }
+  }, [
+    companyParam,
+    dealCompanyParam,
+    showVptSxWorkshopFilter,
+    filterSxWorkshopCompany,
+    timePreset,
+    customFrom,
+    customTo,
+    filterPersonId,
+  ]);
+
   const boardRefreshTimerRef = useRef(null);
 
   /** Gộp mọi yêu cầu tải lại board (socket / sau khi kéo thẻ) vào một timer. */
@@ -1664,9 +1763,11 @@ export default function ProductionDashboard() {
     if (filterCompany && workshopCompanyPickerList.some((c) => String(c.id) === String(filterCompany))) return;
 
     // Admin để trống xưởng → API trả pipeline Global (không có cột →VC Hucabi),
-    // thẻ shipping bị map nhầm cột «Tiếp nhận». Auto-pick khi đang trống.
+    // thẻ shipping bị map nhầm cột «Tiếp nhận». Auto-pick lần đầu khi đang trống.
+    // Nếu admin đã chọn «Tất cả xưởng» thì giữ trống (filterAllWorkshops).
     if (isAdmin) {
       if (filterCompany) return;
+      if (filterAllWorkshops) return;
       let saved = '';
       try { saved = String(localStorage.getItem('sx_pipeline_settings_company_id') || ''); } catch { /* ignore */ }
       const fromSaved = saved
@@ -1688,7 +1789,7 @@ export default function ProductionDashboard() {
       : null;
     const pick = own || workshopCompanyPickerList[0];
     if (pick?.id) handleStaffFilterCompanyChange(pick.id);
-  }, [workshopCompanyPickerList, filterCompany, handleStaffFilterCompanyChange, isAdmin, user, companies]);
+  }, [workshopCompanyPickerList, filterCompany, filterAllWorkshops, handleStaffFilterCompanyChange, isAdmin, user, companies]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1739,12 +1840,13 @@ export default function ProductionDashboard() {
         filterPersonId, filterPersonName, filterRegion, filterPhone, filterWorkTypeId,
         searchQuery, priorityFilter, stageFilter, viewMode, sortBy,
         showOrphanColumn, showAdvFilter, sxFilterTab, kanbanColumnScrollMode,
+        filterAllWorkshops,
       }));
     } catch { /* ignore */ }
   }, [
     filterCompany, filterDealCompany, filterSxWorkshopCompany, timePreset, customFrom, customTo, showCustomDate, kanbanLoadKey, filterPersonId, filterPersonName,
     filterRegion, filterPhone, filterWorkTypeId, searchQuery, priorityFilter, stageFilter, viewMode, sortBy,
-    showOrphanColumn, showAdvFilter, sxFilterTab, kanbanColumnScrollMode,
+    showOrphanColumn, showAdvFilter, sxFilterTab, kanbanColumnScrollMode, filterAllWorkshops,
   ]);
 
   // Đóng menu sắp xếp khi click ra ngoài
@@ -2957,8 +3059,9 @@ export default function ProductionDashboard() {
     setShowOrphanColumn(false);
     setFilterSxWorkshopCompany('');
     if (isSystemAdmin(user)) setFilterDealCompany('');
+    if (isAdmin && !isCompanyScopedAdmin) setFilterAllWorkshops(true);
     resetStaffFilters();
-  }, [resetStaffFilters, handleTimePresetChange, user]);
+  }, [resetStaffFilters, handleTimePresetChange, user, isAdmin, isCompanyScopedAdmin]);
 
   const openSxFilterPanel = useCallback(() => {
     setShowAdvFilter((open) => !open);
@@ -3705,7 +3808,7 @@ export default function ProductionDashboard() {
             panelTitle="Lọc NV phụ trách sản xuất (xưởng → khu vực → NV)"
             canPickCompany={canPickCompany}
             workshopCompanyPickerList={workshopCompanyPickerList}
-            showAllWorkshopOption={isAdmin}
+            showAllWorkshopOption={isAdmin && !isCompanyScopedAdmin}
             showDealCompanyFilter={showDealCompanyFilter}
             canPickDealCompany={canPickDealCompany}
             filterDealCompany={filterDealCompany}
@@ -3853,6 +3956,9 @@ export default function ProductionDashboard() {
           <ProductionDeadlineView
             pipeline={filteredKanbanPipeline}
             bucketTotals={deadlineBucketCounts}
+            onLoadBucketMore={loadDeadlineBucketMore}
+            bucketLoading={deadlineBucketLoading}
+            bucketPageState={deadlineBucketMeta}
           />
         )}
 

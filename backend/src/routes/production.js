@@ -1845,6 +1845,171 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
   }
 });
 
+// ─── GET /production/deadline-bucket-page ──
+// Trang thẻ theo bucket Deadline (Quá hạn/…) — không phụ thuộc phân trang cột Kanban.
+r.get('/deadline-bucket-page', requirePermission('projects', 'view'), async (req, res) => {
+  try {
+    const {
+      bucket,
+      offset = 0,
+      limit = 24,
+      company_id: companyIdQuery,
+      sx_workshop_company_id: sxWorkshopCoQ,
+      deal_company_id: dealCompanyIdQuery,
+      workshop_type_id,
+      created_from: createdFrom,
+      created_to: createdTo,
+      production_person_id: productionPersonId,
+      search,
+      priority,
+      division_id,
+      sx_intake,
+    } = req.query;
+
+    const { loadSxDeadlineBucketPage, DEADLINE_BUCKET_KEYS } = require('../helpers/sxKanbanSummary');
+    const bucketKey = String(bucket || '').trim();
+    if (!DEADLINE_BUCKET_KEYS.includes(bucketKey)) {
+      return res.status(400).json({ error: 'bucket không hợp lệ' });
+    }
+
+    const company_id = effectiveWorkshopCompanyId(req, companyIdQuery);
+    const deal_company_id = effectiveDealCompanyId(req, dealCompanyIdQuery, company_id);
+    const sx_workshop_company_id = sxWorkshopCoQ && String(sxWorkshopCoQ).trim()
+      ? String(sxWorkshopCoQ).trim()
+      : null;
+    const wantsUnclassified = String(workshop_type_id || '').toLowerCase() === 'none';
+
+    const [scopePartnerIds, stageMap, wonIds] = await Promise.all([
+      company_id ? getExecutorProjectIdsForCompany(company_id) : Promise.resolve([]),
+      getWorkshopStageMap(),
+      getWonDealProjectIds(),
+    ]);
+    const { ids: stageIds } = stageMap;
+
+    const pageMeta = await loadSxDeadlineBucketPage({
+      req,
+      sx_intake,
+      wonIds,
+      stageIds,
+      division_id,
+      company_id,
+      scopePartnerIds,
+      workshop_type_id,
+      wantsUnclassified,
+      sx_workshop_company_id,
+      deal_company_id,
+      search,
+      priority,
+      createdFrom,
+      createdTo,
+      productionPersonId,
+    }, {
+      bucket: bucketKey,
+      offset,
+      limit,
+    });
+
+    if (!pageMeta.ids.length) {
+      return res.json({
+        projects: [],
+        total: pageMeta.total,
+        nextOffset: pageMeta.nextOffset,
+        hasMore: pageMeta.hasMore,
+        bucket: pageMeta.bucket,
+      });
+    }
+
+    await getResolvedKanbanStages(company_id, {
+      workshopTypeId: workshop_type_id || null,
+    });
+
+    const migration300Cols = 'order_date, delivery_date,';
+    const kanbanSelect = `
+      id, code, name, estimated_value, production_value, deposit_amount, collected_amount, priority, deadline, ${migration300Cols} created_at, status, company_id,
+      production_deadline, sx_kanban_column_id, logistics_company_id, vc_kanban_column_id, vc_handover_status,
+      current_stage_id, workshop_type_id,
+      current_stage:workflow_stages(id, slug, name, color, icon),
+      customer:customers(id, full_name, phone),
+      company:companies!projects_company_id_fkey(id, name, short_name),
+      logistics_company:companies!projects_logistics_company_id_fkey(id, name, short_name),
+      production_person:users!projects_production_person_id_fkey(id, full_name, avatar),
+      sales_person:users!projects_sales_person_id_fkey(id, full_name),
+      ${CRM_DEALS_PROJECT_EMBED},
+      workshop_type:workshop_project_types(id, name, applies_to)
+    `;
+
+    let { data: projects, error } = await supabase
+      .from('projects')
+      .select(kanbanSelect)
+      .in('id', pageMeta.ids);
+
+    if (error && (
+      (typeof isOrderDeliveryDateMissingError === 'function' && isOrderDeliveryDateMissingError(error))
+      || (typeof isDepositAmountMissingError === 'function' && isDepositAmountMissingError(error))
+      || (typeof isCollectedAmountMissingError === 'function' && isCollectedAmountMissingError(error))
+      || /order_date|delivery_date|production_deadline|vc_kanban_column_id|sx_kanban_column_id|workshop_type|relationship/i.test(error.message || '')
+    )) {
+      const fallbackSelect = `
+        id, code, name, estimated_value, production_value, deposit_amount, collected_amount, priority, deadline, created_at, status,
+        production_deadline, workshop_type_id, current_stage_id,
+        current_stage:workflow_stages(id, slug, name, color, icon),
+        customer:customers(id, full_name, phone),
+        company:companies!projects_company_id_fkey(id, name, short_name),
+        logistics_company:companies!projects_logistics_company_id_fkey(id, name, short_name),
+        production_person:users!projects_production_person_id_fkey(id, full_name, avatar),
+        sales_person:users!projects_sales_person_id_fkey(id, full_name),
+        ${CRM_DEALS_PROJECT_EMBED_LEGACY}
+      `;
+      ({ data: projects, error } = await supabase
+        .from('projects')
+        .select(fallbackSelect)
+        .in('id', pageMeta.ids));
+    }
+    if (error) throw error;
+
+    const enrichedSx = await enrichProjectsForSx(
+      projects || [],
+      wonIds,
+      company_id,
+      workshop_type_id || null,
+    );
+    const { attachProductionStaffToProjects } = require('../helpers/productionWorkshopTypeStaff');
+    const enrichedWithStaff = await attachProductionStaffToProjects(enrichedSx);
+    const withProgress = enrichedWithStaff.map((project) => {
+      const pipelinePct = project.sx_pipeline_percent != null
+        ? Number(project.sx_pipeline_percent)
+        : (project.sx_pipeline_stage?.progress_percent != null
+          ? Number(project.sx_pipeline_stage.progress_percent)
+          : 0);
+      return {
+        ...project,
+        progress: Number.isFinite(pipelinePct) ? pipelinePct : 0,
+        task_total: 0,
+        done_tasks: 0,
+        is_overdue: isSxProjectDeliveryDateOverdue(project, project.sx_pipeline_stage),
+        is_production_overdue: isSxProjectDateOverdue(project, 'production_deadline'),
+        is_delivery_overdue: isSxProjectDateOverdue(project, 'delivery_date'),
+      };
+    });
+    const withUserFlags = await attachLeadUserFlagsToProjects(withProgress, req.user?.userId);
+    const dealDepositMap = await loadDealDepositByProjectIds(withUserFlags.map((p) => p.id).filter(Boolean));
+    const projectsOut = attachSxFinanceToProjects(withUserFlags, dealDepositMap);
+    const byId = new Map(projectsOut.map((p) => [String(p.id), p]));
+    const ordered = pageMeta.ids.map((id) => byId.get(String(id))).filter(Boolean);
+
+    res.json({
+      projects: ordered,
+      total: pageMeta.total,
+      nextOffset: pageMeta.nextOffset,
+      hasMore: pageMeta.hasMore,
+      bucket: pageMeta.bucket,
+    });
+  } catch (e) {
+    console.error('[deadline-bucket-page]', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ─── GET /production/projects/:id ──
 /** Columns added in migration 76 — included here, falls back gracefully if migration not yet applied */
 const MIGRATION_76_COLS = 'production_deadline, production_note,';

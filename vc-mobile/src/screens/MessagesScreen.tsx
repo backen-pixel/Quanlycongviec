@@ -142,7 +142,16 @@ export default function MessagesScreen() {
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const myUserId = user?.id || user?.userId || '';
-  const { threads, loading, error, refreshThreads, getPeerPresence } = useMessenger();
+  const {
+    threads,
+    loading,
+    loadingMore,
+    hasMoreThreads,
+    error,
+    refreshThreads,
+    loadMoreThreads,
+    getPeerPresence,
+  } = useMessenger();
 
   const [hub, setHub] = useState<HubTab>('chats');
   const [query, setQuery] = useState('');
@@ -354,6 +363,12 @@ export default function MessagesScreen() {
           data={filtered}
           keyExtractor={(i) => i.id}
           contentContainerStyle={{ paddingBottom: 120 }}
+          initialNumToRender={16}
+          windowSize={9}
+          onEndReachedThreshold={0.4}
+          onEndReached={() => {
+            if (!query.trim() && hasMoreThreads && !loadingMore) void loadMoreThreads();
+          }}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={() => void onRefresh()} tintColor={Colors.primary} />
           }
@@ -365,6 +380,11 @@ export default function MessagesScreen() {
               onLongPress={() => setActionThread(item)}
             />
           )}
+          ListFooterComponent={
+            loadingMore ? (
+              <ActivityIndicator color={Colors.primary} style={{ marginVertical: 16 }} />
+            ) : null
+          }
           ListEmptyComponent={
             loading ? (
               <ActivityIndicator color={Colors.primary} style={{ marginTop: 40 }} />

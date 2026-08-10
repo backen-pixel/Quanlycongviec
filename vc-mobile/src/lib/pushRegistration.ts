@@ -77,11 +77,13 @@ export async function registerPushToken(): Promise<void> {
   const granted = await ensureNotificationPermission();
   await registerFcmTokenOnly();
   if (!granted) return;
+  const projectId = getProjectId();
+  if (!projectId) {
+    // Chưa gán EAS projectId thật → bỏ Expo push (FCM vẫn chạy). Tránh lỗi 400 Invalid uuid.
+    return;
+  }
   try {
-    const projectId = getProjectId();
-    const tokenRes = projectId
-      ? await Notifications.getExpoPushTokenAsync({ projectId })
-      : await Notifications.getExpoPushTokenAsync();
+    const tokenRes = await Notifications.getExpoPushTokenAsync({ projectId });
     const expoToken = tokenRes?.data;
     if (!expoToken) return;
     const prev = await readToken(EXPO_TOKEN_KEY, LEGACY_EXPO_TOKEN_KEY);
