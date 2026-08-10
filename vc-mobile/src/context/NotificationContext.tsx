@@ -11,7 +11,7 @@ import { AppState, type AppStateStatus } from 'react-native';
 import { io, type Socket } from 'socket.io-client';
 import { API_ORIGIN } from '../config';
 import { setAppSocket } from '../lib/appSocket';
-import { mapMessageRow, resolveMediaUrl, fetchMessengerGroups } from '../lib/messengerApi';
+import { mapMessageRow, resolveMediaUrl, fetchMessengerGroupIds } from '../lib/messengerApi';
 import { buildNotificationFromCommentEvent, type ProjectCommentSocketEvent } from '../lib/commentRealtime';
 import { showLocalCommentNotification } from '../lib/localCommentNotification';
 import { clearFloatingBubbleHidden } from '../lib/floatingChatBubbleStorage';
@@ -732,10 +732,10 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     s.on('messenger_group:updated', onMessengerUpdated);
 
     s.on('connect', () => {
-      void fetchMessengerGroups(uid)
-        .then((list) => {
-          for (const t of list) {
-            if (t.id) s.emit('join:messenger_group', t.id);
+      void fetchMessengerGroupIds()
+        .then((ids) => {
+          for (const id of ids) {
+            if (id) s.emit('join:messenger_group', id);
           }
         })
         .catch(() => {});

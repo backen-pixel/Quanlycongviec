@@ -1254,15 +1254,73 @@ r.post('/direct', async (req, res) => {
   }
 });
 
-/** Danh sách nhóm mà user là thành viên */
-r.get('/groups', responseCache({ ttl: 30, scope: 'user', tags: ['messenger'] }), async (req, res) => {
+function messengerGroupsSkipCache(req, res, next) {
+  const limitRaw = parseInt(String(req.query.limit ?? ''), 10);
+  const view = String(req.query.view || '').trim().toLowerCase();
+  if ((Number.isFinite(limitRaw) && limitRaw > 0) || view === 'ids') return next();
+  return responseCache({ ttl: 30, scope: 'user', tags: ['messenger'] })(req, res, next);
+}
+
+async function applyLastMessagePreviews(statsMap, groupIds, uid) {
+  if (!groupIds.length) return;
+  try {
+    const picked = await fetchLastMessagesForGroupPreviews(groupIds, uid);
+    for (const [gid, row] of picked) {
+      const prev = statsMap.get(gid) || {
+        message_count: 0,
+        last_message_at: row.created_at,
+        last_message: null,
+        last_user_id: null,
+        unread_count: 0,
+      };
+      const pickTs = new Date(row.created_at || 0).getTime();
+      const statTs = new Date(prev.last_message_at || 0).getTime();
+      if (pickTs >= statTs || isStatsPreviewMissing(prev)) {
+        statsMap.set(gid, {
+          ...prev,
+          last_message: row.preview,
+          last_user_id: row.user_id || prev.last_user_id || null,
+          last_message_at: pickTs >= statTs ? row.created_at : prev.last_message_at,
+        });
+      }
+    }
+  } catch (_) {
+    /* best-effort */
+  }
+}
+
+function sortMessengerInboxRows(a, b) {
+  const tb = new Date(b.last_message_at || 0).getTime();
+  const ta = new Date(a.last_message_at || 0).getTime();
+  if (tb !== ta) return tb - ta;
+  return String(b.id || '').localeCompare(String(a.id || ''));
+}
+
+/** Danh sách nhóm mà user là thành viên. `limit`/`before`/`before_id` opt-in (web mặc định full). `view=ids` chỉ trả id. */
+r.get('/groups', messengerGroupsSkipCache, async (req, res) => {
   try {
     const uid = req.authUserId;
     const { data: rows, error } = await supabase.from('messenger_group_members').select('group_id, role').eq('user_id', uid);
     if (error) throw error;
     const roleByGid = new Map((rows || []).map((r) => [r.group_id, r.role]));
     const ids = [...roleByGid.keys()];
-    if (!ids.length) return res.json([]);
+
+    const limitRaw = parseInt(String(req.query.limit ?? ''), 10);
+    const paged = Number.isFinite(limitRaw) && limitRaw > 0;
+    const pageLimit = paged ? Math.min(Math.max(limitRaw, 1), 100) : 0;
+    const beforeAt = String(req.query.before || '').trim();
+    const beforeId = String(req.query.before_id || '').trim();
+    const view = String(req.query.view || '').trim().toLowerCase();
+
+    if (!ids.length) {
+      res.setHeader('X-Unread-Total', '0');
+      if (paged) res.setHeader('X-Has-More', '0');
+      return res.json([]);
+    }
+    if (view === 'ids') {
+      return res.json(ids.map((id) => ({ id })));
+    }
+
     const { data: groups, error: gErr } = await supabase.from('messenger_groups').select('*').in('id', ids);
     if (gErr) throw gErr;
 
@@ -1271,29 +1329,6 @@ r.get('/groups', responseCache({ ttl: 30, scope: 'user', tags: ['messenger'] }),
 
     const groupsFiltered =
       leadFilter && Array.isArray(groups) ? groups.filter((g) => String(g.crm_lead_id || '') === leadFilter) : groups || [];
-
-    const { data: allMems } = await supabase
-      .from('messenger_group_members')
-      .select('group_id, user_id')
-      .in('group_id', ids);
-    const membersByG = new Map();
-    for (const m of allMems || []) {
-      if (!membersByG.has(m.group_id)) membersByG.set(m.group_id, []);
-      membersByG.get(m.group_id).push(m.user_id);
-    }
-    const peerIds = [];
-    for (const g of groupsFiltered || []) {
-      if (!g.is_direct) continue;
-      const mems = membersByG.get(g.id) || [];
-      const other = mems.find((id) => String(id) !== String(uid));
-      if (other) peerIds.push(other);
-    }
-    const uniquePeers = [...new Set(peerIds)];
-    let peerMap = new Map();
-    if (uniquePeers.length) {
-      const { data: peerUsers } = await supabase.from('users').select('id, full_name, avatar').in('id', uniquePeers);
-      (peerUsers || []).forEach((u) => peerMap.set(u.id, u));
-    }
 
     let statsMap = new Map();
     if (ids.length) {
@@ -1340,37 +1375,71 @@ r.get('/groups', responseCache({ ttl: 30, scope: 'user', tags: ['messenger'] }),
           }
         }
       }
+    }
 
-      // Bổ sung tin cuối thật (gồm log cuộc gọi — RPC v3 bỏ qua is_system).
-      try {
-        const picked = await fetchLastMessagesForGroupPreviews(ids, uid);
-        for (const [gid, row] of picked) {
-          const prev = statsMap.get(gid) || {
-            message_count: 0,
-            last_message_at: row.created_at,
-            last_message: null,
-            last_user_id: null,
-            unread_count: 0,
-          };
-          const pickTs = new Date(row.created_at || 0).getTime();
-          const statTs = new Date(prev.last_message_at || 0).getTime();
-          if (pickTs >= statTs || isStatsPreviewMissing(prev)) {
-            statsMap.set(gid, {
-              ...prev,
-              last_message: row.preview,
-              last_user_id: row.user_id || prev.last_user_id || null,
-              last_message_at: pickTs >= statTs ? row.created_at : prev.last_message_at,
-            });
-          }
-        }
-      } catch (_) {
-        /* best-effort */
+    let ranked = (groupsFiltered || []).map((g) => {
+      const st = statsMap.get(g.id);
+      return {
+        g,
+        id: g.id,
+        last_message_at: st?.last_message_at || g.created_at,
+        unread_count: Number(st?.unread_count) || 0,
+      };
+    });
+    ranked.sort(sortMessengerInboxRows);
+
+    const unreadTotal = ranked.reduce((sum, row) => sum + row.unread_count, 0);
+    res.setHeader('X-Unread-Total', String(unreadTotal));
+
+    if (paged) {
+      if (beforeAt) {
+        const bt = new Date(beforeAt).getTime();
+        ranked = ranked.filter((row) => {
+          const t = new Date(row.last_message_at || 0).getTime();
+          if (!Number.isFinite(bt)) return true;
+          if (t < bt) return true;
+          if (t > bt) return false;
+          return beforeId ? String(row.id) < String(beforeId) : false;
+        });
       }
+      const hasMore = ranked.length > pageLimit;
+      ranked = ranked.slice(0, pageLimit);
+      res.setHeader('X-Has-More', hasMore ? '1' : '0');
+    }
+
+    const pageGroups = ranked.map((row) => row.g);
+    const pageIds = pageGroups.map((g) => g.id);
+    if (!pageIds.length) return res.json([]);
+
+    // Preview tin cuối + nickname chỉ hydrate trang hiện tại (hoặc full list khi không phân trang).
+    await applyLastMessagePreviews(statsMap, pageIds, uid);
+
+    const { data: allMems } = await supabase
+      .from('messenger_group_members')
+      .select('group_id, user_id')
+      .in('group_id', pageIds);
+    const membersByG = new Map();
+    for (const m of allMems || []) {
+      if (!membersByG.has(m.group_id)) membersByG.set(m.group_id, []);
+      membersByG.get(m.group_id).push(m.user_id);
+    }
+    const peerIds = [];
+    for (const g of pageGroups) {
+      if (!g.is_direct) continue;
+      const mems = membersByG.get(g.id) || [];
+      const other = mems.find((id) => String(id) !== String(uid));
+      if (other) peerIds.push(other);
+    }
+    const uniquePeers = [...new Set(peerIds)];
+    let peerMap = new Map();
+    if (uniquePeers.length) {
+      const { data: peerUsers } = await supabase.from('users').select('id, full_name, avatar').in('id', uniquePeers);
+      (peerUsers || []).forEach((u) => peerMap.set(u.id, u));
     }
 
     const lastSenderIds = [
       ...new Set(
-        (groupsFiltered || [])
+        pageGroups
           .filter((g) => !g.is_direct)
           .map((g) => statsMap.get(g.id)?.last_user_id)
           .filter(Boolean),
@@ -1378,7 +1447,7 @@ r.get('/groups', responseCache({ ttl: 30, scope: 'user', tags: ['messenger'] }),
     ];
     const nickTargetIds = [...new Set([...uniquePeers, ...lastSenderIds].map(String))];
     const contactNickMap = await fetchMessengerNicknameMap(uid, nickTargetIds);
-    const nonDirectGroupIds = (groupsFiltered || []).filter((g) => !g.is_direct).map((g) => g.id);
+    const nonDirectGroupIds = pageGroups.filter((g) => !g.is_direct).map((g) => g.id);
     const groupNickMapsByGroup = await fetchMessengerGroupNicknameMapsByGroup(
       uid,
       nonDirectGroupIds,
@@ -1392,7 +1461,7 @@ r.get('/groups', responseCache({ ttl: 30, scope: 'user', tags: ['messenger'] }),
       }
     }
 
-    const list = (groupsFiltered || []).map((g) => {
+    const list = pageGroups.map((g) => {
       let display_name = g.name;
       let peer_id = null;
       let peer_avatar = null;
@@ -1447,7 +1516,7 @@ r.get('/groups', responseCache({ ttl: 30, scope: 'user', tags: ['messenger'] }),
         unread_count: st?.unread_count ?? 0,
       };
     });
-    list.sort((a, b) => new Date(b.last_message_at) - new Date(a.last_message_at));
+    if (!paged) list.sort(sortMessengerInboxRows);
     res.json(list);
   } catch (e) {
     res.status(500).json({ error: e.message });

@@ -9,10 +9,11 @@ import React, {
 } from 'react';
 import { AppState, type AppStateStatus } from 'react-native';
 import {
-  fetchMessengerGroups,
+  fetchMessengerGroupsPage,
   fetchMessengerMessagesPage,
   mapMessageRow,
   markMessengerGroupRead,
+  MESSENGER_INBOX_PAGE_SIZE,
   patchThreadFromMessage,
   resolveMediaUrl,
   sendMessengerText,
@@ -40,9 +41,12 @@ type MessengerMetaListener = (evt: {
 type MessengerCtx = {
   threads: MessengerThread[];
   loading: boolean;
+  loadingMore: boolean;
+  hasMoreThreads: boolean;
   error: string;
   unreadTotal: number;
   refreshThreads: (silent?: boolean) => Promise<void>;
+  loadMoreThreads: () => Promise<void>;
   markThreadRead: (groupId: string) => Promise<void>;
   sendText: (
     groupId: string,
@@ -91,6 +95,9 @@ export function MessengerProvider({ children }: { children: React.ReactNode }) {
   const [threads, setThreads] = useState<MessengerThread[]>([]);
   const [presenceMap, setPresenceMap] = useState<Record<string, UserPresence>>({});
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMoreThreads, setHasMoreThreads] = useState(false);
+  const [inboxUnreadTotal, setInboxUnreadTotal] = useState(0);
   const [error, setError] = useState('');
   const [activeGroupId, setActiveGroupId] = useState<string | null>(null);
   const activeGroupRef = useRef<string | null>(null);
@@ -98,9 +105,12 @@ export function MessengerProvider({ children }: { children: React.ReactNode }) {
   const groupListenersRef = useRef<Set<GroupMessageListener>>(new Set());
   const metaListenersRef = useRef<Set<MessengerMetaListener>>(new Set());
   const joinedRef = useRef<Set<string>>(new Set());
+  const loadingMoreRef = useRef(false);
+  const hasMoreRef = useRef(false);
 
   activeGroupRef.current = activeGroupId;
   threadsRef.current = threads;
+  hasMoreRef.current = hasMoreThreads;
   setMessengerActiveGroupId(activeGroupId);
 
   const syncPresence = useCallback(async (list: MessengerThread[]) => {
@@ -126,26 +136,68 @@ export function MessengerProvider({ children }: { children: React.ReactNode }) {
     for (const fn of groupListenersRef.current) fn(groupId, message);
   }, []);
 
+  const joinNewThreadIds = useCallback((list: MessengerThread[]) => {
+    const ids = list.map((t) => t.id).filter(Boolean);
+    const newIds = ids.filter((id) => !joinedRef.current.has(id));
+    if (newIds.length) {
+      joinMessengerGroups(newIds);
+      newIds.forEach((id) => joinedRef.current.add(id));
+    }
+  }, [joinMessengerGroups]);
+
   const refreshThreads = useCallback(async (silent = false) => {
     if (!token) return;
     if (!silent) setLoading(true);
     setError('');
     try {
-      const list = await fetchMessengerGroups(myUserId);
-      setThreads(list);
-      void syncPresence(list);
-      const ids = list.map((t) => t.id).filter(Boolean);
-      const newIds = ids.filter((id) => !joinedRef.current.has(id));
-      if (newIds.length) {
-        joinMessengerGroups(newIds);
-        newIds.forEach((id) => joinedRef.current.add(id));
-      }
+      const page = await fetchMessengerGroupsPage(myUserId, { limit: MESSENGER_INBOX_PAGE_SIZE });
+      setThreads((prev) => {
+        if (!silent) return page.threads;
+        const pageIds = new Set(page.threads.map((t) => t.id));
+        const older = prev.filter((t) => !pageIds.has(t.id));
+        return [...page.threads, ...older];
+      });
+      setHasMoreThreads(silent ? (hasMoreRef.current || page.hasMore) : page.hasMore);
+      if (page.unreadTotal != null) setInboxUnreadTotal(page.unreadTotal);
+      void syncPresence(page.threads);
+      joinNewThreadIds(page.threads);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Không tải được tin nhắn');
     } finally {
       if (!silent) setLoading(false);
     }
-  }, [token, myUserId, joinMessengerGroups, syncPresence]);
+  }, [token, myUserId, syncPresence, joinNewThreadIds]);
+
+  const loadMoreThreads = useCallback(async () => {
+    if (!token || loadingMoreRef.current || !hasMoreRef.current) return;
+    const last = threadsRef.current[threadsRef.current.length - 1];
+    if (!last?.lastMessageAt) {
+      setHasMoreThreads(false);
+      return;
+    }
+    loadingMoreRef.current = true;
+    setLoadingMore(true);
+    try {
+      const page = await fetchMessengerGroupsPage(myUserId, {
+        limit: MESSENGER_INBOX_PAGE_SIZE,
+        before: last.lastMessageAt,
+        beforeId: last.id,
+      });
+      setThreads((prev) => {
+        const seen = new Set(prev.map((t) => t.id));
+        const extra = page.threads.filter((t) => !seen.has(t.id));
+        return extra.length ? [...prev, ...extra] : prev;
+      });
+      setHasMoreThreads(page.hasMore);
+      void syncPresence(page.threads);
+      joinNewThreadIds(page.threads);
+    } catch {
+      /* giữ trang đã tải */
+    } finally {
+      loadingMoreRef.current = false;
+      setLoadingMore(false);
+    }
+  }, [token, myUserId, syncPresence, joinNewThreadIds]);
 
   const patchThreadMeta = useCallback((
     groupId: string,
@@ -170,20 +222,20 @@ export function MessengerProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const upsertLocalMessage = useCallback((groupId: string, message: MessengerMessage) => {
+    const existing = threadsRef.current.find((t) => t.id === groupId);
+    if (!existing) {
+      void refreshThreads(true);
+      emitGroupMessage(groupId, message);
+      return;
+    }
+    const active = activeGroupRef.current === groupId;
+    const mine = !!(myUserId && message.user_id && String(message.user_id) === String(myUserId));
+    if (!active && !mine) setInboxUnreadTotal((n) => n + 1);
     setThreads((prev) => {
       const idx = prev.findIndex((t) => t.id === groupId);
-      if (idx < 0) {
-        void refreshThreads(true);
-        return prev;
-      }
-      const active = activeGroupRef.current === groupId;
+      if (idx < 0) return prev;
       const next = [...prev];
-      next[idx] = patchThreadFromMessage(
-        next[idx]!,
-        message,
-        myUserId,
-        !active,
-      );
+      next[idx] = patchThreadFromMessage(next[idx]!, message, myUserId, !active);
       next.sort((a, b) => {
         const ta = new Date(a.lastMessageAt || 0).getTime();
         const tb = new Date(b.lastMessageAt || 0).getTime();
@@ -198,6 +250,8 @@ export function MessengerProvider({ children }: { children: React.ReactNode }) {
     if (!token) {
       setThreads([]);
       setPresenceMap({});
+      setHasMoreThreads(false);
+      setInboxUnreadTotal(0);
       joinedRef.current.clear();
       return undefined;
     }
@@ -262,6 +316,8 @@ export function MessengerProvider({ children }: { children: React.ReactNode }) {
   }, [token, subscribePresenceUpdate]);
 
   const markThreadRead = useCallback(async (groupId: string) => {
+    const prevUnread = threadsRef.current.find((t) => t.id === groupId)?.unread || 0;
+    if (prevUnread) setInboxUnreadTotal((n) => Math.max(0, n - prevUnread));
     setThreads((prev) => prev.map((t) => (t.id === groupId ? { ...t, unread: 0 } : t)));
     try {
       await markMessengerGroupRead(groupId);
@@ -297,18 +353,18 @@ export function MessengerProvider({ children }: { children: React.ReactNode }) {
     return () => leaveMessengerGroup(activeGroupId);
   }, [activeGroupId, joinMessengerGroup, leaveMessengerGroup, markThreadRead]);
 
-  const unreadTotal = useMemo(
-    () => threads.reduce((sum, t) => sum + (t.unread || 0), 0),
-    [threads],
-  );
+  const unreadTotal = inboxUnreadTotal;
 
   const value = useMemo(
     () => ({
       threads,
       loading,
+      loadingMore,
+      hasMoreThreads,
       error,
       unreadTotal,
       refreshThreads,
+      loadMoreThreads,
       markThreadRead,
       sendText,
       loadMessages,
@@ -323,9 +379,12 @@ export function MessengerProvider({ children }: { children: React.ReactNode }) {
     [
       threads,
       loading,
+      loadingMore,
+      hasMoreThreads,
       error,
       unreadTotal,
       refreshThreads,
+      loadMoreThreads,
       markThreadRead,
       sendText,
       loadMessages,

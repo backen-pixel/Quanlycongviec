@@ -112,6 +112,8 @@ export function mapMessageRow(row: Record<string, unknown>): MessengerMessage {
   };
 }
 
+export const MESSENGER_INBOX_PAGE_SIZE = 40;
+
 export async function fetchMessengerGroups(myUserId?: string | null): Promise<MessengerThread[]> {
   const { data } = await api.get<unknown[]>('/messenger/groups', {
     params: { _ts: Date.now() },
@@ -124,6 +126,51 @@ export async function fetchMessengerGroups(myUserId?: string | null): Promise<Me
       const tb = new Date(b.lastMessageAt || 0).getTime();
       return tb - ta;
     });
+}
+
+export type MessengerGroupsPage = {
+  threads: MessengerThread[];
+  hasMore: boolean;
+  unreadTotal: number | null;
+};
+
+function headerInt(headers: Record<string, unknown> | undefined, name: string): number | null {
+  const raw = headers?.[name] ?? headers?.[name.toLowerCase()];
+  if (raw == null || raw === '') return null;
+  const n = parseInt(String(raw), 10);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Inbox phân trang cursor (`limit` + `before`/`before_id`). Không gửi limit = full list (web). */
+export async function fetchMessengerGroupsPage(
+  myUserId?: string | null,
+  opts: { limit?: number; before?: string | null; beforeId?: string | null } = {},
+): Promise<MessengerGroupsPage> {
+  const limit = Math.min(Math.max(opts.limit ?? MESSENGER_INBOX_PAGE_SIZE, 1), 100);
+  const params: Record<string, string | number> = { limit, _ts: Date.now() };
+  if (opts.before) params.before = opts.before;
+  if (opts.beforeId) params.before_id = opts.beforeId;
+  const res = await api.get<unknown[]>('/messenger/groups', { params });
+  const list = Array.isArray(res.data) ? res.data : [];
+  const headers = res.headers as Record<string, unknown> | undefined;
+  return {
+    threads: list.map((row) => mapGroupRow(row as Record<string, unknown>, myUserId)),
+    hasMore: headerHasMore(headers, list.length >= limit),
+    unreadTotal: headerInt(headers, 'x-unread-total'),
+  };
+}
+
+export async function fetchMessengerGroupIds(): Promise<string[]> {
+  const { data } = await api.get<unknown[]>('/messenger/groups', {
+    params: { view: 'ids', _ts: Date.now() },
+  });
+  const list = Array.isArray(data) ? data : [];
+  return list
+    .map((row) => {
+      if (row && typeof row === 'object' && 'id' in row) return String((row as { id?: unknown }).id || '');
+      return String(row || '');
+    })
+    .filter(Boolean);
 }
 
 export type MessengerMessagesPage = {

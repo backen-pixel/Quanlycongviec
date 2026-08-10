@@ -1,10 +1,11 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  FlatList,
   Pressable,
   RefreshControl,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -16,14 +17,24 @@ import PlannerFilterModal, { type PlannerFilterDimension } from '../components/P
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { useProductionRealtime } from '../hooks/useProductionRealtime';
-import { fetchProductionBoard } from '../lib/logisticsApi';
+import { loadKanbanFilters, saveKanbanFilters } from '../lib/kanbanFilterStorage';
+import { fetchCompanies, fetchProductionBoard, type CompanyOption } from '../lib/logisticsApi';
 import { getCachedBoard, isCachedBoardFresh, setCachedBoard } from '../lib/logisticsBoardCache';
+import { isSystemAdmin } from '../lib/productionFilters';
 import { formatMoneyAmount, Radii, Spacing, stageColor } from '../theme';
 import type { ProductionBoard, ProductionProject } from '../types';
 
 /** Số dự án hiển thị ban đầu mỗi nhóm người phụ trách; bấm "Xem thêm" để tải tiếp. */
 const OWNER_PAGE_SIZE = 5;
 const UNASSIGNED_KEY = '__unassigned__';
+
+type OwnerGroupRow = {
+  id: string;
+  name: string;
+  items: ProductionProject[];
+  total: number;
+  unassigned?: boolean;
+};
 
 /** Người phụ trách VC/Lắp đặt của dự án — ưu tiên logistics_person, fallback installer_person. */
 function ownerOf(p: ProductionProject): { id: string | null | undefined; name: string | null | undefined } {
@@ -42,8 +53,12 @@ export default function PlannerScreen() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
-  const isSystemAdmin = user?.role === 'admin' && !user?.company_id;
-  const scopedCompanyId = isSystemAdmin ? undefined : (user?.company_id || undefined);
+  const sysAdmin = isSystemAdmin(user);
+  const [filterCompany, setFilterCompany] = useState(() => (
+    sysAdmin ? '' : String(user?.company_id || '')
+  ));
+  const [companies, setCompanies] = useState<CompanyOption[]>([]);
+  const companiesRef = useRef<CompanyOption[]>([]);
   const [board, setBoard] = useState<ProductionBoard>({ stages: [], projects: [], kpis: null });
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -70,21 +85,51 @@ export default function PlannerScreen() {
     }));
   }, []);
 
+  useFocusEffect(useCallback(() => {
+    let alive = true;
+    void (async () => {
+      const snap = await loadKanbanFilters().catch(() => null);
+      let id = sysAdmin
+        ? String(snap?.filterCompany || '').trim()
+        : String(user?.company_id || '');
+      let list = companiesRef.current;
+      if (!list.length) {
+        list = await fetchCompanies().catch(() => [] as CompanyOption[]);
+        companiesRef.current = list;
+        if (alive) setCompanies(list);
+      }
+      if (sysAdmin && !id && list[0]?.id) {
+        id = String(list[0].id);
+        await saveKanbanFilters({ ...(snap || {}), filterCompany: id });
+      }
+      if (alive) setFilterCompany(id);
+    })();
+    return () => { alive = false; };
+  }, [sysAdmin, user?.company_id]));
+
+  const boardFilters = useMemo(
+    () => ({ companyId: filterCompany || undefined }),
+    [filterCompany],
+  );
+
   const load = useCallback(async (mode: 'init' | 'refresh' | 'silent' = 'init') => {
-    const filters = { companyId: scopedCompanyId };
-    const cached = getCachedBoard(filters);
+    if (sysAdmin && !filterCompany) {
+      if (mode === 'init') setLoading(true);
+      return;
+    }
+    const cached = getCachedBoard(boardFilters);
     if (mode !== 'refresh' && cached) {
       setBoard(cached);
       if (mode === 'init') setLoading(false);
     }
-    if (mode === 'silent' && isCachedBoardFresh(filters) && cached) return;
+    if (mode === 'silent' && isCachedBoardFresh(boardFilters) && cached) return;
 
     if (mode === 'init' && !cached) setLoading(true);
     if (mode === 'refresh') setRefreshing(true);
     if (mode !== 'silent') setError(null);
     try {
-      const boardData = await fetchProductionBoard(mode === 'refresh', filters);
-      setCachedBoard(filters, boardData);
+      const boardData = await fetchProductionBoard(mode === 'refresh', boardFilters);
+      setCachedBoard(boardFilters, boardData);
       setBoard(boardData);
       if (mode !== 'silent') setOwnerVisible({});
     } catch (e) {
@@ -93,7 +138,7 @@ export default function PlannerScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [scopedCompanyId]);
+  }, [boardFilters, filterCompany, sysAdmin]);
 
   useEffect(() => {
     void load('init');
@@ -102,7 +147,7 @@ export default function PlannerScreen() {
   useProductionRealtime({
     onRefresh: (info) => {
       if (info?.patched) {
-        const next = getCachedBoard({ companyId: scopedCompanyId });
+        const next = getCachedBoard(boardFilters);
         if (next) setBoard(next);
         return;
       }
@@ -110,6 +155,14 @@ export default function PlannerScreen() {
     },
     modes: ['board', 'task'],
   });
+
+  const companyLabel = useMemo(() => {
+    if (!filterCompany) return sysAdmin ? 'Đang chọn công ty…' : 'Sắp xếp & phân bổ dự án vận chuyển';
+    const fromList = companies.find((c) => String(c.id) === String(filterCompany))?.name;
+    if (fromList) return fromList;
+    return board.projects.find((p) => p.company_name)?.company_name
+      || 'Sắp xếp & phân bổ dự án vận chuyển';
+  }, [filterCompany, companies, board.projects, sysAdmin]);
 
   const stageById = useMemo(() => {
     const map = new Map<string, { name: string; color: string; icon: string }>();
@@ -135,7 +188,6 @@ export default function PlannerScreen() {
     [needle, filters],
   );
 
-  // Tùy chọn bộ lọc — suy ra từ dữ liệu board hiện có.
   const filterOptions = useMemo(() => {
     const regionMap = new Map<string, string>();
     const personMap = new Map<string, string>();
@@ -163,8 +215,7 @@ export default function PlannerScreen() {
     };
   }, [board.projects, board.stages]);
 
-  // Nhóm theo người phụ trách VC/Lắp đặt (giống tab web "Theo người phụ trách").
-  const ownerGroups = useMemo(() => {
+  const ownerRows = useMemo((): OwnerGroupRow[] => {
     const map = new Map<string, { name: string; items: ProductionProject[]; total: number }>();
     const unassigned: ProductionProject[] = [];
     board.projects.filter(matchesSearch).forEach((p) => {
@@ -178,10 +229,19 @@ export default function PlannerScreen() {
         unassigned.push(p);
       }
     });
-    const groups = [...map.entries()]
+    const groups: OwnerGroupRow[] = [...map.entries()]
       .map(([id, g]) => ({ id, ...g }))
       .sort((a, b) => b.items.length - a.items.length);
-    return { groups, unassigned };
+    if (unassigned.length) {
+      groups.push({
+        id: UNASSIGNED_KEY,
+        name: `Chưa phân công (${unassigned.length})`,
+        items: unassigned,
+        total: 0,
+        unassigned: true,
+      });
+    }
+    return groups;
   }, [board.projects, matchesSearch]);
 
   const styles = useMemo(
@@ -220,9 +280,9 @@ export default function PlannerScreen() {
           height: 42,
         },
         searchInput: { flex: 1, color: colors.text, fontSize: 14 },
+        listContent: { padding: Spacing.md, paddingBottom: 24 },
         errorText: { color: colors.textMuted, textAlign: 'center' },
         empty: { color: colors.textMuted, textAlign: 'center', marginTop: 8, fontSize: 14 },
-        emptySub: { color: colors.textFaint, textAlign: 'center', fontSize: 12 },
         groupCard: {
           backgroundColor: colors.card,
           borderWidth: 1,
@@ -302,14 +362,49 @@ export default function PlannerScreen() {
     );
   };
 
+  const renderGroup = ({ item: g }: { item: OwnerGroupRow }) => {
+    const limit = ownerLimit(g.id);
+    const remaining = g.items.length - limit;
+    return (
+      <View style={[styles.groupCard, g.unassigned && styles.groupCardDashed]}>
+        <View style={styles.groupHeader}>
+          {g.unassigned ? (
+            <Text style={styles.groupNameMuted}>{g.name}</Text>
+          ) : (
+            <>
+              <View style={styles.avatar}>
+                <Text style={styles.avatarText}>{g.name.charAt(0).toUpperCase()}</Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.groupName} numberOfLines={1}>{g.name}</Text>
+                <Text style={styles.groupMeta}>
+                  {g.items.length} dự án • {formatMoneyDisplay(g.total)}
+                </Text>
+              </View>
+            </>
+          )}
+        </View>
+        <View style={styles.groupBody}>
+          {g.items.slice(0, limit).map(renderCard)}
+          {remaining > 0 ? (
+            <Pressable style={styles.moreBtn} onPress={() => showMoreOwner(g.id, g.items.length)}>
+              <Ionicons name="chevron-down" size={16} color={colors.primary} />
+              <Text style={styles.moreBtnText}>
+                Xem thêm {Math.min(remaining, OWNER_PAGE_SIZE)} / {remaining} dự án
+              </Text>
+            </Pressable>
+          ) : null}
+        </View>
+      </View>
+    );
+  };
+
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <View style={styles.header}>
         <View style={{ flex: 1 }}>
           <Text style={styles.title}>Planner</Text>
-          <Text style={styles.subtitle}>
-            {isSystemAdmin ? 'Tất cả công ty' : 'Sắp xếp & phân bổ dự án vận chuyển'}
-          </Text>
+          <Text style={styles.subtitle} numberOfLines={1}>{companyLabel}</Text>
         </View>
         <Pressable
           style={[styles.filterBtn, activeFilterCount > 0 && styles.filterBtnActive]}
@@ -358,75 +453,24 @@ export default function PlannerScreen() {
           <Text style={styles.errorText}>{error}</Text>
         </View>
       ) : (
-        <ScrollView
-          contentContainerStyle={{ padding: Spacing.md, paddingBottom: 24 }}
+        <FlatList
+          data={ownerRows}
+          keyExtractor={(g) => g.id}
+          renderItem={renderGroup}
+          contentContainerStyle={styles.listContent}
+          initialNumToRender={4}
+          maxToRenderPerBatch={4}
+          windowSize={7}
+          removeClippedSubviews
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={() => load('refresh')} tintColor={colors.primary} />
           }
-        >
-          {!ownerGroups.groups.length && !ownerGroups.unassigned.length ? (
+          ListEmptyComponent={
             <Text style={styles.empty}>
               {needle ? `Không tìm thấy kết quả cho "${search.trim()}"` : 'Không có dự án'}
             </Text>
-          ) : (
-              <>
-                {ownerGroups.groups.map((g) => {
-                  const limit = ownerLimit(g.id);
-                  const remaining = g.items.length - limit;
-                  return (
-                    <View key={g.id} style={styles.groupCard}>
-                      <View style={styles.groupHeader}>
-                        <View style={styles.avatar}>
-                          <Text style={styles.avatarText}>{g.name.charAt(0).toUpperCase()}</Text>
-                        </View>
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.groupName} numberOfLines={1}>{g.name}</Text>
-                          <Text style={styles.groupMeta}>
-                            {g.items.length} dự án • {formatMoneyDisplay(g.total)}
-                          </Text>
-                        </View>
-                      </View>
-                      <View style={styles.groupBody}>
-                        {g.items.slice(0, limit).map(renderCard)}
-                        {remaining > 0 ? (
-                          <Pressable style={styles.moreBtn} onPress={() => showMoreOwner(g.id, g.items.length)}>
-                            <Ionicons name="chevron-down" size={16} color={colors.primary} />
-                            <Text style={styles.moreBtnText}>
-                              Xem thêm {Math.min(remaining, OWNER_PAGE_SIZE)} / {remaining} dự án
-                            </Text>
-                          </Pressable>
-                        ) : null}
-                      </View>
-                    </View>
-                  );
-                })}
-                {ownerGroups.unassigned.length ? (() => {
-                  const limit = ownerLimit(UNASSIGNED_KEY);
-                  const remaining = ownerGroups.unassigned.length - limit;
-                  return (
-                    <View style={[styles.groupCard, styles.groupCardDashed]}>
-                      <View style={styles.groupHeader}>
-                        <Text style={styles.groupNameMuted}>
-                          Chưa phân công ({ownerGroups.unassigned.length})
-                        </Text>
-                      </View>
-                      <View style={styles.groupBody}>
-                        {ownerGroups.unassigned.slice(0, limit).map(renderCard)}
-                        {remaining > 0 ? (
-                          <Pressable style={styles.moreBtn} onPress={() => showMoreOwner(UNASSIGNED_KEY, ownerGroups.unassigned.length)}>
-                            <Ionicons name="chevron-down" size={16} color={colors.primary} />
-                            <Text style={styles.moreBtnText}>
-                              Xem thêm {Math.min(remaining, OWNER_PAGE_SIZE)} / {remaining} dự án
-                            </Text>
-                          </Pressable>
-                        ) : null}
-                      </View>
-                    </View>
-                  );
-                })() : null}
-              </>
-          )}
-        </ScrollView>
+          }
+        />
       )}
 
       <PlannerFilterModal
@@ -440,4 +484,3 @@ export default function PlannerScreen() {
     </View>
   );
 }
-

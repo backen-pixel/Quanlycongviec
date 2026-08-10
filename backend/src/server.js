@@ -120,7 +120,7 @@ const corsMainApp = cors({
     'X-Device-Id',
     'X-No-Cache',
   ],
-  exposedHeaders: ['Content-Disposition'],
+  exposedHeaders: ['Content-Disposition', 'X-Has-More', 'X-Unread-Total'],
   maxAge: CORS_PREFLIGHT_MAX_AGE,
 });
 const corsExternalApi = cors({

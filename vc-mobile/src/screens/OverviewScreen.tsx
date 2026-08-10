@@ -673,7 +673,7 @@ export default function OverviewScreen() {
                   <Text style={styles.boardSummaryMuted}> thẻ</Text>
                 </Text>
                 <Text style={styles.boardSummarySep}>
-                  {`VC ${kpis.shipping} · LĐ ${kpis.installing}`}
+                  {`Vận chuyển ${kpis.totalShipping} · Lắp đặt ${kpis.totalInstall}`}
                   {kpis.warranty > 0 ? ` · BH ${kpis.warranty}` : ''}
                 </Text>
               </View>
