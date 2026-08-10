@@ -1,6 +1,6 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -23,7 +23,7 @@ import {
   forwardTargetKey,
   type ForwardTarget,
 } from '../lib/messengerForward';
-import { fetchMessengerGroups } from '../lib/messengerApi';
+import { useMessengerGroupPages } from '../hooks/useMessengerGroupPages';
 import { buildMessengerMessagePreview } from '../lib/messengerPreview';
 import { avatarColorFromName, getMessengerColors } from '../lib/messengerTheme';
 import type { RootStackParamList } from '../navigation/RootNavigator';
@@ -68,8 +68,18 @@ export default function MessengerForwardScreen({ navigation, route }: Props) {
   );
 
   const [panel, setPanel] = useState<Panel>('chats');
-  const [groups, setGroups] = useState<MessengerThread[]>([]);
-  const [loading, setLoading] = useState(true);
+  const {
+    threads,
+    loading,
+    loadingMore,
+    hasMore,
+    error: groupsError,
+    loadMore,
+  } = useMessengerGroupPages(myId);
+  const groups = useMemo(
+    () => threads.filter((g) => String(g.id) !== String(excludeGroupId)),
+    [threads, excludeGroupId],
+  );
   const [q, setQ] = useState('');
   const [selected, setSelected] = useState<Record<string, ForwardTarget>>({});
   const [note, setNote] = useState('');
@@ -79,22 +89,11 @@ export default function MessengerForwardScreen({ navigation, route }: Props) {
   const [toast, setToast] = useState<ToastState>(null);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const list = await fetchMessengerGroups(myId);
-      setGroups(list.filter((g) => String(g.id) !== String(excludeGroupId)));
-    } catch (e) {
-      setToast({ message: e instanceof Error ? e.message : 'Không tải được danh sách', kind: 'error' });
-      setGroups([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [excludeGroupId, myId]);
-
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (groupsError) {
+      setToast({ message: groupsError, kind: 'error' });
+    }
+  }, [groupsError]);
 
   useEffect(() => {
     if (searchTimer.current) clearTimeout(searchTimer.current);
@@ -130,6 +129,11 @@ export default function MessengerForwardScreen({ navigation, route }: Props) {
       (g) => g.name.toLowerCase().includes(term) || g.preview.toLowerCase().includes(term),
     );
   }, [groups, q]);
+
+  useEffect(() => {
+    if (!q.trim() || loading || loadingMore || !hasMore) return;
+    if (filteredGroups.length < 8) void loadMore();
+  }, [q, filteredGroups.length, hasMore, loadingMore, loading, loadMore]);
 
   const selectedList = useMemo(() => Object.values(selected), [selected]);
 
@@ -393,6 +397,13 @@ export default function MessengerForwardScreen({ navigation, route }: Props) {
           data={filteredGroups}
           keyExtractor={(g) => g.id}
           contentContainerStyle={{ paddingBottom: 100 }}
+          onEndReachedThreshold={0.4}
+          onEndReached={() => {
+            if (!q.trim() && hasMore && !loadingMore) void loadMore();
+          }}
+          ListFooterComponent={
+            loadingMore ? <ActivityIndicator color={mc.accent} style={{ marginVertical: 12 }} /> : null
+          }
           renderItem={({ item }) => {
             const key = forwardTargetKey({ type: 'group', id: item.id });
             const on = !!selected[key];

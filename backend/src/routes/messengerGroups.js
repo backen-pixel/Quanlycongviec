@@ -1261,6 +1261,99 @@ function messengerGroupsSkipCache(req, res, next) {
   return responseCache({ ttl: 30, scope: 'user', tags: ['messenger'] })(req, res, next);
 }
 
+/** Rank + unread nhẹ (không preview) — dùng khi phân trang để khỏi RPC v3 toàn bộ membership. */
+async function fetchInboxRankKeys(groupIds, uid) {
+  if (!Array.isArray(groupIds) || !groupIds.length) return new Map();
+  const pg = await pgQuerySafe(
+    `WITH last_msg AS (
+       SELECT DISTINCT ON (group_id) group_id, created_at
+       FROM messenger_group_messages
+       WHERE group_id = ANY($1::uuid[])
+       ORDER BY group_id, created_at DESC
+     ),
+     unread AS (
+       SELECT m.group_id, COUNT(*)::int AS unread_count
+       FROM messenger_group_messages m
+       LEFT JOIN messenger_read_receipts r
+         ON r.group_id = m.group_id AND r.user_id = $2::uuid
+       WHERE m.group_id = ANY($1::uuid[])
+         AND m.user_id IS DISTINCT FROM $2::uuid
+         AND m.created_at > COALESCE(r.last_read_at, TIMESTAMPTZ 'epoch')
+       GROUP BY m.group_id
+     )
+     SELECT g.id::text AS id,
+            g.created_at,
+            g.crm_lead_id,
+            COALESCE(lm.created_at, g.created_at) AS last_message_at,
+            COALESCE(u.unread_count, 0) AS unread_count
+     FROM messenger_groups g
+     LEFT JOIN last_msg lm ON lm.group_id = g.id
+     LEFT JOIN unread u ON u.group_id = g.id
+     WHERE g.id = ANY($1::uuid[])`,
+    [groupIds, uid],
+  );
+  if (!pg || !Array.isArray(pg.rows)) return null;
+  const map = new Map();
+  for (const row of pg.rows) {
+    if (!row?.id) continue;
+    map.set(String(row.id), {
+      last_message_at: row.last_message_at,
+      unread_count: Number(row.unread_count) || 0,
+      created_at: row.created_at,
+      crm_lead_id: row.crm_lead_id || null,
+    });
+  }
+  return map;
+}
+
+async function loadMessengerGroupStatsMap(ids, uid) {
+  const statsMap = new Map();
+  if (!ids.length) return statsMap;
+  const { data: statRowsV3, error: errV3 } = await supabase.rpc('messenger_group_list_stats_v3', {
+    p_group_ids: ids,
+    p_user_id: uid,
+  });
+  if (!errV3 && Array.isArray(statRowsV3)) {
+    for (const row of statRowsV3) {
+      statsMap.set(row.group_id, {
+        message_count: Number(row.message_count) || 0,
+        last_message_at: row.last_message_at,
+        last_message: row.last_message || null,
+        last_user_id: row.last_user_id || null,
+        unread_count: Number(row.unread_count) || 0,
+      });
+    }
+    return statsMap;
+  }
+  const { data: statRows, error: statErr } = await supabase.rpc('messenger_group_list_stats_v2', {
+    p_group_ids: ids,
+    p_user_id: uid,
+  });
+  if (!statErr && Array.isArray(statRows)) {
+    for (const row of statRows) {
+      statsMap.set(row.group_id, {
+        message_count: Number(row.message_count) || 0,
+        last_message_at: row.last_message_at,
+        last_message: row.last_message || null,
+        last_user_id: null,
+        unread_count: Number(row.unread_count) || 0,
+      });
+    }
+    return statsMap;
+  }
+  const { data: statRowsV1 } = await supabase.rpc('messenger_group_list_stats', { p_group_ids: ids });
+  for (const row of statRowsV1 || []) {
+    statsMap.set(row.group_id, {
+      message_count: Number(row.message_count) || 0,
+      last_message_at: row.last_message_at,
+      last_message: null,
+      last_user_id: null,
+      unread_count: 0,
+    });
+  }
+  return statsMap;
+}
+
 async function applyLastMessagePreviews(statsMap, groupIds, uid) {
   if (!groupIds.length) return;
   try {
@@ -1321,77 +1414,31 @@ r.get('/groups', messengerGroupsSkipCache, async (req, res) => {
       return res.json(ids.map((id) => ({ id })));
     }
 
-    const { data: groups, error: gErr } = await supabase.from('messenger_groups').select('*').in('id', ids);
-    if (gErr) throw gErr;
-
     const leadQ = req.query.crm_lead_id != null ? String(req.query.crm_lead_id).trim() : '';
     const leadFilter = leadQ ? parseUuidParam(leadQ) : null;
 
-    const groupsFiltered =
-      leadFilter && Array.isArray(groups) ? groups.filter((g) => String(g.crm_lead_id || '') === leadFilter) : groups || [];
-
+    let groups = [];
     let statsMap = new Map();
-    if (ids.length) {
-      // Thử v3 (có preview theo tệp đính kèm + last_user_id) → v2 → v1.
-      const { data: statRowsV3, error: errV3 } = await supabase.rpc('messenger_group_list_stats_v3', {
-        p_group_ids: ids,
-        p_user_id: uid,
+    let ranked = [];
+
+    const rankKeys = paged ? await fetchInboxRankKeys(ids, uid) : null;
+    if (paged && rankKeys) {
+      ranked = ids.map((id) => {
+        const key = String(id);
+        const rk = rankKeys.get(key);
+        return {
+          id,
+          last_message_at: rk?.last_message_at || rk?.created_at || null,
+          unread_count: Number(rk?.unread_count) || 0,
+          crm_lead_id: rk?.crm_lead_id || null,
+        };
       });
-      if (!errV3 && Array.isArray(statRowsV3)) {
-        for (const row of statRowsV3) {
-          statsMap.set(row.group_id, {
-            message_count: Number(row.message_count) || 0,
-            last_message_at: row.last_message_at,
-            last_message: row.last_message || null,
-            last_user_id: row.last_user_id || null,
-            unread_count: Number(row.unread_count) || 0,
-          });
-        }
-      } else {
-        const { data: statRows, error: statErr } = await supabase.rpc('messenger_group_list_stats_v2', {
-          p_group_ids: ids,
-          p_user_id: uid,
-        });
-        if (!statErr && Array.isArray(statRows)) {
-          for (const row of statRows) {
-            statsMap.set(row.group_id, {
-              message_count: Number(row.message_count) || 0,
-              last_message_at: row.last_message_at,
-              last_message: row.last_message || null,
-              last_user_id: null,
-              unread_count: Number(row.unread_count) || 0,
-            });
-          }
-        } else {
-          const { data: statRowsV1 } = await supabase.rpc('messenger_group_list_stats', { p_group_ids: ids });
-          for (const row of statRowsV1 || []) {
-            statsMap.set(row.group_id, {
-              message_count: Number(row.message_count) || 0,
-              last_message_at: row.last_message_at,
-              last_message: null,
-              last_user_id: null,
-              unread_count: 0,
-            });
-          }
-        }
+      if (leadFilter) {
+        ranked = ranked.filter((row) => String(row.crm_lead_id || '') === leadFilter);
       }
-    }
-
-    let ranked = (groupsFiltered || []).map((g) => {
-      const st = statsMap.get(g.id);
-      return {
-        g,
-        id: g.id,
-        last_message_at: st?.last_message_at || g.created_at,
-        unread_count: Number(st?.unread_count) || 0,
-      };
-    });
-    ranked.sort(sortMessengerInboxRows);
-
-    const unreadTotal = ranked.reduce((sum, row) => sum + row.unread_count, 0);
-    res.setHeader('X-Unread-Total', String(unreadTotal));
-
-    if (paged) {
+      ranked.sort(sortMessengerInboxRows);
+      const unreadTotal = ranked.reduce((sum, row) => sum + row.unread_count, 0);
+      res.setHeader('X-Unread-Total', String(unreadTotal));
       if (beforeAt) {
         const bt = new Date(beforeAt).getTime();
         ranked = ranked.filter((row) => {
@@ -1405,9 +1452,55 @@ r.get('/groups', messengerGroupsSkipCache, async (req, res) => {
       const hasMore = ranked.length > pageLimit;
       ranked = ranked.slice(0, pageLimit);
       res.setHeader('X-Has-More', hasMore ? '1' : '0');
+      const pageIdsOnly = ranked.map((row) => row.id);
+      if (!pageIdsOnly.length) return res.json([]);
+      const { data: pageGroupRows, error: gErr } = await supabase
+        .from('messenger_groups')
+        .select('*')
+        .in('id', pageIdsOnly);
+      if (gErr) throw gErr;
+      const byId = new Map((pageGroupRows || []).map((g) => [String(g.id), g]));
+      groups = pageIdsOnly.map((id) => byId.get(String(id))).filter(Boolean);
+      statsMap = await loadMessengerGroupStatsMap(pageIdsOnly, uid);
+    } else {
+      const { data: allGroups, error: gErr } = await supabase.from('messenger_groups').select('*').in('id', ids);
+      if (gErr) throw gErr;
+      const groupsFiltered =
+        leadFilter && Array.isArray(allGroups)
+          ? allGroups.filter((g) => String(g.crm_lead_id || '') === leadFilter)
+          : allGroups || [];
+      statsMap = await loadMessengerGroupStatsMap(ids, uid);
+      ranked = groupsFiltered.map((g) => {
+        const st = statsMap.get(g.id);
+        return {
+          g,
+          id: g.id,
+          last_message_at: st?.last_message_at || g.created_at,
+          unread_count: Number(st?.unread_count) || 0,
+        };
+      });
+      ranked.sort(sortMessengerInboxRows);
+      const unreadTotal = ranked.reduce((sum, row) => sum + row.unread_count, 0);
+      res.setHeader('X-Unread-Total', String(unreadTotal));
+      if (paged) {
+        if (beforeAt) {
+          const bt = new Date(beforeAt).getTime();
+          ranked = ranked.filter((row) => {
+            const t = new Date(row.last_message_at || 0).getTime();
+            if (!Number.isFinite(bt)) return true;
+            if (t < bt) return true;
+            if (t > bt) return false;
+            return beforeId ? String(row.id) < String(beforeId) : false;
+          });
+        }
+        const hasMore = ranked.length > pageLimit;
+        ranked = ranked.slice(0, pageLimit);
+        res.setHeader('X-Has-More', hasMore ? '1' : '0');
+      }
+      groups = ranked.map((row) => row.g).filter(Boolean);
     }
 
-    const pageGroups = ranked.map((row) => row.g);
+    const pageGroups = groups;
     const pageIds = pageGroups.map((g) => g.id);
     if (!pageIds.length) return res.json([]);
 

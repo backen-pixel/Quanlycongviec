@@ -24,6 +24,22 @@ export type WorkTasksQuery = {
   companyId?: string | null;
   /** Opt-in sau filter JS phía server. */
   limit?: number;
+  offset?: number;
+};
+
+export const WORK_TASKS_PAGE_SIZE = 50;
+
+export type WorkTaskCounts = {
+  pending: number;
+  inProgress: number;
+  done: number;
+};
+
+export type WorkTasksPage = {
+  tasks: WorkTask[];
+  hasMore: boolean;
+  total: number | null;
+  counts: WorkTaskCounts | null;
 };
 
 /** Nhãn deal/lead giống web Giao việc VC. */
@@ -115,21 +131,62 @@ export function nextTaskStatus(status: string): string {
   return 'completed';
 }
 
+function headerInt(headers: Record<string, unknown> | undefined, name: string): number | null {
+  const raw = headers?.[name] ?? headers?.[name.toLowerCase()];
+  if (raw == null || raw === '') return null;
+  const n = parseInt(String(raw), 10);
+  return Number.isFinite(n) ? n : null;
+}
+
+function headerHasMore(headers: Record<string, unknown> | undefined, fallback: boolean): boolean {
+  const raw = String(headers?.['x-has-more'] ?? headers?.['X-Has-More'] ?? '').toLowerCase();
+  if (raw === '1' || raw === 'true') return true;
+  if (raw === '0' || raw === 'false') return false;
+  return fallback;
+}
+
 /**
  * Nhiệm vụ VC — GET /crm/tasks/overview?task_scope=logistics
  * assigneeId rỗng/null = xem cả team (khi user có quyền canViewTeamWork).
  */
-export async function fetchLogisticsWorkTasks(query: WorkTasksQuery = {}): Promise<WorkTask[]> {
+export async function fetchLogisticsWorkTasksPage(
+  query: WorkTasksQuery = {},
+): Promise<WorkTasksPage> {
+  const limit = query.limit && query.limit > 0 ? query.limit : undefined;
+  const offset = query.offset && query.offset > 0 ? query.offset : 0;
   const params: Record<string, string> = { task_scope: 'logistics' };
   if (query.assigneeId) params.assignee_id = query.assigneeId;
   if (query.companyId) params.company_id = query.companyId;
-  if (query.limit && query.limit > 0) params.limit = String(query.limit);
+  if (limit) params.limit = String(limit);
+  if (limit && offset) params.offset = String(offset);
 
-  const { data } = await api.get<unknown[]>('/crm/tasks/overview', { params });
-  const list = Array.isArray(data) ? data : [];
-  return list
+  const res = await api.get<unknown[]>('/crm/tasks/overview', { params });
+  const list = Array.isArray(res.data) ? res.data : [];
+  const headers = res.headers as Record<string, unknown> | undefined;
+  const tasks = list
     .map((row) => mapWorkTask(row as Record<string, unknown>))
     .filter((t) => t.id && t.lead_id);
+  const pending = headerInt(headers, 'x-count-pending');
+  const inProgress = headerInt(headers, 'x-count-in-progress');
+  const done = headerInt(headers, 'x-count-done');
+  return {
+    tasks,
+    hasMore: limit ? headerHasMore(headers, list.length >= limit) : false,
+    total: headerInt(headers, 'x-total'),
+    counts:
+      pending != null || inProgress != null || done != null
+        ? {
+            pending: pending || 0,
+            inProgress: inProgress || 0,
+            done: done || 0,
+          }
+        : null,
+  };
+}
+
+export async function fetchLogisticsWorkTasks(query: WorkTasksQuery = {}): Promise<WorkTask[]> {
+  const page = await fetchLogisticsWorkTasksPage(query);
+  return page.tasks;
 }
 
 export async function fetchMyLogisticsTasks(

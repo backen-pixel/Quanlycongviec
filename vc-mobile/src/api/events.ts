@@ -125,7 +125,10 @@ export function eventsApiError(e: unknown, fallback = 'Có lỗi xảy ra'): str
   return ax?.response?.data?.error || ax?.message || fallback;
 }
 
-/** Lấy sự kiện theo khoảng ngày (YYYY-MM-DD). Dùng cho cả tuần & tháng. */
+const EVENTS_PAGE_SIZE = 80;
+const EVENTS_MAX_ROWS = 1600;
+
+/** Lấy sự kiện theo khoảng ngày (YYYY-MM-DD). Phân trang offset 80 — không dump 500 một lần. */
 export async function fetchEventsRange(opts: {
   dateFrom: string;
   dateTo: string;
@@ -138,21 +141,35 @@ export async function fetchEventsRange(opts: {
   regionId?: string;
   signal?: AbortSignal;
 }): Promise<AppEvent[]> {
-  const params: Record<string, string | number> = {
-    date_from: opts.dateFrom,
-    date_to: opts.dateTo,
-    limit: 500,
-  };
-  if (opts.companyId) params.company_id = opts.companyId;
-  if (opts.search?.trim()) params.search = opts.search.trim();
-  if (opts.status) params.status = opts.status;
-  if (opts.type) params.type = opts.type;
-  if (opts.module) params.module = opts.module;
-  if (opts.userId) params.user_id = opts.userId;
-  if (opts.regionId) params.region_id = opts.regionId;
+  const all: AppEvent[] = [];
+  let offset = 0;
+  while (all.length < EVENTS_MAX_ROWS) {
+    const params: Record<string, string | number> = {
+      date_from: opts.dateFrom,
+      date_to: opts.dateTo,
+      limit: EVENTS_PAGE_SIZE,
+      offset,
+    };
+    if (opts.companyId) params.company_id = opts.companyId;
+    if (opts.search?.trim()) params.search = opts.search.trim();
+    if (opts.status) params.status = opts.status;
+    if (opts.type) params.type = opts.type;
+    if (opts.module) params.module = opts.module;
+    if (opts.userId) params.user_id = opts.userId;
+    if (opts.regionId) params.region_id = opts.regionId;
 
-  const { data } = await api.get<{ events?: ApiEvent[] }>('/events', { params, signal: opts.signal });
-  return (data?.events || []).map(mapEvent);
+    const { data } = await api.get<{ events?: ApiEvent[]; total?: number }>('/events', {
+      params,
+      signal: opts.signal,
+    });
+    const chunk = Array.isArray(data?.events) ? data.events : [];
+    for (const row of chunk) all.push(mapEvent(row));
+    const total = Number(data?.total);
+    if (chunk.length < EVENTS_PAGE_SIZE) break;
+    if (Number.isFinite(total) && all.length >= total) break;
+    offset += EVENTS_PAGE_SIZE;
+  }
+  return all;
 }
 
 export async function fetchEventById(id: string, signal?: AbortSignal): Promise<AppEvent> {

@@ -62,8 +62,26 @@ r.get('/tasks/overview', async (req, res) => {
       rows = rows.filter((t) => !String(t.stage_slug || '').startsWith('sx_'));
     }
     const limitRaw = parseInt(String(req.query.limit || ''), 10);
-    if (Number.isFinite(limitRaw) && limitRaw > 0) {
-      rows = rows.slice(0, Math.min(limitRaw, 500));
+    const offsetRaw = parseInt(String(req.query.offset || ''), 10);
+    const paged = Number.isFinite(limitRaw) && limitRaw > 0;
+    const pageLimit = paged ? Math.min(Math.max(limitRaw, 1), 500) : 0;
+    const pageOffset = Number.isFinite(offsetRaw) && offsetRaw > 0 ? offsetRaw : 0;
+    let pendingCount = 0;
+    let progressCount = 0;
+    let doneCount = 0;
+    for (const t of rows) {
+      const s = String(t?.status || 'pending').toLowerCase();
+      if (s === 'completed' || s === 'done') doneCount += 1;
+      else if (s === 'in_progress') progressCount += 1;
+      else pendingCount += 1;
+    }
+    if (paged) {
+      res.setHeader('X-Total', String(rows.length));
+      res.setHeader('X-Count-Pending', String(pendingCount));
+      res.setHeader('X-Count-In-Progress', String(progressCount));
+      res.setHeader('X-Count-Done', String(doneCount));
+      res.setHeader('X-Has-More', pageOffset + pageLimit < rows.length ? '1' : '0');
+      rows = rows.slice(pageOffset, pageOffset + pageLimit);
     }
     res.json(rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
