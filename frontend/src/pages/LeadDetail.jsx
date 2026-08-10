@@ -477,8 +477,23 @@ export default function LeadDetail() {
           parentSxLeadKind,
         );
         if (dealStageWonPick) {
-          if (dealStageWonWorkTypeId && !inList(dealStageWonWorkTypeId)) setDealStageWonWorkTypeId(suggested || '');
-          else if (!dealStageWonWorkTypeId && suggested) setDealStageWonWorkTypeId(suggested);
+          const nextType = (dealStageWonWorkTypeId && inList(dealStageWonWorkTypeId))
+            ? dealStageWonWorkTypeId
+            : (suggested || '');
+          if (nextType !== dealStageWonWorkTypeId) setDealStageWonWorkTypeId(nextType);
+          // Đồng bộ targets — validate đọc mảng này, không chỉ state dropdown.
+          setDealStageWonTargets((prev) => {
+            if (prev.length > 1) {
+              return prev.map((row, i) => (
+                i === 0 && nextType && !(row.workshopTypeId || row.workshop_type_id)
+                  ? { ...row, workshopTypeId: nextType }
+                  : row
+              ));
+            }
+            const cid = dealStageWonCompanyId || prev[0]?.companyId || '';
+            if (!cid) return prev;
+            return [{ companyId: cid, workshopTypeId: nextType }];
+          });
         }
         if (pickProjectCompanyOpen) {
           if (pickProjectCompanyWorkTypeId && !inList(pickProjectCompanyWorkTypeId)) setPickProjectCompanyWorkTypeId(suggested || '');
@@ -1524,6 +1539,8 @@ export default function LeadDetail() {
         return;
       }
       setDealStageWonErr('');
+      setDealStageWonWorkTypeId('');
+      setDealStageWonTargets([]);
       setDealStageWonCompanyId(
         lead.company_id
           ? String(lead.company_id)
@@ -1571,11 +1588,22 @@ export default function LeadDetail() {
   };
 
   const confirmDealStageWonProduction = async () => {
-    const targets = dealStageWonTargets.length
+    let targets = dealStageWonTargets.length
       ? dealStageWonTargets
       : (dealStageWonCompanyId
         ? [{ companyId: dealStageWonCompanyId, workshopTypeId: dealStageWonWorkTypeId }]
         : []);
+    // Dropdown 1 dòng có thể đã auto-chọn loại, nhưng targets còn workshopTypeId rỗng.
+    if (targets.length === 1 && dealStageWonWorkTypeId) {
+      const t0 = targets[0];
+      if (!(t0.workshopTypeId || t0.workshop_type_id)) {
+        targets = [{
+          ...t0,
+          companyId: t0.companyId || t0.production_company_id || dealStageWonCompanyId,
+          workshopTypeId: dealStageWonWorkTypeId,
+        }];
+      }
+    }
     const err = validateSxTargets(targets);
     if (err) {
       setDealStageWonErr(err);
@@ -1603,11 +1631,21 @@ export default function LeadDetail() {
   };
 
   const submitPickProjectCompany = async () => {
-    const targets = dealStageWonTargets.length
+    let targets = dealStageWonTargets.length
       ? dealStageWonTargets
       : (pickProjectCompanyId
         ? [{ companyId: pickProjectCompanyId, workshopTypeId: pickProjectCompanyWorkTypeId }]
         : []);
+    if (targets.length === 1 && pickProjectCompanyWorkTypeId) {
+      const t0 = targets[0];
+      if (!(t0.workshopTypeId || t0.workshop_type_id)) {
+        targets = [{
+          ...t0,
+          companyId: t0.companyId || t0.production_company_id || pickProjectCompanyId,
+          workshopTypeId: pickProjectCompanyWorkTypeId,
+        }];
+      }
+    }
     const err = validateSxTargets(targets);
     if (err) {
       setPickProjectCompanyErr(err);

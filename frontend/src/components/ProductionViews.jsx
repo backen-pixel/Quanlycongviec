@@ -676,7 +676,20 @@ function PlannerBoardShell({ children }) {
   );
 }
 
-function PlannerColumn({ topBarColor, title, subtitle, count, headerExtras, children, isDragOver, onDragOver, onDragLeave, onDrop }) {
+function PlannerColumn({
+  topBarColor,
+  title,
+  subtitle,
+  count,
+  countTitle,
+  headerExtras,
+  children,
+  isDragOver,
+  onDragOver,
+  onDragLeave,
+  onDrop,
+  bodyRef,
+}) {
   return (
     <div
       onDragOver={onDragOver}
@@ -690,18 +703,167 @@ function PlannerColumn({ topBarColor, title, subtitle, count, headerExtras, chil
           <h3 className="font-semibold text-gray-900 text-force-black truncate text-sm flex-1">{title}</h3>
           <div className="flex items-center gap-1.5 shrink-0">
             {headerExtras}
-            <span className="px-2 py-0.5 bg-gray-100 text-gray-700 font-bold rounded text-[10px]">{count}</span>
+            <span
+              className="px-2 py-0.5 bg-gray-100 text-gray-700 font-bold rounded text-[10px]"
+              title={countTitle || undefined}
+            >
+              {count}
+            </span>
           </div>
         </div>
         {subtitle && <p className="text-[10px] text-gray-500">{subtitle}</p>}
       </div>
       <div
-        className={`border border-gray-200 border-t-0 overflow-y-auto p-2 space-y-2 bg-transparent ${isDragOver ? 'bg-blue-50/40' : ''}`}
+        ref={bodyRef}
+        className={`border border-gray-200 border-t-0 overflow-y-auto p-2 space-y-2 bg-transparent overscroll-y-contain [scrollbar-gutter:stable] ${isDragOver ? 'bg-blue-50/40' : ''}`}
         style={{ maxHeight: '70vh', minHeight: '160px' }}
       >
         {children}
       </div>
     </div>
+  );
+}
+
+/**
+ * Cột Deadline: lazy render thẻ (hiện dần khi cuộn xuống), giữ thẻ đã mount khi cuộn lên.
+ * Tải thêm theo bucket API — không phụ thuộc phân trang cột Kanban.
+ */
+function DeadlineBucketColumn({
+  bucket,
+  items,
+  serverTotal,
+  subtitle,
+  isDragOver,
+  onDragOver,
+  onDragLeave,
+  onDrop,
+  draggingId,
+  savingId,
+  onDragStartItem,
+  onDragEndItem,
+  goProject,
+  onNeedMore,
+  loadingMore = false,
+  canLoadMore = true,
+}) {
+  const INITIAL = 24;
+  const STEP = 24;
+  const [visibleCount, setVisibleCount] = useState(INITIAL);
+  const bodyRef = useRef(null);
+  const sentinelRef = useRef(null);
+  const busyRef = useRef(false);
+  const itemsLen = items.length;
+  const serverN = Number(serverTotal);
+  const displayTotal = Number.isFinite(serverN) ? Math.max(serverN, itemsLen) : itemsLen;
+  const hasMoreLocal = visibleCount < itemsLen;
+  const hasMoreServer = Number.isFinite(serverN) && itemsLen < serverN;
+  const columnLoading = Boolean(loadingMore && hasMoreServer);
+  const canFetchMore = Boolean(hasMoreServer && canLoadMore && typeof onNeedMore === 'function');
+
+  useEffect(() => {
+    setVisibleCount(INITIAL);
+    busyRef.current = false;
+    if (bodyRef.current) bodyRef.current.scrollTop = 0;
+  }, [bucket.key]);
+
+  useEffect(() => {
+    setVisibleCount((c) => {
+      if (itemsLen <= 0) return INITIAL;
+      if (c >= itemsLen) return itemsLen;
+      if (c >= Math.max(0, itemsLen - STEP - 4)) {
+        return Math.min(itemsLen, c + STEP);
+      }
+      return Math.min(Math.max(c, INITIAL), itemsLen);
+    });
+  }, [itemsLen]);
+
+  useEffect(() => {
+    const root = bodyRef.current;
+    const sentinel = sentinelRef.current;
+    if (!root || !sentinel) return undefined;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((e) => e.isIntersecting) || busyRef.current) return;
+        if (visibleCount < itemsLen) {
+          busyRef.current = true;
+          setVisibleCount((c) => Math.min(itemsLen, c + STEP));
+          requestAnimationFrame(() => { busyRef.current = false; });
+          return;
+        }
+        if (canFetchMore && !loadingMore) {
+          busyRef.current = true;
+          onNeedMore(bucket.key);
+          window.setTimeout(() => { busyRef.current = false; }, 600);
+        }
+      },
+      { root, rootMargin: '280px 0px', threshold: 0 },
+    );
+    io.observe(sentinel);
+    return () => io.disconnect();
+  }, [visibleCount, itemsLen, canFetchMore, loadingMore, onNeedMore, bucket.key]);
+
+  const shown = items.slice(0, Math.min(visibleCount, itemsLen));
+  const countTitle = Number.isFinite(serverN) && itemsLen < serverN
+    ? `Đã tải ${itemsLen}/${serverN} (cuộn xuống để tải thêm)`
+    : undefined;
+
+  return (
+    <PlannerColumn
+      topBarColor={bucket.color}
+      title={bucket.label}
+      count={displayTotal}
+      countTitle={countTitle}
+      subtitle={subtitle}
+      isDragOver={isDragOver}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+      bodyRef={bodyRef}
+    >
+      {itemsLen === 0 ? (
+        <div className="flex flex-col items-center justify-center min-h-[120px] text-gray-400 gap-1 px-2">
+          <p className="text-sm">
+            {isDragOver
+              ? '⬇️ Thả vào đây'
+              : columnLoading
+                ? 'Đang tải…'
+                : '—'}
+          </p>
+          {hasMoreServer && !isDragOver && (
+            <>
+              <div ref={sentinelRef} className="h-3 shrink-0" aria-hidden />
+              <p className="text-[10px] text-gray-400 tabular-nums">
+                {columnLoading ? `0/${displayTotal}` : `Đã tải 0/${displayTotal}`}
+              </p>
+            </>
+          )}
+        </div>
+      ) : (
+        <>
+          {shown.map((item) => (
+            <div
+              key={item.id}
+              draggable
+              onDragStart={() => onDragStartItem?.(item.id)}
+              onDragEnd={onDragEndItem}
+              className={`${draggingId === item.id ? 'opacity-40' : ''} ${savingId === item.id ? 'pointer-events-none opacity-70' : ''}`}
+            >
+              <DeadlineCard item={item} goProject={goProject} />
+            </div>
+          ))}
+          {(hasMoreLocal || hasMoreServer) && (
+            <>
+              <div ref={sentinelRef} className="h-3 shrink-0" aria-hidden />
+              <p className="text-center text-[10px] text-gray-400 py-1 tabular-nums">
+                {columnLoading
+                  ? 'Đang tải thêm…'
+                  : `Hiển thị ${shown.length}/${displayTotal}`}
+              </p>
+            </>
+          )}
+        </>
+      )}
+    </PlannerColumn>
   );
 }
 
@@ -1127,7 +1289,13 @@ function DeadlineCard({ item, goProject }) {
   );
 }
 
-export function ProductionDeadlineView({ pipeline, bucketTotals }) {
+export function ProductionDeadlineView({
+  pipeline,
+  bucketTotals,
+  onLoadBucketMore,
+  bucketLoading = {},
+  bucketPageState = {},
+}) {
   const navigate = useNavigate();
   const goProject = (projectId) => {
     markWorkshopPipelineCardFocus(projectId, 'sx');
@@ -1166,7 +1334,33 @@ export function ProductionDeadlineView({ pipeline, bucketTotals }) {
     return out;
   }, [pipeline, todayMs, localOverride]);
 
-  const totalCount = SX_DEADLINE_BUCKETS.reduce((n, b) => n + (grouped[b.key]?.length || 0), 0);
+  const loadedCount = SX_DEADLINE_BUCKETS.reduce((n, b) => n + (grouped[b.key]?.length || 0), 0);
+  const serverTotalAll = SX_DEADLINE_BUCKETS.reduce((n, b) => {
+    const v = Number(bucketTotals?.[b.key]);
+    return n + (Number.isFinite(v) ? v : (grouped[b.key]?.length || 0));
+  }, 0);
+  const totalCount = Math.max(loadedCount, serverTotalAll);
+
+  const requestBucketMore = useCallback((bucketKey) => {
+    if (typeof onLoadBucketMore !== 'function') return;
+    onLoadBucketMore(bucketKey);
+  }, [onLoadBucketMore]);
+
+  // Mở Deadline: lần lượt tải trang bucket còn thiếu (1 request tại một thời điểm).
+  useEffect(() => {
+    if (typeof onLoadBucketMore !== 'function') return undefined;
+    if (Object.values(bucketLoading || {}).some(Boolean)) return undefined;
+    const next = SX_DEADLINE_BUCKETS.find((b) => {
+      const serverN = Number(bucketTotals?.[b.key]);
+      const localN = grouped[b.key]?.length || 0;
+      if (!Number.isFinite(serverN) || serverN <= 0 || localN >= serverN) return false;
+      if (bucketPageState?.[b.key]?.hasMore === false) return false;
+      return true;
+    });
+    if (!next) return undefined;
+    const t = window.setTimeout(() => { onLoadBucketMore(next.key); }, 120);
+    return () => window.clearTimeout(t);
+  }, [bucketTotals, grouped, onLoadBucketMore, bucketLoading, bucketPageState]);
 
   const handleDrop = async (toBucket) => {
     const id = draggingId;
@@ -1227,13 +1421,12 @@ export function ProductionDeadlineView({ pipeline, bucketTotals }) {
           const totalValue = items.reduce((s, it) => s + (Number(it.estimated_value) || 0), 0);
           const isDragOver = dragOverKey === b.key;
           const serverBucketTotal = Number(bucketTotals?.[b.key]);
-          const columnCount = Number.isFinite(serverBucketTotal) ? serverBucketTotal : items.length;
           return (
-            <PlannerColumn
+            <DeadlineBucketColumn
               key={b.key}
-              topBarColor={b.color}
-              title={b.label}
-              count={columnCount}
+              bucket={b}
+              items={items}
+              serverTotal={serverBucketTotal}
               subtitle={!HIDE_PRODUCTION_DEAL_VALUES && totalValue > 0 ? `Giá trị: ${formatVND(totalValue)}` : undefined}
               isDragOver={isDragOver}
               onDragOver={(e) => {
@@ -1243,25 +1436,15 @@ export function ProductionDeadlineView({ pipeline, bucketTotals }) {
               }}
               onDragLeave={(e) => { if (e.target === e.currentTarget) setDragOverKey(null); }}
               onDrop={(e) => { e.preventDefault(); handleDrop(b.key); }}
-            >
-              {items.length === 0 ? (
-                <div className="flex items-center justify-center h-full text-gray-400">
-                  <p className="text-sm">{isDragOver ? '⬇️ Thả vào đây' : '—'}</p>
-                </div>
-              ) : (
-                items.map((item) => (
-                  <div
-                    key={item.id}
-                    draggable
-                    onDragStart={() => setDraggingId(item.id)}
-                    onDragEnd={() => { setDraggingId(null); setDragOverKey(null); }}
-                    className={`${draggingId === item.id ? 'opacity-40' : ''} ${savingId === item.id ? 'pointer-events-none opacity-70' : ''}`}
-                  >
-                    <DeadlineCard item={item} goProject={goProject} />
-                  </div>
-                ))
-              )}
-            </PlannerColumn>
+              draggingId={draggingId}
+              savingId={savingId}
+              onDragStartItem={setDraggingId}
+              onDragEndItem={() => { setDraggingId(null); setDragOverKey(null); }}
+              goProject={goProject}
+              onNeedMore={requestBucketMore}
+              loadingMore={!!bucketLoading?.[b.key]}
+              canLoadMore={bucketPageState?.[b.key]?.hasMore !== false}
+            />
           );
         })}
       </PlannerBoardShell>

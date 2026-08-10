@@ -419,10 +419,90 @@ async function loadSxKanbanColumnSummary(ctx) {
   }
 }
 
+const DEADLINE_BUCKET_KEYS = Object.keys(EMPTY_DEADLINE_COUNTS);
+
+/**
+ * Trang dự án theo deadline bucket (Quá hạn / Hôm nay / …) — cùng filter summary.
+ * Trả ids đã sort theo ngày deadline ASC để FE merge vào board.
+ */
+async function loadSxDeadlineBucketPage(ctx, { bucket, offset = 0, limit = 24 } = {}) {
+  const bucketKey = String(bucket || '').trim();
+  if (!DEADLINE_BUCKET_KEYS.includes(bucketKey)) {
+    return { ids: [], total: 0, nextOffset: 0, hasMore: false, bucket: bucketKey };
+  }
+  const safeOffset = Math.max(parseInt(offset, 10) || 0, 0);
+  const safeLimit = Math.min(Math.max(parseInt(limit, 10) || 24, 1), 50);
+
+  const [restrictIds, stageById] = await Promise.all([
+    resolveSxVisibilityRestrictIds(
+      ctx.req.user,
+      ctx.company_id,
+      ctx.sx_workshop_company_id,
+      ctx.deal_company_id,
+    ),
+    loadStageFlagsById(ctx.company_id, ctx.workshop_type_id),
+  ]);
+  const fullCtx = { ...ctx, restrictIds };
+
+  if (restrictIds !== null && restrictIds !== undefined && !restrictIds.length) {
+    return { ids: [], total: 0, nextOffset: 0, hasMore: false, bucket: bucketKey };
+  }
+  if (String(fullCtx.sx_intake) === '1' && !fullCtx.wonIds?.length) {
+    return { ids: [], total: 0, nextOffset: 0, hasMore: false, bucket: bucketKey };
+  }
+
+  const PAGE = 1000;
+  const MAX = 20000;
+  const todayYmd = formatVnYmd(new Date());
+  const entries = [];
+  let cursor = 0;
+  let selectCols = 'id, sx_kanban_column_id, delivery_date, production_deadline, deadline';
+
+  while (cursor < MAX) {
+    let q = supabase.from('projects').select(selectCols);
+    const applied = applySxSummaryFiltersSync(q, { ...fullCtx, columnMode: undefined });
+    if (applied.empty) {
+      return { ids: [], total: 0, nextOffset: 0, hasMore: false, bucket: bucketKey };
+    }
+    q = applied.query.order('id', { ascending: true }).range(cursor, cursor + PAGE - 1);
+    let { data, error } = await q;
+    if (error && /sx_intake|column .* does not exist/i.test(String(error.message || ''))) {
+      selectCols = selectCols.split(', ').filter((c) => c !== 'sx_intake').join(', ');
+      continue;
+    }
+    if (error) throw error;
+    const batch = data || [];
+    for (const row of batch) {
+      const colId = row?.sx_kanban_column_id ? String(row.sx_kanban_column_id) : null;
+      const stage = colId ? stageById.get(colId) : null;
+      const b = resolveSxDeadlineBucketKey(row, stage, todayYmd);
+      if (b !== bucketKey) continue;
+      const ymd = toVnDeadlineYmd(row?.delivery_date || row?.production_deadline || row?.deadline) || '9999-99-99';
+      entries.push({ id: String(row.id), ymd });
+    }
+    if (batch.length < PAGE) break;
+    cursor += batch.length;
+  }
+
+  entries.sort((a, b) => a.ymd.localeCompare(b.ymd) || a.id.localeCompare(b.id));
+  const total = entries.length;
+  const page = entries.slice(safeOffset, safeOffset + safeLimit);
+  const nextOffset = safeOffset + page.length;
+  return {
+    ids: page.map((e) => e.id),
+    total,
+    nextOffset,
+    hasMore: nextOffset < total,
+    bucket: bucketKey,
+  };
+}
+
 module.exports = {
   loadSxKanbanColumnSummary,
+  loadSxDeadlineBucketPage,
   resolveSxVisibilityRestrictIds,
   // export nhỏ để unit/smoke nếu cần
   resolveSxDeadlineBucketKey,
   toVnDeadlineYmd,
+  DEADLINE_BUCKET_KEYS,
 };
