@@ -1477,7 +1477,17 @@ export default function CRMDashboard() {
         );
         const stillValid = dealWonProductionWorkshopTypeId
           && list.some((t) => String(t.id) === String(dealWonProductionWorkshopTypeId));
-        if (!stillValid) setDealWonProductionWorkshopTypeId(sug || '');
+        const nextTypeId = stillValid ? dealWonProductionWorkshopTypeId : (sug || '');
+        if (!stillValid) setDealWonProductionWorkshopTypeId(nextTypeId);
+        // Đồng bộ targets khi auto-gợi ý (tránh validate thấy workshopTypeId rỗng dù UI đã chọn).
+        if (nextTypeId) {
+          setDealWonSxTargets((prev) => {
+            if (prev.length !== 1) return prev;
+            if (String(prev[0].companyId || '') !== String(dealWonProductionCompanyId)) return prev;
+            if (String(prev[0].workshopTypeId || '') === String(nextTypeId)) return prev;
+            return [{ companyId: dealWonProductionCompanyId, workshopTypeId: nextTypeId }];
+          });
+        }
       })
       .catch(() => { if (!cancelled) setDealWonProductionWorkshopTypes([]); })
       .finally(() => { if (!cancelled) setDealWonProductionWorkshopLoading(false); });
@@ -6052,7 +6062,15 @@ export default function CRMDashboard() {
 
   const confirmDealWonProduction = async () => {
     if (!dealWonPendingRef.current) return;
-    const err = validateSxTargets(dealWonSxTargets);
+    let targets = Array.isArray(dealWonSxTargets) ? dealWonSxTargets : [];
+    if (targets.length <= 1 && dealWonProductionCompanyId) {
+      const tid = targets[0]?.workshopTypeId || dealWonProductionWorkshopTypeId || '';
+      targets = [{
+        companyId: targets[0]?.companyId || dealWonProductionCompanyId,
+        workshopTypeId: tid,
+      }];
+    }
+    const err = validateSxTargets(targets);
     if (err) {
       setDealWonProductionError(err);
       return;
@@ -6061,7 +6079,7 @@ export default function CRMDashboard() {
     if (!ctx) return;
     dealWonPendingRef.current = false;
     setDealWonProductionError('');
-    const apiTargets = sxTargetsToApiPayload(dealWonSxTargets);
+    const apiTargets = sxTargetsToApiPayload(targets);
     const nextExtra = {
       ...ctx.extraData,
       production_company_id: apiTargets[0]?.production_company_id,

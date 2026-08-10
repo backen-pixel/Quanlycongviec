@@ -477,12 +477,44 @@ export default function LeadDetail() {
           parentSxLeadKind,
         );
         if (dealStageWonPick) {
-          if (dealStageWonWorkTypeId && !inList(dealStageWonWorkTypeId)) setDealStageWonWorkTypeId(suggested || '');
-          else if (!dealStageWonWorkTypeId && suggested) setDealStageWonWorkTypeId(suggested);
+          let nextTypeId = dealStageWonWorkTypeId;
+          if (dealStageWonWorkTypeId && !inList(dealStageWonWorkTypeId)) nextTypeId = suggested || '';
+          else if (!dealStageWonWorkTypeId && suggested) nextTypeId = suggested;
+          if (nextTypeId !== dealStageWonWorkTypeId) setDealStageWonWorkTypeId(nextTypeId);
+          // Đồng bộ targets: UI select dùng workTypeId, nhưng confirm validate qua targets
+          // (khi chọn công ty targets bị ghi workshopTypeId='' rồi auto-gợi ý chỉ cập nhật select).
+          setDealStageWonTargets((prev) => {
+            if (prev.length > 1) return prev;
+            if (!activeCompanyId) return prev;
+            const tid = nextTypeId || '';
+            if (
+              prev.length === 1
+              && String(prev[0].companyId || '') === String(activeCompanyId)
+              && String(prev[0].workshopTypeId || '') === String(tid)
+            ) {
+              return prev;
+            }
+            return [{ companyId: activeCompanyId, workshopTypeId: tid }];
+          });
         }
         if (pickProjectCompanyOpen) {
-          if (pickProjectCompanyWorkTypeId && !inList(pickProjectCompanyWorkTypeId)) setPickProjectCompanyWorkTypeId(suggested || '');
-          else if (!pickProjectCompanyWorkTypeId && suggested) setPickProjectCompanyWorkTypeId(suggested);
+          let nextTypeId = pickProjectCompanyWorkTypeId;
+          if (pickProjectCompanyWorkTypeId && !inList(pickProjectCompanyWorkTypeId)) nextTypeId = suggested || '';
+          else if (!pickProjectCompanyWorkTypeId && suggested) nextTypeId = suggested;
+          if (nextTypeId !== pickProjectCompanyWorkTypeId) setPickProjectCompanyWorkTypeId(nextTypeId);
+          setDealStageWonTargets((prev) => {
+            if (prev.length > 1) return prev;
+            if (!activeCompanyId) return prev;
+            const tid = nextTypeId || '';
+            if (
+              prev.length === 1
+              && String(prev[0].companyId || '') === String(activeCompanyId)
+              && String(prev[0].workshopTypeId || '') === String(tid)
+            ) {
+              return prev;
+            }
+            return [{ companyId: activeCompanyId, workshopTypeId: tid }];
+          });
         }
         if (reassignSxOpen) {
           if (reassignSxWorkTypeId && !inList(reassignSxWorkTypeId)) setReassignSxWorkTypeId(suggested || '');
@@ -1524,11 +1556,14 @@ export default function LeadDetail() {
         return;
       }
       setDealStageWonErr('');
-      setDealStageWonCompanyId(
-        lead.company_id
+      setDealStageWonWorkTypeId('');
+      {
+        const initialCo = lead.company_id
           ? String(lead.company_id)
-          : (isAdminUser ? findDefaultAdminCompanyPhucDat(productionCompaniesSx) : ''),
-      );
+          : (isAdminUser ? findDefaultAdminCompanyPhucDat(productionCompaniesSx) : '');
+        setDealStageWonCompanyId(initialCo);
+        setDealStageWonTargets(initialCo ? [{ companyId: initialCo, workshopTypeId: '' }] : []);
+      }
       setDealStageWonPick({ stageId, extraData, targetStage });
       return;
     }
@@ -1571,11 +1606,16 @@ export default function LeadDetail() {
   };
 
   const confirmDealStageWonProduction = async () => {
-    const targets = dealStageWonTargets.length
+    let targets = dealStageWonTargets.length
       ? dealStageWonTargets
       : (dealStageWonCompanyId
         ? [{ companyId: dealStageWonCompanyId, workshopTypeId: dealStageWonWorkTypeId }]
         : []);
+    // Single-row: ưu tiên phân loại đang hiện trên select nếu targets còn rỗng (auto-gợi ý).
+    if (targets.length <= 1 && dealStageWonCompanyId) {
+      const tid = targets[0]?.workshopTypeId || dealStageWonWorkTypeId || '';
+      targets = [{ companyId: targets[0]?.companyId || dealStageWonCompanyId, workshopTypeId: tid }];
+    }
     const err = validateSxTargets(targets);
     if (err) {
       setDealStageWonErr(err);
@@ -1603,11 +1643,15 @@ export default function LeadDetail() {
   };
 
   const submitPickProjectCompany = async () => {
-    const targets = dealStageWonTargets.length
+    let targets = dealStageWonTargets.length
       ? dealStageWonTargets
       : (pickProjectCompanyId
         ? [{ companyId: pickProjectCompanyId, workshopTypeId: pickProjectCompanyWorkTypeId }]
         : []);
+    if (targets.length <= 1 && pickProjectCompanyId) {
+      const tid = targets[0]?.workshopTypeId || pickProjectCompanyWorkTypeId || '';
+      targets = [{ companyId: targets[0]?.companyId || pickProjectCompanyId, workshopTypeId: tid }];
+    }
     const err = validateSxTargets(targets);
     if (err) {
       setPickProjectCompanyErr(err);
@@ -4061,7 +4105,12 @@ export default function LeadDetail() {
       {dealStageWonPick && (
         <div
           className="fixed inset-0 bg-black/40 flex items-center justify-center z-[60] p-4"
-          onClick={() => { setDealStageWonPick(null); setDealStageWonErr(''); setDealStageWonWorkTypeId(''); }}
+          onClick={() => {
+            setDealStageWonPick(null);
+            setDealStageWonErr('');
+            setDealStageWonWorkTypeId('');
+            setDealStageWonTargets([]);
+          }}
         >
           <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center gap-2 mb-2">
@@ -4172,7 +4221,12 @@ export default function LeadDetail() {
               <button
                 type="button"
                 className="flex-1 h-10 border border-gray-200 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50"
-                onClick={() => { setDealStageWonPick(null); setDealStageWonErr(''); setDealStageWonWorkTypeId(''); }}
+                onClick={() => {
+                  setDealStageWonPick(null);
+                  setDealStageWonErr('');
+                  setDealStageWonWorkTypeId('');
+                  setDealStageWonTargets([]);
+                }}
               >
                 Hủy
               </button>
@@ -4191,7 +4245,13 @@ export default function LeadDetail() {
       {pickProjectCompanyOpen && lead?.type === 'deal' && !lead?.project_id && (
         <div
           className="fixed inset-0 bg-black/40 flex items-center justify-center z-[60] p-4"
-          onClick={() => { setPickProjectCompanyOpen(false); projectCompanyPickRef.current = false; setPickProjectCompanyErr(''); setPickProjectCompanyWorkTypeId(''); }}
+          onClick={() => {
+            setPickProjectCompanyOpen(false);
+            projectCompanyPickRef.current = false;
+            setPickProjectCompanyErr('');
+            setPickProjectCompanyWorkTypeId('');
+            setDealStageWonTargets([]);
+          }}
         >
           <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center gap-2 mb-2">
@@ -4263,7 +4323,11 @@ export default function LeadDetail() {
                 </label>
                 <select
                   value={pickProjectCompanyWorkTypeId}
-                  onChange={(e) => { setPickProjectCompanyWorkTypeId(e.target.value); setPickProjectCompanyErr(''); }}
+                  onChange={(e) => {
+                    setPickProjectCompanyWorkTypeId(e.target.value);
+                    setPickProjectCompanyErr('');
+                    setDealStageWonTargets([{ companyId: pickProjectCompanyId, workshopTypeId: e.target.value }]);
+                  }}
                   disabled={wonModalWorkTypesLoading || parentWonTypesForSelect.length === 0}
                   className="w-full h-11 px-3 border border-gray-200 rounded-xl text-sm bg-white disabled:bg-gray-50 disabled:text-gray-400"
                 >
@@ -4298,7 +4362,13 @@ export default function LeadDetail() {
               <button
                 type="button"
                 className="flex-1 h-10 border border-gray-200 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50"
-                onClick={() => { setPickProjectCompanyOpen(false); projectCompanyPickRef.current = false; setPickProjectCompanyErr(''); setPickProjectCompanyWorkTypeId(''); }}
+                onClick={() => {
+                  setPickProjectCompanyOpen(false);
+                  projectCompanyPickRef.current = false;
+                  setPickProjectCompanyErr('');
+                  setPickProjectCompanyWorkTypeId('');
+                  setDealStageWonTargets([]);
+                }}
               >
                 Để sau
               </button>
