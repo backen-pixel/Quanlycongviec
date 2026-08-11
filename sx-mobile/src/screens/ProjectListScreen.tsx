@@ -13,7 +13,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatApiError } from '../api/client';
 import TapHighlight from '../components/TapHighlight';
 import { useTheme } from '../context/ThemeContext';
-import { fetchProductionBoard, type BoardFilters } from '../lib/productionApi';
+import { fetchProductionBoard, isAbortError, type BoardFilters } from '../lib/productionApi';
 import { getCachedBoard, isCachedBoardFresh } from '../lib/productionBoardCache';
 import { loadKanbanFilters } from '../lib/kanbanFilterStorage';
 import { REALTIME_BOARD_TASK } from '../lib/realtimeModes';
@@ -56,6 +56,7 @@ export default function ProjectListScreen() {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const loadSeqRef = useRef(0);
+  const boardAbortRef = useRef<AbortController | null>(null);
   const filtersRef = useRef<BoardFilters>({});
 
   const styles = useMemo(
@@ -120,6 +121,9 @@ export default function ProjectListScreen() {
   );
 
   const load = useCallback(async (mode: 'init' | 'refresh' | 'silent' = 'init') => {
+    boardAbortRef.current?.abort();
+    const ac = new AbortController();
+    boardAbortRef.current = ac;
     const seq = ++loadSeqRef.current;
     if (mode === 'init') setLoading(true);
     else if (mode === 'refresh') setRefreshing(true);
@@ -138,6 +142,7 @@ export default function ProjectListScreen() {
         if (mode === 'init') setLoading(false);
       }
       const data = await fetchProductionBoard(mode === 'refresh', filters, {
+        signal: ac.signal,
         onPartial: (partial) => {
           if (seq !== loadSeqRef.current) return;
           setBoard(partial);
@@ -147,7 +152,7 @@ export default function ProjectListScreen() {
       if (seq !== loadSeqRef.current) return;
       setBoard(data);
     } catch (e) {
-      if (seq !== loadSeqRef.current) return;
+      if (seq !== loadSeqRef.current || isAbortError(e)) return;
       if (mode !== 'silent') setError(formatApiError(e));
     } finally {
       if (seq === loadSeqRef.current) {
@@ -155,6 +160,10 @@ export default function ProjectListScreen() {
         setRefreshing(false);
       }
     }
+  }, []);
+
+  useEffect(() => () => {
+    boardAbortRef.current?.abort();
   }, []);
 
   useEffect(() => {

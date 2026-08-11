@@ -5,6 +5,11 @@ export type KanbanStage = {
   color?: string | null;
   icon?: string | null;
   order_index: number;
+  /**
+   * Slug workflow / cột (production | delivery | customer-care…).
+   * Dùng để biết status shipping do cột SX sinh ra — không ép sang bàn giao VC.
+   */
+  slug?: string | null;
   bucket_slug?: string | null;
   workflow_stage_id?: string | null;
   workshop_type_id?: string | null;
@@ -35,6 +40,10 @@ export type ProductionProject = {
   created_at?: string | null;
   updated_at?: string | null;
   estimated_value?: number | null;
+  /** Giá trị sản xuất (chi phí xưởng) — khớp web production_value. */
+  production_value?: number | null;
+  /** Tiền cọc. */
+  deposit_amount?: number | null;
   /** % hoàn thành nhiệm vụ SX (CRM/workflow). */
   progress?: number;
   /** % tiến độ theo cột pipeline (khớp web). Ưu tiên hiển thị trên card Kanban. */
@@ -112,6 +121,8 @@ export type ProductionBoard = {
   stages: KanbanStage[];
   projects: ProductionProject[];
   kpis: ProductionDashboard | null;
+  /** true = BE còn trang nhưng client đã chạm cap (12×500). */
+  truncated?: boolean;
 };
 
 export type PersonRef = {
@@ -163,6 +174,8 @@ export type CrmTask = {
   title: string;
   status: string;
   stage_slug?: string | null;
+  /** Cột pipeline SX (production_pipeline_stages.id). */
+  production_pipeline_stage_id?: string | null;
   order_index?: number;
   deadline?: string | null;
   due_date?: string | null;
@@ -177,6 +190,7 @@ export type CrmTask = {
   assignees?: PersonRef[];
   creator?: PersonRef | null;
   pipeline_stage?: { id?: string; name?: string | null; order_index?: number } | null;
+  production_pipeline_stage?: { id?: string; name?: string | null; order_index?: number; color?: string | null; icon?: string | null } | null;
 };
 
 export type ProjectActivity = {

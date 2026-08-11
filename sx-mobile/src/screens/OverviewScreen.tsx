@@ -1,55 +1,51 @@
+/**
+ * Tổng quan SX — bố cục giống CRM mobile (hero + banner + KPI + danh sách + lối tắt).
+ * Không còn section «Thông báo mới» (chuông header mở modal).
+ */
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useNavigation } from '@react-navigation/native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
+  Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
-  TouchableOpacity,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatApiError } from '../api/client';
 import Avatar from '../components/Avatar';
 import CommentNotificationsModal from '../components/CommentNotificationsModal';
-import TapHighlight from '../components/TapHighlight';
+import FilterPickerModal from '../components/FilterPickerModal';
 import { useAuth } from '../context/AuthContext';
-import { useNotifications } from '../context/NotificationContext';
 import { useMessenger } from '../context/MessengerContext';
+import { useNotifications } from '../context/NotificationContext';
 import { useTheme } from '../context/ThemeContext';
 import { useProductionRealtime } from '../hooks/useProductionRealtime';
-import type { MainTabParamList } from '../navigation/MainTabs';
-import { useRootNavigation } from '../navigation/useRootNavigation';
-import {
-  fetchCommentNotifications,
-  isWorkshopDealNotification,
-  type SxCommentNotification,
-} from '../lib/notificationApi';
+import { loadKanbanFilters, saveKanbanFilters } from '../lib/kanbanFilterStorage';
 import { ensureNotificationPermission } from '../lib/pushRegistration';
 import {
   fetchCompanies,
   fetchProductionBoard,
   fetchProductionBoardSummary,
+  isAbortError,
   type CompanyOption,
 } from '../lib/productionApi';
 import { getCachedBoard, isCachedBoardFresh } from '../lib/productionBoardCache';
-import { loadKanbanFilters, saveKanbanFilters } from '../lib/kanbanFilterStorage';
-import { REALTIME_BOARD_TASK } from '../lib/realtimeModes';
 import {
   isSystemAdmin,
   workshopCompaniesForCrossViewer,
 } from '../lib/productionFilters';
-import FilterPickerModal from '../components/FilterPickerModal';
+import { REALTIME_BOARD_TASK } from '../lib/realtimeModes';
 import {
   computeSxBoardKpis,
   formatVnWeekdayDate,
-  greetingByHour,
   initialsFrom,
   pickOverdueProjects,
-  pickSoonProjects,
   shortDateLabel,
   type SxBoardKpis,
 } from '../lib/sxBoardKpis';
@@ -59,30 +55,25 @@ import {
   fetchMyProductionTasks,
   fetchProductionWorkTasks,
   formatTaskDeadline,
-  isTaskDone,
+  isTaskInProgress,
   isTaskOverdue,
   isTaskPending,
+  statusPillLabel,
   taskDueIso,
   workTaskFocusCrmId,
+  WORK_TASKS_PAGE_SIZE,
   type WorkTask,
 } from '../lib/workTasksApi';
-import type { ProductionProject } from '../types';
-import { Radii, Spacing, colorWithAlpha, getTaskProgressColor } from '../theme';
+import type { MainTabParamList } from '../navigation/MainTabs';
+import { useRootNavigation } from '../navigation/useRootNavigation';
+import type { KanbanStage, ProductionProject } from '../types';
+import { Radii, Spacing, colorWithAlpha, type AppColors } from '../theme';
 
-const PRIORITY_PAGE_SIZE = 5;
-/** Lấy đủ danh sách để phân trang trên Tổng quan. */
+const PAGE_HPAD = 14;
+const TASK_PAGE_SIZE = 5;
+const DEAL_PAGE_SIZE = 5;
 const PRIORITY_FETCH_LIMIT = 80;
-
-type PrioritySectionKey = 'tasks' | 'deals' | 'soon';
-
-function pageSlice<T>(items: T[], page: number, pageSize: number): T[] {
-  const start = (Math.max(1, page) - 1) * pageSize;
-  return items.slice(start, start + pageSize);
-}
-
-function totalPagesOf(count: number, pageSize: number): number {
-  return Math.max(1, Math.ceil(Math.max(0, count) / pageSize));
-}
+const KPI_CARD_WIDTH = 132;
 
 const EMPTY_KPI: SxBoardKpis = {
   total: 0,
@@ -99,131 +90,98 @@ function firstName(full: string): string {
   return parts[parts.length - 1] || full || 'bạn';
 }
 
-/** Thời gian thông báo: hôm nay = giờ; hôm qua / ngày khác = có ngày để không bị hiểu nhầm. */
-function notifTime(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '';
-  const now = new Date();
-  const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  const startThat = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-  const diffDays = Math.round((startToday - startThat) / 86400000);
-  const hm = d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
-  if (diffDays === 0) return hm;
-  if (diffDays === 1) return `Hôm qua ${hm}`;
-  const dd = String(d.getDate()).padStart(2, '0');
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  if (d.getFullYear() === now.getFullYear()) return `${dd}/${mm} ${hm}`;
-  return `${dd}/${mm}/${d.getFullYear()}`;
+function isOpenWorkTask(t: WorkTask): boolean {
+  return isTaskPending(t.status) || isTaskInProgress(t.status);
 }
 
-function notifListTitle(n: SxCommentNotification): string {
-  if (isWorkshopDealNotification(n)) {
-    const name = n.metadata?.project_name || n.metadata?.deal_title || n.metadata?.project_code;
-    if (name) return String(name);
-    return String(n.title || '')
-      .replace(/^🏭\s*/, '')
-      .replace(/^Deal mới\s*·?\s*/i, '')
-      .trim() || 'Deal xưởng';
-  }
-  const author = n.metadata?.author_name;
-  const code = n.metadata?.project_code;
-  if (author && code) return `${author} · ${code}`;
-  if (author) return author;
-  return String(n.title || n.message || 'Thông báo')
-    .replace(/^💬\s*/, '')
-    .trim();
+function pageSlice<T>(items: T[], page: number, pageSize: number): T[] {
+  const start = (Math.max(1, page) - 1) * pageSize;
+  return items.slice(start, start + pageSize);
 }
 
-function notifListSubtitle(n: SxCommentNotification): string | null {
-  if (isWorkshopDealNotification(n)) {
-    if (n.type === 'workshop_new_deal') return 'Deal mới chờ tiếp nhận';
-    if (n.type === 'project_assigned') return 'Được gán dự án';
-    if (n.type === 'project_created') return 'Dự án mới tạo';
-    return 'Deal xưởng';
-  }
-  const preview = n.metadata?.comment_preview;
-  if (preview) return preview;
-  const msg = String(n.message || '').trim();
-  return msg && msg !== n.title ? msg : null;
+function totalPagesOf(count: number, pageSize: number): number {
+  return Math.max(1, Math.ceil(Math.max(0, count) / pageSize));
 }
 
-function priorityBadge(p: ProductionProject): { label: string; bg: string; fg: string } {
-  if (p.is_overdue) return { label: 'Quá hạn', bg: '#7F1D1D', fg: '#FCA5A5' };
-  const raw = p.delivery_date || p.production_deadline || p.deadline;
-  if (raw) {
-    const t = new Date(raw);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const day = new Date(t);
-    day.setHours(0, 0, 0, 0);
-    const diff = Math.round((day.getTime() - today.getTime()) / 86400000);
-    if (diff >= 0 && diff <= 2) return { label: 'Sắp đến hạn', bg: '#78350F', fg: '#FCD34D' };
-  }
-  return { label: 'Đang thực hiện', bg: '#1E3A5F', fg: '#93C5FD' };
+/** NV thường: chỉ deal mình phụ trách SX. */
+function scopeProjectsForUser(
+  projects: ProductionProject[],
+  opts: { userId: string; ownOnly: boolean },
+): ProductionProject[] {
+  if (!opts.ownOnly || !opts.userId) return projects;
+  return projects.filter((p) => String(p.production_person_id || '') === String(opts.userId));
 }
+
+type KpiTone = 'blue' | 'cyan' | 'muted' | 'green' | 'orange' | 'red';
 
 export default function OverviewScreen() {
-  const { colors, isDark } = useTheme();
-  const styles = useMemo(() => createStyles(colors, isDark), [colors, isDark]);
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const { unreadCount, refreshUnread } = useNotifications();
   const { unreadTotal: messageUnread } = useMessenger();
-  const { openProjectDetail, openOverdueProjects } = useRootNavigation();
+  const { openProjectDetail, openOverdueProjects, openMessages, navigation: rootNav } = useRootNavigation();
   const tabNav = useNavigation<BottomTabNavigationProp<MainTabParamList>>();
 
   const userName = user?.full_name || user?.fullName || user?.email || 'Bạn';
-  const greetName = firstName(userName);
+  const nick = firstName(userName);
   const userId = user?.id || user?.userId || '';
+  const helloLine = `Xin chào, ${nick}!`;
+  const dateLabel = formatVnWeekdayDate();
+  const wishLine = 'Chúc bạn một ngày làm việc hiệu quả!';
 
-  // Không seed từ getAnyCachedBoard (dễ flash KPI sai công ty); load() sẽ hydrate đúng filter.
+  const confirmLogout = useCallback(() => {
+    Alert.alert('Đăng xuất', 'Bạn chắc chắn muốn đăng xuất?', [
+      { text: 'Huỷ', style: 'cancel' },
+      { text: 'Đăng xuất', style: 'destructive', onPress: () => void logout() },
+    ]);
+  }, [logout]);
+
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [kpis, setKpis] = useState<SxBoardKpis>(EMPTY_KPI);
   const [overdueDeals, setOverdueDeals] = useState<ProductionProject[]>([]);
-  const [soonDeals, setSoonDeals] = useState<ProductionProject[]>([]);
   const [tasks, setTasks] = useState<WorkTask[]>([]);
-  const teamWork = canViewTeamWork(user);
-  const [prioOpen, setPrioOpen] = useState<Record<PrioritySectionKey, boolean>>({
-    tasks: false,
-    deals: false,
-    soon: false,
-  });
-  const [prioPage, setPrioPage] = useState<Record<PrioritySectionKey, number>>({
-    tasks: 1,
-    deals: 1,
-    soon: 1,
-  });
-  const [notifs, setNotifs] = useState<SxCommentNotification[]>([]);
+  const [taskPage, setTaskPage] = useState(1);
+  const [dealPage, setDealPage] = useState(1);
   const [companies, setCompanies] = useState<CompanyOption[]>([]);
   const [filterCompany, setFilterCompany] = useState('');
   const [companyPickerOpen, setCompanyPickerOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const boardFiltersRef = useRef<{ companyId?: string; workshopTypeId?: string }>({});
+  const loadSeqRef = useRef(0);
+  const boardAbortRef = useRef<AbortController | null>(null);
+  const companiesRef = useRef<CompanyOption[]>([]);
+  companiesRef.current = companies;
 
-  /** Admin (kể cả sysadmin) chọn được mọi công ty; NV chỉ công ty của mình. */
-  const isAdminLike = user?.role === 'admin' || isSystemAdmin(user);
-  const canPickCompany = Boolean(isAdminLike);
+  /** Admin hệ thống (admin không gắn company) — thấy / chọn mọi công ty. */
+  const sysAdmin = isSystemAdmin(user);
+  /** Admin/manager công ty — thấy cả đội trong công ty; NV thường chỉ việc/deal của mình. */
+  const teamView = canViewTeamWork(user);
+  const ownOnly = !teamView;
+  const canPickCompany = sysAdmin;
+  const lockedCompanyId = !sysAdmin && user?.company_id ? String(user.company_id) : '';
 
   const companyOptions = useMemo(() => {
-    if (canPickCompany) {
+    if (sysAdmin) {
       return [
         { id: '', label: 'Tất cả công ty' },
-        ...companies.map((c) => ({ id: c.id, label: c.name })),
+        ...companies.map((c) => ({ id: String(c.id), label: c.name })),
       ];
     }
-    // Nhân viên: chỉ công ty gắn JWT (hoặc xưởng HCB/Metalla được phép xem chéo nếu có).
-    const ownId = user?.company_id ? String(user.company_id) : '';
+    const ownId = lockedCompanyId
+      || (user?.company_id ? String(user.company_id) : '');
     if (ownId) {
       const own = companies.find((c) => String(c.id) === ownId);
-      return [{ id: ownId, label: own?.name || 'Công ty của tôi' }];
+      return [{ id: ownId, label: own?.name || 'Công ty của bạn' }];
     }
     return workshopCompaniesForCrossViewer(companies, user).map((c) => ({
-      id: c.id,
+      id: String(c.id),
       label: c.name,
     }));
-  }, [canPickCompany, companies, user]);
+  }, [sysAdmin, companies, user, lockedCompanyId]);
 
   const workshopLabel = useMemo(() => {
     if (!filterCompany) {
@@ -236,20 +194,21 @@ export default function OverviewScreen() {
 
   const persistCompanyFilter = useCallback(async (companyId: string) => {
     const snap = (await loadKanbanFilters().catch(() => null)) || {};
+    const prev = String(snap?.filterCompany || '');
+    const next = String(companyId || '');
+    const companyChanged = prev !== next;
     await saveKanbanFilters({
       ...snap,
       filterCompany: companyId,
-      // Đổi công ty → reset phân loại (Kanban sẽ tự chọn lại).
-      filterWorkTypeId: '',
+      // Chỉ xóa phân loại khi đổi xưởng thật — giữ khi khóa lại cùng company JWT.
+      ...(companyChanged ? { filterWorkTypeId: '' } : {}),
     });
   }, []);
 
-  const loadSeqRef = useRef(0);
-
-  const companiesRef = useRef<CompanyOption[]>([]);
-  companiesRef.current = companies;
-
   const load = useCallback(async (mode: 'init' | 'refresh' | 'silent' = 'init') => {
+    boardAbortRef.current?.abort();
+    const ac = new AbortController();
+    boardAbortRef.current = ac;
     const seq = ++loadSeqRef.current;
     if (mode === 'init') setLoading(true);
     if (mode === 'refresh') setRefreshing(true);
@@ -258,8 +217,8 @@ export default function OverviewScreen() {
       const snap = await loadKanbanFilters().catch(() => null);
       let companyId = snap?.filterCompany || '';
       const workshopTypeId = snap?.filterWorkTypeId || undefined;
+      const dealCompanyId = snap?.filterDealCompany || undefined;
 
-      // Silent: tái dùng danh sách công ty đã có — bớt 1 RTT mỗi lần realtime.
       let companyList = companiesRef.current;
       if (mode !== 'silent' || !companyList.length) {
         companyList = await fetchCompanies().catch(() => [] as CompanyOption[]);
@@ -267,16 +226,16 @@ export default function OverviewScreen() {
         setCompanies(companyList);
       }
 
-      if (!canPickCompany) {
-        // NV: khóa về công ty của họ
-        const ownId = user?.company_id ? String(user.company_id) : '';
+      if (!sysAdmin) {
+        // Admin công ty / NV: khóa phạm vi công ty JWT.
+        const ownId = lockedCompanyId
+          || (user?.company_id ? String(user.company_id) : '');
         if (ownId) companyId = ownId;
         else if (!companyId && companyList[0]?.id) companyId = String(companyList[0].id);
         if (companyId && companyId !== (snap?.filterCompany || '')) {
           await persistCompanyFilter(companyId);
         }
       } else if (companyId) {
-        // Admin: bỏ chọn nếu id không còn trong danh sách
         const exists = companyList.some((c) => String(c.id) === String(companyId));
         if (!exists) companyId = '';
       }
@@ -286,7 +245,7 @@ export default function OverviewScreen() {
 
       const boardFilters = {
         companyId: companyId || undefined,
-        // Khớp Kanban: chỉ lọc phân loại khi đã chọn công ty/xưởng.
+        dealCompanyId: dealCompanyId || undefined,
         workshopTypeId:
           companyId && workshopTypeId && workshopTypeId !== 'none'
             ? workshopTypeId
@@ -294,51 +253,76 @@ export default function OverviewScreen() {
       };
       boardFiltersRef.current = boardFilters;
 
-      // Silent + cache tươi: chỉ refresh tasks/notif, không tải lại full board.
       const skipBoard = mode === 'silent' && isCachedBoardFresh(boardFilters) && !!getCachedBoard(boardFilters);
       const cachedBoard = getCachedBoard(boardFilters);
-      const applyBoardPriority = (projects: ProductionProject[], stages: import('../types').KanbanStage[] = []) => {
-        setOverdueDeals(pickOverdueProjects(projects, PRIORITY_FETCH_LIMIT, stages));
-        setSoonDeals(pickSoonProjects(projects, PRIORITY_FETCH_LIMIT, stages));
+
+      const applyScopedBoard = (projects: ProductionProject[], stages: KanbanStage[] = []) => {
+        const scoped = scopeProjectsForUser(projects, { userId, ownOnly });
+        setOverdueDeals(pickOverdueProjects(scoped, PRIORITY_FETCH_LIMIT, stages));
+        return scoped;
       };
 
-      // Đổi filter / refresh: không seed KPI từ board client (thiếu thẻ) hay số công ty cũ —
-      // chờ summary=1 rồi hiện một lần (tránh flash vài số rồi mới đúng).
-      if (mode === 'init' || mode === 'refresh') {
-        setKpis(EMPTY_KPI);
-      }
+      if (mode === 'init' || mode === 'refresh') setKpis(EMPTY_KPI);
       if (cachedBoard && mode !== 'refresh') {
-        applyBoardPriority(cachedBoard.projects, cachedBoard.stages);
+        const scoped = applyScopedBoard(cachedBoard.projects, cachedBoard.stages);
+        if (ownOnly) setKpis(computeSxBoardKpis(scoped, cachedBoard.stages));
         if (mode === 'init') setLoading(false);
       }
 
+      // Admin hệ thống / admin công ty: giao việc đội (theo company). NV: chỉ của mình.
       const tasksPromise = !userId
         ? Promise.resolve([] as WorkTask[])
-        : teamWork
-          ? fetchProductionWorkTasks({
-              assigneeId: null,
-              companyId: companyId || (canPickCompany ? null : (user?.company_id || null)),
-            }).catch(() => [] as WorkTask[])
-          : fetchMyProductionTasks(userId).catch(() => [] as WorkTask[]);
+        : ownOnly
+          ? fetchMyProductionTasks(userId, { signal: ac.signal }).catch(() => [] as WorkTask[])
+          : fetchProductionWorkTasks({
+              companyId: companyId || null,
+              limit: WORK_TASKS_PAGE_SIZE,
+              offset: 0,
+              signal: ac.signal,
+            }).catch(() => [] as WorkTask[]);
 
-      const [board, summary, myTasks, notifList] = await Promise.all([
+      const [board, summary, myTasks] = await Promise.all([
         skipBoard
           ? Promise.resolve(cachedBoard!)
           : fetchProductionBoard(mode === 'refresh', boardFilters, {
+              signal: ac.signal,
               onPartial: (partial) => {
                 if (seq !== loadSeqRef.current) return;
-                // Không cập nhật KPI từ partial board — chỉ summary server (đủ filter).
-                applyBoardPriority(partial.projects, partial.stages);
+                const scoped = applyScopedBoard(partial.projects, partial.stages);
+                if (ownOnly) setKpis(computeSxBoardKpis(scoped, partial.stages));
                 if (mode === 'init') setLoading(false);
               },
             }),
-        fetchProductionBoardSummary(boardFilters, mode === 'refresh').catch(() => null),
+        // Summary toàn công ty — NV không dùng (tính từ deal mình phụ trách).
+        ownOnly
+          ? Promise.resolve(null)
+          : fetchProductionBoardSummary(boardFilters, mode === 'refresh', ac.signal).catch((e) => {
+              if (isAbortError(e)) throw e;
+              return null;
+            }),
         tasksPromise,
-        fetchCommentNotifications(false).catch(() => ({ notifications: [] as SxCommentNotification[], unread_count: 0 })),
       ]);
 
       if (seq !== loadSeqRef.current) return;
-      if (summary) {
+      if (board) {
+        const scoped = applyScopedBoard(board.projects, board.stages);
+        if (ownOnly) {
+          setKpis(computeSxBoardKpis(scoped, board.stages));
+        } else if (summary) {
+          const client = computeSxBoardKpis(board.projects, board.stages);
+          setKpis({
+            ...EMPTY_KPI,
+            total: summary.total,
+            producing: summary.producing,
+            awaitingDelivery: summary.awaitingDelivery,
+            shipped: summary.shipped,
+            completed: client.completed,
+            overdue: summary.overdue,
+          });
+        } else {
+          setKpis(computeSxBoardKpis(board.projects, board.stages));
+        }
+      } else if (summary && !ownOnly) {
         setKpis({
           ...EMPTY_KPI,
           total: summary.total,
@@ -347,21 +331,12 @@ export default function OverviewScreen() {
           shipped: summary.shipped,
           overdue: summary.overdue,
         });
-      } else if (board) {
-        setKpis(computeSxBoardKpis(board.projects, board.stages));
-      }
-      if (board) {
-        applyBoardPriority(board.projects, board.stages);
       }
       setTasks(myTasks);
-      setNotifs(
-        (notifList.notifications || [])
-          .slice()
-          .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))
-          .slice(0, 5),
-      );
+      setTaskPage(1);
+      setDealPage(1);
     } catch (e) {
-      if (seq !== loadSeqRef.current) return;
+      if (seq !== loadSeqRef.current || isAbortError(e)) return;
       if (mode !== 'silent') setError(formatApiError(e));
     } finally {
       if (seq === loadSeqRef.current) {
@@ -369,10 +344,13 @@ export default function OverviewScreen() {
         setRefreshing(false);
       }
     }
-  }, [userId, user?.company_id, canPickCompany, persistCompanyFilter, teamWork]);
+  }, [userId, user?.company_id, sysAdmin, lockedCompanyId, ownOnly, persistCompanyFilter]);
+
+  useEffect(() => () => {
+    boardAbortRef.current?.abort();
+  }, []);
 
   useEffect(() => {
-    // Seed KPI theo cùng key filter nếu có; không dùng cache rỗng (key khác).
     void loadKanbanFilters().then((snap) => {
       const filters = {
         companyId: snap?.filterCompany || undefined,
@@ -387,31 +365,39 @@ export default function OverviewScreen() {
 
   const onSelectCompany = useCallback(async (id: string) => {
     setCompanyPickerOpen(false);
-    if (!canPickCompany && user?.company_id && id !== String(user.company_id)) return;
+    if (!sysAdmin) return;
     setFilterCompany(id);
     await persistCompanyFilter(id);
     void load('refresh');
-  }, [canPickCompany, user?.company_id, persistCompanyFilter, load]);
+  }, [sysAdmin, persistCompanyFilter, load]);
 
   useProductionRealtime({
     onRefresh: (info) => {
       if (info?.patched) {
         const cached = getCachedBoard(boardFiltersRef.current);
         if (cached) {
-          setOverdueDeals(pickOverdueProjects(cached.projects, PRIORITY_FETCH_LIMIT, cached.stages));
-          setSoonDeals(pickSoonProjects(cached.projects, PRIORITY_FETCH_LIMIT, cached.stages));
+          const scoped = scopeProjectsForUser(cached.projects, { userId, ownOnly });
+          setOverdueDeals(pickOverdueProjects(scoped, PRIORITY_FETCH_LIMIT, cached.stages));
+          if (ownOnly) {
+            setKpis(computeSxBoardKpis(scoped, cached.stages));
+            return;
+          }
         }
-        // KPI chỉ từ summary — không đếm board cache (thiếu thẻ → số lệch).
         void fetchProductionBoardSummary(boardFiltersRef.current).then((summary) => {
           if (!summary) return;
-          setKpis({
+          const cachedBoard = getCachedBoard(boardFiltersRef.current);
+          const client = cachedBoard
+            ? computeSxBoardKpis(cachedBoard.projects, cachedBoard.stages)
+            : null;
+          setKpis((prev) => ({
             ...EMPTY_KPI,
             total: summary.total,
             producing: summary.producing,
             awaitingDelivery: summary.awaitingDelivery,
             shipped: summary.shipped,
+            completed: client?.completed ?? prev.completed,
             overdue: summary.overdue,
-          });
+          }));
         });
         return;
       }
@@ -421,55 +407,35 @@ export default function OverviewScreen() {
     debounceMs: 1500,
   });
 
-  const overdueTasksAll = useMemo(
-    () => tasks.filter((t) => isTaskOverdue(t)),
-    [tasks],
-  );
-
+  const overdueTasksAll = useMemo(() => tasks.filter((t) => isTaskOverdue(t)), [tasks]);
   const overdueTaskCount = overdueTasksAll.length;
 
-  const taskStats = useMemo(() => {
-    const pending = tasks.filter((t) => isTaskPending(t.status) || String(t.status) === 'in_progress').length;
-    const now = Date.now();
-    const soon = tasks.filter((t) => {
-      if (isTaskDone(t.status)) return false;
-      if (isTaskOverdue(t)) return false;
-      const raw = t.deadline || t.due_date;
-      if (!raw) return false;
-      const ts = new Date(raw).getTime();
-      if (!Number.isFinite(ts)) return false;
-      const diff = ts - now;
-      return diff >= 0 && diff <= 2 * 86400000;
-    }).length;
-    const done = tasks.filter((t) => isTaskDone(t.status)).length;
-    return { pending, soon, done, overdue: overdueTaskCount };
-  }, [tasks, overdueTaskCount]);
+  /** Chưa làm + Đang làm — ưu tiên quá hạn trước (giống CRM). */
+  const openTasks = useMemo(() => {
+    const open = tasks.filter(isOpenWorkTask);
+    return open.slice().sort((a, b) => {
+      const ao = isTaskOverdue(a) ? 0 : 1;
+      const bo = isTaskOverdue(b) ? 0 : 1;
+      if (ao !== bo) return ao - bo;
+      const ad = taskDueIso(a) || '';
+      const bd = taskDueIso(b) || '';
+      return ad.localeCompare(bd);
+    });
+  }, [tasks]);
 
-  const priorityEmpty =
-    overdueTasksAll.length === 0 && overdueDeals.length === 0 && soonDeals.length === 0;
-
-  const togglePrio = useCallback((key: PrioritySectionKey) => {
-    setPrioOpen((prev) => ({ ...prev, [key]: !prev[key] }));
-  }, []);
-
-  const setSectionPage = useCallback((key: PrioritySectionKey, page: number) => {
-    setPrioPage((prev) => ({ ...prev, [key]: page }));
-  }, []);
-
-  const overdueTasksPage = pageSlice(overdueTasksAll, prioPage.tasks, PRIORITY_PAGE_SIZE);
-  const overdueDealsPage = pageSlice(overdueDeals, prioPage.deals, PRIORITY_PAGE_SIZE);
-  const soonDealsPage = pageSlice(soonDeals, prioPage.soon, PRIORITY_PAGE_SIZE);
-  const tasksPages = totalPagesOf(overdueTasksAll.length, PRIORITY_PAGE_SIZE);
-  const dealsPages = totalPagesOf(overdueDeals.length, PRIORITY_PAGE_SIZE);
-  const soonPages = totalPagesOf(soonDeals.length, PRIORITY_PAGE_SIZE);
+  const taskPages = totalPagesOf(openTasks.length, TASK_PAGE_SIZE);
+  const dealPages = totalPagesOf(overdueDeals.length, DEAL_PAGE_SIZE);
+  const safeTaskPage = Math.min(taskPage, taskPages);
+  const safeDealPage = Math.min(dealPage, dealPages);
+  const previewTasks = pageSlice(openTasks, safeTaskPage, TASK_PAGE_SIZE);
+  const previewDeals = pageSlice(overdueDeals, safeDealPage, DEAL_PAGE_SIZE);
 
   useEffect(() => {
-    setPrioPage((prev) => ({
-      tasks: Math.min(prev.tasks, tasksPages),
-      deals: Math.min(prev.deals, dealsPages),
-      soon: Math.min(prev.soon, soonPages),
-    }));
-  }, [tasksPages, dealsPages, soonPages]);
+    if (taskPage > taskPages) setTaskPage(taskPages);
+  }, [taskPage, taskPages]);
+  useEffect(() => {
+    if (dealPage > dealPages) setDealPage(dealPages);
+  }, [dealPage, dealPages]);
 
   const openNotifs = useCallback(async () => {
     void ensureNotificationPermission();
@@ -477,27 +443,183 @@ export default function OverviewScreen() {
     void refreshUnread();
   }, [refreshUnread]);
 
-  const goKanban = useCallback(() => {
-    tabNav.navigate('Kanban');
-  }, [tabNav]);
+  const goKanban = useCallback(() => tabNav.navigate('Kanban'), [tabNav]);
+  const goWork = useCallback(
+    (status: 'all' | 'pending' | 'in_progress' | 'completed' | 'overdue' = 'all') => {
+      tabNav.navigate('Work', {
+        scope: teamView ? 'team' : 'mine',
+        status,
+      });
+    },
+    [tabNav, teamView],
+  );
 
-  const goWork = useCallback(() => {
-    tabNav.navigate('Work');
-  }, [tabNav]);
+  const toneMap: Record<KpiTone, { fg: string; bg: string }> = {
+    blue: { fg: colors.primary, bg: colors.primarySoft },
+    cyan: { fg: '#38BDF8', bg: colorWithAlpha('#38BDF8', 0.18) },
+    muted: { fg: colors.textMuted, bg: colors.cardAlt },
+    green: { fg: colors.success, bg: colorWithAlpha(colors.success, 0.16) },
+    orange: { fg: colors.warning, bg: colorWithAlpha(colors.warning, 0.16) },
+    red: { fg: colors.danger, bg: colors.dangerSoft },
+  };
 
-  const kpiCards = [
-    { key: 'total', label: 'Tổng', value: kpis.total, color: colors.primary, icon: 'layers-outline' as const },
-    { key: 'producing', label: 'Đang SX', value: kpis.producing, color: '#38BDF8', icon: 'construct-outline' as const },
-    { key: 'await', label: 'Chờ vận chuyển', value: kpis.awaitingDelivery, color: colors.textMuted, icon: 'cube-outline' as const },
-    { key: 'shipped', label: 'Đã vận chuyển', value: kpis.shipped, color: colors.success, icon: 'car-outline' as const },
-    { key: 'done', label: 'Hoàn tất', value: kpis.completed, color: colors.warning, icon: 'checkmark-done-outline' as const },
-    { key: 'overdue', label: 'Quá hạn deal', value: kpis.overdue, color: colors.danger, icon: 'alert-circle-outline' as const },
+  const kpiItems: {
+    key: string;
+    label: string;
+    value: number;
+    tone: KpiTone;
+    onPress: () => void;
+  }[] = [
+    { key: 'total', label: 'Tổng dự án', value: kpis.total, tone: 'blue', onPress: goKanban },
+    { key: 'producing', label: 'Đang sản xuất', value: kpis.producing, tone: 'cyan', onPress: goKanban },
+    {
+      key: 'await',
+      label: 'Chờ vận chuyển',
+      value: kpis.awaitingDelivery,
+      tone: 'muted',
+      onPress: goKanban,
+    },
+    {
+      key: 'shipped',
+      label: 'Đã vận chuyển',
+      value: kpis.shipped,
+      tone: 'green',
+      onPress: goKanban,
+    },
+    {
+      key: 'done',
+      label: 'Hoàn tất',
+      value: kpis.completed,
+      tone: 'orange',
+      onPress: goKanban,
+    },
+    {
+      key: 'overdue',
+      label: 'Quá hạn dự án',
+      value: kpis.overdue,
+      tone: 'red',
+      onPress: () => { if (kpis.overdue > 0) openOverdueProjects(); else goKanban(); },
+    },
   ];
+
+  const quickActions: {
+    key: string;
+    label: string;
+    icon: keyof typeof Ionicons.glyphMap;
+    color: string;
+    onPress: () => void;
+  }[] = [
+    { key: 'kanban', label: 'Dự án', icon: 'grid-outline', color: colors.primary, onPress: goKanban },
+    {
+      key: 'work',
+      label: 'Công việc',
+      icon: 'checkbox-outline',
+      color: colors.warning,
+      onPress: () => goWork('all'),
+    },
+    {
+      key: 'messages',
+      label: 'Tin nhắn',
+      icon: 'chatbubbles-outline',
+      color: '#A78BFA',
+      onPress: () => openMessages(),
+    },
+    {
+      key: 'planner',
+      label: 'Planner',
+      icon: 'calendar-outline',
+      color: colors.success,
+      onPress: () => tabNav.navigate('Planner'),
+    },
+    {
+      key: 'leaves',
+      label: 'Lịch nghỉ',
+      icon: 'airplane-outline',
+      color: '#F97316',
+      onPress: () => rootNav.navigate('Leaves'),
+    },
+    {
+      key: 'overdue',
+      label: 'Quá hạn',
+      icon: 'alert-circle-outline',
+      color: colors.danger,
+      onPress: openOverdueProjects,
+    },
+    {
+      key: 'profile',
+      label: 'Hồ sơ',
+      icon: 'person-outline',
+      color: '#38BDF8',
+      onPress: () => tabNav.navigate('Profile'),
+    },
+    {
+      key: 'company',
+      label: 'Công ty',
+      icon: 'business-outline',
+      color: '#8B5CF6',
+      onPress: () => {
+        if (canPickCompany) setCompanyPickerOpen(true);
+        else tabNav.navigate('Profile');
+      },
+    },
+    {
+      key: 'logout',
+      label: 'Đăng xuất',
+      icon: 'log-out-outline',
+      color: colors.danger,
+      onPress: confirmLogout,
+    },
+  ];
+
+  const overdueDealCount = ownOnly ? overdueDeals.length : kpis.overdue;
+  const overdueTotal = overdueTaskCount + overdueDealCount;
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
+      <View style={styles.hero}>
+        <View style={styles.heroTop}>
+          <View style={styles.heroIdentity}>
+            <Avatar name={userName} avatarUrl={user?.avatar} size={52} color={colors.primary} />
+            <View style={{ flex: 1, paddingRight: 4 }}>
+              <Text style={styles.helloLine} numberOfLines={1}>{helloLine}</Text>
+              <Text style={styles.dateLine}>{dateLabel}</Text>
+              <Text style={styles.wishLine} numberOfLines={2}>{wishLine}</Text>
+            </View>
+          </View>
+          <View style={styles.headerBtns}>
+            <Pressable
+              style={styles.iconBtn}
+              onPress={() => tabNav.navigate('Profile')}
+              accessibilityLabel="Menu"
+              hitSlop={6}
+            >
+              <Ionicons name="menu-outline" size={20} color={colors.text} />
+              {messageUnread > 0 ? (
+                <View style={styles.badge}>
+                  <Text style={styles.badgeText}>{messageUnread > 99 ? '99+' : messageUnread}</Text>
+                </View>
+              ) : null}
+            </Pressable>
+            <Pressable
+              style={styles.iconBtn}
+              onPress={() => void openNotifs()}
+              accessibilityLabel="Thông báo"
+              hitSlop={6}
+            >
+              <Ionicons name="notifications-outline" size={20} color={colors.text} />
+              {unreadCount > 0 ? (
+                <View style={styles.badge}>
+                  <Text style={styles.badgeText}>{unreadCount > 99 ? '99+' : unreadCount}</Text>
+                </View>
+              ) : null}
+            </Pressable>
+          </View>
+        </View>
+      </View>
+
       <ScrollView
-        contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + 100 }]}
+        style={{ flex: 1 }}
+        contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 110 }]}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -507,545 +629,312 @@ export default function OverviewScreen() {
         }
         showsVerticalScrollIndicator={false}
       >
-        {/* Header */}
-        <View style={styles.headerRow}>
-          <View style={styles.headerLeft}>
-            <Avatar name={userName} avatarUrl={user?.avatar} size={48} />
-            <View style={styles.headerTextWrap}>
-              <Text style={styles.greetTitle}>
-                {greetingByHour()}, {greetName}!
-              </Text>
-              <Text style={styles.greetSub}>Chúc bạn một ngày làm việc hiệu quả! 👋</Text>
-            </View>
-          </View>
-          <View style={styles.headerBtns}>
-            <TapHighlight style={styles.iconBtn} onPress={() => void openNotifs()} hitSlop={8}>
-              <Ionicons name="notifications-outline" size={22} color={colors.text} />
-              {unreadCount > 0 ? (
-                <View style={styles.badge}>
-                  <Text style={styles.badgeText}>{unreadCount > 99 ? '99+' : unreadCount}</Text>
-                </View>
-              ) : null}
-            </TapHighlight>
-            <TapHighlight
-              style={styles.iconBtn}
-              onPress={() => tabNav.navigate('Profile')}
-              hitSlop={8}
-            >
-              <Ionicons name="menu-outline" size={22} color={colors.text} />
-              {messageUnread > 0 ? (
-                <View style={styles.badge}>
-                  <Text style={styles.badgeText}>{messageUnread > 99 ? '99+' : messageUnread}</Text>
-                </View>
-              ) : null}
-            </TapHighlight>
-          </View>
-        </View>
-
-        {/* Date + workshop */}
-        <View style={styles.metaRow}>
-          <View style={[styles.metaCard, { flex: 1.05 }]}>
-            <View style={[styles.metaIcon, { backgroundColor: colorWithAlpha(colors.primary, 0.18) }]}>
-              <Ionicons name="calendar-outline" size={18} color={colors.primary} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.metaTitle} numberOfLines={1}>{formatVnWeekdayDate()}</Text>
-              <Text style={styles.metaSub}>Ngày làm việc</Text>
-            </View>
-          </View>
-          <TouchableOpacity
-            style={[styles.metaCard, { flex: 1 }]}
-            activeOpacity={canPickCompany ? 0.85 : 1}
-            onPress={() => {
-              if (canPickCompany) setCompanyPickerOpen(true);
-            }}
-            disabled={!canPickCompany}
-          >
-            <View style={[styles.metaIcon, { backgroundColor: colorWithAlpha('#8B5CF6', 0.18) }]}>
-              <Ionicons name="business-outline" size={18} color="#A78BFA" />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.metaTitle} numberOfLines={1}>{workshopLabel}</Text>
-              <Text style={styles.metaSub}>
-                {canPickCompany ? 'Chạm để chọn công ty' : 'Công ty của bạn'}
-              </Text>
-            </View>
-            {canPickCompany ? (
-              <Ionicons name="chevron-down" size={16} color={colors.textFaint} />
-            ) : null}
-          </TouchableOpacity>
-        </View>
-
         {error ? (
-          <View style={styles.errorBox}>
-            <Text style={styles.errorText}>{error}</Text>
-            <TapHighlight onPress={() => void load('init')}>
-              <Text style={styles.retryText}>Thử lại</Text>
-            </TapHighlight>
-          </View>
+          <Pressable style={styles.errorBanner} onPress={() => void load('init')}>
+            <Ionicons name="warning-outline" size={16} color={colors.danger} />
+            <Text style={styles.errorTxt} numberOfLines={2}>
+              {error} · Chạm để thử lại
+            </Text>
+          </Pressable>
         ) : null}
 
-        {/* Tổng quan sản xuất */}
-        <View style={styles.sectionHead}>
-          <View style={styles.sectionTitleRow}>
-            <Ionicons name="stats-chart" size={18} color={colors.primary} />
-            <Text style={styles.sectionTitle}>Tổng quan sản xuất</Text>
-          </View>
-          <TapHighlight onPress={goKanban}>
-            <Text style={styles.linkText}>Xem chi tiết ›</Text>
-          </TapHighlight>
-        </View>
+        <Pressable
+          style={styles.scopeChip}
+          onPress={() => { if (canPickCompany) setCompanyPickerOpen(true); }}
+          disabled={!canPickCompany}
+        >
+          <Ionicons name="business-outline" size={14} color={colors.primary} />
+          <Text style={styles.scopeChipTxt} numberOfLines={1}>{workshopLabel}</Text>
+          {canPickCompany ? (
+            <Ionicons name="chevron-down" size={14} color={colors.textMuted} />
+          ) : null}
+        </Pressable>
 
-        {loading && kpis.total === 0 ? (
-          <ActivityIndicator color={colors.primary} style={{ marginVertical: 16 }} />
-        ) : (
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.kpiScroll}
+        {loading && !refreshing && kpis.total === 0 && overdueTotal === 0 ? (
+          <View style={styles.inlineLoad}>
+            <ActivityIndicator size="large" color={colors.primary} />
+            <Text style={styles.muted}>Đang tải tổng quan…</Text>
+          </View>
+        ) : overdueTotal > 0 ? (
+          <Pressable
+            style={styles.alertBanner}
+            onPress={() => {
+              if (overdueTaskCount > 0) goWork('overdue');
+              else openOverdueProjects();
+            }}
           >
-            {kpiCards.map((c) => (
-              <TouchableOpacity
-                key={c.key}
-                style={styles.kpiCard}
-                activeOpacity={c.key === 'overdue' && c.value > 0 ? 0.85 : 1}
-                onPress={() => {
-                  if (c.key === 'overdue' && c.value > 0) openOverdueProjects();
-                }}
-                disabled={!(c.key === 'overdue' && c.value > 0)}
-              >
-                <Ionicons name={c.icon} size={16} color={c.color} />
-                <Text style={[styles.kpiValue, { color: c.color }]}>{c.value}</Text>
-                <Text style={styles.kpiLabel} numberOfLines={2}>{c.label}</Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
+            <View style={styles.alertIcon}>
+              <Ionicons name="alert-circle" size={22} color={colors.danger} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.alertTitle}>
+                {overdueTotal} hạng mục quá hạn
+              </Text>
+              <Text style={styles.alertSub}>
+                {[
+                  overdueTaskCount > 0 ? `${overdueTaskCount} công việc` : null,
+                  overdueDealCount > 0 ? `${overdueDealCount} dự án` : null,
+                ].filter(Boolean).join(' · ')}
+                {` · ${workshopLabel}`}
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={colors.danger} />
+          </Pressable>
+        ) : (
+          <View style={styles.okBanner}>
+            <Ionicons name="checkmark-circle" size={20} color={colors.success} />
+            <Text style={styles.okTxt}>Không có công việc / dự án quá hạn</Text>
+          </View>
         )}
 
-        {/* Overdue alert — tách công việc / deal */}
-        {(overdueTaskCount > 0 || kpis.overdue > 0) ? (
-          <View style={styles.alertCard}>
-            <View style={styles.alertLeft}>
-              <View style={styles.alertIcon}>
-                <Ionicons name="time" size={20} color={colors.danger} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.alertTitle}>Cần ưu tiên xử lý quá hạn</Text>
-                <Text style={styles.alertSub}>
-                  {[
-                    overdueTaskCount > 0 ? `${overdueTaskCount} công việc` : null,
-                    kpis.overdue > 0 ? `${kpis.overdue} deal` : null,
-                  ]
-                    .filter(Boolean)
-                    .join(' · ')}
-                </Text>
-              </View>
-            </View>
-            <View style={styles.alertBtnCol}>
-              {overdueTaskCount > 0 ? (
-                <TapHighlight
-                  style={styles.alertBtn}
-                  onPress={() => {
-                    setPrioOpen((prev) => ({ ...prev, tasks: true }));
-                    setSectionPage('tasks', 1);
-                  }}
-                >
-                  <Text style={styles.alertBtnText}>Công việc</Text>
-                </TapHighlight>
-              ) : null}
-              {kpis.overdue > 0 ? (
-                <TapHighlight
-                  style={[styles.alertBtn, styles.alertBtnSecondary]}
-                  onPress={() => {
-                    setPrioOpen((prev) => ({ ...prev, deals: true }));
-                    setSectionPage('deals', 1);
-                  }}
-                >
-                  <Text style={styles.alertBtnText}>Deal</Text>
-                </TapHighlight>
-              ) : null}
-            </View>
-          </View>
-        ) : null}
+        <Text style={styles.secTitle}>Tổng quan sản xuất</Text>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          nestedScrollEnabled
+          contentContainerStyle={styles.kpiScroll}
+        >
+          {kpiItems.map((k, idx) => {
+            const tone = toneMap[k.tone];
+            return (
+              <Pressable
+                key={k.key}
+                style={({ pressed }) => [
+                  styles.kpiCard,
+                  idx > 0 && styles.kpiCardGap,
+                  pressed && styles.pressed,
+                ]}
+                onPress={k.onPress}
+              >
+                <View style={[styles.kpiDot, { backgroundColor: tone.bg }]}>
+                  <View style={[styles.kpiDotInner, { backgroundColor: tone.fg }]} />
+                </View>
+                <Text style={[styles.kpiValue, { color: tone.fg }]}>{k.value}</Text>
+                <Text style={styles.kpiLabel} numberOfLines={2}>{k.label}</Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
 
-        {/* Công việc hôm nay */}
-        <View style={styles.sectionHead}>
-          <View style={styles.sectionTitleRow}>
-            <Ionicons name="clipboard" size={18} color={colors.warning} />
-            <Text style={styles.sectionTitle}>Công việc của tôi hôm nay</Text>
-          </View>
-          <TapHighlight onPress={goWork}>
-            <Text style={styles.linkText}>Xem tất cả ›</Text>
-          </TapHighlight>
+        <View style={styles.secHead}>
+          <Text style={styles.secTitleInline}>Công việc cần làm</Text>
+          <Pressable onPress={() => goWork('all')} hitSlop={8}>
+            <Text style={styles.link}>
+              {openTasks.length > 0 ? `Tất cả (${openTasks.length})` : 'Xem công việc'}
+            </Text>
+          </Pressable>
         </View>
-        <View style={styles.taskStatRow}>
-          <TouchableOpacity style={[styles.taskStatCard, styles.taskStatDanger]} onPress={goWork} activeOpacity={0.88}>
-            <Ionicons name="document-text" size={22} color="#FCA5A5" />
-            <Text style={styles.taskStatValue}>{taskStats.pending}</Text>
-            <Text style={styles.taskStatLabel}>Cần xử lý</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={[styles.taskStatCard, styles.taskStatWarn]} onPress={goWork} activeOpacity={0.88}>
-            <Ionicons name="hourglass" size={22} color="#FCD34D" />
-            <Text style={styles.taskStatValue}>{taskStats.soon}</Text>
-            <Text style={styles.taskStatLabel}>Sắp đến hạn</Text>
-            <Text style={styles.taskStatHint}>Trong 2 ngày</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={[styles.taskStatCard, styles.taskStatOk]} onPress={goWork} activeOpacity={0.88}>
-            <Ionicons name="checkmark-circle" size={22} color="#86EFAC" />
-            <Text style={styles.taskStatValue}>{taskStats.done}</Text>
-            <Text style={styles.taskStatLabel}>Đã hoàn thành</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Ưu tiên xử lý — dropdown + phân trang */}
-        <View style={styles.sectionHead}>
-          <View style={styles.sectionTitleRow}>
-            <Ionicons name="locate" size={20} color={colors.danger} />
-            <Text style={styles.sectionTitle}>Ưu tiên xử lý</Text>
-          </View>
-        </View>
-        <View style={styles.listCard}>
-          {priorityEmpty ? (
-            <Text style={styles.emptyText}>Không có hạng mục ưu tiên</Text>
+        <View style={styles.card}>
+          {previewTasks.length === 0 ? (
+            <View style={styles.emptyRow}>
+              <Ionicons name="checkbox-outline" size={20} color={colors.textFaint} />
+              <Text style={styles.emptyTxt}>Không có việc chưa làm / đang làm</Text>
+            </View>
           ) : (
             <>
-              {/* Quá hạn công việc */}
-              <TouchableOpacity
-                style={styles.prioAccordHead}
-                onPress={() => togglePrio('tasks')}
-                activeOpacity={0.85}
-              >
-                <View style={styles.prioGroupTitleRow}>
-                  <Ionicons name="checkbox-outline" size={18} color={colors.danger} />
-                  <Text style={styles.prioGroupTitle}>Quá hạn công việc</Text>
-                  <View style={[styles.prioCountPill, { backgroundColor: colorWithAlpha(colors.danger, 0.18) }]}>
-                    <Text style={[styles.prioCountTxt, { color: colors.danger }]}>{overdueTaskCount}</Text>
-                  </View>
-                </View>
-                <Ionicons
-                  name={prioOpen.tasks ? 'chevron-up' : 'chevron-down'}
-                  size={22}
-                  color={colors.textMuted}
-                />
-              </TouchableOpacity>
-              {prioOpen.tasks ? (
-                <View style={styles.prioAccordBody}>
-                  {overdueTasksAll.length === 0 ? (
-                    <Text style={styles.prioGroupEmpty}>Không có công việc quá hạn</Text>
-                  ) : (
-                    <>
-                      {overdueTasksPage.map((t, idx) => {
-                        const deal = assignmentDealCardLabel(t.lead);
-                        const due = formatTaskDeadline(taskDueIso(t));
-                        const assignee = t.assignee?.full_name || (t.assignees?.[0]?.full_name) || 'Chưa gán';
-                        return (
-                          <TouchableOpacity
-                            key={`task-${t.id}`}
-                            style={[styles.prioRow, idx > 0 && styles.prioRowBorder]}
-                      onPress={() => {
-                        const pid = t.lead?.project_id;
-                        if (pid) openProjectDetail(String(pid), { focusTaskId: workTaskFocusCrmId(t) });
-                        else goWork();
-                      }}
-                            activeOpacity={0.85}
-                          >
-                            <View style={[styles.prioAvatar, { backgroundColor: colorWithAlpha(colors.danger, 0.2) }]}>
-                              <Ionicons name="alert-circle" size={20} color={colors.danger} />
-                            </View>
-                            <View style={{ flex: 1, minWidth: 0 }}>
-                              <Text style={styles.prioTitle} numberOfLines={1}>{t.title}</Text>
-                              <Text style={styles.prioSub} numberOfLines={1}>
-                                {[assignee, deal].filter(Boolean).join(' · ')}
-                              </Text>
-                            </View>
-                            <View style={styles.prioRight}>
-                              <View style={[styles.prioBadge, { backgroundColor: '#7F1D1D' }]}>
-                                <Text style={[styles.prioBadgeText, { color: '#FCA5A5' }]}>Quá hạn</Text>
-                              </View>
-                              <Text style={[styles.prioDate, { color: colors.danger }]}>{due}</Text>
-                            </View>
-                          </TouchableOpacity>
-                        );
-                      })}
-                      {tasksPages > 1 ? (
-                        <View style={styles.prioPager}>
-                          <TapHighlight
-                            style={[styles.prioPageBtn, prioPage.tasks <= 1 && styles.prioPageBtnDisabled]}
-                            onPress={() => setSectionPage('tasks', Math.max(1, prioPage.tasks - 1))}
-                            disabled={prioPage.tasks <= 1}
-                          >
-                            <Ionicons name="chevron-back" size={16} color={prioPage.tasks <= 1 ? colors.textFaint : colors.text} />
-                          </TapHighlight>
-                          <Text style={styles.prioPageLabel}>
-                            Trang {Math.min(prioPage.tasks, tasksPages)}/{tasksPages}
-                          </Text>
-                          <TapHighlight
-                            style={[styles.prioPageBtn, prioPage.tasks >= tasksPages && styles.prioPageBtnDisabled]}
-                            onPress={() => setSectionPage('tasks', Math.min(tasksPages, prioPage.tasks + 1))}
-                            disabled={prioPage.tasks >= tasksPages}
-                          >
-                            <Ionicons name="chevron-forward" size={16} color={prioPage.tasks >= tasksPages ? colors.textFaint : colors.text} />
-                          </TapHighlight>
-                          <TapHighlight onPress={goWork}>
-                            <Text style={styles.linkText}>Tất cả ›</Text>
-                          </TapHighlight>
-                        </View>
-                      ) : (
-                        <View style={styles.prioPagerEnd}>
-                          <TapHighlight onPress={goWork}>
-                            <Text style={styles.linkText}>Xem tất cả ›</Text>
-                          </TapHighlight>
-                        </View>
-                      )}
-                    </>
-                  )}
-                </View>
-              ) : null}
-
-              {/* Quá hạn deal */}
-              <TouchableOpacity
-                style={[styles.prioAccordHead, styles.prioGroupHeadBorder]}
-                onPress={() => togglePrio('deals')}
-                activeOpacity={0.85}
-              >
-                <View style={styles.prioGroupTitleRow}>
-                  <Ionicons name="briefcase-outline" size={18} color={colors.danger} />
-                  <Text style={styles.prioGroupTitle}>Quá hạn deal</Text>
-                  <View style={[styles.prioCountPill, { backgroundColor: colorWithAlpha(colors.danger, 0.18) }]}>
-                    <Text style={[styles.prioCountTxt, { color: colors.danger }]}>{kpis.overdue}</Text>
-                  </View>
-                </View>
-                <Ionicons
-                  name={prioOpen.deals ? 'chevron-up' : 'chevron-down'}
-                  size={22}
-                  color={colors.textMuted}
-                />
-              </TouchableOpacity>
-              {prioOpen.deals ? (
-                <View style={styles.prioAccordBody}>
-                  {overdueDeals.length === 0 ? (
-                    <Text style={styles.prioGroupEmpty}>Không có deal quá hạn</Text>
-                  ) : (
-                    <>
-                      {overdueDealsPage.map((p, idx) => {
-                        const pct = Math.max(0, Math.min(100, Number(p.progress || 0)));
-                        const done = Number(p.done_tasks || 0);
-                        const total = Number(p.task_total || 0);
-                        const accent = getTaskProgressColor(pct, colors);
-                        return (
-                          <TouchableOpacity
-                            key={`deal-${p.id}`}
-                            style={[styles.prioRow, idx > 0 && styles.prioRowBorder]}
-                            onPress={() => openProjectDetail(p.id)}
-                            activeOpacity={0.85}
-                          >
-                            <View style={[styles.prioAvatar, { backgroundColor: colorWithAlpha(accent, 0.25) }]}>
-                              <Text style={[styles.prioAvatarText, { color: accent }]}>
-                                {initialsFrom(p.customer_name || p.name || p.code)}
-                              </Text>
-                            </View>
-                            <View style={{ flex: 1, minWidth: 0 }}>
-                              <Text style={styles.prioTitle} numberOfLines={1}>{p.name || p.code}</Text>
-                              <Text style={styles.prioSub} numberOfLines={1}>
-                                {p.production_person_name
-                                  ? `Phụ trách: ${p.production_person_name}`
-                                  : (p.customer_name || p.code)}
-                              </Text>
-                              <View style={styles.progressTrack}>
-                                <View style={[styles.progressFill, { width: `${pct}%`, backgroundColor: accent }]} />
-                              </View>
-                              <Text style={styles.progressLabel}>
-                                {total > 0 ? `${done}/${total} nhiệm vụ` : `${pct}% tiến độ`}
-                              </Text>
-                            </View>
-                            <View style={styles.prioRight}>
-                              <View style={[styles.prioBadge, { backgroundColor: '#7F1D1D' }]}>
-                                <Text style={[styles.prioBadgeText, { color: '#FCA5A5' }]}>Quá hạn</Text>
-                              </View>
-                              <Text style={styles.prioDate}>
-                                {shortDateLabel(p.delivery_date || p.production_deadline || p.deadline)}
-                              </Text>
-                            </View>
-                          </TouchableOpacity>
-                        );
-                      })}
-                      {dealsPages > 1 ? (
-                        <View style={styles.prioPager}>
-                          <TapHighlight
-                            style={[styles.prioPageBtn, prioPage.deals <= 1 && styles.prioPageBtnDisabled]}
-                            onPress={() => setSectionPage('deals', Math.max(1, prioPage.deals - 1))}
-                            disabled={prioPage.deals <= 1}
-                          >
-                            <Ionicons name="chevron-back" size={16} color={prioPage.deals <= 1 ? colors.textFaint : colors.text} />
-                          </TapHighlight>
-                          <Text style={styles.prioPageLabel}>
-                            Trang {Math.min(prioPage.deals, dealsPages)}/{dealsPages}
-                          </Text>
-                          <TapHighlight
-                            style={[styles.prioPageBtn, prioPage.deals >= dealsPages && styles.prioPageBtnDisabled]}
-                            onPress={() => setSectionPage('deals', Math.min(dealsPages, prioPage.deals + 1))}
-                            disabled={prioPage.deals >= dealsPages}
-                          >
-                            <Ionicons name="chevron-forward" size={16} color={prioPage.deals >= dealsPages ? colors.textFaint : colors.text} />
-                          </TapHighlight>
-                          <TapHighlight onPress={openOverdueProjects}>
-                            <Text style={styles.linkText}>Tất cả ›</Text>
-                          </TapHighlight>
-                        </View>
-                      ) : kpis.overdue > overdueDeals.length ? (
-                        <View style={styles.prioPagerEnd}>
-                          <TapHighlight onPress={openOverdueProjects}>
-                            <Text style={styles.linkText}>Xem tất cả ›</Text>
-                          </TapHighlight>
-                        </View>
-                      ) : null}
-                    </>
-                  )}
-                </View>
-              ) : null}
-
-              {/* Deal sắp đến hạn */}
-              {soonDeals.length > 0 ? (
-                <>
-                  <TouchableOpacity
-                    style={[styles.prioAccordHead, styles.prioGroupHeadBorder]}
-                    onPress={() => togglePrio('soon')}
-                    activeOpacity={0.85}
+              {previewTasks.map((t, idx) => {
+                const overdue = isTaskOverdue(t);
+                const deal = assignmentDealCardLabel(t.lead);
+                const due = formatTaskDeadline(taskDueIso(t));
+                const people =
+                  t.assignees && t.assignees.length
+                    ? t.assignees
+                    : t.assignee
+                      ? [t.assignee]
+                      : [];
+                const assigneeName =
+                  people.map((p) => p.full_name?.trim()).filter(Boolean).join(', ')
+                  || 'Chưa gán';
+                return (
+                  <Pressable
+                    key={t.id}
+                    style={[styles.rowItem, idx > 0 && styles.rowBorder]}
+                    onPress={() => {
+                      const pid = t.lead?.project_id;
+                      if (pid) openProjectDetail(String(pid), { focusTaskId: workTaskFocusCrmId(t) });
+                      else goWork(overdue ? 'overdue' : 'all');
+                    }}
                   >
-                    <View style={styles.prioGroupTitleRow}>
-                      <Ionicons name="time-outline" size={18} color={colors.warning} />
-                      <Text style={styles.prioGroupTitle}>Deal sắp đến hạn</Text>
-                      <View style={[styles.prioCountPill, { backgroundColor: colorWithAlpha(colors.warning, 0.18) }]}>
-                        <Text style={[styles.prioCountTxt, { color: colors.warning }]}>{soonDeals.length}</Text>
-                      </View>
+                    <View
+                      style={[
+                        styles.rowIcon,
+                        {
+                          backgroundColor: overdue
+                            ? colors.dangerSoft
+                            : isTaskInProgress(t.status)
+                              ? colors.primarySoft
+                              : colorWithAlpha(colors.warning, 0.16),
+                        },
+                      ]}
+                    >
+                      <Ionicons
+                        name={
+                          overdue
+                            ? 'alert-circle'
+                            : isTaskInProgress(t.status)
+                              ? 'time'
+                              : 'ellipse-outline'
+                        }
+                        size={18}
+                        color={
+                          overdue
+                            ? colors.danger
+                            : isTaskInProgress(t.status)
+                              ? colors.primary
+                              : colors.warning
+                        }
+                      />
                     </View>
-                    <Ionicons
-                      name={prioOpen.soon ? 'chevron-up' : 'chevron-down'}
-                      size={22}
-                      color={colors.textMuted}
-                    />
-                  </TouchableOpacity>
-                  {prioOpen.soon ? (
-                    <View style={styles.prioAccordBody}>
-                      {soonDealsPage.map((p, idx) => {
-                        const badge = priorityBadge(p);
-                        const pct = Math.max(0, Math.min(100, Number(p.progress || 0)));
-                        const accent = getTaskProgressColor(pct, colors);
-                        return (
-                          <TouchableOpacity
-                            key={`soon-${p.id}`}
-                            style={[styles.prioRow, idx > 0 && styles.prioRowBorder]}
-                            onPress={() => openProjectDetail(p.id)}
-                            activeOpacity={0.85}
-                          >
-                            <View style={[styles.prioAvatar, { backgroundColor: colorWithAlpha(accent, 0.25) }]}>
-                              <Text style={[styles.prioAvatarText, { color: accent }]}>
-                                {initialsFrom(p.customer_name || p.name || p.code)}
-                              </Text>
-                            </View>
-                            <View style={{ flex: 1, minWidth: 0 }}>
-                              <Text style={styles.prioTitle} numberOfLines={1}>{p.name || p.code}</Text>
-                              <Text style={styles.prioSub} numberOfLines={1}>
-                                {p.production_person_name
-                                  ? `Phụ trách: ${p.production_person_name}`
-                                  : (p.customer_name || p.code)}
-                              </Text>
-                            </View>
-                            <View style={styles.prioRight}>
-                              <View style={[styles.prioBadge, { backgroundColor: badge.bg }]}>
-                                <Text style={[styles.prioBadgeText, { color: badge.fg }]}>{badge.label}</Text>
-                              </View>
-                              <Text style={styles.prioDate}>
-                                {shortDateLabel(p.delivery_date || p.production_deadline || p.deadline)}
-                              </Text>
-                            </View>
-                          </TouchableOpacity>
-                        );
-                      })}
-                      {soonPages > 1 ? (
-                        <View style={styles.prioPager}>
-                          <TapHighlight
-                            style={[styles.prioPageBtn, prioPage.soon <= 1 && styles.prioPageBtnDisabled]}
-                            onPress={() => setSectionPage('soon', Math.max(1, prioPage.soon - 1))}
-                            disabled={prioPage.soon <= 1}
-                          >
-                            <Ionicons name="chevron-back" size={16} color={prioPage.soon <= 1 ? colors.textFaint : colors.text} />
-                          </TapHighlight>
-                          <Text style={styles.prioPageLabel}>
-                            Trang {Math.min(prioPage.soon, soonPages)}/{soonPages}
-                          </Text>
-                          <TapHighlight
-                            style={[styles.prioPageBtn, prioPage.soon >= soonPages && styles.prioPageBtnDisabled]}
-                            onPress={() => setSectionPage('soon', Math.min(soonPages, prioPage.soon + 1))}
-                            disabled={prioPage.soon >= soonPages}
-                          >
-                            <Ionicons name="chevron-forward" size={16} color={prioPage.soon >= soonPages ? colors.textFaint : colors.text} />
-                          </TapHighlight>
-                        </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.rowTitle} numberOfLines={1}>{t.title || 'Nhiệm vụ'}</Text>
+                      <Text style={styles.rowSub} numberOfLines={1}>
+                        Phụ trách: {assigneeName}
+                      </Text>
+                      {deal ? (
+                        <Text style={styles.rowSub} numberOfLines={1}>{deal}</Text>
                       ) : null}
+                      <Text style={styles.rowSub} numberOfLines={1}>
+                        {statusPillLabel(t.status)}
+                        {overdue ? ' · Quá hạn' : ''}
+                        {` · ${due}`}
+                      </Text>
                     </View>
-                  ) : null}
-                </>
+                    <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
+                  </Pressable>
+                );
+              })}
+              {openTasks.length > TASK_PAGE_SIZE ? (
+                <View style={styles.pager}>
+                  <Pressable
+                    style={[styles.pageBtn, safeTaskPage <= 1 && styles.pageBtnDisabled]}
+                    disabled={safeTaskPage <= 1}
+                    onPress={() => setTaskPage((p) => Math.max(1, p - 1))}
+                  >
+                    <Ionicons
+                      name="chevron-back"
+                      size={16}
+                      color={safeTaskPage <= 1 ? colors.textFaint : colors.text}
+                    />
+                  </Pressable>
+                  <Text style={styles.pageLabel}>
+                    Trang {safeTaskPage}/{taskPages}
+                  </Text>
+                  <Pressable
+                    style={[styles.pageBtn, safeTaskPage >= taskPages && styles.pageBtnDisabled]}
+                    disabled={safeTaskPage >= taskPages}
+                    onPress={() => setTaskPage((p) => Math.min(taskPages, p + 1))}
+                  >
+                    <Ionicons
+                      name="chevron-forward"
+                      size={16}
+                      color={safeTaskPage >= taskPages ? colors.textFaint : colors.text}
+                    />
+                  </Pressable>
+                </View>
               ) : null}
             </>
           )}
         </View>
 
-        {/* Thông báo mới */}
-        <View style={styles.sectionHead}>
-          <View style={styles.sectionTitleRow}>
-            <Ionicons name="notifications" size={18} color="#A78BFA" />
-            <Text style={styles.sectionTitle}>Thông báo mới</Text>
-          </View>
-          <TapHighlight onPress={() => void openNotifs()}>
-            <Text style={styles.linkText}>Xem tất cả ›</Text>
-          </TapHighlight>
+        <View style={styles.secHead}>
+          <Text style={styles.secTitleInline}>Dự án quá hạn</Text>
+          <Pressable onPress={openOverdueProjects} hitSlop={8}>
+            <Text style={styles.link}>
+              {(ownOnly ? overdueDeals.length : kpis.overdue) > 0
+                ? `Tất cả (${ownOnly ? overdueDeals.length : kpis.overdue})`
+                : 'Mở danh sách'}
+            </Text>
+          </Pressable>
         </View>
-        <View style={styles.listCard}>
-          {notifs.length === 0 ? (
-            <Text style={styles.emptyText}>Chưa có thông báo mới</Text>
+        <View style={styles.card}>
+          {previewDeals.length === 0 ? (
+            <View style={styles.emptyRow}>
+              <Ionicons name="briefcase-outline" size={20} color={colors.textFaint} />
+              <Text style={styles.emptyTxt}>
+                {!ownOnly && kpis.overdue > overdueDeals.length
+                  ? `Có ${kpis.overdue} dự án quá hạn — mở danh sách đầy đủ`
+                  : 'Không có dự án quá hạn'}
+              </Text>
+            </View>
           ) : (
-            notifs.map((n, idx) => {
-              const subtitle = notifListSubtitle(n);
-              return (
-              <TouchableOpacity
-                key={n.id}
-                style={[styles.notifRow, idx > 0 && styles.prioRowBorder]}
-                activeOpacity={0.85}
-                onPress={() => {
-                  const pid = n.metadata?.project_id || (n.entity_type === 'project' ? n.entity_id : null);
-                  if (pid) openProjectDetail(String(pid));
-                  else void openNotifs();
-                }}
-              >
-                <View style={[styles.notifIcon, { backgroundColor: colorWithAlpha(colors.primary, 0.2) }]}>
-                  <Ionicons
-                    name={
-                      isWorkshopDealNotification(n)
-                        ? 'briefcase-outline'
-                        : n.type?.includes('logistics') || n.message?.includes('vận chuyển')
-                          ? 'car'
-                          : 'chatbubble-ellipses-outline'
-                    }
-                    size={18}
-                    color={colors.primary}
-                  />
-                </View>
-                <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text style={styles.notifText} numberOfLines={2}>
-                    {notifListTitle(n)}
-                  </Text>
-                  {subtitle ? (
-                    <Text style={styles.notifProject} numberOfLines={1}>
-                      {subtitle}
+            <>
+              {previewDeals.map((p, idx) => (
+                <Pressable
+                  key={p.id}
+                  style={[styles.rowItem, idx > 0 && styles.rowBorder]}
+                  onPress={() => openProjectDetail(p.id)}
+                >
+                  <View style={[styles.rowIcon, { backgroundColor: colors.dangerSoft }]}>
+                    <Text style={[styles.avatarTxt, { color: colors.danger }]}>
+                      {initialsFrom(p.customer_name || p.name || p.code)}
                     </Text>
-                  ) : null}
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.rowTitle} numberOfLines={1}>{p.name || p.code}</Text>
+                    <Text style={styles.rowSub} numberOfLines={1}>
+                      {p.production_person_name
+                        ? `Phụ trách: ${p.production_person_name}`
+                        : (p.customer_name || p.code)}
+                    </Text>
+                    <Text style={[styles.rowSub, { color: colors.danger }]} numberOfLines={1}>
+                      Hạn {shortDateLabel(p.delivery_date || p.production_deadline || p.deadline)}
+                    </Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
+                </Pressable>
+              ))}
+              {overdueDeals.length > DEAL_PAGE_SIZE ? (
+                <View style={styles.pager}>
+                  <Pressable
+                    style={[styles.pageBtn, safeDealPage <= 1 && styles.pageBtnDisabled]}
+                    disabled={safeDealPage <= 1}
+                    onPress={() => setDealPage((p) => Math.max(1, p - 1))}
+                  >
+                    <Ionicons
+                      name="chevron-back"
+                      size={16}
+                      color={safeDealPage <= 1 ? colors.textFaint : colors.text}
+                    />
+                  </Pressable>
+                  <Text style={styles.pageLabel}>
+                    Trang {safeDealPage}/{dealPages}
+                  </Text>
+                  <Pressable
+                    style={[styles.pageBtn, safeDealPage >= dealPages && styles.pageBtnDisabled]}
+                    disabled={safeDealPage >= dealPages}
+                    onPress={() => setDealPage((p) => Math.min(dealPages, p + 1))}
+                  >
+                    <Ionicons
+                      name="chevron-forward"
+                      size={16}
+                      color={safeDealPage >= dealPages ? colors.textFaint : colors.text}
+                    />
+                  </Pressable>
                 </View>
-                <Text style={styles.notifTime}>{notifTime(n.created_at)}</Text>
-              </TouchableOpacity>
-              );
-            })
+              ) : !ownOnly && kpis.overdue > overdueDeals.length ? (
+                <Pressable style={styles.moreBtn} onPress={openOverdueProjects}>
+                  <Text style={styles.moreBtnTxt}>Xem tất cả trên Deadline</Text>
+                  <Ionicons name="chevron-forward" size={16} color={colors.primary} />
+                </Pressable>
+              ) : null}
+            </>
           )}
+        </View>
+
+        <Text style={styles.secTitle}>Lối tắt</Text>
+        <View style={styles.quickGrid}>
+          {quickActions.map((a) => (
+            <Pressable
+              key={a.key}
+              style={({ pressed }) => [styles.quickTile, pressed && styles.pressed]}
+              onPress={a.onPress}
+            >
+              <View style={[styles.quickIcon, { backgroundColor: a.color + '22' }]}>
+                <Ionicons name={a.icon} size={20} color={a.color} />
+              </View>
+              <Text style={styles.quickLabel} numberOfLines={1}>{a.label}</Text>
+            </Pressable>
+          ))}
         </View>
       </ScrollView>
 
@@ -1070,256 +959,292 @@ export default function OverviewScreen() {
   );
 }
 
-function createStyles(colors: ReturnType<typeof useTheme>['colors'], isDark: boolean) {
+function createStyles(colors: AppColors) {
   return StyleSheet.create({
     root: { flex: 1, backgroundColor: colors.bg },
-    scroll: { paddingHorizontal: Spacing.lg, paddingTop: Spacing.md },
-    headerRow: {
+    hero: {
+      paddingHorizontal: PAGE_HPAD,
+      paddingTop: 12,
+      paddingBottom: 14,
+      backgroundColor: colors.bg,
+    },
+    heroTop: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 10,
+    },
+    heroIdentity: {
+      flex: 1,
       flexDirection: 'row',
       alignItems: 'center',
-      justifyContent: 'space-between',
-      marginBottom: Spacing.lg,
+      gap: 12,
     },
-    headerLeft: { flexDirection: 'row', alignItems: 'center', flex: 1, gap: 12 },
-    headerTextWrap: { flex: 1, minWidth: 0 },
-    greetTitle: { color: colors.text, fontSize: 17, fontWeight: '800' },
-    greetSub: { color: colors.textMuted, fontSize: 12, marginTop: 2 },
-    headerBtns: { flexDirection: 'row', gap: 8 },
+    helloLine: {
+      color: colors.text,
+      fontSize: 20,
+      fontWeight: '800',
+      letterSpacing: -0.3,
+    },
+    dateLine: {
+      marginTop: 3,
+      color: colors.textMuted,
+      fontSize: 13,
+      fontWeight: '600',
+    },
+    wishLine: {
+      marginTop: 4,
+      color: colors.textMuted,
+      fontSize: 13.5,
+      fontWeight: '600',
+      lineHeight: 18,
+    },
+    headerBtns: { flexDirection: 'row', alignItems: 'center', gap: 8 },
     iconBtn: {
-      width: 42,
-      height: 42,
-      borderRadius: 12,
-      backgroundColor: colors.card,
-      alignItems: 'center',
-      justifyContent: 'center',
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      backgroundColor: colors.cardAlt,
       borderWidth: 1,
       borderColor: colors.border,
+      alignItems: 'center',
+      justifyContent: 'center',
     },
     badge: {
       position: 'absolute',
       top: -4,
       right: -4,
-      minWidth: 18,
-      height: 18,
-      borderRadius: 9,
+      minWidth: 16,
+      height: 16,
+      borderRadius: 8,
       backgroundColor: colors.danger,
       alignItems: 'center',
       justifyContent: 'center',
-      paddingHorizontal: 4,
+      paddingHorizontal: 3,
     },
-    badgeText: { color: '#fff', fontSize: 9, fontWeight: '800' },
-    metaRow: { flexDirection: 'row', gap: 10, marginBottom: Spacing.lg },
-    metaCard: {
+    badgeText: { color: colors.white, fontSize: 9, fontWeight: '800' },
+    content: { paddingHorizontal: PAGE_HPAD, paddingTop: 8 },
+    scopeChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      alignSelf: 'flex-start',
+      gap: 6,
+      marginBottom: 12,
+      paddingHorizontal: 10,
+      paddingVertical: 7,
+      borderRadius: Radii.full,
+      backgroundColor: colors.card,
+      borderWidth: 1,
+      borderColor: colors.border,
+      maxWidth: '100%',
+    },
+    scopeChipTxt: {
+      color: colors.text,
+      fontSize: 12,
+      fontWeight: '700',
+      flexShrink: 1,
+    },
+    inlineLoad: {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 10,
+      paddingVertical: 14,
+      paddingHorizontal: 12,
+      marginBottom: 14,
+      borderRadius: Radii.lg,
+      backgroundColor: colors.cardAlt,
+    },
+    muted: { color: colors.textMuted, fontSize: 13, fontWeight: '600' },
+    errorBanner: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      backgroundColor: colors.dangerSoft,
+      borderRadius: Radii.lg,
+      borderWidth: 1,
+      borderColor: colorWithAlpha(colors.danger, 0.35),
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      marginBottom: 12,
+    },
+    errorTxt: { flex: 1, color: colors.danger, fontSize: 12.5, fontWeight: '700' },
+    alertBanner: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      backgroundColor: colors.dangerSoft,
+      borderRadius: Radii.lg,
+      borderWidth: 1,
+      borderColor: colorWithAlpha(colors.danger, 0.4),
+      paddingHorizontal: 12,
+      paddingVertical: 12,
+      marginBottom: 14,
+    },
+    alertIcon: {
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      backgroundColor: colors.card,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    alertTitle: { color: colors.danger, fontSize: 14.5, fontWeight: '800' },
+    alertSub: { color: colors.textMuted, fontSize: 12, fontWeight: '600', marginTop: 2 },
+    okBanner: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      backgroundColor: colorWithAlpha(colors.success, 0.12),
+      borderRadius: Radii.lg,
+      borderWidth: 1,
+      borderColor: colorWithAlpha(colors.success, 0.28),
+      paddingHorizontal: 12,
+      paddingVertical: 11,
+      marginBottom: 14,
+    },
+    okTxt: { color: colors.success, fontSize: 13.5, fontWeight: '700', flex: 1 },
+    secTitle: {
+      fontSize: 13,
+      fontWeight: '800',
+      color: colors.textMuted,
+      textTransform: 'uppercase',
+      letterSpacing: 0.6,
+      marginBottom: 10,
+      marginTop: 4,
+    },
+    secHead: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginTop: 16,
+      marginBottom: 10,
+    },
+    secTitleInline: {
+      fontSize: 13,
+      fontWeight: '800',
+      color: colors.textMuted,
+      textTransform: 'uppercase',
+      letterSpacing: 0.6,
+    },
+    link: { color: colors.primary, fontSize: 13, fontWeight: '700' },
+    kpiScroll: {
+      paddingRight: PAGE_HPAD,
+      paddingBottom: 4,
+      alignItems: 'stretch',
+    },
+    kpiCard: {
+      width: KPI_CARD_WIDTH,
       backgroundColor: colors.card,
       borderRadius: Radii.lg,
-      padding: 12,
       borderWidth: 1,
       borderColor: colors.border,
+      paddingHorizontal: 12,
+      paddingVertical: 12,
+      minHeight: 96,
     },
-    metaIcon: {
+    kpiCardGap: { marginLeft: 10 },
+    kpiDot: {
+      width: 18,
+      height: 18,
+      borderRadius: 9,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginBottom: 8,
+    },
+    kpiDotInner: { width: 8, height: 8, borderRadius: 4 },
+    kpiValue: { fontSize: 26, fontWeight: '900', letterSpacing: -0.5 },
+    kpiLabel: { marginTop: 2, fontSize: 12, fontWeight: '700', color: colors.textMuted },
+    card: {
+      backgroundColor: colors.card,
+      borderRadius: Radii.lg,
+      borderWidth: 1,
+      borderColor: colors.border,
+      overflow: 'hidden',
+    },
+    emptyRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      paddingHorizontal: 14,
+      paddingVertical: 16,
+    },
+    emptyTxt: { flex: 1, color: colors.textFaint, fontSize: 13, fontWeight: '600' },
+    rowItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      paddingHorizontal: 12,
+      paddingVertical: 12,
+    },
+    rowBorder: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
+    rowIcon: {
       width: 36,
       height: 36,
       borderRadius: 10,
       alignItems: 'center',
       justifyContent: 'center',
     },
-    metaTitle: { color: colors.text, fontSize: 12, fontWeight: '700' },
-    metaSub: { color: colors.textFaint, fontSize: 10, marginTop: 2 },
-    sectionHead: {
+    avatarTxt: { fontSize: 12, fontWeight: '800' },
+    rowTitle: { color: colors.text, fontSize: 14, fontWeight: '700' },
+    rowSub: { color: colors.textMuted, fontSize: 12, fontWeight: '600', marginTop: 2 },
+    pager: {
       flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      marginBottom: 10,
-      marginTop: 4,
-    },
-    sectionTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-    sectionTitle: { color: colors.text, fontSize: 17, fontWeight: '800' },
-    linkText: { color: colors.primary, fontSize: 13, fontWeight: '700' },
-    kpiScroll: { gap: 8, paddingBottom: Spacing.md },
-    kpiCard: {
-      width: 92,
-      backgroundColor: colors.card,
-      borderRadius: Radii.lg,
-      padding: 12,
-      borderWidth: 1,
-      borderColor: colors.border,
-      gap: 4,
-    },
-    kpiValue: { fontSize: 22, fontWeight: '800', marginTop: 4 },
-    kpiLabel: { color: colors.textMuted, fontSize: 11, fontWeight: '600', lineHeight: 14 },
-    alertCard: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 10,
-      backgroundColor: isDark ? '#2A1518' : '#FEF2F2',
-      borderRadius: Radii.lg,
-      padding: 14,
-      borderWidth: 1,
-      borderColor: isDark ? '#7F1D1D' : '#FECACA',
-      marginBottom: Spacing.lg,
-    },
-    alertLeft: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10 },
-    alertIcon: {
-      width: 40,
-      height: 40,
-      borderRadius: 12,
-      backgroundColor: colorWithAlpha(colors.danger, 0.2),
       alignItems: 'center',
       justifyContent: 'center',
-    },
-    alertTitle: { color: colors.text, fontSize: 13, fontWeight: '800' },
-    alertSub: { color: colors.textMuted, fontSize: 11, marginTop: 2 },
-    alertBtn: {
-      backgroundColor: colors.danger,
-      paddingHorizontal: 12,
-      paddingVertical: 8,
-      borderRadius: Radii.md,
-    },
-    alertBtnSecondary: {
-      backgroundColor: colorWithAlpha(colors.danger, 0.85),
-    },
-    alertBtnCol: { gap: 6, alignItems: 'stretch' },
-    alertBtnText: { color: '#fff', fontSize: 12, fontWeight: '700', textAlign: 'center' },
-    taskStatRow: { flexDirection: 'row', gap: 8, marginBottom: Spacing.lg },
-    taskStatCard: {
-      flex: 1,
-      borderRadius: Radii.lg,
-      padding: 12,
-      minHeight: 110,
-      justifyContent: 'space-between',
-    },
-    taskStatDanger: { backgroundColor: isDark ? '#7F1D1D' : '#DC2626' },
-    taskStatWarn: { backgroundColor: isDark ? '#78350F' : '#D97706' },
-    taskStatOk: { backgroundColor: isDark ? '#14532D' : '#16A34A' },
-    taskStatValue: { color: '#fff', fontSize: 26, fontWeight: '800', marginTop: 8 },
-    taskStatLabel: { color: 'rgba(255,255,255,0.92)', fontSize: 12, fontWeight: '700' },
-    taskStatHint: { color: 'rgba(255,255,255,0.7)', fontSize: 10, marginTop: 2 },
-    listCard: {
-      backgroundColor: colors.card,
-      borderRadius: Radii.lg,
-      borderWidth: 1,
-      borderColor: colors.border,
-      paddingHorizontal: 12,
-      marginBottom: Spacing.lg,
-      overflow: 'hidden',
-    },
-    prioAccordHead: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      paddingTop: 16,
-      paddingBottom: 16,
-      gap: 10,
-      minHeight: 56,
-    },
-    prioAccordBody: {
-      paddingBottom: 12,
-    },
-    prioGroupHeadBorder: {
-      marginTop: 2,
+      gap: 12,
+      paddingVertical: 10,
       borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: colors.border,
+      backgroundColor: colors.cardAlt,
     },
-    prioGroupTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 },
-    prioGroupTitle: { color: colors.text, fontSize: 16, fontWeight: '800', letterSpacing: -0.2 },
-    prioCountPill: {
-      minWidth: 28,
-      paddingHorizontal: 10,
-      paddingVertical: 4,
-      borderRadius: Radii.full,
-      alignItems: 'center',
-    },
-    prioCountTxt: { fontSize: 14, fontWeight: '800' },
-    prioGroupEmpty: {
-      color: colors.textFaint,
-      fontSize: 14,
-      paddingVertical: 14,
-      paddingLeft: 2,
-    },
-    prioPager: {
-      flexDirection: 'row',
+    pageBtn: {
+      width: 32,
+      height: 32,
+      borderRadius: 16,
       alignItems: 'center',
       justifyContent: 'center',
-      gap: 12,
-      paddingTop: 12,
-      paddingBottom: 6,
-    },
-    prioPagerEnd: {
-      alignItems: 'flex-end',
-      paddingTop: 10,
-      paddingBottom: 4,
-    },
-    prioPageBtn: {
-      width: 40,
-      height: 40,
-      borderRadius: 10,
+      backgroundColor: colors.card,
       borderWidth: 1,
       borderColor: colors.border,
-      backgroundColor: colors.bgElevated,
-      alignItems: 'center',
-      justifyContent: 'center',
     },
-    prioPageBtnDisabled: { opacity: 0.45 },
-    prioPageLabel: { color: colors.textMuted, fontSize: 14, fontWeight: '700', minWidth: 88, textAlign: 'center' },
-    emptyText: {
-      color: colors.textFaint,
-      fontSize: 14,
-      textAlign: 'center',
-      paddingVertical: 22,
-    },
-    prioRow: {
+    pageBtnDisabled: { opacity: 0.45 },
+    pageLabel: { color: colors.textMuted, fontSize: 12, fontWeight: '700', minWidth: 72, textAlign: 'center' },
+    moreBtn: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 12,
-      paddingVertical: 14,
-    },
-    prioRowBorder: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
-    prioAvatar: {
-      width: 48,
-      height: 48,
-      borderRadius: 24,
-      alignItems: 'center',
       justifyContent: 'center',
-    },
-    prioAvatarText: { fontSize: 14, fontWeight: '800' },
-    prioTitle: { color: colors.text, fontSize: 15, fontWeight: '800', lineHeight: 20 },
-    prioSub: { color: colors.textMuted, fontSize: 13, marginTop: 3, fontWeight: '600' },
-    progressTrack: {
-      height: 6,
-      borderRadius: 3,
+      gap: 6,
+      paddingVertical: 12,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: colors.border,
       backgroundColor: colors.cardAlt,
-      marginTop: 10,
-      overflow: 'hidden',
     },
-    progressFill: { height: 6, borderRadius: 3 },
-    progressLabel: { color: colors.textFaint, fontSize: 11, marginTop: 5, fontWeight: '600' },
-    prioRight: { alignItems: 'flex-end', gap: 8 },
-    prioBadge: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: Radii.full },
-    prioBadgeText: { fontSize: 12, fontWeight: '800' },
-    prioDate: { color: colors.textFaint, fontSize: 12, fontWeight: '700' },
-    notifRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 12 },
-    notifIcon: {
+    moreBtnTxt: { color: colors.primary, fontSize: 13, fontWeight: '800' },
+    quickGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 10,
+      marginBottom: Spacing.lg,
+    },
+    quickTile: {
+      width: '22%',
+      flexGrow: 1,
+      alignItems: 'center',
+      gap: 6,
+      backgroundColor: colors.card,
+      borderRadius: Radii.lg,
+      borderWidth: 1,
+      borderColor: colors.border,
+      paddingVertical: 12,
+      paddingHorizontal: 4,
+    },
+    quickIcon: {
       width: 40,
       height: 40,
       borderRadius: 12,
       alignItems: 'center',
       justifyContent: 'center',
     },
-    notifText: { color: colors.text, fontSize: 13, fontWeight: '600', lineHeight: 18 },
-    notifProject: { color: colors.textMuted, fontSize: 11, marginTop: 2 },
-    notifTime: { color: colors.textFaint, fontSize: 11 },
-    errorBox: {
-      backgroundColor: colors.dangerSoft,
-      borderRadius: Radii.md,
-      padding: 12,
-      marginBottom: 12,
-      borderWidth: 1,
-      borderColor: colors.danger,
-    },
-    errorText: { color: colors.danger, fontSize: 13 },
-    retryText: { color: colors.primary, fontWeight: '700', marginTop: 8 },
+    quickLabel: { fontSize: 11, fontWeight: '700', color: colors.textMuted },
+    pressed: { opacity: 0.82 },
   });
 }

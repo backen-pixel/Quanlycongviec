@@ -1,14 +1,15 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
+import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
+import type { RouteProp } from '@react-navigation/native';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   AppState,
   FlatList,
-  Modal,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -21,6 +22,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatApiError } from '../api/client';
 import FilterPickerModal from '../components/FilterPickerModal';
 import TapHighlight from '../components/TapHighlight';
+import WorkFilterSheet, {
+  type WorkScopeFilter,
+  type WorkStatusFilter,
+} from '../components/WorkFilterSheet';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { useProductionRealtime } from '../hooks/useProductionRealtime';
@@ -32,14 +37,14 @@ import {
   isSystemAdmin,
   workshopCompaniesForCrossViewer,
 } from '../lib/productionFilters';
+import type { MainTabParamList } from '../navigation/MainTabs';
 import { Radii, Spacing, colorWithAlpha, type AppColors } from '../theme';
 import {
-  type WorkAssigneeOption,
   type WorkTask,
   assignmentDealCardLabel,
   canViewTeamWork,
   collectAssigneeOptions,
-  fetchProductionWorkTasks,
+  fetchProductionWorkTasksPage,
   formatTaskDeadline,
   isTaskDone,
   isTaskInProgress,
@@ -54,10 +59,11 @@ import {
   updateWorkTaskStatus,
   uploadWorkTaskFile,
   workTaskFocusCrmId,
+  WORK_TASKS_PAGE_SIZE,
 } from '../lib/workTasksApi';
 
-type StatusFilter = 'all' | 'pending' | 'in_progress' | 'completed' | 'overdue';
-type ScopeFilter = 'team' | 'mine';
+type StatusFilter = WorkStatusFilter;
+type ScopeFilter = WorkScopeFilter;
 
 const STATUS_CHIPS: {
   key: StatusFilter;
@@ -87,6 +93,7 @@ function statusColor(status: string, colors: AppColors): string {
 function createStyles(colors: AppColors, bottomInset: number) {
   return StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.bg },
+    listFlex: { flex: 1 },
     center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bg },
     header: {
       paddingHorizontal: Spacing.lg,
@@ -98,20 +105,6 @@ function createStyles(colors: AppColors, bottomInset: number) {
     headerTextWrap: { flex: 1, minWidth: 0 },
     screenTitle: { color: colors.text, fontSize: 22, fontWeight: '800', letterSpacing: -0.3 },
     subtitle: { color: colors.textMuted, fontSize: 11, marginTop: 1, fontWeight: '600' },
-    headerIconBtn: {
-      width: 36,
-      height: 36,
-      borderRadius: Radii.md,
-      borderWidth: 1,
-      borderColor: colors.border,
-      backgroundColor: colors.card,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    headerIconBtnActive: {
-      borderColor: colors.primary,
-      backgroundColor: colorWithAlpha(colors.primary, 0.12),
-    },
     searchRow: {
       marginHorizontal: Spacing.lg,
       marginBottom: 8,
@@ -128,10 +121,118 @@ function createStyles(colors: AppColors, bottomInset: number) {
       borderWidth: 1,
       borderColor: colors.border,
       borderRadius: Radii.md,
-      paddingHorizontal: 10,
-      minHeight: 38,
+      paddingHorizontal: 12,
+      height: 42,
     },
-    searchInput: { flex: 1, color: colors.text, fontSize: 14, paddingVertical: 7, fontWeight: '500' },
+    searchInput: { flex: 1, color: colors.text, fontSize: 14, fontWeight: '500' },
+    filterBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      height: 42,
+      paddingHorizontal: 12,
+      borderRadius: Radii.md,
+      backgroundColor: colors.card,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    filterBtnActive: {
+      backgroundColor: colors.primary,
+      borderColor: colors.primary,
+    },
+    filterBtnTxt: { color: colors.text, fontSize: 13, fontWeight: '800' },
+    filterBtnTxtActive: { color: colors.white },
+    filterBtnBadge: {
+      minWidth: 18,
+      height: 18,
+      borderRadius: 9,
+      backgroundColor: 'rgba(255,255,255,0.28)',
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 4,
+    },
+    filterBtnBadgeTxt: { color: colors.white, fontSize: 10, fontWeight: '800' },
+    activeChipScroll: {
+      flexGrow: 0,
+      flexShrink: 0,
+      marginBottom: 6,
+      minHeight: 34,
+    },
+    activeChipContent: {
+      paddingHorizontal: Spacing.lg,
+      paddingVertical: 2,
+      alignItems: 'center',
+      gap: 6,
+    },
+    activeChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      height: 30,
+      paddingHorizontal: 10,
+      borderRadius: Radii.full,
+      backgroundColor: colors.card,
+      borderWidth: 1,
+      borderColor: colors.border,
+      maxWidth: 180,
+    },
+    activeChipTxt: { color: colors.text, fontSize: 12, fontWeight: '700', flexShrink: 1 },
+    dropdownChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      height: 30,
+      borderRadius: Radii.full,
+      backgroundColor: colors.card,
+      borderWidth: 1,
+      borderColor: colors.border,
+      maxWidth: 210,
+      overflow: 'hidden',
+    },
+    dropdownChipActive: {
+      borderColor: colorWithAlpha(colors.primary, 0.45),
+      backgroundColor: colors.primarySoft,
+    },
+    dropdownChipMain: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      paddingLeft: 10,
+      paddingRight: 6,
+      height: 30,
+      flexShrink: 1,
+      maxWidth: 180,
+    },
+    dropdownChipPrefix: {
+      color: colors.textMuted,
+      fontSize: 11,
+      fontWeight: '700',
+    },
+    dropdownChipTxt: {
+      color: colors.text,
+      fontSize: 12,
+      fontWeight: '700',
+      flexShrink: 1,
+    },
+    dropdownChipTxtActive: { color: colors.primary },
+    dropdownChipClear: {
+      width: 32,
+      height: 30,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderLeftWidth: StyleSheet.hairlineWidth,
+      borderLeftColor: colors.border,
+    },
+    activeChipClear: {
+      height: 30,
+      paddingHorizontal: 10,
+      borderRadius: Radii.full,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.primarySoft,
+      borderWidth: 1,
+      borderColor: colorWithAlpha(colors.primary, 0.35),
+    },
+    activeChipClearTxt: { color: colors.primary, fontSize: 12, fontWeight: '800' },
     filterBar: {
       paddingBottom: 6,
     },
@@ -164,26 +265,6 @@ function createStyles(colors: AppColors, bottomInset: number) {
     iconChipTxtActive: {
       color: colors.primary,
     },
-    seg: {
-      flexDirection: 'row',
-      borderRadius: Radii.full,
-      borderWidth: 1,
-      borderColor: colors.border,
-      overflow: 'hidden',
-      backgroundColor: colors.card,
-      height: 34,
-    },
-    segBtn: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: 4,
-      paddingHorizontal: 10,
-      height: 34,
-    },
-    segBtnActive: { backgroundColor: colorWithAlpha(colors.primary, 0.14) },
-    segTxt: { fontSize: 12, fontWeight: '700', color: colors.textMuted },
-    segTxtActive: { color: colors.primary },
     statsLine: {
       paddingHorizontal: Spacing.lg,
       paddingBottom: 8,
@@ -193,6 +274,7 @@ function createStyles(colors: AppColors, bottomInset: number) {
     },
     statsItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
     statsDot: { width: 6, height: 6, borderRadius: 3 },
+    statsLabel: { fontSize: 11, fontWeight: '700' },
     statsNum: { fontSize: 12, fontWeight: '800' },
     errorBox: {
       marginHorizontal: Spacing.lg,
@@ -346,45 +428,6 @@ function createStyles(colors: AppColors, bottomInset: number) {
       paddingHorizontal: Spacing.xl,
       lineHeight: 21,
     },
-    modalBackdrop: {
-      flex: 1,
-      backgroundColor: 'rgba(0,0,0,0.45)',
-      justifyContent: 'flex-end',
-    },
-    modalSheet: {
-      backgroundColor: colors.card,
-      borderTopLeftRadius: Radii.xl,
-      borderTopRightRadius: Radii.xl,
-      paddingBottom: bottomInset + 16,
-      maxHeight: '70%',
-    },
-    modalHandle: {
-      alignSelf: 'center',
-      width: 36,
-      height: 4,
-      borderRadius: 2,
-      backgroundColor: colors.borderStrong,
-      marginTop: 10,
-      marginBottom: 8,
-    },
-    modalTitle: {
-      color: colors.text,
-      fontSize: 16,
-      fontWeight: '800',
-      paddingHorizontal: Spacing.lg,
-      marginBottom: 8,
-    },
-    modalItem: {
-      paddingHorizontal: Spacing.lg,
-      paddingVertical: 14,
-      borderTopWidth: StyleSheet.hairlineWidth,
-      borderTopColor: colors.border,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-    },
-    modalItemTxt: { color: colors.text, fontSize: 15, fontWeight: '600', flex: 1 },
-    modalItemActive: { color: colors.primary },
   });
 }
 
@@ -393,6 +436,8 @@ export default function WorkScreen() {
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const { openProjectDetail } = useRootNavigation();
+  const navigation = useNavigation<BottomTabNavigationProp<MainTabParamList, 'Work'>>();
+  const route = useRoute<RouteProp<MainTabParamList, 'Work'>>();
   const userId = user?.id || user?.userId || '';
   const userName = user?.full_name || user?.fullName || 'Bạn';
   const teamView = canViewTeamWork(user);
@@ -400,29 +445,68 @@ export default function WorkScreen() {
   const canPickCompany = Boolean(isAdminLike);
 
   const [tasks, setTasks] = useState<WorkTask[]>([]);
+  const [hasMoreTasks, setHasMoreTasks] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [scope, setScope] = useState<ScopeFilter>(teamView ? 'team' : 'mine');
   const [assigneeFilter, setAssigneeFilter] = useState<string>('all');
-  const [personModal, setPersonModal] = useState(false);
+  const [filterSheetOpen, setFilterSheetOpen] = useState(false);
+  const [quickPicker, setQuickPicker] = useState<'company' | 'assignee' | null>(null);
   const [companies, setCompanies] = useState<CompanyOption[]>([]);
   const [filterCompany, setFilterCompany] = useState('');
-  const [companyPickerOpen, setCompanyPickerOpen] = useState(false);
   const [filtersReady, setFiltersReady] = useState(false);
   const [search, setSearch] = useState('');
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const updatingRef = useRef(false);
   const loadSeqRef = useRef(0);
+  const tasksLenRef = useRef(0);
   const lastSilentAtRef = useRef(0);
   const skipNextFocusRefreshRef = useRef(true);
+  const workAbortRef = useRef<AbortController | null>(null);
+  const loadingMoreRef = useRef(false);
+  const hasMoreTasksRef = useRef(false);
+  /** Số trang đã auto-fill khi lọc client (quá hạn / chưa…) — tránh spam vô hạn. */
+  const quietFillPagesRef = useRef(0);
+
+  useEffect(() => { tasksLenRef.current = tasks.length; }, [tasks.length]);
+  useEffect(() => { loadingMoreRef.current = loadingMore; }, [loadingMore]);
+  useEffect(() => { hasMoreTasksRef.current = hasMoreTasks; }, [hasMoreTasks]);
+  useEffect(() => {
+    quietFillPagesRef.current = 0;
+  }, [statusFilter, search, assigneeFilter, scope, filterCompany]);
+
+  // Overview «Công việc của tôi» → mở tab với filter Tôi (+ status nếu có).
+  useEffect(() => {
+    const p = route.params;
+    if (!p) return;
+    const nextScope = p.scope;
+    const nextStatus = p.status;
+    if (!nextScope && !nextStatus) return;
+
+    if (nextScope === 'mine' || nextScope === 'team') {
+      setScope(teamView && nextScope === 'team' ? 'team' : 'mine');
+      setAssigneeFilter('all');
+    }
+    if (
+      nextStatus === 'all'
+      || nextStatus === 'pending'
+      || nextStatus === 'in_progress'
+      || nextStatus === 'completed'
+      || nextStatus === 'overdue'
+    ) {
+      setStatusFilter(nextStatus);
+    }
+    navigation.setParams({ scope: undefined, status: undefined });
+  }, [route.params, teamView, navigation]);
 
   const companyOptions = useMemo(() => {
     if (canPickCompany) {
       return [
         { id: '', label: 'Tất cả công ty' },
-        ...companies.map((c) => ({ id: c.id, label: c.name })),
+        ...companies.map((c) => ({ id: String(c.id), label: c.name })),
       ];
     }
     const ownId = user?.company_id ? String(user.company_id) : '';
@@ -431,7 +515,7 @@ export default function WorkScreen() {
       return [{ id: ownId, label: own?.name || 'Công ty của tôi' }];
     }
     return workshopCompaniesForCrossViewer(companies, user).map((c) => ({
-      id: c.id,
+      id: String(c.id),
       label: c.name,
     }));
   }, [canPickCompany, companies, user]);
@@ -451,36 +535,85 @@ export default function WorkScreen() {
     });
   }, []);
 
-  const load = useCallback(async (silent = false) => {
+  const load = useCallback(async (
+    silent = false,
+    append = false,
+    opts?: { quiet?: boolean },
+  ) => {
     if (!userId || !filtersReady) {
       if (!userId) {
         setTasks([]);
+        setHasMoreTasks(false);
+        hasMoreTasksRef.current = false;
         setLoading(false);
       }
       return;
     }
-    const seq = ++loadSeqRef.current;
-    if (!silent) setError(null);
+    if (append) {
+      // Dùng ref — KHÔNG đưa loadingMore/hasMore vào deps (tránh vòng reload).
+      if (loadingMoreRef.current || !hasMoreTasksRef.current) return;
+      loadingMoreRef.current = true;
+      if (!opts?.quiet) setLoadingMore(true);
+    } else {
+      workAbortRef.current?.abort();
+    }
+    const ac = append ? (workAbortRef.current || new AbortController()) : new AbortController();
+    if (!append) workAbortRef.current = ac;
+    const seq = append ? loadSeqRef.current : ++loadSeqRef.current;
+    if (!silent && !append) setError(null);
     try {
       const assigneeId = !teamView || scope === 'mine' ? userId : null;
       const companyId = filterCompany || (canPickCompany ? null : (user?.company_id || null));
-      const rows = await fetchProductionWorkTasks({
+      const offset = append ? tasksLenRef.current : 0;
+      const page = await fetchProductionWorkTasksPage({
         assigneeId,
         companyId,
+        limit: WORK_TASKS_PAGE_SIZE,
+        offset,
+        signal: ac.signal,
       });
       if (seq !== loadSeqRef.current) return;
-      setTasks(rows);
+      setTasks((prev) => {
+        if (!append) return page.tasks;
+        const seen = new Set(prev.map((t) => t.id));
+        return [...prev, ...page.tasks.filter((t) => !seen.has(t.id))];
+      });
+      setHasMoreTasks(page.hasMore);
+      hasMoreTasksRef.current = page.hasMore;
       lastSilentAtRef.current = Date.now();
     } catch (e) {
       if (seq !== loadSeqRef.current) return;
-      if (!silent) {
+      const msg = String((e as { message?: string })?.message || '');
+      if (/aborted|canceled|cancelled/i.test(msg)) return;
+      if (!silent && !append) {
         setError(formatApiError(e));
         setTasks([]);
+        setHasMoreTasks(false);
+        hasMoreTasksRef.current = false;
       }
     } finally {
-      if (seq === loadSeqRef.current) setLoading(false);
+      // Append bị abort bởi load mới vẫn phải hạ cờ — tránh kẹt loadingMore.
+      if (append) {
+        loadingMoreRef.current = false;
+        setLoadingMore(false);
+      }
+      if (seq === loadSeqRef.current) {
+        setLoading(false);
+      }
     }
-  }, [userId, teamView, scope, user?.company_id, filterCompany, canPickCompany, filtersReady]);
+  }, [
+    userId,
+    teamView,
+    scope,
+    user?.company_id,
+    filterCompany,
+    canPickCompany,
+    filtersReady,
+  ]);
+
+  useEffect(() => () => {
+    workAbortRef.current?.abort();
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -557,9 +690,9 @@ export default function WorkScreen() {
   });
 
   const onSelectCompany = useCallback(async (id: string) => {
-    setCompanyPickerOpen(false);
     if (!canPickCompany && user?.company_id && id !== String(user.company_id)) return;
     setFilterCompany(id);
+    setQuickPicker(null);
     await persistCompanyFilter(id);
   }, [canPickCompany, user?.company_id, persistCompanyFilter]);
 
@@ -699,21 +832,207 @@ export default function WorkScreen() {
     });
   }, [tasks, statusFilter, search, teamView, scope, assigneeFilter, filterCompany]);
 
+  /**
+   * Chip Quá hạn / Chưa… lọc client → list rỗng dễ kích onEndReached liên tục (spinner xanh).
+   * Tự lấy thêm trang im lặng tối đa N lần tới khi có kết quả hoặc hết data.
+   */
+  useEffect(() => {
+    const clientFilterOn =
+      statusFilter !== 'all'
+      || Boolean(search.trim())
+      || (teamView && scope === 'team' && assigneeFilter !== 'all');
+    if (!clientFilterOn || !filtersReady || loading) return;
+    if (filtered.length > 0 || !hasMoreTasks) return;
+    if (loadingMoreRef.current) return;
+    if (quietFillPagesRef.current >= 8) return;
+    quietFillPagesRef.current += 1;
+    void load(true, true, { quiet: true });
+  }, [
+    filtered.length,
+    hasMoreTasks,
+    statusFilter,
+    search,
+    assigneeFilter,
+    teamView,
+    scope,
+    filtersReady,
+    loading,
+    tasks.length,
+    load,
+  ]);
+
+  /** Stats luôn trên cùng scope (search/công ty/người) — không phụ thuộc chip Chưa/Đang/Xong/QH. */
+  const statsScope = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    return tasks.filter((t) => {
+      if (teamView && scope === 'team' && assigneeFilter !== 'all') {
+        if (!taskAssignedToUser(t, assigneeFilter)) return false;
+      }
+      if (filterCompany && String(t.company_id || '') !== String(filterCompany)) {
+        return false;
+      }
+      if (needle) {
+        const hay = [
+          t.title,
+          t.description,
+          t.lead?.code,
+          t.lead?.title,
+          assignmentDealCardLabel(t.lead),
+          t.assignee?.full_name,
+          ...(t.assignees || []).map((a) => a.full_name),
+          t.stage_slug,
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+        if (!hay.includes(needle)) return false;
+      }
+      return true;
+    });
+  }, [tasks, search, teamView, scope, assigneeFilter, filterCompany]);
+
   const stats = useMemo(
     () => ({
-      total: filtered.length,
-      pending: filtered.filter((t) => isTaskPending(t.status)).length,
-      inProgress: filtered.filter((t) => isTaskInProgress(t.status)).length,
-      overdue: filtered.filter((t) => isTaskOverdue(t)).length,
+      pending: statsScope.filter((t) => isTaskPending(t.status)).length,
+      inProgress: statsScope.filter((t) => isTaskInProgress(t.status)).length,
+      done: statsScope.filter((t) => isTaskDone(t.status)).length,
+      overdue: statsScope.filter((t) => isTaskOverdue(t)).length,
     }),
-    [filtered],
+    [statsScope],
   );
 
   const personLabel = useMemo(() => {
-    if (assigneeFilter === 'all') return 'Người';
+    if (assigneeFilter === 'all') return 'Tất cả';
     const found = assigneeOptions.find((a) => a.id === assigneeFilter);
-    return found?.name?.split(/\s+/).slice(-1)[0] || 'Người';
+    return found?.name || 'Người nhận';
   }, [assigneeFilter, assigneeOptions]);
+
+  const assigneePickerOptions = useMemo(
+    () => [
+      { id: 'all', label: 'Tất cả' },
+      ...assigneeOptions.map((a) => ({ id: a.id, label: a.name })),
+    ],
+    [assigneeOptions],
+  );
+
+  const showCompanyPicker = canPickCompany || companyOptions.length > 1;
+  const showAssignee = teamView && scope === 'team';
+  const DROPDOWN_MIN_CHOICES = 2;
+  const realChoiceCount = (opts: { id: string }[]) =>
+    opts.filter((o) => o.id !== '' && o.id !== 'all').length;
+  const useCompanyDropdown = showCompanyPicker && realChoiceCount(companyOptions) >= DROPDOWN_MIN_CHOICES;
+  const useAssigneeDropdown = showAssignee && realChoiceCount(assigneePickerOptions) >= DROPDOWN_MIN_CHOICES;
+
+  const filterBadge = useMemo(() => {
+    let n = 0;
+    if (search.trim()) n += 1;
+    if (statusFilter !== 'all') n += 1;
+    if (teamView && scope === 'mine') n += 1;
+    if (showAssignee && assigneeFilter !== 'all') n += 1;
+    if (canPickCompany && filterCompany) n += 1;
+    return n;
+  }, [
+    search,
+    statusFilter,
+    teamView,
+    scope,
+    showAssignee,
+    assigneeFilter,
+    canPickCompany,
+    filterCompany,
+  ]);
+
+  type ActiveChip = { key: string; label: string; onClear: () => void };
+  const activeFilterChips = useMemo((): ActiveChip[] => {
+    const chips: ActiveChip[] = [];
+    const q = search.trim();
+    if (q) {
+      chips.push({
+        key: 'search',
+        label: `Tìm: ${q.length > 14 ? `${q.slice(0, 14)}…` : q}`,
+        onClear: () => setSearch(''),
+      });
+    }
+    // Phạm vi Đội/Tôi + trạng thái chọn nhanh trên hàng chip — không lặp active-chip
+    if (!useCompanyDropdown && filterCompany && canPickCompany) {
+      chips.push({
+        key: 'company',
+        label: companyLabel,
+        onClear: () => { void onSelectCompany(''); },
+      });
+    }
+    if (!useAssigneeDropdown && showAssignee && assigneeFilter !== 'all') {
+      chips.push({
+        key: 'assignee',
+        label: personLabel,
+        onClear: () => setAssigneeFilter('all'),
+      });
+    }
+    return chips;
+  }, [
+    search,
+    useCompanyDropdown,
+    filterCompany,
+    canPickCompany,
+    companyLabel,
+    useAssigneeDropdown,
+    showAssignee,
+    assigneeFilter,
+    personLabel,
+    onSelectCompany,
+  ]);
+
+  type DropdownChip = {
+    key: string;
+    prefix: string;
+    label: string;
+    active: boolean;
+    onOpen: () => void;
+    onClear?: () => void;
+  };
+
+  const filterDropdownChips = useMemo((): DropdownChip[] => {
+    const chips: DropdownChip[] = [];
+    if (useCompanyDropdown) {
+      chips.push({
+        key: 'dd-company',
+        prefix: 'Công ty',
+        label: filterCompany ? companyLabel : 'Tất cả',
+        active: !!filterCompany,
+        onOpen: () => setQuickPicker('company'),
+        onClear: filterCompany ? () => { void onSelectCompany(''); } : undefined,
+      });
+    }
+    if (useAssigneeDropdown) {
+      chips.push({
+        key: 'dd-assignee',
+        prefix: 'Người',
+        label: assigneeFilter !== 'all' ? personLabel : 'Tất cả',
+        active: assigneeFilter !== 'all',
+        onOpen: () => setQuickPicker('assignee'),
+        onClear: assigneeFilter !== 'all' ? () => setAssigneeFilter('all') : undefined,
+      });
+    }
+    return chips;
+  }, [
+    useCompanyDropdown,
+    filterCompany,
+    companyLabel,
+    useAssigneeDropdown,
+    assigneeFilter,
+    personLabel,
+    onSelectCompany,
+  ]);
+
+  const showFilterChipRow = activeFilterChips.length > 0 || filterDropdownChips.length > 0;
+
+  const resetWorkFilters = useCallback(() => {
+    setSearch('');
+    setStatusFilter('all');
+    setScope(teamView ? 'team' : 'mine');
+    setAssigneeFilter('all');
+    if (canPickCompany) void onSelectCompany('');
+  }, [teamView, canPickCompany, onSelectCompany]);
 
   const toggleStatus = async (task: WorkTask) => {
     if (updatingRef.current) return;
@@ -920,35 +1239,11 @@ export default function WorkScreen() {
             {assigneeFilter !== 'all' ? ` · ${personLabel}` : ''}
           </Text>
         </View>
-        {(canPickCompany || companyOptions.length > 1) ? (
-          <TapHighlight
-            style={[styles.headerIconBtn, filterCompany ? styles.headerIconBtnActive : null]}
-            onPress={() => setCompanyPickerOpen(true)}
-          >
-            <Ionicons
-              name="business-outline"
-              size={18}
-              color={filterCompany ? colors.primary : colors.textMuted}
-            />
-          </TapHighlight>
-        ) : null}
-        {teamView && scope === 'team' ? (
-          <TapHighlight
-            style={[styles.headerIconBtn, assigneeFilter !== 'all' && styles.headerIconBtnActive]}
-            onPress={() => setPersonModal(true)}
-          >
-            <Ionicons
-              name="person-outline"
-              size={18}
-              color={assigneeFilter !== 'all' ? colors.primary : colors.textMuted}
-            />
-          </TapHighlight>
-        ) : null}
       </View>
 
       <View style={styles.searchRow}>
         <View style={styles.searchWrap}>
-          <Ionicons name="search-outline" size={16} color={colors.textMuted} />
+          <Ionicons name="search-outline" size={17} color={colors.textFaint} />
           <TextInput
             style={styles.searchInput}
             placeholder="Tìm việc, deal, người…"
@@ -956,55 +1251,105 @@ export default function WorkScreen() {
             value={search}
             onChangeText={setSearch}
             autoCorrect={false}
-            clearButtonMode="while-editing"
+            returnKeyType="search"
           />
           {search ? (
             <Pressable onPress={() => setSearch('')} hitSlop={8}>
-              <Ionicons name="close-circle" size={16} color={colors.textMuted} />
+              <Ionicons name="close-circle" size={17} color={colors.textFaint} />
             </Pressable>
           ) : null}
         </View>
+        <Pressable
+          style={[styles.filterBtn, filterBadge > 0 && styles.filterBtnActive]}
+          onPress={() => setFilterSheetOpen(true)}
+          accessibilityLabel="Bộ lọc"
+        >
+          <Ionicons
+            name="options-outline"
+            size={16}
+            color={filterBadge > 0 ? colors.white : colors.text}
+          />
+          <Text style={[styles.filterBtnTxt, filterBadge > 0 && styles.filterBtnTxtActive]}>
+            Bộ lọc
+          </Text>
+          {filterBadge > 0 ? (
+            <View style={styles.filterBtnBadge}>
+              <Text style={styles.filterBtnBadgeTxt}>
+                {filterBadge > 9 ? '9+' : filterBadge}
+              </Text>
+            </View>
+          ) : null}
+        </Pressable>
       </View>
+
+      {showFilterChipRow ? (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.activeChipScroll}
+          contentContainerStyle={styles.activeChipContent}
+          nestedScrollEnabled
+          keyboardShouldPersistTaps="handled"
+        >
+          {filterDropdownChips.map((chip) => (
+            <View
+              key={chip.key}
+              style={[styles.dropdownChip, chip.active && styles.dropdownChipActive]}
+            >
+              <Pressable
+                style={styles.dropdownChipMain}
+                onPress={chip.onOpen}
+                accessibilityLabel={`${chip.prefix}: ${chip.label}`}
+              >
+                <Text style={styles.dropdownChipPrefix} numberOfLines={1}>{chip.prefix}</Text>
+                <Text
+                  style={[styles.dropdownChipTxt, chip.active && styles.dropdownChipTxtActive]}
+                  numberOfLines={1}
+                >
+                  {chip.label}
+                </Text>
+                <Ionicons
+                  name="chevron-down"
+                  size={12}
+                  color={chip.active ? colors.primary : colors.textMuted}
+                />
+              </Pressable>
+              {chip.onClear ? (
+                <Pressable
+                  onPress={chip.onClear}
+                  hitSlop={10}
+                  style={styles.dropdownChipClear}
+                  accessibilityLabel={`Xóa ${chip.prefix}`}
+                >
+                  <Ionicons name="close" size={14} color={colors.textMuted} />
+                </Pressable>
+              ) : null}
+            </View>
+          ))}
+          {activeFilterChips.map((chip) => (
+            <Pressable key={chip.key} style={styles.activeChip} onPress={chip.onClear}>
+              <Text style={styles.activeChipTxt} numberOfLines={1}>{chip.label}</Text>
+              <Ionicons name="close" size={13} color={colors.textMuted} />
+            </Pressable>
+          ))}
+          {(activeFilterChips.length > 0
+            || filterDropdownChips.some((c) => c.active)
+            || filterBadge > 0) ? (
+            <Pressable style={styles.activeChipClear} onPress={resetWorkFilters}>
+              <Text style={styles.activeChipClearTxt}>Xóa lọc</Text>
+            </Pressable>
+          ) : null}
+        </ScrollView>
+      ) : null}
 
       <View style={styles.filterBar}>
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
+          nestedScrollEnabled
+          keyboardShouldPersistTaps="handled"
           contentContainerStyle={styles.filterScroll}
         >
-          {teamView ? (
-            <View style={styles.seg}>
-              <TapHighlight
-                style={[styles.segBtn, scope === 'team' && styles.segBtnActive]}
-                onPress={() => {
-                  setScope('team');
-                  setAssigneeFilter('all');
-                }}
-              >
-                <Ionicons
-                  name="people-outline"
-                  size={15}
-                  color={scope === 'team' ? colors.primary : colors.textMuted}
-                />
-                <Text style={[styles.segTxt, scope === 'team' && styles.segTxtActive]}>Đội</Text>
-              </TapHighlight>
-              <TapHighlight
-                style={[styles.segBtn, scope === 'mine' && styles.segBtnActive]}
-                onPress={() => {
-                  setScope('mine');
-                  setAssigneeFilter('all');
-                }}
-              >
-                <Ionicons
-                  name="person-outline"
-                  size={15}
-                  color={scope === 'mine' ? colors.primary : colors.textMuted}
-                />
-                <Text style={[styles.segTxt, scope === 'mine' && styles.segTxtActive]}>Tôi</Text>
-              </TapHighlight>
-            </View>
-          ) : null}
-
           {STATUS_CHIPS.map((chip) => {
             const active = statusFilter === chip.key;
             const iconColor = active
@@ -1038,19 +1383,23 @@ export default function WorkScreen() {
 
       <View style={styles.statsLine}>
         <View style={styles.statsItem}>
-          <View style={[styles.statsDot, { backgroundColor: colors.textMuted }]} />
-          <Text style={[styles.statsNum, { color: colors.text }]}>{stats.total}</Text>
-        </View>
-        <View style={styles.statsItem}>
           <View style={[styles.statsDot, { backgroundColor: colors.warning }]} />
+          <Text style={[styles.statsLabel, { color: colors.warning }]}>Chưa</Text>
           <Text style={[styles.statsNum, { color: colors.warning }]}>{stats.pending}</Text>
         </View>
         <View style={styles.statsItem}>
           <View style={[styles.statsDot, { backgroundColor: colors.primary }]} />
+          <Text style={[styles.statsLabel, { color: colors.primary }]}>Đang</Text>
           <Text style={[styles.statsNum, { color: colors.primary }]}>{stats.inProgress}</Text>
         </View>
         <View style={styles.statsItem}>
+          <View style={[styles.statsDot, { backgroundColor: colors.success }]} />
+          <Text style={[styles.statsLabel, { color: colors.success }]}>Xong</Text>
+          <Text style={[styles.statsNum, { color: colors.success }]}>{stats.done}</Text>
+        </View>
+        <View style={styles.statsItem}>
           <View style={[styles.statsDot, { backgroundColor: colors.danger }]} />
+          <Text style={[styles.statsLabel, { color: colors.danger }]}>QH</Text>
           <Text style={[styles.statsNum, { color: colors.danger }]}>{stats.overdue}</Text>
         </View>
       </View>
@@ -1064,18 +1413,45 @@ export default function WorkScreen() {
   );
 
   return (
-    <>
+    <View style={styles.container}>
+      {/*
+        Header/filter nằm NGOÀI FlatList: trên Android, Pressable trong
+        ListHeaderComponent (+ removeClippedSubviews / ScrollView ngang lồng)
+        thường bị nuốt gesture — chỉ TextInput còn nhận chạm.
+      */}
+      {listHeader}
+
       <FlatList
-        style={styles.container}
+        style={styles.listFlex}
         data={filtered}
         keyExtractor={(item) => `asg-${item.id}`}
         renderItem={renderCard}
-        ListHeaderComponent={listHeader}
         contentContainerStyle={styles.listContent}
         initialNumToRender={12}
         windowSize={7}
         maxToRenderPerBatch={10}
-        removeClippedSubviews
+        removeClippedSubviews={false}
+        keyboardShouldPersistTaps="handled"
+        onEndReached={() => {
+          // List lọc rỗng: không append qua onEndReached (tránh spinner lặp) — dùng quiet fill.
+          if (filtered.length === 0) return;
+          if (loading || loadingMoreRef.current || !hasMoreTasksRef.current) return;
+          void load(true, true);
+        }}
+        onEndReachedThreshold={0.35}
+        ListFooterComponent={
+          filtered.length === 0
+            ? null
+            : loadingMore
+              ? (
+                <ActivityIndicator style={{ marginVertical: 16 }} color={colors.primary} />
+              )
+              : hasMoreTasks
+                ? (
+                  <Text style={[styles.empty, { paddingVertical: 12 }]}>Vuốt thêm để tải tiếp…</Text>
+                )
+                : null
+        }
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={() => void onRefresh()} tintColor={colors.primary} />
         }
@@ -1092,44 +1468,48 @@ export default function WorkScreen() {
         }
       />
 
-      <Modal visible={personModal} transparent animationType="slide" onRequestClose={() => setPersonModal(false)}>
-        <Pressable style={styles.modalBackdrop} onPress={() => setPersonModal(false)}>
-          <Pressable style={styles.modalSheet} onPress={(e) => e.stopPropagation()}>
-            <View style={styles.modalHandle} />
-            <Text style={styles.modalTitle}>Lọc theo người nhận</Text>
-            <FlatList
-              data={[{ id: 'all', name: 'Tất cả' }, ...assigneeOptions] as WorkAssigneeOption[]}
-              keyExtractor={(item) => item.id}
-              renderItem={({ item }) => {
-                const active = assigneeFilter === item.id;
-                return (
-                  <TapHighlight
-                    style={styles.modalItem}
-                    onPress={() => {
-                      setAssigneeFilter(item.id);
-                      setPersonModal(false);
-                    }}
-                  >
-                    <Text style={[styles.modalItemTxt, active && styles.modalItemActive]} numberOfLines={1}>
-                      {item.name}
-                    </Text>
-                    {active ? <Ionicons name="checkmark" size={18} color={colors.primary} /> : null}
-                  </TapHighlight>
-                );
-              }}
-            />
-          </Pressable>
-        </Pressable>
-      </Modal>
+      <WorkFilterSheet
+        visible={filterSheetOpen}
+        onClose={() => setFilterSheetOpen(false)}
+        onReset={() => {
+          resetWorkFilters();
+          setFilterSheetOpen(false);
+        }}
+        search={search}
+        showScope={teamView}
+        scope={scope}
+        onScopeChange={(id) => {
+          setScope(id);
+          setAssigneeFilter('all');
+        }}
+        statusFilter={statusFilter}
+        onStatusChange={setStatusFilter}
+        showCompanyPicker={showCompanyPicker}
+        companyOptions={companyOptions}
+        filterCompany={filterCompany}
+        onCompanyChange={(id) => { void onSelectCompany(id); }}
+        showAssignee={showAssignee}
+        assigneeOptions={assigneePickerOptions}
+        assigneeFilter={assigneeFilter}
+        onAssigneeChange={setAssigneeFilter}
+      />
 
       <FilterPickerModal
-        visible={companyPickerOpen}
+        visible={quickPicker === 'company'}
         title="Lọc theo công ty"
         options={companyOptions}
         selectedId={filterCompany}
         onSelect={(id) => { void onSelectCompany(id); }}
-        onClose={() => setCompanyPickerOpen(false)}
+        onClose={() => setQuickPicker(null)}
       />
-    </>
+      <FilterPickerModal
+        visible={quickPicker === 'assignee'}
+        title="Lọc theo người nhận"
+        options={assigneePickerOptions}
+        selectedId={assigneeFilter}
+        onSelect={setAssigneeFilter}
+        onClose={() => setQuickPicker(null)}
+      />
+    </View>
   );
 }

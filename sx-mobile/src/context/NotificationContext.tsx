@@ -575,6 +575,24 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     const onStageChanged = (raw: unknown) => {
       emitSync({ type: 'project:stage_changed', payload: (raw || {}) as Record<string, unknown> });
     };
+    /** Cập nhật 1 dự án — patch cache, không full board reload. */
+    const onProjectUpdated = (raw: unknown) => {
+      const p = (raw || {}) as Record<string, unknown>;
+      emitSync({
+        type: 'project:updated',
+        payload: {
+          ...p,
+          project_id:
+            p.project_id != null
+              ? String(p.project_id)
+              : p.id != null
+                ? String(p.id)
+                : p.projectId != null
+                  ? String(p.projectId)
+                  : null,
+        },
+      });
+    };
     const onBoardChanged = (raw: unknown) => {
       const p = (raw || {}) as Record<string, unknown>;
       emitSync({
@@ -680,11 +698,8 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     s.on('presence:update', onPresenceUpdate);
 
     s.on('project:stage_changed', onStageChanged);
-    s.on('project:updated', onBoardChanged);
-    s.on('approval:updated', onBoardChanged);
-    s.on('crm:badge_updated', onBoardChanged);
-    s.on('notify:badge', onBoardChanged);
-    s.on('crm:dashboard_changed', onBoardChanged);
+    // project:updated → patch 1 thẻ; board_changed chỉ sự kiện thật sự đổi cả board.
+    s.on('project:updated', onProjectUpdated);
     s.on('production:board_changed', onBoardChanged);
     s.on('logistics:project_trashed', onBoardChanged);
     s.on('logistics:project_restored', onBoardChanged);
@@ -717,11 +732,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       s.off('lead:comment', onLeadComment);
       s.off('notification', onServerNotif);
       s.off('project:stage_changed', onStageChanged);
-      s.off('project:updated', onBoardChanged);
-      s.off('approval:updated', onBoardChanged);
-      s.off('crm:badge_updated', onBoardChanged);
-      s.off('notify:badge', onBoardChanged);
-      s.off('crm:dashboard_changed', onBoardChanged);
+      s.off('project:updated', onProjectUpdated);
       s.off('production:board_changed', onBoardChanged);
       s.off('logistics:project_trashed', onBoardChanged);
       s.off('logistics:project_restored', onBoardChanged);

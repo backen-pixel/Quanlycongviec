@@ -15,10 +15,16 @@ import PlannerScreen from '../screens/PlannerScreen';
 import ProfileScreen, { SX_OPEN_CREATE_DEAL } from '../screens/ProfileScreen';
 import WorkScreen from '../screens/WorkScreen';
 
+export type WorkTabParams = {
+  /** Lọc Đội / Tôi — Overview «của tôi» truyền `mine`. */
+  scope?: 'mine' | 'team';
+  status?: 'all' | 'pending' | 'in_progress' | 'completed' | 'overdue';
+};
+
 export type MainTabParamList = {
   Overview: undefined;
   Kanban: undefined;
-  Work: undefined;
+  Work: WorkTabParams | undefined;
   CreateDeal: undefined;
   Messages: undefined;
   Planner: undefined;
@@ -136,7 +142,7 @@ export default function MainTabs() {
           name="Kanban"
           component={KanbanScreen}
           options={{
-            tabBarLabel: 'Kanban',
+            tabBarLabel: 'Dự án',
             tabBarIcon: ({ color, focused }) => (
               <Ionicons name={focused ? 'grid' : 'grid-outline'} size={22} color={color} />
             ),

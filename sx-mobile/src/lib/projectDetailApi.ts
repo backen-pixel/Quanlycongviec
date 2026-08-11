@@ -28,14 +28,19 @@ function mapPerson(raw: unknown): PersonRef | null {
 }
 
 function mapKanbanStage(raw: Record<string, unknown>, index: number): KanbanStage {
+  const wfStage = (raw.workflow_stage || {}) as { id?: string; slug?: string };
+  const slugRaw = raw.slug != null && String(raw.slug).trim()
+    ? String(raw.slug)
+    : (wfStage.slug != null && String(wfStage.slug).trim() ? String(wfStage.slug) : null);
   return {
     id: String(raw.id || ''),
     name: String(raw.name || `Cột ${index + 1}`),
     color: (raw.color as string) ?? null,
     icon: (raw.icon as string) ?? null,
     order_index: Number(raw.order_index ?? index),
+    slug: slugRaw,
     bucket_slug: (raw.bucket_slug as string) ?? null,
-    workflow_stage_id: (raw.workflow_stage_id as string) ?? null,
+    workflow_stage_id: (raw.workflow_stage_id as string) ?? wfStage.id ?? null,
     is_handover_to_logistics: Boolean(raw.is_handover_to_logistics),
   };
 }
@@ -79,11 +84,17 @@ function mapCrmTask(raw: Record<string, unknown>): CrmTask {
     ? raw.assignees.map((a) => mapPerson(a)).filter(Boolean) as PersonRef[]
     : [];
   const deadline = raw.deadline != null ? String(raw.deadline) : null;
+  const prodStage = raw.production_pipeline_stage && typeof raw.production_pipeline_stage === 'object'
+    ? (raw.production_pipeline_stage as Record<string, unknown>)
+    : null;
   return {
     id: String(raw.id || ''),
     title: String(raw.title || ''),
     status: String(raw.status || 'pending'),
     stage_slug: raw.stage_slug != null ? String(raw.stage_slug) : null,
+    production_pipeline_stage_id: raw.production_pipeline_stage_id != null
+      ? String(raw.production_pipeline_stage_id)
+      : (prodStage?.id != null ? String(prodStage.id) : null),
     order_index: raw.order_index != null ? Number(raw.order_index) : undefined,
     deadline,
     due_date: deadline ?? (raw.due_date != null ? String(raw.due_date) : null),
@@ -110,6 +121,15 @@ function mapCrmTask(raw: Record<string, unknown>): CrmTask {
             : undefined,
         }
       : null,
+    production_pipeline_stage: prodStage
+      ? {
+          id: prodStage.id != null ? String(prodStage.id) : undefined,
+          name: prodStage.name != null ? String(prodStage.name) : null,
+          order_index: prodStage.order_index != null ? Number(prodStage.order_index) : undefined,
+          color: prodStage.color != null ? String(prodStage.color) : null,
+          icon: prodStage.icon != null ? String(prodStage.icon) : null,
+        }
+      : null,
   };
 }
 
@@ -128,6 +148,18 @@ export const SX_STAGE_ORDER: { slug: string; label: string; icon: string; color:
 
 const SX_STAGE_INDEX = new Map(SX_STAGE_ORDER.map((s, i) => [s.slug, i]));
 
+export const SX_TASK_ORPHAN_STAGE_KEY = '__sx_orphan_pipeline__';
+
+export type CrmTaskStageGroup = {
+  key: string;
+  label: string;
+  color?: string | null;
+  icon?: string | null;
+  tasks: CrmTask[];
+  openCount: number;
+  doneCount: number;
+};
+
 export function getSxStageVisual(slug?: string | null): { icon: string; color: string } {
   const normalized = normalizeCrmTaskStageSlug(slug);
   const hit = SX_STAGE_ORDER.find((s) => s.slug === normalized);
@@ -144,6 +176,69 @@ export function normalizeCrmTaskStageSlug(slug?: string | null): string {
   return s;
 }
 
+function normalizeSxStageText(raw?: string | null): string {
+  return String(raw || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim();
+}
+
+function legacySxSlugFromStageName(nameRaw?: string | null): string | null {
+  const t = normalizeSxStageText(nameRaw);
+  if (!t) return null;
+  if (t.includes('tiep nhan')) return 'sx_tiep_nhan';
+  if (t.includes('thiet ke') || t.includes('len ke hoach')) return 'sx_thiet_ke_ke_hoach';
+  if (t.includes('kiem tra cheo')) return 'sx_kiem_tra_cheo';
+  if (t.includes('vat tu')) return 'sx_vat_tu';
+  if (t.includes('san xuat thung')) return 'sx_san_xuat_thung';
+  if (t.includes('san xuat alu')) return 'sx_san_xuat_alu';
+  if (t.includes('hoan thien')) return 'sx_hoan_thien';
+  if (t.includes('dong goi')) return 'sx_dong_goi';
+  if (t.includes('giao hang')) return 'sx_giao_hang';
+  return null;
+}
+
+function sxSlugForPipelineStage(stage: KanbanStage): string | null {
+  const bucket = String(stage.bucket_slug || '').trim();
+  if (bucket) return `sx_${bucket}`;
+  const legacy = legacySxSlugFromStageName(stage.name);
+  if (legacy) return legacy;
+  if (stage.id) return `sx_pl_${String(stage.id).slice(0, 8)}`;
+  return null;
+}
+
+function buildLegacySxSlugToStageId(stages: KanbanStage[]): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const s of stages || []) {
+    if (!s?.id) continue;
+    const slug = sxSlugForPipelineStage(s);
+    if (slug && !map.has(slug)) map.set(slug, String(s.id));
+  }
+  return map;
+}
+
+/** Gom task SX vào cột production_pipeline_stages.id — khớp web CRMTasksTab. */
+export function resolveSxTaskProductionStageId(
+  task: CrmTask,
+  sxStages: KanbanStage[],
+): string | null {
+  const stages = sxStages || [];
+  const validIds = new Set(stages.map((s) => String(s.id)));
+  const pid = task.production_pipeline_stage_id || task.production_pipeline_stage?.id;
+  if (pid) return validIds.has(String(pid)) ? String(pid) : null;
+
+  const legacyMap = buildLegacySxSlugToStageId(stages);
+  const slug = String(task.stage_slug || '').trim();
+  if (slug && legacyMap.has(slug)) return legacyMap.get(slug) || null;
+  if (slug.startsWith('sx_pl_')) {
+    const prefix = slug.slice(6);
+    const hit = stages.find((s) => s?.id && String(s.id).startsWith(prefix));
+    if (hit && validIds.has(String(hit.id))) return String(hit.id);
+  }
+  return null;
+}
+
 function sortTasksInStage(tasks: CrmTask[]): CrmTask[] {
   return [...tasks].sort((a, b) => {
     const oa = a.order_index ?? 0;
@@ -157,18 +252,22 @@ function stageGroupSortIndex(key: string, sampleTask?: CrmTask): number {
   const normalized = normalizeCrmTaskStageSlug(key);
   const sxIdx = SX_STAGE_INDEX.get(normalized);
   if (sxIdx != null) return sxIdx;
-  const pipeOrder = sampleTask?.pipeline_stage?.order_index;
+  const pipeOrder = sampleTask?.production_pipeline_stage?.order_index
+    ?? sampleTask?.pipeline_stage?.order_index;
   if (pipeOrder != null && Number.isFinite(pipeOrder)) return 100 + pipeOrder;
   return 900;
 }
 
 export function resolveCrmTaskStageLabel(task: CrmTask): string {
+  if (task.production_pipeline_stage?.name) return task.production_pipeline_stage.name;
   if (task.pipeline_stage?.name) return task.pipeline_stage.name;
   const slug = normalizeCrmTaskStageSlug(task.stage_slug);
   const fromOrder = SX_STAGE_ORDER.find((s) => s.slug === slug);
   if (fromOrder) return fromOrder.label;
   if (!slug || slug === '_other') return 'Khác';
   if (slug === 'sx_other') return 'Khác';
+  // Không hiện nhãn dạng «Pl 5ae60298»
+  if (/^sx_pl_/i.test(String(task.stage_slug || '')) || /^pl_/i.test(slug)) return 'Khác';
   if (slug.startsWith('sx_')) {
     return slug
       .replace(/^sx_/, '')
@@ -178,7 +277,61 @@ export function resolveCrmTaskStageLabel(task: CrmTask): string {
   return slug.replace(/_/g, ' ');
 }
 
-export function groupCrmTasksByStage(tasks: CrmTask[]): { key: string; label: string; tasks: CrmTask[] }[] {
+/**
+ * Gom nhiệm vụ theo giai đoạn pipeline SX (ưu tiên), fallback slug legacy.
+ * Khớp CRM: mỗi cột pipeline = 1 nhóm + đếm xong/còn lại.
+ */
+export function groupCrmTasksByStage(
+  tasks: CrmTask[],
+  sxStages: KanbanStage[] = [],
+): CrmTaskStageGroup[] {
+  const stages = [...(sxStages || [])].sort(
+    (a, b) => (Number(a.order_index) || 0) - (Number(b.order_index) || 0),
+  );
+
+  if (stages.length) {
+    const map = new Map<string, CrmTask[]>();
+    for (const s of stages) map.set(String(s.id), []);
+
+    for (const task of tasks) {
+      const key = resolveSxTaskProductionStageId(task, stages);
+      if (key && map.has(key)) {
+        map.get(key)!.push(task);
+      } else {
+        if (!map.has(SX_TASK_ORPHAN_STAGE_KEY)) map.set(SX_TASK_ORPHAN_STAGE_KEY, []);
+        map.get(SX_TASK_ORPHAN_STAGE_KEY)!.push(task);
+      }
+    }
+
+    const sections: CrmTaskStageGroup[] = [];
+    for (const s of stages) {
+      const list = sortTasksInStage(map.get(String(s.id)) || []);
+      if (!list.length) continue;
+      sections.push({
+        key: String(s.id),
+        label: s.name || 'Giai đoạn',
+        color: s.color,
+        icon: s.icon,
+        tasks: list,
+        openCount: list.filter((t) => !isCrmProductionTaskDone(t.status)).length,
+        doneCount: list.filter((t) => isCrmProductionTaskDone(t.status)).length,
+      });
+    }
+    const orphan = sortTasksInStage(map.get(SX_TASK_ORPHAN_STAGE_KEY) || []);
+    if (orphan.length) {
+      sections.push({
+        key: SX_TASK_ORPHAN_STAGE_KEY,
+        label: 'Khác',
+        color: '#B45309',
+        tasks: orphan,
+        openCount: orphan.filter((t) => !isCrmProductionTaskDone(t.status)).length,
+        doneCount: orphan.filter((t) => isCrmProductionTaskDone(t.status)).length,
+      });
+    }
+    return sections;
+  }
+
+  // Không có pipeline stages → gom theo slug (legacy).
   const map = new Map<string, { label: string; tasks: CrmTask[]; sample?: CrmTask }>();
   for (const task of tasks) {
     const key = normalizeCrmTaskStageSlug(task.stage_slug);
@@ -194,11 +347,17 @@ export function groupCrmTasksByStage(tasks: CrmTask[]): { key: string; label: st
       if (ia !== ib) return ia - ib;
       return keyA.localeCompare(keyB, 'vi');
     })
-    .map(([key, v]) => ({
-      key,
-      label: v.label,
-      tasks: sortTasksInStage(v.tasks),
-    }));
+    .map(([key, v]) => {
+      const list = sortTasksInStage(v.tasks);
+      return {
+        key,
+        label: v.label,
+        color: getSxStageVisual(key).color,
+        tasks: list,
+        openCount: list.filter((t) => !isCrmProductionTaskDone(t.status)).length,
+        doneCount: list.filter((t) => isCrmProductionTaskDone(t.status)).length,
+      };
+    });
 }
 
 export async function fetchProductionProjectDetail(projectId: string): Promise<ProductionProjectDetail> {
@@ -260,10 +419,13 @@ export async function fetchProductionProjectDetail(projectId: string): Promise<P
   };
 }
 
-export async function fetchCrmDealTasks(dealId: string): Promise<CrmTask[]> {
-  const { data } = await api.get<unknown>(`/crm/leads/${dealId}/tasks`, {
-    params: { task_scope: 'production' },
-  });
+export async function fetchCrmDealTasks(
+  dealId: string,
+  opts?: { workshopTypeId?: string | null },
+): Promise<CrmTask[]> {
+  const params: Record<string, string> = { task_scope: 'production' };
+  if (opts?.workshopTypeId) params.workshop_type_id = String(opts.workshopTypeId);
+  const { data } = await api.get<unknown>(`/crm/leads/${dealId}/tasks`, { params });
   const list = Array.isArray(data) ? data : [];
   return list.map((row) => mapCrmTask(row as Record<string, unknown>));
 }
@@ -318,6 +480,20 @@ export async function updateProjectDates(
   if (patch.delivery_date !== undefined) {
     body.production_deadline = patch.delivery_date;
   }
+  await api.put(`/projects/${projectId}`, body);
+}
+
+/**
+ * Cập nhật giá trị SX / tiền cọc — khớp web PUT /projects/:id.
+ * null hoặc ≤0 → xóa (null trên DB). Công nợ = SX − cọc (tính phía client).
+ */
+export async function updateProjectMoney(
+  projectId: string,
+  patch: Partial<{ production_value: number | null; deposit_amount: number | null }>,
+): Promise<void> {
+  const body: Record<string, number | null> = {};
+  if (patch.production_value !== undefined) body.production_value = patch.production_value;
+  if (patch.deposit_amount !== undefined) body.deposit_amount = patch.deposit_amount;
   await api.put(`/projects/${projectId}`, body);
 }
 

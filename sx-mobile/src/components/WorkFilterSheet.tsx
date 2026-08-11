@@ -1,5 +1,5 @@
 /**
- * Bottom sheet bộ lọc SX — một trang cuộn (giống CRM), không tách tab.
+ * Bottom sheet bộ lọc tab Công việc — một trang cuộn (đồng nhất với Kanban/CRM).
  */
 import Ionicons from '@expo/vector-icons/Ionicons';
 import React, { useEffect, useMemo, useState } from 'react';
@@ -17,74 +17,74 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { colorWithAlpha, Radii, Spacing, type AppColors } from '../theme';
 
-export type FilterPickOption = { id: string; label: string; group?: string };
-export type QuickFilterId = 'all' | 'mine' | 'overdue' | 'today';
-export type PhoneFilterId = '' | 'has' | 'no';
+export type WorkFilterOption = { id: string; label: string };
+export type WorkStatusFilter = 'all' | 'pending' | 'in_progress' | 'completed' | 'overdue';
+export type WorkScopeFilter = 'team' | 'mine';
 
 type Props = {
   visible: boolean;
   onClose: () => void;
   onReset: () => void;
   search?: string;
-  quickFilter?: QuickFilterId;
-  onQuickFilterChange?: (id: QuickFilterId) => void;
-  filterPhone?: PhoneFilterId;
-  onPhoneChange?: (id: PhoneFilterId) => void;
-  personOptions?: FilterPickOption[];
-  filterPersonId?: string;
-  onPersonChange?: (id: string) => void;
-  showWorkshopPicker: boolean;
-  workshopOptions: FilterPickOption[];
+  showScope: boolean;
+  scope: WorkScopeFilter;
+  onScopeChange: (id: WorkScopeFilter) => void;
+  statusFilter: WorkStatusFilter;
+  onStatusChange: (id: WorkStatusFilter) => void;
+  showCompanyPicker: boolean;
+  companyOptions: WorkFilterOption[];
   filterCompany: string;
-  onWorkshopChange: (id: string) => void;
-  showDealCompanyPicker: boolean;
-  dealCompanyOptions: FilterPickOption[];
-  filterDealCompany: string;
-  onDealCompanyChange: (id: string) => void;
-  dealCompanyReadOnlyLabel?: string;
-  workTypeOptions: FilterPickOption[];
-  filterWorkTypeId: string;
-  onWorkTypeChange: (id: string) => void;
+  onCompanyChange: (id: string) => void;
+  showAssignee: boolean;
+  assigneeOptions: WorkFilterOption[];
+  assigneeFilter: string;
+  onAssigneeChange: (id: string) => void;
 };
 
-const QUICK_OPTS: { id: QuickFilterId; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
-  { id: 'all', label: 'Tất cả', icon: 'apps-outline' },
-  { id: 'mine', label: 'Của tôi', icon: 'person' },
+const STATUS_OPTS: {
+  id: WorkStatusFilter;
+  label: string;
+  icon: keyof typeof Ionicons.glyphMap;
+}[] = [
+  { id: 'all', label: 'Tất cả', icon: 'list-outline' },
+  { id: 'pending', label: 'Chưa làm', icon: 'time-outline' },
+  { id: 'in_progress', label: 'Đang làm', icon: 'play-outline' },
+  { id: 'completed', label: 'Hoàn tất', icon: 'checkmark-circle-outline' },
   { id: 'overdue', label: 'Quá hạn', icon: 'alert-circle-outline' },
-  { id: 'today', label: 'Hôm nay', icon: 'today-outline' },
 ];
 
-const PHONE_OPTS: { id: PhoneFilterId; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
-  { id: 'has', label: 'Có SĐT', icon: 'call' },
-  { id: '', label: 'Tất cả', icon: 'apps-outline' },
-  { id: 'no', label: 'Chưa có SĐT', icon: 'call-outline' },
+const SCOPE_OPTS: {
+  id: WorkScopeFilter;
+  label: string;
+  icon: keyof typeof Ionicons.glyphMap;
+}[] = [
+  { id: 'team', label: 'Đội', icon: 'people-outline' },
+  { id: 'mine', label: 'Tôi', icon: 'person' },
 ];
+
+const COLLAPSE_LIMIT = 6;
 
 function Chip({
   label,
   active,
   onPress,
   icon,
-  disabled,
 }: {
   label: string;
   active: boolean;
   onPress: () => void;
   icon?: keyof typeof Ionicons.glyphMap;
-  disabled?: boolean;
 }) {
   const { colors } = useTheme();
   return (
     <TouchableOpacity
       onPress={onPress}
-      disabled={disabled}
       activeOpacity={0.8}
       style={[
         chipStyles.chip,
         {
           backgroundColor: active ? colors.primary : colors.card,
           borderColor: active ? colors.primary : colors.border,
-          opacity: disabled ? 0.55 : 1,
         },
       ]}
     >
@@ -125,24 +125,26 @@ function FilterSection({
 }) {
   return (
     <View style={{ marginBottom: Spacing.md }}>
-      <Text style={{
-        marginHorizontal: Spacing.lg,
-        fontSize: 13,
-        fontWeight: '800',
-        color: colors.text,
-      }}
+      <Text
+        style={{
+          marginHorizontal: Spacing.lg,
+          fontSize: 13,
+          fontWeight: '800',
+          color: colors.text,
+        }}
       >
         {title}
       </Text>
       {subtitle ? (
-        <Text style={{
-          marginHorizontal: Spacing.lg,
-          marginTop: 2,
-          marginBottom: 8,
-          fontSize: 11,
-          fontWeight: '600',
-          color: colors.textMuted,
-        }}
+        <Text
+          style={{
+            marginHorizontal: Spacing.lg,
+            marginTop: 2,
+            marginBottom: 8,
+            fontSize: 11,
+            fontWeight: '600',
+            color: colors.textMuted,
+          }}
         >
           {subtitle}
         </Text>
@@ -154,9 +156,6 @@ function FilterSection({
   );
 }
 
-/** Thu gọn chip dài — mặc định hiện COLLAPSE_LIMIT, bấm «Xem thêm» để mở hết. */
-const COLLAPSE_LIMIT = 6;
-
 function CollapsibleChips({
   options,
   selectedId,
@@ -166,7 +165,7 @@ function CollapsibleChips({
   moreBtnStyle,
   moreTxtColor,
 }: {
-  options: FilterPickOption[];
+  options: WorkFilterOption[];
   selectedId: string;
   onChange: (id: string) => void;
   forceExpand?: boolean;
@@ -211,30 +210,24 @@ function CollapsibleChips({
   );
 }
 
-export default function ProductionFilterSheet({
+export default function WorkFilterSheet({
   visible,
   onClose,
   onReset,
   search = '',
-  quickFilter = 'all',
-  onQuickFilterChange,
-  filterPhone = '',
-  onPhoneChange,
-  personOptions = [],
-  filterPersonId = '',
-  onPersonChange,
-  showWorkshopPicker,
-  workshopOptions,
+  showScope,
+  scope,
+  onScopeChange,
+  statusFilter,
+  onStatusChange,
+  showCompanyPicker,
+  companyOptions,
   filterCompany,
-  onWorkshopChange,
-  showDealCompanyPicker,
-  dealCompanyOptions,
-  filterDealCompany,
-  onDealCompanyChange,
-  dealCompanyReadOnlyLabel,
-  workTypeOptions,
-  filterWorkTypeId,
-  onWorkTypeChange,
+  onCompanyChange,
+  showAssignee,
+  assigneeOptions,
+  assigneeFilter,
+  onAssigneeChange,
 }: Props) {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
@@ -247,28 +240,17 @@ export default function ProductionFilterSheet({
   const q = query.trim().toLowerCase();
   const match = (label: string) => !q || label.toLowerCase().includes(q);
 
-  const filteredWorkshops = useMemo(
-    () => workshopOptions.filter((o) => match(o.label)),
-    [workshopOptions, q],
+  const filteredCompanies = useMemo(
+    () => companyOptions.filter((o) => match(o.label)),
+    [companyOptions, q],
   );
-  const filteredDeals = useMemo(
-    () => dealCompanyOptions.filter((o) => match(o.label)),
-    [dealCompanyOptions, q],
-  );
-  const filteredPersons = useMemo(
-    () => personOptions.filter((o) => match(o.label)),
-    [personOptions, q],
-  );
-  const filteredWorkTypes = useMemo(
-    () => workTypeOptions.filter((o) => match(o.label)),
-    [workTypeOptions, q],
+  const filteredAssignees = useMemo(
+    () => assigneeOptions.filter((o) => match(o.label)),
+    [assigneeOptions, q],
   );
 
   const showListSearch =
-    workshopOptions.length > 8
-    || dealCompanyOptions.length > 8
-    || personOptions.length > 8
-    || workTypeOptions.length > 8;
+    companyOptions.length > 8 || assigneeOptions.length > 8;
 
   const styles = useMemo(
     () =>
@@ -336,15 +318,15 @@ export default function ProductionFilterSheet({
           gap: 8,
           paddingHorizontal: Spacing.lg,
         },
-        readOnly: {
+        moreBtn: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 4,
+          alignSelf: 'flex-start',
+          marginTop: 10,
           marginHorizontal: Spacing.lg,
-          padding: Spacing.md,
-          borderRadius: Radii.md,
-          backgroundColor: colors.primarySoft,
-          borderWidth: 1,
-          borderColor: colorWithAlpha(colors.primary, 0.2),
+          paddingVertical: 4,
         },
-        readOnlyText: { color: colors.text, fontSize: 13, fontWeight: '600' },
         footer: {
           flexDirection: 'row',
           gap: 10,
@@ -373,15 +355,6 @@ export default function ProductionFilterSheet({
           justifyContent: 'center',
         },
         applyTxt: { color: colors.white, fontSize: 14, fontWeight: '800' },
-        moreBtn: {
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 4,
-          alignSelf: 'flex-start',
-          marginTop: 10,
-          marginHorizontal: Spacing.lg,
-          paddingVertical: 4,
-        },
       }),
     [colors],
   );
@@ -396,9 +369,16 @@ export default function ProductionFilterSheet({
           <View style={styles.handle} />
           <View style={styles.header}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.title}>Bộ lọc sản xuất</Text>
+              <Text style={styles.title}>Bộ lọc công việc</Text>
               <Text style={styles.subtitle}>
-                Nhanh · SĐT · Xưởng · Đặt hàng · Phụ trách · Phân loại
+                {[
+                  showScope ? 'Phạm vi' : null,
+                  'Trạng thái',
+                  showCompanyPicker ? 'Công ty' : null,
+                  showAssignee ? 'Người nhận' : null,
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
               </Text>
             </View>
             <TouchableOpacity onPress={onClose} hitSlop={8}>
@@ -434,44 +414,42 @@ export default function ProductionFilterSheet({
           ) : null}
 
           <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-            <FilterSection title="Lọc nhanh" subtitle="Của tôi · hạn xử lý" colors={colors}>
+            {showScope ? (
+              <FilterSection title="Phạm vi" subtitle="Đội · công việc của tôi" colors={colors}>
+                <View style={styles.chipWrap}>
+                  {SCOPE_OPTS.map((opt) => (
+                    <Chip
+                      key={opt.id}
+                      label={opt.label}
+                      icon={opt.icon}
+                      active={scope === opt.id}
+                      onPress={() => onScopeChange(opt.id)}
+                    />
+                  ))}
+                </View>
+              </FilterSection>
+            ) : null}
+
+            <FilterSection title="Trạng thái" subtitle="Lọc theo tiến độ giao việc" colors={colors}>
               <View style={styles.chipWrap}>
-                {QUICK_OPTS.map((opt) => (
+                {STATUS_OPTS.map((opt) => (
                   <Chip
                     key={opt.id}
                     label={opt.label}
                     icon={opt.icon}
-                    active={quickFilter === opt.id}
-                    onPress={() => onQuickFilterChange?.(opt.id)}
+                    active={statusFilter === opt.id}
+                    onPress={() => onStatusChange(opt.id)}
                   />
                 ))}
               </View>
             </FilterSection>
 
-            <FilterSection title="Số điện thoại" subtitle="Lọc theo SĐT khách hàng" colors={colors}>
-              <View style={styles.chipWrap}>
-                {PHONE_OPTS.map((opt) => (
-                  <Chip
-                    key={opt.id || 'all-phone'}
-                    label={opt.label}
-                    icon={opt.icon}
-                    active={filterPhone === opt.id}
-                    onPress={() => onPhoneChange?.(opt.id)}
-                  />
-                ))}
-              </View>
-            </FilterSection>
-
-            {showWorkshopPicker && workshopOptions.length > 0 ? (
-              <FilterSection
-                title="Công ty sản xuất (xưởng)"
-                subtitle="Phạm vi xưởng"
-                colors={colors}
-              >
+            {showCompanyPicker && companyOptions.length > 0 ? (
+              <FilterSection title="Công ty" subtitle="Phạm vi xưởng / công ty" colors={colors}>
                 <CollapsibleChips
-                  options={filteredWorkshops}
+                  options={filteredCompanies}
                   selectedId={filterCompany}
-                  onChange={onWorkshopChange}
+                  onChange={onCompanyChange}
                   forceExpand={!!q}
                   chipWrapStyle={styles.chipWrap}
                   moreBtnStyle={styles.moreBtn}
@@ -480,32 +458,12 @@ export default function ProductionFilterSheet({
               </FilterSection>
             ) : null}
 
-            {showDealCompanyPicker ? (
-              <FilterSection title="Công ty đặt hàng" colors={colors}>
-                {dealCompanyReadOnlyLabel ? (
-                  <View style={styles.readOnly}>
-                    <Text style={styles.readOnlyText}>{dealCompanyReadOnlyLabel}</Text>
-                  </View>
-                ) : (
-                  <CollapsibleChips
-                    options={filteredDeals}
-                    selectedId={filterDealCompany}
-                    onChange={onDealCompanyChange}
-                    forceExpand={!!q}
-                    chipWrapStyle={styles.chipWrap}
-                    moreBtnStyle={styles.moreBtn}
-                    moreTxtColor={colors.primary}
-                  />
-                )}
-              </FilterSection>
-            ) : null}
-
-            {personOptions.length > 0 ? (
-              <FilterSection title="Người phụ trách SX" colors={colors}>
+            {showAssignee ? (
+              <FilterSection title="Người nhận" subtitle="Lọc giao việc theo người" colors={colors}>
                 <CollapsibleChips
-                  options={filteredPersons}
-                  selectedId={filterPersonId}
-                  onChange={(id) => onPersonChange?.(id)}
+                  options={filteredAssignees}
+                  selectedId={assigneeFilter}
+                  onChange={onAssigneeChange}
                   forceExpand={!!q}
                   chipWrapStyle={styles.chipWrap}
                   moreBtnStyle={styles.moreBtn}
@@ -513,22 +471,6 @@ export default function ProductionFilterSheet({
                 />
               </FilterSection>
             ) : null}
-
-            <FilterSection
-              title="Phân loại pipeline"
-              subtitle="Loại sản xuất / chưa phân loại"
-              colors={colors}
-            >
-              <CollapsibleChips
-                options={filteredWorkTypes}
-                selectedId={filterWorkTypeId}
-                onChange={onWorkTypeChange}
-                forceExpand={!!q}
-                chipWrapStyle={styles.chipWrap}
-                moreBtnStyle={styles.moreBtn}
-                moreTxtColor={colors.primary}
-              />
-            </FilterSection>
 
             <View style={{ height: 8 }} />
           </ScrollView>

@@ -20,6 +20,21 @@ export type ProjectBoardChangedPayload = {
   [key: string]: unknown;
 };
 
+/** Socket `project:updated` — payload thường là row projects (id, status, cột…). */
+export type ProjectUpdatedPayload = {
+  project_id?: string | null;
+  id?: string;
+  sx_kanban_column_id?: string | null;
+  status?: string | null;
+  name?: string | null;
+  code?: string | null;
+  production_person_id?: string | null;
+  production_value?: number | null;
+  deposit_amount?: number | null;
+  is_overdue?: boolean;
+  [key: string]: unknown;
+};
+
 export type ProjectCommentChangedPayload = {
   project_id?: string;
   action?: 'created' | 'updated' | 'deleted' | string;
@@ -35,6 +50,7 @@ export type LeadCommentChangedPayload = {
 /** Sự kiện đồng bộ dữ liệu app (Kanban, Công việc, Planner, chi tiết dự án…). */
 export type SyncEvent =
   | { type: 'project:stage_changed'; payload: ProjectStageChangedPayload }
+  | { type: 'project:updated'; payload: ProjectUpdatedPayload }
   | { type: 'crm:task_changed'; payload: CrmTaskChangedPayload }
   | { type: 'project:board_changed'; payload: ProjectBoardChangedPayload }
   | { type: 'project:comment_changed'; payload: ProjectCommentChangedPayload }

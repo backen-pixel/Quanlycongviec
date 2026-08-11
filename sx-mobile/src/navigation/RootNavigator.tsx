@@ -16,6 +16,8 @@ import ProjectDetailScreen from '../screens/ProjectDetailScreen';
 import UpdateFromServerScreen from '../screens/UpdateFromServerScreen';
 import OverdueProjectsScreen from '../screens/OverdueProjectsScreen';
 import SettingsScreen from '../screens/SettingsScreen';
+import LeavesScreen from '../screens/LeavesScreen';
+import EventsScreen from '../screens/EventsScreen';
 import MainTabs, { type MainTabParamList } from './MainTabs';
 
 export type RootStackParamList = {
@@ -24,6 +26,8 @@ export type RootStackParamList = {
   ProjectDetail: { projectId: string; focusTaskId?: string | null };
   OverdueProjects: undefined;
   Settings: undefined;
+  Leaves: undefined;
+  Events: undefined;
   Messages: { tab?: 'chats' | 'calls' } | undefined;
   ChatDetail: {
     threadId: string;
@@ -131,6 +135,16 @@ export default function RootNavigator() {
           <Stack.Screen
             name="Settings"
             component={SettingsScreen}
+            options={{ animation: 'slide_from_right' }}
+          />
+          <Stack.Screen
+            name="Leaves"
+            component={LeavesScreen}
+            options={{ animation: 'slide_from_right' }}
+          />
+          <Stack.Screen
+            name="Events"
+            component={EventsScreen}
             options={{ animation: 'slide_from_right' }}
           />
           <Stack.Screen

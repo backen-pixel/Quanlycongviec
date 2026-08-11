@@ -666,6 +666,18 @@ r.get('/', async (req, res) => {
     }
 
     q = q.order('position', { ascending: true }).order('created_at', { ascending: false });
+
+    // Phân trang mobile (limit/offset) — mặc định không giới hạn để web giữ hành vi cũ.
+    const rawLimit = Number(req.query.limit);
+    const pageLimit = Number.isFinite(rawLimit) && rawLimit > 0
+      ? Math.min(Math.floor(rawLimit), 500)
+      : null;
+    const rawOffset = Number(req.query.offset);
+    const pageOffset = Number.isFinite(rawOffset) && rawOffset > 0 ? Math.floor(rawOffset) : 0;
+    if (pageLimit != null) {
+      q = q.range(pageOffset, pageOffset + pageLimit - 1);
+    }
+
     let { data, error } = await q;
     if (error && /task_source_type|employee_error_module/.test(error.message || '')) {
       const legacySelect = ASSIGNMENT_SELECT
@@ -687,6 +699,9 @@ r.get('/', async (req, res) => {
         qLegacy = qLegacy.eq('assignment_module', moduleFilter);
       }
       qLegacy = qLegacy.order('position', { ascending: true }).order('created_at', { ascending: false });
+      if (pageLimit != null) {
+        qLegacy = qLegacy.range(pageOffset, pageOffset + pageLimit - 1);
+      }
       ({ data, error } = await qLegacy);
     }
     if (error && /executor_company_id/.test(error.message || '') && isAdmin(req) && req.query.company_id) {
@@ -701,6 +716,9 @@ r.get('/', async (req, res) => {
         ({ q: qExec } = await applyAssignmentSearchQuery(qExec, req.query.q));
       }
       qExec = qExec.order('position', { ascending: true }).order('created_at', { ascending: false });
+      if (pageLimit != null) {
+        qExec = qExec.range(pageOffset, pageOffset + pageLimit - 1);
+      }
       ({ data, error } = await qExec);
     }
     if (error && /assignment_module/.test(error.message || '') && moduleFilter) {
@@ -719,12 +737,21 @@ r.get('/', async (req, res) => {
         ({ q: q2 } = await applyAssignmentSearchQuery(q2, req.query.q));
       }
       q2 = q2.order('position', { ascending: true }).order('created_at', { ascending: false });
+      if (pageLimit != null) {
+        q2 = q2.range(pageOffset, pageOffset + pageLimit - 1);
+      }
       ({ data, error } = await q2);
     }
     if (error) throw error;
     await attachAssigneesToAssignments(data || []);
     await attachCrmTaskMetaToAssignments(data || []);
-    res.json({ assignments: data || [] });
+    const rows = data || [];
+    res.json({
+      assignments: rows,
+      has_more: pageLimit != null ? rows.length >= pageLimit : false,
+      offset: pageOffset,
+      limit: pageLimit,
+    });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi tải nhiệm vụ' }); }
 });
 

@@ -5,13 +5,18 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   RefreshControl,
   ScrollView,
+  SectionList,
   StyleSheet,
   Text,
+  TextInput,
   View,
+  type SectionListData,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import ProductionPipelineStepper from '../components/projectDetail/ProductionPipelineStepper';
@@ -34,7 +39,10 @@ import {
   groupCrmTasksByStage,
   isCrmProductionTaskDone,
   pickPrimaryCrmDealId,
+  updateCrmTask,
   updateProjectDates,
+  updateProjectMoney,
+  type CrmTaskStageGroup,
 } from '../lib/projectDetailApi';
 import { fetchThreadComments, resolveCommentSource } from '../lib/commentApi';
 import type { RootStackParamList } from '../navigation/RootNavigator';
@@ -44,6 +52,7 @@ import type { CrmTask, ProductionProjectDetail, ProjectActivity } from '../types
 type Props = NativeStackScreenProps<RootStackParamList, 'ProjectDetail'>;
 type TabKey = 'tasks' | 'documents' | 'drive' | 'info' | 'team' | 'schedule' | 'comments';
 type EditableDateField = 'order_date' | 'delivery_date' | 'deadline';
+type EditableMoneyField = 'production_value' | 'deposit_amount';
 
 function formatDate(value?: string | null): string {
   if (!value) return '';
@@ -85,67 +94,83 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
   const [editingDateField, setEditingDateField] = useState<EditableDateField | null>(null);
   const [dateDraft, setDateDraft] = useState<Date>(new Date());
   const [dateSaving, setDateSaving] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [editingMoneyField, setEditingMoneyField] = useState<EditableMoneyField | null>(null);
+  const [moneyDraft, setMoneyDraft] = useState('');
+  const [moneySaving, setMoneySaving] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
+  const tasksListRef = useRef<SectionList<CrmTask, CrmTaskStageGroup>>(null);
   const scrollInnerRef = useRef<View>(null);
   const focusTargetRef = useRef<View>(null);
   const didFocusScroll = useRef(false);
   const loadSeqRef = useRef(0);
+  const loadAbortRef = useRef<AbortController | null>(null);
 
   const load = useCallback(async (silent = false) => {
+    loadAbortRef.current?.abort();
+    const ac = new AbortController();
+    loadAbortRef.current = ac;
     const seq = ++loadSeqRef.current;
     const forProjectId = projectId;
     if (!silent) setLoading(true);
     setErr('');
     try {
       const detail = await fetchProductionProjectDetail(forProjectId);
-      if (seq !== loadSeqRef.current) return;
+      if (seq !== loadSeqRef.current || ac.signal.aborted) return;
       setProject(detail);
 
       let resolvedDealId =
         pickPrimaryCrmDealId(detail.crmDeals)
         || null;
       if (!resolvedDealId) resolvedDealId = await fetchDealIdForProject(forProjectId);
-      if (seq !== loadSeqRef.current) return;
+      if (seq !== loadSeqRef.current || ac.signal.aborted) return;
 
       // Activities không phụ thuộc deal — chạy song song với tasks.
       const actPromise = fetchProjectActivities(forProjectId);
 
+      const workshopTypeId = detail.workshop_type_id || detail.workshop_type?.id || null;
+
       let taskRows = resolvedDealId
-        ? await fetchCrmDealTasks(resolvedDealId)
+        ? await fetchCrmDealTasks(resolvedDealId, { workshopTypeId })
         : [];
 
-      // Nếu focusTaskId không nằm trên deal chính — thử các deal còn lại của dự án.
+      // Nếu focusTaskId không nằm trên deal chính — thử các deal còn lại song song.
       if (
         focusTaskId
         && resolvedDealId
         && !taskRows.some((t) => String(t.id) === String(focusTaskId))
         && (detail.crmDeals?.length || 0) > 1
       ) {
-        for (const d of detail.crmDeals || []) {
-          if (String(d.id) === String(resolvedDealId)) continue;
-          const altRows = await fetchCrmDealTasks(String(d.id));
-          if (seq !== loadSeqRef.current) return;
+        const others = (detail.crmDeals || []).filter((d) => String(d.id) !== String(resolvedDealId));
+        const altPages = await Promise.all(
+          others.map((d) => fetchCrmDealTasks(String(d.id), { workshopTypeId }).catch(() => [] as CrmTask[])),
+        );
+        if (seq !== loadSeqRef.current || ac.signal.aborted) return;
+        for (let i = 0; i < others.length; i += 1) {
+          const altRows = altPages[i] || [];
           if (altRows.some((t) => String(t.id) === String(focusTaskId))) {
-            resolvedDealId = String(d.id);
+            resolvedDealId = String(others[i].id);
             taskRows = altRows;
             break;
           }
         }
       }
 
-      if (seq !== loadSeqRef.current) return;
+      if (seq !== loadSeqRef.current || ac.signal.aborted) return;
       setDealId(resolvedDealId);
 
       const [actRows, commentRows] = await Promise.all([
         actPromise,
         fetchThreadComments(resolveCommentSource(forProjectId, resolvedDealId)).catch(() => []),
       ]);
-      if (seq !== loadSeqRef.current) return;
+      if (seq !== loadSeqRef.current || ac.signal.aborted) return;
       setTasks(taskRows);
       setActivities(actRows);
       setCommentCount(commentRows.length);
     } catch (e) {
       if (seq !== loadSeqRef.current) return;
+      const msg = String((e as { message?: string })?.message || '');
+      if (/aborted|canceled|cancelled/i.test(msg)) return;
       setErr(formatApiError(e));
     } finally {
       if (seq === loadSeqRef.current && !silent) setLoading(false);
@@ -154,6 +179,7 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
 
   useEffect(() => {
     void load(false);
+    return () => { loadAbortRef.current?.abort(); };
   }, [load]);
 
   useEffect(() => {
@@ -195,10 +221,92 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
     setTasks((prev) => prev.filter((t) => t.id !== taskId));
   }, []);
 
+  const completeStageAll = useCallback((group: CrmTaskStageGroup) => {
+    if (!dealId) return;
+    const toComplete = group.tasks.filter((t) => !isCrmProductionTaskDone(t.status));
+    if (!toComplete.length) {
+      Alert.alert('Xong hết', 'Không còn nhiệm vụ chưa hoàn thành trong giai đoạn này.');
+      return;
+    }
+    Alert.alert(
+      'Xong hết',
+      `Đánh dấu hoàn thành ${toComplete.length} nhiệm vụ trong «${group.label}»?`,
+      [
+        { text: 'Hủy', style: 'cancel' },
+        {
+          text: 'Xong hết',
+          onPress: () => {
+            void (async () => {
+              const prev = tasks;
+              const ids = new Set(toComplete.map((t) => t.id));
+              setBulkBusy(true);
+              setTasks((p) => p.map((t) => (ids.has(t.id) ? { ...t, status: 'completed' } : t)));
+              try {
+                await Promise.all(
+                  toComplete.map((t) => updateCrmTask(dealId, t.id, { status: 'completed' })),
+                );
+                await load(true);
+              } catch (e) {
+                setTasks(prev);
+                Alert.alert('Lỗi', formatApiError(e));
+              } finally {
+                setBulkBusy(false);
+              }
+            })();
+          },
+        },
+      ],
+    );
+  }, [dealId, tasks, load]);
+
   const openDateEditor = useCallback((field: EditableDateField, current?: string | null) => {
     setDateDraft(parseDateValue(current));
     setEditingDateField(field);
   }, []);
+
+  const openMoneyEditor = useCallback((field: EditableMoneyField, current?: number | null) => {
+    const n = Number(current);
+    setMoneyDraft(Number.isFinite(n) && n > 0 ? String(Math.round(n)) : '');
+    setEditingMoneyField(field);
+  }, []);
+
+  const cancelMoneyEditor = useCallback(() => {
+    setEditingMoneyField(null);
+    setMoneyDraft('');
+  }, []);
+
+  const saveMoneyField = useCallback(async (field: EditableMoneyField, raw: string | null) => {
+    if (!project) return;
+    const trimmed = String(raw ?? '').trim().replace(/[^\d]/g, '');
+    let value: number | null = null;
+    if (trimmed) {
+      const n = Number(trimmed);
+      value = Number.isFinite(n) && n > 0 ? n : null;
+    }
+
+    const nextProduction = field === 'production_value'
+      ? value
+      : (Number(project.production_value) > 0 ? Number(project.production_value) : 0);
+    const nextDeposit = field === 'deposit_amount'
+      ? (value || 0)
+      : (Number(project.deposit_amount) > 0 ? Number(project.deposit_amount) : 0);
+    if (field === 'deposit_amount' && nextDeposit > 0 && nextProduction > 0 && nextDeposit > nextProduction) {
+      Alert.alert('Lỗi', 'Tiền cọc không được lớn hơn giá trị sản xuất.');
+      return;
+    }
+
+    setMoneySaving(true);
+    try {
+      await updateProjectMoney(projectId, { [field]: value });
+      setProject((prev) => (prev ? { ...prev, [field]: value } : prev));
+      setEditingMoneyField(null);
+      setMoneyDraft('');
+    } catch (e) {
+      Alert.alert('Lỗi', formatApiError(e));
+    } finally {
+      setMoneySaving(false);
+    }
+  }, [project, projectId]);
 
   const cancelDateEditor = useCallback(() => {
     setEditingDateField(null);
@@ -280,7 +388,10 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
   }, [project, colors.primary]);
 
   /** Nhóm theo quy trình SX — cùng thứ tự web (stage + order_index). */
-  const taskGroups = useMemo(() => groupCrmTasksByStage(tasks), [tasks]);
+  const taskGroups = useMemo(
+    () => groupCrmTasksByStage(tasks, project?.sxKanbanStages || []),
+    [tasks, project?.sxKanbanStages],
+  );
 
   /** Đưa nhóm/công việc được focus lên đầu để dễ thấy khi mở từ tab Công việc. */
   const orderedTaskGroups = useMemo(() => {
@@ -305,27 +416,26 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
     [tasks, focusTaskId],
   );
 
+  const taskSections = useMemo(
+    (): Array<SectionListData<CrmTask, CrmTaskStageGroup>> =>
+      orderedTaskGroups.map((g) => ({
+        ...g,
+        data: dealId ? g.tasks : [],
+      })),
+    [orderedTaskGroups, dealId],
+  );
+
   useEffect(() => {
     if (!focusTaskId || loading || !focusedTask || didFocusScroll.current) return;
     const timer = setTimeout(() => {
-      const inner = scrollInnerRef.current;
-      const target = focusTargetRef.current;
-      if (!inner || !target) {
-        didFocusScroll.current = true;
-        scrollRef.current?.scrollTo({ y: 320, animated: true });
-        return;
-      }
-      target.measureLayout(
-        inner,
-        (_x, y) => {
-          didFocusScroll.current = true;
-          scrollRef.current?.scrollTo({ y: Math.max(0, y - 12), animated: true });
-        },
-        () => {
-          didFocusScroll.current = true;
-          scrollRef.current?.scrollTo({ y: 320, animated: true });
-        },
-      );
+      didFocusScroll.current = true;
+      // Task đã được đưa lên đầu section 0 — cuộn tới item đầu sau header.
+      tasksListRef.current?.scrollToLocation({
+        sectionIndex: 0,
+        itemIndex: 0,
+        viewOffset: 24,
+        animated: true,
+      });
     }, 350);
     return () => clearTimeout(timer);
   }, [focusTaskId, loading, focusedTask]);
@@ -339,7 +449,12 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
   );
   const progressColor = getTaskProgressColor(progress, colors);
   const docCount = project?.sharedDocuments?.length ?? 0;
-  const valueStr = formatMoneyAmount(project?.estimated_value);
+  const productionValue = Number(project?.production_value ?? 0);
+  const depositAmount = Number(project?.deposit_amount ?? 0);
+  const debtAmount = Math.max(0, productionValue - depositAmount);
+  const productionValueStr = formatMoneyAmount(productionValue);
+  const depositStr = formatMoneyAmount(depositAmount);
+  const debtStr = formatMoneyAmount(debtAmount);
 
   const displayDeal = useMemo(() => {
     const deals = project?.crmDeals || [];
@@ -395,6 +510,50 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
         statLabel: { color: colors.textMuted, fontSize: 10, fontWeight: '700', marginBottom: 4 },
         statValue: { color: colors.text, fontSize: 16, fontWeight: '800' },
         statValueAccent: { color: colors.success },
+        moneyRow: { flexDirection: 'row', gap: 8 },
+        moneyCard: {
+          flex: 1,
+          backgroundColor: colors.card,
+          borderRadius: Radii.lg,
+          borderWidth: 1,
+          borderColor: colors.border,
+          paddingVertical: 10,
+          paddingHorizontal: 8,
+        },
+        moneyCardDebt: { borderColor: colors.danger + '55' },
+        moneyLabel: { color: colors.textMuted, fontSize: 10, fontWeight: '700', marginBottom: 4 },
+        moneyValue: { color: colors.text, fontSize: 13, fontWeight: '800' },
+        moneyValueDebt: { color: colors.danger },
+        moneyHint: { color: colors.textFaint, fontSize: 9, fontWeight: '600', marginTop: 4 },
+        moneyModalRoot: { flex: 1, justifyContent: 'flex-end' },
+        moneyModalBackdrop: {
+          ...StyleSheet.absoluteFillObject,
+          backgroundColor: 'rgba(0,0,0,0.45)',
+        },
+        moneyModalSheet: {
+          backgroundColor: colors.card,
+          borderTopLeftRadius: Radii.xl,
+          borderTopRightRadius: Radii.xl,
+          padding: Spacing.lg,
+          paddingBottom: Math.max(insets.bottom, 16) + 8,
+          gap: 10,
+          borderTopWidth: 1,
+          borderColor: colors.border,
+        },
+        moneyModalTitle: { color: colors.text, fontSize: 17, fontWeight: '800' },
+        moneyModalSub: { color: colors.textMuted, fontSize: 12, fontWeight: '600' },
+        moneyModalInput: {
+          borderWidth: 1,
+          borderColor: colors.borderStrong,
+          borderRadius: Radii.md,
+          paddingHorizontal: 14,
+          paddingVertical: 12,
+          color: colors.text,
+          fontSize: 18,
+          fontWeight: '800',
+          backgroundColor: colors.bgElevated,
+        },
+        moneyModalActions: { flexDirection: 'row', gap: 8, marginTop: 4 },
         progressBox: {
           backgroundColor: colors.card,
           borderRadius: Radii.lg,
@@ -427,11 +586,24 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
           flexDirection: 'row',
           alignItems: 'center',
           justifyContent: 'space-between',
+          gap: 8,
           marginBottom: 8,
           marginTop: 4,
         },
+        groupHeadMain: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 0 },
+        groupDot: { width: 8, height: 8, borderRadius: 4 },
         groupTitle: { color: colors.text, fontSize: 14, fontWeight: '800' },
-        groupCount: { color: colors.textFaint, fontSize: 12, fontWeight: '700' },
+        groupCount: { color: colors.textFaint, fontSize: 11, fontWeight: '600', marginTop: 2 },
+        doneAllBtn: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 4,
+          backgroundColor: colors.success,
+          paddingHorizontal: 10,
+          paddingVertical: 7,
+          borderRadius: Radii.md,
+        },
+        doneAllTxt: { color: '#FFF', fontSize: 11, fontWeight: '800' },
         taskRow: {
           flexDirection: 'row',
           alignItems: 'flex-start',
@@ -605,7 +777,7 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
         focusBannerSub: { color: colors.text, fontSize: 14, fontWeight: '700', marginTop: 2, lineHeight: 19 },
         empty: { color: colors.textMuted, textAlign: 'center', paddingVertical: 32, fontSize: 14 },
       }),
-    [colors, insets.top],
+    [colors, insets.top, insets.bottom],
   );
 
   if (loading && !project) {
@@ -619,6 +791,7 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
   const displayTitle = displayDeal?.title || project?.name || 'Dự án';
   const displayCode = displayDeal?.code || project?.code || '';
   const isFullHeightTab = tab === 'comments' || tab === 'documents' || tab === 'drive' || tab === 'team';
+  const useTasksVirtualList = tab === 'tasks';
 
   const tabsBar = (
     <ScrollView
@@ -647,6 +820,139 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
     </ScrollView>
   );
 
+  const projectSummaryHeader = (
+    <View ref={scrollInnerRef} collapsable={false} style={styles.content}>
+      <ProductionPipelineStepper
+        stages={project?.sxKanbanStages || []}
+        currentStageId={project?.sx_kanban_column_id}
+      />
+
+      <View style={styles.statsRow}>
+        <View style={styles.statCard}>
+          <Text style={styles.statLabel}>Công việc</Text>
+          <Text style={styles.statValue}>{taskDone}/{taskTotal || project?.task_total || 0}</Text>
+        </View>
+        <View style={styles.statCard}>
+          <Text style={styles.statLabel}>Hoạt động</Text>
+          <Text style={[styles.statValue, styles.statValueAccent]}>{activities.length}</Text>
+        </View>
+        <View style={styles.statCard}>
+          <Text style={styles.statLabel}>Tài liệu</Text>
+          <Text style={styles.statValue}>{docCount}</Text>
+        </View>
+      </View>
+
+      <View style={styles.moneyRow}>
+        <Pressable
+          style={styles.moneyCard}
+          onPress={() => openMoneyEditor('production_value', project?.production_value)}
+        >
+          <Text style={styles.moneyLabel}>Giá trị sản xuất</Text>
+          <Text style={styles.moneyValue} numberOfLines={1}>
+            {productionValueStr ? `${productionValueStr} đ` : '0 đ'}
+          </Text>
+          <Text style={styles.moneyHint}>Chạm để sửa</Text>
+        </Pressable>
+        <Pressable
+          style={styles.moneyCard}
+          onPress={() => openMoneyEditor('deposit_amount', project?.deposit_amount)}
+        >
+          <Text style={styles.moneyLabel}>Tiền cọc</Text>
+          <Text style={styles.moneyValue} numberOfLines={1}>
+            {depositStr ? `${depositStr} đ` : '0 đ'}
+          </Text>
+          <Text style={styles.moneyHint}>Chạm để sửa</Text>
+        </Pressable>
+        <View style={[styles.moneyCard, styles.moneyCardDebt]}>
+          <Text style={styles.moneyLabel}>Công nợ</Text>
+          <Text style={[styles.moneyValue, debtAmount > 0 && styles.moneyValueDebt]} numberOfLines={1}>
+            {debtStr ? `${debtStr} đ` : '0 đ'}
+          </Text>
+          <Text style={styles.moneyHint}>= SX − cọc</Text>
+        </View>
+      </View>
+
+      <View style={styles.progressBox}>
+        <Text style={styles.progressLabel}>Tiến độ sản xuất</Text>
+        <View style={styles.progressTrack}>
+          <View style={[styles.progressFill, { width: `${Math.min(100, progress)}%`, backgroundColor: progressColor }]} />
+        </View>
+        <Text style={[styles.progressPct, { color: progressColor }]}>{progress}%</Text>
+      </View>
+    </View>
+  );
+
+  const focusBannerBlock = (
+    <>
+      {focusTaskId && focusedTask ? (
+        <View ref={focusTargetRef} collapsable={false} style={styles.focusBanner}>
+          <Ionicons name="locate" size={16} color={colors.primary} />
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={styles.focusBannerTitle}>Công việc đang mở</Text>
+            <Text style={styles.focusBannerSub} numberOfLines={2}>{focusedTask.title}</Text>
+          </View>
+        </View>
+      ) : focusTaskId && !loading && tasks.length > 0 ? (
+        <View style={[styles.focusBanner, styles.focusBannerWarn]}>
+          <Ionicons name="information-circle-outline" size={16} color={colors.warning} />
+          <Text style={[styles.focusBannerSub, { color: colors.warning, flex: 1 }]}>
+            Không tìm thấy nhiệm vụ gắn deal — đang mở tab Công việc của dự án.
+          </Text>
+        </View>
+      ) : null}
+    </>
+  );
+
+  const renderTaskSectionHeader = (
+    { section }: { section: SectionListData<CrmTask, CrmTaskStageGroup> },
+  ) => {
+    const doneInGroup = section.doneCount ?? section.tasks.filter((t) => isCrmProductionTaskDone(t.status)).length;
+    const openInGroup = section.openCount ?? (section.tasks.length - doneInGroup);
+    return (
+      <View style={{ paddingHorizontal: Spacing.lg, marginBottom: 8, marginTop: 4 }}>
+        <View style={styles.groupHeader}>
+          <View style={styles.groupHeadMain}>
+            {section.color ? (
+              <View style={[styles.groupDot, { backgroundColor: section.color }]} />
+            ) : null}
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={styles.groupTitle} numberOfLines={1}>{section.label}</Text>
+              <Text style={styles.groupCount}>
+                {doneInGroup}/{section.tasks.length} xong
+                {openInGroup ? ` · ${openInGroup} còn lại` : ''}
+              </Text>
+            </View>
+          </View>
+          {openInGroup > 0 && dealId ? (
+            <Pressable
+              style={[styles.doneAllBtn, bulkBusy && { opacity: 0.6 }]}
+              disabled={bulkBusy}
+              onPress={() => completeStageAll(section as CrmTaskStageGroup)}
+            >
+              <Ionicons name="checkmark-done-outline" size={14} color="#FFF" />
+              <Text style={styles.doneAllTxt}>Xong hết</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      </View>
+    );
+  };
+
+  const renderTaskItem = ({ item }: { item: CrmTask }) => {
+    if (!dealId) return null;
+    return (
+      <View style={{ paddingHorizontal: Spacing.lg }}>
+        <ProjectCrmTaskRow
+          task={item}
+          dealId={dealId}
+          onUpdated={onTaskUpdated}
+          onDeleted={onTaskDeleted}
+          highlighted={Boolean(focusTaskId) && String(item.id) === String(focusTaskId)}
+        />
+      </View>
+    );
+  };
+
   return (
     <View style={styles.root}>
       <View style={styles.header}>
@@ -667,96 +973,52 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
 
       <View style={{ flex: 1 }}>
         {isFullHeightTab ? tabsBar : null}
-        {isFullHeightTab ? null : (
+
+        {useTasksVirtualList ? (
+          <SectionList
+            ref={tasksListRef}
+            sections={taskSections}
+            keyExtractor={(item) => String(item.id)}
+            stickySectionHeadersEnabled={false}
+            initialNumToRender={12}
+            maxToRenderPerBatch={10}
+            windowSize={7}
+            removeClippedSubviews={Platform.OS === 'android'}
+            refreshControl={(
+              <RefreshControl refreshing={refreshing} onRefresh={() => void onRefresh()} tintColor={colors.primary} />
+            )}
+            contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
+            ListHeaderComponent={(
+              <>
+                {projectSummaryHeader}
+                {tabsBar}
+                <View style={{ paddingHorizontal: Spacing.lg, paddingTop: Spacing.sm }}>
+                  {focusBannerBlock}
+                </View>
+              </>
+            )}
+            ListEmptyComponent={(
+              <Text style={[styles.empty, { paddingHorizontal: Spacing.lg, paddingTop: 8 }]}>
+                Chưa có nhiệm vụ SX — đồng bộ từ web khi deal có template.
+              </Text>
+            )}
+            renderSectionHeader={renderTaskSectionHeader}
+            renderItem={renderTaskItem}
+          />
+        ) : null}
+
+        {isFullHeightTab || useTasksVirtualList ? null : (
         <ScrollView
           ref={scrollRef}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void onRefresh()} tintColor={colors.primary} />}
           contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
           nestedScrollEnabled
         >
-          <View ref={scrollInnerRef} collapsable={false} style={styles.content}>
-          <ProductionPipelineStepper
-            stages={project?.sxKanbanStages || []}
-            currentStageId={project?.sx_kanban_column_id}
-          />
-
-          <View style={styles.statsRow}>
-            <View style={styles.statCard}>
-              <Text style={styles.statLabel}>Công việc</Text>
-              <Text style={styles.statValue}>{taskDone}/{taskTotal || project?.task_total || 0}</Text>
-            </View>
-            <View style={styles.statCard}>
-              <Text style={styles.statLabel}>Hoạt động</Text>
-              <Text style={[styles.statValue, styles.statValueAccent]}>{activities.length}</Text>
-            </View>
-            <View style={styles.statCard}>
-              <Text style={styles.statLabel}>Tài liệu</Text>
-              <Text style={styles.statValue}>{docCount}</Text>
-            </View>
-            <View style={styles.statCard}>
-              <Text style={styles.statLabel}>Giá trị</Text>
-              <Text style={styles.statValue} numberOfLines={1}>{valueStr ? `${valueStr} đ` : '0 đ'}</Text>
-            </View>
-          </View>
-
-          <View style={styles.progressBox}>
-            <Text style={styles.progressLabel}>Tiến độ sản xuất</Text>
-            <View style={styles.progressTrack}>
-              <View style={[styles.progressFill, { width: `${Math.min(100, progress)}%`, backgroundColor: progressColor }]} />
-            </View>
-            <Text style={[styles.progressPct, { color: progressColor }]}>{progress}%</Text>
-          </View>
-        </View>
+          {projectSummaryHeader}
 
         {tabsBar}
 
         <View style={{ padding: Spacing.lg }}>
-          {tab === 'tasks' && (
-            <>
-              {focusTaskId && focusedTask ? (
-                <View ref={focusTargetRef} collapsable={false} style={styles.focusBanner}>
-                  <Ionicons name="locate" size={16} color={colors.primary} />
-                  <View style={{ flex: 1, minWidth: 0 }}>
-                    <Text style={styles.focusBannerTitle}>Công việc đang mở</Text>
-                    <Text style={styles.focusBannerSub} numberOfLines={2}>{focusedTask.title}</Text>
-                  </View>
-                </View>
-              ) : focusTaskId && !loading && tasks.length > 0 ? (
-                <View style={[styles.focusBanner, styles.focusBannerWarn]}>
-                  <Ionicons name="information-circle-outline" size={16} color={colors.warning} />
-                  <Text style={[styles.focusBannerSub, { color: colors.warning, flex: 1 }]}>
-                    Không tìm thấy nhiệm vụ gắn deal — đang mở tab Công việc của dự án.
-                  </Text>
-                </View>
-              ) : null}
-              {orderedTaskGroups.length ? orderedTaskGroups.map((group) => {
-              const doneInGroup = group.tasks.filter((t) => isCrmProductionTaskDone(t.status)).length;
-              return (
-                <View key={group.key} style={{ marginBottom: 16 }}>
-                  <View style={styles.groupHeader}>
-                    <Text style={styles.groupTitle}>{group.label}</Text>
-                    <Text style={styles.groupCount}>{doneInGroup}/{group.tasks.length}</Text>
-                  </View>
-                  {group.tasks.map((task) =>
-                    dealId ? (
-                      <ProjectCrmTaskRow
-                        key={task.id}
-                        task={task}
-                        dealId={dealId}
-                        onUpdated={onTaskUpdated}
-                        onDeleted={onTaskDeleted}
-                        highlighted={Boolean(focusTaskId) && String(task.id) === String(focusTaskId)}
-                      />
-                    ) : null,
-                  )}
-                </View>
-              );
-            }) : (
-              <Text style={styles.empty}>Chưa có nhiệm vụ SX — đồng bộ từ web khi deal có template.</Text>
-            )}
-            </>
-          )}
-
           {tab === 'info' && project && (
             <View style={styles.infoCard}>
               {[
@@ -770,6 +1032,48 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
                   <Text style={styles.infoValue}>{value}</Text>
                 </View>
               ))}
+
+              {(
+                [
+                  {
+                    field: 'production_value' as const,
+                    label: 'Giá trị sản xuất',
+                    hint: 'Chi phí xưởng — khác giá trị deal CRM',
+                    value: project.production_value,
+                    display: productionValueStr ? `${productionValueStr} đ` : '0 đ',
+                  },
+                  {
+                    field: 'deposit_amount' as const,
+                    label: 'Tiền cọc',
+                    hint: 'Chạm để thêm / sửa / xóa',
+                    value: project.deposit_amount,
+                    display: depositStr ? `${depositStr} đ` : '0 đ',
+                  },
+                ] as const
+              ).map((row) => (
+                <Pressable
+                  key={row.field}
+                  style={styles.infoEditRow}
+                  onPress={() => openMoneyEditor(row.field, row.value)}
+                >
+                  <View style={styles.infoEditBody}>
+                    <Text style={styles.infoLabel}>{row.label}</Text>
+                    <Text style={styles.infoValue}>{row.display}</Text>
+                    <Text style={styles.infoEditHint}>{row.hint}</Text>
+                  </View>
+                  <Ionicons name="create-outline" size={18} color={colors.primary} />
+                </Pressable>
+              ))}
+
+              <View style={styles.infoRow}>
+                <Text style={styles.infoLabel}>Công nợ (SX)</Text>
+                <View style={{ flex: 1, alignItems: 'flex-end' }}>
+                  <Text style={[styles.infoValue, debtAmount > 0 && { color: colors.danger }]}>
+                    {debtStr ? `${debtStr} đ` : '0 đ'}
+                  </Text>
+                  <Text style={styles.infoEditHint}>= Giá trị sản xuất − Tiền cọc</Text>
+                </View>
+              </View>
 
               {(
                 [
@@ -926,6 +1230,67 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
           </View>
         ) : null}
       </View>
+
+      <Modal
+        visible={!!editingMoneyField}
+        transparent
+        animationType="fade"
+        onRequestClose={cancelMoneyEditor}
+      >
+        <KeyboardAvoidingView
+          style={styles.moneyModalRoot}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          <Pressable style={styles.moneyModalBackdrop} onPress={cancelMoneyEditor} />
+          <View style={styles.moneyModalSheet}>
+            <Text style={styles.moneyModalTitle}>
+              {editingMoneyField === 'deposit_amount' ? 'Tiền cọc' : 'Giá trị sản xuất'}
+            </Text>
+            <Text style={styles.moneyModalSub}>
+              {editingMoneyField === 'deposit_amount'
+                ? 'Nhập số tiền cọc (VNĐ). Để trống rồi Xóa để gỡ.'
+                : 'Chi phí xưởng — khác giá trị deal CRM'}
+            </Text>
+            <TextInput
+              style={styles.moneyModalInput}
+              value={moneyDraft}
+              onChangeText={(t) => setMoneyDraft(t.replace(/[^\d]/g, ''))}
+              keyboardType="number-pad"
+              placeholder="0"
+              placeholderTextColor={colors.textFaint}
+              autoFocus
+              selectTextOnFocus
+            />
+            <View style={styles.moneyModalActions}>
+              <Pressable
+                style={[styles.dateBtn, styles.dateBtnDanger]}
+                onPress={() => editingMoneyField && void saveMoneyField(editingMoneyField, null)}
+                disabled={moneySaving}
+              >
+                <Text style={styles.dateBtnTxtDanger}>Xóa</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.dateBtn, styles.dateBtnMuted]}
+                onPress={cancelMoneyEditor}
+                disabled={moneySaving}
+              >
+                <Text style={styles.dateBtnTxtMuted}>Huỷ</Text>
+              </Pressable>
+              <Pressable
+                style={styles.dateBtn}
+                onPress={() => editingMoneyField && void saveMoneyField(editingMoneyField, moneyDraft)}
+                disabled={moneySaving}
+              >
+                {moneySaving ? (
+                  <ActivityIndicator color="#FFF" size="small" />
+                ) : (
+                  <Text style={styles.dateBtnTxt}>Lưu</Text>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </View>
   );
 }

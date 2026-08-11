@@ -104,7 +104,7 @@ export default function ProfileScreen() {
   const mgmtItems: MgmtItem[] = [
     {
       key: 'orders',
-      label: 'Kanban SX',
+      label: 'Dự án',
       icon: 'grid',
       color: '#3B82F6',
       onPress: () => tabNav.navigate('Kanban'),
@@ -115,6 +115,20 @@ export default function ProfileScreen() {
       icon: 'construct',
       color: '#22C55E',
       onPress: () => tabNav.navigate('Work'),
+    },
+    {
+      key: 'leaves',
+      label: 'Lịch nghỉ',
+      icon: 'calendar-outline',
+      color: '#A855F7',
+      onPress: () => rootNav.navigate('Leaves'),
+    },
+    {
+      key: 'events',
+      label: 'Sự kiện',
+      icon: 'calendar',
+      color: '#06B6D4',
+      onPress: () => rootNav.navigate('Events'),
     },
     {
       key: 'stock',

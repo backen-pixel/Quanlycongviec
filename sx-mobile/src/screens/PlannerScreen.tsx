@@ -16,7 +16,7 @@ import PlannerFilterModal, { type PlannerFilterDimension } from '../components/P
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { useProductionRealtime } from '../hooks/useProductionRealtime';
-import { fetchPersonalPlanner, fetchProductionBoard } from '../lib/productionApi';
+import { fetchPersonalPlanner, fetchProductionBoard, isAbortError } from '../lib/productionApi';
 import { getCachedBoard, isCachedBoardFresh } from '../lib/productionBoardCache';
 import { REALTIME_BOARD_TASK } from '../lib/realtimeModes';
 import { formatMoneyAmount, Radii, Spacing, stageColor } from '../theme';
@@ -70,6 +70,7 @@ export default function PlannerScreen() {
   }, []);
 
   const loadSeqRef = useRef(0);
+  const boardAbortRef = useRef<AbortController | null>(null);
 
   const load = useCallback(async (mode: 'init' | 'refresh' | 'silent' = 'init') => {
     const boardFilters = { companyId: scopedCompanyId };
@@ -77,6 +78,9 @@ export default function PlannerScreen() {
       setBoard(getCachedBoard(boardFilters)!);
       return;
     }
+    boardAbortRef.current?.abort();
+    const ac = new AbortController();
+    boardAbortRef.current = ac;
     const seq = ++loadSeqRef.current;
     if (mode === 'init') setLoading(true);
     else if (mode === 'refresh') setRefreshing(true);
@@ -89,6 +93,7 @@ export default function PlannerScreen() {
       }
       const [boardData, personalData] = await Promise.all([
         fetchProductionBoard(mode === 'refresh', boardFilters, {
+          signal: ac.signal,
           onPartial: (partial) => {
             if (seq !== loadSeqRef.current) return;
             setBoard(partial);
@@ -102,7 +107,7 @@ export default function PlannerScreen() {
       setPersonal(personalData);
       if (mode !== 'silent') setOwnerVisible({});
     } catch (e) {
-      if (seq !== loadSeqRef.current) return;
+      if (seq !== loadSeqRef.current || isAbortError(e)) return;
       if (mode !== 'silent') setError(formatApiError(e));
     } finally {
       if (seq === loadSeqRef.current) {
@@ -111,6 +116,10 @@ export default function PlannerScreen() {
       }
     }
   }, [scopedCompanyId]);
+
+  useEffect(() => () => {
+    boardAbortRef.current?.abort();
+  }, []);
 
   useEffect(() => {
     void load(isCachedBoardFresh({ companyId: scopedCompanyId }) ? 'silent' : 'init');

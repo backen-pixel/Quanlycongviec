@@ -1,12 +1,50 @@
+import axios from 'axios';
 import { api } from '../api/client';
 import { normalizeCommentAttachments } from './commentAttachments';
-import { setCachedBoard } from './productionBoardCache';
+import { boardCacheKey, setCachedBoard } from './productionBoardCache';
 import type {
   KanbanStage,
   PersonalPlanner,
   ProductionBoard,
   ProductionProject,
 } from '../types';
+
+/** Request bị hủy (đổi filter / unmount) — không hiện lỗi UI. */
+export function isAbortError(e: unknown): boolean {
+  if (axios.isCancel(e)) return true;
+  if (!e || typeof e !== 'object') return false;
+  const err = e as { name?: string; code?: string; message?: string };
+  return (
+    err.name === 'AbortError'
+    || err.name === 'CanceledError'
+    || err.code === 'ERR_CANCELED'
+    || /aborted|canceled|cancelled/i.test(String(err.message || ''))
+  );
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) return;
+  const err = new Error('Aborted');
+  err.name = 'AbortError';
+  throw err;
+}
+
+function abortError(): Error {
+  const err = new Error('Aborted');
+  err.name = 'AbortError';
+  return err;
+}
+
+function waitForAbort(signal?: AbortSignal): Promise<never> {
+  return new Promise((_, reject) => {
+    if (!signal) return;
+    if (signal.aborted) {
+      reject(abortError());
+      return;
+    }
+    signal.addEventListener('abort', () => reject(abortError()), { once: true });
+  });
+}
 
 export function mapProjectRow(raw: Record<string, unknown>): ProductionProject {
   const customer = (raw.customer || {}) as { full_name?: string; phone?: string };
@@ -37,6 +75,14 @@ export function mapProjectRow(raw: Record<string, unknown>): ProductionProject {
     created_at: (raw.created_at as string) || null,
     updated_at: (raw.updated_at as string) || null,
     estimated_value: Number(raw.estimated_value || 0),
+    production_value:
+      raw.production_value != null && raw.production_value !== ''
+        ? Number(raw.production_value)
+        : null,
+    deposit_amount:
+      raw.deposit_amount != null && raw.deposit_amount !== ''
+        ? Number(raw.deposit_amount)
+        : null,
     progress: Number(raw.progress || 0),
     sx_pipeline_percent:
       raw.sx_pipeline_percent != null && raw.sx_pipeline_percent !== ''
@@ -79,13 +125,17 @@ export function mapProjectRow(raw: Record<string, unknown>): ProductionProject {
 }
 
 function mapStageRow(raw: Record<string, unknown>, index: number): KanbanStage {
-  const wfStage = (raw.workflow_stage || {}) as { id?: string };
+  const wfStage = (raw.workflow_stage || {}) as { id?: string; slug?: string };
+  const slugRaw = raw.slug != null && String(raw.slug).trim()
+    ? String(raw.slug)
+    : (wfStage.slug != null && String(wfStage.slug).trim() ? String(wfStage.slug) : null);
   return {
     id: String(raw.id || ''),
     name: String(raw.name || `Cột ${index + 1}`),
     color: (raw.color as string) ?? null,
     icon: (raw.icon as string) ?? null,
     order_index: Number(raw.order_index ?? index),
+    slug: slugRaw,
     bucket_slug: (raw.bucket_slug as string) ?? null,
     workflow_stage_id: (raw.workflow_stage_id as string) ?? wfStage.id ?? null,
     workshop_type_id: (raw.workshop_type_id as string) ?? null,
@@ -109,11 +159,18 @@ const SX_STAGE_SLUG_STATUS: Record<string, string> = {
   'customer-care': 'warranty',
 };
 
+/** Khớp web sxStageSlugOf: workflow_stage.slug || slug. */
+function sxStageSlugOf(col: KanbanStage | null | undefined): string | null {
+  if (!col) return null;
+  const s = col.slug != null ? String(col.slug).trim() : '';
+  return s || null;
+}
+
 function sxStatusComesFromColumn(
   project: ProductionProject,
   col: KanbanStage | null | undefined,
 ): boolean {
-  const slug = col?.slug || null;
+  const slug = sxStageSlugOf(col);
   if (!slug) return false;
   return SX_STAGE_SLUG_STATUS[slug] === String(project?.status || '');
 }
@@ -323,6 +380,7 @@ export type ProductionBoardSummary = {
 export async function fetchProductionBoardSummary(
   filters?: BoardFilters,
   bustCache = false,
+  signal?: AbortSignal,
 ): Promise<ProductionBoardSummary | null> {
   const params: Record<string, string | number> = {
     summary: 1,
@@ -332,6 +390,7 @@ export async function fetchProductionBoardSummary(
   if (filters?.dealCompanyId) params.deal_company_id = filters.dealCompanyId;
   if (filters?.workshopTypeId) params.workshop_type_id = filters.workshopTypeId;
   try {
+    throwIfAborted(signal);
     const { data } = await api.get<{
       total?: number;
       deadline_counts?: { overdue?: number };
@@ -342,10 +401,11 @@ export async function fetchProductionBoardSummary(
       };
     }>('/production/projects', {
       params,
+      signal,
       ...(bustCache ? { headers: { 'x-no-cache': '1' } } : {}),
     });
+    throwIfAborted(signal);
     const sk = data?.stage_kpis;
-    // BE cũ chưa có stage_kpis → null để UI fallback đếm client.
     if (!sk || typeof sk !== 'object') return null;
     return {
       total: Number(data?.total) || 0,
@@ -354,7 +414,8 @@ export async function fetchProductionBoardSummary(
       shipped: Number(sk.shipped) || 0,
       overdue: Number(data?.deadline_counts?.overdue) || 0,
     };
-  } catch {
+  } catch (e) {
+    if (isAbortError(e)) throw e;
     return null;
   }
 }
@@ -365,18 +426,14 @@ export async function fetchProductionBoardSummary(
  * BE tối đa limit=500/trang — khớp mặc định web.
  * `view=mobile` → payload/enrich nhẹ phía BE.
  *
+ * Shared inflight theo filter: Overview + Kanban cùng lúc chỉ 1 mạng;
+ * signal của từng màn chỉ bỏ apply UI, không hủy tải dùng chung (trừ bustCache).
+ *
  * @param bustCache true chỉ khi user kéo refresh — silent/init dùng HTTP cache 20s.
  */
 const PROJECTS_PAGE_LIMIT = 500;
 const PROJECTS_MAX_PAGES = 12;
 const PROJECTS_FETCH_CONCURRENCY = 4;
-
-export type FetchBoardOptions = {
-  /** Gọi sau trang đầu (và mỗi lô nền) — UI hiện sớm. */
-  onPartial?: (board: ProductionBoard) => void;
-  /** false = chỉ ~500 dự án đầu. Mặc định true. */
-  loadRemaining?: boolean;
-};
 
 function attachColumnsIndexed(
   list: ProductionProject[],
@@ -399,14 +456,12 @@ function attachColumnsIndexed(
       sxIntake = false;
     }
 
-    // Gắn KPI trước, rồi resolve hiển thị trên state giống web (sau enrich).
     const withKpi: ProductionProject = {
       ...p,
       sx_kanban_column_id: finalKpiCol,
       sx_intake: sxIntake,
     };
     let displayColId = resolveColumnId(withKpi, stages, index);
-    // Cột BE nằm trong pipeline đang xem → bắt buộc đúng cột đó (không để resolved cũ nuốt).
     if (finalKpiCol && index.byId.has(String(finalKpiCol))) {
       displayColId = String(finalKpiCol);
     }
@@ -433,13 +488,38 @@ function attachColumnsIndexed(
   });
 }
 
-export async function fetchProductionBoard(
-  bustCache = false,
-  filters: BoardFilters = {},
-  options: FetchBoardOptions = {},
-): Promise<ProductionBoard> {
-  const loadRemaining = options.loadRemaining !== false;
+export type FetchBoardOptions = {
+  /** Gọi sau trang đầu (và mỗi lô nền) — UI hiện sớm. */
+  onPartial?: (board: ProductionBoard) => void;
+  /** false = chỉ ~500 dự án đầu. Mặc định true. */
+  loadRemaining?: boolean;
+  /** Hủy apply UI khi đổi filter / unmount — shared fetch vẫn chạy tới complete. */
+  signal?: AbortSignal;
+};
 
+type InflightBoard = {
+  promise: Promise<ProductionBoard>;
+  partialListeners: Set<(board: ProductionBoard) => void>;
+};
+
+const inflightBoards = new Map<string, InflightBoard>();
+
+function emitPartialTo(listeners: Set<(board: ProductionBoard) => void>, board: ProductionBoard) {
+  for (const fn of [...listeners]) {
+    try {
+      fn(board);
+    } catch {
+      /* ignore listener errors */
+    }
+  }
+}
+
+async function fetchProductionBoardInternal(
+  bustCache: boolean,
+  filters: BoardFilters,
+  loadRemaining: boolean,
+  partialListeners: Set<(board: ProductionBoard) => void>,
+): Promise<ProductionBoard> {
   const stageParams: Record<string, unknown> = { all: 'false' };
   if (bustCache) stageParams._t = Date.now();
   if (filters.companyId) stageParams.company_id = filters.companyId;
@@ -451,7 +531,6 @@ export async function fetchProductionBoard(
       limit: PROJECTS_PAGE_LIMIT,
       view: 'mobile',
     };
-    // Chỉ bust cache khi user refresh — silent dùng responseCache BE (20s).
     if (bustCache) params._t = Date.now();
     if (filters.companyId) params.company_id = filters.companyId;
     if (filters.dealCompanyId) params.deal_company_id = filters.dealCompanyId;
@@ -491,33 +570,35 @@ export async function fetchProductionBoard(
     .sort((a, b) => a.order_index - b.order_index);
   const stageIndex = buildStageIndex(stages);
 
-  // Stages lỗi + không có cột → không coi là board hợp lệ (tránh Kanban trống im lặng).
   if (!stageOutcome.ok && stages.length === 0 && first.rows.length > 0) {
     throw new Error('Không tải được cột pipeline. Kiểm tra mạng và thử lại.');
   }
 
-  // Giữ danh sách đã gắn cột — chỉ transform trang mới (tránh O(n²) khi 1000+ deal).
   let attached: ProductionProject[] = [];
+  const beTotalPages = Math.max(1, first.totalPages);
+  const truncated = beTotalPages > PROJECTS_MAX_PAGES;
+  const totalPages = Math.min(beTotalPages, PROJECTS_MAX_PAGES);
 
-  const emitAttached = () => {
+  const emitAttached = (complete: boolean) => {
     const board: ProductionBoard = {
       stages,
       projects: attached,
       kpis: null,
+      truncated,
     };
-    setCachedBoard(filters, board);
-    options.onPartial?.(board);
+    setCachedBoard(filters, board, { complete });
+    emitPartialTo(partialListeners, board);
     return board;
   };
 
   attached = attachColumnsIndexed(first.rows.map(mapProjectRow), stages, stageIndex);
-  emitAttached();
-
-  const totalPages = Math.min(Math.max(1, first.totalPages), PROJECTS_MAX_PAGES);
   const hasMore = loadRemaining && totalPages > 1 && first.rows.length >= PROJECTS_PAGE_LIMIT;
   if (!hasMore) {
-    return emitAttached();
+    return emitAttached(true);
   }
+
+  // Partial: UI sớm nhưng không đánh fresh / không ghi disk.
+  emitAttached(false);
 
   const remaining: number[] = [];
   for (let p = 2; p <= totalPages; p += 1) remaining.push(p);
@@ -531,11 +612,48 @@ export async function fetchProductionBoard(
     }
     if (newRows.length) {
       attached = attached.concat(attachColumnsIndexed(newRows, stages, stageIndex));
-      emitAttached();
+      const done = i + PROJECTS_FETCH_CONCURRENCY >= remaining.length;
+      emitAttached(done);
     }
   }
 
-  return emitAttached();
+  return emitAttached(true);
+}
+
+export async function fetchProductionBoard(
+  bustCache = false,
+  filters: BoardFilters = {},
+  options: FetchBoardOptions = {},
+): Promise<ProductionBoard> {
+  const loadRemaining = options.loadRemaining !== false;
+  const signal = options.signal;
+  throwIfAborted(signal);
+
+  const dedupeKey = `${boardCacheKey(filters)}|b${bustCache ? 1 : 0}|r${loadRemaining ? 1 : 0}`;
+
+  let entry = !bustCache ? inflightBoards.get(dedupeKey) : undefined;
+  if (!entry) {
+    const partialListeners = new Set<(board: ProductionBoard) => void>();
+    const promise = fetchProductionBoardInternal(
+      bustCache,
+      filters,
+      loadRemaining,
+      partialListeners,
+    ).finally(() => {
+      if (inflightBoards.get(dedupeKey) === created) inflightBoards.delete(dedupeKey);
+    });
+    const created: InflightBoard = { promise, partialListeners };
+    entry = created;
+    if (!bustCache) inflightBoards.set(dedupeKey, created);
+  }
+
+  if (options.onPartial) entry.partialListeners.add(options.onPartial);
+  try {
+    if (!signal) return await entry.promise;
+    return await Promise.race([entry.promise, waitForAbort(signal)]);
+  } finally {
+    if (options.onPartial) entry.partialListeners.delete(options.onPartial);
+  }
 }
 
 export async function fetchProductionProject(projectId: string): Promise<ProductionProject> {

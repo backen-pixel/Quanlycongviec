@@ -32,7 +32,21 @@ export type WorkTasksQuery = {
   /** null/undefined = không lọc người (team). Có id = chỉ việc của người đó. */
   assigneeId?: string | null;
   companyId?: string | null;
+  /** Phân trang — mặc định mobile dùng 200. */
+  limit?: number;
+  offset?: number;
+  signal?: AbortSignal;
 };
+
+export type WorkTasksPage = {
+  tasks: WorkTask[];
+  hasMore: boolean;
+  offset: number;
+  limit: number;
+};
+
+/** Giới hạn mặc định mỗi lần tải — tránh 1 GET hàng nghìn dòng. */
+export const WORK_TASKS_PAGE_SIZE = 200;
 
 function mapPerson(raw: unknown): PersonRef | null {
   if (!raw || typeof raw !== 'object') return null;
@@ -168,20 +182,36 @@ export function priorityLabel(priority?: string | null): string | null {
 
 export function stageSlugLabel(slug?: string | null): string | null {
   if (!slug) return null;
-  const s = String(slug);
+  const s = String(slug).trim();
+  if (!s) return null;
+
+  // Slug tổng hợp từ id cột (pl_*_<uuid8> / sx_pl_…) — không phải tên hiển thị.
+  if (/^(sx_)?pl_([a-z0-9_]+_)?[a-f0-9]{8}$/i.test(s)) return null;
+
   if (s.startsWith('sx_')) {
-    return s
+    const label = s
       .slice(3)
       .split('_')
       .filter(Boolean)
       .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
       .join(' ');
+    // VD: «Pl 5ae60298» / «Pi abcdef12» — mã rút gọn, không dùng làm nhãn.
+    if (/^[A-Za-z]{1,4}\s+[a-f0-9]{6,}$/i.test(label)) return null;
+    return label || null;
   }
+
+  if (/^[A-Za-z]{1,4}\s+[a-f0-9]{6,}$/i.test(s)) return null;
   return s;
 }
 
 export function taskDueIso(task: WorkTask): string | null {
   return task.deadline || task.due_date || null;
+}
+
+function startOfLocalDay(d: Date): Date {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
 }
 
 export function isTaskOverdue(task: WorkTask): boolean {
@@ -190,11 +220,29 @@ export function isTaskOverdue(task: WorkTask): boolean {
   if (!raw) return false;
   const d = new Date(raw);
   if (Number.isNaN(d.getTime())) return false;
-  const start = new Date();
-  start.setHours(0, 0, 0, 0);
-  const due = new Date(d);
-  due.setHours(0, 0, 0, 0);
+  const start = startOfLocalDay(new Date());
+  const due = startOfLocalDay(d);
   return due.getTime() < start.getTime();
+}
+
+/** Hạn (deadline/due_date) trùng ngày local với `day`. */
+export function isTaskDueOnDay(task: WorkTask, day: Date = new Date()): boolean {
+  const raw = taskDueIso(task);
+  if (!raw) return false;
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return false;
+  return startOfLocalDay(d).getTime() === startOfLocalDay(day).getTime();
+}
+
+/**
+ * Overview «Công việc của tôi hôm nay»:
+ * - Việc mở: quá hạn, đến hạn hôm nay, hoặc chưa có hạn (vẫn trên bàn hôm nay).
+ * - Việc xong: chỉ khi hạn là hôm nay (proxy khi thiếu completed_at).
+ */
+export function isTaskForOverviewToday(task: WorkTask, day: Date = new Date()): boolean {
+  if (isTaskDone(task.status)) return isTaskDueOnDay(task, day);
+  if (isTaskOverdue(task) || isTaskDueOnDay(task, day)) return true;
+  return !taskDueIso(task);
 }
 
 export function formatTaskDeadline(iso?: string | null): string {
@@ -208,23 +256,50 @@ export function formatTaskDeadline(iso?: string | null): string {
 
 /**
  * Công việc SX = đúng nguồn Giao việc Sản xuất trên web (`/sx/assignments`).
- * GET /crm/assignments?assignment_module=production
+ * GET /crm/assignments?assignment_module=production&limit=&offset=
  */
-export async function fetchProductionWorkTasks(query: WorkTasksQuery = {}): Promise<WorkTask[]> {
-  const params: Record<string, string> = { assignment_module: 'production' };
+export async function fetchProductionWorkTasksPage(
+  query: WorkTasksQuery = {},
+): Promise<WorkTasksPage> {
+  const limit = Math.min(Math.max(Number(query.limit) || WORK_TASKS_PAGE_SIZE, 1), 500);
+  const offset = Math.max(Number(query.offset) || 0, 0);
+  const params: Record<string, string | number> = {
+    assignment_module: 'production',
+    limit,
+    offset,
+  };
   if (query.assigneeId) params.assignee_id = query.assigneeId;
   if (query.companyId) params.company_id = query.companyId;
 
-  const { data } = await api.get<{ assignments?: unknown[] }>('/crm/assignments', { params });
+  const { data } = await api.get<{
+    assignments?: unknown[];
+    has_more?: boolean;
+  }>('/crm/assignments', { params, signal: query.signal });
   const list = Array.isArray(data?.assignments) ? data.assignments : Array.isArray(data) ? data : [];
-  return list
+  const tasks = list
     .map((row) => mapAssignmentToWorkTask(row as Record<string, unknown>))
     .filter((t) => t.id);
+  const hasMore = data?.has_more != null ? Boolean(data.has_more) : tasks.length >= limit;
+  return { tasks, hasMore, offset, limit };
 }
 
-/** Overview «của tôi» — cùng nguồn Giao việc SX. */
-export async function fetchMyProductionTasks(userId: string): Promise<WorkTask[]> {
-  return fetchProductionWorkTasks({ assigneeId: userId });
+/** Tương thích cũ — tải 1 trang đầu (không còn full dump). */
+export async function fetchProductionWorkTasks(query: WorkTasksQuery = {}): Promise<WorkTask[]> {
+  const page = await fetchProductionWorkTasksPage(query);
+  return page.tasks;
+}
+
+/** Overview «của tôi» — cùng nguồn Giao việc SX (1 trang). */
+export async function fetchMyProductionTasks(
+  userId: string,
+  opts?: { signal?: AbortSignal },
+): Promise<WorkTask[]> {
+  return fetchProductionWorkTasks({
+    assigneeId: userId,
+    limit: WORK_TASKS_PAGE_SIZE,
+    offset: 0,
+    signal: opts?.signal,
+  });
 }
 
 /** Cập nhật trạng thái qua API Giao việc (đồng bộ pipeline nếu có crm_task_id). */

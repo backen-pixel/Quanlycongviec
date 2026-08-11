@@ -4,9 +4,15 @@ import type { BoardFilters } from './productionApi';
 
 /**
  * Cache board dùng chung giữa các tab (Kanban, Tổng quan, Kế hoạch, Danh sách, Quá hạn).
- * RAM + AsyncStorage (cold start): stale-while-revalidate, không bắt user đợi full download.
+ * RAM + AsyncStorage (cold start): stale-while-revalidate.
+ * Partial (đang tải thêm trang) không đánh «tươi» — tránh silent skip board dở.
  */
-type CacheEntry = { board: ProductionBoard; at: number };
+type CacheEntry = {
+  board: ProductionBoard;
+  at: number;
+  /** false = đang tải dở / abort giữa chừng — không dùng làm fresh. */
+  complete: boolean;
+};
 
 const cache = new Map<string, CacheEntry>();
 const DISK_KEY = 'sx_board_cache_v1';
@@ -32,6 +38,10 @@ export function getCachedBoard(filters: BoardFilters = {}): ProductionBoard | nu
   return cache.get(boardCacheKey(filters))?.board ?? null;
 }
 
+export function isCachedBoardComplete(filters: BoardFilters = {}): boolean {
+  return cache.get(boardCacheKey(filters))?.complete === true;
+}
+
 /** Seed UI khi chưa biết filter — lấy board mới nhất trong cache (bất kỳ key). */
 export function getAnyCachedBoard(): ProductionBoard | null {
   let newest: CacheEntry | null = null;
@@ -47,15 +57,41 @@ export function getCachedBoardAge(filters: BoardFilters = {}): number | null {
   return entry ? Date.now() - entry.at : null;
 }
 
+/** Chỉ board đã tải xong mới được coi tươi (silent skip). */
 export function isCachedBoardFresh(filters: BoardFilters = {}): boolean {
-  const age = getCachedBoardAge(filters);
-  return age != null && age < BOARD_CACHE_FRESH_MS;
+  const entry = cache.get(boardCacheKey(filters));
+  if (!entry?.complete) return false;
+  return Date.now() - entry.at < BOARD_CACHE_FRESH_MS;
 }
 
-export function setCachedBoard(filters: BoardFilters = {}, board: ProductionBoard): void {
+export type SetCachedBoardOptions = {
+  /** false = partial / abort — giữ UI nhưng không fresh, không ghi disk. */
+  complete?: boolean;
+};
+
+export function setCachedBoard(
+  filters: BoardFilters = {},
+  board: ProductionBoard,
+  opts: SetCachedBoardOptions = {},
+): void {
   // Chỉ lưu khi có dữ liệu thực (tránh ghi đè bằng partial rỗng lúc đầu).
   if (!board || (board.projects.length === 0 && board.stages.length === 0)) return;
-  cache.set(boardCacheKey(filters), { board, at: Date.now() });
+  const key = boardCacheKey(filters);
+  const complete = opts.complete !== false;
+  const prev = cache.get(key);
+
+  if (!complete) {
+    // Không đẩy `at` lên «tươi» — nếu đã có bản complete trước đó, giữ timestamp cũ
+    // để vẫn có thể refresh nền; UI vẫn thấy board đang lớn dần.
+    cache.set(key, {
+      board,
+      at: prev?.complete ? prev.at : 0,
+      complete: false,
+    });
+    return;
+  }
+
+  cache.set(key, { board, at: Date.now(), complete: true });
   // Giới hạn RAM: giữ tối đa 6 key mới nhất.
   if (cache.size > 6) {
     const ranked = [...cache.entries()].sort((a, b) => a[1].at - b[1].at);
@@ -64,7 +100,7 @@ export function setCachedBoard(filters: BoardFilters = {}, board: ProductionBoar
       if (oldest) cache.delete(oldest[0]);
     }
   }
-  schedulePersist(boardCacheKey(filters));
+  schedulePersist(key);
 }
 
 /**
@@ -93,7 +129,6 @@ export function patchCachedProjectById(
       if (col?.progress_percent != null && Number.isFinite(Number(col.progress_percent))) {
         merged.sx_pipeline_percent = Number(col.progress_percent);
       }
-      // Khớp enrich BE / attachColumns: intake = đúng cột won_pending
       if (patch.sx_intake == null) {
         merged.sx_intake = col?.bucket_slug === 'won_pending';
       }
@@ -101,7 +136,8 @@ export function patchCachedProjectById(
     nextProjects[idx] = merged;
     const nextEntry: CacheEntry = {
       board: { ...entry.board, projects: nextProjects, kpis: null },
-      at: Date.now(),
+      at: entry.at,
+      complete: entry.complete,
     };
     cache.set(key, nextEntry);
     if (!newest || nextEntry.at >= newest.at) {
@@ -109,7 +145,7 @@ export function patchCachedProjectById(
       newestKey = key;
     }
   }
-  if (newest && newestKey) schedulePersist(newestKey);
+  if (newest && newestKey && newest.complete) schedulePersist(newestKey);
   return newest?.board ?? null;
 }
 
@@ -134,15 +170,17 @@ async function persistToDisk(preferredKey: string): Promise<void> {
   try {
     let key = preferredKey;
     let entry = cache.get(preferredKey) ?? null;
-    if (!entry) {
+    if (!entry?.complete) {
+      entry = null;
       for (const [k, e] of cache.entries()) {
+        if (!e.complete) continue;
         if (!entry || e.at > entry.at) {
           entry = e;
           key = k;
         }
       }
     }
-    if (!entry) return;
+    if (!entry?.complete) return;
     const { board, at } = entry;
     if (board.projects.length > DISK_MAX_PROJECTS) return;
 
@@ -154,9 +192,9 @@ async function persistToDisk(preferredKey: string): Promise<void> {
         stages: board.stages,
         projects: board.projects,
         kpis: null,
+        truncated: board.truncated || false,
       },
     });
-    // AsyncStorage Android ~6MB — bỏ qua nếu quá lớn.
     if (payload.length > 4_500_000) return;
     await AsyncStorage.setItem(DISK_KEY, payload);
   } catch {
@@ -183,8 +221,8 @@ export function hydrateBoardCacheFromDisk(): Promise<void> {
         return;
       }
       if (!Array.isArray(parsed.board.stages) || !Array.isArray(parsed.board.projects)) return;
-      if (cache.has(parsed.key)) return; // RAM mới hơn
-      cache.set(parsed.key, { board: parsed.board, at: parsed.at });
+      if (cache.has(parsed.key)) return;
+      cache.set(parsed.key, { board: parsed.board, at: parsed.at, complete: true });
     } catch {
       /* ignore corrupt */
     }

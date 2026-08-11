@@ -17,7 +17,7 @@ import TapHighlight from '../components/TapHighlight';
 import { useTheme } from '../context/ThemeContext';
 import { useProductionRealtime } from '../hooks/useProductionRealtime';
 import { loadKanbanFilters } from '../lib/kanbanFilterStorage';
-import { fetchProductionBoard } from '../lib/productionApi';
+import { fetchProductionBoard, isAbortError } from '../lib/productionApi';
 import { getCachedBoard, isCachedBoardFresh } from '../lib/productionBoardCache';
 import { REALTIME_BOARD } from '../lib/realtimeModes';
 import { initialsFrom, shortDateLabel } from '../lib/sxBoardKpis';
@@ -42,9 +42,13 @@ export default function OverdueProjectsScreen() {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const loadSeqRef = useRef(0);
+  const boardAbortRef = useRef<AbortController | null>(null);
   const filtersRef = useRef<{ companyId?: string; workshopTypeId?: string }>({});
 
   const load = useCallback(async (mode: 'init' | 'refresh' | 'silent' = 'init') => {
+    boardAbortRef.current?.abort();
+    const ac = new AbortController();
+    boardAbortRef.current = ac;
     const seq = ++loadSeqRef.current;
     if (mode === 'init') setLoading(true);
     if (mode === 'refresh') setRefreshing(true);
@@ -71,6 +75,7 @@ export default function OverdueProjectsScreen() {
         if (mode === 'init') setLoading(false);
       }
       const board = await fetchProductionBoard(mode === 'refresh', filters, {
+        signal: ac.signal,
         onPartial: (partial) => {
           if (seq !== loadSeqRef.current) return;
           setProjects(partial.projects.filter((p) => p.is_overdue));
@@ -80,7 +85,7 @@ export default function OverdueProjectsScreen() {
       if (seq !== loadSeqRef.current) return;
       setProjects(board.projects.filter((p) => p.is_overdue));
     } catch (e) {
-      if (seq !== loadSeqRef.current) return;
+      if (seq !== loadSeqRef.current || isAbortError(e)) return;
       if (mode !== 'silent') setError(formatApiError(e));
     } finally {
       if (seq === loadSeqRef.current) {
@@ -88,6 +93,10 @@ export default function OverdueProjectsScreen() {
         setRefreshing(false);
       }
     }
+  }, []);
+
+  useEffect(() => () => {
+    boardAbortRef.current?.abort();
   }, []);
 
   useEffect(() => {
@@ -180,7 +189,7 @@ export default function OverdueProjectsScreen() {
           <Ionicons name="chevron-back" size={24} color={colors.text} />
         </TapHighlight>
         <View style={{ flex: 1 }}>
-          <Text style={styles.title}>Deal quá hạn</Text>
+          <Text style={styles.title}>Dự án quá hạn</Text>
           <Text style={styles.subtitle}>
             {filtered.length} dự án cần xử lý ưu tiên
           </Text>
