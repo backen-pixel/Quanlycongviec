@@ -40,7 +40,7 @@ function PipelineStrip({ title, icon: Icon, color, stages, onStageClick, activeS
     <div className="bg-white rounded-xl border border-gray-200 p-4">
       <h3 className="text-sm font-bold text-gray-900 flex items-center justify-between gap-2 mb-3">
         <span className="flex items-center gap-2">
-          <Icon className={`h-4 w-4 ${color}`} />
+          {Icon ? <Icon className={`h-4 w-4 ${color}`} /> : null}
           {title}
         </span>
         <span className="text-xs font-bold text-gray-500 tabular-nums">{total} tổng</span>
@@ -955,6 +955,7 @@ export default function ManagementDashboard() {
           {(moduleTab === 'overview' || moduleTab === 'vc') && (
             <PipelineStrip
               title="Pipeline Vận chuyển"
+              icon={Truck}
               color="text-amber-600"
               stages={pipelines.vc}
               activeStageId={moduleTab === 'vc' ? vcStageId : null}
