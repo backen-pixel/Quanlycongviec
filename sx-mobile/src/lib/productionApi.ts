@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { api } from '../api/client';
 import { normalizeCommentAttachments } from './commentAttachments';
-import { boardCacheKey, setCachedBoard } from './productionBoardCache';
+import { boardCacheKey, setCachedBoard, applyPendingPatchesToProjects, clearPendingProjectPatches } from './productionBoardCache';
 import type {
   KanbanStage,
   PersonalPlanner,
@@ -579,17 +579,23 @@ async function fetchProductionBoardInternal(
   const truncated = beTotalPages > PROJECTS_MAX_PAGES;
   const totalPages = Math.min(beTotalPages, PROJECTS_MAX_PAGES);
 
-  const emitAttached = (complete: boolean) => {
+  const emitAttached = (pagingDone: boolean) => {
+    // Re-apply socket patches — tránh trang sau ghi đè cột vừa kéo.
+    attached = applyPendingPatchesToProjects(attached, stages);
     const board: ProductionBoard = {
       stages,
       projects: attached,
       kpis: null,
       truncated,
     };
+    // Truncated → không complete (silent skip sẽ che dữ liệu thiếu).
+    const complete = pagingDone && !truncated;
     setCachedBoard(filters, board, { complete });
     emitPartialTo(partialListeners, board);
     return board;
   };
+
+  if (bustCache) clearPendingProjectPatches();
 
   attached = attachColumnsIndexed(first.rows.map(mapProjectRow), stages, stageIndex);
   const hasMore = loadRemaining && totalPages > 1 && first.rows.length >= PROJECTS_PAGE_LIMIT;

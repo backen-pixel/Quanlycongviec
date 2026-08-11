@@ -445,9 +445,13 @@ export default function WorkScreen() {
   const canPickCompany = Boolean(isAdminLike);
 
   const [tasks, setTasks] = useState<WorkTask[]>([]);
+  /** List theo chip status (server) — tách khỏi `tasks` để KPI Chưa/Đang/Xong/QH không bị lệch. */
+  const [chipTasks, setChipTasks] = useState<WorkTask[]>([]);
   const [hasMoreTasks, setHasMoreTasks] = useState(false);
+  const [chipHasMore, setChipHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [chipLoading, setChipLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
@@ -462,21 +466,24 @@ export default function WorkScreen() {
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const updatingRef = useRef(false);
   const loadSeqRef = useRef(0);
+  const chipSeqRef = useRef(0);
   const tasksLenRef = useRef(0);
+  const chipLenRef = useRef(0);
   const lastSilentAtRef = useRef(0);
   const skipNextFocusRefreshRef = useRef(true);
   const workAbortRef = useRef<AbortController | null>(null);
+  const chipAbortRef = useRef<AbortController | null>(null);
   const loadingMoreRef = useRef(false);
   const hasMoreTasksRef = useRef(false);
-  /** Số trang đã auto-fill khi lọc client (quá hạn / chưa…) — tránh spam vô hạn. */
-  const quietFillPagesRef = useRef(0);
+  const chipHasMoreRef = useRef(false);
+  const statusFilterRef = useRef<StatusFilter>('all');
 
   useEffect(() => { tasksLenRef.current = tasks.length; }, [tasks.length]);
+  useEffect(() => { chipLenRef.current = chipTasks.length; }, [chipTasks.length]);
   useEffect(() => { loadingMoreRef.current = loadingMore; }, [loadingMore]);
   useEffect(() => { hasMoreTasksRef.current = hasMoreTasks; }, [hasMoreTasks]);
-  useEffect(() => {
-    quietFillPagesRef.current = 0;
-  }, [statusFilter, search, assigneeFilter, scope, filterCompany]);
+  useEffect(() => { chipHasMoreRef.current = chipHasMore; }, [chipHasMore]);
+  useEffect(() => { statusFilterRef.current = statusFilter; }, [statusFilter]);
 
   // Overview «Công việc của tôi» → mở tab với filter Tôi (+ status nếu có).
   useEffect(() => {
@@ -528,9 +535,7 @@ export default function WorkScreen() {
   }, [filterCompany, canPickCompany, companyOptions, companies]);
 
   const persistCompanyFilter = useCallback(async (companyId: string) => {
-    const snap = (await loadKanbanFilters().catch(() => null)) || {};
     await saveKanbanFilters({
-      ...snap,
       filterCompany: companyId,
     });
   }, []);
@@ -550,7 +555,6 @@ export default function WorkScreen() {
       return;
     }
     if (append) {
-      // Dùng ref — KHÔNG đưa loadingMore/hasMore vào deps (tránh vòng reload).
       if (loadingMoreRef.current || !hasMoreTasksRef.current) return;
       loadingMoreRef.current = true;
       if (!opts?.quiet) setLoadingMore(true);
@@ -565,6 +569,7 @@ export default function WorkScreen() {
       const assigneeId = !teamView || scope === 'mine' ? userId : null;
       const companyId = filterCompany || (canPickCompany ? null : (user?.company_id || null));
       const offset = append ? tasksLenRef.current : 0;
+      // Scope load — không gửi status (giữ KPI đúng trên mọi chip).
       const page = await fetchProductionWorkTasksPage({
         assigneeId,
         companyId,
@@ -592,7 +597,6 @@ export default function WorkScreen() {
         hasMoreTasksRef.current = false;
       }
     } finally {
-      // Append bị abort bởi load mới vẫn phải hạ cờ — tránh kẹt loadingMore.
       if (append) {
         loadingMoreRef.current = false;
         setLoadingMore(false);
@@ -611,8 +615,71 @@ export default function WorkScreen() {
     filtersReady,
   ]);
 
+  /** Chip status → lọc server (status / overdue). */
+  const loadChip = useCallback(async (append = false) => {
+    const chip = statusFilterRef.current;
+    if (!userId || !filtersReady || chip === 'all') return;
+    if (append) {
+      if (loadingMoreRef.current || !chipHasMoreRef.current) return;
+      loadingMoreRef.current = true;
+      setLoadingMore(true);
+    } else {
+      chipAbortRef.current?.abort();
+      setChipLoading(true);
+    }
+    const ac = append ? (chipAbortRef.current || new AbortController()) : new AbortController();
+    if (!append) chipAbortRef.current = ac;
+    const seq = append ? chipSeqRef.current : ++chipSeqRef.current;
+    try {
+      const assigneeId = !teamView || scope === 'mine' ? userId : null;
+      const companyId = filterCompany || (canPickCompany ? null : (user?.company_id || null));
+      const offset = append ? chipLenRef.current : 0;
+      const page = await fetchProductionWorkTasksPage({
+        assigneeId,
+        companyId,
+        status: chip === 'overdue' ? null : chip,
+        overdue: chip === 'overdue',
+        limit: WORK_TASKS_PAGE_SIZE,
+        offset,
+        signal: ac.signal,
+      });
+      if (seq !== chipSeqRef.current || statusFilterRef.current !== chip) return;
+      setChipTasks((prev) => {
+        if (!append) return page.tasks;
+        const seen = new Set(prev.map((t) => t.id));
+        return [...prev, ...page.tasks.filter((t) => !seen.has(t.id))];
+      });
+      setChipHasMore(page.hasMore);
+      chipHasMoreRef.current = page.hasMore;
+    } catch (e) {
+      if (seq !== chipSeqRef.current) return;
+      const msg = String((e as { message?: string })?.message || '');
+      if (/aborted|canceled|cancelled/i.test(msg)) return;
+      if (!append) {
+        setChipTasks([]);
+        setChipHasMore(false);
+        chipHasMoreRef.current = false;
+      }
+    } finally {
+      if (append) {
+        loadingMoreRef.current = false;
+        setLoadingMore(false);
+      }
+      if (seq === chipSeqRef.current) setChipLoading(false);
+    }
+  }, [
+    userId,
+    teamView,
+    scope,
+    user?.company_id,
+    filterCompany,
+    canPickCompany,
+    filtersReady,
+  ]);
+
   useEffect(() => () => {
     workAbortRef.current?.abort();
+    chipAbortRef.current?.abort();
   }, []);
 
   useEffect(() => {
@@ -643,10 +710,11 @@ export default function WorkScreen() {
     setRefreshing(true);
     try {
       await load(false);
+      if (statusFilterRef.current !== 'all') await loadChip(false);
     } finally {
       setRefreshing(false);
     }
-  }, [load]);
+  }, [load, loadChip]);
 
   useEffect(() => {
     if (!filtersReady) return;
@@ -654,6 +722,20 @@ export default function WorkScreen() {
     skipNextFocusRefreshRef.current = true;
     void load(false);
   }, [load, filtersReady]);
+
+  // Chip status → list riêng qua API (status / overdue); KPI vẫn từ `tasks` scope.
+  useEffect(() => {
+    if (!filtersReady || !userId) return;
+    if (statusFilter === 'all') {
+      chipAbortRef.current?.abort();
+      setChipTasks([]);
+      setChipHasMore(false);
+      chipHasMoreRef.current = false;
+      setChipLoading(false);
+      return;
+    }
+    void loadChip(false);
+  }, [statusFilter, filtersReady, userId, loadChip]);
 
   // Quay lại tab / thoát ProjectDetail → refetch để KPI quá hạn + trạng thái khớp server.
   useFocusEffect(
@@ -667,8 +749,9 @@ export default function WorkScreen() {
       if (now - lastSilentAtRef.current < 8_000) return undefined;
       lastSilentAtRef.current = now;
       void load(true);
+      if (statusFilterRef.current !== 'all') void loadChip(false);
       return undefined;
-    }, [filtersReady, userId, load]),
+    }, [filtersReady, userId, load, loadChip]),
   );
 
   useEffect(() => {
@@ -678,12 +761,16 @@ export default function WorkScreen() {
       if (now - lastSilentAtRef.current < 60_000) return;
       lastSilentAtRef.current = now;
       void load(true);
+      if (statusFilterRef.current !== 'all') void loadChip(false);
     });
     return () => sub.remove();
-  }, [load, filtersReady, userId]);
+  }, [load, loadChip, filtersReady, userId]);
 
   useProductionRealtime({
-    onRefresh: () => { void load(true); },
+    onRefresh: () => {
+      void load(true);
+      if (statusFilterRef.current !== 'all') void loadChip(false);
+    },
     enabled: Boolean(userId) && filtersReady,
     modes: REALTIME_TASK,
     debounceMs: 1500,
@@ -703,7 +790,7 @@ export default function WorkScreen() {
   }, [openProjectDetail]);
 
   const bumpTaskFileCount = useCallback((taskId: string) => {
-    setTasks((prev) =>
+    const bump = (prev: WorkTask[]) =>
       prev.map((t) =>
         t.id === taskId
           ? {
@@ -712,8 +799,9 @@ export default function WorkScreen() {
               attachment_count: (t.attachment_count ?? 0) + 1,
             }
           : t,
-      ),
-    );
+      );
+    setTasks(bump);
+    setChipTasks(bump);
   }, []);
 
   const uploadMediaForTask = useCallback(async (
@@ -801,11 +889,15 @@ export default function WorkScreen() {
 
   const filtered = useMemo(() => {
     const needle = search.trim().toLowerCase();
-    return tasks.filter((t) => {
-      if (statusFilter === 'pending' && !isTaskPending(t.status)) return false;
-      if (statusFilter === 'in_progress' && !isTaskInProgress(t.status)) return false;
-      if (statusFilter === 'completed' && !isTaskDone(t.status)) return false;
-      if (statusFilter === 'overdue' && !isTaskOverdue(t)) return false;
+    const source = statusFilter === 'all' ? tasks : chipTasks;
+    return source.filter((t) => {
+      // Status đã lọc server khi chip ≠ all — chỉ soft-check overdue nếu BE cũ chưa có param.
+      if (statusFilter === 'all') {
+        /* no status chip */
+      } else if (statusFilter === 'pending' && !isTaskPending(t.status)) return false;
+      else if (statusFilter === 'in_progress' && !isTaskInProgress(t.status)) return false;
+      else if (statusFilter === 'completed' && !isTaskDone(t.status)) return false;
+      else if (statusFilter === 'overdue' && !isTaskOverdue(t)) return false;
       if (teamView && scope === 'team' && assigneeFilter !== 'all') {
         if (!taskAssignedToUser(t, assigneeFilter)) return false;
       }
@@ -830,38 +922,9 @@ export default function WorkScreen() {
       }
       return true;
     });
-  }, [tasks, statusFilter, search, teamView, scope, assigneeFilter, filterCompany]);
+  }, [tasks, chipTasks, statusFilter, search, teamView, scope, assigneeFilter, filterCompany]);
 
-  /**
-   * Chip Quá hạn / Chưa… lọc client → list rỗng dễ kích onEndReached liên tục (spinner xanh).
-   * Tự lấy thêm trang im lặng tối đa N lần tới khi có kết quả hoặc hết data.
-   */
-  useEffect(() => {
-    const clientFilterOn =
-      statusFilter !== 'all'
-      || Boolean(search.trim())
-      || (teamView && scope === 'team' && assigneeFilter !== 'all');
-    if (!clientFilterOn || !filtersReady || loading) return;
-    if (filtered.length > 0 || !hasMoreTasks) return;
-    if (loadingMoreRef.current) return;
-    if (quietFillPagesRef.current >= 8) return;
-    quietFillPagesRef.current += 1;
-    void load(true, true, { quiet: true });
-  }, [
-    filtered.length,
-    hasMoreTasks,
-    statusFilter,
-    search,
-    assigneeFilter,
-    teamView,
-    scope,
-    filtersReady,
-    loading,
-    tasks.length,
-    load,
-  ]);
-
-  /** Stats luôn trên cùng scope (search/công ty/người) — không phụ thuộc chip Chưa/Đang/Xong/QH. */
+  /** Stats luôn trên scope (không phụ thuộc chip) — search/công ty/người. */
   const statsScope = useMemo(() => {
     const needle = search.trim().toLowerCase();
     return tasks.filter((t) => {
@@ -1053,6 +1116,13 @@ export default function WorkScreen() {
             : t,
         ),
       );
+      setChipTasks((prev) =>
+        prev.map((t) =>
+          t.id === task.id
+            ? { ...t, status: updated.status, title: updated.title || t.title }
+            : t,
+        ),
+      );
       setError(null);
     } catch (e) {
       setError(formatApiError(e));
@@ -1220,7 +1290,7 @@ export default function WorkScreen() {
     );
   };
 
-  if (loading && !refreshing) {
+  if ((loading || (statusFilter !== 'all' && chipLoading && chipTasks.length === 0)) && !refreshing) {
     return (
       <View style={[styles.center, { paddingTop: insets.top }]}>
         <ActivityIndicator size="large" color={colors.primary} />
@@ -1433,9 +1503,14 @@ export default function WorkScreen() {
         removeClippedSubviews={false}
         keyboardShouldPersistTaps="handled"
         onEndReached={() => {
-          // List lọc rỗng: không append qua onEndReached (tránh spinner lặp) — dùng quiet fill.
           if (filtered.length === 0) return;
-          if (loading || loadingMoreRef.current || !hasMoreTasksRef.current) return;
+          if (loading || chipLoading || loadingMoreRef.current) return;
+          if (statusFilter !== 'all') {
+            if (!chipHasMoreRef.current) return;
+            void loadChip(true);
+            return;
+          }
+          if (!hasMoreTasksRef.current) return;
           void load(true, true);
         }}
         onEndReachedThreshold={0.35}
@@ -1446,7 +1521,7 @@ export default function WorkScreen() {
               ? (
                 <ActivityIndicator style={{ marginVertical: 16 }} color={colors.primary} />
               )
-              : hasMoreTasks
+              : (statusFilter === 'all' ? hasMoreTasks : chipHasMore)
                 ? (
                   <Text style={[styles.empty, { paddingVertical: 12 }]}>Vuốt thêm để tải tiếp…</Text>
                 )

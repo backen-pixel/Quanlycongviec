@@ -657,6 +657,16 @@ r.get('/', async (req, res) => {
     if (req.query.priority) q = q.eq('priority', req.query.priority);
     if (req.query.column_id) q = q.eq('column_id', req.query.column_id);
     if (req.query.lead_id) q = q.eq('lead_id', String(req.query.lead_id).trim());
+    // Mobile chip «Quá hạn»: chưa xong + có deadline trước đầu ngày hôm nay (local server ≈ UTC ok cho filter).
+    const overdueFlag = String(req.query.overdue || '').trim().toLowerCase();
+    if (overdueFlag === '1' || overdueFlag === 'true') {
+      const start = new Date();
+      start.setHours(0, 0, 0, 0);
+      q = q
+        .neq('status', 'completed')
+        .not('deadline', 'is', null)
+        .lt('deadline', start.toISOString());
+    }
     const moduleFilter = String(req.query.assignment_module || '').trim().toLowerCase();
     if (moduleFilter === 'production' || moduleFilter === 'crm' || moduleFilter === 'logistics') {
       q = q.eq('assignment_module', moduleFilter);
@@ -695,6 +705,14 @@ r.get('/', async (req, res) => {
       if (req.query.priority) qLegacy = qLegacy.eq('priority', req.query.priority);
       if (req.query.column_id) qLegacy = qLegacy.eq('column_id', req.query.column_id);
       if (req.query.lead_id) qLegacy = qLegacy.eq('lead_id', String(req.query.lead_id).trim());
+      if (overdueFlag === '1' || overdueFlag === 'true') {
+        const start = new Date();
+        start.setHours(0, 0, 0, 0);
+        qLegacy = qLegacy
+          .neq('status', 'completed')
+          .not('deadline', 'is', null)
+          .lt('deadline', start.toISOString());
+      }
       if (moduleFilter === 'production' || moduleFilter === 'crm' || moduleFilter === 'logistics') {
         qLegacy = qLegacy.eq('assignment_module', moduleFilter);
       }

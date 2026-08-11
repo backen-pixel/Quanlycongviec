@@ -196,11 +196,11 @@ export default function OverviewScreen() {
     const snap = (await loadKanbanFilters().catch(() => null)) || {};
     const prev = String(snap?.filterCompany || '');
     const next = String(companyId || '');
-    const companyChanged = prev !== next;
+    // Chỉ xóa phân loại khi ĐỔI từ một công ty đã chọn → công ty khác.
+    // Khóa JWT lần đầu ('' → companyId) không được coi là đổi — giữ work type.
+    const companyChanged = Boolean(prev) && prev !== next;
     await saveKanbanFilters({
-      ...snap,
       filterCompany: companyId,
-      // Chỉ xóa phân loại khi đổi xưởng thật — giữ khi khóa lại cùng company JWT.
       ...(companyChanged ? { filterWorkTypeId: '' } : {}),
     });
   }, []);

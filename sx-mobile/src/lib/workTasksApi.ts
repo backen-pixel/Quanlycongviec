@@ -32,6 +32,10 @@ export type WorkTasksQuery = {
   /** null/undefined = không lọc người (team). Có id = chỉ việc của người đó. */
   assigneeId?: string | null;
   companyId?: string | null;
+  /** pending | in_progress | completed — lọc phía server. */
+  status?: string | null;
+  /** Quá hạn: chưa xong + deadline < đầu ngày hôm nay. */
+  overdue?: boolean;
   /** Phân trang — mặc định mobile dùng 200. */
   limit?: number;
   offset?: number;
@@ -270,6 +274,8 @@ export async function fetchProductionWorkTasksPage(
   };
   if (query.assigneeId) params.assignee_id = query.assigneeId;
   if (query.companyId) params.company_id = query.companyId;
+  if (query.status) params.status = String(query.status);
+  if (query.overdue) params.overdue = 1;
 
   const { data } = await api.get<{
     assignments?: unknown[];

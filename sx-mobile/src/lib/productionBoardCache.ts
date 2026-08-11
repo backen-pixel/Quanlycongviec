@@ -10,11 +10,13 @@ import type { BoardFilters } from './productionApi';
 type CacheEntry = {
   board: ProductionBoard;
   at: number;
-  /** false = đang tải dở / abort giữa chừng — không dùng làm fresh. */
+  /** false = đang tải dở / abort giữa chừng / truncated — không dùng làm fresh. */
   complete: boolean;
 };
 
 const cache = new Map<string, CacheEntry>();
+/** Patch socket trong lúc multi-page fetch — re-apply trước mỗi emitAttached. */
+const pendingProjectPatches = new Map<string, Partial<ProductionProject>>();
 const DISK_KEY = 'sx_board_cache_v1';
 const DISK_SCHEMA = 1;
 /** Board coi là còn "tươi" trong khoảng này → không cần refetch nền. */
@@ -57,15 +59,16 @@ export function getCachedBoardAge(filters: BoardFilters = {}): number | null {
   return entry ? Date.now() - entry.at : null;
 }
 
-/** Chỉ board đã tải xong mới được coi tươi (silent skip). */
+/** Chỉ board đã tải xong (không truncated) mới được coi tươi (silent skip). */
 export function isCachedBoardFresh(filters: BoardFilters = {}): boolean {
   const entry = cache.get(boardCacheKey(filters));
   if (!entry?.complete) return false;
+  if (entry.board.truncated) return false;
   return Date.now() - entry.at < BOARD_CACHE_FRESH_MS;
 }
 
 export type SetCachedBoardOptions = {
-  /** false = partial / abort — giữ UI nhưng không fresh, không ghi disk. */
+  /** false = partial / abort / truncated — giữ UI nhưng không fresh, không ghi disk. */
   complete?: boolean;
 };
 
@@ -77,7 +80,8 @@ export function setCachedBoard(
   // Chỉ lưu khi có dữ liệu thực (tránh ghi đè bằng partial rỗng lúc đầu).
   if (!board || (board.projects.length === 0 && board.stages.length === 0)) return;
   const key = boardCacheKey(filters);
-  const complete = opts.complete !== false;
+  // Truncated không bao giờ «complete/fresh» — tránh silent skip dataset thiếu.
+  const complete = opts.complete !== false && !board.truncated;
   const prev = cache.get(key);
 
   if (!complete) {
@@ -103,6 +107,58 @@ export function setCachedBoard(
   schedulePersist(key);
 }
 
+function mergeProjectPatch(
+  prev: ProductionProject,
+  patch: Partial<ProductionProject>,
+  stages?: ProductionBoard['stages'],
+): ProductionProject {
+  const merged: ProductionProject = { ...prev, ...patch };
+  if (patch.sx_kanban_column_id != null && patch.resolved_column_id == null) {
+    merged.resolved_column_id = String(patch.sx_kanban_column_id);
+  }
+  if (patch.sx_kanban_column_id != null && stages?.length) {
+    const col = stages.find((s) => String(s.id) === String(patch.sx_kanban_column_id));
+    if (col?.progress_percent != null && Number.isFinite(Number(col.progress_percent))) {
+      merged.sx_pipeline_percent = Number(col.progress_percent);
+    }
+    if (patch.sx_intake == null) {
+      merged.sx_intake = col?.bucket_slug === 'won_pending';
+    }
+  }
+  return merged;
+}
+
+/** Ghi nhớ patch để không bị multi-page emitAttached ghi đè. */
+export function notePendingProjectPatch(
+  projectId: string,
+  patch: Partial<ProductionProject>,
+): void {
+  const pid = String(projectId || '');
+  if (!pid || !patch || !Object.keys(patch).length) return;
+  const prev = pendingProjectPatches.get(pid) || {};
+  pendingProjectPatches.set(pid, { ...prev, ...patch });
+}
+
+/** Áp mọi pending patch lên danh sách đang assemble (trước khi ghi cache). */
+export function applyPendingPatchesToProjects(
+  projects: ProductionProject[],
+  stages?: ProductionBoard['stages'],
+): ProductionProject[] {
+  if (!pendingProjectPatches.size || !projects.length) return projects;
+  let changed = false;
+  const next = projects.map((p) => {
+    const patch = pendingProjectPatches.get(String(p.id));
+    if (!patch) return p;
+    changed = true;
+    return mergeProjectPatch(p, patch, stages);
+  });
+  return changed ? next : projects;
+}
+
+export function clearPendingProjectPatches(): void {
+  pendingProjectPatches.clear();
+}
+
 /**
  * Cập nhật 1 dự án trong mọi snapshot cache (kéo cột / socket stage_changed).
  * Trả về board đã patch theo key gần nhất, hoặc null nếu không có trong cache.
@@ -113,27 +169,14 @@ export function patchCachedProjectById(
 ): ProductionBoard | null {
   const pid = String(projectId || '');
   if (!pid) return null;
+  notePendingProjectPatch(pid, patch);
   let newest: CacheEntry | null = null;
   let newestKey = '';
   for (const [key, entry] of cache.entries()) {
     const idx = entry.board.projects.findIndex((p) => String(p.id) === pid);
     if (idx < 0) continue;
     const nextProjects = entry.board.projects.slice();
-    const prev = nextProjects[idx];
-    const merged: ProductionProject = { ...prev, ...patch };
-    if (patch.sx_kanban_column_id != null && patch.resolved_column_id == null) {
-      merged.resolved_column_id = String(patch.sx_kanban_column_id);
-    }
-    if (patch.sx_kanban_column_id != null) {
-      const col = entry.board.stages.find((s) => String(s.id) === String(patch.sx_kanban_column_id));
-      if (col?.progress_percent != null && Number.isFinite(Number(col.progress_percent))) {
-        merged.sx_pipeline_percent = Number(col.progress_percent);
-      }
-      if (patch.sx_intake == null) {
-        merged.sx_intake = col?.bucket_slug === 'won_pending';
-      }
-    }
-    nextProjects[idx] = merged;
+    nextProjects[idx] = mergeProjectPatch(nextProjects[idx], patch, entry.board.stages);
     const nextEntry: CacheEntry = {
       board: { ...entry.board, projects: nextProjects, kpis: null },
       at: entry.at,
@@ -151,6 +194,7 @@ export function patchCachedProjectById(
 
 export function clearBoardCache(): void {
   cache.clear();
+  pendingProjectPatches.clear();
   if (persistTimer) {
     clearTimeout(persistTimer);
     persistTimer = null;
@@ -222,7 +266,9 @@ export function hydrateBoardCacheFromDisk(): Promise<void> {
       }
       if (!Array.isArray(parsed.board.stages) || !Array.isArray(parsed.board.projects)) return;
       if (cache.has(parsed.key)) return;
-      cache.set(parsed.key, { board: parsed.board, at: parsed.at, complete: true });
+      // Truncated snapshot không đánh complete.
+      const complete = !parsed.board.truncated;
+      cache.set(parsed.key, { board: parsed.board, at: parsed.at, complete });
     } catch {
       /* ignore corrupt */
     }
