@@ -286,6 +286,9 @@ export default function OverviewScreen() {
           ? Promise.resolve(cachedBoard!)
           : fetchProductionBoard(mode === 'refresh', boardFilters, {
               signal: ac.signal,
+              // Overview chỉ cần preview overdue + KPI summary — không hydrate 6k deal.
+              // Kanban/Planner vẫn full; cache đầy đủ từ tab khác được ưu tiên ở trên.
+              loadRemaining: false,
               onPartial: (partial) => {
                 if (seq !== loadSeqRef.current) return;
                 const scoped = applyScopedBoard(partial.projects, partial.stages);
@@ -293,7 +296,7 @@ export default function OverviewScreen() {
                 if (mode === 'init') setLoading(false);
               },
             }),
-        // Summary toàn công ty — NV không dùng (tính từ deal mình phụ trách).
+        // Summary toàn công ty — NV không dùng (tính từ deal mình phụ trách trên board/cache).
         ownOnly
           ? Promise.resolve(null)
           : fetchProductionBoardSummary(boardFilters, mode === 'refresh', ac.signal).catch((e) => {
@@ -304,12 +307,24 @@ export default function OverviewScreen() {
       ]);
 
       if (seq !== loadSeqRef.current) return;
-      if (board) {
-        const scoped = applyScopedBoard(board.projects, board.stages);
+      // Ưu tiên board đầy đủ trong cache (Kanban đã tải) hơn preview page-1 vừa fetch.
+      const bestBoard = (() => {
+        const cachedNow = getCachedBoard(boardFilters);
+        if (
+          cachedNow
+          && board
+          && (cachedNow.projects.length || 0) > (board.projects.length || 0)
+        ) {
+          return cachedNow;
+        }
+        return board || cachedNow || null;
+      })();
+      if (bestBoard) {
+        const scoped = applyScopedBoard(bestBoard.projects, bestBoard.stages);
         if (ownOnly) {
-          setKpis(computeSxBoardKpis(scoped, board.stages));
+          setKpis(computeSxBoardKpis(scoped, bestBoard.stages));
         } else if (summary) {
-          const client = computeSxBoardKpis(board.projects, board.stages);
+          const client = computeSxBoardKpis(bestBoard.projects, bestBoard.stages);
           setKpis({
             ...EMPTY_KPI,
             total: summary.total,
@@ -320,7 +335,7 @@ export default function OverviewScreen() {
             overdue: summary.overdue,
           });
         } else {
-          setKpis(computeSxBoardKpis(board.projects, board.stages));
+          setKpis(computeSxBoardKpis(bestBoard.projects, bestBoard.stages));
         }
       } else if (summary && !ownOnly) {
         setKpis({

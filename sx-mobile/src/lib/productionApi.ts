@@ -588,9 +588,12 @@ async function fetchProductionBoardInternal(
       kpis: null,
       truncated,
     };
-    // Truncated → không complete (silent skip sẽ che dữ liệu thiếu).
-    const complete = pagingDone && !truncated;
+    // Preview nhiều trang (loadRemaining=false) → không complete.
+    // 1 trang server + pagingDone → complete được (Overview không cần Kanban).
+    const complete = pagingDone && !truncated && (loadRemaining || beTotalPages <= 1);
     setCachedBoard(filters, board, { complete });
+    // Sau khi đã merge vào snapshot cuối — xóa pending để silent refetch không re-stale.
+    if (pagingDone) clearPendingProjectPatches();
     emitPartialTo(partialListeners, board);
     return board;
   };

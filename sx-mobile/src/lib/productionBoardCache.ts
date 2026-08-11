@@ -85,6 +85,10 @@ export function setCachedBoard(
   const prev = cache.get(key);
 
   if (!complete) {
+    // Không thu nhỏ cache bằng preview/partial ngắn hơn (Overview page-1 vs Kanban full).
+    if (prev && (prev.board.projects.length || 0) > (board.projects.length || 0)) {
+      return;
+    }
     // Không đẩy `at` lên «tươi» — nếu đã có bản complete trước đó, giữ timestamp cũ
     // để vẫn có thể refresh nền; UI vẫn thấy board đang lớn dần.
     cache.set(key, {
