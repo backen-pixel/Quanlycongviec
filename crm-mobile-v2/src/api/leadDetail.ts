@@ -18,6 +18,10 @@ export type LeadDetailRow = {
   project_id?: string | null;
   inbox_channel?: string | null;
   source?: { id?: string; name?: string | null } | string | null;
+  source_id?: string | null;
+  lead_type_id?: string | null;
+  lead_type?: { id?: string; name?: string | null } | null;
+  customer_id?: string | null;
   customer?: {
     id?: string;
     full_name?: string | null;
@@ -32,6 +36,9 @@ export type LeadDetailRow = {
   lead_owner?: { id?: string; full_name?: string | null } | null;
   stage?: { id?: string; name?: string | null; color?: string | null; is_won?: boolean | null } | null;
   estimated_value?: number | null;
+  probability?: number | null;
+  expected_close_date?: string | null;
+  next_follow_up?: string | null;
   deposit_amount?: number | null;
   deposit_received?: boolean | null;
   deposit_label?: string | null;
@@ -334,6 +341,29 @@ export async function updateLeadDeposit(
     deposit_received: input.deposit_received,
     deposit_label: input.deposit_label?.trim() || null,
   });
+}
+
+/** Cập nhật một phần trường Lead/Deal — PUT /crm/leads/:id. */
+export async function updateLeadFields(
+  leadId: string,
+  patch: Record<string, unknown>,
+): Promise<void> {
+  await api.put(`/crm/leads/${leadId}`, patch);
+}
+
+/** Cập nhật khách hàng — PUT /customers/:id. */
+export async function updateCustomerFields(
+  customerId: string,
+  patch: {
+    full_name?: string | null;
+    phone?: string | null;
+    email?: string | null;
+    address?: string | null;
+    company?: string | null;
+    tax_code?: string | null;
+  },
+): Promise<void> {
+  await api.put(`/customers/${customerId}`, patch);
 }
 
 export async function patchLeadComment(commentId: number, body: string): Promise<LeadComment> {

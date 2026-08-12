@@ -1,5 +1,5 @@
 /**
- * Tab Thông tin chung — khách hàng, công ty/khu vực/phụ trách, deadline thẻ.
+ * Tab Thông tin chung — xem + sửa KH / Lead-Deal (khớp web LeadInfoPanel).
  */
 import Ionicons from '@expo/vector-icons/Ionicons';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
@@ -14,17 +14,23 @@ import {
   Text,
   TextInput,
   View,
+  type KeyboardTypeOptions,
 } from 'react-native';
 import { formatApiError } from '../../api/client';
-import { setCrmKanbanDeadline, updateCrmAssignee } from '../../api/crm';
+import { fetchCrmSources, setCrmKanbanDeadline, updateCrmAssignee, type CrmOption } from '../../api/crm';
 import {
   fetchCrmCompanies,
   fetchCrmEmployeesByCompany,
   fetchCrmRegions,
+  type CrmCompany,
   type CrmEmployee,
 } from '../../api/crmMeta';
 import type { LeadDetailRow } from '../../api/leadDetail';
-import { updateLeadDeposit } from '../../api/leadDetail';
+import {
+  updateCustomerFields,
+  updateLeadDeposit,
+  updateLeadFields,
+} from '../../api/leadDetail';
 import { currentUserId, useAuth } from '../../context/AuthContext';
 import {
   buildAssignPickerOptions,
@@ -46,6 +52,17 @@ type Props = {
 
 type DeadlineMode = 'set' | 'edit' | 'clear' | null;
 type DepositReceived = '' | 'yes' | 'no';
+type SelectKind = 'source' | 'company' | 'region' | null;
+type DateField = 'expected_close_date' | 'next_follow_up' | null;
+
+type TextEdit = {
+  scope: 'customer' | 'lead';
+  field: string;
+  label: string;
+  value: string;
+  multiline?: boolean;
+  keyboard?: KeyboardTypeOptions;
+};
 
 function depositDisplay(lead: LeadDetailRow): string | null {
   const parts: string[] = [];
@@ -77,6 +94,12 @@ function sourceLabel(source: LeadDetailRow['source']): string {
   return source.name || '—';
 }
 
+function sourceIdOf(lead: LeadDetailRow): string {
+  if (lead.source_id) return String(lead.source_id);
+  if (lead.source && typeof lead.source === 'object' && lead.source.id) return String(lead.source.id);
+  return '';
+}
+
 function InfoRow({
   label,
   value,
@@ -95,11 +118,7 @@ function InfoRow({
   return (
     <View style={styles.infoRow}>
       <Text style={styles.infoLabel}>{label}</Text>
-      <Pressable
-        style={{ flex: 1 }}
-        onPress={onPress}
-        disabled={!onPress}
-      >
+      <Pressable style={{ flex: 1 }} onPress={onPress} disabled={!onPress}>
         <Text style={[styles.infoValue, onPress && styles.infoLink]} numberOfLines={3}>
           {value || '—'}
         </Text>
@@ -120,8 +139,11 @@ export default function LeadInfoTab({ lead, onUpdated }: Props) {
   const myId = currentUserId(user);
 
   const [refreshing, setRefreshing] = useState(false);
-  const [companyName, setCompanyName] = useState<string>('');
-  const [regionName, setRegionName] = useState<string>('');
+  const [companyName, setCompanyName] = useState('');
+  const [regionName, setRegionName] = useState('');
+  const [companies, setCompanies] = useState<CrmCompany[]>([]);
+  const [regions, setRegions] = useState<{ id: string; name: string }[]>([]);
+  const [sources, setSources] = useState<CrmOption[]>([]);
   const [employees, setEmployees] = useState<CrmEmployee[]>([]);
   const [assignOpen, setAssignOpen] = useState(false);
   const [assignBusy, setAssignBusy] = useState(false);
@@ -139,7 +161,15 @@ export default function LeadInfoTab({ lead, onUpdated }: Props) {
   const [depositLabel, setDepositLabel] = useState('');
   const [savingDeposit, setSavingDeposit] = useState(false);
 
+  const [textEdit, setTextEdit] = useState<TextEdit | null>(null);
+  const [textDraft, setTextDraft] = useState('');
+  const [savingText, setSavingText] = useState(false);
+  const [selectKind, setSelectKind] = useState<SelectKind>(null);
+  const [selectBusy, setSelectBusy] = useState(false);
+  const [dateField, setDateField] = useState<DateField>(null);
+
   const customer = lead.customer;
+  const customerId = String(customer?.id || lead.customer_id || '');
   const assigneeId = String(
     lead.assigned_to || lead.assignee?.id || lead.lead_owner?.id || '',
   );
@@ -158,7 +188,6 @@ export default function LeadInfoTab({ lead, onUpdated }: Props) {
     }),
     [isDeal, assigneeId, lead.lead_owner?.id],
   );
-
   const canAssign = canAssignCrmCard(user, assignTarget, myId || '', companyId);
 
   const projects = useMemo(() => {
@@ -176,47 +205,44 @@ export default function LeadInfoTab({ lead, onUpdated }: Props) {
   }, [lead.production_projects, lead.project_id, lead.linked_project]);
 
   useEffect(() => {
-    const embedded =
-      lead.company?.name || lead.company?.short_name || '';
-    const embeddedRegion =
-      lead.crm_region?.name || lead.region?.name || '';
+    const embedded = lead.company?.name || lead.company?.short_name || '';
+    const embeddedRegion = lead.crm_region?.name || lead.region?.name || '';
     if (embedded) setCompanyName(embedded);
+    else setCompanyName('');
     if (embeddedRegion) setRegionName(embeddedRegion);
-    if (!embedded) setCompanyName('');
-    if (!embeddedRegion) setRegionName('');
+    else setRegionName('');
 
     let cancelled = false;
     void (async () => {
       try {
+        const cos = await fetchCrmCompanies();
+        if (cancelled) return;
+        setCompanies(cos);
         if (companyId && !embedded) {
-          const cos = await fetchCrmCompanies();
-          if (cancelled) return;
           const hit = cos.find((c) => String(c.id) === companyId);
           setCompanyName(hit?.name || hit?.short_name || '');
         }
-        if (companyId && lead.region_id && !embeddedRegion) {
-          const regs = await fetchCrmRegions(companyId);
-          if (cancelled) return;
-          const hit = regs.find((r) => String(r.id) === String(lead.region_id));
-          setRegionName(hit?.name || '');
-        }
         if (companyId) {
-          const res = await fetchCrmEmployeesByCompany(companyId);
+          const [regs, src, emp] = await Promise.all([
+            fetchCrmRegions(companyId),
+            fetchCrmSources(companyId),
+            fetchCrmEmployeesByCompany(companyId),
+          ]);
           if (cancelled) return;
-          setEmployees(res.users || []);
+          setRegions(regs.map((r) => ({ id: String(r.id), name: r.name })));
+          setSources(src);
+          setEmployees(emp.users || []);
+          if (lead.region_id && !embeddedRegion) {
+            const hit = regs.find((r) => String(r.id) === String(lead.region_id));
+            setRegionName(hit?.name || '');
+          }
         }
       } catch {
-        /* ignore meta load */
+        /* ignore */
       }
     })();
     return () => { cancelled = true; };
-  }, [
-    companyId,
-    lead.company,
-    lead.crm_region,
-    lead.region,
-    lead.region_id,
-  ]);
+  }, [companyId, lead.company, lead.crm_region, lead.region, lead.region_id]);
 
   const assignOptions = useMemo(
     () => buildAssignPickerOptions(employees, user, myId || ''),
@@ -233,6 +259,101 @@ export default function LeadInfoTab({ lead, onUpdated }: Props) {
     const p = String(phone || '').trim();
     if (!p) return;
     void Linking.openURL(`tel:${p}`);
+  };
+
+  const requireCustomer = (): string | null => {
+    if (!customerId) {
+      Alert.alert('Thiếu khách hàng', 'Lead/Deal chưa gắn khách hàng — không sửa được thông tin KH.');
+      return null;
+    }
+    return customerId;
+  };
+
+  const openCustomerEdit = (
+    field: TextEdit['field'],
+    label: string,
+    value?: string | null,
+    opts?: { multiline?: boolean; keyboard?: KeyboardTypeOptions },
+  ) => {
+    if (!requireCustomer()) return;
+    setTextEdit({
+      scope: 'customer',
+      field,
+      label,
+      value: String(value || ''),
+      multiline: opts?.multiline,
+      keyboard: opts?.keyboard,
+    });
+    setTextDraft(String(value || ''));
+  };
+
+  const openLeadEdit = (
+    field: TextEdit['field'],
+    label: string,
+    value?: string | null,
+    opts?: { multiline?: boolean; keyboard?: KeyboardTypeOptions },
+  ) => {
+    setTextEdit({
+      scope: 'lead',
+      field,
+      label,
+      value: String(value ?? ''),
+      multiline: opts?.multiline,
+      keyboard: opts?.keyboard,
+    });
+    setTextDraft(String(value ?? ''));
+  };
+
+  const saveTextEdit = async () => {
+    if (!textEdit) return;
+    setSavingText(true);
+    try {
+      const raw = textDraft.trim();
+      if (textEdit.scope === 'customer') {
+        const cid = requireCustomer();
+        if (!cid) return;
+        const val = raw || null;
+        await updateCustomerFields(cid, { [textEdit.field]: val });
+      } else if (textEdit.field === 'estimated_value') {
+        const n = raw === '' ? null : Number(raw.replace(/[^\d.]/g, ''));
+        await updateLeadFields(lead.id, {
+          estimated_value: n != null && Number.isFinite(n) ? n : null,
+        });
+      } else if (textEdit.field === 'probability') {
+        const n = raw === '' ? null : Math.min(100, Math.max(0, Math.round(Number(raw))));
+        await updateLeadFields(lead.id, {
+          probability: n != null && Number.isFinite(n) ? n : null,
+        });
+      } else {
+        await updateLeadFields(lead.id, { [textEdit.field]: raw || null });
+      }
+      setTextEdit(null);
+      onUpdated?.();
+    } catch (e) {
+      Alert.alert('Lỗi', formatApiError(e));
+    } finally {
+      setSavingText(false);
+    }
+  };
+
+  const applySelect = async (kind: SelectKind, id: string | null) => {
+    if (!kind) return;
+    setSelectBusy(true);
+    try {
+      if (kind === 'source') {
+        await updateLeadFields(lead.id, { source_id: id });
+      } else if (kind === 'company') {
+        await updateLeadFields(lead.id, { company_id: id, region_id: null });
+      } else if (kind === 'region') {
+        await updateLeadFields(lead.id, { region_id: id });
+      }
+      setSelectKind(null);
+      onUpdated?.();
+    } catch (e) {
+      Alert.alert('Lỗi', formatApiError(e));
+    } finally {
+      setSelectBusy(false);
+    }
   };
 
   const applyAssignee = async (nextId: string | null) => {
@@ -252,6 +373,7 @@ export default function LeadInfoTab({ lead, onUpdated }: Props) {
     setDeadlineMode(deadlineIso ? 'edit' : 'set');
     setPendingYmd(deadlineIsoToYmd(deadlineIso));
     setReasonText('');
+    setDateField(null);
     setDatePickerOpen(true);
   };
 
@@ -263,15 +385,31 @@ export default function LeadInfoTab({ lead, onUpdated }: Props) {
     setReasonOpen(true);
   };
 
+  const openDateField = (field: Exclude<DateField, null>) => {
+    setDateField(field);
+    setDeadlineMode(null);
+    const cur = field === 'expected_close_date' ? lead.expected_close_date : lead.next_follow_up;
+    setPendingYmd(deadlineIsoToYmd(cur) || String(cur || '').slice(0, 10) || null);
+    setDatePickerOpen(true);
+  };
+
   const onDatePicked = (ymd: string) => {
     setDatePickerOpen(false);
-    setPendingYmd(ymd);
-    // Lần đầu đặt: không bắt buộc lý do. Sửa khi đã có deadline: bắt buộc lý do.
-    if (deadlineIso) {
-      setReasonOpen(true);
-    } else {
-      void commitDeadline(ymd, '');
+    if (dateField) {
+      void (async () => {
+        try {
+          await updateLeadFields(lead.id, { [dateField]: ymd });
+          setDateField(null);
+          onUpdated?.();
+        } catch (e) {
+          Alert.alert('Lỗi', formatApiError(e));
+        }
+      })();
+      return;
     }
+    setPendingYmd(ymd);
+    if (deadlineIso) setReasonOpen(true);
+    else void commitDeadline(ymd, '');
   };
 
   const commitDeadline = async (ymd: string | null, reason: string) => {
@@ -324,6 +462,10 @@ export default function LeadInfoTab({ lead, onUpdated }: Props) {
   };
 
   const depositText = depositDisplay(lead);
+  const editCustomer = customerId
+    ? (field: string, label: string, value?: string | null, opts?: { multiline?: boolean; keyboard?: KeyboardTypeOptions }) =>
+      () => openCustomerEdit(field, label, value, opts)
+    : undefined;
 
   return (
     <>
@@ -338,19 +480,49 @@ export default function LeadInfoTab({ lead, onUpdated }: Props) {
             <Ionicons name="person-outline" size={18} color={Colors.blue} />
             <Text style={styles.cardTitle}>Khách hàng</Text>
           </View>
-          <InfoRow label="Họ tên" value={customer?.full_name || '—'} styles={styles} />
+          <InfoRow
+            label="Họ tên"
+            value={customer?.full_name || '—'}
+            actionLabel={customerId ? 'Sửa' : undefined}
+            onAction={editCustomer?.('full_name', 'Họ tên', customer?.full_name)}
+            styles={styles}
+          />
           <InfoRow
             label="SĐT"
             value={customer?.phone || '—'}
-            onPress={customer?.phone ? () => callPhone(customer.phone) : undefined}
+            onPress={customer?.phone ? () => callPhone(customer.phone) : editCustomer?.('phone', 'SĐT', customer?.phone, { keyboard: 'phone-pad' })}
+            actionLabel={customerId ? 'Sửa' : undefined}
+            onAction={editCustomer?.('phone', 'SĐT', customer?.phone, { keyboard: 'phone-pad' })}
             styles={styles}
           />
-          <InfoRow label="Email" value={customer?.email || '—'} styles={styles} />
-          <InfoRow label="Địa chỉ" value={customer?.address || lead.install_address || '—'} styles={styles} />
-          <InfoRow label="Công ty KH" value={customer?.company || '—'} styles={styles} />
-          {customer?.tax_code ? (
-            <InfoRow label="MST" value={customer.tax_code} styles={styles} />
-          ) : null}
+          <InfoRow
+            label="Email"
+            value={customer?.email || '—'}
+            actionLabel={customerId ? 'Sửa' : undefined}
+            onAction={editCustomer?.('email', 'Email', customer?.email, { keyboard: 'email-address' })}
+            styles={styles}
+          />
+          <InfoRow
+            label="Địa chỉ"
+            value={customer?.address || lead.install_address || '—'}
+            actionLabel={customerId ? 'Sửa' : undefined}
+            onAction={editCustomer?.('address', 'Địa chỉ', customer?.address || lead.install_address, { multiline: true })}
+            styles={styles}
+          />
+          <InfoRow
+            label="Công ty KH"
+            value={customer?.company || '—'}
+            actionLabel={customerId ? 'Sửa' : undefined}
+            onAction={editCustomer?.('company', 'Công ty KH', customer?.company)}
+            styles={styles}
+          />
+          <InfoRow
+            label="MST"
+            value={customer?.tax_code || '—'}
+            actionLabel={customerId ? 'Sửa' : undefined}
+            onAction={editCustomer?.('tax_code', 'MST', customer?.tax_code)}
+            styles={styles}
+          />
         </View>
 
         <View style={styles.card}>
@@ -359,9 +531,33 @@ export default function LeadInfoTab({ lead, onUpdated }: Props) {
             <Text style={styles.cardTitle}>Thông tin {isDeal ? 'Deal' : 'Lead'}</Text>
           </View>
           <InfoRow label="Mã" value={lead.code || '—'} styles={styles} />
-          <InfoRow label="Tiêu đề" value={lead.title || '—'} styles={styles} />
-          <InfoRow label="Công ty" value={companyName || '—'} styles={styles} />
-          <InfoRow label="Khu vực" value={regionName || '—'} styles={styles} />
+          <InfoRow
+            label="Tiêu đề"
+            value={lead.title || '—'}
+            actionLabel="Sửa"
+            onAction={() => openLeadEdit('title', 'Tiêu đề', lead.title)}
+            styles={styles}
+          />
+          <InfoRow
+            label="Công ty"
+            value={companyName || '—'}
+            actionLabel="Sửa"
+            onAction={() => setSelectKind('company')}
+            styles={styles}
+          />
+          <InfoRow
+            label="Khu vực"
+            value={regionName || '—'}
+            actionLabel="Sửa"
+            onAction={() => {
+              if (!companyId) {
+                Alert.alert('Thiếu công ty', 'Chọn công ty trước khi chọn khu vực.');
+                return;
+              }
+              setSelectKind('region');
+            }}
+            styles={styles}
+          />
           <InfoRow
             label="Phụ trách"
             value={ownerName}
@@ -370,10 +566,29 @@ export default function LeadInfoTab({ lead, onUpdated }: Props) {
             styles={styles}
           />
           <InfoRow label="Giai đoạn" value={lead.stage?.name || '—'} styles={styles} />
-          <InfoRow label="Nguồn" value={sourceLabel(lead.source)} styles={styles} />
+          <InfoRow
+            label="Nguồn"
+            value={sourceLabel(lead.source)}
+            actionLabel="Sửa"
+            onAction={() => {
+              if (!companyId) {
+                Alert.alert('Thiếu công ty', 'Chọn công ty trước khi chọn nguồn.');
+                return;
+              }
+              setSelectKind('source');
+            }}
+            styles={styles}
+          />
           <InfoRow
             label="Giá trị"
             value={lead.estimated_value != null ? `${formatVnd(Number(lead.estimated_value))}đ` : '—'}
+            actionLabel="Sửa"
+            onAction={() => openLeadEdit(
+              'estimated_value',
+              'Giá trị (VNĐ)',
+              lead.estimated_value != null ? String(lead.estimated_value) : '',
+              { keyboard: 'numeric' },
+            )}
             styles={styles}
           />
           <InfoRow
@@ -384,10 +599,43 @@ export default function LeadInfoTab({ lead, onUpdated }: Props) {
             onAction={openDepositEdit}
             styles={styles}
           />
+          {isDeal ? (
+            <InfoRow
+              label="Dự kiến chốt"
+              value={fmtDate(lead.expected_close_date)}
+              actionLabel="Sửa"
+              onAction={() => openDateField('expected_close_date')}
+              styles={styles}
+            />
+          ) : (
+            <InfoRow
+              label="Follow-up"
+              value={fmtDate(lead.next_follow_up)}
+              actionLabel="Sửa"
+              onAction={() => openDateField('next_follow_up')}
+              styles={styles}
+            />
+          )}
+          <InfoRow
+            label="% chốt"
+            value={lead.probability != null ? `${lead.probability}%` : '—'}
+            actionLabel="Sửa"
+            onAction={() => openLeadEdit(
+              'probability',
+              'Xác suất chốt (%)',
+              lead.probability != null ? String(lead.probability) : '',
+              { keyboard: 'numeric' },
+            )}
+            styles={styles}
+          />
           <InfoRow label="Ngày tạo" value={fmtDate(lead.created_at)} styles={styles} />
-          {lead.description ? (
-            <InfoRow label="Ghi chú" value={String(lead.description)} styles={styles} />
-          ) : null}
+          <InfoRow
+            label="Ghi chú"
+            value={lead.description ? String(lead.description) : '—'}
+            actionLabel="Sửa"
+            onAction={() => openLeadEdit('description', 'Ghi chú', lead.description, { multiline: true })}
+            styles={styles}
+          />
         </View>
 
         <View style={styles.card}>
@@ -395,14 +643,8 @@ export default function LeadInfoTab({ lead, onUpdated }: Props) {
             <Ionicons name="alarm-outline" size={18} color={Colors.orange} />
             <Text style={styles.cardTitle}>Deadline thẻ</Text>
             <View style={{ flex: 1 }} />
-            <Pressable
-              style={styles.deadlineBtn}
-              onPress={openSetDeadline}
-              disabled={savingDeadline}
-            >
-              <Text style={styles.deadlineBtnTxt}>
-                {deadlineIso ? 'Sửa' : 'Đặt'}
-              </Text>
+            <Pressable style={styles.deadlineBtn} onPress={openSetDeadline} disabled={savingDeadline}>
+              <Text style={styles.deadlineBtnTxt}>{deadlineIso ? 'Sửa' : 'Đặt'}</Text>
             </Pressable>
           </View>
           <Text style={styles.deadlineValue}>
@@ -430,15 +672,9 @@ export default function LeadInfoTab({ lead, onUpdated }: Props) {
               projects.map((p, i) => (
                 <View key={String(p.project_id || i)} style={styles.projectRow}>
                   <Text style={styles.projectCode}>{p.code || 'Dự án'}</Text>
-                  <Text style={styles.projectName} numberOfLines={2}>
-                    {p.name || '—'}
-                  </Text>
-                  {p.company_name ? (
-                    <Text style={styles.metaMuted}>{p.company_name}</Text>
-                  ) : null}
-                  {p.workshop_type_name ? (
-                    <Text style={styles.metaMuted}>{p.workshop_type_name}</Text>
-                  ) : null}
+                  <Text style={styles.projectName} numberOfLines={2}>{p.name || '—'}</Text>
+                  {p.company_name ? <Text style={styles.metaMuted}>{p.company_name}</Text> : null}
+                  {p.workshop_type_name ? <Text style={styles.metaMuted}>{p.workshop_type_name}</Text> : null}
                   {p.is_primary ? (
                     <View style={styles.primaryBadge}>
                       <Text style={styles.primaryBadgeTxt}>Chính</Text>
@@ -447,23 +683,6 @@ export default function LeadInfoTab({ lead, onUpdated }: Props) {
                 </View>
               ))
             )}
-            {lead.linked_project?.delivery_date || lead.linked_project?.production_deadline ? (
-              <View style={{ marginTop: 8 }}>
-                {lead.linked_project.order_date ? (
-                  <InfoRow label="Ngày đơn" value={fmtDate(lead.linked_project.order_date)} styles={styles} />
-                ) : null}
-                {lead.linked_project.delivery_date ? (
-                  <InfoRow label="Giao hàng" value={fmtDate(lead.linked_project.delivery_date)} styles={styles} />
-                ) : null}
-                {lead.linked_project.production_deadline ? (
-                  <InfoRow
-                    label="Hạn SX"
-                    value={fmtDate(lead.linked_project.production_deadline)}
-                    styles={styles}
-                  />
-                ) : null}
-              </View>
-            ) : null}
           </View>
         ) : null}
       </ScrollView>
@@ -477,39 +696,101 @@ export default function LeadInfoTab({ lead, onUpdated }: Props) {
         emptyLabel={canClearCrmAssignee(user) ? '— Bỏ gán —' : undefined}
         loading={assignBusy}
         accent={Colors.purple}
-        onSelect={(opt) => {
-          void applyAssignee(opt?.id || null);
-        }}
+        onSelect={(opt) => { void applyAssignee(opt?.id || null); }}
         onClose={() => setAssignOpen(false)}
+      />
+
+      <PickerSheet
+        visible={selectKind === 'source'}
+        title="Chọn nguồn"
+        options={sources}
+        selectedId={sourceIdOf(lead) || null}
+        searchable
+        emptyLabel="— Bỏ nguồn —"
+        loading={selectBusy}
+        accent={Colors.blue}
+        onSelect={(opt) => { void applySelect('source', opt?.id || null); }}
+        onClose={() => setSelectKind(null)}
+      />
+
+      <PickerSheet
+        visible={selectKind === 'company'}
+        title="Chọn công ty"
+        options={companies.map((c) => ({ id: c.id, name: c.name || c.short_name || 'Công ty' }))}
+        selectedId={companyId || null}
+        searchable
+        loading={selectBusy}
+        accent={Colors.blue}
+        onSelect={(opt) => { void applySelect('company', opt?.id || null); }}
+        onClose={() => setSelectKind(null)}
+      />
+
+      <PickerSheet
+        visible={selectKind === 'region'}
+        title="Chọn khu vực"
+        options={regions}
+        selectedId={lead.region_id ? String(lead.region_id) : null}
+        searchable
+        emptyLabel="— Bỏ khu vực —"
+        loading={selectBusy}
+        accent={Colors.blue}
+        onSelect={(opt) => { void applySelect('region', opt?.id || null); }}
+        onClose={() => setSelectKind(null)}
       />
 
       <DatePickerSheet
         visible={datePickerOpen}
-        value={pendingYmd || deadlineIsoToYmd(deadlineIso)}
-        accent={Colors.orange}
+        value={pendingYmd}
+        accent={dateField ? Colors.blue : Colors.orange}
         onSelect={onDatePicked}
         onClose={() => {
           setDatePickerOpen(false);
+          setDateField(null);
           if (!reasonOpen) setDeadlineMode(null);
         }}
       />
 
       <Modal
+        visible={!!textEdit}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setTextEdit(null)}
+      >
+        <Pressable style={styles.modalBg} onPress={() => setTextEdit(null)} />
+        <View style={styles.modalCard}>
+          <Text style={styles.modalTitle}>{textEdit?.label || 'Sửa'}</Text>
+          <TextInput
+            style={[styles.depositInput, textEdit?.multiline && { minHeight: 96, textAlignVertical: 'top' }]}
+            placeholder={`Nhập ${textEdit?.label || ''}…`}
+            placeholderTextColor={Colors.textFaint}
+            value={textDraft}
+            onChangeText={setTextDraft}
+            keyboardType={textEdit?.keyboard || 'default'}
+            multiline={!!textEdit?.multiline}
+            autoFocus
+          />
+          <View style={styles.modalRow}>
+            <Pressable style={[styles.modalBtn, styles.modalCancel]} onPress={() => setTextEdit(null)}>
+              <Text style={styles.modalCancelTxt}>Hủy</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.modalBtn, styles.modalOkBlue, savingText && { opacity: 0.6 }]}
+              disabled={savingText}
+              onPress={() => void saveTextEdit()}
+            >
+              <Text style={styles.modalOkTxt}>Lưu</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
         visible={reasonOpen}
         transparent
         animationType="fade"
-        onRequestClose={() => {
-          setReasonOpen(false);
-          setDeadlineMode(null);
-        }}
+        onRequestClose={() => { setReasonOpen(false); setDeadlineMode(null); }}
       >
-        <Pressable
-          style={styles.modalBg}
-          onPress={() => {
-            setReasonOpen(false);
-            setDeadlineMode(null);
-          }}
-        />
+        <Pressable style={styles.modalBg} onPress={() => { setReasonOpen(false); setDeadlineMode(null); }} />
         <View style={styles.modalCard}>
           <Text style={styles.modalTitle}>
             {deadlineMode === 'clear' ? 'Lý do xóa deadline' : 'Lý do sửa deadline'}
@@ -529,10 +810,7 @@ export default function LeadInfoTab({ lead, onUpdated }: Props) {
           <View style={styles.modalRow}>
             <Pressable
               style={[styles.modalBtn, styles.modalCancel]}
-              onPress={() => {
-                setReasonOpen(false);
-                setDeadlineMode(null);
-              }}
+              onPress={() => { setReasonOpen(false); setDeadlineMode(null); }}
             >
               <Text style={styles.modalCancelTxt}>Hủy</Text>
             </Pressable>
@@ -544,9 +822,7 @@ export default function LeadInfoTab({ lead, onUpdated }: Props) {
                 reasonText,
               )}
             >
-              <Text style={styles.modalOkTxt}>
-                {deadlineMode === 'clear' ? 'Xóa' : 'Lưu'}
-              </Text>
+              <Text style={styles.modalOkTxt}>{deadlineMode === 'clear' ? 'Xóa' : 'Lưu'}</Text>
             </Pressable>
           </View>
         </View>
@@ -688,7 +964,7 @@ function makeStyles(C: ThemeColors) {
       position: 'absolute',
       left: 20,
       right: 20,
-      top: '28%',
+      top: '24%',
       backgroundColor: C.bgElevated,
       borderRadius: Radii.lg,
       borderWidth: 1,
@@ -709,19 +985,6 @@ function makeStyles(C: ThemeColors) {
       fontSize: 14,
       backgroundColor: C.surfaceSoft,
     },
-    modalRow: { flexDirection: 'row', gap: 10, marginTop: 14 },
-    modalBtn: {
-      flex: 1,
-      height: 42,
-      borderRadius: Radii.md,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    modalCancel: { backgroundColor: C.surfaceSoft, borderWidth: 1, borderColor: C.border },
-    modalCancelTxt: { color: C.textMuted, fontWeight: '700' },
-    modalOk: { backgroundColor: C.orange },
-    modalOkBlue: { backgroundColor: C.blue },
-    modalOkTxt: { color: '#fff', fontWeight: '800' },
     depositInput: {
       marginTop: 6,
       minHeight: 42,
@@ -746,5 +1009,18 @@ function makeStyles(C: ThemeColors) {
     depositChipOn: { backgroundColor: C.blueSoft, borderColor: C.blue },
     depositChipTxt: { fontSize: 12, fontWeight: '700', color: C.textMuted },
     depositChipTxtOn: { color: C.blue },
+    modalRow: { flexDirection: 'row', gap: 10, marginTop: 14 },
+    modalBtn: {
+      flex: 1,
+      height: 42,
+      borderRadius: Radii.md,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    modalCancel: { backgroundColor: C.surfaceSoft, borderWidth: 1, borderColor: C.border },
+    modalCancelTxt: { color: C.textMuted, fontWeight: '700' },
+    modalOk: { backgroundColor: C.orange },
+    modalOkBlue: { backgroundColor: C.blue },
+    modalOkTxt: { color: '#fff', fontWeight: '800' },
   });
 }
