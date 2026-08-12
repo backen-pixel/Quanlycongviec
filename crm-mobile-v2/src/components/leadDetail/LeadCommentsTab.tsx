@@ -7,6 +7,7 @@ import {
   Alert,
   FlatList,
   Image,
+  Keyboard,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -379,17 +380,26 @@ export default function LeadCommentsTab({
     }
   };
 
+  /** Android: mở camera khi bàn phím còn focus thường bị hủy ngay (canceled). */
+  const prepareExternalPicker = async () => {
+    Keyboard.dismiss();
+    inputRef.current?.blur();
+    await new Promise<void>((resolve) => setTimeout(resolve, Platform.OS === 'android' ? 350 : 80));
+  };
+
   const pickCamera = async () => {
     try {
+      await prepareExternalPicker();
       const perm = await ImagePicker.requestCameraPermissionsAsync();
       if (!perm.granted) {
-        Alert.alert('Quyền camera', 'Cần quyền camera để chụp ảnh nhanh.');
+        Alert.alert('Quyền camera', 'Cần quyền camera để chụp ảnh. Bật Camera trong Cài đặt ứng dụng.');
         return;
       }
       const shot = await ImagePicker.launchCameraAsync({
         mediaTypes: ['images'],
         quality: 0.85,
         exif: false,
+        allowsEditing: false,
       });
       if (shot.canceled || !shot.assets?.[0]) return;
       const a = shot.assets[0];
@@ -401,12 +411,19 @@ export default function LeadCommentsTab({
         size: a.fileSize ?? null,
       }]);
     } catch (e) {
-      Alert.alert('Lỗi', formatApiError(e));
+      const msg = formatApiError(e);
+      Alert.alert(
+        'Không mở được camera',
+        /activity|intent|camera/i.test(msg)
+          ? 'Máy không có ứng dụng camera hoặc bị chặn quyền. Thử chọn ảnh từ thư viện.'
+          : msg,
+      );
     }
   };
 
   const pickGallery = async () => {
     try {
+      await prepareExternalPicker();
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!perm.granted) {
         Alert.alert('Quyền ảnh', 'Cần quyền thư viện để chọn ảnh.');
@@ -434,6 +451,7 @@ export default function LeadCommentsTab({
 
   const pickDocuments = async () => {
     try {
+      await prepareExternalPicker();
       const pick = await DocumentPicker.getDocumentAsync({
         copyToCacheDirectory: true,
         multiple: true,
@@ -646,8 +664,11 @@ export default function LeadCommentsTab({
       keyboardVerticalOffset={Platform.OS === 'ios' ? 8 : 0}
     >
       <FlatList
+        style={{ flex: 1 }}
         data={flatRows}
         keyExtractor={(r) => String(r.comment.id)}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
         refreshControl={
           <RefreshControl
             refreshing={refreshing}

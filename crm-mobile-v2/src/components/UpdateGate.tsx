@@ -17,6 +17,12 @@ import {
   shouldSuppressUpdateModal,
   type UpdateCheckResult,
 } from '../lib/appUpdate';
+import {
+  clearAppUpdateNotifyState,
+  consumeOpenUpdateGateRequest,
+  maybeNotifyAppUpdate,
+  onOpenUpdateGateRequest,
+} from '../lib/appUpdateNotify';
 import { hasPendingBubbleChat } from '../lib/bubbleChatPending';
 import { isOnBubbleChatRoute } from '../navigation/navigationRef';
 import { Radii, useColors, type ThemeColors } from '../theme';
@@ -43,7 +49,7 @@ export default function UpdateGate() {
   const lastCheckAt = useRef(0);
   const checkingRef = useRef(false);
 
-  const runCheck = useCallback(async (opts: { allowModal?: boolean } = {}) => {
+  const runCheck = useCallback(async (opts: { allowModal?: boolean; forceModal?: boolean } = {}) => {
     if (checkingRef.current) return;
     // Ưu tiên mở chat overlay — không chặn bằng modal cập nhật.
     if (hasPendingBubbleChat()) return;
@@ -58,6 +64,7 @@ export default function UpdateGate() {
         setVisible(false);
         setBannerVisible(false);
         setReadyUri(null);
+        await clearAppUpdateNotifyState();
         return;
       }
 
@@ -66,6 +73,7 @@ export default function UpdateGate() {
 
       if (isUpToDate(res)) {
         await clearDismissedUpdate();
+        await clearAppUpdateNotifyState();
         setInfo(null);
         setVisible(false);
         setBannerVisible(false);
@@ -81,17 +89,20 @@ export default function UpdateGate() {
       }
 
       setInfo(res);
-      const suppressed = await shouldSuppressUpdateModal(res);
+      void maybeNotifyAppUpdate(res);
 
-      if (res.mandatory) {
+      if (opts.forceModal || res.mandatory) {
         setVisible(true);
         setBannerVisible(false);
         return;
       }
 
+      const suppressed = await shouldSuppressUpdateModal(res);
+
       if (suppressed) {
         if (isUpToDate(res)) {
           await clearDismissedUpdate();
+          await clearAppUpdateNotifyState();
           setInfo(null);
           setVisible(false);
           setBannerVisible(false);
@@ -118,7 +129,8 @@ export default function UpdateGate() {
   useEffect(() => {
     /** Nhường cold start Overview — check update sau vài giây. */
     const bootTimer = setTimeout(() => {
-      void runCheck({ allowModal: true });
+      const forceModal = consumeOpenUpdateGateRequest();
+      void runCheck({ allowModal: true, forceModal });
     }, 6000);
 
     const interval = setInterval(() => {
@@ -129,14 +141,23 @@ export default function UpdateGate() {
       if (state !== 'active') return;
       if (hasPendingBubbleChat()) return;
       if (isOnBubbleChatRoute()) return;
+      if (consumeOpenUpdateGateRequest()) {
+        void runCheck({ allowModal: true, forceModal: true });
+        return;
+      }
       if (Date.now() - lastCheckAt.current < FOREGROUND_DEBOUNCE_MS) return;
       void runCheck({ allowModal: false });
+    });
+
+    const unsubOpen = onOpenUpdateGateRequest(() => {
+      void runCheck({ allowModal: true, forceModal: true });
     });
 
     return () => {
       clearTimeout(bootTimer);
       clearInterval(interval);
       appSub.remove();
+      unsubOpen();
     };
   }, [runCheck]);
 

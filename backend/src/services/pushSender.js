@@ -875,6 +875,122 @@ async function sendCallDismissPush(userId, callId) {
   }
 }
 
+/**
+ * Broadcast tray khi admin phát hành APK mới — gửi tới mọi token đăng ký đúng app_key.
+ * Không tạo row notifications (tránh spam inbox); chỉ FCM/Expo tray.
+ */
+async function sendAppUpdateBroadcast({
+  appKey,
+  version,
+  versionCode,
+  releaseNotes,
+  releaseId,
+  mandatory,
+} = {}) {
+  const key = String(appKey || '').trim();
+  if (!key) return { sent: 0 };
+
+  const title = 'Có bản cập nhật mới';
+  const verLabel = String(version || '').trim();
+  const body = verLabel
+    ? `Phiên bản ${verLabel} đã sẵn sàng. Mở app để cập nhật.`
+    : 'Bản cập nhật ứng dụng đã sẵn sàng. Mở app để cập nhật.';
+
+  const notification = {
+    id: `app_update_${releaseId || versionCode || version || Date.now()}`,
+    type: 'app_update',
+    entity_type: 'app_update',
+    entity_id: releaseId || null,
+    title,
+    message: releaseNotes ? String(releaseNotes).slice(0, 180) : body,
+    body: releaseNotes ? String(releaseNotes).slice(0, 180) : body,
+    metadata: {
+      app_key: key,
+      latest_version: verLabel || null,
+      latest_version_code: versionCode ?? null,
+      mandatory: !!mandatory,
+    },
+  };
+
+  let data = [];
+  let error = null;
+  ({ data, error } = await supabase
+    .from('push_device_tokens')
+    .select('token, platform, device_id, app_key')
+    .eq('app_key', key)
+    .limit(5000));
+
+  if (error && /app_key/i.test(String(error.message || error.code || ''))) {
+    console.warn('[pushSender] app_update broadcast: cột app_key chưa sẵn sàng', error.message);
+    return { sent: 0, error: error.message };
+  }
+  if (error) {
+    console.warn('[pushSender] app_update broadcast query:', error.message);
+    return { sent: 0, error: error.message };
+  }
+
+  let rows = data || [];
+  // CRM v2 cũ: token chưa gắn app_key nhưng device_id tiền tố crmv2
+  if (key === 'crm-mobile-v2' && rows.length < 50) {
+    const { data: legacy } = await supabase
+      .from('push_device_tokens')
+      .select('token, platform, device_id, app_key')
+      .like('device_id', 'crmv2%')
+      .limit(5000);
+    if (legacy?.length) {
+      const seen = new Set(rows.map((r) => r.token));
+      for (const r of legacy) {
+        if (r?.token && !seen.has(r.token)) {
+          seen.add(r.token);
+          rows.push(r);
+        }
+      }
+    }
+  }
+
+  const fcm = [];
+  const expo = [];
+  const seenTok = new Set();
+  for (const r of rows) {
+    const tok = String(r?.token || '').trim();
+    if (!tok || seenTok.has(tok)) continue;
+    seenTok.add(tok);
+    if (r.platform === 'fcm') fcm.push(r);
+    else if (r.platform === 'expo' && isExpoPushToken(tok)) expo.push(r);
+  }
+
+  if (fcm.length) await sendFcmTrayNotification(fcm, notification);
+
+  if (expo.length) {
+    const payload = buildPushPayload(notification);
+    const messages = expo.map((r) => ({
+      to: r.token,
+      title: payload.title,
+      body: payload.body,
+      sound: 'default',
+      priority: 'high',
+      channelId: payload.channelId,
+      data: {
+        type: 'app_update',
+        entity_type: 'app_update',
+        entity_id: String(releaseId || ''),
+        latest_version: verLabel || '',
+        latest_version_code: versionCode != null ? String(versionCode) : '',
+        mandatory: mandatory ? 'true' : 'false',
+        channelId: payload.channelId,
+      },
+    }));
+    for (let i = 0; i < messages.length; i += CHUNK_SIZE) {
+      await sendExpoChunk(messages.slice(i, i + CHUNK_SIZE));
+    }
+  }
+
+  console.log(
+    `[pushSender] app_update broadcast app=${key} ver=${verLabel || '?'} fcm=${fcm.length} expo=${expo.length}`,
+  );
+  return { sent: fcm.length + expo.length, fcm: fcm.length, expo: expo.length };
+}
+
 module.exports = {
   sendMobilePush,
   buildPushPayload,
@@ -882,4 +998,5 @@ module.exports = {
   getPushInfraStatus,
   sendFcmIncomingCall,
   sendCallDismissPush,
+  sendAppUpdateBroadcast,
 };

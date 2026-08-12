@@ -28,6 +28,7 @@ const { auth } = require('../middleware/auth');
 const { isAdminLike } = require('../helpers/adminRole');
 const { parseReleaseFilename, FILENAME_RULE_TEXT, buildStandardApkFilename } = require('../helpers/appReleaseFilename');
 const { scanAppReleaseFiles } = require('../helpers/appReleaseScan');
+const { notifyAppReleaseIfActive } = require('../helpers/appUpdateNotify');
 const { importApkFile, replaceReleaseApkFile, replaceReleaseOtaFile, backfillOtaSizes } = require('../helpers/appReleaseImport');
 const { deleteAppReleaseById, clearReleaseBucketFilesOnly } = require('../helpers/appReleaseDelete');
 const {
@@ -695,6 +696,7 @@ r.post('/apps/:appId/scan-import', requireAdmin, async (req, res) => {
           publicBaseUrl: base,
         });
         imported.push(rel);
+        notifyAppReleaseIfActive(app, rel);
       } catch (err) {
         failed.push({ path: f.path, name: f.name, error: err.message });
       }
@@ -809,6 +811,7 @@ r.post('/apps/:appId/releases', requireAdmin, apkUploadSingle, async (req, res) 
         publicBaseUrl: publicBaseUrl(req),
       });
       fs.unlink(tmpPath, () => {});
+      notifyAppReleaseIfActive(app, data);
       return res.status(201).json(data);
     }
 
@@ -830,6 +833,7 @@ r.post('/apps/:appId/releases', requireAdmin, apkUploadSingle, async (req, res) 
       created_by: req.user.userId || req.user.id || null,
     }).select('*').single();
     if (error) throw error;
+    notifyAppReleaseIfActive(app, data);
     res.status(201).json(data);
   } catch (e) {
     if (tmpPath) fs.unlink(tmpPath, () => {});
@@ -934,6 +938,10 @@ r.put('/releases/:id', requireAdmin, releaseFileUploadSingle, async (req, res) =
     }
 
     if (tmpPath) fs.unlink(tmpPath, () => {});
+    const becameActive = patch.is_active === true && existing.is_active !== true;
+    if (becameActive || (data?.is_active && patch.is_active === true)) {
+      notifyAppReleaseIfActive(app, data);
+    }
     res.json(data);
   } catch (e) {
     if (tmpPath) fs.unlink(tmpPath, () => {});
@@ -999,6 +1007,13 @@ r.post('/releases/:id/run', requireAdmin, async (req, res) => {
       .select('*')
       .single();
     if (error) throw error;
+
+    const { data: appRow } = await supabase
+      .from('mobile_apps')
+      .select('id, app_key, display_name')
+      .eq('id', rel.app_id)
+      .maybeSingle();
+    if (appRow) notifyAppReleaseIfActive(appRow, updated);
 
     res.json({ release: updated });
   } catch (e) {

@@ -42,10 +42,10 @@ type TabDef = { key: LeadDetailTabKey; label: string; icon: keyof typeof Ionicon
 const BASE_TABS: TabDef[] = [
   { key: 'info', label: 'Thông tin', icon: 'information-circle-outline' },
   { key: 'tasks', label: 'Nhiệm vụ', icon: 'checkbox-outline' },
+  { key: 'comments', label: 'Bình luận', icon: 'chatbubbles-outline' },
   { key: 'shared-workspace', label: 'Không gian chung', icon: 'people-circle-outline' },
   { key: 'documents', label: 'Tài liệu', icon: 'document-text-outline' },
   { key: 'drive', label: 'Drive', icon: 'cloud-outline' },
-  { key: 'comments', label: 'Bình luận', icon: 'chatbubbles-outline' },
   { key: 'members', label: 'Thành viên', icon: 'people-outline' },
 ];
 

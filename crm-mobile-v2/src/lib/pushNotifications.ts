@@ -20,6 +20,7 @@ import { api } from '../api/client';
 import { invalidateCrmHubCache, invalidatePlannerCache } from '../api/crm';
 import { navigate } from '../navigation/navigationRef';
 import { APP_KEY } from './appUpdate';
+import { requestOpenUpdateGate } from './appUpdateNotify';
 import { emitCrmRealtime } from './crmRealtimeBus';
 import { getOrCreateDeviceId } from './deviceHeartbeat';
 
@@ -109,6 +110,10 @@ function handleNotificationData(data: Record<string, unknown> | undefined): void
   if (!data) return;
   const entity = String(data.entity_type || '').toLowerCase();
   const type = String(data.type || '').toLowerCase();
+  if (type === 'app_update' || entity === 'app_update') {
+    requestOpenUpdateGate();
+    return;
+  }
   if (
     type === 'deadline_overdue_local'
     || entity === 'deadline_tab'
@@ -161,11 +166,26 @@ export function configurePushNotifications(): void {
       /* bỏ qua */
     }
   });
+  void Notifications.getLastNotificationResponseAsync().then((response) => {
+    try {
+      const data = response?.notification?.request?.content?.data as
+        | Record<string, unknown>
+        | undefined;
+      if (!data) return;
+      const type = String(data.type || '').toLowerCase();
+      const entity = String(data.entity_type || '').toLowerCase();
+      if (type === 'app_update' || entity === 'app_update') {
+        handleNotificationData(data);
+      }
+    } catch {
+      /* bỏ qua */
+    }
+  });
   Notifications.addNotificationReceivedListener((notification) => {
     try {
       const data = notification?.request?.content?.data as Record<string, unknown> | undefined;
       const type = String(data?.type || '').toLowerCase();
-      if (type === 'incoming_call' || type === 'messenger_chat') return;
+      if (type === 'incoming_call' || type === 'messenger_chat' || type === 'app_update') return;
       invalidateCrmHubCache();
       invalidatePlannerCache();
       emitCrmRealtime({ reason: 'notification', detail: data });

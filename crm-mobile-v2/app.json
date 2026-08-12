@@ -18,7 +18,7 @@
       "supportsTablet": true,
       "infoPlist": {
         "NSMicrophoneUsageDescription": "Ứng dụng cần micro để gọi thoại và ghi âm cuộc gọi trên CRM.",
-        "NSCameraUsageDescription": "Ứng dụng cần camera cho cuộc gọi video và quét mã QR đăng nhập."
+        "NSCameraUsageDescription": "Ứng dụng cần camera để chụp ảnh bình luận, gọi video và quét mã QR đăng nhập."
       }
     },
     "android": {
@@ -63,6 +63,13 @@
         "expo-camera",
         {
           "cameraPermission": "Cho phép camera để quét mã QR đăng nhập và gọi video."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Cho phép truy cập ảnh để đính kèm bình luận và tin nhắn.",
+          "cameraPermission": "Cho phép camera để chụp ảnh gửi bình luận và tin nhắn."
         }
       ],
       [
