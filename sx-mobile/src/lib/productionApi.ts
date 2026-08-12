@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { api } from '../api/client';
 import { normalizeCommentAttachments } from './commentAttachments';
-import { boardCacheKey, setCachedBoard, applyPendingPatchesToProjects, clearPendingProjectPatches } from './productionBoardCache';
+import { boardCacheKey, setCachedBoard, applyPendingPatchesToProjects, clearPendingProjectPatches, invalidateCachedBoard } from './productionBoardCache';
 import type {
   KanbanStage,
   PersonalPlanner,
@@ -618,7 +618,10 @@ async function fetchProductionBoardInternal(
     return board;
   };
 
-  if (bustCache) clearPendingProjectPatches();
+  if (bustCache) {
+    invalidateCachedBoard(filters);
+    clearPendingProjectPatches();
+  }
 
   attached = attachColumnsIndexed(first.rows.map(mapProjectRow), stages, stageIndex);
 

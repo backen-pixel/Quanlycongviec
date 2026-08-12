@@ -50,7 +50,7 @@ import {
   type WorkshopTypeOption,
   resolveColumnId,
 } from '../lib/productionApi';
-import { getCachedBoard, isCachedBoardFresh } from '../lib/productionBoardCache';
+import { getCachedBoard, isCachedBoardFresh, patchCachedProjectById } from '../lib/productionBoardCache';
 import { loadKanbanFilters, saveKanbanFilters } from '../lib/kanbanFilterStorage';
 import {
   computeSxBoardKpis,
@@ -1295,14 +1295,18 @@ export default function KanbanScreen() {
       const fromColId = project.resolved_column_id ?? project.sx_kanban_column_id ?? null;
       const isIntake = target.bucket_slug === INTAKE_BUCKET;
       setMovingId(project.id);
+      const optimistic = {
+        sx_kanban_column_id: target.id,
+        resolved_column_id: target.id,
+        sx_intake: isIntake,
+      };
       setBoard((prev) => ({
         ...prev,
         projects: prev.projects.map((p) =>
-          p.id === project.id
-            ? { ...p, sx_kanban_column_id: target.id, resolved_column_id: target.id, sx_intake: isIntake }
-            : p,
+          p.id === project.id ? { ...p, ...optimistic } : p,
         ),
       }));
+      patchCachedProjectById(project.id, optimistic);
       try {
         const result = await moveProjectToStage(project.id, target.id, {
           currentStageId: fromColId,
@@ -1310,35 +1314,33 @@ export default function KanbanScreen() {
           companyId: project.company_id ?? user?.company_id ?? null,
         });
         const newColId = result.sx_kanban_column_id ?? target.id;
+        const confirmed = {
+          sx_kanban_column_id: newColId,
+          resolved_column_id: newColId,
+          sx_intake: isIntake,
+          current_stage_id: result.current_stage_id ?? project.current_stage_id,
+        };
         setBoard((prev) => ({
           ...prev,
           projects: prev.projects.map((p) =>
-            p.id === project.id
-              ? {
-                  ...p,
-                  sx_kanban_column_id: newColId,
-                  resolved_column_id: newColId,
-                  sx_intake: isIntake,
-                  current_stage_id: result.current_stage_id ?? p.current_stage_id,
-                }
-              : p,
+            p.id === project.id ? { ...p, ...confirmed } : p,
           ),
         }));
+        patchCachedProjectById(project.id, confirmed);
         showToast(`Đã chuyển ${project.code} → ${target.name}`, 'success');
       } catch (e) {
+        const rollback = {
+          sx_kanban_column_id: fromColId,
+          resolved_column_id: fromColId,
+          sx_intake: project.sx_intake,
+        };
         setBoard((prev) => ({
           ...prev,
           projects: prev.projects.map((p) =>
-            p.id === project.id
-              ? {
-                  ...p,
-                  sx_kanban_column_id: fromColId,
-                  resolved_column_id: fromColId,
-                  sx_intake: project.sx_intake,
-                }
-              : p,
+            p.id === project.id ? { ...p, ...rollback } : p,
           ),
         }));
+        patchCachedProjectById(project.id, rollback);
         showToast(formatApiError(e), 'error');
       } finally {
         setMovingId(null);
@@ -1352,18 +1354,30 @@ export default function KanbanScreen() {
       const type = workTypes.find((w) => String(w.id) === String(typeId));
       if (!type) return;
       setMovingId(project.id);
+      const optimistic = { workshop_type_id: typeId, workshop_type_name: type.name };
+      setBoard((prev) => ({
+        ...prev,
+        projects: prev.projects.map((p) =>
+          p.id === project.id ? { ...p, ...optimistic } : p,
+        ),
+      }));
+      patchCachedProjectById(project.id, optimistic);
       try {
         await assignProjectWorkshopType(project.id, typeId);
+        patchCachedProjectById(project.id, optimistic);
+        showToast(`Đã gắn phân loại «${type.name}» cho ${project.code}`, 'success');
+      } catch (e) {
+        const rollback = {
+          workshop_type_id: project.workshop_type_id,
+          workshop_type_name: project.workshop_type_name,
+        };
         setBoard((prev) => ({
           ...prev,
           projects: prev.projects.map((p) =>
-            p.id === project.id
-              ? { ...p, workshop_type_id: typeId, workshop_type_name: type.name }
-              : p,
+            p.id === project.id ? { ...p, ...rollback } : p,
           ),
         }));
-        showToast(`Đã gắn phân loại «${type.name}» cho ${project.code}`, 'success');
-      } catch (e) {
+        patchCachedProjectById(project.id, rollback);
         showToast(formatApiError(e), 'error');
       } finally {
         setMovingId(null);

@@ -215,10 +215,11 @@ export function taskDueIso(task: WorkTask): string | null {
   return task.deadline || task.due_date || null;
 }
 
-function startOfLocalDay(d: Date): Date {
-  const x = new Date(d);
-  x.setHours(0, 0, 0, 0);
-  return x;
+/** Ngày lịch VN (YYYY-MM-DD) — khớp BE vnStartOfTodayIso / Asia/Ho_Chi_Minh. */
+const VN_TZ = 'Asia/Ho_Chi_Minh';
+
+function ymdInTimeZone(d: Date, timeZone: string): string {
+  return d.toLocaleDateString('en-CA', { timeZone });
 }
 
 export function isTaskOverdue(task: WorkTask): boolean {
@@ -227,18 +228,18 @@ export function isTaskOverdue(task: WorkTask): boolean {
   if (!raw) return false;
   const d = new Date(raw);
   if (Number.isNaN(d.getTime())) return false;
-  const start = startOfLocalDay(new Date());
-  const due = startOfLocalDay(d);
-  return due.getTime() < start.getTime();
+  const todayYmd = ymdInTimeZone(new Date(), VN_TZ);
+  const dueYmd = ymdInTimeZone(d, VN_TZ);
+  return dueYmd < todayYmd;
 }
 
-/** Hạn (deadline/due_date) trùng ngày local với `day`. */
+/** Hạn (deadline/due_date) trùng ngày lịch VN với `day`. */
 export function isTaskDueOnDay(task: WorkTask, day: Date = new Date()): boolean {
   const raw = taskDueIso(task);
   if (!raw) return false;
   const d = new Date(raw);
   if (Number.isNaN(d.getTime())) return false;
-  return startOfLocalDay(d).getTime() === startOfLocalDay(day).getTime();
+  return ymdInTimeZone(d, VN_TZ) === ymdInTimeZone(day, VN_TZ);
 }
 
 /**

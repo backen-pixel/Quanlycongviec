@@ -40,6 +40,12 @@ export function getCachedBoard(filters: BoardFilters = {}): ProductionBoard | nu
   return cache.get(boardCacheKey(filters))?.board ?? null;
 }
 
+/** Xóa snapshot RAM (+ pending) theo filter — dùng khi user kéo refresh (bustCache). */
+export function invalidateCachedBoard(filters: BoardFilters = {}): void {
+  const key = boardCacheKey(filters);
+  cache.delete(key);
+}
+
 export function isCachedBoardComplete(filters: BoardFilters = {}): boolean {
   return cache.get(boardCacheKey(filters))?.complete === true;
 }

@@ -320,9 +320,10 @@ export default function OverviewScreen() {
       ]);
 
       if (seq !== loadSeqRef.current) return;
-      // Ưu tiên board đầy đủ trong cache (Kanban đã tải) hơn preview page-1 vừa fetch.
+      // Ưu tiên board vừa fetch khi refresh; còn lại ưu tiên cache dài hơn (Kanban full).
       const bestBoard = (() => {
         const cachedNow = getCachedBoard(boardFilters);
+        if (mode === 'refresh') return board || cachedNow || null;
         if (
           cachedNow
           && board

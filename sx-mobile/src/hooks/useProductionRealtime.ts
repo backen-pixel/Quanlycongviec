@@ -113,17 +113,23 @@ function tryPatchFromProjectUpdated(evt: SyncEvent): boolean {
 /**
  * Soft-ingest board_changed: cập nhật/gỡ 1 thẻ thay vì full board.
  * Trash/purge → remove; còn lại fetch 1 project rồi upsert.
+ * `isCancelled` — bỏ upsert nếu đã có soft-ingest mới hơn (tránh out-of-order).
  */
-async function trySoftIngestBoardChanged(evt: SyncEvent): Promise<boolean> {
+async function trySoftIngestBoardChanged(
+  evt: SyncEvent,
+  isCancelled?: () => boolean,
+): Promise<boolean> {
   if (evt.type !== 'project:board_changed') return false;
   const pid = projectIdFromSyncEvent(evt);
   if (!pid) return false;
   const reason = String(evt.payload.reason || evt.payload.action || '').toLowerCase();
   if (/trash|purg/.test(reason)) {
+    if (isCancelled?.()) return false;
     return !!removeCachedProjectById(pid);
   }
   try {
     const project = await fetchProductionProject(pid);
+    if (isCancelled?.()) return false;
     if (!project?.id) return false;
     // Restore / deal mới / intake — upsert vào cache hiện có.
     const board = upsertCachedProject(project);
@@ -177,14 +183,13 @@ export function useProductionRealtime({
 
       if (evt.type === 'project:board_changed') {
         const seq = ++softSeq;
-        void trySoftIngestBoardChanged(evt).then((ok) => {
+        void trySoftIngestBoardChanged(evt, () => seq !== softSeq).then((ok) => {
+          // Soft cũ hơn → không notify / không full-refresh (event mới đã/đang xử lý).
+          if (seq !== softSeq) return;
           if (ok) {
-            // Luôn báo UI — dù softSeq đã tăng (event mới hơn). Cache đã upsert/remove.
             void Promise.resolve(onRefreshRef.current({ evt, patched: true })).catch(() => {});
             return;
           }
-          // Chỉ full-refresh nếu đây vẫn là lần soft-ingest mới nhất.
-          if (seq !== softSeq) return;
           scheduleFullRefresh(evt);
         });
         return;
