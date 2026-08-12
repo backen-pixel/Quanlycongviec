@@ -4,7 +4,6 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import React, { useMemo, useState } from 'react';
 import {
-  ActivityIndicator,
   Alert,
   FlatList,
   KeyboardAvoidingView,
@@ -37,6 +36,7 @@ import type { CrmTask, PersonRef } from '../../types';
 import TapHighlight from '../TapHighlight';
 import { resolveMediaUrl } from '../../lib/mediaUtils';
 
+import SpinningLoader from '../SpinningLoader';
 type Props = {
   task: CrmTask;
   dealId: string;
@@ -716,7 +716,7 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted, 
                   onPress={() => void saveDeadline(pickDate)}
                   disabled={busy}
                 >
-                  {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Lưu</Text>}
+                  {busy ? <SpinningLoader color="#fff" /> : <Text style={styles.btnText}>Lưu</Text>}
                 </TapHighlight>
               </View>
             </Pressable>
@@ -752,7 +752,7 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted, 
                     <Text style={styles.btnTextDark}>Hủy</Text>
                   </TapHighlight>
                   <TapHighlight style={[styles.btn, styles.btnPrimary]} onPress={() => void saveEdit()} disabled={busy}>
-                    {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Lưu</Text>}
+                    {busy ? <SpinningLoader color="#fff" /> : <Text style={styles.btnText}>Lưu</Text>}
                   </TapHighlight>
                 </View>
               </Pressable>
@@ -769,7 +769,7 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted, 
             <Pressable style={[styles.sheet, { maxHeight: '75%' }]} onPress={(e) => e.stopPropagation()}>
               <Text style={styles.sheetTitle}>Gán nhân viên</Text>
               {usersLoading ? (
-                <ActivityIndicator color={colors.primary} style={{ marginVertical: 20 }} />
+                <SpinningLoader color={colors.primary} style={{ marginVertical: 20 }} />
               ) : (
                 <FlatList
                   data={users}
@@ -798,7 +798,7 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted, 
                 </TapHighlight>
                 <TapHighlight style={[styles.btn, styles.btnPrimary]} onPress={() => void saveAssign()} disabled={busy}>
                   {busy ? (
-                    <ActivityIndicator color="#fff" />
+                    <SpinningLoader color="#fff" />
                   ) : (
                     <Text style={styles.btnText}>Gán ({selectedIds.size})</Text>
                   )}
@@ -835,7 +835,7 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted, 
                 />
                 <View style={styles.btnRow}>
                   <TapHighlight style={[styles.btn, styles.btnPrimary]} onPress={() => void saveNotes()} disabled={busy}>
-                    {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Lưu ghi chú</Text>}
+                    {busy ? <SpinningLoader color="#fff" /> : <Text style={styles.btnText}>Lưu ghi chú</Text>}
                   </TapHighlight>
                   <TapHighlight style={[styles.btn, styles.btnGhost]} onPress={() => void pickFile()} disabled={busy}>
                     <Text style={styles.btnTextDark}>Chọn file</Text>
@@ -863,7 +863,7 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted, 
                   File đính kèm ({attachments.length})
                 </Text>
                 {attLoading ? (
-                  <ActivityIndicator color={colors.primary} />
+                  <SpinningLoader color={colors.primary} />
                 ) : attachments.length ? (
                   <ScrollView style={{ maxHeight: 180 }}>
                     {attachments.map((a) => (
@@ -984,7 +984,7 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted, 
             disabled={busy}
           >
             {busy ? (
-              <ActivityIndicator size="small" color={colors.primary} />
+              <SpinningLoader size="small" color={colors.primary} />
             ) : (
               <>
                 <Ionicons name="camera" size={18} color={colors.primary} />
@@ -999,7 +999,7 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted, 
             disabled={busy}
           >
             {busy ? (
-              <ActivityIndicator size="small" color="#A855F7" />
+              <SpinningLoader size="small" color="#A855F7" />
             ) : (
               <>
                 <Ionicons name="videocam" size={18} color="#A855F7" />

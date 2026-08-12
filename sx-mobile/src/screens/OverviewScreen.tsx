@@ -3,11 +3,16 @@
  * Không còn section «Thông báo mới» (chuông header mở modal).
  */
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { useNavigation } from '@react-navigation/native';
-import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
+  useNavigation } from '@react-navigation/native';
+import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
+import React,
+  { useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState } from 'react';
+import {
   Alert,
   Pressable,
   RefreshControl,
@@ -21,6 +26,7 @@ import { formatApiError } from '../api/client';
 import Avatar from '../components/Avatar';
 import CommentNotificationsModal from '../components/CommentNotificationsModal';
 import FilterPickerModal from '../components/FilterPickerModal';
+import SpinningLoader from '../components/SpinningLoader';
 import { useAuth } from '../context/AuthContext';
 import { useMessenger } from '../context/MessengerContext';
 import { useNotifications } from '../context/NotificationContext';
@@ -70,8 +76,8 @@ import type { KanbanStage, ProductionProject } from '../types';
 import { Radii, Spacing, colorWithAlpha, type AppColors } from '../theme';
 
 const PAGE_HPAD = 14;
-const TASK_PAGE_SIZE = 5;
-const DEAL_PAGE_SIZE = 5;
+const TASK_PAGE_SIZE = 4;
+const DEAL_PAGE_SIZE = 4;
 const PRIORITY_FETCH_LIMIT = 80;
 const KPI_CARD_WIDTH = 132;
 
@@ -667,7 +673,7 @@ export default function OverviewScreen() {
 
         {loading && !refreshing && kpis.total === 0 && overdueTotal === 0 ? (
           <View style={styles.inlineLoad}>
-            <ActivityIndicator size="large" color={colors.primary} />
+            <SpinningLoader size="large" color={colors.primary} />
             <Text style={styles.muted}>Đang tải tổng quan…</Text>
           </View>
         ) : overdueTotal > 0 ? (

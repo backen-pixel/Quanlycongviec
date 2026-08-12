@@ -1,7 +1,6 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -22,6 +21,7 @@ import { REALTIME_BOARD_TASK } from '../lib/realtimeModes';
 import { formatMoneyAmount, Radii, Spacing, stageColor } from '../theme';
 import type { PersonalPlanner, ProductionBoard, ProductionProject } from '../types';
 
+import SpinningLoader from '../components/SpinningLoader';
 type SubTab = 'by_owner' | 'personal';
 
 /** Số dự án hiển thị ban đầu mỗi nhóm người phụ trách; bấm "Xem thêm" để tải tiếp. */
@@ -445,7 +445,7 @@ export default function PlannerScreen() {
 
       {loading ? (
         <View style={styles.center}>
-          <ActivityIndicator color={colors.primary} size="large" />
+          <SpinningLoader color={colors.primary} size="large" />
         </View>
       ) : error ? (
         <View style={styles.center}>

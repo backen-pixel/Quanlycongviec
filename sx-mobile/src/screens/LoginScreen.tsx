@@ -1,6 +1,5 @@
 import React, { useMemo, useState } from 'react';
 import {
-  ActivityIndicator,
   Image,
   KeyboardAvoidingView,
   Platform,
@@ -15,6 +14,7 @@ import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { HIT_TARGET, Radii, Spacing } from '../theme';
 
+import SpinningLoader from '../components/SpinningLoader';
 const brandLogo = require('../../assets/icon.png');
 
 export default function LoginScreen() {
@@ -158,7 +158,7 @@ export default function LoginScreen() {
             disabled={busy}
             activeOpacity={0.85}
           >
-            {busy ? <ActivityIndicator color={colors.white} /> : <Text style={styles.btnText}>Đăng nhập</Text>}
+            {busy ? <SpinningLoader color={colors.white} /> : <Text style={styles.btnText}>Đăng nhập</Text>}
           </TouchableOpacity>
         </View>
       </ScrollView>

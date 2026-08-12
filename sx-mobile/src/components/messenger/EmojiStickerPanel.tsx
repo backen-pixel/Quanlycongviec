@@ -1,7 +1,6 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import React, { useMemo } from 'react';
 import {
-  ActivityIndicator,
   ScrollView,
   StyleSheet,
   Text,

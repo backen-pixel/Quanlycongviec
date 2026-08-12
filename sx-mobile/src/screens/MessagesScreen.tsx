@@ -1,10 +1,15 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import {
+  useFocusEffect,
+  useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React,
+  { useCallback,
+  useEffect,
+  useMemo,
+  useState } from 'react';
 import {
   Alert,
-  ActivityIndicator,
   FlatList,
   Pressable,
   RefreshControl,
@@ -34,6 +39,7 @@ import { useTheme } from '../context/ThemeContext';
 import { Radii, type AppColors } from '../theme';
 import type { MessengerThread } from '../types/messenger';
 
+import SpinningLoader from '../components/SpinningLoader';
 type HubTab = 'chats' | 'calls';
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
@@ -369,7 +375,7 @@ export default function MessagesScreen() {
           )}
           ListEmptyComponent={
             loading ? (
-              <ActivityIndicator color={Colors.primary} style={{ marginTop: 40 }} />
+              <SpinningLoader color={Colors.primary} style={{ marginTop: 40 }} />
             ) : error ? (
               <Text style={[styles.empty, { color: Colors.danger }]}>{error}</Text>
             ) : (
@@ -393,7 +399,7 @@ export default function MessagesScreen() {
           }
           ListEmptyComponent={
             callsLoading || loading ? (
-              <ActivityIndicator color={Colors.primary} style={{ marginTop: 40 }} />
+              <SpinningLoader color={Colors.primary} style={{ marginTop: 40 }} />
             ) : (
               <Text style={styles.empty}>Chưa có cuộc gọi trong lịch sử chat</Text>
             )

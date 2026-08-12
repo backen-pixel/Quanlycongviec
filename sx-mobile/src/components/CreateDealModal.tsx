@@ -1,7 +1,6 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  ActivityIndicator,
   FlatList,
   KeyboardAvoidingView,
   Modal,
@@ -31,6 +30,7 @@ import {
 } from '../lib/productionApi';
 import { HIT_TARGET, Radii, Spacing, colorWithAlpha } from '../theme';
 
+import SpinningLoader from './SpinningLoader';
 type FilterOption = { id: string; label: string };
 
 type Props = {
@@ -968,7 +968,7 @@ export default function CreateDealModal({ visible, user, onClose, onCreated }: P
                 activeOpacity={0.85}
               >
                 {busy ? (
-                  <ActivityIndicator color={colors.white} />
+                  <SpinningLoader color={colors.white} />
                 ) : (
                   <Text style={[styles.footerBtnText, styles.footerBtnTextPrimary]}>🏭 Tạo & vào xưởng</Text>
                 )}

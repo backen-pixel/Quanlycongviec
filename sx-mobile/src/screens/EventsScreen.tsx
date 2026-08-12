@@ -1,8 +1,12 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { useNavigation } from '@react-navigation/native';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  ActivityIndicator,
+  useNavigation } from '@react-navigation/native';
+import React,
+  { useCallback,
+  useEffect,
+  useMemo,
+  useState } from 'react';
+import {
   Pressable,
   RefreshControl,
   ScrollView,
@@ -33,6 +37,7 @@ import TapHighlight from '../components/TapHighlight';
 import { useTheme } from '../context/ThemeContext';
 import { Radii, type AppColors } from '../theme';
 
+import SpinningLoader from '../components/SpinningLoader';
 function timeOf(iso: string | null): string {
   if (!iso) return '';
   const d = new Date(iso);
@@ -208,7 +213,7 @@ export default function EventsScreen() {
         </View>
 
         {loading ? (
-          <ActivityIndicator color={colors.primary} style={{ marginTop: 30 }} />
+          <SpinningLoader color={colors.primary} style={{ marginTop: 30 }} />
         ) : error ? (
           <View style={styles.center}>
             <Ionicons name="cloud-offline-outline" size={34} color={colors.textFaint} />

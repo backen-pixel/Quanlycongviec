@@ -1,14 +1,19 @@
 import { useIsFocused } from '@react-navigation/native';
 import { useEffect, useRef } from 'react';
 import { useNotifications } from '../context/NotificationContext';
-import { patchCachedProjectById } from '../lib/productionBoardCache';
+import { fetchProductionProject } from '../lib/productionApi';
+import {
+  patchCachedProjectById,
+  removeCachedProjectById,
+  upsertCachedProject,
+} from '../lib/productionBoardCache';
 import type { SyncEvent } from '../lib/realtimeSync';
 import { dealIdFromSyncEvent, projectIdFromSyncEvent } from '../lib/realtimeSync';
 import type { ProductionProject } from '../types';
 
 export type BoardRealtimeInfo = {
   evt: SyncEvent;
-  /** true = đã patch cache tại chỗ, không cần tải lại full board. */
+  /** true = đã patch/upsert cache tại chỗ, không cần tải lại full board. */
   patched: boolean;
 };
 
@@ -106,8 +111,32 @@ function tryPatchFromProjectUpdated(evt: SyncEvent): boolean {
 }
 
 /**
+ * Soft-ingest board_changed: cập nhật/gỡ 1 thẻ thay vì full board.
+ * Trash/purge → remove; còn lại fetch 1 project rồi upsert.
+ */
+async function trySoftIngestBoardChanged(evt: SyncEvent): Promise<boolean> {
+  if (evt.type !== 'project:board_changed') return false;
+  const pid = projectIdFromSyncEvent(evt);
+  if (!pid) return false;
+  const reason = String(evt.payload.reason || evt.payload.action || '').toLowerCase();
+  if (/trash|purg/.test(reason)) {
+    return !!removeCachedProjectById(pid);
+  }
+  try {
+    const project = await fetchProductionProject(pid);
+    if (!project?.id) return false;
+    // Restore / deal mới / intake — upsert vào cache hiện có.
+    const board = upsertCachedProject(project);
+    // Không có cache nào (chưa mở Kanban) → để full refresh khi vào tab.
+    return !!board;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Debounced refetch khi web/mobile thay đổi Kanban, nhiệm vụ, bình luận… (socket).
- * Stage / project:updated có đủ field → patch cache (không tải lại 1000+ deal).
+ * Stage / project:updated / board_changed(+id) → patch/upsert cache (không tải lại 1000+ deal).
  */
 export function useProductionRealtime({
   projectId,
@@ -128,6 +157,7 @@ export function useProductionRealtime({
     if (!active) return undefined;
 
     let timer: ReturnType<typeof setTimeout> | null = null;
+    let softSeq = 0;
     const scheduleFullRefresh = (evt: SyncEvent) => {
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
@@ -144,11 +174,26 @@ export function useProductionRealtime({
         void Promise.resolve(onRefreshRef.current({ evt, patched: true })).catch(() => {});
         return;
       }
+
+      if (evt.type === 'project:board_changed') {
+        const seq = ++softSeq;
+        void trySoftIngestBoardChanged(evt).then((ok) => {
+          if (seq !== softSeq) return;
+          if (ok) {
+            void Promise.resolve(onRefreshRef.current({ evt, patched: true })).catch(() => {});
+            return;
+          }
+          scheduleFullRefresh(evt);
+        });
+        return;
+      }
+
       scheduleFullRefresh(evt);
     });
 
     return () => {
       if (timer) clearTimeout(timer);
+      softSeq += 1;
       unsub();
     };
   }, [active, projectId, dealId, debounceMs, modes, subscribeSync]);

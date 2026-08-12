@@ -2,7 +2,6 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import * as DocumentPicker from 'expo-document-picker';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
   Image,
   KeyboardAvoidingView,
   Platform,
@@ -65,6 +64,7 @@ import CommentAttachmentsBlock from '../CommentAttachmentsBlock';
 import ImageGalleryLightbox, { type GalleryImage } from '../ImageGalleryLightbox';
 import TapHighlight from '../TapHighlight';
 
+import SpinningLoader from '../SpinningLoader';
 type SortMode = 'newest' | 'oldest';
 const REPLY_DEPTH_STEP = 18;
 
@@ -869,7 +869,7 @@ export default function ProjectCommentsTab({
       >
         {loading ? (
           <View style={styles.emptyWrap}>
-            <ActivityIndicator color={colors.primary} />
+            <SpinningLoader color={colors.primary} />
             <Text style={styles.emptyText}>Đang tải bình luận…</Text>
           </View>
         ) : flatList.length === 0 ? (
@@ -980,7 +980,7 @@ export default function ProjectCommentsTab({
             disabled={uploading || posting}
           >
             {uploading ? (
-              <ActivityIndicator size="small" color={colors.primary} />
+              <SpinningLoader size="small" color={colors.primary} />
             ) : (
               <Ionicons name="attach-outline" size={22} color={colors.primary} />
             )}
@@ -1012,7 +1012,7 @@ export default function ProjectCommentsTab({
             activeOpacity={0.85}
           >
             {posting ? (
-              <ActivityIndicator color={colors.white} size="small" />
+              <SpinningLoader color={colors.white} size="small" />
             ) : (
               <Ionicons name="send" size={18} color={colors.white} />
             )}

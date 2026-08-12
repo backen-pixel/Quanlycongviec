@@ -196,6 +196,68 @@ export function patchCachedProjectById(
   return newest?.board ?? null;
 }
 
+/** Thêm hoặc thay dự án trong mọi snapshot cache (soft-ingest board_changed). */
+export function upsertCachedProject(project: ProductionProject): ProductionBoard | null {
+  const pid = String(project?.id || '');
+  if (!pid) return null;
+  notePendingProjectPatch(pid, project);
+  let newest: CacheEntry | null = null;
+  let newestKey = '';
+  let touched = false;
+  for (const [key, entry] of cache.entries()) {
+    const idx = entry.board.projects.findIndex((p) => String(p.id) === pid);
+    const nextProjects = entry.board.projects.slice();
+    if (idx >= 0) {
+      nextProjects[idx] = mergeProjectPatch(nextProjects[idx], project, entry.board.stages);
+    } else {
+      // Deal mới — chèn đầu list.
+      nextProjects.unshift(mergeProjectPatch(project, {}, entry.board.stages));
+    }
+    touched = true;
+    const nextEntry: CacheEntry = {
+      board: { ...entry.board, projects: nextProjects, kpis: null },
+      at: entry.at,
+      complete: entry.complete,
+    };
+    cache.set(key, nextEntry);
+    if (!newest || nextEntry.at >= newest.at) {
+      newest = nextEntry;
+      newestKey = key;
+    }
+  }
+  if (!touched) return null;
+  if (newest && newestKey && newest.complete) schedulePersist(newestKey);
+  return newest?.board ?? null;
+}
+
+/** Gỡ dự án khỏi cache (trash / purge) — tránh full board reload. */
+export function removeCachedProjectById(projectId: string): ProductionBoard | null {
+  const pid = String(projectId || '');
+  if (!pid) return null;
+  pendingProjectPatches.delete(pid);
+  let newest: CacheEntry | null = null;
+  let newestKey = '';
+  let touched = false;
+  for (const [key, entry] of cache.entries()) {
+    const nextProjects = entry.board.projects.filter((p) => String(p.id) !== pid);
+    if (nextProjects.length === entry.board.projects.length) continue;
+    touched = true;
+    const nextEntry: CacheEntry = {
+      board: { ...entry.board, projects: nextProjects, kpis: null },
+      at: entry.at,
+      complete: entry.complete,
+    };
+    cache.set(key, nextEntry);
+    if (!newest || nextEntry.at >= newest.at) {
+      newest = nextEntry;
+      newestKey = key;
+    }
+  }
+  if (!touched) return null;
+  if (newest && newestKey && newest.complete) schedulePersist(newestKey);
+  return newest?.board ?? null;
+}
+
 export function clearBoardCache(): void {
   cache.clear();
   pendingProjectPatches.clear();

@@ -3,7 +3,6 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  ActivityIndicator,
   Alert,
   Linking,
   Modal,
@@ -29,6 +28,7 @@ import {
 } from '../../lib/driveApi';
 import { Radii, Spacing, type AppColors } from '../../theme';
 
+import SpinningLoader from '../SpinningLoader';
 type Props = {
   projectId: string;
 };
@@ -177,7 +177,7 @@ export default function ProjectDriveTab({ projectId }: Props) {
   if (loading && !files.length && !folders.length && !links.length) {
     return (
       <View style={styles.center}>
-        <ActivityIndicator size="large" color={colors.primary} />
+        <SpinningLoader size="large" color={colors.primary} />
       </View>
     );
   }
@@ -205,7 +205,7 @@ export default function ProjectDriveTab({ projectId }: Props) {
           </TapHighlight>
           <TapHighlight style={styles.toolBtn} onPress={pickUpload} disabled={uploading}>
             {uploading ? (
-              <ActivityIndicator size="small" color={colors.primary} />
+              <SpinningLoader size="small" color={colors.primary} />
             ) : (
               <Ionicons name="cloud-upload-outline" size={18} color={colors.primary} />
             )}

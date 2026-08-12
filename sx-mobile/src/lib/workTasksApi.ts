@@ -151,8 +151,9 @@ export function canViewTeamWork(user?: AuthUserLite | null): boolean {
 }
 
 export function isTaskPending(status: string): boolean {
-  const s = String(status || 'pending');
-  return s === 'pending' || s === 'todo';
+  const s = String(status || 'pending').toLowerCase();
+  // Khớp web computeTaskStats: cancelled → «Chưa làm».
+  return s === 'pending' || s === 'todo' || s === 'cancelled' || s === 'canceled';
 }
 
 export function isTaskInProgress(status: string): boolean {
@@ -287,6 +288,96 @@ export async function fetchProductionWorkTasksPage(
     .filter((t) => t.id);
   const hasMore = data?.has_more != null ? Boolean(data.has_more) : tasks.length >= limit;
   return { tasks, hasMore, offset, limit };
+}
+
+export type WorkTasksStats = {
+  pending: number;
+  in_progress: number;
+  completed: number;
+  overdue: number;
+  total: number;
+};
+
+/**
+ * KPI đầy đủ (không bị cắt limit trang list) — GET /crm/assignments/stats.
+ * Khớp web Giao việc SX: pending gồm cancelled; overdue = chưa xong + deadline < hôm nay.
+ * Fallback: nếu BE chưa có /stats → gom mọi trang list rồi đếm client.
+ */
+export async function fetchProductionWorkTaskStats(
+  query: Omit<WorkTasksQuery, 'status' | 'overdue' | 'limit' | 'offset'> & { q?: string } = {},
+): Promise<WorkTasksStats> {
+  const params: Record<string, string> = { assignment_module: 'production' };
+  if (query.assigneeId) params.assignee_id = query.assigneeId;
+  if (query.companyId) params.company_id = query.companyId;
+  if (query.q) params.q = query.q;
+  try {
+    const { data } = await api.get<WorkTasksStats>('/crm/assignments/stats', {
+      params,
+      signal: query.signal,
+    });
+    if (data && typeof data === 'object' && (data.total != null || data.pending != null)) {
+      return {
+        pending: Number(data.pending) || 0,
+        in_progress: Number(data.in_progress) || 0,
+        completed: Number(data.completed) || 0,
+        overdue: Number(data.overdue) || 0,
+        total: Number(data.total) || 0,
+      };
+    }
+  } catch {
+    /* BE cũ chưa có /stats → drain trang */
+  }
+
+  const all: WorkTask[] = [];
+  let offset = 0;
+  let guard = 0;
+  while (guard < 40) {
+    guard += 1;
+    const page = await fetchProductionWorkTasksPage({
+      assigneeId: query.assigneeId,
+      companyId: query.companyId,
+      limit: 500,
+      offset,
+      signal: query.signal,
+    });
+    all.push(...page.tasks);
+    if (!page.hasMore || page.tasks.length === 0) break;
+    offset += page.tasks.length;
+  }
+  const needle = String(query.q || '').trim().toLowerCase();
+  const scoped = needle
+    ? all.filter((t) => {
+        const hay = [
+          t.title,
+          t.description,
+          t.lead?.code,
+          t.lead?.title,
+          t.assignee?.full_name,
+          ...(t.assignees || []).map((a) => a.full_name),
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+        return hay.includes(needle);
+      })
+    : all;
+  let pending = 0;
+  let inProgress = 0;
+  let completed = 0;
+  let overdue = 0;
+  for (const t of scoped) {
+    if (isTaskDone(t.status)) completed += 1;
+    else if (isTaskInProgress(t.status)) inProgress += 1;
+    else pending += 1;
+    if (isTaskOverdue(t)) overdue += 1;
+  }
+  return {
+    pending,
+    in_progress: inProgress,
+    completed,
+    overdue,
+    total: scoped.length,
+  };
 }
 
 /** Tương thích cũ — tải 1 trang đầu (không còn full dump). */

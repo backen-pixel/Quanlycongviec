@@ -1,7 +1,6 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
   Modal,
@@ -31,6 +30,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 import { Radii, type AppColors } from '../../theme';
 
+import SpinningLoader from '../SpinningLoader';
 type Props = {
   visible: boolean;
   /** Ngày mặc định khi tạo mới (đã chọn trên lịch). */
@@ -180,7 +180,7 @@ export default function EventFormModal({ visible, presetDay, onClose, onSaved }:
           </Pressable>
           <Text style={styles.h1}>Tạo sự kiện</Text>
           <Pressable style={[styles.saveBtn, saving && { opacity: 0.6 }]} onPress={() => void save()} disabled={saving}>
-            {saving ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.saveTxt}>Lưu</Text>}
+            {saving ? <SpinningLoader color="#fff" size="small" /> : <Text style={styles.saveTxt}>Lưu</Text>}
           </Pressable>
         </View>
 

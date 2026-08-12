@@ -1,7 +1,6 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  ActivityIndicator,
   Dimensions,
   Image,
   Linking,
@@ -25,6 +24,7 @@ import {
 } from '../../lib/projectDetailApi';
 import { Radii, Spacing, type AppColors } from '../../theme';
 
+import SpinningLoader from '../SpinningLoader';
 const GRID_GAP = 8;
 const COLS = 3;
 const TILE = (Dimensions.get('window').width - Spacing.lg * 2 - GRID_GAP * (COLS - 1)) / COLS;
@@ -167,7 +167,7 @@ export default function ProjectDocumentsTab({ projectId, dealId, sharedDocuments
   if (loading && totalCount === 0) {
     return (
       <View style={styles.center}>
-        <ActivityIndicator size="large" color={colors.primary} />
+        <SpinningLoader size="large" color={colors.primary} />
       </View>
     );
   }

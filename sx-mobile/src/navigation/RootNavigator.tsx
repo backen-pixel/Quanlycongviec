@@ -1,7 +1,7 @@
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import type { NavigatorScreenParams } from '@react-navigation/native';
 import React, { useMemo } from 'react';
-import { ActivityIndicator, StyleSheet, View } from 'react-native';
+import BootLoadingScreen from '../components/BootLoadingScreen';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import LoginScreen from '../screens/LoginScreen';
@@ -19,7 +19,6 @@ import SettingsScreen from '../screens/SettingsScreen';
 import LeavesScreen from '../screens/LeavesScreen';
 import EventsScreen from '../screens/EventsScreen';
 import MainTabs, { type MainTabParamList } from './MainTabs';
-
 export type RootStackParamList = {
   Login: undefined;
   Main: NavigatorScreenParams<MainTabParamList> | undefined;
@@ -71,11 +70,7 @@ export default function RootNavigator() {
   );
 
   if (loading) {
-    return (
-      <View style={[styles.center, { backgroundColor: colors.bg }]}>
-        <ActivityIndicator size="large" color={colors.primary} />
-      </View>
-    );
+    return <BootLoadingScreen visible hint="Đang khôi phục phiên…" />;
   }
 
   return (
@@ -159,7 +154,3 @@ export default function RootNavigator() {
     </Stack.Navigator>
   );
 }
-
-const styles = StyleSheet.create({
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-});

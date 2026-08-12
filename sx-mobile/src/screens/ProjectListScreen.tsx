@@ -1,7 +1,6 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
   FlatList,
   RefreshControl,
   StyleSheet,
@@ -22,6 +21,7 @@ import { useRootNavigation } from '../navigation/useRootNavigation';
 import { Radii, Spacing, stageColor } from '../theme';
 import type { KanbanStage, ProductionBoard, ProductionProject } from '../types';
 
+import SpinningLoader from '../components/SpinningLoader';
 async function resolveListFilters(): Promise<BoardFilters> {
   const snap = await loadKanbanFilters().catch(() => null);
   const companyId = snap?.filterCompany || undefined;
@@ -211,7 +211,7 @@ export default function ProjectListScreen() {
   if (loading) {
     return (
       <View style={[styles.center, { paddingTop: insets.top }]}>
-        <ActivityIndicator color={colors.primary} size="large" />
+        <SpinningLoader color={colors.primary} size="large" />
       </View>
     );
   }

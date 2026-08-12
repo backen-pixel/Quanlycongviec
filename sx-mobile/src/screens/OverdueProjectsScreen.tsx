@@ -1,8 +1,13 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { useNavigation } from '@react-navigation/native';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
+  useNavigation } from '@react-navigation/native';
+import React,
+  { useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState } from 'react';
+import {
   FlatList,
   RefreshControl,
   StyleSheet,
@@ -25,6 +30,7 @@ import { useRootNavigation } from '../navigation/useRootNavigation';
 import type { ProductionProject } from '../types';
 import { Radii, Spacing, colorWithAlpha, getTaskProgressColor } from '../theme';
 
+import SpinningLoader from '../components/SpinningLoader';
 function overdueDateLabel(p: ProductionProject): string {
   return shortDateLabel(p.delivery_date || p.production_deadline || p.deadline);
 }
@@ -226,7 +232,7 @@ export default function OverdueProjectsScreen() {
 
       {loading && projects.length === 0 ? (
         <View style={styles.center}>
-          <ActivityIndicator color={colors.primary} size="large" />
+          <SpinningLoader color={colors.primary} size="large" />
           <Text style={styles.loadingText}>Đang tải danh sách quá hạn…</Text>
         </View>
       ) : (

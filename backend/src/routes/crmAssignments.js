@@ -1058,6 +1058,127 @@ r.delete('/:id', async (req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi xóa nhiệm vụ' }); }
 });
 
+// ─── STATS (mobile KPI — đếm đủ, không cắt theo limit trang list) ─────────────
+// GET /api/crm/assignments/stats?assignment_module=&company_id=&assignee_id=&q=
+// Khớp logic web computeTaskStats: pending gồm cancelled; overdue = chưa xong + deadline < đầu ngày.
+r.get('/stats', responseCache({ ttl: 20, scope: 'user', tags: ['crm:assignments'] }), async (req, res) => {
+  try {
+    let q = supabase.from('crm_assignments').select('id, status, deadline');
+
+    let scopeIds = null;
+    if (isAdmin(req)) {
+      const companyId = req.query.company_id || null;
+      if (companyId) {
+        q = q.or(`company_id.eq.${companyId},executor_company_id.eq.${companyId}`);
+      }
+    } else {
+      scopeIds = await getVisibleAssignmentIdsForNonAdmin(req);
+      if (!scopeIds.length) {
+        return res.json({
+          pending: 0, in_progress: 0, completed: 0, overdue: 0, total: 0,
+        });
+      }
+      q = q.in('id', scopeIds);
+    }
+
+    const assigneeFilter = String(req.query.assignee_id || '').trim();
+    if (assigneeFilter) {
+      if (!isAdmin(req) && String(assigneeFilter) !== String(req.user?.userId || '')) {
+        return res.json({
+          pending: 0, in_progress: 0, completed: 0, overdue: 0, total: 0,
+        });
+      }
+      const { data: rows } = await supabase
+        .from('crm_assignment_assignees')
+        .select('assignment_id')
+        .eq('user_id', assigneeFilter);
+      let ids = [...new Set((rows || []).map((r) => r.assignment_id))];
+      const { data: directRows } = await supabase
+        .from('crm_assignments')
+        .select('id')
+        .eq('assignee_id', assigneeFilter);
+      (directRows || []).forEach((r) => ids.push(r.id));
+      ids = [...new Set(ids)];
+      if (!ids.length) {
+        return res.json({
+          pending: 0, in_progress: 0, completed: 0, overdue: 0, total: 0,
+        });
+      }
+      if (scopeIds) {
+        const allowed = new Set(scopeIds);
+        ids = ids.filter((id) => allowed.has(id));
+        if (!ids.length) {
+          return res.json({
+            pending: 0, in_progress: 0, completed: 0, overdue: 0, total: 0,
+          });
+        }
+      }
+      q = q.in('id', ids);
+    }
+
+    const moduleFilter = String(req.query.assignment_module || '').trim().toLowerCase();
+    if (moduleFilter === 'production' || moduleFilter === 'crm' || moduleFilter === 'logistics') {
+      q = q.eq('assignment_module', moduleFilter);
+    }
+    if (req.query.q) {
+      ({ q } = await applyAssignmentSearchQuery(q, req.query.q));
+    }
+
+    let { data, error } = await q;
+    if (error && /executor_company_id/.test(error.message || '') && isAdmin(req) && req.query.company_id) {
+      let qExec = supabase.from('crm_assignments').select('id, status, deadline')
+        .eq('company_id', req.query.company_id);
+      if (moduleFilter === 'production' || moduleFilter === 'crm' || moduleFilter === 'logistics') {
+        qExec = qExec.eq('assignment_module', moduleFilter);
+      }
+      if (req.query.q) ({ q: qExec } = await applyAssignmentSearchQuery(qExec, req.query.q));
+      ({ data, error } = await qExec);
+    }
+    if (error && /assignment_module/.test(error.message || '') && moduleFilter) {
+      let q2 = supabase.from('crm_assignments').select('id, status, deadline');
+      if (isAdmin(req)) {
+        const companyId = req.query.company_id || null;
+        if (companyId) q2 = q2.or(`company_id.eq.${companyId},executor_company_id.eq.${companyId}`);
+      } else if (scopeIds?.length) {
+        q2 = q2.in('id', scopeIds);
+      }
+      if (req.query.q) ({ q: q2 } = await applyAssignmentSearchQuery(q2, req.query.q));
+      ({ data, error } = await q2);
+    }
+    if (error) throw error;
+
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    const startIso = start.toISOString();
+
+    let pending = 0;
+    let inProgress = 0;
+    let completed = 0;
+    let overdue = 0;
+    for (const row of data || []) {
+      const s = String(row.status || 'pending').toLowerCase();
+      const done = s === 'completed' || s === 'done';
+      const doing = s === 'in_progress' || s === 'doing';
+      if (done) completed += 1;
+      else if (doing) inProgress += 1;
+      else pending += 1; // pending + cancelled + khác
+
+      if (!done && row.deadline && String(row.deadline) < startIso) overdue += 1;
+    }
+
+    res.json({
+      pending,
+      in_progress: inProgress,
+      completed,
+      overdue,
+      total: (data || []).length,
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Lỗi đếm nhiệm vụ' });
+  }
+});
+
 // ─── UNREAD / BADGE ──────────────────────────────────────────────────────────
 // GET /api/crm/assignments/unread-count
 // Đếm nhiệm vụ "cần chú ý" của user hiện tại: quá hạn / sắp hạn (24h) / chưa làm.

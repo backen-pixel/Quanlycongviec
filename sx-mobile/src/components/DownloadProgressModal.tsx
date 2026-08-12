@@ -1,6 +1,5 @@
 import React, { useMemo } from 'react';
 import {
-  ActivityIndicator,
   Modal,
   Pressable,
   StyleSheet,
@@ -10,6 +9,7 @@ import {
 import { useTheme } from '../context/ThemeContext';
 import { Radii, Spacing } from '../theme';
 
+import SpinningLoader from './SpinningLoader';
 export type DownloadProgressModalProps = {
   visible: boolean;
   fileName: string;
@@ -105,7 +105,7 @@ export default function DownloadProgressModal({
               {phase === 'error' ? '—' : `${pct}%`}
             </Text>
             {phase === 'downloading' || phase === 'saving' ? (
-              <ActivityIndicator color={colors.primary} />
+              <SpinningLoader color={colors.primary} />
             ) : null}
           </View>
 

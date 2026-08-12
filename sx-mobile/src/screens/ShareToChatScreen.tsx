@@ -2,7 +2,6 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  ActivityIndicator,
   Alert,
   FlatList,
   Image,
@@ -25,6 +24,7 @@ import { Radii, Spacing } from '../theme';
 import type { MessengerThread } from '../types/messenger';
 import MessengerAvatar from '../components/messenger/MessengerAvatar';
 
+import SpinningLoader from '../components/SpinningLoader';
 type Props = NativeStackScreenProps<RootStackParamList, 'ShareToChat'>;
 
 export default function ShareToChatScreen({ navigation }: Props) {
@@ -278,7 +278,7 @@ export default function ShareToChatScreen({ navigation }: Props) {
 
       {loading ? (
         <View style={styles.center}>
-          <ActivityIndicator size="large" color={mc.accent} />
+          <SpinningLoader size="large" color={mc.accent} />
         </View>
       ) : (
         <FlatList
@@ -328,7 +328,7 @@ export default function ShareToChatScreen({ navigation }: Props) {
           disabled={!selectedId || sending}
         >
           {sending ? (
-            <ActivityIndicator color="#FFF" />
+            <SpinningLoader color="#FFF" />
           ) : (
             <Text style={styles.sendTxt}>Gửi</Text>
           )}

@@ -1,7 +1,6 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
   Modal,
   Pressable,
   RefreshControl,
@@ -32,6 +31,7 @@ import {
 import { Radii, Spacing } from '../theme';
 import TapHighlight from './TapHighlight';
 
+import SpinningLoader from './SpinningLoader';
 type TabKey = 'all' | 'unread';
 
 type Props = {
@@ -436,7 +436,7 @@ export default function CommentNotificationsModal({ visible, onClose, onOpenProj
         ) : null}
 
         {loading && !items.length ? (
-          <ActivityIndicator color={colors.primary} style={{ marginTop: 40 }} />
+          <SpinningLoader color={colors.primary} style={{ marginTop: 40 }} />
         ) : (
           <ScrollView
             style={styles.list}

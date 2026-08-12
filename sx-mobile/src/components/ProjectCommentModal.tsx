@@ -1,7 +1,6 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
   Image,
   KeyboardAvoidingView,
   Modal,
@@ -41,6 +40,7 @@ import { useTheme } from '../context/ThemeContext';
 import { HIT_TARGET, Radii, Spacing } from '../theme';
 import type { ProductionProject } from '../types';
 
+import SpinningLoader from './SpinningLoader';
 type SortMode = 'newest' | 'oldest';
 
 const REPLY_DEPTH_STEP = 18;
@@ -514,7 +514,7 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
           >
             {loading ? (
               <View style={styles.emptyWrap}>
-                <ActivityIndicator color={colors.primary} />
+                <SpinningLoader color={colors.primary} />
                 <Text style={styles.emptyText}>Đang tải bình luận…</Text>
               </View>
             ) : flatList.length === 0 ? (
@@ -561,7 +561,7 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
                 activeOpacity={0.85}
               >
                 {posting ? (
-                  <ActivityIndicator color={colors.white} size="small" />
+                  <SpinningLoader color={colors.white} size="small" />
                 ) : (
                   <Ionicons name="send" size={18} color={colors.white} />
                 )}

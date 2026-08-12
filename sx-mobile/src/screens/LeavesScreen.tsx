@@ -1,8 +1,12 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { useNavigation } from '@react-navigation/native';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  ActivityIndicator,
+  useNavigation } from '@react-navigation/native';
+import React,
+  { useCallback,
+  useEffect,
+  useMemo,
+  useState } from 'react';
+import {
   Alert,
   Modal,
   Pressable,
@@ -36,6 +40,7 @@ import TapHighlight from '../components/TapHighlight';
 import { useTheme } from '../context/ThemeContext';
 import { Radii, type AppColors } from '../theme';
 
+import SpinningLoader from '../components/SpinningLoader';
 const LEAVE_TYPES = [
   { id: 'annual', label: 'Phép năm', color: '#EA580C' },
   { id: 'sick', label: 'Ốm', color: '#EF4444' },
@@ -284,7 +289,7 @@ export default function LeavesScreen() {
         </View>
 
         {loading ? (
-          <ActivityIndicator color={colors.primary} style={{ marginTop: 30 }} />
+          <SpinningLoader color={colors.primary} style={{ marginTop: 30 }} />
         ) : error ? (
           <View style={styles.center}>
             <Ionicons name="cloud-offline-outline" size={34} color={colors.textFaint} />
@@ -395,7 +400,7 @@ export default function LeavesScreen() {
                 <Text style={styles.cancelText}>Huỷ</Text>
               </Pressable>
               <Pressable style={styles.saveBtn} onPress={() => void onCreate()} disabled={saving}>
-                {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveText}>Lưu</Text>}
+                {saving ? <SpinningLoader color="#fff" /> : <Text style={styles.saveText}>Lưu</Text>}
               </Pressable>
             </View>
           </View>

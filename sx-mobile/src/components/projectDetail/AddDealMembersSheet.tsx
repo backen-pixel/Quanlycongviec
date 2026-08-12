@@ -1,7 +1,6 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  ActivityIndicator,
   FlatList,
   Modal,
   Pressable,
@@ -29,6 +28,7 @@ import FilterPickerModal from '../FilterPickerModal';
 import TapHighlight from '../TapHighlight';
 import { HIT_TARGET, Radii, Spacing, type AppColors } from '../../theme';
 
+import SpinningLoader from '../SpinningLoader';
 type PendingMember = { user_id: string; role: DealMemberRole; name: string };
 
 type Props = {
@@ -283,7 +283,7 @@ export default function AddDealMembersSheet({
               {!companyId && showCompanyPicker ? (
                 <Text style={styles.emptyTxt}>Chọn công ty trước</Text>
               ) : loadingEmployees ? (
-                <ActivityIndicator color={colors.primary} style={{ marginVertical: 20 }} />
+                <SpinningLoader color={colors.primary} style={{ marginVertical: 20 }} />
               ) : pickableEmployees.length === 0 ? (
                 <Text style={styles.emptyTxt}>
                   {employees.length === 0
@@ -370,7 +370,7 @@ export default function AddDealMembersSheet({
             disabled={!pending.length || submitting}
           >
             {submitting ? (
-              <ActivityIndicator color={colors.white} />
+              <SpinningLoader color={colors.white} />
             ) : (
               <Text style={styles.submitTxt}>
                 Thêm {pending.length || ''} thành viên

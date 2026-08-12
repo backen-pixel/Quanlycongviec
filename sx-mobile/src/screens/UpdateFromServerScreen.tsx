@@ -1,9 +1,12 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import * as Application from 'expo-application';
-import { useNavigation } from '@react-navigation/native';
-import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  ActivityIndicator,
+  useNavigation } from '@react-navigation/native';
+import { useCallback,
+  useEffect,
+  useMemo,
+  useState } from 'react';
+import {
   Alert,
   ScrollView,
   StyleSheet,
@@ -23,6 +26,7 @@ import {
 import { API_ORIGIN } from '../config';
 import { HIT_TARGET, Radii, Spacing } from '../theme';
 
+import SpinningLoader from '../components/SpinningLoader';
 function formatDate(value?: string | null) {
   if (!value) return '—';
   try {
@@ -161,7 +165,7 @@ export default function UpdateFromServerScreen() {
     return (
       <View style={[styles.container, { paddingTop: insets.top }]}>
         <View style={styles.center}>
-          <ActivityIndicator size="large" color={colors.primary} />
+          <SpinningLoader size="large" color={colors.primary} />
           <Text style={styles.loadingText}>Đang đọc thông tin từ server…</Text>
         </View>
       </View>
@@ -227,7 +231,7 @@ export default function UpdateFromServerScreen() {
           activeOpacity={0.85}
         >
           {checking ? (
-            <ActivityIndicator color={colors.white} />
+            <SpinningLoader color={colors.white} />
           ) : (
             <Ionicons name="cloud-download-outline" size={18} color={colors.white} />
           )}

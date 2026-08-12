@@ -2,7 +2,6 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
   AppState,
   FlatList,
   PanResponder,
@@ -76,6 +75,7 @@ import { useTheme } from '../context/ThemeContext';
 import { type AppColors, colorWithAlpha, HIT_TARGET, Radii, Spacing, stageColor } from '../theme';
 import type { KanbanStage, ProductionBoard, ProductionProject } from '../types';
 
+import SpinningLoader from '../components/SpinningLoader';
 type QuickFilter = 'all' | 'mine' | 'overdue' | 'today';
 type ViewMode = 'list' | 'kanban';
 
@@ -1393,7 +1393,7 @@ export default function KanbanScreen() {
   if (loading) {
     return (
       <View style={[styles.center, { paddingTop: insets.top }]}>
-        <ActivityIndicator color={colors.primary} size="large" />
+        <SpinningLoader color={colors.primary} size="large" />
         <Text style={styles.loadingText}>Đang tải dữ liệu...</Text>
       </View>
     );
@@ -1754,7 +1754,7 @@ export default function KanbanScreen() {
           ListFooterComponent={
             hasMoreListCards ? (
               <View style={styles.listFooter}>
-                <ActivityIndicator color={colors.primary} size="small" />
+                <SpinningLoader color={colors.primary} size="small" />
                 <Text style={styles.listFooterText}>
                   Đang tải thêm ({pagedListProjects.length}/{listProjects.length})
                 </Text>
@@ -1796,7 +1796,7 @@ export default function KanbanScreen() {
             ListFooterComponent={
               hasMoreCards ? (
                 <View style={styles.listFooter}>
-                  <ActivityIndicator color={colors.primary} size="small" />
+                  <SpinningLoader color={colors.primary} size="small" />
                   <Text style={styles.listFooterText}>
                     Đang tải thêm ({pagedProjects.length}/{columnProjects.length})
                   </Text>
@@ -2095,7 +2095,7 @@ const KanbanCard = memo(function KanbanCard({
             accessibilityLabel="Phân loại"
           >
             {isMoving ? (
-              <ActivityIndicator size="small" color={colors.white} />
+              <SpinningLoader size="small" color={colors.white} />
             ) : (
               <Ionicons name="layers-outline" size={18} color={colors.white} />
             )}
@@ -2108,7 +2108,7 @@ const KanbanCard = memo(function KanbanCard({
             accessibilityLabel="Chuyển cột"
           >
             {isMoving ? (
-              <ActivityIndicator size="small" color={colors.white} />
+              <SpinningLoader size="small" color={colors.white} />
             ) : (
               <Ionicons name="swap-horizontal" size={18} color={colors.white} />
             )}

@@ -3,8 +3,9 @@ import { ShareIntentProvider } from 'expo-share-intent';
 import { StatusBar } from 'expo-status-bar';
 import * as Notifications from 'expo-notifications';
 import React, { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, AppState, Platform, StyleSheet, Text, TextInput, View } from 'react-native';
+import { AppState, Platform, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import BootLoadingScreen, { BOOT_BG } from './src/components/BootLoadingScreen';
 import BubbleOutboundCallHandler from './src/components/BubbleOutboundCallHandler';
 import BubbleChatOverlayLauncher from './src/components/BubbleChatOverlayLauncher';
 import OtaBlockingScreen from './src/components/OtaBlockingScreen';
@@ -74,7 +75,10 @@ function AppShell() {
   const [bubbleOverlayUi, setBubbleOverlayUi] = useState(
     () => isBubbleChatNavState(bubbleInitialState) || hasPendingBubbleChat(),
   );
+  const [navReady, setNavReady] = useState(false);
   const bubbleBoot = bubbleOverlayUi || hasPendingBubbleChat();
+  /** Giống CRM: giữ splash đến khi auth xong + navigation sẵn sàng. */
+  const showBootSplash = loading || (!!token && !navReady);
 
   useEffect(() => {
     void setupNotificationChannels();
@@ -125,6 +129,10 @@ function AppShell() {
     return navigationRef.addListener('state', sync);
   }, [token, loading]);
 
+  useEffect(() => {
+    if (!token) setNavReady(false);
+  }, [token]);
+
   const navTheme = useMemo(
     () => ({
       ...(isDark ? DarkTheme : DefaultTheme),
@@ -140,24 +148,34 @@ function AppShell() {
     [colors, isDark],
   );
 
-  // Chỉ chặn UI khi đang TẢI bản OTA mới. Giai đoạn "checking" chạy nền để app
-  // hiển thị ngay (dùng dữ liệu/đăng nhập đã cache) — nếu có bản mới, phase sẽ
-  // chuyển sang "downloading" và tự reload.
+  // Chỉ chặn UI khi đang TẢI bản OTA mới. Giai đoạn "checking" chạy nền.
   if (otaPhase === 'downloading') {
     return <OtaBlockingScreen phase={otaPhase} />;
   }
 
   if (loading) {
     return (
-      <View style={[styles.root, bubbleBoot && styles.rootTransparent, !bubbleBoot && styles.center]}>
-        {!bubbleBoot ? <ActivityIndicator size="large" color={colors.primary} /> : null}
+      <View style={[styles.root, bubbleBoot && styles.rootTransparent, { backgroundColor: BOOT_BG }]}>
+        <BootLoadingScreen
+          visible
+          transparent={bubbleBoot}
+          hint="Đang khôi phục phiên…"
+        />
       </View>
     );
   }
 
   return (
-    <View style={[styles.root, bubbleOverlayUi && styles.rootTransparent]}>
-      <NavigationContainer ref={navigationRef} theme={navTheme} initialState={bubbleInitialState}>
+    <View style={[
+      styles.root,
+      bubbleOverlayUi ? styles.rootTransparent : { backgroundColor: colors.bg },
+    ]}>
+      <NavigationContainer
+        ref={navigationRef}
+        theme={navTheme}
+        initialState={bubbleInitialState}
+        onReady={() => setNavReady(true)}
+      >
         <RootNavigator />
         <CallScreen />
         <IncomingCallBridge />
@@ -170,6 +188,11 @@ function AppShell() {
       <UpdateGate />
       <ShareIntentHandler enabled={!!token && !loading} />
       {!token && !loading ? <ShareLoginHint /> : null}
+      <BootLoadingScreen
+        visible={showBootSplash}
+        transparent={bubbleBoot}
+        hint={token ? 'Đang tải giao diện…' : 'Đang mở ứng dụng…'}
+      />
       <StatusBar style={isDark ? 'light' : 'dark'} />
     </View>
   );
@@ -178,32 +201,34 @@ function AppShell() {
 const styles = StyleSheet.create({
   root: { flex: 1 },
   rootTransparent: { backgroundColor: 'transparent' },
-  center: { alignItems: 'center', justifyContent: 'center' },
+  appRoot: { flex: 1, backgroundColor: BOOT_BG },
 });
 
 export default function App() {
   return (
-    <SafeAreaProvider>
-      <ShareIntentProvider
-        options={{
-          resetOnBackground: false,
-          disabled: Platform.OS !== 'android',
-        }}
-      >
-        <ThemeProvider>
-          <AuthProvider>
-            <NotificationProvider>
-              <MessengerProvider>
-                <MessengerCallProvider>
-                  <FileActionsProvider>
-                    <AppShell />
-                  </FileActionsProvider>
-                </MessengerCallProvider>
-              </MessengerProvider>
-            </NotificationProvider>
-          </AuthProvider>
-        </ThemeProvider>
-      </ShareIntentProvider>
-    </SafeAreaProvider>
+    <View style={styles.appRoot}>
+      <SafeAreaProvider style={styles.appRoot}>
+        <ShareIntentProvider
+          options={{
+            resetOnBackground: false,
+            disabled: Platform.OS !== 'android',
+          }}
+        >
+          <ThemeProvider>
+            <AuthProvider>
+              <NotificationProvider>
+                <MessengerProvider>
+                  <MessengerCallProvider>
+                    <FileActionsProvider>
+                      <AppShell />
+                    </FileActionsProvider>
+                  </MessengerCallProvider>
+                </MessengerProvider>
+              </NotificationProvider>
+            </AuthProvider>
+          </ThemeProvider>
+        </ShareIntentProvider>
+      </SafeAreaProvider>
+    </View>
   );
 }

@@ -592,8 +592,8 @@ async function fetchProductionBoardInternal(
     // 1 trang server + pagingDone → complete được (Overview không cần Kanban).
     const complete = pagingDone && !truncated && (loadRemaining || beTotalPages <= 1);
     setCachedBoard(filters, board, { complete });
-    // Sau khi đã merge vào snapshot cuối — xóa pending để silent refetch không re-stale.
-    if (pagingDone) clearPendingProjectPatches();
+    // Chỉ clear khi board thật sự complete — Overview preview không được xóa pending của Kanban.
+    if (complete) clearPendingProjectPatches();
     emitPartialTo(partialListeners, board);
     return board;
   };

@@ -1,9 +1,13 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { useFocusEffect } from '@react-navigation/native';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  ActivityIndicator,
+  useFocusEffect } from '@react-navigation/native';
+import React,
+  { useCallback,
+  useEffect,
+  useMemo,
+  useState } from 'react';
+import {
   Alert,
   DeviceEventEmitter,
   FlatList,
@@ -58,6 +62,7 @@ import type { RootStackParamList } from '../navigation/RootNavigator';
 import { Radii, Spacing } from '../theme';
 import type { MessengerMessage } from '../types/messenger';
 
+import SpinningLoader from '../components/SpinningLoader';
 type Props = NativeStackScreenProps<RootStackParamList, 'ChatDetailInfo'>;
 type Panel = 'main' | 'gallery' | 'members';
 
@@ -854,7 +859,7 @@ export default function ChatDetailInfoScreen({ navigation, route }: Props) {
           <Text style={[styles.menuTitle, { color: mc.accent }]}>Thêm thành viên</Text>
         </Pressable>
         {membersLoading ? (
-          <ActivityIndicator style={{ marginTop: 24 }} color={mc.accent} />
+          <SpinningLoader style={{ marginTop: 24 }} color={mc.accent} />
         ) : (
           <FlatList
             data={members}
@@ -909,7 +914,7 @@ export default function ChatDetailInfoScreen({ navigation, route }: Props) {
           />
         )}
         <Pressable style={[styles.leaveBtn, { margin: Spacing.lg }]} onPress={confirmLeave} disabled={leaving}>
-          {leaving ? <ActivityIndicator color={colors.danger} /> : <Text style={styles.leaveTxt}>Rời nhóm</Text>}
+          {leaving ? <SpinningLoader color={colors.danger} /> : <Text style={styles.leaveTxt}>Rời nhóm</Text>}
         </Pressable>
 
         {addOpen ? (
@@ -922,7 +927,7 @@ export default function ChatDetailInfoScreen({ navigation, route }: Props) {
                 </Pressable>
               </View>
               {pickerLoading || adding ? (
-                <ActivityIndicator style={{ margin: 24 }} color={mc.accent} />
+                <SpinningLoader style={{ margin: 24 }} color={mc.accent} />
               ) : (
                 <FlatList
                   data={pickerUsers}
@@ -973,7 +978,7 @@ export default function ChatDetailInfoScreen({ navigation, route }: Props) {
                   disabled={nickSaving}
                 >
                   {nickSaving ? (
-                    <ActivityIndicator color="#FFF" />
+                    <SpinningLoader color="#FFF" />
                   ) : (
                     <Text style={styles.renameSaveTxt}>Lưu</Text>
                   )}
@@ -1019,7 +1024,7 @@ export default function ChatDetailInfoScreen({ navigation, route }: Props) {
             />
             {canManageGroup ? (
               avatarUploading ? (
-                <ActivityIndicator style={{ marginTop: 8 }} color={mc.accent} />
+                <SpinningLoader style={{ marginTop: 8 }} color={mc.accent} />
               ) : (
                 <View style={[styles.editAvatarBadge, { backgroundColor: mc.accent }]}>
                   <Ionicons name="camera" size={14} color="#FFF" />
@@ -1111,7 +1116,7 @@ export default function ChatDetailInfoScreen({ navigation, route }: Props) {
 
         {!isDirect ? (
           <Pressable style={styles.leaveBtn} onPress={confirmLeave} disabled={leaving}>
-            {leaving ? <ActivityIndicator color={colors.danger} /> : <Text style={styles.leaveTxt}>Rời nhóm</Text>}
+            {leaving ? <SpinningLoader color={colors.danger} /> : <Text style={styles.leaveTxt}>Rời nhóm</Text>}
           </Pressable>
         ) : null}
       </ScrollView>
@@ -1126,7 +1131,7 @@ export default function ChatDetailInfoScreen({ navigation, route }: Props) {
               </Pressable>
             </View>
             {pickerLoading || adding ? (
-              <ActivityIndicator style={{ margin: 24 }} color={mc.accent} />
+              <SpinningLoader style={{ margin: 24 }} color={mc.accent} />
             ) : (
               <FlatList
                 data={pickerUsers}
@@ -1168,7 +1173,7 @@ export default function ChatDetailInfoScreen({ navigation, route }: Props) {
                 disabled={renaming}
               >
                 {renaming ? (
-                  <ActivityIndicator color="#FFF" />
+                  <SpinningLoader color="#FFF" />
                 ) : (
                   <Text style={styles.renameSaveTxt}>Lưu</Text>
                 )}
@@ -1212,7 +1217,7 @@ export default function ChatDetailInfoScreen({ navigation, route }: Props) {
                 disabled={nickSaving}
               >
                 {nickSaving ? (
-                  <ActivityIndicator color="#FFF" />
+                  <SpinningLoader color="#FFF" />
                 ) : (
                   <Text style={styles.renameSaveTxt}>Lưu</Text>
                 )}

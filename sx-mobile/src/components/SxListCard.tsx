@@ -1,7 +1,6 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import React, { memo, useMemo } from 'react';
 import {
-  ActivityIndicator,
   Pressable,
   StyleSheet,
   Text,
@@ -16,6 +15,7 @@ import {
 import { Radii, Spacing, stageColor, type AppColors } from '../theme';
 import type { KanbanStage, ProductionProject } from '../types';
 
+import SpinningLoader from './SpinningLoader';
 type Props = {
   item: ProductionProject;
   stage?: KanbanStage | null;
@@ -126,7 +126,7 @@ function SxListCard({
           accessibilityLabel={needsClassify ? 'Phân loại' : 'Chuyển cột'}
         >
           {moving ? (
-            <ActivityIndicator size="small" color="#fff" />
+            <SpinningLoader size="small" color="#fff" />
           ) : (
             <>
               <Ionicons

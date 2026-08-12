@@ -3,7 +3,6 @@ import DateTimePicker, { type DateTimePickerEvent } from '@react-native-communit
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
   Modal,
@@ -25,6 +24,7 @@ import ProjectCrmTaskRow from '../components/projectDetail/ProjectCrmTaskRow';
 import ProjectDocumentsTab from '../components/projectDetail/ProjectDocumentsTab';
 import ProjectDriveTab from '../components/projectDetail/ProjectDriveTab';
 import ProjectMembersTab from '../components/projectDetail/ProjectMembersTab';
+import SpinningLoader from '../components/SpinningLoader';
 import TapHighlight from '../components/TapHighlight';
 import { formatApiError } from '../api/client';
 import { useNotifications } from '../context/NotificationContext';
@@ -89,6 +89,8 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
   const [activities, setActivities] = useState<ProjectActivity[]>([]);
   const [commentCount, setCommentCount] = useState(0);
   const [loading, setLoading] = useState(true);
+  /** Đang chờ danh sách CV — tách khỏi header để hiện task sớm, không đợi comments. */
+  const [tasksLoading, setTasksLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [err, setErr] = useState('');
   const [editingDateField, setEditingDateField] = useState<EditableDateField | null>(null);
@@ -112,12 +114,20 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
     loadAbortRef.current = ac;
     const seq = ++loadSeqRef.current;
     const forProjectId = projectId;
-    if (!silent) setLoading(true);
+    if (!silent) {
+      setLoading(true);
+      setTasksLoading(true);
+      setTasks([]);
+      setActivities([]);
+      setCommentCount(0);
+    }
     setErr('');
     try {
       const detail = await fetchProductionProjectDetail(forProjectId);
       if (seq !== loadSeqRef.current || ac.signal.aborted) return;
       setProject(detail);
+      // Header/tabs hiện ngay — không chờ tasks/comments.
+      if (!silent) setLoading(false);
 
       let resolvedDealId =
         pickPrimaryCrmDealId(detail.crmDeals)
@@ -125,10 +135,14 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
       if (!resolvedDealId) resolvedDealId = await fetchDealIdForProject(forProjectId);
       if (seq !== loadSeqRef.current || ac.signal.aborted) return;
 
-      // Activities không phụ thuộc deal — chạy song song với tasks.
-      const actPromise = fetchProjectActivities(forProjectId);
-
       const workshopTypeId = detail.workshop_type_id || detail.workshop_type?.id || null;
+
+      // Activities + comments chạy nền song song với tasks — không chặn tab Công việc.
+      const actPromise = fetchProjectActivities(forProjectId).catch(() => [] as ProjectActivity[]);
+      const commentDealHint = resolvedDealId;
+      const commentPromise = fetchThreadComments(
+        resolveCommentSource(forProjectId, commentDealHint),
+      ).catch(() => []);
 
       let taskRows = resolvedDealId
         ? await fetchCrmDealTasks(resolvedDealId, { workshopTypeId })
@@ -158,22 +172,38 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
 
       if (seq !== loadSeqRef.current || ac.signal.aborted) return;
       setDealId(resolvedDealId);
-
-      const [actRows, commentRows] = await Promise.all([
-        actPromise,
-        fetchThreadComments(resolveCommentSource(forProjectId, resolvedDealId)).catch(() => []),
-      ]);
-      if (seq !== loadSeqRef.current || ac.signal.aborted) return;
       setTasks(taskRows);
-      setActivities(actRows);
-      setCommentCount(commentRows.length);
+      setTasksLoading(false);
+
+      // Badge bình luận / hoạt động — cập nhật sau, không chặn list CV.
+      void Promise.all([actPromise, commentPromise]).then(async ([actRows, commentRows]) => {
+        if (seq !== loadSeqRef.current || ac.signal.aborted) return;
+        setActivities(actRows);
+        // Deal đổi sau fan-out focus → refetch count đúng thread.
+        if (resolvedDealId && resolvedDealId !== commentDealHint) {
+          const rows = await fetchThreadComments(
+            resolveCommentSource(forProjectId, resolvedDealId),
+          ).catch(() => []);
+          if (seq !== loadSeqRef.current || ac.signal.aborted) return;
+          setCommentCount(rows.length);
+          return;
+        }
+        setCommentCount(commentRows.length);
+      });
     } catch (e) {
       if (seq !== loadSeqRef.current) return;
       const msg = String((e as { message?: string })?.message || '');
       if (/aborted|canceled|cancelled/i.test(msg)) return;
       setErr(formatApiError(e));
+      if (!silent) {
+        setLoading(false);
+        setTasksLoading(false);
+      }
     } finally {
-      if (seq === loadSeqRef.current && !silent) setLoading(false);
+      if (seq === loadSeqRef.current && !silent) {
+        setLoading(false);
+        setTasksLoading(false);
+      }
     }
   }, [projectId, focusTaskId]);
 
@@ -783,7 +813,7 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
   if (loading && !project) {
     return (
       <View style={[styles.root, { alignItems: 'center', justifyContent: 'center' }]}>
-        <ActivityIndicator size="large" color={colors.primary} />
+        <SpinningLoader color={colors.primary} size={36} label="Đang tải…" />
       </View>
     );
   }
@@ -892,7 +922,7 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
             <Text style={styles.focusBannerSub} numberOfLines={2}>{focusedTask.title}</Text>
           </View>
         </View>
-      ) : focusTaskId && !loading && tasks.length > 0 ? (
+      ) : focusTaskId && !tasksLoading && tasks.length > 0 ? (
         <View style={[styles.focusBanner, styles.focusBannerWarn]}>
           <Ionicons name="information-circle-outline" size={16} color={colors.warning} />
           <Text style={[styles.focusBannerSub, { color: colors.warning, flex: 1 }]}>
@@ -998,9 +1028,18 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
               </>
             )}
             ListEmptyComponent={(
-              <Text style={[styles.empty, { paddingHorizontal: Spacing.lg, paddingTop: 8 }]}>
-                Chưa có nhiệm vụ SX — đồng bộ từ web khi deal có template.
-              </Text>
+              tasksLoading ? (
+                <SpinningLoader
+                  color={colors.primary}
+                  size={32}
+                  label="Đang tải công việc…"
+                  style={{ paddingHorizontal: Spacing.lg }}
+                />
+              ) : (
+                <Text style={[styles.empty, { paddingHorizontal: Spacing.lg, paddingTop: 8 }]}>
+                  Chưa có nhiệm vụ SX — đồng bộ từ web khi deal có template.
+                </Text>
+              )
             )}
             renderSectionHeader={renderTaskSectionHeader}
             renderItem={renderTaskItem}
@@ -1131,7 +1170,7 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
                             disabled={dateSaving}
                           >
                             {dateSaving ? (
-                              <ActivityIndicator color="#FFF" size="small" />
+                              <SpinningLoader color="#FFF" size="small" />
                             ) : (
                               <Text style={styles.dateBtnTxt}>Lưu</Text>
                             )}
@@ -1282,7 +1321,7 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
                 disabled={moneySaving}
               >
                 {moneySaving ? (
-                  <ActivityIndicator color="#FFF" size="small" />
+                  <SpinningLoader color="#FFF" size="small" />
                 ) : (
                   <Text style={styles.dateBtnTxt}>Lưu</Text>
                 )}

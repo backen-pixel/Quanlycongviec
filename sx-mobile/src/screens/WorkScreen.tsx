@@ -1,12 +1,19 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
-import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
+import {
+  useFocusEffect,
+  useNavigation,
+  useRoute } from '@react-navigation/native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import type { RouteProp } from '@react-navigation/native';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React,
+  { useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState } from 'react';
 import {
-  ActivityIndicator,
   Alert,
   AppState,
   FlatList,
@@ -41,9 +48,11 @@ import type { MainTabParamList } from '../navigation/MainTabs';
 import { Radii, Spacing, colorWithAlpha, type AppColors } from '../theme';
 import {
   type WorkTask,
+  type WorkTasksStats,
   assignmentDealCardLabel,
   canViewTeamWork,
   collectAssigneeOptions,
+  fetchProductionWorkTaskStats,
   fetchProductionWorkTasksPage,
   formatTaskDeadline,
   isTaskDone,
@@ -62,6 +71,7 @@ import {
   WORK_TASKS_PAGE_SIZE,
 } from '../lib/workTasksApi';
 
+import SpinningLoader from '../components/SpinningLoader';
 type StatusFilter = WorkStatusFilter;
 type ScopeFilter = WorkScopeFilter;
 
@@ -454,6 +464,8 @@ export default function WorkScreen() {
   const [chipLoading, setChipLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** KPI từ /stats (đủ toàn bộ) — tránh lệch vì list chỉ tải 200 dòng. */
+  const [serverStats, setServerStats] = useState<WorkTasksStats | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [scope, setScope] = useState<ScopeFilter>(teamView ? 'team' : 'mine');
   const [assigneeFilter, setAssigneeFilter] = useState<string>('all');
@@ -615,6 +627,35 @@ export default function WorkScreen() {
     filtersReady,
   ]);
 
+  /** KPI server — đếm đủ mọi assignment (không cắt 200). */
+  const loadStats = useCallback(async () => {
+    if (!userId || !filtersReady) return;
+    try {
+      const assigneeId = !teamView || scope === 'mine'
+        ? userId
+        : (assigneeFilter !== 'all' ? assigneeFilter : null);
+      const companyId = filterCompany || (canPickCompany ? null : (user?.company_id || null));
+      const next = await fetchProductionWorkTaskStats({
+        assigneeId,
+        companyId,
+        q: search.trim() || undefined,
+      });
+      setServerStats(next);
+    } catch {
+      /* giữ stats cũ / fallback client */
+    }
+  }, [
+    userId,
+    filtersReady,
+    teamView,
+    scope,
+    assigneeFilter,
+    filterCompany,
+    canPickCompany,
+    user?.company_id,
+    search,
+  ]);
+
   /** Chip status → lọc server (status / overdue). */
   const loadChip = useCallback(async (append = false) => {
     const chip = statusFilterRef.current;
@@ -709,19 +750,27 @@ export default function WorkScreen() {
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      await load(false);
+      await Promise.all([load(false), loadStats()]);
       if (statusFilterRef.current !== 'all') await loadChip(false);
     } finally {
       setRefreshing(false);
     }
-  }, [load, loadChip]);
+  }, [load, loadChip, loadStats]);
 
   useEffect(() => {
     if (!filtersReady) return;
     setLoading(true);
     skipNextFocusRefreshRef.current = true;
     void load(false);
-  }, [load, filtersReady]);
+    void loadStats();
+  }, [load, loadStats, filtersReady]);
+
+  // Search đổi → chỉ cập nhật KPI server (list vẫn lọc client trên trang đã tải).
+  useEffect(() => {
+    if (!filtersReady || !userId) return;
+    const t = setTimeout(() => { void loadStats(); }, 350);
+    return () => clearTimeout(t);
+  }, [search, loadStats, filtersReady, userId]);
 
   // Chip status → list riêng qua API (status / overdue); KPI vẫn từ `tasks` scope.
   useEffect(() => {
@@ -749,9 +798,10 @@ export default function WorkScreen() {
       if (now - lastSilentAtRef.current < 8_000) return undefined;
       lastSilentAtRef.current = now;
       void load(true);
+      void loadStats();
       if (statusFilterRef.current !== 'all') void loadChip(false);
       return undefined;
-    }, [filtersReady, userId, load, loadChip]),
+    }, [filtersReady, userId, load, loadChip, loadStats]),
   );
 
   useEffect(() => {
@@ -761,14 +811,16 @@ export default function WorkScreen() {
       if (now - lastSilentAtRef.current < 60_000) return;
       lastSilentAtRef.current = now;
       void load(true);
+      void loadStats();
       if (statusFilterRef.current !== 'all') void loadChip(false);
     });
     return () => sub.remove();
-  }, [load, loadChip, filtersReady, userId]);
+  }, [load, loadChip, loadStats, filtersReady, userId]);
 
   useProductionRealtime({
     onRefresh: () => {
       void load(true);
+      void loadStats();
       if (statusFilterRef.current !== 'all') void loadChip(false);
     },
     enabled: Boolean(userId) && filtersReady,
@@ -954,15 +1006,22 @@ export default function WorkScreen() {
     });
   }, [tasks, search, teamView, scope, assigneeFilter, filterCompany]);
 
-  const stats = useMemo(
-    () => ({
+  const stats = useMemo(() => {
+    if (serverStats) {
+      return {
+        pending: serverStats.pending,
+        inProgress: serverStats.in_progress,
+        done: serverStats.completed,
+        overdue: serverStats.overdue,
+      };
+    }
+    return {
       pending: statsScope.filter((t) => isTaskPending(t.status)).length,
       inProgress: statsScope.filter((t) => isTaskInProgress(t.status)).length,
       done: statsScope.filter((t) => isTaskDone(t.status)).length,
       overdue: statsScope.filter((t) => isTaskOverdue(t)).length,
-    }),
-    [statsScope],
-  );
+    };
+  }, [serverStats, statsScope]);
 
   const personLabel = useMemo(() => {
     if (assigneeFilter === 'all') return 'Tất cả';
@@ -1227,7 +1286,7 @@ export default function WorkScreen() {
                 pressStyle={{ opacity: 0.8 }}
               >
                 {busy ? (
-                  <ActivityIndicator size="small" color={colors.primary} />
+                  <SpinningLoader size="small" color={colors.primary} />
                 ) : (
                   <Ionicons
                     name="attach"
@@ -1277,7 +1336,7 @@ export default function WorkScreen() {
               pressStyle={{ opacity: 0.8 }}
             >
               {busy ? (
-                <ActivityIndicator size="small" color={colors.text} />
+                <SpinningLoader size="small" color={colors.text} />
               ) : (
                 <Text style={styles.statusBtnTxt}>
                   {isTaskDone(task.status) ? 'Mở lại' : isTaskPending(task.status) ? 'Bắt đầu' : 'Hoàn thành'}
@@ -1293,7 +1352,7 @@ export default function WorkScreen() {
   if ((loading || (statusFilter !== 'all' && chipLoading && chipTasks.length === 0)) && !refreshing) {
     return (
       <View style={[styles.center, { paddingTop: insets.top }]}>
-        <ActivityIndicator size="large" color={colors.primary} />
+        <SpinningLoader size="large" color={colors.primary} />
       </View>
     );
   }
@@ -1519,7 +1578,7 @@ export default function WorkScreen() {
             ? null
             : loadingMore
               ? (
-                <ActivityIndicator style={{ marginVertical: 16 }} color={colors.primary} />
+                <SpinningLoader style={{ marginVertical: 16 }} color={colors.primary} />
               )
               : (statusFilter === 'all' ? hasMoreTasks : chipHasMore)
                 ? (

@@ -1,8 +1,12 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { Audio } from 'expo-av';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
+  Audio } from 'expo-av';
+import React,
+  { useEffect,
+  useMemo,
+  useRef,
+  useState } from 'react';
+import {
   Alert,
   Pressable,
   StyleSheet,
@@ -16,6 +20,8 @@ import { type PendingChatFile } from '../../lib/messengerMedia';
 import { getMessengerColors } from '../../lib/messengerTheme';
 import { ensureMicOnlyAsync, requestVoicePermissionsQuick } from '../../lib/voicePermissions';
 import { Radii, Spacing } from '../../theme';
+
+import SpinningLoader from '../SpinningLoader';
 
 type Props = {
   draft: string;
@@ -353,7 +359,7 @@ export default function ChatComposer({
             disabled={!canSend}
           >
             {sending ? (
-              <ActivityIndicator size="small" color="#FFF" />
+              <SpinningLoader size="small" color="#FFF" />
             ) : (
               <Ionicons name="send" size={20} color="#FFF" />
             )}
