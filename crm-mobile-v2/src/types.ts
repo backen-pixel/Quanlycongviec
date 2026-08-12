@@ -127,6 +127,22 @@ export type CrmKanbanItem = {
   overdue: boolean;
   /** Flag user «đã tương tác» — ẩn deadline cột trên thẻ. */
   isInteracted?: boolean;
+  /** Dự án SX đã tạo (project_id) — bỏ qua picker khi chuyển cột thắng. */
+  projectId?: string | null;
+  /** Badge tiến độ xưởng (đồng bộ từ module SX) — giống web sx_pipeline_stage. */
+  sxPipelineStage?: {
+    id?: string | null;
+    name?: string | null;
+    color?: string | null;
+    icon?: string | null;
+  } | null;
+  /** Badge tiến độ VC. */
+  vcPipelineStage?: {
+    id?: string | null;
+    name?: string | null;
+    color?: string | null;
+    icon?: string | null;
+  } | null;
 };
 
 export type CrmBoard = {
@@ -179,6 +195,8 @@ export type PlannerItem = {
   /** Stamp từ `/crm/deadline-bucket-pages` — ưu tiên khi gom cột (khớp web). */
   deadlineBucket?: DeadlineBucketKey | null;
   overdue: boolean;
+  /** Dự án SX đã tạo — bỏ qua picker khi chuyển cột thắng. */
+  projectId?: string | null;
 };
 
 export type TaskKind = 'call' | 'meeting' | 'quote' | 'followup';

@@ -5,7 +5,6 @@ import { Alert, FlatList, KeyboardAvoidingView, Modal, Platform, Pressable, Refr
 import { formatApiError } from '../../api/client';
 import {
   deleteLeadComment,
-  fetchLeadComments,
   fetchLeadMembers,
   markLeadCommentsRead,
   postLeadComment,
@@ -25,19 +24,26 @@ import {
 import { colorFromName, initialsFromName } from '../../lib/media';
 import { subscribeAppSocket } from '../../lib/appSocket';
 import {
+  getCachedLeadComments,
+  removeCachedLeadComment,
+  setCachedLeadComments,
+  patchCachedLeadComment,
+  fetchLeadCommentsShared,
+} from '../../lib/leadCommentsCache';
+import {
   fetchNotificationPrefs,
   isCommentShowOnScreenEnabled,
 } from '../../lib/notificationPrefs';
-import { Radii, Spacing, useColors, type ThemeColors } from '../../theme';
-import Avatar from '../Avatar';
-import CommentAttachmentsBlock from './CommentAttachmentsBlock';
-import CrmCommentBody from './CrmCommentBody';
-import VcHandoverCommentCard from './VcHandoverCommentCard';
 import {
   extractAllSystemFileLinks,
   isSystemCommentBody,
 } from '../../lib/crmSystemCommentFiles';
+import { Radii, Spacing, useColors, type ThemeColors } from '../../theme';
+import Avatar from '../Avatar';
+import CommentAttachmentsBlock from './CommentAttachmentsBlock';
 import type { CommentAttachment } from './CommentAttachmentsBlock';
+import CrmCommentBody from './CrmCommentBody';
+import VcHandoverCommentCard from './VcHandoverCommentCard';
 
 export const CRM_COMMENT_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'] as const;
 
@@ -137,11 +143,11 @@ export default function LeadCommentsTab({
   const { user } = useAuth();
   const myId = currentUserId(user);
 
-  const [showOnScreen, setShowOnScreen] = useState(true);
-  const [prefsReady, setPrefsReady] = useState(false);
-  const [items, setItems] = useState<LeadComment[]>([]);
+  const [showOnScreen, setShowOnScreen] = useState(() => isCommentShowOnScreenEnabled());
+  const [prefsReady, setPrefsReady] = useState(true);
+  const [items, setItems] = useState<LeadComment[]>(() => getCachedLeadComments(leadId) || []);
   const [members, setMembers] = useState<LeadMember[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !getCachedLeadComments(leadId));
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
@@ -160,10 +166,19 @@ export default function LeadCommentsTab({
   onOpenedRef.current = onOpened;
 
   const load = useCallback(async (silent = false) => {
-    if (!silent) setLoading(true);
+    const cached = getCachedLeadComments(leadId);
+    if (!silent && !(cached && cached.length)) setLoading(true);
     setError(null);
     try {
-      const prefs = await fetchNotificationPrefs();
+      // Prefs + comments song song — không chờ prefs rồi mới gọi comments
+      const prefsPromise = fetchNotificationPrefs();
+      const commentsPromise = fetchLeadCommentsShared(leadId);
+      // Members chỉ cần cho @mention — không chặn vẽ list
+      void fetchLeadMembers(leadId)
+        .then((mems) => setMembers(mems))
+        .catch(() => { /* mention optional */ });
+
+      const [prefs, comments] = await Promise.all([prefsPromise, commentsPromise]);
       const allowed = isCommentShowOnScreenEnabled(prefs);
       setShowOnScreen(allowed);
       setPrefsReady(true);
@@ -172,19 +187,14 @@ export default function LeadCommentsTab({
         setMembers([]);
         return;
       }
-      const [comments, mems] = await Promise.all([
-        fetchLeadComments(leadId),
-        fetchLeadMembers(leadId),
-      ]);
+
+      setCachedLeadComments(leadId, comments);
       setItems(comments);
-      setMembers(mems);
       onItemsChangeRef.current?.(comments.length);
-      try {
-        await markLeadCommentsRead(leadId);
-        onOpenedRef.current?.();
-      } catch {
-        /* read receipt optional */
-      }
+      // Đánh dấu đã đọc không chặn hiển thị
+      void markLeadCommentsRead(leadId)
+        .then(() => onOpenedRef.current?.())
+        .catch(() => { /* optional */ });
     } catch (e) {
       setError(formatApiError(e));
     } finally {
@@ -205,12 +215,14 @@ export default function LeadCommentsTab({
         if (String(payload?.lead_id) !== String(leadId)) return;
         const action = payload?.action || 'created';
         if (action === 'deleted') {
+          if (payload?.comment_id != null) removeCachedLeadComment(leadId, payload.comment_id);
           setItems((prev) => prev.filter((c) => String(c.id) !== String(payload?.comment_id)));
           return;
         }
         const row = payload?.comment;
         if (!row?.id) return;
         if (action === 'updated') {
+          patchCachedLeadComment(leadId, row);
           setItems((prev) =>
             prev.map((c) =>
               String(c.id) === String(row.id)
@@ -220,7 +232,12 @@ export default function LeadCommentsTab({
           );
           return;
         }
-        setItems((prev) => upsertComment(prev, row));
+        patchCachedLeadComment(leadId, row);
+        setItems((prev) => {
+          const next = upsertComment(prev, row);
+          setCachedLeadComments(leadId, next);
+          return next;
+        });
       };
       socket.on('lead:comment', handler);
       return () => {
@@ -410,8 +427,13 @@ export default function LeadCommentsTab({
     );
   };
 
-  if (loading && !items.length && !prefsReady) {
-    return <SpinningLoader color={Colors.blue} style={{ marginTop: 32 }} />;
+  if (loading && !items.length) {
+    return (
+      <View style={{ paddingTop: 32, alignItems: 'center' }}>
+        <SpinningLoader color={Colors.blue} />
+        <Text style={{ marginTop: 12, color: Colors.textMuted, fontSize: 13 }}>Đang tải bình luận…</Text>
+      </View>
+    );
   }
 
   if (prefsReady && !showOnScreen) {
@@ -441,11 +463,18 @@ export default function LeadCommentsTab({
           error ? <ErrorBanner message={error} onRetry={() => void load()} /> : null
         }
         ListEmptyComponent={
-          <EmptyState
-            icon="chatbubbles-outline"
-            title="Chưa có bình luận"
-            hint="Thảo luận nội bộ — @ để nhắc thành viên tham gia."
-          />
+          loading ? (
+            <View style={{ paddingTop: 24, alignItems: 'center' }}>
+              <SpinningLoader color={Colors.blue} />
+              <Text style={{ marginTop: 12, color: Colors.textMuted, fontSize: 13 }}>Đang tải bình luận…</Text>
+            </View>
+          ) : (
+            <EmptyState
+              icon="chatbubbles-outline"
+              title="Chưa có bình luận"
+              hint="Thảo luận nội bộ — @ để nhắc thành viên tham gia."
+            />
+          )
         }
         renderItem={renderComment}
       />

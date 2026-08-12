@@ -66,6 +66,19 @@ type ApiLead = {
   next_follow_up?: string | null;
   next_follow_up_at?: string | null;
   expected_close_date?: string | null;
+  project_id?: string | null;
+  sx_pipeline_stage?: {
+    id?: string | null;
+    name?: string | null;
+    color?: string | null;
+    icon?: string | null;
+  } | null;
+  vc_pipeline_stage?: {
+    id?: string | null;
+    name?: string | null;
+    color?: string | null;
+    icon?: string | null;
+  } | null;
   stage?: ApiStage | null;
   customer?: { full_name?: string | null; phone?: string | null; address?: string | null } | null;
   company?: { id?: string | null; name?: string | null; short_name?: string | null } | null;
@@ -309,6 +322,23 @@ function mapKanbanItem(it: ApiLead, kind: 'lead' | 'deal'): CrmKanbanItem {
     dueIso: due,
     overdue,
     isInteracted: !!it.is_interacted,
+    projectId: it.project_id ? String(it.project_id) : null,
+    sxPipelineStage: it.sx_pipeline_stage
+      ? {
+          id: it.sx_pipeline_stage.id != null ? String(it.sx_pipeline_stage.id) : null,
+          name: it.sx_pipeline_stage.name || null,
+          color: it.sx_pipeline_stage.color || null,
+          icon: it.sx_pipeline_stage.icon || null,
+        }
+      : null,
+    vcPipelineStage: it.vc_pipeline_stage
+      ? {
+          id: it.vc_pipeline_stage.id != null ? String(it.vc_pipeline_stage.id) : null,
+          name: it.vc_pipeline_stage.name || null,
+          color: it.vc_pipeline_stage.color || null,
+          icon: it.vc_pipeline_stage.icon || null,
+        }
+      : null,
   };
 }
 
@@ -1017,15 +1047,161 @@ export async function fetchCrmBoard(type: 'lead' | 'deal', signal?: AbortSignal)
   return { stages: boot.stages, items: boot.initialPage.items };
 }
 
+export type CrmSxProductionTarget = {
+  production_company_id: string;
+  workshop_type_id: string;
+};
+
+export type ProductionCompanyOption = {
+  id: string;
+  name: string;
+  shortName?: string | null;
+};
+
+export type WorkshopProjectTypeOption = {
+  id: string;
+  name: string;
+  companyId?: string | null;
+};
+
+const sxCompaniesCache = new Map<string, ProductionCompanyOption[]>();
+const sxCompaniesInflight = new Map<string, Promise<ProductionCompanyOption[]>>();
+const workshopTypesCache = new Map<string, WorkshopProjectTypeOption[]>();
+const workshopTypesInflight = new Map<string, Promise<WorkshopProjectTypeOption[]>>();
+
+function sxCompanyCacheKey(crmCompanyId?: string | null): string {
+  return String(crmCompanyId || '').trim() || '__all__';
+}
+
+function mapProductionCompanies(data: unknown): ProductionCompanyOption[] {
+  const rows = Array.isArray(data)
+    ? data
+    : Array.isArray((data as { companies?: unknown })?.companies)
+      ? (data as { companies: unknown[] }).companies
+      : Array.isArray((data as { data?: unknown })?.data)
+        ? (data as { data: unknown[] }).data
+        : [];
+  return (rows as Record<string, unknown>[])
+    .map((r) => {
+      const id = String(r.id || r.company_id || '');
+      if (!id) return null;
+      const name = String(r.name || r.short_name || r.company_name || 'Công ty SX');
+      return {
+        id,
+        name,
+        shortName: r.short_name != null ? String(r.short_name) : null,
+      } satisfies ProductionCompanyOption;
+    })
+    .filter(Boolean) as ProductionCompanyOption[];
+}
+
+function mapWorkshopTypes(data: unknown): WorkshopProjectTypeOption[] {
+  const rows = Array.isArray(data)
+    ? data
+    : Array.isArray((data as { types?: unknown })?.types)
+      ? (data as { types: unknown[] }).types
+      : Array.isArray((data as { data?: unknown })?.data)
+        ? (data as { data: unknown[] }).data
+        : [];
+  return (rows as Record<string, unknown>[])
+    .map((r) => {
+      const id = String(r.id || '');
+      if (!id) return null;
+      return {
+        id,
+        name: String(r.name || 'Phân loại'),
+        companyId: r.company_id != null ? String(r.company_id) : null,
+      } satisfies WorkshopProjectTypeOption;
+    })
+    .filter(Boolean) as WorkshopProjectTypeOption[];
+}
+
+/** Cache đồng bộ — mở modal SX không phải chờ mạng nếu đã prefetch. */
+export function peekCrmProductionCompanies(
+  crmCompanyId?: string | null,
+): ProductionCompanyOption[] | null {
+  const key = sxCompanyCacheKey(crmCompanyId);
+  return sxCompaniesCache.has(key) ? sxCompaniesCache.get(key)! : null;
+}
+
+/** Prefetch nền danh sách công ty SX (gọi khi mở «Chuyển cột» deal). */
+export function prefetchCrmProductionCompanies(crmCompanyId?: string | null): void {
+  void fetchCrmProductionCompanies(crmCompanyId).catch(() => undefined);
+}
+
+/** Công ty SX được phép chọn khi ký HĐ — GET /crm/production-companies. */
+export async function fetchCrmProductionCompanies(
+  crmCompanyId?: string | null,
+): Promise<ProductionCompanyOption[]> {
+  const key = sxCompanyCacheKey(crmCompanyId);
+  const cached = sxCompaniesCache.get(key);
+  if (cached) return cached;
+  const inflight = sxCompaniesInflight.get(key);
+  if (inflight) return inflight;
+  const params: Record<string, string> = {};
+  if (crmCompanyId) params.company_id = String(crmCompanyId);
+  const p = api
+    .get<unknown>('/crm/production-companies', { params })
+    .then((r) => {
+      const list = mapProductionCompanies(r.data);
+      sxCompaniesCache.set(key, list);
+      return list;
+    })
+    .finally(() => {
+      sxCompaniesInflight.delete(key);
+    });
+  sxCompaniesInflight.set(key, p);
+  return p;
+}
+
+/** Phân loại / module SX — GET /workshop/project-types?module=production. */
+export async function fetchWorkshopProjectTypes(
+  productionCompanyId: string,
+): Promise<WorkshopProjectTypeOption[]> {
+  if (!productionCompanyId) return [];
+  const key = String(productionCompanyId);
+  const cached = workshopTypesCache.get(key);
+  if (cached) return cached;
+  const inflight = workshopTypesInflight.get(key);
+  if (inflight) return inflight;
+  const p = api
+    .get<unknown>('/workshop/project-types', {
+      params: { company_id: productionCompanyId, module: 'production' },
+    })
+    .then((r) => {
+      const list = mapWorkshopTypes(r.data);
+      workshopTypesCache.set(key, list);
+      return list;
+    })
+    .finally(() => {
+      workshopTypesInflight.delete(key);
+    });
+  workshopTypesInflight.set(key, p);
+  return p;
+}
+
 /** Chuyển lead/deal sang cột pipeline khác. */
 export async function moveCrmItemStage(
   id: string,
   stageId: string,
-  extra?: { kanbanDeadlineAt?: string | null },
+  extra?: {
+    kanbanDeadlineAt?: string | null;
+    productionCompanyId?: string | null;
+    workshopTypeId?: string | null;
+    targets?: CrmSxProductionTarget[];
+  },
 ): Promise<void> {
   const body: Record<string, unknown> = { stage_id: stageId };
   if (extra?.kanbanDeadlineAt) {
     body.kanban_deadline_at = extra.kanbanDeadlineAt;
+  }
+  if (extra?.targets?.length) {
+    body.targets = extra.targets;
+    body.production_company_id = extra.targets[0].production_company_id;
+    body.workshop_type_id = extra.targets[0].workshop_type_id;
+  } else {
+    if (extra?.productionCompanyId) body.production_company_id = extra.productionCompanyId;
+    if (extra?.workshopTypeId) body.workshop_type_id = extra.workshopTypeId;
   }
   await api.patch(`/crm/leads/${id}/stage`, body);
 }
@@ -1141,6 +1317,7 @@ function toPlannerItem(it: ApiLead, kind: 'lead' | 'deal'): PlannerItem {
     deadlineLabel,
     dueIso: due,
     overdue,
+    projectId: it.project_id ? String(it.project_id) : null,
   };
 }
 
@@ -1510,6 +1687,7 @@ function toDeadlineItem(
     deadlineLabel,
     dueIso: due,
     overdue,
+    projectId: it.project_id ? String(it.project_id) : null,
   };
 }
 

@@ -11,6 +11,7 @@ import ColumnPickerModal from '../components/ColumnPickerModal';
 import CrmFilterSheet from '../components/CrmFilterSheet';
 import CrmSearchFieldBar from '../components/CrmSearchFieldBar';
 import DatePickerSheet from '../components/DatePickerSheet';
+import DealWonSxPickerModal from '../components/DealWonSxPickerModal';
 import MoveStageModal from '../components/MoveStageModal';
 import PickerSheet from '../components/PickerSheet';
 import {
@@ -40,6 +41,8 @@ import {
   prefetchCrmNeighborStages,
   setCrmHubCache,
   warmCrmHubPipelines,
+  prefetchCrmProductionCompanies,
+  type CrmSxProductionTarget,
 } from '../api/crm';
 import { formatApiError } from '../api/client';
 import { useAuth } from '../context/AuthContext';
@@ -295,6 +298,28 @@ const KanbanCard = React.memo(function KanbanCard({
               <Text style={styles.tagOverdueText}>Quá hạn</Text>
             </View>
           ) : null}
+          {item.vcPipelineStage?.name || item.sxPipelineStage?.name ? (
+            <View
+              style={[
+                styles.tag,
+                styles.tagGap,
+                {
+                  borderColor: (item.vcPipelineStage || item.sxPipelineStage)?.color || Colors.blue,
+                  backgroundColor: `${(item.vcPipelineStage || item.sxPipelineStage)?.color || Colors.blue}18`,
+                },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.tagText,
+                  { color: (item.vcPipelineStage || item.sxPipelineStage)?.color || Colors.blue },
+                ]}
+                numberOfLines={1}
+              >
+                {item.vcPipelineStage ? 'VC' : 'SX'} · {(item.vcPipelineStage || item.sxPipelineStage)?.name}
+              </Text>
+            </View>
+          ) : null}
         </View>
       </View>
 
@@ -458,6 +483,10 @@ export default function CrmHubScreen({
   const [assigningId, setAssigningId] = useState<string | null>(null);
   const [moveItem, setMoveItem] = useState<CrmKanbanItem | null>(null);
   const [moveDeadlineCtx, setMoveDeadlineCtx] = useState<{
+    item: CrmKanbanItem;
+    target: CrmPipelineStage;
+  } | null>(null);
+  const [moveSxCtx, setMoveSxCtx] = useState<{
     item: CrmKanbanItem;
     target: CrmPipelineStage;
   } | null>(null);
@@ -1095,11 +1124,102 @@ export default function CrmHubScreen({
   );
 
   useCrmRealtimeRefresh(
-    useCallback(() => {
+    useCallback((payload) => {
       if (!canLoadCrmRef.current) return;
+      const detail = payload?.detail;
+      // Xóa dự án / deal — gỡ thẻ ngay rồi reload nền
+      if (
+        detail
+        && (detail.reason === 'project_deleted' || detail.action === 'deleted')
+        && detail.lead_id
+      ) {
+        const lid = String(detail.lead_id);
+        setHub((prev) => {
+          const nextCache = { ...prev.cache };
+          for (const sid of Object.keys(nextCache)) {
+            const col = nextCache[sid];
+            if (!col?.items?.some((it) => it.id === lid)) continue;
+            nextCache[sid] = {
+              ...col,
+              items: col.items.filter((it) => it.id !== lid),
+            };
+          }
+          return { ...prev, cache: nextCache };
+        });
+      }
+      // Cập nhật badge SX/VC hoặc đổi cột từ xưởng
+      if (
+        detail?.lead_id
+        && (
+          payload?.reason === 'badge_updated'
+          || detail.action === 'stage_changed'
+        )
+      ) {
+        const lid = String(detail.lead_id);
+        const sid = detail.stage_id != null ? String(detail.stage_id) : null;
+        const stage = sid ? hubStages.find((s) => String(s.id) === sid) : null;
+        setHub((prev) => {
+          const nextCache = { ...prev.cache };
+          let moved: CrmKanbanItem | null = null;
+          let fromSid: string | null = null;
+          for (const colId of Object.keys(nextCache)) {
+            const col = nextCache[colId];
+            const found = col?.items?.find((it) => it.id === lid);
+            if (!found) continue;
+            fromSid = colId;
+            moved = {
+              ...found,
+              ...(sid
+                ? {
+                    stageId: sid,
+                    stageName: stage?.name || found.stageName,
+                    stageColor: stage?.color || found.stageColor,
+                  }
+                : null),
+              sxPipelineStage: Object.prototype.hasOwnProperty.call(detail, 'sx_pipeline_stage')
+                ? ((detail.sx_pipeline_stage as CrmKanbanItem['sxPipelineStage']) || null)
+                : found.sxPipelineStage,
+              vcPipelineStage: Object.prototype.hasOwnProperty.call(detail, 'vc_pipeline_stage')
+                ? ((detail.vc_pipeline_stage as CrmKanbanItem['vcPipelineStage']) || null)
+                : found.vcPipelineStage,
+              projectId: Object.prototype.hasOwnProperty.call(detail, 'project_id')
+                ? (detail.project_id ? String(detail.project_id) : null)
+                : found.projectId,
+            };
+            if (sid && sid !== colId) {
+              nextCache[colId] = {
+                ...col,
+                items: col.items.filter((it) => it.id !== lid),
+              };
+            } else {
+              nextCache[colId] = {
+                ...col,
+                items: col.items.map((it) => (it.id === lid ? moved! : it)),
+              };
+            }
+            break;
+          }
+          if (!moved) return prev;
+          if (sid && fromSid && fromSid !== sid) {
+            if (nextCache[sid]?.loaded) {
+              nextCache[sid] = {
+                ...nextCache[sid],
+                items: [moved, ...nextCache[sid].items],
+              };
+            } else {
+              delete nextCache[sid];
+            }
+            const nextCounts = { ...prev.stageCounts };
+            nextCounts[fromSid] = Math.max(0, (nextCounts[fromSid] ?? 1) - 1);
+            nextCounts[sid] = (nextCounts[sid] ?? 0) + 1;
+            return { ...prev, cache: nextCache, stageCounts: nextCounts };
+          }
+          return { ...prev, cache: nextCache };
+        });
+      }
       // Silent + lite (không invalidate) — chỉ mode đang xem.
       void loadBootstrapRef.current(modeRef.current, false, undefined, true);
-    }, []),
+    }, [hubStages, setHub]),
     canLoadCrm,
   );
 
@@ -1453,7 +1573,12 @@ export default function CrmHubScreen({
   }, [displayStages]);
 
   const applyHubStageMove = useCallback(
-    async (item: CrmKanbanItem, target: CrmPipelineStage, kanbanDeadlineAt?: string) => {
+    async (
+      item: CrmKanbanItem,
+      target: CrmPipelineStage,
+      kanbanDeadlineAt?: string,
+      sxTargets?: CrmSxProductionTarget[],
+    ) => {
       const fromStageId = item.stageId;
       const moved: CrmKanbanItem = {
         ...item,
@@ -1461,6 +1586,7 @@ export default function CrmHubScreen({
         stageName: target.name,
         stageColor: target.color,
         ...(kanbanDeadlineAt ? { dueIso: kanbanDeadlineAt, overdue: false } : null),
+        ...(sxTargets?.length ? { projectId: item.projectId || 'pending' } : null),
       };
       setMovingId(item.id);
       setHub((prev) => {
@@ -1487,10 +1613,19 @@ export default function CrmHubScreen({
         return { ...prev, cache: nextCache, stageCounts: nextCounts };
       });
       try {
+        if (sxTargets?.length) {
+          showToast(`Đang tạo dự án SX cho ${item.code}…`, true);
+        }
         await moveCrmItemStage(item.id, target.id, {
           kanbanDeadlineAt: kanbanDeadlineAt || undefined,
+          targets: sxTargets,
         });
-        showToast(`Đã chuyển ${item.code} → ${target.name}`, true);
+        showToast(
+          sxTargets?.length
+            ? `Đã chuyển ${item.code} → ${target.name} (đã tạo SX)`
+            : `Đã chuyển ${item.code} → ${target.name}`,
+          true,
+        );
       } catch (e) {
         void loadBootstrap(mode, true, activeStageId);
         showToast(formatApiError(e), false);
@@ -1514,6 +1649,9 @@ export default function CrmHubScreen({
         kind: item.kind,
         target,
         existingDeadlineIso: item.dueIso,
+        projectId: item.projectId,
+        stages: hubStages,
+        itemCode: item.code,
       });
       if (plan.action === 'convert_deal') {
         Alert.alert(
@@ -1542,13 +1680,22 @@ export default function CrmHubScreen({
         );
         return;
       }
+      if (plan.action === 'block_need_won_sx') {
+        Alert.alert('Cần tạo dự án SX trước', plan.message, [{ text: 'OK' }]);
+        return;
+      }
+      if (plan.action === 'need_sx_pick') {
+        prefetchCrmProductionCompanies(item.companyId || filters.companyId);
+        setMoveSxCtx({ item, target });
+        return;
+      }
       if (plan.action === 'need_deadline') {
         setMoveDeadlineCtx({ item, target });
         return;
       }
       await applyHubStageMove(item, target, plan.kanbanDeadlineAt);
     },
-    [hubStages, showToast, applyHubStageMove, loadBootstrap, mode, activeStageId],
+    [hubStages, showToast, applyHubStageMove, loadBootstrap, mode, activeStageId, filters.companyId],
   );
 
   const patchItemInHub = useCallback(
@@ -2024,7 +2171,12 @@ export default function CrmHubScreen({
                   title: item.title,
                 })
               }
-              onMove={() => setMoveItem(item)}
+              onMove={() => {
+                if (item.kind === 'deal') {
+                  prefetchCrmProductionCompanies(item.companyId || filters.companyId);
+                }
+                setMoveItem(item);
+              }}
               onAssign={() => openAssignForItem(item)}
             />
           );
@@ -2106,11 +2258,27 @@ export default function CrmHubScreen({
         visible={!!moveItem}
         stages={hubStages}
         currentStageId={moveItem?.stageId}
+        kind={mode === 'leads' ? 'lead' : 'deal'}
         onSelect={(stageId) => {
           if (moveItem) void moveCardTo(moveItem, stageId);
           setMoveItem(null);
         }}
         onClose={() => setMoveItem(null)}
+      />
+
+      <DealWonSxPickerModal
+        visible={!!moveSxCtx}
+        dealCode={moveSxCtx?.item.code}
+        dealTitle={moveSxCtx?.item.title}
+        crmCompanyId={moveSxCtx?.item.companyId || filters.companyId}
+        onConfirm={(targets) => {
+          const ctx = moveSxCtx;
+          setMoveSxCtx(null);
+          if (!ctx) return;
+          // Đóng modal ngay — tạo dự án SX chạy nền (không giữ spinner trên form)
+          void applyHubStageMove(ctx.item, ctx.target, undefined, targets);
+        }}
+        onClose={() => setMoveSxCtx(null)}
       />
 
       <DatePickerSheet
@@ -2441,6 +2609,20 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
   },
   tagOverdueText: { color: Colors.red, fontSize: 10, fontWeight: '800' },
   cardName: { color: Colors.text, fontSize: 16, fontWeight: '800', marginTop: 8 },
+  sxBadge: {
+    marginTop: 8,
+    alignSelf: 'flex-start',
+    maxWidth: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  sxBadgeLabel: { color: Colors.textMuted, fontSize: 10, fontWeight: '800' },
+  sxBadgeName: { fontSize: 11, fontWeight: '700', flexShrink: 1 },
   customerRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 10 },
   customerName: { color: Colors.text, fontSize: 14, fontWeight: '700' },
   customerPhone: { color: Colors.blue, fontWeight: '600' },

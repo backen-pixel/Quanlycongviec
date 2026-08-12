@@ -36,7 +36,7 @@ function useSafeIsFocused(): boolean {
 
 /** Gọi `refresh` khi CRM thay đổi (socket hoặc poll live-version). */
 export function useCrmRealtimeRefresh(
-  refresh: () => void,
+  refresh: (payload?: import('../lib/crmRealtimeBus').CrmRealtimePayload) => void,
   enabledOrOpts: boolean | CrmRealtimeRefreshOpts = true,
 ): void {
   const enabled = typeof enabledOrOpts === 'boolean'
@@ -58,13 +58,17 @@ export function useCrmRealtimeRefresh(
 
   useEffect(() => {
     if (!enabled) return undefined;
-    return subscribeCrmRealtime(() => {
+    return subscribeCrmRealtime((payload) => {
       if (timerRef.current) clearTimeout(timerRef.current);
+      const delay =
+        payload.reason === 'badge_updated' || payload.detail?.action === 'stage_changed'
+          ? 350
+          : DEBOUNCE_MS;
       timerRef.current = setTimeout(() => {
         timerRef.current = null;
         if (onlyWhenFocusedRef.current && !focusedRef.current) return;
-        refreshRef.current();
-      }, DEBOUNCE_MS);
+        refreshRef.current(payload);
+      }, delay);
     });
   }, [enabled]);
 

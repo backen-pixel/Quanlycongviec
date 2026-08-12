@@ -16,6 +16,8 @@ import {
   moveCrmItemStage,
   setCrmKanbanDeadline,
   setCrmLeadInteracted,
+  prefetchCrmProductionCompanies,
+  type CrmSxProductionTarget,
 } from '../api/crm';
 import {
   fetchCrmCompanies,
@@ -32,6 +34,7 @@ import CrmListCardOptionsSheet, {
   type CrmListCardMenuAction,
 } from '../components/CrmListCardOptionsSheet';
 import DatePickerSheet from '../components/DatePickerSheet';
+import DealWonSxPickerModal from '../components/DealWonSxPickerModal';
 import MoveStageModal from '../components/MoveStageModal';
 import NotificationBadge from '../components/NotificationBadge';
 import { useAuth, currentUserId } from '../context/AuthContext';
@@ -121,6 +124,10 @@ export default function LeadDealListScreen({ kind }: Props) {
   const [moveItem, setMoveItem] = useState<CrmKanbanItem | null>(null);
   const [deadlineItem, setDeadlineItem] = useState<CrmKanbanItem | null>(null);
   const [moveDeadlineCtx, setMoveDeadlineCtx] = useState<{
+    item: CrmKanbanItem;
+    target: CrmPipelineStage;
+  } | null>(null);
+  const [moveSxCtx, setMoveSxCtx] = useState<{
     item: CrmKanbanItem;
     target: CrmPipelineStage;
   } | null>(null);
@@ -375,7 +382,12 @@ export default function LeadDealListScreen({ kind }: Props) {
   }, []);
 
   const applyListStageMove = useCallback(
-    async (item: CrmKanbanItem, target: CrmPipelineStage, kanbanDeadlineAt?: string) => {
+    async (
+      item: CrmKanbanItem,
+      target: CrmPipelineStage,
+      kanbanDeadlineAt?: string,
+      sxTargets?: CrmSxProductionTarget[],
+    ) => {
       setMovingId(item.id);
       setMoveItem(null);
       const prev = { ...item };
@@ -388,6 +400,7 @@ export default function LeadDealListScreen({ kind }: Props) {
           stageName: target.name,
           stageColor: target.color,
           ...(kanbanDeadlineAt ? { dueIso: kanbanDeadlineAt, overdue: false } : null),
+          ...(sxTargets?.length ? { projectId: item.projectId || 'pending' } : null),
         });
       }
       setStageCounts((c) => {
@@ -397,10 +410,18 @@ export default function LeadDealListScreen({ kind }: Props) {
         return next;
       });
       try {
+        if (sxTargets?.length) {
+          showToast(`Đang tạo dự án SX…`);
+        }
         await moveCrmItemStage(item.id, target.id, {
           kanbanDeadlineAt: kanbanDeadlineAt || undefined,
+          targets: sxTargets,
         });
-        showToast(`Đã chuyển → ${target.name}`);
+        showToast(
+          sxTargets?.length
+            ? `Đã chuyển → ${target.name} (đã tạo SX)`
+            : `Đã chuyển → ${target.name}`,
+        );
       } catch (e) {
         if (leaveFilteredColumn) {
           setItems((list) => [prev, ...list]);
@@ -429,6 +450,9 @@ export default function LeadDealListScreen({ kind }: Props) {
         kind: item.kind,
         target,
         existingDeadlineIso: item.dueIso,
+        projectId: item.projectId,
+        stages,
+        itemCode: item.code,
       });
       if (plan.action === 'convert_deal') {
         Alert.alert(
@@ -457,13 +481,22 @@ export default function LeadDealListScreen({ kind }: Props) {
         );
         return;
       }
+      if (plan.action === 'block_need_won_sx') {
+        Alert.alert('Cần tạo dự án SX trước', plan.message, [{ text: 'OK' }]);
+        return;
+      }
+      if (plan.action === 'need_sx_pick') {
+        prefetchCrmProductionCompanies(item.companyId || filters.companyId);
+        setMoveSxCtx({ item, target });
+        return;
+      }
       if (plan.action === 'need_deadline') {
         setMoveDeadlineCtx({ item, target });
         return;
       }
       await applyListStageMove(item, target, plan.kanbanDeadlineAt);
     },
-    [moveItem, stages, showToast, applyListStageMove],
+    [moveItem, stages, showToast, applyListStageMove, filters.companyId],
   );
 
   const handleMenuAction = useCallback(
@@ -856,8 +889,23 @@ export default function LeadDealListScreen({ kind }: Props) {
         visible={!!moveItem}
         stages={stages}
         currentStageId={moveItem?.stageId}
+        kind={kind}
         onSelect={(stageId) => void handleMoveToStage(stageId)}
         onClose={() => setMoveItem(null)}
+      />
+
+      <DealWonSxPickerModal
+        visible={!!moveSxCtx}
+        dealCode={moveSxCtx?.item.code}
+        dealTitle={moveSxCtx?.item.title}
+        crmCompanyId={moveSxCtx?.item.companyId || filters.companyId}
+        onConfirm={(targets) => {
+          const ctx = moveSxCtx;
+          setMoveSxCtx(null);
+          if (!ctx) return;
+          void applyListStageMove(ctx.item, ctx.target, undefined, targets);
+        }}
+        onClose={() => setMoveSxCtx(null)}
       />
 
       <DatePickerSheet

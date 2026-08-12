@@ -17,6 +17,8 @@ type Props = {
   visible: boolean;
   stages: CrmPipelineStage[];
   currentStageId?: string | null;
+  /** lead = hint «Chuyển Deal»; deal = hint chọn module SX. */
+  kind?: 'lead' | 'deal';
   onSelect: (stageId: string) => void;
   onClose: () => void;
 };
@@ -25,6 +27,7 @@ export default function MoveStageModal({
   visible,
   stages,
   currentStageId,
+  kind = 'deal',
   onSelect,
   onClose,
 }: Props) {
@@ -66,7 +69,9 @@ export default function MoveStageModal({
                   <View style={{ flex: 1 }}>
                     <Text style={styles.rowText} numberOfLines={2}>{item.name}</Text>
                     {item.isWon ? (
-                      <Text style={styles.rowHint}>Cần Chuyển Deal</Text>
+                      <Text style={styles.rowHint}>
+                        {kind === 'lead' ? 'Cần Chuyển Deal' : 'Chọn công ty / phân loại SX'}
+                      </Text>
                     ) : item.requiresDeadline ? (
                       <Text style={styles.rowHint}>Yêu cầu deadline</Text>
                     ) : null}

@@ -2568,9 +2568,23 @@ r.delete('/:id', requirePermission('projects', 'delete'), async (req, res) => {
     await supabase.from('notifications').delete().eq('entity_type', 'project').eq('entity_id', req.params.id);
 
     // Xóa lead/deal liên kết (cascade: activities, documents, quotations, orders, invoices)
-    const { data: linkedLeads } = await supabase.from('crm_leads').select('id').eq('project_id', req.params.id);
+    const { data: linkedLeads } = await supabase
+      .from('crm_leads')
+      .select('id, type, company_id')
+      .eq('project_id', req.params.id);
+    let junctionDealIds = [];
+    try {
+      const { data: junction } = await supabase
+        .from('crm_deal_projects')
+        .select('deal_id')
+        .eq('project_id', req.params.id);
+      junctionDealIds = [...new Set((junction || []).map((r) => String(r.deal_id || '')).filter(Boolean))];
+    } catch (_) { /* bảng có thể chưa có */ }
+
+    const deletedLeadIds = new Set();
     if (linkedLeads?.length) {
       const leadIds = linkedLeads.map(l => l.id);
+      leadIds.forEach((id) => deletedLeadIds.add(String(id)));
       // Delete CRM sub-tables — wrap each in try/catch (tables may not exist)
       try { await supabase.from('quotations').delete().in('lead_id', leadIds); } catch (_) {}
       try { await supabase.from('orders').delete().in('lead_id', leadIds); } catch (_) {}
@@ -2582,6 +2596,15 @@ r.delete('/:id', requirePermission('projects', 'delete'), async (req, res) => {
       console.log(`Project ${req.params.id} → deleted ${leadIds.length} linked lead(s)/deal(s)`);
     }
 
+    // Deal còn lại chỉ gắn qua crm_deal_projects (không phải project_id chính)
+    const survivingDealIds = junctionDealIds.filter((id) => !deletedLeadIds.has(id));
+    if (survivingDealIds.length) {
+      try {
+        // Xóa junction trước khi xóa project (CASCADE cũng làm, nhưng clear badge tường minh)
+        await supabase.from('crm_deal_projects').delete().eq('project_id', req.params.id);
+      } catch (_) { /* ignore */ }
+    }
+
     // Xóa project
     const { error } = await supabase.from('projects').delete().eq('id', req.params.id);
     if (error) throw error;
@@ -2590,6 +2613,84 @@ r.delete('/:id', requirePermission('projects', 'delete'), async (req, res) => {
       user_id: req.user.userId, action: 'deleted', entity_type: 'project', entity_id: req.params.id,
       description: `Xóa dự án: ${project?.code} - ${project?.name}`,
     });
+
+    // Realtime CRM: gỡ thẻ / xóa badge ngay (trước đây không emit → badge/thẻ Kanban kẹt đến khi F5)
+    try {
+      const io = req.app.get('io');
+      if (io) {
+        const { emitScoped } = require('../helpers/socketEmit');
+        const { emitCrmBadgeUpdateForProject } = require('../helpers/workshopKanban');
+        let companyId = req.user?.company_id || null;
+        try {
+          // project đã xóa — lấy company từ lead đã snapshot nếu có
+          companyId = linkedLeads?.[0]?.company_id || companyId;
+        } catch (_) { /* ignore */ }
+
+        for (const lead of linkedLeads || []) {
+          const cid = lead.company_id || companyId;
+          emitScoped(io, { companyId: cid }, 'crm:dashboard_changed', {
+            lead_id: String(lead.id),
+            action: 'deleted',
+            type: lead.type || 'deal',
+            company_id: cid,
+            project_id: String(req.params.id),
+            reason: 'project_deleted',
+          });
+          emitScoped(io, { companyId: cid }, 'crm:badge_updated', {
+            lead_id: String(lead.id),
+            project_id: null,
+            stage_id: null,
+            sx_pipeline_stage: null,
+            vc_pipeline_stage: null,
+            reason: 'project_deleted',
+          });
+        }
+
+        for (const dealId of survivingDealIds) {
+          emitScoped(io, { companyId }, 'crm:dashboard_changed', {
+            lead_id: dealId,
+            action: 'updated',
+            type: 'deal',
+            company_id: companyId,
+            project_id: String(req.params.id),
+            reason: 'project_deleted_unlink',
+          });
+          // Refresh badge từ dự án còn lại (nếu còn)
+          try {
+            const { data: still } = await supabase
+              .from('crm_leads')
+              .select('id, project_id')
+              .eq('id', dealId)
+              .maybeSingle();
+            if (still?.project_id) {
+              await emitCrmBadgeUpdateForProject(String(still.project_id), io);
+            } else {
+              emitScoped(io, { companyId }, 'crm:badge_updated', {
+                lead_id: dealId,
+                project_id: null,
+                sx_pipeline_stage: null,
+                vc_pipeline_stage: null,
+                reason: 'project_deleted_unlink',
+              });
+            }
+          } catch (_) {
+            emitScoped(io, { companyId }, 'crm:badge_updated', {
+              lead_id: dealId,
+              project_id: null,
+              sx_pipeline_stage: null,
+              vc_pipeline_stage: null,
+              reason: 'project_deleted_unlink',
+            });
+          }
+        }
+      }
+    } catch (emitErr) {
+      console.warn('[projects:delete] CRM realtime emit:', emitErr?.message || emitErr);
+    }
+    try {
+      const { invalidateTags } = require('../middleware/responseCache');
+      void invalidateTags(['crm', 'production']);
+    } catch (_) { /* ignore */ }
 
     res.json({ message: 'Đã xóa dự án' });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi xóa dự án: ' + e.message }); }

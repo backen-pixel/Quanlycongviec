@@ -2086,6 +2086,10 @@ export default function ProductionDashboard() {
           ? msg
           : `Đã xóa ${idsToDelete.length - failed.length}/${idsToDelete.length}. Lỗi: ${msg}`);
       }
+      // Báo CRM cùng tab làm mới badge / gỡ thẻ liên quan ngay
+      for (const pid of idsToDelete) {
+        window.dispatchEvent(new CustomEvent('crm-project-badges-refresh', { detail: { projectId: pid } }));
+      }
       await load({ silent: true });
     } catch (e) {
       alert(e.response?.data?.error || 'Lỗi xóa dự án');

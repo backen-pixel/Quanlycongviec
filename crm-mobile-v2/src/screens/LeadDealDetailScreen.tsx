@@ -8,7 +8,6 @@ import { formatApiError } from '../api/client';
 import {
   countUnreadLeadComments,
   fetchLeadCommentReadReceipts,
-  fetchLeadComments,
   fetchLeadDetail,
   markLeadCommentsRead,
   type LeadDetailRow,
@@ -16,6 +15,10 @@ import {
 import { currentUserId, useAuth } from '../context/AuthContext';
 import { useCrmRealtimeRefresh } from '../hooks/useCrmRealtimeRefresh';
 import { subscribeAppSocket } from '../lib/appSocket';
+import {
+  fetchLeadCommentsShared,
+  getCachedLeadComments,
+} from '../lib/leadCommentsCache';
 import {
   LeadCommentsTab,
   LeadDocumentsTab,
@@ -79,8 +82,10 @@ export default function LeadDealDetailScreen({ route, navigation }: Props) {
   const refreshCommentBadge = useCallback(async () => {
     if (!leadId) return;
     try {
+      const cached = getCachedLeadComments(leadId);
+      if (cached) setCommentTotal(cached.length);
       const [comments, receiptsRes] = await Promise.all([
-        fetchLeadComments(leadId),
+        fetchLeadCommentsShared(leadId),
         fetchLeadCommentReadReceipts(leadId),
       ]);
       setCommentTotal(comments.length);

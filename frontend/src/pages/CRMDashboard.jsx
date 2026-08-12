@@ -204,6 +204,14 @@ function preserveCrmKanbanPipelineBadges(prevRows, nextRows) {
     if (!row) return row;
     const prev = pmap.get(String(row.id));
     if (!prev) return row;
+    // Đã mất project_id (xóa dự án / unlink) — không giữ badge cũ.
+    if (!row.project_id) {
+      return {
+        ...row,
+        sx_pipeline_stage: row.sx_pipeline_stage ?? null,
+        vc_pipeline_stage: row.vc_pipeline_stage ?? null,
+      };
+    }
     let out = row;
     if (!row.sx_pipeline_stage && prev.sx_pipeline_stage) {
       out = { ...out, sx_pipeline_stage: prev.sx_pipeline_stage };
@@ -2419,7 +2427,22 @@ export default function CRMDashboard() {
       if (Object.prototype.hasOwnProperty.call(payload, 'vc_pipeline_stage')) {
         patch.vc_pipeline_stage = payload.vc_pipeline_stage || null;
       }
+      if (Object.prototype.hasOwnProperty.call(payload, 'project_id')) {
+        patch.project_id = payload.project_id || null;
+      }
       if (payload.stage_id !== undefined) patch.stage_id = payload.stage_id;
+      // Xóa dự án / unlink — gỡ thẻ nếu deal đã bị xóa (stage_id null + project null + badges null)
+      if (
+        payload.reason === 'project_deleted'
+        && payload.project_id == null
+        && payload.sx_pipeline_stage == null
+        && payload.vc_pipeline_stage == null
+        && (payload.stage_id == null || payload.stage_id === undefined)
+      ) {
+        setAllDeals((prev) => removeCrmKanbanRowById(prev, lid));
+        setAllLeads((prev) => removeCrmKanbanRowById(prev, lid));
+        return;
+      }
       if (Object.keys(patch).length === 0) return;
 
       const matchId = (row) => String(row.id) === lid;

@@ -33,6 +33,8 @@ import {
   peekDeadlineBucketCounts,
   peekDeadlineResultCache,
   updateCrmAssignee,
+  prefetchCrmProductionCompanies,
+  type CrmSxProductionTarget,
   type DeadlineBucketCountMap,
   type DeadlineBucketCounts,
 } from '../api/crm';
@@ -48,6 +50,7 @@ import {
 } from '../api/crmMeta';
 import CrmFilterSheet from '../components/CrmFilterSheet';
 import CrmSearchFieldBar from '../components/CrmSearchFieldBar';
+import DealWonSxPickerModal from '../components/DealWonSxPickerModal';
 import MoveStageModal from '../components/MoveStageModal';
 import DatePickerSheet from '../components/DatePickerSheet';
 import PickerSheet from '../components/PickerSheet';
@@ -323,6 +326,10 @@ export default function DeadlineScreen() {
   const [moveItem, setMoveItem] = useState<PlannerItem | null>(null);
   const [moveStages, setMoveStages] = useState<CrmPipelineStage[]>([]);
   const [moveDeadlineCtx, setMoveDeadlineCtx] = useState<{
+    item: PlannerItem;
+    target: CrmPipelineStage;
+  } | null>(null);
+  const [moveSxCtx, setMoveSxCtx] = useState<{
     item: PlannerItem;
     target: CrmPipelineStage;
   } | null>(null);
@@ -1388,6 +1395,9 @@ export default function DeadlineScreen() {
       const regionId = filters.regionId && filters.regionId !== '__none__'
         ? filters.regionId
         : undefined;
+      if (item.kind === 'deal') {
+        prefetchCrmProductionCompanies(companyId);
+      }
       void (async () => {
         try {
           const stages = await fetchPipelineStages(item.kind, { companyId, regionId });
@@ -1439,7 +1449,12 @@ export default function DeadlineScreen() {
   ]);
 
   const applyDeadlineStageMove = useCallback(
-    async (item: PlannerItem, target: CrmPipelineStage, kanbanDeadlineAt?: string) => {
+    async (
+      item: PlannerItem,
+      target: CrmPipelineStage,
+      kanbanDeadlineAt?: string,
+      sxTargets?: CrmSxProductionTarget[],
+    ) => {
       const staysOnDeadline = isDeadlineMembershipStage(target);
       setMovingId(item.id);
       if (!staysOnDeadline) {
@@ -1449,15 +1464,22 @@ export default function DeadlineScreen() {
           stageId: target.id,
           status: target.name,
           ...(kanbanDeadlineAt ? { dueIso: kanbanDeadlineAt, overdue: false } : null),
+          ...(sxTargets?.length ? { projectId: item.projectId || 'pending' } : null),
         });
       }
       try {
+        if (sxTargets?.length) {
+          showToast(`Đang tạo dự án SX cho ${item.code}…`, true);
+        }
         await moveCrmItemStage(item.id, target.id, {
           kanbanDeadlineAt: kanbanDeadlineAt || undefined,
+          targets: sxTargets,
         });
         showToast(
           staysOnDeadline
-            ? `Đã chuyển ${item.code} → ${target.name}`
+            ? (sxTargets?.length
+              ? `Đã chuyển ${item.code} → ${target.name} (đã tạo SX)`
+              : `Đã chuyển ${item.code} → ${target.name}`)
             : `Đã chuyển ${item.code} → ${target.name} (ra khỏi Deadline)`,
           true,
         );
@@ -1482,6 +1504,9 @@ export default function DeadlineScreen() {
         kind: item.kind,
         target,
         existingDeadlineIso: item.dueIso,
+        projectId: item.projectId,
+        stages: moveStages,
+        itemCode: item.code,
       });
       if (plan.action === 'convert_deal') {
         Alert.alert(
@@ -1510,13 +1535,22 @@ export default function DeadlineScreen() {
         );
         return;
       }
+      if (plan.action === 'block_need_won_sx') {
+        Alert.alert('Cần tạo dự án SX trước', plan.message, [{ text: 'OK' }]);
+        return;
+      }
+      if (plan.action === 'need_sx_pick') {
+        prefetchCrmProductionCompanies(item.companyId || filters.companyId);
+        setMoveSxCtx({ item, target });
+        return;
+      }
       if (plan.action === 'need_deadline') {
         setMoveDeadlineCtx({ item, target });
         return;
       }
       await applyDeadlineStageMove(item, target, plan.kanbanDeadlineAt);
     },
-    [moveStages, showToast, applyDeadlineStageMove, patchDeadlineItem],
+    [moveStages, showToast, applyDeadlineStageMove, patchDeadlineItem, filters.companyId],
   );
 
   const assignPickerOptions = useMemo(
@@ -1826,11 +1860,26 @@ export default function DeadlineScreen() {
         visible={!!moveItem}
         stages={moveStages}
         currentStageId={moveItem?.stageId}
+        kind={moveItem?.kind === 'lead' ? 'lead' : 'deal'}
         onSelect={(stageId) => {
           if (moveItem) void moveCardTo(moveItem, stageId);
           setMoveItem(null);
         }}
         onClose={() => setMoveItem(null)}
+      />
+
+      <DealWonSxPickerModal
+        visible={!!moveSxCtx}
+        dealCode={moveSxCtx?.item.code}
+        dealTitle={moveSxCtx?.item.title}
+        crmCompanyId={moveSxCtx?.item.companyId || filters.companyId}
+        onConfirm={(targets) => {
+          const ctx = moveSxCtx;
+          setMoveSxCtx(null);
+          if (!ctx) return;
+          void applyDeadlineStageMove(ctx.item, ctx.target, undefined, targets);
+        }}
+        onClose={() => setMoveSxCtx(null)}
       />
 
       <DatePickerSheet

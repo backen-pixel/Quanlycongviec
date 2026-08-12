@@ -225,6 +225,28 @@ async function emitProductionKanbanChangedAsync(io, projectId, reason = 'kanban_
       await emitCrmBadgeUpdateForProject(pid, io);
       const companyId = await resolveProjectCompanyId(pid);
       emitScoped(io, { companyId }, 'crm:dashboard_changed', { project_id: pid, reason });
+      // Emit theo từng deal để CRM/mobile cập nhật cột ngay (không chỉ badge)
+      try {
+        const { data: leads } = await supabase
+          .from('crm_leads')
+          .select('id, stage_id, company_id, type')
+          .eq('project_id', pid)
+          .eq('type', 'deal');
+        for (const lead of leads || []) {
+          const cid = lead.company_id || companyId;
+          emitScoped(io, { companyId: cid }, 'crm:dashboard_changed', {
+            lead_id: String(lead.id),
+            action: 'stage_changed',
+            stage_id: lead.stage_id ? String(lead.stage_id) : null,
+            type: 'deal',
+            company_id: cid,
+            project_id: pid,
+            reason,
+          });
+        }
+      } catch (perLeadErr) {
+        console.warn('[workshop-kanban-realtime] per-lead emit:', perLeadErr.message);
+      }
     }
   } catch (e) {
     console.warn('[workshop-kanban-realtime] async:', e.message);
