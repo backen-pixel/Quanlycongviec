@@ -180,6 +180,10 @@ const REPLICATION_PARENT_DEPS = {
   facebook_contacts: ['lead_id', 'customer_id'],
   facebook_messages: ['contact_id', 'lead_id', 'customer_id'],
   crm_leads: ['customer_id', 'stage_id', 'source_id', 'assigned_to', 'lead_owner_id'],
+  crm_daily_reports: ['user_id', 'template_id', 'company_id'],
+  crm_daily_report_lines: ['report_id', 'template_item_id'],
+  crm_daily_report_template_items: ['template_id'],
+  crm_daily_report_user_extras: ['user_id', 'company_id'],
 };
 
 function resolveParentTableForColumn(column) {
@@ -193,6 +197,10 @@ function resolveParentTableForColumn(column) {
     lead_owner_id: 'users',
     company_id: 'companies',
     created_by: 'users',
+    user_id: 'users',
+    template_id: 'crm_daily_report_templates',
+    template_item_id: 'crm_daily_report_template_items',
+    report_id: 'crm_daily_reports',
   };
   return map[column] || null;
 }
@@ -597,24 +605,62 @@ async function postRowToBackup(table, row, depth = 0) {
     await upsertCrmLeadOnBackup(row, depth);
     return;
   }
-  const payload = stripRowForBackupReplication(table, row);
+  let payload = stripRowForBackupReplication(table, row);
+  // Parent deps trước khi insert
+  const deps = REPLICATION_PARENT_DEPS[table] || [];
+  for (const col of deps) {
+    const pid = payload?.[col];
+    if (!pid) continue;
+    const parentTable = resolveParentTableForColumn(col);
+    if (parentTable) await ensureRowOnBackup(parentTable, pid, depth + 1);
+  }
+
   const backupBase = trimBase(config.supabaseBackupUrl);
-  const res = await backupFetchWithGrantRetry(() => undiciFetch(`${backupBase}/rest/v1/${table}`, {
-    method: 'POST',
-    headers: {
-      ...backupHeaders({}),
-      'content-type': 'application/json',
-      prefer: 'resolution=merge-duplicates,return=minimal',
+  const res = await backupFetchWithGrantRetry(() => undiciFetch(
+    `${backupBase}/rest/v1/${table}?on_conflict=id`,
+    {
+      method: 'POST',
+      headers: {
+        ...backupHeaders({}),
+        'content-type': 'application/json',
+        prefer: 'resolution=merge-duplicates,return=minimal',
+      },
+      body: JSON.stringify(payload),
+      dispatcher: supabaseDispatcher,
     },
-    body: JSON.stringify(payload),
-    dispatcher: supabaseDispatcher,
-  })).then(({ res: r }) => r);
+  )).then(({ res: r }) => r);
   if (res.ok) return;
   const text = await res.text().catch(() => '');
   const fk = parseFkMissingFromError(text);
   if (fk && depth < 4) {
     await ensureRowOnBackup(fk.parentTable, fk.parentId, depth + 1);
+    // template_item_id nullable — nếu parent vẫn thiếu thì bỏ FK để không kẹt 409
+    if (
+      fk.childColumn === 'template_item_id'
+      && !(await backupRowExists('crm_daily_report_template_items', fk.parentId))
+    ) {
+      payload = { ...payload, template_item_id: null };
+      return postRowToBackup(table, payload, depth + 1);
+    }
     return postRowToBackup(table, row, depth + 1);
+  }
+  // 409 duplicate mà không có on_conflict hiệu lực → PATCH theo id
+  if ((res.status === 409 || /23505|duplicate key/i.test(text)) && payload?.id) {
+    const { id, created_at, ...patch } = payload;
+    const patchRes = await undiciFetch(
+      `${backupBase}/rest/v1/${table}?id=eq.${encodeURIComponent(id)}`,
+      {
+        method: 'PATCH',
+        headers: {
+          ...backupHeaders({}),
+          'content-type': 'application/json',
+          prefer: 'return=minimal',
+        },
+        body: JSON.stringify(patch),
+        dispatcher: supabaseDispatcher,
+      },
+    );
+    if (patchRes.ok) return;
   }
   throw new Error(`backup upsert ${table} → ${res.status} ${text.slice(0, 200)}`);
 }

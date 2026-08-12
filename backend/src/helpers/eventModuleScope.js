@@ -1,12 +1,24 @@
 const { isAdminLike, isSystemAdmin } = require('./adminRole');
 const { userHasEcosystemModuleAccess } = require('./ecosystemModuleScope');
 
-const EVENT_MODULES = new Set(['crm', 'production', 'logistics', 'general']);
+const BUILTIN_EVENT_MODULES = new Set(['crm', 'production', 'logistics', 'general']);
+const EVENT_MODULE_SLUG_RE = /^[a-z][a-z0-9_-]{0,63}$/;
+
+/** @deprecated dùng BUILTIN_EVENT_MODULES + slug custom */
+const EVENT_MODULES = BUILTIN_EVENT_MODULES;
 
 function normalizeEventModule(v) {
   if (v == null) return null;
   const s = String(v).trim().toLowerCase();
-  return EVENT_MODULES.has(s) ? s : null;
+  if (!s) return null;
+  if (BUILTIN_EVENT_MODULES.has(s)) return s;
+  if (EVENT_MODULE_SLUG_RE.test(s)) return s;
+  return null;
+}
+
+function isCustomEventModule(v) {
+  const s = normalizeEventModule(v);
+  return !!s && !BUILTIN_EVENT_MODULES.has(s);
 }
 
 /**
@@ -33,6 +45,21 @@ async function getAllowedEventModules(user) {
     if (await userHasEcosystemModuleAccess(user, 'logistics')) allowed.add('logistics');
   }
 
+  // Module tùy chỉnh user được phép
+  try {
+    const { getCustomModuleKeys } = require('./appModuleRegistry');
+    const customKeys = typeof getCustomModuleKeys === 'function'
+      ? await getCustomModuleKeys()
+      : [];
+    for (const key of customKeys || []) {
+      const k = String(key || '').trim().toLowerCase();
+      if (!k || BUILTIN_EVENT_MODULES.has(k)) continue;
+      if (await userHasEcosystemModuleAccess(user, k)) allowed.add(k);
+    }
+  } catch {
+    /* registry optional */
+  }
+
   return [...allowed];
 }
 
@@ -53,6 +80,13 @@ async function assertEventModuleWrite(user, moduleKey) {
       };
     }
     return { ok: true };
+  }
+
+  // Custom module: kiểm trực tiếp quyền ecosystem nếu chưa nằm trong danh sách cached
+  if (!allowed.includes(mod) && isCustomEventModule(mod)) {
+    if (await userHasEcosystemModuleAccess(user, mod)) {
+      return { ok: true };
+    }
   }
 
   if (!allowed.includes(mod)) {
@@ -93,7 +127,9 @@ async function resolveEventModulesQueryFilter(user, moduleFilter, modulesFilter)
 
 module.exports = {
   EVENT_MODULES,
+  BUILTIN_EVENT_MODULES,
   normalizeEventModule,
+  isCustomEventModule,
   getAllowedEventModules,
   assertEventModuleWrite,
   resolveEventModulesQueryFilter,

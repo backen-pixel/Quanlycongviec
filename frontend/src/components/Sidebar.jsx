@@ -12,7 +12,7 @@ import {
   UserPlus, Building2, Building, Network, Layers, GitBranch, Shield, UsersRound,
   Target, FileText, ShoppingCart, ShoppingBag, Receipt, Activity, BarChart3, Phone, Palette, ListChecks, Mic, Award, Plus,
   BookOpen, FolderTree, Factory, Calendar, CalendarClock, CalendarRange, Megaphone, MessageCircle, ArrowRightLeft, ClipboardCheck, FileCheck, Key, Puzzle, Tags, MapPin, UserCog, LayoutGrid, Timer, Trash2, Clock, Share2, ShieldOff, Smartphone, GraduationCap, Bot, Download, UserMinus,
-  Sigma, Calculator, FileUp, History as HistoryIcon, HardDrive, Database, Globe, CreditCard, Sparkles, Pin,
+  Sigma, Calculator, FileUp, History as HistoryIcon, History, HardDrive, Database, Globe, CreditCard, Sparkles, Pin,
 } from 'lucide-react';
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import {
@@ -161,6 +161,8 @@ const CRM_MENU_BOTTOM_GROUPS = [
       { to: '/crm/tasks', icon: CheckSquare, label: 'Công việc CRM', end: true },
       { to: '/crm/assignments', icon: ClipboardList, label: 'Giao việc CRM', end: true },
       { to: '/crm/dept-plan', icon: CalendarRange, label: 'Kế hoạch phòng ban' },
+      { to: '/crm/daily-reports', icon: ClipboardCheck, label: 'Báo cáo hằng ngày' },
+      { to: '/crm/daily-reports/history', icon: History, label: 'Lịch sử công việc ngày' },
       { to: '/crm/lead-journey', icon: ArrowRightLeft, label: 'Hành trình Lead' },
     ],
   },
@@ -569,7 +571,9 @@ function SideLink({
     ? 'nav-crm-dashboard'
     : to === '/crm/events'
       ? 'nav-crm-events'
-      : undefined;
+      : to === '/crm/assignments'
+        ? 'nav-crm-assignments'
+        : undefined;
   const onNavClick = () => {
     const p = location.pathname;
     if (p === '/crm/dashboard' || p === '/crm/pipeline') {
@@ -1110,6 +1114,7 @@ export default function Sidebar() {
           isCongViec={isCongViec}
           customModuleId={customModuleId}
           customModuleName={customModMeta?.name || customAppModuleKey || null}
+          customModuleMeta={customModMeta}
           extraModules={customAppModules}
           taskBadge={unifiedTasksOpen}
         />

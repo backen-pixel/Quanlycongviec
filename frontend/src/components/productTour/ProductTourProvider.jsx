@@ -131,6 +131,27 @@ function stepNeedsEventModal(step) {
     || step?.ensureOpen === 'events-create-modal';
 }
 
+function stepNeedsAssignFilterPanel(step) {
+  return step?.target === 'assign-filter-panel'
+    || step?.ensureOpen === 'assign-filter-panel';
+}
+
+function stepNeedsAssignCreateModal(step) {
+  const t = String(step?.target || '');
+  return t.startsWith('assign-create')
+    || step?.ensureOpen === 'assign-create-modal';
+}
+
+function closeAssignFilterPanel() {
+  if (!document.querySelector('[data-tour="assign-filter-panel"]')) return;
+  const closeBtn = document.querySelector('[data-tour="assign-filter-close"]');
+  if (closeBtn) {
+    closeBtn.click();
+    return;
+  }
+  clickTourTarget('assign-filter');
+}
+
 function clickPipelineTab(kind) {
   const byAttr = kind === 'deal' ? 'pipeline-tab-deal' : 'pipeline-tab-lead';
   const el = findBestTourTarget(byAttr);
@@ -178,15 +199,25 @@ function runStepChrome(step) {
   if (step?.ensureClose === 'event-create-modal') {
     document.querySelector('[data-tour="event-create-modal-close"]')?.click();
   }
+  if (step?.ensureClose === 'assign-create-modal') {
+    document.querySelector('[data-tour="assign-create-modal-close"]')?.click();
+  }
+  if (step?.ensureClose === 'assign-filter-panel') {
+    closeAssignFilterPanel();
+  }
 
   // Tự đóng panel/menu không thuộc bước hiện tại (tránh đè / sai vị trí)
   if (!stepNeedsFilterPanel(step)) closeCrmFilterPanel();
+  if (!stepNeedsAssignFilterPanel(step)) closeAssignFilterPanel();
   if (!stepNeedsViewModeMenu(step)) closeIfPresent('crm-view-mode-menu', 'crm-view-mode-more');
   if (!stepNeedsKanbanSettingsMenu(step)) {
     closeIfPresent('crm-kanban-settings-menu', 'crm-kanban-settings');
   }
   if (!stepNeedsEventModal(step) && document.querySelector('[data-tour="event-create-modal"]')) {
     document.querySelector('[data-tour="event-create-modal-close"]')?.click();
+  }
+  if (!stepNeedsAssignCreateModal(step) && document.querySelector('[data-tour="assign-create-modal"]')) {
+    document.querySelector('[data-tour="assign-create-modal-close"]')?.click();
   }
 
   const ensureOpen = step?.ensureOpen;
@@ -264,6 +295,38 @@ function runStepChrome(step) {
       detail: { view: 'calendar' },
     }));
     findBestTourTarget('events-view-calendar')?.click();
+  } else if (ensureOpen === 'assign-tab-assignments') {
+    window.dispatchEvent(new CustomEvent('product-tour:set-assign-tab', {
+      detail: { tab: 'assignments' },
+    }));
+    findBestTourTarget('assign-tab-assignments')?.click();
+  } else if (ensureOpen === 'assign-tab-private') {
+    window.dispatchEvent(new CustomEvent('product-tour:set-assign-tab', {
+      detail: { tab: 'private' },
+    }));
+    findBestTourTarget('assign-tab-private')?.click();
+  } else if (ensureOpen === 'assign-view-kanban') {
+    window.dispatchEvent(new CustomEvent('product-tour:set-assign-tab', {
+      detail: { tab: 'assignments' },
+    }));
+    window.dispatchEvent(new CustomEvent('product-tour:set-assign-view', {
+      detail: { view: 'kanban' },
+    }));
+    findBestTourTarget('assign-tab-assignments')?.click();
+    findBestTourTarget('assign-view-kanban')?.click();
+  } else if (ensureOpen === 'assign-filter-panel') {
+    closeIfPresent('crm-view-mode-menu', 'crm-view-mode-more');
+    toggleIfMissing('assign-filter-panel', 'assign-filter');
+  } else if (ensureOpen === 'assign-create-modal') {
+    closeAssignFilterPanel();
+    closeIfPresent('crm-view-mode-menu', 'crm-view-mode-more');
+    window.dispatchEvent(new CustomEvent('product-tour:set-assign-tab', {
+      detail: { tab: 'assignments' },
+    }));
+    findBestTourTarget('assign-tab-assignments')?.click();
+    if (!document.querySelector('[data-tour="assign-create-modal"]')) {
+      findBestTourTarget('assign-create-btn')?.click();
+    }
   }
 }
 

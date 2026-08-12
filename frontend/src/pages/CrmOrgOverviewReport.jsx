@@ -1271,7 +1271,7 @@ function buildMetricCols(dealKhSplit, typeView = 'all') {
   const orderCols = dealKhSplit && typeView !== 'lead'
     ? [{
       key: 'customer_order_count',
-      label: 'Đơn hàng',
+      label: 'Khách hàng',
       align: 'right',
       render: (r) => r.customer_order_count ?? 0,
     }]
@@ -1283,7 +1283,7 @@ function buildMetricCols(dealKhSplit, typeView = 'all') {
     ...orderCols,
     ...head.slice(insertAt),
   ];
-  // Đưa cột Thua ngay sau Deal/Đơn hàng khi tách — dễ đối chiếu, không gộp vào pipeline
+  // Đưa cột Thua ngay sau Deal/Khách hàng khi tách — dễ đối chiếu, không gộp vào pipeline
   if (dealKhSplit) {
     const lostIdx = cols.findIndex((c) => c.key === 'lost_deal_count');
     const afterOrders = cols.findIndex((c) => c.key === 'customer_order_count');
@@ -1909,8 +1909,8 @@ export default function CrmOrgOverviewReport() {
             <div
               className="inline-flex rounded-lg border border-slate-200 bg-white p-0.5 shrink-0"
               role="group"
-              aria-label="Gộp hoặc tách đơn hàng"
-              title={hasCustomerTab ? undefined : 'Chưa có cột sau Thắng — Đơn hàng có thể = 0'}
+              aria-label="Gộp hoặc tách khách hàng"
+              title={hasCustomerTab ? undefined : 'Chưa có cột sau Thắng — Khách hàng có thể = 0'}
             >
               <button
                 type="button"
@@ -1932,7 +1932,7 @@ export default function CrmOrgOverviewReport() {
                     : 'text-slate-500 hover:text-slate-800'
                 }`}
               >
-                Tách đơn hàng
+                Tách khách hàng
               </button>
             </div>
           )}
@@ -2124,11 +2124,11 @@ export default function CrmOrgOverviewReport() {
                   compare={compare}
                   compareKey="deal_count"
                   accent="border-cyan-200 bg-cyan-50"
-                  sub={dealKhSplitActive ? 'Trước cột Thắng · không gồm Thua / Đơn hàng' : 'Đã gộp với đơn hàng'}
+                  sub={dealKhSplitActive ? 'Trước cột Thắng · không gồm Thua / Khách hàng' : 'Đã gộp với khách hàng'}
                 />
                 {dealKhSplitActive && (
                   <KpiCard
-                    label="Đơn hàng"
+                    label="Khách hàng"
                     value={summary.customer_order_count ?? 0}
                     compare={compare}
                     compareKey="customer_order_count"
@@ -2152,7 +2152,7 @@ export default function CrmOrgOverviewReport() {
               compare={compare}
               compareKey="pipeline_value"
               accent="border-indigo-200 bg-indigo-50"
-              sub={dealKhSplitActive ? 'Lead + Deal pipeline + Đơn hàng (không gồm thua)' : undefined}
+              sub={dealKhSplitActive ? 'Lead + Deal pipeline + Khách hàng (không gồm thua)' : undefined}
             />
             {typeView !== 'lead' && (
               <KpiCard

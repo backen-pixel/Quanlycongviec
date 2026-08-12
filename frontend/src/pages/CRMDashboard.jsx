@@ -5533,7 +5533,7 @@ export default function CRMDashboard() {
     }
     if (isCrmCustomerPipelineTab(pipelineType)) {
       return [
-        { key: 'total', label: 'Đơn hàng', value: Number(customerKpiTotalCount ?? 0).toLocaleString('vi-VN'), tone: 'count' },
+        { key: 'total', label: 'Khách hàng', value: Number(customerKpiTotalCount ?? 0).toLocaleString('vi-VN'), tone: 'count' },
         { key: 'active', label: 'Đang triển khai', value: Number(customerKpisFromFilters.project_active ?? 0).toLocaleString('vi-VN'), tone: 'processing' },
         { key: 'won', label: 'Doanh thu thắng', value: formatVND(customerKpisFromFilters.won_value), tone: 'won' },
         { key: 'completed', label: 'Doanh thu hoàn thành', value: formatVND(customerKpisFromFilters.completed_revenue_value), tone: 'completed' },
@@ -6903,7 +6903,7 @@ export default function CRMDashboard() {
                     : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
                 }`}
               >
-                Đơn hàng{customerTabCountLabel != null ? ` ${customerTabCountLabel}` : ''}
+                Khách hàng{customerTabCountLabel != null ? ` ${customerTabCountLabel}` : ''}
                 {pinnedTab === 'customer' && <Pin className={`h-3 w-3 rotate-45 ${pipelineType === 'customer' ? 'text-amber-500 fill-amber-400' : 'text-amber-600 fill-amber-500'}`} />}
               </button>
             )}
@@ -7406,15 +7406,15 @@ export default function CRMDashboard() {
                   {hasCustomerTab && (
                     <>
                       <div className="my-3 border-t border-gray-100" />
-                      <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-2">Tab Deal / Đơn hàng</p>
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-2">Tab Deal / Khách hàng</p>
                       <p className="text-[11px] text-gray-500 leading-snug mb-2">
-                        Gộp: một tab Deal toàn pipeline. Tách: tab Deal riêng + tab Đơn hàng (Thắng &amp; sau Thắng).
-                        {isAdmin ? ' Admin mặc định Tách đơn hàng.' : ' Mặc định Gộp — bấm Tách đơn hàng khi cần.'}
+                        Gộp: một tab Deal toàn pipeline. Tách: tab Deal riêng + tab Khách hàng (Thắng &amp; sau Thắng).
+                        {isAdmin ? ' Admin mặc định Tách khách hàng.' : ' Mặc định Gộp — bấm Tách khách hàng khi cần.'}
                       </p>
                       <div
                         className="inline-flex w-full rounded-lg border border-gray-200 bg-white p-0.5"
                         role="group"
-                        aria-label="Gộp hoặc tách tab Deal và Đơn hàng"
+                        aria-label="Gộp hoặc tách tab Deal và Khách hàng"
                       >
                         <button
                           type="button"
@@ -7436,7 +7436,7 @@ export default function CRMDashboard() {
                               : 'text-gray-600 hover:text-gray-900'
                           }`}
                         >
-                          Tách đơn hàng
+                          Tách khách hàng
                         </button>
                       </div>
                     </>
@@ -7932,7 +7932,7 @@ export default function CRMDashboard() {
               icon={<Users className="h-3 w-3" />}
               iconBgColor="bg-cyan-100"
               iconColor="text-cyan-700"
-              label="Tổng đơn hàng"
+              label="Tổng khách hàng"
               value={customerKpisFromFilters.total_deals}
               sublabel={
                 kpiUsesClientOnlyFilters
@@ -8700,35 +8700,40 @@ export default function CRMDashboard() {
           className="fixed inset-0 bg-black/40 flex items-center justify-center z-[60] p-4"
           onClick={closeDealWonProductionModal}
         >
-          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-5 space-y-3" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-start justify-between gap-2">
-              <div>
-                <h3 className="text-lg font-bold text-gray-900">Chuyển công ty SX</h3>
-                <p className="text-xs text-gray-500 mt-1">
-                  Deal <span className="font-mono text-teal-700">{dealWonProductionCtx.deal?.code}</span> sang <strong>Thắng</strong>.
-                  Tích xác nhận đã kiểm tra, bấm «Xác nhận chuyển» — đếm 5 giây rồi mới chuyển (có thể hủy).
-                </p>
+          <div
+            className="bg-white rounded-2xl shadow-xl max-w-md w-full max-h-[90vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-5 pb-3 space-y-3 shrink-0">
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <h3 className="text-lg font-bold text-gray-900">Chuyển công ty SX</h3>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Deal <span className="font-mono text-teal-700">{dealWonProductionCtx.deal?.code}</span> sang <strong>Thắng</strong>.
+                    Tích xác nhận đã kiểm tra, bấm «Xác nhận chuyển» — đếm 5 giây rồi mới chuyển (có thể hủy).
+                  </p>
+                </div>
+                <button type="button" onClick={closeDealWonProductionModal} className="p-1 cursor-pointer">
+                  <X className="h-5 w-5 text-gray-400" />
+                </button>
               </div>
-              <button type="button" onClick={closeDealWonProductionModal} className="p-1 cursor-pointer">
-                <X className="h-5 w-5 text-gray-400" />
-              </button>
+
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-[12px] leading-snug text-amber-950">
+                <p className="font-semibold text-amber-900 mb-1">Hướng dẫn chọn xưởng</p>
+                {dashWonHint ? (
+                  <p className="mb-1.5">{dashWonHint}</p>
+                ) : (
+                  <p className="mb-1.5 text-amber-800/90">Chưa có phân loại CRM — ★ sẽ hiện khi deal có loại (Tủ bếp / Cửa…).</p>
+                )}
+                <ul className="space-y-1 list-disc pl-4">
+                  <li><strong>Phúc Đạt</strong> chỉ làm cửa</li>
+                  <li>Làm tủ bếp (Sang thiết kế) → chọn <strong>HCB</strong></li>
+                  <li>Làm tủ bếp inox → chọn <strong>Tủ bếp</strong> của <strong>Metalla</strong></li>
+                </ul>
+              </div>
             </div>
 
-            <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-[12px] leading-snug text-amber-950">
-              <p className="font-semibold text-amber-900 mb-1">Hướng dẫn chọn xưởng</p>
-              {dashWonHint ? (
-                <p className="mb-1.5">{dashWonHint}</p>
-              ) : (
-                <p className="mb-1.5 text-amber-800/90">Chưa có phân loại CRM — ★ sẽ hiện khi deal có loại (Tủ bếp / Cửa…).</p>
-              )}
-              <ul className="space-y-1 list-disc pl-4">
-                <li><strong>Phúc Đạt</strong> chỉ làm cửa</li>
-                <li>Làm tủ bếp (Sang thiết kế) → chọn <strong>HCB</strong></li>
-                <li>Làm tủ bếp inox → chọn <strong>Tủ bếp</strong> của <strong>Metalla</strong></li>
-              </ul>
-            </div>
-
-            <div className="max-h-[50vh] overflow-y-auto">
+            <div className="px-5 flex-1 min-h-0 overflow-y-auto">
               <SxMultiTargetPicker
                 key={dealWonProductionCtx?.leadId || 'won-sx'}
                 companies={dashWonCompaniesForSelect}
@@ -8754,66 +8759,68 @@ export default function CRMDashboard() {
               />
             </div>
 
-            {dealWonProductionError && (
-              <p className="text-xs text-red-600">{dealWonProductionError}</p>
-            )}
+            <div className="p-5 pt-3 space-y-3 shrink-0 border-t border-gray-100 bg-white rounded-b-2xl">
+              {dealWonProductionError && (
+                <p className="text-xs text-red-600">{dealWonProductionError}</p>
+              )}
 
-            <label className={`flex items-start gap-2.5 rounded-xl border px-3 py-2.5 cursor-pointer ${
-              dealWonAckChecked ? 'border-teal-300 bg-teal-50/80' : 'border-gray-200 bg-gray-50/80'
-            } ${dealWonConfirmWait > 0 ? 'opacity-60 pointer-events-none' : ''}`}>
-              <input
-                type="checkbox"
-                className="mt-0.5 h-4 w-4 rounded border-gray-300 text-teal-600 focus:ring-teal-500"
-                checked={dealWonAckChecked}
-                disabled={dealWonConfirmWait > 0}
-                onChange={(e) => setDealWonAckChecked(e.target.checked)}
-              />
-              <span className="text-[12px] leading-snug text-gray-800">
-                Đã kiểm tra và chọn đúng công ty sản xuất (và phân loại) trước khi chuyển.
-              </span>
-            </label>
-
-            {dealWonConfirmWait > 0 && (
-              <div className="rounded-xl border-2 border-sky-400 bg-sky-50 px-3 py-3 text-sm text-sky-950 flex items-center justify-between gap-2 shadow-sm">
-                <span>
-                  Đang chuyển sau <strong className="text-lg tabular-nums text-sky-700">{dealWonConfirmWait}s</strong>…
+              <label className={`flex items-start gap-2.5 rounded-xl border px-3 py-2.5 cursor-pointer ${
+                dealWonAckChecked ? 'border-teal-300 bg-teal-50/80' : 'border-gray-200 bg-gray-50/80'
+              } ${dealWonConfirmWait > 0 ? 'opacity-60 pointer-events-none' : ''}`}>
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-4 w-4 rounded border-gray-300 text-teal-600 focus:ring-teal-500"
+                  checked={dealWonAckChecked}
+                  disabled={dealWonConfirmWait > 0}
+                  onChange={(e) => setDealWonAckChecked(e.target.checked)}
+                />
+                <span className="text-[12px] leading-snug text-gray-800">
+                  Đã kiểm tra và chọn đúng công ty sản xuất (và phân loại) trước khi chuyển.
                 </span>
+              </label>
+
+              {dealWonConfirmWait > 0 && (
+                <div className="rounded-xl border-2 border-sky-400 bg-sky-50 px-3 py-3 text-sm text-sky-950 flex items-center justify-between gap-2 shadow-sm">
+                  <span>
+                    Đang chuyển sau <strong className="text-lg tabular-nums text-sky-700">{dealWonConfirmWait}s</strong>…
+                  </span>
+                  <button
+                    type="button"
+                    onClick={cancelDealWonPending}
+                    className="shrink-0 h-9 px-3 rounded-lg text-sm font-bold border border-sky-400 bg-white text-sky-900 hover:bg-sky-100 cursor-pointer"
+                  >
+                    Hủy
+                  </button>
+                </div>
+              )}
+
+              <div className="flex gap-2">
                 <button
                   type="button"
-                  onClick={cancelDealWonPending}
-                  className="shrink-0 h-9 px-3 rounded-lg text-sm font-bold border border-sky-400 bg-white text-sky-900 hover:bg-sky-100 cursor-pointer"
+                  className="flex-1 h-10 border rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50 cursor-pointer"
+                  onClick={dealWonConfirmWait > 0 ? cancelDealWonPending : closeDealWonProductionModal}
                 >
-                  Hủy
+                  {dealWonConfirmWait > 0 ? 'Hủy chuyển' : 'Đóng'}
+                </button>
+                <button
+                  type="button"
+                  disabled={
+                    !!validateSxTargets(dealWonSxTargets)
+                    || !dealWonAckChecked
+                    || dealWonConfirmWait > 0
+                  }
+                  className="flex-1 h-10 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                  onClick={requestDealWonProduction}
+                >
+                  {dealWonConfirmWait > 0
+                    ? `Chuyển sau ${dealWonConfirmWait}s`
+                    : validateSxTargets(dealWonSxTargets)
+                      ? 'Chọn công ty + phân loại'
+                      : !dealWonAckChecked
+                        ? 'Tích xác nhận đã kiểm tra'
+                        : (dealWonSxTargets.length > 1 ? `Xác nhận ${dealWonSxTargets.length} xưởng` : 'Xác nhận chuyển')}
                 </button>
               </div>
-            )}
-
-            <div className="flex gap-2 pt-1">
-              <button
-                type="button"
-                className="flex-1 h-10 border rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50 cursor-pointer"
-                onClick={dealWonConfirmWait > 0 ? cancelDealWonPending : closeDealWonProductionModal}
-              >
-                {dealWonConfirmWait > 0 ? 'Hủy chuyển' : 'Đóng'}
-              </button>
-              <button
-                type="button"
-                disabled={
-                  !!validateSxTargets(dealWonSxTargets)
-                  || !dealWonAckChecked
-                  || dealWonConfirmWait > 0
-                }
-                className="flex-1 h-10 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-                onClick={requestDealWonProduction}
-              >
-                {dealWonConfirmWait > 0
-                  ? `Chuyển sau ${dealWonConfirmWait}s`
-                  : validateSxTargets(dealWonSxTargets)
-                    ? 'Chọn công ty + phân loại'
-                    : !dealWonAckChecked
-                      ? 'Tích xác nhận đã kiểm tra'
-                      : (dealWonSxTargets.length > 1 ? `Xác nhận ${dealWonSxTargets.length} xưởng` : 'Xác nhận chuyển')}
-              </button>
             </div>
           </div>
         </div>

@@ -4880,10 +4880,10 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
                       ? 'bg-amber-50 text-amber-800 border-amber-200'
                       : 'bg-emerald-50 text-emerald-700 border-emerald-100'
                 }`}
-                title={`Ngày giao hàng: ${formatDate(item.delivery_date)}${ignoreOrderDeliveryOverdue ? ' · Cột đang bỏ quá hạn' : ''}`}
+                title={`Ngày lắp đặt: ${formatDate(item.delivery_date)}${ignoreOrderDeliveryOverdue ? ' · Cột đang bỏ quá hạn' : ''}`}
               >
                 <Truck className="h-2.5 w-2.5 shrink-0" strokeWidth={2.4} />
-                Giao: {formatDate(item.delivery_date)}
+                Lắp: {formatDate(item.delivery_date)}
             </span>
             );
           })()}

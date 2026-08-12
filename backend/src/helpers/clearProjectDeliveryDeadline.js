@@ -17,15 +17,22 @@ async function clearProjectDeliveryDeadlineForCrmLead(leadId) {
   if (!lead?.project_id) return false;
 
   const now = new Date().toISOString();
-  const { error: projErr } = await supabase
+  const projectClear = {
+    delivery_date: null,
+    production_deadline: null,
+    production_finish_date: null,
+    updated_at: now,
+  };
+  let { error: projErr } = await supabase
     .from('projects')
-    .update({
-      delivery_date: null,
-      production_deadline: null,
-      updated_at: now,
-    })
+    .update(projectClear)
     .eq('id', lead.project_id);
-  if (projErr && !/delivery_date|production_deadline/i.test(String(projErr.message || ''))) {
+  if (projErr && /production_finish_date/i.test(String(projErr.message || ''))) {
+    const fallback = { ...projectClear };
+    delete fallback.production_finish_date;
+    ({ error: projErr } = await supabase.from('projects').update(fallback).eq('id', lead.project_id));
+  }
+  if (projErr && !/delivery_date|production_deadline|production_finish_date/i.test(String(projErr.message || ''))) {
     throw projErr;
   }
 

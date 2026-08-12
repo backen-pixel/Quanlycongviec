@@ -83,8 +83,11 @@ export default function VcHandoverCommentCard({ comment, onUpdated }: Props) {
   const [busy, setBusy] = useState('');
 
   const projLabel = String(md.project_name || md.project_code || 'dự án');
+  const skipLogistics = !!md.skip_logistics_module;
   const eventsLabel =
-    md.events_mode === 'triple' || (Array.isArray(md.event_ids) && md.event_ids.length >= 3)
+    md.events_mode === 'external' || (skipLogistics && Array.isArray(md.event_ids) && md.event_ids.length)
+      ? 'Mở lịch sự kiện (Giao hàng xưởng + Lắp đặt)'
+      : md.events_mode === 'triple' || (Array.isArray(md.event_ids) && md.event_ids.length >= 3)
       ? 'Mở lịch sự kiện (3 sự kiện: SX + VC + Lắp)'
       : md.events_mode === 'split'
         ? 'Mở lịch sự kiện VC/LĐ (2 sự kiện)'
@@ -161,6 +164,9 @@ export default function VcHandoverCommentCard({ comment, onUpdated }: Props) {
             <Text style={styles.row}>
               <Text style={styles.muted}>Công ty: </Text>
               <Text style={styles.strong}>{String(md.logistics_company_name || '—')}</Text>
+              {skipLogistics ? (
+                <Text style={styles.hint}> · Bên ngoài, không vào bảng Lắp đặt</Text>
+              ) : null}
             </Text>
             {md.select_notes ? (
               <Text style={styles.row}>
@@ -178,7 +184,11 @@ export default function VcHandoverCommentCard({ comment, onUpdated }: Props) {
                 <Text style={styles.strong}>{formatInstallDatesLabel(md as Record<string, unknown>)}</Text>
               </Text>
             ) : null}
-            <Text style={styles.rule}>Chỉ phụ trách chính Xưởng và VC/LĐ được xác nhận.</Text>
+            <Text style={styles.rule}>
+              {skipLogistics
+                ? 'Đối tác không dùng app. Sale/xưởng tự cập nhật tiến độ trên lịch sự kiện và kanban SX.'
+                : 'Chỉ phụ trách chính Xưởng và VC/LĐ được xác nhận.'}
+            </Text>
 
             <Pressable
               style={styles.calBtn}
@@ -194,7 +204,16 @@ export default function VcHandoverCommentCard({ comment, onUpdated }: Props) {
           <View style={styles.doneBanner}>
             <Ionicons name="checkmark-circle" size={16} color="#047857" />
             <Text style={styles.doneTxt}>
-              Đã xác nhận giữa Xưởng và VC/LĐ — ngày {formatVcDateTime(md.pickup_at)} giao nhận hàng.
+              {skipLogistics
+                ? `Đã ghi nhận thuê lắp đặt bên ngoài — ngày ${formatVcDateTime(md.pickup_at)}. Cập nhật tiến độ trên lịch / kanban SX.`
+                : `Đã xác nhận giữa Xưởng và VC/LĐ — ngày ${formatVcDateTime(md.pickup_at)} giao nhận hàng.`}
+            </Text>
+          </View>
+        ) : state === 'awaiting_confirm' && skipLogistics ? (
+          <View style={styles.doneBanner}>
+            <Ionicons name="information-circle" size={16} color="#B45309" />
+            <Text style={styles.doneTxt}>
+              Thuê ngoài — không chờ xác nhận VC/LĐ. Tự cập nhật tiến độ trên lịch / kanban SX.
             </Text>
           </View>
         ) : state === 'awaiting_confirm' ? (

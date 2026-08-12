@@ -29,6 +29,15 @@ import { useModuleAccess } from '../shared/context/ModuleAccessContext';
 
 export { EVENT_MODULE_OPTIONS };
 
+const EVENT_MODULE_SLUG_RE = /^[a-z][a-z0-9_-]{0,63}$/;
+
+function isValidLockedEventModule(v) {
+  const s = String(v || '').trim().toLowerCase();
+  if (!s) return false;
+  if (EVENT_MODULE_OPTIONS.some((o) => o.value === s)) return true;
+  return EVENT_MODULE_SLUG_RE.test(s);
+}
+
 /** Nút mở deal/dự án đúng module (CRM / SX / VC). */
 function EventDealLinkButtons({ event: ev, pageModule = 'crm', className = '' }) {
   const { label, links } = buildEventDealLinks(ev, pageModule);
@@ -67,8 +76,19 @@ const STATUS_MAP = {
   cancelled: { label: 'Đã hủy', color: 'bg-red-100 text-red-700', icon: XCircle },
 };
 
-function moduleMeta(v) {
-  return EVENT_MODULE_OPTIONS.find((o) => o.value === String(v || '')) || EVENT_MODULE_OPTIONS[1];
+function moduleMeta(v, customLabel = '') {
+  const key = String(v || '');
+  const hit = EVENT_MODULE_OPTIONS.find((o) => o.value === key);
+  if (hit) return hit;
+  if (key && EVENT_MODULE_SLUG_RE.test(key)) {
+    return {
+      value: key,
+      label: customLabel || key,
+      emoji: '📦',
+      color: 'bg-teal-100 text-teal-700 border-teal-200',
+    };
+  }
+  return EVENT_MODULE_OPTIONS[1];
 }
 
 function formatTime(isoStr) {
@@ -205,9 +225,13 @@ const EVENTS_TIME_PRESETS = [
 // ═══════════════════════════════════════════════════════════════
 // MAIN PAGE
 // ═══════════════════════════════════════════════════════════════
-/** @param {{ lockedModule?: 'production'|'logistics'|'crm'|'' }} props */
-export default function EventsFeedPage({ lockedModule = '' } = {}) {
-  const forcedModule = EVENT_MODULE_OPTIONS.some((o) => o.value === lockedModule) ? lockedModule : '';
+/** @param {{ lockedModule?: string, lockedModuleLabel?: string }} props */
+export default function EventsFeedPage({ lockedModule = '', lockedModuleLabel = '' } = {}) {
+  const forcedModule = isValidLockedEventModule(lockedModule)
+    ? String(lockedModule).trim().toLowerCase()
+    : '';
+  const customModLabel = String(lockedModuleLabel || '').trim();
+  const resolveModuleMeta = (v) => moduleMeta(v, customModLabel);
   const { user } = useAuth();
   const isAdmin = isAdminLike(user);
   /** Admin chọn công ty (admin tổng / platform_admin — khớp CRM Dashboard, không chỉ isSystemAdmin). */
@@ -218,19 +242,19 @@ export default function EventsFeedPage({ lockedModule = '' } = {}) {
   const initialModule = useMemo(() => {
     if (forcedModule) return forcedModule;
     const v = String(searchParams.get('module') || '').toLowerCase();
-    return EVENT_MODULE_OPTIONS.some((o) => o.value === v) ? v : '';
+    return isValidLockedEventModule(v) ? v : '';
   }, [forcedModule, searchParams]);
   const [filterModule, setFilterModule] = useState(initialModule);
   const [loadError, setLoadError] = useState('');
 
   /**
    * Dropdown công ty theo khối đang chọn trong hệ sinh thái:
-   * crm / production / logistics → for_module tương ứng;
+   * crm / production / logistics / custom → for_module tương ứng;
    * «Tất cả khối» / «Chung công ty» → mọi công ty (không lọc module).
    */
   const companiesModule = useMemo(() => {
-    if (forcedModule === 'production' || forcedModule === 'logistics') return forcedModule;
-    if (filterModule === 'crm' || filterModule === 'production' || filterModule === 'logistics') {
+    if (forcedModule && forcedModule !== 'general') return forcedModule;
+    if (filterModule && filterModule !== 'general' && isValidLockedEventModule(filterModule)) {
       return filterModule;
     }
     return false;
@@ -736,7 +760,9 @@ export default function EventsFeedPage({ lockedModule = '' } = {}) {
 
   const activeFilterHints = useMemo(() => {
     const hints = [];
-    if (filterModule) hints.push(`khối ${moduleMeta(filterModule).label}`);
+    if (filterModule) {
+      hints.push(`khối ${moduleMeta(filterModule, filterModule === forcedModule ? customModLabel : '').label}`);
+    }
     if (canPickCompany && filterCompanyId) {
       const co = companies.find((c) => String(c.id) === String(filterCompanyId));
       hints.push(`công ty ${co?.short_name || co?.name || filterCompanyId}`);
@@ -753,7 +779,7 @@ export default function EventsFeedPage({ lockedModule = '' } = {}) {
     if (search.trim()) hints.push(`tìm "${search.trim()}"`);
     return hints;
   }, [
-    filterModule, canPickCompany, filterCompanyId, companies, view, rangeFrom, rangeTo,
+    filterModule, forcedModule, customModLabel, canPickCompany, filterCompanyId, companies, view, rangeFrom, rangeTo,
     calMonth, calYear, filterRegionId, filterType, filterStatus, filterUser, search,
   ]);
 
@@ -949,12 +975,16 @@ export default function EventsFeedPage({ lockedModule = '' } = {}) {
           {forcedModule ? (
             <div className="flex items-center gap-2 px-2.5 h-9 rounded-lg border border-amber-200 bg-amber-50 text-amber-900 text-xs font-medium">
               <span>
-                {forcedModule === 'production' ? '🏭 Sản xuất + 🚚 VC/LĐ' : '🚚 VC/LĐ + 🏭 Sản xuất'}
+                {forcedModule === 'production'
+                  ? '🏭 Sản xuất + 🚚 VC/LĐ'
+                  : forcedModule === 'logistics'
+                    ? '🚚 VC/LĐ + 🏭 Sản xuất'
+                    : `${moduleMeta(forcedModule, customModLabel).emoji} ${moduleMeta(forcedModule, customModLabel).label}`}
               </span>
             </div>
           ) : !(isAdmin || isSystemAdmin) && filterModule ? (
             <div className="flex items-center gap-2 px-2.5 h-9 rounded-lg border border-amber-200 bg-amber-50 text-amber-900 text-xs">
-              <span>{moduleMeta(filterModule).emoji} Khối: {moduleMeta(filterModule).label}</span>
+              <span>{moduleMeta(filterModule, customModLabel).emoji} Khối: {moduleMeta(filterModule, customModLabel).label}</span>
               <button
                 type="button"
                 onClick={() => setFilterModule('')}
@@ -1398,6 +1428,7 @@ export default function EventsFeedPage({ lockedModule = '' } = {}) {
           users={users}
           defaultCompanyId={filterCompanyId || user?.company_id || ''}
           defaultModule={forcedModule || filterModule || (allowedModules && allowedModules.find((m) => m !== 'general')) || 'crm'}
+          defaultModuleLabel={forcedModule ? customModLabel : ''}
           allowedModules={forcedModule ? [forcedModule] : (isAdmin || isSystemAdmin ? null : allowedModules)}
           allowGeneralModule={!forcedModule && (isAdmin || isSystemAdmin)}
           onClose={() => { setShowCreate(false); setEditEvent(null); setCreatePresetDay(null); }}

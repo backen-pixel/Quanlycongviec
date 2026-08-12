@@ -242,6 +242,7 @@ async function clearSxSchedulesOnCompletedForProjects(projectIds) {
     sx_kanban_deadline_reason: null,
     production_deadline: null,
     delivery_date: null,
+    production_finish_date: null,
     deadline: null,
     updated_at: nowIso,
   };
@@ -255,8 +256,9 @@ async function clearSxSchedulesOnCompletedForProjects(projectIds) {
     }
     if (/production_deadline/.test(m)) delete fallback.production_deadline;
     if (/delivery_date/.test(m)) delete fallback.delivery_date;
+    if (/production_finish_date/.test(m)) delete fallback.production_finish_date;
     ({ error: projErr } = await supabase.from('projects').update(fallback).in('id', ids));
-    if (projErr && !/sx_kanban_deadline|production_deadline|delivery_date|deadline/.test(String(projErr.message || ''))) {
+    if (projErr && !/sx_kanban_deadline|production_deadline|delivery_date|production_finish_date|deadline/.test(String(projErr.message || ''))) {
       throw projErr;
     }
   }
@@ -2015,6 +2017,8 @@ r.get('/deadline-bucket-page', requirePermission('projects', 'view'), async (req
 const MIGRATION_76_COLS = 'production_deadline, production_note,';
 /** Columns added in migration 300 — ngày đặt / giao hàng trên dự án SX */
 const MIGRATION_300_COLS = 'order_date, delivery_date,';
+/** Columns added in migration 520 — ngày hoàn thiện SX (= delivery − 2) */
+const MIGRATION_520_COLS = 'production_finish_date, ';
 function isExternalCompanyNameMissingError(err) {
   const m = String(err?.message || '');
   return m.includes('external_company_name');
@@ -2022,9 +2026,15 @@ function isExternalCompanyNameMissingError(err) {
 function stripMigration300Cols(sel) {
   return sel.replace(MIGRATION_300_COLS, '');
 }
+function stripMigration520Cols(sel) {
+  return sel.replace(MIGRATION_520_COLS, '');
+}
 function isOrderDeliveryDateMissingError(err) {
   const m = String(err?.message || '');
   return m.includes('order_date') || m.includes('delivery_date');
+}
+function isProductionFinishDateMissingError(err) {
+  return String(err?.message || '').includes('production_finish_date');
 }
 function isDepositAmountMissingError(err) {
   return String(err?.message || '').includes('deposit_amount');
@@ -2053,7 +2063,7 @@ const WORKSHOP_TYPE_SCALAR = 'workshop_type_id,';
 const WORKSHOP_TYPE_EMBED = 'workshop_type:workshop_project_types(id, name, applies_to),';
 
 const PROJECT_DETAIL_SELECT = `
-        id, company_id, code, name, description, estimated_value, production_value, deposit_amount, collected_amount, priority, deadline, install_address, install_date, pickup_at, pickup_notes, ${MIGRATION_300_COLS} ${MIGRATION_76_COLS} status, notes, created_at,
+        id, company_id, code, name, description, estimated_value, production_value, deposit_amount, collected_amount, priority, deadline, install_address, install_date, pickup_at, pickup_notes, ${MIGRATION_300_COLS} ${MIGRATION_520_COLS} ${MIGRATION_76_COLS} status, notes, created_at,
         current_stage_id, ${WORKSHOP_TYPE_SCALAR}
         ${WORKSHOP_TYPE_EMBED}
         current_stage:workflow_stages(id, slug, name, color, icon),
@@ -2085,7 +2095,7 @@ const PROJECT_DETAIL_SELECT = `
 // Fallback select khi DB thiếu cột/relationship mới (FK users, task_checklists, participants…)
 // Mục tiêu: vẫn mở được chi tiết dự án + hiển thị stage/tag đúng.
 const PROJECT_DETAIL_SELECT_MIN = `
-        id, company_id, code, name, description, estimated_value, production_value, priority, deadline, install_address, install_date, pickup_at, pickup_notes, ${MIGRATION_300_COLS} status, notes, created_at,
+        id, company_id, code, name, description, estimated_value, production_value, priority, deadline, install_address, install_date, pickup_at, pickup_notes, ${MIGRATION_300_COLS} ${MIGRATION_520_COLS} status, notes, created_at,
         current_stage_id, ${WORKSHOP_TYPE_SCALAR}
         ${WORKSHOP_TYPE_EMBED}
         current_stage:workflow_stages(id, slug, name, color, icon),
@@ -2147,6 +2157,14 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
       ({ data: project, error } = await supabase
         .from('projects')
         .select(stripMigration300Cols(PROJECT_DETAIL_SELECT))
+        .eq('id', projectId)
+        .single());
+    }
+    // Migration 520 not yet applied — retry without production_finish_date
+    if (error && isProductionFinishDateMissingError(error)) {
+      ({ data: project, error } = await supabase
+        .from('projects')
+        .select(stripMigration520Cols(PROJECT_DETAIL_SELECT))
         .eq('id', projectId)
         .single());
     }
@@ -2839,6 +2857,7 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
         projectUpd.sx_kanban_deadline_reason = null;
         projectUpd.production_deadline = null;
         projectUpd.delivery_date = null;
+        projectUpd.production_finish_date = null;
         projectUpd.deadline = null;
       } else if (hasDeadlineInput) {
         projectUpd.sx_kanban_deadline_at = new Date(parsedDeadlineTs).toISOString();
@@ -2864,7 +2883,7 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
       }
       if (Object.keys(projectUpd).length) {
         let { error: projUpdErr } = await supabase.from('projects').update(projectUpd).eq('id', id);
-        if (projUpdErr && /sx_kanban_deadline|production_deadline|delivery_date/.test(projUpdErr.message || '')) {
+        if (projUpdErr && /sx_kanban_deadline|production_deadline|delivery_date|production_finish_date/.test(projUpdErr.message || '')) {
           const fallbackUpd = { ...projectUpd };
           if (/sx_kanban_deadline/.test(projUpdErr.message || '')) {
             delete fallbackUpd.sx_kanban_deadline_at;
@@ -2872,6 +2891,7 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
           }
           if (/production_deadline/.test(projUpdErr.message || '')) delete fallbackUpd.production_deadline;
           if (/delivery_date/.test(projUpdErr.message || '')) delete fallbackUpd.delivery_date;
+          if (/production_finish_date/.test(projUpdErr.message || '')) delete fallbackUpd.production_finish_date;
           ({ error: projUpdErr } = await supabase.from('projects').update(fallbackUpd).eq('id', id));
           if (!projUpdErr && hasDeadlineInput) {
             return res.status(503).json({

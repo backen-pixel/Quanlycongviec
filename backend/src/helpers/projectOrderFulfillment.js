@@ -1,4 +1,4 @@
-﻿const { supabase } = require('../config/supabase');
+const { supabase } = require('../config/supabase');
 const { PHUC_DAT_COMPANY_ID } = require('./hideQuoteContractFromProduction');
 const {
   fetchProductionWorkshopTemplatesForApply,
@@ -255,6 +255,32 @@ async function findMasterDealForProject(projectId) {
 }
 
 /**
+ * Cột đầu tab Khách hàng = neo Thắng (`is_won`, order_index lớn nhất) — khớp FE `splitDealStagesForCrmTabs`.
+ */
+async function resolveFirstCustomerTabStageId(pipelineId) {
+  if (!pipelineId) return null;
+  const { data: stages, error } = await supabase
+    .from('crm_pipeline_stages')
+    .select('id, order_index, is_won, is_lost, is_active, pipeline_type')
+    .eq('pipeline_id', pipelineId)
+    .eq('pipeline_type', 'deal')
+    .eq('is_active', true)
+    .order('order_index', { ascending: true });
+  if (error) throw error;
+  const list = stages || [];
+  const won = list.filter((s) => !!s.is_won && !s.is_lost);
+  if (!won.length) return list[0]?.id || null;
+  const best = won.reduce((acc, s) => {
+    const ao = Number(acc?.order_index);
+    const so = Number(s.order_index);
+    const aOrd = Number.isFinite(ao) ? ao : -Infinity;
+    const sOrd = Number.isFinite(so) ? so : -Infinity;
+    return sOrd >= aOrd ? s : acc;
+  });
+  return best?.id || list[0]?.id || null;
+}
+
+/**
  * Tạo deal con gắn dự án cha — dùng cho nhiệm vụ CRM riêng theo đơn; sau push VC project_id chuyển sang dự án logistics.
  */
 async function createFulfillmentChildDeal({
@@ -293,6 +319,83 @@ async function createFulfillmentChildDeal({
     .single();
   if (error) throw error;
   return data.id;
+}
+
+/**
+ * Đơn hàng phát sinh: deal độc lập trên Kanban (không parent_lead_id),
+ * hiện cột đầu tab Khách hàng, liên kết deal nguồn qua source_customer_deal_id.
+ */
+async function createAdditionalCustomerDeal({
+  parentDeal,
+  title,
+  notes,
+  userId,
+}) {
+  const code = await nextDealCode();
+  const label = String(title || '').trim();
+  if (!label) throw new Error('Nhập tên deal phát sinh');
+  if (!parentDeal?.id) throw new Error('Thiếu deal nguồn');
+  if (!parentDeal.pipeline_id) throw new Error('Deal nguồn chưa có pipeline');
+
+  const stageId = (await resolveFirstCustomerTabStageId(parentDeal.pipeline_id))
+    || parentDeal.stage_id
+    || null;
+  if (!stageId) throw new Error('Không tìm thấy cột pipeline Khách hàng đầu tiên');
+
+  const parentHint = (parentDeal.title || parentDeal.code || '').trim();
+  const notePart = String(notes || '').trim();
+  const description = [
+    parentHint
+      ? `Đơn hàng phát sinh từ deal khách hàng: ${parentHint}${parentDeal.code ? ` (${parentDeal.code})` : ''}`
+      : 'Đơn hàng phát sinh',
+    notePart || null,
+  ].filter(Boolean).join('\n\n');
+
+  const row = {
+    code,
+    title: label,
+    description,
+    type: 'deal',
+    customer_id: parentDeal.customer_id || null,
+    company_id: parentDeal.company_id || null,
+    pipeline_id: parentDeal.pipeline_id,
+    stage_id: stageId,
+    region_id: parentDeal.region_id || null,
+    assigned_to: parentDeal.assigned_to || userId,
+    lead_owner_id: parentDeal.lead_owner_id || parentDeal.assigned_to || userId,
+    project_id: parentDeal.project_id || null,
+    phone: parentDeal.phone || null,
+    install_address: parentDeal.install_address || null,
+    lead_type_id: parentDeal.lead_type_id || null,
+    source_id: parentDeal.source_id || null,
+    estimated_value: 0,
+    created_by: userId,
+    stage_entered_at: new Date().toISOString(),
+    source_customer_deal_id: parentDeal.id,
+  };
+
+  let { data, error } = await supabase
+    .from('crm_leads')
+    .insert(row)
+    .select('id, code, title, stage_id, pipeline_id, company_id, source_customer_deal_id, parent_lead_id')
+    .single();
+
+  if (error && /source_customer_deal_id/i.test(String(error.message || ''))) {
+    const { source_customer_deal_id: _s, ...fallback } = row;
+    fallback.description = [
+      description,
+      `source_customer_deal_id=${parentDeal.id}`,
+    ].join('\n');
+    ({ data, error } = await supabase
+      .from('crm_leads')
+      .insert(fallback)
+      .select('id, code, title, stage_id, pipeline_id, company_id, parent_lead_id')
+      .single());
+    if (!error && data) data.source_customer_deal_id = parentDeal.id;
+  }
+
+  if (error) throw error;
+  return data;
 }
 
 /**
@@ -1556,6 +1659,8 @@ module.exports = {
   findMasterDealForProject,
   createChildOrderOnProject,
   createFulfillmentChildDeal,
+  createAdditionalCustomerDeal,
+  resolveFirstCustomerTabStageId,
   ensureDefaultOrderOneForProject,
   pushOrderToLogistics,
   resolveVcIntakeStageId,

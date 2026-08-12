@@ -2,6 +2,7 @@
  * Lịch giao việc CRM/SX — tạo schedule và spawn crm_assignments theo chu kỳ.
  */
 const { supabase } = require('../config/supabase');
+const { normalizeAssignModule } = require('./assignmentModule');
 
 const ADMIN_ROLES = new Set(['admin', 'manager', 'sales_admin', 'crm_production_admin']);
 const isAdmin = (req) => ADMIN_ROLES.has(String(req.user?.role || '').toLowerCase());
@@ -114,7 +115,7 @@ async function spawnAssignmentFromSchedule(schedule, io) {
     status: 'pending',
     deadline: resolveInstanceDeadline(schedule, runAt),
     position: posBase,
-    assignment_module: schedule.assignment_module === 'production' ? 'production' : 'crm',
+    assignment_module: normalizeAssignModule(schedule.assignment_module),
     schedule_id: schedule.id,
   };
 
@@ -164,7 +165,7 @@ async function createCrmAssignmentSchedule(req, body) {
     ? (company_id || req.user?.company_id || null)
     : (req.user?.company_id || null);
 
-  const resolvedModule = assignment_module === 'production' ? 'production' : 'crm';
+  const resolvedModule = normalizeAssignModule(assignment_module);
   const deadlineAt = deadline ? new Date(deadline).toISOString() : null;
 
   const row = {

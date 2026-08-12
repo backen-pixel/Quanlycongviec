@@ -191,7 +191,7 @@ export default function AppModuleSettingsPage() {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Link
-              to={`/ecosystem/app-modules/${mod.module_key}?tab=templates`}
+              to={`/m/${mod.module_key}/settings?tab=templates`}
               className="h-8 px-3 text-xs font-medium text-violet-700 hover:text-violet-900 border border-violet-200 rounded-lg bg-white inline-flex items-center gap-1.5"
             >
               <ListChecks className="h-3.5 w-3.5" /> Bộ mẫu nhiệm vụ

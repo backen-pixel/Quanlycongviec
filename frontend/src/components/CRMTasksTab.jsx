@@ -1548,6 +1548,20 @@ export default function CRMTasksTab({
     return Number.isNaN(ts.getTime()) ? null : ts.toISOString();
   };
 
+  /** Trừ N ngày theo lịch (YYYY-MM-DD) — khớp backend projectDeliveryDates. */
+  const subtractCalendarDays = (dateOnly, days) => {
+    if (!dateOnly) return null;
+    const m = String(dateOnly).trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (!m) return null;
+    const dt = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12, 0, 0));
+    if (Number.isNaN(dt.getTime())) return null;
+    dt.setUTCDate(dt.getUTCDate() - Math.abs(Number(days) || 0));
+    const y = dt.getUTCFullYear();
+    const mo = String(dt.getUTCMonth() + 1).padStart(2, '0');
+    const d = String(dt.getUTCDate()).padStart(2, '0');
+    return `${y}-${mo}-${d}`;
+  };
+
   const saveProjectDateFromChecklist = async (fieldKey) => {
     if (!linkedProjectId) {
       alert('Deal chưa gắn dự án để lưu ngày đặt/giao.');
@@ -1558,7 +1572,12 @@ export default function CRMTasksTab({
       const checked = !!dateChecklist[fieldKey];
       const dateValue = checked ? (projectDates[fieldKey] || null) : null;
       const patch = { [fieldKey]: dateValue };
-      if (fieldKey === 'delivery_date') patch.production_deadline = dateValue;
+      if (fieldKey === 'delivery_date') {
+        patch.production_deadline = dateValue;
+        patch.production_finish_date = dateValue
+          ? subtractCalendarDays(dateValue, 2)
+          : null;
+      }
       await api.put(`/projects/${linkedProjectId}`, patch);
 
       // Đồng bộ nhắc việc vào nhóm nhiệm vụ giao hàng (sx_giao_hang).
@@ -1589,6 +1608,7 @@ export default function CRMTasksTab({
       await api.put(`/projects/${linkedProjectId}`, {
         delivery_date: null,
         production_deadline: null,
+        production_finish_date: null,
       });
       const deliveryTasks = tasks.filter((t) => t.stage_slug === 'sx_giao_hang' && t.deadline);
       if (deliveryTasks.length) {
@@ -4470,7 +4490,7 @@ export default function CRMTasksTab({
           )}
           {[
             { key: 'order_date', label: 'Ngày đặt hàng', icon: '🛒' },
-            { key: 'delivery_date', label: 'Ngày giao hàng', icon: '🚚' },
+            { key: 'delivery_date', label: 'Ngày lắp đặt', icon: '🚚' },
           ].map((row) => (
             <div key={row.key} className="rounded-lg border border-sky-100 bg-white px-2.5 py-2">
               <label className="flex items-center gap-2 text-xs font-medium text-slate-700">
@@ -4505,7 +4525,8 @@ export default function CRMTasksTab({
           ))}
           <p className="text-[10px] text-sky-700">
             Ngày đặt hàng tự điền khi deal CRM chuyển sang cột Sản xuất (nếu chưa có).
-            Lưu thủ công ghi vào dự án. Ngày giao hàng đồng bộ `production_deadline` và nhắc hạn nhiệm vụ `sx_giao_hang`.
+            Lưu thủ công ghi vào dự án. Ngày lắp đặt đồng bộ `production_deadline` và nhắc hạn nhiệm vụ `sx_giao_hang`;
+            ngày hoàn thiện SX = lắp đặt − 2 ngày (`production_finish_date`).
           </p>
         </div>
       )}

@@ -65,7 +65,13 @@ function resolveSxStageInfo(deal, project, ctx) {
 
 function resolveAccountingCompanyId(user, queryClientCompanyId) {
   if (isAccountingUser(user)) return getAccountingCompanyId(user);
-  if (isAdminLike(user) && queryClientCompanyId) return String(queryClientCompanyId).trim();
+  if (isAdminLike(user)) {
+    if (queryClientCompanyId) return String(queryClientCompanyId).trim();
+    // Admin công ty: dùng company_id của chính họ
+    if (user?.company_id != null && String(user.company_id).trim() !== '') {
+      return String(user.company_id).trim();
+    }
+  }
   return null;
 }
 
@@ -179,14 +185,69 @@ function resolveAccountingDeposit(row) {
   return 0;
 }
 
-/** Còn thu = (Đơn / Giá SX) − Tiền cọc − Đã HĐ. Đồng bộ công nợ SX (production − deposit). */
+/**
+ * Còn thu — cùng logic trang chi tiết deal kế toán:
+ * effective = max(cọc snapshot, cọc từ giai đoạn) + thu các giai đoạn không-cọc
+ * (và không thấp hơn tổng giao dịch thực tế / đã xuất HĐ).
+ */
 function computeOutstandingAmount(row) {
   const invoiced = row.invoice_total != null ? Number(row.invoice_total) || 0 : 0;
-  const basis = row.order_total != null
+  const basis = row.order_total != null && Number(row.order_total) > 0
     ? Number(row.order_total) || 0
-    : (row.production_value || row.estimated_value || 0);
-  const deposit = resolveAccountingDeposit(row);
-  return Math.max(0, basis - deposit - invoiced);
+    : (row.quotation_total != null && Number(row.quotation_total) > 0
+      ? Number(row.quotation_total) || 0
+      : (Number(row.estimated_value) || Number(row.production_value) || 0));
+
+  const depositSnapshot = resolveAccountingDeposit(row);
+  const depositFromStages = Number(row.deposit_stage_received) || 0;
+  const stagesReceived = Number(row.stages_received) || 0;
+  const paymentsReceived = Number(row.payments_received) || 0;
+
+  const depositCredit = Math.max(depositSnapshot, depositFromStages);
+  // Nếu BG/deal đánh dấu đã nhận cọc mà giai đoạn cọc chưa ghi nhận → vẫn credit cọc
+  const depositFlagCredit = (row.deposit_received === true || row.quotation_deposit_received === true)
+    ? depositSnapshot
+    : 0;
+  const effectiveDeposit = Math.max(depositCredit, depositFlagCredit);
+  const nonDepositFromStages = Math.max(0, stagesReceived - depositFromStages);
+  const fromStagesAndDeposit = effectiveDeposit + nonDepositFromStages;
+
+  const effectiveReceived = Math.max(fromStagesAndDeposit, paymentsReceived, invoiced);
+  return Math.max(0, basis - effectiveReceived);
+}
+
+/** Tổng thu theo giai đoạn + giao dịch thực tế cho từng lead. */
+async function fetchPaymentTotalsByLeadIds(leadIds) {
+  const map = new Map();
+  if (!leadIds.length) return map;
+
+  const [{ data: stages, error: stErr }, { data: pays, error: payErr }] = await Promise.all([
+    supabase
+      .from('crm_payment_stages')
+      .select('lead_id, label, received_amount, status')
+      .in('lead_id', leadIds),
+    supabase
+      .from('crm_deal_payments')
+      .select('lead_id, amount')
+      .in('lead_id', leadIds),
+  ]);
+  if (stErr) console.warn('[accountingDeals] payment_stages:', stErr.message);
+  if (payErr) console.warn('[accountingDeals] deal_payments:', payErr.message);
+
+  for (const s of stages || []) {
+    const lid = String(s.lead_id);
+    if (!map.has(lid)) map.set(lid, { stages_received: 0, deposit_stage_received: 0, payments_received: 0 });
+    const slot = map.get(lid);
+    const amt = Number(s.received_amount) || 0;
+    slot.stages_received += amt;
+    if (/cọc/i.test(String(s.label || ''))) slot.deposit_stage_received += amt;
+  }
+  for (const p of pays || []) {
+    const lid = String(p.lead_id);
+    if (!map.has(lid)) map.set(lid, { stages_received: 0, deposit_stage_received: 0, payments_received: 0 });
+    map.get(lid).payments_received += Number(p.amount) || 0;
+  }
+  return map;
 }
 
 function applyFinancialFilters(rows, { financialStatus, sxDoneNotInvoiced }) {
@@ -218,10 +279,10 @@ async function fetchLatestFinancialsByLeadIds(leadIds) {
   const map = new Map();
   if (!leadIds.length) return map;
 
-  const chunk = async (table, statusField) => {
+  const chunk = async (table, statusField, extraCols = '') => {
     const { data, error } = await supabase
       .from(table)
-      .select(`id, lead_id, total, status, code, created_at, ${statusField}`)
+      .select(`id, lead_id, total, status, code, created_at, ${statusField}${extraCols}`)
       .in('lead_id', leadIds)
       .order('created_at', { ascending: false });
     if (error) {
@@ -239,8 +300,8 @@ async function fetchLatestFinancialsByLeadIds(leadIds) {
   };
 
   await Promise.all([
-    chunk('quotations', 'accepted_at'),
-    chunk('orders', 'order_date'),
+    chunk('quotations', 'accepted_at', ', deposit_amount, deposit_received'),
+    chunk('orders', 'order_date', ', deposit_amount, deposit_received'),
     chunk('invoices', 'invoice_date'),
   ]);
   return map;
@@ -261,7 +322,7 @@ async function fetchAccountingDeals({
   }
 
   const dealSelectWithSx = `
-      id, code, title, estimated_value, deposit_amount, company_id, external_company_id, external_company_name,
+      id, code, title, estimated_value, deposit_amount, deposit_received, company_id, external_company_id, external_company_name,
       project_id, customer_id, created_at, updated_at, actual_close_date, stage_id, lead_type_id, assigned_to,
       sx_pipeline_stage_id, sx_handover_at,
       customer:customers(id, full_name, phone),
@@ -271,7 +332,7 @@ async function fetchAccountingDeals({
       sx_pipeline_stage:production_pipeline_stages(id, name, color, bucket_slug, is_handover_to_logistics)
     `;
   const dealSelectFallback = `
-      id, code, title, estimated_value, deposit_amount, company_id, external_company_id, external_company_name,
+      id, code, title, estimated_value, deposit_amount, deposit_received, company_id, external_company_id, external_company_name,
       project_id, customer_id, created_at, updated_at, actual_close_date, stage_id, lead_type_id, assigned_to,
       sx_pipeline_stage_id, sx_handover_at,
       customer:customers(id, full_name, phone),
@@ -320,7 +381,10 @@ async function fetchAccountingDeals({
   const workshopMap = new Map((workshopCos || []).map((c) => [String(c.id), c]));
 
   const leadIds = dealsFiltered.map((d) => d.id).filter(Boolean);
-  const financialMap = await fetchLatestFinancialsByLeadIds(leadIds);
+  const [financialMap, paymentTotalsMap] = await Promise.all([
+    fetchLatestFinancialsByLeadIds(leadIds),
+    fetchPaymentTotalsByLeadIds(leadIds),
+  ]);
 
   const searchNorm = normalizeSearch(search);
   const enrichedRaw = dealsFiltered.map((d) => {
@@ -328,6 +392,7 @@ async function fetchAccountingDeals({
     const ws = proj?.company_id ? workshopMap.get(String(proj.company_id)) : null;
     const sxInfo = resolveSxStageInfo(d, proj, sxStageCtx);
     const fin = financialMap.get(String(d.id)) || {};
+    const pay = paymentTotalsMap.get(String(d.id)) || {};
     return finalizeDealRow({
       id: d.id,
       code: d.code,
@@ -353,6 +418,12 @@ async function fetchAccountingDeals({
         ? Number(proj.deposit_amount)
         : (Number(d.deposit_amount) > 0 ? Number(d.deposit_amount) : 0),
       deal_deposit_amount: Number(d.deposit_amount) > 0 ? Number(d.deposit_amount) : 0,
+      deposit_received: d.deposit_received === true,
+      quotation_deposit_received: fin.quotation?.deposit_received === true
+        || fin.order?.deposit_received === true,
+      stages_received: Number(pay.stages_received) || 0,
+      deposit_stage_received: Number(pay.deposit_stage_received) || 0,
+      payments_received: Number(pay.payments_received) || 0,
       workshop_company_id: proj?.company_id || null,
       workshop_name: ws?.short_name || ws?.name || null,
       ...sxInfo,
@@ -544,4 +615,6 @@ module.exports = {
   buildAccountingSummary,
   accountingDealsToCsv,
   applyAccountingCrmCompanyFilter,
+  computeOutstandingAmount,
+  resolveAccountingDeposit,
 };

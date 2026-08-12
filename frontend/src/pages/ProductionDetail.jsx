@@ -162,6 +162,8 @@ function WorkshopInfoPanel({
 
   const pickupAt = project.pickup_at || null;
   const installDate = project.install_date || null;
+  const deliveryDate = project.delivery_date || null;
+  const productionFinishDate = project.production_finish_date || null;
 
   const pickupDateObj = pickupAt ? new Date(pickupAt) : null;
   const pickupOverdue = pickupDateObj && !Number.isNaN(pickupDateObj.getTime()) && pickupDateObj < new Date();
@@ -172,6 +174,11 @@ function WorkshopInfoPanel({
   const installOverdue = installDateObj && !Number.isNaN(installDateObj.getTime()) && installDateObj < new Date();
   const installSoon = installDateObj && !installOverdue && !Number.isNaN(installDateObj.getTime())
     && installDateObj < new Date(Date.now() + 3 * 86400000);
+
+  const finishDateObj = productionFinishDate ? new Date(`${String(productionFinishDate).slice(0, 10)}T12:00:00`) : null;
+  const finishOverdue = !!(finishDateObj && !Number.isNaN(finishDateObj.getTime()) && finishDateObj < new Date());
+  const finishSoon = !!(finishDateObj && !finishOverdue && !Number.isNaN(finishDateObj.getTime())
+    && finishDateObj < new Date(Date.now() + 3 * 86400000));
 
   const toDateInputValue = (raw) => {
     if (!raw) return '';
@@ -377,6 +384,68 @@ function WorkshopInfoPanel({
               <p className="text-[10px] text-gray-400 mt-0.5">= Giá trị sản xuất − Tiền cọc</p>
             </div>
           </div>
+
+          {/* Ngày hoàn thiện SX — đồng bộ từ Sale (giao − 2 ngày), có thể sửa tay */}
+          <div
+            className={`flex items-start gap-2 py-2 px-1 rounded-lg -mx-1 transition-colors group cursor-pointer ${finishOverdue ? 'bg-red-50 hover:bg-red-100' : 'hover:bg-gray-50'}`}
+            onClick={() => editing !== 'production_finish_date' && startEdit('production_finish_date', toDateInputValue(productionFinishDate))}
+          >
+            <span className="text-sm mt-0.5 shrink-0">🏭</span>
+            <div className="flex-1 min-w-0">
+              <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Ngày hoàn thiện sản xuất</p>
+              {editing === 'production_finish_date' ? (
+                <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                  <input
+                    type="date"
+                    value={draft}
+                    onChange={(e) => setDraft(e.target.value)}
+                    autoFocus
+                    className="px-2 py-1 border border-blue-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-400"
+                  />
+                  <button type="button" onClick={() => save('production_finish_date', draft)} disabled={saving} className="px-2 py-1 bg-blue-600 text-white rounded text-xs cursor-pointer disabled:opacity-50">✓</button>
+                  <button type="button" onClick={cancelEdit} className="px-2 py-1 bg-gray-100 rounded text-xs cursor-pointer">✕</button>
+                </div>
+              ) : (
+                <p className={`text-sm font-medium flex items-center gap-1 ${finishOverdue ? 'text-red-600' : finishSoon ? 'text-amber-600' : 'text-gray-900'}`}>
+                  <span className="flex-1 min-w-0">{productionFinishDate ? formatDate(productionFinishDate) : '—'}</span>
+                  {finishOverdue && <span className="text-[10px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded font-bold">Trễ!</span>}
+                  {finishSoon && <span className="text-[10px] bg-amber-100 text-amber-600 px-1.5 py-0.5 rounded font-bold">Sắp tới</span>}
+                  <Edit2 className="h-3 w-3 text-gray-300 opacity-0 group-hover:opacity-100 shrink-0" />
+                </p>
+              )}
+              <p className="text-[10px] text-gray-400 mt-0.5">Mặc định = ngày lắp đặt − 2 ngày (Sale)</p>
+            </div>
+          </div>
+
+          {/* Ngày lắp đặt — do Sale thiết lập (delivery_date) */}
+          <div
+            className="flex items-start gap-2 py-2 px-1 rounded-lg -mx-1 transition-colors group cursor-pointer hover:bg-gray-50"
+            onClick={() => editing !== 'delivery_date' && startEdit('delivery_date', toDateInputValue(deliveryDate))}
+          >
+            <span className="text-sm mt-0.5 shrink-0">🚚</span>
+            <div className="flex-1 min-w-0">
+              <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Ngày lắp đặt</p>
+              {editing === 'delivery_date' ? (
+                <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                  <input
+                    type="date"
+                    value={draft}
+                    onChange={(e) => setDraft(e.target.value)}
+                    autoFocus
+                    className="px-2 py-1 border border-blue-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-400"
+                  />
+                  <button type="button" onClick={() => save('delivery_date', draft)} disabled={saving} className="px-2 py-1 bg-blue-600 text-white rounded text-xs cursor-pointer disabled:opacity-50">✓</button>
+                  <button type="button" onClick={cancelEdit} className="px-2 py-1 bg-gray-100 rounded text-xs cursor-pointer">✕</button>
+                </div>
+              ) : (
+                <p className="text-sm font-medium text-gray-900 flex items-center gap-1">
+                  <span className="flex-1 min-w-0">{deliveryDate ? formatDate(deliveryDate) : '—'}</span>
+                  <Edit2 className="h-3 w-3 text-gray-300 opacity-0 group-hover:opacity-100 shrink-0" />
+                </p>
+              )}
+              <p className="text-[10px] text-gray-400 mt-0.5">Đổi ngày lắp đặt sẽ tự cập nhật hoàn thiện = lắp đặt − 2 ngày</p>
+            </div>
+          </div>
         </>
       )}
 
@@ -411,14 +480,16 @@ function WorkshopInfoPanel({
         </div>
       </div>
 
-      {/* Ngày lắp đặt */}
+      {/* Ngày lắp đặt (install_date — lịch hiện trường / VC) */}
       <div
         className={`flex items-start gap-2 py-2 px-1 rounded-lg -mx-1 transition-colors group cursor-pointer ${installOverdue ? 'bg-red-50 hover:bg-red-100' : 'hover:bg-gray-50'}`}
         onClick={() => editing !== 'install_date' && startEdit('install_date', toDateInputValue(installDate))}
       >
         <span className="text-sm mt-0.5 shrink-0">🔧</span>
         <div className="flex-1 min-w-0">
-          <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Ngày lắp đặt</p>
+          <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">
+            {isVC ? 'Ngày lắp đặt' : 'Ngày lắp đặt (hiện trường)'}
+          </p>
           {editing === 'install_date' ? (
             <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
               <input

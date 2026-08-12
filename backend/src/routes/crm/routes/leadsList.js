@@ -150,6 +150,17 @@ r.get('/leads/picker', async (req, res) => {
 
     if (customerId) query = query.eq('customer_id', customerId);
 
+    // Lọc theo NV phụ trách deal (assigned_to) — dùng khi gắn deal trong Giao việc
+    const assigneeId = uuidQueryOrNull(req.query.assignee_id)
+      || uuidQueryOrNull(req.query.assigned_to);
+    if (assigneeId) {
+      if (type === 'lead') {
+        query = query.or(`assigned_to.eq.${assigneeId},lead_owner_id.eq.${assigneeId}`);
+      } else {
+        query = query.eq('assigned_to', assigneeId);
+      }
+    }
+
     if (q) {
       // Search theo code / title / SĐT / tên KH / mã dự án (TB-…)
       const safe = q.replace(/[(),]/g, ' ').replace(/\s+/g, '%');

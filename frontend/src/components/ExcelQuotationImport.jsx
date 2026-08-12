@@ -206,6 +206,15 @@ export function buildQuotationDraftFromPreview(preview, file, user, leadId, sour
       deposit_amount: sum?.deposit_amount > 0 ? sum.deposit_amount : null,
       deposit_received: sum?.deposit_received === true || sum?.deposit_received === false ? sum.deposit_received : null,
       deposit_label: sum?.deposit_label || '',
+      deposit_installments: Array.isArray(sum?.deposit_installments) && sum.deposit_installments.length
+        ? sum.deposit_installments
+        : (sum?.deposit_amount > 0 || sum?.deposit_label
+          ? [{
+              amount: sum?.deposit_amount > 0 ? sum.deposit_amount : null,
+              received: sum?.deposit_received === true || sum?.deposit_received === false ? sum.deposit_received : null,
+              label: sum?.deposit_label || '',
+            }]
+          : undefined),
       remaining_amount: sum?.remaining_amount > 0 ? sum.remaining_amount : null,
       remaining_note: sum?.remaining_note || '',
       source_excel_file_url: sourceFile?.file_url || '',

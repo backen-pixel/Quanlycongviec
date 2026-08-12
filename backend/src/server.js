@@ -391,6 +391,7 @@ app.use('/api/crm/deal-performance', require('./routes/dealScores'));
 app.use('/api/kpi', require('./routes/kpi'));
 app.use('/api/crm/assignments', require('./routes/crmAssignments'));
 app.use('/api/crm/dept-plans', require('./routes/crmDeptPlans'));
+app.use('/api/crm/daily-reports', require('./routes/crmDailyReports'));
 app.use('/api/crm', require('./routes/crm'));
 app.use('/api/trash', require('./routes/trash'));
 app.use('/api/messenger', require('./routes/messengerGroups'));

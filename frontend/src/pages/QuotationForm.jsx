@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams, useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import api from '../lib/api';
-import { Save, ArrowLeft, ShoppingCart, Download, X, Loader2, Check, History } from 'lucide-react';
+import { Save, ArrowLeft, ShoppingCart, Download, X, Loader2, Check, History, Plus, Trash2 } from 'lucide-react';
 import SaveToast from '../components/SaveToast';
 import CustomerSearchPicker from '../components/CustomerSearchPicker';
 import LeadDealPicker from '../components/LeadDealPicker';
@@ -9,11 +9,17 @@ import { QUOTATION_EXCEL_DRAFT_KEY } from '../components/ExcelQuotationImport';
 import QuotationSourceExcelLink from '../components/QuotationSourceExcelLink';
 import { useAuth } from '../lib/auth';
 import { formatDateTime } from '../lib/utils';
-import { getDepositRemainingDisplay } from '../lib/quotationTermsDisplay';
+import {
+  getDepositRemainingDisplay,
+  depositInstallmentsForForm,
+  aggregateDepositFromInstallments,
+} from '../lib/quotationTermsDisplay';
 import ProductSearchPicker from '../components/ProductSearchPicker';
 import CommercialItemsTable, { NumericInput } from '../components/CommercialItemsTable';
 import { formatVND, computeItemRows, computeGroupBreakdown, applyItemFieldUpdate, buildItemFromProduct } from '../lib/commercialItems';
 import { computeQuotationDocumentDiscounts } from '../lib/quotationTotals';
+
+const EMPTY_DEPOSIT_ROW = () => ({ amount: null, received: null, label: '' });
 
 const DEFAULT_PAYMENT_TERMS = 'Thanh toán 40% khi ký HĐ, Thanh toán 60% khi bàn giao';
 
@@ -51,6 +57,7 @@ export default function QuotationForm() {
     deposit_amount: null,
     deposit_received: null,
     deposit_label: '',
+    deposit_installments: [EMPTY_DEPOSIT_ROW()],
     remaining_amount: null,
     remaining_note: '',
   });
@@ -102,6 +109,7 @@ export default function QuotationForm() {
           deposit_amount: d.deposit_amount != null && d.deposit_amount !== '' ? Number(d.deposit_amount) : null,
           deposit_received: d.deposit_received === true || d.deposit_received === false ? d.deposit_received : null,
           deposit_label: d.deposit_label || '',
+          deposit_installments: depositInstallmentsForForm(d),
           remaining_amount: d.remaining_amount != null && d.remaining_amount !== '' ? Number(d.remaining_amount) : null,
           remaining_note: d.remaining_note || '',
         });
@@ -188,6 +196,7 @@ export default function QuotationForm() {
               sale_discount_value: dform.sale_discount_value ?? 0,
               payment_terms: presetPt ? pt : (pt ? 'Khác' : f.payment_terms),
               approved_by: dform.approved_by || f.approved_by || '',
+              deposit_installments: depositInstallmentsForForm(dform),
             }));
             if (parsed.items?.length) {
               setItems(
@@ -415,9 +424,46 @@ export default function QuotationForm() {
   }, [items, form.discount_type, form.discount_value, form.sale_discount_type, form.sale_discount_value]);
 
   const { depositShow, remainingShow } = useMemo(() => getDepositRemainingDisplay(form), [
-    form.deposit_amount, form.deposit_received, form.deposit_label,
+    form.deposit_amount, form.deposit_received, form.deposit_label, form.deposit_installments,
     form.remaining_amount, form.remaining_note, form.notes,
   ]);
+
+  const patchDepositInstallment = (idx, patch) => {
+    setForm((f) => {
+      const rows = [...(f.deposit_installments || [EMPTY_DEPOSIT_ROW()])];
+      rows[idx] = { ...rows[idx], ...patch };
+      const agg = aggregateDepositFromInstallments(rows);
+      return {
+        ...f,
+        deposit_installments: rows,
+        deposit_amount: agg.deposit_amount,
+        deposit_received: agg.deposit_received,
+        deposit_label: agg.deposit_label,
+      };
+    });
+  };
+
+  const addDepositInstallment = () => {
+    setForm((f) => ({
+      ...f,
+      deposit_installments: [...(f.deposit_installments || []), EMPTY_DEPOSIT_ROW()],
+    }));
+  };
+
+  const removeDepositInstallment = (idx) => {
+    setForm((f) => {
+      const cur = f.deposit_installments || [];
+      const rows = cur.length <= 1 ? [EMPTY_DEPOSIT_ROW()] : cur.filter((_, i) => i !== idx);
+      const agg = aggregateDepositFromInstallments(rows);
+      return {
+        ...f,
+        deposit_installments: rows,
+        deposit_amount: agg.deposit_amount,
+        deposit_received: agg.deposit_received,
+        deposit_label: agg.deposit_label,
+      };
+    });
+  };
 
   const _isSaving = useRef(false);
   const excelSaveBlocked = !isEdit && excelImportMeta?.requireReviewConfirm && !excelReviewConfirmed;
@@ -435,7 +481,16 @@ export default function QuotationForm() {
     try {
       const effectivePayment = isCustomPayment ? customPaymentTerms : form.payment_terms;
       const { due_date: _dropDueDate, ...formWithoutDueDate } = form;
-      const payload = { ...formWithoutDueDate, payment_terms: effectivePayment, items: calcs.rows };
+      const depositAgg = aggregateDepositFromInstallments(form.deposit_installments);
+      const payload = {
+        ...formWithoutDueDate,
+        payment_terms: effectivePayment,
+        items: calcs.rows,
+        deposit_installments: depositAgg.deposit_installments,
+        deposit_amount: depositAgg.deposit_amount,
+        deposit_received: depositAgg.deposit_received,
+        deposit_label: depositAgg.deposit_label || null,
+      };
       const excelSrc = excelImportMeta?.fileUrl
         ? {
             source_excel_file_url: excelImportMeta.fileUrl,
@@ -793,20 +848,44 @@ export default function QuotationForm() {
                 <div className="font-semibold text-rose-900 text-[11px] uppercase tracking-wide">Tiền cọc & khoản còn lại</div>
                 {depositShow && (
                   <div className="space-y-0.5">
-                    <div className="flex justify-between gap-2">
-                      <span className="text-rose-900">Tiền cọc (theo báo giá)</span>
-                      <span className="font-bold text-rose-950 tabular-nums">
-                        {depositShow.amount > 0 ? formatVND(depositShow.amount) : '—'}
-                      </span>
-                    </div>
-                    <div className="flex justify-between gap-2 text-rose-800">
-                      <span>Trạng thái nhận cọc</span>
-                      <span className="font-medium">
-                        {depositShow.received === true ? 'Đã nhận' : depositShow.received === false ? 'Chưa nhận' : '—'}
-                      </span>
-                    </div>
-                    {depositShow.label && (
-                      <p className="text-[11px] text-rose-800/90 whitespace-pre-wrap leading-snug border-t border-rose-100 pt-1 mt-1">{depositShow.label}</p>
+                    {(depositShow.installments?.length > 1) ? (
+                      <div className="space-y-1">
+                        {depositShow.installments.map((inst, i) => (
+                          <div key={i} className="flex justify-between gap-2">
+                            <span className="text-rose-900 truncate">
+                              {inst.label || `Cọc lần ${i + 1}`}
+                              {inst.received === true ? ' · Đã nhận' : inst.received === false ? ' · Chưa nhận' : ''}
+                            </span>
+                            <span className="font-bold text-rose-950 tabular-nums shrink-0">
+                              {inst.amount > 0 ? formatVND(inst.amount) : '—'}
+                            </span>
+                          </div>
+                        ))}
+                        <div className="flex justify-between gap-2 border-t border-rose-100 pt-1 mt-1">
+                          <span className="text-rose-900 font-semibold">Tổng cọc</span>
+                          <span className="font-bold text-rose-950 tabular-nums">
+                            {depositShow.amount > 0 ? formatVND(depositShow.amount) : '—'}
+                          </span>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="flex justify-between gap-2">
+                          <span className="text-rose-900">Tiền cọc (theo báo giá)</span>
+                          <span className="font-bold text-rose-950 tabular-nums">
+                            {depositShow.amount > 0 ? formatVND(depositShow.amount) : '—'}
+                          </span>
+                        </div>
+                        <div className="flex justify-between gap-2 text-rose-800">
+                          <span>Trạng thái nhận cọc</span>
+                          <span className="font-medium">
+                            {depositShow.received === true ? 'Đã nhận' : depositShow.received === false ? 'Chưa nhận' : '—'}
+                          </span>
+                        </div>
+                        {depositShow.label && (
+                          <p className="text-[11px] text-rose-800/90 whitespace-pre-wrap leading-snug border-t border-rose-100 pt-1 mt-1">{depositShow.label}</p>
+                        )}
+                      </>
                     )}
                     {depositShow.fromNotesOnly && (
                       <p className="text-[10px] text-amber-800 bg-amber-50 border border-amber-100 rounded px-1.5 py-0.5">
@@ -857,8 +936,9 @@ export default function QuotationForm() {
         <h2 className="text-sm font-bold mb-3" style={{ color: '#000000' }}>Điều khoản</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
-            <label className="text-xs font-medium text-gray-600">Hiệu lực đến</label>
+            <label className="text-xs font-medium text-gray-600">Ngày HĐ / hiệu lực</label>
             <input type="date" value={form.valid_until} onChange={e => setForm(f => ({ ...f, valid_until: e.target.value }))} className="w-full h-10 px-3 border rounded-lg text-sm mt-1" />
+            <p className="text-[11px] text-gray-400 mt-1">Tự do chọn ngày ký hợp đồng hoặc ngày có hiệu lực mới.</p>
           </div>
           <div>
             <label className="text-xs font-medium text-gray-600">Điều khoản thanh toán</label>
@@ -874,46 +954,77 @@ export default function QuotationForm() {
             )}
           </div>
           <div className="md:col-span-2 rounded-lg border border-rose-100 bg-rose-50/50 p-3 space-y-3">
-            <h3 className="text-xs font-bold" style={{ color: '#000000' }}>Cọc & thanh toán còn lại</h3>
-            <p className="text-[11px] text-rose-900/80">Số liệu khớp block cuối file Excel (hoặc nhập tay). Hiển thị tóm tắt cạnh <strong>TỔNG CỘNG</strong>.</p>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="flex items-start justify-between gap-2 flex-wrap">
               <div>
-                <label className="text-xs font-medium text-gray-600">Tiền cọc (VNĐ)</label>
-                <NumericInput
-                  value={form.deposit_amount === null || form.deposit_amount === undefined ? '' : form.deposit_amount}
-                  onChange={(v) => setForm((f) => ({ ...f, deposit_amount: v === '' ? null : v }))}
-                  allowEmpty
-                  className="w-full h-10 px-3 border rounded-lg text-sm mt-1 text-right"
-                  placeholder="0"
-                />
+                <h3 className="text-xs font-bold" style={{ color: '#000000' }}>Cọc & thanh toán còn lại</h3>
+                <p className="text-[11px] text-rose-900/80 mt-0.5">Có thể thêm nhiều đợt thu cọc. Tổng hiển thị cạnh <strong>TỔNG CỘNG</strong>.</p>
               </div>
-              <div>
-                <label className="text-xs font-medium text-gray-600">Đã nhận cọc?</label>
-                <select
-                  value={form.deposit_received === true ? 'yes' : form.deposit_received === false ? 'no' : ''}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    setForm((f) => ({
-                      ...f,
-                      deposit_received: v === 'yes' ? true : v === 'no' ? false : null,
-                    }));
-                  }}
-                  className="w-full h-10 px-3 border rounded-lg text-sm mt-1"
-                >
-                  <option value="">Chưa xác định</option>
-                  <option value="yes">Đã nhận</option>
-                  <option value="no">Chưa nhận</option>
-                </select>
-              </div>
-              <div className="md:col-span-2">
-                <label className="text-xs font-medium text-gray-600">Mô tả dòng cọc (VD: ký HĐ, lệnh SX)</label>
-                <input
-                  value={form.deposit_label}
-                  onChange={(e) => setForm((f) => ({ ...f, deposit_label: e.target.value }))}
-                  className="w-full h-10 px-3 border rounded-lg text-sm mt-1"
-                  placeholder="Tùy chọn"
-                />
-              </div>
+              <button
+                type="button"
+                onClick={addDepositInstallment}
+                className="h-8 px-2.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold flex items-center gap-1 cursor-pointer transition"
+              >
+                <Plus className="h-3.5 w-3.5" /> Thêm đợt cọc
+              </button>
+            </div>
+            <div className="space-y-3">
+              {(form.deposit_installments || [EMPTY_DEPOSIT_ROW()]).map((row, idx) => (
+                <div key={idx} className="rounded-lg border border-rose-100 bg-white/70 p-3 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-[11px] font-semibold text-rose-900 uppercase tracking-wide">Cọc lần {idx + 1}</p>
+                    {(form.deposit_installments || []).length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => removeDepositInstallment(idx)}
+                        className="h-7 w-7 flex items-center justify-center rounded-md text-rose-400 hover:text-rose-700 hover:bg-rose-50 cursor-pointer"
+                        title="Xóa đợt cọc"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs font-medium text-gray-600">Tiền cọc (VNĐ)</label>
+                      <NumericInput
+                        value={row.amount === null || row.amount === undefined ? '' : row.amount}
+                        onChange={(v) => patchDepositInstallment(idx, { amount: v === '' ? null : v })}
+                        allowEmpty
+                        className="w-full h-10 px-3 border rounded-lg text-sm mt-1 text-right"
+                        placeholder="0"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium text-gray-600">Đã nhận cọc?</label>
+                      <select
+                        value={row.received === true ? 'yes' : row.received === false ? 'no' : ''}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          patchDepositInstallment(idx, {
+                            received: v === 'yes' ? true : v === 'no' ? false : null,
+                          });
+                        }}
+                        className="w-full h-10 px-3 border rounded-lg text-sm mt-1"
+                      >
+                        <option value="">Chưa xác định</option>
+                        <option value="yes">Đã nhận</option>
+                        <option value="no">Chưa nhận</option>
+                      </select>
+                    </div>
+                    <div className="md:col-span-2">
+                      <label className="text-xs font-medium text-gray-600">Mô tả đợt cọc (VD: ký HĐ, lệnh SX)</label>
+                      <input
+                        value={row.label || ''}
+                        onChange={(e) => patchDepositInstallment(idx, { label: e.target.value })}
+                        className="w-full h-10 px-3 border rounded-lg text-sm mt-1"
+                        placeholder={`Cọc lần ${idx + 1} — tùy chọn`}
+                      />
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1 border-t border-rose-100">
               <div>
                 <label className="text-xs font-medium text-gray-600">Số tiền còn lại (VNĐ)</label>
                 <NumericInput

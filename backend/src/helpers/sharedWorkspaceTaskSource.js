@@ -6,7 +6,7 @@
 
 const TASK_SOURCE_TYPES = new Set(['customer_request', 'employee_error']);
 const ERROR_MODULES = new Set(['crm', 'production', 'logistics']);
-const ASSIGN_MODULES = new Set(['crm', 'production', 'logistics']);
+const { normalizeAssignModule, BUILTIN_ASSIGN_MODULES: ASSIGN_MODULES } = require('./assignmentModule');
 
 function normalizeTaskSourceType(raw) {
   const v = String(raw || '').trim().toLowerCase();
@@ -16,11 +16,6 @@ function normalizeTaskSourceType(raw) {
 function normalizeErrorModule(raw) {
   const v = String(raw || '').trim().toLowerCase();
   return ERROR_MODULES.has(v) ? v : null;
-}
-
-function normalizeAssignModule(raw) {
-  const v = String(raw || '').trim().toLowerCase();
-  return ASSIGN_MODULES.has(v) ? v : 'crm';
 }
 
 /**

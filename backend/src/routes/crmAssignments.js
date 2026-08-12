@@ -459,22 +459,29 @@ function pushNotif(req, userId, payload) {
   } catch { /* ignore */ }
 }
 
+const { normalizeAssignModule, isValidAssignModuleFilter, navPathForAssignModule, isCustomAssignModule } = require('../helpers/assignmentModule');
+
 function assignmentNotifCopy(assignment) {
-  const mod = String(assignment?.assignment_module || '').toLowerCase();
+  const mod = normalizeAssignModule(assignment?.assignment_module);
   const isProd = mod === 'production';
   const isLogistics = mod === 'logistics';
+  const isCustom = isCustomAssignModule(mod);
   return {
     isProd,
     isLogistics,
+    isCustom,
     title: isProd
       ? '📋 Bạn vừa được giao nhiệm vụ Sản xuất'
       : isLogistics
         ? '📋 Bạn vừa được giao nhiệm vụ VC/LĐ'
-        : '📋 Bạn vừa được giao nhiệm vụ CRM',
+        : isCustom
+          ? `📋 Bạn vừa được giao nhiệm vụ (${mod})`
+          : '📋 Bạn vừa được giao nhiệm vụ CRM',
     metadata: {
-      module_key: isProd ? 'production' : (isLogistics ? 'logistics' : 'crm'),
-      ecosystem_module_key: isLogistics ? 'logistics' : (isProd ? 'production' : 'crm'),
-      nav_path: isProd ? '/sx/assignments' : (isLogistics ? '/vc/assignments' : '/crm/assignments'),
+      module_key: mod,
+      ecosystem_module_key: mod,
+      assignment_module: mod,
+      nav_path: navPathForAssignModule(mod),
       open: assignment?.id,
       lead_id: assignment?.lead_id || null,
       task_source_type: assignment?.task_source_type || null,
@@ -668,7 +675,7 @@ r.get('/', async (req, res) => {
         .lt('deadline', start.toISOString());
     }
     const moduleFilter = String(req.query.assignment_module || '').trim().toLowerCase();
-    if (moduleFilter === 'production' || moduleFilter === 'crm' || moduleFilter === 'logistics') {
+    if (isValidAssignModuleFilter(moduleFilter)) {
       q = q.eq('assignment_module', moduleFilter);
     }
     if (req.query.q) {
@@ -713,7 +720,7 @@ r.get('/', async (req, res) => {
           .not('deadline', 'is', null)
           .lt('deadline', start.toISOString());
       }
-      if (moduleFilter === 'production' || moduleFilter === 'crm' || moduleFilter === 'logistics') {
+      if (isValidAssignModuleFilter(moduleFilter)) {
         qLegacy = qLegacy.eq('assignment_module', moduleFilter);
       }
       qLegacy = qLegacy.order('position', { ascending: true }).order('created_at', { ascending: false });
@@ -727,7 +734,7 @@ r.get('/', async (req, res) => {
       qExec = qExec.eq('company_id', req.query.company_id);
       if (req.query.status) qExec = qExec.eq('status', req.query.status);
       if (req.query.priority) qExec = qExec.eq('priority', req.query.priority);
-      if (moduleFilter === 'production' || moduleFilter === 'crm' || moduleFilter === 'logistics') {
+      if (isValidAssignModuleFilter(moduleFilter)) {
         qExec = qExec.eq('assignment_module', moduleFilter);
       }
       if (req.query.q) {
@@ -849,8 +856,7 @@ r.put('/:id', async (req, res) => {
         'priority', 'status', 'deadline', 'position', 'company_id', 'lead_id',
       ].forEach((f) => { if (req.body[f] !== undefined) update[f] = req.body[f]; });
       if (req.body.assignment_module !== undefined) {
-        const mod = String(req.body.assignment_module || '').toLowerCase();
-        update.assignment_module = ['production', 'logistics'].includes(mod) ? mod : 'crm';
+        update.assignment_module = normalizeAssignModule(req.body.assignment_module);
       }
       if (req.body.task_source_type !== undefined || req.body.employee_error_module !== undefined) {
         const {
@@ -1070,7 +1076,7 @@ r.get('/unread-count', responseCache({ ttl: 30, scope: 'user', tags: ['crm:assig
       .select('id, status, deadline')
       .in('id', ids)
       .neq('status', 'completed');
-    if (moduleFilter === 'production' || moduleFilter === 'crm' || moduleFilter === 'logistics') {
+    if (isValidAssignModuleFilter(moduleFilter)) {
       q = q.eq('assignment_module', moduleFilter);
     }
     let { data: items, error: listErr } = await q;
@@ -1456,8 +1462,7 @@ r.get('/private-deal-tasks', async (req, res) => {
 // GET /api/crm/assignments/schedules?assignment_module=crm|production|logistics
 r.get('/schedules', async (req, res) => {
   try {
-    const rawMod = String(req.query.assignment_module || 'crm').toLowerCase();
-    const moduleFilter = ['production', 'logistics'].includes(rawMod) ? rawMod : 'crm';
+    const moduleFilter = normalizeAssignModule(req.query.assignment_module || 'crm');
     let q = supabase
       .from('crm_assignment_schedules')
       .select('*')

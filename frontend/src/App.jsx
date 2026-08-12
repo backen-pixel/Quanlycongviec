@@ -101,6 +101,8 @@ const ProductionHandoverSettingsPage = lazyWithRetry(() => import('./pages/Produ
 const ProductionBackupSyncPage = lazyWithRetry(() => import('./pages/ProductionBackupSyncPage'));
 const ProductionAssignmentsPage = lazyWithRetry(() => import('./pages/ProductionAssignmentsPage'));
 const LogisticsAssignmentsPage = lazyWithRetry(() => import('./pages/LogisticsAssignmentsPage'));
+const CustomModuleAssignmentsPage = lazyWithRetry(() => import('./pages/CustomModuleAssignmentsPage'));
+const CustomModuleEventsPage = lazyWithRetry(() => import('./pages/CustomModuleEventsPage'));
 const ProductionRegionsPage = lazyWithRetry(() => import('./pages/ProductionRegionsPage'));
 const LogisticsDashboard = lazyWithRetry(() => import('./pages/LogisticsDashboard'));
 const LogisticsDetail = lazyWithRetry(() => import('./pages/LogisticsDetail'));
@@ -150,6 +152,8 @@ const CRMCustomersPage = lazyWithRetry(() => import('./pages/CRMCustomersPage'))
 const CRMTasksPage = lazyWithRetry(() => import('./pages/CRMTasksPage'));
 const CRMAssignmentsPage = lazyWithRetry(() => import('./pages/CRMAssignmentsPage'));
 const CrmDeptPlanPage = lazyWithRetry(() => import('./pages/CrmDeptPlanPage'));
+const CrmDailyReportPage = lazyWithRetry(() => import('./pages/CrmDailyReportPage'));
+const CrmDailyWorkHistoryPage = lazyWithRetry(() => import('./pages/CrmDailyWorkHistoryPage'));
 const CrmFollowUpCarePage = lazyWithRetry(() => import('./pages/CrmFollowUpCarePage'));
 const CRMTemplatesPage = lazyWithRetry(() => import('./pages/CRMTemplatesPage'));
 const AutoProjectConfigPage = lazyWithRetry(() => import('./pages/AutoProjectConfigPage'));
@@ -309,7 +313,8 @@ function ProtectedLayout() {
   }
 
   const fullscreenPages = ['/projects/create', '/crm/messenger'];
-  const isFullscreen = fullscreenPages.some((p) => location.pathname.startsWith(p));
+  const isFullscreen = fullscreenPages.some((p) => location.pathname.startsWith(p))
+    || /^\/m\/[^/]+\/messenger$/.test(location.pathname);
   const compactKanbanChrome = /^\/(crm\/(dashboard|pipeline)|sx\/(dashboard|pipeline)|work\/unified|personal-tasks|m\/)/.test(location.pathname);
 
   return (
@@ -441,6 +446,15 @@ export default function App() {
             <Route path="/ecosystem/app-modules/:moduleKey" element={<AppModuleSettingsPage />} />
             <Route path="/m/:moduleKey" element={<AppModuleLayout />}>
               <Route index element={<AppModuleDashboard />} />
+              <Route path="assignments" element={<CustomModuleAssignmentsPage />} />
+              <Route path="events" element={<CustomModuleEventsPage />} />
+              <Route path="leaves" element={<LeaveSchedulePage />} />
+              <Route path="leaves/list" element={<LeaveListPage />} />
+              <Route path="activity" element={<ActiveUsersPage />} />
+              <Route path="messenger" element={<MessengerHubPage />} />
+              <Route path="social" element={<SocialFeedPage />} />
+              <Route path="settings" element={<AppModuleSettingsPage />} />
+              <Route path="trash" element={<Navigate to="/admin/trash?tab=crm" replace />} />
               <Route path="records/:recordId" element={<AppModuleRecordDetail />} />
             </Route>
             <Route path="/ecosystem-levels" element={<EcosystemLevelsPage />} />
@@ -512,6 +526,8 @@ export default function App() {
             <Route path="/crm/tasks" element={<CRMTasksPage />} />
             <Route path="/crm/assignments" element={<CRMAssignmentsPage />} />
             <Route path="/crm/dept-plan" element={<CrmDeptPlanPage />} />
+            <Route path="/crm/daily-reports" element={<CrmDailyReportPage />} />
+            <Route path="/crm/daily-reports/history" element={<CrmDailyWorkHistoryPage />} />
             <Route path="/production/assignments" element={<Navigate to="/sx/assignments" replace />} />
             <Route path="/crm/follow-up-care" element={<CrmFollowUpCarePage />} />
             <Route path="/crm/task-templates" element={<RequireCrmElevated><CRMTemplatesPage /></RequireCrmElevated>} />

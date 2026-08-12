@@ -1,30 +1,47 @@
 import {
   LayoutDashboard, FolderKanban, Settings, ListChecks, LayoutList,
   Building2, HardDrive, Trash2, Share2, Calendar, UserMinus, Activity, MessageCircle,
+  ClipboardList,
 } from 'lucide-react';
 import { customModuleScopeId } from './sidebarModuleContext';
 
-/** Liên kết «Chức năng chung» — giữ sidebar module tùy chỉnh qua moduleContext. */
-export function buildCustomAppSharedLinks() {
+/**
+ * Liên kết «Chức năng chung» — luôn nằm dưới /m/{moduleKey}/…
+ * để sidebar giữ đúng module đang mở.
+ */
+export function buildCustomAppSharedLinks(moduleKey = '') {
+  const key = String(moduleKey || '').trim();
+  if (!key) {
+    return [
+      { to: '/social', icon: Share2, label: 'Bảng tin nội bộ' },
+      { to: '/crm/events', icon: Calendar, label: 'Sự kiện' },
+      { to: '/crm/leaves', icon: UserMinus, label: 'Lịch nghỉ' },
+      { to: '/crm/activity', icon: Activity, label: 'Đang hoạt động' },
+      { to: '/crm/messenger', icon: MessageCircle, label: 'Nhóm chat' },
+    ];
+  }
+  const base = `/m/${key}`;
   return [
-    { to: '/social', icon: Share2, label: 'Bảng tin nội bộ' },
-    { to: '/crm/events', icon: Calendar, label: 'Sự kiện' },
-    { to: '/crm/leaves', icon: UserMinus, label: 'Lịch nghỉ' },
-    { to: '/crm/activity', icon: Activity, label: 'Đang hoạt động' },
-    { to: '/crm/messenger', icon: MessageCircle, label: 'Nhóm chat' },
+    { to: `${base}/social`, icon: Share2, label: 'Bảng tin nội bộ' },
+    { to: `${base}/events`, icon: Calendar, label: 'Sự kiện' },
+    { to: `${base}/leaves`, icon: UserMinus, label: 'Lịch nghỉ' },
+    { to: `${base}/activity`, icon: Activity, label: 'Đang hoạt động' },
+    { to: `${base}/messenger`, icon: MessageCircle, label: 'Nhóm chat' },
   ];
 }
 
 /**
  * Menu sidebar module tùy chỉnh — bố cục giống Vận chuyển:
- * Tổng quan · Chức năng chung · Điều hành (pipeline / bộ NV) · Cài đặt.
+ * Tổng quan · Chức năng chung · Điều hành · Cài đặt.
+ * Mọi đường dẫn thuộc /m/{moduleKey}/… (trừ Drive dùng ?module=).
  */
 export function buildCustomAppModuleMenuGroups(moduleKey, modMeta = null) {
   const key = String(moduleKey || '').trim();
   if (!key) return [];
   const scope = customModuleScopeId(key);
   const base = `/m/${key}`;
-  const settings = `/ecosystem/app-modules/${key}`;
+  const settings = `${base}/settings`;
+  const labelName = String(modMeta?.name || key).trim() || key;
 
   return [
     {
@@ -34,6 +51,7 @@ export function buildCustomAppModuleMenuGroups(moduleKey, modMeta = null) {
       emoji: '📊',
       items: [
         { to: base, icon: LayoutDashboard, label: 'Dashboard', end: true },
+        { to: `${base}/assignments`, icon: ClipboardList, label: `Giao việc ${labelName}` },
         { to: `/drive?module=${encodeURIComponent(scope)}`, icon: HardDrive, label: 'Drive' },
       ],
     },
@@ -42,7 +60,7 @@ export function buildCustomAppModuleMenuGroups(moduleKey, modMeta = null) {
       moduleScope: scope,
       title: '2. Chức năng chung',
       emoji: '🌐',
-      items: buildCustomAppSharedLinks(),
+      items: buildCustomAppSharedLinks(key),
     },
     {
       id: `custom-${key}-ops`,
@@ -54,7 +72,7 @@ export function buildCustomAppModuleMenuGroups(moduleKey, modMeta = null) {
         { to: `${settings}?tab=pipeline`, icon: Settings, label: 'Pipeline' },
         { to: `${settings}?tab=templates`, icon: ListChecks, label: 'Bộ nhiệm vụ' },
         { to: `${settings}?tab=tabs`, icon: LayoutList, label: 'Tab pipeline', adminOnly: true },
-        { to: { pathname: '/admin/trash', search: '?tab=crm' }, icon: Trash2, label: 'Thùng rác', adminOnly: true, strictAdminOnly: true },
+        { to: `${base}/trash`, icon: Trash2, label: 'Thùng rác', adminOnly: true, strictAdminOnly: true },
       ],
     },
     {

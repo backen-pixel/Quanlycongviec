@@ -1,0 +1,61 @@
+/**
+ * Ngày đặt / giao / hoàn thiện SX trên projects.
+ * production_finish_date = delivery_date − 2 calendar days (một chiều từ Sale).
+ */
+
+/** Parse YYYY-MM-DD (hoặc ISO bắt đầu bằng ngày) → { y, m, d } hoặc null. */
+function parseDateOnlyParts(raw) {
+  if (raw == null || raw === '') return null;
+  const s = String(raw).trim();
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return null;
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const d = Number(m[3]);
+  if (!Number.isFinite(y) || !Number.isFinite(mo) || !Number.isFinite(d)) return null;
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+  return { y, m: mo, d };
+}
+
+/** Cộng/trừ ngày theo lịch (UTC noon tránh lệch DST). Trả YYYY-MM-DD hoặc null. */
+function addCalendarDays(dateOnly, deltaDays) {
+  const parts = parseDateOnlyParts(dateOnly);
+  if (!parts) return null;
+  const dt = new Date(Date.UTC(parts.y, parts.m - 1, parts.d, 12, 0, 0));
+  if (Number.isNaN(dt.getTime())) return null;
+  dt.setUTCDate(dt.getUTCDate() + Number(deltaDays || 0));
+  const y = dt.getUTCFullYear();
+  const m = String(dt.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(dt.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function subtractCalendarDays(dateOnly, days) {
+  return addCalendarDays(dateOnly, -Math.abs(Number(days) || 0));
+}
+
+/**
+ * Khi delivery_date đổi: tính production_finish_date = delivery − 2.
+ * Nếu client gửi tường minh production_finish_date trong cùng request → giữ giá trị đó (chỉnh tay SX).
+ * @returns {{ production_finish_date?: string|null } | null} patch bổ sung, hoặc null nếu không đụng delivery_date
+ */
+function productionFinishPatchFromDelivery(body) {
+  if (!body || body.delivery_date === undefined) return null;
+  // Client chỉnh tay finish trong cùng request với delivery → tôn trọng
+  if (body.production_finish_date !== undefined) return null;
+
+  const raw = body.delivery_date;
+  if (raw === null || raw === '') {
+    return { production_finish_date: null };
+  }
+  const finish = subtractCalendarDays(raw, 2);
+  if (!finish) return { production_finish_date: null };
+  return { production_finish_date: finish };
+}
+
+module.exports = {
+  parseDateOnlyParts,
+  addCalendarDays,
+  subtractCalendarDays,
+  productionFinishPatchFromDelivery,
+};

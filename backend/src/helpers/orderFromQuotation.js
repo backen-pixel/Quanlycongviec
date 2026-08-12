@@ -21,6 +21,7 @@ function snapshotOrderRowFromQuotation(quote) {
     deposit_amount: quote.deposit_amount ?? null,
     deposit_received: quote.deposit_received ?? null,
     deposit_label: quote.deposit_label ?? null,
+    deposit_installments: quote.deposit_installments ?? null,
     remaining_amount: quote.remaining_amount ?? null,
     remaining_note: quote.remaining_note ?? null,
     subtotal: quote.subtotal,

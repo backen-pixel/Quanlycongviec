@@ -5,6 +5,8 @@ import SidebarTooltip from './SidebarTooltip';
 import {
   getAccessibleAppModules,
   resolveActiveAppModuleId,
+  mapCustomAppModuleToDef,
+  sidebarAccentFromColor,
 } from '../lib/appSwitcherModules';
 import { preloadModuleIconsFromModules } from '../lib/moduleIconPreload';
 
@@ -66,6 +68,7 @@ export default function SidebarModuleCycleButton({
   isCongViec,
   customModuleId = null,
   customModuleName = null,
+  customModuleMeta = null,
   extraModules = [],
   taskBadge = 0,
 }) {
@@ -80,35 +83,53 @@ export default function SidebarModuleCycleButton({
     () => {
       const list = getAccessibleAppModules({ canAccessModule, crmOnly, extraModules });
       if (customModuleId && !list.some((m) => m.id === customModuleId)) {
-        const key = String(customModuleId).replace(/^custom:/, '');
-        list.push({
-          id: customModuleId,
-          path: `/m/${key}`,
-          name: customModuleName || key,
-          desc: 'Module tùy chỉnh',
-          Icon: null,
-          emoji: '📦',
-          iconClass: 'bg-transparent shadow-none',
-          category: 'Tùy chỉnh',
-          categoryClass: '',
-          sidebarAccent: {
-            ring: 'ring-violet-400/35 hover:ring-violet-300/55',
-            card: 'bg-gradient-to-br from-violet-500/22 via-violet-500/8 to-transparent hover:from-violet-500/30',
-            iconWrap: 'bg-violet-500/18 ring-1 ring-violet-300/30 shadow-inner shadow-violet-900/20',
-            dot: 'bg-violet-400',
-          },
-          mod: key,
-          isCustom: true,
-        });
+        const fromMeta = customModuleMeta
+          ? mapCustomAppModuleToDef(customModuleMeta)
+          : null;
+        if (fromMeta) {
+          list.push(fromMeta);
+        } else {
+          const key = String(customModuleId).replace(/^custom:/, '');
+          const color = customModuleMeta?.color || '#4f46e5';
+          list.push({
+            id: customModuleId,
+            path: `/m/${key}`,
+            name: customModuleName || customModuleMeta?.name || key,
+            desc: 'Module tùy chỉnh',
+            Icon: null,
+            imageUrl: customModuleMeta?.icon_image || undefined,
+            emoji: customModuleMeta?.icon_image ? undefined : (customModuleMeta?.icon || '📦'),
+            iconClass: 'bg-transparent shadow-none',
+            category: 'Tùy chỉnh',
+            categoryClass: '',
+            sidebarAccent: sidebarAccentFromColor(color),
+            accentColor: color,
+            mod: key,
+            isCustom: true,
+          });
+        }
       } else if (customModuleId && customModuleName) {
         const idx = list.findIndex((m) => m.id === customModuleId);
-        if (idx >= 0 && list[idx].name !== customModuleName) {
-          list[idx] = { ...list[idx], name: customModuleName };
+        if (idx >= 0) {
+          const prev = list[idx];
+          const nextName = customModuleName || prev.name;
+          const nextImage = customModuleMeta?.icon_image || prev.imageUrl;
+          const nextColor = customModuleMeta?.color || prev.accentColor;
+          const patched = { ...prev, name: nextName };
+          if (nextImage && nextImage !== prev.imageUrl) {
+            patched.imageUrl = nextImage;
+            patched.emoji = undefined;
+          }
+          if (nextColor && nextColor !== prev.accentColor) {
+            patched.accentColor = nextColor;
+            patched.sidebarAccent = sidebarAccentFromColor(nextColor);
+          }
+          list[idx] = patched;
         }
       }
       return list;
     },
-    [canAccessModule, crmOnly, extraModules, customModuleId, customModuleName],
+    [canAccessModule, crmOnly, extraModules, customModuleId, customModuleName, customModuleMeta],
   );
 
   const activeId = resolveActiveAppModuleId({
@@ -134,7 +155,8 @@ export default function SidebarModuleCycleButton({
   const centerPx = dial * centerHubRatio;
 
   const displayMod = modules[displayIdx] || cur;
-  const accentMod = modules[accentIdx] || cur;
+  // Accent theo module đang hiện (hình đã chọn), kể cả lúc đang animate swap
+  const accentMod = modules[displayIdx] || modules[accentIdx] || cur;
 
   useEffect(() => {
     void preloadModuleIconsFromModules(modules);
@@ -158,6 +180,7 @@ export default function SidebarModuleCycleButton({
 
     setPreviousDisplayIdx(curIdx);
     setDisplayIdx(nextIdx);
+    setAccentIdx(nextIdx);
     setSwapping(true);
 
     if (swapTimerRef.current) window.clearTimeout(swapTimerRef.current);
@@ -165,21 +188,27 @@ export default function SidebarModuleCycleButton({
       navigate(target.path);
       setSwapping(false);
       setPreviousDisplayIdx(null);
-      setAccentIdx(nextIdx);
       swapTimerRef.current = null;
     }, SWAP_MS);
   }, [canCycle, swapping, curIdx, modules, navigate]);
 
   if (!cur) return null;
 
+  const accentColor = accentMod.accentColor || accentMod.sidebarAccent?.color || null;
   const accentDot = accentMod.sidebarAccent?.dot || 'bg-white/50';
   const accentRing = accentMod.sidebarAccent?.ring || 'ring-white/20';
   const accentCard = accentMod.sidebarAccent?.card || 'bg-white/[0.06]';
   const tooltip = canCycle ? `${displayMod.name} — bấm chuyển sang ${next.name}` : displayMod.name;
 
+  const shellStyle = accentColor
+    ? {
+      background: `linear-gradient(to bottom right, ${accentColor}38, ${accentColor}14, transparent)`,
+    }
+    : undefined;
+
   const highlightShell = collapsed
-    ? `rounded-xl p-0.5 ${accentCard} ring-1 ${accentRing} shadow-md shadow-black/25 module-cycle-shell`
-    : `flex items-center gap-2.5 flex-1 min-w-0 rounded-xl px-2 py-1.5 ring-1 shadow-md shadow-black/25 ${accentCard} ${accentRing} module-cycle-shell`;
+    ? `rounded-xl p-0.5 ${accentCard || ''} ring-1 ${accentRing} shadow-md shadow-black/25 module-cycle-shell`
+    : `flex items-center gap-2.5 flex-1 min-w-0 rounded-xl px-2 py-1.5 ring-1 shadow-md shadow-black/25 ${accentCard || ''} ${accentRing} module-cycle-shell`;
 
   const dialButton = (
     <button
@@ -201,7 +230,11 @@ export default function SidebarModuleCycleButton({
       <span className="module-cycle-dial-shine absolute inset-0 rounded-full pointer-events-none" aria-hidden />
 
       <span
-        className={`absolute inset-[3px] rounded-full ring-[2px] ring-inset opacity-90 module-cycle-accent-ring ${accentDot.replace('bg-', 'ring-')}`}
+        className={`absolute inset-[3px] rounded-full opacity-90 module-cycle-accent-ring ${
+          accentColor ? '' : `ring-[2px] ring-inset ${accentDot.replace('bg-', 'ring-')}`
+        }`}
+        style={accentColor ? { boxShadow: `inset 0 0 0 2px ${accentColor}` } : undefined}
+        aria-hidden
       />
 
       <ModuleCenterHub
@@ -224,14 +257,18 @@ export default function SidebarModuleCycleButton({
   if (collapsed) {
     return (
       <SidebarTooltip label={tooltip} enabled>
-        <div className={highlightShell}>{dialButton}</div>
+        <div className={highlightShell} style={shellStyle}>{dialButton}</div>
       </SidebarTooltip>
     );
   }
 
   return (
-    <div className={`${highlightShell} relative overflow-hidden`}>
-      <span className={`absolute left-0 top-2 bottom-2 w-[3px] rounded-r-full ${accentDot} opacity-90 module-cycle-accent-bar`} aria-hidden />
+    <div className={`${highlightShell} relative overflow-hidden`} style={shellStyle}>
+      <span
+        className={`absolute left-0 top-2 bottom-2 w-[3px] rounded-r-full opacity-90 module-cycle-accent-bar ${accentColor ? '' : accentDot}`}
+        style={accentColor ? { backgroundColor: accentColor } : undefined}
+        aria-hidden
+      />
       {dialButton}
       <div className="min-w-0 flex-1 pl-0.5 relative">
         <p

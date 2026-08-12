@@ -93,7 +93,7 @@ const GUIDES = [
       },
       {
         title: 'Bước 5: Điều khoản & Lưu',
-        content: '• Hiệu lực đến: Ngày hết hạn báo giá\n• Điều khoản TT: Chọn có sẵn hoặc nhập tùy chỉnh\n  VD: "TT 50% ký HĐ, 50% bàn giao"\n• Ghi chú\n→ Bấm "💾 Lưu"',
+        content: '• Ngày HĐ / hiệu lực: Tự do chọn ngày ký hợp đồng hoặc ngày có hiệu lực\n• Điều khoản TT: Chọn có sẵn hoặc nhập tùy chỉnh\n  VD: "TT 50% ký HĐ, 50% bàn giao"\n• Tiền cọc: có thể thêm nhiều đợt thu\n• Ghi chú\n→ Bấm "💾 Lưu"',
       },
       {
         title: 'Bước 6: Gửi KH & Xuất PDF',

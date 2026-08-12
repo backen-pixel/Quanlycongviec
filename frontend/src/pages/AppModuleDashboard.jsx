@@ -924,7 +924,7 @@ export default function AppModuleDashboard() {
 
               {isAdmin && (
                 <Link
-                  to={`/ecosystem/app-modules/${moduleKey}`}
+                  to={`/m/${moduleKey}/settings`}
                   className={`${TOOLBAR_BTN} border border-slate-200 bg-white text-slate-600 hover:bg-slate-50`}
                   title="Cấu hình pipeline & bộ nhiệm vụ"
                 >
@@ -1123,7 +1123,7 @@ export default function AppModuleDashboard() {
         ) : !loading && stages.length === 0 ? (
           <div className="rounded-xl border border-dashed border-slate-200 bg-white px-4 py-12 text-center">
             <p className="text-sm text-slate-500">Tab này chưa có cột pipeline. Thêm cột trong cấu hình module.</p>
-            <Link to={`/ecosystem/app-modules/${moduleKey}`} className="inline-flex mt-3 text-xs font-semibold text-violet-700 hover:underline">
+            <Link to={`/m/${moduleKey}/settings`} className="inline-flex mt-3 text-xs font-semibold text-violet-700 hover:underline">
               Mở cấu hình →
             </Link>
           </div>

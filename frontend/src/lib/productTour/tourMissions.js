@@ -37,6 +37,14 @@ export const TOUR_MISSIONS = [
     group: 'Sự kiện',
     order: 4,
   },
+  {
+    id: 'm-crm-assignments-page',
+    tourId: 'crm-assignments-page',
+    title: 'Trang Giao việc',
+    desc: 'Menu Giao việc → tab · tìm/lọc · chế độ xem · KPI · Kanban · form giao việc · Không gian chung',
+    group: 'Giao việc',
+    order: 5,
+  },
 ];
 
 export function listTourMissions() {

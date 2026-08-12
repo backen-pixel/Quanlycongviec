@@ -7,6 +7,8 @@
  *   2. Sale chọn công ty VC/LĐ + ngày lấy/lắp → PATCH /comments/:cid/select
  *      → bàn giao thật + lưu ngày đề xuất; Xưởng mặc định đã xác nhận; chờ VC/LĐ xác nhận.
  *      (Chưa tạo 3 sự kiện lịch — tránh phải sửa lịch khi còn đổi giờ.)
+ *      Hoặc chọn «công ty lắp đặt bên ngoài» (skip_logistics_module): không vào bảng VC/LĐ,
+ *      tự tạo sự kiện Giao hàng xưởng + Lắp đặt trên lịch SX/CRM để nội bộ cập nhật tiến độ.
  *   3. (Legacy) Sale chỉ chọn ngày → PATCH /comments/:cid/schedule nếu còn bình luận awaiting_date.
  *   3b. Sale sửa ngày đề xuất → PATCH /comments/:cid/reschedule (khi awaiting_confirm, chưa có sự kiện).
  *      → giữ Xưởng đã xác nhận (mặc định); reset xác nhận VC/LĐ.
@@ -378,10 +380,11 @@ async function syncProjectHandoverDates(projectId, { pickupAt, installAt = null,
 }
 
 /**
- * Tạo 3 sự kiện sau khi Xưởng + VC/LĐ đều xác nhận:
+ * Tạo sự kiện sau khi Xưởng + VC/LĐ đều xác nhận:
  *  1. Giao hàng xưởng (module production) — ngày nhận hàng / lấy hàng
  *  2. VC tới nơi LĐ (module logistics) — vc_arrive_at (fallback = nhận hàng)
  *  3. Lắp đặt (module logistics) — ngày lắp (≥ VC, mặc định = VC)
+ * Thuê ngoài (skip_logistics_module): bỏ sự kiện VC, lắp đặt gắn module production.
  */
 async function createVcHandoverEvents({
   userId, leadId, projectId, pickupAt, installAt = null, vcArriveAt = null, pickupNotes, meta, logisticsPersonId,
@@ -402,8 +405,14 @@ async function createVcHandoverEvents({
   ].filter(Boolean))];
 
   const projLabel = meta.project_name || meta.project_code || lead?.title || 'dự án';
-  const companyId = meta.logistics_company_id || lead?.company_id || null;
+  const skipVcBoard = !!meta.skip_logistics_module;
+  const companyId = skipVcBoard
+    ? (meta.workshop_company_id || lead?.company_id || null)
+    : (meta.logistics_company_id || lead?.company_id || null);
   const notes = pickupNotes || meta.select_notes || null;
+  const externalHint = skipVcBoard && meta.external_company_name
+    ? `Thuê ngoài: ${meta.external_company_name} (không dùng app — nội bộ tự cập nhật tiến độ).`
+    : null;
   const addr = meta.install_address ? `Địa chỉ: ${meta.install_address}` : null;
   const installStart = installAt || pickupAt;
   const arriveStart = vcArriveAt || meta.vc_arrive_at || pickupAt;
@@ -444,39 +453,43 @@ async function createVcHandoverEvents({
     description: [
       notes || `Xưởng giao hàng cho dự án ${projLabel} (đồng bộ ngày nhận hàng VC).`,
       addr,
+      externalHint,
     ].filter(Boolean).join('\n'),
     start_time: pickupAt,
     assignee_id: meta.production_person_id || null,
   }, participantIds, userId);
   if (sxEventId) eventIds.push(sxEventId);
 
-  // 2) VC tới nơi LĐ (vận chuyển)
-  transportEventId = await insertCrmEventWithParticipants({
-    ...baseShared,
-    module: 'logistics',
-    event_type_id: pickupType.id,
-    event_type: pickupType.slug || 'pickup',
-    title: `VC tới nơi LĐ — ${projLabel}`,
-    description: [
-      notes || `Xe VC tới địa điểm lắp đặt cho dự án ${projLabel}.`,
-      addr,
-    ].filter(Boolean).join('\n'),
-    start_time: arriveStart,
-    assignee_id: logisticsPersonId || meta.logistics_person_id || null,
-  }, participantIds, userId);
-  if (transportEventId) eventIds.push(transportEventId);
+  // 2) VC tới nơi LĐ — bỏ qua khi thuê ngoài (không vào module Lắp đặt)
+  if (!skipVcBoard) {
+    transportEventId = await insertCrmEventWithParticipants({
+      ...baseShared,
+      module: 'logistics',
+      event_type_id: pickupType.id,
+      event_type: pickupType.slug || 'pickup',
+      title: `VC tới nơi LĐ — ${projLabel}`,
+      description: [
+        notes || `Xe VC tới địa điểm lắp đặt cho dự án ${projLabel}.`,
+        addr,
+      ].filter(Boolean).join('\n'),
+      start_time: arriveStart,
+      assignee_id: logisticsPersonId || meta.logistics_person_id || null,
+    }, participantIds, userId);
+    if (transportEventId) eventIds.push(transportEventId);
+  }
 
-  // 3) Lắp đặt (VC/LĐ) — có thể nhiều ngày (liên tiếp hoặc ngắt quãng)
+  // 3) Lắp đặt — nội bộ (SX/CRM) nếu thuê ngoài; VC/LĐ nếu bàn giao trong app
   const installHm = vnHmFromIso(installStart, '14:00');
   const installInsert = {
     ...baseShared,
-    module: 'logistics',
+    module: skipVcBoard ? 'production' : 'logistics',
     event_type_id: installType.id,
     event_type: installType.slug || 'installation',
     title: `Lắp đặt — ${projLabel}`,
     description: [
       notes || `Sự kiện lắp đặt cho dự án ${projLabel}.`,
       addr,
+      externalHint,
       occDates.length > 1 ? `Ngày lắp: ${occDates.map(formatYmdVi).join(', ')}.` : null,
       sameDay && occDates.length <= 1 ? 'Cùng ngày với nhận hàng VC.' : null,
     ].filter(Boolean).join('\n'),
@@ -498,7 +511,7 @@ async function createVcHandoverEvents({
     sxEventId,
     transportEventId,
     installEventId,
-    mode: 'triple',
+    mode: skipVcBoard ? 'external' : 'triple',
     participantIds,
     projLabel,
   };
@@ -781,9 +794,16 @@ r.patch('/comments/:cid/select', async (req, res) => {
     let installOccurrenceDates = normalizeOccurrenceYmds(req.body?.install_occurrence_dates);
     const installAddress = req.body?.install_address != null ? String(req.body.install_address).trim() : null;
     const otherName = req.body?.external_company_name != null ? String(req.body.external_company_name).trim() : null;
+    const skipLogistics = req.body?.skip_logistics_module === true
+      || String(logisticsCompanyId || '') === '__external__';
     // VC/LĐ là một khối — luôn thêm cả phụ trách vận chuyển và lắp đặt.
     const serviceType = 'both';
-    if (!logisticsCompanyId) return res.status(400).json({ error: 'Vui lòng chọn công ty Lắp đặt.' });
+    if (skipLogistics) {
+      if (!otherName) return res.status(400).json({ error: 'Nhập tên công ty lắp đặt bên ngoài.' });
+    } else if (!logisticsCompanyId) {
+      return res.status(400).json({ error: 'Vui lòng chọn công ty Lắp đặt.' });
+    }
+    const resolvedLogisticsCompanyId = skipLogistics ? null : logisticsCompanyId;
     if (!pickupAtRaw) return res.status(400).json({ error: 'Vui lòng chọn ngày lấy hàng.' });
     const pickupDate = new Date(pickupAtRaw);
     if (Number.isNaN(pickupDate.getTime())) return res.status(400).json({ error: 'Ngày lấy hàng không hợp lệ.' });
@@ -854,53 +874,69 @@ r.patch('/comments/:cid/select', async (req, res) => {
     const projectId = meta.project_id;
     if (!projectId) return res.status(400).json({ error: 'Bình luận thiếu thông tin dự án.' });
 
-    const result = await performVcHandoverCore(req, {
-      projectId,
-      logisticsCompanyId,
-      sxHandoverPipelineStageId: meta.sx_stage_id || null,
-      actorUserId: userId,
-    });
-    void rcInvalidateTags(['production', 'logistics', 'crm']);
-
-    // Nhân sự công ty VC/LĐ → lead_members + deal CRM cho công ty VC (nếu khác CRM gốc).
-    const responsibleId = await resolveLogisticsHandoverResponsibleUserId(logisticsCompanyId);
-    const installerId = await resolveLogisticsHandoverInstallerUserId(logisticsCompanyId);
-    const relatedVcIds = await collectVcHandoverRecipientIds({
-      logisticsCompanyId,
-      projectId,
-      excludeUserId: null,
-    });
-    const addIds = [...new Set([responsibleId, installerId, ...relatedVcIds].filter(Boolean).map(String))];
-
+    let result = {
+      handed_over: false,
+      vc_kanban_column_id: null,
+      logistics_person_id: null,
+      installer_person_id: null,
+      already_in_logistics: false,
+    };
+    let responsibleId = null;
+    let installerId = null;
+    let addIds = [];
     let vcMemberIds = [];
     let vcCompanyDeal = null;
-    try {
-      const visibility = await afterVcCompanySelected({
-        sourceLeadId: comment.lead_id,
-        logisticsCompanyId,
-        projectId,
-        vcKanbanColumnId: result.vc_kanban_column_id || null,
-        logisticsPersonId: result.logistics_person_id || responsibleId || null,
-        installerPersonId: result.installer_person_id || installerId || null,
-        actorUserId: userId,
-        extraUserIds: addIds,
-        addMembersFn: addVcMembersWithCutoff,
-      });
-      vcMemberIds = [...new Set([
-        ...(visibility.addedToSource || []),
-        ...(visibility.addedToVcDeal || []),
-        ...(visibility.memberIds || []),
-      ])];
-      vcCompanyDeal = visibility.vcDeal || null;
-      if (vcCompanyDeal?.created) {
-        console.log(`[vc-handover] tạo deal CRM cho công ty VC: ${vcCompanyDeal.code || vcCompanyDeal.dealId}`);
-      }
-    } catch (memErr) {
-      console.warn('[vc-handover] afterVcCompanySelected:', memErr.message);
-      vcMemberIds = await addVcMembersWithCutoff(comment.lead_id, addIds, userId);
-    }
+    let logisticsPersonId = null;
 
-    const logisticsPersonId = result.logistics_person_id || responsibleId || installerId || null;
+    if (!skipLogistics) {
+      result = await performVcHandoverCore(req, {
+        projectId,
+        logisticsCompanyId: resolvedLogisticsCompanyId,
+        sxHandoverPipelineStageId: meta.sx_stage_id || null,
+        actorUserId: userId,
+      });
+      void rcInvalidateTags(['production', 'logistics', 'crm']);
+
+      // Nhân sự công ty VC/LĐ → lead_members + deal CRM cho công ty VC (nếu khác CRM gốc).
+      responsibleId = await resolveLogisticsHandoverResponsibleUserId(resolvedLogisticsCompanyId);
+      installerId = await resolveLogisticsHandoverInstallerUserId(resolvedLogisticsCompanyId);
+      const relatedVcIds = await collectVcHandoverRecipientIds({
+        logisticsCompanyId: resolvedLogisticsCompanyId,
+        projectId,
+        excludeUserId: null,
+      });
+      addIds = [...new Set([responsibleId, installerId, ...relatedVcIds].filter(Boolean).map(String))];
+
+      try {
+        const visibility = await afterVcCompanySelected({
+          sourceLeadId: comment.lead_id,
+          logisticsCompanyId: resolvedLogisticsCompanyId,
+          projectId,
+          vcKanbanColumnId: result.vc_kanban_column_id || null,
+          logisticsPersonId: result.logistics_person_id || responsibleId || null,
+          installerPersonId: result.installer_person_id || installerId || null,
+          actorUserId: userId,
+          extraUserIds: addIds,
+          addMembersFn: addVcMembersWithCutoff,
+        });
+        vcMemberIds = [...new Set([
+          ...(visibility.addedToSource || []),
+          ...(visibility.addedToVcDeal || []),
+          ...(visibility.memberIds || []),
+        ])];
+        vcCompanyDeal = visibility.vcDeal || null;
+        if (vcCompanyDeal?.created) {
+          console.log(`[vc-handover] tạo deal CRM cho công ty VC: ${vcCompanyDeal.code || vcCompanyDeal.dealId}`);
+        }
+      } catch (memErr) {
+        console.warn('[vc-handover] afterVcCompanySelected:', memErr.message);
+        vcMemberIds = await addVcMembersWithCutoff(comment.lead_id, addIds, userId);
+      }
+
+      logisticsPersonId = result.logistics_person_id || responsibleId || installerId || null;
+    } else {
+      void rcInvalidateTags(['production', 'crm']);
+    }
 
     // Làm mới phụ trách SX từ project (có thể đổi sau khi tạo request).
     let productionPersonId = meta.production_person_id || null;
@@ -924,18 +960,25 @@ r.patch('/comments/:cid/select', async (req, res) => {
     } catch (e) {
       console.warn('[vc-handover] resolve SX confirm user:', e.message);
     }
-    try {
-      logisticsConfirmUserId = await resolveLogisticsHandoverConfirmUserId(
-        logisticsCompanyId,
-        logisticsPersonId,
-      );
-    } catch (e) {
-      console.warn('[vc-handover] resolve VC confirm user:', e.message);
+    if (!skipLogistics) {
+      try {
+        logisticsConfirmUserId = await resolveLogisticsHandoverConfirmUserId(
+          resolvedLogisticsCompanyId,
+          logisticsPersonId,
+        );
+      } catch (e) {
+        console.warn('[vc-handover] resolve VC confirm user:', e.message);
+      }
+    } else {
+      logisticsConfirmUserId = null;
     }
 
-    const { data: company } = await supabase
-      .from('companies').select('name, short_name').eq('id', logisticsCompanyId).maybeSingle();
-    const companyName = company?.short_name || company?.name || 'Công ty VC/LĐ';
+    let companyName = otherName || 'Công ty lắp đặt bên ngoài';
+    if (!skipLogistics) {
+      const { data: company } = await supabase
+        .from('companies').select('name, short_name').eq('id', resolvedLogisticsCompanyId).maybeSingle();
+      companyName = company?.short_name || company?.name || 'Công ty VC/LĐ';
+    }
 
     const [
       productionPersonName,
@@ -969,10 +1012,12 @@ r.patch('/comments/:cid/select', async (req, res) => {
       ? formatInstallDaysLabel(installDate, installOccurrenceDates)
       : pickupLabel;
     const notesSuffix = selectNotes ? ` · ${selectNotes}` : '';
+    const nowIso = new Date().toISOString();
     const nextMeta = {
       ...meta,
-      state: 'awaiting_confirm',
-      logistics_company_id: logisticsCompanyId,
+      state: skipLogistics ? 'done' : 'awaiting_confirm',
+      skip_logistics_module: !!skipLogistics,
+      logistics_company_id: resolvedLogisticsCompanyId,
       logistics_company_name: companyName,
       workshop_company_id: workshopCompanyId || meta.workshop_company_id || null,
       service_type: serviceType,
@@ -991,35 +1036,79 @@ r.patch('/comments/:cid/select', async (req, res) => {
       vc_company_deal_created: !!vcCompanyDeal?.created,
       pickup_at: pickupAt,
       pickup_notes: pickupNotes || null,
-      vc_arrive_at: vcArriveAt || null,
+      vc_arrive_at: skipLogistics ? null : (vcArriveAt || null),
       event_id: null,
       event_ids: [],
       sx_event_id: null,
       transport_event_id: null,
       install_event_id: null,
-      events_mode: 'pending_confirm',
+      events_mode: skipLogistics ? 'external' : 'pending_confirm',
       delivery_date: deliveryDate || null,
       install_date: installDate || pickupAt,
       install_occurrence_dates: installOccurrenceDates.length ? installOccurrenceDates : null,
       install_address: installAddress || null,
-      external_company_name: otherName || null,
+      external_company_name: otherName || (skipLogistics ? companyName : null),
       confirmed_production: defaultProductionConfirmMeta({
         production_confirm_user_id: productionConfirmUserId,
         production_person_id: productionPersonId,
       }),
-      confirmed_logistics: null,
+      confirmed_logistics: skipLogistics
+        ? { user_id: userId, at: nowIso, auto: true, external: true }
+        : null,
     };
-    const body = [
-      comment.body.split('\n')[0],
-      `— Đã chọn: ${companyName}${notesSuffix}`,
-      `— Ngày nhận hàng: ${pickupLabel}`,
-      `— VC tới nơi LĐ: ${arriveLabel}`,
-      installLabel ? `— Ngày lắp đặt: ${installLabel}` : null,
-      installAddress ? `— Địa chỉ lắp: ${installAddress}` : null,
-      '— Xưởng đã xác nhận (mặc định).',
-      '— 3 sự kiện lịch (Giao hàng xưởng + VC tới nơi LĐ + Lắp đặt) sẽ tạo sau khi VC/LĐ xác nhận.',
-      '— Chờ xác nhận VC/LĐ.',
-    ].filter(Boolean).join('\n');
+
+    let eventsCreateError = null;
+    if (skipLogistics) {
+      try {
+        const created = await createVcHandoverEvents({
+          userId,
+          leadId: comment.lead_id,
+          projectId,
+          pickupAt,
+          installAt: installDate || pickupAt,
+          vcArriveAt: null,
+          pickupNotes: pickupNotes || selectNotes || null,
+          meta: nextMeta,
+          logisticsPersonId: null,
+          installOccurrenceDates,
+        });
+        nextMeta.event_id = created.eventId;
+        nextMeta.event_ids = created.eventIds || (created.eventId ? [created.eventId] : []);
+        nextMeta.sx_event_id = created.sxEventId || null;
+        nextMeta.transport_event_id = null;
+        nextMeta.install_event_id = created.installEventId || null;
+        nextMeta.events_mode = created.mode || 'external';
+      } catch (evErr) {
+        eventsCreateError = evErr.message || 'Không tạo được sự kiện lịch';
+        console.error('[vc-handover] create external install events:', eventsCreateError);
+        nextMeta.events_mode = 'failed';
+      }
+    }
+
+    const body = skipLogistics
+      ? [
+        comment.body.split('\n')[0],
+        `— Thuê lắp đặt bên ngoài: ${companyName}${notesSuffix}`,
+        '— Không đưa vào bảng Lắp đặt (đối tác không dùng app).',
+        `— Ngày nhận hàng: ${pickupLabel}`,
+        installLabel ? `— Ngày lắp đặt: ${installLabel}` : null,
+        installAddress ? `— Địa chỉ lắp: ${installAddress}` : null,
+        eventsCreateError
+          ? `— Chưa tạo được lịch sự kiện: ${eventsCreateError}`
+          : '— Đã tạo sự kiện lịch: Giao hàng xưởng + Lắp đặt (module SX).',
+        '— Sale/xưởng tự cập nhật tiến độ trên lịch sự kiện và kanban SX.',
+      ].filter(Boolean).join('\n')
+      : [
+        comment.body.split('\n')[0],
+        `— Đã chọn: ${companyName}${notesSuffix}`,
+        `— Ngày nhận hàng: ${pickupLabel}`,
+        `— VC tới nơi LĐ: ${arriveLabel}`,
+        installLabel ? `— Ngày lắp đặt: ${installLabel}` : null,
+        installAddress ? `— Địa chỉ lắp: ${installAddress}` : null,
+        '— Xưởng đã xác nhận (mặc định).',
+        '— 3 sự kiện lịch (Giao hàng xưởng + VC tới nơi LĐ + Lắp đặt) sẽ tạo sau khi VC/LĐ xác nhận.',
+        '— Chờ xác nhận VC/LĐ.',
+      ].filter(Boolean).join('\n');
 
     const { data: updated, error } = await supabase
       .from('crm_lead_comments')
@@ -1029,7 +1118,9 @@ r.patch('/comments/:cid/select', async (req, res) => {
       .single();
     if (error) throw error;
 
-    await supabase.from('projects').update({ vc_handover_status: 'scheduled' }).eq('id', projectId)
+    await supabase.from('projects').update({
+      vc_handover_status: skipLogistics ? 'external' : 'scheduled',
+    }).eq('id', projectId)
       .then(({ error: e }) => { if (e && !String(e.message || '').includes('vc_handover_status')) console.warn('[vc-handover] status:', e.message); });
 
     // Đồng bộ panel Thông tin VC: tên khác / ngày giao / ngày lắp / địa chỉ.
@@ -1060,24 +1151,38 @@ r.patch('/comments/:cid/select', async (req, res) => {
     // Ghi nhận lịch sử bàn giao dạng bình luận riêng (timeline chat).
     let historyRow = null;
     try {
-      const historyBody = [
-        `📋 ${actorName || 'Sale CRM'} đã bàn giao «${projLabel}» sang ${companyName}.`,
-        `• Nhận hàng: ${pickupLabel}`,
-        `• VC tới nơi LĐ: ${arriveLabel}`,
-        installLabel ? `• Lắp đặt: ${installLabel}` : null,
-        installAddress ? `• Địa chỉ: ${installAddress}` : null,
-        logisticsPersonName ? `• Phụ trách VC/LĐ: ${logisticsPersonName}` : null,
-        productionPersonName ? `• Phụ trách xưởng: ${productionPersonName}` : null,
-        selectNotes ? `• Ghi chú: ${selectNotes}` : null,
-        vcMemberIds.length ? `• Đã thêm ${vcMemberIds.length} thành viên công ty VC/LĐ vào deal.` : null,
-        vcCompanyDeal?.created
-          ? `• Đã tạo deal CRM cho công ty VC/LĐ: ${vcCompanyDeal.code || vcCompanyDeal.dealId}.`
-          : null,
-        '• Xưởng đã xác nhận (mặc định khi Sale tạo bàn giao).',
-        '• Lịch: 3 sự kiện sẽ tạo sau khi VC/LĐ xác nhận (Giao hàng xưởng + VC tới nơi LĐ + Lắp đặt).',
-        '• Module VC/LĐ: mở board công ty đã chọn — dự án giữ mã SX, gắn công ty VC.',
-        'Chờ VC/LĐ xác nhận trên thẻ bàn giao.',
-      ].filter(Boolean).join('\n');
+      const historyBody = skipLogistics
+        ? [
+          `📋 ${actorName || 'Sale CRM'} ghi nhận thuê lắp đặt bên ngoài «${companyName}» cho «${projLabel}».`,
+          '• Không đưa dự án vào bảng Lắp đặt (đối tác không dùng app).',
+          `• Nhận hàng: ${pickupLabel}`,
+          installLabel ? `• Lắp đặt: ${installLabel}` : null,
+          installAddress ? `• Địa chỉ: ${installAddress}` : null,
+          productionPersonName ? `• Phụ trách xưởng: ${productionPersonName}` : null,
+          selectNotes ? `• Ghi chú: ${selectNotes}` : null,
+          eventsCreateError
+            ? `• Lịch: chưa tạo được sự kiện (${eventsCreateError}).`
+            : '• Lịch: đã tạo Giao hàng xưởng + Lắp đặt (module SX).',
+          '• Sale/xưởng tự cập nhật tiến độ trên lịch sự kiện và kanban SX.',
+        ].filter(Boolean).join('\n')
+        : [
+          `📋 ${actorName || 'Sale CRM'} đã bàn giao «${projLabel}» sang ${companyName}.`,
+          `• Nhận hàng: ${pickupLabel}`,
+          `• VC tới nơi LĐ: ${arriveLabel}`,
+          installLabel ? `• Lắp đặt: ${installLabel}` : null,
+          installAddress ? `• Địa chỉ: ${installAddress}` : null,
+          logisticsPersonName ? `• Phụ trách VC/LĐ: ${logisticsPersonName}` : null,
+          productionPersonName ? `• Phụ trách xưởng: ${productionPersonName}` : null,
+          selectNotes ? `• Ghi chú: ${selectNotes}` : null,
+          vcMemberIds.length ? `• Đã thêm ${vcMemberIds.length} thành viên công ty VC/LĐ vào deal.` : null,
+          vcCompanyDeal?.created
+            ? `• Đã tạo deal CRM cho công ty VC/LĐ: ${vcCompanyDeal.code || vcCompanyDeal.dealId}.`
+            : null,
+          '• Xưởng đã xác nhận (mặc định khi Sale tạo bàn giao).',
+          '• Lịch: 3 sự kiện sẽ tạo sau khi VC/LĐ xác nhận (Giao hàng xưởng + VC tới nơi LĐ + Lắp đặt).',
+          '• Module VC/LĐ: mở board công ty đã chọn — dự án giữ mã SX, gắn công ty VC.',
+          'Chờ VC/LĐ xác nhận trên thẻ bàn giao.',
+        ].filter(Boolean).join('\n');
       const { data: histIns, error: histErr } = await supabase
         .from('crm_lead_comments')
         .insert({
@@ -1087,12 +1192,14 @@ r.patch('/comments/:cid/select', async (req, res) => {
           metadata: {
             kind: 'vc_handover_history',
             project_id: projectId,
-            logistics_company_id: logisticsCompanyId,
+            skip_logistics_module: !!skipLogistics,
+            logistics_company_id: resolvedLogisticsCompanyId,
+            external_company_name: skipLogistics ? companyName : (otherName || null),
             pickup_at: pickupAt,
-            vc_arrive_at: vcArriveAt || null,
+            vc_arrive_at: skipLogistics ? null : (vcArriveAt || null),
             install_date: installDate || pickupAt,
-            event_id: null,
-            event_ids: [],
+            event_id: nextMeta.event_id || null,
+            event_ids: nextMeta.event_ids || [],
             source_comment_id: cid,
           },
         })
@@ -1107,48 +1214,53 @@ r.patch('/comments/:cid/select', async (req, res) => {
       console.warn('[vc-handover] history comment:', histErr.message);
     }
 
-    // Thông báo cho VC/LĐ + xưởng + sale + mọi NV liên quan (ngày đề xuất — chưa khóa lịch).
+    // Thông báo: nội bộ VC/LĐ + xưởng + sale; thuê ngoài chỉ xưởng + sale.
     try {
       const notifyIds = [...new Set([
-        logisticsPersonId,
-        logisticsConfirmUserId,
-        installerId,
+        ...(skipLogistics ? [] : [logisticsPersonId, logisticsConfirmUserId, installerId, ...vcMemberIds, ...addIds]),
         productionPersonId,
         productionConfirmUserId,
-        ...vcMemberIds,
-        ...addIds,
         ...(meta.sale_user_ids || []),
         ...saleIds,
       ].filter(Boolean).map(String))];
-      const msgParts = [
-        `Công ty: ${companyName}.`,
-        `Lấy hàng đề xuất: ${pickupLabel}.`,
-        `VC tới nơi LĐ: ${arriveLabel}.`,
-        installLabel ? `Nhận/lắp đề xuất: ${installLabel}.` : null,
-        installAddress ? `Địa chỉ: ${installAddress}.` : null,
-        productionConfirmUserName
-          ? `Xưởng: ${productionConfirmUserName} (đã xác nhận mặc định).`
-          : 'Xưởng đã xác nhận (mặc định).',
-        logisticsConfirmUserName ? `Chờ xác nhận VC/LĐ: ${logisticsConfirmUserName}.` : null,
-        vcCompanyDeal?.created ? `Deal VC: ${vcCompanyDeal.code}.` : null,
-        'VC/LĐ xác nhận trên thẻ bàn giao — sau đó hệ thống mới tạo 3 sự kiện trên lịch.',
-      ].filter(Boolean);
+      const msgParts = skipLogistics
+        ? [
+          `Thuê lắp đặt bên ngoài: ${companyName}. Không vào bảng Lắp đặt.`,
+          `Lấy hàng: ${pickupLabel}.`,
+          installLabel ? `Lắp đặt: ${installLabel}.` : null,
+          installAddress ? `Địa chỉ: ${installAddress}.` : null,
+          'Sale/xưởng tự cập nhật tiến độ trên lịch sự kiện (Giao hàng xưởng + Lắp đặt) và kanban SX.',
+        ]
+        : [
+          `Công ty: ${companyName}.`,
+          `Lấy hàng đề xuất: ${pickupLabel}.`,
+          `VC tới nơi LĐ: ${arriveLabel}.`,
+          installLabel ? `Nhận/lắp đề xuất: ${installLabel}.` : null,
+          installAddress ? `Địa chỉ: ${installAddress}.` : null,
+          productionConfirmUserName
+            ? `Xưởng: ${productionConfirmUserName} (đã xác nhận mặc định).`
+            : 'Xưởng đã xác nhận (mặc định).',
+          logisticsConfirmUserName ? `Chờ xác nhận VC/LĐ: ${logisticsConfirmUserName}.` : null,
+          vcCompanyDeal?.created ? `Deal VC: ${vcCompanyDeal.code}.` : null,
+          'VC/LĐ xác nhận trên thẻ bàn giao — sau đó hệ thống mới tạo 3 sự kiện trên lịch.',
+        ];
       if (notifyIds.length) {
         await notifyMultiple(
           req,
           notifyIds,
           'vc_handover_assigned',
-          `📦 Bàn giao VC/LĐ: ${projLabel}`,
-          msgParts.join(' '),
+          skipLogistics ? `📦 Thuê lắp đặt ngoài: ${projLabel}` : `📦 Bàn giao VC/LĐ: ${projLabel}`,
+          msgParts.filter(Boolean).join(' '),
           'lead',
           vcCompanyDeal?.dealId || comment.lead_id,
           {
             nav_tab: 'comments',
-            ecosystem_module_key: 'logistics',
+            ecosystem_module_key: skipLogistics ? 'production' : 'logistics',
             project_id: String(projectId),
             pickup_at: pickupAt,
             install_date: installDate || null,
-            logistics_company_id: logisticsCompanyId,
+            logistics_company_id: resolvedLogisticsCompanyId,
+            skip_logistics_module: !!skipLogistics,
             vc_handover: true,
             vc_company_deal_id: vcCompanyDeal?.dealId || null,
           },
@@ -1166,19 +1278,20 @@ r.patch('/comments/:cid/select', async (req, res) => {
 
     res.json({
       comment: row,
-      event_id: null,
-      event_ids: [],
-      install_event_id: null,
-      events_mode: 'pending_confirm',
+      event_id: nextMeta.event_id || null,
+      event_ids: nextMeta.event_ids || [],
+      install_event_id: nextMeta.install_event_id || null,
+      events_mode: nextMeta.events_mode || (skipLogistics ? 'external' : 'pending_confirm'),
       history_comment: historyRow,
       vc_company_deal_id: vcCompanyDeal?.dealId || null,
       vc_company_deal_created: !!vcCompanyDeal?.created,
       vc_members_added: vcMemberIds.length,
       project_id: projectId,
-      logistics_company_id: logisticsCompanyId,
+      skip_logistics_module: !!skipLogistics,
+      logistics_company_id: resolvedLogisticsCompanyId,
       logistics_company_name: companyName,
       vc_kanban_column_id: result.vc_kanban_column_id || null,
-      handed_over: result.handed_over !== false,
+      handed_over: skipLogistics ? false : result.handed_over !== false,
       already_in_logistics: !!result.already_in_logistics,
     });
   } catch (e) {

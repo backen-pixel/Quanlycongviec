@@ -65,7 +65,7 @@ const MODULE_TABS = [
   { id: 'all', label: 'Tất cả', icon: LayoutGrid, emoji: '📋' },
   { id: 'crm', label: 'CRM', icon: Target, emoji: '🎯' },
   { id: 'production', label: 'SX', icon: Factory, emoji: '🏭' },
-  { id: 'logistics', label: 'VC', icon: Truck, emoji: '🚚' },
+  { id: 'logistics', label: 'LD', icon: Truck, emoji: '🚚' },
 ];
 
 const TASK_SOURCE_OPTIONS = [
@@ -76,7 +76,7 @@ const TASK_SOURCE_OPTIONS = [
 const ERROR_MODULE_OPTIONS = [
   { value: 'crm', label: 'CRM' },
   { value: 'production', label: 'Xưởng (SX)' },
-  { value: 'logistics', label: 'VC / LĐ' },
+  { value: 'logistics', label: 'Lắp đặt (LD)' },
 ];
 
 function toLocalInput(iso) {
@@ -149,7 +149,7 @@ function assignmentBelongsToModule(assignment, moduleId, memberByUserId) {
 
 function assignmentModuleLabel(mod) {
   if (mod === 'production') return 'SX';
-  if (mod === 'logistics') return 'VC';
+  if (mod === 'logistics') return 'LD';
   return 'CRM';
 }
 
@@ -185,7 +185,7 @@ function taskSourceLabel(type) {
 
 function errorModuleLabel(mod) {
   if (mod === 'production') return 'Xưởng';
-  if (mod === 'logistics') return 'VC/LĐ';
+  if (mod === 'logistics') return 'Lắp đặt';
   if (mod === 'crm') return 'CRM';
   return null;
 }
@@ -457,10 +457,10 @@ export default function LeadMemberAssignmentsPanel({
     if (!memberIds.size) return alert('Chọn ít nhất một thành viên');
     if (!taskSourceType) return alert('Chọn loại nhiệm vụ');
     if (!['crm', 'production', 'logistics'].includes(String(assignModule || ''))) {
-      return alert('Chọn khối phân công: CRM / Xưởng / VC-LĐ');
+      return alert('Chọn khối phân công: CRM / Xưởng / Lắp đặt (LD)');
     }
     if (taskSourceType === 'employee_error' && !employeeErrorModule) {
-      return alert('Chọn khối phát sinh lỗi: CRM / Xưởng / VC-LĐ');
+      return alert('Chọn khối phát sinh lỗi: CRM / Xưởng / Lắp đặt (LD)');
     }
     const invalid = [...memberIds].filter((id) => {
       const m = memberByUserId.get(String(id));
@@ -776,7 +776,11 @@ export default function LeadMemberAssignmentsPanel({
                   setModuleTab(tab.id);
                   if (showForm && !editingId) resetForm();
                 }}
-                title={`Thành viên: ${memberN} · Phân công: ${assignN}`}
+                title={
+                  tab.id === 'logistics'
+                    ? `Lắp đặt (LD) — Thành viên: ${memberN} · Phân công: ${assignN}`
+                    : `Thành viên: ${memberN} · Phân công: ${assignN}`
+                }
                 className={`rounded-md font-semibold transition-colors flex items-center gap-1 px-2 py-1 text-[11px] whitespace-nowrap cursor-pointer ${
                   active
                     ? MODULE_TAB_ACTIVE[idx % MODULE_TAB_ACTIVE.length]

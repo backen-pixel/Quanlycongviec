@@ -730,7 +730,10 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
 
   const [companies, setCompanies] = useState([]);
   const [companyId, setCompanyId] = useState('');
+  const [externalName, setExternalName] = useState('');
   const [selectNotes, setSelectNotes] = useState('');
+  const isExternalCompany = companyId === '__external__';
+  const skipLogisticsModule = !!md.skip_logistics_module;
   const [pickupAt, setPickupAt] = useState('');
   const [pickupNotes, setPickupNotes] = useState('');
   const [vcArriveAt, setVcArriveAt] = useState('');
@@ -864,7 +867,6 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
         const list = r.data?.companies || r.data || [];
         const arr = Array.isArray(list) ? list : [];
         setCompanies(arr);
-        if (arr.length === 1) setCompanyId(String(arr[0].id));
       })
       .catch(() => { if (active) setCompanies([]); });
     return () => { active = false; };
@@ -1053,11 +1055,30 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
                     className="mt-1 w-full h-9 px-2 border border-orange-200 rounded-lg text-[13px] bg-white focus:ring-2 focus:ring-orange-400"
                   >
                     <option value="">— Chọn công ty —</option>
+                    <option value="__external__">Công ty lắp đặt bên ngoài (không dùng app)</option>
                     {companies.map((c) => (
                       <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
                     ))}
                   </select>
                 </label>
+                {isExternalCompany ? (
+                  <div className="space-y-1.5">
+                    <label className="block">
+                      <span className="text-[11px] font-semibold text-gray-600">Tên công ty thuê ngoài *</span>
+                      <input
+                        type="text"
+                        value={externalName}
+                        onChange={(e) => setExternalName(e.target.value)}
+                        placeholder="VD: Đội lắp đặt Nguyễn Văn A"
+                        className="mt-1 w-full h-9 px-2 border border-amber-300 rounded-lg text-[13px] bg-white focus:ring-2 focus:ring-amber-400"
+                      />
+                    </label>
+                    <p className="text-[11px] text-amber-900/90 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5 leading-snug">
+                      Không đưa dự án vào bảng Lắp đặt. Sale/xưởng tự cập nhật tiến độ trên lịch sự kiện
+                      (Giao hàng xưởng + Lắp đặt) và kanban SX.
+                    </p>
+                  </div>
+                ) : null}
                 <label className="block">
                   <span className="text-[11px] font-semibold text-gray-600">Ghi chú</span>
                   <textarea
@@ -1115,9 +1136,9 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
                         </label>
                       ) : null}
                     </div>
-                    <div className="block min-w-0">
+                    <div className={`block min-w-0 ${isExternalCompany ? 'opacity-50 pointer-events-none' : ''}`}>
                       <span className="block h-4 text-[11px] font-semibold text-gray-600 leading-4">
-                        VC tới nơi LĐ
+                        {isExternalCompany ? 'VC tới nơi LĐ (bỏ qua)' : 'VC tới nơi LĐ'}
                       </span>
                       <button
                         type="button"
@@ -1191,7 +1212,11 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
                   </div>
                   {(pickupAt || installDate || vcArriveAt) ? (
                     <div className="rounded-md border border-orange-100 bg-orange-50/50 px-2 py-1.5 space-y-1">
-                      <p className="text-[10px] font-semibold text-orange-800">Xưởng xác nhận mặc định · 3 sự kiện tạo sau khi VC/LĐ xác nhận</p>
+                      <p className="text-[10px] font-semibold text-orange-800">
+                        {isExternalCompany
+                          ? 'Thuê ngoài · tạo ngay 2 sự kiện SX (Giao hàng + Lắp đặt), không vào bảng Lắp đặt'
+                          : 'Xưởng xác nhận mặc định · 3 sự kiện tạo sau khi VC/LĐ xác nhận'}
+                      </p>
                       <div className="space-y-1">
                         <div className="flex items-start gap-1.5 text-[11px] text-gray-800">
                           <span className="shrink-0 mt-0.5 h-4 w-4 rounded bg-violet-100 text-violet-700 text-[9px] font-bold inline-flex items-center justify-center">SX</span>
@@ -1200,6 +1225,7 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
                             <p className="text-[10px] text-gray-500">{pickupAt ? formatDatetimeLocalLabel(pickupAt) : '—'}</p>
                           </div>
                         </div>
+                        {!isExternalCompany ? (
                         <div className="flex items-start gap-1.5 text-[11px] text-gray-800">
                           <span className="shrink-0 mt-0.5 h-4 w-4 rounded bg-orange-100 text-orange-700 text-[9px] font-bold inline-flex items-center justify-center">VC</span>
                           <div className="min-w-0">
@@ -1211,6 +1237,7 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
                             </p>
                           </div>
                         </div>
+                        ) : null}
                         <div className="flex items-start gap-1.5 text-[11px] text-gray-800">
                           <span className="shrink-0 mt-0.5 h-4 w-4 rounded bg-amber-100 text-amber-800 text-[9px] font-bold inline-flex items-center justify-center">LĐ</span>
                           <div className="min-w-0">
@@ -1241,7 +1268,7 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
                 {err && <p className="text-[11px] text-red-600">{err}</p>}
                 <button
                   type="button"
-                  disabled={!companyId || !pickupAt || busy === 'select'}
+                  disabled={!companyId || !pickupAt || busy === 'select' || (isExternalCompany && !externalName.trim())}
                   onClick={() => {
                     if (installDate && pickupAt) {
                       const vcDay = String(pickupAt).slice(0, 10);
@@ -1251,7 +1278,7 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
                         return;
                       }
                     }
-                    if (vcArriveAt && pickupAt) {
+                    if (!isExternalCompany && vcArriveAt && pickupAt) {
                       const vcDay = String(pickupAt).slice(0, 10);
                       const arriveDay = String(vcArriveAt).slice(0, 10);
                       if (arriveDay < vcDay) {
@@ -1259,7 +1286,7 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
                         return;
                       }
                     }
-                    if (vcArriveAt && installDate) {
+                    if (!isExternalCompany && vcArriveAt && installDate) {
                       const arriveDay = String(vcArriveAt).slice(0, 10);
                       const installDay = String(installDate).slice(0, 10);
                       if (arriveDay > installDay) {
@@ -1267,10 +1294,14 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
                         return;
                       }
                     }
-                    const arriveLocal = vcArriveAt || defaultArriveLocal(pickupAt, installDate);
+                    const arriveLocal = isExternalCompany
+                      ? null
+                      : (vcArriveAt || defaultArriveLocal(pickupAt, installDate));
                     const occDates = resolvedInstallDates();
                     run('select', () => onSelect(comment.id, {
-                    logistics_company_id: companyId,
+                    logistics_company_id: isExternalCompany ? null : companyId,
+                    skip_logistics_module: isExternalCompany,
+                    external_company_name: isExternalCompany ? externalName.trim() : null,
                     notes: selectNotes.trim() || null,
                     pickup_at: new Date(pickupAt).toISOString(),
                     vc_arrive_at: arriveLocal ? new Date(arriveLocal).toISOString() : null,
@@ -1282,7 +1313,7 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
                   className="w-full h-9 rounded-lg bg-orange-600 text-white text-[13px] font-semibold hover:bg-orange-700 disabled:opacity-50 flex items-center justify-center gap-2"
                 >
                   {busy === 'select' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Truck className="h-4 w-4" />}
-                  Chọn & bàn giao
+                  {isExternalCompany ? 'Ghi nhận thuê ngoài' : 'Chọn & bàn giao'}
                 </button>
               </>
             ) : (
@@ -1354,12 +1385,17 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
             <div className="rounded-lg bg-white border border-orange-100 px-3 py-2 text-[12px] text-gray-700 space-y-0.5">
               <p>
                 <span className="text-gray-500">Công ty:</span> <strong>{md.logistics_company_name}</strong>
+                {skipLogisticsModule ? (
+                  <span className="ml-1.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-900">
+                    Bên ngoài · không vào bảng Lắp đặt
+                  </span>
+                ) : null}
               </p>
               {md.select_notes ? (
                 <p><span className="text-gray-500">Ghi chú:</span> {md.select_notes}</p>
               ) : null}
               <p><span className="text-gray-500">Ngày nhận hàng:</span> <strong>{formatVcDateTime(md.pickup_at)}</strong></p>
-              {md.vc_arrive_at ? (
+              {!skipLogisticsModule && md.vc_arrive_at ? (
                 <p><span className="text-gray-500">VC tới nơi LĐ:</span> <strong>{formatVcDateTime(md.vc_arrive_at)}</strong></p>
               ) : null}
               {(Array.isArray(md.install_occurrence_dates) && md.install_occurrence_dates.length > 1) ? (
@@ -1371,8 +1407,10 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
                 <p><span className="text-gray-500">Ngày lắp đặt:</span> <strong>{formatVcDateTime(md.install_date)}</strong></p>
               ) : null}
               <p className="text-[11px] text-orange-700/80 pt-0.5">
-                Xưởng đã xác nhận mặc định khi tạo bàn giao. Chỉ người cấu hình xác nhận VC/LĐ được bấm.
-                {state === 'awaiting_confirm' && !(Array.isArray(md.event_ids) && md.event_ids.length)
+                {skipLogisticsModule
+                  ? 'Đối tác không dùng app. Sale/xưởng tự cập nhật tiến độ trên lịch sự kiện (Giao hàng xưởng + Lắp đặt) và kéo cột kanban SX khi xong.'
+                  : 'Xưởng đã xác nhận mặc định khi tạo bàn giao. Chỉ người cấu hình xác nhận VC/LĐ được bấm.'}
+                {!skipLogisticsModule && state === 'awaiting_confirm' && !(Array.isArray(md.event_ids) && md.event_ids.length)
                   ? ' Sau khi VC/LĐ xác nhận, hệ thống mới tạo 3 sự kiện trên lịch.'
                   : null}
               </p>
@@ -1383,7 +1421,9 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
                   className="w-full h-8 inline-flex items-center justify-center gap-1.5 rounded-lg border border-orange-200 bg-orange-50 text-[12px] font-semibold text-orange-800 hover:bg-orange-100"
                 >
                   <Calendar className="h-3.5 w-3.5" />
-                  {md.events_mode === 'triple' || (Array.isArray(md.event_ids) && md.event_ids.length >= 3)
+                  {md.events_mode === 'external' || (skipLogisticsModule && Array.isArray(md.event_ids) && md.event_ids.length)
+                    ? 'Mở lịch (giao + lắp)'
+                    : md.events_mode === 'triple' || (Array.isArray(md.event_ids) && md.event_ids.length >= 3)
                     ? 'Mở lịch (3 sự kiện)'
                     : md.events_mode === 'split'
                       ? 'Mở lịch VC/LĐ'
@@ -1408,7 +1448,13 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
             {state === 'done' ? (
               <div className="flex items-center gap-2 rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2 text-[12px] font-semibold text-emerald-800">
                 <CheckCircle2 className="h-4 w-4 shrink-0" />
-                Đã xác nhận giữa Xưởng và VC/LĐ — ngày {formatVcDateTime(md.pickup_at)} giao nhận hàng.
+                {skipLogisticsModule
+                  ? `Đã ghi nhận thuê lắp đặt bên ngoài — ngày ${formatVcDateTime(md.pickup_at)}. Cập nhật tiến độ trên lịch / kanban SX.`
+                  : `Đã xác nhận giữa Xưởng và VC/LĐ — ngày ${formatVcDateTime(md.pickup_at)} giao nhận hàng.`}
+              </div>
+            ) : skipLogisticsModule ? (
+              <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-[12px] text-amber-900">
+                Thuê ngoài — không chờ xác nhận VC/LĐ. Tự cập nhật tiến độ trên lịch sự kiện và kanban SX.
               </div>
             ) : (
               <div className="grid grid-cols-2 gap-2">
@@ -2370,19 +2416,21 @@ export function CrmLeadCommentsPanel({
         return [...prev, { ...hist, reactions: hist.reactions || { summary: [], mine: null } }];
       });
     }
-    // Báo board VC/LĐ reload — dự án reuse mã SX, gắn logistics_company_id đã chọn.
-    try {
-      window.dispatchEvent(new CustomEvent('vc-handover:board-refresh', {
-        detail: {
-          id: r.data?.project_id || null,
-          project_id: r.data?.project_id || null,
-          status: 'shipping',
-          reason: 'vc_handover',
-          logistics_company_id: r.data?.logistics_company_id || payload?.logistics_company_id || null,
-          vc_kanban_column_id: r.data?.vc_kanban_column_id || null,
-        },
-      }));
-    } catch (_) { /* ignore */ }
+    // Báo board VC/LĐ reload — bỏ qua nếu thuê ngoài (không vào module Lắp đặt).
+    if (!payload?.skip_logistics_module && !r.data?.skip_logistics_module) {
+      try {
+        window.dispatchEvent(new CustomEvent('vc-handover:board-refresh', {
+          detail: {
+            id: r.data?.project_id || null,
+            project_id: r.data?.project_id || null,
+            status: 'shipping',
+            reason: 'vc_handover',
+            logistics_company_id: r.data?.logistics_company_id || payload?.logistics_company_id || null,
+            vc_kanban_column_id: r.data?.vc_kanban_column_id || null,
+          },
+        }));
+      } catch (_) { /* ignore */ }
+    }
     return r.data?.comment;
   }, [applyVcRow]);
 

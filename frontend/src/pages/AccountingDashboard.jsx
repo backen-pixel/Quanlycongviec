@@ -128,22 +128,33 @@ export default function AccountingDashboard() {
     } else if (filterFinancial) {
       p.financial_status = filterFinancial;
     }
+    // Admin công ty: truyền company_id để API xác định phạm vi kế toán
+    if (!isAccountingUser(user) && user?.company_id) {
+      p.client_company_id = user.company_id;
+    }
     return p;
-  }, [page, limit, filterWorkshop, filterFinancial, searchDebounced]);
+  }, [page, limit, filterWorkshop, filterFinancial, searchDebounced, user]);
 
-  const summaryParams = useMemo(() => (
-    filterWorkshop ? { workshop_company_id: filterWorkshop } : {}
-  ), [filterWorkshop]);
+  const summaryParams = useMemo(() => {
+    const p = filterWorkshop ? { workshop_company_id: filterWorkshop } : {};
+    if (!isAccountingUser(user) && user?.company_id) {
+      p.client_company_id = user.company_id;
+    }
+    return p;
+  }, [filterWorkshop, user]);
 
   const loadData = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     else setRefreshing(true);
     setError('');
     try {
+      const workshopParams = (!isAccountingUser(user) && user?.company_id)
+        ? { client_company_id: user.company_id }
+        : {};
       const [summaryRes, dealsRes, workshopsRes] = await Promise.all([
         api.get('/accounting/summary', { params: summaryParams }),
         api.get('/accounting/deals', { params: queryParams }),
-        api.get('/accounting/workshops'),
+        api.get('/accounting/workshops', { params: workshopParams }),
       ]);
       setSummary(summaryRes.data);
       setDeals(dealsRes.data.deals || []);
@@ -156,7 +167,7 @@ export default function AccountingDashboard() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [queryParams, summaryParams]);
+  }, [queryParams, summaryParams, user]);
 
   useEffect(() => {
     if (!user) return;
@@ -219,10 +230,10 @@ export default function AccountingDashboard() {
   const totalPages = Math.max(1, Math.ceil(total / limit));
   const companyLabel = clientCompany?.short_name || clientCompany?.name || 'Công ty';
 
-  if (!isAccountingUser(user) && user?.role !== 'admin' && user?.role !== 'manager') {
+  if (!isAccountingUser(user) && user?.role !== 'admin' && user?.role !== 'manager' && user?.role !== 'sales_admin' && user?.role !== 'platform_admin') {
     return (
       <div className="rounded-xl border border-amber-200 bg-amber-50 p-6 text-center">
-        <p className="text-amber-800 font-medium">Module Kế toán chỉ dành cho tài khoản kế toán công ty.</p>
+        <p className="text-amber-800 font-medium">Module Kế toán chỉ dành cho tài khoản kế toán công ty hoặc admin.</p>
       </div>
     );
   }

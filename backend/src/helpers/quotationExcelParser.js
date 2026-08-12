@@ -687,16 +687,33 @@ async function parseQuotationExcelBuffer(buffer, options = {}) {
     let deposit_label = '';
     let remaining_amount = null;
     let remaining_note = '';
+    const deposit_installments = [];
     for (const sr of summaryRows) {
       if (sr.row_kind === 'deposit') {
-        if (sr.amount > 0) deposit_amount = sr.amount;
-        deposit_label = sr.label || deposit_label;
+        const row = {
+          amount: sr.amount > 0 ? sr.amount : null,
+          received: sr.deposit_received === true || sr.deposit_received === false ? sr.deposit_received : null,
+          label: sr.label || '',
+        };
+        if (row.amount != null || row.received != null || row.label) {
+          deposit_installments.push(row);
+        }
+        // Legacy: tổng = cộng các đợt; label/received lấy từ đợt cuối có dữ liệu
+        if (sr.amount > 0) {
+          deposit_amount = (deposit_amount || 0) + sr.amount;
+        }
+        if (sr.label) deposit_label = deposit_installments.map((d) => d.label).filter(Boolean).join('\n');
         if (sr.deposit_received === true || sr.deposit_received === false) deposit_received = sr.deposit_received;
       }
       if (sr.row_kind === 'remaining') {
         remaining_amount = sr.amount > 0 ? sr.amount : remaining_amount;
         remaining_note = sr.label || remaining_note;
       }
+    }
+    if (deposit_installments.length > 1) {
+      const anyFalse = deposit_installments.some((d) => d.received === false);
+      const allTrue = deposit_installments.every((d) => d.received === true);
+      deposit_received = allTrue ? true : anyFalse ? false : null;
     }
 
     return {
@@ -715,6 +732,7 @@ async function parseQuotationExcelBuffer(buffer, options = {}) {
         deposit_amount,
         deposit_received,
         deposit_label,
+        deposit_installments: deposit_installments.length ? deposit_installments : null,
         remaining_amount,
         remaining_note,
       },

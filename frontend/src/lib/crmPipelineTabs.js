@@ -13,13 +13,13 @@ export function isCrmDealSidePipelineTab(pipelineType) {
 
 export function crmPipelineTabEntityLabel(pipelineType) {
   if (pipelineType === 'lead') return 'lead';
-  if (pipelineType === 'customer') return 'đơn hàng';
+  if (pipelineType === 'customer') return 'khách hàng';
   return 'deal';
 }
 
 export function crmPipelineTabTitle(pipelineType) {
   if (pipelineType === 'lead') return 'Lead';
-  if (pipelineType === 'customer') return 'Đơn hàng';
+  if (pipelineType === 'customer') return 'Khách hàng';
   return 'Deal';
 }
 
@@ -205,7 +205,7 @@ export function partitionDealsForCrmTabs(deals, { wonAnchorOrder, stagesDeal }) 
 }
 
 /**
- * Tổng tab Deal / Đơn hàng từ `GET /crm/stage-counts` `.counts`.
+ * Tổng tab Deal / Khách hàng từ `GET /crm/stage-counts` `.counts`.
  * - deal (tách): Σ cột trước Thắng, không gồm Thua/Hủy và không gồm cột Thắng
  * - customer: Σ cột Thắng + sau Thắng
  * - merged: Σ mọi cột trừ Thua/Hủy

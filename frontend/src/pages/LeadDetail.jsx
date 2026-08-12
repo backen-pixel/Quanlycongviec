@@ -24,6 +24,7 @@ import { compressImage } from '../lib/compressImage';
 import { consumeCrmLeadDetailPrefetch } from '../lib/crmLeadDetailPrefetch';
 import { getSocket } from '../lib/socket';
 import { formatVND, formatDate, getFileEmoji } from '../lib/utils';
+import { depositInstallmentsForForm, aggregateDepositFromInstallments } from '../lib/quotationTermsDisplay';
 import CRMTasksTab from '../components/CRMTasksTab';
 import { pickSurveyFillFormTask, hasFilledFormData, normalizeFormConfig } from '../lib/taskFillForm';
 import DealSharedWorkspaceTab from '../components/DealSharedWorkspaceTab';
@@ -239,6 +240,10 @@ export default function LeadDetail() {
   const [downloadingDocsZip, setDownloadingDocsZip] = useState(false);
   const [docLightboxIndex, setDocLightboxIndex] = useState(null);
   const [showExcelImport, setShowExcelImport] = useState(false);
+  const [showCreateOrderModal, setShowCreateOrderModal] = useState(false);
+  const [createOrderTitle, setCreateOrderTitle] = useState('');
+  const [createOrderNotes, setCreateOrderNotes] = useState('');
+  const [createOrderSaving, setCreateOrderSaving] = useState(false);
   /** Báo giá deal có file Excel gốc — mở lại từ header */
   const [dealExcelQuotations, setDealExcelQuotations] = useState([]);
   /** Đặt hàng gắn deal — CRUD đơn giản trên tab */
@@ -1877,6 +1882,42 @@ export default function LeadDetail() {
   // Backend vẫn chọn cột lead đích (is_revert_to_lead_target / cột lead đầu).
   const canRevertToLead = lead.type === 'deal';
   const canTransferRegion = !!lead.company_id;
+  /** Deal khách hàng (đã thắng / sau thắng) — tạo đơn phát sinh chi phí gắn deal. */
+  const canCreateDealOrder = lead.type === 'deal';
+
+  const openCreateOrderModal = () => {
+    const base = String(lead?.title || lead?.code || 'Đơn hàng').trim();
+    setCreateOrderTitle(base ? `${base} — Phát sinh` : 'Đơn hàng phát sinh');
+    setCreateOrderNotes('');
+    setShowCreateOrderModal(true);
+  };
+
+  const submitCreateDealOrder = async () => {
+    const title = String(createOrderTitle || '').trim();
+    if (!title) {
+      alert('Nhập tên deal phát sinh');
+      return;
+    }
+    setCreateOrderSaving(true);
+    try {
+      const { data } = await api.post(`/crm/deals/${lead.id}/spawn-additional`, {
+        title,
+        notes: String(createOrderNotes || '').trim() || null,
+      });
+      setShowCreateOrderModal(false);
+      const newId = data?.id;
+      if (newId) {
+        navigate(`/crm/leads/${newId}`);
+      } else {
+        alert(`Đã tạo deal ${data?.code || ''}`);
+        load({ silent: true });
+      }
+    } catch (e) {
+      alert(e.response?.data?.error || e.message || 'Lỗi tạo deal phát sinh');
+    } finally {
+      setCreateOrderSaving(false);
+    }
+  };
 
   const openTransferRegionModal = () => {
     setTransferRegionError('');
@@ -2399,8 +2440,34 @@ export default function LeadDetail() {
           >
             📥 Import Excel
           </button>
+          {canCreateDealOrder ? (
+            <button
+              type="button"
+              data-tour="lead-create-order"
+              onClick={openCreateOrderModal}
+              className="h-9 px-3 bg-teal-600 hover:bg-teal-700 text-white rounded-lg text-sm font-medium flex items-center gap-1.5 cursor-pointer"
+              title="Tạo deal đơn hàng phát sinh — hiện cột đầu tab Khách hàng, liên kết deal này"
+            >
+              <ShoppingCart className="h-4 w-4" /> Tạo đơn hàng phát sinh
+            </button>
+          ) : null}
         </div>
       </div>
+
+      {lead?.source_customer_deal_id || lead?.source_customer_deal?.id ? (
+        <div className="rounded-xl border border-teal-200 bg-teal-50/80 px-4 py-2.5 text-sm text-teal-900 flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span className="font-medium">Phát sinh từ deal khách hàng:</span>
+          <button
+            type="button"
+            className="font-semibold text-teal-800 underline underline-offset-2 hover:text-teal-950 cursor-pointer"
+            onClick={() => navigate(`/crm/leads/${lead.source_customer_deal?.id || lead.source_customer_deal_id}`)}
+          >
+            {[lead.source_customer_deal?.code, lead.source_customer_deal?.title].filter(Boolean).join(' — ')
+              || String(lead.source_customer_deal_id || '').slice(0, 8)
+              || 'Deal nguồn'}
+          </button>
+        </div>
+      ) : null}
 
       {/* Lost Banner — hiển thị nổi bật khi deal/lead thua */}
       {(lead?.lost_reason || stages.find((s) => s.id === lead.stage_id)?.is_lost) && (
@@ -2504,25 +2571,32 @@ export default function LeadDetail() {
           className="fixed inset-0 bg-black/40 flex items-center justify-center z-[60] p-4"
           onClick={() => { if (!addSxBusy) { setAddSxOpen(false); setAddSxErr(''); setAddSxTargets([]); } }}
         >
-          <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center gap-2 mb-2">
-              <Building2 className="h-6 w-6 text-teal-600" />
-              <h3 className="text-lg font-bold text-gray-900">Thêm dự án SX</h3>
+          <div
+            className="bg-white rounded-2xl shadow-xl max-w-lg w-full max-h-[90vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-6 pb-3 shrink-0">
+              <div className="flex items-center gap-2 mb-2">
+                <Building2 className="h-6 w-6 text-teal-600" />
+                <h3 className="text-lg font-bold text-gray-900">Thêm dự án SX</h3>
+              </div>
+              <p className="text-sm text-gray-600">
+                Tạo thêm thẻ Kanban tại xưởng khác (vd. tủ ở HCB khi đã có cửa ở Phúc Đạt).
+              </p>
             </div>
-            <p className="text-sm text-gray-600 mb-4">
-              Tạo thêm thẻ Kanban tại xưởng khác (vd. tủ ở HCB khi đã có cửa ở Phúc Đạt).
-            </p>
-            <SxMultiTargetPicker
-              key="add-sx"
-              companies={parentSxCompaniesForSelect}
-              leadTypeRow={parentSxLeadTypeRow}
-              kind={parentSxLeadKind}
-              accent="teal"
-              disabled={addSxBusy}
-              onChange={(rows) => { setAddSxTargets(rows); setAddSxErr(''); }}
-            />
-            {addSxErr && <p className="text-xs text-red-600 mt-2">{addSxErr}</p>}
-            <div className="flex gap-2 mt-4">
+            <div className="px-6 flex-1 min-h-0 overflow-y-auto">
+              <SxMultiTargetPicker
+                key="add-sx"
+                companies={parentSxCompaniesForSelect}
+                leadTypeRow={parentSxLeadTypeRow}
+                kind={parentSxLeadKind}
+                accent="teal"
+                disabled={addSxBusy}
+                onChange={(rows) => { setAddSxTargets(rows); setAddSxErr(''); }}
+              />
+              {addSxErr && <p className="text-xs text-red-600 mt-2">{addSxErr}</p>}
+            </div>
+            <div className="flex gap-2 p-6 pt-4 shrink-0 border-t border-gray-100 bg-white rounded-b-2xl">
               <button
                 type="button"
                 disabled={addSxBusy}
@@ -4065,6 +4139,100 @@ export default function LeadDetail() {
         />
       )}
 
+      {/* Tạo đơn hàng phát sinh từ deal khách hàng */}
+      <Modal
+        open={showCreateOrderModal}
+        onClose={() => !createOrderSaving && setShowCreateOrderModal(false)}
+        title="Tạo đơn hàng phát sinh"
+        size="md"
+      >
+        <div className="space-y-5">
+          <p className="text-sm text-gray-600 leading-relaxed">
+            Tạo deal mới từ deal khách hàng này với tên đã chỉnh sửa.
+            Deal sẽ hiện ở cột đầu tab Khách hàng và giữ liên kết với deal nguồn.
+          </p>
+
+          <div className="rounded-xl border border-teal-200 bg-teal-50/70 px-4 py-3.5 space-y-3">
+            <p className="text-[11px] font-bold uppercase tracking-wide text-teal-700">Deal nguồn</p>
+            <div className="space-y-1.5 min-w-0">
+              <p className="text-xs text-teal-800/80">
+                Mã:{' '}
+                <span className="font-mono font-semibold text-teal-950 text-sm">
+                  {lead?.code || '—'}
+                </span>
+              </p>
+              <p className="text-base font-semibold text-gray-900 leading-snug break-words whitespace-pre-wrap">
+                {lead?.title || '—'}
+              </p>
+              {(lead?.customer?.full_name || lead?.customer?.phone || lead?.phone || lead?.display_phone) ? (
+                <p className="text-sm text-gray-700 break-words">
+                  {[
+                    lead?.customer?.full_name,
+                    lead?.customer?.phone || lead?.phone || lead?.display_phone,
+                  ].filter(Boolean).join(' · ')}
+                </p>
+              ) : null}
+              {lead?.project_id ? (
+                <p className="text-xs text-teal-800 pt-1">Đã gắn dự án SX</p>
+              ) : null}
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">
+              Tên deal phát sinh <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              value={createOrderTitle}
+              onChange={(e) => setCreateOrderTitle(e.target.value)}
+              className="w-full h-11 px-3.5 border border-gray-200 rounded-xl text-sm font-medium outline-none focus:ring-2 focus:ring-teal-200 focus:border-teal-400"
+              placeholder="VD: Phát sinh thêm cánh / phụ kiện…"
+              autoFocus
+              disabled={createOrderSaving}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  void submitCreateDealOrder();
+                }
+              }}
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">
+              Ghi chú <span className="text-gray-400 font-normal">(tuỳ chọn)</span>
+            </label>
+            <textarea
+              value={createOrderNotes}
+              onChange={(e) => setCreateOrderNotes(e.target.value)}
+              rows={3}
+              disabled={createOrderSaving}
+              className="w-full px-3.5 py-2.5 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-teal-200 focus:border-teal-400 resize-y min-h-[88px]"
+              placeholder="Lý do phát sinh / phạm vi…"
+            />
+          </div>
+          <div className="flex gap-3 pt-1">
+            <button
+              type="button"
+              disabled={createOrderSaving}
+              onClick={() => setShowCreateOrderModal(false)}
+              className="flex-1 h-11 border border-gray-200 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50 cursor-pointer disabled:opacity-50"
+            >
+              Hủy
+            </button>
+            <button
+              type="button"
+              disabled={createOrderSaving || !String(createOrderTitle || '').trim()}
+              onClick={() => void submitCreateDealOrder()}
+              className="flex-[1.4] h-11 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-sm font-semibold cursor-pointer disabled:opacity-50 inline-flex items-center justify-center gap-1.5 px-3"
+            >
+              <ShoppingCart className="h-4 w-4 shrink-0" />
+              {createOrderSaving ? 'Đang tạo…' : 'Tạo deal phát sinh'}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
       {dealWonSxExistsCtx && (
         <div
           className="fixed inset-0 bg-black/40 flex items-center justify-center z-[60] p-4"
@@ -5194,7 +5362,7 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
   const [sxHandoverSaving, setSxHandoverSaving] = useState(false);
   const [sxHandoverNotice, setSxHandoverNotice] = useState('');
   const [sxHandoverExpanded, setSxHandoverExpanded] = useState(false);
-  const [depositDraft, setDepositDraft] = useState({ amount: '', received: '', label: '' });
+  const [depositDraft, setDepositDraft] = useState([{ amount: '', received: '', label: '' }]);
   /** Admin chuyển / thêm công ty SX — popup + đếm ngược 5s */
   const [sxAssignOpen, setSxAssignOpen] = useState(false);
   const [sxAssignProjectId, setSxAssignProjectId] = useState('');
@@ -5565,34 +5733,59 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
   };
 
   const depositDisplayValue = () => {
-    const parts = [];
-    const amt = Number(lead?.deposit_amount);
-    if (Number.isFinite(amt) && amt > 0) parts.push(formatVND(amt));
-    if (lead?.deposit_received === true) parts.push('Đã nhận cọc');
-    else if (lead?.deposit_received === false) parts.push('Chưa nhận cọc');
-    const lbl = lead?.deposit_label?.trim();
-    if (lbl) parts.push(lbl);
-    return parts.length ? parts.join(' · ') : null;
+    const rows = depositInstallmentsForForm(lead);
+    if (!rows?.length) return null;
+    const meaningful = rows.filter((r) => (r.amount != null && r.amount > 0) || r.label || r.received != null);
+    if (!meaningful.length) return null;
+    if (meaningful.length === 1) {
+      const parts = [];
+      const amt = Number(meaningful[0].amount);
+      if (Number.isFinite(amt) && amt > 0) parts.push(formatVND(amt));
+      if (meaningful[0].received === true) parts.push('Đã nhận cọc');
+      else if (meaningful[0].received === false) parts.push('Chưa nhận cọc');
+      const lbl = meaningful[0].label?.trim();
+      if (lbl) parts.push(lbl);
+      return parts.length ? parts.join(' · ') : null;
+    }
+    const agg = aggregateDepositFromInstallments(meaningful);
+    const lines = meaningful.map((r, i) => {
+      const bits = [`Lần ${i + 1}`];
+      if (r.amount > 0) bits.push(formatVND(r.amount));
+      if (r.received === true) bits.push('Đã nhận');
+      else if (r.received === false) bits.push('Chưa nhận');
+      if (r.label) bits.push(r.label);
+      return bits.join(' · ');
+    });
+    if (agg.deposit_amount > 0) lines.push(`Tổng: ${formatVND(agg.deposit_amount)}`);
+    return lines.join('\n');
   };
 
   const startEditDeposit = () => {
     setEditing('deposit');
-    setDepositDraft({
-      amount: lead?.deposit_amount != null && Number(lead.deposit_amount) > 0 ? String(lead.deposit_amount) : '',
-      received: lead?.deposit_received === true ? 'yes' : lead?.deposit_received === false ? 'no' : '',
-      label: lead?.deposit_label?.trim() || '',
-    });
+    const rows = depositInstallmentsForForm(lead);
+    setDepositDraft(
+      (rows?.length ? rows : [{ amount: null, received: null, label: '' }]).map((r) => ({
+        amount: r.amount != null && Number(r.amount) > 0 ? String(r.amount) : '',
+        received: r.received === true ? 'yes' : r.received === false ? 'no' : '',
+        label: r.label?.trim() || '',
+      })),
+    );
   };
 
   const saveDeposit = async () => {
     setSaving(true);
     try {
-      const rawAmt = depositDraft.amount;
-      const deposit_amount = rawAmt === '' || rawAmt == null ? null : Number(rawAmt);
+      const installments = (Array.isArray(depositDraft) ? depositDraft : []).map((row) => ({
+        amount: row.amount === '' || row.amount == null ? null : Number(row.amount),
+        received: row.received === 'yes' ? true : row.received === 'no' ? false : null,
+        label: row.label?.trim() || '',
+      }));
+      const agg = aggregateDepositFromInstallments(installments);
       await api.put(`/crm/leads/${lead.id}`, {
-        deposit_amount: deposit_amount != null && deposit_amount > 0 ? deposit_amount : null,
-        deposit_received: depositDraft.received === 'yes' ? true : depositDraft.received === 'no' ? false : null,
-        deposit_label: depositDraft.label?.trim() || null,
+        deposit_installments: agg.deposit_installments,
+        deposit_amount: agg.deposit_amount,
+        deposit_received: agg.deposit_received,
+        deposit_label: agg.deposit_label || null,
       });
       setEditing(null);
       onUpdate();
@@ -5805,32 +5998,56 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
           <div className="flex-1 min-w-0">
             <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Tiền cọc</p>
             {editing === 'deposit' ? (
-              <div className="space-y-1.5 relative z-20">
-                <input
-                  type="number"
-                  min="0"
-                  value={depositDraft.amount}
-                  onChange={(e) => setDepositDraft((d) => ({ ...d, amount: e.target.value }))}
-                  className="w-full h-8 px-2 border rounded-lg text-sm text-right outline-none focus:ring-2 focus:ring-blue-400"
-                  placeholder="Số tiền VNĐ"
-                  autoFocus
-                />
-                <select
-                  value={depositDraft.received}
-                  onChange={(e) => setDepositDraft((d) => ({ ...d, received: e.target.value }))}
-                  className="w-full h-8 px-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+              <div className="space-y-2 relative z-20">
+                {(Array.isArray(depositDraft) ? depositDraft : []).map((row, idx) => (
+                  <div key={idx} className="rounded-lg border border-gray-200 bg-gray-50/80 p-2 space-y-1.5">
+                    <div className="flex items-center justify-between gap-1">
+                      <p className="text-[10px] font-semibold text-gray-500 uppercase">Cọc lần {idx + 1}</p>
+                      {depositDraft.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => setDepositDraft((rows) => rows.filter((_, i) => i !== idx))}
+                          className="p-0.5 text-gray-300 hover:text-rose-500 cursor-pointer"
+                          title="Xóa đợt"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                      )}
+                    </div>
+                    <input
+                      type="number"
+                      min="0"
+                      value={row.amount}
+                      onChange={(e) => setDepositDraft((rows) => rows.map((r, i) => (i === idx ? { ...r, amount: e.target.value } : r)))}
+                      className="w-full h-8 px-2 border rounded-lg text-sm text-right outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+                      placeholder="Số tiền VNĐ"
+                      autoFocus={idx === 0}
+                    />
+                    <select
+                      value={row.received}
+                      onChange={(e) => setDepositDraft((rows) => rows.map((r, i) => (i === idx ? { ...r, received: e.target.value } : r)))}
+                      className="w-full h-8 px-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+                    >
+                      <option value="">Chưa xác định</option>
+                      <option value="yes">Đã nhận</option>
+                      <option value="no">Chưa nhận</option>
+                    </select>
+                    <input
+                      type="text"
+                      value={row.label}
+                      onChange={(e) => setDepositDraft((rows) => rows.map((r, i) => (i === idx ? { ...r, label: e.target.value } : r)))}
+                      className="w-full h-8 px-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+                      placeholder="Mô tả (VD: ký HĐ, lệnh SX)"
+                    />
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setDepositDraft((rows) => [...rows, { amount: '', received: '', label: '' }])}
+                  className="h-8 w-full flex items-center justify-center gap-1 rounded-lg border border-dashed border-blue-300 text-blue-600 text-xs font-medium cursor-pointer hover:bg-blue-50"
                 >
-                  <option value="">Chưa xác định</option>
-                  <option value="yes">Đã nhận</option>
-                  <option value="no">Chưa nhận</option>
-                </select>
-                <input
-                  type="text"
-                  value={depositDraft.label}
-                  onChange={(e) => setDepositDraft((d) => ({ ...d, label: e.target.value }))}
-                  className="w-full h-8 px-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-400"
-                  placeholder="Mô tả (VD: ký HĐ, lệnh SX)"
-                />
+                  <Plus className="h-3.5 w-3.5" /> Thêm đợt cọc
+                </button>
                 <div className="flex items-center gap-1.5">
                   <button type="button" onClick={() => void saveDeposit()} disabled={saving}
                     className="h-8 px-2.5 flex items-center gap-1 bg-blue-600 text-white rounded-lg text-xs font-medium cursor-pointer hover:bg-blue-700 disabled:opacity-50">
@@ -5845,7 +6062,7 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
             ) : (
               <div onClick={startEditDeposit} className="cursor-pointer group/val">
                 {depositDisplayValue() ? (
-                  <p className="text-sm font-medium" style={{ color: '#000000' }}>{depositDisplayValue()}</p>
+                  <p className="text-sm font-medium whitespace-pre-line" style={{ color: '#000000' }}>{depositDisplayValue()}</p>
                 ) : (
                   <p className="text-sm text-gray-300 italic group-hover/val:text-blue-400 transition-colors">
                     Nhấn để nhập...
@@ -6368,10 +6585,10 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
               onClick={() => { if (!sxAddBusy) { setSxAddOpen(false); setSxAddErr(''); } }}
             >
               <div
-                className="bg-white rounded-2xl shadow-xl w-full max-w-lg p-5 space-y-3 max-h-[90vh] overflow-y-auto"
+                className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] flex flex-col"
                 onClick={(e) => e.stopPropagation()}
               >
-                <div className="flex items-start justify-between gap-2">
+                <div className="flex items-start justify-between gap-2 p-5 pb-3 shrink-0">
                   <div>
                     <h3 className="text-lg font-bold text-gray-900">Thêm công ty SX</h3>
                     <p className="text-xs text-gray-500 mt-1">
@@ -6382,17 +6599,19 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
                     <X className="h-5 w-5 text-gray-400" />
                   </button>
                 </div>
-                <SxMultiTargetPicker
-                  key="leadinfo-add-sx"
-                  companies={sxCompaniesForSelect}
-                  leadTypeRow={sxLeadTypeRow}
-                  kind={sxLeadKind}
-                  accent="orange"
-                  disabled={sxAddBusy}
-                  onChange={(rows) => { setSxAddTargets(rows); setSxAddErr(''); }}
-                />
-                {sxAddErr && <p className="text-xs text-red-600">{sxAddErr}</p>}
-                <div className="flex gap-2 pt-1">
+                <div className="px-5 flex-1 min-h-0 overflow-y-auto space-y-3">
+                  <SxMultiTargetPicker
+                    key="leadinfo-add-sx"
+                    companies={sxCompaniesForSelect}
+                    leadTypeRow={sxLeadTypeRow}
+                    kind={sxLeadKind}
+                    accent="orange"
+                    disabled={sxAddBusy}
+                    onChange={(rows) => { setSxAddTargets(rows); setSxAddErr(''); }}
+                  />
+                  {sxAddErr && <p className="text-xs text-red-600">{sxAddErr}</p>}
+                </div>
+                <div className="flex gap-2 p-5 pt-4 shrink-0 border-t border-gray-100 bg-white rounded-b-2xl">
                   <button
                     type="button"
                     disabled={sxAddBusy}

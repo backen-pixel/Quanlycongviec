@@ -10,6 +10,7 @@ const {
   executeLeadCompanyTransfer,
   getTransferOptions,
 } = require('../../../helpers/crmLeadCompanyTransfer');
+const { createAdditionalCustomerDeal } = require('../../../helpers/projectOrderFulfillment');
 
 const r = Router();
 
@@ -301,6 +302,120 @@ r.post('/deals', async (req, res) => {
   }
 });
 
+/** Tạo deal đơn hàng phát sinh từ deal khách hàng — cột đầu tab Khách hàng. */
+r.post('/deals/:id/spawn-additional', async (req, res) => {
+  try {
+    const parentId = String(req.params.id || '').trim();
+    if (!CRM_UUID_RE.test(parentId)) {
+      return res.status(400).json({ error: 'Id deal không hợp lệ' });
+    }
+    const title = String(req.body?.title || '').trim();
+    if (!title) return res.status(400).json({ error: 'Nhập tên deal phát sinh' });
+    const notes = String(req.body?.notes || '').trim() || null;
+
+    const { data: parentDeal, error: pErr } = await supabase
+      .from('crm_leads')
+      .select('id, type, code, title, customer_id, company_id, pipeline_id, stage_id, assigned_to, lead_owner_id, estimated_value, parent_lead_id, project_id, region_id, phone, install_address, lead_type_id, source_id')
+      .eq('id', parentId)
+      .maybeSingle();
+    if (pErr) throw pErr;
+    if (!parentDeal) return res.status(404).json({ error: 'Không tìm thấy deal nguồn' });
+    if (parentDeal.type !== 'deal') {
+      return res.status(400).json({ error: 'Chỉ tạo đơn hàng phát sinh từ deal' });
+    }
+    if (parentDeal.parent_lead_id) {
+      return res.status(400).json({ error: 'Không tạo phát sinh từ deal fulfillment (deal con)' });
+    }
+
+    const sac = scopedAdminCompanyId(req);
+    if (sac && String(parentDeal.company_id || '') !== String(sac)) {
+      return res.status(403).json({ error: 'Không có quyền' });
+    }
+    const ar = assertLeadReadableByRegionScope(req, parentDeal);
+    if (!ar.ok) return res.status(403).json({ error: ar.error });
+
+    const created = await createAdditionalCustomerDeal({
+      parentDeal,
+      title,
+      notes,
+      userId: req.user.userId,
+    });
+
+    try {
+      await autoGenCrmTasksForNewLead(created.id, req.user.userId, req);
+    } catch (autoErr) {
+      console.warn('[spawn-additional] auto tasks:', autoErr.message);
+    }
+
+    emitCrmDashboardChanged(req, {
+      type: 'deal',
+      company_id: created.company_id || parentDeal.company_id,
+      lead_id: created.id,
+      action: 'created',
+    });
+
+    res.status(201).json({
+      ...created,
+      source_customer_deal_id: created.source_customer_deal_id || parentDeal.id,
+      source_deal: { id: parentDeal.id, code: parentDeal.code, title: parentDeal.title },
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message || 'Lỗi tạo deal phát sinh' });
+  }
+});
+
+/** Danh sách deal đơn hàng phát sinh gắn deal khách hàng nguồn. */
+r.get('/deals/:id/spawned-additional', async (req, res) => {
+  try {
+    const parentId = String(req.params.id || '').trim();
+    if (!CRM_UUID_RE.test(parentId)) {
+      return res.status(400).json({ error: 'Id deal không hợp lệ' });
+    }
+
+    const { data: parentDeal, error: pErr } = await supabase
+      .from('crm_leads')
+      .select('id, type, company_id, region_id, assigned_to, lead_owner_id, parent_lead_id')
+      .eq('id', parentId)
+      .maybeSingle();
+    if (pErr) throw pErr;
+    if (!parentDeal) return res.status(404).json({ error: 'Không tìm thấy deal' });
+
+    const sac = scopedAdminCompanyId(req);
+    if (sac && String(parentDeal.company_id || '') !== String(sac)) {
+      return res.status(403).json({ error: 'Không có quyền' });
+    }
+    const ar = assertLeadReadableByRegionScope(req, parentDeal);
+    if (!ar.ok) return res.status(403).json({ error: ar.error });
+
+    let { data: rows, error } = await supabase
+      .from('crm_leads')
+      .select('id, code, title, created_at, stage_id, estimated_value, stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, is_won, is_lost)')
+      .eq('source_customer_deal_id', parentId)
+      .eq('type', 'deal')
+      .order('created_at', { ascending: false });
+
+    if (error && /source_customer_deal_id/i.test(String(error.message || ''))) {
+      return res.json({ items: [], parent_id: parentId });
+    }
+    if (error && /crm_pipeline_stages|relationship/i.test(String(error.message || ''))) {
+      ({ data: rows, error } = await supabase
+        .from('crm_leads')
+        .select('id, code, title, created_at, stage_id, estimated_value')
+        .eq('source_customer_deal_id', parentId)
+        .eq('type', 'deal')
+        .order('created_at', { ascending: false }));
+    }
+    if (error) throw error;
+
+    res.json({
+      parent_id: parentId,
+      items: rows || [],
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message || 'Lỗi tải đơn hàng phát sinh' });
+  }
+});
+
 r.get('/leads/:id/badge', async (req, res) => {
   try {
     const data = await fetchCrmLeadWithPipelineBadges(req.params.id);
@@ -354,7 +469,7 @@ r.get('/leads/:id', async (req, res) => {
       return res.status(400).json({ error: 'Id lead/deal không hợp lệ', requested_id: rawId });
     }
     const canonicalId = (await resolveCanonicalCrmLeadId(rawId)) || rawId;
-    const baseFields = 'id, title, type, company_id, pipeline_id, stage_id, assigned_to, lead_owner_id, created_by, parent_lead_id, use_order_tasks, sx_template_company_id, project_id, deposit_amount, deposit_received, deposit_label';
+    const baseFields = 'id, title, type, company_id, pipeline_id, stage_id, assigned_to, lead_owner_id, created_by, parent_lead_id, use_order_tasks, sx_template_company_id, project_id, deposit_amount, deposit_received, deposit_label, deposit_installments';
     const projectEmbed = ', linked_project:projects!crm_leads_project_id_fkey(id, code, name, order_date, delivery_date, production_deadline)';
     let { data, error } = await supabase
       .from('crm_leads')
@@ -447,6 +562,21 @@ r.get('/leads/:id/detail', async (req, res) => {
       data.production_projects = data.project_id
         ? [{ project_id: data.project_id, is_primary: true }]
         : [];
+    }
+    try {
+      const srcId = data.source_customer_deal_id || null;
+      if (srcId) {
+        const { data: src } = await supabase
+          .from('crm_leads')
+          .select('id, code, title, type')
+          .eq('id', srcId)
+          .maybeSingle();
+        data.source_customer_deal = src || { id: srcId };
+      } else {
+        data.source_customer_deal = null;
+      }
+    } catch (_) {
+      data.source_customer_deal = null;
     }
     res.json(data);
   } catch (e) {
@@ -610,22 +740,31 @@ r.put('/leads/:id', async (req, res) => {
       });
     }
 
-    if ('deposit_amount' in safeBody) {
-      const raw = safeBody.deposit_amount;
-      if (raw === '' || raw === undefined || raw === null) safeBody.deposit_amount = null;
-      else {
-        const n = Number(raw);
-        safeBody.deposit_amount = Number.isFinite(n) && n > 0 ? n : null;
+    if ('deposit_installments' in safeBody) {
+      const { aggregateDepositFromInstallments } = require('../../../helpers/depositInstallments');
+      const agg = aggregateDepositFromInstallments(safeBody.deposit_installments);
+      safeBody.deposit_installments = agg.deposit_installments;
+      safeBody.deposit_amount = agg.deposit_amount;
+      safeBody.deposit_received = agg.deposit_received;
+      safeBody.deposit_label = agg.deposit_label;
+    } else {
+      if ('deposit_amount' in safeBody) {
+        const raw = safeBody.deposit_amount;
+        if (raw === '' || raw === undefined || raw === null) safeBody.deposit_amount = null;
+        else {
+          const n = Number(raw);
+          safeBody.deposit_amount = Number.isFinite(n) && n > 0 ? n : null;
+        }
       }
+      if ('deposit_received' in safeBody) {
+        const dr = safeBody.deposit_received;
+        if (dr === '' || dr === undefined || dr === null) safeBody.deposit_received = null;
+        else if (dr === true || dr === 'true') safeBody.deposit_received = true;
+        else if (dr === false || dr === 'false') safeBody.deposit_received = false;
+        else safeBody.deposit_received = null;
+      }
+      if ('deposit_label' in safeBody && safeBody.deposit_label === '') safeBody.deposit_label = null;
     }
-    if ('deposit_received' in safeBody) {
-      const dr = safeBody.deposit_received;
-      if (dr === '' || dr === undefined || dr === null) safeBody.deposit_received = null;
-      else if (dr === true || dr === 'true') safeBody.deposit_received = true;
-      else if (dr === false || dr === 'false') safeBody.deposit_received = false;
-      else safeBody.deposit_received = null;
-    }
-    if ('deposit_label' in safeBody && safeBody.deposit_label === '') safeBody.deposit_label = null;
 
     if (Object.prototype.hasOwnProperty.call(safeBody, 'lead_type_id')) {
       if (!safeBody.lead_type_id) {

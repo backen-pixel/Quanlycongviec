@@ -20,10 +20,16 @@ const {
   listDealPayments,
   recomputeStageReceived,
   syncDepositFromPaymentStages,
+  syncDepositToQuotationsAndOrders,
+  syncDepositReceivedFlagToPaymentStages,
   mirrorPaymentToInvoice,
   fetchAccountingDealDetail,
   syncDealValueToProject,
 } = require('../helpers/accountingDealDetail');
+const {
+  normalizeDepositInstallments,
+  aggregateDepositFromInstallments,
+} = require('../helpers/depositInstallments');
 
 function parseQueryFilters(req) {
   return {
@@ -50,10 +56,13 @@ async function resolveClientCompanyContext(req) {
     || null;
   const clientCompanyId = resolveAccountingCompanyId(req.user, fromQuery);
   if (!clientCompanyId) {
+    if (isAdminLike(req.user) && !isAccountingUser(req.user)) {
+      return {
+        error: 'Admin hệ thống cần chọn công ty (client_company_id) để xem module kế toán',
+        status: 400,
+      };
+    }
     return { error: 'Không xác định được công ty kế toán', status: 403 };
-  }
-  if (!isAccountingUser(req.user) && isAdminLike(req.user) && !fromQuery) {
-    return { error: 'Admin cần truyền client_company_id', status: 400 };
   }
   const { data: company } = await supabase
     .from('companies')
@@ -341,7 +350,7 @@ r.get('/deals/:leadId', async (req, res) => {
   }
 });
 
-/** PUT /accounting/deals/:leadId/deposit — cập nhật snapshot cọc trên deal */
+/** PUT /accounting/deals/:leadId/deposit — cập nhật snapshot cọc trên deal + đồng bộ BG/ĐH */
 r.put('/deals/:leadId/deposit', async (req, res) => {
   try {
     const ctx = await resolveClientCompanyContext(req);
@@ -362,11 +371,29 @@ r.put('/deals/:leadId/deposit', async (req, res) => {
       patch.deposit_label = b.deposit_label ? String(b.deposit_label).trim() : null;
     }
 
+    // Khi đánh dấu Đã nhận / Chưa nhận — cập nhật luôn các đợt cọc trên deal
+    if (b.deposit_received === true || b.deposit_received === false) {
+      const { data: leadRow } = await supabase
+        .from('crm_leads')
+        .select('deposit_installments')
+        .eq('id', req.params.leadId)
+        .maybeSingle();
+      const existing = normalizeDepositInstallments(leadRow?.deposit_installments);
+      if (existing?.length) {
+        const updated = existing.map((r) => ({ ...r, received: b.deposit_received }));
+        const agg = aggregateDepositFromInstallments(updated);
+        patch.deposit_installments = agg.deposit_installments;
+        if (agg.deposit_amount != null && patch.deposit_amount === undefined) {
+          patch.deposit_amount = agg.deposit_amount;
+        }
+      }
+    }
+
     const { data: updated, error } = await supabase
       .from('crm_leads')
       .update(patch)
       .eq('id', req.params.leadId)
-      .select('id, deposit_amount, deposit_received, deposit_label, project_id')
+      .select('id, deposit_amount, deposit_received, deposit_label, deposit_installments, project_id')
       .maybeSingle();
     if (error) throw error;
 
@@ -377,7 +404,19 @@ r.put('/deals/:leadId/deposit', async (req, res) => {
       }).eq('id', updated.project_id);
     }
 
-    res.json({ deposit: updated });
+    const docsSync = await syncDepositToQuotationsAndOrders(req.params.leadId, {
+      deposit_amount: updated?.deposit_amount ?? patch.deposit_amount ?? null,
+      deposit_received: updated?.deposit_received ?? patch.deposit_received ?? null,
+      deposit_label: updated?.deposit_label ?? patch.deposit_label ?? null,
+      deposit_installments: updated?.deposit_installments || patch.deposit_installments || null,
+      force: true,
+    });
+
+    if (patch.deposit_received === true || patch.deposit_received === false) {
+      await syncDepositReceivedFlagToPaymentStages(req.params.leadId, patch.deposit_received);
+    }
+
+    res.json({ deposit: updated, synced: docsSync });
   } catch (e) {
     console.error('[accounting/deals/:id/deposit]', e);
     res.status(500).json({ error: e.message || 'Lỗi cập nhật cọc' });

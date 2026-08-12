@@ -727,11 +727,23 @@ export default function AccountingDealDetail() {
                                 <p className="text-sm font-semibold text-gray-800 truncate">{x.code || x.title || '—'}</p>
                                 <p className="text-[11px] text-gray-500 tabular-nums">{formatVND(x.total || 0)}</p>
                               </div>
-                              {docStatusLabel(block.key, x) && (
-                                <span className="shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-white border border-gray-200 text-gray-500">
-                                  {docStatusLabel(block.key, x)}
-                                </span>
-                              )}
+                              <div className="shrink-0 flex flex-col items-end gap-0.5">
+                                {docStatusLabel(block.key, x) && (
+                                  <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-white border border-gray-200 text-gray-500">
+                                    {docStatusLabel(block.key, x)}
+                                  </span>
+                                )}
+                                {(block.key === 'quotation' || block.key === 'order') && x.deposit_received === true && (
+                                  <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-emerald-50 border border-emerald-200 text-emerald-700">
+                                    Đã nhận cọc
+                                  </span>
+                                )}
+                                {(block.key === 'quotation' || block.key === 'order') && x.deposit_received === false && (
+                                  <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-50 border border-amber-200 text-amber-700">
+                                    Chưa nhận cọc
+                                  </span>
+                                )}
+                              </div>
                             </div>
                             <div className="flex flex-wrap items-center gap-1.5">
                               <Link

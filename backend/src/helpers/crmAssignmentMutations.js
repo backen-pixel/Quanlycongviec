@@ -82,9 +82,8 @@ async function createCrmAssignment(req, body) {
     column_id, company_id, priority, status, deadline, lead_id, assignment_module,
     task_source_type, employee_error_module, crm_task_id,
   } = body || {};
-  const resolvedModule = ['production', 'logistics'].includes(String(assignment_module || '').toLowerCase())
-    ? String(assignment_module).toLowerCase()
-    : 'crm';
+  const { normalizeAssignModule } = require('./assignmentModule');
+  const resolvedModule = normalizeAssignModule(assignment_module);
   if (!title || !title.trim()) return { error: 'Cần tiêu đề', status: 400 };
 
   const {

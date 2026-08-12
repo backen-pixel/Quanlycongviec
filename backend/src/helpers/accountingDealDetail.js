@@ -3,6 +3,10 @@
  */
 const { supabase } = require('../config/supabase');
 const { crmDealBelongsToAccountingCompany } = require('./accountingScope');
+const {
+  normalizeDepositInstallments,
+  aggregateDepositFromInstallments,
+} = require('./depositInstallments');
 
 const DEFAULT_PAYMENT_STAGE_LABELS = [
   'Cọc lần 1',
@@ -172,8 +176,167 @@ async function recomputeStageReceived(stageId) {
 }
 
 /**
- * Đồng bộ tổng thực thu các giai đoạn "cọc" → crm_leads + projects.
+ * Map giai đoạn cọc kế toán → deposit_installments trên BG/ĐH/deal.
+ * Ưu tiên khớp theo số thứ tự; nếu thiếu đợt thì tạo từ planned_amount của stage.
  */
+function buildInstallmentsFromDepositStages(depositStages, existingInstallments) {
+  const stages = Array.isArray(depositStages) ? depositStages : [];
+  if (!stages.length) return null;
+
+  const existing = normalizeDepositInstallments(existingInstallments) || [];
+  const rows = stages.map((st, i) => {
+    const prev = existing[i] || {};
+    const planned = Number(st.planned_amount);
+    const amount = (Number.isFinite(planned) && planned > 0)
+      ? planned
+      : (prev.amount != null ? prev.amount : null);
+    let received = prev.received ?? null;
+    if (st.status === 'paid') received = true;
+    else if ((Number(st.received_amount) || 0) > 0) received = false;
+    else if (st.status === 'pending') received = false;
+    return {
+      amount,
+      received,
+      label: (prev.label && String(prev.label).trim())
+        || String(st.label || '').trim()
+        || `Cọc lần ${i + 1}`,
+    };
+  });
+
+  // Giữ các đợt thừa trên BG/ĐH nếu nhiều hơn số stage cọc
+  for (let i = stages.length; i < existing.length; i += 1) {
+    rows.push({ ...existing[i] });
+  }
+
+  return aggregateDepositFromInstallments(rows);
+}
+
+/**
+ * Đồng bộ cọc từ kế toán → báo giá + đơn hàng cùng lead.
+ * @param {string} leadId
+ * @param {object} opts
+ * @param {number|null} [opts.deposit_amount]
+ * @param {boolean|null} [opts.deposit_received]
+ * @param {string|null} [opts.deposit_label]
+ * @param {Array|null} [opts.deposit_installments]
+ * @param {boolean} [opts.force] — ghi cả khi chỉ có deposit_received (PUT cọc thủ công)
+ */
+async function syncDepositToQuotationsAndOrders(leadId, opts = {}) {
+  if (!leadId) return { synced: false, quotations: 0, orders: 0 };
+
+  const patch = { updated_at: new Date().toISOString() };
+  const amt = Number(opts.deposit_amount);
+  if (Number.isFinite(amt) && amt > 0) patch.deposit_amount = amt;
+  if (opts.deposit_received === true || opts.deposit_received === false) {
+    patch.deposit_received = opts.deposit_received;
+  }
+  if (opts.deposit_label != null && String(opts.deposit_label).trim() !== '') {
+    patch.deposit_label = String(opts.deposit_label).trim();
+  }
+  if (opts.deposit_installments) {
+    patch.deposit_installments = opts.deposit_installments;
+  }
+
+  // Chỉ chạy khi có ít nhất 1 field cọc (tránh update trống)
+  const keys = Object.keys(patch).filter((k) => k !== 'updated_at');
+  if (!keys.length && !opts.force) {
+    return { synced: false, quotations: 0, orders: 0 };
+  }
+
+  const [quotesRes, ordersRes] = await Promise.all([
+    supabase
+      .from('quotations')
+      .select('id, deposit_installments')
+      .eq('lead_id', leadId),
+    supabase
+      .from('orders')
+      .select('id, deposit_installments')
+      .eq('lead_id', leadId),
+  ]);
+
+  let quoteCount = 0;
+  let orderCount = 0;
+
+  for (const q of quotesRes.data || []) {
+    let docPatch = { ...patch };
+    // Nếu caller chưa gửi installments, vẫn cập nhật received trên đợt hiện có
+    if (!opts.deposit_installments && (opts.deposit_received === true || opts.deposit_received === false)) {
+      const existing = normalizeDepositInstallments(q.deposit_installments);
+      if (existing?.length) {
+        const updated = existing.map((r) => ({ ...r, received: opts.deposit_received }));
+        const agg = aggregateDepositFromInstallments(updated);
+        docPatch.deposit_installments = agg.deposit_installments;
+        if (agg.deposit_received != null) docPatch.deposit_received = agg.deposit_received;
+        if (agg.deposit_amount != null && !docPatch.deposit_amount) {
+          docPatch.deposit_amount = agg.deposit_amount;
+        }
+      }
+    }
+    const { error } = await supabase.from('quotations').update(docPatch).eq('id', q.id);
+    if (!error) quoteCount += 1;
+    else console.warn('[accounting] sync deposit → quotation', q.id, error.message);
+  }
+
+  for (const o of ordersRes.data || []) {
+    let docPatch = { ...patch };
+    if (!opts.deposit_installments && (opts.deposit_received === true || opts.deposit_received === false)) {
+      const existing = normalizeDepositInstallments(o.deposit_installments);
+      if (existing?.length) {
+        const updated = existing.map((r) => ({ ...r, received: opts.deposit_received }));
+        const agg = aggregateDepositFromInstallments(updated);
+        docPatch.deposit_installments = agg.deposit_installments;
+        if (agg.deposit_received != null) docPatch.deposit_received = agg.deposit_received;
+        if (agg.deposit_amount != null && !docPatch.deposit_amount) {
+          docPatch.deposit_amount = agg.deposit_amount;
+        }
+      }
+    }
+    const { error } = await supabase.from('orders').update(docPatch).eq('id', o.id);
+    if (!error) orderCount += 1;
+    else console.warn('[accounting] sync deposit → order', o.id, error.message);
+  }
+
+  return { synced: quoteCount + orderCount > 0, quotations: quoteCount, orders: orderCount };
+}
+
+/**
+ * Khi BG/deal đánh dấu Đã nhận / Chưa nhận cọc → cập nhật giai đoạn thanh toán có nhãn «cọc».
+ */
+async function syncDepositReceivedFlagToPaymentStages(leadId, depositReceived) {
+  if (!leadId || (depositReceived !== true && depositReceived !== false)) {
+    return { updated: 0 };
+  }
+  const stages = await listPaymentStages(leadId);
+  const depositStages = stages.filter((s) => isDepositStageLabel(s.label));
+  if (!depositStages.length) return { updated: 0 };
+
+  let updated = 0;
+  const now = new Date().toISOString();
+  for (const st of depositStages) {
+    if (depositReceived === true) {
+      const planned = Number(st.planned_amount);
+      const current = Number(st.received_amount) || 0;
+      const received = (Number.isFinite(planned) && planned > 0)
+        ? Math.max(current, planned)
+        : Math.max(current, 0);
+      const patch = {
+        status: 'paid',
+        updated_at: now,
+      };
+      if (received > 0) patch.received_amount = received;
+      else if (Number.isFinite(planned) && planned > 0) patch.received_amount = planned;
+      const { error } = await supabase.from('crm_payment_stages').update(patch).eq('id', st.id);
+      if (!error) updated += 1;
+    } else if (depositReceived === false && (Number(st.received_amount) || 0) <= 0) {
+      const { error } = await supabase.from('crm_payment_stages').update({
+        status: 'pending',
+        updated_at: now,
+      }).eq('id', st.id);
+      if (!error) updated += 1;
+    }
+  }
+  return { updated };
+}
 async function syncDepositFromPaymentStages(leadId) {
   const stages = await listPaymentStages(leadId);
   const depositStages = stages.filter((s) => isDepositStageLabel(s.label));
@@ -188,30 +351,48 @@ async function syncDepositFromPaymentStages(leadId) {
   const allDepositPaid = depositStages.length > 0
     && depositStages.every((st) => st.status === 'paid');
 
+  const { data: lead } = await supabase
+    .from('crm_leads')
+    .select('id, project_id, deposit_installments, deposit_label, deposit_received, deposit_amount')
+    .eq('id', leadId)
+    .maybeSingle();
+  if (!lead) return { synced: false };
+
+  const fromStages = depositStages.length
+    ? buildInstallmentsFromDepositStages(depositStages, lead.deposit_installments)
+    : null;
+
   const leadPatch = {
     updated_at: new Date().toISOString(),
   };
   if (depositReceivedTotal > 0) {
     leadPatch.deposit_amount = depositReceivedTotal;
+  } else if (fromStages?.deposit_amount != null) {
+    leadPatch.deposit_amount = fromStages.deposit_amount;
   }
   if (depositStages.length) {
-    if (allDepositPaid && plannedDeposit > 0) {
+    if (allDepositPaid && (plannedDeposit > 0 || depositReceivedTotal > 0)) {
+      leadPatch.deposit_received = true;
+    } else if (lead.deposit_received === true) {
+      // Giữ «Đã nhận» từ báo giá / chỉnh tay — không đè false khi giai đoạn cọc chưa khớp số
       leadPatch.deposit_received = true;
     } else if (depositReceivedTotal > 0) {
       leadPatch.deposit_received = false;
     }
   }
-
-  const { data: lead } = await supabase
-    .from('crm_leads')
-    .select('id, project_id')
-    .eq('id', leadId)
-    .maybeSingle();
-  if (!lead) return { synced: false };
+  if (fromStages?.deposit_installments) {
+    leadPatch.deposit_installments = fromStages.deposit_installments;
+    if (fromStages.deposit_received != null && leadPatch.deposit_received == null) {
+      leadPatch.deposit_received = fromStages.deposit_received;
+    }
+    if (fromStages.deposit_label && !lead.deposit_label) {
+      leadPatch.deposit_label = fromStages.deposit_label;
+    }
+  }
 
   await supabase.from('crm_leads').update(leadPatch).eq('id', leadId);
 
-  if (lead.project_id && depositReceivedTotal > 0) {
+  if (lead.project_id && (depositReceivedTotal > 0 || leadPatch.deposit_amount != null)) {
     const allPays = await listDealPayments(leadId);
     const nonDepositStageIds = new Set(
       stages.filter((s) => !isDepositStageLabel(s.label)).map((s) => String(s.id)),
@@ -221,17 +402,28 @@ async function syncDepositFromPaymentStages(leadId) {
       .reduce((s, p) => s + (Number(p.amount) || 0), 0);
 
     const projectPatch = {
-      deposit_amount: depositReceivedTotal,
       updated_at: new Date().toISOString(),
     };
+    if (depositReceivedTotal > 0) projectPatch.deposit_amount = depositReceivedTotal;
+    else if (leadPatch.deposit_amount != null) projectPatch.deposit_amount = leadPatch.deposit_amount;
     if (collected > 0) projectPatch.collected_amount = collected;
     await supabase.from('projects').update(projectPatch).eq('id', lead.project_id);
   }
+
+  // Báo giá + đơn hàng: khi giai đoạn cọc = "Đủ" → "Đã nhận" (thu đủ)
+  const docsSync = await syncDepositToQuotationsAndOrders(leadId, {
+    deposit_amount: leadPatch.deposit_amount ?? null,
+    deposit_received: leadPatch.deposit_received ?? null,
+    deposit_label: leadPatch.deposit_label ?? null,
+    deposit_installments: leadPatch.deposit_installments || null,
+  });
 
   return {
     synced: true,
     deposit_amount: leadPatch.deposit_amount ?? null,
     deposit_received: leadPatch.deposit_received ?? null,
+    quotations: docsSync.quotations,
+    orders: docsSync.orders,
   };
 }
 
@@ -455,13 +647,13 @@ async function fetchAccountingDealDetail(leadId, clientCompanyId) {
       : Promise.resolve({ data: null }),
     supabase
       .from('quotations')
-      .select('id, code, status, total, deposit_amount, created_at, title')
+      .select('id, code, status, total, deposit_amount, deposit_received, created_at, title')
       .eq('lead_id', leadId)
       .order('created_at', { ascending: false })
       .limit(20),
     supabase
       .from('orders')
-      .select('id, code, status, total, deposit_amount, created_at, title')
+      .select('id, code, status, total, deposit_amount, deposit_received, created_at, title')
       .eq('lead_id', leadId)
       .order('created_at', { ascending: false })
       .limit(20),
@@ -523,6 +715,9 @@ module.exports = {
   listDealPayments,
   recomputeStageReceived,
   syncDepositFromPaymentStages,
+  syncDepositToQuotationsAndOrders,
+  syncDepositReceivedFlagToPaymentStages,
+  buildInstallmentsFromDepositStages,
   mirrorPaymentToInvoice,
   collectMergedDocuments,
   fetchAccountingDealDetail,

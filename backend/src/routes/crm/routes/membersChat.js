@@ -183,15 +183,16 @@ r.post('/leads/:id/assignments', async (req, res) => {
       : 'lead/deal';
     const leadSuffix = leadLabel ? ` (${leadLabel})` : '';
     const pushFn = req.app?.get?.('pushNotification');
-    const mod = String(data?.assignment_module || b.assignment_module || 'crm').toLowerCase();
+    const { normalizeAssignModule, navPathForAssignModule, isCustomAssignModule } = require('../../../helpers/assignmentModule');
+    const mod = normalizeAssignModule(data?.assignment_module || b.assignment_module || 'crm');
     const notifTitle = mod === 'production'
       ? '📋 Bạn vừa được giao nhiệm vụ SX'
       : mod === 'logistics'
         ? '📋 Bạn vừa được giao nhiệm vụ VC/LĐ'
-        : '📋 Bạn vừa được giao nhiệm vụ CRM';
-    const navPath = mod === 'production'
-      ? '/sx/assignments'
-      : (mod === 'logistics' ? '/vc/assignments' : '/crm/assignments');
+        : isCustomAssignModule(mod)
+          ? `📋 Bạn vừa được giao nhiệm vụ (${mod})`
+          : '📋 Bạn vừa được giao nhiệm vụ CRM';
+    const navPath = navPathForAssignModule(mod);
     for (const uid of assigneeIds) {
       if (String(uid) === String(req.user.userId)) continue;
       const message = `"${data.title}"${leadSuffix}${data.deadline ? ' — hạn ' + new Date(data.deadline).toLocaleString('vi-VN') : ''}`;

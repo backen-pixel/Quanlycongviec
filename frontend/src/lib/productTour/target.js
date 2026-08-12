@@ -92,7 +92,7 @@ function stackingBoost(el) {
   let boost = 0;
   if (style.position === 'fixed' || style.position === 'sticky') boost += 20000;
   // Modal / menu nổi thường nằm trong portal body
-  if (el.closest?.('[data-tour="new-lead-modal"], [data-tour="new-deal-modal"], [data-tour="event-create-modal"], [data-tour="crm-filter-panel"], [data-tour="crm-view-mode-menu"], [data-tour="crm-kanban-settings-menu"]')) {
+  if (el.closest?.('[data-tour="new-lead-modal"], [data-tour="new-deal-modal"], [data-tour="event-create-modal"], [data-tour="crm-filter-panel"], [data-tour="crm-view-mode-menu"], [data-tour="crm-kanban-settings-menu"], [data-tour="assign-filter-panel"], [data-tour="assign-create-modal"]')) {
     boost += 25000;
   }
   return boost;

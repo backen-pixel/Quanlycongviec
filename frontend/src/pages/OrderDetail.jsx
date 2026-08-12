@@ -118,20 +118,44 @@ export default function OrderDetail() {
       <div className="font-semibold text-rose-900 text-[11px] uppercase tracking-wide">Tiền cọc & khoản còn lại</div>
       {depositShow && (
         <div className="space-y-0.5">
-          <div className="flex justify-between gap-2">
-            <span className="text-rose-900">Tiền cọc (theo báo giá)</span>
-            <span className="font-bold text-rose-950 tabular-nums">
-              {depositShow.amount > 0 ? formatVND(depositShow.amount) : '—'}
-            </span>
-          </div>
-          <div className="flex justify-between gap-2 text-rose-800">
-            <span>Trạng thái nhận cọc</span>
-            <span className="font-medium">
-              {depositShow.received === true ? 'Đã nhận' : depositShow.received === false ? 'Chưa nhận' : '—'}
-            </span>
-          </div>
-          {depositShow.label && (
-            <p className="text-[11px] text-rose-800/90 whitespace-pre-wrap leading-snug border-t border-rose-100 pt-1 mt-1">{depositShow.label}</p>
+          {(depositShow.installments?.length > 1) ? (
+            <div className="space-y-1">
+              {depositShow.installments.map((inst, i) => (
+                <div key={i} className="flex justify-between gap-2">
+                  <span className="text-rose-900 truncate">
+                    {inst.label || `Cọc lần ${i + 1}`}
+                    {inst.received === true ? ' · Đã nhận' : inst.received === false ? ' · Chưa nhận' : ''}
+                  </span>
+                  <span className="font-bold text-rose-950 tabular-nums shrink-0">
+                    {inst.amount > 0 ? formatVND(inst.amount) : '—'}
+                  </span>
+                </div>
+              ))}
+              <div className="flex justify-between gap-2 border-t border-rose-100 pt-1 mt-1">
+                <span className="text-rose-900 font-semibold">Tổng cọc</span>
+                <span className="font-bold text-rose-950 tabular-nums">
+                  {depositShow.amount > 0 ? formatVND(depositShow.amount) : '—'}
+                </span>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="flex justify-between gap-2">
+                <span className="text-rose-900">Tiền cọc (theo báo giá)</span>
+                <span className="font-bold text-rose-950 tabular-nums">
+                  {depositShow.amount > 0 ? formatVND(depositShow.amount) : '—'}
+                </span>
+              </div>
+              <div className="flex justify-between gap-2 text-rose-800">
+                <span>Trạng thái nhận cọc</span>
+                <span className="font-medium">
+                  {depositShow.received === true ? 'Đã nhận' : depositShow.received === false ? 'Chưa nhận' : '—'}
+                </span>
+              </div>
+              {depositShow.label && (
+                <p className="text-[11px] text-rose-800/90 whitespace-pre-wrap leading-snug border-t border-rose-100 pt-1 mt-1">{depositShow.label}</p>
+              )}
+            </>
           )}
           {depositShow.fromNotesOnly && order.source_quotation?.code && (
             <p className="text-[10px] text-amber-800 bg-amber-50 border border-amber-100 rounded px-1.5 py-0.5">
@@ -304,7 +328,7 @@ export default function OrderDetail() {
                 <p className="text-gray-700 flex items-center gap-2"><Calendar className="h-4 w-4 text-gray-400 shrink-0" /> Ngày đơn: <span className="font-medium">{formatDate(order.order_date)}</span></p>
               )}
               {displayDoc.valid_until && (
-                <p className="text-gray-700 flex items-center gap-2"><Calendar className="h-4 w-4 text-amber-500 shrink-0" /> Hiệu lực đến: <span className="font-medium">{formatDate(displayDoc.valid_until)}</span></p>
+                <p className="text-gray-700 flex items-center gap-2"><Calendar className="h-4 w-4 text-amber-500 shrink-0" /> Ngày HĐ / hiệu lực: <span className="font-medium">{formatDate(displayDoc.valid_until)}</span></p>
               )}
               {displayDoc.payment_terms && (
                 <div>

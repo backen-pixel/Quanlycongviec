@@ -10,7 +10,7 @@ import {
   Pencil, GripVertical, Flag, MoreVertical, MessageSquare, Send, Paperclip,
   FileText as FileIcon, Download, Upload, Repeat2, CalendarClock, ChevronDown,
   ChevronUp, ClipboardList, ChevronRight, Lock, ArrowLeft, RefreshCw, Filter, RotateCcw,
-  Eye,
+  Eye, BookOpen,
 } from 'lucide-react';
 import ViewModeDropdownMenu from '../components/ViewModeDropdownMenu';
 import AnchoredDropdownMenu from '../components/AnchoredDropdownMenu';
@@ -158,6 +158,44 @@ const ASSIGN_ALT_VIEW_MODES = ASSIGN_VIEW_MODES.filter((v) => v.id !== 'kanban')
 
 function getAssignmentTheme(assignmentModule) {
   const mod = normalizeAssignmentPageModule(assignmentModule);
+  const isCustom = mod && !['crm', 'production', 'logistics'].includes(mod);
+  if (isCustom) {
+    return {
+      mod,
+      shortTitle: 'Giao việc',
+      viewTheme: 'teal',
+      activeText: 'text-teal-700',
+      headerGrad: 'from-teal-50/70 via-white to-cyan-50/50',
+      cta: 'bg-teal-600 hover:bg-teal-700 shadow-teal-500/20',
+      kpiBorder: 'border-teal-200/80 hover:border-teal-300/80',
+      kpiLabel: 'text-teal-700/80',
+      filterField: 'border-teal-200 focus:ring-teal-300/80 focus:border-teal-400',
+      filterLabel: 'text-teal-800/90',
+      filterActiveBtn: 'bg-teal-100 text-teal-700 border-teal-300',
+      filterDot: 'bg-teal-600',
+      filterTitle: 'text-teal-950',
+      filterIcon: 'text-teal-600',
+      filterClose: 'text-teal-500 hover:text-teal-800 hover:bg-teal-200/60',
+      filterReset: 'border-teal-300 text-teal-700 hover:bg-teal-100',
+      searchIdle: 'border-slate-200 bg-white hover:border-slate-300',
+      searchActive: 'border-teal-300 bg-teal-50/80',
+      searchFocus: 'border-teal-400 bg-white ring-1 ring-teal-200/60',
+      searchIcon: 'text-teal-600',
+      searchIconIdle: 'text-slate-400',
+      suggestShell: 'border-2 border-teal-200 shadow-xl shadow-teal-500/15 ring-1 ring-teal-100',
+      suggestHeader: 'bg-gradient-to-r from-teal-50 to-cyan-50/80 border-teal-100',
+      suggestHeaderText: 'text-teal-800',
+      suggestHeaderMuted: 'text-teal-600/90',
+      suggestCount: 'text-teal-700',
+      suggestHover: 'hover:bg-teal-50/80',
+      suggestMeta: 'text-teal-600',
+      suggestCodeBg: 'bg-slate-100 text-slate-500 group-hover/item:bg-teal-100 group-hover/item:text-teal-700',
+      suggestChevron: 'text-slate-300 group-hover/item:text-teal-400',
+      suggestEye: 'hover:bg-teal-100 hover:text-teal-700',
+      panelRing: 'ring-1 ring-slate-900/[0.04]',
+      kpiToggle: 'border-teal-100/70',
+    };
+  }
   if (mod === 'production') {
     return {
       mod,
@@ -271,7 +309,10 @@ function getAssignmentTheme(assignmentModule) {
 
 function SegmentedControl({ value, onChange, options, activeText = 'text-violet-700' }) {
   return (
-    <div className="inline-flex items-center gap-px p-0.5 rounded-md bg-slate-100 border border-slate-200/80 shrink-0">
+    <div
+      className="inline-flex items-center gap-px p-0.5 rounded-md bg-slate-100 border border-slate-200/80 shrink-0"
+      data-tour="assign-page-tabs"
+    >
       {options.map((opt) => {
         const active = value === opt.id;
         const Icon = opt.icon;
@@ -279,6 +320,7 @@ function SegmentedControl({ value, onChange, options, activeText = 'text-violet-
           <button
             key={opt.id}
             type="button"
+            data-tour={opt.dataTour || undefined}
             onClick={() => onChange(opt.id)}
             className={`h-8 px-2 rounded-md text-xs font-medium inline-flex items-center gap-1 whitespace-nowrap cursor-pointer transition-colors ${
               active
@@ -315,9 +357,10 @@ function ViewModeSwitcher({ view, onChange, theme, modes, primaryId, fallbackIco
   const AltIcon = activeAlt?.icon || FallbackIcon;
   const toolbarBtn = 'h-8 px-2 rounded-md text-xs font-medium inline-flex items-center gap-1 cursor-pointer transition-colors shrink-0';
   return (
-    <div className="inline-flex items-center gap-px p-0.5 rounded-md bg-slate-100 border border-slate-200/80">
+    <div className="inline-flex items-center gap-px p-0.5 rounded-md bg-slate-100 border border-slate-200/80" data-tour="assign-view-mode">
       <button
         type="button"
+        data-tour={primary.id === 'kanban' ? 'assign-view-kanban' : undefined}
         onClick={() => onChange(primary.id)}
         className={`${toolbarBtn} ${
           view === primary.id ? `bg-white ${theme.activeText} shadow-sm` : 'text-slate-600 hover:text-slate-900'
@@ -330,6 +373,7 @@ function ViewModeSwitcher({ view, onChange, theme, modes, primaryId, fallbackIco
         <button
           ref={triggerRef}
           type="button"
+          data-tour="crm-view-mode-more"
           onClick={() => setOpen((v) => !v)}
           className={`${toolbarBtn} ${
             view !== primary.id ? `bg-white ${theme.activeText} shadow-sm` : 'text-slate-600 hover:text-slate-900'
@@ -619,7 +663,7 @@ function PrivateDealInbox({ groups, loading, assignmentModule, search, onSearchC
   const stats = useMemo(() => computeTaskStats(flatTasks), [flatTasks]);
 
   return (
-    <div className="space-y-0 rounded-2xl border border-slate-200/90 bg-white shadow-sm overflow-hidden">
+    <div className="space-y-0 rounded-2xl border border-slate-200/90 bg-white shadow-sm overflow-hidden" data-tour="assign-private-board">
       <div className="flex flex-wrap items-center gap-1.5 px-2.5 py-1.5 sm:px-3 border-b border-slate-200/50">
         <div className={`group/search flex items-center shrink-0 flex-1 min-w-0 max-w-none sm:max-w-[22rem] lg:max-w-[28rem] rounded-md border transition-colors ${searchBoxCls}`}>
           <div className="relative flex-1 min-w-0 flex items-center pl-7 pr-1">
@@ -1086,6 +1130,8 @@ export default function CRMAssignmentsPage({
 
   const [editingItem, setEditingItem] = useState(null);
   const [showItemModal, setShowItemModal] = useState(false);
+  /** true = tạo từ tab Không gian chung — bắt buộc gắn deal */
+  const [createForSharedWorkspace, setCreateForSharedWorkspace] = useState(false);
   const [viewingItem, setViewingItem] = useState(null);
   const [showColumnModal, setShowColumnModal] = useState(null); // null | { id?, name, color, is_done_column }
   const [showPersonalColumnModal, setShowPersonalColumnModal] = useState(null); // null | { view, column? }
@@ -1342,6 +1388,23 @@ export default function CRMAssignmentsPage({
   }, [setSearchParams]);
 
   useEffect(() => {
+    const onSetTab = (e) => {
+      const tab = e?.detail?.tab === 'private' ? 'private' : 'assignments';
+      setPageTabAndUrl(tab);
+    };
+    const onSetView = (e) => {
+      const v = String(e?.detail?.view || '');
+      if (v) setView(v);
+    };
+    window.addEventListener('product-tour:set-assign-tab', onSetTab);
+    window.addEventListener('product-tour:set-assign-view', onSetView);
+    return () => {
+      window.removeEventListener('product-tour:set-assign-tab', onSetTab);
+      window.removeEventListener('product-tour:set-assign-view', onSetView);
+    };
+  }, [setPageTabAndUrl]);
+
+  useEffect(() => {
     const raw = String(searchParams.get('pageTab') || '').toLowerCase();
     // pageTab=shared cũ → về Giao việc
     const t = raw === 'private' ? 'private' : 'assignments';
@@ -1538,8 +1601,11 @@ export default function CRMAssignmentsPage({
         });
         setViewingItem((prev) => (prev && String(prev.id) === String(saved.id) ? { ...prev, ...saved } : prev));
       }
-      setShowItemModal(false); setEditingItem(null);
+      setShowItemModal(false); setEditingItem(null); setCreateForSharedWorkspace(false);
       void load({ soft: true });
+      if (payload.lead_id || createForSharedWorkspace) {
+        void loadPrivateTasks();
+      }
     } catch (e) { alert(e.response?.data?.error || 'Lỗi lưu nhiệm vụ'); }
   };
 
@@ -1746,7 +1812,7 @@ export default function CRMAssignmentsPage({
     <div className="space-y-3">
       {/* Panel điều khiển — đồng bộ dashboard CRM / SX / VC */}
       <div className={`ui-solid-white rounded-2xl border border-slate-200/90 bg-white shadow-md overflow-hidden ${theme.panelRing}`}>
-        <div className={`border-b border-slate-200/80 bg-gradient-to-r ${theme.headerGrad}`}>
+        <div className={`border-b border-slate-200/80 bg-gradient-to-r ${theme.headerGrad}`} data-tour="assign-page-header">
           <div className="flex flex-col gap-2 px-3 py-2.5 sm:px-4 lg:flex-row lg:items-center lg:justify-between lg:gap-3">
             <div className="flex flex-wrap items-center gap-2 min-w-0">
               {dashboardLink ? (
@@ -1771,21 +1837,53 @@ export default function CRMAssignmentsPage({
                 onChange={setPageTabAndUrl}
                 activeText={theme.activeText}
                 options={[
-                  { id: 'assignments', label: 'Giao việc' },
-                  { id: 'private', label: 'Không gian chung', badge: privateTaskCount },
+                  { id: 'assignments', label: 'Giao việc', dataTour: 'assign-tab-assignments' },
+                  { id: 'private', label: 'Không gian chung', badge: privateTaskCount, dataTour: 'assign-tab-private' },
                 ]}
               />
             </div>
 
             <div className="flex flex-wrap items-center gap-2 justify-end">
+              <button
+                type="button"
+                data-tour="assign-tour-btn"
+                onClick={() => {
+                  window.dispatchEvent(new CustomEvent('product-tour:start', {
+                    detail: { id: 'crm-assignments-page', preferCurrentPath: true },
+                  }));
+                }}
+                className="h-8 w-8 shrink-0 border border-sky-200 text-sky-600 hover:bg-sky-50 hover:border-sky-300 rounded-md flex items-center justify-center cursor-pointer transition-colors"
+                title="Hướng dẫn Giao việc"
+                aria-label="Hướng dẫn Giao việc"
+              >
+                <BookOpen className="h-3.5 w-3.5" />
+              </button>
               {pageTab === 'assignments' && (
                 <>
                   <button
                     type="button"
-                    onClick={() => { setEditingItem(null); setShowItemModal(true); }}
+                    data-tour="assign-create-btn"
+                    onClick={() => {
+                      setEditingItem(null);
+                      setCreateForSharedWorkspace(false);
+                      setShowItemModal(true);
+                    }}
                     className={`h-8 px-3 rounded-md text-white text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer shadow-sm ${theme.cta}`}
                   >
                     <Plus className="h-3.5 w-3.5" strokeWidth={2.5} />Giao việc
+                  </button>
+                  <button
+                    type="button"
+                    data-tour="assign-create-shared-btn"
+                    onClick={() => {
+                      setEditingItem(null);
+                      setCreateForSharedWorkspace(true);
+                      setShowItemModal(true);
+                    }}
+                    className="h-8 px-3 rounded-md bg-white border border-teal-200 text-teal-800 text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer hover:bg-teal-50 shadow-sm"
+                    title="Tạo giao việc gắn deal — hiện ở Không gian chung"
+                  >
+                    <Plus className="h-3.5 w-3.5" strokeWidth={2.5} />KG chung
                   </button>
                   {schedules.length > 0 && (
                     <button
@@ -1801,13 +1899,28 @@ export default function CRMAssignmentsPage({
                 </>
               )}
               {pageTab === 'private' && (
-                <button
-                  type="button"
-                  onClick={() => void loadPrivateTasks()}
-                  className="h-8 px-3 rounded-md bg-white border border-slate-200 text-slate-700 text-xs font-medium inline-flex items-center gap-1.5 cursor-pointer hover:bg-slate-50 shadow-sm"
-                >
-                  <RefreshCw className="h-3.5 w-3.5" />Làm mới
-                </button>
+                <>
+                  <button
+                    type="button"
+                    data-tour="assign-create-shared-btn"
+                    onClick={() => {
+                      setEditingItem(null);
+                      setCreateForSharedWorkspace(true);
+                      setShowItemModal(true);
+                    }}
+                    className={`h-8 px-3 rounded-md text-white text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer shadow-sm ${theme.cta}`}
+                    title="Tạo giao việc gắn deal — hiện ở Không gian chung"
+                  >
+                    <Plus className="h-3.5 w-3.5" strokeWidth={2.5} />Giao việc KG chung
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void loadPrivateTasks()}
+                    className="h-8 px-3 rounded-md bg-white border border-slate-200 text-slate-700 text-xs font-medium inline-flex items-center gap-1.5 cursor-pointer hover:bg-slate-50 shadow-sm"
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" />Làm mới
+                  </button>
+                </>
               )}
             </div>
           </div>
@@ -1816,9 +1929,10 @@ export default function CRMAssignmentsPage({
         {pageTab === 'assignments' && (
           <>
             {/* Hàng tìm kiếm + chế độ xem — giống dashboard CRM */}
-            <div className="flex flex-wrap items-center gap-1.5 px-2.5 py-1.5 sm:px-3 border-b border-slate-200/50">
+            <div className="flex flex-wrap items-center gap-1.5 px-2.5 py-1.5 sm:px-3 border-b border-slate-200/50" data-tour="assign-toolbar">
               <div
                 ref={searchBoxRef}
+                data-tour="assign-search"
                 className={`group/search flex items-center shrink-0 flex-1 min-w-0 max-w-none sm:max-w-[22rem] lg:max-w-[28rem] rounded-md border transition-colors ${searchBoxCls}`}
               >
                 <div className="relative flex-1 min-w-0 flex items-center pl-7 pr-1">
@@ -1948,6 +2062,7 @@ export default function CRMAssignmentsPage({
                 <div className="shrink-0 pr-1">
                   <button
                     type="button"
+                    data-tour="assign-filter"
                     onClick={() => setShowAdvFilter((v) => !v)}
                     aria-expanded={showAdvFilter}
                     className={`relative h-6 w-6 flex items-center justify-center rounded border transition-colors cursor-pointer ${
@@ -1974,6 +2089,7 @@ export default function CRMAssignmentsPage({
             {/* KPI thu gọn / mở rộng — giống dashboard */}
             <button
               type="button"
+              data-tour="assign-kpis"
               onClick={() => setKpiPanelOpen((v) => !v)}
               className={`w-full flex items-center gap-2 px-3 py-1.5 sm:px-4 text-left border-b ${theme.kpiToggle} bg-white/40 hover:bg-slate-50/80 cursor-pointer transition-colors`}
             >
@@ -2026,6 +2142,7 @@ export default function CRMAssignmentsPage({
       {showAdvFilter && pageTab === 'assignments' && portalAssignmentsModal(
         <div
           ref={filterPanelRef}
+          data-tour="assign-filter-panel"
           className="ui-solid-white fixed z-[75] max-sm:left-4 max-sm:right-4 max-sm:bottom-4 max-sm:top-auto w-[min(100vw-2rem,400px)] max-h-[min(calc(100vh-5rem),620px)] flex flex-col rounded-xl border border-gray-200 bg-white shadow-2xl overflow-hidden animate-fade-in"
           style={{ top: '4.5rem', right: '1rem' }}
           role="region"
@@ -2044,6 +2161,7 @@ export default function CRMAssignmentsPage({
               </p>
               <button
                 type="button"
+                data-tour="assign-filter-close"
                 onClick={() => setShowAdvFilter(false)}
                 className={`h-7 w-7 rounded-md cursor-pointer flex items-center justify-center shrink-0 transition-colors ${theme.filterClose}`}
                 aria-label="Thu gọn bộ lọc"
@@ -2197,9 +2315,18 @@ export default function CRMAssignmentsPage({
           onAddColumn={() => setShowColumnModal({ name: '', color: COLUMN_COLORS[0], is_done_column: false, is_in_progress_column: false })}
           onEditColumn={(col) => setShowColumnModal(col)}
           onDeleteColumn={removeColumn}
-          onAddCard={(colId) => { setEditingItem({ column_id: colId }); setShowItemModal(true); }}
+          onAddCard={(colId) => {
+            setEditingItem({ column_id: colId });
+            setCreateForSharedWorkspace(false);
+            setShowItemModal(true);
+          }}
           onOpenCard={(t) => setViewingItem(t)}
-          onEditCard={(t) => { if (!canManageTask(t)) return; setEditingItem(t); setShowItemModal(true); }}
+          onEditCard={(t) => {
+            if (!canManageTask(t)) return;
+            setEditingItem(t);
+            setCreateForSharedWorkspace(false);
+            setShowItemModal(true);
+          }}
           onDeleteCard={removeItem}
           onUpdateCard={updateItem}
           canManageTask={canManageTask}
@@ -2291,7 +2418,13 @@ export default function CRMAssignmentsPage({
           companies={companies}
           isAdmin={isAdmin}
           defaultCompanyId={isAdmin ? filterCompanyId : (user?.company_id || '')}
-          onClose={() => { setShowItemModal(false); setEditingItem(null); }}
+          requireLead={createForSharedWorkspace && !editingItem?.id}
+          sharedWorkspaceMode={createForSharedWorkspace}
+          onClose={() => {
+            setShowItemModal(false);
+            setEditingItem(null);
+            setCreateForSharedWorkspace(false);
+          }}
           onSave={upsertItem}
         />
       )}
@@ -2333,7 +2466,7 @@ function KanbanView({
 }) {
   const noneList = itemsByColumn.get('__none__') || [];
   return (
-    <div className="flex gap-3 overflow-x-auto pb-3" style={{ minHeight: 400 }}>
+    <div className="flex gap-3 overflow-x-auto pb-3" style={{ minHeight: 400 }} data-tour="assign-kanban">
       {columns.map((col) => {
         const list = itemsByColumn.get(col.id) || [];
         return (
@@ -2401,6 +2534,7 @@ function Card({ task, canManage, canMove, onDragStart, onOpen, onEdit, onDelete,
   return (
     <div
       draggable={!!canMove}
+      data-tour="assign-card"
       onDragStart={canMove ? onDragStart(task.id) : undefined}
       onClick={() => onOpen?.(task)}
       className="bg-white rounded-lg border border-slate-200/90 p-2.5 shadow-sm hover:shadow-md hover:border-violet-200 cursor-pointer group"
@@ -2949,7 +3083,18 @@ function PersonalColumnModal({ column, viewLabel, onClose, onSave }) {
 }
 
 // ─── MODALS ───────────────────────────────────────────────────────────────────
-function ItemModal({ item, users: _initialUsers, columns, companies, isAdmin, defaultCompanyId, onClose, onSave }) {
+function ItemModal({
+  item,
+  users: _initialUsers,
+  columns,
+  companies,
+  isAdmin,
+  defaultCompanyId,
+  requireLead = false,
+  sharedWorkspaceMode = false,
+  onClose,
+  onSave,
+}) {
   const { apiBase, assignmentModule, theme } = useAssignmentsPageContext();
   const initialAssigneeIds = item?.assignees?.length
     ? item.assignees.map((a) => String(a.id))
@@ -2997,6 +3142,9 @@ function ItemModal({ item, users: _initialUsers, columns, companies, isAdmin, de
   const [filterLeadMembers, setFilterLeadMembers] = useState(() => !!(item?.lead?.id || item?.lead_id));
   const [leadMemberIds, setLeadMemberIds] = useState(null);
   const [loadingLeadMembers, setLoadingLeadMembers] = useState(false);
+  /** Lọc danh sách deal theo NV phụ trách (assigned_to) */
+  const [dealAssigneeFilter, setDealAssigneeFilter] = useState('');
+  const [dealAssigneeSearch, setDealAssigneeSearch] = useState('');
 
   const linkFieldLabel = assignmentSourceFieldLabel(assignmentModule);
   const isSxLink = isProductionAssignmentsPage(assignmentModule);
@@ -3122,6 +3270,10 @@ function ItemModal({ item, users: _initialUsers, columns, companies, isAdmin, de
       alert('Chọn thời gian bắt đầu lịch giao việc');
       return;
     }
+    if (requireLead && !linkedLead?.id) {
+      alert('Không gian chung bắt buộc gắn deal / dự án trước khi giao việc');
+      return;
+    }
     if (!selUsers.size) {
       alert('Chọn ít nhất một nhân viên');
       return;
@@ -3154,6 +3306,30 @@ function ItemModal({ item, users: _initialUsers, columns, companies, isAdmin, de
     return [...selUsers].map((id) => byId.get(id)).filter(Boolean);
   }, [selUsers, lookups.users]);
 
+  const dealAssigneeOptions = useMemo(() => {
+    const all = lookups.users || [];
+    const q = dealAssigneeSearch.trim().toLowerCase();
+    const sorted = [...all].sort((a, b) => String(a.full_name || '').localeCompare(String(b.full_name || ''), 'vi'));
+    if (!q) return sorted;
+    const matched = sorted.filter((u) => {
+      const name = String(u.full_name || '').toLowerCase();
+      const email = String(u.email || '').toLowerCase();
+      return name.includes(q) || email.includes(q);
+    });
+    // Giữ option đang chọn dù không khớp ô tìm — tránh select trống
+    if (dealAssigneeFilter && !matched.some((u) => String(u.id) === String(dealAssigneeFilter))) {
+      const selected = sorted.find((u) => String(u.id) === String(dealAssigneeFilter));
+      if (selected) return [selected, ...matched];
+    }
+    return matched;
+  }, [lookups.users, dealAssigneeSearch, dealAssigneeFilter]);
+
+  const dealAssigneeLabel = useMemo(() => {
+    if (!dealAssigneeFilter) return '';
+    const u = (lookups.users || []).find((x) => String(x.id) === String(dealAssigneeFilter));
+    return u?.full_name || '';
+  }, [dealAssigneeFilter, lookups.users]);
+
   const t = theme || getAssignmentTheme(assignmentModule);
   const isLd = t.mod === 'logistics';
   const isSx = t.mod === 'production';
@@ -3173,7 +3349,10 @@ function ItemModal({ item, users: _initialUsers, columns, companies, isAdmin, de
   const headerGrad = t.headerGrad || 'from-slate-50 via-white to-white';
 
   const assigneePanel = (
-    <div className={`rounded-2xl border p-3 flex flex-col min-h-0 ${isLd ? 'border-orange-200 bg-orange-50/40' : isSx ? 'border-indigo-200 bg-indigo-50/40' : 'border-blue-200 bg-blue-50/40'}`}>
+    <div
+      data-tour="assign-create-assignees"
+      className={`rounded-2xl border p-3 flex flex-col min-h-0 ${isLd ? 'border-orange-200 bg-orange-50/40' : isSx ? 'border-indigo-200 bg-indigo-50/40' : 'border-blue-200 bg-blue-50/40'}`}
+    >
       <div className="flex items-center justify-between gap-2 mb-2">
         <div>
           <p className="text-sm font-bold text-gray-900">Giao cho</p>
@@ -3340,7 +3519,7 @@ function ItemModal({ item, users: _initialUsers, columns, companies, isAdmin, de
   );
 
   return portalAssignmentsModal(
-    <div className={`fixed inset-0 bg-black/40 ${ASSIGNMENTS_MODAL_Z} flex items-center justify-center p-3 sm:p-4`} onClick={onClose}>
+    <div className={`fixed inset-0 bg-black/40 ${ASSIGNMENTS_MODAL_Z} flex items-center justify-center p-3 sm:p-4`} onClick={onClose} data-tour="assign-create-modal">
       <form
         onClick={(e) => e.stopPropagation()}
         onSubmit={submit}
@@ -3349,13 +3528,26 @@ function ItemModal({ item, users: _initialUsers, columns, companies, isAdmin, de
         <div className={`flex items-start justify-between gap-3 px-5 py-3.5 border-b bg-gradient-to-r ${headerGrad}`}>
           <div className="min-w-0">
             <p className={`text-[11px] font-semibold uppercase tracking-wide mb-0.5 ${t.activeText || 'text-gray-500'}`}>
-              {t.shortTitle || 'Giao việc'}
+              {sharedWorkspaceMode ? 'Không gian chung' : (t.shortTitle || 'Giao việc')}
             </p>
             <h3 className="text-lg font-bold text-gray-900 leading-tight">
-              {form.id ? 'Sửa nhiệm vụ' : 'Giao việc mới'}
+              {form.id
+                ? 'Sửa nhiệm vụ'
+                : sharedWorkspaceMode
+                  ? 'Giao việc Không gian chung'
+                  : 'Giao việc mới'}
             </h3>
-          </div>
-          <button type="button" onClick={onClose} className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-white/80 cursor-pointer shrink-0">
+            {sharedWorkspaceMode && !form.id ? (
+              <p className="text-[11px] text-teal-700 mt-1">
+                Bắt buộc gắn deal — người nhận sẽ thấy việc ở tab Không gian chung.
+              </p>
+            ) : null}          </div>
+          <button
+            type="button"
+            data-tour="assign-create-modal-close"
+            onClick={onClose}
+            className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-white/80 cursor-pointer shrink-0"
+          >
             <X className="h-5 w-5" />
           </button>
         </div>
@@ -3363,14 +3555,32 @@ function ItemModal({ item, users: _initialUsers, columns, companies, isAdmin, de
         <div className="px-5 py-4 overflow-y-auto flex-1 min-h-0">
           <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_20rem] gap-4">
             <div className="space-y-3 min-w-0">
-              <section className="rounded-2xl border border-gray-200 bg-gray-50/60 p-3.5 space-y-3">
-                <p className={sectionTitleCls}>1. Gắn dự án / deal</p>
-                {isAdmin && (
+              <section className={`rounded-2xl border p-3.5 space-y-3 ${
+                requireLead
+                  ? 'border-teal-300 bg-teal-50/50 ring-1 ring-teal-200/60'
+                  : 'border-gray-200 bg-gray-50/60'
+              }`}>
+                <p className={sectionTitleCls}>
+                  1. Gắn dự án / deal
+                  {requireLead ? <span className="text-red-500 normal-case tracking-normal"> *</span> : null}
+                </p>
+                {requireLead ? (
+                  <p className="text-[11px] text-teal-800 -mt-1">
+                    Chọn deal để việc xuất hiện ở Không gian chung của người được giao.
+                  </p>
+                ) : null}                {isAdmin && (
                   <div>
                     <label className="text-xs font-medium text-gray-600 block mb-1">Công ty</label>
                     <select
                       value={form.company_id}
-                      onChange={(e) => { set('company_id', e.target.value); setSelRegions(new Set()); setSelDepts(new Set()); setSelUsers(new Set()); }}
+                      onChange={(e) => {
+                        set('company_id', e.target.value);
+                        setSelRegions(new Set());
+                        setSelDepts(new Set());
+                        setSelUsers(new Set());
+                        setDealAssigneeFilter('');
+                        setDealAssigneeSearch('');
+                      }}
                       className={selectCls}
                     >
                       <option value="">Tất cả công ty module này</option>
@@ -3380,16 +3590,61 @@ function ItemModal({ item, users: _initialUsers, columns, companies, isAdmin, de
                   </div>
                 )}
                 <div>
+                  <label className="text-xs font-medium text-gray-600 block mb-1">Nhân viên phụ trách deal</label>
+                  <div className="flex gap-2">
+                    <div className="relative flex-1 min-w-0">
+                      <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400 pointer-events-none" />
+                      <input
+                        value={dealAssigneeSearch}
+                        onChange={(e) => setDealAssigneeSearch(e.target.value)}
+                        placeholder="Tìm tên NV để lọc deal…"
+                        className={`w-full h-10 pl-8 pr-2 border border-gray-200 rounded-xl text-sm outline-none bg-white ${focusCls}`}
+                      />
+                    </div>
+                    <select
+                      value={dealAssigneeFilter}
+                      onChange={(e) => setDealAssigneeFilter(e.target.value)}
+                      className={`${selectCls} flex-[1.2] min-w-0`}
+                      title="Chỉ hiện deal của nhân viên này"
+                    >
+                      <option value="">Tất cả nhân viên</option>
+                      {dealAssigneeOptions.map((u) => (
+                        <option key={u.id} value={u.id}>{u.full_name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  {dealAssigneeFilter ? (
+                    <p className="text-[11px] text-purple-700 mt-1">
+                      Đang lọc deal của <span className="font-semibold">{dealAssigneeLabel || 'NV đã chọn'}</span>
+                      {' · '}
+                      <button
+                        type="button"
+                        onClick={() => { setDealAssigneeFilter(''); setDealAssigneeSearch(''); }}
+                        className="underline hover:text-purple-900 cursor-pointer"
+                      >
+                        Bỏ lọc
+                      </button>
+                    </p>
+                  ) : (
+                    <p className="text-[11px] text-gray-500 mt-1">Chọn NV để chỉ hiện deal đang phụ trách.</p>
+                  )}
+                </div>
+                <div>
                   <label className="text-xs font-medium text-gray-600 block mb-1">{linkFieldLabel}</label>
                   <LeadDealPicker
                     value={linkedLead}
                     onChange={onPickLinkedLead}
                     type="deal"
                     companyId={form.company_id || null}
+                    assigneeId={dealAssigneeFilter || null}
                     forModule={assignmentModule || null}
                     placeholder={linkPlaceholder}
-                    emptyLabel={linkEmptyLabel}
-                    warnOrphan={false}
+                    emptyLabel={requireLead
+                      ? (isSxLink || isVcLink
+                        ? 'Chọn dự án / deal (bắt buộc)'
+                        : 'Chọn deal CRM (bắt buộc)')
+                      : linkEmptyLabel}
+                    warnOrphan={requireLead}
                   />
                   {linkedLead?.project_code ? (
                     <p className="text-[11px] text-teal-700 mt-1.5 font-mono">Dự án: {linkedLead.project_code}{linkedLead.project_name ? ` — ${linkedLead.project_name}` : ''}</p>
@@ -3402,6 +3657,7 @@ function ItemModal({ item, users: _initialUsers, columns, companies, isAdmin, de
                 <div>
                   <label className="text-xs font-medium text-gray-600 block mb-1">Tiêu đề <span className="text-red-500">*</span></label>
                   <input
+                    data-tour="assign-create-title"
                     value={form.title}
                     onChange={(e) => set('title', e.target.value)}
                     className={fieldCls}
@@ -3559,7 +3815,11 @@ function ItemModal({ item, users: _initialUsers, columns, companies, isAdmin, de
           </p>
           <div className="flex justify-end gap-2 ml-auto">
             <button type="button" onClick={onClose} className="h-10 px-4 rounded-xl border border-gray-200 bg-white text-sm cursor-pointer hover:bg-gray-50">Huỷ</button>
-            <button type="submit" className={`h-10 px-5 rounded-xl text-white text-sm font-semibold cursor-pointer shadow-sm ${ctaCls}`}>
+            <button
+              type="submit"
+              data-tour="assign-create-save"
+              className={`h-10 px-5 rounded-xl text-white text-sm font-semibold cursor-pointer shadow-sm ${ctaCls}`}
+            >
               {form.id ? 'Lưu thay đổi' : form.schedule_enabled ? `Lên lịch (${selUsers.size} NV)` : `Giao cho ${selUsers.size} NV`}
             </button>
           </div>

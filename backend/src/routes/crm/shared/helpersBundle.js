@@ -6287,7 +6287,7 @@ function generateDocPdf(res, doc, items, docType) {
 
   if (doc.valid_until) {
     pdf.font('VN-Bold').fontSize(9).fillColor('#1a1a1a');
-    pdf.text(`Hiệu lực báo giá: đến ngày ${new Date(doc.valid_until).toLocaleDateString('vi-VN')}`, margin, tableY, { width: pageW });
+    pdf.text(`Ngày HĐ / hiệu lực: ${new Date(doc.valid_until).toLocaleDateString('vi-VN')}`, margin, tableY, { width: pageW });
     tableY = pdf.y + 4;
   }
 

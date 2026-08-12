@@ -233,6 +233,14 @@ r.post('/quotations', async (req, res) => {
     }
     if (quoteData.deposit_label === '') quoteData.deposit_label = null;
     if (quoteData.remaining_note === '') quoteData.remaining_note = null;
+    if ('deposit_installments' in quoteData) {
+      const { aggregateDepositFromInstallments } = require('../../../helpers/depositInstallments');
+      const agg = aggregateDepositFromInstallments(quoteData.deposit_installments);
+      quoteData.deposit_installments = agg.deposit_installments;
+      quoteData.deposit_amount = agg.deposit_amount;
+      quoteData.deposit_received = agg.deposit_received;
+      quoteData.deposit_label = agg.deposit_label;
+    }
     if (quoteData.source_excel_file_url === '') quoteData.source_excel_file_url = null;
     if (quoteData.source_excel_file_name === '') quoteData.source_excel_file_name = null;
     if (quoteData.sale_discount_type === '') quoteData.sale_discount_type = 'amount';
@@ -594,6 +602,14 @@ r.put('/quotations/:id', async (req, res) => {
     }
     if (quoteData.deposit_label === '') quoteData.deposit_label = null;
     if (quoteData.remaining_note === '') quoteData.remaining_note = null;
+    if ('deposit_installments' in quoteData) {
+      const { aggregateDepositFromInstallments } = require('../../../helpers/depositInstallments');
+      const agg = aggregateDepositFromInstallments(quoteData.deposit_installments);
+      quoteData.deposit_installments = agg.deposit_installments;
+      quoteData.deposit_amount = agg.deposit_amount;
+      quoteData.deposit_received = agg.deposit_received;
+      quoteData.deposit_label = agg.deposit_label;
+    }
     if (quoteData.source_excel_file_url === '') quoteData.source_excel_file_url = null;
     if (quoteData.source_excel_file_name === '') quoteData.source_excel_file_name = null;
 
@@ -818,7 +834,7 @@ r.get('/orders/:id', async (req, res) => {
     let source_quotation = null;
     if (order?.quotation_id) {
       const { data: q } = await supabase.from('quotations')
-        .select('id, code, notes, valid_until, delivery_terms, payment_terms, deposit_amount, deposit_received, deposit_label, remaining_amount, remaining_note, description')
+        .select('id, code, notes, valid_until, delivery_terms, payment_terms, deposit_amount, deposit_received, deposit_label, deposit_installments, remaining_amount, remaining_note, description')
         .eq('id', order.quotation_id).maybeSingle();
       source_quotation = q || null;
       // Đơn hàng không có dòng (lỗi copy trước đây / DB trống) — hiển thị dòng từ báo giá gốc

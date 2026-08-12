@@ -10,23 +10,31 @@ function assignmentIdStr(assignmentId) {
   return String(assignmentId);
 }
 
-/** Metadata module CRM / SX / VC — dùng chung assign / overdue / due-soon. */
+const {
+  normalizeAssignModule,
+  navPathForAssignModule,
+  isCustomAssignModule,
+} = require('./assignmentModule');
+
+/** Metadata module CRM / SX / VC / custom — dùng chung assign / overdue / due-soon. */
 function assignmentModuleMeta(assignmentModule, extra = {}) {
-  const raw = String(assignmentModule || '').toLowerCase();
   const stage = String(extra.stageSlug || '');
-  const isProduction = raw === 'production' || stage.startsWith('sx_');
-  const isLogistics = raw === 'logistics' || stage.startsWith('vc_');
-  const moduleKey = isProduction ? 'production' : (isLogistics ? 'logistics' : 'crm');
-  const nav_path = isProduction
-    ? '/sx/assignments'
-    : (isLogistics ? '/vc/assignments' : '/crm/assignments');
+  let raw = String(assignmentModule || '').toLowerCase();
+  if (stage.startsWith('sx_')) raw = 'production';
+  else if (stage.startsWith('vc_')) raw = 'logistics';
+  const moduleKey = normalizeAssignModule(raw);
+  const isProduction = moduleKey === 'production';
+  const isLogistics = moduleKey === 'logistics';
+  const isCustom = isCustomAssignModule(moduleKey);
+  const nav_path = navPathForAssignModule(moduleKey);
   return {
     isProduction,
     isLogistics,
+    isCustom,
     moduleKey,
     metadata: {
       module_key: moduleKey,
-      ecosystem_module_key: moduleKey,
+      ecosystem_module_key: isCustom ? moduleKey : moduleKey,
       assignment_module: moduleKey,
       nav_path,
       ...extra.metadata,

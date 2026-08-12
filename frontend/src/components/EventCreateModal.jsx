@@ -481,6 +481,8 @@ function EventDateTime24hPickers({ label, required, value, onChange, hint }) {
 export default function EventCreateModal({
   event, presetDay, eventTypes = [], users = [], onClose, onSaved,
   defaultModule = 'crm', allowedModules = null, allowGeneralModule = false,
+  /** Nhãn hiển thị khi defaultModule là module tùy chỉnh */
+  defaultModuleLabel = '',
   /** Công ty gắn sự kiện — bắt buộc khi không có lead (để lịch lọc theo công ty vẫn thấy). */
   defaultCompanyId = '',
   defaultLeadId = '',
@@ -796,12 +798,29 @@ export default function EventCreateModal({
           ) : null}
           {/* Khối / Module — chỉ hiện chọn nếu user thuộc nhiều khối, hoặc là admin */}
           {(() => {
-            const visibleModules = EVENT_MODULE_OPTIONS.filter((m) => {
+            const builtinVisible = EVENT_MODULE_OPTIONS.filter((m) => {
               if (!m.value) return false;
               if (m.value === 'general' && !allowGeneralModule) return false;
               if (!allowedModules) return true;
               return allowedModules.includes(m.value);
             });
+            const defMod = String(defaultModule || '').trim().toLowerCase();
+            const isCustomDef = defMod
+              && !EVENT_MODULE_OPTIONS.some((o) => o.value === defMod)
+              && /^[a-z][a-z0-9_-]{0,63}$/.test(defMod);
+            const visibleModules = [...builtinVisible];
+            if (isCustomDef && !visibleModules.some((m) => m.value === defMod)) {
+              visibleModules.push({
+                value: defMod,
+                label: defaultModuleLabel || defMod,
+                emoji: '📦',
+                color: 'bg-teal-100 text-teal-700 border-teal-200',
+              });
+            }
+            // Khóa 1 khối (SX/VC/custom): không hiện picker
+            if (allowedModules && allowedModules.length === 1 && !allowedModules.includes('general')) {
+              return null;
+            }
             if (visibleModules.length <= 1) return null;
             return (
               <div data-tour="event-create-module">
