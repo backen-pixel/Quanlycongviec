@@ -33,6 +33,11 @@ import Avatar from '../Avatar';
 import CommentAttachmentsBlock from './CommentAttachmentsBlock';
 import CrmCommentBody from './CrmCommentBody';
 import VcHandoverCommentCard from './VcHandoverCommentCard';
+import {
+  extractAllSystemFileLinks,
+  isSystemCommentBody,
+} from '../../lib/crmSystemCommentFiles';
+import type { CommentAttachment } from './CommentAttachmentsBlock';
 
 export const CRM_COMMENT_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'] as const;
 
@@ -336,13 +341,31 @@ export default function LeadCommentsTab({
     const name = c.user?.full_name || 'Người dùng';
     const isMine = String(c.user_id || c.user?.id || '') === String(myId);
     const reactions = c.reactions?.summary || [];
+    const bodyFileLinks = extractAllSystemFileLinks(c.body);
+    const bodyAsAttachments: CommentAttachment[] = bodyFileLinks.map((f) => ({
+      url: f.url,
+      name: f.label,
+      file_name: f.label,
+      mime_type: undefined,
+    }));
+    const attachments = [
+      ...(Array.isArray(c.attachments) ? c.attachments : []),
+      ...bodyAsAttachments,
+    ];
+    const isSys = isSystemCommentBody(c.body);
 
     return (
       <View style={[styles.commentWrap, row.depth > 0 && styles.commentReply]}>
         <View style={styles.commentRow}>
-          <Avatar name={name} initials={initialsFromName(name)} size={34} color={colorFromName(name)} />
+          {isSys ? (
+            <View style={styles.sysIcon}>
+              <Ionicons name="attach-outline" size={18} color={Colors.textMuted} />
+            </View>
+          ) : (
+            <Avatar name={name} initials={initialsFromName(name)} size={34} color={colorFromName(name)} />
+          )}
           <View style={styles.commentBody}>
-            <View style={styles.commentBubble}>
+            <View style={[styles.commentBubble, isSys && styles.sysBubble]}>
               <View style={styles.commentMeta}>
                 <Text style={styles.commentAuthor}>{name}</Text>
                 <Text style={styles.metaFaint}>
@@ -351,7 +374,7 @@ export default function LeadCommentsTab({
                 </Text>
               </View>
               <CrmCommentBody content={c.body} members={members} />
-              <CommentAttachmentsBlock attachments={c.attachments} />
+              <CommentAttachmentsBlock attachments={attachments} />
               {reactions.length > 0 ? (
                 <View style={styles.rxRow}>
                   {reactions.map((r) => (
@@ -366,19 +389,21 @@ export default function LeadCommentsTab({
                 </View>
               ) : null}
             </View>
-            <View style={styles.commentActions}>
-              <Pressable hitSlop={6} onPress={() => setReplyTo({ id: c.id, name })}>
-                <Text style={styles.actionTxt}>Trả lời</Text>
-              </Pressable>
-              <Pressable hitSlop={6} onPress={() => setReactionPickerFor(c.id)}>
-                <Text style={styles.actionTxt}>Cảm xúc</Text>
-              </Pressable>
-              {isMine ? (
-                <Pressable hitSlop={6} onPress={() => removeComment(c)}>
-                  <Text style={[styles.actionTxt, { color: Colors.red }]}>Xóa</Text>
+            {!isSys ? (
+              <View style={styles.commentActions}>
+                <Pressable hitSlop={6} onPress={() => setReplyTo({ id: c.id, name })}>
+                  <Text style={styles.actionTxt}>Trả lời</Text>
                 </Pressable>
-              ) : null}
-            </View>
+                <Pressable hitSlop={6} onPress={() => setReactionPickerFor(c.id)}>
+                  <Text style={styles.actionTxt}>Cảm xúc</Text>
+                </Pressable>
+                {isMine ? (
+                  <Pressable hitSlop={6} onPress={() => removeComment(c)}>
+                    <Text style={[styles.actionTxt, { color: Colors.red }]}>Xóa</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            ) : null}
           </View>
         </View>
       </View>
@@ -524,6 +549,19 @@ function makeStyles(C: ThemeColors) {
       borderWidth: 1,
       borderColor: C.borderSoft,
       padding: 10,
+    },
+    sysBubble: {
+      backgroundColor: C.surfaceSoft,
+    },
+    sysIcon: {
+      width: 34,
+      height: 34,
+      borderRadius: 17,
+      backgroundColor: C.surfaceSoft,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: C.borderSoft,
     },
     commentMeta: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'baseline', gap: 6, marginBottom: 4 },
     commentAuthor: { fontSize: 14, fontWeight: '700', color: C.text },
