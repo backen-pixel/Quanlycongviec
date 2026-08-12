@@ -7,6 +7,7 @@ import {
   formatVND, formatNum, parseNumber,
   applyItemFieldUpdate, makeEmptyItem, makeSectionRow,
   productPatchForItem, updateGroupDiscountItems, getGroupDiscountPercentOf,
+  updateGroupDiscountAmountItems, updateGroupAfterDiscountItems,
 } from '../lib/commercialItems';
 
 // Component input số — hiển thị formatted khi blur, raw khi focus
@@ -95,6 +96,8 @@ export default function CommercialItemsTable({
   const addRow = () => setItems(prev => [...prev, makeEmptyItem()]);
   const addSection = () => setItems(prev => [...prev, makeSectionRow()]);
   const updateGroupDiscount = (groupName, percent) => setItems(prev => updateGroupDiscountItems(prev, groupName, percent));
+  const updateGroupDiscountAmount = (groupName, amount) => setItems(prev => updateGroupDiscountAmountItems(prev, groupName, amount, rows));
+  const updateGroupAfterDiscount = (groupName, after) => setItems(prev => updateGroupAfterDiscountItems(prev, groupName, after, rows));
   const getGroupDiscountPercent = (groupName) => getGroupDiscountPercentOf(items, groupName);
 
   return (
@@ -279,15 +282,27 @@ export default function CommercialItemsTable({
                           const gross = row.gross_amount || 0;
                           const amt = parseFloat(v) || 0;
                           if (gross > 0) {
-                            const pct = Math.max(0, Math.min(100, Math.round((amt / gross) * 10000) / 100));
-                            updateItem(idx, 'discount_percent', pct);
+                            // % CK theo số tiền CK, tối đa 3 chữ số thập phân (vd: 35,121%)
+                            const pct = Math.max(0, Math.min(100, Math.round((amt / gross) * 100000) / 1000));
+                            setItems((prev) => prev.map((it, i) => {
+                              if (i !== idx) return it;
+                              const next = applyItemFieldUpdate(it, 'discount_percent', pct);
+                              // Giữ đúng số tiền CK user nhập (tránh round-trip từ % làm lệch)
+                              next.imported_discount_amount = amt;
+                              return next;
+                            }));
                           } else if (amt === 0) {
-                            updateItem(idx, 'discount_percent', 0);
+                            setItems((prev) => prev.map((it, i) => {
+                              if (i !== idx) return it;
+                              const next = applyItemFieldUpdate(it, 'discount_percent', 0);
+                              next.imported_discount_amount = undefined;
+                              return next;
+                            }));
                           }
                         }}
                         placeholder="0"
                         allowEmpty
-                        title="Số tiền CK (đ) — gõ vào sẽ tự tính lại % CK theo Thành tiền gốc"
+                        title="Số tiền CK (đ) — gõ vào sẽ tự tính lại % CK (tối đa 3 số thập phân) theo Thành tiền gốc"
                         className="w-full px-1.5 py-1 border border-gray-200 hover:border-orange-400 focus:border-orange-500 focus:ring-1 focus:ring-orange-300 rounded text-xs outline-none bg-transparent text-right text-orange-700 font-medium"
                       />
                     )}
@@ -326,7 +341,7 @@ export default function CommercialItemsTable({
                   <td className="py-1 px-1 text-center"><input type="checkbox" checked={item.is_promo || false} onChange={e => updateItem(idx, 'is_promo', e.target.checked)} className="h-4 w-4 rounded cursor-pointer" /></td>
                   <td className="py-1 px-1"><button onClick={() => removeItem(idx)} className="p-1 text-red-400 hover:text-red-600 cursor-pointer"><Trash2 className="h-4 w-4" /></button></td>
                 </tr>
-                {/* Group summary rows after last item in group */}
+                {/* Group summary rows after last item in group — có thể chỉnh CK / tổng sau CK */}
                 {isLastInGroup && gd && (
                   <>
                     <tr className="bg-indigo-50/70">
@@ -336,24 +351,43 @@ export default function CommercialItemsTable({
                       <td className="py-2 px-2 text-right text-sm font-bold text-indigo-800">{formatVND(gd.subtotal)}</td>
                       <td colSpan={6}></td>
                     </tr>
-                    {gd.discountTotal > 0 && (
-                      <tr className="bg-indigo-50/70">
-                        <td colSpan={15} className="py-2 px-3 text-right text-sm font-bold text-red-600">
-                          Chiết khấu nhóm:
-                        </td>
-                        <td className="py-2 px-2 text-right text-sm font-bold text-red-600">-{formatVND(gd.discountTotal)}</td>
-                        <td colSpan={6}></td>
-                      </tr>
-                    )}
-                    {gd.discountTotal > 0 && (
-                      <tr className="bg-indigo-100/60">
-                        <td colSpan={15} className="py-2 px-3 text-right text-sm font-bold text-indigo-900">
-                          Tổng sau CK:
-                        </td>
-                        <td className="py-2 px-2 text-right text-sm font-bold text-indigo-900">{formatVND(gd.afterDiscount)}</td>
-                        <td colSpan={6}></td>
-                      </tr>
-                    )}
+                    <tr className="bg-indigo-50/70">
+                      <td colSpan={15} className="py-2 px-3 text-right text-sm font-bold text-red-600">
+                        Chiết khấu nhóm:
+                        {gd.subtotal > 0 && (
+                          <span className="ml-2 text-[11px] font-medium text-red-500/80">
+                            ({formatNum(Math.round(((gd.discountTotal || 0) / gd.subtotal) * 100000) / 1000)}%)
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-1.5 px-1">
+                        <NumericInput
+                          value={Math.round(gd.discountTotal || 0) || ''}
+                          onChange={(v) => updateGroupDiscountAmount(currentGroupName, v === '' ? 0 : parseFloat(v) || 0)}
+                          placeholder="0"
+                          allowEmpty
+                          title="Số tiền chiết khấu cả nhóm — phân bổ theo tỉ lệ Thành tiền gốc từng dòng"
+                          className="w-full px-1.5 py-1 border border-red-200 hover:border-red-400 focus:border-red-500 focus:ring-1 focus:ring-red-300 rounded text-xs outline-none bg-white text-right text-red-700 font-bold"
+                        />
+                      </td>
+                      <td colSpan={6}></td>
+                    </tr>
+                    <tr className="bg-indigo-100/60">
+                      <td colSpan={15} className="py-2 px-3 text-right text-sm font-bold text-indigo-900">
+                        Tổng sau CK:
+                      </td>
+                      <td className="py-1.5 px-1">
+                        <NumericInput
+                          value={Math.round(gd.afterDiscount || 0) || ''}
+                          onChange={(v) => updateGroupAfterDiscount(currentGroupName, v === '' ? 0 : parseFloat(v) || 0)}
+                          placeholder="0"
+                          allowEmpty
+                          title="Tổng sau chiết khấu nhóm — chỉnh sẽ suy ra số tiền CK và phân bổ xuống dòng"
+                          className="w-full px-1.5 py-1 border border-indigo-300 hover:border-indigo-500 focus:border-indigo-600 focus:ring-1 focus:ring-indigo-300 rounded text-xs outline-none bg-white text-right text-indigo-900 font-bold"
+                        />
+                      </td>
+                      <td colSpan={6}></td>
+                    </tr>
                   </>
                 )}
                 </React.Fragment>

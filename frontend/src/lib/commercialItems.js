@@ -242,8 +242,89 @@ export function updateGroupDiscountItems(items, groupName, percent) {
     if (it.row_type === 'section') return it;
     if ((it.group_name || '') !== groupName) return it;
     if (it.is_freebie || it.notes === 'HỖ TRỢ') return it;
-    return { ...it, discount_percent: pct, lock_amount: false, imported_amount: undefined };
+    return {
+      ...it,
+      discount_percent: pct,
+      lock_amount: false,
+      imported_amount: undefined,
+      imported_discount_amount: undefined,
+    };
   });
+}
+
+/**
+ * Phân bổ số tiền CK nhóm theo tỉ lệ Thành tiền gốc từng dòng.
+ * Giữ đúng tổng số tiền CK (dòng cuối nhận phần dư), % làm tròn 3 chữ số thập phân.
+ */
+export function updateGroupDiscountAmountItems(items, groupName, discountAmount, rows) {
+  if (!groupName) return items;
+  const targetAmt = Math.max(0, parseFloat(discountAmount) || 0);
+  const idxs = [];
+  let totalGross = 0;
+  items.forEach((it, i) => {
+    if (it.row_type === 'section') return;
+    if ((it.group_name || '') !== groupName) return;
+    if (it.is_freebie || it.notes === 'HỖ TRỢ') return;
+    const gross = rows?.[i]?.gross_amount != null
+      ? Number(rows[i].gross_amount) || 0
+      : (() => {
+          const f = parseFloat(it.spec_factor) || 0;
+          const q = it.quantity || 0;
+          const p = it.unit_price || 0;
+          return f > 0 ? f * q * p : q * p;
+        })();
+    idxs.push({ i, gross: Math.max(0, gross) });
+    totalGross += Math.max(0, gross);
+  });
+  if (!idxs.length) return items;
+  if (targetAmt <= 0 || totalGross <= 0) {
+    return updateGroupDiscountItems(items, groupName, 0);
+  }
+  const capped = Math.min(targetAmt, totalGross);
+  let allocated = 0;
+  const next = items.slice();
+  idxs.forEach((entry, pos) => {
+    const isLast = pos === idxs.length - 1;
+    const share = isLast
+      ? Math.max(0, Math.round(capped - allocated))
+      : Math.round((entry.gross / totalGross) * capped);
+    allocated += share;
+    const pct = entry.gross > 0
+      ? Math.max(0, Math.min(100, Math.round((share / entry.gross) * 100000) / 1000))
+      : 0;
+    const it = next[entry.i];
+    next[entry.i] = {
+      ...it,
+      discount_percent: pct,
+      imported_discount_amount: share,
+      lock_amount: false,
+      imported_amount: undefined,
+    };
+  });
+  return next;
+}
+
+/** Đặt Tổng sau CK của nhóm → suy ra số tiền CK rồi phân bổ. */
+export function updateGroupAfterDiscountItems(items, groupName, afterDiscount, rows) {
+  if (!groupName) return items;
+  let totalGross = 0;
+  items.forEach((it, i) => {
+    if (it.row_type === 'section') return;
+    if ((it.group_name || '') !== groupName) return;
+    if (it.is_freebie || it.notes === 'HỖ TRỢ') return;
+    const gross = rows?.[i]?.gross_amount != null
+      ? Number(rows[i].gross_amount) || 0
+      : (() => {
+          const f = parseFloat(it.spec_factor) || 0;
+          const q = it.quantity || 0;
+          const p = it.unit_price || 0;
+          return f > 0 ? f * q * p : q * p;
+        })();
+    totalGross += Math.max(0, gross);
+  });
+  const after = Math.max(0, parseFloat(afterDiscount) || 0);
+  const discountAmt = Math.max(0, totalGross - after);
+  return updateGroupDiscountAmountItems(items, groupName, discountAmt, rows);
 }
 
 /** CK% "đại diện" của nhóm: mọi item cùng % → trả %; lệch nhau → null (mixed). */
@@ -258,5 +339,5 @@ export function getGroupDiscountPercentOf(items, groupName) {
   if (!groupItems.length) return 0;
   const pcts = groupItems.map(it => parseFloat(it.discount_percent) || 0);
   const first = pcts[0];
-  return pcts.every(p => Math.abs(p - first) < 0.01) ? first : null;
+  return pcts.every(p => Math.abs(p - first) < 0.001) ? first : null;
 }

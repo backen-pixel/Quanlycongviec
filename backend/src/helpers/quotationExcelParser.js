@@ -12,13 +12,32 @@ function parseExcelDepositReceivedFromRow(row) {
   return null;
 }
 
-/** Dòng tiền Cọc / Còn lại — không có chữ TỔNG/CỘNG (tránh trùng với dòng tổng hạng mục). */
+/** Dòng tiền Cọc / Còn lại / đợt thanh toán — không có chữ TỔNG/CỘNG (tránh trùng với dòng tổng hạng mục). */
 function isExcelDepositOrRemainSummaryRow(name, stt, fullRowText) {
   const bundle = `${name || ''} ${stt || ''} ${fullRowText || ''}`.trim();
   if (!bundle) return false;
   const u = bundle.toUpperCase();
   if (/\bTỔNG\b/.test(u) || /\bCỘNG\b/.test(u)) return false;
-  return /\bCỌC\b/.test(u) || /\bCÒN\s*LẠI\b/.test(u);
+  return /\bCỌC\b/.test(u) || /\bCÒN\s*LẠI\b/.test(u) || /THANH\s*TOÁN\s*ĐỢT/.test(u);
+}
+
+/** Dòng tiêu đề không phải nhóm hàng (thanh toán / làm tròn / giá trị HĐ). */
+function isExcelNonProductSectionTitle(label) {
+  const u = String(label || '').trim().toUpperCase();
+  if (!u) return false;
+  return /THANH\s*TOÁN/.test(u)
+    || /LÀM\s*TRÒN/.test(u)
+    || /TỔNG\s*GIÁ\s*TRỊ/.test(u)
+    || /GIÁ\s*TRỊ\s*(LÀM\s*TRÒN|HỢP\s*ĐỒNG)/.test(u);
+}
+
+/** TỔNG cộng gộp / làm tròn — không gán làm subtotal 1 nhóm. */
+function isExcelGrandOrRoundTotalLabel(label) {
+  const u = String(label || '').trim().toUpperCase();
+  return /\d\s*\+\s*\d/.test(u)
+    || /LÀM\s*TRÒN/.test(u)
+    || /TỔNG\s*GIÁ\s*TRỊ/.test(u)
+    || /GIÁ\s*TRỊ\s*HỢP\s*ĐỒNG/.test(u);
 }
 
 /**
@@ -451,7 +470,21 @@ async function parseQuotationExcelBuffer(buffer, options = {}) {
       const hasPriceEarly = parseExcelMoneyFromMappedColumn(row, colMap.unit_price) > 0;
 
       if (isRomanGroupEarly && !hasPriceEarly) {
-        const groupName = workingNameEarly || fullRowText.trim();
+        let groupName = workingNameEarly || fullRowText.trim();
+        if (isExcelNonProductSectionTitle(groupName)) {
+          // Đợt thanh toán / làm tròn — không tạo nhóm hàng
+          continue;
+        }
+        // Trùng tên Roman (vd. "I. TỦ BẾP" lần 2 dưới "TỦ PHÁT SINH") → gắn tiền tố để không gộp tổng
+        const nameTaken = items.some((it) => it.is_group && it.name === groupName);
+        const parentIsPlain = currentGroup && !/^[IVX]+[\.\)\s]/i.test(currentGroup)
+          && !isExcelNonProductSectionTitle(currentGroup);
+        if (nameTaken && parentIsPlain) {
+          groupName = `${currentGroup} — ${groupName}`;
+        } else if (nameTaken) {
+          const n = items.filter((it) => it.is_group && (it.name === groupName || it.name.startsWith(`${groupName} (`))).length;
+          groupName = `${groupName} (${n + 1})`;
+        }
         currentGroup = groupName;
         const ckMatch = groupName.match(/(?:CHIẾT\s*KHẤU|CK)\s*(\d+)\s*%/i);
         currentGroupDiscount = ckMatch ? parseFloat(ckMatch[1]) : 0;
@@ -534,15 +567,57 @@ async function parseQuotationExcelBuffer(buffer, options = {}) {
       const isRomanGroup = /^[IVX]+[\.\)\s]/.test(workingName);
 
       if ((isGroupRow && !hasUnit) || isRomanGroup) {
-        currentGroup = workingName;
+        let groupName = workingName;
+        if (isExcelNonProductSectionTitle(groupName)) {
+          continue;
+        }
+        const isRoman = isRomanGroup || /^[IVX]+[\.\)\s]/i.test(groupName);
+        // Tiêu đề thuần (vd. "TỦ PHÁT SINH"): chỉ làm ngữ cảnh cho nhóm Roman con
+        if (!isRoman) {
+          currentGroup = groupName;
+          currentGroupDiscount = 0;
+          continue;
+        }
+        const nameTaken = items.some((it) => it.is_group && it.name === groupName);
+        const parentIsPlain = currentGroup && !/^[IVX]+[\.\)\s]/i.test(currentGroup)
+          && !isExcelNonProductSectionTitle(currentGroup);
+        if (nameTaken && parentIsPlain) {
+          groupName = `${currentGroup} — ${groupName}`;
+        } else if (nameTaken) {
+          const n = items.filter((it) => it.is_group && (it.name === groupName || it.name.startsWith(`${groupName} (`))).length;
+          groupName = `${groupName} (${n + 1})`;
+        }
+        currentGroup = groupName;
         // Parse chiết khấu % từ header nhóm: "PHỤ KIỆN BẾP (CHIẾT KHẤU 35%)" hoặc "CK 35%"
-        const ckMatch = workingName.match(/(?:CHIẾT\s*KHẤU|CK)\s*(\d+)\s*%/i);
+        const ckMatch = groupName.match(/(?:CHIẾT\s*KHẤU|CK)\s*(\d+)\s*%/i);
         currentGroupDiscount = ckMatch ? parseFloat(ckMatch[1]) : 0;
         items.push({
-          is_group: true, group_name: workingName, name: workingName,
+          is_group: true, group_name: groupName, name: groupName,
           description: '', unit: '', quantity: 0, unit_price: 0, amount: 0,
           height: null, width: null, length: null, notes: '',
           group_discount_percent: currentGroupDiscount,
+        });
+        continue;
+      }
+
+      // Đợt thanh toán / làm tròn (có số tiền nhưng không phải dòng hàng)
+      if (isExcelDepositOrRemainSummaryRow(name, stt, fullRowText) || isExcelNonProductSectionTitle(workingName || fullRowText)) {
+        let amt = colMap.amount !== undefined ? parseVietnameseMoney(row[colMap.amount]) : 0;
+        if (amt === 0) {
+          for (let ci = 0; ci < row.length; ci++) {
+            const cellVal = parseVietnameseMoney(row[ci]);
+            if (cellVal >= 1000 && cellVal > amt) amt = cellVal;
+          }
+        }
+        const summaryLabel = name || stt || fullRowText;
+        const labelU = summaryLabel.toUpperCase();
+        const rowKind = labelU.includes('CÒN LẠI') ? 'remaining' : 'deposit';
+        const deposit_received = rowKind === 'deposit' ? parseExcelDepositReceivedFromRow(row) : null;
+        summaryRows.push({
+          label: summaryLabel,
+          amount: amt,
+          row_kind: rowKind,
+          deposit_received,
         });
         continue;
       }
@@ -624,6 +699,8 @@ async function parseQuotationExcelBuffer(buffer, options = {}) {
     const groupNamesOrdered = items.filter(i => i.is_group).map(g => g.name);
     const groupsWithoutHeaderCK = items.filter(i => i.is_group && !i.group_discount_percent).map(g => g.name);
     let nextTotalGroupIdx = 0;
+    // Sau khi gắn CK cho 1 nhóm, dòng TỔNG kế tiếp thường là "tổng sau CK" → bỏ qua
+    let skipNextTotalAsAfterDiscount = false;
 
     for (const sr of summaryRows) {
       const label = sr.label.toUpperCase();
@@ -632,14 +709,36 @@ async function parseQuotationExcelBuffer(buffer, options = {}) {
       } else if (label.includes('SAU') && (label.includes('CHIẾT KHẤU') || label.includes('CK'))) {
         // "TỔNG TỦ SAU CHIẾT KHẤU" — skip for group calc, use as grandTotal fallback
         if (!grandTotal) grandTotal = sr.amount;
+        skipNextTotalAsAfterDiscount = false;
       } else if (label.includes('CHIẾT KHẤU') || label.includes('PHẦN TỪ') || label.includes('PHẦN TỦ')) {
         discountAmount += sr.amount;
         // Assign discount to first group without header CK that doesn't have discount yet
         const target = groupsWithoutHeaderCK.find(gn => !groupDiscounts[gn]);
-        if (target) groupDiscounts[target] = (groupDiscounts[target] || 0) + sr.amount;
+        if (target) {
+          groupDiscounts[target] = (groupDiscounts[target] || 0) + sr.amount;
+          skipNextTotalAsAfterDiscount = true;
+        }
       } else if (label.includes('TỔNG')) {
+        if (isExcelGrandOrRoundTotalLabel(label)) {
+          // Ưu tiên dòng LÀM TRÒN / GIÁ TRỊ hơn "TỔNG (1+2+3)"
+          if (/LÀM\s*TRÒN|GIÁ\s*TRỊ/.test(label) || !grandTotal) {
+            grandTotal = sr.amount;
+          }
+          continue;
+        }
+        if (skipNextTotalAsAfterDiscount) {
+          // "TỔNG CỘNG TỦ BẾP (1)" sau dòng CHIẾT KHẤU nhóm — không ghi đè subtotal
+          skipNextTotalAsAfterDiscount = false;
+          continue;
+        }
         subtotalBeforeDiscount += sr.amount;
-        // Assign to groups in file order
+        // Assign to groups in file order (mỗi nhóm 1 lần)
+        while (
+          nextTotalGroupIdx < groupNamesOrdered.length
+          && groupTotals[groupNamesOrdered[nextTotalGroupIdx]] != null
+        ) {
+          nextTotalGroupIdx++;
+        }
         if (nextTotalGroupIdx < groupNamesOrdered.length) {
           groupTotals[groupNamesOrdered[nextTotalGroupIdx]] = sr.amount;
           nextTotalGroupIdx++;
@@ -663,7 +762,7 @@ async function parseQuotationExcelBuffer(buffer, options = {}) {
       const gDiscount = groupDiscounts[groupItem.name];
       console.log('[parse-excel] checking group:', groupItem.name.slice(0,30), 'gTotal:', gTotal, 'gDiscount:', gDiscount);
       if (gTotal > 0 && gDiscount > 0) {
-        const ckPercent = Math.round((gDiscount / gTotal) * 10000) / 100; // round 2 decimal
+        const ckPercent = Math.round((gDiscount / gTotal) * 100000) / 1000; // round 3 decimal
         groupItem.group_summary_discount_percent = ckPercent;
         // Apply to child items as summary-level discount (NOT already in Thành tiền)
         let applied = 0;

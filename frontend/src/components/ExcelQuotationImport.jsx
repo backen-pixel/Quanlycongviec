@@ -63,7 +63,7 @@ function resolveEffectiveDiscountPercent(item) {
   const price = item.unit_price || 0;
   const rowAmt = item.row_discount_amount || 0;
   if (rowAmt > 0 && qty > 0 && price > 0) {
-    return Math.round((rowAmt / (qty * price)) * 10000) / 100;
+    return Math.round((rowAmt / (qty * price)) * 100000) / 1000;
   }
   const headerCK = item.group_discount_percent || 0;
   const amt = item.amount || 0;
@@ -83,7 +83,7 @@ export function buildQuotationDraftFromPreview(preview, file, user, leadId, sour
     .map((i) => {
       let specFactor = 0;
       let itemDiscount = 0;
-      const qty = i.quantity || 1;
+      let qty = i.quantity || 1;
       let price = i.unit_price || 0;
       const excelAmount = i.amount || 0;
       const headerCK = i.group_discount_percent || 0;
@@ -91,6 +91,7 @@ export function buildQuotationDraftFromPreview(preview, file, user, leadId, sour
       const rowPct = i.row_discount_percent || 0;
       const rowAmt = i.row_discount_amount || 0;
       const hasExplicitDiscountCol = rowPct > 0 || rowAmt > 0;
+      const lengthVal = parseFloat(i.length) || 0;
 
       if (i.is_freebie) {
         itemDiscount = 0;
@@ -101,6 +102,12 @@ export function buildQuotationDraftFromPreview(preview, file, user, leadId, sour
         // KHÔNG suy luận/tính lại từ tỉ lệ Thành tiền (đúng yêu cầu: import lấy kết quả 100%).
         itemDiscount = resolveEffectiveDiscountPercent(i);
         specFactor = 0;
+      } else if (lengthVal > 0 && price > 0 && excelAmount > 0
+        && Math.abs(excelAmount - lengthVal * price) / Math.max(excelAmount, lengthVal * price) < 0.015) {
+        // Mẫu Md/mét dài: Thành tiền = Dài × Đơn giá (kể cả khi Dài < 1 → không suy thành CK%)
+        qty = lengthVal;
+        itemDiscount = 0;
+        specFactor = 0;
       } else if (price > 0 && qty > 0 && excelAmount > 0) {
         // Không có cột chiết khấu riêng theo dòng → fallback: suy luận từ tỉ lệ Thành tiền / (SL × Đơn giá)
         const rawRatio = excelAmount / (qty * price);
@@ -109,7 +116,7 @@ export function buildQuotationDraftFromPreview(preview, file, user, leadId, sour
         } else if (rawRatio >= 0.995) {
           specFactor = 0;
         } else {
-          const impliedCK = Math.round((1 - rawRatio) * 10000) / 100;
+          const impliedCK = Math.round((1 - rawRatio) * 100000) / 1000;
           if (headerCK > 0 && Math.abs(impliedCK - headerCK) < 1) {
             itemDiscount = headerCK;
           } else {
@@ -147,8 +154,38 @@ export function buildQuotationDraftFromPreview(preview, file, user, leadId, sour
         imported_amount: lockedAmount,
         lock_amount: lockedAmount !== null,
         imported_discount_amount: lockedDiscountAmount,
+        _group_summary_discount_percent: i.group_summary_discount_percent || 0,
       };
     });
+
+  // CK nhóm từ dòng summary Excel (vd. "CHIẾT KHẤU KHÁCH 7%") — áp vào dòng nếu chưa có CK dòng
+  // để footer nhóm hiện đúng số tiền CK và cho phép chỉnh sửa.
+  {
+    const byGroup = new Map();
+    itemsPayload.forEach((it, idx) => {
+      const g = it.group_name || '';
+      if (!g || it.is_freebie) return;
+      if (!byGroup.has(g)) byGroup.set(g, []);
+      byGroup.get(g).push(idx);
+    });
+    byGroup.forEach((idxs) => {
+      const gsd = idxs.map((i) => itemsPayload[i]._group_summary_discount_percent || 0).find((v) => v > 0) || 0;
+      if (!(gsd > 0)) return;
+      const hasLineCk = idxs.some((i) => (itemsPayload[i].discount_percent || 0) > 0 || (itemsPayload[i].imported_discount_amount || 0) > 0);
+      if (hasLineCk) return;
+      idxs.forEach((i) => {
+        const it = itemsPayload[i];
+        itemsPayload[i] = {
+          ...it,
+          discount_percent: gsd,
+          lock_amount: false,
+          imported_amount: undefined,
+          imported_discount_amount: undefined,
+        };
+      });
+    });
+    itemsPayload.forEach((it) => { delete it._group_summary_discount_percent; });
+  }
 
   // Khi locked, itemsGrossTotal = Σ imported_amount (đúng bằng tổng Excel) → discount_value tổng = 0
   const itemsGrossTotal = itemsPayload.reduce((s, i) => {
@@ -161,10 +198,11 @@ export function buildQuotationDraftFromPreview(preview, file, user, leadId, sour
   }, 0);
   const excelGrandTotal = preview.summary?.total || 0;
   // Nếu items đã khớp grand total Excel thì KHÔNG cần thêm CK tổng — giữ nguyên 0.
+  // (CK nhóm summary đã áp vào dòng ở trên → không cộng lại vào discount_value chứng từ.)
   const computedDiscount =
     excelGrandTotal > 0 && Math.abs(itemsGrossTotal - excelGrandTotal) > 1
       ? Math.round(itemsGrossTotal - excelGrandTotal)
-      : preview.summary?.discount_amount || 0;
+      : 0;
 
   const notesParts = [];
   if (preview.kts_info) notesParts.push(`KT Phụ trách: ${preview.kts_info}`);
