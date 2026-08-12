@@ -55,6 +55,27 @@ export default function CrmListCard({ item, moving, onPress, onMore, onMove }: P
           {hasValue ? (
             <Text style={styles.value} numberOfLines={1}>{item.valueLabel}</Text>
           ) : null}
+          {item.vcPipelineStage?.name || item.sxPipelineStage?.name ? (
+            <View
+              style={[
+                styles.sxChip,
+                {
+                  borderColor: (item.vcPipelineStage || item.sxPipelineStage)?.color || Colors.blue,
+                  backgroundColor: `${(item.vcPipelineStage || item.sxPipelineStage)?.color || Colors.blue}18`,
+                },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.sxChipTxt,
+                  { color: (item.vcPipelineStage || item.sxPipelineStage)?.color || Colors.blue },
+                ]}
+                numberOfLines={1}
+              >
+                {item.vcPipelineStage ? 'VC' : 'SX'} · {(item.vcPipelineStage || item.sxPipelineStage)?.name}
+              </Text>
+            </View>
+          ) : null}
           <Text style={styles.owner} numberOfLines={1}>{item.ownerName || 'Chưa gán'}</Text>
         </View>
         <View style={styles.meta}>
@@ -130,6 +151,16 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
   company: { color: Colors.textMuted, fontSize: 12.5, fontWeight: '600' },
   customer: { color: Colors.blue, fontSize: 13, fontWeight: '700', marginTop: 1 },
   value: { color: Colors.orange, fontSize: 13, fontWeight: '800', marginTop: 2 },
+  sxChip: {
+    alignSelf: 'flex-start',
+    marginTop: 4,
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    maxWidth: '100%',
+  },
+  sxChipTxt: { fontSize: 11, fontWeight: '800' },
   owner: { color: Colors.textFaint, fontSize: 12, fontWeight: '600', marginTop: 2 },
   meta: { alignItems: 'flex-end', gap: 6, maxWidth: 112 },
   stagePill: {

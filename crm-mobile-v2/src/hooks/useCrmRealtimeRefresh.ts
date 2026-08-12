@@ -59,16 +59,26 @@ export function useCrmRealtimeRefresh(
   useEffect(() => {
     if (!enabled) return undefined;
     return subscribeCrmRealtime((payload) => {
+      // badge_updated / stage_changed: gọi ngay — chip SX/VC & đổi cột không chờ debounce.
+      const instant =
+        payload.reason === 'badge_updated'
+        || payload.detail?.action === 'stage_changed'
+        || payload.detail?.reason === 'project_deleted';
+      if (instant) {
+        if (timerRef.current) {
+          clearTimeout(timerRef.current);
+          timerRef.current = null;
+        }
+        if (onlyWhenFocusedRef.current && !focusedRef.current) return;
+        refreshRef.current(payload);
+        return;
+      }
       if (timerRef.current) clearTimeout(timerRef.current);
-      const delay =
-        payload.reason === 'badge_updated' || payload.detail?.action === 'stage_changed'
-          ? 350
-          : DEBOUNCE_MS;
       timerRef.current = setTimeout(() => {
         timerRef.current = null;
         if (onlyWhenFocusedRef.current && !focusedRef.current) return;
         refreshRef.current(payload);
-      }, delay);
+      }, DEBOUNCE_MS);
     });
   }, [enabled]);
 

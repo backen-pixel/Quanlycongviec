@@ -1514,11 +1514,12 @@ async function emitCrmBadgeUpdateForProject(projectId, io) {
       companyId = proj?.company_id || proj?.logistics_company_id || null;
     } catch { /* ignore */ }
 
-    // Thử với cả hai join trước
+    // Thử với cả hai join trước — emit theo company_id của deal CRM (user mobile/web join room đó),
+    // không chỉ company dự án SX (có thể khác khi gia công ngoài).
     const { data: leadsWithBoth, error: bothErr } = await supabase
       .from('crm_leads')
       .select(`
-        id, project_id, stage_id,
+        id, project_id, stage_id, company_id,
         sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug, company:companies(id, name, short_name)),
         vc_pipeline_stage:logistics_pipeline_stages(id, name, color, icon, bucket_slug)
       `)
@@ -1530,7 +1531,7 @@ async function emitCrmBadgeUpdateForProject(projectId, io) {
       // KHÔNG emit vc_pipeline_stage để tránh xóa badge VC hiện tại trên frontend
       const { data: leadsWithSx } = await supabase
         .from('crm_leads')
-        .select('id, project_id, stage_id, sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug, company:companies(id, name, short_name))')
+        .select('id, project_id, stage_id, company_id, sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug, company:companies(id, name, short_name))')
         .eq('project_id', projectId)
         .eq('type', 'deal');
       for (const lead of (leadsWithSx || [])) {
@@ -1539,9 +1540,13 @@ async function emitCrmBadgeUpdateForProject(projectId, io) {
           lead_id: String(lead.id),
           project_id: lead.project_id ? String(lead.project_id) : null,
           stage_id: lead.stage_id ? String(lead.stage_id) : null,
+          sx_pipeline_stage: sx || null,
         };
-        if (sx) payloadSx.sx_pipeline_stage = sx;
-        emitScoped(io, { companyId }, 'crm:badge_updated', payloadSx);
+        const roomCid = lead.company_id || companyId;
+        emitScoped(io, { companyId: roomCid }, 'crm:badge_updated', payloadSx);
+        if (companyId && roomCid && String(companyId) !== String(roomCid)) {
+          emitScoped(io, { companyId }, 'crm:badge_updated', payloadSx);
+        }
       }
       return;
     }
@@ -1553,10 +1558,14 @@ async function emitCrmBadgeUpdateForProject(projectId, io) {
         lead_id: String(lead.id),
         project_id: lead.project_id ? String(lead.project_id) : null,
         stage_id: lead.stage_id ? String(lead.stage_id) : null,
+        sx_pipeline_stage: sx || null,
+        vc_pipeline_stage: vc || null,
       };
-      if (sx) payload.sx_pipeline_stage = sx;
-      if (vc) payload.vc_pipeline_stage = vc;
-      emitScoped(io, { companyId }, 'crm:badge_updated', payload);
+      const roomCid = lead.company_id || companyId;
+      emitScoped(io, { companyId: roomCid }, 'crm:badge_updated', payload);
+      if (companyId && roomCid && String(companyId) !== String(roomCid)) {
+        emitScoped(io, { companyId }, 'crm:badge_updated', payload);
+      }
     }
   } catch (e) {
     console.warn('[workshopKanban] emitCrmBadgeUpdateForProject:', e.message);

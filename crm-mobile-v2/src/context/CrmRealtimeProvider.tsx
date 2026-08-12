@@ -65,16 +65,10 @@ export function CrmRealtimeProvider({ children }: { children: React.ReactNode })
 
       const onBadge = (payload?: Record<string, unknown>) => {
         lastSocketAtRef.current = Date.now();
-        // Badge SX/VC + đổi cột CRM từ xưởng — invalidate + refresh nhanh hơn dashboard thường
+        // Chip SX/VC + đổi cột từ xưởng: emit NGAY (không debounce) để thẻ patch tức thì.
+        // Invalidate cache để lần fetch sau (silent bootstrap) lấy dữ liệu mới.
         invalidateCrmHubCache();
-        pendingReasonRef.current = 'badge_updated';
-        pendingDetailRef.current = payload;
-        if (bumpTimerRef.current) clearTimeout(bumpTimerRef.current);
-        const fast =
-          payload?.stage_id != null
-          || payload?.reason === 'project_deleted'
-          || payload?.action === 'stage_changed';
-        bumpTimerRef.current = setTimeout(flushBump, fast ? 400 : 800);
+        emitCrmRealtime({ reason: 'badge_updated', detail: payload });
       };
 
       const onTask = (payload?: Record<string, unknown>) => {

@@ -39,6 +39,7 @@ import MoveStageModal from '../components/MoveStageModal';
 import NotificationBadge from '../components/NotificationBadge';
 import { useAuth, currentUserId } from '../context/AuthContext';
 import { useCreateMenu } from '../context/CreateMenuContext';
+import { applyCrmBadgeFieldsToItem } from '../lib/crmBadgePatch';
 import { useCrmRealtimeRefresh } from '../hooks/useCrmRealtimeRefresh';
 import { useUnreadNotificationCount } from '../hooks/useUnreadNotificationCount';
 import { lockCrmAssigneeScope, lockCrmCompanyScope } from '../lib/crmAssignee';
@@ -306,7 +307,45 @@ export default function LeadDealListScreen({ kind }: Props) {
     }, [loadPage, filtersReady, listActive]),
   );
 
-  useCrmRealtimeRefresh(() => {
+  useCrmRealtimeRefresh((payload) => {
+    const detail = payload?.detail;
+    if (
+      detail?.lead_id
+      && (
+        payload?.reason === 'badge_updated'
+        || detail.action === 'stage_changed'
+        || detail.reason === 'project_deleted'
+        || detail.action === 'deleted'
+      )
+    ) {
+      const lid = String(detail.lead_id);
+      if (detail.reason === 'project_deleted' || detail.action === 'deleted') {
+        setItems((list) => list.filter((it) => it.id !== lid));
+      } else {
+        const sid = detail.stage_id != null ? String(detail.stage_id) : null;
+        const stage = sid ? stages.find((s) => String(s.id) === sid) : null;
+        setItems((list) => list.map((it) => {
+          if (it.id !== lid) return it;
+          return applyCrmBadgeFieldsToItem({
+            ...it,
+            ...(sid
+              ? {
+                  stageId: sid,
+                  stageName: stage?.name || it.stageName,
+                  stageColor: stage?.color || it.stageColor,
+                }
+              : null),
+          }, detail);
+        }));
+      }
+      // Chip đã hiện ngay — đồng bộ list nền sau (tránh giật).
+      if (payload?.reason === 'badge_updated') {
+        setTimeout(() => {
+          if (listActive) void loadPage('refresh');
+        }, 2500);
+        return;
+      }
+    }
     void loadPage('refresh');
   }, listActive);
 

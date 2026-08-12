@@ -6,6 +6,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { FlatList, InteractionManager, Keyboard, PanResponder, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View, Alert } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useCrmRealtimeRefresh } from '../hooks/useCrmRealtimeRefresh';
+import { applyCrmBadgeFieldsToItem, crmBadgeDetailAffectsChip } from '../lib/crmBadgePatch';
 import Avatar from '../components/Avatar';
 import ColumnPickerModal from '../components/ColumnPickerModal';
 import CrmFilterSheet from '../components/CrmFilterSheet';
@@ -1127,6 +1128,9 @@ export default function CrmHubScreen({
     useCallback((payload) => {
       if (!canLoadCrmRef.current) return;
       const detail = payload?.detail;
+      let patchedInPlace = false;
+      let needColumnReload = false;
+
       // Xóa dự án / deal — gỡ thẻ ngay rồi reload nền
       if (
         detail
@@ -1136,18 +1140,23 @@ export default function CrmHubScreen({
         const lid = String(detail.lead_id);
         setHub((prev) => {
           const nextCache = { ...prev.cache };
+          let removed = false;
           for (const sid of Object.keys(nextCache)) {
             const col = nextCache[sid];
             if (!col?.items?.some((it) => it.id === lid)) continue;
+            removed = true;
             nextCache[sid] = {
               ...col,
               items: col.items.filter((it) => it.id !== lid),
             };
           }
-          return { ...prev, cache: nextCache };
+          return removed ? { ...prev, cache: nextCache } : prev;
         });
+        patchedInPlace = true;
+        needColumnReload = true;
       }
-      // Cập nhật badge SX/VC hoặc đổi cột từ xưởng
+
+      // Cập nhật badge SX/VC hoặc đổi cột từ xưởng — patch chip ngay, không chờ API
       if (
         detail?.lead_id
         && (
@@ -1167,7 +1176,7 @@ export default function CrmHubScreen({
             const found = col?.items?.find((it) => it.id === lid);
             if (!found) continue;
             fromSid = colId;
-            moved = {
+            moved = applyCrmBadgeFieldsToItem({
               ...found,
               ...(sid
                 ? {
@@ -1176,16 +1185,7 @@ export default function CrmHubScreen({
                     stageColor: stage?.color || found.stageColor,
                   }
                 : null),
-              sxPipelineStage: Object.prototype.hasOwnProperty.call(detail, 'sx_pipeline_stage')
-                ? ((detail.sx_pipeline_stage as CrmKanbanItem['sxPipelineStage']) || null)
-                : found.sxPipelineStage,
-              vcPipelineStage: Object.prototype.hasOwnProperty.call(detail, 'vc_pipeline_stage')
-                ? ((detail.vc_pipeline_stage as CrmKanbanItem['vcPipelineStage']) || null)
-                : found.vcPipelineStage,
-              projectId: Object.prototype.hasOwnProperty.call(detail, 'project_id')
-                ? (detail.project_id ? String(detail.project_id) : null)
-                : found.projectId,
-            };
+            }, detail);
             if (sid && sid !== colId) {
               nextCache[colId] = {
                 ...col,
@@ -1199,8 +1199,13 @@ export default function CrmHubScreen({
             }
             break;
           }
-          if (!moved) return prev;
+          if (!moved) {
+            needColumnReload = true;
+            return prev;
+          }
+          patchedInPlace = true;
           if (sid && fromSid && fromSid !== sid) {
+            needColumnReload = true;
             if (nextCache[sid]?.loaded) {
               nextCache[sid] = {
                 ...nextCache[sid],
@@ -1217,7 +1222,21 @@ export default function CrmHubScreen({
           return { ...prev, cache: nextCache };
         });
       }
-      // Silent + lite (không invalidate) — chỉ mode đang xem.
+
+      // Chip-only đã patch: bỏ silent reload ngay (tránh ghi đè / giật). Đồng bộ nền sau.
+      const chipOnly =
+        patchedInPlace
+        && !needColumnReload
+        && payload?.reason === 'badge_updated'
+        && crmBadgeDetailAffectsChip(detail);
+      if (chipOnly) {
+        setTimeout(() => {
+          if (!canLoadCrmRef.current) return;
+          void loadBootstrapRef.current(modeRef.current, false, undefined, true);
+        }, 2500);
+        return;
+      }
+      // Silent + lite — đổi cột / chưa thấy thẻ / dashboard.
       void loadBootstrapRef.current(modeRef.current, false, undefined, true);
     }, [hubStages, setHub]),
     canLoadCrm,

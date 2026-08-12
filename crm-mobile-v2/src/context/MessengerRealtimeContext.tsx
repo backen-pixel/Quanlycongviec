@@ -136,8 +136,8 @@ export function MessengerRealtimeProvider({ children }: { children: React.ReactN
     let delayTimer: ReturnType<typeof setTimeout> | null = null;
 
     const tier = getPerfTier();
-    /** Nhường Overview first paint — low chậm hơn mid/high. */
-      const connectDelayMs = tier === 'low' ? 8000 : tier === 'mid' ? 7000 : 6500;
+    /** Nhường Overview first paint — vẫn đủ sớm để nhận chip SX/VC realtime. */
+      const connectDelayMs = tier === 'low' ? 4500 : tier === 'mid' ? 3500 : 2800;
 
     const connect = () => {
       if (cancelled || !token) return;
