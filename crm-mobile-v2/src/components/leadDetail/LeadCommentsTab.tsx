@@ -1,7 +1,23 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
+import * as DocumentPicker from 'expo-document-picker';
+import * as ImagePicker from 'expo-image-picker';
 import SpinningLoader from '../SpinningLoader';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, FlatList, KeyboardAvoidingView, Modal, Platform, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from 'react-native';
+import {
+  Alert,
+  FlatList,
+  Image,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  Pressable,
+  RefreshControl,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatApiError } from '../../api/client';
 import {
   deleteLeadComment,
@@ -10,6 +26,7 @@ import {
   postLeadComment,
   setLeadCommentReaction,
   type LeadComment,
+  type LeadCommentAttachment,
   type LeadMember,
 } from '../../api/leadDetail';
 import { currentUserId, useAuth } from '../../context/AuthContext';
@@ -38,6 +55,7 @@ import {
   extractAllSystemFileLinks,
   isSystemCommentBody,
 } from '../../lib/crmSystemCommentFiles';
+import { uploadSingleFile, type LocalUploadFile } from '../../lib/uploadFile';
 import { Radii, Spacing, useColors, type ThemeColors } from '../../theme';
 import Avatar from '../Avatar';
 import CommentAttachmentsBlock from './CommentAttachmentsBlock';
@@ -46,6 +64,40 @@ import CrmCommentBody from './CrmCommentBody';
 import VcHandoverCommentCard from './VcHandoverCommentCard';
 
 export const CRM_COMMENT_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'] as const;
+
+const MAX_PENDING_ATTACHMENTS = 12;
+
+type PendingAttachment = LeadCommentAttachment & {
+  localId: string;
+  localUri?: string;
+  uploading?: boolean;
+};
+
+function toCommentAttachment(up: {
+  file_url: string;
+  file_name?: string;
+  original_name?: string;
+  file_size?: number;
+  mime_type?: string;
+}): LeadCommentAttachment {
+  const name = up.file_name || up.original_name || 'file';
+  return {
+    url: up.file_url,
+    file_url: up.file_url,
+    name,
+    file_name: name,
+    type: up.mime_type || '',
+    mime_type: up.mime_type || '',
+    size: up.file_size || 0,
+    file_size: up.file_size || 0,
+  };
+}
+
+function isPendingImage(a: PendingAttachment): boolean {
+  const mime = String(a.mime_type || a.type || '');
+  const name = String(a.file_name || a.name || '');
+  return mime.startsWith('image/') || /\.(jpe?g|png|gif|webp|heic)$/i.test(name);
+}
 
 function fmtDate(iso?: string | null): string {
   if (!iso) return '';
@@ -140,8 +192,10 @@ export default function LeadCommentsTab({
 }) {
   const Colors = useColors();
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
+  const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const myId = currentUserId(user);
+  const myName = user?.full_name || user?.fullName || user?.email || 'bạn';
 
   const [showOnScreen, setShowOnScreen] = useState(() => isCommentShowOnScreenEnabled());
   const [prefsReady, setPrefsReady] = useState(true);
@@ -151,7 +205,9 @@ export default function LeadCommentsTab({
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
+  const [pending, setPending] = useState<PendingAttachment[]>([]);
   const [sending, setSending] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [replyTo, setReplyTo] = useState<{ id: number; name: string } | null>(null);
   const [reactionBusy, setReactionBusy] = useState<number | null>(null);
   const [reactionPickerFor, setReactionPickerFor] = useState<number | null>(null);
@@ -276,9 +332,144 @@ export default function LeadCommentsTab({
     setTimeout(() => inputRef.current?.focus(), 50);
   };
 
+  const readyAttachments = useMemo(
+    () => pending.filter((p) => !p.uploading && (p.url || p.file_url)),
+    [pending],
+  );
+  const canSend = Boolean(draft.trim() || readyAttachments.length) && !sending && !uploading
+    && !pending.some((p) => p.uploading);
+
+  const enqueueUploads = async (files: LocalUploadFile[]) => {
+    if (!files.length) return;
+    const room = MAX_PENDING_ATTACHMENTS - pending.length;
+    if (room <= 0) {
+      Alert.alert('Giới hạn', `Tối đa ${MAX_PENDING_ATTACHMENTS} file mỗi bình luận.`);
+      return;
+    }
+    const slice = files.slice(0, room);
+    const placeholders: PendingAttachment[] = slice.map((f, i) => ({
+      localId: `up-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 7)}`,
+      localUri: f.uri,
+      name: f.name,
+      file_name: f.name,
+      type: f.type || '',
+      mime_type: f.type || '',
+      size: f.size || 0,
+      file_size: f.size || 0,
+      uploading: true,
+    }));
+    setPending((prev) => [...prev, ...placeholders]);
+    setUploading(true);
+    try {
+      for (let i = 0; i < slice.length; i += 1) {
+        const localId = placeholders[i].localId;
+        try {
+          const up = await uploadSingleFile(slice[i]);
+          const att = toCommentAttachment(up);
+          setPending((prev) =>
+            prev.map((p) => (p.localId === localId ? { ...p, ...att, uploading: false } : p)),
+          );
+        } catch (e) {
+          setPending((prev) => prev.filter((p) => p.localId !== localId));
+          Alert.alert('Lỗi upload', formatApiError(e));
+        }
+      }
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const pickCamera = async () => {
+    try {
+      const perm = await ImagePicker.requestCameraPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert('Quyền camera', 'Cần quyền camera để chụp ảnh nhanh.');
+        return;
+      }
+      const shot = await ImagePicker.launchCameraAsync({
+        mediaTypes: ['images'],
+        quality: 0.85,
+        exif: false,
+      });
+      if (shot.canceled || !shot.assets?.[0]) return;
+      const a = shot.assets[0];
+      const name = a.fileName || `camera-${Date.now()}.jpg`;
+      await enqueueUploads([{
+        uri: a.uri,
+        name,
+        type: a.mimeType || 'image/jpeg',
+        size: a.fileSize ?? null,
+      }]);
+    } catch (e) {
+      Alert.alert('Lỗi', formatApiError(e));
+    }
+  };
+
+  const pickGallery = async () => {
+    try {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert('Quyền ảnh', 'Cần quyền thư viện để chọn ảnh.');
+        return;
+      }
+      const res = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        quality: 0.85,
+        allowsMultipleSelection: true,
+        selectionLimit: MAX_PENDING_ATTACHMENTS,
+      });
+      if (res.canceled || !res.assets?.length) return;
+      await enqueueUploads(
+        res.assets.map((a, i) => ({
+          uri: a.uri,
+          name: a.fileName || `image-${Date.now()}-${i}.jpg`,
+          type: a.mimeType || 'image/jpeg',
+          size: a.fileSize ?? null,
+        })),
+      );
+    } catch (e) {
+      Alert.alert('Lỗi', formatApiError(e));
+    }
+  };
+
+  const pickDocuments = async () => {
+    try {
+      const pick = await DocumentPicker.getDocumentAsync({
+        copyToCacheDirectory: true,
+        multiple: true,
+        type: '*/*',
+      });
+      if (pick.canceled || !pick.assets?.length) return;
+      await enqueueUploads(
+        pick.assets.map((a) => ({
+          uri: a.uri,
+          name: a.name || `file-${Date.now()}`,
+          type: a.mimeType || 'application/octet-stream',
+          size: a.size ?? null,
+        })),
+      );
+    } catch (e) {
+      Alert.alert('Lỗi', formatApiError(e));
+    }
+  };
+
+  const removePending = (localId: string) => {
+    setPending((prev) => prev.filter((p) => p.localId !== localId));
+  };
+
   const send = async () => {
     const body = draft.trim();
-    if (!body || sending) return;
+    const attachments = readyAttachments.map((p) => ({
+      url: p.url || p.file_url || '',
+      file_url: p.file_url || p.url || '',
+      name: p.name || p.file_name || 'file',
+      file_name: p.file_name || p.name || 'file',
+      type: p.type || p.mime_type || '',
+      mime_type: p.mime_type || p.type || '',
+      size: p.size ?? p.file_size ?? 0,
+      file_size: p.file_size ?? p.size ?? 0,
+    })).filter((a) => a.url);
+    if ((!body && !attachments.length) || sending || uploading) return;
     setSending(true);
     try {
       const fromText = resolveMentionIdsFromContent(body, members, { excludeUserId: myId });
@@ -287,6 +478,7 @@ export default function LeadCommentsTab({
       const row = await postLeadComment(leadId, body, {
         parent_id: replyTo?.id ?? null,
         mention_user_ids: mentionIds.length ? mentionIds : undefined,
+        attachments: attachments.length ? attachments : undefined,
       });
       setItems((prev) => {
         const next = upsertComment(prev, row);
@@ -294,6 +486,7 @@ export default function LeadCommentsTab({
         return next;
       });
       setDraft('');
+      setPending([]);
       setReplyTo(null);
       pickedMentionIds.current = new Set();
       setMentionOpen(false);
@@ -447,7 +640,11 @@ export default function LeadCommentsTab({
   }
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardAvoidingView
+      style={{ flex: 1 }}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 8 : 0}
+    >
       <FlatList
         data={flatRows}
         keyExtractor={(r) => String(r.comment.id)}
@@ -507,11 +704,66 @@ export default function LeadCommentsTab({
         </View>
       ) : null}
 
-      <View style={styles.composer}>
+      {pending.length > 0 ? (
+        <View style={styles.pendingWrap}>
+          {pending.map((p) => (
+            <View key={p.localId} style={styles.pendingChip}>
+              {isPendingImage(p) && p.localUri ? (
+                <Image source={{ uri: p.localUri }} style={styles.pendingThumb} />
+              ) : (
+                <View style={styles.pendingFileIcon}>
+                  <Ionicons name="document-attach-outline" size={16} color={Colors.orange} />
+                </View>
+              )}
+              <Text style={styles.pendingName} numberOfLines={1}>
+                {p.file_name || p.name || 'file'}
+              </Text>
+              {p.uploading ? (
+                <SpinningLoader size="small" color={Colors.orange} />
+              ) : (
+                <Pressable hitSlop={8} onPress={() => removePending(p.localId)}>
+                  <Ionicons name="close-circle" size={18} color={Colors.textMuted} />
+                </Pressable>
+              )}
+            </View>
+          ))}
+        </View>
+      ) : null}
+
+      <View style={[styles.composer, { paddingBottom: Math.max(insets.bottom, 10) }]}>
+        <View style={styles.composerTools}>
+          <Pressable
+            style={styles.toolBtn}
+            onPress={() => void pickCamera()}
+            disabled={uploading || sending}
+            hitSlop={4}
+            accessibilityLabel="Chụp ảnh nhanh"
+          >
+            <Ionicons name="camera-outline" size={20} color={Colors.orange} />
+          </Pressable>
+          <Pressable
+            style={styles.toolBtn}
+            onPress={() => void pickGallery()}
+            disabled={uploading || sending}
+            hitSlop={4}
+            accessibilityLabel="Chọn ảnh từ thư viện"
+          >
+            <Ionicons name="image-outline" size={20} color={Colors.orange} />
+          </Pressable>
+          <Pressable
+            style={styles.toolBtn}
+            onPress={() => void pickDocuments()}
+            disabled={uploading || sending}
+            hitSlop={4}
+            accessibilityLabel="Đính kèm file"
+          >
+            <Ionicons name="attach-outline" size={20} color={Colors.orange} />
+          </Pressable>
+        </View>
         <TextInput
           ref={inputRef}
           style={styles.composerInput}
-          placeholder="Viết bình luận… (@ nhắc thành viên)"
+          placeholder={`Bình luận với tư cách ${myName}…`}
           placeholderTextColor={Colors.textFaint}
           value={draft}
           onChangeText={(t) => {
@@ -523,9 +775,10 @@ export default function LeadCommentsTab({
           maxLength={4000}
         />
         <Pressable
-          style={[styles.sendBtn, (!draft.trim() || sending) && styles.sendBtnDisabled]}
+          style={[styles.sendBtn, !canSend && styles.sendBtnDisabled]}
           onPress={() => void send()}
-          disabled={!draft.trim() || sending}
+          disabled={!canSend}
+          accessibilityLabel="Gửi bình luận"
         >
           {sending ? (
             <SpinningLoader size="small" color={Colors.white} />
@@ -629,23 +882,72 @@ function makeStyles(C: ThemeColors) {
     },
     mentionItem: { paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.borderSoft },
     mentionItemTxt: { fontSize: 14, color: C.text, fontWeight: '600' },
+    pendingWrap: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+      paddingHorizontal: Spacing.md,
+      paddingTop: 8,
+      paddingBottom: 4,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: C.borderSoft,
+      backgroundColor: C.card,
+    },
+    pendingChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      maxWidth: '100%',
+      paddingVertical: 4,
+      paddingHorizontal: 6,
+      borderRadius: 10,
+      backgroundColor: C.surfaceSoft,
+      borderWidth: 1,
+      borderColor: C.borderSoft,
+    },
+    pendingThumb: { width: 32, height: 32, borderRadius: 6 },
+    pendingFileIcon: {
+      width: 32,
+      height: 32,
+      borderRadius: 6,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: C.orangeSoft,
+    },
+    pendingName: { flexShrink: 1, maxWidth: 140, fontSize: 12, color: C.text, fontWeight: '600' },
     composer: {
       flexDirection: 'row',
       alignItems: 'flex-end',
       gap: 8,
-      padding: Spacing.md,
+      paddingHorizontal: 10,
+      paddingTop: 10,
       borderTopWidth: 1,
       borderTopColor: C.borderSoft,
       backgroundColor: C.card,
+    },
+    composerTools: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingBottom: 4,
+    },
+    toolBtn: {
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1.5,
+      borderColor: C.orange,
+      backgroundColor: C.cardAlt,
     },
     composerInput: {
       flex: 1,
       minHeight: 40,
       maxHeight: 120,
-      borderWidth: 1,
-      borderColor: C.borderSoft,
-      borderRadius: Radii.lg,
-      paddingHorizontal: 12,
+      borderWidth: 0,
+      borderRadius: 22,
+      paddingHorizontal: 14,
       paddingVertical: 10,
       color: C.text,
       fontSize: 15,
@@ -655,9 +957,10 @@ function makeStyles(C: ThemeColors) {
       width: 42,
       height: 42,
       borderRadius: 21,
-      backgroundColor: C.blue,
+      backgroundColor: C.orangeDeep,
       alignItems: 'center',
       justifyContent: 'center',
+      marginBottom: 1,
     },
     sendBtnDisabled: { opacity: 0.45 },
     empty: { alignItems: 'center', paddingVertical: 40, gap: 8 },
