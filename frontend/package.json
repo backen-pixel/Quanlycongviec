@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "node ../scripts/knowledge/sync-screenshots-deploy.js && vite build",
-    "build:analyze": "cross-env ANALYZE=1 vite build",
+    "build": "node ../scripts/knowledge/sync-screenshots-deploy.js && cross-env NODE_OPTIONS=--max-old-space-size=4096 vite build",
+    "build:analyze": "cross-env ANALYZE=1 NODE_OPTIONS=--max-old-space-size=4096 vite build",
     "preview": "vite preview"
   },
   "dependencies": {

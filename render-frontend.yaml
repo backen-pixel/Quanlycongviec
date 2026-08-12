@@ -6,8 +6,10 @@ services:
     name: tubep-frontend
     runtime: static
     rootDir: frontend
-    buildCommand: npm ci --prefer-offline --no-audit && npm run build
+    buildCommand: NODE_OPTIONS=--max-old-space-size=4096 npm ci --prefer-offline --no-audit && npm run build
     staticPublishPath: dist
     envVars:
+      - key: NODE_OPTIONS
+        value: --max-old-space-size=4096
       - key: VITE_API_URL
         value: https://tubep-backend.onrender.com
