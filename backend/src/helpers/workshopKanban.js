@@ -75,7 +75,8 @@ async function getWorkshopStageMap() {
 let _wonDealProjectIdsCache = { at: 0, ids: null };
 let _wonDealProjectIdsInflight = null;
 const WON_DEAL_IDS_TTL_MS = 90_000;
-const WON_DEAL_IDS_REDIS_KEY = 'sx:won_deal_project_ids';
+// v2: gồm cả project phụ multi-SX (crm_deal_projects), không chỉ crm_leads.project_id.
+const WON_DEAL_IDS_REDIS_KEY = 'sx:won_deal_project_ids:v2';
 
 async function getWonDealProjectIds() {
   const now = Date.now();
@@ -116,6 +117,7 @@ async function getWonDealProjectIds() {
       // - đang ở stage is_won=true
       // - hoặc đã từng thắng (actual_close_date IS NOT NULL)
       // - hoặc (fallback) chỉ cần có project_id (tránh mất deal khi stage đã đổi nhưng chưa set actual_close_date)
+      // - multi-SX: project phụ chỉ nằm ở crm_deal_projects (không ghi đè crm_leads.project_id)
       const queries = [];
       if (wonStageIds.length) {
         queries.push(
@@ -146,9 +148,24 @@ async function getWonDealProjectIds() {
           .not('project_id', 'is', null),
       );
 
+      // Multi-xưởng: dự án xưởng 2+ gắn qua junction, không có trên crm_leads.project_id
+      queries.push(
+        supabase
+          .from('crm_deal_projects')
+          .select('project_id')
+          .not('project_id', 'is', null),
+      );
+
       const results = await Promise.all(queries);
       const out = new Set();
-      for (const { data } of results) {
+      for (const { data, error } of results) {
+        if (error) {
+          // DB chưa có bảng junction → bỏ qua, vẫn dùng project_id chính
+          if (!String(error.message || '').includes('crm_deal_projects')) {
+            console.warn('[getWonDealProjectIds]', error.message);
+          }
+          continue;
+        }
         for (const l of data || []) {
           if (l.project_id) out.add(l.project_id);
         }

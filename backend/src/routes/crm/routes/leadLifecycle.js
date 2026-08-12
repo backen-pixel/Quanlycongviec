@@ -302,6 +302,33 @@ r.post('/deals', async (req, res) => {
   }
 });
 
+/** Id các deal khách hàng đã có đơn phát sinh (để tô màu thẻ Kanban). */
+r.get('/deals/spawn-source-ids', async (req, res) => {
+  try {
+    const companyId = String(req.query.company_id || '').trim() || null;
+    const sac = scopedAdminCompanyId(req);
+    const scopeCo = sac || companyId || null;
+
+    let q = supabase
+      .from('crm_leads')
+      .select('source_customer_deal_id')
+      .not('source_customer_deal_id', 'is', null)
+      .eq('type', 'deal');
+    if (scopeCo) q = q.eq('company_id', scopeCo);
+
+    const { data, error } = await q.limit(5000);
+    if (error && /source_customer_deal_id/i.test(String(error.message || ''))) {
+      return res.json({ ids: [] });
+    }
+    if (error) throw error;
+
+    const ids = [...new Set((data || []).map((r) => String(r.source_customer_deal_id || '')).filter(Boolean))];
+    res.json({ ids });
+  } catch (e) {
+    res.status(500).json({ error: e.message || 'Lỗi tải danh sách deal gốc phát sinh' });
+  }
+});
+
 /** Tạo deal đơn hàng phát sinh từ deal khách hàng — cột đầu tab Khách hàng. */
 r.post('/deals/:id/spawn-additional', async (req, res) => {
   try {
@@ -2248,6 +2275,9 @@ r.patch('/leads/:id/stage', async (req, res) => {
       production_company_id,
       workshop_type_id: bodyWorkshopTypeId,
       targets: bodySxTargets,
+      delivery_date: bodyDeliveryDate,
+      production_deadline: bodyProductionDeadline,
+      production_finish_date: bodyProductionFinishDate,
     } = req.body;
     const leadStageSelectWithBadges =
       'type, project_id, company_id, assigned_to, lead_owner_id, lead_type_id, use_order_tasks, parent_lead_id, stage_id, sx_handover_at, kanban_deadline_at'
@@ -2635,6 +2665,11 @@ r.patch('/leads/:id/stage', async (req, res) => {
         productionCompanyId: effectiveProductionCompanyId,
         workshopTypeId: bodyWorkshopTypeId || null,
         targets: sxTargets,
+        projectDates: {
+          delivery_date: bodyDeliveryDate || null,
+          production_deadline: bodyProductionDeadline || bodyDeliveryDate || null,
+          production_finish_date: bodyProductionFinishDate || null,
+        },
       });
 
       if (auto.ok) {
@@ -3888,6 +3923,11 @@ r.post('/deals/:id/auto-create-project', async (req, res) => {
       workshopTypeId: req.body?.workshop_type_id || null,
       targets,
       mode,
+      projectDates: {
+        delivery_date: req.body?.delivery_date || null,
+        production_deadline: req.body?.production_deadline || req.body?.delivery_date || null,
+        production_finish_date: req.body?.production_finish_date || null,
+      },
     });
     if (!result.ok) {
       if (result.existing_project_id) {

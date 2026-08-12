@@ -6,6 +6,7 @@ import { isAdminLike } from '../lib/adminRole';
 import { Settings, Plus, Trash2, Save, ChevronRight, ChevronDown, Loader2, Factory, Truck, Building2, ListChecks, Tags, Globe, Clock, Trophy, CheckCircle2, UserCircle, Banknote, Hammer, ArrowRightLeft, Search, Wrench, Eye, EyeOff } from 'lucide-react';
 import WorkshopTypeSettingsSection from '../components/WorkshopTypeSettingsSection';
 import { isPipelineStageSlaDisabled } from '../lib/crmPipelineSla';
+import { SX_DEADLINE_GROUPS, sxDeadlineGroupMeta } from '../lib/sxWorkshopSchedule';
 
 const INTAKE = 'won_pending';
 const LS_SX_PIPE_COMPANY = 'sx_pipeline_settings_company_id';
@@ -41,6 +42,7 @@ export default function ProductionPipelineSettingsPage() {
   const [bulkSelected, setBulkSelected] = useState(() => new Set());
   const [bulkTargetCrm, setBulkTargetCrm] = useState('');
   const [bulkTargetWorkshopType, setBulkTargetWorkshopType] = useState('');
+  const [bulkDeadlineGroup, setBulkDeadlineGroup] = useState('');
   const [bulkSaving, setBulkSaving] = useState(false);
   const [handoverData, setHandoverData] = useState(null);
   const [intakeAssigneeId, setIntakeAssigneeId] = useState('');
@@ -74,6 +76,7 @@ export default function ProductionPipelineSettingsPage() {
     counts_as_completed_revenue: false,
     counts_as_collected_revenue: false,
     requires_deadline: false,
+    deadline_group: '',
     auto_add_members_on_enter: false,
     stage_staff_user_ids: [],
     stage_staff_primary_user_id: '',
@@ -571,6 +574,36 @@ export default function ProductionPipelineSettingsPage() {
     }
   };
 
+  const bulkSetDeadlineGroup = async () => {
+    if (!bulkSelected.size) return;
+    if (!bulkDeadlineGroup && bulkDeadlineGroup !== '__clear__') return;
+    const group = bulkDeadlineGroup === '__clear__' ? null : (bulkDeadlineGroup || null);
+    const meta = sxDeadlineGroupMeta(group);
+    const label = meta ? meta.label : 'Không thuộc nhóm';
+    if (!confirm(`Gán nhóm deadline «${label}» cho ${bulkSelected.size} cột đã chọn?`)) return;
+    setBulkSaving(true);
+    try {
+      await Promise.all(
+        Array.from(bulkSelected).map((id) =>
+          api.put(`/production/pipeline-stages/${id}`, {
+            deadline_group: group,
+          }),
+        ),
+      );
+      setBulkSelected(new Set());
+      setBulkDeadlineGroup('');
+      await load();
+    } catch (e) {
+      if (isMissingProductionStage(e)) {
+        await recoverMissingStage();
+        return;
+      }
+      alert('Lỗi gán nhóm deadline: ' + (e.response?.data?.error || e.message));
+    } finally {
+      setBulkSaving(false);
+    }
+  };
+
   const bulkMoveWorkshopType = async () => {
     if (!bulkSelected.size || !bulkTargetWorkshopType) return;
     const targetLabel = bulkTargetWorkshopType === GLOBAL_TYPE_KEY
@@ -728,6 +761,7 @@ export default function ProductionPipelineSettingsPage() {
     counts_as_completed_revenue: !!form.counts_as_completed_revenue,
     counts_as_collected_revenue: !!form.counts_as_collected_revenue,
     requires_deadline: !!form.requires_deadline,
+    deadline_group: form.deadline_group || null,
   });
 
   const requestEdit = (stage) => {
@@ -758,6 +792,7 @@ export default function ProductionPipelineSettingsPage() {
       counts_as_completed_revenue: false,
       counts_as_collected_revenue: false,
       requires_deadline: false,
+      deadline_group: '',
       auto_add_members_on_enter: false,
       stage_staff_user_ids: [],
       stage_staff_primary_user_id: '',
@@ -794,6 +829,7 @@ export default function ProductionPipelineSettingsPage() {
       counts_as_completed_revenue: !!stage.counts_as_completed_revenue,
       counts_as_collected_revenue: !!stage.counts_as_collected_revenue,
       requires_deadline: !!stage.requires_deadline,
+      deadline_group: stage.deadline_group || '',
       auto_add_members_on_enter: !!stage.auto_add_members_on_enter,
       stage_staff_user_ids: (stage.default_staff?.user_ids || []).map(String),
       stage_staff_primary_user_id: stage.default_staff?.primary_user_id ? String(stage.default_staff.primary_user_id) : '',
@@ -1637,6 +1673,27 @@ export default function ProductionPipelineSettingsPage() {
                       Bỏ trigger SX
                     </button>
                     <span className="w-px h-6 bg-gray-300 mx-1" />
+                    <select
+                      value={bulkDeadlineGroup}
+                      onChange={(e) => setBulkDeadlineGroup(e.target.value)}
+                      className="h-8 px-2 border rounded-lg text-xs bg-white border-indigo-200 max-w-[200px]"
+                      title="Nhóm deadline theo kế hoạch lắp (thùng / hoàn thiện / đóng gói)"
+                    >
+                      <option value="">— Nhóm deadline —</option>
+                      {SX_DEADLINE_GROUPS.map((g) => (
+                        <option key={g.value} value={g.value}>{g.label}</option>
+                      ))}
+                      <option value="__clear__">Không thuộc nhóm</option>
+                    </select>
+                    <button
+                      type="button"
+                      onClick={bulkSetDeadlineGroup}
+                      disabled={bulkSaving || !bulkDeadlineGroup}
+                      className="h-8 px-3 bg-indigo-700 text-white rounded-lg text-xs font-semibold hover:bg-indigo-800 disabled:opacity-50 cursor-pointer"
+                    >
+                      Gán nhóm DL
+                    </button>
+                    <span className="w-px h-6 bg-gray-300 mx-1" />
                     <details className="relative">
                       <summary className="h-8 px-2 inline-flex items-center text-[11px] text-gray-500 hover:text-gray-700 cursor-pointer list-none">
                         Nâng cao ▾
@@ -1688,7 +1745,7 @@ export default function ProductionPipelineSettingsPage() {
                 )}
                 {bulkSelected.size === 0 && (
                   <span className="text-[11px] text-gray-500">
-                    Tick các cột → <strong>chuyển phân loại</strong> (Tủ bếp, Cánh kính, …) hoặc <strong>đặt Trigger SX</strong> (CRM tự nhảy về cột Sản xuất khi project chạm cột trigger).
+                    Tick các cột → <strong>chuyển phân loại</strong>, <strong>Trigger SX</strong>, hoặc <strong>gán nhóm deadline</strong> (Thùng / Hoàn thiện / Đóng gói).
                   </span>
                 )}
               </div>
@@ -1696,13 +1753,42 @@ export default function ProductionPipelineSettingsPage() {
           })()}
 
           <div className="border-t">
+            <div className="px-4 py-2 bg-slate-50 border-b text-[10px] text-slate-600 leading-snug">
+              <p className="font-semibold text-slate-800 mb-1">Nhóm deadline (theo kế hoạch từ ngày lắp)</p>
+              <div className="flex flex-wrap gap-1.5">
+                {SX_DEADLINE_GROUPS.map((g) => (
+                  <span key={g.value} className={`inline-flex items-center px-1.5 py-0.5 rounded border font-medium ${g.className}`} title={g.hint}>
+                    {g.shortLabel}
+                  </span>
+                ))}
+              </div>
+              <p className="mt-1 text-slate-500">
+                Gán cột vào Thùng / Hoàn thiện / Đóng gói (hoặc Kế hoạch) để biết deadline thuộc công đoạn nào.
+              </p>
+            </div>
             {sorted.map((s, i) => {
               const isIntake = s.bucket_slug === INTAKE;
               const isDragging = draggingId === s.id;
               const isDragOver = dragOverId === s.id && draggingId && draggingId !== s.id;
+              const groupMeta = !isIntake ? sxDeadlineGroupMeta(s.deadline_group) : null;
+              const prevGroup = i > 0 && sorted[i - 1]?.bucket_slug !== INTAKE
+                ? (sorted[i - 1]?.deadline_group || '')
+                : null;
+              const curGroup = isIntake ? null : (s.deadline_group || '');
+              const showGroupHeader = !isIntake && (i === 0 || sorted[i - 1]?.bucket_slug === INTAKE || prevGroup !== curGroup);
               return (
+                <div key={s.id}>
+                  {showGroupHeader ? (
+                    <div className={`px-4 py-1.5 border-b text-[10px] font-bold uppercase tracking-wide ${
+                      groupMeta
+                        ? `${groupMeta.headerClassName} border`
+                        : 'bg-gray-100 text-gray-600 border-gray-200'
+                    }`}>
+                      {groupMeta ? `Nhóm: ${groupMeta.label}` : 'Chưa gán nhóm deadline'}
+                      {groupMeta ? <span className="ml-2 font-normal normal-case opacity-80">— {groupMeta.hint}</span> : null}
+                    </div>
+                  ) : null}
                 <div
-                  key={s.id}
                   onDragOver={(e) => handleDragOver(e, s)}
                   onDragLeave={() => setDragOverId(null)}
                   onDrop={(e) => handleDrop(e, s)}
@@ -1827,6 +1913,11 @@ export default function ProductionPipelineSettingsPage() {
                           ⏰ DL bắt buộc
                         </span>
                       )}
+                      {!isIntake && groupMeta && (
+                        <span className={`border px-1.5 py-0.5 rounded font-medium ${groupMeta.className}`}>
+                          📅 {groupMeta.shortLabel}
+                        </span>
+                      )}
                       {!isIntake && s.auto_add_members_on_enter && (
                         <span className="bg-indigo-50 text-indigo-800 border border-indigo-200 px-1.5 py-0.5 rounded font-medium">
                           👥 Tự thêm NV
@@ -1928,6 +2019,7 @@ export default function ProductionPipelineSettingsPage() {
                     </button>
                   </div>
                   </div>
+                </div>
                 </div>
               );
             })}
@@ -2063,6 +2155,20 @@ export default function ProductionPipelineSettingsPage() {
                       />
                       <Clock className="h-3.5 w-3.5 text-rose-600" /> Bắt buộc đặt deadline khi kéo thẻ tới cột
                     </label>
+                    <div className="flex items-center gap-2 text-xs text-indigo-950 bg-indigo-50 px-2 py-1 rounded-lg border border-indigo-200">
+                      <span className="font-semibold whitespace-nowrap">Nhóm deadline</span>
+                      <select
+                        value={form.deadline_group || ''}
+                        onChange={(e) => setForm((f) => ({ ...f, deadline_group: e.target.value }))}
+                        className="h-7 px-2 border border-indigo-200 rounded-md text-xs bg-white min-w-[11rem]"
+                        title="Gắn cột với công đoạn kế hoạch lắp: thùng / hoàn thiện / đóng gói"
+                      >
+                        <option value="">— Chưa gán —</option>
+                        {SX_DEADLINE_GROUPS.map((g) => (
+                          <option key={g.value} value={g.value}>{g.label}</option>
+                        ))}
+                      </select>
+                    </div>
                     <label className="flex items-center gap-2 text-xs cursor-pointer text-amber-900 bg-amber-50 px-2 py-1 rounded-lg border border-amber-200">
                       <input
                         type="checkbox"

@@ -43,6 +43,23 @@ async function loadCrmDealsForProjectDetail(projectId) {
   );
   if (rows.length) return rows;
 
+  // Multi-SX: project phụ gắn qua crm_deal_projects
+  try {
+    const { data: links } = await supabase
+      .from('crm_deal_projects')
+      .select('deal_id')
+      .eq('project_id', projectId);
+    const junctionIds = [...new Set((links || []).map((r) => r.deal_id).filter(Boolean))];
+    if (junctionIds.length) {
+      rows = await queryCrmDealsEmbed((q) => q.in('id', junctionIds));
+      if (rows.length) return rows;
+    }
+  } catch (e) {
+    if (!String(e.message || '').includes('crm_deal_projects')) {
+      console.warn('[workshopCrmDeals] junction detail:', e.message);
+    }
+  }
+
   let orderRows = [];
   try {
     const { data, error } = await supabase
@@ -119,6 +136,60 @@ async function attachCrmDealsToProjects(projects, opts = {}) {
     if (!pid) continue;
     if (!byProject.has(pid)) byProject.set(pid, []);
     byProject.get(pid).push(row);
+  }
+
+  // Multi-SX: project phụ chỉ có trong crm_deal_projects → bổ sung deal theo junction
+  const missingIds = projectIds
+    .map(String)
+    .filter((pid) => {
+      if ((byProject.get(pid) || []).length) return false;
+      const existing = list.find((p) => String(p?.id) === pid)?.crm_deals;
+      return !(Array.isArray(existing) && existing.length);
+    });
+  if (missingIds.length) {
+    try {
+      for (let i = 0; i < missingIds.length; i += CHUNK) {
+        const chunk = missingIds.slice(i, i + CHUNK);
+        const { data: links, error: linkErr } = await supabase
+          .from('crm_deal_projects')
+          .select('deal_id, project_id')
+          .in('project_id', chunk);
+        if (linkErr) throw linkErr;
+        const dealIds = [...new Set((links || []).map((r) => r.deal_id).filter(Boolean))];
+        if (!dealIds.length) continue;
+        let deals = [];
+        try {
+          const { data, error } = await supabase
+            .from('crm_leads')
+            .select(embedWithProject)
+            .in('id', dealIds)
+            .eq('type', 'deal');
+          if (error) throw error;
+          deals = data || [];
+        } catch (e) {
+          console.warn('[workshopCrmDeals] junction embed:', e.message);
+          const { data } = await supabase
+            .from('crm_leads')
+            .select(minWithProject)
+            .in('id', dealIds)
+            .eq('type', 'deal');
+          deals = data || [];
+        }
+        const dealById = new Map(deals.map((d) => [String(d.id), d]));
+        for (const link of links || []) {
+          const pid = link.project_id != null ? String(link.project_id) : null;
+          const deal = link.deal_id ? dealById.get(String(link.deal_id)) : null;
+          if (!pid || !deal) continue;
+          if (!byProject.has(pid)) byProject.set(pid, []);
+          const arr = byProject.get(pid);
+          if (!arr.some((d) => String(d.id) === String(deal.id))) arr.push(deal);
+        }
+      }
+    } catch (e) {
+      if (!String(e.message || '').includes('crm_deal_projects')) {
+        console.warn('[workshopCrmDeals] multi-sx junction:', e.message);
+      }
+    }
   }
 
   return list.map((p) => ({

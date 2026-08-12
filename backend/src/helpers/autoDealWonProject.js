@@ -8,10 +8,38 @@ const { validateProductionCompanyId } = require('./productionCompanyGate');
 const { ensureDealLeadDocumentsForModuleTransition } = require('./ensureDealLeadDocumentsForModuleTransition');
 const { applyProductionTemplateToFulfillmentLead } = require('./projectOrderFulfillment');
 const { postSxTransferMentionComment } = require('./dealCommentNotifications');
+const { subtractCalendarDays, parseDateOnlyParts } = require('./projectDeliveryDates');
 
 /**
- * Chuẩn hóa + dedupe targets: [{ production_company_id, workshop_type_id }]
+ * Chuẩn hóa ngày lắp đặt từ body / opts → patch projects.
  */
+function resolveProjectDatesFromOpts(projectDates) {
+  const raw = projectDates?.delivery_date ?? projectDates?.production_deadline ?? null;
+  if (raw == null || raw === '') return null;
+  if (!parseDateOnlyParts(raw)) return null;
+  const delivery = String(raw).trim().slice(0, 10);
+  const finish = projectDates?.production_finish_date != null && projectDates.production_finish_date !== ''
+    ? String(projectDates.production_finish_date).trim().slice(0, 10)
+    : subtractCalendarDays(delivery, 2);
+  return {
+    delivery_date: delivery,
+    production_deadline: delivery,
+    production_finish_date: finish || null,
+  };
+}
+
+/** Ưu tiên ngày trên từng target xưởng; fallback body chung. */
+function resolveProjectDatesForTarget(target, fallbackProjectDates = null) {
+  if (target?.delivery_date || target?.production_deadline) {
+    return resolveProjectDatesFromOpts({
+      delivery_date: target.delivery_date || target.production_deadline,
+      production_deadline: target.production_deadline || target.delivery_date,
+      production_finish_date: target.production_finish_date || null,
+    });
+  }
+  return resolveProjectDatesFromOpts(fallbackProjectDates);
+}
+
 function normalizeProductionTargets(targets, legacyCompanyId, legacyWorkshopTypeId) {
   const raw = Array.isArray(targets) && targets.length
     ? targets
@@ -25,7 +53,12 @@ function normalizeProductionTargets(targets, legacyCompanyId, legacyWorkshopType
     const key = `${String(cid)}::${wtid ? String(wtid) : ''}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push({ production_company_id: String(cid), workshop_type_id: wtid ? String(wtid) : null });
+    const datePatch = resolveProjectDatesForTarget(t, null);
+    out.push({
+      production_company_id: String(cid),
+      workshop_type_id: wtid ? String(wtid) : null,
+      ...(datePatch || {}),
+    });
   }
   return out;
 }
@@ -416,6 +449,7 @@ async function autoCreateProjectFromWonDeal({
   workshopTypeId = null,
   targets = null,
   mode = 'create',
+  projectDates = null,
 }) {
   try {
     const normalized = normalizeProductionTargets(targets, productionCompanyId, workshopTypeId);
@@ -432,6 +466,7 @@ async function autoCreateProjectFromWonDeal({
         mode: 'create',
         nameSuffix: null,
         isMultiBatch: false,
+        projectDates: resolveProjectDatesForTarget(normalized[0], projectDates),
       });
     }
 
@@ -450,6 +485,7 @@ async function autoCreateProjectFromWonDeal({
       isMultiBatch: true,
       skipCrmTaskImport: createMode === 'additional',
       skipOrderSync: createMode === 'additional',
+      projectDates: resolveProjectDatesForTarget(t, projectDates),
     });
 
     const pushOk = (one, t, isFirst) => {
@@ -536,6 +572,7 @@ async function runAutoCreateProjectFromWonDeal({
   isMultiBatch = false,
   skipCrmTaskImport = false,
   skipOrderSync = false,
+  projectDates = null,
 }) {
   const coCheck = await validateProductionCompanyId(productionCompanyId);
   if (!coCheck.ok) {
@@ -634,6 +671,14 @@ async function runAutoCreateProjectFromWonDeal({
     : (deal.title || 'Dự án mới');
 
   const yr = new Date().getFullYear();
+  const datePatch = resolveProjectDatesFromOpts(projectDates);
+  let sxReceptionDate = null;
+  try {
+    const { resolveSxReceptionDateForCompany } = require('./sxWorkshopSchedule');
+    sxReceptionDate = await resolveSxReceptionDateForCompany(coCheck.company.id, Date.now());
+  } catch (recvErr) {
+    console.warn('[auto-project] sx_reception_date:', recvErr.message);
+  }
   const baseRow = (code) => ({
     code,
     name: projectName,
@@ -652,6 +697,8 @@ async function runAutoCreateProjectFromWonDeal({
     sales_person_id: deal.assigned_to || deal.lead_owner_id || userId,
     consult_date: new Date().toISOString(),
     ...(validatedWorkshopTypeId ? { workshop_type_id: validatedWorkshopTypeId } : {}),
+    ...(datePatch || {}),
+    ...(sxReceptionDate ? { sx_reception_date: sxReceptionDate } : {}),
   });
 
   let project;
@@ -675,6 +722,19 @@ async function runAutoCreateProjectFromWonDeal({
       omitCreatedFromSx = true;
       continue;
     }
+    if (/production_finish_date/i.test(String(projErr.message || '')) && row.production_finish_date !== undefined) {
+      delete row.production_finish_date;
+      const { data: data2, error: err2 } = await supabase.from('projects').insert(row).select('*').single();
+      if (!err2) {
+        project = data2;
+        break;
+      }
+      lastInsertErr = err2;
+    }
+    if (/sx_reception_date/i.test(String(projErr.message || '')) && row.sx_reception_date !== undefined) {
+      delete row.sx_reception_date;
+      continue;
+    }
     if (isPostgresUniqueViolation(projErr)) continue;
     throw projErr;
   }
@@ -682,6 +742,25 @@ async function runAutoCreateProjectFromWonDeal({
 
   const projectId = project.id;
   const becomePrimary = !isAdditional && !deal.project_id;
+
+  // Gán cột Kanban SX đầu tiên của xưởng (đặc biệt quan trọng với project phụ multi-SX —
+  // nếu null + status consulting sẽ bị lọc khỏi board nếu không nằm trong wonIds).
+  try {
+    const { getResolvedKanbanStages, firstSxPipelineColumnId } = require('./workshopKanban');
+    const wkt = validatedWorkshopTypeId || 'none';
+    const { stages } = await getResolvedKanbanStages(String(coCheck.company.id), { workshopTypeId: wkt });
+    const firstCol = firstSxPipelineColumnId(stages);
+    if (firstCol && !String(firstCol).startsWith('__fb_')) {
+      const { error: colErr } = await supabase
+        .from('projects')
+        .update({ sx_kanban_column_id: firstCol, updated_at: new Date().toISOString() })
+        .eq('id', projectId);
+      if (colErr) console.warn('[auto-project] set sx_kanban_column_id:', colErr.message);
+      else project.sx_kanban_column_id = firstCol;
+    }
+  } catch (colAssignErr) {
+    console.warn('[auto-project] assign kanban column:', colAssignErr.message);
+  }
 
   const [hopRes, flowStepsRes] = await Promise.all([
     supabase
@@ -843,8 +922,9 @@ async function runAutoCreateProjectFromWonDeal({
     }
   }
 
-  // Additional đơn lẻ: gộp lại NV mọi xưởng (multi-batch sync ở wrapper).
-  if (!becomePrimary && !isMultiBatch) {
+  // Đồng bộ tab Thành viên từ roster xưởng (primary + additional đơn lẻ).
+  // Multi-batch: wrapper gọi một lần sau khi tạo xong mọi dự án.
+  if (!isMultiBatch) {
     try {
       const { ensureLeadMembersFromProjectStaff } = require('./productionWorkshopTypeStaff');
       await ensureLeadMembersFromProjectStaff(dealId);

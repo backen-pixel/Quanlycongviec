@@ -1852,6 +1852,44 @@ export default function CRMDashboard() {
     return m;
   }, [allLeads, allDeals]);
 
+  /** Deal gốc đã có đơn phát sinh — tô hover Kanban. */
+  const [spawnSourceIdsFromApi, setSpawnSourceIdsFromApi] = useState(() => new Set());
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const params = {};
+        if (kanbanEffectiveCompanyId) params.company_id = kanbanEffectiveCompanyId;
+        const { data } = await api.get('/crm/deals/spawn-source-ids', { params });
+        if (cancelled) return;
+        setSpawnSourceIdsFromApi(new Set((data?.ids || []).map((id) => String(id))));
+      } catch {
+        if (!cancelled) setSpawnSourceIdsFromApi(new Set());
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [kanbanEffectiveCompanyId, allDeals.length]);
+
+  const spawnSourceIdSet = useMemo(() => {
+    const s = new Set(spawnSourceIdsFromApi);
+    for (const d of allDeals || []) {
+      if (d?.source_customer_deal_id) s.add(String(d.source_customer_deal_id));
+    }
+    return s;
+  }, [spawnSourceIdsFromApi, allDeals]);
+
+  /** source_customer_deal_id → [child deal ids] — để hover nổi cả nhóm gốc + phát sinh. */
+  const spawnChildrenBySourceId = useMemo(() => {
+    const m = new Map();
+    for (const d of allDeals || []) {
+      const sid = d?.source_customer_deal_id ? String(d.source_customer_deal_id) : '';
+      if (!sid) continue;
+      if (!m.has(sid)) m.set(sid, []);
+      m.get(sid).push(String(d.id));
+    }
+    return m;
+  }, [allDeals]);
+
   const pipelinesForDeleteCheck = useMemo(
     () => (pipelinesAll.length ? pipelinesAll : pipelines),
     [pipelinesAll, pipelines],
@@ -6091,6 +6129,7 @@ export default function CRMDashboard() {
       targets = [{
         companyId: targets[0]?.companyId || dealWonProductionCompanyId,
         workshopTypeId: tid,
+        deliveryDate: targets[0]?.deliveryDate || targets[0]?.delivery_date || '',
       }];
     }
     const err = validateSxTargets(targets);
@@ -6103,11 +6142,19 @@ export default function CRMDashboard() {
     dealWonPendingRef.current = false;
     setDealWonProductionError('');
     const apiTargets = sxTargetsToApiPayload(targets);
+    const firstDated = apiTargets.find((t) => t.delivery_date) || null;
     const nextExtra = {
       ...ctx.extraData,
       production_company_id: apiTargets[0]?.production_company_id,
       workshop_type_id: apiTargets[0]?.workshop_type_id,
       targets: apiTargets,
+      ...(firstDated
+        ? {
+          delivery_date: firstDated.delivery_date,
+          production_deadline: firstDated.production_deadline,
+          production_finish_date: firstDated.production_finish_date,
+        }
+        : {}),
     };
     clearDealWonConfirmTimer();
     setDealWonAckChecked(false);
@@ -8399,6 +8446,8 @@ export default function CRMDashboard() {
               columnScrollMode={kanbanColumnScrollMode}
               searchHighlightId={kanbanSearchHighlightId}
               scopedCompanyFilter={!!filterCompany}
+              spawnSourceIdSet={spawnSourceIdSet}
+              spawnChildrenBySourceId={spawnChildrenBySourceId}
             />
           </div>
           )}
@@ -8701,7 +8750,7 @@ export default function CRMDashboard() {
           onClick={closeDealWonProductionModal}
         >
           <div
-            className="bg-white rounded-2xl shadow-xl max-w-md w-full max-h-[90vh] flex flex-col"
+            className="bg-white rounded-2xl shadow-xl max-w-4xl w-full max-h-[90vh] flex flex-col"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="p-5 pb-3 space-y-3 shrink-0">
@@ -8740,6 +8789,7 @@ export default function CRMDashboard() {
                 leadTypeRow={dashWonLeadTypeRow}
                 kind={dashWonLeadKind}
                 accent="teal"
+                showDates
                 disabled={dealWonConfirmWait > 0}
                 initialRows={dealWonSxTargets.length
                   ? dealWonSxTargets
@@ -9776,6 +9826,10 @@ const KanbanStageCard = memo(function KanbanStageCard({
   searchHighlightId = null,
   boardScrollRef = null,
   onColumnVisibilityChange,
+  spawnSourceIdSet = null,
+  spawnHighlightIds = null,
+  onSpawnGroupEnter = null,
+  onSpawnGroupLeave = null,
 }) {
   const [isOverColumn, setIsOverColumn] = useState(false);
   const columnRef = useRef(null);
@@ -9918,12 +9972,18 @@ const KanbanStageCard = memo(function KanbanStageCard({
       onOpenCustomModuleTransfer={onOpenCustomModuleTransfer}
       customTransfers={customStageTransfers?.[String(stage.id)] || []}
       searchHighlighted={String(searchHighlightId) === String(item.id)}
+      isSpawnedAdditional={!!item.source_customer_deal_id}
+      isSpawnSourceDeal={!!(spawnSourceIdSet && spawnSourceIdSet.has(String(item.id)))}
+      spawnGroupHighlighted={!!(spawnHighlightIds && spawnHighlightIds.has(String(item.id)))}
+      onSpawnGroupEnter={onSpawnGroupEnter}
+      onSpawnGroupLeave={onSpawnGroupLeave}
     />
   ), [
     stage, columnTheme.accent, onMoveStage, pipelineStages, pipelineType, mergeSelectedIds,
     onToggleMergeSelect, compact, showCompanyOnCard, leadTypes, kpiLedgerPeriodStart,
     onOpenKanbanComment, onTogglePin, onToggleInteracted, onOpenDeadline, onSaveEstimatedValue,
     onOpenSxTransfer, onOpenCustomModuleTransfer, customStageTransfers, searchHighlightId,
+    spawnSourceIdSet, spawnHighlightIds, onSpawnGroupEnter, onSpawnGroupLeave,
   ]);
 
   return (
@@ -10047,7 +10107,7 @@ const KanbanStageCard = memo(function KanbanStageCard({
 });
 
 // Kanban Item Card — meta · tiêu đề · ngữ cảnh · giá trị · khách · footer
-const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveStage, pipelineStages, pipelineType, mergeSelectedIds, onToggleMergeSelect, compact, showCompanyOnCard, leadTypes, kpiLedgerPeriodStart, onOpenKanbanComment, onTogglePin, onToggleInteracted, onOpenDeadline, onSaveEstimatedValue, onOpenSxTransfer, onOpenCustomModuleTransfer, customTransfers = [], searchHighlighted = false }) {
+const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveStage, pipelineStages, pipelineType, mergeSelectedIds, onToggleMergeSelect, compact, showCompanyOnCard, leadTypes, kpiLedgerPeriodStart, onOpenKanbanComment, onTogglePin, onToggleInteracted, onOpenDeadline, onSaveEstimatedValue, onOpenSxTransfer, onOpenCustomModuleTransfer, customTransfers = [], searchHighlighted = false, isSpawnedAdditional = false, isSpawnSourceDeal = false, spawnGroupHighlighted = false, onSpawnGroupEnter = null, onSpawnGroupLeave = null }) {
   const navigate = useNavigate();
   const cardRef = useRef(null);
   const [editingValue, setEditingValue] = useState(false);
@@ -10281,15 +10341,37 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
   const contextMetaLine = [companyLabel, regionLabel].filter(Boolean).join(' · ');
   const hasContextChips = !!(sxVcChip || orderDateChip || deliveryDateChip);
   const createdDateLabel = item.created_at ? formatDate(item.created_at) : null;
+  const spawnHoverKind = isSpawnedAdditional ? 'spawned' : (isSpawnSourceDeal ? 'source' : null);
+  const spawnHoverTitle = spawnHoverKind === 'spawned'
+    ? 'Deal phát sinh — hover để nổi cả nhóm theo màu deal gốc'
+    : spawnHoverKind === 'source'
+      ? 'Deal gốc — hover để nổi các đơn hàng phát sinh cùng màu'
+      : null;
+  // Cả nhóm (gốc + phát sinh) dùng cùng màu deal gốc khi highlight.
+  const spawnLitClass = spawnGroupHighlighted
+    ? '!bg-violet-50 !border-violet-400 shadow-md shadow-violet-200/80 ring-1 ring-violet-300 -translate-y-0.5 z-10'
+    : (spawnHoverKind
+      ? 'hover:!bg-violet-50 hover:!border-violet-400 hover:shadow-violet-200/70 hover:ring-1 hover:ring-violet-300/80'
+      : '');
 
   return (
     <div
       ref={cardRef}
       data-crm-pipeline-card={item.id}
       data-tour="kanban-card"
+      data-spawn-kind={spawnHoverKind || undefined}
       draggable={!dealDragLocked}
       onDragStart={handleDragStart}
-      title={dealDragLocked ? 'Cột Sản xuất/Vận chuyển trên CRM — kéo về Thắng hoặc giai đoạn trước; tiến độ xưởng/VC qua badge' : undefined}
+      onMouseEnter={() => {
+        if (spawnHoverKind && typeof onSpawnGroupEnter === 'function') onSpawnGroupEnter(item);
+      }}
+      onMouseLeave={() => {
+        if (spawnHoverKind && typeof onSpawnGroupLeave === 'function') onSpawnGroupLeave();
+      }}
+      title={[
+        dealDragLocked ? 'Cột Sản xuất/Vận chuyển trên CRM — kéo về Thắng hoặc giai đoạn trước; tiến độ xưởng/VC qua badge' : '',
+        spawnHoverTitle || '',
+      ].filter(Boolean).join('\n') || undefined}
       onClick={(ev) => {
         if (
           ev.target.closest?.('[data-kanban-flag-btn]')
@@ -10305,16 +10387,30 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
         }
         openLeadDetail();
       }}
-      className={`relative rounded-lg !bg-white transition-[box-shadow,transform,z-index,background-color,border-color] duration-150 group/card hover:-translate-y-0.5 hover:shadow-md ${KANBAN_PIPELINE_CARD_CLASS} ${
+      className={`relative rounded-lg !bg-white transition-[box-shadow,transform,z-index,background-color,border-color] duration-150 group/card hover:-translate-y-0.5 hover:shadow-md ${KANBAN_PIPELINE_CARD_CLASS} ${spawnLitClass} ${
         searchHighlighted ? `${CRM_KANBAN_SEARCH_HIT_TW} ${CRM_KANBAN_SEARCH_HIT_CLASS}` : 'overflow-hidden'
       } ${
         dealDragLocked ? 'cursor-default' : 'cursor-pointer'
       } ${stage?.is_lost && item.lost_reason ? 'hover:z-20' : ''} ${selectedForMerge ? 'ring-2 ring-amber-400 ring-offset-1' : ''}`}
       style={{
-        backgroundColor: '#ffffff',
+        backgroundColor: spawnGroupHighlighted ? '#f5f3ff' : '#ffffff',
         ...getKanbanPipelineCardBorderStyle(columnAccent, cardBorderTone),
       }}
     >
+      {spawnHoverKind ? (
+        <span
+          className={`pointer-events-none absolute top-1 left-1.5 z-20 transition-opacity text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded border shadow-sm ${
+            spawnGroupHighlighted ? 'opacity-100' : 'opacity-0 group-hover/card:opacity-100'
+          } ${
+            spawnHoverKind === 'spawned'
+              ? 'bg-violet-500 text-white border-violet-600'
+              : 'bg-violet-700 text-white border-violet-800'
+          }`}
+        >
+          {spawnHoverKind === 'spawned' ? 'Phát sinh' : 'Deal gốc'}
+        </span>
+      ) : null}
+
       {typeof item.kpi_ledger_month_net === 'number' && !stage?.is_lost && (
         <KpiKanbanLedgerBadge
           net={item.kpi_ledger_month_net}
@@ -10629,11 +10725,16 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
   && prev.item?.is_new_for_current_user === next.item?.is_new_for_current_user
   && prev.item?.kpi_ledger_month_net === next.item?.kpi_ledger_month_net
   && prev.item?.crm_next_open_task_deadline === next.item?.crm_next_open_task_deadline
+  && prev.item?.source_customer_deal_id === next.item?.source_customer_deal_id
   && prev.stage?.id === next.stage?.id
   && prev.compact === next.compact
   && prev.pipelineType === next.pipelineType
   && prev.showCompanyOnCard === next.showCompanyOnCard
   && prev.kpiLedgerPeriodStart === next.kpiLedgerPeriodStart
+  && prev.isSpawnedAdditional === next.isSpawnedAdditional
+  && prev.isSpawnSourceDeal === next.isSpawnSourceDeal
+  && prev.spawnGroupHighlighted === next.spawnGroupHighlighted
+  && prev.searchHighlighted === next.searchHighlighted
   && (prev.mergeSelectedIds || []).length === (next.mergeSelectedIds || []).length
   && (prev.mergeSelectedIds || []).some((x) => String(x) === String(prev.item?.id))
     === (next.mergeSelectedIds || []).some((x) => String(x) === String(next.item?.id))
@@ -10670,12 +10771,52 @@ function KanbanView({
   searchHighlightId = null,
   /** true = đang lọc 1 công ty; false = «Tất cả công ty» (nhiều pipeline → cần overscan lớn hơn). */
   scopedCompanyFilter = true,
+  spawnSourceIdSet = null,
+  spawnChildrenBySourceId = null,
 }) {
   const kanbanHScrollRef = useRef(null);
   const loadMoreCooldownRef = useRef(false);
   const visibleStageIdsRef = useRef(new Set());
   const visibleLoadTimerRef = useRef(null);
   const perColumnScroll = columnScrollMode === 'per-column';
+  const [spawnHighlightIds, setSpawnHighlightIds] = useState(null);
+  const spawnHighlightLeaveTimerRef = useRef(null);
+
+  const resolveSpawnGroupIds = useCallback((item) => {
+    if (!item?.id) return null;
+    const id = String(item.id);
+    const sourceId = item.source_customer_deal_id
+      ? String(item.source_customer_deal_id)
+      : (spawnSourceIdSet?.has(id) ? id : null);
+    if (!sourceId) return null;
+    const children = spawnChildrenBySourceId?.get(sourceId) || [];
+    return new Set([sourceId, ...children.map(String)]);
+  }, [spawnSourceIdSet, spawnChildrenBySourceId]);
+
+  const handleSpawnGroupEnter = useCallback((item) => {
+    if (spawnHighlightLeaveTimerRef.current) {
+      window.clearTimeout(spawnHighlightLeaveTimerRef.current);
+      spawnHighlightLeaveTimerRef.current = null;
+    }
+    const group = resolveSpawnGroupIds(item);
+    setSpawnHighlightIds(group);
+  }, [resolveSpawnGroupIds]);
+
+  const handleSpawnGroupLeave = useCallback(() => {
+    if (spawnHighlightLeaveTimerRef.current) {
+      window.clearTimeout(spawnHighlightLeaveTimerRef.current);
+    }
+    spawnHighlightLeaveTimerRef.current = window.setTimeout(() => {
+      spawnHighlightLeaveTimerRef.current = null;
+      setSpawnHighlightIds(null);
+    }, 60);
+  }, []);
+
+  useEffect(() => () => {
+    if (spawnHighlightLeaveTimerRef.current) {
+      window.clearTimeout(spawnHighlightLeaveTimerRef.current);
+    }
+  }, []);
   const pipelineStages = useMemo(
     () => (quickMoveStages?.length ? quickMoveStages : (pipeline || []).map(({ items, ...stage }) => stage)),
     [quickMoveStages, pipeline],
@@ -10914,6 +11055,10 @@ function KanbanView({
               onColumnVisibilityChange={handleColumnVisibilityChange}
               searchHighlightId={searchHighlightId}
               boardScrollRef={kanbanHScrollRef}
+              spawnSourceIdSet={spawnSourceIdSet}
+              spawnHighlightIds={spawnHighlightIds}
+              onSpawnGroupEnter={handleSpawnGroupEnter}
+              onSpawnGroupLeave={handleSpawnGroupLeave}
             />
           );
           if (!virtualItem) return stageCard;

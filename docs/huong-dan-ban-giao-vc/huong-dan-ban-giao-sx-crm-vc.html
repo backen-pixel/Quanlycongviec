@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <title>Hướng dẫn — Bàn giao SX → CRM → VC/LĐ</title>
+  <style>
+    @page { size: A4; margin: 14mm 12mm; }
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Segoe UI", system-ui, sans-serif;
+      color: #0f172a;
+      line-height: 1.45;
+      font-size: 11.5px;
+      margin: 0;
+      padding: 0;
+    }
+    h1 {
+      font-size: 20px;
+      margin: 0 0 6px;
+      color: #0f172a;
+    }
+    .meta {
+      color: #64748b;
+      font-size: 11px;
+      margin-bottom: 16px;
+    }
+    h2 {
+      font-size: 14px;
+      margin: 18px 0 8px;
+      padding-bottom: 4px;
+      border-bottom: 2px solid #ea580c;
+      color: #9a3412;
+      page-break-after: avoid;
+    }
+    h3 {
+      font-size: 12.5px;
+      margin: 12px 0 6px;
+      color: #1e293b;
+      page-break-after: avoid;
+    }
+    p, li { margin: 4px 0; }
+    ol, ul { padding-left: 18px; margin: 6px 0; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 8px 0 12px;
+      font-size: 11px;
+    }
+    th, td {
+      border: 1px solid #cbd5e1;
+      padding: 6px 8px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th { background: #fff7ed; color: #9a3412; }
+    .shot {
+      margin: 8px 0 14px;
+      page-break-inside: avoid;
+    }
+    .shot img {
+      width: 100%;
+      max-height: 340px;
+      object-fit: contain;
+      object-position: top;
+      border: 1px solid #e2e8f0;
+      border-radius: 6px;
+      background: #f8fafc;
+    }
+    .cap {
+      font-size: 10px;
+      color: #64748b;
+      margin-top: 4px;
+      font-style: italic;
+    }
+    .box {
+      background: #fff7ed;
+      border: 1px solid #fdba74;
+      border-radius: 8px;
+      padding: 10px 12px;
+      margin: 8px 0 12px;
+    }
+    .check { margin: 3px 0; padding-left: 2px; }
+    .checklist-wrap {
+      page-break-before: always;
+      break-before: page;
+      border: 1px solid #fdba74;
+      background: #fffbeb;
+      border-radius: 10px;
+      padding: 14px 16px 16px;
+      margin: 12px 0 8px;
+    }
+    .checklist-wrap h2 {
+      margin-top: 0;
+      border-bottom-color: #ea580c;
+    }
+    .checklist-wrap h3 {
+      margin: 10px 0 4px;
+      color: #9a3412;
+      font-size: 12px;
+    }
+    .checklist-wrap .check {
+      font-size: 11.5px;
+      line-height: 1.5;
+    }
+    .flow {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin: 8px 0 12px;
+      font-weight: 600;
+      font-size: 11px;
+    }
+    .flow span {
+      background: #0f172a;
+      color: #fff;
+      padding: 5px 10px;
+      border-radius: 999px;
+    }
+    .flow .arr { background: transparent; color: #64748b; padding: 5px 2px; }
+    .footer {
+      margin-top: 20px;
+      padding-top: 8px;
+      border-top: 1px solid #e2e8f0;
+      color: #94a3b8;
+      font-size: 10px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Hướng dẫn — Bàn giao SX → CRM → VC/LĐ</h1>
+  <p class="meta">TuBep Pro · Form bàn giao qua bình luận deal · 05/08/2026</p>
+
+  <div class="flow">
+    <span>1. Xưởng SX</span><span class="arr">→</span>
+    <span>2. CRM Sale</span><span class="arr">→</span>
+    <span>3. Xác nhận 2 bên</span><span class="arr">→</span>
+    <span>4. Kanban VC/LĐ</span>
+  </div>
+
+  <h2>Mục đích</h2>
+  <div class="box">
+    Khi xưởng <strong>hoàn thành sản xuất</strong>, cần báo Sale CRM chọn công ty Vận chuyển/Lắp đặt và ngày giao–lắp.
+    Hệ thống tạo <strong>form bàn giao</strong> trên tab Bình luận của deal; sau khi Sale chọn công ty thì đơn vào module <strong>VC/LĐ</strong>.
+    Đủ 2 bên (Xưởng + VC/LĐ) xác nhận thì khóa lịch (3 sự kiện).
+  </div>
+
+  <h2>Tổng quan — mỗi bên làm gì</h2>
+  <table>
+    <thead>
+      <tr><th>Bên</th><th>Việc phải làm</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Xưởng SX</strong></td>
+        <td>Kéo thẻ vào cột badge <strong>→VC</strong> (VD: «Chờ giao hàng») hoặc bấm <strong>Bàn giao VC</strong></td>
+      </tr>
+      <tr>
+        <td><strong>Sale CRM</strong></td>
+        <td>Mở deal → tab <strong>Bình luận</strong> → chọn công ty VC/LĐ + ngày nhận hàng (+ lắp/địa chỉ) → <strong>Chọn &amp; bàn giao</strong></td>
+      </tr>
+      <tr>
+        <td><strong>VC/LĐ</strong></td>
+        <td>Xác nhận trên thẻ bàn giao (CRM) → nhận thẻ trên Kanban VC → kéo theo pipeline</td>
+      </tr>
+      <tr>
+        <td><strong>Xưởng (xác nhận)</strong></td>
+        <td>Người cấu hình xác nhận SX bấm trên thẻ; đủ 2 bên mới khóa lịch</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p class="meta">Deal test minh họa: <strong>DEAL-2026-1000</strong> / <strong>TB-2026-578</strong> · xưởng <strong>HCB</strong> · cột <strong>ĐƠN HÀNG ĐÃ CHUẨN BỊ XONG</strong>.</p>
+
+  <h2>Bước 1 — Xưởng SX: gửi yêu cầu bàn giao</h2>
+  <ol>
+    <li>Vào module <strong>Xưởng SX</strong> → Kanban, lọc xưởng <strong>HCB</strong> (+ phân loại <strong>Tủ bếp</strong> nếu cần).</li>
+    <li>Tìm cột <strong>ĐƠN HÀNG ĐÃ CHUẨN BỊ XONG</strong> (badge <strong>→VC</strong>).</li>
+    <li>Khi đơn sẵn sàng: <strong>kéo thẻ</strong> vào cột đó, hoặc bấm <strong>Chuyển cột nhanh</strong> / <strong>Bàn giao VC</strong>.</li>
+    <li>Hệ thống đăng thẻ «Bàn giao Vận chuyển / Lắp đặt» lên deal CRM — <strong>chưa</strong> bàn giao thật sang module VC.</li>
+  </ol>
+  <div class="shot">
+    <img src="../../frontend/public/release-notes/vc-hd-01-sx-cot-ban-giao.png" alt="Kanban SX HCB cột chuẩn bị xong" />
+    <div class="cap">Hình 1 — SX HCB: thẻ deal test ở KT KCS → chọn cột «ĐƠN HÀNG ĐÃ CHUẨN BỊ XONG» →VC</div>
+  </div>
+  <p>Cách khác: trên thẻ bấm <strong>Chuyển cột nhanh</strong> → chọn <strong>ĐƠN HÀNG ĐÃ CHUẨN BỊ XONG</strong>.</p>
+  <div class="shot">
+    <img src="../../frontend/public/release-notes/vc-hd-01b-sx-chuyen-cot-nhanh.png" alt="Menu chuyển cột nhanh HCB" />
+    <div class="cap">Hình 2 — Menu chuyển cột nhanh → chọn «ĐƠN HÀNG ĐÃ CHUẨN BỊ XONG»</div>
+  </div>
+
+  <h2>Bước 2 — CRM Sale: điền form bàn giao</h2>
+  <ol>
+    <li>Mở <strong>deal CRM</strong> liên kết dự án (thông báo hoặc badge SX trên deal).</li>
+    <li>Mở tab <strong>Bình luận</strong>.</li>
+    <li>Tìm thẻ cam <strong>Bàn giao Vận chuyển / Lắp đặt</strong>.</li>
+    <li>Chỉ <strong>Sale phụ trách deal</strong> thấy form đầy đủ. Điền:
+      <ul>
+        <li><strong>Công ty VC/LĐ</strong> (bắt buộc)</li>
+        <li><strong>Ngày nhận hàng</strong> (bắt buộc)</li>
+        <li>Ngày lắp đặt / địa chỉ (tuỳ chọn, thường tự điền)</li>
+        <li>Ghi chú</li>
+      </ul>
+    </li>
+    <li>Bấm <strong>Chọn &amp; bàn giao</strong> → bàn giao thật: dự án gắn công ty VC, badge VC trên deal, thẻ xuất hiện Kanban VC.</li>
+  </ol>
+  <div class="shot">
+    <img src="../../frontend/public/release-notes/vc-hd-02b-crm-form-sale-dien.png" alt="Form Sale CRM" />
+    <div class="cap">Hình 3 — Form Sale (DEAL-2026-1000): chọn công ty VC/LĐ, ngày nhận hàng, «Chọn &amp; bàn giao»</div>
+  </div>
+  <p>Nếu không phải Sale phụ trách, thẻ chỉ hiện thông báo (không có form chọn công ty):</p>
+  <div class="shot">
+    <img src="../../frontend/public/release-notes/vc-hd-02-crm-form-ban-giao.png" alt="Thẻ chỉ Sale phụ trách" />
+    <div class="cap">Hình 4 — Thẻ bàn giao khi không phải Sale phụ trách deal</div>
+  </div>
+
+  <h2>Bước 3 — Xác nhận 2 bên (khóa lịch)</h2>
+  <ul>
+    <li><strong>Xưởng</strong>: người cấu hình xác nhận SX bấm trên thẻ.</li>
+    <li><strong>VC/LĐ</strong>: người được cấu hình xác nhận bấm xác nhận trên thẻ.</li>
+    <li>Đủ 2 bên → hệ thống tạo <strong>3 sự kiện lịch</strong>: Giao hàng xưởng · VC tới nơi LĐ · Lắp đặt.</li>
+    <li>Deal CRM có badge <strong>Vận chuyển</strong> (VD: Chờ vận chuyển).</li>
+  </ul>
+  <div class="shot">
+    <img src="../../frontend/public/release-notes/vc-hd-03-crm-cho-xac-nhan.png" alt="CRM chờ xác nhận" />
+    <div class="cap">Hình 5 — CRM deal test: Xưởng đã xác nhận · chờ VC/LĐ · badge «Chờ vận chuyển»</div>
+  </div>
+
+  <h2>Bước 4 — Module VC/LĐ: nhận đơn &amp; kéo pipeline</h2>
+  <ol>
+    <li>Vào module <strong>Vận chuyển</strong> → chọn đúng <strong>công ty VC/LĐ</strong> đã bàn giao (VD: Phúc Đạt).</li>
+    <li>Thẻ mới nằm cột <strong>Chờ xác nhận</strong>, giữ mã dự án SX (VD: <strong>TB-2026-578</strong>).</li>
+    <li>NV VC/LĐ xác nhận trên form CRM (bước 3) rồi kéo thẻ theo pipeline: kiểm tra → vận chuyển → giao → lắp đặt.</li>
+  </ol>
+  <div class="shot">
+    <img src="../../frontend/public/release-notes/vc-hd-04-vc-kanban-cho-xac-nhan.png" alt="Kanban VC" />
+    <div class="cap">Hình 6 — Kanban VC Phúc Đạt: cột Chờ xác nhận có TB-2026-578 từ SX HCB</div>
+  </div>
+
+  <div class="checklist-wrap">
+    <h2>Checklist nhanh</h2>
+
+    <h3>Xưởng SX</h3>
+    <div class="check">☐ Đơn đã đủ hàng / đóng gói</div>
+    <div class="check">☐ Kéo vào cột →VC hoặc bấm Bàn giao VC</div>
+    <div class="check">☐ Không cần chọn công ty VC tại bước này</div>
+
+    <h3>Sale CRM</h3>
+    <div class="check">☐ Mở deal → tab Bình luận → thẻ bàn giao</div>
+    <div class="check">☐ Chọn công ty VC/LĐ + ngày nhận hàng</div>
+    <div class="check">☐ Bấm Chọn &amp; bàn giao</div>
+    <div class="check">☐ Theo dõi xác nhận VC/LĐ / sửa ngày nếu chưa khóa lịch</div>
+
+    <h3>VC/LĐ</h3>
+    <div class="check">☐ Xác nhận trên thẻ bàn giao (CRM)</div>
+    <div class="check">☐ Kiểm tra thẻ trên Kanban VC đúng công ty</div>
+    <div class="check">☐ Kéo cột theo tiến độ giao–lắp</div>
+
+    <h3>Admin</h3>
+    <div class="check">☐ Pipeline SX: bật cờ bàn giao VC trên đúng cột</div>
+    <div class="check">☐ Cấu hình người xác nhận giao hàng SX / VC trong cài đặt bàn giao</div>
+  </div>
+
+  <p class="footer">TuBep Pro · Xuất từ hướng dẫn tích hợp (Có gì mới) · Không thay thế thao tác trên hệ thống live.</p>
+</body>
+</html>

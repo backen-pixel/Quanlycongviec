@@ -204,6 +204,11 @@ function parseProductionStageKpiBody(b) {
   if (b.requires_deadline !== undefined) {
     out.requires_deadline = b.requires_deadline == null ? null : !!b.requires_deadline;
   }
+  if (b.deadline_group !== undefined) {
+    const raw = b.deadline_group == null || b.deadline_group === '' ? null : String(b.deadline_group).trim();
+    const allowed = new Set(['planning', 'cabinet', 'finishing', 'packing']);
+    out.deadline_group = raw && allowed.has(raw) ? raw : null;
+  }
   return out;
 }
 
@@ -483,6 +488,36 @@ async function loadDealDepositByProjectIds(projectIds) {
       map[String(d.project_id)] = d.deposit_amount;
     }
   }
+  // Multi-SX: project phụ → lấy deposit từ deal qua junction
+  const missing = ids.map(String).filter((id) => map[id] == null);
+  if (missing.length) {
+    try {
+      const { data: links } = await supabase
+        .from('crm_deal_projects')
+        .select('project_id, deal_id')
+        .in('project_id', missing);
+      const dealIds = [...new Set((links || []).map((r) => r.deal_id).filter(Boolean))];
+      if (dealIds.length) {
+        const { data: deals } = await supabase
+          .from('crm_leads')
+          .select('id, deposit_amount')
+          .eq('type', 'deal')
+          .in('id', dealIds);
+        const byDeal = new Map((deals || []).map((d) => [String(d.id), d.deposit_amount]));
+        for (const link of links || []) {
+          const pid = link.project_id != null ? String(link.project_id) : null;
+          if (!pid || map[pid] != null) continue;
+          if (link.deal_id && byDeal.has(String(link.deal_id))) {
+            map[pid] = byDeal.get(String(link.deal_id));
+          }
+        }
+      }
+    } catch (e) {
+      if (!String(e.message || '').includes('crm_deal_projects')) {
+        console.warn('[loadDealDepositByProjectIds] junction:', e.message);
+      }
+    }
+  }
   return map;
 }
 
@@ -622,6 +657,37 @@ async function loadCrmDealsSummaryForProductionProject(projectId) {
     rows = data || [];
   }
   if (rows.length) return rows;
+
+  // Multi-SX: project phụ gắn qua crm_deal_projects (không có trên crm_leads.project_id)
+  try {
+    const { data: links } = await supabase
+      .from('crm_deal_projects')
+      .select('deal_id')
+      .eq('project_id', projectId);
+    const junctionIds = [...new Set((links || []).map((r) => r.deal_id).filter(Boolean))];
+    if (junctionIds.length) {
+      try {
+        const { data, error } = await supabase
+          .from('crm_leads')
+          .select(CRM_DEALS_FOR_PROJECT_EMBED)
+          .in('id', junctionIds);
+        if (error) throw error;
+        rows = data || [];
+      } catch (e) {
+        console.warn('[production] crmDeals junction embed:', e.message);
+        const { data } = await supabase
+          .from('crm_leads')
+          .select(CRM_DEALS_FOR_PROJECT_MIN)
+          .in('id', junctionIds);
+        rows = data || [];
+      }
+      if (rows.length) return rows;
+    }
+  } catch (e) {
+    if (!String(e.message || '').includes('crm_deal_projects')) {
+      console.warn('[production] crmDeals junction:', e.message);
+    }
+  }
 
   let orderRows = [];
   try {
@@ -816,6 +882,10 @@ r.post('/pipeline-stages', requirePermission('projects', 'edit'), async (req, re
       workshop_type_id: workshopTypeId,
       ...parseProductionStageKpiBody(b),
     };
+    if (isIntake) {
+      insertPayload.deadline_group = null;
+      insertPayload.requires_deadline = false;
+    }
 
     const data = await insertProductionPipelineStageRow(supabase, insertPayload);
     if (!isIntake && (b.default_staff || b.auto_add_members_on_enter)) {
@@ -896,6 +966,7 @@ r.put('/pipeline-stages/:id', requirePermission('projects', 'edit'), async (req,
       delete update.counts_as_completed_revenue;
       delete update.counts_as_collected_revenue;
       delete update.requires_deadline;
+      delete update.deadline_group;
     }
     if (update.bucket_slug && update.bucket_slug !== INTAKE_BUCKET) {
       return res.status(400).json({ error: 'bucket_slug không hợp lệ' });
@@ -1760,12 +1831,20 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
 
     // Mobile lite: vẫn enrich cột SX (sx_kanban_column_id / sx_intake) giống web —
     // bỏ staff/finance phía dưới. Trước đây bỏ enrich khiến app tự resolve cột → lệch KPI «Đang SX».
-    const enrichedSx = await enrichProjectsForSx(
+    let enrichedSx = await enrichProjectsForSx(
       projects,
       wonIds,
       company_id,
       workshop_type_id || null,
     );
+
+    // Multi-SX: embed crm_deals theo project_id bỏ sót project phụ — bổ sung qua junction.
+    try {
+      const { attachCrmDealsToProjects } = require('../helpers/workshopCrmDeals');
+      enrichedSx = await attachCrmDealsToProjects(enrichedSx, { lite: mobileLite });
+    } catch (crmAttachErr) {
+      console.warn('[production/projects] attachCrmDeals multi-sx:', crmAttachErr.message);
+    }
 
     const mapPipelineProgress = (project) => {
       const pipelinePct = project.sx_pipeline_percent != null
@@ -1969,12 +2048,18 @@ r.get('/deadline-bucket-page', requirePermission('projects', 'view'), async (req
     }
     if (error) throw error;
 
-    const enrichedSx = await enrichProjectsForSx(
+    let enrichedSx = await enrichProjectsForSx(
       projects || [],
       wonIds,
       company_id,
       workshop_type_id || null,
     );
+    try {
+      const { attachCrmDealsToProjects } = require('../helpers/workshopCrmDeals');
+      enrichedSx = await attachCrmDealsToProjects(enrichedSx);
+    } catch (crmAttachErr) {
+      console.warn('[deadline-bucket-page] attachCrmDeals multi-sx:', crmAttachErr.message);
+    }
     const { attachProductionStaffToProjects } = require('../helpers/productionWorkshopTypeStaff');
     const enrichedWithStaff = await attachProductionStaffToProjects(enrichedSx);
     const withProgress = enrichedWithStaff.map((project) => {

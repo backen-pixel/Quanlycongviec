@@ -16,6 +16,7 @@ const {
   stripAssigneeMetaFromInsertRow,
 } = require('./templateItemAssignees');
 const { resolveExecutorCompanyId, isExecutorColumnError } = require('./crossCompanyWorkspace');
+const { isOrderDocsDocumentSlot } = require('./orderDocsWorkshopTasks');
 const { normalizeEvidenceFileTypes } = require('./evidenceFileTypes');
 const { normalizeTemplateChecklistForCrmTask } = require('./templateChecklistNormalize');
 const { loadProductionPipelineStagesRows, INTAKE_BUCKET } = require('./workshopKanban');
@@ -49,12 +50,15 @@ async function loadHandoverMapsCached(cache, companyId) {
 async function syncSxTasksAfterBulkInsert(req, leadId, rows, fingerprintFn, createdBy) {
   if (!leadId || !rows?.length) return { synced_assignments: 0, synced_artifacts: 0 };
   try {
+    // Slot tư liệu đơn hàng: chỉ đồng bộ file → xưởng, không tạo Giao việc
+    const workRows = rows.filter((r) => !isOrderDocsDocumentSlot(null, r?.title));
+    if (!workRows.length) return { synced_assignments: 0, synced_artifacts: 0 };
     const syncReq = req || { user: { userId: createdBy } };
     return await syncProductionLeadTasksToAssignments(syncReq, leadId, {
-      fingerprints: new Set(rows.map((r) => fingerprintFn(r.title, r.stage_slug))),
+      fingerprints: new Set(workRows.map((r) => fingerprintFn(r.title, r.stage_slug))),
       fingerprintFn,
       assignmentModule: 'production',
-      limit: rows.length + 20,
+      limit: workRows.length + 20,
     });
   } catch (e) {
     console.warn('[applyProductionTemplate] sync assignments:', e.message);
@@ -671,6 +675,7 @@ async function applyProductionTemplateToFulfillmentLead({
       const execCo = resolveExecutorCompanyId(it, mustCompanyId);
       const maps = await loadHandoverMapsCached(handoverCacheStrict, execCo);
       const assigneeIds = resolveSxAssigneesForTemplateItem(it, maps);
+      const isDocSlot = isOrderDocsDocumentSlot(tpl, it);
       inserts.push({
         lead_id: leadId,
         title: it.title,
@@ -687,6 +692,7 @@ async function applyProductionTemplateToFulfillmentLead({
         created_by: createdBy,
         blocks_stage_advance: !!it.blocks_stage_advance,
         clears_delivery_deadline_on_complete: !!it.clears_delivery_deadline_on_complete,
+        ...(isDocSlot ? { shared_to_project: true, allowed_share_modules: ['production'] } : {}),
         ...sxEvidenceFieldsFromTemplateItem(it),
         ...sxExecutorFieldsFromTemplateItem(it, mustCompanyId),
         production_pipeline_stage_id: sxStage.production_pipeline_stage_id,
@@ -929,6 +935,7 @@ async function applyProductionTemplateToFulfillmentLead({
     const execCo = resolveExecutorCompanyId(it, targetCompanyId);
     const maps = await loadHandoverMapsCached(handoverCacheLoose, execCo);
     const assigneeIds = resolveSxAssigneesForTemplateItem(it, maps);
+    const isDocSlot = isOrderDocsDocumentSlot(tpl, it);
     inserts.push({
       lead_id: leadId,
       title: it.title,
@@ -945,6 +952,7 @@ async function applyProductionTemplateToFulfillmentLead({
       created_by: createdBy,
       blocks_stage_advance: !!it.blocks_stage_advance,
       clears_delivery_deadline_on_complete: !!it.clears_delivery_deadline_on_complete,
+      ...(isDocSlot ? { shared_to_project: true, allowed_share_modules: ['production'] } : {}),
       ...sxEvidenceFieldsFromTemplateItem(it),
       ...sxExecutorFieldsFromTemplateItem(it, targetCompanyId),
       production_pipeline_stage_id: sxStage.production_pipeline_stage_id,
@@ -1455,6 +1463,8 @@ async function applyProductionTemplatesOnPipelineEnter({
     const execCo = resolveExecutorCompanyId(it, ownerCompanyId);
     const maps = await loadHandoverMapsCached(handoverCache, execCo);
     const assigneeIds = resolveSxAssigneesForTemplateItem(it, maps);
+    const tpl = templates.find((t) => String(t.id) === String(it.template_id)) || null;
+    const isDocSlot = isOrderDocsDocumentSlot(tpl, it);
     const row = {
       lead_id: leadId,
       title: it.title,
@@ -1471,6 +1481,7 @@ async function applyProductionTemplatesOnPipelineEnter({
       created_by: userId,
       blocks_stage_advance: !!it.blocks_stage_advance,
       clears_delivery_deadline_on_complete: !!it.clears_delivery_deadline_on_complete,
+      ...(isDocSlot ? { shared_to_project: true, allowed_share_modules: ['production'] } : {}),
       ...sxEvidenceFieldsFromTemplateItem(it),
       ...sxExecutorFieldsFromTemplateItem(it, ownerCompanyId),
       production_pipeline_stage_id: pipelineStageId,
@@ -1524,13 +1535,7 @@ async function applyProductionTemplatesOnPipelineEnter({
   await applyAssigneesToInsertedCrmTasks(insertedRowsPipe || [], assigneeIdsForCreatedPipe, req || { user: { userId } }, { syncAssignments: false });
 
   const syncReq = req || { user: { userId } };
-  const createdTitles = new Set(inserts.map((r) => sxTaskFingerprint(r.title, r.stage_slug)));
-  const syncStats = await syncProductionLeadTasksToAssignments(syncReq, leadId, {
-    fingerprints: createdTitles,
-    fingerprintFn: sxTaskFingerprint,
-    assignmentModule: 'production',
-    limit: inserts.length + 20,
-  });
+  const syncStats = await syncSxTasksAfterBulkInsert(syncReq, leadId, inserts, sxTaskFingerprint, userId);
 
   return {
     created: inserts.length,

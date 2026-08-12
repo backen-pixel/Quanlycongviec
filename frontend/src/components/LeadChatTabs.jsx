@@ -691,7 +691,7 @@ function ReplyComposerBar({ replyTo, onCancel, isGroupChat = false }) {
 // ═══════════════════════════════════════════════════════════════
 // Tab Thành viên — bộ lọc NV giống CRM Dashboard + chọn nhiều người
 // ═══════════════════════════════════════════════════════════════
-export function LeadMembersTab({ leadId, onMembersChange, onOpenSharedWorkspace }) {
+export function LeadMembersTab({ leadId, onMembersChange, onOpenSharedWorkspace, refreshKey = null, onMembersMutated = null }) {
   const [members, setMembers] = useState([]);
   const [companies, setCompanies] = useState([]);
   const [filterCompany, setFilterCompany] = useState('');
@@ -704,6 +704,7 @@ export function LeadMembersTab({ leadId, onMembersChange, onOpenSharedWorkspace 
   const isAdmin = isAdminLike(user);
   const onMembersChangeRef = useRef(onMembersChange);
   onMembersChangeRef.current = onMembersChange;
+  const prevMembersRefreshKeyRef = useRef(refreshKey);
 
   const staffFilter = useWorkshopStaffFilter({
     user,
@@ -785,6 +786,14 @@ export function LeadMembersTab({ leadId, onMembersChange, onOpenSharedWorkspace 
     }).catch(() => setCompanies([]));
   }, [leadId, load, loadAssignments]);
 
+  useEffect(() => {
+    if (refreshKey == null) return;
+    if (prevMembersRefreshKeyRef.current === refreshKey) return;
+    prevMembersRefreshKeyRef.current = refreshKey;
+    void load();
+    void loadAssignments();
+  }, [refreshKey, load, loadAssignments]);
+
   const blockedUserIds = useMemo(() => {
     const ids = new Set();
     for (const m of members) {
@@ -845,7 +854,9 @@ export function LeadMembersTab({ leadId, onMembersChange, onOpenSharedWorkspace 
     try {
       await api.post(`/crm/leads/${leadId}/members`, { members: selectedUsers });
       setSelectedUsers([]);
-      load();
+      await load();
+      await loadAssignments();
+      onMembersMutated?.();
     } catch (e) { alert(e.response?.data?.error || 'Lỗi thêm thành viên'); }
     setLoading(false);
   };
@@ -854,14 +865,17 @@ export function LeadMembersTab({ leadId, onMembersChange, onOpenSharedWorkspace 
     if (!confirm('Xóa thành viên khỏi nhóm?')) return;
     try {
       await api.delete(`/crm/leads/${leadId}/members/${uid}`);
-      load();
+      await load();
+      await loadAssignments();
+      onMembersMutated?.();
     } catch (e) { alert('Lỗi'); }
   };
 
   const changeRole = async (uid, newRole) => {
     try {
       await api.post(`/crm/leads/${leadId}/members`, { user_id: uid, role: newRole });
-      load();
+      await load();
+      onMembersMutated?.();
     } catch (e) { alert('Lỗi cập nhật quyền'); }
   };
 

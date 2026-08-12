@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { formatDate } from '../lib/utils';
@@ -8,10 +8,14 @@ import { publicFileUrl } from '../lib/publicFileUrl';
 import { AttachmentFileIcon, inferAttachmentDocType, TASK_ATTACHMENT_FILE_ACCEPT } from '../lib/attachmentFileIcon';
 import { mergeUploadProgressState, uploadSingleFileWithProgress } from '../lib/uploadProgressEta';
 import UploadProgressBubble from './UploadProgressBubble';
-import { FilePreviewOpenLink } from '../context/FilePreviewContext';
+import UploadFileLightbox, {
+  collectUploadLightboxItems,
+  findUploadLightboxIndex,
+} from './UploadFileLightbox';
+import { useFilePreview } from '../context/FilePreviewContext';
 import {
   ClipboardList, Plus, Calendar, CheckCircle2, Circle, Clock, X, Pencil, Trash2, Save,
-  LayoutGrid, Target, Factory, Truck, ExternalLink, MessageSquare, Paperclip, FileUp,
+  LayoutGrid, Target, Factory, Truck, ExternalLink, MessageSquare, Paperclip, FileUp, ImagePlus,
 } from 'lucide-react';
 
 const NOTE_DOC_TYPES = new Set(['task_inline_note', 'task_note', 'checklist_inline_note']);
@@ -200,6 +204,7 @@ export default function LeadMemberAssignmentsPanel({
   companyId: companyIdProp = null,
   sxCompanyId = null,
   vcCompanyId = null,
+  refreshKey = null,
 }) {
   const initialModule = ['crm', 'production', 'logistics'].includes(defaultModule)
     ? defaultModule
@@ -233,6 +238,13 @@ export default function LeadMemberAssignmentsPanel({
   const [taskAttachments, setTaskAttachments] = useState({});
   const [uploadingAssignId, setUploadingAssignId] = useState(null);
   const [uploadProgress, setUploadProgress] = useState({});
+  /** Ảnh minh họa đính kèm khi tạo/sửa phân công — upload sau khi có crm_task_id */
+  const [pendingImages, setPendingImages] = useState([]);
+  const [formUploadBusy, setFormUploadBusy] = useState(false);
+  const [lightbox, setLightbox] = useState(null); // { items, index }
+  const pendingImagesInputRef = useRef(null);
+  const prevAssignRefreshKeyRef = useRef(refreshKey);
+  const filePreview = useFilePreview();
 
   const companyId = companyIdProp || leadCompanyId || null;
   const companyScope = useMemo(
@@ -304,6 +316,15 @@ export default function LeadMemberAssignmentsPanel({
     return counts;
   }, [assignments, memberByUserId]);
 
+  const clearPendingImages = useCallback(() => {
+    setPendingImages((prev) => {
+      prev.forEach((p) => {
+        if (p?.previewUrl) URL.revokeObjectURL(p.previewUrl);
+      });
+      return [];
+    });
+  }, []);
+
   const resetForm = useCallback(() => {
     setTitle('');
     setDesc('');
@@ -317,8 +338,59 @@ export default function LeadMemberAssignmentsPanel({
     setAssignModule(moduleTab === 'all' ? 'crm' : moduleTab);
     setEditingId(null);
     setShowForm(false);
-  }, [columns, moduleTab]);
+    clearPendingImages();
+    setFormUploadBusy(false);
+  }, [columns, moduleTab, clearPendingImages]);
 
+  const addPendingImages = (fileList) => {
+    const files = Array.from(fileList || []).filter((f) => f.type?.startsWith('image/')).slice(0, 20);
+    if (!files.length) return;
+    setPendingImages((prev) => {
+      const room = Math.max(0, 20 - prev.length);
+      const next = files.slice(0, room).map((file) => ({
+        key: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        file,
+        previewUrl: URL.createObjectURL(file),
+      }));
+      return [...prev, ...next];
+    });
+  };
+
+  const removePendingImage = (key) => {
+    setPendingImages((prev) => {
+      const hit = prev.find((p) => p.key === key);
+      if (hit?.previewUrl) URL.revokeObjectURL(hit.previewUrl);
+      return prev.filter((p) => p.key !== key);
+    });
+  };
+
+  const uploadImagesToTask = async (taskId, images) => {
+    if (!taskId || !images?.length) return;
+    const compressed = await Promise.all(images.map((p) => compressImage(p.file)));
+    const formData = new FormData();
+    compressed.forEach((f) => formData.append('files', f));
+    const { data: uploadRes } = await api.post('/upload', formData);
+    const ok = uploadRes.uploaded || uploadRes.files || (Array.isArray(uploadRes) ? uploadRes : [uploadRes]);
+    const allUploaded = Array.isArray(ok) ? ok : [ok];
+    const successUploads = allUploaded.filter((up) => up?.file_url && !String(up.file_url).startsWith('data:'));
+    if (!successUploads.length) throw new Error('Upload ảnh không thành công');
+    const seenUrls = new Set();
+    const items = [];
+    for (const up of successUploads) {
+      const url = String(up.file_url);
+      if (seenUrls.has(url)) continue;
+      seenUrls.add(url);
+      items.push({
+        name: (up.original_name || up.file_name || 'Ảnh minh họa').replace(/\.[^.]+$/, ''),
+        doc_type: inferAttachmentDocType(up) || 'image',
+        file_url: up.file_url,
+        file_name: up.file_name,
+        file_size: up.file_size,
+        mime_type: up.mime_type,
+      });
+    }
+    await api.post(`/crm/leads/${leadId}/tasks/${taskId}/attachments/bulk`, { items });
+  };
   const loadMembers = useCallback(async () => {
     if (!leadId) return;
     try {
@@ -375,6 +447,14 @@ export default function LeadMemberAssignmentsPanel({
     });
     return () => { cancelled = true; };
   }, [leadId, loadMembers, loadAssignments, loadLeadCompany]);
+
+  useEffect(() => {
+    if (!leadId || refreshKey == null) return;
+    if (prevAssignRefreshKeyRef.current === refreshKey) return;
+    prevAssignRefreshKeyRef.current = refreshKey;
+    void loadMembers();
+    void loadAssignments();
+  }, [refreshKey, leadId, loadMembers, loadAssignments]);
 
   useEffect(() => {
     if (companyIdProp) setLeadCompanyId(companyIdProp);
@@ -478,7 +558,10 @@ export default function LeadMemberAssignmentsPanel({
     };
     setSaving(true);
     try {
+      let linkedTaskId = null;
       if (editingId) {
+        const existing = assignments.find((a) => String(a.id) === String(editingId));
+        linkedTaskId = existing?.crm_task_id || null;
         await api.put(`/crm/assignments/${editingId}`, {
           title: title.trim(),
           description: desc.trim() || null,
@@ -491,7 +574,7 @@ export default function LeadMemberAssignmentsPanel({
           ...sourcePayload,
         });
       } else {
-        await api.post(`/crm/leads/${leadId}/assignments`, {
+        const { data } = await api.post(`/crm/leads/${leadId}/assignments`, {
           title: title.trim(),
           description: desc.trim() || null,
           priority,
@@ -502,12 +585,21 @@ export default function LeadMemberAssignmentsPanel({
           company_id: formCompanyId || undefined,
           ...sourcePayload,
         });
+        linkedTaskId = data?.task?.id || data?.assignment?.crm_task_id || null;
+      }
+      if (pendingImages.length) {
+        if (!linkedTaskId) {
+          throw new Error('Đã lưu phân công nhưng chưa có nhiệm vụ để đính ảnh — mở phân công và Upload file.');
+        }
+        setFormUploadBusy(true);
+        await uploadImagesToTask(linkedTaskId, pendingImages);
       }
       resetForm();
       await loadAssignments();
     } catch (e) {
-      alert(e.response?.data?.error || 'Lỗi lưu phân công');
+      alert(e.response?.data?.error || e.message || 'Lỗi lưu phân công');
     } finally {
+      setFormUploadBusy(false);
       setSaving(false);
     }
   };
@@ -542,6 +634,55 @@ export default function LeadMemberAssignmentsPanel({
       setTaskAttachments((p) => ({ ...p, [a.id]: [] }));
     }
   };
+
+  const openAttachmentPreview = (atts, att) => {
+    if (!att?.file_url) return;
+    if (isImageAtt(att)) {
+      const items = collectUploadLightboxItems(atts);
+      const idx = findUploadLightboxIndex(items, att.file_url);
+      if (items.length && idx >= 0) {
+        setLightbox({ items, index: idx });
+        return;
+      }
+      const one = collectUploadLightboxItems([att]);
+      if (one.length) setLightbox({ items: one, index: 0 });
+      return;
+    }
+    if (filePreview?.openFilePreview) {
+      filePreview.openFilePreview({
+        url: att.file_url,
+        fileName: att.file_name || att.name,
+        mimeType: att.mime_type,
+        title: att.name || att.file_name || 'Xem file',
+      });
+    }
+  };
+
+  /** Prefetch đính kèm cho danh sách phân công (hiện luôn trên thẻ, không cần mở panel). */
+  useEffect(() => {
+    if (!leadId || !assignments.length) return;
+    let cancelled = false;
+    const rows = assignments.filter((a) => a?.crm_task_id);
+    if (!rows.length) return undefined;
+    (async () => {
+      await Promise.all(rows.map(async (a) => {
+        if (cancelled) return;
+        try {
+          const { data } = await api.get(`/crm/leads/${leadId}/tasks/${a.crm_task_id}/attachments`);
+          if (cancelled) return;
+          setTaskAttachments((p) => ({
+            ...p,
+            [a.id]: Array.isArray(data) ? data : (data?.attachments || []),
+          }));
+        } catch {
+          if (!cancelled) {
+            setTaskAttachments((p) => ({ ...p, [a.id]: [] }));
+          }
+        }
+      }));
+    })();
+    return () => { cancelled = true; };
+  }, [leadId, assignments]);
 
   const toggleNotes = (a) => {
     if (expandedNotesId === a.id) {
@@ -975,6 +1116,69 @@ export default function LeadMemberAssignmentsPanel({
               </p>
             )}
           </div>
+
+          <div className="rounded-lg border border-dashed border-violet-300 bg-white/70 p-2.5 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <p className="text-[11px] font-semibold text-violet-800 inline-flex items-center gap-1">
+                  <ImagePlus className="h-3.5 w-3.5" />
+                  Ảnh minh họa công việc
+                </p>
+                <p className="text-[10px] text-violet-600/80 mt-0.5">
+                  Thêm hình để người nhận biết việc cần làm (tối đa 20 ảnh).
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => pendingImagesInputRef.current?.click()}
+                className="h-8 px-2.5 text-[11px] font-semibold text-violet-700 border border-violet-200 rounded-lg hover:bg-violet-50 cursor-pointer inline-flex items-center gap-1 shrink-0"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                Thêm ảnh
+              </button>
+              <input
+                ref={pendingImagesInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  addPendingImages(e.target.files);
+                  e.target.value = '';
+                }}
+              />
+            </div>
+            {pendingImages.length > 0 ? (
+              <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
+                {pendingImages.map((img) => (
+                  <div key={img.key} className="relative group aspect-square rounded-lg overflow-hidden border border-violet-100 bg-slate-50">
+                    <img
+                      src={img.previewUrl}
+                      alt={img.file?.name || 'preview'}
+                      className="w-full h-full object-cover"
+                    />
+                    <button
+                      type="button"
+                      title="Xóa ảnh"
+                      onClick={() => removePendingImage(img.key)}
+                      className="absolute top-1 right-1 h-6 w-6 rounded-full bg-black/60 text-white inline-flex items-center justify-center opacity-90 hover:bg-red-600 cursor-pointer"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => pendingImagesInputRef.current?.click()}
+                className="w-full py-4 text-[11px] text-violet-600/80 hover:text-violet-800 hover:bg-violet-50/80 rounded-lg cursor-pointer"
+              >
+                Chưa có ảnh — bấm để chọn hình từ máy
+              </button>
+            )}
+          </div>
+
           <div className="flex justify-end gap-2 pt-1">
             <button
               type="button"
@@ -985,12 +1189,16 @@ export default function LeadMemberAssignmentsPanel({
             </button>
             <button
               type="button"
-              disabled={saving}
+              disabled={saving || formUploadBusy}
               onClick={submit}
               className="h-8 px-4 bg-violet-600 text-white text-xs font-semibold rounded-lg hover:bg-violet-700 disabled:opacity-50 cursor-pointer inline-flex items-center gap-1"
             >
               <Save size={12} />
-              {saving ? 'Đang lưu…' : (editingId ? 'Lưu' : `Giao cho ${memberIds.size || 0} NV`)}
+              {formUploadBusy
+                ? 'Đang tải ảnh…'
+                : saving
+                  ? 'Đang lưu…'
+                  : (editingId ? 'Lưu' : `Giao cho ${memberIds.size || 0} NV`)}
             </button>
           </div>
         </div>
@@ -1026,6 +1234,9 @@ export default function LeadMemberAssignmentsPanel({
             const errLabel = srcType === 'employee_error'
               ? errorModuleLabel(a.employee_error_module)
               : null;
+            const cardAtts = filterFileAttachments(taskAttachments[a.id]);
+            const cardImages = cardAtts.filter((att) => isImageAtt(att));
+            const cardFiles = cardAtts.filter((att) => !isImageAtt(att));
             return (
               <div
                 key={a.id}
@@ -1079,6 +1290,12 @@ export default function LeadMemberAssignmentsPanel({
                         Có CV
                       </span>
                     )}
+                    {cardAtts.length > 0 && (
+                      <span className="shrink-0 text-[9px] px-1.5 py-0.5 rounded font-semibold bg-indigo-100 text-indigo-700 inline-flex items-center gap-0.5">
+                        <Paperclip className="h-2.5 w-2.5" />
+                        {cardAtts.length} file
+                      </span>
+                    )}
                     {!!(a.crm_task?.notes || '').trim() && expandedNotesId !== a.id && (
                       <span className="shrink-0 text-[9px] px-1.5 py-0.5 rounded-full font-medium text-amber-700 bg-amber-50 flex items-center gap-0.5">
                         <MessageSquare className="h-2.5 w-2.5" />Có ghi chú
@@ -1099,6 +1316,70 @@ export default function LeadMemberAssignmentsPanel({
                       </span>
                     )}
                   </div>
+
+                  {cardAtts.length > 0 && expandedNotesId !== a.id && (
+                    <div className="mt-2 space-y-1.5">
+                      {cardImages.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5">
+                          {cardImages.slice(0, 6).map((att) => (
+                            <button
+                              key={att.id}
+                              type="button"
+                              className="block h-14 w-14 rounded-md overflow-hidden border border-violet-100 bg-slate-50 hover:ring-2 hover:ring-violet-300 cursor-pointer p-0"
+                              title={`${att.file_name || att.name || 'Ảnh'} — bấm phóng to`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openAttachmentPreview(cardAtts, att);
+                              }}
+                            >
+                              <img
+                                src={publicFileUrl(att.file_url)}
+                                alt={att.file_name || ''}
+                                className="h-full w-full object-cover"
+                              />
+                            </button>
+                          ))}
+                          {cardImages.length > 6 && (
+                            <button
+                              type="button"
+                              onClick={() => toggleNotes(a)}
+                              className="h-14 w-14 rounded-md border border-dashed border-violet-200 text-[10px] text-violet-700 font-semibold hover:bg-violet-50 cursor-pointer"
+                            >
+                              +{cardImages.length - 6}
+                            </button>
+                          )}
+                        </div>
+                      )}
+                      {cardFiles.length > 0 && (
+                        <div className="flex flex-wrap gap-1">
+                          {cardFiles.slice(0, 4).map((att) => (
+                            <button
+                              key={att.id}
+                              type="button"
+                              title="Xem trên trang"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openAttachmentPreview(cardAtts, att);
+                              }}
+                              className="inline-flex items-center gap-1 max-w-[11rem] px-1.5 py-0.5 rounded bg-slate-50 border border-slate-200 text-[10px] text-slate-700 hover:border-violet-300 hover:text-violet-800 cursor-pointer"
+                            >
+                              <AttachmentFileIcon att={att} className="h-3 w-3 shrink-0" />
+                              <span className="truncate">{att.name || att.file_name || 'File'}</span>
+                            </button>
+                          ))}
+                          {cardFiles.length > 4 && (
+                            <button
+                              type="button"
+                              onClick={() => toggleNotes(a)}
+                              className="text-[10px] text-violet-700 font-semibold px-1.5 py-0.5 cursor-pointer hover:underline"
+                            >
+                              +{cardFiles.length - 4} file
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
                 <div className="flex items-center gap-0.5 shrink-0">
                   <button
@@ -1220,14 +1501,13 @@ export default function LeadMemberAssignmentsPanel({
                                   <div className="flex-1 min-w-0">
                                     <p className="text-xs font-medium text-gray-800 truncate">{att.name || att.file_name}</p>
                                     {att.file_url && !img && (
-                                      <FilePreviewOpenLink
-                                        fileUrl={att.file_url}
-                                        fileName={att.file_name || att.name}
-                                        mimeType={att.mime_type}
+                                      <button
+                                        type="button"
                                         className="text-[10px] text-blue-600 hover:underline cursor-pointer"
+                                        onClick={() => openAttachmentPreview(atts, att)}
                                       >
                                         {att.file_name || 'Xem file'}
-                                      </FilePreviewOpenLink>
+                                      </button>
                                     )}
                                     {att.creator?.full_name && (
                                       <span className="text-[9px] text-gray-400 ml-1">{att.creator.full_name}</span>
@@ -1242,18 +1522,18 @@ export default function LeadMemberAssignmentsPanel({
                                   </button>
                                 </div>
                                 {att.file_url && img && (
-                                  <a
-                                    href={publicFileUrl(att.file_url)}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="block mt-1.5 ml-5"
+                                  <button
+                                    type="button"
+                                    className="block mt-1.5 ml-5 p-0 cursor-pointer text-left"
+                                    title="Phóng to ảnh"
+                                    onClick={() => openAttachmentPreview(atts, att)}
                                   >
                                     <img
                                       src={publicFileUrl(att.file_url)}
                                       alt={att.file_name || ''}
-                                      className="max-h-80 max-w-full rounded-lg border border-gray-200 object-contain"
+                                      className="max-h-80 max-w-full rounded-lg border border-gray-200 object-contain hover:ring-2 hover:ring-violet-300"
                                     />
-                                  </a>
+                                  </button>
                                 )}
                                 {att.file_url && video && (
                                   <div className="mt-1.5 ml-5">
@@ -1282,6 +1562,15 @@ export default function LeadMemberAssignmentsPanel({
         </div>
       )}
       </div>
+
+      {lightbox?.items?.length > 0 && (
+        <UploadFileLightbox
+          items={lightbox.items}
+          index={lightbox.index}
+          onIndexChange={(index) => setLightbox((prev) => (prev ? { ...prev, index } : prev))}
+          onClose={() => setLightbox(null)}
+        />
+      )}
     </div>
   );
 }

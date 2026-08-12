@@ -552,7 +552,8 @@ function MyReportPanel({ date, onDateChange }) {
     <div className="space-y-4">
       <div className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-950" data-export-hide="1">
         <strong>Phần I</strong> = kế hoạch ngày phiếu ({fmtDMY(date)}).{' '}
-        <strong>Phần II</strong> = kết quả ngày hôm trước ({fmtDMY(addDaysISO(date, -1))}), tự lấy từ CRM khi <strong>Nộp báo cáo</strong>.
+        <strong>Phần II</strong> = kết quả ngày hôm trước ({fmtDMY(addDaysISO(date, -1))}), tự lấy từ CRM khi <strong>Nộp báo cáo</strong>
+        {' '}(hệ thống cũng tự chốt ~17:00 mỗi ngày).
       </div>
 
       <div className="flex flex-wrap items-center justify-end gap-2" data-export-hide="1">

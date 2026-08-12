@@ -22,6 +22,8 @@ let pipelineKpiSlaColumnsAvailable = true;
 let pipelineCollectedRevenueColumnAvailable = true;
 /** Cột requires_deadline (migration 288) — tắt nếu DB chưa migrate */
 let pipelineRequiresDeadlineColumnAvailable = true;
+/** Cột deadline_group (migration 523) — nhóm DL theo kế hoạch lắp */
+let pipelineDeadlineGroupColumnAvailable = true;
 /** Cột converts_workshop_type / target_workshop_type_id (migration 303) */
 let pipelineSwitchWorkshopTypeColumnAvailable = true;
 let pipelineTargetWorkshopTypeJoinAvailable = true;
@@ -214,6 +216,21 @@ function markPipelineRequiresDeadlineColumnMissing() {
   pipelineRequiresDeadlineColumnAvailable = false;
 }
 
+function isPipelineDeadlineGroupMissingError(err) {
+  if (!err || !pipelineDeadlineGroupColumnAvailable) return false;
+  const s = String(err.message || err.details || err.hint || '').toLowerCase();
+  return s.includes('deadline_group') && (s.includes('does not exist') || s.includes('could not find'));
+}
+
+function markPipelineDeadlineGroupColumnMissing() {
+  if (pipelineDeadlineGroupColumnAvailable) {
+    console.warn(
+      '[production_pipeline_stages] Cột deadline_group chưa tồn tại. Chạy database/523_production_pipeline_deadline_group.sql trên Supabase.',
+    );
+  }
+  pipelineDeadlineGroupColumnAvailable = false;
+}
+
 function isPipelineSwitchWorkshopTypeMissingError(err) {
   if (!err || !pipelineSwitchWorkshopTypeColumnAvailable) return false;
   const s = String(err.message || err.details || err.hint || '').toLowerCase();
@@ -287,6 +304,7 @@ function buildPipelineStageSelect() {
   const kpiCollected = pipelineCollectedRevenueColumnAvailable ? 'counts_as_collected_revenue, ' : '';
   const kpi = `${kpi287}${kpiCollected}`;
   const reqDl = pipelineRequiresDeadlineColumnAvailable ? 'requires_deadline, ' : '';
+  const dlGroup = pipelineDeadlineGroupColumnAvailable ? 'deadline_group, ' : '';
   const sw = pipelineSwitchWorkshopTypeColumnAvailable ? 'converts_workshop_type, ' : '';
   let twt = '';
   if (pipelineSwitchWorkshopTypeColumnAvailable) {
@@ -308,7 +326,7 @@ function buildPipelineStageSelect() {
       t = 'crm_target_stage_id, ';
     }
   }
-  return `id, ${cid}name, color, icon, order_index, is_active, workflow_stage_id, bucket_slug, crm_sync_type, is_packaging_done, ${h}${sw}${twt}${pp}${kpi}${reqDl}${wt}${t}workflow_stage:workflow_stages(id, slug, name, color, icon)`;
+  return `id, ${cid}name, color, icon, order_index, is_active, workflow_stage_id, bucket_slug, crm_sync_type, is_packaging_done, ${h}${sw}${twt}${pp}${kpi}${reqDl}${dlGroup}${wt}${t}workflow_stage:workflow_stages(id, slug, name, color, icon)`;
 }
 
 /** Áp dụng retry khi SELECT 1 cột pipeline (embed / cột thiếu). */
@@ -356,6 +374,10 @@ async function fetchProductionPipelineStageById(supabase, stageId) {
     markPipelineRequiresDeadlineColumnMissing();
     ({ data, error } = await run());
   }
+  if (error && isPipelineDeadlineGroupMissingError(error)) {
+    markPipelineDeadlineGroupColumnMissing();
+    ({ data, error } = await run());
+  }
   if (error && isPipelineSwitchWorkshopTypeMissingError(error)) {
     markPipelineSwitchWorkshopTypeColumnMissing();
     ({ data, error } = await run());
@@ -377,6 +399,7 @@ const INSERT_COLUMN_RETRIES = [
   [isPipelineCollectedRevenueMissingError, markPipelineCollectedRevenueColumnMissing],
   [isPipelineKpiSlaMissingError, markPipelineKpiSlaColumnMissing],
   [isPipelineRequiresDeadlineMissingError, markPipelineRequiresDeadlineColumnMissing],
+  [isPipelineDeadlineGroupMissingError, markPipelineDeadlineGroupColumnMissing],
   [isPipelineSwitchWorkshopTypeMissingError, markPipelineSwitchWorkshopTypeColumnMissing],
   [isPipelineWorkshopTypeMissingError, markPipelineWorkshopTypeColumnMissing],
   [isCrmTargetStageMissingError, markCrmTargetStageColumnMissing],
@@ -440,6 +463,7 @@ function stripHandoverFields(obj) {
     delete o.counts_as_collected_revenue;
   }
   if (!pipelineRequiresDeadlineColumnAvailable) delete o.requires_deadline;
+  if (!pipelineDeadlineGroupColumnAvailable) delete o.deadline_group;
   if (!pipelineSwitchWorkshopTypeColumnAvailable) {
     delete o.converts_workshop_type;
     delete o.is_switch_workshop_type;
@@ -462,6 +486,7 @@ function _resetForTests() {
   pipelineKpiSlaColumnsAvailable = true;
   pipelineCollectedRevenueColumnAvailable = true;
   pipelineRequiresDeadlineColumnAvailable = true;
+  pipelineDeadlineGroupColumnAvailable = true;
   pipelineSwitchWorkshopTypeColumnAvailable = true;
   pipelineTargetWorkshopTypeJoinAvailable = true;
 }
@@ -487,6 +512,8 @@ module.exports = {
   markPipelineCollectedRevenueColumnMissing,
   isPipelineRequiresDeadlineMissingError,
   markPipelineRequiresDeadlineColumnMissing,
+  isPipelineDeadlineGroupMissingError,
+  markPipelineDeadlineGroupColumnMissing,
   isPipelineSwitchWorkshopTypeMissingError,
   markPipelineSwitchWorkshopTypeColumnMissing,
   isPipelineTargetWorkshopTypeEmbedRelationshipError,

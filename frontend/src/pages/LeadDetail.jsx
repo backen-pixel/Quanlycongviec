@@ -103,6 +103,16 @@ function formatLeadDealEventTitle(lead, customer) {
   return cust ? `${title} - ${cust}` : title;
 }
 
+/** YYYY-MM-DD − N ngày lịch (UTC noon). */
+function subtractCalendarDaysYmd(ymd, days = 2) {
+  const m = String(ymd || '').trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return '';
+  const dt = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12, 0, 0));
+  if (Number.isNaN(dt.getTime())) return '';
+  dt.setUTCDate(dt.getUTCDate() - Math.abs(Number(days) || 0));
+  return dt.toISOString().slice(0, 10);
+}
+
 function leadDealEventLocation(lead, customer) {
   return (
     customer?.address
@@ -302,6 +312,9 @@ export default function LeadDetail() {
   const [addSxErr, setAddSxErr] = useState('');
   const [dealStageWonWorkTypeId, setDealStageWonWorkTypeId] = useState('');
   const [dealStageWonErr, setDealStageWonErr] = useState('');
+  /** Ngày lắp đặt (delivery_date) — hoàn thiện SX = lắp đặt − 2 ngày */
+  const [dealStageWonDeliveryDate, setDealStageWonDeliveryDate] = useState('');
+  const [pickProjectDeliveryDate, setPickProjectDeliveryDate] = useState('');
   /** Deal đã có dự án SX — kéo lại Thắng: thông báo, không mở hộp chuyển */
   const [dealWonSxExistsCtx, setDealWonSxExistsCtx] = useState(null);
   const [productionCompaniesSx, setProductionCompaniesSx] = useState([]);
@@ -544,7 +557,19 @@ export default function LeadDetail() {
   const [autoCreateError, setAutoCreateError] = useState('');
   const autoCreateCalledRef = useRef(false);
 
-  const autoCreateProject = async (dealId, productionCompanyId, workshopTypeId = null, targets = null, mode = 'create') => {
+  const softRefreshDeal = useCallback(async () => {
+    await loadRef.current?.({ silent: true });
+    setCrmTasksRefreshKey((k) => k + 1);
+  }, []);
+
+  const softRefreshDealAfterProject = useCallback(async () => {
+    await softRefreshDeal();
+    // Background: template NV xưởng / sync thêm — refresh lại nhẹ sau vài giây
+    window.setTimeout(() => { void softRefreshDeal(); }, 1800);
+    window.setTimeout(() => { void softRefreshDeal(); }, 4500);
+  }, [softRefreshDeal]);
+
+  const autoCreateProject = async (dealId, productionCompanyId, workshopTypeId = null, targets = null, mode = 'create', projectDates = null) => {
     if (!productionCompanyId && !(Array.isArray(targets) && targets.length)) {
       setPickProjectCompanyOpen(true);
       setPickProjectCompanyErr('');
@@ -555,23 +580,33 @@ export default function LeadDetail() {
     setAutoCreateStatus('loading');
     setPickProjectCompanyOpen(false);
     try {
+      const datePayload = {};
+      const deliveryYmd = String(projectDates?.delivery_date || '').trim();
+      if (/^\d{4}-\d{2}-\d{2}$/.test(deliveryYmd)) {
+        datePayload.delivery_date = deliveryYmd;
+        datePayload.production_deadline = deliveryYmd;
+        datePayload.production_finish_date = subtractCalendarDaysYmd(deliveryYmd, 2) || null;
+      }
       const payload = Array.isArray(targets) && targets.length
-        ? { targets: sxTargetsToApiPayload(targets), ...(mode === 'additional' ? { mode: 'additional' } : {}) }
+        ? { targets: sxTargetsToApiPayload(targets), ...datePayload, ...(mode === 'additional' ? { mode: 'additional' } : {}) }
         : {
           production_company_id: productionCompanyId,
           ...(workshopTypeId ? { workshop_type_id: workshopTypeId } : {}),
+          ...datePayload,
           ...(mode === 'additional' ? { mode: 'additional' } : {}),
         };
       const { data } = await api.post(`/crm/deals/${dealId}/auto-create-project`, payload);
       setAutoCreateResult(data);
       setAutoCreateStatus('success');
       projectCompanyPickRef.current = false;
-      load({ silent: true });
+      await softRefreshDealAfterProject();
     } catch (e) {
       const msg = e.response?.data?.error || 'Lỗi tạo dự án';
       if (e.response?.data?.project_id) {
         setAutoCreateResult({ project_id: e.response.data.project_id });
         setAutoCreateStatus('success');
+        projectCompanyPickRef.current = false;
+        await softRefreshDealAfterProject();
       } else {
         setAutoCreateError(msg);
         setAutoCreateStatus('error');
@@ -1568,6 +1603,7 @@ export default function LeadDetail() {
       }
       setDealStageWonErr('');
       setDealStageWonWorkTypeId('');
+      setDealStageWonDeliveryDate('');
       {
         const initialCo = lead.company_id
           ? String(lead.company_id)
@@ -1620,12 +1656,19 @@ export default function LeadDetail() {
     let targets = dealStageWonTargets.length
       ? dealStageWonTargets
       : (dealStageWonCompanyId
-        ? [{ companyId: dealStageWonCompanyId, workshopTypeId: dealStageWonWorkTypeId }]
+        ? [{
+          companyId: dealStageWonCompanyId,
+          workshopTypeId: dealStageWonWorkTypeId,
+          deliveryDate: dealStageWonDeliveryDate || '',
+        }]
         : []);
-    // Single-row: ưu tiên phân loại đang hiện trên select nếu targets còn rỗng (auto-gợi ý).
     if (targets.length <= 1 && dealStageWonCompanyId) {
       const tid = targets[0]?.workshopTypeId || dealStageWonWorkTypeId || '';
-      targets = [{ companyId: targets[0]?.companyId || dealStageWonCompanyId, workshopTypeId: tid }];
+      targets = [{
+        companyId: targets[0]?.companyId || dealStageWonCompanyId,
+        workshopTypeId: tid,
+        deliveryDate: targets[0]?.deliveryDate || dealStageWonDeliveryDate || '',
+      }];
     }
     const err = validateSxTargets(targets);
     if (err) {
@@ -1636,16 +1679,25 @@ export default function LeadDetail() {
     if (!ctx) return;
     setDealStageWonErr('');
     const apiTargets = sxTargetsToApiPayload(targets);
+    const firstDated = apiTargets.find((t) => t.delivery_date) || null;
     const merged = {
       ...ctx.extraData,
       production_company_id: apiTargets[0]?.production_company_id,
       workshop_type_id: apiTargets[0]?.workshop_type_id,
       targets: apiTargets,
+      ...(firstDated
+        ? {
+          delivery_date: firstDated.delivery_date,
+          production_deadline: firstDated.production_deadline,
+          production_finish_date: firstDated.production_finish_date,
+        }
+        : {}),
     };
     setDealStageWonPick(null);
     setDealStageWonCompanyId('');
     setDealStageWonWorkTypeId('');
     setDealStageWonTargets([]);
+    setDealStageWonDeliveryDate('');
     if (ctx.targetStage.create_event_on_enter) {
       setDealDetailEventCtx({ stageId: ctx.stageId, extraData: merged, targetStage: ctx.targetStage });
     } else {
@@ -1657,11 +1709,19 @@ export default function LeadDetail() {
     let targets = dealStageWonTargets.length
       ? dealStageWonTargets
       : (pickProjectCompanyId
-        ? [{ companyId: pickProjectCompanyId, workshopTypeId: pickProjectCompanyWorkTypeId }]
+        ? [{
+          companyId: pickProjectCompanyId,
+          workshopTypeId: pickProjectCompanyWorkTypeId,
+          deliveryDate: pickProjectDeliveryDate || '',
+        }]
         : []);
     if (targets.length <= 1 && pickProjectCompanyId) {
       const tid = targets[0]?.workshopTypeId || pickProjectCompanyWorkTypeId || '';
-      targets = [{ companyId: targets[0]?.companyId || pickProjectCompanyId, workshopTypeId: tid }];
+      targets = [{
+        companyId: targets[0]?.companyId || pickProjectCompanyId,
+        workshopTypeId: tid,
+        deliveryDate: targets[0]?.deliveryDate || pickProjectDeliveryDate || '',
+      }];
     }
     const err = validateSxTargets(targets);
     if (err) {
@@ -1670,7 +1730,16 @@ export default function LeadDetail() {
     }
     setPickProjectCompanyErr('');
     autoCreateCalledRef.current = false;
-    await autoCreateProject(id, targets[0]?.companyId, targets[0]?.workshopTypeId || null, targets);
+    const firstDelivery = String(targets[0]?.deliveryDate || pickProjectDeliveryDate || '').trim();
+    await autoCreateProject(
+      id,
+      targets[0]?.companyId,
+      targets[0]?.workshopTypeId || null,
+      targets,
+      'create',
+      /^\d{4}-\d{2}-\d{2}$/.test(firstDelivery) ? { delivery_date: firstDelivery } : null,
+    );
+    setPickProjectDeliveryDate('');
   };
 
   const submitAddSxProject = async () => {
@@ -1696,7 +1765,7 @@ export default function LeadDetail() {
         setAutoCreateResult(data);
         setAutoCreateStatus('success');
       }
-      load({ silent: true });
+      await softRefreshDealAfterProject();
     } catch (e) {
       setAddSxErr(e.response?.data?.error || e.message || 'Lỗi thêm dự án SX');
     } finally {
@@ -1871,7 +1940,8 @@ export default function LeadDetail() {
     }
   };
 
-  if (loading || !lead) return <div className="flex items-center justify-center h-64"><div className="animate-spin h-10 w-10 border-4 border-blue-600 border-t-transparent rounded-full" /></div>;
+  if (loading && !lead) return <div className="flex items-center justify-center h-64"><div className="animate-spin h-10 w-10 border-4 border-blue-600 border-t-transparent rounded-full" /></div>;
+  if (!lead) return <div className="flex items-center justify-center h-64 text-sm text-gray-500">Không tải được deal/lead.</div>;
 
   const stages = lead.type === 'deal' ? stagesDeal : stagesLead;
   const currentStageIdx = stages.findIndex(s => s.id === lead.stage_id);
@@ -2572,7 +2642,7 @@ export default function LeadDetail() {
           onClick={() => { if (!addSxBusy) { setAddSxOpen(false); setAddSxErr(''); setAddSxTargets([]); } }}
         >
           <div
-            className="bg-white rounded-2xl shadow-xl max-w-lg w-full max-h-[90vh] flex flex-col"
+            className="bg-white rounded-2xl shadow-xl max-w-4xl w-full max-h-[90vh] flex flex-col"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="p-6 pb-3 shrink-0">
@@ -2581,7 +2651,7 @@ export default function LeadDetail() {
                 <h3 className="text-lg font-bold text-gray-900">Thêm dự án SX</h3>
               </div>
               <p className="text-sm text-gray-600">
-                Tạo thêm thẻ Kanban tại xưởng khác (vd. tủ ở HCB khi đã có cửa ở Phúc Đạt).
+                Tạo thêm thẻ Kanban tại xưởng khác (vd. tủ ở HCB khi đã có cửa ở Phúc Đạt). Ngày lắp/hoàn thành tuỳ chọn — gắn vào đúng dự án xưởng đó.
               </p>
             </div>
             <div className="px-6 flex-1 min-h-0 overflow-y-auto">
@@ -2591,6 +2661,7 @@ export default function LeadDetail() {
                 leadTypeRow={parentSxLeadTypeRow}
                 kind={parentSxLeadKind}
                 accent="teal"
+                showDates
                 disabled={addSxBusy}
                 onChange={(rows) => { setAddSxTargets(rows); setAddSxErr(''); }}
               />
@@ -3724,7 +3795,9 @@ export default function LeadDetail() {
               ) : activeTab === 'team' ? (
                 <LeadMembersTab
                   leadId={id}
+                  refreshKey={crmTasksRefreshKey}
                   onMembersChange={(list) => setMemberModuleCounts(countMembersByModule(list))}
+                  onMembersMutated={() => setCrmTasksRefreshKey((k) => k + 1)}
                   onOpenSharedWorkspace={() => setActiveTab('shared-workspace')}
                 />
               ) : activeTab === 'comments' ? (
@@ -4284,129 +4357,71 @@ export default function LeadDetail() {
             setDealStageWonErr('');
             setDealStageWonWorkTypeId('');
             setDealStageWonTargets([]);
+            setDealStageWonDeliveryDate('');
           }}
         >
-          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center gap-2 mb-2">
-              <Building2 className="h-6 w-6 text-teal-600" />
-              <h3 className="text-lg font-bold text-gray-900">Chọn công ty Sản xuất</h3>
-            </div>
-            <p className="text-sm text-gray-600 mb-4">
-              Chuyển deal sang <strong>Thắng</strong> cần gắn công ty thuộc <strong>module Sản xuất</strong> cho dự án xưởng.
-            </p>
-            {parentSxHint && (
-              <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-100 rounded-lg px-2.5 py-1.5 mb-3">
-                {parentSxHint}
+          <div
+            className="bg-white rounded-2xl shadow-xl w-full max-w-4xl max-h-[92vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-6 pt-5 pb-3 border-b border-slate-100 shrink-0">
+              <div className="flex items-center gap-2 mb-1">
+                <Building2 className="h-6 w-6 text-teal-600" />
+                <h3 className="text-lg font-bold text-gray-900">Chọn công ty Sản xuất</h3>
+              </div>
+              <p className="text-sm text-gray-600">
+                Chuyển deal sang <strong>Thắng</strong> — thêm từng xưởng (công ty + phân loại). Ngày lắp đặt tuỳ chọn.
               </p>
-            )}
-            <label className="block text-xs font-medium text-gray-700 mb-1">
-              Công ty <span className="text-red-600">*</span>
-              <span className="ml-1 font-normal text-gray-500">(<span className="text-red-600 font-bold">★</span> = gợi ý)</span>
-            </label>
-            <SxCompanyPickList
-              companies={parentSxCompaniesForSelect}
-              value={dealStageWonCompanyId}
-              leadTypeRow={parentSxLeadTypeRow}
-              kind={parentSxLeadKind}
-              accent="teal"
-              onChange={(id) => {
-                setDealStageWonCompanyId(id);
-                setDealStageWonWorkTypeId('');
-                setDealStageWonErr('');
-                setDealStageWonTargets([{ companyId: id, workshopTypeId: '' }]);
-              }}
-            />
-            <div className="mt-2 mb-1">
-              <button
-                type="button"
-                className="text-[11px] font-semibold text-teal-700 hover:underline"
-                onClick={() => {
-                  const base = dealStageWonTargets.length
-                    ? dealStageWonTargets
-                    : [{ companyId: dealStageWonCompanyId, workshopTypeId: dealStageWonWorkTypeId }];
-                  setDealStageWonTargets([...base, { companyId: '', workshopTypeId: '' }]);
-                }}
-              >
-                + Thêm công ty SX khác
-              </button>
+              {parentSxHint && (
+                <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-100 rounded-lg px-2.5 py-1.5 mt-2">
+                  {parentSxHint}
+                </p>
+              )}
             </div>
-            {dealStageWonTargets.length > 1 && (
-              <div className="mb-3">
-                <SxMultiTargetPicker
-                  key={`won-multi-${dealStageWonTargets.length}`}
-                  companies={parentSxCompaniesForSelect}
-                  leadTypeRow={parentSxLeadTypeRow}
-                  kind={parentSxLeadKind}
-                  accent="teal"
-                  initialRows={dealStageWonTargets}
-                  onChange={(rows) => {
-                    setDealStageWonTargets(rows);
-                    setDealStageWonCompanyId(rows[0]?.companyId || '');
-                    setDealStageWonWorkTypeId(rows[0]?.workshopTypeId || '');
-                    setDealStageWonErr('');
-                  }}
-                />
-              </div>
-            )}
-            {/* Phân loại theo công ty SX vừa chọn */}
-            {dealStageWonTargets.length <= 1 && dealStageWonCompanyId && (
-              <div className="mt-3">
-                <label className="block text-xs font-medium text-gray-700 mb-1">
-                  Phân loại sản xuất {parentWonTypesForSelect.length > 0 && <span className="text-red-600">*</span>}
-                </label>
-                <select
-                  value={dealStageWonWorkTypeId}
-                  onChange={(e) => {
-                    setDealStageWonWorkTypeId(e.target.value);
-                    setDealStageWonErr('');
-                    setDealStageWonTargets([{ companyId: dealStageWonCompanyId, workshopTypeId: e.target.value }]);
-                  }}
-                  disabled={wonModalWorkTypesLoading || parentWonTypesForSelect.length === 0}
-                  className="w-full h-11 px-3 border border-gray-200 rounded-xl text-sm bg-white disabled:bg-gray-50 disabled:text-gray-400"
-                >
-                  <option value="">
-                    {wonModalWorkTypesLoading
-                      ? 'Đang tải phân loại…'
-                      : (parentWonTypesForSelect.length === 0
-                          ? '— Công ty chưa có phân loại nào —'
-                          : '— Chọn phân loại —')}
-                  </option>
-                  {parentWonTypesForSelect.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {workshopTypePreferredForLeadType(t.id, parentSxLeadTypeRow, dealStageWonCompanyId)
-                        || workshopTypePreferredForLeadType(t.id, parentSxLeadTypeRow, pickProjectCompanyId)
-                        || workshopTypePreferredForLeadType(t.id, parentSxLeadTypeRow, reassignSxCompanyId)
-                        || (parentSxDbPref.workshopTypeId && String(t.id) === parentSxDbPref.workshopTypeId)
-                        || workshopTypeMatchesSxKind(t.name, parentSxLeadKind)
-                        ? '★'
-                        : '📦'} {t.name}
-                    </option>
-                  ))}
-                </select>
-                {parentWonTypesForSelect.length === 0 && !wonModalWorkTypesLoading && (
-                  <p className="mt-1 text-[11px] text-gray-500">
-                    Công ty này chưa cấu hình phân loại — admin có thể vào /sx/pipeline-settings để thêm.
-                  </p>
-                )}
-              </div>
-            )}
-            {dealStageWonErr && <p className="text-xs text-red-600 mt-2">{dealStageWonErr}</p>}
-            <div className="flex gap-2 mt-4">
+            <div className="px-6 py-4 overflow-y-auto flex-1 min-h-0">
+              <SxMultiTargetPicker
+                key={`won-list-${dealStageWonPick.stageId}`}
+                companies={parentSxCompaniesForSelect}
+                leadTypeRow={parentSxLeadTypeRow}
+                kind={parentSxLeadKind}
+                accent="teal"
+                showDates
+                initialRows={
+                  dealStageWonTargets.length
+                    ? dealStageWonTargets
+                    : [{
+                      companyId: dealStageWonCompanyId || '',
+                      workshopTypeId: dealStageWonWorkTypeId || '',
+                      deliveryDate: dealStageWonDeliveryDate || '',
+                    }]
+                }
+                onChange={(rows) => {
+                  setDealStageWonTargets(rows);
+                  setDealStageWonCompanyId(rows[0]?.companyId || '');
+                  setDealStageWonWorkTypeId(rows[0]?.workshopTypeId || '');
+                  setDealStageWonDeliveryDate(rows[0]?.deliveryDate || '');
+                  setDealStageWonErr('');
+                }}
+              />
+              {dealStageWonErr && <p className="text-xs text-red-600 mt-3">{dealStageWonErr}</p>}
+            </div>
+            <div className="px-6 py-4 border-t border-slate-100 flex gap-2 shrink-0">
               <button
                 type="button"
-                className="flex-1 h-10 border border-gray-200 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50"
+                className="flex-1 h-11 border border-gray-200 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50"
                 onClick={() => {
                   setDealStageWonPick(null);
                   setDealStageWonErr('');
                   setDealStageWonWorkTypeId('');
                   setDealStageWonTargets([]);
+                  setDealStageWonDeliveryDate('');
                 }}
               >
                 Hủy
               </button>
               <button
                 type="button"
-                className="flex-1 h-10 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-sm font-semibold"
+                className="flex-[1.4] h-11 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-sm font-semibold"
                 onClick={() => confirmDealStageWonProduction()}
               >
                 Tiếp tục
@@ -4425,130 +4440,72 @@ export default function LeadDetail() {
             setPickProjectCompanyErr('');
             setPickProjectCompanyWorkTypeId('');
             setDealStageWonTargets([]);
+            setPickProjectDeliveryDate('');
           }}
         >
-          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center gap-2 mb-2">
-              <Building2 className="h-6 w-6 text-amber-600" />
-              <h3 className="text-lg font-bold text-gray-900">Tạo dự án xưởng</h3>
-            </div>
-            <p className="text-sm text-gray-600 mb-4">
-              Deal đã <strong>Thắng</strong> nhưng chưa có dự án. Chọn công ty <strong>module Sản xuất</strong> để hệ thống tạo dự án.
-            </p>
-            {parentSxHint && (
-              <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-100 rounded-lg px-2.5 py-1.5 mb-3">
-                {parentSxHint}
+          <div
+            className="bg-white rounded-2xl shadow-xl w-full max-w-4xl max-h-[92vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-6 pt-5 pb-3 border-b border-slate-100 shrink-0">
+              <div className="flex items-center gap-2 mb-1">
+                <Building2 className="h-6 w-6 text-amber-600" />
+                <h3 className="text-lg font-bold text-gray-900">Tạo dự án xưởng</h3>
+              </div>
+              <p className="text-sm text-gray-600">
+                Deal đã <strong>Thắng</strong> nhưng chưa có dự án. Thêm từng xưởng (công ty + phân loại). Ngày lắp đặt tuỳ chọn.
               </p>
-            )}
-            <label className="block text-xs font-medium text-gray-700 mb-1">
-              Công ty <span className="text-red-600">*</span>
-              <span className="ml-1 font-normal text-gray-500">(<span className="text-red-600 font-bold">★</span> = gợi ý)</span>
-            </label>
-            <SxCompanyPickList
-              companies={parentSxCompaniesForSelect}
-              value={pickProjectCompanyId}
-              leadTypeRow={parentSxLeadTypeRow}
-              kind={parentSxLeadKind}
-              accent="amber"
-              onChange={(id) => {
-                setPickProjectCompanyId(id);
-                setPickProjectCompanyWorkTypeId('');
-                setPickProjectCompanyErr('');
-                setDealStageWonTargets([{ companyId: id, workshopTypeId: '' }]);
-              }}
-            />
-            <div className="mt-2 mb-1">
-              <button
-                type="button"
-                className="text-[11px] font-semibold text-amber-700 hover:underline"
-                onClick={() => {
-                  const base = dealStageWonTargets.length
-                    ? dealStageWonTargets
-                    : [{ companyId: pickProjectCompanyId, workshopTypeId: pickProjectCompanyWorkTypeId }];
-                  setDealStageWonTargets([...base, { companyId: '', workshopTypeId: '' }]);
-                }}
-              >
-                + Thêm công ty SX khác
-              </button>
+              {parentSxHint && (
+                <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-100 rounded-lg px-2.5 py-1.5 mt-2">
+                  {parentSxHint}
+                </p>
+              )}
             </div>
-            {dealStageWonTargets.length > 1 && (
-              <div className="mb-3">
-                <SxMultiTargetPicker
-                  key={`pick-multi-${dealStageWonTargets.length}`}
-                  companies={parentSxCompaniesForSelect}
-                  leadTypeRow={parentSxLeadTypeRow}
-                  kind={parentSxLeadKind}
-                  accent="amber"
-                  initialRows={dealStageWonTargets}
-                  onChange={(rows) => {
-                    setDealStageWonTargets(rows);
-                    setPickProjectCompanyId(rows[0]?.companyId || '');
-                    setPickProjectCompanyWorkTypeId(rows[0]?.workshopTypeId || '');
-                    setPickProjectCompanyErr('');
-                  }}
-                />
-              </div>
-            )}
-            {/* Phân loại theo công ty SX vừa chọn */}
-            {dealStageWonTargets.length <= 1 && pickProjectCompanyId && (
-              <div className="mt-3">
-                <label className="block text-xs font-medium text-gray-700 mb-1">
-                  Phân loại sản xuất {parentWonTypesForSelect.length > 0 && <span className="text-red-600">*</span>}
-                </label>
-                <select
-                  value={pickProjectCompanyWorkTypeId}
-                  onChange={(e) => {
-                    setPickProjectCompanyWorkTypeId(e.target.value);
-                    setPickProjectCompanyErr('');
-                    setDealStageWonTargets([{ companyId: pickProjectCompanyId, workshopTypeId: e.target.value }]);
-                  }}
-                  disabled={wonModalWorkTypesLoading || parentWonTypesForSelect.length === 0}
-                  className="w-full h-11 px-3 border border-gray-200 rounded-xl text-sm bg-white disabled:bg-gray-50 disabled:text-gray-400"
-                >
-                  <option value="">
-                    {wonModalWorkTypesLoading
-                      ? 'Đang tải phân loại…'
-                      : (parentWonTypesForSelect.length === 0
-                          ? '— Công ty chưa có phân loại nào —'
-                          : '— Chọn phân loại —')}
-                  </option>
-                  {parentWonTypesForSelect.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {workshopTypePreferredForLeadType(t.id, parentSxLeadTypeRow, dealStageWonCompanyId)
-                        || workshopTypePreferredForLeadType(t.id, parentSxLeadTypeRow, pickProjectCompanyId)
-                        || workshopTypePreferredForLeadType(t.id, parentSxLeadTypeRow, reassignSxCompanyId)
-                        || (parentSxDbPref.workshopTypeId && String(t.id) === parentSxDbPref.workshopTypeId)
-                        || workshopTypeMatchesSxKind(t.name, parentSxLeadKind)
-                        ? '★'
-                        : '📦'} {t.name}
-                    </option>
-                  ))}
-                </select>
-                {parentWonTypesForSelect.length === 0 && !wonModalWorkTypesLoading && (
-                  <p className="mt-1 text-[11px] text-gray-500">
-                    Công ty này chưa cấu hình phân loại — admin có thể vào /sx/pipeline-settings để thêm.
-                  </p>
-                )}
-              </div>
-            )}
-            {pickProjectCompanyErr && <p className="text-xs text-red-600 mt-2">{pickProjectCompanyErr}</p>}
-            <div className="flex gap-2 mt-4">
+            <div className="px-6 py-4 overflow-y-auto flex-1 min-h-0">
+              <SxMultiTargetPicker
+                key="pick-project-list"
+                companies={parentSxCompaniesForSelect}
+                leadTypeRow={parentSxLeadTypeRow}
+                kind={parentSxLeadKind}
+                accent="amber"
+                showDates
+                initialRows={
+                  dealStageWonTargets.length
+                    ? dealStageWonTargets
+                    : [{
+                      companyId: pickProjectCompanyId || '',
+                      workshopTypeId: pickProjectCompanyWorkTypeId || '',
+                      deliveryDate: pickProjectDeliveryDate || '',
+                    }]
+                }
+                onChange={(rows) => {
+                  setDealStageWonTargets(rows);
+                  setPickProjectCompanyId(rows[0]?.companyId || '');
+                  setPickProjectCompanyWorkTypeId(rows[0]?.workshopTypeId || '');
+                  setPickProjectDeliveryDate(rows[0]?.deliveryDate || '');
+                  setPickProjectCompanyErr('');
+                }}
+              />
+              {pickProjectCompanyErr && <p className="text-xs text-red-600 mt-3">{pickProjectCompanyErr}</p>}
+            </div>
+            <div className="px-6 py-4 border-t border-slate-100 flex gap-2 shrink-0">
               <button
                 type="button"
-                className="flex-1 h-10 border border-gray-200 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50"
+                className="flex-1 h-11 border border-gray-200 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50"
                 onClick={() => {
                   setPickProjectCompanyOpen(false);
                   projectCompanyPickRef.current = false;
                   setPickProjectCompanyErr('');
                   setPickProjectCompanyWorkTypeId('');
                   setDealStageWonTargets([]);
+                  setPickProjectDeliveryDate('');
                 }}
               >
                 Để sau
               </button>
               <button
                 type="button"
-                className="flex-1 h-10 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-sm font-semibold"
+                className="flex-[1.4] h-11 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-sm font-semibold"
                 onClick={() => submitPickProjectCompany()}
               >
                 Tạo dự án
@@ -6585,14 +6542,14 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
               onClick={() => { if (!sxAddBusy) { setSxAddOpen(false); setSxAddErr(''); } }}
             >
               <div
-                className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] flex flex-col"
+                className="bg-white rounded-2xl shadow-xl w-full max-w-4xl max-h-[90vh] flex flex-col"
                 onClick={(e) => e.stopPropagation()}
               >
                 <div className="flex items-start justify-between gap-2 p-5 pb-3 shrink-0">
                   <div>
                     <h3 className="text-lg font-bold text-gray-900">Thêm công ty SX</h3>
                     <p className="text-xs text-gray-500 mt-1">
-                      Tạo thêm dự án xưởng cho deal (không ghi đè dự án chính).
+                      Tạo thêm dự án xưởng cho deal (không ghi đè dự án chính). Ngày lắp/hoàn thành tuỳ chọn — gắn vào đúng dự án xưởng đó.
                     </p>
                   </div>
                   <button type="button" disabled={sxAddBusy} onClick={() => { setSxAddOpen(false); setSxAddErr(''); }} className="p-1 cursor-pointer">
@@ -6606,6 +6563,7 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
                     leadTypeRow={sxLeadTypeRow}
                     kind={sxLeadKind}
                     accent="orange"
+                    showDates
                     disabled={sxAddBusy}
                     onChange={(rows) => { setSxAddTargets(rows); setSxAddErr(''); }}
                   />

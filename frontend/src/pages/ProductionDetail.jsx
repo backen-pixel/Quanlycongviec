@@ -29,6 +29,14 @@ import { downloadWorkshopDocumentsZip } from '../lib/workshopDocumentsZipDownloa
 import { resolveSxProjectLeadId } from '../lib/sxProjectComments';
 import { countMembersByModule } from '../lib/memberModuleCounts';
 import {
+  addCalendarDaysYmd,
+  buildSxInstallBackPlan,
+  normalizeHolidayIndex,
+  remainingSxWorkingDaysTo,
+  resolveSxReceptionYmd,
+  SX_INSTALL_BACK_PLAN_RULES,
+} from '../lib/sxWorkshopSchedule';
+import {
   ArrowLeft, FolderKanban, MessageSquare, Plus, X,
   FileUp, Edit2, Save, ChevronDown, Trash2, Send, Paperclip,
   AlertTriangle, CheckCircle2, Circle, Clock, Truck, Wrench, ArrowRightLeft, Loader2, Download,
@@ -127,6 +135,88 @@ const ACTIVITY_FORM_TYPES = ACTIVITY_TYPES.filter((t) =>
   ['call', 'meeting', 'email', 'zalo', 'note'].includes(t.value),
 );
 
+/**
+ * Tone lịch hẹn theo số ngày LV còn lại.
+ * kind: 'finish' (xưởng / teal) | 'install' (lắp đặt / xanh dương).
+ */
+function workshopScheduleTone(days, kind = 'finish') {
+  const isInstall = kind === 'install';
+  const base = isInstall
+    ? {
+      row: 'border-l-[3px] border-blue-500 bg-blue-50/90 hover:bg-blue-100/90',
+      label: 'text-blue-700',
+      value: 'text-blue-900',
+      hint: 'text-blue-600/80',
+    }
+    : {
+      row: 'border-l-[3px] border-teal-500 bg-teal-50/90 hover:bg-teal-100/90',
+      label: 'text-teal-700',
+      value: 'text-teal-900',
+      hint: 'text-teal-600/80',
+    };
+  if (days == null || !Number.isFinite(days)) {
+    return { ...base, badge: null };
+  }
+  if (days < 0) {
+    return {
+      row: 'border-l-[3px] border-red-700 bg-red-100 hover:bg-red-200/80',
+      label: 'text-red-800',
+      value: 'text-red-800 font-bold',
+      hint: 'text-red-600/90',
+      badge: { className: 'bg-red-800 text-white', text: `Quá hạn ${Math.abs(days)} ngày LV` },
+    };
+  }
+  if (days === 0) {
+    return {
+      row: 'border-l-[3px] border-red-600 bg-red-50 hover:bg-red-100',
+      label: 'text-red-700',
+      value: 'text-red-700 font-bold',
+      hint: 'text-red-600/80',
+      badge: { className: 'bg-red-600 text-white', text: 'Hôm nay (LV)' },
+    };
+  }
+  if (days <= 2) {
+    return {
+      row: 'border-l-[3px] border-orange-500 bg-orange-50 hover:bg-orange-100',
+      label: 'text-orange-800',
+      value: 'text-orange-800 font-semibold',
+      hint: 'text-orange-700/80',
+      badge: { className: 'bg-orange-500 text-white', text: `Còn ${days} ngày LV` },
+    };
+  }
+  if (days <= 4) {
+    return {
+      row: 'border-l-[3px] border-amber-500 bg-amber-50 hover:bg-amber-100',
+      label: 'text-amber-800',
+      value: 'text-amber-900 font-semibold',
+      hint: 'text-amber-700/80',
+      badge: { className: 'bg-amber-400 text-amber-950', text: `Còn ${days} ngày LV` },
+    };
+  }
+  if (days <= 6) {
+    return {
+      row: isInstall
+        ? 'border-l-[3px] border-sky-500 bg-sky-50 hover:bg-sky-100'
+        : 'border-l-[3px] border-cyan-500 bg-cyan-50 hover:bg-cyan-100',
+      label: isInstall ? 'text-sky-800' : 'text-cyan-800',
+      value: isInstall ? 'text-sky-900 font-semibold' : 'text-cyan-900 font-semibold',
+      hint: isInstall ? 'text-sky-700/80' : 'text-cyan-700/80',
+      badge: {
+        className: isInstall ? 'bg-sky-500 text-white' : 'bg-cyan-600 text-white',
+        text: `Còn ${days} ngày LV`,
+      },
+    };
+  }
+  return {
+    ...base,
+    value: `${base.value} font-semibold`,
+    badge: {
+      className: isInstall ? 'bg-blue-600 text-white' : 'bg-teal-600 text-white',
+      text: `Còn ${days} ngày LV`,
+    },
+  };
+}
+
 /** Cột trái — ngày giao/lắp, địa chỉ, tên khác (đồng bộ deal CRM / bàn giao VC). */
 function WorkshopInfoPanel({
   project,
@@ -138,6 +228,25 @@ function WorkshopInfoPanel({
   const [editing, setEditing] = useState(null);
   const [draft, setDraft] = useState('');
   const [saving, setSaving] = useState(false);
+  const [holidayIndex, setHolidayIndex] = useState(() => normalizeHolidayIndex([]));
+
+  useEffect(() => {
+    let cancelled = false;
+    api.get('/kpi/holidays', {
+      params: project?.company_id ? { company_id: project.company_id } : {},
+    })
+      .then((r) => {
+        if (cancelled) return;
+        const list = Array.isArray(r.data?.holidays)
+          ? r.data.holidays
+          : (Array.isArray(r.data) ? r.data : []);
+        setHolidayIndex(normalizeHolidayIndex(list));
+      })
+      .catch(() => {
+        if (!cancelled) setHolidayIndex(normalizeHolidayIndex([]));
+      });
+    return () => { cancelled = true; };
+  }, [project?.company_id]);
 
   const startEdit = (field, value) => { setEditing(field); setDraft(value ?? ''); };
   const cancelEdit = () => { setEditing(null); setDraft(''); };
@@ -164,6 +273,32 @@ function WorkshopInfoPanel({
   const installDate = project.install_date || null;
   const deliveryDate = project.delivery_date || null;
   const productionFinishDate = project.production_finish_date || null;
+  const receptionYmd = useMemo(() => {
+    const stored = String(project?.sx_reception_date || '').slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(stored)) return stored;
+    if (project?.created_at) return resolveSxReceptionYmd(project.created_at, holidayIndex);
+    return resolveSxReceptionYmd(Date.now(), holidayIndex);
+  }, [project?.sx_reception_date, project?.created_at, holidayIndex]);
+
+  const finishTone = workshopScheduleTone(
+    remainingSxWorkingDaysTo(productionFinishDate, { receptionYmd, holidayIndex }),
+    'finish',
+  );
+  const installTone = workshopScheduleTone(
+    remainingSxWorkingDaysTo(deliveryDate, { receptionYmd, holidayIndex }),
+    'install',
+  );
+  const installBackPlan = useMemo(
+    () => buildSxInstallBackPlan(deliveryDate, { startYmd: receptionYmd }),
+    [deliveryDate, receptionYmd],
+  );
+
+  const formatPlanRange = (startYmd, endYmd) => {
+    if (!startYmd && !endYmd) return '—';
+    if (startYmd && endYmd && startYmd === endYmd) return formatDate(startYmd);
+    if (startYmd && endYmd) return `${formatDate(startYmd)} → ${formatDate(endYmd)}`;
+    return formatDate(startYmd || endYmd);
+  };
 
   const pickupDateObj = pickupAt ? new Date(pickupAt) : null;
   const pickupOverdue = pickupDateObj && !Number.isNaN(pickupDateObj.getTime()) && pickupDateObj < new Date();
@@ -174,11 +309,6 @@ function WorkshopInfoPanel({
   const installOverdue = installDateObj && !Number.isNaN(installDateObj.getTime()) && installDateObj < new Date();
   const installSoon = installDateObj && !installOverdue && !Number.isNaN(installDateObj.getTime())
     && installDateObj < new Date(Date.now() + 3 * 86400000);
-
-  const finishDateObj = productionFinishDate ? new Date(`${String(productionFinishDate).slice(0, 10)}T12:00:00`) : null;
-  const finishOverdue = !!(finishDateObj && !Number.isNaN(finishDateObj.getTime()) && finishDateObj < new Date());
-  const finishSoon = !!(finishDateObj && !finishOverdue && !Number.isNaN(finishDateObj.getTime())
-    && finishDateObj < new Date(Date.now() + 3 * 86400000));
 
   const toDateInputValue = (raw) => {
     if (!raw) return '';
@@ -228,7 +358,14 @@ function WorkshopInfoPanel({
         }
       }
 
-      await api.put(`/projects/${project.id}`, { [field]: payloadValue });
+      const projectPatch = { [field]: payloadValue };
+      // Đổi ngày lắp → tự cập nhật hoàn thiện SX = lắp − 2 (cuối công đoạn hoàn thiện).
+      if (field === 'delivery_date') {
+        projectPatch.production_finish_date = payloadValue
+          ? (addCalendarDaysYmd(payloadValue, -2) || null)
+          : null;
+      }
+      await api.put(`/projects/${project.id}`, projectPatch);
 
       // Đồng bộ sang deal CRM (cùng nguồn với phiếu/bàn giao VC của sale).
       if (crmDeal?.id) {
@@ -385,14 +522,31 @@ function WorkshopInfoPanel({
             </div>
           </div>
 
+          <div className="flex items-start gap-2 py-2 px-2 rounded-lg -mx-1 border-l-[3px] border-slate-300 bg-slate-50">
+            <span className="text-sm mt-0.5 shrink-0">📥</span>
+            <div className="flex-1 min-w-0">
+              <p className="text-[10px] text-slate-600 uppercase tracking-wider font-bold mb-0.5">
+                Ngày tiếp nhận xưởng
+              </p>
+              <p className="text-sm font-semibold text-slate-800">
+                {receptionYmd ? formatDate(receptionYmd) : '—'}
+              </p>
+              <p className="text-[10px] text-slate-500 mt-0.5">
+                Setup &lt;12h = ngày đó · ≥12h = ngày làm kế (bỏ CN + lễ)
+              </p>
+            </div>
+          </div>
+
           {/* Ngày hoàn thiện SX — đồng bộ từ Sale (giao − 2 ngày), có thể sửa tay */}
           <div
-            className={`flex items-start gap-2 py-2 px-1 rounded-lg -mx-1 transition-colors group cursor-pointer ${finishOverdue ? 'bg-red-50 hover:bg-red-100' : 'hover:bg-gray-50'}`}
+            className={`flex items-start gap-2 py-2.5 px-2 rounded-lg -mx-1 transition-colors group cursor-pointer ${finishTone.row}`}
             onClick={() => editing !== 'production_finish_date' && startEdit('production_finish_date', toDateInputValue(productionFinishDate))}
           >
             <span className="text-sm mt-0.5 shrink-0">🏭</span>
             <div className="flex-1 min-w-0">
-              <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Ngày hoàn thiện sản xuất</p>
+              <p className={`text-[10px] uppercase tracking-wider font-bold mb-0.5 ${finishTone.label}`}>
+                Ngày hoàn thiện sản xuất
+              </p>
               {editing === 'production_finish_date' ? (
                 <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
                   <input
@@ -400,31 +554,40 @@ function WorkshopInfoPanel({
                     value={draft}
                     onChange={(e) => setDraft(e.target.value)}
                     autoFocus
-                    className="px-2 py-1 border border-blue-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-400"
+                    className="px-2 py-1 border border-teal-400 rounded text-sm outline-none focus:ring-1 focus:ring-teal-400"
                   />
-                  <button type="button" onClick={() => save('production_finish_date', draft)} disabled={saving} className="px-2 py-1 bg-blue-600 text-white rounded text-xs cursor-pointer disabled:opacity-50">✓</button>
+                  <button type="button" onClick={() => save('production_finish_date', draft)} disabled={saving} className="px-2 py-1 bg-teal-600 text-white rounded text-xs cursor-pointer disabled:opacity-50">✓</button>
                   <button type="button" onClick={cancelEdit} className="px-2 py-1 bg-gray-100 rounded text-xs cursor-pointer">✕</button>
                 </div>
               ) : (
-                <p className={`text-sm font-medium flex items-center gap-1 ${finishOverdue ? 'text-red-600' : finishSoon ? 'text-amber-600' : 'text-gray-900'}`}>
-                  <span className="flex-1 min-w-0">{productionFinishDate ? formatDate(productionFinishDate) : '—'}</span>
-                  {finishOverdue && <span className="text-[10px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded font-bold">Trễ!</span>}
-                  {finishSoon && <span className="text-[10px] bg-amber-100 text-amber-600 px-1.5 py-0.5 rounded font-bold">Sắp tới</span>}
-                  <Edit2 className="h-3 w-3 text-gray-300 opacity-0 group-hover:opacity-100 shrink-0" />
-                </p>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <p className={`text-sm flex items-center gap-1 min-w-0 ${finishTone.value}`}>
+                    <span className="min-w-0">{productionFinishDate ? formatDate(productionFinishDate) : '—'}</span>
+                    <Edit2 className="h-3 w-3 text-gray-400 opacity-0 group-hover:opacity-100 shrink-0" />
+                  </p>
+                  {finishTone.badge ? (
+                    <span className={`inline-flex shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold leading-tight ${finishTone.badge.className}`}>
+                      {finishTone.badge.text}
+                    </span>
+                  ) : null}
+                </div>
               )}
-              <p className="text-[10px] text-gray-400 mt-0.5">Mặc định = ngày lắp đặt − 2 ngày (Sale)</p>
+              <p className={`text-[10px] mt-0.5 ${finishTone.hint}`}>
+                Cuối công đoạn hoàn thiện (= lắp đặt − 2 ngày)
+              </p>
             </div>
           </div>
 
           {/* Ngày lắp đặt — do Sale thiết lập (delivery_date) */}
           <div
-            className="flex items-start gap-2 py-2 px-1 rounded-lg -mx-1 transition-colors group cursor-pointer hover:bg-gray-50"
+            className={`flex items-start gap-2 py-2.5 px-2 rounded-lg -mx-1 transition-colors group cursor-pointer ${installTone.row}`}
             onClick={() => editing !== 'delivery_date' && startEdit('delivery_date', toDateInputValue(deliveryDate))}
           >
             <span className="text-sm mt-0.5 shrink-0">🚚</span>
             <div className="flex-1 min-w-0">
-              <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Ngày lắp đặt</p>
+              <p className={`text-[10px] uppercase tracking-wider font-bold mb-0.5 ${installTone.label}`}>
+                Ngày lắp đặt
+              </p>
               {editing === 'delivery_date' ? (
                 <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
                   <input
@@ -432,20 +595,82 @@ function WorkshopInfoPanel({
                     value={draft}
                     onChange={(e) => setDraft(e.target.value)}
                     autoFocus
-                    className="px-2 py-1 border border-blue-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-400"
+                    className="px-2 py-1 border border-blue-400 rounded text-sm outline-none focus:ring-1 focus:ring-blue-400"
                   />
                   <button type="button" onClick={() => save('delivery_date', draft)} disabled={saving} className="px-2 py-1 bg-blue-600 text-white rounded text-xs cursor-pointer disabled:opacity-50">✓</button>
                   <button type="button" onClick={cancelEdit} className="px-2 py-1 bg-gray-100 rounded text-xs cursor-pointer">✕</button>
                 </div>
               ) : (
-                <p className="text-sm font-medium text-gray-900 flex items-center gap-1">
-                  <span className="flex-1 min-w-0">{deliveryDate ? formatDate(deliveryDate) : '—'}</span>
-                  <Edit2 className="h-3 w-3 text-gray-300 opacity-0 group-hover:opacity-100 shrink-0" />
-                </p>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <p className={`text-sm flex items-center gap-1 min-w-0 ${installTone.value}`}>
+                    <span className="min-w-0">{deliveryDate ? formatDate(deliveryDate) : '—'}</span>
+                    <Edit2 className="h-3 w-3 text-gray-400 opacity-0 group-hover:opacity-100 shrink-0" />
+                  </p>
+                  {installTone.badge ? (
+                    <span className={`inline-flex shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold leading-tight ${installTone.badge.className}`}>
+                      {installTone.badge.text}
+                    </span>
+                  ) : null}
+                </div>
               )}
-              <p className="text-[10px] text-gray-400 mt-0.5">Đổi ngày lắp đặt sẽ tự cập nhật hoàn thiện = lắp đặt − 2 ngày</p>
+              <p className={`text-[10px] mt-0.5 ${installTone.hint}`}>
+                Đổi ngày lắp → tự cập nhật hoàn thiện = lắp − 2 ngày
+              </p>
             </div>
           </div>
+
+          {installBackPlan ? (
+            <div className="mt-1 rounded-lg border border-indigo-200 bg-indigo-50/80 px-2.5 py-2 -mx-1 space-y-2">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-indigo-800">
+                  Kế hoạch SX (tính từ ngày lắp)
+                </p>
+                <ul className="mt-1 space-y-0.5 text-[10px] text-indigo-900/80 leading-snug list-disc pl-3.5">
+                  {SX_INSTALL_BACK_PLAN_RULES.map((rule) => (
+                    <li key={rule}>{rule}</li>
+                  ))}
+                </ul>
+              </div>
+              <div className="overflow-hidden rounded-md border border-indigo-100 bg-white divide-y divide-indigo-50">
+                {[
+                  installBackPlan.planning,
+                  installBackPlan.cabinet,
+                  installBackPlan.finishing,
+                  installBackPlan.packing,
+                ].map((stage) => (
+                  <div key={stage.key} className="flex items-start justify-between gap-2 px-2 py-1.5 text-[11px]">
+                    <div className="min-w-0">
+                      <p className="font-semibold text-slate-800">{stage.label}</p>
+                      <p className="text-[10px] text-slate-500 tabular-nums">
+                        {formatPlanRange(stage.startYmd, stage.endYmd)}
+                      </p>
+                    </div>
+                    <span className="shrink-0 rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-bold text-indigo-800 tabular-nums">
+                      {stage.daysFixed != null
+                        ? `${stage.daysFixed} ngày`
+                        : (stage.days != null ? `${stage.days} ngày` : 'Phần còn lại')}
+                    </span>
+                  </div>
+                ))}
+                <div className="flex items-start justify-between gap-2 px-2 py-1.5 text-[11px] bg-blue-50/80">
+                  <div className="min-w-0">
+                    <p className="font-semibold text-blue-900">Ngày lắp đặt</p>
+                    <p className="text-[10px] text-blue-700/80 tabular-nums">
+                      {formatDate(installBackPlan.installYmd)}
+                    </p>
+                  </div>
+                  <span className="shrink-0 rounded bg-blue-600 px-1.5 py-0.5 text-[10px] font-bold text-white">
+                    Mốc
+                  </span>
+                </div>
+              </div>
+              {installBackPlan.planning.days === 0 ? (
+                <p className="text-[10px] font-medium text-red-700">
+                  Cảnh báo: từ tiếp nhận tới trước thùng không còn ngày — cần lùi lắp hoặc đẩy tiếp nhận.
+                </p>
+              ) : null}
+            </div>
+          ) : null}
         </>
       )}
 

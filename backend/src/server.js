@@ -1181,6 +1181,13 @@ server.listen(config.port, () => {
   // Cron CSKH: nhắc chăm lại lead lúc 8h30 & 13h30 VN (disable bằng CSKH_CRON_DISABLED=1)
   try { require('./jobs/cskhReminder').start(io); } catch (e) { console.warn('[cskh-cron] Failed to start:', e.message); }
 
+  // Cron BC ngày: auto-nộp Phần II (KQ CRM hôm trước) ~17:00 VN — disable: DAILY_REPORT_AUTO_CLOSE_DISABLED=1
+  try {
+    require('./jobs/dailyReportAutoCloseCron').start();
+  } catch (e) {
+    console.warn('[daily-report-cron] Failed to start:', e.message);
+  }
+
   // Cron bổ sung nhiệm vụ CRM thiếu theo bộ mẫu — 12:30 & 18:00 VN (disable: CRM_MISSING_TASKS_CRON_DISABLED=1)
   try {
     require('./jobs/crmMissingTasksCron').start();

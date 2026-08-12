@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8"/>
+<title>Báo cáo công việc 27/07 – 01/08/2026</title>
+<style>
+  @page { margin: 14mm 12mm; size: A4 landscape; }
+  body { font-family: "Segoe UI", Arial, sans-serif; font-size: 10.5pt; line-height: 1.4; color: #111; margin: 24px; }
+  h1 { font-size: 16pt; margin: 0 0 8px; }
+  h2 { font-size: 12pt; margin: 22px 0 8px; font-weight: 700; }
+  .meta { border-collapse: collapse; margin-bottom: 12px; font-size: 10pt; }
+  .meta td { padding: 3px 10px 3px 0; }
+  .meta td:first-child { font-weight: 600; width: 140px; color: #334155; }
+  table.report { border-collapse: collapse; width: 100%; font-size: 9.5pt; margin-bottom: 8px; }
+  table.report th, table.report td { border: 1px solid #000; padding: 6px 8px; vertical-align: top; }
+  table.report th { background: #ffc000; font-weight: 700; text-align: center; white-space: nowrap; }
+  table.report td:first-child { text-align: center; width: 40px; }
+  table.report .center { text-align: center; }
+  .status { text-align: center; font-weight: 600; color: #15803d; }
+  .note { font-size: 9pt; color: #64748b; margin-top: 18px; }
+  @media print {
+    body { margin: 0; }
+    h2 { page-break-after: avoid; }
+    table.report { page-break-inside: auto; }
+    tr { page-break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+
+<h1>Báo cáo công việc tuần 27/07/2026 – 01/08/2026</h1>
+<table class="meta">
+  <tr><td>Người thực hiện</td><td><strong>Phan Nguyễn Đăng Khoa</strong></td></tr>
+  <tr><td>Giai đoạn</td><td>27/07/2026 – 01/08/2026</td></tr>
+  <tr><td>Ngày lập báo cáo</td><td>03/08/2026</td></tr>
+</table>
+
+<h2>1. Công việc thường xuyên</h2>
+<table class="report">
+  <thead>
+    <tr>
+      <th>STT</th>
+      <th>Loại</th>
+      <th>Danh mục</th>
+      <th>Nội dung công việc</th>
+      <th>Kết quả đạt được</th>
+      <th>Trạng thái</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>1</td>
+      <td class="center">Sửa lỗi</td>
+      <td>CRM – Transfer</td>
+      <td>Sửa filter nhân viên khi transfer CRM</td>
+      <td>Filter NV transfer đúng scope, không lệch danh sách</td>
+      <td class="status">Hoàn thành</td>
+    </tr>
+    <tr>
+      <td>2</td>
+      <td class="center">Sửa lỗi</td>
+      <td>CRM – Kanban</td>
+      <td>Sửa live totals Kanban và giảm request thừa; sửa refresh tổng Deal khi load trang</td>
+      <td>Tổng cột/tab đúng ngay khi mở trang; giảm gọi API thừa</td>
+      <td class="status">Hoàn thành</td>
+    </tr>
+    <tr>
+      <td>3</td>
+      <td class="center">Sửa lỗi</td>
+      <td>CRM – Pipeline</td>
+      <td>Hiện lại cột SX pipeline bị ẩn; giữ tổng Lead/Deal tab cùng lúc; hiện tổng tab Deals kèm Leads từ filter-summary</td>
+      <td>Cột SX hiển thị lại; badge tổng Lead/Deal đồng bộ</td>
+      <td class="status">Hoàn thành</td>
+    </tr>
+    <tr>
+      <td>4</td>
+      <td class="center">Sửa lỗi</td>
+      <td>CRM – Pipeline UI</td>
+      <td>Sửa UI reorder stage pipeline không cập nhật sau khi lưu</td>
+      <td>Kéo thả stage lưu xong UI cập nhật đúng thứ tự</td>
+      <td class="status">Hoàn thành</td>
+    </tr>
+    <tr>
+      <td>5</td>
+      <td class="center">Sửa lỗi</td>
+      <td>CRM – Facebook</td>
+      <td>Sửa resolve stage lead Facebook để giữ đúng pipeline theo công ty của page</td>
+      <td>Lead FB vào đúng pipeline theo company của page</td>
+      <td class="status">Hoàn thành</td>
+    </tr>
+    <tr>
+      <td>6</td>
+      <td class="center">Sửa lỗi</td>
+      <td>CRM – Kanban</td>
+      <td>Harden Kanban chống 500 gián đoạn (retry + load stage-link an toàn hơn); ổn định virtualization, load cột đang nhìn sớm hơn</td>
+      <td>Kanban ít lỗi 500; scroll/virtual list ổn định hơn</td>
+      <td class="status">Hoàn thành</td>
+    </tr>
+    <tr>
+      <td>7</td>
+      <td class="center">Sửa lỗi</td>
+      <td>Hạ tầng – CORS</td>
+      <td>Cho phép header <code>X-No-Cache</code> trong CORS (preflight <code>/companies</code>)</td>
+      <td>Preflight CRM <code>/companies</code> không còn bị chặn</td>
+      <td class="status">Hoàn thành</td>
+    </tr>
+    <tr>
+      <td>8</td>
+      <td class="center">Vận hành</td>
+      <td>Thông báo</td>
+      <td>Scope thông báo admin theo công ty của deal/project</td>
+      <td>Admin chỉ nhận thông báo đúng công ty liên quan</td>
+      <td class="status">Hoàn thành</td>
+    </tr>
+    <tr>
+      <td>9</td>
+      <td class="center">Vận hành</td>
+      <td>Sản xuất</td>
+      <td>Tạm mở kéo thả kanban SX; xóa lịch khi task completed</td>
+      <td>Drag SX hoạt động tạm thời; task hoàn thành thì lịch bị xóa</td>
+      <td class="status">Hoàn thành</td>
+    </tr>
+    <tr>
+      <td>10</td>
+      <td class="center">Hỗ trợ</td>
+      <td>Messenger</td>
+      <td>Cho tìm người trên Messenger không bắt buộc scope company</td>
+      <td>Search người dùng Messenger linh hoạt hơn (không ép theo company)</td>
+      <td class="status">Hoàn thành</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>2. Công việc phát triển</h2>
+<table class="report">
+  <thead>
+    <tr>
+      <th>STT</th>
+      <th>Danh mục</th>
+      <th>Nội dung công việc</th>
+      <th>Kết quả đạt được</th>
+      <th>TRẠNG THÁI</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>1</td>
+      <td>CRM – Kanban</td>
+      <td>Bỏ giới hạn hard load 3000 của CRM kanban (All / custom load không giới hạn)</td>
+      <td>Load All/custom không còn bị cắt ở 3000 bản ghi</td>
+      <td class="status">Hoàn thành</td>
+    </tr>
+    <tr>
+      <td>2</td>
+      <td>CRM – Deadline</td>
+      <td>Thêm tab Deadline (badge cột kiểu Kanban) và tải thông báo nhanh hơn</td>
+      <td>Có tab Deadline mới; badge theo cột; notification load nhanh hơn</td>
+      <td class="status">Hoàn thành</td>
+    </tr>
+    <tr>
+      <td>3</td>
+      <td>CRM – Kanban</td>
+      <td>Chuyển filter CRM Kanban sang server query; tối ưu incremental loading</td>
+      <td>Filter chạy phía server; load từng đợt mượt hơn</td>
+      <td class="status">Hoàn thành</td>
+    </tr>
+    <tr>
+      <td>4</td>
+      <td>CRM – Kanban</td>
+      <td>Phân trang Kanban theo từng cột; tối ưu lazy load Deadline + Kanban</td>
+      <td>Mỗi cột paginate riêng; lazy load Deadline/Kanban nhẹ hơn</td>
+      <td class="status">Hoàn thành</td>
+    </tr>
+    <tr>
+      <td>5</td>
+      <td>CRM – Deadline</td>
+      <td>Cho chỉnh sửa nguồn deadline CRM theo thứ tự ưu tiên</td>
+      <td>Cấu hình nguồn deadline theo priority, chỉnh sửa được</td>
+      <td class="status">Hoàn thành</td>
+    </tr>
+    <tr>
+      <td>6</td>
+      <td>Module / Workflow</td>
+      <td>Thêm app modules mở rộng và shared workflow assignments</td>
+      <td>Module app mở rộng; gán workflow dùng chung giữa module</td>
+      <td class="status">Hoàn thành</td>
+    </tr>
+    <tr>
+      <td>7</td>
+      <td>CRM ↔ SX</td>
+      <td>Bắt buộc có project SX đã ký HĐ trước khi chuyển CRM sau Won; khôi phục checkmark stepper giai đoạn thiết kế</td>
+      <td>Chặn chuyển sau Won nếu chưa có dự án SX ký HĐ; stepper thiết kế hiện đúng ✓</td>
+      <td class="status">Hoàn thành</td>
+    </tr>
+  </tbody>
+</table>
+
+<p class="note">
+  Báo cáo tổng hợp từ nhật ký công việc + đối chiếu git log 27/07–01/08/2026.
+  Mở file này bằng trình duyệt → chọn In / Save as PDF, hoặc copy bảng sang Excel/Google Sheets.
+</p>
+
+</body>
+</html>

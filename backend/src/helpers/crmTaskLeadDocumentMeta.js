@@ -90,6 +90,13 @@ function getDefaultCrmAttachmentShare(taskRow, opts = {}, checklistItem = null) 
     const cleaned = raw?.length ? cleanShareModulesInput(raw) : null;
     return { shared_to_project: true, allowed_share_modules: cleaned };
   }
+  // Slot tư liệu đơn hàng (sketchup / mô tả / render / …): luôn đồng bộ file → xưởng khi có dự án
+  try {
+    const { isOrderDocsTaskTitle } = require('./orderDocsWorkshopTasks');
+    if (opts.linkToProject && isOrderDocsTaskTitle(taskRow?.title)) {
+      return { shared_to_project: true, allowed_share_modules: ['production'] };
+    }
+  } catch (_) { /* ignore */ }
   if (opts.linkToProject || shouldAutoShareSxToWorkshop(taskRow, opts)) {
     return { shared_to_project: true, allowed_share_modules: ['production'] };
   }

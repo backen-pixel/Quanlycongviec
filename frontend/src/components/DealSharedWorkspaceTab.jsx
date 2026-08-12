@@ -209,6 +209,7 @@ export default function DealSharedWorkspaceTab({
         companyId={resolvedCompanyId}
         sxCompanyId={resolvedSxCompanyId}
         vcCompanyId={resolvedVcCompanyId}
+        refreshKey={refreshKey}
       />
 
       <SpawnedAdditionalDealsPanel

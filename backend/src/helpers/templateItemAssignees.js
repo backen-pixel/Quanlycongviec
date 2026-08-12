@@ -101,7 +101,11 @@ function assigneeIdsForFilteredInserts(allInserts, filteredInserts, fingerprintF
 
 function stripAssigneeMetaFromInsertRow(row) {
   if (!row || typeof row !== 'object') return row;
-  const { __template_assignee_ids: _a, ...rest } = row;
+  const {
+    __template_assignee_ids: _a,
+    __assignment_module: _m,
+    ...rest
+  } = row;
   return rest;
 }
 

@@ -234,7 +234,32 @@ function isSxProductionTask(task) {
 const SX_ASSIGNMENTS_PATH = '/sx/assignments';
 const VC_ASSIGNMENTS_PATH = '/vc/assignments';
 
+/** Tiêu đề mẫu «Tư liệu đơn hàng» — việc sales đặt hàng, xưởng chỉ xem/tải. */
+const ORDER_DOCS_TASK_TITLES = new Set([
+  'file sketchup',
+  'bảng mô tả',
+  'bang mo ta',
+  'file render',
+  'hình ảnh',
+  'hinh anh',
+  'file phụ kiện',
+  'file phu kien',
+]);
+
+function isCrmOrderDocsTask(task) {
+  if (!task) return false;
+  return ORDER_DOCS_TASK_TITLES.has(String(task?.title || '').trim().toLowerCase());
+}
+
+function isWorkshopViewOnlyOrderDocs(task, productionScope) {
+  return !!productionScope && isCrmOrderDocsTask(task);
+}
+
 function assignmentNavForTask(task, isProductionScope = false, forceProduction = null, isLogisticsScope = false) {
+  // Slot tư liệu đơn hàng: không mở Giao việc — chỉ đồng bộ file sang xưởng
+  if (isCrmOrderDocsTask(task)) {
+    return null;
+  }
   const storedMod = String(task?.crm_assignment_module || '').toLowerCase();
   const isLogistics = forceProduction == null && (
     isLogisticsScope
@@ -1639,6 +1664,7 @@ export default function CRMTasksTab({
   };
 
   const toggleStatus = (task) => {
+    if (isWorkshopViewOnlyOrderDocs(task, isProductionScope || showSxTasksInUi)) return;
     const next = task.status === 'completed' ? 'pending' : task.status === 'pending' ? 'in_progress' : 'completed';
     updateTask(task.id, { status: next });
   };
@@ -3469,6 +3495,7 @@ export default function CRMTasksTab({
       task.status !== 'completed';
     const assignees = taskAssigneeList(task);
     const hasCollapsedMeta = showInternalBadge || showEvidenceBadge || assignees.length > 0;
+    const workshopViewOnly = isWorkshopViewOnlyOrderDocs(task, isProductionScope || showSxTasksInUi);
     return (
       <SortableTaskWrapper key={task.id} id={task.id}>
         {({ dragHandleProps, isOver }) => (
@@ -3494,8 +3521,9 @@ export default function CRMTasksTab({
             type="button"
             data-tour="crm-task-complete"
             onClick={() => toggleStatus(task)}
-            className="cursor-pointer shrink-0"
-            title="Đánh dấu hoàn thành / chưa xong"
+            disabled={workshopViewOnly}
+            className={`shrink-0 ${workshopViewOnly ? 'cursor-default opacity-60' : 'cursor-pointer'}`}
+            title={workshopViewOnly ? 'Sales đặt hàng phụ trách — xưởng không đổi trạng thái' : 'Đánh dấu hoàn thành / chưa xong'}
           >
             <StatusIcon className={`h-4 w-4 ${task.status === 'completed' ? 'text-emerald-500' : task.status === 'in_progress' ? 'text-blue-500' : 'text-gray-300'}`} />
           </button>
@@ -3635,6 +3663,7 @@ export default function CRMTasksTab({
                   null,
                   isLogisticsScope || showLogisticsWorkshopInUi,
                 );
+                if (!asnNav) return null;
                 return (
                 <Link
                   to={asnNav.openUrl(task.crm_assignment_id)}
@@ -3646,6 +3675,14 @@ export default function CRMTasksTab({
                 </Link>
                 );
               })()}
+              {workshopViewOnly && (
+                <span
+                  className="text-[10px] text-slate-600 bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded-full font-medium"
+                  title="Tài liệu sales nộp → đồng bộ sang xưởng để xem/tải. Không phải giao việc xưởng."
+                >
+                  Tài liệu sales · chỉ xem/tải
+                </span>
+              )}
               {task.supervisor && <span className="text-[10px] text-purple-600 flex items-center gap-0.5"><Eye className="h-2.5 w-2.5" />{task.supervisor.full_name}</span>}
               {/* File & Note count badges — always visible */}
               {fileCount > 0 && (
@@ -3751,10 +3788,12 @@ export default function CRMTasksTab({
               data-tour="crm-task-notes-files"
               onClick={(e) => { e.stopPropagation(); toggleExpand(task); }}
               className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-md cursor-pointer"
-              title="Ghi chú & file"
+              title={workshopViewOnly ? 'Xem / tải file' : 'Ghi chú & file'}
             >
               <Paperclip className="h-3.5 w-3.5" />
             </button>
+            {!workshopViewOnly && (
+            <>
             <button
               type="button"
               data-tour="crm-task-assign"
@@ -3840,6 +3879,8 @@ export default function CRMTasksTab({
             >
               <Trash2 className="h-3.5 w-3.5" />
             </button>
+            </>
+            )}
           </div>
         </div>
 
@@ -4188,10 +4229,12 @@ export default function CRMTasksTab({
                         : 'Đang nén ảnh...'}
                     </span>
                   ) : (
+                    !workshopViewOnly && (
                     <button onClick={() => uploadTaskFile(task.id)}
                       className="text-[10px] text-blue-600 hover:text-blue-800 flex items-center gap-0.5 cursor-pointer px-1.5 py-0.5 rounded hover:bg-blue-50">
                       <FileUp className="h-3 w-3" /> Upload file
                     </button>
+                    )
                   )}
                   {!!task.auto_upload_attachments_to_drive && (
                     <span

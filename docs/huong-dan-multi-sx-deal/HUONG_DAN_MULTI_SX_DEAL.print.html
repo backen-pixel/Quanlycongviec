@@ -1,141 +1,257 @@
 <!DOCTYPE html>
 <html lang="vi">
 <head>
-  <meta charset="utf-8" />
-  <title>CRM làm gì — Deal nhiều công ty SX</title>
+  <meta charset="UTF-8" />
+  <title>Hướng dẫn — Deal gắn nhiều công ty sản xuất</title>
   <style>
-    @page { size: A4; margin: 16mm 14mm; }
+    @page { size: A4; margin: 16mm 14mm 18mm 14mm; }
     * { box-sizing: border-box; }
     body {
-      font-family: "Segoe UI", system-ui, sans-serif;
-      color: #0f172a;
-      line-height: 1.5;
-      font-size: 12.5px;
+      font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+      font-size: 10.5pt;
+      line-height: 1.55;
+      color: #1e293b;
       margin: 0;
       padding: 0;
     }
     h1 {
-      font-size: 22px;
+      font-size: 18pt;
+      color: #0f766e;
       margin: 0 0 4px;
-      color: #0f172a;
+      line-height: 1.25;
     }
+    .subtitle { font-size: 11pt; color: #475569; margin-bottom: 4px; }
     .meta {
+      font-size: 9pt;
       color: #64748b;
-      font-size: 11px;
-      margin-bottom: 18px;
+      margin-bottom: 16px;
       padding-bottom: 10px;
-      border-bottom: 2px solid #0d9488;
+      border-bottom: 2px solid #99f6e4;
     }
     h2 {
-      font-size: 15px;
-      margin: 0 0 10px;
-      color: #115e59;
-      border-left: 4px solid #0d9488;
+      font-size: 12.5pt;
+      color: #0f766e;
+      margin: 18px 0 8px;
+      page-break-after: avoid;
+      border-left: 4px solid #14b8a6;
       padding-left: 10px;
     }
-    .step {
-      display: flex;
-      gap: 12px;
-      margin: 0 0 12px;
-      padding: 12px 14px;
-      border: 1px solid #e2e8f0;
-      border-radius: 10px;
-      background: #fff;
-      page-break-inside: avoid;
-    }
-    .num {
-      flex-shrink: 0;
-      width: 28px;
-      height: 28px;
-      border-radius: 999px;
-      background: #0d9488;
-      color: #fff;
-      font-weight: 700;
-      font-size: 14px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    .step strong {
-      display: block;
-      font-size: 13.5px;
-      color: #0f172a;
-      margin-bottom: 3px;
-    }
-    .step p {
-      margin: 0;
+    h3 {
+      font-size: 11pt;
       color: #334155;
-      font-size: 12px;
+      margin: 12px 0 6px;
+      page-break-after: avoid;
     }
-    .note {
-      margin-top: 14px;
-      padding: 10px 12px;
+    p { margin: 5px 0; }
+    ul, ol { margin: 6px 0 10px; padding-left: 22px; }
+    li { margin: 3px 0; }
+    .flow {
       background: #f0fdfa;
       border: 1px solid #99f6e4;
       border-radius: 8px;
-      font-size: 11.5px;
-      color: #115e59;
+      padding: 10px 12px;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 8.5pt;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      margin: 8px 0 14px;
     }
-    .footer {
+    figure {
+      margin: 10px 0 14px;
+      page-break-inside: avoid;
+    }
+    figure img {
+      width: 100%;
+      max-height: 380px;
+      object-fit: contain;
+      object-position: top;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      background: #fff;
+    }
+    figcaption {
+      font-size: 8.5pt;
+      color: #64748b;
+      margin-top: 5px;
+      font-style: italic;
+    }
+    .notes {
+      background: #f0fdfa;
+      border: 1px solid #99f6e4;
+      border-radius: 6px;
+      padding: 7px 10px;
+      font-size: 9pt;
+      margin-top: 4px;
+    }
+    .notes strong { color: #115e59; }
+    .callout {
+      background: #fffbeb;
+      border-left: 4px solid #f59e0b;
+      padding: 8px 12px;
+      margin: 8px 0;
+      font-size: 9.5pt;
+    }
+    .page-break { page-break-before: always; }
+    .footer-note {
       margin-top: 20px;
-      font-size: 10px;
+      padding-top: 8px;
+      border-top: 1px solid #e2e8f0;
+      font-size: 8pt;
       color: #94a3b8;
+      text-align: center;
     }
+    .badge {
+      display: inline-block;
+      background: #0d9488;
+      color: #fff;
+      font-size: 8pt;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 999px;
+      margin-left: 6px;
+      vertical-align: middle;
+    }
+    table.trouble { width: 100%; border-collapse: collapse; font-size: 9pt; margin: 8px 0; }
+    table.trouble th, table.trouble td {
+      border: 1px solid #e2e8f0;
+      padding: 6px 8px;
+      vertical-align: top;
+      text-align: left;
+    }
+    table.trouble th { background: #f1f5f9; color: #334155; }
   </style>
 </head>
 <body>
+  <h1>Hướng dẫn — Deal gắn nhiều công ty sản xuất</h1>
+  <p class="subtitle">Chọn 1 hoặc nhiều xưởng khi thắng deal · Thêm xưởng sau trên chi tiết deal</p>
+  <p class="meta">
+    Mẫu thực tế: <strong>DEAL-2026-963</strong> — CỬA+TỦ CHÚ MỸ · Phúc Đạt (Cửa) + HCB (Tủ bếp)
+    <span class="badge">v2</span><br />
+    Cập nhật: 12/08/2026 · TuBep Pro · Ảnh chụp từ app thật
+  </p>
 
-  <h1>CRM làm những gì?</h1>
-  <p class="meta">Deal gắn nhiều công ty sản xuất · Hướng dẫn ngắn · 06/08/2026</p>
+  <h2>Tổng quan</h2>
+  <div class="flow">Khi chuyển deal sang cột Thắng
+  → Popup «Chọn công ty Sản xuất»
+  → Có thể chọn 1 xưởng, hoặc bấm «+ Thêm công ty SX khác» để chọn nhiều
+  → Hệ thống tạo dự án SX riêng từng xưởng (mã TB-…)
 
-  <h2>Tóm tắt cho Sale / CRM</h2>
+Sau đó (nếu cần thêm xưởng):
+  Chi tiết deal → «+ Thêm dự án SX» / «+ Thêm công ty SX»
+  → Chọn công ty + phân loại → Thêm dự án</div>
 
-  <div class="step">
-    <div class="num">1</div>
-    <div>
-      <strong>Chọn công ty SX khi chuyển deal</strong>
-      <p>Có thể chọn <b>1 hoặc nhiều xưởng</b> trong một lần (vd. Phúc Đạt làm cửa + HCB làm tủ). Hệ thống tạo dự án SX riêng từng công ty.</p>
-    </div>
+  <p><strong>Ví dụ điển hình:</strong> cửa làm tại <strong>Phúc Đạt</strong>, tủ bếp làm tại <strong>HCB</strong> (hoặc tủ inox tại <strong>Metalla</strong>). Deal CRM vẫn là một; mỗi xưởng có thẻ Kanban SX riêng.</p>
+
+  <h2>Bước 1 — Chọn nhiều xưởng khi chuyển Thắng</h2>
+  <h3>1.1. Chuyển deal sang cột Thắng</h3>
+  <ol>
+    <li>Mở chi tiết deal (hoặc Kanban Deals).</li>
+    <li>Bấm giai đoạn <strong>🎉 Đã ký hợp đồng.</strong> (cột Thắng) trên stepper / Kanban.</li>
+  </ol>
+  <p>Hệ thống mở popup bắt buộc chọn công ty sản xuất:</p>
+  <figure>
+    <img src="imgs/05-popup-chon-cong-ty-thang.png" alt="Popup chọn công ty SX khi thắng" />
+    <figcaption>Hình 1 — Popup «Chọn công ty Sản xuất» khi chuyển sang Thắng</figcaption>
+  </figure>
+  <div class="notes">
+    <strong>Ghi chú:</strong> (1) Chọn công ty (Metalla / HCB / Phúc Đạt…) · (2) Phân loại (vd. Cửa) ·
+    (3) Nút <em>+ Thêm công ty SX khác</em> · (4) Hủy / Tiếp tục
   </div>
 
-  <div class="step">
-    <div class="num">2</div>
-    <div>
-      <strong>Thêm xưởng sau nếu cần</strong>
-      <p>Trên chi tiết deal → <b>+ Thêm dự án SX</b> → chọn công ty + phân loại. NV cả các xưởng đã có sẽ được thông báo trong bình luận.</p>
-    </div>
+  <h3>1.2. Thêm xưởng thứ 2 trong cùng popup</h3>
+  <ol>
+    <li>Bấm <strong>+ Thêm công ty SX khác</strong>.</li>
+    <li>Xuất hiện <strong>Xưởng 1</strong> và <strong>Xưởng 2</strong>.</li>
+    <li>Với mỗi dòng: chọn công ty + phân loại (không trùng cặp công ty–phân loại).</li>
+    <li>Bấm <strong>Tiếp tục</strong> (sau khi đã kiểm tra đúng) — hệ thống tạo dự án từng xưởng.</li>
+  </ol>
+  <figure>
+    <img src="imgs/06-popup-thang-hai-xuong.png" alt="Popup thắng với hai xưởng" />
+    <figcaption>Hình 2 — Đã thêm Xưởng 2 (vd. Phúc Đạt + HCB) trước khi xác nhận</figcaption>
+  </figure>
+  <div class="callout">
+    <strong>Nhớ:</strong> Phúc Đạt chỉ làm cửa · Tủ bếp (Sang thiết kế) → HCB · Tủ bếp inox → Metalla (phân loại Tủ bếp).
   </div>
 
-  <div class="step">
-    <div class="num">3</div>
-    <div>
-      <strong>Không cần quản thành viên SX thủ công</strong>
-      <p>Tab Thành viên: CRM chỉ giữ <b>1 người chịu trách nhiệm</b>. NV sản xuất tự vào theo setup xưởng. Có thể thêm tay người khác nếu cần.</p>
-    </div>
+  <div class="page-break"></div>
+  <h2>Bước 2 — Xem deal đã có nhiều dự án SX</h2>
+  <p>Trên đầu trang chi tiết deal, khối <strong>Dự án sản xuất</strong> liệt kê mọi thẻ xưởng đã gắn:</p>
+  <figure>
+    <img src="imgs/01-deal-hai-xuong.png" alt="Deal với hai dự án SX" />
+    <figcaption>Hình 3 — DEAL-2026-963: TB-2026-586 (Phúc Đạt · Cửa) và TB-2026-588 (HCB · Tủ bếp)</figcaption>
+  </figure>
+  <div class="notes">
+    <strong>Ghi chú:</strong> (1) Banner «có thể thêm xưởng khác» · (2) Nút <em>+ Thêm dự án SX</em> ·
+    (3) Danh sách dự án + <em>Mở SX</em>
   </div>
 
-  <div class="step">
-    <div class="num">4</div>
-    <div>
-      <strong>Khi xưởng bàn giao VC → điền form</strong>
-      <p>Thẻ cam trên bình luận deal: chọn <b>công ty VC/LĐ</b> + ngày lấy / lắp. Badge trên thẻ cho biết <b>xưởng nào</b> đang gửi (Phúc Đạt hay HCB…).</p>
-    </div>
+  <p>Cột trái (sidebar) cũng hiển thị <strong>🏭 CÔNG TY SX (2 xưởng)</strong> kèm hướng dẫn chọn xưởng và nút thêm:</p>
+  <figure>
+    <img src="imgs/04-sidebar-cong-ty-sx.png" alt="Sidebar công ty SX" />
+    <figcaption>Hình 4 — Sidebar: danh sách xưởng, «+ Thêm công ty SX», gợi ý Phúc Đạt / HCB / Metalla</figcaption>
+  </figure>
+
+  <h2>Bước 3 — Thêm xưởng sau (khi đã thắng)</h2>
+  <ol>
+    <li>Mở chi tiết deal đã có ít nhất một dự án SX.</li>
+    <li>Bấm <strong>+ Thêm dự án SX</strong> (đầu trang) hoặc <strong>+ Thêm công ty SX</strong> (sidebar).</li>
+    <li>Trong popup: chọn công ty + phân loại; có thể bấm <strong>Thêm công ty SX</strong> để tạo nhiều dòng cùng lúc.</li>
+    <li>Bấm <strong>Thêm dự án</strong> — NV các xưởng liên quan được thông báo trên bình luận deal.</li>
+  </ol>
+  <figure>
+    <img src="imgs/02-modal-them-du-an-sx.png" alt="Modal thêm dự án SX" />
+    <figcaption>Hình 5 — Popup «Thêm dự án SX»: chọn công ty (Metalla / HCB / Phúc Đạt…)</figcaption>
+  </figure>
+  <figure>
+    <img src="imgs/03-modal-hai-xuong.png" alt="Modal thêm nhiều xưởng" />
+    <figcaption>Hình 6 — Trong popup: Xưởng 1 + Xưởng 2 (nút «Thêm công ty SX»)</figcaption>
+  </figure>
+
+  <div class="page-break"></div>
+  <h2>Bước 4 — Thành viên &amp; bình luận</h2>
+  <h3>4.1. Thành viên</h3>
+  <p>Tab <strong>Thành viên</strong>: CRM giữ người chịu trách nhiệm; nhân viên xưởng thường vào theo setup module SX. Có thể thêm tay nếu cần.</p>
+  <figure>
+    <img src="imgs/07-thanh-vien.png" alt="Tab thành viên" />
+    <figcaption>Hình 7 — Tab Thành viên trên deal nhiều xưởng</figcaption>
+  </figure>
+
+  <h3>4.2. Bình luận</h3>
+  <p>Tab <strong>Bình luận</strong>: theo dõi trao đổi CRM ↔ xưởng. Khi cần giới hạn người xem, dùng chế độ riêng tư (🔒) nếu có trên form đăng.</p>
+  <figure>
+    <img src="imgs/08-binh-luan.png" alt="Tab bình luận" />
+    <figcaption>Hình 8 — Tab Bình luận deal (thông báo thêm xưởng / trao đổi hồ sơ)</figcaption>
+  </figure>
+
+  <h2>Xử lý sự cố nhanh</h2>
+  <table class="trouble">
+    <thead>
+      <tr><th>Tình huống</th><th>Cách xử lý</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Không thấy nút «+ Thêm dự án SX»</td>
+        <td>Deal chưa có dự án SX — cần chuyển Thắng + chọn xưởng trước.</td>
+      </tr>
+      <tr>
+        <td>Lỗi trùng công ty + phân loại</td>
+        <td>Đổi phân loại hoặc bỏ dòng trùng trước khi xác nhận.</td>
+      </tr>
+      <tr>
+        <td>Chọn nhầm xưởng</td>
+        <td>Sidebar → «Sửa / chuyển» hoặc «Chuyển công ty SX» trên dòng tương ứng.</td>
+      </tr>
+      <tr>
+        <td>Không thấy thẻ trên Kanban SX</td>
+        <td>Lọc đúng công ty xưởng + phân loại; mở bằng nút «Mở SX» từ deal.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="notes">
+    <strong>Nhớ nhanh:</strong> Một deal CRM · nhiều dự án SX · mỗi xưởng một thẻ Kanban · bàn giao VC theo từng xưởng.
   </div>
 
-  <div class="step">
-    <div class="num">5</div>
-    <div>
-      <strong>Bình luận riêng tư (khi cần)</strong>
-      <p>Bấm <b>🔒 Riêng tư</b> → chọn người được xem → Đăng. Chỉ những người đó thấy (kể cả admin cũng không thấy nếu không được chọn).</p>
-    </div>
-  </div>
-
-  <div class="note">
-    <b>Nhớ nhanh:</b> CRM chọn xưởng → theo dõi deal → khi SX gửi bàn giao VC thì Sale điền công ty VC + ngày.
-    Mỗi xưởng một dự án / một yêu cầu bàn giao riêng; deal CRM vẫn là một.
-  </div>
-
-  <p class="footer">QLCV · docs/huong-dan-multi-sx-deal/</p>
-
+  <p class="footer-note">TuBep Pro · docs/huong-dan-multi-sx-deal/ · 12/08/2026</p>
 </body>
 </html>

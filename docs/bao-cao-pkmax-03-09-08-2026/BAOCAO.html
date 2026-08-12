@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8"/>
+<title>Báo cáo công việc tuần 03–09/08/2026</title>
+<style>
+  body { font-family: "Segoe UI", Arial, sans-serif; font-size: 10.5pt; margin: 24px; color: #111; }
+  h1 { font-size: 16pt; margin: 0 0 8px; }
+  h2 { font-size: 12pt; margin: 22px 0 8px; font-weight: 700; }
+  .meta td { padding: 3px 10px 3px 0; }
+  .meta td:first-child { font-weight: 600; width: 140px; color: #334155; }
+  table.report { border-collapse: collapse; width: 100%; font-size: 9.5pt; }
+  table.report th, table.report td { border: 1px solid #000; padding: 6px 8px; vertical-align: top; }
+  table.report th { background: #ffc000; font-weight: 700; text-align: center; }
+  table.report td:first-child { text-align: center; width: 40px; }
+  .status { text-align: center; font-weight: 600; }
+</style>
+</head>
+<body>
+<h1>Báo cáo công việc tuần 03/08/2026 – 09/08/2026</h1>
+<table class="meta">
+  <tr><td>Người thực hiện</td><td><strong>Phan Nguyễn Đăng Khoa</strong></td></tr>
+  <tr><td>Giai đoạn</td><td>03/08/2026 – 09/08/2026</td></tr>
+  <tr><td>Ngày lập</td><td>03/08/2026</td></tr>
+</table>
+
+<h2>1. Công việc thường xuyên</h2>
+<table class="report">
+  <thead>
+    <tr><th>STT</th><th>DANH MỤC</th><th>NỘI DUNG CÔNG VIỆC</th><th>KẾT QUẢ ĐẠT ĐƯỢC</th><th>TRẠNG THÁI</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>1</td>
+      <td>Hỗ trợ – VC/LĐ</td>
+      <td>Hỗ trợ hướng dẫn quy trình bàn giao VC/LĐ cho CRM và Sản xuất (Sale chọn công ty VC → xác nhận 2 bên Xưởng/VC → khóa lịch)</td>
+      <td>Nhân sự CRM/SX nắm flow bàn giao; giảm sai bước khi chuyển dự án sang VC/LĐ</td>
+      <td class="status">Đang thực hiện</td>
+    </tr>
+    <tr>
+      <td>2</td>
+      <td>Phân quyền</td>
+      <td>Phân quyền MCP / Hệ thống / module (CRM, SX, VC/LĐ) theo vai trò vận hành</td>
+      <td>Phân quyền đúng scope; MCP và quyền hệ thống cấu hình theo nhu cầu triển khai</td>
+      <td class="status">Đang thực hiện</td>
+    </tr>
+    <tr>
+      <td>3</td>
+      <td>Triển khai – cấu hình</td>
+      <td>Hướng dẫn cấu hình pipeline bàn giao: phụ trách VC/LĐ, QL giao hàng (xác nhận SX), người xác nhận bàn giao VC</td>
+      <td>Công ty SX/VC có cấu hình người bấm xác nhận riêng, không lẫn phụ trách dự án</td>
+      <td class="status">Đang thực hiện</td>
+    </tr>
+    <tr>
+      <td>4</td>
+      <td>Triển khai – vận hành</td>
+      <td>Hỗ trợ triển khai module VC/LĐ trên thực tế: kiểm tra cột Kanban, mẫu công việc, sync CRM sau bàn giao</td>
+      <td>Module VC/LĐ sẵn sàng dùng; checklist triển khai theo công ty</td>
+      <td class="status">Đang thực hiện</td>
+    </tr>
+    <tr>
+      <td>5</td>
+      <td>Hướng dẫn UI</td>
+      <td>Bổ sung / dùng product tour và hướng dẫn thao tác chuyển app, menu CRM–Events liên quan quy trình mới</td>
+      <td>Người dùng mới theo được bước thao tác trên giao diện</td>
+      <td class="status">Đang thực hiện</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>2. Công việc phát triển</h2>
+<table class="report">
+  <thead>
+    <tr><th>STT</th><th>DANH MỤC</th><th>NỘI DUNG CÔNG VIỆC</th><th>KẾT QUẢ ĐẠT ĐƯỢC</th><th>TRẠNG THÁI</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>1</td>
+      <td>Module VC/LĐ</td>
+      <td>Triển khai module Vận chuyển / Lắp đặt (VC/LĐ): pipeline, bàn giao từ SX, sync deal CRM</td>
+      <td>Module VC/LĐ vận hành được end-to-end từ SX → VC → LĐ</td>
+      <td class="status">Đang thực hiện</td>
+    </tr>
+    <tr>
+      <td>2</td>
+      <td>Quy trình bàn giao</td>
+      <td>Chỉnh flow bàn giao: Sale chọn công ty + ngày → chờ xác nhận 2 bên; chỉ khi đủ xác nhận mới tạo 3 sự kiện lịch rồi khóa lịch</td>
+      <td>Tránh tạo/sửa lịch sớm; lịch chỉ khóa sau khi Xưởng và VC/LĐ đã xác nhận</td>
+      <td class="status">Hoàn thành (dev)</td>
+    </tr>
+    <tr>
+      <td>3</td>
+      <td>Cấu hình bàn giao</td>
+      <td>Thêm người xác nhận riêng phía SX và VC/LĐ (migration 494 + UI pipeline settings)</td>
+      <td>Cấu hình được người bấm «Xác nhận» khác phụ trách chính dự án</td>
+      <td class="status">Hoàn thành (dev)</td>
+    </tr>
+    <tr>
+      <td>4</td>
+      <td>Lịch / Events</td>
+      <td>Mở rộng lịch &amp; feed sự kiện theo module (SX/VC), khu vực Lead, bản đồ khảo sát</td>
+      <td>Lọc/xem sự kiện bàn giao theo module và địa bàn rõ hơn</td>
+      <td class="status">Đang thực hiện</td>
+    </tr>
+    <tr>
+      <td>5</td>
+      <td>Giao việc liên module</td>
+      <td>Cải thiện panel giao việc trên deal: điều hướng đúng board theo assignment_module (gồm VC/LĐ)</td>
+      <td>Từ deal mở đúng bảng giao việc theo module</td>
+      <td class="status">Hoàn thành (dev)</td>
+    </tr>
+  </tbody>
+</table>
+</body>
+</html>

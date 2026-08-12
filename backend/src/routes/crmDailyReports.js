@@ -17,6 +17,7 @@ const REPORT_FIELDS =
 const LINE_FIELDS =
   'id, report_id, template_item_id, section, label, order_index, plan_value, result_value, plan_note, result_note, metric_key, auto_result, created_at, updated_at';
 const { computeAutoDailyResults, loadMetricEntityLinks, metricKeyFromLabel } = require('../helpers/dailyReportAutoClose');
+const { autoCloseDailyReportForUser } = require('../helpers/dailyReportAutoSubmit');
 const { buildDailyWorkHistory } = require('../helpers/dailyWorkHistory');
 const { crmReportAddDaysYmd } = require('../helpers/crmReportDateBounds');
 
@@ -726,7 +727,7 @@ r.put('/mine', async (req, res) => {
   }
 });
 
-// ─── POST /mine/auto-close — buổi chiều: tự chốt KQ từ CRM rồi nộp ───────────
+// ─── POST /mine/auto-close — buổi chiều: tự chốt KQ Phần II từ CRM rồi nộp ───
 r.post('/mine/auto-close', async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -737,151 +738,20 @@ r.post('/mine/auto-close', async (req, res) => {
     const companyId = me?.company_id || req.user.company_id || null;
     const deptName = me?.departments?.name || null;
 
-    let { data: report } = await supabase
-      .from('crm_daily_reports')
-      .select(REPORT_FIELDS)
-      .eq('user_id', userId)
-      .eq('report_date', date)
-      .maybeSingle();
+    const out = await autoCloseDailyReportForUser({
+      userId,
+      reportDate: date,
+      companyId,
+      templateId: req.body?.template_id || null,
+      departmentName: deptName,
+      userProfile: me,
+      force: true,
+    });
 
-    let templateId = report?.template_id || req.body?.template_id || null;
-    if (!templateId) {
-      const templates = await listTemplates(companyId);
-      const roleKey = guessRoleKey(me || req.user, deptName);
-      templateId = (templates.find((t) => t.role_key === roleKey) || templates[0])?.id;
-    }
-    if (!templateId) return res.status(400).json({ error: 'Chưa có template báo cáo ngày' });
-
-    const template = await getTemplateById(templateId);
-    if (!template) return res.status(404).json({ error: 'Không tìm thấy template' });
-
-    const now = new Date().toISOString();
-    if (!report) {
-      const { data: created, error: insErr } = await supabase
-        .from('crm_daily_reports')
-        .insert({
-          company_id: companyId,
-          user_id: userId,
-          template_id: templateId,
-          report_date: date,
-          department_name: deptName,
-          status: 'draft',
-          updated_at: now,
-        })
-        .select(REPORT_FIELDS)
-        .single();
-      if (insErr) throw insErr;
-      report = created;
-      const seedLines = (template.items || []).map((it) => ({
-        report_id: report.id,
-        template_item_id: it.id,
-        section: it.section,
-        label: it.label,
-        order_index: it.order_index,
-        metric_key: it.metric_key || metricKeyFromLabel(it.label),
-        plan_value: null,
-        result_value: null,
-        plan_note: null,
-        result_note: null,
-        auto_result: false,
-        updated_at: now,
-      }));
-      if (seedLines.length) {
-        const { error: seedErr } = await supabase.from('crm_daily_report_lines').insert(seedLines);
-        if (seedErr) throw seedErr;
-      }
-    }
-
-    const { data: dbLines, error: lineErr } = await supabase
-      .from('crm_daily_report_lines')
-      .select(LINE_FIELDS)
-      .eq('report_id', report.id);
-    if (lineErr) throw lineErr;
-
-    // Ensure new template metrics exist on older reports
-    await syncMissingTemplateLines(report.id, template);
-    await syncUserExtraLines(report.id, userId);
-    const { data: linesFresh, error: lineErr2 } = await supabase
-      .from('crm_daily_report_lines')
-      .select(LINE_FIELDS)
-      .eq('report_id', report.id);
-    if (lineErr2) throw lineErr2;
-    const linesToFill = linesFresh || dbLines || [];
-
-    const roleKey = template.role_key || guessRoleKey(me || req.user, deptName);
-    const resultDate = resultDateForReport(date);
-    if (!resultDate) return res.status(400).json({ error: 'Không xác định được ngày kết quả (hôm trước)' });
-    const computed = await computeAutoDailyResults(userId, resultDate, roleKey);
-    const metrics = computed.metrics || {};
-
-    let autoFilled = 0;
-    let manualLeft = 0;
-    for (const row of linesToFill) {
-      const key = row.metric_key || metricKeyFromLabel(row.label);
-      const m = key ? metrics[key] : null;
-      if (m) {
-        const keepNote = row.result_note && !/^tự động:/i.test(String(row.result_note))
-          && !/^không tự động/i.test(String(row.result_note))
-          ? row.result_note
-          : null;
-        const { error: upErr } = await supabase
-          .from('crm_daily_report_lines')
-          .update({
-            result_value: m.value,
-            result_note: keepNote,
-            metric_key: key,
-            auto_result: true,
-            updated_at: now,
-          })
-          .eq('id', row.id);
-        if (upErr) throw upErr;
-        autoFilled += 1;
-      } else if (row.section === 'work') {
-        const keepNote = row.result_note && !/^không tự động/i.test(String(row.result_note))
-          ? row.result_note
-          : null;
-        const { error: upErr } = await supabase
-          .from('crm_daily_report_lines')
-          .update({
-            result_value: row.result_value != null ? row.result_value : 0,
-            result_note: keepNote,
-            auto_result: false,
-            updated_at: now,
-          })
-          .eq('id', row.id);
-        if (upErr) throw upErr;
-        manualLeft += 1;
-      }
-      // sharpen / proposal: giữ nguyên (điền tay)
-    }
-
-    const reportPatch = {
-      updated_at: now,
-      department_name: deptName || report.department_name,
-      result_submitted_at: now,
-      status: 'result_submitted',
-    };
-    if (!report.plan_submitted_at) reportPatch.plan_submitted_at = now;
-
-    const { data: updatedReport, error: repErr } = await supabase
-      .from('crm_daily_reports')
-      .update(reportPatch)
-      .eq('id', report.id)
-      .select(REPORT_FIELDS)
-      .single();
-    if (repErr) throw repErr;
-
-    const bundle = await loadReportBundle(updatedReport.id);
+    const bundle = await loadReportBundle(out.report.id);
     return res.json({
       report: bundle,
-      auto_close: {
-        auto_filled: autoFilled,
-        manual_left: manualLeft,
-        computed_at: computed.computed_at,
-        report_date: date,
-        result_date: resultDate,
-        metrics,
-      },
+      auto_close: out.auto_close,
     });
   } catch (e) {
     console.error('[daily-reports] POST /mine/auto-close:', e.message || e);
