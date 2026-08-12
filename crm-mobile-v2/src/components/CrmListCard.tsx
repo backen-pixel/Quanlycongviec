@@ -11,12 +11,13 @@ import type { CrmKanbanItem } from '../types';
 type Props = {
   item: CrmKanbanItem;
   moving?: boolean;
+  highlighted?: boolean;
   onPress: () => void;
   onMore: () => void;
   onMove: () => void;
 };
 
-export default function CrmListCard({ item, moving, onPress, onMore, onMove }: Props) {
+export default function CrmListCard({ item, moving, highlighted, onPress, onMore, onMove }: Props) {
   const Colors = useColors();
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const accent = stageColor(item.stageColor, 0);
@@ -32,7 +33,16 @@ export default function CrmListCard({ item, moving, onPress, onMore, onMove }: P
   const hasValue = !!(item.valueLabel && item.valueLabel !== 'Chưa định giá');
 
   return (
-    <View style={styles.card}>
+    <View
+      style={[
+        styles.card,
+        highlighted && {
+          borderColor: Colors.red,
+          borderWidth: 2,
+          backgroundColor: `${Colors.red}12`,
+        },
+      ]}
+    >
       <Pressable
         onPress={onPress}
         style={({ pressed }) => [styles.main, pressed && styles.mainPressed]}

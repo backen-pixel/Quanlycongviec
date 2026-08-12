@@ -1,33 +1,33 @@
-import { vnTodayYmd, ymdFromLocalDate } from './vnDate';
+import { vnDayKey, vnTodayYmd, vnAddDaysYmd } from './vnDate';
 
 export type ListDateSectionKey = string;
 
-/** Nhóm ngày giống list CRM: Hôm nay / Hôm qua / Tuần này / Tháng này / tháng-năm. */
+/** Nhóm ngày giống list CRM: Hôm nay / Hôm qua / Tuần này / Tháng này / tháng-năm.
+ * Dùng lịch VN (khớp bộ lọc date_from/date_to API) — không dùng timezone máy. */
 export function listDateSectionLabel(iso?: string | null): ListDateSectionKey {
   if (!iso) return 'Không rõ ngày';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return 'Không rõ ngày';
+  const ymd = vnDayKey(iso);
+  if (!ymd) return 'Không rõ ngày';
 
-  const ymd = ymdFromLocalDate(d);
   const today = vnTodayYmd();
   if (ymd === today) return 'Hôm nay';
 
-  const [ty, tm, td] = today.split('-').map(Number);
-  const yesterday = new Date(ty, tm - 1, td);
-  yesterday.setDate(yesterday.getDate() - 1);
-  if (ymd === ymdFromLocalDate(yesterday)) return 'Hôm qua';
+  const yesterday = vnAddDaysYmd(today, -1);
+  if (yesterday && ymd === yesterday) return 'Hôm qua';
 
-  const dayOfWeek = new Date(ty, tm - 1, td).getDay();
-  const monday = new Date(ty, tm - 1, td);
-  monday.setDate(td - (dayOfWeek === 0 ? 6 : dayOfWeek - 1));
-  const sunday = new Date(monday);
-  sunday.setDate(monday.getDate() + 6);
-  if (ymd >= ymdFromLocalDate(monday) && ymd <= ymdFromLocalDate(sunday)) return 'Tuần này';
+  const [ty, tm, td] = today.split('-').map(Number);
+  const dayOfWeek = new Date(Date.UTC(ty, tm - 1, td)).getUTCDay();
+  const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+  const monday = vnAddDaysYmd(today, mondayOffset);
+  const sunday = monday ? vnAddDaysYmd(monday, 6) : null;
+  if (monday && sunday && ymd >= monday && ymd <= sunday) return 'Tuần này';
 
   const thisMonthPrefix = today.slice(0, 7);
   if (ymd.startsWith(thisMonthPrefix)) return 'Tháng này';
 
-  return d.toLocaleDateString('vi-VN', { month: 'long', year: 'numeric' });
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return 'Không rõ ngày';
+  return d.toLocaleDateString('vi-VN', { month: 'long', year: 'numeric', timeZone: 'Asia/Ho_Chi_Minh' });
 }
 
 export function listDateSectionOrder(label: string): number {

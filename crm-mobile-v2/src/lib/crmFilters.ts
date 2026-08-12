@@ -199,15 +199,20 @@ export function resolveFilterDateRange(filters: CrmHubFilters): { from: string; 
 
 export function timePresetLabel(preset: TimePreset, dateFrom = '', dateTo = ''): string {
   switch (preset) {
-    case 'this_week': return 'Tuần này';
-    case 'this_month': return 'Tháng này';
-    case 'last_week': return 'Tuần trước';
-    case 'last_month': return 'Tháng trước';
+    case 'this_week': return 'Tạo tuần này';
+    case 'this_month': return 'Tạo tháng này';
+    case 'last_week': return 'Tạo tuần trước';
+    case 'last_month': return 'Tạo tháng trước';
     case 'custom': {
-      if (dateFrom && dateTo) return `${dateFrom.slice(5)} → ${dateTo.slice(5)}`;
-      if (dateFrom) return `Từ ${dateFrom}`;
-      if (dateTo) return `Đến ${dateTo}`;
-      return 'Tùy chọn ngày';
+      if (dateFrom && dateTo && dateFrom === dateTo) {
+        if (dateFrom === vnTodayYmd()) return 'Tạo hôm nay';
+        const [, m, d] = dateFrom.split('-');
+        return `Tạo ${d}/${m}`;
+      }
+      if (dateFrom && dateTo) return `Tạo ${dateFrom.slice(5)} → ${dateTo.slice(5)}`;
+      if (dateFrom) return `Tạo từ ${dateFrom}`;
+      if (dateTo) return `Tạo đến ${dateTo}`;
+      return 'Ngày tạo';
     }
     default: return '';
   }

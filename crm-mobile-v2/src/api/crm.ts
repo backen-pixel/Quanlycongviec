@@ -562,7 +562,7 @@ export async function fetchCrmStageCountsBatch(
       values?: Record<string, number>;
       weighted_values?: Record<string, number>;
       total?: number;
-    }>('/crm/stage-counts', { params });
+    }>('/crm/stage-counts', { params, signal: opts?.signal });
     const result: StageCountsBatch = {
       counts: data?.counts && typeof data.counts === 'object' ? data.counts : {},
       values: data?.values && typeof data.values === 'object' ? data.values : {},
@@ -602,15 +602,26 @@ export async function fetchStageCounts(
   }
 }
 
-/** Tổng lead/deal theo bộ lọc hiện tại — khớp KPI «Tổng» trên web (không lọc stage_id). */
+/**
+ * Tổng lead/deal theo bộ lọc hiện tại (không lọc 1 stage).
+ * Ưu tiên /crm/stage-counts — cùng nguồn với badge «Tất cả» trên List.
+ * Tránh GET /crm/leads?limit=1: luồng legacy phone_filter ước lượng total sai (hay thành 2 khi chỉ có 1).
+ */
 export async function fetchCrmListTotal(
   type: 'lead' | 'deal',
   opts?: CrmStageFetchOpts,
 ): Promise<number> {
-  const params: Record<string, unknown> = { type, limit: 1, offset: 0 };
+  try {
+    const batch = await fetchCrmStageCountsBatch(type, opts);
+    if (opts?.signal?.aborted) return 0;
+    return batch.total;
+  } catch {
+    /* stage-counts 400 với vài bộ lọc legacy → fallback list */
+  }
+  const params: Record<string, unknown> = { type, limit: KANBAN_PAGE_SIZE, offset: 0 };
   applyListParams(params, opts);
   const { data } = await api.get('/crm/leads', { params, signal: opts?.signal });
-  return parsePayload(data, 1).total;
+  return parsePayload(data, KANBAN_PAGE_SIZE).total;
 }
 
 /** Trang danh sách Lead/Deal (có hoặc không lọc stage) — dùng màn list tab. */
@@ -631,6 +642,24 @@ export async function fetchCrmListPage(
     nextOffset: page.nextOffset,
     total: page.total,
   };
+}
+
+/** Gợi ý tìm nhanh (dropdown) — tối đa `limit` lead/deal khớp search, không theo cột. */
+export async function fetchCrmSearchSuggest(
+  type: 'lead' | 'deal',
+  query: string,
+  opts?: CrmStageFetchOpts,
+  limit = 10,
+): Promise<{ items: CrmKanbanItem[]; total: number }> {
+  const q = query.trim();
+  if (q.length < 2) return { items: [], total: 0 };
+  const page = await fetchCrmListPage(type, 0, limit, {
+    ...opts,
+    search: q,
+    lite: true,
+    skipCounts: true,
+  });
+  return { items: page.items, total: page.total };
 }
 
 const LIST_ALL_PAGE_SIZE = 500;

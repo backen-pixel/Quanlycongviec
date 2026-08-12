@@ -43,6 +43,7 @@ import {
   setCrmHubCache,
   warmCrmHubPipelines,
   prefetchCrmProductionCompanies,
+  fetchCrmSearchSuggest,
   type CrmSxProductionTarget,
 } from '../api/crm';
 import { formatApiError } from '../api/client';
@@ -58,6 +59,7 @@ import {
 import { useCrmHubFilters } from '../hooks/useCrmHubFilters';
 import {
   activeFilterChips,
+  buildSearchForApi,
   buildStageFetchOpts,
   clientFilterKanbanItems,
   countActiveFilters,
@@ -68,6 +70,7 @@ import {
   serverFilterKey,
   type SearchField,
 } from '../lib/crmFilters';
+import CrmSearchSuggestDropdown from '../components/CrmSearchSuggestDropdown';
 import {
   buildAssignPickerOptions,
   canAssignCrmCard,
@@ -247,6 +250,7 @@ const SLOW_LOAD_HINT_MS = 4000;
 const KanbanCard = React.memo(function KanbanCard({
   item,
   accent,
+  highlighted,
   isMoving,
   isAssigning,
   canAssign,
@@ -256,6 +260,7 @@ const KanbanCard = React.memo(function KanbanCard({
 }: {
   item: CrmKanbanItem;
   accent: string;
+  highlighted?: boolean;
   isMoving: boolean;
   isAssigning: boolean;
   canAssign: boolean;
@@ -270,7 +275,17 @@ const KanbanCard = React.memo(function KanbanCard({
   const tempMeta = item.temp ? tempMetaMap(Colors)[item.temp] : null;
 
   return (
-    <View style={[styles.card, { borderLeftColor: accent }]}>
+    <View
+      style={[
+        styles.card,
+        { borderLeftColor: accent },
+        highlighted && {
+          borderColor: Colors.red,
+          borderWidth: 2,
+          backgroundColor: `${Colors.red}12`,
+        },
+      ]}
+    >
       <Pressable
         onPress={onPress}
         disabled={isMoving || isAssigning}
@@ -497,6 +512,16 @@ export default function CrmHubScreen({
   const [columnPickerOpen, setColumnPickerOpen] = useState(false);
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const [searchSuggestDismissed, setSearchSuggestDismissed] = useState(false);
+  const [searchSuggestLoading, setSearchSuggestLoading] = useState(false);
+  const [searchSuggestItems, setSearchSuggestItems] = useState<CrmKanbanItem[]>([]);
+  const [searchSuggestTotal, setSearchSuggestTotal] = useState(0);
+  const [highlightCardId, setHighlightCardId] = useState<string | null>(null);
+  const [searchFocusNonce, setSearchFocusNonce] = useState(0);
+  const listRef = useRef<FlatList<CrmKanbanItem>>(null);
+  const pendingSearchFocusRef = useRef<{ id: string; stageId: string } | null>(null);
+  const searchSuggestAbortRef = useRef<AbortController | null>(null);
+  const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadingModeRef = useRef<{ leads: boolean; deals: boolean }>({ leads: false, deals: false });
   const countsInflightRef = useRef<{ leads: string; deals: string }>({ leads: '', deals: '' });
@@ -545,6 +570,10 @@ export default function CrmHubScreen({
   const hub = isLeads ? leadData : dealData;
   const setHub = isLeads ? setLeadData : setDealData;
   const loading = loadingByMode[dataMode];
+  const hubStages = useMemo(
+    () => resolveCrmHubDisplayStages(mode, leadData.stages, dealData.stages, dealKhSplitEnabled),
+    [mode, leadData.stages, dealData.stages, dealKhSplitEnabled],
+  );
 
   useEffect(() => {
     if (route.params?.initialAssignee !== 'mine') return;
@@ -1280,10 +1309,6 @@ export default function CrmHubScreen({
     }
   }, [route.params?.initialMode, applyDealKhSplit]);
 
-  const hubStages = useMemo(
-    () => resolveCrmHubDisplayStages(mode, leadData.stages, dealData.stages, dealKhSplitEnabled),
-    [mode, leadData.stages, dealData.stages, dealKhSplitEnabled],
-  );
   const displayStages = useMemo(() => {
     const stages = filters.showOrphan ? [...hubStages, orphanVirtualStage()] : hubStages;
     return filterStagesHideEmpty(stages, hub.stageCounts, filters.hideEmptyStages);
@@ -1476,6 +1501,176 @@ export default function CrmHubScreen({
     () => clientFilterKanbanItems(rawColumnItems, filters, search),
     [rawColumnItems, filters, search],
   );
+
+  const localSearchSuggest = useMemo(() => {
+    const q = searchDraft.trim().toLowerCase();
+    const qDigits = q.replace(/\D/g, '');
+    if (q.length < 2) return [] as CrmKanbanItem[];
+    const stageIds = new Set(hubStages.map((s) => s.id));
+    if (filters.showOrphan) stageIds.add(ORPHAN_STAGE_ID);
+    const field = filters.searchField;
+    const seen = new Set<string>();
+    const out: CrmKanbanItem[] = [];
+    for (const sid of Object.keys(hub.cache)) {
+      if (!stageIds.has(sid)) continue;
+      for (const it of hub.cache[sid]?.items || []) {
+        if (seen.has(it.id)) continue;
+        seen.add(it.id);
+        let ok = false;
+        if (field === 'phone') {
+          ok = !!(qDigits && (it.phone || '').replace(/\D/g, '').includes(qDigits));
+        } else if (field === 'code') {
+          ok = (it.code || '').toLowerCase().includes(q);
+        } else if (field === 'title') {
+          ok = (it.title || '').toLowerCase().includes(q)
+            || (it.contactName || '').toLowerCase().includes(q);
+        } else if (field === 'assignee') {
+          ok = (it.ownerName || '').toLowerCase().includes(q);
+        } else {
+          const hay = [
+            it.title, it.code, it.phone, it.contactName, it.ownerName, it.stageName,
+          ].join(' ').toLowerCase();
+          ok = hay.includes(q)
+            || !!(qDigits && (it.phone || '').replace(/\D/g, '').includes(qDigits));
+        }
+        if (ok) out.push(it);
+        if (out.length >= 10) return out;
+      }
+    }
+    return out;
+  }, [searchDraft, hub.cache, hubStages, filters.searchField, filters.showOrphan]);
+
+  const searchSuggestOpen =
+    searchDraft.trim().length >= 2
+    && !searchSuggestDismissed
+    && (searchSuggestLoading || searchSuggestItems.length > 0 || localSearchSuggest.length > 0);
+
+  const displaySuggestItems = useMemo(() => {
+    if (searchSuggestItems.length) return searchSuggestItems;
+    return localSearchSuggest;
+  }, [searchSuggestItems, localSearchSuggest]);
+
+  useEffect(() => {
+    const q = searchDraft.trim();
+    if (q.length < 2) {
+      searchSuggestAbortRef.current?.abort();
+      setSearchSuggestItems([]);
+      setSearchSuggestTotal(0);
+      setSearchSuggestLoading(false);
+      return undefined;
+    }
+    setSearchSuggestDismissed(false);
+    const t = setTimeout(() => {
+      searchSuggestAbortRef.current?.abort();
+      const ac = new AbortController();
+      searchSuggestAbortRef.current = ac;
+      setSearchSuggestLoading(true);
+      const type = mode === 'leads' ? 'lead' as const : 'deal' as const;
+      const opts = {
+        ...buildStageFetchOpts(filters, '', myId),
+        search: buildSearchForApi(q, filters.searchField) || q,
+        signal: ac.signal,
+        lite: true,
+        skipCounts: true,
+      };
+      void fetchCrmSearchSuggest(type, q, opts, 10)
+        .then((res) => {
+          if (ac.signal.aborted) return;
+          const stageIds = new Set(hubStages.map((s) => s.id));
+          const filtered = res.items.filter((it) => !it.stageId || stageIds.has(it.stageId));
+          setSearchSuggestItems(filtered.length ? filtered : res.items);
+          setSearchSuggestTotal(res.total);
+        })
+        .catch(() => {
+          if (ac.signal.aborted) return;
+          /* giữ localSuggest */
+        })
+        .finally(() => {
+          if (!ac.signal.aborted) setSearchSuggestLoading(false);
+        });
+    }, 280);
+    return () => {
+      clearTimeout(t);
+    };
+  }, [searchDraft, mode, filters, myId, hubStages]);
+
+  const flashHighlight = useCallback((id: string) => {
+    if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+    setHighlightCardId(id);
+    highlightTimerRef.current = setTimeout(() => {
+      setHighlightCardId(null);
+      highlightTimerRef.current = null;
+    }, 2800);
+  }, []);
+
+  const ensureItemInStageCache = useCallback((item: CrmKanbanItem) => {
+    const sid = item.stageId || ORPHAN_STAGE_ID;
+    setHub((prev) => {
+      const col = prev.cache[sid];
+      if (col?.items?.some((it) => it.id === item.id)) return prev;
+      const items = col?.items?.length
+        ? [item, ...col.items.filter((it) => it.id !== item.id)]
+        : [item];
+      return {
+        ...prev,
+        cache: {
+          ...prev.cache,
+          [sid]: {
+            items,
+            hasMore: col?.hasMore ?? true,
+            nextOffset: Math.max(col?.nextOffset ?? 0, items.length),
+            loaded: true,
+          },
+        },
+      };
+    });
+  }, [setHub]);
+
+  const focusSearchResult = useCallback((item: CrmKanbanItem) => {
+    setSearchSuggestDismissed(true);
+    Keyboard.dismiss();
+    const sid = item.stageId || (filters.showOrphan ? ORPHAN_STAGE_ID : '');
+    if (!sid) {
+      showToast('Không xác định được cột của bản ghi này', false);
+      return;
+    }
+    ensureItemInStageCache({ ...item, stageId: sid });
+    const idx = displayStages.findIndex((s) => String(s.id) === String(sid));
+    pendingSearchFocusRef.current = { id: item.id, stageId: sid };
+    if (idx >= 0 && idx !== activeIndexRef.current) {
+      setActiveIndex(idx);
+    }
+    setSearchFocusNonce((n) => n + 1);
+  }, [displayStages, ensureItemInStageCache, filters.showOrphan, showToast]);
+
+  const openSearchResultDetail = useCallback((item: CrmKanbanItem) => {
+    setSearchSuggestDismissed(true);
+    Keyboard.dismiss();
+    navigation.navigate('LeadDealDetail', {
+      leadId: item.id,
+      kind: item.kind,
+      code: item.code,
+      title: item.title,
+    });
+  }, [navigation]);
+
+  useEffect(() => {
+    const pending = pendingSearchFocusRef.current;
+    if (!pending || !activeStageId || String(pending.stageId) !== String(activeStageId)) return;
+    const index = columnItems.findIndex((it) => it.id === pending.id);
+    if (index < 0) return;
+    pendingSearchFocusRef.current = null;
+    flashHighlight(pending.id);
+    const t = setTimeout(() => {
+      try {
+        listRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.25 });
+      } catch {
+        listRef.current?.scrollToOffset({ offset: Math.max(0, index * 160), animated: true });
+      }
+    }, 80);
+    return () => clearTimeout(t);
+  }, [activeStageId, columnItems, flashHighlight, searchFocusNonce]);
+
   const columnHasMore = activeStageId ? (hub.cache[activeStageId]?.hasMore ?? false) : false;
   /**
    * Chỉ chặn infinite-scroll khi lọc CLIENT-SIDE (server chưa áp được).
@@ -1967,27 +2162,46 @@ export default function CrmHubScreen({
         </View>
         ) : null}
 
+        <View style={styles.searchRowWrap}>
         <View style={styles.searchRow}>
           <View style={styles.searchBox}>
             <Ionicons name="search-outline" size={17} color={Colors.textFaint} />
             <TextInput
               value={searchDraft}
-              onChangeText={setSearchDraft}
+              onChangeText={(t) => {
+                setSearchDraft(t);
+                setSearchSuggestDismissed(false);
+              }}
+              onFocus={() => setSearchSuggestDismissed(false)}
               placeholder={searchPlaceholder(filters.searchField, isLeads ? 'lead' : 'deal')}
               placeholderTextColor={Colors.textFaint}
               style={styles.searchInput}
               returnKeyType="search"
               keyboardType={filters.searchField === 'phone' ? 'phone-pad' : 'default'}
+              onSubmitEditing={() => {
+                setSearchSuggestDismissed(true);
+                commitSearch(searchDraft.trim());
+              }}
             />
             {searchDraft ? (
-              <Pressable onPress={() => setSearchDraft('')} hitSlop={8}>
+              <Pressable
+                onPress={() => {
+                  setSearchDraft('');
+                  setSearchSuggestDismissed(false);
+                  setSearchSuggestItems([]);
+                }}
+                hitSlop={8}
+              >
                 <Ionicons name="close-circle" size={17} color={Colors.textFaint} />
               </Pressable>
             ) : null}
           </View>
           <Pressable
             style={[styles.filterBtn, filterBadge > 0 && styles.filterBtnActive]}
-            onPress={() => setFilterOpen(true)}
+            onPress={() => {
+              setSearchSuggestDismissed(true);
+              setFilterOpen(true);
+            }}
             hitSlop={4}
           >
             <Ionicons name="options-outline" size={20} color={filterBadge > 0 ? Colors.blue : Colors.text} />
@@ -1997,6 +2211,17 @@ export default function CrmHubScreen({
               </View>
             ) : null}
           </Pressable>
+        </View>
+        <CrmSearchSuggestDropdown
+          open={searchSuggestOpen}
+          query={searchDraft}
+          loading={searchSuggestLoading}
+          items={displaySuggestItems}
+          total={searchSuggestTotal || displaySuggestItems.length}
+          onDismiss={() => setSearchSuggestDismissed(true)}
+          onSelect={focusSearchResult}
+          onOpenDetail={openSearchResultDetail}
+        />
         </View>
 
         <CrmSearchFieldBar
@@ -2116,6 +2341,7 @@ export default function CrmHubScreen({
 
       <View style={styles.listFlex} {...columnSwipe.panHandlers}>
       <FlatList
+        ref={listRef}
         style={styles.listFill}
         data={columnItems}
         keyExtractor={(item) => item.id}
@@ -2123,6 +2349,19 @@ export default function CrmHubScreen({
           styles.listContent,
           { paddingBottom: embeddedInTabs ? 72 : 100 + insets.bottom },
         ]}
+        onScrollToIndexFailed={(info) => {
+          listRef.current?.scrollToOffset({
+            offset: Math.max(0, info.averageItemLength * info.index),
+            animated: true,
+          });
+          setTimeout(() => {
+            listRef.current?.scrollToIndex({
+              index: info.index,
+              animated: true,
+              viewPosition: 0.25,
+            });
+          }, 120);
+        }}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -2172,6 +2411,7 @@ export default function CrmHubScreen({
         updateCellsBatchingPeriod={50}
         windowSize={5}
         initialNumToRender={8}
+        keyboardShouldPersistTaps="handled"
         renderItem={({ item }) => {
           const cardCompanyId = item.companyId || filters.companyId || user?.company_id || '';
           const canAssign = canAssignCrmCard(user, item, myId, cardCompanyId);
@@ -2179,6 +2419,7 @@ export default function CrmHubScreen({
             <KanbanCard
               item={item}
               accent={accent}
+              highlighted={highlightCardId === item.id}
               isMoving={movingId === item.id}
               isAssigning={assigningId === item.id}
               canAssign={canAssign}
@@ -2384,7 +2625,7 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
     justifyContent: 'center',
   },
   retryText: { color: Colors.blue, fontWeight: '800', fontSize: 14 },
-  fixedTop: { paddingHorizontal: 14 },
+  fixedTop: { paddingHorizontal: 14, zIndex: 20, overflow: 'visible' },
   header: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -2464,6 +2705,7 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
   },
   segCountTxt: { color: Colors.textMuted, fontSize: 11, fontWeight: '800' },
   searchRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  searchRowWrap: { zIndex: 30, elevation: 12, overflow: 'visible' },
   searchBox: {
     flex: 1,
     flexDirection: 'row',

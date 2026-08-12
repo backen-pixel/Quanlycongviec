@@ -7,6 +7,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Alert,
   FlatList,
+  Keyboard,
   Modal,
   PanResponder,
   Pressable,
@@ -48,6 +49,9 @@ import {
   type CrmEmployee,
   type CrmRegion,
 } from '../api/crmMeta';
+import CrmSearchSuggestDropdown from '../components/CrmSearchSuggestDropdown';
+import { useCrmSearchSuggest } from '../hooks/useCrmSearchSuggest';
+import type { CrmKanbanItem } from '../types';
 import CrmFilterSheet from '../components/CrmFilterSheet';
 import CrmSearchFieldBar from '../components/CrmSearchFieldBar';
 import DealWonSxPickerModal from '../components/DealWonSxPickerModal';
@@ -144,9 +148,62 @@ function persistDeadlineKind(next: PlannerKind) {
   AsyncStorage.setItem(DEADLINE_KIND_KEY, next).catch(() => undefined);
 }
 
+function plannerToSuggestItem(it: PlannerItem): CrmKanbanItem {
+  return {
+    id: it.id,
+    kind: it.kind,
+    code: it.code,
+    title: it.title,
+    stageId: it.stageId || '',
+    stageName: it.status,
+    stageColor: '',
+    contactName: it.contactName,
+    phone: it.phone,
+    companyId: it.companyId || '',
+    companyName: undefined,
+    ownerName: it.ownerName,
+    ownerInitials: it.ownerInitials,
+    ownerColor: it.ownerColor,
+    ownerId: it.ownerId,
+    assignedToId: it.assignedToId || '',
+    leadOwnerId: it.leadOwnerId || '',
+    dueIso: it.dueIso,
+    overdue: it.overdue,
+    valueLabel: it.valueLabel,
+    projectId: it.projectId,
+  };
+}
+
+function kanbanToPlannerItem(it: CrmKanbanItem): PlannerItem {
+  return {
+    id: it.id,
+    kind: it.kind,
+    code: it.code || '',
+    title: it.title || '',
+    status: it.stageName || '—',
+    stageId: it.stageId,
+    companyId: it.companyId,
+    contactName: it.contactName || '—',
+    phone: it.phone || '',
+    location: '—',
+    valueLabel: it.valueLabel,
+    ownerId: it.ownerId || '',
+    assignedToId: it.assignedToId,
+    leadOwnerId: it.leadOwnerId,
+    ownerName: it.ownerName || '',
+    ownerInitials: it.ownerInitials || '',
+    ownerColor: it.ownerColor || '',
+    deadlineLabel: it.dueIso ? 'đã hẹn' : '—',
+    dueIso: it.dueIso,
+    overdue: !!it.overdue,
+    projectId: it.projectId,
+  };
+}
+
 const DeadlineCard = React.memo(function DeadlineCard({
   item,
   accent,
+  highlighted,
   canAssign,
   isAssigning,
   isMoving,
@@ -156,6 +213,7 @@ const DeadlineCard = React.memo(function DeadlineCard({
 }: {
   item: PlannerItem;
   accent: string;
+  highlighted?: boolean;
   canAssign: boolean;
   isAssigning: boolean;
   isMoving: boolean;
@@ -168,7 +226,17 @@ const DeadlineCard = React.memo(function DeadlineCard({
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const hasAssignee = itemHasAssignee(plannerAsAssigneeTarget(item));
   return (
-    <View style={[styles.card, { borderLeftColor: accent }]}>
+    <View
+      style={[
+        styles.card,
+        { borderLeftColor: accent },
+        highlighted && {
+          borderColor: Colors.red,
+          borderWidth: 2,
+          backgroundColor: `${Colors.red}12`,
+        },
+      ]}
+    >
       <Pressable
         style={({ pressed }) => [pressed && styles.cardPressed]}
         onPress={() => onOpen(item)}
@@ -933,6 +1001,126 @@ export default function DeadlineScreen() {
     () => columnItems.slice(0, visibleCount),
     [columnItems, visibleCount],
   );
+
+  const suggestLocalItems = useMemo(
+    () => rawState.items.map(plannerToSuggestItem),
+    [rawState.items],
+  );
+  const {
+    open: searchSuggestOpen,
+    loading: searchSuggestLoading,
+    items: searchSuggestItems,
+    total: searchSuggestTotal,
+    setDismissed: setSearchSuggestDismissed,
+  } = useCrmSearchSuggest({
+    enabled: true,
+    type: kind,
+    searchDraft,
+    filters,
+    myId: userId || '',
+    localItems: suggestLocalItems,
+  });
+
+  const listRef = useRef<FlatList<PlannerItem>>(null);
+  const pendingSearchFocusRef = useRef<PlannerItem | null>(null);
+  const [highlightCardId, setHighlightCardId] = useState<string | null>(null);
+  const [searchFocusNonce, setSearchFocusNonce] = useState(0);
+  const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const flashHighlight = useCallback((id: string) => {
+    if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+    setHighlightCardId(id);
+    highlightTimerRef.current = setTimeout(() => {
+      setHighlightCardId(null);
+      highlightTimerRef.current = null;
+    }, 2800);
+  }, []);
+
+  const focusSearchResult = useCallback((item: CrmKanbanItem) => {
+    setSearchSuggestDismissed(true);
+    Keyboard.dismiss();
+    const fromLead = leadStateRef.current.items.find((x) => x.id === item.id);
+    const fromDeal = dealStateRef.current.items.find((x) => x.id === item.id);
+    const found = fromLead || fromDeal || kanbanToPlannerItem({ ...item, kind: item.kind || kind });
+    if (found.kind !== kind) {
+      setKind(found.kind);
+      persistDeadlineKind(found.kind);
+    }
+    const bucket = (found.deadlineBucket && buckets.includes(found.deadlineBucket))
+      ? found.deadlineBucket
+      : resolveDeadlineBucket(deadlineIsoToTs(found.dueIso), deadlineConfig?.buckets);
+    if (bucket !== bucketKey) setBucketKey(bucket);
+    pendingSearchFocusRef.current = found;
+    // Đảm bảo thẻ nằm trong cửa sổ render
+    setVisibleCount((n) => Math.max(n, DEADLINE_CARD_PAGE_SIZE * 3));
+    setSearchFocusNonce((n) => n + 1);
+  }, [
+    setSearchSuggestDismissed,
+    kind,
+    buckets,
+    deadlineConfig?.buckets,
+    bucketKey,
+  ]);
+
+  const openSearchResultDetail = useCallback((item: CrmKanbanItem) => {
+    setSearchSuggestDismissed(true);
+    Keyboard.dismiss();
+    navigation.navigate('LeadDealDetail', {
+      leadId: item.id,
+      kind: item.kind,
+      code: item.code,
+      title: item.title,
+    });
+  }, [navigation, setSearchSuggestDismissed]);
+
+  useEffect(() => {
+    const pending = pendingSearchFocusRef.current;
+    if (!pending) return;
+    // Đợi đúng tab kind
+    if (pending.kind !== kind) return;
+    const idx = pagedColumnItems.findIndex((it) => it.id === pending.id);
+    if (idx < 0) {
+      // Mở rộng cửa sổ nếu thẻ nằm sâu hơn
+      const fullIdx = columnItems.findIndex((it) => it.id === pending.id);
+      if (fullIdx >= 0 && visibleCount <= fullIdx) {
+        setVisibleCount(fullIdx + 5);
+        return;
+      }
+      // Chưa có trong cột — inject tạm vào state hiện tại
+      if (fullIdx < 0) {
+        const inject = (prev: SectionState): SectionState => {
+          if (prev.items.some((x) => x.id === pending.id)) return prev;
+          return { ...prev, items: [pending, ...prev.items] };
+        };
+        if (kind === 'lead') {
+          setLeadState(inject);
+          leadStateRef.current = inject(leadStateRef.current);
+        } else {
+          setDealState(inject);
+          dealStateRef.current = inject(dealStateRef.current);
+        }
+      }
+      return;
+    }
+    pendingSearchFocusRef.current = null;
+    flashHighlight(pending.id);
+    const t = setTimeout(() => {
+      try {
+        listRef.current?.scrollToIndex({ index: idx, animated: true, viewPosition: 0.25 });
+      } catch {
+        listRef.current?.scrollToOffset({ offset: Math.max(0, idx * 140), animated: true });
+      }
+    }, 80);
+    return () => clearTimeout(t);
+  }, [
+    kind,
+    pagedColumnItems,
+    columnItems,
+    visibleCount,
+    searchFocusNonce,
+    flashHighlight,
+  ]);
+
   const clientHasMore = visibleCount < columnItems.length;
   const bucketIdx = Math.max(0, buckets.indexOf(safeBucket));
   const canPrev = bucketIdx > 0;
@@ -1427,6 +1615,7 @@ export default function DeadlineScreen() {
         <DeadlineCard
           item={it}
           accent={accent}
+          highlighted={highlightCardId === it.id}
           canAssign={canAssign}
           isAssigning={assigningId === it.id}
           isMoving={movingId === it.id}
@@ -1440,6 +1629,7 @@ export default function DeadlineScreen() {
     accent,
     assigningId,
     movingId,
+    highlightCardId,
     filters.companyId,
     user,
     userId,
@@ -1592,27 +1782,45 @@ export default function DeadlineScreen() {
           </View>
         </View>
 
+        <View style={styles.searchRowWrap}>
         <View style={styles.searchRow}>
           <View style={styles.searchBox}>
             <Ionicons name="search-outline" size={17} color={Colors.textFaint} />
             <TextInput
               value={searchDraft}
-              onChangeText={setSearchDraft}
+              onChangeText={(t) => {
+                setSearchDraft(t);
+                setSearchSuggestDismissed(false);
+              }}
+              onFocus={() => setSearchSuggestDismissed(false)}
               placeholder={searchPlaceholder(filters.searchField, kind)}
               placeholderTextColor={Colors.textFaint}
               style={styles.searchInput}
               returnKeyType="search"
               keyboardType={filters.searchField === 'phone' ? 'phone-pad' : 'default'}
+              onSubmitEditing={() => {
+                setSearchSuggestDismissed(true);
+                commitSearch(searchDraft.trim());
+              }}
             />
             {searchDraft ? (
-              <Pressable onPress={() => setSearchDraft('')} hitSlop={8}>
+              <Pressable
+                onPress={() => {
+                  setSearchDraft('');
+                  setSearchSuggestDismissed(false);
+                }}
+                hitSlop={8}
+              >
                 <Ionicons name="close-circle" size={17} color={Colors.textFaint} />
               </Pressable>
             ) : null}
           </View>
           <Pressable
             style={[styles.filterBtn, filterBadge > 0 && styles.filterBtnActive]}
-            onPress={() => setFilterOpen(true)}
+            onPress={() => {
+              setSearchSuggestDismissed(true);
+              setFilterOpen(true);
+            }}
             hitSlop={4}
           >
             <Ionicons name="options-outline" size={20} color={filterBadge > 0 ? Colors.blue : Colors.text} />
@@ -1622,6 +1830,17 @@ export default function DeadlineScreen() {
               </View>
             ) : null}
           </Pressable>
+        </View>
+        <CrmSearchSuggestDropdown
+          open={searchSuggestOpen}
+          query={searchDraft}
+          loading={searchSuggestLoading}
+          items={searchSuggestItems}
+          total={searchSuggestTotal}
+          onDismiss={() => setSearchSuggestDismissed(true)}
+          onSelect={focusSearchResult}
+          onOpenDetail={openSearchResultDetail}
+        />
         </View>
 
         <View style={{ paddingHorizontal: 16 }}>
@@ -1738,6 +1957,7 @@ export default function DeadlineScreen() {
       ) : (
         <View style={styles.cardListWrap} {...columnSwipe.panHandlers}>
         <FlatList
+          ref={listRef}
           style={styles.cardList}
           data={pagedColumnItems}
           keyExtractor={(it) => it.id}
@@ -1745,6 +1965,12 @@ export default function DeadlineScreen() {
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
           directionalLockEnabled
+          onScrollToIndexFailed={(info) => {
+            listRef.current?.scrollToOffset({
+              offset: Math.max(0, info.averageItemLength * info.index),
+              animated: true,
+            });
+          }}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={() => void load({ refresh: true })} tintColor={Colors.blue} />
           }
@@ -1776,7 +2002,7 @@ export default function DeadlineScreen() {
             </View>
           }
           renderItem={renderDeadlineItem}
-          extraData={`${assigningId || ''}|${movingId || ''}|${accent}|${visibleCount}`}
+          extraData={`${assigningId || ''}|${movingId || ''}|${accent}|${visibleCount}|${highlightCardId || ''}`}
           onScrollBeginDrag={onListScrollBegin}
           onMomentumScrollBegin={onListScrollBegin}
           onScrollEndDrag={onListScrollEnd}
@@ -1964,7 +2190,9 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: Colors.borderSoft,
     paddingBottom: 6,
-    zIndex: 2,
+    zIndex: 20,
+    overflow: 'visible',
+    elevation: 8,
   },
   cardListWrap: { flex: 1 },
   cardList: { flex: 1 },
@@ -1995,6 +2223,11 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
     gap: 8,
     paddingHorizontal: 16,
     marginBottom: 4,
+  },
+  searchRowWrap: {
+    zIndex: 30,
+    elevation: 12,
+    overflow: 'visible',
   },
   searchBox: {
     flex: 1,

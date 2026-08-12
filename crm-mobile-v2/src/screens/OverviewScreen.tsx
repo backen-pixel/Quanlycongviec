@@ -2,7 +2,7 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { CompositeNavigationProp, useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Pressable,
   RefreshControl,
@@ -25,18 +25,27 @@ import {
   type DeadlineFocusBreakdown,
 } from '../api/deadlineOverdue';
 import { fetchEventsRange, type AppEvent } from '../api/events';
+import {
+  fetchCrmCompanies,
+  type CrmCompany,
+} from '../api/crmMeta';
 import Avatar from '../components/Avatar';
 import HeaderMenuBell from '../components/HeaderMenuBell';
 import ListCreateFab from '../components/ListCreateFab';
+import PickerSheet from '../components/PickerSheet';
 import SpinningLoader from '../components/SpinningLoader';
 import { peekOverviewKpiCache, saveOverviewKpiCache } from '../lib/overviewKpiCache';
 import { useAuth, currentUserId } from '../context/AuthContext';
 import { useCreateMenu } from '../context/CreateMenuContext';
+import { useCrmHubFilters } from '../hooks/useCrmHubFilters';
 import { useCrmRealtimeRefresh } from '../hooks/useCrmRealtimeRefresh';
 import {
-  buildStageFetchOpts,
-  DEFAULT_CRM_FILTERS,
-} from '../lib/crmFilters';
+  canSwitchCrmCompany,
+  canViewAllCrm,
+  lockCrmAssigneeScope,
+  lockCrmCompanyScope,
+} from '../lib/crmAssignee';
+import { buildStageFetchOpts } from '../lib/crmFilters';
 import { formatDateShort } from '../lib/format';
 import { vnTodayYmd } from '../lib/vnDate';
 import type { RootStackParamList, TabParamList } from '../navigation/types';
@@ -57,8 +66,42 @@ const EMPTY_FOCUS: DeadlineFocusBreakdown = {
   scopeLabel: '',
 };
 
-/** Số nhiệm vụ hiện mỗi trang trên Tổng quan. */
-const TASK_PAGE_SIZE = 5;
+/** Số mục mỗi trang trên Tổng quan (sự kiện / nhiệm vụ). */
+const OVERVIEW_PAGE_SIZE = 4;
+
+/** Token trang đánh số: số trang (1-based) hoặc dấu … */
+type OverviewPageToken = number | 'ellipsis';
+
+/** Cửa sổ trang gọn: 1 … 4 5 6 … N (tối đa ~7 ô). `current` là chỉ số 0-based. */
+function overviewPageTokens(current: number, total: number, sibling = 1): OverviewPageToken[] {
+  if (total <= 1) return [1];
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
+  const cur = Math.min(Math.max(current + 1, 1), total);
+  const set = new Set<number>([1, total]);
+  for (let i = cur - sibling; i <= cur + sibling; i += 1) {
+    if (i >= 1 && i <= total) set.add(i);
+  }
+  // Gần đầu/cuối: mở rộng thêm 1 ô để ít dấu … hơn
+  if (cur <= 3) {
+    set.add(2);
+    set.add(3);
+    set.add(4);
+  }
+  if (cur >= total - 2) {
+    set.add(total - 1);
+    set.add(total - 2);
+    set.add(total - 3);
+  }
+  const sorted = [...set].filter((n) => n >= 1 && n <= total).sort((a, b) => a - b);
+  const out: OverviewPageToken[] = [];
+  let prev = 0;
+  for (const n of sorted) {
+    if (prev > 0 && n - prev > 1) out.push('ellipsis');
+    out.push(n);
+    prev = n;
+  }
+  return out;
+}
 
 function weekdayViLong(d: Date): string {
   return ['Chủ Nhật', 'Thứ Hai', 'Thứ Ba', 'Thứ Tư', 'Thứ Năm', 'Thứ Sáu', 'Thứ Bảy'][d.getDay()];
@@ -121,6 +164,78 @@ type QuickAction = {
   onPress: () => void;
 };
 
+function OverviewNumberPager({
+  styles,
+  colors,
+  page,
+  pageCount,
+  onChange,
+}: {
+  styles: ReturnType<typeof makeStyles>;
+  colors: ThemeColors;
+  page: number;
+  pageCount: number;
+  onChange: (next: number) => void;
+}) {
+  const tokens = overviewPageTokens(page, pageCount);
+  const atStart = page <= 0;
+  const atEnd = page >= pageCount - 1;
+  return (
+    <View style={styles.pagerRow}>
+      <Pressable
+        style={[styles.pagerArrow, atStart && styles.pagerArrowDisabled]}
+        disabled={atStart}
+        onPress={() => onChange(Math.max(0, page - 1))}
+        hitSlop={8}
+        accessibilityLabel="Trang trước"
+      >
+        <Ionicons
+          name="chevron-back"
+          size={18}
+          color={atStart ? colors.textFaint : colors.blue}
+        />
+      </Pressable>
+      <View style={styles.pagerNums}>
+        {tokens.map((tok, idx) =>
+          tok === 'ellipsis' ? (
+            <Text key={`e-${idx}`} style={styles.pagerEllipsis}>
+              …
+            </Text>
+          ) : (
+            <Pressable
+              key={`p-${tok}`}
+              onPress={() => onChange(tok - 1)}
+              hitSlop={4}
+              style={[styles.pagerNum, tok === page + 1 && styles.pagerNumOn]}
+              accessibilityLabel={`Trang ${tok}`}
+              accessibilityState={{ selected: tok === page + 1 }}
+            >
+              <Text
+                style={[styles.pagerNumTxt, tok === page + 1 && styles.pagerNumTxtOn]}
+              >
+                {tok}
+              </Text>
+            </Pressable>
+          ),
+        )}
+      </View>
+      <Pressable
+        style={[styles.pagerArrow, atEnd && styles.pagerArrowDisabled]}
+        disabled={atEnd}
+        onPress={() => onChange(Math.min(pageCount - 1, page + 1))}
+        hitSlop={8}
+        accessibilityLabel="Trang sau"
+      >
+        <Ionicons
+          name="chevron-forward"
+          size={18}
+          color={atEnd ? colors.textFaint : colors.blue}
+        />
+      </Pressable>
+    </View>
+  );
+}
+
 export default function OverviewScreen() {
   const Colors = useColors();
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
@@ -128,9 +243,19 @@ export default function OverviewScreen() {
   const navigation = useNavigation<Nav>();
   const { user } = useAuth();
   const { toggle: toggleCreateMenu } = useCreateMenu();
+  const {
+    ready: filtersReady,
+    filters,
+    patchFilters,
+  } = useCrmHubFilters();
 
   const uid = currentUserId(user) || user?.id || user?.userId || '';
   const cachedKpi = uid ? peekOverviewKpiCache(uid) : null;
+  const canPickCompany = canSwitchCrmCompany(user);
+  const canPickAssignee = canViewAllCrm(user);
+  const lockCompany = lockCrmCompanyScope(user);
+  const lockAssignee = lockCrmAssigneeScope(user);
+  const scopeMine = lockAssignee || filters.assignee === 'mine';
 
   const [loading, setLoading] = useState(() => !cachedKpi);
   const [refreshing, setRefreshing] = useState(false);
@@ -140,7 +265,10 @@ export default function OverviewScreen() {
   const [todayDealCount, setTodayDealCount] = useState(() => cachedKpi?.todayDeal ?? 0);
   const [events, setEvents] = useState<AppEvent[]>([]);
   const [tasks, setTasks] = useState<CrmAssignment[]>([]);
-  const [taskVisibleCount, setTaskVisibleCount] = useState(TASK_PAGE_SIZE);
+  const [eventPage, setEventPage] = useState(0);
+  const [taskPage, setTaskPage] = useState(0);
+  const [companies, setCompanies] = useState<CrmCompany[]>([]);
+  const [companyPickerOpen, setCompanyPickerOpen] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const loadGenRef = useRef(0);
   const lastLoadAtRef = useRef(0);
@@ -155,8 +283,43 @@ export default function OverviewScreen() {
   const dateLabel = formatHeroDate(now);
   const wishLine = 'Chúc bạn một ngày làm việc hiệu quả!';
 
+  const effectiveCompanyId = useMemo(() => {
+    if (lockCompany) return String(user?.company_id || filters.companyId || '').trim();
+    return String(filters.companyId || '').trim();
+  }, [lockCompany, user?.company_id, filters.companyId]);
+
+  useEffect(() => {
+    if (!canPickCompany) return undefined;
+    let cancelled = false;
+    void fetchCrmCompanies()
+      .then((list) => {
+        if (!cancelled) setCompanies(list);
+      })
+      .catch(() => {
+        if (!cancelled) setCompanies([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [canPickCompany]);
+
+  const companyLabel = useMemo(() => {
+    if (!effectiveCompanyId) return 'Tất cả công ty';
+    const c = companies.find((x) => String(x.id) === String(effectiveCompanyId));
+    return c?.short_name || c?.name || 'Công ty đã chọn';
+  }, [companies, effectiveCompanyId]);
+
+  const scopeHint = useMemo(() => {
+    const parts: string[] = [];
+    if (effectiveCompanyId) parts.push(companyLabel);
+    else if (canPickCompany) parts.push('Tất cả công ty');
+    parts.push(scopeMine ? 'Của tôi' : 'Tất cả NV');
+    return parts.join(' · ');
+  }, [effectiveCompanyId, companyLabel, canPickCompany, scopeMine]);
+
   const load = useCallback(
     async (opts?: { refresh?: boolean; silent?: boolean }) => {
+      if (!filtersReady) return;
       const isRefresh = opts?.refresh ?? false;
       const silent = opts?.silent ?? false;
       abortRef.current?.abort();
@@ -170,13 +333,18 @@ export default function OverviewScreen() {
 
       try {
         const today = vnTodayYmd();
-        const myTodayOpts = {
+        const companyId = effectiveCompanyId;
+        const assigneeMode = scopeMine ? ('mine' as const) : ('all' as const);
+
+        // Khớp bộ lọc Hub (SĐT / vùng / …) — chỉ ép ngày = hôm nay + phạm vi Của tôi/Tất cả.
+        // Trước đây phone:'' nên đếm cả lead không SĐT → KPI lệch với tab Lead (mặc định has_phone).
+        const todayOpts = {
           ...buildStageFetchOpts(
             {
-              ...DEFAULT_CRM_FILTERS,
-              phone: '',
-              assignee: 'mine',
-              companyId: user?.company_id || '',
+              ...filters,
+              assignee: assigneeMode,
+              assigneeUserId: '',
+              companyId: companyId || '',
               timePreset: 'custom',
               dateFrom: today,
               dateTo: today,
@@ -187,10 +355,10 @@ export default function OverviewScreen() {
           signal: ac.signal,
         };
 
-        // Wave 1 — vẽ banner quá hạn ngay khi RPC xong, không đợi đếm hôm nay
+        // Wave 1 — banner quá hạn + KPI hôm nay theo cùng bộ lọc Hub
         const focusP = fetchDeadlineFocusBreakdown(userRef.current, ac.signal);
-        const leadP = fetchCrmListTotal('lead', myTodayOpts);
-        const dealP = fetchCrmListTotal('deal', myTodayOpts);
+        const leadP = fetchCrmListTotal('lead', todayOpts);
+        const dealP = fetchCrmListTotal('deal', todayOpts);
 
         const focusRes = await focusP;
         if (ac.signal.aborted || gen !== loadGenRef.current) return;
@@ -215,16 +383,18 @@ export default function OverviewScreen() {
           });
         }
 
-        // Wave 2 — sự kiện + nhiệm vụ (không chặn first paint)
+        // Wave 2 — sự kiện + nhiệm vụ theo phạm vi quyền / bộ lọc
         const [eventRes, taskRes] = await Promise.all([
           fetchEventsRange({
             dateFrom: today,
             dateTo: today,
-            userId: uid || undefined,
+            companyId: companyId || undefined,
+            userId: scopeMine ? (uid || undefined) : undefined,
             signal: ac.signal,
           }),
           fetchCrmAssignments({
-            assignee_id: uid || undefined,
+            company_id: companyId || undefined,
+            assignee_id: scopeMine ? (uid || undefined) : undefined,
             signal: ac.signal,
           }),
         ]);
@@ -250,7 +420,8 @@ export default function OverviewScreen() {
 
         setEvents(openEvents);
         setTasks(focusTasks);
-        setTaskVisibleCount(TASK_PAGE_SIZE);
+        setEventPage(0);
+        setTaskPage(0);
         lastLoadAtRef.current = Date.now();
       } catch (e: unknown) {
         if (isAbortError(e) || ac.signal.aborted || gen !== loadGenRef.current) return;
@@ -265,19 +436,32 @@ export default function OverviewScreen() {
         }
       }
     },
-    [uid, user?.company_id],
+    [uid, filtersReady, effectiveCompanyId, scopeMine, filters],
   );
 
   useFocusEffect(
     useCallback(() => {
+      if (!filtersReady) return undefined;
       const OVERVIEW_TTL_MS = 45_000;
       const stale = Date.now() - lastLoadAtRef.current > OVERVIEW_TTL_MS;
       if (!hasPaintedRef.current || stale) {
         void load({ silent: hasPaintedRef.current });
       }
       return () => abortRef.current?.abort();
-    }, [load]),
+    }, [load, filtersReady]),
   );
+
+  // Đổi lọc Hub (công ty / của tôi / SĐT / vùng) → tải lại KPI Tổng quan
+  useEffect(() => {
+    if (!filtersReady) return;
+    void load({ silent: hasPaintedRef.current });
+  }, [
+    filters.companyId,
+    filters.assignee,
+    filters.phone,
+    filters.regionId,
+    filtersReady,
+  ]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useCrmRealtimeRefresh(
     useCallback(() => {
@@ -289,20 +473,44 @@ export default function OverviewScreen() {
     navigation.navigate(screen);
   };
 
+  const openTodayList = (screen: 'Lead' | 'Deal') => {
+    const today = vnTodayYmd();
+    patchFilters({
+      timePreset: 'custom',
+      dateFrom: today,
+      dateTo: today,
+      assignee: scopeMine ? 'mine' : filters.assignee,
+      assigneeUserId: scopeMine ? '' : filters.assigneeUserId,
+      companyId: effectiveCompanyId || filters.companyId,
+    });
+    goTab(screen);
+  };
+
+  const companyPickerOptions = useMemo(
+    () => [
+      { id: '', name: 'Tất cả công ty' },
+      ...companies.map((c) => ({
+        id: c.id,
+        name: c.short_name || c.name,
+      })),
+    ],
+    [companies],
+  );
+
   const kpiItems: { key: string; label: string; value: number; tone: KpiTone; onPress: () => void }[] = [
     {
       key: 'lead_today',
-      label: 'Lead hôm nay',
+      label: 'Lead tạo hôm nay',
       value: todayLeadCount,
       tone: 'blue',
-      onPress: () => goTab('Lead'),
+      onPress: () => openTodayList('Lead'),
     },
     {
       key: 'deal_today',
-      label: 'Deal hôm nay',
+      label: 'Deal tạo hôm nay',
       value: todayDealCount,
       tone: 'orange',
-      onPress: () => goTab('Deal'),
+      onPress: () => openTodayList('Deal'),
     },
   ];
 
@@ -365,9 +573,20 @@ export default function OverviewScreen() {
     },
   ];
 
-  const previewEvents = events.slice(0, 5);
-  const previewTasks = tasks.slice(0, taskVisibleCount);
-  const hasMoreTasks = taskVisibleCount < tasks.length;
+  const eventPageCount = Math.max(1, Math.ceil(events.length / OVERVIEW_PAGE_SIZE));
+  const taskPageCount = Math.max(1, Math.ceil(tasks.length / OVERVIEW_PAGE_SIZE));
+  const safeEventPage = Math.min(eventPage, eventPageCount - 1);
+  const safeTaskPage = Math.min(taskPage, taskPageCount - 1);
+  const previewEvents = events.slice(
+    safeEventPage * OVERVIEW_PAGE_SIZE,
+    safeEventPage * OVERVIEW_PAGE_SIZE + OVERVIEW_PAGE_SIZE,
+  );
+  const previewTasks = tasks.slice(
+    safeTaskPage * OVERVIEW_PAGE_SIZE,
+    safeTaskPage * OVERVIEW_PAGE_SIZE + OVERVIEW_PAGE_SIZE,
+  );
+  const showEventPager = events.length > OVERVIEW_PAGE_SIZE;
+  const showTaskPager = tasks.length > OVERVIEW_PAGE_SIZE;
   const toneMap: Record<KpiTone, { fg: string; bg: string }> = {
     orange: { fg: Colors.orange, bg: Colors.orangeSoft },
     blue: { fg: Colors.blue, bg: Colors.blueSoft },
@@ -420,6 +639,63 @@ export default function OverviewScreen() {
               </Pressable>
             ) : null}
 
+            {(canPickCompany || canPickAssignee) ? (
+              <View style={styles.filterBar}>
+                {canPickCompany ? (
+                  <Pressable
+                    style={[styles.filterChip, !!effectiveCompanyId && styles.filterChipOn]}
+                    onPress={() => setCompanyPickerOpen(true)}
+                  >
+                    <Ionicons
+                      name="business-outline"
+                      size={14}
+                      color={effectiveCompanyId ? Colors.blue : Colors.textMuted}
+                    />
+                    <Text
+                      style={[styles.filterChipTxt, !!effectiveCompanyId && styles.filterChipTxtOn]}
+                      numberOfLines={1}
+                    >
+                      {companyLabel}
+                    </Text>
+                    <Ionicons name="chevron-down" size={14} color={Colors.textFaint} />
+                  </Pressable>
+                ) : null}
+                {canPickAssignee ? (
+                  <View style={styles.assigneeSeg}>
+                    <Pressable
+                      style={[styles.assigneeBtn, scopeMine && styles.assigneeBtnOn]}
+                      onPress={() => patchFilters({ assignee: 'mine', assigneeUserId: '' })}
+                    >
+                      <Text style={[styles.assigneeBtnTxt, scopeMine && styles.assigneeBtnTxtOn]}>
+                        Của tôi
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      style={[styles.assigneeBtn, !scopeMine && styles.assigneeBtnOn]}
+                      onPress={() => patchFilters({ assignee: 'all', assigneeUserId: '' })}
+                    >
+                      <Text style={[styles.assigneeBtnTxt, !scopeMine && styles.assigneeBtnTxtOn]}>
+                        Tất cả
+                      </Text>
+                    </Pressable>
+                  </View>
+                ) : (
+                  <View style={[styles.filterChip, styles.filterChipOn]}>
+                    <Ionicons name="person-outline" size={14} color={Colors.blue} />
+                    <Text style={[styles.filterChipTxt, styles.filterChipTxtOn]}>Của tôi</Text>
+                  </View>
+                )}
+              </View>
+            ) : (
+              <View style={styles.filterBar}>
+                <View style={[styles.filterChip, styles.filterChipOn]}>
+                  <Ionicons name="person-outline" size={14} color={Colors.blue} />
+                  <Text style={[styles.filterChipTxt, styles.filterChipTxtOn]}>Của tôi</Text>
+                </View>
+              </View>
+            )}
+            <Text style={styles.scopeHint}>{scopeHint}</Text>
+
             {loading && !refreshing && !focus.at ? (
               <View style={styles.inlineLoad}>
                 <SpinningLoader size="large" color={Colors.blue} />
@@ -448,7 +724,9 @@ export default function OverviewScreen() {
               </View>
             )}
 
-            <Text style={styles.secTitle}>Lead · Deal hôm nay của tôi</Text>
+            <Text style={styles.secTitle}>
+              {scopeMine ? 'Lead · Deal hôm nay của tôi' : 'Lead · Deal hôm nay'}
+            </Text>
             <View style={styles.kpiGrid}>
               {kpiItems.map((k) => {
                 const tone = toneMap[k.tone];
@@ -485,36 +763,47 @@ export default function OverviewScreen() {
                   <Text style={styles.emptyTxt}>Không có sự kiện hôm nay</Text>
                 </View>
               ) : (
-                previewEvents.map((e, idx) => {
-                  const timeStr = e.allDay
-                    ? 'Cả ngày'
-                    : e.endTime
-                      ? `${timeOf(e.startTime)} – ${timeOf(e.endTime)}`
-                      : timeOf(e.startTime);
-                  return (
-                    <Pressable
-                      key={e.id}
-                      style={[styles.rowItem, idx > 0 && styles.rowBorder]}
-                      onPress={() => navigation.navigate('Events')}
-                    >
-                      <View style={[styles.rowIcon, { backgroundColor: (e.typeColor || Colors.cyan) + '22' }]}>
-                        <Text style={{ fontSize: 14 }}>{e.typeIcon || '📋'}</Text>
-                      </View>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.rowTitle} numberOfLines={1}>
-                          {e.title}
-                        </Text>
-                        <Text style={styles.rowSub} numberOfLines={1}>
-                          {timeStr}
-                          {e.customerName || e.leadTitle
-                            ? ` · ${e.customerName || e.leadTitle}`
-                            : ''}
-                        </Text>
-                      </View>
-                      <Ionicons name="chevron-forward" size={16} color={Colors.textFaint} />
-                    </Pressable>
-                  );
-                })
+                <>
+                  {previewEvents.map((e, idx) => {
+                    const timeStr = e.allDay
+                      ? 'Cả ngày'
+                      : e.endTime
+                        ? `${timeOf(e.startTime)} – ${timeOf(e.endTime)}`
+                        : timeOf(e.startTime);
+                    return (
+                      <Pressable
+                        key={e.id}
+                        style={[styles.rowItem, idx > 0 && styles.rowBorder]}
+                        onPress={() => navigation.navigate('Events')}
+                      >
+                        <View style={[styles.rowIcon, { backgroundColor: (e.typeColor || Colors.cyan) + '22' }]}>
+                          <Text style={{ fontSize: 14 }}>{e.typeIcon || '📋'}</Text>
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.rowTitle} numberOfLines={1}>
+                            {e.title}
+                          </Text>
+                          <Text style={styles.rowSub} numberOfLines={1}>
+                            {timeStr}
+                            {e.customerName || e.leadTitle
+                              ? ` · ${e.customerName || e.leadTitle}`
+                              : ''}
+                          </Text>
+                        </View>
+                        <Ionicons name="chevron-forward" size={16} color={Colors.textFaint} />
+                      </Pressable>
+                    );
+                  })}
+                  {showEventPager ? (
+                    <OverviewNumberPager
+                      styles={styles}
+                      colors={Colors}
+                      page={safeEventPage}
+                      pageCount={eventPageCount}
+                      onChange={(p) => setEventPage(p)}
+                    />
+                  ) : null}
+                </>
               )}
             </View>
 
@@ -632,26 +921,14 @@ export default function OverviewScreen() {
                       </Pressable>
                     );
                   })}
-                  {hasMoreTasks ? (
-                    <Pressable
-                      style={styles.moreBtn}
-                      onPress={() =>
-                        setTaskVisibleCount((n) => Math.min(n + TASK_PAGE_SIZE, tasks.length))
-                      }
-                    >
-                      <Text style={styles.moreBtnTxt}>
-                        Xem thêm ({Math.min(TASK_PAGE_SIZE, tasks.length - taskVisibleCount)})
-                      </Text>
-                      <Ionicons name="chevron-down" size={16} color={Colors.blue} />
-                    </Pressable>
-                  ) : tasks.length > TASK_PAGE_SIZE ? (
-                    <Pressable
-                      style={styles.moreBtn}
-                      onPress={() => setTaskVisibleCount(TASK_PAGE_SIZE)}
-                    >
-                      <Text style={styles.moreBtnTxt}>Thu gọn</Text>
-                      <Ionicons name="chevron-up" size={16} color={Colors.blue} />
-                    </Pressable>
+                  {showTaskPager ? (
+                    <OverviewNumberPager
+                      styles={styles}
+                      colors={Colors}
+                      page={safeTaskPage}
+                      pageCount={taskPageCount}
+                      onChange={(p) => setTaskPage(p)}
+                    />
                   ) : null}
                 </>
               )}
@@ -678,6 +955,23 @@ export default function OverviewScreen() {
       </ScrollView>
 
       <ListCreateFab kind="menu" onPress={toggleCreateMenu} bottom={12} />
+
+      {canPickCompany ? (
+        <PickerSheet
+          visible={companyPickerOpen}
+          title="Chọn công ty"
+          options={companyPickerOptions}
+          selectedId={effectiveCompanyId || null}
+          searchable
+          emptyLabel="Tất cả công ty"
+          accent={Colors.blue}
+          onSelect={(opt) => {
+            patchFilters({ companyId: opt?.id || '', regionId: '' });
+            setCompanyPickerOpen(false);
+          }}
+          onClose={() => setCompanyPickerOpen(false)}
+        />
+      ) : null}
     </View>
   );
 }
@@ -734,6 +1028,58 @@ const makeStyles = (Colors: ThemeColors) =>
       backgroundColor: Colors.surfaceSoft,
     },
     muted: { color: Colors.textMuted, fontSize: 13, fontWeight: '600' },
+    filterBar: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      alignItems: 'center',
+      gap: 8,
+      marginBottom: 6,
+    },
+    filterChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      maxWidth: '100%',
+      paddingHorizontal: 10,
+      paddingVertical: 7,
+      borderRadius: Radii.lg,
+      backgroundColor: Colors.card,
+      borderWidth: 1,
+      borderColor: Colors.border,
+    },
+    filterChipOn: {
+      borderColor: Colors.blue,
+      backgroundColor: Colors.blueSoft,
+    },
+    filterChipTxt: {
+      flexShrink: 1,
+      color: Colors.textMuted,
+      fontSize: 12.5,
+      fontWeight: '700',
+    },
+    filterChipTxtOn: { color: Colors.blue },
+    assigneeSeg: {
+      flexDirection: 'row',
+      borderRadius: Radii.lg,
+      borderWidth: 1,
+      borderColor: Colors.border,
+      overflow: 'hidden',
+      backgroundColor: Colors.card,
+    },
+    assigneeBtn: {
+      paddingHorizontal: 12,
+      paddingVertical: 7,
+      backgroundColor: 'transparent',
+    },
+    assigneeBtnOn: { backgroundColor: Colors.blueSoft },
+    assigneeBtnTxt: { color: Colors.textMuted, fontSize: 12.5, fontWeight: '700' },
+    assigneeBtnTxtOn: { color: Colors.blue },
+    scopeHint: {
+      color: Colors.textFaint,
+      fontSize: 11,
+      fontWeight: '600',
+      marginBottom: 10,
+    },
     errorBanner: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -898,6 +1244,62 @@ const makeStyles = (Colors: ThemeColors) =>
       backgroundColor: Colors.cardAlt,
     },
     moreBtnTxt: { color: Colors.blue, fontSize: 13, fontWeight: '800' },
+    pagerRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 10,
+      paddingVertical: 10,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: Colors.border,
+    },
+    pagerArrow: {
+      width: 32,
+      height: 32,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: 8,
+    },
+    pagerArrowDisabled: { opacity: 0.45 },
+    pagerNums: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      flexShrink: 1,
+      gap: 4,
+      maxWidth: '72%',
+    },
+    pagerNum: {
+      minWidth: 30,
+      height: 30,
+      paddingHorizontal: 6,
+      borderRadius: 8,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: Colors.cardAlt,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: Colors.border,
+    },
+    pagerNumOn: {
+      backgroundColor: Colors.blue,
+      borderColor: Colors.blue,
+    },
+    pagerNumTxt: {
+      color: Colors.text,
+      fontSize: 12,
+      fontWeight: '700',
+    },
+    pagerNumTxtOn: {
+      color: '#fff',
+    },
+    pagerEllipsis: {
+      color: Colors.textMuted,
+      fontSize: 13,
+      fontWeight: '700',
+      paddingHorizontal: 2,
+      minWidth: 14,
+      textAlign: 'center',
+    },
     quickGrid: {
       flexDirection: 'row',
       flexWrap: 'wrap',

@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { DeadlineFocusBreakdown } from '../api/deadlineOverdue';
 
-const KEY = 'crmv2_overview_kpi_v1';
+const KEY = 'crmv2_overview_kpi_v2';
 const MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 export type OverviewKpiCache = {

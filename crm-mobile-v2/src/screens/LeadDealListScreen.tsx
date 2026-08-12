@@ -4,7 +4,7 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Pressable, RefreshControl, ScrollView, SectionList, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Keyboard, Pressable, RefreshControl, ScrollView, SectionList, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatApiError, isAbortError } from '../api/client';
 import {
@@ -33,6 +33,7 @@ import CrmListCard from '../components/CrmListCard';
 import CrmListCardOptionsSheet, {
   type CrmListCardMenuAction,
 } from '../components/CrmListCardOptionsSheet';
+import CrmSearchSuggestDropdown from '../components/CrmSearchSuggestDropdown';
 import DatePickerSheet from '../components/DatePickerSheet';
 import DealWonSxPickerModal from '../components/DealWonSxPickerModal';
 import MoveStageModal from '../components/MoveStageModal';
@@ -41,6 +42,7 @@ import { useAuth, currentUserId } from '../context/AuthContext';
 import { useCreateMenu } from '../context/CreateMenuContext';
 import { applyCrmBadgeFieldsToItem } from '../lib/crmBadgePatch';
 import { useCrmRealtimeRefresh } from '../hooks/useCrmRealtimeRefresh';
+import { useCrmSearchSuggest } from '../hooks/useCrmSearchSuggest';
 import { useUnreadNotificationCount } from '../hooks/useUnreadNotificationCount';
 import { lockCrmAssigneeScope, lockCrmCompanyScope } from '../lib/crmAssignee';
 import ListCreateFab from '../components/ListCreateFab';
@@ -185,6 +187,15 @@ export default function LeadDealListScreen({ kind }: Props) {
     setStageCounts({});
     setStages([]);
   }, [filters.companyId]);
+
+  // Đổi bộ lọc chung (ngày / SĐT / NV…) → về «Tất cả» giai đoạn.
+  // Tránh KPI «Lead hôm nay» = 2 trong khi List còn kẹt 1 cột chỉ hiện 1 thẻ.
+  const prevFilterKeyRef = useRef(filterKey);
+  useEffect(() => {
+    if (prevFilterKeyRef.current === filterKey) return;
+    prevFilterKeyRef.current = filterKey;
+    setStageId('');
+  }, [filterKey]);
 
   // Stage đã chọn không còn trong pipeline mới → về «Tất cả».
   useEffect(() => {
@@ -370,8 +381,99 @@ export default function LeadDealListScreen({ kind }: Props) {
       .sort((a, b) => listDateSectionOrder(a.title) - listDateSectionOrder(b.title));
   }, [items, listSort]);
 
+  const {
+    open: searchSuggestOpen,
+    loading: searchSuggestLoading,
+    items: searchSuggestItems,
+    total: searchSuggestTotal,
+    setDismissed: setSearchSuggestDismissed,
+  } = useCrmSearchSuggest({
+    enabled: listActive,
+    type: kind,
+    searchDraft,
+    filters,
+    myId: myId || '',
+    localItems: items,
+  });
+
+  const listRef = useRef<SectionList<CrmKanbanItem, Section>>(null);
+  const pendingSearchFocusRef = useRef<CrmKanbanItem | null>(null);
+  const [highlightCardId, setHighlightCardId] = useState<string | null>(null);
+  const [searchFocusNonce, setSearchFocusNonce] = useState(0);
+  const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const flashHighlight = useCallback((id: string) => {
+    if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+    setHighlightCardId(id);
+    highlightTimerRef.current = setTimeout(() => {
+      setHighlightCardId(null);
+      highlightTimerRef.current = null;
+    }, 2800);
+  }, []);
+
+  const focusSearchResult = useCallback((item: CrmKanbanItem) => {
+    setSearchSuggestDismissed(true);
+    Keyboard.dismiss();
+    pendingSearchFocusRef.current = item;
+    if (stageId && item.stageId && String(stageId) !== String(item.stageId)) {
+      setStageId(item.stageId);
+    } else {
+      setItems((prev) => (prev.some((it) => it.id === item.id) ? prev : [item, ...prev]));
+    }
+    setSearchFocusNonce((n) => n + 1);
+  }, [stageId, setSearchSuggestDismissed]);
+
+  const openSearchResultDetail = useCallback((item: CrmKanbanItem) => {
+    setSearchSuggestDismissed(true);
+    Keyboard.dismiss();
+    navigation.navigate('LeadDealDetail', {
+      leadId: item.id,
+      kind: item.kind,
+      code: item.code,
+      title: item.title,
+    });
+  }, [navigation, setSearchSuggestDismissed]);
+
+  useEffect(() => {
+    const pending = pendingSearchFocusRef.current;
+    if (!pending) return;
+    if (!items.some((it) => it.id === pending.id)) {
+      setItems((prev) => (prev.some((it) => it.id === pending.id) ? prev : [pending, ...prev]));
+      return;
+    }
+    let sectionIndex = -1;
+    let itemIndex = -1;
+    for (let si = 0; si < sections.length; si += 1) {
+      const ii = sections[si].data.findIndex((it) => it.id === pending.id);
+      if (ii >= 0) {
+        sectionIndex = si;
+        itemIndex = ii;
+        break;
+      }
+    }
+    if (sectionIndex < 0 || itemIndex < 0) return;
+    pendingSearchFocusRef.current = null;
+    flashHighlight(pending.id);
+    const t = setTimeout(() => {
+      try {
+        listRef.current?.scrollToLocation({
+          sectionIndex,
+          itemIndex,
+          animated: true,
+          viewPosition: 0.25,
+        });
+      } catch {
+        /* ignore */
+      }
+    }, 80);
+    return () => clearTimeout(t);
+  }, [items, sections, searchFocusNonce, flashHighlight]);
+
   const filterBadge = countActiveFilters(filters, search);
-  const displayTotal = listTotal ?? items.length;
+  /** Badge khớp dữ liệu đang xem: cột đang chọn dùng count cột; «Tất cả» dùng tổng pipeline. */
+  const displayTotal = stageId
+    ? (stageCounts[stageId] ?? items.length)
+    : (listTotal ?? items.length);
 
   const filterChips = useMemo(() => {
     const companyName = companies.find((c) => c.id === filters.companyId)?.name
@@ -664,19 +766,34 @@ export default function LeadDealListScreen({ kind }: Props) {
         </View>
       </View>
 
+      <View style={styles.searchRowWrap}>
       <View style={styles.searchRow}>
         <View style={styles.searchBox}>
           <Ionicons name="search" size={17} color={Colors.textFaint} />
           <TextInput
             value={searchDraft}
-            onChangeText={setSearchDraft}
+            onChangeText={(t) => {
+              setSearchDraft(t);
+              setSearchSuggestDismissed(false);
+            }}
+            onFocus={() => setSearchSuggestDismissed(false)}
             placeholder={searchPlaceholder(filters.searchField, kind)}
             placeholderTextColor={Colors.textFaint}
             style={styles.searchInput}
             returnKeyType="search"
+            onSubmitEditing={() => {
+              setSearchSuggestDismissed(true);
+              commitSearch(searchDraft.trim());
+            }}
           />
           {searchDraft ? (
-            <Pressable onPress={() => setSearchDraft('')} hitSlop={8}>
+            <Pressable
+              onPress={() => {
+                setSearchDraft('');
+                setSearchSuggestDismissed(false);
+              }}
+              hitSlop={8}
+            >
               <Ionicons name="close-circle" size={17} color={Colors.textFaint} />
             </Pressable>
           ) : null}
@@ -684,6 +801,7 @@ export default function LeadDealListScreen({ kind }: Props) {
         <Pressable
           style={[styles.filterBtn, filterBadge > 0 && styles.filterBtnActive]}
           onPress={() => {
+            setSearchSuggestDismissed(true);
             void loadMeta();
             setFilterOpen(true);
           }}
@@ -696,6 +814,17 @@ export default function LeadDealListScreen({ kind }: Props) {
             </View>
           ) : null}
         </Pressable>
+      </View>
+      <CrmSearchSuggestDropdown
+        open={searchSuggestOpen}
+        query={searchDraft}
+        loading={searchSuggestLoading}
+        items={searchSuggestItems}
+        total={searchSuggestTotal}
+        onDismiss={() => setSearchSuggestDismissed(true)}
+        onSelect={focusSearchResult}
+        onOpenDetail={openSearchResultDetail}
+      />
       </View>
 
       {filterChips.length > 0 ? (
@@ -806,12 +935,16 @@ export default function LeadDealListScreen({ kind }: Props) {
         </View>
       ) : (
         <SectionList
+          ref={listRef}
           sections={sections}
           keyExtractor={(it) => it.id}
+          keyboardShouldPersistTaps="handled"
+          onScrollToIndexFailed={() => undefined}
           renderItem={({ item }) => (
             <CrmListCard
               item={item}
               moving={movingId === item.id}
+              highlighted={highlightCardId === item.id}
               onPress={() =>
                 navigation.navigate('LeadDealDetail', {
                   leadId: item.id,
@@ -1021,6 +1154,11 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
     gap: 8,
     paddingHorizontal: 16,
     marginBottom: 6,
+  },
+  searchRowWrap: {
+    zIndex: 30,
+    elevation: 12,
+    overflow: 'visible',
   },
   searchBox: {
     flex: 1,

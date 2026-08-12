@@ -4718,9 +4718,10 @@ async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
       total = matches.length;
       hasMore = parsedOffset + page.length < total;
     } else {
-      // Chưa hết dữ liệu SQL — total tối thiểu là cửa sổ đã lọc + còn tiếp.
-      total = Math.max(matches.length, parsedOffset + page.length + (page.length >= parsedLimit ? 1 : 0));
-      hasMore = page.length >= parsedLimit || matches.length > parsedOffset + page.length;
+      // Chưa hết SQL — hasMore=true. Không cộng ảo +1 vào total
+      // (trước đây limit=1 + 1 match → total=2 dù chỉ có 1 lead khớp).
+      total = Math.max(matches.length, parsedOffset + page.length);
+      hasMore = true;
     }
   }
 
