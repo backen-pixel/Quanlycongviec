@@ -1,16 +1,8 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
+import SpinningLoader from '../components/SpinningLoader';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  FlatList,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { Alert, FlatList, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { api } from '../api/client';
 import MessengerAvatar from '../components/messenger/MessengerAvatar';
@@ -386,7 +378,7 @@ export default function MessengerForwardScreen({ navigation, route }: Props) {
 
       {loading && panel === 'chats' ? (
         <View style={styles.center}>
-          <ActivityIndicator size="large" color={mc.accent} />
+          <SpinningLoader size="large" color={mc.accent} />
         </View>
       ) : panel === 'chats' ? (
         <FlatList
@@ -428,7 +420,7 @@ export default function MessengerForwardScreen({ navigation, route }: Props) {
         />
       ) : searchingStaff ? (
         <View style={styles.center}>
-          <ActivityIndicator size="large" color={mc.accent} />
+          <SpinningLoader size="large" color={mc.accent} />
         </View>
       ) : (
         <FlatList
@@ -478,7 +470,7 @@ export default function MessengerForwardScreen({ navigation, route }: Props) {
           disabled={!selectedList.length || sending}
         >
           {sending ? (
-            <ActivityIndicator color="#FFF" size="small" />
+            <SpinningLoader color="#FFF" size="small" />
           ) : (
             <Text style={styles.sendTxt}>Gửi ({selectedList.length})</Text>
           )}

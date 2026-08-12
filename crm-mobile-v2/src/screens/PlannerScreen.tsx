@@ -25,10 +25,9 @@ import {
   type PlannerFetchOpts,
 } from '../api/crm';
 import Avatar from '../components/Avatar';
-import NotificationBadge from '../components/NotificationBadge';
+import HeaderMenuBell from '../components/HeaderMenuBell';
 import PlannerCompactCard, { plannerKindMeta } from '../components/planner/PlannerCompactCard';
 import SpinningLoader from '../components/SpinningLoader';
-import { useUnreadNotificationCount } from '../hooks/useUnreadNotificationCount';
 import { currentUserId, useAuth } from '../context/AuthContext';
 import {
   filterPlannerItems,
@@ -282,7 +281,6 @@ export default function PlannerScreen() {
   const [dealsLoadingMore, setDealsLoadingMore] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
-  const unreadNotifCount = useUnreadNotificationCount();
   const abortRef = useRef<AbortController | null>(null);
   const loadingRef = useRef(false);
   const companyIdRef = useRef<string | undefined>(undefined);
@@ -576,10 +574,7 @@ export default function PlannerScreen() {
               </Text>
             </View>
           </View>
-          <Pressable style={styles.bellBtn} onPress={() => navigation.navigate('Notifications')}>
-            <Ionicons name="notifications-outline" size={20} color={Colors.text} />
-            <NotificationBadge count={unreadNotifCount} style={styles.bellBadge} />
-          </Pressable>
+          <HeaderMenuBell />
         </View>
         <Text style={styles.motivateTxt} numberOfLines={1}>
           Chúc bạn một ngày làm việc hiệu quả! 👋
@@ -605,7 +600,7 @@ export default function PlannerScreen() {
         <View style={styles.quickRow}>
           <Pressable
             style={[styles.quickBtn, { borderColor: Colors.blue }]}
-            onPress={() => navigation.navigate('CrmHub', { initialMode: 'leads' })}
+            onPress={() => navigation.navigate('Tabs', { screen: 'Lead' })}
           >
             <View style={[styles.quickIcon, { backgroundColor: Colors.blueSoft }]}>
               <Ionicons name="people" size={22} color={Colors.blue} />
@@ -618,7 +613,7 @@ export default function PlannerScreen() {
           </Pressable>
           <Pressable
             style={[styles.quickBtn, { borderColor: Colors.orange }]}
-            onPress={() => navigation.navigate('CrmHub', { initialMode: 'deals' })}
+            onPress={() => navigation.navigate('Tabs', { screen: 'Deal' })}
           >
             <View style={[styles.quickIcon, { backgroundColor: Colors.orangeSoft }]}>
               <Ionicons name="pricetags" size={22} color={Colors.orange} />
@@ -686,17 +681,6 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
     paddingHorizontal: 16,
     marginBottom: 16,
   },
-  bellBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    backgroundColor: Colors.card,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  bellBadge: { top: -4, right: -4 },
   summary: {
     flexDirection: 'row',
     alignItems: 'center',

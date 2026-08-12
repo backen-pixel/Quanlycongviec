@@ -1,8 +1,9 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
+import SpinningLoader from '../SpinningLoader';
 
 import React, { useMemo, useState } from 'react';
 
-import { ActivityIndicator, Alert, StyleSheet, Text, View } from 'react-native';
+import { Alert, StyleSheet, Text, View } from 'react-native';
 
 import TapHighlight from '../TapHighlight';
 
@@ -345,7 +346,7 @@ export default function ChatHeader({
           <>
             <TapHighlight style={styles.callBtn} onPress={onCall} disabled={calling}>
               {calling ? (
-                <ActivityIndicator size="small" color={mc.accent} />
+                <SpinningLoader size="small" color={mc.accent} />
               ) : (
                 <Ionicons name="call" size={18} color={mc.accent} />
               )}

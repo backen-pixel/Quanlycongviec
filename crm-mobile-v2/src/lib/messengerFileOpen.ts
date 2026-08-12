@@ -3,38 +3,39 @@ import * as IntentLauncher from 'expo-intent-launcher';
 import * as MediaLibrary from 'expo-media-library';
 import { Alert, Linking, Platform } from 'react-native';
 import { getStoredToken } from '../api/client';
-import { guessAudioMimeFromFileName } from './guessAudioMime';
+import { API_PREFIX } from '../config';
+import { guessFileMime, resolveFileAccessUrl } from './remoteFile';
 
 function safeFileName(name?: string | null): string {
   const base = (name || 'file').replace(/[^a-zA-Z0-9._-]/g, '_');
   return base || 'file';
 }
 
-function guessMime(name?: string | null, mime?: string | null): string {
-  if (mime) return mime;
-  const lower = String(name || '').toLowerCase();
-  if (lower.endsWith('.pdf')) return 'application/pdf';
-  if (lower.endsWith('.doc') || lower.endsWith('.docx')) {
-    return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-  }
-  if (lower.endsWith('.xls') || lower.endsWith('.xlsx')) {
-    return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
-  }
-  if (/\.(jpe?g|png|gif|webp)$/i.test(lower)) return 'image/jpeg';
-  const audio = guessAudioMimeFromFileName(lower);
-  if (audio) return audio;
-  return 'application/octet-stream';
-}
-
 async function downloadToCache(url: string, name?: string | null): Promise<string> {
   const token = await getStoredToken();
   const fileName = safeFileName(name);
-  const dest = `${FileSystem.cacheDirectory}messenger_${Date.now()}_${fileName}`;
+  const dest = `${FileSystem.cacheDirectory}crmfile_${Date.now()}_${fileName}`;
   const result = await FileSystem.downloadAsync(url, dest, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
   if (result.status < 200 || result.status >= 300) {
     throw new Error(`Không tải được file (${result.status})`);
+  }
+  // SPA/HTML fallback (sai URL) — file quá nhỏ và là HTML
+  try {
+    const info = await FileSystem.getInfoAsync(result.uri);
+    if (info.exists && 'size' in info && typeof info.size === 'number' && info.size > 0 && info.size < 800) {
+      const head = await FileSystem.readAsStringAsync(result.uri, {
+        length: Math.min(64, info.size),
+        position: 0,
+      });
+      const t = head.trimStart().toLowerCase();
+      if (t.startsWith('<!doctype') || t.startsWith('<html')) {
+        throw new Error('File không còn trên máy chủ hoặc URL sai');
+      }
+    }
+  } catch (e) {
+    if ((e as Error)?.message?.includes('máy chủ')) throw e;
   }
   return result.uri;
 }
@@ -73,8 +74,10 @@ export async function openMessengerAttachment(
   opts?: { name?: string | null; mime?: string | null },
 ): Promise<void> {
   try {
-    const mime = guessMime(opts?.name, opts?.mime);
-    const local = await downloadToCache(url, opts?.name);
+    const accessUrl = await resolveFileAccessUrl(url, { name: opts?.name });
+    if (!accessUrl) throw new Error('Không có đường dẫn file');
+    const mime = guessFileMime(opts?.name, opts?.mime);
+    const local = await downloadToCache(accessUrl, opts?.name);
     await openLocalFile(local, mime);
   } catch (e) {
     Alert.alert('Mở file', (e as Error)?.message || 'Không mở được file.');
@@ -86,8 +89,10 @@ export async function saveMessengerAttachment(
   opts?: { name?: string | null; mime?: string | null },
 ): Promise<void> {
   try {
-    const mime = guessMime(opts?.name, opts?.mime);
-    const local = await downloadToCache(url, opts?.name);
+    const accessUrl = await resolveFileAccessUrl(url, { name: opts?.name });
+    if (!accessUrl) throw new Error('Không có đường dẫn file');
+    const mime = guessFileMime(opts?.name, opts?.mime);
+    const local = await downloadToCache(accessUrl, opts?.name);
 
     if (
       mime.startsWith('image/')
@@ -109,6 +114,18 @@ export async function saveMessengerAttachment(
   }
 }
 
+/** Mở file Drive qua API download (Bearer), không phụ thuộc Google view_url. */
+export async function openDriveFileById(
+  fileId: string,
+  opts?: { name?: string | null; mime?: string | null },
+): Promise<void> {
+  const token = await getStoredToken();
+  const url = `${API_PREFIX}/drive/files/${encodeURIComponent(fileId)}/download`;
+  // downloadToCache gửi Bearer; không cần query token
+  void token;
+  await openMessengerAttachment(url, opts);
+}
+
 export type FileActionTarget = {
   url: string;
   name?: string | null;
@@ -123,6 +140,7 @@ export function registerFileActionsPrompt(
   fileActionsPrompt = fn;
 }
 
+/** Sheet Mở / Tải / Chia sẻ — dùng chung Messenger + CRM. */
 export function promptMessengerFileActions(
   url: string,
   opts?: Omit<FileActionTarget, 'url'>,

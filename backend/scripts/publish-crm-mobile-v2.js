@@ -15,15 +15,21 @@ const { supabase } = require('../src/config/supabase');
 const { buildStandardApkFilename } = require('../src/helpers/appReleaseFilename');
 
 const APP_KEY = 'crm-mobile-v2';
-const VERSION = process.env.PUB_VERSION || '2.0.53';
-const VERSION_CODE = parseInt(process.env.PUB_CODE || '54', 10);
+const VERSION = process.env.PUB_VERSION || '2.2.73';
+const VERSION_CODE = parseInt(process.env.PUB_CODE || '184', 10);
 const PUBLIC_HOST = (process.env.PUB_HOST || 'https://tubep-backend.onrender.com').replace(/\/$/, '');
 const FILE_NAME = buildStandardApkFilename(APP_KEY, VERSION, VERSION_CODE, { release: true });
 const APK = path.resolve(__dirname, `../uploads/app-releases/crm-mobile-v2/${FILE_NAME}`);
 const FILE_URL = `${PUBLIC_HOST}/uploads/app-releases/crm-mobile-v2/${FILE_NAME}`;
 const RELEASE_NOTES =
   process.env.PUB_NOTES
-  || 'Gọi nhóm voice/video; duyệt thành viên vào muộn; cải thiện cuộc gọi Web↔App.';
+  || [
+    `CRM Mobile ${VERSION} (code ${VERSION_CODE})`,
+    '- Sua crash khi bam Cap nhat ngay (thieu SpinningLoader)',
+    '- Giam RAM tab Tin nhan (avatar / dang online theo may)',
+    '- Sua tab Nhac han: badge khop ho so qua han, nut mo Deadline',
+    '- Cold start nhanh hon (cache KPI Tong quan)',
+  ].join('\n');
 
 async function uploadApkToProduction(releaseId) {
   if (process.env.SKIP_UPLOAD === '1' || process.env.SKIP_UPLOAD === 'true') {

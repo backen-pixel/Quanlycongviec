@@ -14,6 +14,7 @@ import {
 } from '../lib/crmPipelineTabs';
 import { getDeadlinePerfLimits } from '../lib/devicePerf';
 import { api } from './client';
+import { fetchCrmCompanies as fetchCrmCompaniesMeta } from './crmMeta';
 import type {
   CrmBoard,
   CrmHubData,
@@ -38,6 +39,7 @@ type ApiStage = {
   is_lost?: boolean | null;
   counts_as_expected_revenue?: boolean | null;
   counts_as_completed_revenue?: boolean | null;
+  requires_deadline?: boolean | null;
   canonical_slug?: string | null;
   deal_report_bucket?: string | null;
   sla_days?: number | null;
@@ -121,6 +123,7 @@ export const KANBAN_PAGE_SIZE = 20;
 const STAGES_CACHE_TTL_MS = 5 * 60 * 1000;
 const MAX_STAGES_CACHE = 24;
 const stagesCache = new Map<string, { stages: CrmPipelineStage[]; at: number }>();
+const stagesInflight = new Map<string, Promise<CrmPipelineStage[]>>();
 
 /** Xóa entry hết hạn + giữ tối đa `maxEntries` (cũ nhất bị đá). */
 function pruneTimedMap<T extends { at: number }>(
@@ -180,25 +183,40 @@ async function fetchPipelineStagesCached(
   const key = stagesCacheKey(type, opts);
   const hit = stagesCache.get(key);
   if (hit && Date.now() - hit.at < STAGES_CACHE_TTL_MS) return hit.stages;
-  const stages = await fetchPipelineStagesUncached(type, opts);
-  stagesCache.set(key, { stages, at: Date.now() });
-  pruneTimedMap(stagesCache, STAGES_CACHE_TTL_MS, MAX_STAGES_CACHE);
-  return stages;
+  let pending = stagesInflight.get(key);
+  if (!pending) {
+    pending = fetchPipelineStagesUncached(type, { ...opts, signal: undefined })
+      .then((stages) => {
+        stagesCache.set(key, { stages, at: Date.now() });
+        pruneTimedMap(stagesCache, STAGES_CACHE_TTL_MS, MAX_STAGES_CACHE);
+        return stages;
+      })
+      .finally(() => {
+        if (stagesInflight.get(key) === pending) stagesInflight.delete(key);
+      });
+    stagesInflight.set(key, pending);
+  }
+  return pending;
 }
 
 /** Xóa cache stages (sau refresh thủ công nếu cần). */
 export function invalidatePipelineStagesCache(type?: 'lead' | 'deal', opts?: CrmStageFetchOpts) {
   if (type && opts) {
     stagesCache.delete(stagesCacheKey(type, opts));
+    stagesInflight.delete(stagesCacheKey(type, opts));
     return;
   }
   if (type) {
     for (const key of stagesCache.keys()) {
       if (key.startsWith(`${type}|`)) stagesCache.delete(key);
     }
+    for (const key of [...stagesInflight.keys()]) {
+      if (key.startsWith(`${type}|`)) stagesInflight.delete(key);
+    }
     return;
   }
   stagesCache.clear();
+  stagesInflight.clear();
 }
 
 export type CrmStageFetchOpts = {
@@ -273,7 +291,13 @@ function mapKanbanItem(it: ApiLead, kind: 'lead' | 'deal'): CrmKanbanItem {
     companyName: it.company?.name || it.company?.short_name || undefined,
     companyId: String(it.company_id || it.company?.id || ''),
     sourceLabel: it.source?.name || undefined,
-    valueLabel: kind === 'deal' ? formatVnd(it.estimated_value) : undefined,
+    valueLabel: (() => {
+      const label = formatVnd(it.estimated_value);
+      return label !== 'Chưa định giá' ? label : undefined;
+    })(),
+    estimatedValue: it.estimated_value == null || Number.isNaN(Number(it.estimated_value))
+      ? null
+      : Number(it.estimated_value),
     temp: kind === 'lead' ? tempFromStage(it.stage?.name) : undefined,
     ownerId,
     assignedToId: String(it.assigned_to || it.assignee?.id || ''),
@@ -284,6 +308,7 @@ function mapKanbanItem(it: ApiLead, kind: 'lead' | 'deal'): CrmKanbanItem {
     createdAt: it.created_at,
     dueIso: due,
     overdue,
+    isInteracted: !!it.is_interacted,
   };
 }
 
@@ -376,7 +401,9 @@ function applyListParams(params: Record<string, unknown>, opts?: CrmStageFetchOp
   if (opts?.dateFrom) params.date_from = opts.dateFrom;
   if (opts?.dateTo) params.date_to = opts.dateTo;
   if (opts?.companyId) params.company_id = opts.companyId;
-  if (opts?.regionId && opts.regionId !== '__none__') params.region_id = opts.regionId;
+  // Khớp web `resolveCrmRegionFilterQuery`: «Chưa gán» → region_unassigned=1 (không gửi region_id).
+  if (opts?.regionId === '__none__') params.region_unassigned = '1';
+  else if (opts?.regionId) params.region_id = opts.regionId;
   if (opts?.skipCounts) params.skip_counts = '1';
   if (opts?.lite) params.lite = '1';
 }
@@ -399,6 +426,7 @@ function mapApiStageFields(s: ApiStage, type: 'lead' | 'deal', i: number): CrmPi
     isLost: !!s.is_lost,
     countsAsExpectedRevenue: !!s.counts_as_expected_revenue,
     countsAsCompletedRevenue: !!s.counts_as_completed_revenue,
+    requiresDeadline: !!s.requires_deadline,
     canonicalSlug: s.canonical_slug || null,
     dealReportBucket: s.deal_report_bucket || null,
     slaDays: s.sla_days == null ? null : Number(s.sla_days),
@@ -479,36 +507,48 @@ async function fetchStageCountsLegacy(
   return results;
 }
 
-/** Đếm + tổng GT theo cột pipeline trong 1 API call. */
-export async function fetchCrmStageCountsBatch(
-  type: 'lead' | 'deal',
-  opts?: CrmStageFetchOpts,
-): Promise<{
+type StageCountsBatch = {
   counts: Record<string, number>;
   values: Record<string, number>;
   weightedValues: Record<string, number>;
   total: number;
-}> {
-  const params = crmListQueryParams(type, opts);
-  const { data } = await api.get<{
-    counts?: Record<string, number>;
-    values?: Record<string, number>;
-    weighted_values?: Record<string, number>;
-    total?: number;
-  }>(
-    '/crm/stage-counts',
-    { params, signal: opts?.signal },
-  );
-  const result = {
-    counts: data?.counts && typeof data.counts === 'object' ? data.counts : {},
-    values: data?.values && typeof data.values === 'object' ? data.values : {},
-    weightedValues: data?.weighted_values && typeof data.weighted_values === 'object'
-      ? data.weighted_values
-      : {},
-    total: typeof data?.total === 'number' ? data.total : 0,
-  };
-  setCrmTotalsCache(type, opts, result);
-  return result;
+};
+
+const totalsInflight = new Map<string, Promise<StageCountsBatch>>();
+
+/** Đếm + tổng GT theo cột pipeline trong 1 API call. */
+export async function fetchCrmStageCountsBatch(
+  type: 'lead' | 'deal',
+  opts?: CrmStageFetchOpts,
+): Promise<StageCountsBatch> {
+  const key = totalsCacheKey(type, opts);
+  const pending = totalsInflight.get(key);
+  if (pending) return pending;
+
+  const run = (async (): Promise<StageCountsBatch> => {
+    const params = crmListQueryParams(type, opts);
+    const { data } = await api.get<{
+      counts?: Record<string, number>;
+      values?: Record<string, number>;
+      weighted_values?: Record<string, number>;
+      total?: number;
+    }>('/crm/stage-counts', { params });
+    const result: StageCountsBatch = {
+      counts: data?.counts && typeof data.counts === 'object' ? data.counts : {},
+      values: data?.values && typeof data.values === 'object' ? data.values : {},
+      weightedValues: data?.weighted_values && typeof data.weighted_values === 'object'
+        ? data.weighted_values
+        : {},
+      total: typeof data?.total === 'number' ? data.total : 0,
+    };
+    setCrmTotalsCache(type, opts, result);
+    return result;
+  })().finally(() => {
+    if (totalsInflight.get(key) === run) totalsInflight.delete(key);
+  });
+
+  totalsInflight.set(key, run);
+  return run;
 }
 
 export async function fetchStageCounts(
@@ -541,6 +581,26 @@ export async function fetchCrmListTotal(
   applyListParams(params, opts);
   const { data } = await api.get('/crm/leads', { params, signal: opts?.signal });
   return parsePayload(data, 1).total;
+}
+
+/** Trang danh sách Lead/Deal (có hoặc không lọc stage) — dùng màn list tab. */
+export async function fetchCrmListPage(
+  type: 'lead' | 'deal',
+  offset: number,
+  limit = KANBAN_PAGE_SIZE,
+  opts?: CrmStageFetchOpts & { stageId?: string },
+): Promise<CrmStagePage> {
+  const params: Record<string, unknown> = { type, limit, offset };
+  if (opts?.stageId) params.stage_id = opts.stageId;
+  applyListParams(params, opts);
+  const { data } = await api.get('/crm/leads', { params, signal: opts?.signal });
+  const page = parsePayload(data, limit);
+  return {
+    items: page.rows.map((it) => mapKanbanItem(it, type)),
+    hasMore: page.hasMore,
+    nextOffset: page.nextOffset,
+    total: page.total,
+  };
 }
 
 const LIST_ALL_PAGE_SIZE = 500;
@@ -831,6 +891,7 @@ export function peekCrmTotalsCache(
 
 export function invalidateCrmTotalsCache(): void {
   totalsCache.clear();
+  totalsInflight.clear();
 }
 
 function bootstrapCacheKey(
@@ -957,8 +1018,49 @@ export async function fetchCrmBoard(type: 'lead' | 'deal', signal?: AbortSignal)
 }
 
 /** Chuyển lead/deal sang cột pipeline khác. */
-export async function moveCrmItemStage(id: string, stageId: string): Promise<void> {
-  await api.patch(`/crm/leads/${id}/stage`, { stage_id: stageId });
+export async function moveCrmItemStage(
+  id: string,
+  stageId: string,
+  extra?: { kanbanDeadlineAt?: string | null },
+): Promise<void> {
+  const body: Record<string, unknown> = { stage_id: stageId };
+  if (extra?.kanbanDeadlineAt) {
+    body.kanban_deadline_at = extra.kanbanDeadlineAt;
+  }
+  await api.patch(`/crm/leads/${id}/stage`, body);
+}
+
+/** Chuyển Lead → Deal (cột thắng) — khớp web POST /crm/leads/:id/convert-to-deal. */
+export async function convertLeadToDeal(
+  leadId: string,
+  opts?: { regionId?: string | null; companyId?: string | null },
+): Promise<{ id: string; code?: string }> {
+  const body: Record<string, unknown> = {};
+  if (opts?.regionId) body.region_id = opts.regionId;
+  if (opts?.companyId) body.company_id = opts.companyId;
+  const { data } = await api.post<{ id: string; code?: string }>(
+    `/crm/leads/${leadId}/convert-to-deal`,
+    body,
+  );
+  return { id: data?.id, code: data?.code };
+}
+
+/** Đặt / xóa deadline thẻ (kanban_deadline_at) — khớp web PATCH /crm/leads/:id/deadline. */
+export async function setCrmKanbanDeadline(
+  leadId: string,
+  dateYmd: string | null,
+  opts?: { reason?: string },
+): Promise<void> {
+  await api.patch(`/crm/leads/${leadId}/deadline`, {
+    kanban_deadline_at: dateYmd ? deadlineDateToIso(dateYmd) : null,
+    reason: (opts?.reason || '').trim(),
+  });
+}
+
+/** Bật/tắt «đã tương tác» — POST/DELETE /crm/leads/:id/interacted. */
+export async function setCrmLeadInteracted(leadId: string, next: boolean): Promise<void> {
+  if (next) await api.post(`/crm/leads/${leadId}/interacted`);
+  else await api.delete(`/crm/leads/${leadId}/interacted`);
 }
 
 /** Gán / đổi người phụ trách lead/deal (assigned_to ↔ lead_owner_id trên server). */
@@ -1244,16 +1346,12 @@ export const PLANNER_FETCH_LIMIT = 40;
 export const PLANNER_MAX_BUFFER = 100;
 /** Buffer lớn hơn khi admin xem tất cả NV. */
 export const PLANNER_MAX_BUFFER_ALL = 400;
-/** Deadline cần nhiều hơn Planner vì gom nhiều cột pipeline mở. */
-/** Trần buffer — Lead có thể >3k (khớp web «Tải tất cả» tối đa ~3000–5000). */
-export const DEADLINE_MAX_BUFFER = 5000;
-/** Lần tải đầu tab Deadline — đủ first-paint nhanh; phần còn lại drain nền. */
-export const DEADLINE_FIRST_PAINT_LIMIT = 500;
-/**
- * Đồng bộ nền tối đa sau first-paint — đủ để badge cột ổn định.
- * Không drain tới MAX_BUFFER (5000) nếu không sẽ «Đang đồng bộ…» mãi + badge nhảy liên tục.
- */
-export const DEADLINE_BG_SYNC_LIMIT = 1200;
+/** Deadline: ưu tiên bucket-pages; buffer chỉ giữ card đã tải theo cột (vuốt lên). */
+export const DEADLINE_MAX_BUFFER = 400;
+/** Fallback first-paint (stage drain) — giữ thấp nếu còn dùng. */
+export const DEADLINE_FIRST_PAINT_LIMIT = 80;
+/** Fallback sync nền — không drain hàng nghìn thẻ. */
+export const DEADLINE_BG_SYNC_LIMIT = 200;
 
 export type PlannerSectionPage = {
   items: PlannerItem[];
@@ -1415,18 +1513,18 @@ function toDeadlineItem(
   };
 }
 
-/** Page size lớn hơn → ít round-trip hơn khi drain cột mở (server max 2000). */
-const DEADLINE_DRAIN_PAGE = 500;
-/** Trang đầu mỗi cột nhỏ hơn — về nhanh hơn để first-paint sớm (giống Kanban ~20–40/cột). */
-const DEADLINE_FIRST_PAGE = 60;
-/** Máy yếu: trang đầu nhỏ hơn nữa. */
-const DEADLINE_FIRST_PAGE_LOW = 30;
-/** Số trang tối đa mỗi cột mở (Lead nhiều cột × nhiều bản ghi). */
-const DEADLINE_STAGE_MAX_PAGES = 20;
-/** Song song nhiều cột — Lead ~10–15 cột mở (máy yếu lấy từ devicePerf). */
-const DEADLINE_STAGE_FETCH_CONCURRENCY = 6;
+/** Page size khi còn dùng path drain (fallback) — server max 2000. */
+const DEADLINE_DRAIN_PAGE = 80;
+/** Trang đầu mỗi cột (fallback drain). */
+const DEADLINE_FIRST_PAGE = 20;
+/** Máy yếu: trang đầu nhỏ hơn. */
+const DEADLINE_FIRST_PAGE_LOW = 12;
+/** Số trang tối đa mỗi cột mở (fallback). */
+const DEADLINE_STAGE_MAX_PAGES = 8;
+/** Song song stage khi drain (máy yếu lấy từ devicePerf). */
+const DEADLINE_STAGE_FETCH_CONCURRENCY = 3;
 /** Phát UI sớm sau N bản ghi đầu. */
-const DEADLINE_PROGRESS_EVERY = 120;
+const DEADLINE_PROGRESS_EVERY = 80;
 
 /**
  * Stage được đưa vào Deadline — khớp web DeadlineView + backend `crmDeadlineStageExcluded`:
@@ -1454,7 +1552,6 @@ function resolveDeadlineOpenStages(
  * Search/due lọc trên client — không gửi search lên API (tránh reload nặng khi gõ).
  */
 function buildDeadlineListOpts(opts?: DeadlineFetchOpts): CrmStageFetchOpts {
-  const regionRaw = opts?.regionId;
   return {
     search: undefined,
     assignedTo: opts?.assignedTo,
@@ -1462,7 +1559,8 @@ function buildDeadlineListOpts(opts?: DeadlineFetchOpts): CrmStageFetchOpts {
     dateFrom: opts?.dateFrom,
     dateTo: opts?.dateTo,
     companyId: opts?.companyId,
-    regionId: regionRaw === '__none__' ? undefined : regionRaw,
+    // Giữ `__none__` để applyListParams gửi region_unassigned=1 (khớp web).
+    regionId: opts?.regionId,
     lite: true,
     skipCounts: true,
     signal: opts?.signal,
@@ -1733,11 +1831,8 @@ export function invalidateDeadlineResultCache(): void {
 }
 
 /* ------------------------------------------------------------------ *
- * Badge cột Deadline — cùng cách làm với badge cột Kanban:
- * Kanban gọi `/crm/stage-counts` riêng (1 lượt, cache 90s) nên số trên cột
- * không phụ thuộc phần list đã tải. Deadline không có API đếm theo cột (hạn
- * được suy ra ở client: hạn NV → deadline thẻ → SLA), nên ở đây quét cột mở
- * một lượt riêng và CHỈ giữ số đếm — không giữ row, không map card.
+ * Badge cột Deadline — POST `/crm/deadline-bucket-counts` (RPC server).
+ * Không quét nghìn dòng trên client (tránh nghẽn mạng/RAM máy yếu).
  * ------------------------------------------------------------------ */
 
 export type DeadlineBucketCountMap = Partial<Record<DeadlineBucketKey, number>>;
@@ -1751,12 +1846,6 @@ export type DeadlineBucketCounts = {
   at: number;
 };
 
-/** Đếm không render nên lấy trang lớn — ít round-trip hơn list (server cap 2000). */
-const DEADLINE_COUNT_PAGE = 1000;
-/** Thấp hơn list: lượt đếm chạy nền, không được tranh băng thông với first-paint. */
-const DEADLINE_COUNT_CONCURRENCY = 3;
-const DEADLINE_COUNT_MAX_PAGES = 8;
-const DEADLINE_COUNT_MAX_ROWS = 12000;
 const DEADLINE_COUNTS_TTL_MS = 90 * 1000;
 const MAX_DEADLINE_COUNTS_CACHE = 12;
 
@@ -1789,14 +1878,10 @@ export function invalidateDeadlineBucketCounts(): void {
   deadlineBucketCountsCache.clear();
 }
 
-async function scanDeadlineBucketCounts(
+async function fetchDeadlineBucketCountsFromApi(
   type: 'lead' | 'deal',
   opts?: DeadlineFetchOpts,
 ): Promise<DeadlineBucketCounts> {
-  const perf = getDeadlinePerfLimits();
-  const countPage = perf.countPage || DEADLINE_COUNT_PAGE;
-  const countConcurrency = perf.countConcurrency || DEADLINE_COUNT_CONCURRENCY;
-  const countMaxRows = perf.countMaxRows || DEADLINE_COUNT_MAX_ROWS;
   const regionNone = opts?.regionId === '__none__';
   const listOpts = buildDeadlineListOpts(opts);
   const stages = await fetchPipelineStagesCached(type, {
@@ -1805,128 +1890,52 @@ async function scanDeadlineBucketCounts(
     signal: opts?.signal,
   });
   const openStages = resolveDeadlineOpenStages(type, stages, opts?.dealKhSplitEnabled);
-  const stageLookup = new Map(stages.map((s) => [s.id, s]));
-  const allowedCompanies =
-    !listOpts.companyId && opts?.allowedCompanyIds?.length
-      ? new Set(opts.allowedCompanyIds.map(String).filter(Boolean))
-      : null;
-
-  const cfg = opts?.deadlineConfig;
   const openStageIds = openStages.map((s) => s.id).filter(Boolean);
+  const cfg = opts?.deadlineConfig;
 
-  // Luôn ưu tiên cùng API web — kể cả «Tất cả công ty» (BE đã lọc khối CRM).
-  // Trước đây bỏ qua khi có allowedCompanyIds → quét client cắt trang → lệch badge.
-  if (openStageIds.length && !regionNone) {
-    try {
-      const params = crmListQueryParams(type, listOpts);
-      const { data } = await api.post<{
-        counts?: DeadlineBucketCountMap;
-        total?: number;
-        complete?: boolean;
-      }>(
-        '/crm/deadline-bucket-counts',
-        { stage_ids: openStageIds, config: cfg || {} },
-        { params, signal: opts?.signal },
-      );
-      if (data?.counts && typeof data.counts === 'object') {
-        const counts = { ...data.counts };
-        const overdue = Number(counts.overdue) || 0;
-        const total = Number.isFinite(Number(data.total))
-          ? Number(data.total)
-          : Object.values(counts).reduce((s, n) => s + (Number(n) || 0), 0);
-        return {
-          counts,
-          total,
-          overdue,
-          complete: data.complete !== false,
-          at: Date.now(),
-        };
-      }
-    } catch {
-      /* fallback client scan */
-    }
-  }
-
-  const counts: DeadlineBucketCountMap = {};
-  const seen = new Set<string>();
-  const todayStart = crmDeadlineStartOfTodayVnMs();
-  let total = 0;
-  let overdue = 0;
-  let complete = true;
-
-  const ingest = (rows: ApiLead[]) => {
-    for (const row of rows) {
-      if (!row?.id || seen.has(row.id)) continue;
-      if (allowedCompanies) {
-        const cid = String(row.company_id || row.company?.id || '');
-        if (!cid || !allowedCompanies.has(cid)) continue;
-      }
-      if (regionNone && String(row.region_id || '')) continue;
-      seen.add(row.id);
-      total += 1;
-      const iso = resolveDeadlineIso(row, cfg, stageMetaFromLead(row, stageLookup));
-      const ts = iso ? new Date(iso).getTime() : NaN;
-      const validTs = Number.isNaN(ts) ? null : ts;
-      const bucket = resolveDeadlineBucket(validTs, cfg?.buckets);
-      counts[bucket] = (counts[bucket] || 0) + 1;
-      if (validTs != null && validTs < todayStart) overdue += 1;
-    }
+  const params = crmListQueryParams(type, listOpts);
+  const body: { stage_ids?: string[]; config: Record<string, unknown> } = {
+    config: cfg || {},
   };
-
-  if (openStages.length) {
-    const queues = openStages.map((stage) => ({ stage, cursor: 0, hasMore: true, pages: 0 }));
-    while (queues.some((q) => q.hasMore)) {
-      if (opts?.signal?.aborted || total >= countMaxRows) {
-        complete = false;
-        break;
-      }
-      const active = queues.filter((q) => q.hasMore).slice(0, countConcurrency);
-      const pages = await Promise.all(
-        active.map(async (slot) => {
-          const page = await fetchCrmRowsForStage(
-            type,
-            slot.stage.id,
-            slot.cursor,
-            countPage,
-            listOpts,
-          );
-          slot.pages += 1;
-          slot.cursor = page.nextOffset;
-          slot.hasMore = page.hasMore && slot.pages < DEADLINE_COUNT_MAX_PAGES;
-          if (page.hasMore && slot.pages >= DEADLINE_COUNT_MAX_PAGES) complete = false;
-          return page.rows || [];
-        }),
-      );
-      for (const rows of pages) ingest(rows);
-    }
-  } else {
-    /** Fallback: không lấy được stages — quét list rồi lọc cột mở như phần list. */
-    let cursor = 0;
-    let apiHasMore = true;
-    let pages = 0;
-    while (apiHasMore && pages < DEADLINE_COUNT_MAX_PAGES * 2) {
-      if (opts?.signal?.aborted || total >= countMaxRows) {
-        complete = false;
-        break;
-      }
-      const params: Record<string, unknown> = {
-        type,
-        limit: countPage,
-        offset: cursor,
-      };
-      applyListParams(params, listOpts);
-      const { data } = await api.get('/crm/leads', { params, signal: opts?.signal });
-      const page = parsePayload(data, countPage);
-      pages += 1;
-      apiHasMore = page.hasMore;
-      cursor = page.nextOffset;
-      if (!page.rows.length) break;
-      ingest(page.rows.filter((row) => isOpenDeadlineRow(row)));
-    }
-    if (apiHasMore) complete = false;
+  if (listOpts.companyId && openStageIds.length) {
+    body.stage_ids = openStageIds;
   }
 
-  return { counts, total, overdue, complete, at: Date.now() };
+  try {
+    const { data } = await api.post<{
+      counts?: DeadlineBucketCountMap;
+      total?: number;
+      complete?: boolean;
+    }>(
+      '/crm/deadline-bucket-counts',
+      body,
+      { params, signal: opts?.signal, timeout: 120000 },
+    );
+    if (data?.counts && typeof data.counts === 'object') {
+      const counts = { ...data.counts };
+      const overdue = Number(counts.overdue) || 0;
+      const total = Number.isFinite(Number(data.total))
+        ? Number(data.total)
+        : Object.values(counts).reduce((s, n) => s + (Number(n) || 0), 0);
+      return {
+        counts,
+        total,
+        overdue,
+        complete: data.complete !== false,
+        at: Date.now(),
+      };
+    }
+  } catch {
+    /* không fallback quét client */
+  }
+
+  return {
+    counts: {},
+    total: 0,
+    overdue: 0,
+    complete: false,
+    at: Date.now(),
+  };
 }
 
 /**
@@ -1949,7 +1958,7 @@ export async function fetchDeadlineBucketCounts(
     deadlineBucketCountsInflight.delete(key);
   }
 
-  const run = scanDeadlineBucketCounts(type, opts)
+  const run = fetchDeadlineBucketCountsFromApi(type, { ...opts, signal: undefined })
     .then((res) => {
       if (res.complete) {
         deadlineBucketCountsCache.set(key, { data: res, at: res.at });
@@ -1990,7 +1999,10 @@ export async function fetchDeadlineBucketPages(
   const openStages = resolveDeadlineOpenStages(type, stages, opts?.dealKhSplitEnabled);
   const stageLookup = new Map(stages.map((s) => [s.id, s]));
   const stageIds = openStages.map((s) => s.id).filter(Boolean);
-  if (!stageIds.length || !requests.length) return {};
+  if (!requests.length) return {};
+  // Không chọn công ty: server tự lấy toàn bộ stage (giống deadline-bucket-counts).
+  // Gửi subset stage_ids sẽ lệch badge 23 vs list 1 card.
+  if (listOpts.companyId && !stageIds.length) return {};
 
   const payloadRequests = requests
     .map((r) => ({
@@ -2001,6 +2013,16 @@ export async function fetchDeadlineBucketPages(
     .slice(0, 6);
 
   const params = crmListQueryParams(type, listOpts);
+  const body: {
+    buckets: typeof payloadRequests;
+    config: Record<string, unknown>;
+    stage_ids?: string[];
+  } = {
+    buckets: payloadRequests,
+    config: opts?.deadlineConfig || {},
+  };
+  if (listOpts.companyId && stageIds.length) body.stage_ids = stageIds;
+
   const { data } = await api.post<{
     pages?: Record<string, {
       data?: ApiLead[];
@@ -2010,11 +2032,7 @@ export async function fetchDeadlineBucketPages(
     }>;
   }>(
     '/crm/deadline-bucket-pages',
-    {
-      buckets: payloadRequests,
-      stage_ids: stageIds,
-      config: opts?.deadlineConfig || {},
-    },
+    body,
     { params, signal: opts?.signal },
   );
 
@@ -2139,13 +2157,13 @@ function asArray<T = unknown>(data: unknown, ...keys: string[]): T[] {
   return [];
 }
 
-/** Danh sách công ty cho module CRM. */
+/** Danh sách công ty cho module CRM — cùng cache/inflight với crmMeta. */
 export async function fetchCrmCompanies(signal?: AbortSignal): Promise<CrmCompanyOption[]> {
-  const { data } = await api.get('/companies', { params: { for_module: 'crm' }, signal });
-  return asArray<Record<string, unknown>>(data, 'companies').map((c) => ({
-    id: String(c.id),
-    name: String(c.name || c.short_name || 'Công ty'),
-    shortName: c.short_name ? String(c.short_name) : undefined,
+  const rows = await fetchCrmCompaniesMeta(signal);
+  return rows.map((c) => ({
+    id: c.id,
+    name: c.name,
+    shortName: c.short_name || undefined,
     divisionUnitId: c.division_unit_id != null ? String(c.division_unit_id) : null,
   }));
 }
@@ -2241,9 +2259,10 @@ export async function createCrmEntity(input: CreateCrmInput): Promise<{ id: stri
   const companyId = input.companyId || null;
   const installAddress = input.installAddress?.trim() || null;
 
+  // customers.phone là NOT NULL trên DB — gửi '' thay vì null khi chưa có SĐT.
   const customerPayload: Record<string, unknown> = {
     full_name: input.customer.name.trim() || 'Khách mới',
-    phone: input.customer.phone?.trim() || null,
+    phone: input.customer.phone?.trim() || '',
     company: input.customer.company?.trim() || null,
   };
   if (input.customer.email?.trim()) customerPayload.email = input.customer.email.trim();

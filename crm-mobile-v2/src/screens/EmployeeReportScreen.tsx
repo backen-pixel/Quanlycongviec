@@ -1,19 +1,9 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
+import SpinningLoader from '../components/SpinningLoader';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  ActivityIndicator,
-  FlatList,
-  Modal,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { FlatList, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   fetchOrgOverviewReport,
@@ -291,7 +281,7 @@ export default function EmployeeReportScreen() {
 
       {loading && !refreshing && !report ? (
         <View style={styles.centerBox}>
-          <ActivityIndicator color={Colors.purple} size="large" />
+          <SpinningLoader color={Colors.purple} size="large" />
         </View>
       ) : (
         <ScrollView

@@ -100,7 +100,8 @@ export function splitDealStagesForCrmTabs(stagesDeal: CrmPipelineStage[]) {
   for (const s of sorted) {
     const sid = String(s.id);
     const order = stageOrderIndex(s);
-    if (s.isLost) {
+    // Khớp web: Thua/Hủy theo cờ + tên (Chê giá, Khách hủy…) luôn nằm tab Deal.
+    if (isLostOrCancelledPipelineStage(s)) {
       dealTabStages.push(s);
       continue;
     }
@@ -221,10 +222,10 @@ export function sumCrmDealStatsCount(
 }
 
 /**
- * Tổng Deal KPI tab Deal trên CRM Hub.
- * Gồm deal pre-Thắng + stage lạ (stage_id không thuộc pipeline công ty, vd. import FB).
- * Không gồm cột Thua / Hủy / Thắng / sau Thắng — tính riêng theo TỪNG pipeline (khi "Tất cả công ty"
- * gộp nhiều công ty, mỗi pipeline có order_index/cột Thắng độc lập).
+ * Tổng Deal KPI tab Deal trên CRM Hub — khớp web `sumCrmDealTabCountsFromStageCounts.deal`.
+ * Chỉ Σ cột đã biết trong pipeline (pre-Thắng) + orphan `__none__`.
+ * Không cộng stage_id lạ ngoài pipeline (web cũng bỏ) — tránh lệch tổng app vs web.
+ * Không gồm Thua / Hủy / Thắng / sau Thắng; multi-pipeline: won-anchor theo từng pipeline.
  */
 export function sumCrmDealHubKpiCount(
   dealStages: CrmPipelineStage[],
@@ -232,33 +233,26 @@ export function sumCrmDealHubKpiCount(
 ): number {
   const stages = dealStages || [];
   const counts = dealCounts || {};
-  const stageById = new Map(stages.map((s) => [String(s.id), s]));
-  const anchorOrderByPipeline = new Map<string, number | null>();
-  for (const [pid, pipeStages] of groupStagesByPipeline(stages)) {
-    const anchor = resolveDealWonAnchorStage(pipeStages);
-    anchorOrderByPipeline.set(pid, anchor ? stageOrderIndex(anchor) : null);
-  }
+  const stagesByPipeline = groupStagesByPipeline(stages);
+  const multiPipeline = stagesByPipeline.size > 1;
 
-  let total = Number(counts[ORPHAN_STAGE_KEY] ?? 0) || 0;
-  for (const [sid, raw] of Object.entries(counts)) {
-    if (sid === ORPHAN_STAGE_KEY) continue;
-    const cnt = Number(raw) || 0;
-    if (cnt <= 0) continue;
-    const stage = stageById.get(sid);
-    if (!stage) {
-      // Stage lạ — không thuộc pipeline đang xem (vd. import FB) — luôn tính vào tab Deal.
-      total += cnt;
-      continue;
-    }
-    // Tab Deal không tính cột Thua / Hủy.
-    if (isLostOrCancelledPipelineStage(stage)) continue;
-    const pid = String(stage.pipelineId || '__none__');
-    const anchorOrder = anchorOrderByPipeline.get(pid) ?? null;
+  let total = Number(counts[ORPHAN_STAGE_KEY] ?? counts[''] ?? 0) || 0;
+  for (const s of stages) {
+    if (!s?.id) continue;
+    const n = Number(counts[s.id] ?? counts[String(s.id)] ?? 0) || 0;
+    if (n <= 0) continue;
+    if (isLostOrCancelledPipelineStage(s)) continue;
+
+    const pipeStages = multiPipeline
+      ? (stagesByPipeline.get(String(s.pipelineId || '__none__')) || stages)
+      : stages;
+    const anchor = resolveDealWonAnchorStage(pipeStages);
+    const anchorOrder = anchor ? stageOrderIndex(anchor) : null;
     if (anchorOrder == null) {
-      if (!stage.isWon) total += cnt;
+      if (!s.isWon) total += n;
       continue;
     }
-    if (stageOrderIndex(stage) < anchorOrder) total += cnt;
+    if (stageOrderIndex(s) < anchorOrder) total += n;
   }
   return total;
 }

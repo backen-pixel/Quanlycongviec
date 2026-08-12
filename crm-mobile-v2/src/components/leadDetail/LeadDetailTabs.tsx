@@ -1,20 +1,7 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
+import SpinningLoader from '../SpinningLoader';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  FlatList,
-  Image,
-  KeyboardAvoidingView,
-  Linking,
-  Platform,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { FlatList, KeyboardAvoidingView, Linking, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { formatApiError } from '../../api/client';
 import {
   fetchFacebookLeadMessages,
@@ -26,18 +13,25 @@ import {
   type LeadMember,
   type ZaloMessage,
 } from '../../api/leadDetail';
+import AuthRemoteImage from '../AuthRemoteImage';
 import Avatar from '../Avatar';
-import { resolveMediaUrl } from '../../lib/media';
+import { useMediaPreview } from '../../context/MediaPreviewContext';
+import { promptMessengerFileActions } from '../../lib/messengerFileOpen';
+import { resolveFileAccessUrl } from '../../lib/remoteFile';
 import { colorFromName, initialsFromName } from '../../lib/media';
 import { Radii, Spacing, useColors, type ThemeColors } from '../../theme';
 
 export { default as LeadTasksTab } from './LeadTasksTab';
+export { default as LeadInfoTab } from './LeadInfoTab';
 export { default as LeadDriveTab } from './LeadDriveTab';
 export { default as LeadDocumentsTab } from './LeadDocumentsTab';
 export { default as LeadCommentsTab } from './LeadCommentsTab';
+export { default as LeadSharedWorkspaceTab } from './LeadSharedWorkspaceTab';
 
 export type LeadDetailTabKey =
+  | 'info'
   | 'tasks'
+  | 'shared-workspace'
   | 'documents'
   | 'drive'
   | 'comments'
@@ -123,7 +117,7 @@ export function LeadMembersTab({ leadId }: { leadId: string }) {
   }, [load]);
 
   if (loading && !items.length) {
-    return <ActivityIndicator color={Colors.blue} style={{ marginTop: 32 }} />;
+    return <SpinningLoader color={Colors.blue} style={{ marginTop: 32 }} />;
   }
   if (error && !items.length) return <ErrorBanner message={error} onRetry={() => void load()} />;
 
@@ -179,17 +173,30 @@ function InboxBubble({
 }) {
   const Colors = useColors();
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
-  const imgUrl = messageType === 'image' ? resolveMediaUrl(attachmentUrl) : null;
+  const { openInAppMedia } = useMediaPreview();
+  const imgUrl = messageType === 'image' ? attachmentUrl : null;
 
   return (
     <View style={[styles.bubbleWrap, outbound ? styles.bubbleWrapOut : styles.bubbleWrapIn]}>
       <View style={[styles.bubble, outbound ? styles.bubbleOut : styles.bubbleIn]}>
         {imgUrl ? (
-          <Image source={{ uri: imgUrl }} style={styles.bubbleImg} resizeMode="cover" />
+          <Pressable onPress={() => {
+            void (async () => {
+              const uri = await resolveFileAccessUrl(imgUrl);
+              if (uri && openInAppMedia({ uri, mime_type: 'image/*', name: 'Ảnh' })) return;
+              promptMessengerFileActions(String(imgUrl), { name: 'Ảnh', mime: 'image/jpeg' });
+            })();
+          }}>
+            <AuthRemoteImage rawUrl={imgUrl} style={styles.bubbleImg} resizeMode="cover" />
+          </Pressable>
         ) : null}
         {text ? <Text style={[styles.bubbleTxt, outbound && styles.bubbleTxtOut]}>{text}</Text> : null}
         {!text && !imgUrl && attachmentUrl ? (
-          <Text style={styles.bubbleTxt}>[Đính kèm]</Text>
+          <Pressable onPress={() => {
+            promptMessengerFileActions(String(attachmentUrl), { name: 'Đính kèm' });
+          }}>
+            <Text style={[styles.bubbleTxt, { color: Colors.blue }]}>[Đính kèm — mở]</Text>
+          </Pressable>
         ) : null}
         {time ? <Text style={[styles.bubbleTime, outbound && styles.bubbleTimeOut]}>{time}</Text> : null}
       </View>
@@ -268,7 +275,7 @@ export function LeadFacebookTab({ leadId, companyId }: { leadId: string; company
   };
 
   if (loading && !messages.length) {
-    return <ActivityIndicator color={Colors.blue} style={{ marginTop: 32 }} />;
+    return <SpinningLoader color={Colors.blue} style={{ marginTop: 32 }} />;
   }
 
   return (
@@ -319,7 +326,7 @@ export function LeadFacebookTab({ leadId, companyId }: { leadId: string; company
             multiline
           />
           <Pressable style={[styles.sendBtn, (!reply.trim() || sending) && styles.sendBtnDisabled]} onPress={() => void send()} disabled={!reply.trim() || sending}>
-            {sending ? <ActivityIndicator size="small" color={Colors.white} /> : <Ionicons name="send" size={18} color={Colors.white} />}
+            {sending ? <SpinningLoader size="small" color={Colors.white} /> : <Ionicons name="send" size={18} color={Colors.white} />}
           </Pressable>
         </View>
       ) : null}
@@ -362,7 +369,7 @@ export function LeadZaloTab({ leadId }: { leadId: string }) {
   };
 
   if (loading && !messages.length) {
-    return <ActivityIndicator color={Colors.blue} style={{ marginTop: 32 }} />;
+    return <SpinningLoader color={Colors.blue} style={{ marginTop: 32 }} />;
   }
 
   return (
@@ -413,7 +420,7 @@ export function LeadZaloTab({ leadId }: { leadId: string }) {
             multiline
           />
           <Pressable style={[styles.sendBtn, (!reply.trim() || sending) && styles.sendBtnDisabled]} onPress={() => void send()} disabled={!reply.trim() || sending}>
-            {sending ? <ActivityIndicator size="small" color={Colors.white} /> : <Ionicons name="send" size={18} color={Colors.white} />}
+            {sending ? <SpinningLoader size="small" color={Colors.white} /> : <Ionicons name="send" size={18} color={Colors.white} />}
           </Pressable>
         </View>
       ) : null}

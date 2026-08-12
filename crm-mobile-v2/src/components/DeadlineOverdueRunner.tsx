@@ -50,7 +50,7 @@ export default function DeadlineOverdueRunner() {
     }
 
     // Máy yếu: trì hoãn quét quá hạn lúc mở app — tránh tranh băng thông với màn hình đầu.
-    const bootDelayMs = getPerfTier() === 'low' ? 4500 : getPerfTier() === 'mid' ? 2000 : 400;
+    const bootDelayMs = getPerfTier() === 'low' ? 9000 : getPerfTier() === 'mid' ? 8000 : 7000;
     let cancelled = false;
     const bootTimer = setTimeout(() => {
       InteractionManager.runAfterInteractions(() => {
@@ -85,7 +85,7 @@ export default function DeadlineOverdueRunner() {
       // Dùng cache nếu vừa quét / DeadlineScreen vừa publish (<90s).
       tick(false);
     }, [tick]),
-    Boolean(token && userId),
+    { enabled: Boolean(token && userId), onlyWhenFocused: false },
   );
 
   return null;

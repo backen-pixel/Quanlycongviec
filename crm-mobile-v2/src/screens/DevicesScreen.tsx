@@ -1,17 +1,9 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
+import SpinningLoader from '../components/SpinningLoader';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React, { useCallback, useMemo, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  FlatList,
-  Pressable,
-  RefreshControl,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { Alert, FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   AUTH_EVENT_LABEL,
@@ -212,7 +204,7 @@ export default function DevicesScreen() {
             hitSlop={8}
           >
             {revoking === d.id ? (
-              <ActivityIndicator color={Colors.red} size="small" />
+              <SpinningLoader color={Colors.red} size="small" />
             ) : (
               <Ionicons name="log-out-outline" size={20} color={Colors.red} />
             )}
@@ -275,7 +267,7 @@ export default function DevicesScreen() {
       <Text style={styles.secTitle}>Thiết bị đã / đang đăng nhập</Text>
       {loading && !devices.length ? (
         <View style={styles.centerBox}>
-          <ActivityIndicator color={Colors.purple} />
+          <SpinningLoader color={Colors.purple} />
         </View>
       ) : devices.length === 0 ? (
         <View style={styles.emptyBox}>

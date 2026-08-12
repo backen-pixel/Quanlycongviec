@@ -2203,9 +2203,18 @@ r.patch('/leads/:id/stage', async (req, res) => {
       }
     }
 
-    // Gate 2: cột bật requires_deadline → bắt buộc chọn deadline (sau khi đã qua gate nhiệm vụ).
+    // Gate 2: cột bật requires_deadline → bắt buộc có deadline (body hoặc đã gắn trên thẻ).
     // Cột Thắng/Thua/Hoàn thành doanh thu không yêu cầu deadline.
-    if (isStageChange && stage?.requires_deadline && !stage?.is_won && !stage?.is_lost && !stage?.counts_as_completed_revenue && !hasDeadlineInput) {
+    const leadHasDeadline = !!(lead?.kanban_deadline_at);
+    if (
+      isStageChange
+      && stage?.requires_deadline
+      && !stage?.is_won
+      && !stage?.is_lost
+      && !stage?.counts_as_completed_revenue
+      && !hasDeadlineInput
+      && !leadHasDeadline
+    ) {
       return res.status(400).json({
         error: 'Cột này yêu cầu đặt deadline khi chuyển thẻ tới.',
         code: 'requires_deadline',

@@ -22,6 +22,7 @@ import VoiceShareHandler, { VoiceShareLoginHint } from './src/components/VoiceSh
 import UpdateGate from './src/components/UpdateGate';
 import { AuthProvider, useAuth } from './src/context/AuthContext';
 import { FileActionsProvider } from './src/context/FileActionsContext';
+import { MediaPreviewProvider } from './src/context/MediaPreviewContext';
 import { CallProvider } from './src/context/CallContext';
 import { CreateMenuProvider } from './src/context/CreateMenuContext';
 import { CrmRealtimeProvider } from './src/context/CrmRealtimeProvider';
@@ -136,6 +137,7 @@ function Gate() {
         <CrmRealtimeProvider>
         <MessengerProvider>
           <CallProvider>
+            <MediaPreviewProvider>
             <FileActionsProvider>
             <View style={[styles.root, bubbleOverlayUi && styles.rootTransparent]}>
               <NavigationContainer
@@ -161,6 +163,7 @@ function Gate() {
               />
             </View>
             </FileActionsProvider>
+            </MediaPreviewProvider>
           </CallProvider>
         </MessengerProvider>
         </CrmRealtimeProvider>

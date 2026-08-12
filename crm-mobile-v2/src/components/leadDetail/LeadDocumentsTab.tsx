@@ -1,17 +1,7 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
+import SpinningLoader from '../SpinningLoader';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  ActivityIndicator,
-  Dimensions,
-  Image,
-  Linking,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { Dimensions, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { formatApiError } from '../../api/client';
 import {
   fetchLeadDocuments,
@@ -19,9 +9,12 @@ import {
   type LeadDocument,
   type LeadTaskDocument,
 } from '../../api/leadDetail';
+import AuthRemoteImage from '../AuthRemoteImage';
 import ImageGalleryLightbox, { type GalleryImage } from '../ImageGalleryLightbox';
-import { isImageFile, toGalleryImage, type GalleryImageItem } from '../../lib/isImageFile';
-import { resolveMediaUrl } from '../../lib/media';
+import { isImageFile, isVideoFile } from '../../lib/isImageFile';
+import { promptMessengerFileActions } from '../../lib/messengerFileOpen';
+import { resolveFileAccessUrl } from '../../lib/remoteFile';
+import { useMediaPreview } from '../../context/MediaPreviewContext';
 import { Radii, Spacing, useColors, type ThemeColors } from '../../theme';
 
 const GRID_GAP = 8;
@@ -56,6 +49,7 @@ function EmptyState({ icon, title, hint }: { icon: keyof typeof Ionicons.glyphMa
 export default function LeadDocumentsTab({ leadId }: { leadId: string }) {
   const Colors = useColors();
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
+  const { openInAppMedia } = useMediaPreview();
   const [docs, setDocs] = useState<LeadDocument[]>([]);
   const [taskDocs, setTaskDocs] = useState<LeadTaskDocument[]>([]);
   const [loading, setLoading] = useState(true);
@@ -63,6 +57,7 @@ export default function LeadDocumentsTab({ leadId }: { leadId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [galleryOpen, setGalleryOpen] = useState(false);
   const [galleryIndex, setGalleryIndex] = useState(0);
+  const [galleryImages, setGalleryImages] = useState<GalleryImage[]>([]);
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -85,47 +80,76 @@ export default function LeadDocumentsTab({ leadId }: { leadId: string }) {
 
   const manualDocs = useMemo(() => docs.filter((d) => !d.is_from_task), [docs]);
 
-  const allImages = useMemo((): GalleryImageItem[] => {
-    const out: GalleryImageItem[] = [];
+  type ImgRow = {
+    id: string;
+    rawUrl: string;
+    title?: string;
+    subtitle?: string;
+    mime?: string | null;
+  };
+
+  const allImages = useMemo((): ImgRow[] => {
+    const out: ImgRow[] = [];
     for (const d of taskDocs) {
-      const g = toGalleryImage(String(d.id), d, {
+      if (!isImageFile(d) || !d.file_url) continue;
+      out.push({
+        id: String(d.id),
+        rawUrl: String(d.file_url),
         title: d.file_name || d.task_title || 'Ảnh',
         subtitle: d.task_title || undefined,
+        mime: d.mime_type,
       });
-      if (g) out.push(g);
     }
     for (const d of manualDocs) {
-      const g = toGalleryImage(String(d.id), d, {
+      if (!isImageFile(d) || !d.file_url) continue;
+      out.push({
+        id: String(d.id),
+        rawUrl: String(d.file_url),
         title: d.name || d.file_name || 'Ảnh',
         subtitle: d.doc_type || undefined,
+        mime: d.mime_type,
       });
-      if (g) out.push(g);
     }
     return out;
   }, [taskDocs, manualDocs]);
 
-  const galleryImages: GalleryImage[] = useMemo(
-    () => allImages.map((g) => ({ uri: g.uri, title: g.title, subtitle: g.subtitle })),
-    [allImages],
-  );
-
-  const openGallery = (id: string) => {
-    const i = allImages.findIndex((g) => g.id === id);
-    if (i < 0) return;
-    setGalleryIndex(i);
-    setGalleryOpen(true);
+  const openFile = (url?: string | null, mime?: string | null, name?: string | null) => {
+    void (async () => {
+      const u = await resolveFileAccessUrl(url, { name });
+      if (!u) return;
+      const like = { mime_type: mime, name, file_url: url };
+      if (isImageFile(like) || isVideoFile(like)) {
+        if (openInAppMedia({ uri: u, mime_type: mime, name })) return;
+      }
+      promptMessengerFileActions(String(url || u), { name, mime });
+    })();
   };
 
-  const openFile = (url?: string | null) => {
-    const u = resolveMediaUrl(url);
-    if (u) void Linking.openURL(u);
+  const openGallery = (id: string) => {
+    void (async () => {
+      const i = allImages.findIndex((g) => g.id === id);
+      if (i < 0) return;
+      const resolved = (
+        await Promise.all(
+          allImages.map(async (g) => {
+            const uri = await resolveFileAccessUrl(g.rawUrl, { name: g.title });
+            if (!uri) return null;
+            return { uri, title: g.title, subtitle: g.subtitle };
+          }),
+        )
+      ).filter((g): g is GalleryImage => !!g);
+      if (!resolved.length) return;
+      setGalleryImages(resolved);
+      setGalleryIndex(Math.min(i, resolved.length - 1));
+      setGalleryOpen(true);
+    })();
   };
 
   const taskFiles = taskDocs.filter((d) => !isImageFile(d));
   const manualFiles = manualDocs.filter((d) => !isImageFile(d));
 
   if (loading && !docs.length && !taskDocs.length) {
-    return <ActivityIndicator color={Colors.blue} style={{ marginTop: 32 }} />;
+    return <SpinningLoader color={Colors.blue} style={{ marginTop: 32 }} />;
   }
 
   return (
@@ -152,7 +176,7 @@ export default function LeadDocumentsTab({ leadId }: { leadId: string }) {
             <View style={styles.imageGrid}>
               {allImages.map((img) => (
                 <Pressable key={img.id} style={styles.tile} onPress={() => openGallery(img.id)}>
-                  <Image source={{ uri: img.uri }} style={styles.tileImg} resizeMode="cover" />
+                  <AuthRemoteImage rawUrl={img.rawUrl} style={styles.tileImg} resizeMode="cover" />
                   {img.title ? (
                     <Text style={styles.tileCaption} numberOfLines={2}>{img.title}</Text>
                   ) : null}
@@ -166,7 +190,7 @@ export default function LeadDocumentsTab({ leadId }: { leadId: string }) {
           <>
             <Text style={styles.sectionTitle}>Tài liệu từ nhiệm vụ ({taskFiles.length})</Text>
             {taskFiles.map((d) => (
-              <Pressable key={d.id} style={styles.card} onPress={() => openFile(d.file_url)}>
+              <Pressable key={d.id} style={styles.card} onPress={() => openFile(d.file_url, d.mime_type, d.file_name || d.task_title)}>
                 <View style={styles.docRow}>
                   <Ionicons name="document-attach-outline" size={20} color={Colors.blue} />
                   <View style={{ flex: 1 }}>
@@ -190,7 +214,7 @@ export default function LeadDocumentsTab({ leadId }: { leadId: string }) {
           <Text style={styles.metaHint}>Không còn file khác ngoài hình ảnh ở trên.</Text>
         ) : (
           manualFiles.map((d) => (
-            <Pressable key={d.id} style={styles.card} onPress={() => openFile(d.file_url)}>
+            <Pressable key={d.id} style={styles.card} onPress={() => openFile(d.file_url, d.mime_type, d.name || d.file_name)}>
               <View style={styles.docRow}>
                 <Ionicons name="document-text-outline" size={20} color={Colors.orange} />
                 <View style={{ flex: 1 }}>

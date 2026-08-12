@@ -1,20 +1,9 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
+import SpinningLoader from '../components/SpinningLoader';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  FlatList,
-  Platform,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { Alert, FlatList, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { api } from '../api/client';
 import ActionGrid2x2 from '../components/ActionGrid2x2';
@@ -366,7 +355,7 @@ export default function VoiceLocalRecordingsScreen() {
         }
         ListEmptyComponent={
           loading ? (
-            <ActivityIndicator color={Colors.blue} style={{ marginTop: 40 }} />
+            <SpinningLoader color={Colors.blue} style={{ marginTop: 40 }} />
           ) : (
             <View style={styles.emptyBox}>
               <Ionicons name="file-tray-outline" size={38} color={Colors.textFaint} />

@@ -1,20 +1,9 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
+import SpinningLoader from '../SpinningLoader';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  Linking,
-  Modal,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { Alert, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { formatApiError } from '../../api/client';
 import { preview as drivePreview, formatBytes, iconNameForMime } from '../../api/drive';
 import {
@@ -26,6 +15,9 @@ import {
   fetchDriveLinksByEntity,
   type LeadDetailRow,
 } from '../../api/leadDetail';
+import { useMediaPreview } from '../../context/MediaPreviewContext';
+import { API_PREFIX } from '../../config';
+import { openDriveFileById, promptMessengerFileActions } from '../../lib/messengerFileOpen';
 import { Radii, Spacing, useColors, type ThemeColors } from '../../theme';
 
 type Props = { lead: LeadDetailRow };
@@ -46,6 +38,7 @@ export default function LeadDriveTab({ lead }: Props) {
   const [crumb, setCrumb] = useState<{ id: string; name: string }[]>([]);
   const [folderModal, setFolderModal] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
+  const { openDriveMedia } = useMediaPreview();
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -88,13 +81,29 @@ export default function LeadDriveTab({ lead }: Props) {
     void load();
   }, [load]);
 
-  const openFile = async (fileId: string) => {
+  const openFile = async (fileId: string, mime?: string | null, name?: string | null) => {
     try {
-      const p = await drivePreview(fileId);
-      const url = p.view_url || p.embed_url;
-      if (url) void Linking.openURL(url);
+      if (await openDriveMedia({ id: fileId, name, mime_type: mime })) return;
+      let resolvedName = name;
+      let resolvedMime = mime;
+      try {
+        const p = await drivePreview(fileId);
+        resolvedName = p.name || name;
+        resolvedMime = p.mime_type || mime;
+        if (await openDriveMedia({ id: fileId, name: resolvedName, mime_type: resolvedMime })) {
+          return;
+        }
+      } catch {
+        /* preview optional */
+      }
+      const downloadUrl = `${API_PREFIX}/drive/files/${encodeURIComponent(fileId)}/download`;
+      promptMessengerFileActions(downloadUrl, { name: resolvedName, mime: resolvedMime });
     } catch (e) {
-      Alert.alert('Lỗi', formatApiError(e));
+      try {
+        await openDriveFileById(fileId, { name, mime });
+      } catch {
+        Alert.alert('Lỗi', formatApiError(e));
+      }
     }
   };
 
@@ -171,7 +180,7 @@ export default function LeadDriveTab({ lead }: Props) {
   };
 
   if (loading && !files.length && !folders.length && !links.length) {
-    return <ActivityIndicator color={Colors.blue} style={{ marginTop: 32 }} />;
+    return <SpinningLoader color={Colors.blue} style={{ marginTop: 32 }} />;
   }
 
   return (
@@ -193,7 +202,7 @@ export default function LeadDriveTab({ lead }: Props) {
           </Pressable>
           <Pressable style={styles.toolBtn} onPress={pickUpload} disabled={uploading}>
             {uploading ? (
-              <ActivityIndicator size="small" color={Colors.blue} />
+              <SpinningLoader size="small" color={Colors.blue} />
             ) : (
               <Ionicons name="cloud-upload-outline" size={18} color={Colors.blue} />
             )}
@@ -229,7 +238,7 @@ export default function LeadDriveTab({ lead }: Props) {
           <>
             <Text style={styles.sectionTitle}>Liên kết ({links.length})</Text>
             {links.map((l) => (
-              <Pressable key={l.id} style={styles.card} onPress={() => void openFile(l.fileId)}>
+              <Pressable key={l.id} style={styles.card} onPress={() => void openFile(l.fileId, null, l.name)}>
                 <View style={styles.docRow}>
                   <Ionicons name="link-outline" size={20} color={Colors.purple} />
                   <Text style={[styles.cardTitle, { flex: 1 }]} numberOfLines={2}>{l.name}</Text>
@@ -251,7 +260,7 @@ export default function LeadDriveTab({ lead }: Props) {
         ))}
 
         {files.map((f) => (
-          <Pressable key={f.id} style={styles.card} onPress={() => void openFile(f.id)}>
+          <Pressable key={f.id} style={styles.card} onPress={() => void openFile(f.id, f.mime_type, f.name)}>
             <View style={styles.docRow}>
               <Ionicons name={iconNameForMime(f.mime_type) as keyof typeof Ionicons.glyphMap} size={20} color={Colors.blue} />
               <View style={{ flex: 1 }}>

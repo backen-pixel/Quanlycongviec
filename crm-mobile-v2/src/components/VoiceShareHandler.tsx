@@ -1,6 +1,7 @@
 import { useShareIntentContext } from 'expo-share-intent';
+import SpinningLoader from './SpinningLoader';
 import React, { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Modal, Platform, StyleSheet, Text, View } from 'react-native';
+import { Alert, Modal, Platform, StyleSheet, Text, View } from 'react-native';
 import { formatApiError } from '../api/client';
 import { navigate } from '../navigation/navigationRef';
 import { isSharedAudioFile, uploadSharedVoiceFiles } from '../lib/voiceShareUpload';
@@ -74,7 +75,7 @@ export default function VoiceShareHandler({ enabled }: Props) {
     <Modal transparent animationType="fade" visible>
       <View style={styles.backdrop}>
         <View style={styles.card}>
-          <ActivityIndicator color={Colors.purple} size="large" />
+          <SpinningLoader color={Colors.purple} size="large" />
           <Text style={styles.title}>Đang tải ghi âm lên CRM…</Text>
         </View>
       </View>

@@ -65,6 +65,11 @@ export default function MoveStageModal({
                   <Text style={styles.rowIcon}>{item.icon || '📋'}</Text>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.rowText} numberOfLines={2}>{item.name}</Text>
+                    {item.isWon ? (
+                      <Text style={styles.rowHint}>Cần Chuyển Deal</Text>
+                    ) : item.requiresDeadline ? (
+                      <Text style={styles.rowHint}>Yêu cầu deadline</Text>
+                    ) : null}
                   </View>
                   <View style={[styles.badge, { backgroundColor: color }]}>
                     <Ionicons name="arrow-forward" size={14} color={Colors.white} />
@@ -122,6 +127,7 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
   },
   rowIcon: { fontSize: 18, width: 28, textAlign: 'center' },
   rowText: { color: Colors.text, fontSize: 14, fontWeight: '600' },
+  rowHint: { color: Colors.textMuted, fontSize: 11, marginTop: 2, fontWeight: '500' },
   badge: {
     width: 32,
     height: 32,

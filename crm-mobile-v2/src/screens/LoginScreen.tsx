@@ -1,17 +1,8 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
+import SpinningLoader from '../components/SpinningLoader';
 import { LinearGradient } from 'expo-linear-gradient';
 import React, { useCallback, useMemo, useState } from 'react';
-import {
-  ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatApiError } from '../api/client';
 import QrLoginScanner from '../components/qr/QrLoginScanner';
@@ -121,7 +112,7 @@ export default function LoginScreen() {
 
             <Pressable style={[styles.btn, busy && { opacity: 0.7 }]} onPress={submit} disabled={busy}>
               {busy ? (
-                <ActivityIndicator color="#fff" />
+                <SpinningLoader color="#fff" />
               ) : (
                 <Text style={styles.btnTxt}>Đăng nhập</Text>
               )}

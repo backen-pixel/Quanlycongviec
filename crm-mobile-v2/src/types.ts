@@ -89,6 +89,8 @@ export type CrmPipelineStage = {
   isLost?: boolean;
   countsAsExpectedRevenue?: boolean;
   countsAsCompletedRevenue?: boolean;
+  /** Cột bắt buộc có deadline thẻ khi chuyển vào (Cold…). */
+  requiresDeadline?: boolean;
   canonicalSlug?: string | null;
   dealReportBucket?: string | null;
   /** SLA cột (ngày) — dùng view Deadline / Kanban. */
@@ -111,6 +113,8 @@ export type CrmKanbanItem = {
   companyId?: string;
   sourceLabel?: string;
   valueLabel?: string;
+  /** Giá trị số (VND) — dùng sort list. */
+  estimatedValue?: number | null;
   temp?: LeadTemp;
   ownerId: string;
   assignedToId: string;
@@ -121,6 +125,8 @@ export type CrmKanbanItem = {
   createdAt?: string | null;
   dueIso?: string | null;
   overdue: boolean;
+  /** Flag user «đã tương tác» — ẩn deadline cột trên thẻ. */
+  isInteracted?: boolean;
 };
 
 export type CrmBoard = {

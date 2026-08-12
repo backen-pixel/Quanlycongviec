@@ -1,5 +1,6 @@
 import React from 'react';
-import { ActivityIndicator, Image, StyleSheet, Text, View } from 'react-native';
+import { Image, StyleSheet, Text, View } from 'react-native';
+import SpinningLoader from './SpinningLoader';
 import { useColors, type ThemeColors } from '../theme';
 
 type Props = {
@@ -23,7 +24,7 @@ export default function BootSplash({ visible, transparent, hint }: Props) {
   return (
     <View style={styles.root} pointerEvents="auto">
       <Image source={require('../../assets/splash-icon.png')} style={styles.logo} resizeMode="contain" />
-      <ActivityIndicator color={Colors.blue} size="large" style={styles.spinner} />
+      <SpinningLoader color={Colors.blue} size="large" style={styles.spinner} />
       <Text style={styles.title}>CRM Mobile</Text>
       <Text style={styles.hint}>{hint || 'Đang mở ứng dụng…'}</Text>
     </View>

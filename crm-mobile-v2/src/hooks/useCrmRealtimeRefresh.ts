@@ -1,10 +1,57 @@
-import { useEffect, useRef } from 'react';
+import { NavigationContext } from '@react-navigation/native';
+import { useContext, useEffect, useRef, useState } from 'react';
 import { subscribeCrmRealtime } from '../lib/crmRealtimeBus';
 
 const DEBOUNCE_MS = 2500;
 
+export type CrmRealtimeRefreshOpts = {
+  enabled?: boolean;
+  /**
+   * Mặc định true: tab freezeOnBlur / không focus không refetch nền.
+   * Runner ngoài navigator không có NavigationContext → luôn coi như focused.
+   */
+  onlyWhenFocused?: boolean;
+};
+
+function useSafeIsFocused(): boolean {
+  const navigation = useContext(NavigationContext);
+  const [focused, setFocused] = useState(() => navigation?.isFocused() ?? true);
+
+  useEffect(() => {
+    if (!navigation) {
+      setFocused(true);
+      return undefined;
+    }
+    setFocused(navigation.isFocused());
+    const unsubFocus = navigation.addListener('focus', () => setFocused(true));
+    const unsubBlur = navigation.addListener('blur', () => setFocused(false));
+    return () => {
+      unsubFocus();
+      unsubBlur();
+    };
+  }, [navigation]);
+
+  return focused;
+}
+
 /** Gọi `refresh` khi CRM thay đổi (socket hoặc poll live-version). */
-export function useCrmRealtimeRefresh(refresh: () => void, enabled = true): void {
+export function useCrmRealtimeRefresh(
+  refresh: () => void,
+  enabledOrOpts: boolean | CrmRealtimeRefreshOpts = true,
+): void {
+  const enabled = typeof enabledOrOpts === 'boolean'
+    ? enabledOrOpts
+    : (enabledOrOpts.enabled ?? true);
+  const onlyWhenFocused = typeof enabledOrOpts === 'boolean'
+    ? true
+    : (enabledOrOpts.onlyWhenFocused ?? true);
+
+  const focused = useSafeIsFocused();
+  const focusedRef = useRef(focused);
+  focusedRef.current = focused;
+  const onlyWhenFocusedRef = useRef(onlyWhenFocused);
+  onlyWhenFocusedRef.current = onlyWhenFocused;
+
   const refreshRef = useRef(refresh);
   refreshRef.current = refresh;
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -15,6 +62,7 @@ export function useCrmRealtimeRefresh(refresh: () => void, enabled = true): void
       if (timerRef.current) clearTimeout(timerRef.current);
       timerRef.current = setTimeout(() => {
         timerRef.current = null;
+        if (onlyWhenFocusedRef.current && !focusedRef.current) return;
         refreshRef.current();
       }, DEBOUNCE_MS);
     });

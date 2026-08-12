@@ -1,23 +1,10 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
+import SpinningLoader from '../components/SpinningLoader';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  DeviceEventEmitter,
-  FlatList,
-  ImageBackground,
-  Keyboard,
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { Alert, DeviceEventEmitter, FlatList, ImageBackground, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatApiError } from '../api/client';
@@ -804,7 +791,7 @@ export default function ChatDetailScreen({ navigation, route }: Props) {
       >
         {loading ? (
           <View style={styles.center}>
-            <ActivityIndicator size="large" color={mc.accent} />
+            <SpinningLoader size="large" color={mc.accent} />
           </View>
         ) : (
           <View style={[styles.listWrap, wallpaperBackgroundColor(wallpaper) ? { backgroundColor: wallpaperBackgroundColor(wallpaper)! } : null]}>

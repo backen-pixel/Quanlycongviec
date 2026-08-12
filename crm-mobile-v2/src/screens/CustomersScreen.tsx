@@ -1,21 +1,10 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
+import SpinningLoader from '../components/SpinningLoader';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  FlatList,
-  Modal,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { Alert, FlatList, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { fetchCrmCompanies } from '../api/crm';
 import { formatApiError } from '../api/client';
@@ -397,7 +386,7 @@ export default function CustomersScreen() {
             </View>
 
             {detailLoading ? (
-              <ActivityIndicator color={Colors.blue} style={{ marginVertical: 16 }} />
+              <SpinningLoader color={Colors.blue} style={{ marginVertical: 16 }} />
             ) : timeline.length === 0 ? (
               <Text style={styles.emptyTimeline}>Chưa có giao dịch nào</Text>
             ) : (
@@ -595,7 +584,7 @@ export default function CustomersScreen() {
     <View style={[styles.root, { paddingTop: insets.top }]}>
       {loading && !rows.length ? (
         <View style={styles.center}>
-          <ActivityIndicator color={Colors.blue} size="large" />
+          <SpinningLoader color={Colors.blue} size="large" />
         </View>
       ) : (
         <FlatList
@@ -619,7 +608,7 @@ export default function CustomersScreen() {
           removeClippedSubviews
           ListFooterComponent={
             loadingMore ? (
-              <ActivityIndicator color={Colors.blue} style={{ marginVertical: 16 }} />
+              <SpinningLoader color={Colors.blue} style={{ marginVertical: 16 }} />
             ) : hasMore && rows.length > 0 ? (
               <Text style={styles.loadMoreHint}>Cuộn để tải thêm...</Text>
             ) : null

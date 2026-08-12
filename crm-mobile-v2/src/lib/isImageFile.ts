@@ -8,14 +8,25 @@ export type ImageFileLike = {
   name?: string | null;
 };
 
+function filePathOf(input: ImageFileLike): string {
+  const name = String(input.file_name || input.name || input.file_url || '');
+  return name.split('?')[0].split('#')[0];
+}
+
 export function isImageFile(input: ImageFileLike): boolean {
   const mime = String(input.mime_type || '').toLowerCase();
   if (mime.startsWith('image/')) return true;
   const dt = String(input.doc_type || '').toLowerCase();
   if (dt === 'image') return true;
-  const name = String(input.file_name || input.name || input.file_url || '');
-  const path = name.split('?')[0].split('#')[0];
-  return /\.(jpe?g|png|gif|webp|bmp|heic|heif|avif)$/i.test(path);
+  return /\.(jpe?g|png|gif|webp|bmp|heic|heif|avif)$/i.test(filePathOf(input));
+}
+
+export function isVideoFile(input: ImageFileLike): boolean {
+  const mime = String(input.mime_type || '').toLowerCase();
+  if (mime.startsWith('video/')) return true;
+  const dt = String(input.doc_type || '').toLowerCase();
+  if (dt === 'video') return true;
+  return /\.(mp4|mov|m4v|webm|mkv|avi|3gp)$/i.test(filePathOf(input));
 }
 
 export type GalleryImageItem = {

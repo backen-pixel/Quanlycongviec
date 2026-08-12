@@ -27,12 +27,49 @@ export type CrmAssignment = {
   deadline?: string | null;
   created_at?: string | null;
   completed_at?: string | null;
+  column_id?: string | null;
+  assignment_module?: string | null;
+  task_source_type?: string | null;
+  employee_error_module?: string | null;
+  assignee_id?: string | null;
   assignee?: AssignmentUser | null;
   assignees?: AssignmentUser[];
   created_by?: AssignmentUser | null;
   company?: { id: string; name?: string | null; short_name?: string | null } | null;
   lead?: AssignmentLead | null;
 };
+
+export type AssignmentColumn = {
+  id: string;
+  name?: string | null;
+  order_index?: number | null;
+};
+
+export type CreateLeadAssignmentPayload = {
+  title: string;
+  description?: string | null;
+  priority?: string;
+  column_id?: string | null;
+  deadline?: string | null;
+  assignee_ids: string[];
+  assignment_module?: 'crm' | 'production' | 'logistics' | string;
+  company_id?: string | null;
+  task_source_type: 'customer_request' | 'employee_error' | string;
+  employee_error_module?: string | null;
+};
+
+export type UpdateAssignmentPayload = Partial<{
+  title: string;
+  description: string | null;
+  priority: string;
+  status: string;
+  column_id: string | null;
+  deadline: string | null;
+  assignee_ids: string[];
+  assignment_module: string;
+  task_source_type: string;
+  employee_error_module: string | null;
+}>;
 
 export type AssignmentLookupUser = {
   id: string;
@@ -95,4 +132,46 @@ export async function fetchCrmAssignmentLookups(
     regions: Array.isArray(data?.regions) ? data.regions : [],
     users: Array.isArray(data?.users) ? data.users : [],
   };
+}
+
+export async function fetchLeadAssignments(
+  leadId: string,
+  signal?: AbortSignal,
+): Promise<CrmAssignment[]> {
+  const { data } = await api.get<{ assignments?: CrmAssignment[] }>(
+    `/crm/leads/${leadId}/assignments`,
+    { signal },
+  );
+  return Array.isArray(data?.assignments) ? data.assignments : [];
+}
+
+export async function fetchAssignmentColumns(signal?: AbortSignal): Promise<AssignmentColumn[]> {
+  const { data } = await api.get<{ columns?: AssignmentColumn[] }>('/crm/assignments/columns', {
+    signal,
+  });
+  return Array.isArray(data?.columns) ? data.columns : [];
+}
+
+export async function createLeadAssignment(
+  leadId: string,
+  payload: CreateLeadAssignmentPayload,
+): Promise<CrmAssignment> {
+  const { data } = await api.post<{ assignment?: CrmAssignment } | CrmAssignment>(
+    `/crm/leads/${leadId}/assignments`,
+    payload,
+  );
+  const row = (data as { assignment?: CrmAssignment })?.assignment || (data as CrmAssignment);
+  return row;
+}
+
+export async function updateCrmAssignment(
+  assignmentId: string,
+  payload: UpdateAssignmentPayload,
+): Promise<CrmAssignment> {
+  const { data } = await api.put<CrmAssignment>(`/crm/assignments/${assignmentId}`, payload);
+  return data;
+}
+
+export async function deleteCrmAssignment(assignmentId: string): Promise<void> {
+  await api.delete(`/crm/assignments/${assignmentId}`);
 }

@@ -41,6 +41,14 @@ export function getPerfTier(): PerfTier {
   return cachedTier;
 }
 
+/** Số card Deadline giữ trong RAM theo tầng máy. */
+export function getDeadlineMaxBuffer(): number {
+  const tier = getPerfTier();
+  if (tier === 'low') return 100;
+  if (tier === 'mid') return 200;
+  return 400;
+}
+
 export type DeadlinePerfLimits = {
   tier: PerfTier;
   firstPaint: number;
@@ -64,14 +72,14 @@ export function getDeadlinePerfLimits(): DeadlinePerfLimits {
   if (tier === 'low') {
     return {
       tier,
-      firstPaint: 100,
-      bgSync: 350,
+      firstPaint: 40,
+      bgSync: 120,
       stageConcurrency: 2,
       countConcurrency: 1,
       countPage: 300,
       countMaxRows: 2500,
       progressEvery: 200,
-      countsDelayMs: 1800,
+      countsDelayMs: 120,
       parallelKinds: false,
       listInitial: 5,
       listBatch: 4,
@@ -81,14 +89,14 @@ export function getDeadlinePerfLimits(): DeadlinePerfLimits {
   if (tier === 'mid') {
     return {
       tier,
-      firstPaint: 220,
-      bgSync: 700,
+      firstPaint: 60,
+      bgSync: 160,
       stageConcurrency: 3,
       countConcurrency: 2,
       countPage: 500,
       countMaxRows: 6000,
       progressEvery: 180,
-      countsDelayMs: 800,
+      countsDelayMs: 80,
       parallelKinds: true,
       listInitial: 6,
       listBatch: 6,
@@ -97,17 +105,60 @@ export function getDeadlinePerfLimits(): DeadlinePerfLimits {
   }
   return {
     tier,
-    firstPaint: 500,
-    bgSync: 1200,
-    stageConcurrency: 6,
+    firstPaint: 80,
+    bgSync: 200,
+    stageConcurrency: 4,
     countConcurrency: 3,
-    countPage: 1000,
-    countMaxRows: 12000,
+    countPage: 800,
+    countMaxRows: 8000,
     progressEvery: 120,
-    countsDelayMs: 400,
+    countsDelayMs: 40,
     parallelKinds: true,
     listInitial: 8,
     listBatch: 8,
+    listWindow: 5,
+  };
+}
+
+/** Giới hạn Tin nhắn / avatar — máy yếu tránh decode ảnh full-res. */
+export type MessengerPerfLimits = {
+  tier: PerfTier;
+  /** Không tải avatar remote (chỉ chữ cái) — giảm RAM decode mạnh. */
+  skipRemoteAvatars: boolean;
+  onlineStripMax: number;
+  listInitial: number;
+  listBatch: number;
+  listWindow: number;
+};
+
+export function getMessengerPerfLimits(): MessengerPerfLimits {
+  const tier = getPerfTier();
+  if (tier === 'low') {
+    return {
+      tier,
+      skipRemoteAvatars: true,
+      onlineStripMax: 8,
+      listInitial: 6,
+      listBatch: 4,
+      listWindow: 3,
+    };
+  }
+  if (tier === 'mid') {
+    return {
+      tier,
+      skipRemoteAvatars: false,
+      onlineStripMax: 12,
+      listInitial: 8,
+      listBatch: 6,
+      listWindow: 5,
+    };
+  }
+  return {
+    tier,
+    skipRemoteAvatars: false,
+    onlineStripMax: 20,
+    listInitial: 12,
+    listBatch: 10,
     listWindow: 7,
   };
 }

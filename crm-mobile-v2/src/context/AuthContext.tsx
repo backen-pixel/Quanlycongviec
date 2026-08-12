@@ -9,6 +9,7 @@ import {
 import { startDeviceHeartbeat, stopDeviceHeartbeat } from '../lib/deviceHeartbeat';
 import { registerPushTokenV2, unregisterPushTokenV2 } from '../lib/pushNotifications';
 import { syncNativeAuthPrefs } from '../lib/nativeAuthSync';
+import { clearOverviewKpiCache, hydrateOverviewKpiCache } from '../lib/overviewKpiCache';
 
 const USER_KEY = 'crmv2_user_json';
 
@@ -55,7 +56,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     void (async () => {
       try {
-        const [t, u] = await Promise.all([getStoredToken(), AsyncStorage.getItem(USER_KEY)]);
+        const [t, u] = await Promise.all([
+          getStoredToken(),
+          AsyncStorage.getItem(USER_KEY),
+          hydrateOverviewKpiCache(),
+        ]);
         hydrateMemoryToken(t);
         if (t && u) {
           setToken(t);
@@ -91,29 +96,34 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!token) return;
-    startDeviceHeartbeat();
-    // Đăng ký FCM token để nhận thông báo trên thanh hệ thống (kể cả khi app đóng).
-    void registerPushTokenV2();
     syncNativeAuthPrefs({
       token,
       userId: user?.id || user?.userId || null,
     });
     const controller = new AbortController();
-    void (async () => {
-      try {
-        const { data } = await api.get<{ user?: AuthUser }>('/auth/me', { signal: controller.signal });
-        if (data?.user) {
-          setUser((prev) => {
-            const merged = mergeAuthUser(prev, data.user!);
-            void AsyncStorage.setItem(USER_KEY, JSON.stringify(merged));
-            return merged;
-          });
+    // Nhường băng thông + JS cho Overview cold start.
+    const bootTimer = setTimeout(() => {
+      startDeviceHeartbeat();
+      void registerPushTokenV2();
+      void (async () => {
+        try {
+          const { data } = await api.get<{ user?: AuthUser }>('/auth/me', { signal: controller.signal });
+          if (data?.user) {
+            setUser((prev) => {
+              const merged = mergeAuthUser(prev, data.user!);
+              void AsyncStorage.setItem(USER_KEY, JSON.stringify(merged));
+              return merged;
+            });
+          }
+        } catch {
+          /* giữ cache cũ */
         }
-      } catch {
-        /* giữ cache cũ */
-      }
-    })();
-    return () => controller.abort();
+      })();
+    }, 5000);
+    return () => {
+      clearTimeout(bootTimer);
+      controller.abort();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, user?.id, user?.userId]);
 
@@ -145,6 +155,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     stopVoiceBackgroundSyncLoop();
     stopDeviceHeartbeat();
     await unregisterPushTokenV2();
+    await clearOverviewKpiCache();
     await setStoredToken(null);
     await AsyncStorage.removeItem(USER_KEY);
     setToken(null);
@@ -154,6 +165,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     setUnauthorizedHandler(() => {
       void AsyncStorage.removeItem(USER_KEY);
+      void clearOverviewKpiCache();
       setToken(null);
       setUser(null);
     });

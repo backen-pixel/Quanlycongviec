@@ -1,15 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import SpinningLoader from './SpinningLoader';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  ActivityIndicator,
-  AppState,
-  Modal,
-  Pressable,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { AppState, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useAuth, currentUserId } from '../context/AuthContext';
 import {
   APP_PERMISSION_CATALOG,
@@ -122,7 +115,7 @@ export default function PermissionBootstrap() {
             onPress={() => void handleGrant()}
           >
             {busy ? (
-              <ActivityIndicator color="#fff" size="small" />
+              <SpinningLoader color="#fff" size="small" />
             ) : (
               <Text style={styles.btnTxt}>
                 {missingRequired.length ? 'Cho phép thông báo' : 'Tiếp tục'}

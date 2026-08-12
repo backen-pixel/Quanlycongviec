@@ -4,7 +4,6 @@ import {
   Animated,
   Dimensions,
   Image,
-  Linking,
   PanResponder,
   Pressable,
   StyleSheet,
@@ -34,6 +33,7 @@ import {
 import { senderNameColor } from '../../lib/messengerSenderColors';
 import { avatarColorFromName, getMessengerColors } from '../../lib/messengerTheme';
 import { promptMessengerFileActions } from '../../lib/messengerFileOpen';
+import { useMediaPreview } from '../../context/MediaPreviewContext';
 import type { MessengerGroupMember } from '../../lib/messengerApi';
 import type { MessengerMessage, MessengerReadReceipt } from '../../types/messenger';
 import Avatar from '../Avatar';
@@ -105,6 +105,7 @@ export default function ChatMessageRow({
   showTimeInBubble = false,
 }: Props) {
   const { colors, isDark } = useTheme();
+  const { openVideo } = useMediaPreview();
   const mc = getMessengerColors(colors, isDark);
   const translateX = useRef(new Animated.Value(0)).current;
   const recalled = !!(item.is_recalled || item.recalled_at);
@@ -439,7 +440,7 @@ export default function ChatMessageRow({
             style={[styles.bubble, styles.mediaBubble]}
             onLongPress={openActions}
             delayLongPress={320}
-            onPress={() => void Linking.openURL(mediaUrl)}
+            onPress={() => openVideo({ uri: mediaUrl, title: att.name || 'Video' })}
           >
             {replyQuote}
             <View style={styles.videoWrap}>

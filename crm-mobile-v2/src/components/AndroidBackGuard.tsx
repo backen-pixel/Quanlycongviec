@@ -8,8 +8,8 @@ import { navigationRef } from '../navigation/navigationRef';
  * Android hardware Back:
  * 1) Đóng sheet «Tạo mới» nếu đang mở
  * 2) Pop stack (Chat, CRM Hub, …)
- * 3) Ở tab khác → về Kanban
- * 4) Ở Kanban root → nhấn Back lần nữa trong 2s mới thoát app
+ * 3) Ở tab khác → về Tổng quan
+ * 4) Ở Tổng quan root → nhấn Back lần nữa trong 2s mới thoát app
  */
 export default function AndroidBackGuard() {
   const { open, close } = useCreateMenu();
@@ -47,11 +47,11 @@ export default function AndroidBackGuard() {
 
       const route = navigationRef.getCurrentRoute();
       const name = String(route?.name || '');
-      if (name && name !== 'Kanban') {
+      if (name && name !== 'Overview') {
         navigationRef.dispatch(
           CommonActions.navigate({
             name: 'Tabs',
-            params: { screen: 'Kanban' },
+            params: { screen: 'Overview' },
           }),
         );
         return true;

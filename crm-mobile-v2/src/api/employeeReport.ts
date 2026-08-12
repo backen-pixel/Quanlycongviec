@@ -289,7 +289,7 @@ export async function fetchOrgOverviewReport(
 
 export async function fetchOrgActivityFeed(
   params: EmployeeReportQuery,
-  opts?: { limit?: number; since?: string; signal?: AbortSignal },
+  opts?: { limit?: number; since?: string; signal?: AbortSignal; timeoutMs?: number },
 ): Promise<OrgActivityFeedResponse> {
   const { data } = await api.get<OrgActivityFeedResponse>('/crm/reports/org-activity-feed', {
     params: {
@@ -302,6 +302,7 @@ export async function fetchOrgActivityFeed(
       ...(opts?.since ? { since: opts.since } : {}),
     },
     signal: opts?.signal,
+    timeout: opts?.timeoutMs ?? 12_000,
   });
   return {
     date_from: data.date_from,

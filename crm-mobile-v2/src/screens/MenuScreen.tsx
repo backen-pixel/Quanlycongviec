@@ -21,7 +21,7 @@ type Item = {
   label: string;
   color: string;
   target?: ItemTarget;
-  action?: 'logout' | 'drive' | 'settings' | 'notifications' | 'events' | 'leaves' | 'planner' | 'quotations' | 'products' | 'customers' | 'tasks' | 'account' | 'devices' | 'qr-scan' | 'employee-report' | 'recordings';
+  action?: 'logout' | 'drive' | 'settings' | 'notifications' | 'events' | 'leaves' | 'planner' | 'quotations' | 'products' | 'customers' | 'tasks' | 'account' | 'devices' | 'qr-scan' | 'employee-report' | 'recordings' | 'overview';
 };
 
 function buildSections(Colors: ThemeColors): { title: string; items: Item[] }[] {
@@ -40,6 +40,7 @@ function buildSections(Colors: ThemeColors): { title: string; items: Item[] }[] 
     {
       title: 'Công việc',
       items: [
+        { icon: 'home', label: 'Tổng quan', color: Colors.blue, action: 'overview' },
         { icon: 'grid', label: 'Planner', color: Colors.blue, action: 'planner' },
         { icon: 'checkbox', label: 'Nhiệm vụ', color: Colors.blue, action: 'tasks' },
         { icon: 'calendar', label: 'Sự kiện', color: Colors.cyan, action: 'events' },
@@ -79,7 +80,10 @@ export default function MenuScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      void warmCrmHubPipelines(user?.company_id || undefined);
+      const t = setTimeout(() => {
+        void warmCrmHubPipelines(user?.company_id || undefined);
+      }, 800);
+      return () => clearTimeout(t);
     }, [user?.company_id]),
   );
 
@@ -106,6 +110,10 @@ export default function MenuScreen() {
     }
     if (it.action === 'leaves') {
       navigation.navigate('Leaves');
+      return;
+    }
+    if (it.action === 'overview') {
+      navigation.navigate('Tabs', { screen: 'Overview' });
       return;
     }
     if (it.action === 'planner') {
@@ -148,16 +156,28 @@ export default function MenuScreen() {
       navigation.navigate('QrScan');
       return;
     }
-    if (it.target) navigation.navigate('CrmHub', { initialMode: it.target.kind });
-  };
+    if (it.target) {
+      const screen = it.target.kind === 'deals' ? 'Deal' : it.target.kind === 'orders' ? 'Deal' : 'Lead';
+      if (it.target.kind === 'orders') {
+        navigation.navigate('CrmHub', { initialMode: 'orders' });
+        return;
+      }
+      navigation.navigate('Tabs', { screen });
+      return;
+    }  };
 
   return (
     <ScrollView
       style={styles.root}
-      contentContainerStyle={{ paddingTop: insets.top + 12, paddingBottom: 120 }}
+      contentContainerStyle={{ paddingBottom: insets.bottom + 32 }}
       showsVerticalScrollIndicator={false}
     >
-      <Text style={styles.h1}>Menu</Text>
+      <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
+        <Pressable style={styles.backBtn} onPress={() => navigation.goBack()} hitSlop={8}>
+          <Ionicons name="chevron-back" size={22} color={Colors.text} />
+        </Pressable>
+        <Text style={styles.h1}>Menu</Text>
+      </View>
 
       <Pressable
         style={({ pressed }) => [styles.profile, pressed && styles.profilePressed]}
@@ -232,7 +252,21 @@ export default function MenuScreen() {
 
 const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
   root: { flex: 1, backgroundColor: Colors.bg },
-  h1: { color: Colors.text, fontSize: 28, fontWeight: '900', paddingHorizontal: 16 },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    marginBottom: 4,
+  },
+  backBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  h1: { color: Colors.text, fontSize: 28, fontWeight: '900', flex: 1 },
   profile: {
     flexDirection: 'row',
     alignItems: 'center',

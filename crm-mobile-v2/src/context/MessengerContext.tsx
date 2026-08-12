@@ -8,7 +8,7 @@ import React, {
   useState,
 } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { AppState, type AppStateStatus } from 'react-native';
+import { AppState, InteractionManager, type AppStateStatus } from 'react-native';
 import {
   fetchMessengerGroups,
   fetchMessengerMessages,
@@ -20,6 +20,7 @@ import {
 } from '../lib/messengerApi';
 import { fetchUserPresence, type UserPresence } from '../lib/messengerPresence';
 import { setMessengerActiveGroupId } from '../lib/messengerActiveGroup';
+import { getPerfTier } from '../lib/devicePerf';
 import type { MessengerMessage, MessengerThread } from '../types/messenger';
 import { useAuth } from './AuthContext';
 import { useNotifications } from './MessengerRealtimeContext';
@@ -252,11 +253,7 @@ export function MessengerProvider({ children }: { children: React.ReactNode }) {
           if (Array.isArray(parsed.threads) && parsed.threads.length) {
             setThreads(parsed.threads);
             if (typeof parsed.at === 'number') lastFetchAtRef.current = parsed.at;
-            const ids = parsed.threads.map((t) => t.id).filter(Boolean);
-            if (ids.length) {
-              joinMessengerGroups(ids);
-              ids.forEach((id) => joinedRef.current.add(id));
-            }
+            // Chưa join toàn bộ room lúc cold start — join khi network refresh / mở chat.
           }
         } catch {
           /* ignore */
@@ -264,7 +261,16 @@ export function MessengerProvider({ children }: { children: React.ReactNode }) {
       });
     }
 
-    void refreshThreads(threadsRef.current.length > 0);
+    const tier = getPerfTier();
+    const networkDelayMs = tier === 'low' ? 8000 : tier === 'mid' ? 7000 : 6500;
+    let delayTimer: ReturnType<typeof setTimeout> | null = null;
+    const interaction = InteractionManager.runAfterInteractions(() => {
+      delayTimer = setTimeout(() => {
+        void refreshThreads(threadsRef.current.length > 0);
+        emitPresencePing();
+      }, networkDelayMs);
+    });
+
     const onState = (state: AppStateStatus) => {
       if (state === 'active') {
         const gap = Date.now() - lastFetchAtRef.current;
@@ -273,8 +279,11 @@ export function MessengerProvider({ children }: { children: React.ReactNode }) {
       }
     };
     const sub = AppState.addEventListener('change', onState);
-    emitPresencePing();
-    return () => sub.remove();
+    return () => {
+      interaction.cancel?.();
+      if (delayTimer) clearTimeout(delayTimer);
+      sub.remove();
+    };
   }, [token, myUserId, refreshThreads, emitPresencePing, joinMessengerGroups]);
 
   useEffect(() => {

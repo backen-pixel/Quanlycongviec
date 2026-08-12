@@ -1,25 +1,12 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
+import SpinningLoader from '../SpinningLoader';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  FlatList,
-  Image,
-  KeyboardAvoidingView,
-  Linking,
-  Modal,
-  Platform,
-  Pressable,
-  RefreshControl,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { Alert, KeyboardAvoidingView, Modal, Platform, Pressable, RefreshControl, SectionList, StyleSheet, Text, TextInput, View } from 'react-native';
 import { fetchCrmEmployeesByCompany } from '../../api/crmMeta';
 import { formatApiError } from '../../api/client';
+import { fetchPipelineStages } from '../../api/crm';
 import type { LeadCrmTask } from '../../api/leadDetail';
 import {
   addTaskAttachmentNote,
@@ -34,6 +21,7 @@ import {
   updateTaskNotes,
   type TaskAttachment,
 } from '../../api/leadTasks';
+import AuthRemoteImage from '../AuthRemoteImage';
 import PickerSheet, { type PickerOption } from '../PickerSheet';
 import ImageGalleryLightbox, { type GalleryImage } from '../ImageGalleryLightbox';
 import TaskAttachSheet, { type TaskAttachOption } from './TaskAttachSheet';
@@ -43,14 +31,30 @@ import {
   normalizeChecklist,
   type CrmChecklistItem,
 } from '../../lib/crmChecklist';
-import { resolveMediaUrl } from '../../lib/media';
-import { isImageFile, toGalleryImage } from '../../lib/isImageFile';
+import { groupCrmTasksByStage, type TaskStageSection } from '../../lib/crmTaskStages';
+import { isImageFile, isVideoFile } from '../../lib/isImageFile';
+import { promptMessengerFileActions } from '../../lib/messengerFileOpen';
+import { resolveFileAccessUrl } from '../../lib/remoteFile';
+import { useMediaPreview } from '../../context/MediaPreviewContext';
 import { attachmentItemFromUpload, uploadSingleFile, type LocalUploadFile } from '../../lib/uploadFile';
 import { Radii, Spacing, useColors, type ThemeColors } from '../../theme';
+import type { CrmPipelineStage } from '../../types';
 
 type Props = {
   leadId: string;
   companyId?: string | null;
+  /** Loại lead/deal — dùng tải pipeline stages để gom nhóm. */
+  leadType?: 'lead' | 'deal' | string | null;
+  /** stage_id hiện tại của lead — ưu tiên gắn task chưa có stage. */
+  currentStageId?: string | null;
+  /** Khớp web CRMTasksTab task_scope — mặc định crm. */
+  taskScope?: 'crm' | 'production' | 'logistics' | string;
+  /** shared = nhiệm vụ giao chéo công ty (Không gian chung). */
+  taskCompanyScope?: 'own' | 'shared' | 'all' | string;
+  /** Ẩn nút tạo nhiệm vụ (dùng cho tab shared). */
+  hideCreate?: boolean;
+  emptyTitle?: string;
+  emptyHint?: string;
 };
 
 type AttachTarget = { taskId: string; checklistId?: string | null };
@@ -61,16 +65,30 @@ function employeeName(map: Map<string, string>, id?: string | null): string {
   return map.get(String(id)) || '';
 }
 
-export default function LeadTasksTab({ leadId, companyId }: Props) {
+export default function LeadTasksTab({
+  leadId,
+  companyId,
+  leadType = 'lead',
+  currentStageId = null,
+  taskScope = 'crm',
+  taskCompanyScope,
+  hideCreate = false,
+  emptyTitle = 'Chưa có nhiệm vụ',
+  emptyHint = 'Thêm nhiệm vụ hoặc checklist cho lead/deal này.',
+}: Props) {
   const Colors = useColors();
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
+  const { openInAppMedia } = useMediaPreview();
 
   const [tasks, setTasks] = useState<LeadCrmTask[]>([]);
+  const [stages, setStages] = useState<CrmPipelineStage[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [expandedCk, setExpandedCk] = useState<string | null>(null);
+  const [collapsedStages, setCollapsedStages] = useState<Record<string, boolean>>({});
+  const [bulkBusy, setBulkBusy] = useState(false);
   const [attachments, setAttachments] = useState<Record<string, TaskAttachment[]>>({});
   const [employees, setEmployees] = useState<PickerOption[]>([]);
   const [attachTarget, setAttachTarget] = useState<AttachTarget | null>(null);
@@ -92,18 +110,39 @@ export default function LeadTasksTab({ leadId, companyId }: Props) {
 
   const empMap = useMemo(() => new Map(employees.map((e) => [e.id, e.name])), [employees]);
 
+  const kind = String(leadType || 'lead') === 'deal' ? 'deal' : 'lead';
+
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     setError(null);
     try {
-      setTasks(await fetchLeadTasks(leadId));
+      const [taskRows, stageRows] = await Promise.all([
+        fetchLeadTasks(leadId, { taskScope, taskCompanyScope }),
+        taskScope === 'crm'
+          ? fetchPipelineStages(kind, { companyId: companyId || undefined }).catch(() => [] as CrmPipelineStage[])
+          : Promise.resolve([] as CrmPipelineStage[]),
+      ]);
+      setTasks(taskRows);
+      setStages(stageRows);
     } catch (e) {
       setError(formatApiError(e));
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [leadId]);
+  }, [leadId, taskScope, taskCompanyScope, kind, companyId]);
+
+  const stageSections = useMemo(
+    () => groupCrmTasksByStage(tasks, stages, currentStageId),
+    [tasks, stages, currentStageId],
+  );
+
+  const listSections = useMemo(() => {
+    return stageSections.map((s) => ({
+      ...s,
+      data: collapsedStages[s.key] === true ? [] : s.tasks,
+    }));
+  }, [stageSections, collapsedStages]);
 
   const loadAtts = useCallback(async (taskId: string) => {
     try {
@@ -160,6 +199,43 @@ export default function LeadTasksTab({ leadId, companyId }: Props) {
   const toggleTaskStatus = async (task: LeadCrmTask) => {
     const next = task.status === 'completed' ? 'pending' : 'completed';
     await saveTaskUpdate(task.id, { status: next });
+  };
+
+  const completeStageAll = (section: TaskStageSection) => {
+    const toComplete = section.tasks.filter((t) => t.status !== 'completed');
+    if (!toComplete.length) {
+      Alert.alert('Xong hết', 'Không còn nhiệm vụ chưa hoàn thành trong giai đoạn này.');
+      return;
+    }
+    Alert.alert(
+      'Xong hết',
+      `Đánh dấu hoàn thành ${toComplete.length} nhiệm vụ trong «${section.label}»?`,
+      [
+        { text: 'Hủy', style: 'cancel' },
+        {
+          text: 'Xong hết',
+          onPress: () => {
+            void (async () => {
+              const prev = tasks;
+              const ids = new Set(toComplete.map((t) => t.id));
+              setBulkBusy(true);
+              setTasks((p) => p.map((t) => (ids.has(t.id) ? { ...t, status: 'completed' } : t)));
+              try {
+                await Promise.all(
+                  toComplete.map((t) => updateLeadTask(leadId, t.id, { status: 'completed' })),
+                );
+                await load(true);
+              } catch (e) {
+                setTasks(prev);
+                Alert.alert('Lỗi', formatApiError(e));
+              } finally {
+                setBulkBusy(false);
+              }
+            })();
+          },
+        },
+      ],
+    );
   };
 
   const addTask = async () => {
@@ -426,20 +502,42 @@ export default function LeadTasksTab({ leadId, companyId }: Props) {
   };
 
   const openAtt = (att: TaskAttachment, imageRows: TaskAttachment[]) => {
-    if (isImageFile(att)) {
-      const items = imageRows
-        .map((a) => toGalleryImage(String(a.id), a, { title: a.file_name || a.name || 'Ảnh' }))
-        .filter((g): g is NonNullable<typeof g> => !!g);
-      const i = items.findIndex((g) => g.id === String(att.id));
-      if (i >= 0) {
-        setGalleryImages(items.map((g) => ({ uri: g.uri, title: g.title, subtitle: g.subtitle })));
-        setGalleryIndex(i);
-        setGalleryOpen(true);
-        return;
+    void (async () => {
+      if (isImageFile(att)) {
+        const items = (
+          await Promise.all(
+            imageRows.map(async (a) => {
+              const uri = await resolveFileAccessUrl(a.file_url, { name: a.file_name || a.name });
+              if (!uri) return null;
+              return {
+                uri,
+                title: a.file_name || a.name || 'Ảnh',
+                subtitle: undefined as string | undefined,
+                id: String(a.id),
+              };
+            }),
+          )
+        ).filter((g): g is { uri: string; title: string; subtitle?: string; id: string } => !!g);
+        const i = items.findIndex((g) => g.id === String(att.id));
+        if (i >= 0) {
+          setGalleryImages(items.map((g) => ({ uri: g.uri, title: g.title, subtitle: g.subtitle })));
+          setGalleryIndex(i);
+          setGalleryOpen(true);
+          return;
+        }
       }
-    }
-    const u = resolveMediaUrl(att.file_url);
-    if (u) void Linking.openURL(u);
+      const u = await resolveFileAccessUrl(att.file_url, { name: att.file_name || att.name });
+      if (!u) return;
+      if (isVideoFile(att) && openInAppMedia({
+        uri: u,
+        mime_type: att.mime_type,
+        name: att.file_name || att.name,
+      })) return;
+      promptMessengerFileActions(String(att.file_url || u), {
+        name: att.file_name || att.name,
+        mime: att.mime_type,
+      });
+    })();
   };
 
   const renderAttachments = (taskId: string, ckId?: string | null, scopeLabel?: string) => {
@@ -457,7 +555,7 @@ export default function LeadTasksTab({ leadId, companyId }: Props) {
           <View style={styles.attImgGrid}>
             {imageRows.map((att) => (
               <Pressable key={att.id} style={styles.attImgWrap} onPress={() => openAtt(att, imageRows)}>
-                <Image source={{ uri: resolveMediaUrl(att.file_url) || '' }} style={styles.attImgTile} resizeMode="cover" />
+                <AuthRemoteImage rawUrl={att.file_url} style={styles.attImgTile} resizeMode="cover" />
               </Pressable>
             ))}
           </View>
@@ -582,7 +680,7 @@ export default function LeadTasksTab({ leadId, companyId }: Props) {
                     </Pressable>
                   </View>
                   {renderAttachments(task.id, ck.id, 'Ảnh / file checklist')}
-                  {uploading === key ? <ActivityIndicator color={Colors.blue} style={{ marginTop: 6 }} /> : null}
+                  {uploading === key ? <SpinningLoader color={Colors.blue} style={{ marginTop: 6 }} /> : null}
                 </View>
               ) : null}
               </View>
@@ -608,7 +706,6 @@ export default function LeadTasksTab({ leadId, companyId }: Props) {
 
   const renderTask = ({ item: task }: { item: LeadCrmTask }) => {
     const expanded = expandedId === task.id;
-    const stageName = task.pipeline_stage?.name || task.stage_slug || '';
     const assignee =
       employeeName(empMap, task.assignee_id || task.assignees?.[0]?.id) ||
       task.assignees?.map((a) => a.full_name).filter(Boolean).join(', ') ||
@@ -625,15 +722,6 @@ export default function LeadTasksTab({ leadId, companyId }: Props) {
             />
           </Pressable>
           <View style={{ flex: 1 }}>
-            <View style={styles.taskBadgeRow}>
-              <View style={styles.taskBadge}>
-                <Ionicons name="briefcase-outline" size={12} color={Colors.blue} />
-                <Text style={styles.taskBadgeTxt}>Nhiệm vụ</Text>
-              </View>
-              {stageName ? (
-                <Text style={styles.taskStageChip} numberOfLines={1}>{stageName}</Text>
-              ) : null}
-            </View>
             <Text style={[styles.cardTitle, task.status === 'completed' && styles.taskDone]} numberOfLines={2}>
               {task.title || 'Nhiệm vụ'}
             </Text>
@@ -682,7 +770,7 @@ export default function LeadTasksTab({ leadId, companyId }: Props) {
                 <Text style={styles.saveNoteTxt}>{saving === `note-${task.id}` ? 'Đang lưu…' : 'Lưu ghi chú'}</Text>
               </Pressable>
               {renderAttachments(task.id, null, 'Ảnh / file nhiệm vụ')}
-              {uploading === task.id ? <ActivityIndicator color={Colors.blue} style={{ marginTop: 8 }} /> : null}
+              {uploading === task.id ? <SpinningLoader color={Colors.blue} style={{ marginTop: 8 }} /> : null}
             </View>
           </View>
         ) : null}
@@ -690,16 +778,60 @@ export default function LeadTasksTab({ leadId, companyId }: Props) {
     );
   };
 
+  const renderStageHeader = (section: TaskStageSection & { data: LeadCrmTask[] }) => {
+    const collapsed = collapsedStages[section.key] === true;
+    const accent = section.color || Colors.blue;
+    return (
+      <View style={[styles.stageHead, section.isCurrent && styles.stageHeadCurrent]}>
+        <Pressable
+          style={styles.stageHeadMain}
+          onPress={() =>
+            setCollapsedStages((p) => ({ ...p, [section.key]: !(p[section.key] === true) }))
+          }
+        >
+          <View style={[styles.stageDot, { backgroundColor: accent }]} />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.stageTitle} numberOfLines={1}>
+              {section.icon ? `${section.icon} ` : ''}{section.label}
+              {section.isCurrent ? ' · hiện tại' : ''}
+            </Text>
+            <Text style={styles.stageMeta}>
+              {section.doneCount}/{section.tasks.length} xong
+              {section.openCount ? ` · ${section.openCount} còn lại` : ''}
+            </Text>
+          </View>
+          <Ionicons
+            name={collapsed ? 'chevron-down' : 'chevron-up'}
+            size={18}
+            color={Colors.textMuted}
+          />
+        </Pressable>
+        {section.openCount > 0 ? (
+          <Pressable
+            style={[styles.doneAllBtn, bulkBusy && { opacity: 0.6 }]}
+            disabled={bulkBusy}
+            onPress={() => completeStageAll(section)}
+          >
+            <Ionicons name="checkmark-done-outline" size={15} color={Colors.white} />
+            <Text style={styles.doneAllTxt}>Xong hết</Text>
+          </Pressable>
+        ) : null}
+      </View>
+    );
+  };
+
   if (loading && !tasks.length) {
-    return <ActivityIndicator color={Colors.blue} style={{ marginTop: 32 }} />;
+    return <SpinningLoader color={Colors.blue} style={{ marginTop: 32 }} />;
   }
 
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <FlatList
-        data={tasks}
+      <SectionList
+        sections={listSections}
         keyExtractor={(t) => t.id}
         renderItem={renderTask}
+        renderSectionHeader={({ section }) => renderStageHeader(section as TaskStageSection & { data: LeadCrmTask[] })}
+        stickySectionHeadersEnabled={false}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); void load(true); }} tintColor={Colors.blue} />
         }
@@ -711,17 +843,19 @@ export default function LeadTasksTab({ leadId, companyId }: Props) {
                 <Text style={styles.errorText}>{error}</Text>
               </View>
             ) : null}
-            <Pressable style={styles.addTaskBtn} onPress={() => setAddOpen(true)}>
-              <Ionicons name="add-circle-outline" size={20} color={Colors.white} />
-              <Text style={styles.addTaskTxt}>Thêm nhiệm vụ</Text>
-            </Pressable>
+            {!hideCreate ? (
+              <Pressable style={styles.addTaskBtn} onPress={() => setAddOpen(true)}>
+                <Ionicons name="add-circle-outline" size={20} color={Colors.white} />
+                <Text style={styles.addTaskTxt}>Thêm nhiệm vụ</Text>
+              </Pressable>
+            ) : null}
           </>
         }
         ListEmptyComponent={
           <View style={styles.empty}>
             <Ionicons name="checkbox-outline" size={40} color={Colors.textFaint} />
-            <Text style={styles.emptyTitle}>Chưa có nhiệm vụ</Text>
-            <Text style={styles.emptyHint}>Bấm «Thêm nhiệm vụ» hoặc đồng bộ pipeline trên web.</Text>
+            <Text style={styles.emptyTitle}>{emptyTitle}</Text>
+            <Text style={styles.emptyHint}>{emptyHint}</Text>
           </View>
         }
       />
@@ -857,6 +991,32 @@ function makeStyles(C: ThemeColors) {
   return StyleSheet.create({
     listPad: { padding: Spacing.md, paddingBottom: Spacing.xl },
     listPadGrow: { flexGrow: 1, padding: Spacing.md },
+    stageHead: {
+      marginTop: 10,
+      marginBottom: 6,
+      backgroundColor: C.card,
+      borderRadius: Radii.md,
+      borderWidth: 1,
+      borderColor: C.borderSoft,
+      padding: 10,
+      gap: 8,
+    },
+    stageHeadCurrent: { borderColor: C.blue },
+    stageHeadMain: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+    stageDot: { width: 10, height: 10, borderRadius: 5 },
+    stageTitle: { fontSize: 14, fontWeight: '800', color: C.text },
+    stageMeta: { fontSize: 11, color: C.textMuted, marginTop: 2 },
+    doneAllBtn: {
+      alignSelf: 'flex-start',
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 5,
+      backgroundColor: C.green,
+      paddingHorizontal: 12,
+      paddingVertical: 7,
+      borderRadius: Radii.sm,
+    },
+    doneAllTxt: { color: C.white, fontWeight: '800', fontSize: 12 },
     addTaskBtn: {
       flexDirection: 'row',
       alignItems: 'center',

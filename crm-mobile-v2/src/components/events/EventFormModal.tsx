@@ -1,19 +1,7 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
+import SpinningLoader from '../SpinningLoader';
 import React, { useEffect, useMemo, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Switch,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { Alert, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   EVENT_MODULE_OPTIONS,
@@ -32,6 +20,7 @@ import {
 } from '../../api/events';
 import {
   fetchCrmEmployeesByCompany,
+  loadCrmCompanies,
   type CrmCompany,
   type CrmEmployee,
 } from '../../api/crmMeta';
@@ -102,12 +91,34 @@ export default function EventFormModal({
   const [assigneePickerOpen, setAssigneePickerOpen] = useState(false);
   const [companyPickerOpen, setCompanyPickerOpen] = useState(false);
   const [formEmployees, setFormEmployees] = useState<CrmEmployee[]>([]);
+  const [formCompanies, setFormCompanies] = useState<CrmCompany[]>(companies);
+  const [companiesLoading, setCompaniesLoading] = useState(false);
+  const [companySearch, setCompanySearch] = useState('');
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (!visible) return;
     void fetchEventTypes().then(setTypes);
   }, [visible]);
+
+  /** Form tự tải DS công ty — không chờ màn Lịch (tránh mở sớm chỉ thấy 1 CT). */
+  useEffect(() => {
+    if (!visible || !showCompanyPicker) return undefined;
+    if (companies.length) setFormCompanies(companies);
+    let cancelled = false;
+    if (companies.length < 2) setCompaniesLoading(true);
+    void loadCrmCompanies()
+      .then((rows) => {
+        if (cancelled) return;
+        if (rows.length) setFormCompanies(rows);
+      })
+      .finally(() => {
+        if (!cancelled) setCompaniesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [visible, showCompanyPicker, companies]);
 
   useEffect(() => {
     if (!visible) return;
@@ -148,6 +159,7 @@ export default function EventFormModal({
     setDescription('');
     setAssigneeId(defaultAssigneeId || '');
     setCompanyId(defaultCompanyId || '');
+    setCompanySearch('');
   }, [visible, event?.id, presetDay, defaultModule, defaultAssigneeId, defaultCompanyId]);
 
   useEffect(() => {
@@ -255,9 +267,16 @@ export default function EventFormModal({
   const assigneeName =
     assigneeList.find((u) => u.id === assigneeId)?.full_name ||
     (assigneeId ? 'Đã chọn' : 'Chọn người phụ trách…');
-  const companyLabel = companies.find((c) => c.id === companyId);
+  const companySource = formCompanies.length >= companies.length ? formCompanies : companies;
+  const companyLabel = companySource.find((c) => c.id === companyId);
   const companyName =
     companyLabel?.name || companyLabel?.short_name || (companyId ? 'Đã chọn' : 'Chọn công ty…');
+  const companyQuery = companySearch.trim().toLowerCase();
+  const visibleCompanies = companyQuery
+    ? companySource.filter((c) =>
+        `${c.name} ${c.short_name || ''}`.toLowerCase().includes(companyQuery),
+      )
+    : companySource;
 
   const moduleChoices = EVENT_MODULE_OPTIONS.filter((m) => m.value);
 
@@ -273,7 +292,7 @@ export default function EventFormModal({
           </Pressable>
           <Text style={styles.h1}>{isEdit ? 'Sửa sự kiện' : 'Tạo sự kiện'}</Text>
           <Pressable style={[styles.saveBtn, saving && { opacity: 0.6 }]} onPress={() => void save()} disabled={saving}>
-            {saving ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.saveTxt}>Lưu</Text>}
+            {saving ? <SpinningLoader color="#fff" size="small" /> : <Text style={styles.saveTxt}>Lưu</Text>}
           </Pressable>
         </View>
 
@@ -479,9 +498,28 @@ export default function EventFormModal({
         <Modal visible={companyPickerOpen} transparent animationType="fade" onRequestClose={() => setCompanyPickerOpen(false)}>
           <Pressable style={styles.pickerBackdrop} onPress={() => setCompanyPickerOpen(false)}>
             <Pressable style={[styles.pickerSheet, { paddingBottom: insets.bottom + 12 }]} onPress={() => {}}>
-              <Text style={styles.pickerTitle}>Chọn công ty</Text>
-              <ScrollView style={{ maxHeight: 360 }}>
-                {companies.map((c) => (
+              <Text style={styles.pickerTitle}>
+                Chọn công ty{companySource.length > 1 ? ` (${companySource.length})` : ''}
+              </Text>
+              {companySource.length > 8 ? (
+                <TextInput
+                  value={companySearch}
+                  onChangeText={setCompanySearch}
+                  placeholder="Tìm công ty…"
+                  placeholderTextColor={Colors.textFaint}
+                  style={[styles.input, { marginBottom: 8 }]}
+                />
+              ) : null}
+              <ScrollView style={{ maxHeight: 360 }} keyboardShouldPersistTaps="handled">
+                {companiesLoading && companySource.length < 2 ? (
+                  <View style={{ paddingVertical: 20, alignItems: 'center', gap: 8 }}>
+                    <SpinningLoader color={Colors.blue} />
+                    <Text style={[styles.pickerRowTxt, { color: Colors.textFaint }]}>
+                      Đang tải danh sách công ty…
+                    </Text>
+                  </View>
+                ) : null}
+                {visibleCompanies.map((c) => (
                   <Pressable
                     key={c.id}
                     style={styles.pickerRow}
@@ -489,6 +527,7 @@ export default function EventFormModal({
                       setCompanyId(c.id);
                       setAssigneeId('');
                       setCompanyPickerOpen(false);
+                      setCompanySearch('');
                     }}
                   >
                     <Text style={[styles.pickerRowTxt, companyId === c.id && { color: Colors.blue, fontWeight: '800' }]}>
@@ -497,9 +536,9 @@ export default function EventFormModal({
                     {companyId === c.id ? <Ionicons name="checkmark" size={18} color={Colors.blue} /> : null}
                   </Pressable>
                 ))}
-                {!companies.length ? (
+                {!companiesLoading && !visibleCompanies.length ? (
                   <Text style={[styles.pickerRowTxt, { color: Colors.textFaint, paddingVertical: 12 }]}>
-                    Không có danh sách công ty
+                    {companyQuery ? 'Không tìm thấy công ty' : 'Không có danh sách công ty'}
                   </Text>
                 ) : null}
               </ScrollView>

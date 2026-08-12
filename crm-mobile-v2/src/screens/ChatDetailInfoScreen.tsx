@@ -1,22 +1,9 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
+import SpinningLoader from '../components/SpinningLoader';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useFocusEffect } from '@react-navigation/native';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  DeviceEventEmitter,
-  FlatList,
-  Image,
-  Pressable,
-  ScrollView,
-  Share,
-  StyleSheet,
-  Switch,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { Alert, DeviceEventEmitter, FlatList, Image, Pressable, ScrollView, Share, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatApiError } from '../api/client';
@@ -46,7 +33,7 @@ import {
   isVideoMessage,
   resolvePrimaryAttachment,
 } from '../lib/messengerMedia';
-import { openMessengerAttachment } from '../lib/messengerFileOpen';
+import { useMediaPreview } from '../context/MediaPreviewContext';
 import {
   clearChatWallpaper,
   getChatWallpaperValue,
@@ -144,6 +131,7 @@ export default function ChatDetailInfoScreen({ navigation, route }: Props) {
   const mc = getMessengerColors(colors, isDark);
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
+  const { openVideo } = useMediaPreview();
   const myUserId = String(user?.id || user?.userId || '');
   const { threads, patchThreadMeta, refreshThreads } = useMessenger();
   const thread = threads.find((t) => t.id === threadId);
@@ -827,7 +815,7 @@ export default function ChatDetailInfoScreen({ navigation, route }: Props) {
         style={[styles.mediaThumb, { width: size, height: size }]}
         onPress={() => {
           if (!url) return;
-          if (video) void openMessengerAttachment(url, { name: att.name, mime: att.type || 'video/mp4' });
+          if (video) openVideo({ uri: url, title: att.name || 'Video' });
           else setLightboxUrl(url);
         }}
       >
@@ -875,7 +863,7 @@ export default function ChatDetailInfoScreen({ navigation, route }: Props) {
           <Text style={[styles.menuTitle, { color: mc.accent }]}>Thêm thành viên</Text>
         </Pressable>
         {membersLoading ? (
-          <ActivityIndicator style={{ marginTop: 24 }} color={mc.accent} />
+          <SpinningLoader style={{ marginTop: 24 }} color={mc.accent} />
         ) : (
           <FlatList
             data={members}
@@ -930,7 +918,7 @@ export default function ChatDetailInfoScreen({ navigation, route }: Props) {
           />
         )}
         <Pressable style={[styles.leaveBtn, { margin: Spacing.lg }]} onPress={confirmLeave} disabled={leaving}>
-          {leaving ? <ActivityIndicator color={colors.red} /> : <Text style={styles.leaveTxt}>Rời nhóm</Text>}
+          {leaving ? <SpinningLoader color={colors.red} /> : <Text style={styles.leaveTxt}>Rời nhóm</Text>}
         </Pressable>
 
         {addOpen ? (
@@ -943,7 +931,7 @@ export default function ChatDetailInfoScreen({ navigation, route }: Props) {
                 </Pressable>
               </View>
               {pickerLoading || adding ? (
-                <ActivityIndicator style={{ margin: 24 }} color={mc.accent} />
+                <SpinningLoader style={{ margin: 24 }} color={mc.accent} />
               ) : (
                 <FlatList
                   data={pickerUsers}
@@ -994,7 +982,7 @@ export default function ChatDetailInfoScreen({ navigation, route }: Props) {
                   disabled={nickSaving}
                 >
                   {nickSaving ? (
-                    <ActivityIndicator color="#FFF" />
+                    <SpinningLoader color="#FFF" />
                   ) : (
                     <Text style={styles.renameSaveTxt}>Lưu</Text>
                   )}
@@ -1040,7 +1028,7 @@ export default function ChatDetailInfoScreen({ navigation, route }: Props) {
             />
             {canManageGroup ? (
               avatarUploading ? (
-                <ActivityIndicator style={{ marginTop: 8 }} color={mc.accent} />
+                <SpinningLoader style={{ marginTop: 8 }} color={mc.accent} />
               ) : (
                 <View style={[styles.editAvatarBadge, { backgroundColor: mc.accent }]}>
                   <Ionicons name="camera" size={14} color="#FFF" />
@@ -1132,7 +1120,7 @@ export default function ChatDetailInfoScreen({ navigation, route }: Props) {
 
         {!isDirect ? (
           <Pressable style={styles.leaveBtn} onPress={confirmLeave} disabled={leaving}>
-            {leaving ? <ActivityIndicator color={colors.red} /> : <Text style={styles.leaveTxt}>Rời nhóm</Text>}
+            {leaving ? <SpinningLoader color={colors.red} /> : <Text style={styles.leaveTxt}>Rời nhóm</Text>}
           </Pressable>
         ) : null}
       </ScrollView>
@@ -1147,7 +1135,7 @@ export default function ChatDetailInfoScreen({ navigation, route }: Props) {
               </Pressable>
             </View>
             {pickerLoading || adding ? (
-              <ActivityIndicator style={{ margin: 24 }} color={mc.accent} />
+              <SpinningLoader style={{ margin: 24 }} color={mc.accent} />
             ) : (
               <FlatList
                 data={pickerUsers}
@@ -1189,7 +1177,7 @@ export default function ChatDetailInfoScreen({ navigation, route }: Props) {
                 disabled={renaming}
               >
                 {renaming ? (
-                  <ActivityIndicator color="#FFF" />
+                  <SpinningLoader color="#FFF" />
                 ) : (
                   <Text style={styles.renameSaveTxt}>Lưu</Text>
                 )}
@@ -1233,7 +1221,7 @@ export default function ChatDetailInfoScreen({ navigation, route }: Props) {
                 disabled={nickSaving}
               >
                 {nickSaving ? (
-                  <ActivityIndicator color="#FFF" />
+                  <SpinningLoader color="#FFF" />
                 ) : (
                   <Text style={styles.renameSaveTxt}>Lưu</Text>
                 )}
@@ -1271,7 +1259,7 @@ export default function ChatDetailInfoScreen({ navigation, route }: Props) {
               disabled={wallpaperBusy}
             >
               {wallpaperBusy ? (
-                <ActivityIndicator color={mc.accent} />
+                <SpinningLoader color={mc.accent} />
               ) : (
                 <Text style={styles.wallpaperCustomTxt}>Chọn ảnh</Text>
               )}

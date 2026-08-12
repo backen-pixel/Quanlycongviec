@@ -1,7 +1,14 @@
 /**
  * Drive API client cho crm-mobile-v2.
  */
+import { API_PREFIX } from '../config';
 import { api, postMultipart } from './client';
+
+/** Stream Drive inline + Range (video/ảnh trong app). Có thể kèm JWT query. */
+export function driveFileContentUrl(fileId: string, token?: string | null): string {
+  const base = `${API_PREFIX}/drive/files/${fileId}/stream`;
+  return token ? `${base}?access_token=${encodeURIComponent(token)}` : base;
+}
 
 export type DriveRoot = {
   id: string;

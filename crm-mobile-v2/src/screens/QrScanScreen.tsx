@@ -1,14 +1,9 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
+import SpinningLoader from '../components/SpinningLoader';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import React, { useCallback, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  Pressable,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { api, formatApiError } from '../api/client';
 import { getQrDeviceInfo, formatQrDeviceLabel } from '../lib/qrDeviceInfo';
@@ -76,7 +71,7 @@ export default function QrScanScreen({ navigation }: Props) {
   if (!permission) {
     return (
       <View style={[styles.root, styles.center]}>
-        <ActivityIndicator color={Colors.blue} />
+        <SpinningLoader color={Colors.blue} />
       </View>
     );
   }
@@ -122,7 +117,7 @@ export default function QrScanScreen({ navigation }: Props) {
       ) : (
         <View style={[styles.center, { flex: 1, padding: 24 }]}>
           {phase === 'confirming' ? (
-            <ActivityIndicator color={Colors.blue} size="large" />
+            <SpinningLoader color={Colors.blue} size="large" />
           ) : (
             <Ionicons
               name={phase === 'done' ? 'checkmark-circle' : 'alert-circle'}

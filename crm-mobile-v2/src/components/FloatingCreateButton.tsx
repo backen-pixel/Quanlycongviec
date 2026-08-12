@@ -5,31 +5,16 @@ import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-nativ
 import { CreateGradient, Shadow, useColors, type ThemeColors } from '../theme';
 
 type Props = {
-  open: boolean;
   onPress: () => void;
 };
 
 /**
- * Nút "Tạo mới" nổi ở giữa thanh tab:
- * - Nền gradient cam cháy đa sắc
- * - Vòng phát sáng (glow) bao quanh
- * - Nhô cao khỏi thanh menu, có label "Tạo mới"
- * - Bấm xoay dấu + thành ×
+ * Bong bóng «Tạo sự kiện» — nổi góc phải phía trên thanh tab (kiểu FAB Lead mới).
  */
-export default function FloatingCreateButton({ open, onPress }: Props) {
+export default function FloatingCreateButton({ onPress }: Props) {
   const Colors = useColors();
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
-  const rotate = useRef(new Animated.Value(0)).current;
   const glow = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    Animated.timing(rotate, {
-      toValue: open ? 1 : 0,
-      duration: 220,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: true,
-    }).start();
-  }, [open, rotate]);
 
   useEffect(() => {
     const loop = Animated.loop(
@@ -52,13 +37,12 @@ export default function FloatingCreateButton({ open, onPress }: Props) {
     return () => loop.stop();
   }, [glow]);
 
-  const spin = rotate.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '135deg'] });
   const glowScale = glow.interpolate({ inputRange: [0, 1], outputRange: [1, 1.18] });
   const glowOpacity = glow.interpolate({ inputRange: [0, 1], outputRange: [0.35, 0.7] });
 
   return (
     <View style={styles.wrap} pointerEvents="box-none">
-      <Pressable onPress={onPress} style={styles.pressable} hitSlop={10}>
+      <Pressable onPress={onPress} style={styles.pressable} hitSlop={8} accessibilityLabel="Tạo sự kiện">
         <Animated.View
           style={[
             styles.glow,
@@ -72,43 +56,39 @@ export default function FloatingCreateButton({ open, onPress }: Props) {
           end={{ x: 1, y: 1 }}
           style={[styles.button, Shadow.fab]}
         >
-          <Animated.View style={{ transform: [{ rotate: spin }] }}>
-            <Ionicons name="add" size={34} color="#FFFFFF" />
-          </Animated.View>
+          <Ionicons name="calendar" size={26} color="#FFFFFF" />
+          <Text style={styles.innerLabel}>Tạo sự kiện</Text>
         </LinearGradient>
       </Pressable>
-      <Text style={styles.label}>{open ? 'Đóng' : 'Tạo mới'}</Text>
     </View>
   );
 }
 
-const BTN = 60;
+const BTN = 68;
 
 const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
   wrap: {
     alignItems: 'center',
-    justifyContent: 'flex-start',
-    width: 88,
+    width: BTN + 28,
   },
   pressable: {
-    width: 88,
-    height: 88,
+    width: BTN + 28,
+    height: BTN + 28,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: -30,
   },
   glow: {
     position: 'absolute',
-    width: BTN + 26,
-    height: BTN + 26,
-    borderRadius: (BTN + 26) / 2,
+    width: BTN + 22,
+    height: BTN + 22,
+    borderRadius: (BTN + 22) / 2,
     backgroundColor: Colors.orangeGlow,
   },
   ring: {
     position: 'absolute',
-    width: BTN + 12,
-    height: BTN + 12,
-    borderRadius: (BTN + 12) / 2,
+    width: BTN + 10,
+    height: BTN + 10,
+    borderRadius: (BTN + 10) / 2,
     borderWidth: 2,
     borderColor: 'rgba(251,191,36,0.55)',
   },
@@ -120,11 +100,14 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
     justifyContent: 'center',
     borderWidth: 1.5,
     borderColor: 'rgba(255,255,255,0.18)',
+    gap: 2,
+    paddingTop: 2,
   },
-  label: {
-    color: Colors.orange,
-    fontSize: 11,
+  innerLabel: {
+    color: '#FFFFFF',
+    fontSize: 9,
     fontWeight: '800',
-    marginTop: -4,
+    textAlign: 'center',
+    lineHeight: 11,
   },
 });

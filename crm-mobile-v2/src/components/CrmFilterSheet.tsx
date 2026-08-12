@@ -1,17 +1,10 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
+import SpinningLoader from './SpinningLoader';
 import React, { useEffect, useMemo, useState } from 'react';
-import {
-  ActivityIndicator,
-  Modal,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import { Modal, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { CrmCompany, CrmDepartment, CrmEmployee, CrmRegion } from '../api/crmMeta';
+import DateRangePickerSheet from './DateRangePickerSheet';
 import {
   DEFAULT_CRM_FILTERS,
   REGION_NONE,
@@ -33,7 +26,14 @@ type Props = {
   departments: CrmDepartment[];
   employees: CrmEmployee[];
   metaLoading: boolean;
-  /** Nhân viên thường: khóa lọc Công ty + Người phụ trách (không cho đổi). */
+  /** Khóa chọn công ty (NV + admin công ty). */
+  lockCompany?: boolean;
+  /** Khóa người phụ trách = chỉ «Của tôi» (NV thường). */
+  lockAssignee?: boolean;
+  /**
+   * @deprecated Dùng lockCompany + lockAssignee.
+   * true = khóa cả hai (tương thích cũ).
+   */
   lockScope?: boolean;
   /** Hiện Gộp/Tách khi pipeline có cột sau Thắng. */
   showDealOrderSplit?: boolean;
@@ -67,6 +67,8 @@ const TIME_OPTS: Option<TimePreset>[] = [
   { value: '', label: 'Mọi thời điểm', icon: 'time-outline' },
   { value: 'this_week', label: 'Tuần này', icon: 'calendar' },
   { value: 'this_month', label: 'Tháng này', icon: 'calendar-number-outline' },
+  { value: 'last_week', label: 'Tuần trước', icon: 'calendar-outline' },
+  { value: 'last_month', label: 'Tháng trước', icon: 'calendar-clear-outline' },
 ];
 
 function ChipRow<T extends string>({
@@ -139,6 +141,8 @@ export default function CrmFilterSheet({
   departments,
   employees,
   metaLoading,
+  lockCompany,
+  lockAssignee,
   lockScope = false,
   showDealOrderSplit = false,
   dealKhSplitEnabled = true,
@@ -151,13 +155,27 @@ export default function CrmFilterSheet({
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const insets = useSafeAreaInsets();
   const accent = mode === 'leads' ? Colors.blue : (mode === 'orders' ? Colors.purple : Colors.orange);
+  const lockCo = lockCompany ?? lockScope;
+  const lockAs = lockAssignee ?? lockScope;
   const [draft, setDraft] = useState(filters);
+  const [rangeOpen, setRangeOpen] = useState(false);
 
   useEffect(() => {
-    if (visible) setDraft(filters);
+    if (visible) {
+      setDraft(filters);
+      setRangeOpen(false);
+    }
   }, [visible, filters]);
 
   const patch = (p: Partial<CrmHubFilters>) => setDraft((d) => ({ ...d, ...p }));
+
+  const setTimePreset = (v: TimePreset) => {
+    patch({ timePreset: v, dateFrom: '', dateTo: '' });
+  };
+
+  const openCustomRange = () => {
+    setRangeOpen(true);
+  };
 
   const companyRows = useMemo(
     () => [{ id: '', name: 'Tất cả công ty' }, ...companies],
@@ -184,7 +202,7 @@ export default function CrmFilterSheet({
   }, [employees, draft.departmentId, draft.regionId]);
 
   const handleCompany = (companyId: string) => {
-    if (lockScope) return;
+    if (lockCo) return;
     patch({ companyId, regionId: '', departmentId: '', assigneeUserId: '', assignee: 'all' });
     onCompanyChange(companyId);
   };
@@ -198,6 +216,7 @@ export default function CrmFilterSheet({
   };
 
   return (
+    <>
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <Pressable style={styles.backdrop} onPress={onClose}>
         <Pressable
@@ -227,20 +246,20 @@ export default function CrmFilterSheet({
           <ScrollView style={styles.scroll} showsVerticalScrollIndicator={false}>
             <FilterSection
               title="Công ty"
-              subtitle={lockScope ? 'Đã khóa theo tài khoản của bạn' : 'Lọc qua API theo company_id'}
+              subtitle={lockCo ? 'Đã khóa theo tài khoản của bạn' : 'Lọc qua API theo company_id'}
             >
               {metaLoading && !companies.length ? (
-                <ActivityIndicator color={accent} style={{ marginVertical: 8 }} />
+                <SpinningLoader color={accent} style={{ marginVertical: 8 }} />
               ) : (
                 <ChipRow
                   options={companyRows.map((c) => ({ value: c.id, label: c.name }))}
                   value={draft.companyId}
                   onChange={handleCompany}
                   accent={accent}
-                  disabled={lockScope}
+                  disabled={lockCo}
                 />
               )}
-              {lockScope ? (
+              {lockCo ? (
                 <View style={styles.lockHint}>
                   <Ionicons name="lock-closed" size={13} color={Colors.textFaint} />
                   <Text style={styles.lockHintTxt}>Bạn chỉ xem dữ liệu trong công ty của mình.</Text>
@@ -259,26 +278,26 @@ export default function CrmFilterSheet({
 
             <FilterSection
               title="Người phụ trách"
-              subtitle={lockScope ? 'Đã khóa: chỉ xem bản ghi của bạn' : 'Chọn phòng ban → chọn nhân viên'}
+              subtitle={lockAs ? 'Đã khóa: chỉ xem bản ghi của bạn' : 'Chọn phòng ban → chọn nhân viên'}
             >
               <ChipRow
                 options={
-                  lockScope
+                  lockAs
                     ? [{ value: 'mine' as AssigneeFilter, label: 'Của tôi' }]
                     : ASSIGNEE_OPTS.map((o) => ({ value: o.value, label: o.label }))
                 }
-                value={lockScope ? 'mine' : draft.assignee === 'user' ? 'all' : draft.assignee}
+                value={lockAs ? 'mine' : draft.assignee === 'user' ? 'all' : draft.assignee}
                 onChange={(v) => patch({ assignee: v, assigneeUserId: '' })}
                 accent={accent}
-                disabled={lockScope}
+                disabled={lockAs}
               />
-              {lockScope ? (
+              {lockAs ? (
                 <View style={styles.lockHint}>
                   <Ionicons name="lock-closed" size={13} color={Colors.textFaint} />
                   <Text style={styles.lockHintTxt}>Không thể đổi người phụ trách.</Text>
                 </View>
               ) : null}
-              {!lockScope && departments.length > 0 ? (
+              {!lockAs && departments.length > 0 ? (
                 <>
                   <Text style={styles.subLbl}>Phòng ban</Text>
                   <ChipRow
@@ -289,8 +308,8 @@ export default function CrmFilterSheet({
                   />
                 </>
               ) : null}
-              {lockScope ? null : metaLoading && !employees.length ? (
-                <ActivityIndicator color={accent} style={{ marginTop: 8 }} />
+              {lockAs ? null : metaLoading && !employees.length ? (
+                <SpinningLoader color={accent} style={{ marginTop: 8 }} />
               ) : filteredEmployees.length > 0 ? (
                 <View style={styles.userList}>
                   {filteredEmployees.slice(0, 40).map((u) => {
@@ -376,13 +395,46 @@ export default function CrmFilterSheet({
               />
             </FilterSection>
 
-            <FilterSection title="Ngày tạo">
-              <ChipRow
-                options={TIME_OPTS.map((o) => ({ value: o.value, label: o.label }))}
-                value={draft.timePreset}
-                onChange={(v) => patch({ timePreset: v })}
-                accent={accent}
-              />
+            <FilterSection title="Ngày tạo" subtitle="Preset nhanh hoặc chọn khoảng ngày trên lịch">
+              <View style={styles.timeRow}>
+                <ChipRow
+                  options={TIME_OPTS.map((o) => ({ value: o.value, label: o.label }))}
+                  value={draft.timePreset}
+                  onChange={setTimePreset}
+                  accent={accent}
+                />
+              </View>
+              <TouchableOpacity
+                style={[
+                  styles.customDateBtn,
+                  draft.timePreset === 'custom' && { backgroundColor: accent + '22', borderColor: accent },
+                ]}
+                onPress={openCustomRange}
+              >
+                <Ionicons
+                  name="calendar-outline"
+                  size={16}
+                  color={draft.timePreset === 'custom' ? accent : Colors.textMuted}
+                />
+                <Text
+                  style={[
+                    styles.customDateTxt,
+                    draft.timePreset === 'custom' && { color: accent },
+                  ]}
+                  numberOfLines={1}
+                >
+                  {draft.timePreset === 'custom'
+                    ? (draft.dateFrom && draft.dateTo
+                      ? `${draft.dateFrom} → ${draft.dateTo}`
+                      : 'Chạm để chọn khoảng ngày')
+                    : 'Chọn lịch (khoảng ngày)'}
+                </Text>
+                <Ionicons
+                  name="chevron-forward"
+                  size={14}
+                  color={draft.timePreset === 'custom' ? accent : Colors.textFaint}
+                />
+              </TouchableOpacity>
             </FilterSection>
 
             {showDealOrderSplit && onDealKhSplitChange ? (
@@ -418,18 +470,30 @@ export default function CrmFilterSheet({
             <TouchableOpacity
               style={styles.resetBtn}
               onPress={() =>
-                setDraft(
-                  lockScope
-                    ? { ...DEFAULT_CRM_FILTERS, companyId: draft.companyId, assignee: 'mine', assigneeUserId: '' }
-                    : { ...DEFAULT_CRM_FILTERS },
-                )
+                setDraft({
+                  ...DEFAULT_CRM_FILTERS,
+                  companyId: lockCo ? draft.companyId : '',
+                  assignee: lockAs ? 'mine' : 'all',
+                  assigneeUserId: '',
+                })
               }
             >
               <Text style={styles.resetTxt}>Đặt lại</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.applyBtn, { backgroundColor: accent }]}
-              onPress={() => { onApply(draft); onClose(); }}
+              onPress={() => {
+                let next = draft;
+                if (draft.timePreset === 'custom') {
+                  if (!draft.dateFrom && !draft.dateTo) {
+                    next = { ...draft, timePreset: '', dateFrom: '', dateTo: '' };
+                  } else if (draft.dateFrom && draft.dateTo && draft.dateFrom > draft.dateTo) {
+                    next = { ...draft, dateFrom: draft.dateTo, dateTo: draft.dateFrom };
+                  }
+                }
+                onApply(next);
+                onClose();
+              }}
             >
               <Text style={styles.applyTxt}>Áp dụng</Text>
             </TouchableOpacity>
@@ -437,6 +501,23 @@ export default function CrmFilterSheet({
         </Pressable>
       </Pressable>
     </Modal>
+
+      <DateRangePickerSheet
+        visible={visible && rangeOpen}
+        dateFrom={draft.dateFrom}
+        dateTo={draft.dateTo}
+        accent={accent}
+        onConfirm={(from, to) => {
+          patch({ timePreset: 'custom', dateFrom: from, dateTo: to });
+          setRangeOpen(false);
+        }}
+        onClear={() => {
+          patch({ timePreset: '', dateFrom: '', dateTo: '' });
+          setRangeOpen(false);
+        }}
+        onClose={() => setRangeOpen(false)}
+      />
+    </>
   );
 }
 
@@ -509,6 +590,20 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
   splitBtnTxt: { color: Colors.textMuted, fontSize: 13, fontWeight: '800' },
   subLbl: { color: Colors.textMuted, fontSize: 12, fontWeight: '700', marginTop: 8, marginBottom: 6 },
   hScroll: { marginBottom: 4 },
+  timeRow: { marginBottom: 4 },
+  customDateBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    borderRadius: Radii.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surfaceSoft,
+  },
+  customDateTxt: { flex: 1, color: Colors.textMuted, fontSize: 13, fontWeight: '700' },
   miniChip: {
     paddingHorizontal: 12,
     paddingVertical: 8,

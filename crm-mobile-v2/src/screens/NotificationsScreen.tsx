@@ -16,23 +16,33 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { EmployeeReportQuery } from '../api/employeeReport';
+import { fetchDeadlineFocusBreakdown } from '../api/deadlineOverdue';
 import {
   fetchNotificationCounts,
   fetchNotifications,
+  invalidateNotificationCountsCache,
   markAllNotificationsRead,
   markNotificationRead,
   type AppNotification,
   type NotificationChannel,
   type NotificationCounts,
 } from '../api/notifications';
+import { setNotificationCounts } from '../lib/notificationCountsStore';
+import {
+  getDeadlineOverdueBreakdown,
+  isDeadlineOverdueFresh,
+  subscribeDeadlineOverdue,
+} from '../lib/deadlineOverdueStore';
+import { peekCrmHubFiltersForUser } from '../lib/crmHubFilterStore';
 import { formatBadgeCount } from '../components/NotificationBadge';
 import ReportRecentActivityFeed from '../components/reports/ReportRecentActivityFeed';
 import SpinningLoader from '../components/SpinningLoader';
-import { useAuth } from '../context/AuthContext';
+import { currentUserId, useAuth } from '../context/AuthContext';
+import { isSystemAdmin } from '../lib/crmAssignee';
 import { getPerfTier } from '../lib/devicePerf';
 import type { ActivityFeedItem } from '../lib/reportActivityFeed';
 import { timeLabel } from '../lib/media';
-import { defaultMonthRange } from '../lib/reportFormat';
+import { vnAddDaysYmd, vnTodayYmd } from '../lib/vnDate';
 import type { RootStackParamList } from '../navigation/types';
 import { Radii, useColors, type ThemeColors } from '../theme';
 
@@ -128,23 +138,37 @@ export default function NotificationsScreen() {
   const [marking, setMarking] = useState(false);
   const [error, setError] = useState('');
   const [counts, setCounts] = useState<NotificationCounts>(EMPTY_COUNTS);
+  const [overdueBd, setOverdueBd] = useState(() => getDeadlineOverdueBreakdown());
   const abortRef = useRef<AbortController | null>(null);
   const countsAbortRef = useRef<AbortController | null>(null);
 
-  const monthRange = useMemo(() => defaultMonthRange(), []);
-  const activityQuery = useMemo<EmployeeReportQuery>(() => ({
-    date_from: monthRange.from,
-    date_to: monthRange.to,
-    type: 'all',
-    ...(user?.company_id ? { company_id: String(user.company_id) } : {}),
-  }), [monthRange.from, monthRange.to, user?.company_id]);
+  useEffect(() => subscribeDeadlineOverdue(setOverdueBd), []);
+  const overdueTotal = overdueBd?.total ?? 0;
+  const overdueLead = overdueBd?.lead ?? 0;
+  const overdueDeal = overdueBd?.deal ?? 0;
 
+  const uid = currentUserId(user);
+  const userCompanyId = user?.company_id || '';
+  const activityQuery = useMemo<EmployeeReportQuery>(() => {
+    const today = vnTodayYmd();
+    const from = vnAddDaysYmd(today, -13) || today;
+    const hub = uid ? peekCrmHubFiltersForUser(uid) : null;
+    const companyId = hub?.filters.companyId || userCompanyId || '';
+    return {
+      date_from: from,
+      date_to: today,
+      type: 'all',
+      ...(companyId ? { company_id: String(companyId) } : {}),
+    };
+  }, [uid, userCompanyId]);
+
+  const workNeedsCompany = isSystemAdmin(user) && !activityQuery.company_id;
   const {
     items: activityItems,
     loading: activityLoading,
     error: activityError,
     refresh: refreshActivity,
-  } = useOrgActivityFeed(activityQuery, isWorkTab);
+  } = useOrgActivityFeed(activityQuery, isWorkTab && !workNeedsCompany);
 
   const refreshCounts = useCallback(async () => {
     countsAbortRef.current?.abort();
@@ -152,18 +176,25 @@ export default function NotificationsScreen() {
     countsAbortRef.current = ac;
     try {
       const next = await fetchNotificationCounts(ac.signal);
-      if (!ac.signal.aborted) setCounts(next);
+      if (!ac.signal.aborted) {
+        setCounts(next);
+        setNotificationCounts(next);
+      }
     } catch {
-      if (!ac.signal.aborted) setCounts(EMPTY_COUNTS);
+      if (!ac.signal.aborted) {
+        setCounts(EMPTY_COUNTS);
+        setNotificationCounts(EMPTY_COUNTS);
+      }
     }
   }, []);
 
   const tabBadge = useCallback(
     (key: NotificationTab): number => {
       if (key === 'work') return activityItems.length;
+      if (key === 'deadlines') return Math.max(counts.deadlines || 0, overdueTotal);
       return counts[key] ?? 0;
     },
-    [activityItems.length, counts],
+    [activityItems.length, counts, overdueTotal],
   );
 
   const load = useCallback(
@@ -195,6 +226,17 @@ export default function NotificationsScreen() {
         if (!ac.signal.aborted) {
           notifListCache.set(key, { items: list, at: Date.now() });
           setItems(list);
+          if (channel === 'deadlines') {
+            const unreadN = list.filter((n) => !n.is_read).length;
+            if (unreadN > 0) {
+              setCounts((prev) => {
+                const next = { ...prev, deadlines: Math.max(prev.deadlines, unreadN) };
+                next.total = next.activity + next.assignments + next.events + next.deadlines;
+                setNotificationCounts(next);
+                return next;
+              });
+            }
+          }
         }
       } catch (e: unknown) {
         if (!ac.signal.aborted) {
@@ -223,16 +265,19 @@ export default function NotificationsScreen() {
   useFocusEffect(
     useCallback(() => {
       void refreshCounts();
+      if (!isDeadlineOverdueFresh() && user) {
+        void fetchDeadlineFocusBreakdown(user).catch(() => {});
+      }
       return () => {
         abortRef.current?.abort();
         countsAbortRef.current?.abort();
       };
-    }, [refreshCounts]),
+    }, [refreshCounts, user]),
   );
 
   useEffect(() => {
     if (isWorkTab) {
-      void refreshActivity();
+      // useOrgActivityFeed tự tải khi enabled — không gọi refresh lần nữa (abort → treo spinner).
       return;
     }
     const channel = tab as NotificationChannel;
@@ -247,7 +292,7 @@ export default function NotificationsScreen() {
       setLoading(true);
       void load({ channel });
     }
-  }, [tab, onlyUnread, isWorkTab, load, refreshActivity]);
+  }, [tab, onlyUnread, isWorkTab, load]);
 
   useCrmRealtimeRefresh(
     useCallback(() => {
@@ -313,10 +358,12 @@ export default function NotificationsScreen() {
     setItems(nextItems);
     syncListCache(tab as NotificationChannel, nextItems);
     setCounts(EMPTY_COUNTS);
+    invalidateNotificationCountsCache();
+    setNotificationCounts(EMPTY_COUNTS);
     try {
-      // Đánh dấu đã đọc toàn bộ kênh để badge tổng về 0.
       await markAllNotificationsRead();
-      void refreshCounts();
+      const next = await fetchNotificationCounts(undefined, { force: true });
+      setCounts(next);
     } catch {
       void load();
       void refreshCounts();
@@ -324,6 +371,10 @@ export default function NotificationsScreen() {
       setMarking(false);
     }
   };
+
+  const openDeadlineTab = useCallback(() => {
+    navigation.navigate('Tabs', { screen: 'Deadline' });
+  }, [navigation]);
 
   const navigateForNotification = (n: AppNotification) => {
     const e = (n.entity_type || '').toLowerCase();
@@ -336,6 +387,24 @@ export default function NotificationsScreen() {
     }
   };
 
+  const overduePanel = tab === 'deadlines' && overdueTotal > 0 ? (
+    <Pressable style={styles.overdueCard} onPress={openDeadlineTab}>
+      <View style={styles.overdueIcon}>
+        <Ionicons name="alert-circle" size={22} color={Colors.red} />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.overdueTitle}>
+          {overdueTotal} Lead/Deal quá hạn
+        </Text>
+        <Text style={styles.overdueSub}>
+          {overdueLead} Lead · {overdueDeal} Deal · cùng bộ lọc tab Deadline
+        </Text>
+        <Text style={styles.overdueCta}>Mở tab Deadline</Text>
+      </View>
+      <Ionicons name="chevron-forward" size={18} color={Colors.red} />
+    </Pressable>
+  ) : null;
+
   const handlePress = (n: AppNotification) => {
     if (!n.is_read) {
       const nextItems = items.map((it) => (it.id === n.id ? { ...it, is_read: true } : it));
@@ -347,6 +416,7 @@ export default function NotificationsScreen() {
           const nextVal = Math.max(0, (prev[ch] ?? 0) - 1);
           const next = { ...prev, [ch]: nextVal };
           next.total = next.activity + next.assignments + next.events + next.deadlines;
+          setNotificationCounts(next);
           return next;
         });
       }
@@ -442,7 +512,12 @@ export default function NotificationsScreen() {
       </View>
 
       {isWorkTab ? (
-        activityLoading && !activityItems.length ? (
+        workNeedsCompany ? (
+          <View style={styles.center}>
+            <Ionicons name="business-outline" size={36} color={Colors.textFaint} />
+            <Text style={styles.errTxt}>Chọn công ty ở bộ lọc CRM để xem hoạt động công việc.</Text>
+          </View>
+        ) : activityLoading && !activityItems.length ? (
           <View style={styles.blockingLoader}>
             <SpinningLoader variant="large" color={Colors.blue} />
             <Text style={styles.blockingLoaderTxt}>Đang tải…</Text>
@@ -504,15 +579,22 @@ export default function NotificationsScreen() {
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={() => void load({ refresh: true })} tintColor={Colors.blue} />
           }
+          ListHeaderComponent={overduePanel}
           ListEmptyComponent={
-            <View style={styles.center}>
-              <View style={styles.emptyIcon}>
-                <Ionicons name="notifications-off-outline" size={28} color={Colors.textFaint} />
-              </View>
-              <Text style={styles.emptyTxt}>
-                {onlyUnread ? 'Không có thông báo chưa đọc' : 'Chưa có thông báo nào'}
+            overduePanel ? (
+              <Text style={styles.overdueHint}>
+                Không có thông báo nhắc hạn trong hộp thư — số badge là hồ sơ quá hạn realtime.
               </Text>
-            </View>
+            ) : (
+              <View style={styles.center}>
+                <View style={styles.emptyIcon}>
+                  <Ionicons name="notifications-off-outline" size={28} color={Colors.textFaint} />
+                </View>
+                <Text style={styles.emptyTxt}>
+                  {onlyUnread ? 'Không có thông báo chưa đọc' : 'Chưa có thông báo nào'}
+                </Text>
+              </View>
+            )
           }
           renderSectionHeader={({ section }) => (
             <Text style={styles.sectionHeader}>{section.title}</Text>
@@ -635,6 +717,40 @@ const makeStyles = (Colors: ThemeColors) =>
       justifyContent: 'center',
     },
     emptyTxt: { color: Colors.textMuted, fontSize: 14, fontWeight: '700', textAlign: 'center' },
+    overdueCard: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      marginHorizontal: 14,
+      marginTop: 14,
+      marginBottom: 4,
+      paddingHorizontal: 12,
+      paddingVertical: 12,
+      borderRadius: Radii.lg,
+      borderWidth: 1,
+      borderColor: 'rgba(239,68,68,0.4)',
+      backgroundColor: Colors.redSoft,
+    },
+    overdueIcon: {
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      backgroundColor: Colors.card,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    overdueTitle: { color: Colors.red, fontSize: 14.5, fontWeight: '800' },
+    overdueSub: { color: Colors.textMuted, fontSize: 12, fontWeight: '600', marginTop: 2 },
+    overdueCta: { color: Colors.red, fontSize: 12, fontWeight: '800', marginTop: 6 },
+    overdueHint: {
+      color: Colors.textFaint,
+      fontSize: 12,
+      fontWeight: '600',
+      textAlign: 'center',
+      paddingHorizontal: 28,
+      paddingTop: 16,
+      paddingBottom: 8,
+    },
     errTxt: { color: Colors.textFaint, fontSize: 14, textAlign: 'center' },
     retryBtn: { paddingHorizontal: 24, paddingVertical: 10, borderRadius: Radii.md, backgroundColor: Colors.blue },
     retryTxt: { color: '#fff', fontWeight: '800', fontSize: 14 },

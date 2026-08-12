@@ -1,16 +1,10 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
+import SpinningLoader from '../components/SpinningLoader';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  ActivityIndicator,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   fetchEmployeePipelineDetail,
@@ -127,7 +121,7 @@ export default function EmployeeReportDetailScreen() {
 
       {loading ? (
         <View style={styles.centerBox}>
-          <ActivityIndicator color={Colors.blue} size="large" />
+          <SpinningLoader color={Colors.blue} size="large" />
         </View>
       ) : (
         <ScrollView

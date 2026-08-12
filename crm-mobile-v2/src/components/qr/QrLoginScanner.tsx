@@ -1,11 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  Pressable,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import SpinningLoader from '../SpinningLoader';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { api, formatApiError } from '../../api/client';
 import { getQrDeviceInfo, formatQrDeviceLabel } from '../../lib/qrDeviceInfo';
@@ -109,7 +104,7 @@ export default function QrLoginScanner({ onSuccess }: Props) {
   if (!permission) {
     return (
       <View style={styles.center}>
-        <ActivityIndicator color={Colors.blue} />
+        <SpinningLoader color={Colors.blue} />
       </View>
     );
   }
@@ -141,7 +136,7 @@ export default function QrLoginScanner({ onSuccess }: Props) {
         </View>
       ) : (
         <View style={[styles.center, styles.waitBox]}>
-          <ActivityIndicator color={Colors.blue} size="large" />
+          <SpinningLoader color={Colors.blue} size="large" />
           <Text style={styles.waitTxt}>{message || 'Đang xử lý…'}</Text>
         </View>
       )}

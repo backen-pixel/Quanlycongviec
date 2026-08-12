@@ -1,18 +1,25 @@
 import type { NavigatorScreenParams } from '@react-navigation/native';
 
 export type TabParamList = {
-  Kanban: undefined;
+  Overview: undefined;
+  Lead: undefined;
+  Deal: undefined;
   Deadline: undefined;
-  CreatePlaceholder: undefined;
   Messages: undefined;
-  Menu: undefined;
 };
 
 export type RootStackParamList = {
   Tabs: NavigatorScreenParams<TabParamList> | undefined;
   /** Trang trống — danh sách Deal đang phụ trách (Menu → Công việc → Planner). */
   Planner: undefined;
-  CrmHub: { initialMode?: 'leads' | 'deals' | 'orders'; initialAssignee?: 'mine' } | undefined;
+  CrmHub: {
+    initialMode?: 'leads' | 'deals' | 'orders';
+    initialAssignee?: 'mine';
+    /** Nhúng trong tab Lead/Deal — không hiện nút Back. */
+    embedded?: boolean;
+    /** Khóa 1 mode (ẩn segment Leads|Deals|ĐH). */
+    lockMode?: boolean;
+  } | undefined;
   LeadDealDetail: {
     leadId: string;
     kind?: 'lead' | 'deal';
@@ -52,8 +59,10 @@ export type RootStackParamList = {
   VoiceLocalRecordings: undefined;
   Drive: undefined;
   Settings: undefined;
+  /** Menu app — mở từ nút cạnh chuông thông báo (không còn tab). */
+  Menu: undefined;
   Notifications: undefined;
-  Events: undefined;
+  Events: { openCreate?: boolean } | undefined;
   Leaves: undefined;
   Quotations: undefined;
   Orders: undefined;

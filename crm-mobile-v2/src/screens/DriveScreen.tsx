@@ -1,23 +1,15 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
+import SpinningLoader from '../components/SpinningLoader';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import * as DocumentPicker from 'expo-document-picker';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  FlatList,
-  Linking,
-  Modal,
-  Pressable,
-  RefreshControl,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { Alert, FlatList, Modal, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatApiError } from '../api/client';
+import { API_PREFIX } from '../config';
+import { promptMessengerFileActions } from '../lib/messengerFileOpen';
+import { useMediaPreview } from '../context/MediaPreviewContext';
 import {
   createFolder as apiCreateFolder,
   ensurePersonalRoot,
@@ -27,7 +19,6 @@ import {
   listFolderChildren,
   listRootChildren,
   listRoots,
-  preview as apiPreview,
   search as apiSearch,
   trashFile,
   trashFolder,
@@ -61,6 +52,7 @@ export default function DriveScreen() {
   const [query, setQuery] = useState('');
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { openDriveMedia } = useMediaPreview();
 
   const loadRoots = useCallback(async () => {
     try {
@@ -181,12 +173,11 @@ export default function DriveScreen() {
 
   const onPreview = async (file: DriveFile) => {
     try {
-      const meta = await apiPreview(file.id);
-      if (meta.view_url) {
-        await Linking.openURL(meta.view_url);
-      } else {
-        Alert.alert('Không xem được', 'File này không có bản xem trước. Hãy mở từ web Drive.');
+      if (await openDriveMedia({ id: file.id, name: file.name, mime_type: file.mime_type })) {
+        return;
       }
+      const downloadUrl = `${API_PREFIX}/drive/files/${encodeURIComponent(file.id)}/download`;
+      promptMessengerFileActions(downloadUrl, { name: file.name, mime: file.mime_type });
     } catch (e) {
       Alert.alert('Lỗi', formatApiError(e));
     }
@@ -308,7 +299,7 @@ export default function DriveScreen() {
 
       {loading ? (
         <View style={styles.loading}>
-          <ActivityIndicator color={Colors.blue} />
+          <SpinningLoader color={Colors.blue} />
         </View>
       ) : (
         <FlatList
@@ -369,7 +360,7 @@ export default function DriveScreen() {
         </Pressable>
         <Pressable style={styles.fab} onPress={onUpload} disabled={uploading}>
           {uploading ? (
-            <ActivityIndicator color="#fff" />
+            <SpinningLoader color="#fff" />
           ) : (
             <Ionicons name="cloud-upload" size={22} color="#fff" />
           )}

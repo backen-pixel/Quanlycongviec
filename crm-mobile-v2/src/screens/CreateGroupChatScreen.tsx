@@ -1,16 +1,8 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
+import SpinningLoader from '../components/SpinningLoader';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  FlatList,
-  Pressable,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { Alert, FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Avatar from '../components/Avatar';
 import TapHighlight from '../components/TapHighlight';
@@ -161,7 +153,7 @@ export default function CreateGroupChatScreen({ navigation, route }: Props) {
         <Text style={styles.headerTitle}>Tạo nhóm chat</Text>
         <Pressable style={styles.createBtn} onPress={() => void submit()} disabled={busy}>
           {busy ? (
-            <ActivityIndicator size="small" color="#FFF" />
+            <SpinningLoader size="small" color="#FFF" />
           ) : (
             <Text style={styles.createBtnTxt}>Tạo</Text>
           )}
@@ -191,7 +183,7 @@ export default function CreateGroupChatScreen({ navigation, route }: Props) {
 
       {loading ? (
         <View style={styles.center}>
-          <ActivityIndicator size="large" color={colors.blue} />
+          <SpinningLoader size="large" color={colors.blue} />
         </View>
       ) : (
         <FlatList

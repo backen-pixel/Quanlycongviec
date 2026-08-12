@@ -55,7 +55,25 @@ export function peekMemoryToken(): string | null {
   return memoryToken;
 }
 
+/** Hủy request (đổi tab / load mới) — không phải lỗi mạng, đừng hiện banner. */
+export function isAbortError(e: unknown): boolean {
+  if (!e || typeof e !== 'object') return false;
+  const ex = e as { name?: string; code?: string; message?: string };
+  const name = String(ex.name || '');
+  const code = String(ex.code || '');
+  const msg = String(ex.message || '').toLowerCase();
+  return (
+    name === 'AbortError'
+    || name === 'CanceledError'
+    || code === 'ERR_CANCELED'
+    || msg === 'aborted'
+    || msg === 'canceled'
+    || msg === 'cancelled'
+  );
+}
+
 export function formatApiError(e: unknown): string {
+  if (isAbortError(e)) return '';
   if (!e || typeof e !== 'object') return String(e ?? 'Lỗi không xác định');
   const ex = e as {
     response?: { data?: { error?: string; message?: string } };

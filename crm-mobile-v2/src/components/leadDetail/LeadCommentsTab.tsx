@@ -1,24 +1,13 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
+import SpinningLoader from '../SpinningLoader';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  FlatList,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  Pressable,
-  RefreshControl,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { Alert, FlatList, KeyboardAvoidingView, Modal, Platform, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from 'react-native';
 import { formatApiError } from '../../api/client';
 import {
   deleteLeadComment,
   fetchLeadComments,
   fetchLeadMembers,
+  markLeadCommentsRead,
   postLeadComment,
   setLeadCommentReaction,
   type LeadComment,
@@ -41,7 +30,9 @@ import {
 } from '../../lib/notificationPrefs';
 import { Radii, Spacing, useColors, type ThemeColors } from '../../theme';
 import Avatar from '../Avatar';
+import CommentAttachmentsBlock from './CommentAttachmentsBlock';
 import CrmCommentBody from './CrmCommentBody';
+import VcHandoverCommentCard from './VcHandoverCommentCard';
 
 export const CRM_COMMENT_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'] as const;
 
@@ -127,7 +118,15 @@ function ErrorBanner({ message, onRetry }: { message: string; onRetry?: () => vo
   );
 }
 
-export default function LeadCommentsTab({ leadId }: { leadId: string }) {
+export default function LeadCommentsTab({
+  leadId,
+  onItemsChange,
+  onOpened,
+}: {
+  leadId: string;
+  onItemsChange?: (count: number) => void;
+  onOpened?: () => void;
+}) {
   const Colors = useColors();
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const { user } = useAuth();
@@ -150,6 +149,10 @@ export default function LeadCommentsTab({ leadId }: { leadId: string }) {
   const [mentionOpen, setMentionOpen] = useState(false);
   const pickedMentionIds = useRef(new Set<string>());
   const inputRef = useRef<TextInput>(null);
+  const onItemsChangeRef = useRef(onItemsChange);
+  const onOpenedRef = useRef(onOpened);
+  onItemsChangeRef.current = onItemsChange;
+  onOpenedRef.current = onOpened;
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -170,6 +173,13 @@ export default function LeadCommentsTab({ leadId }: { leadId: string }) {
       ]);
       setItems(comments);
       setMembers(mems);
+      onItemsChangeRef.current?.(comments.length);
+      try {
+        await markLeadCommentsRead(leadId);
+        onOpenedRef.current?.();
+      } catch {
+        /* read receipt optional */
+      }
     } catch (e) {
       setError(formatApiError(e));
     } finally {
@@ -256,7 +266,11 @@ export default function LeadCommentsTab({ leadId }: { leadId: string }) {
         parent_id: replyTo?.id ?? null,
         mention_user_ids: mentionIds.length ? mentionIds : undefined,
       });
-      setItems((prev) => upsertComment(prev, row));
+      setItems((prev) => {
+        const next = upsertComment(prev, row);
+        onItemsChangeRef.current?.(next.length);
+        return next;
+      });
       setDraft('');
       setReplyTo(null);
       pickedMentionIds.current = new Set();
@@ -308,6 +322,17 @@ export default function LeadCommentsTab({ leadId }: { leadId: string }) {
 
   const renderComment = ({ item: row }: { item: FlatRow }) => {
     const c = row.comment;
+
+    if (c.comment_type === 'vc_handover' && row.depth === 0) {
+      return (
+        <VcHandoverCommentCard
+          comment={c}
+          onUpdated={(next) => setItems((prev) => upsertComment(prev, next))}
+          onHistoryComment={(hist) => setItems((prev) => upsertComment(prev, hist))}
+        />
+      );
+    }
+
     const name = c.user?.full_name || 'Người dùng';
     const isMine = String(c.user_id || c.user?.id || '') === String(myId);
     const reactions = c.reactions?.summary || [];
@@ -326,6 +351,7 @@ export default function LeadCommentsTab({ leadId }: { leadId: string }) {
                 </Text>
               </View>
               <CrmCommentBody content={c.body} members={members} />
+              <CommentAttachmentsBlock attachments={c.attachments} />
               {reactions.length > 0 ? (
                 <View style={styles.rxRow}>
                   {reactions.map((r) => (
@@ -360,7 +386,7 @@ export default function LeadCommentsTab({ leadId }: { leadId: string }) {
   };
 
   if (loading && !items.length && !prefsReady) {
-    return <ActivityIndicator color={Colors.blue} style={{ marginTop: 32 }} />;
+    return <SpinningLoader color={Colors.blue} style={{ marginTop: 32 }} />;
   }
 
   if (prefsReady && !showOnScreen) {
@@ -448,7 +474,7 @@ export default function LeadCommentsTab({ leadId }: { leadId: string }) {
           disabled={!draft.trim() || sending}
         >
           {sending ? (
-            <ActivityIndicator size="small" color={Colors.white} />
+            <SpinningLoader size="small" color={Colors.white} />
           ) : (
             <Ionicons name="send" size={18} color={Colors.white} />
           )}

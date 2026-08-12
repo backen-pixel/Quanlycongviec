@@ -1,20 +1,8 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
+import SpinningLoader from '../components/SpinningLoader';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  Animated,
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import { Alert, Animated, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatApiError } from '../api/client';
 import {
@@ -504,7 +492,7 @@ export default function CreateEntityScreen({ navigation, route }: Props) {
                 disabled={saving}
               >
                 {saving ? (
-                  <ActivityIndicator color="#fff" />
+                  <SpinningLoader color="#fff" />
                 ) : (
                   <>
                     <Ionicons name="checkmark" size={18} color="#fff" />
@@ -675,7 +663,7 @@ function SelectBox({
         {value || placeholder}
       </Text>
       {loading ? (
-        <ActivityIndicator size="small" color={Colors.textMuted} />
+        <SpinningLoader size="small" color={Colors.textMuted} />
       ) : (
         <Ionicons name={locked ? 'lock-closed' : 'chevron-down'} size={locked ? 14 : 18} color={Colors.textFaint} />
       )}

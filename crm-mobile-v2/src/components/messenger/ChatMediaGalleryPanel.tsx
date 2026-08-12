@@ -31,6 +31,7 @@ import {
   openMessengerAttachment,
   promptMessengerFileActions,
 } from '../../lib/messengerFileOpen';
+import { useMediaPreview } from '../../context/MediaPreviewContext';
 import { senderDisplayName } from '../../lib/messengerReadReceipts';
 import { avatarColorFromName, getMessengerColors } from '../../lib/messengerTheme';
 import { Radii, Spacing } from '../../theme';
@@ -171,6 +172,7 @@ export default function ChatMediaGalleryPanel({
   onOpenLightbox,
 }: Props) {
   const { colors, isDark } = useTheme();
+  const { openVideo } = useMediaPreview();
   const mc = getMessengerColors(colors, isDark);
   const insets = useSafeAreaInsets();
   const screenW = Dimensions.get('window').width;
@@ -442,7 +444,7 @@ export default function ChatMediaGalleryPanel({
     const url = resolveMediaUrl(att.url);
     if (!url) return;
     if (isVideoMessage(m)) {
-      void openMessengerAttachment(url, { name: att.name, mime: att.type || 'video/mp4' });
+      openVideo({ uri: url, title: att.name || 'Video' });
     } else if (isImageMessage(m)) {
       onOpenLightbox(url);
     } else if (isAudioMessage(m)) {

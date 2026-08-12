@@ -1,11 +1,12 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useCrmRealtimeRefresh } from '../hooks/useCrmRealtimeRefresh';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Alert,
   FlatList,
-  InteractionManager,
   Modal,
   PanResponder,
   Pressable,
@@ -20,22 +21,22 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatApiError } from '../api/client';
 import {
-  DEADLINE_MAX_BUFFER,
+  convertLeadToDeal,
   fetchDeadlineBucketCounts,
   fetchDeadlineBucketPages,
   fetchDeadlineConfig,
-  fetchDeadlineSectionPage,
   fetchPipelineStages,
   invalidateDeadlineBucketCounts,
+  invalidateDeadlineResultCache,
   isDeadlineBucketCountsFresh,
   moveCrmItemStage,
   peekDeadlineBucketCounts,
   peekDeadlineResultCache,
-  setDeadlineResultCache,
   updateCrmAssignee,
   type DeadlineBucketCountMap,
   type DeadlineBucketCounts,
 } from '../api/crm';
+import { deadlineBucketFilterKey } from '../api/deadlineOverdue';
 import {
   fetchCrmCompanies,
   fetchCrmEmployeesByCompany,
@@ -48,6 +49,7 @@ import {
 import CrmFilterSheet from '../components/CrmFilterSheet';
 import CrmSearchFieldBar from '../components/CrmSearchFieldBar';
 import MoveStageModal from '../components/MoveStageModal';
+import DatePickerSheet from '../components/DatePickerSheet';
 import PickerSheet from '../components/PickerSheet';
 import SpinningLoader from '../components/SpinningLoader';
 import { currentUserId, useAuth } from '../context/AuthContext';
@@ -57,6 +59,8 @@ import {
   canClearCrmAssignee,
   canViewAllCrm,
   itemHasAssignee,
+  lockCrmAssigneeScope,
+  lockCrmCompanyScope,
   plannerAsAssigneeTarget,
 } from '../lib/crmAssignee';
 import {
@@ -68,32 +72,28 @@ import {
   type DeadlineBucketKey,
   type DeadlineConfig,
 } from '../lib/crmDeadlineBuckets';
+import { useCrmHubFilters } from '../hooks/useCrmHubFilters';
 import {
   activeFilterChips,
   buildStageFetchOpts,
   clientFilterDeadlineItems,
   countActiveFilters,
-  DEFAULT_CRM_FILTERS,
   searchPlaceholder,
-  type CrmHubFilters,
   type SearchField,
 } from '../lib/crmFilters';
-import {
-  loadCrmHubFilterSnapshot,
-  saveCrmHubFilterSnapshot,
-} from '../lib/crmHubFilterStorage';
 import {
   readDefaultDealKhSplitEnabled,
   readStoredDealKhSplitPreference,
   storeDealKhSplitPreference,
 } from '../lib/crmDealKhSplit';
 import { isDeadlineMembershipStage } from '../lib/crmPipelineTabs';
+import { deadlineIsoToYmd, planCrmStageMove } from '../lib/crmStageMove';
 import {
   clearDeadlineOverdueBreakdown,
   publishDeadlineOverdueCounts,
   publishDeadlineOverdueFromItems,
 } from '../lib/deadlineOverdueStore';
-import { getDeadlinePerfLimits } from '../lib/devicePerf';
+import { getDeadlineMaxBuffer, getDeadlinePerfLimits } from '../lib/devicePerf';
 import { colorFromName, initialsFromName } from '../lib/media';
 import { Radii, useColors, type ThemeColors } from '../theme';
 import type { RootStackParamList } from '../navigation/types';
@@ -127,18 +127,18 @@ function kindMeta(Colors: ThemeColors): Record<PlannerKind, KindMeta> {
   };
 }
 
-function resetDeadlineFilters(
-  user: { company_id?: string | null; role?: string } | null,
-): CrmHubFilters {
-  const base: CrmHubFilters = {
-    ...DEFAULT_CRM_FILTERS,
-    companyId: user?.company_id || '',
-  };
-  if (!canViewAllCrm(user)) {
-    base.assignee = 'mine';
-    base.assigneeUserId = '';
-  }
-  return base;
+const DEADLINE_KIND_KEY = 'crmv2_deadline_kind_v1';
+
+async function readStoredDeadlineKind(): Promise<PlannerKind> {
+  try {
+    const v = await AsyncStorage.getItem(DEADLINE_KIND_KEY);
+    if (v === 'lead' || v === 'deal') return v;
+  } catch { /* ignore */ }
+  return 'deal';
+}
+
+function persistDeadlineKind(next: PlannerKind) {
+  AsyncStorage.setItem(DEADLINE_KIND_KEY, next).catch(() => undefined);
 }
 
 const DeadlineCard = React.memo(function DeadlineCard({
@@ -244,6 +244,11 @@ const DeadlineCard = React.memo(function DeadlineCard({
   );
 });
 
+/** Số thẻ hiện trong FlatList mỗi lần — vuốt lên mới mở rộng / gọi API. */
+const DEADLINE_CARD_PAGE_SIZE = 10;
+/** Trang đầu / load-more từ server (cap API 20). */
+const DEADLINE_BUCKET_PAGE_LIMIT = 10;
+
 export default function DeadlineScreen() {
   const Colors = useColors();
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
@@ -252,9 +257,12 @@ export default function DeadlineScreen() {
   const { user } = useAuth();
   const userId = currentUserId(user);
   const viewAll = canViewAllCrm(user);
-  const lockScope = !viewAll;
+  const lockCompany = lockCrmCompanyScope(user);
+  const lockAssignee = lockCrmAssigneeScope(user);
 
   const [kind, setKind] = useState<PlannerKind>('deal');
+  const kindReadyRef = useRef(false);
+  const userPickedKindRef = useRef(false);
   const [leadState, setLeadState] = useState<SectionState>(EMPTY_SECTION);
   const [dealState, setDealState] = useState<SectionState>(EMPTY_SECTION);
   const [leadsLoading, setLeadsLoading] = useState(true);
@@ -262,6 +270,8 @@ export default function DeadlineScreen() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [drainingLead, setDrainingLead] = useState(false);
   const [drainingDeal, setDrainingDeal] = useState(false);
+  /** Cửa sổ render trong cột — tránh FlatList nhận cả trăm thẻ cùng lúc. */
+  const [visibleCount, setVisibleCount] = useState(DEADLINE_CARD_PAGE_SIZE);
   /** Số đếm cột từ lượt quét riêng (giống stageCounts của Kanban) — badge không phụ thuộc list. */
   const [countsByKind, setCountsByKind] = useState<Record<PlannerKind, DeadlineBucketCounts | null>>({
     lead: null,
@@ -284,17 +294,23 @@ export default function DeadlineScreen() {
   const [bucketKey, setBucketKey] = useState<DeadlineBucketKey>('overdue');
   const [pickerOpen, setPickerOpen] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
-  const [filtersReady, setFiltersReady] = useState(false);
+  const {
+    ready: filtersReady,
+    filters,
+    search,
+    searchDraft,
+    setSearchDraft,
+    commitSearch,
+    setFilters,
+    resetFilters,
+  } = useCrmHubFilters();
   const [dealKhSplitEnabled, setDealKhSplitEnabled] = useState(() =>
     readDefaultDealKhSplitEnabled(viewAll),
   );
   const bucketInitRef = useRef(false);
 
-  const [filters, setFilters] = useState<CrmHubFilters>(() => resetDeadlineFilters(user));
-  const [searchDraft, setSearchDraft] = useState('');
-  const [search, setSearch] = useState('');
-
   const [companies, setCompanies] = useState<CrmCompany[]>([]);
+  const [orgReady, setOrgReady] = useState(false);
   const [regions, setRegions] = useState<CrmRegion[]>([]);
   const [departments, setDepartments] = useState<CrmDepartment[]>([]);
   const [employees, setEmployees] = useState<CrmEmployee[]>([]);
@@ -306,11 +322,16 @@ export default function DeadlineScreen() {
   const [assigningId, setAssigningId] = useState<string | null>(null);
   const [moveItem, setMoveItem] = useState<PlannerItem | null>(null);
   const [moveStages, setMoveStages] = useState<CrmPipelineStage[]>([]);
+  const [moveDeadlineCtx, setMoveDeadlineCtx] = useState<{
+    item: PlannerItem;
+    target: CrmPipelineStage;
+  } | null>(null);
   const [movingId, setMovingId] = useState<string | null>(null);
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Giới hạn tải theo máy — low/mid giảm buffer + song song để tránh giật. */
   const perf = useMemo(() => getDeadlinePerfLimits(), []);
+  const maxBuffer = useMemo(() => getDeadlineMaxBuffer(), []);
   /** Đang cuộn list — tạm dừng setState từ drain để khỏi giật. */
   const listScrollingRef = useRef(false);
   const pendingProgressRef = useRef<{
@@ -383,101 +404,66 @@ export default function DeadlineScreen() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      const storedKind = await readStoredDeadlineKind();
+      if (!cancelled) {
+        setKind(storedKind);
+        kindReadyRef.current = true;
+      }
       try {
         const list = await fetchCrmCompanies();
-        if (!cancelled) setCompanies(list);
+        const scoped = lockCompany && user?.company_id
+          ? list.filter((c) => String(c.id) === String(user.company_id))
+          : list;
+        if (!cancelled) setCompanies(scoped);
       } catch {
         if (!cancelled) setCompanies([]);
+      } finally {
+        if (!cancelled) setOrgReady(true);
       }
       const pref = await readStoredDealKhSplitPreference(viewAll);
       if (!cancelled) setDealKhSplitEnabled(pref);
-
-      if (!userId) {
-        if (!cancelled) setFiltersReady(true);
-        return;
-      }
-      const snap = await loadCrmHubFilterSnapshot(userId);
-      if (cancelled) return;
-      if (snap?.filters) {
-        const next = {
-          ...DEFAULT_CRM_FILTERS,
-          ...snap.filters,
-          companyId: snap.filters.companyId || user?.company_id || '',
-        };
-        if (!viewAll) {
-          next.assignee = 'mine';
-          next.assigneeUserId = '';
-          if (!next.companyId && user?.company_id) next.companyId = user.company_id;
-        }
-        setFilters(next);
-        if (next.companyId) void loadOrgMeta(next.companyId);
-      } else {
-        const next = resetDeadlineFilters(user);
-        setFilters(next);
-        if (next.companyId) void loadOrgMeta(next.companyId);
-      }
-      if (snap?.search) {
-        setSearch(snap.search);
-        setSearchDraft(snap.search);
-      }
-      setFiltersReady(true);
     })();
     return () => { cancelled = true; };
-  }, [userId, user, viewAll, loadOrgMeta]);
+  }, [userId, user, viewAll, lockCompany, loadOrgMeta]);
 
   useEffect(() => {
-    const t = setTimeout(() => {
-      const q = searchDraft.trim();
-      setSearch(q);
-      // Không đổi phone filter khi gõ SĐT — tránh reload server nặng; lọc phone trên client.
-    }, 280);
-    return () => clearTimeout(t);
-  }, [searchDraft]);
+    if (!filtersReady) return;
+    if (filters.companyId) void loadOrgMeta(filters.companyId);
+    else {
+      setRegions([]);
+      setDepartments([]);
+      setEmployees([]);
+    }
+  }, [filtersReady, filters.companyId, loadOrgMeta]);
 
-  useEffect(() => {
-    if (!filtersReady || !userId) return;
-    const t = setTimeout(() => {
-      void saveCrmHubFilterSnapshot(userId, {
-        filters: filtersRef.current,
-        search: searchRef.current,
-      });
-    }, 400);
-    return () => {
-      clearTimeout(t);
-      void saveCrmHubFilterSnapshot(userId, {
-        filters: filtersRef.current,
-        search: searchRef.current,
-      });
-    };
-  }, [filtersReady, userId, filters, search]);
-
-  /** Key lọc server — bỏ search/due/searchField (lọc client). */
+  /** Key lọc server — khớp Overview `deadlineBucketFilterKey` (cùng RPC cache). */
+  const stageOptsForKey = useMemo(
+    () => buildStageFetchOpts(filters, '', userId || ''),
+    [filters, userId],
+  );
   const serverFilterKey = useMemo(
     () =>
-      [
-        filters.phone,
-        filters.assignee,
-        filters.assigneeUserId,
-        filters.timePreset,
-        filters.companyId,
-        filters.regionId,
-        dealKhSplitEnabled ? '1' : '0',
-        viewAll ? '1' : '0',
-        userId || '',
-        // Admin «Tất cả CT» cần danh sách companies để lọc khối CRM.
-        filters.companyId ? '1' : String(companies.length),
-      ].join('|'),
+      deadlineBucketFilterKey({
+        phone: filters.phone,
+        assignee: filters.assignee,
+        assigneeUserId: filters.assigneeUserId,
+        companyId: stageOptsForKey.companyId || filters.companyId || '',
+        regionId: stageOptsForKey.regionId || '',
+        dateFrom: stageOptsForKey.dateFrom || '',
+        dateTo: stageOptsForKey.dateTo || '',
+        dealKhSplit: dealKhSplitEnabled,
+        viewAll,
+        userId: userId || '',
+      }),
     [
       filters.phone,
       filters.assignee,
       filters.assigneeUserId,
-      filters.timePreset,
       filters.companyId,
-      filters.regionId,
+      stageOptsForKey,
       dealKhSplitEnabled,
       viewAll,
       userId,
-      companies.length,
     ],
   );
   const serverFilterKeyRef = useRef(serverFilterKey);
@@ -554,12 +540,15 @@ export default function DeadlineScreen() {
     force?: boolean;
     /** Realtime: luôn đếm lại badge cột + reset trang bucket. */
     forceCounts?: boolean;
+    /** Đổi bộ lọc server: bỏ list cũ, không merge card của lọc trước. */
+    resetList?: boolean;
   }) => {
     if (!filtersReady) return;
     if (!userId && !viewAll) return;
     const isRefresh = opts?.refresh ?? false;
     const silent = opts?.silent ?? false;
     const force = opts?.force ?? false;
+    const resetList = opts?.resetList ?? false;
     if (loadingRef.current && !isRefresh && !force) return;
 
     abortRef.current?.abort();
@@ -575,11 +564,18 @@ export default function DeadlineScreen() {
 
     // Hiện ngay dữ liệu cache cũ (nếu có) trong lúc tải nền — tránh màn "Đang tải…"
     // mỗi lần vào lại tab, giống trải nghiệm Kanban Hub.
-    for (const k of kinds) {
-      const stateNow = k === 'lead' ? leadStateRef.current : dealStateRef.current;
-      if (stateNow.items.length > 0) continue;
-      const cached = peekDeadlineResultCache(k, fkAtStart);
-      if (cached) applySectionPage(k, cached);
+    // Đổi lọc: không lấy cache/list cũ (tránh 1 card lọc trước + badge 23).
+    if (resetList) {
+      for (const k of kinds) {
+        applySectionPage(k, { items: [], total: 0, hasMore: true, nextOffset: 0 });
+      }
+    } else {
+      for (const k of kinds) {
+        const stateNow = k === 'lead' ? leadStateRef.current : dealStateRef.current;
+        if (stateNow.items.length > 0) continue;
+        const cached = peekDeadlineResultCache(k, fkAtStart);
+        if (cached) applySectionPage(k, cached);
+      }
     }
 
     if (!silent) {
@@ -631,202 +627,36 @@ export default function DeadlineScreen() {
     let leadErr = '';
     let dealErr = '';
 
-    const mergeSectionPage = (
-      _section: PlannerKind,
-      prev: SectionState,
-      pageRes: { items: PlannerItem[]; total: number; hasMore: boolean; nextOffset: number },
-    ): SectionState => {
-      const seen = new Set(prev.items.map((i) => i.id));
-      const appended = pageRes.items.filter((i) => !seen.has(i.id));
-      const items = prev.items.length
-        ? [...prev.items, ...appended].sort(byDeadlineAsc).slice(0, DEADLINE_MAX_BUFFER)
-        : pageRes.items.slice(0, DEADLINE_MAX_BUFFER);
-      return {
-        items,
-        total: Math.max(prev.total, items.length, pageRes.total),
-        hasMore: pageRes.hasMore && items.length < DEADLINE_MAX_BUFFER,
-        nextOffset: Math.max(prev.nextOffset, pageRes.nextOffset, items.length),
-      };
-    };
-
-    /** Không bao giờ thay list đang lớn bằng snapshot nhỏ hơn → badge cột nhảy/tuột. */
-    const applyProgressSafe = (
-      section: PlannerKind,
-      partial: { items: PlannerItem[]; total: number; hasMore: boolean; nextOffset: number },
-    ) => {
-      if (listScrollingRef.current) {
-        pendingProgressRef.current = { section, partial, mode: 'safe' };
-        return;
+    const clearSectionLoading = (section: PlannerKind) => {
+      if (section === 'lead') {
+        setLeadsLoading(false);
+        setDrainingLead(false);
+      } else {
+        setDealsLoading(false);
+        setDrainingDeal(false);
       }
-      const prev = section === 'lead' ? leadStateRef.current : dealStateRef.current;
-      if (prev.items.length > 0 && partial.items.length < prev.items.length) return;
-      applySectionPage(section, partial);
     };
 
-    const drainSectionBackground = (
-      section: PlannerKind,
-      startPage: SectionState,
-      optsBase: typeof deadlineOptsBase,
-      fk: string,
-    ) => {
-      const bgLimit = perf.bgSync;
-      const room = bgLimit - startPage.items.length;
-      if (!startPage.hasMore || room <= 0) {
-        if (section === 'lead') setDrainingLead(false);
-        else setDrainingDeal(false);
-        return;
-      }
-      drainAbortRef.current[section]?.abort();
-      const drainAc = new AbortController();
-      drainAbortRef.current[section] = drainAc;
-      applySectionPage(section, startPage);
-      if (section === 'lead') setDrainingLead(true);
-      else setDrainingDeal(true);
-
-      const uiThrottleMs = perf.tier === 'low' ? 1200 : 600;
-      let lastUiAt = 0;
-      const publishMerged = (
-        partial: { items: PlannerItem[]; total: number; hasMore: boolean; nextOffset: number },
-        force = false,
-      ) => {
-        if (drainAc.signal.aborted) return;
-        if (listScrollingRef.current) {
-          pendingProgressRef.current = { section, partial, mode: 'merge' };
-          return;
-        }
-        const now = Date.now();
-        if (!force && now - lastUiAt < uiThrottleMs) return;
-        lastUiAt = now;
-        const prev = section === 'lead' ? leadStateRef.current : dealStateRef.current;
-        applySectionPage(section, mergeSectionPage(section, prev, partial));
-      };
-
-      void (async () => {
-        // Máy yếu: đợi animation/scroll xong rồi mới drain nền.
-        if (perf.tier !== 'high') {
-          await new Promise<void>((resolve) => {
-            InteractionManager.runAfterInteractions(() => resolve());
-          });
-        }
-        if (drainAc.signal.aborted) return;
-        try {
-          // Quét lại từ đầu (không bỏ qua theo offset): thứ tự cột mở giữa 2 lượt
-          // có thể khác nhau nên «skip N bản ghi đầu» dễ làm mất thẻ. Trùng thì gộp theo id.
-          const pageRes = await fetchDeadlineSectionPage(
-            section,
-            0,
-            bgLimit,
-            {
-              ...optsBase,
-              signal: drainAc.signal,
-              progressEvery: perf.progressEvery,
-              onProgress: (partial) => publishMerged(partial, false),
-            },
-          );
-          if (drainAc.signal.aborted) return;
-          const prev = section === 'lead' ? leadStateRef.current : dealStateRef.current;
-          const merged = mergeSectionPage(section, prev, pageRes);
-          const capped: SectionState = {
-            ...merged,
-            hasMore: merged.hasMore || merged.items.length >= bgLimit,
-          };
-          applySectionPage(section, capped);
-          setDeadlineResultCache(section, fk, capped);
-        } catch {
-          /* giữ first-paint */
-        } finally {
-          if (drainAbortRef.current[section] === drainAc) {
-            if (section === 'lead') setDrainingLead(false);
-            else setDrainingDeal(false);
-          }
-        }
-      })();
-    };
-
+    /**
+     * Path nhẹ: không drain toàn stage (gây lag).
+     * Card cột active lấy từ `/crm/deadline-bucket-pages` khi có counts.
+     */
     const runOne = async (section: PlannerKind) => {
-      const hadExisting = (section === 'lead' ? leadStateRef.current : dealStateRef.current).items.length > 0;
-      const firstPaintLimit = perf.firstPaint;
-      const bgLimit = perf.bgSync;
+      const prev = section === 'lead' ? leadStateRef.current : dealStateRef.current;
+      const hadExisting = !resetList && prev.items.length > 0;
       try {
-        const pageRes = await fetchDeadlineSectionPage(
-          section,
-          0,
-          firstPaintLimit,
-          {
-            ...deadlineOptsBase,
-            firstPaintOnly: true,
-            // Đã có cache/list → khỏi đẩy progress trung gian (tránh badge nhảy).
-            onProgress: hadExisting
-              ? undefined
-              : (partial) => {
-                if (ac.signal.aborted) return;
-                applyProgressSafe(section, partial);
-              },
-          },
-        );
-        if (ac.signal.aborted) return;
-
-        const prev = section === 'lead' ? leadStateRef.current : dealStateRef.current;
-        // Soft refresh: giữ list cũ nếu first-paint nhỏ hơn — drain sẽ bổ sung / refresh nền.
-        if (hadExisting && prev.items.length > pageRes.items.length) {
-          if (section === 'lead') setLeadsLoading(false);
-          else setDealsLoading(false);
-          // Vẫn drain từ đầu list mới: thay thế khi đủ lớn hơn hoặc hết drain.
-          drainAbortRef.current[section]?.abort();
-          const drainAc = new AbortController();
-          drainAbortRef.current[section] = drainAc;
-          if (section === 'lead') setDrainingLead(true);
-          else setDrainingDeal(true);
-          void (async () => {
-            try {
-              const full = await fetchDeadlineSectionPage(section, 0, bgLimit, {
-                ...deadlineOptsBase,
-                signal: drainAc.signal,
-                progressEvery: perf.progressEvery,
-                onProgress: (partial) => {
-                  if (drainAc.signal.aborted) return;
-                  // Chỉ đổi UI khi snapshot mới không nhỏ hơn list đang hiện.
-                  applyProgressSafe(section, {
-                    ...partial,
-                    hasMore: partial.hasMore || partial.items.length >= bgLimit,
-                  });
-                },
-              });
-              if (drainAc.signal.aborted) return;
-              applySectionPage(section, {
-                items: full.items,
-                total: full.total,
-                hasMore: full.hasMore || full.items.length >= bgLimit,
-                nextOffset: full.nextOffset,
-              });
-              setDeadlineResultCache(section, fkAtStart, {
-                items: full.items,
-                total: full.total,
-                hasMore: full.hasMore || full.items.length >= bgLimit,
-                nextOffset: full.nextOffset,
-              });
-            } catch {
-              /* giữ list cũ */
-            } finally {
-              if (drainAbortRef.current[section] === drainAc) {
-                if (section === 'lead') setDrainingLead(false);
-                else setDrainingDeal(false);
-              }
-            }
-          })();
-          return;
+        if (!hadExisting) {
+          applySectionPage(section, {
+            items: [],
+            total: 0,
+            hasMore: true,
+            nextOffset: 0,
+          });
+        } else {
+          // Soft refresh: giữ list đã stamp; bucket-pages merge thêm.
+          applySectionPage(section, { ...prev, hasMore: true });
+          clearSectionLoading(section);
         }
-
-        applySectionPage(section, pageRes);
-        setDeadlineResultCache(section, fkAtStart, pageRes);
-        if (section === 'lead') setLeadsLoading(false);
-        else setDealsLoading(false);
-        drainSectionBackground(section, {
-          items: pageRes.items,
-          total: pageRes.total,
-          hasMore: pageRes.hasMore,
-          nextOffset: pageRes.nextOffset,
-        }, deadlineOptsBase, fkAtStart);
       } catch (e: unknown) {
         if (ac.signal.aborted) return;
         const msg =
@@ -835,16 +665,11 @@ export default function DeadlineScreen() {
           (section === 'lead' ? 'Không tải được leads' : 'Không tải được deals');
         if (section === 'lead') leadErr = msg;
         else dealErr = msg;
-      } finally {
-        if (!ac.signal.aborted) {
-          if (section === 'lead') setLeadsLoading(false);
-          else setDealsLoading(false);
-        }
+        clearSectionLoading(section);
       }
     };
 
-    // Máy yếu: chỉ tải tab đang xem trước — tránh 2× API + drain tranh CPU.
-    // Máy mạnh: Lead + Deal song song như Kanban.
+    // Máy yếu: chỉ chuẩn bị tab đang xem trước.
     if (perf.parallelKinds || kinds.length === 1) {
       await Promise.all(kinds.map((k) => runOne(k)));
     } else {
@@ -856,8 +681,7 @@ export default function DeadlineScreen() {
       }
     }
 
-    // Đếm badge cột sau first-paint — máy yếu trễ hơn để nhường UI.
-    // Realtime / refresh: luôn force đếm lại (bỏ cache 90s).
+    // Đếm badge cột sớm — card cột active load ngay sau khi có counts.
     if (!ac.signal.aborted) {
       const forceCounts = !!opts?.forceCounts || isRefresh;
       if (forceCounts) {
@@ -881,7 +705,10 @@ export default function DeadlineScreen() {
         });
       }
       setTimeout(() => {
-        for (const k of kinds) refreshBucketCounts(k, deadlineOptsBase, fkAtStart, forceCounts);
+        const { signal: _loadSignal, ...countsOpts } = deadlineOptsBase as typeof deadlineOptsBase & {
+          signal?: AbortSignal;
+        };
+        for (const k of kinds) refreshBucketCounts(k, countsOpts, fkAtStart, forceCounts);
       }, forceCounts ? 0 : perf.countsDelayMs);
     }
 
@@ -897,21 +724,31 @@ export default function DeadlineScreen() {
   }, [filtersReady, userId, viewAll, applySectionPage, abortAllDrains, refreshBucketCounts, perf]);
 
   /** Reload server chỉ khi lọc server đổi — search/due/searchField lọc client, không gọi lại API. */
+  const prevServerFilterKeyRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!filtersReady) return;
-    // Bộ lọc đổi → xóa badge cũ để số tạm không bị giữ cao hơn thực tế (monotonic).
-    clearDeadlineOverdueBreakdown();
-    // Số đếm cột của bộ lọc cũ không còn đúng — dùng lại cache của bộ lọc mới nếu có.
+    if (!filtersReady || !orgReady) return;
+    const prev = prevServerFilterKeyRef.current;
+    if (prev === serverFilterKey) return;
+    prevServerFilterKeyRef.current = serverFilterKey;
+    const isFirst = prev == null;
+    if (!isFirst) {
+      clearDeadlineOverdueBreakdown();
+      invalidateDeadlineResultCache();
+      userPickedKindRef.current = false;
+    }
     setCountsByKind({
       lead: peekDeadlineBucketCounts('lead', serverFilterKey),
       deal: peekDeadlineBucketCounts('deal', serverFilterKey),
     });
     const t = setTimeout(() => {
-      // Giống Kanban: Lead + Deal cùng một lượt, song song → đổi tab tức thì, badge đúng sớm.
-      void load({ refresh: true, kinds: ['lead', 'deal'] });
-    }, 120);
+      void load({
+        refresh: !isFirst,
+        kinds: ['lead', 'deal'],
+        resetList: !isFirst,
+      });
+    }, isFirst ? 0 : 120);
     return () => clearTimeout(t);
-  }, [filtersReady, load, serverFilterKey]);
+  }, [filtersReady, orgReady, load, serverFilterKey]);
 
   /** Đổi Lead ↔ Deal: chỉ tải khi tab đích trống (không chạy trùng lần mount). */
   const prevKindRef = useRef<PlannerKind | null>(null);
@@ -925,9 +762,26 @@ export default function DeadlineScreen() {
     void load({ kinds: [kind] });
   }, [kind, filtersReady, load]);
 
+  /** Tab đang xem trống mà tab kia có quá hạn → chuyển sang tab có dữ liệu (trừ khi user vừa chọn tay). */
+  useEffect(() => {
+    if (!filtersReady || !kindReadyRef.current) return;
+    if (userPickedKindRef.current) return;
+    const leadC = countsByKind.lead;
+    const dealC = countsByKind.deal;
+    if (!leadC || !dealC) return;
+    const leadN = Math.max(leadC.overdue, leadC.total);
+    const dealN = Math.max(dealC.overdue, dealC.total);
+    const curN = kind === 'lead' ? leadN : dealN;
+    const otherN = kind === 'lead' ? dealN : leadN;
+    if (curN > 0 || otherN <= 0) return;
+    const next: PlannerKind = kind === 'lead' ? 'deal' : 'lead';
+    setKind(next);
+    persistDeadlineKind(next);
+  }, [filtersReady, countsByKind, kind]);
+
   useFocusEffect(
     useCallback(() => {
-      if (!filtersReady) return undefined;
+      if (!filtersReady || !orgReady) return undefined;
       if (!userId && !viewAll) return undefined;
       const hasData =
         leadStateRef.current.items.length > 0
@@ -935,15 +789,19 @@ export default function DeadlineScreen() {
       const stale = Date.now() - lastServerLoadAtRef.current > 60_000;
       if (hasData && stale) {
         void load({ refresh: true, silent: true, kinds: ['lead', 'deal'] });
-      } else if (!hasData) {
-        void load({ kinds: ['lead', 'deal'] });
+        return undefined;
       }
-      return () => {
-        abortRef.current?.abort();
-        abortAllDrains();
-        abortAllCounts();
-      };
-    }, [load, userId, viewAll, filtersReady, abortAllDrains, abortAllCounts]),
+      if (!hasData) {
+        const t = setTimeout(() => {
+          if (loadingRef.current) return;
+          if (leadStateRef.current.items.length || dealStateRef.current.items.length) return;
+          if (lastServerLoadAtRef.current > 0) return;
+          void load({ kinds: ['lead', 'deal'] });
+        }, 280);
+        return () => clearTimeout(t);
+      }
+      return undefined;
+    }, [load, userId, viewAll, filtersReady, orgReady]),
   );
 
   useCrmRealtimeRefresh(
@@ -1064,22 +922,40 @@ export default function DeadlineScreen() {
 
   const safeBucket = buckets.includes(bucketKey) ? bucketKey : (buckets[0] || 'overdue');
   const columnItems = grouped[safeBucket] || [];
+  const pagedColumnItems = useMemo(
+    () => columnItems.slice(0, visibleCount),
+    [columnItems, visibleCount],
+  );
+  const clientHasMore = visibleCount < columnItems.length;
   const bucketIdx = Math.max(0, buckets.indexOf(safeBucket));
   const canPrev = bucketIdx > 0;
   const canNext = bucketIdx < buckets.length - 1;
   const accent = DEADLINE_BUCKET_COLOR[safeBucket] || meta.color;
   const columnTitle = deadlineBucketLabel(safeBucket, deadlineConfig?.buckets);
-  const columnBadgeCount = bucketCounts[safeBucket] ?? columnItems.length;
+  const columnPageKey = `${serverFilterKey}:${kind}:${safeBucket}`;
+  const columnPageState = bucketPageState[columnPageKey];
+  /** Ưu tiên số đếm server; nếu chưa có thì dùng total từ bucket-pages; tránh đếm list đã tải (lệch trên 4G). */
+  const pageTotal = Number(columnPageState?.total);
+  const columnBadgeCount = (() => {
+    if (useScannedCounts && kindCounts) {
+      return Number(kindCounts.counts[safeBucket]) || 0;
+    }
+    if (Number.isFinite(pageTotal) && pageTotal > 0) return pageTotal;
+    return loadedBucketCounts[safeBucket] ?? columnItems.length;
+  })();
   /** Chỉ đánh dấu «+» khi số vẫn là cận dưới (chưa đếm xong / chưa đếm riêng). */
   const columnBadgePending = useScannedCounts
     ? !kindCounts?.complete
-    : (loading || draining) && rawState.hasMore;
-  const columnPageKey = `${kind}:${safeBucket}`;
-  const columnPageState = bucketPageState[columnPageKey];
+    : ((loading || draining) && rawState.hasMore) || !(Number.isFinite(pageTotal) && pageTotal > 0);
   const columnHasMore = columnPageState
     ? columnPageState.hasMore !== false
       && (columnItems.length < (Number(bucketCounts[safeBucket]) || 0) || !!columnPageState.hasMore)
-    : rawState.hasMore && rawState.items.length < DEADLINE_MAX_BUFFER;
+    : false;
+  const listHasMore = clientHasMore || columnHasMore;
+
+  useEffect(() => {
+    setVisibleCount(DEADLINE_CARD_PAGE_SIZE);
+  }, [safeBucket, kind, serverFilterKey, search, filters.due]);
 
   const goPrevBucket = useCallback(() => {
     setBucketKey((cur) => {
@@ -1106,15 +982,37 @@ export default function DeadlineScreen() {
   ) => {
     if (!filtersReady) return;
     if (!userId && !viewAll) return;
-    const pageKey = `${kind}:${bucket}`;
+    const fk = serverFilterKeyRef.current;
+    const pageKey = `${fk}:${kind}:${bucket}`;
     if (bucketPagesLoadingRef.current.has(pageKey)) return;
     const state = bucketPageStateRef.current[pageKey] || { nextOffset: 0, hasMore: true, loading: false, total: 0 };
     const total = Number(kindCounts?.counts?.[bucket]);
-    if (Number.isFinite(total) && total <= 0) return;
-    if (state.hasMore === false) return;
+    const finishLoading = () => {
+      if (kind === 'lead') {
+        setLeadsLoading(false);
+        setDrainingLead(false);
+      } else {
+        setDealsLoading(false);
+        setDrainingDeal(false);
+      }
+    };
+    if (Number.isFinite(total) && total <= 0) {
+      finishLoading();
+      return;
+    }
+    if (state.hasMore === false) {
+      finishLoading();
+      return;
+    }
     const offset = Math.max(Number(state.nextOffset) || 0, 0);
-    if (initialOnly && offset > 0) return;
-    if (Number.isFinite(total) && offset >= total) return;
+    if (initialOnly && offset > 0) {
+      finishLoading();
+      return;
+    }
+    if (Number.isFinite(total) && offset >= total) {
+      finishLoading();
+      return;
+    }
 
     const generation = bucketPagesGenRef.current;
     bucketPagesLoadingRef.current.add(pageKey);
@@ -1132,7 +1030,7 @@ export default function DeadlineScreen() {
       const companiesList = companiesRef.current;
       const pages = await fetchDeadlineBucketPages(
         kind,
-        [{ bucket, offset, limit: initialOnly ? 20 : 15 }],
+        [{ bucket, offset, limit: DEADLINE_BUCKET_PAGE_LIMIT }],
         {
           ...listOpts,
           deadlineConfig: configRef.current,
@@ -1144,11 +1042,20 @@ export default function DeadlineScreen() {
         },
       );
       if (generation !== bucketPagesGenRef.current) return;
-      const page = pages[bucket];
-      if (!page) return;
+      if (serverFilterKeyRef.current !== fk) return;
+      const page = pages[bucket] || {
+        items: [] as PlannerItem[],
+        total: 0,
+        nextOffset: offset,
+        hasMore: false,
+      };
 
       const mergeItems = (prevItems: PlannerItem[]) => {
-        const map = new Map(prevItems.map((i) => [String(i.id), i]));
+        // Trang đầu của cột: bỏ card cột này của lọc/trang cũ, không giữ 1 dòng stale.
+        const base = offset > 0
+          ? prevItems
+          : prevItems.filter((i) => i.deadlineBucket && i.deadlineBucket !== bucket);
+        const map = new Map(base.map((i) => [String(i.id), i]));
         for (const row of page.items) {
           const id = String(row.id);
           const prev = map.get(id);
@@ -1156,7 +1063,7 @@ export default function DeadlineScreen() {
             ? { ...prev, ...row, deadlineBucket: row.deadlineBucket || prev.deadlineBucket }
             : row);
         }
-        return [...map.values()].sort(byDeadlineAsc).slice(0, DEADLINE_MAX_BUFFER);
+        return [...map.values()].sort(byDeadlineAsc).slice(0, maxBuffer);
       };
 
       if (kind === 'lead') {
@@ -1199,6 +1106,13 @@ export default function DeadlineScreen() {
     } finally {
       bucketPagesLoadingRef.current.delete(pageKey);
       if (generation === bucketPagesGenRef.current) setLoadingMore(false);
+      if (kind === 'lead') {
+        setLeadsLoading(false);
+        setDrainingLead(false);
+      } else {
+        setDealsLoading(false);
+        setDrainingDeal(false);
+      }
       setBucketPageState((prev) => {
         if (!prev[pageKey]?.loading) return prev;
         const next = { ...prev, [pageKey]: { ...prev[pageKey], loading: false } };
@@ -1206,7 +1120,7 @@ export default function DeadlineScreen() {
         return next;
       });
     }
-  }, [filtersReady, userId, viewAll, kind, kindCounts]);
+  }, [filtersReady, userId, viewAll, kind, kindCounts, serverFilterKey]);
 
   useEffect(() => {
     if (!filtersReady || !kindCounts) return;
@@ -1279,60 +1193,25 @@ export default function DeadlineScreen() {
         assigneeName: employees.find((e) => e.id === filters.assigneeUserId)?.full_name || undefined,
       },
       (patch) => setFilters((p) => ({ ...p, ...patch })),
-      () => { setSearchDraft(''); setSearch(''); },
-      lockScope,
+      () => commitSearch(''),
+      false,
+      lockCompany,
+      lockAssignee,
     ),
-    [filters, search, companies, regions, employees, lockScope],
+    [filters, search, companies, regions, employees, lockCompany, lockAssignee],
   );
 
   const loadMore = useCallback(async () => {
     if (loadingMore) return;
     if (!userId && !viewAll) return;
-    const pageKey = `${kind}:${safeBucket}`;
+    const pageKey = `${serverFilterKey}:${kind}:${safeBucket}`;
     const pageState = bucketPageStateRef.current[pageKey];
-    // Ưu tiên phân trang theo cột bucket (khớp web).
-    if (pageState?.hasMore !== false) {
-      const total = Number(kindCounts?.counts?.[safeBucket]);
-      const loadedInCol = (grouped[safeBucket] || []).length;
-      if (!Number.isFinite(total) || loadedInCol < total || pageState?.hasMore) {
-        await loadBucketColumn(safeBucket, { initialOnly: false });
-        return;
-      }
-    }
-    if (!rawState.hasMore) return;
-    if (rawState.items.length >= DEADLINE_MAX_BUFFER) return;
-    setLoadingMore(true);
-    try {
-      const listOpts = buildStageFetchOpts(filtersRef.current, '', userId || '');
-      const companiesList = companiesRef.current;
-      const pageRes = await fetchDeadlineSectionPage(kind, rawState.nextOffset, DEADLINE_MAX_BUFFER, {
-        ...listOpts,
-        deadlineConfig: configRef.current,
-        dealKhSplitEnabled: dealKhSplitRef.current,
-        allowedCompanyIds:
-          listOpts.companyId || !companiesList.length
-            ? null
-            : companiesList.map((c) => c.id).filter(Boolean),
-      });
-      const seen = new Set(rawState.items.map((i) => i.id));
-      const appended = pageRes.items.filter((i) => !seen.has(i.id));
-      const merged: SectionState = {
-        items: [...rawState.items, ...appended].slice(0, DEADLINE_MAX_BUFFER),
-        total: pageRes.total || rawState.total,
-        hasMore: pageRes.hasMore && rawState.items.length + appended.length < DEADLINE_MAX_BUFFER,
-        nextOffset: pageRes.nextOffset,
-      };
-      if (kind === 'lead') {
-        leadStateRef.current = merged;
-        setLeadState(merged);
-      } else {
-        dealStateRef.current = merged;
-        setDealState(merged);
-      }
-    } finally {
-      setLoadingMore(false);
-    }
-  }, [loadingMore, rawState, kind, userId, viewAll, safeBucket, kindCounts, grouped, loadBucketColumn]);
+    if (pageState?.hasMore === false) return;
+    const total = Number(kindCounts?.counts?.[safeBucket]);
+    const loadedInCol = (grouped[safeBucket] || []).length;
+    if (Number.isFinite(total) && loadedInCol >= total && pageState?.hasMore !== true) return;
+    await loadBucketColumn(safeBucket, { initialOnly: false });
+  }, [loadingMore, userId, viewAll, safeBucket, kind, kindCounts, grouped, loadBucketColumn, serverFilterKey]);
 
   const goDetail = useCallback((item: PlannerItem) => {
     navigation.navigate('LeadDealDetail', {
@@ -1358,12 +1237,12 @@ export default function DeadlineScreen() {
     const seen = new Set(prev.items.map((i) => i.id));
     const appended = partial.items.filter((i) => !seen.has(i.id));
     const items = prev.items.length
-      ? [...prev.items, ...appended].sort(byDeadlineAsc).slice(0, DEADLINE_MAX_BUFFER)
-      : partial.items.slice(0, DEADLINE_MAX_BUFFER);
+      ? [...prev.items, ...appended].sort(byDeadlineAsc).slice(0, maxBuffer)
+      : partial.items.slice(0, maxBuffer);
     applySectionPage(section, {
       items,
       total: Math.max(prev.total, items.length, partial.total),
-      hasMore: partial.hasMore && items.length < DEADLINE_MAX_BUFFER,
+      hasMore: partial.hasMore && items.length < maxBuffer,
       nextOffset: Math.max(prev.nextOffset, partial.nextOffset, items.length),
     });
   }, [applySectionPage]);
@@ -1559,13 +1438,8 @@ export default function DeadlineScreen() {
     openMoveForItem,
   ]);
 
-  const moveCardTo = useCallback(
-    async (item: PlannerItem, targetStageId: string) => {
-      const target = moveStages.find((s) => String(s.id) === String(targetStageId));
-      if (!target) {
-        showToast('Không tìm thấy cột đích', false);
-        return;
-      }
+  const applyDeadlineStageMove = useCallback(
+    async (item: PlannerItem, target: CrmPipelineStage, kanbanDeadlineAt?: string) => {
       const staysOnDeadline = isDeadlineMembershipStage(target);
       setMovingId(item.id);
       if (!staysOnDeadline) {
@@ -1574,10 +1448,13 @@ export default function DeadlineScreen() {
         patchDeadlineItem(item.kind, item.id, {
           stageId: target.id,
           status: target.name,
+          ...(kanbanDeadlineAt ? { dueIso: kanbanDeadlineAt, overdue: false } : null),
         });
       }
       try {
-        await moveCrmItemStage(item.id, target.id);
+        await moveCrmItemStage(item.id, target.id, {
+          kanbanDeadlineAt: kanbanDeadlineAt || undefined,
+        });
         showToast(
           staysOnDeadline
             ? `Đã chuyển ${item.code} → ${target.name}`
@@ -1591,7 +1468,55 @@ export default function DeadlineScreen() {
         setMovingId(null);
       }
     },
-    [moveStages, patchDeadlineItem, showToast, load],
+    [patchDeadlineItem, showToast, load],
+  );
+
+  const moveCardTo = useCallback(
+    async (item: PlannerItem, targetStageId: string) => {
+      const target = moveStages.find((s) => String(s.id) === String(targetStageId));
+      if (!target) {
+        showToast('Không tìm thấy cột đích', false);
+        return;
+      }
+      const plan = planCrmStageMove({
+        kind: item.kind,
+        target,
+        existingDeadlineIso: item.dueIso,
+      });
+      if (plan.action === 'convert_deal') {
+        Alert.alert(
+          'Chuyển Deal',
+          `«${target.name}» là cột thắng — không chuyển cột trực tiếp. Dùng Chuyển Deal để tạo Deal đúng quy trình (giống web).`,
+          [
+            { text: 'Hủy', style: 'cancel' },
+            {
+              text: 'Chuyển Deal ngay',
+              onPress: () => {
+                void (async () => {
+                  try {
+                    await convertLeadToDeal(item.id, {
+                      regionId: undefined,
+                      companyId: item.companyId,
+                    });
+                    showToast(`Đã chuyển ${item.code} sang Deal`, true);
+                    patchDeadlineItem(item.kind, item.id, null, { remove: true });
+                  } catch (e) {
+                    showToast(formatApiError(e), false);
+                  }
+                })();
+              },
+            },
+          ],
+        );
+        return;
+      }
+      if (plan.action === 'need_deadline') {
+        setMoveDeadlineCtx({ item, target });
+        return;
+      }
+      await applyDeadlineStageMove(item, target, plan.kanbanDeadlineAt);
+    },
+    [moveStages, showToast, applyDeadlineStageMove, patchDeadlineItem],
   );
 
   const assignPickerOptions = useMemo(
@@ -1608,23 +1533,29 @@ export default function DeadlineScreen() {
     <View style={styles.root}>
       {/* Header cố định — chỉ danh sách card cuộn */}
       <View style={[styles.stickyChrome, { paddingTop: insets.top + 8 }]}>
-        <View style={styles.kindTabs}>
-          {(['lead', 'deal'] as PlannerKind[]).map((k) => {
-            const km = kindMeta(Colors)[k];
-            const active = kind === k;
-            return (
-              <Pressable
-                key={k}
-                style={[styles.kindTab, active && { backgroundColor: km.color, borderColor: km.color }]}
-                onPress={() => setKind(k)}
-              >
-                <Ionicons name={km.icon} size={16} color={active ? '#fff' : km.color} />
-                <Text style={[styles.kindTabTxt, { color: active ? '#fff' : Colors.text }]}>
-                  {km.label}
-                </Text>
-              </Pressable>
-            );
-          })}
+        <View style={styles.topRow}>
+          <View style={styles.kindTabs}>
+            {(['lead', 'deal'] as PlannerKind[]).map((k) => {
+              const km = kindMeta(Colors)[k];
+              const active = kind === k;
+              return (
+                <Pressable
+                  key={k}
+                  style={[styles.kindTab, active && { backgroundColor: km.color, borderColor: km.color }]}
+                  onPress={() => {
+                    userPickedKindRef.current = true;
+                    setKind(k);
+                    persistDeadlineKind(k);
+                  }}
+                >
+                  <Ionicons name={km.icon} size={16} color={active ? '#fff' : km.color} />
+                  <Text style={[styles.kindTabTxt, { color: active ? '#fff' : Colors.text }]}>
+                    {km.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
         </View>
 
         <View style={styles.searchRow}>
@@ -1675,7 +1606,7 @@ export default function DeadlineScreen() {
 
         <View style={styles.metaRow}>
           <Text style={styles.metaTxt}>
-            {filteredItems.length} bản ghi · {buckets.length} cột
+            {filteredItems.length} bản ghi · {buckets.length} cột · badge tab theo bộ lọc này
           </Text>
           <Text style={[styles.metaHint, { color: meta.color }]}>{phoneHint}</Text>
         </View>
@@ -1696,18 +1627,7 @@ export default function DeadlineScreen() {
             ))}
             <Pressable
               style={styles.activeChipClear}
-              onPress={() => {
-                setSearchDraft('');
-                setSearch('');
-                const next = resetDeadlineFilters(user);
-                setFilters(next);
-                if (next.companyId) void loadOrgMeta(next.companyId);
-                else {
-                  setRegions([]);
-                  setDepartments([]);
-                  setEmployees([]);
-                }
-              }}
+              onPress={() => resetFilters()}
             >
               <Text style={styles.activeChipClearTxt}>Xóa lọc</Text>
             </Pressable>
@@ -1785,7 +1705,7 @@ export default function DeadlineScreen() {
         <View style={styles.cardListWrap} {...columnSwipe.panHandlers}>
         <FlatList
           style={styles.cardList}
-          data={columnItems}
+          data={pagedColumnItems}
           keyExtractor={(it) => it.id}
           contentContainerStyle={{ paddingBottom: 120, paddingTop: 8 }}
           showsVerticalScrollIndicator={false}
@@ -1806,26 +1726,39 @@ export default function DeadlineScreen() {
             ) : null
           }
           ListEmptyComponent={
-            <View style={{ paddingHorizontal: 16 }}>
-              <Text style={styles.empty}>
-                {filteredItems.length === 0
-                  ? `Không có ${kind === 'lead' ? 'lead' : 'deal'} khớp bộ lọc.`
-                  : `Cột «${columnTitle}» trống.`}
-              </Text>
+            <View style={{ paddingHorizontal: 16, paddingVertical: 24, alignItems: 'center' }}>
+              {columnPageState?.loading || loadingMore || loading ? (
+                <>
+                  <SpinningLoader size={22} color={accent} />
+                  <Text style={[styles.empty, { marginTop: 10 }]}>Đang tải…</Text>
+                </>
+              ) : (
+                <Text style={styles.empty}>
+                  {filteredItems.length === 0
+                    ? `Không có ${kind === 'lead' ? 'lead' : 'deal'} khớp bộ lọc.`
+                    : `Cột «${columnTitle}» trống.`}
+                </Text>
+              )}
             </View>
           }
           renderItem={renderDeadlineItem}
-          extraData={`${assigningId || ''}|${movingId || ''}|${accent}`}
+          extraData={`${assigningId || ''}|${movingId || ''}|${accent}|${visibleCount}`}
           onScrollBeginDrag={onListScrollBegin}
           onMomentumScrollBegin={onListScrollBegin}
           onScrollEndDrag={onListScrollEnd}
           onMomentumScrollEnd={onListScrollEnd}
           ListFooterComponent={
-            columnHasMore ? (
+            listHasMore ? (
               <View style={{ paddingHorizontal: 16 }}>
                 <Pressable
                   style={[styles.loadMoreBtn, { borderColor: accent }]}
-                  onPress={() => void loadMore()}
+                  onPress={() => {
+                    if (clientHasMore) {
+                      setVisibleCount((n) => Math.min(n + DEADLINE_CARD_PAGE_SIZE, columnItems.length));
+                      return;
+                    }
+                    void loadMore();
+                  }}
                   disabled={loadingMore || !!columnPageState?.loading}
                 >
                   {loadingMore || columnPageState?.loading ? (
@@ -1837,11 +1770,15 @@ export default function DeadlineScreen() {
               </View>
             ) : null
           }
-          onEndReachedThreshold={0.5}
+          onEndReachedThreshold={0.4}
           onEndReached={() => {
+            if (clientHasMore) {
+              setVisibleCount((n) => Math.min(n + DEADLINE_CARD_PAGE_SIZE, columnItems.length));
+              return;
+            }
             void loadMore();
           }}
-          initialNumToRender={perf.listInitial}
+          initialNumToRender={Math.min(perf.listInitial, DEADLINE_CARD_PAGE_SIZE)}
           maxToRenderPerBatch={perf.listBatch}
           windowSize={perf.listWindow}
           updateCellsBatchingPeriod={perf.tier === 'low' ? 80 : 50}
@@ -1860,7 +1797,8 @@ export default function DeadlineScreen() {
         departments={departments}
         employees={employees}
         metaLoading={metaLoading}
-        lockScope={lockScope}
+        lockCompany={lockCompany}
+        lockAssignee={lockAssignee}
         showDealOrderSplit={kind === 'deal'}
         dealKhSplitEnabled={dealKhSplitEnabled}
         onDealKhSplitChange={(enabled) => {
@@ -1868,10 +1806,17 @@ export default function DeadlineScreen() {
           void storeDealKhSplitPreference(enabled);
         }}
         onApply={(next) => {
-          setFilters(next);
-          if (next.companyId !== filters.companyId) void loadOrgMeta(next.companyId);
+          const forced = {
+            ...next,
+            companyId: lockCompany ? (user?.company_id || next.companyId) : next.companyId,
+            assignee: lockAssignee ? 'mine' as const : next.assignee,
+            assigneeUserId: lockAssignee ? '' : next.assigneeUserId,
+          };
+          setFilters(forced);
+          if (forced.companyId !== filters.companyId) void loadOrgMeta(forced.companyId);
         }}
         onCompanyChange={(companyId) => {
+          if (lockCompany) return;
           void loadOrgMeta(companyId);
         }}
         onClose={() => setFilterOpen(false)}
@@ -1886,6 +1831,20 @@ export default function DeadlineScreen() {
           setMoveItem(null);
         }}
         onClose={() => setMoveItem(null)}
+      />
+
+      <DatePickerSheet
+        visible={!!moveDeadlineCtx}
+        value={deadlineIsoToYmd(moveDeadlineCtx?.item.dueIso)}
+        accent={Colors.blue}
+        onSelect={(ymd) => {
+          const ctx = moveDeadlineCtx;
+          setMoveDeadlineCtx(null);
+          if (!ctx) return;
+          const iso = new Date(`${ymd}T09:00:00`).toISOString();
+          void applyDeadlineStageMove(ctx.item, ctx.target, iso);
+        }}
+        onClose={() => setMoveDeadlineCtx(null)}
       />
 
       <PickerSheet
@@ -1960,7 +1919,14 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
   },
   cardListWrap: { flex: 1 },
   cardList: { flex: 1 },
-  kindTabs: { flexDirection: 'row', gap: 10, paddingHorizontal: 16, marginBottom: 10 },
+  kindTabs: { flex: 1, flexDirection: 'row', gap: 10, marginBottom: 0, paddingHorizontal: 0 },
+  topRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 16,
+    marginBottom: 10,
+  },
   kindTab: {
     flex: 1,
     flexDirection: 'row',

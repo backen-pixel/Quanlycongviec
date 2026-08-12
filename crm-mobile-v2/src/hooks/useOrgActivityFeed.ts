@@ -3,11 +3,28 @@ import {
   fetchOrgActivityFeed,
   type EmployeeReportQuery,
 } from '../api/employeeReport';
+import { formatApiError } from '../api/client';
 import { useCrmRealtimeRefresh } from './useCrmRealtimeRefresh';
 import {
   mapApiActivityFeedItem,
   type ActivityFeedItem,
 } from '../lib/reportActivityFeed';
+
+function isAbortLike(e: unknown): boolean {
+  const name = (e as { name?: string })?.name;
+  const code = (e as { code?: string })?.code;
+  return name === 'AbortError' || name === 'CanceledError' || code === 'ERR_CANCELED';
+}
+
+function queryKey(q: EmployeeReportQuery): string {
+  return [
+    q.date_from,
+    q.date_to,
+    q.company_id || '',
+    q.region_id || '',
+    q.type || 'all',
+  ].join('|');
+}
 
 export function useOrgActivityFeed(query: EmployeeReportQuery, enabled = true) {
   const [items, setItems] = useState<ActivityFeedItem[]>([]);
@@ -15,6 +32,10 @@ export function useOrgActivityFeed(query: EmployeeReportQuery, enabled = true) {
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const latestAtRef = useRef<string | null>(null);
+  const genRef = useRef(0);
+  const queryRef = useRef(query);
+  queryRef.current = query;
+  const qKey = queryKey(query);
 
   const itemsLenRef = useRef(0);
 
@@ -23,14 +44,22 @@ export function useOrgActivityFeed(query: EmployeeReportQuery, enabled = true) {
     abortRef.current?.abort();
     const ac = new AbortController();
     abortRef.current = ac;
+    const gen = ++genRef.current;
+    let timedOut = false;
+    const kill = setTimeout(() => {
+      timedOut = true;
+      ac.abort();
+    }, 12_000);
     if (!incremental || itemsLenRef.current === 0) setLoading(true);
     setError(null);
     try {
-      const res = await fetchOrgActivityFeed(query, {
+      const res = await fetchOrgActivityFeed(queryRef.current, {
         limit: 30,
         since: incremental && latestAtRef.current ? latestAtRef.current : undefined,
         signal: ac.signal,
+        timeoutMs: 12_000,
       });
+      if (gen !== genRef.current) return;
       const mapped = (res.items || []).map(mapApiActivityFeedItem);
       if (incremental && latestAtRef.current && mapped.length) {
         setItems((prev) => {
@@ -45,12 +74,19 @@ export function useOrgActivityFeed(query: EmployeeReportQuery, enabled = true) {
         latestAtRef.current = mapped[0].occurredAt || latestAtRef.current;
       }
     } catch (e) {
-      if ((e as { name?: string })?.name === 'AbortError') return;
-      setError(e instanceof Error ? e.message : 'Không tải được hoạt động');
+      if (gen !== genRef.current) return;
+      if (isAbortLike(e)) {
+        if (timedOut) {
+          setError('Hết thời gian tải hoạt động. Kéo xuống để thử lại.');
+        }
+        return;
+      }
+      setError(formatApiError(e) || 'Không tải được hoạt động');
     } finally {
-      if (abortRef.current === ac) setLoading(false);
+      clearTimeout(kill);
+      if (gen === genRef.current) setLoading(false);
     }
-  }, [enabled, query]);
+  }, [enabled, qKey]);
 
   useEffect(() => {
     itemsLenRef.current = items.length;

@@ -1,16 +1,9 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
+import SpinningLoader from '../components/SpinningLoader';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React, { useCallback, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  FlatList,
-  Pressable,
-  RefreshControl,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { fetchPlannerSectionPage, PLANNER_FETCH_LIMIT, PLANNER_MAX_BUFFER } from '../api/crm';
 import PlannerCompactCard from '../components/planner/PlannerCompactCard';
@@ -126,7 +119,7 @@ export default function MyDealsScreen() {
       </View>
 
       {loading ? (
-        <ActivityIndicator color={Colors.orange} style={{ marginTop: 40 }} />
+        <SpinningLoader color={Colors.orange} style={{ marginTop: 40 }} />
       ) : error ? (
         <View style={styles.center}>
           <Ionicons name="cloud-offline-outline" size={36} color={Colors.textFaint} />
@@ -157,7 +150,7 @@ export default function MyDealsScreen() {
           onEndReachedThreshold={0.4}
           onEndReached={() => void loadMore()}
           ListFooterComponent={
-            loadingMore ? <ActivityIndicator color={Colors.orange} style={{ marginVertical: 12 }} /> : null
+            loadingMore ? <SpinningLoader color={Colors.orange} style={{ marginVertical: 12 }} /> : null
           }
         />
       )}

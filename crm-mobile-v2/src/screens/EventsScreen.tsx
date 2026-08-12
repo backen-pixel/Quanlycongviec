@@ -1,19 +1,9 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import SpinningLoader from '../components/SpinningLoader';
+import { useFocusEffect, useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  Modal,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { Alert, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   cancelEvent,
@@ -27,7 +17,7 @@ import {
   type EventType,
 } from '../api/events';
 import {
-  fetchCrmCompanies,
+  loadCrmCompanies,
   fetchCrmEmployeesByCompany,
   fetchCrmRegions,
   type CrmCompany,
@@ -113,6 +103,7 @@ export default function EventsScreen() {
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<Nav>();
+  const route = useRoute<RouteProp<RootStackParamList, 'Events'>>();
   const { user } = useAuth();
   const admin = isAdminLike(user?.role);
   const showCompanyPicker = admin && !user?.company_id;
@@ -149,9 +140,14 @@ export default function EventsScreen() {
 
   useEffect(() => {
     void fetchEventTypes().then(setEventTypes);
-    if (showCompanyPicker) {
-      void fetchCrmCompanies().then(setCompanies);
-    }
+    if (!showCompanyPicker) return undefined;
+    let cancelled = false;
+    void loadCrmCompanies().then((rows) => {
+      if (!cancelled) setCompanies(rows);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [showCompanyPicker]);
 
   const effectiveCompanyId = useMemo(() => {
@@ -311,7 +307,7 @@ export default function EventsScreen() {
     return n;
   }, [filters, showCompanyPicker]);
 
-  const openCreate = () => {
+  const openCreate = useCallback(() => {
     // Admin hệ thống chọn công ty ngay trong form tạo — không bắt buộc lọc trước.
     if (!showCompanyPicker && !user?.company_id && !filters.companyId) {
       Alert.alert('Thiếu công ty', 'Tài khoản chưa gán công ty — không tạo được sự kiện.');
@@ -319,7 +315,14 @@ export default function EventsScreen() {
     }
     setEditEvent(null);
     setFormOpen(true);
-  };
+  }, [showCompanyPicker, user?.company_id, filters.companyId]);
+
+  /** Tab bar «Tạo sự kiện» → mở form (kể cả khi đã đang ở màn Lịch). */
+  useEffect(() => {
+    if (!route.params?.openCreate) return;
+    openCreate();
+    navigation.setParams({ openCreate: undefined });
+  }, [route.params?.openCreate, openCreate, navigation]);
 
   const openEdit = (ev: AppEvent) => {
     setEditEvent(ev);
@@ -538,7 +541,7 @@ export default function EventsScreen() {
         </View>
 
         {loading ? (
-          <ActivityIndicator color={Colors.blue} style={{ marginTop: 30 }} />
+          <SpinningLoader color={Colors.blue} style={{ marginTop: 30 }} />
         ) : error ? (
           <View style={styles.center}>
             <Ionicons name="cloud-offline-outline" size={34} color={Colors.textFaint} />
@@ -633,7 +636,7 @@ export default function EventsScreen() {
                 onPress={() => void submitCancel()}
               >
                 {busyId === cancelTarget?.id ? (
-                  <ActivityIndicator color="#fff" size="small" />
+                  <SpinningLoader color="#fff" size="small" />
                 ) : (
                   <Text style={styles.cancelDangerTxt}>Xác nhận hủy</Text>
                 )}

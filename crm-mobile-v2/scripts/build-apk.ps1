@@ -47,20 +47,21 @@ function Sync-AndroidVersionFromAppJson {
 
 Sync-AndroidVersionFromAppJson
 
-function Set-Arm64OnlyApk {
+function Set-ArmAbisForRelease {
   $gp = Join-Path $root 'android\gradle.properties'
   if (-not (Test-Path $gp)) { return }
   $content = Get-Content $gp -Raw
-  if ($content -match 'reactNativeArchitectures=arm64-v8a(\r?\n|$)') {
-    Write-Host '>> ABI: arm64-v8a only (already set)'
+  $wanted = 'reactNativeArchitectures=armeabi-v7a,arm64-v8a'
+  if ($content -match [regex]::Escape($wanted)) {
+    Write-Host '>> ABI: armeabi-v7a + arm64-v8a (already set)'
     return
   }
-  $content = $content -replace 'reactNativeArchitectures=.*', 'reactNativeArchitectures=arm64-v8a'
+  $content = $content -replace 'reactNativeArchitectures=.*', $wanted
   Set-Content -Path $gp -Value $content -NoNewline
-  Write-Host '>> ABI: arm64-v8a only (giảm kích thước APK cho upload server)'
+  Write-Host '>> ABI: armeabi-v7a + arm64-v8a (tương thích Samsung A13 / máy 32-bit)'
 }
 
-Set-Arm64OnlyApk
+Set-ArmAbisForRelease
 
 # Nạp .env (EXPO_PUBLIC_*) — APK release nhúng URL lúc bundle JS.
 $envFile = Join-Path $root '.env'

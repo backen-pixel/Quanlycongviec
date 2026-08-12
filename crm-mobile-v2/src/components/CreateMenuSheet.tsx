@@ -1,7 +1,7 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { LinearGradient } from 'expo-linear-gradient';
 import React, { useEffect, useMemo, useRef } from 'react';
-import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useCreateMenu } from '../context/CreateMenuContext';
 import { navigate } from '../navigation/navigationRef';
@@ -49,11 +49,13 @@ export default function CreateMenuSheet() {
   const fade = useRef(new Animated.Value(0)).current;
   const a1 = useRef(new Animated.Value(0)).current;
   const a2 = useRef(new Animated.Value(0)).current;
+  const a3 = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     if (open) {
       Animated.timing(fade, { toValue: 1, duration: 180, useNativeDriver: true }).start();
-      Animated.stagger(70, [
+      Animated.stagger(60, [
+        Animated.spring(a3, { toValue: 1, useNativeDriver: true, friction: 7 }),
         Animated.spring(a2, { toValue: 1, useNativeDriver: true, friction: 7 }),
         Animated.spring(a1, { toValue: 1, useNativeDriver: true, friction: 7 }),
       ]).start();
@@ -61,14 +63,20 @@ export default function CreateMenuSheet() {
       fade.setValue(0);
       a1.setValue(0);
       a2.setValue(0);
+      a3.setValue(0);
     }
-  }, [open, fade, a1, a2]);
+  }, [open, fade, a1, a2, a3]);
 
   if (!open) return null;
 
-  const go = (kind: 'lead' | 'deal') => {
+  const goEntity = (kind: 'lead' | 'deal') => {
     close();
     navigate('CreateEntity', { kind });
+  };
+
+  const goEvent = () => {
+    close();
+    navigate('Events', { openCreate: true });
   };
 
   return (
@@ -77,21 +85,30 @@ export default function CreateMenuSheet() {
         <Animated.View style={[StyleSheet.absoluteFill, styles.backdrop, { opacity: fade }]} />
       </Pressable>
       <View style={[styles.sheet, { paddingBottom: insets.bottom + 96 }]} pointerEvents="box-none">
+        <Text style={styles.sheetTitle}>Tạo mới</Text>
         <ActionButton
           icon="person-add"
-          label="Thêm Lead"
+          label="Tạo Lead"
           sub="Khách hàng tiềm năng mới"
           colors={[Colors.blue, '#1E4FD6']}
           delay={a1}
-          onPress={() => go('lead')}
+          onPress={() => goEntity('lead')}
         />
         <ActionButton
           icon="pricetags"
-          label="Thêm Deal"
+          label="Tạo Deal"
           sub="Cơ hội bán hàng / báo giá"
           colors={[Colors.orange, Colors.orangeDeep]}
           delay={a2}
-          onPress={() => go('deal')}
+          onPress={() => goEntity('deal')}
+        />
+        <ActionButton
+          icon="calendar"
+          label="Tạo sự kiện"
+          sub="Lịch hẹn / khảo sát / họp"
+          colors={[Colors.cyan, '#0E7490']}
+          delay={a3}
+          onPress={goEvent}
         />
       </View>
     </View>
@@ -105,8 +122,17 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    paddingHorizontal: 36,
-    gap: 12,
+    paddingHorizontal: 28,
+    gap: 10,
+  },
+  sheetTitle: {
+    color: Colors.textFaint,
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+    marginBottom: 2,
+    marginLeft: 4,
   },
   action: {
     flexDirection: 'row',

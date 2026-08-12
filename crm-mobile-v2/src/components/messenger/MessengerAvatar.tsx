@@ -10,6 +10,7 @@ type Props = {
   avatarUrl?: string | null;
   online?: boolean;
   dashed?: boolean;
+  skipRemoteImage?: boolean;
   children?: React.ReactNode;
 };
 
@@ -20,10 +21,11 @@ export default function MessengerAvatar({
   avatarUrl,
   online,
   dashed,
+  skipRemoteImage = false,
   children,
 }: Props) {
   const bg = color || avatarColorFromName(name);
-  const resolvedAvatar = resolveMediaUrl(avatarUrl);
+  const resolvedAvatar = skipRemoteImage ? null : resolveMediaUrl(avatarUrl);
   const styles = useMemo(
     () =>
       StyleSheet.create({
@@ -66,7 +68,12 @@ export default function MessengerAvatar({
       <View style={styles.circle}>
         {children}
         {!dashed && !children && resolvedAvatar ? (
-          <Image source={{ uri: resolvedAvatar }} style={styles.image} />
+          <Image
+            source={{ uri: resolvedAvatar }}
+            style={styles.image}
+            resizeMethod="resize"
+            resizeMode="cover"
+          />
         ) : null}
         {!dashed && !children && !resolvedAvatar ? (
           <Text style={styles.text}>{initialsFromName(name)}</Text>

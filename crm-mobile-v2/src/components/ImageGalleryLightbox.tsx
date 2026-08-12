@@ -14,6 +14,7 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import ZoomableImage from './ZoomableImage';
 
 const SCREEN_W = Dimensions.get('window').width;
 const THUMB = 56;
@@ -22,6 +23,7 @@ export type GalleryImage = {
   uri: string;
   title?: string;
   subtitle?: string;
+  headers?: Record<string, string>;
 };
 
 type Props = {
@@ -41,11 +43,13 @@ export default function ImageGalleryLightbox({
   const mainRef = useRef<FlatList<GalleryImage>>(null);
   const thumbRef = useRef<FlatList<GalleryImage>>(null);
   const [index, setIndex] = useState(initialIndex);
+  const [zoomed, setZoomed] = useState(false);
 
   useEffect(() => {
     if (!visible || !images.length) return;
     const i = Math.min(Math.max(initialIndex, 0), images.length - 1);
     setIndex(i);
+    setZoomed(false);
     const t = setTimeout(() => {
       try {
         mainRef.current?.scrollToIndex({ index: i, animated: false });
@@ -62,6 +66,7 @@ export default function ImageGalleryLightbox({
       if (!images.length) return;
       const i = Math.min(Math.max(next, 0), images.length - 1);
       setIndex(i);
+      setZoomed(false);
       mainRef.current?.scrollToIndex({ index: i, animated: true });
       thumbRef.current?.scrollToIndex({ index: i, animated: true, viewPosition: 0.5 });
     },
@@ -72,6 +77,7 @@ export default function ImageGalleryLightbox({
     const i = Math.round(e.nativeEvent.contentOffset.x / SCREEN_W);
     if (i >= 0 && i < images.length && i !== index) {
       setIndex(i);
+      setZoomed(false);
       thumbRef.current?.scrollToIndex({ index: i, animated: true, viewPosition: 0.5 });
     }
   };
@@ -88,6 +94,7 @@ export default function ImageGalleryLightbox({
           <View style={styles.topMeta}>
             <Text style={styles.counter}>{index + 1} / {images.length}</Text>
             {current?.title ? <Text style={styles.title} numberOfLines={1}>{current.title}</Text> : null}
+            <Text style={styles.hint}>Chụm để phóng to · Kéo để xem phần bị che</Text>
           </View>
           <Pressable style={styles.iconBtn} onPress={onClose} hitSlop={12}>
             <Ionicons name="close" size={26} color="#fff" />
@@ -101,21 +108,28 @@ export default function ImageGalleryLightbox({
             data={images}
             keyExtractor={(item, i) => `${item.uri}-${i}`}
             horizontal
-            pagingEnabled
+            pagingEnabled={!zoomed}
+            scrollEnabled={!zoomed}
             showsHorizontalScrollIndicator={false}
             initialScrollIndex={Math.min(initialIndex, images.length - 1)}
             getItemLayout={(_, i) => ({ length: SCREEN_W, offset: SCREEN_W * i, index: i })}
             onMomentumScrollEnd={onMainScrollEnd}
             onScrollToIndexFailed={() => {}}
-            renderItem={({ item }) => (
+            renderItem={({ item, index: i }) => (
               <View style={styles.slide}>
-                <Image source={{ uri: item.uri }} style={styles.mainImg} resizeMode="contain" />
+                <ZoomableImage
+                  uri={item.uri}
+                  headers={item.headers}
+                  onZoomChange={(s) => {
+                    if (i === index) setZoomed(s > 1.05);
+                  }}
+                />
               </View>
             )}
           />
         </View>
 
-        {images.length > 1 ? (
+        {images.length > 1 && !zoomed ? (
           <>
             {index > 0 ? (
               <Pressable style={[styles.navBtn, styles.navLeft]} onPress={() => goTo(index - 1)} hitSlop={16}>
@@ -174,6 +188,7 @@ const styles = StyleSheet.create({
   topMeta: { flex: 1, marginRight: 8 },
   counter: { color: 'rgba(255,255,255,0.75)', fontSize: 13, fontWeight: '600' },
   title: { color: '#fff', fontSize: 15, fontWeight: '600', marginTop: 2 },
+  hint: { color: 'rgba(255,255,255,0.5)', fontSize: 11, marginTop: 2 },
   iconBtn: {
     width: 40,
     height: 40,
@@ -188,7 +203,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  mainImg: { width: SCREEN_W, height: '100%' },
   navBtn: {
     position: 'absolute',
     top: '45%',

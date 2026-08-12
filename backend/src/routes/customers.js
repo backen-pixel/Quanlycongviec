@@ -95,8 +95,13 @@ r.post('/', async (req, res) => {
       commercialCompanyId = req.user?.company_id ? String(req.user.company_id) : null;
     }
     if (commercialCompanyId && !assertCompanyAccessible(req, res, commercialCompanyId)) return;
+    // phone NOT NULL trên DB — null/undefined → '' (Lead có thể chưa có SĐT).
+    const phone =
+      b.phone == null || String(b.phone).trim() === ''
+        ? ''
+        : String(b.phone).trim();
     const { data, error } = await supabase.from('customers').insert({
-      full_name: b.full_name, phone: b.phone, email: b.email || null,
+      full_name: b.full_name, phone, email: b.email || null,
       address: b.address || null, district: b.district || null, city: b.city || null,
       notes: b.notes || null, source: b.source || null,
       company: b.company || null, tax_code: b.tax_code || null,
@@ -108,7 +113,13 @@ r.post('/', async (req, res) => {
     }).select().single();
     if (error) throw error;
     res.status(201).json({ customer: data });
-  } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
+  } catch (e) {
+    console.error(e);
+    const msg = e && e.message ? String(e.message) : 'Lỗi';
+    res.status(500).json({ error: msg.includes('phone') && msg.includes('not-null')
+      ? 'Thiếu số điện thoại khách hàng'
+      : (msg.length < 180 ? msg : 'Lỗi tạo khách hàng') });
+  }
 });
 
 // ─── UPDATE CUSTOMER ──

@@ -113,6 +113,8 @@ export function CrmRealtimeProvider({ children }: { children: React.ReactNode })
 
   useEffect(() => {
     let cancelled = false;
+    let interval: ReturnType<typeof setInterval> | null = null;
+    let startTimer: ReturnType<typeof setTimeout> | null = null;
 
     const poll = async () => {
       if (cancelled || AppState.currentState !== 'active') return;
@@ -129,8 +131,13 @@ export function CrmRealtimeProvider({ children }: { children: React.ReactNode })
       }
     };
 
-    void poll();
-    const interval = setInterval(poll, LIVE_VERSION_POLL_MS);
+    /** Tránh tranh bandwidth với Overview cold start. */
+    startTimer = setTimeout(() => {
+      if (cancelled) return;
+      void poll();
+      interval = setInterval(poll, LIVE_VERSION_POLL_MS);
+    }, 5000);
+
     const sub = AppState.addEventListener('change', (state) => {
       if (state === 'background' || state === 'inactive') {
         evictStaleCrmCaches();
@@ -141,7 +148,8 @@ export function CrmRealtimeProvider({ children }: { children: React.ReactNode })
 
     return () => {
       cancelled = true;
-      clearInterval(interval);
+      if (startTimer) clearTimeout(startTimer);
+      if (interval) clearInterval(interval);
       sub.remove();
       if (bumpTimerRef.current) clearTimeout(bumpTimerRef.current);
     };

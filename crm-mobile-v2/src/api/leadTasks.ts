@@ -45,9 +45,18 @@ export type UpdateTaskPayload = Partial<{
   order_index: number;
 }>;
 
-export async function fetchLeadTasks(leadId: string): Promise<LeadCrmTask[]> {
+export async function fetchLeadTasks(
+  leadId: string,
+  opts?: {
+    taskScope?: 'crm' | 'production' | 'logistics' | string;
+    taskCompanyScope?: 'own' | 'shared' | 'all' | string;
+  },
+): Promise<LeadCrmTask[]> {
   const r = await api.get<LeadCrmTask[]>(`/crm/leads/${leadId}/tasks`, {
-    params: { task_scope: 'crm' },
+    params: {
+      task_scope: opts?.taskScope || 'crm',
+      ...(opts?.taskCompanyScope ? { task_company_scope: opts.taskCompanyScope } : {}),
+    },
   });
   return r.data || [];
 }

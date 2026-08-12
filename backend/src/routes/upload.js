@@ -4,7 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { supabase } = require('../config/supabase');
-const { auth } = require('../middleware/auth');
+const { auth, authWithQueryToken } = require('../middleware/auth');
 const { assertFileAttachmentMutation } = require('../helpers/projectFileActivity');
 const { sanitizeStorageFilename, isInvalidStorageKeyError } = require('../helpers/storageFilename');
 
@@ -35,7 +35,8 @@ function mapUploadFailure(err) {
 }
 
 const r = Router();
-r.use(auth);
+/** JWT từ header hoặc ?access_token= (cho Image/Video). */
+r.use(authWithQueryToken);
 
 // ── Memory upload (ảnh, PDF, file nhỏ) ──
 const upload = multer({

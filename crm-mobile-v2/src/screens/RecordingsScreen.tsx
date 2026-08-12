@@ -1,22 +1,10 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
+import SpinningLoader from '../components/SpinningLoader';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Audio } from 'expo-av';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  Animated,
-  FlatList,
-  Modal,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { Alert, Animated, FlatList, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import FilterGridPanel from '../components/FilterGridPanel';
 import RecordingsFilterSheet from '../components/RecordingsFilterSheet';
@@ -494,7 +482,7 @@ export default function RecordingsScreen() {
             </Pressable>
           </View>
         ) : loading ? (
-          <ActivityIndicator color={Colors.blue} style={{ marginVertical: 20 }} />
+          <SpinningLoader color={Colors.blue} style={{ marginVertical: 20 }} />
         ) : null}
       </View>
 

@@ -10,6 +10,8 @@ type Props = {
   color?: string;
   online?: boolean;
   avatarUrl?: string | null;
+  /** Máy yếu: bỏ ảnh remote, chỉ hiện chữ cái (giảm RAM decode). */
+  skipRemoteImage?: boolean;
 };
 
 function initialsFromName(name: string): string {
@@ -26,11 +28,12 @@ export default function Avatar({
   color,
   online,
   avatarUrl,
+  skipRemoteImage = false,
 }: Props) {
   const Colors = useColors();
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const circleColor = color ?? Colors.blue;
-  const resolvedAvatar = resolveMediaUrl(avatarUrl);
+  const resolvedAvatar = skipRemoteImage ? null : resolveMediaUrl(avatarUrl);
   return (
     <View style={{ width: size, height: size }}>
       <View
@@ -40,7 +43,12 @@ export default function Avatar({
         ]}
       >
         {resolvedAvatar ? (
-          <Image source={{ uri: resolvedAvatar }} style={{ width: size, height: size }} />
+          <Image
+            source={{ uri: resolvedAvatar }}
+            style={{ width: size, height: size }}
+            resizeMethod="resize"
+            resizeMode="cover"
+          />
         ) : (
           <Text style={[styles.text, { fontSize: Math.max(11, size * 0.36) }]}>
             {initials || initialsFromName(name)}

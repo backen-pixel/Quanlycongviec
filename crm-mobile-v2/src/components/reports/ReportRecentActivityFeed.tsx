@@ -1,6 +1,7 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
+import SpinningLoader from '../SpinningLoader';
 import React, { useMemo } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import type { ActivityFeedItem } from '../../lib/reportActivityFeed';
 import { formatRelativeTimeVi } from '../../lib/reportFormat';
 import { Radii, useColors, type ThemeColors } from '../../theme';
@@ -39,7 +40,7 @@ export default function ReportRecentActivityFeed({ items, loading, onItemPress }
   if (loading && !items.length) {
     return (
       <View style={styles.loadingWrap}>
-        <ActivityIndicator color={Colors.purple} />
+        <SpinningLoader color={Colors.purple} />
         <Text style={styles.loadingText}>Đang tải hoạt động…</Text>
       </View>
     );

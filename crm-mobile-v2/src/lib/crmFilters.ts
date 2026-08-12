@@ -1,16 +1,28 @@
 import type { CrmStageFetchOpts } from '../api/crm';
 import type { CrmKanbanItem, PlannerItem } from '../types';
+import {
+  lockCrmAssigneeScope,
+  lockCrmCompanyScope,
+  scopedCompanyId,
+} from './crmAssignee';
 import { vnTodayYmd, vnDefaultMonthRange, ymdFromLocalDate } from './vnDate';
+
+type FilterUser = {
+  role?: string | null;
+  company_id?: string | null;
+} | null | undefined;
 
 export type PhoneFilter = '' | 'has_phone' | 'no_phone';
 export type AssigneeFilter = 'all' | 'mine' | 'user';
 export type DueFilter = 'all' | 'overdue' | 'today';
-export type TimePreset = '' | 'this_week' | 'this_month';
+export type TimePreset = '' | 'this_week' | 'this_month' | 'last_week' | 'last_month' | 'custom';
 export type SearchField = 'all' | 'title' | 'phone' | 'code' | 'assignee';
 
 /** Cột ảo: lead/deal chưa có giai đoạn hợp lệ. */
 export const ORPHAN_STAGE_ID = '__orphan_no_stage__';
 export const REGION_NONE = '__none__';
+
+const YMD_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 export type CrmHubFilters = {
   phone: PhoneFilter;
@@ -19,6 +31,9 @@ export type CrmHubFilters = {
   departmentId: string;
   due: DueFilter;
   timePreset: TimePreset;
+  /** Khoảng ngày tạo tùy chọn (ymd) — dùng khi timePreset = 'custom'. */
+  dateFrom: string;
+  dateTo: string;
   companyId: string;
   regionId: string;
   showOrphan: boolean;
@@ -35,6 +50,8 @@ export const DEFAULT_CRM_FILTERS: CrmHubFilters = {
   departmentId: '',
   due: 'all',
   timePreset: '',
+  dateFrom: '',
+  dateTo: '',
   companyId: '',
   regionId: '',
   showOrphan: false,
@@ -42,9 +59,104 @@ export const DEFAULT_CRM_FILTERS: CrmHubFilters = {
   searchField: 'all',
 };
 
+export const TIME_PRESET_VALUES: TimePreset[] = [
+  '',
+  'this_week',
+  'this_month',
+  'last_week',
+  'last_month',
+  'custom',
+];
+
+export function sanitizeCrmHubFilters(raw: Partial<CrmHubFilters> | null | undefined): CrmHubFilters {
+  const f = { ...DEFAULT_CRM_FILTERS, ...(raw || {}) };
+  const phoneOk = f.phone === '' || f.phone === 'has_phone' || f.phone === 'no_phone';
+  const assigneeOk = f.assignee === 'all' || f.assignee === 'mine' || f.assignee === 'user';
+  const dueOk = f.due === 'all' || f.due === 'overdue' || f.due === 'today';
+  const timeOk = TIME_PRESET_VALUES.includes(f.timePreset as TimePreset);
+  const searchOk = ['all', 'title', 'phone', 'code', 'assignee'].includes(f.searchField);
+  const dateFrom = YMD_RE.test(String(f.dateFrom || '')) ? String(f.dateFrom) : '';
+  const dateTo = YMD_RE.test(String(f.dateTo || '')) ? String(f.dateTo) : '';
+  let timePreset = timeOk ? (f.timePreset as TimePreset) : DEFAULT_CRM_FILTERS.timePreset;
+  if (timePreset === 'custom' && !dateFrom && !dateTo) timePreset = '';
+  return {
+    phone: phoneOk ? f.phone : DEFAULT_CRM_FILTERS.phone,
+    assignee: assigneeOk ? f.assignee : DEFAULT_CRM_FILTERS.assignee,
+    assigneeUserId: String(f.assigneeUserId || ''),
+    departmentId: String(f.departmentId || ''),
+    due: dueOk ? f.due : DEFAULT_CRM_FILTERS.due,
+    timePreset,
+    dateFrom: timePreset === 'custom' ? dateFrom : '',
+    dateTo: timePreset === 'custom' ? dateTo : '',
+    companyId: String(f.companyId || ''),
+    regionId: String(f.regionId || ''),
+    showOrphan: !!f.showOrphan,
+    hideEmptyStages: f.hideEmptyStages !== false,
+    searchField: searchOk ? f.searchField : DEFAULT_CRM_FILTERS.searchField,
+  };
+}
+
+/** Khóa công ty / «Của tôi» theo vai trò — mọi màn CRM dùng chung. */
+export function applyCrmFilterLocks(user: FilterUser, filters: CrmHubFilters): CrmHubFilters {
+  const next = sanitizeCrmHubFilters(filters);
+  if (lockCrmAssigneeScope(user)) {
+    next.assignee = 'mine';
+    next.assigneeUserId = '';
+  }
+  if (lockCrmCompanyScope(user)) {
+    next.companyId = scopedCompanyId(user) || String(user?.company_id || '').trim() || next.companyId;
+  }
+  return next;
+}
+
+/** Xóa lọc → về mặc định web (Có SĐT) + khóa phạm vi user. */
+export function resetSharedCrmFilters(user: FilterUser): CrmHubFilters {
+  return applyCrmFilterLocks(user, {
+    ...DEFAULT_CRM_FILTERS,
+    companyId: scopedCompanyId(user) || String(user?.company_id || '').trim(),
+    assignee: lockCrmAssigneeScope(user) ? 'mine' : 'all',
+    assigneeUserId: '',
+  });
+}
+
 export function looksLikePhoneSearch(q: string): boolean {
   const digits = q.replace(/\D/g, '');
   return digits.length >= 3;
+}
+
+function pad2(n: number): string {
+  return String(n).padStart(2, '0');
+}
+
+/** Tuần trước = Mon–Sun của tuần liền trước (lịch VN, tuần bắt đầu T2). */
+export function getLastWeekRange(ref: Date = new Date()): { from: string; to: string } {
+  const todayYmd = vnTodayYmd(ref);
+  const [y, m, d] = todayYmd.split('-').map(Number);
+  const today = new Date(y, m - 1, d);
+  const dayOfWeek = today.getDay();
+  const mondayThis = new Date(today);
+  mondayThis.setDate(today.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1));
+  const mondayLast = new Date(mondayThis);
+  mondayLast.setDate(mondayThis.getDate() - 7);
+  const sundayLast = new Date(mondayLast);
+  sundayLast.setDate(mondayLast.getDate() + 6);
+  return { from: ymdFromLocalDate(mondayLast), to: ymdFromLocalDate(sundayLast) };
+}
+
+/** Tháng trước — từ ngày 1 đến hết tháng. */
+export function getLastMonthRange(ref: Date = new Date()): { from: string; to: string } {
+  const todayYmd = vnTodayYmd(ref);
+  const [y, m] = todayYmd.split('-').map(Number);
+  let ly = y;
+  let lm = m - 1;
+  if (lm < 1) {
+    ly -= 1;
+    lm = 12;
+  }
+  const from = `${ly}-${pad2(lm)}-01`;
+  const last = new Date(Date.UTC(ly, lm, 0));
+  const to = `${last.getUTCFullYear()}-${pad2(last.getUTCMonth() + 1)}-${pad2(last.getUTCDate())}`;
+  return { from, to };
 }
 
 export function getDateRange(preset: TimePreset): { from: string; to: string } {
@@ -65,8 +177,39 @@ export function getDateRange(preset: TimePreset): { from: string; to: string } {
     }
     case 'this_month':
       return vnDefaultMonthRange();
+    case 'last_week':
+      return getLastWeekRange();
+    case 'last_month':
+      return getLastMonthRange();
     default:
       return { from: '', to: '' };
+  }
+}
+
+export function resolveFilterDateRange(filters: CrmHubFilters): { from: string; to: string } {
+  if (filters.timePreset === 'custom') {
+    const from = YMD_RE.test(filters.dateFrom) ? filters.dateFrom : '';
+    const to = YMD_RE.test(filters.dateTo) ? filters.dateTo : '';
+    if (from && to && from > to) return { from: to, to: from };
+    return { from, to };
+  }
+  if (filters.timePreset) return getDateRange(filters.timePreset);
+  return { from: '', to: '' };
+}
+
+export function timePresetLabel(preset: TimePreset, dateFrom = '', dateTo = ''): string {
+  switch (preset) {
+    case 'this_week': return 'Tuần này';
+    case 'this_month': return 'Tháng này';
+    case 'last_week': return 'Tuần trước';
+    case 'last_month': return 'Tháng trước';
+    case 'custom': {
+      if (dateFrom && dateTo) return `${dateFrom.slice(5)} → ${dateTo.slice(5)}`;
+      if (dateFrom) return `Từ ${dateFrom}`;
+      if (dateTo) return `Đến ${dateTo}`;
+      return 'Tùy chọn ngày';
+    }
+    default: return '';
   }
 }
 
@@ -84,6 +227,8 @@ export function serverFilterKey(f: CrmHubFilters, q: string): string {
     f.assignee,
     f.assigneeUserId,
     f.timePreset,
+    f.dateFrom,
+    f.dateTo,
     f.companyId,
     f.regionId,
     f.showOrphan ? '1' : '0',
@@ -96,7 +241,7 @@ export function buildStageFetchOpts(
   search: string,
   myId: string,
 ): CrmStageFetchOpts {
-  const range = filters.timePreset ? getDateRange(filters.timePreset) : { from: '', to: '' };
+  const range = resolveFilterDateRange(filters);
   let assignedTo: string | undefined;
   if (filters.assignee === 'mine' && myId) assignedTo = myId;
   else if (filters.assignee === 'user' && filters.assigneeUserId) assignedTo = filters.assigneeUserId;
@@ -143,7 +288,11 @@ export function activeFilterChips(
   onPatch: (patch: Partial<CrmHubFilters>) => void,
   onClearSearch: () => void,
   lockScope = false,
+  lockCompany?: boolean,
+  lockAssignee?: boolean,
 ): ActiveFilterChip[] {
+  const lockCo = lockCompany ?? lockScope;
+  const lockAs = lockAssignee ?? lockScope;
   const chips: ActiveFilterChip[] = [];
   if (search.trim()) {
     const fieldLabel =
@@ -163,8 +312,8 @@ export function activeFilterChips(
   } else if (filters.phone === '') {
     chips.push({ key: 'phone-all', label: 'Mọi SĐT', onClear: () => onPatch({ phone: DEFAULT_CRM_FILTERS.phone }) });
   }
-  // Khi bị khóa phạm vi (nhân viên), không hiển thị chip xóa nhanh cho Công ty.
-  if (!lockScope && filters.companyId) {
+  // Khi bị khóa công ty, không hiển thị chip xóa nhanh cho Công ty.
+  if (!lockCo && filters.companyId) {
     chips.push({
       key: 'co',
       label: labels.companyName || 'Công ty đã chọn',
@@ -183,7 +332,7 @@ export function activeFilterChips(
     chips.push({
       key: 'mine',
       label: 'Của tôi',
-      onClear: lockScope ? () => {} : () => onPatch({ assignee: 'all', assigneeUserId: '' }),
+      onClear: lockAs ? () => {} : () => onPatch({ assignee: 'all', assigneeUserId: '' }),
     });
   } else if (filters.assignee === 'user' && filters.assigneeUserId) {
     chips.push({
@@ -197,10 +346,12 @@ export function activeFilterChips(
   } else if (filters.due === 'today') {
     chips.push({ key: 'due', label: 'Hôm nay', onClear: () => onPatch({ due: 'all' }) });
   }
-  if (filters.timePreset === 'this_week') {
-    chips.push({ key: 'time', label: 'Tuần này', onClear: () => onPatch({ timePreset: '' }) });
-  } else if (filters.timePreset === 'this_month') {
-    chips.push({ key: 'time', label: 'Tháng này', onClear: () => onPatch({ timePreset: '' }) });
+  if (filters.timePreset) {
+    chips.push({
+      key: 'time',
+      label: timePresetLabel(filters.timePreset, filters.dateFrom, filters.dateTo) || 'Ngày tạo',
+      onClear: () => onPatch({ timePreset: '', dateFrom: '', dateTo: '' }),
+    });
   }
   if (filters.showOrphan) {
     chips.push({ key: 'orphan', label: 'Chưa có GD', onClear: () => onPatch({ showOrphan: false }) });

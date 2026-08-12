@@ -389,16 +389,47 @@ export async function downloadApkToCache(
     /* ignore */
   }
 
-  const resumable = FileSystem.createDownloadResumable(url, target, {}, (p) => {
-    if (opts.onProgress && p.totalBytesExpectedToWrite > 0) {
-      opts.onProgress(p.totalBytesWritten / p.totalBytesExpectedToWrite);
+  let resultUri = target;
+  try {
+    const resumable = FileSystem.createDownloadResumable(url, target, {}, (p) => {
+      if (opts.onProgress && p.totalBytesExpectedToWrite > 0) {
+        opts.onProgress(p.totalBytesWritten / p.totalBytesExpectedToWrite);
+      }
+    });
+    const result = await resumable.downloadAsync();
+    if (result?.uri) resultUri = result.uri;
+  } catch (e) {
+    // Fallback khi resumable lỗi / mất file trên một số máy Android.
+    const result = await FileSystem.downloadAsync(url, target);
+    if (!result?.uri) {
+      throw new Error(
+        e instanceof Error && e.message
+          ? `Tải APK thất bại: ${e.message}`
+          : 'Tải APK thất bại',
+      );
     }
-  });
+    resultUri = result.uri;
+  }
 
-  const result = await resumable.downloadAsync();
-  if (!result?.uri) throw new Error('Tải APK thất bại');
-  await assertDownloadedApk(result.uri, opts.expectedSize, opts.expectedSha256);
-  return { uri: result.uri };
+  const info = await FileSystem.getInfoAsync(resultUri);
+  if (!info.exists || !info.size) {
+    throw new Error(
+      'Tải APK thất bại — file không lưu được vào máy. Thử lại hoặc tải APK từ trang Cập nhật trên web.',
+    );
+  }
+
+  try {
+    await assertDownloadedApk(resultUri, opts.expectedSize, opts.expectedSha256);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e || '');
+    if (/ENOENT|FileNotFound|readAsStringAsync/i.test(msg)) {
+      throw new Error(
+        'Tải APK chưa xong hoặc file bị mất trong cache. Bấm tải lại; nếu vẫn lỗi hãy tải APK từ web.',
+      );
+    }
+    throw e;
+  }
+  return { uri: resultUri };
 }
 
 export async function openDownloadedApk(

@@ -1,21 +1,11 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
+import SpinningLoader from '../components/SpinningLoader';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useCrmRealtimeRefresh } from '../hooks/useCrmRealtimeRefresh';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  FlatList,
-  Modal,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { FlatList, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   fetchCrmAssignmentLookups,
@@ -461,7 +451,7 @@ export default function TasksScreen() {
     <View style={[styles.root, { paddingTop: insets.top }]}>
       {loading && !rows.length ? (
         <View style={styles.center}>
-          <ActivityIndicator color={Colors.blue} size="large" />
+          <SpinningLoader color={Colors.blue} size="large" />
         </View>
       ) : (
         <FlatList

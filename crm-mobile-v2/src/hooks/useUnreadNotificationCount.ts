@@ -1,23 +1,29 @@
-import { useFocusEffect } from '@react-navigation/native';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { fetchNotificationCounts } from '../api/notifications';
+import {
+  bellUnreadCount,
+  getNotificationCounts,
+  subscribeNotificationCounts,
+} from '../lib/notificationCountsStore';
 import { useCrmRealtimeRefresh } from './useCrmRealtimeRefresh';
 
-/** Số thông báo chưa đọc — refresh khi focus + realtime CRM/notification. */
+/** Số chuông header/Menu — không gồm nhắc hạn (trùng tab Deadline). */
 export function useUnreadNotificationCount(): number {
-  const [count, setCount] = useState(0);
+  const [count, setCount] = useState(() => bellUnreadCount(getNotificationCounts()));
+
+  useEffect(
+    () => subscribeNotificationCounts((next) => setCount(bellUnreadCount(next))),
+    [],
+  );
 
   const refresh = useCallback(() => {
-    void fetchNotificationCounts()
-      .then((c) => setCount(c.total))
-      .catch(() => setCount(0));
+    void fetchNotificationCounts().catch(() => {});
   }, []);
 
-  useFocusEffect(
-    useCallback(() => {
-      refresh();
-    }, [refresh]),
-  );
+  useEffect(() => {
+    const t = setTimeout(refresh, 5000);
+    return () => clearTimeout(t);
+  }, [refresh]);
 
   useCrmRealtimeRefresh(refresh);
 

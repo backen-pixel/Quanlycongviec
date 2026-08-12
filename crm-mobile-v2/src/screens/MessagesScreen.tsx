@@ -1,21 +1,12 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
+import SpinningLoader from '../components/SpinningLoader';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  Alert,
-  ActivityIndicator,
-  FlatList,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import React, { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import { Alert, FlatList, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Avatar from '../components/Avatar';
+import HeaderMenuBell from '../components/HeaderMenuBell';
 import { formatApiError } from '../api/client';
 import { fetchActivityUsers, type ActivityUserItem } from '../api/users';
 import { useAuth } from '../context/AuthContext';
@@ -29,6 +20,7 @@ import { markThreadDeleted, loadDeletedThreadIds } from '../lib/messengerThreadS
 import type { CallHistoryItem } from '../lib/messengerCallLog';
 import { formatPresenceLabel } from '../lib/messengerPresence';
 import { avatarColorFromName } from '../lib/messengerTheme';
+import { getMessengerPerfLimits } from '../lib/devicePerf';
 import type { RootStackParamList } from '../navigation/types';
 import { Radii, useColors, type ThemeColors } from '../theme';
 import type { MessengerThread } from '../types/messenger';
@@ -47,11 +39,13 @@ function ThreadRow({
   onPress,
   onLongPress,
   activityLabel,
+  skipRemoteAvatars,
 }: {
   item: MessengerThread;
   onPress: () => void;
   onLongPress?: () => void;
   activityLabel?: string | null;
+  skipRemoteAvatars?: boolean;
 }) {
   const Colors = useColors();
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
@@ -65,7 +59,14 @@ function ThreadRow({
       delayLongPress={320}
       android_ripple={{ color: Colors.surfaceSoft }}
     >
-      <Avatar name={item.name} size={52} color={color} online={item.online} avatarUrl={item.avatarUrl} />
+      <Avatar
+        name={item.name}
+        size={52}
+        color={color}
+        online={item.online}
+        avatarUrl={item.avatarUrl}
+        skipRemoteImage={skipRemoteAvatars}
+      />
       <View style={styles.rowBody}>
         <View style={styles.rowTop}>
           <Text style={styles.rowName} numberOfLines={1}>{item.name}</Text>
@@ -94,12 +95,16 @@ function ThreadRow({
   );
 }
 
+const MemoThreadRow = memo(ThreadRow);
+
 function CallHistoryRow({
   item,
   onPress,
+  skipRemoteAvatars,
 }: {
   item: CallHistoryItem;
   onPress: () => void;
+  skipRemoteAvatars?: boolean;
 }) {
   const Colors = useColors();
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
@@ -120,6 +125,7 @@ function CallHistoryRow({
         size={52}
         color={avatarColorFromName(item.groupName)}
         avatarUrl={item.groupAvatarUrl}
+        skipRemoteImage={skipRemoteAvatars}
       />
       <View style={styles.rowBody}>
         <View style={styles.rowTop}>
@@ -143,10 +149,12 @@ export default function MessagesScreen() {
   const { user } = useAuth();
   const myUserId = user?.id || user?.userId || '';
   const { threads, loading, error, refreshThreads, getPeerPresence } = useMessenger();
+  const perf = useMemo(() => getMessengerPerfLimits(), []);
 
   const [hub, setHub] = useState<HubTab>('chats');
   const [query, setQuery] = useState('');
   const [onlineUsers, setOnlineUsers] = useState<ActivityUserItem[]>([]);
+  const [onlineTotal, setOnlineTotal] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
   const [callHistory, setCallHistory] = useState<CallHistoryItem[]>([]);
   const [callsLoading, setCallsLoading] = useState(false);
@@ -161,12 +169,15 @@ export default function MessagesScreen() {
   const loadOnline = useCallback(async () => {
     try {
       const list = await fetchActivityUsers();
-      setOnlineUsers(list.filter((u) => u.online && String(u.id) !== String(myUserId)));
+      const online = list.filter((u) => u.online && String(u.id) !== String(myUserId));
+      setOnlineTotal(online.length);
+      setOnlineUsers(online.slice(0, perf.onlineStripMax));
       setOnlineError('');
     } catch {
       setOnlineUsers([]);
+      setOnlineTotal(0);
     }
-  }, [myUserId]);
+  }, [myUserId, perf.onlineStripMax]);
 
   const loadCallHistory = useCallback(async () => {
     if (!myUserId) return;
@@ -239,11 +250,11 @@ export default function MessagesScreen() {
     [myUserId, navigation],
   );
 
-  const openChat = (threadId: string, title: string) => {
+  const openChat = useCallback((threadId: string, title: string) => {
     navigation.navigate('ChatDetail', { threadId, title });
-  };
+  }, [navigation]);
 
-  const openOnlineUser = async (u: ActivityUserItem) => {
+  const openOnlineUser = useCallback(async (u: ActivityUserItem) => {
     const existing = threads.find((t) => t.isDirect && t.peerId && String(t.peerId) === String(u.id));
     if (existing) {
       openChat(existing.id, existing.name);
@@ -256,20 +267,47 @@ export default function MessagesScreen() {
     } catch (e) {
       setOnlineError(formatApiError(e));
     }
-  };
+  }, [threads, openChat, refreshThreads]);
 
-  const threadActivityLabel = (t: MessengerThread): string | null => {
+  const threadActivityLabel = useCallback((t: MessengerThread): string | null => {
     if (!t.isDirect || !t.peerId) return null;
     const pres = getPeerPresence(t.peerId);
     const label = formatPresenceLabel(pres || (t.online ? { online: true } : { online: false }));
     return label || null;
-  };
+  }, [getPeerPresence]);
+
+  const renderOnlineItem = useCallback(({ item: u }: { item: ActivityUserItem }) => (
+    <Pressable style={styles.storyItem} onPress={() => void openOnlineUser(u)}>
+      <Avatar
+        name={u.name}
+        size={56}
+        color={u.color}
+        online
+        avatarUrl={u.avatarUrl}
+        skipRemoteImage={perf.skipRemoteAvatars}
+      />
+      <Text style={styles.storyLabel} numberOfLines={2}>
+        {firstName(u.name)}
+      </Text>
+    </Pressable>
+  ), [styles.storyItem, styles.storyLabel, openOnlineUser, perf.skipRemoteAvatars]);
+
+  const renderThread = useCallback(({ item }: { item: MessengerThread }) => (
+    <MemoThreadRow
+      item={item}
+      activityLabel={threadActivityLabel(item)}
+      skipRemoteAvatars={perf.skipRemoteAvatars}
+      onPress={() => openChat(item.id, item.name)}
+      onLongPress={() => setActionThread(item)}
+    />
+  ), [threadActivityLabel, perf.skipRemoteAvatars, openChat]);
 
   return (
     <View style={styles.root}>
       <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
         <Text style={styles.title}>Tin nhắn</Text>
         <View style={styles.headerActions}>
+          <HeaderMenuBell />
           <Pressable style={styles.iconBtn}>
             <Ionicons name="search-outline" size={20} color={Colors.text} />
           </Pressable>
@@ -300,28 +338,26 @@ export default function MessagesScreen() {
               <View style={styles.onlineDot} />
               <Text style={styles.onlineTitle}>Đang online</Text>
             </View>
-            <Text style={styles.onlineCount}>{onlineUsers.length}</Text>
+            <Text style={styles.onlineCount}>{onlineTotal}</Text>
           </View>
           {onlineError ? (
             <Text style={[styles.onlineEmpty, { color: Colors.red }]}>{onlineError}</Text>
           ) : onlineUsers.length === 0 ? (
             <Text style={styles.onlineEmpty}>Chưa có ai online</Text>
           ) : (
-            <ScrollView
+            <FlatList
               horizontal
+              data={onlineUsers}
+              keyExtractor={(u) => String(u.id)}
+              renderItem={renderOnlineItem}
               showsHorizontalScrollIndicator={false}
               contentContainerStyle={styles.stories}
               style={styles.storiesScroll}
-            >
-              {onlineUsers.map((u) => (
-                <Pressable key={u.id} style={styles.storyItem} onPress={() => void openOnlineUser(u)}>
-                  <Avatar name={u.name} size={56} color={u.color} online avatarUrl={u.avatarUrl} />
-                  <Text style={styles.storyLabel} numberOfLines={2}>
-                    {firstName(u.name)}
-                  </Text>
-                </Pressable>
-              ))}
-            </ScrollView>
+              initialNumToRender={Math.min(8, perf.onlineStripMax)}
+              maxToRenderPerBatch={6}
+              windowSize={3}
+              removeClippedSubviews
+            />
           )}
         </View>
       ) : null}
@@ -360,25 +396,18 @@ export default function MessagesScreen() {
           data={filtered}
           keyExtractor={(i) => i.id}
           contentContainerStyle={{ paddingBottom: 120 }}
-          initialNumToRender={12}
-          maxToRenderPerBatch={10}
-          windowSize={7}
+          initialNumToRender={perf.listInitial}
+          maxToRenderPerBatch={perf.listBatch}
+          windowSize={perf.listWindow}
           removeClippedSubviews
           updateCellsBatchingPeriod={50}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={() => void onRefresh()} tintColor={Colors.blue} />
           }
-          renderItem={({ item }) => (
-            <ThreadRow
-              item={item}
-              activityLabel={threadActivityLabel(item)}
-              onPress={() => openChat(item.id, item.name)}
-              onLongPress={() => setActionThread(item)}
-            />
-          )}
+          renderItem={renderThread}
           ListEmptyComponent={
             loading ? (
-              <ActivityIndicator color={Colors.blue} style={{ marginTop: 40 }} />
+              <SpinningLoader color={Colors.blue} style={{ marginTop: 40 }} />
             ) : error ? (
               <Text style={[styles.empty, { color: Colors.red }]}>{error}</Text>
             ) : (
@@ -391,18 +420,26 @@ export default function MessagesScreen() {
           data={callHistory}
           keyExtractor={(item) => `${item.groupId}-${item.id}`}
           contentContainerStyle={{ paddingBottom: 120 }}
+          initialNumToRender={perf.listInitial}
+          maxToRenderPerBatch={perf.listBatch}
+          windowSize={perf.listWindow}
+          removeClippedSubviews
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={() => void onRefresh()} tintColor={Colors.blue} />
           }
           renderItem={({ item }) => (
-            <CallHistoryRow item={item} onPress={() => openChat(item.groupId, item.groupName)} />
+            <CallHistoryRow
+              item={item}
+              skipRemoteAvatars={perf.skipRemoteAvatars}
+              onPress={() => openChat(item.groupId, item.groupName)}
+            />
           )}
           ListHeaderComponent={
             <Text style={styles.callsHeader}>Lịch sử cuộc gọi</Text>
           }
           ListEmptyComponent={
             callsLoading || loading ? (
-              <ActivityIndicator color={Colors.blue} style={{ marginTop: 40 }} />
+              <SpinningLoader color={Colors.blue} style={{ marginTop: 40 }} />
             ) : (
               <Text style={styles.empty}>Chưa có cuộc gọi trong lịch sử chat</Text>
             )

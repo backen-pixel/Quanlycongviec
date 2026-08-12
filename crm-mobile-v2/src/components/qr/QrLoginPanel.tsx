@@ -1,11 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  Pressable,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import SpinningLoader from '../SpinningLoader';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import QRCode from 'react-native-qrcode-svg';
 import { api, formatApiError } from '../../api/client';
 import { Radii, useColors, type ThemeColors } from '../../theme';
@@ -118,7 +113,7 @@ export default function QrLoginPanel({ target, onSuccess }: Props) {
       <Text style={styles.hint}>{hint}</Text>
       <View style={styles.qrBox}>
         {status === 'loading' ? (
-          <ActivityIndicator color={Colors.blue} size="large" />
+          <SpinningLoader color={Colors.blue} size="large" />
         ) : null}
         {status !== 'loading' && qrText && status !== 'expired' ? (
           <QRCode value={qrText} size={200} />

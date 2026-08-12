@@ -14,10 +14,13 @@ import {
   saveMessengerAttachment,
   type FileActionTarget,
 } from '../../lib/messengerFileOpen';
+import { resolveFileAccessUrl } from '../../lib/remoteFile';
 import { getMessengerFileForwardContext } from '../../lib/messengerFileForwardContext';
 import { buildForwardMessageFromAttachment } from '../../lib/messengerForward';
 import { navigate } from '../../navigation/navigationRef';
 import { getFileTypeDescription, getFileTypeMeta, isAudioMimeOrName } from '../../lib/messengerMedia';
+import { isImageFile, isVideoFile } from '../../lib/isImageFile';
+import { useMediaPreview } from '../../context/MediaPreviewContext';
 import { useTheme } from '../../theme';
 import { Radii, Spacing } from '../../theme';
 
@@ -62,11 +65,14 @@ function shareInAppAttachment(file: FileActionTarget): void {
 export default function FileActionsSheet({ visible, file, onDismiss }: Props) {
   const { colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
+  const { openInAppMedia } = useMediaPreview();
 
   const fileName = file?.name?.trim() || 'Tệp đính kèm';
   const typeLabel = getFileTypeDescription(file?.name, file?.mime);
   const fileMeta = getFileTypeMeta(file?.name, file?.mime || '');
   const isAudio = isAudioMimeOrName(file?.mime, file?.name);
+  const inAppMedia = isImageFile({ mime_type: file?.mime, name: file?.name, file_url: file?.url })
+    || isVideoFile({ mime_type: file?.mime, name: file?.name, file_url: file?.url });
 
   const styles = useMemo(
     () =>
@@ -168,12 +174,16 @@ export default function FileActionsSheet({ visible, file, onDismiss }: Props) {
   const actions: ActionRow[] = [
     {
       key: 'open',
-      icon: isAudio ? 'play-outline' : 'open-outline',
+      icon: isAudio || inAppMedia ? 'play-outline' : 'open-outline',
       tint: '#2563EB',
       iconBg: isDark ? '#1E3A5F' : '#EFF6FF',
-      title: isAudio ? 'Phát' : 'Mở',
-      sub: isAudio ? 'Nghe tin nhắn thoại' : 'Xem nội dung file',
-      onPress: () => run(() => openMessengerAttachment(file.url, file)),
+      title: isAudio ? 'Phát' : inAppMedia ? 'Xem trong app' : 'Mở',
+      sub: isAudio ? 'Nghe tin nhắn thoại' : inAppMedia ? 'Xem ảnh/video ngay trong ứng dụng' : 'Xem nội dung file',
+      onPress: () => run(async () => {
+        const uri = await resolveFileAccessUrl(file.url, { name: file.name });
+        if (uri && openInAppMedia({ uri, mime: file.mime, mime_type: file.mime, name: file.name })) return;
+        return openMessengerAttachment(file.url, file);
+      }),
     },
     {
       key: 'download',

@@ -3,20 +3,33 @@ import React, { useEffect, useRef } from 'react';
 import { Animated, Easing, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 
 type Props = {
-  size?: number;
-  color: string;
-  /** 'small' ≈ 18, 'large' ≈ 28 — ghi đè `size` nếu truyền. */
+  /** Số px, hoặc 'small' / 'large' (tương thích ActivityIndicator). */
+  size?: number | 'small' | 'large';
+  color?: string;
+  /** 'small' ≈ 18, 'large' ≈ 28 — dùng khi không truyền size số. */
   variant?: 'small' | 'large';
   style?: StyleProp<ViewStyle>;
 };
 
+const DEFAULT_COLOR = '#2F6BFF';
+
+function resolvePx(size: Props['size'], variant: Props['variant']): number {
+  if (typeof size === 'number' && Number.isFinite(size)) return size;
+  if (size === 'large' || variant === 'large') return 28;
+  return 18;
+}
+
 /**
- * Icon tải xoay tròn (Ionicons refresh) — dùng thay/cùng ActivityIndicator
- * khi cần visual rõ ràng hơn trên Android/dark theme.
+ * Icon tải xoay tròn thống nhất toàn app (Ionicons reload-outline).
  */
-export default function SpinningLoader({ size, color, variant = 'small', style }: Props) {
+export default function SpinningLoader({
+  size,
+  color = DEFAULT_COLOR,
+  variant = 'small',
+  style,
+}: Props) {
   const spin = useRef(new Animated.Value(0)).current;
-  const px = size ?? (variant === 'large' ? 28 : 18);
+  const px = resolvePx(size, variant);
 
   useEffect(() => {
     const anim = Animated.loop(

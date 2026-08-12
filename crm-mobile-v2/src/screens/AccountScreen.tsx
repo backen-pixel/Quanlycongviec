@@ -1,19 +1,10 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
+import SpinningLoader from '../components/SpinningLoader';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React, { useCallback, useMemo, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { changePassword, fetchCurrentUser, roleLabel } from '../api/auth';
 import { formatApiError } from '../api/client';
@@ -232,13 +223,13 @@ export default function AccountScreen() {
         <Text style={styles.secTitle}>Thông tin</Text>
         {!user && loadingMeta ? (
           <View style={styles.loadingBox}>
-            <ActivityIndicator color={Colors.blue} />
+            <SpinningLoader color={Colors.blue} />
           </View>
         ) : (
           <View style={styles.blockCard}>
             {loadingMeta ? (
               <View style={styles.refreshRow}>
-                <ActivityIndicator color={Colors.blue} size="small" />
+                <SpinningLoader color={Colors.blue} size="small" />
                 <Text style={styles.refreshTxt}>Đang cập nhật...</Text>
               </View>
             ) : null}
@@ -294,7 +285,7 @@ export default function AccountScreen() {
             disabled={saving}
           >
             {saving ? (
-              <ActivityIndicator color={Colors.white} size="small" />
+              <SpinningLoader color={Colors.white} size="small" />
             ) : (
               <>
                 <Ionicons name="lock-closed-outline" size={18} color={Colors.white} />

@@ -3,17 +3,7 @@
  * Modal chỉ hiện lần đầu; sau đó dùng banner nhẹ trong lúc dùng app.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  AppState,
-  Modal,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import { AppState, Modal, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   checkForUpdate,
@@ -30,6 +20,7 @@ import {
 import { hasPendingBubbleChat } from '../lib/bubbleChatPending';
 import { isOnBubbleChatRoute } from '../navigation/navigationRef';
 import { Radii, useColors, type ThemeColors } from '../theme';
+import SpinningLoader from './SpinningLoader';
 
 const CHECK_INTERVAL_MS = 30 * 60 * 1000;
 const FOREGROUND_DEBOUNCE_MS = 90 * 1000;
@@ -125,7 +116,10 @@ export default function UpdateGate() {
   }, []);
 
   useEffect(() => {
-    void runCheck({ allowModal: true });
+    /** Nhường cold start Overview — check update sau vài giây. */
+    const bootTimer = setTimeout(() => {
+      void runCheck({ allowModal: true });
+    }, 6000);
 
     const interval = setInterval(() => {
       void runCheck({ allowModal: false });
@@ -140,6 +134,7 @@ export default function UpdateGate() {
     });
 
     return () => {
+      clearTimeout(bootTimer);
       clearInterval(interval);
       appSub.remove();
     };
@@ -279,7 +274,7 @@ export default function UpdateGate() {
 
               {downloading ? (
                 <View style={styles.progressWrap}>
-                  <ActivityIndicator color={Colors.blue} />
+                  <SpinningLoader color={Colors.blue} />
                   <Text style={styles.progressText}>Đang tải… {pct}%</Text>
                   <View style={styles.bar}>
                     <View style={[styles.barFill, { width: `${pct}%` }]} />
