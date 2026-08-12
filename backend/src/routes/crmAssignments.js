@@ -31,6 +31,15 @@ const { promoteNextAssignmentAfterComplete } = require('../helpers/crmSequential
 const { emitCrmTaskChanged } = require('../helpers/crmTaskRealtime');
 const { responseCache, invalidateTags: rcInvalidateTags } = require('../middleware/responseCache');
 const { listSharedWorkspaceInboxTasks, listPrivateDealInboxTasks } = require('../helpers/sharedWorkspaceInbox');
+const {
+  crmReportTodayYmdVn,
+  crmReportCreatedAtFromIso,
+} = require('../helpers/crmReportDateBounds');
+
+/** Đầu ngày lịch VN (ISO +07) — KPI/chip quá hạn không phụ thuộc TZ process. */
+function vnStartOfTodayIso() {
+  return crmReportCreatedAtFromIso(crmReportTodayYmdVn());
+}
 
 /** Mobile SX Work tab lắng nghe crm:task_changed — emit khi assignment gắn lead/deal. */
 async function emitAssignmentTaskChanged(req, assignment, action = 'updated') {
@@ -664,15 +673,14 @@ r.get('/', async (req, res) => {
     if (req.query.priority) q = q.eq('priority', req.query.priority);
     if (req.query.column_id) q = q.eq('column_id', req.query.column_id);
     if (req.query.lead_id) q = q.eq('lead_id', String(req.query.lead_id).trim());
-    // Mobile chip «Quá hạn»: chưa xong + có deadline trước đầu ngày hôm nay (local server ≈ UTC ok cho filter).
+    // Mobile chip «Quá hạn»: chưa xong + deadline trước đầu ngày hôm nay (giờ VN).
     const overdueFlag = String(req.query.overdue || '').trim().toLowerCase();
     if (overdueFlag === '1' || overdueFlag === 'true') {
-      const start = new Date();
-      start.setHours(0, 0, 0, 0);
+      const startIso = vnStartOfTodayIso();
       q = q
         .neq('status', 'completed')
         .not('deadline', 'is', null)
-        .lt('deadline', start.toISOString());
+        .lt('deadline', startIso);
     }
     const moduleFilter = String(req.query.assignment_module || '').trim().toLowerCase();
     if (isValidAssignModuleFilter(moduleFilter)) {
@@ -713,12 +721,11 @@ r.get('/', async (req, res) => {
       if (req.query.column_id) qLegacy = qLegacy.eq('column_id', req.query.column_id);
       if (req.query.lead_id) qLegacy = qLegacy.eq('lead_id', String(req.query.lead_id).trim());
       if (overdueFlag === '1' || overdueFlag === 'true') {
-        const start = new Date();
-        start.setHours(0, 0, 0, 0);
+        const startIso = vnStartOfTodayIso();
         qLegacy = qLegacy
           .neq('status', 'completed')
           .not('deadline', 'is', null)
-          .lt('deadline', start.toISOString());
+          .lt('deadline', startIso);
       }
       if (isValidAssignModuleFilter(moduleFilter)) {
         qLegacy = qLegacy.eq('assignment_module', moduleFilter);
@@ -1064,9 +1071,8 @@ r.delete('/:id', async (req, res) => {
 // Dùng count head (aggregate) — không tải hết status/deadline rows.
 r.get('/stats', responseCache({ ttl: 20, scope: 'user', tags: ['crm:assignments'] }), async (req, res) => {
   try {
-    const start = new Date();
-    start.setHours(0, 0, 0, 0);
-    const startIso = start.toISOString();
+    // Đầu ngày lịch VN — không dùng setHours theo TZ process (Render = UTC).
+    const startIso = vnStartOfTodayIso();
 
     let scopeIds = null;
     if (!isAdmin(req)) {

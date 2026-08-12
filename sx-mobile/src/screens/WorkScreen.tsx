@@ -954,7 +954,7 @@ export default function WorkScreen() {
   const assigneeOptions = useMemo(() => collectAssigneeOptions(tasks), [tasks]);
 
   const filtered = useMemo(() => {
-    const needle = search.trim().toLowerCase();
+    // Search đã gửi `q` lên server — không lọc lại client (tránh che match SĐT/lead).
     const source = statusFilter === 'all' ? tasks : chipTasks;
     return source.filter((t) => {
       // Status đã lọc server khi chip ≠ all — chỉ soft-check overdue nếu BE cũ chưa có param.
@@ -970,29 +970,12 @@ export default function WorkScreen() {
       if (filterCompany && String(t.company_id || '') !== String(filterCompany)) {
         return false;
       }
-      if (needle) {
-        const hay = [
-          t.title,
-          t.description,
-          t.lead?.code,
-          t.lead?.title,
-          assignmentDealCardLabel(t.lead),
-          t.assignee?.full_name,
-          ...(t.assignees || []).map((a) => a.full_name),
-          t.stage_slug,
-        ]
-          .filter(Boolean)
-          .join(' ')
-          .toLowerCase();
-        if (!hay.includes(needle)) return false;
-      }
       return true;
     });
-  }, [tasks, chipTasks, statusFilter, search, teamView, scope, assigneeFilter, filterCompany]);
+  }, [tasks, chipTasks, statusFilter, teamView, scope, assigneeFilter, filterCompany]);
 
-  /** Stats luôn trên scope (không phụ thuộc chip) — search/công ty/người. */
+  /** Stats fallback client — scope đã tải (search/KPI ưu tiên /stats). */
   const statsScope = useMemo(() => {
-    const needle = search.trim().toLowerCase();
     return tasks.filter((t) => {
       if (teamView && scope === 'team' && assigneeFilter !== 'all') {
         if (!taskAssignedToUser(t, assigneeFilter)) return false;
@@ -1000,25 +983,9 @@ export default function WorkScreen() {
       if (filterCompany && String(t.company_id || '') !== String(filterCompany)) {
         return false;
       }
-      if (needle) {
-        const hay = [
-          t.title,
-          t.description,
-          t.lead?.code,
-          t.lead?.title,
-          assignmentDealCardLabel(t.lead),
-          t.assignee?.full_name,
-          ...(t.assignees || []).map((a) => a.full_name),
-          t.stage_slug,
-        ]
-          .filter(Boolean)
-          .join(' ')
-          .toLowerCase();
-        if (!hay.includes(needle)) return false;
-      }
       return true;
     });
-  }, [tasks, search, teamView, scope, assigneeFilter, filterCompany]);
+  }, [tasks, teamView, scope, assigneeFilter, filterCompany]);
 
   const stats = useMemo(() => {
     if (serverStats) {

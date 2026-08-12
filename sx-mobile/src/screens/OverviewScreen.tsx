@@ -165,6 +165,8 @@ export default function OverviewScreen() {
   const boardAbortRef = useRef<AbortController | null>(null);
   const companiesRef = useRef<CompanyOption[]>([]);
   companiesRef.current = companies;
+  const summaryDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const summaryReqSeqRef = useRef(0);
 
   /** Admin hệ thống (admin không gắn company) — thấy / chọn mọi công ty. */
   const sysAdmin = isSystemAdmin(user);
@@ -411,22 +413,29 @@ export default function OverviewScreen() {
             return;
           }
         }
-        void fetchProductionBoardSummary(boardFiltersRef.current).then((summary) => {
-          if (!summary) return;
-          const cachedBoard = getCachedBoard(boardFiltersRef.current);
-          const client = cachedBoard
-            ? computeSxBoardKpis(cachedBoard.projects, cachedBoard.stages)
-            : null;
-          setKpis((prev) => ({
-            ...EMPTY_KPI,
-            total: summary.total,
-            producing: summary.producing,
-            awaitingDelivery: summary.awaitingDelivery,
-            shipped: summary.shipped,
-            completed: client?.completed ?? prev.completed,
-            overdue: summary.overdue,
-          }));
-        });
+        // Coalesce summary khi soft-ingest dày (tránh bão GET /summary).
+        if (summaryDebounceRef.current) clearTimeout(summaryDebounceRef.current);
+        summaryDebounceRef.current = setTimeout(() => {
+          summaryDebounceRef.current = null;
+          const seq = ++summaryReqSeqRef.current;
+          const filters = boardFiltersRef.current;
+          void fetchProductionBoardSummary(filters).then((summary) => {
+            if (!summary || seq !== summaryReqSeqRef.current) return;
+            const cachedBoard = getCachedBoard(filters);
+            const client = cachedBoard
+              ? computeSxBoardKpis(cachedBoard.projects, cachedBoard.stages)
+              : null;
+            setKpis((prev) => ({
+              ...EMPTY_KPI,
+              total: summary.total,
+              producing: summary.producing,
+              awaitingDelivery: summary.awaitingDelivery,
+              shipped: summary.shipped,
+              completed: client?.completed ?? prev.completed,
+              overdue: summary.overdue,
+            }));
+          });
+        }, 800);
         return;
       }
       void load('silent');
@@ -434,6 +443,10 @@ export default function OverviewScreen() {
     modes: REALTIME_BOARD_TASK,
     debounceMs: 1500,
   });
+
+  useEffect(() => () => {
+    if (summaryDebounceRef.current) clearTimeout(summaryDebounceRef.current);
+  }, []);
 
   // Quay lại tab Tổng quan → catch-up nhẹ (realtime onlyWhenFocused bỏ qua khi ở tab khác).
   useFocusEffect(

@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Ionicons from '@expo/vector-icons/Ionicons';
+import { useFocusEffect } from '@react-navigation/native';
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AppState,
@@ -199,6 +200,7 @@ export default function KanbanScreen() {
   const loadSeqRef = useRef(0);
   const boardAbortRef = useRef<AbortController | null>(null);
   const lastSilentAtRef = useRef(0);
+  const skipNextFocusRefreshRef = useRef(true);
   const [toast, setToast] = useState<ToastState>(null);
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
@@ -529,6 +531,23 @@ export default function KanbanScreen() {
     modes: REALTIME_BOARD_TASK,
     debounceMs: 1500,
   });
+
+  // Quay lại tab Dự án → catch-up nhẹ (socket onlyWhenFocused bỏ qua khi ở tab khác).
+  useFocusEffect(
+    useCallback(() => {
+      if (!boardFiltersReady) return undefined;
+      if (skipNextFocusRefreshRef.current) {
+        skipNextFocusRefreshRef.current = false;
+        return undefined;
+      }
+      if (movingIdRef.current) return undefined;
+      const now = Date.now();
+      if (now - lastSilentAtRef.current < 12_000) return undefined;
+      lastSilentAtRef.current = now;
+      void load('silent');
+      return undefined;
+    }, [boardFiltersReady, load]),
+  );
 
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
