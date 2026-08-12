@@ -1652,7 +1652,7 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
 
     const projectListSelect = mobileLite
       ? `
-        id, code, name, estimated_value, priority, deadline, ${MIGRATION_300_COLS} created_at, status, company_id,
+        id, code, name, estimated_value, priority, deadline, install_date, ${MIGRATION_300_COLS} ${MIGRATION_520_COLS} created_at, status, company_id,
         production_deadline, sx_kanban_column_id, logistics_company_id, vc_kanban_column_id, vc_handover_status,
         current_stage_id, workshop_type_id,
         current_stage:workflow_stages(id, slug, name, color, icon),
@@ -1665,7 +1665,7 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
       `
       : kanbanBoard
         ? `
-        id, code, name, estimated_value, production_value, deposit_amount, collected_amount, priority, deadline, ${MIGRATION_300_COLS} created_at, status, company_id,
+        id, code, name, estimated_value, production_value, deposit_amount, collected_amount, priority, deadline, install_date, ${MIGRATION_300_COLS} ${MIGRATION_520_COLS} created_at, status, company_id,
         production_deadline, sx_kanban_column_id, logistics_company_id, vc_kanban_column_id, vc_handover_status,
         current_stage_id, workshop_type_id,
         current_stage:workflow_stages(id, slug, name, color, icon),
@@ -1678,7 +1678,7 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
         workshop_type:workshop_project_types(id, name, applies_to)
       `
       : `
-        id, code, name, estimated_value, production_value, deposit_amount, collected_amount, priority, deadline, ${MIGRATION_300_COLS} created_at, status, notes, company_id,
+        id, code, name, estimated_value, production_value, deposit_amount, collected_amount, priority, deadline, install_date, ${MIGRATION_300_COLS} ${MIGRATION_520_COLS} created_at, status, notes, company_id,
         production_deadline, production_note, vc_kanban_column_id, vc_handover_status, sx_kanban_column_id,
         current_stage_id, workshop_type_id,
         current_stage:workflow_stages(id, slug, name, color, icon),
@@ -1764,15 +1764,16 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
       error.message?.includes('workshop_type_id') ||
       error.message?.includes('relationship') ||
       isOrderDeliveryDateMissingError(error) ||
+      isProductionFinishDateMissingError(error) ||
       isDepositAmountMissingError(error) ||
       isCollectedAmountMissingError(error) ||
       isExternalCompanyNameMissingError(error)
     );
     if (needsFallback) {
       // Migration not yet applied or FK not ready — retry without new columns
-      const fallbackSelect = (mobileLite || kanbanBoard)
+      let fallbackSelect = (mobileLite || kanbanBoard)
         ? `
-          id, code, name, estimated_value, production_value, deposit_amount, collected_amount, priority, deadline, created_at, status,
+          id, code, name, estimated_value, production_value, deposit_amount, collected_amount, priority, deadline, install_date, ${MIGRATION_300_COLS} ${MIGRATION_520_COLS} created_at, status,
           production_deadline, workshop_type_id,
           current_stage_id,
           current_stage:workflow_stages(id, slug, name, color, icon),
@@ -1784,7 +1785,7 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
           ${kanbanBoard || !mobileLite ? CRM_DEALS_PROJECT_EMBED_LEGACY : CRM_DEALS_PROJECT_EMBED_MOBILE}
         `
         : `
-          id, code, name, estimated_value, production_value, deposit_amount, collected_amount, priority, deadline, created_at, status, notes,
+          id, code, name, estimated_value, production_value, deposit_amount, collected_amount, priority, deadline, install_date, ${MIGRATION_300_COLS} ${MIGRATION_520_COLS} created_at, status, notes,
           production_deadline, production_note, workshop_type_id,
           current_stage_id,
           current_stage:workflow_stages(id, slug, name, color, icon),
@@ -1797,6 +1798,12 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
           ${CRM_DEALS_PROJECT_EMBED_LEGACY},
           tasks(id, status)
         `;
+      if (isOrderDeliveryDateMissingError(error)) {
+        fallbackSelect = stripMigration300Cols(fallbackSelect).replace(/\binstall_date,\s*/g, '');
+      }
+      if (isProductionFinishDateMissingError(error)) {
+        fallbackSelect = stripMigration520Cols(fallbackSelect);
+      }
       let fallbackQuery = supabase
         .from('projects')
         .select(fallbackSelect, { count: 'exact' });

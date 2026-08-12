@@ -1907,10 +1907,10 @@ r.put('/:id', requireProjectEditOrSxKanbanWorkshopType(), async (req, res) => {
     const dateFields = ['deadline', 'design_deadline', 'production_start_date', 'install_date', 'pickup_at', 'production_deadline', 'order_date', 'delivery_date', 'production_finish_date'];
     fields.forEach(f => { if (b[f] !== undefined) update[f] = b[f]; });
     dateFields.forEach((f) => { if (update[f] === '') update[f] = null; });
-    // Sale đổi delivery_date → production_finish_date = giao − 2 (trừ khi FE gửi tường minh finish)
+    // Lắp đặt / giao hàng đổi → production_finish_date = − 2 (trừ khi FE gửi tường minh finish)
     try {
-      const { productionFinishPatchFromDelivery } = require('../helpers/projectDeliveryDates');
-      const finishPatch = productionFinishPatchFromDelivery(b);
+      const { productionFinishPatchFromInstallOrDelivery } = require('../helpers/projectDeliveryDates');
+      const finishPatch = productionFinishPatchFromInstallOrDelivery(b);
       if (finishPatch) Object.assign(update, finishPatch);
     } catch (_) { /* ignore */ }
     if (b.deposit_amount !== undefined) {

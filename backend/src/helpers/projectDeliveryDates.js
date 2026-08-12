@@ -1,6 +1,6 @@
 /**
  * Ngày đặt / giao / hoàn thiện SX trên projects.
- * production_finish_date = delivery_date − 2 calendar days (một chiều từ Sale).
+ * production_finish_date = (install_date || delivery_date) − 2 calendar days.
  */
 
 /** Parse YYYY-MM-DD (hoặc ISO bắt đầu bằng ngày) → { y, m, d } hoặc null. */
@@ -53,9 +53,32 @@ function productionFinishPatchFromDelivery(body) {
   return { production_finish_date: finish };
 }
 
+/**
+ * Ưu tiên install_date (lắp đặt), không thì delivery_date (giao hàng) → finish = − 2 ngày.
+ * Tôn trọng production_finish_date nếu client gửi tường minh.
+ */
+function productionFinishPatchFromInstallOrDelivery(body) {
+  if (!body) return null;
+  if (body.production_finish_date !== undefined) return null;
+
+  if (body.install_date !== undefined) {
+    const raw = body.install_date;
+    if (raw === null || raw === '') {
+      // Xóa lắp đặt: nếu cùng request còn delivery → suy từ delivery; không thì không đụng finish
+      if (body.delivery_date !== undefined) return productionFinishPatchFromDelivery(body);
+      return null;
+    }
+    const finish = subtractCalendarDays(raw, 2);
+    return finish ? { production_finish_date: finish } : { production_finish_date: null };
+  }
+
+  return productionFinishPatchFromDelivery(body);
+}
+
 module.exports = {
   parseDateOnlyParts,
   addCalendarDays,
   subtractCalendarDays,
   productionFinishPatchFromDelivery,
+  productionFinishPatchFromInstallOrDelivery,
 };

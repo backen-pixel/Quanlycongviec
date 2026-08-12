@@ -189,66 +189,163 @@ function resolveVcDeadlineRaw(item) {
   return { raw: null, source: null };
 }
 
-// ─── Calendar View (xem theo deadline) ──────────────────────────────────────
+/** YYYY-MM-DD từ install_date / pickup_at. */
+function resolveVcDateKey(raw) {
+  if (raw == null || raw === '') return null;
+  const ymd = String(raw).slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return ymd;
+  return toLocalDateKey(raw);
+}
+
+function shouldHideVcDeadlineCard(item, stage) {
+  if (item?.status === 'completed') return true;
+  const slug = String(stage?.bucket_slug || stage?.slug || '').toLowerCase();
+  return slug === 'completed' || slug === 'done';
+}
+
+const VC_CAL_MODES = [
+  { id: 'all', label: 'Tất cả' },
+  { id: 'pickup', label: 'Chỉ lấy hàng' },
+  { id: 'install', label: 'Chỉ lắp đặt' },
+];
+
+// ─── Calendar View — lấy hàng (pickup_at) + lắp đặt (install_date) ───────────
 export function LogisticsCalendarView({ pipeline, filterFrom, onVisibleMonthChange }) {
   const navigate = useNavigate();
   const todayKey = toLocalDateKey(Date.now());
+  const [calMode, setCalMode] = useState('all');
 
   const calendarItems = useMemo(() => {
-    const out = [];
+    const built = [];
     for (const s of pipeline || []) {
       for (const p of s.items || []) {
-        const { raw, source } = resolveVcDeadlineRaw(p);
-        if (!raw || !source) continue;
-        const dateKey = toLocalDateKey(raw);
-        if (!dateKey) continue;
-        const stageColor = s.color || '#f97316';
-        const overdue = dateKey < todayKey && p.status !== 'completed';
-        const srcLabel = source === 'install_date' ? 'Ngày lắp đặt' : 'Deadline';
-        const timeStr = formatCalendarDeadlineTime(raw);
-        out.push({
-          id: p.id,
-          dateKey,
-          label: p.code || `#${p.id}`,
-          subLabel: p.name || p.customer_name || '',
-          meta: [timeStr, srcLabel, s.name].filter(Boolean).join(' · '),
-          title: [
-            p.code,
-            p.name,
-            timeStr && `Hạn lúc: ${timeStr}`,
-            srcLabel,
-            s.name && `Cột: ${s.name}`,
-          ].filter(Boolean).join('\n'),
-          tone: overdue ? 'overdue' : (source === 'install_date' ? 'install' : 'deadline'),
-          overdue,
-          chipClassName: overdue ? undefined : 'hover:opacity-80',
-          chipStyle: overdue
-            ? undefined
-            : { backgroundColor: `${stageColor}22`, color: stageColor },
-          raw: p,
-        });
+        if (shouldHideVcDeadlineCard(p, s)) continue;
+        const code = p.code || `#${p.id}`;
+        const name = p.name || p.customer_name || '';
+
+        const pickupKey = resolveVcDateKey(p.pickup_at);
+        if (pickupKey) {
+          const overdue = pickupKey < todayKey;
+          const timeStr = formatCalendarDeadlineTime(p.pickup_at);
+          built.push({
+            id: `${p.id}:pickup`,
+            kind: 'pickup',
+            dateKey: pickupKey,
+            label: `LH · ${code}`,
+            subLabel: name,
+            meta: [timeStr, 'Lấy hàng', s.name].filter(Boolean).join(' · '),
+            title: [
+              code,
+              name,
+              `Lấy hàng: ${pickupKey}`,
+              timeStr && `Giờ: ${timeStr}`,
+              s.name && `Cột: ${s.name}`,
+            ].filter(Boolean).join('\n'),
+            tone: overdue ? 'overdue' : 'delivery',
+            overdue,
+            raw: p,
+          });
+        }
+
+        const installKey = resolveVcDateKey(p.install_date);
+        if (installKey) {
+          const overdue = installKey < todayKey;
+          const timeStr = formatCalendarDeadlineTime(p.install_date);
+          built.push({
+            id: `${p.id}:install`,
+            kind: 'install',
+            dateKey: installKey,
+            label: `LĐ · ${code}`,
+            subLabel: name,
+            meta: [timeStr, 'Lắp đặt', s.name].filter(Boolean).join(' · '),
+            title: [
+              code,
+              name,
+              `Lắp đặt: ${installKey}`,
+              timeStr && `Giờ: ${timeStr}`,
+              s.name && `Cột: ${s.name}`,
+            ].filter(Boolean).join('\n'),
+            tone: overdue ? 'overdue' : 'install',
+            overdue,
+            raw: p,
+          });
+        }
       }
     }
-    return out;
-  }, [pipeline, todayKey]);
+    if (calMode === 'pickup') return built.filter((x) => x.kind === 'pickup');
+    if (calMode === 'install') return built.filter((x) => x.kind === 'install');
+    return built;
+  }, [pipeline, todayKey, calMode]);
+
+  const modeHint = calMode === 'pickup'
+    ? 'lịch lấy hàng'
+    : calMode === 'install'
+      ? 'lịch lắp đặt'
+      : 'lấy hàng + lắp đặt';
+
+  const pickupCount = useMemo(
+    () => (pipeline || []).flatMap((s) => s.items || []).filter((p) => resolveVcDateKey(p.pickup_at)).length,
+    [pipeline],
+  );
+  const installCount = useMemo(
+    () => (pipeline || []).flatMap((s) => s.items || []).filter((p) => resolveVcDateKey(p.install_date)).length,
+    [pipeline],
+  );
 
   return (
-    <DashboardMonthCalendar
-      accent="orange"
-      items={calendarItems}
-      filterFrom={filterFrom}
-      onVisibleMonthChange={onVisibleMonthChange}
-      onItemClick={(calItem) => {
-        markWorkshopPipelineCardFocus(calItem.id, 'vc');
-        navigate(`/vc/projects/${calItem.id}`);
-      }}
-      legend={[
-        { label: 'Deadline dự án', className: 'bg-purple-100' },
-        { label: 'Ngày lắp đặt', className: 'bg-teal-100' },
-        { label: 'Đã trễ', className: 'bg-red-100' },
-      ]}
-      footerRight={`${calendarItems.length} dự án có lịch`}
-    />
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-1.5">
+        {VC_CAL_MODES.map((m) => {
+          const active = calMode === m.id;
+          const countHint = m.id === 'pickup'
+            ? pickupCount
+            : m.id === 'install'
+              ? installCount
+              : pickupCount + installCount;
+          return (
+            <button
+              key={m.id}
+              type="button"
+              onClick={() => setCalMode(m.id)}
+              className={`h-8 px-3 rounded-lg text-xs font-semibold border cursor-pointer transition-colors ${
+                active
+                  ? 'bg-orange-600 text-white border-orange-600 shadow-sm'
+                  : 'bg-white text-slate-600 border-slate-200 hover:border-orange-300 hover:bg-orange-50/60'
+              }`}
+            >
+              {m.label}
+              <span className={`ml-1.5 tabular-nums ${active ? 'text-orange-100' : 'text-slate-400'}`}>
+                {countHint}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      {calMode === 'pickup' && calendarItems.length === 0 && (
+        <p className="text-xs text-slate-500 px-1">
+          Không có lịch lấy hàng trong dữ liệu đang tải{pickupCount === 0 ? ' (chưa có ngày lấy hàng trên dự án)' : ''}.
+        </p>
+      )}
+      <DashboardMonthCalendar
+        key={`vc-cal-${calMode}`}
+        accent="orange"
+        items={calendarItems}
+        filterFrom={filterFrom}
+        onVisibleMonthChange={onVisibleMonthChange}
+        onItemClick={(calItem) => {
+          const pid = calItem.raw?.id || String(calItem.id || '').split(':')[0];
+          if (!pid) return;
+          markWorkshopPipelineCardFocus(pid, 'vc');
+          navigate(`/vc/projects/${pid}`);
+        }}
+        legend={[
+          { label: 'Lấy hàng', className: 'bg-emerald-100' },
+          { label: 'Lắp đặt', className: 'bg-teal-100' },
+          { label: 'Đã trễ', className: 'bg-red-100' },
+        ]}
+        footerRight={`${calendarItems.length} lịch · ${modeHint}`}
+      />
+    </div>
   );
 }
 
@@ -311,12 +408,6 @@ function targetDateForVcBucket(bucketKey) {
     case 'none': return null;
     default: return fmt(today);
   }
-}
-
-function shouldHideVcDeadlineCard(item, stage) {
-  if (item?.status === 'completed') return true;
-  const slug = String(stage?.bucket_slug || stage?.slug || '').toLowerCase();
-  return slug === 'completed' || slug === 'done';
 }
 
 function VcDeadlineBoardShell({ children }) {

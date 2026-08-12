@@ -20,9 +20,15 @@ import {
   useCommentThreadLive,
 } from './commentThreadLiveUx';
 import DashboardMonthCalendar, { toLocalDateKey, formatCalendarDeadlineTime } from './dashboard/DashboardMonthCalendar';
+import { workshopProductionFinishYmd } from '../lib/workshopDashboardUtils';
+import { projectIsProducing } from '../lib/sxPipelineRevenue';
 
 /** Bộ emoji được phép — đồng bộ với backend PROJECT_COMMENT_ALLOWED_REACTION_EMOJI */
 const PROJECT_COMMENT_REACTION_PICKER = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
+
+function resolveProductionFinishDateKey(item) {
+  return workshopProductionFinishYmd(item);
+}
 
 function groupProjectCommentsByParent(flat) {
   const m = new Map();
@@ -362,44 +368,38 @@ export function ProductionListView({ pipeline, calculateDays }) {
   );
 }
 
-/** Calendar view — lịch tháng theo hạn hiệu lực (delivery → production → deadline) */
+/** Calendar view — chỉ lịch hoàn thiện sản xuất (production_finish_date = lắp đặt − 2) */
 export function ProductionCalendarView({ pipeline, filterFrom, onVisibleMonthChange }) {
   const navigate = useNavigate();
   const todayKey = toLocalDateKey(Date.now());
 
   const calendarItems = useMemo(() => {
+    const stages = pipeline || [];
     const out = [];
-    for (const s of pipeline || []) {
+    for (const s of stages) {
       for (const item of s.items || []) {
-        const { ts, source } = resolveSxDeadlineBucket(item, Date.now(), s);
-        if (ts == null || !source) continue;
-        const dateKey = toLocalDateKey(ts);
+        // Đã hoàn thiện / bàn giao VC / đã VC → không hiện trên lịch hoàn thiện
+        if (!projectIsProducing(item, stages)) continue;
+        const dateKey = resolveProductionFinishDateKey(item);
         if (!dateKey) continue;
-        const tone = source === 'delivery_date'
-          ? 'delivery'
-          : source === 'production_deadline'
-            ? 'production'
-            : 'deadline';
-        const srcLabel = source === 'delivery_date'
-          ? 'Ngày giao hàng'
-          : source === 'production_deadline'
-            ? 'Ngày giao xưởng'
-            : 'Deadline tổng';
-        const timeStr = formatCalendarDeadlineTime(ts);
+        const timeStr = item.production_finish_date
+          ? formatCalendarDeadlineTime(item.production_finish_date)
+          : (item.install_date ? formatCalendarDeadlineTime(item.install_date) : '');
+        const fromInstallFallback = !item.production_finish_date && !!item.install_date;
         out.push({
           id: item.id,
           dateKey,
           label: `${s.icon ? `${s.icon} ` : ''}${item.code || `#${item.id}`}`,
           subLabel: item.name || item.customer_name || '',
-          meta: [timeStr, srcLabel, s.name].filter(Boolean).join(' · '),
+          meta: [timeStr, 'Hoàn thiện SX', s.name].filter(Boolean).join(' · '),
           title: [
             item.code,
             item.name,
-            timeStr && `Hạn lúc: ${timeStr}`,
-            srcLabel,
+            `Hoàn thiện SX: ${dateKey}${fromInstallFallback ? ' (lắp đặt − 2)' : ''}`,
+            timeStr && `Giờ: ${timeStr}`,
             s.name && `Cột: ${s.name}`,
           ].filter(Boolean).join('\n'),
-          tone,
+          tone: 'production',
           overdue: dateKey < todayKey,
           raw: item,
         });
@@ -419,12 +419,10 @@ export function ProductionCalendarView({ pipeline, filterFrom, onVisibleMonthCha
         navigate(`/sx/projects/${calItem.id}`);
       }}
       legend={[
-        { label: 'Ngày giao hàng', className: 'bg-emerald-100' },
-        { label: 'Ngày giao xưởng', className: 'bg-sky-100' },
-        { label: 'Deadline tổng', className: 'bg-purple-100' },
+        { label: 'Hoàn thiện sản xuất', className: 'bg-sky-100' },
         { label: 'Đã trễ', className: 'bg-red-100' },
       ]}
-      footerRight={`${calendarItems.length} dự án có lịch`}
+      footerRight={`${calendarItems.length} dự án · hạn = lắp đặt − 2 ngày`}
     />
   );
 }

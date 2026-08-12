@@ -720,7 +720,7 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
     const orFilter = buildLogisticsScopeFilter(stageIds);
     if (!orFilter) return res.json({ projects: [], total: 0, page: parsedPage, totalPages: 1 });
 
-    const selectFull = `id, code, name, estimated_value, priority, deadline, created_at, status, notes, company_id, logistics_company_id,
+    const selectFull = `id, code, name, estimated_value, priority, deadline, install_date, delivery_date, pickup_at, created_at, status, notes, company_id, logistics_company_id,
         current_stage_id, vc_kanban_column_id, workshop_type_id,
         current_stage:workflow_stages(id, slug, name, color, icon),
         customer:customers(id, full_name, phone),
@@ -732,7 +732,7 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
         sales_person:users!projects_sales_person_id_fkey(id, full_name),
         workshop_type:workshop_project_types(id, name, applies_to),
         ${TASKS_EMBED}`;
-    const selectLite = `id, code, name, estimated_value, deadline, created_at, status, company_id, logistics_company_id,
+    const selectLite = `id, code, name, estimated_value, deadline, install_date, delivery_date, pickup_at, created_at, status, company_id, logistics_company_id,
         current_stage_id, vc_kanban_column_id, workshop_type_id,
         logistics_person_id, installer_person_id, production_person_id, sales_person_id,
         current_stage:workflow_stages(id, slug, name),
@@ -793,13 +793,13 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
       (err?.message?.includes('relationship') && err?.message?.includes('users'));
     if (error && isLogisticsPersonError(error)) {
       const fbSelect = mobileLite
-        ? `id, code, name, estimated_value, deadline, created_at, status, company_id, logistics_company_id,
+        ? `id, code, name, estimated_value, deadline, install_date, delivery_date, pickup_at, created_at, status, company_id, logistics_company_id,
           current_stage_id, vc_kanban_column_id,
           current_stage:workflow_stages(id, slug, name),
           customer:customers(id, full_name, phone),
           company:companies!projects_company_id_fkey(id, name, short_name),
           logistics_company:companies!projects_logistics_company_id_fkey(id, name, short_name)`
-        : `id, code, name, estimated_value, priority, deadline, created_at, status,
+        : `id, code, name, estimated_value, priority, deadline, install_date, delivery_date, pickup_at, created_at, status,
           current_stage_id, vc_kanban_column_id,
           current_stage:workflow_stages(id, slug, name, color, icon),
           customer:customers(id, full_name, phone),
@@ -824,7 +824,7 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
       } else {
         let fb3q = supabase
           .from('projects')
-          .select(`id, code, name, estimated_value, priority, deadline, created_at, status,
+          .select(`id, code, name, estimated_value, priority, deadline, install_date, delivery_date, pickup_at, created_at, status,
             current_stage_id,
             current_stage:workflow_stages(id, slug, name, color, icon),
             customer:customers(id, full_name, phone)${mobileLite ? '' : `, ${TASKS_EMBED}`}`, { count: 'exact' })

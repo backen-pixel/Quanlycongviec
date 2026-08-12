@@ -49,6 +49,32 @@ export function workshopCreatedInRange(iso, from, to) {
 }
 
 /**
+ * Ngày hoàn thiện SX (YYYY-MM-DD): production_finish_date, hoặc lắp đặt/giao − 2.
+ * Dùng cho lịch SX.
+ */
+export function workshopProductionFinishYmd(project) {
+  const finishRaw = project?.production_finish_date;
+  if (finishRaw != null && finishRaw !== '') {
+    const ymd = String(finishRaw).slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return ymd;
+  }
+  const anchorRaw = project?.install_date || project?.delivery_date;
+  if (anchorRaw == null || anchorRaw === '') return null;
+  const anchorYmd = /^\d{4}-\d{2}-\d{2}/.test(String(anchorRaw))
+    ? String(anchorRaw).slice(0, 10)
+    : ((String(anchorRaw).includes('T') && String(anchorRaw).split('T')[0]) || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(anchorYmd)) return null;
+  const [y, m, d] = anchorYmd.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+  if (Number.isNaN(dt.getTime())) return null;
+  dt.setUTCDate(dt.getUTCDate() - 2);
+  const yy = dt.getUTCFullYear();
+  const mm = String(dt.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(dt.getUTCDate()).padStart(2, '0');
+  return `${yy}-${mm}-${dd}`;
+}
+
+/**
  * Lấy nhiều trang projects từ /production/projects hoặc /logistics/projects.
  * @param {import('axios').AxiosInstance} api
  * @param {string} path

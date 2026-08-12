@@ -28,7 +28,8 @@ import { CrmCommentMentionComposer } from '../components/crmCommentMentionUi';
 import { resolveMentionIdsFromContent } from '../lib/crmCommentMentions';
 import {
   getWorkshopDateRange, WS_TIME_PRESETS,
-  workshopCreatedInRange, fetchWorkshopProjectPages, WS_KANBAN_LOAD_ALL_MAX,
+  workshopCreatedInRange,
+  fetchWorkshopProjectPages, WS_KANBAN_LOAD_ALL_MAX,
 } from '../lib/workshopDashboardUtils';
 import {
   CheckCircle2, Search, X, Calendar, Plus,
@@ -526,6 +527,8 @@ export default function ProductionDashboard() {
     const v = P0?.viewMode;
     return WS_DASH_VIEW_MODES.includes(v) ? v : 'kanban';
   });
+  const viewModeRef = useRef(viewMode);
+  viewModeRef.current = viewMode;
   const [sortBy, setSortBy] = useState(() => {
     const v = P0?.sortBy;
     return SX_SORT_OPTIONS_VISIBLE.some((o) => o.id === v) ? v : 'newest';
@@ -895,9 +898,11 @@ export default function ProductionDashboard() {
         const s = rawWorkshopType == null ? '' : String(rawWorkshopType).trim();
         return s || undefined;
       })();
-      const serverDateRange = timePreset === 'custom'
-        ? (customFrom && customTo ? { from: customFrom, to: customTo } : { from: '', to: '' })
-        : (timePreset ? getWorkshopDateRange(timePreset) : { from: '', to: '' });
+      const serverDateRange = viewModeRef.current === 'calendar'
+        ? { from: '', to: '' } // Lịch hoàn thiện SX: không lọc theo ngày tạo
+        : (timePreset === 'custom'
+          ? (customFrom && customTo ? { from: customFrom, to: customTo } : { from: '', to: '' })
+          : (timePreset ? getWorkshopDateRange(timePreset) : { from: '', to: '' }));
       const serverFilterParams = {
         ...(serverDateRange.from ? { created_from: serverDateRange.from } : {}),
         ...(serverDateRange.to ? { created_to: serverDateRange.to } : {}),
@@ -980,14 +985,21 @@ export default function ProductionDashboard() {
         }
       });
 
-      // Chỉ lấy 40 card đầu; tổng được tải độc lập bằng truy vấn đếm nhẹ phía trên.
+      // Kanban: bootstrap 40 thẻ; Lịch: tải đủ trần (finish date có thể nằm ngoài 40 thẻ đầu vì sort theo deadline).
+      const onCalendar = viewModeRef.current === 'calendar';
+      const bootstrapPageSize = onCalendar
+        ? Math.min(maxRecords, 500)
+        : SX_KANBAN_PAGE_SIZE;
+      const bootstrapMax = onCalendar
+        ? maxRecords
+        : Math.min(maxRecords, SX_KANBAN_PAGE_SIZE);
       const projectPage = await fetchWorkshopProjectPages(api, '/production/projects', {
         companyId: fetchCompanyId,
         dealCompanyId: fetchDealCompanyId,
         sxWorkshopCompanyId: fetchSxWorkshopId,
         workshopTypeId: workshopTypeFilter,
-        maxRecords: Math.min(maxRecords, SX_KANBAN_PAGE_SIZE),
-        pageSize: SX_KANBAN_PAGE_SIZE,
+        maxRecords: bootstrapMax,
+        pageSize: bootstrapPageSize,
         bustCache,
         view: 'kanban',
         includeMeta: true,
@@ -1071,7 +1083,7 @@ export default function ProductionDashboard() {
     }
   }, [
     companyParam, dealCompanyParam, kanbanLoadKey, showVptSxWorkshopFilter,
-    filterSxWorkshopCompany, timePreset, customFrom, customTo, filterPersonId,
+    filterSxWorkshopCompany, timePreset, customFrom, customTo, filterPersonId, viewMode,
   ]);
 
   const loadRef = useRef(load);
@@ -1153,9 +1165,11 @@ export default function ProductionDashboard() {
       try {
         const rawWorkshopType = filterWorkTypeIdRef.current;
         const workshopTypeId = rawWorkshopType == null ? '' : String(rawWorkshopType).trim();
-        const serverDateRange = timePreset === 'custom'
-          ? (customFrom && customTo ? { from: customFrom, to: customTo } : { from: '', to: '' })
-          : (timePreset ? getWorkshopDateRange(timePreset) : { from: '', to: '' });
+        const serverDateRange = viewModeRef.current === 'calendar'
+          ? { from: '', to: '' }
+          : (timePreset === 'custom'
+            ? (customFrom && customTo ? { from: customFrom, to: customTo } : { from: '', to: '' })
+            : (timePreset ? getWorkshopDateRange(timePreset) : { from: '', to: '' }));
         const payload = await fetchWorkshopProjectPages(api, '/production/projects', {
           companyId: companyParam,
           dealCompanyId: dealCompanyParam,
@@ -1217,9 +1231,11 @@ export default function ProductionDashboard() {
     try {
       const rawWorkshopType = filterWorkTypeIdRef.current;
       const workshopTypeId = rawWorkshopType == null ? '' : String(rawWorkshopType).trim();
-      const serverDateRange = timePreset === 'custom'
-        ? (customFrom && customTo ? { from: customFrom, to: customTo } : { from: '', to: '' })
-        : (timePreset ? getWorkshopDateRange(timePreset) : { from: '', to: '' });
+      const serverDateRange = viewModeRef.current === 'calendar'
+        ? { from: '', to: '' }
+        : (timePreset === 'custom'
+          ? (customFrom && customTo ? { from: customFrom, to: customTo } : { from: '', to: '' })
+          : (timePreset ? getWorkshopDateRange(timePreset) : { from: '', to: '' }));
       const commonExtra = {
         ...(serverDateRange.from ? { created_from: serverDateRange.from } : {}),
         ...(serverDateRange.to ? { created_to: serverDateRange.to } : {}),
@@ -1549,21 +1565,25 @@ export default function ProductionDashboard() {
     && workTypesCompanyId === companyForTypes
     && (companyForTypes !== '' || allowEmptyWorkshopScope);
 
-  /** Một key duy nhất cho mọi filter server — đổi loại/công ty/trần tải chỉ 1 đường load. */
-  const projectsLoadKey = useMemo(() => [
-    companyParam || '',
-    dealCompanyParam || '',
-    kanbanLoadKey || '500',
-    showVptSxWorkshopFilter ? (filterSxWorkshopCompany || '') : '',
-    filterWorkTypeId || '',
-    timePreset || '',
-    timePreset === 'custom' ? (customFrom || '') : '',
-    timePreset === 'custom' ? (customTo || '') : '',
-    filterPersonId || '',
-  ].join('|'), [
+  /** Một key duy nhất cho mọi filter server — đổi loại/công ty/trần tải chỉ 1 đường load.
+   * Tab Lịch: bỏ created_from/to khỏi key (và khỏi API) — đổi tháng chỉ neo UI, không reload theo ngày tạo. */
+  const projectsLoadKey = useMemo(() => {
+    const onCalendar = viewMode === 'calendar';
+    return [
+      companyParam || '',
+      dealCompanyParam || '',
+      kanbanLoadKey || '500',
+      showVptSxWorkshopFilter ? (filterSxWorkshopCompany || '') : '',
+      filterWorkTypeId || '',
+      onCalendar ? 'calendar' : (timePreset || ''),
+      onCalendar ? '' : (timePreset === 'custom' ? (customFrom || '') : ''),
+      onCalendar ? '' : (timePreset === 'custom' ? (customTo || '') : ''),
+      filterPersonId || '',
+    ].join('|');
+  }, [
     companyParam, dealCompanyParam, kanbanLoadKey,
     showVptSxWorkshopFilter, filterSxWorkshopCompany, filterWorkTypeId,
-    timePreset, customFrom, customTo, filterPersonId,
+    timePreset, customFrom, customTo, filterPersonId, viewMode,
   ]);
 
   const firstLoadedRef = useRef(false);
@@ -1938,7 +1958,7 @@ export default function ProductionDashboard() {
     setCustomTo(range.to);
   }, []);
 
-  /** Lịch tháng: prev/next/Hôm nay → lọc thời gian = cả tháng đang xem. */
+  /** Lịch tháng: prev/next/Hôm nay → đồng bộ khoảng thời gian filter = cả tháng đang xem. */
   const handleCalendarMonthChange = useCallback(({ from, to }) => {
     if (!from || !to) return;
     setTimePreset('custom');
@@ -1960,7 +1980,10 @@ export default function ProductionDashboard() {
   const scopeProjects = useMemo(() => {
     return projects.filter((p) => {
       const { from, to } = dateFromTo;
-      if (from && to && !workshopCreatedInRange(p.created_at, from, to)) return false;
+      // Tab Lịch: không lọc theo khoảng thời gian (tháng xem do lưới lịch tự xếp theo dateKey)
+      if (viewMode !== 'calendar' && from && to && !workshopCreatedInRange(p.created_at, from, to)) {
+        return false;
+      }
       if (!matchesProject(p, { personNameQ: deferredPersonName })) return false;
       if (filterPhone === 'has' && !p.customer?.phone) return false;
       if (filterPhone === 'no' && p.customer?.phone) return false;
@@ -1981,7 +2004,7 @@ export default function ProductionDashboard() {
       }
       return true;
     });
-  }, [projects, dateFromTo, matchesProject, deferredPersonName, filterPhone, filterWorkTypeId, showOrphanColumn, dealCompanyExternalFilter]);
+  }, [projects, dateFromTo, matchesProject, deferredPersonName, filterPhone, filterWorkTypeId, showOrphanColumn, dealCompanyExternalFilter, viewMode]);
 
   const toggleSelect = useCallback((id, e) => {
     e?.stopPropagation();
@@ -3730,7 +3753,8 @@ export default function ProductionDashboard() {
 {!showAdvFilter && showCustomDate && (
           <div className="flex flex-wrap items-center gap-3 bg-violet-50 border border-violet-200 rounded-xl p-3 shadow-sm">
             <span className="text-xs font-bold text-violet-600 uppercase flex items-center gap-1.5">
-              <Calendar className="h-3.5 w-3.5" /> Khoảng thời gian:
+              <Calendar className="h-3.5 w-3.5" />
+              Khoảng thời gian:
             </span>
             <button
               type="button"

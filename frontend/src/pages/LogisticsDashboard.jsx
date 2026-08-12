@@ -22,6 +22,7 @@ import {
   ChevronDown, ChevronUp, MessageSquare, Phone, ExternalLink,
 } from 'lucide-react';
 import { LogisticsListView, LogisticsPlannerView, LogisticsCalendarView, LogisticsDeadlineView } from '../components/LogisticsViews';
+import { getCalendarMonthRange } from '../components/dashboard/DashboardMonthCalendar';
 import NewLogisticsProjectModal from '../components/NewLogisticsProjectModal';
 import WorkshopPipelineKanbanScroll, { useWorkshopKanbanScrollLayout } from '../components/WorkshopPipelineKanbanScroll';
 import KanbanColumnVirtualList from '../components/KanbanColumnVirtualList';
@@ -300,6 +301,18 @@ export default function LogisticsDashboard() {
 
   useEffect(() => { load(); }, [load]);
 
+  /** Vào Lịch: reload để có pickup_at / install_date (list Kanban cũ có thể thiếu field). */
+  const calendarReloadOnceRef = useRef(false);
+  useEffect(() => {
+    if (viewMode !== 'calendar') {
+      calendarReloadOnceRef.current = false;
+      return;
+    }
+    if (calendarReloadOnceRef.current) return;
+    calendarReloadOnceRef.current = true;
+    load();
+  }, [viewMode, load]);
+
   useEffect(() => {
     projectsRef.current = projects;
   }, [projects]);
@@ -412,6 +425,18 @@ export default function LogisticsDashboard() {
     setShowDateRangePicker(false);
   }, []);
 
+  /** Vào tab Lịch: nếu chưa có khoảng ngày → neo tháng hiện tại (đồng bộ header lịch ↔ bộ lọc). */
+  useEffect(() => {
+    if (viewMode !== 'calendar') return;
+    if (customFrom && customTo) return;
+    const now = new Date();
+    const range = getCalendarMonthRange(now.getFullYear(), now.getMonth());
+    setTimePreset('custom');
+    setCustomFrom(range.from);
+    setCustomTo(range.to);
+    setShowCustomDate(true);
+  }, [viewMode, customFrom, customTo]);
+
   const timeFilterLabel = useMemo(() => {
     if (!timePreset) return '';
     if (timePreset === 'custom') {
@@ -507,16 +532,26 @@ export default function LogisticsDashboard() {
     return { from: '', to: '' };
   }, [timePreset, customFrom, customTo]);
 
+  /** Tháng neo lịch = đầu khoảng lọc (preset hoặc custom). */
+  const calendarFilterFrom = useMemo(() => {
+    if (timePreset === 'custom') return customFrom || '';
+    if (timePreset) return dateFromTo.from || customFrom || '';
+    return customFrom || '';
+  }, [timePreset, customFrom, dateFromTo.from]);
+
   const scopeProjects = useMemo(() => {
     return projects.filter((p) => {
       const { from, to } = dateFromTo;
-      if (from && to && !workshopCreatedInRange(p.created_at, from, to)) return false;
+      // Tab Lịch: neo tháng theo install_date trên lưới — không lọc theo ngày tạo
+      if (viewMode !== 'calendar' && from && to && !workshopCreatedInRange(p.created_at, from, to)) {
+        return false;
+      }
       if (!matchesProject(p, { personNameQ: deferredPersonName })) return false;
       if (filterPhone === 'has' && !p.customer?.phone) return false;
       if (filterPhone === 'no' && p.customer?.phone) return false;
       return true;
     });
-  }, [projects, dateFromTo, matchesProject, deferredPersonName, filterPhone]);
+  }, [projects, dateFromTo, matchesProject, deferredPersonName, filterPhone, viewMode]);
 
   const toggleSelect = useCallback((id, e) => {
     e?.stopPropagation();
@@ -1313,8 +1348,10 @@ export default function LogisticsDashboard() {
           from={customFrom}
           to={customTo}
           onChange={({ from, to }) => {
+            setTimePreset('custom');
             setCustomFrom(from);
             setCustomTo(to);
+            setShowCustomDate(true);
           }}
           onClose={() => setShowDateRangePicker(false)}
         />
@@ -1519,7 +1556,7 @@ export default function LogisticsDashboard() {
       {viewMode === 'calendar' && (
         <LogisticsCalendarView
           pipeline={filteredKanbanPipeline}
-          filterFrom={customFrom}
+          filterFrom={calendarFilterFrom}
           onVisibleMonthChange={handleCalendarMonthChange}
         />
       )}
