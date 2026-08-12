@@ -18,7 +18,7 @@ import { useProductionRealtime } from '../hooks/useProductionRealtime';
 import { fetchPersonalPlanner, fetchProductionBoard, isAbortError } from '../lib/productionApi';
 import { getCachedBoard, isCachedBoardFresh } from '../lib/productionBoardCache';
 import { REALTIME_BOARD_TASK } from '../lib/realtimeModes';
-import { formatMoneyAmount, Radii, Spacing, stageColor } from '../theme';
+import { formatMoneyAmount, Radii, Spacing, stageColor, colorWithAlpha } from '../theme';
 import type { PersonalPlanner, ProductionBoard, ProductionProject } from '../types';
 
 import SpinningLoader from '../components/SpinningLoader';
@@ -270,6 +270,20 @@ export default function PlannerScreen() {
         tabText: { color: colors.textMuted, fontSize: 13, fontWeight: '700' },
         tabTextActive: { color: colors.white },
         searchRow: { paddingHorizontal: Spacing.md, paddingBottom: Spacing.sm },
+        truncatedBanner: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 8,
+          marginHorizontal: Spacing.md,
+          marginBottom: Spacing.sm,
+          paddingHorizontal: 12,
+          paddingVertical: 10,
+          borderRadius: Radii.md,
+          backgroundColor: colorWithAlpha(colors.warning, 0.14),
+          borderWidth: 1,
+          borderColor: colorWithAlpha(colors.warning, 0.35),
+        },
+        truncatedBannerTxt: { flex: 1, color: colors.warning, fontSize: 12, fontWeight: '700', lineHeight: 16 },
         searchBox: {
           flexDirection: 'row',
           alignItems: 'center',
@@ -442,6 +456,15 @@ export default function PlannerScreen() {
           ) : null}
         </View>
       </View>
+
+      {board.truncated ? (
+        <View style={styles.truncatedBanner}>
+          <Ionicons name="information-circle-outline" size={16} color={colors.warning} />
+          <Text style={styles.truncatedBannerTxt}>
+            Đã tải tối đa ~6.000 dự án. Thu hẹp bộ lọc để xem đủ trên lịch.
+          </Text>
+        </View>
+      ) : null}
 
       {loading ? (
         <View style={styles.center}>

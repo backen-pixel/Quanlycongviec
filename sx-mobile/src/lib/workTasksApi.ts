@@ -36,6 +36,8 @@ export type WorkTasksQuery = {
   status?: string | null;
   /** Quá hạn: chưa xong + deadline < đầu ngày hôm nay. */
   overdue?: boolean;
+  /** Tìm kiếm server (title / mô tả / deal…). */
+  q?: string | null;
   /** Phân trang — mặc định mobile dùng 200. */
   limit?: number;
   offset?: number;
@@ -277,6 +279,7 @@ export async function fetchProductionWorkTasksPage(
   if (query.companyId) params.company_id = query.companyId;
   if (query.status) params.status = String(query.status);
   if (query.overdue) params.overdue = 1;
+  if (query.q?.trim()) params.q = query.q.trim();
 
   const { data } = await api.get<{
     assignments?: unknown[];
@@ -336,6 +339,7 @@ export async function fetchProductionWorkTaskStats(
     const page = await fetchProductionWorkTasksPage({
       assigneeId: query.assigneeId,
       companyId: query.companyId,
+      q: query.q,
       limit: 500,
       offset,
       signal: query.signal,

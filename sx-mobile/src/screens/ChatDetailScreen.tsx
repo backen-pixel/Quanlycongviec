@@ -52,6 +52,7 @@ import {
 } from '../lib/chatWallpaperStorage';
 import {
   fetchMessengerGroupDetail,
+  fetchMessengerMessagesPage,
   fetchReadReceipts,
   formatMessageTime,
   recallMessengerMessage,
@@ -106,7 +107,6 @@ export default function ChatDetailScreen({ navigation, route }: Props) {
   const mc = getMessengerColors(colors, isDark);
   const {
     threads,
-    loadMessages,
     sendText,
     subscribeGroupMessage,
     subscribeMessengerMeta,
@@ -127,6 +127,9 @@ export default function ChatDetailScreen({ navigation, route }: Props) {
   const [seenViewers, setSeenViewers] = useState<MessageViewer[]>([]);
   const [seenSheetOpen, setSeenSheetOpen] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [hasMoreOlder, setHasMoreOlder] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const loadingOlderRef = useRef(false);
   const [sending, setSending] = useState(false);
   const [draft, setDraft] = useState('');
   const [draftSel, setDraftSel] = useState({ start: 0, end: 0 });
@@ -323,11 +326,16 @@ export default function ChatDetailScreen({ navigation, route }: Props) {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    setHasMoreOlder(false);
     initialScrollDone.current = false;
-    void Promise.all([loadMessages(threadId), fetchReadReceipts(threadId)])
-      .then(([rows, receipts]) => {
+    void Promise.all([
+      fetchMessengerMessagesPage(threadId, { limit: 60 }),
+      fetchReadReceipts(threadId),
+    ])
+      .then(([page, receipts]) => {
         if (cancelled) return;
-        setMessages(rows);
+        setMessages(page.messages);
+        setHasMoreOlder(page.hasMore);
         setReadReceipts(receipts);
       })
       .catch((e) => {
@@ -339,7 +347,32 @@ export default function ChatDetailScreen({ navigation, route }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [threadId, loadMessages]);
+  }, [threadId]);
+
+  const loadOlderMessages = useCallback(async () => {
+    if (loadingOlderRef.current || !hasMoreOlder || !messages.length) return;
+    const oldest = messages[0];
+    if (!oldest?.created_at) return;
+    loadingOlderRef.current = true;
+    setLoadingOlder(true);
+    try {
+      const page = await fetchMessengerMessagesPage(threadId, {
+        limit: 60,
+        before: String(oldest.created_at),
+      });
+      setMessages((prev) => {
+        const seen = new Set(prev.map((m) => m.id));
+        const older = page.messages.filter((m) => !seen.has(m.id));
+        return older.length ? [...older, ...prev] : prev;
+      });
+      setHasMoreOlder(page.hasMore);
+    } catch {
+      /* giữ trang đã tải */
+    } finally {
+      loadingOlderRef.current = false;
+      setLoadingOlder(false);
+    }
+  }, [threadId, hasMoreOlder, messages]);
 
   useEffect(() => {
     if (isDirect) {
@@ -798,6 +831,15 @@ export default function ChatDetailScreen({ navigation, route }: Props) {
               maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
               keyboardShouldPersistTaps="handled"
               keyboardDismissMode="on-drag"
+              onEndReached={() => { void loadOlderMessages(); }}
+              onEndReachedThreshold={0.25}
+              ListFooterComponent={
+                loadingOlder ? (
+                  <View style={{ paddingVertical: 12, transform: [{ scaleY: -1 }] }}>
+                    <SpinningLoader size="small" color={mc.accent} />
+                  </View>
+                ) : null
+              }
               renderItem={({ item, index }) => {
               const mine = String(item.user_id) === String(myUserId);
               const replyParent = item.reply_to

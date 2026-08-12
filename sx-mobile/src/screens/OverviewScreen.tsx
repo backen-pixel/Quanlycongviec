@@ -4,6 +4,7 @@
  */
 import Ionicons from '@expo/vector-icons/Ionicons';
 import {
+  useFocusEffect,
   useNavigation } from '@react-navigation/native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import React,
@@ -148,7 +149,10 @@ export default function OverviewScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [kpis, setKpis] = useState<SxBoardKpis>(EMPTY_KPI);
   const [overdueDeals, setOverdueDeals] = useState<ProductionProject[]>([]);
+  const [boardTruncated, setBoardTruncated] = useState(false);
   const [tasks, setTasks] = useState<WorkTask[]>([]);
+  const skipNextFocusRefreshRef = useRef(true);
+  const lastSilentAtRef = useRef(0);
   const [taskPage, setTaskPage] = useState(1);
   const [dealPage, setDealPage] = useState(1);
   const [companies, setCompanies] = useState<CompanyOption[]>([]);
@@ -262,15 +266,16 @@ export default function OverviewScreen() {
       const skipBoard = mode === 'silent' && isCachedBoardFresh(boardFilters) && !!getCachedBoard(boardFilters);
       const cachedBoard = getCachedBoard(boardFilters);
 
-      const applyScopedBoard = (projects: ProductionProject[], stages: KanbanStage[] = []) => {
+      const applyScopedBoard = (projects: ProductionProject[], stages: KanbanStage[] = [], truncated?: boolean) => {
         const scoped = scopeProjectsForUser(projects, { userId, ownOnly });
         setOverdueDeals(pickOverdueProjects(scoped, PRIORITY_FETCH_LIMIT, stages));
+        if (truncated != null) setBoardTruncated(Boolean(truncated));
         return scoped;
       };
 
       if (mode === 'init' || mode === 'refresh') setKpis(EMPTY_KPI);
       if (cachedBoard && mode !== 'refresh') {
-        const scoped = applyScopedBoard(cachedBoard.projects, cachedBoard.stages);
+        const scoped = applyScopedBoard(cachedBoard.projects, cachedBoard.stages, cachedBoard.truncated);
         if (ownOnly) setKpis(computeSxBoardKpis(scoped, cachedBoard.stages));
         if (mode === 'init') setLoading(false);
       }
@@ -297,7 +302,7 @@ export default function OverviewScreen() {
               loadRemaining: false,
               onPartial: (partial) => {
                 if (seq !== loadSeqRef.current) return;
-                const scoped = applyScopedBoard(partial.projects, partial.stages);
+                const scoped = applyScopedBoard(partial.projects, partial.stages, partial.truncated);
                 if (ownOnly) setKpis(computeSxBoardKpis(scoped, partial.stages));
                 if (mode === 'init') setLoading(false);
               },
@@ -326,7 +331,7 @@ export default function OverviewScreen() {
         return board || cachedNow || null;
       })();
       if (bestBoard) {
-        const scoped = applyScopedBoard(bestBoard.projects, bestBoard.stages);
+        const scoped = applyScopedBoard(bestBoard.projects, bestBoard.stages, bestBoard.truncated);
         if (ownOnly) {
           setKpis(computeSxBoardKpis(scoped, bestBoard.stages));
         } else if (summary) {
@@ -356,6 +361,7 @@ export default function OverviewScreen() {
       setTasks(myTasks);
       setTaskPage(1);
       setDealPage(1);
+      lastSilentAtRef.current = Date.now();
     } catch (e) {
       if (seq !== loadSeqRef.current || isAbortError(e)) return;
       if (mode !== 'silent') setError(formatApiError(e));
@@ -399,6 +405,7 @@ export default function OverviewScreen() {
         if (cached) {
           const scoped = scopeProjectsForUser(cached.projects, { userId, ownOnly });
           setOverdueDeals(pickOverdueProjects(scoped, PRIORITY_FETCH_LIMIT, cached.stages));
+          setBoardTruncated(Boolean(cached.truncated));
           if (ownOnly) {
             setKpis(computeSxBoardKpis(scoped, cached.stages));
             return;
@@ -427,6 +434,21 @@ export default function OverviewScreen() {
     modes: REALTIME_BOARD_TASK,
     debounceMs: 1500,
   });
+
+  // Quay lại tab Tổng quan → catch-up nhẹ (realtime onlyWhenFocused bỏ qua khi ở tab khác).
+  useFocusEffect(
+    useCallback(() => {
+      if (skipNextFocusRefreshRef.current) {
+        skipNextFocusRefreshRef.current = false;
+        return undefined;
+      }
+      const now = Date.now();
+      if (now - lastSilentAtRef.current < 12_000) return undefined;
+      lastSilentAtRef.current = now;
+      void load('silent');
+      return undefined;
+    }, [load]),
+  );
 
   const overdueTasksAll = useMemo(() => tasks.filter((t) => isTaskOverdue(t)), [tasks]);
   const overdueTaskCount = overdueTasksAll.length;
@@ -657,6 +679,15 @@ export default function OverviewScreen() {
               {error} · Chạm để thử lại
             </Text>
           </Pressable>
+        ) : null}
+
+        {boardTruncated ? (
+          <View style={styles.truncatedBanner}>
+            <Ionicons name="information-circle-outline" size={16} color={colors.warning} />
+            <Text style={styles.truncatedBannerTxt}>
+              Đã tải tối đa ~6.000 dự án. Vào tab Dự án và thu hẹp bộ lọc để xem đủ.
+            </Text>
+          </View>
         ) : null}
 
         <Pressable
@@ -1088,6 +1119,19 @@ function createStyles(colors: AppColors) {
       marginBottom: 12,
     },
     errorTxt: { flex: 1, color: colors.danger, fontSize: 12.5, fontWeight: '700' },
+    truncatedBanner: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      backgroundColor: colorWithAlpha(colors.warning, 0.14),
+      borderRadius: Radii.lg,
+      borderWidth: 1,
+      borderColor: colorWithAlpha(colors.warning, 0.35),
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      marginBottom: 12,
+    },
+    truncatedBannerTxt: { flex: 1, color: colors.warning, fontSize: 12, fontWeight: '700', lineHeight: 16 },
     alertBanner: {
       flexDirection: 'row',
       alignItems: 'center',

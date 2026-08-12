@@ -126,6 +126,8 @@ export default function MainTabs() {
           tabBarInactiveTintColor: colors.textFaint,
           tabBarStyle: [styles.tabBar, { height: tabBarHeight, paddingBottom: padBottom }],
           tabBarLabelStyle: styles.tabLabel,
+          lazy: true,
+          freezeOnBlur: true,
         }}
       >
         <Tab.Screen

@@ -1061,27 +1061,25 @@ r.delete('/:id', async (req, res) => {
 // ─── STATS (mobile KPI — đếm đủ, không cắt theo limit trang list) ─────────────
 // GET /api/crm/assignments/stats?assignment_module=&company_id=&assignee_id=&q=
 // Khớp logic web computeTaskStats: pending gồm cancelled; overdue = chưa xong + deadline < đầu ngày.
+// Dùng count head (aggregate) — không tải hết status/deadline rows.
 r.get('/stats', responseCache({ ttl: 20, scope: 'user', tags: ['crm:assignments'] }), async (req, res) => {
   try {
-    let q = supabase.from('crm_assignments').select('id, status, deadline');
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    const startIso = start.toISOString();
 
     let scopeIds = null;
-    if (isAdmin(req)) {
-      const companyId = req.query.company_id || null;
-      if (companyId) {
-        q = q.or(`company_id.eq.${companyId},executor_company_id.eq.${companyId}`);
-      }
-    } else {
+    if (!isAdmin(req)) {
       scopeIds = await getVisibleAssignmentIdsForNonAdmin(req);
       if (!scopeIds.length) {
         return res.json({
           pending: 0, in_progress: 0, completed: 0, overdue: 0, total: 0,
         });
       }
-      q = q.in('id', scopeIds);
     }
 
     const assigneeFilter = String(req.query.assignee_id || '').trim();
+    let assigneeIds = null;
     if (assigneeFilter) {
       if (!isAdmin(req) && String(assigneeFilter) !== String(req.user?.userId || '')) {
         return res.json({
@@ -1113,65 +1111,71 @@ r.get('/stats', responseCache({ ttl: 20, scope: 'user', tags: ['crm:assignments'
           });
         }
       }
-      q = q.in('id', ids);
+      assigneeIds = ids;
     }
 
     const moduleFilter = String(req.query.assignment_module || '').trim().toLowerCase();
-    if (moduleFilter === 'production' || moduleFilter === 'crm' || moduleFilter === 'logistics') {
-      q = q.eq('assignment_module', moduleFilter);
-    }
-    if (req.query.q) {
-      ({ q } = await applyAssignmentSearchQuery(q, req.query.q));
-    }
+    const searchQ = req.query.q;
 
-    let { data, error } = await q;
-    if (error && /executor_company_id/.test(error.message || '') && isAdmin(req) && req.query.company_id) {
-      let qExec = supabase.from('crm_assignments').select('id, status, deadline')
-        .eq('company_id', req.query.company_id);
-      if (moduleFilter === 'production' || moduleFilter === 'crm' || moduleFilter === 'logistics') {
-        qExec = qExec.eq('assignment_module', moduleFilter);
-      }
-      if (req.query.q) ({ q: qExec } = await applyAssignmentSearchQuery(qExec, req.query.q));
-      ({ data, error } = await qExec);
-    }
-    if (error && /assignment_module/.test(error.message || '') && moduleFilter) {
-      let q2 = supabase.from('crm_assignments').select('id, status, deadline');
-      if (isAdmin(req)) {
+    async function applyStatsFilters(q, { skipModule = false } = {}) {
+      if (assigneeIds) {
+        q = q.in('id', assigneeIds);
+      } else if (scopeIds) {
+        q = q.in('id', scopeIds);
+      } else if (isAdmin(req)) {
         const companyId = req.query.company_id || null;
-        if (companyId) q2 = q2.or(`company_id.eq.${companyId},executor_company_id.eq.${companyId}`);
-      } else if (scopeIds?.length) {
-        q2 = q2.in('id', scopeIds);
+        if (companyId) {
+          q = q.or(`company_id.eq.${companyId},executor_company_id.eq.${companyId}`);
+        }
       }
-      if (req.query.q) ({ q: q2 } = await applyAssignmentSearchQuery(q2, req.query.q));
-      ({ data, error } = await q2);
+      if (!skipModule && (moduleFilter === 'production' || moduleFilter === 'crm' || moduleFilter === 'logistics')) {
+        q = q.eq('assignment_module', moduleFilter);
+      }
+      if (searchQ) {
+        ({ q } = await applyAssignmentSearchQuery(q, searchQ));
+      }
+      return q;
     }
-    if (error) throw error;
 
-    const start = new Date();
-    start.setHours(0, 0, 0, 0);
-    const startIso = start.toISOString();
-
-    let pending = 0;
-    let inProgress = 0;
-    let completed = 0;
-    let overdue = 0;
-    for (const row of data || []) {
-      const s = String(row.status || 'pending').toLowerCase();
-      const done = s === 'completed' || s === 'done';
-      const doing = s === 'in_progress' || s === 'doing';
-      if (done) completed += 1;
-      else if (doing) inProgress += 1;
-      else pending += 1; // pending + cancelled + khác
-
-      if (!done && row.deadline && String(row.deadline) < startIso) overdue += 1;
+    async function countExact(extra = (q) => q, opts = {}) {
+      let q = supabase.from('crm_assignments').select('id', { count: 'exact', head: true });
+      q = await applyStatsFilters(q, opts);
+      q = extra(q);
+      let { count, error } = await q;
+      if (error && /executor_company_id/.test(error.message || '') && isAdmin(req) && req.query.company_id) {
+        let qExec = supabase.from('crm_assignments').select('id', { count: 'exact', head: true })
+          .eq('company_id', req.query.company_id);
+        if (!opts.skipModule && (moduleFilter === 'production' || moduleFilter === 'crm' || moduleFilter === 'logistics')) {
+          qExec = qExec.eq('assignment_module', moduleFilter);
+        }
+        if (assigneeIds) qExec = qExec.in('id', assigneeIds);
+        if (searchQ) ({ q: qExec } = await applyAssignmentSearchQuery(qExec, searchQ));
+        qExec = extra(qExec);
+        ({ count, error } = await qExec);
+      }
+      if (error && /assignment_module/.test(error.message || '') && moduleFilter && !opts.skipModule) {
+        return countExact(extra, { skipModule: true });
+      }
+      if (error) throw error;
+      return count || 0;
     }
+
+    const DONE = '(completed,done)';
+
+    const [total, completed, inProgress, overdue] = await Promise.all([
+      countExact((q) => q),
+      countExact((q) => q.in('status', ['completed', 'done'])),
+      countExact((q) => q.in('status', ['in_progress', 'doing'])),
+      countExact((q) => q.not('status', 'in', DONE).lt('deadline', startIso)),
+    ]);
+    const pending = Math.max(0, total - completed - inProgress);
 
     res.json({
       pending,
       in_progress: inProgress,
       completed,
       overdue,
-      total: (data || []).length,
+      total,
     });
   } catch (e) {
     console.error(e);

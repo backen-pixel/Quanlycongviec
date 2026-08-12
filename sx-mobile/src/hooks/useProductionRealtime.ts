@@ -178,11 +178,13 @@ export function useProductionRealtime({
       if (evt.type === 'project:board_changed') {
         const seq = ++softSeq;
         void trySoftIngestBoardChanged(evt).then((ok) => {
-          if (seq !== softSeq) return;
           if (ok) {
+            // Luôn báo UI — dù softSeq đã tăng (event mới hơn). Cache đã upsert/remove.
             void Promise.resolve(onRefreshRef.current({ evt, patched: true })).catch(() => {});
             return;
           }
+          // Chỉ full-refresh nếu đây vẫn là lần soft-ingest mới nhất.
+          if (seq !== softSeq) return;
           scheduleFullRefresh(evt);
         });
         return;

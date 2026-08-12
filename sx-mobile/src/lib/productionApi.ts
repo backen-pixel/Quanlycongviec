@@ -426,7 +426,8 @@ export async function fetchProductionBoardSummary(
  * BE tối đa limit=500/trang — khớp mặc định web.
  * `view=mobile` → payload/enrich nhẹ phía BE.
  *
- * Shared inflight theo filter: Overview + Kanban cùng lúc chỉ 1 mạng;
+ * Shared inflight theo filter: Overview preview + Kanban full cùng 1 mạng;
+ * preview resolve sau trang 1; Kanban promote để tải nốt (grace ~450ms).
  * signal của từng màn chỉ bỏ apply UI, không hủy tải dùng chung (trừ bustCache).
  *
  * @param bustCache true chỉ khi user kéo refresh — silent/init dùng HTTP cache 20s.
@@ -498,11 +499,22 @@ export type FetchBoardOptions = {
 };
 
 type InflightBoard = {
+  /** Promise kết thúc (full hoặc preview-only sau grace). */
   promise: Promise<ProductionBoard>;
+  /** Resolve ngay sau trang 1 — Overview await cái này khi loadRemaining=false. */
+  firstPage: Promise<ProductionBoard>;
+  resolveFirstPage: (board: ProductionBoard) => void;
+  firstPageBoard: ProductionBoard | null;
   partialListeners: Set<(board: ProductionBoard) => void>;
+  wantFull: boolean;
+  promote: () => void;
+  whenFull: Promise<void>;
 };
 
+/** Shared theo filter — không tách r0/r1 (Overview preview + Kanban full cùng 1 mạng). */
 const inflightBoards = new Map<string, InflightBoard>();
+/** Chờ Kanban/Planner promote sau khi Overview mở preview trước. */
+const BOARD_PROMOTE_GRACE_MS = 450;
 
 function emitPartialTo(listeners: Set<(board: ProductionBoard) => void>, board: ProductionBoard) {
   for (const fn of [...listeners]) {
@@ -514,11 +526,19 @@ function emitPartialTo(listeners: Set<(board: ProductionBoard) => void>, board: 
   }
 }
 
+function sleepMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function fetchProductionBoardInternal(
   bustCache: boolean,
   filters: BoardFilters,
-  loadRemaining: boolean,
+  ctrl: {
+    getWantFull: () => boolean;
+    waitPromoteOrPreview: () => Promise<'full' | 'preview'>;
+  },
   partialListeners: Set<(board: ProductionBoard) => void>,
+  onFirstPage: (board: ProductionBoard) => void,
 ): Promise<ProductionBoard> {
   const stageParams: Record<string, unknown> = { all: 'false' };
   if (bustCache) stageParams._t = Date.now();
@@ -588,9 +608,9 @@ async function fetchProductionBoardInternal(
       kpis: null,
       truncated,
     };
-    // Preview nhiều trang (loadRemaining=false) → không complete.
+    // Preview nhiều trang (wantFull=false) → không complete.
     // 1 trang server + pagingDone → complete được (Overview không cần Kanban).
-    const complete = pagingDone && !truncated && (loadRemaining || beTotalPages <= 1);
+    const complete = pagingDone && !truncated && (ctrl.getWantFull() || beTotalPages <= 1);
     setCachedBoard(filters, board, { complete });
     // Chỉ clear khi board thật sự complete — Overview preview không được xóa pending của Kanban.
     if (complete) clearPendingProjectPatches();
@@ -601,13 +621,24 @@ async function fetchProductionBoardInternal(
   if (bustCache) clearPendingProjectPatches();
 
   attached = attachColumnsIndexed(first.rows.map(mapProjectRow), stages, stageIndex);
-  const hasMore = loadRemaining && totalPages > 1 && first.rows.length >= PROJECTS_PAGE_LIMIT;
-  if (!hasMore) {
-    return emitAttached(true);
+
+  if (totalPages <= 1 || first.rows.length < PROJECTS_PAGE_LIMIT) {
+    const done = emitAttached(true);
+    onFirstPage(done);
+    return done;
   }
 
-  // Partial: UI sớm nhưng không đánh fresh / không ghi disk.
-  emitAttached(false);
+  // Partial trang 1: UI sớm; Overview có thể resolve tại đây.
+  const page1 = emitAttached(false);
+  onFirstPage(page1);
+
+  const decision = ctrl.getWantFull()
+    ? 'full'
+    : await ctrl.waitPromoteOrPreview();
+  if (decision !== 'full') {
+    // Chỉ Overview (preview) — dừng, không hydrate hết board.
+    return emitAttached(true);
+  }
 
   const remaining: number[] = [];
   for (let p = 2; p <= totalPages; p += 1) remaining.push(p);
@@ -634,32 +665,83 @@ export async function fetchProductionBoard(
   filters: BoardFilters = {},
   options: FetchBoardOptions = {},
 ): Promise<ProductionBoard> {
-  const loadRemaining = options.loadRemaining !== false;
+  const wantFull = options.loadRemaining !== false;
   const signal = options.signal;
   throwIfAborted(signal);
 
-  const dedupeKey = `${boardCacheKey(filters)}|b${bustCache ? 1 : 0}|r${loadRemaining ? 1 : 0}`;
+  const dedupeKey = `${boardCacheKey(filters)}|b${bustCache ? 1 : 0}`;
 
   let entry = !bustCache ? inflightBoards.get(dedupeKey) : undefined;
+  if (entry && wantFull && !entry.wantFull) {
+    entry.promote();
+  }
+
   if (!entry) {
     const partialListeners = new Set<(board: ProductionBoard) => void>();
-    const promise = fetchProductionBoardInternal(
+    let wantFullFlag = wantFull;
+    let resolveWhenFull: () => void = () => {};
+    const whenFull = new Promise<void>((resolve) => {
+      resolveWhenFull = resolve;
+    });
+    if (wantFullFlag) resolveWhenFull();
+
+    let resolveFirstPage: (board: ProductionBoard) => void = () => {};
+    const firstPage = new Promise<ProductionBoard>((resolve) => {
+      resolveFirstPage = resolve;
+    });
+
+    const created: InflightBoard = {
+      promise: null as unknown as Promise<ProductionBoard>,
+      firstPage,
+      resolveFirstPage: (board) => {
+        if (!created.firstPageBoard) {
+          created.firstPageBoard = board;
+          resolveFirstPage(board);
+        }
+      },
+      firstPageBoard: null,
+      partialListeners,
+      wantFull: wantFullFlag,
+      whenFull,
+      promote: () => {
+        if (created.wantFull) return;
+        created.wantFull = true;
+        wantFullFlag = true;
+        resolveWhenFull();
+      },
+    };
+
+    created.promise = fetchProductionBoardInternal(
       bustCache,
       filters,
-      loadRemaining,
+      {
+        getWantFull: () => created.wantFull,
+        waitPromoteOrPreview: async () => {
+          if (created.wantFull) return 'full';
+          await Promise.race([created.whenFull, sleepMs(BOARD_PROMOTE_GRACE_MS)]);
+          return created.wantFull ? 'full' : 'preview';
+        },
+      },
       partialListeners,
+      (board) => created.resolveFirstPage(board),
     ).finally(() => {
       if (inflightBoards.get(dedupeKey) === created) inflightBoards.delete(dedupeKey);
     });
-    const created: InflightBoard = { promise, partialListeners };
+
     entry = created;
     if (!bustCache) inflightBoards.set(dedupeKey, created);
   }
 
   if (options.onPartial) entry.partialListeners.add(options.onPartial);
+  // Preview consumer → trang 1; full → đợi hydrate xong.
+  const resultPromise = wantFull
+    ? entry.promise
+    : entry.firstPageBoard
+      ? Promise.resolve(entry.firstPageBoard)
+      : entry.firstPage;
   try {
-    if (!signal) return await entry.promise;
-    return await Promise.race([entry.promise, waitForAbort(signal)]);
+    if (!signal) return await resultPromise;
+    return await Promise.race([resultPromise, waitForAbort(signal)]);
   } finally {
     if (options.onPartial) entry.partialListeners.delete(options.onPartial);
   }

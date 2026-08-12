@@ -489,6 +489,9 @@ export default function WorkScreen() {
   const hasMoreTasksRef = useRef(false);
   const chipHasMoreRef = useRef(false);
   const statusFilterRef = useRef<StatusFilter>('all');
+  const searchRef = useRef(search);
+  searchRef.current = search;
+  const skipFirstSearchEffectRef = useRef(true);
 
   useEffect(() => { tasksLenRef.current = tasks.length; }, [tasks.length]);
   useEffect(() => { chipLenRef.current = chipTasks.length; }, [chipTasks.length]);
@@ -581,10 +584,12 @@ export default function WorkScreen() {
       const assigneeId = !teamView || scope === 'mine' ? userId : null;
       const companyId = filterCompany || (canPickCompany ? null : (user?.company_id || null));
       const offset = append ? tasksLenRef.current : 0;
+      const q = searchRef.current.trim() || undefined;
       // Scope load — không gửi status (giữ KPI đúng trên mọi chip).
       const page = await fetchProductionWorkTasksPage({
         assigneeId,
         companyId,
+        q,
         limit: WORK_TASKS_PAGE_SIZE,
         offset,
         signal: ac.signal,
@@ -680,6 +685,7 @@ export default function WorkScreen() {
         companyId,
         status: chip === 'overdue' ? null : chip,
         overdue: chip === 'overdue',
+        q: searchRef.current.trim() || undefined,
         limit: WORK_TASKS_PAGE_SIZE,
         offset,
         signal: ac.signal,
@@ -765,12 +771,20 @@ export default function WorkScreen() {
     void loadStats();
   }, [load, loadStats, filtersReady]);
 
-  // Search đổi → chỉ cập nhật KPI server (list vẫn lọc client trên trang đã tải).
+  // Search đổi → reload list + KPI server (q trên API). Bỏ qua lần mount đầu (đã load ở trên).
   useEffect(() => {
     if (!filtersReady || !userId) return;
-    const t = setTimeout(() => { void loadStats(); }, 350);
+    if (skipFirstSearchEffectRef.current) {
+      skipFirstSearchEffectRef.current = false;
+      return;
+    }
+    const t = setTimeout(() => {
+      void load(false);
+      void loadStats();
+      if (statusFilterRef.current !== 'all') void loadChip(false);
+    }, 350);
     return () => clearTimeout(t);
-  }, [search, loadStats, filtersReady, userId]);
+  }, [search, load, loadChip, loadStats, filtersReady, userId]);
 
   // Chip status → list riêng qua API (status / overdue); KPI vẫn từ `tasks` scope.
   useEffect(() => {
