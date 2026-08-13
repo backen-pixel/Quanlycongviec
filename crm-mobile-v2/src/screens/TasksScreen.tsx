@@ -30,6 +30,8 @@ type StatusSegment = 'pending' | 'in_progress' | 'completed';
 
 /** Trang list — KPI lấy từ /stats (không cắt theo trang). */
 const TASKS_PAGE_SIZE = 40;
+/** Chặn refresh realtime/focus dồn — 8s cân bằng task mới vs spam API. */
+const TASKS_TTL_MS = 8_000;
 
 const EMPTY_STATS: CrmAssignmentStats = {
   pending: 0,
@@ -286,7 +288,6 @@ export default function TasksScreen() {
   // Focus lại màn: chỉ soft-refresh khi quá TTL. Không abort lần tải đầu (tránh KPI/list = 0).
   useFocusEffect(
     useCallback(() => {
-      const TASKS_TTL_MS = 45_000;
       if (lastLoadAtRef.current === 0) {
         return undefined;
       }
@@ -302,7 +303,6 @@ export default function TasksScreen() {
 
   useCrmRealtimeRefresh(
     useCallback(() => {
-      const TASKS_TTL_MS = 45_000;
       if (Date.now() - lastLoadAtRef.current < TASKS_TTL_MS) return;
       void loadRef.current({ refresh: true, silent: true, refreshStats: true });
     }, []),
