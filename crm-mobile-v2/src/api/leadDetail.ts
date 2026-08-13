@@ -210,14 +210,15 @@ export type ZaloMessage = {
   contact?: ZaloContact | null;
 };
 
-export async function fetchLeadDetail(leadId: string): Promise<LeadDetailRow> {
-  const r = await api.get<LeadDetailRow>(`/crm/leads/${leadId}/detail`);
+export async function fetchLeadDetail(leadId: string, signal?: AbortSignal): Promise<LeadDetailRow> {
+  const r = await api.get<LeadDetailRow>(`/crm/leads/${leadId}/detail`, { signal });
   const row = r.data;
   // Detail đôi khi chưa embed linked_project — bổ sung từ GET /crm/leads/:id.
   if (row?.project_id && !row.linked_project) {
     try {
       const lite = await api.get<{ linked_project?: LeadDetailRow['linked_project'] }>(
         `/crm/leads/${leadId}`,
+        { signal },
       );
       if (lite.data?.linked_project) row.linked_project = lite.data.linked_project;
     } catch {
@@ -244,12 +245,31 @@ export async function fetchLeadTaskDocuments(leadId: string): Promise<LeadTaskDo
   return r.data || [];
 }
 
-export async function fetchLeadComments(leadId: string): Promise<LeadComment[]> {
-  const r = await api.get<LeadComment[]>(`/crm/leads/${leadId}/comments`);
-  return (r.data || []).map((c) => ({
+export type FetchLeadCommentsResult = {
+  items: LeadComment[];
+  hasMore: boolean;
+};
+
+/** Trang bình luận — BE hỗ trợ limit (≤200) + before (ISO) + header X-Has-More. */
+export async function fetchLeadComments(
+  leadId: string,
+  opts?: { limit?: number; before?: string; signal?: AbortSignal },
+): Promise<FetchLeadCommentsResult> {
+  const limit = opts?.limit != null && opts.limit > 0 ? Math.min(opts.limit, 200) : 50;
+  const r = await api.get<LeadComment[]>(`/crm/leads/${leadId}/comments`, {
+    params: {
+      limit,
+      before: opts?.before?.trim() || undefined,
+    },
+    signal: opts?.signal,
+  });
+  const items = (r.data || []).map((c) => ({
     ...c,
     reactions: c.reactions || { summary: [], mine: null },
   }));
+  const hasMoreHdr = String(r.headers?.['x-has-more'] ?? r.headers?.['X-Has-More'] ?? '').trim();
+  const hasMore = hasMoreHdr === '1' || hasMoreHdr.toLowerCase() === 'true';
+  return { items, hasMore };
 }
 
 export type LeadCommentsIndexRow = {

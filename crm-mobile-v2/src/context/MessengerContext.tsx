@@ -354,7 +354,7 @@ export function MessengerProvider({ children }: { children: React.ReactNode }) {
   }, [upsertLocalMessage]);
 
   const loadMessages = useCallback(async (groupId: string) => {
-    return fetchMessengerMessages(groupId);
+    return fetchMessengerMessages(groupId, { limit: 60 });
   }, []);
 
   const getPeerPresence = useCallback(

@@ -757,8 +757,9 @@ export default function DeadlineScreen() {
     }
 
     // Đếm badge cột sớm — card cột active load ngay sau khi có counts.
+    // Pull-to-refresh (không silent) mới ép quét lại; realtime silent giữ cache + delay.
     if (!ac.signal.aborted) {
-      const forceCounts = !!opts?.forceCounts || isRefresh;
+      const forceCounts = !!opts?.forceCounts || (isRefresh && !silent);
       if (forceCounts) {
         invalidateDeadlineBucketCounts();
         bucketPagesGenRef.current += 1;
@@ -882,12 +883,11 @@ export default function DeadlineScreen() {
   useCrmRealtimeRefresh(
     useCallback(() => {
       if (!filtersReady) return;
-      // Đồng bộ list + badge counts + trang cột (socket / live-version / push).
+      // Chỉ refresh tab đang xem; không forceCounts (tránh quét lại badge lead+deal mỗi bump).
       void load({
         refresh: true,
         silent: true,
-        kinds: ['lead', 'deal'],
-        forceCounts: true,
+        kinds: [kindRef.current],
       });
     }, [load, filtersReady]),
     Boolean(filtersReady && (userId || viewAll)),

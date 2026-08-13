@@ -146,6 +146,7 @@ export default function LeadDealListScreen({ kind }: Props) {
   const abortRef = useRef<AbortController | null>(null);
   const loadGenRef = useRef(0);
   const skipNextFocusRefresh = useRef(true);
+  const lastFocusLoadAtRef = useRef(0);
   const nextOffsetRef = useRef(0);
   const filterKey = serverFilterKey(filters, search);
   const listActive = viewModeReady && viewMode === 'list';
@@ -304,22 +305,33 @@ export default function LeadDealListScreen({ kind }: Props) {
     if (!filtersReady || !listActive) return;
     nextOffsetRef.current = 0;
     skipNextFocusRefresh.current = true;
+    lastFocusLoadAtRef.current = Date.now();
     void loadPage('replace');
   }, [kind, filterKey, stageId, loadPage, filtersReady, listActive]);
 
   useFocusEffect(
     useCallback(() => {
-      if (!filtersReady || !listActive) return;
       if (skipNextFocusRefresh.current) {
         skipNextFocusRefresh.current = false;
         return;
       }
+      if (!filtersReady || !listActive) return;
+      const LIST_FOCUS_TTL_MS = 45_000;
+      if (Date.now() - lastFocusLoadAtRef.current < LIST_FOCUS_TTL_MS) return;
+      lastFocusLoadAtRef.current = Date.now();
       void loadPage('refresh');
     }, [loadPage, filtersReady, listActive]),
   );
 
   useCrmRealtimeRefresh((payload) => {
     const detail = payload?.detail;
+    const LIST_REALTIME_TTL_MS = 45_000;
+    const scheduleRefresh = (force = false) => {
+      if (!listActive) return;
+      if (!force && Date.now() - lastFocusLoadAtRef.current < LIST_REALTIME_TTL_MS) return;
+      lastFocusLoadAtRef.current = Date.now();
+      void loadPage('refresh');
+    };
     if (
       detail?.lead_id
       && (
@@ -349,15 +361,16 @@ export default function LeadDealListScreen({ kind }: Props) {
           }, detail);
         }));
       }
-      // Chip đã hiện ngay — đồng bộ list nền sau (tránh giật).
+      // Chip đã hiện ngay — đồng bộ list nền sau (tránh giật), tôn trọng TTL.
       if (payload?.reason === 'badge_updated') {
-        setTimeout(() => {
-          if (listActive) void loadPage('refresh');
-        }, 2500);
+        setTimeout(() => scheduleRefresh(false), 2500);
         return;
       }
+      // Xóa / đổi cột: refresh ngay (force).
+      scheduleRefresh(true);
+      return;
     }
-    void loadPage('refresh');
+    scheduleRefresh(false);
   }, listActive);
 
   const sections: Section[] = useMemo(() => {
@@ -1252,22 +1265,33 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.border,
     marginRight: 8,
-    maxWidth: 180,
+    maxWidth: 200,
+    overflow: 'hidden',
   },
   chipActive: { backgroundColor: Colors.blue, borderColor: Colors.blue },
-  chipTxt: { color: Colors.textMuted, fontSize: 13, fontWeight: '700' },
+  /** flexShrink để chữ dài cắt ellipsis, không đẩy badge ra ngoài chip. */
+  chipTxt: {
+    flexShrink: 1,
+    flexGrow: 0,
+    minWidth: 0,
+    maxWidth: 148,
+    color: Colors.textMuted,
+    fontSize: 13,
+    fontWeight: '700',
+  },
   chipTxtActive: { color: '#fff' },
   chipBadge: {
+    flexShrink: 0,
     minWidth: 18,
     height: 18,
     borderRadius: 9,
-    backgroundColor: Colors.surfaceSoft,
+    backgroundColor: Colors.red,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 4,
+    paddingHorizontal: 5,
   },
-  chipBadgeActive: { backgroundColor: 'rgba(255,255,255,0.25)' },
-  chipBadgeTxt: { color: Colors.textMuted, fontSize: 10, fontWeight: '800' },
+  chipBadgeActive: { backgroundColor: Colors.red },
+  chipBadgeTxt: { color: '#fff', fontSize: 10, fontWeight: '800' },
   chipBadgeTxtActive: { color: '#fff' },
   sortRow: {
     flexDirection: 'row',

@@ -26,6 +26,10 @@ export type RootStackParamList = {
     code?: string;
     title?: string;
     initialTab?: string;
+    /** Mở đúng phân công Giao việc (Không gian chung). */
+    focusAssignmentId?: string;
+    /** Mở đúng nhiệm vụ crm_tasks (tab Nhiệm vụ). */
+    focusTaskId?: string;
   };
   ChatDetail: {
     threadId: string;

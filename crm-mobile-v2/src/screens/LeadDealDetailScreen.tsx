@@ -1,13 +1,13 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import SpinningLoader from '../components/SpinningLoader';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatApiError } from '../api/client';
 import {
-  countUnreadLeadComments,
   fetchLeadCommentReadReceipts,
+  fetchLeadCommentsIndex,
   fetchLeadDetail,
   markLeadCommentsRead,
   type LeadDetailRow,
@@ -15,10 +15,6 @@ import {
 import { currentUserId, useAuth } from '../context/AuthContext';
 import { useCrmRealtimeRefresh } from '../hooks/useCrmRealtimeRefresh';
 import { subscribeAppSocket } from '../lib/appSocket';
-import {
-  fetchLeadCommentsShared,
-  getCachedLeadComments,
-} from '../lib/leadCommentsCache';
 import {
   LeadCommentsTab,
   LeadDocumentsTab,
@@ -61,7 +57,15 @@ function buildTabs(lead: LeadDetailRow | null): TabDef[] {
 }
 
 export default function LeadDealDetailScreen({ route, navigation }: Props) {
-  const { leadId, code: paramCode, title: paramTitle, kind: paramKind, initialTab } = route.params;
+  const {
+    leadId,
+    code: paramCode,
+    title: paramTitle,
+    kind: paramKind,
+    initialTab,
+    focusAssignmentId,
+    focusTaskId,
+  } = route.params;
   const Colors = useColors();
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const insets = useSafeAreaInsets();
@@ -76,21 +80,39 @@ export default function LeadDealDetailScreen({ route, navigation }: Props) {
   );
   const [unreadComments, setUnreadComments] = useState(0);
   const [commentTotal, setCommentTotal] = useState(0);
+  const activeTabRef = useRef(activeTab);
+  activeTabRef.current = activeTab;
 
   const tabs = useMemo(() => buildTabs(lead), [lead]);
 
   const refreshCommentBadge = useCallback(async () => {
     if (!leadId) return;
     try {
-      const cached = getCachedLeadComments(leadId);
-      if (cached) setCommentTotal(cached.length);
-      const [comments, receiptsRes] = await Promise.all([
-        fetchLeadCommentsShared(leadId),
+      // Luôn dùng index + receipts — không phụ thuộc cache trang comments (có thể chỉ là page 1).
+      const [index, receiptsRes] = await Promise.all([
+        fetchLeadCommentsIndex([leadId]),
         fetchLeadCommentReadReceipts(leadId),
       ]);
-      setCommentTotal(comments.length);
+      const row = index[String(leadId)];
+      const total = Number(row?.count) || 0;
+      setCommentTotal(total);
       const mine = (receiptsRes.receipts || []).find((r) => String(r.user_id) === String(myId || ''));
-      setUnreadComments(countUnreadLeadComments(comments, myId || '', mine?.last_read_at));
+      const lastRead = mine?.last_read_at;
+      const lastAt = row?.last_at;
+      const lastUser = row?.last_user_id ? String(row.last_user_id) : '';
+      if (!total || !lastAt) {
+        setUnreadComments(0);
+        return;
+      }
+      if (lastUser && lastUser === String(myId || '')) {
+        setUnreadComments(0);
+        return;
+      }
+      if (lastRead && new Date(lastAt).getTime() <= new Date(lastRead).getTime()) {
+        setUnreadComments(0);
+        return;
+      }
+      setUnreadComments(1);
     } catch {
       /* badge optional */
     }
@@ -105,23 +127,35 @@ export default function LeadDealDetailScreen({ route, navigation }: Props) {
     }
   }, [leadId]);
 
+  const abortRef = useRef<AbortController | null>(null);
+  const loadGenRef = useRef(0);
+  const lastDetailLoadAtRef = useRef(0);
+
   const load = useCallback(async (silent = false) => {
+    abortRef.current?.abort();
+    const ac = new AbortController();
+    abortRef.current = ac;
+    const gen = ++loadGenRef.current;
     if (!silent) {
       setLoading(true);
       setError(null);
     }
     try {
-      const row = await fetchLeadDetail(leadId);
+      const row = await fetchLeadDetail(leadId, ac.signal);
+      if (ac.signal.aborted || gen !== loadGenRef.current) return;
       setLead(row);
+      lastDetailLoadAtRef.current = Date.now();
     } catch (e) {
+      if (ac.signal.aborted || gen !== loadGenRef.current) return;
       if (!silent) setError(formatApiError(e));
     } finally {
-      if (!silent) setLoading(false);
+      if (!silent && gen === loadGenRef.current) setLoading(false);
     }
   }, [leadId]);
 
   useEffect(() => {
     void load();
+    return () => abortRef.current?.abort();
   }, [load]);
 
   useEffect(() => {
@@ -129,10 +163,17 @@ export default function LeadDealDetailScreen({ route, navigation }: Props) {
   }, [refreshCommentBadge]);
 
   useCrmRealtimeRefresh(
-    useCallback(() => {
+    useCallback((payload) => {
+      // Không reload full detail vì mọi noise CRM / bình luận (socket tab đã xử lý).
+      if (payload?.reason === 'lead_comment' || payload?.reason === 'badge_updated') {
+        return;
+      }
+      const detailLead = payload?.detail?.lead_id ?? payload?.detail?.id;
+      if (detailLead != null && String(detailLead) !== String(leadId)) return;
+      const DETAIL_TTL_MS = 45_000;
+      if (Date.now() - lastDetailLoadAtRef.current < DETAIL_TTL_MS) return;
       void load(true);
-      void refreshCommentBadge();
-    }, [load, refreshCommentBadge]),
+    }, [leadId, load]),
   );
 
   useEffect(() => {
@@ -166,7 +207,7 @@ export default function LeadDealDetailScreen({ route, navigation }: Props) {
         if (action === 'created' && payload?.comment?.id) {
           setCommentTotal((n) => n + 1);
           const author = String(payload.comment.user_id || payload.comment.user?.id || '');
-          if (activeTab !== 'comments' && author && author !== String(myId || '')) {
+          if (activeTabRef.current !== 'comments' && author && author !== String(myId || '')) {
             setUnreadComments((n) => n + 1);
           }
           return;
@@ -179,7 +220,7 @@ export default function LeadDealDetailScreen({ route, navigation }: Props) {
         socket.off('lead:comment', onComment);
       };
     });
-  }, [leadId, myId, activeTab, refreshCommentBadge]);
+  }, [leadId, myId, refreshCommentBadge]);
 
   const displayCode = lead?.code || paramCode || '';
   const displayTitle = lead?.title || paramTitle || '';
@@ -200,6 +241,7 @@ export default function LeadDealDetailScreen({ route, navigation }: Props) {
             companyId={lead?.company_id}
             leadType={lead?.type}
             currentStageId={lead?.stage?.id}
+            focusTaskId={focusTaskId}
           />
         );
       case 'shared-workspace':
@@ -208,6 +250,7 @@ export default function LeadDealDetailScreen({ route, navigation }: Props) {
             leadId={leadId}
             companyId={lead?.company_id}
             leadType={lead?.type}
+            focusAssignmentId={focusAssignmentId}
           />
         );
       case 'documents':

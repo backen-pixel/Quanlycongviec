@@ -3,7 +3,7 @@ import { AppState } from 'react-native';
 import { api } from '../api/client';
 import { invalidateCrmHubCache, invalidatePlannerCache, invalidateDeadlineBucketCounts, evictStaleCrmCaches } from '../api/crm';
 import { subscribeAppSocket } from '../lib/appSocket';
-import { emitCrmRealtime, type CrmRealtimeReason } from '../lib/crmRealtimeBus';
+import { emitCrmRealtime, markCrmSocketActivity, type CrmRealtimeReason } from '../lib/crmRealtimeBus';
 
 const LIVE_VERSION_POLL_MS = 20000;
 const SOCKET_RECENT_MS = 45000;
@@ -32,13 +32,19 @@ export function CrmRealtimeProvider({ children }: { children: React.ReactNode })
   const lastSocketAtRef = useRef(0);
   const bumpTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingPlannerRef = useRef(false);
+  const pendingDeadlineRef = useRef(false);
   const pendingReasonRef = useRef<CrmRealtimeReason>('dashboard_changed');
   const pendingDetailRef = useRef<Record<string, unknown> | undefined>(undefined);
 
   const flushBump = () => {
     bumpTimerRef.current = null;
-    invalidateCrmHubCache();
-    invalidateDeadlineBucketCounts();
+    // Soft: không xóa stages/totals — tránh silent bootstrap storm.
+    invalidateCrmHubCache(undefined, { soft: true });
+    // Chỉ xóa cache badge Deadline khi sự kiện liên quan hạn / gán — tránh quét lại mọi bump.
+    if (pendingDeadlineRef.current) {
+      invalidateDeadlineBucketCounts();
+      pendingDeadlineRef.current = false;
+    }
     if (pendingPlannerRef.current) invalidatePlannerCache();
     pendingPlannerRef.current = false;
     emitCrmRealtime({ reason: pendingReasonRef.current, detail: pendingDetailRef.current });
@@ -48,10 +54,12 @@ export function CrmRealtimeProvider({ children }: { children: React.ReactNode })
     reason: CrmRealtimeReason,
     detail?: Record<string, unknown>,
     alsoPlanner = false,
+    alsoDeadline = false,
   ) => {
     pendingReasonRef.current = reason;
     pendingDetailRef.current = detail;
     if (alsoPlanner) pendingPlannerRef.current = true;
+    if (alsoDeadline) pendingDeadlineRef.current = true;
     if (bumpTimerRef.current) clearTimeout(bumpTimerRef.current);
     bumpTimerRef.current = setTimeout(flushBump, BUMP_DEBOUNCE_MS);
   };
@@ -60,32 +68,41 @@ export function CrmRealtimeProvider({ children }: { children: React.ReactNode })
     return subscribeAppSocket((socket) => {
       const onDashboard = (payload?: Record<string, unknown>) => {
         lastSocketAtRef.current = Date.now();
-        scheduleBumpAndEmit('dashboard_changed', payload, false);
+        markCrmSocketActivity();
+        // Dashboard đổi → hub; deadline counts chỉ khi payload gợi ý hạn.
+        const d = String(payload?.type || payload?.reason || '').toLowerCase();
+        const deadlineHint = d.includes('deadline') || d.includes('due');
+        scheduleBumpAndEmit('dashboard_changed', payload, false, deadlineHint);
       };
 
       const onBadge = (payload?: Record<string, unknown>) => {
         lastSocketAtRef.current = Date.now();
+        markCrmSocketActivity();
         // Chip SX/VC + đổi cột từ xưởng: emit NGAY (không debounce) để thẻ patch tức thì.
         // Invalidate cache để lần fetch sau (silent bootstrap) lấy dữ liệu mới.
-        invalidateCrmHubCache();
+        invalidateCrmHubCache(undefined, { soft: true });
         emitCrmRealtime({ reason: 'badge_updated', detail: payload });
       };
 
       const onTask = (payload?: Record<string, unknown>) => {
         lastSocketAtRef.current = Date.now();
+        markCrmSocketActivity();
         emitCrmRealtime({ reason: 'task_changed', detail: payload });
       };
 
       const onNotification = (payload?: Record<string, unknown>) => {
         const type = String(payload?.type || '');
         if (!CRM_NOTIFICATION_TYPES.has(type)) return;
+        lastSocketAtRef.current = Date.now();
+        markCrmSocketActivity();
         const plannerRelated =
           type.includes('deadline')
           || type === 'lead_assigned'
           || type === 'task_assigned'
           || type === 'task_updated';
+        const deadlineRelated = type.includes('deadline');
         if (plannerRelated) {
-          scheduleBumpAndEmit('notification', payload, true);
+          scheduleBumpAndEmit('notification', payload, true, deadlineRelated);
         } else {
           emitCrmRealtime({ reason: 'notification', detail: payload });
         }
@@ -93,6 +110,7 @@ export function CrmRealtimeProvider({ children }: { children: React.ReactNode })
 
       const onLeadComment = (payload?: Record<string, unknown>) => {
         lastSocketAtRef.current = Date.now();
+        markCrmSocketActivity();
         emitCrmRealtime({ reason: 'lead_comment', detail: payload });
       };
 
@@ -126,7 +144,8 @@ export function CrmRealtimeProvider({ children }: { children: React.ReactNode })
         const v = Number(data?.v) || 0;
         if (lastVersionRef.current != null && v > lastVersionRef.current) {
           const recentSocket = Date.now() - lastSocketAtRef.current < SOCKET_RECENT_MS;
-          scheduleBumpAndEmit('live_version', undefined, !recentSocket);
+          // live-version: hub + planner khi không có socket gần đây; không ép invalidate deadline counts.
+          scheduleBumpAndEmit('live_version', undefined, !recentSocket, false);
         }
         lastVersionRef.current = v;
       } catch {

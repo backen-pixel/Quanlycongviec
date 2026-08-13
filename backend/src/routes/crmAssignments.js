@@ -126,6 +126,31 @@ r.use((req, res, next) => {
 const ADMIN_ROLES = new Set(['admin', 'manager', 'sales_admin', 'crm_production_admin']);
 const isAdmin = (req) => ADMIN_ROLES.has(String(req.user?.role || '').toLowerCase());
 
+/**
+ * status_group (mobile segment) hoặc status đơn / CSV.
+ * pending gồm null/todo/cancelled — khớp web normalizeTaskStatus.
+ */
+function applyAssignmentStatusFilter(q, query = {}) {
+  const group = String(query.status_group || '').trim().toLowerCase();
+  if (group === 'pending') {
+    return q.or('status.is.null,status.in.(pending,todo,cancelled)');
+  }
+  if (group === 'in_progress' || group === 'doing') {
+    return q.in('status', ['in_progress', 'doing']);
+  }
+  if (group === 'completed' || group === 'done') {
+    return q.in('status', ['completed', 'done']);
+  }
+  const statusRaw = String(query.status || '').trim();
+  if (!statusRaw) return q;
+  if (statusRaw.includes(',')) {
+    const parts = statusRaw.split(',').map((s) => s.trim()).filter(Boolean);
+    if (parts.length) return q.in('status', parts);
+    return q;
+  }
+  return q.eq('status', statusRaw);
+}
+
 /** Cột Kanban dùng chung toàn hệ thống — không theo company_id. */
 const SHARED_COLUMN_DEFAULTS = [
   { name: 'Chưa làm', color: '#94A3B8', position: 0, is_done_column: false, is_in_progress_column: false },
@@ -669,7 +694,7 @@ r.get('/', async (req, res) => {
       }
     }
 
-    if (req.query.status) q = q.eq('status', req.query.status);
+    q = applyAssignmentStatusFilter(q, req.query);
     if (req.query.priority) q = q.eq('priority', req.query.priority);
     if (req.query.column_id) q = q.eq('column_id', req.query.column_id);
     if (req.query.lead_id) q = q.eq('lead_id', String(req.query.lead_id).trim());
@@ -716,7 +741,7 @@ r.get('/', async (req, res) => {
       } else if (scopeIds?.length) {
         qLegacy = qLegacy.in('id', scopeIds);
       }
-      if (req.query.status) qLegacy = qLegacy.eq('status', req.query.status);
+      qLegacy = applyAssignmentStatusFilter(qLegacy, req.query);
       if (req.query.priority) qLegacy = qLegacy.eq('priority', req.query.priority);
       if (req.query.column_id) qLegacy = qLegacy.eq('column_id', req.query.column_id);
       if (req.query.lead_id) qLegacy = qLegacy.eq('lead_id', String(req.query.lead_id).trim());
@@ -739,7 +764,7 @@ r.get('/', async (req, res) => {
     if (error && /executor_company_id/.test(error.message || '') && isAdmin(req) && req.query.company_id) {
       let qExec = supabase.from('crm_assignments').select(ASSIGNMENT_SELECT);
       qExec = qExec.eq('company_id', req.query.company_id);
-      if (req.query.status) qExec = qExec.eq('status', req.query.status);
+      qExec = applyAssignmentStatusFilter(qExec, req.query);
       if (req.query.priority) qExec = qExec.eq('priority', req.query.priority);
       if (isValidAssignModuleFilter(moduleFilter)) {
         qExec = qExec.eq('assignment_module', moduleFilter);
@@ -761,7 +786,7 @@ r.get('/', async (req, res) => {
       } else if (scopeIds?.length) {
         q2 = q2.in('id', scopeIds);
       }
-      if (req.query.status) q2 = q2.eq('status', req.query.status);
+      q2 = applyAssignmentStatusFilter(q2, req.query);
       if (req.query.priority) q2 = q2.eq('priority', req.query.priority);
       if (req.query.column_id) q2 = q2.eq('column_id', req.query.column_id);
       if (req.query.lead_id) q2 = q2.eq('lead_id', String(req.query.lead_id).trim());
@@ -1067,12 +1092,11 @@ r.delete('/:id', async (req, res) => {
 
 // ─── STATS (mobile KPI — đếm đủ, không cắt theo limit trang list) ─────────────
 // GET /api/crm/assignments/stats?assignment_module=&company_id=&assignee_id=&q=
-// Khớp logic web computeTaskStats: pending gồm cancelled; overdue = chưa xong + deadline < đầu ngày.
+// Khớp web computeTaskStats: pending gồm cancelled; overdue = chưa xong + deadline < now.
 // Dùng count head (aggregate) — không tải hết status/deadline rows.
 r.get('/stats', responseCache({ ttl: 20, scope: 'user', tags: ['crm:assignments'] }), async (req, res) => {
   try {
-    // Đầu ngày lịch VN — không dùng setHours theo TZ process (Render = UTC).
-    const startIso = vnStartOfTodayIso();
+    const nowIso = new Date().toISOString();
 
     let scopeIds = null;
     if (!isAdmin(req)) {
@@ -1137,6 +1161,8 @@ r.get('/stats', responseCache({ ttl: 20, scope: 'user', tags: ['crm:assignments'
       if (!skipModule && (moduleFilter === 'production' || moduleFilter === 'crm' || moduleFilter === 'logistics')) {
         q = q.eq('assignment_module', moduleFilter);
       }
+      const priorityFilter = String(req.query.priority || '').trim();
+      if (priorityFilter) q = q.eq('priority', priorityFilter);
       if (searchQ) {
         ({ q } = await applyAssignmentSearchQuery(q, searchQ));
       }
@@ -1172,7 +1198,7 @@ r.get('/stats', responseCache({ ttl: 20, scope: 'user', tags: ['crm:assignments'
       countExact((q) => q),
       countExact((q) => q.in('status', ['completed', 'done'])),
       countExact((q) => q.in('status', ['in_progress', 'doing'])),
-      countExact((q) => q.not('status', 'in', DONE).lt('deadline', startIso)),
+      countExact((q) => q.not('status', 'in', DONE).lt('deadline', nowIso)),
     ]);
     const pending = Math.max(0, total - completed - inProgress);
 

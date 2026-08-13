@@ -1027,12 +1027,16 @@ export function setCrmHubCache(
   pruneTimedMap(hubCache, HUB_CACHE_TTL_MS, MAX_HUB_CACHE);
 }
 
-export function invalidateCrmHubCache(userId?: string): void {
+export function invalidateCrmHubCache(userId?: string, opts?: { soft?: boolean }): void {
+  const soft = !!opts?.soft;
   if (!userId) {
     hubCache.clear();
     bootstrapCache.clear();
-    totalsCache.clear();
-    stagesCache.clear();
+    // Soft: giữ stages/totals để silent bootstrap không miss warm cache.
+    if (!soft) {
+      totalsCache.clear();
+      stagesCache.clear();
+    }
     return;
   }
   for (const key of hubCache.keys()) {

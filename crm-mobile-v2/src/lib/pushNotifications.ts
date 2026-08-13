@@ -17,32 +17,61 @@ import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 import { PermissionsAndroid, Platform } from 'react-native';
 import { api } from '../api/client';
-import { invalidateCrmHubCache, invalidatePlannerCache } from '../api/crm';
+import { invalidateCrmHubCache, invalidateDeadlineBucketCounts, invalidatePlannerCache } from '../api/crm';
 import { navigate } from '../navigation/navigationRef';
 import { APP_KEY } from './appUpdate';
 import { requestOpenUpdateGate } from './appUpdateNotify';
-import { emitCrmRealtime } from './crmRealtimeBus';
+import { emitCrmRealtime, wasCrmSocketRecent } from './crmRealtimeBus';
 import { getOrCreateDeviceId } from './deviceHeartbeat';
 
 const FCM_TOKEN_KEY = 'crmv2_fcm_push_token_v1';
 const LOG = '[crmv2 push]';
+
+/** Chỉ invalidate cache CRM khi push thuộc loại CRM — tránh mọi notification làm refresh hub/planner. */
+const CRM_PUSH_INVALIDATE_TYPES = new Set([
+  'lead_assigned',
+  'lead_stage_changed',
+  'lead_chat',
+  'crm_deadline_set',
+  'crm_deadline_reminder',
+  'crm_deadline_overdue',
+  'crm_kanban_deadline_overdue',
+  'lead_stage_sla_reminder',
+  'ai_crm_deadline_digest',
+  'task_assigned',
+  'task_updated',
+  'deadline_overdue_local',
+]);
 
 /** Phải khớp hằng số channelId trong backend/src/services/pushSender.js */
 const CHANNEL_SYSTEM = 'crm_system_tray_v3';
 const CHANNEL_CHAT = 'crm_chat';
 const CHANNEL_CALL = 'crm_call';
 const CHANNEL_SX_COMMENTS = 'sx_comments';
+const CHANNEL_APP_UPDATE = 'crm_app_update_v1';
 
 let configured = false;
 
 /** Hiển thị banner + âm thanh ngay cả khi app đang mở (foreground). */
 Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowBanner: true,
-    shouldShowList: true,
-    shouldPlaySound: true,
-    shouldSetBadge: true,
-  }),
+  handleNotification: async (notification) => {
+    const type = String(notification?.request?.content?.data?.type || '').toLowerCase();
+    // Cập nhật app: không banner/âm thanh khi app đang mở (tránh nhảy liên tục).
+    if (type === 'app_update') {
+      return {
+        shouldShowBanner: false,
+        shouldShowList: true,
+        shouldPlaySound: false,
+        shouldSetBadge: false,
+      };
+    }
+    return {
+      shouldShowBanner: true,
+      shouldShowList: true,
+      shouldPlaySound: true,
+      shouldSetBadge: true,
+    };
+  },
 });
 
 /**
@@ -85,6 +114,16 @@ async function ensureAndroidChannels(): Promise<void> {
       vibrationPattern: [0, 250, 250, 250],
       lightColor: '#2F6BFF',
       sound: 'default',
+    });
+    await Notifications.setNotificationChannelAsync(CHANNEL_APP_UPDATE, {
+      name: 'Cập nhật ứng dụng',
+      description: 'Thông báo khi có bản CRM Mobile mới',
+      importance: Notifications.AndroidImportance.MAX,
+      vibrationPattern: [0, 250, 250, 250],
+      lightColor: '#F97316',
+      sound: 'default',
+      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+      showBadge: true,
     });
   } catch (e) {
     console.warn(LOG, 'ensureAndroidChannels', e);
@@ -186,8 +225,18 @@ export function configurePushNotifications(): void {
       const data = notification?.request?.content?.data as Record<string, unknown> | undefined;
       const type = String(data?.type || '').toLowerCase();
       if (type === 'incoming_call' || type === 'messenger_chat' || type === 'app_update') return;
-      invalidateCrmHubCache();
-      invalidatePlannerCache();
+      if (!CRM_PUSH_INVALIDATE_TYPES.has(type) && !type.startsWith('crm_') && !type.startsWith('lead_') && !type.startsWith('task_')) {
+        return;
+      }
+      // Socket vừa xử lý CRM → bỏ FCM invalidate/emit (tránh double refresh).
+      if (wasCrmSocketRecent()) return;
+      invalidateCrmHubCache(undefined, { soft: true });
+      if (type.includes('deadline')) {
+        invalidateDeadlineBucketCounts();
+        invalidatePlannerCache();
+      } else if (type === 'lead_assigned' || type.startsWith('task_')) {
+        invalidatePlannerCache();
+      }
       emitCrmRealtime({ reason: 'notification', detail: data });
     } catch {
       /* bỏ qua */

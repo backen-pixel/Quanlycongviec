@@ -1,30 +1,75 @@
 import type { LeadComment } from '../api/leadDetail';
-import { fetchLeadComments } from '../api/leadDetail';
+import { fetchLeadComments, type FetchLeadCommentsResult } from '../api/leadDetail';
 
-type Entry = { items: LeadComment[]; at: number };
+type Entry = { items: LeadComment[]; hasMore: boolean; at: number };
 
 const cache = new Map<string, Entry>();
-const inflight = new Map<string, Promise<LeadComment[]>>();
+const inflight = new Map<string, Promise<FetchLeadCommentsResult>>();
 
-/** Cache trong bộ nhớ — hiển thị ngay khi mở lại tab, rồi refresh nền. */
+const COMMENT_CACHE_TTL_MS = 30 * 60_000;
+const MAX_COMMENT_CACHE = 40;
+/** Trang đầu — đủ để mở tab nhanh, không dump full thread. */
+export const LEAD_COMMENTS_PAGE_SIZE = 50;
+
+function pruneCommentCache() {
+  const now = Date.now();
+  for (const [k, v] of cache) {
+    if (now - v.at > COMMENT_CACHE_TTL_MS) cache.delete(k);
+  }
+  if (cache.size <= MAX_COMMENT_CACHE) return;
+  const ordered = [...cache.entries()].sort((a, b) => a[1].at - b[1].at);
+  const drop = cache.size - MAX_COMMENT_CACHE;
+  for (let i = 0; i < drop; i += 1) {
+    const key = ordered[i]?.[0];
+    if (key) cache.delete(key);
+  }
+}
+
+/** Cache trang đã tải (thường là trang mới nhất + các trang cũ đã merge). */
 export function getCachedLeadComments(leadId: string): LeadComment[] | null {
   const row = cache.get(String(leadId));
-  return row ? row.items : null;
+  if (!row) return null;
+  if (Date.now() - row.at > COMMENT_CACHE_TTL_MS) {
+    cache.delete(String(leadId));
+    return null;
+  }
+  return row.items;
 }
 
-export function setCachedLeadComments(leadId: string, items: LeadComment[]) {
-  cache.set(String(leadId), { items: items || [], at: Date.now() });
+export function getCachedLeadCommentsMeta(
+  leadId: string,
+): { items: LeadComment[]; hasMore: boolean } | null {
+  const row = cache.get(String(leadId));
+  if (!row) return null;
+  if (Date.now() - row.at > COMMENT_CACHE_TTL_MS) {
+    cache.delete(String(leadId));
+    return null;
+  }
+  return { items: row.items, hasMore: row.hasMore };
 }
 
-/** Một request đang chạy được dùng chung (badge + tab bình luận). */
-export function fetchLeadCommentsShared(leadId: string): Promise<LeadComment[]> {
+export function setCachedLeadComments(
+  leadId: string,
+  items: LeadComment[],
+  hasMore = false,
+) {
+  cache.set(String(leadId), { items: items || [], hasMore: !!hasMore, at: Date.now() });
+  pruneCommentCache();
+}
+
+/** Trang đầu (không `before`) — dùng chung badge/tab nếu cần; mặc định limit trang. */
+export function fetchLeadCommentsShared(
+  leadId: string,
+  opts?: { limit?: number },
+): Promise<FetchLeadCommentsResult> {
   const key = String(leadId);
   const existing = inflight.get(key);
   if (existing) return existing;
-  const p = fetchLeadComments(key)
-    .then((items) => {
-      setCachedLeadComments(key, items);
-      return items;
+  const limit = opts?.limit ?? LEAD_COMMENTS_PAGE_SIZE;
+  const p = fetchLeadComments(key, { limit })
+    .then((res) => {
+      setCachedLeadComments(key, res.items, res.hasMore);
+      return res;
     })
     .finally(() => {
       inflight.delete(key);
@@ -35,21 +80,24 @@ export function fetchLeadCommentsShared(leadId: string): Promise<LeadComment[]> 
 
 export function patchCachedLeadComment(leadId: string, row: LeadComment) {
   const key = String(leadId);
-  const prev = cache.get(key)?.items || [];
-  const i = prev.findIndex((c) => String(c.id) === String(row.id));
+  const prev = cache.get(key);
+  const list = prev?.items || [];
+  const i = list.findIndex((c) => String(c.id) === String(row.id));
   const next =
     i >= 0
-      ? prev.map((c, idx) => (idx === i ? { ...c, ...row } : c))
-      : [...prev, row];
-  cache.set(key, { items: next, at: Date.now() });
+      ? list.map((c, idx) => (idx === i ? { ...c, ...row } : c))
+      : [...list, row];
+  cache.set(key, { items: next, hasMore: prev?.hasMore ?? false, at: Date.now() });
+  pruneCommentCache();
 }
 
 export function removeCachedLeadComment(leadId: string, commentId: string | number) {
   const key = String(leadId);
-  const prev = cache.get(key)?.items;
+  const prev = cache.get(key);
   if (!prev) return;
   cache.set(key, {
-    items: prev.filter((c) => String(c.id) !== String(commentId)),
+    items: prev.items.filter((c) => String(c.id) !== String(commentId)),
+    hasMore: prev.hasMore,
     at: Date.now(),
   });
 }

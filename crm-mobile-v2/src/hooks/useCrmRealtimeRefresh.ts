@@ -2,7 +2,7 @@ import { NavigationContext } from '@react-navigation/native';
 import { useContext, useEffect, useRef, useState } from 'react';
 import { subscribeCrmRealtime } from '../lib/crmRealtimeBus';
 
-const DEBOUNCE_MS = 2500;
+const DEBOUNCE_MS = 100;
 
 export type CrmRealtimeRefreshOpts = {
   enabled?: boolean;
@@ -34,7 +34,8 @@ function useSafeIsFocused(): boolean {
   return focused;
 }
 
-/** Gọi `refresh` khi CRM thay đổi (socket hoặc poll live-version). */
+/** Gọi `refresh` khi CRM thay đổi (socket hoặc poll live-version).
+ * Provider đã debounce ~2s trước khi emit — hook chỉ coalesce ngắn (100ms), không chồng 2.5s. */
 export function useCrmRealtimeRefresh(
   refresh: (payload?: import('../lib/crmRealtimeBus').CrmRealtimePayload) => void,
   enabledOrOpts: boolean | CrmRealtimeRefreshOpts = true,

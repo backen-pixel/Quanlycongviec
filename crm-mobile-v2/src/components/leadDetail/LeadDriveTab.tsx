@@ -168,14 +168,9 @@ export default function LeadDriveTab({ lead }: Props) {
   };
 
   const uploadFromCamera = async () => {
-    const perm = await ImagePicker.requestCameraPermissionsAsync();
-    if (!perm.granted) {
-      Alert.alert('Quyền camera', 'Cần quyền camera.');
-      return;
-    }
-    const shot = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.9 });
-    if (shot.canceled || !shot.assets?.[0]) return;
-    const a = shot.assets[0];
+    const { launchCameraPhoto } = await import('../../lib/launchCameraPhoto');
+    const a = await launchCameraPhoto({ quality: 0.9, settleMs: 200 });
+    if (!a) return;
     await doUpload(a.uri, a.fileName || `photo_${Date.now()}.jpg`, a.mimeType || 'image/jpeg');
   };
 

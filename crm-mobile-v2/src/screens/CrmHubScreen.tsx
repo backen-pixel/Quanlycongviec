@@ -1119,6 +1119,7 @@ export default function CrmHubScreen({
   }, [canLoadCrm, hubServerFilterKey, applyTotalsCache, prefetchTabTotals]);
   const loadBootstrapRef = useRef(loadBootstrap);
   loadBootstrapRef.current = loadBootstrap;
+  const lastSilentBootstrapAtRef = useRef(0);
   const loadStageRef = useRef(loadStage);
   loadStageRef.current = loadStage;
   const prefetchTabTotalsRef = useRef(prefetchTabTotals);
@@ -1261,11 +1262,23 @@ export default function CrmHubScreen({
       if (chipOnly) {
         setTimeout(() => {
           if (!canLoadCrmRef.current) return;
+          const HUB_SILENT_TTL_MS = 45_000;
+          if (Date.now() - lastSilentBootstrapAtRef.current < HUB_SILENT_TTL_MS) return;
+          lastSilentBootstrapAtRef.current = Date.now();
           void loadBootstrapRef.current(modeRef.current, false, undefined, true);
         }, 2500);
         return;
       }
       // Silent + lite — đổi cột / chưa thấy thẻ / dashboard.
+      // Throttle 45s trừ khi cần reload cột (đổi stage / xóa thẻ).
+      const HUB_SILENT_TTL_MS = 45_000;
+      if (
+        !needColumnReload
+        && Date.now() - lastSilentBootstrapAtRef.current < HUB_SILENT_TTL_MS
+      ) {
+        return;
+      }
+      lastSilentBootstrapAtRef.current = Date.now();
       void loadBootstrapRef.current(modeRef.current, false, undefined, true);
     }, [hubStages, setHub]),
     canLoadCrm,

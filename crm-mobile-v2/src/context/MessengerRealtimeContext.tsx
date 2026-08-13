@@ -134,10 +134,11 @@ export function MessengerRealtimeProvider({ children }: { children: React.ReactN
     let socket: Socket | null = null;
     let appStateSub: { remove: () => void } | null = null;
     let delayTimer: ReturnType<typeof setTimeout> | null = null;
+    let presenceInterval: ReturnType<typeof setInterval> | null = null;
 
     const tier = getPerfTier();
     /** Nhường Overview first paint — vẫn đủ sớm để nhận chip SX/VC realtime. */
-      const connectDelayMs = tier === 'low' ? 4500 : tier === 'mid' ? 3500 : 2800;
+    const connectDelayMs = tier === 'low' ? 4500 : tier === 'mid' ? 3500 : 2800;
 
     const connect = () => {
       if (cancelled || !token) return;
@@ -286,6 +287,11 @@ export function MessengerRealtimeProvider({ children }: { children: React.ReactN
         if (state === 'active') emitPresencePing();
       };
       appStateSub = AppState.addEventListener('change', onState);
+      // Ping định kỳ khi app foreground — giữ online strip đỡ lệch.
+      if (presenceInterval) clearInterval(presenceInterval);
+      presenceInterval = setInterval(() => {
+        if (AppState.currentState === 'active' && s.connected) emitPresencePing();
+      }, 45_000);
     };
 
     const interaction = InteractionManager.runAfterInteractions(() => {
@@ -296,6 +302,7 @@ export function MessengerRealtimeProvider({ children }: { children: React.ReactN
       cancelled = true;
       interaction.cancel?.();
       if (delayTimer) clearTimeout(delayTimer);
+      if (presenceInterval) clearInterval(presenceInterval);
       appStateSub?.remove();
       socket?.disconnect();
       if (socketRef.current === socket) {

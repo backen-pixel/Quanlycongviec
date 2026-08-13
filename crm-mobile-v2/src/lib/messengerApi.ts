@@ -126,10 +126,36 @@ export async function fetchMessengerGroups(myUserId?: string | null): Promise<Me
     });
 }
 
-export async function fetchMessengerMessages(groupId: string): Promise<MessengerMessage[]> {
-  const { data } = await api.get<unknown[]>(`/messenger/groups/${groupId}/chat`);
-  const list = Array.isArray(data) ? data : [];
-  return list.map((row) => mapMessageRow(row as Record<string, unknown>));
+export type MessengerMessagesPage = {
+  messages: MessengerMessage[];
+  hasMore: boolean;
+};
+
+const CHAT_PAGE_LIMIT = 60;
+
+export async function fetchMessengerMessagesPage(
+  groupId: string,
+  opts?: { limit?: number; before?: string },
+): Promise<MessengerMessagesPage> {
+  const limit = Math.min(Math.max(Number(opts?.limit) || CHAT_PAGE_LIMIT, 1), 200);
+  const params: Record<string, string | number> = { limit };
+  if (opts?.before) params.before = opts.before;
+  const res = await api.get<unknown[]>(`/messenger/groups/${groupId}/chat`, { params });
+  const list = Array.isArray(res.data) ? res.data : [];
+  const header = res.headers?.['x-has-more'] ?? res.headers?.['X-Has-More'];
+  const hasMore = header === '1' || header === 1 || list.length >= limit;
+  return {
+    messages: list.map((row) => mapMessageRow(row as Record<string, unknown>)),
+    hasMore,
+  };
+}
+
+export async function fetchMessengerMessages(
+  groupId: string,
+  opts?: { limit?: number; before?: string },
+): Promise<MessengerMessage[]> {
+  const page = await fetchMessengerMessagesPage(groupId, opts);
+  return page.messages;
 }
 
 export async function sendMessengerText(
@@ -401,7 +427,7 @@ export async function fetchCallHistoryItems(
   await Promise.all(
     candidates.map(async (t) => {
       try {
-        const msgs = await fetchMessengerMessages(t.id);
+        const msgs = await fetchMessengerMessages(t.id, { limit: 40 });
         for (const callMsg of msgs.filter(isMessengerCallLogMessage)) {
           enriched.push({ ...t, lastMessage: callMsg });
         }

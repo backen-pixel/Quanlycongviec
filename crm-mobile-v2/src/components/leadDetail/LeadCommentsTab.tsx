@@ -22,6 +22,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatApiError } from '../../api/client';
 import {
   deleteLeadComment,
+  fetchLeadComments,
+  fetchLeadCommentsIndex,
   fetchLeadMembers,
   markLeadCommentsRead,
   postLeadComment,
@@ -43,10 +45,12 @@ import { colorFromName, initialsFromName } from '../../lib/media';
 import { subscribeAppSocket } from '../../lib/appSocket';
 import {
   getCachedLeadComments,
+  getCachedLeadCommentsMeta,
   removeCachedLeadComment,
   setCachedLeadComments,
   patchCachedLeadComment,
   fetchLeadCommentsShared,
+  LEAD_COMMENTS_PAGE_SIZE,
 } from '../../lib/leadCommentsCache';
 import {
   fetchNotificationPrefs,
@@ -57,8 +61,10 @@ import {
   isSystemCommentBody,
 } from '../../lib/crmSystemCommentFiles';
 import { uploadSingleFile, type LocalUploadFile } from '../../lib/uploadFile';
+import { launchCameraPhoto } from '../../lib/launchCameraPhoto';
 import { Radii, Spacing, useColors, type ThemeColors } from '../../theme';
 import Avatar from '../Avatar';
+import AttachFileSheet, { type AttachOption } from '../messenger/AttachFileSheet';
 import CommentAttachmentsBlock from './CommentAttachmentsBlock';
 import type { CommentAttachment } from './CommentAttachmentsBlock';
 import CrmCommentBody from './CrmCommentBody';
@@ -200,9 +206,12 @@ export default function LeadCommentsTab({
 
   const [showOnScreen, setShowOnScreen] = useState(() => isCommentShowOnScreenEnabled());
   const [prefsReady, setPrefsReady] = useState(true);
-  const [items, setItems] = useState<LeadComment[]>(() => getCachedLeadComments(leadId) || []);
+  const cachedMeta = getCachedLeadCommentsMeta(leadId);
+  const [items, setItems] = useState<LeadComment[]>(() => cachedMeta?.items || getCachedLeadComments(leadId) || []);
+  const [hasMore, setHasMore] = useState(() => cachedMeta?.hasMore ?? false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
   const [members, setMembers] = useState<LeadMember[]>([]);
-  const [loading, setLoading] = useState(() => !getCachedLeadComments(leadId));
+  const [loading, setLoading] = useState(() => !(cachedMeta?.items?.length || getCachedLeadComments(leadId)?.length));
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
@@ -219,46 +228,149 @@ export default function LeadCommentsTab({
   const inputRef = useRef<TextInput>(null);
   const onItemsChangeRef = useRef(onItemsChange);
   const onOpenedRef = useRef(onOpened);
+  const loadGenRef = useRef(0);
   onItemsChangeRef.current = onItemsChange;
   onOpenedRef.current = onOpened;
 
+  const [attachOpen, setAttachOpen] = useState(false);
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const listRef = useRef<FlatList>(null);
+
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvent, (e) => {
+      setKeyboardVisible(true);
+      setKeyboardHeight(Math.max(0, e.endCoordinates?.height || 0));
+    });
+    const hideSub = Keyboard.addListener(hideEvent, () => {
+      setKeyboardVisible(false);
+      setKeyboardHeight(0);
+    });
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+
+  // Khi bàn phím mở: cuộn list để thấy tin mới gần composer.
+  useEffect(() => {
+    if (!keyboardVisible) return undefined;
+    const t = setTimeout(() => {
+      listRef.current?.scrollToEnd({ animated: true });
+    }, 80);
+    return () => clearTimeout(t);
+  }, [keyboardVisible]);
+
+  const composerPadBottom = keyboardVisible ? 8 : Math.max(insets.bottom, 10);
+  /** Chiều cao vùng composer ước lượng — chừa đáy list khi bàn phím / composer đè. */
+  const composerReserve = 62 + composerPadBottom + (replyTo ? 36 : 0) + (pending.length ? 52 : 0);
+  /**
+   * Android nested (header + tab): adjustResize thường không đẩy được thanh nhập.
+   * Neo composer bằng keyboardHeight; iOS dùng KeyboardAvoidingView.
+   */
+  const androidKbLift = Platform.OS === 'android' ? keyboardHeight : 0;
+
   const load = useCallback(async (silent = false) => {
-    const cached = getCachedLeadComments(leadId);
-    if (!silent && !(cached && cached.length)) setLoading(true);
+    const gen = ++loadGenRef.current;
+    const cached = getCachedLeadCommentsMeta(leadId);
+    if (!silent && !(cached && cached.items.length)) setLoading(true);
     setError(null);
     try {
-      // Prefs + comments song song — không chờ prefs rồi mới gọi comments
       const prefsPromise = fetchNotificationPrefs();
-      const commentsPromise = fetchLeadCommentsShared(leadId);
-      // Members chỉ cần cho @mention — không chặn vẽ list
+      const commentsPromise = fetchLeadCommentsShared(leadId, { limit: LEAD_COMMENTS_PAGE_SIZE });
       void fetchLeadMembers(leadId)
-        .then((mems) => setMembers(mems))
+        .then((mems) => {
+          if (gen !== loadGenRef.current) return;
+          setMembers(mems);
+        })
         .catch(() => { /* mention optional */ });
 
-      const [prefs, comments] = await Promise.all([prefsPromise, commentsPromise]);
+      const [prefs, page] = await Promise.all([prefsPromise, commentsPromise]);
+      if (gen !== loadGenRef.current) return;
       const allowed = isCommentShowOnScreenEnabled(prefs);
       setShowOnScreen(allowed);
       setPrefsReady(true);
       if (!allowed) {
         setItems([]);
+        setHasMore(false);
         setMembers([]);
         return;
       }
 
-      setCachedLeadComments(leadId, comments);
-      setItems(comments);
-      onItemsChangeRef.current?.(comments.length);
-      // Đánh dấu đã đọc không chặn hiển thị
+      setCachedLeadComments(leadId, page.items, page.hasMore);
+      // Merge theo id — không wipe socket upserts đến trong lúc fetch.
+      setItems((prev) => {
+        if (!prev.length) return page.items;
+        const byId = new Map<number, LeadComment>();
+        for (const row of page.items) byId.set(Number(row.id), row);
+        for (const row of prev) {
+          const id = Number(row.id);
+          const existing = byId.get(id);
+          byId.set(id, existing ? { ...existing, ...row } : row);
+        }
+        return [...byId.values()].sort(
+          (a, b) => new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime(),
+        );
+      });
+      setHasMore(page.hasMore);
+      // Tổng chính xác từ index — không dùng độ dài trang đã tải.
+      void fetchLeadCommentsIndex([leadId])
+        .then((idx) => {
+          if (gen !== loadGenRef.current) return;
+          const total = Number(idx[String(leadId)]?.count);
+          onItemsChangeRef.current?.(Number.isFinite(total) ? total : page.items.length);
+        })
+        .catch(() => {
+          if (gen !== loadGenRef.current) return;
+          onItemsChangeRef.current?.(page.items.length);
+        });
       void markLeadCommentsRead(leadId)
-        .then(() => onOpenedRef.current?.())
+        .then(() => {
+          if (gen !== loadGenRef.current) return;
+          onOpenedRef.current?.();
+        })
         .catch(() => { /* optional */ });
+    } catch (e) {
+      if (gen !== loadGenRef.current) return;
+      setError(formatApiError(e));
+    } finally {
+      if (gen === loadGenRef.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    }
+  }, [leadId]);
+
+  const loadOlder = useCallback(async () => {
+    if (loadingOlder || !hasMore || !items.length) return;
+    const oldest = items.reduce((min, c) => {
+      const t = String(c.created_at || '');
+      if (!t) return min;
+      return !min || t < min ? t : min;
+    }, '');
+    if (!oldest) return;
+    setLoadingOlder(true);
+    try {
+      const page = await fetchLeadComments(leadId, {
+        limit: LEAD_COMMENTS_PAGE_SIZE,
+        before: oldest,
+      });
+      setItems((prev) => {
+        const seen = new Set(prev.map((c) => String(c.id)));
+        const older = page.items.filter((c) => !seen.has(String(c.id)));
+        const next = [...older, ...prev];
+        setCachedLeadComments(leadId, next, page.hasMore);
+        return next;
+      });
+      setHasMore(page.hasMore);
     } catch (e) {
       setError(formatApiError(e));
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      setLoadingOlder(false);
     }
-  }, [leadId]);
+  }, [hasMore, items, leadId, loadingOlder]);
 
   useEffect(() => {
     void load();
@@ -292,7 +404,7 @@ export default function LeadCommentsTab({
         patchCachedLeadComment(leadId, row);
         setItems((prev) => {
           const next = upsertComment(prev, row);
-          setCachedLeadComments(leadId, next);
+          setCachedLeadComments(leadId, next, hasMore);
           return next;
         });
       };
@@ -302,7 +414,7 @@ export default function LeadCommentsTab({
         socket.off('lead:comment', handler);
       };
     });
-  }, [leadId, showOnScreen]);
+  }, [hasMore, leadId, showOnScreen]);
 
   const byParent = useMemo(() => groupCommentsByParent(items), [items]);
   const flatRows = useMemo(() => flattenCommentTree(byParent), [byParent]);
@@ -380,29 +492,36 @@ export default function LeadCommentsTab({
     }
   };
 
-  /** Android: mở camera khi bàn phím còn focus thường bị hủy ngay (canceled). */
+  /** Android: đóng bàn phím trước khi mở picker. */
   const prepareExternalPicker = async () => {
     Keyboard.dismiss();
     inputRef.current?.blur();
-    await new Promise<void>((resolve) => setTimeout(resolve, Platform.OS === 'android' ? 350 : 80));
+    if (Platform.OS === 'android') {
+      const { waitForKeyboardHidden } = await import('../../lib/launchCameraPhoto');
+      await waitForKeyboardHidden(700);
+    } else {
+      await new Promise<void>((r) => setTimeout(r, 60));
+    }
   };
 
   const pickCamera = async () => {
     try {
-      await prepareExternalPicker();
-      const perm = await ImagePicker.requestCameraPermissionsAsync();
-      if (!perm.granted) {
-        Alert.alert('Quyền camera', 'Cần quyền camera để chụp ảnh. Bật Camera trong Cài đặt ứng dụng.');
+      inputRef.current?.blur();
+      Keyboard.dismiss();
+      // Khớp tin nhắn: đợi UI ổn định rồi mở camera (không waitKeyboard dài — dễ cancel Intent).
+      await new Promise<void>((r) => setTimeout(r, Platform.OS === 'android' ? 450 : 80));
+      const a = await launchCameraPhoto({
+        quality: 0.85,
+        waitKeyboard: false,
+        settleMs: 200,
+      });
+      if (!a) {
+        Alert.alert(
+          'Camera',
+          'Không nhận được ảnh. Thử tắt bàn phím rồi bấm lại, hoặc dùng nút đính kèm → Camera.',
+        );
         return;
       }
-      const shot = await ImagePicker.launchCameraAsync({
-        mediaTypes: ['images'],
-        quality: 0.85,
-        exif: false,
-        allowsEditing: false,
-      });
-      if (shot.canceled || !shot.assets?.[0]) return;
-      const a = shot.assets[0];
       const name = a.fileName || `camera-${Date.now()}.jpg`;
       await enqueueUploads([{
         uri: a.uri,
@@ -411,20 +530,15 @@ export default function LeadCommentsTab({
         size: a.fileSize ?? null,
       }]);
     } catch (e) {
-      const msg = formatApiError(e);
-      Alert.alert(
-        'Không mở được camera',
-        /activity|intent|camera/i.test(msg)
-          ? 'Máy không có ứng dụng camera hoặc bị chặn quyền. Thử chọn ảnh từ thư viện.'
-          : msg,
-      );
+      Alert.alert('Lỗi', formatApiError(e));
     }
   };
 
   const pickGallery = async () => {
     try {
       await prepareExternalPicker();
-      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      const cur = await ImagePicker.getMediaLibraryPermissionsAsync();
+      const perm = cur.granted ? cur : await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!perm.granted) {
         Alert.alert('Quyền ảnh', 'Cần quyền thư viện để chọn ảnh.');
         return;
@@ -471,6 +585,26 @@ export default function LeadCommentsTab({
     }
   };
 
+  const onAttachPick = (option: AttachOption) => {
+    // Sheet tin nhắn: đóng sheet rồi mở — camera không cần đợi keyboard thêm lần nữa.
+    const run = () => {
+      if (option === 'camera') {
+        void (async () => {
+          const a = await launchCameraPhoto({ quality: 0.85, waitKeyboard: false, settleMs: 200 });
+          if (!a) return;
+          await enqueueUploads([{
+            uri: a.uri,
+            name: a.fileName || `camera-${Date.now()}.jpg`,
+            type: a.mimeType || 'image/jpeg',
+            size: a.fileSize ?? null,
+          }]);
+        })();
+      } else if (option === 'gallery') void pickGallery();
+      else void pickDocuments();
+    };
+    setTimeout(run, Platform.OS === 'android' ? 280 : 80);
+  };
+
   const removePending = (localId: string) => {
     setPending((prev) => prev.filter((p) => p.localId !== localId));
   };
@@ -500,9 +634,10 @@ export default function LeadCommentsTab({
       });
       setItems((prev) => {
         const next = upsertComment(prev, row);
-        onItemsChangeRef.current?.(next.length);
+        setCachedLeadComments(leadId, next, hasMore);
         return next;
       });
+      // Tổng badge do parent (index / socket) giữ — không dùng độ dài trang đã tải.
       setDraft('');
       setPending([]);
       setReplyTo(null);
@@ -658,17 +793,19 @@ export default function LeadCommentsTab({
   }
 
   return (
+    <View style={{ flex: 1, marginBottom: androidKbLift }}>
     <KeyboardAvoidingView
       style={{ flex: 1 }}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 8 : 0}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? Math.max(insets.top, 12) + 96 : 0}
     >
       <FlatList
+        ref={listRef}
         style={{ flex: 1 }}
         data={flatRows}
         keyExtractor={(r) => String(r.comment.id)}
         keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="on-drag"
+        keyboardDismissMode="interactive"
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -676,9 +813,36 @@ export default function LeadCommentsTab({
             tintColor={Colors.blue}
           />
         }
-        contentContainerStyle={flatRows.length ? styles.listPad : styles.listPadGrow}
+        contentContainerStyle={[
+          flatRows.length ? styles.listPad : styles.listPadGrow,
+          { paddingBottom: composerReserve + 8 },
+        ]}
         ListHeaderComponent={
-          error ? <ErrorBanner message={error} onRetry={() => void load()} /> : null
+          <>
+            {error ? <ErrorBanner message={error} onRetry={() => void load()} /> : null}
+            {hasMore ? (
+              <Pressable
+                onPress={() => void loadOlder()}
+                disabled={loadingOlder}
+                style={{
+                  alignSelf: 'center',
+                  paddingHorizontal: 14,
+                  paddingVertical: 8,
+                  marginBottom: 8,
+                  borderRadius: 999,
+                  backgroundColor: Colors.surfaceSoft,
+                }}
+              >
+                {loadingOlder ? (
+                  <SpinningLoader color={Colors.blue} size="small" />
+                ) : (
+                  <Text style={{ color: Colors.blue, fontSize: 13, fontWeight: '600' }}>
+                    Tải bình luận cũ hơn
+                  </Text>
+                )}
+              </Pressable>
+            ) : null}
+          </>
         }
         ListEmptyComponent={
           loading ? (
@@ -751,20 +915,29 @@ export default function LeadCommentsTab({
         </View>
       ) : null}
 
-      <View style={[styles.composer, { paddingBottom: Math.max(insets.bottom, 10) }]}>
+      <View style={[styles.composer, { paddingBottom: composerPadBottom }]}>
         <View style={styles.composerTools}>
           <Pressable
             style={styles.toolBtn}
-            onPress={() => void pickCamera()}
+            onPress={() => {
+              // Mở sheet đính kèm → Camera (cùng luồng tin nhắn — ổn định trên máy thật).
+              inputRef.current?.blur();
+              Keyboard.dismiss();
+              setAttachOpen(true);
+            }}
             disabled={uploading || sending}
             hitSlop={4}
-            accessibilityLabel="Chụp ảnh nhanh"
+            accessibilityLabel="Chụp ảnh / đính kèm"
           >
             <Ionicons name="camera-outline" size={20} color={Colors.orange} />
           </Pressable>
           <Pressable
             style={styles.toolBtn}
-            onPress={() => void pickGallery()}
+            onPress={() => {
+              inputRef.current?.blur();
+              Keyboard.dismiss();
+              void pickGallery();
+            }}
             disabled={uploading || sending}
             hitSlop={4}
             accessibilityLabel="Chọn ảnh từ thư viện"
@@ -773,7 +946,10 @@ export default function LeadCommentsTab({
           </Pressable>
           <Pressable
             style={styles.toolBtn}
-            onPress={() => void pickDocuments()}
+            onPress={() => {
+              Keyboard.dismiss();
+              setAttachOpen(true);
+            }}
             disabled={uploading || sending}
             hitSlop={4}
             accessibilityLabel="Đính kèm file"
@@ -792,6 +968,9 @@ export default function LeadCommentsTab({
             syncMentionUi(t, t.length);
           }}
           onSelectionChange={(e) => syncMentionUi(draft, e.nativeEvent.selection.start)}
+          onFocus={() => {
+            setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 120);
+          }}
           multiline
           maxLength={4000}
         />
@@ -829,7 +1008,14 @@ export default function LeadCommentsTab({
           </View>
         </View>
       </Modal>
+
+      <AttachFileSheet
+        visible={attachOpen}
+        onDismiss={() => setAttachOpen(false)}
+        onPick={onAttachPick}
+      />
     </KeyboardAvoidingView>
+    </View>
   );
 }
 

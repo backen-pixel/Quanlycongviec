@@ -28,6 +28,8 @@ export type CrmAssignment = {
   created_at?: string | null;
   completed_at?: string | null;
   column_id?: string | null;
+  crm_task_id?: string | null;
+  crm_task?: { id?: string; title?: string | null; status?: string | null } | null;
   assignment_module?: string | null;
   task_source_type?: string | null;
   employee_error_module?: string | null;
@@ -49,6 +51,7 @@ export type CreateLeadAssignmentPayload = {
   title: string;
   description?: string | null;
   priority?: string;
+  status?: string;
   column_id?: string | null;
   deadline?: string | null;
   assignee_ids: string[];
@@ -56,6 +59,11 @@ export type CreateLeadAssignmentPayload = {
   company_id?: string | null;
   task_source_type: 'customer_request' | 'employee_error' | string;
   employee_error_module?: string | null;
+};
+
+export type CreateLeadAssignmentResult = {
+  assignment: CrmAssignment;
+  taskId: string | null;
 };
 
 export type UpdateAssignmentPayload = Partial<{
@@ -101,9 +109,46 @@ export type FetchAssignmentsParams = {
   company_id?: string;
   assignee_id?: string;
   priority?: string;
+  /** Lọc theo status trên server (pending | in_progress | completed). */
+  status?: string;
+  /** Segment mobile: pending | in_progress | completed (ưu tiên hơn status đơn). */
+  status_group?: 'pending' | 'in_progress' | 'completed' | string;
   q?: string;
+  /** Phân trang mobile — backend chỉ cắt khi có limit (>0). */
+  limit?: number;
+  offset?: number;
   signal?: AbortSignal;
 };
+
+export type CrmAssignmentStats = {
+  pending: number;
+  in_progress: number;
+  completed: number;
+  overdue: number;
+  total: number;
+};
+
+/** Khớp web `computeTaskStats` (CRMAssignmentsPage). */
+export function computeAssignmentStats(tasks: CrmAssignment[]): CrmAssignmentStats {
+  const list = Array.isArray(tasks) ? tasks : [];
+  const norm = (status: string | null | undefined) => {
+    const s = String(status || 'pending').toLowerCase();
+    if (s === 'completed' || s === 'done') return 'completed';
+    if (s === 'in_progress' || s === 'doing') return 'in_progress';
+    return 'pending'; // cancelled / todo / null → pending
+  };
+  const pending = list.filter((t) => {
+    const s = norm(t.status);
+    const raw = String(t.status || '').toLowerCase();
+    return s === 'pending' || raw === 'cancelled';
+  }).length;
+  const in_progress = list.filter((t) => norm(t.status) === 'in_progress').length;
+  const completed = list.filter((t) => norm(t.status) === 'completed').length;
+  const overdue = list.filter(
+    (t) => t.deadline && new Date(t.deadline).getTime() < Date.now() && norm(t.status) !== 'completed',
+  ).length;
+  return { total: list.length, pending, in_progress, completed, overdue };
+}
 
 export async function fetchCrmAssignments(params: FetchAssignmentsParams = {}): Promise<CrmAssignment[]> {
   const { data } = await api.get<{ assignments?: CrmAssignment[] }>('/crm/assignments', {
@@ -112,11 +157,45 @@ export async function fetchCrmAssignments(params: FetchAssignmentsParams = {}): 
       company_id: params.company_id || undefined,
       assignee_id: params.assignee_id || undefined,
       priority: params.priority || undefined,
+      // status_group (API mới) + status (fallback API cũ chỉ .eq).
+      status_group: params.status_group || undefined,
+      status: params.status || params.status_group || undefined,
       q: params.q?.trim() || undefined,
+      limit: params.limit != null && params.limit > 0 ? params.limit : undefined,
+      offset: params.offset != null && params.offset > 0 ? params.offset : undefined,
     },
     signal: params.signal,
   });
   return Array.isArray(data?.assignments) ? data.assignments : [];
+}
+
+/**
+ * KPI đủ (không cắt theo trang list).
+ * Chỉ dùng GET /crm/assignments/stats — không full-dump khi lỗi (tránh nghẽn data lớn).
+ */
+export async function fetchCrmAssignmentStats(
+  params: Omit<FetchAssignmentsParams, 'limit' | 'offset' | 'status' | 'status_group'> = {},
+): Promise<CrmAssignmentStats> {
+  const shared = {
+    company_id: params.company_id || undefined,
+    assignee_id: params.assignee_id || undefined,
+    priority: params.priority || undefined,
+    q: params.q?.trim() || undefined,
+  };
+  const { data } = await api.get<Partial<CrmAssignmentStats>>('/crm/assignments/stats', {
+    params: {
+      assignment_module: 'crm',
+      ...shared,
+    },
+    signal: params.signal,
+  });
+  return {
+    pending: Number(data?.pending) || 0,
+    in_progress: Number(data?.in_progress) || 0,
+    completed: Number(data?.completed) || 0,
+    overdue: Number(data?.overdue) || 0,
+    total: Number(data?.total) || 0,
+  };
 }
 
 export async function fetchCrmAssignmentLookups(
@@ -155,13 +234,44 @@ export async function fetchAssignmentColumns(signal?: AbortSignal): Promise<Assi
 export async function createLeadAssignment(
   leadId: string,
   payload: CreateLeadAssignmentPayload,
-): Promise<CrmAssignment> {
-  const { data } = await api.post<{ assignment?: CrmAssignment } | CrmAssignment>(
-    `/crm/leads/${leadId}/assignments`,
-    payload,
-  );
-  const row = (data as { assignment?: CrmAssignment })?.assignment || (data as CrmAssignment);
-  return row;
+): Promise<CreateLeadAssignmentResult> {
+  const { data } = await api.post<{
+    assignment?: CrmAssignment;
+    task?: { id?: string };
+  }>(`/crm/leads/${leadId}/assignments`, payload);
+  const assignment = data?.assignment || (data as unknown as CrmAssignment);
+  const taskId =
+    data?.task?.id
+    || assignment?.crm_task_id
+    || assignment?.crm_task?.id
+    || null;
+  return {
+    assignment,
+    taskId: taskId ? String(taskId) : null,
+  };
+}
+
+export function assignmentTaskId(a?: CrmAssignment | null): string | null {
+  if (!a) return null;
+  const id = a.crm_task_id || a.crm_task?.id;
+  return id ? String(id) : null;
+}
+
+/**
+ * Phân công gắn crm_task (module CRM) → tab Nhiệm vụ.
+ * Phân công Giao việc thuần / SX-VC → tab Không gian chung.
+ */
+export function resolveAssignmentLeadNav(a: CrmAssignment): {
+  initialTab: 'tasks' | 'shared-workspace';
+  focusTaskId?: string;
+  focusAssignmentId?: string;
+} {
+  const taskId = assignmentTaskId(a);
+  const mod = String(a.assignment_module || 'crm').toLowerCase();
+  if (taskId && (mod === 'crm' || mod === '')) {
+    return { initialTab: 'tasks', focusTaskId: taskId };
+  }
+  return { initialTab: 'shared-workspace', focusAssignmentId: String(a.id) };
 }
 
 export async function updateCrmAssignment(

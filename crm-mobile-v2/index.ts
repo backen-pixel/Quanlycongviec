@@ -4,6 +4,7 @@ import { registerRootComponent } from 'expo';
 // có thể đánh thức quét + đẩy ghi âm ngay cả khi app không mở.
 import './src/lib/voiceBackgroundTask';
 import './src/lib/deadlineOverdueBackgroundTask';
+import './src/lib/appUpdateBackgroundTask';
 
 // Cài handler hiển thị thông báo + kênh Android + lắng nghe bấm thông báo (FCM).
 import { configurePushNotifications } from './src/lib/pushNotifications';

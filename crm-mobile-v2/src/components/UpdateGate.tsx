@@ -22,7 +22,9 @@ import {
   consumeOpenUpdateGateRequest,
   maybeNotifyAppUpdate,
   onOpenUpdateGateRequest,
+  probeAndNotifyAppUpdateTray,
 } from '../lib/appUpdateNotify';
+import { registerAppUpdateBackgroundTask } from '../lib/appUpdateBackgroundTask';
 import { hasPendingBubbleChat } from '../lib/bubbleChatPending';
 import { isOnBubbleChatRoute } from '../navigation/navigationRef';
 import { Radii, useColors, type ThemeColors } from '../theme';
@@ -89,6 +91,7 @@ export default function UpdateGate() {
       }
 
       setInfo(res);
+      // Tray tối đa 1 lần / version — không force lại mỗi check.
       void maybeNotifyAppUpdate(res);
 
       if (opts.forceModal || res.mandatory) {
@@ -127,7 +130,13 @@ export default function UpdateGate() {
   }, []);
 
   useEffect(() => {
-    /** Nhường cold start Overview — check update sau vài giây. */
+    void registerAppUpdateBackgroundTask();
+
+    /** Tray một lần lúc mở app (đã có chống spam trong maybeNotify). */
+    const trayTimer = setTimeout(() => {
+      void probeAndNotifyAppUpdateTray();
+    }, 1500);
+
     const bootTimer = setTimeout(() => {
       const forceModal = consumeOpenUpdateGateRequest();
       void runCheck({ allowModal: true, forceModal });
@@ -141,6 +150,7 @@ export default function UpdateGate() {
       if (state !== 'active') return;
       if (hasPendingBubbleChat()) return;
       if (isOnBubbleChatRoute()) return;
+      // Không đẩy tray lại khi về foreground — tránh thông báo nhảy liên tục.
       if (consumeOpenUpdateGateRequest()) {
         void runCheck({ allowModal: true, forceModal: true });
         return;
@@ -154,6 +164,7 @@ export default function UpdateGate() {
     });
 
     return () => {
+      clearTimeout(trayTimer);
       clearTimeout(bootTimer);
       clearInterval(interval);
       appSub.remove();

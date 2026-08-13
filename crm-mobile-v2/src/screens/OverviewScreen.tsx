@@ -16,6 +16,7 @@ import {
   fetchCrmAssignments,
   PRIORITY_LABEL,
   STATUS_STAGE_LABEL,
+  resolveAssignmentLeadNav,
   type CrmAssignment,
 } from '../api/assignments';
 import { formatApiError, isAbortError } from '../api/client';
@@ -395,6 +396,8 @@ export default function OverviewScreen() {
           fetchCrmAssignments({
             company_id: companyId || undefined,
             assignee_id: scopeMine ? (uid || undefined) : undefined,
+            // Overview chỉ preview vài trang — không tải toàn bộ assignments.
+            limit: 80,
             signal: ac.signal,
           }),
         ]);
@@ -451,9 +454,14 @@ export default function OverviewScreen() {
     }, [load, filtersReady]),
   );
 
-  // Đổi lọc Hub (công ty / của tôi / SĐT / vùng) → tải lại KPI Tổng quan
+  // Đổi lọc Hub → tải lại KPI. Bỏ qua lần đầu (focus effect đã load) để tránh double-fetch.
+  const filterLoadSkipRef = useRef(true);
   useEffect(() => {
     if (!filtersReady) return;
+    if (filterLoadSkipRef.current) {
+      filterLoadSkipRef.current = false;
+      return;
+    }
     void load({ silent: hasPaintedRef.current });
   }, [
     filters.companyId,
@@ -465,6 +473,9 @@ export default function OverviewScreen() {
 
   useCrmRealtimeRefresh(
     useCallback(() => {
+      // Không đè TTL Overview — tránh KPI reload liên tục khi tab đang mở.
+      const OVERVIEW_TTL_MS = 45_000;
+      if (Date.now() - lastLoadAtRef.current < OVERVIEW_TTL_MS) return;
       void load({ refresh: true, silent: true });
     }, [load]),
   );
@@ -836,11 +847,15 @@ export default function OverviewScreen() {
                         style={[styles.rowItem, idx > 0 && styles.rowBorder]}
                         onPress={() => {
                           if (t.lead?.id) {
+                            const nav = resolveAssignmentLeadNav(t);
                             navigation.navigate('LeadDealDetail', {
                               leadId: t.lead.id,
                               kind: entityKind || 'lead',
                               code: t.lead.code || undefined,
                               title: t.lead.title || undefined,
+                              initialTab: nav.initialTab,
+                              focusAssignmentId: nav.focusAssignmentId,
+                              focusTaskId: nav.focusTaskId,
                             });
                           } else {
                             navigation.navigate('Tasks');

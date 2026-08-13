@@ -2,7 +2,7 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import SpinningLoader from '../SpinningLoader';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, KeyboardAvoidingView, Modal, Platform, Pressable, RefreshControl, SectionList, StyleSheet, Text, TextInput, View } from 'react-native';
 import { fetchCrmEmployeesByCompany } from '../../api/crmMeta';
 import { formatApiError } from '../../api/client';
@@ -55,6 +55,8 @@ type Props = {
   hideCreate?: boolean;
   emptyTitle?: string;
   emptyHint?: string;
+  /** Deep link: mở rộng / cuộn tới nhiệm vụ. */
+  focusTaskId?: string | null;
 };
 
 type AttachTarget = { taskId: string; checklistId?: string | null };
@@ -75,10 +77,13 @@ export default function LeadTasksTab({
   hideCreate = false,
   emptyTitle = 'Chưa có nhiệm vụ',
   emptyHint = 'Thêm nhiệm vụ hoặc checklist cho lead/deal này.',
+  focusTaskId,
 }: Props) {
   const Colors = useColors();
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const { openInAppMedia } = useMediaPreview();
+  const listRef = useRef<SectionList<LeadCrmTask>>(null);
+  const focusedOnceRef = useRef<string | null>(null);
 
   const [tasks, setTasks] = useState<LeadCrmTask[]>([]);
   const [stages, setStages] = useState<CrmPipelineStage[]>([]);
@@ -86,6 +91,9 @@ export default function LeadTasksTab({
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [highlightTaskId, setHighlightTaskId] = useState<string | null>(
+    focusTaskId ? String(focusTaskId) : null,
+  );
   const [expandedCk, setExpandedCk] = useState<string | null>(null);
   const [collapsedStages, setCollapsedStages] = useState<Record<string, boolean>>({});
   const [bulkBusy, setBulkBusy] = useState(false);
@@ -156,6 +164,43 @@ export default function LeadTasksTab({
   useEffect(() => {
     void load();
   }, [load]);
+
+  /** Deep link từ Tổng quan / Giao việc: mở đúng nhiệm vụ trong tab Nhiệm vụ. */
+  useEffect(() => {
+    const id = focusTaskId ? String(focusTaskId) : '';
+    if (!id || loading || !tasks.length) return;
+    if (focusedOnceRef.current === id) return;
+    const target = tasks.find((t) => String(t.id) === id);
+    if (!target) return;
+    focusedOnceRef.current = id;
+    setHighlightTaskId(id);
+    setExpandedId(id);
+    setNoteDraft((p) => ({ ...p, [id]: target.notes || '' }));
+    void loadAtts(id);
+    const section = stageSections.find((s) => s.tasks.some((t) => String(t.id) === id));
+    if (section) {
+      setCollapsedStages((prev) => ({ ...prev, [section.key]: false }));
+    }
+    const timer = setTimeout(() => {
+      try {
+        const secIdx = listSections.findIndex((s) => s.data.some((x) => String(x.id) === id));
+        const rowIdx = secIdx >= 0
+          ? listSections[secIdx]!.data.findIndex((x) => String(x.id) === id)
+          : -1;
+        if (secIdx >= 0 && rowIdx >= 0) {
+          listRef.current?.scrollToLocation({
+            sectionIndex: secIdx,
+            itemIndex: Math.max(0, rowIdx),
+            animated: true,
+            viewPosition: 0.12,
+          });
+        }
+      } catch {
+        /* ignore */
+      }
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [focusTaskId, listSections, loadAtts, loading, stageSections, tasks]);
 
   useEffect(() => {
     if (!companyId) return;
@@ -449,14 +494,9 @@ export default function LeadTasksTab({
           })),
         );
       } else if (option === 'camera') {
-        const perm = await ImagePicker.requestCameraPermissionsAsync();
-        if (!perm.granted) {
-          Alert.alert('Quyền camera', 'Cần quyền camera để chụp ảnh.');
-          return;
-        }
-        const shot = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.85 });
-        if (shot.canceled || !shot.assets?.[0]) return;
-        const a = shot.assets[0];
+        const { launchCameraPhoto } = await import('../../lib/launchCameraPhoto');
+        const a = await launchCameraPhoto({ quality: 0.85, settleMs: 200 });
+        if (!a) return;
         await uploadFiles(target, [{
           uri: a.uri,
           name: a.fileName || `photo_${Date.now()}.jpg`,
@@ -464,12 +504,14 @@ export default function LeadTasksTab({
           size: a.fileSize,
         }]);
       } else if (option === 'video') {
-        const perm = await ImagePicker.requestCameraPermissionsAsync();
-        if (!perm.granted) {
-          Alert.alert('Quyền camera', 'Cần quyền camera để quay video.');
-          return;
-        }
-        const rec = await ImagePicker.launchCameraAsync({ mediaTypes: ['videos'], videoQuality: 1 });
+        const { ensureCameraPermission } = await import('../../lib/launchCameraPhoto');
+        const ok = await ensureCameraPermission({ message: 'Cần quyền camera để quay video.' });
+        if (!ok) return;
+        await new Promise<void>((r) => setTimeout(r, 200));
+        const rec = await ImagePicker.launchCameraAsync({
+          mediaTypes: ImagePicker.MediaTypeOptions.Videos,
+          videoQuality: 1,
+        });
         if (rec.canceled || !rec.assets?.[0]) return;
         const a = rec.assets[0];
         await uploadFiles(target, [{
@@ -706,13 +748,14 @@ export default function LeadTasksTab({
 
   const renderTask = ({ item: task }: { item: LeadCrmTask }) => {
     const expanded = expandedId === task.id;
+    const focused = highlightTaskId && String(task.id) === String(highlightTaskId);
     const assignee =
       employeeName(empMap, task.assignee_id || task.assignees?.[0]?.id) ||
       task.assignees?.map((a) => a.full_name).filter(Boolean).join(', ') ||
       (task.assignee as { full_name?: string } | undefined)?.full_name;
 
     return (
-      <View style={styles.card}>
+      <View style={[styles.card, focused && styles.cardFocused]}>
         <Pressable style={styles.taskHead} onPress={() => toggleExpand(task)}>
           <Pressable onPress={() => void toggleTaskStatus(task)} hitSlop={8}>
             <Ionicons
@@ -827,11 +870,25 @@ export default function LeadTasksTab({
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <SectionList
+        ref={listRef}
         sections={listSections}
         keyExtractor={(t) => t.id}
         renderItem={renderTask}
         renderSectionHeader={({ section }) => renderStageHeader(section as TaskStageSection & { data: LeadCrmTask[] })}
         stickySectionHeadersEnabled={false}
+        onScrollToLocationFailed={(info) => {
+          setTimeout(() => {
+            try {
+              listRef.current?.scrollToLocation({
+                sectionIndex: info.index,
+                itemIndex: 0,
+                animated: true,
+              });
+            } catch {
+              /* ignore */
+            }
+          }, 250);
+        }}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); void load(true); }} tintColor={Colors.blue} />
         }
@@ -1035,6 +1092,11 @@ function makeStyles(C: ThemeColors) {
       borderColor: C.borderSoft,
       marginBottom: 10,
       overflow: 'hidden',
+    },
+    cardFocused: {
+      borderColor: C.blue,
+      borderWidth: 2,
+      backgroundColor: C.blueSoft,
     },
     taskHead: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, padding: 12 },
     taskBody: { paddingHorizontal: 12, paddingBottom: 12, borderTopWidth: 1, borderTopColor: C.borderSoft },

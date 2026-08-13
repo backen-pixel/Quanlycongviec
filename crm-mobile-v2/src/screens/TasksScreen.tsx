@@ -9,14 +9,17 @@ import { FlatList, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Tex
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   fetchCrmAssignmentLookups,
+  fetchCrmAssignmentStats,
   fetchCrmAssignments,
   PRIORITY_LABEL,
   STATUS_STAGE_LABEL,
+  resolveAssignmentLeadNav,
   type AssignmentPriority,
   type CrmAssignment,
+  type CrmAssignmentStats,
 } from '../api/assignments';
 import { fetchCrmCompanies } from '../api/crm';
-import { formatApiError } from '../api/client';
+import { formatApiError, isAbortError } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { formatDateShort } from '../lib/format';
 import type { RootStackParamList } from '../navigation/types';
@@ -24,6 +27,17 @@ import { Radii, Shadow, useColors, type ThemeColors } from '../theme';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 type StatusSegment = 'pending' | 'in_progress' | 'completed';
+
+/** Trang list — KPI lấy từ /stats (không cắt theo trang). */
+const TASKS_PAGE_SIZE = 40;
+
+const EMPTY_STATS: CrmAssignmentStats = {
+  pending: 0,
+  in_progress: 0,
+  completed: 0,
+  overdue: 0,
+  total: 0,
+};
 
 const STATUS_SEGMENTS: { key: StatusSegment; label: string }[] = [
   { key: 'pending', label: 'Chưa làm' },
@@ -42,10 +56,6 @@ const PRIORITY_OPTIONS: { key: '' | AssignmentPriority; label: string }[] = [
 function isAdminLike(role?: string | null): boolean {
   const r = String(role || '').trim().toLowerCase();
   return r === 'admin' || r === 'sales_admin';
-}
-
-function isSystemAdmin(user: { role?: string | null; company_id?: string | null } | null): boolean {
-  return String(user?.role || '').trim().toLowerCase() === 'admin' && !user?.company_id;
 }
 
 function assigneeList(a: CrmAssignment) {
@@ -105,6 +115,9 @@ export default function TasksScreen() {
   const { user } = useAuth();
 
   const [rows, setRows] = useState<CrmAssignment[]>([]);
+  const [serverStats, setServerStats] = useState<CrmAssignmentStats>(EMPTY_STATS);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [users, setUsers] = useState<{ id: string; name: string }[]>([]);
   const [companies, setCompanies] = useState<{ id: string; name: string }[]>([]);
   const [loading, setLoading] = useState(true);
@@ -121,10 +134,18 @@ export default function TasksScreen() {
   const [priorityPickerOpen, setPriorityPickerOpen] = useState(false);
   const [detailItem, setDetailItem] = useState<CrmAssignment | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const lastLoadAtRef = useRef(0);
+  const rowsRef = useRef<CrmAssignment[]>([]);
+  const loadingMoreRef = useRef(false);
+  const hasMoreRef = useRef(false);
+  const loadGenRef = useRef(0);
+  rowsRef.current = rows;
+  hasMoreRef.current = hasMore;
 
   const showCompanyPicker = isAdminLike(user?.role);
   const showAssigneePicker = isAdminLike(user?.role);
-  const companyQuery = isSystemAdmin(user) && companyFilter ? companyFilter : companyFilter || undefined;
+  /** Giống web: chỉ lọc company khi user chọn chip (không ép company_id). */
+  const companyQuery = companyFilter || undefined;
   const uid = user?.id || user?.userId || '';
 
   useEffect(() => {
@@ -155,77 +176,140 @@ export default function TasksScreen() {
     return () => ac.abort();
   }, [companyQuery, user?.company_id]);
 
-  const load = useCallback(async (opts?: { refresh?: boolean; silent?: boolean }) => {
+  const load = useCallback(async (opts?: { refresh?: boolean; silent?: boolean; append?: boolean }) => {
     const isRefresh = opts?.refresh ?? false;
     const silent = opts?.silent ?? false;
-    abortRef.current?.abort();
-    const ac = new AbortController();
-    abortRef.current = ac;
-    if (isRefresh && !silent) setRefreshing(true);
-    else if (!silent) setLoading(true);
-    if (!silent) setError('');
+    const append = opts?.append ?? false;
+
+    if (append) {
+      if (loadingMoreRef.current || !hasMoreRef.current) return;
+      loadingMoreRef.current = true;
+      setLoadingMore(true);
+    } else {
+      abortRef.current?.abort();
+      const ac = new AbortController();
+      abortRef.current = ac;
+      loadGenRef.current += 1;
+      if (isRefresh && !silent) setRefreshing(true);
+      else if (!silent) setLoading(true);
+      if (!silent) setError('');
+    }
+
+    const gen = loadGenRef.current;
+    const signal = abortRef.current?.signal;
     try {
       const assigneeId = assigneeFilter || (!showAssigneePicker && uid ? uid : undefined);
-      const list = await fetchCrmAssignments({
+      const offset = append ? rowsRef.current.length : 0;
+      const listParams = {
         company_id: companyQuery,
         assignee_id: assigneeId,
         priority: priorityFilter || undefined,
+        status_group: statusSegment,
+        status: statusSegment,
         q: search || undefined,
-        signal: ac.signal,
-      });
-      if (!ac.signal.aborted) setRows(list);
-    } catch (e: unknown) {
-      if (!ac.signal.aborted) {
-        setError(formatApiError(e));
-        setRows([]);
-      }
-    } finally {
-      if (!ac.signal.aborted) {
-        if (!silent) {
-          setLoading(false);
-          setRefreshing(false);
+        limit: TASKS_PAGE_SIZE,
+        offset,
+        signal,
+      };
+
+      // KPI đếm đủ (không cắt trang). Không gắn abort list — tránh KPI = đúng 1 trang (40).
+      const statsPromise = append
+        ? Promise.resolve(null as CrmAssignmentStats | null)
+        : fetchCrmAssignmentStats({
+            company_id: companyQuery,
+            assignee_id: assigneeId,
+            priority: priorityFilter || undefined,
+            q: search || undefined,
+          });
+
+      const [list, statsSettled] = await Promise.all([
+        fetchCrmAssignments(listParams),
+        statsPromise.then(
+          (s) => ({ ok: true as const, s }),
+          () => ({ ok: false as const }),
+        ),
+      ]);
+      if (signal?.aborted || (!append && gen !== loadGenRef.current)) return;
+
+      setRows((prev) => {
+        if (!append) return list;
+        const seen = new Set(prev.map((r) => r.id));
+        const merged = [...prev];
+        for (const row of list) {
+          if (!seen.has(row.id)) {
+            seen.add(row.id);
+            merged.push(row);
+          }
         }
+        return merged;
+      });
+      setHasMore(list.length >= TASKS_PAGE_SIZE);
+      if (!append && statsSettled.ok) {
+        setServerStats(statsSettled.s);
+      }
+      lastLoadAtRef.current = Date.now();
+    } catch (e: unknown) {
+      if (append || isAbortError(e) || signal?.aborted) return;
+      if (!append && gen !== loadGenRef.current) return;
+      const msg = formatApiError(e);
+      if (msg) setError(msg);
+      setRows([]);
+      setHasMore(false);
+    } finally {
+      if (append) {
+        loadingMoreRef.current = false;
+        setLoadingMore(false);
+      } else if (gen === loadGenRef.current) {
+        setLoading(false);
+        setRefreshing(false);
       }
     }
-  }, [assigneeFilter, companyQuery, priorityFilter, search, showAssigneePicker, uid]);
+  }, [assigneeFilter, companyQuery, priorityFilter, search, showAssigneePicker, statusSegment, uid]);
 
+  const loadRef = useRef(load);
+  loadRef.current = load;
+
+  // Đổi lọc / tìm kiếm → luôn tải lại ngay (không bị TTL chặn).
+  useEffect(() => {
+    void load({ silent: lastLoadAtRef.current > 0 });
+  }, [load]);
+
+  // Focus lại màn: chỉ soft-refresh khi quá TTL (load ổn định qua loadRef).
   useFocusEffect(
     useCallback(() => {
-      void load();
+      const TASKS_TTL_MS = 45_000;
+      if (lastLoadAtRef.current === 0) {
+        return () => abortRef.current?.abort();
+      }
+      if (Date.now() - lastLoadAtRef.current > TASKS_TTL_MS) {
+        void loadRef.current({ refresh: true, silent: true });
+      }
       return () => abortRef.current?.abort();
-    }, [load]),
+    }, []),
   );
 
   useCrmRealtimeRefresh(
     useCallback(() => {
-      void load({ refresh: true, silent: true });
-    }, [load]),
+      const TASKS_TTL_MS = 45_000;
+      if (Date.now() - lastLoadAtRef.current < TASKS_TTL_MS) return;
+      void loadRef.current({ refresh: true, silent: true });
+    }, []),
   );
 
-  const stats = useMemo(() => {
-    const active = rows.filter((t) => t.status !== 'cancelled');
-    const total = active.length;
-    const completed = active.filter((t) => t.status === 'completed').length;
-    const inProgress = active.filter((t) => t.status === 'in_progress').length;
-    const overdue = active.filter((t) => isOverdue(t)).length;
-    return { total, completed, inProgress, overdue };
-  }, [rows]);
+  const stats = serverStats;
 
-  const segmentCounts = useMemo(() => {
-    const active = rows.filter((t) => t.status !== 'cancelled');
-    return {
-      pending: active.filter((t) => t.status === 'pending' || !t.status).length,
-      in_progress: active.filter((t) => t.status === 'in_progress').length,
-      completed: active.filter((t) => t.status === 'completed').length,
-    };
-  }, [rows]);
+  const segmentCounts = useMemo(
+    () => ({
+      pending: stats.pending,
+      in_progress: stats.in_progress,
+      completed: stats.completed,
+    }),
+    [stats],
+  );
 
   const filtered = useMemo(() => {
-    let list = rows.filter((t) => t.status !== 'cancelled');
-    list = list.filter((t) => {
-      const st = t.status || 'pending';
-      return st === statusSegment;
-    });
+    // Server đã lọc theo status_group (hoặc status fallback); chỉ sort deadline.
+    const list = [...rows];
     list.sort((a, b) => {
       const da = a.deadline ? new Date(a.deadline).getTime() : Number.MAX_SAFE_INTEGER;
       const db = b.deadline ? new Date(b.deadline).getTime() : Number.MAX_SAFE_INTEGER;
@@ -235,7 +319,12 @@ export default function TasksScreen() {
       return tb - ta;
     });
     return list;
-  }, [rows, statusSegment]);
+  }, [rows]);
+
+  const onEndReached = useCallback(() => {
+    if (!hasMoreRef.current || loadingMoreRef.current) return;
+    void load({ append: true, silent: true });
+  }, [load]);
 
   const companyLabel = useMemo(() => {
     if (!companyFilter) return 'Tất cả công ty';
@@ -335,7 +424,7 @@ export default function TasksScreen() {
             <View style={{ flex: 1 }}>
               <Text style={styles.headerTitle}>Giao việc CRM</Text>
               <Text style={styles.headerSub}>
-                {stats.total} nhiệm vụ — {stats.completed} hoàn thành — {stats.inProgress} đang làm
+                {stats.total} nhiệm vụ — {stats.completed} hoàn thành — {stats.in_progress} đang làm
               </Text>
             </View>
           </View>
@@ -356,7 +445,7 @@ export default function TasksScreen() {
             <Ionicons name="time-outline" size={14} color={Colors.blue} />
             <Text style={styles.statLbl}>ĐANG LÀM</Text>
           </View>
-          <Text style={[styles.statVal, { color: Colors.blue }]}>{stats.inProgress}</Text>
+          <Text style={[styles.statVal, { color: Colors.blue }]}>{stats.in_progress}</Text>
           <Text style={styles.statSub}>đang xử lý</Text>
         </View>
         <View style={styles.statCard}>
@@ -462,6 +551,19 @@ export default function TasksScreen() {
           contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: insets.bottom + 24 }}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={() => void load({ refresh: true })} tintColor={Colors.blue} />
+          }
+          onEndReached={onEndReached}
+          onEndReachedThreshold={0.35}
+          ListFooterComponent={
+            loadingMore ? (
+              <View style={{ paddingVertical: 16, alignItems: 'center' }}>
+                <SpinningLoader color={Colors.blue} />
+              </View>
+            ) : hasMore ? (
+              <Text style={{ textAlign: 'center', color: Colors.textFaint, fontSize: 12, paddingVertical: 10 }}>
+                Kéo xuống để tải thêm…
+              </Text>
+            ) : null
           }
           ListEmptyComponent={
             <View style={styles.emptyBox}>
@@ -599,6 +701,28 @@ export default function TasksScreen() {
                       <Text style={styles.detailLbl}>Lead / Deal</Text>
                       <Text style={styles.detailVal}>{leadLabel(detailItem)}</Text>
                     </View>
+                  ) : null}
+                  {detailItem.lead?.id ? (
+                    <Pressable
+                      style={[styles.filterPill, { alignSelf: 'stretch', justifyContent: 'center', marginTop: 12 }]}
+                      onPress={() => {
+                        const lead = detailItem.lead!;
+                        const navTo = resolveAssignmentLeadNav(detailItem);
+                        setDetailItem(null);
+                        navigation.navigate('LeadDealDetail', {
+                          leadId: lead.id,
+                          kind: lead.type === 'deal' ? 'deal' : 'lead',
+                          code: lead.code || undefined,
+                          title: lead.title || undefined,
+                          initialTab: navTo.initialTab,
+                          focusAssignmentId: navTo.focusAssignmentId,
+                          focusTaskId: navTo.focusTaskId,
+                        });
+                      }}
+                    >
+                      <Ionicons name="open-outline" size={16} color={Colors.blue} />
+                      <Text style={styles.filterPillTxt}>Mở trong Lead/Deal</Text>
+                    </Pressable>
                   ) : null}
                   {detailItem.company?.short_name || detailItem.company?.name ? (
                     <View style={styles.detailRow}>
