@@ -282,25 +282,27 @@ async function syncCrmTaskFromAssignment(assignment) {
 
 async function attachCrmTaskMetaToAssignments(list) {
   if (!Array.isArray(list) || !list.length) return list;
-  const taskIds = list.map((a) => a.crm_task_id).filter(Boolean);
+  const taskIds = [...new Set(list.map((a) => a.crm_task_id).filter(Boolean))];
   if (!taskIds.length) return list;
-  const { data, error } = await supabase
-    .from('crm_tasks')
-    .select('id, notes, status, lead_id, title, stage_slug, production_pipeline_stage_id, show_fill_form, form_config, form_data')
-    .in('id', taskIds);
-  if (error) {
-    // DB chưa có cột form — fallback select cũ
-    if (/show_fill_form|form_config|form_data/i.test(error.message || '')) {
-      const { data: legacy, error: legErr } = await supabase
-        .from('crm_tasks')
-        .select('id, notes, status, lead_id, title, stage_slug, production_pipeline_stage_id')
-        .in('id', taskIds);
-      if (legErr) return list;
-      return attachCrmTaskMetaToAssignmentsWithRows(list, legacy || [], taskIds);
+  const CHUNK = 200;
+  const allRows = [];
+  let useLegacy = false;
+  for (let i = 0; i < taskIds.length; i += CHUNK) {
+    const slice = taskIds.slice(i, i + CHUNK);
+    const selectFull = 'id, notes, status, lead_id, title, stage_slug, production_pipeline_stage_id, show_fill_form, form_config, form_data';
+    const selectLegacy = 'id, notes, status, lead_id, title, stage_slug, production_pipeline_stage_id';
+    let { data, error } = await supabase
+      .from('crm_tasks')
+      .select(useLegacy ? selectLegacy : selectFull)
+      .in('id', slice);
+    if (error && !useLegacy && /show_fill_form|form_config|form_data/i.test(error.message || '')) {
+      useLegacy = true;
+      ({ data, error } = await supabase.from('crm_tasks').select(selectLegacy).in('id', slice));
     }
-    return list;
+    if (error) return list;
+    allRows.push(...(data || []));
   }
-  return attachCrmTaskMetaToAssignmentsWithRows(list, data || [], taskIds);
+  return attachCrmTaskMetaToAssignmentsWithRows(list, allRows, taskIds);
 }
 
 async function attachCrmTaskMetaToAssignmentsWithRows(list, taskRows, taskIds) {
@@ -347,6 +349,45 @@ async function applyAssignmentStatusColumn(update, status) {
   return update;
 }
 
+/**
+ * Sửa lệch status ↔ column_id trên cột shared (KPI đếm theo status, Kanban theo cột).
+ * Cập nhật in-memory ngay; ghi DB nền (không chặn response).
+ */
+async function healAssignmentColumnStatusAlignment(list) {
+  if (!Array.isArray(list) || !list.length) return list;
+  const cols = await loadSharedColumns();
+  if (!cols.length) return list;
+  const sharedIds = new Set(cols.map((c) => String(c.id)));
+  const patches = [];
+  list.forEach((row) => {
+    if (!row?.id) return;
+    const status = String(row.status || 'pending').toLowerCase();
+    const normalized = status === 'done' ? 'completed'
+      : (status === 'doing' ? 'in_progress' : status);
+    const expected = columnIdForTaskStatus(cols, normalized === 'cancelled' ? 'pending' : normalized);
+    if (!expected) return;
+    const cur = row.column_id == null ? null : String(row.column_id);
+    if (cur === String(expected)) return;
+    // Chỉ heal khi đang ở cột shared / chưa gán — không đụng cột custom cá nhân
+    if (cur && !sharedIds.has(cur)) return;
+    row.column_id = expected;
+    patches.push({ id: row.id, column_id: expected });
+  });
+  if (patches.length) {
+    void (async () => {
+      const CHUNK = 80;
+      for (let i = 0; i < patches.length; i += CHUNK) {
+        const slice = patches.slice(i, i + CHUNK);
+        await Promise.all(slice.map((p) => supabase
+          .from('crm_assignments')
+          .update({ column_id: p.column_id, updated_at: new Date().toISOString() })
+          .eq('id', p.id)));
+      }
+    })().catch((e) => console.warn('[crm_assignments] heal column/status:', e?.message || e));
+  }
+  return list;
+}
+
 async function attachAssignmentIdsToCrmTasks(list) {
   if (!Array.isArray(list) || !list.length) return list;
   const taskIds = list.map((t) => t.id);
@@ -381,5 +422,6 @@ module.exports = {
   attachAssignmentIdsToCrmTasks,
   attachCrmTaskMetaToAssignments,
   applyAssignmentStatusColumn,
+  healAssignmentColumnStatusAlignment,
   columnIdForTaskStatus,
 };

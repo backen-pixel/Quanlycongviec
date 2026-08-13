@@ -22,6 +22,7 @@ const {
   syncCrmTaskFromAssignment,
   attachCrmTaskMetaToAssignments,
   applyAssignmentStatusColumn,
+  healAssignmentColumnStatusAlignment,
 } = require('../helpers/crmTaskAssignmentSync');
 const {
   syncAssignmentFileToTask,
@@ -409,18 +410,44 @@ async function applyAssignmentSearchQuery(q, rawQ) {
   return { q };
 }
 
+/** PostgREST mặc định ~1000 dòng/request — web list không truyền limit phải gom đủ trang. */
+const ASSIGN_LIST_PAGE = 1000;
+const ASSIGN_LIST_MAX = 50000;
+
+async function fetchAssignmentRowsPaged(makeQuery, { pageLimit = null, pageOffset = 0 } = {}) {
+  if (pageLimit != null) {
+    const { q } = await makeQuery();
+    return q.range(pageOffset, pageOffset + pageLimit - 1);
+  }
+  const all = [];
+  for (let from = 0; from < ASSIGN_LIST_MAX; from += ASSIGN_LIST_PAGE) {
+    const { q } = await makeQuery();
+    // q phải bọc { q } — return builder trần từ async sẽ bị Promise unwrap (thenable) → chạy query.
+    const { data, error } = await q.range(from, from + ASSIGN_LIST_PAGE - 1);
+    if (error) return { data: all.length ? all : null, error };
+    const batch = data || [];
+    all.push(...batch);
+    if (batch.length < ASSIGN_LIST_PAGE) break;
+  }
+  return { data: all, error: null };
+}
+
 async function attachAssigneesToAssignments(list) {
   if (!Array.isArray(list) || !list.length) return list;
   const ids = list.map((x) => x.id);
-  const { data: rows } = await supabase
-    .from('crm_assignment_assignees')
-    .select('assignment_id, user_id, user:users(id, full_name, email, avatar)')
-    .in('assignment_id', ids);
   const byId = new Map();
-  (rows || []).forEach((r) => {
-    if (!byId.has(r.assignment_id)) byId.set(r.assignment_id, []);
-    if (r.user) byId.get(r.assignment_id).push(r.user);
-  });
+  const CHUNK = 200;
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const slice = ids.slice(i, i + CHUNK);
+    const { data: rows } = await supabase
+      .from('crm_assignment_assignees')
+      .select('assignment_id, user_id, user:users(id, full_name, email, avatar)')
+      .in('assignment_id', slice);
+    (rows || []).forEach((r) => {
+      if (!byId.has(r.assignment_id)) byId.set(r.assignment_id, []);
+      if (r.user) byId.get(r.assignment_id).push(r.user);
+    });
+  }
   list.forEach((a) => { a.assignees = byId.get(a.id) || (a.assignee ? [a.assignee] : []); });
   return list;
 }
@@ -646,18 +673,13 @@ r.post('/columns/reorder', async (req, res) => {
 // GET /api/crm/assignments?company_id=&assignee_id=&status=&priority=&q=
 r.get('/', async (req, res) => {
   try {
-    let q = supabase.from('crm_assignments').select(ASSIGNMENT_SELECT);
-
     let scopeIds = null;
-    if (isAdmin(req)) {
-      const companyId = req.query.company_id || null;
-      if (companyId) {
-        q = q.or(`company_id.eq.${companyId},executor_company_id.eq.${companyId}`);
-      }
-    } else {
+    /** Khi có filter assignee/phòng ban — giới hạn theo id (ưu tiên hơn scopeIds). */
+    let idInFilter = null;
+
+    if (!isAdmin(req)) {
       scopeIds = await getVisibleAssignmentIdsForNonAdmin(req);
       if (!scopeIds.length) return res.json({ assignments: [] });
-      q = q.in('id', scopeIds);
     }
 
     const assigneeFilter = String(req.query.assignee_id || '').trim();
@@ -682,7 +704,7 @@ r.get('/', async (req, res) => {
         ids = ids.filter((id) => allowed.has(id));
         if (!ids.length) return res.json({ assignments: [] });
       }
-      q = q.in('id', ids);
+      idInFilter = ids;
     }
 
     const departmentFilter = String(req.query.department_id || '').trim();
@@ -692,129 +714,104 @@ r.get('/', async (req, res) => {
       }
       const deptIds = await getAssignmentIdsForDepartment(departmentFilter);
       if (!deptIds.length) return res.json({ assignments: [] });
-      if (scopeIds) {
+      if (idInFilter) {
+        idInFilter = intersectAssignmentIds(idInFilter, deptIds);
+        if (!idInFilter.length) return res.json({ assignments: [] });
+      } else if (scopeIds) {
         scopeIds = intersectAssignmentIds(scopeIds, deptIds);
         if (!scopeIds.length) return res.json({ assignments: [] });
-        q = q.in('id', scopeIds);
       } else {
-        q = q.in('id', deptIds);
+        idInFilter = deptIds;
       }
     }
 
-    q = applyAssignmentStatusFilter(q, req.query);
-    if (req.query.priority) q = q.eq('priority', req.query.priority);
-    if (req.query.column_id) q = q.eq('column_id', req.query.column_id);
-    if (req.query.lead_id) q = q.eq('lead_id', String(req.query.lead_id).trim());
-    // Mobile chip «Quá hạn»: chưa xong + deadline trước đầu ngày hôm nay (giờ VN).
     const overdueFlag = String(req.query.overdue || '').trim().toLowerCase();
-    if (overdueFlag === '1' || overdueFlag === 'true') {
-      const startIso = vnStartOfTodayIso();
-      q = q
-        .neq('status', 'completed')
-        .not('deadline', 'is', null)
-        .lt('deadline', startIso);
-    }
     const moduleFilter = String(req.query.assignment_module || '').trim().toLowerCase();
-    if (isValidAssignModuleFilter(moduleFilter)) {
-      q = q.eq('assignment_module', moduleFilter);
-    }
-    if (req.query.q) {
-      ({ q } = await applyAssignmentSearchQuery(q, req.query.q));
-    }
-
-    q = q.order('position', { ascending: true }).order('created_at', { ascending: false });
-
-    // Phân trang mobile (limit/offset) — mặc định không giới hạn để web giữ hành vi cũ.
     const rawLimit = Number(req.query.limit);
     const pageLimit = Number.isFinite(rawLimit) && rawLimit > 0
       ? Math.min(Math.floor(rawLimit), 500)
       : null;
     const rawOffset = Number(req.query.offset);
     const pageOffset = Number.isFinite(rawOffset) && rawOffset > 0 ? Math.floor(rawOffset) : 0;
-    if (pageLimit != null) {
-      q = q.range(pageOffset, pageOffset + pageLimit - 1);
-    }
+    const pageOpts = { pageLimit, pageOffset };
 
-    let { data, error } = await q;
-    if (error && /task_source_type|employee_error_module/.test(error.message || '')) {
-      const legacySelect = ASSIGNMENT_SELECT
-        .replace(/task_source_type,\s*/g, '')
-        .replace(/employee_error_module,\s*/g, '');
-      let qLegacy = supabase.from('crm_assignments').select(legacySelect);
-      // Re-apply only identity filters that are safe to rebuild from query params
-      if (isAdmin(req)) {
-        const companyId = req.query.company_id || null;
-        if (companyId) qLegacy = qLegacy.or(`company_id.eq.${companyId},executor_company_id.eq.${companyId}`);
+    async function applyCommonFilters(q, {
+      companyMode = 'or',
+      skipModule = false,
+    } = {}) {
+      if (idInFilter?.length) {
+        q = q.in('id', idInFilter);
       } else if (scopeIds?.length) {
-        qLegacy = qLegacy.in('id', scopeIds);
+        q = q.in('id', scopeIds);
+      } else if (isAdmin(req)) {
+        const companyId = req.query.company_id || null;
+        if (companyId) {
+          if (companyMode === 'company_only') q = q.eq('company_id', companyId);
+          else q = q.or(`company_id.eq.${companyId},executor_company_id.eq.${companyId}`);
+        }
       }
-      qLegacy = applyAssignmentStatusFilter(qLegacy, req.query);
-      if (req.query.priority) qLegacy = qLegacy.eq('priority', req.query.priority);
-      if (req.query.column_id) qLegacy = qLegacy.eq('column_id', req.query.column_id);
-      if (req.query.lead_id) qLegacy = qLegacy.eq('lead_id', String(req.query.lead_id).trim());
+      q = applyAssignmentStatusFilter(q, req.query);
+      if (req.query.priority) q = q.eq('priority', req.query.priority);
+      if (req.query.column_id) q = q.eq('column_id', req.query.column_id);
+      if (req.query.lead_id) q = q.eq('lead_id', String(req.query.lead_id).trim());
       if (overdueFlag === '1' || overdueFlag === 'true') {
         const startIso = vnStartOfTodayIso();
-        qLegacy = qLegacy
+        q = q
           .neq('status', 'completed')
           .not('deadline', 'is', null)
           .lt('deadline', startIso);
       }
-      if (isValidAssignModuleFilter(moduleFilter)) {
-        qLegacy = qLegacy.eq('assignment_module', moduleFilter);
+      if (!skipModule && isValidAssignModuleFilter(moduleFilter)) {
+        q = q.eq('assignment_module', moduleFilter);
       }
-      qLegacy = qLegacy.order('position', { ascending: true }).order('created_at', { ascending: false });
-      if (pageLimit != null) {
-        qLegacy = qLegacy.range(pageOffset, pageOffset + pageLimit - 1);
+      if (req.query.q) {
+        ({ q } = await applyAssignmentSearchQuery(q, req.query.q));
       }
-      ({ data, error } = await qLegacy);
+      q = q.order('position', { ascending: true }).order('created_at', { ascending: false });
+      // Không return builder trần từ async — PostgREST thenable, await sẽ chạy query.
+      return { q };
+    }
+
+    const makeFull = async () => applyCommonFilters(
+      supabase.from('crm_assignments').select(ASSIGNMENT_SELECT),
+    );
+
+    let { data, error } = await fetchAssignmentRowsPaged(makeFull, pageOpts);
+
+    if (error && /task_source_type|employee_error_module/.test(error.message || '')) {
+      const legacySelect = ASSIGNMENT_SELECT
+        .replace(/task_source_type,\s*/g, '')
+        .replace(/employee_error_module,\s*/g, '');
+      const makeLegacy = async () => applyCommonFilters(
+        supabase.from('crm_assignments').select(legacySelect),
+      );
+      ({ data, error } = await fetchAssignmentRowsPaged(makeLegacy, pageOpts));
     }
     if (error && /executor_company_id/.test(error.message || '') && isAdmin(req) && req.query.company_id) {
-      let qExec = supabase.from('crm_assignments').select(ASSIGNMENT_SELECT);
-      qExec = qExec.eq('company_id', req.query.company_id);
-      qExec = applyAssignmentStatusFilter(qExec, req.query);
-      if (req.query.priority) qExec = qExec.eq('priority', req.query.priority);
-      if (isValidAssignModuleFilter(moduleFilter)) {
-        qExec = qExec.eq('assignment_module', moduleFilter);
-      }
-      if (req.query.q) {
-        ({ q: qExec } = await applyAssignmentSearchQuery(qExec, req.query.q));
-      }
-      qExec = qExec.order('position', { ascending: true }).order('created_at', { ascending: false });
-      if (pageLimit != null) {
-        qExec = qExec.range(pageOffset, pageOffset + pageLimit - 1);
-      }
-      ({ data, error } = await qExec);
+      const makeExec = async () => applyCommonFilters(
+        supabase.from('crm_assignments').select(ASSIGNMENT_SELECT),
+        { companyMode: 'company_only' },
+      );
+      ({ data, error } = await fetchAssignmentRowsPaged(makeExec, pageOpts));
     }
     if (error && /assignment_module/.test(error.message || '') && moduleFilter) {
-      let q2 = supabase.from('crm_assignments').select(ASSIGNMENT_SELECT);
-      if (isAdmin(req)) {
-        const companyId = req.query.company_id || null;
-        if (companyId) q2 = q2.or(`company_id.eq.${companyId},executor_company_id.eq.${companyId}`);
-      } else if (scopeIds?.length) {
-        q2 = q2.in('id', scopeIds);
-      }
-      q2 = applyAssignmentStatusFilter(q2, req.query);
-      if (req.query.priority) q2 = q2.eq('priority', req.query.priority);
-      if (req.query.column_id) q2 = q2.eq('column_id', req.query.column_id);
-      if (req.query.lead_id) q2 = q2.eq('lead_id', String(req.query.lead_id).trim());
-      if (req.query.q) {
-        ({ q: q2 } = await applyAssignmentSearchQuery(q2, req.query.q));
-      }
-      q2 = q2.order('position', { ascending: true }).order('created_at', { ascending: false });
-      if (pageLimit != null) {
-        q2 = q2.range(pageOffset, pageOffset + pageLimit - 1);
-      }
-      ({ data, error } = await q2);
+      const makeNoMod = async () => applyCommonFilters(
+        supabase.from('crm_assignments').select(ASSIGNMENT_SELECT),
+        { skipModule: true },
+      );
+      ({ data, error } = await fetchAssignmentRowsPaged(makeNoMod, pageOpts));
     }
     if (error) throw error;
     await attachAssigneesToAssignments(data || []);
     await attachCrmTaskMetaToAssignments(data || []);
+    await healAssignmentColumnStatusAlignment(data || []);
     const rows = data || [];
     res.json({
       assignments: rows,
       has_more: pageLimit != null ? rows.length >= pageLimit : false,
       offset: pageOffset,
       limit: pageLimit,
+      total_returned: rows.length,
     });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi tải nhiệm vụ' }); }
 });
@@ -1153,42 +1150,63 @@ r.get('/stats', responseCache({ ttl: 20, scope: 'user', tags: ['crm:assignments'
 
     const moduleFilter = String(req.query.assignment_module || '').trim().toLowerCase();
     const searchQ = req.query.q;
+    const priorityFilter = String(req.query.priority || '').trim();
+    const departmentFilter = String(req.query.department_id || '').trim();
+    let statsIdFilter = assigneeIds || scopeIds || null;
+    if (departmentFilter && isAdmin(req)) {
+      const deptIds = await getAssignmentIdsForDepartment(departmentFilter);
+      if (!deptIds.length) {
+        return res.json({
+          pending: 0, in_progress: 0, completed: 0, overdue: 0, total: 0,
+        });
+      }
+      if (statsIdFilter) {
+        const allowed = new Set(deptIds);
+        statsIdFilter = statsIdFilter.filter((id) => allowed.has(id));
+        if (!statsIdFilter.length) {
+          return res.json({
+            pending: 0, in_progress: 0, completed: 0, overdue: 0, total: 0,
+          });
+        }
+      } else {
+        statsIdFilter = deptIds;
+      }
+    }
 
     async function applyStatsFilters(q, { skipModule = false } = {}) {
-      if (assigneeIds) {
-        q = q.in('id', assigneeIds);
-      } else if (scopeIds) {
-        q = q.in('id', scopeIds);
+      if (statsIdFilter) {
+        q = q.in('id', statsIdFilter);
       } else if (isAdmin(req)) {
         const companyId = req.query.company_id || null;
         if (companyId) {
           q = q.or(`company_id.eq.${companyId},executor_company_id.eq.${companyId}`);
         }
       }
-      if (!skipModule && (moduleFilter === 'production' || moduleFilter === 'crm' || moduleFilter === 'logistics')) {
+      if (!skipModule && isValidAssignModuleFilter(moduleFilter)) {
         q = q.eq('assignment_module', moduleFilter);
       }
-      const priorityFilter = String(req.query.priority || '').trim();
       if (priorityFilter) q = q.eq('priority', priorityFilter);
       if (searchQ) {
         ({ q } = await applyAssignmentSearchQuery(q, searchQ));
       }
-      return q;
+      // Không return builder trần từ async — PostgREST thenable.
+      return { q };
     }
 
     async function countExact(extra = (q) => q, opts = {}) {
       let q = supabase.from('crm_assignments').select('id', { count: 'exact', head: true });
-      q = await applyStatsFilters(q, opts);
+      ({ q } = await applyStatsFilters(q, opts));
       q = extra(q);
       let { count, error } = await q;
       if (error && /executor_company_id/.test(error.message || '') && isAdmin(req) && req.query.company_id) {
         let qExec = supabase.from('crm_assignments').select('id', { count: 'exact', head: true })
           .eq('company_id', req.query.company_id);
-        if (!opts.skipModule && (moduleFilter === 'production' || moduleFilter === 'crm' || moduleFilter === 'logistics')) {
+        if (!opts.skipModule && isValidAssignModuleFilter(moduleFilter)) {
           qExec = qExec.eq('assignment_module', moduleFilter);
         }
-        if (assigneeIds) qExec = qExec.in('id', assigneeIds);
+        if (statsIdFilter) qExec = qExec.in('id', statsIdFilter);
         if (searchQ) ({ q: qExec } = await applyAssignmentSearchQuery(qExec, searchQ));
+        if (priorityFilter) qExec = qExec.eq('priority', priorityFilter);
         qExec = extra(qExec);
         ({ count, error } = await qExec);
       }
@@ -1200,7 +1218,7 @@ r.get('/stats', responseCache({ ttl: 20, scope: 'user', tags: ['crm:assignments'
     }
 
     // Enum DB chỉ: pending | in_progress | completed | cancelled (không có done/doing).
-    // stats_rev=3 — buộc Render redeploy (bản cũ .in(done/doing) → 500).
+    // stats_rev=4 — đếm đủ + department_id; web KPI không còn phụ thuộc list cắt 1000.
     const [total, completed, inProgress, overdue] = await Promise.all([
       countExact((q) => q),
       countExact((q) => q.eq('status', 'completed')),
@@ -1215,7 +1233,7 @@ r.get('/stats', responseCache({ ttl: 20, scope: 'user', tags: ['crm:assignments'
       completed,
       overdue,
       total,
-      stats_rev: 3,
+      stats_rev: 4,
     });
   } catch (e) {
     console.error('[crm/assignments/stats]', e?.code || e?.message || e);

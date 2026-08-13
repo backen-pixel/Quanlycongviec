@@ -1106,6 +1106,7 @@ export default function CRMAssignmentsPage({
   const [view, setView] = useState('kanban');
   const [columns, setColumns] = useState([]);
   const [items, setItems] = useState([]);
+  const [serverStats, setServerStats] = useState(null);
   const [privateGroups, setPrivateGroups] = useState([]);
   const [privateLoading, setPrivateLoading] = useState(false);
   const [privateTaskCount, setPrivateTaskCount] = useState(0);
@@ -1329,14 +1330,23 @@ export default function CRMAssignmentsPage({
       if (searchDebounced) params.q = searchDebounced;
       if (assignmentModule) params.assignment_module = assignmentModule;
 
-      const [colRes, itRes, schedRes] = await Promise.all([
+      const [colRes, itRes, schedRes, statsRes] = await Promise.all([
         api.get(`${apiBase}/columns`),
         api.get(apiBase, { params }),
         api.get(`${apiBase}/schedules`, { params: { assignment_module: assignmentModule, ...(isAdmin && filterCompanyId ? { company_id: filterCompanyId } : {}) } }).catch(() => ({ data: { schedules: [] } })),
+        api.get(`${apiBase}/stats`, { params }).catch(() => ({ data: null })),
       ]);
       setColumns(colRes.data?.columns || []);
       const nextItems = itRes.data?.assignments || [];
       setItems(nextItems);
+      const s = statsRes?.data;
+      setServerStats(s && typeof s.total === 'number' ? {
+        total: s.total || 0,
+        pending: s.pending || 0,
+        inProgress: s.in_progress || 0,
+        completed: s.completed || 0,
+        overdue: s.overdue || 0,
+      } : null);
       setSchedules(schedRes.data?.schedules || []);
       setViewingItem((prev) => {
         if (!prev) return prev;
@@ -1346,6 +1356,30 @@ export default function CRMAssignmentsPage({
     } catch (e) { console.error(e); }
     setLoading(false);
     setRefreshing(false);
+  }, [isAdmin, filterCompanyId, filterDepartmentId, filterAssignee, filterStatus, filterPriority, searchDebounced, apiBase, assignmentModule, uid]);
+
+  const refreshStats = useCallback(async () => {
+    try {
+      const params = {};
+      if (isAdmin && filterCompanyId) params.company_id = filterCompanyId;
+      if (isAdmin && filterDepartmentId) params.department_id = filterDepartmentId;
+      if (filterAssignee) params.assignee_id = filterAssignee;
+      else if (!isAdmin && uid) params.assignee_id = uid;
+      if (filterStatus) params.status = filterStatus;
+      if (filterPriority) params.priority = filterPriority;
+      if (searchDebounced) params.q = searchDebounced;
+      if (assignmentModule) params.assignment_module = assignmentModule;
+      const { data: s } = await api.get(`${apiBase}/stats`, { params });
+      if (s && typeof s.total === 'number') {
+        setServerStats({
+          total: s.total || 0,
+          pending: s.pending || 0,
+          inProgress: s.in_progress || 0,
+          completed: s.completed || 0,
+          overdue: s.overdue || 0,
+        });
+      }
+    } catch { /* giữ KPI cũ */ }
   }, [isAdmin, filterCompanyId, filterDepartmentId, filterAssignee, filterStatus, filterPriority, searchDebounced, apiBase, assignmentModule, uid]);
 
   useEffect(() => { void load({ soft: true }); }, [load]);
@@ -1458,8 +1492,11 @@ export default function CRMAssignmentsPage({
     return () => { cancelled = true; };
   }, [pendingOpenId, items, isAdmin, searchParams, setSearchParams]);
 
-  // ─── Stats ──
-  const stats = useMemo(() => computeTaskStats(items), [items]);
+  // ─── Stats: ưu tiên aggregate server (không bị cắt 1000), fallback đếm từ list ──
+  const stats = useMemo(() => {
+    if (serverStats) return serverStats;
+    return computeTaskStats(items);
+  }, [serverStats, items]);
 
   const itemsByStatus = useMemo(() => groupTasksByStatus(items), [items]);
 
@@ -1642,6 +1679,7 @@ export default function CRMAssignmentsPage({
       if (updated) {
         setItems((prev) => prev.map((t) => (String(t.id) === String(id) ? { ...t, ...updated } : t)));
         setViewingItem((prev) => (prev && String(prev.id) === String(id) ? { ...prev, ...updated } : prev));
+        if (patch?.status != null) void refreshStats();
       } else {
         void load({ soft: true });
       }
@@ -1661,6 +1699,7 @@ export default function CRMAssignmentsPage({
       if (updated) {
         setItems((prev) => prev.map((t) => (String(t.id) === String(id) ? { ...t, ...updated } : t)));
         setViewingItem((prev) => (prev && String(prev.id) === String(id) ? { ...prev, ...updated } : prev));
+        void refreshStats();
       } else {
         void load({ soft: true });
       }

@@ -13,8 +13,6 @@ import {
   UserPlus,
   Pin,
   Filter,
-  PanelRightClose,
-  PanelRightOpen,
 } from 'lucide-react';
 import OnlineStatusDot, { getUserPresence } from './OnlineStatusDot';
 import {
@@ -41,25 +39,18 @@ const DOCK_ACCENT_GLOW_SUNK =
   '0 0 0 2px rgba(37, 99, 235, 0.28), 0 4px 18px rgba(37, 99, 235, 0.1)';
 const DOCK_ACCENT_GLOW_UNREAD =
   '0 0 0 2px rgba(239, 68, 68, 0.35), 0 0 10px rgba(37, 99, 235, 0.12), 0 8px 28px rgba(239, 68, 68, 0.22)';
-const DOCK_COLLAPSED_KEY = 'messenger_quick_dock_collapsed';
 const DOCK_PINNED_KEY = 'messenger_quick_dock_pinned';
 /** Class ẩn scrollbar nhưng vẫn cuộn được */
 const DOCK_STRIP_SCROLL_CLS =
   'overflow-y-auto overscroll-contain [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden';
-/** Phần lộ ra mép phải khi thanh đang chìm (nhỏ → ít đè lên Kanban) */
-const SUNK_PEEK_PX = 14;
-/** Phần lộ ra khi chìm — avatar ghim (giữ nguyên icon, không bị khuất) */
-const PINNED_SUNK_PEEK_PX = 40;
 /** Khoảng cách mép phải viewport — sát mép màn hình */
 const DOCK_VIEWPORT_RIGHT = 0;
 /** Padding trong mỗi ô avatar (badge/status không bị cắt) */
 const COMPACT_ITEM_PAD = 6;
-/** Trễ trước khi hiện thẻ hover avatar (ms) */
+/** Trễ trước khi hiện thẻ hover avatar (ms) — chỉ khi dock đã mở bằng click/ghim */
 const HOVER_CARD_SHOW_MS = 480;
 /** Trễ trước khi ẩn thẻ hover avatar (ms) */
 const HOVER_CARD_HIDE_MS = 360;
-/** Trễ trước khi thanh dock chìm lại sau khi rời chuột (ms) */
-const DOCK_SINK_DELAY_MS = 340;
 /** Thời lượng trượt / mờ thanh dock (ms) */
 const DOCK_MOTION_MS = 520;
 const DOCK_MOTION_EASE = 'cubic-bezier(0.33, 1, 0.68, 1)';
@@ -151,6 +142,7 @@ function UserHoverCard({ item, presence, anchorRect, publicFileUrl, onTogglePin,
 
   return createPortal(
     <div
+      data-messenger-hover-card=""
       className="fixed z-[130] pointer-events-auto pr-3"
       style={{ top, left: Math.max(12, left), width: cardW + 12 }}
       onMouseEnter={onPreviewEnter}
@@ -281,26 +273,19 @@ export default function MessengerQuickChatDock({
   dockRef,
 }) {
   const [raised, setRaised] = useState(false);
-  const [avatarsCollapsed, setAvatarsCollapsed] = useState(() => {
+  // Ghim cố định thanh + thu gọn avatar đã bỏ UI — clear flag cũ trong localStorage.
+  useEffect(() => {
     try {
-      return localStorage.getItem(DOCK_COLLAPSED_KEY) === '1';
-    } catch {
-      return false;
-    }
-  });
-  const [dockPinned, setDockPinned] = useState(() => {
-    try {
-      return localStorage.getItem(DOCK_PINNED_KEY) === '1';
-    } catch {
-      return false;
-    }
-  });
+      localStorage.removeItem(DOCK_PINNED_KEY);
+      localStorage.removeItem('messenger_quick_dock_collapsed');
+    } catch { /* ignore */ }
+  }, []);
+  const dockPinned = false;
   const [hoverItem, setHoverItem] = useState(null);
   const [hoverRect, setHoverRect] = useState(null);
   const [previewEngaged, setPreviewEngaged] = useState(false);
   const hoverTimer = useRef(null);
   const hideHoverTimer = useRef(null);
-  const leaveTimer = useRef(null);
   const stripScrollRef = useRef(null);
   const [stripScrollFade, setStripScrollFade] = useState({ top: false, bottom: false });
 
@@ -319,31 +304,33 @@ export default function MessengerQuickChatDock({
 
   const dockActive = raised || expanded || dockPinned;
 
-  useEffect(() => {
-    if (dockPinned) setRaised(true);
-  }, [dockPinned]);
-
-  const handleDockEnter = useCallback(() => {
-    clearTimeout(leaveTimer.current);
+  /** Mở/đóng thanh compact bằng click — không dùng hover (tránh che thanh cuộn trang). */
+  const ignoreOutsideUntilRef = useRef(0);
+  const openDock = useCallback(() => {
+    // Tránh cùng nhịp click bị listener "click ngoài" thu lại ngay.
+    ignoreOutsideUntilRef.current = Date.now() + 450;
     setRaised(true);
   }, []);
 
-  const handleDockLeave = useCallback((e) => {
-    if (dockPinned) return;
-    const next = e?.relatedTarget;
-    if (next instanceof Node && dockRef.current?.contains(next)) return;
-    clearTimeout(leaveTimer.current);
-    leaveTimer.current = setTimeout(() => {
-      if (dockPinned || previewEngaged || expanded) return;
-      if (dockRef.current?.matches(':hover')) return;
-      setRaised(false);
-    }, DOCK_SINK_DELAY_MS);
-  }, [expanded, dockPinned, previewEngaged]);
+  const sinkDock = useCallback(() => {
+    if (dockPinned || expanded) return;
+    setRaised(false);
+    setHoverItem(null);
+    setHoverRect(null);
+    setPreviewEngaged(false);
+  }, [dockPinned, expanded]);
 
-  const compactWidth = avatarsCollapsed ? QUICK_CHAT_DOCK_MINI_W : QUICK_CHAT_DOCK_W;
+  const handleChatButtonClick = useCallback((e) => {
+    e?.stopPropagation?.();
+    if (!dockActive) {
+      openDock();
+      return;
+    }
+    onToggleExpanded();
+  }, [dockActive, openDock, onToggleExpanded]);
+
+  const compactWidth = QUICK_CHAT_DOCK_W;
   const compactOuterWidth = compactWidth + COMPACT_ITEM_PAD * 2;
-  const pinnedSinkX = dockActive ? 0 : Math.max(0, compactOuterWidth - PINNED_SUNK_PEEK_PX);
-  const mainExtraSinkX = dockActive ? 0 : Math.max(0, compactOuterWidth - SUNK_PEEK_PX - pinnedSinkX);
 
   /** Hội thoại ghim — luôn nổi ngoài thanh chìm */
   const pinnedStripItems = useMemo(
@@ -362,44 +349,17 @@ export default function MessengerQuickChatDock({
     return Math.max(0, rest.length - MAX_COMPACT_AVATARS);
   }, [items]);
 
-  const toggleDockPinned = useCallback(() => {
-    setDockPinned((v) => {
-      const next = !v;
-      if (next) setRaised(true);
-      try {
-        localStorage.setItem(DOCK_PINNED_KEY, next ? '1' : '0');
-      } catch {
-        /* ignore */
-      }
-      return next;
-    });
-  }, []);
-
-  const toggleAvatarsCollapsed = useCallback(() => {
-    setAvatarsCollapsed((v) => {
-      const next = !v;
-      try {
-        localStorage.setItem(DOCK_COLLAPSED_KEY, next ? '1' : '0');
-      } catch {
-        /* ignore */
-      }
-      return next;
-    });
-  }, []);
-
   const showHover = useCallback((item, el, { pinnedStrip = false } = {}) => {
+    // Thẻ preview chỉ khi dock đã mở (click/ghim) — hover khi chìm không kéo dock ra.
+    if (!raised && !dockPinned && !expanded && !pinnedStrip) return;
     clearTimeout(hideHoverTimer.current);
     clearTimeout(hoverTimer.current);
     hoverTimer.current = setTimeout(() => {
       if (el) setHoverRect(el.getBoundingClientRect());
       setHoverItem(item);
       setPreviewEngaged(true);
-      if (!pinnedStrip) {
-        clearTimeout(leaveTimer.current);
-        setRaised(true);
-      }
     }, HOVER_CARD_SHOW_MS);
-  }, []);
+  }, [raised, dockPinned, expanded]);
 
   const hideHover = useCallback(() => {
     clearTimeout(hoverTimer.current);
@@ -408,30 +368,34 @@ export default function MessengerQuickChatDock({
       setHoverItem(null);
       setHoverRect(null);
       setPreviewEngaged(false);
-      if (dockRef.current?.matches(':hover')) {
-        clearTimeout(leaveTimer.current);
-        setRaised(true);
-      } else if (!dockPinned && !expanded) {
-        // Chuột đã rời dock — schedule sink ngay khi previewEngaged về false
-        clearTimeout(leaveTimer.current);
-        leaveTimer.current = setTimeout(() => {
-          if (dockPinned || expanded) return;
-          if (dockRef.current?.matches(':hover')) return;
-          setRaised(false);
-        }, DOCK_SINK_DELAY_MS);
-      }
     }, HOVER_CARD_HIDE_MS);
-  }, [dockPinned, expanded]);
+  }, []);
 
   const keepPreviewOpen = useCallback(() => {
     clearTimeout(hideHoverTimer.current);
-    clearTimeout(leaveTimer.current);
     setPreviewEngaged(true);
   }, []);
 
   useEffect(() => {
     if (expanded) setRaised(true);
   }, [expanded]);
+
+  // Click ra ngoài → chìm (trừ khi ghim / đang mở panel)
+  useEffect(() => {
+    if (!raised || dockPinned || expanded) return undefined;
+    const onPointerDown = (e) => {
+      if (Date.now() < ignoreOutsideUntilRef.current) return;
+      const t = e.target;
+      if (!(t instanceof Node)) return;
+      if (dockRef.current?.contains(t)) return;
+      if (typeof Element !== 'undefined' && t instanceof Element) {
+        if (t.closest('[data-messenger-hover-card]')) return;
+      }
+      sinkDock();
+    };
+    document.addEventListener('pointerdown', onPointerDown, true);
+    return () => document.removeEventListener('pointerdown', onPointerDown, true);
+  }, [raised, dockPinned, expanded, sinkDock, dockRef]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return undefined;
@@ -459,19 +423,15 @@ export default function MessengerQuickChatDock({
 
   useEffect(() => {
     updateStripScrollFade();
-  }, [regularStripItems.length, avatarsCollapsed, dockActive, updateStripScrollFade]);
+  }, [regularStripItems.length, dockActive, updateStripScrollFade]);
 
   useEffect(
     () => () => {
-      clearTimeout(leaveTimer.current);
       clearTimeout(hoverTimer.current);
       clearTimeout(hideHoverTimer.current);
     },
     [],
   );
-
-  const compactPanelOpacity = dockActive ? 1 : totalUnread > 0 ? 0.72 : 0.58;
-  const compactControlOpacity = dockActive ? 1 : 0.55;
 
   const renderCompactButton = (item, { pinnedStrip = false } = {}) => {
     const presence = item.peerId ? getUserPresence(presenceByUser, item.peerId) : null;
@@ -484,10 +444,7 @@ export default function MessengerQuickChatDock({
         : 'ring-2 ring-white';
 
     const handleClick = () => {
-      if (pinnedStrip && !expanded && !dockPinned) {
-        clearTimeout(leaveTimer.current);
-        setRaised(false);
-      }
+      if (!dockActive) openDock();
       hideHover();
       onItemClick(item);
     };
@@ -606,12 +563,8 @@ export default function MessengerQuickChatDock({
       <div
         ref={dockRef}
         data-messenger-quick-chat-dock=""
-        className={`fixed top-1/2 -translate-y-1/2 z-[120] flex flex-row-reverse items-stretch gap-3 font-[Inter,system-ui,sans-serif] overflow-visible ${
-          dockActive ? 'pointer-events-auto' : 'pointer-events-none'
-        }`}
+        className="fixed top-1/2 -translate-y-1/2 z-[120] flex flex-row-reverse items-stretch gap-3 font-[Inter,system-ui,sans-serif] overflow-visible pointer-events-none"
         style={{ right: DOCK_VIEWPORT_RIGHT }}
-        onMouseEnter={handleDockEnter}
-        onMouseLeave={handleDockLeave}
       >
         {/* Expanded panel — luôn hiển thị đầy đủ khi mở */}
         {expanded ? (
@@ -843,17 +796,45 @@ export default function MessengerQuickChatDock({
           </div>
         ) : null}
 
-        {/* Compact dock — chìm khi không hover; avatar ghim trượt cùng nhưng vẫn lộ ra */}
+        {/* Khi chìm: chỉ hiện nút mở (+ avatar ghim) — luôn trong viewport, dễ bấm, ít che scrollbar */}
+        {!dockActive ? (
+          <div
+            data-messenger-quick-chat-dock-region="compact"
+            className="pointer-events-auto flex flex-col items-center gap-1.5 shrink-0 mr-1.5"
+          >
+            {pinnedStripItems.length > 0 ? (
+              <div className="flex flex-col items-center gap-1 shrink-0 py-0.5" aria-label="Chat đã ghim">
+                {pinnedStripItems.map((item) => renderCompactButton(item, { pinnedStrip: true }))}
+              </div>
+            ) : null}
+            <button
+              type="button"
+              data-dock-open-hit=""
+              onClick={handleChatButtonClick}
+              className={`relative w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 overflow-visible border-2 shadow-md ${DOCK_MOTION_CLS} ${
+                totalUnread > 0
+                  ? 'border-[#EF4444]/75 bg-gradient-to-br from-[#EF4444]/90 to-[#DC2626]/90 text-white ring-1 ring-[#FCA5A5]/60'
+                  : 'border-[#2563EB]/55 bg-white text-[#2563EB]'
+              }`}
+              style={{
+                boxShadow: totalUnread > 0 ? DOCK_ACCENT_GLOW_UNREAD : DOCK_ACCENT_GLOW_SUNK,
+              }}
+              title={totalUnread > 0 ? `${totalUnread} tin nhắn mới — nhấn để mở` : 'Nhấn để mở thanh chat nhanh'}
+            >
+              <MessageCircle className="h-5 w-5" />
+              {totalUnread > 0 ? (
+                <UnreadBadge count={totalUnread} prominent pulseRing />
+              ) : null}
+            </button>
+          </div>
+        ) : (
         <div
           data-messenger-quick-chat-dock-region="compact"
           className={`flex flex-col items-center gap-1.5 shrink-0 overflow-visible pointer-events-auto ${DOCK_MOTION_CLS}`}
-          style={{ transform: `translateX(${pinnedSinkX}px)` }}
-          onMouseEnter={handleDockEnter}
-          onMouseLeave={handleDockLeave}
         >
           {pinnedStripItems.length > 0 ? (
             <div
-              className="flex flex-col items-center gap-1 shrink-0 py-0.5"
+              className="flex flex-col items-center gap-1 shrink-0 py-0.5 pointer-events-auto"
               aria-label="Chat đã ghim"
             >
               {pinnedStripItems.map((item) => renderCompactButton(item, { pinnedStrip: true }))}
@@ -861,26 +842,11 @@ export default function MessengerQuickChatDock({
           ) : null}
 
           <div
-            className={`relative shrink-0 flex flex-col items-center rounded-[24px] border-2 py-3 gap-2 overflow-visible pointer-events-auto ${DOCK_MOTION_CLS} ${
-              dockActive || dockPinned
-                ? 'border-[#2563EB] bg-white px-2.5'
-                : totalUnread > 0
-                  ? 'border-[#EF4444]/75 bg-white/85 px-2.5'
-                  : 'border-[#2563EB]/55 bg-white/75 backdrop-blur-sm px-2'
-            }`}
+            className={`relative shrink-0 flex flex-col items-center rounded-[24px] border-2 py-3 gap-2 overflow-visible pointer-events-auto ${DOCK_MOTION_CLS} border-[#2563EB] bg-white px-2.5`}
             style={{
               width: compactOuterWidth,
-              opacity: compactPanelOpacity,
-              boxShadow:
-                dockActive || dockPinned
-                  ? DOCK_ACCENT_GLOW_ACTIVE
-                  : totalUnread > 0
-                    ? DOCK_ACCENT_GLOW_UNREAD
-                    : DOCK_ACCENT_GLOW_SUNK,
-              transform: `translateX(${mainExtraSinkX}px)`,
-              transitionDuration: `${DOCK_MOTION_MS}ms`,
-              transitionTimingProperty: 'transform, opacity, box-shadow, border-color, background-color',
-              transitionTimingFunction: DOCK_MOTION_EASE,
+              opacity: 1,
+              boxShadow: DOCK_ACCENT_GLOW_ACTIVE,
             }}
           >
           {(dockActive || dockPinned || expanded) ? (
@@ -895,60 +861,38 @@ export default function MessengerQuickChatDock({
           ) : null}
           <button
             type="button"
-            onClick={onToggleExpanded}
-            className={`relative w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 overflow-visible ${DOCK_MOTION_CLS} ${
+            data-dock-open-hit=""
+            onClick={handleChatButtonClick}
+            className={`relative w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 overflow-visible pointer-events-auto ${DOCK_MOTION_CLS} ${
               expanded
                 ? 'bg-gradient-to-br from-[#2563EB] to-[#7C3AED] text-white shadow-md scale-95'
-                : totalUnread > 0 && !dockActive
-                  ? 'bg-gradient-to-br from-[#EF4444]/90 to-[#DC2626]/90 text-white shadow-sm ring-1 ring-[#FCA5A5]/60'
-                  : dockActive
-                    ? 'bg-slate-50 text-[#2563EB] hover:bg-gradient-to-br hover:from-[#2563EB] hover:to-[#7C3AED] hover:text-white hover:shadow-md'
-                    : 'bg-white/90 text-[#2563EB]/80 shadow-sm'
+                : 'bg-slate-50 text-[#2563EB] hover:bg-gradient-to-br hover:from-[#2563EB] hover:to-[#7C3AED] hover:text-white hover:shadow-md'
             }`}
-            title={expanded ? 'Thu gọn danh sách' : totalUnread > 0 ? `${totalUnread} tin nhắn mới` : 'Mở danh sách chat'}
+            title={
+              expanded
+                ? 'Thu gọn danh sách'
+                : (totalUnread > 0 ? `${totalUnread} tin nhắn mới` : 'Mở danh sách chat')
+            }
           >
             <MessageCircle className="h-5 w-5" />
-            {dockPinned && !expanded ? (
-              <span className="absolute bottom-0 left-0 z-10 h-3.5 w-3.5 rounded-full bg-[#F59E0B] flex items-center justify-center ring-1 ring-white shadow">
-                <Pin className="h-2 w-2 text-white fill-white" />
-              </span>
-            ) : null}
             {!expanded && totalUnread > 0 ? (
-              <UnreadBadge count={totalUnread} prominent pulseRing={!dockActive} />
+              <UnreadBadge count={totalUnread} prominent />
             ) : null}
           </button>
 
-          <div className="flex flex-col items-center gap-0.5 shrink-0" style={{ opacity: compactControlOpacity }}>
+          {!expanded ? (
             <button
               type="button"
-              onClick={toggleDockPinned}
-              className={`w-8 h-7 rounded-lg flex items-center justify-center ${DOCK_MOTION_CLS} ${
-                dockPinned
-                  ? 'text-[#F59E0B] bg-[#F59E0B]/12 hover:bg-[#F59E0B]/20'
-                  : 'text-slate-400 hover:text-[#2563EB] hover:bg-[#2563EB]/5'
-              }`}
-              title={dockPinned ? 'Bỏ ghim cố định thanh chat' : 'Ghim cố định thanh chat — không tự chìm'}
+              onClick={sinkDock}
+              className={`w-8 h-7 rounded-lg flex items-center justify-center pointer-events-auto text-slate-400 hover:text-slate-700 hover:bg-slate-100 ${DOCK_MOTION_CLS}`}
+              title="Thu thanh chat nhanh"
             >
-              <Pin className={`h-3.5 w-3.5 ${dockPinned ? 'fill-[#F59E0B]' : ''}`} />
+              <X className="h-3.5 w-3.5" />
             </button>
+          ) : null}
 
-            <button
-              type="button"
-              onClick={toggleAvatarsCollapsed}
-              className={`w-8 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-[#2563EB] hover:bg-[#2563EB]/5 ${DOCK_MOTION_CLS}`}
-              title={avatarsCollapsed ? 'Mở rộng thanh avatar' : 'Thu gọn — chỉ giữ nút chat'}
-            >
-              {avatarsCollapsed ? (
-                <PanelRightOpen className="h-3.5 w-3.5" />
-              ) : (
-                <PanelRightClose className="h-3.5 w-3.5" />
-              )}
-            </button>
-          </div>
-
-          {!avatarsCollapsed ? (
-            <>
-              <div className={`w-8 border-t shrink-0 ${DOCK_MOTION_CLS} ${dockActive ? 'border-[#E5E7EB]' : 'border-slate-200/60'}`} />
+          <>
+              <div className={`w-8 border-t shrink-0 ${DOCK_MOTION_CLS} border-[#E5E7EB]`} />
 
               <div className="relative w-full min-h-0 flex-1 max-h-[min(340px,42vh)]">
                 <div
@@ -990,26 +934,10 @@ export default function MessengerQuickChatDock({
                   />
                 ) : null}
               </div>
-            </>
-          ) : null}
-
-          {!dockActive && !expanded && totalUnread > 0 ? (
-            <span
-              className={`absolute left-0 top-1/2 -translate-y-1/2 w-1 h-10 rounded-full bg-gradient-to-b from-[#EF4444] to-[#DC2626] shadow-[0_0_8px_rgba(239,68,68,0.6)] animate-pulse ${DOCK_MOTION_CLS}`}
-              aria-hidden
-            />
-          ) : !dockActive && !expanded ? (
-            <span
-              className={`absolute left-0 top-1/2 -translate-y-1/2 w-1 h-10 rounded-full ${DOCK_MOTION_CLS}`}
-              style={{
-                background: 'linear-gradient(180deg, #22C55E, #2563EB)',
-                boxShadow: '0 0 10px rgba(37, 99, 235, 0.55)',
-              }}
-              aria-hidden
-            />
-          ) : null}
+          </>
           </div>
         </div>
+        )}
       </div>
     </>
   );
