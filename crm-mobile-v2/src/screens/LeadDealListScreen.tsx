@@ -44,7 +44,7 @@ import { applyCrmBadgeFieldsToItem } from '../lib/crmBadgePatch';
 import { useCrmRealtimeRefresh } from '../hooks/useCrmRealtimeRefresh';
 import { useCrmSearchSuggest } from '../hooks/useCrmSearchSuggest';
 import { useUnreadNotificationCount } from '../hooks/useUnreadNotificationCount';
-import { lockCrmAssigneeScope, lockCrmCompanyScope } from '../lib/crmAssignee';
+import { lockCrmAssigneeScope, lockCrmCompanyScope, canViewAllCrm } from '../lib/crmAssignee';
 import ListCreateFab from '../components/ListCreateFab';
 import {
   activeFilterChips,
@@ -65,6 +65,15 @@ import {
   sortCrmListItems,
   type CrmListSort,
 } from '../lib/crmListSort';
+import {
+  readDefaultDealKhSplitEnabled,
+  readStoredDealKhSplitPreference,
+  storeDealKhSplitPreference,
+} from '../lib/crmDealKhSplit';
+import {
+  hasCrmCustomerOrderTab,
+  resolveCrmHubDisplayStages,
+} from '../lib/crmPipelineTabs';
 import { useCrmHubFilters } from '../hooks/useCrmHubFilters';
 import { deadlineIsoToYmd, planCrmStageMove } from '../lib/crmStageMove';
 import type { RootStackParamList } from '../navigation/types';
@@ -76,6 +85,7 @@ import PickerSheet from '../components/PickerSheet';
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 type Kind = 'lead' | 'deal';
 type ViewMode = 'list' | 'kanban';
+type DealListTab = 'deals' | 'orders';
 type Section = { title: string; data: CrmKanbanItem[]; count: number };
 type Props = { kind: Kind };
 
@@ -91,9 +101,15 @@ export default function LeadDealListScreen({ kind }: Props) {
   const myId = currentUserId(user);
   const lockCompany = lockCrmCompanyScope(user);
   const lockAssignee = lockCrmAssigneeScope(user);
+  const adminLike = canViewAllCrm(user);
   const unreadNotif = useUnreadNotificationCount();
 
-  const title = kind === 'lead' ? 'Leads' : 'Deals';
+  const [dealKhSplitEnabled, setDealKhSplitEnabled] = useState(() =>
+    readDefaultDealKhSplitEnabled(adminLike),
+  );
+  const [dealListTab, setDealListTab] = useState<DealListTab>('deals');
+  const isOrdersList = kind === 'deal' && dealKhSplitEnabled && dealListTab === 'orders';
+  const title = kind === 'lead' ? 'Leads' : (isOrdersList ? 'Đơn hàng' : 'Deals');
   const mode = kind === 'lead' ? 'leads' : 'deals';
   const { toggle: toggleCreateMenu } = useCreateMenu();
 
@@ -179,6 +195,24 @@ export default function LeadDealListScreen({ kind }: Props) {
     void AsyncStorage.setItem(sortKey(kind), next).catch(() => undefined);
   }, [kind]);
 
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const pref = await readStoredDealKhSplitPreference(adminLike);
+      if (!cancelled) setDealKhSplitEnabled(pref);
+    })();
+    return () => { cancelled = true; };
+  }, [adminLike]);
+
+  const applyDealKhSplit = useCallback((enabled: boolean) => {
+    setDealKhSplitEnabled(enabled);
+    void storeDealKhSplitPreference(enabled);
+    if (!enabled) {
+      setDealListTab('deals');
+      setStageId('');
+    }
+  }, []);
+
   // Đổi công ty → pipeline/stage khác ID; giữ stageId cũ khiến list trống.
   const prevCompanyRef = useRef(filters.companyId);
   useEffect(() => {
@@ -198,13 +232,46 @@ export default function LeadDealListScreen({ kind }: Props) {
     setStageId('');
   }, [filterKey]);
 
-  // Stage đã chọn không còn trong pipeline mới → về «Tất cả».
+  // Stage đã chọn không còn trong pipeline (theo tab Deal/ĐH) → về «Tất cả».
   useEffect(() => {
-    if (!stageId || !stages.length) return;
-    if (!stages.some((s) => String(s.id) === String(stageId))) {
+    if (!stageId) return;
+    const pool = kind === 'deal'
+      ? resolveCrmHubDisplayStages(
+        dealListTab === 'orders' ? 'orders' : 'deals',
+        [],
+        stages,
+        dealKhSplitEnabled,
+      )
+      : stages;
+    if (!pool.length) return;
+    if (!pool.some((s) => String(s.id) === String(stageId))) {
       setStageId('');
     }
-  }, [stages, stageId]);
+  }, [stages, stageId, kind, dealListTab, dealKhSplitEnabled]);
+
+  const displayStages = useMemo(() => {
+    if (kind !== 'deal') return stages;
+    return resolveCrmHubDisplayStages(
+      dealListTab === 'orders' ? 'orders' : 'deals',
+      [],
+      stages,
+      dealKhSplitEnabled,
+    );
+  }, [kind, stages, dealListTab, dealKhSplitEnabled]);
+
+  const showOrdersTab = kind === 'deal' && hasCrmCustomerOrderTab(stages) && dealKhSplitEnabled;
+
+  const allowedStageIds = useMemo(
+    () => new Set(displayStages.map((s) => String(s.id))),
+    [displayStages],
+  );
+
+  /** Khi Tách + «Tất cả»: chỉ hiện thẻ thuộc cột tab Deal hoặc Đơn hàng. */
+  const visibleItems = useMemo(() => {
+    if (kind !== 'deal' || !dealKhSplitEnabled || stageId) return items;
+    if (!allowedStageIds.size) return items;
+    return items.filter((it) => it.stageId && allowedStageIds.has(String(it.stageId)));
+  }, [kind, dealKhSplitEnabled, stageId, items, allowedStageIds]);
 
   const fetchOpts = useMemo(
     () => buildStageFetchOpts(filters, search, myId || ''),
@@ -374,7 +441,7 @@ export default function LeadDealListScreen({ kind }: Props) {
   }, listActive);
 
   const sections: Section[] = useMemo(() => {
-    const sorted = sortCrmListItems(items, listSort);
+    const sorted = sortCrmListItems(visibleItems, listSort);
     if (listSort !== 'newest' && listSort !== 'last_week' && listSort !== 'last_month') {
       return [{
         title: `Sắp xếp: ${crmListSortLabel(listSort)}`,
@@ -392,7 +459,7 @@ export default function LeadDealListScreen({ kind }: Props) {
     return [...map.entries()]
       .map(([secTitle, data]) => ({ title: secTitle, data, count: data.length }))
       .sort((a, b) => listDateSectionOrder(a.title) - listDateSectionOrder(b.title));
-  }, [items, listSort]);
+  }, [visibleItems, listSort]);
 
   const {
     open: searchSuggestOpen,
@@ -483,10 +550,14 @@ export default function LeadDealListScreen({ kind }: Props) {
   }, [items, sections, searchFocusNonce, flashHighlight]);
 
   const filterBadge = countActiveFilters(filters, search);
-  /** Badge khớp dữ liệu đang xem: cột đang chọn dùng count cột; «Tất cả» dùng tổng pipeline. */
-  const displayTotal = stageId
-    ? (stageCounts[stageId] ?? items.length)
-    : (listTotal ?? items.length);
+  /** Badge khớp dữ liệu đang xem: cột đang chọn / tab Deal·ĐH / toàn pipeline. */
+  const displayTotal = (() => {
+    if (stageId) return stageCounts[stageId] ?? visibleItems.length;
+    if (kind === 'deal' && dealKhSplitEnabled && displayStages.length) {
+      return displayStages.reduce((sum, s) => sum + (stageCounts[s.id] ?? 0), 0);
+    }
+    return listTotal ?? visibleItems.length;
+  })();
 
   const filterChips = useMemo(() => {
     const companyName = companies.find((c) => c.id === filters.companyId)?.name
@@ -724,10 +795,16 @@ export default function LeadDealListScreen({ kind }: Props) {
 
   const stageChips = useMemo(() => {
     const visible = filters.hideEmptyStages
-      ? stages.filter((s) => (stageCounts[s.id] ?? 0) > 0 || s.id === stageId)
-      : stages;
-    return visible.length ? visible : stages;
-  }, [stages, stageCounts, filters.hideEmptyStages, stageId]);
+      ? displayStages.filter((s) => (stageCounts[s.id] ?? 0) > 0 || s.id === stageId)
+      : displayStages;
+    return visible.length ? visible : displayStages;
+  }, [displayStages, stageCounts, filters.hideEmptyStages, stageId]);
+
+  const switchDealListTab = useCallback((next: DealListTab) => {
+    if (next === dealListTab) return;
+    setDealListTab(next);
+    setStageId('');
+  }, [dealListTab]);
 
   if (!viewModeReady) {
     return (
@@ -778,6 +855,37 @@ export default function LeadDealListScreen({ kind }: Props) {
           </Pressable>
         </View>
       </View>
+
+      {showOrdersTab ? (
+        <View style={styles.dealOrderSeg}>
+          <Pressable
+            style={[styles.dealOrderSegItem, dealListTab === 'deals' && styles.dealOrderSegDealOn]}
+            onPress={() => switchDealListTab('deals')}
+          >
+            <Ionicons
+              name="pricetags"
+              size={14}
+              color={dealListTab === 'deals' ? '#fff' : Colors.textMuted}
+            />
+            <Text style={[styles.dealOrderSegTxt, dealListTab === 'deals' && { color: '#fff' }]}>
+              Deal
+            </Text>
+          </Pressable>
+          <Pressable
+            style={[styles.dealOrderSegItem, dealListTab === 'orders' && styles.dealOrderSegOrderOn]}
+            onPress={() => switchDealListTab('orders')}
+          >
+            <Ionicons
+              name="cart"
+              size={14}
+              color={dealListTab === 'orders' ? '#fff' : Colors.textMuted}
+            />
+            <Text style={[styles.dealOrderSegTxt, dealListTab === 'orders' && { color: '#fff' }]}>
+              Đơn hàng
+            </Text>
+          </Pressable>
+        </View>
+      ) : null}
 
       <View style={styles.searchRowWrap}>
       <View style={styles.searchRow}>
@@ -1003,7 +1111,10 @@ export default function LeadDealListScreen({ kind }: Props) {
           }
           ListEmptyComponent={
             <Text style={styles.empty}>
-              {error || (kind === 'lead' ? 'Không có Lead' : 'Không có Deal')}
+              {error
+                || (kind === 'lead'
+                  ? 'Không có Lead'
+                  : (isOrdersList ? 'Không có Đơn hàng' : 'Không có Deal'))}
             </Text>
           }
         />
@@ -1030,7 +1141,7 @@ export default function LeadDealListScreen({ kind }: Props) {
 
       <CrmFilterSheet
         visible={filterOpen}
-        mode={mode}
+        mode={isOrdersList ? 'orders' : mode}
         filters={filters}
         search={search}
         companies={companies}
@@ -1040,6 +1151,9 @@ export default function LeadDealListScreen({ kind }: Props) {
         metaLoading={metaLoading}
         lockCompany={lockCompany}
         lockAssignee={lockAssignee}
+        showDealOrderSplit={kind === 'deal' && hasCrmCustomerOrderTab(stages)}
+        dealKhSplitEnabled={dealKhSplitEnabled}
+        onDealKhSplitChange={applyDealKhSplit}
         onApply={(f) => {
           if (String(f.companyId || '') !== String(filters.companyId || '')) {
             setStageId('');
@@ -1072,7 +1186,7 @@ export default function LeadDealListScreen({ kind }: Props) {
 
       <MoveStageModal
         visible={!!moveItem}
-        stages={stages}
+        stages={displayStages.length ? displayStages : stages}
         currentStageId={moveItem?.stageId}
         kind={kind}
         onSelect={(stageId) => void handleMoveToStage(stageId)}
@@ -1160,6 +1274,29 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
   },
   countTxt: { color: '#fff', fontSize: 12, fontWeight: '800' },
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  dealOrderSeg: {
+    flexDirection: 'row',
+    marginHorizontal: 16,
+    marginBottom: 10,
+    padding: 3,
+    borderRadius: Radii.md,
+    backgroundColor: Colors.cardAlt,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    gap: 3,
+  },
+  dealOrderSegItem: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    borderRadius: Radii.sm,
+  },
+  dealOrderSegDealOn: { backgroundColor: Colors.orange },
+  dealOrderSegOrderOn: { backgroundColor: Colors.purple },
+  dealOrderSegTxt: { color: Colors.textMuted, fontSize: 13, fontWeight: '700' },
   bellBadge: { top: -4, right: -4 },
   searchRow: {
     flexDirection: 'row',
