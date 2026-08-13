@@ -1200,6 +1200,7 @@ r.get('/stats', responseCache({ ttl: 20, scope: 'user', tags: ['crm:assignments'
     }
 
     // Enum DB chỉ: pending | in_progress | completed | cancelled (không có done/doing).
+    // (redeploy trigger: mobile KPI phụ thuộc endpoint này)
     const [total, completed, inProgress, overdue] = await Promise.all([
       countExact((q) => q),
       countExact((q) => q.eq('status', 'completed')),

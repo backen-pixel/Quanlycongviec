@@ -179,7 +179,7 @@ export async function fetchCrmAssignments(params: FetchAssignmentsParams = {}): 
 
 /**
  * KPI đủ (không cắt theo trang list).
- * Chỉ dùng GET /crm/assignments/stats — không full-dump khi lỗi (tránh nghẽn data lớn).
+ * Ưu tiên GET /crm/assignments/stats; nếu lỗi (enum/deploy) → phân trang nhẹ rồi compute.
  */
 export async function fetchCrmAssignmentStats(
   params: Omit<FetchAssignmentsParams, 'limit' | 'offset' | 'status' | 'status_group'> = {},
@@ -190,20 +190,41 @@ export async function fetchCrmAssignmentStats(
     priority: params.priority || undefined,
     q: params.q?.trim() || undefined,
   };
-  const { data } = await api.get<Partial<CrmAssignmentStats>>('/crm/assignments/stats', {
-    params: {
-      assignment_module: 'crm',
-      ...shared,
-    },
-    signal: params.signal,
-  });
-  return {
-    pending: Number(data?.pending) || 0,
-    in_progress: Number(data?.in_progress) || 0,
-    completed: Number(data?.completed) || 0,
-    overdue: Number(data?.overdue) || 0,
-    total: Number(data?.total) || 0,
-  };
+  try {
+    const { data } = await api.get<Partial<CrmAssignmentStats>>('/crm/assignments/stats', {
+      params: {
+        assignment_module: 'crm',
+        ...shared,
+      },
+      signal: params.signal,
+      headers: { 'x-no-cache': '1' },
+    });
+    const next = {
+      pending: Number(data?.pending) || 0,
+      in_progress: Number(data?.in_progress) || 0,
+      completed: Number(data?.completed) || 0,
+      overdue: Number(data?.overdue) || 0,
+      total: Number(data?.total) || 0,
+    };
+    // 200 nhưng toàn 0 trong khi list có data → vẫn dùng next; fallback chỉ khi request lỗi.
+    return next;
+  } catch {
+    // Fallback an toàn khi /stats 500 (enum done/doing trên bản backend cũ).
+    const pageSize = 100;
+    const maxPages = 20; // tối đa ~2000 dòng
+    const rows: CrmAssignment[] = [];
+    for (let page = 0; page < maxPages; page += 1) {
+      const chunk = await fetchCrmAssignments({
+        ...shared,
+        limit: pageSize,
+        offset: page * pageSize,
+        signal: params.signal,
+      });
+      rows.push(...chunk);
+      if (chunk.length < pageSize) break;
+    }
+    return computeAssignmentStats(rows);
+  }
 }
 
 export async function fetchCrmAssignmentLookups(
