@@ -2127,9 +2127,6 @@ export default function CrmHubScreen({
               </View>
             </View>
           ) : null}
-          <Pressable style={styles.iconBtn} onPress={() => void loadBootstrap(mode, true, activeStageId)} hitSlop={8}>
-            <Ionicons name="refresh-outline" size={20} color={Colors.text} />
-          </Pressable>
         </View>
 
         {!lockMode ? (
@@ -2172,6 +2169,34 @@ export default function CrmHubScreen({
               )}
             </Pressable>
           ) : null}
+        </View>
+        ) : showOrdersTab && (isDeals || isOrders) ? (
+        /* Tab Deal (lockMode): vẫn cho chuyển Deal ↔ Đơn hàng khi đã Tách ĐH. */
+        <View style={styles.segment}>
+          <Pressable
+            style={[styles.segItem, isDeals && { backgroundColor: Colors.orange }]}
+            onPress={() => switchMode('deals')}
+          >
+            <Ionicons name="pricetags" size={15} color={isDeals ? '#fff' : Colors.textMuted} />
+            <Text style={[styles.segTxt, isDeals && { color: '#fff' }]}>Deal</Text>
+            {dealTabTotalKnown && (
+              <View style={styles.segCount}>
+                <Text style={styles.segCountTxt}>{dealTabTotal}</Text>
+              </View>
+            )}
+          </Pressable>
+          <Pressable
+            style={[styles.segItem, isOrders && { backgroundColor: Colors.purple }]}
+            onPress={() => switchMode('orders')}
+          >
+            <Ionicons name="cart" size={15} color={isOrders ? '#fff' : Colors.textMuted} />
+            <Text style={[styles.segTxt, isOrders && { color: '#fff' }]}>Đơn hàng</Text>
+            {ordersTabTotalKnown && (
+              <View style={styles.segCount}>
+                <Text style={styles.segCountTxt}>{ordersTabTotal}</Text>
+              </View>
+            )}
+          </Pressable>
         </View>
         ) : null}
 
@@ -2498,7 +2523,7 @@ export default function CrmHubScreen({
         metaLoading={metaLoading}
         lockCompany={lockCompany}
         lockAssignee={lockAssignee}
-        showDealOrderSplit={hasCustomerTab}
+        showDealOrderSplit={hasCustomerTab && !(lockMode && isLeads)}
         dealKhSplitEnabled={dealKhSplitEnabled}
         onDealKhSplitChange={applyDealKhSplit}
         onApply={(next) => {
