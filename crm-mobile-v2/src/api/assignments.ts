@@ -179,10 +179,13 @@ export async function fetchCrmAssignments(params: FetchAssignmentsParams = {}): 
 
 /**
  * KPI đủ (không cắt theo trang list).
- * Ưu tiên GET /crm/assignments/stats; nếu lỗi (enum/deploy) → phân trang nhẹ rồi compute.
+ * Ưu tiên GET /crm/assignments/stats; nếu lỗi (enum/deploy) → phân trang rồi compute.
+ * `onPartial` cập nhật UI sớm khi fallback (tránh KPI = 0 suốt 20–30s).
  */
 export async function fetchCrmAssignmentStats(
-  params: Omit<FetchAssignmentsParams, 'limit' | 'offset' | 'status' | 'status_group'> = {},
+  params: Omit<FetchAssignmentsParams, 'limit' | 'offset' | 'status' | 'status_group'> & {
+    onPartial?: (stats: CrmAssignmentStats) => void;
+  } = {},
 ): Promise<CrmAssignmentStats> {
   const shared = {
     company_id: params.company_id || undefined,
@@ -198,6 +201,7 @@ export async function fetchCrmAssignmentStats(
       },
       signal: params.signal,
       headers: { 'x-no-cache': '1' },
+      timeout: 12_000,
     });
     const next = {
       pending: Number(data?.pending) || 0,
@@ -206,22 +210,37 @@ export async function fetchCrmAssignmentStats(
       overdue: Number(data?.overdue) || 0,
       total: Number(data?.total) || 0,
     };
-    // 200 nhưng toàn 0 trong khi list có data → vẫn dùng next; fallback chỉ khi request lỗi.
     return next;
   } catch {
-    // Fallback an toàn khi /stats 500 (enum done/doing trên bản backend cũ).
+    // Fallback khi /stats 500 (backend cũ dùng enum done/doing).
     const pageSize = 100;
-    const maxPages = 20; // tối đa ~2000 dòng
+    const maxPages = 20;
     const rows: CrmAssignment[] = [];
-    for (let page = 0; page < maxPages; page += 1) {
-      const chunk = await fetchCrmAssignments({
-        ...shared,
-        limit: pageSize,
-        offset: page * pageSize,
-        signal: params.signal,
-      });
-      rows.push(...chunk);
-      if (chunk.length < pageSize) break;
+    const concurrency = 4;
+    for (let page = 0; page < maxPages; page += concurrency) {
+      if (params.signal?.aborted) break;
+      const batch = await Promise.all(
+        Array.from({ length: concurrency }, (_, i) => {
+          const p = page + i;
+          if (p >= maxPages) return Promise.resolve([] as CrmAssignment[]);
+          return fetchCrmAssignments({
+            ...shared,
+            limit: pageSize,
+            offset: p * pageSize,
+            signal: params.signal,
+          });
+        }),
+      );
+      let short = false;
+      for (const chunk of batch) {
+        rows.push(...chunk);
+        if (chunk.length < pageSize) {
+          short = true;
+          break;
+        }
+      }
+      params.onPartial?.(computeAssignmentStats(rows));
+      if (short) break;
     }
     return computeAssignmentStats(rows);
   }

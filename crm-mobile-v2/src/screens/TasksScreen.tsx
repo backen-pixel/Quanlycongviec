@@ -184,6 +184,9 @@ export default function TasksScreen() {
         assignee_id: assigneeId,
         priority: priorityFilter || undefined,
         q: search || undefined,
+        onPartial: (partial) => {
+          if (partial.total > 0) setServerStats(partial);
+        },
       });
       setServerStats(s);
     } catch {

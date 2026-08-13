@@ -1200,7 +1200,7 @@ r.get('/stats', responseCache({ ttl: 20, scope: 'user', tags: ['crm:assignments'
     }
 
     // Enum DB chỉ: pending | in_progress | completed | cancelled (không có done/doing).
-    // (redeploy trigger: mobile KPI phụ thuộc endpoint này)
+    // stats_rev=3 — buộc Render redeploy (bản cũ .in(done/doing) → 500).
     const [total, completed, inProgress, overdue] = await Promise.all([
       countExact((q) => q),
       countExact((q) => q.eq('status', 'completed')),
@@ -1215,10 +1215,14 @@ r.get('/stats', responseCache({ ttl: 20, scope: 'user', tags: ['crm:assignments'
       completed,
       overdue,
       total,
+      stats_rev: 3,
     });
   } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: 'Lỗi đếm nhiệm vụ' });
+    console.error('[crm/assignments/stats]', e?.code || e?.message || e);
+    res.status(500).json({
+      error: 'Lỗi đếm nhiệm vụ',
+      detail: String(e?.message || e?.code || '').slice(0, 180),
+    });
   }
 });
 
