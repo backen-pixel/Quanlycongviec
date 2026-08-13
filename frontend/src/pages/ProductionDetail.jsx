@@ -102,10 +102,26 @@ function resolvePersonFromList(person, personId, users) {
   return users.find((u) => String(u.id) === String(personId)) || null;
 }
 
-/** Khớp cột Kanban SX với dashboard — dùng chung resolveSxDisplayColumnId. */
+/** Khớp cột Kanban SX với dashboard — ưu tiên sx_kanban_column_id của CHÍNH project (multi-SX). */
 function resolveSxKanbanCurrentStageId(project, stages) {
+  const list = Array.isArray(stages) ? stages : [];
+  const rawCol = project?.sx_kanban_column_id != null ? String(project.sx_kanban_column_id) : '';
+  if (rawCol && list.some((s) => String(s.id) === rawCol)) return rawCol;
+
+  const primaryDeal = Array.isArray(project?.crmDeals)
+    ? (project.crmDeals.find((d) => d?.type === 'deal') || project.crmDeals[0])
+    : null;
+  const isDealPrimaryProject = !!(
+    primaryDeal
+    && project?.id
+    && String(primaryDeal.project_id || '') === String(project.id)
+  );
   return resolveSxDisplayColumnId(project, stages, {
     sxWonDeal: Boolean(project?.sx_won_deal),
+    ignoreCrmDealCol: !isDealPrimaryProject,
+    leadColId: isDealPrimaryProject
+      ? (primaryDeal?.sx_pipeline_stage_id || primaryDeal?.sx_pipeline_stage?.id || null)
+      : null,
   });
 }
 
@@ -2454,10 +2470,8 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
           const wid = sxStage?.workflow_stage_id || sxStage?.workflow_stage?.id || null;
           body = {
             sx_pipeline_stage_id: colId,
-            current_sx_pipeline_stage_id:
-              project?.sx_kanban_column_id
-              || project?.crmDeals?.[0]?.sx_pipeline_stage?.id
-              || null,
+            // Không fallback badge deal (có thể là stage xưởng khác khi multi-SX).
+            current_sx_pipeline_stage_id: project?.sx_kanban_column_id || null,
           };
           optimisticPatch = {
             sx_kanban_column_id: colId,

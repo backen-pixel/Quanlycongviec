@@ -537,9 +537,29 @@ async function getLeadMemberProjectIdsForUser(userId) {
         console.warn('[dealParticipantProduction] crm_leads:', leadErr.message);
         return [];
       }
-      const ids = [...new Set((leads || []).map((l) => l.project_id).filter(Boolean))];
-      _leadMemberProjectIdsCache.set(key, { at: Date.now(), ids });
-      return ids;
+      const ids = new Set((leads || []).map((l) => l.project_id).filter(Boolean));
+      // Multi-SX: project phụ gắn qua crm_deal_projects (không chỉ crm_leads.project_id)
+      try {
+        const { data: junc, error: jErr } = await supabase
+          .from('crm_deal_projects')
+          .select('project_id')
+          .in('deal_id', leadIds)
+          .not('project_id', 'is', null);
+        if (jErr) {
+          if (!String(jErr.message || '').includes('crm_deal_projects')) {
+            console.warn('[dealParticipantProduction] crm_deal_projects:', jErr.message);
+          }
+        } else {
+          for (const row of junc || []) {
+            if (row.project_id) ids.add(row.project_id);
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+      const out = [...ids];
+      _leadMemberProjectIdsCache.set(key, { at: Date.now(), ids: out });
+      return out;
     } finally {
       _leadMemberProjectIdsInflight.delete(key);
     }

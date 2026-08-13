@@ -472,14 +472,18 @@ export function resolveSxDisplayColumnId(project, stages, opts = {}) {
   const stageIds = new Set(sorted.map((s) => String(s.id)));
   const inList = (id) => (id != null && stageIds.has(String(id)) ? id : null);
 
-  const primaryDeal = opts.leadMeta
-    || (Array.isArray(project?.crmDeals) ? (project.crmDeals.find((d) => d?.type === 'deal') || project.crmDeals[0]) : null)
-    || project?.crm_deals?.[0]
-    || null;
-  const leadColId = opts.leadColId
-    || primaryDeal?.sx_pipeline_stage_id
-    || primaryDeal?.sx_pipeline_stage?.id
-    || null;
+  const primaryDeal = opts.ignoreCrmDealCol
+    ? null
+    : (opts.leadMeta
+      || (Array.isArray(project?.crmDeals) ? (project.crmDeals.find((d) => d?.type === 'deal') || project.crmDeals[0]) : null)
+      || project?.crm_deals?.[0]
+      || null);
+  // Cho phép truyền leadColId=null (multi-SX xưởng phụ) — không fallback sang badge deal.
+  const leadColId = Object.prototype.hasOwnProperty.call(opts, 'leadColId')
+    ? opts.leadColId
+    : (primaryDeal?.sx_pipeline_stage_id
+      || primaryDeal?.sx_pipeline_stage?.id
+      || null);
   const wonDeal = opts.sxWonDeal ?? Boolean(project?.sx_won_deal);
   const hasSxHandover = opts.hasSxHandover ?? Boolean(primaryDeal?.sx_handover_at);
   const inLogistics = projectHasLogisticsLink(project);

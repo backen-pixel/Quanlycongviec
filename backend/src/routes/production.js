@@ -11,6 +11,7 @@ const {
   INTAKE_BUCKET,
   getWorkshopStageMap,
   getWonDealProjectIds,
+  projectLinkedToWonDealScope,
   buildScopeOrFilter,
   loadProductionPipelineStagesRows,
   filterProductionPipelineStagesForWorkshopType,
@@ -533,7 +534,7 @@ function attachSxFinanceToProjects(projects, dealDepositByProjectId = {}) {
 }
 
 const CRM_DEALS_FOR_PROJECT_EMBED = `
-  id, code, title, type, company_id, estimated_value, created_at, sx_handover_at, region_id,
+  id, code, title, type, company_id, estimated_value, created_at, sx_handover_at, region_id, project_id,
   crm_region:company_regions!crm_leads_region_id_fkey(id, name, code),
   assignee:users!crm_leads_assigned_to_fkey(id, full_name, avatar),
   lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name, avatar),
@@ -542,7 +543,7 @@ const CRM_DEALS_FOR_PROJECT_EMBED = `
 
 // Một số DB cũ chưa có các cột `status`, `lost_reason` trên crm_leads.
 // Giữ select tối thiểu để không làm vỡ màn hình chi tiết xưởng.
-const CRM_DEALS_FOR_PROJECT_MIN = 'id, code, title, type, company_id, estimated_value, created_at';
+const CRM_DEALS_FOR_PROJECT_MIN = 'id, code, title, type, company_id, estimated_value, created_at, project_id';
 
 async function nextDealCode() {
   const year = new Date().getFullYear();
@@ -2154,9 +2155,26 @@ function isProjectFinanceColMissingError(err) {
 const WORKSHOP_TYPE_SCALAR = 'workshop_type_id,';
 const WORKSHOP_TYPE_EMBED = 'workshop_type:workshop_project_types(id, name, applies_to),';
 
+/**
+ * Cột trạng thái Kanban SX/VC — bắt buộc có ở chi tiết dự án.
+ * Thiếu `sx_kanban_column_id` thì resolver phải đoán qua `workflow_stage_id`; pipeline nào
+ * dùng chung 1 workflow cho mọi cột (Metalla «Data đầu ra») sẽ luôn rơi về cột đầu.
+ */
+const KANBAN_STATE_COLS = 'sx_kanban_column_id, sx_pipeline_stage_entered_at, sx_kanban_deadline_at, sx_kanban_deadline_reason, logistics_company_id, vc_kanban_column_id, vc_handover_status,';
+
+function isKanbanStateColMissingError(err) {
+  return /sx_kanban_column_id|sx_pipeline_stage_entered_at|sx_kanban_deadline|vc_kanban_column_id|vc_handover_status/.test(
+    String(err?.message || ''),
+  );
+}
+
+function stripKanbanStateCols(sel) {
+  return String(sel).replace(KANBAN_STATE_COLS, '');
+}
+
 const PROJECT_DETAIL_SELECT = `
         id, company_id, code, name, description, estimated_value, production_value, deposit_amount, collected_amount, priority, deadline, install_address, install_date, pickup_at, pickup_notes, ${MIGRATION_300_COLS} ${MIGRATION_520_COLS} ${MIGRATION_76_COLS} status, notes, created_at,
-        current_stage_id, ${WORKSHOP_TYPE_SCALAR}
+        current_stage_id, ${KANBAN_STATE_COLS} ${WORKSHOP_TYPE_SCALAR}
         ${WORKSHOP_TYPE_EMBED}
         current_stage:workflow_stages(id, slug, name, color, icon),
         customer:customers(id, full_name, phone, email, address, city),
@@ -2188,7 +2206,7 @@ const PROJECT_DETAIL_SELECT = `
 // Mục tiêu: vẫn mở được chi tiết dự án + hiển thị stage/tag đúng.
 const PROJECT_DETAIL_SELECT_MIN = `
         id, company_id, code, name, description, estimated_value, production_value, priority, deadline, install_address, install_date, pickup_at, pickup_notes, ${MIGRATION_300_COLS} ${MIGRATION_520_COLS} status, notes, created_at,
-        current_stage_id, ${WORKSHOP_TYPE_SCALAR}
+        current_stage_id, ${KANBAN_STATE_COLS} ${WORKSHOP_TYPE_SCALAR}
         ${WORKSHOP_TYPE_EMBED}
         current_stage:workflow_stages(id, slug, name, color, icon),
         customer:customers(id, full_name, phone, email, address, city),
@@ -2290,11 +2308,19 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
         .eq('id', projectId)
         .single());
     }
+    if (error && isKanbanStateColMissingError(error)) {
+      ({ data: project, error } = await supabase
+        .from('projects')
+        .select(stripKanbanStateCols(PROJECT_DETAIL_SELECT))
+        .eq('id', projectId)
+        .single());
+    }
     // Relationship/columns not ready — retry with minimal select (no optional embeds)
     if (error && (error.message?.includes('relationship') || error.message?.includes('does not exist'))) {
       let minSel = PROJECT_DETAIL_SELECT_MIN;
       if (isWorkshopTypeEmbedError(error)) minSel = stripWorkshopTypeEmbed(minSel);
       if (isWorkshopTypeColumnError(error)) minSel = stripWorkshopTypeAll(minSel);
+      if (isKanbanStateColMissingError(error)) minSel = stripKanbanStateCols(minSel);
       ({ data: project, error } = await supabase.from('projects').select(minSel).eq('id', projectId).single());
     }
 
@@ -2389,12 +2415,17 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
 
     if (!assertRowCompanyInTenant(req, res, project)) return;
 
-    const inSxScope = wonSet.has(project.id);
+    let inSxScope = wonSet.has(project.id);
+    // Multi-SX: project phụ (consulting) có thể chưa kịp vào cache wonIds — kiểm tra junction trực tiếp
+    if (!inSxScope) {
+      inSxScope = await projectLinkedToWonDealScope(project.id, wonSet);
+    }
 
     const { ids: workshopIds } = await getWorkshopStageMap();
     const inWorkshopStage = project.current_stage_id && workshopIds.includes(project.current_stage_id);
     const inWorkshopStatus = WORKSHOP_STATUSES.includes(project.status);
-    if (!inSxScope && !inWorkshopStage && !inWorkshopStatus) {
+    const onSxKanban = !!project.sx_kanban_column_id;
+    if (!inSxScope && !inWorkshopStage && !inWorkshopStatus && !onSxKanban) {
       return res.status(403).json({ error: 'Dự án không thuộc phạm vi sản xuất / deal thắng' });
     }
 
@@ -2595,9 +2626,15 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
     const sortedKIdSet = new Set(sortedK.map((c) => String(c.id)));
     const primaryDeal = (crmSummary || [])[0] || null;
     const dealHasHandover = !!primaryDeal?.sx_handover_at;
-    const crmStageId = (crmSummary || [])
-      .map((d) => d?.sx_pipeline_stage?.id || null)
-      .find((sid) => sid && sortedKIdSet.has(String(sid))) || null;
+    // Multi-SX: deal.project_id = xưởng chính. Project phụ không dùng/đè badge SX trên deal.
+    const isDealPrimaryProject = (crmSummary || []).some(
+      (d) => String(d.project_id || '') === String(project.id),
+    );
+    const crmStageId = isDealPrimaryProject
+      ? ((crmSummary || [])
+        .map((d) => d?.sx_pipeline_stage?.id || null)
+        .find((sid) => sid && sortedKIdSet.has(String(sid))) || null)
+      : null;
     const intakeCol = sortedK.find((c) => c.bucket_slug === INTAKE_BUCKET);
     const handoverCol = sortedK.find((c) => c.is_handover_to_logistics === true);
     const projectInVcFlow = shouldForceSxHandoverColumn(project, sortedK.find((c) => String(c.id) === String(project.sx_kanban_column_id || '')) || null);
@@ -2606,13 +2643,15 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
       ? (handoverCol?.id || defaultFirstColId)
       : defaultFirstColId;
 
-    // Auto-fix dữ liệu cũ: deal lưu sx_pipeline_stage_id lệch khỏi pipeline phân loại
-    // hiện tại (vd. cột thuộc phân loại Tủ bếp nhưng project đã đổi sang phân loại Cửa).
-    // Reset về cột đầu để Kanban + stepper hiển thị đúng pipeline đang chọn.
-    const orphanDeals = (crmSummary || []).filter((d) => (
-      d?.sx_pipeline_stage?.id
-      && !sortedKIdSet.has(String(d.sx_pipeline_stage.id))
-    ));
+    // Auto-fix orphan chỉ trên project chính của deal.
+    // Mở xưởng phụ: stage trên deal thuộc pipeline xưởng 1 → KHÔNG được reset về cột xưởng 2.
+    const orphanDeals = isDealPrimaryProject
+      ? (crmSummary || []).filter((d) => (
+        d?.sx_pipeline_stage?.id
+        && !sortedKIdSet.has(String(d.sx_pipeline_stage.id))
+        && String(d.project_id || '') === String(project.id)
+      ))
+      : [];
     if (orphanDeals.length && fallbackRepairColId) {
       try {
         await supabase
@@ -2627,12 +2666,23 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
       }
     }
 
-    const displayLeadCol = crmStageId
-      || (crmSummary || [])
-        .map((d) => d?.sx_pipeline_stage?.id || null)
-        .find((sid) => sid && sortedKIdSet.has(String(sid))) || null;
-    let finalSxKanbanColumnId = resolveSxDisplayColumnId(
-      { ...project, sx_kanban_column_id: sxRow.sx_kanban_column_id, sx_intake: sxRow.sx_intake },
+    const displayLeadCol = isDealPrimaryProject
+      ? (crmStageId
+        || (crmSummary || [])
+          .map((d) => d?.sx_pipeline_stage?.id || null)
+          .find((sid) => sid && sortedKIdSet.has(String(sid))) || null)
+      : null;
+    // Ưu tiên cột đã lưu trên project (mỗi xưởng một stage riêng); enrich chỉ là fallback.
+    const rawProjectCol = project.sx_kanban_column_id
+      && sortedKIdSet.has(String(project.sx_kanban_column_id))
+      ? String(project.sx_kanban_column_id)
+      : null;
+    let finalSxKanbanColumnId = rawProjectCol || resolveSxDisplayColumnId(
+      {
+        ...project,
+        sx_kanban_column_id: project.sx_kanban_column_id || sxRow.sx_kanban_column_id,
+        sx_intake: sxRow.sx_intake,
+      },
       sortedK,
       {
         leadColId: displayLeadCol,
@@ -2898,6 +2948,8 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
       // Lần đầu SX bấm cột pipeline = Sale đã handover sang xưởng → mark sx_handover_at
       const nowIso = new Date().toISOString();
       const colChanged = isColChange;
+      // Multi-SX: chỉ ghi badge / stage CRM khi project này là project chính của deal.
+      // Project phụ chỉ lưu projects.sx_kanban_column_id — không đè stage xưởng 1 trên deal.
       const { data: existingLeads } = await supabase
         .from('crm_leads')
         .select('id, sx_handover_at, stage_id')
@@ -2906,35 +2958,37 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
       const leadIdsToHandover = (existingLeads || [])
         .filter((l) => !l.sx_handover_at)
         .map((l) => l.id);
-      const { error: leadUpdErr } = await supabase
-        .from('crm_leads')
-        .update(leadPatch)
-        .eq('project_id', id)
-        .eq('type', 'deal');
-      if (leadUpdErr && !leadUpdErr.message?.includes('sx_pipeline_stage_id')) throw leadUpdErr;
-      if (leadIdsToHandover.length) {
-        try {
-          await supabase
-            .from('crm_leads')
-            .update({ sx_handover_at: nowIso })
-            .in('id', leadIdsToHandover);
-        } catch (e) {
-          console.warn('[production] auto sx_handover_at:', e.message);
+      if ((existingLeads || []).length) {
+        const { error: leadUpdErr } = await supabase
+          .from('crm_leads')
+          .update(leadPatch)
+          .eq('project_id', id)
+          .eq('type', 'deal');
+        if (leadUpdErr && !leadUpdErr.message?.includes('sx_pipeline_stage_id')) throw leadUpdErr;
+        if (leadIdsToHandover.length) {
+          try {
+            await supabase
+              .from('crm_leads')
+              .update({ sx_handover_at: nowIso })
+              .in('id', leadIdsToHandover);
+          } catch (e) {
+            console.warn('[production] auto sx_handover_at:', e.message);
+          }
         }
-      }
 
-      // Trigger CRM stage_id theo crm_target_stage_id của cột (nếu cấu hình)
-      // — không yêu cầu sx_handover_at vì SX vừa explicit chọn cột này.
-      if (colRow.crm_target_stage_id) {
-        try {
-          await supabase
-            .from('crm_leads')
-            .update({ stage_id: colRow.crm_target_stage_id, updated_at: nowIso })
-            .eq('project_id', id)
-            .eq('type', 'deal')
-            .neq('stage_id', colRow.crm_target_stage_id);
-        } catch (e) {
-          console.warn('[production] crm_target_stage_id sync:', e.message);
+        // Trigger CRM stage_id theo crm_target_stage_id của cột (nếu cấu hình)
+        // — không yêu cầu sx_handover_at vì SX vừa explicit chọn cột này.
+        if (colRow.crm_target_stage_id) {
+          try {
+            await supabase
+              .from('crm_leads')
+              .update({ stage_id: colRow.crm_target_stage_id, updated_at: nowIso })
+              .eq('project_id', id)
+              .eq('type', 'deal')
+              .neq('stage_id', colRow.crm_target_stage_id);
+          } catch (e) {
+            console.warn('[production] crm_target_stage_id sync:', e.message);
+          }
         }
       }
 

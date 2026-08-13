@@ -10258,52 +10258,107 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
     }
   };
 
-  // Chip SX/VC — gọn, một dòng
-  const sxVcChip = (() => {
+  // Chip SX/VC — multi-xưởng: 1 chip SX cho mỗi dự án + chip VC (nếu có)
+  const sxVcChips = (() => {
     const vcStage = item.vc_pipeline_stage;
     const sxStage = item.sx_pipeline_stage;
     const hasProject = !!item.project_id;
     const stageIsWon = item.stage?.is_won;
-    const fallbackForWon = !vcStage && !sxStage && (hasProject || stageIsWon) && item.type === 'deal'
-      ? { id: null, name: 'Chờ vào xưởng', color: '#0369a1', icon: '⏳', bucket_slug: 'won_pending' }
-      : null;
-    const activeStage = vcStage || sxStage || fallbackForWon;
-    if (!activeStage) return null;
-    const isVC = !!vcStage;
-    const icon = activeStage?.icon
-      || (isVC
-        ? (activeStage?.bucket_slug === 'delivery_pending' ? '📦'
-          : activeStage?.bucket_slug === 'completed' ? '✅' : '🚚')
-        : (activeStage?.bucket_slug === 'won_pending' ? '⏳'
-          : activeStage?.bucket_slug === 'completed' ? '✅' : '🏭'));
-    const label = isVC ? 'VC' : 'SX';
-    const defaultColor = isVC ? '#ea580c' : '#0369a1';
-    const isPlaceholder = !vcStage && !sxStage;
-    const companyHint = activeStage?.company?.short_name || activeStage?.company?.name;
-    const multiSxCount = Number(item.production_project_count)
-      || (Array.isArray(item.production_projects) ? item.production_projects.length : 0);
-    const multiSxLabel = multiSxCount > 1 ? ` · ${multiSxCount} xưởng` : '';
-    return (
-      <span
-        className={`inline-flex items-center gap-1 max-w-full rounded border px-1.5 py-0.5 text-[10px] font-medium truncate ${isPlaceholder ? 'border-dashed' : ''}`}
-        title={[
-          isPlaceholder ? 'Chưa có giai đoạn xưởng' : activeStage.name,
-          companyHint,
-          multiSxCount > 1
-            ? (item.production_projects || []).map((p) => p.company_name || p.label || p.code).filter(Boolean).join(' + ')
-            : null,
-        ].filter(Boolean).join(' · ')}
-        style={{
-          backgroundColor: activeStage.color ? `${activeStage.color}12` : (isVC ? '#fff7ed' : '#f0f9ff'),
-          borderColor: activeStage.color ? `${activeStage.color}45` : (isVC ? '#fed7aa' : '#bae6fd'),
-          color: activeStage.color || defaultColor,
-        }}
-      >
-        <span className="shrink-0">{icon}</span>
-        <span className="font-bold shrink-0">{label}{multiSxLabel}</span>
-        <span className="truncate">{activeStage.name}</span>
-      </span>
-    );
+    const pps = Array.isArray(item.production_projects) ? item.production_projects : [];
+    const chips = [];
+
+    const renderChip = ({
+      key, isVC, stage, isPlaceholder, workshopHint, stageName,
+    }) => {
+      const icon = stage?.icon
+        || (isVC
+          ? (stage?.bucket_slug === 'delivery_pending' ? '📦'
+            : stage?.bucket_slug === 'completed' ? '✅' : '🚚')
+          : (stage?.bucket_slug === 'won_pending' ? '⏳'
+            : stage?.bucket_slug === 'completed' ? '✅' : '🏭'));
+      const label = isVC ? 'VC' : 'SX';
+      const defaultColor = isVC ? '#ea580c' : '#0369a1';
+      const color = stage?.color || defaultColor;
+      const titleParts = [
+        isPlaceholder ? 'Chưa có giai đoạn xưởng' : stageName,
+        workshopHint,
+      ].filter(Boolean);
+      return (
+        <span
+          key={key}
+          className={`inline-flex items-center gap-1 max-w-full rounded border px-1.5 py-0.5 text-[10px] font-medium truncate ${isPlaceholder ? 'border-dashed' : ''}`}
+          title={titleParts.join(' · ')}
+          style={{
+            backgroundColor: color ? `${color}12` : (isVC ? '#fff7ed' : '#f0f9ff'),
+            borderColor: color ? `${color}45` : (isVC ? '#fed7aa' : '#bae6fd'),
+            color: color || defaultColor,
+          }}
+        >
+          <span className="shrink-0">{icon}</span>
+          <span className="font-bold shrink-0">{label}</span>
+          {workshopHint && (
+            <span className="font-semibold shrink-0 opacity-80">{workshopHint}</span>
+          )}
+          <span className="truncate">{stageName}</span>
+        </span>
+      );
+    };
+
+    if (pps.length > 0) {
+      const sorted = [...pps].sort((a, b) => Number(!!b.is_primary) - Number(!!a.is_primary));
+      sorted.forEach((pp, idx) => {
+        const stage = pp.sx_pipeline_stage
+          || (pp.is_primary || sorted.length === 1 ? sxStage : null)
+          || null;
+        const workshopRaw = pp.company_name
+          || stage?.company?.short_name
+          || stage?.company?.name
+          || null;
+        // Nhiều xưởng: luôn hiện tên xưởng trên chip để phân biệt
+        const workshopHint = sorted.length > 1
+          ? (workshopRaw || (pp.code ? String(pp.code).slice(-6) : `Xưởng ${idx + 1}`))
+          : workshopRaw;
+        const stageName = stage?.name
+          || (pp.status === 'consulting' ? 'Chờ vào xưởng' : null)
+          || 'Chờ vào xưởng';
+        chips.push(renderChip({
+          key: `sx-${pp.project_id || idx}`,
+          isVC: false,
+          stage: stage || { color: '#0369a1', icon: '⏳', bucket_slug: 'won_pending' },
+          isPlaceholder: !stage?.id,
+          workshopHint,
+          stageName,
+        }));
+      });
+    } else {
+      const fallbackForWon = !vcStage && !sxStage && (hasProject || stageIsWon) && item.type === 'deal'
+        ? { id: null, name: 'Chờ vào xưởng', color: '#0369a1', icon: '⏳', bucket_slug: 'won_pending' }
+        : null;
+      const activeSx = sxStage || fallbackForWon;
+      if (activeSx) {
+        chips.push(renderChip({
+          key: 'sx-primary',
+          isVC: false,
+          stage: activeSx,
+          isPlaceholder: !sxStage,
+          workshopHint: activeSx?.company?.short_name || activeSx?.company?.name || null,
+          stageName: activeSx.name,
+        }));
+      }
+    }
+
+    if (vcStage) {
+      chips.push(renderChip({
+        key: 'vc',
+        isVC: true,
+        stage: vcStage,
+        isPlaceholder: false,
+        workshopHint: vcStage?.company?.short_name || vcStage?.company?.name || null,
+        stageName: vcStage.name,
+      }));
+    }
+
+    return chips.length ? chips : null;
   })();
 
   const orderDateChip = item.linked_project?.order_date ? (
@@ -10339,7 +10394,7 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
     : null;
   const regionLabel = item.crm_region?.name || null;
   const contextMetaLine = [companyLabel, regionLabel].filter(Boolean).join(' · ');
-  const hasContextChips = !!(sxVcChip || orderDateChip || deliveryDateChip);
+  const hasContextChips = !!(sxVcChips || orderDateChip || deliveryDateChip);
   const createdDateLabel = item.created_at ? formatDate(item.created_at) : null;
   const spawnHoverKind = isSpawnedAdditional ? 'spawned' : (isSpawnSourceDeal ? 'source' : null);
   const spawnHoverTitle = spawnHoverKind === 'spawned'
@@ -10598,7 +10653,7 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
         {/* SX/VC · lịch đặt/giao */}
         {hasContextChips && (
           <div className="flex flex-wrap gap-1 min-w-0">
-            {sxVcChip}
+            {sxVcChips}
             {orderDateChip}
             {deliveryDateChip}
           </div>

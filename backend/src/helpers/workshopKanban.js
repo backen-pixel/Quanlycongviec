@@ -78,6 +78,52 @@ const WON_DEAL_IDS_TTL_MS = 90_000;
 // v2: gồm cả project phụ multi-SX (crm_deal_projects), không chỉ crm_leads.project_id.
 const WON_DEAL_IDS_REDIS_KEY = 'sx:won_deal_project_ids:v2';
 
+/** Xóa cache wonIds — gọi sau khi tạo/gắn project SX (kể cả xưởng phụ). */
+function invalidateWonDealProjectIdsCache() {
+  _wonDealProjectIdsCache = { at: 0, ids: null };
+  _wonDealProjectIdsInflight = null;
+  try {
+    const { getRedisIfReady } = require('../config/redis');
+    const redis = getRedisIfReady();
+    if (redis) {
+      Promise.resolve(redis.del(WON_DEAL_IDS_REDIS_KEY)).catch(() => {});
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Project có trong wonSet hoặc gắn deal qua crm_deal_projects (không phụ thuộc cache). */
+async function projectLinkedToWonDealScope(projectId, wonSet = null) {
+  if (!projectId) return false;
+  if (wonSet && wonSet.has(projectId)) return true;
+  try {
+    const { data, error } = await supabase
+      .from('crm_deal_projects')
+      .select('project_id')
+      .eq('project_id', projectId)
+      .limit(1)
+      .maybeSingle();
+    if (!error && data?.project_id) return true;
+  } catch {
+    /* ignore */
+  }
+  // Fallback: deal primary
+  try {
+    const { data } = await supabase
+      .from('crm_leads')
+      .select('id')
+      .eq('type', 'deal')
+      .eq('project_id', projectId)
+      .limit(1)
+      .maybeSingle();
+    if (data?.id) return true;
+  } catch {
+    /* ignore */
+  }
+  return false;
+}
+
 async function getWonDealProjectIds() {
   const now = Date.now();
   if (_wonDealProjectIdsCache.ids && now - _wonDealProjectIdsCache.at < WON_DEAL_IDS_TTL_MS) {
@@ -1645,6 +1691,8 @@ module.exports = {
   INTAKE_BUCKET,
   getWorkshopStageMap,
   getWonDealProjectIds,
+  invalidateWonDealProjectIdsCache,
+  projectLinkedToWonDealScope,
   buildScopeOrFilter,
   loadProductionPipelineStagesRows,
   filterProductionPipelineStagesForWorkshopType,

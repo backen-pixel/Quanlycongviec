@@ -168,17 +168,39 @@ async function attachProductionProjectsForList(rows) {
   try {
     for (let i = 0; i < dealIds.length; i += 200) {
       const chunk = dealIds.slice(i, i + 200);
-      const { data: links, error } = await supabase
-        .from('crm_deal_projects')
-        .select(`
+      let links = null;
+      let error = null;
+      // Ưu tiên kèm cột Kanban SX từng project (multi-xưởng → nhiều badge CRM)
+      const selWithSxCol = `
           deal_id, project_id, is_primary, label,
           project:projects!crm_deal_projects_project_id_fkey(
-            id, code, name, status, company_id, workshop_type_id,
+            id, code, name, status, company_id, workshop_type_id, sx_kanban_column_id,
+            company:companies!projects_company_id_fkey(id, name, short_name),
+            workshop_type:workshop_project_types!projects_workshop_type_id_fkey(id, name),
+            sx_kanban_column:production_pipeline_stages!projects_sx_kanban_column_id_fkey(
+              id, name, color, icon, bucket_slug, company_id,
+              company:companies(id, name, short_name)
+            )
+          )
+        `;
+      const selLite = `
+          deal_id, project_id, is_primary, label,
+          project:projects!crm_deal_projects_project_id_fkey(
+            id, code, name, status, company_id, workshop_type_id, sx_kanban_column_id,
             company:companies!projects_company_id_fkey(id, name, short_name),
             workshop_type:workshop_project_types!projects_workshop_type_id_fkey(id, name)
           )
-        `)
-        .in('deal_id', chunk);
+        `;
+      ({ data: links, error } = await supabase
+        .from('crm_deal_projects')
+        .select(selWithSxCol)
+        .in('deal_id', chunk));
+      if (error) {
+        ({ data: links, error } = await supabase
+          .from('crm_deal_projects')
+          .select(selLite)
+          .in('deal_id', chunk));
+      }
       if (error) {
         console.warn('[attachProductionProjectsForList]', error.message);
         break;
@@ -188,17 +210,35 @@ async function attachProductionProjectsForList(rows) {
         const p = l.project || {};
         const co = p.company || {};
         const wt = p.workshop_type || {};
+        const colRaw = p.sx_kanban_column;
+        const col = Array.isArray(colRaw) ? colRaw[0] : colRaw;
+        const colCo = col?.company || {};
         const item = {
           project_id: l.project_id || p.id,
           code: p.code || null,
           name: p.name || null,
           status: p.status || null,
           company_id: p.company_id || co.id || null,
-          company_name: co.short_name || co.name || null,
+          company_name: String(co.short_name || co.name || '').trim() || null,
           workshop_type_id: p.workshop_type_id || wt.id || null,
           workshop_type_name: wt.name || null,
           is_primary: !!l.is_primary,
           label: l.label || null,
+          sx_pipeline_stage: col?.id ? {
+            id: col.id,
+            name: col.name || null,
+            color: col.color || null,
+            icon: col.icon || null,
+            bucket_slug: col.bucket_slug || null,
+            company: (colCo.id || col.company_id)
+              ? {
+                id: colCo.id || col.company_id,
+                name: colCo.name || null,
+                short_name: colCo.short_name || null,
+              }
+              : null,
+          } : null,
+          _sx_col_id: p.sx_kanban_column_id || null,
         };
         if (!byDeal.has(did)) byDeal.set(did, []);
         byDeal.get(did).push(item);
@@ -206,6 +246,54 @@ async function attachProductionProjectsForList(rows) {
     }
   } catch (e) {
     console.warn('[attachProductionProjectsForList]', e.message);
+  }
+
+  // Bổ sung stage SX theo sx_kanban_column_id nếu embed cột lỗi / thiếu
+  try {
+    const needColIds = [];
+    for (const list of byDeal.values()) {
+      for (const pp of list) {
+        if (!pp.sx_pipeline_stage?.id && pp._sx_col_id) needColIds.push(String(pp._sx_col_id));
+      }
+    }
+    const uniq = [...new Set(needColIds)];
+    if (uniq.length) {
+      const colMap = new Map();
+      for (let i = 0; i < uniq.length; i += 200) {
+        const chunk = uniq.slice(i, i + 200);
+        const { data: cols } = await supabase
+          .from('production_pipeline_stages')
+          .select('id, name, color, icon, bucket_slug, company_id, company:companies(id, name, short_name)')
+          .in('id', chunk);
+        for (const c of cols || []) {
+          const co = c.company || {};
+          colMap.set(String(c.id), {
+            id: c.id,
+            name: c.name || null,
+            color: c.color || null,
+            icon: c.icon || null,
+            bucket_slug: c.bucket_slug || null,
+            company: (co.id || c.company_id)
+              ? { id: co.id || c.company_id, name: co.name || null, short_name: co.short_name || null }
+              : null,
+          });
+        }
+      }
+      for (const list of byDeal.values()) {
+        for (const pp of list) {
+          if (!pp.sx_pipeline_stage?.id && pp._sx_col_id) {
+            pp.sx_pipeline_stage = colMap.get(String(pp._sx_col_id)) || null;
+          }
+          delete pp._sx_col_id;
+        }
+      }
+    } else {
+      for (const list of byDeal.values()) {
+        for (const pp of list) delete pp._sx_col_id;
+      }
+    }
+  } catch (e) {
+    console.warn('[attachProductionProjectsForList] sx cols:', e.message);
   }
 
   return rows.map((r) => {
@@ -219,6 +307,7 @@ async function attachProductionProjectsForList(rows) {
         is_primary: true,
         company_id: null,
         company_name: null,
+        sx_pipeline_stage: r.sx_pipeline_stage || null,
       }];
     }
     return {
@@ -876,6 +965,14 @@ async function runAutoCreateProjectFromWonDeal({
       console.warn('[auto-project] sync sx_pipeline_stage_id:', e.message);
     }),
   ]);
+
+  // Bust wonIds cache — project phụ consulting cần vào scope board/detail ngay
+  try {
+    const { invalidateWonDealProjectIdsCache } = require('./workshopKanban');
+    invalidateWonDealProjectIdsCache();
+  } catch {
+    /* ignore */
+  }
 
   let notifyStaff = [];
   let mentionStaffIds = [];

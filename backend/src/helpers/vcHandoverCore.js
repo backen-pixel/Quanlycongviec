@@ -26,6 +26,108 @@ const { notifyVcHandoverFromSx } = require('./vcHandoverNotify');
 const { isProjectAlreadyInLogistics } = require('./projectLogisticsScope');
 const { logDealActivityComment } = require('./projectFileActivity');
 
+/**
+ * Deal CRM gắn project: ưu tiên crm_leads.project_id, fallback crm_deal_projects (multi-SX phụ).
+ */
+async function resolveCrmDealForProject(projectId, select = 'id, code, title, assigned_to, lead_owner_id, company_id, lead_type_id, install_address, customer_id, project_id, pipeline_id') {
+  const pid = String(projectId || '').trim();
+  if (!pid) return null;
+
+  const { data: deals } = await supabase
+    .from('crm_leads')
+    .select(select)
+    .eq('project_id', pid)
+    .eq('type', 'deal')
+    .order('created_at', { ascending: true });
+  if (deals?.length) return deals[0];
+
+  const { data: link } = await supabase
+    .from('crm_deal_projects')
+    .select('deal_id, is_primary')
+    .eq('project_id', pid)
+    .order('is_primary', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (!link?.deal_id) return null;
+
+  const { data: deal } = await supabase
+    .from('crm_leads')
+    .select(select)
+    .eq('id', link.deal_id)
+    .eq('type', 'deal')
+    .maybeSingle();
+  return deal || null;
+}
+
+/**
+ * Multi-SX: chỉ kéo deal CRM sang cột vc_delivery khi mọi project SX của deal
+ * đã bàn giao (project hiện tại tính là đã xong trong lần gọi này).
+ */
+async function shouldMoveCrmDealToVcDelivery(dealId, currentProjectId) {
+  const did = String(dealId || '').trim();
+  const pid = String(currentProjectId || '').trim();
+  if (!did || !pid) return true;
+
+  const ids = new Set([pid]);
+  const { data: lead } = await supabase
+    .from('crm_leads')
+    .select('project_id')
+    .eq('id', did)
+    .maybeSingle();
+  if (lead?.project_id) ids.add(String(lead.project_id));
+
+  const { data: links } = await supabase
+    .from('crm_deal_projects')
+    .select('project_id')
+    .eq('deal_id', did);
+  for (const l of links || []) {
+    if (l.project_id) ids.add(String(l.project_id));
+  }
+  if (ids.size <= 1) return true;
+
+  const { data: projects } = await supabase
+    .from('projects')
+    .select('id, logistics_company_id, vc_kanban_column_id, vc_handover_status')
+    .in('id', [...ids]);
+
+  return (projects || []).every((p) => {
+    if (String(p.id) === pid) return true;
+    if (isProjectAlreadyInLogistics(p)) return true;
+    const st = String(p.vc_handover_status || '');
+    return st === 'external' || st === 'confirmed';
+  });
+}
+
+/** Mọi deal CRM liên kết project (primary + multi-SX phụ). */
+async function listCrmDealsForProject(projectId, select = 'id, pipeline_id, project_id') {
+  const pid = String(projectId || '').trim();
+  if (!pid) return [];
+  const byId = new Map();
+
+  const { data: primary } = await supabase
+    .from('crm_leads')
+    .select(select)
+    .eq('project_id', pid)
+    .eq('type', 'deal');
+  for (const d of primary || []) byId.set(String(d.id), d);
+
+  const { data: links } = await supabase
+    .from('crm_deal_projects')
+    .select('deal_id')
+    .eq('project_id', pid);
+  const missing = [...new Set((links || []).map((l) => l.deal_id).filter(Boolean))]
+    .filter((id) => !byId.has(String(id)));
+  if (missing.length) {
+    const { data: linked } = await supabase
+      .from('crm_leads')
+      .select(select)
+      .in('id', missing)
+      .eq('type', 'deal');
+    for (const d of linked || []) byId.set(String(d.id), d);
+  }
+  return [...byId.values()];
+}
+
 /** Tìm cột intake của pipeline VC theo công ty VC đã chọn. */
 async function resolveVcIntakeStageId(logisticsCompanyId) {
   try {
@@ -136,6 +238,7 @@ async function performVcHandoverCore(req, {
     if (sameCompany && hasVcCol) {
       if (sxHandoverPipelineStageId) {
         await supabase.from('projects').update({ sx_kanban_column_id: sxHandoverPipelineStageId }).eq('id', projectId);
+        // Chỉ ghi badge SX trên deal khi đây là project chính (tránh đè stage xưởng khác).
         await supabase.from('crm_leads')
           .update({ sx_pipeline_stage_id: sxHandoverPipelineStageId, updated_at: new Date().toISOString() })
           .eq('project_id', projectId).eq('type', 'deal');
@@ -232,19 +335,22 @@ async function performVcHandoverCore(req, {
   } catch (te) { console.warn('[vcHandoverCore] stage_transitions:', te.message); }
 
   // Đồng bộ CRM deal → cột đã gắn sync_role=vc_delivery (VD «Vận chuyển/lắp đặt»).
+  // Gồm cả project phụ multi-SX (crm_deal_projects).
   try {
     const nowIso = new Date().toISOString();
-    const { data: leads } = await supabase
-      .from('crm_leads')
-      .select('id, pipeline_id')
-      .eq('project_id', projectId)
-      .eq('type', 'deal');
+    const leads = await listCrmDealsForProject(projectId, 'id, pipeline_id, project_id');
     for (const lead of leads || []) {
-      const vcDeliveryStageId = await getCrmStageByRole('vc_delivery', lead.pipeline_id || null)
-        || await getCrmVcDeliveryStageId();
+      const moveCrmStage = await shouldMoveCrmDealToVcDelivery(lead.id, projectId);
+      const vcDeliveryStageId = moveCrmStage
+        ? (await getCrmStageByRole('vc_delivery', lead.pipeline_id || null)
+          || await getCrmVcDeliveryStageId())
+        : null;
       const fullUpd = { updated_at: nowIso };
       if (vcStageId) fullUpd.vc_pipeline_stage_id = vcStageId;
-      if (sxHandoverPipelineStageId) fullUpd.sx_pipeline_stage_id = sxHandoverPipelineStageId;
+      // sx_pipeline_stage_id trên deal = badge xưởng chính — chỉ ghi khi project là primary.
+      if (sxHandoverPipelineStageId && String(lead.project_id || '') === String(projectId)) {
+        fullUpd.sx_pipeline_stage_id = sxHandoverPipelineStageId;
+      }
       if (vcDeliveryStageId) {
         fullUpd.stage_id = vcDeliveryStageId;
         fullUpd.stage_entered_at = nowIso;
@@ -258,11 +364,15 @@ async function performVcHandoverCore(req, {
             stage_entered_at: nowIso,
             updated_at: nowIso,
           }).eq('id', lead.id);
+        } else if (isColErr) {
+          await supabase.from('crm_leads').update({ updated_at: nowIso }).eq('id', lead.id);
         } else {
           console.warn('[vcHandoverCore] CRM update lead', lead.id, ':', leadErr.message);
         }
       } else if (vcDeliveryStageId) {
         console.log(`[vcHandoverCore] CRM deal ${lead.id} → sync_role=vc_delivery (${vcDeliveryStageId})`);
+      } else if (!moveCrmStage) {
+        console.log(`[vcHandoverCore] CRM deal ${lead.id}: còn xưởng SX khác chưa bàn giao — giữ stage CRM`);
       } else {
         console.warn(`[vcHandoverCore] CRM deal ${lead.id}: chưa cấu hình cột sync_role=vc_delivery trên pipeline`);
       }
@@ -327,4 +437,7 @@ module.exports = {
   performVcHandoverCore,
   resolveVcIntakeStageId,
   resolveSxHandoverStageId,
+  resolveCrmDealForProject,
+  listCrmDealsForProject,
+  shouldMoveCrmDealToVcDelivery,
 };

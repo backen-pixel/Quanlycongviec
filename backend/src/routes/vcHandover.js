@@ -28,7 +28,7 @@ const { Router } = require('express');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
 const { createNotification, notifyMultiple } = require('../helpers/notifications');
-const { performVcHandoverCore } = require('../helpers/vcHandoverCore');
+const { performVcHandoverCore, resolveCrmDealForProject } = require('../helpers/vcHandoverCore');
 const {
   resolveLogisticsHandoverResponsibleUserId,
   resolveLogisticsHandoverInstallerUserId,
@@ -537,13 +537,11 @@ r.post('/projects/:id/request', async (req, res) => {
       .maybeSingle();
     if (!project) return res.status(404).json({ error: 'Không tìm thấy dự án' });
 
-    const { data: deals } = await supabase
-      .from('crm_leads')
-      .select('id, code, title, assigned_to, lead_owner_id, company_id, lead_type_id, install_address, customer_id')
-      .eq('project_id', projectId)
-      .eq('type', 'deal')
-      .order('created_at', { ascending: true });
-    const deal = (deals || [])[0];
+    // Multi-SX: project phụ chỉ nằm ở crm_deal_projects (không ghi crm_leads.project_id)
+    const deal = await resolveCrmDealForProject(
+      projectId,
+      'id, code, title, assigned_to, lead_owner_id, company_id, lead_type_id, install_address, customer_id, project_id',
+    );
     if (!deal) return res.status(400).json({ error: 'Dự án chưa liên kết deal CRM để bàn giao VC/LĐ.' });
 
     let installAddressPrefill = String(project.install_address || deal.install_address || '').trim() || null;
@@ -562,7 +560,7 @@ r.post('/projects/:id/request', async (req, res) => {
     const actorName = await getUserName(actor);
     const projLabel = project.name || project.code || 'dự án';
 
-    // Idempotent: đã có bình luận bàn giao đang mở → trả lại + nhắc lại Sale CRM.
+    // Idempotent theo TỪNG project: multi-SX → mỗi xưởng một thẻ bàn giao riêng trên cùng deal.
     const { data: openRows } = await supabase
       .from('crm_lead_comments')
       .select(COMMENT_SELECT)
@@ -570,7 +568,13 @@ r.post('/projects/:id/request', async (req, res) => {
       .eq('comment_type', 'vc_handover')
       .is('deleted_at', null)
       .order('created_at', { ascending: false });
-    const openComment = (openRows || []).find((c) => (c.metadata?.state || '') !== 'done');
+    const openComment = (openRows || []).find((c) => {
+      if ((c.metadata?.state || '') === 'done') return false;
+      const cPid = c.metadata?.project_id ? String(c.metadata.project_id) : '';
+      // Comment cũ không có project_id: chỉ reuse cho project chính của deal
+      if (!cPid) return String(deal.project_id || '') === String(projectId);
+      return cPid === String(projectId);
+    });
     if (openComment) {
       // Backfill loại / xưởng cho bình luận cũ (trước khi có field metadata).
       const meta = openComment.metadata || {};
@@ -668,6 +672,21 @@ r.post('/projects/:id/request', async (req, res) => {
         console.warn('[vc-handover] remind comment notify:', cerr.message);
       }
 
+      // Cùng project: vẫn ghim cột bàn giao SX (tránh thẻ bị nhảy/mất stage khi bấm lại).
+      try {
+        const projUpdate = { vc_handover_status: 'pending' };
+        if (sxStageId) projUpdate.sx_kanban_column_id = sxStageId;
+        let { error: puErr } = await supabase.from('projects').update(projUpdate).eq('id', projectId);
+        if (puErr && String(puErr.message || '').includes('sx_kanban_column_id')) {
+          ({ error: puErr } = await supabase.from('projects').update({ vc_handover_status: 'pending' }).eq('id', projectId));
+        }
+        if (puErr && !String(puErr.message || '').includes('vc_handover_status')) {
+          console.warn('[vc-handover] re-request project update:', puErr.message);
+        }
+      } catch (pe) {
+        console.warn('[vc-handover] re-request project update:', pe.message);
+      }
+
       return res.json({ comment: withReactions(enrichedRow), lead_id: deal.id, already: true });
     }
 
@@ -739,10 +758,11 @@ r.post('/projects/:id/request', async (req, res) => {
     if (puErr && !String(puErr.message || '').includes('vc_handover_status')) {
       console.warn('[vc-handover] request project update:', puErr.message);
     }
-    if (sxStageId) {
+    // Badge SX trên deal chỉ cập nhật khi đây là project chính của deal
+    if (sxStageId && String(deal.project_id || '') === String(projectId)) {
       await supabase.from('crm_leads')
         .update({ sx_pipeline_stage_id: sxStageId, updated_at: new Date().toISOString() })
-        .eq('project_id', projectId).eq('type', 'deal')
+        .eq('id', deal.id)
         .then(() => {}).catch(() => {});
     }
 

@@ -560,7 +560,16 @@ export default function LeadDetail() {
   const softRefreshDeal = useCallback(async () => {
     await loadRef.current?.({ silent: true });
     setCrmTasksRefreshKey((k) => k + 1);
-  }, []);
+    // Cập nhật badge Thành viên (CRM/SX/VC) không reload cả trang
+    if (id) {
+      try {
+        const { data } = await api.get(`/crm/leads/${id}/members`);
+        setMemberModuleCounts(countMembersByModule(data || []));
+      } catch {
+        /* giữ số cũ */
+      }
+    }
+  }, [id]);
 
   const softRefreshDealAfterProject = useCallback(async () => {
     await softRefreshDeal();
@@ -1750,13 +1759,18 @@ export default function LeadDetail() {
     }
     setAddSxBusy(true);
     setAddSxErr('');
+    setAutoCreateError('');
+    setAutoCreateResult(null);
+    setAutoCreateStatus('loading');
+    // Đóng modal ngay để hiện banner «Đang tạo dự án» — không reload cả trang
+    setAddSxOpen(false);
+    const targetsPayload = sxTargetsToApiPayload(addSxTargets);
+    setAddSxTargets([]);
     try {
       const { data } = await api.post(`/crm/deals/${id}/auto-create-project`, {
         mode: 'additional',
-        targets: sxTargetsToApiPayload(addSxTargets),
+        targets: targetsPayload,
       });
-      setAddSxOpen(false);
-      setAddSxTargets([]);
       if (data?.partial_error || data?.warning) {
         setAutoCreateError(data.partial_error || data.warning);
         setAutoCreateStatus('error');
@@ -1767,7 +1781,8 @@ export default function LeadDetail() {
       }
       await softRefreshDealAfterProject();
     } catch (e) {
-      setAddSxErr(e.response?.data?.error || e.message || 'Lỗi thêm dự án SX');
+      setAutoCreateError(e.response?.data?.error || e.message || 'Lỗi thêm dự án SX');
+      setAutoCreateStatus('error');
     } finally {
       setAddSxBusy(false);
     }
@@ -2190,27 +2205,45 @@ export default function LeadDetail() {
     <div className="space-y-4 mx-auto">
       {/* Auto-create project banner */}
       {autoCreateStatus === 'loading' && (
-        <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-xl p-4 text-white shadow-lg flex items-center gap-4">
+        <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-xl p-4 text-white shadow-lg flex items-center gap-4" data-tour="sx-auto-create-loading">
           <div className="animate-spin h-8 w-8 border-3 border-white/30 border-t-white rounded-full flex-shrink-0" />
           <div>
-            <p className="font-bold text-lg">🚀 Đang tự động tạo dự án...</p>
-            <p className="text-sm text-white/80">Hệ thống đang tạo dự án và phân công nhiệm vụ</p>
+            <p className="font-bold text-lg">Đang tạo dự án ở Sản xuất…</p>
+            <p className="text-sm text-white/80">Đang tạo thẻ SX, phân công nhiệm vụ và đồng bộ thành viên sản xuất</p>
           </div>
         </div>
       )}
       {autoCreateStatus === 'success' && autoCreateResult && (
-        <div className="bg-gradient-to-r from-emerald-600 to-green-600 rounded-xl p-4 text-white shadow-lg flex items-center justify-between">
+        <div className="bg-gradient-to-r from-emerald-600 to-green-600 rounded-xl p-4 text-white shadow-lg flex items-center justify-between" data-tour="sx-auto-create-success">
           <div className="flex items-center gap-4">
             <div className="flex items-center justify-center w-10 h-10 bg-white/20 rounded-full text-xl">✅</div>
             <div>
-              <p className="font-bold text-lg">Dự án {autoCreateResult.project_code || ''} đã tạo!</p>
-              <p className="text-sm text-white/90">{autoCreateResult.tasks_created || 0} nhiệm vụ được tạo tự động</p>
+              <p className="font-bold text-lg">
+                Dự án {autoCreateResult.project_code || ''} đã tạo!
+                {(Array.isArray(autoCreateResult.projects) && autoCreateResult.projects.length > 1)
+                  ? ` (+${autoCreateResult.projects.length - 1} xưởng khác)`
+                  : ''}
+              </p>
+              <p className="text-sm text-white/90">
+                {autoCreateResult.tasks_created || 0} nhiệm vụ · thành viên SX đã đồng bộ — đang cập nhật deal
+              </p>
             </div>
           </div>
-          <button onClick={() => navigate(`/projects/${autoCreateResult.project_id}`)}
-            className="h-9 px-4 bg-white text-emerald-700 hover:bg-emerald-50 rounded-lg text-sm font-semibold cursor-pointer transition flex items-center gap-1">
-            Xem dự án →
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setAutoCreateStatus(null)}
+              className="h-9 px-3 bg-white/15 hover:bg-white/25 text-white rounded-lg text-sm cursor-pointer"
+            >
+              Đóng
+            </button>
+            {autoCreateResult.project_id && (
+              <button onClick={() => navigate(`/sx/projects/${autoCreateResult.project_id}`)}
+                className="h-9 px-4 bg-white text-emerald-700 hover:bg-emerald-50 rounded-lg text-sm font-semibold cursor-pointer transition flex items-center gap-1">
+                Xem dự án →
+              </button>
+            )}
+          </div>
         </div>
       )}
       {autoCreateStatus === 'error' && (
@@ -2786,6 +2819,31 @@ export default function LeadDetail() {
             currentUser={user}
             productionCompaniesSx={productionCompaniesSx}
             onOpenTransferAssignee={canTransferRegion ? openTransferRegionModal : null}
+            onAdditionalSxCreate={async (targets) => {
+              setAutoCreateError('');
+              setAutoCreateResult(null);
+              setAutoCreateStatus('loading');
+              try {
+                const { data } = await api.post(`/crm/deals/${id}/auto-create-project`, {
+                  mode: 'additional',
+                  targets,
+                });
+                if (data?.partial_error || data?.warning) {
+                  setAutoCreateError(data.partial_error || data.warning);
+                  setAutoCreateStatus('error');
+                  setAutoCreateResult(data);
+                } else {
+                  setAutoCreateResult(data);
+                  setAutoCreateStatus('success');
+                }
+                await softRefreshDealAfterProject();
+                return data;
+              } catch (e) {
+                setAutoCreateError(e.response?.data?.error || e.message || 'Lỗi thêm dự án SX');
+                setAutoCreateStatus('error');
+                throw e;
+              }
+            }}
           />
 
           {/* Quick Stats Card */}
@@ -5294,7 +5352,15 @@ function LeadInfoEditableRow({
 // ═══════════════════════════════════════════════════════════════════════════
 // LeadInfoPanel — Inline editable fields (always visible)
 // ═══════════════════════════════════════════════════════════════════════════
-function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompaniesSx = [], onOpenTransferAssignee = null }) {
+function LeadInfoPanel({
+  lead,
+  allUsers,
+  onUpdate,
+  currentUser,
+  productionCompaniesSx = [],
+  onOpenTransferAssignee = null,
+  onAdditionalSxCreate = null,
+}) {
   const navigate = useNavigate();
   const [sources, setSources] = useState([]);
   const [leadTypes, setLeadTypes] = useState([]);
@@ -5836,17 +5902,24 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
     }
     setSxAddBusy(true);
     setSxAddErr('');
+    const targets = sxTargetsToApiPayload(sxAddTargets);
+    setSxAddOpen(false);
+    setSxAddTargets([]);
     try {
-      await api.post(`/crm/deals/${lead.id}/auto-create-project`, {
-        mode: 'additional',
-        targets: sxTargetsToApiPayload(sxAddTargets),
-      });
-      setSxAddOpen(false);
-      setSxAddTargets([]);
-      setSxAssignNotice('Đã thêm dự án SX mới');
-      onUpdate();
+      if (typeof onAdditionalSxCreate === 'function') {
+        await onAdditionalSxCreate(targets);
+        setSxAssignNotice('Đã thêm dự án SX — đang đồng bộ thành viên');
+      } else {
+        await api.post(`/crm/deals/${lead.id}/auto-create-project`, {
+          mode: 'additional',
+          targets,
+        });
+        setSxAssignNotice('Đã thêm dự án SX mới');
+        onUpdate();
+      }
     } catch (e) {
       setSxAddErr(e.response?.data?.error || e.message || 'Lỗi thêm dự án SX');
+      setSxAddOpen(true);
     } finally {
       setSxAddBusy(false);
     }
