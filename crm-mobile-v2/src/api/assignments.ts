@@ -151,15 +151,23 @@ export function computeAssignmentStats(tasks: CrmAssignment[]): CrmAssignmentSta
 }
 
 export async function fetchCrmAssignments(params: FetchAssignmentsParams = {}): Promise<CrmAssignment[]> {
+  const status =
+    params.status
+    || (params.status_group === 'in_progress' || params.status_group === 'doing'
+      ? 'in_progress'
+      : params.status_group === 'completed' || params.status_group === 'done'
+        ? 'completed'
+        : params.status_group === 'pending'
+          ? 'pending'
+          : undefined);
   const { data } = await api.get<{ assignments?: CrmAssignment[] }>('/crm/assignments', {
     params: {
       assignment_module: 'crm',
       company_id: params.company_id || undefined,
       assignee_id: params.assignee_id || undefined,
       priority: params.priority || undefined,
-      // status_group (API mới) + status (fallback API cũ chỉ .eq).
-      status_group: params.status_group || undefined,
-      status: params.status || params.status_group || undefined,
+      // Chỉ gửi status enum hợp lệ — tránh status_group làm API cũ/lỗi enum.
+      status: status || undefined,
       q: params.q?.trim() || undefined,
       limit: params.limit != null && params.limit > 0 ? params.limit : undefined,
       offset: params.offset != null && params.offset > 0 ? params.offset : undefined,

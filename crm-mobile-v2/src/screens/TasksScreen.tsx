@@ -204,7 +204,6 @@ export default function TasksScreen() {
         company_id: companyQuery,
         assignee_id: assigneeId,
         priority: priorityFilter || undefined,
-        status_group: statusSegment,
         status: statusSegment,
         q: search || undefined,
         limit: TASKS_PAGE_SIZE,
@@ -212,7 +211,7 @@ export default function TasksScreen() {
         signal,
       };
 
-      // KPI đếm đủ (không cắt trang). Không gắn abort list — tránh KPI = đúng 1 trang (40).
+      // KPI đếm đủ 1 lần (/stats). List paginate riêng — không gắn abort vào stats.
       const statsPromise = append
         ? Promise.resolve(null as CrmAssignmentStats | null)
         : fetchCrmAssignmentStats({
@@ -232,15 +231,22 @@ export default function TasksScreen() {
           () => ({ ok: false as const }),
         ),
       ]);
-      if (signal?.aborted || (!append && gen !== loadGenRef.current)) return;
+      // Chỉ bỏ kết quả khi có load mới hơn — không discard vì abort muộn (sau khi đã có data).
+      if (!append && gen !== loadGenRef.current) return;
+
+      if (!append && statsSettled.ok) {
+        setServerStats(statsSettled.s);
+      }
 
       if (!listSettled.ok) {
-        if (append) return;
+        if (append || isAbortError(listSettled.err) || signal?.aborted) {
+          if (!append && gen === loadGenRef.current) lastLoadAtRef.current = Date.now();
+          return;
+        }
         const msg = formatApiError(listSettled.err);
         if (msg) setError(msg);
         setRows([]);
         setHasMore(false);
-        if (statsSettled.ok) setServerStats(statsSettled.s);
         lastLoadAtRef.current = Date.now();
         return;
       }
@@ -259,9 +265,6 @@ export default function TasksScreen() {
         return merged;
       });
       setHasMore(list.length >= TASKS_PAGE_SIZE);
-      if (!append && statsSettled.ok) {
-        setServerStats(statsSettled.s);
-      }
       lastLoadAtRef.current = Date.now();
     } catch (e: unknown) {
       if (append || isAbortError(e) || signal?.aborted) return;
@@ -289,17 +292,20 @@ export default function TasksScreen() {
     void load({ silent: lastLoadAtRef.current > 0 });
   }, [load]);
 
-  // Focus lại màn: chỉ soft-refresh khi quá TTL (load ổn định qua loadRef).
+  // Focus lại màn: chỉ soft-refresh khi quá TTL. Không abort lần tải đầu (tránh KPI/list = 0).
   useFocusEffect(
     useCallback(() => {
       const TASKS_TTL_MS = 45_000;
       if (lastLoadAtRef.current === 0) {
-        return () => abortRef.current?.abort();
+        return undefined;
       }
       if (Date.now() - lastLoadAtRef.current > TASKS_TTL_MS) {
         void loadRef.current({ refresh: true, silent: true });
       }
-      return () => abortRef.current?.abort();
+      return () => {
+        // Chỉ abort soft-refresh / lần sau — không đụng gen đang chạy nếu vừa vào màn.
+        if (lastLoadAtRef.current > 0) abortRef.current?.abort();
+      };
     }, []),
   );
 
