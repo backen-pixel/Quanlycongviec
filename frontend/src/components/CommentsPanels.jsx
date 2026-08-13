@@ -872,7 +872,7 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
     return () => { active = false; };
   }, [state, canSale]);
 
-  // Prefill địa chỉ / ngày lắp từ deal + dự án (cùng nguồn panel Thông tin VC).
+  // Prefill địa chỉ / lịch từ ĐÚNG project xưởng của thẻ (multi-SX), vẫn cho Sale chỉnh tay.
   useEffect(() => {
     if (state !== 'awaiting_company' || !canSale) return undefined;
     let active = true;
@@ -883,53 +883,71 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
       }
       return '';
     };
+    const toLocalDay = (raw, hhmm = '14:00') => {
+      if (!raw) return '';
+      const local = toDatetimeLocalValue(raw);
+      if (local) {
+        // Ngày thuần (YYYY-MM-DD) → gắn giờ mặc định
+        if (/^\d{4}-\d{2}-\d{2}$/.test(String(raw).slice(0, 10)) && !String(raw).includes('T')) {
+          return `${String(raw).slice(0, 10)}T${hhmm}`;
+        }
+        return local;
+      }
+      const day = String(raw).slice(0, 10);
+      return /^\d{4}-\d{2}-\d{2}$/.test(day) ? `${day}T${hhmm}` : '';
+    };
     const fill = async () => {
       let nextAddr = pickAddr(md.install_address);
-      let nextInstall = md.install_date ? toDatetimeLocalValue(md.install_date) : '';
+      // Panel SX «Ngày lắp đặt» = delivery_date; «Hoàn thiện» = production_finish_date
+      let nextInstall = toLocalDay(md.install_date || md.delivery_date, '14:00');
+      let nextPickup = toLocalDay(md.pickup_at || md.production_finish_date, '08:00');
+      let nextArrive = '';
 
-      const tasks = [];
-      if (comment?.lead_id) {
-        tasks.push(
-          api.get(`/crm/leads/${comment.lead_id}/detail`)
-            .then((lr) => {
-              const deal = lr.data || {};
-              nextAddr = pickAddr(
-                nextAddr,
-                deal.install_address,
-                deal.customer?.address,
-                deal.customer_address,
-                deal.linked_project?.install_address,
-                deal.linked_project?.customer?.address,
-              );
-              if (!nextInstall && deal.linked_project?.install_date) {
-                nextInstall = toDatetimeLocalValue(deal.linked_project.install_date);
-              }
-            })
-            .catch(() => {}),
-        );
-      }
+      // Ưu tiên fetch đúng project_id của thẻ (không lấy linked_project deal = xưởng chính).
       if (md.project_id) {
-        tasks.push(
-          api.get(`/projects/${md.project_id}`)
-            .catch(() => api.get(`/production/projects/${md.project_id}`))
-            .catch(() => api.get(`/logistics/projects/${md.project_id}`))
-            .then((pr) => {
-              const p = pr.data?.project || pr.data || {};
-              nextAddr = pickAddr(
-                nextAddr,
-                p.install_address,
-                p.customer?.address,
-                (p.crmDeals || p.crm_deals || [])[0]?.install_address,
-                (p.crmDeals || p.crm_deals || [])[0]?.customer?.address,
-              );
-              if (!nextInstall && p.install_date) nextInstall = toDatetimeLocalValue(p.install_date);
-            })
-            .catch(() => {}),
-        );
+        try {
+          const pr = await api.get(`/production/projects/${md.project_id}`)
+            .catch(() => api.get(`/projects/${md.project_id}`))
+            .catch(() => api.get(`/logistics/projects/${md.project_id}`));
+          const p = pr.data?.project || pr.data || {};
+          nextAddr = pickAddr(
+            nextAddr,
+            p.install_address,
+            p.customer?.address,
+            (p.crmDeals || p.crm_deals || [])[0]?.install_address,
+            (p.crmDeals || p.crm_deals || [])[0]?.customer?.address,
+          );
+          if (!nextInstall) {
+            nextInstall = toLocalDay(p.install_date || p.delivery_date, '14:00');
+          }
+          if (!nextPickup) {
+            nextPickup = toLocalDay(p.pickup_at || p.production_finish_date, '08:00');
+          }
+        } catch { /* sale có thể không có quyền SX */ }
       }
-      await Promise.all(tasks);
+
+      // Địa chỉ: bổ sung từ deal nếu project chưa có (không lấy ngày từ deal/project chính).
+      if (comment?.lead_id && !nextAddr) {
+        try {
+          const lr = await api.get(`/crm/leads/${comment.lead_id}/detail`);
+          const deal = lr.data || {};
+          nextAddr = pickAddr(
+            nextAddr,
+            deal.install_address,
+            deal.customer?.address,
+            deal.customer_address,
+          );
+        } catch { /* ignore */ }
+      }
+
+      if (nextInstall) {
+        const day = String(nextInstall).slice(0, 10);
+        nextArrive = day ? `${day}T11:00` : '';
+      }
+
       if (!active) return;
       if (nextAddr) setInstallAddress((prev) => (prev.trim() ? prev : nextAddr));
+      if (nextPickup) setPickupAt((prev) => (prev.trim() ? prev : nextPickup));
       if (nextInstall) {
         setInstallDate((prev) => (prev.trim() ? prev : nextInstall));
         setInstallOccurrenceDates((prev) => {
@@ -937,11 +955,9 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
           const day = String(nextInstall).slice(0, 10);
           return day ? [day] : [];
         });
-        setVcArriveAt((prev) => {
-          if (prev.trim()) return prev;
-          const day = String(nextInstall).slice(0, 10);
-          return day ? `${day}T11:00` : '';
-        });
+      }
+      if (nextArrive) {
+        setVcArriveAt((prev) => (prev.trim() ? prev : nextArrive));
       }
     };
     void fill();
@@ -953,6 +969,9 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
     md.project_id,
     md.install_address,
     md.install_date,
+    md.delivery_date,
+    md.pickup_at,
+    md.production_finish_date,
   ]);
 
   // Tự điền ghi chú: «Loại - xưởng» từ deal (phân loại CRM) + xưởng SX của dự án.

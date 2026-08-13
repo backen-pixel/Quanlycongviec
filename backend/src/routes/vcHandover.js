@@ -532,10 +532,25 @@ r.post('/projects/:id/request', async (req, res) => {
 
     const { data: project } = await supabase
       .from('projects')
-      .select('id, code, name, production_person_id, sales_person_id, company_id, install_address, customer_id, workshop_type_id')
+      .select('id, code, name, production_person_id, sales_person_id, company_id, install_address, customer_id, workshop_type_id, install_date, delivery_date, production_finish_date, pickup_at, pickup_notes')
       .eq('id', projectId)
       .maybeSingle();
     if (!project) return res.status(404).json({ error: 'Không tìm thấy dự án' });
+
+    // Ngày lịch từ ĐÚNG project xưởng này (multi-SX không lấy từ deal/project chính).
+    // Panel SX: «Ngày lắp đặt» = delivery_date; «Hoàn thiện» = production_finish_date.
+    const dayOnly = (v) => {
+      const s = String(v || '').trim();
+      if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+      try {
+        const d = new Date(s);
+        if (Number.isNaN(d.getTime())) return null;
+        return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' });
+      } catch { return null; }
+    };
+    const installDayPrefill = dayOnly(project.install_date) || dayOnly(project.delivery_date) || null;
+    const finishDayPrefill = dayOnly(project.production_finish_date) || null;
+    const pickupPrefill = project.pickup_at || (finishDayPrefill ? `${finishDayPrefill}T08:00:00+07:00` : null);
 
     // Multi-SX: project phụ chỉ nằm ở crm_deal_projects (không ghi crm_leads.project_id)
     const deal = await resolveCrmDealForProject(
@@ -576,7 +591,7 @@ r.post('/projects/:id/request', async (req, res) => {
       return cPid === String(projectId);
     });
     if (openComment) {
-      // Backfill loại / xưởng cho bình luận cũ (trước khi có field metadata).
+      // Backfill loại / xưởng / lịch từ đúng project hiện tại (multi-SX).
       const meta = openComment.metadata || {};
       let enrichedRow = openComment;
       if (
@@ -585,9 +600,14 @@ r.post('/projects/:id/request', async (req, res) => {
         || !meta.sale_user_ids?.length
         || !meta.install_address
         || !meta.crm_responsible_user_id
+        || !meta.install_date
+        || !meta.delivery_date
+        || !meta.production_finish_date
+        || !meta.pickup_at
+        || String(meta.project_id || '') !== String(projectId)
       ) {
         try {
-          const patch = { ...meta };
+          const patch = { ...meta, project_id: projectId };
           if (!patch.lead_type_name && deal.lead_type_id) {
             const { data: lt } = await supabase.from('crm_lead_types').select('name').eq('id', deal.lead_type_id).maybeSingle();
             patch.lead_type_id = deal.lead_type_id;
@@ -608,11 +628,23 @@ r.post('/projects/:id/request', async (req, res) => {
           if (!patch.install_address && installAddressPrefill) {
             patch.install_address = installAddressPrefill;
           }
+          // Làm mới lịch từ project khi Sale chưa chọn (awaiting_company) — vẫn cho chỉnh tay sau.
+          if ((meta.state || 'awaiting_company') === 'awaiting_company') {
+            if (installDayPrefill) patch.install_date = `${installDayPrefill}T14:00:00+07:00`;
+            if (project.delivery_date) patch.delivery_date = project.delivery_date;
+            if (project.production_finish_date) patch.production_finish_date = project.production_finish_date;
+            if (pickupPrefill) patch.pickup_at = pickupPrefill;
+            if (project.pickup_notes && !patch.pickup_notes) patch.pickup_notes = project.pickup_notes;
+          }
           if (
             patch.lead_type_name !== meta.lead_type_name
             || patch.workshop_company_name !== meta.workshop_company_name
             || patch.install_address !== meta.install_address
             || patch.crm_responsible_user_id !== meta.crm_responsible_user_id
+            || patch.install_date !== meta.install_date
+            || patch.delivery_date !== meta.delivery_date
+            || patch.production_finish_date !== meta.production_finish_date
+            || patch.pickup_at !== meta.pickup_at
             || JSON.stringify(patch.sale_user_ids) !== JSON.stringify(meta.sale_user_ids || [])
           ) {
             const { data: enriched } = await supabase
@@ -734,6 +766,12 @@ r.post('/projects/:id/request', async (req, res) => {
       workshop_type_id: project.workshop_type_id || null,
       workshop_type_name: workshopTypeName,
       install_address: installAddressPrefill,
+      // Lịch từ đúng xưởng — Sale có thể chỉnh trên thẻ.
+      install_date: installDayPrefill ? `${installDayPrefill}T14:00:00+07:00` : null,
+      delivery_date: project.delivery_date || null,
+      production_finish_date: project.production_finish_date || null,
+      pickup_at: pickupPrefill,
+      pickup_notes: project.pickup_notes || null,
     };
     const mentionText = await formatSaleMentionText(deal.id, saleUserIds);
     await ensureSaleUsersAsLeadMembers(deal.id, saleUserIds, actor);
