@@ -1013,9 +1013,11 @@ r.post('/kanban-stage-pages', async (req, res) => {
           skipEnrich: true,
           lite: true,
         });
-        const baseRows = attachLeadNewFlagForList(hydrated, req.user?.userId);
-        const withFlags = await attachLeadUserFlagsForList(baseRows, req.user?.userId);
-        const rowsById = new Map(withFlags.map((row) => [String(row.id), row]));
+        let baseRows = attachLeadNewFlagForList(hydrated, req.user?.userId);
+        baseRows = await attachLeadUserFlagsForList(baseRows, req.user?.userId);
+        // Multi-SX: mỗi xưởng một chip pipeline trên thẻ CRM
+        baseRows = await helpers.attachProductionProjectsForList(baseRows);
+        const rowsById = new Map(baseRows.map((row) => [String(row.id), row]));
         const pages = {};
         for (const [stageId, page] of Object.entries(batchPages)) {
           const ids = Array.isArray(page?.ids) ? page.ids.map(String) : [];

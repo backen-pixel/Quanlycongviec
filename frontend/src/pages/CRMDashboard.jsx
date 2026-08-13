@@ -219,6 +219,19 @@ function preserveCrmKanbanPipelineBadges(prevRows, nextRows) {
     if (!row.vc_pipeline_stage && prev.vc_pipeline_stage) {
       out = { ...out, vc_pipeline_stage: prev.vc_pipeline_stage };
     }
+    // Multi-SX: giữ danh sách project/chip khi reload thiếu production_projects.
+    if (
+      !(Array.isArray(row.production_projects) && row.production_projects.length)
+      && Array.isArray(prev.production_projects)
+      && prev.production_projects.length
+    ) {
+      out = {
+        ...out,
+        production_projects: prev.production_projects,
+        production_project_count: prev.production_project_count
+          || prev.production_projects.length,
+      };
+    }
     // Giữ stamp Deadline khi hydrate Kanban (500→2000) không mang deadline_bucket.
     if (!row.deadline_bucket && prev.deadline_bucket) {
       out = { ...out, deadline_bucket: prev.deadline_bucket };
@@ -10781,6 +10794,14 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
   && prev.item?.kpi_ledger_month_net === next.item?.kpi_ledger_month_net
   && prev.item?.crm_next_open_task_deadline === next.item?.crm_next_open_task_deadline
   && prev.item?.source_customer_deal_id === next.item?.source_customer_deal_id
+  && prev.item?.sx_pipeline_stage?.id === next.item?.sx_pipeline_stage?.id
+  && prev.item?.vc_pipeline_stage?.id === next.item?.vc_pipeline_stage?.id
+  && (prev.item?.production_project_count || 0) === (next.item?.production_project_count || 0)
+  && JSON.stringify((prev.item?.production_projects || []).map((p) => [
+    p.project_id, p.sx_pipeline_stage?.id, p.company_name,
+  ])) === JSON.stringify((next.item?.production_projects || []).map((p) => [
+    p.project_id, p.sx_pipeline_stage?.id, p.company_name,
+  ]))
   && prev.stage?.id === next.stage?.id
   && prev.compact === next.compact
   && prev.pipelineType === next.pipelineType

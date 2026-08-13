@@ -4746,7 +4746,8 @@ async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
   let enrichedStaff = await attachProductionProjectsForList(withUserFlags);
   try {
     const { enrichCrmLeadsWithProductionStaff } = require('../../../helpers/productionWorkshopTypeStaff');
-    enrichedStaff = await enrichCrmLeadsWithProductionStaff(withUserFlags);
+    // Phải truyền bản đã có production_projects — không dùng withUserFlags (mất multi-chip SX).
+    enrichedStaff = await enrichCrmLeadsWithProductionStaff(enrichedStaff);
   } catch (e) {
     console.warn('[crm] enrich production_staff (legacy list):', e.message);
   }
@@ -4964,6 +4965,8 @@ async function hydrateCrmLeadsRpcPage(parsedRpc, req, parsedOffset, parsedLimit,
     let page = attachLeadNewFlagForList(hydrated, req.user?.userId);
     page = await attachLeadUserFlagsForList(page, req.user?.userId);
     if (!skipDeadline) page = await attachCrmNextOpenTaskDeadline(page);
+    // Multi-SX: 1 chip / xưởng trên thẻ Kanban
+    page = await attachProductionProjectsForList(page);
     return {
       data: page,
       total,
@@ -4975,7 +4978,8 @@ async function hydrateCrmLeadsRpcPage(parsedRpc, req, parsedOffset, parsedLimit,
   }
   const rows = await attachCrmNextOpenTaskDeadline(hydrated);
   const page = attachLeadNewFlagForList(rows, req.user?.userId);
-  const pageWithUserFlags = await attachLeadUserFlagsForList(page, req.user?.userId);
+  let pageWithUserFlags = await attachLeadUserFlagsForList(page, req.user?.userId);
+  pageWithUserFlags = await attachProductionProjectsForList(pageWithUserFlags);
   return {
     data: pageWithUserFlags,
     total,
