@@ -23,7 +23,7 @@
     },
     "android": {
       "package": "vn.tubeppro.crmobilev2",
-      "versionCode": 223,
+      "versionCode": 224,
       "usesCleartextTraffic": true,
       "edgeToEdgeEnabled": false,
       "googleServicesFile": "./google-services.json",
