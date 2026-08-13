@@ -194,10 +194,17 @@ export default function TasksScreen() {
     }
   }, [assigneeFilter, companyQuery, priorityFilter, search, showAssigneePicker, uid]);
 
-  const load = useCallback(async (opts?: { refresh?: boolean; silent?: boolean; append?: boolean }) => {
+  const load = useCallback(async (opts?: {
+    refresh?: boolean;
+    silent?: boolean;
+    append?: boolean;
+    /** Chỉ kéo KPI khi pull/focus/đổi lọc — không khi đổi tab Chưa làm/Đang làm/Hoàn thành. */
+    refreshStats?: boolean;
+  }) => {
     const isRefresh = opts?.refresh ?? false;
     const silent = opts?.silent ?? false;
     const append = opts?.append ?? false;
+    const refreshStats = opts?.refreshStats ?? false;
 
     if (append) {
       if (loadingMoreRef.current || !hasMoreRef.current) return;
@@ -211,8 +218,7 @@ export default function TasksScreen() {
       if (isRefresh && !silent) setRefreshing(true);
       else if (!silent) setLoading(true);
       if (!silent) setError('');
-      // KPI độc lập với list (1 lần đếm đủ).
-      void loadStats();
+      if (refreshStats) void loadStats();
     }
 
     const gen = loadGenRef.current;
@@ -267,7 +273,12 @@ export default function TasksScreen() {
   const loadRef = useRef(load);
   loadRef.current = load;
 
-  // Đổi lọc / tìm kiếm → luôn tải lại ngay (không bị TTL chặn).
+  // KPI theo bộ lọc (company/assignee/priority/search) — không theo tab status.
+  useEffect(() => {
+    void loadStats();
+  }, [loadStats]);
+
+  // Đổi tab status / lọc → chỉ tải lại list thẻ.
   useEffect(() => {
     void load({ silent: lastLoadAtRef.current > 0 });
   }, [load]);
@@ -280,7 +291,7 @@ export default function TasksScreen() {
         return undefined;
       }
       if (Date.now() - lastLoadAtRef.current > TASKS_TTL_MS) {
-        void loadRef.current({ refresh: true, silent: true });
+        void loadRef.current({ refresh: true, silent: true, refreshStats: true });
       }
       return () => {
         // Chỉ abort soft-refresh / lần sau — không đụng gen đang chạy nếu vừa vào màn.
@@ -293,7 +304,7 @@ export default function TasksScreen() {
     useCallback(() => {
       const TASKS_TTL_MS = 45_000;
       if (Date.now() - lastLoadAtRef.current < TASKS_TTL_MS) return;
-      void loadRef.current({ refresh: true, silent: true });
+      void loadRef.current({ refresh: true, silent: true, refreshStats: true });
     }, []),
   );
 
@@ -551,7 +562,7 @@ export default function TasksScreen() {
           ListHeaderComponent={listHeader}
           contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: insets.bottom + 24 }}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={() => void load({ refresh: true })} tintColor={Colors.blue} />
+            <RefreshControl refreshing={refreshing} onRefresh={() => void load({ refresh: true, refreshStats: true })} tintColor={Colors.blue} />
           }
           onEndReached={onEndReached}
           onEndReachedThreshold={0.35}
