@@ -176,6 +176,21 @@ export default function TasksScreen() {
     return () => ac.abort();
   }, [companyQuery, user?.company_id]);
 
+  const loadStats = useCallback(async () => {
+    const assigneeId = assigneeFilter || (!showAssigneePicker && uid ? uid : undefined);
+    try {
+      const s = await fetchCrmAssignmentStats({
+        company_id: companyQuery,
+        assignee_id: assigneeId,
+        priority: priorityFilter || undefined,
+        q: search || undefined,
+      });
+      setServerStats(s);
+    } catch {
+      /* giữ KPI cũ — không full-dump */
+    }
+  }, [assigneeFilter, companyQuery, priorityFilter, search, showAssigneePicker, uid]);
+
   const load = useCallback(async (opts?: { refresh?: boolean; silent?: boolean; append?: boolean }) => {
     const isRefresh = opts?.refresh ?? false;
     const silent = opts?.silent ?? false;
@@ -193,6 +208,8 @@ export default function TasksScreen() {
       if (isRefresh && !silent) setRefreshing(true);
       else if (!silent) setLoading(true);
       if (!silent) setError('');
+      // KPI độc lập với list (1 lần đếm đủ).
+      void loadStats();
     }
 
     const gen = loadGenRef.current;
@@ -200,7 +217,7 @@ export default function TasksScreen() {
     try {
       const assigneeId = assigneeFilter || (!showAssigneePicker && uid ? uid : undefined);
       const offset = append ? rowsRef.current.length : 0;
-      const listParams = {
+      const list = await fetchCrmAssignments({
         company_id: companyQuery,
         assignee_id: assigneeId,
         priority: priorityFilter || undefined,
@@ -209,49 +226,9 @@ export default function TasksScreen() {
         limit: TASKS_PAGE_SIZE,
         offset,
         signal,
-      };
-
-      // KPI đếm đủ 1 lần (/stats). List paginate riêng — không gắn abort vào stats.
-      const statsPromise = append
-        ? Promise.resolve(null as CrmAssignmentStats | null)
-        : fetchCrmAssignmentStats({
-            company_id: companyQuery,
-            assignee_id: assigneeId,
-            priority: priorityFilter || undefined,
-            q: search || undefined,
-          });
-
-      const [listSettled, statsSettled] = await Promise.all([
-        fetchCrmAssignments(listParams).then(
-          (list) => ({ ok: true as const, list }),
-          (err: unknown) => ({ ok: false as const, err }),
-        ),
-        statsPromise.then(
-          (s) => ({ ok: true as const, s }),
-          () => ({ ok: false as const }),
-        ),
-      ]);
-      // Chỉ bỏ kết quả khi có load mới hơn — không discard vì abort muộn (sau khi đã có data).
+      });
       if (!append && gen !== loadGenRef.current) return;
 
-      if (!append && statsSettled.ok) {
-        setServerStats(statsSettled.s);
-      }
-
-      if (!listSettled.ok) {
-        if (append || isAbortError(listSettled.err) || signal?.aborted) {
-          if (!append && gen === loadGenRef.current) lastLoadAtRef.current = Date.now();
-          return;
-        }
-        const msg = formatApiError(listSettled.err);
-        if (msg) setError(msg);
-        setRows([]);
-        setHasMore(false);
-        lastLoadAtRef.current = Date.now();
-        return;
-      }
-
-      const list = listSettled.list;
       setRows((prev) => {
         if (!append) return list;
         const seen = new Set(prev.map((r) => r.id));
@@ -282,7 +259,7 @@ export default function TasksScreen() {
         setRefreshing(false);
       }
     }
-  }, [assigneeFilter, companyQuery, priorityFilter, search, showAssigneePicker, statusSegment, uid]);
+  }, [assigneeFilter, companyQuery, loadStats, priorityFilter, search, showAssigneePicker, statusSegment, uid]);
 
   const loadRef = useRef(load);
   loadRef.current = load;

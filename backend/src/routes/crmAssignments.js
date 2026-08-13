@@ -1199,13 +1199,12 @@ r.get('/stats', responseCache({ ttl: 20, scope: 'user', tags: ['crm:assignments'
       return count || 0;
     }
 
-    const DONE = '(completed,done)';
-
+    // Enum DB chỉ: pending | in_progress | completed | cancelled (không có done/doing).
     const [total, completed, inProgress, overdue] = await Promise.all([
       countExact((q) => q),
-      countExact((q) => q.in('status', ['completed', 'done'])),
-      countExact((q) => q.in('status', ['in_progress', 'doing'])),
-      countExact((q) => q.not('status', 'in', DONE).lt('deadline', nowIso)),
+      countExact((q) => q.eq('status', 'completed')),
+      countExact((q) => q.eq('status', 'in_progress')),
+      countExact((q) => q.neq('status', 'completed').lt('deadline', nowIso)),
     ]);
     const pending = Math.max(0, total - completed - inProgress);
 
