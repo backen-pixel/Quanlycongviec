@@ -222,8 +222,11 @@ export default function TasksScreen() {
             q: search || undefined,
           });
 
-      const [list, statsSettled] = await Promise.all([
-        fetchCrmAssignments(listParams),
+      const [listSettled, statsSettled] = await Promise.all([
+        fetchCrmAssignments(listParams).then(
+          (list) => ({ ok: true as const, list }),
+          (err: unknown) => ({ ok: false as const, err }),
+        ),
         statsPromise.then(
           (s) => ({ ok: true as const, s }),
           () => ({ ok: false as const }),
@@ -231,6 +234,18 @@ export default function TasksScreen() {
       ]);
       if (signal?.aborted || (!append && gen !== loadGenRef.current)) return;
 
+      if (!listSettled.ok) {
+        if (append) return;
+        const msg = formatApiError(listSettled.err);
+        if (msg) setError(msg);
+        setRows([]);
+        setHasMore(false);
+        if (statsSettled.ok) setServerStats(statsSettled.s);
+        lastLoadAtRef.current = Date.now();
+        return;
+      }
+
+      const list = listSettled.list;
       setRows((prev) => {
         if (!append) return list;
         const seen = new Set(prev.map((r) => r.id));

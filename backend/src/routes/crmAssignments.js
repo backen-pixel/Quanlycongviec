@@ -128,25 +128,32 @@ const isAdmin = (req) => ADMIN_ROLES.has(String(req.user?.role || '').toLowerCas
 
 /**
  * status_group (mobile segment) hoặc status đơn / CSV.
- * pending gồm null/todo/cancelled — khớp web normalizeTaskStatus.
+ * Enum DB: pending | in_progress | completed | cancelled (không có todo/doing/done).
+ * pending gồm cancelled — khớp web normalizeTaskStatus.
  */
 function applyAssignmentStatusFilter(q, query = {}) {
   const group = String(query.status_group || '').trim().toLowerCase();
   if (group === 'pending') {
-    return q.or('status.is.null,status.in.(pending,todo,cancelled)');
+    // null hiếm (cột thường NOT NULL) — chỉ dùng enum hợp lệ.
+    return q.in('status', ['pending', 'cancelled']);
   }
   if (group === 'in_progress' || group === 'doing') {
-    return q.in('status', ['in_progress', 'doing']);
+    return q.eq('status', 'in_progress');
   }
   if (group === 'completed' || group === 'done') {
-    return q.in('status', ['completed', 'done']);
+    return q.eq('status', 'completed');
   }
   const statusRaw = String(query.status || '').trim();
   if (!statusRaw) return q;
   if (statusRaw.includes(',')) {
-    const parts = statusRaw.split(',').map((s) => s.trim()).filter(Boolean);
+    const allowed = new Set(['pending', 'in_progress', 'completed', 'cancelled']);
+    const parts = statusRaw.split(',').map((s) => s.trim()).filter((s) => allowed.has(s));
     if (parts.length) return q.in('status', parts);
     return q;
+  }
+  if (statusRaw === 'doing') return q.eq('status', 'in_progress');
+  if (statusRaw === 'done' || statusRaw === 'todo') {
+    return q.eq('status', statusRaw === 'todo' ? 'pending' : 'completed');
   }
   return q.eq('status', statusRaw);
 }
