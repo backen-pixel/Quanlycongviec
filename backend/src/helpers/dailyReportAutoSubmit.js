@@ -24,6 +24,7 @@ function guessRoleKey(user, departmentName = '') {
     role === 'sales_admin'
     || /sale\s*admin|sales?\s*admin|chăm\s*sóc|cham\s*soc|\bcskh\b|care\s*lead/.test(dept)
     || /sale\s*admin/.test(name)
+    || (/(^|\s)sales?(\s|$)/.test(dept) && !/deal/.test(dept))
   ) {
     return 'sale_admin';
   }
@@ -39,24 +40,24 @@ function guessRoleKey(user, departmentName = '') {
   ) {
     return 'sale_deal';
   }
-  return 'sale_admin';
+  return null;
 }
 
 /** Phòng ban CRM/sale (không SX / VC / NS / KT / mua hàng). */
 function isCrmSalesDept(name) {
   const t = String(name || '').toLowerCase().normalize('NFD').replace(/\p{M}/gu, '');
   if (!t) return false;
-  if (/san\s*xuat|van\s*chuyen|lap\s*dat|nhan\s*su|tai\s*chinh|ke\s*toan|mua\s*hang|kho\b|cong\s*nhan/.test(t)) {
+  if (/san\s*xuat|van\s*chuyen|lap\s*dat|nhan\s*su|tai\s*chinh|ke\s*toan|mua\s*hang|kho\b|cong\s*nhan|hanh\s*chinh|xuong|workshop|logistics/.test(t)) {
     return false;
   }
-  return /cskh|cham\s*soc|kinh\s*doanh|sale|marketing|thiet\s*ke|design/.test(t);
+  return /cskh|cham\s*soc|kinh\s*doanh|sale|sales|marketing|thiet\s*ke|design|crm|tu\s*van/.test(t);
 }
 
 function looksLikeNonCrmUser(user) {
   const name = String(user?.full_name || '').toLowerCase().normalize('NFD').replace(/\p{M}/gu, '');
   const role = String(user?.role || '').toLowerCase();
-  if (/san\s*xuat|lap\s*dat|van\s*chuyen|ke\s*toan|mua\s*hang|cong\s*nhan/.test(name)) return true;
-  if (/production|logistics|warehouse|accountant/.test(role)) return true;
+  if (/san\s*xuat|lap\s*dat|van\s*chuyen|ke\s*toan|mua\s*hang|cong\s*nhan|nhan\s*su|xuong|hanh\s*chinh/.test(name)) return true;
+  if (/production|logistics|warehouse|accountant|hr\b/.test(role)) return true;
   return false;
 }
 
@@ -77,12 +78,18 @@ async function listTemplates(companyId = null) {
   }
   const { data, error } = await q;
   if (error) throw error;
-  return (data || []).map((t) => ({
+  const rows = (data || []).map((t) => ({
     ...t,
     items: (t.items || []).slice().sort(
       (a, b) => (a.order_index - b.order_index) || String(a.label).localeCompare(String(b.label)),
     ),
   }));
+  if (!companyId) return rows.filter((t) => t.company_id == null);
+  const cid = String(companyId);
+  const companyRows = rows.filter((t) => t.company_id && String(t.company_id) === cid);
+  const usedRoles = new Set(companyRows.map((t) => String(t.role_key)));
+  const globalsKept = rows.filter((t) => t.company_id == null && !usedRoles.has(String(t.role_key)));
+  return [...companyRows, ...globalsKept];
 }
 
 async function getTemplateById(templateId) {
@@ -293,7 +300,16 @@ async function autoCloseDailyReportForUser({
   const templates = await listTemplates(resolvedCompanyId);
   const roleKeyGuess = guessRoleKey(me || { role: null }, deptName);
   if (!resolvedTemplateId) {
-    resolvedTemplateId = (templates.find((t) => t.role_key === roleKeyGuess) || templates[0])?.id;
+    const want = roleKeyGuess === 'deal_admin' ? 'sale_deal' : roleKeyGuess;
+    const same = (templates || []).filter((t) => {
+      const rk = t.role_key === 'deal_admin' ? 'sale_deal' : t.role_key;
+      return rk === want;
+    });
+    resolvedTemplateId = (
+      same.find((t) => resolvedCompanyId && String(t.company_id || '') === String(resolvedCompanyId))
+      || same.find((t) => t.company_id == null)
+      || same[0]
+    )?.id || null;
   }
   if (!resolvedTemplateId) throw new Error('Chưa có template báo cáo ngày');
 
@@ -581,6 +597,7 @@ async function runAutoCloseBatch({
 module.exports = {
   guessRoleKey,
   isCrmSalesDept,
+  looksLikeNonCrmUser,
   resultDateForReport,
   listTemplates,
   getTemplateById,

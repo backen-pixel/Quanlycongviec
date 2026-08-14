@@ -402,7 +402,7 @@ async function computeAutoDailyResults(userId, reportDate, roleKey = 'sale_admin
 
   if (roleKey === 'sale_admin') {
     ({ funnel, distinctCounts, distinctIds } = await countStageFunnelBySlugs(
-      userId, reportDate, LEAD_FUNNEL_SLUGS, null,
+      userId, reportDate, LEAD_FUNNEL_SLUGS, 'lead',
     ));
     const created = await listLeadsCreatedToday(userId, reportDate, 'lead');
     const leadNewIds = unionIds(distinctIds.lead_new, created.ids);

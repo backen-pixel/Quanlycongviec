@@ -17,7 +17,7 @@ const REPORT_FIELDS =
 const LINE_FIELDS =
   'id, report_id, template_item_id, section, label, order_index, plan_value, result_value, plan_note, result_note, metric_key, auto_result, created_at, updated_at';
 const { computeAutoDailyResults, loadMetricEntityLinks, metricKeyFromLabel } = require('../helpers/dailyReportAutoClose');
-const { autoCloseDailyReportForUser } = require('../helpers/dailyReportAutoSubmit');
+const { autoCloseDailyReportForUser, guessRoleKey, isCrmSalesDept, looksLikeNonCrmUser } = require('../helpers/dailyReportAutoSubmit');
 const { buildDailyWorkHistory } = require('../helpers/dailyWorkHistory');
 const { crmReportAddDaysYmd } = require('../helpers/crmReportDateBounds');
 
@@ -27,6 +27,22 @@ const isValidDate = (s) => DATE_RE.test(String(s || '')) && !Number.isNaN(new Da
 /** Phần II = kết quả ngày hôm trước của ngày phiếu. */
 function resultDateForReport(reportDate) {
   return crmReportAddDaysYmd(reportDate, -1);
+}
+
+async function mapLimit(items, limit, fn) {
+  const list = items || [];
+  const out = new Array(list.length);
+  let next = 0;
+  async function worker() {
+    while (next < list.length) {
+      const i = next;
+      next += 1;
+      out[i] = await fn(list[i], i);
+    }
+  }
+  const n = Math.min(Math.max(1, limit), list.length || 1);
+  await Promise.all(Array.from({ length: list.length ? n : 0 }, () => worker()));
+  return out;
 }
 
 function isGlobalManager(user) {
@@ -52,31 +68,23 @@ function nowVnParts() {
   };
 }
 
-function guessRoleKey(user, departmentName = '') {
-  const role = normalizeRole(user?.role);
-  const dept = String(departmentName || '').toLowerCase();
-  const name = String(user?.full_name || '').toLowerCase();
-  // Sale Admin / CSKH — ưu tiên trước rule Sale-Deal
-  if (
-    role === 'sales_admin'
-    || /sale\s*admin|sales?\s*admin|chăm\s*sóc|cham\s*soc|\bcskh\b|care\s*lead/.test(dept)
-    || /sale\s*admin/.test(name)
-  ) {
-    return 'sale_admin';
+function normalizeDailyRoleKey(roleKey) {
+  const k = String(roleKey || '').trim();
+  if (k === 'deal_admin') return 'sale_deal';
+  return k || null;
+}
+
+/** Chỉ lấy mẫu đúng vai trò — không fallback sang mẫu kia (Sale Admin ≠ Sale-Deal). */
+function pickTemplateByRole(templates, roleKey, companyId = null) {
+  const want = normalizeDailyRoleKey(roleKey);
+  if (!want) return null;
+  const same = (templates || []).filter((t) => normalizeDailyRoleKey(t.role_key) === want);
+  if (!same.length) return null;
+  if (companyId) {
+    const own = same.find((t) => String(t.company_id || '') === String(companyId));
+    if (own) return own;
   }
-  if (/thiết\s*kế|thiet\s*ke|design/.test(dept)) return 'design_survey';
-  // Sale Deal / admin / quản lý → mẫu Sale-Deal
-  if (
-    role === 'admin'
-    || role === 'manager'
-    || role === 'platform_admin'
-    || role === 'crm_production_admin'
-    || /sale\s*-?\s*deal|admin|quản\s*lý|quan\s*ly|giám\s*đốc/.test(dept)
-    || /sale\s*-?\s*deal/.test(name)
-  ) {
-    return 'sale_deal';
-  }
-  return 'sale_admin';
+  return same.find((t) => t.company_id == null) || same[0];
 }
 
 function toNumOrNull(v) {
@@ -101,7 +109,7 @@ async function listTemplates(companyId) {
     .select(`${TEMPLATE_FIELDS}, items:crm_daily_report_template_items(${ITEM_FIELDS})`)
     .eq('is_active', true)
     .order('name');
-  // System (null) + company-specific
+  // Hệ thống (null) + đúng công ty đang chọn — không lấy mẫu công ty khác
   if (companyId) {
     q = q.or(`company_id.is.null,company_id.eq.${companyId}`);
   } else {
@@ -113,7 +121,25 @@ async function listTemplates(companyId) {
     ...t,
     items: (t.items || []).slice().sort((a, b) => (a.order_index - b.order_index) || String(a.label).localeCompare(String(b.label))),
   }));
-  return rows;
+  return preferCompanyTemplates(rows, companyId);
+}
+
+/** Mẫu công ty ghi đè mẫu hệ thống cùng role_key; loại mẫu công ty khác (nếu lọt). */
+function preferCompanyTemplates(rows, companyId) {
+  const list = rows || [];
+  if (!companyId) return list.filter((t) => t.company_id == null);
+  const cid = String(companyId);
+  const companyRows = list.filter((t) => t.company_id && String(t.company_id) === cid);
+  const usedRoles = new Set(companyRows.map((t) => String(t.role_key)));
+  const globalsKept = list.filter((t) => t.company_id == null && !usedRoles.has(String(t.role_key)));
+  return [...companyRows, ...globalsKept].sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'vi'));
+}
+
+function templateAllowedForCompany(template, companyId) {
+  if (!template) return false;
+  if (template.company_id == null || template.company_id === '') return true;
+  if (!companyId) return false;
+  return String(template.company_id) === String(companyId);
 }
 
 async function getTemplateById(templateId) {
@@ -450,9 +476,11 @@ async function resolveTeamUserIds(req) {
 // ─── GET /templates ──────────────────────────────────────────────────────────
 r.get('/templates', async (req, res) => {
   try {
-    const companyId = req.user.company_id || null;
+    const requested = String(req.query.company_id || '').trim() || null;
+    let companyId = req.user.company_id || null;
+    if (isSystemAdmin(req.user) && requested) companyId = requested;
     const templates = await listTemplates(companyId);
-    return res.json({ templates });
+    return res.json({ templates, company_id: companyId });
   } catch (e) {
     console.error('[daily-reports] GET /templates:', e.message || e);
     return res.status(500).json({ error: e.message || 'Lỗi tải template' });
@@ -484,9 +512,10 @@ r.get('/mine', async (req, res) => {
         .maybeSingle();
       // Cho phép đổi mẫu tự do khi truyền template_id
       const wantTpl = req.query.template_id ? String(req.query.template_id) : null;
+      const companyId = me?.company_id || req.user.company_id || null;
       if (full && wantTpl && wantTpl !== String(full.template_id || '')) {
         const nextTpl = await getTemplateById(wantTpl);
-        if (nextTpl) {
+        if (nextTpl && templateAllowedForCompany(nextTpl, companyId)) {
           await switchReportTemplate(full.id, nextTpl, userId);
           full.template_id = nextTpl.id;
         }
@@ -503,13 +532,15 @@ r.get('/mine', async (req, res) => {
 
     // Chưa có phiếu → trả skeleton theo template + dòng user tự thêm
     const templates = await listTemplates(me?.company_id || req.user.company_id || null);
+    const companyId = me?.company_id || req.user.company_id || null;
     let templateId = req.query.template_id || null;
     if (!templateId) {
       const roleKey = guessRoleKey(me || req.user, deptName);
-      const match = templates.find((t) => t.role_key === roleKey) || templates[0];
+      const match = pickTemplateByRole(templates, roleKey, companyId);
       templateId = match?.id || null;
     }
-    const template = templateId ? await getTemplateById(templateId) : null;
+    let template = templateId ? await getTemplateById(templateId) : null;
+    if (template && !templateAllowedForCompany(template, companyId)) template = null;
     const extras = await listUserExtras(userId);
     const skeletonLines = [
       ...(template?.items || []).map((it) => ({
@@ -597,12 +628,15 @@ r.put('/mine', async (req, res) => {
     } else if (!templateId) {
       const templates = await listTemplates(companyId);
       const roleKey = guessRoleKey(me || req.user, deptName);
-      templateId = (templates.find((t) => t.role_key === roleKey) || templates[0])?.id;
+      templateId = pickTemplateByRole(templates, roleKey, companyId)?.id;
     }
     if (!templateId) return res.status(400).json({ error: 'Chưa có template báo cáo ngày' });
 
     const template = await getTemplateById(templateId);
     if (!template) return res.status(404).json({ error: 'Không tìm thấy template' });
+    if (!templateAllowedForCompany(template, companyId)) {
+      return res.status(403).json({ error: 'Mẫu báo cáo không thuộc công ty này' });
+    }
 
     const now = new Date().toISOString();
     let report = existing;
@@ -807,7 +841,7 @@ r.post('/mine/extras', async (req, res) => {
       const deptName = me?.departments?.name || null;
       const templates = await listTemplates(companyId);
       const roleKey = guessRoleKey(me || req.user, deptName);
-      const templateId = (templates.find((t) => t.role_key === roleKey) || templates[0])?.id
+      const templateId = pickTemplateByRole(templates, roleKey, companyId)?.id
         || req.body?.template_id
         || null;
       if (!templateId) {
@@ -1144,10 +1178,8 @@ r.get('/team/matrix-cell-links', async (req, res) => {
     const roleKey = String(req.query.role_key || 'sale_admin').trim() || 'sale_admin';
     const section = String(req.query.section || 'result').trim();
 
-    // Phần II dùng ngày kết quả (hôm trước); các mục khác cũng dùng resultDate nếu hỏi auto CRM
-    const crmDate = section === 'plan'
-      ? reportDate
-      : (resultDateForReport(reportDate) || reportDate);
+    // Bảng tổng hợp: ô Kết quả / Kế hoạch đều bám ngày đang chọn trên bộ lọc.
+    const crmDate = reportDate;
 
     const payload = await loadMetricEntityLinks(userId, crmDate, roleKey, metricKey);
     return res.json({
@@ -1177,7 +1209,9 @@ r.get('/team/matrix', async (req, res) => {
     const date = String(req.query.date || nowVnParts().date);
     if (!isValidDate(date)) return res.status(400).json({ error: 'Ngày không hợp lệ' });
 
-    const resultDate = resultDateForReport(date);
+    // Tab Kết quả trên bảng tổng hợp = CRM của đúng ngày đang chọn (không lệch −1).
+    // Phiếu cá nhân vẫn: Phần I = ngày phiếu, Phần II = hôm trước.
+    const resultDate = date;
     let companyId = String(req.query.company_id || '').trim() || null;
     const departmentId = String(req.query.department_id || '').trim() || null;
     const qSearch = String(req.query.q || '').trim().toLowerCase();
@@ -1252,7 +1286,14 @@ r.get('/team/matrix', async (req, res) => {
 
     const templatesCatalog = await listTemplates(companyId);
     const templateById = new Map((templatesCatalog || []).map((t) => [String(t.id), t]));
-    const templateByRole = new Map((templatesCatalog || []).map((t) => [String(t.role_key), t]));
+    const templateByRole = new Map();
+    for (const t of templatesCatalog || []) {
+      const rk = normalizeDailyRoleKey(t.role_key);
+      if (!rk) continue;
+      if (!templateByRole.has(rk) || (companyId && String(t.company_id || '') === String(companyId))) {
+        templateByRole.set(rk, t);
+      }
+    }
 
     const missingUserIds = [...reportByUser.keys()].filter(
       (uid) => !users.some((u) => String(u.id) === uid),
@@ -1274,6 +1315,37 @@ r.get('/team/matrix', async (req, res) => {
     }
 
     users.sort((a, b) => String(a.full_name || '').localeCompare(String(b.full_name || ''), 'vi'));
+
+    const lastTemplateByUser = new Map();
+    {
+      const userIds = users.map((u) => u.id).filter(Boolean);
+      if (userIds.length) {
+        const { data: prevReps } = await supabase
+          .from('crm_daily_reports')
+          .select('user_id, template_id, report_date')
+          .eq('company_id', companyId)
+          .in('user_id', userIds)
+          .not('template_id', 'is', null)
+          .gte('report_date', crmReportAddDaysYmd(date, -21) || date)
+          .order('report_date', { ascending: false })
+          .limit(4000);
+        for (const r of prevReps || []) {
+          const uid = String(r.user_id);
+          if (!lastTemplateByUser.has(uid) && r.template_id) lastTemplateByUser.set(uid, String(r.template_id));
+        }
+      }
+    }
+
+    users = users.filter((u) => {
+      const uid = String(u.id);
+      const dn = deptNameById.get(String(u.department_id || '')) || '';
+      if (looksLikeNonCrmUser(u) && !reportByUser.has(uid)) return false;
+      if (reportByUser.has(uid)) return true;
+      const guessed = guessRoleKey(u, dn);
+      if (guessed === 'sale_admin' || guessed === 'sale_deal' || guessed === 'design_survey') return true;
+      if (lastTemplateByUser.has(uid) && isCrmSalesDept(dn)) return true;
+      return false;
+    });
 
     const reportIds = users
       .map((u) => reportByUser.get(String(u.id))?.id)
@@ -1303,16 +1375,22 @@ r.get('/team/matrix', async (req, res) => {
         return {
           template_id: rep.template.id,
           template_name: rep.template.name,
-          role_key: rep.template.role_key || 'unknown',
+          role_key: normalizeDailyRoleKey(rep.template.role_key) || 'unknown',
         };
       }
       if (rep?.template_id && templateById.has(String(rep.template_id))) {
         const t = templateById.get(String(rep.template_id));
-        return { template_id: t.id, template_name: t.name, role_key: t.role_key || 'unknown' };
+        return { template_id: t.id, template_name: t.name, role_key: normalizeDailyRoleKey(t.role_key) || 'unknown' };
+      }
+      const lastId = lastTemplateByUser.get(String(u.id));
+      if (lastId && templateById.has(lastId)) {
+        const t = templateById.get(lastId);
+        return { template_id: t.id, template_name: t.name, role_key: normalizeDailyRoleKey(t.role_key) || 'unknown' };
       }
       const guessed = guessRoleKey(u, deptNameById.get(String(u.department_id || '')) || '');
-      const t = templateByRole.get(guessed);
-      if (t) return { template_id: t.id, template_name: t.name, role_key: t.role_key };
+      if (!guessed) return { template_id: null, template_name: 'Chưa có mẫu', role_key: 'none' };
+      const t = pickTemplateByRole(templatesCatalog, guessed, companyId) || templateByRole.get(normalizeDailyRoleKey(guessed));
+      if (t) return { template_id: t.id, template_name: t.name, role_key: normalizeDailyRoleKey(t.role_key) };
       return { template_id: null, template_name: 'Chưa có mẫu', role_key: 'none' };
     }
 
@@ -1341,13 +1419,39 @@ r.get('/team/matrix', async (req, res) => {
         template_name: tpl.template_name,
         role_key: tpl.role_key,
       };
-    });
+    }).filter((e) => (
+      e.report_id
+      || (e.role_key && e.role_key !== 'none' && e.role_key !== 'unknown')
+    ));
 
     if (templateRoleFilter) {
+      const wantRole = normalizeDailyRoleKey(templateRoleFilter);
       employees = employees.filter((e) => (
-        String(e.role_key) === templateRoleFilter
-        || String(e.template_id) === templateRoleFilter
+        String(e.template_id) === templateRoleFilter
+        || normalizeDailyRoleKey(e.role_key) === wantRole
       ));
+    }
+
+    // Luôn tính CRM live cho Phần II — không phụ thuộc phiếu đã chốt / cron 17:00.
+    const AUTO_RESULT_ROLES = new Set(['sale_admin', 'sale_deal', 'deal_admin', 'design_survey']);
+    const liveByUser = new Map();
+    const needLiveResult = !!resultDate && employees.some((e) => AUTO_RESULT_ROLES.has(e.role_key));
+    if (needLiveResult) {
+      await mapLimit(
+        employees.filter((e) => (
+          AUTO_RESULT_ROLES.has(e.role_key)
+          && (e.report_id || isCrmSalesDept(e.department_name) || lastTemplateByUser.has(String(e.id)))
+        )),
+        6,
+        async (emp) => {
+          try {
+            const computed = await computeAutoDailyResults(String(emp.id), resultDate, emp.role_key);
+            liveByUser.set(String(emp.id), computed.metrics || {});
+          } catch (err) {
+            console.warn('[daily-reports] live matrix result', emp.id, err.message || err);
+          }
+        },
+      );
     }
 
     function rowKey(section, line) {
@@ -1355,11 +1459,50 @@ r.get('/team/matrix', async (req, res) => {
       return `${section}:label:${String(line.label || '').trim().toLowerCase()}`;
     }
 
+    function sourceLines(emp, section, valueField) {
+      const tpl = emp.template_id ? templateById.get(String(emp.template_id)) : null;
+      const tplItems = (tpl?.items || []).filter((it) => it.section === section);
+      const allowedKeys = new Set(tplItems.map((it) => it.metric_key).filter(Boolean));
+      const allowedLabels = new Set(tplItems.map((it) => String(it.label || '').trim().toLowerCase()).filter(Boolean));
+
+      // Kết quả team: luôn lấy hạng mục từ mẫu + số CRM live (không dùng result_value phiếu,
+      // vì phiếu ngày D lưu KQ của D−1).
+      if (valueField === 'result' && section === 'work') {
+        const extras = emp.report_id
+          ? (linesByReport.get(String(emp.report_id)) || []).filter((l) => (
+            l.section === 'work' && String(l.metric_key || '').startsWith('user_extra:')
+          ))
+          : [];
+        return [
+          ...tplItems.map((it) => ({
+            section: 'work',
+            label: it.label,
+            order_index: it.order_index,
+            metric_key: it.metric_key,
+            plan_value: null,
+            result_value: null,
+          })),
+          ...extras,
+        ];
+      }
+
+      const fromReport = emp.report_id
+        ? (linesByReport.get(String(emp.report_id)) || []).filter((l) => {
+          if (l.section !== section) return false;
+          if (String(l.metric_key || '').startsWith('user_extra:')) return true;
+          if (!tplItems.length) return true;
+          if (l.metric_key && allowedKeys.has(l.metric_key)) return true;
+          return allowedLabels.has(String(l.label || '').trim().toLowerCase());
+        })
+        : [];
+      return fromReport;
+    }
+
     function collectSectionRows(empList, section, valueField) {
       const map = new Map();
       for (const emp of empList) {
-        if (!emp.report_id) continue;
-        const lines = (linesByReport.get(String(emp.report_id)) || []).filter((l) => l.section === section);
+        if (valueField !== 'result' && !emp.report_id) continue;
+        const lines = sourceLines(emp, section, valueField);
         for (const line of lines) {
           const key = rowKey(section, line);
           if (!map.has(key)) {
@@ -1376,8 +1519,12 @@ r.get('/team/matrix', async (req, res) => {
           row.order_index = Math.min(row.order_index, Number(line.order_index) || 0);
           let display = null;
           if (valueField === 'plan') display = line.plan_value;
-          else if (valueField === 'result') display = line.result_value;
-          else if (valueField === 'note') {
+          else if (valueField === 'result') {
+            const live = liveByUser.get(String(emp.id));
+            const mk = line.metric_key || metricKeyFromLabel(line.label);
+            if (live && mk && live[mk] && live[mk].value != null) display = live[mk].value;
+            else display = line.result_value;
+          } else if (valueField === 'note') {
             const note = line.result_note || line.plan_note;
             display = note && String(note).trim() ? String(note).trim() : (line.result_value ?? line.plan_value);
           }
@@ -1405,7 +1552,7 @@ r.get('/team/matrix', async (req, res) => {
         {
           key: 'result',
           code: 'II',
-          title: `II. Kết quả ngày đã qua (${resultDate ? `${resultDate.slice(8, 10)}/${resultDate.slice(5, 7)}/${resultDate.slice(0, 4)}` : '—'})`,
+          title: `II. Kết quả (${resultDate ? `${resultDate.slice(8, 10)}/${resultDate.slice(5, 7)}/${resultDate.slice(0, 4)}` : '—'})`,
           rows: collectSectionRows(empList, 'work', 'result'),
         },
         {
@@ -1426,18 +1573,19 @@ r.get('/team/matrix', async (req, res) => {
     const ROLE_ORDER = ['sale_admin', 'sale_deal', 'deal_admin', 'design_survey', 'none', 'unknown'];
     const groupMap = new Map();
     for (const emp of employees) {
-      const key = emp.role_key || 'none';
+      const key = String(emp.template_id || emp.role_key || 'none');
       if (!groupMap.has(key)) {
         groupMap.set(key, {
-          role_key: key,
+          role_key: emp.role_key || 'none',
           template_id: emp.template_id,
-          template_name: emp.template_name || key,
+          template_name: emp.template_name || emp.role_key,
           employees: [],
         });
       }
       const g = groupMap.get(key);
       if (!g.template_id && emp.template_id) g.template_id = emp.template_id;
       if (emp.template_name) g.template_name = emp.template_name;
+      if (emp.role_key) g.role_key = emp.role_key;
       g.employees.push(emp);
     }
 
@@ -1469,9 +1617,11 @@ r.get('/team/matrix', async (req, res) => {
       missing: employees.filter((e) => e.submit_state === 'missing' || e.submit_state === 'draft').length,
     };
 
+    res.set('Cache-Control', 'no-store');
     return res.json({
       date,
       result_date: resultDate,
+      result_live: needLiveResult,
       company_id: companyId,
       department_id: departmentId,
       role_key: templateRoleFilter,
@@ -1479,6 +1629,7 @@ r.get('/team/matrix', async (req, res) => {
         id: t.id,
         name: t.name,
         role_key: t.role_key,
+        company_id: t.company_id || null,
       })),
       departments: (depts || []).map((d) => ({ id: d.id, name: d.name })),
       summary,

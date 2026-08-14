@@ -42,21 +42,21 @@ const fmtTime = (iso) => {
 
 /** Giải thích hạng mục AUTO (hover dấu ?) */
 const METRIC_HELP = {
-  lead_new: 'Số lead vào cột Tiếp nhận ngày hôm trước (hoặc lead bạn tạo mới). Đếm lead bạn phụ trách hoặc bạn chuyển cột.',
-  not_contacted: 'Số lead vào cột Không trả lời / không phản hồi ngày hôm trước.',
-  care_cold: 'Số lead Cold bạn chăm ngày hôm trước (activity). Nếu không có activity thì đếm lead vào cột Cold.',
-  care_warm: 'Số lead Warm bạn chăm ngày hôm trước (activity). Nếu không có activity thì đếm lead vào cột Warm.',
-  care_hot: 'Số lead Hot bạn chăm ngày hôm trước (activity). Nếu không có activity thì đếm lead vào cột Hot.',
-  survey_scheduled: 'Số lead bạn chốt chuyển sang Deal ngày hôm trước (convert Lead → Deal).',
-  deal_new: 'Số deal tiếp nhận trong ngày hôm trước (deal tạo mới hoặc lead chuyển sang deal).',
-  deal_interact: 'Số sự kiện khảo sát ngày hôm trước (có liên kết lead/deal).',
-  deal_survey: 'Số sự kiện khảo sát ngày hôm trước (có liên kết lead/deal).',
-  deal_to_quote: 'Số deal chuyển sang báo giá / đang thiết kế trong ngày hôm trước.',
-  deal_to_contract: 'Số deal ký hợp đồng / chờ cọc trong ngày hôm trước.',
-  deal_producing: 'Số deal vào sản xuất trong ngày hôm trước.',
-  deal_installing: 'Số deal VC / lắp đặt trong ngày hôm trước.',
-  deal_completed: 'Số deal hoàn thành trong ngày hôm trước.',
-  deal_overdue: 'Số deal quá hạn trong ngày hôm trước (deadline thẻ hoặc ngày đóng kỳ vọng, chưa thắng/thua).',
+  lead_new: 'Số lead vào cột Tiếp nhận trong ngày (hoặc lead bạn tạo mới cùng ngày). Đếm lead bạn phụ trách hoặc bạn là người chuyển cột. Lấy max hai nguồn, không cộng trùng.',
+  not_contacted: 'Số lead (distinct) vào cột Không trả lời / không phản hồi trong ngày.',
+  care_cold: 'Ưu tiên: số lead đang ở Cold mà bạn có activity trong ngày. Nếu không có activity thì đếm lead vào cột Cold trong ngày.',
+  care_warm: 'Ưu tiên: số lead đang ở Warm mà bạn có activity trong ngày. Nếu không có activity thì đếm lead vào cột Warm trong ngày.',
+  care_hot: 'Ưu tiên: số lead đang ở Hot mà bạn có activity trong ngày. Nếu không có activity thì đếm lead vào cột Hot trong ngày.',
+  survey_scheduled: 'Số lead bạn convert Lead → Deal trong ngày (KPI lead_converted hoặc chuyển sang pipeline Deal) — không phải số vào cột Hẹn khảo sát.',
+  deal_new: 'Số deal tiếp nhận trong ngày (deal tạo mới hoặc lead→deal). Lấy max hai nguồn.',
+  deal_interact: 'Số sự kiện khảo sát / đo đạc trong ngày có liên kết lead/deal (bạn tạo hoặc được giao).',
+  deal_survey: 'Số sự kiện khảo sát / đo đạc trong ngày có liên kết lead/deal.',
+  deal_to_quote: 'Số deal chuyển sang báo giá hoặc đang thiết kế/BG trong ngày (cộng hai cột, có thể trùng nếu cùng deal đi cả hai).',
+  deal_to_contract: 'Số deal ký hợp đồng hoặc chờ cọc trong ngày.',
+  deal_producing: 'Số deal vào sản xuất trong ngày.',
+  deal_installing: 'Số deal VC / lắp đặt trong ngày.',
+  deal_completed: 'Số deal hoàn thành trong ngày.',
+  deal_overdue: 'Số deal chưa thắng/thua có deadline thẻ hoặc ngày đóng kỳ vọng rơi vào ngày đó.',
   survey_event: 'Số sự kiện khảo sát / đo đạc trong ngày (bạn được giao hoặc tạo).',
   install_follow: 'Số deal theo dõi lắp đặt (chuyển cột hoặc task) trong ngày.',
   design_consult: 'Điền tay: số lần hỗ trợ tư vấn.',
@@ -1526,7 +1526,9 @@ function EmployeeHeaderCells({ employees, onOpenReport, hoveredColId, sectionKey
 function MatrixSectionTable({ section, employees, templateName, roleKey, reportDate, onOpenReport }) {
   const headCls = SECTION_HEADER_CLS[section.key] || 'bg-slate-800';
   const rows = section.rows || [];
-  const cols = (employees || []).filter((e) => e.report_id);
+  const cols = section.key === 'result'
+    ? (employees || [])
+    : (employees || []).filter((e) => e.report_id);
   const showCols = cols.length ? cols : (employees || []);
   const [hover, setHover] = useState({ rowKey: null, colId: null });
   const [picked, setPicked] = useState(null); // { row, emp, display }
@@ -1604,7 +1606,9 @@ function MatrixSectionTable({ section, employees, templateName, roleKey, reportD
               </div>
             )}
           </div>
-          <div className="text-[11px] text-white/80">{showCols.length} nhân viên có phiếu</div>
+          <div className="text-[11px] text-white/80">
+            {showCols.length} nhân viên{section.key === 'result' ? '' : ' có phiếu'}
+          </div>
         </div>
 
         {picked && (
@@ -1690,7 +1694,9 @@ function MatrixSectionTable({ section, employees, templateName, roleKey, reportD
                 <td className="sticky left-0 z-10 bg-white px-3 py-6 text-center text-gray-400 border-r border-gray-100" colSpan={showCols.length + 1}>
                   {section.key === 'plan'
                     ? 'Chưa có kế hoạch (Phần I) — số liệu chốt nằm ở mục II. Kết quả'
-                    : 'Chưa có dữ liệu mục này'}
+                    : section.key === 'result'
+                      ? 'Chưa có số liệu CRM cho ngày đang chọn'
+                      : 'Chưa có dữ liệu mục này'}
                 </td>
               </tr>
             ) : (
@@ -1832,6 +1838,7 @@ function TeamMatrixPanel({ date, onDateChange }) {
       const next = { ...prev, ...patch };
       if (Object.prototype.hasOwnProperty.call(patch, 'companyId') && patch.companyId !== prev.companyId) {
         next.departmentId = '';
+        next.roleKey = '';
       }
       if (!lockedCompany && Object.prototype.hasOwnProperty.call(patch, 'companyId')) {
         setStoredCrmFilterCompanyId(patch.companyId || '');
@@ -1858,9 +1865,10 @@ function TeamMatrixPanel({ date, onDateChange }) {
           role_key: filter.roleKey || undefined,
           q: filter.q || undefined,
         },
+        headers: { 'x-no-cache': '1' },
       });
       setData(res.data);
-      if (res.data?.templates?.length) setTemplates(res.data.templates);
+      if (res.data?.templates) setTemplates(res.data.templates);
       if (res.data?.departments?.length) {
         const list = departmentsForDailyReportFilter(res.data.departments);
         setDepartments(list);
@@ -1890,7 +1898,7 @@ function TeamMatrixPanel({ date, onDateChange }) {
         const section = (g.sections || []).find((sec) => sec.key === key);
         if (!section) continue;
         blocks.push({
-          id: `${key}:${g.role_key || g.template_id}`,
+          id: `${key}:${g.template_id || g.role_key}`,
           section,
           employees: g.employees || [],
           templateName: g.template_name,
@@ -1973,7 +1981,9 @@ function TeamMatrixPanel({ date, onDateChange }) {
               >
                 <option value="">Tất cả mẫu</option>
                 {tplOptions.map((t) => (
-                  <option key={t.role_key || t.id} value={t.role_key || t.id}>{t.name}</option>
+                  <option key={t.id || t.role_key} value={t.role_key || t.id}>
+                    {t.name}{t.company_id ? ' · công ty' : ''}
+                  </option>
                 ))}
               </select>
             </div>
@@ -1992,7 +2002,8 @@ function TeamMatrixPanel({ date, onDateChange }) {
             </div>
           </div>
           <div className="text-[11px] text-violet-700/80">
-            Phiếu {fmtDMY(date)} · KQ Phần II: {fmtDMY(addDaysISO(date, -1))}
+            Ngày đang chọn {fmtDMY(date)} · Tab Kết quả đếm đúng CRM ngày này
+            {data?.result_live ? ' (lấy trực tiếp từ CRM)' : ''}
           </div>
         </div>
       </div>
@@ -2021,6 +2032,14 @@ function TeamMatrixPanel({ date, onDateChange }) {
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
           Chọn công ty để xem bảng tổng hợp theo từng mục I–IV.
           {companies.length === 0 && isSystemAdmin(user) ? ' Đang tải danh sách công ty…' : null}
+        </div>
+      )}
+
+      {companyId && (sectionTab === 'result' || sectionTab === 'all') && (
+        <div className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-sm text-violet-950">
+          <strong>II. Kết quả</strong> là số CRM của <strong>đúng ngày đang chọn</strong>
+          ({fmtDMY(data?.result_date || date)}).
+          Muốn xem ngày 13/08 thì chọn <strong>13/08/2026</strong> trên bộ lọc — không cần chờ 17:00.
         </div>
       )}
 
