@@ -4,7 +4,7 @@
  */
 const { supabase } = require('../config/supabase');
 const { normalizeRole } = require('./adminRole');
-const { computeAutoDailyResults, metricKeyFromLabel } = require('./dailyReportAutoClose');
+const { computeAutoDailyResults, computeAutoDailyPlans, metricKeyFromLabel } = require('./dailyReportAutoClose');
 const { crmReportAddDaysYmd, crmReportTodayYmdVn } = require('./crmReportDateBounds');
 
 const TEMPLATE_FIELDS =
@@ -374,47 +374,52 @@ async function autoCloseDailyReportForUser({
 
   const roleKey = template.role_key || roleKeyGuess;
   const computed = await computeAutoDailyResults(userId, resultDate, roleKey);
+  const planned = await computeAutoDailyPlans(userId, date, roleKey, resolvedCompanyId);
   const metrics = computed.metrics || {};
+  const planMetrics = planned.metrics || {};
 
   let autoFilled = 0;
   let manualLeft = 0;
   for (const row of linesToFill || []) {
-    if (row.section !== 'work') continue; // Chỉ Phần II (KQ hạng mục work)
+    if (row.section !== 'work') continue;
     const key = row.metric_key || metricKeyFromLabel(row.label);
     const m = key ? metrics[key] : null;
+    const p = key ? planMetrics[key] : null;
+    const keepResultNote = row.result_note
+      && !/^tự động:/i.test(String(row.result_note))
+      && !/^không tự động/i.test(String(row.result_note))
+      ? row.result_note
+      : null;
+    const keepPlanNote = row.plan_note
+      && !/^tự động deadline:/i.test(String(row.plan_note))
+      && !/^tự động:/i.test(String(row.plan_note))
+      ? row.plan_note
+      : null;
+    const patch = {
+      metric_key: key || row.metric_key,
+      auto_result: !!(m || p),
+      updated_at: now,
+    };
     if (m) {
-      const keepNote = row.result_note && !/^tự động:/i.test(String(row.result_note))
-        && !/^không tự động/i.test(String(row.result_note))
-        ? row.result_note
-        : null;
-      const { error: upErr } = await supabase
-        .from('crm_daily_report_lines')
-        .update({
-          result_value: m.value,
-          result_note: keepNote,
-          metric_key: key,
-          auto_result: true,
-          updated_at: now,
-        })
-        .eq('id', row.id);
-      if (upErr) throw upErr;
-      autoFilled += 1;
+      patch.result_value = m.value;
+      patch.result_note = keepResultNote;
     } else {
-      const keepNote = row.result_note && !/^không tự động/i.test(String(row.result_note))
-        ? row.result_note
-        : null;
-      const { error: upErr } = await supabase
-        .from('crm_daily_report_lines')
-        .update({
-          result_value: row.result_value != null ? row.result_value : 0,
-          result_note: keepNote,
-          auto_result: false,
-          updated_at: now,
-        })
-        .eq('id', row.id);
-      if (upErr) throw upErr;
-      manualLeft += 1;
+      patch.result_value = row.result_value != null ? row.result_value : 0;
+      patch.result_note = keepResultNote && !/^không tự động/i.test(String(keepResultNote))
+        ? keepResultNote
+        : (row.result_note && !/^không tự động/i.test(String(row.result_note)) ? row.result_note : null);
     }
+    if (p) {
+      patch.plan_value = p.value;
+      patch.plan_note = keepPlanNote;
+    }
+    const { error: upErr } = await supabase
+      .from('crm_daily_report_lines')
+      .update(patch)
+      .eq('id', row.id);
+    if (upErr) throw upErr;
+    if (m || p) autoFilled += 1;
+    else manualLeft += 1;
   }
 
   const reportPatch = {
@@ -446,6 +451,7 @@ async function autoCloseDailyReportForUser({
       result_date: resultDate,
       role_key: roleKey,
       metrics,
+      plan_metrics: planMetrics,
     },
   };
 }

@@ -6,7 +6,43 @@ const { supabase } = require('../config/supabase');
 const {
   crmReportCreatedAtFromIso,
   crmReportCreatedAtToIso,
+  endOfCalendarDayAfterEntered,
 } = require('./crmReportDateBounds');
+const { attachLeadUserFlagsForList } = require('./crmLeadUserFlags');
+const { crmLeadHasPhone, effectivePipelineStageSlaDays } = require('./crmPipelineSla');
+
+/** Stage hiện tại → hạng mục kế hoạch (Deadline Quá hạn + Hôm nay). */
+const PLAN_STAGE_TO_METRIC = {
+  sale_admin: {
+    lead_new: 'lead_new',
+    not_contacted: 'not_contacted',
+    cold: 'care_cold',
+    warm: 'care_warm',
+    hot: 'care_hot',
+    survey_scheduled: 'survey_scheduled',
+    survey_done: 'survey_scheduled',
+  },
+  sale_deal: {
+    survey_scheduled: 'deal_new',
+    survey_done: 'deal_interact',
+    designing: 'deal_to_quote',
+    quoted: 'deal_to_quote',
+    negotiating: 'deal_to_quote',
+    waiting_deposit: 'deal_to_contract',
+    contract_signed: 'deal_to_contract',
+    producing: 'deal_producing',
+    installing: 'deal_installing',
+    completed: 'deal_completed',
+  },
+};
+
+const PLAN_METRIC_KEYS = {
+  sale_admin: ['lead_new', 'not_contacted', 'care_cold', 'care_warm', 'care_hot', 'survey_scheduled'],
+  sale_deal: [
+    'deal_new', 'deal_interact', 'deal_survey', 'deal_to_quote', 'deal_to_contract',
+    'deal_producing', 'deal_installing', 'deal_completed', 'deal_overdue',
+  ],
+};
 
 const LEAD_FUNNEL_SLUGS = [
   'lead_new', 'not_contacted', 'cold', 'warm', 'hot', 'survey_scheduled', 'survey_done',
@@ -549,11 +585,218 @@ async function computeAutoDailyResults(userId, reportDate, roleKey = 'sale_admin
   };
 }
 
+function deadlineStageExcluded(stage) {
+  return !!(
+    stage?.is_won
+    || stage?.is_lost
+    || stage?.counts_as_completed_revenue
+    || stage?.canonical_slug === 'won'
+    || stage?.canonical_slug === 'lost'
+    || stage?.deal_report_bucket === 'won'
+    || stage?.deal_report_bucket === 'lost'
+  );
+}
+
+/** Cùng thứ tự ưu tiên với màn Deadline (crmDeadlineTsForRow). */
+function deadlineTsForLead(row) {
+  if (row?.deadline_disabled_at) return null;
+  if (!crmLeadHasPhone(row)) return null;
+  if (deadlineStageExcluded(row.stage)) return null;
+
+  for (const field of ['crm_next_open_task_deadline', 'kanban_deadline_at']) {
+    const raw = row?.[field];
+    if (!raw) continue;
+    const ts = new Date(raw).getTime();
+    if (Number.isFinite(ts)) return ts;
+  }
+
+  const slaDays = effectivePipelineStageSlaDays(row?.stage?.sla_days);
+  if (slaDays != null && row?.stage_entered_at) {
+    const due = endOfCalendarDayAfterEntered(row.stage_entered_at, slaDays);
+    const ts = due?.getTime?.();
+    if (Number.isFinite(ts)) return ts;
+  }
+
+  const raw = row?.expected_close_date;
+  if (raw) {
+    const ts = new Date(raw).getTime();
+    if (Number.isFinite(ts)) return ts;
+  }
+  return null;
+}
+
+/** Hạn NV CRM đang mở của cột hiện tại (giống attachCrmNextOpenTaskDeadline). */
+async function attachNextOpenTaskDeadline(rows) {
+  const list = Array.isArray(rows) ? rows.filter(Boolean) : [];
+  if (!list.length) return list;
+  const stageByLead = new Map(list.map((r) => [String(r.id), r.stage_id == null ? null : String(r.stage_id)]));
+  const byLead = new Map();
+  const ids = list.map((r) => String(r.id));
+  for (let i = 0; i < ids.length; i += 200) {
+    const chunk = ids.slice(i, i + 200);
+    const { data, error } = await supabase
+      .from('crm_tasks')
+      .select('lead_id, pipeline_stage_id, deadline, order_index')
+      .in('lead_id', chunk)
+      .in('status', ['pending', 'in_progress'])
+      .not('deadline', 'is', null);
+    if (error) {
+      console.warn('[daily-reports] next open task deadline:', error.message || error);
+      continue;
+    }
+    for (const t of data || []) {
+      const lid = String(t.lead_id);
+      if (t.pipeline_stage_id != null && String(t.pipeline_stage_id) !== String(stageByLead.get(lid) || '')) continue;
+      const ts = new Date(t.deadline).getTime();
+      if (!Number.isFinite(ts)) continue;
+      const orderIndex = Number(t.order_index) || 0;
+      const prev = byLead.get(lid);
+      if (!prev || ts < prev.ts || (ts === prev.ts && orderIndex < prev.orderIndex)) {
+        byLead.set(lid, { ts, orderIndex });
+      }
+    }
+  }
+  return list.map((row) => {
+    const hit = byLead.get(String(row.id));
+    return {
+      ...row,
+      crm_next_open_task_deadline: hit ? new Date(hit.ts).toISOString() : null,
+    };
+  });
+}
+
+function deadlineBucketOnDate(deadlineTs, reportDate) {
+  if (deadlineTs == null || !Number.isFinite(deadlineTs)) return null;
+  const startMs = new Date(crmReportCreatedAtFromIso(reportDate)).getTime();
+  const endMs = new Date(crmReportCreatedAtToIso(reportDate)).getTime();
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return null;
+  if (deadlineTs < startMs) return 'overdue';
+  if (deadlineTs <= endMs) return 'today';
+  return null;
+}
+
+async function listOwnedOpenCards(userId, type, companyId = null) {
+  const rows = [];
+  const page = 1000;
+  let offset = 0;
+  for (;;) {
+    let q = supabase
+      .from('crm_leads')
+      .select(`
+        id, type, phone, stage_id, stage_entered_at, pipeline_id,
+        kanban_deadline_at, expected_close_date, deadline_disabled_at,
+        customer:customers(id, phone),
+        stage:crm_pipeline_stages!crm_leads_stage_id_fkey(
+          id, name, canonical_slug, is_won, is_lost, sla_days, is_active, pipeline_id,
+          counts_as_completed_revenue, deal_report_bucket
+        )
+      `)
+      .or(`lead_owner_id.eq.${userId},assigned_to.eq.${userId}`)
+      .eq('type', type)
+      .is('deadline_disabled_at', null)
+      .range(offset, offset + page - 1);
+    if (companyId) q = q.eq('company_id', companyId);
+    const { data, error } = await q;
+    if (error) throw error;
+    const chunk = data || [];
+    rows.push(...chunk);
+    if (chunk.length < page) break;
+    offset += page;
+    if (offset >= 8000) break;
+  }
+  return rows;
+}
+
+/**
+ * Kế hoạch ngày = thẻ Deadline Lead/Deal đang ở cột Quá hạn + Hôm nay,
+ * gom theo cột Kanban hiện tại → hạng mục mẫu.
+ */
+async function computeAutoDailyPlans(userId, reportDate, roleKey = 'sale_admin', companyId = null) {
+  const rk = roleKey === 'deal_admin' ? 'sale_deal' : roleKey;
+  const empty = {
+    metrics: {},
+    raw: { overdue: 0, today: 0, type: null },
+    computed_at: new Date().toISOString(),
+  };
+  if (rk !== 'sale_admin' && rk !== 'sale_deal') return empty;
+
+  const type = rk === 'sale_deal' ? 'deal' : 'lead';
+  const stageMap = PLAN_STAGE_TO_METRIC[rk];
+  const seedKeys = PLAN_METRIC_KEYS[rk] || [];
+  const results = Object.fromEntries(seedKeys.map((k) => [
+    k,
+    metricPayload(0, 'Tự động Deadline: 0 quá hạn + 0 hôm nay', 'deadline overdue+today', []),
+  ]));
+
+  let cards = await listOwnedOpenCards(userId, type, companyId);
+  // Bám bảng Deadline: chỉ cột đang hoạt động của đúng pipeline thẻ, có SĐT, chưa thắng/thua.
+  cards = cards.filter((row) => {
+    if (row.deadline_disabled_at) return false;
+    if (!row.stage || row.stage.is_active === false) return false;
+    if (row.pipeline_id && row.stage.pipeline_id && String(row.pipeline_id) !== String(row.stage.pipeline_id)) return false;
+    if (deadlineStageExcluded(row.stage)) return false;
+    return crmLeadHasPhone(row);
+  });
+  cards = await attachNextOpenTaskDeadline(cards);
+  cards = await attachLeadUserFlagsForList(cards, userId);
+  const byMetric = new Map();
+  const overdueIds = [];
+  const todayIds = [];
+
+  for (const row of cards) {
+    if (row.is_interacted) continue;
+    const ts = deadlineTsForLead(row);
+    const bucket = deadlineBucketOnDate(ts, reportDate);
+    if (bucket !== 'overdue' && bucket !== 'today') continue;
+    const slug = row.stage?.canonical_slug || slugFromStageName(row.stage?.name);
+    const metricKey = slug ? stageMap[slug] : null;
+    if (bucket === 'overdue') overdueIds.push(String(row.id));
+    else todayIds.push(String(row.id));
+    if (!metricKey) continue;
+    if (!byMetric.has(metricKey)) byMetric.set(metricKey, { overdue: [], today: [] });
+    byMetric.get(metricKey)[bucket].push(String(row.id));
+  }
+
+  for (const [key, parts] of byMetric.entries()) {
+    const ids = unionIds(parts.overdue, parts.today);
+    results[key] = metricPayload(
+      ids.length,
+      `Tự động Deadline: ${parts.overdue.length} quá hạn + ${parts.today.length} hôm nay`,
+      'crm_leads.kanban_deadline_at|expected_close_date|sla overdue+today',
+      ids,
+    );
+  }
+  if (rk === 'sale_deal') {
+    results.deal_overdue = metricPayload(
+      overdueIds.length,
+      `Tự động Deadline: ${overdueIds.length} deal cột Quá hạn`,
+      'crm_leads deadline bucket overdue',
+      overdueIds,
+    );
+    results.deal_survey = results.deal_interact
+      || metricPayload(0, 'Tự động Deadline: 0 quá hạn + 0 hôm nay', 'deadline overdue+today', []);
+  }
+
+  return {
+    metrics: results,
+    raw: {
+      overdue: overdueIds.length,
+      today: todayIds.length,
+      overdue_ids: overdueIds,
+      today_ids: todayIds,
+      type,
+    },
+    computed_at: new Date().toISOString(),
+  };
+}
+
 /** Resolve lead/deal cards for one metric (matrix drill-down). */
-async function loadMetricEntityLinks(userId, reportDate, roleKey, metricKey) {
+async function loadMetricEntityLinks(userId, reportDate, roleKey, metricKey, section = 'result', companyId = null) {
   const key = String(metricKey || '').trim();
   if (!key) return { metric_key: key, ids: [], items: [] };
-  const computed = await computeAutoDailyResults(userId, reportDate, roleKey || 'sale_admin');
+  const computed = section === 'plan'
+    ? await computeAutoDailyPlans(userId, reportDate, roleKey || 'sale_admin', companyId)
+    : await computeAutoDailyResults(userId, reportDate, roleKey || 'sale_admin');
   const m = computed.metrics?.[key];
   const ids = m?.ids || [];
   if (!ids.length) {
@@ -627,6 +870,7 @@ function metricKeyFromLabel(label) {
 
 module.exports = {
   computeAutoDailyResults,
+  computeAutoDailyPlans,
   loadMetricEntityLinks,
   metricKeyFromLabel,
 };

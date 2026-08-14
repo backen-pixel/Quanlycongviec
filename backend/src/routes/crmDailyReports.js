@@ -16,7 +16,7 @@ const REPORT_FIELDS =
   'id, company_id, user_id, template_id, report_date, department_name, status, plan_submitted_at, result_submitted_at, manager_note, created_at, updated_at';
 const LINE_FIELDS =
   'id, report_id, template_item_id, section, label, order_index, plan_value, result_value, plan_note, result_note, metric_key, auto_result, created_at, updated_at';
-const { computeAutoDailyResults, loadMetricEntityLinks, metricKeyFromLabel } = require('../helpers/dailyReportAutoClose');
+const { computeAutoDailyResults, computeAutoDailyPlans, loadMetricEntityLinks, metricKeyFromLabel } = require('../helpers/dailyReportAutoClose');
 const { autoCloseDailyReportForUser, guessRoleKey, isCrmSalesDept, looksLikeNonCrmUser } = require('../helpers/dailyReportAutoSubmit');
 const { buildDailyWorkHistory } = require('../helpers/dailyWorkHistory');
 const { crmReportAddDaysYmd } = require('../helpers/crmReportDateBounds');
@@ -1006,12 +1006,18 @@ r.get('/mine/preview-auto', async (req, res) => {
     if (!roleKey) roleKey = guessRoleKey(me || req.user, deptName);
     const resultDate = resultDateForReport(date);
     if (!resultDate) return res.status(400).json({ error: 'Không xác định được ngày kết quả (hôm trước)' });
-    const computed = await computeAutoDailyResults(userId, resultDate, roleKey);
+    const [computed, planned] = await Promise.all([
+      computeAutoDailyResults(userId, resultDate, roleKey),
+      computeAutoDailyPlans(userId, date, roleKey, req.user.company_id || me?.company_id || null),
+    ]);
     return res.json({
       date,
       result_date: resultDate,
+      plan_date: date,
       role_key: roleKey,
       ...computed,
+      plan_metrics: planned.metrics || {},
+      plan_raw: planned.raw || null,
     });
   } catch (e) {
     console.error('[daily-reports] GET /mine/preview-auto:', e.message || e);
@@ -1181,7 +1187,14 @@ r.get('/team/matrix-cell-links', async (req, res) => {
     // Bảng tổng hợp: ô Kết quả / Kế hoạch đều bám ngày đang chọn trên bộ lọc.
     const crmDate = reportDate;
 
-    const payload = await loadMetricEntityLinks(userId, crmDate, roleKey, metricKey);
+    const payload = await loadMetricEntityLinks(
+      userId,
+      crmDate,
+      roleKey,
+      metricKey,
+      section === 'plan' ? 'plan' : 'result',
+      String(req.query.company_id || '').trim() || null,
+    );
     return res.json({
       date: reportDate,
       crm_date: crmDate,
@@ -1432,23 +1445,34 @@ r.get('/team/matrix', async (req, res) => {
       ));
     }
 
-    // Luôn tính CRM live cho Phần II — không phụ thuộc phiếu đã chốt / cron 17:00.
+    // Luôn tính CRM live cho Phần I (Deadline) + Phần II (funnel) — không phụ thuộc phiếu đã chốt.
     const AUTO_RESULT_ROLES = new Set(['sale_admin', 'sale_deal', 'deal_admin', 'design_survey']);
+    const AUTO_PLAN_ROLES = new Set(['sale_admin', 'sale_deal', 'deal_admin']);
     const liveByUser = new Map();
-    const needLiveResult = !!resultDate && employees.some((e) => AUTO_RESULT_ROLES.has(e.role_key));
-    if (needLiveResult) {
+    const needLive = employees.some((e) => AUTO_RESULT_ROLES.has(e.role_key) || AUTO_PLAN_ROLES.has(e.role_key));
+    if (needLive) {
       await mapLimit(
         employees.filter((e) => (
-          AUTO_RESULT_ROLES.has(e.role_key)
+          (AUTO_RESULT_ROLES.has(e.role_key) || AUTO_PLAN_ROLES.has(e.role_key))
           && (e.report_id || isCrmSalesDept(e.department_name) || lastTemplateByUser.has(String(e.id)))
         )),
         6,
         async (emp) => {
           try {
-            const computed = await computeAutoDailyResults(String(emp.id), resultDate, emp.role_key);
-            liveByUser.set(String(emp.id), computed.metrics || {});
+            const [computed, planned] = await Promise.all([
+              AUTO_RESULT_ROLES.has(emp.role_key)
+                ? computeAutoDailyResults(String(emp.id), resultDate, emp.role_key)
+                : Promise.resolve({ metrics: {} }),
+              AUTO_PLAN_ROLES.has(emp.role_key)
+                ? computeAutoDailyPlans(String(emp.id), date, emp.role_key, companyId)
+                : Promise.resolve({ metrics: {} }),
+            ]);
+            liveByUser.set(String(emp.id), {
+              result: computed.metrics || {},
+              plan: planned.metrics || {},
+            });
           } catch (err) {
-            console.warn('[daily-reports] live matrix result', emp.id, err.message || err);
+            console.warn('[daily-reports] live matrix', emp.id, err.message || err);
           }
         },
       );
@@ -1465,9 +1489,8 @@ r.get('/team/matrix', async (req, res) => {
       const allowedKeys = new Set(tplItems.map((it) => it.metric_key).filter(Boolean));
       const allowedLabels = new Set(tplItems.map((it) => String(it.label || '').trim().toLowerCase()).filter(Boolean));
 
-      // Kết quả team: luôn lấy hạng mục từ mẫu + số CRM live (không dùng result_value phiếu,
-      // vì phiếu ngày D lưu KQ của D−1).
-      if (valueField === 'result' && section === 'work') {
+      // Kế hoạch / Kết quả team: hạng mục từ mẫu + số CRM live (không phụ thuộc phiếu).
+      if (section === 'work' && (valueField === 'result' || valueField === 'plan')) {
         const extras = emp.report_id
           ? (linesByReport.get(String(emp.report_id)) || []).filter((l) => (
             l.section === 'work' && String(l.metric_key || '').startsWith('user_extra:')
@@ -1501,7 +1524,7 @@ r.get('/team/matrix', async (req, res) => {
     function collectSectionRows(empList, section, valueField) {
       const map = new Map();
       for (const emp of empList) {
-        if (valueField !== 'result' && !emp.report_id) continue;
+        if (valueField !== 'result' && valueField !== 'plan' && !emp.report_id) continue;
         const lines = sourceLines(emp, section, valueField);
         for (const line of lines) {
           const key = rowKey(section, line);
@@ -1518,11 +1541,13 @@ r.get('/team/matrix', async (req, res) => {
           if (!row.metric_key && line.metric_key) row.metric_key = line.metric_key;
           row.order_index = Math.min(row.order_index, Number(line.order_index) || 0);
           let display = null;
-          if (valueField === 'plan') display = line.plan_value;
-          else if (valueField === 'result') {
-            const live = liveByUser.get(String(emp.id));
-            const mk = line.metric_key || metricKeyFromLabel(line.label);
-            if (live && mk && live[mk] && live[mk].value != null) display = live[mk].value;
+          const live = liveByUser.get(String(emp.id));
+          const mk = line.metric_key || metricKeyFromLabel(line.label);
+          if (valueField === 'plan') {
+            if (live?.plan && mk && live.plan[mk] && live.plan[mk].value != null) display = live.plan[mk].value;
+            else display = line.plan_value;
+          } else if (valueField === 'result') {
+            if (live?.result && mk && live.result[mk] && live.result[mk].value != null) display = live.result[mk].value;
             else display = line.result_value;
           } else if (valueField === 'note') {
             const note = line.result_note || line.plan_note;
@@ -1546,7 +1571,7 @@ r.get('/team/matrix', async (req, res) => {
         {
           key: 'plan',
           code: 'I',
-          title: `I. Kế hoạch ngày mới (${date.slice(8, 10)}/${date.slice(5, 7)}/${date.slice(0, 4)})`,
+          title: `I. Kế hoạch ngày mới (${date.slice(8, 10)}/${date.slice(5, 7)}/${date.slice(0, 4)}) — Deadline Quá hạn + Hôm nay`,
           rows: collectSectionRows(empList, 'work', 'plan'),
         },
         {
@@ -1621,7 +1646,8 @@ r.get('/team/matrix', async (req, res) => {
     return res.json({
       date,
       result_date: resultDate,
-      result_live: needLiveResult,
+      result_live: needLive,
+      plan_live: needLive,
       company_id: companyId,
       department_id: departmentId,
       role_key: templateRoleFilter,

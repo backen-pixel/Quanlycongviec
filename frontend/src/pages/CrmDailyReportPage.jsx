@@ -233,20 +233,26 @@ function mapLines(list) {
   });
 }
 
-/** Gắn số liệu CRM preview vào dòng Phần II (không ghi đè ghi chú NV). */
-function applyAutoPreview(list, metrics) {
-  if (!metrics || typeof metrics !== 'object') return list;
+/** Gắn số liệu CRM preview vào dòng Phần I (Deadline) và Phần II (funnel). */
+function applyAutoPreview(list, resultMetrics, planMetrics) {
+  const hasResult = resultMetrics && typeof resultMetrics === 'object';
+  const hasPlan = planMetrics && typeof planMetrics === 'object';
+  if (!hasResult && !hasPlan) return list;
   return (list || []).map((l) => {
     if (l.section !== 'work') return l;
     const key = l.metric_key;
-    const m = key ? metrics[key] : null;
-    if (!m || m.value == null) return l;
+    const m = key && hasResult ? resultMetrics[key] : null;
+    const p = key && hasPlan ? planMetrics[key] : null;
+    if ((!m || m.value == null) && (!p || p.value == null)) return l;
     return {
       ...l,
-      result_value: m.value,
+      result_value: (m && m.value != null) ? m.value : l.result_value,
+      plan_value: (p && p.value != null) ? p.value : l.plan_value,
       auto_result: true,
-      preview_live: true,
-      auto_hint: m.note || null,
+      preview_live: !!(m && m.value != null),
+      preview_live_plan: !!(p && p.value != null),
+      auto_hint: m?.note || null,
+      auto_plan_hint: p?.note || null,
     };
   });
 }
@@ -329,21 +335,27 @@ function MyReportPanel({ date, onDateChange }) {
       const isClosed = rep?.status === 'result_submitted' || rep?.status === 'late';
       if (isClosed) {
         const metrics = data.metrics || {};
+        const planMetrics = data.plan_metrics || {};
         setLines((baseLines || []).map((l) => {
           if (l.section !== 'work') return l;
           const m = l.metric_key ? metrics[l.metric_key] : null;
-          if (!m) return { ...l, auto_result: l.auto_result || false };
+          const p = l.metric_key ? planMetrics[l.metric_key] : null;
+          if (!m && !p) return { ...l, auto_result: l.auto_result || false };
           const hasSaved = l.result_value !== '' && l.result_value != null;
+          const hasSavedPlan = l.plan_value !== '' && l.plan_value != null;
           return {
             ...l,
-            result_value: hasSaved ? l.result_value : (m.value ?? l.result_value),
+            result_value: hasSaved ? l.result_value : (m?.value ?? l.result_value),
+            plan_value: hasSavedPlan ? l.plan_value : (p?.value ?? l.plan_value),
             auto_result: true,
-            preview_live: !hasSaved,
-            auto_hint: m.note || null,
+            preview_live: !hasSaved && !!m,
+            preview_live_plan: !hasSavedPlan && !!p,
+            auto_hint: m?.note || null,
+            auto_plan_hint: p?.note || null,
           };
         }));
       } else {
-        setLines(applyAutoPreview(baseLines, data.metrics));
+        setLines(applyAutoPreview(baseLines, data.metrics, data.plan_metrics));
       }
     } catch (e) {
       setLines(baseLines);
@@ -551,7 +563,7 @@ function MyReportPanel({ date, onDateChange }) {
   return (
     <div className="space-y-4">
       <div className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-950" data-export-hide="1">
-        <strong>Phần I</strong> = kế hoạch ngày phiếu ({fmtDMY(date)}).{' '}
+        <strong>Phần I</strong> = kế hoạch ngày phiếu ({fmtDMY(date)}), tự lấy từ Deadline Lead/Deal cột <strong>Quá hạn + Hôm nay</strong>.{' '}
         <strong>Phần II</strong> = kết quả ngày hôm trước ({fmtDMY(addDaysISO(date, -1))}), tự lấy từ CRM khi <strong>Nộp báo cáo</strong>
         {' '}(hệ thống cũng tự chốt ~17:00 mỗi ngày).
       </div>
@@ -652,16 +664,22 @@ function MyReportPanel({ date, onDateChange }) {
                 ({fmtDMY(date)})
               </span>
             </span>
-            <button
-              type="button"
-              disabled={saving}
-              onClick={() => addExtraLine('work')}
-              title="Thêm hạng mục"
-              data-export-hide="1"
-              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white text-slate-700 shadow hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              <Plus className="h-5 w-5" strokeWidth={2.5} />
-            </button>
+            <div className="flex items-center gap-2">
+              <span className="inline-flex items-center gap-1 rounded-md bg-sky-500/90 px-2 py-0.5 text-[11px] font-semibold tracking-wide">
+                {previewing ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+                DEADLINE QH + HÔM NAY
+              </span>
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => addExtraLine('work')}
+                title="Thêm hạng mục"
+                data-export-hide="1"
+                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white text-slate-700 shadow hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <Plus className="h-5 w-5" strokeWidth={2.5} />
+              </button>
+            </div>
           </div>
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
@@ -675,7 +693,9 @@ function MyReportPanel({ date, onDateChange }) {
                 </tr>
               </thead>
               <tbody>
-                {workLines.map((l, i) => (
+                {workLines.map((l, i) => {
+                  const planManual = l.is_user_extra || !l.metric_key || String(l.metric_key).startsWith('user_extra:');
+                  return (
                   <tr key={l.id || l.user_extra_id || `p-${i}`} className="border-t border-gray-100">
                     <td className="px-3 py-2 text-gray-500">{i + 1}</td>
                     <td className="px-3 py-2 font-medium text-gray-800">
@@ -702,13 +722,29 @@ function MyReportPanel({ date, onDateChange }) {
                           )}
                         </div>
                       ) : (
-                        <span>{l.label}</span>
+                        <span className="inline-flex items-center gap-1">
+                          <span>{l.label}</span>
+                          {(l.preview_live_plan || l.auto_result) && !l.is_user_extra && (
+                            <span className="rounded bg-sky-50 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700">AUTO</span>
+                          )}
+                        </span>
                       )}
                     </td>
                     <td className="px-3 py-2">
-                      <input type="number" min="0" step="1" value={l.plan_value}
-                        onChange={(e) => updateLine(findIdx(l), 'plan_value', e.target.value)}
-                        className={`${inputCls} text-right tabular-nums`} />
+                      {planManual ? (
+                        <input type="number" min="0" step="1" value={l.plan_value}
+                          onChange={(e) => updateLine(findIdx(l), 'plan_value', e.target.value)}
+                          className={`${inputCls} text-right tabular-nums`} />
+                      ) : (
+                        <div
+                          className="rounded-md border border-dashed border-sky-200 bg-sky-50/50 px-2 py-1.5 text-right tabular-nums font-semibold text-sky-900"
+                          title={l.auto_plan_hint || ''}
+                        >
+                          {previewing && (l.plan_value === '' || l.plan_value == null)
+                            ? '…'
+                            : (l.plan_value === '' || l.plan_value == null ? 0 : l.plan_value)}
+                        </div>
+                      )}
                     </td>
                     <td className="px-3 py-2">
                       <input type="text" value={l.plan_note} placeholder="Ghi chú kế hoạch"
@@ -723,7 +759,8 @@ function MyReportPanel({ date, onDateChange }) {
                       )}
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -1523,10 +1560,10 @@ function EmployeeHeaderCells({ employees, onOpenReport, hoveredColId, sectionKey
 }
 
 /** Một bảng cho 1 mục (I/II/III/IV) × 1 mẫu. */
-function MatrixSectionTable({ section, employees, templateName, roleKey, reportDate, onOpenReport }) {
+function MatrixSectionTable({ section, employees, templateName, roleKey, reportDate, companyId, onOpenReport }) {
   const headCls = SECTION_HEADER_CLS[section.key] || 'bg-slate-800';
   const rows = section.rows || [];
-  const cols = section.key === 'result'
+  const cols = (section.key === 'result' || section.key === 'plan')
     ? (employees || [])
     : (employees || []).filter((e) => e.report_id);
   const showCols = cols.length ? cols : (employees || []);
@@ -1566,6 +1603,7 @@ function MatrixSectionTable({ section, employees, templateName, roleKey, reportD
           metric_key: metricKey,
           role_key: roleKey || emp.role_key || 'sale_admin',
           section: section.key,
+          company_id: companyId || undefined,
         },
         headers: { 'x-no-cache': '1' },
       });
@@ -2088,6 +2126,7 @@ function TeamMatrixPanel({ date, onDateChange }) {
               templateName={block.templateName}
               roleKey={block.roleKey}
               reportDate={date}
+              companyId={companyId}
               onOpenReport={setDetailId}
             />
           ))}
