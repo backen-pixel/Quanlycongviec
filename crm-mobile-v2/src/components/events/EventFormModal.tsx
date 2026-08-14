@@ -3,6 +3,7 @@ import SpinningLoader from '../SpinningLoader';
 import React, { useEffect, useMemo, useState } from 'react';
 import { Alert, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useKeyboardInset } from '../../context/KeyboardInsetContext';
 import {
   EVENT_MODULE_OPTIONS,
   EVENT_STATUS_META,
@@ -71,6 +72,8 @@ export default function EventFormModal({
   const Colors = useColors();
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const insets = useSafeAreaInsets();
+  // Modal ở cửa sổ riêng — tự chừa chỗ bàn phím (Android 15+ không co cửa sổ).
+  const { overlap: kbOverlap } = useKeyboardInset();
   const isEdit = !!event?.id;
   const needCompanyInForm = showCompanyPicker && !isEdit;
 
@@ -283,7 +286,7 @@ export default function EventFormModal({
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <KeyboardAvoidingView
-        style={[styles.root, { paddingTop: insets.top }]}
+        style={[styles.root, { paddingTop: insets.top, paddingBottom: kbOverlap }]}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
         <View style={styles.header}>

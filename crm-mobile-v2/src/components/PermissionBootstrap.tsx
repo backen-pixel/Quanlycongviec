@@ -5,11 +5,11 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AppState, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useAuth, currentUserId } from '../context/AuthContext';
 import {
-  APP_PERMISSION_CATALOG,
+  INTRO_PERMISSION_CATALOG,
+  OPTIONAL_PERMISSION_KINDS,
   getAppPermissionStatus,
   grantEssentialPermissionsQuick,
   openAppSettings,
-  OPTIONAL_PERMISSION_KINDS,
   type AppPermissionItem,
 } from '../lib/appPermissions';
 import { Radii, useColors, type ThemeColors } from '../theme';
@@ -25,23 +25,29 @@ export default function PermissionBootstrap() {
   const userId = currentUserId(user);
   const [visible, setVisible] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [items, setItems] = useState<AppPermissionItem[]>([]);
+  const [items, setItems] = useState<AppPermissionItem[]>(() =>
+    INTRO_PERMISSION_CATALOG.map((c) => ({ ...c, granted: false })),
+  );
 
   const refresh = useCallback(async () => {
-    const status = await getAppPermissionStatus();
+    const status = await getAppPermissionStatus(['notifications', 'microphone']);
     setItems(status);
     return status;
   }, []);
 
   useEffect(() => {
     if (loading || !token || !userId) return;
+    let cancelled = false;
     void (async () => {
       const introDone = await AsyncStorage.getItem(introKeyForUser(userId));
-      // Chỉ hiện 1 lần / user — không ép lại mỗi lần mở app vì thiếu micro/overlay.
-      if (introDone) return;
-      await refresh();
+      if (cancelled || introDone) return;
+      // Hiện ngay — không chờ check quyền tuần tự (tránh form «treo» lúc cài app).
       setVisible(true);
+      void refresh();
     })();
+    return () => {
+      cancelled = true;
+    };
   }, [loading, token, userId, refresh]);
 
   useEffect(() => {
@@ -61,19 +67,19 @@ export default function PermissionBootstrap() {
     setBusy(true);
     try {
       await grantEssentialPermissionsQuick();
-      setTimeout(async () => {
-        await refresh();
-        await finishIntro();
-        setBusy(false);
-      }, 600);
+      // Đóng modal ngay khi hộp thoại hệ thống xong — không chờ đọc lại trạng thái.
+      await finishIntro();
+      void refresh();
     } catch {
+      /* ignore */
+    } finally {
       setBusy(false);
     }
   }, [refresh, finishIntro]);
 
   if (!visible) return null;
 
-  const catalog = items.length ? items : APP_PERMISSION_CATALOG.map((c) => ({ ...c, granted: false }));
+  const catalog = items.length ? items : INTRO_PERMISSION_CATALOG.map((c) => ({ ...c, granted: false }));
   const missingRequired = catalog.filter((i) => !i.granted && !OPTIONAL_PERMISSION_KINDS.has(i.kind));
 
   return (
@@ -85,7 +91,7 @@ export default function PermissionBootstrap() {
             <Text style={styles.title}>Quyền cần thiết</Text>
           </View>
           <Text style={styles.sub}>
-            Chỉ xin tối thiểu để nhận thông báo CRM. Micro và bong bóng chat có thể cấp sau khi bạn dùng tính năng đó.
+            Xin thông báo và micro để nhận nhắc việc CRM và ghi âm tư vấn. Bong bóng chat sẽ hỏi quyền hiển thị khi bạn bật tính năng đó.
           </Text>
 
           <View style={styles.list}>
@@ -118,7 +124,7 @@ export default function PermissionBootstrap() {
               <SpinningLoader color="#fff" size="small" />
             ) : (
               <Text style={styles.btnTxt}>
-                {missingRequired.length ? 'Cho phép thông báo' : 'Tiếp tục'}
+                {missingRequired.length ? 'Cho phép quyền cần thiết' : 'Tiếp tục'}
               </Text>
             )}
           </Pressable>

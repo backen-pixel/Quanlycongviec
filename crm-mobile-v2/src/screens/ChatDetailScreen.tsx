@@ -815,7 +815,7 @@ export default function ChatDetailScreen({ navigation, route }: Props) {
 
       <KeyboardAvoidingView
         style={styles.body}
-        behavior="padding"
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={Platform.OS === 'ios' ? headerBarHeight : 0}
       >
         {loading ? (

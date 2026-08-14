@@ -7,8 +7,7 @@ export const CRMV2_PERMISSION_ONBOARDING_DONE_KEY = '@crmv2_perm_onboarding_done
 
 /**
  * Quyền hiện trên modal lần đầu đăng nhập.
- * Micro / file âm thanh xin khi vào tab Ghi âm (không ép lúc mở app).
- * Overlay xin khi bật bong bóng chat.
+ * Micro / overlay xin khi dùng tính năng (tab Ghi âm / bong bóng chat).
  */
 export type AppPermissionKind = 'notifications' | 'microphone' | 'overlay';
 
@@ -42,6 +41,11 @@ export const APP_PERMISSION_CATALOG: Omit<AppPermissionItem, 'granted'>[] = [
   },
 ];
 
+/** Modal lần đầu: thông báo + micro ghi âm. Overlay xin khi bật bong bóng chat. */
+export const INTRO_PERMISSION_CATALOG = APP_PERMISSION_CATALOG.filter(
+  (c) => c.kind === 'notifications' || c.kind === 'microphone',
+);
+
 async function androidPermGranted(perm: string): Promise<boolean> {
   if (Platform.OS !== 'android') return true;
   try {
@@ -67,12 +71,13 @@ async function checkKind(kind: AppPermissionKind): Promise<boolean> {
   return true;
 }
 
-export async function getAppPermissionStatus(): Promise<AppPermissionItem[]> {
-  const results: AppPermissionItem[] = [];
-  for (const item of APP_PERMISSION_CATALOG) {
-    results.push({ ...item, granted: await checkKind(item.kind) });
-  }
-  return results;
+export async function getAppPermissionStatus(
+  kinds: AppPermissionKind[] = APP_PERMISSION_CATALOG.map((c) => c.kind),
+): Promise<AppPermissionItem[]> {
+  const catalog = APP_PERMISSION_CATALOG.filter((c) => kinds.includes(c.kind));
+  return Promise.all(
+    catalog.map(async (item) => ({ ...item, granted: await checkKind(item.kind) })),
+  );
 }
 
 export async function getAppPermissionGaps(): Promise<AppPermissionKind[]> {
@@ -80,26 +85,26 @@ export async function getAppPermissionGaps(): Promise<AppPermissionKind[]> {
   return status.filter((s) => !s.granted).map((s) => s.kind);
 }
 
-/** Xin quyền tối thiểu khi mở app: thông báo (+ micro nếu user muốn trong cùng lần). */
+/** Xin quyền tối thiểu khi mở app: thông báo + micro ghi âm. */
 export async function grantEssentialPermissionsQuick(): Promise<void> {
   if (Platform.OS === 'android') {
     const api = Number(Platform.Version) || 0;
     const list: string[] = [];
     if (api >= 33) list.push(PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS);
     list.push(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO);
-    if (list.length) {
-      try {
-        await PermissionsAndroid.requestMultiple(list as never);
-      } catch {
-        /* ignore */
-      }
+    try {
+      await PermissionsAndroid.requestMultiple(list as never);
+    } catch {
+      /* ignore */
+    }
+  } else {
+    try {
+      await Audio.requestPermissionsAsync();
+    } catch {
+      /* ignore */
     }
   }
-  try {
-    await Audio.requestPermissionsAsync();
-  } catch {
-    /* ignore */
-  }
+  // Đăng ký token nền — không chặn đóng modal.
   void registerPushTokenV2();
 }
 

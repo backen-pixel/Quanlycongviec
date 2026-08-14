@@ -19,7 +19,7 @@ import {
   type CrmAssignmentStats,
 } from '../api/assignments';
 import { fetchCrmCompanies } from '../api/crm';
-import { formatApiError, isAbortError } from '../api/client';
+import { formatApiError, isAbortError, isNetworkError } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { formatDateShort } from '../lib/format';
 import type { RootStackParamList } from '../navigation/types';
@@ -259,8 +259,11 @@ export default function TasksScreen() {
       if (!append && gen !== loadGenRef.current) return;
       const msg = formatApiError(e);
       if (msg) setError(msg);
-      setRows([]);
-      setHasMore(false);
+      // Mất mạng / lỗi tạm: giữ danh sách đang xem, chỉ hiện thông báo lỗi.
+      if (!isNetworkError(e) || !rowsRef.current.length) {
+        setRows([]);
+        setHasMore(false);
+      }
     } finally {
       if (append) {
         loadingMoreRef.current = false;

@@ -256,6 +256,12 @@ async function assertDownloadReady(url: string): Promise<void> {
   }
 }
 
+/**
+ * SHA-256 bằng JS thuần rất chậm (~1 phút cho APK 25 MB) nên chỉ kiểm với file nhỏ.
+ * File lớn đã được bảo vệ bằng HTTPS + dung lượng + chữ ký APK do Android kiểm khi cài.
+ */
+const SHA_VERIFY_MAX_BYTES = 6 * 1024 * 1024;
+
 async function hashFileSha256(uri: string, size: number): Promise<string> {
   const hasher = createSha256();
   const chunkBytes = 512 * 1024;
@@ -332,7 +338,7 @@ async function assertDownloadedApk(
   }
 
   const wantSha = normalizeSha256Hex(expectedSha256);
-  if (wantSha && /^[0-9a-f]{64}$/.test(wantSha)) {
+  if (wantSha && /^[0-9a-f]{64}$/.test(wantSha) && info.size <= SHA_VERIFY_MAX_BYTES) {
     const gotSha = await hashFileSha256(uri, info.size);
     if (gotSha !== wantSha) {
       try {
@@ -393,7 +399,8 @@ export async function downloadApkToCache(
   try {
     const resumable = FileSystem.createDownloadResumable(url, target, {}, (p) => {
       if (opts.onProgress && p.totalBytesExpectedToWrite > 0) {
-        opts.onProgress(p.totalBytesWritten / p.totalBytesExpectedToWrite);
+        // Giữ ≤ 97% trong lúc tải — 100% chỉ khi đã kiểm tra xong, tránh đứng im ở 100%.
+        opts.onProgress(Math.min(0.97, p.totalBytesWritten / p.totalBytesExpectedToWrite));
       }
     });
     const result = await resumable.downloadAsync();
@@ -429,6 +436,7 @@ export async function downloadApkToCache(
     }
     throw e;
   }
+  opts.onProgress?.(1);
   return { uri: resultUri };
 }
 

@@ -307,7 +307,9 @@ export default function UpdateGate() {
               {downloading ? (
                 <View style={styles.progressWrap}>
                   <SpinningLoader color={Colors.blue} />
-                  <Text style={styles.progressText}>Đang tải… {pct}%</Text>
+                  <Text style={styles.progressText}>
+                    {pct >= 97 ? 'Đã tải xong — đang mở trình cài đặt…' : `Đang tải… ${pct}%`}
+                  </Text>
                   <View style={styles.bar}>
                     <View style={[styles.barFill, { width: `${pct}%` }]} />
                   </View>
@@ -348,7 +350,11 @@ export default function UpdateGate() {
 
       {!!info && downloading && !visible && (
         <View style={[styles.floating, { bottom: insets.bottom + 24 }]}>
-          <Text style={styles.floatingText}>Đang tải bản {info.latestVersion}… {pct}%</Text>
+          <Text style={styles.floatingText}>
+            {pct >= 97
+              ? `Đã tải xong bản ${info.latestVersion} — đang mở trình cài đặt…`
+              : `Đang tải bản ${info.latestVersion}… ${pct}%`}
+          </Text>
           <View style={styles.bar}>
             <View style={[styles.barFill, { width: `${pct}%` }]} />
           </View>

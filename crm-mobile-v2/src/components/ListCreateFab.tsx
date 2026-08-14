@@ -1,7 +1,8 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { LinearGradient } from 'expo-linear-gradient';
-import React, { useEffect, useMemo, useRef } from 'react';
-import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useMemo } from 'react';
+import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
+import { usePulseGlow } from '../hooks/usePulseGlow';
 import { CreateGradient, Shadow, useColors, type ThemeColors } from '../theme';
 
 type Props = {
@@ -19,7 +20,7 @@ const DEAL_GRADIENT = ['#FBBF24', '#F97316', '#EA580C'] as const;
 export default function ListCreateFab({ kind, onPress, bottom = 88 }: Props) {
   const Colors = useColors();
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
-  const glow = useRef(new Animated.Value(0)).current;
+  const glow = usePulseGlow(kind);
 
   const isLead = kind === 'lead';
   const isDeal = kind === 'deal';
@@ -37,27 +38,6 @@ export default function ListCreateFab({ kind, onPress, bottom = 88 }: Props) {
   const iconName = isLead ? 'person-add' : isDeal ? 'pricetags' : 'add';
   const label = isLead ? 'Tạo Lead' : isDeal ? 'Tạo Deal' : 'Tạo mới';
   const a11y = isLead ? 'Tạo Lead' : isDeal ? 'Tạo Deal' : 'Tạo Lead, Deal hoặc sự kiện';
-
-  useEffect(() => {
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(glow, {
-          toValue: 1,
-          duration: 1400,
-          easing: Easing.inOut(Easing.quad),
-          useNativeDriver: true,
-        }),
-        Animated.timing(glow, {
-          toValue: 0,
-          duration: 1400,
-          easing: Easing.inOut(Easing.quad),
-          useNativeDriver: true,
-        }),
-      ]),
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [glow]);
 
   const glowScale = glow.interpolate({ inputRange: [0, 1], outputRange: [1, 1.16] });
   const glowOpacity = glow.interpolate({ inputRange: [0, 1], outputRange: [0.32, 0.68] });

@@ -11,6 +11,7 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useKeyboardInset } from '../context/KeyboardInsetContext';
 import { Radii, Spacing, useColors, type ThemeColors } from '../theme';
 
 export type PickerOption = { id: string; name: string };
@@ -53,6 +54,8 @@ export default function PickerSheet({
   const Colors = useColors();
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const insets = useSafeAreaInsets();
+  // Modal nằm ở cửa sổ riêng nên không nhận padding bàn phím từ gốc app.
+  const { overlap: kbOverlap } = useKeyboardInset();
   const tint = accent ?? Colors.blue;
   const [query, setQuery] = useState('');
   const [custom, setCustom] = useState('');
@@ -72,7 +75,13 @@ export default function PickerSheet({
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={close}>
       <Pressable style={styles.backdrop} onPress={close}>
-        <Pressable style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 16) }]} onPress={() => {}}>
+        <Pressable
+          style={[
+            styles.sheet,
+            { paddingBottom: (kbOverlap > 0 ? 16 : Math.max(insets.bottom, 16)) + kbOverlap },
+          ]}
+          onPress={() => {}}
+        >
           <View style={styles.handle} />
           <View style={styles.header}>
             <Text style={styles.title} numberOfLines={1}>{title}</Text>

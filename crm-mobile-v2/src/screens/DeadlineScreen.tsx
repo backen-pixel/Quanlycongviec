@@ -637,6 +637,23 @@ export default function DeadlineScreen() {
       : [kindRef.current];
     const fkAtStart = serverFilterKeyRef.current;
 
+    const clearSectionLoading = (section: PlannerKind) => {
+      if (section === 'lead') {
+        setLeadsLoading(false);
+        setDrainingLead(false);
+      } else {
+        setDealsLoading(false);
+        setDrainingDeal(false);
+      }
+    };
+    /** Dọn cờ tải khi thoát sớm — nếu không, spinner và `loadingRef` kẹt vĩnh viễn. */
+    const bailOut = () => {
+      if (abortRef.current !== ac) return;
+      loadingRef.current = false;
+      if (!silent) setRefreshing(false);
+      for (const k of kinds) clearSectionLoading(k);
+    };
+
     // Hiện ngay dữ liệu cache cũ (nếu có) trong lúc tải nền — tránh màn "Đang tải…"
     // mỗi lần vào lại tab, giống trải nghiệm Kanban Hub.
     // Đổi lọc: không lấy cache/list cũ (tránh 1 card lọc trước + badge 23).
@@ -674,9 +691,18 @@ export default function DeadlineScreen() {
     const companyId = listOpts.companyId;
     const companiesList = companiesRef.current;
 
-    const cfg = await fetchDeadlineConfig(companyId, ac.signal);
+    let cfg: DeadlineConfig;
+    try {
+      cfg = await fetchDeadlineConfig(companyId, ac.signal);
+    } catch (e: unknown) {
+      if (!ac.signal.aborted && !silent) {
+        setError(formatApiError(e) || 'Không tải được cấu hình deadline');
+      }
+      bailOut();
+      return;
+    }
     if (ac.signal.aborted) {
-      loadingRef.current = false;
+      bailOut();
       return;
     }
     configRef.current = cfg;
@@ -701,16 +727,6 @@ export default function DeadlineScreen() {
 
     let leadErr = '';
     let dealErr = '';
-
-    const clearSectionLoading = (section: PlannerKind) => {
-      if (section === 'lead') {
-        setLeadsLoading(false);
-        setDrainingLead(false);
-      } else {
-        setDealsLoading(false);
-        setDrainingDeal(false);
-      }
-    };
 
     /**
      * Path nhẹ: không drain toàn stage (gây lag).
@@ -795,8 +811,11 @@ export default function DeadlineScreen() {
       else if (kinds.includes('deal') && dealErr && !dealStateRef.current.items.length) setError(dealErr);
       else setError('');
     }
-    loadingRef.current = false;
-    if (!silent) setRefreshing(false);
+    // Lượt tải mới đã bắt đầu: không tắt cờ của nó.
+    if (abortRef.current === ac) {
+      loadingRef.current = false;
+      if (!silent) setRefreshing(false);
+    }
   }, [filtersReady, userId, viewAll, applySectionPage, abortAllDrains, refreshBucketCounts, perf]);
 
   /** Reload server chỉ khi lọc server đổi — search/due/searchField lọc client, không gọi lại API. */

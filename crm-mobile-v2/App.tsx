@@ -15,6 +15,7 @@ import CreateMenuSheet from './src/components/CreateMenuSheet';
 import BubbleChatOverlayLauncher from './src/components/BubbleChatOverlayLauncher';
 import BubbleOutboundCallHandler from './src/components/BubbleOutboundCallHandler';
 import SystemBubbleSync from './src/components/SystemBubbleSync';
+import OfflineBanner from './src/components/OfflineBanner';
 import PermissionBootstrap from './src/components/PermissionBootstrap';
 import DeadlineOverdueRunner from './src/components/DeadlineOverdueRunner';
 import VoiceSyncRunner from './src/components/VoiceSyncRunner';
@@ -28,6 +29,8 @@ import { CreateMenuProvider } from './src/context/CreateMenuContext';
 import { CrmRealtimeProvider } from './src/context/CrmRealtimeProvider';
 import { MessengerProvider } from './src/context/MessengerContext';
 import { MessengerRealtimeProvider } from './src/context/MessengerRealtimeContext';
+import { KeyboardInsetProvider } from './src/context/KeyboardInsetContext';
+import { NetworkStatusProvider } from './src/context/NetworkStatusContext';
 import RootNavigator from './src/navigation/RootNavigator';
 import { navigationRef, resetToBubbleChat } from './src/navigation/navigationRef';
 import LoginScreen from './src/screens/LoginScreen';
@@ -140,6 +143,7 @@ function Gate() {
             <MediaPreviewProvider>
             <FileActionsProvider>
             <View style={[styles.root, bubbleOverlayUi && styles.rootTransparent]}>
+              <OfflineBanner />
               <NavigationContainer
                 ref={navigationRef}
                 theme={navTheme}
@@ -199,9 +203,13 @@ export default function App() {
         }}
       >
         <ThemeProvider>
-          <AuthProvider>
-            <AppBody />
-          </AuthProvider>
+          <NetworkStatusProvider>
+            <KeyboardInsetProvider>
+              <AuthProvider>
+                <AppBody />
+              </AuthProvider>
+            </KeyboardInsetProvider>
+          </NetworkStatusProvider>
         </ThemeProvider>
       </ShareIntentProvider>
     </SafeAreaProvider>

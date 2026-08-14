@@ -20,7 +20,7 @@ import {
   type CrmAssignment,
 } from '../api/assignments';
 import { formatApiError, isAbortError } from '../api/client';
-import { fetchCrmListTotal } from '../api/crm';
+import { fetchCrmListTotal, warmCrmHubPipelines } from '../api/crm';
 import {
   fetchDeadlineFocusBreakdown,
   type DeadlineFocusBreakdown,
@@ -303,6 +303,16 @@ export default function OverviewScreen() {
       cancelled = true;
     };
   }, [canPickCompany]);
+
+  // Làm nóng Kanban sớm từ tab Tổng quan — mở Lead/Deal không phải chờ cold bootstrap.
+  useEffect(() => {
+    if (!filtersReady || !uid) return undefined;
+    const companyId = effectiveCompanyId || user?.company_id || undefined;
+    const t = setTimeout(() => {
+      void warmCrmHubPipelines(companyId || undefined);
+    }, 250);
+    return () => clearTimeout(t);
+  }, [filtersReady, uid, effectiveCompanyId, user?.company_id]);
 
   const companyLabel = useMemo(() => {
     if (!effectiveCompanyId) return 'Tất cả công ty';

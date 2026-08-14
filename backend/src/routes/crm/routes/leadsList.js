@@ -580,8 +580,21 @@ r.get('/kanban-bootstrap', responseCache({ ttl: 15, scope: 'user', tags: ['crm:l
       );
     };
 
+    // Đếm số lượng theo cột không phụ thuộc trang đầu — chạy song song để bớt 1 lượt round-trip.
+    let countsError = null;
+    const countsPromise = skipCounts
+      ? null
+      : invokeCrmLeadsStageCountsRpc({
+        ...filterParams,
+        p_pipeline_stage_ids: stageIds.length ? stageIds : null,
+      }).catch((e) => {
+        countsError = e;
+        return null;
+      });
+
     const initialPage = await loadInitialPage();
     if (!initialPage) {
+      if (countsPromise) await countsPromise;
       return res.status(500).json({ error: 'Không tải được trang kanban' });
     }
 
@@ -603,10 +616,8 @@ r.get('/kanban-bootstrap', responseCache({ ttl: 15, scope: 'user', tags: ['crm:l
       });
     }
 
-    const countsParsed = await invokeCrmLeadsStageCountsRpc({
-      ...filterParams,
-      p_pipeline_stage_ids: stageIds.length ? stageIds : null,
-    });
+    const countsParsed = await countsPromise;
+    if (countsError) throw countsError;
 
     const stageCounts = countsParsed?.counts || {};
     if (initialStageId && stageCounts[initialStageId] === undefined) {

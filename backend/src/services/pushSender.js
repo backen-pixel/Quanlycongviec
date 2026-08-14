@@ -24,6 +24,7 @@ const CHANNEL_SYSTEM = 'crm_system_tray_v3';
 const CHANNEL_CALL = 'crm_call';
 const CHANNEL_SX_COMMENTS = 'sx_comments';
 const CHANNEL_VC_COMMENTS = 'vc_comments';
+const CHANNEL_APP_UPDATE = 'crm_app_update_v1';
 
 function isChatType(type) {
   return type === 'messenger_chat' || type === 'lead_chat' || type === 'department_chat';
@@ -156,6 +157,8 @@ function buildPushPayload(notification) {
   const isCall = isIncomingCallType(notification.type);
   const isSxComment = isProductionCommentNotification(notification);
   const isVcModule = isLogisticsModuleNotification(notification);
+  const isAppUpdate = String(notification.type || '') === 'app_update'
+    || String(notification.entity_type || '') === 'app_update';
   const channelId = isCall
     ? CHANNEL_CALL
     : chat
@@ -164,7 +167,9 @@ function buildPushPayload(notification) {
         ? CHANNEL_SX_COMMENTS
         : isVcModule
           ? CHANNEL_VC_COMMENTS
-          : CHANNEL_SYSTEM;
+          : isAppUpdate
+            ? CHANNEL_APP_UPDATE
+            : CHANNEL_SYSTEM;
 
   return {
     title: String(title).slice(0, 120),

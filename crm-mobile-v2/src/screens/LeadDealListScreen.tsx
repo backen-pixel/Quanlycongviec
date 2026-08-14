@@ -4,9 +4,20 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Keyboard, Pressable, RefreshControl, ScrollView, SectionList, StyleSheet, Text, TextInput, View } from 'react-native';
+import {
+  Alert,
+  Keyboard,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  SectionList,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { formatApiError, isAbortError } from '../api/client';
+import { formatApiError, isAbortError, isNetworkError } from '../api/client';
 import {
   convertLeadToDeal,
   fetchCrmListPage,
@@ -14,11 +25,13 @@ import {
   fetchPipelineStages,
   KANBAN_PAGE_SIZE,
   moveCrmItemStage,
+  setCrmHubCache,
   setCrmKanbanDeadline,
   setCrmLeadInteracted,
   prefetchCrmProductionCompanies,
   type CrmSxProductionTarget,
 } from '../api/crm';
+import { useNetworkStatus } from '../context/NetworkStatusContext';
 import {
   fetchCrmCompanies,
   fetchCrmEmployeesByCompany,
@@ -115,6 +128,7 @@ export default function LeadDealListScreen({ kind }: Props) {
 
   const [viewMode, setViewMode] = useState<ViewMode>('list');
   const [viewModeReady, setViewModeReady] = useState(false);
+  const [switchingToKanban, setSwitchingToKanban] = useState(false);
   const [listSort, setListSort] = useState<CrmListSort>('newest');
   const [sortOpen, setSortOpen] = useState(false);
   const {
@@ -184,10 +198,25 @@ export default function LeadDealListScreen({ kind }: Props) {
     };
   }, [kind]);
 
+  const { isOnline } = useNetworkStatus();
+  const isOnlineRef = useRef(isOnline);
+  isOnlineRef.current = isOnline;
+
   const switchViewMode = useCallback((next: ViewMode) => {
-    setViewMode(next);
-    void AsyncStorage.setItem(viewModeKey(kind), next).catch(() => undefined);
-  }, [kind]);
+    if (next === viewMode) return;
+    if (next === 'kanban') {
+      // Một frame cho press highlight — mount Hub ngay (cache warm làm paint nhanh).
+      setSwitchingToKanban(true);
+      requestAnimationFrame(() => {
+        setViewMode('kanban');
+        setSwitchingToKanban(false);
+        void AsyncStorage.setItem(viewModeKey(kind), 'kanban').catch(() => undefined);
+      });
+      return;
+    }
+    setViewMode('list');
+    void AsyncStorage.setItem(viewModeKey(kind), 'list').catch(() => undefined);
+  }, [kind, viewMode]);
 
   const switchListSort = useCallback((next: CrmListSort) => {
     setListSort(next);
@@ -347,7 +376,25 @@ export default function LeadDealListScreen({ kind }: Props) {
           const [stg, batch] = meta;
           setListTotal(batch?.total ?? page.total);
           setStages(stg);
+          const nextCounts = batch?.counts || {};
           if (batch?.counts) setStageCounts(batch.counts);
+          // Warm cache cho Kanban — List→Kanban offline vẫn còn cột + badge.
+          if (myId && stg.length) {
+            const counts: Record<string, number> = { ...nextCounts };
+            for (const s of stg) {
+              if (counts[s.id] === undefined) counts[s.id] = 0;
+            }
+            setCrmHubCache(myId, kind, serverFilterKey(filters, search), {
+              data: {
+                stages: stg,
+                stageCounts: counts,
+                listTotal: batch?.total ?? page.total,
+                cache: {},
+              },
+              activeStageId: String(stg[0]?.id || ''),
+              activeIndex: 0,
+            });
+          }
         } else if (modeLoad !== 'append') {
           setListTotal((prev) => prev ?? page.total);
         }
@@ -355,6 +402,11 @@ export default function LeadDealListScreen({ kind }: Props) {
         if (isAbortError(e) || ac.signal.aborted || gen !== loadGenRef.current) return;
         const msg = formatApiError(e);
         if (!msg) return;
+        // Offline / lỗi mạng: giữ danh sách + badge đã có — tránh giật về 0.
+        if (isNetworkError(e) || !isOnlineRef.current) {
+          setError(msg);
+          return;
+        }
         setError(msg);
         if (modeLoad !== 'append') setItems([]);
       } finally {
@@ -365,7 +417,7 @@ export default function LeadDealListScreen({ kind }: Props) {
         }
       }
     },
-    [kind, fetchOpts, stageId],
+    [kind, fetchOpts, stageId, myId, filters, search],
   );
 
   useEffect(() => {
@@ -383,6 +435,7 @@ export default function LeadDealListScreen({ kind }: Props) {
         return;
       }
       if (!filtersReady || !listActive) return;
+      if (!isOnlineRef.current) return;
       const LIST_FOCUS_TTL_MS = 45_000;
       if (Date.now() - lastFocusLoadAtRef.current < LIST_FOCUS_TTL_MS) return;
       lastFocusLoadAtRef.current = Date.now();
@@ -391,6 +444,7 @@ export default function LeadDealListScreen({ kind }: Props) {
   );
 
   useCrmRealtimeRefresh((payload) => {
+    if (!isOnlineRef.current) return;
     const detail = payload?.detail;
     const LIST_REALTIME_TTL_MS = 45_000;
     const scheduleRefresh = (force = false) => {
@@ -806,10 +860,15 @@ export default function LeadDealListScreen({ kind }: Props) {
     setStageId('');
   }, [dealListTab]);
 
-  if (!viewModeReady) {
+  if (!viewModeReady || switchingToKanban) {
     return (
       <View style={[styles.root, { paddingTop: insets.top + 48, alignItems: 'center' }]}>
         <SpinningLoader color={Colors.blue} />
+        {switchingToKanban ? (
+          <Text style={{ marginTop: 12, color: Colors.textMuted, fontWeight: '600' }}>
+            Đang chuyển sang Kanban…
+          </Text>
+        ) : null}
       </View>
     );
   }

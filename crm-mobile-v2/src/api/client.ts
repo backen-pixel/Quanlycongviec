@@ -72,6 +72,31 @@ export function isAbortError(e: unknown): boolean {
   );
 }
 
+/** Mất mạng / không tới được máy chủ (không gồm HTTP 4xx/5xx đã có response). */
+export function isNetworkError(e: unknown): boolean {
+  if (!e || typeof e !== 'object') return false;
+  if (isAbortError(e)) return false;
+  const ex = e as { message?: string; code?: string; response?: unknown };
+  if (ex.response != null) return false;
+  const code = String(ex.code || '');
+  if (
+    code === 'ERR_NETWORK'
+    || code === 'ECONNABORTED'
+    || code === 'ETIMEDOUT'
+    || code === 'ENOTFOUND'
+    || code === 'ECONNREFUSED'
+  ) {
+    return true;
+  }
+  const msg = String(ex.message || '').toLowerCase();
+  return (
+    msg === 'network error'
+    || msg.includes('network request failed')
+    || msg.includes('failed to fetch')
+    || msg.includes('không kết nối được máy chủ')
+  );
+}
+
 export function formatApiError(e: unknown): string {
   if (isAbortError(e)) return '';
   if (!e || typeof e !== 'object') return String(e ?? 'Lỗi không xác định');
@@ -88,7 +113,9 @@ export function formatApiError(e: unknown): string {
   if (ex.code === 'ECONNABORTED' || ex.code === 'ETIMEDOUT') {
     return 'Hết giờ chờ máy chủ. Thử lại hoặc kiểm tra mạng.';
   }
-  if (ex.message === 'Network Error') return 'Không kết nối được máy chủ. Kiểm tra mạng.';
+  if (ex.message === 'Network Error' || isNetworkError(e)) {
+    return 'Không kết nối được máy chủ. Kiểm tra mạng.';
+  }
   if (ex.message && String(ex.message).trim()) return String(ex.message);
   return 'Lỗi không xác định';
 }

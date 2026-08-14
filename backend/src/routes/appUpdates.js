@@ -205,6 +205,17 @@ function effectiveReleaseFileSize(release, appKey) {
   return Number.isFinite(sz) && sz > 0 ? sz : null;
 }
 
+/**
+ * App cũ (trước 2.2.127) băm SHA-256 bằng JS thuần sau khi tải xong → đứng 100% ~1 phút với APK 25+ MB.
+ * Không trả checksum cho file lớn: client cũ sẽ bỏ qua bước băm; HTTPS + chữ ký APK Android vẫn bảo vệ.
+ */
+const CLIENT_SHA256_MAX_BYTES = 6 * 1024 * 1024;
+function sha256ForMobileClient(release, appKey) {
+  const size = effectiveReleaseFileSize(release, appKey);
+  if (size && size > CLIENT_SHA256_MAX_BYTES) return null;
+  return release?.sha256 || null;
+}
+
 function sendApkFile(res, diskPath, filename) {
   const size = statFileSizeSafe(diskPath);
   res.setHeader('Content-Type', 'application/vnd.android.package-archive');
@@ -290,7 +301,7 @@ r.get('/check', async (req, res) => {
       latestVersionCode: latest.version_code,
       downloadUrl: hasNewer ? downloadUrlFor(latest, publicBaseUrl(req)) : null,
       size: effectiveReleaseFileSize(latest, appKey),
-      sha256: latest.sha256,
+      sha256: sha256ForMobileClient(latest, appKey),
       releaseNotes: latest.release_notes || null,
       apkReady,
       needsUpdate,
@@ -347,7 +358,7 @@ r.get('/latest', async (req, res) => {
       versionCode: latest.version_code,
       downloadUrl: apkReady ? downloadUrlFor(latest, publicBaseUrl(req)) : null,
       size: effectiveReleaseFileSize(latest, appKey),
-      sha256: latest.sha256,
+      sha256: sha256ForMobileClient(latest, appKey),
       releaseNotes: latest.release_notes || null,
       mandatory: latest.is_mandatory,
       publishedAt: latest.updated_at || latest.created_at,

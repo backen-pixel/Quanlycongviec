@@ -709,8 +709,35 @@ export async function fetchCrmStagePage(
   return { items, hasMore, nextOffset, total: isOrphan ? items.length : total };
 }
 
-/** Bootstrap kanban — 1 request: stages + counts + trang đầu cột active. */
-async function fetchCrmKanbanBootstrapRemote(
+const bootstrapInflight = new Map<string, Promise<CrmBoardBootstrap | null>>();
+
+/**
+ * Bootstrap kanban — 1 request: stages + counts + trang đầu cột active.
+ *
+ * Gộp các lời gọi cùng key vào 1 request: lúc mở app, warm (Tổng quan/Menu) và
+ * Hub có thể gọi cùng lúc. Request dùng chung không nhận `signal` — nơi gọi tự
+ * kiểm tra `signal.aborted` sau khi await.
+ */
+function fetchCrmKanbanBootstrapRemote(
+  type: 'lead' | 'deal',
+  initialStageId?: string,
+  opts?: CrmStageFetchOpts,
+): Promise<CrmBoardBootstrap | null> {
+  const key = bootstrapCacheKey(type, initialStageId, opts);
+  const pending = bootstrapInflight.get(key);
+  if (pending) return pending;
+
+  const run = fetchCrmKanbanBootstrapUncached(type, initialStageId, {
+    ...opts,
+    signal: undefined,
+  }).finally(() => {
+    if (bootstrapInflight.get(key) === run) bootstrapInflight.delete(key);
+  });
+  bootstrapInflight.set(key, run);
+  return run;
+}
+
+async function fetchCrmKanbanBootstrapUncached(
   type: 'lead' | 'deal',
   initialStageId?: string,
   opts?: CrmStageFetchOpts,
@@ -846,15 +873,38 @@ export async function fetchCrmBoardInitial(
   };
 }
 
-/** Làm nóng cache pipeline + bootstrap + tổng số Lead/Deal (gọi sớm từ Menu). */
-export async function warmCrmHubPipelines(companyId?: string, signal?: AbortSignal): Promise<void> {
-  const opts: CrmStageFetchOpts = { companyId, signal, skipCounts: true, lite: true };
-  void warmCrmHubStageCounts(companyId, signal);
-  await Promise.all([
+/** Khoảng cách tối thiểu giữa 2 lần làm nóng cho cùng công ty. */
+const WARM_HUB_MIN_INTERVAL_MS = 60 * 1000;
+const warmHubState = new Map<string, { at: number; pending: Promise<void> | null }>();
+
+/**
+ * Làm nóng cache pipeline + bootstrap + tổng số Lead/Deal.
+ *
+ * Được gọi từ nhiều nơi (Tổng quan, Menu, Hub) nên tự gom lại: cùng công ty thì
+ * chỉ chạy 1 lần mỗi phút, tránh bắn trùng request lúc khởi động app.
+ */
+export function warmCrmHubPipelines(companyId?: string, signal?: AbortSignal): Promise<void> {
+  const key = companyId || '__all__';
+  const state = warmHubState.get(key);
+  if (state?.pending) return state.pending;
+  if (state && Date.now() - state.at < WARM_HUB_MIN_INTERVAL_MS) return Promise.resolve();
+
+  // Không dùng `signal` của một màn cụ thể: warm dùng chung, màn đóng không nên hủy.
+  const opts: CrmStageFetchOpts = { companyId, skipCounts: true, lite: true };
+  const pending = Promise.all([
     fetchPipelineStagesCached('lead', opts),
     fetchPipelineStagesCached('deal', opts),
-    warmCrmHubBootstrap(companyId, signal),
-  ]);
+    warmCrmHubBootstrap(companyId),
+    warmCrmHubStageCounts(companyId),
+  ])
+    .then(() => undefined)
+    .catch(() => undefined)
+    .finally(() => {
+      warmHubState.set(key, { at: Date.now(), pending: null });
+    });
+
+  warmHubState.set(key, { at: Date.now(), pending });
+  return pending;
 }
 
 /** Prefetch tổng + badge cột — cùng mặc định Có SĐT như Hub. */
@@ -995,6 +1045,7 @@ function setCrmBootstrapCache(
 
 export function invalidateCrmBootstrapCache(): void {
   bootstrapCache.clear();
+  bootstrapInflight.clear();
 }
 
 export type CrmHubCacheSnapshot = {
@@ -1032,10 +1083,12 @@ export function invalidateCrmHubCache(userId?: string, opts?: { soft?: boolean }
   if (!userId) {
     hubCache.clear();
     bootstrapCache.clear();
+    bootstrapInflight.clear();
     // Soft: giữ stages/totals để silent bootstrap không miss warm cache.
     if (!soft) {
       totalsCache.clear();
       stagesCache.clear();
+      warmHubState.clear();
     }
     return;
   }

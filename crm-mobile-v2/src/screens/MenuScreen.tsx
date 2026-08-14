@@ -82,7 +82,7 @@ export default function MenuScreen() {
     useCallback(() => {
       const t = setTimeout(() => {
         void warmCrmHubPipelines(user?.company_id || undefined);
-      }, 800);
+      }, 200);
       return () => clearTimeout(t);
     }, [user?.company_id]),
   );

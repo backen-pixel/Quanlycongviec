@@ -46,10 +46,11 @@ import {
   fetchCrmSearchSuggest,
   type CrmSxProductionTarget,
 } from '../api/crm';
-import { formatApiError } from '../api/client';
+import { formatApiError, isNetworkError } from '../api/client';
 import { useAuth } from '../context/AuthContext';
+import { useNetworkStatus } from '../context/NetworkStatusContext';
 import { colorFromName, initialsFromName } from '../lib/media';
-import { sumCrmDealHubKpiCount, sumCrmCustomerTabDealCount, sumCrmDealMergedHubCount, resolveCrmHubDisplayStages, hasCrmCustomerOrderTab } from '../lib/crmPipelineTabs';
+import { sumCrmDealHubKpiCount, sumCrmCustomerTabDealCount, sumCrmDealMergedHubCount, resolveCrmHubDisplayStages, hasCrmCustomerOrderTab, splitDealStagesForCrmTabsMulti } from '../lib/crmPipelineTabs';
 import { deadlineIsoToYmd, planCrmStageMove } from '../lib/crmStageMove';
 import {
   readDefaultDealKhSplitEnabled,
@@ -151,27 +152,47 @@ function filterStagesHideEmpty(
   return filtered.length > 0 ? filtered : stages.slice(0, 1);
 }
 
-/** Giữ cache cột quanh cột đang xem — session dài không tích hàng chục cột × 120 item. */
+/** Giữ cache cột quanh cột đang xem — session dài không tích hàng chục cột × 120 item.
+ * `protectIds`: không bao giờ xóa (vd. nửa Deal khi đang xem ĐH — tránh giật khi đổi tab). */
 function pruneStageCacheAround(
   cache: Record<string, CrmStageCache>,
   stageIdsOrdered: string[],
   centerId: string,
   radius = 2,
+  protectIds?: Iterable<string>,
 ): Record<string, CrmStageCache> {
-  const idx = stageIdsOrdered.findIndex((id) => String(id) === String(centerId));
   const keep = new Set<string>();
+  if (protectIds) {
+    for (const id of protectIds) keep.add(String(id));
+  }
+  const idx = stageIdsOrdered.findIndex((id) => String(id) === String(centerId));
   if (idx >= 0) {
     const from = Math.max(0, idx - radius);
     const to = Math.min(stageIdsOrdered.length - 1, idx + radius);
-    for (let i = from; i <= to; i++) keep.add(stageIdsOrdered[i]);
+    for (let i = from; i <= to; i++) keep.add(String(stageIdsOrdered[i]));
   } else if (centerId) {
-    keep.add(centerId);
+    keep.add(String(centerId));
   }
   const next: Record<string, CrmStageCache> = {};
   for (const id of Object.keys(cache)) {
-    if (keep.has(id)) next[id] = cache[id];
+    if (keep.has(String(id))) next[id] = cache[id];
   }
   return Object.keys(next).length ? next : cache;
+}
+
+/** Tách ĐH: prune trong nửa tab hiện tại, bảo vệ cache nửa còn lại. */
+function dealSplitPrunePlan(
+  allStages: CrmPipelineStage[],
+  centerId: string,
+): { pruneOrder: string[]; protect: string[] } | null {
+  const { dealTabStages, customerTabStages } = splitDealStagesForCrmTabsMulti(allStages || []);
+  const dealIds = dealTabStages.map((s) => String(s.id));
+  const orderIds = customerTabStages.map((s) => String(s.id));
+  if (!dealIds.length || !orderIds.length) return null;
+  const cid = String(centerId);
+  if (orderIds.includes(cid)) return { pruneOrder: orderIds, protect: dealIds };
+  if (dealIds.includes(cid)) return { pruneOrder: dealIds, protect: orderIds };
+  return null;
 }
 
 function sumCounts(counts: Record<string, number>): number {
@@ -448,6 +469,9 @@ export default function CrmHubScreen({
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const myId = user?.id || user?.userId || '';
+  const { isOnline } = useNetworkStatus();
+  const isOnlineRef = useRef(isOnline);
+  isOnlineRef.current = isOnline;
   const {
     ready: filtersReady,
     filters,
@@ -595,9 +619,10 @@ export default function CrmHubScreen({
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
     const task = InteractionManager.runAfterInteractions(() => {
+      // Warm loại còn lại sớm — không chờ 3.5s (lúc đó user đã mở Kanban rồi).
       timer = setTimeout(() => {
         void warmCrmHubPipelines(user?.company_id || undefined);
-      }, 3500);
+      }, 450);
     });
     return () => {
       task.cancel?.();
@@ -900,7 +925,26 @@ export default function CrmHubScreen({
 
     if (!silent && !isRefresh && applyCachedHub(dm, fk)) {
       applyTotalsCache(dm);
-      void loadBootstrap(dm, false, stageId, true);
+      if (isOnlineRef.current) void loadBootstrap(dm, false, stageId, true);
+      return;
+    }
+
+    // Offline: giữ cache/dữ liệu cũ — không bootstrap (tránh cột trống + badge giật).
+    if (!isOnlineRef.current) {
+      if (applyCachedHub(dm, fk)) {
+        applyTotalsCache(dm);
+        return;
+      }
+      const hubNow = dm === 'leads' ? leadDataRef.current : dealDataRef.current;
+      if (hubNow.stages.length) {
+        applyTotalsCache(dm);
+        return;
+      }
+      if (!silent) {
+        setError('Không có kết nối mạng. Kiểm tra Wi‑Fi / dữ liệu di động rồi thử lại.');
+        setLoadingByMode((p) => ({ ...p, [dm]: false }));
+        setRefreshing(false);
+      }
       return;
     }
 
@@ -1033,8 +1077,14 @@ export default function CrmHubScreen({
       }
     } catch (e) {
       if (!ac.signal.aborted && !silent) {
-        const msg = formatApiError(e);
-        if (msg) setError(msg);
+        const hubNow = dm === 'leads' ? leadDataRef.current : dealDataRef.current;
+        // Có dữ liệu cũ: không đè màn hình lỗi / không xóa badge khi mất mạng.
+        if (hubNow.stages.length && isNetworkError(e)) {
+          /* giữ UI */
+        } else {
+          const msg = formatApiError(e);
+          if (msg) setError(msg);
+        }
       }
     } finally {
       if (abortByModeRef.current[dm] === ac) {
@@ -1045,7 +1095,12 @@ export default function CrmHubScreen({
     }
   }, [applyBootstrap, applyCachedHub, applyTotalsCache, search, filters, myId, resolveFetchStageId]);
 
-  const loadStage = useCallback(async (which: Mode, stageId: string, append = false) => {
+  const loadStage = useCallback(async (
+    which: Mode,
+    stageId: string,
+    append = false,
+    quiet = false,
+  ) => {
     const dm = asDataMode(which);
     const type = dm === 'leads' ? 'lead' : 'deal';
     const setter = dm === 'leads' ? setLeadData : setDealData;
@@ -1056,7 +1111,7 @@ export default function CrmHubScreen({
     const validStageIds = new Set(hubNow.stages.map((s) => s.id));
 
     if (append) setMoreLoading(true);
-    else setStageLoading(true);
+    else if (!quiet) setStageLoading(true);
     try {
       const offset = append ? cur.nextOffset : 0;
       const page = await fetchCrmStagePage(
@@ -1075,7 +1130,11 @@ export default function CrmHubScreen({
         if (items.length > MAX_STAGE_ITEMS) {
           items = items.slice(items.length - MAX_STAGE_ITEMS);
         }
-        const stageIds = prev.stages.map((s) => s.id);
+        const allIds = prev.stages.map((s) => s.id);
+        const splitPlan =
+          dealKhSplitRef.current && dm === 'deals'
+            ? dealSplitPrunePlan(prev.stages, stageId)
+            : null;
         const mergedCache = {
           ...prev.cache,
           [stageId]: {
@@ -1088,13 +1147,19 @@ export default function CrmHubScreen({
         return {
           ...prev,
           stageCounts: { ...prev.stageCounts, [stageId]: page.total },
-          cache: pruneStageCacheAround(mergedCache, stageIds, stageId, 2),
+          cache: pruneStageCacheAround(
+            mergedCache,
+            splitPlan?.pruneOrder ?? allIds,
+            stageId,
+            2,
+            splitPlan?.protect,
+          ),
         };
       });
     } catch {
       /* giữ cache cũ nếu có */
     } finally {
-      setStageLoading(false);
+      if (!quiet) setStageLoading(false);
       setMoreLoading(false);
     }
   }, []);
@@ -1114,6 +1179,7 @@ export default function CrmHubScreen({
     tabTotalsKeyRef.current = { leads: '', deals: '' };
     applyTotalsCache('leads');
     applyTotalsCache('deals');
+    if (!isOnlineRef.current) return;
     void prefetchTabTotals('leads');
     void prefetchTabTotals('deals');
   }, [canLoadCrm, hubServerFilterKey, applyTotalsCache, prefetchTabTotals]);
@@ -1131,12 +1197,12 @@ export default function CrmHubScreen({
     useCallback(() => {
       const which = modeRef.current;
       const dm = asDataMode(which);
-      if (canLoadCrmRef.current) {
+      if (canLoadCrmRef.current && isOnlineRef.current) {
         // Luôn làm mới badge khi quay lại Hub — tránh mất tổng vì abort lúc thoát.
         void prefetchTabTotalsRef.current('leads');
         void prefetchTabTotalsRef.current('deals');
       }
-      if (canLoadCrmRef.current && loadedRef.current[dm]) {
+      if (canLoadCrmRef.current && loadedRef.current[dm] && isOnlineRef.current) {
         const hubNow = dm === 'leads' ? leadDataRef.current : dealDataRef.current;
         const sid = stageIdAtIndex(which, activeIndexRef.current);
         // Chỉ silent refresh nếu cột đang xem trống / chưa loaded — tránh bootstrap nặng mỗi lần focus.
@@ -1157,6 +1223,7 @@ export default function CrmHubScreen({
   useCrmRealtimeRefresh(
     useCallback((payload) => {
       if (!canLoadCrmRef.current) return;
+      if (!isOnlineRef.current) return;
       const detail = payload?.detail;
       let patchedInPlace = false;
       let needColumnReload = false;
@@ -1328,10 +1395,12 @@ export default function CrmHubScreen({
   }, [hubStages, filters.showOrphan, filters.hideEmptyStages, hub.stageCounts]);
 
   const lastActiveStageIdRef = useRef<string | undefined>(undefined);
+  /** Nhớ cột đang xem theo tab — Deal ↔ ĐH không nhảy về cột 0 + reload. */
+  const tabStageIdRef = useRef<Partial<Record<Mode, string>>>({});
 
   useEffect(() => {
     if (!displayStages.length) return;
-    const want = lastActiveStageIdRef.current;
+    const want = tabStageIdRef.current[mode] ?? lastActiveStageIdRef.current;
     const byId = want != null
       ? displayStages.findIndex((s) => String(s.id) === String(want))
       : -1;
@@ -1341,7 +1410,7 @@ export default function CrmHubScreen({
     }
     // Cột đang xem bị ẩn (count → 0) hoặc danh sách rút — kẹp index hợp lệ.
     setActiveIndex((i) => Math.max(0, Math.min(i, displayStages.length - 1)));
-  }, [displayStages]);
+  }, [displayStages, mode]);
 
   const filterKey = serverFilterKey(filters, search);
   useEffect(() => {
@@ -1353,30 +1422,55 @@ export default function CrmHubScreen({
       setDealData((p) => ({ ...p, listTotal: null, stageCounts: {} }));
       tabTotalsKeyRef.current = { leads: '', deals: '' };
     }
-    const stageId = displayStages[activeIndexRef.current]?.id;
-    const dm = asDataMode(mode);
+    const which = modeRef.current;
+    const stageId = stageIdAtIndex(which, activeIndexRef.current);
+    const dm = asDataMode(which);
     if (!loaded[dm]) {
-      void loadBootstrap(mode, false, stageId);
+      void loadBootstrap(which, false, stageId);
       return;
     }
     filterKeyRef.current = filterKey;
     if (stageId === ORPHAN_STAGE_ID) {
-      void loadStage(mode, ORPHAN_STAGE_ID, false);
+      void loadStage(which, ORPHAN_STAGE_ID, false);
     } else {
-      void loadBootstrap(mode, true, stageId);
+      void loadBootstrap(which, true, stageId);
     }
-  }, [filterKey, mode, loaded, canLoadCrm, displayStages, loadBootstrap, loadStage]);
+    // Không phụ thuộc mode/displayStages — đổi Deal↔ĐH không được kích hoạt bootstrap lại.
+  }, [filterKey, loaded, canLoadCrm, loadBootstrap, loadStage]);
 
   const switchMode = (next: Mode) => {
     if (next === mode) return;
     if (next === 'orders' && !dealKhSplitRef.current) return;
+
+    const curSid = stageIdAtIndex(mode, activeIndexRef.current);
+    if (curSid) tabStageIdRef.current[mode] = curSid;
+
+    const nextStages = resolveCrmHubDisplayStages(
+      next,
+      leadDataRef.current.stages,
+      dealDataRef.current.stages,
+      dealKhSplitRef.current,
+    );
+    const want = tabStageIdRef.current[next];
+    let idx = want
+      ? nextStages.findIndex((s) => String(s.id) === String(want))
+      : 0;
+    if (idx < 0) idx = 0;
+
     setMode(next);
+    setActiveIndex(idx);
     // Không reset bộ lọc / search khi đổi tab — Lead/Deal/ĐH dùng chung 1 bộ lọc.
-    setActiveIndex(0);
+
     const dm = asDataMode(next);
     if (!loadedRef.current[dm]) {
-      // Lần đầu mở tab — bootstrap. Không xóa filterKeyRef khi đã loaded (tránh refresh + badge nhảy).
       void loadBootstrap(next, false);
+      return;
+    }
+    const sid = nextStages[idx]?.id;
+    if (!sid) return;
+    const hubNow = dm === 'leads' ? leadDataRef.current : dealDataRef.current;
+    if (!hubNow.cache[sid]?.loaded) {
+      void loadStage(next, sid, false);
     }
   };
 
@@ -1384,8 +1478,11 @@ export default function CrmHubScreen({
   const activeStageId = activeStage?.id;
 
   useEffect(() => {
-    if (activeStageId) lastActiveStageIdRef.current = activeStageId;
-  }, [activeStageId]);
+    if (activeStageId) {
+      lastActiveStageIdRef.current = activeStageId;
+      tabStageIdRef.current[mode] = activeStageId;
+    }
+  }, [activeStageId, mode]);
 
   useEffect(() => {
     if (!filters.showOrphan && activeStageId === ORPHAN_STAGE_ID) {
@@ -1402,6 +1499,29 @@ export default function CrmHubScreen({
       void loadStage(mode, activeStageId, false);
     }
   }, [loaded, mode, activeStageId, hub.cache, stageLoading, loadStage]);
+
+  /** Prefetch cột đầu tab đối diện (Deal↔ĐH) — đổi tab không phải chờ mạng (đặc biệt «Tất cả CT»). */
+  useEffect(() => {
+    if (!dealKhSplitEnabled || !loaded.deals || !isOnline) return;
+    if (mode !== 'deals' && mode !== 'orders') return;
+    const other: Mode = mode === 'deals' ? 'orders' : 'deals';
+    const otherStages = resolveCrmHubDisplayStages(
+      other,
+      leadDataRef.current.stages,
+      dealDataRef.current.stages,
+      true,
+    );
+    if (!otherStages.length) return;
+    const want =
+      tabStageIdRef.current[other]
+      || otherStages[0]?.id;
+    if (!want) return;
+    if (dealDataRef.current.cache[want]?.loaded) return;
+    const t = setTimeout(() => {
+      void loadStageRef.current(other, want, false, true);
+    }, 180);
+    return () => clearTimeout(t);
+  }, [mode, dealKhSplitEnabled, loaded.deals, isOnline, dealData.stages]);
 
   /** Prefetch cột trái/phải — vuốt sang không phải chờ mạng. */
   const neighborPrefetchKeyRef = useRef('');
@@ -1433,17 +1553,27 @@ export default function CrmHubScreen({
                 if (cache[id]?.loaded) continue;
                 cache[id] = snap;
               }
-              const stageIds = prev.stages.map((s) => s.id);
+              const allIds = prev.stages.map((s) => s.id);
+              const splitPlan =
+                dealKhSplitRef.current && dataMode === 'deals'
+                  ? dealSplitPrunePlan(prev.stages, activeStageId)
+                  : null;
               return {
                 ...prev,
-                cache: pruneStageCacheAround(cache, stageIds, activeStageId, 2),
+                cache: pruneStageCacheAround(
+                  cache,
+                  splitPlan?.pruneOrder ?? allIds,
+                  activeStageId,
+                  2,
+                  splitPlan?.protect,
+                ),
               };
             });
           } catch {
             /* bỏ qua prefetch lỗi */
           }
         })();
-      }, 280);
+      }, 80);
     });
     return () => {
       cancelled = true;
@@ -1732,7 +1862,8 @@ export default function CrmHubScreen({
   const waitingForCrm = !canLoadCrm && !loaded[dataMode];
   const showFullScreenLoad = waitingForCrm || (isInitialLoad && !hubStages.length);
   const totalsPending =
-    (isInitialLoad || loading || Boolean(countsInflightRef.current[dataMode]))
+    isOnline
+    && (isInitialLoad || loading || Boolean(countsInflightRef.current[dataMode]))
     && hub.listTotal == null
     && Object.keys(hub.stageCounts).length === 0;
   const totalRecordsLabel = totalsPending ? '…' : String(totalRecords);

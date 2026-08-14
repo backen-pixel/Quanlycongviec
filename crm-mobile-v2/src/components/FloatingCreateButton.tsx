@@ -1,7 +1,8 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { LinearGradient } from 'expo-linear-gradient';
-import React, { useEffect, useMemo, useRef } from 'react';
-import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useMemo } from 'react';
+import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
+import { usePulseGlow } from '../hooks/usePulseGlow';
 import { CreateGradient, Shadow, useColors, type ThemeColors } from '../theme';
 
 type Props = {
@@ -14,28 +15,7 @@ type Props = {
 export default function FloatingCreateButton({ onPress }: Props) {
   const Colors = useColors();
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
-  const glow = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(glow, {
-          toValue: 1,
-          duration: 1400,
-          easing: Easing.inOut(Easing.quad),
-          useNativeDriver: true,
-        }),
-        Animated.timing(glow, {
-          toValue: 0,
-          duration: 1400,
-          easing: Easing.inOut(Easing.quad),
-          useNativeDriver: true,
-        }),
-      ]),
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [glow]);
+  const glow = usePulseGlow();
 
   const glowScale = glow.interpolate({ inputRange: [0, 1], outputRange: [1, 1.18] });
   const glowOpacity = glow.interpolate({ inputRange: [0, 1], outputRange: [0.35, 0.7] });

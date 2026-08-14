@@ -33,6 +33,7 @@ import {
   type LeadMember,
 } from '../../api/leadDetail';
 import { currentUserId, useAuth } from '../../context/AuthContext';
+import { useKeyboardInset } from '../../context/KeyboardInsetContext';
 import {
   applyMentionPickToText,
   buildMentionPickerItems,
@@ -233,26 +234,8 @@ export default function LeadCommentsTab({
   onOpenedRef.current = onOpened;
 
   const [attachOpen, setAttachOpen] = useState(false);
-  const [keyboardVisible, setKeyboardVisible] = useState(false);
-  const [keyboardHeight, setKeyboardHeight] = useState(0);
   const listRef = useRef<FlatList>(null);
-
-  useEffect(() => {
-    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
-    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-    const showSub = Keyboard.addListener(showEvent, (e) => {
-      setKeyboardVisible(true);
-      setKeyboardHeight(Math.max(0, e.endCoordinates?.height || 0));
-    });
-    const hideSub = Keyboard.addListener(hideEvent, () => {
-      setKeyboardVisible(false);
-      setKeyboardHeight(0);
-    });
-    return () => {
-      showSub.remove();
-      hideSub.remove();
-    };
-  }, []);
+  const { keyboardVisible } = useKeyboardInset();
 
   // Khi bàn phím mở: cuộn list để thấy tin mới gần composer.
   useEffect(() => {
@@ -266,11 +249,6 @@ export default function LeadCommentsTab({
   const composerPadBottom = keyboardVisible ? 8 : Math.max(insets.bottom, 10);
   /** Chiều cao vùng composer ước lượng — chừa đáy list khi bàn phím / composer đè. */
   const composerReserve = 62 + composerPadBottom + (replyTo ? 36 : 0) + (pending.length ? 52 : 0);
-  /**
-   * Android nested (header + tab): adjustResize thường không đẩy được thanh nhập.
-   * Neo composer bằng keyboardHeight; iOS dùng KeyboardAvoidingView.
-   */
-  const androidKbLift = Platform.OS === 'android' ? keyboardHeight : 0;
 
   const load = useCallback(async (silent = false) => {
     const gen = ++loadGenRef.current;
@@ -793,7 +771,6 @@ export default function LeadCommentsTab({
   }
 
   return (
-    <View style={{ flex: 1, marginBottom: androidKbLift }}>
     <KeyboardAvoidingView
       style={{ flex: 1 }}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -973,6 +950,7 @@ export default function LeadCommentsTab({
           }}
           multiline
           maxLength={4000}
+          textAlignVertical="top"
         />
         <Pressable
           style={[styles.sendBtn, !canSend && styles.sendBtnDisabled]}
@@ -1015,7 +993,6 @@ export default function LeadCommentsTab({
         onPick={onAttachPick}
       />
     </KeyboardAvoidingView>
-    </View>
   );
 }
 
@@ -1159,6 +1136,7 @@ function makeStyles(C: ThemeColors) {
       color: C.text,
       fontSize: 15,
       backgroundColor: C.surfaceSoft,
+      textAlignVertical: 'top',
     },
     sendBtn: {
       width: 42,
