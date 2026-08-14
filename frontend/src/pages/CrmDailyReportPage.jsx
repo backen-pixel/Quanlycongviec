@@ -7,7 +7,7 @@ import { createPortal } from 'react-dom';
 import {
   CalendarDays, ChevronLeft, ChevronRight, ClipboardCheck, Loader2,
   Save, Send, Users, X, AlertTriangle, CheckCircle2, Clock, Sparkles, History,
-  Plus, Trash2, HelpCircle, Filter, Search, ExternalLink, FileDown, Copy,
+  Plus, Trash2, HelpCircle, Filter, Search, ExternalLink, FileDown, Copy, Sheet,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
@@ -22,6 +22,7 @@ import {
   isLikelyEmptyCrmLeadCompany,
 } from '../lib/crmCompanyFilter';
 import { copyElementImageToClipboard, downloadElementPdf } from '../lib/domCaptureShare';
+import { downloadDailyReportMatrixExcel } from '../lib/crmDailyReportMatrixExcel';
 
 const pad2 = (n) => String(n).padStart(2, '0');
 const toISO = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
@@ -1825,6 +1826,7 @@ function TeamMatrixPanel({ date, onDateChange }) {
   const [companies, setCompanies] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [templates, setTemplates] = useState([]);
+  const [exportingExcel, setExportingExcel] = useState(false);
 
   useEffect(() => {
     if (lockedCompany) return undefined;
@@ -1926,6 +1928,32 @@ function TeamMatrixPanel({ date, onDateChange }) {
   const tplOptions = templates.length ? templates : (data?.templates || []);
 
   /** Flatten: từng mục → danh sách { section, group } để render theo phần. */
+  const companyName = companies.find((c) => String(c.id) === String(companyId))?.short_name
+    || companies.find((c) => String(c.id) === String(companyId))?.name
+    || '';
+  const departmentName = departments.find((d) => String(d.id) === String(filter.departmentId))?.name || '';
+  const roleLabel = tplOptions.find((t) => String(t.role_key || t.id) === String(filter.roleKey))?.name || '';
+
+  const exportExcel = async () => {
+    if (!groups.length || exportingExcel) return;
+    setExportingExcel(true);
+    setError('');
+    try {
+      await downloadDailyReportMatrixExcel({
+        date,
+        companyName,
+        departmentName,
+        roleLabel,
+        summary: s,
+        groups,
+      });
+    } catch (e) {
+      setError(e?.message || 'Xuất Excel thất bại');
+    } finally {
+      setExportingExcel(false);
+    }
+  };
+
   const sectionBlocks = useMemo(() => {
     const keys = sectionTab === 'all'
       ? ['plan', 'result', 'sharpen', 'proposal']
@@ -2048,21 +2076,33 @@ function TeamMatrixPanel({ date, onDateChange }) {
 
       {/* Tab theo từng mục I–IV */}
       {companyId && (
-        <div className="flex flex-wrap gap-1.5 rounded-xl border border-violet-200 bg-white p-1.5 shadow-sm">
-          {SECTION_TAB_META.map((tab) => (
-            <button
-              key={tab.key}
-              type="button"
-              onClick={() => setSectionTab(tab.key)}
-              className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-all ${
-                sectionTab === tab.key
-                  ? 'bg-violet-600 text-white shadow-sm'
-                  : 'text-violet-800/80 hover:bg-violet-50'
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex min-w-0 flex-1 flex-wrap gap-1.5 rounded-xl border border-violet-200 bg-white p-1.5 shadow-sm">
+            {SECTION_TAB_META.map((tab) => (
+              <button
+                key={tab.key}
+                type="button"
+                onClick={() => setSectionTab(tab.key)}
+                className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-all ${
+                  sectionTab === tab.key
+                    ? 'bg-violet-600 text-white shadow-sm'
+                    : 'text-violet-800/80 hover:bg-violet-50'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            disabled={!groups.length || loading || exportingExcel}
+            onClick={exportExcel}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-600 px-3 py-2 text-xs font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+            title="Xuất Excel tab Kế hoạch và Kết quả (kèm tổng quan + so sánh KH/KQ)"
+          >
+            {exportingExcel ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sheet className="h-4 w-4" />}
+            Xuất Excel KH + KQ
+          </button>
         </div>
       )}
 
