@@ -40,6 +40,10 @@ export default function EarthExperienceBackground({ opts = {} }) {
           return;
         }
         experience = exp;
+        // Ẩn tab / cửa sổ không focus → dừng RAF ngay (tiết kiệm GPU khi làm việc CRM).
+        if (document.visibilityState === 'hidden' || !document.hasFocus()) {
+          experience.renderLoop?.stop?.();
+        }
       } catch (err) {
         console.warn('[EarthExperienceBackground] mount failed:', err);
       }
@@ -47,33 +51,31 @@ export default function EarthExperienceBackground({ opts = {} }) {
 
     idleId = runWhenIdle(() => {
       if (!cancelled) void mount();
-    }, { timeout: 1200 });
+    }, { timeout: 1800 });
 
-    const onVisibility = () => {
-      if (document.visibilityState === 'hidden') {
-        experience?.renderLoop?.stop?.();
-      } else if (experience && !experience.renderLoop?.isRunning) {
+    const syncLoop = () => {
+      if (!experience) return;
+      const shouldRun = document.visibilityState === 'visible' && document.hasFocus();
+      if (!shouldRun) {
+        experience.renderLoop?.stop?.();
+        return;
+      }
+      if (!experience.renderLoop?.isRunning) {
         experience.renderLoop?.start?.();
         experience.sceneContext?.render?.();
       }
     };
-    document.addEventListener('visibilitychange', onVisibility);
 
-    const onBlur = () => experience?.renderLoop?.stop?.();
-    const onFocus = () => {
-      if (document.visibilityState === 'visible' && experience && !experience.renderLoop?.isRunning) {
-        experience.renderLoop?.start?.();
-      }
-    };
-    window.addEventListener('blur', onBlur);
-    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', syncLoop);
+    window.addEventListener('blur', syncLoop);
+    window.addEventListener('focus', syncLoop);
 
     return () => {
       cancelled = true;
       if (idleId != null) cancelIdle(idleId);
-      document.removeEventListener('visibilitychange', onVisibility);
-      window.removeEventListener('blur', onBlur);
-      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', syncLoop);
+      window.removeEventListener('blur', syncLoop);
+      window.removeEventListener('focus', syncLoop);
       experience?.release();
     };
   }, []);
@@ -90,6 +92,9 @@ export default function EarthExperienceBackground({ opts = {} }) {
         height: '100vh',
         pointerEvents: 'none',
         zIndex: 0,
+        // Tách layer compositor — giảm repaint khi UI CRM cuộn
+        contain: 'strict',
+        transform: 'translateZ(0)',
       }}
     />
   );

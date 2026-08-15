@@ -329,7 +329,7 @@ export default function TrashPage({ embedded = false, filters, showCompanyColumn
   const pagedItems = pagination.items;
 
   return (
-    <div className={`flex flex-col min-h-0 h-full ${embedded ? 'gap-2' : 'max-w-6xl mx-auto space-y-4'}`}>
+    <div className={`flex flex-col min-h-0 ${embedded ? 'flex-1 h-full gap-2' : 'max-w-6xl mx-auto space-y-4'}`}>
       {!embedded && (
       <div className="flex items-center justify-between mb-6">
         <div>

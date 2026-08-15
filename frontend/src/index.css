@@ -135,7 +135,9 @@ main .ui-kanban-fixed .kanban-unified-scroll-column > .kanban-column-header-stic
 }
 .kanban-h-scroll-main {
   scrollbar-gutter: stable;
-  overscroll-behavior: contain;
+  /* Chặn nối tiếp ngang, nhưng cho cuộn dọc nối ra trang khi board đã chạm đáy */
+  overscroll-behavior-x: contain;
+  overscroll-behavior-y: auto;
   touch-action: pan-x pan-y;
 }
 

@@ -135,10 +135,10 @@ export function TrashTablePagination({ page, totalPages, total, pageSize = TRASH
   );
 }
 
-/** Khung bảng cuộn — thead dính, tránh cuộn cả trang. */
+/** Khung bảng cuộn — thead dính, tránh cuộn cả trang; cao theo phần còn lại của viewport. */
 export function TrashScrollTableShell({ header, footer, children, className = '' }) {
   return (
-    <div className={`flex flex-col min-h-0 h-full max-h-[min(560px,calc(100vh-15rem))] bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm ${className}`}>
+    <div className={`flex flex-col min-h-0 flex-1 h-full max-h-[calc(100vh-11rem)] bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm ${className}`}>
       {header}
       <div className="flex-1 min-h-0 overflow-auto [scrollbar-width:thin]">
         {children}

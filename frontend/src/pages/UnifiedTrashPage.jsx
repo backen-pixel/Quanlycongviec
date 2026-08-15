@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { Trash2, Target, Factory, Truck, AlertTriangle } from 'lucide-react';
 import api from '../lib/api';
@@ -118,7 +118,7 @@ export default function UnifiedTrashPage() {
   };
 
   return (
-    <div className="max-w-6xl mx-auto flex flex-col gap-3 min-h-[420px] max-h-[calc(100vh-5.5rem)]">
+    <div className="max-w-6xl mx-auto flex flex-col gap-3 h-[calc(100vh-5.5rem)] min-h-[420px]">
       <div className="shrink-0 flex flex-wrap items-start justify-between gap-3">
         <div className="flex items-center gap-2">
           <Trash2 className="h-7 w-7 text-rose-600 shrink-0" />

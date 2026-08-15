@@ -288,12 +288,17 @@ export const BACKGROUND_PRESETS = [
     sceneOpts: {
       camera: {
         initialDistance: 4.15,
-        orbitSpeedRadPerSec: 0.02,
+        orbitSpeedRadPerSec: 0.016,
         alignWithSun: true,
+        parallaxStrength: 0,
+        breathingAmplitude: 0,
       },
       earth: {
         radius: 0.44,
       },
+      // Nền full-page: ép profile tiết kiệm (EarthExperienceBackground cũng set performanceAware)
+      performanceAware: true,
+      interactive: false,
     },
     baseGradient: 'radial-gradient(ellipse at 28% 18%, #142850 0%, #0a1530 52%, #060818 100%)',
     textTheme: 'light',

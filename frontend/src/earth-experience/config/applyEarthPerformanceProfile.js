@@ -1,6 +1,6 @@
 /**
  * Tune Earth experience quality by device tier — keeps visuals, reduces GPU load.
- * Background mode (full-page preset) always applies cuts, including on "high" tier.
+ * Background mode (full-page preset) always applies aggressive cuts so CRM UI stays responsive.
  *
  * @param {import('./earthExperienceDefaults.js').EarthExperienceConfig} config
  * @param {'low' | 'medium' | 'high'} tier
@@ -11,17 +11,26 @@ export function applyEarthPerformanceProfile(config, tier, options = {}) {
   if (!background && tier === 'high') return config;
 
   const fogLayers = config.milkyWay?.fogLayers?.layers ?? [];
-  const planetItems = (config.deepSpacePlanets?.items ?? []).filter(
-    (item) => !String(item.id).startsWith('Star-'),
-  );
+  /** Chỉ giữ hành tinh lớn, bỏ sao phụ + vệ tinh (rất tốn draw-call). */
+  const majorPlanets = (config.deepSpacePlanets?.items ?? [])
+    .filter((item) => !String(item.id).startsWith('Star-'))
+    .slice(0, background ? (tier === 'high' ? 3 : 2) : 6)
+    .map((item) => ({ ...item, moons: [] }));
 
-  if (background && tier === 'high') {
+  // ── Full-page CRM background: ưu tiên mượt UI hơn độ nét 3D ──────────────
+  if (background) {
+    const isLow = tier === 'low';
+    const isMed = tier === 'medium';
     return {
       ...config,
       renderer: {
         ...config.renderer,
-        pixelRatioMax: 1.5,
+        // 1× DPR + scale canvas — giảm fill-rate trên màn retina
+        pixelRatioMax: 1,
+        resolutionScale: isLow ? 0.55 : isMed ? 0.65 : 0.72,
+        antialias: false,
         precision: 'mediump',
+        powerPreference: 'low-power',
         shadowMap: false,
         postProcess: { ...config.renderer.postProcess, enabled: false },
       },
@@ -30,126 +39,73 @@ export function applyEarthPerformanceProfile(config, tier, options = {}) {
         castShadow: false,
         visual: {
           ...config.sun.visual,
-          coronaLayerCount: 3,
-          discSegments: 48,
+          // Tắt đĩa mặt trời texture 4K — vẫn có directional light
+          enabled: !isLow,
+          coronaLayerCount: 1,
+          discSegments: 24,
+          glowStrength: 0.35,
         },
       },
       earth: {
         ...config.earth,
-        widthSegments: 72,
-        heightSegments: 52,
-        cloudSegments: 48,
+        widthSegments: isLow ? 40 : isMed ? 48 : 56,
+        heightSegments: isLow ? 28 : isMed ? 32 : 40,
+        cloudSegments: isLow ? 28 : isMed ? 32 : 36,
+        cloudOpacity: isLow ? 0.32 : 0.4,
       },
       atmosphere: {
         ...config.atmosphere,
-        shellSegments: 48,
+        shellSegments: isLow ? 28 : 32,
       },
       moon: {
         ...config.moon,
-        segments: 40,
+        enabled: !isLow,
+        segments: 24,
+        glowStrength: 0.35,
       },
       milkyWay: {
         ...config.milkyWay,
-        segments: 48,
+        segments: isLow ? 24 : 32,
         fogLayers: {
           ...config.milkyWay.fogLayers,
-          layers: fogLayers.slice(0, 2),
+          enabled: !isLow,
+          layers: fogLayers.slice(0, isLow ? 0 : 1),
         },
       },
       starfield: {
         ...config.starfield,
-        count: 4000,
+        count: isLow ? 600 : isMed ? 900 : 1200,
       },
       deepSpacePlanets: {
         ...config.deepSpacePlanets,
+        groupRotationSpeedRadPerSec: 0.001,
         glowStars: {
           ...config.deepSpacePlanets.glowStars,
-          count: 40,
+          count: 0,
         },
-        items: planetItems,
+        items: isLow ? [] : majorPlanets,
       },
       textures: {
         ...config.textures,
+        // Bỏ map phụ 4K; nền không cần specular/normal
         normal: null,
         specular: null,
         roughness: null,
+        // Sun/Moon texture nặng — chỉ tải khi thực sự dùng
+        sun: isLow ? null : config.textures?.sun,
+        moon: isLow ? null : config.textures?.moon,
       },
       animation: {
         ...config.animation,
-        targetFps: 30,
+        // Cap FPS rõ ràng — nền trang, không phải demo
+        targetFps: isLow ? 15 : isMed ? 18 : 20,
+        maxDeltaSec: 0.08,
       },
     };
   }
 
-  if (background && tier === 'medium') {
-    return {
-      ...config,
-      renderer: {
-        ...config.renderer,
-        pixelRatioMax: 1.35,
-        antialias: true,
-        precision: 'mediump',
-        shadowMap: false,
-        postProcess: { ...config.renderer.postProcess, enabled: false },
-      },
-      sun: {
-        ...config.sun,
-        castShadow: false,
-        visual: {
-          ...config.sun.visual,
-          coronaLayerCount: 2,
-          discSegments: 40,
-        },
-      },
-      earth: {
-        ...config.earth,
-        widthSegments: 64,
-        heightSegments: 48,
-        cloudSegments: 40,
-      },
-      atmosphere: {
-        ...config.atmosphere,
-        shellSegments: 40,
-      },
-      moon: {
-        ...config.moon,
-        segments: 36,
-      },
-      milkyWay: {
-        ...config.milkyWay,
-        segments: 40,
-        fogLayers: {
-          ...config.milkyWay.fogLayers,
-          layers: fogLayers.slice(0, 2),
-        },
-      },
-      starfield: {
-        ...config.starfield,
-        count: 3000,
-      },
-      deepSpacePlanets: {
-        ...config.deepSpacePlanets,
-        glowStars: {
-          ...config.deepSpacePlanets.glowStars,
-          count: 28,
-        },
-        items: planetItems.slice(0, 5),
-      },
-      textures: {
-        ...config.textures,
-        normal: null,
-        specular: null,
-        roughness: null,
-      },
-      animation: {
-        ...config.animation,
-        targetFps: 24,
-      },
-    };
-  }
-
-  // low tier, or medium/low without background flag
-  const sliceFog = tier === 'low' ? 1 : (background ? 2 : 3);
+  // ── Interactive / non-background (giữ chất lượng hơn) ────────────────────
+  const sliceFog = tier === 'low' ? 1 : 3;
 
   return {
     ...config,
@@ -183,7 +139,6 @@ export function applyEarthPerformanceProfile(config, tier, options = {}) {
     moon: {
       ...config.moon,
       segments: tier === 'low' ? 32 : 36,
-      enabled: tier === 'low' && background ? false : config.moon?.enabled,
     },
     milkyWay: {
       ...config.milkyWay,
@@ -195,27 +150,19 @@ export function applyEarthPerformanceProfile(config, tier, options = {}) {
     },
     starfield: {
       ...config.starfield,
-      count: tier === 'low' ? (background ? 1800 : 3500) : (background ? 2500 : 5500),
+      count: tier === 'low' ? 3500 : 5500,
     },
     deepSpacePlanets: {
       ...config.deepSpacePlanets,
       glowStars: {
         ...config.deepSpacePlanets.glowStars,
-        count: tier === 'low' ? (background ? 0 : 36) : (background ? 20 : 58),
+        count: tier === 'low' ? 36 : 58,
       },
-      items: background
-        ? planetItems.slice(0, tier === 'low' ? 4 : 5)
-        : config.deepSpacePlanets.items,
+      items: config.deepSpacePlanets.items,
     },
-    textures: background ? {
-      ...config.textures,
-      normal: null,
-      specular: null,
-      roughness: null,
-    } : config.textures,
     animation: {
       ...config.animation,
-      targetFps: background ? (tier === 'low' ? 20 : 24) : (config.animation?.targetFps ?? 0),
+      targetFps: config.animation?.targetFps ?? 0,
     },
   };
 }

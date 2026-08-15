@@ -53,9 +53,9 @@ export class SceneContext {
     this.renderer.toneMappingExposure = rendererConfig.toneMappingExposure;
     this.renderer.setClearColor(new Color(rendererConfig.clearColor), rendererConfig.alpha ? 0 : 1);
 
-    const dpr = Math.min(window.devicePixelRatio || 1, rendererConfig.pixelRatioMax);
-    this.renderer.setPixelRatio(dpr);
-    this.renderer.shadowMap.enabled = rendererConfig.shadowMap !== false;
+  const dpr = Math.min(window.devicePixelRatio || 1, rendererConfig.pixelRatioMax ?? 2);
+  this.renderer.setPixelRatio(dpr);
+  this.renderer.shadowMap.enabled = rendererConfig.shadowMap === true;
 
     this.canvas = this.renderer.domElement;
     this.canvas.style.display = 'block';
@@ -109,13 +109,16 @@ export class SceneContext {
     this.height = height;
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
-    this.renderer.setSize(width, height, false);
-    this.composer?.setSize(width, height);
+    const scale = Math.max(0.4, Math.min(1, Number(this.rendererConfig.resolutionScale) || 1));
+    const rw = Math.max(1, Math.round(width * scale));
+    const rh = Math.max(1, Math.round(height * scale));
+    this.renderer.setSize(rw, rh, false);
+    this.composer?.setSize(rw, rh);
     if (this.fxaaPass) {
       const dpr = this.renderer.getPixelRatio();
       this.fxaaPass.material.uniforms.resolution.value.set(
-        1 / (width * dpr),
-        1 / (height * dpr),
+        1 / (rw * dpr),
+        1 / (rh * dpr),
       );
     }
   }
