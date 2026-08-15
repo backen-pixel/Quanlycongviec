@@ -1,7 +1,8 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import React, { useMemo, useState } from 'react';
+import React, { useMemo } from 'react';
 import {
   ActivityIndicator,
+  Dimensions,
   FlatList,
   Pressable,
   StyleSheet,
@@ -22,6 +23,9 @@ type Props = {
   onDismiss: () => void;
 };
 
+const ROW_H = 72;
+const LIST_MAX = Math.min(380, Math.round(Dimensions.get('window').height * 0.48));
+
 export default function CrmSearchSuggestDropdown({
   open,
   query,
@@ -34,35 +38,72 @@ export default function CrmSearchSuggestDropdown({
 }: Props) {
   const Colors = useColors();
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
-  const [panelH, setPanelH] = useState(0);
   if (!open) return null;
 
-  const shown = total != null && total > items.length ? total : items.length;
+  const extra = total != null && total > items.length ? total - items.length : 0;
+  const listH = Math.min(LIST_MAX, Math.max(ROW_H * 3, items.length * ROW_H + (extra ? 40 : 8)));
+
+  const renderItem = ({ item }: { item: CrmKanbanItem }) => (
+    <View style={styles.row}>
+      <Pressable
+        style={({ pressed }) => [styles.main, pressed && styles.mainPressed]}
+        onPress={() => onSelect(item)}
+      >
+        <View style={styles.codeBox}>
+          <Text style={styles.codeTxt}>{(item.code || '?').slice(0, 2)}</Text>
+        </View>
+        <View style={styles.body}>
+          <View style={styles.titleRow}>
+            {item.code ? (
+              <Text style={styles.codeFull} numberOfLines={1}>{item.code}</Text>
+            ) : null}
+            <Text style={styles.title} numberOfLines={1}>{item.title || '—'}</Text>
+          </View>
+          <Text style={styles.meta} numberOfLines={2}>
+            {[
+              item.kind === 'lead' ? 'Lead' : item.kind === 'deal' ? 'Deal' : null,
+              item.phone || null,
+              item.contactName && item.contactName !== '—' ? item.contactName : null,
+              item.stageName || null,
+              item.ownerName || null,
+            ].filter(Boolean).join(' · ')}
+          </Text>
+        </View>
+        <Ionicons name="chevron-forward" size={16} color={Colors.textFaint} />
+      </Pressable>
+      {onOpenDetail ? (
+        <Pressable
+          style={styles.eyeBtn}
+          onPress={() => onOpenDetail(item)}
+          hitSlop={6}
+          accessibilityLabel="Mở chi tiết"
+        >
+          <Ionicons name="eye-outline" size={18} color={Colors.blue} />
+        </Pressable>
+      ) : null}
+    </View>
+  );
 
   return (
-    <View style={styles.wrap} pointerEvents="box-none">
-      <View
-        style={styles.panel}
-        collapsable={false}
-        onLayout={(e) => setPanelH(e.nativeEvent.layout.height)}
-      >
+    <View style={styles.wrap} collapsable={false}>
+      <View style={styles.panel} collapsable={false}>
         <View style={styles.head}>
           <Text style={styles.headTxt}>
             {loading && !items.length
               ? 'Đang tìm…'
               : (
                 <>
-                  <Text style={styles.headCount}>{shown}</Text>
+                  <Text style={styles.headCount}>{items.length}</Text>
                   {` kết quả cho “${query.trim()}”`}
                 </>
               )}
           </Text>
           <Text style={styles.headHint}>
             Chạm dòng để tới thẻ · biểu tượng mắt mở chi tiết
-            {total != null && total > items.length ? ` · hiện ${items.length} đầu` : ''}
+            {items.length > 4 ? ' · vuốt danh sách để xem thêm' : ''}
           </Text>
         </View>
-        {loading && items.length ? (
+        {loading && !items.length ? (
           <View style={styles.loadingRow}>
             <ActivityIndicator size="small" color={Colors.blue} />
           </View>
@@ -73,97 +114,48 @@ export default function CrmSearchSuggestDropdown({
           <FlatList
             data={items}
             keyExtractor={(it) => it.id}
-            keyboardShouldPersistTaps="handled"
+            renderItem={renderItem}
+            keyboardShouldPersistTaps="always"
             nestedScrollEnabled
-            style={styles.list}
             bounces
             overScrollMode="always"
-            renderItem={({ item }) => (
-              <View style={styles.row}>
-                <Pressable
-                  style={({ pressed }) => [styles.main, pressed && styles.mainPressed]}
-                  onPress={() => onSelect(item)}
-                >
-                  <View style={styles.codeBox}>
-                    <Text style={styles.codeTxt}>{(item.code || '?').slice(0, 2)}</Text>
-                  </View>
-                  <View style={styles.body}>
-                    <View style={styles.titleRow}>
-                      {item.code ? (
-                        <Text style={styles.codeFull} numberOfLines={1}>{item.code}</Text>
-                      ) : null}
-                      <Text style={styles.title} numberOfLines={1}>{item.title || '—'}</Text>
-                    </View>
-                    <Text style={styles.meta} numberOfLines={1}>
-                      {[
-                        item.phone || null,
-                        item.contactName && item.contactName !== '—' ? item.contactName : null,
-                        item.stageName || null,
-                        item.ownerName || null,
-                      ].filter(Boolean).join(' · ')}
-                    </Text>
-                  </View>
-                  <Ionicons name="chevron-forward" size={16} color={Colors.textFaint} />
-                </Pressable>
-                {onOpenDetail ? (
-                  <Pressable
-                    style={styles.eyeBtn}
-                    onPress={() => onOpenDetail(item)}
-                    hitSlop={6}
-                    accessibilityLabel="Mở chi tiết"
-                  >
-                    <Ionicons name="eye-outline" size={18} color={Colors.blue} />
-                  </Pressable>
-                ) : null}
-              </View>
-            )}
+            style={{ height: listH }}
+            contentContainerStyle={styles.listContent}
+            showsVerticalScrollIndicator
+            persistentScrollbar
+            ListFooterComponent={
+              extra > 0
+                ? <Text style={styles.moreHint}>Còn {extra} kết quả — gõ thêm để thu hẹp</Text>
+                : null
+            }
           />
         )}
       </View>
-      {/* Backdrop chỉ dưới panel — không đè list (tránh chặn cuộn). */}
-      {panelH > 0 ? (
-        <Pressable
-          style={[styles.backdrop, { top: panelH + 4 }]}
-          onPress={onDismiss}
-          accessibilityLabel="Đóng gợi ý tìm"
-        />
-      ) : null}
+      <Pressable
+        style={styles.dismissHit}
+        onPress={onDismiss}
+        accessibilityLabel="Đóng gợi ý tìm"
+      />
     </View>
   );
 }
 
 const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
   wrap: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    top: '100%',
     zIndex: 40,
     elevation: 20,
   },
-  backdrop: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    height: 640,
-    backgroundColor: 'transparent',
-    zIndex: 1,
+  dismissHit: {
+    height: 12,
   },
   panel: {
     marginHorizontal: 12,
     marginTop: 4,
-    maxHeight: 320,
     backgroundColor: Colors.card,
     borderRadius: Radii.lg,
     borderWidth: 1.5,
     borderColor: Colors.blue,
     overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOpacity: 0.18,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 16,
-    zIndex: 2,
   },
   head: {
     paddingHorizontal: 12,
@@ -183,10 +175,19 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
   },
-  list: { maxHeight: 248 },
+  listContent: { paddingBottom: 6 },
+  moreHint: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    textAlign: 'center',
+    color: Colors.textMuted,
+    fontSize: 11,
+    fontWeight: '600',
+  },
   row: {
     flexDirection: 'row',
     alignItems: 'stretch',
+    minHeight: 64,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: Colors.border,
   },

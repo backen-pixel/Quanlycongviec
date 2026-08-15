@@ -4455,6 +4455,17 @@ function parseCrmAssigneeNameQuery(reqQuery) {
   return String(reqQuery?.assignee_name || '').trim() || '';
 }
 
+function parseCrmSearchField(reqQuery) {
+  const v = String(reqQuery?.search_field || reqQuery?.searchField || '').trim().toLowerCase();
+  if (v === 'title' || v === 'phone' || v === 'code' || v === 'assignee') return v;
+  return 'all';
+}
+
+function parseCrmSuggestQuery(reqQuery) {
+  const v = reqQuery?.suggest;
+  return v === true || v === 1 || v === '1' || v === 'true';
+}
+
 function parseCrmRegionUnassignedQuery(reqQuery) {
   const v = reqQuery?.region_unassigned;
   if (v === true || v === 1 || v === '1' || v === 'true') return true;
@@ -4488,7 +4499,10 @@ async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
   const referrerNameTrim = String(referrer_name || '').trim();
   const customerCompanyTrim = String(customer_company || '').trim();
   const searchTrim = String(search || '').trim();
-  const assigneeNameTrim = parseCrmAssigneeNameQuery(reqQuery);
+  const searchField = parseCrmSearchField(reqQuery);
+  const isSuggest = parseCrmSuggestQuery(reqQuery);
+  const assigneeNameTrim = parseCrmAssigneeNameQuery(reqQuery)
+    || (searchField === 'assignee' ? searchTrim : '');
   const regionUnassigned = parseCrmRegionUnassignedQuery(reqQuery);
   const explicitRegionId = regionUnassigned ? null : uuidQueryOrNull(reqQuery.region_id);
   const parsedLimit = Math.min(Math.max(parseInt(limit) || 100, 1), 2000);
@@ -4498,13 +4512,23 @@ async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
   // crm_leads.phone hầu như luôn NULL (SĐT thật nằm ở customers.phone qua customer_id) —
   // tìm thêm customer_id khớp SĐT/tên KH để không bị "lọc không ra lead" khi search bằng SĐT.
   let customerIdsForSearch = null;
-  if (searchTrim) {
-    const { data: custSearchRows, error: custSearchErr } = await supabase
-      .from('customers')
-      .select('id')
-      .or(`phone.ilike.%${searchTrim}%,full_name.ilike.%${searchTrim}%,email.ilike.%${searchTrim}%,address.ilike.%${searchTrim}%,company.ilike.%${searchTrim}%`)
-      .limit(1000);
-    if (!custSearchErr) customerIdsForSearch = (custSearchRows || []).map((r) => r.id);
+  if (searchTrim && searchField !== 'code' && searchField !== 'assignee') {
+    const digits = searchTrim.replace(/\D/g, '');
+    const onlyDigits = digits.length >= 2 && /^\d[\d\s.+-]*$/.test(searchTrim);
+    let custOr = '';
+    if (searchField === 'phone') custOr = `phone.ilike.%${searchTrim}%`;
+    else if (searchField === 'title') custOr = `full_name.ilike.%${searchTrim}%`;
+    else if (isSuggest && onlyDigits && digits.length < 4) custOr = `full_name.ilike.%${searchTrim}%`;
+    else if (isSuggest) custOr = `phone.ilike.%${searchTrim}%,full_name.ilike.%${searchTrim}%`;
+    else custOr = `phone.ilike.%${searchTrim}%,full_name.ilike.%${searchTrim}%,email.ilike.%${searchTrim}%,address.ilike.%${searchTrim}%,company.ilike.%${searchTrim}%`;
+    if (custOr) {
+      const { data: custSearchRows, error: custSearchErr } = await supabase
+        .from('customers')
+        .select('id')
+        .or(custOr)
+        .limit(1000);
+      if (!custSearchErr) customerIdsForSearch = (custSearchRows || []).map((r) => r.id);
+    }
   }
   let assigneeIdsForName = null;
   if (assigneeNameTrim) {
@@ -4527,18 +4551,32 @@ async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
     }
   }
   const buildSearchOr = () => {
-    if (!searchTrim) return null;
-    const parts = [
-      `title.ilike.%${searchTrim}%`,
-      `code.ilike.%${searchTrim}%`,
-      `phone.ilike.%${searchTrim}%`,
-      `description.ilike.%${searchTrim}%`,
-      `install_address.ilike.%${searchTrim}%`,
-    ];
+    if (!searchTrim || searchField === 'assignee') return null;
+    const parts = [];
+    if (searchField === 'phone') {
+      parts.push(`phone.ilike.%${searchTrim}%`);
+    } else if (searchField === 'code') {
+      parts.push(`code.ilike.%${searchTrim}%`);
+    } else if (searchField === 'title') {
+      parts.push(`title.ilike.%${searchTrim}%`);
+    } else if (isSuggest) {
+      const digits = searchTrim.replace(/\D/g, '');
+      const onlyDigits = digits.length >= 2 && /^\d[\d\s.+-]*$/.test(searchTrim);
+      parts.push(`title.ilike.%${searchTrim}%`, `code.ilike.%${searchTrim}%`);
+      if (!(onlyDigits && digits.length < 4)) parts.push(`phone.ilike.%${searchTrim}%`);
+    } else {
+      parts.push(
+        `title.ilike.%${searchTrim}%`,
+        `code.ilike.%${searchTrim}%`,
+        `phone.ilike.%${searchTrim}%`,
+        `description.ilike.%${searchTrim}%`,
+        `install_address.ilike.%${searchTrim}%`,
+      );
+    }
     if (customerIdsForSearch && customerIdsForSearch.length) {
       parts.push(`customer_id.in.(${customerIdsForSearch.join(',')})`);
     }
-    return parts.join(',');
+    return parts.length ? parts.join(',') : null;
   };
   let customerIdsForCompanyFilter = null;
   if (customerCompanyTrim && customerCompanyTrim !== '__none__') {
@@ -5036,7 +5074,11 @@ function crmListUsesLegacyFilters(mergedQuery) {
   const legacyFollowUpEmpty =
     mergedQuery.next_follow_up_empty === 'true' || mergedQuery.next_follow_up_empty === '1';
   const legacyPipelineId = uuidQueryOrNull(mergedQuery.pipeline_id);
-  return !!(legacyFollowUpFrom || legacyFollowUpTo || legacyFollowUpEmpty || legacyPipelineId);
+  if (legacyFollowUpFrom || legacyFollowUpTo || legacyFollowUpEmpty || legacyPipelineId) return true;
+  // Chip Tên/SĐT/Mã/NV hoặc dropdown gợi ý — RPC p_search quá rộng (mô tả/địa chỉ/email).
+  if (parseCrmSearchField(mergedQuery) !== 'all') return true;
+  if (parseCrmSuggestQuery(mergedQuery)) return true;
+  return false;
 }
 
 /** GET /crm/stage-counts — đếm tất cả cột trong 1 request (RPC GROUP BY stage_id). */

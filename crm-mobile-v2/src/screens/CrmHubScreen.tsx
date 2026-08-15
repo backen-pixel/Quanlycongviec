@@ -10,7 +10,6 @@ import { applyCrmBadgeFieldsToItem, crmBadgeDetailAffectsChip } from '../lib/crm
 import Avatar from '../components/Avatar';
 import ColumnPickerModal from '../components/ColumnPickerModal';
 import CrmFilterSheet from '../components/CrmFilterSheet';
-import CrmSearchFieldBar from '../components/CrmSearchFieldBar';
 import DatePickerSheet from '../components/DatePickerSheet';
 import DealWonSxPickerModal from '../components/DealWonSxPickerModal';
 import MoveStageModal from '../components/MoveStageModal';
@@ -67,11 +66,13 @@ import {
   ORPHAN_STAGE_ID,
   orphanVirtualStage,
   REGION_NONE,
+  filtersForCrmSearchSuggest,
   searchPlaceholder,
+  searchQueryForCrmItem,
   serverFilterKey,
-  type SearchField,
 } from '../lib/crmFilters';
 import CrmSearchSuggestDropdown from '../components/CrmSearchSuggestDropdown';
+import { rankCrmSearchSuggestItems, scoreCrmSearchSuggestItem } from '../hooks/useCrmSearchSuggest';
 import {
   buildAssignPickerOptions,
   canAssignCrmCard,
@@ -563,12 +564,14 @@ export default function CrmHubScreen({
   const modeRef = useRef(mode);
   const filtersRef = useRef(filters);
   const searchRef = useRef(search);
+  const searchDraftRef = useRef(searchDraft);
   leadDataRef.current = leadData;
   dealDataRef.current = dealData;
   activeIndexRef.current = activeIndex;
   modeRef.current = mode;
   filtersRef.current = filters;
   searchRef.current = search;
+  searchDraftRef.current = searchDraft;
 
   function stagesForMode(which: Mode): CrmPipelineStage[] {
     const dm = asDataMode(which);
@@ -673,9 +676,11 @@ export default function CrmHubScreen({
     void loadOrgMeta(companyId);
   }, [loadOrgMeta]);
 
+  // Tìm kiếm Lead/Deal: lọc client trên cột đã tải (giống Deadline).
+  // Không đưa `search` lên API — chọn 1 kết quả sẽ không bootstrap lại cả bảng / cột khác.
   const fetchOpts = useCallback(
-    () => buildStageFetchOpts(filters, search, myId),
-    [filters, search, myId],
+    () => buildStageFetchOpts(filters, '', myId),
+    [filters, myId],
   );
   const fetchOptsRef = useRef(fetchOpts);
   fetchOptsRef.current = fetchOpts;
@@ -803,7 +808,7 @@ export default function CrmHubScreen({
     if (!forceBatch && !missing.length) return;
     const fk = serverFilterKey(
       filtersRef.current,
-      search,
+      '',
     );
     if (countsInflightRef.current[dm] === fk) return;
     countsInflightRef.current[dm] = fk;
@@ -830,13 +835,13 @@ export default function CrmHubScreen({
     } finally {
       if (countsInflightRef.current[dm] === fk) countsInflightRef.current[dm] = '';
     }
-  }, [search]);
+  }, []);
 
   const fetchOptsForMode = useCallback((which: Mode): ReturnType<typeof buildStageFetchOpts> => {
     const dm = asDataMode(which);
     const modeFilters = filtersRef.current;
-    return buildStageFetchOpts(modeFilters, search, myId);
-  }, [search, myId]);
+    return buildStageFetchOpts(modeFilters, '', myId);
+  }, [myId]);
 
   const applyTotalsCache = useCallback((which: Mode) => {
     const dm = asDataMode(which);
@@ -859,8 +864,8 @@ export default function CrmHubScreen({
     const dm = asDataMode(which);
     const type = dm === 'leads' ? 'lead' : 'deal';
     const modeFilters = filtersRef.current;
-    const fk = serverFilterKey(modeFilters, search);
-    const opts = buildStageFetchOpts(modeFilters, search, myId);
+    const fk = serverFilterKey(modeFilters, '');
+    const opts = buildStageFetchOpts(modeFilters, '', myId);
     const setter = dm === 'leads' ? setLeadData : setDealData;
 
     applyTotalsCache(dm);
@@ -906,7 +911,7 @@ export default function CrmHubScreen({
     } finally {
       if (countsInflightRef.current[dm] === fk) countsInflightRef.current[dm] = '';
     }
-  }, [applyTotalsCache, search, myId]);
+  }, [applyTotalsCache, myId]);
 
   const loadBootstrap = useCallback(async (
     which: Mode,
@@ -921,7 +926,7 @@ export default function CrmHubScreen({
 
     const type = dm === 'leads' ? 'lead' : 'deal';
     const modeFilters = filters;
-    const fk = serverFilterKey(modeFilters, search);
+    const fk = serverFilterKey(modeFilters, '');
 
     if (!silent && !isRefresh && applyCachedHub(dm, fk)) {
       applyTotalsCache(dm);
@@ -980,7 +985,7 @@ export default function CrmHubScreen({
       // Gộp với prefetchTabTotals — tránh 2 request stage-counts cùng bộ lọc.
       const totalsFk = serverFilterKey(
         filtersRef.current,
-        searchRef.current,
+        '',
       );
       const hubNowForCounts = dm === 'leads' ? leadDataRef.current : dealDataRef.current;
       const countsAlreadyFresh =
@@ -1006,7 +1011,7 @@ export default function CrmHubScreen({
         if (!batch) return;
         const fkNow = serverFilterKey(
           filtersRef.current,
-          searchRef.current,
+          '',
         );
         if (fkNow !== totalsFk) return;
         typeSetter((prev) => ({
@@ -1027,7 +1032,7 @@ export default function CrmHubScreen({
         setLoaded((p) => ({ ...p, [dm]: true }));
         filterKeyRef.current = serverFilterKey(
           filtersRef.current,
-          searchRef.current,
+          '',
         );
         if (!silent) setError('');
         return;
@@ -1036,7 +1041,7 @@ export default function CrmHubScreen({
       setLoaded((p) => ({ ...p, [dm]: true }));
       filterKeyRef.current = serverFilterKey(
         filtersRef.current,
-        search,
+        '',
       );
 
       if (myId) {
@@ -1093,7 +1098,7 @@ export default function CrmHubScreen({
         setRefreshing(false);
       }
     }
-  }, [applyBootstrap, applyCachedHub, applyTotalsCache, search, filters, myId, resolveFetchStageId]);
+  }, [applyBootstrap, applyCachedHub, applyTotalsCache, filters, myId, resolveFetchStageId]);
 
   const loadStage = useCallback(async (
     which: Mode,
@@ -1108,6 +1113,11 @@ export default function CrmHubScreen({
     const cur = hubNow.cache[stageId] ?? EMPTY_STAGE;
     if (append && !cur.hasMore) return;
     if (!append && cur.loaded) return;
+    if (searchDraftRef.current.trim().length >= 2 || searchRef.current.trim()) {
+      if (!quiet) setStageLoading(false);
+      setMoreLoading(false);
+      return;
+    }
     const validStageIds = new Set(hubNow.stages.map((s) => s.id));
 
     if (append) setMoreLoading(true);
@@ -1171,7 +1181,7 @@ export default function CrmHubScreen({
   const canLoadCrmRef = useRef(canLoadCrm);
   canLoadCrmRef.current = canLoadCrm;
 
-  const hubServerFilterKey = serverFilterKey(filters, search);
+  const hubServerFilterKey = serverFilterKey(filters, '');
 
   useEffect(() => {
     if (!canLoadCrm) return;
@@ -1412,7 +1422,7 @@ export default function CrmHubScreen({
     setActiveIndex((i) => Math.max(0, Math.min(i, displayStages.length - 1)));
   }, [displayStages, mode]);
 
-  const filterKey = serverFilterKey(filters, search);
+  const filterKey = serverFilterKey(filters, '');
   useEffect(() => {
     if (!canLoadCrm) return;
     if (filterKeyRef.current === filterKey) return;
@@ -1492,18 +1502,20 @@ export default function CrmHubScreen({
 
   useEffect(() => {
     if (!loaded[dataMode] || !activeStageId) return;
+    if (searchDraft.trim().length >= 2 || search.trim()) return;
     const cur = hub.cache[activeStageId];
     // Cột đang xem chưa có dữ liệu → nạp lại. Không phụ thuộc cờ `loading` cấp board
     // (tránh kẹt khi cờ này không được reset đúng lúc); loadStage tự chống nạp trùng.
     if (!cur?.loaded && !stageLoading) {
       void loadStage(mode, activeStageId, false);
     }
-  }, [loaded, mode, activeStageId, hub.cache, stageLoading, loadStage]);
+  }, [loaded, mode, activeStageId, hub.cache, stageLoading, loadStage, search, searchDraft]);
 
   /** Prefetch cột đầu tab đối diện (Deal↔ĐH) — đổi tab không phải chờ mạng (đặc biệt «Tất cả CT»). */
   useEffect(() => {
     if (!dealKhSplitEnabled || !loaded.deals || !isOnline) return;
     if (mode !== 'deals' && mode !== 'orders') return;
+    if (searchDraft.trim().length >= 2 || search.trim()) return;
     const other: Mode = mode === 'deals' ? 'orders' : 'deals';
     const otherStages = resolveCrmHubDisplayStages(
       other,
@@ -1521,7 +1533,7 @@ export default function CrmHubScreen({
       void loadStageRef.current(other, want, false, true);
     }, 180);
     return () => clearTimeout(t);
-  }, [mode, dealKhSplitEnabled, loaded.deals, isOnline, dealData.stages]);
+  }, [mode, dealKhSplitEnabled, loaded.deals, isOnline, dealData.stages, search, searchDraft]);
 
   /** Prefetch cột trái/phải — vuốt sang không phải chờ mạng. */
   const neighborPrefetchKeyRef = useRef('');
@@ -1529,6 +1541,7 @@ export default function CrmHubScreen({
   useEffect(() => {
     if (!loaded[dataMode] || !activeStageId || activeStageId === ORPHAN_STAGE_ID) return;
     if (!activeColumnLoaded) return;
+    if (searchDraft.trim().length >= 2 || search.trim()) return;
     const key = `${dataMode}|${filterKey}|${activeStageId}`;
     if (neighborPrefetchKeyRef.current === key) return;
     neighborPrefetchKeyRef.current = key;
@@ -1586,8 +1599,8 @@ export default function CrmHubScreen({
     dataMode,
     activeStageId,
     activeColumnLoaded,
-    filterKey,
-    displayStages,
+    search,
+    searchDraft,
     setHub,
   ]);
 
@@ -1640,47 +1653,29 @@ export default function CrmHubScreen({
   const rawColumnItems = activeStageId
     ? (hub.cache[activeStageId]?.items ?? [])
     : [];
-  const columnItems = useMemo(
-    () => clientFilterKanbanItems(rawColumnItems, filters, search),
-    [rawColumnItems, filters, search],
-  );
+  const columnItems = useMemo(() => {
+    const base = clientFilterKanbanItems(rawColumnItems, filters, '');
+    const q = search.trim();
+    if (!q) return base;
+    return base.filter((it) => scoreCrmSearchSuggestItem(it, q, filters.searchField) > 0);
+  }, [rawColumnItems, filters, search]);
 
   const localSearchSuggest = useMemo(() => {
-    const q = searchDraft.trim().toLowerCase();
-    const qDigits = q.replace(/\D/g, '');
+    const q = searchDraft.trim();
     if (q.length < 2) return [] as CrmKanbanItem[];
     const stageIds = new Set(hubStages.map((s) => s.id));
     if (filters.showOrphan) stageIds.add(ORPHAN_STAGE_ID);
-    const field = filters.searchField;
+    const pool: CrmKanbanItem[] = [];
     const seen = new Set<string>();
-    const out: CrmKanbanItem[] = [];
     for (const sid of Object.keys(hub.cache)) {
       if (!stageIds.has(sid)) continue;
       for (const it of hub.cache[sid]?.items || []) {
         if (seen.has(it.id)) continue;
         seen.add(it.id);
-        let ok = false;
-        if (field === 'phone') {
-          ok = !!(qDigits && (it.phone || '').replace(/\D/g, '').includes(qDigits));
-        } else if (field === 'code') {
-          ok = (it.code || '').toLowerCase().includes(q);
-        } else if (field === 'title') {
-          ok = (it.title || '').toLowerCase().includes(q)
-            || (it.contactName || '').toLowerCase().includes(q);
-        } else if (field === 'assignee') {
-          ok = (it.ownerName || '').toLowerCase().includes(q);
-        } else {
-          const hay = [
-            it.title, it.code, it.phone, it.contactName, it.ownerName, it.stageName,
-          ].join(' ').toLowerCase();
-          ok = hay.includes(q)
-            || !!(qDigits && (it.phone || '').replace(/\D/g, '').includes(qDigits));
-        }
-        if (ok) out.push(it);
-        if (out.length >= 10) return out;
+        pool.push(it);
       }
     }
-    return out;
+    return rankCrmSearchSuggestItems(pool, q, filters.searchField, 40);
   }, [searchDraft, hub.cache, hubStages, filters.searchField, filters.showOrphan]);
 
   const searchSuggestOpen =
@@ -1689,9 +1684,15 @@ export default function CrmHubScreen({
     && (searchSuggestLoading || searchSuggestItems.length > 0 || localSearchSuggest.length > 0);
 
   const displaySuggestItems = useMemo(() => {
-    if (searchSuggestItems.length) return searchSuggestItems;
-    return localSearchSuggest;
-  }, [searchSuggestItems, localSearchSuggest]);
+    const q = searchDraft.trim();
+    if (q.length < 2) return [] as CrmKanbanItem[];
+    return rankCrmSearchSuggestItems(
+      [...searchSuggestItems, ...localSearchSuggest],
+      q,
+      filters.searchField,
+      40,
+    );
+  }, [searchSuggestItems, localSearchSuggest, searchDraft, filters.searchField]);
 
   useEffect(() => {
     const q = searchDraft.trim();
@@ -1702,27 +1703,34 @@ export default function CrmHubScreen({
       setSearchSuggestLoading(false);
       return undefined;
     }
-    setSearchSuggestDismissed(false);
+    // Giữ dropdown đóng sau khi chọn kết quả — chỉ mở lại khi gõ / focus.
+    if (searchSuggestDismissed) {
+      searchSuggestAbortRef.current?.abort();
+      setSearchSuggestLoading(false);
+      return undefined;
+    }
     const t = setTimeout(() => {
       searchSuggestAbortRef.current?.abort();
       const ac = new AbortController();
       searchSuggestAbortRef.current = ac;
       setSearchSuggestLoading(true);
       const type = mode === 'leads' ? 'lead' as const : 'deal' as const;
+      const suggestFilters = filtersForCrmSearchSuggest(filters);
       const opts = {
-        ...buildStageFetchOpts(filters, '', myId),
+        ...buildStageFetchOpts(suggestFilters, q, myId),
         search: buildSearchForApi(q, filters.searchField) || q,
+        searchField: filters.searchField,
+        suggest: true,
         signal: ac.signal,
         lite: true,
         skipCounts: true,
       };
-      void fetchCrmSearchSuggest(type, q, opts, 10)
+      void fetchCrmSearchSuggest(type, q, opts, 80)
         .then((res) => {
           if (ac.signal.aborted) return;
-          const stageIds = new Set(hubStages.map((s) => s.id));
-          const filtered = res.items.filter((it) => !it.stageId || stageIds.has(it.stageId));
-          setSearchSuggestItems(filtered.length ? filtered : res.items);
-          setSearchSuggestTotal(res.total);
+          const ranked = rankCrmSearchSuggestItems(res.items, q, filters.searchField, 40);
+          setSearchSuggestItems(ranked);
+          setSearchSuggestTotal(ranked.length);
         })
         .catch(() => {
           if (ac.signal.aborted) return;
@@ -1735,7 +1743,7 @@ export default function CrmHubScreen({
     return () => {
       clearTimeout(t);
     };
-  }, [searchDraft, mode, filters, myId, hubStages]);
+  }, [searchDraft, searchSuggestDismissed, mode, filters, myId, hubStages]);
 
   const flashHighlight = useCallback((id: string) => {
     if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
@@ -1770,7 +1778,14 @@ export default function CrmHubScreen({
   }, [setHub]);
 
   const focusSearchResult = useCallback((item: CrmKanbanItem) => {
+    searchSuggestAbortRef.current?.abort();
     setSearchSuggestDismissed(true);
+    setSearchSuggestLoading(false);
+    const q = searchQueryForCrmItem(item);
+    if (q) {
+      setSearchDraft(q);
+      commitSearch(q);
+    }
     Keyboard.dismiss();
     const sid = item.stageId || (filters.showOrphan ? ORPHAN_STAGE_ID : '');
     if (!sid) {
@@ -1784,7 +1799,7 @@ export default function CrmHubScreen({
       setActiveIndex(idx);
     }
     setSearchFocusNonce((n) => n + 1);
-  }, [displayStages, ensureItemInStageCache, filters.showOrphan, showToast]);
+  }, [commitSearch, displayStages, ensureItemInStageCache, filters.showOrphan, setSearchDraft, showToast]);
 
   const openSearchResultDetail = useCallback((item: CrmKanbanItem) => {
     setSearchSuggestDismissed(true);
@@ -1824,12 +1839,14 @@ export default function CrmHubScreen({
    * Chỉ chặn infinite-scroll / badge «sau lọc client» khi server chưa áp được.
    * «Chưa gán KV» đã gửi `region_unassigned=1` (khớp web) → dùng stageCounts server.
    */
+  const searchUiActive = searchDraft.trim().length >= 2 || !!search.trim();
   const clientOnlyFilterActive =
     filters.due !== 'all'
-    || (!!search.trim() && filters.searchField === 'assignee');
+    || (!!search.trim() && filters.searchField === 'assignee')
+    || searchUiActive;
   /** Chỉ lọc CLIENT — companyId/SĐT/assignee/region đã gửi API → badge cột dùng stageCounts. */
   const filterActive = clientOnlyFilterActive;
-  const allowLoadMore = !clientOnlyFilterActive;
+  const allowLoadMore = !searchUiActive && !clientOnlyFilterActive;
   const filterBadge = countActiveFilters(filters, search);
 
   const leadCountsComplete = stageCountsLookComplete(leadData.stages, leadData.stageCounts);
@@ -1858,7 +1875,7 @@ export default function CrmHubScreen({
   const totalRecords = isLeads ? leadTabTotal : (isOrders ? ordersTabTotal : dealTabTotal);
 
   const isInitialLoad = loading && !loaded[dataMode];
-  const isColumnLoading = stageLoading && !columnItems.length;
+  const isColumnLoading = !searchUiActive && stageLoading && !columnItems.length;
   const waitingForCrm = !canLoadCrm && !loaded[dataMode];
   const showFullScreenLoad = waitingForCrm || (isInitialLoad && !hubStages.length);
   const totalsPending =
@@ -2392,18 +2409,6 @@ export default function CrmHubScreen({
           onOpenDetail={openSearchResultDetail}
         />
         </View>
-
-        <CrmSearchFieldBar
-          value={filters.searchField}
-          onChange={(field: SearchField) => {
-            setFilters((p) => ({
-              ...p,
-              searchField: field,
-              ...(field === 'phone' && searchDraft.trim() ? { phone: 'has_phone' as const } : {}),
-            }));
-          }}
-          accent={isLeads ? Colors.blue : Colors.orange}
-        />
 
         <View style={styles.metaRow}>
           <Text style={styles.metaTxt}>

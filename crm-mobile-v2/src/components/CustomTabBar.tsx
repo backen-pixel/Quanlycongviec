@@ -5,6 +5,7 @@ import { Keyboard, Platform, Pressable, StyleSheet, Text, View } from 'react-nat
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useMessenger } from '../context/MessengerContext';
 import { useDeadlineOverdueCount } from '../hooks/useDeadlineOverdueCount';
+import { commitCrmHubSearch } from '../lib/crmHubFilterStore';
 import { useColors, type ThemeColors } from '../theme';
 
 type TabMeta = {
@@ -21,6 +22,7 @@ const META: Record<string, TabMeta> = {
   Messages: { icon: 'chatbubble-outline', iconActive: 'chatbubble', label: 'Tin nhắn' },
 };
 
+const CRM_SEARCH_TABS = new Set(['Lead', 'Deal', 'Deadline']);
 const TAB_BAR_CONTENT_H = 64;
 
 export default function CustomTabBar({ state, navigation }: BottomTabBarProps) {
@@ -60,6 +62,10 @@ export default function CustomTabBar({ state, navigation }: BottomTabBarProps) {
               canPreventDefault: true,
             });
             if (!focused && !event.defaultPrevented) {
+              const from = state.routes[state.index]?.name;
+              if (CRM_SEARCH_TABS.has(from) && CRM_SEARCH_TABS.has(route.name)) {
+                commitCrmHubSearch('');
+              }
               navigation.navigate(route.name);
             }
           };

@@ -74,7 +74,6 @@ export function sanitizeCrmHubFilters(raw: Partial<CrmHubFilters> | null | undef
   const assigneeOk = f.assignee === 'all' || f.assignee === 'mine' || f.assignee === 'user';
   const dueOk = f.due === 'all' || f.due === 'overdue' || f.due === 'today';
   const timeOk = TIME_PRESET_VALUES.includes(f.timePreset as TimePreset);
-  const searchOk = ['all', 'title', 'phone', 'code', 'assignee'].includes(f.searchField);
   const dateFrom = YMD_RE.test(String(f.dateFrom || '')) ? String(f.dateFrom) : '';
   const dateTo = YMD_RE.test(String(f.dateTo || '')) ? String(f.dateTo) : '';
   let timePreset = timeOk ? (f.timePreset as TimePreset) : DEFAULT_CRM_FILTERS.timePreset;
@@ -92,7 +91,7 @@ export function sanitizeCrmHubFilters(raw: Partial<CrmHubFilters> | null | undef
     regionId: String(f.regionId || ''),
     showOrphan: !!f.showOrphan,
     hideEmptyStages: f.hideEmptyStages !== false,
-    searchField: searchOk ? f.searchField : DEFAULT_CRM_FILTERS.searchField,
+    searchField: DEFAULT_CRM_FILTERS.searchField,
   };
 }
 
@@ -252,7 +251,8 @@ export function buildStageFetchOpts(
   else if (filters.assignee === 'user' && filters.assigneeUserId) assignedTo = filters.assigneeUserId;
 
   return {
-    search: buildSearchForApi(search, filters.searchField),
+    search: buildSearchForApi(search, filters.searchField) || (filters.searchField === 'assignee' ? search.trim() || undefined : undefined),
+    searchField: filters.searchField,
     assignedTo,
     phoneFilter: filters.phone || undefined,
     dateFrom: range.from || undefined,
@@ -414,9 +414,33 @@ export function clientFilterKanbanItems(
     result = result.filter((i) => (i.code || '').toLowerCase().includes(q));
   } else if (q && filters.searchField === 'phone') {
     result = result.filter((i) => (i.phone || '').replace(/\D/g, '').includes(q.replace(/\D/g, '')));
+  } else if (q) {
+    const qDigits = q.replace(/\D/g, '');
+    result = result.filter((i) => {
+      if ((i.title || '').toLowerCase().includes(q)) return true;
+      if ((i.contactName || '').toLowerCase().includes(q)) return true;
+      const code = (i.code || '').toLowerCase();
+      const suffix = code.split('-').pop() || '';
+      if (code === q || suffix === q || suffix.startsWith(q) || code.endsWith(q)) return true;
+      const onlyDigits = qDigits.length >= 2 && /^\d[\d\s.+-]*$/.test(q);
+      if (!onlyDigits && code.includes(q)) return true;
+      if (qDigits.length >= 4 && (i.phone || '').replace(/\D/g, '').includes(qDigits)) return true;
+      return false;
+    });
   }
 
   return result;
+}
+
+/** Gợi ý tìm: không áp ngày tạo / «có SĐT» của Hub — để ra đúng thẻ đang gõ. */
+export function filtersForCrmSearchSuggest(filters: CrmHubFilters): CrmHubFilters {
+  return {
+    ...filters,
+    timePreset: '',
+    dateFrom: '',
+    dateTo: '',
+    phone: '',
+  };
 }
 
 /** Lọc client cho tab Deadline (PlannerItem) — due + searchField giống Hub. */
@@ -462,14 +486,16 @@ export function clientFilterDeadlineItems(
   if (filters.searchField === 'phone') {
     return result.filter((i) => (i.phone || '').replace(/\D/g, '').includes(qDigits));
   }
-  // searchField === 'all'
+  // searchField === 'all' — chỉ mã / tên / SĐT, không khớp NV hay trạng thái.
   return result.filter((i) => {
     if ((i.title || '').toLowerCase().includes(q)) return true;
     if ((i.contactName || '').toLowerCase().includes(q)) return true;
-    if ((i.code || '').toLowerCase().includes(q)) return true;
-    if ((i.ownerName || '').toLowerCase().includes(q)) return true;
-    if ((i.status || '').toLowerCase().includes(q)) return true;
-    if (qDigits.length >= 3 && (i.phone || '').replace(/\D/g, '').includes(qDigits)) return true;
+    const code = (i.code || '').toLowerCase();
+    const suffix = (code.split('-').pop() || '');
+    if (code === q || suffix === q || suffix.startsWith(q) || code.endsWith(q)) return true;
+    const onlyDigits = qDigits.length >= 2 && /^\d[\d\s.+-]*$/.test(q);
+    if (!onlyDigits && code.includes(q)) return true;
+    if (qDigits.length >= 4 && (i.phone || '').replace(/\D/g, '').includes(qDigits)) return true;
     return false;
   });
 }
@@ -487,6 +513,14 @@ export function orphanVirtualStage() {
     color: '#94a3b8',
     orderIndex: 9999,
   };
+}
+
+export function searchQueryForCrmItem(item: {
+  title?: string | null;
+  code?: string | null;
+  phone?: string | null;
+}): string {
+  return String(item.title || item.code || item.phone || '').trim();
 }
 
 export function searchPlaceholder(field: SearchField, kind: 'lead' | 'deal'): string {

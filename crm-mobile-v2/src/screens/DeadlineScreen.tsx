@@ -1,6 +1,6 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { useFocusEffect, useIsFocused, useNavigation } from '@react-navigation/native';
 import { useCrmRealtimeRefresh } from '../hooks/useCrmRealtimeRefresh';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -53,7 +53,6 @@ import CrmSearchSuggestDropdown from '../components/CrmSearchSuggestDropdown';
 import { useCrmSearchSuggest } from '../hooks/useCrmSearchSuggest';
 import type { CrmKanbanItem } from '../types';
 import CrmFilterSheet from '../components/CrmFilterSheet';
-import CrmSearchFieldBar from '../components/CrmSearchFieldBar';
 import DealWonSxPickerModal from '../components/DealWonSxPickerModal';
 import MoveStageModal from '../components/MoveStageModal';
 import DatePickerSheet from '../components/DatePickerSheet';
@@ -85,8 +84,9 @@ import {
   buildStageFetchOpts,
   clientFilterDeadlineItems,
   countActiveFilters,
+  filtersForCrmSearchSuggest,
   searchPlaceholder,
-  type SearchField,
+  searchQueryForCrmItem,
 } from '../lib/crmFilters';
 import {
   readDefaultDealKhSplitEnabled,
@@ -325,6 +325,7 @@ export default function DeadlineScreen() {
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<Nav>();
+  const deadlineTabFocused = useIsFocused();
   const { user } = useAuth();
   const userId = currentUserId(user);
   const viewAll = canViewAllCrm(user);
@@ -439,6 +440,7 @@ export default function DeadlineScreen() {
   const loadingRef = useRef(false);
   const filtersRef = useRef(filters);
   const searchRef = useRef(search);
+  const searchDraftRef = useRef(searchDraft);
   const dealKhSplitRef = useRef(dealKhSplitEnabled);
   const configRef = useRef<DeadlineConfig | null>(null);
   const leadStateRef = useRef(leadState);
@@ -448,6 +450,7 @@ export default function DeadlineScreen() {
   const lastServerLoadAtRef = useRef(0);
   filtersRef.current = filters;
   searchRef.current = search;
+  searchDraftRef.current = searchDraft;
   dealKhSplitRef.current = dealKhSplitEnabled;
   leadStateRef.current = leadState;
   dealStateRef.current = dealState;
@@ -1012,7 +1015,7 @@ export default function DeadlineScreen() {
     bucketPagesLoadingRef.current.clear();
     bucketPageStateRef.current = {};
     setBucketPageState({});
-  }, [kind, filters.phone, filters.assignee, filters.companyId, filters.regionId, search]);
+  }, [kind, filters.phone, filters.assignee, filters.companyId, filters.regionId]);
 
   const safeBucket = buckets.includes(bucketKey) ? bucketKey : (buckets[0] || 'overdue');
   const columnItems = grouped[safeBucket] || [];
@@ -1021,10 +1024,18 @@ export default function DeadlineScreen() {
     [columnItems, visibleCount],
   );
 
-  const suggestLocalItems = useMemo(
-    () => rawState.items.map(plannerToSuggestItem),
-    [rawState.items],
+  const searchUiActive = searchDraft.trim().length >= 2 || !!search.trim();
+
+  const deadlineSuggestFilters = useMemo(
+    () => filtersForCrmSearchSuggest(filters),
+    [filters],
   );
+
+  const suggestLocalItems = useMemo(
+    () => [...leadState.items, ...dealState.items].map(plannerToSuggestItem),
+    [leadState.items, dealState.items],
+  );
+  const deadlineSuggestTypes = useMemo(() => ['lead', 'deal'] as Array<'lead' | 'deal'>, []);
   const {
     open: searchSuggestOpen,
     loading: searchSuggestLoading,
@@ -1032,12 +1043,14 @@ export default function DeadlineScreen() {
     total: searchSuggestTotal,
     setDismissed: setSearchSuggestDismissed,
   } = useCrmSearchSuggest({
-    enabled: true,
+    enabled: deadlineTabFocused,
     type: kind,
+    types: deadlineSuggestTypes,
     searchDraft,
-    filters,
+    filters: deadlineSuggestFilters,
     myId: userId || '',
     localItems: suggestLocalItems,
+    deadlineOnly: true,
   });
 
   const listRef = useRef<FlatList<PlannerItem>>(null);
@@ -1057,6 +1070,11 @@ export default function DeadlineScreen() {
 
   const focusSearchResult = useCallback((item: CrmKanbanItem) => {
     setSearchSuggestDismissed(true);
+    const q = searchQueryForCrmItem(item);
+    if (q) {
+      setSearchDraft(q);
+      commitSearch(q);
+    }
     Keyboard.dismiss();
     const fromLead = leadStateRef.current.items.find((x) => x.id === item.id);
     const fromDeal = dealStateRef.current.items.find((x) => x.id === item.id);
@@ -1075,6 +1093,8 @@ export default function DeadlineScreen() {
     setSearchFocusNonce((n) => n + 1);
   }, [
     setSearchSuggestDismissed,
+    setSearchDraft,
+    commitSearch,
     kind,
     buckets,
     deadlineConfig?.buckets,
@@ -1165,7 +1185,7 @@ export default function DeadlineScreen() {
     ? columnPageState.hasMore !== false
       && (columnItems.length < (Number(bucketCounts[safeBucket]) || 0) || !!columnPageState.hasMore)
     : false;
-  const listHasMore = clientHasMore || columnHasMore;
+  const listHasMore = searchUiActive ? clientHasMore : (clientHasMore || columnHasMore);
 
   useEffect(() => {
     setVisibleCount(DEADLINE_CARD_PAGE_SIZE);
@@ -1210,6 +1230,12 @@ export default function DeadlineScreen() {
         setDrainingDeal(false);
       }
     };
+    // Đang tìm: không phân trang cột phía dưới — dropdown/client filter đã có kết quả.
+    if (searchDraftRef.current.trim().length >= 2 || searchRef.current.trim()) {
+      finishLoading();
+      setLoadingMore(false);
+      return;
+    }
     if (Number.isFinite(total) && total <= 0) {
       finishLoading();
       return;
@@ -1417,6 +1443,7 @@ export default function DeadlineScreen() {
 
   const loadMore = useCallback(async () => {
     if (loadingMore) return;
+    if (searchDraftRef.current.trim().length >= 2 || searchRef.current.trim()) return;
     if (!userId && !viewAll) return;
     const pageKey = `${serverFilterKey}:${kind}:${safeBucket}`;
     const pageState = bucketPageStateRef.current[pageKey];
@@ -1862,23 +1889,11 @@ export default function DeadlineScreen() {
         />
         </View>
 
-        <View style={{ paddingHorizontal: 16 }}>
-          <CrmSearchFieldBar
-            value={filters.searchField}
-            onChange={(field: SearchField) => {
-              setFilters((p) => ({
-                ...p,
-                searchField: field,
-                ...(field === 'phone' && searchDraft.trim() ? { phone: 'has_phone' as const } : {}),
-              }));
-            }}
-            accent={meta.color}
-          />
-        </View>
-
         <View style={styles.metaRow}>
           <Text style={styles.metaTxt}>
-            {filteredItems.length} bản ghi · {buckets.length} cột · badge tab theo bộ lọc này
+            {columnItems.length}/{columnBadgeCount}{columnBadgePending ? '+' : ''} {columnTitle}
+            {' · '}đã tải {filteredItems.length}
+            {' · '}{buckets.length} cột
           </Text>
           <Text style={[styles.metaHint, { color: meta.color }]}>{phoneHint}</Text>
         </View>
@@ -1955,12 +1970,12 @@ export default function DeadlineScreen() {
         </View>
         <Text style={styles.swipeHint}>Vuốt ngang để chuyển cột · {bucketIdx + 1}/{buckets.length}</Text>
 
-        {!showBlockingLoader && draining && rawState.items.length > 0 ? (
+        {!showBlockingLoader && !searchUiActive && draining && rawState.items.length > 0 ? (
           <View style={styles.inlineLoading}>
             <SpinningLoader size={16} color={accent} />
             <Text style={styles.inlineLoadingTxt}>Đang đồng bộ thêm dữ liệu…</Text>
           </View>
-        ) : !showBlockingLoader && loading && rawState.items.length > 0 ? (
+        ) : !showBlockingLoader && !searchUiActive && loading && rawState.items.length > 0 ? (
           <View style={styles.inlineLoading}>
             <SpinningLoader size={16} color={accent} />
             <Text style={styles.inlineLoadingTxt}>Đang tải…</Text>
@@ -2006,7 +2021,7 @@ export default function DeadlineScreen() {
           }
           ListEmptyComponent={
             <View style={{ paddingHorizontal: 16, paddingVertical: 24, alignItems: 'center' }}>
-              {columnPageState?.loading || loadingMore || loading ? (
+              {(!searchUiActive && (columnPageState?.loading || loadingMore || loading)) ? (
                 <>
                   <SpinningLoader size={22} color={accent} />
                   <Text style={[styles.empty, { marginTop: 10 }]}>Đang tải…</Text>

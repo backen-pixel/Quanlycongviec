@@ -235,6 +235,10 @@ export function invalidatePipelineStagesCache(type?: 'lead' | 'deal', opts?: Crm
 export type CrmStageFetchOpts = {
   signal?: AbortSignal;
   search?: string;
+  /** Chip Tên / SĐT / Mã / NV — backend chỉ khớp đúng trường. */
+  searchField?: 'all' | 'title' | 'phone' | 'code' | 'assignee';
+  /** Dropdown gợi ý: không tìm mô tả/địa chỉ/email. */
+  suggest?: boolean;
   assignedTo?: string;
   phoneFilter?: '' | 'has_phone' | 'no_phone';
   dateFrom?: string;
@@ -425,7 +429,14 @@ export function isClassifiedKanbanItem(item: CrmKanbanItem, stageIds: Set<string
 
 /** Gắn params lọc chung cho GET /crm/leads và batch kanban. */
 function applyListParams(params: Record<string, unknown>, opts?: CrmStageFetchOpts) {
-  if (opts?.search?.trim()) params.search = opts.search.trim();
+  const field = opts?.searchField || 'all';
+  const q = opts?.search?.trim();
+  if (q) {
+    if (field === 'assignee') params.assignee_name = q;
+    else params.search = q;
+  }
+  if (field !== 'all') params.search_field = field;
+  if (opts?.suggest) params.suggest = '1';
   if (opts?.assignedTo) params.assigned_to = opts.assignedTo;
   if (opts?.phoneFilter) params.phone_filter = opts.phoneFilter;
   if (opts?.dateFrom) params.date_from = opts.dateFrom;
@@ -649,13 +660,14 @@ export async function fetchCrmSearchSuggest(
   type: 'lead' | 'deal',
   query: string,
   opts?: CrmStageFetchOpts,
-  limit = 10,
+  limit = 40,
 ): Promise<{ items: CrmKanbanItem[]; total: number }> {
   const q = query.trim();
   if (q.length < 2) return { items: [], total: 0 };
   const page = await fetchCrmListPage(type, 0, limit, {
     ...opts,
-    search: q,
+    search: opts?.search?.trim() || q,
+    suggest: true,
     lite: true,
     skipCounts: true,
   });

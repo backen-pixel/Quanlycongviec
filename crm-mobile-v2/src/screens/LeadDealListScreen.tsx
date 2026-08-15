@@ -55,7 +55,7 @@ import { useAuth, currentUserId } from '../context/AuthContext';
 import { useCreateMenu } from '../context/CreateMenuContext';
 import { applyCrmBadgeFieldsToItem } from '../lib/crmBadgePatch';
 import { useCrmRealtimeRefresh } from '../hooks/useCrmRealtimeRefresh';
-import { useCrmSearchSuggest } from '../hooks/useCrmSearchSuggest';
+import { useCrmSearchSuggest, scoreCrmSearchSuggestItem } from '../hooks/useCrmSearchSuggest';
 import { useUnreadNotificationCount } from '../hooks/useUnreadNotificationCount';
 import { lockCrmAssigneeScope, lockCrmCompanyScope, canViewAllCrm } from '../lib/crmAssignee';
 import ListCreateFab from '../components/ListCreateFab';
@@ -63,8 +63,10 @@ import {
   activeFilterChips,
   buildStageFetchOpts,
   countActiveFilters,
+  filtersForCrmSearchSuggest,
   REGION_NONE,
   searchPlaceholder,
+  searchQueryForCrmItem,
   serverFilterKey,
 } from '../lib/crmFilters';
 import {
@@ -178,7 +180,13 @@ export default function LeadDealListScreen({ kind }: Props) {
   const skipNextFocusRefresh = useRef(true);
   const lastFocusLoadAtRef = useRef(0);
   const nextOffsetRef = useRef(0);
-  const filterKey = serverFilterKey(filters, search);
+  const searchRef = useRef(search);
+  const searchDraftRef = useRef(searchDraft);
+  const itemsRef = useRef(items);
+  searchRef.current = search;
+  searchDraftRef.current = searchDraft;
+  itemsRef.current = items;
+  const filterKey = serverFilterKey(filters, '');
   const listActive = viewModeReady && viewMode === 'list';
 
   useEffect(() => {
@@ -297,14 +305,20 @@ export default function LeadDealListScreen({ kind }: Props) {
 
   /** Khi Tách + «Tất cả»: chỉ hiện thẻ thuộc cột tab Deal hoặc Đơn hàng. */
   const visibleItems = useMemo(() => {
-    if (kind !== 'deal' || !dealKhSplitEnabled || stageId) return items;
-    if (!allowedStageIds.size) return items;
-    return items.filter((it) => it.stageId && allowedStageIds.has(String(it.stageId)));
-  }, [kind, dealKhSplitEnabled, stageId, items, allowedStageIds]);
+    let rows = items;
+    if (kind === 'deal' && dealKhSplitEnabled && !stageId && allowedStageIds.size) {
+      rows = rows.filter((it) => it.stageId && allowedStageIds.has(String(it.stageId)));
+    }
+    const q = search.trim();
+    if (q) {
+      rows = rows.filter((it) => scoreCrmSearchSuggestItem(it, q, filters.searchField) > 0);
+    }
+    return rows;
+  }, [kind, dealKhSplitEnabled, stageId, items, allowedStageIds, search, filters.searchField]);
 
   const fetchOpts = useMemo(
-    () => buildStageFetchOpts(filters, search, myId || ''),
-    [filters, search, myId],
+    () => buildStageFetchOpts(filters, '', myId || ''),
+    [filters, myId],
   );
 
   const loadMeta = useCallback(async (overrideCompanyId?: string) => {
@@ -341,6 +355,13 @@ export default function LeadDealListScreen({ kind }: Props) {
 
   const loadPage = useCallback(
     async (modeLoad: 'replace' | 'append' | 'refresh') => {
+      if (
+        modeLoad === 'append'
+        && (searchDraftRef.current.trim().length >= 2 || searchRef.current.trim())
+      ) {
+        setLoadingMore(false);
+        return;
+      }
       abortRef.current?.abort();
       const ac = new AbortController();
       abortRef.current = ac;
@@ -384,7 +405,7 @@ export default function LeadDealListScreen({ kind }: Props) {
             for (const s of stg) {
               if (counts[s.id] === undefined) counts[s.id] = 0;
             }
-            setCrmHubCache(myId, kind, serverFilterKey(filters, search), {
+            setCrmHubCache(myId, kind, serverFilterKey(filters, ''), {
               data: {
                 stages: stg,
                 stageCounts: counts,
@@ -417,11 +438,16 @@ export default function LeadDealListScreen({ kind }: Props) {
         }
       }
     },
-    [kind, fetchOpts, stageId, myId, filters, search],
+    [kind, fetchOpts, stageId, myId, filters],
   );
 
   useEffect(() => {
     if (!filtersReady || !listActive) return;
+    const searching = !!searchRef.current.trim() || searchDraftRef.current.trim().length >= 2;
+    if (searching && itemsRef.current.length > 0) {
+      setLoading(false);
+      return;
+    }
     nextOffsetRef.current = 0;
     skipNextFocusRefresh.current = true;
     lastFocusLoadAtRef.current = Date.now();
@@ -515,6 +541,11 @@ export default function LeadDealListScreen({ kind }: Props) {
       .sort((a, b) => listDateSectionOrder(a.title) - listDateSectionOrder(b.title));
   }, [visibleItems, listSort]);
 
+  const deadlineSuggestFilters = useMemo(
+    () => filtersForCrmSearchSuggest(filters),
+    [filters],
+  );
+  const searchUiActive = searchDraft.trim().length >= 2 || !!search.trim();
   const {
     open: searchSuggestOpen,
     loading: searchSuggestLoading,
@@ -525,7 +556,7 @@ export default function LeadDealListScreen({ kind }: Props) {
     enabled: listActive,
     type: kind,
     searchDraft,
-    filters,
+    filters: deadlineSuggestFilters,
     myId: myId || '',
     localItems: items,
   });
@@ -547,6 +578,11 @@ export default function LeadDealListScreen({ kind }: Props) {
 
   const focusSearchResult = useCallback((item: CrmKanbanItem) => {
     setSearchSuggestDismissed(true);
+    const q = searchQueryForCrmItem(item);
+    if (q) {
+      setSearchDraft(q);
+      commitSearch(q);
+    }
     Keyboard.dismiss();
     pendingSearchFocusRef.current = item;
     if (stageId && item.stageId && String(stageId) !== String(item.stageId)) {
@@ -555,7 +591,7 @@ export default function LeadDealListScreen({ kind }: Props) {
       setItems((prev) => (prev.some((it) => it.id === item.id) ? prev : [item, ...prev]));
     }
     setSearchFocusNonce((n) => n + 1);
-  }, [stageId, setSearchSuggestDismissed]);
+  }, [stageId, setSearchSuggestDismissed, setSearchDraft, commitSearch]);
 
   const openSearchResultDetail = useCallback((item: CrmKanbanItem) => {
     setSearchSuggestDismissed(true);
@@ -1109,7 +1145,7 @@ export default function LeadDealListScreen({ kind }: Props) {
 
       {error ? <Text style={styles.error}>{error}</Text> : null}
 
-      {loading && !items.length ? (
+      {loading && !items.length && !searchUiActive ? (
         <View style={styles.center}>
           <SpinningLoader color={Colors.blue} />
         </View>
@@ -1160,11 +1196,12 @@ export default function LeadDealListScreen({ kind }: Props) {
             />
           }
           onEndReached={() => {
+            if (searchUiActive) return;
             if (hasMore && !loadingMore && !loading) void loadPage('append');
           }}
           onEndReachedThreshold={0.4}
           ListFooterComponent={
-            loadingMore ? (
+            !searchUiActive && loadingMore ? (
               <SpinningLoader color={Colors.blue} style={{ marginVertical: 16 }} />
             ) : null
           }
