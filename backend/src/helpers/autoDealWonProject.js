@@ -468,6 +468,7 @@ function scheduleAutoProjectBackground(ctx) {
               project_id: String(projectId),
               project_code: projectCode,
               project_name: projectName,
+              company_id: companyId || null,
             });
         }
       } catch (e) {
@@ -485,6 +486,7 @@ function scheduleAutoProjectBackground(ctx) {
               project_id: String(projectId),
               project_code: projectCode,
               project_name: projectName,
+              company_id: companyId || null,
             });
         } catch (e) {
           console.warn('[auto-project/bg] staff notify:', e.message);

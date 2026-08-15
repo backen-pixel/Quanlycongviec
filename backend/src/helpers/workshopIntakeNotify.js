@@ -3,7 +3,7 @@
  */
 
 const { supabase } = require('../config/supabase');
-const { notifyMultiple } = require('./notifications');
+const { notifyMultiple, getCompanyScopedRoleUserIds } = require('./notifications');
 const { emitCrmBadgeUpdateForProject } = require('./workshopKanban');
 const { invalidateTags: rcInvalidateTags } = require('../middleware/responseCache');
 const { emitScoped } = require('./socketEmit');
@@ -64,14 +64,7 @@ async function notifyWorkshopIntakeNewDeal({
     // Không biết công ty xưởng → không broadcast toàn hệ thống (tránh spam).
     if (!companyId) return;
 
-    const { data: users } = await supabase
-      .from('users')
-      .select('id, company_id, role')
-      .in('role', INTAKE_NOTIFY_ROLES)
-      .eq('is_active', true)
-      .eq('company_id', companyId);
-    const recipientIds = (users || [])
-      .map((u) => u.id)
+    const recipientIds = (await getCompanyScopedRoleUserIds(companyId, INTAKE_NOTIFY_ROLES))
       .filter((uid) => uid && String(uid) !== String(actorUserId));
     if (!recipientIds.length) return;
 
@@ -94,6 +87,7 @@ async function notifyWorkshopIntakeNewDeal({
         project_name: projectName || null,
         nav_tab: 'kanban',
         intake: true,
+        company_id: companyId,
         nav_url: `/sx/dashboard?open=${encodeURIComponent(String(projectId))}`,
       },
     );

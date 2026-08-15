@@ -3707,6 +3707,7 @@ async function handleComment(pageId, value) {
         message: `${value.from?.name}: "${(value.message || '').substring(0, 80)}"`,
         entity_type: 'fb_comment',
         entity_id: commentId,
+        metadata: { company_id: pageRow?.default_company_id || null },
       });
     }
   } catch (e) { /* ignore */ }

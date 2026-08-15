@@ -4,7 +4,7 @@
  */
 
 const { supabase } = require('../config/supabase');
-const { notifyMultiple } = require('./notifications');
+const { notifyMultiple, getSystemAdminUserIds } = require('./notifications');
 const {
   resolveLogisticsHandoverResponsibleUserId,
   resolveLogisticsHandoverInstallerUserId,
@@ -130,6 +130,7 @@ async function collectVcProjectNotifyRecipientIds({
       for (const u of roleUsers || []) {
         if (u?.id) ids.add(String(u.id));
       }
+      for (const sid of await getSystemAdminUserIds()) ids.add(sid);
     } catch (e) {
       console.warn('[vc-logistics-notify] role users:', e.message);
     }
@@ -234,6 +235,7 @@ async function notifyLogisticsIntakePending(req, {
         vc_stage_id: stageId || null,
         focus_kpi: 'intake',
         reason,
+        company_id: logisticsCompanyId || null,
       },
     );
   } catch (e) {
@@ -311,6 +313,7 @@ async function notifyLogisticsStageChanged(req, {
         bucket_slug: stageRow?.bucket_slug || null,
         focus_kpi: focusKpi,
         jumped_to_install: Boolean(jumpedToInstall),
+        company_id: logisticsCompanyId || null,
       },
     );
   } catch (e) {

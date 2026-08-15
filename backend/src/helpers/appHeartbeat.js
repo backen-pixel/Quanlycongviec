@@ -181,7 +181,7 @@ async function computeHeartbeatBadges(req, socialCompanyId) {
     countAssignmentsBothModules(uid),
     countSocialUnread(req, socialCompanyId),
     countReleaseNotesUnread(uid),
-    pgDashboardNotificationStats(uid),
+    pgDashboardNotificationStats(uid, req.user),
     countUnifiedOpenTasks(req.user),
     countUnifiedOverdueTasks(req.user),
   ]);
@@ -199,7 +199,12 @@ async function computeHeartbeatBadges(req, socialCompanyId) {
       .or('metadata->>ecosystem_module_key.is.null,metadata->>ecosystem_module_key.neq.projects')
       .limit(500);
     if (error) throw error;
-    notifications = { unread: (rows || []).length };
+    const { filterNotificationsForViewer } = require('./notifications');
+    const visible = filterNotificationsForViewer(
+      (rows || []).filter((n) => n && String(n.entity_type || '') !== 'project'),
+      req.user,
+    );
+    notifications = { unread: visible.length };
   }
 
   return {

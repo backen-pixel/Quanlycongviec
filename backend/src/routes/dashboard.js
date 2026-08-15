@@ -35,6 +35,9 @@ const {
   notificationMatchesProjectIdSet,
   enrichNotificationProjectOptions,
 } = require('../helpers/notificationProjectScope');
+const {
+  filterNotificationsForViewer,
+} = require('../helpers/notifications');
 
 function postgrestInTypesList(types) {
   return `(${types.map((t) => String(t)).join(',')})`;
@@ -186,7 +189,7 @@ async function applyProjectScopeAndOptions(rows, scopeParams = {}) {
 
 r.get('/', responseCache({ ttl: 20, scope: 'user', tags: ['notifications'] }), async (req, res) => {
   try {
-    const pgResult = await pgDashboardNotificationStats(req.user.userId);
+    const pgResult = await pgDashboardNotificationStats(req.user.userId, req.user);
     if (pgResult) {
       return res.json(pgResult);
     }
@@ -202,7 +205,10 @@ r.get('/', responseCache({ ttl: 20, scope: 'user', tags: ['notifications'] }), a
       .limit(1000);
     if (error) return res.status(500).json({ error: error.message });
 
-    const filtered = (rows || []).filter((n) => !isProjectModuleNotification(n));
+    const filtered = filterNotificationsForViewer(
+      (rows || []).filter((n) => !isProjectModuleNotification(n)),
+      req.user,
+    );
 
     let unread = 0, unreadChat = 0, unreadActivity = 0, unreadDeadlines = 0, unreadEvents = 0, unreadAssignments = 0;
     for (const n of filtered) {
@@ -260,6 +266,7 @@ r.get('/notifications', responseCache({ ttl: 20, scope: 'user', tags: ['notifica
       toDate,
       module: moduleFilter,
       ...scopeParams,
+      viewer: req.user,
     });
     if (pgResult) {
       return res.json(pgResult);
@@ -312,7 +319,10 @@ r.get('/notifications', responseCache({ ttl: 20, scope: 'user', tags: ['notifica
     const { data, error } = await q;
     if (error) return res.status(500).json({ error: error.message });
 
-    let rows = (data || []).filter((n) => !isProjectModuleNotification(n));
+    let rows = filterNotificationsForViewer(
+      (data || []).filter((n) => !isProjectModuleNotification(n)),
+      req.user,
+    );
     if (ch === 'activity') {
       rows = rows.filter((n) => isDealActivityNotification(n));
     }
@@ -359,7 +369,10 @@ r.get('/notifications/deadlines', async (req, res) => {
     else if (unread === 'false') q = q.eq('is_read', true);
     const { data, error } = await q;
     if (error) return res.status(500).json({ error: error.message });
-    let rows = (data || []).filter((n) => isExpiryDeadlineNotificationType(n.type) && !isProjectModuleNotification(n));
+    let rows = filterNotificationsForViewer(
+      (data || []).filter((n) => isExpiryDeadlineNotificationType(n.type) && !isProjectModuleNotification(n)),
+      req.user,
+    );
     rows = rows.filter((n) => notificationMatchesModule(n, mod));
     const scoped = await applyProjectScopeAndOptions(rows, scopeParams);
     res.json({

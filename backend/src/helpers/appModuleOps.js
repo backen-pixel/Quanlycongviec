@@ -2,7 +2,7 @@
  * Helpers: apply task templates + CRM sync for custom app modules.
  */
 const { supabase } = require('../config/supabase');
-const { createNotification } = require('./notifications');
+const { createNotification, getCompanyScopedRoleUserIds } = require('./notifications');
 
 function addDays(date, days) {
   const d = new Date(date);
@@ -193,13 +193,8 @@ async function notifyModuleTransfer(req, {
   // Company admins / staff of the module company (best-effort)
   if (moduleRow.company_id || record.company_id) {
     const cid = moduleRow.company_id || record.company_id;
-    const { data: users } = await supabase
-      .from('users')
-      .select('id, role')
-      .eq('company_id', cid)
-      .in('role', ['admin', 'manager', 'sales_admin'])
-      .limit(20);
-    (users || []).forEach((u) => targets.add(String(u.id)));
+    const users = await getCompanyScopedRoleUserIds(cid, ['admin', 'manager', 'sales_admin']);
+    users.forEach((id) => targets.add(String(id)));
   }
 
   targets.delete(String(actorUserId || ''));
@@ -214,6 +209,7 @@ async function notifyModuleTransfer(req, {
     app_module_id: moduleRow.id,
     record_id: record.id,
     source_crm_lead_id: record.source_crm_lead_id || null,
+    company_id: moduleRow.company_id || record.company_id || null,
   };
 
   const results = [];

@@ -124,7 +124,7 @@ r.post('/leads', async (req, res) => {
       if (targetIds.size) await notifyMultiple(req, [...targetIds], 'lead_created',
         '🆕 Lead mới',
         `Lead "${body.title}" — Mã: ${code}`,
-        'crm_lead', data.id);
+        'crm_lead', data.id, { ecosystem_module_key: 'crm', company_id: data.company_id || body.company_id || null });
     } catch (ne) { console.warn('[NOTIFY] lead_created:', ne.message); }
 
     try {
@@ -267,7 +267,7 @@ r.post('/deals', async (req, res) => {
       if (targetIds.size) await notifyMultiple(req, [...targetIds], 'deal_created',
         '🎯 Deal mới',
         `Deal "${body.title}" — Mã: ${code} — GT: ${formatMoney(body.estimated_value)}`,
-        'crm_deal', data.id);
+        'crm_deal', data.id, { ecosystem_module_key: 'crm', company_id: data.company_id || body.company_id || null });
     } catch (ne) { console.warn('[NOTIFY] deal_created:', ne.message); }
 
     try {
@@ -2641,7 +2641,7 @@ r.patch('/leads/:id/stage', async (req, res) => {
                 await notifyMultiple(req, adminIds, 'deal_won',
                   '🏆 Deal Thắng',
                   `Deal "${wonTitle}" - Giá trị: ${Number(wonValue).toLocaleString('vi-VN')} VND`,
-                  'crm_deal', wonDealId);
+                  'crm_deal', wonDealId, { ecosystem_module_key: 'crm', company_id: wonCompanyId || null });
               }
             } catch (ne) {
               console.warn('[crm/stage] deal_won notify:', ne.message);
@@ -3790,7 +3790,7 @@ r.post('/project/:projectId/auto-invoice', async (req, res) => {
         if (adminIds.length) await notifyMultiple(req, adminIds, 'invoice_created',
           '🧾 Tự động tạo hóa đơn',
           `Dự án hoàn thành → tạo ${invoices.length} hóa đơn`,
-          'project', req.params.projectId);
+          'project', req.params.projectId, { company_id: proj?.company_id || null });
       } catch (ne) { console.warn('[NOTIFY] auto_invoice:', ne.message); }
     }
 

@@ -4811,22 +4811,29 @@ r.post('/projects/:id/incidents', requirePermission('projects', 'edit'), async (
       .single();
     if (error) throw error;
 
-    // Notify managers and production supervisors
+    // Notify managers / admin đúng công ty dự án (+ admin hệ thống)
     try {
-      const { data: managers } = await supabase
-        .from('users')
-        .select('id')
-        .in('role', ['manager', 'admin'])
-        .eq('is_active', true);
-      const recipientIds = (managers || []).map((u) => u.id).filter((uid) => uid !== userId);
+      const { data: projRow } = await supabase
+        .from('projects')
+        .select('company_id')
+        .eq('id', id)
+        .maybeSingle();
+      const { notifyMultiple: notifyM, getCompanyScopedRoleUserIds } = require('../helpers/notifications');
+      const recipientIds = (await getCompanyScopedRoleUserIds(
+        projRow?.company_id,
+        ['manager', 'admin'],
+      )).filter((uid) => uid !== userId);
       if (!DISABLE_PRODUCTION_PUSH_NOTIFICATIONS && recipientIds.length) {
-        const { notifyMultiple: notifyM } = require('../helpers/notifications');
         await notifyM(
           req, recipientIds, 'project_updated',
           `⚠️ Sự cố: ${title}`,
           `Dự án ${id} báo sự cố mức ${severity || 'medium'}`,
           'project', id,
-          { ecosystem_module_key: 'production', project_id: String(id) },
+          {
+            ecosystem_module_key: 'production',
+            project_id: String(id),
+            company_id: projRow?.company_id || null,
+          },
         );
       }
     } catch (ne) {

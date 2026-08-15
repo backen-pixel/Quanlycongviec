@@ -4,7 +4,7 @@
  */
 
 const { supabase } = require('../config/supabase');
-const { notifyMultiple } = require('./notifications');
+const { notifyMultiple, getCompanyScopedAdminIds } = require('./notifications');
 const { collectVcProjectNotifyRecipientIds } = require('./vcLogisticsNotify');
 
 const ENABLE_VC_HANDOVER_NOTIFICATIONS = true;
@@ -67,6 +67,7 @@ async function notifyVcHandoverFromSx(req, {
         vc_intake: true,
         stage_name: 'Chờ vận chuyển',
         focus_kpi: 'intake',
+        company_id: logisticsCompanyId || null,
       },
     );
   } catch (e) {
@@ -93,13 +94,8 @@ async function notifyDealPackagingDone(req, { deal, projectId, sxStage } = {}) {
   const companyId = deal.company_id || null;
   if (companyId) {
     try {
-      const { data: admins } = await supabase
-        .from('users')
-        .select('id')
-        .eq('is_active', true)
-        .eq('company_id', companyId)
-        .in('role', ['admin', 'sales_admin']);
-      for (const u of admins || []) if (u?.id) recipientIds.add(String(u.id));
+      const adminIds = await getCompanyScopedAdminIds(companyId);
+      for (const id of adminIds) recipientIds.add(String(id));
     } catch (e) {
       console.warn('[notifyDealPackagingDone] admin lookup:', e.message);
     }
@@ -123,6 +119,7 @@ async function notifyDealPackagingDone(req, { deal, projectId, sxStage } = {}) {
           lead_id: String(deal.id),
           project_id: projectId ? String(projectId) : null,
           packaging_done: true,
+          company_id: companyId,
         },
       );
     } else {
@@ -140,6 +137,7 @@ async function notifyDealPackagingDone(req, { deal, projectId, sxStage } = {}) {
           lead_id: String(deal.id),
           project_id: projectId ? String(projectId) : null,
           packaging_done: true,
+          company_id: companyId,
         },
       }));
       await supabase.from('notifications').insert(rows);

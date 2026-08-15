@@ -1191,7 +1191,7 @@ r.post('/invoices', async (req, res) => {
       if (adminIds.length) await notifyMultiple(req, adminIds, 'invoice_created',
         '🧾 Hóa đơn mới',
         `Hóa đơn ${code} — KH: ${inv.customer_name || 'N/A'} — ${formatMoney(inv.total)}`,
-        'invoice', inv.id);
+        'invoice', inv.id, { company_id: invCo || inv.company_id || null });
     } catch (ne) { console.warn('[NOTIFY] invoice_created:', ne.message); }
 
     res.status(201).json(inv);
@@ -1322,7 +1322,7 @@ r.delete('/invoices/:id', async (req, res) => {
       if (adminIds.length) await notifyMultiple(req, adminIds, 'item_deleted',
         '🗑️ Hóa đơn đã xóa',
         `Hóa đơn ${delI?.code || ''} — KH: ${delI?.customer_name || 'N/A'} đã bị xóa`,
-        'invoice', req.params.id);
+        'invoice', req.params.id, { company_id: delI?.company_id || null });
     } catch (ne) {}
 
     res.json({ message: 'Đã xóa hóa đơn' });

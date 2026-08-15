@@ -1,9 +1,66 @@
 const { supabase } = require('../config/supabase');
+const { isSystemAdmin, isPlatformAdmin } = require('./adminRole');
 const { isNotificationAllowedForUser } = require('./notificationPrefsUser');
 const { isExpiryDeadlineNotificationType } = require('./notificationOperationalFilter');
 const { isCommentMutedForUser, isMessengerMutedForUser } = require('./notificationMutes');
 // Lưu ý: KHÔNG gọi sendMobilePush trực tiếp ở đây — đã có server.js pushNotification gọi
 // (qua app.set('pushNotification')). Tránh gửi push trùng.
+
+function isGlobalNotificationViewer(user) {
+  return isSystemAdmin(user) || isPlatformAdmin(user);
+}
+
+function normalizeCompanyId(value) {
+  if (value == null) return '';
+  const s = String(value).trim();
+  return s;
+}
+
+function extractNotificationCompanyId(n) {
+  const meta = n?.metadata && typeof n.metadata === 'object' ? n.metadata : {};
+  return normalizeCompanyId(meta.company_id || meta.companyId);
+}
+
+function withCompanyMeta(metadata, companyId) {
+  const cid = normalizeCompanyId(companyId);
+  const meta = metadata && typeof metadata === 'object' ? { ...metadata } : {};
+  if (cid && !normalizeCompanyId(meta.company_id || meta.companyId)) {
+    meta.company_id = cid;
+  }
+  return Object.keys(meta).length ? meta : (metadata || null);
+}
+
+/** Inbox: admin hệ thống thấy hết; user gắn công ty chỉ thấy TB stamped đúng công ty (hoặc TB chưa gắn company_id). */
+function notificationVisibleToViewer(n, viewer) {
+  if (!n) return false;
+  if (isGlobalNotificationViewer(viewer)) return true;
+  const viewerCid = normalizeCompanyId(viewer?.company_id);
+  if (!viewerCid) return true;
+  const nCid = extractNotificationCompanyId(n);
+  if (!nCid) return true;
+  return nCid === viewerCid;
+}
+
+function filterNotificationsForViewer(rows, viewer) {
+  return (rows || []).filter((n) => notificationVisibleToViewer(n, viewer));
+}
+
+/**
+ * Admin hệ thống (role admin, không company_id) + platform_admin.
+ */
+async function getSystemAdminUserIds(opts = {}) {
+  const activeOnly = opts.activeOnly !== false;
+  let q = supabase.from('users').select('id, company_id, role').in('role', ['admin', 'platform_admin']);
+  if (activeOnly) q = q.eq('is_active', true);
+  const { data, error } = await q;
+  if (error) {
+    console.warn('[getSystemAdminUserIds]', error.message);
+    return [];
+  }
+  return (data || [])
+    .filter((u) => u?.id && isGlobalNotificationViewer(u))
+    .map((u) => String(u.id));
+}
 
 /**
  * User theo role nhận TB đúng công ty (company_id / user_companies) + tùy chọn admin hệ thống (company_id null).
@@ -18,9 +75,14 @@ async function getCompanyScopedRoleUserIds(companyId, roles, opts = {}) {
 
   const includeSystemAdmins = opts.includeSystemAdmins !== false;
   const activeOnly = opts.activeOnly !== false;
-  const cid = companyId != null && String(companyId).trim() !== '' ? String(companyId).trim() : '';
+  const cid = normalizeCompanyId(companyId);
+  const roleSet = new Set(roleList);
 
-  let q = supabase.from('users').select('id, company_id, role').in('role', roleList);
+  const queryRoles = includeSystemAdmins
+    ? [...new Set([...roleList, 'admin', 'platform_admin'])]
+    : roleList;
+
+  let q = supabase.from('users').select('id, company_id, role').in('role', queryRoles);
   if (activeOnly) q = q.eq('is_active', true);
   const { data: users, error } = await q;
   if (error) {
@@ -31,12 +93,12 @@ async function getCompanyScopedRoleUserIds(companyId, roles, opts = {}) {
   const ids = new Set();
   for (const u of users || []) {
     if (!u?.id) continue;
-    if (!u.company_id) {
-      // Chỉ admin hệ thống (role admin, không gắn company) mới nhận cross-company
-      if (includeSystemAdmins && String(u.role) === 'admin') ids.add(u.id);
+    if (includeSystemAdmins && isGlobalNotificationViewer(u)) {
+      ids.add(u.id);
       continue;
     }
-    if (cid && String(u.company_id) === cid) ids.add(u.id);
+    if (!roleSet.has(String(u.role || ''))) continue;
+    if (cid && String(u.company_id || '') === cid) ids.add(u.id);
   }
 
   if (cid) {
@@ -47,10 +109,18 @@ async function getCompanyScopedRoleUserIds(companyId, roles, opts = {}) {
         .eq('company_id', cid);
       const linkIds = [...new Set((links || []).map((r) => r.user_id).filter(Boolean))];
       if (linkIds.length) {
-        let lq = supabase.from('users').select('id').in('role', roleList).in('id', linkIds);
+        let lq = supabase.from('users').select('id, company_id, role').in('role', roleList).in('id', linkIds);
         if (activeOnly) lq = lq.eq('is_active', true);
         const { data: linked } = await lq;
-        (linked || []).forEach((u) => { if (u?.id) ids.add(u.id); });
+        for (const u of linked || []) {
+          if (!u?.id) continue;
+          if (isGlobalNotificationViewer(u)) {
+            ids.add(u.id);
+            continue;
+          }
+          // Chỉ user chưa gắn công ty gốc (NV xưởng/dept) — không kéo admin công ty khác.
+          if (!normalizeCompanyId(u.company_id)) ids.add(u.id);
+        }
       }
     } catch (e) {
       console.warn('[getCompanyScopedRoleUserIds] user_companies:', e.message || e);
@@ -107,7 +177,7 @@ async function createNotification(req, userId, type, title, message, entityType,
     entity_id: entityId,
   };
 
-  if (metadata) insert.metadata = metadata;
+  if (metadata) insert.metadata = withCompanyMeta(metadata, metadata.company_id || metadata.companyId);
 
   const { data, error } = await supabase
     .from('notifications')
@@ -232,4 +302,9 @@ module.exports = {
   dispatchNotificationToUser,
   getCompanyScopedAdminIds,
   getCompanyScopedRoleUserIds,
+  getSystemAdminUserIds,
+  withCompanyMeta,
+  notificationVisibleToViewer,
+  filterNotificationsForViewer,
+  isGlobalNotificationViewer,
 };

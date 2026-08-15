@@ -21,6 +21,7 @@ const {
   notificationMatchesProjectIdSet,
   enrichNotificationProjectOptions,
 } = require('./notificationProjectScope');
+const { filterNotificationsForViewer } = require('./notifications');
 const EVENT_NOTIFICATION_TYPES = ['event_created', 'event_completed'];
 const ASSIGNMENT_NOTIFICATION_TYPES = [
   'crm_assignment_assigned',
@@ -179,7 +180,7 @@ function countNotificationStats(rows) {
 /**
  * GET /api/dashboard/ — unread notification counts grouped in SQL.
  */
-async function pgDashboardNotificationStats(userId) {
+async function pgDashboardNotificationStats(userId, viewer = null) {
   if (!isPgEnabled() || !userId) return null;
 
   const result = await pgQuerySafe(
@@ -196,7 +197,10 @@ async function pgDashboardNotificationStats(userId) {
   );
   if (!result) return null;
 
-  const filtered = (result.rows || []).filter((n) => !isProjectModuleNotification(n));
+  const filtered = filterNotificationsForViewer(
+    (result.rows || []).filter((n) => !isProjectModuleNotification(n)),
+    viewer,
+  );
   return { stats: countNotificationStats(filtered) };
 }
 
@@ -215,6 +219,7 @@ async function pgDashboardNotificationsList(userId, {
   regionId,
   workshopTypeId,
   projectQ,
+  viewer = null,
 } = {}) {
   if (!isPgEnabled() || !userId) return null;
 
@@ -279,7 +284,10 @@ async function pgDashboardNotificationsList(userId, {
   const result = await pgQuerySafe(sql, params);
   if (!result) return null;
 
-  let rows = (result.rows || []).filter((n) => !isProjectModuleNotification(n));
+  let rows = filterNotificationsForViewer(
+    (result.rows || []).filter((n) => !isProjectModuleNotification(n)),
+    viewer,
+  );
   if (ch === 'activity') {
     rows = rows.filter((n) => isDealActivityNotification(n));
   }
