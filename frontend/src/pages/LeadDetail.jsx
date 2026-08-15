@@ -4721,6 +4721,7 @@ export default function LeadDetail() {
         currentDeadline={lead?.kanban_deadline_at || null}
         mandatory
         submitting={stageDeadlineBusy}
+        companyId={lead?.company_id || null}
         onClose={() => { if (!stageDeadlineBusy) setStageDeadlineCtx(null); }}
         onConfirm={confirmStageDeadline}
       />
@@ -6215,6 +6216,7 @@ function LeadInfoPanel({
         requireReason={!!lead?.kanban_deadline_at}
         allowClear={!!lead?.kanban_deadline_at}
         submitting={deadlineBusy}
+        companyId={lead?.company_id || null}
         onClose={() => { if (!deadlineBusy) setDeadlineModalOpen(false); }}
         onConfirm={saveKanbanDeadline}
       />

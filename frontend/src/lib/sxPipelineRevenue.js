@@ -3,6 +3,7 @@
  */
 
 import { effectivePipelineStageSlaDays, isPipelineStageSlaDisabled } from './crmPipelineSla';
+import { isHucabiSameDayPastWorkEnd } from './companyDeadlineClock';
 
 const INTAKE_BUCKET = 'won_pending';
 const VC_SHIPPED_STATUSES = new Set(['shipping', 'installing', 'warranty', 'completed']);
@@ -253,7 +254,17 @@ export function resolveSxDeadlineBucket(item, todayMs = Date.now(), stage = null
     }
     return { bucket: 'overdue', ts: t, source };
   }
-  if (diffDays === 0) return { bucket: 'today', ts: t, source };
+  if (diffDays === 0) {
+    const companyRef = item?.company_id || item?.company;
+    if (
+      isHucabiSameDayPastWorkEnd(raw, companyRef, todayMs)
+      && !shouldIgnoreSxOrderDeliveryOverdue(st)
+      && !isSxPipelineStageNoDeadline(st)
+    ) {
+      return { bucket: 'overdue', ts: t, source };
+    }
+    return { bucket: 'today', ts: t, source };
+  }
   const dow = today.getDay() === 0 ? 7 : today.getDay();
   const daysToEndOfWeek = 7 - dow;
   if (diffDays <= daysToEndOfWeek) return { bucket: 'this_week', ts: t, source };
@@ -366,15 +377,16 @@ export function shouldIgnoreSxOrderDeliveryOverdue(stage) {
 }
 
 /** Mức cảnh báo ngày giao / deadline đặt hàng — null nếu không có ngày. */
-export function getSxOrderDeliveryDateUrgency(dateIso, stage) {
+export function getSxOrderDeliveryDateUrgency(dateIso, stage, companyOrId = null) {
   if (!dateIso) return null;
   const dd = new Date(dateIso);
   if (Number.isNaN(dd.getTime())) return null;
   if (shouldIgnoreSxOrderDeliveryOverdue(stage)) {
     return { level: 'ok', overdue: false, soon: false };
   }
-  // Quá hạn = trước hôm nay (theo ngày), không tính «hôm nay đã qua giờ».
-  const overdue = startOfLocalDay(dd).getTime() < startOfLocalDay(new Date()).getTime();
+  // Quá hạn = trước hôm nay, hoặc HCB cùng ngày sau 17:30.
+  let overdue = startOfLocalDay(dd).getTime() < startOfLocalDay(new Date()).getTime();
+  if (!overdue && isHucabiSameDayPastWorkEnd(dateIso, companyOrId)) overdue = true;
   const soon = !overdue && dd < new Date(Date.now() + 3 * 86400000);
   return {
     level: overdue ? 'overdue' : soon ? 'soon' : 'ok',
@@ -390,8 +402,8 @@ export function isSxProjectDeliveryDateOverdue(project, stage) {
   if (!raw || project?.status === 'completed') return false;
   const t = new Date(raw);
   if (Number.isNaN(t.getTime())) return false;
-  // Khớp cột Deadline: chỉ quá hạn khi ngày hạn < hôm nay (không tính cùng ngày).
-  return startOfLocalDay(t).getTime() < startOfLocalDay(new Date()).getTime();
+  if (startOfLocalDay(t).getTime() < startOfLocalDay(new Date()).getTime()) return true;
+  return isHucabiSameDayPastWorkEnd(raw, project?.company_id || project?.company);
 }
 
 /** SLA cột pipeline SX — null nếu không áp dụng. */

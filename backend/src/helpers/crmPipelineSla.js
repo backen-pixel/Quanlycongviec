@@ -1,8 +1,7 @@
 /** SLA cột pipeline CRM — dùng chung crm.js, kpi.js, kpiCalculator */
 
-const {
-  crmReportIsYmdBeforeToday,
-} = require('./crmReportDateBounds');
+const { crmReportIsYmdBeforeToday } = require('./crmReportDateBounds');
+const { isHucabiSameDayPastWorkEnd } = require('./companyDeadlineClock');
 
 const DEFAULT_PIPELINE_STAGE_SLA_DAYS = 7;
 
@@ -101,7 +100,8 @@ function isSxProjectDeliveryDateOverdue(project, stage) {
   if (shouldIgnoreSxOrderDeliveryOverdue(st)) return false;
   const raw = project?.delivery_date || project?.production_deadline || project?.deadline;
   if (!raw || project?.status === 'completed') return false;
-  return crmReportIsYmdBeforeToday(raw);
+  if (crmReportIsYmdBeforeToday(raw)) return true;
+  return isHucabiSameDayPastWorkEnd(raw, project?.company_id || project?.company);
 }
 
 module.exports = {

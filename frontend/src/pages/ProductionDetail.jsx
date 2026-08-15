@@ -3848,6 +3848,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
         requireReason={false}
         allowClear={false}
         submitting={deadlineBusy}
+        companyId={project?.company_id || null}
         onClose={() => !deadlineBusy && setDeadlineCtx(null)}
         onConfirm={submitStageDeadline}
       />

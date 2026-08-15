@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Clock, X, AlertTriangle } from 'lucide-react';
 import { formatDate } from '../lib/utils';
+import { companyDeadlineIsoFromYmd, hucabiDeadlineHint } from '../lib/companyDeadlineClock';
 
 /** Đổi Date/ISO → chuỗi cho <input type="date"> theo ngày local. */
 function toDateInput(value) {
@@ -11,12 +12,14 @@ function toDateInput(value) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
-/** Ngày từ input date → ISO cuối ngày (local) để so sánh hạn theo ngày. */
-function dateInputToIso(dateStr) {
+/** Ngày từ input date → ISO mốc hết hạn trong ngày (HCB = 17:30 VN, mặc định cuối ngày). */
+function dateInputToIso(dateStr, companyOrId) {
   if (!dateStr?.trim()) return null;
   const [y, m, d] = dateStr.split('-').map(Number);
   if (!y || !m || !d) return null;
-  return new Date(y, m - 1, d, 23, 59, 59, 999).toISOString();
+  const ymd = `${String(y).padStart(4, '0')}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  return companyDeadlineIsoFromYmd(ymd, companyOrId)
+    || new Date(y, m - 1, d, 23, 59, 59, 999).toISOString();
 }
 
 /**
@@ -33,6 +36,7 @@ export default function CrmDeadlineModal({
   requireReason = false,
   allowClear = false,
   submitting = false,
+  companyId = null,
   onClose,
   onConfirm,
 }) {
@@ -64,7 +68,7 @@ export default function CrmDeadlineModal({
       setError('Vui lòng nhập lý do thay đổi deadline.');
       return;
     }
-    const deadlineIso = hasValue ? dateInputToIso(value) : null;
+    const deadlineIso = hasValue ? dateInputToIso(value, companyId) : null;
     if (hasValue && !deadlineIso) {
       setError('Ngày deadline không hợp lệ.');
       return;
@@ -116,6 +120,9 @@ export default function CrmDeadlineModal({
               onChange={(e) => { setValue(e.target.value); setError(''); }}
               className="w-full h-10 rounded-lg border border-slate-300 px-3 text-sm focus:border-rose-400 focus:ring-1 focus:ring-rose-300 outline-none"
             />
+            {hucabiDeadlineHint(companyId) && (
+              <p className="mt-1 text-[11px] text-slate-500">{hucabiDeadlineHint(companyId)}</p>
+            )}
           </div>
 
           <div>

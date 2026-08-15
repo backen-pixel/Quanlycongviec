@@ -9098,6 +9098,7 @@ export default function CRMDashboard() {
         requireReason={deadlineCtx?.mode === 'edit_only' && !!deadlineCtx?.card?.kanban_deadline_at}
         allowClear={deadlineCtx?.mode === 'edit_only' && !!deadlineCtx?.card?.kanban_deadline_at}
         submitting={deadlineBusy}
+        companyId={deadlineCtx?.card?.company_id || null}
         onClose={() => { if (!deadlineBusy) setDeadlineCtx(null); }}
         onConfirm={confirmDeadlineMove}
       />
@@ -10386,7 +10387,7 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
   const deliveryDateChip = (() => {
     const pd = item.linked_project?.delivery_date || item.linked_project?.production_deadline;
     if (!pd) return null;
-    const urgency = getSxOrderDeliveryDateUrgency(pd, item.sx_pipeline_stage);
+    const urgency = getSxOrderDeliveryDateUrgency(pd, item.sx_pipeline_stage, item.linked_project?.company_id || item.company_id);
     const isOverdue = urgency?.overdue;
     const isSoon = urgency?.soon;
     const tone = isOverdue ? 'bg-red-50 border-red-200 text-red-700'

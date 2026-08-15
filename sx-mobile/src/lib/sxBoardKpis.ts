@@ -105,6 +105,19 @@ export function projectIsIntake(p: ProductionProject): boolean {
   return Boolean(p.sx_intake);
 }
 
+const HUCABI_COMPANY_ID = '18c2563f-3495-498d-8199-23200c9f420e';
+
+function isHucabiSameDayPast1730(raw: string | Date, companyId: string | null | undefined, nowMs: number): boolean {
+  if (String(companyId || '') !== HUCABI_COMPANY_ID) return false;
+  const ts = new Date(raw).getTime();
+  if (!Number.isFinite(ts)) return false;
+  const dueYmd = new Date(ts).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' });
+  const nowYmd = new Date(nowMs).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' });
+  if (dueYmd !== nowYmd) return false;
+  const endMs = new Date(`${dueYmd}T17:30:00+07:00`).getTime();
+  return nowMs > endMs;
+}
+
 export function startOfLocalDay(d: Date): Date {
   const x = new Date(d);
   x.setHours(0, 0, 0, 0);
@@ -143,7 +156,8 @@ export function projectIsDeadlineOverdue(
   if (Number.isNaN(t.getTime())) return false;
   if (shouldIgnoreOverdue(col)) return false;
   const today = startOfLocalDay(new Date(todayMs));
-  return startOfLocalDay(t).getTime() < today.getTime();
+  if (startOfLocalDay(t).getTime() < today.getTime()) return true;
+  return isHucabiSameDayPast1730(raw, p.company_id, todayMs);
 }
 
 export type SxBoardKpis = {

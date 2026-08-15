@@ -4309,6 +4309,7 @@ export default function ProductionDashboard() {
         requireReason={deadlineCtx?.mode === 'edit_only' && !!deadlineCtx?.project?.sx_kanban_deadline_at}
         allowClear={deadlineCtx?.mode === 'edit_only' && !!deadlineCtx?.project?.sx_kanban_deadline_at}
         submitting={deadlineBusy}
+        companyId={deadlineCtx?.project?.company_id || null}
         onClose={() => !deadlineBusy && setDeadlineCtx(null)}
         onConfirm={confirmDeadlineMove}
       />
@@ -4766,7 +4767,7 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
     ? null
     : (item.production_deadline || item.deadline || null);
   const deliveryOverdueTone = !hideColumnDeadline && item.delivery_date && !ignoreOrderDeliveryOverdue
-    ? getSxOrderDeliveryDateUrgency(item.delivery_date, sxStage)
+    ? getSxOrderDeliveryDateUrgency(item.delivery_date, sxStage, item.company_id)
     : null;
   const customerInitials = getInitials(item.customer?.full_name || item.name || '');
   const progress = item.sx_pipeline_percent != null ? Math.max(0, Math.min(100, Number(item.sx_pipeline_percent) || 0)) : null;
@@ -4892,7 +4893,7 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
             </span>
           )}
           {item.delivery_date && (() => {
-            const urgency = getSxOrderDeliveryDateUrgency(item.delivery_date, sxStage);
+            const urgency = getSxOrderDeliveryDateUrgency(item.delivery_date, sxStage, item.company_id);
             const overdue = urgency?.overdue;
             const soon = urgency?.soon;
             return (

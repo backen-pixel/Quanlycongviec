@@ -12,6 +12,7 @@ import { upsertComment, CommentAttachmentsBlock, CrmLeadCommentsPanel } from './
 import { FilePreview, FileUploadButton } from './FileUpload';
 import { HIDE_PRODUCTION_DEAL_VALUES } from '../lib/hideProductionDealValues';
 import { shouldHideSxKanbanDeadlineOnCard, resolveSxDeadlineBucket } from '../lib/sxPipelineRevenue';
+import { companyDeadlineIsoFromYmd } from '../lib/companyDeadlineClock';
 import { formatStaffDisplayName, getStaffInitials } from '../lib/utils';
 import { resolveSxProjectLeadId, resolveSxProjectLeadIdAsync } from '../lib/sxProjectComments';
 import {
@@ -1385,7 +1386,9 @@ export function ProductionDeadlineView({
         ? 'deadline'
         : 'production_deadline';
 
-    const newTs = newDate ? new Date(`${newDate}T00:00:00`).getTime() : null;
+    const newTs = newDate
+      ? new Date(companyDeadlineIsoFromYmd(newDate, target.company_id || target.company) || `${newDate}T00:00:00`).getTime()
+      : null;
     const newSource = newDate ? fieldKey : null;
 
     setLocalOverride((prev) => ({

@@ -8,6 +8,7 @@ const { applyProjectTenantScope, isTenantScopeEnforced } = require('./tenantScop
 const { applyProductionCompanyScopeFilter } = require('./crossCompanyWorkspace');
 const { applyWorkshopProjectVisibilityScope } = require('./dealParticipantProduction');
 const { buildScopeOrFilter, WORKSHOP_STATUSES, getResolvedKanbanStages } = require('./workshopKanban');
+const { isHucabiSameDayPastWorkEnd } = require('./companyDeadlineClock');
 
 const VN_TZ = 'Asia/Ho_Chi_Minh';
 const SX_KANBAN_COL_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -82,7 +83,7 @@ function diffCalendarDays(ymdA, ymdB) {
  * Bucket Deadline SX — khớp frontend resolveSxDeadlineBucket + shouldHide (bỏ card Đã công).
  * @returns {string|null} null = ẩn khỏi Deadline view
  */
-function resolveSxDeadlineBucketKey(row, stage, todayYmd) {
+function resolveSxDeadlineBucketKey(row, stage, todayYmd, companyOrId, nowMs = Date.now()) {
   if (stage?.counts_as_completed_revenue) return null;
   const raw = row?.delivery_date || row?.production_deadline || row?.deadline;
   const ymd = toVnDeadlineYmd(raw);
@@ -93,7 +94,12 @@ function resolveSxDeadlineBucketKey(row, stage, todayYmd) {
     if (ignoreOverdue) return 'later';
     return 'overdue';
   }
-  if (diffDays === 0) return 'today';
+  if (diffDays === 0) {
+    if (!ignoreOverdue && isHucabiSameDayPastWorkEnd(raw, companyOrId || row?.company_id, nowMs)) {
+      return 'overdue';
+    }
+    return 'today';
+  }
   const [y, m, d] = todayYmd.split('-').map(Number);
   const dowUtc = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
   const dow = dowUtc === 0 ? 7 : dowUtc;
@@ -286,7 +292,7 @@ async function thinScanSummary(ctx, opts = {}) {
   const stageById = opts.stageById || await loadStageFlagsById(ctx.company_id, ctx.workshop_type_id);
   // logistics/status/vc — KPI Đang SX / Chờ VC / Đã VC (toàn filter).
   // Không select `sx_intake` (field enrich, không phải cột DB → 500 summary).
-  let selectCols = 'id, sx_kanban_column_id, delivery_date, production_deadline, deadline, status, logistics_company_id, vc_kanban_column_id';
+  let selectCols = 'id, company_id, sx_kanban_column_id, delivery_date, production_deadline, deadline, status, logistics_company_id, vc_kanban_column_id';
   let omitVcCol = false;
 
   while (cursor < MAX) {
@@ -305,7 +311,7 @@ async function thinScanSummary(ctx, opts = {}) {
     let { data, error } = await q;
     if (error && !omitVcCol && String(error.message || '').includes('vc_kanban_column_id')) {
       omitVcCol = true;
-      selectCols = 'id, sx_kanban_column_id, delivery_date, production_deadline, deadline, status, logistics_company_id';
+      selectCols = 'id, company_id, sx_kanban_column_id, delivery_date, production_deadline, deadline, status, logistics_company_id';
       continue;
     }
     // Phòng cột enrich/legacy lỡ select — bỏ và thử lại.
@@ -326,7 +332,7 @@ async function thinScanSummary(ctx, opts = {}) {
       total += 1;
       const colId = row?.sx_kanban_column_id ? String(row.sx_kanban_column_id) : null;
       const stage = colId ? stageById.get(colId) : null;
-      const bucket = resolveSxDeadlineBucketKey(row, stage, todayYmd);
+      const bucket = resolveSxDeadlineBucketKey(row, stage, todayYmd, row.company_id || ctx.company_id);
       if (bucket && Object.prototype.hasOwnProperty.call(deadline_counts, bucket)) {
         deadline_counts[bucket] += 1;
       }
@@ -456,7 +462,7 @@ async function loadSxDeadlineBucketPage(ctx, { bucket, offset = 0, limit = 24 } 
   const todayYmd = formatVnYmd(new Date());
   const entries = [];
   let cursor = 0;
-  let selectCols = 'id, sx_kanban_column_id, delivery_date, production_deadline, deadline';
+  let selectCols = 'id, company_id, sx_kanban_column_id, delivery_date, production_deadline, deadline';
 
   while (cursor < MAX) {
     let q = supabase.from('projects').select(selectCols);
@@ -475,7 +481,7 @@ async function loadSxDeadlineBucketPage(ctx, { bucket, offset = 0, limit = 24 } 
     for (const row of batch) {
       const colId = row?.sx_kanban_column_id ? String(row.sx_kanban_column_id) : null;
       const stage = colId ? stageById.get(colId) : null;
-      const b = resolveSxDeadlineBucketKey(row, stage, todayYmd);
+      const b = resolveSxDeadlineBucketKey(row, stage, todayYmd, row.company_id || fullCtx.company_id);
       if (b !== bucketKey) continue;
       const ymd = toVnDeadlineYmd(row?.delivery_date || row?.production_deadline || row?.deadline) || '9999-99-99';
       entries.push({ id: String(row.id), ymd });

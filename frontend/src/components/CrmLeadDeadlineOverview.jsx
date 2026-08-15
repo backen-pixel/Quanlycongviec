@@ -506,6 +506,7 @@ export default function CrmLeadDeadlineOverview({ lead, onChanged }) {
           || (deadlineEditor?.type === 'sla' && slaTs != null)
         }
         submitting={deadlineBusy}
+        companyId={lead?.company_id || null}
         onClose={() => !deadlineBusy && setDeadlineEditor(null)}
         onConfirm={saveDeadlineEditor}
       />
