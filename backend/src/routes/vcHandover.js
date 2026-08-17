@@ -934,21 +934,6 @@ r.patch('/comments/:cid/select', async (req, res) => {
     if (installOccurrenceDates.length && !installDate) {
       installDate = `${installOccurrenceDates[0]}T14:00:00+07:00`;
     }
-    if (installDate) {
-      const pickupDay = vnCalendarDayKey(pickupAt);
-      const installDay = vnCalendarDayKey(installDate);
-      if (pickupDay && installDay && pickupDay < installDay) {
-        return res.status(400).json({
-          error: 'Ngày lấy hàng VC phải bằng hoặc sau ngày lắp đặt (có thể cùng ngày).',
-        });
-      }
-      const firstOcc = installOccurrenceDates[0];
-      if (pickupDay && firstOcc && pickupDay < firstOcc) {
-        return res.status(400).json({
-          error: 'Ngày lấy hàng VC phải bằng hoặc sau ngày lắp đặt (có thể cùng ngày).',
-        });
-      }
-    }
     if (vcArriveAt) {
       const pickupDay = vnCalendarDayKey(pickupAt);
       const arriveDay = vnCalendarDayKey(vcArriveAt);
@@ -1528,21 +1513,6 @@ r.patch('/comments/:cid/reschedule', async (req, res) => {
     }
     if (installOccurrenceDates.length && !installDate) {
       installDate = `${installOccurrenceDates[0]}T14:00:00+07:00`;
-    }
-    if (installDate) {
-      const pickupDay = vnCalendarDayKey(pickupAt);
-      const installDay = vnCalendarDayKey(installDate);
-      if (pickupDay && installDay && pickupDay < installDay) {
-        return res.status(400).json({
-          error: 'Ngày lấy hàng VC phải bằng hoặc sau ngày lắp đặt (có thể cùng ngày).',
-        });
-      }
-      const firstOcc = installOccurrenceDates[0];
-      if (pickupDay && firstOcc && pickupDay < firstOcc) {
-        return res.status(400).json({
-          error: 'Ngày lấy hàng VC phải bằng hoặc sau ngày lắp đặt (có thể cùng ngày).',
-        });
-      }
     }
     if (vcArriveAt) {
       const pickupDay = vnCalendarDayKey(pickupAt);

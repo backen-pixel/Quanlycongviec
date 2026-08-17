@@ -4535,6 +4535,7 @@ export default function CRMTasksTab({
           )}
           {[
             { key: 'order_date', label: 'Ngày đặt hàng', icon: '🛒' },
+            { key: 'delivery_date', label: 'Ngày giao hàng', icon: '🚚' },
           ].map((row) => (
             <div key={row.key} className="rounded-lg border border-sky-100 bg-white px-2.5 py-2">
               <label className="flex items-center gap-2 text-xs font-medium text-slate-700">

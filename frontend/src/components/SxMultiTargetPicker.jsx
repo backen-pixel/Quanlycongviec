@@ -33,24 +33,6 @@ function ymdOf(value) {
   return m ? m[1] : '';
 }
 
-/**
- * Quy định: lấy hàng VC được cùng ngày với lắp đặt, không được trước ngày lắp.
- * (Lắp đặt có thể trước hoặc cùng ngày lấy hàng.)
- * @returns {{ ok: boolean, message?: string }}
- */
-function assertPickupOnOrAfterInstall(pickupAt, installYmd) {
-  const pickupYmd = ymdOf(pickupAt);
-  const install = ymdOf(installYmd);
-  if (!pickupYmd || !install) return { ok: true };
-  if (pickupYmd >= install) return { ok: true };
-  return {
-    ok: false,
-    message:
-      `Ngày lấy hàng VC (${pickupYmd}) phải bằng hoặc sau ngày lắp đặt (${install}). `
-      + 'Có thể cùng ngày, không được trước ngày lắp.',
-  };
-}
-
 const MINI_DOW = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
 
 /** Hộp lịch tháng nhỏ — chọn 1 ngày (lắp hoặc lấy hàng). */
@@ -393,13 +375,6 @@ export default function SxMultiTargetPicker({
   const setDeliveryDate = (key, deliveryDate) => {
     const row = rows.find((r) => r.key === key);
     if (!row) return;
-    if (deliveryDate && showVcSetup) {
-      const chk = assertPickupOnOrAfterInstall(row.pickupAt, deliveryDate);
-      if (!chk.ok) {
-        alert(chk.message);
-        return;
-      }
-    }
     emit(rows.map((r) => {
       if (r.key !== key) return r;
       const next = { ...r, deliveryDate };
@@ -412,15 +387,6 @@ export default function SxMultiTargetPicker({
   };
 
   const setPickupAt = (key, pickupAt) => {
-    const row = rows.find((r) => r.key === key);
-    if (!row) return;
-    if (pickupAt && row.deliveryDate) {
-      const chk = assertPickupOnOrAfterInstall(pickupAt, row.deliveryDate);
-      if (!chk.ok) {
-        alert(chk.message);
-        return;
-      }
-    }
     patchRow(key, { pickupAt });
   };
 
@@ -461,19 +427,8 @@ export default function SxMultiTargetPicker({
     if (!row) return;
     if (calPick.target === 'pickup') {
       const hm = String(row.pickupAt || '').match(/T(\d{2}:\d{2})/)?.[1] || '08:00';
-      const nextPickup = `${ymd}T${hm}`;
-      const chk = assertPickupOnOrAfterInstall(nextPickup, row.deliveryDate);
-      if (!chk.ok) {
-        alert(chk.message);
-        return;
-      }
-      applyCalPickToRow(calPick.rowKey, { pickupAt: nextPickup });
+      applyCalPickToRow(calPick.rowKey, { pickupAt: `${ymd}T${hm}` });
     } else if (calPick.target === 'install') {
-      const chk = assertPickupOnOrAfterInstall(row.pickupAt, ymd);
-      if (!chk.ok) {
-        alert(chk.message);
-        return;
-      }
       applyCalPickToRow(calPick.rowKey, {
         installAt: `${ymd}T${row.installTime || '14:00'}`,
       });
@@ -512,20 +467,8 @@ export default function SxMultiTargetPicker({
       const tm = String(localSingle || '').match(/T(\d{2}:\d{2})/);
       if (!day) return;
       if (target === 'pickup') {
-        const nextPickup = String(localSingle).slice(0, 16);
-        const chk = assertPickupOnOrAfterInstall(nextPickup, row.deliveryDate);
-        if (!chk.ok) {
-          alert(chk.message);
-          return;
-        }
-        patchRow(rowKey, { pickupAt: nextPickup });
+        patchRow(rowKey, { pickupAt: String(localSingle).slice(0, 16) });
       } else {
-        const nextPickup = String(row.pickupAt || '').trim() || `${day}T08:00`;
-        const chk = assertPickupOnOrAfterInstall(nextPickup, day);
-        if (!chk.ok) {
-          alert(chk.message);
-          return;
-        }
         patchRow(rowKey, {
           deliveryDate: day,
           installTime: tm ? tm[1] : (row.installTime || '14:00'),
@@ -536,9 +479,6 @@ export default function SxMultiTargetPicker({
       return;
     }
     const patch = {};
-    const nextPickup = pickupAt != null
-      ? String(pickupAt).slice(0, 16)
-      : String(row.pickupAt || '').trim();
     const occ = [...new Set(
       (Array.isArray(installOccurrenceDates) ? installOccurrenceDates : [])
         .map((d) => String(d || '').slice(0, 10))
@@ -563,14 +503,6 @@ export default function SxMultiTargetPicker({
       }
     }
     if (pickupAt) patch.pickupAt = String(pickupAt).slice(0, 16);
-
-    const effectivePickup = patch.pickupAt || nextPickup;
-    const effectiveInstall = patch.deliveryDate || nextInstallDay;
-    const chk = assertPickupOnOrAfterInstall(effectivePickup, effectiveInstall);
-    if (!chk.ok) {
-      alert(chk.message);
-      return;
-    }
     if (Object.keys(patch).length) patchRow(rowKey, patch);
   };
 
@@ -772,7 +704,7 @@ export default function SxMultiTargetPicker({
                     <div className={`grid grid-cols-1 gap-2 ${showVcSetup ? 'sm:grid-cols-3' : 'sm:grid-cols-2'}`}>
                       <div className="min-w-0">
                         <label className="block text-[10px] font-bold text-teal-800 mb-0.5">
-                          Ngày lắp đặt <span className="font-normal text-teal-600/80">(deadline VC/LĐ · lấy hàng ≥ ngày lắp)</span>
+                          Ngày lắp đặt <span className="font-normal text-teal-600/80">(deadline VC/LĐ)</span>
                         </label>
                         <div className="flex flex-wrap items-center gap-2">
                           <input
@@ -878,7 +810,6 @@ export default function SxMultiTargetPicker({
                             <input
                               type="datetime-local"
                               value={row.pickupAt || ''}
-                              min={row.deliveryDate ? `${row.deliveryDate}T00:00` : undefined}
                               disabled={disabled}
                               onChange={(e) => setPickupAt(row.key, e.target.value)}
                               className={`${fieldCls} sm:max-w-xs border-sky-400 bg-white text-red-600 disabled:text-red-600 font-bold tabular-nums ring-1 ring-sky-200 focus:ring-2 focus:ring-sky-500 scheme-light`}
@@ -1174,12 +1105,6 @@ export function validateSxTargets(rows) {
     }
     if (pickup && !delivery) {
       return `Xưởng ${i + 1}: đã nhập lấy hàng — vui lòng nhập ngày lắp đặt.`;
-    }
-    if (pickup && delivery) {
-      const chk = assertPickupOnOrAfterInstall(pickup, delivery);
-      if (!chk.ok) {
-        return `Xưởng ${i + 1}: ngày lấy hàng VC phải bằng hoặc sau ngày lắp đặt (có thể cùng ngày).`;
-      }
     }
   }
   return '';

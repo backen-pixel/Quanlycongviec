@@ -188,18 +188,6 @@ async function upsertPlannedVcLdEvents({
     ? isoOnYmdWithHm(occDates[occDates.length - 1], installIso, '14:00')
     : null;
 
-  // Lấy hàng VC phải >= ngày lắp đầu (có thể cùng ngày)
-  if (installDateOk && pickupDateOk) {
-    const pickupDay = vnDayKey(pickupIso);
-    const firstInstallDay = occDates[0] || vnDayKey(resolvedInstallIso);
-    if (pickupDay && firstInstallDay && pickupDay < firstInstallDay) {
-      return {
-        ok: false,
-        error: `Ngày lấy hàng VC (${pickupDay}) phải bằng hoặc sau ngày lắp đặt (${firstInstallDay})`,
-      };
-    }
-  }
-
   const projLabel = projectName || projectCode || 'dự án';
   const logisticsCompany = logisticsCompanyId || companyId || null;
   const productionCompany = companyId || logisticsCompanyId || null;

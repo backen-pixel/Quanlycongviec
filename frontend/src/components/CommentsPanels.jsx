@@ -1544,14 +1544,6 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
                   type="button"
                   disabled={!companyId || !pickupAt || busy === 'select' || (isExternalCompany && !externalName.trim())}
                   onClick={() => {
-                    if (installDate && pickupAt) {
-                      const vcDay = String(pickupAt).slice(0, 10);
-                      const installDay = String(installDate).slice(0, 10);
-                      if (installDay > vcDay) {
-                        setErr('Ngày lấy hàng VC phải bằng hoặc sau ngày lắp đặt (có thể cùng ngày).');
-                        return;
-                      }
-                    }
                     if (!isExternalCompany && vcArriveAt && pickupAt) {
                       const vcDay = String(pickupAt).slice(0, 10);
                       const arriveDay = String(vcArriveAt).slice(0, 10);
@@ -1845,16 +1837,7 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
               return;
             }
             if (datePickTarget === 'install') {
-              const vcDay = pickupAt ? String(pickupAt).slice(0, 10) : null;
               const installDay = local ? String(local).slice(0, 10) : null;
-              if (!vcDay) {
-                alert('Chọn ngày nhận hàng VC trước, rồi mới chọn ngày lắp đặt.');
-                return;
-              }
-              if (installDay && installDay > vcDay) {
-                alert('Ngày lấy hàng VC phải bằng hoặc sau ngày lắp đặt (có thể cùng ngày).');
-                return;
-              }
               applyInstallOccurrenceDates([installDay], timePart(local) || '14:00');
             } else if (datePickTarget === 'arrive') {
               const vcDay = pickupAt ? String(pickupAt).slice(0, 10) : null;
@@ -1887,14 +1870,6 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
             setRescheduleMode(false);
           }}
           onPickDates={({ pickupAt: p, installAt: i, vcArriveAt: a, installOccurrenceDates: occIn }) => {
-            if (p && i) {
-              const vcDay = String(p).slice(0, 10);
-              const installDay = String(i).slice(0, 10);
-              if (installDay && vcDay && installDay > vcDay) {
-                alert('Ngày lấy hàng VC phải bằng hoặc sau ngày lắp đặt (có thể cùng ngày).');
-                return;
-              }
-            }
             const nextArrive = a || defaultArriveLocal(p, i);
             const occ = (Array.isArray(occIn) && occIn.length
               ? occIn
