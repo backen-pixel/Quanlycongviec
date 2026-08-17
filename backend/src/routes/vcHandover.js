@@ -937,13 +937,16 @@ r.patch('/comments/:cid/select', async (req, res) => {
     if (installDate) {
       const pickupDay = vnCalendarDayKey(pickupAt);
       const installDay = vnCalendarDayKey(installDate);
-      if (pickupDay && installDay && installDay < pickupDay) {
+      if (pickupDay && installDay && pickupDay < installDay) {
         return res.status(400).json({
-          error: 'Ngày lắp đặt phải bằng hoặc sau ngày nhận hàng / lấy hàng VC.',
+          error: 'Ngày lấy hàng VC phải bằng hoặc sau ngày lắp đặt (có thể cùng ngày).',
         });
       }
-      if (pickupDay && installOccurrenceDates.some((d) => d < pickupDay)) {
-        return res.status(400).json({ error: 'Ngày lắp đặt không được trước ngày nhận hàng VC.' });
+      const firstOcc = installOccurrenceDates[0];
+      if (pickupDay && firstOcc && pickupDay < firstOcc) {
+        return res.status(400).json({
+          error: 'Ngày lấy hàng VC phải bằng hoặc sau ngày lắp đặt (có thể cùng ngày).',
+        });
       }
     }
     if (vcArriveAt) {
@@ -1529,13 +1532,16 @@ r.patch('/comments/:cid/reschedule', async (req, res) => {
     if (installDate) {
       const pickupDay = vnCalendarDayKey(pickupAt);
       const installDay = vnCalendarDayKey(installDate);
-      if (pickupDay && installDay && installDay < pickupDay) {
+      if (pickupDay && installDay && pickupDay < installDay) {
         return res.status(400).json({
-          error: 'Ngày lắp đặt phải bằng hoặc sau ngày nhận hàng / lấy hàng VC.',
+          error: 'Ngày lấy hàng VC phải bằng hoặc sau ngày lắp đặt (có thể cùng ngày).',
         });
       }
-      if (pickupDay && installOccurrenceDates.some((d) => d < pickupDay)) {
-        return res.status(400).json({ error: 'Ngày lắp đặt không được trước ngày nhận hàng VC.' });
+      const firstOcc = installOccurrenceDates[0];
+      if (pickupDay && firstOcc && pickupDay < firstOcc) {
+        return res.status(400).json({
+          error: 'Ngày lấy hàng VC phải bằng hoặc sau ngày lắp đặt (có thể cùng ngày).',
+        });
       }
     }
     if (vcArriveAt) {

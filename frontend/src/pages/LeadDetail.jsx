@@ -3063,15 +3063,14 @@ export default function LeadDetail() {
       )}
 
       {sxScheduleEdit && (
-        <div
-          className="fixed inset-0 bg-black/40 flex items-center justify-center z-[60] p-4"
-          onClick={closeSxScheduleEdit}
+        <OverlayPortal
+          open
+          size="xl"
+          closeOnBackdrop={!sxScheduleBusy}
+          onClose={closeSxScheduleEdit}
+          panelClassName="p-5 space-y-3 overflow-y-auto"
         >
-          <div
-            className="bg-white rounded-2xl shadow-xl max-w-6xl w-full p-5 space-y-3 max-h-[92vh] overflow-y-auto"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-start justify-between gap-2">
+            <div className="flex items-start justify-between gap-2 shrink-0">
               <div>
                 <h3 className="text-lg font-bold text-gray-900">Sửa lịch lắp đặt</h3>
                 <p className="text-xs text-gray-500 mt-1">
@@ -3083,7 +3082,7 @@ export default function LeadDetail() {
               </button>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 flex-1 min-h-0">
             <div className="space-y-3 min-w-0">
             <label className="text-[10px] font-semibold text-gray-700 block">
               Công ty vận chuyển / lắp đặt
@@ -3283,8 +3282,7 @@ export default function LeadDetail() {
               />
             </div>
             </div>
-          </div>
-        </div>
+        </OverlayPortal>
       )}
 
       {addSxOpen && lead?.type === 'deal' && lead?.project_id && (

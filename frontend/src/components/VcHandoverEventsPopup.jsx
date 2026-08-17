@@ -75,15 +75,15 @@ function compareYmd(a, b) {
   return 0;
 }
 
-/** Quy định: ngày lắp đặt phải = hoặc sau ngày VC (cùng ngày được phép) */
-function assertInstallOnOrAfterVc(vcYmd, installYmd) {
-  if (!vcYmd || !installYmd) return { ok: true };
-  if (compareYmd(installYmd, vcYmd) >= 0) return { ok: true };
+/** Quy định: ngày lấy hàng VC phải = hoặc sau ngày lắp (cùng ngày được phép) */
+function assertPickupOnOrAfterInstall(installYmd, pickupYmd) {
+  if (!installYmd || !pickupYmd) return { ok: true };
+  if (compareYmd(pickupYmd, installYmd) >= 0) return { ok: true };
   return {
     ok: false,
     message:
-      `Ngày lắp đặt (${formatDayLabel(installYmd)}) phải bằng hoặc sau ngày nhận hàng VC `
-      + `(${formatDayLabel(vcYmd)}). Có thể cùng ngày, không được trước VC.`,
+      `Ngày lấy hàng VC (${formatDayLabel(pickupYmd)}) phải bằng hoặc sau ngày lắp đặt `
+      + `(${formatDayLabel(installYmd)}). Có thể cùng ngày, không được trước ngày lắp.`,
   };
 }
 
@@ -703,10 +703,9 @@ export default function VcHandoverEventsPopup({
   };
 
   const applyInstallOcc = (dates) => {
-    const vcDay = parseDay(datetimeLocalValueToIso(vcAt) || vcAt) || String(vcAt || '').slice(0, 10);
     const sorted = [...(dates || [])]
       .map((d) => String(d || '').slice(0, 10))
-      .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d) && (!vcDay || d >= vcDay))
+      .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
       .sort();
     setInstallOccurrenceDates(sorted);
     if (!sorted.length) {
@@ -715,6 +714,12 @@ export default function VcHandoverEventsPopup({
     }
     const { h, mi } = hmFromLocal(installAt, 14, 0);
     setInstallAt(ymdToLocal(sorted[0], h, mi));
+    // Lấy hàng phải ≥ ngày lắp đầu
+    const vcDay = parseDay(datetimeLocalValueToIso(vcAt) || vcAt) || String(vcAt || '').slice(0, 10);
+    if (vcDay && compareYmd(vcDay, sorted[0]) < 0) {
+      const ph = String(vcAt || '').match(/T(\d{2}:\d{2})/)?.[1] || '08:00';
+      setVcAt(`${sorted[0]}T${ph}`);
+    }
     const last = sorted[sorted.length - 1];
     const arriveDay = parseDay(datetimeLocalValueToIso(arriveAt) || arriveAt);
     if (arriveDay && arriveDay > last) setArriveAt(ymdToLocal(sorted[0], 11));
@@ -745,10 +750,10 @@ export default function VcHandoverEventsPopup({
         || parseDay(datetimeLocalValueToIso(installAt) || '')
         || (anchorInstallAt && String(anchorInstallAt).match(/^(\d{4}-\d{2}-\d{2})/)?.[1])
         || null;
-      if (installDay && compareYmd(ymd, installDay) > 0) {
+      if (installDay && compareYmd(ymd, installDay) < 0) {
         alert(
-          `Ngày lấy hàng VC phải bằng hoặc trước ngày lắp đặt (${formatDayLabel(installDay)}). `
-          + 'Lắp đặt có thể cùng ngày với VC, không được trước VC.',
+          `Ngày lấy hàng VC phải bằng hoặc sau ngày lắp đặt (${formatDayLabel(installDay)}). `
+          + 'Có thể cùng ngày, không được trước ngày lắp.',
         );
         return;
       }
@@ -763,19 +768,12 @@ export default function VcHandoverEventsPopup({
       return;
     }
 
-    // Chỉ chọn lắp đặt → áp dụng ngay
+    // Chỉ chọn lắp đặt → áp dụng ngay (lắp có thể trước lấy hàng; nếu lấy hàng đang trước lắp thì kéo lấy hàng theo)
     if (pickTarget === 'install') {
       const vcDay = parseDay(anchorPickupAt)
         || parseDay(datetimeLocalValueToIso(anchorPickupAt) || '')
         || (anchorPickupAt && String(anchorPickupAt).match(/^(\d{4}-\d{2}-\d{2})/)?.[1])
         || null;
-      if (vcDay && compareYmd(ymd, vcDay) < 0) {
-        alert(
-          `Ngày lắp đặt phải bằng hoặc sau ngày lấy hàng (${formatDayLabel(vcDay)}). `
-          + 'Có thể cùng ngày, không được trước VC.',
-        );
-        return;
-      }
       let hour = 14;
       let minute = 0;
       const prev = String(installAt || anchorInstallAt || '').match(/T(\d{2}):(\d{2})/);
@@ -786,9 +784,19 @@ export default function VcHandoverEventsPopup({
       const local = ymdToLocal(ymd, hour, minute);
       setInstallAt(local);
       setInstallOccurrenceDates([ymd]);
-      if (vcDay) setVcAt(anchorPickupAt || ymdToLocal(vcDay, 8));
+      let nextPickup = vcDay ? (anchorPickupAt || ymdToLocal(vcDay, 8)) : null;
+      if (vcDay && compareYmd(vcDay, ymd) < 0) {
+        nextPickup = ymdToLocal(ymd, 8);
+        setVcAt(nextPickup);
+      } else if (vcDay) {
+        setVcAt(nextPickup);
+      }
       if (typeof onPickDates === 'function') {
-        onPickDates({ installAt: local });
+        onPickDates({
+          installAt: local,
+          ...(nextPickup ? { pickupAt: nextPickup } : {}),
+          installOccurrenceDates: [ymd],
+        });
       } else if (typeof onPickDate === 'function') {
         onPickDate(local);
       }
@@ -801,15 +809,16 @@ export default function VcHandoverEventsPopup({
         || parseDay(installAt)
         || parseDay(datetimeLocalValueToIso(installAt) || '');
       setVcAt(ymdToLocal(ymd, 9));
-      if (existingInstallDay && compareYmd(existingInstallDay, ymd) >= 0) {
+      // Lấy hàng ≥ lắp: giữ ngày lắp nếu ≤ ngày lấy hàng vừa chọn
+      if (existingInstallDay && compareYmd(existingInstallDay, ymd) <= 0) {
         setInstallAt(anchorInstallAt || installAt || ymdToLocal(existingInstallDay, 14));
         setInstallOccurrenceDates((prev) => {
-          const kept = (prev.length ? prev : [existingInstallDay]).filter((d) => d >= ymd);
+          const kept = (prev.length ? prev : [existingInstallDay]).filter((d) => d <= ymd);
           return kept.length ? kept : [existingInstallDay];
         });
         const arriveDay = parseDay(anchorArriveAt) || existingInstallDay;
         setArriveAt(
-          (arriveDay && compareYmd(arriveDay, ymd) >= 0 && compareYmd(arriveDay, existingInstallDay) <= 0)
+          (arriveDay && compareYmd(arriveDay, existingInstallDay) >= 0 && compareYmd(arriveDay, ymd) <= 0)
             ? (anchorArriveAt || arriveAt || ymdToLocal(arriveDay, 11))
             : ymdToLocal(ymd, 11),
         );
@@ -906,10 +915,11 @@ export default function VcHandoverEventsPopup({
     let occ = [...occRaw];
     if (!occ.length && nextInstall) occ = [String(nextInstall).slice(0, 10)];
 
-    // Tự chỉnh lắp >= lấy hàng (không chặn nút bằng alert)
-    if (vcDay && occ.length && !installOnly) {
-      const kept = occ.filter((d) => d >= vcDay);
-      occ = kept.length ? kept : [vcDay];
+    // Tự chỉnh lấy hàng >= ngày lắp đầu (không chặn nút bằng alert)
+    const firstInstall = occ[0] || null;
+    if (firstInstall && vcDay && compareYmd(vcDay, firstInstall) < 0 && !arriveOnly) {
+      nextPickup = `${firstInstall}T${String(nextPickup || '').match(/T(\d{2}:\d{2})/)?.[1] || '08:00'}`;
+      vcDay = firstInstall;
     }
     if (occ.length) {
       const hm = String(nextInstall || '').match(/T(\d{2}:\d{2})/)?.[1] || '14:00';
@@ -937,7 +947,7 @@ export default function VcHandoverEventsPopup({
     const finalInstallDay = nextInstall
       ? (parseDay(datetimeLocalValueToIso(nextInstall) || nextInstall) || String(nextInstall).slice(0, 10))
       : null;
-    const orderChk = assertInstallOnOrAfterVc(vcDay, finalInstallDay);
+    const orderChk = assertPickupOnOrAfterInstall(finalInstallDay, vcDay);
     if (!orderChk.ok) {
       alert(orderChk.message);
       return;
@@ -1004,8 +1014,8 @@ export default function VcHandoverEventsPopup({
       ? [...installOccurrenceDates]
       : (installAt ? [String(installAt).slice(0, 10)] : [])
     ).map((d) => String(d).slice(0, 10)).filter(Boolean).sort();
-    if (occ.some((d) => vcDay && d < vcDay)) {
-      alert('Ngày lắp đặt không được trước ngày nhận hàng VC.');
+    if (occ.length && vcDay && compareYmd(vcDay, occ[0]) < 0) {
+      alert('Ngày lấy hàng VC phải bằng hoặc sau ngày lắp đặt (có thể cùng ngày).');
       return;
     }
 
@@ -1019,9 +1029,8 @@ export default function VcHandoverEventsPopup({
         return;
       }
     }
-
-    const installDay = installIso ? parseDay(installIso) : null;
-    const orderChk = assertInstallOnOrAfterVc(vcDay, installDay);
+    const installDay = occ[0] || parseDay(installIso);
+    const orderChk = assertPickupOnOrAfterInstall(installDay, vcDay);
     if (!orderChk.ok) {
       alert(orderChk.message);
       return;
@@ -1583,7 +1592,7 @@ export default function VcHandoverEventsPopup({
                       ? 'Áp dụng ngày lắp đặt vào form kế hoạch'
                       : pickTarget === 'pickup'
                         ? 'Áp dụng ngày lấy hàng vào form kế hoạch'
-                        : 'Áp dụng vào form · lắp đặt ≥ ngày lấy hàng')
+                        : 'Áp dụng vào form · lấy hàng ≥ ngày lắp')
                     : 'Ngày VC đồng thời là ngày giao hàng SX'}
                 </p>
               </div>
@@ -1606,20 +1615,18 @@ export default function VcHandoverEventsPopup({
                     const nextDay = parseDay(datetimeLocalValueToIso(next) || next);
                     const installDay = parseDay(datetimeLocalValueToIso(installAt) || installAt);
                     const arriveDay = parseDay(datetimeLocalValueToIso(arriveAt) || arriveAt);
-                    // Mặc định: tới nơi 11:00 + lắp 14:00 cùng ngày VC nếu chưa có / đang cùng ngày cũ
-                    if (!installAt || !installDay || installDay === parseDay(datetimeLocalValueToIso(vcAt) || vcAt)) {
+                    // Lấy hàng ≥ lắp: nếu chọn lấy hàng trước ngày lắp → kéo lấy hàng = ngày lắp
+                    if (nextDay && installDay && compareYmd(nextDay, installDay) < 0) {
+                      const hm = String(next).match(/T(\d{2}:\d{2})/)?.[1] || '08:00';
+                      setVcAt(`${installDay}T${hm}`);
+                      return;
+                    }
+                    // Chưa có lắp → mặc định lắp + tới nơi cùng ngày lấy hàng
+                    if (!installAt || !installDay) {
                       if (nextDay) {
                         setInstallAt(ymdToLocal(nextDay, 14));
                         setInstallOccurrenceDates([nextDay]);
                       }
-                    } else if (nextDay && installDay && compareYmd(installDay, nextDay) < 0) {
-                      setInstallAt(ymdToLocal(nextDay, 14));
-                      setInstallOccurrenceDates([nextDay]);
-                    } else if (nextDay) {
-                      setInstallOccurrenceDates((prev) => {
-                        const kept = prev.filter((d) => d >= nextDay);
-                        return kept.length ? kept : (installDay ? [installDay] : [nextDay]);
-                      });
                     }
                     if (!arriveAt || !arriveDay || arriveDay === parseDay(datetimeLocalValueToIso(vcAt) || vcAt)) {
                       if (nextDay) setArriveAt(ymdToLocal(nextDay, 11));
@@ -1655,8 +1662,7 @@ export default function VcHandoverEventsPopup({
                   selectedYmds={installOccurrenceDates}
                   onChange={applyInstallOcc}
                   anchorYmd={installOccurrenceDates[0] || String(installAt || vcAt || '').slice(0, 10)}
-                  minYmd={parseDay(datetimeLocalValueToIso(vcAt) || vcAt) || String(vcAt || '').slice(0, 10)}
-                  hint="Chọn một hoặc nhiều ngày lắp (liên tiếp hoặc ngắt quãng)"
+                  hint="Chọn một hoặc nhiều ngày lắp (liên tiếp hoặc ngắt quãng). Lấy hàng VC ≥ ngày lắp đầu."
                 />
                 {(installOccurrenceDates.length || installAt) ? (
                   <label className="mt-2 flex items-center gap-2 text-[11px] text-gray-600">
@@ -1678,7 +1684,7 @@ export default function VcHandoverEventsPopup({
                 ) : null}
                 {pickMode && (
                   <p className="mt-1 text-[10px] text-gray-500">
-                    Lắp ≥ nhận hàng · VC tới nơi nằm giữa nhận hàng và ngày lắp đầu.
+                    Lấy hàng ≥ ngày lắp · VC tới nơi nằm giữa lấy hàng và ngày lắp đầu.
                   </p>
                 )}
                 {(installOccurrenceDates.length || installAt) && !pickMode && (

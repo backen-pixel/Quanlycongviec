@@ -34,19 +34,20 @@ function ymdOf(value) {
 }
 
 /**
- * Quy định: lắp đặt được cùng ngày với VC, không được trước ngày lấy hàng VC.
+ * Quy định: lấy hàng VC được cùng ngày với lắp đặt, không được trước ngày lắp.
+ * (Lắp đặt có thể trước hoặc cùng ngày lấy hàng.)
  * @returns {{ ok: boolean, message?: string }}
  */
-function assertInstallOnOrAfterPickup(pickupAt, installYmd) {
+function assertPickupOnOrAfterInstall(pickupAt, installYmd) {
   const pickupYmd = ymdOf(pickupAt);
   const install = ymdOf(installYmd);
   if (!pickupYmd || !install) return { ok: true };
-  if (install >= pickupYmd) return { ok: true };
+  if (pickupYmd >= install) return { ok: true };
   return {
     ok: false,
     message:
-      `Ngày lắp đặt (${install}) phải bằng hoặc sau ngày lấy hàng VC (${pickupYmd}). `
-      + 'Có thể cùng ngày, không được trước VC.',
+      `Ngày lấy hàng VC (${pickupYmd}) phải bằng hoặc sau ngày lắp đặt (${install}). `
+      + 'Có thể cùng ngày, không được trước ngày lắp.',
   };
 }
 
@@ -393,7 +394,7 @@ export default function SxMultiTargetPicker({
     const row = rows.find((r) => r.key === key);
     if (!row) return;
     if (deliveryDate && showVcSetup) {
-      const chk = assertInstallOnOrAfterPickup(row.pickupAt, deliveryDate);
+      const chk = assertPickupOnOrAfterInstall(row.pickupAt, deliveryDate);
       if (!chk.ok) {
         alert(chk.message);
         return;
@@ -414,7 +415,7 @@ export default function SxMultiTargetPicker({
     const row = rows.find((r) => r.key === key);
     if (!row) return;
     if (pickupAt && row.deliveryDate) {
-      const chk = assertInstallOnOrAfterPickup(pickupAt, row.deliveryDate);
+      const chk = assertPickupOnOrAfterInstall(pickupAt, row.deliveryDate);
       if (!chk.ok) {
         alert(chk.message);
         return;
@@ -461,14 +462,14 @@ export default function SxMultiTargetPicker({
     if (calPick.target === 'pickup') {
       const hm = String(row.pickupAt || '').match(/T(\d{2}:\d{2})/)?.[1] || '08:00';
       const nextPickup = `${ymd}T${hm}`;
-      const chk = assertInstallOnOrAfterPickup(nextPickup, row.deliveryDate);
+      const chk = assertPickupOnOrAfterInstall(nextPickup, row.deliveryDate);
       if (!chk.ok) {
         alert(chk.message);
         return;
       }
       applyCalPickToRow(calPick.rowKey, { pickupAt: nextPickup });
     } else if (calPick.target === 'install') {
-      const chk = assertInstallOnOrAfterPickup(row.pickupAt, ymd);
+      const chk = assertPickupOnOrAfterInstall(row.pickupAt, ymd);
       if (!chk.ok) {
         alert(chk.message);
         return;
@@ -512,7 +513,7 @@ export default function SxMultiTargetPicker({
       if (!day) return;
       if (target === 'pickup') {
         const nextPickup = String(localSingle).slice(0, 16);
-        const chk = assertInstallOnOrAfterPickup(nextPickup, row.deliveryDate);
+        const chk = assertPickupOnOrAfterInstall(nextPickup, row.deliveryDate);
         if (!chk.ok) {
           alert(chk.message);
           return;
@@ -520,7 +521,7 @@ export default function SxMultiTargetPicker({
         patchRow(rowKey, { pickupAt: nextPickup });
       } else {
         const nextPickup = String(row.pickupAt || '').trim() || `${day}T08:00`;
-        const chk = assertInstallOnOrAfterPickup(nextPickup, day);
+        const chk = assertPickupOnOrAfterInstall(nextPickup, day);
         if (!chk.ok) {
           alert(chk.message);
           return;
@@ -565,7 +566,7 @@ export default function SxMultiTargetPicker({
 
     const effectivePickup = patch.pickupAt || nextPickup;
     const effectiveInstall = patch.deliveryDate || nextInstallDay;
-    const chk = assertInstallOnOrAfterPickup(effectivePickup, effectiveInstall);
+    const chk = assertPickupOnOrAfterInstall(effectivePickup, effectiveInstall);
     if (!chk.ok) {
       alert(chk.message);
       return;
@@ -771,13 +772,12 @@ export default function SxMultiTargetPicker({
                     <div className={`grid grid-cols-1 gap-2 ${showVcSetup ? 'sm:grid-cols-3' : 'sm:grid-cols-2'}`}>
                       <div className="min-w-0">
                         <label className="block text-[10px] font-bold text-teal-800 mb-0.5">
-                          Ngày lắp đặt <span className="font-normal text-teal-600/80">(deadline VC/LĐ · ≥ ngày lấy hàng)</span>
+                          Ngày lắp đặt <span className="font-normal text-teal-600/80">(deadline VC/LĐ · lấy hàng ≥ ngày lắp)</span>
                         </label>
                         <div className="flex flex-wrap items-center gap-2">
                           <input
                             type="date"
                             value={row.deliveryDate || ''}
-                            min={ymdOf(row.pickupAt) || undefined}
                             disabled={disabled}
                             onChange={(e) => setDeliveryDate(row.key, e.target.value)}
                             className={`${fieldCls} sm:max-w-[11.5rem] border-teal-400 bg-white text-red-600 disabled:text-red-600 font-bold tabular-nums ring-1 ring-teal-200 focus:ring-2 focus:ring-teal-500 scheme-light`}
@@ -878,7 +878,7 @@ export default function SxMultiTargetPicker({
                             <input
                               type="datetime-local"
                               value={row.pickupAt || ''}
-                              max={row.deliveryDate ? `${row.deliveryDate}T23:59` : undefined}
+                              min={row.deliveryDate ? `${row.deliveryDate}T00:00` : undefined}
                               disabled={disabled}
                               onChange={(e) => setPickupAt(row.key, e.target.value)}
                               className={`${fieldCls} sm:max-w-xs border-sky-400 bg-white text-red-600 disabled:text-red-600 font-bold tabular-nums ring-1 ring-sky-200 focus:ring-2 focus:ring-sky-500 scheme-light`}
@@ -1176,9 +1176,9 @@ export function validateSxTargets(rows) {
       return `Xưởng ${i + 1}: đã nhập lấy hàng — vui lòng nhập ngày lắp đặt.`;
     }
     if (pickup && delivery) {
-      const chk = assertInstallOnOrAfterPickup(pickup, delivery);
+      const chk = assertPickupOnOrAfterInstall(pickup, delivery);
       if (!chk.ok) {
-        return `Xưởng ${i + 1}: ngày lắp đặt phải bằng hoặc sau ngày lấy hàng VC (có thể cùng ngày).`;
+        return `Xưởng ${i + 1}: ngày lấy hàng VC phải bằng hoặc sau ngày lắp đặt (có thể cùng ngày).`;
       }
     }
   }
