@@ -1,6 +1,6 @@
 /**
  * Phân loại thành viên lead/deal theo khối CRM / SX / VC để hiển thị badge đếm.
- * Dựa trên users.role (và drive_module nếu có).
+ * Role khối nghiệp vụ ưu tiên hơn drive_module (vd. logistics_admin vẫn có drive_module=crm).
  */
 
 const LOGISTICS_ROLES = new Set([
@@ -17,14 +17,17 @@ const CRM_ROLES = new Set([
 export function memberModulesFromUser(user) {
   if (!user) return ['crm'];
   const drive = String(user.drive_module || '').trim().toLowerCase();
+  const r = String(user.role || '').trim().toLowerCase();
+
+  // Role VC/SX rõ ràng → ưu tiên (không để drive_module=crm nuốt mất logistics_admin)
+  if (LOGISTICS_ROLES.has(r)) return ['logistics'];
+  if (r === 'production_admin' || r === 'production_staff' || r === 'production') return ['production'];
+  if (r === 'crm_production_admin' || r === 'crm_production_staff') return ['crm', 'production'];
+
   if (drive === 'vc' || drive === 'logistics') return ['logistics'];
   if (drive === 'sx' || drive === 'production') return ['production'];
   if (drive === 'crm') return ['crm'];
 
-  const r = String(user.role || '').trim().toLowerCase();
-  if (LOGISTICS_ROLES.has(r)) return ['logistics'];
-  if (r === 'production_admin' || r === 'production_staff' || r === 'production') return ['production'];
-  if (r === 'crm_production_admin' || r === 'crm_production_staff') return ['crm', 'production'];
   if (CRM_ROLES.has(r) || !r) return ['crm'];
   if (PRODUCTION_ROLES.has(r)) return ['production'];
   return ['crm'];

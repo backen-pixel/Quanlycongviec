@@ -118,15 +118,25 @@ const MENU_GROUPS = [
   }
 ];
 
-/** CÔNG VIỆC — module tổng hợp nhiệm vụ từ CRM / SX / VC / giao việc */
+/** DỰ ÁN VÀ CÔNG VIỆC — nhiệm vụ tổng hợp + dự án + setup luồng module */
 const CONGVIEC_MENU_GROUPS = [
   {
     id: 'congviec-overview',
-    title: '1. Công việc',
+    title: '1. Làm việc',
     emoji: '✅',
     items: [
+      { to: '/projects', icon: LayoutDashboard, label: 'Dashboard dự án', end: true },
       { to: '/work/unified', icon: Layers, label: 'Công việc tổng hợp', end: true },
       { to: '/personal-tasks', icon: UserPlus, label: 'NV cá nhân' },
+    ],
+  },
+  {
+    id: 'congviec-setup',
+    title: '2. Thiết lập',
+    emoji: '⚙️',
+    adminOnly: true,
+    items: [
+      { to: '/work/flows', icon: GitBranch, label: 'Setup luồng', adminOnly: true },
     ],
   },
 ];
@@ -480,6 +490,7 @@ const VC_MENU_GROUPS = [
 
 function resolveGroupModuleContext(group) {
   if (group?.moduleScope && String(group.moduleScope).startsWith('custom:')) return group.moduleScope;
+  if (String(group.id || '').startsWith('congviec')) return 'congviec';
   if (group.moduleKey === 'crm' || String(group.id || '').startsWith('crm')) return 'crm';
   if (group.moduleKey === 'production' || String(group.id || '').startsWith('sx')) return 'sx';
   if (group.moduleKey === 'logistics' || String(group.id || '').startsWith('vc')) return 'vc';

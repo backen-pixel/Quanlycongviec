@@ -44,7 +44,7 @@ import {
   ArrowLeft, FolderKanban, MessageSquare, Plus, X,
   FileUp, Edit2, Save, ChevronDown, Trash2, Send, Paperclip,
   AlertTriangle, CheckCircle2, Circle, Clock, Truck, Wrench, ArrowRightLeft, Loader2, Download,
-  Share2, Lock, Factory,
+  Share2, Lock, Factory, Users,
 } from 'lucide-react';
 import CRMTasksTab from '../components/CRMTasksTab';
 import DealSharedWorkspaceTab from '../components/DealSharedWorkspaceTab';
@@ -706,69 +706,72 @@ function WorkshopInfoPanel({
         </>
       )}
 
-      {/* Ngày lấy hàng (VC) */}
-      <div
-        className={`flex items-start gap-2 py-2 px-1 rounded-lg -mx-1 transition-colors group cursor-pointer ${pickupOverdue ? 'bg-red-50 hover:bg-red-100' : 'hover:bg-gray-50'}`}
-        onClick={() => editing !== 'pickup_at' && startEdit('pickup_at', toDateInputValue(pickupAt))}
-      >
-        <span className="text-sm mt-0.5 shrink-0">🚚</span>
-        <div className="flex-1 min-w-0">
-          <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Ngày lấy hàng</p>
-          {editing === 'pickup_at' ? (
-            <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-              <input
-                type="date"
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                autoFocus
-                className="px-2 py-1 border border-blue-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-400"
-              />
-              <button type="button" onClick={() => save('pickup_at', draft)} disabled={saving} className="px-2 py-1 bg-blue-600 text-white rounded text-xs cursor-pointer disabled:opacity-50">✓</button>
-              <button type="button" onClick={cancelEdit} className="px-2 py-1 bg-gray-100 rounded text-xs cursor-pointer">✕</button>
+      {/* Ngày lấy hàng + lắp hiện trường — chỉ VC (SX đã có delivery_date / kế hoạch lắp) */}
+      {isVC && (
+        <>
+          <div
+            className={`flex items-start gap-2 py-2 px-1 rounded-lg -mx-1 transition-colors group cursor-pointer ${pickupOverdue ? 'bg-red-50 hover:bg-red-100' : 'hover:bg-gray-50'}`}
+            onClick={() => editing !== 'pickup_at' && startEdit('pickup_at', toDateInputValue(pickupAt))}
+          >
+            <span className="text-sm mt-0.5 shrink-0">🚚</span>
+            <div className="flex-1 min-w-0">
+              <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Ngày lấy hàng</p>
+              {editing === 'pickup_at' ? (
+                <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                  <input
+                    type="date"
+                    value={draft}
+                    onChange={(e) => setDraft(e.target.value)}
+                    autoFocus
+                    className="px-2 py-1 border border-blue-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-400"
+                  />
+                  <button type="button" onClick={() => save('pickup_at', draft)} disabled={saving} className="px-2 py-1 bg-blue-600 text-white rounded text-xs cursor-pointer disabled:opacity-50">✓</button>
+                  <button type="button" onClick={cancelEdit} className="px-2 py-1 bg-gray-100 rounded text-xs cursor-pointer">✕</button>
+                </div>
+              ) : (
+                <p className={`text-sm font-medium flex items-center gap-1 ${pickupOverdue ? 'text-red-600' : pickupSoon ? 'text-amber-600' : 'text-gray-900'}`}>
+                  <span className="flex-1 min-w-0">{pickupAt ? formatDate(pickupAt) : '—'}</span>
+                  {pickupOverdue && <span className="text-[10px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded font-bold">Trễ!</span>}
+                  {pickupSoon && <span className="text-[10px] bg-amber-100 text-amber-600 px-1.5 py-0.5 rounded font-bold">Sắp tới</span>}
+                  <Edit2 className="h-3 w-3 text-gray-300 opacity-0 group-hover:opacity-100 shrink-0" />
+                </p>
+              )}
             </div>
-          ) : (
-            <p className={`text-sm font-medium flex items-center gap-1 ${pickupOverdue ? 'text-red-600' : pickupSoon ? 'text-amber-600' : 'text-gray-900'}`}>
-              <span className="flex-1 min-w-0">{pickupAt ? formatDate(pickupAt) : '—'}</span>
-              {pickupOverdue && <span className="text-[10px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded font-bold">Trễ!</span>}
-              {pickupSoon && <span className="text-[10px] bg-amber-100 text-amber-600 px-1.5 py-0.5 rounded font-bold">Sắp tới</span>}
-              <Edit2 className="h-3 w-3 text-gray-300 opacity-0 group-hover:opacity-100 shrink-0" />
-            </p>
-          )}
-        </div>
-      </div>
+          </div>
 
-      {/* Ngày lắp đặt (install_date — lịch hiện trường / VC) */}
-      <div
-        className={`flex items-start gap-2 py-2 px-1 rounded-lg -mx-1 transition-colors group cursor-pointer ${installOverdue ? 'bg-red-50 hover:bg-red-100' : 'hover:bg-gray-50'}`}
-        onClick={() => editing !== 'install_date' && startEdit('install_date', toDateInputValue(installDate))}
-      >
-        <span className="text-sm mt-0.5 shrink-0">🔧</span>
-        <div className="flex-1 min-w-0">
-          <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">
-            {isVC ? 'Ngày lắp đặt' : 'Ngày lắp đặt (hiện trường)'}
-          </p>
-          {editing === 'install_date' ? (
-            <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-              <input
-                type="date"
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                autoFocus
-                className="px-2 py-1 border border-blue-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-400"
-              />
-              <button type="button" onClick={() => save('install_date', draft)} disabled={saving} className="px-2 py-1 bg-blue-600 text-white rounded text-xs cursor-pointer disabled:opacity-50">✓</button>
-              <button type="button" onClick={cancelEdit} className="px-2 py-1 bg-gray-100 rounded text-xs cursor-pointer">✕</button>
+          <div
+            className={`flex items-start gap-2 py-2 px-1 rounded-lg -mx-1 transition-colors group cursor-pointer ${installOverdue ? 'bg-red-50 hover:bg-red-100' : 'hover:bg-gray-50'}`}
+            onClick={() => editing !== 'install_date' && startEdit('install_date', toDateInputValue(installDate))}
+          >
+            <span className="text-sm mt-0.5 shrink-0">🔧</span>
+            <div className="flex-1 min-w-0">
+              <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">
+                Ngày lắp đặt
+              </p>
+              {editing === 'install_date' ? (
+                <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                  <input
+                    type="date"
+                    value={draft}
+                    onChange={(e) => setDraft(e.target.value)}
+                    autoFocus
+                    className="px-2 py-1 border border-blue-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-400"
+                  />
+                  <button type="button" onClick={() => save('install_date', draft)} disabled={saving} className="px-2 py-1 bg-blue-600 text-white rounded text-xs cursor-pointer disabled:opacity-50">✓</button>
+                  <button type="button" onClick={cancelEdit} className="px-2 py-1 bg-gray-100 rounded text-xs cursor-pointer">✕</button>
+                </div>
+              ) : (
+                <p className={`text-sm font-medium flex items-center gap-1 ${installOverdue ? 'text-red-600' : installSoon ? 'text-amber-600' : 'text-gray-900'}`}>
+                  <span className="flex-1 min-w-0">{installDate ? formatDate(installDate) : '—'}</span>
+                  {installOverdue && <span className="text-[10px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded font-bold">Trễ!</span>}
+                  {installSoon && <span className="text-[10px] bg-amber-100 text-amber-600 px-1.5 py-0.5 rounded font-bold">Sắp tới</span>}
+                  <Edit2 className="h-3 w-3 text-gray-300 opacity-0 group-hover:opacity-100 shrink-0" />
+                </p>
+              )}
             </div>
-          ) : (
-            <p className={`text-sm font-medium flex items-center gap-1 ${installOverdue ? 'text-red-600' : installSoon ? 'text-amber-600' : 'text-gray-900'}`}>
-              <span className="flex-1 min-w-0">{installDate ? formatDate(installDate) : '—'}</span>
-              {installOverdue && <span className="text-[10px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded font-bold">Trễ!</span>}
-              {installSoon && <span className="text-[10px] bg-amber-100 text-amber-600 px-1.5 py-0.5 rounded font-bold">Sắp tới</span>}
-              <Edit2 className="h-3 w-3 text-gray-300 opacity-0 group-hover:opacity-100 shrink-0" />
-            </p>
-          )}
-        </div>
-      </div>
+          </div>
+        </>
+      )}
 
       {/* Địa chỉ lắp đặt */}
       <div
@@ -1654,6 +1657,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   const [placeSxBusy, setPlaceSxBusy] = useState(false);
   const [placeSxErr, setPlaceSxErr] = useState('');
   const [workshopPlacements, setWorkshopPlacements] = useState({ placed: [], received_from: [] });
+  const [membersRefreshKey, setMembersRefreshKey] = useState(0);
 
   // Document upload state
   const [uploadingDoc, setUploadingDoc] = useState(false);
@@ -2221,6 +2225,12 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
         placed: Array.isArray(data?.placed) ? data.placed : [],
         received_from: Array.isArray(data?.received_from) ? data.received_from : [],
       });
+      if (Number(data?.members_synced) > 0) {
+        setMembersRefreshKey((k) => k + 1);
+      }
+      if (data?.comment_posted) {
+        setCommentCount((c) => c + 1);
+      }
     } catch (_) {
       setWorkshopPlacements({ placed: [], received_from: [] });
     }
@@ -2261,14 +2271,18 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
       setPlaceSxTargets([]);
       await loadWorkshopPlacements();
       const n = (data?.created || []).length;
+      const members = Number(data?.members_added) || 0;
+      const notified = data?.notified ? ' Đã thêm thành viên xưởng nhận và gửi bình luận @ thông báo.' : '';
+      const membersNote = members > 0 && !data?.notified ? ` Đã thêm ${members} thành viên.` : '';
       const partial = data?.partial ? ` (một số dòng lỗi: ${(data.errors || []).map((e) => e.error).join('; ')})` : '';
-      alert(`Đã tạo ${n} dự án xưởng${partial}`);
+      alert(`Đã tạo ${n} dự án xưởng.${notified || membersNote}${partial}`);
+      setTab('comments');
     } catch (e) {
       setPlaceSxErr(e.response?.data?.error || e.message || 'Không đặt được xưởng');
     } finally {
       setPlaceSxBusy(false);
     }
-  }, [placeSxTargets, id, loadWorkshopPlacements]);
+  }, [placeSxTargets, id, loadWorkshopPlacements, setTab]);
 
   /** Realtime: đồng bộ Kanban + nhiệm vụ CRM giữa web và mobile */
   useEffect(() => {
@@ -3180,6 +3194,82 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
             }}
           />
 
+          {moduleKey !== 'vc' && (workshopPlacements.placed.length > 0 || workshopPlacements.received_from.length > 0) && (
+            <div className="bg-white rounded-xl border p-4 space-y-3">
+              <h3 className="text-sm font-bold text-gray-900 uppercase flex items-center gap-1.5">
+                <Factory className="h-4 w-4 text-indigo-600" /> Đặt xưởng
+              </h3>
+              {workshopPlacements.placed.length > 0 && (
+                <div>
+                  <p className="text-[10px] text-indigo-600 uppercase font-semibold mb-1.5">
+                    Đã đặt ({workshopPlacements.placed.length})
+                  </p>
+                  <ul className="space-y-2">
+                    {workshopPlacements.placed.map((row) => {
+                      const co = row.target_company;
+                      const wt = row.workshop_type;
+                      const tp = row.target_project;
+                      const staff = Array.isArray(row.staff) ? row.staff : [];
+                      return (
+                        <li key={row.id} className="rounded-lg border border-indigo-100 bg-indigo-50/40 px-2.5 py-2 text-xs">
+                          <Link
+                            to={`/sx/projects/${row.target_project_id}`}
+                            className="font-semibold text-indigo-800 hover:underline"
+                          >
+                            {tp?.code || '—'} · {co?.short_name || co?.name || 'Xưởng'}
+                          </Link>
+                          {wt?.name && <p className="text-gray-600 mt-0.5">{wt.name}</p>}
+                          {(row.delivery_date || row.production_finish_date) && (
+                            <p className="text-gray-500 mt-0.5">
+                              {row.delivery_date ? `Lắp ${formatDate(row.delivery_date)}` : ''}
+                              {row.delivery_date && row.production_finish_date ? ' · ' : ''}
+                              {row.production_finish_date ? `HT ${formatDate(row.production_finish_date)}` : ''}
+                            </p>
+                          )}
+                          {staff.length > 0 && (
+                            <p className="text-indigo-700/90 mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+                              <Users className="h-3 w-3 shrink-0" />
+                              {staff.map((u) => u.full_name || 'NV').join(', ')}
+                            </p>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
+              {workshopPlacements.received_from.length > 0 && (
+                <div>
+                  <p className="text-[10px] text-amber-700 uppercase font-semibold mb-1.5">Nhận đặt từ</p>
+                  <ul className="space-y-1.5">
+                    {workshopPlacements.received_from.map((row) => {
+                      const co = row.source_company || row.source_project?.company;
+                      const sp = row.source_project;
+                      return (
+                        <li key={row.id} className="rounded-lg border border-amber-100 bg-amber-50/50 px-2.5 py-2 text-xs">
+                          <Link
+                            to={`/sx/projects/${row.source_project_id}`}
+                            className="font-semibold text-amber-900 hover:underline"
+                          >
+                            {sp?.code || '—'} · {co?.short_name || co?.name || 'Xưởng nguồn'}
+                          </Link>
+                          {sp?.name && <p className="text-gray-600 mt-0.5 truncate">{sp.name}</p>}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={() => setTab('comments')}
+                className="w-full text-[11px] text-indigo-700 hover:text-indigo-900 font-medium text-left cursor-pointer"
+              >
+                Xem bình luận thông báo →
+              </button>
+            </div>
+          )}
+
           <div className="grid grid-cols-3 gap-2">
             <div className="bg-blue-50 rounded-lg border border-blue-100 p-3 text-center">
               <p className="text-xs text-gray-600 mb-1">Hoạt động</p>
@@ -3340,65 +3430,6 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                 })()}
               </p>
             </div>
-
-            {moduleKey !== 'vc' && (workshopPlacements.placed.length > 0 || workshopPlacements.received_from.length > 0) && (
-              <div className="border-t border-gray-100 pt-3 space-y-3">
-                {workshopPlacements.placed.length > 0 && (
-                  <div>
-                    <p className="text-[10px] text-indigo-600 uppercase font-semibold mb-1.5 flex items-center gap-1">
-                      <Factory className="h-3 w-3" /> Đã đặt xưởng ({workshopPlacements.placed.length})
-                    </p>
-                    <ul className="space-y-1.5">
-                      {workshopPlacements.placed.map((row) => {
-                        const co = row.target_company;
-                        const wt = row.workshop_type;
-                        const tp = row.target_project;
-                        return (
-                          <li key={row.id} className="rounded-lg border border-indigo-100 bg-indigo-50/40 px-2.5 py-2 text-xs">
-                            <Link
-                              to={`/sx/projects/${row.target_project_id}`}
-                              className="font-semibold text-indigo-800 hover:underline"
-                            >
-                              {tp?.code || '—'} · {co?.short_name || co?.name || 'Xưởng'}
-                            </Link>
-                            {wt?.name && <p className="text-gray-600 mt-0.5">{wt.name}</p>}
-                            {(row.delivery_date || row.production_finish_date) && (
-                              <p className="text-gray-500 mt-0.5">
-                                {row.delivery_date ? `Lắp ${formatDate(row.delivery_date)}` : ''}
-                                {row.delivery_date && row.production_finish_date ? ' · ' : ''}
-                                {row.production_finish_date ? `HT ${formatDate(row.production_finish_date)}` : ''}
-                              </p>
-                            )}
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  </div>
-                )}
-                {workshopPlacements.received_from.length > 0 && (
-                  <div>
-                    <p className="text-[10px] text-amber-700 uppercase font-semibold mb-1.5">Đặt từ</p>
-                    <ul className="space-y-1.5">
-                      {workshopPlacements.received_from.map((row) => {
-                        const co = row.source_company || row.source_project?.company;
-                        const sp = row.source_project;
-                        return (
-                          <li key={row.id} className="rounded-lg border border-amber-100 bg-amber-50/50 px-2.5 py-2 text-xs">
-                            <Link
-                              to={`/sx/projects/${row.source_project_id}`}
-                              className="font-semibold text-amber-900 hover:underline"
-                            >
-                              {sp?.code || '—'} · {co?.short_name || co?.name || 'Xưởng nguồn'}
-                            </Link>
-                            {sp?.name && <p className="text-gray-600 mt-0.5 truncate">{sp.name}</p>}
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  </div>
-                )}
-              </div>
-            )}
           </div>
         </div>
 
@@ -3899,6 +3930,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                   ? (
                     <LeadMembersTab
                       leadId={crmLeadId}
+                      refreshKey={membersRefreshKey}
                       onMembersChange={(list) => setMemberModuleCounts(countMembersByModule(list))}
                       onOpenSharedWorkspace={() => setTab('shared-workspace')}
                     />
@@ -4064,7 +4096,8 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
               <div>
                 <h3 className="text-lg font-bold text-gray-900">Đặt xưởng khác</h3>
                 <p className="text-xs text-gray-500 mt-1">
-                  Chọn công ty sản xuất + phân loại (có thể nhiều xưởng). Ngày lắp đặt và hoàn thiện giống chuyển CRM → SX.
+                  Chọn công ty SX + phân loại. Hệ thống tạo dự án ở xưởng nhận, thêm NV mặc định vào thành viên deal,
+                  và gửi bình luận @ thông báo giống CRM → Sản xuất.
                 </p>
               </div>
               <button type="button" onClick={() => !placeSxBusy && setPlaceSxOpen(false)} disabled={placeSxBusy} className="p-1 cursor-pointer disabled:opacity-40">

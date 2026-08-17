@@ -1598,10 +1598,11 @@ export default function CRMTasksTab({
       const dateValue = checked ? (projectDates[fieldKey] || null) : null;
       const patch = { [fieldKey]: dateValue };
       if (fieldKey === 'delivery_date') {
-        patch.production_deadline = dateValue;
-        patch.production_finish_date = dateValue
-          ? subtractCalendarDays(dateValue, 2)
-          : null;
+        const finishYmd = dateValue ? subtractCalendarDays(dateValue, 2) : null;
+        // delivery/install = deadline VC/LĐ; production_* = deadline tổng SX
+        patch.install_date = dateValue ? `${dateValue}T14:00:00+07:00` : null;
+        patch.production_finish_date = finishYmd;
+        patch.production_deadline = finishYmd;
       }
       await api.put(`/projects/${linkedProjectId}`, patch);
 
@@ -1634,6 +1635,7 @@ export default function CRMTasksTab({
         delivery_date: null,
         production_deadline: null,
         production_finish_date: null,
+        install_date: null,
       });
       const deliveryTasks = tasks.filter((t) => t.stage_slug === 'sx_giao_hang' && t.deadline);
       if (deliveryTasks.length) {

@@ -31,6 +31,7 @@ import DealSharedWorkspaceTab from '../components/DealSharedWorkspaceTab';
 import CrmTaskDocumentsPanel from '../components/CrmTaskDocumentsPanel';
 import UnifiedTaskHistoryWidget from '../components/UnifiedTaskHistoryWidget';
 import BlockingTasksAlertModal from '../components/BlockingTasksAlertModal';
+import FlowModuleComposer from '../components/FlowModuleComposer';
 import ExcelQuotationImport from '../components/ExcelQuotationImport';
 import QuotationSourceExcelLink from '../components/QuotationSourceExcelLink';
 import { PO_STATUS, PO_COLORS } from './PurchasingInboxPage';
@@ -69,7 +70,7 @@ import {
   workshopTypePreferredForLeadType,
 } from '../lib/sxCompanySuggestFromLeadType';
 import SxPickGuideList from '../components/SxPickGuideList';
-import Modal from '../components/Modal';
+import Modal, { OverlayPortal } from '../components/Modal';
 import DealCrossScoresPanel from '../components/DealCrossScoresPanel';
 import LeadKpiLedgerPanel from '../components/LeadKpiLedgerPanel';
 import { CrmLeadCommentsPanel } from '../components/CommentsPanels';
@@ -88,6 +89,7 @@ import { sortAndDedupePipelineStages } from '../lib/crmPipelineStages';
 import { resolveDealWonAnchorOrderIndex } from '../lib/crmPipelineTabs';
 import DealStageEventModal from '../components/DealStageEventModal';
 import EventCreateModal from '../components/EventCreateModal';
+import VcHandoverEventsPopup from '../components/VcHandoverEventsPopup';
 import {
   ArrowLeft, Phone, Mail, MapPin, Calendar, DollarSign, User, Target,
   Plus, Clock, MessageSquare, MessageCircle, Edit2, Trash2, X, Save, Building2, FolderKanban,
@@ -111,6 +113,36 @@ function subtractCalendarDaysYmd(ymd, days = 2) {
   if (Number.isNaN(dt.getTime())) return '';
   dt.setUTCDate(dt.getUTCDate() - Math.abs(Number(days) || 0));
   return dt.toISOString().slice(0, 10);
+}
+
+/** ISO → datetime-local (local browser). */
+function toDatetimeLocalValue(raw) {
+  if (!raw) return '';
+  const s = String(raw).trim();
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(s)) return s;
+  const d = new Date(s.length === 10 ? `${s}T00:00:00` : s);
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/** Hiển thị ngắn ngày/giờ VN. */
+function formatVnDateTimeShort(raw) {
+  if (!raw) return '';
+  const d = new Date(String(raw).length === 10 ? `${raw}T12:00:00+07:00` : raw);
+  if (Number.isNaN(d.getTime())) return String(raw).slice(0, 10);
+  return d.toLocaleString('vi-VN', {
+    timeZone: 'Asia/Ho_Chi_Minh',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function projectInstallDisplayRaw(pp) {
+  return pp?.install_date || pp?.delivery_date || null;
 }
 
 function leadDealEventLocation(lead, customer) {
@@ -254,6 +286,9 @@ export default function LeadDetail() {
   const [createOrderTitle, setCreateOrderTitle] = useState('');
   const [createOrderNotes, setCreateOrderNotes] = useState('');
   const [createOrderSaving, setCreateOrderSaving] = useState(false);
+  /** Công ty SX + kế hoạch lắp — bắt chọn lại, không kế thừa dự án gốc. */
+  const [createOrderTargets, setCreateOrderTargets] = useState([]);
+  const [createOrderErr, setCreateOrderErr] = useState('');
   /** Báo giá deal có file Excel gốc — mở lại từ header */
   const [dealExcelQuotations, setDealExcelQuotations] = useState([]);
   /** Đặt hàng gắn deal — CRUD đơn giản trên tab */
@@ -310,11 +345,20 @@ export default function LeadDetail() {
   const [addSxTargets, setAddSxTargets] = useState([]);
   const [addSxBusy, setAddSxBusy] = useState(false);
   const [addSxErr, setAddSxErr] = useState('');
+  /** Sửa lịch lắp đặt / lấy hàng trên từng dự án SX (đồng bộ lịch VC/LĐ). */
+  const [sxScheduleEdit, setSxScheduleEdit] = useState(null);
+  const [sxScheduleBusy, setSxScheduleBusy] = useState(false);
+  const [sxScheduleErr, setSxScheduleErr] = useState('');
+  const [sxScheduleLogisticsCompanies, setSxScheduleLogisticsCompanies] = useState([]);
   const [dealStageWonWorkTypeId, setDealStageWonWorkTypeId] = useState('');
   const [dealStageWonErr, setDealStageWonErr] = useState('');
-  /** Ngày lắp đặt (delivery_date) — hoàn thiện SX = lắp đặt − 2 ngày */
+  /** Ngày lắp đặt = deadline VC/LĐ; hoàn thiện SX = deadline tổng (= lắp − 2) */
   const [dealStageWonDeliveryDate, setDealStageWonDeliveryDate] = useState('');
   const [pickProjectDeliveryDate, setPickProjectDeliveryDate] = useState('');
+  /** Tích xác nhận đúng thông tin trước khi Tiếp tục / Tạo dự án */
+  const [sxPlanInfoConfirmed, setSxPlanInfoConfirmed] = useState(false);
+  /** Luồng quy trình khi tạo dự án từ deal (không còn «mặc định») */
+  const [pickFlowId, setPickFlowId] = useState('');
   /** Deal đã có dự án SX — kéo lại Thắng: thông báo, không mở hộp chuyển */
   const [dealWonSxExistsCtx, setDealWonSxExistsCtx] = useState(null);
   const [productionCompaniesSx, setProductionCompaniesSx] = useState([]);
@@ -578,10 +622,11 @@ export default function LeadDetail() {
     window.setTimeout(() => { void softRefreshDeal(); }, 4500);
   }, [softRefreshDeal]);
 
-  const autoCreateProject = async (dealId, productionCompanyId, workshopTypeId = null, targets = null, mode = 'create', projectDates = null) => {
+  const autoCreateProject = async (dealId, productionCompanyId, workshopTypeId = null, targets = null, mode = 'create', projectDates = null, flowId = null) => {
     if (!productionCompanyId && !(Array.isArray(targets) && targets.length)) {
       setPickProjectCompanyOpen(true);
       setPickProjectCompanyErr('');
+      setSxPlanInfoConfirmed(false);
       return;
     }
     if (autoCreateCalledRef.current) return;
@@ -593,16 +638,24 @@ export default function LeadDetail() {
       const deliveryYmd = String(projectDates?.delivery_date || '').trim();
       if (/^\d{4}-\d{2}-\d{2}$/.test(deliveryYmd)) {
         datePayload.delivery_date = deliveryYmd;
-        datePayload.production_deadline = deliveryYmd;
+        datePayload.production_deadline = subtractCalendarDaysYmd(deliveryYmd, 2) || null;
         datePayload.production_finish_date = subtractCalendarDaysYmd(deliveryYmd, 2) || null;
+        datePayload.install_date = `${deliveryYmd}T14:00:00+07:00`;
       }
+      const resolvedFlowId = flowId || pickFlowId || null;
       const payload = Array.isArray(targets) && targets.length
-        ? { targets: sxTargetsToApiPayload(targets), ...datePayload, ...(mode === 'additional' ? { mode: 'additional' } : {}) }
+        ? {
+          targets: sxTargetsToApiPayload(targets),
+          ...datePayload,
+          ...(mode === 'additional' ? { mode: 'additional' } : {}),
+          ...(resolvedFlowId ? { flow_id: resolvedFlowId } : {}),
+        }
         : {
           production_company_id: productionCompanyId,
           ...(workshopTypeId ? { workshop_type_id: workshopTypeId } : {}),
           ...datePayload,
           ...(mode === 'additional' ? { mode: 'additional' } : {}),
+          ...(resolvedFlowId ? { flow_id: resolvedFlowId } : {}),
         };
       const { data } = await api.post(`/crm/deals/${dealId}/auto-create-project`, payload);
       setAutoCreateResult(data);
@@ -658,9 +711,19 @@ export default function LeadDetail() {
     setPickProjectCompanyId((prev) => prev || nextId);
   }, [parentSxLeadKind, parentSxDbPref.companyId, productionCompaniesSx]);
 
-  useEffect(() => { load(); }, [id]);
+  // Đổi deal/lead trên cùng route `/crm/leads/:id`: phải xóa state cũ ngay
+  // (nếu giữ lead cũ thì UI trông như «không mở» — đặc biệt khi deal phát sinh gần giống tên deal nguồn).
   useEffect(() => {
+    setLead(null);
+    setCustomer(null);
+    setLoading(true);
     setCrmTasksRefreshKey(0);
+    try {
+      const mainEl = document.querySelector('main.flex-1.overflow-y-auto');
+      if (mainEl) mainEl.scrollTop = 0;
+      else window.scrollTo(0, 0);
+    } catch (_) { /* ignore */ }
+    void load();
   }, [id]);
 
   useEffect(() => {
@@ -983,6 +1046,11 @@ export default function LeadDetail() {
       if (leadRes?.stage_id) visited.add(String(leadRes.stage_id));
       setVisitedStageIds(visited);
       setFlows(flowsRes || []);
+      // Chỉ auto chọn khi đúng 1 luồng đang bật; nhiều luồng thì người dùng tự chọn
+      if (!pickFlowId && Array.isArray(flowsRes)) {
+        const activeFlows = flowsRes.filter((f) => f.is_active !== false);
+        if (activeFlows.length === 1) setPickFlowId(activeFlows[0].id);
+      }
       setAllUsers(usersRes || []);
 
       notifyCrmLeadSeenByCurrentUser(id, user?.id || user?.userId);
@@ -1006,6 +1074,7 @@ export default function LeadDetail() {
         if (currentStage?.is_won && !projectCompanyPickRef.current) {
           projectCompanyPickRef.current = true;
           setPickProjectCompanyOpen(true);
+          setSxPlanInfoConfirmed(false);
           setPickProjectCompanyId(
             leadRes.company_id
               ? String(leadRes.company_id)
@@ -1016,7 +1085,9 @@ export default function LeadDetail() {
       }
     } catch (e) { console.error(e); }
     finally {
-      setLoading(false);
+      // Chỉ tắt loading cho request mới nhất — tránh race khi đổi id giữa chừng
+      // (request cũ finally → loading=false trong lúc request mới còn chạy / lead=null).
+      if (seq === loadSeqRef.current) setLoading(false);
     }
   };
 
@@ -1621,6 +1692,7 @@ export default function LeadDetail() {
         setDealStageWonTargets(initialCo ? [{ companyId: initialCo, workshopTypeId: '' }] : []);
       }
       setDealStageWonPick({ stageId, extraData, targetStage });
+      setSxPlanInfoConfirmed(false);
       return;
     }
 
@@ -1684,6 +1756,10 @@ export default function LeadDetail() {
       setDealStageWonErr(err);
       return;
     }
+    if (!sxPlanInfoConfirmed) {
+      setDealStageWonErr('Vui lòng tích xác nhận thông tin trước khi tiếp tục.');
+      return;
+    }
     const ctx = dealStageWonPick;
     if (!ctx) return;
     setDealStageWonErr('');
@@ -1694,6 +1770,7 @@ export default function LeadDetail() {
       production_company_id: apiTargets[0]?.production_company_id,
       workshop_type_id: apiTargets[0]?.workshop_type_id,
       targets: apiTargets,
+      ...(pickFlowId ? { flow_id: pickFlowId } : {}),
       ...(firstDated
         ? {
           delivery_date: firstDated.delivery_date,
@@ -1735,6 +1812,10 @@ export default function LeadDetail() {
     const err = validateSxTargets(targets);
     if (err) {
       setPickProjectCompanyErr(err);
+      return;
+    }
+    if (!sxPlanInfoConfirmed) {
+      setPickProjectCompanyErr('Vui lòng tích xác nhận thông tin trước khi tạo dự án.');
       return;
     }
     setPickProjectCompanyErr('');
@@ -1785,6 +1866,200 @@ export default function LeadDetail() {
       setAutoCreateStatus('error');
     } finally {
       setAddSxBusy(false);
+    }
+  };
+
+  const openSxScheduleEdit = (pp) => {
+    if (!pp?.project_id) return;
+    const installRaw = projectInstallDisplayRaw(pp);
+    const ymd = String(installRaw || '').slice(0, 10);
+    const timeM = String(installRaw || '').match(/T(\d{2}):(\d{2})/);
+    const installYmd = /^\d{4}-\d{2}-\d{2}$/.test(ymd) ? ymd : '';
+    const linked = lead?.linked_project;
+    const sameAsLinked = linked
+      && String(linked.id || lead?.project_id || '') === String(pp.project_id);
+    const logisticsFromPp = pp.logistics_company_id
+      || pp.logistics_company?.id
+      || (sameAsLinked ? (linked.logistics_company_id || null) : null)
+      || null;
+    setSxScheduleEdit({
+      projectId: pp.project_id,
+      code: pp.code || '',
+      logisticsCompanyId: logisticsFromPp ? String(logisticsFromPp) : '',
+      installYmd,
+      installTime: timeM ? `${timeM[1]}:${timeM[2]}` : '14:00',
+      installOccurrenceDates: installYmd ? [installYmd] : [],
+      pickupLocal: pp.pickup_at
+        ? toDatetimeLocalValue(pp.pickup_at)
+        : (sameAsLinked && linked?.pickup_at
+          ? toDatetimeLocalValue(linked.pickup_at)
+          : (installYmd ? `${installYmd}T08:00` : '')),
+    });
+    setSxScheduleErr('');
+
+    const projectId = String(pp.project_id);
+    const leadIdForEvents = lead?.id || id || null;
+
+    Promise.all([
+      api.get('/companies', { params: { for_module: 'logistics' } }).catch(() => null),
+      api.get(`/projects/${projectId}`).catch(() => null),
+      // Lấy lại CT VC/LĐ từ sự kiện dự kiến nếu cột projects.logistics_company_id trống
+      leadIdForEvents
+        ? api.get('/events', {
+          params: {
+            lead_id: leadIdForEvents,
+            modules: 'logistics,production',
+            limit: 100,
+            include_as_participant: '1',
+          },
+        }).catch(() => null)
+        : Promise.resolve(null),
+    ]).then(([companiesRes, projectRes, eventsRes]) => {
+      const list = companiesRes?.data?.companies || companiesRes?.data || [];
+      let companies = Array.isArray(list) ? list.map((c) => ({ ...c, id: String(c.id) })) : [];
+      const proj = projectRes?.data?.project || projectRes?.data || null;
+      const rawEvents = eventsRes?.data?.events || eventsRes?.data || [];
+      const eventList = (Array.isArray(rawEvents) ? rawEvents : []).filter((e) => {
+        if (!e) return false;
+        if (String(e.project_id || '') === projectId) return true;
+        // Sự kiện gắn deal nhưng chưa có project_id — vẫn dùng nếu cùng deal
+        return !e.project_id && leadIdForEvents && String(e.lead_id || '') === String(leadIdForEvents);
+      });
+
+      const preferType = (types) => eventList.find((e) => {
+        const t = String(e?.event_type || '').toLowerCase();
+        return types.includes(t) && e?.company_id;
+      })?.company_id;
+
+      const fromEvents = preferType(['installation', 'pickup', 'delivery'])
+        || null;
+
+      const lid = proj?.logistics_company_id
+        || proj?.logistics_company?.id
+        || logisticsFromPp
+        || fromEvents
+        || null;
+      const lidStr = lid ? String(lid) : '';
+
+      if (lidStr && !companies.some((c) => String(c.id) === lidStr)) {
+        const fromEv = eventList.find((e) => String(e?.company_id) === lidStr);
+        const name = proj?.logistics_company?.short_name
+          || proj?.logistics_company?.name
+          || fromEv?.company?.short_name
+          || fromEv?.company?.name
+          || fromEv?.company_name
+          || pp.logistics_company_name
+          || 'Công ty VC/LĐ đã chọn';
+        companies = [{ id: lidStr, name, short_name: name }, ...companies];
+      }
+      setSxScheduleLogisticsCompanies(companies);
+
+      setSxScheduleEdit((s) => {
+        if (!s || String(s.projectId) !== projectId) return s;
+        const next = { ...s };
+        if (lidStr) next.logisticsCompanyId = lidStr;
+        if (proj?.pickup_at && !String(s.pickupLocal || '').trim()) {
+          next.pickupLocal = toDatetimeLocalValue(proj.pickup_at);
+        }
+        const installEv = eventList.find((e) => String(e?.event_type || '').toLowerCase() === 'installation');
+        const occ = Array.isArray(installEv?.occurrence_dates)
+          ? installEv.occurrence_dates.map((d) => String(d).slice(0, 10)).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort()
+          : [];
+        if (occ.length) {
+          next.installOccurrenceDates = occ;
+          next.installYmd = occ[0];
+          const tm = String(installEv?.start_time || '').match(/T(\d{2}):(\d{2})/)
+            || String(s.installTime || '').match(/^(\d{2}):(\d{2})$/);
+          if (tm) next.installTime = `${tm[1]}:${tm[2]}`;
+        }
+        return next;
+      });
+    }).catch(() => setSxScheduleLogisticsCompanies([]));
+  };
+
+  const closeSxScheduleEdit = () => {
+    if (sxScheduleBusy) return;
+    setSxScheduleEdit(null);
+    setSxScheduleErr('');
+  };
+
+  /** Header: mở thiết lập kế hoạch SX + VC/LĐ (tạo dự án hoặc sửa lịch hiện có). */
+  const openSxVcPlanSetup = () => {
+    if (lead?.type !== 'deal') return;
+    if (!lead?.project_id) {
+      projectCompanyPickRef.current = true;
+      setPickProjectCompanyErr('');
+      setDealStageWonTargets([]);
+      setPickProjectDeliveryDate('');
+      setPickProjectCompanyWorkTypeId('');
+      setPickProjectCompanyId(
+        isAdminUser ? (findDefaultAdminCompanyPhucDat(productionCompaniesSx) || '') : '',
+      );
+      setPickProjectCompanyOpen(true);
+      setSxPlanInfoConfirmed(false);
+      return;
+    }
+    const rows = Array.isArray(lead.production_projects) && lead.production_projects.length
+      ? lead.production_projects
+      : [{
+        project_id: lead.project_id,
+        code: lead.linked_project?.code,
+        name: lead.linked_project?.name,
+        is_primary: true,
+        install_date: lead.linked_project?.install_date,
+        delivery_date: lead.linked_project?.delivery_date,
+        pickup_at: lead.linked_project?.pickup_at,
+        logistics_company_id: lead.linked_project?.logistics_company_id,
+        company_id: lead.linked_project?.company_id || lead.linked_project?.logistics_company_id,
+      }];
+    const primary = rows.find((p) => p.is_primary) || rows[0];
+    if (primary?.project_id) openSxScheduleEdit(primary);
+  };
+
+  const submitSxScheduleEdit = async () => {
+    if (!sxScheduleEdit?.projectId) return;
+    const occ = [...new Set(
+      (Array.isArray(sxScheduleEdit.installOccurrenceDates) ? sxScheduleEdit.installOccurrenceDates : [])
+        .map((d) => String(d || '').slice(0, 10))
+        .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)),
+    )].sort();
+    const ymd = occ[0] || String(sxScheduleEdit.installYmd || '').trim();
+    if (ymd && !/^\d{4}-\d{2}-\d{2}$/.test(ymd)) {
+      setSxScheduleErr('Ngày lắp đặt không hợp lệ.');
+      return;
+    }
+    const time = String(sxScheduleEdit.installTime || '14:00').trim() || '14:00';
+    if (ymd && !/^\d{2}:\d{2}$/.test(time)) {
+      setSxScheduleErr('Giờ lắp đặt không hợp lệ.');
+      return;
+    }
+    const lid = String(sxScheduleEdit.logisticsCompanyId || '').trim();
+    if (lid && !ymd) {
+      setSxScheduleErr('Đã chọn công ty VC/LĐ — vui lòng nhập ngày lắp đặt.');
+      return;
+    }
+    setSxScheduleBusy(true);
+    setSxScheduleErr('');
+    try {
+      const patch = {
+        install_date: ymd ? `${ymd}T${time}:00+07:00` : null,
+        delivery_date: ymd || null,
+        production_deadline: ymd ? (subtractCalendarDaysYmd(ymd, 2) || null) : null,
+        production_finish_date: ymd ? (subtractCalendarDaysYmd(ymd, 2) || null) : null,
+        pickup_at: sxScheduleEdit.pickupLocal
+          ? new Date(sxScheduleEdit.pickupLocal).toISOString()
+          : null,
+        logistics_company_id: lid || null,
+        install_occurrence_dates: occ.length ? occ : (ymd ? [ymd] : []),
+        sync_vc_ld_events: true,
+      };
+      await api.put(`/projects/${sxScheduleEdit.projectId}`, patch);
+      setSxScheduleEdit(null);
+      await softRefreshDeal();
+    } catch (e) {
+      setSxScheduleErr(e.response?.data?.error || e.message || 'Lỗi lưu lịch lắp đặt');
+    } finally {
+      setSxScheduleBusy(false);
     }
   };
 
@@ -1955,7 +2230,12 @@ export default function LeadDetail() {
     }
   };
 
-  if (loading && !lead) return <div className="flex items-center justify-center h-64"><div className="animate-spin h-10 w-10 border-4 border-blue-600 border-t-transparent rounded-full" /></div>;
+  if (loading && !lead) return (
+    <div className="flex flex-col items-center justify-center h-64 gap-3">
+      <div className="animate-spin h-10 w-10 border-4 border-blue-600 border-t-transparent rounded-full" />
+      <p className="text-sm text-gray-500">Đang tải deal…</p>
+    </div>
+  );
   if (!lead) return <div className="flex items-center justify-center h-64 text-sm text-gray-500">Không tải được deal/lead.</div>;
 
   const stages = lead.type === 'deal' ? stagesDeal : stagesLead;
@@ -1974,31 +2254,73 @@ export default function LeadDetail() {
     const base = String(lead?.title || lead?.code || 'Đơn hàng').trim();
     setCreateOrderTitle(base ? `${base} — Phát sinh` : 'Đơn hàng phát sinh');
     setCreateOrderNotes('');
+    setCreateOrderTargets([]);
+    setCreateOrderErr('');
+    setSxPlanInfoConfirmed(false);
     setShowCreateOrderModal(true);
   };
 
   const submitCreateDealOrder = async () => {
     const title = String(createOrderTitle || '').trim();
     if (!title) {
-      alert('Nhập tên deal phát sinh');
+      setCreateOrderErr('Nhập tên deal phát sinh');
       return;
     }
+    const sxErr = validateSxTargets(createOrderTargets);
+    if (sxErr) {
+      setCreateOrderErr(sxErr);
+      return;
+    }
+    if (!sxPlanInfoConfirmed) {
+      setCreateOrderErr('Vui lòng tích xác nhận thông tin trước khi tạo.');
+      return;
+    }
+    setCreateOrderErr('');
     setCreateOrderSaving(true);
     try {
       const { data } = await api.post(`/crm/deals/${lead.id}/spawn-additional`, {
         title,
         notes: String(createOrderNotes || '').trim() || null,
       });
-      setShowCreateOrderModal(false);
       const newId = data?.id;
-      if (newId) {
-        navigate(`/crm/leads/${newId}`);
-      } else {
+      if (!newId) {
+        setShowCreateOrderModal(false);
         alert(`Đã tạo deal ${data?.code || ''}`);
         load({ silent: true });
+        return;
       }
+
+      const apiTargets = sxTargetsToApiPayload(createOrderTargets);
+      const firstDated = apiTargets.find((t) => t.delivery_date) || null;
+      const datePayload = {};
+      const deliveryYmd = String(firstDated?.delivery_date || '').trim();
+      if (/^\d{4}-\d{2}-\d{2}$/.test(deliveryYmd)) {
+        datePayload.delivery_date = deliveryYmd;
+        datePayload.production_deadline = subtractCalendarDaysYmd(deliveryYmd, 2) || null;
+        datePayload.production_finish_date = subtractCalendarDaysYmd(deliveryYmd, 2) || null;
+      }
+      try {
+        await api.post(`/crm/deals/${newId}/auto-create-project`, {
+          targets: apiTargets,
+          ...(pickFlowId ? { flow_id: pickFlowId } : {}),
+          ...datePayload,
+        });
+      } catch (projErr) {
+        setShowCreateOrderModal(false);
+        alert(
+          projErr.response?.data?.error
+            || projErr.message
+            || 'Đã tạo deal nhưng chưa tạo được dự án SX — mở deal để chọn lại công ty SX.',
+        );
+        navigate(`/crm/leads/${newId}`);
+        return;
+      }
+
+      setShowCreateOrderModal(false);
+      setCreateOrderTargets([]);
+      navigate(`/crm/leads/${newId}`);
     } catch (e) {
-      alert(e.response?.data?.error || e.message || 'Lỗi tạo deal phát sinh');
+      setCreateOrderErr(e.response?.data?.error || e.message || 'Lỗi tạo deal phát sinh');
     } finally {
       setCreateOrderSaving(false);
     }
@@ -2266,6 +2588,7 @@ export default function LeadDetail() {
                     : (isAdminUser ? findDefaultAdminCompanyPhucDat(productionCompaniesSx) : ''),
                 );
                 setPickProjectCompanyErr('');
+                setSxPlanInfoConfirmed(false);
                 setPickProjectCompanyOpen(true);
               }}
               className="h-9 px-4 bg-white/20 hover:bg-white/30 rounded-lg text-sm font-medium cursor-pointer transition"
@@ -2543,13 +2866,29 @@ export default function LeadDetail() {
           >
             📥 Import Excel
           </button>
+          {lead?.type === 'deal' ? (
+            <button
+              type="button"
+              data-tour="lead-sx-vc-plan"
+              onClick={openSxVcPlanSetup}
+              className="h-9 px-3 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-sm font-medium flex items-center gap-1.5 cursor-pointer"
+              title={
+                lead?.project_id
+                  ? 'Sửa kế hoạch lắp đặt / VC-LĐ của dự án SX'
+                  : 'Thiết lập công ty SX, ngày lắp và VC/LĐ — tạo dự án xưởng'
+              }
+            >
+              <Building2 className="h-4 w-4" />
+              {lead?.project_id ? 'Kế hoạch SX & VC/LĐ' : 'Thiết lập kế hoạch SX & VC/LĐ'}
+            </button>
+          ) : null}
           {canCreateDealOrder ? (
             <button
               type="button"
               data-tour="lead-create-order"
               onClick={openCreateOrderModal}
               className="h-9 px-3 bg-teal-600 hover:bg-teal-700 text-white rounded-lg text-sm font-medium flex items-center gap-1.5 cursor-pointer"
-              title="Tạo deal đơn hàng phát sinh — hiện cột đầu tab Khách hàng, liên kết deal này"
+              title="Tạo deal phát sinh — chọn lại công ty SX & kế hoạch lắp, hiện cột đầu tab Khách hàng"
             >
               <ShoppingCart className="h-4 w-4" /> Tạo đơn hàng phát sinh
             </button>
@@ -2636,35 +2975,314 @@ export default function LeadDetail() {
                 + Thêm dự án SX
               </button>
             </div>
+            <p className="text-[11px] text-gray-500 leading-snug">
+              Chỉnh lịch lắp đặt / lấy hàng tại đây — lịch VC/LĐ (tab Lịch) sẽ thấy mốc dự kiến.
+            </p>
             <ul className="space-y-1.5">
               {(() => {
                 const rows = Array.isArray(lead.production_projects) && lead.production_projects.length
                   ? lead.production_projects
-                  : [{ project_id: lead.project_id, code: lead.linked_project?.code, name: lead.linked_project?.name, is_primary: true }];
+                  : [{
+                    project_id: lead.project_id,
+                    code: lead.linked_project?.code,
+                    name: lead.linked_project?.name,
+                    is_primary: true,
+                    install_date: lead.linked_project?.install_date,
+                    delivery_date: lead.linked_project?.delivery_date,
+                    pickup_at: lead.linked_project?.pickup_at,
+                    logistics_company_id: lead.linked_project?.logistics_company_id || null,
+                    logistics_company_name:
+                      lead.linked_project?.logistics_company?.short_name
+                      || lead.linked_project?.logistics_company?.name
+                      || null,
+                    company_id: lead.linked_project?.company_id || null,
+                  }];
                 const showPrimary = rows.length <= 1;
-                return rows.map((pp) => (
+                return rows.map((pp) => {
+                  const installRaw = projectInstallDisplayRaw(pp);
+                  const installLabel = installRaw ? formatVnDateTimeShort(installRaw) : null;
+                  const pickupLabel = pp.pickup_at ? formatVnDateTimeShort(pp.pickup_at) : null;
+                  const vcName = pp.logistics_company_name
+                    || pp.logistics_company?.short_name
+                    || pp.logistics_company?.name
+                    || null;
+                  return (
                 <li key={pp.project_id || pp.code} className="flex items-center justify-between gap-2 text-xs rounded-lg border border-gray-100 bg-gray-50 px-2.5 py-2">
-                  <div className="min-w-0">
+                  <div className="min-w-0 flex-1">
                     <p className="font-semibold text-gray-900 truncate">
                       {pp.code || '—'} {showPrimary && pp.is_primary ? <span className="text-teal-700 font-normal">(chính)</span> : null}
                     </p>
                     <p className="text-gray-600 truncate">
                       {[pp.company_name, pp.workshop_type_name || pp.label, pp.name].filter(Boolean).join(' · ')}
                     </p>
+                    <p className="mt-0.5 text-[11px] text-orange-800/90 truncate">
+                      {vcName ? (
+                        <span>VC/LĐ: <strong>{vcName}</strong></span>
+                      ) : (
+                        <span className="text-amber-700">Chưa chọn công ty VC/LĐ</span>
+                      )}
+                    </p>
+                    <p className="mt-0.5 text-[11px] text-teal-800/90 truncate">
+                      {installLabel ? (
+                        <span>Lắp: <strong>{installLabel}</strong></span>
+                      ) : (
+                        <span className="text-amber-700">Chưa có lịch lắp đặt</span>
+                      )}
+                      {pickupLabel ? (
+                        <span className="text-sky-800"> · Lấy hàng: <strong>{pickupLabel}</strong></span>
+                      ) : null}
+                    </p>
                   </div>
-                  {pp.project_id && (
-                    <button
-                      type="button"
-                      className="shrink-0 text-teal-700 font-semibold hover:underline"
-                      onClick={() => navigate(`/sx/projects/${pp.project_id}`)}
-                    >
-                      Mở SX
-                    </button>
-                  )}
+                  <div className="shrink-0 flex flex-col sm:flex-row items-stretch sm:items-center gap-1">
+                    {pp.project_id && (
+                      <button
+                        type="button"
+                        className="h-7 px-2 rounded-md text-[11px] font-semibold border border-teal-200 text-teal-800 bg-white hover:bg-teal-50"
+                        onClick={() => openSxScheduleEdit(pp)}
+                      >
+                        Sửa lịch
+                      </button>
+                    )}
+                    {pp.project_id && (
+                      <button
+                        type="button"
+                        className="h-7 px-2 rounded-md text-[11px] font-semibold text-teal-700 hover:underline"
+                        onClick={() => navigate(`/sx/projects/${pp.project_id}`)}
+                      >
+                        Mở SX
+                      </button>
+                    )}
+                  </div>
                 </li>
-              ));
+                  );
+                });
               })()}
             </ul>
+          </div>
+        </div>
+      )}
+
+      {sxScheduleEdit && (
+        <div
+          className="fixed inset-0 bg-black/40 flex items-center justify-center z-[60] p-4"
+          onClick={closeSxScheduleEdit}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-xl max-w-6xl w-full p-5 space-y-3 max-h-[92vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <h3 className="text-lg font-bold text-gray-900">Sửa lịch lắp đặt</h3>
+                <p className="text-xs text-gray-500 mt-1">
+                  {sxScheduleEdit.code || 'Dự án'} — đồng bộ công ty VC/LĐ, ngày lắp / lấy hàng và sự kiện dự kiến.
+                </p>
+              </div>
+              <button type="button" disabled={sxScheduleBusy} onClick={closeSxScheduleEdit} className="p-1 cursor-pointer disabled:opacity-40">
+                <X className="h-5 w-5 text-gray-400" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            <div className="space-y-3 min-w-0">
+            <label className="text-[10px] font-semibold text-gray-700 block">
+              Công ty vận chuyển / lắp đặt
+              <select
+                value={sxScheduleEdit.logisticsCompanyId || ''}
+                disabled={sxScheduleBusy}
+                onChange={(e) => setSxScheduleEdit((s) => ({ ...s, logisticsCompanyId: e.target.value }))}
+                className="mt-0.5 w-full h-9 px-2 border border-gray-200 rounded-lg text-sm bg-white"
+              >
+                <option value="">— Chưa chọn công ty VC/LĐ —</option>
+                {sxScheduleLogisticsCompanies.map((c) => (
+                  <option key={String(c.id)} value={String(c.id)}>{c.short_name || c.name}</option>
+                ))}
+              </select>
+            </label>
+
+            <div className="rounded-lg border border-teal-100 bg-teal-50/40 px-2.5 py-2 space-y-2">
+              <p className="text-[10px] font-bold uppercase tracking-wide text-teal-800">
+                Deadline lắp đặt (VC/LĐ) &amp; hoàn thiện (SX)
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                <label className="text-[10px] font-semibold text-gray-700 block col-span-2 sm:col-span-1">
+                  Ngày lắp đặt <span className="font-normal text-teal-600">(deadline VC/LĐ)</span>
+                  <input
+                    type="date"
+                    value={sxScheduleEdit.installYmd}
+                    disabled={sxScheduleBusy}
+                    onChange={(e) => {
+                      const nextYmd = e.target.value;
+                      setSxScheduleEdit((s) => ({
+                        ...s,
+                        installYmd: nextYmd,
+                        installOccurrenceDates: nextYmd ? [nextYmd] : [],
+                        pickupLocal: s.pickupLocal || (nextYmd ? `${nextYmd}T08:00` : ''),
+                      }));
+                    }}
+                    className="mt-0.5 w-full h-9 px-2 border border-gray-200 rounded-lg text-sm bg-white"
+                  />
+                </label>
+                <label className="text-[10px] font-semibold text-gray-700 block col-span-2 sm:col-span-1">
+                  Giờ lắp đặt
+                  <input
+                    type="time"
+                    value={sxScheduleEdit.installTime}
+                    disabled={sxScheduleBusy || !sxScheduleEdit.installYmd}
+                    onChange={(e) => setSxScheduleEdit((s) => ({ ...s, installTime: e.target.value }))}
+                    className="mt-0.5 w-full h-9 px-2 border border-gray-200 rounded-lg text-sm bg-white"
+                  />
+                </label>
+              </div>
+              <label className="text-[10px] font-semibold text-indigo-700 block">
+                Ngày hoàn thiện
+                <span className="font-normal text-indigo-500"> (deadline tổng dự án SX = lắp − 2)</span>
+                <input
+                  type="date"
+                  value={sxScheduleEdit.installYmd ? (subtractCalendarDaysYmd(sxScheduleEdit.installYmd, 2) || '') : ''}
+                  readOnly
+                  disabled
+                  className="mt-0.5 w-full h-9 px-2 border border-indigo-200 rounded-lg text-sm bg-indigo-50 text-indigo-900 font-semibold"
+                />
+              </label>
+              {sxScheduleEdit.installYmd ? (
+                <p className="text-[11px] text-indigo-900/90 leading-snug rounded-md bg-indigo-50/80 border border-indigo-100 px-2 py-1.5">
+                  <span className="font-semibold">Quy định:</span>{' '}
+                  hoàn thiện <strong>{subtractCalendarDaysYmd(sxScheduleEdit.installYmd, 2) || '—'}</strong>
+                  {' = deadline tổng SX · '}
+                  lắp <strong>{sxScheduleEdit.installYmd}</strong>
+                  {' = deadline VC/LĐ'}
+                  {Array.isArray(sxScheduleEdit.installOccurrenceDates)
+                    && sxScheduleEdit.installOccurrenceDates.length > 1 ? (
+                    <>
+                      {' · '}
+                      <strong>{sxScheduleEdit.installOccurrenceDates.length} ngày lắp</strong>
+                      {': '}
+                      {sxScheduleEdit.installOccurrenceDates.join(', ')}
+                    </>
+                  ) : null}
+                </p>
+              ) : null}
+            </div>
+
+            <div className="rounded-lg border border-sky-100 bg-sky-50/50 px-2.5 py-2 space-y-2">
+              <p className="text-[10px] font-bold uppercase tracking-wide text-sky-800">Lấy hàng (VC)</p>
+              <label className="text-[10px] font-semibold text-gray-700 block">
+                Thời gian lấy hàng tại xưởng <span className="font-normal text-gray-400">(không bắt buộc)</span>
+                <input
+                  type="datetime-local"
+                  value={sxScheduleEdit.pickupLocal}
+                  disabled={sxScheduleBusy}
+                  onChange={(e) => setSxScheduleEdit((s) => ({ ...s, pickupLocal: e.target.value }))}
+                  className="mt-0.5 w-full h-9 px-2 border border-gray-200 rounded-lg text-sm bg-white"
+                />
+              </label>
+            </div>
+
+            {sxScheduleErr && <p className="text-xs text-red-600">{sxScheduleErr}</p>}
+
+            <div className="flex gap-2 pt-1">
+              <button
+                type="button"
+                disabled={sxScheduleBusy}
+                onClick={closeSxScheduleEdit}
+                className="flex-1 h-10 border border-gray-200 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                disabled={sxScheduleBusy}
+                onClick={() => submitSxScheduleEdit()}
+                className="flex-1 h-10 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-sm font-semibold disabled:opacity-40 inline-flex items-center justify-center gap-1.5"
+              >
+                {sxScheduleBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                {sxScheduleBusy ? 'Đang lưu…' : 'Lưu lịch'}
+              </button>
+            </div>
+            </div>
+
+            <div className="min-w-0 rounded-xl border-2 border-orange-200 overflow-hidden bg-orange-50/30">
+              <p className="px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wide text-orange-900 border-b border-orange-100 bg-orange-50">
+                Lịch sự kiện VC/LĐ
+              </p>
+              <VcHandoverEventsPopup
+                embedded
+                opsScheduleOnly
+                leadId={lead?.id || id || null}
+                projectId={sxScheduleEdit.projectId || null}
+                companyId={sxScheduleEdit.logisticsCompanyId || null}
+                focusDate={
+                  (sxScheduleEdit.installYmd
+                    ? `${sxScheduleEdit.installYmd}T${sxScheduleEdit.installTime || '14:00'}`
+                    : null)
+                  || sxScheduleEdit.pickupLocal
+                  || null
+                }
+                pickMode
+                pickTarget="both"
+                anchorPickupAt={sxScheduleEdit.pickupLocal || null}
+                anchorInstallAt={
+                  sxScheduleEdit.installYmd
+                    ? `${sxScheduleEdit.installYmd}T${sxScheduleEdit.installTime || '14:00'}`
+                    : null
+                }
+                anchorInstallOccurrenceDates={
+                  Array.isArray(sxScheduleEdit.installOccurrenceDates)
+                    ? sxScheduleEdit.installOccurrenceDates
+                    : (sxScheduleEdit.installYmd ? [sxScheduleEdit.installYmd] : [])
+                }
+                anchorFinishAt={
+                  sxScheduleEdit.installYmd
+                    ? (() => {
+                      const finish = subtractCalendarDaysYmd(sxScheduleEdit.installYmd, 2);
+                      return finish ? `${finish}T17:00` : null;
+                    })()
+                    : null
+                }
+                onPickDates={({ pickupAt, installAt, installOccurrenceDates: occFromCal }) => {
+                  setSxScheduleEdit((s) => {
+                    if (!s) return s;
+                    const next = { ...s };
+                    if (pickupAt) next.pickupLocal = String(pickupAt).slice(0, 16);
+                    const occ = [...new Set(
+                      (Array.isArray(occFromCal) ? occFromCal : [])
+                        .map((d) => String(d || '').slice(0, 10))
+                        .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)),
+                    )].sort();
+                    if (occ.length) {
+                      next.installOccurrenceDates = occ;
+                      next.installYmd = occ[0];
+                      if (installAt) {
+                        const tm = String(installAt).match(/T(\d{2}:\d{2})/);
+                        if (tm) next.installTime = tm[1];
+                      }
+                    } else if (installAt) {
+                      const day = String(installAt).slice(0, 10);
+                      const tm = String(installAt).match(/T(\d{2}:\d{2})/);
+                      next.installYmd = day;
+                      next.installTime = tm ? tm[1] : (s.installTime || '14:00');
+                      next.installOccurrenceDates = day ? [day] : [];
+                    }
+                    return next;
+                  });
+                }}
+                onPickDate={(local) => {
+                  const day = String(local || '').slice(0, 10);
+                  const tm = String(local || '').match(/T(\d{2}:\d{2})/);
+                  if (!day) return;
+                  setSxScheduleEdit((s) => (s ? {
+                    ...s,
+                    installYmd: day,
+                    installTime: tm ? tm[1] : (s.installTime || '14:00'),
+                    installOccurrenceDates: [day],
+                    pickupLocal: s.pickupLocal || `${day}T08:00`,
+                  } : s));
+                }}
+                onClose={() => {}}
+              />
+            </div>
+            </div>
           </div>
         </div>
       )}
@@ -2675,7 +3293,7 @@ export default function LeadDetail() {
           onClick={() => { if (!addSxBusy) { setAddSxOpen(false); setAddSxErr(''); setAddSxTargets([]); } }}
         >
           <div
-            className="bg-white rounded-2xl shadow-xl max-w-4xl w-full max-h-[90vh] flex flex-col"
+            className="bg-white rounded-2xl shadow-xl max-w-6xl w-full max-h-[90vh] flex flex-col"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="p-6 pb-3 shrink-0">
@@ -2684,7 +3302,7 @@ export default function LeadDetail() {
                 <h3 className="text-lg font-bold text-gray-900">Thêm dự án SX</h3>
               </div>
               <p className="text-sm text-gray-600">
-                Tạo thêm thẻ Kanban tại xưởng khác (vd. tủ ở HCB khi đã có cửa ở Phúc Đạt). Ngày lắp/hoàn thành tuỳ chọn — gắn vào đúng dự án xưởng đó.
+                Tạo thêm thẻ Kanban tại xưởng khác (vd. tủ ở HCB khi đã có cửa ở Phúc Đạt). Có thể gắn ngày lắp, công ty VC/LĐ và thời gian lấy hàng — hệ thống tạo sự kiện dự kiến trên khối Sự kiện → Lắp đặt.
               </p>
             </div>
             <div className="px-6 flex-1 min-h-0 overflow-y-auto">
@@ -2695,6 +3313,8 @@ export default function LeadDetail() {
                 kind={parentSxLeadKind}
                 accent="teal"
                 showDates
+                showVcSetup
+                leadId={lead?.id || id}
                 disabled={addSxBusy}
                 onChange={(rows) => { setAddSxTargets(rows); setAddSxErr(''); }}
               />
@@ -4273,14 +4893,19 @@ export default function LeadDetail() {
       {/* Tạo đơn hàng phát sinh từ deal khách hàng */}
       <Modal
         open={showCreateOrderModal}
-        onClose={() => !createOrderSaving && setShowCreateOrderModal(false)}
+        onClose={() => {
+          if (createOrderSaving) return;
+          setShowCreateOrderModal(false);
+          setCreateOrderErr('');
+          setCreateOrderTargets([]);
+        }}
         title="Tạo đơn hàng phát sinh"
-        size="md"
+        size="full"
       >
         <div className="space-y-5">
           <p className="text-sm text-gray-600 leading-relaxed">
-            Tạo deal mới từ deal khách hàng này với tên đã chỉnh sửa.
-            Deal sẽ hiện ở cột đầu tab Khách hàng và giữ liên kết với deal nguồn.
+            Tạo deal mới từ deal khách hàng này. Chọn lại công ty Sản xuất và kế hoạch lắp đặt
+            (không kế thừa dự án SX của deal nguồn). Deal sẽ hiện ở cột đầu tab Khách hàng.
           </p>
 
           <div className="rounded-xl border border-teal-200 bg-teal-50/70 px-4 py-3.5 space-y-3">
@@ -4303,9 +4928,6 @@ export default function LeadDetail() {
                   ].filter(Boolean).join(' · ')}
                 </p>
               ) : null}
-              {lead?.project_id ? (
-                <p className="text-xs text-teal-800 pt-1">Đã gắn dự án SX</p>
-              ) : null}
             </div>
           </div>
 
@@ -4316,17 +4938,11 @@ export default function LeadDetail() {
             <input
               type="text"
               value={createOrderTitle}
-              onChange={(e) => setCreateOrderTitle(e.target.value)}
+              onChange={(e) => { setCreateOrderTitle(e.target.value); setCreateOrderErr(''); }}
               className="w-full h-11 px-3.5 border border-gray-200 rounded-xl text-sm font-medium outline-none focus:ring-2 focus:ring-teal-200 focus:border-teal-400"
               placeholder="VD: Phát sinh thêm cánh / phụ kiện…"
               autoFocus
               disabled={createOrderSaving}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  void submitCreateDealOrder();
-                }
-              }}
             />
           </div>
           <div>
@@ -4336,29 +4952,85 @@ export default function LeadDetail() {
             <textarea
               value={createOrderNotes}
               onChange={(e) => setCreateOrderNotes(e.target.value)}
-              rows={3}
+              rows={2}
               disabled={createOrderSaving}
-              className="w-full px-3.5 py-2.5 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-teal-200 focus:border-teal-400 resize-y min-h-[88px]"
+              className="w-full px-3.5 py-2.5 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-teal-200 focus:border-teal-400 resize-y min-h-[72px]"
               placeholder="Lý do phát sinh / phạm vi…"
             />
           </div>
+
+          <div className="border-t border-slate-100 pt-4">
+            <div className="flex items-center gap-2 mb-1">
+              <Building2 className="h-5 w-5 text-teal-600" />
+              <h4 className="text-sm font-bold text-gray-900">Công ty Sản xuất & kế hoạch lắp đặt</h4>
+            </div>
+            <p className="text-xs text-gray-500 mb-3">
+              Bắt buộc chọn lại xưởng (không dùng công ty SX của dự án gốc). Có thể gắn ngày lắp, công ty VC/LĐ và thời gian lấy hàng.
+            </p>
+            {parentSxHint && (
+              <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-100 rounded-lg px-2.5 py-1.5 mb-3">
+                {parentSxHint}
+              </p>
+            )}
+            <SxMultiTargetPicker
+              key={showCreateOrderModal ? 'create-order-sx' : 'create-order-sx-closed'}
+              companies={parentSxCompaniesForSelect}
+              leadTypeRow={parentSxLeadTypeRow}
+              kind={parentSxLeadKind}
+              accent="teal"
+              showDates
+              showVcSetup
+              leadId={lead?.id || id}
+              disabled={createOrderSaving}
+              initialRows={
+                createOrderTargets.length
+                  ? createOrderTargets
+                  : [{ companyId: '', workshopTypeId: '', deliveryDate: '' }]
+              }
+              onChange={(rows) => {
+                setCreateOrderTargets(rows);
+                setCreateOrderErr('');
+              }}
+            />
+            {createOrderErr && <p className="text-xs text-red-600 mt-3">{createOrderErr}</p>}
+            <label className="mt-4 flex items-start gap-2.5 rounded-xl border border-teal-200 bg-teal-50/60 px-3 py-2.5 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={sxPlanInfoConfirmed}
+                onChange={(e) => {
+                  setSxPlanInfoConfirmed(e.target.checked);
+                  if (e.target.checked) setCreateOrderErr('');
+                }}
+                className="mt-0.5 h-4 w-4 rounded border-teal-400 text-teal-600 focus:ring-teal-500"
+              />
+              <span className="text-xs text-teal-950 leading-snug">
+                <span className="font-bold">Tôi xác nhận</span> thông tin xưởng, ngày lắp đặt / lấy hàng và kế hoạch bên trên là đúng trước khi tạo deal + dự án SX.
+              </span>
+            </label>
+          </div>
+
           <div className="flex gap-3 pt-1">
             <button
               type="button"
               disabled={createOrderSaving}
-              onClick={() => setShowCreateOrderModal(false)}
+              onClick={() => {
+                setShowCreateOrderModal(false);
+                setCreateOrderErr('');
+                setCreateOrderTargets([]);
+                setSxPlanInfoConfirmed(false);
+              }}
               className="flex-1 h-11 border border-gray-200 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50 cursor-pointer disabled:opacity-50"
             >
               Hủy
             </button>
             <button
               type="button"
-              disabled={createOrderSaving || !String(createOrderTitle || '').trim()}
+              disabled={createOrderSaving || !String(createOrderTitle || '').trim() || !sxPlanInfoConfirmed}
               onClick={() => void submitCreateDealOrder()}
               className="flex-[1.4] h-11 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-sm font-semibold cursor-pointer disabled:opacity-50 inline-flex items-center justify-center gap-1.5 px-3"
             >
               <ShoppingCart className="h-4 w-4 shrink-0" />
-              {createOrderSaving ? 'Đang tạo…' : 'Tạo deal phát sinh'}
+              {createOrderSaving ? 'Đang tạo…' : 'Tạo deal + dự án SX'}
             </button>
           </div>
         </div>
@@ -4408,27 +5080,27 @@ export default function LeadDetail() {
       )}
 
       {dealStageWonPick && (
-        <div
-          className="fixed inset-0 bg-black/40 flex items-center justify-center z-[60] p-4"
-          onClick={() => {
+        <OverlayPortal
+          open
+          size="full"
+          onClose={() => {
             setDealStageWonPick(null);
             setDealStageWonErr('');
             setDealStageWonWorkTypeId('');
             setDealStageWonTargets([]);
             setDealStageWonDeliveryDate('');
+            setSxPlanInfoConfirmed(false);
           }}
         >
-          <div
-            className="bg-white rounded-2xl shadow-xl w-full max-w-4xl max-h-[92vh] flex flex-col"
-            onClick={(e) => e.stopPropagation()}
-          >
             <div className="px-6 pt-5 pb-3 border-b border-slate-100 shrink-0">
               <div className="flex items-center gap-2 mb-1">
                 <Building2 className="h-6 w-6 text-teal-600" />
-                <h3 className="text-lg font-bold text-gray-900">Chọn công ty Sản xuất</h3>
+                <h3 className="text-lg font-bold text-gray-900">
+                  Thiết lập kế hoạch sản xuất và vận chuyển lắp đặt
+                </h3>
               </div>
               <p className="text-sm text-gray-600">
-                Chuyển deal sang <strong>Thắng</strong> — thêm từng xưởng (công ty + phân loại). Ngày lắp đặt tuỳ chọn.
+                Chuyển deal sang <strong>Thắng</strong> — chọn xưởng (công ty + phân loại), ngày lắp / lấy hàng (VC/LĐ) và lịch sự kiện bên phải.
               </p>
               {parentSxHint && (
                 <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-100 rounded-lg px-2.5 py-1.5 mt-2">
@@ -4444,6 +5116,8 @@ export default function LeadDetail() {
                 kind={parentSxLeadKind}
                 accent="teal"
                 showDates
+                showVcSetup
+                leadId={lead?.id || id}
                 initialRows={
                   dealStageWonTargets.length
                     ? dealStageWonTargets
@@ -4462,6 +5136,20 @@ export default function LeadDetail() {
                 }}
               />
               {dealStageWonErr && <p className="text-xs text-red-600 mt-3">{dealStageWonErr}</p>}
+              <label className="mt-4 flex items-start gap-2.5 rounded-xl border border-teal-200 bg-teal-50/60 px-3 py-2.5 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={sxPlanInfoConfirmed}
+                  onChange={(e) => {
+                    setSxPlanInfoConfirmed(e.target.checked);
+                    if (e.target.checked) setDealStageWonErr('');
+                  }}
+                  className="mt-0.5 h-4 w-4 rounded border-teal-400 text-teal-600 focus:ring-teal-500"
+                />
+                <span className="text-xs text-teal-950 leading-snug">
+                  <span className="font-bold">Tôi xác nhận</span> thông tin xưởng, ngày lắp đặt / lấy hàng và lịch kế hoạch bên trên là đúng trước khi tiếp tục.
+                </span>
+              </label>
             </div>
             <div className="px-6 py-4 border-t border-slate-100 flex gap-2 shrink-0">
               <button
@@ -4473,45 +5161,46 @@ export default function LeadDetail() {
                   setDealStageWonWorkTypeId('');
                   setDealStageWonTargets([]);
                   setDealStageWonDeliveryDate('');
+                  setSxPlanInfoConfirmed(false);
                 }}
               >
                 Hủy
               </button>
               <button
                 type="button"
-                className="flex-[1.4] h-11 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-sm font-semibold"
+                disabled={!sxPlanInfoConfirmed}
+                className="flex-[1.4] h-11 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
                 onClick={() => confirmDealStageWonProduction()}
               >
                 Tiếp tục
               </button>
             </div>
-          </div>
-        </div>
+        </OverlayPortal>
       )}
 
       {pickProjectCompanyOpen && lead?.type === 'deal' && !lead?.project_id && (
-        <div
-          className="fixed inset-0 bg-black/40 flex items-center justify-center z-[60] p-4"
-          onClick={() => {
+        <OverlayPortal
+          open
+          size="full"
+          onClose={() => {
             setPickProjectCompanyOpen(false);
             projectCompanyPickRef.current = false;
             setPickProjectCompanyErr('');
             setPickProjectCompanyWorkTypeId('');
             setDealStageWonTargets([]);
             setPickProjectDeliveryDate('');
+            setSxPlanInfoConfirmed(false);
           }}
         >
-          <div
-            className="bg-white rounded-2xl shadow-xl w-full max-w-4xl max-h-[92vh] flex flex-col"
-            onClick={(e) => e.stopPropagation()}
-          >
             <div className="px-6 pt-5 pb-3 border-b border-slate-100 shrink-0">
               <div className="flex items-center gap-2 mb-1">
                 <Building2 className="h-6 w-6 text-amber-600" />
-                <h3 className="text-lg font-bold text-gray-900">Tạo dự án xưởng</h3>
+                <h3 className="text-lg font-bold text-gray-900">
+                  Thiết lập kế hoạch sản xuất và vận chuyển lắp đặt
+                </h3>
               </div>
               <p className="text-sm text-gray-600">
-                Deal đã <strong>Thắng</strong> nhưng chưa có dự án. Thêm từng xưởng (công ty + phân loại). Ngày lắp đặt tuỳ chọn.
+                Deal đã <strong>Thắng</strong> nhưng chưa có dự án — chọn xưởng, ngày lắp / lấy hàng (VC/LĐ) và lịch sự kiện bên phải.
               </p>
               {parentSxHint && (
                 <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-100 rounded-lg px-2.5 py-1.5 mt-2">
@@ -4527,6 +5216,8 @@ export default function LeadDetail() {
                 kind={parentSxLeadKind}
                 accent="amber"
                 showDates
+                showVcSetup
+                leadId={lead?.id || id}
                 initialRows={
                   dealStageWonTargets.length
                     ? dealStageWonTargets
@@ -4545,6 +5236,20 @@ export default function LeadDetail() {
                 }}
               />
               {pickProjectCompanyErr && <p className="text-xs text-red-600 mt-3">{pickProjectCompanyErr}</p>}
+              <label className="mt-4 flex items-start gap-2.5 rounded-xl border border-amber-200 bg-amber-50/60 px-3 py-2.5 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={sxPlanInfoConfirmed}
+                  onChange={(e) => {
+                    setSxPlanInfoConfirmed(e.target.checked);
+                    if (e.target.checked) setPickProjectCompanyErr('');
+                  }}
+                  className="mt-0.5 h-4 w-4 rounded border-amber-400 text-amber-600 focus:ring-amber-500"
+                />
+                <span className="text-xs text-amber-950 leading-snug">
+                  <span className="font-bold">Tôi xác nhận</span> thông tin xưởng, ngày lắp đặt / lấy hàng và lịch kế hoạch bên trên là đúng trước khi tạo dự án.
+                </span>
+              </label>
             </div>
             <div className="px-6 py-4 border-t border-slate-100 flex gap-2 shrink-0">
               <button
@@ -4557,20 +5262,21 @@ export default function LeadDetail() {
                   setPickProjectCompanyWorkTypeId('');
                   setDealStageWonTargets([]);
                   setPickProjectDeliveryDate('');
+                  setSxPlanInfoConfirmed(false);
                 }}
               >
                 Để sau
               </button>
               <button
                 type="button"
-                className="flex-[1.4] h-11 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-sm font-semibold"
+                disabled={!sxPlanInfoConfirmed}
+                className="flex-[1.4] h-11 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
                 onClick={() => submitPickProjectCompany()}
               >
                 Tạo dự án
               </button>
             </div>
-          </div>
-        </div>
+        </OverlayPortal>
       )}
 
       {reassignSxOpen && lead?.type === 'deal' && lead?.project_id && (
@@ -6617,14 +7323,14 @@ function LeadInfoPanel({
               onClick={() => { if (!sxAddBusy) { setSxAddOpen(false); setSxAddErr(''); } }}
             >
               <div
-                className="bg-white rounded-2xl shadow-xl w-full max-w-4xl max-h-[90vh] flex flex-col"
+                className="bg-white rounded-2xl shadow-xl w-full max-w-6xl max-h-[90vh] flex flex-col"
                 onClick={(e) => e.stopPropagation()}
               >
                 <div className="flex items-start justify-between gap-2 p-5 pb-3 shrink-0">
                   <div>
                     <h3 className="text-lg font-bold text-gray-900">Thêm công ty SX</h3>
                     <p className="text-xs text-gray-500 mt-1">
-                      Tạo thêm dự án xưởng cho deal (không ghi đè dự án chính). Ngày lắp/hoàn thành tuỳ chọn — gắn vào đúng dự án xưởng đó.
+                      Tạo thêm dự án xưởng cho deal (không ghi đè dự án chính). Có thể gắn ngày lắp, công ty VC/LĐ và thời gian lấy hàng — theo từng dự án xưởng.
                     </p>
                   </div>
                   <button type="button" disabled={sxAddBusy} onClick={() => { setSxAddOpen(false); setSxAddErr(''); }} className="p-1 cursor-pointer">
@@ -6639,6 +7345,8 @@ function LeadInfoPanel({
                     kind={sxLeadKind}
                     accent="orange"
                     showDates
+                    showVcSetup
+                    leadId={lead?.id}
                     disabled={sxAddBusy}
                     onChange={(rows) => { setSxAddTargets(rows); setSxAddErr(''); }}
                   />
@@ -6900,27 +7608,149 @@ function LeadInfoPanel({
 function VcBookingInfoBlock({ lead }) {
   const p = lead?.linked_project;
   const pickupIso = p?.pickup_at;
-  if (!pickupIso) return null;
-  const d = new Date(pickupIso);
-  const valid = !Number.isNaN(d.getTime());
-  const label = valid
-    ? d.toLocaleString('vi-VN', {
+  const installIso = p?.install_date || p?.delivery_date;
+  if (!pickupIso && !installIso) return null;
+  const fmt = (iso) => {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '—';
+    return d.toLocaleString('vi-VN', {
       timeZone: 'Asia/Ho_Chi_Minh',
       hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric',
-    })
-    : '—';
+    });
+  };
   return (
     <div className="flex items-start gap-2 py-2 px-3 rounded-lg border bg-sky-50 border-sky-200">
       <span className="text-base mt-0.5 shrink-0">🚚</span>
       <div className="flex-1 min-w-0">
         <p className="text-[10px] font-bold uppercase tracking-wider mb-0.5 text-sky-700">
-          Đặt vận chuyển
+          Lịch VC / LĐ dự kiến
         </p>
-        <p className="text-sm font-semibold text-sky-900">Đi lấy: {label}</p>
+        {pickupIso ? (
+          <p className="text-sm font-semibold text-sky-900">Đi lấy: {fmt(pickupIso)}</p>
+        ) : null}
+        {installIso ? (
+          <p className={`text-sm font-semibold text-sky-900 ${pickupIso ? 'mt-0.5' : ''}`}>
+            Lắp đặt: {fmt(installIso)}
+          </p>
+        ) : null}
         {p?.pickup_notes && (
           <p className="text-[11px] text-sky-700/90 mt-1 leading-snug break-words">Ghi chú: {p.pickup_notes}</p>
         )}
       </div>
+    </div>
+  );
+}
+
+/** Nhãn tiếng Việt cho module key của bước trong luồng. */
+const FLOW_MODULE_LABELS = {
+  crm: 'CRM',
+  projects: 'Dự án',
+  production: 'Sản xuất',
+  logistics: 'Lắp đặt',
+};
+
+function flowStepKeys(flow) {
+  return (flow?.steps || [])
+    .map((s) => String(s.module_key || s.resolved_module_key || '').toLowerCase())
+    .filter(Boolean);
+}
+
+function flowModuleLabel(key, flow) {
+  if (FLOW_MODULE_LABELS[key]) return FLOW_MODULE_LABELS[key];
+  const step = (flow?.steps || []).find((s) => String(s.module_key || s.resolved_module_key || '').toLowerCase() === key);
+  return step?.division?.short_name || step?.division?.name || key;
+}
+
+/** Dropdown chọn luồng khi tạo dự án từ Lead/Deal — hiển thị chuỗi module của luồng. */
+function FlowPickerField({ flows, value, onChange, onFlowCreated }) {
+  const [composing, setComposing] = useState(false);
+  const activeFlows = (flows || []).filter((f) => f.is_active !== false);
+
+  const composer = (
+    <FlowModuleComposer
+      composeOnly
+      label="Tự ghép luồng theo module"
+      startModule="crm"
+      value={value || ''}
+      onChange={(id, flow) => {
+        if (flow) onFlowCreated?.(flow);
+        onChange(id);
+        setComposing(false);
+      }}
+    />
+  );
+
+  if (activeFlows.length === 0) {
+    return (
+      <div className="mt-4 space-y-2">
+        <div className="text-[11px] text-amber-800 bg-amber-50 border border-amber-100 rounded-lg px-2.5 py-2">
+          Chưa có luồng nào đang bật — ghép nhanh một luồng bên dưới hoặc vào <b>Dự án và công việc → Setup luồng</b>.
+        </div>
+        {composer}
+      </div>
+    );
+  }
+
+  const selected = activeFlows.find((f) => String(f.id) === String(value)) || null;
+  const selectedKeys = flowStepKeys(selected);
+  const missingProduction = selected && !selectedKeys.includes('production');
+
+  return (
+    <div className="mt-4">
+      <div className="flex items-center justify-between gap-2 mb-1">
+        <label className="block text-xs font-medium text-gray-700">
+          Luồng quy trình <span className="text-red-600">*</span>
+        </label>
+        <button
+          type="button"
+          onClick={() => setComposing((v) => !v)}
+          className="text-[11px] font-semibold text-[#296DFF] hover:underline cursor-pointer"
+        >
+          {composing ? 'Đóng' : 'Tự ghép module'}
+        </button>
+      </div>
+      {composing && <div className="mb-2">{composer}</div>}
+      <select
+        value={value || ''}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full h-11 px-3 border border-gray-200 rounded-xl text-sm bg-white"
+      >
+        <option value="">— Chọn luồng —</option>
+        {activeFlows.map((f) => {
+          const keys = flowStepKeys(f);
+          const chain = keys.map((k) => flowModuleLabel(k, f)).join(' → ');
+          return (
+            <option key={f.id} value={f.id}>
+              {f.name}{chain ? ` — ${chain}` : ''}
+            </option>
+          );
+        })}
+      </select>
+
+      {selected && selectedKeys.length > 0 && (
+        <div className="flex items-center gap-1 flex-wrap mt-2">
+          {selectedKeys.map((k, i) => (
+            <span key={`${k}-${i}`} className="flex items-center gap-1">
+              {i > 0 && <span className="text-gray-300 text-xs">→</span>}
+              <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
+                i === 0 ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'
+              }`}>
+                {flowModuleLabel(k, selected)}{i === 0 ? ' · bắt đầu' : ''}
+              </span>
+            </span>
+          ))}
+        </div>
+      )}
+
+      {missingProduction ? (
+        <p className="text-[10px] text-amber-700 mt-1.5">
+          Luồng này chưa có bước <b>Sản xuất</b> — không tạo được dự án xưởng. Chọn luồng khác hoặc thêm node Sản xuất trong Setup luồng.
+        </p>
+      ) : (
+        <p className="text-[10px] text-gray-500 mt-1.5">
+          Node đầu tiên của luồng quyết định module bắt đầu; các bước sau dùng cho bàn giao.
+        </p>
+      )}
     </div>
   );
 }

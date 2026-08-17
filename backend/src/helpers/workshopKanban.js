@@ -812,48 +812,37 @@ const ROLE_NAME_PATTERNS = {
 async function getCrmStageByRole(role, pipelineId = null) {
   if (!role) return null;
 
-  // ── Ưu tiên: tìm theo sync_role + pipeline_id ──
-  if (pipelineId) {
-    const { data: byRoleInPipe } = await supabase
+  // Trả cột thuộc pipeline khác sẽ làm deal biến mất khỏi Kanban (không có cột nào khớp stage_id),
+  // nên khi đã biết pipelineId thì mọi bước tìm kiếm đều phải khoá trong pipeline đó.
+  const baseQuery = () => {
+    let q = supabase
       .from('crm_pipeline_stages')
       .select('id, name')
       .eq('pipeline_type', 'deal')
-      .eq('is_active', true)
-      .eq('sync_role', role)
-      .eq('pipeline_id', pipelineId)
-      .limit(1)
-      .maybeSingle();
-    if (byRoleInPipe?.id) return byRoleInPipe.id;
-  }
+      .eq('is_active', true);
+    if (pipelineId) q = q.eq('pipeline_id', pipelineId);
+    return q;
+  };
 
-  // ── Fallback 1: bất kỳ pipeline nào có sync_role ──
-  const { data: byRole } = await supabase
-    .from('crm_pipeline_stages')
-    .select('id, name')
-    .eq('pipeline_type', 'deal')
-    .eq('is_active', true)
+  // ── Ưu tiên: tìm theo sync_role ──
+  const { data: byRole } = await baseQuery()
     .eq('sync_role', role)
     .limit(1)
     .maybeSingle();
   if (byRole?.id) return byRole.id;
 
-  // ── Fallback 2: tìm theo pattern tên nếu chưa cấu hình ──
+  // ── Fallback: tìm theo pattern tên nếu chưa cấu hình sync_role ──
   const patterns = ROLE_NAME_PATTERNS[role];
   if (!patterns) return null;
 
   for (const pattern of patterns) {
-    let q = supabase
-      .from('crm_pipeline_stages')
-      .select('id, name')
-      .eq('pipeline_type', 'deal')
-      .eq('is_active', true)
+    const { data: byName } = await baseQuery()
       .ilike('name', pattern)
       .order('order_index')
-      .limit(1);
-    if (pipelineId) q = q.eq('pipeline_id', pipelineId);
-    const { data: byName } = await q.maybeSingle();
+      .limit(1)
+      .maybeSingle();
     if (byName?.id) {
-      console.log(`[workshopKanban] getCrmStageByRole('${role}') fallback by name: "${byName.name}" (id=${byName.id}). Hãy cấu hình sync_role='${role}' trong Pipeline Settings để tránh fallback.`);
+      console.log(`[workshopKanban] getCrmStageByRole('${role}'${pipelineId ? `, pipeline=${pipelineId}` : ''}) fallback by name: "${byName.name}" (id=${byName.id}). Hãy cấu hình sync_role='${role}' trong Pipeline Settings để tránh fallback.`);
       return byName.id;
     }
   }

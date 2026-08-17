@@ -7,6 +7,7 @@ const { addEcosystemUnitTenantFilter, companyInTenantContext } = require('../hel
 const {
   KNOWN_MODULE_KEYS,
   buildMyModuleAccessMap,
+  getRestrictedDivisionIdsForModule,
   getModulesForCompany,
   invalidateEcosystemModuleScopeCache,
   isKnownModuleKeyAsync,
@@ -895,6 +896,52 @@ r.get('/company-modules', async (req, res) => {
     res.json({ modules });
   } catch (e) {
     console.error('GET /ecosystem/company-modules', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** Danh sách công ty thuộc phạm vi một module — dùng cho sơ đồ luồng module. */
+r.get('/module-companies', async (req, res) => {
+  try {
+    const moduleKey = String(req.query.module_key || '').trim();
+    if (!moduleKey) return res.status(400).json({ error: 'Thiếu module_key' });
+    if (!(await isKnownModuleKeyAsync(moduleKey))) {
+      return res.status(400).json({ error: 'Module không hợp lệ' });
+    }
+
+    const restricted = await getRestrictedDivisionIdsForModule(moduleKey);
+    const [{ data: companies, error: companyError }, { data: links, error: linkError }] = await Promise.all([
+      supabase.from('companies').select('id,name,short_name,division_unit_id').order('name'),
+      supabase.from('company_division_units').select('company_id,division_unit_id'),
+    ]);
+    if (companyError) throw companyError;
+    // Bảng junction có thể chưa tồn tại ở DB cũ; primary division_unit_id vẫn dùng được.
+    const safeLinks = linkError ? [] : (links || []);
+    const divisionsByCompany = new Map();
+    safeLinks.forEach((row) => {
+      const companyId = row.company_id && String(row.company_id);
+      const divisionId = row.division_unit_id && String(row.division_unit_id);
+      if (!companyId || !divisionId) return;
+      if (!divisionsByCompany.has(companyId)) divisionsByCompany.set(companyId, new Set());
+      divisionsByCompany.get(companyId).add(divisionId);
+    });
+
+    const filtered = (companies || []).filter((company) => {
+      if (!companyInTenantContext(req, company.id)) return false;
+      // Không cấu hình phạm vi = module dùng chung cho mọi công ty.
+      if (restricted == null) return true;
+      const divisionIds = divisionsByCompany.get(String(company.id)) || new Set();
+      if (company.division_unit_id) divisionIds.add(String(company.division_unit_id));
+      return [...divisionIds].some((id) => restricted.has(id));
+    }).map((company) => ({
+      id: String(company.id),
+      name: String(company.name || company.short_name || 'Công ty').trim(),
+    }));
+
+    res.set('Cache-Control', 'private, no-store');
+    res.json({ module_key: moduleKey, companies: filtered });
+  } catch (e) {
+    console.error('GET /ecosystem/module-companies', e);
     res.status(500).json({ error: e.message });
   }
 });

@@ -5,7 +5,7 @@ const {
   fetchProductionTemplatesForPipelineStage,
 } = require('./workshopTaskTemplateWorkshopType');
 const { syncProductionLeadTasksToAssignments } = require('./crmTaskAssignmentArtifactSync');
-const { getCrmVcDeliveryStageId } = require('./workshopKanban');
+const { getCrmVcDeliveryStageId, getCrmStageByRole } = require('./workshopKanban');
 const { validateProductionCompanyId } = require('./productionCompanyGate');
 const { loadProductionHandoverMaps, resolveSxAssigneesForTemplateItem, resolveSxAssigneeForTemplateItem } = require('./productionHandoverSettings');
 const {
@@ -367,7 +367,8 @@ async function createAdditionalCustomerDeal({
     region_id: parentDeal.region_id || null,
     assigned_to: parentDeal.assigned_to || userId,
     lead_owner_id: parentDeal.lead_owner_id || parentDeal.assigned_to || userId,
-    project_id: parentDeal.project_id || null,
+    // Không kế thừa dự án/công ty SX của deal gốc — người chịu trách nhiệm chọn lại khi tạo phát sinh.
+    project_id: null,
     phone: parentDeal.phone || null,
     install_address: parentDeal.install_address || null,
     lead_type_id: parentDeal.lead_type_id || null,
@@ -1122,7 +1123,15 @@ async function pushOrderToLogistics({ orderId, projectId, userId }) {
   }
   if (cErr) throw cErr;
 
-  const vcDeliveryStageId = await getCrmVcDeliveryStageId();
+  // Cột VC phải thuộc đúng pipeline của deal, nếu không deal sẽ biến mất khỏi CRM Kanban.
+  const { data: fulfillmentLead } = await supabase
+    .from('crm_leads')
+    .select('pipeline_id')
+    .eq('id', order.fulfillment_lead_id)
+    .maybeSingle();
+  const vcDeliveryStageId = fulfillmentLead?.pipeline_id
+    ? await getCrmStageByRole('vc_delivery', fulfillmentLead.pipeline_id)
+    : await getCrmVcDeliveryStageId();
   const leadUpd = {
     project_id: childProject.id,
     ...(vcStageId ? { vc_pipeline_stage_id: vcStageId } : {}),

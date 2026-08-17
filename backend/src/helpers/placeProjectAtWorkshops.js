@@ -183,6 +183,271 @@ async function applyProjectDatesPatch(projectIds, patch) {
 }
 
 /**
+ * Thêm NV roster xưởng nhận vào tab Thành viên deal nguồn (+ bình luận @mention).
+ * Không lọc chặt role — toàn bộ project_production_staff xưởng nhận đều vào thành viên
+ * (giống ý «CRM thêm SX»: đối tác xưởng phải thấy deal).
+ */
+async function syncWorkshopPlacementMembersToSourceDeal({
+  req = null,
+  user = null,
+  sourceProjectId,
+  deal = null,
+  created = null,
+  postComment = false,
+} = {}) {
+  if (!sourceProjectId) return { members_added: 0, comment: null, mention_ids: [] };
+
+  const userId = user?.userId || user?.id || null;
+  const {
+    getDefaultStaffForType,
+    mergeDealLeadMembers,
+  } = require('./productionWorkshopTypeStaff');
+  const { notifyMultiple } = require('./notifications');
+  const { postSxTransferMentionComment } = require('./dealCommentNotifications');
+
+  let placements = Array.isArray(created) ? created : null;
+  if (!placements) {
+    const { data: rows, error } = await supabase
+      .from('project_workshop_placements')
+      .select(`
+        id, target_project_id, target_company_id, workshop_type_id,
+        target_project:projects!project_workshop_placements_target_project_id_fkey(id, code, name),
+        target_company:companies!project_workshop_placements_target_company_id_fkey(id, name, short_name)
+      `)
+      .eq('source_project_id', sourceProjectId);
+    if (error) {
+      console.warn('[place-at-workshops] list for sync:', error.message);
+      return { members_added: 0, comment: null, mention_ids: [] };
+    }
+    placements = (rows || []).map((r) => ({
+      project_id: r.target_project_id,
+      target_project_id: r.target_project_id,
+      target_company_id: r.target_company_id,
+      workshop_type_id: r.workshop_type_id,
+      project_code: r.target_project?.code || null,
+      company_name: r.target_company?.short_name || r.target_company?.name || null,
+    }));
+  }
+  if (!placements.length) return { members_added: 0, comment: null, mention_ids: [] };
+
+  // Chỉ NV trong setup phân loại xưởng nhận — không lấy cả phòng SX / fallback.
+  const mentionIds = new Set();
+  for (const row of placements) {
+    const companyId = row.target_company_id || row.company_id;
+    const typeId = row.workshop_type_id;
+    if (!companyId || !typeId) continue;
+    try {
+      const { userIds } = await getDefaultStaffForType(companyId, typeId, { allowFallback: false });
+      for (const sid of userIds || []) {
+        if (!sid) continue;
+        if (userId && String(sid) === String(userId)) continue;
+        mentionIds.add(String(sid));
+      }
+    } catch (e) {
+      console.warn('[place-at-workshops] setup staff:', e.message);
+    }
+  }
+  if (!mentionIds.size) {
+    return {
+      members_added: 0,
+      comment: null,
+      mention_ids: [],
+      skipped_no_setup: true,
+    };
+  }
+
+  let sourceDeal = deal;
+  if (!sourceDeal?.id) {
+    try {
+      const { data: byProject } = await supabase
+        .from('crm_leads')
+        .select('id, title, company_id')
+        .eq('project_id', sourceProjectId)
+        .eq('type', 'deal')
+        .order('created_at', { ascending: true })
+        .limit(1)
+        .maybeSingle();
+      sourceDeal = byProject || null;
+      if (!sourceDeal) {
+        const { data: link } = await supabase
+          .from('crm_deal_projects')
+          .select('deal_id')
+          .eq('project_id', sourceProjectId)
+          .limit(1)
+          .maybeSingle();
+        if (link?.deal_id) {
+          const { data: d } = await supabase
+            .from('crm_leads')
+            .select('id, title, company_id')
+            .eq('id', link.deal_id)
+            .maybeSingle();
+          sourceDeal = d || null;
+        }
+      }
+    } catch (e) {
+      console.warn('[place-at-workshops] load deals:', e.message);
+    }
+  }
+  if (!sourceDeal?.id) {
+    return { members_added: 0, comment: null, mention_ids: [...mentionIds], error: 'no_deal' };
+  }
+
+  // Ghi thẳng lead_members — không qua filterUserIdsEligible (admin xưởng / staff vẫn cần thấy deal).
+  let membersAdded = 0;
+  try {
+    const r = await mergeDealLeadMembers({
+      dealId: sourceDeal.id,
+      userIds: [...mentionIds],
+      addedBy: userId,
+    });
+    membersAdded = r?.added || 0;
+  } catch (e) {
+    console.warn('[place-at-workshops] merge members:', e.message);
+  }
+
+  // Người gửi bình luận: user hiện tại → created_by bản đặt → người phụ trách deal.
+  let senderId = userId || null;
+  if (!senderId) {
+    try {
+      const { data: placeRow } = await supabase
+        .from('project_workshop_placements')
+        .select('created_by')
+        .eq('source_project_id', sourceProjectId)
+        .not('created_by', 'is', null)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (placeRow?.created_by) senderId = String(placeRow.created_by);
+    } catch (_) { /* optional */ }
+  }
+  if (!senderId) {
+    try {
+      const { data: leadRow } = await supabase
+        .from('crm_leads')
+        .select('assigned_to, lead_owner_id')
+        .eq('id', sourceDeal.id)
+        .maybeSingle();
+      senderId = leadRow?.assigned_to || leadRow?.lead_owner_id || null;
+    } catch (_) { /* optional */ }
+  }
+
+  let comment = null;
+  if (postComment && req && senderId && mentionIds.size) {
+    try {
+      const workshopLabel = [...new Set(
+        placements.map((c) => c.company_name).filter(Boolean),
+      )].join(', ');
+      const projectCode = placements.map((c) => c.project_code).filter(Boolean).join(', ');
+      comment = await postSxTransferMentionComment(req, notifyMultiple, {
+        dealId: sourceDeal.id,
+        projectId: sourceProjectId,
+        senderId: String(senderId),
+        mentionUserIds: [...mentionIds],
+        projectCode,
+        dealTitle: sourceDeal.title || '',
+        workshopLabel,
+        mode: 'workshop_place',
+      });
+    } catch (e) {
+      console.warn('[place-at-workshops] mention comment:', e.message);
+    }
+  }
+
+  return {
+    members_added: membersAdded,
+    comment,
+    mention_ids: [...mentionIds],
+    deal_id: sourceDeal.id,
+    sender_id: senderId || null,
+  };
+}
+
+/**
+ * Giống CRM → SX: thêm NV xưởng nhận vào thành viên deal nguồn + bình luận thông báo.
+ */
+async function notifySourceDealOfWorkshopPlacement({
+  req,
+  user,
+  source,
+  deal,
+  created = [],
+}) {
+  if (!req || !created.length || !source?.id) return { members_added: 0, comment: null };
+
+  const result = await syncWorkshopPlacementMembersToSourceDeal({
+    req,
+    user,
+    sourceProjectId: source.id,
+    deal,
+    created,
+    postComment: true,
+  });
+
+  // Không có deal CRM — bình luận trên dự án nguồn.
+  if (result.error === 'no_deal' && result.mention_ids?.length) {
+    const userId = user?.userId || user?.id;
+    const { notifyMultiple } = require('./notifications');
+    try {
+      const { data: users } = await supabase
+        .from('users')
+        .select('id, full_name')
+        .in('id', result.mention_ids);
+      const labels = (users || [])
+        .map((u) => String(u.full_name || '').trim())
+        .filter(Boolean)
+        .map((n) => `@${n}`);
+      const workshopLabel = [...new Set(created.map((c) => c.company_name).filter(Boolean))].join(', ');
+      const codes = created.map((c) => c.project_code).filter(Boolean).join(', ');
+      const { data: senderRow } = await supabase
+        .from('users')
+        .select('full_name')
+        .eq('id', userId)
+        .maybeSingle();
+      const senderName = senderRow?.full_name || user?.fullName || 'Hệ thống';
+      const body = labels.length
+        ? `🏭 ${senderName} đã đặt xưởng${workshopLabel ? ` (${workshopLabel})` : ''}${codes ? ` · ${codes}` : ''}. ${labels.join(' ')} — vui lòng tiếp nhận dự án gia công.`
+        : `🏭 ${senderName} đã đặt xưởng${workshopLabel ? ` (${workshopLabel})` : ''}${codes ? ` · ${codes}` : ''}.`;
+
+      const { data: cmt, error: cmtErr } = await supabase
+        .from('project_comments')
+        .insert({ project_id: source.id, user_id: userId, content: body })
+        .select('id, project_id, user_id, content, created_at')
+        .single();
+      if (cmtErr) {
+        console.warn('[place-at-workshops] project comment:', cmtErr.message);
+      } else {
+        result.comment = cmt;
+        const io = req.app?.get?.('io');
+        if (io) {
+          io.to(`project:${source.id}`).emit('project:comment', {
+            project_id: source.id,
+            comment: cmt,
+          });
+        }
+        await notifyMultiple(
+          req,
+          result.mention_ids,
+          'comment_mention',
+          '🏭 Đặt xưởng — được nhắc',
+          body.slice(0, 180),
+          'project',
+          source.id,
+          {
+            ecosystem_module_key: 'production',
+            project_id: String(source.id),
+            mentioned: true,
+          },
+        );
+      }
+    } catch (e) {
+      console.warn('[place-at-workshops] project notify:', e.message);
+    }
+  }
+
+  return result;
+}
+
+/**
  * Đổi ngày lắp / hoàn thiện trên 1 project → ghi cùng bộ ngày sang
  * project nguồn, các bản đặt xưởng, và dòng project_workshop_placements.
  */
@@ -365,6 +630,8 @@ async function placeProjectAtWorkshops(opts) {
       ].filter(Boolean).join('\n').slice(0, 2000),
       externalCompanyId: source.company_id,
       externalCompanyName: coCheck.company.short_name || coCheck.company.name,
+      // Chỉ NV trong setup phân loại xưởng — không fallback cả phòng SX.
+      staffAllowFallback: false,
     });
 
     if (!intake.ok) {
@@ -428,22 +695,93 @@ async function placeProjectAtWorkshops(opts) {
     };
   }
 
+  let notifyMeta = { members_added: 0, comment: null };
+  try {
+    notifyMeta = await notifySourceDealOfWorkshopPlacement({
+      req,
+      user,
+      source,
+      deal,
+      created,
+    });
+  } catch (e) {
+    console.warn('[place-at-workshops] notify/members:', e.message);
+  }
+
   return {
     ok: true,
     created,
     errors: errors.length ? errors : undefined,
     partial: errors.length > 0,
+    members_added: notifyMeta?.members_added || 0,
+    notified: !!notifyMeta?.comment,
   };
 }
 
-async function listWorkshopPlacementsForProject(projectId) {
+/** List + đồng bộ thành viên xưởng nhận → deal nguồn (backfill bản đặt cũ). */
+async function listWorkshopPlacementsForProject(projectId, opts = {}) {
+  const data = await listWorkshopPlacementsRaw(projectId);
+  let membersSynced = 0;
+  let commentPosted = false;
+  if ((data.placed || []).length && opts.syncMembers !== false) {
+    try {
+      // Backfill bình luận nếu deal chưa có dòng «đã đặt xưởng».
+      let needComment = false;
+      try {
+        const { data: deals } = await supabase
+          .from('crm_leads')
+          .select('id')
+          .eq('project_id', projectId)
+          .eq('type', 'deal')
+          .limit(1);
+        let dealId = deals?.[0]?.id || null;
+        if (!dealId) {
+          const { data: link } = await supabase
+            .from('crm_deal_projects')
+            .select('deal_id')
+            .eq('project_id', projectId)
+            .limit(1)
+            .maybeSingle();
+          dealId = link?.deal_id || null;
+        }
+        if (dealId) {
+          const { data: existing } = await supabase
+            .from('crm_lead_comments')
+            .select('id')
+            .eq('lead_id', dealId)
+            .ilike('body', '%đã đặt xưởng%')
+            .limit(1);
+          needComment = !(existing && existing.length);
+        }
+      } catch (_) {
+        needComment = false;
+      }
+
+      const sync = await syncWorkshopPlacementMembersToSourceDeal({
+        req: opts.req || null,
+        user: opts.user || null,
+        sourceProjectId: projectId,
+        postComment: needComment && !!(opts.req || opts.user),
+      });
+      membersSynced = sync?.members_added || 0;
+      commentPosted = !!sync?.comment;
+    } catch (e) {
+      console.warn('[place-at-workshops] sync on list:', e.message);
+    }
+  }
+  return { ...data, members_synced: membersSynced, comment_posted: commentPosted };
+}
+
+async function listWorkshopPlacementsRaw(projectId) {
   const [{ data: asSource, error: srcErr }, { data: asTarget, error: tgtErr }] = await Promise.all([
     supabase
       .from('project_workshop_placements')
       .select(`
         id, source_project_id, target_project_id, target_company_id, workshop_type_id,
         delivery_date, production_finish_date, created_at, created_by,
-        target_project:projects!project_workshop_placements_target_project_id_fkey(id, code, name, company_id, workshop_type_id),
+        target_project:projects!project_workshop_placements_target_project_id_fkey(
+          id, code, name, company_id, workshop_type_id, production_person_id
+        ),
         target_company:companies!project_workshop_placements_target_company_id_fkey(id, name, short_name),
         workshop_type:workshop_project_types(id, name)
       `)
@@ -466,8 +804,50 @@ async function listWorkshopPlacementsForProject(projectId) {
   if (srcErr) throw srcErr;
   if (tgtErr) throw tgtErr;
 
+  const placed = asSource || [];
+  const { getDefaultStaffForType } = require('./productionWorkshopTypeStaff');
+  const staffByProject = {};
+  for (const row of placed) {
+    const pid = String(row.target_project_id || '');
+    const companyId = row.target_company_id;
+    const typeId = row.workshop_type_id;
+    if (!pid || !companyId || !typeId) {
+      staffByProject[pid] = [];
+      continue;
+    }
+    try {
+      const { userIds, primaryUserId } = await getDefaultStaffForType(companyId, typeId, {
+        allowFallback: false,
+      });
+      if (!userIds.length) {
+        staffByProject[pid] = [];
+        continue;
+      }
+      const { data: users } = await supabase
+        .from('users')
+        .select('id, full_name, avatar')
+        .in('id', userIds);
+      const byId = new Map((users || []).map((u) => [String(u.id), u]));
+      staffByProject[pid] = userIds
+        .map((uid) => {
+          const u = byId.get(String(uid));
+          if (!u) return null;
+          return {
+            ...u,
+            is_primary: primaryUserId ? String(uid) === String(primaryUserId) : false,
+          };
+        })
+        .filter(Boolean);
+    } catch (_) {
+      staffByProject[pid] = [];
+    }
+  }
+
   return {
-    placed: asSource || [],
+    placed: placed.map((row) => ({
+      ...row,
+      staff: staffByProject[String(row.target_project_id)] || [],
+    })),
     received_from: (asTarget || []).map((row) => ({
       ...row,
       source_company: row.source_project?.company || null,
@@ -479,6 +859,8 @@ module.exports = {
   placeProjectAtWorkshops,
   listWorkshopPlacementsForProject,
   syncPlacementFamilyDates,
+  syncWorkshopPlacementMembersToSourceDeal,
   canPlaceFromSource,
   normalizeTargets,
+  notifySourceDealOfWorkshopPlacement,
 };

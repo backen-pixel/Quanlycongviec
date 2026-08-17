@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
 import { FileUploadButton } from '../components/FileUpload';
 import EmployeePicker from '../components/EmployeePicker';
+import FlowModuleComposer from '../components/FlowModuleComposer';
 import {
   Plus, ChevronDown, ChevronRight, X, CheckSquare, User, 
   FileText, Save, AlertCircle, MapPin, DollarSign, Flag, Building2, GitBranch, Layers, ListChecks
@@ -60,8 +61,9 @@ export default function CreateProject() {
       api.get('/flows').then(r => {
         const list = r.data.flows || [];
         setFlows(list);
-        const def = list.find(f => f.is_default);
-        if (def) selectFlow(def);
+        // Không auto «mặc định» — user chọn luồng (hoặc preselect luồng đang bật đầu tiên nếu chỉ có 1)
+        const active = list.filter((f) => f.is_active !== false);
+        if (active.length === 1) selectFlow(active[0]);
         flowLoaded = true;
       }).catch(() => setFlows([])),
     ]);
@@ -690,9 +692,9 @@ export default function CreateProject() {
                   >
                     <p className="font-semibold text-sm" style={{ color: '#000000' }}>{flow.name}</p>
                     <p className="text-xs mt-1" style={{ color: '#4b5563' }}>{flow.description || 'Luồng sản xuất'}</p>
-                    {flow.is_default && (
-                      <span className="inline-block text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded mt-2">
-                        ⭐ Mặc định
+                    {flow.is_active === false && (
+                      <span className="inline-block text-xs bg-slate-100 text-slate-500 px-2 py-0.5 rounded mt-2">
+                        Đã tắt
                       </span>
                     )}
                   </button>
@@ -703,6 +705,19 @@ export default function CreateProject() {
                   <AlertCircle className="h-4 w-4" /> {errors.flow}
                 </div>
               )}
+
+              <div className="mt-4">
+                <FlowModuleComposer
+                  composeOnly
+                  label="Hoặc tự ghép luồng theo module"
+                  value={selectedFlow?.id || ''}
+                  onChange={(id, flow) => {
+                    if (!flow) return;
+                    setFlows((prev) => (prev.some((f) => f.id === flow.id) ? prev : [...prev, flow]));
+                    selectFlow(flow);
+                  }}
+                />
+              </div>
             </div>
 
             {/* Flow Steps with Tasks & Assignees */}

@@ -1192,6 +1192,7 @@ r.post('/', requirePermission('projects', 'create'), async (req, res) => {
       installation_person_id: b.installation_person_id || null,
       care_person_id: b.care_person_id || null,
       workshop_type_id: b.workshop_type_id || null,
+      flow_id: b.flow_id || null,
       quotation_files: Array.isArray(b.quotation_files) ? b.quotation_files : [],
       consult_date: new Date().toISOString(),
       ...(logisticsCompanyIdOnCreate ? { logistics_company_id: logisticsCompanyIdOnCreate } : {}),
@@ -1240,6 +1241,7 @@ r.post('/', requirePermission('projects', 'create'), async (req, res) => {
           sales_person_id: b.sales_person_id || null,
           designer_id: b.designer_id || null,
           project_manager_id: b.project_manager_id || null,
+          flow_id: b.flow_id || null,
           consult_date: new Date().toISOString(),
           ...(vcIntakeColId ? { vc_kanban_column_id: vcIntakeColId } : {}),
         }).select(projectSelect).single();
@@ -1903,11 +1905,11 @@ r.put('/:id', requireProjectEditOrSxKanbanWorkshopType(), async (req, res) => {
     if (!(await assertProjectAccessible(req, res, req.params.id, { operation: 'WRITE' }))) return;
     const b = req.body;
     const update = { updated_at: new Date().toISOString() };
-    const fields = ['name','description','status','customer_id','kitchen_type','material','install_address','estimated_value','production_value','deposit_amount','collected_amount','final_value','priority','sales_person_id','designer_id','project_manager_id','design_deadline','production_start_date','install_date','pickup_at','pickup_notes','consulting_person_id','design_person_id','quotation_person_id','contract_person_id','production_person_id','shipping_person_id','installation_person_id','care_person_id','quotation_files','deadline','notes','supervisor_id','production_deadline','production_note','workshop_type_id','order_date','delivery_date','production_finish_date'];
+    const fields = ['name','description','status','customer_id','kitchen_type','material','install_address','estimated_value','production_value','deposit_amount','collected_amount','final_value','priority','sales_person_id','designer_id','project_manager_id','design_deadline','production_start_date','install_date','pickup_at','pickup_notes','consulting_person_id','design_person_id','quotation_person_id','contract_person_id','production_person_id','shipping_person_id','installation_person_id','care_person_id','quotation_files','deadline','notes','supervisor_id','production_deadline','production_note','workshop_type_id','order_date','delivery_date','production_finish_date','logistics_company_id'];
     const dateFields = ['deadline', 'design_deadline', 'production_start_date', 'install_date', 'pickup_at', 'production_deadline', 'order_date', 'delivery_date', 'production_finish_date'];
     fields.forEach(f => { if (b[f] !== undefined) update[f] = b[f]; });
     dateFields.forEach((f) => { if (update[f] === '') update[f] = null; });
-    // Lắp đặt / giao hàng đổi → production_finish_date = − 2 (trừ khi FE gửi tường minh finish)
+    // Lắp đặt / giao hàng đổi → production_finish_date + production_deadline = deadline tổng SX (= lắp − 2)
     try {
       const { productionFinishPatchFromInstallOrDelivery } = require('../helpers/projectDeliveryDates');
       const finishPatch = productionFinishPatchFromInstallOrDelivery(b);
@@ -1981,6 +1983,80 @@ r.put('/:id', requireProjectEditOrSxKanbanWorkshopType(), async (req, res) => {
         });
       } catch (syncErr) {
         console.warn('[PUT /projects] sync placement dates:', syncErr.message);
+      }
+    }
+
+    // CRM/SX đổi ngày lắp / lấy hàng / hoàn thiện → tạo/cập nhật sự kiện dự kiến
+    if (
+      b.install_date !== undefined
+      || b.pickup_at !== undefined
+      || b.production_finish_date !== undefined
+      || b.delivery_date !== undefined
+      || b.sync_vc_ld_events === true
+    ) {
+      if (data?.install_date || data?.pickup_at || data?.production_finish_date) {
+        try {
+          const { upsertPlannedVcLdEvents, normalizeOccurrenceYmds } = require('../helpers/createPlannedVcLdEvents');
+          let leadId = null;
+          try {
+            const { data: link } = await supabase
+              .from('crm_deal_projects')
+              .select('deal_id')
+              .eq('project_id', req.params.id)
+              .limit(1)
+              .maybeSingle();
+            leadId = link?.deal_id || null;
+          } catch (_) { /* ignore */ }
+          if (!leadId) {
+            const { data: leadRow } = await supabase
+              .from('crm_leads')
+              .select('id')
+              .eq('project_id', req.params.id)
+              .limit(1)
+              .maybeSingle();
+            leadId = leadRow?.id || null;
+          }
+          await upsertPlannedVcLdEvents({
+            projectId: req.params.id,
+            leadId,
+            userId: req.user?.userId || null,
+            companyId: data.company_id || null,
+            logisticsCompanyId: data.logistics_company_id || null,
+            customerId: data.customer_id || null,
+            projectCode: data.code,
+            projectName: data.name,
+            installAddress: data.install_address || null,
+            installAt: data.install_date || null,
+            pickupAt: data.pickup_at || null,
+            productionFinishAt: data.production_finish_date || null,
+            installOccurrenceDates: normalizeOccurrenceYmds(
+              b.install_occurrence_dates || b.installOccurrenceDates,
+            ),
+          });
+          // Khi gắn / đổi CT VC/LĐ → chỉ thêm NV phụ trách vào deal
+          if (data.logistics_company_id && (b.logistics_company_id !== undefined || b.sync_vc_ld_events === true)) {
+            try {
+              const { afterVcCompanySelected } = require('../helpers/vcHandoverDealMembers');
+              const { mergeDealLeadMembers } = require('../helpers/productionWorkshopTypeStaff');
+              await afterVcCompanySelected({
+                sourceLeadId: leadId,
+                logisticsCompanyId: String(data.logistics_company_id),
+                projectId: req.params.id,
+                actorUserId: req.user?.userId || null,
+                assertShippingStatus: false,
+                addMembersFn: async (lid, userIds) => {
+                  if (!lid || !userIds?.length) return [];
+                  await mergeDealLeadMembers({ dealId: lid, userIds });
+                  return userIds;
+                },
+              });
+            } catch (memErr) {
+              console.warn('[PUT /projects] VC responsible members:', memErr.message);
+            }
+          }
+        } catch (evErr) {
+          console.warn('[PUT /projects] planned VC/LĐ events:', evErr.message);
+        }
       }
     }
 

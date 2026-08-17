@@ -70,8 +70,8 @@ function EventDealLinkButtons({ event: ev, pageModule = 'crm', className = '' })
 }
 
 const STATUS_MAP = {
-  planned: { label: 'Đã lên kế hoạch', color: 'bg-blue-100 text-blue-700', icon: Clock },
-  in_progress: { label: 'Đang thực hiện', color: 'bg-amber-100 text-amber-700', icon: AlertCircle },
+  planned: { label: 'Dự kiến', color: 'bg-blue-100 text-blue-700', icon: Clock },
+  in_progress: { label: 'Áp dụng', color: 'bg-amber-100 text-amber-700', icon: AlertCircle },
   completed: { label: 'Hoàn thành', color: 'bg-emerald-100 text-emerald-700', icon: CheckCircle2 },
   cancelled: { label: 'Đã hủy', color: 'bg-red-100 text-red-700', icon: XCircle },
 };
@@ -240,6 +240,8 @@ export default function EventsFeedPage({ lockedModule = '', lockedModuleLabel = 
 
   const [searchParams, setSearchParams] = useSearchParams();
   const initialModule = useMemo(() => {
+    // SX/VC: mặc định xem Sản xuất + Lắp đặt; người dùng lọc từng khối bằng chip.
+    if (forcedModule === 'production' || forcedModule === 'logistics') return '';
     if (forcedModule) return forcedModule;
     const v = String(searchParams.get('module') || '').toLowerCase();
     return isValidLockedEventModule(v) ? v : '';
@@ -290,10 +292,8 @@ export default function EventsFeedPage({ lockedModule = '', lockedModuleLabel = 
   const { moduleAccess, canAccessModule } = useModuleAccess();
 
   /**
-   * Khối user được phép xem sự kiện:
-   * - Admin / allowAll → null = không lọc (xem tất cả khối).
-   * - User thường → chỉ những khối có quyền + luôn thêm 'general' (sự kiện chung công ty).
-   * - Trang SX/VC (lockedModule) → chỉ khối đó (+ general).
+   * Khối được phép TẠO/SỬA sự kiện (EventCreateModal).
+   * Xem danh sách: mọi NV thấy sự kiện theo công ty mình (backend khóa company_id).
    */
   const allowedModules = useMemo(() => {
     if (forcedModule) return ['general', forcedModule];
@@ -308,15 +308,11 @@ export default function EventsFeedPage({ lockedModule = '', lockedModuleLabel = 
   }, [forcedModule, moduleAccess, isAdmin, isSystemAdmin, canAccessModule, user]);
 
   useEffect(() => {
-    if (forcedModule) {
-      if (filterModule !== forcedModule) setFilterModule(forcedModule);
-      return;
-    }
-    if (!filterModule) return;
-    if (allowedModules && !allowedModules.includes(filterModule)) {
-      setFilterModule('');
-    }
-  }, [forcedModule, filterModule, allowedModules]);
+    // Khóa module tùy chỉnh (app module) — không khóa SX/VC (cho phép lọc crm/sx/ld).
+    if (!forcedModule) return;
+    if (forcedModule === 'production' || forcedModule === 'logistics') return;
+    if (filterModule !== forcedModule) setFilterModule(forcedModule);
+  }, [forcedModule, filterModule]);
 
   useEffect(() => {
     if (forcedModule) return; // URL SX/VC không cần ?module=
@@ -328,25 +324,30 @@ export default function EventsFeedPage({ lockedModule = '', lockedModuleLabel = 
     }
   }, [filterModule, forcedModule]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const allowedModulesKey = Array.isArray(allowedModules) ? allowedModules.join(',') : '';
-
   const listParams = useMemo(
     () => {
-      const p = canPickCompany && filterCompanyId ? { company_id: filterCompanyId } : {};
+      const p = {};
+      // Admin hệ thống chọn công ty; NV / admin công ty → luôn theo company_id tài khoản.
+      if (canPickCompany && filterCompanyId) {
+        p.company_id = filterCompanyId;
+      } else if (!canPickCompany && user?.company_id) {
+        p.company_id = String(user.company_id).trim();
+      }
       if (forcedModule === 'production' || forcedModule === 'logistics') {
-        // SX và VC cùng thấy sự kiện bàn giao / lấy hàng (khối logistics + production).
-        p.modules = 'production,logistics';
+        // SX / VC: chỉ Sản xuất + Lắp đặt (không gồm Kinh doanh).
         p.include_as_participant = '1';
+        if (filterModule === 'production' || filterModule === 'logistics') {
+          p.module = filterModule;
+        } else {
+          p.modules = 'production,logistics';
+        }
         return p;
       }
-      if (filterModule) {
-        p.module = filterModule;
-      } else if (allowedModulesKey) {
-        p.modules = allowedModulesKey;
-      }
+      // CRM «Tất cả khối»: hiện đủ 3 khối nghiệp vụ (không lọc module = mọi khối + general).
+      if (filterModule) p.module = filterModule;
       return p;
     },
-    [canPickCompany, filterCompanyId, filterModule, allowedModulesKey, forcedModule],
+    [canPickCompany, filterCompanyId, filterModule, forcedModule, user?.company_id],
   );
 
   /** Danh sách nhân viên cho filter / form sự kiện — chỉ trong một công ty (không «tất cả» xuyên hệ thống). */
@@ -947,15 +948,14 @@ export default function EventsFeedPage({ lockedModule = '', lockedModuleLabel = 
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           {/*
-           * Bộ chuyển khối: ẩn khi mở từ SX/VC (lockedModule).
-           * Hiện cho mọi nhân viên trên trang CRM /crm/events;
-           * user thường chỉ thấy khối mình được phép (+ «Tất cả khối»).
+           * Bộ chuyển khối:
+           * - CRM: mọi khối (EVENT_MODULE_OPTIONS)
+           * - SX/VC: lọc Kinh doanh / Sản xuất / Lắp đặt (hoặc tất cả)
+           * - App module khóa: chỉ hiện nhãn khối
            */}
           {!forcedModule && (
             <div className="flex items-center gap-1.5 bg-white border border-gray-200 rounded-lg p-1 shadow-sm" title="Lọc theo khối">
-              {EVENT_MODULE_OPTIONS
-                .filter((m) => !m.value || !allowedModules || allowedModules.includes(m.value))
-                .map((m) => {
+              {EVENT_MODULE_OPTIONS.map((m) => {
                   const active = filterModule === m.value;
                   return (
                     <button
@@ -974,14 +974,33 @@ export default function EventsFeedPage({ lockedModule = '', lockedModuleLabel = 
                 })}
             </div>
           )}
-          {forcedModule ? (
+          {(forcedModule === 'production' || forcedModule === 'logistics') ? (
+            <div className="flex items-center gap-1.5 bg-white border border-amber-200 rounded-lg p-1 shadow-sm" title="Lọc theo khối">
+              {[
+                { value: '', label: 'Tất cả', emoji: '🌐', color: 'bg-amber-100 text-amber-900 border-amber-300' },
+                ...EVENT_MODULE_OPTIONS.filter((m) => m.value === 'production' || m.value === 'logistics'),
+              ].map((m) => {
+                const active = filterModule === m.value;
+                return (
+                  <button
+                    key={m.value || 'all'}
+                    type="button"
+                    onClick={() => setFilterModule(m.value)}
+                    className={`px-2.5 h-7 inline-flex items-center gap-1 text-xs font-medium rounded-md transition-colors cursor-pointer ${
+                      active ? `${m.color} border` : 'text-amber-900/70 hover:bg-amber-50 border border-transparent'
+                    }`}
+                    title={m.label}
+                  >
+                    <span>{m.emoji}</span>
+                    <span className="hidden sm:inline">{m.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : forcedModule ? (
             <div className="flex items-center gap-2 px-2.5 h-9 rounded-lg border border-amber-200 bg-amber-50 text-amber-900 text-xs font-medium">
               <span>
-                {forcedModule === 'production'
-                  ? '🏭 Sản xuất + 🚚 VC/LĐ'
-                  : forcedModule === 'logistics'
-                    ? '🚚 VC/LĐ + 🏭 Sản xuất'
-                    : `${moduleMeta(forcedModule, customModLabel).emoji} ${moduleMeta(forcedModule, customModLabel).label}`}
+                {`${moduleMeta(forcedModule, customModLabel).emoji} ${moduleMeta(forcedModule, customModLabel).label}`}
               </span>
             </div>
           ) : null}

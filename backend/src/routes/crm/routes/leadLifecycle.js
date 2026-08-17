@@ -2278,6 +2278,7 @@ r.patch('/leads/:id/stage', async (req, res) => {
       delivery_date: bodyDeliveryDate,
       production_deadline: bodyProductionDeadline,
       production_finish_date: bodyProductionFinishDate,
+      flow_id: bodyFlowId,
     } = req.body;
     const leadStageSelectWithBadges =
       'type, project_id, company_id, assigned_to, lead_owner_id, lead_type_id, use_order_tasks, parent_lead_id, stage_id, sx_handover_at, kanban_deadline_at'
@@ -2665,6 +2666,7 @@ r.patch('/leads/:id/stage', async (req, res) => {
         productionCompanyId: effectiveProductionCompanyId,
         workshopTypeId: bodyWorkshopTypeId || null,
         targets: sxTargets,
+        flowId: bodyFlowId || null,
         projectDates: {
           delivery_date: bodyDeliveryDate || null,
           production_deadline: bodyProductionDeadline || bodyDeliveryDate || null,
@@ -3923,6 +3925,7 @@ r.post('/deals/:id/auto-create-project', async (req, res) => {
       workshopTypeId: req.body?.workshop_type_id || null,
       targets,
       mode,
+      flowId: req.body?.flow_id || null,
       projectDates: {
         delivery_date: req.body?.delivery_date || null,
         production_deadline: req.body?.production_deadline || req.body?.delivery_date || null,

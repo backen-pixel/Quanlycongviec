@@ -108,21 +108,25 @@ async function assertEventModuleWrite(user, moduleKey) {
   return { ok: true };
 }
 
-/** Áp filter module mặc định khi client không gửi ?module / ?modules */
+/**
+ * Filter module khi ĐỌC danh sách sự kiện.
+ * Phạm vi dữ liệu khóa theo công ty (resolveEventsCompanyScope) — NV công ty A
+ * xem mọi khối trong A; không dùng quyền ghi khối để chặn xem.
+ * Client có thể gửi ?module / ?modules để lọc UI; không gửi = mọi khối trong công ty.
+ */
 async function resolveEventModulesQueryFilter(user, moduleFilter, modulesFilter) {
   if (moduleFilter) {
-    const check = await assertEventModuleWrite(user, moduleFilter);
-    if (!check.ok) return { error: check };
-    return { moduleFilter, modulesFilter: null };
+    const mod = normalizeEventModule(moduleFilter);
+    if (!mod) {
+      return { error: { ok: false, code: 'module_invalid', message: 'Khối sự kiện không hợp lệ' } };
+    }
+    return { moduleFilter: mod, modulesFilter: null };
   }
   if (modulesFilter && modulesFilter.length) return { moduleFilter: null, modulesFilter };
 
-  const allowed = await getAllowedEventModules(user);
-  if (allowed === null) return { moduleFilter: null, modulesFilter: null };
-  if (!allowed.length) {
-    return { error: { ok: false, code: 'no_module', message: 'Không có quyền xem sự kiện' } };
-  }
-  return { moduleFilter: null, modulesFilter: allowed };
+  // Không ép modules theo quyền ghi — xem theo công ty; tạo/sửa vẫn assertEventModuleWrite.
+  void user;
+  return { moduleFilter: null, modulesFilter: null };
 }
 
 module.exports = {

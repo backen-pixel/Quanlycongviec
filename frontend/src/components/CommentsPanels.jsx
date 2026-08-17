@@ -8,6 +8,7 @@ import {
   CheckCheck,
   CheckCircle2,
   Download,
+  ExternalLink,
   Eye,
   EyeOff,
   File,
@@ -17,11 +18,16 @@ import {
   FileSpreadsheet,
   FileText,
   FileVideo,
+  Image as ImageIcon,
+  Link2,
   Loader2,
   Package,
+  PanelRightClose,
+  PanelRightOpen,
   Paperclip,
   Pencil,
   Truck,
+  X,
 } from 'lucide-react';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -172,6 +178,255 @@ function isCommentImage(att) {
   const mime = att.mime || '';
   const name = att.name || '';
   return mime.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp|bmp|svg|heic|heif)$/i.test(name);
+}
+
+function isCommentVideo(att) {
+  const mime = att.mime || '';
+  const name = att.name || '';
+  return mime.startsWith('video/') || /\.(mp4|mov|mkv|avi|webm)$/i.test(name);
+}
+
+const COMMENT_URL_IN_TEXT = /(https?:\/\/[^\s<]+[^<.,:;"')\]\s])/gi;
+
+/** Gom ảnh/video, tệp, link từ toàn bộ thread bình luận (giống panel chi tiết Messenger). */
+function collectCommentMediaBundle(comments, getBody) {
+  const images = [];
+  const videos = [];
+  const files = [];
+  const links = new Map();
+  const seenAtt = new Set();
+
+  const pushLink = (url, label) => {
+    if (!url || links.has(url)) return;
+    links.set(url, { url, label: label || url });
+  };
+
+  for (const c of comments || []) {
+    const rawBody = typeof getBody === 'function' ? (getBody(c) || '') : (c?.body || '');
+
+    if (isSystemComment(rawBody)) {
+      const fileLink = extractSystemFileLink(rawBody);
+      if (fileLink?.url) {
+        const key = `sys:${fileLink.url}`;
+        if (!seenAtt.has(key)) {
+          seenAtt.add(key);
+          const att = { url: fileLink.url, name: fileLink.label, mime: '' };
+          if (isImageFileName(fileLink.label)) images.push(att);
+          else if (/\.(mp4|mov|mkv|avi|webm)$/i.test(fileLink.label || '')) videos.push(att);
+          else files.push(att);
+        }
+      }
+    } else {
+      const matches = String(rawBody).match(COMMENT_URL_IN_TEXT);
+      if (matches) matches.forEach((u) => pushLink(u, u));
+    }
+
+    for (const att of commentAttachmentList(c.attachments)) {
+      const key = `att:${att.url}`;
+      if (seenAtt.has(key)) continue;
+      seenAtt.add(key);
+      if (isCommentImage(att)) images.push(att);
+      else if (isCommentVideo(att)) videos.push(att);
+      else if (!(att.mime || '').startsWith('audio/')) files.push(att);
+    }
+  }
+
+  return {
+    images,
+    videos,
+    files,
+    links: [...links.values()],
+  };
+}
+
+function CommentMediaDetailPanel({ mediaBundle, section, onSectionChange, onOpenImage, onClose }) {
+  const [videoPreview, setVideoPreview] = useState(null);
+  const [dlBusyUrl, setDlBusyUrl] = useState(null);
+
+  const mediaCount = (mediaBundle?.images?.length || 0) + (mediaBundle?.videos?.length || 0);
+  const fileCount = mediaBundle?.files?.length || 0;
+  const linkCount = mediaBundle?.links?.length || 0;
+  const mediaGridItems = useMemo(
+    () => [...(mediaBundle?.images || []), ...(mediaBundle?.videos || [])],
+    [mediaBundle?.images, mediaBundle?.videos],
+  );
+
+  const tabs = [
+    { id: 'media', label: 'Ảnh/Video', count: mediaCount, Icon: ImageIcon },
+    { id: 'files', label: 'Tệp', count: fileCount, Icon: FileText },
+    { id: 'links', label: 'Link', count: linkCount, Icon: Link2 },
+  ];
+
+  const handleDownload = async (file) => {
+    if (!file?.url || dlBusyUrl) return;
+    setDlBusyUrl(file.url);
+    try {
+      await downloadUploadFile(file.url, file.name || 'tai-lieu');
+    } catch (err) {
+      alert(err?.message || 'Không tải được tệp');
+    } finally {
+      setDlBusyUrl(null);
+    }
+  };
+
+  return (
+    <>
+      <aside className="flex w-[280px] shrink-0 flex-col border-l border-[#e4e6eb] bg-slate-100/80 min-h-0 max-h-[min(720px,75vh)] overflow-y-auto [scrollbar-width:thin]">
+        <div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-slate-200 bg-white px-3 py-2">
+          <p className="text-[12px] font-bold text-slate-700 truncate">Ảnh, tệp & link</p>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+            title="Đóng"
+            aria-label="Đóng cột chi tiết"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="mx-2 my-2 pb-2">
+          <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+            <p className="px-3 pt-3 pb-1 text-[11px] font-bold uppercase tracking-wide text-slate-400">
+              Ảnh, tệp & link
+            </p>
+            <div className="flex border-b border-slate-100 text-[11px] font-semibold shrink-0 overflow-x-auto [scrollbar-width:none]">
+              {tabs.map(({ id, label, count, Icon }) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => onSectionChange?.(id)}
+                  className={`flex-1 min-w-0 px-1 py-2.5 flex flex-col items-center gap-0.5 border-b-2 transition ${
+                    section === id
+                      ? 'border-violet-600 text-violet-700 bg-violet-50/40'
+                      : 'border-transparent text-slate-500 hover:text-slate-700'
+                  }`}
+                >
+                  <Icon className="h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate w-full text-center leading-tight">
+                    {label}
+                    {count > 0 ? ` (${count})` : ''}
+                  </span>
+                </button>
+              ))}
+            </div>
+
+            <div className="p-2 text-xs">
+              {section === 'media' && (
+                <div className="space-y-2">
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {mediaGridItems.slice(0, 48).map((att, i) => {
+                      const u = pubUrl(att.url);
+                      const isVideo = isCommentVideo(att);
+                      if (isVideo) {
+                        return (
+                          <button
+                            key={`${att.url}-${i}`}
+                            type="button"
+                            onClick={() => setVideoPreview({ ...att, resolvedUrl: u })}
+                            className="aspect-square rounded-lg overflow-hidden bg-slate-100 border border-slate-200 relative"
+                          >
+                            <video src={u} className="w-full h-full object-cover pointer-events-none" muted playsInline />
+                            <span className="absolute inset-0 flex items-center justify-center bg-black/25 text-white text-lg">▶</span>
+                          </button>
+                        );
+                      }
+                      return (
+                        <button
+                          key={`${att.url}-${i}`}
+                          type="button"
+                          onClick={() => onOpenImage?.(u, { title: att.name || 'image', rawPath: att.url })}
+                          className="aspect-square rounded-lg overflow-hidden bg-slate-100 border border-slate-200 hover:ring-2 hover:ring-violet-300 transition"
+                        >
+                          <img
+                            src={u}
+                            alt={att.name || 'ảnh'}
+                            className="w-full h-full object-cover"
+                          />
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {mediaCount === 0 && <p className="text-slate-400 text-center py-8">Chưa có ảnh/video</p>}
+                </div>
+              )}
+
+              {section === 'files' && (
+                <ul className="space-y-1">
+                  {(mediaBundle?.files || []).map((f, i) => {
+                    const busy = dlBusyUrl === f.url;
+                    return (
+                      <li key={`${f.url}-${i}`}>
+                        <div className="flex items-center gap-2 p-2.5 rounded-xl hover:bg-slate-50">
+                          <FileText className="h-4 w-4 text-violet-600 shrink-0" />
+                          <button
+                            type="button"
+                            onClick={() => void handleDownload(f)}
+                            className="flex-1 min-w-0 truncate text-left text-sm text-slate-700 hover:text-violet-700"
+                            title={f.name}
+                          >
+                            {f.name || 'Tệp'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void handleDownload(f)}
+                            disabled={!f.url || busy}
+                            className="shrink-0 w-8 h-8 rounded-lg border border-slate-200 bg-white hover:bg-violet-50 hover:text-violet-700 text-slate-500 flex items-center justify-center transition disabled:opacity-40"
+                            title="Tải xuống"
+                            aria-label={`Tải xuống ${f.name || 'tệp'}`}
+                          >
+                            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                          </button>
+                        </div>
+                      </li>
+                    );
+                  })}
+                  {fileCount === 0 && <p className="text-slate-400 text-center py-8">Chưa có tệp</p>}
+                </ul>
+              )}
+
+              {section === 'links' && (
+                <ul className="space-y-1">
+                  {(mediaBundle?.links || []).map((l) => (
+                    <li key={l.url}>
+                      <a
+                        href={l.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex items-start gap-2 p-2.5 rounded-xl hover:bg-slate-50 text-violet-700"
+                      >
+                        <ExternalLink className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                        <span className="break-all">{l.label}</span>
+                      </a>
+                    </li>
+                  ))}
+                  {linkCount === 0 && <p className="text-slate-400 text-center py-8">Chưa có link</p>}
+                </ul>
+              )}
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      {videoPreview ? (
+        <div className="fixed inset-0 z-[120] bg-black/90 flex flex-col items-center justify-center p-4">
+          <button
+            type="button"
+            onClick={() => setVideoPreview(null)}
+            className="absolute top-4 right-4 text-white p-2 hover:bg-white/10 rounded-full"
+          >
+            <X className="h-6 w-6" />
+          </button>
+          <video
+            src={videoPreview.resolvedUrl}
+            controls
+            autoPlay
+            className="max-h-[85vh] max-w-full rounded-lg"
+          />
+        </div>
+      ) : null}
+    </>
+  );
 }
 
 function fileExt(name) {
@@ -1758,6 +2013,13 @@ function CommentThread({
 }) {
   const selfUid = user?.userId || user?.id;
   const commentsByParent = useMemo(() => groupByParent(comments), [comments]);
+  const [rightOpen, setRightOpen] = useState(false);
+  const [mediaSection, setMediaSection] = useState('media');
+
+  const mediaBundle = useMemo(
+    () => collectCommentMediaBundle(comments, getBody),
+    [comments, getBody],
+  );
 
   const threadImageItems = useMemo(() => {
     const out = [];
@@ -2077,6 +2339,12 @@ function CommentThread({
     });
   };
 
+  const mediaTotal =
+    (mediaBundle.images?.length || 0)
+    + (mediaBundle.videos?.length || 0)
+    + (mediaBundle.files?.length || 0)
+    + (mediaBundle.links?.length || 0);
+
   return (
     <div className="rounded-xl border border-[#e4e6eb] bg-[#f0f2f5] overflow-hidden">
       {lightboxOpen && (
@@ -2087,75 +2355,110 @@ function CommentThread({
           onClose={() => setLightboxOpen(false)}
         />
       )}
-      <div
-        ref={threadScrollRef}
-        onScroll={onThreadScroll}
-        className="relative min-h-[320px] max-h-[min(720px,75vh)] overflow-y-auto px-2 py-3 scroll-smooth"
-      >
-        {loading && <p className="py-8 text-center text-sm text-[#65676b]">Đang tải…</p>}
-        {!loading && loadError && (
-          <p className="py-8 text-center text-sm text-red-600 px-4">{loadError}</p>
-        )}
-        {!loading && !loadError && !(comments || []).length && (
-          <p className="py-8 text-center text-sm text-[#65676b]">Chưa có bình luận. Hãy là người đầu tiên!</p>
-        )}
-        {!loading && !loadError && renderBranch('__root__', 0)}
-        <CommentNewNotice count={newCommentCount} onScrollToNew={onScrollToNewComments} />
+      <div className="flex items-center justify-end gap-2 border-b border-[#e4e6eb] bg-white px-2 py-1.5">
+        <button
+          type="button"
+          onClick={() => setRightOpen((v) => !v)}
+          className={`inline-flex items-center gap-1.5 h-8 px-2.5 rounded-full text-[12px] font-semibold transition shrink-0 ${
+            rightOpen
+              ? 'bg-violet-600 text-white shadow-sm'
+              : 'bg-violet-50 text-violet-700 hover:bg-violet-100 border border-violet-200'
+          }`}
+          title="Ảnh/video, tệp, link trong bình luận"
+        >
+          {rightOpen ? <PanelRightClose className="h-3.5 w-3.5" /> : <PanelRightOpen className="h-3.5 w-3.5" />}
+          Ảnh & tệp
+          {mediaTotal > 0 ? (
+            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
+              rightOpen ? 'bg-white/20 text-white' : 'bg-violet-100 text-violet-700'
+            }`}>
+              {mediaTotal}
+            </span>
+          ) : null}
+        </button>
       </div>
-      <div className="border-t border-[#e4e6eb] bg-white">
-        {replyTo && (
-          <div className="flex items-center justify-between gap-2 border-b border-[#e4e6eb] bg-[#f0f2f5] px-3 py-2 text-[13px] text-[#050505]">
-            <span className="min-w-0 truncate">Đang trả lời <span className="font-semibold">{replyTo.name}</span></span>
-            <button type="button" className="shrink-0 font-semibold text-[#65676b] hover:underline" onClick={() => setReplyTo(null)}>Hủy</button>
+      <div className="flex min-h-0">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <div
+            ref={threadScrollRef}
+            onScroll={onThreadScroll}
+            className="relative min-h-[320px] max-h-[min(720px,75vh)] overflow-y-auto px-2 py-3 scroll-smooth"
+          >
+            {loading && <p className="py-8 text-center text-sm text-[#65676b]">Đang tải…</p>}
+            {!loading && loadError && (
+              <p className="py-8 text-center text-sm text-red-600 px-4">{loadError}</p>
+            )}
+            {!loading && !loadError && !(comments || []).length && (
+              <p className="py-8 text-center text-sm text-[#65676b]">Chưa có bình luận. Hãy là người đầu tiên!</p>
+            )}
+            {!loading && !loadError && renderBranch('__root__', 0)}
+            <CommentNewNotice count={newCommentCount} onScrollToNew={onScrollToNewComments} />
           </div>
-        )}
-        {enableAttachments && pendingFiles.length > 0 && (
-          <div className="px-3 pt-2">
-            <FilePreview files={pendingFiles} onRemove={onRemovePendingFile} small />
+          <div className="border-t border-[#e4e6eb] bg-white">
+            {replyTo && (
+              <div className="flex items-center justify-between gap-2 border-b border-[#e4e6eb] bg-[#f0f2f5] px-3 py-2 text-[13px] text-[#050505]">
+                <span className="min-w-0 truncate">Đang trả lời <span className="font-semibold">{replyTo.name}</span></span>
+                <button type="button" className="shrink-0 font-semibold text-[#65676b] hover:underline" onClick={() => setReplyTo(null)}>Hủy</button>
+              </div>
+            )}
+            {enableAttachments && pendingFiles.length > 0 && (
+              <div className="px-3 pt-2">
+                <FilePreview files={pendingFiles} onRemove={onRemovePendingFile} small />
+              </div>
+            )}
+            {pasteUploadProgress ? (
+              <div className="px-3 pt-2">
+                <UploadProgressBubble
+                  variant="inline"
+                  align="start"
+                  fileName={pasteUploadProgress.fileName}
+                  fileSize={pasteUploadProgress.fileSize}
+                  percent={pasteUploadProgress.percent}
+                  bytesPerSec={pasteUploadProgress.bytesPerSec}
+                  remainingSec={pasteUploadProgress.remainingSec}
+                  compact
+                />
+              </div>
+            ) : null}
+            {enableMentions ? (
+              <CrmCommentMentionComposer
+                user={user}
+                members={members}
+                value={bodyField}
+                onChange={(e) => setBody(e.target.value)}
+                onSubmit={onSubmit}
+                onPaste={enableAttachments ? handleComposerPaste : undefined}
+                posting={posting}
+                canSubmit={canSubmit}
+                attachSlot={enableAttachments ? <FileUploadButton compact onFilesUploaded={onFilesUploaded} /> : null}
+                placeholder={composerPlaceholder}
+                quickReplyTemplates={quickReplyTemplates}
+                onQuickReply={(text) => setBody(text)}
+              />
+            ) : (
+              <FbCrmCommentComposer
+                user={user}
+                value={bodyField}
+                onChange={(e) => setBody(e.target.value)}
+                onSubmit={onSubmit}
+                onPaste={enableAttachments ? handleComposerPaste : undefined}
+                posting={posting}
+                canSubmit={canSubmit}
+                attachSlot={enableAttachments ? <FileUploadButton compact onFilesUploaded={onFilesUploaded} /> : null}
+                placeholder={composerPlaceholder}
+              />
+            )}
           </div>
-        )}
-        {pasteUploadProgress ? (
-          <div className="px-3 pt-2">
-            <UploadProgressBubble
-              variant="inline"
-              align="start"
-              fileName={pasteUploadProgress.fileName}
-              fileSize={pasteUploadProgress.fileSize}
-              percent={pasteUploadProgress.percent}
-              bytesPerSec={pasteUploadProgress.bytesPerSec}
-              remainingSec={pasteUploadProgress.remainingSec}
-              compact
-            />
-          </div>
+        </div>
+        {rightOpen ? (
+          <CommentMediaDetailPanel
+            mediaBundle={mediaBundle}
+            section={mediaSection}
+            onSectionChange={setMediaSection}
+            onOpenImage={openLightboxByUrl}
+            onClose={() => setRightOpen(false)}
+          />
         ) : null}
-        {enableMentions ? (
-          <CrmCommentMentionComposer
-            user={user}
-            members={members}
-            value={bodyField}
-            onChange={(e) => setBody(e.target.value)}
-            onSubmit={onSubmit}
-            onPaste={enableAttachments ? handleComposerPaste : undefined}
-            posting={posting}
-            canSubmit={canSubmit}
-            attachSlot={enableAttachments ? <FileUploadButton compact onFilesUploaded={onFilesUploaded} /> : null}
-            placeholder={composerPlaceholder}
-            quickReplyTemplates={quickReplyTemplates}
-            onQuickReply={(text) => setBody(text)}
-          />
-        ) : (
-          <FbCrmCommentComposer
-            user={user}
-            value={bodyField}
-            onChange={(e) => setBody(e.target.value)}
-            onSubmit={onSubmit}
-            onPaste={enableAttachments ? handleComposerPaste : undefined}
-            posting={posting}
-            canSubmit={canSubmit}
-            attachSlot={enableAttachments ? <FileUploadButton compact onFilesUploaded={onFilesUploaded} /> : null}
-            placeholder={composerPlaceholder}
-          />
-        )}
       </div>
     </div>
   );

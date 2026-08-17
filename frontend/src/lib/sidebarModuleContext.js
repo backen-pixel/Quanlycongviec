@@ -83,7 +83,7 @@ export function appendDriveModuleQuery(path, moduleKey) {
   return `${path}${sep}module=${encodeURIComponent(moduleKey)}`;
 }
 
-/** Module Công việc — tổng hợp NV từ các module. */
+/** Module Dự án và công việc — tổng hợp NV + setup luồng. */
 export function isCongViecPrimaryPath(pathname) {
   return (
     pathname.startsWith('/work') ||
@@ -91,17 +91,22 @@ export function isCongViecPrimaryPath(pathname) {
   );
 }
 
+/** /projects dùng chung giữa Quản lý và Dự án và công việc — giữ sidebar theo module đang mở. */
+export function isProjectsSharedPath(pathname) {
+  return pathname === '/projects' || pathname.startsWith('/projects/');
+}
+
 export function isWorkPrimaryPath(pathname) {
   if (pathname.startsWith('/crm') || pathname.startsWith('/sx') || pathname.startsWith('/vc') || pathname.startsWith('/ketoan') || pathname.startsWith('/mua-hang')) return false;
   if (pathname.startsWith('/m/')) return false;
   if (/^\/ecosystem\/app-modules\/[^/]+/.test(pathname)) return false;
   if (isCongViecPrimaryPath(pathname)) return false;
+  if (isProjectsSharedPath(pathname)) return false;
   return (
     pathname === '/' ||
     pathname.startsWith('/dashboard') ||
     pathname.startsWith('/management') ||
     pathname.startsWith('/tasks') ||
-    pathname.startsWith('/projects') ||
     pathname.startsWith('/workspace') ||
     pathname.startsWith('/ecosystem') ||
     pathname.startsWith('/companies') ||
@@ -169,6 +174,12 @@ export function resolveActiveModule(pathname, navStateModuleContext, searchParam
   // hoặc sessionStorage — chỉ rơi về 'crm' khi không có gì.
   if (isCrmCrossModulePath(pathname)) {
     return navStateModuleContext || readStoredModule() || 'crm';
+  }
+  // /projects dùng chung Quản lý ↔ Dự án và công việc
+  if (isProjectsSharedPath(pathname)) {
+    const stored = navStateModuleContext || readStoredModule();
+    if (stored === 'congviec' || stored === 'work') return stored;
+    return 'work';
   }
   const fromPath = resolveModuleFromPathname(pathname);
   if (fromPath) return fromPath;

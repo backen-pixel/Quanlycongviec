@@ -2,13 +2,49 @@ const { Router } = require('express');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
 const { notifyMultiple } = require('../helpers/notifications');
-const { isCrmSystemAdminUser, isCrmCompanyAdminUser } = require('../helpers/crmAccessRoles');
-const { isAdminLike, isCompanyScopedAdmin } = require('../helpers/adminRole');
+const { isCrmSystemAdminUser } = require('../helpers/crmAccessRoles');
+const { isAdminLike, isCompanyScopedAdmin, isLogisticsAdmin, isProductionAdmin } = require('../helpers/adminRole');
 
 /** Admin chọn công ty qua query (admin tổng, platform_admin, admin tenant — khớp CRM Dashboard). */
 function canPickEventsCompanyScope(user) {
   if (isCrmSystemAdminUser(user)) return true;
   return isAdminLike(user) && !isCompanyScopedAdmin(user);
+}
+
+/** Admin công ty / module xem đủ lịch; NV thường chỉ thấy sự kiện ops mình phụ trách. */
+function canSeeAllCompanyOpsEvents(user) {
+  if (!user) return false;
+  if (canPickEventsCompanyScope(user)) return true;
+  if (isAdminLike(user) || isCompanyScopedAdmin(user)) return true;
+  if (isLogisticsAdmin(user) || isProductionAdmin(user)) return true;
+  const r = String(user.role || '').toLowerCase();
+  return r === 'manager' || r === 'sales_admin';
+}
+
+const OPS_ASSIGNEE_EVENT_TYPES = new Set([
+  'pickup', 'installation', 'delivery', 'production_finish',
+]);
+
+/**
+ * NV thường: sự kiện ops (lấy hàng/lắp/giao/hoàn thiện) có assignee
+ * → chỉ hiện nếu là assignee / người tạo / participant.
+ */
+async function filterOpsEventsForResponsibleStaff(user, events) {
+  if (!user || canSeeAllCompanyOpsEvents(user)) return events || [];
+  const list = Array.isArray(events) ? events : [];
+  if (!list.length) return list;
+  const myId = String(user.userId || user.id || '');
+  if (!myId) return list;
+  const myPartIds = new Set(await fetchMyParticipantEventIds(myId));
+  return list.filter((ev) => {
+    const t = String(ev?.event_type || '').toLowerCase();
+    if (!OPS_ASSIGNEE_EVENT_TYPES.has(t)) return true;
+    if (!ev?.assignee_id) return true;
+    if (String(ev.assignee_id) === myId) return true;
+    if (String(ev.created_by || '') === myId) return true;
+    if (myPartIds.has(String(ev.id))) return true;
+    return false;
+  });
 }
 const {
   normalizeEventModule,
@@ -49,24 +85,29 @@ async function fetchAllLeadIdsForCompany(companyId) {
 }
 
 /**
- * Chỉ admin hệ thống được company_id null (= xem mọi công ty qua query).
- * Admin theo công ty / nhân viên: luôn giới hạn company_id JWT — không đọc company_id query để tránh lộ dữ liệu công ty khác.
+ * Phạm vi công ty khi đọc/ghi sự kiện:
+ * - Admin hệ thống (không company_id) / platform_admin: có thể chọn ?company_id hoặc xem tất cả.
+ * - Mọi tài khoản có company_id (NV, admin công ty, sales_admin…): luôn khóa đúng công ty JWT —
+ *   bỏ qua ?company_id client gửi để tránh lộ dữ liệu công ty khác.
  */
 function resolveEventsCompanyScope(req, res) {
-  if (isCrmCompanyAdminUser(req.user)) {
-    return { ok: true, companyId: String(req.user.company_id).trim() };
+  const userCid = req.user?.company_id != null && String(req.user.company_id).trim()
+    ? String(req.user.company_id).trim()
+    : null;
+
+  if (userCid && !canPickEventsCompanyScope(req.user)) {
+    return { ok: true, companyId: userCid };
   }
   if (canPickEventsCompanyScope(req.user)) {
     const q = req.query.company_id;
     const id = q && String(q).trim() ? String(q).trim() : null;
     return { ok: true, companyId: id };
   }
-  const cid = req.user?.company_id;
-  if (!cid) {
+  if (!userCid) {
     res.status(400).json({ error: 'Thiếu company_id của user. Gán công ty cho tài khoản hoặc đăng nhập lại.' });
     return { ok: false, companyId: null };
   }
-  return { ok: true, companyId: String(cid).trim() };
+  return { ok: true, companyId: userCid };
 }
 
 const EVENTS_LEGACY_LEAD_OR_MAX = 320;
@@ -611,6 +652,9 @@ r.get('/', async (req, res) => {
         }
       }
     }
+
+    eventsOut = await filterOpsEventsForResponsibleStaff(req.user, eventsOut);
+    totalOut = eventsOut.length;
 
     res.json({ events: eventsOut, total: totalOut, module_filter: moduleFilter });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -1352,6 +1396,7 @@ r.get('/calendar', async (req, res) => {
       }
     }
 
+    calOut = await filterOpsEventsForResponsibleStaff(req.user, calOut);
     res.json(calOut);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

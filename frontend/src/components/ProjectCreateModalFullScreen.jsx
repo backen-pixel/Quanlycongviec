@@ -4,7 +4,7 @@ import { FileUploadButton, FilePreview } from './FileUpload';
 import ProcessTaskEditor from './ProcessTaskEditor';
 import {
   Plus, ChevronDown, ChevronRight, X, CheckSquare, User, ClipboardList, Layers,
-  FileText, StickyNote, GitBranch, Star, ArrowRight, Clock, Building2, Save
+  FileText, StickyNote, GitBranch, ArrowRight, Clock, Building2, Save
 } from 'lucide-react';
 
 export default function ProjectCreateModalFullScreen({ open, onClose, onCreated, dealData }) {
@@ -48,8 +48,8 @@ export default function ProjectCreateModalFullScreen({ open, onClose, onCreated,
       api.get('/flows').then(r => {
         const list = r.data.flows || [];
         setFlows(list);
-        const def = list.find(f => f.is_default);
-        if (def) selectFlow(def);
+        const active = list.filter((f) => f.is_active !== false);
+        if (active.length === 1) selectFlow(active[0]);
       }).catch(() => setFlows([])),
     ]);
   }, [open]);
@@ -226,7 +226,7 @@ export default function ProjectCreateModalFullScreen({ open, onClose, onCreated,
                       <div className="flex-1 min-w-0">
                         <p className="font-semibold text-gray-900 flex items-center gap-1">
                           {f.name}
-                          {f.is_default && <Star className="h-3.5 w-3.5 text-amber-500" />}
+                          {f.is_active === false && <span className="text-[9px] font-medium text-slate-400">Tắt</span>}
                         </p>
                         <p className="text-xs text-gray-500">({f.steps?.length || 0} bước)</p>
                       </div>

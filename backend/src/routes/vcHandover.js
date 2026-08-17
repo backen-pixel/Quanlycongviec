@@ -426,7 +426,7 @@ async function createVcHandoverEvents({
   if (!occDates.length && installDay) occDates.push(installDay);
 
   const baseShared = {
-    status: 'planned',
+    status: 'in_progress', // đủ xác nhận 2 bên → sự kiện áp dụng
     lead_id: leadId,
     project_id: projectId,
     customer_id: lead?.customer_id || null,
@@ -536,6 +536,50 @@ r.post('/projects/:id/request', async (req, res) => {
       .eq('id', projectId)
       .maybeSingle();
     if (!project) return res.status(404).json({ error: 'Không tìm thấy dự án' });
+
+    // Gate luồng module trước khi tạo request bàn giao VC
+    try {
+      const { assertProductionHandoffTarget, isCustomModuleKey } = require('../helpers/resolveModuleFlow');
+      const { transferLeadToAppModule } = require('../helpers/appModuleOps');
+      const { data: projFlow } = await supabase
+        .from('projects')
+        .select('flow_id, company_id')
+        .eq('id', projectId)
+        .maybeSingle();
+      const gate = await assertProductionHandoffTarget(projFlow?.flow_id);
+      if (!gate.ok) {
+        if (gate.customModule && isCustomModuleKey(gate.nextModuleKey)) {
+          const dealForCustom = await resolveCrmDealForProject(
+            projectId,
+            'id, company_id, assignee_id',
+          );
+          if (!dealForCustom?.id) {
+            return res.status(400).json({ error: 'Dự án chưa liên kết deal CRM để bàn giao module tùy chỉnh.' });
+          }
+          const transferred = await transferLeadToAppModule(req, {
+            moduleRow: gate.customModule,
+            leadId: dealForCustom.id,
+            companyId: dealForCustom.company_id || projFlow?.company_id || null,
+            assigneeId: dealForCustom.assignee_id || actor || null,
+          });
+          return res.json({
+            ok: true,
+            custom_module_transfer: true,
+            next_module_key: gate.nextModuleKey,
+            record: transferred?.record || null,
+            created: Boolean(transferred?.created),
+            message: `Đã bàn giao sang module «${gate.customModule.name || gate.nextModuleKey}» theo luồng.`,
+          });
+        }
+        return res.status(400).json({
+          error: gate.error,
+          next_module_key: gate.nextModuleKey || null,
+          code: 'FLOW_HANDOFF_BLOCKED',
+        });
+      }
+    } catch (gateErr) {
+      console.warn('[vc-handover] flow gate:', gateErr.message);
+    }
 
     // Ngày lịch từ ĐÚNG project xưởng này (multi-SX không lấy từ deal/project chính).
     // Panel SX: «Ngày lắp đặt» = delivery_date; «Hoàn thiện» = production_finish_date.
@@ -955,15 +999,10 @@ r.patch('/comments/:cid/select', async (req, res) => {
       });
       void rcInvalidateTags(['production', 'logistics', 'crm']);
 
-      // Nhân sự công ty VC/LĐ → lead_members + deal CRM cho công ty VC (nếu khác CRM gốc).
+      // Nhân sự chịu trách nhiệm VC/LĐ → lead_members (không thêm cả công ty).
       responsibleId = await resolveLogisticsHandoverResponsibleUserId(resolvedLogisticsCompanyId);
       installerId = await resolveLogisticsHandoverInstallerUserId(resolvedLogisticsCompanyId);
-      const relatedVcIds = await collectVcHandoverRecipientIds({
-        logisticsCompanyId: resolvedLogisticsCompanyId,
-        projectId,
-        excludeUserId: null,
-      });
-      addIds = [...new Set([responsibleId, installerId, ...relatedVcIds].filter(Boolean).map(String))];
+      addIds = [...new Set([responsibleId, installerId].filter(Boolean).map(String))];
 
       try {
         const visibility = await afterVcCompanySelected({
@@ -1779,6 +1818,14 @@ r.patch('/comments/:cid/confirm', async (req, res) => {
 
     // Chỉ tạo 3 sự kiện khi đủ 2 bên xác nhận (idempotent nếu đã có từ trước).
     let eventsCreateError = null;
+    if (bothConfirmed && meta.project_id) {
+      try {
+        const { applyLogisticsOpsOnVcIntake } = require('../helpers/applyPlannedOpsEvents');
+        await applyLogisticsOpsOnVcIntake(meta.project_id);
+      } catch (applyEvErr) {
+        console.warn('[vc-handover] apply planned VC/LĐ events:', applyEvErr.message);
+      }
+    }
     if (bothConfirmed && !hasExistingEvents && meta.pickup_at && meta.project_id) {
       try {
         const created = await createVcHandoverEvents({

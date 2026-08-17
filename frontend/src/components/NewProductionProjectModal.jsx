@@ -3,10 +3,12 @@ import { X, Search } from 'lucide-react';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { HIDE_PRODUCTION_DEAL_VALUES } from '../lib/hideProductionDealValues';
+import FlowModuleComposer from './FlowModuleComposer';
 
-export default function NewProductionProjectModal({ onClose }) {
+export default function NewProductionProjectModal({ onClose, onCreated }) {
   const { user } = useAuth();
   const [workTypes, setWorkTypes] = useState([]);
+  const [flowId, setFlowId] = useState('');
   const [formData, setFormData] = useState({
     name: '',
     estimated_value: '',
@@ -58,7 +60,7 @@ export default function NewProductionProjectModal({ onClose }) {
     setSaving(true);
     setError('');
     try {
-      await api.post('/projects', {
+      const { data } = await api.post('/projects', {
         name: formData.name.trim(),
         customer_id: selectedCustomer?.id || null,
         company_id: user?.company_id || null,
@@ -67,8 +69,10 @@ export default function NewProductionProjectModal({ onClose }) {
         deadline: formData.deadline || null,
         production_person_id: formData.production_person_id || null,
         workshop_type_id: formData.workshop_type_id || null,
+        flow_id: flowId || null,
         status: 'producing',
       });
+      onCreated?.(data?.project || data);
       onClose();
     } catch (err) {
       setError(err.response?.data?.error || 'Lỗi tạo dự án');
@@ -152,6 +156,13 @@ export default function NewProductionProjectModal({ onClose }) {
               </div>
             )}
           </div>
+
+          <FlowModuleComposer
+            value={flowId}
+            onChange={(id) => setFlowId(id)}
+            startModule="production"
+            accent="#EA580C"
+          />
 
           {workTypes.length > 0 && (
             <div>

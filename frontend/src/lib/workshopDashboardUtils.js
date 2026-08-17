@@ -49,14 +49,29 @@ export function workshopCreatedInRange(iso, from, to) {
 }
 
 /**
- * Ngày hoàn thiện SX (YYYY-MM-DD): production_finish_date, hoặc lắp đặt/giao − 2.
- * Dùng cho lịch SX.
+ * Ngày hoàn thiện SX (YYYY-MM-DD) = deadline tổng dự án sản xuất:
+ * production_finish_date, hoặc production_deadline, hoặc lắp đặt/giao − 2.
+ * Dùng cho lịch / KPI SX.
  */
 export function workshopProductionFinishYmd(project) {
-  const finishRaw = project?.production_finish_date;
+  const finishRaw = project?.production_finish_date || project?.production_deadline;
   if (finishRaw != null && finishRaw !== '') {
     const ymd = String(finishRaw).slice(0, 10);
-    if (/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return ymd;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(ymd)) {
+      // Tránh nhầm: nếu production_deadline trùng ngày lắp thì suy finish = lắp − 2
+      const installYmd = project?.install_date
+        ? String(project.install_date).slice(0, 10)
+        : (project?.delivery_date ? String(project.delivery_date).slice(0, 10) : '');
+      if (
+        project?.production_finish_date == null
+        && installYmd
+        && ymd === installYmd
+      ) {
+        // legacy: production_deadline từng = ngày lắp → suy hoàn thiện
+      } else {
+        return ymd;
+      }
+    }
   }
   const anchorRaw = project?.install_date || project?.delivery_date;
   if (anchorRaw == null || anchorRaw === '') return null;

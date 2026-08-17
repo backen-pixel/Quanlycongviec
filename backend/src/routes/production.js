@@ -1296,6 +1296,8 @@ r.post('/projects/:id/place-at-workshops', requirePermission('projects', 'create
       created: result.created,
       errors: result.errors,
       partial: !!result.partial,
+      members_added: result.members_added || 0,
+      notified: !!result.notified,
     });
   } catch (e) {
     console.error('[production/place-at-workshops]', e);
@@ -1306,7 +1308,11 @@ r.post('/projects/:id/place-at-workshops', requirePermission('projects', 'create
 r.get('/projects/:id/workshop-placements', requirePermission('projects', 'view'), async (req, res) => {
   try {
     const { listWorkshopPlacementsForProject } = require('../helpers/placeProjectAtWorkshops');
-    const data = await listWorkshopPlacementsForProject(req.params.id);
+    const data = await listWorkshopPlacementsForProject(req.params.id, {
+      user: req.user,
+      req,
+      syncMembers: true,
+    });
     res.json(data);
   } catch (e) {
     console.error('[production/workshop-placements]', e);
@@ -3182,6 +3188,18 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
         .eq('id', id)
         .single();
 
+      if (colChanged && colRow.bucket_slug !== INTAKE_BUCKET) {
+        try {
+          const { applyProductionFinishOnSxIntake } = require('../helpers/applyPlannedOpsEvents');
+          const applied = await applyProductionFinishOnSxIntake(id);
+          if (applied?.count) {
+            console.info(`[production] apply SX finish events: project=${id} count=${applied.count}`);
+          }
+        } catch (applyEvErr) {
+          console.warn('[production] apply SX finish events:', applyEvErr.message);
+        }
+      }
+
       let stageStaffApplied = null;
       if (colChanged && colRow.bucket_slug !== INTAKE_BUCKET) {
         try {
@@ -3361,8 +3379,30 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
     });
 
     const explicitSxColId = req.body?.production_pipeline_stage_id || req.body?.sx_pipeline_stage_id || null;
-    if (explicitSxColId) {
-      const colId = String(explicitSxColId);
+
+    // Tiếp nhận SX qua workflow stage (không còn intake) → áp dụng sự kiện hoàn thiện
+    try {
+      let applyFinish = !project.current_stage_id && !!stage_id;
+      if (explicitSxColId) {
+        const { data: colCfgCheck } = await supabase
+          .from('production_pipeline_stages')
+          .select('bucket_slug')
+          .eq('id', String(explicitSxColId))
+          .maybeSingle();
+        if (colCfgCheck?.bucket_slug === INTAKE_BUCKET) applyFinish = false;
+        else if (colCfgCheck) applyFinish = true;
+      } else if (stage_id) {
+        applyFinish = true;
+      }
+      if (applyFinish) {
+        const { applyProductionFinishOnSxIntake } = require('../helpers/applyPlannedOpsEvents');
+        await applyProductionFinishOnSxIntake(id);
+      }
+    } catch (applyEvErr) {
+      console.warn('[production/stage] apply SX finish events:', applyEvErr.message);
+    }
+
+    if (explicitSxColId) {      const colId = String(explicitSxColId);
       const nowIsoStg = new Date().toISOString();
       const { data: leadsBeforeStg } = await supabase
         .from('crm_leads')
@@ -4079,8 +4119,10 @@ r.patch('/projects/:id/handover-vc', requireProductionKanbanEdit(), async (req, 
         .from('crm_leads').select('id, pipeline_id').eq('project_id', id).eq('type', 'deal');
 
       for (const lead of leads || []) {
-        const vcDeliveryStageId = await getCrmStageByRole('vc_delivery', lead.pipeline_id || null)
-          || await getCrmVcDeliveryStageId();
+        // Deal đã có pipeline riêng: không được lấy cột của pipeline khác, deal sẽ mất khỏi Kanban.
+        const vcDeliveryStageId = lead.pipeline_id
+          ? await getCrmStageByRole('vc_delivery', lead.pipeline_id)
+          : await getCrmVcDeliveryStageId();
         const fullUpd = { updated_at: nowIso };
         if (vcStageId) fullUpd.vc_pipeline_stage_id = vcStageId;
         if (sxHandoverPipelineStageId) fullUpd.sx_pipeline_stage_id = sxHandoverPipelineStageId;

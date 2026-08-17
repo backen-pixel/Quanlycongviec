@@ -152,15 +152,17 @@ async function resolveFallbackStaffForProductionCompany(companyId) {
 }
 
 /** @returns {{ userIds: string[], primaryUserId: string|null }} */
-async function getDefaultStaffForType(companyId, workshopTypeId) {
+async function getDefaultStaffForType(companyId, workshopTypeId, opts = {}) {
   if (!companyId) {
     return { userIds: [], primaryUserId: null };
   }
+  const allowFallback = opts.allowFallback !== false;
   if (workshopTypeId) {
     const map = await loadWorkshopTypeDefaultStaffMap(companyId);
     const block = map.get(String(workshopTypeId));
     if (block?.userIds?.length) return block;
   }
+  if (!allowFallback) return { userIds: [], primaryUserId: null };
   return resolveFallbackStaffForProductionCompany(companyId);
 }
 
@@ -415,22 +417,33 @@ async function pruneNonResponsibleCrmLeadMembersForProject(projectId) {
 
 /**
  * Gán NV mặc định cho dự án theo phân loại xưởng.
+ * @param {object} [opts]
+ * @param {boolean} [opts.allowFallback=true] — không setup phân loại thì lấy mọi NV SX công ty (CRM→SX cũ).
+ *   Đặt xưởng: false — chỉ NV trong setup phân loại.
  * @returns {Promise<string|null>} production_person_id (phụ trách chính)
  */
-async function applyWorkshopTypeDefaultStaffToProject(projectId, companyId, workshopTypeId) {
+async function applyWorkshopTypeDefaultStaffToProject(projectId, companyId, workshopTypeId, opts = {}) {
   if (!projectId || !companyId) return null;
+  const allowFallback = opts.allowFallback !== false;
 
-  let { userIds, primaryUserId } = await getDefaultStaffForType(companyId, workshopTypeId);
+  let { userIds, primaryUserId } = await getDefaultStaffForType(companyId, workshopTypeId, {
+    allowFallback: false,
+  });
 
-  if (!userIds.length) {
+  if (!userIds.length && allowFallback) {
     const fb = await resolveFallbackStaffForProductionCompany(companyId);
     userIds = fb.userIds || [];
     primaryUserId = fb.primaryUserId || null;
   }
 
   if (!userIds.length) {
+    // Không có setup (và không fallback): xóa roster fallback cũ nếu có.
+    if (!allowFallback) {
+      try {
+        await supabase.from('project_production_staff').delete().eq('project_id', projectId);
+      } catch (_) { /* optional */ }
+    }
     await ensureProjectProductionAutoParticipants(projectId);
-    // Không có NV SX mặc định — vẫn chỉ giữ người chịu trách nhiệm CRM trên tab Thành viên.
     await pruneNonResponsibleCrmLeadMembersForProject(projectId);
     return null;
   }

@@ -1,6 +1,9 @@
 /**
  * Ngày đặt / giao / hoàn thiện SX trên projects.
- * production_finish_date = (install_date || delivery_date) − 2 calendar days.
+ * Quy định:
+ * - install_date = deadline VC/LĐ (lắp đặt)
+ * - production_finish_date (+ production_deadline) = deadline tổng dự án SX
+ *   (= install_date || delivery_date − 2 calendar days)
  */
 
 /** Parse YYYY-MM-DD (hoặc ISO bắt đầu bằng ngày) → { y, m, d } hoặc null. */
@@ -35,9 +38,9 @@ function subtractCalendarDays(dateOnly, days) {
 }
 
 /**
- * Khi delivery_date đổi: tính production_finish_date = delivery − 2.
+ * Khi delivery_date đổi: tính production_finish_date = delivery − 2 (deadline tổng SX).
  * Nếu client gửi tường minh production_finish_date trong cùng request → giữ giá trị đó (chỉnh tay SX).
- * @returns {{ production_finish_date?: string|null } | null} patch bổ sung, hoặc null nếu không đụng delivery_date
+ * @returns {{ production_finish_date?: string|null, production_deadline?: string|null } | null}
  */
 function productionFinishPatchFromDelivery(body) {
   if (!body || body.delivery_date === undefined) return null;
@@ -46,20 +49,30 @@ function productionFinishPatchFromDelivery(body) {
 
   const raw = body.delivery_date;
   if (raw === null || raw === '') {
-    return { production_finish_date: null };
+    return { production_finish_date: null, production_deadline: null };
   }
   const finish = subtractCalendarDays(raw, 2);
-  if (!finish) return { production_finish_date: null };
-  return { production_finish_date: finish };
+  if (!finish) return { production_finish_date: null, production_deadline: null };
+  return { production_finish_date: finish, production_deadline: finish };
 }
 
 /**
- * Ưu tiên install_date (lắp đặt), không thì delivery_date (giao hàng) → finish = − 2 ngày.
+ * Ưu tiên install_date (deadline VC/LĐ), không thì delivery_date →
+ * production_finish_date + production_deadline = deadline tổng SX (= lắp − 2).
  * Tôn trọng production_finish_date nếu client gửi tường minh.
  */
 function productionFinishPatchFromInstallOrDelivery(body) {
   if (!body) return null;
-  if (body.production_finish_date !== undefined) return null;
+  if (body.production_finish_date !== undefined) {
+    // Client gửi finish tường minh — đồng bộ production_deadline nếu chưa gửi
+    if (body.production_deadline === undefined && body.production_finish_date) {
+      const ymd = String(body.production_finish_date).trim().slice(0, 10);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(ymd)) {
+        return { production_deadline: ymd };
+      }
+    }
+    return null;
+  }
 
   if (body.install_date !== undefined) {
     const raw = body.install_date;
@@ -69,7 +82,9 @@ function productionFinishPatchFromInstallOrDelivery(body) {
       return null;
     }
     const finish = subtractCalendarDays(raw, 2);
-    return finish ? { production_finish_date: finish } : { production_finish_date: null };
+    return finish
+      ? { production_finish_date: finish, production_deadline: finish }
+      : { production_finish_date: null, production_deadline: null };
   }
 
   return productionFinishPatchFromDelivery(body);

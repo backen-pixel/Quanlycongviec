@@ -3910,10 +3910,10 @@ function buildScanDuplicateGroups(leads, leadFbMap) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 /** linked_project embed added in migration 76 — included here, stripped by runtime fallback if migration not applied */
-const CRM_LEAD_LIST_SELECT_EXTRA = ', linked_project:projects!crm_leads_project_id_fkey(id, code, name, order_date, delivery_date, production_deadline, production_note, pickup_at, pickup_notes, logistics_company_id, delivery_team_id, installation_team_id)';
+const CRM_LEAD_LIST_SELECT_EXTRA = ', linked_project:projects!crm_leads_project_id_fkey(id, code, name, order_date, delivery_date, install_date, production_deadline, production_note, pickup_at, pickup_notes, logistics_company_id, delivery_team_id, installation_team_id, logistics_company:companies!projects_logistics_company_id_fkey(id, name, short_name))';
 /** Kanban chỉ cần mã dự án và các mốc ngày hiển thị trên card. */
 const CRM_LEAD_KANBAN_PROJECT_EMBED =
-  ', linked_project:projects!crm_leads_project_id_fkey(code, order_date, delivery_date, production_deadline)';
+  ', linked_project:projects!crm_leads_project_id_fkey(code, order_date, delivery_date, install_date, production_deadline)';
 const CRM_LEAD_REGION_EMBED = ', crm_region:company_regions!crm_leads_region_id_fkey(id, name, code)';
 const CRM_LEAD_LIST_SELECT_BASE =
   `*, customer:customers(id, full_name, phone, email, company), stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon, is_won, is_lost, pipeline_type, sync_role, order_index), source:crm_sources(id, name, icon), lead_type:crm_lead_types(id, name, color), assignee:users!crm_leads_assigned_to_fkey(id, full_name), lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name), company:companies!crm_leads_company_id_fkey(id, name, short_name)${CRM_LEAD_REGION_EMBED}, sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug, company:companies(id, name, short_name)), vc_pipeline_stage:logistics_pipeline_stages(id, name, color, icon, bucket_slug)`;
@@ -5689,8 +5689,9 @@ async function applyLeadOrCustomerSalesFilter(queryBuilder, leadIdVal) {
 }
 
 /** Admin hệ thống xem/sửa mọi báo giá; admin công ty toàn công ty; NV chỉ báo giá do mình tạo.
- *  Kế toán: xem/sửa chứng từ mình tạo (kể cả company_id deal xưởng) hoặc cùng công ty kế toán. */
-function userMayAccessQuotationRow(req, row) {
+ *  Kế toán: mình tạo, cùng công ty kế toán, hoặc BG gắn deal thuộc phạm vi kế toán
+ *  (company_id/external_company_id) — kể cả khi quotations.company_id là công ty xưởng. */
+async function userMayAccessQuotationRow(req, row) {
   if (!row) return false;
   const sac = scopedAdminCompanyId(req);
   if (sac) return String(row.company_id || '') === String(sac);
@@ -5701,6 +5702,20 @@ function userMayAccessQuotationRow(req, row) {
   if (isAccountingUser(req.user)) {
     if (String(row.created_by || '') === String(uid)) return true;
     if (String(row.company_id || '') === String(cid)) return true;
+    const leadId = row.lead_id || null;
+    if (leadId) {
+      const ac = getAccountingCompanyId(req.user);
+      const { data: lead, error: leadErr } = await supabase
+        .from('crm_leads')
+        .select('company_id, external_company_id, external_company_name')
+        .eq('id', leadId)
+        .maybeSingle();
+      if (leadErr) {
+        console.warn('[quotation-access] accounting lead check:', leadErr.message);
+      } else if (lead && crmDealBelongsToAccountingCompany(lead, ac)) {
+        return true;
+      }
+    }
     return false;
   }
   if (String(row.company_id || '') !== String(cid)) return false;

@@ -4,7 +4,7 @@ import Modal from './Modal';
 import { FileUploadButton, FilePreview } from './FileUpload';
 import {
   Plus, CheckSquare, ChevronDown, ChevronRight, Building2,
-  GitBranch, ArrowRight, Clock, User, ClipboardList, Star, Trash2, Edit, Save, Layers, FileText, StickyNote
+  GitBranch, ArrowRight, Clock, User, ClipboardList, Trash2, Edit, Save, Layers, FileText, StickyNote
 } from 'lucide-react';
 
 export default function ProjectCreateModal({ open, onClose, onCreated }) {
@@ -36,8 +36,8 @@ export default function ProjectCreateModal({ open, onClose, onCreated }) {
       api.get('/flows').then(r => {
         const list = r.data.flows || [];
         setFlows(list);
-        const def = list.find(f => f.is_default);
-        if (def) selectFlow(def);
+        const active = list.filter((f) => f.is_active !== false);
+        if (active.length === 1) selectFlow(active[0]);
       }).catch(() => setFlows([])),
     ]);
   }, [open]);
@@ -173,7 +173,7 @@ export default function ProjectCreateModal({ open, onClose, onCreated }) {
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-semibold text-gray-900 flex items-center gap-1">
                           {f.name}
-                          {f.is_default && <Star className="h-3 w-3 text-amber-500" />}
+                          {f.is_active === false && <span className="text-[9px] font-medium text-slate-400">Tắt</span>}
                         </p>
                         <div className="flex items-center gap-0.5 mt-1 flex-wrap">
                           {(f.steps || []).map((s, i) => (

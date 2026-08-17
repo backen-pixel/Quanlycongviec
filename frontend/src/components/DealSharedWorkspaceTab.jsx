@@ -14,11 +14,26 @@ function SpawnedAdditionalDealsPanel({ leadId, refreshKey = null, dealResponsibl
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  const sourceId = dealResponsible?.source_customer_deal_id
-    || dealResponsible?.source_customer_deal?.id
-    || null;
-  const sourceMeta = dealResponsible?.source_customer_deal || null;
+  // Chỉ tin dealResponsible khi đúng lead đang xem — tránh lệch id khi đang navigate.
+  const responsibleMatches = !dealResponsible?.id
+    || String(dealResponsible.id) === String(leadId);
+  const sourceId = responsibleMatches
+    ? (dealResponsible?.source_customer_deal_id
+      || dealResponsible?.source_customer_deal?.id
+      || null)
+    : null;
+  const sourceMeta = responsibleMatches ? (dealResponsible?.source_customer_deal || null) : null;
   const listParentId = sourceId || leadId;
+
+  const openDeal = useCallback((dealId) => {
+    if (!dealId || String(dealId) === String(leadId)) return;
+    navigate(`/crm/leads/${dealId}`);
+    try {
+      const mainEl = document.querySelector('main.flex-1.overflow-y-auto');
+      if (mainEl) mainEl.scrollTop = 0;
+      else window.scrollTo(0, 0);
+    } catch (_) { /* ignore */ }
+  }, [navigate, leadId]);
 
   const load = useCallback(async () => {
     if (!listParentId) return;
@@ -68,7 +83,7 @@ function SpawnedAdditionalDealsPanel({ leadId, refreshKey = null, dealResponsibl
         {sourceId ? (
           <button
             type="button"
-            onClick={() => navigate(`/crm/leads/${sourceId}`)}
+            onClick={() => openDeal(sourceId)}
             className="w-full text-left rounded-lg border border-teal-300 bg-white hover:bg-teal-50 px-3 py-2.5 transition-colors cursor-pointer group"
           >
             <p className="text-[11px] font-bold uppercase tracking-wide text-teal-700">Deal khách hàng nguồn</p>
@@ -117,7 +132,7 @@ function SpawnedAdditionalDealsPanel({ leadId, refreshKey = null, dealResponsibl
                 <li key={row.id}>
                   <button
                     type="button"
-                    onClick={() => navigate(`/crm/leads/${row.id}`)}
+                    onClick={() => openDeal(row.id)}
                     className="w-full text-left rounded-lg border border-teal-200/90 bg-white hover:bg-teal-50/80 hover:border-teal-300 px-3 py-2.5 transition-colors cursor-pointer group"
                   >
                     <div className="flex items-start justify-between gap-2">

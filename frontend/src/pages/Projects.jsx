@@ -2,9 +2,24 @@ import { useState, useEffect, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import api from '../lib/api';
-import { Plus, Search, Settings, Phone, Calendar, FolderKanban, Trash2, Filter, X, Building2, User, List, CalendarClock, Pin, ChevronLeft, ChevronRight } from 'lucide-react';
+import {
+  Plus, Search, Phone, Calendar, FolderKanban, X, User, List,
+  CalendarClock, Pin, ChevronLeft, ChevronRight, ChevronUp, ChevronDown,
+  LayoutGrid, AlertTriangle, CheckCircle2, Clock, BarChart3, Target, Funnel, Trash2,
+} from 'lucide-react';
 import { togglePin, isPinned } from '../components/PinnedProjectsWidget';
 import { STATUS_LABELS, STATUS_COLORS, PRIORITY_COLORS, PRIORITY_LABELS, formatVND, formatDate, getInitials, avatarColor } from '../lib/utils';
+
+const LS_PROJECTS_KPI_PANEL_OPEN = 'projects_kpi_panel_open';
+
+function readKpiPanelOpen() {
+  try {
+    const v = localStorage.getItem(LS_PROJECTS_KPI_PANEL_OPEN);
+    if (v === '0') return false;
+    if (v === '1') return true;
+  } catch { /* ignore */ }
+  return true;
+}
 
 const TIME_FILTERS = [
   { id: 'all', label: 'Tất cả' },
@@ -71,6 +86,15 @@ export default function Projects() {
   const [loading, setLoading] = useState(true);
   const [showAdvFilter, setShowAdvFilter] = useState(false);
   const [calMonth, setCalMonth] = useState(new Date());
+  const [kpiPanelOpen, setKpiPanelOpen] = useState(readKpiPanelOpen);
+
+  const toggleKpiPanel = () => {
+    setKpiPanelOpen((open) => {
+      const next = !open;
+      try { localStorage.setItem(LS_PROJECTS_KPI_PANEL_OPEN, next ? '1' : '0'); } catch { /* ignore */ }
+      return next;
+    });
+  };
 
   const pinToggle = (id) => { togglePin(id); setPinnedSet(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; }); };
 
@@ -218,14 +242,41 @@ export default function Projects() {
 
   const overdueCount = filtered.filter(p => { const d = p.deadline || p.design_deadline; return d && new Date(d) < new Date() && p.status !== 'completed'; }).length;
 
+  const kpi = useMemo(() => {
+    const now = new Date();
+    let working = 0;
+    let done = 0;
+    let overdue = 0;
+    let noDeadline = 0;
+    let valueSum = 0;
+    for (const p of filtered) {
+      const st = p.status || '';
+      if (st === 'completed') done += 1;
+      else if (['producing', 'shipping', 'installing', 'contract_signed'].includes(st) || STATUS_COLUMNS.find(c => c.id === 'working')?.statuses.includes(st)) working += 1;
+      else if (['consulting', 'designing', 'quoting'].includes(st)) working += 1;
+      const d = p.deadline || p.design_deadline;
+      if (!d) noDeadline += 1;
+      else if (new Date(d) < now && st !== 'completed') overdue += 1;
+      valueSum += Number(p.estimated_value) || 0;
+    }
+    return {
+      total: filtered.length,
+      working,
+      done,
+      overdue,
+      noDeadline,
+      valueSum,
+    };
+  }, [filtered]);
+
   const TABS = [
-    { id: 'list', label: 'List' },
-    { id: 'kanban', label: 'Kanban' },
-    { id: 'deadline', label: 'Deadline' },
-    { id: 'planner', label: 'Planner' },
-    { id: 'calendar', label: 'Calendar' },
-    { id: 'tasks', label: 'Task chats', badge: filtered.length, badgeColor: 'bg-red-500 text-white' },
-    { id: 'comments', label: 'Comments', badge: latestComments.length, badgeColor: 'bg-green-500 text-white' },
+    { id: 'kanban', label: 'Kanban', Icon: LayoutGrid },
+    { id: 'list', label: 'List', Icon: List },
+    { id: 'deadline', label: 'Deadline', Icon: CalendarClock },
+    { id: 'planner', label: 'Planner', Icon: User },
+    { id: 'calendar', label: 'Calendar', Icon: Calendar },
+    { id: 'tasks', label: 'Task chats', badge: filtered.length },
+    { id: 'comments', label: 'Comments', badge: latestComments.length },
   ];
 
   // Drag-and-drop
@@ -306,111 +357,216 @@ export default function Projects() {
   );
 
   return (
-    <div className="space-y-4 max-w-full">
-      {/* Dark gradient header */}
-      <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-blue-900 rounded-2xl p-5">
-        <div className="flex items-center justify-between gap-3 flex-wrap">
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold text-white flex items-center gap-2">
-              <CalendarClock className="h-6 w-6" /> Dự Án
-              <Settings className="h-4 w-4 text-gray-400 cursor-pointer hover:text-white" />
-            </h1>
-            <span className="text-sm text-gray-400">{filtered.length} dự án{hasActiveFilters ? ' (đã lọc)' : ''}</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <button onClick={() => navigate('/projects/create')} className="h-9 px-4 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg text-sm font-bold flex items-center gap-1.5 cursor-pointer shadow-lg">
-              <Plus className="h-4 w-4" /> Tạo dự án
-            </button>
-            <select value={filterPerson} onChange={e => setFilterPerson(e.target.value)} className="h-9 px-3 pr-8 bg-slate-700 text-white border-none rounded-lg text-sm cursor-pointer">
-              <option value="all">Tất cả NV ({filtered.length})</option>
-              {uniquePersons.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-            </select>
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-              <input value={search} onChange={e => setSearch(e.target.value)} onKeyDown={e => e.key === 'Enter' && load()} placeholder="Tìm kiếm..." className="h-9 pl-10 pr-8 bg-slate-700/50 text-white placeholder-gray-400 border border-slate-600 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500 w-48" />
-              {search && <button onClick={() => { setSearch(''); load(''); }} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white cursor-pointer"><X className="h-4 w-4" /></button>}
-            </div>
-            <button onClick={() => setShowAdvFilter(!showAdvFilter)}
-              className={`h-9 px-3 rounded-lg text-sm font-medium flex items-center gap-1.5 cursor-pointer ${hasActiveFilters ? 'bg-blue-500/30 text-blue-300 border border-blue-400/50' : 'bg-white/10 text-gray-400 hover:text-white'}`}>
-              <Filter className="h-3.5 w-3.5" /> {hasActiveFilters && <span className="w-1.5 h-1.5 rounded-full bg-blue-400" />}
-            </button>
-          </div>
-        </div>
-        {/* Tab bar */}
-        <div className="flex items-center gap-1 mt-4 overflow-x-auto">
-          {TABS.map(tab => (
-            <button key={tab.id} onClick={() => setViewMode(tab.id)}
-              className={`px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap cursor-pointer transition-all flex items-center gap-1.5 ${viewMode === tab.id ? 'bg-white/20 text-white' : 'text-gray-400 hover:text-white hover:bg-white/10'}`}>
-              {tab.label}
-              {tab.badge > 0 && <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${tab.badgeColor}`}>{tab.badge > 99 ? '99+' : tab.badge}</span>}
-            </button>
-          ))}
-          <div className="flex-1" />
-          <button className="text-xs text-gray-400 hover:text-white cursor-pointer whitespace-nowrap">Mark all as read</button>
-        </div>
-      </div>
-
-      {/* Advanced filters */}
-      {showAdvFilter && (
-        <div data-tour="project-filters" className="bg-white rounded-xl border p-4 space-y-3">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-gray-700">Bộ lọc nâng cao</h3>
-            {hasActiveFilters && (
-              <button onClick={() => { setFilterTime('all'); setDateFrom(''); setDateTo(''); setFilterDivision('all'); setFilterCompany('all'); setFilterCustomer('all'); setFilterPerson('all'); }}
-                className="text-xs text-red-500 hover:text-red-600 cursor-pointer flex items-center gap-1"><X className="h-3 w-3" /> Xóa bộ lọc</button>
-            )}
-          </div>
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-            <div>
-              <label className="block text-[11px] font-medium text-gray-500 mb-1">Thời gian</label>
-              <select value={filterTime} onChange={e => { setFilterTime(e.target.value); if (e.target.value !== 'custom') { setDateFrom(''); setDateTo(''); } }} className="w-full h-8 px-2 border rounded-lg text-xs bg-white">
-                {TIME_FILTERS.map(tf => <option key={tf.id} value={tf.id}>{tf.label}</option>)}
-              </select>
-              {(filterTime === 'custom' || dateFrom || dateTo) && (
-                <div className="flex items-center gap-1.5 mt-1.5">
-                  <input type="date" value={dateFrom} onChange={e => { setDateFrom(e.target.value); setFilterTime('custom'); }} className="flex-1 h-7 px-2 border rounded text-xs bg-white" />
-                  <span className="text-xs text-gray-400">→</span>
-                  <input type="date" value={dateTo} onChange={e => { setDateTo(e.target.value); setFilterTime('custom'); }} className="flex-1 h-7 px-2 border rounded text-xs bg-white" />
-                </div>
+    <div className="min-h-screen space-y-2">
+      <div className="ui-solid-white rounded-xl border border-slate-200/90 bg-white shadow-sm overflow-hidden">
+        {/* Row 1 — tabs + actions */}
+        <div className="border-b border-slate-200/60">
+          <div className="flex items-center justify-between gap-1.5 flex-wrap px-2.5 py-1 sm:px-3 bg-slate-50/50">
+            <div className="flex items-center gap-1 min-w-0">
+              <div data-tour="pipeline-tabs" className="inline-flex gap-px p-0.5 bg-slate-200/60 border border-slate-300/50 rounded-lg shrink-0">
+                <button
+                  type="button"
+                  className="rounded-md font-semibold transition-colors flex items-center gap-1 px-2 py-1 text-[11px] whitespace-nowrap bg-white text-blue-700 shadow-sm"
+                >
+                  Dự án {filtered.length}
+                </button>
+              </div>
+              {overdueCount > 0 && (
+                <span className="inline-flex items-center gap-1 h-6 px-1.5 rounded-md bg-red-50 border border-red-200 text-red-600 text-[10px] font-bold">
+                  <AlertTriangle className="h-3 w-3" /> {overdueCount}
+                </span>
               )}
+              <span className="text-[10px] text-slate-400 hidden sm:inline">
+                Cập nhật {new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
+              </span>
             </div>
-            <div>
-              <label className="block text-[11px] font-medium text-gray-500 mb-1">Khối</label>
-              <select value={filterDivision} onChange={e => setFilterDivision(e.target.value)} className="w-full h-8 px-2 border rounded-lg text-xs bg-white">
-                <option value="all">Tất cả khối</option>
-                {divisions.map(d => <option key={d.id} value={d.id}>{d.icon || ''} {d.name}</option>)}
-              </select>
+            <button
+              type="button"
+              onClick={() => navigate('/projects/create')}
+              className="h-7 px-2.5 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-semibold flex items-center gap-1 cursor-pointer shadow-sm"
+            >
+              <Plus className="h-3.5 w-3.5" /> Thêm dự án
+            </button>
+          </div>
+
+          {/* Row 2 — toolbar */}
+          <div
+            data-tour="projects-toolbar"
+            className="flex flex-wrap items-center gap-1 px-2.5 py-1 sm:px-3 border-t border-slate-200/50"
+          >
+            <select
+              value={filterCompany}
+              onChange={(e) => setFilterCompany(e.target.value)}
+              className="h-7 px-2 rounded-md border border-slate-200 bg-white text-[11px] text-slate-700 max-w-[10rem]"
+              title="Công ty"
+            >
+              <option value="all">Công ty: Tất cả</option>
+              {companies.map((c) => (
+                <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
+              ))}
+            </select>
+            <select
+              value={filterTime}
+              onChange={(e) => {
+                setFilterTime(e.target.value);
+                if (e.target.value !== 'custom') { setDateFrom(''); setDateTo(''); }
+              }}
+              className="h-7 px-2 rounded-md border border-slate-200 bg-white text-[11px] text-slate-700"
+            >
+              {TIME_FILTERS.map((tf) => (
+                <option key={tf.id} value={tf.id}>Thời gian: {tf.label}</option>
+              ))}
+            </select>
+            {(filterTime === 'custom' || dateFrom || dateTo) && (
+              <div className="flex items-center gap-1">
+                <input type="date" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setFilterTime('custom'); }} className="h-7 px-1.5 border rounded-md text-[10px] bg-white" />
+                <span className="text-[10px] text-slate-400">→</span>
+                <input type="date" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setFilterTime('custom'); }} className="h-7 px-1.5 border rounded-md text-[10px] bg-white" />
+              </div>
+            )}
+
+            <div className={`group/search flex items-center shrink-0 flex-1 min-w-0 max-w-none sm:max-w-[22rem] lg:max-w-[28rem] rounded-md border transition-colors ${showAdvFilter ? 'border-violet-200 bg-violet-50/40' : 'border-slate-200 bg-white'}`}>
+              <Search className="h-3.5 w-3.5 text-slate-400 ml-2 shrink-0" />
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && load()}
+                placeholder="Tìm dự án…"
+                className="flex-1 min-w-0 h-7 px-2 text-[12px] bg-transparent outline-none"
+              />
+              {search && (
+                <button type="button" onClick={() => { setSearch(''); load(); }} className="p-1 text-slate-400 hover:text-slate-600 cursor-pointer">
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+              <div className="shrink-0 pr-1">
+                <button
+                  type="button"
+                  onClick={() => setShowAdvFilter(!showAdvFilter)}
+                  className={`relative h-6 w-6 flex items-center justify-center rounded border transition-colors cursor-pointer ${
+                    showAdvFilter || hasActiveFilters
+                      ? 'bg-violet-100 text-violet-700 border-violet-300'
+                      : 'bg-slate-50 text-slate-500 border-slate-200 hover:bg-slate-100'
+                  }`}
+                  title="Bộ lọc"
+                >
+                  <Funnel className="h-3 w-3" />
+                  {hasActiveFilters && <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-violet-500" />}
+                </button>
+              </div>
             </div>
-            <div>
-              <label className="block text-[11px] font-medium text-gray-500 mb-1">Công ty</label>
-              <select value={filterCompany} onChange={e => setFilterCompany(e.target.value)} className="w-full h-8 px-2 border rounded-lg text-xs bg-white">
-                <option value="all">Tất cả công ty</option>
-                {companies.map(c => <option key={c.id} value={c.id}>{c.short_name || c.name}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="block text-[11px] font-medium text-gray-500 mb-1">Nhân viên</label>
-              <select value={filterPerson} onChange={e => setFilterPerson(e.target.value)} className="w-full h-8 px-2 border rounded-lg text-xs bg-white">
-                <option value="all">Tất cả NV</option>
-                {uniquePersons.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="block text-[11px] font-medium text-gray-500 mb-1">Khách hàng</label>
-              <select value={filterCustomer} onChange={e => setFilterCustomer(e.target.value)} className="w-full h-8 px-2 border rounded-lg text-xs bg-white">
-                <option value="all">Tất cả KH</option>
-                {uniqueCustomers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
+
+            {hasActiveFilters && (
+              <button
+                type="button"
+                onClick={() => {
+                  setFilterTime('all'); setDateFrom(''); setDateTo('');
+                  setFilterDivision('all'); setFilterCompany('all');
+                  setFilterCustomer('all'); setFilterPerson('all');
+                }}
+                className="h-7 px-2 rounded-md text-[10px] font-medium text-red-600 hover:bg-red-50 cursor-pointer"
+              >
+                Xóa lọc
+              </button>
+            )}
+
+            <div className="flex items-center gap-0.5 shrink-0 ml-auto pl-1 border-l border-slate-200/80">
+              <div className="inline-flex items-center gap-px p-0.5 rounded-md bg-slate-100 border border-slate-200/80">
+                {TABS.map((tab) => {
+                  const Icon = tab.Icon;
+                  const active = viewMode === tab.id;
+                  return (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => setViewMode(tab.id)}
+                      className={`h-7 px-2 rounded text-[10px] font-semibold whitespace-nowrap cursor-pointer flex items-center gap-1 transition-colors ${
+                        active ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'
+                      }`}
+                    >
+                      {Icon ? <Icon className="h-3 w-3" /> : null}
+                      {tab.label}
+                      {tab.badge > 0 && (
+                        <span className="px-1 py-0.5 rounded text-[9px] font-bold bg-slate-200 text-slate-600">
+                          {tab.badge > 99 ? '99+' : tab.badge}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </div>
+
+          {showAdvFilter && (
+            <div data-tour="project-filters" className="px-2.5 sm:px-3 py-2 border-t border-slate-200/50 bg-slate-50/40">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                <div>
+                  <label className="block text-[10px] font-medium text-slate-500 mb-0.5">Khối</label>
+                  <select value={filterDivision} onChange={(e) => setFilterDivision(e.target.value)} className="w-full h-8 px-2 border rounded-lg text-xs bg-white">
+                    <option value="all">Tất cả khối</option>
+                    {divisions.map((d) => <option key={d.id} value={d.id}>{d.icon || ''} {d.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-medium text-slate-500 mb-0.5">Nhân viên</label>
+                  <select value={filterPerson} onChange={(e) => setFilterPerson(e.target.value)} className="w-full h-8 px-2 border rounded-lg text-xs bg-white">
+                    <option value="all">Tất cả NV</option>
+                    {uniquePersons.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-medium text-slate-500 mb-0.5">Khách hàng</label>
+                  <select value={filterCustomer} onChange={(e) => setFilterCustomer(e.target.value)} className="w-full h-8 px-2 border rounded-lg text-xs bg-white">
+                    <option value="all">Tất cả KH</option>
+                    {uniqueCustomers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
-      )}
+
+        {/* KPI */}
+        <section data-tour="projects-kpis" className="border-t border-slate-200/60 bg-slate-50/30">
+          <button
+            type="button"
+            onClick={toggleKpiPanel}
+            aria-expanded={kpiPanelOpen}
+            className="w-full flex items-center gap-1.5 px-2.5 py-1 sm:px-3 text-left cursor-pointer transition-colors hover:bg-slate-100/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-300 focus-visible:ring-inset"
+          >
+            <BarChart3 className="h-3.5 w-3.5 shrink-0 text-violet-600" aria-hidden />
+            <span className="text-[11px] font-semibold text-slate-800 shrink-0 whitespace-nowrap">
+              KPI<span className="ml-1 font-medium text-blue-600">· Dự án</span>
+            </span>
+            {!kpiPanelOpen && (
+              <span className="text-[10px] text-slate-500 truncate ml-2">
+                {kpi.total} DA · {kpi.overdue} quá hạn · {kpi.done} xong
+              </span>
+            )}
+            <span className="shrink-0 ml-auto flex items-center gap-0.5 text-[10px] font-medium text-slate-500">
+              <span className="hidden sm:inline">{kpiPanelOpen ? 'Thu gọn' : 'Mở rộng'}</span>
+              {kpiPanelOpen ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+            </span>
+          </button>
+          {kpiPanelOpen && (
+            <div className="border-t border-violet-100/70 bg-white/40 px-2 sm:px-3 pb-2 pt-2 grid items-stretch gap-2 grid-cols-2 min-[520px]:grid-cols-3 xl:grid-cols-6">
+              <ProjectKpiCard icon={<Target className="h-3 w-3" />} iconBg="bg-blue-100" iconColor="text-blue-600" label="Tổng dự án" value={kpi.total} />
+              <ProjectKpiCard icon={<Clock className="h-3 w-3" />} iconBg="bg-sky-100" iconColor="text-sky-600" label="Đang làm" value={kpi.working} />
+              <ProjectKpiCard icon={<AlertTriangle className="h-3 w-3" />} iconBg="bg-red-100" iconColor="text-red-600" label="Quá hạn" value={kpi.overdue} />
+              <ProjectKpiCard icon={<CheckCircle2 className="h-3 w-3" />} iconBg="bg-emerald-100" iconColor="text-emerald-600" label="Hoàn thành" value={kpi.done} />
+              <ProjectKpiCard icon={<CalendarClock className="h-3 w-3" />} iconBg="bg-amber-100" iconColor="text-amber-600" label="Chưa có hạn" value={kpi.noDeadline} />
+              <ProjectKpiCard icon={<BarChart3 className="h-3 w-3" />} iconBg="bg-violet-100" iconColor="text-violet-600" label="Giá trị ước tính" value={formatVND(kpi.valueSum)} money />
+            </div>
+          )}
+        </section>
+      </div>
 
       {/* Content */}
       {loading ? (
         <div className="flex items-center justify-center py-16"><div className="animate-spin h-8 w-8 border-4 border-blue-600 border-t-transparent rounded-full" /></div>
       ) : filtered.length === 0 ? (
-        <div className="text-center py-16">
+        <div className="text-center py-16 bg-white rounded-xl border border-slate-200/90">
           <FolderKanban className="h-12 w-12 mx-auto text-gray-300 mb-3" />
           <p className="text-sm text-gray-400">{hasActiveFilters ? 'Không có dự án phù hợp' : 'Chưa có dự án nào'}</p>
           <button onClick={() => navigate('/projects/create')} className="mt-3 text-sm text-blue-600 font-medium cursor-pointer">+ Tạo dự án</button>
@@ -466,12 +622,12 @@ export default function Projects() {
           const getD = (p) => p.deadline || p.design_deadline || p.install_date || null;
 
           const DEADLINE_COLS = [
-            { id: 'overdue', label: '🔴 Quá hạn', color: '#EF4444', filter: (p) => { const d = getD(p); return d && new Date(d) < today && p.status !== 'completed'; } },
-            { id: 'today', label: '🟠 Hết hạn hôm nay', color: '#F97316', filter: (p) => { const d = getD(p); return d && new Date(d) >= today && new Date(d) < tomorrow; } },
-            { id: 'tomorrow', label: '🟡 Ngày mai', color: '#EAB308', filter: (p) => { const d = getD(p); return d && new Date(d) >= tomorrow && new Date(d) < dayAfterTomorrow; } },
-            { id: 'next_week', label: '🔵 Tuần sau', color: '#3B82F6', filter: (p) => { const d = getD(p); return d && new Date(d) >= dayAfterTomorrow && new Date(d) < endOfNextWeek; } },
-            { id: 'next_month', label: '🟢 Tháng sau', color: '#10B981', filter: (p) => { const d = getD(p); return d && new Date(d) >= endOfNextWeek && new Date(d) < endOfNextMonth; } },
-            { id: 'later', label: '⚪ Sau đó / Chưa có hạn', color: '#6B7280', filter: (p) => { const d = getD(p); return !d || new Date(d) >= endOfNextMonth; } },
+            { id: 'overdue', label: 'Quá hạn', color: '#EF4444', filter: (p) => { const d = getD(p); return d && new Date(d) < today && p.status !== 'completed'; } },
+            { id: 'today', label: 'Hết hạn hôm nay', color: '#F97316', filter: (p) => { const d = getD(p); return d && new Date(d) >= today && new Date(d) < tomorrow; } },
+            { id: 'tomorrow', label: 'Ngày mai', color: '#EAB308', filter: (p) => { const d = getD(p); return d && new Date(d) >= tomorrow && new Date(d) < dayAfterTomorrow; } },
+            { id: 'next_week', label: 'Tuần sau', color: '#3B82F6', filter: (p) => { const d = getD(p); return d && new Date(d) >= dayAfterTomorrow && new Date(d) < endOfNextWeek; } },
+            { id: 'next_month', label: 'Tháng sau', color: '#10B981', filter: (p) => { const d = getD(p); return d && new Date(d) >= endOfNextWeek && new Date(d) < endOfNextMonth; } },
+            { id: 'later', label: 'Sau đó / Chưa có hạn', color: '#6B7280', filter: (p) => { const d = getD(p); return !d || new Date(d) >= endOfNextMonth; } },
           ];
 
           const deadlineData = {};
@@ -798,6 +954,23 @@ export default function Projects() {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function ProjectKpiCard({ icon, iconBg, iconColor, label, value, money }) {
+  const display = typeof value === 'number' ? value.toLocaleString('vi-VN') : value;
+  return (
+    <div className="h-full min-w-0 flex flex-col items-center justify-center text-center rounded-lg border border-violet-200/80 bg-white shadow-sm gap-1 px-2 py-2">
+      <div className={`shrink-0 rounded-md p-1 ${iconBg} ${iconColor}`}>{icon}</div>
+      <p className="text-[9px] text-violet-700/80 font-semibold uppercase tracking-wide leading-tight truncate w-full px-0.5" title={label}>{label}</p>
+      <p
+        className={`font-bold tabular-nums leading-snug max-w-full truncate px-0.5 ${money ? 'text-[11px] sm:text-xs' : 'text-sm'}`}
+        style={{ color: '#000' }}
+        title={String(display)}
+      >
+        {display}
+      </p>
     </div>
   );
 }

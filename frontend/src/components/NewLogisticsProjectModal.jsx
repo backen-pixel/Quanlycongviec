@@ -2,10 +2,12 @@ import { useState, useEffect, useRef } from 'react';
 import { X, Search } from 'lucide-react';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
+import FlowModuleComposer from './FlowModuleComposer';
 
 export default function NewLogisticsProjectModal({ onClose }) {
   const { user } = useAuth();
   const [workTypes, setWorkTypes] = useState([]);
+  const [flowId, setFlowId] = useState('');
   const [formData, setFormData] = useState({
     name: '', estimated_value: '', priority: 'medium', deadline: '', logistics_person_id: '', workshop_type_id: '',
   });
@@ -62,6 +64,7 @@ export default function NewLogisticsProjectModal({ onClose }) {
         deadline: formData.deadline || null,
         logistics_person_id: formData.logistics_person_id || null,
         workshop_type_id: formData.workshop_type_id || null,
+        flow_id: flowId || null,
         status: 'shipping',
       });
       onClose();
@@ -127,6 +130,13 @@ export default function NewLogisticsProjectModal({ onClose }) {
               </div>
             )}
           </div>
+
+          <FlowModuleComposer
+            value={flowId}
+            onChange={(id) => setFlowId(id)}
+            startModule="logistics"
+            accent="#EA580C"
+          />
 
           {workTypes.length > 0 && (
             <div>

@@ -327,6 +327,8 @@ async function postSxTransferMentionComment(req, notifyMultiple, {
   let body;
   if (mode === 'handover') {
     body = `✅ ${senderName} đã xác nhận bàn giao sản xuất${codePart}. ${mentionText} — vui lòng tiếp nhận và xử lý deal${titlePart}.`;
+  } else if (mode === 'workshop_place') {
+    body = `🏭 ${senderName} đã đặt xưởng${workshopPart}${codePart}. ${mentionText} — vui lòng tiếp nhận dự án gia công${titlePart}.`;
   } else {
     const verb = mode === 'additional' ? 'đã thêm dự án SX' : 'đã chuyển deal sang Sản xuất';
     body = `🏭 ${senderName} ${verb}${workshopPart}${codePart}. ${mentionText} — bạn được giao phụ trách sản xuất deal${titlePart}.`;

@@ -17,7 +17,7 @@ import {
 } from './appModulePresets';
 
 export const WORK_MODULE_LABEL = 'Quản lý';
-export const CONGVIEC_MODULE_LABEL = 'Công việc';
+export const CONGVIEC_MODULE_LABEL = 'Dự án và công việc';
 export const LOGISTICS_MODULE_LABEL = 'Lắp đặt';
 export const CRM_MODULE_ICON = '/icons/crm-module.png?v=4';
 export const WORK_MODULE_ICON = '/icons/work-module.png?v=3';
@@ -125,7 +125,7 @@ export const APP_MODULE_DEFINITIONS = [
     id: 'congviec',
     path: '/work/unified',
     name: CONGVIEC_MODULE_LABEL,
-    desc: 'Tổng hợp nhiệm vụ từ CRM, SX, VC & giao việc',
+    desc: 'Dự án, nhiệm vụ tổng hợp & setup luồng module',
     Icon: Layers,
     imageUrl: CONGVIEC_MODULE_ICON,
     iconClass: 'bg-transparent shadow-none',

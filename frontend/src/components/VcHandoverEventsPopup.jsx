@@ -3,6 +3,7 @@
  * tạo đồng thời ngày VC + lắp đặt; ngày VC = giao hàng SX.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   ArrowLeftRight,
   Calendar,
@@ -22,6 +23,8 @@ import MultiDayDatePicker from './MultiDayDatePicker';
 const SX_BUSY_THRESHOLD = 4;
 const VC_BUSY_THRESHOLD = 4;
 const INSTALL_BUSY_THRESHOLD = 4;
+/** Tránh `eventIds = []` tạo mảng mới mỗi render → vòng lặp load. */
+const EMPTY_EVENT_IDS = Object.freeze([]);
 
 function pad(n) {
   return String(n).padStart(2, '0');
@@ -72,7 +75,7 @@ function compareYmd(a, b) {
   return 0;
 }
 
-/** Quy định: ngày lắp đặt phải = hoặc sau ngày VC */
+/** Quy định: ngày lắp đặt phải = hoặc sau ngày VC (cùng ngày được phép) */
 function assertInstallOnOrAfterVc(vcYmd, installYmd) {
   if (!vcYmd || !installYmd) return { ok: true };
   if (compareYmd(installYmd, vcYmd) >= 0) return { ok: true };
@@ -80,7 +83,7 @@ function assertInstallOnOrAfterVc(vcYmd, installYmd) {
     ok: false,
     message:
       `Ngày lắp đặt (${formatDayLabel(installYmd)}) phải bằng hoặc sau ngày nhận hàng VC `
-      + `(${formatDayLabel(vcYmd)}).`,
+      + `(${formatDayLabel(vcYmd)}). Có thể cùng ngày, không được trước VC.`,
   };
 }
 
@@ -107,16 +110,43 @@ const TYPE_FALLBACK = {
   pickup: { name: 'Lấy hàng', icon: '📦', color: '#f97316' },
   delivery: { name: 'Giao hàng', icon: '🚚', color: '#ea580c' },
   installation: { name: 'Lắp đặt', icon: '🔧', color: '#d97706' },
+  production_finish: { name: 'Hoàn thiện SX', icon: '✅', color: '#4f46e5' },
   site_visit: { name: 'Khảo sát', icon: '📍', color: '#3b82f6' },
   video_shoot: { name: 'Đi quay hình', icon: '🎥', color: '#7C3AED' },
 };
 
+/** Chỉ lịch vận hành SX/VC: lắp đặt · lấy hàng · giao hàng · hoàn thiện (ẩn khảo sát CRM…). */
+const OPS_SCHEDULE_TYPES = new Set(['installation', 'pickup', 'delivery', 'production_finish']);
+
+function isOpsScheduleEvent(ev) {
+  if (!ev) return false;
+  const t = String(ev.event_type || '').toLowerCase();
+  if (OPS_SCHEDULE_TYPES.has(t)) return true;
+  // site_visit / khảo = khảo sát — luôn ẩn
+  if (t === 'site_visit' || t === 'survey' || t === 'video_shoot') return false;
+  const blob = [
+    ev.title,
+    ev.name,
+    ev.event_type_name,
+    ev.type_name,
+    ev.description,
+  ].filter(Boolean).join(' ').toLowerCase();
+  if (/khảo\s*sát|khao\s*sat|\bsurvey\b|tư\s*vấn|hẹn\s*gặp|hen\s*gap|ký\s*hđ|hợp\s*đồng|quay\s*hình/.test(blob)) {
+    return false;
+  }
+  if (/lắp\s*đặt|lap\s*dat|\binstall/.test(blob)) return true;
+  if (/giao\s*hàng|giao\s*hang|\bdelivery\b/.test(blob)) return true;
+  if (/lấy\s*hàng|lay\s*hang|\bpickup\b|nhận\s*hàng/.test(blob)) return true;
+  if (/hoàn\s*thiện|hoan\s*thien/.test(blob)) return true;
+  return false;
+}
+
 const STATUS_LABEL = {
-  planned: 'Đã lên lịch',
-  confirmed: 'Đã xác nhận',
+  planned: 'Dự kiến',
+  confirmed: 'Áp dụng',
+  in_progress: 'Áp dụng',
   completed: 'Hoàn thành',
   cancelled: 'Đã hủy',
-  in_progress: 'Đang diễn ra',
 };
 
 const MONTH_NAMES = ['', 'Tháng 1', 'Tháng 2', 'Tháng 3', 'Tháng 4', 'Tháng 5', 'Tháng 6',
@@ -153,11 +183,13 @@ function toPreviewIso(raw) {
  *  companyId?: string|null,
  *  eventIds?: string[],
  *  focusDate?: string|null,
+ *  focusNonce?: number,
  *  pickMode?: boolean,
  *  pickTarget?: 'pickup'|'arrive'|'install'|'both',
  *  anchorPickupAt?: string|null,
  *  anchorArriveAt?: string|null,
  *  anchorInstallAt?: string|null,
+ *  anchorFinishAt?: string|null,
  *  onPickDate?: (datetimeLocal: string) => void,
  *  onPickDates?: (dates: { pickupAt: string, installAt: string, vcArriveAt?: string, installOccurrenceDates?: string[] }) => void,
  *  anchorInstallOccurrenceDates?: string[],
@@ -168,18 +200,25 @@ export default function VcHandoverEventsPopup({
   leadId = null,
   projectId = null,
   companyId = null,
-  eventIds = [],
+  eventIds = EMPTY_EVENT_IDS,
   focusDate = null,
+  focusNonce = 0,
   pickMode = false,
   pickTarget = 'both',
   anchorPickupAt = null,
   anchorArriveAt = null,
   anchorInstallAt = null,
+  anchorFinishAt = null,
   anchorInstallOccurrenceDates = null,
   onPickDate = null,
   onPickDates = null,
+  /** Nhúng trong form (không overlay fullscreen) */
+  embedded = false,
+  /** Chỉ hiện lắp đặt / lấy hàng / giao hàng / hoàn thiện — ẩn khảo sát CRM… */
+  opsScheduleOnly = false,
   onClose,
 }) {
+  const scheduleOnly = opsScheduleOnly || pickMode;
   const initialDay = parseDay(focusDate) || toYmd(new Date());
   const [cursor, setCursor] = useState(() => {
     const [y, m] = initialDay.split('-').map(Number);
@@ -216,7 +255,7 @@ export default function VcHandoverEventsPopup({
   const [savingSchedule, setSavingSchedule] = useState(false);
 
   const idList = useMemo(
-    () => [...new Set((eventIds || []).filter(Boolean).map(String))],
+    () => [...new Set((Array.isArray(eventIds) ? eventIds : EMPTY_EVENT_IDS).filter(Boolean).map(String))],
     [eventIds],
   );
 
@@ -224,7 +263,7 @@ export default function VcHandoverEventsPopup({
     const byId = new Map();
     const fetches = [];
     const base = {
-      modules: 'production,logistics',
+      modules: 'crm,production,logistics',
       limit: 200,
       include_as_participant: '1',
     };
@@ -256,26 +295,30 @@ export default function VcHandoverEventsPopup({
       });
     }
     list = list.filter((e) => {
+      if (scheduleOnly) return isOpsScheduleEvent(e);
       const mod = String(e.module || '').toLowerCase();
-      return !mod || mod === 'production' || mod === 'logistics' || mod === 'general'
+      return !mod || mod === 'crm' || mod === 'production' || mod === 'logistics' || mod === 'general'
         || String(e.event_type || '') === 'installation'
         || String(e.event_type || '') === 'pickup'
         || String(e.event_type || '') === 'delivery';
     });
     list.sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
     setDealEvents(list);
-  }, [leadId, projectId, idList]);
+  }, [leadId, projectId, idList, scheduleOnly]);
 
   const loadMonth = useCallback(async () => {
     const params = {
       month: cursor.month,
       year: cursor.year,
-      modules: 'production,logistics',
+      modules: scheduleOnly ? 'production,logistics' : 'crm,production,logistics',
+      include_as_participant: '1',
     };
+    if (companyId) params.company_id = companyId;
     try {
       const { data } = await api.get('/events/calendar', { params });
       const list = Array.isArray(data) ? data : (data?.events || []);
-      setMonthEvents(Array.isArray(list) ? list : []);
+      const rows = Array.isArray(list) ? list : [];
+      setMonthEvents(scheduleOnly ? rows.filter(isOpsScheduleEvent) : rows);
     } catch {
       try {
         const lastDay = new Date(cursor.year, cursor.month, 0).getDate();
@@ -283,19 +326,21 @@ export default function VcHandoverEventsPopup({
         const to = `${cursor.year}-${pad(cursor.month)}-${pad(lastDay)}`;
         const { data } = await api.get('/events', {
           params: {
-            modules: 'production,logistics',
+            modules: scheduleOnly ? 'production,logistics' : 'crm,production,logistics',
             date_from: from,
             date_to: to,
             limit: 300,
             include_as_participant: '1',
+            ...(companyId ? { company_id: companyId } : {}),
           },
         });
-        setMonthEvents(Array.isArray(data?.events) ? data.events : []);
+        const rows = Array.isArray(data?.events) ? data.events : [];
+        setMonthEvents(scheduleOnly ? rows.filter(isOpsScheduleEvent) : rows);
       } catch {
         setMonthEvents([]);
       }
     }
-  }, [cursor.month, cursor.year]);
+  }, [cursor.month, cursor.year, scheduleOnly, companyId]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -317,6 +362,10 @@ export default function VcHandoverEventsPopup({
   }, [loadDeal, loadMonth]);
 
   useEffect(() => { void load(); }, [load]);
+
+  useEffect(() => {
+    if (scheduleOnly && moduleTab === 'crm') setModuleTab('all');
+  }, [scheduleOnly, moduleTab]);
 
   useEffect(() => {
     api.get('/users', { params: { limit: 300 } })
@@ -358,6 +407,19 @@ export default function VcHandoverEventsPopup({
     }
   }, [anchorPickupAt, anchorInstallAt, anchorInstallOccurrenceDates]);
 
+  // Bấm «Lịch» / đổi ngày-giờ / đổi chế độ Lắp|Lấy hàng → lịch nhảy đúng tháng & ngày.
+  useEffect(() => {
+    const preferred = pickTarget === 'pickup'
+      ? (parseDay(focusDate) || parseDay(anchorPickupAt) || parseDay(anchorInstallAt))
+      : pickTarget === 'install'
+        ? (parseDay(focusDate) || parseDay(anchorInstallAt) || parseDay(anchorPickupAt))
+        : (parseDay(focusDate) || parseDay(anchorInstallAt) || parseDay(anchorPickupAt));
+    if (!preferred) return;
+    setSelectedDay(preferred);
+    const [y, m] = preferred.split('-').map(Number);
+    if (y && m) setCursor({ year: y, month: m });
+  }, [focusDate, focusNonce, pickTarget, anchorPickupAt, anchorInstallAt]);
+
   const calendarEvents = useMemo(() => {
     const byId = new Map();
     for (const e of monthEvents) if (e?.id) byId.set(String(e.id), e);
@@ -365,68 +427,113 @@ export default function VcHandoverEventsPopup({
     return [...byId.values()];
   }, [monthEvents, dealEvents]);
 
-  /** 3 sự kiện tạm (chưa lưu DB) — hiện trên lịch khi đang chọn ngày / chờ xác nhận. */
+  /** Sự kiện tạm (chưa lưu / đang chỉnh trên form) — hiện khi chọn ngày hoặc đang sửa lịch. */
   const draftEvents = useMemo(() => {
     const hasRealHandoverEvents = idList.length > 0;
+    // Có sự kiện DB rồi: chỉ hiện lại bản tạm khi đang chọn/sửa (pickMode).
     if (hasRealHandoverEvents && !pickMode) return [];
 
     const pickupIso = toPreviewIso(vcAt) || toPreviewIso(anchorPickupAt);
     const arriveIso = toPreviewIso(arriveAt) || toPreviewIso(anchorArriveAt) || pickupIso;
     const installIso = toPreviewIso(installAt) || toPreviewIso(anchorInstallAt) || arriveIso || pickupIso;
-    if (!pickupIso) return [];
+    const finishIso = toPreviewIso(anchorFinishAt)
+      || (() => {
+        const installDay = parseDay(installIso);
+        if (!installDay) return null;
+        const d = new Date(`${installDay}T12:00:00+07:00`);
+        if (Number.isNaN(d.getTime())) return null;
+        d.setDate(d.getDate() - 2);
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${y}-${m}-${day}T17:00:00+07:00`;
+      })();
+    if (!pickupIso && !installIso && !finishIso) return [];
 
     const pickupDay = parseDay(pickupIso);
     const installDay = parseDay(installIso);
     const sameDay = !!(pickupDay && installDay && pickupDay === installDay);
 
-    const drafts = [
-      {
-        id: '__draft_sx_delivery__',
+    const drafts = [];
+    if (finishIso) {
+      drafts.push({
+        id: '__draft_sx_finish__',
         _draft: true,
         module: 'production',
-        event_type: 'delivery',
-        title: 'Giao hàng xưởng (tạm)',
-        short_label: 'SX tạm',
-        start_time: pickupIso,
+        event_type: 'production_finish',
+        title: 'Hoàn thiện SX (tạm)',
+        short_label: 'HT SX',
+        start_time: finishIso,
         status: 'planned',
-        color: '#7c3aed',
-      },
-      {
+        color: '#4f46e5',
+        occurrence_dates: [parseDay(finishIso)].filter(Boolean),
+      });
+    }
+    if (pickupIso) {
+      drafts.push({
         id: '__draft_vc_pickup__',
         _draft: true,
         module: 'logistics',
         event_type: 'pickup',
-        title: 'VC tới nơi LĐ (tạm)',
-        short_label: 'VC tạm',
+        title: 'Lấy hàng (tạm)',
+        short_label: 'Lấy tạm',
         start_time: arriveIso || pickupIso,
         status: 'planned',
         color: '#ea580c',
-      },
-      {
+      });
+    }
+    if (installIso) {
+      drafts.push({
         id: '__draft_install__',
         _draft: true,
         module: 'logistics',
         event_type: 'installation',
-        title: sameDay ? 'Lắp đặt (tạm · cùng ngày VC)' : 'Lắp đặt (tạm)',
+        title: sameDay ? 'Lắp đặt (tạm · cùng ngày lấy hàng)' : 'Lắp đặt (tạm)',
         short_label: 'Lắp tạm',
         start_time: installIso || pickupIso,
         status: 'planned',
         color: '#d97706',
         occurrence_dates: installOccurrenceDates.length ? installOccurrenceDates : undefined,
-      },
-    ];
+      });
+    }
     return drafts;
-  }, [vcAt, arriveAt, installAt, installOccurrenceDates, anchorPickupAt, anchorArriveAt, anchorInstallAt, idList, pickMode]);
+  }, [vcAt, arriveAt, installAt, installOccurrenceDates, anchorPickupAt, anchorArriveAt, anchorInstallAt, anchorFinishAt, idList, pickMode]);
 
   const filteredCalendarEvents = useMemo(() => {
+    let scoped = scheduleOnly
+      ? calendarEvents.filter(isOpsScheduleEvent)
+      : calendarEvents;
+
+    // Đang sửa/chọn ngày: ẩn sự kiện ops thật của đúng deal/dự án → hiện lại lịch tạm theo form.
+    if (pickMode && draftEvents.length) {
+      const idSet = new Set(idList.map(String));
+      scoped = scoped.filter((e) => {
+        if (!e || e._draft) return true;
+        if (idSet.has(String(e.id))) return false;
+        if (projectId && String(e.project_id || '') === String(projectId) && isOpsScheduleEvent(e)) {
+          return false;
+        }
+        if (
+          !projectId
+          && leadId
+          && String(e.lead_id || '') === String(leadId)
+          && isOpsScheduleEvent(e)
+        ) {
+          return false;
+        }
+        return true;
+      });
+    }
+
     const base = moduleTab === 'all'
-      ? calendarEvents
-      : calendarEvents.filter((e) => String(e.module || '').toLowerCase() === moduleTab);
+      ? scoped
+      : scoped.filter((e) => String(e.module || '').toLowerCase() === moduleTab);
     const drafts = moduleTab === 'all'
       ? draftEvents
       : draftEvents.filter((e) => String(e.module || '').toLowerCase() === moduleTab);
-    return [...base, ...drafts];
-  }, [calendarEvents, draftEvents, moduleTab]);
+    // Lịch tạm lên trước để luôn thấy trên ô ngày (không bị slice cắt mất)
+    return [...drafts, ...base];
+  }, [calendarEvents, draftEvents, moduleTab, scheduleOnly, pickMode, projectId, leadId, idList]);
 
   const eventYmdsInViewMonth = (ev) => {
     const { year, month } = cursor;
@@ -520,6 +627,14 @@ export default function VcHandoverEventsPopup({
       || parseDay(datetimeLocalValueToIso(anchorPickupAt) || '')
       || (String(anchorPickupAt).match(/^(\d{4}-\d{2}-\d{2})/)?.[1] || null);
   }, [anchorPickupAt]);
+
+  /** Ngày lắp đã chọn trên form — tô teal khi đang chọn / xem */
+  const installAnchorYmd = useMemo(() => {
+    if (!anchorInstallAt) return null;
+    return parseDay(anchorInstallAt)
+      || parseDay(datetimeLocalValueToIso(anchorInstallAt) || '')
+      || (String(anchorInstallAt).match(/^(\d{4}-\d{2}-\d{2})/)?.[1] || null);
+  }, [anchorInstallAt]);
 
   const selectedSxBusy = (sxCountByDay.get(selectedDay) || 0) >= SX_BUSY_THRESHOLD;
   const selectedSxCount = sxCountByDay.get(selectedDay) || 0;
@@ -623,9 +738,65 @@ export default function VcHandoverEventsPopup({
     }
     setSelectedDay(ymd);
 
-    // Chọn ngày VC → mở form giờ VC + tới nơi + lắp (mặc định cùng ngày), có thể chỉnh rồi Áp dụng
-    if (pickTarget === 'pickup' || pickTarget === 'both') {
-      if (!confirmBusyVcDay(ymd)) return;
+    // Chỉ chọn lấy hàng → áp dụng ngay (không mở form xác nhận)
+    if (pickTarget === 'pickup') {
+      const installDay = parseDay(anchorInstallAt)
+        || parseDay(installAt)
+        || parseDay(datetimeLocalValueToIso(installAt) || '')
+        || (anchorInstallAt && String(anchorInstallAt).match(/^(\d{4}-\d{2}-\d{2})/)?.[1])
+        || null;
+      if (installDay && compareYmd(ymd, installDay) > 0) {
+        alert(
+          `Ngày lấy hàng VC phải bằng hoặc trước ngày lắp đặt (${formatDayLabel(installDay)}). `
+          + 'Lắp đặt có thể cùng ngày với VC, không được trước VC.',
+        );
+        return;
+      }
+      const hm = String(vcAt || anchorPickupAt || '').match(/T(\d{2}:\d{2})/)?.[1] || '08:00';
+      const local = `${ymd}T${hm}`;
+      setVcAt(local);
+      if (typeof onPickDates === 'function') {
+        onPickDates({ pickupAt: local });
+      } else if (typeof onPickDate === 'function') {
+        onPickDate(local);
+      }
+      return;
+    }
+
+    // Chỉ chọn lắp đặt → áp dụng ngay
+    if (pickTarget === 'install') {
+      const vcDay = parseDay(anchorPickupAt)
+        || parseDay(datetimeLocalValueToIso(anchorPickupAt) || '')
+        || (anchorPickupAt && String(anchorPickupAt).match(/^(\d{4}-\d{2}-\d{2})/)?.[1])
+        || null;
+      if (vcDay && compareYmd(ymd, vcDay) < 0) {
+        alert(
+          `Ngày lắp đặt phải bằng hoặc sau ngày lấy hàng (${formatDayLabel(vcDay)}). `
+          + 'Có thể cùng ngày, không được trước VC.',
+        );
+        return;
+      }
+      let hour = 14;
+      let minute = 0;
+      const prev = String(installAt || anchorInstallAt || '').match(/T(\d{2}):(\d{2})/);
+      if (prev) {
+        hour = Number(prev[1]);
+        minute = Number(prev[2]);
+      }
+      const local = ymdToLocal(ymd, hour, minute);
+      setInstallAt(local);
+      setInstallOccurrenceDates([ymd]);
+      if (vcDay) setVcAt(anchorPickupAt || ymdToLocal(vcDay, 8));
+      if (typeof onPickDates === 'function') {
+        onPickDates({ installAt: local });
+      } else if (typeof onPickDate === 'function') {
+        onPickDate(local);
+      }
+      return;
+    }
+
+    // Cả hai → mở form giờ để chỉnh rồi Áp dụng
+    if (pickTarget === 'both') {
       const existingInstallDay = parseDay(anchorInstallAt)
         || parseDay(installAt)
         || parseDay(datetimeLocalValueToIso(installAt) || '');
@@ -684,116 +855,117 @@ export default function VcHandoverEventsPopup({
       setArriveAt(ymdToLocal(ymd, hour, minute));
       setInstallAt(anchorInstallAt || installAt || ymdToLocal(installDay || ymd, 14));
       setShowSchedule(true);
-      return;
-    }
-
-    // Chọn lại ngày lắp đặt (≥ VC)
-    if (pickTarget === 'install') {
-      const vcDay = parseDay(anchorPickupAt)
-        || parseDay(datetimeLocalValueToIso(anchorPickupAt) || '')
-        || (anchorPickupAt && String(anchorPickupAt).match(/^(\d{4}-\d{2}-\d{2})/)?.[1])
-        || null;
-      if (!vcDay) {
-        alert('Chọn ngày nhận hàng VC trước, rồi mới chọn ngày lắp đặt.');
-        return;
-      }
-      const chk = assertInstallOnOrAfterVc(vcDay, ymd);
-      if (!chk.ok) {
-        alert(chk.message);
-        return;
-      }
-      if (!confirmBusyInstallDay(ymd)) return;
-      // Giữ giờ lắp đang có (nếu có), không thì 14:00
-      let hour = 14;
-      let minute = 0;
-      const prev = String(installAt || '').match(/T(\d{2}):(\d{2})/);
-      if (prev) {
-        hour = Number(prev[1]);
-        minute = Number(prev[2]);
-      }
-      setVcAt(anchorPickupAt || ymdToLocal(vcDay, 9));
-      setInstallAt(ymdToLocal(ymd, hour, minute));
-      setInstallOccurrenceDates((prev) => {
-        const next = new Set((prev || []).filter((d) => !vcDay || d >= vcDay));
-        next.add(ymd);
-        return [...next].sort();
-      });
-      const arriveDay = parseDay(arriveAt) || parseDay(anchorArriveAt);
-      if (!arriveDay || compareYmd(arriveDay, ymd) > 0) {
-        setArriveAt(ymdToLocal(ymd, 11));
-      } else {
-        setArriveAt(anchorArriveAt || arriveAt || ymdToLocal(arriveDay, 11));
-      }
-      setShowSchedule(true);
     }
   };
 
   const applyPickedDatesToCard = () => {
-    if (!vcAt) {
-      alert('Chọn ngày nhận hàng / VC');
-      return;
-    }
-    const vcDay = parseDay(datetimeLocalValueToIso(vcAt) || vcAt);
-    if (pickTarget !== 'install' && pickTarget !== 'arrive' && !confirmBusyVcDay(vcDay)) return;
+    const installOnly = pickTarget === 'install';
+    const arriveOnly = pickTarget === 'arrive';
+
     let nextInstall = installAt || '';
-    if (!nextInstall && vcDay) nextInstall = ymdToLocal(vcDay, 14);
     let nextArrive = arriveAt || '';
-    if (!nextArrive && vcDay) nextArrive = ymdToLocal(vcDay, 11);
-    const occ = (installOccurrenceDates.length
+    let nextPickup = vcAt || '';
+
+    const occRaw = (installOccurrenceDates.length
       ? [...installOccurrenceDates]
       : (nextInstall ? [String(nextInstall).slice(0, 10)] : [])
     ).map((d) => String(d).slice(0, 10)).filter(Boolean).sort();
-    if (occ.some((d) => vcDay && d < vcDay)) {
-      alert('Ngày lắp đặt không được trước ngày nhận hàng VC.');
+
+    if (installOnly) {
+      if (!nextInstall && !occRaw.length) {
+        alert('Chọn ngày lắp đặt trên lịch, rồi bấm Áp dụng ngày.');
+        return;
+      }
+    } else if (arriveOnly) {
+      if (!nextArrive) {
+        alert('Chọn ngày VC tới nơi LĐ, rồi bấm Áp dụng ngày.');
+        return;
+      }
+    } else if (!nextPickup && !nextInstall && !occRaw.length) {
+      alert('Chọn ngày trên lịch, rồi bấm Áp dụng ngày.');
       return;
+    }
+
+    // Thiếu lấy hàng nhưng đã có lắp → mặc định 08:00 cùng ngày lắp
+    if (!installOnly && !arriveOnly && !nextPickup && (nextInstall || occRaw[0])) {
+      const day = occRaw[0] || String(nextInstall).slice(0, 10);
+      nextPickup = `${day}T08:00`;
+    }
+
+    let vcDay = nextPickup
+      ? (parseDay(datetimeLocalValueToIso(nextPickup) || nextPickup) || String(nextPickup).slice(0, 10) || null)
+      : null;
+
+    if (!nextInstall && (occRaw[0] || vcDay)) {
+      nextInstall = ymdToLocal(occRaw[0] || vcDay, 14);
+    }
+    if (!nextArrive && vcDay) {
+      nextArrive = ymdToLocal(vcDay, 11);
+    }
+
+    let occ = [...occRaw];
+    if (!occ.length && nextInstall) occ = [String(nextInstall).slice(0, 10)];
+
+    // Tự chỉnh lắp >= lấy hàng (không chặn nút bằng alert)
+    if (vcDay && occ.length && !installOnly) {
+      const kept = occ.filter((d) => d >= vcDay);
+      occ = kept.length ? kept : [vcDay];
     }
     if (occ.length) {
       const hm = String(nextInstall || '').match(/T(\d{2}:\d{2})/)?.[1] || '14:00';
       nextInstall = `${occ[0]}T${hm}`;
     }
-    if (nextInstall) {
-      const installDay = parseDay(datetimeLocalValueToIso(nextInstall) || nextInstall);
-      const chk = assertInstallOnOrAfterVc(vcDay, installDay);
-      if (!chk.ok) {
-        alert(chk.message);
-        return;
-      }
-      if (pickTarget === 'install' || pickTarget === 'both' || pickTarget === 'pickup') {
-        if (!confirmBusyInstallDay(installDay)) return;
-      }
+
+    if (installOnly && nextInstall && !nextPickup) {
+      nextPickup = `${String(nextInstall).slice(0, 10)}T08:00`;
+      vcDay = String(nextInstall).slice(0, 10);
     }
-    if (nextArrive) {
+
+    // Đồng bộ «tới nơi» nằm giữa lấy hàng và lắp
+    if (nextArrive && nextInstall) {
       const arriveDay = parseDay(datetimeLocalValueToIso(nextArrive) || nextArrive);
-      if (arriveDay && vcDay && compareYmd(arriveDay, vcDay) < 0) {
-        alert('VC tới nơi LĐ phải bằng hoặc sau ngày nhận hàng.');
-        return;
+      const installDay = parseDay(datetimeLocalValueToIso(nextInstall) || nextInstall);
+      if (vcDay && arriveDay && compareYmd(arriveDay, vcDay) < 0) {
+        nextArrive = ymdToLocal(vcDay, 11);
+      } else if (arriveDay && installDay && compareYmd(arriveDay, installDay) > 0) {
+        nextArrive = ymdToLocal(installDay, 11);
       }
-      if (nextInstall) {
-        const installDay = parseDay(datetimeLocalValueToIso(nextInstall) || nextInstall);
-        if (arriveDay && installDay && compareYmd(arriveDay, installDay) > 0) {
-          alert('VC tới nơi LĐ phải bằng hoặc trước ngày lắp đặt.');
-          return;
-        }
-      }
+    } else if (!nextArrive && vcDay) {
+      nextArrive = ymdToLocal(vcDay, 11);
     }
-    if (typeof onPickDates === 'function') {
-      onPickDates({
-        pickupAt: vcAt,
-        installAt: nextInstall,
-        vcArriveAt: nextArrive,
-        installOccurrenceDates: occ,
-      });
+
+    const finalInstallDay = nextInstall
+      ? (parseDay(datetimeLocalValueToIso(nextInstall) || nextInstall) || String(nextInstall).slice(0, 10))
+      : null;
+    const orderChk = assertInstallOnOrAfterVc(vcDay, finalInstallDay);
+    if (!orderChk.ok) {
+      alert(orderChk.message);
       return;
     }
-    if (typeof onPickDate === 'function') {
-      onPickDate(
-        pickTarget === 'install' ? nextInstall
-          : pickTarget === 'arrive' ? nextArrive
-            : vcAt,
-      );
+
+    try {
+      if (typeof onPickDates === 'function') {
+        onPickDates({
+          pickupAt: nextPickup || undefined,
+          installAt: nextInstall || undefined,
+          vcArriveAt: nextArrive || undefined,
+          installOccurrenceDates: occ,
+        });
+      } else if (typeof onPickDate === 'function') {
+        onPickDate(
+          installOnly ? (nextInstall || nextPickup)
+            : arriveOnly ? nextArrive
+              : (nextPickup || nextInstall),
+        );
+      } else {
+        onClose?.();
+      }
+    } catch (err) {
+      console.error('[VcHandoverEventsPopup] apply pick:', err);
+      alert(err?.message || 'Không áp dụng được ngày đã chọn.');
       return;
     }
-    onClose?.();
+    setShowSchedule(false);
   };
 
   const postEvent = async (body) => {
@@ -956,6 +1128,7 @@ export default function VcHandoverEventsPopup({
 
   const counts = useMemo(() => ({
     all: dealEvents.length,
+    crm: dealEvents.filter((e) => String(e.module || '').toLowerCase() === 'crm').length,
     production: dealEvents.filter((e) => String(e.module || '').toLowerCase() === 'production').length,
     logistics: dealEvents.filter((e) => String(e.module || '').toLowerCase() === 'logistics').length,
   }), [dealEvents]);
@@ -964,23 +1137,35 @@ export default function VcHandoverEventsPopup({
   const isCurrentMonth = today.getFullYear() === cursor.year && today.getMonth() + 1 === cursor.month;
 
   return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center p-3 sm:p-4">
-      <button type="button" className="absolute inset-0 bg-black/40" aria-label="Đóng" onClick={onClose} />
-      <div className="relative w-full max-w-2xl max-h-[min(94vh,820px)] flex flex-col rounded-2xl bg-white shadow-2xl border border-gray-200 overflow-hidden">
+    <div className={embedded
+      ? 'relative w-full h-full min-h-0 flex flex-col bg-white overflow-hidden'
+      : 'fixed inset-0 z-[220] flex items-center justify-center p-3 sm:p-4'}
+    >
+      {!embedded && (
+        <button type="button" className="absolute inset-0 bg-black/40" aria-label="Đóng" onClick={onClose} />
+      )}
+      <div className={embedded
+        ? 'relative w-full h-full min-h-0 flex flex-col overflow-hidden'
+        : 'relative w-full max-w-2xl max-h-[min(94vh,820px)] flex flex-col rounded-2xl bg-white shadow-2xl border border-gray-200 overflow-hidden'}
+      >
         {/* Header — giống trang Sự kiện */}
-        <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-100 bg-gradient-to-r from-blue-50/70 via-white to-orange-50/50 shrink-0">
-          <Calendar className="h-4 w-4 text-blue-600" />
+        <div className={`flex items-center gap-2 px-4 py-3 border-b border-gray-100 shrink-0 ${
+          embedded
+            ? 'bg-gradient-to-r from-orange-50 via-white to-teal-50'
+            : 'bg-gradient-to-r from-blue-50/70 via-white to-orange-50/50'
+        }`}>
+          <Calendar className={`h-4 w-4 ${embedded ? 'text-orange-600' : 'text-blue-600'}`} />
           <div className="min-w-0 flex-1">
             <p className="text-sm font-bold text-gray-900">
-              {pickMode ? 'Chọn ngày trên lịch' : 'Lịch sự kiện SX & VC/LĐ'}
+              {pickMode ? 'Lịch sự kiện — chọn ngày' : 'Lịch sự kiện SX & VC/LĐ'}
             </p>
             <p className="text-[11px] text-gray-500 truncate">
               {pickMode
                 ? (pickTarget === 'install'
-                  ? 'Ngày xám = ngày VC đã chọn · bấm ngày ≥ VC để chọn lắp đặt · khung đứt = lịch tạm'
+                  ? 'Bấm một ngày → chọn lắp đặt ngay (không mở form)'
                   : pickTarget === 'pickup'
-                    ? 'Bấm một ngày — lịch tạm SX/VC/Lắp hiện trên ô ngày (chưa tạo)'
-                    : 'Bấm ngày hoặc + để chọn — lịch tạm SX/VC/Lắp hiện trên lịch')
+                    ? 'Bấm một ngày → chọn lấy hàng ngay (không mở form)'
+                    : 'Bấm ngày để mở form chỉnh giờ lấy hàng + lắp')
                 : (loading
                   ? 'Đang tải…'
                   : draftEvents.length
@@ -988,24 +1173,40 @@ export default function VcHandoverEventsPopup({
                     : `${dealEvents.length} sự kiện deal · tháng này ${filteredCalendarEvents.length} mốc`)}
             </p>
           </div>
-          <button type="button" onClick={onClose} className="h-8 w-8 rounded-lg hover:bg-gray-100 text-gray-600 inline-flex items-center justify-center">
-            <X className="h-4 w-4" />
-          </button>
+          {!embedded && (
+            <button type="button" onClick={onClose} className="h-8 w-8 rounded-lg hover:bg-gray-100 text-gray-600 inline-flex items-center justify-center">
+              <X className="h-4 w-4" />
+            </button>
+          )}
         </div>
 
-        <div className="px-3 pt-2 flex gap-1 shrink-0">
-          {[
-            { id: 'all', label: `Tất cả` },
-            { id: 'production', label: `SX (${counts.production})` },
-            { id: 'logistics', label: `VC/LĐ (${counts.logistics})` },
-          ].map((t) => (
+        <div className="px-3 pt-2 flex flex-wrap gap-1 shrink-0">
+          {(scheduleOnly
+            ? [
+              { id: 'all', label: 'Tất cả' },
+              { id: 'production', label: `Sản xuất (${counts.production})` },
+              { id: 'logistics', label: `VC/LĐ (${counts.logistics})` },
+            ]
+            : [
+              { id: 'all', label: 'Tất cả' },
+              { id: 'crm', label: `CRM (${counts.crm})` },
+              { id: 'production', label: `Sản xuất (${counts.production})` },
+              { id: 'logistics', label: `VC/LĐ (${counts.logistics})` },
+            ]
+          ).map((t) => (
             <button
               key={t.id}
               type="button"
               onClick={() => setModuleTab(t.id)}
               className={`h-7 px-2.5 rounded-lg text-[11px] font-semibold border ${
                 moduleTab === t.id
-                  ? 'bg-blue-600 text-white border-blue-600'
+                  ? (t.id === 'crm'
+                    ? 'bg-blue-600 text-white border-blue-600'
+                    : t.id === 'production'
+                      ? 'bg-teal-600 text-white border-teal-600'
+                      : t.id === 'logistics'
+                        ? 'bg-orange-600 text-white border-orange-600'
+                        : 'bg-slate-800 text-white border-slate-800')
                   : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
               }`}
             >
@@ -1093,6 +1294,7 @@ export default function VcHandoverEventsPopup({
                     const isTodayCell = isCurrentMonth && day === today.getDate();
                     const isSelected = ymd === selectedDay;
                     const isVcAnchor = !!(vcAnchorYmd && ymd === vcAnchorYmd);
+                    const isInstallAnchor = !!(installAnchorYmd && ymd === installAnchorYmd);
                     const isWeekend = i % 7 === 0;
                     const sxBusy = (sxCountByDay.get(ymd) || 0) >= SX_BUSY_THRESHOLD;
                     const vcBusy = (vcCountByDay.get(ymd) || 0) >= VC_BUSY_THRESHOLD;
@@ -1102,13 +1304,24 @@ export default function VcHandoverEventsPopup({
                       : (sxBusy || vcBusy || installBusy);
                     const cellBg = isSelected
                       ? ''
-                      : isVcAnchor
-                        ? 'bg-gray-200/90'
-                        : isTodayCell
-                          ? 'bg-blue-50/40'
-                          : dayBusy
-                            ? 'bg-amber-50/50'
-                            : 'bg-white';
+                      : isInstallAnchor && pickTarget !== 'pickup'
+                        ? 'bg-teal-100/80'
+                        : isVcAnchor && pickTarget !== 'install'
+                          ? 'bg-sky-100/80'
+                          : isVcAnchor
+                            ? 'bg-gray-200/90'
+                            : isTodayCell
+                              ? 'bg-blue-50/40'
+                              : dayBusy
+                                ? 'bg-amber-50/50'
+                                : 'bg-white';
+                    const anchorTitle = isInstallAnchor && isVcAnchor
+                      ? 'Ngày lắp + lấy hàng đã chọn'
+                      : isInstallAnchor
+                        ? 'Ngày lắp đặt đã chọn'
+                        : isVcAnchor
+                          ? 'Ngày nhận hàng VC đã chọn'
+                          : null;
                     return (
                       <div
                         key={ymd}
@@ -1116,33 +1329,46 @@ export default function VcHandoverEventsPopup({
                         className={`group relative rounded-lg border flex flex-col overflow-hidden transition cursor-pointer min-h-[72px] ${
                           isSelected
                             ? 'ring-2 ring-blue-500 ring-offset-1 border-blue-300 shadow-md bg-white'
-                            : isVcAnchor
-                              ? 'border-gray-400 border-dashed hover:border-gray-500'
-                              : 'border-gray-200 hover:border-blue-300 hover:shadow-sm'
+                            : isInstallAnchor && pickTarget !== 'pickup'
+                              ? 'border-teal-400 border-dashed hover:border-teal-500'
+                              : isVcAnchor
+                                ? 'border-sky-400 border-dashed hover:border-sky-500'
+                                : 'border-gray-200 hover:border-blue-300 hover:shadow-sm'
                         } ${cellBg}`}
                         title={
-                          isVcAnchor
-                            ? 'Ngày nhận hàng VC đã chọn'
-                            : dayBusy
+                          anchorTitle
+                            || (dayBusy
                               ? `VC ${vcCountByDay.get(ymd) || 0} · SX ${sxCountByDay.get(ymd) || 0} · Lắp ${installCountByDay.get(ymd) || 0}`
-                              : undefined
+                              : undefined)
                         }
                         onClick={() => applyPickedDay(ymd)}
                       >
-                        <div className={`flex items-center justify-between px-1 py-0.5 border-b ${isVcAnchor ? 'border-gray-300' : 'border-gray-100'}`}>
+                        <div className={`flex items-center justify-between px-1 py-0.5 border-b ${
+                          isInstallAnchor && pickTarget !== 'pickup'
+                            ? 'border-teal-200'
+                            : isVcAnchor
+                              ? 'border-sky-200'
+                              : 'border-gray-100'
+                        }`}>
                           <span
                             className={`text-[11px] font-bold w-5 h-5 inline-flex items-center justify-center rounded-full tabular-nums ${
-                              isVcAnchor
-                                ? 'bg-gray-500 text-white'
-                                : isTodayCell
-                                  ? 'bg-blue-600 text-white'
-                                  : isWeekend ? 'text-rose-600' : 'text-gray-800'
+                              isInstallAnchor && pickTarget !== 'pickup'
+                                ? 'bg-teal-600 text-white'
+                                : isVcAnchor
+                                  ? 'bg-sky-600 text-white'
+                                  : isTodayCell
+                                    ? 'bg-blue-600 text-white'
+                                    : isWeekend ? 'text-rose-600' : 'text-gray-800'
                             }`}
                           >
                             {day}
                           </span>
-                          {isVcAnchor ? (
-                            <span className="text-[8px] font-bold uppercase tracking-wide text-gray-600 pr-0.5">VC</span>
+                          {isInstallAnchor && isVcAnchor ? (
+                            <span className="text-[8px] font-bold uppercase tracking-wide text-teal-700 pr-0.5">L+VC</span>
+                          ) : isInstallAnchor && pickTarget !== 'pickup' ? (
+                            <span className="text-[8px] font-bold uppercase tracking-wide text-teal-700 pr-0.5">Lắp</span>
+                          ) : isVcAnchor ? (
+                            <span className="text-[8px] font-bold uppercase tracking-wide text-sky-700 pr-0.5">VC</span>
                           ) : (!pickMode || pickTarget === 'both') ? (
                             <button
                               type="button"
@@ -1159,7 +1385,13 @@ export default function VcHandoverEventsPopup({
                           ) : null}
                         </div>
                         <div className="flex-1 min-h-0 p-0.5 space-y-0.5 overflow-hidden">
-                          {dayEvents.slice(0, 3).map((ev) => {
+                          {(() => {
+                            const drafts = dayEvents.filter((e) => e._draft);
+                            const reals = dayEvents.filter((e) => !e._draft);
+                            const shown = [...drafts, ...reals].slice(0, Math.max(3, Math.min(drafts.length + 1, 4)));
+                            return (
+                              <>
+                                {shown.map((ev) => {
                             const t = typeInfo(ev);
                             const isDraft = !!ev._draft;
                             const isDeal = !isDraft && dealIds.has(String(ev.id));
@@ -1174,7 +1406,7 @@ export default function VcHandoverEventsPopup({
                                     color,
                                     borderColor: `${color}88`,
                                   }}
-                                  title={`${ev.title} — ${formatTime(ev.start_time)} (chưa tạo trên lịch)`}
+                                  title={`${ev.title} — ${formatTime(ev.start_time)} (đang chỉnh / chưa lưu)`}
                                 >
                                   {t.icon} {ev.short_label || ev.title}
                                 </div>
@@ -1200,10 +1432,13 @@ export default function VcHandoverEventsPopup({
                                 {t.icon} {ev.title}
                               </button>
                             );
-                          })}
-                          {dayEvents.length > 3 && (
-                            <div className="text-[9px] font-semibold text-gray-500 px-1">+{dayEvents.length - 3}</div>
-                          )}
+                                })}
+                                {dayEvents.length > shown.length && (
+                                  <div className="text-[9px] font-semibold text-gray-500 px-1">+{dayEvents.length - shown.length}</div>
+                                )}
+                              </>
+                            );
+                          })()}
                         </div>
                       </div>
                     );
@@ -1219,7 +1454,7 @@ export default function VcHandoverEventsPopup({
                     </span>
                     {selectedDayEvents.some((e) => e._draft) && (
                       <span className="text-[10px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">
-                        Có lịch tạm (chưa tạo)
+                        {pickMode ? 'Lịch tạm theo form đang sửa' : 'Có lịch tạm (chưa tạo)'}
                       </span>
                     )}
                   </h3>
@@ -1326,12 +1561,17 @@ export default function VcHandoverEventsPopup({
         </div>
       </div>
 
-      {/* Form chọn ngày VC + lắp đặt */}
-      {showSchedule && (
-        <div className="fixed inset-0 z-[90] flex items-center justify-center p-3">
-          <button type="button" className="absolute inset-0 bg-black/40" aria-label="Đóng" onClick={() => setShowSchedule(false)} />
-          <div className="relative w-full max-w-lg rounded-2xl bg-white shadow-2xl border border-orange-100 overflow-hidden max-h-[92vh] flex flex-col">
-            <div className="flex items-center gap-2 px-4 py-3 border-b border-orange-100 bg-orange-50/80">
+      {/* Form chọn ngày — portal lên body, trên modal cha (z-200) để không bị overflow/đè */}
+      {showSchedule && typeof document !== 'undefined' && createPortal(
+        <div className="fixed inset-0 z-[260] flex items-center justify-center p-3 sm:p-5">
+          <button type="button" className="absolute inset-0 bg-black/50 backdrop-blur-[1px]" aria-label="Đóng" onClick={() => setShowSchedule(false)} />
+          <div
+            role="dialog"
+            aria-modal="true"
+            className="relative w-full max-w-lg rounded-2xl bg-white shadow-2xl border border-orange-100 overflow-hidden max-h-[min(92vh,720px)] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-2 px-4 py-3 border-b border-orange-100 bg-orange-50/80 shrink-0">
               <Truck className="h-4 w-4 text-orange-600" />
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-bold text-orange-900">
@@ -1339,7 +1579,11 @@ export default function VcHandoverEventsPopup({
                 </p>
                 <p className="text-[11px] text-orange-700/80">
                   {pickMode
-                    ? 'Áp dụng vào thẻ bàn giao · lắp đặt ≥ ngày VC'
+                    ? (pickTarget === 'install'
+                      ? 'Áp dụng ngày lắp đặt vào form kế hoạch'
+                      : pickTarget === 'pickup'
+                        ? 'Áp dụng ngày lấy hàng vào form kế hoạch'
+                        : 'Áp dụng vào form · lắp đặt ≥ ngày lấy hàng')
                     : 'Ngày VC đồng thời là ngày giao hàng SX'}
                 </p>
               </div>
@@ -1475,7 +1719,8 @@ export default function VcHandoverEventsPopup({
                 />
               </div>
               )}
-              <div className="flex gap-2 pt-1">
+            </div>
+              <div className="flex gap-2 p-4 pt-2 border-t border-orange-100 bg-white shrink-0">
                 <button
                   type="button"
                   onClick={() => setShowSchedule(false)}
@@ -1485,17 +1730,25 @@ export default function VcHandoverEventsPopup({
                 </button>
                 <button
                   type="button"
-                  disabled={savingSchedule}
-                  onClick={() => void saveSchedule()}
+                  disabled={savingSchedule && !pickMode}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (pickMode) {
+                      applyPickedDatesToCard();
+                      return;
+                    }
+                    void saveSchedule();
+                  }}
                   className="flex-1 h-10 rounded-lg bg-orange-600 text-white text-sm font-semibold hover:bg-orange-700 disabled:opacity-50 inline-flex items-center justify-center gap-1.5"
                 >
-                  {savingSchedule ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                  {savingSchedule && !pickMode ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
                   {pickMode ? 'Áp dụng ngày' : 'Tạo sự kiện'}
                 </button>
               </div>
-            </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
 
       {showEdit && (

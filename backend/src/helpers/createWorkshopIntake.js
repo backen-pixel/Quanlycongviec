@@ -284,6 +284,7 @@ function scheduleWorkshopIntakeBackground({ req, dealId, projectId, userId, comp
  * @param {string} [opts.externalCompanyName]
  * @param {string} [opts.externalCompanyId]
  * @param {string} [opts.externalCatalogId]
+ * @param {boolean} [opts.staffAllowFallback=true] — false = chỉ NV setup phân loại (đặt xưởng)
  */
 async function createWorkshopIntakeOrder(opts) {
   const {
@@ -304,6 +305,7 @@ async function createWorkshopIntakeOrder(opts) {
     externalCompanyName,
     externalCompanyId,
     externalCatalogId,
+    staffAllowFallback = true,
   } = opts;
 
   const timer = createIntakeTimer();
@@ -491,7 +493,9 @@ async function createWorkshopIntakeOrder(opts) {
       .eq('id', deal.id);
     if (linkDealErr) throw linkDealErr;
 
-    await applyWorkshopTypeDefaultStaffToProject(projectId, companyUuid, wtCheck.type.id);
+    await applyWorkshopTypeDefaultStaffToProject(projectId, companyUuid, wtCheck.type.id, {
+      allowFallback: staffAllowFallback !== false,
+    });
 
     try {
       const { data: hop } = await supabase

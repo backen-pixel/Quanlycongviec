@@ -148,7 +148,7 @@ r.get('/quotations/:id', async (req, res) => {
       if (qe && !benign) return res.status(500).json({ error: qe.message || 'Lỗi tải báo giá' });
       return res.status(404).json({ error: 'Không tìm thấy báo giá' });
     }
-    if (!userMayAccessQuotationRow(req, quote)) {
+    if (!(await userMayAccessQuotationRow(req, quote))) {
       return res.status(403).json({ error: 'Không có quyền xem báo giá này' });
     }
     if (quote.status === 'converted') {
@@ -172,11 +172,11 @@ r.get('/quotations/:id/history', async (req, res) => {
   try {
     const { data: qMeta } = await supabase
       .from('quotations')
-      .select('created_by, company_id')
+      .select('created_by, company_id, lead_id')
       .eq('id', req.params.id)
       .maybeSingle();
     if (!qMeta) return res.status(404).json({ error: 'Không tìm thấy báo giá' });
-    if (!userMayAccessQuotationRow(req, qMeta)) {
+    if (!(await userMayAccessQuotationRow(req, qMeta))) {
       return res.status(403).json({ error: 'Không có quyền xem lịch sử báo giá này' });
     }
     const { data: rows, error } = await supabase
@@ -520,11 +520,11 @@ r.put('/quotations/:id', async (req, res) => {
   try {
     const { data: qAuth } = await supabase
       .from('quotations')
-      .select('created_by, company_id')
+      .select('created_by, company_id, lead_id')
       .eq('id', req.params.id)
       .maybeSingle();
     if (!qAuth) return res.status(404).json({ error: 'Không tìm thấy báo giá' });
-    if (!userMayAccessQuotationRow(req, qAuth)) {
+    if (!(await userMayAccessQuotationRow(req, qAuth))) {
       return res.status(403).json({ error: 'Không có quyền sửa báo giá này' });
     }
 
@@ -731,7 +731,7 @@ r.post('/quotations/:id/convert-to-order', async (req, res) => {
   try {
     const { data: quote } = await supabase.from('quotations').select('*').eq('id', req.params.id).single();
     if (!quote) return res.status(404).json({ error: 'Không tìm thấy báo giá' });
-    if (!userMayAccessQuotationRow(req, quote)) {
+    if (!(await userMayAccessQuotationRow(req, quote))) {
       return res.status(403).json({ error: 'Không có quyền chuyển báo giá này sang đơn hàng' });
     }
 
@@ -776,7 +776,7 @@ r.delete('/quotations/:id', async (req, res) => {
       .eq('id', req.params.id)
       .maybeSingle();
     if (!delScope) return res.status(404).json({ error: 'Không tìm thấy báo giá' });
-    if (!userMayAccessQuotationRow(req, delScope)) {
+    if (!(await userMayAccessQuotationRow(req, delScope))) {
       return res.status(403).json({ error: 'Không có quyền xóa báo giá này' });
     }
     const delQ = { code: delScope.code, lead_id: delScope.lead_id, customer_name: delScope.customer_name };
@@ -1541,7 +1541,7 @@ r.get('/quotations/:id/pdf', async (req, res) => {
       .select('*, customer:customers(id, full_name, phone, email, address, company, tax_code)')
       .eq('id', req.params.id).single();
     if (!quote) return res.status(404).json({ error: 'Khong tim thay bao gia' });
-    if (!userMayAccessQuotationRow(req, quote)) {
+    if (!(await userMayAccessQuotationRow(req, quote))) {
       return res.status(403).json({ error: 'Khong co quyen xuat PDF bao gia nay' });
     }
     const { data: items } = await supabase.from('quotation_items')

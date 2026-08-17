@@ -1,13 +1,18 @@
 /**
  * Sau khi Sale chọn công ty VC/LĐ:
- *  - thêm thành viên công ty VC vào deal (lead_members)
+ *  - chỉ thêm NV chịu trách nhiệm (cấu hình bàn giao + người đã gán) vào deal — không thêm cả công ty
  *  - đảm bảo project hiện trên module VC
  *  - nếu công ty VC ≠ CRM gốc: tạo deal CRM con trên pipeline công ty VC
  */
 const { supabase } = require('../config/supabase');
 const { getCrmStageByRole } = require('./workshopKanban');
+const {
+  resolveLogisticsHandoverResponsibleUserId,
+  resolveLogisticsHandoverInstallerUserId,
+  resolveLogisticsHandoverConfirmUserId,
+} = require('./logisticsHandoverSettings');
 
-/** Toàn bộ user đang active của công ty VC/LĐ. */
+/** Toàn bộ user đang active của công ty VC/LĐ (dùng khi cần blast — mặc định không). */
 async function listActiveCompanyUserIds(companyId) {
   if (!companyId) return [];
   const { data, error } = await supabase
@@ -20,6 +25,37 @@ async function listActiveCompanyUserIds(companyId) {
     return [];
   }
   return [...new Set((data || []).map((u) => String(u.id)).filter(Boolean))];
+}
+
+/**
+ * Chỉ NV chịu trách nhiệm VC/LĐ của công ty (cấu hình logistics_handover_settings).
+ */
+async function listLogisticsResponsibleUserIds(logisticsCompanyId, {
+  logisticsPersonId = null,
+  installerPersonId = null,
+  extraUserIds = [],
+} = {}) {
+  if (!logisticsCompanyId && !logisticsPersonId && !installerPersonId) {
+    return [...new Set((extraUserIds || []).filter(Boolean).map(String))];
+  }
+  const ids = new Set((extraUserIds || []).filter(Boolean).map(String));
+  if (logisticsPersonId) ids.add(String(logisticsPersonId));
+  if (installerPersonId) ids.add(String(installerPersonId));
+  if (logisticsCompanyId) {
+    try {
+      const [resp, inst, confirm] = await Promise.all([
+        resolveLogisticsHandoverResponsibleUserId(logisticsCompanyId),
+        resolveLogisticsHandoverInstallerUserId(logisticsCompanyId),
+        resolveLogisticsHandoverConfirmUserId(logisticsCompanyId, logisticsPersonId),
+      ]);
+      if (resp) ids.add(String(resp));
+      if (inst) ids.add(String(inst));
+      if (confirm) ids.add(String(confirm));
+    } catch (e) {
+      console.warn('[vcHandoverDealMembers] resolve responsible:', e.message);
+    }
+  }
+  return [...ids];
 }
 
 async function nextDealCode() {
@@ -189,6 +225,7 @@ async function ensureVcCompanyCrmDeal({
 
 /**
  * Gom user VC cần thêm vào deal + đảm bảo deal/project VC.
+ * Chỉ NV chịu trách nhiệm — không thêm toàn bộ NV công ty VC/LĐ.
  */
 async function afterVcCompanySelected({
   sourceLeadId,
@@ -200,14 +237,21 @@ async function afterVcCompanySelected({
   actorUserId,
   extraUserIds = [],
   addMembersFn,
+  /** @deprecated giữ tương thích — bị bỏ qua (không còn thêm cả công ty) */
+  addAllCompanyUsers = false,
+  /** true = đẩy project sang shipping (bàn giao VC). false = chỉ gắn CT + NV phụ trách. */
+  assertShippingStatus = true,
 }) {
-  const companyUserIds = await listActiveCompanyUserIds(logisticsCompanyId);
-  const memberIds = [...new Set([
-    ...companyUserIds,
+  const responsibleIds = await listLogisticsResponsibleUserIds(logisticsCompanyId, {
     logisticsPersonId,
     installerPersonId,
-    ...(extraUserIds || []),
-  ].filter(Boolean).map(String))];
+    extraUserIds,
+  });
+  let memberIds = [...responsibleIds];
+  if (addAllCompanyUsers) {
+    const companyUserIds = await listActiveCompanyUserIds(logisticsCompanyId);
+    memberIds = [...new Set([...memberIds, ...companyUserIds])];
+  }
 
   const addedToSource = typeof addMembersFn === 'function'
     ? await addMembersFn(sourceLeadId, memberIds, actorUserId)
@@ -218,7 +262,7 @@ async function afterVcCompanySelected({
     logisticsCompanyId,
     projectId,
     vcKanbanColumnId,
-    logisticsPersonId,
+    logisticsPersonId: logisticsPersonId || responsibleIds[0] || null,
     actorUserId,
   });
 
@@ -229,15 +273,21 @@ async function afterVcCompanySelected({
 
   // Đảm bảo project còn trong scope VC (phòng status bị SX ghi đè).
   if (projectId && logisticsCompanyId) {
+    const resolvedLogisticsPerson = logisticsPersonId || responsibleIds[0] || null;
+    const resolvedInstaller = installerPersonId
+      || (responsibleIds.length > 1 ? responsibleIds[1] : resolvedLogisticsPerson)
+      || null;
     const patch = {
       logistics_company_id: logisticsCompanyId,
-      status: 'shipping',
-      current_stage_id: null,
       updated_at: new Date().toISOString(),
     };
+    if (assertShippingStatus) {
+      patch.status = 'shipping';
+      patch.current_stage_id = null;
+    }
     if (vcKanbanColumnId) patch.vc_kanban_column_id = vcKanbanColumnId;
-    if (logisticsPersonId) patch.logistics_person_id = logisticsPersonId;
-    if (installerPersonId) patch.installer_person_id = installerPersonId;
+    if (resolvedLogisticsPerson) patch.logistics_person_id = resolvedLogisticsPerson;
+    if (resolvedInstaller) patch.installer_person_id = resolvedInstaller;
     const { error: pe } = await supabase.from('projects').update(patch).eq('id', projectId);
     if (pe) console.warn('[vcHandoverDealMembers] project assert:', pe.message);
   }
@@ -252,6 +302,7 @@ async function afterVcCompanySelected({
 
 module.exports = {
   listActiveCompanyUserIds,
+  listLogisticsResponsibleUserIds,
   ensureVcCompanyCrmDeal,
   afterVcCompanySelected,
   resolveVcCompanyCrmTarget,

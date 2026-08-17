@@ -63,6 +63,7 @@ const Dashboard = lazyWithRetry(() => import('./pages/ManagementDashboard'));
 const ManagementDashboard = lazyWithRetry(() => import('./pages/ManagementDashboard'));
 const UnifiedDealPage = lazyWithRetry(() => import('./pages/UnifiedDealPage'));
 const WorkTasksUnifiedPage = lazyWithRetry(() => import('./pages/WorkTasksUnifiedPage'));
+const ModuleFlowSetupPage = lazyWithRetry(() => import('./pages/ModuleFlowSetupPage'));
 const Projects = lazyWithRetry(() => import('./pages/Projects'));
 const ProjectDetail = lazyWithRetry(() => import('./pages/ProjectDetail'));
 const Tasks = lazyWithRetry(() => import('./pages/Tasks'));
@@ -312,10 +313,10 @@ function ProtectedLayout() {
     }
   }
 
-  const fullscreenPages = ['/projects/create', '/crm/messenger'];
+  const fullscreenPages = ['/projects/create', '/crm/messenger', '/work/flows'];
   const isFullscreen = fullscreenPages.some((p) => location.pathname.startsWith(p))
     || /^\/m\/[^/]+\/messenger$/.test(location.pathname);
-  const compactKanbanChrome = /^\/(crm\/(dashboard|pipeline)|sx\/(dashboard|pipeline)|work\/unified|personal-tasks|m\/)/.test(location.pathname);
+  const compactKanbanChrome = /^\/(crm\/(dashboard|pipeline)|sx\/(dashboard|pipeline)|work\/unified|personal-tasks|projects|m\/)/.test(location.pathname);
 
   return (
     <CrmNotesFabProvider>
@@ -407,6 +408,7 @@ export default function App() {
             <Route path="/my-tasks" element={<Navigate to="/work/unified" replace />} />
             <Route path="/work" element={<Navigate to="/work/unified" replace />} />
             <Route path="/work/unified" element={<Suspense fallback={<PageLoader />}><WorkTasksUnifiedPage /></Suspense>} />
+            <Route path="/work/flows" element={<Suspense fallback={<PageLoader />}><ModuleFlowSetupPage /></Suspense>} />
             <Route path="/projects" element={<Projects />} />
             <Route path="/projects/create" element={<CreateProject />} />
             <Route path="/projects/:id" element={<ProjectDetail />} />

@@ -9,35 +9,79 @@ const { ensureDealLeadDocumentsForModuleTransition } = require('./ensureDealLead
 const { applyProductionTemplateToFulfillmentLead } = require('./projectOrderFulfillment');
 const { postSxTransferMentionComment } = require('./dealCommentNotifications');
 const { subtractCalendarDays, parseDateOnlyParts } = require('./projectDeliveryDates');
+const { flowAllowsProductionCreate } = require('./resolveModuleFlow');
 
 /**
- * Chuẩn hóa ngày lắp đặt từ body / opts → patch projects.
+ * Chuẩn hóa ngày từ body / opts → patch projects.
+ * Quy định:
+ * - install_date = deadline VC/LĐ (ngày giờ lắp đặt)
+ * - production_finish_date + production_deadline = deadline tổng dự án SX (hoàn thiện = lắp − 2)
+ * - delivery_date giữ ngày lắp (YYYY-MM-DD) để tương thích lịch/CRM cũ
  */
 function resolveProjectDatesFromOpts(projectDates) {
-  const raw = projectDates?.delivery_date ?? projectDates?.production_deadline ?? null;
+  const raw = projectDates?.install_date
+    ?? projectDates?.delivery_date
+    ?? projectDates?.production_deadline
+    ?? null;
   if (raw == null || raw === '') return null;
   if (!parseDateOnlyParts(raw)) return null;
-  const delivery = String(raw).trim().slice(0, 10);
+  const installYmd = String(raw).trim().slice(0, 10);
   const finish = projectDates?.production_finish_date != null && projectDates.production_finish_date !== ''
     ? String(projectDates.production_finish_date).trim().slice(0, 10)
-    : subtractCalendarDays(delivery, 2);
+    : subtractCalendarDays(installYmd, 2);
+  // Giữ giờ nếu client gửi ISO; mặc định 14:00 VN cho deadline lắp đặt VC/LĐ.
+  const installRaw = projectDates?.install_date != null && String(projectDates.install_date).trim() !== ''
+    ? String(projectDates.install_date).trim()
+    : null;
+  const installDate = installRaw && /T\d{2}:\d{2}/.test(installRaw)
+    ? installRaw
+    : `${installYmd}T14:00:00+07:00`;
+  const sxDeadline = finish || null;
   return {
-    delivery_date: delivery,
-    production_deadline: delivery,
-    production_finish_date: finish || null,
+    delivery_date: installYmd,
+    production_deadline: sxDeadline,
+    production_finish_date: sxDeadline,
+    install_date: installDate,
   };
 }
 
-/** Ưu tiên ngày trên từng target xưởng; fallback body chung. */
+/** Ưu tiên ngày trên từng target xưởng; fallback body chung. Kèm setup VC/LĐ nếu có. */
 function resolveProjectDatesForTarget(target, fallbackProjectDates = null) {
-  if (target?.delivery_date || target?.production_deadline) {
-    return resolveProjectDatesFromOpts({
+  let dates = null;
+  if (target?.install_date || target?.delivery_date || target?.production_deadline) {
+    dates = resolveProjectDatesFromOpts({
+      install_date: target.install_date || null,
       delivery_date: target.delivery_date || target.production_deadline,
       production_deadline: target.production_deadline || target.delivery_date,
       production_finish_date: target.production_finish_date || null,
     });
+  } else {
+    dates = resolveProjectDatesFromOpts(fallbackProjectDates);
   }
-  return resolveProjectDatesFromOpts(fallbackProjectDates);
+
+  const logisticsCompanyId = target?.logistics_company_id
+    || fallbackProjectDates?.logistics_company_id
+    || null;
+  let pickupAt = target?.pickup_at ?? fallbackProjectDates?.pickup_at ?? null;
+  if (pickupAt != null && String(pickupAt).trim() !== '') {
+    const d = new Date(String(pickupAt).trim());
+    pickupAt = Number.isNaN(d.getTime()) ? null : d.toISOString();
+  } else {
+    pickupAt = null;
+  }
+
+  const vcPatch = {};
+  if (logisticsCompanyId) vcPatch.logistics_company_id = String(logisticsCompanyId);
+  if (pickupAt) vcPatch.pickup_at = pickupAt;
+
+  const occRaw = target?.install_occurrence_dates || fallbackProjectDates?.install_occurrence_dates;
+  const occ = Array.isArray(occRaw)
+    ? [...new Set(occRaw.map((d) => String(d || '').slice(0, 10)).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)))].sort()
+    : [];
+  if (occ.length) vcPatch.install_occurrence_dates = occ;
+
+  if (!dates && !Object.keys(vcPatch).length) return null;
+  return { ...(dates || {}), ...vcPatch };
 }
 
 function normalizeProductionTargets(targets, legacyCompanyId, legacyWorkshopTypeId) {
@@ -57,6 +101,8 @@ function normalizeProductionTargets(targets, legacyCompanyId, legacyWorkshopType
     out.push({
       production_company_id: String(cid),
       workshop_type_id: wtid ? String(wtid) : null,
+      logistics_company_id: t?.logistics_company_id ? String(t.logistics_company_id) : null,
+      pickup_at: t?.pickup_at || null,
       ...(datePatch || {}),
     });
   }
@@ -90,71 +136,101 @@ async function linkDealToProject({
  */
 async function listDealProductionProjects(dealId) {
   if (!dealId) return [];
+  const projectDateCols = 'install_date, delivery_date, pickup_at, production_finish_date, logistics_company_id';
+  const projectEmbed = `
+        id, code, name, status, company_id, workshop_type_id, ${projectDateCols},
+        company:companies!projects_company_id_fkey(id, name, short_name),
+        logistics_company:companies!projects_logistics_company_id_fkey(id, name, short_name),
+        workshop_type:workshop_project_types!projects_workshop_type_id_fkey(id, name)
+  `;
+  const mapRow = (l, p) => {
+    const co = p.company || {};
+    const lc = p.logistics_company || {};
+    const wt = p.workshop_type || {};
+    return {
+      link_id: l?.id || null,
+      project_id: (l?.project_id) || p.id,
+      code: p.code || null,
+      name: p.name || null,
+      status: p.status || null,
+      company_id: p.company_id || co.id || null,
+      company_name: co.short_name || co.name || null,
+      workshop_type_id: p.workshop_type_id || wt.id || null,
+      workshop_type_name: wt.name || null,
+      is_primary: l ? !!l.is_primary : true,
+      label: l?.label || null,
+      created_at: l?.created_at || null,
+      install_date: p.install_date || null,
+      delivery_date: p.delivery_date || null,
+      pickup_at: p.pickup_at || null,
+      production_finish_date: p.production_finish_date || null,
+      logistics_company_id: p.logistics_company_id || lc.id || null,
+      logistics_company_name: lc.short_name || lc.name || null,
+    };
+  };
+
   const { data: links, error } = await supabase
     .from('crm_deal_projects')
     .select(`
       id, deal_id, project_id, is_primary, label, created_at,
-      project:projects!crm_deal_projects_project_id_fkey(
-        id, code, name, status, company_id, workshop_type_id,
-        company:companies!projects_company_id_fkey(id, name, short_name),
-        workshop_type:workshop_project_types!projects_workshop_type_id_fkey(id, name)
-      )
+      project:projects!crm_deal_projects_project_id_fkey(${projectEmbed})
     `)
     .eq('deal_id', dealId)
     .order('created_at', { ascending: true });
 
+  let rows = [];
   if (!error && links?.length) {
-    return links.map((l) => {
-      const p = l.project || {};
-      const co = p.company || {};
-      const wt = p.workshop_type || {};
-      return {
-        link_id: l.id,
-        project_id: l.project_id || p.id,
-        code: p.code || null,
-        name: p.name || null,
-        status: p.status || null,
-        company_id: p.company_id || co.id || null,
-        company_name: co.short_name || co.name || null,
-        workshop_type_id: p.workshop_type_id || wt.id || null,
-        workshop_type_name: wt.name || null,
-        is_primary: !!l.is_primary,
-        label: l.label || null,
-        created_at: l.created_at || null,
-      };
-    }).filter((x) => x.project_id);
+    rows = links.map((l) => mapRow(l, l.project || {})).filter((x) => x.project_id);
+  } else {
+    const { data: lead } = await supabase
+      .from('crm_leads')
+      .select(`
+        project_id,
+        project:projects!crm_leads_project_id_fkey(${projectEmbed})
+      `)
+      .eq('id', dealId)
+      .maybeSingle();
+    if (!lead?.project_id) return [];
+    rows = [mapRow(null, lead.project || {})].filter((x) => x.project_id);
   }
 
-  const { data: lead } = await supabase
-    .from('crm_leads')
-    .select(`
-      project_id,
-      project:projects!crm_leads_project_id_fkey(
-        id, code, name, status, company_id, workshop_type_id,
-        company:companies!projects_company_id_fkey(id, name, short_name),
-        workshop_type:workshop_project_types!projects_workshop_type_id_fkey(id, name)
-      )
-    `)
-    .eq('id', dealId)
-    .maybeSingle();
-  if (!lead?.project_id) return [];
-  const p = lead.project || {};
-  const co = p.company || {};
-  const wt = p.workshop_type || {};
-  return [{
-    link_id: null,
-    project_id: lead.project_id,
-    code: p.code || null,
-    name: p.name || null,
-    status: p.status || null,
-    company_id: p.company_id || co.id || null,
-    company_name: co.short_name || co.name || null,
-    workshop_type_id: p.workshop_type_id || wt.id || null,
-    workshop_type_name: wt.name || null,
-    is_primary: true,
-    label: null,
-    created_at: null,
-  }];
+  // Bổ sung tên CT VC/LĐ từ sự kiện lắp/lấy hàng khi projects.logistics_company_id trống
+  const needFill = rows.filter((r) => r.project_id && !r.logistics_company_id);
+  if (needFill.length) {
+    const pids = needFill.map((r) => r.project_id);
+    try {
+      const { data: evs } = await supabase
+        .from('crm_events')
+        .select('project_id, company_id, event_type, company:companies!crm_events_company_id_fkey(id, name, short_name)')
+        .in('project_id', pids)
+        .in('event_type', ['installation', 'pickup', 'delivery'])
+        .order('created_at', { ascending: false });
+      const byProject = new Map();
+      for (const e of evs || []) {
+        const pid = String(e.project_id || '');
+        if (!pid || !e.company_id || byProject.has(pid)) continue;
+        const co = e.company || {};
+        byProject.set(pid, {
+          id: String(e.company_id),
+          name: co.short_name || co.name || null,
+        });
+      }
+      rows = rows.map((r) => {
+        if (r.logistics_company_id) return r;
+        const hit = byProject.get(String(r.project_id));
+        if (!hit) return r;
+        return {
+          ...r,
+          logistics_company_id: hit.id,
+          logistics_company_name: hit.name,
+        };
+      });
+    } catch (fillErr) {
+      console.warn('[listDealProductionProjects] fill logistics from events:', fillErr.message);
+    }
+  }
+
+  return rows;
 }
 
 /**
@@ -541,6 +617,7 @@ async function autoCreateProjectFromWonDeal({
   targets = null,
   mode = 'create',
   projectDates = null,
+  flowId: requestedFlowId = null,
 }) {
   try {
     const normalized = normalizeProductionTargets(targets, productionCompanyId, workshopTypeId);
@@ -558,6 +635,7 @@ async function autoCreateProjectFromWonDeal({
         nameSuffix: null,
         isMultiBatch: false,
         projectDates: resolveProjectDatesForTarget(normalized[0], projectDates),
+        flowId: requestedFlowId,
       });
     }
 
@@ -577,6 +655,7 @@ async function autoCreateProjectFromWonDeal({
       skipCrmTaskImport: createMode === 'additional',
       skipOrderSync: createMode === 'additional',
       projectDates: resolveProjectDatesForTarget(t, projectDates),
+      flowId: requestedFlowId,
     });
 
     const pushOk = (one, t, isFirst) => {
@@ -664,6 +743,7 @@ async function runAutoCreateProjectFromWonDeal({
   skipCrmTaskImport = false,
   skipOrderSync = false,
   projectDates = null,
+  flowId: requestedFlowId = null,
 }) {
   const coCheck = await validateProductionCompanyId(productionCompanyId);
   if (!coCheck.ok) {
@@ -694,6 +774,7 @@ async function runAutoCreateProjectFromWonDeal({
       console.warn('[auto-project] dup check:', e.message);
       return [];
     }),
+    // Giữ query để tương thích DB cũ; UI không còn «mặc định» — ưu tiên flow_id từ client / config
     supabase.from('workflow_flows')
       .select('id').eq('is_default', true).eq('is_active', true).limit(1).maybeSingle(),
   ]);
@@ -740,7 +821,17 @@ async function runAutoCreateProjectFromWonDeal({
   }
 
   const config = configRes?.data || null;
-  let flowId = config?.flow_id || defaultFlowRes?.data?.id || null;
+  if (requestedFlowId) {
+    const { data: pickedFlow } = await supabase.from('workflow_flows')
+      .select('id, is_active').eq('id', requestedFlowId).maybeSingle();
+    if (!pickedFlow) {
+      return { ok: false, error: 'Luồng quy trình đã chọn không tồn tại', statusCode: 400 };
+    }
+    if (pickedFlow.is_active === false) {
+      return { ok: false, error: 'Luồng quy trình đã chọn đang tắt. Hãy chọn luồng khác hoặc bật lại trong Setup luồng.', statusCode: 400 };
+    }
+  }
+  let flowId = requestedFlowId || config?.flow_id || defaultFlowRes?.data?.id || null;
   if (!flowId) {
     const { data: anyFlow } = await supabase.from('workflow_flows')
       .select('id').eq('is_active', true).order('created_at').limit(1).maybeSingle();
@@ -748,6 +839,19 @@ async function runAutoCreateProjectFromWonDeal({
   }
   if (!flowId) {
     return { ok: false, error: 'Chưa có luồng quy trình nào. Vui lòng tạo luồng trước.', statusCode: 400 };
+  }
+
+  try {
+    const allowsSx = await flowAllowsProductionCreate(flowId);
+    if (!allowsSx) {
+      return {
+        ok: false,
+        error: 'Luồng đã chọn không có bước Sản xuất sau CRM. Vào Setup luồng (Dự án và công việc) để thêm node Sản xuất.',
+        statusCode: 400,
+      };
+    }
+  } catch (flowGateErr) {
+    console.warn('[auto-project] flowAllowsProductionCreate:', flowGateErr.message);
   }
 
   const firstStage = firstStageRes?.data || null;
@@ -763,6 +867,14 @@ async function runAutoCreateProjectFromWonDeal({
 
   const yr = new Date().getFullYear();
   const datePatch = resolveProjectDatesFromOpts(projectDates);
+  const vcSetupPatch = {};
+  if (projectDates?.logistics_company_id) {
+    vcSetupPatch.logistics_company_id = String(projectDates.logistics_company_id);
+  }
+  if (projectDates?.pickup_at) {
+    const d = new Date(String(projectDates.pickup_at).trim());
+    if (!Number.isNaN(d.getTime())) vcSetupPatch.pickup_at = d.toISOString();
+  }
   let sxReceptionDate = null;
   try {
     const { resolveSxReceptionDateForCompany } = require('./sxWorkshopSchedule');
@@ -789,6 +901,7 @@ async function runAutoCreateProjectFromWonDeal({
     consult_date: new Date().toISOString(),
     ...(validatedWorkshopTypeId ? { workshop_type_id: validatedWorkshopTypeId } : {}),
     ...(datePatch || {}),
+    ...vcSetupPatch,
     ...(sxReceptionDate ? { sx_reception_date: sxReceptionDate } : {}),
   });
 
@@ -860,9 +973,17 @@ async function runAutoCreateProjectFromWonDeal({
       .eq('production_company_id', coCheck.company.id)
       .maybeSingle(),
     supabase.from('workflow_flow_steps')
-      .select('id, order_index, division_unit_id, company_unit_id, template_set_id')
+      .select('id, order_index, division_unit_id, company_unit_id, template_set_id, module_key')
       .eq('flow_id', flowId).order('order_index'),
   ]);
+
+  let flowSteps = flowStepsRes?.data || [];
+  if (flowStepsRes?.error && /module_key|schema cache|Could not find/i.test(flowStepsRes.error.message || '')) {
+    const fb = await supabase.from('workflow_flow_steps')
+      .select('id, order_index, division_unit_id, company_unit_id, template_set_id')
+      .eq('flow_id', flowId).order('order_index');
+    flowSteps = fb?.data || [];
+  }
 
   if (hopRes?.data?.default_production_team_id) {
     try {
@@ -875,10 +996,12 @@ async function runAutoCreateProjectFromWonDeal({
     }
   }
 
-  const flowSteps = flowStepsRes?.data || [];
+  // Nếu select module_key lỗi schema — getFlowSteps đã có fallback; ở đây chỉ dùng steps thô
   let allCreatedTasks = [];
 
-  const kdStep = flowSteps.find((s) => s.order_index === 0);
+  // Ưu tiên bước CRM (module_key) làm order 0; fallback order_index === 0
+  const kdStep = flowSteps.find((s) => String(s.module_key || '').toLowerCase() === 'crm')
+    || flowSteps.find((s) => s.order_index === 0);
   if (kdStep) {
     const kdAssignPromise = kdStep.division_unit_id
       ? supabase.from('project_company_assignments').upsert({
@@ -921,7 +1044,12 @@ async function runAutoCreateProjectFromWonDeal({
 
   const generatedBySteps = await Promise.all(
     flowSteps
-      .filter((s) => s.order_index > 0)
+      .filter((s) => {
+        const mk = String(s.module_key || '').toLowerCase();
+        if (mk === 'crm') return false;
+        if (kdStep && s.id === kdStep.id) return false;
+        return (s.order_index ?? 0) > (kdStep?.order_index ?? 0) || mk === 'production' || mk === 'logistics';
+      })
       .map(async (step) => {
         if (step.division_unit_id) {
           await supabase.from('project_company_assignments').upsert({
@@ -1029,6 +1157,77 @@ async function runAutoCreateProjectFromWonDeal({
       await ensureLeadMembersFromProjectStaff(dealId);
     } catch (syncErr) {
       console.warn('[auto-project] ensure lead members:', syncErr.message);
+    }
+  }
+
+  // Tạo sự kiện dự kiến: Lắp đặt / lấy hàng / hoàn thiện SX
+  const plannedInstall = project.install_date || datePatch?.install_date || null;
+  const plannedPickup = project.pickup_at || vcSetupPatch.pickup_at || null;
+  const plannedFinish = project.production_finish_date || datePatch?.production_finish_date || null;
+  let resolvedLogisticsId = project.logistics_company_id
+    || vcSetupPatch.logistics_company_id
+    || null;
+  if (resolvedLogisticsId && !project.logistics_company_id) {
+    try {
+      const { error: logCoErr } = await supabase
+        .from('projects')
+        .update({
+          logistics_company_id: String(resolvedLogisticsId),
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', projectId);
+      if (!logCoErr) project.logistics_company_id = String(resolvedLogisticsId);
+      else console.warn('[auto-project] set logistics_company_id:', logCoErr.message);
+    } catch (logCoEx) {
+      console.warn('[auto-project] set logistics_company_id:', logCoEx.message);
+    }
+  }
+  // Chỉ thêm NV chịu trách nhiệm VC/LĐ vào deal (không thêm cả công ty)
+  if (resolvedLogisticsId) {
+    try {
+      const { afterVcCompanySelected } = require('./vcHandoverDealMembers');
+      const { mergeDealLeadMembers } = require('./productionWorkshopTypeStaff');
+      await afterVcCompanySelected({
+        sourceLeadId: dealId,
+        logisticsCompanyId: String(resolvedLogisticsId),
+        projectId,
+        actorUserId: userId,
+        assertShippingStatus: false,
+        addMembersFn: async (leadId, userIds) => {
+          if (!leadId || !userIds?.length) return [];
+          await mergeDealLeadMembers({ dealId: leadId, userIds });
+          return userIds;
+        },
+      });
+    } catch (memErr) {
+      console.warn('[auto-project] VC responsible members:', memErr.message);
+    }
+  }
+  if (plannedInstall || plannedPickup || plannedFinish) {
+    try {
+      const { upsertPlannedVcLdEvents } = require('./createPlannedVcLdEvents');
+      const evRes = await upsertPlannedVcLdEvents({
+        projectId,
+        leadId: dealId,
+        userId,
+        companyId: deal.company_id || coCheck.company.id,
+        logisticsCompanyId: resolvedLogisticsId || null,
+        customerId: deal.customer_id || null,
+        projectCode: project.code,
+        projectName: project.name,
+        installAddress: project.install_address || deal.install_address || null,
+        installAt: plannedInstall,
+        pickupAt: plannedPickup,
+        productionFinishAt: plannedFinish,
+        installOccurrenceDates: datePatch?.install_occurrence_dates
+          || projectDates?.install_occurrence_dates
+          || null,
+      });
+      if (!evRes.ok && !evRes.skipped) {
+        console.warn('[auto-project] planned VC/LĐ events:', evRes.error);
+      }
+    } catch (evErr) {
+      console.warn('[auto-project] planned VC/LĐ events:', evErr.message);
     }
   }
 

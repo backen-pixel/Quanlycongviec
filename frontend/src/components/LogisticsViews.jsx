@@ -182,11 +182,17 @@ function startOfDay(d) {
   return x;
 }
 
-/** Ưu tiên deadline dự án; fallback ngày lắp đặt. */
+/** Ưu tiên deadline dự án; fallback ngày lắp đặt (install_date hoặc delivery_date từ CRM/SX). */
 function resolveVcDeadlineRaw(item) {
   if (item?.deadline) return { raw: item.deadline, source: 'deadline' };
   if (item?.install_date) return { raw: item.install_date, source: 'install_date' };
+  if (item?.delivery_date) return { raw: item.delivery_date, source: 'delivery_date' };
   return { raw: null, source: null };
+}
+
+/** Ngày lắp dự kiến trên lịch VC: install_date → delivery_date (CRM ghi delivery khi tạo SX). */
+function resolveVcInstallRaw(item) {
+  return item?.install_date || item?.delivery_date || null;
 }
 
 /** YYYY-MM-DD từ install_date / pickup_at. */
@@ -247,10 +253,11 @@ export function LogisticsCalendarView({ pipeline, filterFrom, onVisibleMonthChan
           });
         }
 
-        const installKey = resolveVcDateKey(p.install_date);
+        const installRaw = resolveVcInstallRaw(p);
+        const installKey = resolveVcDateKey(installRaw);
         if (installKey) {
           const overdue = installKey < todayKey;
-          const timeStr = formatCalendarDeadlineTime(p.install_date);
+          const timeStr = formatCalendarDeadlineTime(installRaw);
           built.push({
             id: `${p.id}:install`,
             kind: 'install',
@@ -288,7 +295,7 @@ export function LogisticsCalendarView({ pipeline, filterFrom, onVisibleMonthChan
     [pipeline],
   );
   const installCount = useMemo(
-    () => (pipeline || []).flatMap((s) => s.items || []).filter((p) => resolveVcDateKey(p.install_date)).length,
+    () => (pipeline || []).flatMap((s) => s.items || []).filter((p) => resolveVcDateKey(resolveVcInstallRaw(p))).length,
     [pipeline],
   );
 
@@ -570,7 +577,7 @@ function VcDeadlineCard({ item, goProject }) {
       <div className="mt-1.5 flex items-center justify-between gap-2 text-[11px]">
         <span className="text-gray-500">
           {item._deadlineTs ? formatDate(item._deadlineTs) : '—'}
-          {item._deadlineSource === 'install_date'
+          {item._deadlineSource === 'install_date' || item._deadlineSource === 'delivery_date'
             ? ' · Ngày LĐ'
             : item._deadlineSource === 'deadline'
               ? ' · Deadline'

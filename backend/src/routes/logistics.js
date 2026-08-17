@@ -1528,6 +1528,21 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
       console.warn('[logistics/stage] gen logistics templates:', tplErr.message);
     }
 
+    // VC tiếp nhận (rời cột intake) → sự kiện lấy hàng / lắp đặt chuyển sang «áp dụng»
+    try {
+      const isIntakeCol = String(vcPipeStageRow?.bucket_slug || '') === INTAKE_BUCKET
+        || String(effectiveVcStageId || '').startsWith('__vc_intake');
+      if (!isIntakeCol && (effectiveVcStageId || resolvedStageId)) {
+        const { applyLogisticsOpsOnVcIntake } = require('../helpers/applyPlannedOpsEvents');
+        const applied = await applyLogisticsOpsOnVcIntake(id);
+        if (applied?.count) {
+          console.info(`[logistics/stage] apply VC/LĐ events: project=${id} count=${applied.count}`);
+        }
+      }
+    } catch (applyEvErr) {
+      console.warn('[logistics/stage] apply VC/LĐ events:', applyEvErr.message);
+    }
+
     // Thông báo người tham gia + NV VC cùng công ty (không blast toàn hệ thống)
     try {
       const stageName = vcPipeStageRow?.name

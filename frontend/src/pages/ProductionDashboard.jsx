@@ -76,6 +76,7 @@ import { isProjectAlreadyInLogistics } from '../lib/projectLogistics';
 import CrmDeadlineModal from '../components/CrmDeadlineModal';
 import DateRangePickerPopover from '../components/DateRangePickerPopover';
 import NewDealModal from '../components/NewDealModal';
+import NewProductionProjectModal from '../components/NewProductionProjectModal';
 import { DashboardLoaderGate } from '../components/DashboardLoaderGate';
 import { isClickOutside } from '../lib/domUtils';
 import { getCrmDeadlineUrgencyFromIso, getCrmDeadlineUrgencyBadgeClass } from '../lib/crmLeadDeadlineDisplay';
@@ -614,6 +615,7 @@ export default function ProductionDashboard() {
   const [deadlineCtx, setDeadlineCtx] = useState(null);
   const [deadlineBusy, setDeadlineBusy] = useState(false);
   const [showNewDeal, setShowNewDeal] = useState(false);
+  const [showNewSxProject, setShowNewSxProject] = useState(false);
   const [showKanbanSettings, setShowKanbanSettings] = useState(false);
   const kanbanSettingsTriggerRef = useRef(null);
   const [showViewModeMenu, setShowViewModeMenu] = useState(false);
@@ -3364,6 +3366,15 @@ export default function ProductionDashboard() {
                 <Plus className="h-3.5 w-3.5" />
                 Tạo deal
           </button>
+              <button
+                type="button"
+                onClick={() => setShowNewSxProject(true)}
+                className="h-8 px-3.5 border border-indigo-200 text-indigo-700 hover:bg-indigo-50 rounded-lg font-semibold inline-flex items-center gap-1.5 cursor-pointer text-sm shrink-0"
+                title="Tạo dự án sản xuất và tự chọn luồng module"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                Tạo dự án
+              </button>
               <AssignedTasksToolbarButton to="/sx/assignments" assignmentModule="production" variant="outlined" className="!h-8 !rounded-lg !text-sm" />
       </div>
 
@@ -4285,6 +4296,13 @@ export default function ProductionDashboard() {
             </div>
           </div>
         </div>
+      )}
+
+      {showNewSxProject && (
+        <NewProductionProjectModal
+          onClose={() => setShowNewSxProject(false)}
+          onCreated={() => load({ bustCache: true })}
+        />
       )}
 
       {showNewDeal && (

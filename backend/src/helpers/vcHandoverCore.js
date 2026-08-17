@@ -25,6 +25,11 @@ const { ensureLeadDocumentsIncludeShareModules } = require('./moduleLeadDocument
 const { notifyVcHandoverFromSx } = require('./vcHandoverNotify');
 const { isProjectAlreadyInLogistics } = require('./projectLogisticsScope');
 const { logDealActivityComment } = require('./projectFileActivity');
+const {
+  assertProductionHandoffTarget,
+  isCustomModuleKey,
+} = require('./resolveModuleFlow');
+const { transferLeadToAppModule } = require('./appModuleOps');
 
 /**
  * Deal CRM gắn project: ưu tiên crm_leads.project_id, fallback crm_deal_projects (multi-SX phụ).
@@ -222,10 +227,50 @@ async function performVcHandoverCore(req, {
 }) {
   const { data: project } = await supabase
     .from('projects')
-    .select('id, code, name, status, current_stage_id, company_id, vc_kanban_column_id, logistics_company_id')
+    .select('id, code, name, status, current_stage_id, company_id, vc_kanban_column_id, logistics_company_id, flow_id')
     .eq('id', projectId)
     .maybeSingle();
   if (!project) throw new Error('Project not found');
+
+  // Gate theo luồng module (CRM → SX → Lắp đặt / custom)
+  try {
+    const gate = await assertProductionHandoffTarget(project.flow_id);
+    if (!gate.ok) {
+      if (gate.customModule && isCustomModuleKey(gate.nextModuleKey)) {
+        const deal = await resolveCrmDealForProject(projectId, 'id, company_id, assignee_id');
+        if (!deal?.id) {
+          const err = new Error('Dự án chưa liên kết deal CRM để bàn giao module tùy chỉnh.');
+          err.status = 400;
+          throw err;
+        }
+        const transferred = await transferLeadToAppModule(req, {
+          moduleRow: gate.customModule,
+          leadId: deal.id,
+          companyId: deal.company_id || project.company_id || null,
+          assigneeId: deal.assignee_id || actorUserId || null,
+        });
+        return {
+          handed_over: false,
+          custom_module_transfer: true,
+          next_module_key: gate.nextModuleKey,
+          record: transferred?.record || null,
+          created: Boolean(transferred?.created),
+          vc_kanban_column_id: null,
+          sx_pipeline_stage_id: null,
+          logistics_person_id: null,
+          installer_person_id: null,
+        };
+      }
+      const err = new Error(gate.error);
+      err.status = 400;
+      err.code = 'FLOW_HANDOFF_BLOCKED';
+      err.next_module_key = gate.nextModuleKey || null;
+      throw err;
+    }
+  } catch (gateErr) {
+    if (gateErr.code === 'FLOW_HANDOFF_BLOCKED' || gateErr.status === 400) throw gateErr;
+    console.warn('[vcHandoverCore] flow gate:', gateErr.message);
+  }
 
   const sxHandoverPipelineStageId = await resolveSxHandoverStageId(project, preferredSxStageId);
 
@@ -341,9 +386,11 @@ async function performVcHandoverCore(req, {
     const leads = await listCrmDealsForProject(projectId, 'id, pipeline_id, project_id');
     for (const lead of leads || []) {
       const moveCrmStage = await shouldMoveCrmDealToVcDelivery(lead.id, projectId);
+      // Deal đã có pipeline riêng: không được lấy cột của pipeline khác, deal sẽ mất khỏi Kanban.
       const vcDeliveryStageId = moveCrmStage
-        ? (await getCrmStageByRole('vc_delivery', lead.pipeline_id || null)
-          || await getCrmVcDeliveryStageId())
+        ? (lead.pipeline_id
+          ? await getCrmStageByRole('vc_delivery', lead.pipeline_id)
+          : await getCrmVcDeliveryStageId())
         : null;
       const fullUpd = { updated_at: nowIso };
       if (vcStageId) fullUpd.vc_pipeline_stage_id = vcStageId;
