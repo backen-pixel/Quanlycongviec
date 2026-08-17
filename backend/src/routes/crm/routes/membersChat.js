@@ -85,18 +85,19 @@ r.post('/leads/:id/members', async (req, res) => {
 r.get('/leads/:id/assignments', async (req, res) => {
   try {
     const ASSIGN_LIST_SELECT = `
-        id, company_id, column_id, lead_id, crm_task_id, assignment_module,
-        task_source_type, employee_error_module, title, description,
+        id, company_id, executor_company_id, column_id, lead_id, crm_task_id, assignment_module,
+        task_source_type, employee_error_module, department_id, phat_sinh_kind, title, description,
         assignee_id, created_by_id, priority, status, deadline,
         position, created_at, updated_at, completed_at,
         assignee:users!crm_assignments_assignee_id_fkey(id, full_name, email, avatar, role, drive_module),
         created_by:users!crm_assignments_created_by_id_fkey(id, full_name, email, avatar),
+        executor_company:companies!crm_assignments_executor_company_id_fkey(id, name, short_name),
         lead:crm_leads(id, code, title, type),
         crm_task:crm_tasks(id, notes)
       `;
     const ASSIGN_LIST_SELECT_NO_TASK = `
-        id, company_id, column_id, lead_id, crm_task_id, assignment_module,
-        task_source_type, employee_error_module, title, description,
+        id, company_id, executor_company_id, column_id, lead_id, crm_task_id, assignment_module,
+        task_source_type, employee_error_module, department_id, phat_sinh_kind, title, description,
         assignee_id, created_by_id, priority, status, deadline,
         position, created_at, updated_at, completed_at,
         assignee:users!crm_assignments_assignee_id_fkey(id, full_name, email, avatar, role, drive_module),
@@ -124,7 +125,7 @@ r.get('/leads/:id/assignments', async (req, res) => {
         .eq('lead_id', req.params.id)
         .order('created_at', { ascending: false }));
     }
-    if (error && /task_source_type|employee_error_module|crm_task_id/.test(error.message || '')) {
+    if (error && /task_source_type|employee_error_module|phat_sinh_kind|department_id|crm_task_id/.test(error.message || '')) {
       ({ data, error } = await supabase
         .from('crm_assignments')
         .select(ASSIGN_LIST_SELECT_LEGACY)

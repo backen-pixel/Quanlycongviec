@@ -1945,7 +1945,7 @@ function orgReportIsSlaOverdue(row, st, asOfMs = Date.now()) {
   if (slaDays == null) return false;
   const entered = row.stage_entered_at || row.created_at;
   if (!entered) return false;
-  const dueAt = endOfCalendarDayAfterEntered(entered, slaDays);
+  const dueAt = endOfCalendarDayAfterEntered(entered, slaDays, row?.company_id);
   return dueAt.getTime() < asOfMs;
 }
 

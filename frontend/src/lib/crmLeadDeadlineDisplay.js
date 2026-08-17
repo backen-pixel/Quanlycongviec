@@ -1,5 +1,6 @@
 import { effectivePipelineStageSlaDays } from './crmPipelineSla';
 import { endOfVnCalendarDayAfterEntered } from './vnDate';
+import { companyWorkEndMsFromRaw } from './companyDeadlineClock';
 
 /** Cột pipeline Thắng — deal đã chốt, không tính/hiển thị deadline. */
 export function isCrmPipelineStageWon(stage) {
@@ -109,8 +110,12 @@ export function getPipelineStageSlaDeadlineTs(stageEnteredAt, stage, leadItem) {
   if (isCrmPipelineStageNoDeadline(stage)) return null;
   const slaDays = effectivePipelineStageSlaDays(stage.sla_days);
   if (slaDays == null) return null;
-  // Khớp backend: cuối ngày lịch VN sau slaDays (không dùng entered + N*24h).
-  return endOfVnCalendarDayAfterEntered(stageEnteredAt, slaDays).getTime();
+  // Khớp backend: cuối ngày lịch VN sau slaDays (HCB = 17:30).
+  return endOfVnCalendarDayAfterEntered(
+    stageEnteredAt,
+    slaDays,
+    leadItem?.company_id || leadItem?.company,
+  ).getTime();
 }
 
 /**
@@ -130,13 +135,13 @@ export function resolveCrmLeadEffectiveDeadlineSource(item, stage) {
 
   const taskIso = item?.crm_next_open_task_deadline;
   if (taskIso != null && taskIso !== '') {
-    const ts = new Date(taskIso).getTime();
+    const ts = companyWorkEndMsFromRaw(taskIso, item) ?? new Date(taskIso).getTime();
     if (!Number.isNaN(ts)) return { source: 'task', deadlineTs: ts };
   }
 
   const manual = item?.kanban_deadline_at;
   if (manual != null && manual !== '') {
-    const ts = new Date(manual).getTime();
+    const ts = companyWorkEndMsFromRaw(manual, item) ?? new Date(manual).getTime();
     if (!Number.isNaN(ts)) return { source: 'kanban', deadlineTs: ts };
   }
 
@@ -182,9 +187,10 @@ export function getCrmDeadlineUrgencyFromTs(deadlineTs) {
   return { level: 'ok', remainingMs, deadlineTs };
 }
 
-export function getCrmDeadlineUrgencyFromIso(iso) {
+export function getCrmDeadlineUrgencyFromIso(iso, companyOrId) {
   if (iso == null || iso === '') return getCrmDeadlineUrgencyFromTs(null);
-  return getCrmDeadlineUrgencyFromTs(new Date(iso).getTime());
+  const ms = companyWorkEndMsFromRaw(iso, companyOrId) ?? new Date(iso).getTime();
+  return getCrmDeadlineUrgencyFromTs(ms);
 }
 
 /** Class Tailwind cho badge Còn / Sắp / Quá hạn */
@@ -235,13 +241,13 @@ export function resolveCrmLeadDeadlineViewSource(item, stage, config) {
 
   const taskIso = item?.crm_next_open_task_deadline;
   if (taskIso != null && taskIso !== '') {
-    const ts = new Date(taskIso).getTime();
+    const ts = companyWorkEndMsFromRaw(taskIso, item) ?? new Date(taskIso).getTime();
     if (!Number.isNaN(ts)) return { source: 'task', deadlineTs: ts };
   }
 
   const manual = item?.kanban_deadline_at;
   if (manual != null && manual !== '') {
-    const ts = new Date(manual).getTime();
+    const ts = companyWorkEndMsFromRaw(manual, item) ?? new Date(manual).getTime();
     if (!Number.isNaN(ts)) return { source: 'kanban', deadlineTs: ts };
   }
 
@@ -278,7 +284,7 @@ export function resolveCrmLeadDeadlineBucketSource(item, stage, config) {
   for (const field of ['crm_next_open_task_deadline', 'kanban_deadline_at']) {
     const raw = item?.[field];
     if (!raw) continue;
-    const ts = new Date(raw).getTime();
+    const ts = companyWorkEndMsFromRaw(raw, item) ?? new Date(raw).getTime();
     if (!Number.isNaN(ts)) {
       return {
         deadlineTs: ts,

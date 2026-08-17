@@ -948,11 +948,13 @@ export default function EventsFeedPage({ lockedModule = '', lockedModuleLabel = 
         <div className="flex items-center gap-2 flex-wrap">
           {/*
            * Bộ chuyển khối: ẩn khi mở từ SX/VC (lockedModule).
-           * Chỉ hiện cho admin trên trang CRM /crm/events.
+           * Hiện cho mọi nhân viên trên trang CRM /crm/events;
+           * user thường chỉ thấy khối mình được phép (+ «Tất cả khối»).
            */}
-          {!forcedModule && (isAdmin || isSystemAdmin) && (
+          {!forcedModule && (
             <div className="flex items-center gap-1.5 bg-white border border-gray-200 rounded-lg p-1 shadow-sm" title="Lọc theo khối">
               {EVENT_MODULE_OPTIONS
+                .filter((m) => !m.value || !allowedModules || allowedModules.includes(m.value))
                 .map((m) => {
                   const active = filterModule === m.value;
                   return (
@@ -981,17 +983,6 @@ export default function EventsFeedPage({ lockedModule = '', lockedModuleLabel = 
                     ? '🚚 VC/LĐ + 🏭 Sản xuất'
                     : `${moduleMeta(forcedModule, customModLabel).emoji} ${moduleMeta(forcedModule, customModLabel).label}`}
               </span>
-            </div>
-          ) : !(isAdmin || isSystemAdmin) && filterModule ? (
-            <div className="flex items-center gap-2 px-2.5 h-9 rounded-lg border border-amber-200 bg-amber-50 text-amber-900 text-xs">
-              <span>{moduleMeta(filterModule, customModLabel).emoji} Khối: {moduleMeta(filterModule, customModLabel).label}</span>
-              <button
-                type="button"
-                onClick={() => setFilterModule('')}
-                className="font-semibold underline cursor-pointer hover:text-amber-950"
-              >
-                Xem tất cả khối
-              </button>
             </div>
           ) : null}
           {canPickCompany && (

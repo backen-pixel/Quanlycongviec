@@ -63,6 +63,13 @@ export default function ProductionPipelineSettingsPage() {
   const [stageStaffBrowseLoading, setStageStaffBrowseLoading] = useState(false);
   const [stageStaffSearch, setStageStaffSearch] = useState('');
   const [stageStaffSelectedMeta, setStageStaffSelectedMeta] = useState([]);
+  const [scheduleCfg, setScheduleCfg] = useState({
+    default_deadline_time: '17:30',
+    glass_cutoff_time: '12:00',
+    tempered_glass_days: 3,
+  });
+  const [scheduleCfgLoading, setScheduleCfgLoading] = useState(false);
+  const [scheduleCfgSaving, setScheduleCfgSaving] = useState(false);
   const [form, setForm] = useState({
     name: '', color: COLORS[0], icon: '📋', is_active: true,
     is_handover_to_logistics: false,
@@ -122,6 +129,55 @@ export default function ProductionPipelineSettingsPage() {
   }, [load]);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    if (!settingsCompanyId) return undefined;
+    let cancelled = false;
+    setScheduleCfgLoading(true);
+    api.get('/production/schedule-config', { params: { company_id: settingsCompanyId } })
+      .then((r) => {
+        if (cancelled) return;
+        const d = r.data || {};
+        setScheduleCfg({
+          default_deadline_time: String(d.default_deadline_time || '17:30:00').slice(0, 5),
+          glass_cutoff_time: String(d.glass_cutoff_time || '12:00:00').slice(0, 5),
+          tempered_glass_days: Number(d.tempered_glass_days) || 3,
+        });
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setScheduleCfg({
+            default_deadline_time: '17:30',
+            glass_cutoff_time: '12:00',
+            tempered_glass_days: 3,
+          });
+        }
+      })
+      .finally(() => { if (!cancelled) setScheduleCfgLoading(false); });
+    return () => { cancelled = true; };
+  }, [settingsCompanyId]);
+
+  const saveScheduleConfig = async () => {
+    if (!settingsCompanyId) return;
+    setScheduleCfgSaving(true);
+    try {
+      const { data } = await api.put('/production/schedule-config', {
+        company_id: settingsCompanyId,
+        default_deadline_time: scheduleCfg.default_deadline_time,
+        glass_cutoff_time: scheduleCfg.glass_cutoff_time,
+        tempered_glass_days: scheduleCfg.tempered_glass_days,
+      });
+      setScheduleCfg({
+        default_deadline_time: String(data?.default_deadline_time || scheduleCfg.default_deadline_time).slice(0, 5),
+        glass_cutoff_time: String(data?.glass_cutoff_time || scheduleCfg.glass_cutoff_time).slice(0, 5),
+        tempered_glass_days: Number(data?.tempered_glass_days) || scheduleCfg.tempered_glass_days,
+      });
+    } catch (e) {
+      alert(e.response?.data?.error || e.message || 'Không lưu được giờ deadline');
+    } finally {
+      setScheduleCfgSaving(false);
+    }
+  };
 
   const loadHandoverSettings = useCallback(async () => {
     if (!settingsCompanyId) {
@@ -1234,6 +1290,63 @@ export default function ProductionPipelineSettingsPage() {
           )}
         </div>
       </div>
+
+      {settingsCompanyId && (
+        <div className="rounded-xl border border-rose-200 bg-white p-4 shadow-sm space-y-3">
+          <div className="flex items-start gap-2.5">
+            <Clock className="h-5 w-5 text-rose-600 shrink-0 mt-0.5" />
+            <div className="min-w-0">
+              <h2 className="text-sm font-bold text-gray-900">Giờ deadline xưởng &amp; SLA kính</h2>
+              <p className="text-[11px] text-gray-600 mt-0.5 leading-snug max-w-2xl">
+                Deadline cột Kanban lưu lúc giờ này (mặc định 17:30). Có thể đổi. SLA kính phát sinh trên Không gian chung dùng cùng giờ + mốc trưa.
+              </p>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <label className="text-[11px] font-semibold text-slate-600">
+              Giờ deadline trong ngày
+              <input
+                type="time"
+                value={scheduleCfg.default_deadline_time}
+                onChange={(e) => setScheduleCfg((p) => ({ ...p, default_deadline_time: e.target.value }))}
+                disabled={scheduleCfgLoading}
+                className="mt-1 w-full h-9 px-2 border border-rose-200 rounded-lg text-sm bg-white"
+              />
+            </label>
+            <label className="text-[11px] font-semibold text-slate-600">
+              Mốc «trưa báo» (kính không sơn)
+              <input
+                type="time"
+                value={scheduleCfg.glass_cutoff_time}
+                onChange={(e) => setScheduleCfg((p) => ({ ...p, glass_cutoff_time: e.target.value }))}
+                disabled={scheduleCfgLoading}
+                className="mt-1 w-full h-9 px-2 border border-rose-200 rounded-lg text-sm bg-white"
+              />
+            </label>
+            <label className="text-[11px] font-semibold text-slate-600">
+              Kính cường lực (ngày LV)
+              <input
+                type="number"
+                min={1}
+                max={30}
+                value={scheduleCfg.tempered_glass_days}
+                onChange={(e) => setScheduleCfg((p) => ({ ...p, tempered_glass_days: Number(e.target.value) || 3 }))}
+                disabled={scheduleCfgLoading}
+                className="mt-1 w-full h-9 px-2 border border-rose-200 rounded-lg text-sm bg-white"
+              />
+            </label>
+          </div>
+          <button
+            type="button"
+            onClick={saveScheduleConfig}
+            disabled={scheduleCfgSaving || scheduleCfgLoading}
+            className="h-9 px-3.5 rounded-lg bg-rose-600 text-white text-xs font-semibold hover:bg-rose-700 disabled:opacity-50 inline-flex items-center gap-1.5 cursor-pointer"
+          >
+            {scheduleCfgSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+            Lưu giờ deadline
+          </button>
+        </div>
+      )}
 
       {settingsCompanyId && (
         <div className="rounded-xl border border-indigo-200 bg-gradient-to-r from-indigo-50/70 to-white p-4 shadow-sm space-y-4">

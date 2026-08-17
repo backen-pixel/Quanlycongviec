@@ -156,6 +156,12 @@ async function syncAssignmentFromCrmTask(req, task, assigneeIds, opts = {}) {
       ? opts.employeeErrorModule
       : (task.employee_error_module || null);
   }
+  if (opts.departmentId !== undefined || task.department_id !== undefined) {
+    row.department_id = opts.departmentId !== undefined ? opts.departmentId : (task.department_id || null);
+  }
+  if (opts.phatSinhKind !== undefined || task.phat_sinh_kind !== undefined) {
+    row.phat_sinh_kind = opts.phatSinhKind !== undefined ? opts.phatSinhKind : (task.phat_sinh_kind || null);
+  }
   if (status === 'completed') {
     row.completed_at = task.completed_at || new Date().toISOString();
   } else {

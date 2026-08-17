@@ -1,7 +1,7 @@
 /** SLA cột pipeline CRM — dùng chung crm.js, kpi.js, kpiCalculator */
 
-const { crmReportIsYmdBeforeToday } = require('./crmReportDateBounds');
-const { isHucabiSameDayPastWorkEnd } = require('./companyDeadlineClock');
+const { crmReportIsYmdBeforeToday, endOfCalendarDayAfterEntered } = require('./crmReportDateBounds');
+const { isHucabiCompany, isHucabiSameDayPastWorkEnd, companyWorkEndMsFromRaw } = require('./companyDeadlineClock');
 
 const DEFAULT_PIPELINE_STAGE_SLA_DAYS = 7;
 
@@ -61,19 +61,22 @@ function isSxProjectDateOverdue(project, dateField) {
   if (shouldIgnoreSxOrderDeliveryOverdue(stage)) return false;
   const raw = project?.[dateField];
   if (!raw || project?.status === 'completed') return false;
-  return new Date(raw) < new Date();
+  const ms = companyWorkEndMsFromRaw(raw, project?.company_id || project?.company);
+  return ms != null && ms < Date.now();
 }
 
 const INTAKE_BUCKET = 'won_pending';
 
 /** Tone SLA cột SX — null nếu không áp dụng (đồng bộ frontend sxPipelineRevenue). */
-function getSxPipelineStageSlaTone(stageEnteredAt, stage) {
+function getSxPipelineStageSlaTone(stageEnteredAt, stage, companyOrId) {
   if (!stageEnteredAt || !stage) return null;
   if (isSxPipelineStageNoDeadline(stage)) return null;
   if (stage.bucket_slug === INTAKE_BUCKET) return null;
   const slaDays = effectivePipelineStageSlaDays(stage.sla_days);
   if (slaDays == null) return null;
-  const deadlineTs = new Date(stageEnteredAt).getTime() + slaDays * 86400000;
+  const deadlineTs = isHucabiCompany(companyOrId)
+    ? endOfCalendarDayAfterEntered(stageEnteredAt, slaDays, companyOrId).getTime()
+    : new Date(stageEnteredAt).getTime() + slaDays * 86400000;
   const remainingMs = deadlineTs - Date.now();
   if (remainingMs < 0) return { level: 'overdue', remainingMs, deadlineTs };
   if (remainingMs <= 24 * 3600000) return { level: 'soon', remainingMs, deadlineTs };
@@ -85,6 +88,7 @@ function isSxColumnSlaOverdue(project, stage) {
   const tone = getSxPipelineStageSlaTone(
     project?.sx_pipeline_stage_entered_at,
     stage || project?.sx_pipeline_stage,
+    project?.company_id || project?.company,
   );
   return tone?.level === 'overdue';
 }

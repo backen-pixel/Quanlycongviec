@@ -22,6 +22,7 @@ import {
   productionWorkshopFilterCompanies,
 } from '../lib/crossWorkshopProduction';
 import { formatVND, formatDate, formatStaffDisplayName, getStaffInitials } from '../lib/utils';
+import { rememberCompanyDeadlineClock } from '../lib/companyDeadlineClock';
 import { HIDE_PRODUCTION_DEAL_VALUES } from '../lib/hideProductionDealValues';
 import { resolveSxProjectLeadId, resolveSxProjectLeadIdAsync, partitionSxProjectsByCommentSource } from '../lib/sxProjectComments';
 import { CrmCommentMentionComposer } from '../components/crmCommentMentionUi';
@@ -78,6 +79,7 @@ import NewDealModal from '../components/NewDealModal';
 import { DashboardLoaderGate } from '../components/DashboardLoaderGate';
 import { isClickOutside } from '../lib/domUtils';
 import { getCrmDeadlineUrgencyFromIso, getCrmDeadlineUrgencyBadgeClass } from '../lib/crmLeadDeadlineDisplay';
+import { companyWorkEndMsFromRaw } from '../lib/companyDeadlineClock';
 import { showCopyToast } from '../lib/copyToast';
 import SearchInlineFilterChips, { SearchClearButton } from '../components/SearchInlineFilterChips';
 import ViewModeDropdownMenu from '../components/ViewModeDropdownMenu';
@@ -792,6 +794,18 @@ export default function ProductionDashboard() {
     if (filterCompany) return String(filterCompany);
     return undefined;
   }, [filterCompany, user, companies]);
+
+  useEffect(() => {
+    if (!companyParam) return undefined;
+    let cancelled = false;
+    api.get('/production/schedule-config', { params: { company_id: companyParam } })
+      .then((r) => {
+        if (cancelled) return;
+        if (r.data?.deadline_clock) rememberCompanyDeadlineClock(companyParam, r.data.deadline_clock);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [companyParam]);
 
   const showVptSxWorkshopFilter = useMemo(() => {
     const cid = companyParam || filterCompany || user?.company_id || '';
@@ -4722,9 +4736,9 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
   const hideColumnDeadline = shouldHideSxKanbanDeadlineOnCard(item, sxStage);
   const columnSlaTone = hideColumnDeadline
     ? null
-    : getSxPipelineStageSlaTone(item.sx_pipeline_stage_entered_at, sxStage);
+    : getSxPipelineStageSlaTone(item.sx_pipeline_stage_entered_at, sxStage, item.company_id || item.company);
   const manualDlUrgency = !hideColumnDeadline && item.sx_kanban_deadline_at
-    ? getCrmDeadlineUrgencyFromIso(item.sx_kanban_deadline_at)
+    ? getCrmDeadlineUrgencyFromIso(item.sx_kanban_deadline_at, item.company_id || item.company)
     : null;
   const manualDlLevel = manualDlUrgency && manualDlUrgency.level !== 'ok' ? manualDlUrgency.level : null;
   const companyName = item.company?.short_name || item.company?.name || null;
@@ -4734,8 +4748,7 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
     // (ngày giao đơn đã có badge «Giao:» riêng; gộp vào đây sẽ ghi nhãn SLA sai).
     const raw = item.production_deadline || item.deadline || null;
     if (!raw) return null;
-    const ts = new Date(raw).getTime();
-    return Number.isFinite(ts) ? ts : null;
+    return companyWorkEndMsFromRaw(raw, item.company_id || item.company);
   })();
   const nowTs = Date.now();
   const slaRemainingMs = slaDeadlineTs == null ? null : slaDeadlineTs - nowTs;
@@ -4963,7 +4976,7 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
 
       {/* Deadline thẻ (sx_kanban_deadline_at) — bấm để sửa */}
       {!hideColumnDeadline && typeof onOpenDeadline === 'function' && item.sx_kanban_deadline_at && (() => {
-        const { level } = getCrmDeadlineUrgencyFromIso(item.sx_kanban_deadline_at);
+        const { level } = getCrmDeadlineUrgencyFromIso(item.sx_kanban_deadline_at, item.company_id || item.company);
         const tone = `${getCrmDeadlineUrgencyBadgeClass(level)} hover:opacity-90 cursor-pointer`;
         const urgent = level === 'overdue' || level === 'soon';
         return (
@@ -4979,6 +4992,11 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
           </button>
         );
       })()}
+      {Number(item.sx_schedule_slip_days) > 0 && (
+        <span className="inline-flex items-center mb-1.5 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-rose-100 text-rose-800 border border-rose-200">
+          Đã dồn lịch +{Number(item.sx_schedule_slip_days)} ngày
+        </span>
+      )}
 
       {/* Row 4: Khách hàng + Khu vực — 1 dòng với icon nhỏ */}
       {(item.customer?.full_name || crmRegionName) && (

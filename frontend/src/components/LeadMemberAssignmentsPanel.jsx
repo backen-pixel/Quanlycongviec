@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { formatDate } from '../lib/utils';
+import { rememberCompanyDeadlineClock, companyDeadlineIsoFromYmd } from '../lib/companyDeadlineClock';
+import { vnNowParts, addCalendarDaysYmd, nextSxWorkingYmd, addSxWorkingDaysYmd } from '../lib/sxWorkshopSchedule';
 import { memberModulesFromUser } from '../lib/memberModuleCounts';
 import { compressImage } from '../lib/compressImage';
 import { publicFileUrl } from '../lib/publicFileUrl';
@@ -77,11 +79,45 @@ const TASK_SOURCE_OPTIONS = [
   { value: 'employee_error', label: 'Lỗi từ nhân viên' },
 ];
 
-const ERROR_MODULE_OPTIONS = [
-  { value: 'crm', label: 'CRM' },
-  { value: 'production', label: 'Xưởng (SX)' },
-  { value: 'logistics', label: 'Lắp đặt (LD)' },
+const PHAT_SINH_KIND_OPTIONS = [
+  { value: '', label: '— Không chọn SLA kính —' },
+  { value: 'tempered_glass', label: 'Kính cường lực (3 ngày LV)' },
+  { value: 'glass_unpainted', label: 'Kính không sơn (trong ngày / trưa → hôm sau)' },
+  { value: 'glass_painted', label: 'Kính có sơn (trong ngày)' },
 ];
+
+function phatSinhKindLabel(kind) {
+  if (kind === 'tempered_glass') return 'Kính CL';
+  if (kind === 'glass_unpainted') return 'Kính không sơn';
+  if (kind === 'glass_painted') return 'Kính có sơn';
+  return null;
+}
+
+function clockMinutes(clock) {
+  return (Number(clock?.hour) || 0) * 60 + (Number(clock?.minute) || 0);
+}
+
+function suggestPhatSinhDeadlineIso(kind, cfg = {}, companyId = null) {
+  const deadlineClock = cfg.deadline_clock || { hour: 17, minute: 30 };
+  const cutoffClock = cfg.cutoff_clock || { hour: 12, minute: 0 };
+  if (companyId) rememberCompanyDeadlineClock(companyId, deadlineClock);
+  const parts = vnNowParts();
+  const nowMin = parts.hour * 60 + (parts.minute || 0);
+  let ymd = parts.ymd;
+  if (kind === 'tempered_glass') {
+    const days = Number(cfg.tempered_glass_days) > 0 ? Number(cfg.tempered_glass_days) : 3;
+    ymd = addSxWorkingDaysYmd(ymd, days);
+  } else if (kind === 'glass_unpainted') {
+    if (nowMin >= clockMinutes(cutoffClock)) ymd = addCalendarDaysYmd(ymd, 1);
+    ymd = nextSxWorkingYmd(ymd);
+  } else if (kind === 'glass_painted') {
+    if (nowMin >= clockMinutes(deadlineClock)) ymd = addCalendarDaysYmd(ymd, 1);
+    ymd = nextSxWorkingYmd(ymd);
+  } else {
+    return null;
+  }
+  return companyDeadlineIsoFromYmd(ymd, companyId || deadlineClock);
+}
 
 function toLocalInput(iso) {
   if (!iso) return '';
@@ -101,8 +137,8 @@ function memberBelongsToModule(member, moduleId) {
 }
 
 /** Công ty áp dụng khi lọc NV theo khối phân công. */
-function companyIdForAssignModule(moduleId, { companyId, sxCompanyId, vcCompanyId }) {
-  if (moduleId === 'production') return sxCompanyId || companyId || null;
+function companyIdForAssignModule(moduleId, { companyId, sxCompanyId, vcCompanyId, executorCompanyId }) {
+  if (moduleId === 'production') return executorCompanyId || sxCompanyId || companyId || null;
   if (moduleId === 'logistics') return vcCompanyId || companyId || null;
   if (moduleId === 'crm') return companyId || null;
   return companyId || null;
@@ -204,6 +240,7 @@ export default function LeadMemberAssignmentsPanel({
   companyId: companyIdProp = null,
   sxCompanyId = null,
   vcCompanyId = null,
+  linkedProjectId = null,
   refreshKey = null,
 }) {
   const initialModule = ['crm', 'production', 'logistics'].includes(defaultModule)
@@ -228,6 +265,11 @@ export default function LeadMemberAssignmentsPanel({
   const [memberIds, setMemberIds] = useState(() => new Set());
   const [taskSourceType, setTaskSourceType] = useState('customer_request');
   const [employeeErrorModule, setEmployeeErrorModule] = useState('crm');
+  const [phatSinhKind, setPhatSinhKind] = useState('');
+  const [departmentId, setDepartmentId] = useState('');
+  const [executorCompanyId, setExecutorCompanyId] = useState('');
+  const [participantCompanies, setParticipantCompanies] = useState([]);
+  const [departments, setDepartments] = useState([]);
   /** Khối gắn phân công (CRM/SX/VC) — chọn trên form, không chỉ theo tab. */
   const [assignModule, setAssignModule] = useState(
     ['crm', 'production', 'logistics'].includes(initialModule) ? initialModule : 'crm',
@@ -248,8 +290,8 @@ export default function LeadMemberAssignmentsPanel({
 
   const companyId = companyIdProp || leadCompanyId || null;
   const companyScope = useMemo(
-    () => ({ companyId, sxCompanyId, vcCompanyId }),
-    [companyId, sxCompanyId, vcCompanyId],
+    () => ({ companyId, sxCompanyId, vcCompanyId, executorCompanyId: executorCompanyId || null }),
+    [companyId, sxCompanyId, vcCompanyId, executorCompanyId],
   );
 
   const memberByUserId = useMemo(() => {
@@ -335,6 +377,9 @@ export default function LeadMemberAssignmentsPanel({
     setMemberIds(new Set());
     setTaskSourceType('customer_request');
     setEmployeeErrorModule('crm');
+    setPhatSinhKind('');
+    setDepartmentId('');
+    setExecutorCompanyId('');
     setAssignModule(moduleTab === 'all' ? 'crm' : moduleTab);
     setEditingId(null);
     setShowForm(false);
@@ -414,6 +459,76 @@ export default function LeadMemberAssignmentsPanel({
       setLeadCompanyId(null);
     }
   }, [leadId, companyIdProp]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const fallback = [];
+    const seen = new Set();
+    const push = (id, label, role) => {
+      if (!id || seen.has(String(id))) return;
+      seen.add(String(id));
+      fallback.push({ id: String(id), label: label || String(id), roles: role ? [role] : [] });
+    };
+    if (sxCompanyId) push(sxCompanyId, 'Xưởng hiện tại', 'sx');
+    if (companyId) push(companyId, 'CRM', 'crm');
+    if (vcCompanyId) push(vcCompanyId, 'VC/LĐ', 'vc');
+
+    if (!linkedProjectId) {
+      setParticipantCompanies(fallback);
+      return undefined;
+    }
+    api.get(`/production/projects/${linkedProjectId}/participant-companies`)
+      .then((r) => {
+        if (cancelled) return;
+        const list = Array.isArray(r.data?.companies) ? r.data.companies : [];
+        setParticipantCompanies(list.length ? list : fallback);
+      })
+      .catch(() => {
+        if (!cancelled) setParticipantCompanies(fallback);
+      });
+    return () => { cancelled = true; };
+  }, [linkedProjectId, companyId, sxCompanyId, vcCompanyId]);
+
+  const sxParticipantCompanies = useMemo(
+    () => (participantCompanies || []).filter((c) => (c.roles || []).includes('sx') || (c.roles || []).includes('placed')),
+    [participantCompanies],
+  );
+
+  const deptCompanyId = executorCompanyId || sxCompanyId || companyId;
+
+  useEffect(() => {
+    if (!deptCompanyId) {
+      setDepartments([]);
+      return undefined;
+    }
+    let cancelled = false;
+    api.get('/departments', { params: { company_id: deptCompanyId } })
+      .then((r) => {
+        if (cancelled) return;
+        const list = r.data?.departments || r.data || [];
+        setDepartments(Array.isArray(list) ? list : []);
+      })
+      .catch(() => { if (!cancelled) setDepartments([]); });
+    return () => { cancelled = true; };
+  }, [deptCompanyId]);
+
+  useEffect(() => {
+    if (!phatSinhKind || editingId) return;
+    const slaCompany = executorCompanyId || sxCompanyId || companyId;
+    if (!slaCompany) return;
+    let cancelled = false;
+    api.get('/production/schedule-config', { params: { company_id: slaCompany } })
+      .then((r) => {
+        if (cancelled) return;
+        const cfg = r.data || {};
+        const clock = cfg.deadline_clock || { hour: 17, minute: 30 };
+        rememberCompanyDeadlineClock(slaCompany, clock);
+        const iso = suggestPhatSinhDeadlineIso(phatSinhKind, cfg, slaCompany);
+        if (iso) setDeadline(toLocalInput(iso));
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [phatSinhKind, executorCompanyId, sxCompanyId, companyId, editingId]);
 
   const loadAssignments = useCallback(async () => {
     if (!leadId) return;
@@ -500,6 +615,7 @@ export default function LeadMemberAssignmentsPanel({
   const openCreate = () => {
     resetForm();
     setAssignModule(moduleTab === 'all' ? 'crm' : moduleTab);
+    setExecutorCompanyId(sxCompanyId ? String(sxCompanyId) : '');
     setShowForm(true);
   };
 
@@ -525,6 +641,9 @@ export default function LeadMemberAssignmentsPanel({
     setEmployeeErrorModule(
       errMod === 'production' || errMod === 'logistics' || errMod === 'crm' ? errMod : 'crm',
     );
+    setPhatSinhKind(String(a.phat_sinh_kind || ''));
+    setDepartmentId(a.department_id ? String(a.department_id) : '');
+    setExecutorCompanyId(a.executor_company_id ? String(a.executor_company_id) : '');
     const ids = (a.assignees?.length
       ? a.assignees.map((u) => u.id)
       : (a.assignee_id ? [a.assignee_id] : [])
@@ -542,6 +661,9 @@ export default function LeadMemberAssignmentsPanel({
     if (taskSourceType === 'employee_error' && !employeeErrorModule) {
       return alert('Chọn khối phát sinh lỗi: CRM / Xưởng / Lắp đặt (LD)');
     }
+    if (formModule === 'production' && sxParticipantCompanies.length > 0 && !executorCompanyId) {
+      return alert('Chọn xưởng nhận (công ty đã thuộc dự án)');
+    }
     const invalid = [...memberIds].filter((id) => {
       const m = memberByUserId.get(String(id));
       return !m || !memberMatchesAssignPool(m, formModule, companyScope);
@@ -555,6 +677,11 @@ export default function LeadMemberAssignmentsPanel({
     const sourcePayload = {
       task_source_type: taskSourceType,
       employee_error_module: taskSourceType === 'employee_error' ? employeeErrorModule : null,
+      phat_sinh_kind: phatSinhKind || null,
+      department_id: departmentId || null,
+      executor_company_id: formModule === 'production' && executorCompanyId
+        ? executorCompanyId
+        : undefined,
     };
     setSaving(true);
     try {
@@ -1023,6 +1150,61 @@ export default function LeadMemberAssignmentsPanel({
                 </p>
               </div>
             )}
+            {formModule === 'production' && sxParticipantCompanies.length > 0 && (
+              <div className="sm:col-span-2">
+                <label className="block text-[10px] font-semibold text-slate-600 mb-0.5">
+                  Xưởng nhận *
+                </label>
+                <select
+                  value={executorCompanyId}
+                  onChange={(e) => {
+                    setExecutorCompanyId(e.target.value);
+                    setMemberIds(new Set());
+                  }}
+                  className="w-full h-8 px-2 border border-teal-200 rounded-lg text-xs bg-white"
+                >
+                  <option value="">— Chọn xưởng thuộc dự án —</option>
+                  {sxParticipantCompanies.map((c) => (
+                    <option key={c.id} value={c.id}>{c.label || c.short_name || c.name}</option>
+                  ))}
+                </select>
+                <p className="text-[9px] text-teal-700 mt-0.5">
+                  Chỉ các công ty đã gắn dự án này (không tạo xưởng mới).
+                </p>
+              </div>
+            )}
+            <div>
+              <label className="block text-[10px] font-semibold text-slate-600 mb-0.5">
+                Bộ phận
+              </label>
+              <select
+                value={departmentId}
+                onChange={(e) => setDepartmentId(e.target.value)}
+                className="w-full h-8 px-2 border border-gray-200 rounded-lg text-xs bg-white"
+              >
+                <option value="">— Không chọn —</option>
+                {departments.map((d) => (
+                  <option key={d.id} value={d.id}>{d.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-[10px] font-semibold text-slate-600 mb-0.5">
+                Deadline phát sinh (kính)
+              </label>
+              <select
+                value={phatSinhKind}
+                onChange={(e) => setPhatSinhKind(e.target.value)}
+                className="w-full h-8 px-2 border border-cyan-200 rounded-lg text-xs bg-white"
+              >
+                {PHAT_SINH_KIND_OPTIONS.map((o) => (
+                  <option key={o.value || 'none'} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+              <p className="text-[9px] text-cyan-700 mt-0.5">
+                Tự điền hạn (có thể sửa). Kính CL: 3 ngày LV · không sơn: trước 12h trong ngày.
+              </p>
+            </div>
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             <select
@@ -1283,6 +1465,16 @@ export default function LeadMemberAssignmentsPanel({
                       }`}>
                         {srcLabel}
                         {errLabel ? ` · ${errLabel}` : ''}
+                      </span>
+                    )}
+                    {phatSinhKindLabel(a.phat_sinh_kind) && (
+                      <span className="shrink-0 text-[9px] px-1.5 py-0.5 rounded font-semibold bg-cyan-100 text-cyan-800">
+                        {phatSinhKindLabel(a.phat_sinh_kind)}
+                      </span>
+                    )}
+                    {a.executor_company_id && String(a.executor_company_id) !== String(companyId || '') && (
+                      <span className="shrink-0 text-[9px] px-1.5 py-0.5 rounded font-semibold bg-teal-100 text-teal-800">
+                        → {a.executor_company?.short_name || a.executor_company?.name || 'Xưởng khác'}
                       </span>
                     )}
                     {a.crm_task_id && (

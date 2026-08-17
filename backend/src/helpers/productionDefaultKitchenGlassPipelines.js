@@ -173,12 +173,25 @@ async function ensureKitchenAndGlassDefaults(supabase, companyId) {
       .select('id, name')
       .eq('company_id', companyId)
       .eq('workshop_type_id', typeRes.id);
-    const existingNames = new Set((existingRows || []).map((r) => String(r.name || '').toLowerCase()));
+    const normStageName = (raw) => String(raw || '').toLowerCase().replace(/,+\s*$/, '').trim();
+    const existingNames = new Set((existingRows || []).map((r) => normStageName(r.name)));
+    // HCB (và xưởng đã gom): đừng seed lại 6 cột cũ khi đã có «Ban thành phẩm».
+    const hasBanThanhPham = existingNames.has('ban thành phẩm');
+    const mergedIntoBanThanhPham = new Set([
+      'đang cắt cánh',
+      'kế hoạch sx thùng lá ghép',
+      'kế hoạch sx thùng hợp kim',
+      'sx thùng hợp kim + 100 x 16',
+      'đang sx thùng hợp kim + 100 x 16',
+      'đang sx thùng lá ghép nhỏ',
+      'đội sơn',
+    ]);
 
     let i = 0;
     for (const s of preset.stages) {
       i += 1;
-      if (existingNames.has(s.name.toLowerCase())) {
+      const sNorm = normStageName(s.name);
+      if (existingNames.has(sNorm) || (hasBanThanhPham && mergedIntoBanThanhPham.has(sNorm))) {
         stats.stages.skipped += 1;
         continue;
       }

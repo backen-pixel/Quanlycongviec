@@ -70,6 +70,17 @@ export function isSxNonWorkingYmd(ymd, holidayIndex) {
   return isSxHolidayYmd(ymd, holidayIndex);
 }
 
+/** Cộng N ngày làm việc (bỏ CN + lễ) kể từ ymd. */
+export function addSxWorkingDaysYmd(ymd, n, holidayIndex = null) {
+  const steps = Math.max(0, Math.floor(Number(n) || 0));
+  let cur = nextSxWorkingYmd(ymd, holidayIndex);
+  if (!cur) return '';
+  for (let i = 0; i < steps; i += 1) {
+    cur = nextSxWorkingYmd(addCalendarDaysYmd(cur, 1), holidayIndex);
+  }
+  return cur;
+}
+
 export function nextSxWorkingYmd(ymd, holidayIndex, maxSteps = 60) {
   let cur = String(ymd || '').slice(0, 10);
   if (!parseYmd(cur)) return '';
@@ -238,7 +249,7 @@ function inclusiveCalendarDays(fromYmd, toYmd) {
  * @param {{ startYmd?: string|null }} opts startYmd = ngày tiếp nhận / bắt đầu SX
  * @returns {null|{ installYmd, packing, finishing, cabinet, planning, productionFinishYmd }}
  */
-export function buildSxInstallBackPlan(installYmd, { startYmd = null } = {}) {
+export function buildSxInstallBackPlan(installYmd, { startYmd = null, slipDays = 0 } = {}) {
   const install = String(installYmd || '').slice(0, 10);
   if (!parseYmd(install)) return null;
 
@@ -265,29 +276,39 @@ export function buildSxInstallBackPlan(installYmd, { startYmd = null } = {}) {
     }
   }
 
+  const slip = Math.max(0, Math.floor(Number(slipDays) || 0));
+  const shift = (ymd) => (ymd && slip ? addCalendarDaysYmd(ymd, slip) : ymd);
+  const shiftedFinish = shift(finishEnd);
+  const shiftedPackingEnd = shift(packingEnd);
+  const installCollision = Boolean(
+    install && shiftedFinish && shiftedFinish >= install,
+  );
+
   return {
     installYmd: install,
-    productionFinishYmd: finishEnd,
+    productionFinishYmd: shiftedFinish,
+    slipDays: slip,
+    installCollision,
     packing: {
       key: 'packing',
       label: 'Đóng hàng',
       daysFixed: SX_INSTALL_BACK_PLAN.packingDays,
-      startYmd: packingStart,
-      endYmd: packingEnd,
+      startYmd: shift(packingStart),
+      endYmd: shiftedPackingEnd,
     },
     finishing: {
       key: 'finishing',
       label: 'Hoàn thiện',
       daysFixed: SX_INSTALL_BACK_PLAN.finishDays,
-      startYmd: finishStartYmd,
-      endYmd: finishEnd,
+      startYmd: shift(finishStartYmd),
+      endYmd: shiftedFinish,
     },
     cabinet: {
       key: 'cabinet',
       label: 'Hoàn thiện thùng',
       daysFixed: SX_INSTALL_BACK_PLAN.cabinetDays,
-      startYmd: cabinetStart,
-      endYmd: cabinetEnd,
+      startYmd: shift(cabinetStart),
+      endYmd: shift(cabinetEnd),
     },
     planning: {
       key: 'planning',

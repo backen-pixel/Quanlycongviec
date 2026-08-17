@@ -6,7 +6,9 @@
 
 const TASK_SOURCE_TYPES = new Set(['customer_request', 'employee_error']);
 const ERROR_MODULES = new Set(['crm', 'production', 'logistics']);
+const PHAT_SINH_KINDS = new Set(['tempered_glass', 'glass_unpainted', 'glass_painted']);
 const { normalizeAssignModule, BUILTIN_ASSIGN_MODULES: ASSIGN_MODULES } = require('./assignmentModule');
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function normalizeTaskSourceType(raw) {
   const v = String(raw || '').trim().toLowerCase();
@@ -63,19 +65,69 @@ function stageSlugForAssignModule(assignModule) {
   return 'shared_workspace';
 }
 
+function normalizePhatSinhKind(raw) {
+  if (raw === undefined) return undefined;
+  if (raw == null || raw === '') return null;
+  const v = String(raw).trim().toLowerCase();
+  return PHAT_SINH_KINDS.has(v) ? v : null;
+}
+
+function normalizeDepartmentId(raw) {
+  if (raw === undefined) return undefined;
+  if (raw == null || raw === '') return null;
+  const s = String(raw).trim();
+  return UUID_RE.test(s) ? s : null;
+}
+
+function resolvePhatSinhFields(body = {}) {
+  const hasKind = body.phat_sinh_kind !== undefined;
+  const hasDept = body.department_id !== undefined;
+  if (!hasKind && !hasDept) {
+    return { ok: true, phat_sinh_kind: undefined, department_id: undefined };
+  }
+  let phat_sinh_kind = undefined;
+  if (hasKind) {
+    if (body.phat_sinh_kind == null || body.phat_sinh_kind === '') {
+      phat_sinh_kind = null;
+    } else {
+      phat_sinh_kind = normalizePhatSinhKind(body.phat_sinh_kind);
+      if (!phat_sinh_kind) {
+        return { ok: false, error: 'Loại kính phát sinh không hợp lệ', status: 400 };
+      }
+    }
+  }
+  let department_id = undefined;
+  if (hasDept) {
+    if (body.department_id == null || body.department_id === '') {
+      department_id = null;
+    } else {
+      department_id = normalizeDepartmentId(body.department_id);
+      if (!department_id) {
+        return { ok: false, error: 'Bộ phận không hợp lệ', status: 400 };
+      }
+    }
+  }
+  return { ok: true, phat_sinh_kind, department_id };
+}
+
 function isTaskSourceColumnError(err) {
   const m = String(err?.message || '').toLowerCase();
-  return m.includes('task_source_type') || m.includes('employee_error_module');
+  return m.includes('task_source_type') || m.includes('employee_error_module')
+    || m.includes('phat_sinh_kind') || m.includes('department_id');
 }
 
 module.exports = {
   TASK_SOURCE_TYPES,
   ERROR_MODULES,
+  PHAT_SINH_KINDS,
   ASSIGN_MODULES,
   normalizeTaskSourceType,
   normalizeErrorModule,
+  normalizePhatSinhKind,
+  normalizeDepartmentId,
   normalizeAssignModule,
   resolveTaskSourceFields,
+  resolvePhatSinhFields,
   stageSlugForAssignModule,
   isTaskSourceColumnError,
 };

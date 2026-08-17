@@ -612,7 +612,7 @@ function deadlineTsForLead(row) {
 
   const slaDays = effectivePipelineStageSlaDays(row?.stage?.sla_days);
   if (slaDays != null && row?.stage_entered_at) {
-    const due = endOfCalendarDayAfterEntered(row.stage_entered_at, slaDays);
+    const due = endOfCalendarDayAfterEntered(row.stage_entered_at, slaDays, row?.company_id);
     const ts = due?.getTime?.();
     if (Number.isFinite(ts)) return ts;
   }

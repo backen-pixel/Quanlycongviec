@@ -8,6 +8,7 @@ const { syncAssignmentFromCrmTask } = require('./crmTaskAssignmentSync');
 const { replaceCrmTaskAssignees, attachAssigneesToCrmTasks } = require('./crmTaskAssignees');
 const {
   resolveTaskSourceFields,
+  resolvePhatSinhFields,
   normalizeAssignModule,
   stageSlugForAssignModule,
   isTaskSourceColumnError,
@@ -15,7 +16,7 @@ const {
 
 const ASSIGNMENT_SELECT = `
   id, company_id, executor_company_id, column_id, lead_id, crm_task_id, assignment_module,
-  task_source_type, employee_error_module,
+  task_source_type, employee_error_module, department_id, phat_sinh_kind,
   title, description, assignee_id, created_by_id, priority, status, deadline,
   position, created_at, updated_at, completed_at,
   assignee:users!crm_assignments_assignee_id_fkey(id, full_name, email, avatar, role, drive_module),
@@ -80,6 +81,8 @@ async function createSharedWorkspaceLinkedAssignment(req, leadId, body = {}) {
 
   const source = resolveTaskSourceFields(body, { required: true });
   if (!source.ok) return { error: source.error, status: source.status || 400 };
+  const phatSinh = resolvePhatSinhFields(body);
+  if (!phatSinh.ok) return { error: phatSinh.error, status: phatSinh.status || 400 };
 
   const assignmentModule = normalizeAssignModule(body.assignment_module);
   const stageSlug = stageSlugForAssignModule(assignmentModule);
@@ -100,7 +103,7 @@ async function createSharedWorkspaceLinkedAssignment(req, leadId, body = {}) {
 
   const { data: leadInfo } = await supabase
     .from('crm_leads')
-    .select('id, company_id, code, title, type, stage_id')
+    .select('id, company_id, code, title, type, stage_id, project_id')
     .eq('id', leadId)
     .maybeSingle();
   if (!leadInfo) return { error: 'Lead/deal không tồn tại', status: 404 };
@@ -119,6 +122,55 @@ async function createSharedWorkspaceLinkedAssignment(req, leadId, body = {}) {
     && String(effectiveCompany) !== String(leadInfo.company_id)
   ) {
     executorCompanyId = String(effectiveCompany);
+  } else if (body.executor_company_id) {
+    executorCompanyId = String(body.executor_company_id);
+  }
+
+  const targetExec = executorCompanyId || (body.executor_company_id ? String(body.executor_company_id) : null);
+  if (targetExec) {
+    try {
+      const { listProjectParticipantCompanies, isParticipantCompany } = require('./projectParticipantCompanies');
+      let pid = leadInfo.project_id || body.project_id || null;
+      if (!pid) {
+        const { data: link } = await supabase
+          .from('crm_deal_projects')
+          .select('project_id')
+          .eq('deal_id', leadId)
+          .limit(1)
+          .maybeSingle();
+        pid = link?.project_id || null;
+      }
+      if (pid) {
+        const companies = await listProjectParticipantCompanies(pid);
+        if (!isParticipantCompany(companies, targetExec)) {
+          return { error: 'Chỉ giao việc cho công ty đã thuộc dự án này', status: 400 };
+        }
+      }
+    } catch (e) {
+      console.warn('[shared-ws] participant companies:', e.message);
+    }
+  }
+
+  let deadline = body.deadline || null;
+  if (!deadline && phatSinh.phat_sinh_kind) {
+    try {
+      const { getSxScheduleConfig } = require('./sxCompanyScheduleConfig');
+      const { loadSxHolidayIndex } = require('./sxWorkshopSchedule');
+      const { resolvePhatSinhDeadlineIso } = require('./sxPhatSinhDeadline');
+      const slaCompanyId = executorCompanyId || effectiveCompany || leadInfo.company_id;
+      const [cfg, holidays] = await Promise.all([
+        getSxScheduleConfig(slaCompanyId),
+        loadSxHolidayIndex(slaCompanyId),
+      ]);
+      deadline = resolvePhatSinhDeadlineIso({
+        kind: phatSinh.phat_sinh_kind,
+        config: cfg,
+        holidayIndex: holidays,
+        companyId: slaCompanyId,
+      });
+    } catch (e) {
+      console.warn('[shared-ws] phat sinh deadline:', e.message);
+    }
   }
 
   // Tạo crm_tasks — skip side-effect sequential; route sẽ sync trực tiếp + notify 1 lần.
@@ -127,7 +179,7 @@ async function createSharedWorkspaceLinkedAssignment(req, leadId, body = {}) {
     description: body.description || null,
     priority: body.priority || 'medium',
     status: body.status || 'pending',
-    deadline: body.deadline || null,
+    deadline,
     assignee_ids: rawIds,
     pipeline_stage_id: body.pipeline_stage_id || leadInfo.stage_id || null,
     stage_slug: stageSlug,
@@ -135,6 +187,8 @@ async function createSharedWorkspaceLinkedAssignment(req, leadId, body = {}) {
     executor_company_id: executorCompanyId,
     task_source_type: source.task_source_type,
     employee_error_module: source.employee_error_module,
+    department_id: phatSinh.department_id,
+    phat_sinh_kind: phatSinh.phat_sinh_kind,
     sync_assignment: 'direct',
     skip_assignment_notify: true,
   });
@@ -164,6 +218,8 @@ async function createSharedWorkspaceLinkedAssignment(req, leadId, body = {}) {
       companyId: effectiveCompany,
       taskSourceType: source.task_source_type,
       employeeErrorModule: source.employee_error_module,
+      departmentId: phatSinh.department_id,
+      phatSinhKind: phatSinh.phat_sinh_kind,
       forceDirect: true,
     });
   } catch (syncErr) {
@@ -191,6 +247,9 @@ async function createSharedWorkspaceLinkedAssignment(req, leadId, body = {}) {
   if (effectiveCompany) patch.company_id = effectiveCompany;
   patch.task_source_type = source.task_source_type;
   patch.employee_error_module = source.employee_error_module;
+  if (phatSinh.department_id !== undefined) patch.department_id = phatSinh.department_id;
+  if (phatSinh.phat_sinh_kind !== undefined) patch.phat_sinh_kind = phatSinh.phat_sinh_kind;
+  if (executorCompanyId) patch.executor_company_id = executorCompanyId;
 
   let { error: patchErr } = await supabase
     .from('crm_assignments')

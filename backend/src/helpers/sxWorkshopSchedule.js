@@ -22,6 +22,7 @@ function vnNowParts(nowMs = Date.now()) {
     mo: vn.getUTCMonth() + 1,
     d: vn.getUTCDate(),
     hour: vn.getUTCHours(),
+    minute: vn.getUTCMinutes(),
     ymd: formatYmdUtc(vn.getUTCFullYear(), vn.getUTCMonth() + 1, vn.getUTCDate()),
   };
 }
@@ -106,6 +107,36 @@ async function resolveSxReceptionDateForCompany(companyId, setupAt = Date.now())
   return resolveSxReceptionYmd(setupAt, holidays);
 }
 
+/** Cộng N ngày làm việc (bỏ CN + lễ) kể từ ymd. */
+function addSxWorkingDaysYmd(ymd, n, holidayIndex = null) {
+  const steps = Math.max(0, Math.floor(Number(n) || 0));
+  let cur = nextSxWorkingYmd(ymd, holidayIndex);
+  if (!cur) return '';
+  for (let i = 0; i < steps; i += 1) {
+    cur = nextSxWorkingYmd(addCalendarDaysYmd(cur, 1), holidayIndex);
+  }
+  return cur;
+}
+
+function countSxWorkingDaysFromTo(fromYmd, toYmd, holidayIndex = null) {
+  const a = String(fromYmd || '').slice(0, 10);
+  const b = String(toYmd || '').slice(0, 10);
+  if (!parseYmd(a) || !parseYmd(b)) return null;
+  if (a === b) return 0;
+  const forward = a < b;
+  const start = forward ? a : b;
+  const end = forward ? b : a;
+  let count = 0;
+  let cur = addCalendarDaysYmd(start, 1);
+  let guard = 0;
+  while (cur && cur <= end && guard < 800) {
+    if (!isSxNonWorkingYmd(cur, holidayIndex)) count += 1;
+    cur = addCalendarDaysYmd(cur, 1);
+    guard += 1;
+  }
+  return forward ? count : -count;
+}
+
 module.exports = {
   resolveSxReceptionYmd,
   resolveSxReceptionDateForCompany,
@@ -113,5 +144,8 @@ module.exports = {
   nextSxWorkingYmd,
   isSxNonWorkingYmd,
   addCalendarDaysYmd,
+  addSxWorkingDaysYmd,
+  countSxWorkingDaysFromTo,
   vnNowParts,
+  parseYmd,
 };

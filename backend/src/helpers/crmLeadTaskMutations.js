@@ -32,6 +32,7 @@ const { getRedisIfReady } = require('../config/redis');
 const { createCrmTaskOutbox } = require('./crmTaskOutbox');
 const {
   resolveTaskSourceFields,
+  resolvePhatSinhFields,
   isTaskSourceColumnError,
 } = require('./sharedWorkspaceTaskSource');
 
@@ -284,6 +285,10 @@ async function createCrmLeadTask(req, leadId, body) {
     insertRow.task_source_type = sourceFields.task_source_type;
     insertRow.employee_error_module = sourceFields.employee_error_module;
   }
+  const phatSinh = resolvePhatSinhFields(b);
+  if (!phatSinh.ok) return { error: phatSinh.error, status: phatSinh.status || 400 };
+  if (phatSinh.department_id !== undefined) insertRow.department_id = phatSinh.department_id;
+  if (phatSinh.phat_sinh_kind !== undefined) insertRow.phat_sinh_kind = phatSinh.phat_sinh_kind;
 
   let { data, error } = await supabase.from('crm_tasks').insert(insertRow).select(CRM_TASK_SELECT).single();
   if (error && isExecutorColumnError(error)) {
@@ -540,6 +545,12 @@ async function updateCrmLeadTask(req, leadId, taskId, body) {
       update.task_source_type = src.task_source_type;
       update.employee_error_module = src.employee_error_module;
     }
+  }
+  if (b.department_id !== undefined || b.phat_sinh_kind !== undefined) {
+    const ps = resolvePhatSinhFields(b);
+    if (!ps.ok) return { error: ps.error, status: ps.status || 400 };
+    if (ps.department_id !== undefined) update.department_id = ps.department_id;
+    if (ps.phat_sinh_kind !== undefined) update.phat_sinh_kind = ps.phat_sinh_kind;
   }
 
   let { data, error } = await supabase.from('crm_tasks').update(update)

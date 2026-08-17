@@ -1,5 +1,6 @@
 /** Khoảng ngày / lịch CRM theo Việt Nam (Asia/Ho_Chi_Minh) — không phụ thuộc TZ process (Render UTC). */
 const VN_TZ = 'Asia/Ho_Chi_Minh';
+const { companyDeadlineIsoFromYmd, isHucabiCompany } = require('./companyDeadlineClock');
 
 function sanitizeCrmReportYmd(v) {
   if (v == null) return null;
@@ -77,9 +78,9 @@ function crmReportAsOfMs(dateToYmd) {
 
 /**
  * Hạn SLA cột = cuối ngày lịch VN sau `slaDays` ngày kể từ ngày vào cột.
- * Không dùng setHours theo TZ máy chủ.
+ * HCB = 17:30; công ty khác = 23:59:59. Không dùng setHours theo TZ máy chủ.
  */
-function endOfCalendarDayAfterEntered(startIso, slaDays) {
+function endOfCalendarDayAfterEntered(startIso, slaDays, companyOrId) {
   const days = Math.max(1, Number(slaDays) || 1);
   const entered = startIso ? new Date(startIso) : new Date();
   const enteredMs = entered.getTime();
@@ -87,6 +88,10 @@ function endOfCalendarDayAfterEntered(startIso, slaDays) {
     ? entered.toLocaleDateString('en-CA', { timeZone: VN_TZ })
     : crmReportTodayYmdVn();
   const dueYmd = crmReportAddDaysYmd(ymd, days);
+  if (isHucabiCompany(companyOrId)) {
+    const iso = companyDeadlineIsoFromYmd(dueYmd, companyOrId);
+    if (iso) return new Date(iso);
+  }
   return new Date(crmReportCreatedAtToIso(dueYmd));
 }
 

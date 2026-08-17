@@ -1,3 +1,5 @@
+import { companyDeadlineIsoFromYmd, isHucabiCompany } from './companyDeadlineClock';
+
 /** Lịch Việt Nam (Asia/Ho_Chi_Minh) — dùng cho date_from/date_to gửi API. */
 export const VN_TZ = 'Asia/Ho_Chi_Minh';
 
@@ -44,11 +46,15 @@ export function vnDefaultMonthRange(ref = new Date()) {
 
 /**
  * Hạn SLA cột = cuối ngày lịch VN sau slaDays kể từ ngày vào cột.
- * Khớp backend `endOfCalendarDayAfterEntered`.
+ * HCB = 17:30; công ty khác = 23:59:59. Khớp backend `endOfCalendarDayAfterEntered`.
  */
-export function endOfVnCalendarDayAfterEntered(startIso, slaDays) {
+export function endOfVnCalendarDayAfterEntered(startIso, slaDays, companyOrId) {
   const days = Math.max(1, Number(slaDays) || 1);
   const enteredYmd = vnDayKey(startIso || new Date()) || vnTodayYmd();
   const dueYmd = vnAddDaysYmd(enteredYmd, days);
+  if (isHucabiCompany(companyOrId)) {
+    const iso = companyDeadlineIsoFromYmd(dueYmd, companyOrId);
+    if (iso) return new Date(iso);
+  }
   return new Date(`${dueYmd}T23:59:59.999+07:00`);
 }

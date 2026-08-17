@@ -1,10 +1,19 @@
-/** Mốc hết hạn trong ngày theo công ty xưởng. HCB (Hucabi) = 17:30 giờ VN. */
+/** Mốc hết hạn trong ngày theo công ty xưởng. Mặc định 17:30 giờ VN (tuỳ chỉnh theo cấu hình). */
 
 const VN_TZ = 'Asia/Ho_Chi_Minh';
 export const HUCABI_COMPANY_ID = '18c2563f-3495-498d-8199-23200c9f420e';
+export const DEFAULT_DEADLINE_CLOCK = { hour: 17, minute: 30, second: 0, ms: 0 };
+
+const clockByCompany = new Map();
 
 function pad2(n) {
   return String(n).padStart(2, '0');
+}
+
+function companyIdOf(companyOrId) {
+  if (companyOrId == null || companyOrId === '') return '';
+  if (typeof companyOrId === 'string' || typeof companyOrId === 'number') return String(companyOrId);
+  return String(companyOrId.id || companyOrId.company_id || '');
 }
 
 export function isHucabiCompany(companyOrId) {
@@ -19,12 +28,25 @@ export function isHucabiCompany(companyOrId) {
   return sn === 'HCB' || name.includes('hucabi');
 }
 
-/** Giờ hết hạn trong ngày (VN). Công ty khác: cuối ngày. */
+export function rememberCompanyDeadlineClock(companyId, clock) {
+  const id = String(companyId || '');
+  if (!id || !clock) return;
+  clockByCompany.set(id, {
+    hour: Number(clock.hour) || 17,
+    minute: Number(clock.minute) || 0,
+    second: Number(clock.second) || 0,
+    ms: Number(clock.ms) || 0,
+  });
+}
+
+/** Giờ hết hạn trong ngày (VN). Mặc định 17:30 cho mọi xưởng. */
 export function companyDeadlineDayEndClock(companyOrId) {
   if (isHucabiCompany(companyOrId)) {
     return { hour: 17, minute: 30, second: 0, ms: 0 };
   }
-  return { hour: 23, minute: 59, second: 59, ms: 999 };
+  const id = companyIdOf(companyOrId);
+  if (id && clockByCompany.has(id)) return clockByCompany.get(id);
+  return { ...DEFAULT_DEADLINE_CLOCK };
 }
 
 export function vnYmdFromTs(ts) {
@@ -48,11 +70,25 @@ export function companyWorkEndMsOnYmd(ymd, companyOrId) {
 }
 
 /**
- * HCB: hạn ngày hôm nay chuyển sang quá hạn sau 17:30 VN.
- * Công ty khác: giữ so sánh theo ngày lịch (cùng ngày vẫn là «hôm nay»).
+ * Timestamp hết hạn để so sánh quá hạn.
+ * HCB: mọi hạn (DATE midnight UTC / timestamptz) → 17:30 VN cùng ngày lịch.
+ * Công ty khác: giữ timestamp gốc.
+ */
+export function companyWorkEndMsFromRaw(raw, companyOrId) {
+  if (raw == null || raw === '') return null;
+  const t = new Date(raw).getTime();
+  if (!Number.isFinite(t)) return null;
+  if (!isHucabiCompany(companyOrId)) return t;
+  const ymd = vnYmdFromTs(t);
+  const snapped = ymd ? companyWorkEndMsOnYmd(ymd, companyOrId) : null;
+  return snapped != null ? snapped : t;
+}
+
+/**
+ * Hạn ngày hôm nay chuyển sang quá hạn sau giờ deadline công ty (mặc định 17:30 VN).
  */
 export function isHucabiSameDayPastWorkEnd(deadlineRaw, companyOrId, nowMs = Date.now()) {
-  if (!isHucabiCompany(companyOrId) || deadlineRaw == null || deadlineRaw === '') return false;
+  if (deadlineRaw == null || deadlineRaw === '') return false;
   const ts = new Date(deadlineRaw).getTime();
   if (!Number.isFinite(ts)) return false;
   const dueYmd = vnYmdFromTs(ts);
@@ -63,6 +99,9 @@ export function isHucabiSameDayPastWorkEnd(deadlineRaw, companyOrId, nowMs = Dat
 }
 
 export function hucabiDeadlineHint(companyOrId) {
-  if (!isHucabiCompany(companyOrId)) return '';
-  return 'Hạn trong ngày của HCB (Hucabi): 17:30';
+  if (isHucabiCompany(companyOrId)) {
+    return 'Hạn trong ngày của HCB (Hucabi): 17:30';
+  }
+  const c = companyDeadlineDayEndClock(companyOrId);
+  return `Hạn trong ngày lưu lúc ${pad2(c.hour)}:${pad2(c.minute)} (đổi ở Pipeline xưởng)`;
 }

@@ -4533,7 +4533,6 @@ export default function CRMTasksTab({
           )}
           {[
             { key: 'order_date', label: 'Ngày đặt hàng', icon: '🛒' },
-            { key: 'delivery_date', label: 'Ngày lắp đặt', icon: '🚚' },
           ].map((row) => (
             <div key={row.key} className="rounded-lg border border-sky-100 bg-white px-2.5 py-2">
               <label className="flex items-center gap-2 text-xs font-medium text-slate-700">
@@ -4566,11 +4565,6 @@ export default function CRMTasksTab({
               )}
             </div>
           ))}
-          <p className="text-[10px] text-sky-700">
-            Ngày đặt hàng tự điền khi deal CRM chuyển sang cột Sản xuất (nếu chưa có).
-            Lưu thủ công ghi vào dự án. Ngày lắp đặt đồng bộ `production_deadline` và nhắc hạn nhiệm vụ `sx_giao_hang`;
-            ngày hoàn thiện SX = lắp đặt − 2 ngày (`production_finish_date`).
-          </p>
         </div>
       )}
 

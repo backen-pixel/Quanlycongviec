@@ -338,7 +338,7 @@ function intersectAssignmentIds(currentIds, nextIds) {
 
 const ASSIGNMENT_SELECT = `
   id, company_id, executor_company_id, column_id, lead_id, crm_task_id, assignment_module,
-  task_source_type, employee_error_module, title, description,
+  task_source_type, employee_error_module, department_id, phat_sinh_kind, title, description,
   assignee_id, created_by_id, priority, status, deadline,
   position, created_at, updated_at, completed_at,
   assignee:users!crm_assignments_assignee_id_fkey(id, full_name, email, avatar),
@@ -904,6 +904,16 @@ r.put('/:id', async (req, res) => {
           update.task_source_type = source.task_source_type;
           update.employee_error_module = source.employee_error_module;
         }
+      }
+      if (req.body.department_id !== undefined || req.body.phat_sinh_kind !== undefined) {
+        const { resolvePhatSinhFields } = require('../helpers/sharedWorkspaceTaskSource');
+        const ps = resolvePhatSinhFields(req.body);
+        if (!ps.ok) return res.status(ps.status || 400).json({ error: ps.error });
+        if (ps.department_id !== undefined) update.department_id = ps.department_id;
+        if (ps.phat_sinh_kind !== undefined) update.phat_sinh_kind = ps.phat_sinh_kind;
+      }
+      if (req.body.executor_company_id !== undefined) {
+        update.executor_company_id = req.body.executor_company_id || null;
       }
     } else {
       ['status', 'column_id', 'position'].forEach((f) => {

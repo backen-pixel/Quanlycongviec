@@ -17,6 +17,7 @@ function legacySxSlugFromStageName(nameRaw) {
   if (t.includes('tiep nhan')) return 'sx_tiep_nhan';
   if (t.includes('thiet ke') || t.includes('len ke hoach')) return 'sx_thiet_ke_ke_hoach';
   if (t.includes('kiem tra cheo')) return 'sx_kiem_tra_cheo';
+  if (t.includes('ban thanh pham') || (t.includes('thanh pham') && !t.includes('thanh toan'))) return 'sx_ban_thanh_pham';
   if (t.includes('vat tu')) return 'sx_vat_tu';
   if (t.includes('san xuat thung')) return 'sx_san_xuat_thung';
   if (t.includes('san xuat alu')) return 'sx_san_xuat_alu';
@@ -117,6 +118,7 @@ const SX_STAGE_MATCH_HINTS = [
   ['thiet ke', 'thiet ke'],
   ['kiem tra cheo', 'kiem tra'],
   ['vat tu', 'vat tu'],
+  ['ban thanh pham', 'thanh pham'],
   ['cat kinh', 'cat'],
   ['san xuat', 'san xuat'],
   ['hoan thien', 'hoan thien'],

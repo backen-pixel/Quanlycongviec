@@ -17,11 +17,11 @@ import {
   sxScheduleLeadDaysBadge,
 } from '../lib/sxWorkshopSchedule';
 
-const emptyRow = () => ({
+const emptyRow = (deliveryDate = '') => ({
   key: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
   companyId: '',
   workshopTypeId: '',
-  deliveryDate: '',
+  deliveryDate: deliveryDate || '',
   workshopTypes: [],
   loading: false,
 });
@@ -63,6 +63,8 @@ export default function SxMultiTargetPicker({
   maxRows = 5,
   /** Hiện ô ngày lắp đặt / hoàn thành (−2) trên mỗi dòng xưởng */
   showDates = false,
+  /** Ngày lắp mặc định (vd. kế thừa từ dự án nguồn khi đặt xưởng khác) */
+  defaultDeliveryDate = '',
 }) {
   const [holidayIndex, setHolidayIndex] = useState(() => normalizeHolidayIndex([]));
   const receptionYmd = useMemo(
@@ -87,15 +89,16 @@ export default function SxMultiTargetPicker({
   }, []);
 
   const [rows, setRows] = useState(() => {
+    const fallbackDate = defaultDeliveryDate || '';
     if (Array.isArray(initialRows) && initialRows.length) {
       return initialRows.map((r) => ({
-        ...emptyRow(),
+        ...emptyRow(r.deliveryDate || r.delivery_date || fallbackDate),
         companyId: r.companyId || r.production_company_id || '',
         workshopTypeId: r.workshopTypeId || r.workshop_type_id || '',
-        deliveryDate: r.deliveryDate || r.delivery_date || '',
+        deliveryDate: r.deliveryDate || r.delivery_date || fallbackDate || '',
       }));
     }
-    return [emptyRow()];
+    return [emptyRow(fallbackDate)];
   });
 
   const emit = useCallback((next) => {
@@ -167,7 +170,7 @@ export default function SxMultiTargetPicker({
 
   const addRow = () => {
     if (rows.length >= maxRows || disabled) return;
-    emit([...rows, emptyRow()]);
+    emit([...rows, emptyRow(defaultDeliveryDate)]);
   };
 
   const removeRow = (key) => {

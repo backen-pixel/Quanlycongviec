@@ -716,7 +716,7 @@ function crmDeadlineTsForRow(row, stage, config) {
 
   const slaDays = effectivePipelineStageSlaDays(stage?.sla_days);
   if (slaDays != null && row?.stage_entered_at) {
-    const dueAt = endOfCalendarDayAfterEntered(row.stage_entered_at, slaDays);
+    const dueAt = endOfCalendarDayAfterEntered(row.stage_entered_at, slaDays, row?.company_id);
     const ts = dueAt?.getTime?.();
     if (Number.isFinite(ts)) return ts;
   }

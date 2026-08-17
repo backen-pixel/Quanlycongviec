@@ -15,7 +15,11 @@ import {
 } from '../lib/documentShareScope';
 import DocumentShareModulePicker from '../components/DocumentShareModulePicker';
 import { useAuth } from '../lib/auth';
-import { isAdminLike } from '../lib/adminRole';
+import { isAdminLike, isProductionStaff, isProductionAdmin, isSystemAdmin } from '../lib/adminRole';
+import SxMultiTargetPicker, {
+  validateSxTargets,
+  sxTargetsToApiPayload,
+} from '../components/SxMultiTargetPicker';
 import { formatDate, formatVND, getInitials, avatarColor, getFileEmoji } from '../lib/utils';
 import { publicFileUrl as pubUrl, downloadUploadFile, printUploadImage } from '../lib/publicFileUrl';
 import { FilePreviewOpenLink } from '../context/FilePreviewContext';
@@ -40,7 +44,7 @@ import {
   ArrowLeft, FolderKanban, MessageSquare, Plus, X,
   FileUp, Edit2, Save, ChevronDown, Trash2, Send, Paperclip,
   AlertTriangle, CheckCircle2, Circle, Clock, Truck, Wrench, ArrowRightLeft, Loader2, Download,
-  Share2, Lock,
+  Share2, Lock, Factory,
 } from 'lucide-react';
 import CRMTasksTab from '../components/CRMTasksTab';
 import DealSharedWorkspaceTab from '../components/DealSharedWorkspaceTab';
@@ -305,8 +309,11 @@ function WorkshopInfoPanel({
     'install',
   );
   const installBackPlan = useMemo(
-    () => buildSxInstallBackPlan(deliveryDate, { startYmd: receptionYmd }),
-    [deliveryDate, receptionYmd],
+    () => buildSxInstallBackPlan(deliveryDate, {
+      startYmd: receptionYmd,
+      slipDays: project?.sx_schedule_slip_days || 0,
+    }),
+    [deliveryDate, receptionYmd, project?.sx_schedule_slip_days],
   );
 
   const formatPlanRange = (startYmd, endYmd) => {
@@ -377,6 +384,7 @@ function WorkshopInfoPanel({
       const projectPatch = { [field]: payloadValue };
       // Đổi ngày lắp → tự cập nhật hoàn thiện SX = lắp − 2 (cuối công đoạn hoàn thiện).
       if (field === 'delivery_date') {
+        projectPatch.production_deadline = payloadValue;
         projectPatch.production_finish_date = payloadValue
           ? (addCalendarDaysYmd(payloadValue, -2) || null)
           : null;
@@ -683,6 +691,14 @@ function WorkshopInfoPanel({
               {installBackPlan.planning.days === 0 ? (
                 <p className="text-[10px] font-medium text-red-700">
                   Cảnh báo: từ tiếp nhận tới trước thùng không còn ngày — cần lùi lắp hoặc đẩy tiếp nhận.
+                </p>
+              ) : null}
+              {Number(project?.sx_schedule_slip_days) > 0 ? (
+                <p className="text-[10px] font-semibold text-rose-800 bg-rose-50 border border-rose-200 rounded-md px-2 py-1">
+                  Đã dồn lịch +{Number(project.sx_schedule_slip_days)} ngày (công đoạn sau đã đẩy hạn).
+                  {installBackPlan.installCollision
+                    ? ' Hạn hoàn thiện đã sát/qua ngày lắp — cân nhắc đổi ngày lắp.'
+                    : ''}
                 </p>
               ) : null}
             </div>
@@ -1631,6 +1647,14 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   const [switchWorkshopModal, setSwitchWorkshopModal] = useState(null);
   const [switchWorkshopSaving, setSwitchWorkshopSaving] = useState(false);
 
+  // Đặt xưởng khác (Metalla → HCB …)
+  const [placeSxOpen, setPlaceSxOpen] = useState(false);
+  const [placeSxCompanies, setPlaceSxCompanies] = useState([]);
+  const [placeSxTargets, setPlaceSxTargets] = useState([]);
+  const [placeSxBusy, setPlaceSxBusy] = useState(false);
+  const [placeSxErr, setPlaceSxErr] = useState('');
+  const [workshopPlacements, setWorkshopPlacements] = useState({ placed: [], received_from: [] });
+
   // Document upload state
   const [uploadingDoc, setUploadingDoc] = useState(false);
   const [downloadingDocsZip, setDownloadingDocsZip] = useState(false);
@@ -2185,6 +2209,66 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
       /* giữ state cũ */
     }
   }, [id, MOD.apiPrefix, MOD.stagesKey, pickWorkshopTasksForSummary, fallbackDealIdForTasks, fetchCrmDealTaskSummary, loadProjectDocs, loadTaskFiles]);
+
+  const loadWorkshopPlacements = useCallback(async () => {
+    if (!id || moduleKey === 'vc') {
+      setWorkshopPlacements({ placed: [], received_from: [] });
+      return;
+    }
+    try {
+      const { data } = await api.get(`/production/projects/${id}/workshop-placements`);
+      setWorkshopPlacements({
+        placed: Array.isArray(data?.placed) ? data.placed : [],
+        received_from: Array.isArray(data?.received_from) ? data.received_from : [],
+      });
+    } catch (_) {
+      setWorkshopPlacements({ placed: [], received_from: [] });
+    }
+  }, [id, moduleKey]);
+
+  useEffect(() => {
+    loadWorkshopPlacements();
+  }, [loadWorkshopPlacements]);
+
+  const openPlaceSxModal = useCallback(async () => {
+    setPlaceSxErr('');
+    setPlaceSxTargets([]);
+    setPlaceSxOpen(true);
+    try {
+      const { data } = await api.get('/companies', { params: { for_module: 'production' } });
+      const sourceCid = String(project?.company_id || project?.company?.id || '');
+      const list = (data?.companies || data || []).filter((c) => String(c.id) !== sourceCid);
+      setPlaceSxCompanies(list);
+    } catch (_) {
+      setPlaceSxCompanies([]);
+      setPlaceSxErr('Không tải được danh sách công ty SX');
+    }
+  }, [project?.company_id, project?.company?.id]);
+
+  const submitPlaceSx = useCallback(async () => {
+    const err = validateSxTargets(placeSxTargets);
+    if (err) {
+      setPlaceSxErr(err);
+      return;
+    }
+    setPlaceSxBusy(true);
+    setPlaceSxErr('');
+    try {
+      const { data } = await api.post(`/production/projects/${id}/place-at-workshops`, {
+        targets: sxTargetsToApiPayload(placeSxTargets),
+      });
+      setPlaceSxOpen(false);
+      setPlaceSxTargets([]);
+      await loadWorkshopPlacements();
+      const n = (data?.created || []).length;
+      const partial = data?.partial ? ` (một số dòng lỗi: ${(data.errors || []).map((e) => e.error).join('; ')})` : '';
+      alert(`Đã tạo ${n} dự án xưởng${partial}`);
+    } catch (e) {
+      setPlaceSxErr(e.response?.data?.error || e.message || 'Không đặt được xưởng');
+    } finally {
+      setPlaceSxBusy(false);
+    }
+  }, [placeSxTargets, id, loadWorkshopPlacements]);
 
   /** Realtime: đồng bộ Kanban + nhiệm vụ CRM giữa web và mobile */
   useEffect(() => {
@@ -3006,6 +3090,25 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          {moduleKey !== 'vc' && (() => {
+            const sourceCid = String(project.company_id || project.company?.id || '');
+            const canPlace = isSystemAdmin(user) || isAdminLike(user)
+              || (
+                sourceCid
+                && String(user?.company_id || '') === sourceCid
+                && (isProductionStaff(user) || isProductionAdmin(user))
+              );
+            if (!canPlace) return null;
+            return (
+              <button
+                type="button"
+                onClick={openPlaceSxModal}
+                className="h-9 px-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium flex items-center gap-1.5 cursor-pointer"
+              >
+                <Factory className="h-4 w-4" /> Đặt xưởng khác
+              </button>
+            );
+          })()}
           <Link
             to={`/projects/${project.id}`}
             className="h-9 px-3 bg-emerald-100 text-emerald-700 rounded-lg text-sm font-medium flex items-center gap-1.5"
@@ -3060,7 +3163,10 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
         <div className="lg:col-span-1 space-y-4">
           <WorkshopInfoPanel
             project={project}
-            onUpdate={refreshProjectSilently}
+            onUpdate={() => {
+              refreshProjectSilently();
+              loadWorkshopPlacements();
+            }}
             crmDeal={primaryCrmDeal}
             isVC={isVC}
             onDealUpdate={(data) => {
@@ -3234,6 +3340,65 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                 })()}
               </p>
             </div>
+
+            {moduleKey !== 'vc' && (workshopPlacements.placed.length > 0 || workshopPlacements.received_from.length > 0) && (
+              <div className="border-t border-gray-100 pt-3 space-y-3">
+                {workshopPlacements.placed.length > 0 && (
+                  <div>
+                    <p className="text-[10px] text-indigo-600 uppercase font-semibold mb-1.5 flex items-center gap-1">
+                      <Factory className="h-3 w-3" /> Đã đặt xưởng ({workshopPlacements.placed.length})
+                    </p>
+                    <ul className="space-y-1.5">
+                      {workshopPlacements.placed.map((row) => {
+                        const co = row.target_company;
+                        const wt = row.workshop_type;
+                        const tp = row.target_project;
+                        return (
+                          <li key={row.id} className="rounded-lg border border-indigo-100 bg-indigo-50/40 px-2.5 py-2 text-xs">
+                            <Link
+                              to={`/sx/projects/${row.target_project_id}`}
+                              className="font-semibold text-indigo-800 hover:underline"
+                            >
+                              {tp?.code || '—'} · {co?.short_name || co?.name || 'Xưởng'}
+                            </Link>
+                            {wt?.name && <p className="text-gray-600 mt-0.5">{wt.name}</p>}
+                            {(row.delivery_date || row.production_finish_date) && (
+                              <p className="text-gray-500 mt-0.5">
+                                {row.delivery_date ? `Lắp ${formatDate(row.delivery_date)}` : ''}
+                                {row.delivery_date && row.production_finish_date ? ' · ' : ''}
+                                {row.production_finish_date ? `HT ${formatDate(row.production_finish_date)}` : ''}
+                              </p>
+                            )}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                )}
+                {workshopPlacements.received_from.length > 0 && (
+                  <div>
+                    <p className="text-[10px] text-amber-700 uppercase font-semibold mb-1.5">Đặt từ</p>
+                    <ul className="space-y-1.5">
+                      {workshopPlacements.received_from.map((row) => {
+                        const co = row.source_company || row.source_project?.company;
+                        const sp = row.source_project;
+                        return (
+                          <li key={row.id} className="rounded-lg border border-amber-100 bg-amber-50/50 px-2.5 py-2 text-xs">
+                            <Link
+                              to={`/sx/projects/${row.source_project_id}`}
+                              className="font-semibold text-amber-900 hover:underline"
+                            >
+                              {sp?.code || '—'} · {co?.short_name || co?.name || 'Xưởng nguồn'}
+                            </Link>
+                            {sp?.name && <p className="text-gray-600 mt-0.5 truncate">{sp.name}</p>}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
@@ -3879,6 +4044,67 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                 className="h-10 px-4 text-sm bg-violet-600 text-white rounded-lg hover:bg-violet-700 disabled:opacity-50 flex items-center gap-2">
                 {switchWorkshopSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRightLeft className="h-4 w-4" />}
                 {switchWorkshopSaving ? 'Đang chuyển...' : 'Xác nhận chuyển'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Đặt xưởng khác — chọn công ty SX + phân loại + ngày lắp/HT */}
+      {placeSxOpen && moduleKey !== 'vc' && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4"
+          onClick={() => { if (!placeSxBusy) setPlaceSxOpen(false); }}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-xl w-full max-w-lg p-5 space-y-3 max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <h3 className="text-lg font-bold text-gray-900">Đặt xưởng khác</h3>
+                <p className="text-xs text-gray-500 mt-1">
+                  Chọn công ty sản xuất + phân loại (có thể nhiều xưởng). Ngày lắp đặt và hoàn thiện giống chuyển CRM → SX.
+                </p>
+              </div>
+              <button type="button" onClick={() => !placeSxBusy && setPlaceSxOpen(false)} disabled={placeSxBusy} className="p-1 cursor-pointer disabled:opacity-40">
+                <X className="h-5 w-5 text-gray-400" />
+              </button>
+            </div>
+            {placeSxCompanies.length === 0 ? (
+              <p className="text-sm text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+                Không còn công ty SX khác để đặt (hoặc đang tải danh sách).
+              </p>
+            ) : (
+              <SxMultiTargetPicker
+                companies={placeSxCompanies}
+                showDates
+                accent="indigo"
+                disabled={placeSxBusy}
+                defaultDeliveryDate={String(project?.delivery_date || project?.production_deadline || '').slice(0, 10)}
+                onChange={setPlaceSxTargets}
+              />
+            )}
+            {placeSxErr && (
+              <p className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{placeSxErr}</p>
+            )}
+            <div className="flex gap-2 pt-1">
+              <button
+                type="button"
+                disabled={placeSxBusy}
+                onClick={() => setPlaceSxOpen(false)}
+                className="flex-1 h-10 rounded-xl border text-sm font-medium disabled:opacity-40 cursor-pointer"
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                disabled={placeSxBusy || !!validateSxTargets(placeSxTargets) || placeSxCompanies.length === 0}
+                onClick={submitPlaceSx}
+                className="flex-1 h-10 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-sm font-semibold inline-flex items-center justify-center gap-1.5 disabled:opacity-40 cursor-pointer"
+              >
+                {placeSxBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Factory className="h-4 w-4" />}
+                {placeSxBusy ? 'Đang tạo…' : 'Tạo dự án'}
               </button>
             </div>
           </div>

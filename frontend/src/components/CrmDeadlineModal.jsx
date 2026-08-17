@@ -1,7 +1,12 @@
 import { useState, useEffect } from 'react';
 import { Clock, X, AlertTriangle } from 'lucide-react';
 import { formatDate } from '../lib/utils';
-import { companyDeadlineIsoFromYmd, hucabiDeadlineHint } from '../lib/companyDeadlineClock';
+import api from '../lib/api';
+import {
+  companyDeadlineIsoFromYmd,
+  hucabiDeadlineHint,
+  rememberCompanyDeadlineClock,
+} from '../lib/companyDeadlineClock';
 
 /** Đổi Date/ISO → chuỗi cho <input type="date"> theo ngày local. */
 function toDateInput(value) {
@@ -43,6 +48,7 @@ export default function CrmDeadlineModal({
   const [value, setValue] = useState('');
   const [reason, setReason] = useState('');
   const [error, setError] = useState('');
+  const [timeHint, setTimeHint] = useState('');
 
   useEffect(() => {
     if (open) {
@@ -51,6 +57,25 @@ export default function CrmDeadlineModal({
       setError('');
     }
   }, [open, initialDeadline]);
+
+  useEffect(() => {
+    if (!open || !companyId) {
+      setTimeHint(hucabiDeadlineHint(companyId));
+      return;
+    }
+    let cancelled = false;
+    api.get('/production/schedule-config', { params: { company_id: companyId } })
+      .then((r) => {
+        if (cancelled) return;
+        const clock = r.data?.deadline_clock;
+        if (clock) rememberCompanyDeadlineClock(companyId, clock);
+        setTimeHint(hucabiDeadlineHint(companyId));
+      })
+      .catch(() => {
+        if (!cancelled) setTimeHint(hucabiDeadlineHint(companyId));
+      });
+    return () => { cancelled = true; };
+  }, [open, companyId]);
 
   if (!open) return null;
 
@@ -120,8 +145,8 @@ export default function CrmDeadlineModal({
               onChange={(e) => { setValue(e.target.value); setError(''); }}
               className="w-full h-10 rounded-lg border border-slate-300 px-3 text-sm focus:border-rose-400 focus:ring-1 focus:ring-rose-300 outline-none"
             />
-            {hucabiDeadlineHint(companyId) && (
-              <p className="mt-1 text-[11px] text-slate-500">{hucabiDeadlineHint(companyId)}</p>
+            {timeHint && (
+              <p className="mt-1 text-[11px] text-slate-500">{timeHint}</p>
             )}
           </div>
 

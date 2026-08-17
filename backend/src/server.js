@@ -1251,6 +1251,12 @@ server.listen(config.port, () => {
     console.warn('[crm-kanban-deadline] Failed to start:', e.message);
   }
 
+  try {
+    require('./jobs/sxScheduleSlipJob').start();
+  } catch (e) {
+    console.warn('[sx-schedule-slip] Failed to start:', e.message);
+  }
+
   // Cron refresh Zalo OA token hàng ngày 6:00 VN — disable: ZALO_OA_TOKEN_CRON_DISABLED=1
   try {
     require('./jobs/zaloOaTokenRefresh').start();

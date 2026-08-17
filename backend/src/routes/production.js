@@ -1274,6 +1274,87 @@ r.post('/external-companies', requirePermission('projects', 'create'), async (re
   }
 });
 
+// Xưởng đặt xưởng: từ project nguồn tạo project(s) trên board xưởng nhận.
+r.post('/projects/:id/place-at-workshops', requirePermission('projects', 'create'), async (req, res) => {
+  try {
+    const sourceProjectId = req.params.id;
+    const { placeProjectAtWorkshops } = require('../helpers/placeProjectAtWorkshops');
+    const result = await placeProjectAtWorkshops({
+      req,
+      user: req.user,
+      sourceProjectId,
+      targets: req.body?.targets || [],
+    });
+    if (!result.ok) {
+      return res.status(result.statusCode || 500).json({
+        error: result.error,
+        errors: result.errors,
+      });
+    }
+    await rcInvalidateTags(['production', 'crm']);
+    res.status(201).json({
+      created: result.created,
+      errors: result.errors,
+      partial: !!result.partial,
+    });
+  } catch (e) {
+    console.error('[production/place-at-workshops]', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+r.get('/projects/:id/workshop-placements', requirePermission('projects', 'view'), async (req, res) => {
+  try {
+    const { listWorkshopPlacementsForProject } = require('../helpers/placeProjectAtWorkshops');
+    const data = await listWorkshopPlacementsForProject(req.params.id);
+    res.json(data);
+  } catch (e) {
+    console.error('[production/workshop-placements]', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+r.get('/schedule-config', requirePermission('projects', 'view'), async (req, res) => {
+  try {
+    const companyId = effectiveWorkshopCompanyId(req, req.query.company_id);
+    if (!companyId) return res.status(400).json({ error: 'Thiếu company_id' });
+    const { getSxScheduleConfig } = require('../helpers/sxCompanyScheduleConfig');
+    const { rememberCompanyDeadlineClock } = require('../helpers/companyDeadlineClock');
+    const cfg = await getSxScheduleConfig(companyId);
+    rememberCompanyDeadlineClock(companyId, cfg.deadline_clock);
+    res.json(cfg);
+  } catch (e) {
+    console.error('[production/schedule-config GET]', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+r.put('/schedule-config', requirePermission('projects', 'edit'), async (req, res) => {
+  try {
+    const companyId = effectiveWorkshopCompanyId(req, req.body?.company_id || req.query.company_id);
+    if (!companyId) return res.status(400).json({ error: 'Thiếu company_id' });
+    const { upsertSxScheduleConfig } = require('../helpers/sxCompanyScheduleConfig');
+    const { rememberCompanyDeadlineClock } = require('../helpers/companyDeadlineClock');
+    const cfg = await upsertSxScheduleConfig(companyId, req.body || {});
+    rememberCompanyDeadlineClock(companyId, cfg.deadline_clock);
+    res.json(cfg);
+  } catch (e) {
+    console.error('[production/schedule-config PUT]', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+r.get('/projects/:id/participant-companies', requirePermission('projects', 'view'), async (req, res) => {
+  try {
+    const { listProjectParticipantCompanies } = require('../helpers/projectParticipantCompanies');
+    const companies = await listProjectParticipantCompanies(req.params.id);
+    res.json({ companies });
+  } catch (e) {
+    console.error('[production/participant-companies]', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Tạo đơn trực tiếp trên Kanban SX — không qua CRM (pipeline Deal tự sinh nội bộ).
 r.post('/workshop-intake', requirePermission('projects', 'create'), async (req, res) => {
   try {
@@ -1653,7 +1734,7 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
 
     const projectListSelect = mobileLite
       ? `
-        id, code, name, estimated_value, priority, deadline, install_date, ${MIGRATION_300_COLS} ${MIGRATION_520_COLS} created_at, status, company_id,
+        id, code, name, estimated_value, priority, deadline, install_date, ${MIGRATION_300_COLS} ${MIGRATION_520_COLS} ${MIGRATION_529_COLS} created_at, status, company_id,
         production_deadline, sx_kanban_column_id, logistics_company_id, vc_kanban_column_id, vc_handover_status,
         current_stage_id, workshop_type_id,
         current_stage:workflow_stages(id, slug, name, color, icon),
@@ -1666,7 +1747,7 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
       `
       : kanbanBoard
         ? `
-        id, code, name, estimated_value, production_value, deposit_amount, collected_amount, priority, deadline, install_date, ${MIGRATION_300_COLS} ${MIGRATION_520_COLS} created_at, status, company_id,
+        id, code, name, estimated_value, production_value, deposit_amount, collected_amount, priority, deadline, install_date, ${MIGRATION_300_COLS} ${MIGRATION_520_COLS} ${MIGRATION_529_COLS} created_at, status, company_id,
         production_deadline, sx_kanban_column_id, logistics_company_id, vc_kanban_column_id, vc_handover_status,
         current_stage_id, workshop_type_id,
         current_stage:workflow_stages(id, slug, name, color, icon),
@@ -1679,7 +1760,7 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
         workshop_type:workshop_project_types(id, name, applies_to)
       `
       : `
-        id, code, name, estimated_value, production_value, deposit_amount, collected_amount, priority, deadline, install_date, ${MIGRATION_300_COLS} ${MIGRATION_520_COLS} created_at, status, notes, company_id,
+        id, code, name, estimated_value, production_value, deposit_amount, collected_amount, priority, deadline, install_date, ${MIGRATION_300_COLS} ${MIGRATION_520_COLS} ${MIGRATION_529_COLS} created_at, status, notes, company_id,
         production_deadline, production_note, vc_kanban_column_id, vc_handover_status, sx_kanban_column_id,
         current_stage_id, workshop_type_id,
         current_stage:workflow_stages(id, slug, name, color, icon),
@@ -1766,6 +1847,7 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
       error.message?.includes('relationship') ||
       isOrderDeliveryDateMissingError(error) ||
       isProductionFinishDateMissingError(error) ||
+      isSxScheduleSlipMissingError(error) ||
       isDepositAmountMissingError(error) ||
       isCollectedAmountMissingError(error) ||
       isExternalCompanyNameMissingError(error)
@@ -1774,7 +1856,7 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
       // Migration not yet applied or FK not ready — retry without new columns
       let fallbackSelect = (mobileLite || kanbanBoard)
         ? `
-          id, code, name, estimated_value, production_value, deposit_amount, collected_amount, priority, deadline, install_date, ${MIGRATION_300_COLS} ${MIGRATION_520_COLS} created_at, status,
+          id, code, name, estimated_value, production_value, deposit_amount, collected_amount, priority, deadline, install_date, ${MIGRATION_300_COLS} ${MIGRATION_520_COLS} ${MIGRATION_529_COLS} created_at, status,
           production_deadline, workshop_type_id,
           current_stage_id,
           current_stage:workflow_stages(id, slug, name, color, icon),
@@ -1786,7 +1868,7 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
           ${kanbanBoard || !mobileLite ? CRM_DEALS_PROJECT_EMBED_LEGACY : CRM_DEALS_PROJECT_EMBED_MOBILE}
         `
         : `
-          id, code, name, estimated_value, production_value, deposit_amount, collected_amount, priority, deadline, install_date, ${MIGRATION_300_COLS} ${MIGRATION_520_COLS} created_at, status, notes,
+          id, code, name, estimated_value, production_value, deposit_amount, collected_amount, priority, deadline, install_date, ${MIGRATION_300_COLS} ${MIGRATION_520_COLS} ${MIGRATION_529_COLS} created_at, status, notes,
           production_deadline, production_note, workshop_type_id,
           current_stage_id,
           current_stage:workflow_stages(id, slug, name, color, icon),
@@ -2112,6 +2194,7 @@ const MIGRATION_76_COLS = 'production_deadline, production_note,';
 const MIGRATION_300_COLS = 'order_date, delivery_date,';
 /** Columns added in migration 520 — ngày hoàn thiện SX (= delivery − 2) */
 const MIGRATION_520_COLS = 'production_finish_date, ';
+const MIGRATION_529_COLS = 'sx_schedule_slip_days, ';
 function isExternalCompanyNameMissingError(err) {
   const m = String(err?.message || '');
   return m.includes('external_company_name');
@@ -2121,6 +2204,12 @@ function stripMigration300Cols(sel) {
 }
 function stripMigration520Cols(sel) {
   return sel.replace(MIGRATION_520_COLS, '');
+}
+function stripMigration529Cols(sel) {
+  return sel.replace(MIGRATION_529_COLS, '');
+}
+function isSxScheduleSlipMissingError(err) {
+  return String(err?.message || '').includes('sx_schedule_slip_days');
 }
 function isOrderDeliveryDateMissingError(err) {
   const m = String(err?.message || '');
@@ -2173,7 +2262,7 @@ function stripKanbanStateCols(sel) {
 }
 
 const PROJECT_DETAIL_SELECT = `
-        id, company_id, code, name, description, estimated_value, production_value, deposit_amount, collected_amount, priority, deadline, install_address, install_date, pickup_at, pickup_notes, ${MIGRATION_300_COLS} ${MIGRATION_520_COLS} ${MIGRATION_76_COLS} status, notes, created_at,
+        id, company_id, code, name, description, estimated_value, production_value, deposit_amount, collected_amount, priority, deadline, install_address, install_date, pickup_at, pickup_notes, ${MIGRATION_300_COLS} ${MIGRATION_520_COLS} ${MIGRATION_529_COLS} ${MIGRATION_76_COLS} status, notes, created_at,
         current_stage_id, ${KANBAN_STATE_COLS} ${WORKSHOP_TYPE_SCALAR}
         ${WORKSHOP_TYPE_EMBED}
         current_stage:workflow_stages(id, slug, name, color, icon),
@@ -2205,7 +2294,7 @@ const PROJECT_DETAIL_SELECT = `
 // Fallback select khi DB thiếu cột/relationship mới (FK users, task_checklists, participants…)
 // Mục tiêu: vẫn mở được chi tiết dự án + hiển thị stage/tag đúng.
 const PROJECT_DETAIL_SELECT_MIN = `
-        id, company_id, code, name, description, estimated_value, production_value, priority, deadline, install_address, install_date, pickup_at, pickup_notes, ${MIGRATION_300_COLS} ${MIGRATION_520_COLS} status, notes, created_at,
+        id, company_id, code, name, description, estimated_value, production_value, priority, deadline, install_address, install_date, pickup_at, pickup_notes, ${MIGRATION_300_COLS} ${MIGRATION_520_COLS} ${MIGRATION_529_COLS} status, notes, created_at,
         current_stage_id, ${KANBAN_STATE_COLS} ${WORKSHOP_TYPE_SCALAR}
         ${WORKSHOP_TYPE_EMBED}
         current_stage:workflow_stages(id, slug, name, color, icon),
@@ -2275,6 +2364,13 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
       ({ data: project, error } = await supabase
         .from('projects')
         .select(stripMigration520Cols(PROJECT_DETAIL_SELECT))
+        .eq('id', projectId)
+        .single());
+    }
+    if (error && isSxScheduleSlipMissingError(error)) {
+      ({ data: project, error } = await supabase
+        .from('projects')
+        .select(stripMigration529Cols(PROJECT_DETAIL_SELECT))
         .eq('id', projectId)
         .single());
     }
@@ -2760,7 +2856,7 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
 
     const { data: project } = await supabase
       .from('projects')
-      .select('id, current_stage_id, code, name, status, company_id, sx_kanban_deadline_at, logistics_company_id, vc_kanban_column_id')
+      .select('id, current_stage_id, code, name, status, company_id, sx_kanban_deadline_at, sx_kanban_column_id, sx_schedule_slip_days, production_finish_date, delivery_date, install_date, logistics_company_id, vc_kanban_column_id')
       .eq('id', id)
       .single();
 
@@ -2768,6 +2864,13 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
       return res.status(404).json({ error: 'Project not found' });
     }
     if (!(await assertProductionKanbanMutation(req, res, { projectId: id }))) return;
+
+    try {
+      const { applySxOverdueSlipForProject } = require('../helpers/sxScheduleSlip');
+      await applySxOverdueSlipForProject(project);
+    } catch (slipErr) {
+      console.warn('[production/stage] slip:', slipErr.message);
+    }
 
     /** Kéo về cột «Chờ vào xưởng» — không có workflow_stage_id trên cột intake */
     if (move_to_intake === true || move_to_intake === 'true') {

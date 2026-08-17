@@ -83,7 +83,7 @@ r.get('/admin/sla-at-risk', async (req, res) => {
       const slaDays = effectivePipelineStageSlaDays(st?.sla_days);
       if (slaDays == null) continue;
       const entered = lead.stage_entered_at || lead.created_at;
-      const dueAt = endOfCalendarDayAfterEntered(entered, slaDays);
+      const dueAt = endOfCalendarDayAfterEntered(entered, slaDays, lead.company_id);
       const dueMs = dueAt.getTime();
 
       let risk = 'due_soon';
@@ -221,7 +221,7 @@ r.post('/admin/sla-remind', async (req, res) => {
       if (slaDays == null) {
         return res.status(400).json({ error: 'Cột pipeline này không áp dụng SLA (sla_days = 0)' });
       }
-      const dueAt = endOfCalendarDayAfterEntered(lead.stage_entered_at || lead.created_at, slaDays);
+      const dueAt = endOfCalendarDayAfterEntered(lead.stage_entered_at || lead.created_at, slaDays, lead.company_id);
 
       const rawTargets = [...new Set([lead.assigned_to, lead.type === 'lead' ? lead.lead_owner_id : null].filter(Boolean))];
       const leadScope = { company_id: lead.company_id, region_id: lead.region_id };

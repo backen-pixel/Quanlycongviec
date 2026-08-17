@@ -1964,6 +1964,27 @@ r.put('/:id', requireProjectEditOrSxKanbanWorkshopType(), async (req, res) => {
     if (error) throw error;
 
     if (
+      b.delivery_date !== undefined
+      || b.production_finish_date !== undefined
+      || b.production_deadline !== undefined
+    ) {
+      try {
+        const { syncPlacementFamilyDates } = require('../helpers/placeProjectAtWorkshops');
+        await syncPlacementFamilyDates(req.params.id, {
+          delivery_date: b.delivery_date !== undefined ? (data.delivery_date ?? null) : undefined,
+          production_deadline: b.production_deadline !== undefined || b.delivery_date !== undefined
+            ? (data.production_deadline ?? data.delivery_date ?? null)
+            : undefined,
+          production_finish_date: b.production_finish_date !== undefined || b.delivery_date !== undefined
+            ? (data.production_finish_date ?? null)
+            : undefined,
+        });
+      } catch (syncErr) {
+        console.warn('[PUT /projects] sync placement dates:', syncErr.message);
+      }
+    }
+
+    if (
       b.workshop_type_id !== undefined
       && String(b.workshop_type_id || '') !== String(old?.workshop_type_id || '')
       && b.production_person_id === undefined

@@ -3,7 +3,8 @@
  */
 
 import { effectivePipelineStageSlaDays, isPipelineStageSlaDisabled } from './crmPipelineSla';
-import { isHucabiSameDayPastWorkEnd } from './companyDeadlineClock';
+import { isHucabiCompany, isHucabiSameDayPastWorkEnd } from './companyDeadlineClock';
+import { endOfVnCalendarDayAfterEntered } from './vnDate';
 
 const INTAKE_BUCKET = 'won_pending';
 const VC_SHIPPED_STATUSES = new Set(['shipping', 'installing', 'warranty', 'completed']);
@@ -407,13 +408,15 @@ export function isSxProjectDeliveryDateOverdue(project, stage) {
 }
 
 /** SLA cột pipeline SX — null nếu không áp dụng. */
-export function getSxPipelineStageSlaTone(stageEnteredAt, stage) {
+export function getSxPipelineStageSlaTone(stageEnteredAt, stage, companyOrId = null) {
   if (!stageEnteredAt || !stage) return null;
   if (isSxPipelineStageNoDeadline(stage)) return null;
   if (stage.bucket_slug === INTAKE_BUCKET) return null;
   const slaDays = effectivePipelineStageSlaDays(stage.sla_days);
   if (slaDays == null) return null;
-  const deadlineTs = new Date(stageEnteredAt).getTime() + slaDays * 86400000;
+  const deadlineTs = isHucabiCompany(companyOrId)
+    ? endOfVnCalendarDayAfterEntered(stageEnteredAt, slaDays, companyOrId).getTime()
+    : new Date(stageEnteredAt).getTime() + slaDays * 86400000;
   const remainingMs = deadlineTs - Date.now();
   if (remainingMs < 0) return { level: 'overdue', remainingMs, deadlineTs };
   if (remainingMs <= 24 * 3600000) return { level: 'soon', remainingMs, deadlineTs };
@@ -425,6 +428,7 @@ export function isSxColumnSlaOverdue(project, stage) {
   const tone = getSxPipelineStageSlaTone(
     project?.sx_pipeline_stage_entered_at,
     stage || project?.sx_pipeline_stage,
+    project?.company_id || project?.company,
   );
   return tone?.level === 'overdue';
 }

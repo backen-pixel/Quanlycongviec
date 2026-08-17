@@ -1426,14 +1426,17 @@ async function applyProductionTemplatesOnPipelineEnter({
 
   const { data: existingSx } = await supabase
     .from('crm_tasks')
-    .select('title, stage_slug')
+    .select('title, stage_slug, production_pipeline_stage_id')
     .eq('lead_id', leadId)
     .like('stage_slug', 'sx_%');
   const existingKeys = new Set(
     (existingSx || []).map((t) => sxTaskFingerprint(t.title, t.stage_slug)),
   );
-  const existingTitleKeys = new Set(
-    (existingSx || []).map((t) => normalizeSxTaskText(t.title)),
+  // Cột pipeline khác nhau được phép trùng title (vd. «Sơn» ở Kiểm tra chéo vs Ban thành phẩm).
+  const existingOnThisStage = new Set(
+    (existingSx || [])
+      .filter((t) => String(t.production_pipeline_stage_id || '') === String(pipelineStageId))
+      .map((t) => normalizeSxTaskText(t.title)),
   );
 
   const slugByTemplateNameLocal = (nameRaw) => legacySxSlugFromStageName(nameRaw) || 'sx_other';
@@ -1486,8 +1489,9 @@ async function applyProductionTemplatesOnPipelineEnter({
       ...sxExecutorFieldsFromTemplateItem(it, ownerCompanyId),
       production_pipeline_stage_id: pipelineStageId,
     };
+    const titleNorm = normalizeSxTaskText(row.title);
     if (!existingKeys.has(sxTaskFingerprint(row.title, row.stage_slug))
-      && !(normalizeSxTaskText(row.title) && existingTitleKeys.has(normalizeSxTaskText(row.title)))) inserts.push(row);
+      && !(titleNorm && existingOnThisStage.has(titleNorm))) inserts.push(row);
   }
 
   if (!inserts.length) {
