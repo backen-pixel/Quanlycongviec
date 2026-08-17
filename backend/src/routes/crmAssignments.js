@@ -126,6 +126,16 @@ r.use((req, res, next) => {
 
 const ADMIN_ROLES = new Set(['admin', 'manager', 'sales_admin', 'crm_production_admin']);
 const isAdmin = (req) => ADMIN_ROLES.has(String(req.user?.role || '').toLowerCase());
+/** NV gắn công ty — xem giao việc trong phạm vi công ty (tab Tất cả mobile VC). */
+function canViewCompanyWideAssignments(req) {
+  if (isAdmin(req)) return true;
+  const cid = req.user?.company_id;
+  return cid != null && String(cid).trim() !== '';
+}
+function viewerCompanyId(req) {
+  const cid = req.user?.company_id;
+  return cid != null && String(cid).trim() !== '' ? String(cid).trim() : null;
+}
 
 /**
  * status_group (mobile segment) hoặc status đơn / CSV.
@@ -676,15 +686,17 @@ r.get('/', async (req, res) => {
     let scopeIds = null;
     /** Khi có filter assignee/phòng ban — giới hạn theo id (ưu tiên hơn scopeIds). */
     let idInFilter = null;
+    const companyWide = canViewCompanyWideAssignments(req);
+    const forcedCompanyId = !isAdmin(req) ? viewerCompanyId(req) : null;
 
-    if (!isAdmin(req)) {
+    if (!companyWide) {
       scopeIds = await getVisibleAssignmentIdsForNonAdmin(req);
       if (!scopeIds.length) return res.json({ assignments: [] });
     }
 
     const assigneeFilter = String(req.query.assignee_id || '').trim();
     if (assigneeFilter) {
-      if (!isAdmin(req) && String(assigneeFilter) !== String(req.user?.userId || '')) {
+      if (!companyWide && String(assigneeFilter) !== String(req.user?.userId || '')) {
         return res.json({ assignments: [] });
       }
       const { data: rows } = await supabase
@@ -709,7 +721,7 @@ r.get('/', async (req, res) => {
 
     const departmentFilter = String(req.query.department_id || '').trim();
     if (departmentFilter) {
-      if (!isAdmin(req)) {
+      if (!companyWide) {
         return res.json({ assignments: [] });
       }
       const deptIds = await getAssignmentIdsForDepartment(departmentFilter);
@@ -743,8 +755,8 @@ r.get('/', async (req, res) => {
         q = q.in('id', idInFilter);
       } else if (scopeIds?.length) {
         q = q.in('id', scopeIds);
-      } else if (isAdmin(req)) {
-        const companyId = req.query.company_id || null;
+      } else if (isAdmin(req) || forcedCompanyId) {
+        const companyId = forcedCompanyId || req.query.company_id || null;
         if (companyId) {
           if (companyMode === 'company_only') q = q.eq('company_id', companyId);
           else q = q.or(`company_id.eq.${companyId},executor_company_id.eq.${companyId}`);
@@ -1113,7 +1125,9 @@ r.get('/stats', responseCache({ ttl: 20, scope: 'user', tags: ['crm:assignments'
     const nowIso = new Date().toISOString();
 
     let scopeIds = null;
-    if (!isAdmin(req)) {
+    const companyWide = canViewCompanyWideAssignments(req);
+    const forcedCompanyId = !isAdmin(req) ? viewerCompanyId(req) : null;
+    if (!companyWide) {
       scopeIds = await getVisibleAssignmentIdsForNonAdmin(req);
       if (!scopeIds.length) {
         return res.json({
@@ -1125,7 +1139,7 @@ r.get('/stats', responseCache({ ttl: 20, scope: 'user', tags: ['crm:assignments'
     const assigneeFilter = String(req.query.assignee_id || '').trim();
     let assigneeIds = null;
     if (assigneeFilter) {
-      if (!isAdmin(req) && String(assigneeFilter) !== String(req.user?.userId || '')) {
+      if (!companyWide && String(assigneeFilter) !== String(req.user?.userId || '')) {
         return res.json({
           pending: 0, in_progress: 0, completed: 0, overdue: 0, total: 0,
         });
@@ -1186,8 +1200,8 @@ r.get('/stats', responseCache({ ttl: 20, scope: 'user', tags: ['crm:assignments'
     async function applyStatsFilters(q, { skipModule = false } = {}) {
       if (statsIdFilter) {
         q = q.in('id', statsIdFilter);
-      } else if (isAdmin(req)) {
-        const companyId = req.query.company_id || null;
+      } else if (isAdmin(req) || forcedCompanyId) {
+        const companyId = forcedCompanyId || req.query.company_id || null;
         if (companyId) {
           q = q.or(`company_id.eq.${companyId},executor_company_id.eq.${companyId}`);
         }

@@ -43,8 +43,12 @@ import {
 import {
   STATUS_STAGE_LABEL,
   fetchPrivateDealInboxTasks,
+  fetchLogisticsAssignments,
+  updateCrmAssignment,
   type SharedInboxTask,
+  type CrmAssignment,
 } from '../lib/sharedWorkspaceApi';
+import AssignWorkModal from '../components/AssignWorkModal';
 
 function firstName(full: string): string {
   const parts = full.trim().split(/\s+/).filter(Boolean);
@@ -52,11 +56,12 @@ function firstName(full: string): string {
 }
 
 type StatusFilter = 'all' | 'pending' | 'in_progress' | 'completed';
-type WorkMode = 'mine' | 'shared';
+type WorkMode = 'mine' | 'all' | 'shared';
 
 const WORK_MODES: { key: WorkMode; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
   { key: 'mine', label: 'Của tôi', icon: 'person-outline' },
-  { key: 'shared', label: 'Không gian chung', icon: 'people-outline' },
+  { key: 'all', label: 'Tất cả', icon: 'grid-outline' },
+  { key: 'shared', label: 'KG chung', icon: 'people-outline' },
 ];
 
 const FILTER_CHIPS: { key: StatusFilter; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
@@ -130,19 +135,25 @@ export default function WorkScreen() {
   const greetName = firstName(userName);
 
   const [tasks, setTasks] = useState<WorkTask[]>([]);
+  const [assignments, setAssignments] = useState<CrmAssignment[]>([]);
   const [sharedTasks, setSharedTasks] = useState<SharedInboxTask[]>([]);
   const [mineCounts, setMineCounts] = useState<WorkTaskCounts | null>(null);
+  const [allCounts, setAllCounts] = useState<WorkTaskCounts | null>(null);
   const [hasMoreMine, setHasMoreMine] = useState(false);
+  const [hasMoreAll, setHasMoreAll] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const loadingMoreRef = useRef(false);
   const hasMoreMineRef = useRef(false);
+  const hasMoreAllRef = useRef(false);
   const [workMode, setWorkMode] = useState<WorkMode>('mine');
   const [filter, setFilter] = useState<StatusFilter>('all');
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [notifOpen, setNotifOpen] = useState(false);
+  const [assignOpen, setAssignOpen] = useState(false);
+  const companyId = user?.company_id ? String(user.company_id) : '';
 
   const openNotifs = useCallback(async () => {
     void ensureNotificationPermission();
@@ -151,6 +162,7 @@ export default function WorkScreen() {
   }, [refreshUnread]);
 
   hasMoreMineRef.current = hasMoreMine;
+  hasMoreAllRef.current = hasMoreAll;
 
   const tasksLenRef = useRef(0);
   tasksLenRef.current = tasks.length;
@@ -158,42 +170,74 @@ export default function WorkScreen() {
   const load = useCallback(async () => {
     if (!userId) {
       setTasks([]);
+      setAssignments([]);
       setSharedTasks([]);
       setMineCounts(null);
+      setAllCounts(null);
       setHasMoreMine(false);
+      setHasMoreAll(false);
       setLoading(false);
       return;
     }
     setError(null);
     try {
-      const [minePage, shared] = await Promise.all([
-        fetchLogisticsWorkTasksPage({
-          assigneeId: userId,
-          limit: WORK_TASKS_PAGE_SIZE,
-          offset: 0,
-        }),
+      const pipelineMode = workMode === 'all' ? 'all' : 'mine';
+      const assigneeId = pipelineMode === 'mine' ? userId : null;
+      const [page, assigns, shared] = await Promise.all([
+        workMode === 'shared'
+          ? Promise.resolve({
+              tasks: [] as WorkTask[],
+              hasMore: false,
+              total: null,
+              counts: null as WorkTaskCounts | null,
+            })
+          : fetchLogisticsWorkTasksPage({
+              assigneeId,
+              companyId: companyId || undefined,
+              limit: WORK_TASKS_PAGE_SIZE,
+              offset: 0,
+            }),
+        workMode === 'shared'
+          ? Promise.resolve([] as CrmAssignment[])
+          : fetchLogisticsAssignments({
+              companyId: companyId || undefined,
+              assigneeId: pipelineMode === 'mine' ? userId : undefined,
+              limit: 100,
+            }).catch(() => [] as CrmAssignment[]),
         fetchPrivateDealInboxTasks('logistics').catch(() => [] as SharedInboxTask[]),
       ]);
-      setTasks(minePage.tasks);
-      setHasMoreMine(minePage.hasMore);
-      setMineCounts(minePage.counts);
+      if (workMode !== 'shared') {
+        setTasks(page.tasks);
+        setAssignments(assigns);
+        if (pipelineMode === 'all') {
+          setHasMoreAll(page.hasMore);
+          setAllCounts(page.counts);
+        } else {
+          setHasMoreMine(page.hasMore);
+          setMineCounts(page.counts);
+        }
+      }
       setSharedTasks(shared);
     } catch (e) {
       setError(formatApiError(e));
       setTasks([]);
+      setAssignments([]);
       setSharedTasks([]);
     } finally {
       setLoading(false);
     }
-  }, [userId]);
+  }, [userId, companyId, workMode]);
 
   const loadMoreMine = useCallback(async () => {
-    if (!userId || loadingMoreRef.current || !hasMoreMineRef.current) return;
+    if (!userId || loadingMoreRef.current || workMode === 'shared') return;
+    const hasMore = workMode === 'all' ? hasMoreAllRef.current : hasMoreMineRef.current;
+    if (!hasMore) return;
     loadingMoreRef.current = true;
     setLoadingMore(true);
     try {
       const page = await fetchLogisticsWorkTasksPage({
-        assigneeId: userId,
+        assigneeId: workMode === 'all' ? null : userId,
+        companyId: companyId || undefined,
         limit: WORK_TASKS_PAGE_SIZE,
         offset: tasksLenRef.current,
       });
@@ -204,41 +248,33 @@ export default function WorkScreen() {
         appended = extra.length;
         return extra.length ? [...prev, ...extra] : prev;
       });
-      setHasMoreMine(appended > 0 && page.hasMore);
-      if (page.counts) setMineCounts(page.counts);
+      if (workMode === 'all') {
+        setHasMoreAll(appended > 0 && page.hasMore);
+        if (page.counts) setAllCounts(page.counts);
+      } else {
+        setHasMoreMine(appended > 0 && page.hasMore);
+        if (page.counts) setMineCounts(page.counts);
+      }
     } catch {
       /* giữ trang đã tải */
     } finally {
       loadingMoreRef.current = false;
       setLoadingMore(false);
     }
-  }, [userId]);
+  }, [userId, companyId, workMode]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      if (userId) {
-        const [minePage, shared] = await Promise.all([
-          fetchLogisticsWorkTasksPage({
-            assigneeId: userId,
-            limit: WORK_TASKS_PAGE_SIZE,
-            offset: 0,
-          }),
-          fetchPrivateDealInboxTasks('logistics').catch(() => [] as SharedInboxTask[]),
-        ]);
-        setTasks(minePage.tasks);
-        setHasMoreMine(minePage.hasMore);
-        setMineCounts(minePage.counts);
-        setSharedTasks(shared);
-        setError(null);
-      }
+      await load();
+      setError(null);
       void refreshUnread();
     } catch (e) {
       setError(formatApiError(e));
     } finally {
       setRefreshing(false);
     }
-  }, [userId, refreshUnread]);
+  }, [load, refreshUnread]);
 
   useEffect(() => {
     setLoading(true);
@@ -248,22 +284,11 @@ export default function WorkScreen() {
   const reloadSilent = useCallback(async () => {
     if (!userId) return;
     try {
-      const [minePage, shared] = await Promise.all([
-        fetchLogisticsWorkTasksPage({
-          assigneeId: userId,
-          limit: Math.min(Math.max(tasksLenRef.current, WORK_TASKS_PAGE_SIZE), 500),
-          offset: 0,
-        }),
-        fetchPrivateDealInboxTasks('logistics').catch(() => [] as SharedInboxTask[]),
-      ]);
-      setTasks(minePage.tasks);
-      setHasMoreMine(minePage.hasMore);
-      setMineCounts(minePage.counts);
-      setSharedTasks(shared);
+      await load();
     } catch {
       /* giữ list cũ */
     }
-  }, [userId]);
+  }, [userId, load]);
 
   useProductionRealtime({
     onRefresh: reloadSilent,
@@ -272,25 +297,58 @@ export default function WorkScreen() {
   });
 
   useEffect(() => {
-    if (workMode !== 'mine' || filter === 'all') return;
-    if (!hasMoreMine || loadingMore) return;
+    if (workMode === 'shared' || filter === 'all') return;
+    const hasMore = workMode === 'all' ? hasMoreAll : hasMoreMine;
+    if (!hasMore || loadingMore) return;
     const visible = filterTasks(tasks, filter);
     if (visible.length < 12) void loadMoreMine();
-  }, [workMode, filter, tasks, hasMoreMine, loadingMore, loadMoreMine]);
+  }, [workMode, filter, tasks, hasMoreMine, hasMoreAll, loadingMore, loadMoreMine]);
 
-  const activeTasks = workMode === 'mine' ? tasks : sharedTasks.map((t) => ({
-    id: String(t.id),
-    status: String(t.status || 'pending'),
-  }));
+  const activeTasks = workMode === 'shared'
+    ? sharedTasks.map((t) => ({ id: String(t.id), status: String(t.status || 'pending') }))
+    : [
+        ...tasks.map((t) => ({ id: t.id, status: t.status })),
+        ...assignments.map((a) => ({ id: String(a.id), status: String(a.status || 'pending') })),
+      ];
 
   const stats = useMemo(() => {
-    if (workMode === 'mine' && mineCounts) return mineCounts;
+    if (workMode === 'mine' && mineCounts) {
+      const ap = assignments.filter((a) => isTaskPending(String(a.status || ''))).length;
+      const ai = assignments.filter((a) => isTaskInProgress(String(a.status || ''))).length;
+      const ad = assignments.filter((a) => isTaskDone(String(a.status || ''))).length;
+      return {
+        pending: (mineCounts.pending || 0) + ap,
+        inProgress: (mineCounts.inProgress || 0) + ai,
+        done: (mineCounts.done || 0) + ad,
+      };
+    }
+    if (workMode === 'all' && allCounts) {
+      const ap = assignments.filter((a) => isTaskPending(String(a.status || ''))).length;
+      const ai = assignments.filter((a) => isTaskInProgress(String(a.status || ''))).length;
+      const ad = assignments.filter((a) => isTaskDone(String(a.status || ''))).length;
+      return {
+        pending: (allCounts.pending || 0) + ap,
+        inProgress: (allCounts.inProgress || 0) + ai,
+        done: (allCounts.done || 0) + ad,
+      };
+    }
     return {
       pending: activeTasks.filter((t) => isTaskPending(t.status)).length,
       inProgress: activeTasks.filter((t) => isTaskInProgress(t.status)).length,
       done: activeTasks.filter((t) => isTaskDone(t.status)).length,
     };
-  }, [activeTasks, mineCounts, workMode]);
+  }, [activeTasks, mineCounts, allCounts, workMode, assignments]);
+
+  const filteredAssignments = useMemo(() => {
+    if (workMode === 'shared') return [];
+    return assignments.filter((a) => {
+      const st = String(a.status || 'pending');
+      if (filter === 'pending') return isTaskPending(st);
+      if (filter === 'in_progress') return isTaskInProgress(st);
+      if (filter === 'completed') return isTaskDone(st);
+      return true;
+    });
+  }, [assignments, filter, workMode]);
 
   const sections = useMemo(() => {
     if (workMode === 'shared') return [];
@@ -306,7 +364,6 @@ export default function WorkScreen() {
       })
       .filter((section) => section.data.length > 0);
   }, [tasks, filter, workMode]);
-
   const sharedSections = useMemo(() => {
     if (workMode !== 'shared') return [];
     const filtered = filterInboxTasks(sharedTasks, filter);
@@ -330,6 +387,24 @@ export default function WorkScreen() {
             ? { ...t, status: updated.status, title: updated.title }
             : t,
         ),
+      );
+      setError(null);
+    } catch (e) {
+      setError(formatApiError(e));
+    } finally {
+      setUpdatingId(null);
+    }
+  };
+
+  const toggleAssignmentStatus = async (a: CrmAssignment) => {
+    if (updatingId) return;
+    const id = String(a.id);
+    setUpdatingId(`asg-${id}`);
+    try {
+      const next = nextTaskStatus(String(a.status || 'pending'));
+      const updated = await updateCrmAssignment(id, { status: next });
+      setAssignments((prev) =>
+        prev.map((row) => (String(row.id) === id ? { ...row, status: updated.status || next } : row)),
       );
       setError(null);
     } catch (e) {
@@ -404,18 +479,20 @@ export default function WorkScreen() {
           flexDirection: 'row',
           alignItems: 'center',
           justifyContent: 'center',
-          gap: 6,
-          paddingVertical: 11,
+          gap: 4,
+          paddingVertical: 10,
+          paddingHorizontal: 4,
           borderRadius: Radii.md,
           borderWidth: 1,
           borderColor: colors.border,
           backgroundColor: colors.card,
+          minWidth: 0,
         },
         modeBtnActive: {
           borderColor: colors.primary,
           backgroundColor: colors.primarySoft,
         },
-        modeBtnText: { color: colors.textMuted, fontSize: 13, fontWeight: '700' },
+        modeBtnText: { color: colors.textMuted, fontSize: 12, fontWeight: '700' },
         modeBtnTextActive: { color: colors.primary },
         modeBadge: {
           minWidth: 18,
@@ -580,7 +657,44 @@ export default function WorkScreen() {
           paddingHorizontal: Spacing.xl,
           lineHeight: 21,
         },
-        listContent: { paddingBottom: insets.bottom + 24 },
+        listContent: { paddingBottom: insets.bottom + 88 },
+        assignBlock: {
+          marginHorizontal: Spacing.lg,
+          marginTop: 8,
+          marginBottom: 4,
+          gap: 8,
+        },
+        assignHead: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 },
+        assignHeadTxt: { color: colors.text, fontSize: 14, fontWeight: '800' },
+        assignCard: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 10,
+          padding: 12,
+          borderRadius: Radii.md,
+          borderWidth: 1,
+          borderColor: colors.border,
+          backgroundColor: colors.card,
+        },
+        assignMeta: { color: colors.textFaint, fontSize: 11, fontWeight: '600', marginTop: 2 },
+        fab: {
+          position: 'absolute',
+          right: 16,
+          bottom: insets.bottom + 16,
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 6,
+          paddingHorizontal: 16,
+          paddingVertical: 12,
+          borderRadius: 999,
+          backgroundColor: colors.primary,
+          shadowColor: colors.shadow,
+          shadowOpacity: 0.25,
+          shadowRadius: 8,
+          shadowOffset: { width: 0, height: 4 },
+          elevation: 4,
+        },
+        fabTxt: { color: '#fff', fontSize: 14, fontWeight: '800' },
       }),
     [colors, insets.bottom],
   );
@@ -699,7 +813,7 @@ export default function WorkScreen() {
             ) : null}
           </TapHighlight>
         </View>
-        <Text style={styles.greetSub}>Của tôi · Không gian chung — VC & lắp đặt</Text>
+        <Text style={styles.greetSub}>Của tôi · Tất cả công ty · KG chung — VC & lắp đặt</Text>
       </View>
 
       <View style={styles.modeRow}>
@@ -716,7 +830,7 @@ export default function WorkScreen() {
             >
               <Ionicons
                 name={m.icon}
-                size={16}
+                size={15}
                 color={active ? colors.primary : colors.textMuted}
               />
               <Text style={[styles.modeBtnText, active && styles.modeBtnTextActive]} numberOfLines={1}>
@@ -738,16 +852,26 @@ export default function WorkScreen() {
             Việc deal giao cho bạn · chạm deal để mở Không gian chung (phân công + nhiệm vụ chéo công ty).
           </Text>
         </View>
+      ) : workMode === 'all' ? (
+        <View style={styles.hintBox}>
+          <Text style={styles.hintText}>
+            Toàn bộ nhiệm vụ & giao việc Lắp đặt trong công ty của bạn.
+          </Text>
+        </View>
       ) : null}
 
       <View style={styles.sectionHead}>
         <Ionicons
-          name={workMode === 'shared' ? 'people' : 'folder'}
+          name={workMode === 'shared' ? 'people' : workMode === 'all' ? 'grid' : 'folder'}
           size={18}
           color={workMode === 'shared' ? colors.primary : '#EAB308'}
         />
         <Text style={styles.sectionTitle}>
-          {workMode === 'shared' ? 'Không gian chung' : 'Công việc của tôi'}
+          {workMode === 'shared'
+            ? 'Không gian chung'
+            : workMode === 'all'
+              ? 'Tất cả công việc công ty'
+              : 'Công việc của tôi'}
         </Text>
       </View>
 
@@ -833,12 +957,57 @@ export default function WorkScreen() {
           <Text style={styles.errorText}>{error}</Text>
         </View>
       ) : null}
+
+      {workMode !== 'shared' && filteredAssignments.length > 0 ? (
+        <View style={styles.assignBlock}>
+          <View style={styles.assignHead}>
+            <Ionicons name="clipboard-outline" size={16} color={colors.primary} />
+            <Text style={styles.assignHeadTxt}>Giao việc ({filteredAssignments.length})</Text>
+          </View>
+          {filteredAssignments.map((a) => {
+            const st = String(a.status || 'pending');
+            const done = isTaskDone(st);
+            const assigneeName =
+              a.assignees?.map((u) => u.full_name).filter(Boolean).join(', ')
+              || a.assignee?.full_name
+              || '';
+            return (
+              <TapHighlight
+                key={`asg-${a.id}`}
+                style={styles.assignCard}
+                onPress={() => void toggleAssignmentStatus(a)}
+                disabled={updatingId === `asg-${a.id}`}
+              >
+                <View style={[styles.dot, { backgroundColor: dotColor(st, colors) }]} />
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={[styles.taskTitle, done && styles.taskTitleDone]} numberOfLines={2}>
+                    {a.title || 'Giao việc'}
+                  </Text>
+                  {assigneeName ? (
+                    <Text style={styles.assignMeta} numberOfLines={1}>Người nhận: {assigneeName}</Text>
+                  ) : null}
+                  {a.deadline ? (
+                    <Text style={styles.assignMeta} numberOfLines={1}>
+                      Hạn: {new Date(a.deadline).toLocaleString('vi-VN')}
+                    </Text>
+                  ) : null}
+                </View>
+                <View style={styles.statusPill}>
+                  <Text style={styles.statusPillText}>
+                    {STATUS_STAGE_LABEL[st] || statusPillLabel(st)}
+                  </Text>
+                </View>
+              </TapHighlight>
+            );
+          })}
+        </View>
+      ) : null}
     </>
   );
 
   return (
     <>
-      {workMode === 'mine' ? (
+      {workMode !== 'shared' ? (
         <SectionList
           style={styles.container}
           sections={sections}
@@ -850,7 +1019,8 @@ export default function WorkScreen() {
           contentContainerStyle={styles.listContent}
           onEndReachedThreshold={0.4}
           onEndReached={() => {
-            if (hasMoreMine && !loadingMore) void loadMoreMine();
+            const hasMore = workMode === 'all' ? hasMoreAll : hasMoreMine;
+            if (hasMore && !loadingMore) void loadMoreMine();
           }}
           ListFooterComponent={
             loadingMore ? (
@@ -863,9 +1033,13 @@ export default function WorkScreen() {
           ListEmptyComponent={
             <Text style={styles.empty}>
               {userId
-                ? filter === 'all'
-                  ? 'Chưa có nhiệm vụ vận chuyển lắp đặt nào được giao cho bạn.'
-                  : 'Không có nhiệm vụ nào trong bộ lọc này.'
+                ? filteredAssignments.length > 0
+                  ? ''
+                  : filter === 'all'
+                    ? workMode === 'all'
+                      ? 'Chưa có nhiệm vụ Lắp đặt nào trong công ty.'
+                      : 'Chưa có nhiệm vụ vận chuyển lắp đặt nào được giao cho bạn.'
+                    : 'Không có nhiệm vụ nào trong bộ lọc này.'
                 : 'Đăng nhập để xem công việc được giao.'}
             </Text>
           }
@@ -948,6 +1122,24 @@ export default function WorkScreen() {
           }}
         />
       )}
+
+      {workMode !== 'shared' ? (
+        <TapHighlight style={styles.fab} onPress={() => setAssignOpen(true)}>
+          <Ionicons name="add" size={24} color="#fff" />
+          <Text style={styles.fabTxt}>Giao việc</Text>
+        </TapHighlight>
+      ) : null}
+
+      <AssignWorkModal
+        visible={assignOpen}
+        companyId={companyId || null}
+        onClose={() => setAssignOpen(false)}
+        onCreated={() => {
+          if (workMode === 'all') void load();
+          else setWorkMode('all');
+        }}
+      />
+
       <CommentNotificationsModal
         visible={notifOpen}
         onClose={() => {

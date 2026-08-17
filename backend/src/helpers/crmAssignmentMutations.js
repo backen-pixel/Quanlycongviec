@@ -46,8 +46,16 @@ async function expandAssigneeIds({ assignee_ids, department_ids, region_ids, com
   if (company_id && ids.length) {
     const { data: depts } = await supabase.from('departments').select('id').eq('company_id', company_id);
     const allowDeptIds = new Set((depts || []).map((d) => String(d.id)));
-    const { data: usrs } = await supabase.from('users').select('id, department_id').in('id', ids);
-    ids = (usrs || []).filter((u) => allowDeptIds.has(String(u.department_id))).map((u) => u.id);
+    const { data: usrs } = await supabase
+      .from('users')
+      .select('id, department_id, company_id')
+      .in('id', ids);
+    ids = (usrs || [])
+      .filter((u) => (
+        String(u.company_id || '') === String(company_id)
+        || allowDeptIds.has(String(u.department_id || ''))
+      ))
+      .map((u) => u.id);
   }
   return ids;
 }

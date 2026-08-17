@@ -11,6 +11,8 @@ const { isSystemAdmin } = require('./adminRole');
 function userSeesCompanyWideCrmTasks(user) {
   if (!user) return false;
   if (isSystemAdmin(user)) return true;
+  // NV đã gắn công ty — xem nhiệm vụ pipeline trong phạm vi công ty (tab Tất cả VC).
+  if (user.company_id != null && String(user.company_id).trim() !== '') return true;
   return userSeesAllCrmLeadsForScope(user) || userSeesAllCrmDealsForScope(user);
 }
 

@@ -227,4 +227,75 @@ export async function fetchPrivateDealInboxTasks(
   return Array.isArray(data?.tasks) ? data.tasks : [];
 }
 
+export type AssignmentLookupUser = {
+  id: string;
+  full_name?: string | null;
+  email?: string | null;
+  avatar?: string | null;
+  role?: string | null;
+};
+
+export async function fetchAssignmentLookups(companyId?: string | null): Promise<{
+  users: AssignmentLookupUser[];
+}> {
+  const params: Record<string, string> = {};
+  if (companyId) params.company_id = companyId;
+  const { data } = await api.get<{ users?: AssignmentLookupUser[] }>('/crm/assignments/lookups', {
+    params,
+  });
+  return {
+    users: Array.isArray(data?.users)
+      ? data.users.map((u) => ({
+          id: String(u.id),
+          full_name: u.full_name ?? null,
+          email: u.email ?? null,
+          avatar: u.avatar ?? null,
+          role: u.role ?? null,
+        })).filter((u) => u.id)
+      : [],
+  };
+}
+
+export type CreateCrmAssignmentPayload = {
+  title: string;
+  description?: string | null;
+  priority?: string;
+  deadline?: string | null;
+  assignee_ids: string[];
+  column_id?: string | null;
+  company_id?: string | null;
+  lead_id?: string | null;
+  assignment_module?: 'crm' | 'production' | 'logistics' | string;
+  task_source_type?: string;
+};
+
+/** Giao việc board VC — POST /crm/assignments (không bắt buộc gắn deal). */
+export async function createCrmAssignment(payload: CreateCrmAssignmentPayload): Promise<CrmAssignment> {
+  const { data } = await api.post<{ assignment?: CrmAssignment } | CrmAssignment>(
+    '/crm/assignments',
+    {
+      assignment_module: 'logistics',
+      task_source_type: 'customer_request',
+      ...payload,
+    },
+  );
+  const row = (data as { assignment?: CrmAssignment })?.assignment || (data as CrmAssignment);
+  return row;
+}
+
+export async function fetchLogisticsAssignments(opts: {
+  companyId?: string | null;
+  assigneeId?: string | null;
+  limit?: number;
+  offset?: number;
+} = {}): Promise<CrmAssignment[]> {
+  const params: Record<string, string> = { assignment_module: 'logistics' };
+  if (opts.companyId) params.company_id = opts.companyId;
+  if (opts.assigneeId) params.assignee_id = opts.assigneeId;
+  if (opts.limit) params.limit = String(opts.limit);
+  if (opts.offset) params.offset = String(opts.offset);
+  const { data } = await api.get<{ assignments?: CrmAssignment[] }>('/crm/assignments', { params });
+  return Array.isArray(data?.assignments) ? data.assignments : [];
+}
+
 export { fetchLeadMembersBase };
