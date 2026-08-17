@@ -252,6 +252,25 @@ export function isWorkTaskWorkshop(task: Pick<WorkTask, 'source' | '_workshop_pr
   return task.source === 'workshop' || task._workshop_project_task === true;
 }
 
+/** Đính kèm từ tab Công việc — đồng bộ chi tiết dự án (CRM hoặc workshop). */
+export async function uploadWorkTaskFile(
+  task: WorkTask,
+  file: { uri: string; name: string; mime: string },
+): Promise<void> {
+  const dealId = task.lead_id ? String(task.lead_id) : '';
+  const taskId = workTaskFocusCrmId(task) || String(task.id || '');
+  if (!taskId) throw new Error('Thiếu id nhiệm vụ');
+
+  if (isWorkTaskWorkshop(task)) {
+    const { uploadWorkshopTaskFiles } = await import('./projectDetailApi');
+    await uploadWorkshopTaskFiles(taskId, [file]);
+    return;
+  }
+  if (!dealId) throw new Error('Thiếu deal để đính kèm');
+  const { uploadCrmTaskFiles } = await import('./projectDetailApi');
+  await uploadCrmTaskFiles(dealId, taskId, [file]);
+}
+
 export type DealTaskSection = {
   leadId: string;
   code: string;

@@ -128,21 +128,37 @@ async function loadWorkshopLogisticsTasksForCrmLead(leadId, projectId) {
   return logistics.map((t) => mapWorkshopProjectTaskToCrmTask(t, leadId, project));
 }
 
-/**
- * Nhiệm vụ workshop logistics cho GET /crm/tasks/overview (inbox VC).
- * Gắn lead từ crm_leads.project_id; lọc theo công ty / assignee giống overview.
- */
-async function loadWorkshopLogisticsTasksForOverview(opts = {}) {
-  const {
-    companyId = null,
-    assigneeId = null,
-    status = null,
-    userId = null,
-    companyWide = false,
-  } = opts;
+function isLogisticsCrmTaskRow(t) {
+  const slug = String(t?.stage_slug || '');
+  if (slug.startsWith('vc_')) return true;
+  const meta = t?.metadata && typeof t.metadata === 'object' ? t.metadata : {};
+  return meta.workshop_module === 'logistics' || meta.workshop_area === 'logistics';
+}
 
-  // Dự án đã vào module VC: có logistics_company_id hoặc vc_kanban_column_id
-  // (khớp listWorkshopPickerProjectIds logistics — không lấy deal CRM thuần).
+function matchesOverviewStatus(statusWant, rawStatus) {
+  if (!statusWant) return true;
+  const want = String(statusWant).toLowerCase();
+  const raw = String(rawStatus || '').toLowerCase();
+  const mapped = raw === 'done' ? 'completed' : raw === 'todo' ? 'pending' : raw;
+  return mapped === want || raw === want;
+}
+
+function sortOverviewTasks(rows) {
+  return [...(rows || [])].sort((a, b) => {
+    const da = a.deadline || a.due_date || '';
+    const db = b.deadline || b.due_date || '';
+    if (!da && !db) return 0;
+    if (!da) return 1;
+    if (!db) return -1;
+    return String(da).localeCompare(String(db));
+  });
+}
+
+/**
+ * Dự án đã vào module VC (logistics_company_id / vc_kanban_column_id).
+ * Khớp listWorkshopPickerProjectIds + chi tiết dự án VC.
+ */
+async function listLogisticsProjectsForCompany(companyId = null) {
   let projQ = supabase
     .from('projects')
     .select('id, code, name, company_id, logistics_company_id, vc_kanban_column_id')
@@ -172,29 +188,134 @@ async function loadWorkshopLogisticsTasksForOverview(opts = {}) {
     ({ data: projects, error: projErr } = await q3);
   }
   if (projErr) {
-    console.warn('[workshopOverview] projects:', projErr.message);
+    console.warn('[logisticsOverview] projects:', projErr.message);
     return [];
   }
-  const projectList = projects || [];
-  if (!projectList.length) return [];
-  const projectIds = projectList.map((p) => p.id).filter(Boolean);
-  const projectById = new Map(projectList.map((p) => [String(p.id), p]));
+  return projects || [];
+}
 
-  // Deal CRM gắn project
+async function loadLeadsForLogisticsProjects(projectIds) {
+  if (!projectIds.length) return [];
   const { data: leads, error: leadErr } = await supabase
     .from('crm_leads')
     .select('id, title, code, type, project_id, customer:customers(id, full_name)')
     .in('project_id', projectIds.slice(0, 400));
   if (leadErr) {
-    console.warn('[workshopOverview] leads:', leadErr.message);
+    console.warn('[logisticsOverview] leads:', leadErr.message);
     return [];
   }
-  const leadByProject = new Map();
+  return leads || [];
+}
+
+/**
+ * Một deal chính / dự án — khớp ProjectDetail (crmDeals[0]).
+ * Tránh cộng dồn crm_tasks từ nhiều deal cùng project → lệch số việc.
+ */
+function pickPrimaryLeadPerProject(leads) {
+  const byProject = new Map();
   for (const L of leads || []) {
-    const pid = L.project_id ? String(L.project_id) : '';
-    if (!pid || leadByProject.has(pid)) continue;
-    leadByProject.set(pid, L);
+    const pid = L?.project_id ? String(L.project_id) : '';
+    if (!pid || !L?.id) continue;
+    const prev = byProject.get(pid);
+    if (!prev) {
+      byProject.set(pid, L);
+      continue;
+    }
+    const prevDeal = String(prev.type || '').toLowerCase() === 'deal';
+    const nextDeal = String(L.type || '').toLowerCase() === 'deal';
+    if (nextDeal && !prevDeal) byProject.set(pid, L);
   }
+  return byProject;
+}
+
+/**
+ * crm_tasks vc_* trên deal gắn dự án VC — khớp GET /crm/leads/:id/tasks?task_scope=logistics.
+ * Không lọc lead.company_id (deal thường thuộc công ty Sale, không phải VC).
+ */
+async function loadCrmVcTasksForLogisticsOverview(opts = {}) {
+  const {
+    companyId = null,
+    assigneeId = null,
+    status = null,
+    userId = null,
+    companyWide = false,
+  } = opts;
+
+  const projectList = await listLogisticsProjectsForCompany(companyId);
+  if (!projectList.length) return [];
+  const projectIds = projectList.map((p) => p.id).filter(Boolean);
+  const leads = await loadLeadsForLogisticsProjects(projectIds);
+  if (!leads.length) return [];
+
+  const primaryByProject = pickPrimaryLeadPerProject(leads);
+  const primaryLeads = [...primaryByProject.values()];
+  const leadById = new Map(primaryLeads.map((L) => [String(L.id), L]));
+  const leadIds = primaryLeads.map((L) => L.id).filter(Boolean);
+  if (!leadIds.length) return [];
+
+  let taskQ = supabase
+    .from('crm_tasks')
+    .select(`
+      *,
+      assignee:users!crm_tasks_assignee_id_fkey(id,full_name,avatar),
+      supervisor:users!crm_tasks_supervisor_id_fkey(id,full_name,avatar)
+    `)
+    .in('lead_id', leadIds.slice(0, 400))
+    .order('deadline', { ascending: true, nullsFirst: false })
+    .limit(2000);
+  if (assigneeId) taskQ = taskQ.eq('assignee_id', assigneeId);
+  else if (!companyWide && userId) taskQ = taskQ.eq('assignee_id', userId);
+  if (status) taskQ = taskQ.eq('status', status);
+
+  const { data: taskRows, error: taskErr } = await taskQ;
+  if (taskErr) {
+    console.warn('[logisticsOverview] crm_tasks:', taskErr.message);
+    return [];
+  }
+
+  const out = [];
+  for (const t of taskRows || []) {
+    if (!isLogisticsCrmTaskRow(t)) continue;
+    if (!matchesOverviewStatus(status, t.status)) continue;
+    const lead = leadById.get(String(t.lead_id || ''));
+    if (!lead?.id) continue;
+    out.push({
+      ...t,
+      lead_id: lead.id,
+      lead: {
+        id: lead.id,
+        title: lead.title,
+        code: lead.code,
+        type: lead.type,
+        project_id: lead.project_id,
+        customer: lead.customer || null,
+      },
+    });
+  }
+  return out;
+}
+
+/**
+ * Nhiệm vụ workshop logistics cho GET /crm/tasks/overview (inbox VC).
+ * Gắn lead từ crm_leads.project_id; lọc theo công ty / assignee giống overview.
+ */
+async function loadWorkshopLogisticsTasksForOverview(opts = {}) {
+  const {
+    companyId = null,
+    assigneeId = null,
+    status = null,
+    userId = null,
+    companyWide = false,
+  } = opts;
+
+  const projectList = await listLogisticsProjectsForCompany(companyId);
+  if (!projectList.length) return [];
+  const projectIds = projectList.map((p) => p.id).filter(Boolean);
+  const projectById = new Map(projectList.map((p) => [String(p.id), p]));
+
+  const leads = await loadLeadsForLogisticsProjects(projectIds);
+  const primaryByProject = pickPrimaryLeadPerProject(leads);
+  const leadByProject = primaryByProject;
 
   const TASK_SELECT = `
     id, title, description, status, priority, due_date, order_index, assignee_id, project_id, blocks_stage_advance, file_note_recorded, metadata, created_at,
@@ -235,12 +356,7 @@ async function loadWorkshopLogisticsTasksForOverview(opts = {}) {
   for (const t of taskRows || []) {
     const meta = t.metadata && typeof t.metadata === 'object' ? t.metadata : {};
     if (meta.workshop_area !== 'logistics') continue;
-    if (status) {
-      const want = String(status).toLowerCase();
-      const raw = String(t.status || '').toLowerCase();
-      const mapped = raw === 'done' ? 'completed' : raw === 'todo' ? 'pending' : raw;
-      if (mapped !== want && raw !== want) continue;
-    }
+    if (!matchesOverviewStatus(status, t.status)) continue;
     const pid = t.project_id ? String(t.project_id) : '';
     const lead = leadByProject.get(pid);
     if (!lead?.id) continue;
@@ -259,8 +375,54 @@ async function loadWorkshopLogisticsTasksForOverview(opts = {}) {
   return out;
 }
 
+/**
+ * Inbox VC đầy đủ = crm_tasks vc_* trên deal chính dự án + workshop logistics.
+ * Merge theo từng dự án giống GET /crm/leads/:id/tasks?task_scope=logistics:
+ * có native vc_* → crm + workshop; không → chỉ workshop.
+ */
+async function loadLogisticsTasksForOverview(opts = {}) {
+  const [crmRows, wsRows] = await Promise.all([
+    loadCrmVcTasksForLogisticsOverview(opts),
+    loadWorkshopLogisticsTasksForOverview(opts),
+  ]);
+
+  const crmByProject = new Map();
+  for (const row of crmRows) {
+    const pid = row?.lead?.project_id ? String(row.lead.project_id) : '';
+    if (!pid) continue;
+    if (!crmByProject.has(pid)) crmByProject.set(pid, []);
+    crmByProject.get(pid).push(row);
+  }
+  const wsByProject = new Map();
+  for (const row of wsRows) {
+    const pid = row?.lead?.project_id ? String(row.lead.project_id) : '';
+    if (!pid) continue;
+    if (!wsByProject.has(pid)) wsByProject.set(pid, []);
+    wsByProject.get(pid).push(row);
+  }
+
+  const projectIds = new Set([...crmByProject.keys(), ...wsByProject.keys()]);
+  const out = [];
+  const seen = new Set();
+  for (const pid of projectIds) {
+    const crm = crmByProject.get(pid) || [];
+    const ws = wsByProject.get(pid) || [];
+    const hasNativeVc = crm.some((t) => String(t.stage_slug || '').startsWith('vc_'));
+    const merged = hasNativeVc ? [...crm, ...ws] : (ws.length ? ws : crm);
+    for (const row of merged) {
+      const id = String(row?.id || '');
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      out.push(row);
+    }
+  }
+  return sortOverviewTasks(out);
+}
+
 module.exports = {
   loadWorkshopLogisticsTasksForCrmLead,
   loadWorkshopLogisticsTasksForOverview,
+  loadCrmVcTasksForLogisticsOverview,
+  loadLogisticsTasksForOverview,
   mapWorkshopProjectTaskToCrmTask,
 };

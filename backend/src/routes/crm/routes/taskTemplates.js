@@ -46,44 +46,21 @@ r.get('/tasks/overview', async (req, res) => {
     if (taskScope === 'production') {
       rows = rows.filter((t) => String(t.stage_slug || '').startsWith('sx_') || t.production_pipeline_stage_id);
     } else if (taskScope === 'logistics') {
-      // Chỉ nhiệm vụ VC/LĐ (vc_* / metadata logistics) — KHÔNG fallback sang CRM sales
-      // (tránh inbox Lắp đặt hiện «Báo giá», «Chốt sản xuất», …).
-      rows = rows.filter((t) => {
-        const slug = String(t.stage_slug || '');
-        if (slug.startsWith('vc_')) return true;
-        const meta = t.metadata && typeof t.metadata === 'object' ? t.metadata : {};
-        return meta.workshop_module === 'logistics' || meta.workshop_area === 'logistics';
-      });
-
-      // Gộp nhiệm vụ bảng tasks (workshop logistics) — khớp chi tiết dự án CRMTasksTab
+      // Inbox VC: lấy theo dự án đã bàn giao VC (không dùng lead.company_id —
+      // deal thường thuộc Sale → lệch với tab Công việc trong chi tiết dự án).
       try {
-        const { loadWorkshopLogisticsTasksForOverview } = require('../../../helpers/workshopProjectTasksForCrm');
+        const { loadLogisticsTasksForOverview } = require('../../../helpers/workshopProjectTasksForCrm');
         const { userSeesCompanyWideCrmTasks } = require('../../../helpers/crmTaskOverviewScope');
-        const wsRows = await loadWorkshopLogisticsTasksForOverview({
+        rows = await loadLogisticsTasksForOverview({
           companyId: effectiveCompanyId,
           assigneeId: assignee_id ? String(assignee_id) : null,
           status: status ? String(status) : null,
           userId: req.user?.userId || null,
           companyWide: userSeesCompanyWideCrmTasks(req.user),
         });
-        if (wsRows.length) {
-          const seen = new Set(rows.map((t) => String(t.id)));
-          for (const w of wsRows) {
-            if (seen.has(String(w.id))) continue;
-            seen.add(String(w.id));
-            rows.push(w);
-          }
-          rows.sort((a, b) => {
-            const da = a.deadline || a.due_date || '';
-            const db = b.deadline || b.due_date || '';
-            if (!da && !db) return 0;
-            if (!da) return 1;
-            if (!db) return -1;
-            return String(da).localeCompare(String(db));
-          });
-        }
       } catch (wsErr) {
-        console.warn('[crm/tasks/overview] workshop logistics:', wsErr.message);
+        console.warn('[crm/tasks/overview] logistics overview:', wsErr.message);
+        rows = [];
       }
     } else if (taskScope === 'crm') {
       rows = rows.filter((t) => !String(t.stage_slug || '').startsWith('sx_'));

@@ -1,4 +1,5 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
+import * as ImagePicker from 'expo-image-picker';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -17,7 +18,6 @@ import { useTheme } from '../context/ThemeContext';
 import { useProductionRealtime } from '../hooks/useProductionRealtime';
 import { useRootNavigation } from '../navigation/useRootNavigation';
 import {
-  canViewTeamWork,
   fetchLogisticsWorkTasksPage,
   formatTaskDeadline,
   groupTasksByDeal,
@@ -29,6 +29,7 @@ import {
   statusPillLabel,
   taskDueIso,
   updateWorkTaskStatus,
+  uploadWorkTaskFile,
   workTaskFocusCrmId,
   type DealTaskSection,
   type WorkTask,
@@ -64,26 +65,32 @@ type ListRow =
 type Props = {
   ListHeaderComponent?: React.ReactElement | null;
   contentPaddingBottom?: number;
+  /** Lọc công ty (logistics) — truyền xuống overview API. */
+  companyId?: string | null;
+  /** Lọc nhân viên: null/undefined = tất cả (khi được phép); có id = theo người. */
+  assigneeId?: string | null;
 };
 
 export default function WorkProjectTasksPanel({
   ListHeaderComponent,
   contentPaddingBottom = 24,
+  companyId = null,
+  assigneeId = null,
 }: Props) {
   const { colors } = useTheme();
   const { user } = useAuth();
   const { openProjectDetail } = useRootNavigation();
   const userId = user?.id || user?.userId || '';
-  const canTeam = canViewTeamWork(user);
   const styles = useMemo(() => makeStyles(colors), [colors]);
 
-  const [mineOnly, setMineOnly] = useState(true);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [tasks, setTasks] = useState<WorkTask[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
+  /** Section đóng mặc định — chỉ lưu leadId đang mở. */
+  const [expandedLeadIds, setExpandedLeadIds] = useState<Record<string, boolean>>({});
 
   const load = useCallback(async () => {
     if (!userId) {
@@ -93,9 +100,9 @@ export default function WorkProjectTasksPanel({
     }
     setError(null);
     try {
-      const assigneeId = mineOnly || !canTeam ? userId : undefined;
       const page = await fetchLogisticsWorkTasksPage({
         assigneeId: assigneeId || null,
+        companyId: companyId || null,
         limit: WORK_TASKS_PAGE_SIZE * 4,
       });
       setTasks(page.tasks);
@@ -105,7 +112,7 @@ export default function WorkProjectTasksPanel({
     } finally {
       setLoading(false);
     }
-  }, [userId, mineOnly, canTeam]);
+  }, [userId, assigneeId, companyId]);
 
   useEffect(() => {
     setLoading(true);
@@ -144,12 +151,13 @@ export default function WorkProjectTasksPanel({
     const rows: ListRow[] = [];
     for (const section of sections) {
       rows.push({ kind: 'section', key: `s-${section.leadId}`, section });
+      if (!expandedLeadIds[section.leadId]) continue;
       for (const task of section.tasks) {
         rows.push({ kind: 'task', key: `t-${task.id}`, task, section });
       }
     }
     return rows;
-  }, [sections]);
+  }, [sections, expandedLeadIds]);
 
   const stats = useMemo(() => ({
     pending: tasks.filter((t) => isTaskPending(String(t.status))).length,
@@ -157,6 +165,10 @@ export default function WorkProjectTasksPanel({
     done: tasks.filter((t) => isTaskDone(String(t.status))).length,
     overdue: tasks.filter((t) => isTaskOverdue(t)).length,
   }), [tasks]);
+
+  const toggleSection = (leadId: string) => {
+    setExpandedLeadIds((prev) => ({ ...prev, [leadId]: !prev[leadId] }));
+  };
 
   const openTask = (task: WorkTask, section: DealTaskSection) => {
     const projectId = section.projectId || task.lead?.project_id;
@@ -188,6 +200,84 @@ export default function WorkProjectTasksPanel({
     }
   };
 
+  const bumpFileCount = (taskId: string) => {
+    setTasks((prev) => prev.map((t) => (
+      String(t.id) === String(taskId)
+        ? {
+            ...t,
+            file_count: (t.file_count ?? 0) + 1,
+            attachment_count: (t.attachment_count ?? 0) + 1,
+          }
+        : t
+    )));
+  };
+
+  const uploadMedia = async (
+    task: WorkTask,
+    file: { uri: string; name: string; mime: string },
+    successMsg: string,
+  ) => {
+    if (updatingId) return;
+    setUpdatingId(String(task.id));
+    try {
+      await uploadWorkTaskFile(task, file);
+      bumpFileCount(String(task.id));
+      Alert.alert('Đã đính kèm', successMsg);
+    } catch (e) {
+      Alert.alert('Lỗi upload', formatApiError(e));
+    } finally {
+      setUpdatingId(null);
+    }
+  };
+
+  const capturePhoto = async (task: WorkTask) => {
+    const perm = await ImagePicker.requestCameraPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert('Quyền camera', 'Cần quyền camera để chụp ảnh.');
+      return;
+    }
+    const shot = await ImagePicker.launchCameraAsync({
+      mediaTypes: ['images'],
+      quality: 0.85,
+      exif: false,
+    });
+    if (shot.canceled || !shot.assets?.[0]) return;
+    const a = shot.assets[0];
+    await uploadMedia(
+      task,
+      {
+        uri: a.uri,
+        name: a.fileName || `photo_${Date.now()}.jpg`,
+        mime: a.mimeType || 'image/jpeg',
+      },
+      'Ảnh đã đính kèm vào nhiệm vụ.',
+    );
+  };
+
+  const captureVideo = async (task: WorkTask) => {
+    const perm = await ImagePicker.requestCameraPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert('Quyền camera', 'Cần quyền camera để quay video.');
+      return;
+    }
+    const shot = await ImagePicker.launchCameraAsync({
+      mediaTypes: ['videos'],
+      videoMaxDuration: 120,
+      quality: 0.7,
+    });
+    if (shot.canceled || !shot.assets?.[0]) return;
+    const a = shot.assets[0];
+    await uploadMedia(
+      task,
+      {
+        uri: a.uri,
+        name: a.fileName || `video_${Date.now()}.mp4`,
+        mime: a.mimeType || 'video/mp4',
+      },
+      'Video đã đính kèm vào nhiệm vụ.',
+    );
+  };
+
   const quickActions = (task: WorkTask) => {
     const st = String(task.status || 'pending');
     if (isTaskDone(st)) return [{ key: 'pending', label: 'Mở lại' }];
@@ -206,22 +296,6 @@ export default function WorkProjectTasksPanel({
   const panelHeader = (
     <View>
       {ListHeaderComponent}
-      <View style={styles.scopeRow}>
-        {canTeam ? (
-          <TapHighlight
-            style={[styles.scopeChip, mineOnly && styles.scopeChipActive]}
-            onPress={() => setMineOnly((v) => !v)}
-          >
-            <Text style={[styles.scopeChipTxt, mineOnly && styles.scopeChipTxtActive]}>
-              {mineOnly ? 'Của tôi' : 'Tất cả NV'}
-            </Text>
-          </TapHighlight>
-        ) : (
-          <View style={styles.scopeChip}>
-            <Text style={styles.scopeChipTxt}>Của tôi</Text>
-          </View>
-        )}
-      </View>
 
       <ScrollView
         horizontal
@@ -306,25 +380,34 @@ export default function WorkProjectTasksPanel({
         if (item.kind === 'section') {
           const s = item.section;
           const open = s.tasks.filter((t) => !isTaskDone(String(t.status))).length;
+          const expanded = !!expandedLeadIds[s.leadId];
           return (
-            <View style={styles.sectionHead}>
-              <View style={{ flex: 1, minWidth: 0 }}>
-                <Text style={styles.sectionTitle} numberOfLines={1}>
-                  {s.code ? `${s.code} · ` : ''}{s.title || 'Dự án'}
-                </Text>
-                <Text style={styles.sectionMeta}>
-                  {open}/{s.tasks.length} còn lại
-                  {s.customerName ? ` · ${s.customerName}` : ''}
-                </Text>
-              </View>
-              {s.projectId ? (
-                <Pressable
-                  hitSlop={8}
-                  onPress={() => openProjectDetail(String(s.projectId), { initialTab: 'tasks' })}
-                >
-                  <Ionicons name="open-outline" size={18} color={colors.primary} />
-                </Pressable>
-              ) : null}
+            <View style={styles.sectionCard}>
+              <TapHighlight style={styles.sectionHead} onPress={() => toggleSection(s.leadId)}>
+                <Ionicons
+                  name={expanded ? 'chevron-down' : 'chevron-forward'}
+                  size={18}
+                  color={colors.textMuted}
+                />
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={styles.sectionTitle} numberOfLines={1}>
+                    {s.code ? `${s.code} · ` : ''}{s.title || 'Dự án'}
+                  </Text>
+                  <Text style={styles.sectionMeta}>
+                    {open}/{s.tasks.length} còn lại
+                    {s.customerName ? ` · ${s.customerName}` : ''}
+                    {!expanded ? ' · chạm để mở' : ''}
+                  </Text>
+                </View>
+                {s.projectId ? (
+                  <Pressable
+                    hitSlop={8}
+                    onPress={() => openProjectDetail(String(s.projectId), { initialTab: 'tasks' })}
+                  >
+                    <Ionicons name="open-outline" size={18} color={colors.primary} />
+                  </Pressable>
+                ) : null}
+              </TapHighlight>
             </View>
           );
         }
@@ -334,6 +417,8 @@ export default function WorkProjectTasksPanel({
         const done = isTaskDone(st);
         const overdue = isTaskOverdue(task);
         const due = taskDueIso(task);
+        const busy = updatingId === String(task.id);
+        const fileCount = task.file_count ?? task.attachment_count ?? 0;
 
         return (
           <View style={[styles.card, overdue && styles.cardOverdue]}>
@@ -356,21 +441,50 @@ export default function WorkProjectTasksPanel({
                 <Text style={[styles.metaTxt, overdue && { color: colors.danger }]}>
                   {formatTaskDeadline(due)}
                 </Text>
-                {isWorkTaskWorkshop(task) ? (
-                  <Text style={styles.wsTag}>Xưởng</Text>
+                {fileCount > 0 ? (
+                  <View style={styles.fileBadge}>
+                    <Ionicons name="attach" size={12} color={colors.textMuted} />
+                    <Text style={styles.metaTxt}>{fileCount}</Text>
+                  </View>
                 ) : null}
               </View>
-              <Text style={styles.tapHint}>Mở trong chi tiết dự án</Text>
             </TapHighlight>
+
+            <View style={styles.mediaRow}>
+              <TapHighlight
+                style={styles.mediaBtn}
+                disabled={busy}
+                onPress={() => void capturePhoto(task)}
+              >
+                <Ionicons name="camera" size={16} color={colors.primary} />
+                <Text style={styles.mediaBtnTxt}>Chụp</Text>
+              </TapHighlight>
+              <TapHighlight
+                style={[styles.mediaBtn, styles.mediaBtnAlt]}
+                disabled={busy}
+                onPress={() => void captureVideo(task)}
+              >
+                <Ionicons name="videocam" size={16} color={colors.text} />
+                <Text style={styles.mediaBtnTxtAlt}>Quay</Text>
+              </TapHighlight>
+              <TapHighlight
+                style={styles.openBtn}
+                onPress={() => openTask(task, item.section)}
+              >
+                <Ionicons name="open-outline" size={15} color={colors.primary} />
+                <Text style={styles.openBtnTxt}>Mở</Text>
+              </TapHighlight>
+            </View>
+
             <View style={styles.quickRow}>
               {quickActions(task).map((act) => (
                 <Pressable
                   key={act.key}
                   style={styles.quickBtn}
-                  disabled={updatingId === String(task.id)}
+                  disabled={busy}
                   onPress={() => void applyStatus(task, act.key)}
                 >
-                  {updatingId === String(task.id) ? (
+                  {busy ? (
                     <ActivityIndicator size="small" color={colors.primary} />
                   ) : (
                     <Text style={styles.quickBtnTxt}>{act.label}</Text>
@@ -459,13 +573,22 @@ function makeStyles(colors: AppColors) {
     empty: { alignItems: 'center', paddingVertical: 48, paddingHorizontal: 24 },
     emptyTitle: { marginTop: 10, fontSize: 15, fontWeight: '800', color: colors.text },
     emptySub: { marginTop: 4, fontSize: 13, color: colors.textMuted, textAlign: 'center' },
+    sectionCard: {
+      marginHorizontal: Spacing.lg,
+      marginTop: 8,
+      marginBottom: 4,
+      borderRadius: Radii.md,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.card,
+      overflow: 'hidden',
+    },
     sectionHead: {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 8,
-      paddingHorizontal: Spacing.lg,
-      paddingTop: 12,
-      paddingBottom: 6,
+      paddingHorizontal: 12,
+      paddingVertical: 12,
     },
     sectionTitle: { fontSize: 14, fontWeight: '800', color: colors.text },
     sectionMeta: { fontSize: 11, color: colors.textMuted, marginTop: 2, fontWeight: '600' },
@@ -490,40 +613,66 @@ function makeStyles(colors: AppColors) {
       borderRadius: Radii.sm,
     },
     overduePillTxt: { fontSize: 10, fontWeight: '800', color: colors.danger },
-    metaRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8, flexWrap: 'wrap' },
+    metaRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      flexWrap: 'wrap',
+      gap: 8,
+      marginTop: 8,
+    },
     statusPill: {
-      backgroundColor: colors.bg,
-      borderRadius: Radii.sm,
       paddingHorizontal: 8,
-      paddingVertical: 3,
+      paddingVertical: 2,
+      borderRadius: Radii.full,
+      backgroundColor: colors.cardAlt,
+    },
+    statusPillTxt: { fontSize: 11, fontWeight: '700', color: colors.textMuted },
+    metaTxt: { fontSize: 11, fontWeight: '600', color: colors.textMuted },
+    fileBadge: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+    mediaRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      marginTop: 10,
+    },
+    mediaBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 5,
+      paddingHorizontal: 10,
+      paddingVertical: 7,
+      borderRadius: Radii.md,
+      backgroundColor: colorWithAlpha(colors.primary, 0.12),
       borderWidth: 1,
+      borderColor: colorWithAlpha(colors.primary, 0.28),
+    },
+    mediaBtnAlt: {
+      backgroundColor: colors.cardAlt,
       borderColor: colors.border,
     },
-    statusPillTxt: { fontSize: 11, fontWeight: '700', color: colors.text },
-    metaTxt: { fontSize: 11, color: colors.textMuted, fontWeight: '600' },
-    wsTag: {
-      fontSize: 10,
-      fontWeight: '800',
-      color: colors.primary,
-      backgroundColor: colors.primarySoft,
-      paddingHorizontal: 6,
-      paddingVertical: 2,
-      borderRadius: Radii.sm,
-      overflow: 'hidden',
+    mediaBtnTxt: { fontSize: 12, fontWeight: '700', color: colors.primary },
+    mediaBtnTxtAlt: { fontSize: 12, fontWeight: '700', color: colors.text },
+    openBtn: {
+      marginLeft: 'auto',
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      paddingHorizontal: 8,
+      paddingVertical: 6,
     },
-    tapHint: { marginTop: 6, fontSize: 11, color: colors.textFaint, fontWeight: '600' },
+    openBtnTxt: { fontSize: 12, fontWeight: '700', color: colors.primary },
     quickRow: { flexDirection: 'row', gap: 8, marginTop: 10 },
     quickBtn: {
       flex: 1,
       alignItems: 'center',
       justifyContent: 'center',
-      paddingVertical: 8,
-      borderRadius: Radii.sm,
-      backgroundColor: colors.primarySoft,
+      paddingVertical: 9,
+      borderRadius: Radii.md,
       borderWidth: 1,
-      borderColor: colorWithAlpha(colors.primary, 0.25),
+      borderColor: colors.border,
+      backgroundColor: colors.cardAlt,
       minHeight: 36,
     },
-    quickBtnTxt: { fontSize: 12, fontWeight: '800', color: colors.primary },
+    quickBtnTxt: { fontSize: 12, fontWeight: '700', color: colors.text },
   });
 }

@@ -32,6 +32,10 @@ import type { MainTabParamList } from '../navigation/MainTabs';
 import { useRootNavigation } from '../navigation/useRootNavigation';
 import { fetchCompanies, type CompanyOption } from '../lib/logisticsApi';
 import {
+  fetchEmployeesByCompanyForMembers,
+  type CrmEmployeeOption,
+} from '../lib/leadMembersApi';
+import {
   PRIORITY_LABEL,
   STATUS_STAGE_LABEL,
   assignmentDealLabel,
@@ -44,6 +48,7 @@ import {
   type SharedInboxTask,
 } from '../lib/sharedWorkspaceApi';
 import {
+  canViewTeamWork,
   isTaskDone,
   isTaskInProgress,
   isTaskPending,
@@ -57,8 +62,8 @@ function isAssignmentsAdmin(role?: string | null): boolean {
   return ['admin', 'manager', 'sales_admin'].includes(String(role || '').toLowerCase());
 }
 
-const LS_COMPANY = 'vc_assignments_company_id';
-const LS_ASSIGNEE_MINE = 'vc_assignments_assignee_mine';
+const LS_COMPANY = 'vc_work_filter_company_id';
+const LS_ASSIGNEE = 'vc_work_filter_assignee_id';
 
 function firstName(full: string): string {
   const parts = full.trim().split(/\s+/).filter(Boolean);
@@ -151,14 +156,19 @@ export default function WorkScreen() {
   const greetName = firstName(userName);
   const ownCompanyId = user?.company_id ? String(user.company_id) : '';
   const assignAdmin = isAssignmentsAdmin(user?.role);
+  const canTeam = canViewTeamWork(user);
+  /** Chọn công ty / NV — admin hoặc quyền xem team. */
+  const canPickScope = assignAdmin || canTeam;
 
   const [pageTab, setPageTab] = useState<PageTab>('tasks');
-  /** Admin: '' = tất cả công ty (khớp web). NV: luôn công ty mình (backend force). */
+  /** '' = tất cả công ty (admin). NV: luôn công ty mình. */
   const [filterCompanyId, setFilterCompanyId] = useState('');
-  /** Admin: true = chỉ việc giao cho tôi; false = tất cả NV (mặc định web). NV: luôn true. */
-  const [assigneeMineOnly, setAssigneeMineOnly] = useState(!assignAdmin);
+  /** '' = tất cả NV; có id = lọc theo người (mặc định = mình). */
+  const [filterAssigneeId, setFilterAssigneeId] = useState(userId);
   const [companies, setCompanies] = useState<CompanyOption[]>([]);
+  const [employees, setEmployees] = useState<CrmEmployeeOption[]>([]);
   const [companyPickerOpen, setCompanyPickerOpen] = useState(false);
+  const [assigneePickerOpen, setAssigneePickerOpen] = useState(false);
   const [filtersReady, setFiltersReady] = useState(false);
   const [assignments, setAssignments] = useState<CrmAssignment[]>([]);
   const [sharedGroups, setSharedGroups] = useState<SharedInboxGroup[]>([]);
@@ -177,26 +187,26 @@ export default function WorkScreen() {
     let cancelled = false;
     void (async () => {
       try {
-        if (assignAdmin) {
-          const [savedCo, savedMine, list] = await Promise.all([
+        const list = await fetchCompanies().catch(() => [] as CompanyOption[]);
+        if (cancelled) return;
+        setCompanies(list);
+        if (canPickScope) {
+          const [savedCo, savedAsg] = await Promise.all([
             AsyncStorage.getItem(LS_COMPANY),
-            AsyncStorage.getItem(LS_ASSIGNEE_MINE),
-            fetchCompanies().catch(() => [] as CompanyOption[]),
+            AsyncStorage.getItem(LS_ASSIGNEE),
           ]);
           if (cancelled) return;
-          setCompanies(list);
           const co = String(savedCo || '').trim();
           if (co && list.some((c) => String(c.id) === co)) setFilterCompanyId(co);
           else setFilterCompanyId('');
-          // Admin mặc định xem tất cả NV (như web filterAssignee='').
-          setAssigneeMineOnly(savedMine === '1');
+          const asg = String(savedAsg || '').trim();
+          // Mặc định «Của tôi» nếu chưa lưu; '' = tất cả NV.
+          if (asg === '__all__') setFilterAssigneeId('');
+          else if (asg) setFilterAssigneeId(asg);
+          else setFilterAssigneeId(userId);
         } else {
           setFilterCompanyId(ownCompanyId);
-          setAssigneeMineOnly(true);
-          if (ownCompanyId) {
-            const list = await fetchCompanies().catch(() => [] as CompanyOption[]);
-            if (!cancelled) setCompanies(list);
-          }
+          setFilterAssigneeId(userId);
         }
       } finally {
         if (!cancelled) setFiltersReady(true);
@@ -205,17 +215,37 @@ export default function WorkScreen() {
     return () => {
       cancelled = true;
     };
-  }, [assignAdmin, ownCompanyId]);
+  }, [canPickScope, ownCompanyId, userId]);
 
   useEffect(() => {
-    if (!assignAdmin || !filtersReady) return;
+    if (!canPickScope || !filtersReady) return;
     void AsyncStorage.setItem(LS_COMPANY, filterCompanyId || '');
-  }, [assignAdmin, filterCompanyId, filtersReady]);
+  }, [canPickScope, filterCompanyId, filtersReady]);
 
   useEffect(() => {
-    if (!assignAdmin || !filtersReady) return;
-    void AsyncStorage.setItem(LS_ASSIGNEE_MINE, assigneeMineOnly ? '1' : '0');
-  }, [assignAdmin, assigneeMineOnly, filtersReady]);
+    if (!canPickScope || !filtersReady) return;
+    void AsyncStorage.setItem(LS_ASSIGNEE, filterAssigneeId || '__all__');
+  }, [canPickScope, filterAssigneeId, filtersReady]);
+
+  const employeeCompanyId = filterCompanyId || ownCompanyId;
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!employeeCompanyId || !canPickScope) {
+      setEmployees([]);
+      return undefined;
+    }
+    void fetchEmployeesByCompanyForMembers(employeeCompanyId)
+      .then((rows) => {
+        if (!cancelled) setEmployees(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setEmployees([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [employeeCompanyId, canPickScope]);
 
   /** Khớp web load(): company_id chỉ khi admin chọn; assignee_id bắt buộc với NV. */
   const load = useCallback(async () => {
@@ -229,17 +259,15 @@ export default function WorkScreen() {
     }
     setError(null);
     try {
-      const companyParam = assignAdmin
+      const companyParam = canPickScope
         ? (filterCompanyId || undefined)
         : undefined;
-      const assigneeParam = (!assignAdmin || assigneeMineOnly)
-        ? userId
-        : undefined;
+      const assigneeParam = filterAssigneeId || (!canPickScope ? userId : undefined);
 
       const [list, inbox] = await Promise.all([
         fetchLogisticsAssignments({
           companyId: companyParam,
-          assigneeId: assigneeParam,
+          assigneeId: assigneeParam || undefined,
           status: filters.status || undefined,
           priority: filters.priority || undefined,
           q: filters.q || undefined,
@@ -259,9 +287,9 @@ export default function WorkScreen() {
   }, [
     userId,
     filtersReady,
-    assignAdmin,
+    canPickScope,
     filterCompanyId,
-    assigneeMineOnly,
+    filterAssigneeId,
     filters.status,
     filters.priority,
     filters.q,
@@ -303,8 +331,30 @@ export default function WorkScreen() {
       || 'Công ty';
   }, [filterCompanyId, companyOptions, companies]);
 
+  const selectedAssigneeLabel = useMemo(() => {
+    if (!filterAssigneeId) return 'Tất cả NV';
+    if (filterAssigneeId === userId) return 'Của tôi';
+    const hit = employees.find((e) => String(e.id) === String(filterAssigneeId));
+    return hit?.full_name || 'Nhân viên';
+  }, [filterAssigneeId, userId, employees]);
+
+  const assigneeOptions: FilterOption[] = useMemo(() => {
+    const opts: FilterOption[] = [];
+    if (canPickScope) opts.push({ id: '', label: 'Tất cả NV' });
+    opts.push({ id: userId, label: 'Của tôi' });
+    for (const e of employees) {
+      if (String(e.id) === String(userId)) continue;
+      opts.push({ id: String(e.id), label: e.full_name || String(e.id) });
+    }
+    return opts;
+  }, [canPickScope, userId, employees]);
+
   /** companyId khi tạo giao việc — ưu tiên filter đang chọn. */
   const createCompanyId = filterCompanyId || ownCompanyId || null;
+
+  /** Scope truyền sang tab Nhiệm vụ (overview logistics). */
+  const tasksCompanyId = canPickScope ? (filterCompanyId || null) : (ownCompanyId || null);
+  const tasksAssigneeId = filterAssigneeId || (!canPickScope ? userId : null);
 
   const visibleAssignments = useMemo(
     () => assignments.filter((a) => matchAssignment(a, filters)),
@@ -327,13 +377,21 @@ export default function WorkScreen() {
         const dealMatch = !q || dealHay.includes(q);
         const tasks = (g.tasks || []).filter((t) => {
           if (!matchInboxTask(t, { ...filters, q: dealMatch ? '' : filters.q })) return false;
+          if (filterCompanyId) {
+            const co = String(t.executor_company_id || t.owner_company_id || '');
+            if (co && co !== String(filterCompanyId)) return false;
+          }
+          if (filterAssigneeId) {
+            const aid = String(t.assignee?.id || '');
+            if (aid !== String(filterAssigneeId)) return false;
+          }
           return true;
         });
         if (!tasks.length) return null;
         return { ...g, tasks };
       })
       .filter(Boolean) as SharedInboxGroup[];
-  }, [sharedGroups, filters]);
+  }, [sharedGroups, filters, filterCompanyId, filterAssigneeId]);
 
   const flatShared = useMemo(
     () => visibleSharedGroups.flatMap((g) => g.tasks || []),
@@ -585,9 +643,9 @@ export default function WorkScreen() {
         })}
       </View>
 
-      {pageTab === 'assignments' ? (
+      {pageTab === 'assignments' || pageTab === 'shared' || pageTab === 'tasks' ? (
         <View style={styles.scopeRow}>
-          {assignAdmin ? (
+          {canPickScope ? (
             <TapHighlight
               style={[styles.scopeChip, styles.scopeChipGrow, filterCompanyId ? styles.scopeChipActive : null]}
               onPress={() => setCompanyPickerOpen(true)}
@@ -611,24 +669,45 @@ export default function WorkScreen() {
             </TapHighlight>
           ) : (
             <View style={[styles.scopeChip, styles.scopeChipGrow]}>
-              <Ionicons name="person-outline" size={14} color={colors.textMuted} />
+              <Ionicons name="business-outline" size={14} color={colors.textMuted} />
               <Text style={styles.scopeChipTxt} numberOfLines={1}>
-                {userName || 'Việc của tôi'}
+                {selectedCompanyLabel !== 'Tất cả công ty'
+                  ? selectedCompanyLabel
+                  : (companies.find((c) => String(c.id) === ownCompanyId)?.name || 'Công ty tôi')}
               </Text>
             </View>
           )}
-          {assignAdmin ? (
+          {canPickScope ? (
             <TapHighlight
-              style={[styles.scopeChip, assigneeMineOnly && styles.scopeChipActive]}
-              onPress={() => setAssigneeMineOnly((v) => !v)}
+              style={[styles.scopeChip, filterAssigneeId ? styles.scopeChipActive : null]}
+              onPress={() => setAssigneePickerOpen(true)}
             >
-              <Text style={[styles.scopeChipTxt, assigneeMineOnly && styles.scopeChipTxtActive]}>
-                {assigneeMineOnly ? 'Của tôi' : 'Tất cả NV'}
+              <Ionicons
+                name="person-outline"
+                size={14}
+                color={filterAssigneeId ? colors.primary : colors.textMuted}
+              />
+              <Text
+                style={[styles.scopeChipTxt, filterAssigneeId ? styles.scopeChipTxtActive : null]}
+                numberOfLines={1}
+              >
+                {selectedAssigneeLabel}
               </Text>
+              <Ionicons
+                name="chevron-down"
+                size={14}
+                color={filterAssigneeId ? colors.primary : colors.textMuted}
+              />
             </TapHighlight>
-          ) : null}
+          ) : (
+            <View style={styles.scopeChip}>
+              <Text style={styles.scopeChipTxt}>Của tôi</Text>
+            </View>
+          )}
         </View>
-      ) : pageTab === 'shared' ? (
+      ) : null}
+
+      {pageTab === 'shared' ? (
         <View style={styles.hintBox}>
           <Text style={styles.hintText}>
             Việc deal / công ty khác giao cho bạn. Dùng nút «Giao việc KG chung» để tạo việc gắn deal.
@@ -709,6 +788,66 @@ export default function WorkScreen() {
           );
         })}
       </View>
+
+      <View style={styles.scopeRow}>
+        {canPickScope ? (
+          <TapHighlight
+            style={[styles.scopeChip, styles.scopeChipGrow, filterCompanyId ? styles.scopeChipActive : null]}
+            onPress={() => setCompanyPickerOpen(true)}
+          >
+            <Ionicons
+              name="business-outline"
+              size={14}
+              color={filterCompanyId ? colors.primary : colors.textMuted}
+            />
+            <Text
+              style={[styles.scopeChipTxt, filterCompanyId ? styles.scopeChipTxtActive : null]}
+              numberOfLines={1}
+            >
+              {selectedCompanyLabel}
+            </Text>
+            <Ionicons
+              name="chevron-down"
+              size={14}
+              color={filterCompanyId ? colors.primary : colors.textMuted}
+            />
+          </TapHighlight>
+        ) : (
+          <View style={[styles.scopeChip, styles.scopeChipGrow]}>
+            <Ionicons name="business-outline" size={14} color={colors.textMuted} />
+            <Text style={styles.scopeChipTxt} numberOfLines={1}>
+              {companies.find((c) => String(c.id) === ownCompanyId)?.name || 'Công ty tôi'}
+            </Text>
+          </View>
+        )}
+        {canPickScope ? (
+          <TapHighlight
+            style={[styles.scopeChip, filterAssigneeId ? styles.scopeChipActive : null]}
+            onPress={() => setAssigneePickerOpen(true)}
+          >
+            <Ionicons
+              name="person-outline"
+              size={14}
+              color={filterAssigneeId ? colors.primary : colors.textMuted}
+            />
+            <Text
+              style={[styles.scopeChipTxt, filterAssigneeId ? styles.scopeChipTxtActive : null]}
+              numberOfLines={1}
+            >
+              {selectedAssigneeLabel}
+            </Text>
+            <Ionicons
+              name="chevron-down"
+              size={14}
+              color={filterAssigneeId ? colors.primary : colors.textMuted}
+            />
+          </TapHighlight>
+        ) : (
+          <View style={styles.scopeChip}>
+            <Text style={styles.scopeChipTxt}>Của tôi</Text>
+          </View>
+        )}
+      </View>
     </View>
   );
 
@@ -726,6 +865,8 @@ export default function WorkScreen() {
         <WorkProjectTasksPanel
           ListHeaderComponent={tasksListHeader}
           contentPaddingBottom={24 + insets.bottom}
+          companyId={tasksCompanyId}
+          assigneeId={tasksAssigneeId}
         />
       ) : pageTab === 'assignments' ? (
         <FlatList
@@ -900,8 +1041,20 @@ export default function WorkScreen() {
         title="Chọn công ty"
         options={companyOptions}
         selectedId={filterCompanyId}
-        onSelect={setFilterCompanyId}
+        onSelect={(id) => {
+          setFilterCompanyId(id);
+          // Đổi công ty → giữ «Của tôi» / tất cả, danh sách NV sẽ reload.
+        }}
         onClose={() => setCompanyPickerOpen(false)}
+      />
+
+      <FilterPickerModal
+        visible={assigneePickerOpen}
+        title="Chọn nhân viên"
+        options={assigneeOptions}
+        selectedId={filterAssigneeId}
+        onSelect={setFilterAssigneeId}
+        onClose={() => setAssigneePickerOpen(false)}
       />
     </View>
   );
