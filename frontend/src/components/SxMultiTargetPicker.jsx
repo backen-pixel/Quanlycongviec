@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Calendar, ChevronLeft, ChevronRight, Plus, Trash2, X } from 'lucide-react';
 import api from '../lib/api';
+import MultiDayDatePicker, { formatYmdListVi } from './MultiDayDatePicker';
 import VcHandoverEventsPopup from './VcHandoverEventsPopup';
 import {
   companyPreferredForLeadType,
@@ -21,6 +22,16 @@ import {
   vnNowParts,
 } from '../lib/sxWorkshopSchedule';
 
+/** Chuẩn hóa danh sách YYYY-MM-DD (unique, sort). */
+function normalizeOccYmds(list, fallbackYmd = '') {
+  const fromList = (Array.isArray(list) ? list : [])
+    .map((d) => String(d || '').slice(0, 10))
+    .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d));
+  const fb = String(fallbackYmd || '').slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(fb) && !fromList.includes(fb)) fromList.push(fb);
+  return [...new Set(fromList)].sort();
+}
+
 function pad2(n) {
   return String(n).padStart(2, '0');
 }
@@ -35,16 +46,25 @@ function ymdOf(value) {
 
 const MINI_DOW = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
 
-/** Hộp lịch tháng nhỏ — chọn 1 ngày (lắp hoặc lấy hàng). */
+/** Hộp lịch tháng nhỏ — 1 ngày (lấy hàng) hoặc nhiều ngày (lắp đặt). */
 function MiniDayPickerPopup({
   open,
   title,
   accent = 'teal',
   selectedYmd = '',
+  selectedYmds = null,
+  multi = false,
   onPick,
+  onChangeYmds,
   onClose,
 }) {
-  const initial = String(selectedYmd || '').slice(0, 10);
+  const multiList = normalizeOccYmds(
+    multi ? (selectedYmds || []) : [],
+    multi ? '' : selectedYmd,
+  );
+  const initial = multi
+    ? (multiList[0] || String(selectedYmd || '').slice(0, 10))
+    : String(selectedYmd || '').slice(0, 10);
   const init = initial.match(/^(\d{4})-(\d{2})/) || [];
   const [cursor, setCursor] = useState(() => ({
     year: Number(init[1]) || vnNowParts().y,
@@ -53,9 +73,10 @@ function MiniDayPickerPopup({
 
   useEffect(() => {
     if (!open) return;
-    const m = String(selectedYmd || '').slice(0, 10).match(/^(\d{4})-(\d{2})/);
+    const src = multi ? (multiList[0] || selectedYmd) : selectedYmd;
+    const m = String(src || '').slice(0, 10).match(/^(\d{4})-(\d{2})/);
     if (m) setCursor({ year: Number(m[1]), month: Number(m[2]) });
-  }, [open, selectedYmd]);
+  }, [open, selectedYmd, multi]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!open || typeof document === 'undefined') return null;
 
@@ -67,6 +88,7 @@ function MiniDayPickerPopup({
   for (let d = 1; d <= daysInMonth; d += 1) cells.push(d);
   while (cells.length % 7 !== 0) cells.push(null);
 
+  const selectedSet = new Set(multi ? multiList : [String(selectedYmd || '').slice(0, 10)].filter(Boolean));
   const accentBtn = accent === 'sky'
     ? 'bg-sky-600 hover:bg-sky-700 text-white'
     : 'bg-teal-600 hover:bg-teal-700 text-white';
@@ -81,6 +103,17 @@ function MiniDayPickerPopup({
       if (m > 12) { m = 1; y += 1; }
       return { year: y, month: m };
     });
+  };
+
+  const handleDayClick = (ymd) => {
+    if (multi) {
+      const next = selectedSet.has(ymd)
+        ? multiList.filter((x) => x !== ymd)
+        : [...multiList, ymd].sort();
+      onChangeYmds?.(next);
+      return;
+    }
+    onPick?.(ymd);
   };
 
   return createPortal(
@@ -120,13 +153,13 @@ function MiniDayPickerPopup({
             {cells.map((day, i) => {
               if (!day) return <div key={`e-${i}`} className="h-9" />;
               const ymd = `${year}-${pad2(month)}-${pad2(day)}`;
-              const selected = ymd === String(selectedYmd || '').slice(0, 10);
+              const selected = selectedSet.has(ymd);
               const isWeekend = i % 7 === 0 || i % 7 === 6;
               return (
                 <button
                   key={ymd}
                   type="button"
-                  onClick={() => onPick(ymd)}
+                  onClick={() => handleDayClick(ymd)}
                   className={`h-9 rounded-lg text-sm font-semibold tabular-nums transition ${
                     selected
                       ? `ring-2 ring-offset-1 ${accentRing} ${accentBtn}`
@@ -138,9 +171,29 @@ function MiniDayPickerPopup({
               );
             })}
           </div>
-          <p className="text-[10px] text-gray-500 mt-2 text-center">
-            Chọn ngày → ghi vào form · hoặc chọn trên lịch lớn bên phải
-          </p>
+          {multi ? (
+            <div className="mt-2 space-y-2">
+              <p className="text-[10px] text-gray-500 text-center">
+                Bấm từng ngày để chọn/bỏ · có thể nhiều ngày liên tiếp hoặc cách ngày
+              </p>
+              {multiList.length ? (
+                <p className="text-[11px] text-teal-800 font-semibold text-center tabular-nums">
+                  Đã chọn {multiList.length} ngày: {formatYmdListVi(multiList)}
+                </p>
+              ) : null}
+              <button
+                type="button"
+                onClick={onClose}
+                className={`w-full h-9 rounded-lg text-sm font-bold text-white ${accentBtn}`}
+              >
+                Xong
+              </button>
+            </div>
+          ) : (
+            <p className="text-[10px] text-gray-500 mt-2 text-center">
+              Chọn ngày → ghi vào form · hoặc chọn trên lịch lớn bên phải
+            </p>
+          )}
         </div>
       </div>
     </div>,
@@ -157,11 +210,13 @@ function defaultInstallYmd() {
 
 const emptyRow = (deliveryDate = '') => {
   const delivery = deliveryDate || '';
+  const occ = delivery ? [delivery] : [];
   return {
     key: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     companyId: '',
     workshopTypeId: '',
     deliveryDate: delivery,
+    installOccurrenceDates: occ,
     installTime: '14:00',
     logisticsCompanyId: '',
     pickupAt: delivery ? `${delivery}T08:00` : '',
@@ -193,17 +248,26 @@ function formatLocalVi(local) {
   return `${m[3]}/${m[2]}/${m[1]} ${m[4]}:${m[5]}`;
 }
 
+/** Placeholder — API cũ nhưng UI đã bỏ số thứ tự (không render). */
+function StepNum() {
+  return null;
+}
+
 function mapEmitRow(r) {
+  const occ = normalizeOccYmds(r.installOccurrenceDates, r.deliveryDate || r.delivery_date);
+  const delivery = occ[0] || r.deliveryDate || '';
   return {
     companyId: r.companyId,
     workshopTypeId: r.workshopTypeId,
-    deliveryDate: r.deliveryDate || '',
+    deliveryDate: delivery,
+    installOccurrenceDates: occ,
     installTime: r.installTime || '14:00',
     logisticsCompanyId: r.logisticsCompanyId || '',
     pickupAt: r.pickupAt || '',
     production_company_id: r.companyId,
     workshop_type_id: r.workshopTypeId || null,
-    delivery_date: r.deliveryDate || '',
+    delivery_date: delivery,
+    install_occurrence_dates: occ,
     install_time: r.installTime || '14:00',
     logistics_company_id: r.logisticsCompanyId || '',
     pickup_at: r.pickupAt || '',
@@ -289,14 +353,20 @@ export default function SxMultiTargetPicker({
     if (Array.isArray(initialRows) && initialRows.length) {
       return initialRows.map((r) => {
         const delivery = r.deliveryDate || r.delivery_date || fallbackDate || '';
+        const occ = normalizeOccYmds(
+          r.installOccurrenceDates || r.install_occurrence_dates,
+          delivery,
+        );
+        const primary = occ[0] || delivery;
         return {
-          ...emptyRow(delivery),
+          ...emptyRow(primary),
           companyId: r.companyId || r.production_company_id || '',
           workshopTypeId: r.workshopTypeId || r.workshop_type_id || '',
-          deliveryDate: delivery,
+          deliveryDate: primary,
+          installOccurrenceDates: occ.length ? occ : (primary ? [primary] : []),
           installTime: r.installTime || r.install_time || '14:00',
           logisticsCompanyId: r.logisticsCompanyId || r.logistics_company_id || '',
-          pickupAt: r.pickupAt || r.pickup_at || (delivery ? `${delivery}T08:00` : ''),
+          pickupAt: r.pickupAt || r.pickup_at || (primary ? `${primary}T08:00` : ''),
         };
       });
     }
@@ -372,18 +442,34 @@ export default function SxMultiTargetPicker({
     emit(rows.map((r) => (r.key === key ? { ...r, workshopTypeId } : r)));
   };
 
-  const setDeliveryDate = (key, deliveryDate) => {
+  const setInstallOccurrenceDates = (key, ymds) => {
     const row = rows.find((r) => r.key === key);
     if (!row) return;
+    const occ = normalizeOccYmds(ymds);
+    const deliveryDate = occ[0] || '';
     emit(rows.map((r) => {
       if (r.key !== key) return r;
-      const next = { ...r, deliveryDate };
-      // Ngày lắp → gợi ý lấy hàng cùng ngày 08:00 nếu chưa nhập
+      const next = {
+        ...r,
+        deliveryDate,
+        installOccurrenceDates: occ,
+      };
       if (showVcSetup && deliveryDate && !String(r.pickupAt || '').trim()) {
         next.pickupAt = `${deliveryDate}T08:00`;
       }
+      if (!deliveryDate) {
+        const oldPick = String(r.pickupAt || '');
+        if (oldPick === `${r.deliveryDate}T08:00`) next.pickupAt = '';
+      }
       return next;
     }));
+    // Đồng bộ lịch sự kiện bên phải (tô ngày + nhảy tháng)
+    if (showVcSetup) {
+      setCalEmbedRowKey(key);
+      setCalPick({ rowKey: key, target: 'install' });
+      setMiniCalOpen(false);
+      setCalFocusNonce((n) => n + 1);
+    }
   };
 
   const setPickupAt = (key, pickupAt) => {
@@ -428,12 +514,30 @@ export default function SxMultiTargetPicker({
     if (calPick.target === 'pickup') {
       const hm = String(row.pickupAt || '').match(/T(\d{2}:\d{2})/)?.[1] || '08:00';
       applyCalPickToRow(calPick.rowKey, { pickupAt: `${ymd}T${hm}` });
-    } else if (calPick.target === 'install') {
-      applyCalPickToRow(calPick.rowKey, {
-        installAt: `${ymd}T${row.installTime || '14:00'}`,
-      });
+      setMiniCalOpen(false);
+      return;
     }
+    // install: single-pick path (multi dùng onChangeYmds)
+    applyCalPickToRow(calPick.rowKey, {
+      installAt: `${ymd}T${row.installTime || '14:00'}`,
+      installOccurrenceDates: [ymd],
+    });
     setMiniCalOpen(false);
+  };
+
+  const applyMiniCalInstallYmds = (ymds) => {
+    if (!calPick?.rowKey) return;
+    const row = rows.find((r) => r.key === calPick.rowKey);
+    if (!row) return;
+    const occ = normalizeOccYmds(ymds);
+    if (!occ.length) {
+      setInstallOccurrenceDates(calPick.rowKey, []);
+      return;
+    }
+    applyCalPickToRow(calPick.rowKey, {
+      installAt: `${occ[0]}T${row.installTime || '14:00'}`,
+      installOccurrenceDates: occ,
+    });
   };
 
   // Mặc định mở lịch nhúng cho xưởng đầu khi bật setup VC
@@ -475,6 +579,9 @@ export default function SxMultiTargetPicker({
           installOccurrenceDates: [day],
           ...(!String(row.pickupAt || '').trim() ? { pickupAt: `${day}T08:00` } : {}),
         });
+        setCalEmbedRowKey(rowKey);
+        setCalPick({ rowKey, target: 'install' });
+        setCalFocusNonce((n) => n + 1);
       }
       return;
     }
@@ -488,28 +595,53 @@ export default function SxMultiTargetPicker({
       || (installAt ? String(installAt).slice(0, 10) : '')
       || String(row.deliveryDate || '').trim();
 
-    if (installAt || occ.length) {
+    if (installAt || occ.length || Array.isArray(installOccurrenceDates)) {
       const day = nextInstallDay;
       const tm = installAt
         ? String(installAt).match(/T(\d{2}:\d{2})/)
         : null;
-      if (day) {
-        patch.deliveryDate = day;
+      if (day || Array.isArray(installOccurrenceDates)) {
+        patch.deliveryDate = day || '';
         patch.installTime = tm ? tm[1] : (row.installTime || '14:00');
-        patch.installOccurrenceDates = occ.length ? occ : (day ? [day] : []);
-        if (!String(row.pickupAt || '').trim() && !pickupAt) {
+        patch.installOccurrenceDates = occ;
+        if (day && !String(row.pickupAt || '').trim() && !pickupAt) {
           patch.pickupAt = `${day}T08:00`;
         }
       }
     }
     if (pickupAt) patch.pickupAt = String(pickupAt).slice(0, 16);
-    if (Object.keys(patch).length) patchRow(rowKey, patch);
+    if (Object.keys(patch).length) {
+      patchRow(rowKey, patch);
+      if (Object.prototype.hasOwnProperty.call(patch, 'installOccurrenceDates')
+        || Object.prototype.hasOwnProperty.call(patch, 'deliveryDate')) {
+        setCalEmbedRowKey(rowKey);
+        setCalPick((prev) => ({
+          rowKey,
+          target: prev?.rowKey === rowKey && prev?.target === 'pickup' && pickupAt && !installAt
+            ? 'pickup'
+            : (installAt || Array.isArray(installOccurrenceDates) ? 'install' : (prev?.target || 'both')),
+        }));
+        setCalFocusNonce((n) => n + 1);
+      }
+    }
   };
 
   const calRow = (calEmbedRowKey && rows.find((r) => String(r.key) === String(calEmbedRowKey)))
     || rows[0]
     || null;
   const calRowIdx = calRow ? rows.findIndex((r) => r.key === calRow.key) : -1;
+  const calInstallOcc = useMemo(
+    () => (calRow
+      ? normalizeOccYmds(calRow.installOccurrenceDates, calRow.deliveryDate)
+      : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [calRow?.key, calRow?.deliveryDate, (calRow?.installOccurrenceDates || []).join('|')],
+  );
+  const calInstallFocus = calInstallOcc.length
+    ? `${calInstallOcc[calInstallOcc.length - 1]}T${calRow?.installTime || '14:00'}`
+    : (calRow?.deliveryDate
+      ? `${calRow.deliveryDate}T${calRow.installTime || '14:00'}`
+      : null);
 
   const accentBorder = accent === 'amber' ? 'border-amber-200' : accent === 'orange' ? 'border-orange-200' : 'border-teal-200';
   const accentTitle = accent === 'amber' ? 'text-amber-800' : accent === 'orange' ? 'text-orange-800' : 'text-teal-800';
@@ -524,9 +656,25 @@ export default function SxMultiTargetPicker({
   const fieldCls = 'w-full h-9 px-2.5 border border-gray-200 rounded-lg text-sm bg-white disabled:bg-gray-50 disabled:text-gray-400';
   const showSchedule = showDates || showVcSetup;
 
+  // Số thứ tự các ô nhập theo đúng trình tự thao tác (bỏ qua ô đang ẩn)
+  const step = (() => {
+    let n = 0;
+    const map = { company: ++n, type: ++n };
+    if (showSchedule) {
+      map.install = ++n;
+      if (showVcSetup) map.installTime = ++n;
+      map.finish = ++n;
+    }
+    if (showVcSetup) {
+      map.pickup = ++n;
+      map.vcCompany = ++n;
+    }
+    return map;
+  })();
+
   return (
     <div className={showVcSetup
-      ? 'grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(320px,0.95fr)] gap-3 items-start lg:min-h-[min(640px,calc(94vh-11rem))]'
+      ? 'grid grid-cols-1 lg:grid-cols-[minmax(0,0.72fr)_minmax(420px,1.35fr)] gap-3 items-start'
       : 'space-y-2'}
     >
       <div className="min-w-0 space-y-2">
@@ -537,7 +685,7 @@ export default function SxMultiTargetPicker({
         </p>
       ) : (showSchedule ? (
         <p className="text-[10px] text-gray-500">
-          Ngày lắp = deadline VC/LĐ · hoàn thiện SX = deadline tổng dự án (= lắp − 2) · công ty VC không bắt buộc
+          Ngày lắp = deadline VC/LĐ (có thể nhiều ngày) · hoàn thiện SX = deadline tổng dự án (= lắp đầu − 2) · công ty VC không bắt buộc
         </p>
       ) : null)}
       {showDates ? (
@@ -569,28 +717,23 @@ export default function SxMultiTargetPicker({
         </div>
       ) : null}
       <div className={`rounded-xl border ${accentBorder} overflow-hidden bg-white divide-y divide-slate-100`}>
-        <div className={`hidden sm:grid ${topGridCols} gap-2 px-3 py-1.5 bg-slate-50 text-[10px] font-semibold uppercase tracking-wide text-slate-500`}>
-          <span>#</span>
-          <span>Công ty SX *</span>
-          <span>Phân loại *</span>
-          <span className="sr-only">Xóa</span>
-        </div>
-
         {rows.map((row, idx) => {
           const types = orderWorkshopTypesPreferredFirst(
             row.workshopTypes,
             kind,
             preferredWorkshopTypeIdForCompany(leadTypeRow, row.companyId),
           );
-          const finishYmd = subtractCalendarDaysYmd(row.deliveryDate, 2);
+          const installOcc = normalizeOccYmds(row.installOccurrenceDates, row.deliveryDate);
+          const primaryInstall = installOcc[0] || row.deliveryDate || '';
+          const finishYmd = subtractCalendarDaysYmd(primaryInstall, 2);
           const leadBadge = showDates
-            ? sxScheduleLeadDaysBadge(remainingSxWorkingDaysTo(row.deliveryDate, {
+            ? sxScheduleLeadDaysBadge(remainingSxWorkingDaysTo(primaryInstall, {
               receptionYmd,
               holidayIndex,
             }))
             : null;
-          const backPlan = showDates && row.deliveryDate
-            ? buildSxInstallBackPlan(row.deliveryDate, { startYmd: receptionYmd })
+          const backPlan = showDates && primaryInstall
+            ? buildSxInstallBackPlan(primaryInstall, { startYmd: receptionYmd })
             : null;
           const fmtRange = (a, b) => {
             if (!a && !b) return '—';
@@ -598,29 +741,50 @@ export default function SxMultiTargetPicker({
             if (a && b) return `${a} → ${b}`;
             return a || b;
           };
+          const installLabel = installOcc.length > 1
+            ? `${installOcc.length} ngày: ${formatYmdListVi(installOcc)}`
+            : (primaryInstall ? formatYmdVi(primaryInstall) : '');
+          const selectedCompany = (companies || []).find((c) => String(c.id) === String(row.companyId));
+          const selectedType = types.find((t) => String(t.id) === String(row.workshopTypeId));
+          const shopName = selectedCompany?.short_name || selectedCompany?.name || '';
+          const typeName = selectedType?.name || '';
+          const titleParts = [shopName, typeName].filter(Boolean);
           return (
-            <div key={row.key} className={`px-3 py-2.5 space-y-2 ${accentRow}`}>
-              <div className={`grid grid-cols-1 gap-2 ${topGridCols} sm:items-center`}>
-                <div className="flex items-center justify-between sm:block">
-                  <span className={`text-xs font-bold tabular-nums ${accentTitle}`}>
-                    Xưởng {idx + 1}
-                  </span>
-                  {rows.length > minRows ? (
-                    <button
-                      type="button"
-                      disabled={disabled}
-                      onClick={() => removeRow(row.key)}
-                      title="Xóa xưởng"
-                      className="sm:hidden inline-flex items-center gap-1 text-[11px] text-red-600 hover:text-red-700 disabled:opacity-40 cursor-pointer"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                      Xóa
-                    </button>
-                  ) : null}
+            <div key={row.key} className={`px-3 py-3 space-y-2.5 ${accentRow}`}>
+              <div className="flex items-center gap-2">
+                <span className={`inline-flex items-center justify-center h-6 min-w-[1.5rem] px-1.5 rounded-full bg-teal-100 text-teal-800 text-[11px] font-bold tabular-nums`}>
+                  {idx + 1}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className={`text-sm font-bold truncate ${titleParts.length ? accentTitle : 'text-slate-400'}`}>
+                    {titleParts.length ? titleParts.join(' · ') : 'Chưa chọn xưởng'}
+                  </p>
+                  {primaryInstall ? (
+                    <p className="text-[10px] text-slate-500 truncate tabular-nums">
+                      Lắp đặt {installLabel}{row.installTime ? ` · ${row.installTime}` : ''}
+                    </p>
+                  ) : (
+                    <p className="text-[10px] text-slate-400">Chưa chọn ngày lắp</p>
+                  )}
                 </div>
+                {rows.length > minRows ? (
+                  <button
+                    type="button"
+                    disabled={disabled}
+                    onClick={() => removeRow(row.key)}
+                    title="Xóa xưởng"
+                    className="h-8 w-8 inline-flex items-center justify-center rounded-lg text-red-500 hover:text-red-700 hover:bg-red-50 disabled:opacity-40 cursor-pointer"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                ) : null}
+              </div>
 
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <div className="min-w-0">
-                  <label className="sm:hidden text-[10px] font-medium text-gray-500">Công ty SX *</label>
+                  <label className="block text-[10px] font-semibold uppercase tracking-wide text-slate-500 mb-0.5">
+                    Công ty SX <span className="text-red-500">*</span>
+                  </label>
                   <select
                     value={row.companyId}
                     disabled={disabled || !companies?.length}
@@ -638,7 +802,9 @@ export default function SxMultiTargetPicker({
                 </div>
 
                 <div className="min-w-0">
-                  <label className="sm:hidden text-[10px] font-medium text-gray-500">Phân loại *</label>
+                  <label className="block text-[10px] font-semibold uppercase tracking-wide text-slate-500 mb-0.5">
+                    Phân loại <span className="text-red-500">*</span>
+                  </label>
                   <select
                     value={row.workshopTypeId}
                     onChange={(e) => setType(row.key, e.target.value)}
@@ -664,35 +830,19 @@ export default function SxMultiTargetPicker({
                     ))}
                   </select>
                 </div>
-
-                <div className="hidden sm:flex justify-end">
-                  {rows.length > minRows ? (
-                    <button
-                      type="button"
-                      disabled={disabled}
-                      onClick={() => removeRow(row.key)}
-                      title="Xóa xưởng"
-                      className="h-9 w-7 inline-flex items-center justify-center text-red-500 hover:text-red-700 disabled:opacity-40 cursor-pointer"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  ) : (
-                    <span className="w-7" />
-                  )}
-                </div>
               </div>
 
               {showSchedule ? (
-                <div className="sm:pl-[3.25rem] space-y-2">
+                <div className="space-y-2">
                   {/* Khối deadline: lắp (VC/LĐ) + hoàn thiện (SX) */}
                   <div className="rounded-xl border-2 border-teal-300 bg-teal-50 px-3 py-2.5 space-y-2 shadow-sm">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <p className="text-[11px] font-bold uppercase tracking-wide text-teal-900">
                         Deadline lắp đặt (VC/LĐ) &amp; hoàn thiện (SX)
                       </p>
-                      {row.deliveryDate ? (
-                        <span className="inline-flex items-center gap-1 rounded-md bg-teal-600 text-white px-2 py-1 text-[11px] font-bold tabular-nums shadow-sm">
-                          Lắp đặt {formatYmdVi(row.deliveryDate)}
+                      {primaryInstall ? (
+                        <span className="inline-flex items-center gap-1 rounded-md bg-teal-600 text-white px-2 py-1 text-[11px] font-bold tabular-nums shadow-sm max-w-full">
+                          Lắp đặt {installLabel}
                           {row.installTime ? ` · ${row.installTime}` : ''}
                         </span>
                       ) : (
@@ -701,50 +851,52 @@ export default function SxMultiTargetPicker({
                         </span>
                       )}
                     </div>
-                    <div className={`grid grid-cols-1 gap-2 ${showVcSetup ? 'sm:grid-cols-3' : 'sm:grid-cols-2'}`}>
+                    <div className="space-y-2">
                       <div className="min-w-0">
                         <label className="block text-[10px] font-bold text-teal-800 mb-0.5">
-                          Ngày lắp đặt <span className="font-normal text-teal-600/80">(deadline VC/LĐ)</span>
+                          Ngày lắp đặt <span className="font-normal text-teal-600/80">(deadline VC/LĐ · có thể nhiều ngày)</span>
                         </label>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <input
-                            type="date"
-                            value={row.deliveryDate || ''}
-                            disabled={disabled}
-                            onChange={(e) => setDeliveryDate(row.key, e.target.value)}
-                            className={`${fieldCls} sm:max-w-[11.5rem] border-teal-400 bg-white text-red-600 disabled:text-red-600 font-bold tabular-nums ring-1 ring-teal-200 focus:ring-2 focus:ring-teal-500 scheme-light`}
-                          />
+                        <MultiDayDatePicker
+                          accent="teal"
+                          disabled={disabled}
+                          selectedYmds={installOcc}
+                          onChange={(ymds) => setInstallOccurrenceDates(row.key, ymds)}
+                          anchorYmd={primaryInstall || undefined}
+                          hint="Bấm chọn từng ngày lắp — liên tiếp hoặc cách ngày (1, 3, 5…)"
+                        />
+                        <div className="mt-1.5 flex flex-wrap items-center gap-2">
                           {showVcSetup ? (
                             <button
                               type="button"
                               disabled={disabled}
                               onClick={() => openCalPick(row.key, 'install')}
-                              className="h-9 px-2.5 rounded-lg border border-teal-400 bg-teal-600 text-white text-[11px] font-bold hover:bg-teal-700 inline-flex items-center gap-1 disabled:opacity-40"
-                              title="Chọn deadline lắp (VC/LĐ) từ lịch"
+                              className="h-8 px-2.5 rounded-lg border border-teal-400 bg-teal-600 text-white text-[11px] font-bold hover:bg-teal-700 inline-flex items-center gap-1 disabled:opacity-40"
+                              title="Chọn nhiều ngày lắp từ lịch nhỏ / lịch lớn bên phải"
                             >
                               <Calendar className="h-3.5 w-3.5" />
-                              Lịch
+                              Lịch lớn
                             </button>
                           ) : null}
                           {leadBadge ? (
                             <span
                               className={`inline-flex shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold leading-tight ${leadBadge.className}`}
-                              title="Số ngày làm việc từ hôm nay tới deadline lắp (VC/LĐ)"
+                              title="Số ngày làm việc từ hôm nay tới ngày lắp đầu (VC/LĐ)"
                             >
                               {leadBadge.text}
                             </span>
                           ) : null}
                         </div>
                       </div>
+                      <div className={`grid grid-cols-1 gap-2 ${showVcSetup ? 'sm:grid-cols-2' : 'sm:grid-cols-1'}`}>
                       {showVcSetup ? (
                         <div className="min-w-0">
                           <label className="block text-[10px] font-bold text-teal-800 mb-0.5">
-                            Giờ lắp <span className="font-normal text-teal-600/80">(mặc định 14:00)</span>
+                            Giờ lắp <span className="font-normal text-teal-600/80">(mỗi ngày · mặc định 14:00)</span>
                           </label>
                           <input
                             type="time"
                             value={row.installTime || '14:00'}
-                            disabled={disabled || !row.deliveryDate}
+                            disabled={disabled || !primaryInstall}
                             onChange={(e) => patchRow(row.key, { installTime: e.target.value })}
                             className={`${fieldCls} sm:max-w-[11.5rem] border-teal-400 bg-white text-red-600 disabled:text-red-600/70 font-bold tabular-nums ring-1 ring-teal-200 focus:ring-2 focus:ring-teal-500 scheme-light`}
                           />
@@ -753,33 +905,34 @@ export default function SxMultiTargetPicker({
                       <div className="min-w-0">
                         <label className="block text-[10px] font-bold text-indigo-800 mb-0.5">
                           Ngày hoàn thiện
-                          <span className="font-normal text-indigo-600"> (sự kiện SX · áp dụng khi xưởng tiếp nhận)</span>
+                          <span className="font-normal text-indigo-600"> (tự tính = lắp đầu − 2 · sự kiện SX)</span>
                         </label>
                         <input
                           type="date"
                           value={finishYmd}
                           readOnly
                           disabled
-                          title="Deadline tổng dự án sản xuất = ngày lắp (VC/LĐ) − 2 · sẽ tạo sự kiện «Hoàn thiện sản xuất»"
+                          title="Deadline tổng dự án sản xuất = ngày lắp đầu (VC/LĐ) − 2 · sẽ tạo sự kiện «Hoàn thiện sản xuất»"
                           className={`${fieldCls} bg-indigo-100 border-indigo-400 text-red-600 disabled:text-red-600 font-bold tabular-nums ring-1 ring-indigo-200 sm:max-w-[11.5rem] scheme-light`}
                         />
                       </div>
+                      </div>
                     </div>
-                    {row.deliveryDate && finishYmd ? (
+                    {primaryInstall && finishYmd ? (
                       <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
                         <span className="rounded-md bg-indigo-600 text-white px-2 py-1 font-bold tabular-nums">
                           Hoàn thiện SX {formatYmdVi(finishYmd)}
                         </span>
                         <span className="text-indigo-800/80 font-medium">deadline tổng SX</span>
                         <span className="text-teal-700 font-bold">·</span>
-                        <span className="rounded-md bg-teal-600 text-white px-2 py-1 font-bold tabular-nums">
-                          Lắp đặt {formatYmdVi(row.deliveryDate)}
+                        <span className="rounded-md bg-teal-600 text-white px-2 py-1 font-bold tabular-nums max-w-full">
+                          Lắp đặt {installLabel}
                         </span>
                         <span className="text-teal-800/80 font-medium">deadline VC/LĐ</span>
                       </div>
                     ) : (
                       <p className="text-[10px] text-teal-800/70 font-medium">
-                        Chọn ngày lắp đặt (deadline VC/LĐ) → tự điền hoàn thiện SX (= deadline tổng SX, lắp − 2).
+                        Chọn một hoặc nhiều ngày lắp đặt (deadline VC/LĐ) → tự điền hoàn thiện SX (= deadline tổng SX, lắp đầu − 2).
                       </p>
                     )}
                   </div>
@@ -804,7 +957,8 @@ export default function SxMultiTargetPicker({
                         </div>
                         <div className="min-w-0">
                           <label className="block text-[10px] font-bold text-sky-800 mb-0.5">
-                            Thời gian lấy hàng tại xưởng <span className="font-normal text-sky-600/80">(không bắt buộc)</span>
+                            Thời gian lấy hàng tại xưởng
+                            <span className="font-normal text-sky-600/80"> (không bắt buộc)</span>
                           </label>
                           <div className="flex flex-wrap items-center gap-2">
                             <input
@@ -829,8 +983,8 @@ export default function SxMultiTargetPicker({
                       </div>
 
                       <div className="min-w-0">
-                        <label className="block text-[10px] font-medium text-gray-500 mb-0.5">
-                          Công ty VC / lắp đặt <span className="font-normal text-gray-400">(không bắt buộc)</span>
+                        <label className="block text-[10px] font-semibold uppercase tracking-wide text-slate-500 mb-0.5">
+                          Công ty VC / lắp đặt <span className="font-normal normal-case text-gray-400">(không bắt buộc)</span>
                         </label>
                         <select
                           value={row.logisticsCompanyId || ''}
@@ -917,7 +1071,7 @@ export default function SxMultiTargetPicker({
       {showVcSetup && calRow ? (
         <div
           ref={calPanelRef}
-          className="min-w-0 rounded-xl border-2 border-orange-200 bg-orange-50/30 overflow-hidden lg:sticky lg:top-0 lg:self-start flex flex-col h-[min(640px,calc(94vh-11rem))] min-h-[420px]"
+          className="min-w-0 rounded-xl border-2 border-orange-200 bg-orange-50/30 overflow-hidden lg:sticky lg:top-0 lg:self-start flex flex-col h-[min(720px,calc(94vh-9rem))] min-h-[480px]"
         >
           <div className="flex flex-wrap items-center justify-between gap-2 px-2.5 py-1.5 border-b border-orange-100 bg-orange-50 shrink-0">
             <div className="min-w-0">
@@ -926,10 +1080,10 @@ export default function SxMultiTargetPicker({
               </p>
               <p className="text-[10px] text-orange-800/80 truncate">
                 {calPick?.target === 'install'
-                  ? `Bấm ngày trên lịch → chọn lắp · Xưởng ${calRowIdx >= 0 ? calRowIdx + 1 : 1}`
+                  ? `Bấm ngày trên lịch → điền bước ${step.install} (lắp) · Xưởng ${calRowIdx >= 0 ? calRowIdx + 1 : 1}`
                   : calPick?.target === 'pickup'
-                    ? `Bấm ngày trên lịch → chọn lấy hàng · Xưởng ${calRowIdx >= 0 ? calRowIdx + 1 : 1}`
-                    : `Áp dụng → Xưởng ${calRowIdx >= 0 ? calRowIdx + 1 : 1} · lắp + lấy hàng`}
+                    ? `Bấm ngày trên lịch → điền bước ${step.pickup} (lấy hàng) · Xưởng ${calRowIdx >= 0 ? calRowIdx + 1 : 1}`
+                    : `Áp dụng → Xưởng ${calRowIdx >= 0 ? calRowIdx + 1 : 1} · bước ${step.install} lắp + bước ${step.pickup} lấy hàng`}
               </p>
             </div>
             <div className="flex items-center gap-1">
@@ -984,16 +1138,12 @@ export default function SxMultiTargetPicker({
                   const target = calPick?.rowKey === calRow.key ? calPick.target : 'both';
                   if (target === 'pickup') {
                     return calRow.pickupAt
-                      || (calRow.deliveryDate ? `${calRow.deliveryDate}T08:00` : null);
+                      || (calInstallOcc[0] ? `${calInstallOcc[0]}T08:00` : null);
                   }
                   if (target === 'install') {
-                    return calRow.deliveryDate
-                      ? `${calRow.deliveryDate}T${calRow.installTime || '14:00'}`
-                      : (calRow.pickupAt || null);
+                    return calInstallFocus || calRow.pickupAt || null;
                   }
-                  return calRow.deliveryDate
-                    ? `${calRow.deliveryDate}T${calRow.installTime || '14:00'}`
-                    : (calRow.pickupAt || null);
+                  return calInstallFocus || calRow.pickupAt || null;
                 })()
               }
               pickMode
@@ -1004,18 +1154,14 @@ export default function SxMultiTargetPicker({
               }
               anchorPickupAt={calRow.pickupAt || null}
               anchorInstallAt={
-                calRow.deliveryDate
-                  ? `${calRow.deliveryDate}T${calRow.installTime || '14:00'}`
+                calInstallOcc[0]
+                  ? `${calInstallOcc[0]}T${calRow.installTime || '14:00'}`
                   : null
               }
-              anchorInstallOccurrenceDates={
-                Array.isArray(calRow.installOccurrenceDates) && calRow.installOccurrenceDates.length
-                  ? calRow.installOccurrenceDates
-                  : (calRow.deliveryDate ? [calRow.deliveryDate] : [])
-              }
+              anchorInstallOccurrenceDates={calInstallOcc}
               anchorFinishAt={
                 (() => {
-                  const finish = subtractCalendarDaysYmd(calRow.deliveryDate, 2);
+                  const finish = subtractCalendarDaysYmd(calInstallOcc[0] || calRow.deliveryDate, 2);
                   return finish ? `${finish}T17:00` : null;
                 })()
               }
@@ -1052,9 +1198,10 @@ export default function SxMultiTargetPicker({
         title={
           calPick?.target === 'pickup'
             ? 'Chọn ngày lấy hàng (VC)'
-            : 'Chọn ngày lắp đặt (deadline VC/LĐ)'
+            : 'Chọn ngày lắp đặt (có thể nhiều ngày)'
         }
         accent={calPick?.target === 'pickup' ? 'sky' : 'teal'}
+        multi={calPick?.target === 'install'}
         selectedYmd={
           (() => {
             const row = calPick?.rowKey
@@ -1065,7 +1212,17 @@ export default function SxMultiTargetPicker({
             return row.deliveryDate || '';
           })()
         }
+        selectedYmds={
+          (() => {
+            const row = calPick?.rowKey
+              ? rows.find((r) => r.key === calPick.rowKey)
+              : null;
+            if (!row) return [];
+            return normalizeOccYmds(row.installOccurrenceDates, row.deliveryDate);
+          })()
+        }
         onPick={applyMiniCalDay}
+        onChangeYmds={applyMiniCalInstallYmds}
         onClose={() => setMiniCalOpen(false)}
       />
     </div>
@@ -1098,7 +1255,11 @@ export function validateSxTargets(rows) {
     seen.add(key);
 
     const lid = r.logisticsCompanyId || r.logistics_company_id;
-    const delivery = String(r.deliveryDate || r.delivery_date || '').trim();
+    const occ = normalizeOccYmds(
+      r.installOccurrenceDates || r.install_occurrence_dates,
+      r.deliveryDate || r.delivery_date,
+    );
+    const delivery = occ[0] || String(r.deliveryDate || r.delivery_date || '').trim();
     const pickup = String(r.pickupAt || r.pickup_at || '').trim();
     if (lid && !delivery) {
       return `Xưởng ${i + 1}: đã chọn công ty VC/LĐ — vui lòng nhập ngày lắp đặt.`;
@@ -1114,7 +1275,11 @@ export function sxTargetsToApiPayload(rows) {
   return (rows || [])
     .filter((r) => r.companyId || r.production_company_id)
     .map((r) => {
-      const delivery = String(r.deliveryDate || r.delivery_date || '').trim();
+      const occ = normalizeOccYmds(
+        r.installOccurrenceDates || r.install_occurrence_dates,
+        r.deliveryDate || r.delivery_date,
+      );
+      const delivery = occ[0] || String(r.deliveryDate || r.delivery_date || '').trim();
       const timeRaw = String(r.installTime || r.install_time || '14:00').trim() || '14:00';
       const time = /^\d{2}:\d{2}$/.test(timeRaw) ? timeRaw : '14:00';
       const logisticsCompanyId = String(r.logisticsCompanyId || r.logistics_company_id || '').trim();
@@ -1126,7 +1291,7 @@ export function sxTargetsToApiPayload(rows) {
       if (/^\d{4}-\d{2}-\d{2}$/.test(delivery)) {
         const finishYmd = subtractCalendarDaysYmd(delivery, 2) || null;
         out.delivery_date = delivery;
-        // install_date = deadline VC/LĐ; production_* = deadline tổng SX (hoàn thiện)
+        // install_date = deadline VC/LĐ (ngày lắp đầu); production_* = deadline tổng SX (hoàn thiện)
         out.install_date = `${delivery}T${time}:00+07:00`;
         out.production_finish_date = finishYmd;
         out.production_deadline = finishYmd;
@@ -1138,11 +1303,6 @@ export function sxTargetsToApiPayload(rows) {
         const d = new Date(pickupLocal);
         if (!Number.isNaN(d.getTime())) out.pickup_at = d.toISOString();
       }
-      const occ = [...new Set(
-        (Array.isArray(r.installOccurrenceDates) ? r.installOccurrenceDates : [])
-          .map((d) => String(d || '').slice(0, 10))
-          .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)),
-      )].sort();
       if (occ.length) out.install_occurrence_dates = occ;
       else if (/^\d{4}-\d{2}-\d{2}$/.test(delivery)) out.install_occurrence_dates = [delivery];
       return out;

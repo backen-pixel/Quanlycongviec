@@ -385,11 +385,21 @@ export default function VcHandoverEventsPopup({
         : ymdToLocal(parseDay(anchorInstallAt) || '', 14);
       if (local) setInstallAt(local);
     }
-    const occ = Array.isArray(anchorInstallOccurrenceDates)
-      ? [...anchorInstallOccurrenceDates].map((d) => String(d).slice(0, 10)).filter(Boolean).sort()
-      : [];
-    if (occ.length) setInstallOccurrenceDates(occ);
-    else if (anchorInstallAt) {
+    if (Array.isArray(anchorInstallOccurrenceDates)) {
+      const occ = [...anchorInstallOccurrenceDates]
+        .map((d) => String(d).slice(0, 10))
+        .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
+        .sort();
+      const uniq = [...new Set(occ)];
+      setInstallOccurrenceDates(uniq);
+      if (!uniq.length && !anchorInstallAt) setInstallAt('');
+      else if (uniq.length && !anchorInstallAt) {
+        setInstallAt((prev) => {
+          if (prev && String(prev).startsWith(uniq[0])) return prev;
+          return ymdToLocal(uniq[0], 14);
+        });
+      }
+    } else if (anchorInstallAt) {
       const day = parseDay(anchorInstallAt) || String(anchorInstallAt).slice(0, 10);
       if (day) setInstallOccurrenceDates((prev) => (prev.length ? prev : [day]));
     }
@@ -397,16 +407,19 @@ export default function VcHandoverEventsPopup({
 
   // Bấm «Lịch» / đổi ngày-giờ / đổi chế độ Lắp|Lấy hàng → lịch nhảy đúng tháng & ngày.
   useEffect(() => {
+    const occFirst = Array.isArray(anchorInstallOccurrenceDates) && anchorInstallOccurrenceDates.length
+      ? String(anchorInstallOccurrenceDates[0]).slice(0, 10)
+      : '';
     const preferred = pickTarget === 'pickup'
-      ? (parseDay(focusDate) || parseDay(anchorPickupAt) || parseDay(anchorInstallAt))
+      ? (parseDay(focusDate) || parseDay(anchorPickupAt) || parseDay(anchorInstallAt) || occFirst)
       : pickTarget === 'install'
-        ? (parseDay(focusDate) || parseDay(anchorInstallAt) || parseDay(anchorPickupAt))
-        : (parseDay(focusDate) || parseDay(anchorInstallAt) || parseDay(anchorPickupAt));
+        ? (parseDay(focusDate) || occFirst || parseDay(anchorInstallAt) || parseDay(anchorPickupAt))
+        : (parseDay(focusDate) || occFirst || parseDay(anchorInstallAt) || parseDay(anchorPickupAt));
     if (!preferred) return;
     setSelectedDay(preferred);
     const [y, m] = preferred.split('-').map(Number);
     if (y && m) setCursor({ year: y, month: m });
-  }, [focusDate, focusNonce, pickTarget, anchorPickupAt, anchorInstallAt]);
+  }, [focusDate, focusNonce, pickTarget, anchorPickupAt, anchorInstallAt, anchorInstallOccurrenceDates]);
 
   const calendarEvents = useMemo(() => {
     const byId = new Map();
@@ -616,13 +629,27 @@ export default function VcHandoverEventsPopup({
       || (String(anchorPickupAt).match(/^(\d{4}-\d{2}-\d{2})/)?.[1] || null);
   }, [anchorPickupAt]);
 
-  /** Ngày lắp đã chọn trên form — tô teal khi đang chọn / xem */
-  const installAnchorYmd = useMemo(() => {
-    if (!anchorInstallAt) return null;
-    return parseDay(anchorInstallAt)
+  /** Các ngày lắp đã chọn (nhiều ngày) — tô teal trên lưới lịch */
+  const installAnchorYmds = useMemo(() => {
+    const fromState = (installOccurrenceDates || [])
+      .map((d) => String(d || '').slice(0, 10))
+      .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d));
+    if (fromState.length) return new Set(fromState);
+    const fromAnchor = Array.isArray(anchorInstallOccurrenceDates)
+      ? anchorInstallOccurrenceDates.map((d) => String(d || '').slice(0, 10)).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
+      : [];
+    if (fromAnchor.length) return new Set(fromAnchor);
+    if (!anchorInstallAt) return new Set();
+    const one = parseDay(anchorInstallAt)
       || parseDay(datetimeLocalValueToIso(anchorInstallAt) || '')
       || (String(anchorInstallAt).match(/^(\d{4}-\d{2}-\d{2})/)?.[1] || null);
-  }, [anchorInstallAt]);
+    return one ? new Set([one]) : new Set();
+  }, [installOccurrenceDates, anchorInstallOccurrenceDates, anchorInstallAt]);
+
+  const installAnchorYmd = useMemo(
+    () => (installAnchorYmds.size ? [...installAnchorYmds].sort()[0] : null),
+    [installAnchorYmds],
+  );
 
   const selectedSxBusy = (sxCountByDay.get(selectedDay) || 0) >= SX_BUSY_THRESHOLD;
   const selectedSxCount = sxCountByDay.get(selectedDay) || 0;
@@ -738,7 +765,7 @@ export default function VcHandoverEventsPopup({
       return;
     }
 
-    // Chỉ chọn lắp đặt → áp dụng ngay
+    // Chỉ chọn lắp đặt → toggle nhiều ngày (đồng bộ form trái)
     if (pickTarget === 'install') {
       const vcDay = parseDay(anchorPickupAt)
         || parseDay(datetimeLocalValueToIso(anchorPickupAt) || '')
@@ -746,17 +773,30 @@ export default function VcHandoverEventsPopup({
         || null;
       let hour = 14;
       let minute = 0;
-      const prev = String(installAt || anchorInstallAt || '').match(/T(\d{2}):(\d{2})/);
-      if (prev) {
-        hour = Number(prev[1]);
-        minute = Number(prev[2]);
+      const prevHm = String(installAt || anchorInstallAt || '').match(/T(\d{2}):(\d{2})/);
+      if (prevHm) {
+        hour = Number(prevHm[1]);
+        minute = Number(prevHm[2]);
       }
-      const local = ymdToLocal(ymd, hour, minute);
+      const prevOcc = [...(installOccurrenceDates || [])]
+        .map((d) => String(d || '').slice(0, 10))
+        .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d));
+      const nextOcc = prevOcc.includes(ymd)
+        ? prevOcc.filter((d) => d !== ymd)
+        : [...prevOcc, ymd].sort();
+      setInstallOccurrenceDates(nextOcc);
+      if (!nextOcc.length) {
+        setInstallAt('');
+        if (typeof onPickDates === 'function') {
+          onPickDates({ installAt: '', installOccurrenceDates: [] });
+        }
+        return;
+      }
+      const local = ymdToLocal(nextOcc[0], hour, minute);
       setInstallAt(local);
-      setInstallOccurrenceDates([ymd]);
       if (vcDay) setVcAt(anchorPickupAt || ymdToLocal(vcDay, 8));
       if (typeof onPickDates === 'function') {
-        onPickDates({ installAt: local, installOccurrenceDates: [ymd] });
+        onPickDates({ installAt: local, installOccurrenceDates: nextOcc });
       } else if (typeof onPickDate === 'function') {
         onPickDate(local);
       }
@@ -1099,7 +1139,7 @@ export default function VcHandoverEventsPopup({
             <p className="text-[11px] text-gray-500 truncate">
               {pickMode
                 ? (pickTarget === 'install'
-                  ? 'Bấm một ngày → chọn lắp đặt ngay (không mở form)'
+                  ? 'Bấm ngày → chọn/bỏ ngày lắp (có thể nhiều ngày)'
                   : pickTarget === 'pickup'
                     ? 'Bấm một ngày → chọn lấy hàng ngay (không mở form)'
                     : 'Bấm ngày để mở form chỉnh giờ lấy hàng + lắp')
@@ -1231,7 +1271,7 @@ export default function VcHandoverEventsPopup({
                     const isTodayCell = isCurrentMonth && day === today.getDate();
                     const isSelected = ymd === selectedDay;
                     const isVcAnchor = !!(vcAnchorYmd && ymd === vcAnchorYmd);
-                    const isInstallAnchor = !!(installAnchorYmd && ymd === installAnchorYmd);
+                    const isInstallAnchor = installAnchorYmds.has(ymd);
                     const isWeekend = i % 7 === 0;
                     const sxBusy = (sxCountByDay.get(ymd) || 0) >= SX_BUSY_THRESHOLD;
                     const vcBusy = (vcCountByDay.get(ymd) || 0) >= VC_BUSY_THRESHOLD;
