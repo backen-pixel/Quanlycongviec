@@ -1,12 +1,15 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
+  Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -24,6 +27,8 @@ import { useTheme } from '../context/ThemeContext';
 import { useProductionRealtime } from '../hooks/useProductionRealtime';
 import {
   calcCrmProductionTaskProgress,
+  createLogisticsWorkshopTask,
+  createCrmLogisticsTask,
   fetchCrmDealTasks,
   fetchDealIdForProject,
   fetchLeadTaskDocuments,
@@ -32,9 +37,17 @@ import {
   fetchProjectActivities,
   fetchProjectDocuments,
   fetchProjectTaskFiles,
+  fetchUsersForAssign,
+  filterVcAreaTabTasks,
+  filterVcLogisticsUiTasks,
+  filterVcStagesByAreaTab,
   groupCrmTasksByStage,
   isCrmProductionTaskDone,
+  isInstallLogisticsPipelineStage,
+  resolveVcTaskPipelineStageId,
   taskDeadline,
+  updateCrmTask,
+  updateWorkshopTask,
 } from '../lib/projectDetailApi';
 import {
   fetchDealCommentIndex,
@@ -42,10 +55,13 @@ import {
 } from '../lib/logisticsApi';
 import type { RootStackParamList } from '../navigation/RootNavigator';
 import { formatMoneyAmount, Radii, Spacing, getTaskProgressColor } from '../theme';
-import type { CrmTask, ProductionProjectDetail, ProjectActivity } from '../types';
+import type { CrmTask, PersonRef, ProductionProjectDetail, ProjectActivity } from '../types';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'ProjectDetail'>;
 type TabKey = 'tasks' | 'shared-workspace' | 'comments' | 'documents' | 'drive' | 'info' | 'team' | 'schedule';
+type VcAreaTab = 'shipping' | 'install' | 'all';
+
+type TaskStageGroup = ReturnType<typeof groupCrmTasksByStage>[number];
 
 const VALID_TABS: TabKey[] = [
   'tasks', 'shared-workspace', 'comments', 'documents', 'drive', 'info', 'team', 'schedule',
@@ -61,16 +77,27 @@ function formatDate(value?: string | null): string {
 }
 
 export default function ProjectDetailScreen({ route, navigation }: Props) {
-  const { projectId, initialTab } = route.params;
+  const { projectId, initialTab, focusTaskId: focusTaskIdParam } = route.params;
+  const incomingFocusId = focusTaskIdParam ? String(focusTaskIdParam) : '';
+  const [highlightTaskId, setHighlightTaskId] = useState(incomingFocusId);
   const { colors } = useTheme();
   const { joinProjectRoom, leaveProjectRoom, joinLeadRoom, leaveLeadRoom } = useNotifications();
   const insets = useSafeAreaInsets();
   const [tab, setTab] = useState<TabKey>(() => {
-    const t = String(initialTab || '').trim() as TabKey;
+    const t = String(initialTab || (incomingFocusId ? 'tasks' : '')).trim() as TabKey;
     return VALID_TABS.includes(t) ? t : 'tasks';
   });
   const [project, setProject] = useState<ProductionProjectDetail | null>(null);
   const [tasks, setTasks] = useState<CrmTask[]>([]);
+  const [vcAreaTab, setVcAreaTab] = useState<VcAreaTab>('shipping');
+  const [expandedStages, setExpandedStages] = useState<Record<string, boolean>>({});
+  const [showAddStageId, setShowAddStageId] = useState<string | null>(null);
+  const [newTaskTitle, setNewTaskTitle] = useState('');
+  const [newTaskPriority, setNewTaskPriority] = useState('medium');
+  const [newTaskAssigneeId, setNewTaskAssigneeId] = useState('');
+  const [assignUsers, setAssignUsers] = useState<PersonRef[]>([]);
+  const [addingTask, setAddingTask] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
   const [dealId, setDealId] = useState<string | null>(null);
   const [activities, setActivities] = useState<ProjectActivity[]>([]);
   const [commentCount, setCommentCount] = useState(0);
@@ -78,6 +105,26 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [err, setErr] = useState('');
+  const didApplyFocusRef = useRef('');
+
+  useEffect(() => {
+    if (!incomingFocusId) return;
+    setHighlightTaskId(incomingFocusId);
+    setTab('tasks');
+    didApplyFocusRef.current = '';
+    navigation.setParams({ focusTaskId: undefined });
+  }, [incomingFocusId, navigation]);
+
+  useEffect(() => {
+    if (!highlightTaskId) return undefined;
+    const t = setTimeout(() => setHighlightTaskId(''), 4500);
+    return () => clearTimeout(t);
+  }, [highlightTaskId]);
+
+  useEffect(() => {
+    setHighlightTaskId('');
+    didApplyFocusRef.current = '';
+  }, [projectId]);
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -88,10 +135,14 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
       let resolvedDealId = detail.crmDeals?.[0]?.id || null;
       if (!resolvedDealId) resolvedDealId = await fetchDealIdForProject(projectId);
       setDealId(resolvedDealId);
+      const ownerCompanyId = detail.company_id || detail.company?.id || null;
       const sharedDocCount = Array.isArray(detail.sharedDocuments) ? detail.sharedDocuments.length : 0;
       const [crmTasks, workshopTasks, actRows, commentMeta, documentsMeta] = await Promise.all([
-        resolvedDealId ? fetchCrmDealTasks(resolvedDealId) : Promise.resolve([]),
-        fetchLogisticsWorkshopTasks(projectId),
+        resolvedDealId
+          ? fetchCrmDealTasks(resolvedDealId, { ownerCompanyId })
+          : Promise.resolve([]),
+        // Chỉ dùng khi không có deal — khớp web WorkshopProjectTasksPanel
+        resolvedDealId ? Promise.resolve([]) : fetchLogisticsWorkshopTasks(projectId),
         fetchProjectActivities(projectId),
         (async () => {
           try {
@@ -121,13 +172,12 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
           }
         })(),
       ]);
-      // Ưu tiên nhiệm vụ bộ mẫu logistics trên dự án (bảng tasks).
-      // CRM API đôi khi trả cùng bộ đó nhưng thiếu source=workshop → ghi chú/file sẽ sai bảng.
-      const crmWorkshop = crmTasks.filter((t) => t.source === 'workshop');
-      const crmOnly = crmTasks.filter((t) => t.source !== 'workshop');
-      if (workshopTasks.length) setTasks(workshopTasks);
-      else if (crmWorkshop.length) setTasks(crmWorkshop);
-      else setTasks(crmOnly);
+      // Web: có deal → CRMTasksTab (API đã merge workshop logistics); không deal → bảng tasks.
+      if (resolvedDealId) {
+        setTasks(filterVcLogisticsUiTasks(crmTasks));
+      } else {
+        setTasks(workshopTasks);
+      }
       setActivities(actRows);
       setCommentCount(commentMeta);
       setDocCount(documentsMeta);
@@ -141,6 +191,12 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
   useEffect(() => {
     void load(false);
   }, [load]);
+
+  useEffect(() => {
+    void fetchUsersForAssign()
+      .then(setAssignUsers)
+      .catch(() => setAssignUsers([]));
+  }, []);
 
   useEffect(() => {
     joinProjectRoom(projectId);
@@ -176,13 +232,141 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
     setTasks((prev) => prev.filter((t) => t.id !== taskId));
   }, []);
 
-  const taskGroups = useMemo(() => groupCrmTasksByStage(tasks), [tasks]);
+  const completeStageAll = useCallback((group: TaskStageGroup) => {
+    const toComplete = group.tasks.filter((t) => !isCrmProductionTaskDone(t.status));
+    if (!toComplete.length) {
+      Alert.alert('Xong hết', 'Không còn nhiệm vụ chưa hoàn thành trong giai đoạn này.');
+      return;
+    }
+    Alert.alert(
+      'Xong hết',
+      `Đánh dấu hoàn thành ${toComplete.length} nhiệm vụ trong «${group.label}»?`,
+      [
+        { text: 'Hủy', style: 'cancel' },
+        {
+          text: 'Xong hết',
+          onPress: () => {
+            void (async () => {
+              const prev = tasks;
+              const ids = new Set(toComplete.map((t) => t.id));
+              setBulkBusy(true);
+              setTasks((p) => p.map((t) => (ids.has(t.id) ? { ...t, status: 'completed' } : t)));
+              try {
+                await Promise.all(toComplete.map((t) => {
+                  const isWs = t.source === 'workshop' || t._workshop_project_task;
+                  if (isWs) return updateWorkshopTask(t.id, { status: 'completed' });
+                  if (!dealId) return Promise.resolve(t);
+                  return updateCrmTask(dealId, t.id, { status: 'completed' });
+                }));
+                await load(true);
+              } catch (e) {
+                setTasks(prev);
+                Alert.alert('Lỗi', formatApiError(e));
+              } finally {
+                setBulkBusy(false);
+              }
+            })();
+          },
+        },
+      ],
+    );
+  }, [dealId, tasks, load]);
+
+  const submitAddTask = useCallback(async (stageId: string, stageLabel: string, bucketSlug?: string | null) => {
+    const title = newTaskTitle.trim();
+    if (!title) {
+      Alert.alert('Thiếu tiêu đề', 'Nhập tên công việc.');
+      return;
+    }
+    setAddingTask(true);
+    try {
+      const guessed = String(bucketSlug || '').toLowerCase().includes('install')
+        ? 'installation'
+        : String(bucketSlug || '').toLowerCase().includes('delivery_pending')
+          || String(stageLabel || '').toLowerCase().includes('tiếp nhận')
+          ? 'delivery_pending'
+          : 'shipping';
+      let created: CrmTask;
+      if (dealId) {
+        // Khớp web CRMTasksTab — tạo crm_tasks vc_* (hiện ngay trên API logistics)
+        created = await createCrmLogisticsTask(dealId, {
+          title,
+          priority: newTaskPriority,
+          assignee_id: newTaskAssigneeId || null,
+          logistics_pipeline_stage_id: stageId,
+          order_index: tasks.filter((t) => String(t.logistics_pipeline_stage_id) === String(stageId)).length,
+        });
+      } else {
+        created = await createLogisticsWorkshopTask({
+          projectId,
+          title,
+          priority: newTaskPriority,
+          assignee_id: newTaskAssigneeId || null,
+          logistics_pipeline_stage_id: stageId,
+          guessed_stage_slug: guessed,
+        });
+      }
+      setTasks((prev) => [...prev, created]);
+      setNewTaskTitle('');
+      setNewTaskAssigneeId('');
+      setNewTaskPriority('medium');
+      setShowAddStageId(null);
+      setExpandedStages((p) => ({ ...p, [stageId]: true }));
+      await load(true);
+    } catch (e) {
+      Alert.alert('Lỗi', formatApiError(e));
+    } finally {
+      setAddingTask(false);
+    }
+  }, [newTaskTitle, newTaskPriority, newTaskAssigneeId, projectId, dealId, tasks, load]);
+
+  const vcStages = project?.vcKanbanStages || project?.sxKanbanStages || [];
+  const areaStages = useMemo(
+    () => filterVcStagesByAreaTab(vcStages, vcAreaTab),
+    [vcStages, vcAreaTab],
+  );
+  const visibleTasks = useMemo(
+    () => filterVcAreaTabTasks(tasks, vcAreaTab, vcStages),
+    [tasks, vcAreaTab, vcStages],
+  );
+  const taskGroups = useMemo(
+    () => groupCrmTasksByStage(visibleTasks, areaStages, { includeEmpty: areaStages.length > 0 }),
+    [visibleTasks, areaStages],
+  );
+
+  // Focus từ Work/Overview: chọn đúng tab VC, expand stage chứa task, highlight ~4s.
+  useEffect(() => {
+    if (!highlightTaskId || loading || !tasks.length) return;
+    if (didApplyFocusRef.current === String(highlightTaskId)) return;
+    const fid = String(highlightTaskId);
+    const focused = tasks.find((t) => String(t.id) === fid);
+    if (!focused) return;
+    didApplyFocusRef.current = fid;
+
+    const stages = project?.vcKanbanStages || project?.sxKanbanStages || [];
+    const sid = resolveVcTaskPipelineStageId(focused, stages);
+    let area: VcAreaTab = 'shipping';
+    if (sid && stages.length) {
+      const stage = stages.find((s) => String(s.id) === String(sid));
+      if (stage && isInstallLogisticsPipelineStage(stage)) area = 'install';
+    } else {
+      const meta = focused.metadata && typeof focused.metadata === 'object' ? focused.metadata : {};
+      const guessed = String((meta as { guessed_stage_slug?: string }).guessed_stage_slug || '').toLowerCase();
+      const slug = String(focused.stage_slug || '').toLowerCase();
+      if (guessed.includes('install') || slug.includes('install')) area = 'install';
+    }
+    setVcAreaTab(area);
+
+    const groupKey = sid || '_other';
+    setExpandedStages((p) => ({ ...p, [groupKey]: true }));
+  }, [highlightTaskId, loading, tasks, project?.vcKanbanStages, project?.sxKanbanStages]);
+
   const { done: taskDone, total: taskTotal, percent: progress } = useMemo(
     () => calcCrmProductionTaskProgress(
-      tasks,
+      visibleTasks,
       Number(project?.productionTaskProgress ?? project?.progress ?? 0),
     ),
-    [tasks, project?.productionTaskProgress, project?.progress],
+    [visibleTasks, project?.productionTaskProgress, project?.progress],
   );
   const progressColor = getTaskProgressColor(progress, colors);
   const valueStr = formatMoneyAmount(project?.estimated_value);
@@ -348,6 +532,113 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
         },
         errText: { color: colors.danger, fontSize: 13, fontWeight: '600' },
         empty: { color: colors.textMuted, textAlign: 'center', paddingVertical: 32, fontSize: 14 },
+        vcAreaRow: {
+          flexDirection: 'row',
+          backgroundColor: colors.border,
+          borderRadius: Radii.md,
+          padding: 3,
+          marginBottom: 14,
+        },
+        vcAreaBtn: {
+          flex: 1,
+          paddingVertical: 8,
+          borderRadius: Radii.sm,
+          alignItems: 'center',
+        },
+        vcAreaBtnActive: { backgroundColor: colors.card },
+        vcAreaText: { fontSize: 13, fontWeight: '600', color: colors.textMuted },
+        vcAreaTextActive: { color: colors.text },
+        stageCard: {
+          borderWidth: 1,
+          borderColor: colors.border,
+          borderRadius: Radii.md,
+          overflow: 'hidden',
+          marginBottom: 12,
+          backgroundColor: colors.card,
+        },
+        stageHeader: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 6,
+          paddingHorizontal: 10,
+          paddingVertical: 10,
+          backgroundColor: colors.bg,
+          borderBottomWidth: StyleSheet.hairlineWidth,
+          borderBottomColor: colors.border,
+        },
+        stageHeadBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 0 },
+        stageDot: { width: 8, height: 8, borderRadius: 4 },
+        stageTitle: { fontSize: 14, fontWeight: '700', color: colors.text, flexShrink: 1 },
+        stageMeta: { fontSize: 11, color: colors.textMuted, marginTop: 1 },
+        doneAllBtn: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 4,
+          backgroundColor: '#059669',
+          paddingHorizontal: 8,
+          paddingVertical: 6,
+          borderRadius: Radii.sm,
+        },
+        doneAllTxt: { color: '#FFF', fontSize: 11, fontWeight: '700' },
+        stageBody: { paddingHorizontal: 8, paddingVertical: 8 },
+        addTaskBtn: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 4,
+          paddingVertical: 8,
+          paddingHorizontal: 8,
+        },
+        addTaskBtnTxt: { color: colors.primary, fontSize: 12, fontWeight: '600' },
+        addForm: {
+          backgroundColor: colors.primarySoft || '#FFF7ED',
+          borderRadius: Radii.sm,
+          padding: 10,
+          gap: 8,
+          marginTop: 4,
+        },
+        addInput: {
+          borderWidth: 1,
+          borderColor: colors.border,
+          borderRadius: Radii.sm,
+          paddingHorizontal: 10,
+          paddingVertical: 8,
+          fontSize: 14,
+          color: colors.text,
+          backgroundColor: colors.card,
+        },
+        addRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+        chip: {
+          paddingHorizontal: 10,
+          paddingVertical: 6,
+          borderRadius: Radii.sm,
+          borderWidth: 1,
+          borderColor: colors.border,
+          backgroundColor: colors.card,
+        },
+        chipActive: { borderColor: colors.primary, backgroundColor: colors.primarySoft || '#FFF7ED' },
+        chipTxt: { fontSize: 11, color: colors.textMuted, fontWeight: '600' },
+        chipTxtActive: { color: colors.primary },
+        addActions: { flexDirection: 'row', gap: 8 },
+        addSaveBtn: {
+          backgroundColor: colors.primary,
+          paddingHorizontal: 14,
+          paddingVertical: 8,
+          borderRadius: Radii.sm,
+        },
+        addSaveTxt: { color: '#FFF', fontSize: 12, fontWeight: '700' },
+        addCancelBtn: {
+          backgroundColor: colors.border,
+          paddingHorizontal: 14,
+          paddingVertical: 8,
+          borderRadius: Radii.sm,
+        },
+        addCancelTxt: { color: colors.text, fontSize: 12, fontWeight: '600' },
+        stageEmptyHint: {
+          fontSize: 12,
+          color: colors.textMuted,
+          paddingHorizontal: 8,
+          paddingVertical: 6,
+        },
       }),
     [colors, insets.top],
   );
@@ -455,29 +746,182 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
 
         <View style={{ padding: Spacing.lg }}>
           {tab === 'tasks' && (
-            taskGroups.length ? taskGroups.map((group) => {
-              const doneInGroup = group.tasks.filter((t) => isCrmProductionTaskDone(t.status)).length;
-              return (
-                <View key={group.key} style={{ marginBottom: 16 }}>
-                  <View style={styles.groupHeader}>
-                    <Text style={styles.groupTitle}>{group.label}</Text>
-                    <Text style={styles.groupCount}>{doneInGroup}/{group.tasks.length}</Text>
+            <>
+              <View style={styles.vcAreaRow}>
+                {([
+                  ['shipping', 'Vận chuyển'],
+                  ['install', 'Lắp đặt'],
+                  ['all', 'Tất cả'],
+                ] as [VcAreaTab, string][]).map(([id, label]) => (
+                  <TapHighlight
+                    key={id}
+                    style={[styles.vcAreaBtn, vcAreaTab === id && styles.vcAreaBtnActive]}
+                    onPress={() => setVcAreaTab(id)}
+                  >
+                    <Text style={[styles.vcAreaText, vcAreaTab === id && styles.vcAreaTextActive]}>
+                      {label}
+                    </Text>
+                  </TapHighlight>
+                ))}
+              </View>
+              {taskGroups.length ? taskGroups.map((group) => {
+                const expanded = expandedStages[group.key] ?? group.tasks.length > 0;
+                const openInGroup = group.openCount ?? group.tasks.filter((t) => !isCrmProductionTaskDone(t.status)).length;
+                const doneInGroup = group.doneCount ?? group.tasks.filter((t) => isCrmProductionTaskDone(t.status)).length;
+                const stageMeta = areaStages.find((s) => String(s.id) === String(group.key));
+                const isAdding = showAddStageId === group.key;
+                return (
+                  <View key={group.key} style={styles.stageCard}>
+                    <View style={styles.stageHeader}>
+                      <Pressable
+                        style={styles.stageHeadBtn}
+                        onPress={() => setExpandedStages((p) => ({
+                          ...p,
+                          [group.key]: !expanded,
+                        }))}
+                      >
+                        <Ionicons
+                          name={expanded ? 'chevron-down' : 'chevron-forward'}
+                          size={16}
+                          color={colors.textMuted}
+                        />
+                        {group.color ? (
+                          <View style={[styles.stageDot, { backgroundColor: group.color }]} />
+                        ) : null}
+                        <View style={{ flex: 1, minWidth: 0 }}>
+                          <Text style={styles.stageTitle} numberOfLines={1}>{group.label}</Text>
+                          <Text style={styles.stageMeta}>
+                            {doneInGroup}/{group.tasks.length} xong
+                            {openInGroup ? ` · ${openInGroup} còn lại` : ''}
+                          </Text>
+                        </View>
+                      </Pressable>
+                      {openInGroup > 0 ? (
+                        <Pressable
+                          style={[styles.doneAllBtn, bulkBusy && { opacity: 0.6 }]}
+                          disabled={bulkBusy}
+                          onPress={() => completeStageAll(group)}
+                        >
+                          <Ionicons name="checkmark-done-outline" size={14} color="#FFF" />
+                          <Text style={styles.doneAllTxt}>Xong hết</Text>
+                        </Pressable>
+                      ) : null}
+                    </View>
+                    {expanded ? (
+                      <View style={styles.stageBody}>
+                        {group.tasks.length ? group.tasks.map((task) => (
+                          <ProjectCrmTaskRow
+                            key={task.id}
+                            task={task}
+                            dealId={dealId}
+                            projectCompanyId={project?.company_id || project?.company?.id || null}
+                            highlighted={Boolean(highlightTaskId) && String(task.id) === String(highlightTaskId)}
+                            onUpdated={onTaskUpdated}
+                            onDeleted={onTaskDeleted}
+                          />
+                        )) : (
+                          <Text style={styles.stageEmptyHint}>Chưa có công việc — thêm việc bên dưới.</Text>
+                        )}
+                        {isAdding ? (
+                          <View style={styles.addForm}>
+                            <TextInput
+                              style={styles.addInput}
+                              placeholder="Tên công việc..."
+                              placeholderTextColor={colors.textMuted}
+                              value={newTaskTitle}
+                              onChangeText={setNewTaskTitle}
+                              autoFocus
+                            />
+                            <View style={styles.addRow}>
+                              {(['low', 'medium', 'high'] as const).map((p) => (
+                                <Pressable
+                                  key={p}
+                                  style={[styles.chip, newTaskPriority === p && styles.chipActive]}
+                                  onPress={() => setNewTaskPriority(p)}
+                                >
+                                  <Text style={[styles.chipTxt, newTaskPriority === p && styles.chipTxtActive]}>
+                                    {p === 'low' ? 'Thấp' : p === 'high' ? 'Cao' : 'TB'}
+                                  </Text>
+                                </Pressable>
+                              ))}
+                            </View>
+                            {assignUsers.length ? (
+                              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ maxHeight: 40 }}>
+                                <View style={styles.addRow}>
+                                  <Pressable
+                                    style={[styles.chip, !newTaskAssigneeId && styles.chipActive]}
+                                    onPress={() => setNewTaskAssigneeId('')}
+                                  >
+                                    <Text style={[styles.chipTxt, !newTaskAssigneeId && styles.chipTxtActive]}>
+                                      Chưa giao
+                                    </Text>
+                                  </Pressable>
+                                  {assignUsers.slice(0, 20).map((u) => (
+                                    <Pressable
+                                      key={String(u.id)}
+                                      style={[styles.chip, newTaskAssigneeId === String(u.id) && styles.chipActive]}
+                                      onPress={() => setNewTaskAssigneeId(String(u.id))}
+                                    >
+                                      <Text
+                                        style={[
+                                          styles.chipTxt,
+                                          newTaskAssigneeId === String(u.id) && styles.chipTxtActive,
+                                        ]}
+                                        numberOfLines={1}
+                                      >
+                                        {u.full_name || 'NV'}
+                                      </Text>
+                                    </Pressable>
+                                  ))}
+                                </View>
+                              </ScrollView>
+                            ) : null}
+                            <View style={styles.addActions}>
+                              <Pressable
+                                style={[styles.addSaveBtn, addingTask && { opacity: 0.6 }]}
+                                disabled={addingTask}
+                                onPress={() => void submitAddTask(
+                                  group.key,
+                                  group.label,
+                                  stageMeta?.bucket_slug,
+                                )}
+                              >
+                                <Text style={styles.addSaveTxt}>{addingTask ? 'Đang lưu…' : 'Thêm'}</Text>
+                              </Pressable>
+                              <Pressable
+                                style={styles.addCancelBtn}
+                                onPress={() => {
+                                  setShowAddStageId(null);
+                                  setNewTaskTitle('');
+                                }}
+                              >
+                                <Text style={styles.addCancelTxt}>Hủy</Text>
+                              </Pressable>
+                            </View>
+                          </View>
+                        ) : group.key !== '_other' ? (
+                          <Pressable
+                            style={styles.addTaskBtn}
+                            onPress={() => {
+                              setShowAddStageId(group.key);
+                              setNewTaskTitle('');
+                              setExpandedStages((p) => ({ ...p, [group.key]: true }));
+                            }}
+                          >
+                            <Ionicons name="add" size={14} color={colors.primary} />
+                            <Text style={styles.addTaskBtnTxt}>Thêm việc</Text>
+                          </Pressable>
+                        ) : null}
+                      </View>
+                    ) : null}
                   </View>
-                  {group.tasks.map((task) => (
-                      <ProjectCrmTaskRow
-                        key={task.id}
-                        task={task}
-                        dealId={dealId}
-                        projectCompanyId={project?.company_id || project?.company?.id || null}
-                        onUpdated={onTaskUpdated}
-                        onDeleted={onTaskDeleted}
-                      />
-                    ))}
-                </View>
-              );
-            }) : (
-              <Text style={styles.empty}>Chưa có nhiệm vụ VC — đồng bộ từ web khi deal có bộ mẫu vận chuyển lắp đặt.</Text>
-            )
+                );
+              }) : (
+                <Text style={styles.empty}>
+                  Chưa có cột pipeline VC — kiểm tra cấu hình giai đoạn trên web.
+                </Text>
+              )}
+            </>
           )}
 
           {tab === 'info' && project && (

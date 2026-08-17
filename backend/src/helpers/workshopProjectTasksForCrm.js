@@ -128,7 +128,139 @@ async function loadWorkshopLogisticsTasksForCrmLead(leadId, projectId) {
   return logistics.map((t) => mapWorkshopProjectTaskToCrmTask(t, leadId, project));
 }
 
+/**
+ * Nhiệm vụ workshop logistics cho GET /crm/tasks/overview (inbox VC).
+ * Gắn lead từ crm_leads.project_id; lọc theo công ty / assignee giống overview.
+ */
+async function loadWorkshopLogisticsTasksForOverview(opts = {}) {
+  const {
+    companyId = null,
+    assigneeId = null,
+    status = null,
+    userId = null,
+    companyWide = false,
+  } = opts;
+
+  // Dự án đã vào module VC: có logistics_company_id hoặc vc_kanban_column_id
+  // (khớp listWorkshopPickerProjectIds logistics — không lấy deal CRM thuần).
+  let projQ = supabase
+    .from('projects')
+    .select('id, code, name, company_id, logistics_company_id, vc_kanban_column_id')
+    .or('logistics_company_id.not.is.null,vc_kanban_column_id.not.is.null')
+    .is('vc_deleted_at', null)
+    .limit(800);
+  if (companyId) {
+    projQ = projQ.or(`logistics_company_id.eq.${companyId},company_id.eq.${companyId}`);
+  }
+  let { data: projects, error: projErr } = await projQ;
+  if (projErr && /vc_deleted_at/i.test(String(projErr.message || ''))) {
+    let q2 = supabase
+      .from('projects')
+      .select('id, code, name, company_id, logistics_company_id, vc_kanban_column_id')
+      .or('logistics_company_id.not.is.null,vc_kanban_column_id.not.is.null')
+      .limit(800);
+    if (companyId) q2 = q2.or(`logistics_company_id.eq.${companyId},company_id.eq.${companyId}`);
+    ({ data: projects, error: projErr } = await q2);
+  }
+  if (projErr && /vc_kanban_column_id/i.test(String(projErr.message || ''))) {
+    let q3 = supabase
+      .from('projects')
+      .select('id, code, name, company_id, logistics_company_id')
+      .not('logistics_company_id', 'is', null)
+      .limit(800);
+    if (companyId) q3 = q3.or(`logistics_company_id.eq.${companyId},company_id.eq.${companyId}`);
+    ({ data: projects, error: projErr } = await q3);
+  }
+  if (projErr) {
+    console.warn('[workshopOverview] projects:', projErr.message);
+    return [];
+  }
+  const projectList = projects || [];
+  if (!projectList.length) return [];
+  const projectIds = projectList.map((p) => p.id).filter(Boolean);
+  const projectById = new Map(projectList.map((p) => [String(p.id), p]));
+
+  // Deal CRM gắn project
+  const { data: leads, error: leadErr } = await supabase
+    .from('crm_leads')
+    .select('id, title, code, type, project_id, customer:customers(id, full_name)')
+    .in('project_id', projectIds.slice(0, 400));
+  if (leadErr) {
+    console.warn('[workshopOverview] leads:', leadErr.message);
+    return [];
+  }
+  const leadByProject = new Map();
+  for (const L of leads || []) {
+    const pid = L.project_id ? String(L.project_id) : '';
+    if (!pid || leadByProject.has(pid)) continue;
+    leadByProject.set(pid, L);
+  }
+
+  const TASK_SELECT = `
+    id, title, description, status, priority, due_date, order_index, assignee_id, project_id, blocks_stage_advance, file_note_recorded, metadata, created_at,
+    assignee:users!tasks_assignee_id_fkey(id, full_name, avatar),
+    stage:workflow_stages(id, name, slug)
+  `;
+  let taskQ = supabase
+    .from('tasks')
+    .select(TASK_SELECT)
+    .in('project_id', projectIds.slice(0, 400))
+    .order('due_date', { ascending: true, nullsFirst: false })
+    .limit(2000);
+  if (assigneeId) taskQ = taskQ.eq('assignee_id', assigneeId);
+  else if (!companyWide && userId) taskQ = taskQ.eq('assignee_id', userId);
+
+  let { data: taskRows, error: taskErr } = await taskQ;
+  if (taskErr && /file_note_recorded/i.test(String(taskErr.message || ''))) {
+    let q2 = supabase
+      .from('tasks')
+      .select(`
+        id, title, description, status, priority, due_date, order_index, assignee_id, project_id, blocks_stage_advance, metadata, created_at,
+        assignee:users!tasks_assignee_id_fkey(id, full_name, avatar),
+        stage:workflow_stages(id, name, slug)
+      `)
+      .in('project_id', projectIds.slice(0, 400))
+      .order('due_date', { ascending: true, nullsFirst: false })
+      .limit(2000);
+    if (assigneeId) q2 = q2.eq('assignee_id', assigneeId);
+    else if (!companyWide && userId) q2 = q2.eq('assignee_id', userId);
+    ({ data: taskRows, error: taskErr } = await q2);
+  }
+  if (taskErr) {
+    console.warn('[workshopOverview] tasks:', taskErr.message);
+    return [];
+  }
+
+  const out = [];
+  for (const t of taskRows || []) {
+    const meta = t.metadata && typeof t.metadata === 'object' ? t.metadata : {};
+    if (meta.workshop_area !== 'logistics') continue;
+    if (status) {
+      const want = String(status).toLowerCase();
+      const raw = String(t.status || '').toLowerCase();
+      const mapped = raw === 'done' ? 'completed' : raw === 'todo' ? 'pending' : raw;
+      if (mapped !== want && raw !== want) continue;
+    }
+    const pid = t.project_id ? String(t.project_id) : '';
+    const lead = leadByProject.get(pid);
+    if (!lead?.id) continue;
+    const mapped = mapWorkshopProjectTaskToCrmTask(t, lead.id, projectById.get(pid) || {});
+    mapped.lead = {
+      id: lead.id,
+      title: lead.title,
+      code: lead.code,
+      type: lead.type,
+      project_id: lead.project_id,
+      customer: lead.customer || null,
+    };
+    mapped.lead_id = lead.id;
+    out.push(mapped);
+  }
+  return out;
+}
+
 module.exports = {
   loadWorkshopLogisticsTasksForCrmLead,
+  loadWorkshopLogisticsTasksForOverview,
   mapWorkshopProjectTaskToCrmTask,
 };

@@ -1,13 +1,14 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation } from '@react-navigation/native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
+  Pressable,
   RefreshControl,
-  ScrollView,
-  SectionList,
   StyleSheet,
   Text,
   View,
@@ -15,824 +16,562 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatApiError } from '../api/client';
 import Avatar from '../components/Avatar';
-import CommentNotificationsModal from '../components/CommentNotificationsModal';
+import AssignWorkModal from '../components/AssignWorkModal';
+import AssignmentDetailModal from '../components/AssignmentDetailModal';
+import FilterPickerModal, { type FilterOption } from '../components/FilterPickerModal';
 import TapHighlight from '../components/TapHighlight';
+import WorkFilterModal, {
+  EMPTY_WORK_FILTERS,
+  type WorkBoardFilters,
+} from '../components/WorkFilterModal';
+import WorkProjectTasksPanel from '../components/WorkProjectTasksPanel';
 import { useAuth } from '../context/AuthContext';
-import { useNotifications } from '../context/NotificationContext';
 import { useTheme } from '../context/ThemeContext';
 import { useProductionRealtime } from '../hooks/useProductionRealtime';
 import type { MainTabParamList } from '../navigation/MainTabs';
 import { useRootNavigation } from '../navigation/useRootNavigation';
-import { ensureNotificationPermission } from '../lib/pushRegistration';
-import { formatVnWeekdayDate } from '../lib/vcBoardKpis';
-import { Radii, Spacing, colorWithAlpha } from '../theme';
+import { fetchCompanies, type CompanyOption } from '../lib/logisticsApi';
 import {
-  type DealTaskSection,
-  type WorkTask,
-  type WorkTaskCounts,
-  WORK_TASKS_PAGE_SIZE,
-  fetchLogisticsWorkTasksPage,
-  groupTasksByDeal,
+  PRIORITY_LABEL,
+  STATUS_STAGE_LABEL,
+  assignmentDealLabel,
+  companyShortLabel,
+  fetchLogisticsAssignments,
+  fetchPrivateDealInbox,
+  updateCrmAssignment,
+  type CrmAssignment,
+  type SharedInboxGroup,
+  type SharedInboxTask,
+} from '../lib/sharedWorkspaceApi';
+import {
   isTaskDone,
   isTaskInProgress,
   isTaskPending,
-  nextTaskStatus,
   statusPillLabel,
-  updateWorkTaskStatus,
 } from '../lib/workTasksApi';
-import {
-  STATUS_STAGE_LABEL,
-  fetchPrivateDealInboxTasks,
-  fetchLogisticsAssignments,
-  updateCrmAssignment,
-  type SharedInboxTask,
-  type CrmAssignment,
-} from '../lib/sharedWorkspaceApi';
-import AssignWorkModal from '../components/AssignWorkModal';
+import { formatVnWeekdayDate } from '../lib/vcBoardKpis';
+import { Radii, Spacing, colorWithAlpha, type AppColors } from '../theme';
+
+/** Khớp web CRMAssignmentsPage: admin | manager | sales_admin */
+function isAssignmentsAdmin(role?: string | null): boolean {
+  return ['admin', 'manager', 'sales_admin'].includes(String(role || '').toLowerCase());
+}
+
+const LS_COMPANY = 'vc_assignments_company_id';
+const LS_ASSIGNEE_MINE = 'vc_assignments_assignee_mine';
 
 function firstName(full: string): string {
   const parts = full.trim().split(/\s+/).filter(Boolean);
   return parts[parts.length - 1] || full || 'bạn';
 }
 
-type StatusFilter = 'all' | 'pending' | 'in_progress' | 'completed';
-type WorkMode = 'mine' | 'all' | 'shared';
+type PageTab = 'tasks' | 'assignments' | 'shared';
 
-const WORK_MODES: { key: WorkMode; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
-  { key: 'mine', label: 'Của tôi', icon: 'person-outline' },
-  { key: 'all', label: 'Tất cả', icon: 'grid-outline' },
+const PAGE_TABS: { key: PageTab; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
+  { key: 'tasks', label: 'Nhiệm vụ', icon: 'checkbox-outline' },
+  { key: 'assignments', label: 'Giao việc', icon: 'clipboard-outline' },
   { key: 'shared', label: 'KG chung', icon: 'people-outline' },
 ];
 
-const FILTER_CHIPS: { key: StatusFilter; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
-  { key: 'all', label: 'Tất cả', icon: 'list-outline' },
-  { key: 'pending', label: 'Chưa làm', icon: 'time-outline' },
-  { key: 'in_progress', label: 'Đang làm', icon: 'play-outline' },
-  { key: 'completed', label: 'Hoàn thành', icon: 'checkmark-circle-outline' },
-];
-
-function filterTasks(tasks: WorkTask[], filter: StatusFilter): WorkTask[] {
-  if (filter === 'pending') return tasks.filter((t) => isTaskPending(t.status));
-  if (filter === 'in_progress') return tasks.filter((t) => isTaskInProgress(t.status));
-  if (filter === 'completed') return tasks.filter((t) => isTaskDone(t.status));
-  return tasks;
+function pageTabTitle(tab: PageTab): string {
+  if (tab === 'tasks') return 'Nhiệm vụ';
+  if (tab === 'shared') return 'KG chung';
+  return 'Giao việc';
 }
 
-function filterInboxTasks(tasks: SharedInboxTask[], filter: StatusFilter): SharedInboxTask[] {
-  if (filter === 'pending') return tasks.filter((t) => isTaskPending(String(t.status || '')));
-  if (filter === 'in_progress') return tasks.filter((t) => isTaskInProgress(String(t.status || '')));
-  if (filter === 'completed') return tasks.filter((t) => isTaskDone(String(t.status || '')));
-  return tasks;
+function countActiveFilters(f: WorkBoardFilters): number {
+  let n = 0;
+  if (f.status) n += 1;
+  if (f.priority) n += 1;
+  if (f.q.trim()) n += 1;
+  return n;
 }
 
-function groupInboxByDeal(tasks: SharedInboxTask[]) {
-  const map = new Map<string, {
-    leadId: string;
-    projectId: string | null;
-    code: string;
-    title: string;
-    tasks: SharedInboxTask[];
-  }>();
-  for (const t of tasks) {
-    const leadId = String(t.lead_id || t.lead?.id || '');
-    if (!leadId) continue;
-    const existing = map.get(leadId);
-    if (existing) {
-      existing.tasks.push(t);
-      continue;
-    }
-    map.set(leadId, {
-      leadId,
-      projectId: t.lead?.project_id ? String(t.lead.project_id) : null,
-      code: String(t.lead?.code || t.lead?.project_code || 'Deal'),
-      title: String(t.lead?.title || t.lead?.project_name || ''),
-      tasks: [t],
-    });
-  }
-  return Array.from(map.values());
+function matchAssignment(a: CrmAssignment, f: WorkBoardFilters): boolean {
+  if (f.status && String(a.status || 'pending') !== f.status) return false;
+  if (f.priority && String(a.priority || '') !== f.priority) return false;
+  const q = f.q.trim().toLowerCase();
+  if (!q) return true;
+  const hay = [
+    a.title,
+    a.description,
+    assignmentDealLabel(a.lead),
+    a.assignee?.full_name,
+    ...(a.assignees || []).map((u) => u.full_name),
+    a.created_by?.full_name,
+    companyShortLabel(a.company),
+    companyShortLabel(a.executor_company),
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+  return hay.includes(q);
 }
 
-function dotColor(status: string, colors: ReturnType<typeof useTheme>['colors']): string {
-  if (isTaskDone(status)) return colors.success;
-  if (isTaskInProgress(status)) return colors.primary;
-  return colors.warning;
+function matchInboxTask(t: SharedInboxTask, f: WorkBoardFilters): boolean {
+  if (f.status && String(t.status || 'pending') !== f.status) return false;
+  if (f.priority && String(t.priority || '') !== f.priority) return false;
+  const q = f.q.trim().toLowerCase();
+  if (!q) return true;
+  const hay = [
+    t.title,
+    assignmentDealLabel(t.lead),
+    t.assignee?.full_name,
+    t.owner_company_name,
+    t.executor_company_name,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+  return hay.includes(q);
 }
 
-function dealAccentColor(index: number, colors: ReturnType<typeof useTheme>['colors']): string {
-  const palette = [colors.primary, '#8B5CF6', '#14B8A6', '#F59E0B', '#EC4899'];
-  return palette[index % palette.length];
+function priorityTone(priority: string | null | undefined, colors: AppColors): string {
+  const p = String(priority || '').toLowerCase();
+  if (p === 'urgent' || p === 'high') return colors.danger;
+  if (p === 'medium') return colors.warning;
+  return colors.textMuted;
+}
+
+function isOverdue(deadline?: string | null, status?: string | null): boolean {
+  if (!deadline || isTaskDone(String(status || ''))) return false;
+  const d = new Date(deadline);
+  if (Number.isNaN(d.getTime())) return false;
+  return d.getTime() < Date.now();
 }
 
 export default function WorkScreen() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
-  const { unreadCount, refreshUnread } = useNotifications();
   const { openProjectDetail } = useRootNavigation();
   const tabNav = useNavigation<BottomTabNavigationProp<MainTabParamList>>();
   const userId = user?.id || user?.userId || '';
   const userName = user?.full_name || user?.fullName || 'Bạn';
   const greetName = firstName(userName);
+  const ownCompanyId = user?.company_id ? String(user.company_id) : '';
+  const assignAdmin = isAssignmentsAdmin(user?.role);
 
-  const [tasks, setTasks] = useState<WorkTask[]>([]);
+  const [pageTab, setPageTab] = useState<PageTab>('tasks');
+  /** Admin: '' = tất cả công ty (khớp web). NV: luôn công ty mình (backend force). */
+  const [filterCompanyId, setFilterCompanyId] = useState('');
+  /** Admin: true = chỉ việc giao cho tôi; false = tất cả NV (mặc định web). NV: luôn true. */
+  const [assigneeMineOnly, setAssigneeMineOnly] = useState(!assignAdmin);
+  const [companies, setCompanies] = useState<CompanyOption[]>([]);
+  const [companyPickerOpen, setCompanyPickerOpen] = useState(false);
+  const [filtersReady, setFiltersReady] = useState(false);
   const [assignments, setAssignments] = useState<CrmAssignment[]>([]);
-  const [sharedTasks, setSharedTasks] = useState<SharedInboxTask[]>([]);
-  const [mineCounts, setMineCounts] = useState<WorkTaskCounts | null>(null);
-  const [allCounts, setAllCounts] = useState<WorkTaskCounts | null>(null);
-  const [hasMoreMine, setHasMoreMine] = useState(false);
-  const [hasMoreAll, setHasMoreAll] = useState(false);
-  const [loadingMore, setLoadingMore] = useState(false);
+  const [sharedGroups, setSharedGroups] = useState<SharedInboxGroup[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const loadingMoreRef = useRef(false);
-  const hasMoreMineRef = useRef(false);
-  const hasMoreAllRef = useRef(false);
-  const [workMode, setWorkMode] = useState<WorkMode>('mine');
-  const [filter, setFilter] = useState<StatusFilter>('all');
   const [updatingId, setUpdatingId] = useState<string | null>(null);
-  const [notifOpen, setNotifOpen] = useState(false);
   const [assignOpen, setAssignOpen] = useState(false);
-  const companyId = user?.company_id ? String(user.company_id) : '';
+  const [assignShared, setAssignShared] = useState(false);
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [filters, setFilters] = useState<WorkBoardFilters>({ ...EMPTY_WORK_FILTERS });
 
-  const openNotifs = useCallback(async () => {
-    void ensureNotificationPermission();
-    setNotifOpen(true);
-    void refreshUnread();
-  }, [refreshUnread]);
+  const styles = useMemo(() => makeStyles(colors, insets.bottom), [colors, insets.bottom]);
 
-  hasMoreMineRef.current = hasMoreMine;
-  hasMoreAllRef.current = hasMoreAll;
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        if (assignAdmin) {
+          const [savedCo, savedMine, list] = await Promise.all([
+            AsyncStorage.getItem(LS_COMPANY),
+            AsyncStorage.getItem(LS_ASSIGNEE_MINE),
+            fetchCompanies().catch(() => [] as CompanyOption[]),
+          ]);
+          if (cancelled) return;
+          setCompanies(list);
+          const co = String(savedCo || '').trim();
+          if (co && list.some((c) => String(c.id) === co)) setFilterCompanyId(co);
+          else setFilterCompanyId('');
+          // Admin mặc định xem tất cả NV (như web filterAssignee='').
+          setAssigneeMineOnly(savedMine === '1');
+        } else {
+          setFilterCompanyId(ownCompanyId);
+          setAssigneeMineOnly(true);
+          if (ownCompanyId) {
+            const list = await fetchCompanies().catch(() => [] as CompanyOption[]);
+            if (!cancelled) setCompanies(list);
+          }
+        }
+      } finally {
+        if (!cancelled) setFiltersReady(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [assignAdmin, ownCompanyId]);
 
-  const tasksLenRef = useRef(0);
-  tasksLenRef.current = tasks.length;
+  useEffect(() => {
+    if (!assignAdmin || !filtersReady) return;
+    void AsyncStorage.setItem(LS_COMPANY, filterCompanyId || '');
+  }, [assignAdmin, filterCompanyId, filtersReady]);
 
+  useEffect(() => {
+    if (!assignAdmin || !filtersReady) return;
+    void AsyncStorage.setItem(LS_ASSIGNEE_MINE, assigneeMineOnly ? '1' : '0');
+  }, [assignAdmin, assigneeMineOnly, filtersReady]);
+
+  /** Khớp web load(): company_id chỉ khi admin chọn; assignee_id bắt buộc với NV. */
   const load = useCallback(async () => {
-    if (!userId) {
-      setTasks([]);
-      setAssignments([]);
-      setSharedTasks([]);
-      setMineCounts(null);
-      setAllCounts(null);
-      setHasMoreMine(false);
-      setHasMoreAll(false);
-      setLoading(false);
+    if (!userId || !filtersReady) {
+      if (!userId) {
+        setAssignments([]);
+        setSharedGroups([]);
+        setLoading(false);
+      }
       return;
     }
     setError(null);
     try {
-      const pipelineMode = workMode === 'all' ? 'all' : 'mine';
-      const assigneeId = pipelineMode === 'mine' ? userId : null;
-      const [page, assigns, shared] = await Promise.all([
-        workMode === 'shared'
-          ? Promise.resolve({
-              tasks: [] as WorkTask[],
-              hasMore: false,
-              total: null,
-              counts: null as WorkTaskCounts | null,
-            })
-          : fetchLogisticsWorkTasksPage({
-              assigneeId,
-              companyId: companyId || undefined,
-              limit: WORK_TASKS_PAGE_SIZE,
-              offset: 0,
-            }),
-        workMode === 'shared'
-          ? Promise.resolve([] as CrmAssignment[])
-          : fetchLogisticsAssignments({
-              companyId: companyId || undefined,
-              assigneeId: pipelineMode === 'mine' ? userId : undefined,
-              limit: 100,
-            }).catch(() => [] as CrmAssignment[]),
-        fetchPrivateDealInboxTasks('logistics').catch(() => [] as SharedInboxTask[]),
+      const companyParam = assignAdmin
+        ? (filterCompanyId || undefined)
+        : undefined;
+      const assigneeParam = (!assignAdmin || assigneeMineOnly)
+        ? userId
+        : undefined;
+
+      const [list, inbox] = await Promise.all([
+        fetchLogisticsAssignments({
+          companyId: companyParam,
+          assigneeId: assigneeParam,
+          status: filters.status || undefined,
+          priority: filters.priority || undefined,
+          q: filters.q || undefined,
+          limit: 200,
+        }),
+        fetchPrivateDealInbox('logistics'),
       ]);
-      if (workMode !== 'shared') {
-        setTasks(page.tasks);
-        setAssignments(assigns);
-        if (pipelineMode === 'all') {
-          setHasMoreAll(page.hasMore);
-          setAllCounts(page.counts);
-        } else {
-          setHasMoreMine(page.hasMore);
-          setMineCounts(page.counts);
-        }
-      }
-      setSharedTasks(shared);
+      setAssignments(list);
+      setSharedGroups(inbox.groups);
     } catch (e) {
       setError(formatApiError(e));
-      setTasks([]);
       setAssignments([]);
-      setSharedTasks([]);
+      setSharedGroups([]);
     } finally {
       setLoading(false);
     }
-  }, [userId, companyId, workMode]);
+  }, [
+    userId,
+    filtersReady,
+    assignAdmin,
+    filterCompanyId,
+    assigneeMineOnly,
+    filters.status,
+    filters.priority,
+    filters.q,
+  ]);
 
-  const loadMoreMine = useCallback(async () => {
-    if (!userId || loadingMoreRef.current || workMode === 'shared') return;
-    const hasMore = workMode === 'all' ? hasMoreAllRef.current : hasMoreMineRef.current;
-    if (!hasMore) return;
-    loadingMoreRef.current = true;
-    setLoadingMore(true);
-    try {
-      const page = await fetchLogisticsWorkTasksPage({
-        assigneeId: workMode === 'all' ? null : userId,
-        companyId: companyId || undefined,
-        limit: WORK_TASKS_PAGE_SIZE,
-        offset: tasksLenRef.current,
-      });
-      let appended = 0;
-      setTasks((prev) => {
-        const seen = new Set(prev.map((t) => `${t.lead_id}:${t.id}`));
-        const extra = page.tasks.filter((t) => !seen.has(`${t.lead_id}:${t.id}`));
-        appended = extra.length;
-        return extra.length ? [...prev, ...extra] : prev;
-      });
-      if (workMode === 'all') {
-        setHasMoreAll(appended > 0 && page.hasMore);
-        if (page.counts) setAllCounts(page.counts);
-      } else {
-        setHasMoreMine(appended > 0 && page.hasMore);
-        if (page.counts) setMineCounts(page.counts);
-      }
-    } catch {
-      /* giữ trang đã tải */
-    } finally {
-      loadingMoreRef.current = false;
-      setLoadingMore(false);
-    }
-  }, [userId, companyId, workMode]);
+  useEffect(() => {
+    if (!filtersReady) return;
+    setLoading(true);
+    void load();
+  }, [load, filtersReady]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
       await load();
-      setError(null);
-      void refreshUnread();
-    } catch (e) {
-      setError(formatApiError(e));
     } finally {
       setRefreshing(false);
     }
-  }, [load, refreshUnread]);
-
-  useEffect(() => {
-    setLoading(true);
-    void load();
   }, [load]);
 
-  const reloadSilent = useCallback(async () => {
-    if (!userId) return;
-    try {
-      await load();
-    } catch {
-      /* giữ list cũ */
-    }
-  }, [userId, load]);
-
   useProductionRealtime({
-    onRefresh: reloadSilent,
-    enabled: Boolean(userId),
+    onRefresh: () => void load(),
+    enabled: Boolean(userId) && filtersReady,
     modes: ['task'],
   });
 
-  useEffect(() => {
-    if (workMode === 'shared' || filter === 'all') return;
-    const hasMore = workMode === 'all' ? hasMoreAll : hasMoreMine;
-    if (!hasMore || loadingMore) return;
-    const visible = filterTasks(tasks, filter);
-    if (visible.length < 12) void loadMoreMine();
-  }, [workMode, filter, tasks, hasMoreMine, hasMoreAll, loadingMore, loadMoreMine]);
+  const companyOptions: FilterOption[] = useMemo(() => {
+    const opts: FilterOption[] = [{ id: '', label: 'Tất cả công ty' }];
+    for (const c of companies) {
+      opts.push({ id: String(c.id), label: c.name || String(c.id) });
+    }
+    return opts;
+  }, [companies]);
 
-  const activeTasks = workMode === 'shared'
-    ? sharedTasks.map((t) => ({ id: String(t.id), status: String(t.status || 'pending') }))
-    : [
-        ...tasks.map((t) => ({ id: t.id, status: t.status })),
-        ...assignments.map((a) => ({ id: String(a.id), status: String(a.status || 'pending') })),
-      ];
+  const selectedCompanyLabel = useMemo(() => {
+    if (!filterCompanyId) return 'Tất cả công ty';
+    return companyOptions.find((o) => o.id === filterCompanyId)?.label
+      || companies.find((c) => String(c.id) === filterCompanyId)?.name
+      || 'Công ty';
+  }, [filterCompanyId, companyOptions, companies]);
+
+  /** companyId khi tạo giao việc — ưu tiên filter đang chọn. */
+  const createCompanyId = filterCompanyId || ownCompanyId || null;
+
+  const visibleAssignments = useMemo(
+    () => assignments.filter((a) => matchAssignment(a, filters)),
+    [assignments, filters],
+  );
+
+  const visibleSharedGroups = useMemo(() => {
+    const q = filters.q.trim().toLowerCase();
+    return sharedGroups
+      .map((g) => {
+        const dealHay = [
+          g.lead?.code,
+          g.lead?.title,
+          g.lead?.project_code,
+          g.lead?.project_name,
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+        const dealMatch = !q || dealHay.includes(q);
+        const tasks = (g.tasks || []).filter((t) => {
+          if (!matchInboxTask(t, { ...filters, q: dealMatch ? '' : filters.q })) return false;
+          return true;
+        });
+        if (!tasks.length) return null;
+        return { ...g, tasks };
+      })
+      .filter(Boolean) as SharedInboxGroup[];
+  }, [sharedGroups, filters]);
+
+  const flatShared = useMemo(
+    () => visibleSharedGroups.flatMap((g) => g.tasks || []),
+    [visibleSharedGroups],
+  );
 
   const stats = useMemo(() => {
-    if (workMode === 'mine' && mineCounts) {
-      const ap = assignments.filter((a) => isTaskPending(String(a.status || ''))).length;
-      const ai = assignments.filter((a) => isTaskInProgress(String(a.status || ''))).length;
-      const ad = assignments.filter((a) => isTaskDone(String(a.status || ''))).length;
-      return {
-        pending: (mineCounts.pending || 0) + ap,
-        inProgress: (mineCounts.inProgress || 0) + ai,
-        done: (mineCounts.done || 0) + ad,
-      };
-    }
-    if (workMode === 'all' && allCounts) {
-      const ap = assignments.filter((a) => isTaskPending(String(a.status || ''))).length;
-      const ai = assignments.filter((a) => isTaskInProgress(String(a.status || ''))).length;
-      const ad = assignments.filter((a) => isTaskDone(String(a.status || ''))).length;
-      return {
-        pending: (allCounts.pending || 0) + ap,
-        inProgress: (allCounts.inProgress || 0) + ai,
-        done: (allCounts.done || 0) + ad,
-      };
-    }
+    const rows =
+      pageTab === 'shared'
+        ? flatShared.map((t) => ({
+          status: String(t.status || 'pending'),
+          deadline: t.deadline,
+        }))
+        : visibleAssignments.map((a) => ({
+          status: String(a.status || 'pending'),
+          deadline: a.deadline,
+        }));
     return {
-      pending: activeTasks.filter((t) => isTaskPending(t.status)).length,
-      inProgress: activeTasks.filter((t) => isTaskInProgress(t.status)).length,
-      done: activeTasks.filter((t) => isTaskDone(t.status)).length,
+      pending: rows.filter((r) => isTaskPending(r.status)).length,
+      inProgress: rows.filter((r) => isTaskInProgress(r.status)).length,
+      done: rows.filter((r) => isTaskDone(r.status)).length,
+      overdue: rows.filter((r) => isOverdue(r.deadline, r.status)).length,
     };
-  }, [activeTasks, mineCounts, allCounts, workMode, assignments]);
+  }, [pageTab, visibleAssignments, flatShared]);
 
-  const filteredAssignments = useMemo(() => {
-    if (workMode === 'shared') return [];
-    return assignments.filter((a) => {
-      const st = String(a.status || 'pending');
-      if (filter === 'pending') return isTaskPending(st);
-      if (filter === 'in_progress') return isTaskInProgress(st);
-      if (filter === 'completed') return isTaskDone(st);
-      return true;
-    });
-  }, [assignments, filter, workMode]);
+  const [detailItem, setDetailItem] = useState<CrmAssignment | null>(null);
+  const [detailId, setDetailId] = useState<string | null>(null);
 
-  const sections = useMemo(() => {
-    if (workMode === 'shared') return [];
-    const grouped = groupTasksByDeal(tasks);
-    return grouped
-      .map((section, index) => {
-        const filtered = filterTasks(section.tasks, filter);
-        return {
-          ...section,
-          sectionIndex: index,
-          data: filtered.length ? [{ tasks: filtered }] : [],
-        };
-      })
-      .filter((section) => section.data.length > 0);
-  }, [tasks, filter, workMode]);
-  const sharedSections = useMemo(() => {
-    if (workMode !== 'shared') return [];
-    const filtered = filterInboxTasks(sharedTasks, filter);
-    return groupInboxByDeal(filtered).map((section, index) => ({
-      ...section,
-      sectionIndex: index,
-    }));
-  }, [sharedTasks, filter, workMode]);
-
-  const sharedCount = sharedTasks.length;
-
-  const toggleStatus = async (task: WorkTask) => {
-    if (updatingId) return;
-    setUpdatingId(task.id);
-    try {
-      const next = nextTaskStatus(task.status);
-      const updated = await updateWorkTaskStatus(task.lead_id, task.id, next);
-      setTasks((prev) =>
-        prev.map((t) =>
-          t.id === task.id && t.lead_id === task.lead_id
-            ? { ...t, status: updated.status, title: updated.title }
-            : t,
-        ),
-      );
-      setError(null);
-    } catch (e) {
-      setError(formatApiError(e));
-    } finally {
-      setUpdatingId(null);
-    }
+  const openAssignmentDetail = (a: CrmAssignment) => {
+    setDetailItem(a);
+    setDetailId(String(a.id));
   };
 
-  const toggleAssignmentStatus = async (a: CrmAssignment) => {
-    if (updatingId) return;
+  const applyStatus = async (a: CrmAssignment, next: string) => {
     const id = String(a.id);
-    setUpdatingId(`asg-${id}`);
+    if (updatingId || String(a.status || 'pending') === next) return;
+    setUpdatingId(id);
     try {
-      const next = nextTaskStatus(String(a.status || 'pending'));
       const updated = await updateCrmAssignment(id, { status: next });
       setAssignments((prev) =>
-        prev.map((row) => (String(row.id) === id ? { ...row, status: updated.status || next } : row)),
+        prev.map((row) => (String(row.id) === id ? { ...row, ...updated, status: updated.status || next } : row)),
       );
-      setError(null);
     } catch (e) {
-      setError(formatApiError(e));
+      Alert.alert('Lỗi', formatApiError(e));
     } finally {
       setUpdatingId(null);
     }
   };
 
-  const styles = useMemo(
-    () =>
-      StyleSheet.create({
-        container: { flex: 1, backgroundColor: colors.bg },
-        center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bg },
-        header: {
-          paddingHorizontal: Spacing.lg,
-          paddingTop: Spacing.md,
-          paddingBottom: Spacing.sm,
-        },
-        headerRow: {
-          flexDirection: 'row',
-          alignItems: 'flex-start',
-          justifyContent: 'space-between',
-          gap: 12,
-        },
-        headerLeft: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12, minWidth: 0 },
-        headerTextWrap: { flex: 1, minWidth: 0 },
-        greetTitle: { color: colors.text, fontSize: 20, fontWeight: '800', letterSpacing: -0.2 },
-        greetDate: { color: colors.textMuted, fontSize: 13, fontWeight: '600', marginTop: 3 },
-        greetSub: { color: colors.textFaint, fontSize: 13, marginTop: 6, fontWeight: '500' },
-        iconBtn: {
-          width: 42,
-          height: 42,
-          borderRadius: 12,
-          borderWidth: 1,
-          borderColor: colors.border,
-          backgroundColor: colors.card,
-          alignItems: 'center',
-          justifyContent: 'center',
-        },
-        badge: {
-          position: 'absolute',
-          top: -4,
-          right: -6,
-          minWidth: 18,
-          height: 18,
-          borderRadius: 9,
-          backgroundColor: colors.danger,
-          alignItems: 'center',
-          justifyContent: 'center',
-          paddingHorizontal: 4,
-        },
-        badgeText: { color: '#fff', fontSize: 9, fontWeight: '800' },
-        sectionHead: {
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 8,
-          paddingHorizontal: Spacing.lg,
-          marginTop: Spacing.md,
-          marginBottom: 10,
-        },
-        sectionTitle: { color: colors.text, fontSize: 17, fontWeight: '800' },
-        modeRow: {
-          flexDirection: 'row',
-          gap: 8,
-          paddingHorizontal: Spacing.lg,
-          marginTop: Spacing.sm,
-          marginBottom: Spacing.md,
-        },
-        modeBtn: {
-          flex: 1,
-          flexDirection: 'row',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: 4,
-          paddingVertical: 10,
-          paddingHorizontal: 4,
-          borderRadius: Radii.md,
-          borderWidth: 1,
-          borderColor: colors.border,
-          backgroundColor: colors.card,
-          minWidth: 0,
-        },
-        modeBtnActive: {
-          borderColor: colors.primary,
-          backgroundColor: colors.primarySoft,
-        },
-        modeBtnText: { color: colors.textMuted, fontSize: 12, fontWeight: '700' },
-        modeBtnTextActive: { color: colors.primary },
-        modeBadge: {
-          minWidth: 18,
-          height: 18,
-          borderRadius: 9,
-          paddingHorizontal: 4,
-          backgroundColor: colorWithAlpha(colors.primary, 0.2),
-          alignItems: 'center',
-          justifyContent: 'center',
-        },
-        modeBadgeText: { color: colors.primary, fontSize: 10, fontWeight: '800' },
-        hintBox: {
-          marginHorizontal: Spacing.lg,
-          marginBottom: Spacing.sm,
-          paddingHorizontal: 12,
-          paddingVertical: 10,
-          borderRadius: Radii.md,
-          backgroundColor: colors.primarySoft,
-          borderWidth: 1,
-          borderColor: colorWithAlpha(colors.primary, 0.25),
-        },
-        hintText: { color: colors.textMuted, fontSize: 12, fontWeight: '600', lineHeight: 17 },
-        statsRow: {
-          flexDirection: 'row',
-          gap: 10,
-          paddingHorizontal: Spacing.lg,
-          marginBottom: Spacing.md,
-        },
-        statCard: {
-          flex: 1,
-          backgroundColor: colors.card,
-          borderRadius: Radii.lg,
-          borderWidth: 1,
-          borderColor: colors.border,
-          paddingVertical: 14,
-          alignItems: 'center',
-        },
-        statCardActive: {
-          borderWidth: 1.5,
-        },
-        statValue: { fontSize: 26, fontWeight: '800', lineHeight: 30 },
-        statLabel: { color: colors.textMuted, fontSize: 12, marginTop: 4, fontWeight: '600', textAlign: 'center' },
-        userName: { color: colors.textMuted, fontSize: 14, marginTop: 4, fontWeight: '600' },
-        chipsRow: {
-          flexDirection: 'row',
-          gap: 8,
-          paddingHorizontal: Spacing.lg,
-          paddingBottom: Spacing.md,
-        },
-        chip: {
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 6,
-          paddingHorizontal: 14,
-          paddingVertical: 9,
-          borderRadius: Radii.full,
-          borderWidth: 1.5,
-          borderColor: colors.border,
-          backgroundColor: colors.card,
-        },
-        chipActiveAll: { borderColor: colors.text, backgroundColor: colors.white },
-        chipActivePending: { borderColor: colors.warning, backgroundColor: colors.card },
-        chipActiveProgress: { borderColor: colors.primary, backgroundColor: colors.card },
-        chipActiveDone: { borderColor: colors.success, backgroundColor: colors.card },
-        chipText: { fontSize: 13, fontWeight: '700', color: colors.textMuted },
-        chipTextActiveAll: { color: '#0E1116' },
-        chipTextActivePending: { color: colors.warning },
-        chipTextActiveProgress: { color: colors.primary },
-        chipTextActiveDone: { color: colors.success },
-        errorBox: {
-          marginHorizontal: Spacing.lg,
-          marginBottom: Spacing.sm,
-          padding: 10,
-          borderRadius: Radii.md,
-          backgroundColor: colors.dangerSoft,
-          borderWidth: 1,
-          borderColor: colors.danger,
-        },
-        errorText: { color: colors.danger, fontSize: 12, fontWeight: '600' },
-        sectionWrap: {
-          marginHorizontal: Spacing.lg,
-          marginTop: Spacing.lg,
-          marginBottom: Spacing.xs,
-        },
-        sectionCard: {
-          backgroundColor: colors.card,
-          borderRadius: Radii.lg,
-          borderWidth: 1,
-          borderColor: colors.border,
-          paddingHorizontal: Spacing.md,
-          paddingVertical: Spacing.md,
-          overflow: 'hidden',
-        },
-        sectionAccent: {
-          position: 'absolute',
-          left: 0,
-          top: 0,
-          bottom: 0,
-          width: 5,
-        },
-        dealCodeRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
-        dealCode: {
-          flex: 1,
-          color: colors.text,
-          fontSize: 22,
-          fontWeight: '900',
-          letterSpacing: 0.5,
-        },
-        dealBadge: {
-          paddingHorizontal: 10,
-          paddingVertical: 4,
-          borderRadius: Radii.full,
-          backgroundColor: colorWithAlpha(colors.primary, 0.15),
-        },
-        dealBadgeText: { color: colors.primary, fontSize: 11, fontWeight: '800' },
-        dealTitle: {
-          color: colors.text,
-          fontSize: 16,
-          fontWeight: '700',
-          marginTop: 6,
-          lineHeight: 22,
-        },
-        dealMeta: { color: colors.textMuted, fontSize: 13, marginTop: 4, fontWeight: '600' },
-        taskBlock: {
-          marginHorizontal: Spacing.lg,
-          marginTop: Spacing.sm,
-          marginBottom: Spacing.md,
-          backgroundColor: colors.bgElevated,
-          borderRadius: Radii.lg,
-          borderWidth: 1,
-          borderColor: colors.border,
-          overflow: 'hidden',
-        },
-        taskRow: {
-          flexDirection: 'row',
-          alignItems: 'center',
-          paddingHorizontal: Spacing.md,
-          paddingVertical: 15,
-          borderBottomWidth: StyleSheet.hairlineWidth,
-          borderBottomColor: colors.border,
-          gap: 12,
-        },
-        taskRowLast: { borderBottomWidth: 0 },
-        dot: { width: 10, height: 10, borderRadius: 5 },
-        taskTitle: { flex: 1, color: colors.text, fontSize: 16, fontWeight: '600' },
-        taskTitleDone: { color: colors.textMuted, textDecorationLine: 'line-through' },
-        statusPill: {
-          paddingHorizontal: 14,
-          paddingVertical: 8,
-          borderRadius: Radii.full,
-          borderWidth: 1,
-          borderColor: colors.borderStrong,
-          minWidth: 92,
-          alignItems: 'center',
-        },
-        statusPillText: { color: colors.text, fontSize: 12, fontWeight: '700' },
-        empty: {
-          color: colors.textMuted,
-          textAlign: 'center',
-          fontSize: 14,
-          marginTop: 48,
-          paddingHorizontal: Spacing.xl,
-          lineHeight: 21,
-        },
-        listContent: { paddingBottom: insets.bottom + 88 },
-        assignBlock: {
-          marginHorizontal: Spacing.lg,
-          marginTop: 8,
-          marginBottom: 4,
-          gap: 8,
-        },
-        assignHead: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 },
-        assignHeadTxt: { color: colors.text, fontSize: 14, fontWeight: '800' },
-        assignCard: {
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 10,
-          padding: 12,
-          borderRadius: Radii.md,
-          borderWidth: 1,
-          borderColor: colors.border,
-          backgroundColor: colors.card,
-        },
-        assignMeta: { color: colors.textFaint, fontSize: 11, fontWeight: '600', marginTop: 2 },
-        fab: {
-          position: 'absolute',
-          right: 16,
-          bottom: insets.bottom + 16,
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 6,
-          paddingHorizontal: 16,
-          paddingVertical: 12,
-          borderRadius: 999,
-          backgroundColor: colors.primary,
-          shadowColor: colors.shadow,
-          shadowOpacity: 0.25,
-          shadowRadius: 8,
-          shadowOffset: { width: 0, height: 4 },
-          elevation: 4,
-        },
-        fabTxt: { color: '#fff', fontSize: 14, fontWeight: '800' },
-      }),
-    [colors, insets.bottom],
-  );
+  const quickStatusActions = (a: CrmAssignment) => {
+    const st = String(a.status || 'pending');
+    if (isTaskDone(st)) {
+      return [{ key: 'pending', label: 'Mở lại' }];
+    }
+    if (isTaskInProgress(st)) {
+      return [
+        { key: 'completed', label: 'Hoàn thành' },
+        { key: 'pending', label: 'Mở lại' },
+      ];
+    }
+    return [
+      { key: 'in_progress', label: 'Đang làm' },
+      { key: 'completed', label: 'Hoàn thành' },
+    ];
+  };
 
-  const renderSectionHeader = ({
-    section,
-  }: {
-    section: DealTaskSection & { data: { tasks: WorkTask[] }[]; sectionIndex: number };
-  }) => {
-    const accent = dealAccentColor(section.sectionIndex, colors);
-    const subtitle = section.customerName || section.title;
-    const taskCount = section.data[0]?.tasks.length ?? 0;
+  const openInboxDetail = (t: SharedInboxTask) => {
+    const asgId = t.crm_assignment_id != null
+      ? String(t.crm_assignment_id)
+      : (String(t.id).startsWith('asg_') ? String(t.id).slice(4) : '');
+    if (asgId && String(t.task_source_type || '') === 'crm_assignment') {
+      setDetailItem({
+        id: asgId,
+        title: t.title,
+        status: t.status,
+        priority: t.priority,
+        deadline: t.deadline,
+        lead_id: t.lead_id,
+        lead: t.lead,
+        assignee: t.assignee,
+        company: t.owner_company_name
+          ? { id: String(t.owner_company_id || ''), name: t.owner_company_name }
+          : null,
+        executor_company: t.executor_company_name
+          ? { id: String(t.executor_company_id || ''), name: t.executor_company_name }
+          : null,
+        assignment_module: t.assignment_module,
+        task_source_type: t.task_source_type,
+      });
+      setDetailId(asgId);
+      return;
+    }
+    const projectId = t.lead?.project_id ? String(t.lead.project_id) : '';
+    if (projectId) openProjectDetail(projectId, { initialTab: 'shared-workspace' });
+  };
+
+  const filterCount = countActiveFilters(filters);
+  const sharedCount = sharedGroups.reduce((n, g) => n + (g.tasks?.length || 0), 0);
+
+  const renderAssignment = ({ item: a }: { item: CrmAssignment }) => {
+    const st = String(a.status || 'pending');
+    const done = isTaskDone(st);
+    const overdue = isOverdue(a.deadline, st);
+    const assigneeName =
+      a.assignees?.map((u) => u.full_name).filter(Boolean).join(', ')
+      || a.assignee?.full_name
+      || '';
+    const dealLabel = assignmentDealLabel(a.lead);
+    const ownerCo = companyShortLabel(a.company);
+    const execCo = companyShortLabel(a.executor_company);
+    const crossCo = execCo && ownerCo && execCo !== ownerCo
+      ? `${ownerCo} → ${execCo}`
+      : execCo && execCo !== ownerCo
+        ? `Từ ${execCo}`
+        : ownerCo;
+    const pri = String(a.priority || 'medium');
+
     return (
-      <View style={styles.sectionWrap}>
-        <TapHighlight
-          onPress={() => {
-            if (section.projectId) openProjectDetail(section.projectId);
-          }}
-          disabled={!section.projectId}
-          pressStyle={{ opacity: 0.88 }}
-        >
-          <View style={styles.sectionCard}>
-            <View style={[styles.sectionAccent, { backgroundColor: accent }]} />
-            <View style={{ paddingLeft: 6 }}>
-              <View style={styles.dealCodeRow}>
-                <Text style={styles.dealCode} numberOfLines={1}>
-                  {section.code}
-                </Text>
-                <View style={[styles.dealBadge, { backgroundColor: colorWithAlpha(accent, 0.18) }]}>
-                  <Text style={[styles.dealBadgeText, { color: accent }]}>{taskCount} NV</Text>
-                </View>
+      <View style={[styles.card, overdue && styles.cardOverdue]}>
+        <TapHighlight onPress={() => openAssignmentDetail(a)}>
+          <View style={styles.cardTop}>
+            <View style={[styles.statusDot, {
+              backgroundColor: done ? colors.success : isTaskInProgress(st) ? colors.primary : colors.warning,
+            }]}
+            />
+            <Text style={[styles.cardTitle, done && styles.doneTxt]} numberOfLines={2}>
+              {a.title || 'Giao việc'}
+            </Text>
+            {overdue ? (
+              <View style={styles.overduePill}>
+                <Text style={styles.overduePillTxt}>Quá hạn</Text>
               </View>
-              {subtitle && subtitle !== section.code ? (
-                <Text style={styles.dealTitle} numberOfLines={2}>
-                  {subtitle}
+            ) : (
+              <View style={[styles.priPill, { borderColor: priorityTone(pri, colors) }]}>
+                <Text style={[styles.priTxt, { color: priorityTone(pri, colors) }]}>
+                  {PRIORITY_LABEL[pri] || pri}
                 </Text>
-              ) : null}
-              <Text style={styles.dealMeta} numberOfLines={1}>
-                {section.projectId ? 'Chạm để mở dự án · ' : ''}
-                Giao cho {userName}
-              </Text>
-            </View>
+              </View>
+            )}
           </View>
+
+          {dealLabel ? (
+            <Text style={styles.dealLine} numberOfLines={1}>{dealLabel}</Text>
+          ) : null}
+          {a.description ? (
+            <Text style={styles.desc} numberOfLines={2}>{a.description}</Text>
+          ) : null}
+
+          <View style={styles.metaRow}>
+            <View style={styles.statusPill}>
+              <Text style={styles.statusPillTxt}>{STATUS_STAGE_LABEL[st] || statusPillLabel(st)}</Text>
+            </View>
+            {a.deadline ? (
+              <Text style={[styles.metaTxt, overdue && { color: colors.danger }]} numberOfLines={1}>
+                Hạn {new Date(a.deadline).toLocaleString('vi-VN')}
+              </Text>
+            ) : null}
+          </View>
+
+          {assigneeName ? (
+            <Text style={styles.metaTxt} numberOfLines={1}>Người nhận: {assigneeName}</Text>
+          ) : null}
+          {a.created_by?.full_name ? (
+            <Text style={styles.metaTxt} numberOfLines={1}>Người giao: {a.created_by.full_name}</Text>
+          ) : null}
+          {crossCo ? (
+            <View style={styles.companyRow}>
+              <Ionicons name="business-outline" size={12} color={colors.primary} />
+              <Text style={styles.companyLine} numberOfLines={1}>{crossCo}</Text>
+            </View>
+          ) : null}
+          <Text style={[styles.tapHint, { marginLeft: 0, marginTop: 4 }]}>Nhấn để xem chi tiết</Text>
         </TapHighlight>
+
+        <View style={styles.quickRow}>
+          {quickStatusActions(a).map((act) => (
+            <Pressable
+              key={act.key}
+              style={styles.quickBtn}
+              onPress={() => void applyStatus(a, act.key)}
+              disabled={updatingId === String(a.id)}
+            >
+              {updatingId === String(a.id) ? (
+                <ActivityIndicator color={colors.primary} size="small" />
+              ) : (
+                <Text style={styles.quickBtnTxt}>{act.label}</Text>
+              )}
+            </Pressable>
+          ))}
+        </View>
       </View>
     );
   };
 
-  const renderItem = ({ item }: { item: { tasks: WorkTask[] } }) => (
-    <View style={styles.taskBlock}>
-      {item.tasks.map((task, index) => {
-        const done = isTaskDone(task.status);
-        const busy = updatingId === task.id;
-        const isLast = index === item.tasks.length - 1;
-        return (
-          <View key={task.id} style={[styles.taskRow, isLast && styles.taskRowLast]}>
-            <View style={[styles.dot, { backgroundColor: dotColor(task.status, colors) }]} />
-            <Text style={[styles.taskTitle, done && styles.taskTitleDone]} numberOfLines={2}>
-              {task.title}
-            </Text>
-            <TapHighlight
-              style={styles.statusPill}
-              onPress={() => void toggleStatus(task)}
-              disabled={busy}
-              pressStyle={{ opacity: 0.82 }}
-            >
-              {busy ? (
-                <ActivityIndicator size="small" color={colors.text} />
-              ) : (
-                <Text style={styles.statusPillText}>{statusPillLabel(task.status)}</Text>
-              )}
-            </TapHighlight>
-          </View>
-        );
-      })}
-    </View>
-  );
-
-  if (loading && !refreshing) {
-    return (
-      <View style={[styles.center, { paddingTop: insets.top }]}>
-        <ActivityIndicator size="large" color={colors.primary} />
-      </View>
-    );
-  }
-
   const listHeader = (
-    <>
-      <View style={[styles.header, { paddingTop: insets.top + Spacing.md }]}>
+    <View>
+      <View style={styles.header}>
         <View style={styles.headerRow}>
           <View style={styles.headerLeft}>
-            <TapHighlight
-              style={styles.iconBtn}
-              onPress={() => tabNav.navigate('Overview')}
-              hitSlop={8}
-              accessibilityLabel="Quay lại Tổng quan"
-            >
+            <TapHighlight style={styles.backBtn} onPress={() => tabNav.navigate('Overview')}>
               <Ionicons name="chevron-back" size={22} color={colors.text} />
             </TapHighlight>
             <Avatar name={userName} avatarUrl={user?.avatar} size={44} />
             <View style={styles.headerTextWrap}>
-              <Text style={styles.greetTitle} numberOfLines={1}>
-                Công việc
-              </Text>
+              <Text style={styles.greetTitle} numberOfLines={1}>{pageTabTitle(pageTab)}</Text>
               <Text style={styles.greetDate} numberOfLines={1}>
                 Xin chào, {greetName} · {formatVnWeekdayDate()}
               </Text>
             </View>
           </View>
-          <TapHighlight style={styles.iconBtn} onPress={() => void openNotifs()} hitSlop={8}>
-            <Ionicons name="notifications-outline" size={22} color={colors.text} />
-            {unreadCount > 0 ? (
-              <View style={styles.badge}>
-                <Text style={styles.badgeText}>{unreadCount > 99 ? '99+' : unreadCount}</Text>
-              </View>
-            ) : null}
-          </TapHighlight>
+          {pageTab !== 'tasks' ? (
+            <TapHighlight style={styles.iconBtn} onPress={() => setFilterOpen(true)} hitSlop={8}>
+              <Ionicons name="options-outline" size={20} color={colors.text} />
+              {filterCount > 0 ? (
+                <View style={styles.badge}>
+                  <Text style={styles.badgeText}>{filterCount}</Text>
+                </View>
+              ) : null}
+            </TapHighlight>
+          ) : null}
         </View>
-        <Text style={styles.greetSub}>Của tôi · Tất cả công ty · KG chung — VC & lắp đặt</Text>
+        <Text style={styles.greetSub}>
+          {pageTab === 'tasks'
+            ? 'Nhiệm vụ vận chuyển / lắp đặt theo dự án — chạm để mở chi tiết'
+            : 'Khớp web Lắp đặt — chọn công ty / nhân viên như bộ lọc trên web'}
+        </Text>
       </View>
 
       <View style={styles.modeRow}>
-        {WORK_MODES.map((m) => {
-          const active = workMode === m.key;
+        {PAGE_TABS.map((m) => {
+          const active = pageTab === m.key;
           return (
             <TapHighlight
               key={m.key}
               style={[styles.modeBtn, active && styles.modeBtnActive]}
-              onPress={() => {
-                setWorkMode(m.key);
-                setFilter('all');
-              }}
+              onPress={() => setPageTab(m.key)}
             >
-              <Ionicons
-                name={m.icon}
-                size={15}
-                color={active ? colors.primary : colors.textMuted}
-              />
+              <Ionicons name={m.icon} size={15} color={active ? colors.primary : colors.textMuted} />
               <Text style={[styles.modeBtnText, active && styles.modeBtnTextActive]} numberOfLines={1}>
                 {m.label}
               </Text>
@@ -846,209 +585,170 @@ export default function WorkScreen() {
         })}
       </View>
 
-      {workMode === 'shared' ? (
-        <View style={styles.hintBox}>
-          <Text style={styles.hintText}>
-            Việc deal giao cho bạn · chạm deal để mở Không gian chung (phân công + nhiệm vụ chéo công ty).
-          </Text>
+      {pageTab === 'assignments' ? (
+        <View style={styles.scopeRow}>
+          {assignAdmin ? (
+            <TapHighlight
+              style={[styles.scopeChip, styles.scopeChipGrow, filterCompanyId ? styles.scopeChipActive : null]}
+              onPress={() => setCompanyPickerOpen(true)}
+            >
+              <Ionicons
+                name="business-outline"
+                size={14}
+                color={filterCompanyId ? colors.primary : colors.textMuted}
+              />
+              <Text
+                style={[styles.scopeChipTxt, filterCompanyId ? styles.scopeChipTxtActive : null]}
+                numberOfLines={1}
+              >
+                {selectedCompanyLabel}
+              </Text>
+              <Ionicons
+                name="chevron-down"
+                size={14}
+                color={filterCompanyId ? colors.primary : colors.textMuted}
+              />
+            </TapHighlight>
+          ) : (
+            <View style={[styles.scopeChip, styles.scopeChipGrow]}>
+              <Ionicons name="person-outline" size={14} color={colors.textMuted} />
+              <Text style={styles.scopeChipTxt} numberOfLines={1}>
+                {userName || 'Việc của tôi'}
+              </Text>
+            </View>
+          )}
+          {assignAdmin ? (
+            <TapHighlight
+              style={[styles.scopeChip, assigneeMineOnly && styles.scopeChipActive]}
+              onPress={() => setAssigneeMineOnly((v) => !v)}
+            >
+              <Text style={[styles.scopeChipTxt, assigneeMineOnly && styles.scopeChipTxtActive]}>
+                {assigneeMineOnly ? 'Của tôi' : 'Tất cả NV'}
+              </Text>
+            </TapHighlight>
+          ) : null}
         </View>
-      ) : workMode === 'all' ? (
+      ) : pageTab === 'shared' ? (
         <View style={styles.hintBox}>
           <Text style={styles.hintText}>
-            Toàn bộ nhiệm vụ & giao việc Lắp đặt trong công ty của bạn.
+            Việc deal / công ty khác giao cho bạn. Dùng nút «Giao việc KG chung» để tạo việc gắn deal.
           </Text>
         </View>
       ) : null}
 
-      <View style={styles.sectionHead}>
-        <Ionicons
-          name={workMode === 'shared' ? 'people' : workMode === 'all' ? 'grid' : 'folder'}
-          size={18}
-          color={workMode === 'shared' ? colors.primary : '#EAB308'}
-        />
-        <Text style={styles.sectionTitle}>
-          {workMode === 'shared'
-            ? 'Không gian chung'
-            : workMode === 'all'
-              ? 'Tất cả công việc công ty'
-              : 'Công việc của tôi'}
-        </Text>
-      </View>
+      {pageTab !== 'tasks' ? (
+        <View style={styles.statsRow}>
+          <View style={styles.statCard}>
+            <Text style={[styles.statValue, { color: colors.danger }]}>{stats.pending}</Text>
+            <Text style={styles.statLabel}>Cần xử lý</Text>
+          </View>
+          <View style={styles.statCard}>
+            <Text style={[styles.statValue, { color: colors.primary }]}>{stats.inProgress}</Text>
+            <Text style={styles.statLabel}>Đang làm</Text>
+          </View>
+          <View style={styles.statCard}>
+            <Text style={[styles.statValue, { color: colors.success }]}>{stats.done}</Text>
+            <Text style={styles.statLabel}>Hoàn thành</Text>
+          </View>
+          <View style={styles.statCard}>
+            <Text style={[styles.statValue, { color: colors.danger }]}>{stats.overdue}</Text>
+            <Text style={styles.statLabel}>Quá hạn</Text>
+          </View>
+        </View>
+      ) : null}
 
-      <View style={styles.statsRow}>
-        <TapHighlight
-          style={[
-            styles.statCard,
-            filter === 'pending' && styles.statCardActive,
-            filter === 'pending' && { borderColor: colors.danger },
-          ]}
-          onPress={() => setFilter('pending')}
-        >
-          <Text style={[styles.statValue, { color: colors.danger }]}>{stats.pending}</Text>
-          <Text style={styles.statLabel}>Cần xử lý</Text>
-        </TapHighlight>
-        <TapHighlight
-          style={[
-            styles.statCard,
-            filter === 'in_progress' && styles.statCardActive,
-            filter === 'in_progress' && { borderColor: colors.primary },
-          ]}
-          onPress={() => setFilter('in_progress')}
-        >
-          <Text style={[styles.statValue, { color: colors.primary }]}>{stats.inProgress}</Text>
-          <Text style={styles.statLabel}>Đang làm</Text>
-        </TapHighlight>
-        <TapHighlight
-          style={[
-            styles.statCard,
-            filter === 'completed' && styles.statCardActive,
-            filter === 'completed' && { borderColor: colors.success },
-          ]}
-          onPress={() => setFilter('completed')}
-        >
-          <Text style={[styles.statValue, { color: colors.success }]}>{stats.done}</Text>
-          <Text style={styles.statLabel}>Hoàn thành</Text>
-        </TapHighlight>
-      </View>
-
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.chipsRow}
-        style={{ flexGrow: 0, marginBottom: 0 }}
-      >
-        {FILTER_CHIPS.map((chip) => {
-          const active = filter === chip.key;
-          const chipStyle = [
-            styles.chip,
-            active && chip.key === 'all' && styles.chipActiveAll,
-            active && chip.key === 'pending' && styles.chipActivePending,
-            active && chip.key === 'in_progress' && styles.chipActiveProgress,
-            active && chip.key === 'completed' && styles.chipActiveDone,
-          ];
-          const textStyle = [
-            styles.chipText,
-            active && chip.key === 'all' && styles.chipTextActiveAll,
-            active && chip.key === 'pending' && styles.chipTextActivePending,
-            active && chip.key === 'in_progress' && styles.chipTextActiveProgress,
-            active && chip.key === 'completed' && styles.chipTextActiveDone,
-          ];
-          const iconColor =
-            active && chip.key === 'all'
-              ? '#0E1116'
-              : active && chip.key === 'pending'
-                ? colors.warning
-                : active && chip.key === 'in_progress'
-                  ? colors.primary
-                  : active && chip.key === 'completed'
-                    ? colors.success
-                    : colors.textMuted;
-          return (
-            <TapHighlight key={chip.key} style={chipStyle} onPress={() => setFilter(chip.key)}>
-              <Ionicons name={chip.icon} size={15} color={iconColor} />
-              <Text style={textStyle}>{chip.label}</Text>
-            </TapHighlight>
-          );
-        })}
-      </ScrollView>
-
-      {error ? (
+      {error && pageTab !== 'tasks' ? (
         <View style={styles.errorBox}>
           <Text style={styles.errorText}>{error}</Text>
         </View>
       ) : null}
-
-      {workMode !== 'shared' && filteredAssignments.length > 0 ? (
-        <View style={styles.assignBlock}>
-          <View style={styles.assignHead}>
-            <Ionicons name="clipboard-outline" size={16} color={colors.primary} />
-            <Text style={styles.assignHeadTxt}>Giao việc ({filteredAssignments.length})</Text>
-          </View>
-          {filteredAssignments.map((a) => {
-            const st = String(a.status || 'pending');
-            const done = isTaskDone(st);
-            const assigneeName =
-              a.assignees?.map((u) => u.full_name).filter(Boolean).join(', ')
-              || a.assignee?.full_name
-              || '';
-            return (
-              <TapHighlight
-                key={`asg-${a.id}`}
-                style={styles.assignCard}
-                onPress={() => void toggleAssignmentStatus(a)}
-                disabled={updatingId === `asg-${a.id}`}
-              >
-                <View style={[styles.dot, { backgroundColor: dotColor(st, colors) }]} />
-                <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text style={[styles.taskTitle, done && styles.taskTitleDone]} numberOfLines={2}>
-                    {a.title || 'Giao việc'}
-                  </Text>
-                  {assigneeName ? (
-                    <Text style={styles.assignMeta} numberOfLines={1}>Người nhận: {assigneeName}</Text>
-                  ) : null}
-                  {a.deadline ? (
-                    <Text style={styles.assignMeta} numberOfLines={1}>
-                      Hạn: {new Date(a.deadline).toLocaleString('vi-VN')}
-                    </Text>
-                  ) : null}
-                </View>
-                <View style={styles.statusPill}>
-                  <Text style={styles.statusPillText}>
-                    {STATUS_STAGE_LABEL[st] || statusPillLabel(st)}
-                  </Text>
-                </View>
-              </TapHighlight>
-            );
-          })}
-        </View>
-      ) : null}
-    </>
+    </View>
   );
 
+  const tasksListHeader = (
+    <View>
+      <View style={styles.header}>
+        <View style={styles.headerRow}>
+          <View style={styles.headerLeft}>
+            <TapHighlight style={styles.backBtn} onPress={() => tabNav.navigate('Overview')}>
+              <Ionicons name="chevron-back" size={22} color={colors.text} />
+            </TapHighlight>
+            <Avatar name={userName} avatarUrl={user?.avatar} size={44} />
+            <View style={styles.headerTextWrap}>
+              <Text style={styles.greetTitle} numberOfLines={1}>Nhiệm vụ</Text>
+              <Text style={styles.greetDate} numberOfLines={1}>
+                Xin chào, {greetName} · {formatVnWeekdayDate()}
+              </Text>
+            </View>
+          </View>
+        </View>
+        <Text style={styles.greetSub}>
+          Nhiệm vụ vận chuyển / lắp đặt theo dự án — chạm để mở chi tiết
+        </Text>
+      </View>
+
+      <View style={styles.modeRow}>
+        {PAGE_TABS.map((m) => {
+          const active = pageTab === m.key;
+          return (
+            <TapHighlight
+              key={m.key}
+              style={[styles.modeBtn, active && styles.modeBtnActive]}
+              onPress={() => setPageTab(m.key)}
+            >
+              <Ionicons name={m.icon} size={15} color={active ? colors.primary : colors.textMuted} />
+              <Text style={[styles.modeBtnText, active && styles.modeBtnTextActive]} numberOfLines={1}>
+                {m.label}
+              </Text>
+              {m.key === 'shared' && sharedCount > 0 ? (
+                <View style={styles.modeBadge}>
+                  <Text style={styles.modeBadgeText}>{sharedCount > 99 ? '99+' : sharedCount}</Text>
+                </View>
+              ) : null}
+            </TapHighlight>
+          );
+        })}
+      </View>
+    </View>
+  );
+
+  if (pageTab !== 'tasks' && loading && !refreshing) {
+    return (
+      <View style={[styles.center, { paddingTop: insets.top }]}>
+        <ActivityIndicator color={colors.primary} size="large" />
+      </View>
+    );
+  }
+
   return (
-    <>
-      {workMode !== 'shared' ? (
-        <SectionList
-          style={styles.container}
-          sections={sections}
-          keyExtractor={(item, index) => `task-group-${index}-${item.tasks[0]?.lead_id || ''}`}
-          renderItem={renderItem}
-          renderSectionHeader={renderSectionHeader}
+    <View style={[styles.root, { paddingTop: insets.top }]}>
+      {pageTab === 'tasks' ? (
+        <WorkProjectTasksPanel
+          ListHeaderComponent={tasksListHeader}
+          contentPaddingBottom={24 + insets.bottom}
+        />
+      ) : pageTab === 'assignments' ? (
+        <FlatList
+          data={visibleAssignments}
+          keyExtractor={(item) => String(item.id)}
+          renderItem={renderAssignment}
           ListHeaderComponent={listHeader}
-          stickySectionHeadersEnabled={false}
           contentContainerStyle={styles.listContent}
-          onEndReachedThreshold={0.4}
-          onEndReached={() => {
-            const hasMore = workMode === 'all' ? hasMoreAll : hasMoreMine;
-            if (hasMore && !loadingMore) void loadMoreMine();
-          }}
-          ListFooterComponent={
-            loadingMore ? (
-              <ActivityIndicator color={colors.primary} style={{ marginVertical: 16 }} />
-            ) : null
-          }
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={() => void onRefresh()} tintColor={colors.primary} />
           }
           ListEmptyComponent={
             <Text style={styles.empty}>
               {userId
-                ? filteredAssignments.length > 0
-                  ? ''
-                  : filter === 'all'
-                    ? workMode === 'all'
-                      ? 'Chưa có nhiệm vụ Lắp đặt nào trong công ty.'
-                      : 'Chưa có nhiệm vụ vận chuyển lắp đặt nào được giao cho bạn.'
-                    : 'Không có nhiệm vụ nào trong bộ lọc này.'
-                : 'Đăng nhập để xem công việc được giao.'}
+                ? 'Chưa có giao việc Lắp đặt trong phạm vi này.'
+                : 'Đăng nhập để xem giao việc.'}
             </Text>
           }
         />
       ) : (
         <FlatList
-          style={styles.container}
-          data={sharedSections}
-          keyExtractor={(item) => item.leadId}
+          data={visibleSharedGroups}
+          keyExtractor={(g) => String(g.lead_id)}
           ListHeaderComponent={listHeader}
           contentContainerStyle={styles.listContent}
           refreshControl={
@@ -1057,100 +757,417 @@ export default function WorkScreen() {
           ListEmptyComponent={
             <Text style={styles.empty}>
               {userId
-                ? filter === 'all'
-                  ? 'Chưa có việc trong Không gian chung.'
-                  : 'Không có nhiệm vụ nào trong bộ lọc này.'
+                ? 'Chưa có nhiệm vụ deal VC/LĐ được giao cho bạn.'
                 : 'Đăng nhập để xem Không gian chung.'}
             </Text>
           }
-          renderItem={({ item, index }) => {
-            const accent = dealAccentColor(index, colors);
+          renderItem={({ item: g, index }) => {
+            const accent = [colors.primary, '#8B5CF6', '#14B8A6', '#F59E0B'][index % 4];
+            const projectId = g.lead?.project_id ? String(g.lead.project_id) : '';
             return (
-              <View style={styles.sectionWrap}>
+              <View style={styles.groupWrap}>
                 <TapHighlight
                   onPress={() => {
-                    if (item.projectId) {
-                      openProjectDetail(item.projectId, { initialTab: 'shared-workspace' });
-                    }
+                    if (projectId) openProjectDetail(projectId, { initialTab: 'shared-workspace' });
                   }}
-                  disabled={!item.projectId}
-                  pressStyle={{ opacity: 0.88 }}
+                  disabled={!projectId}
                 >
-                  <View style={styles.sectionCard}>
-                    <View style={[styles.sectionAccent, { backgroundColor: accent }]} />
-                    <View style={{ paddingLeft: 6 }}>
-                      <View style={styles.dealCodeRow}>
-                        <Text style={styles.dealCode} numberOfLines={1}>{item.code}</Text>
-                        <View style={[styles.dealBadge, { backgroundColor: colorWithAlpha(accent, 0.18) }]}>
-                          <Text style={[styles.dealBadgeText, { color: accent }]}>
-                            {item.tasks.length} NV
-                          </Text>
-                        </View>
-                      </View>
-                      {item.title ? (
-                        <Text style={styles.dealTitle} numberOfLines={2}>{item.title}</Text>
-                      ) : null}
-                      <Text style={styles.dealMeta} numberOfLines={1}>
-                        {item.projectId ? 'Mở Không gian chung · ' : ''}
-                        Việc deal giao cho bạn
+                  <View style={styles.groupHead}>
+                    <View style={[styles.groupAccent, { backgroundColor: accent }]} />
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text style={styles.groupCode} numberOfLines={1}>
+                        {g.lead?.code || g.lead?.project_code || 'Deal'}
                       </Text>
+                      <Text style={styles.groupTitle} numberOfLines={2}>
+                        {g.lead?.title || g.lead?.project_name || 'Không gian chung'}
+                      </Text>
+                    </View>
+                    <View style={[styles.dealBadge, { backgroundColor: colorWithAlpha(accent, 0.18) }]}>
+                      <Text style={[styles.dealBadgeText, { color: accent }]}>{g.tasks.length}</Text>
                     </View>
                   </View>
                 </TapHighlight>
-                <View style={styles.taskBlock}>
-                  {item.tasks.map((task, taskIdx) => {
-                    const st = String(task.status || 'pending');
-                    const done = isTaskDone(st);
-                    const isLast = taskIdx === item.tasks.length - 1;
-                    return (
-                      <View key={task.id} style={[styles.taskRow, isLast && styles.taskRowLast]}>
-                        <View style={[styles.dot, { backgroundColor: dotColor(st, colors) }]} />
-                        <Text style={[styles.taskTitle, done && styles.taskTitleDone]} numberOfLines={2}>
-                          {task.title || 'Nhiệm vụ'}
-                        </Text>
-                        <View style={styles.statusPill}>
-                          <Text style={styles.statusPillText}>
-                            {STATUS_STAGE_LABEL[st] || statusPillLabel(st)}
-                          </Text>
-                        </View>
+                {(g.tasks || []).map((t) => {
+                  const st = String(t.status || 'pending');
+                  const overdue = isOverdue(t.deadline, st);
+                  const cross =
+                    t.executor_company_name && t.owner_company_name
+                    && t.executor_company_name !== t.owner_company_name
+                      ? `${t.owner_company_name} → ${t.executor_company_name}`
+                      : t.executor_company_name || t.owner_company_name || '';
+                  return (
+                    <TapHighlight
+                      key={String(t.id)}
+                      style={[styles.inboxRow, overdue && styles.cardOverdue]}
+                      onPress={() => openInboxDetail(t)}
+                    >
+                      <View style={[styles.statusDot, {
+                        backgroundColor: isTaskDone(st)
+                          ? colors.success
+                          : isTaskInProgress(st)
+                            ? colors.primary
+                            : colors.warning,
+                      }]}
+                      />
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <Text style={styles.cardTitle} numberOfLines={2}>{t.title || 'Nhiệm vụ'}</Text>
+                        {cross ? (
+                          <Text style={styles.companyLine} numberOfLines={1}>{cross}</Text>
+                        ) : null}
+                        {overdue ? (
+                          <Text style={styles.overdueInline}>Quá hạn</Text>
+                        ) : null}
                       </View>
-                    );
-                  })}
-                </View>
+                      <Text style={styles.statusPillTxt}>
+                        {STATUS_STAGE_LABEL[st] || statusPillLabel(st)}
+                      </Text>
+                    </TapHighlight>
+                  );
+                })}
               </View>
             );
           }}
         />
       )}
 
-      {workMode !== 'shared' ? (
-        <TapHighlight style={styles.fab} onPress={() => setAssignOpen(true)}>
-          <Ionicons name="add" size={24} color="#fff" />
-          <Text style={styles.fabTxt}>Giao việc</Text>
+      {pageTab !== 'tasks' ? (
+        <TapHighlight
+          style={styles.fab}
+          onPress={() => {
+            setAssignShared(pageTab === 'shared');
+            setAssignOpen(true);
+          }}
+        >
+          <Ionicons name="add" size={22} color="#fff" />
+          <Text style={styles.fabTxt}>
+            {pageTab === 'shared' ? 'Giao việc KG chung' : 'Giao việc'}
+          </Text>
         </TapHighlight>
       ) : null}
 
       <AssignWorkModal
         visible={assignOpen}
-        companyId={companyId || null}
+        companyId={createCompanyId}
+        isAdmin={assignAdmin}
+        companies={companies}
+        sharedWorkspaceMode={assignShared}
         onClose={() => setAssignOpen(false)}
         onCreated={() => {
-          if (workMode === 'all') void load();
-          else setWorkMode('all');
+          if (assignShared) setPageTab('shared');
+          else setPageTab('assignments');
+          void load();
         }}
       />
 
-      <CommentNotificationsModal
-        visible={notifOpen}
+      <AssignmentDetailModal
+        visible={Boolean(detailId)}
+        assignment={detailItem}
+        assignmentId={detailId}
         onClose={() => {
-          setNotifOpen(false);
-          void refreshUnread();
+          setDetailId(null);
+          setDetailItem(null);
         }}
-        onOpenProject={(projectId) => {
-          setNotifOpen(false);
-          openProjectDetail(projectId);
+        onUpdated={(row) => {
+          setDetailItem(row);
+          setAssignments((prev) =>
+            prev.map((a) => (String(a.id) === String(row.id) ? { ...a, ...row } : a)),
+          );
+          setSharedGroups((prev) =>
+            prev.map((g) => ({
+              ...g,
+              tasks: (g.tasks || []).map((t) => {
+                const tid = t.crm_assignment_id != null
+                  ? String(t.crm_assignment_id)
+                  : (String(t.id).startsWith('asg_') ? String(t.id).slice(4) : '');
+                if (tid !== String(row.id)) return t;
+                return { ...t, status: row.status, title: row.title, priority: row.priority, deadline: row.deadline };
+              }),
+            })),
+          );
         }}
       />
-    </>
+
+      <WorkFilterModal
+        visible={filterOpen}
+        value={filters}
+        bottomInset={insets.bottom}
+        onClose={() => setFilterOpen(false)}
+        onApply={setFilters}
+      />
+
+      <FilterPickerModal
+        visible={companyPickerOpen}
+        title="Chọn công ty"
+        options={companyOptions}
+        selectedId={filterCompanyId}
+        onSelect={setFilterCompanyId}
+        onClose={() => setCompanyPickerOpen(false)}
+      />
+    </View>
   );
+}
+
+function makeStyles(colors: AppColors, bottomInset: number) {
+  return StyleSheet.create({
+    root: { flex: 1, backgroundColor: colors.bg },
+    center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bg },
+    header: { paddingHorizontal: Spacing.lg, paddingTop: Spacing.md, paddingBottom: Spacing.sm },
+    headerRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 },
+    headerLeft: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12, minWidth: 0 },
+    headerTextWrap: { flex: 1, minWidth: 0 },
+    backBtn: {
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.bgElevated,
+    },
+    greetTitle: { color: colors.text, fontSize: 20, fontWeight: '800', letterSpacing: -0.2 },
+    greetDate: { color: colors.textMuted, fontSize: 13, fontWeight: '600', marginTop: 3 },
+    greetSub: { color: colors.textFaint, fontSize: 12, marginTop: 6, fontWeight: '500', lineHeight: 17 },
+    iconBtn: {
+      width: 42,
+      height: 42,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.card,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    badge: {
+      position: 'absolute',
+      top: -4,
+      right: -6,
+      minWidth: 18,
+      height: 18,
+      borderRadius: 9,
+      backgroundColor: colors.primary,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 4,
+    },
+    badgeText: { color: '#fff', fontSize: 9, fontWeight: '800' },
+    modeRow: {
+      flexDirection: 'row',
+      gap: 8,
+      paddingHorizontal: Spacing.lg,
+      marginTop: Spacing.sm,
+      marginBottom: Spacing.sm,
+    },
+    modeBtn: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 6,
+      paddingVertical: 11,
+      borderRadius: Radii.md,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.card,
+      minWidth: 0,
+    },
+    modeBtnActive: { borderColor: colors.primary, backgroundColor: colors.primarySoft },
+    modeBtnText: { color: colors.textMuted, fontSize: 13, fontWeight: '700' },
+    modeBtnTextActive: { color: colors.primary },
+    modeBadge: {
+      minWidth: 18,
+      height: 18,
+      borderRadius: 9,
+      paddingHorizontal: 4,
+      backgroundColor: colorWithAlpha(colors.primary, 0.2),
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    modeBadgeText: { color: colors.primary, fontSize: 10, fontWeight: '800' },
+    scopeRow: {
+      flexDirection: 'row',
+      gap: 8,
+      paddingHorizontal: Spacing.lg,
+      marginBottom: Spacing.sm,
+      alignItems: 'center',
+    },
+    scopeChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: Radii.full,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.card,
+      maxWidth: '100%',
+    },
+    scopeChipGrow: { flex: 1, minWidth: 0 },
+    scopeChipActive: { borderColor: colors.primary, backgroundColor: colors.primarySoft },
+    scopeChipTxt: { color: colors.textMuted, fontSize: 12, fontWeight: '700', flexShrink: 1 },
+    scopeChipTxtActive: { color: colors.primary },
+    hintBox: {
+      marginHorizontal: Spacing.lg,
+      marginBottom: Spacing.sm,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      borderRadius: Radii.md,
+      backgroundColor: colors.primarySoft,
+      borderWidth: 1,
+      borderColor: colorWithAlpha(colors.primary, 0.25),
+    },
+    hintText: { color: colors.textMuted, fontSize: 12, fontWeight: '600', lineHeight: 17 },
+    statsRow: {
+      flexDirection: 'row',
+      gap: 10,
+      paddingHorizontal: Spacing.lg,
+      marginBottom: Spacing.md,
+    },
+    statCard: {
+      flex: 1,
+      backgroundColor: colors.card,
+      borderRadius: Radii.lg,
+      borderWidth: 1,
+      borderColor: colors.border,
+      paddingVertical: 12,
+      alignItems: 'center',
+    },
+    statValue: { fontSize: 22, fontWeight: '800' },
+    statLabel: { color: colors.textMuted, fontSize: 11, marginTop: 4, fontWeight: '600' },
+    errorBox: {
+      marginHorizontal: Spacing.lg,
+      marginBottom: Spacing.sm,
+      padding: 10,
+      borderRadius: Radii.md,
+      backgroundColor: colors.dangerSoft,
+      borderWidth: 1,
+      borderColor: colorWithAlpha(colors.danger, 0.35),
+    },
+    errorText: { color: colors.danger, fontSize: 12, fontWeight: '600' },
+    listContent: { paddingBottom: bottomInset + 96 },
+    empty: {
+      color: colors.textMuted,
+      textAlign: 'center',
+      fontSize: 14,
+      marginTop: 40,
+      paddingHorizontal: Spacing.xl,
+      lineHeight: 21,
+    },
+    card: {
+      marginHorizontal: Spacing.lg,
+      marginBottom: 10,
+      padding: 14,
+      borderRadius: Radii.lg,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.card,
+      gap: 6,
+    },
+    cardOverdue: {
+      borderColor: colorWithAlpha(colors.danger, 0.55),
+      backgroundColor: colorWithAlpha(colors.danger, 0.08),
+    },
+    overduePill: {
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+      borderRadius: 999,
+      backgroundColor: colorWithAlpha(colors.danger, 0.2),
+    },
+    overduePillTxt: { color: colors.danger, fontSize: 10, fontWeight: '900' },
+    overdueInline: { color: colors.danger, fontSize: 11, fontWeight: '800', marginTop: 2 },
+    tapHint: { color: colors.textFaint, fontSize: 10, fontWeight: '600', marginLeft: 'auto' },
+    quickRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      alignItems: 'center',
+      gap: 8,
+      marginTop: 6,
+    },
+    quickBtn: {
+      paddingHorizontal: 10,
+      paddingVertical: 7,
+      borderRadius: Radii.md,
+      borderWidth: 1,
+      borderColor: colors.primary,
+      backgroundColor: colors.primarySoft,
+      minWidth: 72,
+      alignItems: 'center',
+    },
+    quickBtnTxt: { color: colors.primary, fontSize: 11, fontWeight: '800' },
+    cardTop: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
+    statusDot: { width: 10, height: 10, borderRadius: 5, marginTop: 5 },
+    cardTitle: { flex: 1, color: colors.text, fontSize: 15, fontWeight: '800' },
+    doneTxt: { color: colors.textMuted, textDecorationLine: 'line-through' },
+    priPill: {
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+      borderRadius: 999,
+      borderWidth: 1,
+    },
+    priTxt: { fontSize: 10, fontWeight: '800' },
+    dealLine: { color: colors.primary, fontSize: 12, fontWeight: '700' },
+    desc: { color: colors.textMuted, fontSize: 12, fontWeight: '500', lineHeight: 17 },
+    metaRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+    statusPill: {
+      paddingHorizontal: 10,
+      paddingVertical: 4,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: colors.borderStrong,
+    },
+    statusPillTxt: { color: colors.text, fontSize: 11, fontWeight: '700' },
+    metaTxt: { color: colors.textFaint, fontSize: 11, fontWeight: '600', flexShrink: 1 },
+    companyRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
+    companyLine: { flex: 1, color: colors.primary, fontSize: 11, fontWeight: '700' },
+    groupWrap: {
+      marginHorizontal: Spacing.lg,
+      marginBottom: 12,
+      borderRadius: Radii.lg,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.bgElevated,
+      overflow: 'hidden',
+    },
+    groupHead: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      padding: 12,
+      backgroundColor: colors.card,
+    },
+    groupAccent: { width: 4, alignSelf: 'stretch', borderRadius: 2 },
+    groupCode: { color: colors.primary, fontSize: 12, fontWeight: '800' },
+    groupTitle: { color: colors.text, fontSize: 14, fontWeight: '700', marginTop: 2 },
+    dealBadge: {
+      minWidth: 28,
+      height: 28,
+      borderRadius: 14,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 8,
+    },
+    dealBadgeText: { fontSize: 12, fontWeight: '800' },
+    inboxRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      paddingHorizontal: 12,
+      paddingVertical: 12,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: colors.border,
+    },
+    fab: {
+      position: 'absolute',
+      right: 16,
+      bottom: bottomInset + 16,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      borderRadius: 999,
+      backgroundColor: colors.primary,
+      elevation: 4,
+    },
+    fabTxt: { color: '#fff', fontSize: 13, fontWeight: '800' },
+  });
 }

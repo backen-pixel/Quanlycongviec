@@ -17,7 +17,7 @@ import PlannerFilterModal, { type PlannerFilterDimension } from '../components/P
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { useProductionRealtime } from '../hooks/useProductionRealtime';
-import { loadKanbanFilters, saveKanbanFilters } from '../lib/kanbanFilterStorage';
+import { loadKanbanFilters, saveKanbanFilters, subscribeSharedFilters } from '../lib/kanbanFilterStorage';
 import { fetchCompanies, fetchProductionBoard, type CompanyOption } from '../lib/logisticsApi';
 import { getCachedBoard, isCachedBoardFresh, setCachedBoard } from '../lib/logisticsBoardCache';
 import { isSystemAdmin } from '../lib/productionFilters';
@@ -98,14 +98,24 @@ export default function PlannerScreen() {
         companiesRef.current = list;
         if (alive) setCompanies(list);
       }
-      if (sysAdmin && !id && list[0]?.id) {
+      // Sysadmin: '' = Tất cả công ty — không ép công ty đầu.
+      if (!sysAdmin && !id && list[0]?.id) {
         id = String(list[0].id);
-        await saveKanbanFilters({ ...(snap || {}), filterCompany: id });
+        await saveKanbanFilters({ filterCompany: id });
       }
       if (alive) setFilterCompany(id);
     })();
     return () => { alive = false; };
   }, [sysAdmin, user?.company_id]));
+
+  useEffect(() => {
+    const unsub = subscribeSharedFilters((snap) => {
+      if (!sysAdmin) return;
+      const next = String(snap.filterCompany || '');
+      setFilterCompany((prev) => (prev === next ? prev : next));
+    });
+    return unsub;
+  }, [sysAdmin]);
 
   const boardFilters = useMemo(
     () => ({ companyId: filterCompany || undefined }),
@@ -113,7 +123,8 @@ export default function PlannerScreen() {
   );
 
   const load = useCallback(async (mode: 'init' | 'refresh' | 'silent' = 'init') => {
-    if (sysAdmin && !filterCompany) {
+    // Sysadmin với '' = Tất cả — vẫn tải. NV thiếu companyId thì thôi.
+    if (!sysAdmin && !filterCompany) {
       if (mode === 'init') setLoading(true);
       return;
     }
@@ -157,11 +168,13 @@ export default function PlannerScreen() {
   });
 
   const companyLabel = useMemo(() => {
-    if (!filterCompany) return sysAdmin ? 'Đang chọn công ty…' : 'Sắp xếp & phân bổ dự án vận chuyển';
+    if (!filterCompany) {
+      return sysAdmin ? 'Tất cả công ty' : 'Sắp xếp & phân bổ dự án lắp đặt';
+    }
     const fromList = companies.find((c) => String(c.id) === String(filterCompany))?.name;
     if (fromList) return fromList;
     return board.projects.find((p) => p.company_name)?.company_name
-      || 'Sắp xếp & phân bổ dự án vận chuyển';
+      || 'Sắp xếp & phân bổ dự án lắp đặt';
   }, [filterCompany, companies, board.projects, sysAdmin]);
 
   const stageById = useMemo(() => {

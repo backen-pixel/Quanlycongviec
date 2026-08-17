@@ -1,16 +1,16 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Animated,
   Dimensions,
   FlatList,
   Image,
   Modal,
   NativeScrollEvent,
   NativeSyntheticEvent,
-  Platform,
+  PanResponder,
   Pressable,
-  ScrollView,
   StatusBar,
   StyleSheet,
   Text,
@@ -20,6 +20,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const SCREEN_W = Dimensions.get('window').width;
 const SCREEN_H = Dimensions.get('window').height;
+const FIT_H = SCREEN_H * 0.62;
+const MIN_SCALE = 1;
+const MAX_SCALE = 4;
 const THUMB = 56;
 
 export type GalleryImage = {
@@ -35,23 +38,133 @@ type Props = {
   onClose: () => void;
 };
 
-/** Pinch-zoom (iOS) + chạm đúp phóng/thu (Android & iOS). Không mở trình duyệt. */
-function ZoomableImage({ uri }: { uri: string }) {
+function clampTransform(scale: number, x: number, y: number) {
+  const s = Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale));
+  const maxX = Math.max(0, (SCREEN_W * (s - 1)) / 2);
+  const maxY = Math.max(0, (FIT_H * (s - 1)) / 2);
+  return {
+    s,
+    x: Math.min(maxX, Math.max(-maxX, x)),
+    y: Math.min(maxY, Math.max(-maxY, y)),
+  };
+}
+
+function touchDistance(touches: { pageX: number; pageY: number }[]) {
+  if (touches.length < 2) return 0;
+  return Math.hypot(touches[0].pageX - touches[1].pageX, touches[0].pageY - touches[1].pageY);
+}
+
+/** Pinch + chạm đúp zoom, kéo để xem phần bị che khi phóng to. */
+function ZoomableImage({
+  uri,
+  onZoomedChange,
+}: {
+  uri: string;
+  onZoomedChange?: (zoomed: boolean) => void;
+}) {
   const [failed, setFailed] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [zoomed, setZoomed] = useState(false);
+  const scale = useRef(new Animated.Value(1)).current;
+  const translate = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
+  const currentScale = useRef(1);
+  const currentTx = useRef(0);
+  const currentTy = useRef(0);
+  const zoomedRef = useRef(false);
   const lastTap = useRef(0);
+  const mode = useRef<'none' | 'pan' | 'pinch'>('none');
+  const pinchStartDist = useRef(1);
+  const pinchStartScale = useRef(1);
+  const panStartTx = useRef(0);
+  const panStartTy = useRef(0);
+
+  const apply = useCallback((nextScale: number, x: number, y: number, animated = false) => {
+    const c = clampTransform(nextScale, x, y);
+    currentScale.current = c.s;
+    currentTx.current = c.x;
+    currentTy.current = c.y;
+    const zoomed = c.s > 1.02;
+    if (zoomed !== zoomedRef.current) {
+      zoomedRef.current = zoomed;
+      onZoomedChange?.(zoomed);
+    }
+    if (animated) {
+      Animated.parallel([
+        Animated.spring(scale, { toValue: c.s, useNativeDriver: true, friction: 8, tension: 80 }),
+        Animated.spring(translate.x, { toValue: c.x, useNativeDriver: true, friction: 8, tension: 80 }),
+        Animated.spring(translate.y, { toValue: c.y, useNativeDriver: true, friction: 8, tension: 80 }),
+      ]).start();
+      return;
+    }
+    scale.setValue(c.s);
+    translate.setValue({ x: c.x, y: c.y });
+  }, [onZoomedChange, scale, translate]);
 
   useEffect(() => {
     setFailed(false);
     setLoading(true);
-    setZoomed(false);
-  }, [uri]);
+    apply(1, 0, 0);
+  }, [uri, apply]);
 
-  const onDoubleTap = () => {
+  const pan = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => false,
+        onMoveShouldSetPanResponder: (e, g) => {
+          const n = e.nativeEvent.touches?.length || 0;
+          if (n >= 2) return true;
+          return currentScale.current > 1.02 && (Math.abs(g.dx) > 4 || Math.abs(g.dy) > 4);
+        },
+        onMoveShouldSetPanResponderCapture: (e, g) => {
+          const n = e.nativeEvent.touches?.length || 0;
+          if (n >= 2) return true;
+          return currentScale.current > 1.02 && (Math.abs(g.dx) > 6 || Math.abs(g.dy) > 6);
+        },
+        onPanResponderGrant: (e) => {
+          const touches = e.nativeEvent.touches || [];
+          if (touches.length >= 2) {
+            mode.current = 'pinch';
+            pinchStartDist.current = touchDistance(touches) || 1;
+            pinchStartScale.current = currentScale.current;
+            return;
+          }
+          mode.current = 'pan';
+          panStartTx.current = currentTx.current;
+          panStartTy.current = currentTy.current;
+        },
+        onPanResponderMove: (e, g) => {
+          const touches = e.nativeEvent.touches || [];
+          if (touches.length >= 2) {
+            if (mode.current !== 'pinch') {
+              mode.current = 'pinch';
+              pinchStartDist.current = touchDistance(touches) || 1;
+              pinchStartScale.current = currentScale.current;
+            }
+            const d = touchDistance(touches);
+            apply(pinchStartScale.current * (d / (pinchStartDist.current || 1)), currentTx.current, currentTy.current);
+            return;
+          }
+          if (currentScale.current > 1.02) {
+            apply(currentScale.current, panStartTx.current + g.dx, panStartTy.current + g.dy);
+          }
+        },
+        onPanResponderRelease: () => {
+          if (currentScale.current < 1.05) apply(1, 0, 0, true);
+          else apply(currentScale.current, currentTx.current, currentTy.current, true);
+          mode.current = 'none';
+        },
+        onPanResponderTerminate: () => {
+          mode.current = 'none';
+        },
+        onPanResponderTerminationRequest: () => currentScale.current <= 1.02,
+      }),
+    [apply],
+  );
+
+  const onTap = () => {
     const now = Date.now();
-    if (now - lastTap.current < 300) {
-      setZoomed((z) => !z);
+    if (now - lastTap.current < 280) {
+      if (currentScale.current > 1.05) apply(1, 0, 0, true);
+      else apply(2.4, 0, 0, true);
     }
     lastTap.current = now;
   };
@@ -66,26 +179,21 @@ function ZoomableImage({ uri }: { uri: string }) {
   }
 
   return (
-    <ScrollView
-      style={{ width: SCREEN_W, flex: 1 }}
-      contentContainerStyle={styles.zoomContent}
-      maximumZoomScale={4}
-      minimumZoomScale={1}
-      centerContent
-      bouncesZoom
-      showsHorizontalScrollIndicator={false}
-      showsVerticalScrollIndicator={false}
-    >
-      <Pressable onPress={onDoubleTap}>
-        {loading ? (
-          <ActivityIndicator color="#fff" style={styles.loader} />
-        ) : null}
-        <Image
+    <View style={styles.zoomStage} {...pan.panHandlers}>
+      <Pressable onPress={onTap} style={styles.zoomPress}>
+        {loading ? <ActivityIndicator color="#fff" style={styles.loader} /> : null}
+        <Animated.Image
           source={{ uri }}
           style={[
             styles.mainImg,
-            zoomed && styles.mainImgZoomed,
             loading && { opacity: 0 },
+            {
+              transform: [
+                { translateX: translate.x },
+                { translateY: translate.y },
+                { scale },
+              ],
+            },
           ]}
           resizeMode="contain"
           onLoadEnd={() => setLoading(false)}
@@ -95,7 +203,7 @@ function ZoomableImage({ uri }: { uri: string }) {
           }}
         />
       </Pressable>
-    </ScrollView>
+    </View>
   );
 }
 
@@ -109,11 +217,13 @@ export default function ImageGalleryLightbox({
   const mainRef = useRef<FlatList<GalleryImage>>(null);
   const thumbRef = useRef<FlatList<GalleryImage>>(null);
   const [index, setIndex] = useState(initialIndex);
+  const [viewerZoomed, setViewerZoomed] = useState(false);
 
   useEffect(() => {
     if (!visible || !images.length) return;
     const i = Math.min(Math.max(initialIndex, 0), images.length - 1);
     setIndex(i);
+    setViewerZoomed(false);
     const t = setTimeout(() => {
       try {
         mainRef.current?.scrollToIndex({ index: i, animated: false });
@@ -130,6 +240,7 @@ export default function ImageGalleryLightbox({
       if (!images.length) return;
       const i = Math.min(Math.max(next, 0), images.length - 1);
       setIndex(i);
+      setViewerZoomed(false);
       mainRef.current?.scrollToIndex({ index: i, animated: true });
       thumbRef.current?.scrollToIndex({ index: i, animated: true, viewPosition: 0.5 });
     },
@@ -164,7 +275,7 @@ export default function ImageGalleryLightbox({
             <Text style={styles.counter}>{index + 1} / {images.length}</Text>
             {current?.title ? <Text style={styles.title} numberOfLines={1}>{current.title}</Text> : null}
             <Text style={styles.hint}>
-              {Platform.OS === 'ios' ? 'Chụm/duỗi để zoom · Chạm đúp phóng to' : 'Chạm đúp để phóng to / thu nhỏ'}
+              Chụm hoặc chạm đúp để zoom · Kéo để xem phần bị che
             </Text>
           </View>
           <Pressable style={styles.iconBtn} onPress={onClose} hitSlop={12}>
@@ -179,21 +290,26 @@ export default function ImageGalleryLightbox({
             data={images}
             keyExtractor={(item, i) => `${item.uri}-${i}`}
             horizontal
-            pagingEnabled
+            pagingEnabled={!viewerZoomed}
+            scrollEnabled={!viewerZoomed}
             showsHorizontalScrollIndicator={false}
             initialScrollIndex={Math.min(initialIndex, images.length - 1)}
             getItemLayout={(_, i) => ({ length: SCREEN_W, offset: SCREEN_W * i, index: i })}
             onMomentumScrollEnd={onMainScrollEnd}
+            extraData={index}
             onScrollToIndexFailed={() => {}}
-            renderItem={({ item }) => (
+            renderItem={({ item, index: i }) => (
               <View style={styles.slide}>
-                <ZoomableImage uri={item.uri} />
+                <ZoomableImage
+                  uri={item.uri}
+                  onZoomedChange={i === index ? setViewerZoomed : undefined}
+                />
               </View>
             )}
           />
         </View>
 
-        {images.length > 1 ? (
+        {images.length > 1 && !viewerZoomed ? (
           <>
             {index > 0 ? (
               <Pressable style={[styles.navBtn, styles.navLeft]} onPress={() => goTo(index - 1)} hitSlop={16}>
@@ -266,17 +382,23 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'hidden',
   },
-  zoomContent: {
-    flexGrow: 1,
+  zoomStage: {
     width: SCREEN_W,
-    minHeight: SCREEN_H * 0.55,
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  zoomPress: {
+    width: SCREEN_W,
+    height: FIT_H,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  mainImg: { width: SCREEN_W, height: SCREEN_H * 0.62 },
-  mainImgZoomed: { width: SCREEN_W * 2.2, height: SCREEN_H * 0.9 },
-  loader: { position: 'absolute', alignSelf: 'center' },
+  mainImg: { width: SCREEN_W, height: FIT_H },
+  loader: { position: 'absolute', alignSelf: 'center', zIndex: 1 },
   failTxt: { color: 'rgba(255,255,255,0.55)', marginTop: 10, fontSize: 13, fontWeight: '600' },
   navBtn: {
     position: 'absolute',

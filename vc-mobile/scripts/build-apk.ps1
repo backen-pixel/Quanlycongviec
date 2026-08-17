@@ -138,10 +138,91 @@ function Set-WebrtcVersionPin {
 
 Set-WebrtcVersionPin
 
-Write-Host '>> gradlew assembleRelease...'
-Set-Location android
-.\gradlew.bat assembleRelease --no-daemon
-Set-Location $root
+function Set-ApkSizeGradleOpts {
+  $gradle = Join-Path $root 'android\app\build.gradle'
+  if (-not (Test-Path $gradle)) { return }
+  $content = Get-Content $gradle -Raw
+  $orig = $content
+  if ($content -notmatch 'resourceConfigurations \+= \["en", "vi"\]') {
+    $content = $content -replace 'defaultConfig \{', "defaultConfig {`r`n        resourceConfigurations += [`"en`", `"vi`"]"
+  }
+  if ($content -notmatch 'IoniconsOnlyPackaging') {
+    $excludes = @(
+      'AntDesign.ttf','Entypo.ttf','EvilIcons.ttf','Feather.ttf','FontAwesome.ttf',
+      'FontAwesome5_Brands.ttf','FontAwesome5_Regular.ttf','FontAwesome5_Solid.ttf',
+      'FontAwesome6_Brands.ttf','FontAwesome6_Regular.ttf','FontAwesome6_Solid.ttf',
+      'Fontisto.ttf','Foundation.ttf','MaterialCommunityIcons.ttf','MaterialIcons.ttf',
+      'Octicons.ttf','SimpleLineIcons.ttf','Zocial.ttf'
+    ) | ForEach-Object { "`"**/$($_)`"" }
+    $block = ($excludes -join ",`r`n          ")
+    $content = $content -replace 'packagingOptions \{', @"
+packagingOptions {
+        // IoniconsOnlyPackaging
+        excludes += [
+          $block
+        ]
+"@
+  }
+  $gp = Join-Path $root 'android\gradle.properties'
+  if (Test-Path $gp) {
+    $gpc = Get-Content $gp -Raw
+    $gpc = $gpc -replace 'expo\.webp\.enabled=true', 'expo.webp.enabled=false'
+    if ($gpc -notmatch 'expo\.webp\.enabled=') { $gpc += "`r`nexpo.webp.enabled=false`r`n" }
+    Set-Content -Path $gp -Value $gpc -NoNewline
+  }
+  if ($content -ne $orig) {
+    Set-Content -Path $gradle -Value $content -NoNewline
+    Write-Host '>> APK size: resConfigs vi/en + drop unused icon fonts'
+  } else {
+    Write-Host '>> APK size gradle opts already set'
+  }
+}
+
+Set-ApkSizeGradleOpts
+
+function Hide-UnusedIconFonts {
+  $keep = 'Ionicons.ttf'
+  $stashRoot = Join-Path $root '.tmp-unused-icon-fonts'
+  $moved = [System.Collections.Generic.List[object]]::new()
+  New-Item -ItemType Directory -Force -Path $stashRoot | Out-Null
+  @(
+    (Join-Path $root 'node_modules\@expo\vector-icons\build\vendor\react-native-vector-icons\Fonts'),
+    (Join-Path $root 'node_modules\react-native-vector-icons\Fonts')
+  ) | ForEach-Object {
+    if (-not (Test-Path $_)) { return }
+    Get-ChildItem $_ -Filter '*.ttf' -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne $keep } | ForEach-Object {
+      $dest = Join-Path $stashRoot ("{0}_{1}" -f $_.Directory.Parent.Name, $_.Name)
+      Move-Item $_.FullName $dest -Force
+      $moved.Add([pscustomobject]@{ From = $_.FullName; To = $dest })
+    }
+  }
+  Write-Host (">> Hid {0} unused icon fonts (keep Ionicons)" -f $moved.Count)
+  return $moved
+}
+
+function Restore-UnusedIconFonts($moved) {
+  foreach ($m in $moved) {
+    if (Test-Path $m.To) {
+      New-Item -ItemType Directory -Force -Path (Split-Path $m.From) | Out-Null
+      Move-Item $m.To $m.From -Force
+    }
+  }
+}
+
+$hiddenFonts = Hide-UnusedIconFonts
+try {
+  $appBuild = Join-Path $root 'android\app\build'
+  if (Test-Path $appBuild) {
+    Remove-Item $appBuild -Recurse -Force -ErrorAction SilentlyContinue
+    Write-Host '>> Cleared android/app/build so icon fonts are not reused from cache'
+  }
+  Write-Host '>> gradlew assembleRelease...'
+  Set-Location android
+  .\gradlew.bat assembleRelease --no-daemon
+} finally {
+  Set-Location $root
+  Restore-UnusedIconFonts $hiddenFonts
+}
 
 $apk = Get-ChildItem 'android\app\build\outputs\apk\release\*.apk' | Select-Object -First 1
 if (-not $apk) { throw 'Khong tim thay APK sau build' }

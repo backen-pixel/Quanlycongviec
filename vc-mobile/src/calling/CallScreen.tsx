@@ -3,7 +3,7 @@
  * Tự render theo state máy trạng thái: incoming (đổ chuông) → call (đang gọi/kết nối/đã nối).
  * Hỗ trợ voice + video (RTCView).
  */
-import { Ionicons } from '@expo/vector-icons';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import React, { useEffect, useMemo, useState } from 'react';
 import { Image, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { RTCView } from 'react-native-webrtc';

@@ -16,7 +16,7 @@ import { formatApiError } from '../api/client';
 import TapHighlight from '../components/TapHighlight';
 import { useTheme } from '../context/ThemeContext';
 import { useProductionRealtime } from '../hooks/useProductionRealtime';
-import { loadKanbanFilters } from '../lib/kanbanFilterStorage';
+import { loadKanbanFilters, subscribeSharedFilters, boardFiltersFromSharedSnap } from '../lib/kanbanFilterStorage';
 import { fetchProductionBoard } from '../lib/logisticsApi';
 import { getCachedBoard, isCachedBoardFresh } from '../lib/logisticsBoardCache';
 import { REALTIME_BOARD } from '../lib/realtimeModes';
@@ -55,15 +55,7 @@ export default function OverdueProjectsScreen() {
     setError(null);
     try {
       const snap = await loadKanbanFilters().catch(() => null);
-      const companyId = snap?.filterCompany || undefined;
-      const workshopTypeId = snap?.filterWorkTypeId;
-      const filters = {
-        companyId,
-        workshopTypeId:
-          companyId && workshopTypeId && workshopTypeId !== 'none'
-            ? workshopTypeId
-            : undefined,
-      };
+      const filters = boardFiltersFromSharedSnap(snap);
       filtersRef.current = filters;
       if (mode === 'silent' && isCachedBoardFresh(filters) && getCachedBoard(filters)) {
         setProjects(getCachedBoard(filters)!.projects.filter((p) => projectIsDeadlineOverdue(p)));
@@ -90,15 +82,22 @@ export default function OverdueProjectsScreen() {
 
   useEffect(() => {
     void loadKanbanFilters().then((snap) => {
-      const filters = {
-        companyId: snap?.filterCompany || undefined,
-        workshopTypeId:
-          snap?.filterWorkTypeId && snap.filterWorkTypeId !== 'none'
-            ? snap.filterWorkTypeId
-            : undefined,
-      };
+      const filters = boardFiltersFromSharedSnap(snap);
       void load(getCachedBoard(filters) ? 'silent' : 'init');
     });
+  }, [load]);
+
+  useEffect(() => {
+    const unsub = subscribeSharedFilters((snap) => {
+      const next = boardFiltersFromSharedSnap(snap);
+      const prev = filtersRef.current;
+      if (
+        String(prev.companyId || '') === String(next.companyId || '')
+        && String(prev.workshopTypeId || '') === String(next.workshopTypeId || '')
+      ) return;
+      void load(getCachedBoard(next) ? 'silent' : 'init');
+    });
+    return unsub;
   }, [load]);
 
   useProductionRealtime({

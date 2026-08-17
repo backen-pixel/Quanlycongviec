@@ -17,3 +17,4 @@ ios/
 # Misc
 *.log
 .DS_Store
+.tmp-unused-icon-fonts/

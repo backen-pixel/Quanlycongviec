@@ -1,12 +1,13 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
+import { useFocusEffect, useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   FlatList,
+  PanResponder,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -43,6 +44,7 @@ import {
   fetchCompanyRegions,
   moveProjectToStage,
   resolveProjectDealId,
+  vcListStageLabel,
   type BoardFilters,
   type CommentIndexEntry,
   type CompanyOption,
@@ -67,7 +69,7 @@ import {
   workshopCompaniesForCrossViewer,
   type ClientCompanyOption,
 } from '../lib/productionFilters';
-import { loadKanbanFilters, saveKanbanFilters } from '../lib/kanbanFilterStorage';
+import { loadKanbanFilters, saveKanbanFilters, subscribeSharedFilters } from '../lib/kanbanFilterStorage';
 import { loadCommentSeenMap, markProjectCommentsSeen } from '../lib/notificationApi';
 import { ensureNotificationPermission } from '../lib/pushRegistration';
 import { useProductionRealtime } from '../hooks/useProductionRealtime';
@@ -389,8 +391,8 @@ export default function KanbanScreen() {
   }, []);
 
   const load = useCallback(async (mode: 'init' | 'refresh' | 'silent' = 'init') => {
-    // Pipeline VC luôn gắn 1 công ty — không fetch «tất cả» (tránh lệch web).
-    if (!filterCompanyRef.current) {
+    // NV/admin công ty: cần companyId. Sysadmin: '' = Tất cả công ty.
+    if (!filterCompanyRef.current && !isSysAdmin) {
       if (mode === 'init') setLoading(false);
       if (mode === 'refresh') setRefreshing(false);
       return;
@@ -426,20 +428,20 @@ export default function KanbanScreen() {
         setRefreshing(false);
       }
     }
-  }, []);
+  }, [isSysAdmin]);
 
   // Đồng bộ refs với state để load() luôn dùng filter mới nhất.
   useEffect(() => { filterCompanyRef.current = filterCompany; }, [filterCompany]);
   useEffect(() => { filterDealCompanyRef.current = dealCompanyParam || ''; }, [dealCompanyParam]);
   useEffect(() => { filterWorkTypeIdRef.current = filterWorkTypeId; }, [filterWorkTypeId]);
 
-  // Chỉ tải khi đã có công ty (auto-select hoặc user chọn) — khớp web.
+  // Sysadmin: '' = Tất cả — vẫn tải. NV: chờ có companyId.
   useEffect(() => {
-    if (!filterCompany) return;
+    if (!filterCompany && !isSysAdmin) return;
     setActiveIndex(0);
     void load('init');
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterCompany, filterDealCompany, dealCompanyParam, filterWorkTypeId]);
+  }, [filterCompany, filterDealCompany, dealCompanyParam, filterWorkTypeId, isSysAdmin]);
 
   useProductionRealtime({
     onRefresh: (info) => {
@@ -666,13 +668,25 @@ export default function KanbanScreen() {
         allCompaniesRef.current = fromApi;
       }
     }
-    // Không có «Tất cả công ty» — pipeline VC luôn gắn 1 công ty như web.
+    // Sysadmin: thêm «Tất cả công ty».
+    if (showWorkshopPicker && isSystemAdmin(user)) {
+      return [{ id: '', label: 'Tất cả công ty' }, ...fromApi.map((c) => ({ id: c.id, label: c.name }))];
+    }
     return fromApi.map((c) => ({ id: c.id, label: c.name }));
   }, [companies, board.projects, workshopCompanyPickerList, showWorkshopPicker, user]);
 
-  /** Bắt buộc chọn 1 công ty khi có danh sách — giống web LogisticsDashboard. */
+  /** Sysadmin: '' = Tất cả (hợp lệ). NV: bắt buộc 1 công ty. */
   useEffect(() => {
     if (!workshopCompanyPickerList.length) return;
+    if (isSysAdmin) {
+      if (!filterCompany) return;
+      const valid = workshopCompanyPickerList.some((c) => String(c.id) === String(filterCompany));
+      if (valid) return;
+      setFilterCompany('');
+      setFilterWorkTypeId('');
+      setFilterRegion('');
+      return;
+    }
     const valid = filterCompany
       && workshopCompanyPickerList.some((c) => String(c.id) === String(filterCompany));
     if (valid) return;
@@ -701,16 +715,51 @@ export default function KanbanScreen() {
         }
       });
     return () => { cancelled = true; };
-  }, [workshopCompanyPickerList, filterCompany]);
+  }, [workshopCompanyPickerList, filterCompany, isSysAdmin]);
 
   useEffect(() => {
-    if (!filterCompany && !filterDealCompany && !filterWorkTypeId) return;
     void saveKanbanFilters({
       filterCompany,
       filterDealCompany,
       filterWorkTypeId,
     }).catch(() => {});
   }, [filterCompany, filterDealCompany, filterWorkTypeId]);
+
+  // Đồng bộ từ Overview/Planner khi đổi công ty.
+  useEffect(() => {
+    const unsub = subscribeSharedFilters((snap) => {
+      const nextCo = String(snap.filterCompany || '');
+      const nextDeal = String(snap.filterDealCompany || '');
+      const nextWork = String(snap.filterWorkTypeId || '');
+      const same =
+        nextCo === String(filterCompanyRef.current || '')
+        && nextDeal === String(filterDealCompanyRef.current || '')
+        && nextWork === String(filterWorkTypeIdRef.current || '');
+      if (same) return;
+      setFilterCompany(nextCo);
+      if (nextDeal !== undefined) setFilterDealCompany(nextDeal);
+      setFilterWorkTypeId(nextWork);
+    });
+    return unsub;
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      let alive = true;
+      void loadKanbanFilters().then((snap) => {
+        if (!alive || !snap) return;
+        const nextCo = String(snap.filterCompany || '');
+        if (nextCo !== String(filterCompanyRef.current || '')) {
+          setFilterCompany(nextCo);
+        }
+        const nextWork = String(snap.filterWorkTypeId || '');
+        if (nextWork !== String(filterWorkTypeIdRef.current || '')) {
+          setFilterWorkTypeId(nextWork);
+        }
+      });
+      return () => { alive = false; };
+    }, []),
+  );
 
   const dealCompanyPickerOptions = useMemo(() => {
     if (!showDealCompanyFilter) return [];
@@ -890,14 +939,78 @@ export default function KanbanScreen() {
   const activeStage: KanbanStage | undefined = displayStages[activeIndex];
   const canPrev = activeIndex > 0;
   const canNext = activeIndex < displayStages.length - 1;
+  const canPrevRef = useRef(canPrev);
+  const canNextRef = useRef(canNext);
+  const stageCountRef = useRef(displayStages.length);
+  canPrevRef.current = canPrev;
+  canNextRef.current = canNext;
+  stageCountRef.current = displayStages.length;
+  /** Đã nhận diện vuốt ngang — không nhường FlatList (tránh lúc được lúc không). */
+  const swipeClaimedRef = useRef(false);
+
+  const trySwipeColumn = useCallback((dx: number, vx: number) => {
+    const distance = 40;
+    const fling = 0.35;
+    if ((dx <= -distance || vx <= -fling) && canNextRef.current) {
+      setActiveIndex((i) => Math.min(stageCountRef.current - 1, i + 1));
+      return;
+    }
+    if ((dx >= distance || vx >= fling) && canPrevRef.current) {
+      setActiveIndex((i) => Math.max(0, i - 1));
+    }
+  }, []);
+
+  /**
+   * Vuốt ngang đổi cột — gắn lên View bọc FlatList + header cột (giống SX/CRM),
+   * không gắn thẳng lên FlatList (ScrollView hay cướp gesture → lúc được lúc không).
+   */
+  const columnSwipe = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => false,
+        onMoveShouldSetPanResponder: (_e, g) => {
+          const ok = Math.abs(g.dx) > 12 && Math.abs(g.dx) > Math.abs(g.dy) * 1.2;
+          if (ok) swipeClaimedRef.current = true;
+          return ok;
+        },
+        onMoveShouldSetPanResponderCapture: (_e, g) => {
+          const ok = Math.abs(g.dx) > 18 && Math.abs(g.dx) > Math.abs(g.dy) * 1.35;
+          if (ok) swipeClaimedRef.current = true;
+          return ok;
+        },
+        onPanResponderTerminationRequest: () => !swipeClaimedRef.current,
+        onPanResponderRelease: (_e, g) => {
+          const claimed = swipeClaimedRef.current;
+          swipeClaimedRef.current = false;
+          if (!claimed) return;
+          trySwipeColumn(g.dx, g.vx);
+        },
+        onPanResponderTerminate: (_e, g) => {
+          const claimed = swipeClaimedRef.current;
+          swipeClaimedRef.current = false;
+          if (!claimed) return;
+          trySwipeColumn(g.dx, g.vx);
+        },
+      }),
+    [trySwipeColumn],
+  );
+
   const accent = stageColor(activeStage?.color, activeIndex);
 
   const projectsByStage = useMemo(() => {
     const map = new Map<string, ProductionProject[]>();
     displayStages.forEach((s) => map.set(s.id, []));
+    const intakeId = displayStages.find((s) => s.bucket_slug === 'delivery_pending')?.id
+      || displayStages[0]?.id
+      || '';
     filteredProjects.forEach((p) => {
-      const key = p.resolved_column_id;
-      if (key && map.has(key)) map.get(key)!.push(p);
+      const key = p.resolved_column_id ? String(p.resolved_column_id) : '';
+      if (key && map.has(key)) {
+        map.get(key)!.push(p);
+        return;
+      }
+      // Orphan (cột SX / cột công ty khác) → cột tiếp nhận.
+      if (intakeId && map.has(String(intakeId))) map.get(String(intakeId))!.push(p);
     });
     return map;
   }, [displayStages, filteredProjects]);
@@ -983,14 +1096,15 @@ export default function KanbanScreen() {
     setSearchInput('');
     setSearch('');
     setQuickFilter('all');
-    const first = workshopCompanyPickerList[0]?.id
-      ? String(workshopCompanyPickerList[0].id)
-      : '';
+    // Sysadmin: về «Tất cả công ty»; NV: giữ công ty đang chọn / đầu list.
+    const first = isSysAdmin
+      ? ''
+      : (workshopCompanyPickerList[0]?.id ? String(workshopCompanyPickerList[0].id) : '');
     setFilterCompany(first);
     setFilterDealCompany('');
     setFilterWorkTypeId('');
     setFilterRegion('');
-  }, [workshopCompanyPickerList]);
+  }, [workshopCompanyPickerList, isSysAdmin]);
 
   const performMove = useCallback(
     async (project: ProductionProject, target: KanbanStage) => {
@@ -1277,7 +1391,7 @@ export default function KanbanScreen() {
       {/* ── COLUMN NAV (Kanban) hoặc STAGE CHIPS (List) ── */}
       {viewMode === 'kanban' ? (
         <>
-          <View style={styles.colHeaderRow}>
+          <View style={styles.colHeaderRow} {...columnSwipe.panHandlers}>
             <Pressable
               onPress={() => setActiveIndex((i) => Math.max(0, i - 1))}
               disabled={!canPrev}
@@ -1332,6 +1446,11 @@ export default function KanbanScreen() {
               );
             })}
           </ScrollView>
+          {displayStages.length > 1 ? (
+            <Text style={styles.swipeHint}>
+              Vuốt ngang để chuyển cột · {activeIndex + 1}/{displayStages.length}
+            </Text>
+          ) : null}
         </>
       ) : (
         <ScrollView
@@ -1435,7 +1554,7 @@ export default function KanbanScreen() {
               <VcListCard
                 item={item}
                 title={cardTitleOf(item)}
-                stageName={meta?.name || item.stage_name}
+                stageName={vcListStageLabel(item, displayStages, meta?.name)}
                 stageColorHex={meta?.color}
                 stageIndex={meta?.index ?? 0}
                 ageLabel={calculateDays(item.created_at)}
@@ -1454,7 +1573,8 @@ export default function KanbanScreen() {
           }}
         />
       ) : (
-      /* ── CARD LIST (Kanban 1 cột) ── */
+      /* ── CARD LIST (Kanban 1 cột, vuốt ngang đổi cột) ── */
+      <View style={styles.listFlex} {...columnSwipe.panHandlers}>
       <FlatList
         style={styles.listFlex}
         data={pagedProjects}
@@ -1688,6 +1808,7 @@ export default function KanbanScreen() {
           );
         }}
       />
+      </View>
       )}
 
       <MoveColumnModal
@@ -1994,6 +2115,14 @@ function createKanbanStyles(c: AppColors) {
   },
   dotGap: { marginLeft: 5 },
   dot: { width: 7, height: 7, borderRadius: 4, backgroundColor: c.border },
+  swipeHint: {
+    textAlign: 'center',
+    color: c.textFaint,
+    fontSize: 11,
+    fontWeight: '600',
+    marginTop: 2,
+    marginBottom: 2,
+  },
 
   // Cards
   listContent: { paddingHorizontal: Spacing.md, paddingTop: 4, paddingBottom: 24 },

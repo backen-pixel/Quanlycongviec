@@ -16,6 +16,7 @@ export type WorkTask = CrmTask & {
   lead_id: string;
   lead?: WorkLeadRef | null;
   crm_task_id?: string | null;
+  _workshop_project_task?: boolean;
 };
 
 export type WorkTasksQuery = {
@@ -87,6 +88,11 @@ function mapWorkTask(raw: Record<string, unknown>): WorkTask {
     crm_task_id: raw.crm_task_id != null ? String(raw.crm_task_id) : null,
     file_count: raw.file_count != null ? Number(raw.file_count) : undefined,
     attachment_count: raw.attachment_count != null ? Number(raw.attachment_count) : undefined,
+    _workshop_project_task: raw._workshop_project_task === true || raw.source === 'workshop',
+    source: raw._workshop_project_task === true || raw.source === 'workshop' ? 'workshop' : 'crm',
+    metadata: raw.metadata && typeof raw.metadata === 'object'
+      ? (raw.metadata as Record<string, unknown>)
+      : null,
     lead: leadRaw
       ? {
           id: String(leadRaw.id || raw.lead_id || ''),
@@ -103,6 +109,18 @@ function mapWorkTask(raw: Record<string, unknown>): WorkTask {
         }
       : null,
   };
+}
+
+/** Chỉ nhiệm vụ VC/LĐ — loại CRM sales («Báo giá», «Chốt sản xuất», …). */
+export function isLogisticsWorkTask(
+  task: Pick<WorkTask, 'stage_slug' | 'source' | '_workshop_project_task' | 'metadata'>,
+): boolean {
+  if (task.source === 'workshop' || task._workshop_project_task) return true;
+  const slug = String(task.stage_slug || '');
+  if (slug.startsWith('vc_')) return true;
+  const meta = task.metadata && typeof task.metadata === 'object' ? task.metadata : null;
+  if (!meta) return false;
+  return meta.workshop_module === 'logistics' || meta.workshop_area === 'logistics';
 }
 
 export function isTaskPending(status: string): boolean {
@@ -165,7 +183,7 @@ export async function fetchLogisticsWorkTasksPage(
   const headers = res.headers as Record<string, unknown> | undefined;
   const tasks = list
     .map((row) => mapWorkTask(row as Record<string, unknown>))
-    .filter((t) => t.id && t.lead_id);
+    .filter((t) => t.id && t.lead_id && isLogisticsWorkTask(t));
   const pending = headerInt(headers, 'x-count-pending');
   const inProgress = headerInt(headers, 'x-count-in-progress');
   const done = headerInt(headers, 'x-count-done');
@@ -211,12 +229,27 @@ export async function updateWorkTaskStatus(
   dealId: string,
   taskId: string,
   status: string,
+  opts?: { workshop?: boolean },
 ): Promise<WorkTask> {
+  if (opts?.workshop) {
+    const { updateWorkshopTask } = await import('./projectDetailApi');
+    const updated = await updateWorkshopTask(taskId, { status });
+    return {
+      ...updated,
+      lead_id: dealId,
+      _workshop_project_task: true,
+      source: 'workshop',
+    } as WorkTask;
+  }
   const { data } = await api.put<Record<string, unknown>>(`/crm/leads/${dealId}/tasks/${taskId}`, {
     status,
     skip_completion_evidence: true,
   });
   return mapWorkTask({ ...(data || {}), lead_id: dealId, id: taskId, status });
+}
+
+export function isWorkTaskWorkshop(task: Pick<WorkTask, 'source' | '_workshop_project_task'>): boolean {
+  return task.source === 'workshop' || task._workshop_project_task === true;
 }
 
 export type DealTaskSection = {

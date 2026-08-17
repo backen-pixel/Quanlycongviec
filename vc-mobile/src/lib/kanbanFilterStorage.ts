@@ -1,6 +1,9 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { DeviceEventEmitter } from 'react-native';
 
 const KEY = 'vc_kanban_filters_v1';
+/** Event đồng bộ bộ lọc giữa Overview / Kanban / Planner / Overdue. */
+export const SHARED_FILTERS_CHANGED = 'vc_shared_logistics_filters_changed';
 
 export type KanbanFilterSnapshot = {
   filterCompany?: string;
@@ -8,30 +11,133 @@ export type KanbanFilterSnapshot = {
   filterWorkTypeId?: string;
 };
 
+/** Serialize writes — tránh Overview/Kanban ghi đè lẫn nhau. */
+let writeChain: Promise<void> = Promise.resolve();
+
+/** Bản RAM — đọc sync sau khi hydrate / save. */
+let memorySnap: KanbanFilterSnapshot | null = null;
+let memoryHydrated = false;
+
+function emitChanged(snap: KanbanFilterSnapshot): void {
+  DeviceEventEmitter.emit(SHARED_FILTERS_CHANGED, snap);
+}
+
+export function getSharedFiltersSync(): KanbanFilterSnapshot {
+  return memorySnap ? { ...memorySnap } : {};
+}
+
+export function subscribeSharedFilters(
+  listener: (snap: KanbanFilterSnapshot) => void,
+): () => void {
+  const sub = DeviceEventEmitter.addListener(
+    SHARED_FILTERS_CHANGED,
+    (snap: KanbanFilterSnapshot) => listener(snap || {}),
+  );
+  return () => sub.remove();
+}
+
+export type BoardFiltersLite = {
+  companyId?: string;
+  dealCompanyId?: string;
+  workshopTypeId?: string;
+};
+
+/**
+ * Deal company picker → param API board.
+ * `ext:…` chỉ lọc client — không gửi lên server.
+ */
+export function dealCompanyIdForBoardApi(filterDealCompany?: string | null): string | undefined {
+  const raw = String(filterDealCompany || '').trim();
+  if (!raw || raw.startsWith('ext:')) return undefined;
+  return raw;
+}
+
+/** Snapshot → filters dùng chung Overview / Kanban / Planner / cache key. */
+export function boardFiltersFromSharedSnap(
+  snap: KanbanFilterSnapshot | null | undefined,
+  opts?: { companyIdOverride?: string | null },
+): BoardFiltersLite {
+  const companyId = String(opts?.companyIdOverride ?? snap?.filterCompany ?? '').trim() || undefined;
+  const workRaw = String(snap?.filterWorkTypeId || '').trim();
+  const workshopTypeId = companyId && workRaw && workRaw !== 'none' ? workRaw : undefined;
+  return {
+    companyId,
+    dealCompanyId: dealCompanyIdForBoardApi(snap?.filterDealCompany),
+    workshopTypeId,
+  };
+}
+
 export async function loadKanbanFilters(): Promise<KanbanFilterSnapshot | null> {
   try {
+    if (memoryHydrated && memorySnap) return { ...memorySnap };
     const raw = await AsyncStorage.getItem(KEY);
-    if (!raw) return null;
+    if (!raw) {
+      memorySnap = {};
+      memoryHydrated = true;
+      return null;
+    }
     const parsed = JSON.parse(raw) as KanbanFilterSnapshot;
-    return parsed && typeof parsed === 'object' ? parsed : null;
+    const snap = parsed && typeof parsed === 'object' ? parsed : {};
+    memorySnap = { ...snap };
+    memoryHydrated = true;
+    return { ...snap };
   } catch {
-    return null;
+    memoryHydrated = true;
+    return memorySnap ? { ...memorySnap } : null;
   }
 }
 
-export async function saveKanbanFilters(snap: KanbanFilterSnapshot): Promise<void> {
-  try {
-    await AsyncStorage.setItem(KEY, JSON.stringify(snap));
-  } catch {
-    /* ignore */
-  }
+/**
+ * Merge partial vào snapshot hiện có (không replace toàn bộ).
+ * Chỉ ghi field được truyền (undefined = bỏ qua; '' = xóa có chủ đích).
+ */
+export async function saveKanbanFilters(
+  partial: Partial<KanbanFilterSnapshot>,
+): Promise<void> {
+  const run = async () => {
+    try {
+      const prev = (await loadKanbanFilters()) || {};
+      const next: KanbanFilterSnapshot = { ...prev };
+      (Object.keys(partial) as Array<keyof KanbanFilterSnapshot>).forEach((k) => {
+        const v = partial[k];
+        if (v !== undefined) next[k] = v;
+      });
+      memorySnap = { ...next };
+      memoryHydrated = true;
+      const same =
+        String(prev.filterCompany || '') === String(next.filterCompany || '')
+        && String(prev.filterDealCompany || '') === String(next.filterDealCompany || '')
+        && String(prev.filterWorkTypeId || '') === String(next.filterWorkTypeId || '');
+      await AsyncStorage.setItem(KEY, JSON.stringify(next));
+      if (!same) emitChanged(next);
+    } catch {
+      /* ignore */
+    }
+  };
+  writeChain = writeChain.then(run, run);
+  return writeChain;
 }
 
 /** Xóa bộ lọc khi đăng xuất — tránh user mới kế thừa scope công ty cũ. */
 export async function clearKanbanFilters(): Promise<void> {
-  try {
-    await AsyncStorage.removeItem(KEY);
-  } catch {
-    /* ignore */
-  }
+  writeChain = writeChain.then(async () => {
+    try {
+      memorySnap = {};
+      memoryHydrated = true;
+      await AsyncStorage.removeItem(KEY);
+      emitChanged({});
+    } catch {
+      /* ignore */
+    }
+  }, async () => {
+    try {
+      memorySnap = {};
+      memoryHydrated = true;
+      await AsyncStorage.removeItem(KEY);
+      emitChanged({});
+    } catch {
+      /* ignore */
+    }
+  });
+  return writeChain;
 }

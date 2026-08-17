@@ -68,11 +68,34 @@ function mapCrmDeal(raw: Record<string, unknown>): CrmDealSummary {
   };
 }
 
+function mapStageRef(raw: unknown): CrmTask['pipeline_stage'] {
+  if (!raw || typeof raw !== 'object') return null;
+  const s = raw as Record<string, unknown>;
+  return {
+    id: s.id != null ? String(s.id) : undefined,
+    name: s.name != null ? String(s.name) : null,
+    order_index: s.order_index != null ? Number(s.order_index) : undefined,
+  };
+}
+
 function mapCrmTask(raw: Record<string, unknown>): CrmTask {
   const assignees = Array.isArray(raw.assignees)
     ? raw.assignees.map((a) => mapPerson(a)).filter(Boolean) as PersonRef[]
     : [];
   const deadline = raw.deadline != null ? String(raw.deadline) : null;
+  const meta = raw.metadata && typeof raw.metadata === 'object'
+    ? (raw.metadata as Record<string, unknown>)
+    : null;
+  const logisticsStage = mapStageRef(raw.logistics_pipeline_stage);
+  const pipelineStage = mapStageRef(raw.pipeline_stage) || logisticsStage;
+  const logisticsStageId = raw.logistics_pipeline_stage_id != null
+    ? String(raw.logistics_pipeline_stage_id)
+    : (meta?.logistics_pipeline_stage_id != null ? String(meta.logistics_pipeline_stage_id) : null);
+  const isWorkshop = raw._workshop_project_task === true
+    || raw.source === 'workshop'
+    || meta?.workshop_area === 'logistics'
+    || meta?.workshop_module === 'logistics'
+    || String(raw.stage_slug || '').startsWith('vc_ws_');
   return {
     id: String(raw.id || ''),
     title: String(raw.title || ''),
@@ -89,19 +112,19 @@ function mapCrmTask(raw: Record<string, unknown>): CrmTask {
     attachment_count: Number(raw.attachment_count ?? 0),
     assignee: mapPerson(raw.assignee),
     assignees,
-    pipeline_stage: raw.pipeline_stage && typeof raw.pipeline_stage === 'object'
+    pipeline_stage: pipelineStage,
+    logistics_pipeline_stage_id: logisticsStageId,
+    logistics_pipeline_stage: logisticsStage
       ? {
-          id: (raw.pipeline_stage as Record<string, unknown>).id != null
-            ? String((raw.pipeline_stage as Record<string, unknown>).id)
-            : undefined,
-          name: (raw.pipeline_stage as Record<string, unknown>).name != null
-            ? String((raw.pipeline_stage as Record<string, unknown>).name)
+          ...logisticsStage,
+          bucket_slug: (raw.logistics_pipeline_stage as Record<string, unknown> | undefined)?.bucket_slug != null
+            ? String((raw.logistics_pipeline_stage as Record<string, unknown>).bucket_slug)
             : null,
-          order_index: (raw.pipeline_stage as Record<string, unknown>).order_index != null
-            ? Number((raw.pipeline_stage as Record<string, unknown>).order_index)
-            : undefined,
         }
       : null,
+    metadata: meta,
+    _workshop_project_task: isWorkshop,
+    source: isWorkshop ? 'workshop' : 'crm',
   };
 }
 
@@ -146,6 +169,7 @@ function stageGroupSortIndex(key: string, sampleTask?: CrmTask): number {
 }
 
 export function resolveCrmTaskStageLabel(task: CrmTask): string {
+  if (task.logistics_pipeline_stage?.name) return task.logistics_pipeline_stage.name;
   if (task.pipeline_stage?.name) return task.pipeline_stage.name;
   const slug = normalizeCrmTaskStageSlug(task.stage_slug);
   const fromOrder = VC_STAGE_ORDER.find((s) => s.slug === slug);
@@ -161,7 +185,302 @@ export function resolveCrmTaskStageLabel(task: CrmTask): string {
   return slug.replace(/_/g, ' ');
 }
 
-export function groupCrmTasksByStage(tasks: CrmTask[]): { key: string; label: string; tasks: CrmTask[] }[] {
+/** Gom nhiệm vụ vào cột logistics_pipeline_stages — khớp CRMTasksTab trên web. */
+export function resolveVcTaskPipelineStageId(
+  task: CrmTask,
+  vcStages: KanbanStage[],
+): string | null {
+  const stages = vcStages || [];
+  if (!stages.length) return null;
+  const validIds = new Set(stages.map((s) => String(s.id)));
+  const meta = task.metadata && typeof task.metadata === 'object' ? task.metadata : {};
+  const pid = task.logistics_pipeline_stage_id || meta.logistics_pipeline_stage_id;
+  if (pid && validIds.has(String(pid))) return String(pid);
+
+  const slug = String(task.stage_slug || '').trim();
+  if (slug.startsWith('vc_pl_')) {
+    const prefix = slug.slice(6);
+    const hit = stages.find((s) => s?.id && String(s.id).startsWith(prefix));
+    if (hit && validIds.has(String(hit.id))) return String(hit.id);
+  }
+
+  const wsSlug = String(meta.guessed_stage_slug || slug.replace(/^vc_ws_/, '') || '').toLowerCase();
+  const findByBucket = (pred: (b: string, n: string) => boolean) => stages.find((s) => {
+    const b = String(s.bucket_slug || '').toLowerCase();
+    const n = String(s.name || '').toLowerCase();
+    return pred(b, n);
+  });
+
+  if (wsSlug === 'delivery_pending' || wsSlug === 'delivery-pending') {
+    const col = findByBucket((b, n) => (
+      b === 'delivery_pending'
+      || n.includes('chờ vận')
+      || n.includes('tiếp nhận')
+    ));
+    if (col?.id) return String(col.id);
+  }
+  if (wsSlug === 'installation' || wsSlug === 'installing') {
+    const col = findByBucket((b, n) => n.includes('lắp đặt') || b === 'installation');
+    if (col?.id) return String(col.id);
+  }
+  if (wsSlug === 'completed') {
+    const col = findByBucket((b, n) => b === 'completed' || n.includes('hoàn thành'));
+    if (col?.id) return String(col.id);
+  }
+  if (wsSlug === 'shipping' || wsSlug === 'delivery') {
+    const col = findByBucket((b, n) => n.includes('đang vận') || (n.includes('vận chuyển') && b !== 'delivery_pending'));
+    if (col?.id) return String(col.id);
+  }
+
+  return stages[0]?.id ? String(stages[0].id) : null;
+}
+
+/** Khớp web: tab VC deal chỉ hiện workshop logistics + crm_tasks vc_*. */
+export function filterVcLogisticsUiTasks(tasks: CrmTask[]): CrmTask[] {
+  return (tasks || []).filter((t) => (
+    t.source === 'workshop'
+    || t._workshop_project_task === true
+    || String(t.stage_slug || '').startsWith('vc_')
+  ));
+}
+
+export function isInstallLogisticsPipelineStage(
+  stage: Pick<KanbanStage, 'name' | 'bucket_slug'> | null | undefined,
+): boolean {
+  if (!stage) return false;
+  const name = String(stage.name || '').toLowerCase();
+  const slug = String(stage.bucket_slug || '').toLowerCase();
+  return (
+    slug.includes('install')
+    || name.includes('lắp')
+    || name.includes('lap dat')
+  );
+}
+
+function guessInstallFromTitle(title: string): boolean {
+  const t = String(title || '').toLowerCase().trim();
+  if (!t) return false;
+  if (
+    t.includes('vận chuyển')
+    || t.includes('giao hàng')
+    || t.includes('chờ vận')
+    || t.includes('checklist hàng')
+    || t.includes('phiếu giao')
+    || t.includes('địa chỉ')
+    || t.includes('chứng từ')
+    || t.includes('thanh toán')
+    || t.includes('trước khi lấy')
+    || t.includes('lên xe')
+    || t.includes('trước khi giao')
+  ) {
+    return false;
+  }
+  return (
+    t.includes('nghiệm thu')
+    || t.includes('quy trình lắp')
+    || t.includes('lắp đặt')
+    || t.includes('kiểm tra và nhận')
+    || t.includes('kiểm tra nhận hàng')
+    || t.includes('khảo sát')
+    || t.includes('thi công')
+    || t.includes('vận hành')
+    || t.includes('dụng cụ')
+    || t.includes('lắp ')
+  );
+}
+
+/**
+ * Lọc Vận chuyển / Lắp đặt — khớp CRMTasksTab (vcAreaTab) trên web.
+ * Mặc định web = shipping.
+ */
+export function filterVcAreaTabTasks(
+  tasks: CrmTask[],
+  vcAreaTab: 'shipping' | 'install' | 'all' | null | undefined,
+  vcStages: KanbanStage[] = [],
+): CrmTask[] {
+  if (!vcAreaTab || vcAreaTab === 'all') return tasks || [];
+  if (vcAreaTab !== 'shipping' && vcAreaTab !== 'install') return tasks || [];
+  const stages = Array.isArray(vcStages) ? vcStages : [];
+  return (tasks || []).filter((t) => {
+    const sid = resolveVcTaskPipelineStageId(t, stages);
+    if (sid && stages.length) {
+      const stage = stages.find((s) => String(s.id) === String(sid));
+      if (stage) {
+        const install = isInstallLogisticsPipelineStage(stage);
+        return vcAreaTab === 'install' ? install : !install;
+      }
+    }
+    const meta = t.metadata && typeof t.metadata === 'object' ? t.metadata : {};
+    const guessed = String(meta.guessed_stage_slug || '').toLowerCase();
+    const slug = String(t.stage_slug || '').toLowerCase();
+    const isInstall = guessed.includes('install')
+      || slug.includes('install')
+      || guessInstallFromTitle(t.title || '');
+    return vcAreaTab === 'install' ? isInstall : !isInstall;
+  });
+}
+
+/**
+ * Lọc cột pipeline theo tab Vận chuyển / Lắp đặt (giống web listStagesToRender).
+ */
+export function filterVcStagesByAreaTab(
+  stages: KanbanStage[],
+  vcAreaTab: 'shipping' | 'install' | 'all' | null | undefined,
+): KanbanStage[] {
+  const list = Array.isArray(stages) ? stages : [];
+  if (!vcAreaTab || vcAreaTab === 'all') return list;
+  return list.filter((s) => {
+    const install = isInstallLogisticsPipelineStage(s);
+    return vcAreaTab === 'install' ? install : !install;
+  });
+}
+
+/** Tạo nhiệm vụ VC/LĐ trên bảng tasks — khớp WorkshopProjectTasksPanel «Thêm việc». */
+export async function createLogisticsWorkshopTask(input: {
+  projectId: string;
+  title: string;
+  priority?: string;
+  assignee_id?: string | null;
+  logistics_pipeline_stage_id: string;
+  guessed_stage_slug?: string;
+  stage_id?: string | null;
+}): Promise<CrmTask> {
+  const guessed = String(input.guessed_stage_slug || 'shipping');
+  const payload: Record<string, unknown> = {
+    project_id: input.projectId,
+    title: input.title.trim(),
+    priority: input.priority || 'medium',
+    status: 'todo',
+    task_type: 'project',
+    metadata: {
+      workshop_area: 'logistics',
+      logistics_pipeline_stage_id: input.logistics_pipeline_stage_id,
+      guessed_stage_slug: guessed,
+    },
+  };
+  if (input.assignee_id) payload.assignee_id = input.assignee_id;
+  if (input.stage_id) payload.stage_id = input.stage_id;
+
+  const { data } = await api.post<unknown>('/tasks', payload);
+  const root = (data && typeof data === 'object' ? data : {}) as Record<string, unknown>;
+  const row = (root.task && typeof root.task === 'object' ? root.task : root) as Record<string, unknown>;
+  // Nếu backend chưa lưu metadata (chưa deploy), gắn lại bằng PUT.
+  if (row.id && (!row.metadata || !(row.metadata as Record<string, unknown>).workshop_area)) {
+    try {
+      await api.put(`/tasks/${row.id}`, {
+        metadata: {
+          workshop_area: 'logistics',
+          logistics_pipeline_stage_id: input.logistics_pipeline_stage_id,
+          guessed_stage_slug: guessed,
+        },
+      });
+    } catch { /* cột/API cũ — bỏ qua */ }
+  }
+  return mapWorkshopTask({
+    ...row,
+    metadata: {
+      ...(typeof row.metadata === 'object' && row.metadata ? row.metadata as object : {}),
+      workshop_area: 'logistics',
+      logistics_pipeline_stage_id: input.logistics_pipeline_stage_id,
+      guessed_stage_slug: guessed,
+    },
+  });
+}
+
+/** Tạo crm_tasks vc_* theo cột pipeline — khớp CRMTasksTab «Thêm việc» (khi có deal). */
+export async function createCrmLogisticsTask(
+  dealId: string,
+  input: {
+    title: string;
+    priority?: string;
+    assignee_id?: string | null;
+    logistics_pipeline_stage_id: string;
+    order_index?: number;
+  },
+): Promise<CrmTask> {
+  const stageId = String(input.logistics_pipeline_stage_id);
+  const payload: Record<string, unknown> = {
+    title: input.title.trim(),
+    priority: input.priority || 'medium',
+    status: 'pending',
+    stage_slug: `vc_pl_${stageId.slice(0, 8)}`,
+    order_index: input.order_index ?? 0,
+    metadata: {
+      workshop_area: 'logistics',
+      workshop_module: 'logistics',
+      logistics_pipeline_stage_id: stageId,
+    },
+  };
+  if (input.assignee_id) {
+    payload.assignee_id = input.assignee_id;
+    payload.assignee_ids = [input.assignee_id];
+  }
+  const { data } = await api.post<Record<string, unknown>>(`/crm/leads/${dealId}/tasks`, payload);
+  return mapCrmTask({
+    ...(data || {}),
+    logistics_pipeline_stage_id: stageId,
+    stage_slug: (data?.stage_slug as string) || `vc_pl_${stageId.slice(0, 8)}`,
+    metadata: {
+      ...((data?.metadata && typeof data.metadata === 'object') ? data.metadata as object : {}),
+      workshop_area: 'logistics',
+      logistics_pipeline_stage_id: stageId,
+    },
+  });
+}
+
+export function groupCrmTasksByStage(
+  tasks: CrmTask[],
+  vcStages: KanbanStage[] = [],
+  opts?: { includeEmpty?: boolean },
+): { key: string; label: string; color?: string | null; tasks: CrmTask[]; openCount: number; doneCount: number }[] {
+  const includeEmpty = !!opts?.includeEmpty;
+  const stages = [...(vcStages || [])].sort(
+    (a, b) => (Number(a.order_index) || 0) - (Number(b.order_index) || 0),
+  );
+
+  if (stages.length) {
+    const map = new Map<string, CrmTask[]>();
+    for (const s of stages) map.set(String(s.id), []);
+    const orphanKey = '_other';
+    for (const task of tasks) {
+      const key = resolveVcTaskPipelineStageId(task, stages) || orphanKey;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(task);
+    }
+    const sections: {
+      key: string;
+      label: string;
+      color?: string | null;
+      tasks: CrmTask[];
+      openCount: number;
+      doneCount: number;
+    }[] = [];
+    for (const s of stages) {
+      const list = sortTasksInStage(map.get(String(s.id)) || []);
+      if (!list.length && !includeEmpty) continue;
+      sections.push({
+        key: String(s.id),
+        label: s.name || 'Giai đoạn',
+        color: s.color,
+        tasks: list,
+        openCount: list.filter((t) => !isCrmProductionTaskDone(t.status)).length,
+        doneCount: list.filter((t) => isCrmProductionTaskDone(t.status)).length,
+      });
+    }
+    const orphans = sortTasksInStage(map.get(orphanKey) || []);
+    if (orphans.length) {
+      sections.push({
+        key: orphanKey,
+        label: 'Khác',
+        color: '#64748b',
+        tasks: orphans,
+        openCount: orphans.filter((t) => !isCrmProductionTaskDone(t.status)).length,
+        doneCount: orphans.filter((t) => isCrmProductionTaskDone(t.status)).length,
+      });
+    }
+    return sections;
+  }
+
   const map = new Map<string, { label: string; tasks: CrmTask[]; sample?: CrmTask }>();
   for (const task of tasks) {
     const key = normalizeCrmTaskStageSlug(task.stage_slug);
@@ -177,11 +496,16 @@ export function groupCrmTasksByStage(tasks: CrmTask[]): { key: string; label: st
       if (ia !== ib) return ia - ib;
       return keyA.localeCompare(keyB, 'vi');
     })
-    .map(([key, v]) => ({
-      key,
-      label: v.label,
-      tasks: sortTasksInStage(v.tasks),
-    }));
+    .map(([key, v]) => {
+      const list = sortTasksInStage(v.tasks);
+      return {
+        key,
+        label: v.label,
+        tasks: list,
+        openCount: list.filter((t) => !isCrmProductionTaskDone(t.status)).length,
+        doneCount: list.filter((t) => isCrmProductionTaskDone(t.status)).length,
+      };
+    });
 }
 
 export async function fetchProductionProjectDetail(projectId: string): Promise<ProductionProjectDetail> {
@@ -246,26 +570,18 @@ export async function fetchProductionProjectDetail(projectId: string): Promise<P
   };
 }
 
-export async function fetchCrmDealTasks(dealId: string): Promise<CrmTask[]> {
-  const { data } = await api.get<unknown>(`/crm/leads/${dealId}/tasks`, {
-    params: { task_scope: 'logistics' },
-  });
+export async function fetchCrmDealTasks(
+  dealId: string,
+  opts?: { ownerCompanyId?: string | null },
+): Promise<CrmTask[]> {
+  const params: Record<string, string> = {
+    task_scope: 'logistics',
+    task_company_scope: 'own',
+  };
+  if (opts?.ownerCompanyId) params.owner_company_id = String(opts.ownerCompanyId);
+  const { data } = await api.get<unknown>(`/crm/leads/${dealId}/tasks`, { params });
   const list = Array.isArray(data) ? data : [];
-  return list.map((row) => {
-    const raw = row as Record<string, unknown>;
-    const meta = raw.metadata && typeof raw.metadata === 'object'
-      ? (raw.metadata as Record<string, unknown>)
-      : {};
-    // API CRM có thể trả nhiệm vụ bảng `tasks` (bộ mẫu VC) — không phải crm_tasks
-    const isWorkshopRow = raw._workshop_project_task === true
-      || meta.workshop_area === 'logistics'
-      || meta.workshop_module === 'logistics'
-      || String(raw.stage_slug || '').startsWith('vc_ws_');
-    return {
-      ...mapCrmTask(raw),
-      source: isWorkshopRow ? 'workshop' as const : 'crm' as const,
-    };
-  });
+  return list.map((row) => mapCrmTask(row as Record<string, unknown>));
 }
 
 const VC_WORKSHOP_STAGE_LABEL: Record<string, string> = {
@@ -282,12 +598,14 @@ function isLogisticsWorkshopTask(row: Record<string, unknown>): boolean {
   const meta = row.metadata && typeof row.metadata === 'object'
     ? (row.metadata as Record<string, unknown>)
     : {};
-  if (meta.workshop_area === 'logistics' || meta.workshop_module === 'logistics') return true;
+  if (meta.workshop_area === 'production') return false;
+  if (meta.workshop_area === 'logistics') return true;
+  // Khớp frontend taskBelongsToWorkshopModule('vc') khi không có deal (WorkshopProjectTasksPanel)
   const stageSlug = row.stage && typeof row.stage === 'object'
     ? String((row.stage as Record<string, unknown>).slug || '')
     : '';
-  const slug = String(meta.guessed_stage_slug || stageSlug || '');
-  return ['delivery_pending', 'delivery', 'shipping', 'installation', 'installing', 'customer-care', 'warranty'].includes(slug);
+  const slug = String(meta.guessed_stage_slug || stageSlug || '').toLowerCase();
+  return ['delivery', 'shipping', 'installation', 'installing', 'customer-care', 'delivery_pending'].includes(slug);
 }
 
 function mapWorkshopTask(row: Record<string, unknown>): CrmTask {
@@ -313,7 +631,7 @@ function mapWorkshopTask(row: Record<string, unknown>): CrmTask {
     id: String(row.id || ''),
     title: String(row.title || ''),
     status,
-    stage_slug: guessed,
+    stage_slug: guessed.startsWith('vc_') ? guessed : `vc_ws_${guessed}`,
     order_index: row.order_index != null ? Number(row.order_index) : undefined,
     deadline: due,
     due_date: due,
@@ -329,6 +647,11 @@ function mapWorkshopTask(row: Record<string, unknown>): CrmTask {
       name: label,
       order_index: row.order_index != null ? Number(row.order_index) : undefined,
     },
+    logistics_pipeline_stage_id: meta.logistics_pipeline_stage_id != null
+      ? String(meta.logistics_pipeline_stage_id)
+      : null,
+    metadata: meta,
+    _workshop_project_task: true,
     source: 'workshop',
   };
 }

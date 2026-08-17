@@ -6,9 +6,38 @@ import type {
   ProductionProject,
 } from '../types';
 
-const LOGISTICS_STAGE_SLUGS = new Set(['delivery', 'installation', 'customer-care']);
+const LOGISTICS_STAGE_SLUGS = new Set(['delivery', 'installation', 'customer-care', 'acceptance', 'completed']);
 const LOGISTICS_STATUSES = new Set(['shipping', 'installing', 'warranty', 'completed']);
 const INTAKE_BUCKET = 'delivery_pending';
+/** Workflow / status còn thuộc SX — không dùng làm nhãn cột trên board VC. */
+const PRODUCTION_STAGE_HINT = /sản\s*xuất|^sx$|^production$|^producing$/i;
+
+export function isProductionStageLabel(nameOrSlug?: string | null): boolean {
+  const s = String(nameOrSlug || '').trim();
+  if (!s) return false;
+  return PRODUCTION_STAGE_HINT.test(s);
+}
+
+/** Nhãn giai đoạn hiển thị trên List VC — không fallback sang current_stage SX. */
+export function vcListStageLabel(
+  project: ProductionProject,
+  stages: KanbanStage[],
+  metaName?: string | null,
+): string {
+  if (metaName && !isProductionStageLabel(metaName)) return metaName;
+  const rid = project.resolved_column_id ? String(project.resolved_column_id) : '';
+  if (rid) {
+    const col = stages.find((s) => String(s.id) === rid);
+    if (col?.name && !isProductionStageLabel(col.name)) return col.name;
+  }
+  const intake = stages.find((c) => c.bucket_slug === INTAKE_BUCKET) || stages[0];
+  if (isProductionStageLabel(project.stage_name) || isProductionStageLabel(project.stage_slug)) {
+    return intake?.name || 'Chờ VC';
+  }
+  const raw = String(project.stage_name || '').trim();
+  if (raw && !isProductionStageLabel(raw)) return raw;
+  return intake?.name || '—';
+}
 
 export function mapProjectRow(raw: Record<string, unknown>): ProductionProject {
   const customer = (raw.customer || {}) as { full_name?: string; phone?: string };
@@ -116,27 +145,34 @@ export function resolveColumnId(
   if (!matchedCol) {
     for (const col of sortedStages) {
       if (col.bucket_slug === INTAKE_BUCKET) continue;
-      const wsSlug = col.workflow_stage_id
-        ? sortedStages.find((s) => s.workflow_stage_id === col.workflow_stage_id)?.bucket_slug
-        : null;
-      if (stageSlug && (col.bucket_slug === stageSlug || wsSlug === stageSlug)) {
+      const wsSlug = col.workflow_stage?.slug || null;
+      if (stageSlug && (
+        col.bucket_slug === stageSlug
+        || col.slug === stageSlug
+        || wsSlug === stageSlug
+      )) {
         matchedCol = col;
         break;
       }
-      if (status && col.bucket_slug === status) {
+      if (status && (col.bucket_slug === status || col.slug === status)) {
         matchedCol = col;
         break;
       }
     }
   }
 
+  // Khớp backend: dự án đã vào phạm vi VC dù current_stage vẫn «Sản xuất»
+  // thì đặt vào cột tiếp nhận — tránh orphan chỉ hiện ở List với nhãn SX.
   const inScope = (status && LOGISTICS_STATUSES.has(status))
-    || (stageSlug && LOGISTICS_STAGE_SLUGS.has(stageSlug));
+    || (stageSlug && LOGISTICS_STAGE_SLUGS.has(stageSlug))
+    || Boolean(project.vc_kanban_column_id || project.company_id)
+    || isProductionStageLabel(stageSlug)
+    || isProductionStageLabel(project.stage_name);
   if (!matchedCol && inScope) {
     matchedCol = intakeCol || firstCol;
   }
 
-  return matchedCol?.id || project.vc_kanban_column_id || null;
+  return matchedCol?.id || null;
 }
 
 export type BoardFilters = {

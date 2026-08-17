@@ -49,7 +49,7 @@ import {
   type CompanyOption,
 } from '../lib/logisticsApi';
 import { getCachedBoard, isCachedBoardFresh, setCachedBoard } from '../lib/logisticsBoardCache';
-import { loadKanbanFilters, saveKanbanFilters } from '../lib/kanbanFilterStorage';
+import { boardFiltersFromSharedSnap, loadKanbanFilters, saveKanbanFilters, subscribeSharedFilters } from '../lib/kanbanFilterStorage';
 import { REALTIME_BOARD_TASK_EVENT } from '../lib/realtimeModes';
 import {
   isSystemAdmin,
@@ -180,7 +180,10 @@ export default function OverviewScreen() {
 
   const companyOptions = useMemo(() => {
     if (isSystemAdmin(user)) {
-      return companies.map((c) => ({ id: c.id, label: c.name }));
+      return [
+        { id: '', label: 'Tất cả công ty' },
+        ...companies.map((c) => ({ id: c.id, label: c.name })),
+      ];
     }
     if (isCompanyScopedAdmin(user) && user?.company_id) {
       const ownId = String(user.company_id);
@@ -200,19 +203,21 @@ export default function OverviewScreen() {
 
   const workshopLabel = useMemo(() => {
     if (!filterCompany) {
-      return companyOptions[0]?.label || 'Công ty';
+      return canPickCompany ? 'Tất cả công ty' : (companyOptions[0]?.label || 'Công ty');
     }
     return companyOptions.find((o) => o.id === filterCompany)?.label
       || companies.find((c) => String(c.id) === String(filterCompany))?.name
       || 'Công ty';
-  }, [filterCompany, companyOptions, companies]);
+  }, [filterCompany, canPickCompany, companyOptions, companies]);
 
   const persistCompanyFilter = useCallback(async (companyId: string) => {
     const snap = (await loadKanbanFilters().catch(() => null)) || {};
+    const prev = String(snap?.filterCompany || '');
+    const next = String(companyId || '');
+    const companyChanged = Boolean(prev) && prev !== next;
     await saveKanbanFilters({
-      ...snap,
       filterCompany: companyId,
-      filterWorkTypeId: '',
+      ...(companyChanged ? { filterWorkTypeId: '' } : {}),
     });
   }, []);
 
@@ -240,26 +245,19 @@ export default function OverviewScreen() {
         if (companyId && companyId !== (snap?.filterCompany || '')) {
           await persistCompanyFilter(companyId);
         }
-      } else {
-        // Sysadmin: luôn chọn 1 công ty cụ thể (không «Tất cả») — khớp web.
-        const exists = companyId
-          && companyList.some((c) => String(c.id) === String(companyId));
+      } else if (companyId) {
+        // Sysadmin: '' = Tất cả công ty; chỉ clear nếu id đã chọn không còn trong list.
+        const exists = companyList.some((c) => String(c.id) === String(companyId));
         if (!exists) {
-          companyId = companyList[0]?.id ? String(companyList[0].id) : '';
-          if (companyId) await persistCompanyFilter(companyId);
+          companyId = '';
+          if ((snap?.filterCompany || '') !== '') await persistCompanyFilter('');
         }
       }
 
       if (seq !== loadSeqRef.current) return;
       setFilterCompany(companyId);
 
-      const boardFilters = {
-        companyId: companyId || undefined,
-        workshopTypeId:
-          companyId && workshopTypeId && workshopTypeId !== 'none'
-            ? workshopTypeId
-            : undefined,
-      };
+      const boardFilters = boardFiltersFromSharedSnap(snap, { companyIdOverride: companyId });
       boardFiltersRef.current = boardFilters;
 
       const skipBoard = mode === 'silent' && isCachedBoardFresh(boardFilters) && !!getCachedBoard(boardFilters);
@@ -282,8 +280,13 @@ export default function OverviewScreen() {
         userId: userId || undefined,
       }).catch(() => [] as AppEvent[]);
 
+      // Soft-fail board: NV thiếu projects:view không làm đỏ cả Tổng quan (tasks/events vẫn hiện).
+      const boardPromise = skipBoard
+        ? Promise.resolve(cachedBoard!)
+        : fetchProductionBoard(mode === 'refresh', boardFilters).catch(() => null);
+
       const [board, myTasks, todayEvents, notifList] = await Promise.all([
-        skipBoard ? Promise.resolve(cachedBoard!) : fetchProductionBoard(mode === 'refresh', boardFilters),
+        boardPromise,
         tasksPromise,
         eventsPromise,
         fetchCommentNotifications(false).catch(() => ({
@@ -296,6 +299,8 @@ export default function OverviewScreen() {
       if (board) {
         if (!skipBoard) setCachedBoard(boardFilters, board);
         setKpis(computeVcBoardKpis(board.projects, board.stages));
+      } else if (!cachedBoard) {
+        setKpis(EMPTY_KPI);
       }
       setTasks(myTasks);
       setEvents(todayEvents);
@@ -319,15 +324,24 @@ export default function OverviewScreen() {
 
   useEffect(() => {
     void loadKanbanFilters().then((snap) => {
-      const filters = {
-        companyId: snap?.filterCompany || undefined,
-        workshopTypeId:
-          snap?.filterWorkTypeId && snap.filterWorkTypeId !== 'none'
-            ? snap.filterWorkTypeId
-            : undefined,
-      };
+      const filters = boardFiltersFromSharedSnap(snap);
       void load(getCachedBoard(filters) ? 'silent' : 'init');
     });
+  }, [load]);
+
+  // Đồng bộ khi Kanban/Planner đổi filter công ty.
+  useEffect(() => {
+    const unsub = subscribeSharedFilters((snap) => {
+      const nextFilters = boardFiltersFromSharedSnap(snap);
+      const prev = boardFiltersRef.current;
+      const same =
+        String(prev.companyId || '') === String(nextFilters.companyId || '')
+        && String(prev.workshopTypeId || '') === String(nextFilters.workshopTypeId || '');
+      if (same) return;
+      setFilterCompany(String(snap.filterCompany || ''));
+      void load(getCachedBoard(nextFilters) ? 'silent' : 'init');
+    });
+    return unsub;
   }, [load]);
 
   /** Quay lại Tổng quan → đọc cache (Kanban đã patch) rồi refresh nền nếu stale. */

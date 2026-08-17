@@ -13,19 +13,27 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatApiError } from '../api/client';
+import FilterPickerModal, { type FilterOption } from './FilterPickerModal';
 import {
   PRIORITY_LABEL,
   createCrmAssignment,
   fetchAssignmentColumns,
   fetchAssignmentLookups,
+  fetchDealPicker,
+  fetchSharedWorkspaceMembers,
   type AssignmentLookupUser,
+  type DealPickerItem,
 } from '../lib/sharedWorkspaceApi';
+import type { CompanyOption } from '../lib/logisticsApi';
 import { useTheme } from '../context/ThemeContext';
 import { Radii, Spacing, type AppColors } from '../theme';
 
 type Props = {
   visible: boolean;
   companyId?: string | null;
+  isAdmin?: boolean;
+  companies?: CompanyOption[];
+  sharedWorkspaceMode?: boolean;
   onClose: () => void;
   onCreated: () => void;
 };
@@ -37,11 +45,23 @@ const PRIORITIES = [
   { value: 'urgent', label: PRIORITY_LABEL.urgent },
 ];
 
-export default function AssignWorkModal({ visible, companyId, onClose, onCreated }: Props) {
+const DEAL_PAGE_SIZE = 8;
+
+export default function AssignWorkModal({
+  visible,
+  companyId,
+  isAdmin = false,
+  companies = [],
+  sharedWorkspaceMode = false,
+  onClose,
+  onCreated,
+}: Props) {
   const { colors } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
 
+  const [formCompanyId, setFormCompanyId] = useState('');
+  const [companyPickerOpen, setCompanyPickerOpen] = useState(false);
   const [users, setUsers] = useState<AssignmentLookupUser[]>([]);
   const [columnId, setColumnId] = useState('');
   const [loadingMeta, setLoadingMeta] = useState(false);
@@ -53,6 +73,12 @@ export default function AssignWorkModal({ visible, companyId, onClose, onCreated
   const [priority, setPriority] = useState('medium');
   const [assigneeIds, setAssigneeIds] = useState<Set<string>>(new Set());
   const [userQuery, setUserQuery] = useState('');
+  const [dealQuery, setDealQuery] = useState('');
+  const [dealPool, setDealPool] = useState<DealPickerItem[]>([]);
+  const [dealPage, setDealPage] = useState(1);
+  const [dealLoading, setDealLoading] = useState(false);
+  const [selectedDeal, setSelectedDeal] = useState<DealPickerItem | null>(null);
+  const [membersOnly, setMembersOnly] = useState(true);
 
   useEffect(() => {
     if (!visible) return;
@@ -63,10 +89,21 @@ export default function AssignWorkModal({ visible, companyId, onClose, onCreated
     setPriority('medium');
     setAssigneeIds(new Set());
     setUserQuery('');
+    setDealQuery('');
+    setDealPool([]);
+    setDealPage(1);
+    setSelectedDeal(null);
+    setMembersOnly(true);
+    setFormCompanyId(companyId ? String(companyId) : '');
+    setColumnId('');
+  }, [visible, companyId]);
+
+  useEffect(() => {
+    if (!visible) return;
     let cancelled = false;
     setLoadingMeta(true);
     void Promise.all([
-      fetchAssignmentLookups(companyId),
+      fetchAssignmentLookups(formCompanyId || null),
       fetchAssignmentColumns().catch(() => []),
     ])
       .then(([lookups, cols]) => {
@@ -83,7 +120,72 @@ export default function AssignWorkModal({ visible, companyId, onClose, onCreated
     return () => {
       cancelled = true;
     };
-  }, [visible, companyId]);
+  }, [visible, formCompanyId]);
+
+  useEffect(() => {
+    if (!visible || selectedDeal) return;
+    let cancelled = false;
+    const t = setTimeout(() => {
+      setDealLoading(true);
+      setDealPage(1);
+      void fetchDealPicker({
+        q: dealQuery,
+        companyId: formCompanyId || null,
+        limit: 50,
+      })
+        .then((rows) => {
+          if (!cancelled) setDealPool(rows);
+        })
+        .catch(() => {
+          if (!cancelled) setDealPool([]);
+        })
+        .finally(() => {
+          if (!cancelled) setDealLoading(false);
+        });
+    }, 280);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [visible, dealQuery, formCompanyId, selectedDeal]);
+
+  useEffect(() => {
+    if (!visible || !selectedDeal?.id || !membersOnly) return;
+    let cancelled = false;
+    void fetchSharedWorkspaceMembers(selectedDeal.id)
+      .then((mem) => {
+        if (cancelled) return;
+        const ids = mem.map((m) => String(m.user_id)).filter(Boolean);
+        if (ids.length) setAssigneeIds(new Set(ids));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [visible, selectedDeal?.id, membersOnly]);
+
+  const companyOptions: FilterOption[] = useMemo(() => {
+    const opts: FilterOption[] = [{ id: '', label: 'Tất cả công ty module này' }];
+    for (const c of companies) {
+      opts.push({ id: String(c.id), label: c.name || String(c.id) });
+    }
+    return opts;
+  }, [companies]);
+
+  const selectedCompanyLabel = useMemo(() => {
+    if (!formCompanyId) return 'Tất cả công ty module này';
+    return companyOptions.find((o) => o.id === formCompanyId)?.label || 'Công ty';
+  }, [formCompanyId, companyOptions]);
+
+  const dealTotalPages = Math.max(1, Math.ceil(dealPool.length / DEAL_PAGE_SIZE));
+  const pagedDeals = useMemo(() => {
+    const start = (dealPage - 1) * DEAL_PAGE_SIZE;
+    return dealPool.slice(start, start + DEAL_PAGE_SIZE);
+  }, [dealPool, dealPage]);
+
+  useEffect(() => {
+    if (dealPage > dealTotalPages) setDealPage(dealTotalPages);
+  }, [dealPage, dealTotalPages]);
 
   const filteredUsers = useMemo(() => {
     const q = userQuery.trim().toLowerCase();
@@ -109,6 +211,10 @@ export default function AssignWorkModal({ visible, companyId, onClose, onCreated
       Alert.alert('Thiếu tiêu đề', 'Nhập tiêu đề giao việc');
       return;
     }
+    if (sharedWorkspaceMode && !selectedDeal?.id) {
+      Alert.alert('Thiếu deal', 'Không gian chung bắt buộc gắn deal / dự án');
+      return;
+    }
     if (!assigneeIds.size) {
       Alert.alert('Thiếu người nhận', 'Chọn ít nhất một nhân viên');
       return;
@@ -132,7 +238,8 @@ export default function AssignWorkModal({ visible, companyId, onClose, onCreated
         deadline: deadlineIso,
         assignee_ids: [...assigneeIds],
         column_id: columnId || null,
-        company_id: companyId || undefined,
+        company_id: formCompanyId || companyId || undefined,
+        lead_id: selectedDeal?.id || undefined,
         assignment_module: 'logistics',
         task_source_type: 'customer_request',
       });
@@ -151,16 +258,150 @@ export default function AssignWorkModal({ visible, companyId, onClose, onCreated
         <View style={[styles.sheet, { paddingBottom: insets.bottom + 12 }]}>
           <View style={styles.handle} />
           <View style={styles.head}>
-            <Text style={styles.title}>Giao việc Lắp đặt</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.title}>
+                {sharedWorkspaceMode ? 'Giao việc KG chung' : 'Giao việc Lắp đặt'}
+              </Text>
+              <Text style={styles.sub}>
+                {sharedWorkspaceMode
+                  ? 'Bắt buộc gắn deal — người nhận thấy ở tab Không gian chung.'
+                  : 'Có thể gắn deal (tuỳ chọn). Chọn công ty để lọc deal & nhân viên.'}
+              </Text>
+            </View>
             <Pressable onPress={onClose} hitSlop={8}>
               <Ionicons name="close" size={22} color={colors.textMuted} />
             </Pressable>
           </View>
 
-          {loadingMeta ? (
+          {loadingMeta && users.length === 0 ? (
             <ActivityIndicator color={colors.primary} style={{ marginVertical: 40 }} />
           ) : (
-            <ScrollView style={{ maxHeight: 520 }} keyboardShouldPersistTaps="handled">
+            <ScrollView
+              style={styles.scroll}
+              contentContainerStyle={styles.scrollContent}
+              keyboardShouldPersistTaps="handled"
+              nestedScrollEnabled
+              showsVerticalScrollIndicator
+            >
+              <Text style={styles.section}>1. Gắn dự án / deal{sharedWorkspaceMode ? ' *' : ''}</Text>
+
+              {isAdmin ? (
+                <>
+                  <Text style={styles.label}>Công ty</Text>
+                  <Pressable style={styles.pickerBtn} onPress={() => setCompanyPickerOpen(true)}>
+                    <Ionicons name="business-outline" size={16} color={colors.primary} />
+                    <Text style={styles.pickerBtnTxt} numberOfLines={1}>{selectedCompanyLabel}</Text>
+                    <Ionicons name="chevron-down" size={16} color={colors.textMuted} />
+                  </Pressable>
+                  <Text style={styles.hint}>Chọn công ty trước để danh sách deal & NV gọn hơn.</Text>
+                </>
+              ) : null}
+
+              <Text style={styles.label}>
+                {sharedWorkspaceMode ? 'Deal / dự án Lắp đặt *' : 'Deal / dự án Lắp đặt (tuỳ chọn)'}
+              </Text>
+
+              {selectedDeal ? (
+                <View style={styles.selectedDeal}>
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text style={styles.dealCode} numberOfLines={1}>
+                      {selectedDeal.code || selectedDeal.id.slice(0, 8)}
+                    </Text>
+                    <Text style={styles.selectedDealTxt} numberOfLines={2}>
+                      {selectedDeal.title || selectedDeal.project?.name || 'Deal'}
+                    </Text>
+                  </View>
+                  <Pressable
+                    onPress={() => {
+                      setSelectedDeal(null);
+                      setDealPage(1);
+                    }}
+                    hitSlop={8}
+                  >
+                    <Ionicons name="close-circle" size={20} color={colors.textMuted} />
+                  </Pressable>
+                </View>
+              ) : (
+                <>
+                  <TextInput
+                    value={dealQuery}
+                    onChangeText={setDealQuery}
+                    placeholder="Tìm deal theo mã TB, mã deal, tên…"
+                    placeholderTextColor={colors.textFaint}
+                    style={styles.input}
+                  />
+                  {dealLoading ? (
+                    <ActivityIndicator color={colors.primary} style={{ marginVertical: 10 }} />
+                  ) : (
+                    <View style={styles.dealList}>
+                      {pagedDeals.length === 0 ? (
+                        <Text style={styles.emptyUsers}>
+                          {dealQuery.trim().length >= 1
+                            ? 'Không tìm thấy deal'
+                            : 'Gõ để tìm deal / dự án'}
+                        </Text>
+                      ) : (
+                        pagedDeals.map((d) => (
+                          <Pressable
+                            key={d.id}
+                            style={styles.dealRow}
+                            onPress={() => setSelectedDeal(d)}
+                          >
+                            <Text style={styles.dealCode} numberOfLines={1}>
+                              {d.code || d.id.slice(0, 8)}
+                            </Text>
+                            <Text style={styles.dealTitle} numberOfLines={2}>
+                              {d.title || d.project?.name || 'Deal'}
+                            </Text>
+                          </Pressable>
+                        ))
+                      )}
+                      {dealPool.length > DEAL_PAGE_SIZE ? (
+                        <View style={styles.pager}>
+                          <Pressable
+                            style={[styles.pagerBtn, dealPage <= 1 && styles.pagerBtnDisabled]}
+                            disabled={dealPage <= 1}
+                            onPress={() => setDealPage((p) => Math.max(1, p - 1))}
+                          >
+                            <Ionicons name="chevron-back" size={16} color={colors.text} />
+                            <Text style={styles.pagerTxt}>Trước</Text>
+                          </Pressable>
+                          <Text style={styles.pagerMeta}>
+                            {dealPage}/{dealTotalPages} · {dealPool.length} deal
+                          </Text>
+                          <Pressable
+                            style={[styles.pagerBtn, dealPage >= dealTotalPages && styles.pagerBtnDisabled]}
+                            disabled={dealPage >= dealTotalPages}
+                            onPress={() => setDealPage((p) => Math.min(dealTotalPages, p + 1))}
+                          >
+                            <Text style={styles.pagerTxt}>Sau</Text>
+                            <Ionicons name="chevron-forward" size={16} color={colors.text} />
+                          </Pressable>
+                        </View>
+                      ) : null}
+                    </View>
+                  )}
+                </>
+              )}
+
+              {selectedDeal ? (
+                <Pressable
+                  style={styles.membersToggle}
+                  onPress={() => setMembersOnly((v) => !v)}
+                >
+                  <Ionicons
+                    name={membersOnly ? 'checkbox' : 'square-outline'}
+                    size={18}
+                    color={colors.primary}
+                  />
+                  <Text style={styles.membersToggleTxt}>
+                    Prefill thành viên deal khi chọn deal
+                  </Text>
+                </Pressable>
+              ) : null}
+
+              <Text style={styles.section}>2. Việc cần làm</Text>
+
               <Text style={styles.label}>Tiêu đề *</Text>
               <TextInput
                 value={title}
@@ -224,7 +465,7 @@ export default function AssignWorkModal({ visible, companyId, onClose, onCreated
               />
               <View style={styles.userList}>
                 {filteredUsers.length === 0 ? (
-                  <Text style={styles.emptyUsers}>Không có nhân viên trong công ty</Text>
+                  <Text style={styles.emptyUsers}>Không có nhân viên trong phạm vi công ty</Text>
                 ) : (
                   filteredUsers.map((u) => {
                     const active = assigneeIds.has(u.id);
@@ -252,6 +493,7 @@ export default function AssignWorkModal({ visible, companyId, onClose, onCreated
                   })
                 )}
               </View>
+              <View style={{ height: 24 }} />
             </ScrollView>
           )}
 
@@ -269,6 +511,20 @@ export default function AssignWorkModal({ visible, companyId, onClose, onCreated
           </View>
         </View>
       </View>
+
+      <FilterPickerModal
+        visible={companyPickerOpen}
+        title="Chọn công ty"
+        options={companyOptions}
+        selectedId={formCompanyId}
+        onSelect={(id) => {
+          setFormCompanyId(id);
+          setAssigneeIds(new Set());
+          setSelectedDeal(null);
+          setDealPage(1);
+        }}
+        onClose={() => setCompanyPickerOpen(false)}
+      />
     </Modal>
   );
 }
@@ -282,7 +538,7 @@ function makeStyles(colors: AppColors) {
       borderTopRightRadius: 20,
       paddingHorizontal: Spacing.lg,
       paddingTop: 10,
-      maxHeight: '92%',
+      height: '92%',
       borderWidth: 1,
       borderColor: colors.border,
       borderBottomWidth: 0,
@@ -295,9 +551,38 @@ function makeStyles(colors: AppColors) {
       backgroundColor: colors.borderStrong,
       marginBottom: 10,
     },
-    head: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
+    head: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      justifyContent: 'space-between',
+      marginBottom: 8,
+      gap: 8,
+    },
     title: { color: colors.text, fontSize: 17, fontWeight: '900' },
+    sub: { color: colors.textMuted, fontSize: 12, fontWeight: '600', marginTop: 4, lineHeight: 16 },
+    scroll: { flex: 1, minHeight: 0 },
+    scrollContent: { paddingBottom: 16 },
+    section: {
+      color: colors.text,
+      fontSize: 13,
+      fontWeight: '900',
+      marginTop: 14,
+      marginBottom: 4,
+    },
     label: { color: colors.textMuted, fontSize: 12, fontWeight: '800', marginTop: 12, marginBottom: 6 },
+    hint: { color: colors.textFaint, fontSize: 11, fontWeight: '600', marginTop: 4 },
+    pickerBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.card,
+      borderRadius: Radii.md,
+      paddingHorizontal: 12,
+      paddingVertical: 12,
+    },
+    pickerBtnTxt: { flex: 1, color: colors.text, fontSize: 14, fontWeight: '700' },
     input: {
       borderWidth: 1,
       borderColor: colors.border,
@@ -321,13 +606,64 @@ function makeStyles(colors: AppColors) {
     },
     chipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
     chipTxt: { color: colors.textMuted, fontSize: 12, fontWeight: '700' },
-    userList: { gap: 6, marginTop: 8, marginBottom: 8 },
+    selectedDeal: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      padding: 12,
+      borderRadius: Radii.md,
+      backgroundColor: colors.primarySoft,
+      borderWidth: 1,
+      borderColor: colors.primary,
+      overflow: 'hidden',
+    },
+    selectedDealTxt: { color: colors.text, fontSize: 13, fontWeight: '700', marginTop: 2 },
+    dealList: {
+      marginTop: 8,
+      gap: 6,
+      overflow: 'hidden',
+    },
+    dealRow: {
+      paddingHorizontal: 10,
+      paddingVertical: 10,
+      borderRadius: Radii.md,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.card,
+      overflow: 'hidden',
+    },
+    dealCode: { color: colors.primary, fontSize: 11, fontWeight: '800' },
+    dealTitle: { color: colors.text, fontSize: 13, fontWeight: '700', marginTop: 2 },
+    pager: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginTop: 8,
+      gap: 8,
+    },
+    pagerBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 2,
+      paddingHorizontal: 10,
+      paddingVertical: 8,
+      borderRadius: Radii.md,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.card,
+    },
+    pagerBtnDisabled: { opacity: 0.4 },
+    pagerTxt: { color: colors.text, fontSize: 12, fontWeight: '700' },
+    pagerMeta: { color: colors.textMuted, fontSize: 11, fontWeight: '700' },
+    membersToggle: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 10 },
+    membersToggleTxt: { color: colors.textMuted, fontSize: 12, fontWeight: '700', flex: 1 },
+    userList: { marginTop: 8, gap: 6 },
     userRow: {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 10,
-      paddingVertical: 10,
       paddingHorizontal: 10,
+      paddingVertical: 10,
       borderRadius: Radii.md,
       borderWidth: 1,
       borderColor: colors.border,
@@ -335,13 +671,13 @@ function makeStyles(colors: AppColors) {
     },
     userRowActive: { borderColor: colors.primary, backgroundColor: colors.primarySoft },
     userName: { color: colors.text, fontSize: 14, fontWeight: '700' },
-    userEmail: { color: colors.textFaint, fontSize: 11, marginTop: 1 },
-    emptyUsers: { color: colors.textFaint, fontSize: 13, fontWeight: '600', paddingVertical: 12 },
-    footer: { flexDirection: 'row', gap: 10, marginTop: 12 },
+    userEmail: { color: colors.textFaint, fontSize: 11, fontWeight: '600', marginTop: 2 },
+    emptyUsers: { color: colors.textFaint, fontSize: 13, fontWeight: '600', paddingVertical: 8 },
+    footer: { flexDirection: 'row', gap: 10, marginTop: 8, paddingTop: 8 },
     cancelBtn: {
       flex: 1,
       alignItems: 'center',
-      paddingVertical: 13,
+      paddingVertical: 12,
       borderRadius: Radii.md,
       borderWidth: 1,
       borderColor: colors.border,
@@ -350,7 +686,7 @@ function makeStyles(colors: AppColors) {
     saveBtn: {
       flex: 1,
       alignItems: 'center',
-      paddingVertical: 13,
+      paddingVertical: 12,
       borderRadius: Radii.md,
       backgroundColor: colors.primary,
     },

@@ -25,6 +25,7 @@ export type AssignmentLead = {
 export type CrmAssignment = {
   id: string;
   company_id?: string | null;
+  executor_company_id?: string | null;
   title?: string | null;
   description?: string | null;
   status?: AssignmentStatus | string | null;
@@ -33,14 +34,17 @@ export type CrmAssignment = {
   created_at?: string | null;
   completed_at?: string | null;
   column_id?: string | null;
+  lead_id?: string | null;
   assignment_module?: string | null;
   task_source_type?: string | null;
   employee_error_module?: string | null;
+  created_by_id?: string | null;
   assignee_id?: string | null;
   assignee?: AssignmentUser | null;
   assignees?: AssignmentUser[];
   created_by?: AssignmentUser | null;
   company?: { id: string; name?: string | null; short_name?: string | null } | null;
+  executor_company?: { id: string; name?: string | null; short_name?: string | null } | null;
   lead?: AssignmentLead | null;
 };
 
@@ -109,11 +113,29 @@ export type SharedInboxTask = {
   priority?: string | null;
   lead_id?: string | null;
   kind?: string | null;
+  stage_slug?: string | null;
   lead?: AssignmentLead | null;
   assignee?: AssignmentUser | null;
+  owner_company_id?: string | null;
   owner_company_name?: string | null;
+  executor_company_id?: string | null;
   executor_company_name?: string | null;
   assignment_module?: string | null;
+  task_source_type?: string | null;
+  crm_assignment_id?: string | number | null;
+  href?: string | null;
+};
+
+export type SharedInboxGroup = {
+  lead_id: string;
+  lead?: AssignmentLead | null;
+  tasks: SharedInboxTask[];
+  href?: string | null;
+};
+
+export type PrivateDealInboxResult = {
+  tasks: SharedInboxTask[];
+  groups: SharedInboxGroup[];
 };
 
 export async function fetchLeadAssignments(leadId: string): Promise<CrmAssignment[]> {
@@ -146,6 +168,42 @@ export async function updateCrmAssignment(
 ): Promise<CrmAssignment> {
   const { data } = await api.put<CrmAssignment>(`/crm/assignments/${assignmentId}`, payload);
   return data;
+}
+
+export async function fetchCrmAssignmentById(assignmentId: string): Promise<CrmAssignment | null> {
+  const id = String(assignmentId || '').trim();
+  if (!id) return null;
+  const { data } = await api.get<{ assignment?: CrmAssignment } | CrmAssignment>(
+    `/crm/assignments/${id}`,
+  );
+  const row = (data as { assignment?: CrmAssignment })?.assignment || (data as CrmAssignment);
+  return row?.id ? row : null;
+}
+
+export type AssignmentComment = {
+  id: string;
+  content?: string | null;
+  created_at?: string | null;
+  user?: AssignmentUser | null;
+};
+
+export async function fetchAssignmentComments(assignmentId: string): Promise<AssignmentComment[]> {
+  const { data } = await api.get<{ comments?: AssignmentComment[] }>(
+    `/crm/assignments/${assignmentId}/comments`,
+  );
+  return Array.isArray(data?.comments) ? data.comments : [];
+}
+
+export async function postAssignmentComment(
+  assignmentId: string,
+  content: string,
+): Promise<AssignmentComment | null> {
+  const { data } = await api.post<{ comment?: AssignmentComment } | AssignmentComment>(
+    `/crm/assignments/${assignmentId}/comments`,
+    { content },
+  );
+  const row = (data as { comment?: AssignmentComment })?.comment || (data as AssignmentComment);
+  return row?.id ? row : null;
 }
 
 export async function deleteCrmAssignment(assignmentId: string): Promise<void> {
@@ -217,14 +275,91 @@ export async function updateSharedDealTask(
 }
 
 /** Inbox tab Công việc → Không gian chung (việc deal giao cho tôi). */
-export async function fetchPrivateDealInboxTasks(
+export async function fetchPrivateDealInbox(
   assignmentModule: 'logistics' | 'production' | 'crm' = 'logistics',
-): Promise<SharedInboxTask[]> {
-  const { data } = await api.get<{ tasks?: SharedInboxTask[] }>(
+): Promise<PrivateDealInboxResult> {
+  const { data } = await api.get<{ tasks?: SharedInboxTask[]; groups?: SharedInboxGroup[] }>(
     '/crm/assignments/private-deal-tasks',
     { params: { assignment_module: assignmentModule } },
   );
-  return Array.isArray(data?.tasks) ? data.tasks : [];
+  const tasks = Array.isArray(data?.tasks) ? data.tasks : [];
+  const groups = Array.isArray(data?.groups) ? data.groups : [];
+  return { tasks, groups };
+}
+
+/** @deprecated dùng fetchPrivateDealInbox */
+export async function fetchPrivateDealInboxTasks(
+  assignmentModule: 'logistics' | 'production' | 'crm' = 'logistics',
+): Promise<SharedInboxTask[]> {
+  const { tasks } = await fetchPrivateDealInbox(assignmentModule);
+  return tasks;
+}
+
+export type DealPickerItem = {
+  id: string;
+  code?: string | null;
+  title?: string | null;
+  type?: string | null;
+  project_id?: string | null;
+  company_id?: string | null;
+  customer?: { full_name?: string | null } | null;
+  project?: { id?: string; code?: string | null; name?: string | null } | null;
+};
+
+export async function fetchDealPicker(opts: {
+  q?: string;
+  companyId?: string | null;
+  limit?: number;
+} = {}): Promise<DealPickerItem[]> {
+  const params: Record<string, string> = {
+    type: 'deal',
+    for_module: 'logistics',
+    limit: String(opts.limit && opts.limit > 0 ? Math.min(opts.limit, 50) : 20),
+  };
+  if (opts.q?.trim()) params.q = opts.q.trim();
+  if (opts.companyId) params.company_id = opts.companyId;
+  const { data } = await api.get<{ results?: DealPickerItem[]; total?: number }>('/crm/leads/picker', { params });
+  return Array.isArray(data?.results) ? data.results : [];
+}
+
+export type AssignmentFile = {
+  id: string;
+  kind?: string | null;
+  file_name?: string | null;
+  file_url?: string | null;
+  file_size?: number | null;
+  mime_type?: string | null;
+  created_at?: string | null;
+};
+
+export async function fetchAssignmentFiles(
+  assignmentId: string,
+  kind: 'req' | 'sub' = 'req',
+): Promise<AssignmentFile[]> {
+  const { data } = await api.get<{ files?: AssignmentFile[] }>(
+    `/crm/assignments/${assignmentId}/files`,
+    { params: { kind } },
+  );
+  return Array.isArray(data?.files) ? data.files : [];
+}
+
+export async function uploadAssignmentFile(
+  assignmentId: string,
+  kind: 'req' | 'sub',
+  file: { uri: string; name: string; mime: string },
+): Promise<void> {
+  const { postMultipart } = await import('../api/client');
+  const form = new FormData();
+  form.append('file', { uri: file.uri, name: file.name, type: file.mime } as unknown as Blob);
+  form.append('kind', kind);
+  await postMultipart(`/crm/assignments/${assignmentId}/files`, form);
+}
+
+export async function deleteAssignmentFile(
+  assignmentId: string,
+  fileId: string,
+): Promise<void> {
+  await api.delete(`/crm/assignments/${assignmentId}/files/${fileId}`);
 }
 
 export type AssignmentLookupUser = {
@@ -269,7 +404,7 @@ export type CreateCrmAssignmentPayload = {
   task_source_type?: string;
 };
 
-/** Giao việc board VC — POST /crm/assignments (không bắt buộc gắn deal). */
+/** Giao việc board VC — POST /crm/assignments. KG chung: bắt buộc lead_id. */
 export async function createCrmAssignment(payload: CreateCrmAssignmentPayload): Promise<CrmAssignment> {
   const { data } = await api.post<{ assignment?: CrmAssignment } | CrmAssignment>(
     '/crm/assignments',
@@ -286,16 +421,45 @@ export async function createCrmAssignment(payload: CreateCrmAssignmentPayload): 
 export async function fetchLogisticsAssignments(opts: {
   companyId?: string | null;
   assigneeId?: string | null;
+  status?: string | null;
+  priority?: string | null;
+  q?: string | null;
   limit?: number;
   offset?: number;
 } = {}): Promise<CrmAssignment[]> {
   const params: Record<string, string> = { assignment_module: 'logistics' };
   if (opts.companyId) params.company_id = opts.companyId;
   if (opts.assigneeId) params.assignee_id = opts.assigneeId;
+  if (opts.status) params.status = opts.status;
+  if (opts.priority) params.priority = opts.priority;
+  if (opts.q?.trim()) params.q = opts.q.trim();
   if (opts.limit) params.limit = String(opts.limit);
   if (opts.offset) params.offset = String(opts.offset);
   const { data } = await api.get<{ assignments?: CrmAssignment[] }>('/crm/assignments', { params });
   return Array.isArray(data?.assignments) ? data.assignments : [];
+}
+
+/** Nhãn deal trên card giao việc — khớp web. */
+export function assignmentDealLabel(lead?: AssignmentLead | null): string {
+  if (!lead) return '';
+  const code = String(lead.code || '').trim();
+  const title = String(lead.title || '').trim();
+  const isDeal = String(lead.type || '').toLowerCase() === 'deal';
+  if (isDeal) {
+    if (code && title) return `${code} — ${title}`;
+    return title || code || 'Deal';
+  }
+  if (code && title) return `${code} · ${title}`;
+  return title || code || '';
+}
+
+export function companyShortLabel(
+  co?: { name?: string | null; short_name?: string | null } | null,
+  fallback?: string | null,
+): string {
+  if (co?.short_name) return String(co.short_name);
+  if (co?.name) return String(co.name);
+  return fallback ? String(fallback) : '';
 }
 
 export { fetchLeadMembersBase };

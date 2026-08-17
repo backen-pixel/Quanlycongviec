@@ -29,7 +29,10 @@ function notify(io, event, data) { if (io) io.emit(event, data); }
 
 async function createProjectTask(req, body) {
   const b = body;
-  const { data, error } = await supabase.from('tasks').insert({
+  const meta = b.metadata && typeof b.metadata === 'object' && !Array.isArray(b.metadata)
+    ? b.metadata
+    : null;
+  const insertRow = {
     project_id: b.project_id || null,
     stage_id: b.stage_id || null,
     workflow_line_id: b.workflow_line_id || null,
@@ -44,7 +47,14 @@ async function createProjectTask(req, body) {
     estimated_hours: b.estimated_hours || null,
     attachments: b.attachments || [],
     task_type: b.task_type || 'project',
-  }).select().single();
+  };
+  if (meta) insertRow.metadata = meta;
+
+  let { data, error } = await supabase.from('tasks').insert(insertRow).select().single();
+  if (error && /metadata/i.test(String(error.message || ''))) {
+    const { metadata: _m, ...legacy } = insertRow;
+    ({ data, error } = await supabase.from('tasks').insert(legacy).select().single());
+  }
   if (error) return { error: error.message, status: 500 };
 
   if (b.participants?.length) {
@@ -115,11 +125,12 @@ async function updateProjectTask(req, taskId, body) {
   // tasks không có cột notes — ghi chú NV lưu ở task_comments
   const fields = ['title', 'description', 'status', 'priority', 'assignee_id', 'supervisor_id',
     'due_date', 'start_date', 'estimated_hours', 'actual_hours', 'stage_id', 'order_index',
-    'blocks_stage_advance', 'production_stage_id', 'file_note_recorded'];
+    'blocks_stage_advance', 'production_stage_id', 'file_note_recorded', 'metadata'];
   fields.forEach((f) => {
     if (b[f] === undefined) return;
     if (f === 'file_note_recorded' || f === 'blocks_stage_advance') update[f] = !!b[f];
-    else update[f] = b[f];
+    else if (f === 'metadata' && b.metadata && typeof b.metadata === 'object') update.metadata = b.metadata;
+    else if (f !== 'metadata') update[f] = b[f];
   });
 
   if (update.status === 'done') update.completed_at = new Date().toISOString();

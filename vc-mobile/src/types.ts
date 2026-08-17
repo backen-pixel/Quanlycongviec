@@ -193,6 +193,10 @@ export type CrmTask = {
   assignee?: PersonRef | null;
   assignees?: PersonRef[];
   pipeline_stage?: { id?: string; name?: string | null; order_index?: number } | null;
+  logistics_pipeline_stage_id?: string | null;
+  logistics_pipeline_stage?: { id?: string; name?: string | null; order_index?: number; bucket_slug?: string | null } | null;
+  metadata?: Record<string, unknown> | null;
+  _workshop_project_task?: boolean;
   /** crm = crm_tasks trên deal; workshop = bảng tasks (bộ mẫu VC/LĐ) */
   source?: 'crm' | 'workshop';
 };

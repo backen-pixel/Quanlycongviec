@@ -14,4 +14,20 @@ config.resolver.extraNodeModules = new Proxy(
   },
 );
 
+/** Chỉ giữ font Ionicons — các bộ icon khác (~2MB) không dùng. */
+const unusedIconFont = /(?:@expo[\\/]vector-icons|react-native-vector-icons).+[\\/]Fonts[\\/](?!Ionicons\.ttf$).+\.ttf$/;
+const prevBlock = config.resolver.blockList;
+config.resolver.blockList = [unusedIconFont].concat(
+  Array.isArray(prevBlock) ? prevBlock : prevBlock ? [prevBlock] : [],
+);
+
+config.transformer = config.transformer || {};
+config.transformer.minifierConfig = {
+  ...(config.transformer.minifierConfig || {}),
+  compress: {
+    ...((config.transformer.minifierConfig && config.transformer.minifierConfig.compress) || {}),
+    drop_console: true,
+  },
+};
+
 module.exports = config;

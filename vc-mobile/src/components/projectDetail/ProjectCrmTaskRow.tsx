@@ -52,6 +52,7 @@ type Props = {
   dealId?: string | null;
   /** Công ty VC/LĐ — dùng khi gán người cho nhiệm vụ workshop */
   projectCompanyId?: string | null;
+  highlighted?: boolean;
   onUpdated: (task: CrmTask) => void;
   onDeleted: (taskId: string) => void;
 };
@@ -128,6 +129,7 @@ export default function ProjectCrmTaskRow({
   task,
   dealId,
   projectCompanyId,
+  highlighted,
   onUpdated,
   onDeleted,
 }: Props) {
@@ -666,6 +668,20 @@ export default function ProjectCrmTaskRow({
           padding: 12,
           marginBottom: 8,
         },
+        rowHighlight: {
+          borderColor: colors.primary,
+          borderWidth: 2,
+          backgroundColor: colors.primary + '14',
+        },
+        focusBanner: {
+          alignSelf: 'flex-start',
+          marginBottom: 8,
+          paddingHorizontal: 8,
+          paddingVertical: 3,
+          borderRadius: Radii.full,
+          backgroundColor: colors.primary + '22',
+        },
+        focusBannerTxt: { color: colors.primary, fontSize: 10, fontWeight: '800' },
         top: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
         check: {
           width: 22,
@@ -1218,7 +1234,12 @@ export default function ProjectCrmTaskRow({
 
   return (
     <>
-      <View style={styles.row}>
+      <View style={[styles.row, highlighted && styles.rowHighlight]}>
+        {highlighted ? (
+          <View style={styles.focusBanner}>
+            <Text style={styles.focusBannerTxt}>Công việc đang mở</Text>
+          </View>
+        ) : null}
         <View style={styles.top}>
           <TapHighlight style={[styles.check, done && styles.checkDone]} onPress={() => void toggleStatus()} disabled={busy}>
             {done ? <Ionicons name="checkmark" size={14} color={colors.success} /> : null}

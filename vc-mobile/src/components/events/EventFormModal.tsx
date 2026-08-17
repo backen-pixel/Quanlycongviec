@@ -30,6 +30,7 @@ import {
 import FilterPickerModal from '../FilterPickerModal';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
+import { loadKanbanFilters } from '../../lib/kanbanFilterStorage';
 import { fetchCompanies, type CompanyOption } from '../../lib/logisticsApi';
 import { isSystemAdmin } from '../../lib/productionFilters';
 import { Radii, type AppColors } from '../../theme';
@@ -123,6 +124,12 @@ export default function EventFormModal({ visible, presetDay, onClose, onSaved }:
     setDescription('');
     if (!sysAdmin) {
       setCompanyId(user?.company_id ? String(user.company_id) : '');
+    } else {
+      // Prefill từ bộ lọc chung (Overview/Kanban) — bỏ qua «Tất cả».
+      void loadKanbanFilters().then((snap) => {
+        const fromFilter = String(snap?.filterCompany || '').trim();
+        if (fromFilter) setCompanyId(fromFilter);
+      });
     }
   }, [visible, presetDay, sysAdmin, user?.company_id]);
 
