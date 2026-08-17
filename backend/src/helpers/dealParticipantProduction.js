@@ -125,6 +125,11 @@ function canCrossWorkshopProductionViewerUseCompanyQuery(user, queryCompanyId) {
 
 /** Participant-only: VPT theo lead_members; Metalla/Hucabi lọc deal VPT riêng. */
 async function userNeedsParticipantOnlyProductionScopeForWorkshop(user, workshopCompanyId) {
+  const ownCo = getUserDealCompanyScopeId(user);
+  // Đúng công ty của NV → thấy mọi dự án công ty đó (mọi role nhân viên).
+  if (ownCo && workshopCompanyId && String(ownCo) === String(workshopCompanyId)) {
+    return false;
+  }
   if (!userNeedsParticipantOnlyProductionScope(user)) return false;
   if (isCrossWorkshopProductionViewer(user) && workshopCompanyId) {
     if (await isMetallaOrHucabiCompanyId(workshopCompanyId)) return false;
@@ -482,12 +487,19 @@ function isDealParticipantProductionViewer(user) {
 }
 
 function isWorkshopRoleProductionParticipant(user) {
-  return WORKSHOP_PARTICIPANT_PRODUCTION_ROLES.has(normalizeRole(user?.role));
+  // Đã gắn công ty → xem toàn bộ dự án trong công ty (không khóa theo lead_members / phụ trách).
+  if (getUserDealCompanyScopeId(user)) return false;
+  const r = normalizeRole(user?.role);
+  // Chưa gán công ty: staff / installer / logistics / driver chỉ thấy dự án được giao.
+  if (r === 'staff') return true;
+  return WORKSHOP_PARTICIPANT_PRODUCTION_ROLES.has(r);
 }
 
 /** Kanban SX chỉ hiện dự án gắn deal mình tham gia (lead_members) — không áp dụng role accounting. */
 function userNeedsParticipantOnlyProductionScope(user) {
   if (isAccountingUser(user)) return false;
+  // NV thuộc công ty: luôn xem board theo phạm vi công ty (không participant-only).
+  if (getUserDealCompanyScopeId(user) && !isDealParticipantProductionViewer(user)) return false;
   return isDealParticipantProductionViewer(user) || isWorkshopRoleProductionParticipant(user);
 }
 
@@ -523,43 +535,61 @@ async function getLeadMemberProjectIdsForUser(userId) {
         return [];
       }
       const leadIds = [...new Set((mems || []).map((m) => m.lead_id).filter(Boolean))];
-      if (!leadIds.length) {
-        _leadMemberProjectIdsCache.set(key, { at: Date.now(), ids: [] });
-        return [];
-      }
+      const ids = new Set();
 
-      const { data: leads, error: leadErr } = await supabase
-        .from('crm_leads')
-        .select('project_id')
-        .in('id', leadIds)
-        .not('project_id', 'is', null);
-      if (leadErr) {
-        console.warn('[dealParticipantProduction] crm_leads:', leadErr.message);
-        return [];
-      }
-      const ids = new Set((leads || []).map((l) => l.project_id).filter(Boolean));
-      // Multi-SX: project phụ gắn qua crm_deal_projects (không chỉ crm_leads.project_id)
-      try {
-        const { data: junc, error: jErr } = await supabase
-          .from('crm_deal_projects')
+      if (leadIds.length) {
+        const { data: leads, error: leadErr } = await supabase
+          .from('crm_leads')
           .select('project_id')
-          .in('deal_id', leadIds)
+          .in('id', leadIds)
           .not('project_id', 'is', null);
-        if (jErr) {
-          if (!String(jErr.message || '').includes('crm_deal_projects')) {
-            console.warn('[dealParticipantProduction] crm_deal_projects:', jErr.message);
-          }
+        if (leadErr) {
+          console.warn('[dealParticipantProduction] crm_leads:', leadErr.message);
         } else {
-          for (const row of junc || []) {
-            if (row.project_id) ids.add(row.project_id);
+          for (const l of leads || []) {
+            if (l.project_id) ids.add(String(l.project_id));
           }
         }
-      } catch {
-        /* ignore */
+        // Multi-SX: project phụ gắn qua crm_deal_projects
+        try {
+          const { data: junc, error: jErr } = await supabase
+            .from('crm_deal_projects')
+            .select('project_id')
+            .in('deal_id', leadIds)
+            .not('project_id', 'is', null);
+          if (jErr) {
+            if (!String(jErr.message || '').includes('crm_deal_projects')) {
+              console.warn('[dealParticipantProduction] crm_deal_projects:', jErr.message);
+            }
+          } else {
+            for (const row of junc || []) {
+              if (row.project_id) ids.add(String(row.project_id));
+            }
+          }
+        } catch {
+          /* ignore */
+        }
       }
+
+      // VC/LĐ: dự án được gán phụ trách (staff chưa vào lead_members vẫn thấy).
+      const { data: assigned, error: aErr } = await supabase
+        .from('projects')
+        .select('id')
+        .or(`logistics_person_id.eq.${userId},installer_person_id.eq.${userId}`);
+      if (aErr) {
+        console.warn('[dealParticipantProduction] assigned projects:', aErr.message);
+      } else {
+        for (const p of assigned || []) {
+          if (p?.id) ids.add(String(p.id));
+        }
+      }
+
       const out = [...ids];
       _leadMemberProjectIdsCache.set(key, { at: Date.now(), ids: out });
       return out;
+    } catch (e) {
+      console.warn('[dealParticipantProduction] getLeadMemberProjectIdsForUser:', e?.message || e);
+      return [];
     } finally {
       _leadMemberProjectIdsInflight.delete(key);
     }

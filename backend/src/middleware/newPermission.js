@@ -16,6 +16,7 @@ const {
   isDealParticipantProductionViewer,
   isCrossWorkshopProductionViewer,
   isWorkshopRoleProductionParticipant,
+  getUserDealCompanyScopeId,
 } = require('../helpers/dealParticipantProduction');
 const { isAccountingUser } = require('../helpers/accountingScope');
 
@@ -36,13 +37,19 @@ async function checkPermission(userId, resource, action, ecosystemUnitId = null,
     const resKey = String(resource);
     if (WORKSHOP_MODULE_RESOURCES.has(resKey)) {
       if (isProductionStaff(user) || isProductionAdmin(user) || isLogisticsAdmin(user)) return true;
-      if (resKey === 'projects' && action === 'view'
-        && (
+      if (resKey === 'projects' && action === 'view') {
+        // Mọi NV đã gắn công ty: xem dự án trong phạm vi công ty (route lọc theo company_id).
+        if (getUserDealCompanyScopeId(user)) return true;
+        // Manager / staff chưa gán CT: vẫn vào board (scoped lead_members / phụ trách).
+        const role = String(user?.role || '').trim().toLowerCase();
+        if (role === 'manager' || role === 'staff') return true;
+        if (
           isDealParticipantProductionViewer(user)
           || isCrossWorkshopProductionViewer(user)
           || isAccountingUser(user)
           || isWorkshopRoleProductionParticipant(user)
-        )) return true;
+        ) return true;
+      }
     }
 
     const { data, error } = await supabase.rpc('user_has_permission', {

@@ -1082,8 +1082,14 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
     }
 
     const viewerCompanyId = req.user?.company_id || null;
-    const ownerCompanyId = project.company_id || project.logistics_company_id || null;
-    if (viewerCompanyId && ownerCompanyId && String(viewerCompanyId) !== String(ownerCompanyId)) {
+    const ownerCompanyIds = [project.company_id, project.logistics_company_id]
+      .filter(Boolean)
+      .map((id) => String(id));
+    if (
+      viewerCompanyId
+      && ownerCompanyIds.length
+      && !ownerCompanyIds.includes(String(viewerCompanyId))
+    ) {
       const crossOk = await userCanAccessCrossWorkshopProductionProject(req.user, rowId);
       if (!crossOk) {
         return res.status(403).json({ error: 'Dự án không thuộc phạm vi công ty của bạn' });
