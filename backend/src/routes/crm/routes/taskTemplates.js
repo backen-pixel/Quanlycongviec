@@ -12,7 +12,7 @@ r.get('/tasks/overview', async (req, res) => {
   try {
     let effectiveCompanyId = null;
     if (!isSystemAdmin(req.user)) {
-      const cid = requireUserCompanyId(req, res);
+      const cid = await requireUserCompanyIdResolved(req, res);
       if (!cid) return;
       effectiveCompanyId = cid;
     } else {
@@ -20,20 +20,16 @@ r.get('/tasks/overview', async (req, res) => {
       effectiveCompanyId = q && String(q).trim() ? String(q).trim() : null;
     }
 
-    let leadIds = null;
-    if (effectiveCompanyId) {
-      const { data: leads, error: leErr } = await supabase.from('crm_leads').select('id').eq('company_id', effectiveCompanyId);
-      if (leErr) throw leErr;
-      leadIds = (leads || []).map((x) => x.id);
-      if (!leadIds.length) return res.json([]);
-    }
-
     const { status, assignee_id, stage_slug, type } = req.query;
     const taskScope = String(req.query?.task_scope || 'all').toLowerCase();
+    // !inner + eq(lead.company_id) — tránh .in(lead_id) hàng nghìn UUID → PostgREST "Bad Request".
+    const leadEmbed = effectiveCompanyId
+      ? 'lead:crm_leads!inner(id,title,code,type,project_id,customer:customers(id,full_name))'
+      : 'lead:crm_leads(id,title,code,type,project_id,customer:customers(id,full_name))';
     let q = supabase.from('crm_tasks')
-      .select('*, lead:crm_leads(id,title,code,type,project_id,customer:customers(id,full_name)), assignee:users!crm_tasks_assignee_id_fkey(id,full_name,avatar), supervisor:users!crm_tasks_supervisor_id_fkey(id,full_name,avatar)')
+      .select(`*, ${leadEmbed}, assignee:users!crm_tasks_assignee_id_fkey(id,full_name,avatar), supervisor:users!crm_tasks_supervisor_id_fkey(id,full_name,avatar)`)
       .order('deadline', { ascending: true, nullsFirst: false });
-    if (leadIds?.length) q = q.in('lead_id', leadIds);
+    if (effectiveCompanyId) q = q.eq('lead.company_id', effectiveCompanyId);
     if (status) q = q.eq('status', status);
     if (assignee_id) q = q.eq('assignee_id', assignee_id);
     if (stage_slug) q = q.eq('stage_slug', stage_slug);
@@ -91,26 +87,22 @@ r.get('/tasks/planner', async (req, res) => {
   try {
     let effectiveCompanyId = null;
     if (!isSystemAdmin(req.user)) {
-      const cid = requireUserCompanyId(req, res);
+      const cid = await requireUserCompanyIdResolved(req, res);
       if (!cid) return;
       effectiveCompanyId = cid;
     } else {
       const q = req.query.company_id;
       effectiveCompanyId = q && String(q).trim() ? String(q).trim() : null;
     }
-    let leadIds = null;
-    if (effectiveCompanyId) {
-      const { data: leads, error: leErr } = await supabase.from('crm_leads').select('id').eq('company_id', effectiveCompanyId);
-      if (leErr) throw leErr;
-      leadIds = (leads || []).map((x) => x.id);
-      if (!leadIds.length) return res.json({ assignees: [], unassigned: [] });
-    }
 
+    const leadEmbed = effectiveCompanyId
+      ? 'lead:crm_leads!inner(id,title,code,type)'
+      : 'lead:crm_leads(id,title,code,type)';
     let tq = supabase.from('crm_tasks')
-      .select('*, lead:crm_leads(id,title,code,type), assignee:users!crm_tasks_assignee_id_fkey(id,full_name,avatar)')
+      .select(`*, ${leadEmbed}, assignee:users!crm_tasks_assignee_id_fkey(id,full_name,avatar)`)
       .in('status', ['pending', 'in_progress'])
       .order('deadline', { ascending: true, nullsFirst: false });
-    if (leadIds?.length) tq = tq.in('lead_id', leadIds);
+    if (effectiveCompanyId) tq = tq.eq('lead.company_id', effectiveCompanyId);
 
     const { applyCrmTasksListAccessScope } = require('../../../helpers/crmTaskOverviewScope');
     const scoped = await applyCrmTasksListAccessScope(tq, supabase, req, { companyId: effectiveCompanyId });

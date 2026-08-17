@@ -12,12 +12,14 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { formatApiError } from '../api/client';
+import { api, formatApiError } from '../api/client';
 import {
   EVENT_STATUS_META,
+  fetchEventTypes,
   fetchEventsRange,
   type AppEvent,
   type EventStatus,
+  type EventType,
 } from '../api/events';
 import CalendarChrome, {
   addDays,
@@ -28,11 +30,20 @@ import CalendarChrome, {
   type DayMark,
   ymd,
 } from '../components/calendar/CalendarChrome';
+import EventFilterModal, {
+  EMPTY_EVENT_FILTERS,
+  type EventFilterEmployee,
+  type EventFilters,
+} from '../components/events/EventFilterModal';
 import EventFormModal from '../components/events/EventFormModal';
 import TapHighlight from '../components/TapHighlight';
-import { useProductionRealtime } from '../hooks/useProductionRealtime';
-import { REALTIME_EVENT } from '../lib/realtimeModes';
+import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
+import { useProductionRealtime } from '../hooks/useProductionRealtime';
+import { loadKanbanFilters } from '../lib/kanbanFilterStorage';
+import { fetchCompanies, type CompanyOption } from '../lib/logisticsApi';
+import { isSystemAdmin } from '../lib/productionFilters';
+import { REALTIME_EVENT } from '../lib/realtimeModes';
 import { Radii, type AppColors } from '../theme';
 
 function timeOf(iso: string | null): string {
@@ -57,11 +68,24 @@ function dayKeyOf(iso: string | null): string | null {
   return ymd(d);
 }
 
+function countActiveFilters(f: EventFilters, showCompanyPicker: boolean): number {
+  let n = 0;
+  if (f.status) n += 1;
+  if (f.type) n += 1;
+  if (f.module && f.module !== 'logistics') n += 1;
+  if (f.userId) n += 1;
+  if (showCompanyPicker && f.companyId) n += 1;
+  return n;
+}
+
 export default function EventsScreen() {
   const { colors } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
+  const { user } = useAuth();
+  const showCompanyPicker = isSystemAdmin(user);
+  const ownCompanyId = user?.company_id ? String(user.company_id) : '';
 
   const [mode, setMode] = useState<CalendarMode>('week');
   const [cursor, setCursor] = useState(() => new Date());
@@ -73,11 +97,116 @@ export default function EventsScreen() {
   const [searchDraft, setSearchDraft] = useState('');
   const [search, setSearch] = useState('');
   const [formOpen, setFormOpen] = useState(false);
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [eventTypes, setEventTypes] = useState<EventType[]>([]);
+  const [companies, setCompanies] = useState<CompanyOption[]>([]);
+  const [employees, setEmployees] = useState<EventFilterEmployee[]>([]);
+  const [filters, setFilters] = useState<EventFilters>(() => ({
+    ...EMPTY_EVENT_FILTERS,
+    companyId: ownCompanyId,
+    module: 'logistics',
+  }));
 
   useEffect(() => {
     const t = setTimeout(() => setSearch(searchDraft.trim()), 300);
     return () => clearTimeout(t);
   }, [searchDraft]);
+
+  // NV: luôn khóa company_id theo tài khoản. Admin: mặc định từ bộ lọc chung nếu có.
+  useEffect(() => {
+    if (!showCompanyPicker) {
+      if (ownCompanyId && filters.companyId !== ownCompanyId) {
+        setFilters((prev) => ({ ...prev, companyId: ownCompanyId }));
+      }
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const snap = await loadKanbanFilters().catch(() => null);
+      const fromShared = String(snap?.filterCompany || '').trim();
+      if (cancelled || !fromShared) return;
+      setFilters((prev) => (prev.companyId ? prev : { ...prev, companyId: fromShared }));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [showCompanyPicker, ownCompanyId, filters.companyId]);
+
+  useEffect(() => {
+    void fetchEventTypes().then(setEventTypes);
+  }, []);
+
+  useEffect(() => {
+    if (!showCompanyPicker) return;
+    let cancelled = false;
+    void fetchCompanies()
+      .then((rows) => {
+        if (!cancelled) setCompanies(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setCompanies([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [showCompanyPicker]);
+
+  const effectiveCompanyId = useMemo(() => {
+    if (filters.companyId) return filters.companyId;
+    if (ownCompanyId) return ownCompanyId;
+    return '';
+  }, [filters.companyId, ownCompanyId]);
+
+  useEffect(() => {
+    if (!effectiveCompanyId) {
+      setEmployees([]);
+      return;
+    }
+    let cancelled = false;
+    void api
+      .get<{ users?: EventFilterEmployee[] } | EventFilterEmployee[]>('/users', {
+        params: { company_id: effectiveCompanyId },
+      })
+      .then(({ data }) => {
+        if (cancelled) return;
+        const list = Array.isArray(data) ? data : Array.isArray(data?.users) ? data.users : [];
+        setEmployees(
+          list
+            .map((u) => ({
+              id: String((u as EventFilterEmployee).id || ''),
+              full_name: (u as EventFilterEmployee).full_name ?? null,
+              email: (u as EventFilterEmployee).email ?? null,
+            }))
+            .filter((u) => u.id),
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setEmployees([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [effectiveCompanyId]);
+
+  const companyLockedLabel = useMemo(() => {
+    if (!effectiveCompanyId) return 'Chưa gán công ty';
+    const fromList = companies.find((c) => String(c.id) === String(effectiveCompanyId))?.name;
+    return fromList || 'Công ty của bạn';
+  }, [effectiveCompanyId, companies]);
+
+  // NV cũng cần tên công ty — tải list nhẹ khi chưa có
+  useEffect(() => {
+    if (showCompanyPicker || !ownCompanyId || companies.length) return;
+    let cancelled = false;
+    void fetchCompanies()
+      .then((rows) => {
+        if (!cancelled) setCompanies(rows);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [showCompanyPicker, ownCompanyId, companies.length]);
 
   const openCreate = () => setFormOpen(true);
 
@@ -99,9 +228,20 @@ export default function EventsScreen() {
       }
       setError('');
       try {
+        if (!showCompanyPicker && !ownCompanyId && !filters.companyId) {
+          setEvents([]);
+          setError('Tài khoản chưa gán công ty — không tải được sự kiện.');
+          return;
+        }
         const list = await fetchEventsRange({
           dateFrom: ymd(range.from),
           dateTo: ymd(range.to),
+          search: search || undefined,
+          companyId: effectiveCompanyId || undefined,
+          status: filters.status || undefined,
+          type: filters.type || undefined,
+          module: filters.module || undefined,
+          userId: filters.userId || undefined,
         });
         setEvents(list);
       } catch (e) {
@@ -111,7 +251,19 @@ export default function EventsScreen() {
         setRefreshing(false);
       }
     },
-    [range.from, range.to],
+    [
+      range.from,
+      range.to,
+      search,
+      effectiveCompanyId,
+      filters.status,
+      filters.type,
+      filters.module,
+      filters.userId,
+      filters.companyId,
+      showCompanyPicker,
+      ownCompanyId,
+    ],
   );
 
   useEffect(() => {
@@ -150,6 +302,7 @@ export default function EventsScreen() {
   }, [events, selectedDay, search]);
 
   const today = useMemo(() => new Date(), []);
+  const activeFilterCount = countActiveFilters(filters, showCompanyPicker);
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
@@ -160,7 +313,20 @@ export default function EventsScreen() {
           </TapHighlight>
           <View style={{ flex: 1 }}>
             <Text style={styles.h1}>Sự kiện</Text>
+            {effectiveCompanyId ? (
+              <Text style={styles.subH} numberOfLines={1}>
+                {companyLockedLabel}
+              </Text>
+            ) : null}
           </View>
+          <TapHighlight style={styles.filterBtn} onPress={() => setFilterOpen(true)}>
+            <Ionicons name="options-outline" size={18} color={colors.text} />
+            {activeFilterCount > 0 ? (
+              <View style={styles.filterBadge}>
+                <Text style={styles.filterBadgeTxt}>{activeFilterCount}</Text>
+              </View>
+            ) : null}
+          </TapHighlight>
           <TapHighlight style={styles.createBtn} onPress={openCreate}>
             <Ionicons name="add" size={20} color="#fff" />
           </TapHighlight>
@@ -296,6 +462,22 @@ export default function EventsScreen() {
         onClose={() => setFormOpen(false)}
         onSaved={() => void load({ refresh: true })}
       />
+
+      <EventFilterModal
+        visible={filterOpen}
+        value={filters}
+        eventTypes={eventTypes}
+        companies={companies}
+        employees={employees}
+        showCompanyPicker={showCompanyPicker}
+        companyLockedLabel={companyLockedLabel}
+        bottomInset={insets.bottom}
+        onClose={() => setFilterOpen(false)}
+        onApply={(next) => {
+          const companyId = showCompanyPicker ? next.companyId : ownCompanyId || next.companyId;
+          setFilters({ ...next, companyId });
+        }}
+      />
     </View>
   );
 }
@@ -318,6 +500,27 @@ function makeStyles(colors: AppColors) {
       justifyContent: 'center',
       backgroundColor: colors.bgElevated,
     },
+    filterBtn: {
+      width: 34,
+      height: 34,
+      borderRadius: 17,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.bgElevated,
+    },
+    filterBadge: {
+      position: 'absolute',
+      top: 2,
+      right: 2,
+      minWidth: 14,
+      height: 14,
+      borderRadius: 7,
+      backgroundColor: colors.primary,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 3,
+    },
+    filterBadgeTxt: { color: '#fff', fontSize: 9, fontWeight: '900' },
     createBtn: {
       width: 34,
       height: 34,
@@ -327,6 +530,7 @@ function makeStyles(colors: AppColors) {
       backgroundColor: colors.primary,
     },
     h1: { color: colors.text, fontSize: 19, fontWeight: '900' },
+    subH: { color: colors.textMuted, fontSize: 11, fontWeight: '600', marginTop: 1 },
     addDayBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: 'auto' },
     addDayTxt: { color: colors.primary, fontSize: 13, fontWeight: '800' },
     searchBox: {
