@@ -198,8 +198,9 @@ async function loadLeadsForLogisticsProjects(projectIds) {
   if (!projectIds.length) return [];
   const { data: leads, error: leadErr } = await supabase
     .from('crm_leads')
-    .select('id, title, code, type, project_id, customer:customers(id, full_name)')
-    .in('project_id', projectIds.slice(0, 400));
+    .select('id, title, code, type, project_id, created_at, customer:customers(id, full_name)')
+    .in('project_id', projectIds.slice(0, 400))
+    .order('created_at', { ascending: false });
   if (leadErr) {
     console.warn('[logisticsOverview] leads:', leadErr.message);
     return [];
@@ -208,12 +209,17 @@ async function loadLeadsForLogisticsProjects(projectIds) {
 }
 
 /**
- * Một deal chính / dự án — khớp ProjectDetail (crmDeals[0]).
- * Tránh cộng dồn crm_tasks từ nhiều deal cùng project → lệch số việc.
+ * Deal chính / dự án — khớp loadCrmDealsForProjectDetail (created_at DESC)
+ * rồi ProjectDetail crmDeals[0].
  */
 function pickPrimaryLeadPerProject(leads) {
   const byProject = new Map();
-  for (const L of leads || []) {
+  const sorted = [...(leads || [])].sort((a, b) => {
+    const ta = a?.created_at ? new Date(a.created_at).getTime() : 0;
+    const tb = b?.created_at ? new Date(b.created_at).getTime() : 0;
+    return tb - ta;
+  });
+  for (const L of sorted) {
     const pid = L?.project_id ? String(L.project_id) : '';
     if (!pid || !L?.id) continue;
     const prev = byProject.get(pid);
@@ -223,6 +229,7 @@ function pickPrimaryLeadPerProject(leads) {
     }
     const prevDeal = String(prev.type || '').toLowerCase() === 'deal';
     const nextDeal = String(L.type || '').toLowerCase() === 'deal';
+    // Ưu tiên deal; trong cùng loại giữ bản mới hơn (đã sort DESC nên prev thắng).
     if (nextDeal && !prevDeal) byProject.set(pid, L);
   }
   return byProject;
@@ -377,13 +384,26 @@ async function loadWorkshopLogisticsTasksForOverview(opts = {}) {
 
 /**
  * Inbox VC đầy đủ = crm_tasks vc_* trên deal chính dự án + workshop logistics.
- * Merge theo từng dự án giống GET /crm/leads/:id/tasks?task_scope=logistics:
- * có native vc_* → crm + workshop; không → chỉ workshop.
+ * Merge theo từng dự án giống GET /crm/leads/:id/tasks?task_scope=logistics
+ * rồi filterVcLogisticsUiTasks (mobile chi tiết).
+ * Assignee lọc SAU merge để không đổi nhánh hasNativeVc (khớp số việc khi «Tất cả NV»).
  */
 async function loadLogisticsTasksForOverview(opts = {}) {
+  const {
+    assigneeId = null,
+    userId = null,
+    companyWide = false,
+  } = opts;
+
+  // Load đủ task deal/workshop trước — không cắt theo assignee ở SQL.
+  const loadOpts = {
+    ...opts,
+    assigneeId: null,
+    companyWide: true,
+  };
   const [crmRows, wsRows] = await Promise.all([
-    loadCrmVcTasksForLogisticsOverview(opts),
-    loadWorkshopLogisticsTasksForOverview(opts),
+    loadCrmVcTasksForLogisticsOverview(loadOpts),
+    loadWorkshopLogisticsTasksForOverview(loadOpts),
   ]);
 
   const crmByProject = new Map();
@@ -402,20 +422,42 @@ async function loadLogisticsTasksForOverview(opts = {}) {
   }
 
   const projectIds = new Set([...crmByProject.keys(), ...wsByProject.keys()]);
-  const out = [];
+  let out = [];
   const seen = new Set();
   for (const pid of projectIds) {
     const crm = crmByProject.get(pid) || [];
     const ws = wsByProject.get(pid) || [];
-    const hasNativeVc = crm.some((t) => String(t.stage_slug || '').startsWith('vc_'));
-    const merged = hasNativeVc ? [...crm, ...ws] : (ws.length ? ws : crm);
+    // Khớp crmTasks.js logistics + filterVcLogisticsUiTasks:
+    // có native vc_* → crm vc + workshop; không → chỉ workshop (không fallback CRM sales).
+    const nativeVc = crm.filter((t) => String(t.stage_slug || '').startsWith('vc_')
+      || t.source === 'workshop'
+      || t._workshop_project_task);
+    const hasNativeVc = nativeVc.some((t) => String(t.stage_slug || '').startsWith('vc_'));
+    const merged = hasNativeVc
+      ? [...nativeVc.filter((t) => !t._workshop_project_task), ...ws]
+      : ws;
     for (const row of merged) {
       const id = String(row?.id || '');
       if (!id || seen.has(id)) continue;
+      // Chỉ vc_* / workshop — khớp filterVcLogisticsUiTasks trên mobile.
+      const slug = String(row.stage_slug || '');
+      const isWs = row._workshop_project_task === true || row.source === 'workshop';
+      if (!isWs && !slug.startsWith('vc_')) continue;
       seen.add(id);
       out.push(row);
     }
   }
+
+  const wantAssignee = assigneeId
+    || (!companyWide && userId ? String(userId) : null);
+  if (wantAssignee) {
+    out = out.filter((t) => {
+      if (String(t.assignee_id || '') === String(wantAssignee)) return true;
+      const multi = Array.isArray(t.assignees) ? t.assignees : [];
+      return multi.some((a) => String(a?.id || '') === String(wantAssignee));
+    });
+  }
+
   return sortOverviewTasks(out);
 }
 

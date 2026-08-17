@@ -35,10 +35,12 @@ import {
   type WorkTask,
   WORK_TASKS_PAGE_SIZE,
 } from '../lib/workTasksApi';
+import { filterVcAreaTabTasks, filterVcLogisticsUiTasks } from '../lib/projectDetailApi';
 import { Radii, Spacing, colorWithAlpha, type AppColors } from '../theme';
 import TapHighlight from './TapHighlight';
 
 type StatusFilter = 'all' | 'pending' | 'in_progress' | 'completed' | 'overdue';
+type VcAreaFilter = 'shipping' | 'install' | 'all';
 
 const STATUS_CHIPS: {
   key: StatusFilter;
@@ -50,6 +52,12 @@ const STATUS_CHIPS: {
   { key: 'in_progress', label: 'Đang', icon: 'play-outline' },
   { key: 'completed', label: 'Xong', icon: 'checkmark-circle-outline' },
   { key: 'overdue', label: 'Quá hạn', icon: 'alert-circle-outline' },
+];
+
+const AREA_CHIPS: { key: VcAreaFilter; label: string }[] = [
+  { key: 'shipping', label: 'Vận chuyển' },
+  { key: 'install', label: 'Lắp đặt' },
+  { key: 'all', label: 'Tất cả' },
 ];
 
 function statusColor(status: string, colors: AppColors): string {
@@ -84,6 +92,8 @@ export default function WorkProjectTasksPanel({
   const styles = useMemo(() => makeStyles(colors), [colors]);
 
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  /** Mặc định Vận chuyển — khớp ProjectDetail vcAreaTab. */
+  const [areaFilter, setAreaFilter] = useState<VcAreaFilter>('shipping');
   const [tasks, setTasks] = useState<WorkTask[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -105,7 +115,9 @@ export default function WorkProjectTasksPanel({
         companyId: companyId || null,
         limit: WORK_TASKS_PAGE_SIZE * 4,
       });
-      setTasks(page.tasks);
+      // Khớp tab Công việc trong chi tiết deal (chỉ vc_* + workshop).
+      const aligned = filterVcLogisticsUiTasks(page.tasks) as WorkTask[];
+      setTasks(aligned.filter((t) => t.id && t.lead_id));
     } catch (e) {
       setError(formatApiError(e));
       setTasks([]);
@@ -135,7 +147,8 @@ export default function WorkProjectTasksPanel({
   });
 
   const filtered = useMemo(() => {
-    return tasks.filter((t) => {
+    const byArea = filterVcAreaTabTasks(tasks, areaFilter, []) as WorkTask[];
+    return byArea.filter((t) => {
       const st = String(t.status || 'pending');
       if (statusFilter === 'pending') return isTaskPending(st);
       if (statusFilter === 'in_progress') return isTaskInProgress(st);
@@ -143,7 +156,7 @@ export default function WorkProjectTasksPanel({
       if (statusFilter === 'overdue') return isTaskOverdue(t);
       return true;
     });
-  }, [tasks, statusFilter]);
+  }, [tasks, statusFilter, areaFilter]);
 
   const sections = useMemo(() => groupTasksByDeal(filtered), [filtered]);
 
@@ -159,12 +172,15 @@ export default function WorkProjectTasksPanel({
     return rows;
   }, [sections, expandedLeadIds]);
 
-  const stats = useMemo(() => ({
-    pending: tasks.filter((t) => isTaskPending(String(t.status))).length,
-    inProgress: tasks.filter((t) => isTaskInProgress(String(t.status))).length,
-    done: tasks.filter((t) => isTaskDone(String(t.status))).length,
-    overdue: tasks.filter((t) => isTaskOverdue(t)).length,
-  }), [tasks]);
+  const stats = useMemo(() => {
+    const base = filterVcAreaTabTasks(tasks, areaFilter, []) as WorkTask[];
+    return {
+      pending: base.filter((t) => isTaskPending(String(t.status))).length,
+      inProgress: base.filter((t) => isTaskInProgress(String(t.status))).length,
+      done: base.filter((t) => isTaskDone(String(t.status))).length,
+      overdue: base.filter((t) => isTaskOverdue(t)).length,
+    };
+  }, [tasks, areaFilter]);
 
   const toggleSection = (leadId: string) => {
     setExpandedLeadIds((prev) => ({ ...prev, [leadId]: !prev[leadId] }));
@@ -296,6 +312,23 @@ export default function WorkProjectTasksPanel({
   const panelHeader = (
     <View>
       {ListHeaderComponent}
+
+      <View style={styles.areaRow}>
+        {AREA_CHIPS.map((chip) => {
+          const active = areaFilter === chip.key;
+          return (
+            <Pressable
+              key={chip.key}
+              style={[styles.areaChip, active && styles.areaChipActive]}
+              onPress={() => setAreaFilter(chip.key)}
+            >
+              <Text style={[styles.areaChipTxt, active && styles.areaChipTxtActive]}>
+                {chip.label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
 
       <ScrollView
         horizontal
@@ -524,6 +557,27 @@ function makeStyles(colors: AppColors) {
     },
     scopeChipTxt: { fontSize: 12, fontWeight: '700', color: colors.textMuted },
     scopeChipTxtActive: { color: colors.primary },
+    areaRow: {
+      flexDirection: 'row',
+      gap: 8,
+      paddingHorizontal: Spacing.lg,
+      marginBottom: 8,
+    },
+    areaChip: {
+      flex: 1,
+      alignItems: 'center',
+      paddingVertical: 9,
+      borderRadius: Radii.md,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.card,
+    },
+    areaChipActive: {
+      borderColor: colors.primary,
+      backgroundColor: colorWithAlpha(colors.primary, 0.12),
+    },
+    areaChipTxt: { fontSize: 12, fontWeight: '700', color: colors.textMuted },
+    areaChipTxtActive: { color: colors.primary },
     chipScroll: { flexGrow: 0, marginBottom: 8 },
     chipRow: { paddingHorizontal: Spacing.lg, gap: 6 },
     chip: {
