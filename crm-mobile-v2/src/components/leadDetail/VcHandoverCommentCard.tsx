@@ -93,6 +93,8 @@ export default function VcHandoverCommentCard({ comment, onUpdated, onHistoryCom
   const selfUid = String(currentUserId(user) || user?.id || user?.userId || '');
   const saleIds = (Array.isArray(md.sale_user_ids) ? md.sale_user_ids : []).map(String);
   const canSale = saleIds.includes(selfUid);
+  const role = String(user?.role || '').trim().toLowerCase();
+  const canAct = canSale || role === 'admin' || role === 'sales_admin' || role === 'platform_admin';
   const canConfirmProduction = selfUid === String(md.production_person_id || '');
   const canConfirmLogistics = selfUid === String(md.logistics_person_id || '');
 
@@ -116,7 +118,7 @@ export default function VcHandoverCommentCard({ comment, onUpdated, onHistoryCom
         : 'Mở lịch sự kiện VC/LĐ';
 
   useEffect(() => {
-    if (state !== 'awaiting_company' || !canSale) return undefined;
+    if (state !== 'awaiting_company' || !canAct) return undefined;
     const ac = new AbortController();
     void fetchLogisticsCompanies(ac.signal).then((list) => {
       setCompanies(list);
@@ -131,7 +133,7 @@ export default function VcHandoverCommentCard({ comment, onUpdated, onHistoryCom
       if (notes) setSelectNotes((prev) => prev || notes);
     }
     return () => ac.abort();
-  }, [state, canSale, md.install_date, md.lead_type_name, md.workshop_company_name]);
+  }, [state, canAct, md.install_date, md.lead_type_name, md.workshop_company_name]);
 
   const pickupParts = splitLocal(pickupAt);
   const installParts = splitLocal(installDate);
@@ -208,7 +210,7 @@ export default function VcHandoverCommentCard({ comment, onUpdated, onHistoryCom
         </View>
 
         {state === 'awaiting_company' ? (
-          canSale ? (
+          canAct ? (
             <View style={styles.formBox}>
               <Text style={styles.fieldLabel}>Công ty VC/LĐ *</Text>
               <Pressable style={styles.pickerBtn} onPress={() => setCompanyPickerOpen(true)}>
@@ -338,7 +340,7 @@ export default function VcHandoverCommentCard({ comment, onUpdated, onHistoryCom
           ) : (
             <View style={styles.infoBox}>
               <Text style={styles.hint}>
-                Chỉ Sale CRM phụ trách deal mới được chọn công ty VC/LĐ và ngày lấy hàng.
+                Chỉ Sale CRM phụ trách deal hoặc admin mới được chọn công ty VC/LĐ và ngày lấy hàng.
               </Text>
             </View>
           )
@@ -356,7 +358,7 @@ export default function VcHandoverCommentCard({ comment, onUpdated, onHistoryCom
                 {String(md.select_notes)}
               </Text>
             ) : null}
-            {canSale ? (
+            {canAct ? (
               <>
                 <Text style={styles.fieldLabel}>Ngày lấy hàng *</Text>
                 <View style={styles.rowInputs}>
@@ -411,7 +413,7 @@ export default function VcHandoverCommentCard({ comment, onUpdated, onHistoryCom
                 </Pressable>
               </>
             ) : (
-              <Text style={styles.hint}>Chỉ Sale CRM phụ trách deal mới được chọn ngày lấy hàng.</Text>
+              <Text style={styles.hint}>Chỉ Sale CRM phụ trách deal hoặc admin mới được chọn ngày lấy hàng.</Text>
             )}
           </View>
         ) : null}

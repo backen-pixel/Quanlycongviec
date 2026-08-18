@@ -27,18 +27,69 @@ function ddmm(ymdStr) {
   return m && d ? `${d}/${m}` : '—';
 }
 
+function addDaysYmd(ymd, n) {
+  if (!ymd) return '';
+  const d = new Date(`${ymd}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return '';
+  d.setDate(d.getDate() + n);
+  return toYmd(d);
+}
+
+function MiniVcCalendar({ days, installDates, pickupDate, finishYmd, onPickInstall, onPickPickup }) {
+  const installSet = new Set(installDates || []);
+  return (
+    <div className="min-w-0 rounded-xl border-2 border-orange-200 overflow-hidden bg-orange-50/30 h-full">
+      <p className="px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wide text-orange-900 border-b border-orange-100 bg-orange-50">
+        Lịch sự kiện VC/LĐ
+      </p>
+      <div className="p-2.5">
+        <div className="grid grid-cols-7 gap-1 mb-1">
+          {WEEKDAYS.map((w) => (
+            <div key={w} className="text-center text-[10px] font-bold text-gray-400">{w}</div>
+          ))}
+        </div>
+        <div className="grid grid-cols-7 gap-1">
+          {days.map((d) => {
+            const isInstall = installSet.has(d);
+            const isPickup = pickupDate === d;
+            const isFinish = finishYmd === d;
+            return (
+              <button
+                key={d}
+                type="button"
+                onClick={() => onPickInstall?.(d)}
+                onContextMenu={(e) => { e.preventDefault(); onPickPickup?.(d); }}
+                className={`min-h-[3.25rem] rounded-lg border text-center px-0.5 py-1 ${
+                  isInstall
+                    ? 'bg-teal-100 border-teal-400'
+                    : isPickup
+                      ? 'bg-sky-100 border-sky-400'
+                      : isFinish
+                        ? 'bg-indigo-50 border-indigo-200'
+                        : 'bg-white border-gray-200 hover:border-orange-300'
+                }`}
+                title="Bấm chọn ngày lắp · chuột phải chọn ngày lấy hàng"
+              >
+                <span className="block text-[11px] font-bold tabular-nums">{ddmm(d)}</span>
+                {isFinish ? <span className="block text-[9px] font-bold text-indigo-700">HT SX</span> : null}
+                {isPickup ? <span className="block text-[9px] font-bold text-sky-700">Lấy tạm</span> : null}
+                {isInstall ? <span className="block text-[9px] font-bold text-teal-800">Lắp tạm</span> : null}
+              </button>
+            );
+          })}
+        </div>
+        <p className="mt-2 text-[10px] text-orange-800">
+          Lịch tạm theo form đang sửa — bấm ngày để chọn lắp, chuột phải để chọn lấy hàng.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function weekdayLabel(ymdStr) {
   if (!ymdStr) return '';
   const d = new Date(`${ymdStr}T00:00:00`);
   return Number.isNaN(d.getTime()) ? '' : WEEKDAYS[d.getDay()];
-}
-
-function StepBadge({ n }) {
-  return (
-    <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-teal-600 text-white text-xs font-bold shrink-0">
-      {n}
-    </span>
-  );
 }
 
 function ShiftButtons({ value, onPick }) {
@@ -240,7 +291,7 @@ export default function KnowledgeSimulationPlayer({ exercise, onSubmit, submitti
 
   const savePlan = () => {
     if (!canSave) {
-      say('Còn ô chưa điền — xem lại các bước có số thứ tự.', 'warn');
+      say('Còn ô chưa điền — chọn xưởng, ngày lắp, giờ lắp, công ty VC/LĐ rồi bấm Thêm dự án / Lưu lịch.', 'warn');
       return;
     }
     const vc = vcCompanies.find((c) => c.id === form.vcCompany);
@@ -405,128 +456,192 @@ export default function KnowledgeSimulationPlayer({ exercise, onSubmit, submitti
 
                 {saved && (
                   <div className="mt-3 rounded-lg bg-white border border-gray-200 p-2.5 text-xs text-gray-700">
-                    <p className="font-semibold text-gray-900 mb-1">Dự án sản xuất</p>
-                    <p>{projectCode} · {sxCompanies.find((c) => c.id === form.sxCompany)?.name} · {classifications.find((c) => c.id === form.classification)?.name}</p>
-                    <p className="mt-0.5">Lắp: {installDates.map(ddmm).join(', ')} {form.installTime} · Lấy hàng: {ddmm(form.pickupDate)} {form.pickupTime}</p>
-                    <p className="mt-0.5">VC/LĐ: {vcCompanyCfg?.name || '—'}</p>
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <p className="font-semibold text-gray-900 mb-1">Dự án sản xuất</p>
+                        <p>{projectCode} · {sxCompanies.find((c) => c.id === form.sxCompany)?.name} · {classifications.find((c) => c.id === form.classification)?.name}</p>
+                        <p className="mt-0.5">VC/LĐ: {vcCompanyCfg?.name || '—'}</p>
+                        <p className="mt-0.5">Lắp: {installDates.map(ddmm).join(', ')} {form.installTime} · Lấy hàng: {ddmm(form.pickupDate)} {form.pickupTime}</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setPlanOpen(true)}
+                        className="h-7 px-2 rounded-md text-[11px] font-semibold border border-teal-200 text-teal-800 bg-white hover:bg-teal-50 shrink-0"
+                      >
+                        Sửa lịch
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
 
               {planOpen && (
-                <div className="rounded-xl border-2 border-teal-300 bg-white p-3.5 space-y-3">
-                  <p className="text-sm font-bold text-gray-900">Kế hoạch SX & VC/LĐ — điền lần lượt theo số</p>
-
-                  <div className="flex items-start gap-2.5">
-                    <StepBadge n={1} />
-                    <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      <label className="block">
-                        <span className="block text-[11px] font-bold uppercase text-gray-500 mb-1">Công ty SX</span>
-                        <select
-                          value={form.sxCompany}
-                          onChange={(e) => setForm((f) => ({ ...f, sxCompany: e.target.value }))}
-                          className="w-full h-9 px-2 border-2 border-gray-200 rounded-lg text-sm focus:border-teal-500"
-                        >
-                          <option value="">— chọn xưởng —</option>
-                          {sxCompanies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                        </select>
-                      </label>
-                      <label className="block">
-                        <span className="block text-[11px] font-bold uppercase text-gray-500 mb-1">Phân loại</span>
-                        <select
-                          value={form.classification}
-                          onChange={(e) => setForm((f) => ({ ...f, classification: e.target.value }))}
-                          className="w-full h-9 px-2 border-2 border-gray-200 rounded-lg text-sm focus:border-teal-500"
-                        >
-                          <option value="">— chọn phân loại —</option>
-                          {classifications.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                        </select>
-                      </label>
+                <div
+                  className="fixed inset-0 z-[200] flex items-center justify-center p-3 sm:p-5 bg-black/40"
+                  onClick={() => setPlanOpen(false)}
+                >
+                  <div
+                    role="dialog"
+                    aria-modal="true"
+                    className="relative bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden w-full max-w-6xl max-h-[90vh] p-5 space-y-3 overflow-y-auto"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div className="flex items-start justify-between gap-2 shrink-0">
+                      <div>
+                        <h3 className="text-lg font-bold text-gray-900">
+                          {saved ? 'Sửa lịch lắp đặt' : 'Thiết lập kế hoạch sản xuất và vận chuyển lắp đặt'}
+                        </h3>
+                        <p className="text-xs text-gray-500 mt-1">
+                          {saved
+                            ? `${projectCode} — đồng bộ công ty VC/LĐ, ngày lắp / lấy hàng và sự kiện dự kiến.`
+                            : 'Deal đã ký hợp đồng — chọn xưởng, ngày lắp, công ty VC/LĐ rồi thêm dự án.'}
+                        </p>
+                      </div>
+                      <button type="button" onClick={() => setPlanOpen(false)} className="p-1 text-gray-400 hover:text-gray-700">✕</button>
                     </div>
-                  </div>
 
-                  <div className="flex items-start gap-2.5">
-                    <StepBadge n={2} />
-                    <div className="flex-1 space-y-1.5">
-                      <span className="block text-[11px] font-bold uppercase text-gray-500">Ngày lắp đặt (bấm chọn, lắp nhiều ngày thì chọn nhiều)</span>
-                      <DayStrip
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 flex-1 min-h-0">
+                      <div className="space-y-3 min-w-0">
+                        {!saved && (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <label className="text-[10px] font-semibold text-gray-700 block">
+                              Công ty SX <span className="text-red-500">*</span>
+                              <select
+                                value={form.sxCompany}
+                                onChange={(e) => setForm((f) => ({ ...f, sxCompany: e.target.value }))}
+                                className="mt-0.5 w-full h-9 px-2 border border-gray-200 rounded-lg text-sm bg-white"
+                              >
+                                <option value="">— Chọn công ty SX —</option>
+                                {sxCompanies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                              </select>
+                            </label>
+                            <label className="text-[10px] font-semibold text-gray-700 block">
+                              Phân loại <span className="text-red-500">*</span>
+                              <select
+                                value={form.classification}
+                                onChange={(e) => setForm((f) => ({ ...f, classification: e.target.value }))}
+                                className="mt-0.5 w-full h-9 px-2 border border-gray-200 rounded-lg text-sm bg-white"
+                              >
+                                <option value="">— Chọn phân loại —</option>
+                                {classifications.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                              </select>
+                            </label>
+                          </div>
+                        )}
+
+                        <label className="text-[10px] font-semibold text-gray-700 block">
+                          Công ty vận chuyển / lắp đặt
+                          <select
+                            value={form.vcCompany}
+                            onChange={(e) => setForm((f) => ({ ...f, vcCompany: e.target.value }))}
+                            className="mt-0.5 w-full h-9 px-2 border border-gray-200 rounded-lg text-sm bg-white"
+                          >
+                            <option value="">— Chưa chọn công ty VC/LĐ —</option>
+                            {vcCompanies.map((c) => (
+                              <option key={c.id} value={c.id}>
+                                {c.name}{c.temp_column ? ` — có cột tạm «${c.temp_column}»` : ' — chưa bật cột tạm'}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+
+                        <label className="text-[10px] font-semibold text-gray-700 block">
+                          Ghi chú cho bên vận chuyển / lắp đặt
+                          <textarea
+                            rows={2}
+                            value={form.vcNotes}
+                            onChange={(e) => setForm((f) => ({ ...f, vcNotes: e.target.value }))}
+                            placeholder="VD: hàng dễ vỡ, gọi trước 30 phút, thang máy nhỏ…"
+                            className="mt-0.5 w-full px-2 py-1.5 border border-gray-200 rounded-lg text-sm bg-white resize-y"
+                          />
+                        </label>
+
+                        <div className="rounded-lg border border-teal-100 bg-teal-50/40 px-2.5 py-2 space-y-2">
+                          <p className="text-[10px] font-bold uppercase tracking-wide text-teal-800">
+                            Deadline lắp đặt (VC/LĐ) &amp; hoàn thiện (SX)
+                          </p>
+                          <div>
+                            <span className="text-[10px] font-semibold text-gray-700 block">
+                              Ngày lắp đặt <span className="font-normal text-teal-600">(deadline VC/LĐ · bấm nhiều ngày nếu lắp nhiều ngày)</span>
+                            </span>
+                            <div className="mt-1">
+                              <DayStrip
+                                days={days}
+                                multiple
+                                selected={form.installDates}
+                                onToggle={(d) => setForm((f) => ({
+                                  ...f,
+                                  installDates: f.installDates.includes(d)
+                                    ? f.installDates.filter((x) => x !== d)
+                                    : [...f.installDates, d],
+                                }))}
+                              />
+                            </div>
+                          </div>
+                          <div>
+                            <span className="text-[10px] font-semibold text-gray-700 block">Giờ lắp đặt</span>
+                            <div className="mt-0.5">
+                              <ShiftButtons value={form.installTime} onPick={(t) => setForm((f) => ({ ...f, installTime: t }))} />
+                            </div>
+                          </div>
+                          <label className="text-[10px] font-semibold text-indigo-700 block">
+                            Ngày hoàn thiện
+                            <span className="font-normal text-indigo-500"> (deadline tổng dự án SX = lắp − 2)</span>
+                            <input
+                              type="text"
+                              readOnly
+                              disabled
+                              value={installDates[0] ? ddmm(addDaysYmd(installDates[0], -2)) : ''}
+                              className="mt-0.5 w-full h-9 px-2 border border-indigo-200 rounded-lg text-sm bg-indigo-50 text-indigo-900 font-semibold"
+                            />
+                          </label>
+                        </div>
+
+                        <div className="rounded-lg border border-sky-100 bg-sky-50/50 px-2.5 py-2 space-y-2">
+                          <p className="text-[10px] font-bold uppercase tracking-wide text-sky-800">Lấy hàng (VC)</p>
+                          <span className="text-[10px] font-semibold text-gray-700 block">
+                            Thời gian lấy hàng tại xưởng <span className="font-normal text-gray-400">(không bắt buộc)</span>
+                          </span>
+                          <DayStrip
+                            days={days}
+                            selected={form.pickupDate}
+                            onToggle={(d) => setForm((f) => ({ ...f, pickupDate: f.pickupDate === d ? '' : d }))}
+                          />
+                          <ShiftButtons value={form.pickupTime} onPick={(t) => setForm((f) => ({ ...f, pickupTime: t }))} />
+                        </div>
+
+                        <div className="flex gap-2 pt-1">
+                          <button
+                            type="button"
+                            onClick={() => setPlanOpen(false)}
+                            className="flex-1 h-10 border border-gray-200 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50"
+                          >
+                            {saved ? 'Hủy' : 'Để sau'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={savePlan}
+                            className="flex-1 h-10 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-sm font-semibold"
+                          >
+                            {saved ? 'Lưu lịch' : 'Thêm dự án'}
+                          </button>
+                        </div>
+                      </div>
+
+                      <MiniVcCalendar
                         days={days}
-                        multiple
-                        selected={form.installDates}
-                        onToggle={(d) => setForm((f) => ({
+                        installDates={form.installDates}
+                        pickupDate={form.pickupDate}
+                        finishYmd={installDates[0] ? addDaysYmd(installDates[0], -2) : ''}
+                        onPickInstall={(d) => setForm((f) => ({
                           ...f,
                           installDates: f.installDates.includes(d)
                             ? f.installDates.filter((x) => x !== d)
                             : [...f.installDates, d],
                         }))}
+                        onPickPickup={(d) => setForm((f) => ({ ...f, pickupDate: f.pickupDate === d ? '' : d }))}
                       />
-                      <div className="flex items-center gap-2 pt-1">
-                        <span className="text-[11px] font-bold uppercase text-gray-500">Giờ lắp</span>
-                        <ShiftButtons value={form.installTime} onPick={(t) => setForm((f) => ({ ...f, installTime: t }))} />
-                      </div>
                     </div>
-                  </div>
-
-                  <div className="flex items-start gap-2.5">
-                    <StepBadge n={3} />
-                    <div className="flex-1 space-y-1.5">
-                      <span className="block text-[11px] font-bold uppercase text-gray-500">Lấy hàng VC — ngày và giờ</span>
-                      <DayStrip
-                        days={days}
-                        selected={form.pickupDate}
-                        onToggle={(d) => setForm((f) => ({ ...f, pickupDate: f.pickupDate === d ? '' : d }))}
-                      />
-                      <div className="flex items-center gap-2 pt-1">
-                        <span className="text-[11px] font-bold uppercase text-gray-500">Giờ lấy hàng</span>
-                        <ShiftButtons value={form.pickupTime} onPick={(t) => setForm((f) => ({ ...f, pickupTime: t }))} />
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex items-start gap-2.5">
-                    <StepBadge n={4} />
-                    <label className="flex-1 block">
-                      <span className="block text-[11px] font-bold uppercase text-gray-500 mb-1">Công ty VC / lắp đặt</span>
-                      <select
-                        value={form.vcCompany}
-                        onChange={(e) => setForm((f) => ({ ...f, vcCompany: e.target.value }))}
-                        className="w-full h-9 px-2 border-2 border-gray-200 rounded-lg text-sm focus:border-teal-500"
-                      >
-                        <option value="">— chọn công ty VC/LĐ —</option>
-                        {vcCompanies.map((c) => (
-                          <option key={c.id} value={c.id}>
-                            {c.name}{c.temp_column ? ` — có cột tạm «${c.temp_column}»` : ' — chưa bật cột tạm'}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  </div>
-
-                  {form.vcCompany && (
-                    <div className="flex items-start gap-2.5">
-                      <StepBadge n={5} />
-                      <label className="flex-1 block">
-                        <span className="block text-[11px] font-bold uppercase text-gray-500 mb-1">Ghi chú cho bên VC / lắp đặt</span>
-                        <textarea
-                          rows={3}
-                          value={form.vcNotes}
-                          onChange={(e) => setForm((f) => ({ ...f, vcNotes: e.target.value }))}
-                          placeholder={'Ví dụ:\nHàng dễ vỡ, gọi khách trước 30 phút.\nThang máy nhỏ, cần 2 thợ mang tay.'}
-                          className="w-full border-2 border-gray-200 rounded-lg p-2 text-sm focus:border-teal-500"
-                        />
-                      </label>
-                    </div>
-                  )}
-
-                  <div className="flex items-center gap-2.5 pt-1">
-                    <StepBadge n={6} />
-                    <button
-                      type="button"
-                      onClick={savePlan}
-                      className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-sm font-bold hover:bg-emerald-700"
-                    >
-                      {saved ? 'Lưu lịch' : 'Thêm dự án'}
-                    </button>
                   </div>
                 </div>
               )}
@@ -549,7 +664,7 @@ export default function KnowledgeSimulationPlayer({ exercise, onSubmit, submitti
                     <p className="text-sm font-bold text-amber-900">Bàn giao Lắp đặt — xưởng đã chuẩn bị xong</p>
                     <div className="mt-2 rounded-lg bg-white border border-emerald-200 p-2.5 text-xs text-gray-700">
                       <p className="font-semibold text-emerald-800 mb-1">Thông tin VC/LĐ đã điền khi lập kế hoạch — xác nhận hoặc sửa lại</p>
-                      <p>Công ty VC/LĐ: <strong>{vcCompanyCfg?.name || '—'}</strong></p>
+                      <p>Công ty vận chuyển / lắp đặt: <strong>{vcCompanyCfg?.name || '—'}</strong></p>
                       <p>Ngày lắp dự kiến: <strong>{installDates.map(ddmm).join(', ') || '—'} {form.installTime}</strong></p>
                       <p>Ngày lấy hàng: <strong>{ddmm(form.pickupDate)} {form.pickupTime}</strong></p>
                       <p className="whitespace-pre-line">Ghi chú: {form.vcNotes || '—'}</p>

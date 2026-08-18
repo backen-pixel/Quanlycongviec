@@ -26,7 +26,7 @@ INSERT INTO knowledge_exercises (
   'simulation',
   $sim${
   "mode": "simulation",
-  "brief": "Chị Lan vừa ký hợp đồng tủ bếp. Hãy chạy trọn một ca trên sân tập:\n1. CRM → «Thiết lập kế hoạch SX & VC/LĐ»: xưởng HCB, phân loại Tủ bếp, chọn 2 ngày lắp LIỀN NHAU, giờ lắp buổi Sáng; ngày lấy hàng VC không được sau ngày lắp đầu tiên, giờ lấy hàng buổi Chiều; chọn công ty VC/LĐ CÓ cột lắp đặt tạm; ghi chú cho VC/LĐ ít nhất 2 dòng. Bấm «Thêm dự án».\n2. Tab VC / Lắp đặt: kiểm thẻ ở cột lắp đặt tạm, rồi thử chuyển thẻ sang cột khác để xem hệ thống chặn thế nào.\n3. Tab Lịch: xem 3 mốc dự kiến và ghi chú VC/LĐ.\n4. Tab Sản xuất: chuyển thẻ vào cột «Đơn hàng đã chuẩn bị xong» để bàn giao.\n5. CRM → Bình luận: bấm «Chọn & bàn giao» để xác nhận lần hai.\n6. Quay lại tab VC / Lắp đặt: thẻ phải nằm ở cột «Chờ giao hàng» và hết badge TẠM.\nXong thì bấm «Nộp bài mô phỏng».",
+  "brief": "Chị Lan vừa ký hợp đồng tủ bếp. Hãy chạy trọn một ca trên sân tập — popup giống hệ thống thật (2 cột: form trái, lịch sự kiện VC/LĐ phải):\n1. CRM → «Thiết lập kế hoạch SX & VC/LĐ». Popup mở ra: chọn Công ty SX «Xưởng HCB», Phân loại «Tủ bếp»; chọn Công ty vận chuyển / lắp đặt CÓ cột tạm (VC Phúc Đạt); nhập Ghi chú cho bên vận chuyển / lắp đặt ít nhất 2 dòng; ở khối Deadline lắp đặt chọn 2 ngày lắp LIỀN NHAU, Giờ lắp đặt bấm Sáng; ở khối Lấy hàng (VC) chọn ngày không sau ngày lắp đầu, giờ bấm Chiều. Bấm «Thêm dự án».\n2. Tab VC / Lắp đặt: kiểm thẻ ở cột lắp đặt tạm, rồi thử chuyển thẻ sang cột khác để xem hệ thống chặn.\n3. Tab Lịch: xem 3 mốc dự kiến và ghi chú VC/LĐ.\n4. Tab Sản xuất: chuyển thẻ vào cột «Đơn hàng đã chuẩn bị xong» để bàn giao.\n5. CRM → Bình luận: bấm «Chọn & bàn giao».\n6. Quay lại tab VC / Lắp đặt: thẻ ở cột «Chờ giao hàng», hết badge TẠM.\nMuốn đổi ngày sau khi lưu: khối Dự án sản xuất → «Sửa lịch» → «Lưu lịch».\nXong thì bấm «Nộp bài mô phỏng».",
   "scenario": {
     "deal": {
       "code": "DEAL-MP-2026-01",
@@ -77,7 +77,12 @@ INSERT INTO knowledge_exercises (
   NULL,
   2,
   '/uploads/knowledge-screenshots/sx-vc-07b-the-tam-ghi-chu.png',
-  $ea3$[{"type":"image","url":"/uploads/knowledge-screenshots/sx-vc-04b-form-cac-buoc.png","caption":"Form kế hoạch thật — sân tập mô phỏng theo đúng thứ tự này"},{"type":"image","url":"/uploads/knowledge-screenshots/sx-vc-07b-the-tam-ghi-chu.png","caption":"Kết quả cần đạt: thẻ TẠM kèm ghi chú VC/LĐ"}]$ea3$::jsonb
+  $ea3$[
+    {"type":"image","url":"/uploads/knowledge-screenshots/sx-vc-04b-form-cac-buoc.png","caption":"Form kế hoạch — chọn xưởng, phân loại, bấm ngày lắp"},
+    {"type":"image","url":"/uploads/knowledge-screenshots/sx-vc-05-chon-vc-ghi-chu.png","caption":"Chọn công ty vận chuyển / lắp đặt, ghi chú rồi Thêm dự án"},
+    {"type":"image","url":"/uploads/knowledge-screenshots/sx-vc-07b-the-tam-ghi-chu.png","caption":"Kết quả cần đạt: thẻ TẠM kèm ghi chú VC/LĐ"},
+    {"type":"image","url":"/uploads/knowledge-screenshots/sx-vc-09b-chon-ban-giao.png","caption":"Bước cuối trên hệ thống thật: Chọn & bàn giao"}
+  ]$ea3$::jsonb
 ) ON CONFLICT (id) DO UPDATE SET
   lesson_id = EXCLUDED.lesson_id, title = EXCLUDED.title, instructions = EXCLUDED.instructions,
   type = EXCLUDED.type, questions = EXCLUDED.questions, passing_score = EXCLUDED.passing_score,

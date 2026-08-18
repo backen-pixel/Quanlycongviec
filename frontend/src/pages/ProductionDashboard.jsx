@@ -20,6 +20,7 @@ import {
   resolveStaffWorkshopCompanyId,
   isWorkshopProductionStaff,
   productionWorkshopFilterCompanies,
+  isOwnWorkshopCompanyAdmin,
 } from '../lib/crossWorkshopProduction';
 import { formatVND, formatDate, formatStaffDisplayName, getStaffInitials } from '../lib/utils';
 import { rememberCompanyDeadlineClock } from '../lib/companyDeadlineClock';
@@ -714,11 +715,17 @@ export default function ProductionDashboard() {
     if (filterDealCompany && !String(filterDealCompany).startsWith('ext:')) {
       return String(filterDealCompany);
     }
-    if (showDealCompanyFilter && !isAdmin && !isSystemAdmin(user) && user?.company_id) {
+    // Admin CRM (VPT Q2…) xem xưởng HCB/Metalla: luôn lọc deal theo công ty CRM của họ.
+    if (
+      showDealCompanyFilter
+      && user?.company_id
+      && !isSystemAdmin(user)
+      && !isOwnWorkshopCompanyAdmin(user, companies)
+    ) {
       return String(user.company_id);
     }
     return undefined;
-  }, [resolvedDealCompanyPick, filterDealCompany, showDealCompanyFilter, user, isAdmin]);
+  }, [resolvedDealCompanyPick, filterDealCompany, showDealCompanyFilter, user, companies]);
 
   const dealCompanyExternalFilter = useMemo(() => {
     if (!resolvedDealCompanyPick || resolvedDealCompanyPick.client_company_id) return null;
@@ -735,10 +742,9 @@ export default function ProductionDashboard() {
 
   const canPickCompany = canPickWorkshopCompany(user, isAdmin, isCompanyScopedAdmin);
   const workshopCompanyPickerList = useMemo(() => {
-    // Admin công ty (Metalla/Hucabi…): chỉ xưởng của họ — không lẫn HCB ↔ Metalla.
+    // Admin xưởng Metalla/Hucabi: chỉ xưởng của họ. Admin CRM VPT: xưởng HCB/Metalla (deal lọc theo công ty CRM).
     if (isCompanyScopedAdmin && userCompanyId) {
-      const own = (companies || []).find((c) => String(c.id) === userCompanyId);
-      return own ? [own] : [{ id: userCompanyId, name: userCompanyId, short_name: userCompanyId }];
+      return workshopCompaniesForCrossViewer(companies, user);
     }
     // Admin hệ thống: hiện toàn bộ công ty backend trả về cho module SX (đã lọc tenant + division ở /api/companies?for_module=production).
     if (isAdmin && !isCompanyScopedAdmin && !dealCompanyParam) {
@@ -1801,9 +1807,9 @@ export default function ProductionDashboard() {
     // Admin để trống xưởng → API trả pipeline Global (không có cột →VC Hucabi),
     // thẻ shipping bị map nhầm cột «Tiếp nhận». Auto-pick lần đầu khi đang trống.
     // Nếu admin đã chọn «Tất cả xưởng» thì giữ trống (filterAllWorkshops).
+    // filterCompany cũ (vd. chip CRM VPT) không còn trong danh sách xưởng → pick lại HCB/Metalla.
     if (isAdmin) {
-      if (filterCompany) return;
-      if (filterAllWorkshops) return;
+      if (filterAllWorkshops && !filterCompany) return;
       let saved = '';
       try { saved = String(localStorage.getItem('sx_pipeline_settings_company_id') || ''); } catch { /* ignore */ }
       const fromSaved = saved
