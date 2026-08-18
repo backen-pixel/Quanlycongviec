@@ -327,7 +327,10 @@ export default function LogisticsDashboard() {
       const pid = data?.id || data?.project_id || data?.project?.id;
       if (!pid) return;
       const existed = (projectsRef.current || []).some((p) => String(p.id) === String(pid));
-      if (existed) return;
+      const reason = String(data?.reason || '');
+      const fromHandover = reason === 'vc_handover' || reason === 'handover_vc';
+      // Đã trên bảng (cột tạm) vẫn reload khi bàn giao thật → nhảy sang Chờ giao hàng
+      if (existed && !fromHandover) return;
 
       const s = data?.status || data?.project?.status;
       const handedOver = Boolean(

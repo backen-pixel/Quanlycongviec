@@ -3,6 +3,7 @@ import { Link, useParams, useNavigate, useLocation } from 'react-router-dom';
 import api from '../lib/api';
 import { publicFileUrl } from '../lib/publicFileUrl';
 import KnowledgeMediaGallery from '../components/KnowledgeMediaGallery';
+import KnowledgeSimulationPlayer from '../components/KnowledgeSimulationPlayer';
 import { youtubeEmbedUrl } from '../lib/knowledgeMarkdown';
 import {
   ChevronLeft, ChevronRight, CheckCircle2, Clock, Award, Loader2,
@@ -344,6 +345,48 @@ function ResultScreen({ result, exercise, onRetry, onBack, onGoNext }) {
         )}
       </div>
 
+      {exercise.type === 'simulation' && (result.details || []).length > 0 && (
+        <div className="bg-white rounded-2xl border border-gray-200 p-6">
+          <h3 className="font-semibold mb-4 flex items-center gap-2" style={{ color: '#000000' }}>
+            <ListChecks className="h-5 w-5 text-blue-600" /> Chi tiết từng bước thao tác
+          </h3>
+          {result.required_failed && (
+            <p className="mb-4 text-sm text-red-800 bg-red-50 border border-red-200 rounded-lg p-3">
+              Có bước <strong>bắt buộc</strong> chưa đạt nên bài chưa qua, dù tổng điểm có thể trên {exercise.passing_score ?? 70}%.
+              Xem các bước gắn nhãn «bắt buộc» bên dưới rồi làm lại.
+            </p>
+          )}
+          <ul className="space-y-2">
+            {(result.details || []).map((d, idx) => (
+              <li
+                key={d.id}
+                className={`flex items-start gap-3 p-3 rounded-lg border ${
+                  d.correct ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'
+                }`}
+              >
+                <span className="mt-0.5 shrink-0">
+                  {d.correct ? <CheckCircle2 className="h-5 w-5 text-green-600" /> : <XCircle className="h-5 w-5 text-red-600" />}
+                </span>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium" style={{ color: '#000000' }}>
+                    {idx + 1}. {d.label}
+                    {d.required && (
+                      <span className="ml-1.5 px-1.5 py-0.5 rounded bg-red-100 text-red-700 text-[10px] font-bold align-middle">
+                        bắt buộc
+                      </span>
+                    )}
+                  </p>
+                  <p className="text-xs text-gray-600 mt-0.5">
+                    {d.correct ? `Đạt · +${d.points} điểm` : `Chưa đạt · 0/${d.points} điểm`}
+                    {!d.correct && d.hint ? ` — ${d.hint}` : ''}
+                  </p>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {exercise.type === 'quiz' && items.length > 0 && (
         <div className="bg-white rounded-2xl border border-gray-200 p-6">
           <h3 className="font-semibold mb-4 flex items-center gap-2" style={{ color: '#000000' }}>
@@ -601,8 +644,12 @@ export default function KnowledgeExercisePage() {
 
   if (!started) {
     const items = exercise.questions?.items || [];
-    const itemCount = exercise.type === 'essay' ? 1 : items.length;
-    const typeLabel = exercise.type === 'quiz' ? 'Trắc nghiệm' : exercise.type === 'checklist' ? 'Checklist thực hành' : 'Tự luận';
+    const simSteps = exercise.questions?.steps || [];
+    const itemCount = exercise.type === 'essay' ? 1 : exercise.type === 'simulation' ? simSteps.length : items.length;
+    const typeLabel = exercise.type === 'quiz' ? 'Trắc nghiệm'
+      : exercise.type === 'checklist' ? 'Checklist thực hành'
+      : exercise.type === 'simulation' ? 'Mô phỏng thao tác'
+      : 'Tự luận';
 
     return (
       <div className="max-w-2xl mx-auto py-12">
@@ -627,7 +674,7 @@ export default function KnowledgeExercisePage() {
               <p className="text-sm font-semibold" style={{ color: '#000000' }}>{typeLabel}</p>
             </div>
             <div className="p-3 bg-gray-50 rounded-lg">
-              <p className="text-xs text-gray-500">Số câu</p>
+              <p className="text-xs text-gray-500">{exercise.type === 'simulation' ? 'Số bước' : 'Số câu'}</p>
               <p className="text-sm font-semibold" style={{ color: '#000000' }}>{itemCount}</p>
             </div>
             <div className="p-3 bg-gray-50 rounded-lg">
@@ -666,7 +713,7 @@ export default function KnowledgeExercisePage() {
   }
 
   return (
-    <div className="max-w-5xl mx-auto py-4">
+    <div className={`${exercise.type === 'simulation' ? 'max-w-7xl' : 'max-w-5xl'} mx-auto py-4`}>
       <div className="flex items-center justify-between mb-6">
         <Link to={backUrl} className={KNOWLEDGE_BACK_LINK_CLASS} style={knowledgeBackLinkStyle}>
           <ChevronLeft className="h-4 w-4" /> Bài học
@@ -695,6 +742,14 @@ export default function KnowledgeExercisePage() {
       {exercise.type === 'quiz' && <QuizPlayer exercise={exercise} onSubmit={submit} submitting={submitting} onAnswersChange={(a) => { answersRef.current = a; }} />}
       {exercise.type === 'checklist' && <ChecklistPlayer exercise={exercise} onSubmit={submit} submitting={submitting} />}
       {exercise.type === 'essay' && <EssayPlayer exercise={exercise} onSubmit={submit} submitting={submitting} />}
+      {exercise.type === 'simulation' && (
+        <KnowledgeSimulationPlayer
+          exercise={exercise}
+          onSubmit={submit}
+          submitting={submitting}
+          onAnswersChange={(a) => { answersRef.current = a; }}
+        />
+      )}
 
       <KnowledgeMediaGallery items={exercise.attachments} title="Tài liệu tham khảo" />
     </div>

@@ -494,6 +494,7 @@ async function performVcHandoverCore(req, {
           logistics_company_id: logisticsCompanyId,
           vc_kanban_column_id: vcStageId || null,
           sx_kanban_column_id: sxHandoverPipelineStageId || null,
+          vc_temp_staged: false,
         },
       });
     }

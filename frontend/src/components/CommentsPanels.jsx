@@ -31,6 +31,7 @@ import {
 } from 'lucide-react';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { isAdminLike } from '../lib/adminRole';
 import { FbCrmAvatar, FbCrmCommentComposer, formatCrmCommentFullDateTime, formatCrmFbRelativeTime } from './crmFbCommentUi';
 import { CrmCommentMentionComposer, renderCrmCommentBody } from './crmCommentMentionUi';
 import { FilePreview, FileUploadButton, uploadFilesBatch } from './FileUpload';
@@ -973,12 +974,13 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
   const md = comment?.metadata || {};
   const state = md.state || 'awaiting_company';
   const selfUid = String(user?.userId || user?.id || '');
-  // Chỉ Sale CRM phụ trách deal (assigned_to / lead_owner) được chọn công ty + ngày.
+  // Sale CRM phụ trách deal (assigned_to / lead_owner) hoặc admin được chọn công ty + ngày.
   const saleIds = (md.sale_user_ids || []).map(String);
   const canSale = saleIds.includes(selfUid);
-  // Chỉ người chịu trách nhiệm CRM chính (assigned_to) được sửa ngày đề xuất.
+  const canAct = canSale || isAdminLike(user);
+  // Người chịu trách nhiệm CRM chính (assigned_to) hoặc admin được sửa ngày đề xuất.
   const crmResponsibleId = String(md.crm_responsible_user_id || saleIds[0] || '');
-  const canEditAsCrmOwner = !!crmResponsibleId && selfUid === crmResponsibleId;
+  const canEditAsCrmOwner = (!!crmResponsibleId && selfUid === crmResponsibleId) || isAdminLike(user);
   // Chỉ đúng người cấu hình xác nhận mới được tích (fallback phụ trách dự án).
   const canConfirmProduction = selfUid === String(md.production_confirm_user_id || md.production_person_id || '');
   const canConfirmLogistics = selfUid === String(md.logistics_confirm_user_id || md.logistics_person_id || '');
@@ -1115,7 +1117,7 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
   }, [md.event_ids, md.event_id, md.sx_event_id, md.transport_event_id, md.install_event_id]);
 
   useEffect(() => {
-    if (state !== 'awaiting_company' || !canSale) return;
+    if (state !== 'awaiting_company' || !canAct) return;
     let active = true;
     api.get('/companies', { params: { for_module: 'logistics' } })
       .then((r) => {
@@ -1126,7 +1128,7 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
       })
       .catch(() => { if (active) setCompanies([]); });
     return () => { active = false; };
-  }, [state, canSale]);
+  }, [state, canAct]);
 
   // Prefill từ kế hoạch SX & VC/LĐ Sale đã điền trước đó — vẫn cho sửa trước khi bàn giao.
   const planVcNotes = md.plan_vc_notes || md.vc_notes || '';
@@ -1139,17 +1141,17 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
   const hasPlanInfo = !!(planCompanyId || planVcNotes || planOccurrenceDates.length);
 
   useEffect(() => {
-    if (state !== 'awaiting_company' || !canSale) return;
+    if (state !== 'awaiting_company' || !canAct) return;
     if (planCompanyId) setCompanyId((prev) => (prev ? prev : planCompanyId));
     if (planVcNotes) setVcNotes((prev) => (prev.trim() ? prev : planVcNotes));
     if (planOccurrenceDates.length) {
       setInstallOccurrenceDates((prev) => (prev.length ? prev : planOccurrenceDates));
     }
-  }, [state, canSale, planCompanyId, planVcNotes, planOccurrenceDates]);
+  }, [state, canAct, planCompanyId, planVcNotes, planOccurrenceDates]);
 
   // Prefill địa chỉ / lịch từ ĐÚNG project xưởng của thẻ (multi-SX), vẫn cho Sale chỉnh tay.
   useEffect(() => {
-    if (state !== 'awaiting_company' || !canSale) return undefined;
+    if (state !== 'awaiting_company' || !canAct) return undefined;
     let active = true;
     const pickAddr = (...cands) => {
       for (const c of cands) {
@@ -1198,6 +1200,9 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
           if (!nextPickup) {
             nextPickup = toLocalDay(p.pickup_at || p.production_finish_date, '08:00');
           }
+          if (p.logistics_company_id) {
+            setCompanyId((prev) => (prev ? prev : String(p.logistics_company_id)));
+          }
         } catch { /* sale có thể không có quyền SX */ }
       }
 
@@ -1239,7 +1244,7 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
     return () => { active = false; };
   }, [
     state,
-    canSale,
+    canAct,
     comment?.lead_id,
     md.project_id,
     md.install_address,
@@ -1251,7 +1256,7 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
 
   // Tự điền ghi chú: «Loại - xưởng» từ deal (phân loại CRM) + xưởng SX của dự án.
   useEffect(() => {
-    if (state !== 'awaiting_company' || !canSale) return undefined;
+    if (state !== 'awaiting_company' || !canAct) return undefined;
     let active = true;
     const buildNotes = (loai, xuong) => {
       const parts = [loai, xuong].map((s) => String(s || '').trim()).filter(Boolean);
@@ -1287,7 +1292,7 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
     return () => { active = false; };
   }, [
     state,
-    canSale,
+    canAct,
     comment?.lead_id,
     md.lead_type_name,
     md.workshop_company_name,
@@ -1339,7 +1344,7 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
 
         {state === 'awaiting_company' && (
           <div className="space-y-2">
-            {canSale ? (
+            {canAct ? (
               <>
                 {hasPlanInfo ? (
                   <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1.5 space-y-0.5">
@@ -1643,7 +1648,7 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
               </>
             ) : (
               <p className="text-[12px] text-orange-700/90">
-                Chỉ Sale CRM phụ trách deal mới được chọn công ty VC/LĐ và ngày lấy hàng.
+                Chỉ Sale CRM phụ trách deal hoặc admin mới được chọn công ty VC/LĐ và ngày lấy hàng.
               </p>
             )}
           </div>
@@ -1659,7 +1664,7 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
                 <span className="text-gray-500">Ghi chú:</span> {md.select_notes}
               </p>
             ) : null}
-            {canSale ? (
+            {canAct ? (
               <>
                 <div className="block">
                   <span className="text-[11px] font-semibold text-gray-600 flex items-center gap-1"><Calendar className="h-3.5 w-3.5" /> Ngày lấy hàng *</span>
@@ -1699,7 +1704,7 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
               </>
             ) : (
               <p className="text-[12px] text-orange-700/90">
-                Chỉ Sale CRM phụ trách deal mới được chọn ngày lấy hàng.
+                Chỉ Sale CRM phụ trách deal hoặc admin mới được chọn ngày lấy hàng.
               </p>
             )}
           </div>

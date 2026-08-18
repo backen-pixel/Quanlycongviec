@@ -4,8 +4,8 @@
  * Luồng:
  *   1. SX kéo thẻ vào cột is_handover_to_logistics → POST /projects/:id/request
  *      → đăng bình luận tương tác (comment_type='vc_handover') cho sale CRM, KHÔNG bàn giao thật.
- *   2. Sale chọn công ty VC/LĐ + ngày lấy/lắp → PATCH /comments/:cid/select
- *      → bàn giao thật + lưu ngày đề xuất; Xưởng mặc định đã xác nhận; chờ VC/LĐ xác nhận.
+ *   2. Sale CRM phụ trách deal hoặc admin chọn công ty VC/LĐ + ngày lấy/lắp → PATCH /comments/:cid/select
+ *      → bàn giao thật (thẻ rời cột lắp đặt tạm sang Chờ giao hàng) + thông báo VC/LĐ;
  *      (Chưa tạo 3 sự kiện lịch — tránh phải sửa lịch khi còn đổi giờ.)
  *      Hoặc chọn «công ty lắp đặt bên ngoài» (skip_logistics_module): không vào bảng VC/LĐ,
  *      tự tạo sự kiện Giao hàng xưởng + Lắp đặt trên lịch SX/CRM để nội bộ cập nhật tiến độ.
@@ -53,6 +53,7 @@ const {
   logLeadCommentMentionActivity,
   memberDisplayName,
 } = require('../helpers/crmLeadCommentMentions');
+const { isAdminLike } = require('../helpers/adminRole');
 
 const r = Router();
 r.use(auth);
@@ -63,6 +64,13 @@ const COMMENT_SELECT =
 
 function withReactions(row) {
   return { ...row, attachments: Array.isArray(row?.attachments) ? row.attachments : [], reactions: { summary: [], mine: null } };
+}
+
+/** Sale CRM phụ trách deal hoặc admin được chọn công ty / ngày bàn giao. */
+function canActAsVcHandoverSale(req, saleIds) {
+  const uid = String(req.user?.userId || req.user?.id || '');
+  if (uid && (saleIds || []).map(String).includes(uid)) return true;
+  return isAdminLike(req.user);
 }
 
 function emitComment(req, leadId, action, row) {
@@ -1000,8 +1008,8 @@ r.patch('/comments/:cid/select', async (req, res) => {
     if (meta.state !== 'awaiting_company') return res.status(409).json({ error: 'Bước chọn công ty đã hoàn tất.' });
 
     const saleIds = (meta.sale_user_ids || []).map(String);
-    if (!saleIds.includes(String(userId))) {
-      return res.status(403).json({ error: 'Chỉ Sale CRM phụ trách deal mới được chọn công ty VC/LĐ.' });
+    if (!canActAsVcHandoverSale(req, saleIds)) {
+      return res.status(403).json({ error: 'Chỉ Sale CRM phụ trách deal hoặc admin mới được chọn công ty VC/LĐ.' });
     }
 
     const projectId = meta.project_id;
@@ -1454,8 +1462,8 @@ r.patch('/comments/:cid/schedule', async (req, res) => {
     if (meta.state !== 'awaiting_date') return res.status(409).json({ error: 'Chưa thể đặt ngày (sai bước) hoặc đã đặt.' });
 
     const saleIds = (meta.sale_user_ids || []).map(String);
-    if (!saleIds.includes(String(userId))) {
-      return res.status(403).json({ error: 'Chỉ Sale CRM phụ trách deal mới được chọn ngày lấy hàng.' });
+    if (!canActAsVcHandoverSale(req, saleIds)) {
+      return res.status(403).json({ error: 'Chỉ Sale CRM phụ trách deal hoặc admin mới được chọn ngày lấy hàng.' });
     }
 
     const projectId = meta.project_id;
@@ -1607,8 +1615,8 @@ r.patch('/comments/:cid/reschedule', async (req, res) => {
     } catch (e) {
       console.warn('[vc-handover] resolve CRM responsible on reschedule:', e.message);
     }
-    if (!crmResponsibleId || String(userId) !== String(crmResponsibleId)) {
-      return res.status(403).json({ error: 'Chỉ người chịu trách nhiệm CRM của deal mới được sửa ngày đề xuất.' });
+    if (!isAdminLike(req.user) && (!crmResponsibleId || String(userId) !== String(crmResponsibleId))) {
+      return res.status(403).json({ error: 'Chỉ người chịu trách nhiệm CRM của deal hoặc admin mới được sửa ngày đề xuất.' });
     }
 
     const projectId = meta.project_id;

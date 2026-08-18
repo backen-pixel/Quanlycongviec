@@ -1932,7 +1932,11 @@ r.put('/:id', requireProjectEditOrSxKanbanWorkshopType(), async (req, res) => {
       }
     }
 
-    const { data: old } = await supabase.from('projects').select('status,name,workshop_type_id,company_id,production_person_id,production_value,estimated_value,deposit_amount,collected_amount').eq('id', req.params.id).single();
+    const OLD_BASE_COLS = 'status,name,workshop_type_id,company_id,production_person_id,production_value,estimated_value,deposit_amount,collected_amount,install_date,pickup_at,production_finish_date,delivery_date';
+    let { data: old, error: oldErr } = await supabase.from('projects').select(`${OLD_BASE_COLS},vc_notes`).eq('id', req.params.id).single();
+    if (oldErr && oldErr.message?.includes('column')) {
+      ({ data: old } = await supabase.from('projects').select(OLD_BASE_COLS).eq('id', req.params.id).single());
+    }
 
     if (update.deposit_amount != null) {
       const total = Number(update.production_value ?? old?.production_value ?? old?.estimated_value ?? 0);
@@ -2016,6 +2020,12 @@ r.put('/:id', requireProjectEditOrSxKanbanWorkshopType(), async (req, res) => {
               .maybeSingle();
             leadId = leadRow?.id || null;
           }
+          // Ngày lắp nhiều ngày nằm trên sự kiện lắp đặt — đọc trước khi upsert ghi đè
+          const {
+            loadPlannedInstallOccurrenceYmds,
+            notifySxScheduleChange,
+          } = require('../helpers/sxScheduleChangeNotify');
+          const prevInstallOccurrenceYmds = await loadPlannedInstallOccurrenceYmds(req.params.id);
           await upsertPlannedVcLdEvents({
             projectId: req.params.id,
             leadId,
@@ -2094,6 +2104,36 @@ r.put('/:id', requireProjectEditOrSxKanbanWorkshopType(), async (req, res) => {
             } catch (notifyErr) {
               console.warn('[PUT /projects] notify VC plan:', notifyErr.message);
             }
+          }
+
+          // Lịch đổi → ghi bình luận vào deal + báo người phụ trách SX
+          try {
+            await notifySxScheduleChange(req, {
+              projectId: req.params.id,
+              leadId,
+              projectCode: data.code,
+              projectName: data.name,
+              productionPersonId: data.production_person_id || null,
+              actorUserId: req.user?.userId || null,
+              before: {
+                installAt: old?.install_date || null,
+                pickupAt: old?.pickup_at || null,
+                productionFinishAt: old?.production_finish_date || null,
+                vcNotes: old?.vc_notes || null,
+                installOccurrenceDates: prevInstallOccurrenceYmds,
+              },
+              after: {
+                installAt: data.install_date || null,
+                pickupAt: data.pickup_at || null,
+                productionFinishAt: data.production_finish_date || null,
+                vcNotes: data.vc_notes || null,
+                installOccurrenceDates: normalizeOccurrenceYmds(
+                  b.install_occurrence_dates || b.installOccurrenceDates,
+                ),
+              },
+            });
+          } catch (schedErr) {
+            console.warn('[PUT /projects] notify SX schedule change:', schedErr.message);
           }
         } catch (evErr) {
           console.warn('[PUT /projects] planned VC/LĐ events:', evErr.message);

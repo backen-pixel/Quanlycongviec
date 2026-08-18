@@ -585,6 +585,7 @@ const guides = [
         <li>Kiểm tra, sửa nếu cần, rồi bấm <strong>Chọn &amp; bàn giao</strong>.</li>
       </ol>
       ${imgTag('sx-vc-ld-ke-hoach/09-crm-the-ban-giao-xac-nhan.png', 'Thẻ Bàn giao Lắp đặt trong tab Bình luận của Deal')}
+      ${imgTag('sx-vc-ld-ke-hoach/09b-crm-chon-ban-giao.png', 'Cuối thẻ bàn giao: ngày lắp, giờ lắp, 3 sự kiện và nút Chọn & bàn giao')}
       <div class="note">
         <strong>Không tạo dự án VC/LĐ mới.</strong> Xác nhận chỉ chuyển dự án đang ở cột tạm sang <strong>cột tiếp nhận</strong> và bỏ badge TẠM.
         Chỉ <strong>Sale CRM phụ trách deal</strong> mới bấm được — người khác chỉ xem.

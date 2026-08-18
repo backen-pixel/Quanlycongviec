@@ -17,6 +17,7 @@ const EX_TYPES = [
   { value: 'quiz', label: 'Trắc nghiệm' },
   { value: 'checklist', label: 'Checklist' },
   { value: 'essay', label: 'Tự luận' },
+  { value: 'simulation', label: 'Mô phỏng thao tác' },
 ];
 
 const ROLES = ['admin', 'sales_admin', 'manager', 'sales', 'designer', 'production', 'logistics', 'accounting', 'staff'];
@@ -1025,7 +1026,10 @@ export default function KnowledgeAdminPage() {
                       </td>
                       <td className="px-2 py-2 text-center text-xs">
                         <span className="px-2 py-0.5 bg-gray-100 rounded-full">
-                          {ex.type === 'quiz' ? 'Trắc nghiệm' : ex.type === 'checklist' ? 'Checklist' : 'Tự luận'}
+                          {ex.type === 'quiz' ? 'Trắc nghiệm'
+                            : ex.type === 'checklist' ? 'Checklist'
+                            : ex.type === 'simulation' ? 'Mô phỏng'
+                            : 'Tự luận'}
                         </span>
                       </td>
                       <td className="px-2 py-2 text-center">{ex.question_count}</td>
@@ -1102,6 +1106,12 @@ export default function KnowledgeAdminPage() {
               }}>
                 {EX_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
               </select>
+
+              {exForm.type === 'simulation' && (
+                <p className="text-xs text-purple-800 bg-white border border-purple-200 rounded-lg p-2">
+                  Bài mô phỏng dùng cấu hình JSON (scenario + steps) nạp bằng migration — trang này chỉ sửa được tiêu đề, mô tả, điểm đạt và số lượt làm.
+                </p>
+              )}
 
               {exForm.type === 'quiz' && (
                 <div className="space-y-2">

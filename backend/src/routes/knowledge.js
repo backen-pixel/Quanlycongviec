@@ -2,6 +2,7 @@ const { Router } = require('express');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
 const { isAdminLike, isSystemAdmin } = require('../helpers/adminRole');
+const { gradeSimulation } = require('../helpers/knowledgeSimulationGrading');
 
 const r = Router();
 r.use(auth);
@@ -1303,6 +1304,14 @@ r.get('/exercises/:id', async (req, res) => {
       }));
       payload.questions = { items };
     }
+    if (!canManage(req) && ex.type === 'simulation') {
+      payload.questions = {
+        ...(ex.questions || {}),
+        steps: (ex.questions?.steps || []).map(({ id, label, points, hint, required }) => ({
+          id, label, points, hint, required: !!required,
+        })),
+      };
+    }
     const ytId = extractYoutubeId(ex.video_url);
     if (ytId) {
       payload.video_embed_id = ytId;
@@ -1424,12 +1433,19 @@ r.post('/exercises/:id/submit', async (req, res) => {
     let score = null;
     let status = 'submitted';
     let quizDetails = null;
+    let simRequiredFailed = false;
     if (ex.type === 'quiz') {
       const graded = gradeQuiz(ex.questions, answers);
       score = graded.score;
       quizDetails = graded.details;
       const pass = score >= (ex.passing_score ?? 70);
       status = pass ? 'passed' : 'failed';
+    } else if (ex.type === 'simulation') {
+      const graded = gradeSimulation(ex.questions, answers);
+      score = graded.score;
+      quizDetails = graded.details;
+      simRequiredFailed = graded.requiredFailed;
+      status = score >= (ex.passing_score ?? 70) && !graded.requiredFailed ? 'passed' : 'failed';
     } else if (ex.type === 'checklist') {
       const items = ex.questions?.items || [];
       const done = items.filter((it) => answers?.[it.id]).length;
@@ -1502,6 +1518,7 @@ r.post('/exercises/:id/submit', async (req, res) => {
       status,
       score,
       details: quizDetails,
+      required_failed: simRequiredFailed,
       certificate_issued: newCert || null,
       next_lesson: nextLesson || null,
       current_lesson_id: ex.lesson?.id || null,
@@ -2316,7 +2333,9 @@ r.get('/admin/exercises', async (req, res) => {
       const stat = submissionStats[e.id];
       return {
         ...e,
-        question_count: e.questions?.items?.length || (e.type === 'essay' ? 1 : 0),
+        question_count: e.questions?.items?.length
+          || e.questions?.steps?.length
+          || (e.type === 'essay' ? 1 : 0),
         submission_count: stat?.count || 0,
         passed_count: stat?.passed || 0,
         pass_rate: stat?.count ? Math.round((stat.passed / stat.count) * 100) : null,

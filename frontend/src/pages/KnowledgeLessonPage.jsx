@@ -539,7 +539,10 @@ export default function KnowledgeLessonPage() {
                       <p className="font-semibold" style={{ color: '#000000' }}>{ex.title}</p>
                       <p className="text-xs text-gray-500 mt-1 flex items-center gap-2 flex-wrap">
                         <span className="px-2 py-0.5 bg-gray-100 rounded">
-                          {ex.type === 'quiz' ? 'Trắc nghiệm' : ex.type === 'checklist' ? 'Checklist' : 'Tự luận'}
+                          {ex.type === 'quiz' ? 'Trắc nghiệm'
+                            : ex.type === 'checklist' ? 'Checklist'
+                            : ex.type === 'simulation' ? 'Mô phỏng thao tác'
+                            : 'Tự luận'}
                         </span>
                         {ex.user_passed && (
                           <span className="text-green-700 font-medium">Đã đạt{ex.user_best_score != null ? ` · ${ex.user_best_score}%` : ''}</span>
