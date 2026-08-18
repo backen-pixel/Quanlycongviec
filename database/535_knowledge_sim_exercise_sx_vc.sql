@@ -26,7 +26,7 @@ INSERT INTO knowledge_exercises (
   'simulation',
   $sim${
   "mode": "simulation",
-  "brief": "Chị Lan vừa ký hợp đồng tủ bếp. Hãy chạy trọn một ca trên sân tập — popup giống hệ thống thật (2 cột: form trái, lịch sự kiện VC/LĐ phải):\n1. CRM → «Thiết lập kế hoạch SX & VC/LĐ». Popup mở ra: chọn Công ty SX «Xưởng HCB», Phân loại «Tủ bếp»; chọn Công ty vận chuyển / lắp đặt CÓ cột tạm (VC Phúc Đạt); nhập Ghi chú cho bên vận chuyển / lắp đặt ít nhất 2 dòng; ở khối Deadline lắp đặt chọn 2 ngày lắp LIỀN NHAU, Giờ lắp đặt bấm Sáng; ở khối Lấy hàng (VC) chọn ngày không sau ngày lắp đầu, giờ bấm Chiều. Bấm «Thêm dự án».\n2. Tab VC / Lắp đặt: kiểm thẻ ở cột lắp đặt tạm, rồi thử chuyển thẻ sang cột khác để xem hệ thống chặn.\n3. Tab Lịch: xem 3 mốc dự kiến và ghi chú VC/LĐ.\n4. Tab Sản xuất: chuyển thẻ vào cột «Đơn hàng đã chuẩn bị xong» để bàn giao.\n5. CRM → Bình luận: bấm «Chọn & bàn giao».\n6. Quay lại tab VC / Lắp đặt: thẻ ở cột «Chờ giao hàng», hết badge TẠM.\nMuốn đổi ngày sau khi lưu: khối Dự án sản xuất → «Sửa lịch» → «Lưu lịch».\nXong thì bấm «Nộp bài mô phỏng».",
+  "brief": "Điền 3 mục rồi bấm **Thêm dự án**:\n\n• Công ty SX: **Xưởng HCB**\n• Công ty VC/LĐ: **VC Phúc Đạt**\n• Ngày giờ: lắp **2 ngày liền nhau** (sau hôm nay) lúc **Sáng** — lấy hàng **không sau ngày lắp đầu** lúc **Chiều**",
   "scenario": {
     "deal": {
       "code": "DEAL-MP-2026-01",

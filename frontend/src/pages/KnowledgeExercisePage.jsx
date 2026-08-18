@@ -3,7 +3,7 @@ import { Link, useParams, useNavigate, useLocation } from 'react-router-dom';
 import api from '../lib/api';
 import { publicFileUrl } from '../lib/publicFileUrl';
 import KnowledgeMediaGallery from '../components/KnowledgeMediaGallery';
-import KnowledgeSimulationPlayer from '../components/KnowledgeSimulationPlayer';
+import KnowledgeSimulationPlayer, { SIM_BRIEF_SHORT, BriefRich } from '../components/KnowledgeSimulationPlayer';
 import { youtubeEmbedUrl } from '../lib/knowledgeMarkdown';
 import {
   ChevronLeft, ChevronRight, CheckCircle2, Clock, Award, Loader2,
@@ -662,6 +662,12 @@ export default function KnowledgeExercisePage() {
           </div>
           <h1 className="text-2xl font-bold" style={{ color: '#000000' }}>{exercise.title}</h1>
           {exercise.instructions && <p className="text-gray-600 mt-3">{exercise.instructions}</p>}
+          {exercise.type === 'simulation' && (
+            <div className="mt-4 text-left rounded-xl border-2 border-amber-300 bg-amber-50 p-4">
+              <p className="text-xs font-bold uppercase tracking-wide text-amber-800 mb-1.5">Đề bài</p>
+              <BriefRich text={SIM_BRIEF_SHORT} className="text-sm text-amber-950 leading-relaxed" />
+            </div>
+          )}
 
           <div className="mt-6 text-left">
             <ExerciseMediaHeader exercise={exercise} />
@@ -735,7 +741,10 @@ export default function KnowledgeExercisePage() {
         </div>
       </div>
 
-      <h1 className="text-xl font-bold text-gray-900 mb-4">{exercise.title}</h1>
+      <h1 className="text-xl font-bold text-gray-900 mb-2">{exercise.title}</h1>
+      {exercise.type === 'simulation' && exercise.instructions && (
+        <p className="text-sm text-gray-600 mb-4">{exercise.instructions}</p>
+      )}
 
       <ExerciseMediaHeader exercise={exercise} />
 
