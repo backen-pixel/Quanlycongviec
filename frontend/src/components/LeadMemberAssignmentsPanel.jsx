@@ -79,6 +79,12 @@ const TASK_SOURCE_OPTIONS = [
   { value: 'employee_error', label: 'Lỗi từ nhân viên' },
 ];
 
+const ERROR_MODULE_OPTIONS = [
+  { value: 'crm', label: 'CRM' },
+  { value: 'production', label: 'Xưởng (SX)' },
+  { value: 'logistics', label: 'Lắp đặt (LD)' },
+];
+
 const PHAT_SINH_KIND_OPTIONS = [
   { value: '', label: '— Không chọn SLA kính —' },
   { value: 'tempered_glass', label: 'Kính cường lực (3 ngày LV)' },
