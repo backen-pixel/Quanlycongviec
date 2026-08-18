@@ -513,7 +513,7 @@ const EVENT_SELECT = `*,
   assignee:users!crm_events_assignee_id_fkey(id, full_name, avatar),
   lead:crm_leads(id, title, code, type, project_id, customer:customers(id, full_name)),
   customer:customers(id, full_name, phone),
-  project:projects(id, name, code),
+  project:projects(id, name, code, vc_notes),
   event_type_ref:event_types(id, name, slug, icon, color, stage_slug),
   participants:crm_event_participants(id, user_id, status, user:users(id, full_name, avatar))`;
 

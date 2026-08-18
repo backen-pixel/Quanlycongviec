@@ -81,12 +81,17 @@ export function preferenceKeyForNotificationType(type, entityType, metadata = nu
   const eco =
     metadata && typeof metadata === 'object' ? String(metadata.ecosystem_module_key || '').trim() : '';
 
-  /** Xưởng SX / CRM deal — không gom vào project_notifications (CRM module Dự án). */
-  if (eco === 'production' || eco === 'crm') {
+  /** Xưởng SX / VC / CRM deal — không gom vào project_notifications (CRM module Dự án). */
+  if (eco === 'production' || eco === 'crm' || eco === 'logistics') {
     const mapped = NOTIFICATION_TYPE_PREF_MAP[type];
     if (mapped) return mapped;
     if (type === 'comment_added') return 'comment_added';
     if (type === 'workshop_new_deal') return 'deal_new';
+    if (type === 'logistics_stage_changed' || type === 'crm_stage_changed') return 'stage_changed';
+    if (type.startsWith('vc_handover_')) return 'deal_new';
+    if (type === 'logistics_task_deadline_warning' || type === 'logistics_task_deadline_overdue') {
+      return 'logistics_deadlines';
+    }
     return null;
   }
 

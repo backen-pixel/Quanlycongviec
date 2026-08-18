@@ -380,6 +380,8 @@ export default function App() {
   return (
     <ErrorBoundary>
     <AuthProvider>
+      {/* ErrorBoundary trong AuthProvider: lỗi trang không unmount phiên đăng nhập */}
+      <ErrorBoundary>
       <BrowserRouter>
         <SharedProviders>
         <MessengerDockProvider>
@@ -620,6 +622,7 @@ export default function App() {
         </MessengerDockProvider>
         </SharedProviders>
       </BrowserRouter>
+      </ErrorBoundary>
     </AuthProvider>
     </ErrorBoundary>
   );

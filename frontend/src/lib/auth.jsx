@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect } from 'react';
+import { useContext, useState, useEffect } from 'react';
 import api from '../lib/api';
 import { flushNow } from '../lib/activityLogger';
 import {
@@ -11,8 +11,7 @@ import { resetClientSessionState } from '../lib/sessionReset';
 import { useActivityPing } from '../hooks/useActivityPing';
 import { useDeviceHeartbeat } from '../hooks/useDeviceHeartbeat';
 import GeoConsentBanner from '../components/GeoConsentBanner';
-
-const AuthCtx = createContext(null);
+import { AuthCtx } from './authContext';
 
 function ActivityPingGate({ user, children }) {
   useActivityPing(!!user);

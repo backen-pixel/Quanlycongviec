@@ -46,8 +46,15 @@ export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify(BUILD_VERSION),
   },
+  resolve: {
+    dedupe: ['react', 'react-dom'],
+  },
   server: {
     host: true,
+    watch: {
+      // Xuất PDF hướng dẫn ghi public/guides + scripts → Vite full-reload làm vỡ AuthContext
+      ignored: ['**/public/guides/**', '**/scripts/**'],
+    },
     proxy: {
       '/socket.io': {
         target: 'http://127.0.0.1:4000',

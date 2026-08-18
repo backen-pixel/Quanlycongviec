@@ -74,6 +74,10 @@ function resolveProjectDatesForTarget(target, fallbackProjectDates = null) {
   if (logisticsCompanyId) vcPatch.logistics_company_id = String(logisticsCompanyId);
   if (pickupAt) vcPatch.pickup_at = pickupAt;
 
+  const vcNotesRaw = target?.vc_notes ?? fallbackProjectDates?.vc_notes ?? null;
+  const vcNotes = vcNotesRaw != null ? String(vcNotesRaw).trim() : '';
+  if (vcNotes) vcPatch.vc_notes = vcNotes;
+
   const occRaw = target?.install_occurrence_dates || fallbackProjectDates?.install_occurrence_dates;
   const occ = Array.isArray(occRaw)
     ? [...new Set(occRaw.map((d) => String(d || '').slice(0, 10)).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)))].sort()
@@ -103,6 +107,7 @@ function normalizeProductionTargets(targets, legacyCompanyId, legacyWorkshopType
       workshop_type_id: wtid ? String(wtid) : null,
       logistics_company_id: t?.logistics_company_id ? String(t.logistics_company_id) : null,
       pickup_at: t?.pickup_at || null,
+      vc_notes: t?.vc_notes ? String(t.vc_notes).trim() || null : null,
       ...(datePatch || {}),
     });
   }
@@ -136,7 +141,7 @@ async function linkDealToProject({
  */
 async function listDealProductionProjects(dealId) {
   if (!dealId) return [];
-  const projectDateCols = 'install_date, delivery_date, pickup_at, production_finish_date, logistics_company_id';
+  const projectDateCols = 'install_date, delivery_date, pickup_at, production_finish_date, logistics_company_id, vc_notes';
   const projectEmbed = `
         id, code, name, status, company_id, workshop_type_id, ${projectDateCols},
         company:companies!projects_company_id_fkey(id, name, short_name),
@@ -166,6 +171,7 @@ async function listDealProductionProjects(dealId) {
       production_finish_date: p.production_finish_date || null,
       logistics_company_id: p.logistics_company_id || lc.id || null,
       logistics_company_name: lc.short_name || lc.name || null,
+      vc_notes: p.vc_notes || null,
     };
   };
 
@@ -875,6 +881,9 @@ async function runAutoCreateProjectFromWonDeal({
     const d = new Date(String(projectDates.pickup_at).trim());
     if (!Number.isNaN(d.getTime())) vcSetupPatch.pickup_at = d.toISOString();
   }
+  if (projectDates?.vc_notes != null && String(projectDates.vc_notes).trim() !== '') {
+    vcSetupPatch.vc_notes = String(projectDates.vc_notes).trim();
+  }
   let sxReceptionDate = null;
   try {
     const { resolveSxReceptionDateForCompany } = require('./sxWorkshopSchedule');
@@ -908,10 +917,12 @@ async function runAutoCreateProjectFromWonDeal({
   let project;
   let lastInsertErr;
   let omitCreatedFromSx = false;
+  let omitVcNotes = false;
   for (let attempt = 0; attempt < 25; attempt += 1) {
     const code = await nextTbProjectCode(supabase, yr);
     const row = baseRow(code);
     if (omitCreatedFromSx) delete row.created_from_sx;
+    if (omitVcNotes) delete row.vc_notes;
     const { data, error: projErr } = await supabase
       .from('projects')
       .insert(row)
@@ -924,6 +935,10 @@ async function runAutoCreateProjectFromWonDeal({
     lastInsertErr = projErr;
     if (String(projErr.message || '').includes('created_from_sx') && !omitCreatedFromSx) {
       omitCreatedFromSx = true;
+      continue;
+    }
+    if (/vc_notes/i.test(String(projErr.message || '')) && !omitVcNotes) {
+      omitVcNotes = true;
       continue;
     }
     if (/production_finish_date/i.test(String(projErr.message || '')) && row.production_finish_date !== undefined) {
@@ -1202,6 +1217,20 @@ async function runAutoCreateProjectFromWonDeal({
     } catch (memErr) {
       console.warn('[auto-project] VC responsible members:', memErr.message);
     }
+    // Đặt sẵn dự án vào cột «lắp đặt tạm» của công ty VC (nếu admin đã tích cột này)
+    try {
+      const { stageProjectAtVcTempColumn } = require('./vcTempInstallStaging');
+      const staged = await stageProjectAtVcTempColumn(req, {
+        projectId,
+        logisticsCompanyId: String(resolvedLogisticsId),
+      });
+      if (staged.staged && staged.vc_kanban_column_id) {
+        project.vc_kanban_column_id = staged.vc_kanban_column_id;
+        project.vc_temp_staged = true;
+      }
+    } catch (stgErr) {
+      console.warn('[auto-project] VC temp staging:', stgErr.message);
+    }
   }
   if (plannedInstall || plannedPickup || plannedFinish) {
     try {
@@ -1222,12 +1251,38 @@ async function runAutoCreateProjectFromWonDeal({
         installOccurrenceDates: datePatch?.install_occurrence_dates
           || projectDates?.install_occurrence_dates
           || null,
+        vcNotes: project.vc_notes || vcSetupPatch.vc_notes || null,
       });
       if (!evRes.ok && !evRes.skipped) {
         console.warn('[auto-project] planned VC/LĐ events:', evRes.error);
       }
     } catch (evErr) {
       console.warn('[auto-project] planned VC/LĐ events:', evErr.message);
+    }
+
+    // Báo cho NV chịu trách nhiệm VC/LĐ biết trước ngày lắp / lấy hàng + ghi chú
+    if (resolvedLogisticsId) {
+      try {
+        const { notifyVcPlanToLogisticsStaff } = require('./vcPlanNotify');
+        await notifyVcPlanToLogisticsStaff(req, {
+          projectId,
+          leadId: dealId,
+          logisticsCompanyId: String(resolvedLogisticsId),
+          projectCode: project.code,
+          projectName: project.name,
+          pickupAt: plannedPickup,
+          installAt: plannedInstall,
+          installOccurrenceDates: datePatch?.install_occurrence_dates
+            || projectDates?.install_occurrence_dates
+            || null,
+          vcNotes: project.vc_notes || vcSetupPatch.vc_notes || null,
+          installAddress: project.install_address || deal.install_address || null,
+          actorUserId: userId,
+          tempStaged: Boolean(project.vc_temp_staged),
+        });
+      } catch (notifyErr) {
+        console.warn('[auto-project] notify VC plan:', notifyErr.message);
+      }
     }
   }
 

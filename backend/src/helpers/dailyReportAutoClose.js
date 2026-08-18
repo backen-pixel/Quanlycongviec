@@ -154,21 +154,37 @@ async function listCareActivities(userId, reportDate) {
   const startISO = crmReportCreatedAtFromIso(reportDate);
   const endISO = crmReportCreatedAtToIso(reportDate);
   const empty = {
-    care_cold: 0, care_warm: 0, care_hot: 0,
-    ids: { care_cold: [], care_warm: [], care_hot: [] },
+    care_cold: 0, care_warm: 0, care_hot: 0, not_contacted: 0, survey: 0,
+    ids: { care_cold: [], care_warm: [], care_hot: [], not_contacted: [], survey: [] },
   };
 
-  const { data: acts, error } = await supabase
-    .from('crm_activities')
-    .select('id, lead_id, created_at, activity_date')
-    .eq('created_by', userId)
-    .gte('created_at', startISO)
-    .lte('created_at', endISO)
-    .limit(2000);
+  const [{ data: acts, error }, { data: comments, error: cErr }] = await Promise.all([
+    supabase
+      .from('crm_activities')
+      .select('id, lead_id, created_at, activity_date')
+      .eq('created_by', userId)
+      .gte('created_at', startISO)
+      .lte('created_at', endISO)
+      .limit(2000),
+    supabase
+      .from('crm_lead_comments')
+      .select('id, lead_id, created_at')
+      .eq('user_id', userId)
+      .is('deleted_at', null)
+      .gte('created_at', startISO)
+      .lte('created_at', endISO)
+      .limit(4000),
+  ]);
   if (error) throw error;
-  if (!acts?.length) return empty;
+  if (cErr) throw cErr;
 
-  const leadIds = [...new Set(acts.map((a) => a.lead_id).filter(Boolean))];
+  const rows = [
+    ...(acts || []),
+    ...(comments || []),
+  ];
+  if (!rows.length) return empty;
+
+  const leadIds = [...new Set(rows.map((a) => a.lead_id).filter(Boolean))];
   if (!leadIds.length) return empty;
 
   const leadSlug = new Map();
@@ -176,32 +192,50 @@ async function listCareActivities(userId, reportDate) {
     const chunk = leadIds.slice(i, i + 200);
     const { data: leads, error: lErr } = await supabase
       .from('crm_leads')
-      .select('id, stage:crm_pipeline_stages!stage_id(canonical_slug)')
+      .select('id, type, stage:crm_pipeline_stages!stage_id(canonical_slug)')
       .in('id', chunk);
     if (lErr) throw lErr;
     for (const l of leads || []) {
-      leadSlug.set(String(l.id), l.stage?.canonical_slug || null);
+      leadSlug.set(String(l.id), {
+        slug: l.stage?.canonical_slug || null,
+        type: l.type || null,
+      });
     }
   }
 
-  const seen = { care_cold: new Set(), care_warm: new Set(), care_hot: new Set() };
-  for (const a of acts) {
-    const slug = leadSlug.get(String(a.lead_id));
+  const seen = {
+    care_cold: new Set(),
+    care_warm: new Set(),
+    care_hot: new Set(),
+    not_contacted: new Set(),
+    survey: new Set(),
+  };
+  for (const a of rows) {
+    if (!a.lead_id) continue;
+    const meta = leadSlug.get(String(a.lead_id)) || {};
+    const slug = meta.slug;
+    const isDeal = meta.type === 'deal';
     let key = null;
     if (slug === 'cold') key = 'care_cold';
     else if (slug === 'warm') key = 'care_warm';
     else if (slug === 'hot') key = 'care_hot';
-    if (!key || !a.lead_id) continue;
+    else if (slug === 'not_contacted') key = 'not_contacted';
+    else if (slug === 'survey_scheduled' || slug === 'survey_done' || isDeal) key = 'survey';
+    if (!key) continue;
     seen[key].add(String(a.lead_id));
   }
   return {
     care_cold: seen.care_cold.size,
     care_warm: seen.care_warm.size,
     care_hot: seen.care_hot.size,
+    not_contacted: seen.not_contacted.size,
+    survey: seen.survey.size,
     ids: {
       care_cold: [...seen.care_cold],
       care_warm: [...seen.care_warm],
       care_hot: [...seen.care_hot],
+      not_contacted: [...seen.not_contacted],
+      survey: [...seen.survey],
     },
   };
 }
@@ -449,46 +483,54 @@ async function computeAutoDailyResults(userId, reportDate, roleKey = 'sale_admin
       'crm_lead_stage_history:lead_new|crm_leads.created_at',
       leadNewIds,
     );
-    results.not_contacted = metricPayload(
-      distinctCounts.not_contacted,
-      `Tự động: ${distinctCounts.not_contacted} lead vào cột Không phản hồi`,
-      'crm_lead_stage_history:not_contacted',
-      distinctIds.not_contacted,
-    );
     const leadToDeal = await listLeadToDealConversions(userId, reportDate);
+    const care = await listCareActivities(userId, reportDate);
+    const notContactedIds = unionIds(distinctIds.not_contacted, care.ids?.not_contacted);
+    const notContacted = Math.max(distinctCounts.not_contacted || 0, care.not_contacted || 0);
+    results.not_contacted = metricPayload(
+      notContacted,
+      care.not_contacted > 0
+        ? `Tự động: ${notContacted} lead Không phản hồi (chuyển cột + comment/activity)`
+        : `Tự động: ${distinctCounts.not_contacted} lead vào cột Không phản hồi`,
+      care.not_contacted > 0
+        ? 'crm_lead_stage_history:not_contacted|crm_lead_comments'
+        : 'crm_lead_stage_history:not_contacted',
+      notContactedIds,
+    );
+    const surveyIds = unionIds(leadToDeal.ids, care.ids?.survey);
+    const surveyCount = surveyIds.length;
     results.survey_scheduled = metricPayload(
-      leadToDeal.count,
-      `Tự động: ${leadToDeal.count} lead chuyển sang Deal trong ngày`,
-      'crm_kpi_ledger:lead_converted|crm_lead_stage_history:deal',
-      leadToDeal.ids,
+      surveyCount,
+      `Tự động: ${leadToDeal.count} chốt Deal + ${care.survey || 0} tương tác khảo sát/deal → ${surveyCount} khách`,
+      'crm_kpi_ledger:lead_converted|crm_lead_comments+survey/deal',
+      surveyIds,
     );
 
-    const care = await listCareActivities(userId, reportDate);
     const careCold = care.care_cold > 0 ? care.care_cold : distinctCounts.cold;
     const careWarm = care.care_warm > 0 ? care.care_warm : distinctCounts.warm;
     const careHot = care.care_hot > 0 ? care.care_hot : distinctCounts.hot;
     results.care_cold = metricPayload(
       careCold,
       care.care_cold > 0
-        ? `Tự động: chăm ${careCold} lead Cold (activity)`
+        ? `Tự động: chăm ${careCold} lead Cold (activity/comment)`
         : `Tự động: ${careCold} lead vào cột Cold`,
-      care.care_cold > 0 ? 'crm_activities+stage:cold' : 'crm_lead_stage_history:cold',
+      care.care_cold > 0 ? 'crm_activities|crm_lead_comments+stage:cold' : 'crm_lead_stage_history:cold',
       care.care_cold > 0 ? care.ids.care_cold : distinctIds.cold,
     );
     results.care_warm = metricPayload(
       careWarm,
       care.care_warm > 0
-        ? `Tự động: chăm ${careWarm} lead Warm (activity)`
+        ? `Tự động: chăm ${careWarm} lead Warm (activity/comment)`
         : `Tự động: ${careWarm} lead vào cột Warm`,
-      care.care_warm > 0 ? 'crm_activities+stage:warm' : 'crm_lead_stage_history:warm',
+      care.care_warm > 0 ? 'crm_activities|crm_lead_comments+stage:warm' : 'crm_lead_stage_history:warm',
       care.care_warm > 0 ? care.ids.care_warm : distinctIds.warm,
     );
     results.care_hot = metricPayload(
       careHot,
       care.care_hot > 0
-        ? `Tự động: chăm ${careHot} lead Hot (activity)`
+        ? `Tự động: chăm ${careHot} lead Hot (activity/comment)`
         : `Tự động: ${careHot} lead vào cột Hot`,
-      care.care_hot > 0 ? 'crm_activities+stage:hot' : 'crm_lead_stage_history:hot',
+      care.care_hot > 0 ? 'crm_activities|crm_lead_comments+stage:hot' : 'crm_lead_stage_history:hot',
       care.care_hot > 0 ? care.ids.care_hot : distinctIds.hot,
     );
   }

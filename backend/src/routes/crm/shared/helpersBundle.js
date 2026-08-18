@@ -3910,7 +3910,7 @@ function buildScanDuplicateGroups(leads, leadFbMap) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 /** linked_project embed added in migration 76 — included here, stripped by runtime fallback if migration not applied */
-const CRM_LEAD_LIST_SELECT_EXTRA = ', linked_project:projects!crm_leads_project_id_fkey(id, code, name, order_date, delivery_date, install_date, production_deadline, production_note, pickup_at, pickup_notes, logistics_company_id, delivery_team_id, installation_team_id, logistics_company:companies!projects_logistics_company_id_fkey(id, name, short_name))';
+const CRM_LEAD_LIST_SELECT_EXTRA = ', linked_project:projects!crm_leads_project_id_fkey(id, code, name, order_date, delivery_date, install_date, production_deadline, production_note, pickup_at, pickup_notes, vc_notes, logistics_company_id, delivery_team_id, installation_team_id, logistics_company:companies!projects_logistics_company_id_fkey(id, name, short_name))';
 /** Kanban chỉ cần mã dự án và các mốc ngày hiển thị trên card. */
 const CRM_LEAD_KANBAN_PROJECT_EMBED =
   ', linked_project:projects!crm_leads_project_id_fkey(code, order_date, delivery_date, install_date, production_deadline)';

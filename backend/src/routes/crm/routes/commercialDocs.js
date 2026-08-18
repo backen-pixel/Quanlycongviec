@@ -613,60 +613,78 @@ r.put('/quotations/:id', async (req, res) => {
     if (quoteData.source_excel_file_url === '') quoteData.source_excel_file_url = null;
     if (quoteData.source_excel_file_name === '') quoteData.source_excel_file_name = null;
 
-    let rawItems = itemsBody;
-    if (rawItems === undefined) {
-      const { data: existingItems } = await supabase.from('quotation_items').select('*').eq('quotation_id', req.params.id).order('item_order');
-      rawItems = existingItems || [];
-    }
-    
-    // Calc totals with per-item VAT + spec_factor (hệ số quy cách)
-    // ── Excel fidelity: nếu item.lock_amount && imported_amount → giữ NGUYÊN số tiền Excel ──
-    const processedItems = buildProcessedCommercialItems(rawItems);
-    const subtotal = processedItems.reduce((s, i) => s + (i.amount || 0), 0);
-    const discountAmt = quoteData.discount_type === 'percent' 
-      ? subtotal * (quoteData.discount_value || 0) / 100 
-      : (quoteData.discount_value || 0);
-    const afterRebate = subtotal - discountAmt;
-    const saleDiscountAmt = quoteData.sale_discount_type === 'percent'
-      ? afterRebate * (quoteData.sale_discount_value || 0) / 100
-      : (quoteData.sale_discount_value || 0);
-    const afterAllDiscounts = Math.max(0, afterRebate - saleDiscountAmt);
-    const taxAmt = processedItems.reduce((s, i) => s + (i.vat_amount || 0), 0);
+    // Đổi trạng thái / sửa header không gửi items → không đụng quotation_items
+    // (tránh FK order_items.quotation_item_id khi BG đã chuyển ĐH).
+    const replaceItems = itemsBody !== undefined;
+    let processedItems = [];
+    let quoteUpdatePayload = { ...quoteData, updated_at: new Date().toISOString() };
 
-    const { data, error } = await updateQuotationRow(req.params.id, {
-      ...quoteData, subtotal, discount_amount: discountAmt, sale_discount_amount: saleDiscountAmt,
-      tax_amount: taxAmt, total: afterAllDiscounts + taxAmt,
-      updated_at: new Date().toISOString(),
-    });
+    if (replaceItems) {
+      const rawItems = itemsBody || [];
+      // Calc totals with per-item VAT + spec_factor (hệ số quy cách)
+      // ── Excel fidelity: nếu item.lock_amount && imported_amount → giữ NGUYÊN số tiền Excel ──
+      processedItems = buildProcessedCommercialItems(rawItems);
+      const subtotal = processedItems.reduce((s, i) => s + (i.amount || 0), 0);
+      const discountAmt = quoteData.discount_type === 'percent'
+        ? subtotal * (quoteData.discount_value || 0) / 100
+        : (quoteData.discount_value || 0);
+      const afterRebate = subtotal - discountAmt;
+      const saleDiscountAmt = quoteData.sale_discount_type === 'percent'
+        ? afterRebate * (quoteData.sale_discount_value || 0) / 100
+        : (quoteData.sale_discount_value || 0);
+      const afterAllDiscounts = Math.max(0, afterRebate - saleDiscountAmt);
+      const taxAmt = processedItems.reduce((s, i) => s + (i.vat_amount || 0), 0);
+      quoteUpdatePayload = {
+        ...quoteUpdatePayload,
+        subtotal,
+        discount_amount: discountAmt,
+        sale_discount_amount: saleDiscountAmt,
+        tax_amount: taxAmt,
+        total: afterAllDiscounts + taxAmt,
+      };
+    }
+
+    const { data, error } = await updateQuotationRow(req.params.id, quoteUpdatePayload);
     if (error) throw error;
 
-    // Replace items — KHÔNG gửi id: null/undefined (PostgREST sẽ insert NULL → mất hết dòng sau khi DELETE)
-    const { data: prevItems } = await supabase
-      .from('quotation_items')
-      .select('*')
-      .eq('quotation_id', req.params.id)
-      .order('item_order');
-    const { error: delItemsErr } = await supabase.from('quotation_items').delete().eq('quotation_id', req.params.id);
-    if (delItemsErr) throw delItemsErr;
-    if (processedItems.length) {
-      const itemRows = processedItems.map((item, i) => {
-        const row = { ...item, quotation_id: req.params.id, item_order: i };
-        delete row.id;
-        return row;
-      });
-      const { error: insItemsErr } = await supabase.from('quotation_items').insert(itemRows);
-      if (insItemsErr) {
-        // Khôi phục dòng cũ nếu insert fail (tránh mất chi tiết hàng hóa)
-        if (prevItems?.length) {
-          const restoreRows = prevItems.map(({ id: _id, ...rest }, i) => ({
-            ...rest,
-            quotation_id: req.params.id,
-            item_order: rest.item_order ?? i,
-          }));
-          const { error: restoreErr } = await supabase.from('quotation_items').insert(restoreRows);
-          if (restoreErr) console.error('[QUOTE PUT] restore items failed:', restoreErr.message);
+    if (replaceItems) {
+      // Replace items — KHÔNG gửi id: null/undefined (PostgREST sẽ insert NULL → mất hết dòng sau khi DELETE)
+      const { data: prevItems } = await supabase
+        .from('quotation_items')
+        .select('*')
+        .eq('quotation_id', req.params.id)
+        .order('item_order');
+      const prevItemIds = (prevItems || []).map((r) => r.id).filter(Boolean);
+      // Gỡ FK từ order_items trước khi xóa (BG đã → ĐH vẫn cho phép sửa dòng BG)
+      if (prevItemIds.length) {
+        const { error: unlinkErr } = await supabase
+          .from('order_items')
+          .update({ quotation_item_id: null })
+          .in('quotation_item_id', prevItemIds);
+        if (unlinkErr) console.warn('[QUOTE PUT] unlink order_items.quotation_item_id:', unlinkErr.message);
+      }
+      const { error: delItemsErr } = await supabase.from('quotation_items').delete().eq('quotation_id', req.params.id);
+      if (delItemsErr) throw delItemsErr;
+      if (processedItems.length) {
+        const itemRows = processedItems.map((item, i) => {
+          const row = { ...item, quotation_id: req.params.id, item_order: i };
+          delete row.id;
+          return row;
+        });
+        const { error: insItemsErr } = await supabase.from('quotation_items').insert(itemRows);
+        if (insItemsErr) {
+          // Khôi phục dòng cũ nếu insert fail (tránh mất chi tiết hàng hóa)
+          if (prevItems?.length) {
+            const restoreRows = prevItems.map(({ id: _id, ...rest }, i) => ({
+              ...rest,
+              quotation_id: req.params.id,
+              item_order: rest.item_order ?? i,
+            }));
+            const { error: restoreErr } = await supabase.from('quotation_items').insert(restoreRows);
+            if (restoreErr) console.error('[QUOTE PUT] restore items failed:', restoreErr.message);
+          }
+          throw insItemsErr;
         }
-        throw insItemsErr;
       }
     }
 
@@ -682,6 +700,14 @@ r.put('/quotations/:id', async (req, res) => {
         parts.push(`Trạng thái ${prevQuote.status || '—'} → ${data.status || '—'}`);
       }
       const summary = parts.length ? `Cập nhật: ${parts.join('; ')}` : 'Cập nhật báo giá';
+      let itemCount = processedItems.length;
+      if (!replaceItems) {
+        const { count } = await supabase
+          .from('quotation_items')
+          .select('id', { count: 'exact', head: true })
+          .eq('quotation_id', req.params.id);
+        itemCount = count || 0;
+      }
       await supabase.from('quotation_edit_history').insert({
         quotation_id: req.params.id,
         action: 'updated',
@@ -689,7 +715,7 @@ r.put('/quotations/:id', async (req, res) => {
         detail: {
           before: prevQuote ? { title: prevQuote.title, total: prevQuote.total, status: prevQuote.status } : null,
           after: { title: data.title, total: data.total, status: data.status },
-          item_count: processedItems.length,
+          item_count: itemCount,
         },
         created_by: req.user.userId,
       });

@@ -219,11 +219,53 @@ const emptyRow = (deliveryDate = '') => {
     installOccurrenceDates: occ,
     installTime: '14:00',
     logisticsCompanyId: '',
+    vcNotes: '',
     pickupAt: delivery ? `${delivery}T08:00` : '',
     workshopTypes: [],
     loading: false,
   };
 };
+
+/** Buổi làm việc chọn nhanh — vẫn nhập được giờ lẻ ở ô bên cạnh. */
+const SHIFT_OPTIONS = [
+  { label: 'Sáng', hm: '08:00' },
+  { label: 'Chiều', hm: '14:00' },
+];
+
+const SHIFT_TONES = {
+  teal: {
+    wrap: 'border-teal-400',
+    active: 'bg-teal-600 text-white',
+    idle: 'bg-white text-teal-800 hover:bg-teal-100',
+    divide: 'divide-teal-300',
+  },
+  sky: {
+    wrap: 'border-sky-400',
+    active: 'bg-sky-600 text-white',
+    idle: 'bg-white text-sky-800 hover:bg-sky-100',
+    divide: 'divide-sky-300',
+  },
+};
+
+export function ShiftQuickPick({ hm, onPick, disabled = false, tone = 'teal' }) {
+  const t = SHIFT_TONES[tone] || SHIFT_TONES.teal;
+  return (
+    <div className={`inline-flex h-9 shrink-0 overflow-hidden rounded-lg border divide-x ${t.wrap} ${t.divide}`}>
+      {SHIFT_OPTIONS.map((o) => (
+        <button
+          key={o.hm}
+          type="button"
+          disabled={disabled}
+          onClick={() => onPick(o.hm)}
+          title={`Đặt ${o.label.toLowerCase()} — ${o.hm}`}
+          className={`px-2.5 text-[11px] font-bold disabled:opacity-40 ${hm === o.hm ? t.active : t.idle}`}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 function subtractCalendarDaysYmd(ymd, days = 2) {
   const m = String(ymd || '').trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
@@ -263,6 +305,7 @@ function mapEmitRow(r) {
     installOccurrenceDates: occ,
     installTime: r.installTime || '14:00',
     logisticsCompanyId: r.logisticsCompanyId || '',
+    vcNotes: r.vcNotes || '',
     pickupAt: r.pickupAt || '',
     production_company_id: r.companyId,
     workshop_type_id: r.workshopTypeId || null,
@@ -270,6 +313,7 @@ function mapEmitRow(r) {
     install_occurrence_dates: occ,
     install_time: r.installTime || '14:00',
     logistics_company_id: r.logisticsCompanyId || '',
+    vc_notes: r.vcNotes || '',
     pickup_at: r.pickupAt || '',
     loading: !!r.loading,
   };
@@ -366,6 +410,7 @@ export default function SxMultiTargetPicker({
           installOccurrenceDates: occ.length ? occ : (primary ? [primary] : []),
           installTime: r.installTime || r.install_time || '14:00',
           logisticsCompanyId: r.logisticsCompanyId || r.logistics_company_id || '',
+          vcNotes: r.vcNotes || r.vc_notes || '',
           pickupAt: r.pickupAt || r.pickup_at || (primary ? `${primary}T08:00` : ''),
         };
       });
@@ -474,6 +519,17 @@ export default function SxMultiTargetPicker({
 
   const setPickupAt = (key, pickupAt) => {
     patchRow(key, { pickupAt });
+  };
+
+  /** Đổi buổi lấy hàng — giữ ngày đang chọn, chưa có ngày thì dùng ngày lắp đầu. */
+  const setPickupShift = (key, hm) => {
+    const row = rows.find((r) => r.key === key);
+    if (!row) return;
+    const ymd = String(row.pickupAt || '').slice(0, 10)
+      || normalizeOccYmds(row.installOccurrenceDates, row.deliveryDate)[0]
+      || '';
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return;
+    setPickupAt(key, `${ymd}T${hm}`);
   };
 
   const patchRow = (key, patch) => {
@@ -891,15 +947,24 @@ export default function SxMultiTargetPicker({
                       {showVcSetup ? (
                         <div className="min-w-0">
                           <label className="block text-[10px] font-bold text-teal-800 mb-0.5">
-                            Giờ lắp <span className="font-normal text-teal-600/80">(mỗi ngày · mặc định 14:00)</span>
+                            Giờ lắp <span className="font-normal text-teal-600/80">(mỗi ngày · bấm Sáng / Chiều)</span>
                           </label>
-                          <input
-                            type="time"
-                            value={row.installTime || '14:00'}
-                            disabled={disabled || !primaryInstall}
-                            onChange={(e) => patchRow(row.key, { installTime: e.target.value })}
-                            className={`${fieldCls} sm:max-w-[11.5rem] border-teal-400 bg-white text-red-600 disabled:text-red-600/70 font-bold tabular-nums ring-1 ring-teal-200 focus:ring-2 focus:ring-teal-500 scheme-light`}
-                          />
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <ShiftQuickPick
+                              tone="teal"
+                              hm={row.installTime || '14:00'}
+                              disabled={disabled || !primaryInstall}
+                              onPick={(hm) => patchRow(row.key, { installTime: hm })}
+                            />
+                            <input
+                              type="time"
+                              value={row.installTime || '14:00'}
+                              disabled={disabled || !primaryInstall}
+                              onChange={(e) => patchRow(row.key, { installTime: e.target.value })}
+                              title="Giờ khác — nhập trực tiếp"
+                              className={`${fieldCls} w-[7.5rem] sm:max-w-[7.5rem] border-teal-400 bg-white text-red-600 disabled:text-red-600/70 font-bold tabular-nums ring-1 ring-teal-200 focus:ring-2 focus:ring-teal-500 scheme-light`}
+                            />
+                          </div>
                         </div>
                       ) : null}
                       <div className="min-w-0">
@@ -958,15 +1023,22 @@ export default function SxMultiTargetPicker({
                         <div className="min-w-0">
                           <label className="block text-[10px] font-bold text-sky-800 mb-0.5">
                             Thời gian lấy hàng tại xưởng
-                            <span className="font-normal text-sky-600/80"> (không bắt buộc)</span>
+                            <span className="font-normal text-sky-600/80"> (không bắt buộc · bấm Sáng / Chiều)</span>
                           </label>
                           <div className="flex flex-wrap items-center gap-2">
+                            <ShiftQuickPick
+                              tone="sky"
+                              hm={String(row.pickupAt || '').match(/T(\d{2}:\d{2})/)?.[1] || ''}
+                              disabled={disabled}
+                              onPick={(hm) => setPickupShift(row.key, hm)}
+                            />
                             <input
                               type="datetime-local"
                               value={row.pickupAt || ''}
                               disabled={disabled}
                               onChange={(e) => setPickupAt(row.key, e.target.value)}
-                              className={`${fieldCls} sm:max-w-xs border-sky-400 bg-white text-red-600 disabled:text-red-600 font-bold tabular-nums ring-1 ring-sky-200 focus:ring-2 focus:ring-sky-500 scheme-light`}
+                              title="Ngày giờ khác — nhập trực tiếp"
+                              className={`${fieldCls} sm:max-w-[13rem] border-sky-400 bg-white text-red-600 disabled:text-red-600 font-bold tabular-nums ring-1 ring-sky-200 focus:ring-2 focus:ring-sky-500 scheme-light`}
                             />
                             <button
                               type="button"
@@ -999,6 +1071,24 @@ export default function SxMultiTargetPicker({
                             </option>
                           ))}
                         </select>
+                      </div>
+
+                      <div className="min-w-0">
+                        <label className="block text-[10px] font-semibold uppercase tracking-wide text-slate-500 mb-0.5">
+                          Ghi chú cho bên VC / lắp đặt
+                          <span className="font-normal normal-case text-gray-400"> (không bắt buộc)</span>
+                        </label>
+                        <textarea
+                          rows={2}
+                          value={row.vcNotes || ''}
+                          disabled={disabled}
+                          onChange={(e) => patchRow(row.key, { vcNotes: e.target.value })}
+                          placeholder="VD: hàng dễ vỡ, gọi trước 30 phút, thang máy nhỏ — cần tháo cánh…"
+                          className="w-full px-2.5 py-1.5 border border-gray-200 rounded-lg text-sm bg-white disabled:bg-gray-50 disabled:text-gray-400 resize-y min-h-[3.75rem]"
+                        />
+                        <p className="text-[10px] text-gray-500 mt-0.5">
+                          Ghi chú riêng cho xưởng này &amp; công ty VC/LĐ đã chọn — hiện lại ở thẻ bàn giao và trên dự án VC.
+                        </p>
                       </div>
                       {String(calEmbedRowKey) === String(row.key) ? (
                         <p className="text-[10px] font-semibold text-orange-800 bg-orange-50 border border-orange-100 rounded-lg px-2 py-1">
@@ -1299,6 +1389,8 @@ export function sxTargetsToApiPayload(rows) {
       if (logisticsCompanyId) {
         out.logistics_company_id = logisticsCompanyId;
       }
+      const vcNotes = String(r.vcNotes ?? r.vc_notes ?? '').trim();
+      if (vcNotes) out.vc_notes = vcNotes;
       if (pickupLocal) {
         const d = new Date(pickupLocal);
         if (!Number.isNaN(d.getTime())) out.pickup_at = d.toISOString();

@@ -1905,7 +1905,7 @@ r.put('/:id', requireProjectEditOrSxKanbanWorkshopType(), async (req, res) => {
     if (!(await assertProjectAccessible(req, res, req.params.id, { operation: 'WRITE' }))) return;
     const b = req.body;
     const update = { updated_at: new Date().toISOString() };
-    const fields = ['name','description','status','customer_id','kitchen_type','material','install_address','estimated_value','production_value','deposit_amount','collected_amount','final_value','priority','sales_person_id','designer_id','project_manager_id','design_deadline','production_start_date','install_date','pickup_at','pickup_notes','consulting_person_id','design_person_id','quotation_person_id','contract_person_id','production_person_id','shipping_person_id','installation_person_id','care_person_id','quotation_files','deadline','notes','supervisor_id','production_deadline','production_note','workshop_type_id','order_date','delivery_date','production_finish_date','logistics_company_id'];
+    const fields = ['name','description','status','customer_id','kitchen_type','material','install_address','estimated_value','production_value','deposit_amount','collected_amount','final_value','priority','sales_person_id','designer_id','project_manager_id','design_deadline','production_start_date','install_date','pickup_at','pickup_notes','consulting_person_id','design_person_id','quotation_person_id','contract_person_id','production_person_id','shipping_person_id','installation_person_id','care_person_id','quotation_files','deadline','notes','supervisor_id','production_deadline','production_note','workshop_type_id','order_date','delivery_date','production_finish_date','logistics_company_id','vc_notes'];
     const dateFields = ['deadline', 'design_deadline', 'production_start_date', 'install_date', 'pickup_at', 'production_deadline', 'order_date', 'delivery_date', 'production_finish_date'];
     fields.forEach(f => { if (b[f] !== undefined) update[f] = b[f]; });
     dateFields.forEach((f) => { if (update[f] === '') update[f] = null; });
@@ -1960,7 +1960,7 @@ r.put('/:id', requireProjectEditOrSxKanbanWorkshopType(), async (req, res) => {
     if (error && error.message?.includes('column')) {
       // Remove fields that may not exist yet (need migration)
       const safeCopy = { ...update };
-      ['deadline', 'notes', 'order_date', 'delivery_date', 'production_finish_date', 'deposit_amount', 'collected_amount'].forEach(f => delete safeCopy[f]);
+      ['deadline', 'notes', 'order_date', 'delivery_date', 'production_finish_date', 'deposit_amount', 'collected_amount', 'vc_notes'].forEach(f => delete safeCopy[f]);
       ({ data, error } = await supabase.from('projects').update(safeCopy).eq('id', req.params.id).select(`*, customers(id,full_name,phone), current_stage:workflow_stages(id,name,slug,color)`).single());
     }
     if (error) throw error;
@@ -2032,7 +2032,9 @@ r.put('/:id', requireProjectEditOrSxKanbanWorkshopType(), async (req, res) => {
             installOccurrenceDates: normalizeOccurrenceYmds(
               b.install_occurrence_dates || b.installOccurrenceDates,
             ),
+            vcNotes: data.vc_notes || null,
           });
+          let tempStaged = Boolean(data.vc_temp_staged);
           // Khi gắn / đổi CT VC/LĐ → chỉ thêm NV phụ trách vào deal
           if (data.logistics_company_id && (b.logistics_company_id !== undefined || b.sync_vc_ld_events === true)) {
             try {
@@ -2052,6 +2054,45 @@ r.put('/:id', requireProjectEditOrSxKanbanWorkshopType(), async (req, res) => {
               });
             } catch (memErr) {
               console.warn('[PUT /projects] VC responsible members:', memErr.message);
+            }
+            // Đặt sẵn dự án vào cột «lắp đặt tạm» của công ty VC (nếu admin đã tích cột này)
+            try {
+              const { stageProjectAtVcTempColumn } = require('../helpers/vcTempInstallStaging');
+              const staged = await stageProjectAtVcTempColumn(req, {
+                projectId: req.params.id,
+                logisticsCompanyId: String(data.logistics_company_id),
+              });
+              if (staged?.staged) tempStaged = true;
+            } catch (stgErr) {
+              console.warn('[PUT /projects] VC temp staging:', stgErr.message);
+            }
+          }
+
+          // Báo NV chịu trách nhiệm VC/LĐ ngày lắp / lấy hàng + ghi chú (kể cả khi chỉ đổi ngày).
+          // Trùng công ty + ngày + ghi chú so với lần trước → helper tự bỏ qua, không spam.
+          if (data.logistics_company_id) {
+            try {
+              const { notifyVcPlanToLogisticsStaff } = require('../helpers/vcPlanNotify');
+              await notifyVcPlanToLogisticsStaff(req, {
+                projectId: req.params.id,
+                leadId,
+                logisticsCompanyId: String(data.logistics_company_id),
+                projectCode: data.code,
+                projectName: data.name,
+                pickupAt: data.pickup_at || null,
+                installAt: data.install_date || null,
+                installOccurrenceDates: normalizeOccurrenceYmds(
+                  b.install_occurrence_dates || b.installOccurrenceDates,
+                ),
+                vcNotes: data.vc_notes || null,
+                installAddress: data.install_address || null,
+                logisticsPersonId: data.logistics_person_id || null,
+                installerPersonId: data.installer_person_id || null,
+                actorUserId: req.user?.userId || null,
+                tempStaged,
+              });
+            } catch (notifyErr) {
+              console.warn('[PUT /projects] notify VC plan:', notifyErr.message);
             }
           }
         } catch (evErr) {

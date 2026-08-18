@@ -6,6 +6,7 @@ const { supabase } = require('../config/supabase');
 const { normalizeRole } = require('./adminRole');
 const { computeAutoDailyResults, computeAutoDailyPlans, metricKeyFromLabel } = require('./dailyReportAutoClose');
 const { crmReportAddDaysYmd, crmReportTodayYmdVn } = require('./crmReportDateBounds');
+const { getAssignedTemplateId } = require('./dailyReportUserTemplates');
 
 const TEMPLATE_FIELDS =
   'id, company_id, role_key, name, description, has_sharpen_section, is_active, created_at, updated_at';
@@ -296,7 +297,7 @@ async function autoCloseDailyReportForUser({
     };
   }
 
-  let resolvedTemplateId = templateId || report?.template_id || null;
+  let resolvedTemplateId = templateId || report?.template_id || await getAssignedTemplateId(userId) || null;
   const templates = await listTemplates(resolvedCompanyId);
   const roleKeyGuess = guessRoleKey(me || { role: null }, deptName);
   if (!resolvedTemplateId) {

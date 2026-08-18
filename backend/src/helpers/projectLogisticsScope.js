@@ -7,6 +7,8 @@ const LOGISTICS_PROJECT_STATUSES = ['shipping', 'installing', 'warranty', 'compl
  */
 function isProjectAlreadyInLogistics(project) {
   if (!project) return false;
+  // Đang ở cột «lắp đặt tạm» (setup kế hoạch SX/VC) → chưa bàn giao thật từ xưởng.
+  if (project.vc_temp_staged) return false;
   if (project.vc_kanban_column_id) return true;
   if (project.logistics_company_id) return true;
   return false;

@@ -9,6 +9,7 @@ Bản đầy đủ có trên app: **Cập nhật** (\`/updates\`) — lọc mụ
 3. \`pdf/03-chuyen-nhan-vien-khu-vuc.pdf\`
 4. \`pdf/04-gop-lead-thu-cong.pdf\`
 5. \`pdf/05-metalla-tao-nhan-vien-phan-quyen.pdf\`
+6. \`pdf/06-ke-hoach-sx-va-vc-ld.pdf\`
 
 Tạo lại: \`node frontend/scripts/export-guide-pdfs.mjs\`
 
@@ -19,6 +20,7 @@ Tạo lại: \`node frontend/scripts/export-guide-pdfs.mjs\`
 | 3 | Chuyển NV khác khu vực | `hd-deal-header.png`, `hd-transfer-assignee-modal.png` | id \`2026-07-crm-transfer-assignee-region\` |
 | 4 | Gộp Lead thủ công (Kanban) | `gop-lead/01` … `07` | id \`2026-07-huong-dan-gop-lead\` |
 | 5 | Tạo NV + phân quyền Metalla | `metalla-tao-nv/01` … `06` | — |
+| 6 | Kế hoạch SX & VC/LĐ (cột lắp đặt tạm) | `sx-vc-ld-ke-hoach/01` … `09` | — |
 
 ## Tóm tắt thao tác
 
@@ -37,3 +39,9 @@ Kanban Lead → chọn ≥2 thẻ → **Gộp đã chọn** → chọn bản gi�
 
 ### 5. Tạo nhân viên & phân quyền (Metalla)
 **Nhân viên** → lọc **Công Ty Metalla** → **Thêm NV** → điền thông tin + phòng ban/khu vực → **Tạo NV** → menu ⋯ → **Phân quyền** → gán vai trò phạm vi **Công Ty Metalla**.
+
+### 6. Kế hoạch SX & VC/LĐ
+Admin bật cột **LĐ tạm** ở `/vc/pipeline-settings` → Sale mở Deal → **Kế hoạch SX & VC/LĐ**
+(xưởng + ngày lắp + ngày lấy hàng + công ty VC/LĐ + ghi chú) → dự án hiện ở cột tạm (badge **TẠM**) trên bảng Lắp đặt,
+NV phụ trách VC/LĐ nhận thông báo «Kế hoạch lắp đặt sắp tới» + sự kiện *(dự kiến)* trên tab Lịch →
+xưởng kéo vào cột bàn giao → Sale xác nhận thẻ **Bàn giao Lắp đặt** (không tạo dự án mới) → thẻ sang cột tiếp nhận.

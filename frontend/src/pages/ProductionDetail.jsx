@@ -60,7 +60,7 @@ import {
   buildCrmStageSlugLabelMapFromTasks,
   resolveCrmPipelineStageLabel,
 } from '../lib/crmStageSlugLabels';
-import { isProjectAlreadyInLogistics } from '../lib/projectLogistics';
+import { isProjectAlreadyInLogistics, VC_TEMP_LOCK_MSG } from '../lib/projectLogistics';
 import { buildCrmLeadDocTaskSections, normalizeCrmChecklist } from '../lib/crmTaskDocumentTree';
 import { fetchPipelineStagesById } from '../lib/crmPipelineStages';
 import { buildSxPipelineStageMeta, resolveSxDisplayColumnId, TEMP_SX_FREE_DRAG } from '../lib/sxPipelineRevenue';
@@ -2515,6 +2515,11 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
       let body;
       let optimisticPatch = null;
       if (moduleKey === 'vc') {
+        // Còn ở cột lắp đặt tạm → chờ xưởng bàn giao + Sale CRM xác nhận mới chuyển cột được
+        if (project?.vc_temp_staged && String(stageId) !== String(project?.vc_kanban_column_id || '')) {
+          alert(VC_TEMP_LOCK_MSG);
+          return;
+        }
         // stageId là logistics_pipeline_stages.id → gửi vc_stage_id
         // Tìm thêm workflow_stage_id nếu có
         const vcStage = pipelineStages.find((s) => String(s.id) === String(stageId));
@@ -3161,6 +3166,16 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
               📍 {primaryCrmDeal.crm_region.name}
             </span>
           )}
+        </div>
+      )}
+
+      {moduleKey === 'vc' && project?.vc_temp_staged && (
+        <div className="rounded-xl border border-fuchsia-200 bg-fuchsia-50 px-3 py-2 text-xs text-fuchsia-900 flex items-start gap-2">
+          <Lock className="h-3.5 w-3.5 mt-0.5 shrink-0" aria-hidden />
+          <span>
+            <strong>Lắp đặt tạm</strong> — Sale đã lên kế hoạch VC/LĐ, xưởng SX chưa bàn giao.
+            Chờ xưởng bàn giao và Sale CRM xác nhận lại thông tin thì mới chuyển cột theo lịch được.
+          </span>
         </div>
       )}
 

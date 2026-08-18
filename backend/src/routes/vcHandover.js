@@ -532,7 +532,7 @@ r.post('/projects/:id/request', async (req, res) => {
 
     const { data: project } = await supabase
       .from('projects')
-      .select('id, code, name, production_person_id, sales_person_id, company_id, install_address, customer_id, workshop_type_id, install_date, delivery_date, production_finish_date, pickup_at, pickup_notes')
+      .select('id, code, name, production_person_id, sales_person_id, company_id, install_address, customer_id, workshop_type_id, install_date, delivery_date, production_finish_date, pickup_at, pickup_notes, logistics_company_id, vc_notes')
       .eq('id', projectId)
       .maybeSingle();
     if (!project) return res.status(404).json({ error: 'Không tìm thấy dự án' });
@@ -595,6 +595,34 @@ r.post('/projects/:id/request', async (req, res) => {
     const installDayPrefill = dayOnly(project.install_date) || dayOnly(project.delivery_date) || null;
     const finishDayPrefill = dayOnly(project.production_finish_date) || null;
     const pickupPrefill = project.pickup_at || (finishDayPrefill ? `${finishDayPrefill}T08:00:00+07:00` : null);
+
+    // Công ty VC/LĐ + ngày lắp (nhiều ngày) Sale đã điền khi lập kế hoạch SX & VC/LĐ
+    let planLogisticsCompanyName = null;
+    if (project.logistics_company_id) {
+      const { data: lgCo } = await supabase
+        .from('companies')
+        .select('name, short_name')
+        .eq('id', project.logistics_company_id)
+        .maybeSingle();
+      planLogisticsCompanyName = lgCo?.short_name || lgCo?.name || null;
+    }
+    let planOccurrenceDates = null;
+    try {
+      const { data: plannedInstall } = await supabase
+        .from('crm_events')
+        .select('occurrence_dates')
+        .eq('project_id', projectId)
+        .eq('event_type', 'installation')
+        .order('start_time', { ascending: true })
+        .limit(1)
+        .maybeSingle();
+      const occ = Array.isArray(plannedInstall?.occurrence_dates)
+        ? [...new Set(plannedInstall.occurrence_dates
+          .map((d) => String(d || '').slice(0, 10))
+          .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)))].sort()
+        : [];
+      planOccurrenceDates = occ.length ? occ : null;
+    } catch (_) { /* ignore */ }
 
     // Multi-SX: project phụ chỉ nằm ở crm_deal_projects (không ghi crm_leads.project_id)
     const deal = await resolveCrmDealForProject(
@@ -679,6 +707,11 @@ r.post('/projects/:id/request', async (req, res) => {
             if (project.production_finish_date) patch.production_finish_date = project.production_finish_date;
             if (pickupPrefill) patch.pickup_at = pickupPrefill;
             if (project.pickup_notes && !patch.pickup_notes) patch.pickup_notes = project.pickup_notes;
+            patch.plan_logistics_company_id = project.logistics_company_id || null;
+            patch.plan_logistics_company_name = planLogisticsCompanyName;
+            patch.plan_vc_notes = project.vc_notes || null;
+            patch.plan_install_occurrence_dates = planOccurrenceDates;
+            if (project.vc_notes && !patch.vc_notes) patch.vc_notes = project.vc_notes;
           }
           if (
             patch.lead_type_name !== meta.lead_type_name
@@ -689,6 +722,9 @@ r.post('/projects/:id/request', async (req, res) => {
             || patch.delivery_date !== meta.delivery_date
             || patch.production_finish_date !== meta.production_finish_date
             || patch.pickup_at !== meta.pickup_at
+            || String(patch.plan_logistics_company_id || '') !== String(meta.plan_logistics_company_id || '')
+            || String(patch.plan_vc_notes || '') !== String(meta.plan_vc_notes || '')
+            || JSON.stringify(patch.plan_install_occurrence_dates || null) !== JSON.stringify(meta.plan_install_occurrence_dates || null)
             || JSON.stringify(patch.sale_user_ids) !== JSON.stringify(meta.sale_user_ids || [])
           ) {
             const { data: enriched } = await supabase
@@ -816,6 +852,12 @@ r.post('/projects/:id/request', async (req, res) => {
       production_finish_date: project.production_finish_date || null,
       pickup_at: pickupPrefill,
       pickup_notes: project.pickup_notes || null,
+      // Thông tin VC/LĐ Sale đã điền lúc lập kế hoạch — thẻ hiện lại để xác nhận / sửa
+      plan_logistics_company_id: project.logistics_company_id || null,
+      plan_logistics_company_name: planLogisticsCompanyName,
+      plan_vc_notes: project.vc_notes || null,
+      plan_install_occurrence_dates: planOccurrenceDates,
+      vc_notes: project.vc_notes || null,
     };
     const mentionText = await formatSaleMentionText(deal.id, saleUserIds);
     await ensureSaleUsersAsLeadMembers(deal.id, saleUserIds, actor);
@@ -895,6 +937,7 @@ r.patch('/comments/:cid/select', async (req, res) => {
     const installDateRaw = req.body?.install_date != null ? String(req.body.install_date).trim() : null;
     let installOccurrenceDates = normalizeOccurrenceYmds(req.body?.install_occurrence_dates);
     const installAddress = req.body?.install_address != null ? String(req.body.install_address).trim() : null;
+    const vcNotes = req.body?.vc_notes != null ? String(req.body.vc_notes).trim() : null;
     const otherName = req.body?.external_company_name != null ? String(req.body.external_company_name).trim() : null;
     const skipLogistics = req.body?.skip_logistics_module === true
       || String(logisticsCompanyId || '') === '__external__';
@@ -1132,6 +1175,7 @@ r.patch('/comments/:cid/select', async (req, res) => {
       install_date: installDate || pickupAt,
       install_occurrence_dates: installOccurrenceDates.length ? installOccurrenceDates : null,
       install_address: installAddress || null,
+      vc_notes: vcNotes != null ? (vcNotes || null) : (meta.vc_notes || meta.plan_vc_notes || null),
       external_company_name: otherName || (skipLogistics ? companyName : null),
       confirmed_production: defaultProductionConfirmMeta({
         production_confirm_user_id: productionConfirmUserId,
@@ -1214,8 +1258,15 @@ r.patch('/comments/:cid/select', async (req, res) => {
       if (deliveryDate) projectPatch.delivery_date = deliveryDate;
       if (installDate) projectPatch.install_date = installDate;
       if (installAddress) projectPatch.install_address = installAddress;
+      if (vcNotes != null) projectPatch.vc_notes = vcNotes || null;
       if (Object.keys(projectPatch).length) {
-        const { error: pe } = await supabase.from('projects').update(projectPatch).eq('id', projectId);
+        let { error: pe } = await supabase.from('projects').update(projectPatch).eq('id', projectId);
+        if (pe && String(pe.message || '').includes('vc_notes')) {
+          const { vc_notes: _n, ...legacyPatch } = projectPatch;
+          if (Object.keys(legacyPatch).length) {
+            ({ error: pe } = await supabase.from('projects').update(legacyPatch).eq('id', projectId));
+          } else pe = null;
+        }
         if (pe) console.warn('[vc-handover] sync project info:', pe.message);
       }
       const leadPatch = {};

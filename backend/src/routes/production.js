@@ -1741,7 +1741,7 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
     const projectListSelect = mobileLite
       ? `
         id, code, name, estimated_value, priority, deadline, install_date, ${MIGRATION_300_COLS} ${MIGRATION_520_COLS} ${MIGRATION_529_COLS} created_at, status, company_id,
-        production_deadline, sx_kanban_column_id, logistics_company_id, vc_kanban_column_id, vc_handover_status,
+        production_deadline, sx_kanban_column_id, logistics_company_id, vc_kanban_column_id, vc_handover_status, vc_temp_staged,
         current_stage_id, workshop_type_id,
         current_stage:workflow_stages(id, slug, name, color, icon),
         customer:customers(id, full_name, phone),
@@ -1754,7 +1754,7 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
       : kanbanBoard
         ? `
         id, code, name, estimated_value, production_value, deposit_amount, collected_amount, priority, deadline, install_date, ${MIGRATION_300_COLS} ${MIGRATION_520_COLS} ${MIGRATION_529_COLS} created_at, status, company_id,
-        production_deadline, sx_kanban_column_id, logistics_company_id, vc_kanban_column_id, vc_handover_status,
+        production_deadline, sx_kanban_column_id, logistics_company_id, vc_kanban_column_id, vc_handover_status, vc_temp_staged,
         current_stage_id, workshop_type_id,
         current_stage:workflow_stages(id, slug, name, color, icon),
         customer:customers(id, full_name, phone),
@@ -1767,7 +1767,7 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
       `
       : `
         id, code, name, estimated_value, production_value, deposit_amount, collected_amount, priority, deadline, install_date, ${MIGRATION_300_COLS} ${MIGRATION_520_COLS} ${MIGRATION_529_COLS} created_at, status, notes, company_id,
-        production_deadline, production_note, vc_kanban_column_id, vc_handover_status, sx_kanban_column_id,
+        production_deadline, production_note, vc_kanban_column_id, vc_handover_status, vc_temp_staged, vc_notes, sx_kanban_column_id,
         current_stage_id, workshop_type_id,
         current_stage:workflow_stages(id, slug, name, color, icon),
         vc_stage:logistics_pipeline_stages(id, name, color, icon, bucket_slug),
@@ -1846,6 +1846,8 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
       error.message?.includes('production_deadline') ||
       error.message?.includes('vc_kanban_column_id') ||
       error.message?.includes('vc_handover_status') ||
+      error.message?.includes('vc_temp_staged') ||
+      error.message?.includes('vc_notes') ||
       error.message?.includes('sx_kanban_column_id') ||
       error.message?.includes('logistics_pipeline_stages') ||
       error.message?.includes('workshop_project_types') ||
@@ -2103,7 +2105,7 @@ r.get('/deadline-bucket-page', requirePermission('projects', 'view'), async (req
     const migration300Cols = 'order_date, delivery_date,';
     const kanbanSelect = `
       id, code, name, estimated_value, production_value, deposit_amount, collected_amount, priority, deadline, ${migration300Cols} created_at, status, company_id,
-      production_deadline, sx_kanban_column_id, logistics_company_id, vc_kanban_column_id, vc_handover_status,
+      production_deadline, sx_kanban_column_id, logistics_company_id, vc_kanban_column_id, vc_handover_status, vc_temp_staged,
       current_stage_id, workshop_type_id,
       current_stage:workflow_stages(id, slug, name, color, icon),
       customer:customers(id, full_name, phone),
@@ -2255,10 +2257,10 @@ const WORKSHOP_TYPE_EMBED = 'workshop_type:workshop_project_types(id, name, appl
  * Thiếu `sx_kanban_column_id` thì resolver phải đoán qua `workflow_stage_id`; pipeline nào
  * dùng chung 1 workflow cho mọi cột (Metalla «Data đầu ra») sẽ luôn rơi về cột đầu.
  */
-const KANBAN_STATE_COLS = 'sx_kanban_column_id, sx_pipeline_stage_entered_at, sx_kanban_deadline_at, sx_kanban_deadline_reason, logistics_company_id, vc_kanban_column_id, vc_handover_status,';
+const KANBAN_STATE_COLS = 'sx_kanban_column_id, sx_pipeline_stage_entered_at, sx_kanban_deadline_at, sx_kanban_deadline_reason, logistics_company_id, vc_kanban_column_id, vc_handover_status, vc_temp_staged, vc_notes,';
 
 function isKanbanStateColMissingError(err) {
-  return /sx_kanban_column_id|sx_pipeline_stage_entered_at|sx_kanban_deadline|vc_kanban_column_id|vc_handover_status/.test(
+  return /sx_kanban_column_id|sx_pipeline_stage_entered_at|sx_kanban_deadline|vc_kanban_column_id|vc_handover_status|vc_temp_staged|vc_notes/.test(
     String(err?.message || ''),
   );
 }
@@ -3847,7 +3849,7 @@ r.patch('/projects/:id/handover-vc', requireProductionKanbanEdit(), async (req, 
     }
 
     const HANDOVER_VC_PROJECT_SELECT =
-      'id, code, name, status, current_stage_id, company_id, vc_kanban_column_id, logistics_company_id, sx_kanban_column_id';
+      'id, code, name, status, current_stage_id, company_id, vc_kanban_column_id, logistics_company_id, sx_kanban_column_id, vc_temp_staged';
     const HANDOVER_VC_PROJECT_SELECT_FALLBACK =
       'id, code, name, status, current_stage_id, company_id, vc_kanban_column_id, logistics_company_id';
 
@@ -3856,8 +3858,8 @@ r.patch('/projects/:id/handover-vc', requireProductionKanbanEdit(), async (req, 
       .select(HANDOVER_VC_PROJECT_SELECT)
       .eq('id', id)
       .maybeSingle();
-    // Migration 423 chưa apply — retry không có sx_kanban_column_id
-    if (projectLoadErr && String(projectLoadErr.message || '').includes('sx_kanban_column_id')) {
+    // Migration 423 / 532 chưa apply — retry không có sx_kanban_column_id / vc_temp_staged
+    if (projectLoadErr && /sx_kanban_column_id|vc_temp_staged/.test(String(projectLoadErr.message || ''))) {
       ({ data: project, error: projectLoadErr } = await supabase
         .from('projects')
         .select(HANDOVER_VC_PROJECT_SELECT_FALLBACK)

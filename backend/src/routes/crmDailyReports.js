@@ -18,6 +18,12 @@ const LINE_FIELDS =
   'id, report_id, template_item_id, section, label, order_index, plan_value, result_value, plan_note, result_note, metric_key, auto_result, created_at, updated_at';
 const { computeAutoDailyResults, computeAutoDailyPlans, loadMetricEntityLinks, metricKeyFromLabel } = require('../helpers/dailyReportAutoClose');
 const { autoCloseDailyReportForUser, guessRoleKey, isCrmSalesDept, looksLikeNonCrmUser } = require('../helpers/dailyReportAutoSubmit');
+const {
+  loadAssignedTemplateIds,
+  getAssignedTemplateId,
+  setAssignedTemplate,
+  clearAssignedTemplate,
+} = require('../helpers/dailyReportUserTemplates');
 const { buildDailyWorkHistory } = require('../helpers/dailyWorkHistory');
 const { crmReportAddDaysYmd } = require('../helpers/crmReportDateBounds');
 
@@ -427,6 +433,71 @@ async function switchReportTemplate(reportId, nextTpl, userId) {
   if (userId) await syncUserExtraLines(reportId, userId);
 }
 
+/**
+ * Gắn phiếu cũ sang mẫu khác mà KHÔNG xoá dòng nào (khác switchReportTemplate).
+ * Hạng mục cùng mục + cùng nhãn/metric được trỏ sang mẫu mới nên giữ nguyên số liệu và
+ * ghi chú đã nhập; dòng riêng của mẫu cũ vẫn nằm lại DB nhưng bị lọc lúc hiển thị.
+ */
+async function retagReportTemplate(reportId, nextTpl, userId) {
+  if (!reportId || !nextTpl?.id) return;
+  const now = new Date().toISOString();
+  const { data: rows } = await supabase
+    .from('crm_daily_report_lines')
+    .select('id, section, label, metric_key, template_item_id')
+    .eq('report_id', reportId);
+  const oldLines = (rows || []).filter((l) => !String(l.metric_key || '').startsWith('user_extra:'));
+
+  await supabase
+    .from('crm_daily_reports')
+    .update({ template_id: nextTpl.id, updated_at: now })
+    .eq('id', reportId);
+
+  const norm = (s) => String(s || '').trim().toLowerCase();
+  const reused = new Set();
+  const toInsert = [];
+  for (const it of nextTpl.items || []) {
+    const metricKey = it.metric_key || metricKeyFromLabel(it.label);
+    const reuse = oldLines.find((l) => (
+      !reused.has(l.id)
+      && l.section === it.section
+      && ((metricKey && l.metric_key === metricKey) || norm(l.label) === norm(it.label))
+    ));
+    if (reuse) {
+      reused.add(reuse.id);
+      await supabase
+        .from('crm_daily_report_lines')
+        .update({
+          template_item_id: it.id,
+          label: it.label,
+          order_index: it.order_index,
+          metric_key: metricKey,
+          updated_at: now,
+        })
+        .eq('id', reuse.id);
+      continue;
+    }
+    toInsert.push({
+      report_id: reportId,
+      template_item_id: it.id,
+      section: it.section,
+      label: it.label,
+      order_index: it.order_index,
+      metric_key: metricKey,
+      plan_value: null,
+      result_value: null,
+      plan_note: null,
+      result_note: null,
+      auto_result: false,
+      updated_at: now,
+    });
+  }
+  if (toInsert.length) {
+    const { error } = await supabase.from('crm_daily_report_lines').insert(toInsert);
+    if (error) throw error;
+  }
+  if (userId) await syncUserExtraLines(reportId, userId);
+}
+
 async function canViewUserHistory(req, targetUserId) {
   if (String(targetUserId) === String(req.user.userId)) return true;
   return canViewReport(req, { user_id: targetUserId });
@@ -518,6 +589,7 @@ r.get('/mine', async (req, res) => {
         if (nextTpl && templateAllowedForCompany(nextTpl, companyId)) {
           await switchReportTemplate(full.id, nextTpl, userId);
           full.template_id = nextTpl.id;
+          await setAssignedTemplate({ userId, companyId, templateId: nextTpl.id, assignedBy: userId });
         }
       } else if (full?.template_id) {
         const template = await getTemplateById(full.template_id);
@@ -534,6 +606,7 @@ r.get('/mine', async (req, res) => {
     const templates = await listTemplates(me?.company_id || req.user.company_id || null);
     const companyId = me?.company_id || req.user.company_id || null;
     let templateId = req.query.template_id || null;
+    if (!templateId) templateId = await getAssignedTemplateId(userId);
     if (!templateId) {
       const roleKey = guessRoleKey(me || req.user, deptName);
       const match = pickTemplateByRole(templates, roleKey, companyId);
@@ -626,9 +699,12 @@ r.put('/mine', async (req, res) => {
       // Cho phép đổi mẫu tự do khi client gửi template_id
       if (!templateId) templateId = existing.template_id;
     } else if (!templateId) {
-      const templates = await listTemplates(companyId);
-      const roleKey = guessRoleKey(me || req.user, deptName);
-      templateId = pickTemplateByRole(templates, roleKey, companyId)?.id;
+      templateId = await getAssignedTemplateId(userId);
+      if (!templateId) {
+        const templates = await listTemplates(companyId);
+        const roleKey = guessRoleKey(me || req.user, deptName);
+        templateId = pickTemplateByRole(templates, roleKey, companyId)?.id;
+      }
     }
     if (!templateId) return res.status(400).json({ error: 'Chưa có template báo cáo ngày' });
 
@@ -681,6 +757,7 @@ r.put('/mine', async (req, res) => {
     } else if (templateId && String(templateId) !== String(existing.template_id || '')) {
       await switchReportTemplate(report.id, template, userId);
       report = { ...report, template_id: templateId };
+      await setAssignedTemplate({ userId, companyId, templateId, assignedBy: userId });
     } else {
       await syncUserExtraLines(report.id, userId);
     }
@@ -841,7 +918,8 @@ r.post('/mine/extras', async (req, res) => {
       const deptName = me?.departments?.name || null;
       const templates = await listTemplates(companyId);
       const roleKey = guessRoleKey(me || req.user, deptName);
-      const templateId = pickTemplateByRole(templates, roleKey, companyId)?.id
+      const templateId = await getAssignedTemplateId(userId)
+        || pickTemplateByRole(templates, roleKey, companyId)?.id
         || req.body?.template_id
         || null;
       if (!templateId) {
@@ -1002,6 +1080,10 @@ r.get('/mine/preview-auto', async (req, res) => {
         const t = await getTemplateById(existing.template_id);
         roleKey = t?.role_key || null;
       }
+    }
+    if (!roleKey) {
+      const assignedId = await getAssignedTemplateId(userId);
+      if (assignedId) roleKey = (await getTemplateById(assignedId))?.role_key || null;
     }
     if (!roleKey) roleKey = guessRoleKey(me || req.user, deptName);
     const resultDate = resultDateForReport(date);
@@ -1329,6 +1411,8 @@ r.get('/team/matrix', async (req, res) => {
 
     users.sort((a, b) => String(a.full_name || '').localeCompare(String(b.full_name || ''), 'vi'));
 
+    const assignedByUser = await loadAssignedTemplateIds(users.map((u) => u.id));
+
     const lastTemplateByUser = new Map();
     {
       const userIds = users.map((u) => u.id).filter(Boolean);
@@ -1352,6 +1436,8 @@ r.get('/team/matrix', async (req, res) => {
     users = users.filter((u) => {
       const uid = String(u.id);
       const dn = deptNameById.get(String(u.department_id || '')) || '';
+      // Admin gán mẫu tay = cố ý đưa NV vào bảng, thắng mọi suy đoán loại trừ
+      if (assignedByUser.has(uid)) return true;
       if (looksLikeNonCrmUser(u) && !reportByUser.has(uid)) return false;
       if (reportByUser.has(uid)) return true;
       const guessed = guessRoleKey(u, dn);
@@ -1384,6 +1470,11 @@ r.get('/team/matrix', async (req, res) => {
     }
 
     function resolveTemplateMeta(u, rep) {
+      const assignedId = assignedByUser.get(String(u.id));
+      if (assignedId && templateById.has(assignedId)) {
+        const t = templateById.get(assignedId);
+        return { template_id: t.id, template_name: t.name, role_key: normalizeDailyRoleKey(t.role_key) || 'unknown' };
+      }
       if (rep?.template?.id) {
         return {
           template_id: rep.template.id,
@@ -1431,6 +1522,7 @@ r.get('/team/matrix', async (req, res) => {
         template_id: tpl.template_id,
         template_name: tpl.template_name,
         role_key: tpl.role_key,
+        assigned_template_id: assignedByUser.get(String(u.id)) || null,
       };
     }).filter((e) => (
       e.report_id
@@ -1667,6 +1759,70 @@ r.get('/team/matrix', async (req, res) => {
   } catch (e) {
     console.error('[daily-reports] GET /team/matrix:', e.message || e);
     return res.status(500).json({ error: e.message || 'Lỗi tải bảng tổng hợp' });
+  }
+});
+
+// ─── PUT /team/assign-template — gán cứng mẫu cho 1 nhân viên ────────────────
+// body: { user_id, template_id: uuid | null (null = về tự động theo vai trò), company_id?, backfill? }
+r.put('/team/assign-template', async (req, res) => {
+  try {
+    if (!isSystemAdmin(req.user)) {
+      return res.status(403).json({ error: 'Chỉ admin hệ thống mới gán mẫu báo cáo' });
+    }
+    const userId = String(req.body?.user_id || '').trim();
+    if (!userId) return res.status(400).json({ error: 'Thiếu user_id' });
+    const templateId = String(req.body?.template_id || '').trim() || null;
+    const backfill = req.body?.backfill !== false;
+
+    const target = await loadUserProfile(userId);
+    if (!target) return res.status(404).json({ error: 'Không tìm thấy nhân viên' });
+    const companyId = String(req.body?.company_id || '').trim() || target.company_id || null;
+
+    if (!templateId) {
+      await clearAssignedTemplate(userId);
+      return res.json({ ok: true, user_id: userId, template_id: null, retagged: 0 });
+    }
+
+    const template = await getTemplateById(templateId);
+    if (!template) return res.status(404).json({ error: 'Không tìm thấy mẫu báo cáo' });
+    if (!templateAllowedForCompany(template, companyId)) {
+      return res.status(403).json({ error: 'Mẫu báo cáo không thuộc công ty này' });
+    }
+
+    await setAssignedTemplate({
+      userId,
+      companyId,
+      templateId: template.id,
+      assignedBy: req.user.userId,
+    });
+
+    let retagged = 0;
+    if (backfill) {
+      const { data: reps, error: repErr } = await supabase
+        .from('crm_daily_reports')
+        .select('id')
+        .eq('user_id', userId)
+        .neq('template_id', template.id)
+        .order('report_date', { ascending: false })
+        .limit(400);
+      if (repErr) throw repErr;
+      for (const rep of reps || []) {
+        await retagReportTemplate(rep.id, template, userId);
+        retagged += 1;
+      }
+    }
+
+    return res.json({
+      ok: true,
+      user_id: userId,
+      template_id: template.id,
+      template_name: template.name,
+      role_key: normalizeDailyRoleKey(template.role_key),
+      retagged,
+    });
+  } catch (e) {
+    console.error('[daily-reports] PUT /team/assign-template:', e.message || e);
+    return res.status(500).json({ error: e.message || 'Lỗi gán mẫu báo cáo' });
   }
 });
 

@@ -142,7 +142,9 @@ const CSS = `
   .muted { color: #94a3b8; font-size: 10pt; }
 `;
 
-function wrap(title, bodyHtml) {
+function wrap(title, bodyHtml, opts = {}) {
+  const badge = opts.badge || 'Hướng dẫn nội bộ · CRM';
+  const meta = opts.meta || 'Dành cho nhân viên · Tháng 7/2026';
   return `<!DOCTYPE html>
 <html lang="vi">
 <head>
@@ -152,9 +154,9 @@ function wrap(title, bodyHtml) {
 </head>
 <body>
   <header class="cover">
-    <div class="badge">Hướng dẫn nội bộ · CRM</div>
+    <div class="badge">${badge}</div>
     <h1>${title}</h1>
-    <div class="meta">Dành cho nhân viên · Tháng 7/2026</div>
+    <div class="meta">${meta}</div>
   </header>
   ${bodyHtml}
   <div class="footer">Hệ thống Quản lý công việc · In từ bộ hướng dẫn Cập nhật (builtin guides)</div>
@@ -466,6 +468,178 @@ const guides = [
         </tbody>
       </table>
     `),
+  },
+  {
+    file: '06-ke-hoach-sx-va-vc-ld.pdf',
+    title: 'Thiết lập kế hoạch Sản xuất & VC/LĐ',
+    html: wrap('Thiết lập kế hoạch Sản xuất & VC/LĐ', `
+      <h2>Luồng đi của một đơn hàng</h2>
+      <p>Sale CRM lập kế hoạch <strong>một lần</strong> (xưởng SX + công ty VC/LĐ + ngày lắp + ngày lấy hàng + ghi chú).
+      Dự án hiện ngay ở <strong>cột lắp đặt tạm</strong> trên bảng Lắp đặt để bên VC/LĐ biết trước.
+      Khi xưởng làm xong và bấm bàn giao, Sale nhận thông báo và chỉ cần <strong>xác nhận lại thông tin đã điền</strong> —
+      hệ thống <strong>không tạo dự án VC/LĐ mới</strong>, chỉ chuyển dự án từ cột tạm sang cột tiếp nhận.</p>
+      <table>
+        <thead><tr><th>Bước</th><th>Ai làm</th><th>Làm ở đâu</th><th>Kết quả</th></tr></thead>
+        <tbody>
+          <tr><td>0. Cấu hình (1 lần)</td><td>Admin</td><td>Lắp đặt → Cài đặt Pipeline</td><td>Chọn cột chứa dự án lắp đặt tạm</td></tr>
+          <tr><td>1. Lập kế hoạch</td><td>Sale CRM</td><td>Chi tiết Deal → <strong>Kế hoạch SX &amp; VC/LĐ</strong></td><td>Tạo dự án xưởng, đặt vào cột tạm, tạo sự kiện dự kiến + thông báo cho VC/LĐ</td></tr>
+          <tr><td>2. Xem trước</td><td>VC/LĐ</td><td>Chuông thông báo · Lắp đặt → Kanban cột tạm · tab Lịch</td><td>Thẻ có badge <strong>TẠM</strong> + ghi chú VC/LĐ, lịch có mốc dự kiến</td></tr>
+          <tr><td>3. Xưởng xong</td><td>Xưởng SX</td><td>Kanban SX / trang dự án SX → cột bàn giao</td><td>Gửi thông báo cho Sale CRM phụ trách deal</td></tr>
+          <tr><td>4. Xác nhận</td><td>Sale CRM</td><td>Deal → tab <strong>Bình luận</strong> → thẻ Bàn giao Lắp đặt</td><td>Bàn giao thật: thẻ rời cột tạm sang cột tiếp nhận</td></tr>
+          <tr><td>5. Nhận việc</td><td>VC/LĐ</td><td>Lắp đặt → cột tiếp nhận (vd. Chờ giao hàng)</td><td>Xác nhận → tạo sự kiện lịch lấy hàng &amp; lắp đặt</td></tr>
+        </tbody>
+      </table>
+
+      <h2>Bước 0 — Admin: chọn cột «lắp đặt tạm» (làm một lần cho mỗi công ty VC)</h2>
+      <ol>
+        <li>Vào module <strong>Lắp đặt</strong> → <strong>Cài đặt Pipeline Lắp đặt</strong> (<code>/vc/pipeline-settings</code>).</li>
+        <li>Chọn <strong>Công ty</strong> VC/LĐ ở ô phía trên.</li>
+        <li>Ở giai đoạn muốn dùng làm nơi chứa dự án chưa bàn giao (vd. <em>Dự án sắp tới</em>), bấm pill <strong>LĐ tạm</strong>.
+        Pill sáng tím + badge <strong>🔧 Lắp đặt tạm</strong> = đã bật.</li>
+      </ol>
+      ${imgTag('sx-vc-ld-ke-hoach/01-vc-setup-cot-lap-dat-tam.png', 'Cột «Dự án sắp tới» đã bật LĐ tạm')}
+      <p>Cách khác: bấm <strong>Sửa</strong> ở giai đoạn đó rồi tích <strong>Nơi để dự án lắp đặt tạm</strong> → <strong>Lưu</strong>.</p>
+      ${imgTag('sx-vc-ld-ke-hoach/02-vc-setup-tich-o-lap-dat-tam.png', 'Ô tích «Nơi để dự án lắp đặt tạm» trong form sửa giai đoạn')}
+      <div class="note">
+        <strong>Lưu ý:</strong> mỗi công ty VC/LĐ chỉ có <strong>một</strong> cột lắp đặt tạm — bật cột mới thì cột cũ tự tắt.
+        Chưa bật cột nào thì luồng vẫn chạy, chỉ là bên VC/LĐ không thấy dự án trước khi xưởng bàn giao.
+      </div>
+
+      <h2>Bước 1 — Sale CRM: lập kế hoạch SX &amp; VC/LĐ trên Deal</h2>
+      <ol>
+        <li>Mở <strong>chi tiết Deal</strong> (CRM → Pipeline → bấm thẻ deal).</li>
+        <li>Trên header bấm <strong>Thiết lập kế hoạch SX &amp; VC/LĐ</strong> (deal đã có dự án thì nút hiện là <strong>Kế hoạch SX &amp; VC/LĐ</strong>).
+        Muốn thêm xưởng thứ hai thì dùng <strong>+ Thêm dự án SX</strong> ở khối <em>Dự án sản xuất</em>.</li>
+      </ol>
+      ${imgTag('sx-vc-ld-ke-hoach/03-crm-nut-thiet-lap-ke-hoach.png', 'Header Deal: nút Kế hoạch SX & VC/LĐ và khối Dự án sản xuất')}
+      <p>Form đi theo <strong>số thứ tự từng bước</strong> — điền lần lượt:</p>
+      <ol>
+        <li><strong>CÔNG TY SX</strong> + <strong>PHÂN LOẠI</strong> (vd. HCB · Tủ bếp). Mỗi xưởng là một thẻ Kanban SX riêng.</li>
+        <li><strong>DEADLINE LẮP ĐẶT (VC/LĐ) &amp; HOÀN THIỆN (SX)</strong> — chọn ngày lắp; ngày hoàn thiện SX tự tính = ngày lắp − 2 ngày.</li>
+        <li><strong>LẤY HÀNG (VC)</strong> — giờ VC đến xưởng lấy hàng.</li>
+      </ol>
+      ${imgTag('sx-vc-ld-ke-hoach/04-form-ke-hoach-cac-buoc.png', 'Bước 1–2: chọn xưởng, phân loại và deadline lắp đặt')}
+      <ol start="4">
+        <li><strong>CÔNG TY VC / LẮP ĐẶT</strong> — chọn công ty vận chuyển/lắp đặt của xưởng này.
+        Chọn xong thì dự án được đặt sẵn vào cột lắp đặt tạm của công ty đó.</li>
+        <li><strong>GHI CHÚ CHO BÊN VC / LẮP ĐẶT</strong> — dặn dò riêng cho tổ VC/LĐ
+        (vd. <em>hàng dễ vỡ, gọi khách trước 30 phút, thang máy nhỏ cần 2 thợ, chỗ đậu xe</em>).
+        Ghi chú theo <strong>từng xưởng</strong>: mỗi xưởng gắn một công ty VC/LĐ nên nhập riêng cho từng thẻ.</li>
+        <li>Bấm <strong>Thêm dự án</strong> (hoặc <strong>Lưu lịch</strong> nếu đang sửa) để chốt kế hoạch.</li>
+      </ol>
+      ${imgTag('sx-vc-ld-ke-hoach/05-form-chon-vc-va-ghi-chu.png', 'Bước 4–5: công ty VC/LĐ và ghi chú cho bên VC/LĐ')}
+      <p>Sau này cần đổi ngày hoặc bổ sung ghi chú: khối <em>Dự án sản xuất</em> → <strong>Sửa lịch</strong>.
+      Cùng một ô ghi chú, sửa xong bấm <strong>Lưu lịch</strong>.</p>
+      ${imgTag('sx-vc-ld-ke-hoach/06-sua-lich-ghi-chu-vc.png', 'Modal Sửa lịch lắp đặt — công ty VC/LĐ, ghi chú, ngày lắp, ngày lấy hàng')}
+
+      <h2>Bước 2 — VC/LĐ thấy dự án ở đâu (trước khi xưởng bàn giao)</h2>
+      <p>Vào module <strong>Lắp đặt</strong> → <strong>Kanban</strong>, chọn đúng <strong>công ty VC/LĐ</strong>.
+      Dự án nằm ở <strong>cột lắp đặt tạm</strong> đã cấu hình ở bước 0 (ảnh dưới: cột <em>Dự án sắp tới</em>).</p>
+      <p>Thẻ có:</p>
+      <ul>
+        <li>Badge tím <strong>🔒 TẠM</strong> — nghĩa là <em>xưởng chưa bàn giao thật</em>, chỉ để xem trước và chuẩn bị nhân sự/xe.
+        Thẻ đang <em>khoá</em>: chưa kéo sang cột khác được.</li>
+        <li>Dòng <strong>Ghi chú VC/LĐ</strong> — đúng nội dung Sale đã nhập ở bước 1.</li>
+        <li>Mã dự án, khách hàng, phân loại, người phụ trách CRM/SX/VC/LĐ.</li>
+      </ul>
+      ${imgTag('sx-vc-ld-ke-hoach/07-vc-board-cot-tam.png', 'Bảng Lắp đặt — cột lắp đặt tạm «Dự án sắp tới»')}
+      ${imgTag('sx-vc-ld-ke-hoach/07b-vc-the-tam-ghi-chu.png', 'Thẻ ở cột tạm: badge TẠM + Ghi chú VC/LĐ')}
+      <div class="note">
+        <strong>Thẻ TẠM bị khoá chuyển cột.</strong> Không kéo được sang cột khác, nút «Chuyển cột nhanh» / «Chuyển LĐ» cũng mờ đi.
+        Chờ xưởng bàn giao và Sale CRM xác nhận lại thông tin — hệ thống tự chuyển thẻ sang cột tiếp nhận, lúc đó mới kéo thẻ theo lịch được.
+      </div>
+
+      <h3>Thông báo + lịch dự kiến tự gửi ngay khi Sale lưu kế hoạch</h3>
+      <p>Không cần chờ xưởng bàn giao, ngay lúc Sale lưu kế hoạch hệ thống đã:</p>
+      <ul>
+        <li><strong>Gửi thông báo (chuông)</strong> cho <em>NV phụ trách VC, NV lắp đặt và người xác nhận bàn giao</em> của công ty VC/LĐ:
+        <em>«🚚 Kế hoạch lắp đặt sắp tới — TB-xxxx · lắp đặt 27/08 · lấy hàng 27/08 · ghi chú: … — đang ở cột lắp đặt tạm, chờ xưởng bàn giao»</em>.
+        Bấm vào thông báo là mở thẳng bảng Lắp đặt và sáng đúng thẻ.</li>
+        <li><strong>Tạo sự kiện dự kiến</strong> trên tab <strong>Lịch</strong> (thẻ sự kiện Lấy hàng / Lắp đặt hiện luôn khối vàng <em>🚚 Ghi chú VC/LĐ</em> nếu Sale đã nhập):
+        <em>Lấy hàng (dự kiến)</em>, <em>Lắp đặt (dự kiến)</em> (module Lắp đặt)
+        và <em>Hoàn thiện sản xuất (dự kiến)</em> (module Sản xuất) — đã gắn sẵn người phụ trách VC/LĐ, NV lắp đặt và người xác nhận vào thành viên sự kiện.</li>
+        <li><strong>Thêm NV phụ trách VC/LĐ vào tab Thành viên</strong> của deal để họ đọc được trao đổi liên quan.</li>
+      </ul>
+      <p>Sale sửa lịch hoặc sửa ghi chú → gửi lại thông báo <em>«🚚 Kế hoạch lắp đặt vừa cập nhật»</em>.
+      Lưu lại mà công ty VC/LĐ, ngày và ghi chú không đổi thì <strong>không gửi trùng</strong>.</p>
+      <div class="note">
+        <strong>Không nhận được thông báo?</strong> Công ty VC/LĐ chưa cấu hình NV chịu trách nhiệm bàn giao —
+        chỉ NV phụ trách (không phải cả công ty) mới nhận, để tránh làm ồn cả tổ.
+      </div>
+
+      <h2>Bước 3 — Xưởng SX hoàn thiện: bấm bàn giao</h2>
+      <ol>
+        <li>Trên <strong>Kanban SX</strong>: kéo thẻ dự án vào <strong>cột bàn giao VC</strong> (cột được cấu hình bàn giao sang Lắp đặt,
+        vd. <em>ĐƠN HÀNG ĐÃ CHUẨN BỊ XONG</em>).</li>
+        <li>Hoặc mở <strong>trang dự án SX</strong> rồi bấm chính bước đó trên thanh giai đoạn phía trên.</li>
+      </ol>
+      ${imgTag('sx-vc-ld-ke-hoach/08-sx-hoan-thien-cot-ban-giao.png', 'Trang dự án SX — bấm bước bàn giao trên thanh giai đoạn')}
+      <p>Hệ thống báo: <em>«Đã gửi thông báo cho Sale CRM phụ trách deal — họ cần chọn công ty VC/LĐ và ngày lấy/lắp
+      (trong bình luận deal)»</em>. Xưởng không phải chọn công ty VC/LĐ.</p>
+
+      <h2>Bước 4 — Sale CRM: xác nhận lại thông tin đã điền</h2>
+      <ol>
+        <li>Sale nhận <strong>thông báo</strong> (chuông) và một thẻ <strong>Bàn giao Lắp đặt</strong> trong Deal → tab <strong>Bình luận</strong>.</li>
+        <li>Trong thẻ có khối xanh <strong>«Thông tin VC/LĐ đã điền khi lập kế hoạch — xác nhận hoặc sửa lại»</strong>:
+        công ty VC/LĐ, ngày lắp dự kiến, ghi chú cho VC/LĐ đã được <strong>điền sẵn</strong> từ bước 1.</li>
+        <li>Kiểm tra, sửa nếu cần, rồi bấm <strong>Chọn &amp; bàn giao</strong>.</li>
+      </ol>
+      ${imgTag('sx-vc-ld-ke-hoach/09-crm-the-ban-giao-xac-nhan.png', 'Thẻ Bàn giao Lắp đặt trong tab Bình luận của Deal')}
+      <div class="note">
+        <strong>Không tạo dự án VC/LĐ mới.</strong> Xác nhận chỉ chuyển dự án đang ở cột tạm sang <strong>cột tiếp nhận</strong> và bỏ badge TẠM.
+        Chỉ <strong>Sale CRM phụ trách deal</strong> mới bấm được — người khác chỉ xem.
+      </div>
+
+      <h2>Bước 5 — VC/LĐ nhận việc thật</h2>
+      <ul>
+        <li>Thẻ rời cột lắp đặt tạm → sang <strong>cột tiếp nhận</strong> của bảng Lắp đặt (vd. <em>Chờ giao hàng</em>), badge TẠM mất.</li>
+        <li>Ghi chú VC/LĐ vẫn giữ trên thẻ và trong chi tiết dự án.</li>
+        <li><strong>Phụ trách VC/LĐ xác nhận</strong> trên thẻ bàn giao → đủ hai bên (Xưởng + VC/LĐ) thì hệ thống tạo
+        các <strong>sự kiện lịch bàn giao chính thức</strong> (khác với sự kiện <em>dự kiến</em> đã có từ lúc lập kế hoạch).</li>
+        <li>Từ đây kéo thẻ theo tiến độ thật: Đang giao → Đã giao → Lắp đặt → Nghiệm thu → Hoàn thiện.</li>
+      </ul>
+
+      <h2>Tra nhanh: xem ở đâu</h2>
+      <table>
+        <thead><tr><th>Cần xem</th><th>Vị trí</th></tr></thead>
+        <tbody>
+          <tr><td>Kế hoạch lắp / lấy hàng của deal</td><td>Chi tiết Deal → khối <strong>Dự án sản xuất</strong></td></tr>
+          <tr><td>Ghi chú cho bên VC/LĐ</td><td>Thẻ Kanban Lắp đặt · chi tiết dự án · modal Sửa lịch · thẻ sự kiện <em>Lấy hàng / Lắp đặt</em> trên tab Lịch</td></tr>
+          <tr><td>Dự án chưa bàn giao</td><td>Bảng Lắp đặt → cột lắp đặt tạm (badge TẠM)</td></tr>
+          <tr><td>Thông báo kế hoạch lắp đặt</td><td>Chuông → <em>🚚 Kế hoạch lắp đặt sắp tới / vừa cập nhật</em></td></tr>
+          <tr><td>Yêu cầu bàn giao của xưởng</td><td>Deal → tab Bình luận → thẻ <strong>Bàn giao Lắp đặt</strong></td></tr>
+          <tr><td>Lịch lấy hàng / lắp đặt</td><td>Tab <strong>Lịch</strong> (CRM · SX · VC/LĐ) — mốc <em>(dự kiến)</em> có ngay sau khi lưu kế hoạch</td></tr>
+        </tbody>
+      </table>
+
+      <h2>Checklist</h2>
+      <ul class="check">
+        <li>Admin đã bật cột lắp đặt tạm cho công ty VC/LĐ</li>
+        <li>Sale đã chọn xưởng SX + phân loại + ngày lắp + ngày lấy hàng</li>
+        <li>Đã chọn công ty VC/LĐ và nhập ghi chú cho từng xưởng</li>
+        <li>Bên VC/LĐ thấy thẻ badge TẠM kèm ghi chú</li>
+        <li>NV phụ trách VC/LĐ đã nhận thông báo «Kế hoạch lắp đặt sắp tới» + thấy mốc dự kiến trên tab Lịch</li>
+        <li>Xưởng xong → kéo vào cột bàn giao → Sale nhận thông báo</li>
+        <li>Sale bấm <strong>Chọn &amp; bàn giao</strong> → thẻ sang cột tiếp nhận, không có dự án trùng</li>
+        <li>VC/LĐ xác nhận → sự kiện lịch lấy hàng &amp; lắp đặt đã tạo</li>
+      </ul>
+
+      <h2>Lỗi hay gặp</h2>
+      <table>
+        <thead><tr><th>Hiện tượng</th><th>Cách xử lý</th></tr></thead>
+        <tbody>
+          <tr><td>VC/LĐ không thấy dự án dù đã lập kế hoạch</td><td>Chưa bật cột lắp đặt tạm, hoặc đang xem sai công ty VC/LĐ trên bảng Lắp đặt</td></tr>
+          <tr><td>Không thấy ô ghi chú VC/LĐ</td><td>Ô chỉ hiện sau khi đã chọn <strong>Công ty VC / lắp đặt</strong></td></tr>
+          <tr><td>NV VC/LĐ không nhận thông báo kế hoạch</td><td>Công ty VC/LĐ chưa cấu hình NV phụ trách / NV lắp đặt bàn giao, hoặc người đó đã tắt thông báo</td></tr>
+          <tr><td>Thợ lắp không thấy mốc trên tab Lịch</td><td>NV thường chỉ thấy sự kiện mình là thành viên — gán họ làm NV lắp đặt của dự án</td></tr>
+          <tr><td>Sale không bấm được «Chọn &amp; bàn giao»</td><td>Chỉ Sale phụ trách deal có quyền — chuyển người phụ trách hoặc nhờ đúng người bấm</td></tr>
+          <tr><td>Thẻ vẫn còn badge TẠM sau khi xưởng bàn giao</td><td>Sale chưa xác nhận thẻ Bàn giao Lắp đặt trong tab Bình luận</td></tr>
+          <tr><td>Kéo thẻ TẠM không được / báo «chờ xưởng bàn giao và Sale xác nhận»</td><td>Đúng thiết kế — chỉ chuyển cột được sau khi bàn giao thật. Cần gấp thì nhờ xưởng bấm bàn giao và Sale xác nhận (admin có thể ép chuyển)</td></tr>
+          <tr><td>Lo bị tạo hai dự án VC/LĐ</td><td>Không xảy ra: bàn giao chỉ chuyển cột dự án đang có, không tạo mới</td></tr>
+          <tr><td>Chưa thấy sự kiện lịch</td><td>Sự kiện chỉ tạo khi cả Xưởng và VC/LĐ đã xác nhận</td></tr>
+        </tbody>
+      </table>
+    `, { badge: 'Hướng dẫn nội bộ · CRM · Sản xuất · Lắp đặt', meta: 'Dành cho Sale CRM · Xưởng SX · VC/LĐ · Tháng 8/2026' }),
   },
 ];
 

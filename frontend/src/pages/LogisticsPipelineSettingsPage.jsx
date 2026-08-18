@@ -56,6 +56,9 @@ function StageBadges({ stage }) {
   if (isInstallVcStage(s)) {
     badges.push({ key: 'col-ld', cls: 'bg-amber-50 text-amber-800 border-amber-200', text: 'Cột LĐ' });
   }
+  if (s.is_temp_install_staging) {
+    badges.push({ key: 'temp', cls: 'bg-fuchsia-50 text-fuchsia-800 border-fuchsia-200', text: '🔧 Lắp đặt tạm' });
+  }
   if (s.progress_percent != null && s.progress_percent !== '') {
     badges.push({ key: 'pct', cls: 'bg-violet-50 text-violet-700 border-violet-200', text: `${s.progress_percent}%` });
   }
@@ -113,6 +116,7 @@ export default function LogisticsPipelineSettingsPage() {
     crm_sync_type: null,
     crm_target_stage_id: '',
     progress_percent: '',
+    is_temp_install_staging: false,
   });
 
   const settingsCompanyLabel = useMemo(() => {
@@ -237,6 +241,7 @@ export default function LogisticsPipelineSettingsPage() {
       crm_sync_type: null,
       crm_target_stage_id: '',
       progress_percent: '',
+      is_temp_install_staging: false,
     });
   };
 
@@ -251,6 +256,7 @@ export default function LogisticsPipelineSettingsPage() {
       crm_sync_type: stage.crm_sync_type || null,
       crm_target_stage_id: stage.crm_target_stage_id || '',
       progress_percent: stage.progress_percent ?? '',
+      is_temp_install_staging: !!stage.is_temp_install_staging,
     });
   };
 
@@ -268,6 +274,7 @@ export default function LogisticsPipelineSettingsPage() {
         progress_percent: form.progress_percent === '' ? null : Number(form.progress_percent),
         crm_sync_type: hardTarget ? null : (form.crm_sync_type || null),
         crm_target_stage_id: hardTarget,
+        is_temp_install_staging: !!form.is_temp_install_staging,
         bucket_slug: null,
         company_id: settingsCompanyId,
       });
@@ -295,6 +302,7 @@ export default function LogisticsPipelineSettingsPage() {
         progress_percent: form.progress_percent === '' ? null : Number(form.progress_percent),
         crm_sync_type: intakeRow || hardTarget ? null : (form.crm_sync_type || null),
         crm_target_stage_id: hardTarget,
+        is_temp_install_staging: intakeRow ? false : !!form.is_temp_install_staging,
       });
       setEditId(null);
       setAdding(false);
@@ -340,6 +348,21 @@ export default function LogisticsPipelineSettingsPage() {
       await load({ silent: true });
     } catch (e) {
       alert(e.response?.data?.error || 'Lỗi cập nhật cột Lắp đặt');
+    }
+  };
+
+  const toggleTempInstallStaging = async (stage) => {
+    if (stage.bucket_slug === INTAKE) {
+      return alert('Cột tiếp nhận là nơi dự án vào khi bàn giao thật — không dùng làm cột lắp đặt tạm.');
+    }
+    const turningOn = !stage.is_temp_install_staging;
+    try {
+      await api.put(`/logistics/pipeline-stages/${stage.id}`, {
+        is_temp_install_staging: turningOn,
+      });
+      await load({ silent: true });
+    } catch (e) {
+      alert(e.response?.data?.error || 'Lỗi cập nhật cột lắp đặt tạm');
     }
   };
 
@@ -504,6 +527,24 @@ export default function LogisticsPipelineSettingsPage() {
           />
           Hiện trên Kanban
         </label>
+        {!editingIntake && (
+          <label className="flex items-start gap-2 text-[11px] cursor-pointer p-2.5 rounded-lg bg-fuchsia-50 border border-fuchsia-200">
+            <input
+              type="checkbox"
+              checked={!!form.is_temp_install_staging}
+              onChange={(e) => setForm((f) => ({ ...f, is_temp_install_staging: e.target.checked }))}
+              className="rounded border-gray-300 mt-0.5"
+            />
+            <span>
+              <span className="font-semibold text-fuchsia-900">Nơi để dự án lắp đặt tạm</span>
+              <span className="block text-[10px] text-fuchsia-700 leading-snug mt-0.5">
+                Sale setup kế hoạch SX & VC/LĐ (chọn công ty VC + ngày lấy hàng / lắp) → dự án vào cột này ngay
+                để bên VC/LĐ thấy trước. Xưởng hoàn thành và bàn giao thật thì dự án chuyển sang cột tiếp nhận,
+                không tạo dự án mới. Mỗi công ty chỉ có một cột tạm.
+              </span>
+            </span>
+          </label>
+        )}
         {!editingIntake && (
           <div className="space-y-1.5 p-2.5 rounded-lg bg-blue-50 border border-blue-200">
             <label className="text-[10px] font-semibold text-blue-800 block">
@@ -696,6 +737,16 @@ export default function LogisticsPipelineSettingsPage() {
                         title={onInstallCol ? 'Bỏ đánh dấu cột Lắp đặt' : 'Đánh dấu là cột Lắp đặt'}
                       >
                         Cột LĐ
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => toggleTempInstallStaging(s)}
+                        className={pillBtn(!!s.is_temp_install_staging, 'bg-fuchsia-100 text-fuchsia-900 border-fuchsia-300 ring-1 ring-fuchsia-200')}
+                        title={s.is_temp_install_staging
+                          ? 'Đang bật: dự án vào cột này ngay khi Sale setup kế hoạch SX & VC/LĐ (chưa bàn giao thật)'
+                          : 'Bật để dự án nằm tạm ở cột này ngay khi Sale setup kế hoạch SX & VC/LĐ'}
+                      >
+                        LĐ tạm
                       </button>
                     </>
                   )}

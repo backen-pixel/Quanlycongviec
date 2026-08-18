@@ -147,15 +147,29 @@ async function resolveVcIntakeStageId(logisticsCompanyId) {
       .maybeSingle();
     if (vcIntakeRow?.id) return vcIntakeRow.id;
 
-    const { data: vcFirstRow } = await supabase
+    // Không có cột intake: lấy cột đầu nhưng bỏ qua cột «lắp đặt tạm»
+    let firstRows = null;
+    const firstFull = await supabase
       .from('logistics_pipeline_stages')
-      .select('id')
+      .select('id, is_temp_install_staging')
       .eq('is_active', true)
       .eq('company_id', logisticsCompanyId)
       .order('order_index')
-      .limit(1)
-      .maybeSingle();
-    if (vcFirstRow?.id) return vcFirstRow.id;
+      .limit(10);
+    if (firstFull.error && String(firstFull.error.message || '').includes('is_temp_install_staging')) {
+      const legacy = await supabase
+        .from('logistics_pipeline_stages')
+        .select('id')
+        .eq('is_active', true)
+        .eq('company_id', logisticsCompanyId)
+        .order('order_index')
+        .limit(10);
+      firstRows = legacy.data || [];
+    } else {
+      firstRows = firstFull.data || [];
+    }
+    const firstNonTemp = firstRows.find((r) => !r.is_temp_install_staging);
+    if (firstNonTemp?.id) return firstNonTemp.id;
 
     const { data: gIntake } = await supabase
       .from('logistics_pipeline_stages')
@@ -225,11 +239,20 @@ async function performVcHandoverCore(req, {
   deliveryTeamId = null,
   installationTeamId = null,
 }) {
-  const { data: project } = await supabase
+  let { data: project } = await supabase
     .from('projects')
-    .select('id, code, name, status, current_stage_id, company_id, vc_kanban_column_id, logistics_company_id, flow_id')
+    .select('id, code, name, status, current_stage_id, company_id, vc_kanban_column_id, logistics_company_id, flow_id, vc_temp_staged')
     .eq('id', projectId)
     .maybeSingle();
+  if (!project) {
+    // DB chưa có cột vc_temp_staged (migration 532 chưa chạy)
+    const { data: legacy } = await supabase
+      .from('projects')
+      .select('id, code, name, status, current_stage_id, company_id, vc_kanban_column_id, logistics_company_id, flow_id')
+      .eq('id', projectId)
+      .maybeSingle();
+    project = legacy || null;
+  }
   if (!project) throw new Error('Project not found');
 
   // Gate theo luồng module (CRM → SX → Lắp đặt / custom)
@@ -276,6 +299,7 @@ async function performVcHandoverCore(req, {
 
   // Đã trong luồng VC đúng công ty đã chọn → chỉ cập nhật cột SX (không bàn giao lại).
   // Nếu thiếu logistics_company / cột VC, hoặc Sale chọn công ty khác → chạy lại bàn giao.
+  // Dự án đang ở cột «lắp đặt tạm» → coi như chưa bàn giao: chạy tiếp để chuyển sang cột tiếp nhận.
   if (isProjectAlreadyInLogistics(project)) {
     const sameCompany = project.logistics_company_id
       && String(project.logistics_company_id) === String(logisticsCompanyId);
@@ -349,8 +373,14 @@ async function performVcHandoverCore(req, {
   if (installationTeamId) projectUpdate.installation_team_id = installationTeamId;
   if (vcStageId) projectUpdate.vc_kanban_column_id = vcStageId;
   if (sxHandoverPipelineStageId) projectUpdate.sx_kanban_column_id = sxHandoverPipelineStageId;
+  // Rời cột «lắp đặt tạm» → dự án vào cột tiếp nhận thật (không tạo bản ghi VC mới)
+  projectUpdate.vc_temp_staged = false;
 
-  const { error: updateError } = await supabase.from('projects').update(projectUpdate).eq('id', projectId);
+  let { error: updateError } = await supabase.from('projects').update(projectUpdate).eq('id', projectId);
+  if (updateError && String(updateError.message || '').includes('vc_temp_staged')) {
+    const { vc_temp_staged: _t, ...legacyUpdate } = projectUpdate;
+    ({ error: updateError } = await supabase.from('projects').update(legacyUpdate).eq('id', projectId));
+  }
   if (updateError) throw updateError;
 
   try {

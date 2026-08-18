@@ -19,7 +19,7 @@ import {
   Package, Users, LayoutGrid, List, Plus,
   CheckSquare, UserCheck, Loader2, Wrench, ShieldCheck,
   Filter, Clock, Layers, Trash2, Settings, BarChart3,
-  ChevronDown, ChevronUp, MessageSquare, Phone, ExternalLink,
+  ChevronDown, ChevronUp, MessageSquare, Phone, ExternalLink, Lock,
 } from 'lucide-react';
 import { LogisticsListView, LogisticsPlannerView, LogisticsCalendarView, LogisticsDeadlineView } from '../components/LogisticsViews';
 import { getCalendarMonthRange } from '../components/dashboard/DashboardMonthCalendar';
@@ -44,6 +44,7 @@ import {
   peekWorkshopPipelineCardFocus, clearWorkshopPipelineCardFocus, markWorkshopPipelineCardFocus,
   applyWorkshopProjectRenamePatches,
 } from '../lib/workshopPipelineStorage';
+import { VC_TEMP_LOCK_MSG } from '../lib/projectLogistics';
 
 const INTAKE_BUCKET = 'delivery_pending';
 
@@ -689,11 +690,27 @@ export default function LogisticsDashboard() {
 
   const handleMoveStage = useCallback(async (projectId, targetCol) => {
     const isIntake = targetCol?.bucket_slug === INTAKE_BUCKET || String(targetCol?.id || '').startsWith('__vc_');
+
+    // Chưa bàn giao thật (đang ở cột lắp đặt tạm) → không cho kéo sang cột khác
+    const moving = projects.find((p) => String(p.id) === String(projectId));
+    let forceTempMove = false;
+    if (moving?.vc_temp_staged && String(moving.vc_kanban_column_id || '') !== String(targetCol?.id || '')) {
+      if (!isAdmin) {
+        alert(VC_TEMP_LOCK_MSG);
+        return;
+      }
+      if (!window.confirm(`${VC_TEMP_LOCK_MSG}\n\nBạn là admin — vẫn chuyển cột dự án này?`)) return;
+      forceTempMove = true;
+    }
+
     if (isIntake) {
       setProjects((prev) => prev.map((p) => (String(p.id) === String(projectId)
         ? { ...p, current_stage: null, vc_kanban_column_id: targetCol.id, vc_intake: true } : p)));
       try {
-        await api.patch(`/logistics/projects/${projectId}/stage`, { move_to_intake: true });
+        await api.patch(`/logistics/projects/${projectId}/stage`, {
+          move_to_intake: true,
+          ...(forceTempMove ? { force_temp_move: true } : {}),
+        });
       } catch (e) { console.error(e); load(); }
       return;
     }
@@ -727,6 +744,7 @@ export default function LogisticsDashboard() {
       // Gửi id cột gate (có cờ → LĐ); backend tự nhảy sang cột Lắp đặt
       const body = { vc_stage_id: targetCol.id };
       if (targetCol?.workflow_stage_id) body.stage_id = targetCol.workflow_stage_id;
+      if (forceTempMove) body.force_temp_move = true;
       const { data } = await api.patch(`/logistics/projects/${projectId}/stage`, body);
       if (data?.jumped_to_install && data?.install_stage_id) {
         setProjects((prev) => prev.map((p) => (String(p.id) === String(projectId)
@@ -741,8 +759,13 @@ export default function LogisticsDashboard() {
             },
           } : p)));
       }
-    } catch (e) { console.error(e); load(); }
-  }, [load, projects, kanbanPipeline]);
+    } catch (e) {
+      console.error(e);
+      const msg = e?.response?.data?.error;
+      if (e?.response?.status === 409 && msg) alert(msg);
+      load();
+    }
+  }, [load, projects, kanbanPipeline, isAdmin]);
 
   const handleDeleteCard = useCallback((projectId, projectLabel) => {
     if (!projectId) return;
@@ -1843,8 +1866,13 @@ const KanbanCard = memo(function KanbanCard({
   item, stage, calculateDays, isSelected, onToggleSelect, onDelete, onMoveStage, pipelineStages = [],
 }) {
   const navigate = useNavigate();
+  const tempLocked = !!item.vc_temp_staged;
   const handleDragStart = (e) => {
-    if (e.target.closest?.('[data-workshop-bulk-checkbox]') || e.target.closest?.('[data-vc-quick-btn]')) {
+    if (
+      tempLocked
+      || e.target.closest?.('[data-workshop-bulk-checkbox]')
+      || e.target.closest?.('[data-vc-quick-btn]')
+    ) {
       e.preventDefault();
       return;
     }
@@ -1909,8 +1937,9 @@ const KanbanCard = memo(function KanbanCard({
   return (
     <div
       data-vc-kanban-card={item.id}
-      draggable
+      draggable={!tempLocked}
       onDragStart={handleDragStart}
+      title={tempLocked ? VC_TEMP_LOCK_MSG : undefined}
       onClick={(e) => {
         if (e.target.closest?.('[data-workshop-bulk-checkbox]') || e.target.closest?.('[data-vc-quick-btn]')) return;
         markWorkshopPipelineCardFocus(item.id, 'vc');
@@ -1954,14 +1983,31 @@ const KanbanCard = memo(function KanbanCard({
         </button>
       )}
 
-      <div className="flex items-start justify-between pr-7 mb-2">
+      <div className="flex items-start justify-between pr-7 mb-2 gap-1.5">
         <p className="text-xs font-semibold text-orange-600">{item.code}</p>
+        {item.vc_temp_staged && (
+          <span
+            className="shrink-0 inline-flex items-center gap-0.5 text-[9px] font-bold uppercase tracking-wide text-fuchsia-800 bg-fuchsia-50 border border-fuchsia-200 px-1.5 py-0.5 rounded leading-tight"
+            title={VC_TEMP_LOCK_MSG}
+          >
+            <Lock className="h-2.5 w-2.5" aria-hidden />
+            Tạm
+          </span>
+        )}
       </div>
 
       <div className="flex items-start gap-1.5 min-w-0 mb-2">
         <p className="text-sm font-medium truncate flex-1 min-w-0" style={{ color: '#000000' }} title={cardTitle}>{cardTitle}</p>
         {isNew && <span className="shrink-0 text-[10px] font-bold uppercase tracking-wide text-white bg-rose-500 px-1.5 py-0.5 rounded leading-tight">Mới</span>}
       </div>
+      {item.vc_notes && (
+        <p
+          className="text-[10px] text-fuchsia-900 bg-fuchsia-50 border border-fuchsia-100 rounded px-1.5 py-1 mb-2 line-clamp-2 whitespace-pre-wrap"
+          title={item.vc_notes}
+        >
+          <span className="font-semibold">Ghi chú VC/LĐ:</span> {item.vc_notes}
+        </p>
+      )}
       {item.workshop_type?.name && (
         <p className="text-[10px] text-slate-600 mb-2">
           <span className="text-slate-500 font-medium">Loại:</span> {item.workshop_type.name}
@@ -2008,14 +2054,19 @@ const KanbanCard = memo(function KanbanCard({
         <button
           type="button"
           data-vc-quick-btn
+          disabled={tempLocked}
           onClick={(e) => {
             e.stopPropagation();
             onMoveStage(item.id, stage);
           }}
-          className="mt-1.5 w-full flex items-center justify-center gap-1 py-1 rounded text-[10px] font-semibold bg-teal-50 text-teal-800 border border-teal-200 hover:bg-teal-100 cursor-pointer"
-          title="Chuyển dự án sang Lắp đặt"
+          className={`mt-1.5 w-full flex items-center justify-center gap-1 py-1 rounded text-[10px] font-semibold border ${
+            tempLocked
+              ? 'bg-gray-50 text-gray-400 border-gray-200 cursor-not-allowed'
+              : 'bg-teal-50 text-teal-800 border-teal-200 hover:bg-teal-100 cursor-pointer'
+          }`}
+          title={tempLocked ? VC_TEMP_LOCK_MSG : 'Chuyển dự án sang Lắp đặt'}
         >
-          <Wrench className="h-3 w-3" />
+          {tempLocked ? <Lock className="h-3 w-3" /> : <Wrench className="h-3 w-3" />}
           Chuyển LĐ
         </button>
       )}
@@ -2043,6 +2094,8 @@ const KanbanCard = memo(function KanbanCard({
               onMove={(target) => onMoveStage(item.id, target)}
               theme="sx"
               blockVirtualTargets={false}
+              disabled={tempLocked}
+              disabledTitle={VC_TEMP_LOCK_MSG}
             />
           )}
           {customerPhone && (

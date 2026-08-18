@@ -8,6 +8,7 @@ const { supabase } = require('../config/supabase');
 const {
   resolveLogisticsHandoverResponsibleUserId,
   resolveLogisticsHandoverInstallerUserId,
+  resolveLogisticsHandoverConfirmUserId,
 } = require('./logisticsHandoverSettings');
 
 async function resolveEventTypeBySlugs(slugs) {
@@ -148,7 +149,7 @@ async function insertOrUpdatePlannedEvent({
 
 /**
  * Upsert sự kiện dự kiến từ setup ngày lắp / lấy hàng / hoàn thiện SX.
- * @returns {{ ok: boolean, installEventId?: string|null, pickupEventId?: string|null, finishEventId?: string|null, error?: string }}
+ * @returns {{ ok: boolean, installEventId?: string|null, pickupEventId?: string|null, finishEventId?: string|null, logisticsStaffIds?: string[], error?: string }}
  */
 async function upsertPlannedVcLdEvents({
   projectId,
@@ -164,6 +165,7 @@ async function upsertPlannedVcLdEvents({
   productionFinishAt = null,
   logisticsCompanyId = null,
   installOccurrenceDates = null,
+  vcNotes = null,
 } = {}) {
   if (!projectId) return { ok: false, error: 'missing projectId' };
   const installIso = installAt ? String(installAt).trim() : null;
@@ -215,13 +217,25 @@ async function upsertPlannedVcLdEvents({
   // NV chịu trách nhiệm VC/LĐ (+ đã gán trên project)
   let logisticsAssigneeId = null;
   let installerAssigneeId = null;
+  let confirmUserId = null;
   let productionAssigneeId = null;
+  let resolvedVcNotes = vcNotes ? String(vcNotes).trim() : '';
   try {
-    const { data: proj } = await supabase
+    const staffCols = 'logistics_person_id, installer_person_id, production_person_id, logistics_company_id';
+    let { data: proj } = await supabase
       .from('projects')
-      .select('logistics_person_id, installer_person_id, production_person_id, logistics_company_id')
+      .select(`${staffCols}, vc_notes`)
       .eq('id', projectId)
       .maybeSingle();
+    if (!proj) {
+      // Migration 532 chưa chạy → chưa có cột vc_notes
+      ({ data: proj } = await supabase
+        .from('projects')
+        .select(staffCols)
+        .eq('id', projectId)
+        .maybeSingle());
+    }
+    if (!resolvedVcNotes && proj?.vc_notes) resolvedVcNotes = String(proj.vc_notes).trim();
     const logCo = logisticsCompanyId || proj?.logistics_company_id || logisticsCompany;
     logisticsAssigneeId = proj?.logistics_person_id
       || (logCo ? await resolveLogisticsHandoverResponsibleUserId(logCo) : null)
@@ -230,6 +244,10 @@ async function upsertPlannedVcLdEvents({
       || (logCo ? await resolveLogisticsHandoverInstallerUserId(logCo) : null)
       || logisticsAssigneeId
       || null;
+    // Người bấm xác nhận phía VC/LĐ cũng cần thấy lịch dự kiến trên module Lắp đặt
+    confirmUserId = logCo
+      ? await resolveLogisticsHandoverConfirmUserId(logCo, logisticsAssigneeId)
+      : null;
     productionAssigneeId = proj?.production_person_id || null;
 
     // Ghi lại người phụ trách lên project nếu còn trống
@@ -248,6 +266,7 @@ async function upsertPlannedVcLdEvents({
   const logisticsParticipants = [...new Set([
     logisticsAssigneeId,
     installerAssigneeId,
+    confirmUserId,
     userId,
   ].filter(Boolean).map(String))];
 
@@ -257,6 +276,7 @@ async function upsertPlannedVcLdEvents({
   ].filter(Boolean).map(String))];
 
   const addr = installAddress ? `Địa chỉ: ${installAddress}` : null;
+  const vcNoteLine = resolvedVcNotes ? `Ghi chú VC/LĐ: ${resolvedVcNotes}` : null;
   const note = 'Sự kiện dự kiến từ setup ngày khi tạo / chỉnh dự án SX trên CRM.';
 
   let existing = [];
@@ -318,7 +338,7 @@ async function upsertPlannedVcLdEvents({
           title: keepStatus(prev) === 'planned'
             ? `Lấy hàng (dự kiến) — ${projLabel}`
             : `Lấy hàng — ${projLabel}`,
-          description: [note, addr].filter(Boolean).join('\n'),
+          description: [vcNoteLine, addr, note].filter(Boolean).join('\n'),
           start_time: pickupIso,
           location: installAddress || null,
         },
@@ -344,12 +364,13 @@ async function upsertPlannedVcLdEvents({
             ? `Lắp đặt (dự kiến) — ${projLabel}`
             : `Lắp đặt — ${projLabel}`,
           description: [
-            note,
+            vcNoteLine,
             addr,
             multiHint,
             pickupDateOk && vnDayKey(pickupIso) === firstDay && occDates.length <= 1
               ? 'Cùng ngày với lấy hàng VC.'
               : null,
+            note,
           ].filter(Boolean).join('\n'),
           start_time: resolvedInstallIso,
           end_time: installEndIso,
@@ -391,7 +412,15 @@ async function upsertPlannedVcLdEvents({
       });
     }
 
-    return { ok: true, pickupEventId, installEventId, finishEventId };
+    return {
+      ok: true,
+      pickupEventId,
+      installEventId,
+      finishEventId,
+      logisticsStaffIds: [logisticsAssigneeId, installerAssigneeId, confirmUserId]
+        .filter(Boolean)
+        .map(String),
+    };
   } catch (e) {
     console.warn('[planned-vc-ld-events]', e.message);
     return { ok: false, error: e.message };

@@ -987,6 +987,7 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
   const [companyId, setCompanyId] = useState('');
   const [externalName, setExternalName] = useState('');
   const [selectNotes, setSelectNotes] = useState('');
+  const [vcNotes, setVcNotes] = useState('');
   const isExternalCompany = companyId === '__external__';
   const skipLogisticsModule = !!md.skip_logistics_module;
   const [pickupAt, setPickupAt] = useState('');
@@ -1126,6 +1127,25 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
       .catch(() => { if (active) setCompanies([]); });
     return () => { active = false; };
   }, [state, canSale]);
+
+  // Prefill từ kế hoạch SX & VC/LĐ Sale đã điền trước đó — vẫn cho sửa trước khi bàn giao.
+  const planVcNotes = md.plan_vc_notes || md.vc_notes || '';
+  const planCompanyId = md.plan_logistics_company_id ? String(md.plan_logistics_company_id) : '';
+  const planOccurrenceDates = useMemo(() => (
+    Array.isArray(md.plan_install_occurrence_dates)
+      ? [...new Set(md.plan_install_occurrence_dates.map((d) => String(d || '').slice(0, 10)).filter(Boolean))].sort()
+      : []
+  ), [md.plan_install_occurrence_dates]);
+  const hasPlanInfo = !!(planCompanyId || planVcNotes || planOccurrenceDates.length);
+
+  useEffect(() => {
+    if (state !== 'awaiting_company' || !canSale) return;
+    if (planCompanyId) setCompanyId((prev) => (prev ? prev : planCompanyId));
+    if (planVcNotes) setVcNotes((prev) => (prev.trim() ? prev : planVcNotes));
+    if (planOccurrenceDates.length) {
+      setInstallOccurrenceDates((prev) => (prev.length ? prev : planOccurrenceDates));
+    }
+  }, [state, canSale, planCompanyId, planVcNotes, planOccurrenceDates]);
 
   // Prefill địa chỉ / lịch từ ĐÚNG project xưởng của thẻ (multi-SX), vẫn cho Sale chỉnh tay.
   useEffect(() => {
@@ -1321,6 +1341,34 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
           <div className="space-y-2">
             {canSale ? (
               <>
+                {hasPlanInfo ? (
+                  <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1.5 space-y-0.5">
+                    <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-800">
+                      Thông tin VC/LĐ đã điền khi lập kế hoạch — xác nhận hoặc sửa lại
+                    </p>
+                    {md.plan_logistics_company_name ? (
+                      <p className="text-[11px] text-emerald-900">
+                        Công ty VC/LĐ: <span className="font-semibold">{md.plan_logistics_company_name}</span>
+                      </p>
+                    ) : null}
+                    {planOccurrenceDates.length ? (
+                      <p className="text-[11px] text-emerald-900">
+                        Ngày lắp dự kiến:{' '}
+                        <span className="font-semibold">
+                          {planOccurrenceDates.map((d) => d.split('-').reverse().join('/')).join(', ')}
+                        </span>
+                      </p>
+                    ) : null}
+                    {planVcNotes ? (
+                      <p className="text-[11px] text-emerald-900 whitespace-pre-wrap">
+                        Ghi chú cho VC/LĐ: <span className="font-semibold">{planVcNotes}</span>
+                      </p>
+                    ) : null}
+                    <p className="text-[10px] text-emerald-700">
+                      Dự án đã nằm ở cột lắp đặt tạm trên bảng VC — bàn giao chỉ chuyển sang cột tiếp nhận, không tạo dự án mới.
+                    </p>
+                  </div>
+                ) : null}
                 <label className="block">
                   <span className="text-[11px] font-semibold text-gray-600">Công ty VC/LĐ *</span>
                   <select
@@ -1360,6 +1408,16 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
                     onChange={(e) => setSelectNotes(e.target.value)}
                     rows={2}
                     placeholder="Loại - xưởng - …"
+                    className="mt-1 w-full px-2 py-1.5 border border-orange-200 rounded-lg text-[13px] bg-white focus:ring-2 focus:ring-orange-400 resize-y"
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-[11px] font-semibold text-gray-600">Ghi chú cho bên VC / lắp đặt</span>
+                  <textarea
+                    value={vcNotes}
+                    onChange={(e) => setVcNotes(e.target.value)}
+                    rows={2}
+                    placeholder="VD: hàng dễ vỡ, gọi trước 30 phút, thang máy nhỏ…"
                     className="mt-1 w-full px-2 py-1.5 border border-orange-200 rounded-lg text-[13px] bg-white focus:ring-2 focus:ring-orange-400 resize-y"
                   />
                 </label>
@@ -1569,6 +1627,7 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
                     skip_logistics_module: isExternalCompany,
                     external_company_name: isExternalCompany ? externalName.trim() : null,
                     notes: selectNotes.trim() || null,
+                    vc_notes: vcNotes.trim() || null,
                     pickup_at: new Date(pickupAt).toISOString(),
                     vc_arrive_at: arriveLocal ? new Date(arriveLocal).toISOString() : null,
                     install_date: installDate ? new Date(installDate).toISOString() : null,
@@ -1659,6 +1718,12 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
               </p>
               {md.select_notes ? (
                 <p><span className="text-gray-500">Ghi chú:</span> {md.select_notes}</p>
+              ) : null}
+              {md.vc_notes || md.plan_vc_notes ? (
+                <p className="whitespace-pre-wrap">
+                  <span className="text-gray-500">Ghi chú cho VC/LĐ:</span>{' '}
+                  <strong>{md.vc_notes || md.plan_vc_notes}</strong>
+                </p>
               ) : null}
               <p><span className="text-gray-500">Ngày nhận hàng:</span> <strong>{formatVcDateTime(md.pickup_at)}</strong></p>
               {!skipLogisticsModule && md.vc_arrive_at ? (

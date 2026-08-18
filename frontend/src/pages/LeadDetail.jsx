@@ -53,6 +53,7 @@ import SxCompanyPickList from '../components/SxCompanyPickList';
 import SxMultiTargetPicker, {
   validateSxTargets,
   sxTargetsToApiPayload,
+  ShiftQuickPick,
 } from '../components/SxMultiTargetPicker';
 import { useConfirmCountdown } from '../hooks/useConfirmCountdown';
 import {
@@ -1889,6 +1890,7 @@ export default function LeadDetail() {
       installYmd,
       installTime: timeM ? `${timeM[1]}:${timeM[2]}` : '14:00',
       installOccurrenceDates: installYmd ? [installYmd] : [],
+      vcNotes: pp.vc_notes || (sameAsLinked ? (linked?.vc_notes || '') : '') || '',
       pickupLocal: pp.pickup_at
         ? toDatetimeLocalValue(pp.pickup_at)
         : (sameAsLinked && linked?.pickup_at
@@ -2051,6 +2053,7 @@ export default function LeadDetail() {
           : null,
         logistics_company_id: lid || null,
         install_occurrence_dates: occ.length ? occ : (ymd ? [ymd] : []),
+        vc_notes: String(sxScheduleEdit.vcNotes || '').trim() || null,
         sync_vc_ld_events: true,
       };
       await api.put(`/projects/${sxScheduleEdit.projectId}`, patch);
@@ -3099,6 +3102,18 @@ export default function LeadDetail() {
               </select>
             </label>
 
+            <label className="text-[10px] font-semibold text-gray-700 block">
+              Ghi chú cho bên vận chuyển / lắp đặt
+              <textarea
+                rows={2}
+                value={sxScheduleEdit.vcNotes || ''}
+                disabled={sxScheduleBusy}
+                onChange={(e) => setSxScheduleEdit((s) => ({ ...s, vcNotes: e.target.value }))}
+                placeholder="VD: hàng dễ vỡ, gọi trước 30 phút, thang máy nhỏ…"
+                className="mt-0.5 w-full px-2 py-1.5 border border-gray-200 rounded-lg text-sm bg-white resize-y"
+              />
+            </label>
+
             <div className="rounded-lg border border-teal-100 bg-teal-50/40 px-2.5 py-2 space-y-2">
               <p className="text-[10px] font-bold uppercase tracking-wide text-teal-800">
                 Deadline lắp đặt (VC/LĐ) &amp; hoàn thiện (SX)
@@ -3122,16 +3137,25 @@ export default function LeadDetail() {
                     className="mt-0.5 w-full h-9 px-2 border border-gray-200 rounded-lg text-sm bg-white"
                   />
                 </label>
-                <label className="text-[10px] font-semibold text-gray-700 block col-span-2 sm:col-span-1">
-                  Giờ lắp đặt
-                  <input
-                    type="time"
-                    value={sxScheduleEdit.installTime}
-                    disabled={sxScheduleBusy || !sxScheduleEdit.installYmd}
-                    onChange={(e) => setSxScheduleEdit((s) => ({ ...s, installTime: e.target.value }))}
-                    className="mt-0.5 w-full h-9 px-2 border border-gray-200 rounded-lg text-sm bg-white"
-                  />
-                </label>
+                <div className="col-span-2 sm:col-span-1">
+                  <span className="text-[10px] font-semibold text-gray-700 block">Giờ lắp đặt</span>
+                  <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
+                    <ShiftQuickPick
+                      tone="teal"
+                      hm={sxScheduleEdit.installTime || ''}
+                      disabled={sxScheduleBusy || !sxScheduleEdit.installYmd}
+                      onPick={(hm) => setSxScheduleEdit((s) => ({ ...s, installTime: hm }))}
+                    />
+                    <input
+                      type="time"
+                      value={sxScheduleEdit.installTime}
+                      disabled={sxScheduleBusy || !sxScheduleEdit.installYmd}
+                      onChange={(e) => setSxScheduleEdit((s) => ({ ...s, installTime: e.target.value }))}
+                      title="Giờ khác — nhập trực tiếp"
+                      className="w-[7.5rem] h-9 px-2 border border-gray-200 rounded-lg text-sm bg-white tabular-nums"
+                    />
+                  </div>
+                </div>
               </div>
               <label className="text-[10px] font-semibold text-indigo-700 block">
                 Ngày hoàn thiện
@@ -3166,16 +3190,31 @@ export default function LeadDetail() {
 
             <div className="rounded-lg border border-sky-100 bg-sky-50/50 px-2.5 py-2 space-y-2">
               <p className="text-[10px] font-bold uppercase tracking-wide text-sky-800">Lấy hàng (VC)</p>
-              <label className="text-[10px] font-semibold text-gray-700 block">
-                Thời gian lấy hàng tại xưởng <span className="font-normal text-gray-400">(không bắt buộc)</span>
-                <input
-                  type="datetime-local"
-                  value={sxScheduleEdit.pickupLocal}
-                  disabled={sxScheduleBusy}
-                  onChange={(e) => setSxScheduleEdit((s) => ({ ...s, pickupLocal: e.target.value }))}
-                  className="mt-0.5 w-full h-9 px-2 border border-gray-200 rounded-lg text-sm bg-white"
-                />
-              </label>
+              <div>
+                <span className="text-[10px] font-semibold text-gray-700 block">
+                  Thời gian lấy hàng tại xưởng <span className="font-normal text-gray-400">(không bắt buộc)</span>
+                </span>
+                <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
+                  <ShiftQuickPick
+                    tone="sky"
+                    hm={String(sxScheduleEdit.pickupLocal || '').match(/T(\d{2}:\d{2})/)?.[1] || ''}
+                    disabled={sxScheduleBusy}
+                    onPick={(hm) => setSxScheduleEdit((s) => {
+                      const ymd = String(s.pickupLocal || '').slice(0, 10) || s.installYmd || '';
+                      if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return s;
+                      return { ...s, pickupLocal: `${ymd}T${hm}` };
+                    })}
+                  />
+                  <input
+                    type="datetime-local"
+                    value={sxScheduleEdit.pickupLocal}
+                    disabled={sxScheduleBusy}
+                    onChange={(e) => setSxScheduleEdit((s) => ({ ...s, pickupLocal: e.target.value }))}
+                    title="Ngày giờ khác — nhập trực tiếp"
+                    className="w-[13rem] h-9 px-2 border border-gray-200 rounded-lg text-sm bg-white tabular-nums"
+                  />
+                </div>
+              </div>
             </div>
 
             {sxScheduleErr && <p className="text-xs text-red-600">{sxScheduleErr}</p>}
@@ -7633,6 +7672,11 @@ function VcBookingInfoBlock({ lead }) {
         ) : null}
         {p?.pickup_notes && (
           <p className="text-[11px] text-sky-700/90 mt-1 leading-snug break-words">Ghi chú: {p.pickup_notes}</p>
+        )}
+        {p?.vc_notes && (
+          <p className="text-[11px] text-sky-800 mt-1 leading-snug break-words whitespace-pre-wrap">
+            Ghi chú cho VC/LĐ: {p.vc_notes}
+          </p>
         )}
       </div>
     </div>

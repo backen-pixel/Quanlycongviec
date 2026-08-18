@@ -8,6 +8,7 @@ import {
   CalendarDays, ChevronLeft, ChevronRight, ClipboardCheck, Loader2,
   Save, Send, Users, X, AlertTriangle, CheckCircle2, Clock, Sparkles, History,
   Plus, Trash2, HelpCircle, Filter, Search, ExternalLink, FileDown, Copy, Sheet,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
@@ -1561,7 +1562,10 @@ function EmployeeHeaderCells({ employees, onOpenReport, hoveredColId, sectionKey
 }
 
 /** Một bảng cho 1 mục (I/II/III/IV) × 1 mẫu. */
-function MatrixSectionTable({ section, employees, templateName, roleKey, reportDate, companyId, onOpenReport }) {
+function MatrixSectionTable({
+  section, employees, templateName, roleKey, reportDate, companyId, onOpenReport,
+  templates, onAssignTemplate, assigningUserId,
+}) {
   const headCls = SECTION_HEADER_CLS[section.key] || 'bg-slate-800';
   const rows = section.rows || [];
   const cols = (section.key === 'result' || section.key === 'plan')
@@ -1571,6 +1575,7 @@ function MatrixSectionTable({ section, employees, templateName, roleKey, reportD
   const [hover, setHover] = useState({ rowKey: null, colId: null });
   const [picked, setPicked] = useState(null); // { row, emp, display }
   const [links, setLinks] = useState({ loading: false, error: '', items: [], meta: null });
+  const [showAssign, setShowAssign] = useState(false);
 
   const clearHover = () => setHover({ rowKey: null, colId: null });
 
@@ -1645,10 +1650,55 @@ function MatrixSectionTable({ section, employees, templateName, roleKey, reportD
               </div>
             )}
           </div>
-          <div className="text-[11px] text-white/80">
-            {showCols.length} nhân viên{section.key === 'result' ? '' : ' có phiếu'}
+          <div className="flex items-center gap-2">
+            <div className="text-[11px] text-white/80">
+              {showCols.length} nhân viên{section.key === 'result' ? '' : ' có phiếu'}
+            </div>
+            {onAssignTemplate && (
+              <button
+                type="button"
+                onClick={() => setShowAssign((v) => !v)}
+                className={`inline-flex items-center gap-1 rounded-md border border-white/25 px-2 py-1 text-[11px] font-semibold transition-colors ${
+                  showAssign ? 'bg-white text-violet-900' : 'bg-white/10 text-white hover:bg-white/20'
+                }`}
+                title="Gán mẫu báo cáo cho từng nhân viên trong nhóm này"
+              >
+                <SlidersHorizontal className="h-3.5 w-3.5" /> Gán mẫu
+              </button>
+            )}
           </div>
         </div>
+
+        {showAssign && onAssignTemplate && (
+          <div className="mt-2 rounded-lg border border-white/20 bg-black/20 px-3 py-2">
+            <div className="text-[11px] text-white/85">
+              Nhân viên bị xếp sai nhóm thì chọn đúng mẫu ở đây. Đổi mẫu sẽ chuyển họ sang bảng của
+              mẫu đó và cập nhật cả những phiếu đã lưu trước đó.
+            </div>
+            <div className="mt-2 grid gap-1.5 sm:grid-cols-2 xl:grid-cols-3">
+              {(employees || []).map((emp) => (
+                <div key={emp.id} className="flex items-center gap-2 rounded-md bg-white/10 px-2 py-1.5">
+                  <span className="min-w-0 flex-1 truncate text-[11px] font-medium" title={emp.email || ''}>
+                    {emp.full_name}
+                  </span>
+                  <select
+                    value={emp.assigned_template_id || ''}
+                    disabled={String(assigningUserId || '') === String(emp.id)}
+                    onChange={(e) => onAssignTemplate(emp, e.target.value)}
+                    className="max-w-[160px] shrink-0 rounded-md border border-white/25 bg-white px-1.5 py-1 text-[11px] font-medium text-gray-900 disabled:opacity-60"
+                  >
+                    <option value="">
+                      Tự động{emp.template_name ? ` (đang là ${emp.template_name})` : ''}
+                    </option>
+                    {(templates || []).filter((t) => t.id).map((t) => (
+                      <option key={t.id} value={t.id}>{t.name}</option>
+                    ))}
+                  </select>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {picked && (
           <div className="mt-2 rounded-lg border border-white/20 bg-black/20 px-3 py-2">
@@ -1827,6 +1877,7 @@ function TeamMatrixPanel({ date, onDateChange }) {
   const [departments, setDepartments] = useState([]);
   const [templates, setTemplates] = useState([]);
   const [exportingExcel, setExportingExcel] = useState(false);
+  const [assigningUserId, setAssigningUserId] = useState('');
 
   useEffect(() => {
     if (lockedCompany) return undefined;
@@ -1922,6 +1973,24 @@ function TeamMatrixPanel({ date, onDateChange }) {
   }, [date, companyId, filter.departmentId, filter.roleKey, filter.q]);
 
   useEffect(() => { load(); }, [load]);
+
+  const assignTemplate = async (emp, templateId) => {
+    if (!emp?.id || assigningUserId) return;
+    setAssigningUserId(String(emp.id));
+    setError('');
+    try {
+      await api.put('/crm/daily-reports/team/assign-template', {
+        user_id: emp.id,
+        template_id: templateId || null,
+        company_id: companyId || undefined,
+      });
+      await load();
+    } catch (e) {
+      setError(e.response?.data?.error || e.message || 'Gán mẫu báo cáo thất bại');
+    } finally {
+      setAssigningUserId('');
+    }
+  };
 
   const groups = data?.groups || [];
   const s = data?.summary || { total: 0, with_report: 0, plan_ok: 0, result_ok: 0, missing: 0 };
@@ -2168,6 +2237,9 @@ function TeamMatrixPanel({ date, onDateChange }) {
               reportDate={date}
               companyId={companyId}
               onOpenReport={setDetailId}
+              templates={tplOptions}
+              onAssignTemplate={assignTemplate}
+              assigningUserId={assigningUserId}
             />
           ))}
         </div>

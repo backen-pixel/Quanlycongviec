@@ -21,6 +21,7 @@ const {
 } = require('../helpers/workshopCrmDeals');
 const { validateLogisticsCompanyId } = require('../helpers/logisticsCompanyGate');
 const { isSystemAdmin } = require('../helpers/adminRole');
+const { assertVcTempStagedMovable } = require('../helpers/vcTempInstallStaging');
 const {
   isInstallLogisticsStageRow,
   attachSplitLogisticsTaskStats,
@@ -97,14 +98,33 @@ const IS_VC_DELETED_AT_MISSING = (err) =>
 const IS_VC_DELETE_REASON_MISSING = (err) =>
   !!err && String(err.message || '').toLowerCase().includes('vc_delete_reason');
 
-const VC_SELECT_FULL = `id, company_id, name, color, icon, order_index, is_active, progress_percent, workflow_stage_id, bucket_slug, crm_sync_type, is_handover_to_install,
+const VC_SELECT_FULL = `id, company_id, name, color, icon, order_index, is_active, progress_percent, workflow_stage_id, bucket_slug, crm_sync_type, is_handover_to_install, is_temp_install_staging,
       crm_target_stage_id, crm_target_stage:crm_pipeline_stages(id, name, color, icon, order_index),
       workflow_stage:workflow_stages(id, slug, name, color, icon)`;
 
 /** Khi DB chưa có cột company_id — truy vấn không lọc theo công ty */
-const VC_SELECT_NO_COMPANY = `id, name, color, icon, order_index, is_active, progress_percent, workflow_stage_id, bucket_slug, crm_sync_type, is_handover_to_install,
+const VC_SELECT_NO_COMPANY = `id, name, color, icon, order_index, is_active, progress_percent, workflow_stage_id, bucket_slug, crm_sync_type, is_handover_to_install, is_temp_install_staging,
       crm_target_stage_id, crm_target_stage:crm_pipeline_stages(id, name, color, icon, order_index),
       workflow_stage:workflow_stages(id, slug, name, color, icon)`;
+
+/** Mỗi công ty VC chỉ có một cột «lắp đặt tạm» — bỏ cờ trên các cột còn lại. */
+async function clearOtherTempInstallStages(companyId, keepStageId) {
+  try {
+    let q = supabase
+      .from(VC_PIPELINE_TABLE)
+      .update({ is_temp_install_staging: false })
+      .eq('is_temp_install_staging', true);
+    if (companyId) q = q.eq('company_id', companyId);
+    else q = q.is('company_id', null);
+    if (keepStageId) q = q.neq('id', keepStageId);
+    const { error } = await q;
+    if (error && !String(error.message || '').includes('is_temp_install_staging')) {
+      console.warn('[logistics] clear temp install stages:', error.message);
+    }
+  } catch (e) {
+    console.warn('[logistics] clear temp install stages:', e.message);
+  }
+}
 
 async function resolveFirstInstallLogisticsColumn(companyId) {
   const rows = await loadLogisticsPipelineRows(true, companyId);
@@ -137,7 +157,7 @@ async function loadLogisticsPipelineRows(includeInactive = false, companyId = nu
     if (error && isLogisticsCompanyIdMissing(error)) {
       return loadLogisticsPipelineRows(includeInactive, companyId, true);
     }
-    if (error && (error.message?.includes('progress_percent') || error.message?.includes('is_handover_to_install'))) {
+    if (error && (error.message?.includes('progress_percent') || error.message?.includes('is_handover_to_install') || error.message?.includes('is_temp_install_staging'))) {
       const slim = legacyUnscoped
         ? 'id, name, color, icon, order_index, is_active, workflow_stage_id, bucket_slug, crm_sync_type, crm_target_stage_id, crm_target_stage:crm_pipeline_stages(id, name, color, icon, order_index), workflow_stage:workflow_stages(id, slug, name, color, icon)'
         : 'id, company_id, name, color, icon, order_index, is_active, workflow_stage_id, bucket_slug, crm_sync_type, crm_target_stage_id, crm_target_stage:crm_pipeline_stages(id, name, color, icon, order_index), workflow_stage:workflow_stages(id, slug, name, color, icon)';
@@ -150,7 +170,11 @@ async function loadLogisticsPipelineRows(includeInactive = false, companyId = nu
       if (!legacyUnscoped && scope === 'global') q2 = q2.is('company_id', null);
       ({ data, error } = await q2);
       if (!error && Array.isArray(data)) {
-        data = data.map((r) => ({ ...r, is_handover_to_install: !!r.is_handover_to_install }));
+        data = data.map((r) => ({
+          ...r,
+          is_handover_to_install: !!r.is_handover_to_install,
+          is_temp_install_staging: !!r.is_temp_install_staging,
+        }));
       }
       if (error && isLogisticsCompanyIdMissing(error)) {
         return loadLogisticsPipelineRows(includeInactive, companyId, true);
@@ -462,17 +486,22 @@ r.post('/pipeline-stages', requirePermission('projects', 'edit'), async (req, re
       bucket_slug: b.bucket_slug || null,
       crm_sync_type: isIntakeRow ? null : (b.crm_sync_type || null),
       crm_target_stage_id: isIntakeRow ? null : (b.crm_target_stage_id || null),
+      is_temp_install_staging: isIntakeRow ? false : !!b.is_temp_install_staging,
       company_id: insertCompanyId || null,
     };
+    // Mỗi công ty chỉ giữ một cột «lắp đặt tạm»
+    if (insertPayload.is_temp_install_staging) {
+      await clearOtherTempInstallStages(insertCompanyId, null);
+    }
     const vcSelect = 'id, name, color, icon, order_index, is_active, workflow_stage_id, bucket_slug, crm_sync_type, workflow_stage:workflow_stages(id, slug, name, color, icon)';
     let { data, error } = await supabase
       .from(VC_PIPELINE_TABLE)
       .insert(insertPayload)
       .select(`${vcSelect}, crm_target_stage_id, crm_target_stage:crm_pipeline_stages(id, name, color, icon, order_index)`)
       .single();
-    // Graceful: crm_target_stage_id column may not exist yet
-    if (error && error.message?.includes('crm_target_stage_id')) {
-      const { crm_target_stage_id: _t, ...payloadWithout } = insertPayload;
+    // Graceful: crm_target_stage_id / is_temp_install_staging column may not exist yet
+    if (error && (error.message?.includes('crm_target_stage_id') || error.message?.includes('is_temp_install_staging'))) {
+      const { crm_target_stage_id: _t, is_temp_install_staging: _s, ...payloadWithout } = insertPayload;
       const r2 = await supabase.from(VC_PIPELINE_TABLE).insert(payloadWithout).select(vcSelect).single();
       data = r2.data; error = r2.error;
     }
@@ -493,7 +522,8 @@ r.put('/pipeline-stages/:id', requirePermission('projects', 'edit'), async (req,
     if (!assertCompanyOwnedRow(req, res, existingRow, { label: 'cột pipeline VC', queryCompanyId: b.company_id })) return;
     const update = {};
     ['name', 'color', 'icon', 'order_index', 'is_active', 'workflow_stage_id', 'bucket_slug',
-      'crm_sync_type', 'crm_target_stage_id', 'progress_percent', 'is_handover_to_install'].forEach((f) => {
+      'crm_sync_type', 'crm_target_stage_id', 'progress_percent', 'is_handover_to_install',
+      'is_temp_install_staging'].forEach((f) => {
       if (b[f] !== undefined) update[f] = b[f];
     });
     if (existingRow?.bucket_slug === INTAKE_BUCKET) {
@@ -501,6 +531,13 @@ r.put('/pipeline-stages/:id', requirePermission('projects', 'edit'), async (req,
       update.crm_sync_type = null;
       update.crm_target_stage_id = null;
       update.is_handover_to_install = false;
+      update.is_temp_install_staging = false;
+    }
+    if (update.is_temp_install_staging !== undefined) {
+      update.is_temp_install_staging = !!update.is_temp_install_staging;
+      if (update.is_temp_install_staging) {
+        await clearOtherTempInstallStages(existingRow?.company_id || null, req.params.id);
+      }
     }
     if (update.bucket_slug === 'installation' || update.crm_sync_type === 'installation') {
       update.is_handover_to_install = false;
@@ -518,9 +555,9 @@ r.put('/pipeline-stages/:id', requirePermission('projects', 'edit'), async (req,
       .eq('id', req.params.id)
       .select(`${vcSelect}, crm_target_stage_id, crm_target_stage:crm_pipeline_stages(id, name, color, icon, order_index)`)
       .single();
-    // Graceful: crm_target_stage_id column may not exist yet
-    if (error && error.message?.includes('crm_target_stage_id')) {
-      const { crm_target_stage_id: _t, ...updateWithout } = update;
+    // Graceful: crm_target_stage_id / is_temp_install_staging column may not exist yet
+    if (error && (error.message?.includes('crm_target_stage_id') || error.message?.includes('is_temp_install_staging'))) {
+      const { crm_target_stage_id: _t, is_temp_install_staging: _s, ...updateWithout } = update;
       const r2 = await supabase.from(VC_PIPELINE_TABLE).update(updateWithout).eq('id', req.params.id).select(vcSelect).single();
       data = r2.data; error = r2.error;
     }
@@ -720,7 +757,7 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
     const orFilter = buildLogisticsScopeFilter(stageIds);
     if (!orFilter) return res.json({ projects: [], total: 0, page: parsedPage, totalPages: 1 });
 
-    const selectFull = `id, code, name, estimated_value, priority, deadline, install_date, delivery_date, pickup_at, created_at, status, notes, company_id, logistics_company_id,
+    const selectFull = `id, code, name, estimated_value, priority, deadline, install_date, delivery_date, pickup_at, created_at, status, notes, vc_notes, vc_temp_staged, company_id, logistics_company_id,
         current_stage_id, vc_kanban_column_id, workshop_type_id,
         current_stage:workflow_stages(id, slug, name, color, icon),
         customer:customers(id, full_name, phone),
@@ -732,7 +769,7 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
         sales_person:users!projects_sales_person_id_fkey(id, full_name),
         workshop_type:workshop_project_types(id, name, applies_to),
         ${TASKS_EMBED}`;
-    const selectLite = `id, code, name, estimated_value, deadline, install_date, delivery_date, pickup_at, created_at, status, company_id, logistics_company_id,
+    const selectLite = `id, code, name, estimated_value, deadline, install_date, delivery_date, pickup_at, created_at, status, vc_temp_staged, company_id, logistics_company_id,
         current_stage_id, vc_kanban_column_id, workshop_type_id,
         logistics_person_id, installer_person_id, production_person_id, sales_person_id,
         current_stage:workflow_stages(id, slug, name),
@@ -876,7 +913,7 @@ const VC_WORKSHOP_TYPE_EMBED = 'workshop_type:workshop_project_types(id, name, a
 
 const LOGISTICS_DETAIL_SELECT_FULL = `
         id, company_id, code, name, estimated_value, status, deadline, created_at, notes, priority,
-        order_date, delivery_date, install_date, pickup_at, pickup_notes,
+        order_date, delivery_date, install_date, pickup_at, pickup_notes, vc_notes, vc_temp_staged,
         production_deadline, production_note, install_address, vc_kanban_column_id,
         current_stage_id, ${VC_WORKSHOP_TYPE_SCALAR}
         ${VC_WORKSHOP_TYPE_EMBED}
@@ -896,7 +933,7 @@ const LOGISTICS_DETAIL_SELECT_FULL = `
 
 const LOGISTICS_DETAIL_SELECT_NO_TEAMS = `
         id, company_id, code, name, estimated_value, status, deadline, created_at, notes, priority,
-        order_date, delivery_date, install_date, pickup_at, pickup_notes,
+        order_date, delivery_date, install_date, pickup_at, pickup_notes, vc_notes, vc_temp_staged,
         production_deadline, production_note, install_address, vc_kanban_column_id,
         current_stage_id, ${VC_WORKSHOP_TYPE_SCALAR}
         ${VC_WORKSHOP_TYPE_EMBED}
@@ -1261,7 +1298,9 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
     if (!(await assertProjectAccessible(req, res, req.params.id, { operation: 'WRITE' }))) return;
     const { id } = req.params;
     // stage_id = workflow_stages.id (tùy chọn), vc_stage_id = logistics_pipeline_stages.id (ưu tiên)
-    const { stage_id, vc_stage_id, move_to_intake } = req.body;
+    const {
+      stage_id, vc_stage_id, move_to_intake, force_temp_move,
+    } = req.body;
     const userId = req.user.userId;
 
     const { data: project } = await supabase
@@ -1270,6 +1309,15 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
       .eq('id', id)
       .single();
     if (!project) return res.status(404).json({ error: 'Project not found' });
+
+    // Dự án đang ở cột «lắp đặt tạm» (Sale mới lên kế hoạch, xưởng chưa bàn giao thật)
+    // → khoá chuyển cột tới khi xưởng bàn giao + Sale CRM xác nhận lại thông tin VC/LĐ.
+    const tempGuard = await assertVcTempStagedMovable(req, {
+      projectId: id,
+      targetVcStageId: vc_stage_id || null,
+      allowForce: force_temp_move === true || force_temp_move === 'true',
+    });
+    if (!tempGuard.ok) return res.status(409).json({ error: tempGuard.error, code: 'vc_temp_staged_locked' });
 
     if (move_to_intake === true || move_to_intake === 'true') {
       // Tìm cột intake/first để lưu vc_kanban_column_id

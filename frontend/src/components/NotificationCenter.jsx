@@ -6,7 +6,7 @@ import { useAuth } from '../lib/auth';
 import { alertIncomingNotification, cancelNotificationSpeech } from '../lib/notificationAlert';
 import { setNotificationPrefsCache, getNotificationPrefsCache, isNotificationTypeEnabled } from '../lib/notificationPrefsCache';
 import { isExpiryDeadlineNotificationType } from '../lib/notificationOperationalFilter';
-import { Bell, Check, CheckCheck, Clock, MessageSquare, CheckSquare, FolderKanban, AlertTriangle, X, ThumbsUp, ThumbsDown, Paperclip, FileText, Shield, ShieldCheck, ShieldAlert, XCircle, RotateCcw, Settings, Users, Factory, Calendar, CalendarClock, CheckCircle2, Sparkles, ClipboardList, BellOff, Filter } from 'lucide-react';
+import { Bell, Check, CheckCheck, Clock, MessageSquare, CheckSquare, FolderKanban, AlertTriangle, X, ThumbsUp, ThumbsDown, Paperclip, FileText, Shield, ShieldCheck, ShieldAlert, XCircle, RotateCcw, Settings, Users, Factory, Truck, Calendar, CalendarClock, CheckCircle2, Sparkles, ClipboardList, BellOff, Filter } from 'lucide-react';
 import { formatDateTime, getInitials, avatarColor } from '../lib/utils';
 import NotificationToast from './NotificationToast';
 import NotificationSettings from './NotificationSettings';
@@ -65,6 +65,8 @@ const ICON_MAP = {
   document_uploaded: Paperclip,
   project_created: FolderKanban,
   workshop_new_deal: Factory,
+  vc_plan_ready: Truck,
+  vc_handover_request: Truck,
   item_deleted: AlertTriangle,
   system: Bell,
   crm_deadline_1h: Clock,
@@ -146,6 +148,8 @@ const COLOR_MAP = {
   order_confirmed: 'bg-orange-100 text-orange-600',
   invoice_overdue: 'bg-red-100 text-red-600',
   workshop_new_deal: 'bg-sky-100 text-sky-700',
+  vc_plan_ready: 'bg-amber-100 text-amber-700',
+  vc_handover_request: 'bg-amber-100 text-amber-700',
   system: 'bg-gray-100 text-gray-600',
   crm_deadline_1h: 'bg-amber-100 text-amber-700',
   crm_deadline_warning: 'bg-amber-100 text-amber-700',

@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useMemo, useRef, useLayoutEffect } from 'react';
+import { useState, useEffect, useMemo, useRef, useLayoutEffect } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -158,6 +158,34 @@ function formatOccurrenceDatesLabel(ev) {
     const [, m, d] = ymd.split('-');
     return `${d}/${m}`;
   }).join(', ');
+}
+
+const VC_NOTE_LINE_RE = /^ghi chú vc\s*\/\s*lđ\s*:/i;
+
+const VC_NOTE_EVENT_TYPES = ['pickup', 'installation', 'delivery', 'acceptance'];
+
+/**
+ * Ghi chú dặn bên VC/LĐ — lấy từ dự án (chỉ cho sự kiện vận chuyển / lắp đặt),
+ * fallback dòng ghi chú đã ghi trong mô tả sự kiện.
+ */
+function getEventVcNotes(ev) {
+  const line = String(ev?.description || '')
+    .split('\n')
+    .find((l) => VC_NOTE_LINE_RE.test(l.trim()));
+  if (line) return line.replace(/^[^:]*:\s*/, '').trim();
+  const isVcEvent = String(ev?.module || '') === 'logistics'
+    || VC_NOTE_EVENT_TYPES.includes(String(ev?.event_type || ''));
+  if (!isVcEvent) return '';
+  return ev?.project?.vc_notes ? String(ev.project.vc_notes).trim() : '';
+}
+
+/** Mô tả sự kiện đã bỏ dòng ghi chú VC/LĐ (đã hiện riêng thành khối nổi bật). */
+function getEventDescriptionWithoutVcNotes(ev) {
+  return String(ev?.description || '')
+    .split('\n')
+    .filter((l) => !VC_NOTE_LINE_RE.test(l.trim()))
+    .join('\n')
+    .trim();
 }
 
 /** Khoảng ngày theo preset (đồng bộ style với CRM Dashboard). YYYY-MM-DD theo local. */
@@ -1533,6 +1561,10 @@ function EventCard({ event: ev, eventTypes, currentUser, pageModule = 'crm', onR
   const declined = (ev.participants || []).filter(p => p.status === 'declined');
   const pending = (ev.participants || []).filter(p => p.status === 'pending');
   const myParticipation = (ev.participants || []).find(p => p.user_id === currentUser.id);
+  const cardVcNotes = getEventVcNotes(ev);
+  const cardDescription = cardVcNotes
+    ? getEventDescriptionWithoutVcNotes(ev)
+    : String(ev.description || '').trim();
 
   const handleComplete = async () => {
     if (!canCompleteNow || completing) return;
@@ -1718,7 +1750,15 @@ function EventCard({ event: ev, eventTypes, currentUser, pageModule = 'crm', onR
               {ev.customer.full_name} {ev.customer.phone ? `(${ev.customer.phone})` : ''}
             </p>
           )}
-          {ev.description && <p className="text-[11px] text-gray-600 line-clamp-2">{ev.description}</p>}
+          {cardVcNotes && (
+            <p
+              className="text-[11px] text-amber-900 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded line-clamp-2"
+              title={cardVcNotes}
+            >
+              🚚 <span className="font-semibold">Ghi chú VC/LĐ:</span> {cardVcNotes}
+            </p>
+          )}
+          {cardDescription && <p className="text-[11px] text-gray-600 line-clamp-2">{cardDescription}</p>}
           {ev.result && <p className="text-[11px] text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded line-clamp-2">📝 {ev.result}</p>}
 
           {/* Participants — chip nhỏ */}
@@ -1878,6 +1918,8 @@ function SelectedDayEventDetail({ ev, eventTypes, pageModule = 'crm', onEdit }) 
     return `${startLabel}, ${startTime} → ${endLabel}, ${endTime}`;
   })();
   const occLabel = formatOccurrenceDatesLabel(ev);
+  const vcNotes = getEventVcNotes(ev);
+  const descriptionText = vcNotes ? getEventDescriptionWithoutVcNotes(ev) : String(ev.description || '').trim();
 
   return (
     <div
@@ -1955,7 +1997,12 @@ function SelectedDayEventDetail({ ev, eventTypes, pageModule = 'crm', onEdit }) 
               <span className="text-gray-800">{ev.project.code ? `${ev.project.code} — ` : ''}{ev.project.name}</span>
             </div>
           )}
-          {ev.description && <p className="text-gray-600 text-sm whitespace-pre-wrap">{ev.description}</p>}
+          {vcNotes && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[13px] text-amber-900 whitespace-pre-wrap">
+              <span className="font-semibold">🚚 Ghi chú VC/LĐ: </span>{vcNotes}
+            </div>
+          )}
+          {descriptionText && <p className="text-gray-600 text-sm whitespace-pre-wrap">{descriptionText}</p>}
           {ev.result && (
             <p className="text-sm text-emerald-800 bg-emerald-50 px-3 py-2 rounded-lg border border-emerald-100">📝 Kết quả: {ev.result}</p>
           )}
@@ -2406,8 +2453,18 @@ function EventListView({
                         <div className="font-semibold text-gray-900 truncate" title={ev.title}>
                           <span className="mr-1">{typeInfo.icon}</span>{ev.title}
                         </div>
-                        {ev.description && (
-                          <div className="text-[11px] text-gray-500 truncate" title={ev.description}>{ev.description}</div>
+                        {getEventVcNotes(ev) && (
+                          <div className="text-[11px] text-amber-800 truncate" title={getEventVcNotes(ev)}>
+                            🚚 Ghi chú VC/LĐ: {getEventVcNotes(ev)}
+                          </div>
+                        )}
+                        {getEventDescriptionWithoutVcNotes(ev) && (
+                          <div
+                            className="text-[11px] text-gray-500 truncate"
+                            title={getEventDescriptionWithoutVcNotes(ev)}
+                          >
+                            {getEventDescriptionWithoutVcNotes(ev)}
+                          </div>
                         )}
                         <EventDealLinkButtons event={ev} pageModule={pageModule} className="mt-0.5" />
                       </td>
