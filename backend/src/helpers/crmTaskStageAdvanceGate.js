@@ -4,7 +4,7 @@
  * Quy tắc:
  *  - blocks_stage_advance = true + chưa completed/cancelled → chặn.
  *  - completion_requires_file_or_note = true + thiếu ghi chú/đính kèm → chặn.
- *  - KHÔNG chặn khi giai đoạn đích là Thắng (is_won) hoặc Thua (is_lost).
+ *  - KHÔNG chặn khi giai đoạn đích là Thắng (is_won), Thua (is_lost) hoặc Hoàn thành.
  *  - KHÔNG chặn khi giai đoạn đích "lùi lại" (order_index <= current order_index).
  *
  * Áp dụng cho cả Lead và Deal.
@@ -18,6 +18,7 @@ const {
   quickVerdictMeetsRequirement,
   formatQuickVerdictBlockLabel,
 } = require('./taskQuickVerdict');
+const { isCrmCompletedStage } = require('./completeOpenWorkOnModuleDone');
 
 /** Mapping từ tên giai đoạn (đã chuẩn hoá) → template-slug của bộ nhiệm vụ Lead. */
 const LEAD_STAGE_NAME_TO_SLUG = [
@@ -73,7 +74,7 @@ function inferTaskStageSlugForPipelineStage(stage, leadType) {
  */
 function shouldSkipGate(currentStage, targetStage) {
   if (!targetStage) return true;
-  if (targetStage.is_won || targetStage.is_lost) return true;
+  if (targetStage.is_won || targetStage.is_lost || isCrmCompletedStage(targetStage)) return true;
   if (!currentStage) return true;
   if (String(currentStage.id || '') === String(targetStage.id || '')) return true;
   const a = Number(currentStage.order_index);

@@ -43,6 +43,31 @@ function buildBlockResponse(currentCol, targetCol, blockingItems) {
  *   1) crm_leads.sx_pipeline_stage_id (nếu nằm trong company + workshop_type)
  *   2) Fallback null (không xác định được — cho qua gate)
  */
+const SX_COL_SELECT =
+  'id, name, order_index, bucket_slug, workshop_type_id, company_id, counts_as_completed_revenue, counts_as_collected_revenue';
+const SX_COL_SELECT_LEGACY = 'id, name, order_index, bucket_slug, workshop_type_id, company_id';
+
+async function fetchSxColumnById(colId) {
+  if (!colId) return null;
+  let { data, error } = await supabase
+    .from('production_pipeline_stages')
+    .select(SX_COL_SELECT)
+    .eq('id', colId)
+    .maybeSingle();
+  if (error && /counts_as_/.test(String(error.message || ''))) {
+    ({ data, error } = await supabase
+      .from('production_pipeline_stages')
+      .select(SX_COL_SELECT_LEGACY)
+      .eq('id', colId)
+      .maybeSingle());
+  }
+  if (error) {
+    console.warn('[sxGate] fetch column:', error.message);
+    return null;
+  }
+  return data || null;
+}
+
 async function resolveCurrentSxColumn(projectId) {
   const { data: lead } = await supabase
     .from('crm_leads')
@@ -52,24 +77,11 @@ async function resolveCurrentSxColumn(projectId) {
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle();
-  const colId = lead?.sx_pipeline_stage_id || null;
-  if (!colId) return null;
-  const { data: col } = await supabase
-    .from('production_pipeline_stages')
-    .select('id, name, order_index, bucket_slug, workshop_type_id, company_id')
-    .eq('id', colId)
-    .maybeSingle();
-  return col || null;
+  return fetchSxColumnById(lead?.sx_pipeline_stage_id || null);
 }
 
 async function resolveTargetSxColumn(targetColId) {
-  if (!targetColId) return null;
-  const { data } = await supabase
-    .from('production_pipeline_stages')
-    .select('id, name, order_index, bucket_slug, workshop_type_id, company_id')
-    .eq('id', targetColId)
-    .maybeSingle();
-  return data || null;
+  return fetchSxColumnById(targetColId);
 }
 
 function shouldSkipGate(currentCol, targetCol) {
@@ -77,6 +89,7 @@ function shouldSkipGate(currentCol, targetCol) {
   if (!targetCol?.id) return true;
   if (String(currentCol.id) === String(targetCol.id)) return true;
   if (targetCol.bucket_slug === INTAKE_BUCKET) return true; // kéo về intake
+  if (targetCol.counts_as_completed_revenue || targetCol.counts_as_collected_revenue) return true;
   const a = Number(currentCol.order_index);
   const b = Number(targetCol.order_index);
   if (Number.isFinite(a) && Number.isFinite(b) && b <= a) return true;

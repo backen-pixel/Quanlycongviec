@@ -11,6 +11,10 @@ const {
   getTransferOptions,
 } = require('../../../helpers/crmLeadCompanyTransfer');
 const { createAdditionalCustomerDeal } = require('../../../helpers/projectOrderFulfillment');
+const {
+  isCrmCompletedStage,
+  completeOpenWorkOnModuleDone,
+} = require('../../../helpers/completeOpenWorkOnModuleDone');
 
 const r = Router();
 
@@ -2227,7 +2231,7 @@ r.get('/leads/:id/stage-advance-check', async (req, res) => {
 
     const { data: targetStage } = await supabase
       .from('crm_pipeline_stages')
-      .select('id, name, order_index, is_won, is_lost, pipeline_type')
+      .select('id, name, order_index, is_won, is_lost, pipeline_type, counts_as_completed_revenue')
       .eq('id', targetStageId)
       .maybeSingle();
 
@@ -2537,7 +2541,25 @@ r.patch('/leads/:id/stage', async (req, res) => {
     }
 
     // Bổ sung nhiệm vụ CRM thiếu theo bộ mẫu của cột đích (chỉ thêm phần chưa có).
-    if (isStageChange && stage_id) {
+    // Cột hoàn thành: không gen thêm NV — đóng hết NV + deadline CRM còn mở.
+    if (isStageChange && stage_id && isCrmCompletedStage(stage)) {
+      try {
+        const done = await completeOpenWorkOnModuleDone({
+          module: 'crm',
+          leadIds: [req.params.id],
+          projectIds: lead?.project_id ? [lead.project_id] : [],
+        });
+        if (done.crm_tasks > 0) {
+          await emitCrmTaskChanged(req, {
+            leadId: req.params.id,
+            action: 'bulk_completed',
+            count: done.crm_tasks,
+          });
+        }
+      } catch (doneErr) {
+        console.warn('[crm/stage] complete open CRM work:', doneErr.message);
+      }
+    } else if (isStageChange && stage_id) {
       try {
         const taskLeadId = await resolveCrmTaskWriteLeadId(req.params.id);
         const ensureResult = await ensureMissingCrmTasksForPipelineStage({

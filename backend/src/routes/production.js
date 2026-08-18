@@ -60,6 +60,7 @@ const {
   ensureMissingSxTasksForLead,
 } = require('../helpers/projectOrderFulfillment');
 const { assertSxKanbanAdvanceAllowed } = require('../helpers/workshopStageAdvanceGate');
+const { completeOpenWorkOnModuleDone } = require('../helpers/completeOpenWorkOnModuleDone');
 const { applyProjectTenantScope, assertRowCompanyInTenant } = require('../helpers/tenantScope');
 
 /** Kế toán / deal_company_id: lọc deal theo công ty CRM; company_id = xưởng SX. */
@@ -236,7 +237,7 @@ function isSxColumnClearsDeadlines(col) {
 
 /**
  * Kéo vào cột «Hoàn thành» / Đã công / Đã thu:
- * xóa hết deadline / ngày giao xưởng + hạn NV xưởng + hủy lịch hẹn SX còn mở.
+ * xóa deadline SX + hoàn thành NV SX còn mở + hủy lịch hẹn SX.
  */
 async function clearSxSchedulesOnCompletedForProjects(projectIds) {
   const ids = [...new Set((projectIds || []).map(String).filter(Boolean))];
@@ -266,18 +267,6 @@ async function clearSxSchedulesOnCompletedForProjects(projectIds) {
     ({ error: projErr } = await supabase.from('projects').update(fallback).in('id', ids));
     if (projErr && !/sx_kanban_deadline|production_deadline|delivery_date|production_finish_date|deadline/.test(String(projErr.message || ''))) {
       throw projErr;
-    }
-  }
-
-  // Hạn nhiệm vụ xưởng (tab SX / tasks.due_date)
-  {
-    const { error: taskDueErr } = await supabase
-      .from('tasks')
-      .update({ due_date: null, updated_at: nowIso })
-      .in('project_id', ids)
-      .not('due_date', 'is', null);
-    if (taskDueErr) {
-      console.warn('[production] clear workshop task due_date on complete:', taskDueErr.message);
     }
   }
 
@@ -347,6 +336,16 @@ async function clearSxSchedulesOnCompletedForProjects(projectIds) {
     if (projEvtErr) {
       console.warn('[production] cancel project production events on complete:', projEvtErr.message);
     }
+  }
+
+  try {
+    await completeOpenWorkOnModuleDone({
+      module: 'production',
+      leadIds,
+      projectIds: ids,
+    });
+  } catch (doneErr) {
+    console.warn('[production] complete SX tasks on completed column:', doneErr.message);
   }
 }
 
@@ -3247,7 +3246,7 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
           },
         });
       }
-      const shouldApplyPipelineTemplates = colChanged && colRow.bucket_slug !== INTAKE_BUCKET;
+      const shouldApplyPipelineTemplates = colChanged && colRow.bucket_slug !== INTAKE_BUCKET && !isCompletedCol;
       setImmediate(() => {
         void (async () => {
           try {

@@ -206,7 +206,7 @@ function resolveVcDateKey(raw) {
 function shouldHideVcDeadlineCard(item, stage) {
   if (item?.status === 'completed') return true;
   const slug = String(stage?.bucket_slug || stage?.slug || '').toLowerCase();
-  return slug === 'completed' || slug === 'done';
+  return slug === 'completed' || slug === 'done' || slug === 'install_completed';
 }
 
 const VC_CAL_MODES = [

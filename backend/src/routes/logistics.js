@@ -27,6 +27,10 @@ const {
   attachSplitLogisticsTaskStats,
 } = require('../helpers/logisticsTaskSplit');
 const { applyAllActiveWorkshopTemplatesForArea } = require('../helpers/workshopApplyTemplates');
+const {
+  isLogisticsCompletedColumn,
+  completeOpenWorkOnModuleDone,
+} = require('../helpers/completeOpenWorkOnModuleDone');
 const { assertProjectAccessible } = require('../helpers/projectAccessScope');
 const {
   notifyLogisticsIntakePending,
@@ -1561,7 +1565,16 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
           .maybeSingle();
         targetCol = data;
       }
-      if (targetCol && effectiveVcStageId) {
+      if (targetCol && effectiveVcStageId && isLogisticsCompletedColumn(targetCol)) {
+        try {
+          await completeOpenWorkOnModuleDone({
+            module: 'logistics',
+            projectIds: [id],
+          });
+        } catch (doneErr) {
+          console.warn('[logistics/stage] complete VC/LĐ work on completed column:', doneErr.message);
+        }
+      } else if (targetCol && effectiveVcStageId) {
         const logCo = project.logistics_company_id || project.company_id || null;
         const out = await applyAllActiveWorkshopTemplatesForArea(id, userId, {
           workshopArea: 'logistics',
