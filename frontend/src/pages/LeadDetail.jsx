@@ -16,7 +16,7 @@ import UploadFileLightbox, {
 } from '../components/UploadFileLightbox';
 import { downloadCrmLeadDocumentsZip } from '../lib/crmDocumentsZipDownload';
 import { useAuth } from '../lib/auth';
-import { isAdminLike } from '../lib/adminRole';
+import { isAdminLike, isProductionStaff, isProductionAdmin, isLogisticsAdmin } from '../lib/adminRole';
 import { canUserDeleteCrmLeadDeal } from '../lib/crmPipelineDeletePermission';
 import { isDealResponsibleUser } from '../lib/fileOwnership';
 import api from '../lib/api';
@@ -2464,6 +2464,10 @@ export default function LeadDetail() {
     user,
   });
   const canManageDeal = isDealResponsibleUser(user, lead);
+  const canEditSxVcSchedule = canManageDeal
+    || isProductionStaff(user)
+    || isProductionAdmin(user)
+    || isLogisticsAdmin(user);
 
   const deleteDocument = async (docId) => {
     if (!confirm('Xóa tài liệu?')) return;
@@ -2869,7 +2873,7 @@ export default function LeadDetail() {
           >
             📥 Import Excel
           </button>
-          {lead?.type === 'deal' ? (
+          {lead?.type === 'deal' && (!lead?.project_id || canEditSxVcSchedule) ? (
             <button
               type="button"
               data-tour="lead-sx-vc-plan"
@@ -3037,11 +3041,12 @@ export default function LeadDetail() {
                     </p>
                   </div>
                   <div className="shrink-0 flex flex-col sm:flex-row items-stretch sm:items-center gap-1">
-                    {pp.project_id && (
+                    {pp.project_id && canEditSxVcSchedule && (
                       <button
                         type="button"
                         className="h-7 px-2 rounded-md text-[11px] font-semibold border border-teal-200 text-teal-800 bg-white hover:bg-teal-50"
                         onClick={() => openSxScheduleEdit(pp)}
+                        title="Sửa lịch lắp đặt / VC-LĐ — người chịu trách nhiệm dự án"
                       >
                         Sửa lịch
                       </button>

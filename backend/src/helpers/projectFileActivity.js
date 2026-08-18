@@ -44,9 +44,23 @@ async function fetchLeadMemberUserIds(leadId) {
   } catch (_) { return []; }
 }
 
+/** Thành viên tab với vai trò «Chịu trách nhiệm». */
+async function fetchResponsibleMemberIds(leadId) {
+  if (!leadId) return [];
+  try {
+    const { data } = await supabase
+      .from('lead_members')
+      .select('user_id')
+      .eq('lead_id', leadId)
+      .eq('role', 'responsible');
+    return (data || []).map((r) => String(r.user_id)).filter(Boolean);
+  } catch (_) { return []; }
+}
+
 async function enrichWithLeadMembers(row) {
   if (!row?.id) return;
   row._member_ids = await fetchLeadMemberUserIds(row.id);
+  row._responsible_member_ids = await fetchResponsibleMemberIds(row.id);
 }
 
 async function enrichWithProductionInfo(row, projectId) {
@@ -90,6 +104,31 @@ async function resolveDealRow(leadId, projectId) {
       await enrichWithLeadMembers(data);
       return data;
     }
+    try {
+      const { data: link } = await supabase
+        .from('crm_deal_projects')
+        .select('deal_id')
+        .eq('project_id', projectId)
+        .order('is_primary', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (link?.deal_id) {
+        const { data: viaLink } = await supabase
+          .from('crm_leads')
+          .select('id, assigned_to, lead_owner_id, project_id, title')
+          .eq('id', link.deal_id)
+          .maybeSingle();
+        if (viaLink) {
+          await enrichWithProductionInfo(viaLink, projectId);
+          await enrichWithLeadMembers(viaLink);
+          return viaLink;
+        }
+      }
+    } catch (e) {
+      if (!String(e.message || '').includes('crm_deal_projects')) {
+        console.warn('[projectFileActivity] crm_deal_projects:', e.message);
+      }
+    }
     const { data: proj } = await supabase
       .from('projects')
       .select('id, production_person_id')
@@ -119,6 +158,7 @@ function isDealResponsibleUser(req, dealRow) {
   if (crmOwner != null && String(crmOwner) === uidStr) return true;
   if (dealRow.production_person_id != null && String(dealRow.production_person_id) === uidStr) return true;
   if (Array.isArray(dealRow._staff_ids) && dealRow._staff_ids.includes(uidStr)) return true;
+  if (Array.isArray(dealRow._responsible_member_ids) && dealRow._responsible_member_ids.includes(uidStr)) return true;
   return false;
 }
 
@@ -142,6 +182,33 @@ async function userCanMutateProductionProjectKanban(userId, projectId, user = nu
   const dealRow = await resolveDealRow(null, projectId);
   if (!dealRow) return false;
   return canMutateProductionKanban({ user: user || { userId } }, dealRow);
+}
+
+/** Body «Sửa lịch» từ LeadDetail — không gồm field tài chính / tên dự án. */
+const VC_SCHEDULE_PATCH_KEYS = new Set([
+  'install_date',
+  'delivery_date',
+  'production_deadline',
+  'production_finish_date',
+  'pickup_at',
+  'pickup_notes',
+  'logistics_company_id',
+  'vc_notes',
+  'install_occurrence_dates',
+  'sync_vc_ld_events',
+]);
+
+function isVcScheduleOnlyPatch(body) {
+  const keys = Object.keys(body || {}).filter((k) => body[k] !== undefined);
+  return keys.length > 0 && keys.every((k) => VC_SCHEDULE_PATCH_KEYS.has(k));
+}
+
+/** NV chịu trách nhiệm deal/dự án được sửa lịch VC/LĐ (không cần projects:edit). */
+async function userCanEditProjectVcSchedule(userId, projectId, user = null) {
+  if (!userId || !projectId) return false;
+  const dealRow = await resolveDealRow(null, projectId);
+  if (!dealRow) return false;
+  return isDealResponsibleUser({ user: user || { userId } }, dealRow);
 }
 
 async function assertProductionKanbanMutation(req, res, { leadId, projectId } = {}) {
@@ -182,7 +249,7 @@ function requireProductionKanbanEdit() {
   };
 }
 
-/** PUT /projects/:id — chỉ cho lead_members sửa workshop_type_id (kéo cột «Chưa phân loại»). */
+/** PUT /projects/:id — lead_members sửa workshop_type_id; NV chịu trách nhiệm sửa lịch VC. */
 function requireProjectEditOrSxKanbanWorkshopType() {
   const { checkPermission } = require('../middleware/newPermission');
   return async (req, res, next) => {
@@ -196,6 +263,9 @@ function requireProjectEditOrSxKanbanWorkshopType() {
       const keys = Object.keys(b).filter((k) => b[k] !== undefined);
       const onlyWorkshopType = keys.length > 0 && keys.every((k) => k === 'workshop_type_id');
       if (onlyWorkshopType && await userCanMutateProductionProjectKanban(userId, req.params.id, req.user)) {
+        return next();
+      }
+      if (isVcScheduleOnlyPatch(b) && await userCanEditProjectVcSchedule(userId, req.params.id, req.user)) {
         return next();
       }
       return res.status(403).json({
@@ -372,6 +442,7 @@ module.exports = {
   isDealResponsibleUser,
   canMutateProductionKanban,
   userCanMutateProductionProjectKanban,
+  userCanEditProjectVcSchedule,
   assertDealResponsible,
   assertProductionKanbanMutation,
   requireProductionKanbanEdit,
