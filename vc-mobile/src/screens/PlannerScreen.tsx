@@ -17,6 +17,7 @@ import PlannerFilterModal, { type PlannerFilterDimension } from '../components/P
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { useProductionRealtime } from '../hooks/useProductionRealtime';
+import { REALTIME_BOARD_TASK } from '../lib/realtimeModes';
 import { loadKanbanFilters, saveKanbanFilters, subscribeSharedFilters } from '../lib/kanbanFilterStorage';
 import { fetchCompanies, fetchProductionBoard, type CompanyOption } from '../lib/logisticsApi';
 import { getCachedBoard, isCachedBoardFresh, setCachedBoard } from '../lib/logisticsBoardCache';
@@ -122,12 +123,15 @@ export default function PlannerScreen() {
     [filterCompany],
   );
 
+  const loadSeqRef = useRef(0);
+
   const load = useCallback(async (mode: 'init' | 'refresh' | 'silent' = 'init') => {
     // Sysadmin với '' = Tất cả — vẫn tải. NV thiếu companyId thì thôi.
     if (!sysAdmin && !filterCompany) {
       if (mode === 'init') setLoading(true);
       return;
     }
+    const seq = ++loadSeqRef.current;
     const cached = getCachedBoard(boardFilters);
     if (mode !== 'refresh' && cached) {
       setBoard(cached);
@@ -140,14 +144,18 @@ export default function PlannerScreen() {
     if (mode !== 'silent') setError(null);
     try {
       const boardData = await fetchProductionBoard(mode === 'refresh', boardFilters);
+      if (seq !== loadSeqRef.current) return;
       setCachedBoard(boardFilters, boardData);
       setBoard(boardData);
       if (mode !== 'silent') setOwnerVisible({});
     } catch (e) {
+      if (seq !== loadSeqRef.current) return;
       if (mode !== 'silent') setError(formatApiError(e));
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (seq === loadSeqRef.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, [boardFilters, filterCompany, sysAdmin]);
 
@@ -164,7 +172,7 @@ export default function PlannerScreen() {
       }
       void load('silent');
     },
-    modes: ['board', 'task'],
+    modes: REALTIME_BOARD_TASK,
   });
 
   const companyLabel = useMemo(() => {

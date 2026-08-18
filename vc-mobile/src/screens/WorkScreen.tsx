@@ -1,33 +1,32 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import type { RouteProp } from '@react-navigation/native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Modal,
   Pressable,
   RefreshControl,
+  ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatApiError } from '../api/client';
-import Avatar from '../components/Avatar';
 import AssignWorkModal from '../components/AssignWorkModal';
 import AssignmentDetailModal from '../components/AssignmentDetailModal';
 import FilterPickerModal, { type FilterOption } from '../components/FilterPickerModal';
 import TapHighlight from '../components/TapHighlight';
-import WorkFilterModal, {
-  EMPTY_WORK_FILTERS,
-  type WorkBoardFilters,
-} from '../components/WorkFilterModal';
 import WorkProjectTasksPanel from '../components/WorkProjectTasksPanel';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { useProductionRealtime } from '../hooks/useProductionRealtime';
+import { REALTIME_TASK } from '../lib/realtimeModes';
 import type { MainTabParamList } from '../navigation/MainTabs';
 import { useRootNavigation } from '../navigation/useRootNavigation';
 import { fetchCompanies, type CompanyOption } from '../lib/logisticsApi';
@@ -54,7 +53,6 @@ import {
   isTaskPending,
   statusPillLabel,
 } from '../lib/workTasksApi';
-import { formatVnWeekdayDate } from '../lib/vcBoardKpis';
 import { Radii, Spacing, colorWithAlpha, type AppColors } from '../theme';
 
 /** Khớp web CRMAssignmentsPage: admin | manager | sales_admin */
@@ -63,12 +61,8 @@ function isAssignmentsAdmin(role?: string | null): boolean {
 }
 
 const LS_COMPANY = 'vc_work_filter_company_id';
-const LS_ASSIGNEE = 'vc_work_filter_assignee_id';
-
-function firstName(full: string): string {
-  const parts = full.trim().split(/\s+/).filter(Boolean);
-  return parts[parts.length - 1] || full || 'bạn';
-}
+/** v2: admin/team mặc định «Tất cả NV» (khớp web); v1 từng mặc định «Của tôi» → list trống. */
+const LS_ASSIGNEE = 'vc_work_filter_assignee_id_v2';
 
 type PageTab = 'tasks' | 'assignments' | 'shared';
 
@@ -78,57 +72,44 @@ const PAGE_TABS: { key: PageTab; label: string; icon: keyof typeof Ionicons.glyp
   { key: 'shared', label: 'KG chung', icon: 'people-outline' },
 ];
 
+type WorkListStatus = 'all' | 'pending' | 'in_progress' | 'completed' | 'overdue' | 'cancelled';
+
+const WORK_STATUS_CHIPS: { id: WorkListStatus; label: string }[] = [
+  { id: 'all', label: 'Tất cả' },
+  { id: 'pending', label: 'Chưa làm' },
+  { id: 'in_progress', label: 'Đang làm' },
+  { id: 'completed', label: 'Đã làm' },
+  { id: 'overdue', label: 'Quá hạn' },
+];
+
+const WORK_PRIORITY_CHIPS: { id: string; label: string }[] = [
+  { id: '', label: 'Ưu tiên' },
+  { id: 'urgent', label: 'Gấp' },
+  { id: 'high', label: 'Cao' },
+  { id: 'medium', label: 'TB' },
+  { id: 'low', label: 'Thấp' },
+];
+
 function pageTabTitle(tab: PageTab): string {
   if (tab === 'tasks') return 'Nhiệm vụ';
   if (tab === 'shared') return 'KG chung';
   return 'Giao việc';
 }
 
-function countActiveFilters(f: WorkBoardFilters): number {
-  let n = 0;
-  if (f.status) n += 1;
-  if (f.priority) n += 1;
-  if (f.q.trim()) n += 1;
-  return n;
-}
-
-function matchAssignment(a: CrmAssignment, f: WorkBoardFilters): boolean {
-  if (f.status && String(a.status || 'pending') !== f.status) return false;
-  if (f.priority && String(a.priority || '') !== f.priority) return false;
-  const q = f.q.trim().toLowerCase();
-  if (!q) return true;
-  const hay = [
-    a.title,
-    a.description,
-    assignmentDealLabel(a.lead),
-    a.assignee?.full_name,
-    ...(a.assignees || []).map((u) => u.full_name),
-    a.created_by?.full_name,
-    companyShortLabel(a.company),
-    companyShortLabel(a.executor_company),
-  ]
-    .filter(Boolean)
-    .join(' ')
-    .toLowerCase();
-  return hay.includes(q);
-}
-
-function matchInboxTask(t: SharedInboxTask, f: WorkBoardFilters): boolean {
-  if (f.status && String(t.status || 'pending') !== f.status) return false;
-  if (f.priority && String(t.priority || '') !== f.priority) return false;
-  const q = f.q.trim().toLowerCase();
-  if (!q) return true;
-  const hay = [
-    t.title,
-    assignmentDealLabel(t.lead),
-    t.assignee?.full_name,
-    t.owner_company_name,
-    t.executor_company_name,
-  ]
-    .filter(Boolean)
-    .join(' ')
-    .toLowerCase();
-  return hay.includes(q);
+function matchInboxTaskScope(
+  t: SharedInboxTask,
+  filterCompanyId: string,
+  filterAssigneeId: string,
+): boolean {
+  if (filterCompanyId) {
+    const co = String(t.executor_company_id || t.owner_company_id || '');
+    if (co && co !== String(filterCompanyId)) return false;
+  }
+  if (filterAssigneeId) {
+    const aid = String(t.assignee?.id || '');
+    if (aid !== String(filterAssigneeId)) return false;
+  }
+  return true;
 }
 
 function priorityTone(priority: string | null | undefined, colors: AppColors): string {
@@ -151,9 +132,8 @@ export default function WorkScreen() {
   const { user } = useAuth();
   const { openProjectDetail } = useRootNavigation();
   const tabNav = useNavigation<BottomTabNavigationProp<MainTabParamList>>();
+  const route = useRoute<RouteProp<MainTabParamList, 'Work'>>();
   const userId = user?.id || user?.userId || '';
-  const userName = user?.full_name || user?.fullName || 'Bạn';
-  const greetName = firstName(userName);
   const ownCompanyId = user?.company_id ? String(user.company_id) : '';
   const assignAdmin = isAssignmentsAdmin(user?.role);
   const canTeam = canViewTeamWork(user);
@@ -161,14 +141,22 @@ export default function WorkScreen() {
   const canPickScope = assignAdmin || canTeam;
 
   const [pageTab, setPageTab] = useState<PageTab>('tasks');
+  const pendingFocusIdRef = useRef<string | null>(null);
+  const loadSeqRef = useRef(0);
   /** '' = tất cả công ty (admin). NV: luôn công ty mình. */
   const [filterCompanyId, setFilterCompanyId] = useState('');
-  /** '' = tất cả NV; có id = lọc theo người (mặc định = mình). */
-  const [filterAssigneeId, setFilterAssigneeId] = useState(userId);
+  /**
+   * Assignee: admin/team mặc định '' (Tất cả NV — khớp web Giao việc Lắp đặt);
+   * NV thường = chính mình. Tránh list trống khi admin giao việc cho người khác.
+   */
+  const [filterAssigneeId, setFilterAssigneeId] = useState(() => (
+    canPickScope ? '' : userId
+  ));
   const [companies, setCompanies] = useState<CompanyOption[]>([]);
   const [employees, setEmployees] = useState<CrmEmployeeOption[]>([]);
   const [companyPickerOpen, setCompanyPickerOpen] = useState(false);
   const [assigneePickerOpen, setAssigneePickerOpen] = useState(false);
+  const [scopeSheetOpen, setScopeSheetOpen] = useState(false);
   const [filtersReady, setFiltersReady] = useState(false);
   const [assignments, setAssignments] = useState<CrmAssignment[]>([]);
   const [sharedGroups, setSharedGroups] = useState<SharedInboxGroup[]>([]);
@@ -178,8 +166,6 @@ export default function WorkScreen() {
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [assignOpen, setAssignOpen] = useState(false);
   const [assignShared, setAssignShared] = useState(false);
-  const [filterOpen, setFilterOpen] = useState(false);
-  const [filters, setFilters] = useState<WorkBoardFilters>({ ...EMPTY_WORK_FILTERS });
 
   const styles = useMemo(() => makeStyles(colors, insets.bottom), [colors, insets.bottom]);
 
@@ -200,10 +186,10 @@ export default function WorkScreen() {
           if (co && list.some((c) => String(c.id) === co)) setFilterCompanyId(co);
           else setFilterCompanyId('');
           const asg = String(savedAsg || '').trim();
-          // Mặc định «Của tôi» nếu chưa lưu; '' = tất cả NV.
-          if (asg === '__all__') setFilterAssigneeId('');
+          // Admin/team: mặc định Tất cả NV (khớp web). NV: luôn chính mình.
+          if (asg === '__all__' || asg === '') setFilterAssigneeId('');
           else if (asg) setFilterAssigneeId(asg);
-          else setFilterAssigneeId(userId);
+          else setFilterAssigneeId('');
         } else {
           setFilterCompanyId(ownCompanyId);
           setFilterAssigneeId(userId);
@@ -257,6 +243,7 @@ export default function WorkScreen() {
       }
       return;
     }
+    const seq = ++loadSeqRef.current;
     setError(null);
     try {
       const companyParam = canPickScope
@@ -268,21 +255,20 @@ export default function WorkScreen() {
         fetchLogisticsAssignments({
           companyId: companyParam,
           assigneeId: assigneeParam || undefined,
-          status: filters.status || undefined,
-          priority: filters.priority || undefined,
-          q: filters.q || undefined,
           limit: 200,
         }),
         fetchPrivateDealInbox('logistics'),
       ]);
+      if (seq !== loadSeqRef.current) return;
       setAssignments(list);
       setSharedGroups(inbox.groups);
     } catch (e) {
+      if (seq !== loadSeqRef.current) return;
       setError(formatApiError(e));
       setAssignments([]);
       setSharedGroups([]);
     } finally {
-      setLoading(false);
+      if (seq === loadSeqRef.current) setLoading(false);
     }
   }, [
     userId,
@@ -290,16 +276,17 @@ export default function WorkScreen() {
     canPickScope,
     filterCompanyId,
     filterAssigneeId,
-    filters.status,
-    filters.priority,
-    filters.q,
   ]);
 
   useEffect(() => {
     if (!filtersReady) return;
+    if (pageTab === 'tasks') {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     void load();
-  }, [load, filtersReady]);
+  }, [load, filtersReady, pageTab]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -310,10 +297,11 @@ export default function WorkScreen() {
     }
   }, [load]);
 
+  /** Chỉ Giao việc / KG chung — tab Nhiệm vụ do WorkProjectTasksPanel subscribe (tránh tải đôi). */
   useProductionRealtime({
     onRefresh: () => void load(),
-    enabled: Boolean(userId) && filtersReady,
-    modes: ['task'],
+    enabled: Boolean(userId) && filtersReady && pageTab !== 'tasks',
+    modes: REALTIME_TASK,
   });
 
   const companyOptions: FilterOption[] = useMemo(() => {
@@ -338,6 +326,12 @@ export default function WorkScreen() {
     return hit?.full_name || 'Nhân viên';
   }, [filterAssigneeId, userId, employees]);
 
+  /** Badge filter: khác mặc định (admin = tất cả NV; NV = của tôi). */
+  const defaultAssigneeId = canPickScope ? '' : userId;
+  const scopeFilterCount =
+    (filterCompanyId ? 1 : 0)
+    + (String(filterAssigneeId || '') !== String(defaultAssigneeId || '') ? 1 : 0);
+
   const assigneeOptions: FilterOption[] = useMemo(() => {
     const opts: FilterOption[] = [];
     if (canPickScope) opts.push({ id: '', label: 'Tất cả NV' });
@@ -356,42 +350,34 @@ export default function WorkScreen() {
   const tasksCompanyId = canPickScope ? (filterCompanyId || null) : (ownCompanyId || null);
   const tasksAssigneeId = filterAssigneeId || (!canPickScope ? userId : null);
 
-  const visibleAssignments = useMemo(
-    () => assignments.filter((a) => matchAssignment(a, filters)),
-    [assignments, filters],
-  );
+  const [listStatusFilter, setListStatusFilter] = useState<WorkListStatus>('all');
+  const [filterPriority, setFilterPriority] = useState('');
+
+  const visibleAssignments = useMemo(() => {
+    return assignments.filter((a) => {
+      if (filterPriority && String(a.priority || '') !== filterPriority) return false;
+      if (listStatusFilter === 'overdue') return isOverdue(a.deadline, a.status);
+      if (listStatusFilter !== 'all' && String(a.status || 'pending') !== listStatusFilter) return false;
+      return true;
+    });
+  }, [assignments, listStatusFilter, filterPriority]);
 
   const visibleSharedGroups = useMemo(() => {
-    const q = filters.q.trim().toLowerCase();
     return sharedGroups
       .map((g) => {
-        const dealHay = [
-          g.lead?.code,
-          g.lead?.title,
-          g.lead?.project_code,
-          g.lead?.project_name,
-        ]
-          .filter(Boolean)
-          .join(' ')
-          .toLowerCase();
-        const dealMatch = !q || dealHay.includes(q);
-        const tasks = (g.tasks || []).filter((t) => {
-          if (!matchInboxTask(t, { ...filters, q: dealMatch ? '' : filters.q })) return false;
-          if (filterCompanyId) {
-            const co = String(t.executor_company_id || t.owner_company_id || '');
-            if (co && co !== String(filterCompanyId)) return false;
-          }
-          if (filterAssigneeId) {
-            const aid = String(t.assignee?.id || '');
-            if (aid !== String(filterAssigneeId)) return false;
-          }
+        const tasks = (g.tasks || []).filter((t) =>
+          matchInboxTaskScope(t, filterCompanyId, filterAssigneeId),
+        ).filter((t) => {
+          if (filterPriority && String(t.priority || '') !== filterPriority) return false;
+          if (listStatusFilter === 'overdue') return isOverdue(t.deadline, t.status);
+          if (listStatusFilter !== 'all' && String(t.status || 'pending') !== listStatusFilter) return false;
           return true;
         });
         if (!tasks.length) return null;
         return { ...g, tasks };
       })
       .filter(Boolean) as SharedInboxGroup[];
-  }, [sharedGroups, filters, filterCompanyId, filterAssigneeId]);
+  }, [sharedGroups, filterCompanyId, filterAssigneeId, listStatusFilter, filterPriority]);
 
   const flatShared = useMemo(
     () => visibleSharedGroups.flatMap((g) => g.tasks || []),
@@ -424,6 +410,62 @@ export default function WorkScreen() {
     setDetailItem(a);
     setDetailId(String(a.id));
   };
+
+  const [focusTaskLeadId, setFocusTaskLeadId] = useState<string | null>(null);
+  const [focusTaskId, setFocusTaskId] = useState<string | null>(null);
+  const [tasksStatusFilter, setTasksStatusFilter] = useState<
+    'all' | 'pending' | 'in_progress' | 'completed' | 'overdue' | null
+  >(null);
+
+  /** Deep-link từ Tổng quan → đúng tab Công việc (+ lọc quá hạn nếu có). */
+  useEffect(() => {
+    const tab = route.params?.tab;
+    const focusId = route.params?.focusId ? String(route.params.focusId) : '';
+    const focusLeadId = route.params?.focusLeadId ? String(route.params.focusLeadId) : '';
+    const statusFilter = route.params?.statusFilter;
+    if (!tab && !focusId && !focusLeadId && !statusFilter) return;
+
+    if (tab === 'tasks' || tab === 'assignments' || tab === 'shared') {
+      setPageTab(tab);
+    }
+    if (statusFilter === 'overdue' || statusFilter === 'pending'
+      || statusFilter === 'in_progress' || statusFilter === 'completed') {
+      setListStatusFilter(statusFilter);
+      setTasksStatusFilter(statusFilter);
+    } else if (statusFilter) {
+      setListStatusFilter('all');
+      setTasksStatusFilter(statusFilter);
+    }
+    if (tab === 'tasks' || (!tab && (focusId || focusLeadId))) {
+      if (focusLeadId) setFocusTaskLeadId(focusLeadId);
+      if (focusId) setFocusTaskId(focusId);
+    }
+    if (focusId && (tab === 'assignments' || tab === 'shared')) {
+      pendingFocusIdRef.current = focusId;
+    }
+    tabNav.setParams({
+      tab: undefined,
+      focusId: undefined,
+      focusLeadId: undefined,
+      statusFilter: undefined,
+    });
+  }, [
+    route.params?.tab,
+    route.params?.focusId,
+    route.params?.focusLeadId,
+    route.params?.statusFilter,
+    tabNav,
+  ]);
+
+  useEffect(() => {
+    if (pageTab !== 'assignments' && pageTab !== 'shared') return;
+    const focusId = pendingFocusIdRef.current;
+    if (!focusId || !assignments.length) return;
+    const hit = assignments.find((a) => String(a.id) === focusId);
+    if (!hit) return;
+    pendingFocusIdRef.current = null;
+    openAssignmentDetail(hit);
+  }, [pageTab, assignments]);
 
   const applyStatus = async (a: CrmAssignment, next: string) => {
     const id = String(a.id);
@@ -488,7 +530,6 @@ export default function WorkScreen() {
     if (projectId) openProjectDetail(projectId, { initialTab: 'shared-workspace' });
   };
 
-  const filterCount = countActiveFilters(filters);
   const sharedCount = sharedGroups.reduce((n, g) => n + (g.tasks?.length || 0), 0);
 
   const renderAssignment = ({ item: a }: { item: CrmAssignment }) => {
@@ -594,30 +635,24 @@ export default function WorkScreen() {
             <TapHighlight style={styles.backBtn} onPress={() => tabNav.navigate('Overview')}>
               <Ionicons name="chevron-back" size={22} color={colors.text} />
             </TapHighlight>
-            <Avatar name={userName} avatarUrl={user?.avatar} size={44} />
             <View style={styles.headerTextWrap}>
               <Text style={styles.greetTitle} numberOfLines={1}>{pageTabTitle(pageTab)}</Text>
-              <Text style={styles.greetDate} numberOfLines={1}>
-                Xin chào, {greetName} · {formatVnWeekdayDate()}
+              <Text style={styles.greetSubCompact} numberOfLines={2}>
+                Khớp web Lắp đặt — lọc công ty / nhân viên góc trên phải
               </Text>
             </View>
           </View>
-          {pageTab !== 'tasks' ? (
-            <TapHighlight style={styles.iconBtn} onPress={() => setFilterOpen(true)} hitSlop={8}>
-              <Ionicons name="options-outline" size={20} color={colors.text} />
-              {filterCount > 0 ? (
+          <View style={styles.headerActions}>
+            <TapHighlight style={styles.iconBtn} onPress={() => setScopeSheetOpen(true)} hitSlop={8}>
+              <Ionicons name="filter-outline" size={20} color={colors.text} />
+              {scopeFilterCount > 0 ? (
                 <View style={styles.badge}>
-                  <Text style={styles.badgeText}>{filterCount}</Text>
+                  <Text style={styles.badgeText}>{scopeFilterCount}</Text>
                 </View>
               ) : null}
             </TapHighlight>
-          ) : null}
+          </View>
         </View>
-        <Text style={styles.greetSub}>
-          {pageTab === 'tasks'
-            ? 'Nhiệm vụ vận chuyển / lắp đặt theo dự án — chạm để mở chi tiết'
-            : 'Khớp web Lắp đặt — chọn công ty / nhân viên như bộ lọc trên web'}
-        </Text>
       </View>
 
       <View style={styles.modeRow}>
@@ -643,70 +678,6 @@ export default function WorkScreen() {
         })}
       </View>
 
-      {pageTab === 'assignments' || pageTab === 'shared' || pageTab === 'tasks' ? (
-        <View style={styles.scopeRow}>
-          {canPickScope ? (
-            <TapHighlight
-              style={[styles.scopeChip, styles.scopeChipGrow, filterCompanyId ? styles.scopeChipActive : null]}
-              onPress={() => setCompanyPickerOpen(true)}
-            >
-              <Ionicons
-                name="business-outline"
-                size={14}
-                color={filterCompanyId ? colors.primary : colors.textMuted}
-              />
-              <Text
-                style={[styles.scopeChipTxt, filterCompanyId ? styles.scopeChipTxtActive : null]}
-                numberOfLines={1}
-              >
-                {selectedCompanyLabel}
-              </Text>
-              <Ionicons
-                name="chevron-down"
-                size={14}
-                color={filterCompanyId ? colors.primary : colors.textMuted}
-              />
-            </TapHighlight>
-          ) : (
-            <View style={[styles.scopeChip, styles.scopeChipGrow]}>
-              <Ionicons name="business-outline" size={14} color={colors.textMuted} />
-              <Text style={styles.scopeChipTxt} numberOfLines={1}>
-                {selectedCompanyLabel !== 'Tất cả công ty'
-                  ? selectedCompanyLabel
-                  : (companies.find((c) => String(c.id) === ownCompanyId)?.name || 'Công ty tôi')}
-              </Text>
-            </View>
-          )}
-          {canPickScope ? (
-            <TapHighlight
-              style={[styles.scopeChip, filterAssigneeId ? styles.scopeChipActive : null]}
-              onPress={() => setAssigneePickerOpen(true)}
-            >
-              <Ionicons
-                name="person-outline"
-                size={14}
-                color={filterAssigneeId ? colors.primary : colors.textMuted}
-              />
-              <Text
-                style={[styles.scopeChipTxt, filterAssigneeId ? styles.scopeChipTxtActive : null]}
-                numberOfLines={1}
-              >
-                {selectedAssigneeLabel}
-              </Text>
-              <Ionicons
-                name="chevron-down"
-                size={14}
-                color={filterAssigneeId ? colors.primary : colors.textMuted}
-              />
-            </TapHighlight>
-          ) : (
-            <View style={styles.scopeChip}>
-              <Text style={styles.scopeChipTxt}>Của tôi</Text>
-            </View>
-          )}
-        </View>
-      ) : null}
-
       {pageTab === 'shared' ? (
         <View style={styles.hintBox}>
           <Text style={styles.hintText}>
@@ -716,23 +687,77 @@ export default function WorkScreen() {
       ) : null}
 
       {pageTab !== 'tasks' ? (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.filterChipRow}
+        >
+          {WORK_STATUS_CHIPS.map((c) => {
+            const active = listStatusFilter === c.id;
+            return (
+              <TapHighlight
+                key={c.id}
+                style={[styles.filterChip, active && styles.filterChipOn]}
+                onPress={() => setListStatusFilter(c.id)}
+              >
+                <Text style={[styles.filterChipTxt, active && styles.filterChipTxtOn]}>{c.label}</Text>
+              </TapHighlight>
+            );
+          })}
+        </ScrollView>
+      ) : null}
+
+      {pageTab !== 'tasks' ? (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.filterChipRow}
+        >
+          {WORK_PRIORITY_CHIPS.map((c) => {
+            const active = filterPriority === c.id;
+            return (
+              <TapHighlight
+                key={c.id || 'all-pr'}
+                style={[styles.filterChip, active && styles.filterChipOn]}
+                onPress={() => setFilterPriority(c.id)}
+              >
+                <Text style={[styles.filterChipTxt, active && styles.filterChipTxtOn]}>{c.label}</Text>
+              </TapHighlight>
+            );
+          })}
+        </ScrollView>
+      ) : null}
+
+      {pageTab !== 'tasks' ? (
         <View style={styles.statsRow}>
-          <View style={styles.statCard}>
+          <TapHighlight
+            style={styles.statCard}
+            onPress={() => setListStatusFilter((v) => (v === 'pending' ? 'all' : 'pending'))}
+          >
             <Text style={[styles.statValue, { color: colors.danger }]}>{stats.pending}</Text>
             <Text style={styles.statLabel}>Cần xử lý</Text>
-          </View>
-          <View style={styles.statCard}>
+          </TapHighlight>
+          <TapHighlight
+            style={styles.statCard}
+            onPress={() => setListStatusFilter((v) => (v === 'in_progress' ? 'all' : 'in_progress'))}
+          >
             <Text style={[styles.statValue, { color: colors.primary }]}>{stats.inProgress}</Text>
             <Text style={styles.statLabel}>Đang làm</Text>
-          </View>
-          <View style={styles.statCard}>
+          </TapHighlight>
+          <TapHighlight
+            style={styles.statCard}
+            onPress={() => setListStatusFilter((v) => (v === 'completed' ? 'all' : 'completed'))}
+          >
             <Text style={[styles.statValue, { color: colors.success }]}>{stats.done}</Text>
             <Text style={styles.statLabel}>Hoàn thành</Text>
-          </View>
-          <View style={styles.statCard}>
+          </TapHighlight>
+          <TapHighlight
+            style={styles.statCard}
+            onPress={() => setListStatusFilter((v) => (v === 'overdue' ? 'all' : 'overdue'))}
+          >
             <Text style={[styles.statValue, { color: colors.danger }]}>{stats.overdue}</Text>
             <Text style={styles.statLabel}>Quá hạn</Text>
-          </View>
+          </TapHighlight>
         </View>
       ) : null}
 
@@ -752,18 +777,22 @@ export default function WorkScreen() {
             <TapHighlight style={styles.backBtn} onPress={() => tabNav.navigate('Overview')}>
               <Ionicons name="chevron-back" size={22} color={colors.text} />
             </TapHighlight>
-            <Avatar name={userName} avatarUrl={user?.avatar} size={44} />
             <View style={styles.headerTextWrap}>
               <Text style={styles.greetTitle} numberOfLines={1}>Nhiệm vụ</Text>
-              <Text style={styles.greetDate} numberOfLines={1}>
-                Xin chào, {greetName} · {formatVnWeekdayDate()}
+              <Text style={styles.greetSubCompact} numberOfLines={2}>
+                Nhiệm vụ vận chuyển theo dự án — chạm để mở chi tiết
               </Text>
             </View>
           </View>
+          <TapHighlight style={styles.iconBtn} onPress={() => setScopeSheetOpen(true)} hitSlop={8}>
+            <Ionicons name="filter-outline" size={20} color={colors.text} />
+            {scopeFilterCount > 0 ? (
+              <View style={styles.badge}>
+                <Text style={styles.badgeText}>{scopeFilterCount}</Text>
+              </View>
+            ) : null}
+          </TapHighlight>
         </View>
-        <Text style={styles.greetSub}>
-          Nhiệm vụ vận chuyển / lắp đặt theo dự án — chạm để mở chi tiết
-        </Text>
       </View>
 
       <View style={styles.modeRow}>
@@ -787,66 +816,6 @@ export default function WorkScreen() {
             </TapHighlight>
           );
         })}
-      </View>
-
-      <View style={styles.scopeRow}>
-        {canPickScope ? (
-          <TapHighlight
-            style={[styles.scopeChip, styles.scopeChipGrow, filterCompanyId ? styles.scopeChipActive : null]}
-            onPress={() => setCompanyPickerOpen(true)}
-          >
-            <Ionicons
-              name="business-outline"
-              size={14}
-              color={filterCompanyId ? colors.primary : colors.textMuted}
-            />
-            <Text
-              style={[styles.scopeChipTxt, filterCompanyId ? styles.scopeChipTxtActive : null]}
-              numberOfLines={1}
-            >
-              {selectedCompanyLabel}
-            </Text>
-            <Ionicons
-              name="chevron-down"
-              size={14}
-              color={filterCompanyId ? colors.primary : colors.textMuted}
-            />
-          </TapHighlight>
-        ) : (
-          <View style={[styles.scopeChip, styles.scopeChipGrow]}>
-            <Ionicons name="business-outline" size={14} color={colors.textMuted} />
-            <Text style={styles.scopeChipTxt} numberOfLines={1}>
-              {companies.find((c) => String(c.id) === ownCompanyId)?.name || 'Công ty tôi'}
-            </Text>
-          </View>
-        )}
-        {canPickScope ? (
-          <TapHighlight
-            style={[styles.scopeChip, filterAssigneeId ? styles.scopeChipActive : null]}
-            onPress={() => setAssigneePickerOpen(true)}
-          >
-            <Ionicons
-              name="person-outline"
-              size={14}
-              color={filterAssigneeId ? colors.primary : colors.textMuted}
-            />
-            <Text
-              style={[styles.scopeChipTxt, filterAssigneeId ? styles.scopeChipTxtActive : null]}
-              numberOfLines={1}
-            >
-              {selectedAssigneeLabel}
-            </Text>
-            <Ionicons
-              name="chevron-down"
-              size={14}
-              color={filterAssigneeId ? colors.primary : colors.textMuted}
-            />
-          </TapHighlight>
-        ) : (
-          <View style={styles.scopeChip}>
-            <Text style={styles.scopeChipTxt}>Của tôi</Text>
-          </View>
-        )}
       </View>
     </View>
   );
@@ -867,6 +836,9 @@ export default function WorkScreen() {
           contentPaddingBottom={24 + insets.bottom}
           companyId={tasksCompanyId}
           assigneeId={tasksAssigneeId}
+          focusLeadId={focusTaskLeadId}
+          focusTaskId={focusTaskId}
+          initialStatusFilter={tasksStatusFilter}
         />
       ) : pageTab === 'assignments' ? (
         <FlatList
@@ -881,7 +853,9 @@ export default function WorkScreen() {
           ListEmptyComponent={
             <Text style={styles.empty}>
               {userId
-                ? 'Chưa có giao việc Lắp đặt trong phạm vi này.'
+                ? (listStatusFilter !== 'all' || filterPriority
+                  ? 'Không có giao việc khớp bộ lọc.'
+                  : 'Chưa có giao việc Lắp đặt trong phạm vi này.')
                 : 'Đăng nhập để xem giao việc.'}
             </Text>
           }
@@ -1028,14 +1002,6 @@ export default function WorkScreen() {
         }}
       />
 
-      <WorkFilterModal
-        visible={filterOpen}
-        value={filters}
-        bottomInset={insets.bottom}
-        onClose={() => setFilterOpen(false)}
-        onApply={setFilters}
-      />
-
       <FilterPickerModal
         visible={companyPickerOpen}
         title="Chọn công ty"
@@ -1056,6 +1022,93 @@ export default function WorkScreen() {
         onSelect={setFilterAssigneeId}
         onClose={() => setAssigneePickerOpen(false)}
       />
+
+      <Modal
+        visible={scopeSheetOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setScopeSheetOpen(false)}
+      >
+        <Pressable style={styles.scopeSheetBackdrop} onPress={() => setScopeSheetOpen(false)}>
+          <Pressable style={styles.scopeSheetCard} onPress={() => {}}>
+            <Text style={styles.scopeSheetTitle}>Bộ lọc</Text>
+            {canPickScope ? (
+              <TapHighlight
+                style={[styles.scopeSheetRow, filterCompanyId ? styles.scopeSheetRowActive : null]}
+                onPress={() => {
+                  setScopeSheetOpen(false);
+                  setCompanyPickerOpen(true);
+                }}
+              >
+                <Ionicons
+                  name="business-outline"
+                  size={18}
+                  color={filterCompanyId ? colors.primary : colors.textMuted}
+                />
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={styles.scopeSheetRowLabel}>Công ty</Text>
+                  <Text style={styles.scopeSheetRowValue} numberOfLines={1}>
+                    {selectedCompanyLabel}
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
+              </TapHighlight>
+            ) : (
+              <View style={styles.scopeSheetRow}>
+                <Ionicons name="business-outline" size={18} color={colors.textMuted} />
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={styles.scopeSheetRowLabel}>Công ty</Text>
+                  <Text style={styles.scopeSheetRowValue} numberOfLines={1}>
+                    {companies.find((c) => String(c.id) === ownCompanyId)?.name || 'Công ty tôi'}
+                  </Text>
+                </View>
+              </View>
+            )}
+            {canPickScope ? (
+              <TapHighlight
+                style={[
+                  styles.scopeSheetRow,
+                  String(filterAssigneeId || '') !== String(userId || '')
+                    ? styles.scopeSheetRowActive
+                    : null,
+                ]}
+                onPress={() => {
+                  setScopeSheetOpen(false);
+                  setAssigneePickerOpen(true);
+                }}
+              >
+                <Ionicons
+                  name="person-outline"
+                  size={18}
+                  color={
+                    String(filterAssigneeId || '') !== String(userId || '')
+                      ? colors.primary
+                      : colors.textMuted
+                  }
+                />
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={styles.scopeSheetRowLabel}>Nhân viên</Text>
+                  <Text style={styles.scopeSheetRowValue} numberOfLines={1}>
+                    {selectedAssigneeLabel}
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
+              </TapHighlight>
+            ) : (
+              <View style={styles.scopeSheetRow}>
+                <Ionicons name="person-outline" size={18} color={colors.textMuted} />
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={styles.scopeSheetRowLabel}>Nhân viên</Text>
+                  <Text style={styles.scopeSheetRowValue}>Của tôi</Text>
+                </View>
+              </View>
+            )}
+            <TapHighlight style={styles.scopeSheetClose} onPress={() => setScopeSheetOpen(false)}>
+              <Text style={styles.scopeSheetCloseTxt}>Đóng</Text>
+            </TapHighlight>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -1079,6 +1132,13 @@ function makeStyles(colors: AppColors, bottomInset: number) {
     greetTitle: { color: colors.text, fontSize: 20, fontWeight: '800', letterSpacing: -0.2 },
     greetDate: { color: colors.textMuted, fontSize: 13, fontWeight: '600', marginTop: 3 },
     greetSub: { color: colors.textFaint, fontSize: 12, marginTop: 6, fontWeight: '500', lineHeight: 17 },
+    greetSubCompact: {
+      color: colors.textFaint,
+      fontSize: 12,
+      marginTop: 2,
+      fontWeight: '500',
+      lineHeight: 16,
+    },
     iconBtn: {
       width: 42,
       height: 42,
@@ -1089,6 +1149,7 @@ function makeStyles(colors: AppColors, bottomInset: number) {
       alignItems: 'center',
       justifyContent: 'center',
     },
+    headerActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
     badge: {
       position: 'absolute',
       top: -4,
@@ -1102,6 +1163,64 @@ function makeStyles(colors: AppColors, bottomInset: number) {
       paddingHorizontal: 4,
     },
     badgeText: { color: '#fff', fontSize: 9, fontWeight: '800' },
+    scopeSheetBackdrop: {
+      flex: 1,
+      backgroundColor: 'rgba(0,0,0,0.45)',
+      justifyContent: 'flex-end',
+    },
+    scopeSheetCard: {
+      backgroundColor: colors.card,
+      borderTopLeftRadius: Radii.xl,
+      borderTopRightRadius: Radii.xl,
+      paddingHorizontal: Spacing.lg,
+      paddingTop: Spacing.lg,
+      paddingBottom: bottomInset + Spacing.lg,
+      borderWidth: 1,
+      borderColor: colors.border,
+      gap: 10,
+    },
+    scopeSheetTitle: {
+      color: colors.text,
+      fontSize: 16,
+      fontWeight: '800',
+      marginBottom: 4,
+    },
+    scopeSheetRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      borderRadius: Radii.md,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.bgElevated,
+    },
+    scopeSheetRowActive: {
+      borderColor: colors.primary,
+      backgroundColor: colors.primarySoft,
+    },
+    scopeSheetRowLabel: {
+      color: colors.textMuted,
+      fontSize: 11,
+      fontWeight: '600',
+      marginBottom: 2,
+    },
+    scopeSheetRowValue: {
+      color: colors.text,
+      fontSize: 14,
+      fontWeight: '700',
+    },
+    scopeSheetClose: {
+      marginTop: 4,
+      alignItems: 'center',
+      paddingVertical: 12,
+    },
+    scopeSheetCloseTxt: {
+      color: colors.textMuted,
+      fontSize: 14,
+      fontWeight: '700',
+    },
     modeRow: {
       flexDirection: 'row',
       gap: 8,
@@ -1135,6 +1254,27 @@ function makeStyles(colors: AppColors, bottomInset: number) {
       justifyContent: 'center',
     },
     modeBadgeText: { color: colors.primary, fontSize: 10, fontWeight: '800' },
+    filterChipRow: {
+      paddingHorizontal: Spacing.lg,
+      paddingBottom: 8,
+      gap: 8,
+      flexDirection: 'row',
+      alignItems: 'center',
+    },
+    filterChip: {
+      paddingHorizontal: 12,
+      paddingVertical: 7,
+      borderRadius: Radii.full,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.card,
+    },
+    filterChipOn: {
+      borderColor: colors.primary,
+      backgroundColor: colors.primarySoft,
+    },
+    filterChipTxt: { color: colors.textMuted, fontSize: 12, fontWeight: '700' },
+    filterChipTxtOn: { color: colors.primary },
     scopeRow: {
       flexDirection: 'row',
       gap: 8,
@@ -1169,6 +1309,25 @@ function makeStyles(colors: AppColors, bottomInset: number) {
       borderColor: colorWithAlpha(colors.primary, 0.25),
     },
     hintText: { color: colors.textMuted, fontSize: 12, fontWeight: '600', lineHeight: 17 },
+    overdueFilterBar: {
+      marginHorizontal: Spacing.lg,
+      marginBottom: Spacing.sm,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      borderRadius: Radii.md,
+      backgroundColor: colors.dangerSoft,
+      borderWidth: 1,
+      borderColor: colorWithAlpha(colors.danger, 0.4),
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    overdueFilterTxt: {
+      flex: 1,
+      color: colors.danger,
+      fontSize: 12,
+      fontWeight: '800',
+    },
     statsRow: {
       flexDirection: 'row',
       gap: 10,

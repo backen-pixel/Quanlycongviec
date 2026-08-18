@@ -6,12 +6,36 @@ import type {
   PersonRef,
   ProductionProjectDetail,
   ProjectActivity,
+  TaskChecklistItem,
   TaskStaffNote,
 } from '../types';
 import { mapProjectRow } from './logisticsApi';
 
 export function isCrmProductionTaskDone(status: string): boolean {
   return status === 'completed' || status === 'done';
+}
+
+/** Chuẩn hoá checklist JSONB — khớp web CRMTasksTab. */
+export function normalizeTaskChecklist(raw: unknown): TaskChecklistItem[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((c, i) => {
+    if (typeof c === 'string') {
+      return {
+        id: `ckidx_${i}_${c.slice(0, 8)}`,
+        title: c,
+        description: '',
+        done: false,
+      };
+    }
+    const row = (c && typeof c === 'object' ? c : {}) as Record<string, unknown>;
+    return {
+      ...row,
+      id: String(row.id || `ckidx_${i}`),
+      title: String(row.title || row.label || ''),
+      description: row.description != null ? String(row.description) : '',
+      done: !!(row.done ?? row.is_completed),
+    };
+  }).filter((c) => String(c.title || '').trim());
 }
 
 export function calcCrmProductionTaskProgress(
@@ -107,6 +131,7 @@ function mapCrmTask(raw: Record<string, unknown>): CrmTask {
     notes: raw.notes != null ? String(raw.notes) : null,
     description: raw.description != null ? String(raw.description) : null,
     priority: raw.priority != null ? String(raw.priority) : null,
+    checklist: normalizeTaskChecklist(raw.checklist),
     file_count: Number(raw.file_count ?? 0),
     note_count: Number(raw.note_count ?? 0),
     attachment_count: Number(raw.attachment_count ?? 0),
@@ -638,6 +663,7 @@ function mapWorkshopTask(row: Record<string, unknown>): CrmTask {
     notes: notePreview,
     description,
     priority: row.priority != null ? String(row.priority) : null,
+    checklist: normalizeTaskChecklist(row.checklist ?? meta.checklist),
     note_count: Number(row.note_count ?? staffNotes?.length ?? 0),
     file_count: Number(row.file_count ?? 0),
     staff_notes: staffNotes,

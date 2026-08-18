@@ -21,6 +21,7 @@ export type FilterPickOption = { id: string; label: string; group?: string };
 
 type TabId = 'scope' | 'pipeline';
 export type QuickFilterId = 'all' | 'mine' | 'overdue' | 'today';
+export type PhoneFilterId = '' | 'has' | 'no';
 
 type Props = {
   visible: boolean;
@@ -30,6 +31,13 @@ type Props = {
   /** Lọc nhanh — tương đương NV phụ trách / quá hạn / deadline hôm nay trên web. */
   quickFilter?: QuickFilterId;
   onQuickFilterChange?: (id: QuickFilterId) => void;
+  filterPhone?: PhoneFilterId;
+  onPhoneChange?: (id: PhoneFilterId) => void;
+  personOptions?: FilterPickOption[];
+  filterPersonId?: string;
+  onPersonChange?: (id: string) => void;
+  filterPriority?: string;
+  onPriorityChange?: (id: string) => void;
   showWorkshopPicker: boolean;
   workshopOptions: FilterPickOption[];
   filterCompany: string;
@@ -94,6 +102,20 @@ const QUICK_FILTERS: { id: QuickFilterId; label: string }[] = [
   { id: 'today', label: 'Hôm nay' },
 ];
 
+const PHONE_FILTERS: { id: PhoneFilterId; label: string }[] = [
+  { id: '', label: 'Tất cả SĐT' },
+  { id: 'has', label: 'Có SĐT' },
+  { id: 'no', label: 'Chưa có SĐT' },
+];
+
+const PRIORITY_FILTERS: { id: string; label: string }[] = [
+  { id: '', label: 'Tất cả ưu tiên' },
+  { id: 'urgent', label: 'Gấp' },
+  { id: 'high', label: 'Cao' },
+  { id: 'medium', label: 'TB' },
+  { id: 'low', label: 'Thấp' },
+];
+
 export default function ProductionFilterSheet({
   visible,
   onClose,
@@ -101,6 +123,13 @@ export default function ProductionFilterSheet({
   initialTab = 'scope',
   quickFilter = 'all',
   onQuickFilterChange,
+  filterPhone = '',
+  onPhoneChange,
+  personOptions = [],
+  filterPersonId = '',
+  onPersonChange,
+  filterPriority = '',
+  onPriorityChange,
   showWorkshopPicker,
   workshopOptions,
   filterCompany,
@@ -119,7 +148,8 @@ export default function ProductionFilterSheet({
 }: Props) {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
-  const showScopeTab = showWorkshopPicker || showDealCompanyPicker || regionOptions.length > 0;
+  const showScopeTab = showWorkshopPicker || showDealCompanyPicker || regionOptions.length > 0
+    || personOptions.length > 0 || !!onPhoneChange;
   const [tab, setTab] = useState<TabId>(showScopeTab ? initialTab : 'pipeline');
   const [query, setQuery] = useState('');
 
@@ -134,10 +164,12 @@ export default function ProductionFilterSheet({
     if (filterCompany) n += 1;
     if (filterDealCompany) n += 1;
     if (filterRegion) n += 1;
+    if (filterPersonId) n += 1;
+    if (filterPhone) n += 1;
     return n;
-  }, [filterCompany, filterDealCompany, filterRegion]);
+  }, [filterCompany, filterDealCompany, filterRegion, filterPersonId, filterPhone]);
 
-  const pipelineCount = filterWorkTypeId ? 1 : 0;
+  const pipelineCount = (filterWorkTypeId ? 1 : 0) + (filterPriority ? 1 : 0);
 
   const filterOptions = (opts: FilterPickOption[]) => {
     const q = query.trim().toLowerCase();
@@ -355,6 +387,38 @@ export default function ProductionFilterSheet({
           </View>
         </>
       ) : null}
+
+      {onPersonChange && personOptions.length > 0 ? (
+        <>
+          <Text style={themed.sectionLabel}>NV phụ trách VC/LĐ</Text>
+          <View style={themed.chipWrap}>
+            {filterOptions(personOptions).map((opt) => (
+              <Chip
+                key={`ps-${opt.id || 'all'}`}
+                label={opt.label}
+                active={filterPersonId === opt.id}
+                onPress={() => onPersonChange(opt.id)}
+              />
+            ))}
+          </View>
+        </>
+      ) : null}
+
+      {onPhoneChange ? (
+        <>
+          <Text style={themed.sectionLabel}>Số điện thoại KH</Text>
+          <View style={themed.chipWrap}>
+            {PHONE_FILTERS.map((opt) => (
+              <Chip
+                key={`ph-${opt.id || 'all'}`}
+                label={opt.label}
+                active={filterPhone === opt.id}
+                onPress={() => onPhoneChange(opt.id)}
+              />
+            ))}
+          </View>
+        </>
+      ) : null}
     </>
   );
 
@@ -371,6 +435,21 @@ export default function ProductionFilterSheet({
           />
         ))}
       </View>
+      {onPriorityChange ? (
+        <>
+          <Text style={themed.sectionLabel}>Ưu tiên</Text>
+          <View style={themed.chipWrap}>
+            {PRIORITY_FILTERS.map((opt) => (
+              <Chip
+                key={`pr-${opt.id || 'all'}`}
+                label={opt.label}
+                active={filterPriority === opt.id}
+                onPress={() => onPriorityChange(opt.id)}
+              />
+            ))}
+          </View>
+        </>
+      ) : null}
     </>
   );
 

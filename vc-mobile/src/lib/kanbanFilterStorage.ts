@@ -9,6 +9,10 @@ export type KanbanFilterSnapshot = {
   filterCompany?: string;
   filterDealCompany?: string;
   filterWorkTypeId?: string;
+  filterRegion?: string;
+  filterPersonId?: string;
+  filterPhone?: '' | 'has' | 'no';
+  filterPriority?: string;
 };
 
 /** Serialize writes — tránh Overview/Kanban ghi đè lẫn nhau. */
@@ -90,10 +94,13 @@ export async function loadKanbanFilters(): Promise<KanbanFilterSnapshot | null> 
 /**
  * Merge partial vào snapshot hiện có (không replace toàn bộ).
  * Chỉ ghi field được truyền (undefined = bỏ qua; '' = xóa có chủ đích).
+ * `emit: false` — ghi storage/RAM nhưng không broadcast (auto-pick work-type trên Kanban).
  */
 export async function saveKanbanFilters(
   partial: Partial<KanbanFilterSnapshot>,
+  opts?: { emit?: boolean },
 ): Promise<void> {
+  const shouldEmit = opts?.emit !== false;
   const run = async () => {
     try {
       const prev = (await loadKanbanFilters()) || {};
@@ -107,9 +114,13 @@ export async function saveKanbanFilters(
       const same =
         String(prev.filterCompany || '') === String(next.filterCompany || '')
         && String(prev.filterDealCompany || '') === String(next.filterDealCompany || '')
-        && String(prev.filterWorkTypeId || '') === String(next.filterWorkTypeId || '');
+        && String(prev.filterWorkTypeId || '') === String(next.filterWorkTypeId || '')
+        && String(prev.filterRegion || '') === String(next.filterRegion || '')
+        && String(prev.filterPersonId || '') === String(next.filterPersonId || '')
+        && String(prev.filterPhone || '') === String(next.filterPhone || '')
+        && String(prev.filterPriority || '') === String(next.filterPriority || '');
       await AsyncStorage.setItem(KEY, JSON.stringify(next));
-      if (!same) emitChanged(next);
+      if (!same && shouldEmit) emitChanged(next);
     } catch {
       /* ignore */
     }

@@ -85,11 +85,16 @@ function isWarrantyCol(s: KanbanStage): boolean {
     slug === 'customer-care'
     || slug.includes('warranty')
     || slug.includes('issue')
+    || slug.includes('phat_sinh')
+    || slug.includes('phatsinh')
     || name.includes('bảo hành')
     || name.includes('bao hanh')
     || name.includes('có vấn đề')
     || name.includes('co van de')
     || name.includes('vấn đề')
+    || name.includes('van de')
+    || name.includes('phát sinh')
+    || name.includes('phat sinh')
   );
 }
 
@@ -129,13 +134,13 @@ export type VcBoardKpis = {
   totalInstall: number;
   /** Chờ VC — số thẻ cột chờ/tiếp nhận. */
   intake: number;
-  /** Đang vận chuyển. */
+  /** Đang vận chuyển / Dự án sắp tới. */
   shipping: number;
   /** Đã giao. */
   delivered: number;
   /** Đang lắp đặt. */
   installing: number;
-  /** Có vấn đề / bảo hành. */
+  /** Có vấn đề / Phát sinh / bảo hành. */
   warranty: number;
   /** Nghiệm thu · bàn giao. */
   acceptance: number;

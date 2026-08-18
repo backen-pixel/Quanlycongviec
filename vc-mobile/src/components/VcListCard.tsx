@@ -2,6 +2,7 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import React, { useMemo } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import TapHighlight from './TapHighlight';
+import PersonRoleChip from './PersonRoleChip';
 import { useTheme } from '../context/ThemeContext';
 import { Radii, stageColor, type AppColors } from '../theme';
 import type { ProductionProject } from '../types';
@@ -56,7 +57,7 @@ export default function VcListCard({
   hasUnreadComments,
   commentCount = 0,
 }: Props) {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const accent = stageColor(stageColorHex, stageIndex);
   const deadlineStr = formatDeadline(item.deadline);
@@ -66,12 +67,7 @@ export default function VcListCard({
     && item.status !== 'completed'
   );
   const customerLine = [item.customer_name, item.customer_phone].filter(Boolean).join(' · ');
-  const people = [
-    crmName ? `CRM: ${crmName}` : null,
-    sxName ? `SX: ${sxName}` : null,
-    vcName ? `VC: ${vcName}` : null,
-    ldName ? `LĐ: ${ldName}` : null,
-  ].filter(Boolean);
+  const hasPeople = !!(crmName || sxName || vcName || ldName);
 
   return (
     <View style={[styles.card, { borderLeftColor: accent }]}>
@@ -93,8 +89,13 @@ export default function VcListCard({
           <Text style={styles.customer} numberOfLines={1}>{customerLine}</Text>
         ) : null}
 
-        {people.length ? (
-          <Text style={styles.people} numberOfLines={2}>{people.join(' · ')}</Text>
+        {hasPeople ? (
+          <View style={styles.peopleWrap}>
+            <PersonRoleChip label="CRM" name={crmName} isDark={isDark} />
+            <PersonRoleChip label="SX" name={sxName} isDark={isDark} />
+            <PersonRoleChip label="VC" name={vcName} isDark={isDark} />
+            <PersonRoleChip label="LĐ" name={ldName} isDark={isDark} />
+          </View>
         ) : (
           <Text style={styles.peopleMuted}>Phụ trách: —</Text>
         )}
@@ -123,9 +124,11 @@ export default function VcListCard({
         {onComment ? (
           <TapHighlight style={styles.actionBtn} onPress={onComment} accessibilityLabel="Bình luận">
             <Ionicons name="chatbubble-ellipses-outline" size={18} color={colors.primary} />
-            {hasUnreadComments ? (
+            {hasUnreadComments || commentCount > 0 ? (
               <View style={styles.badge}>
-                <Text style={styles.badgeTxt}>{commentCount > 99 ? '99+' : commentCount}</Text>
+                <Text style={styles.badgeTxt}>
+                  {commentCount > 0 ? (commentCount > 99 ? '99+' : String(commentCount)) : '!'}
+                </Text>
               </View>
             ) : null}
           </TapHighlight>
@@ -175,7 +178,7 @@ function makeStyles(c: AppColors) {
     stageTxt: { fontSize: 11, fontWeight: '700' },
     title: { color: c.text, fontSize: 15, fontWeight: '700', marginBottom: 4 },
     customer: { color: c.textMuted, fontSize: 12, fontWeight: '600', marginBottom: 4 },
-    people: { color: c.text, fontSize: 11, fontWeight: '600', lineHeight: 16, marginBottom: 6 },
+    peopleWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 6 },
     peopleMuted: { color: c.textFaint, fontSize: 11, marginBottom: 6 },
     metaRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 2 },
     metaItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
@@ -206,18 +209,19 @@ function makeStyles(c: AppColors) {
     },
     badge: {
       position: 'absolute',
-      top: -4,
-      right: -4,
-      minWidth: 16,
-      height: 16,
-      borderRadius: 8,
-      paddingHorizontal: 4,
+      top: -5,
+      right: -5,
+      minWidth: 18,
+      height: 18,
+      borderRadius: 9,
+      paddingHorizontal: 5,
       backgroundColor: c.danger,
       borderWidth: 1.5,
       borderColor: c.card,
       alignItems: 'center',
       justifyContent: 'center',
+      zIndex: 2,
     },
-    badgeTxt: { color: c.white, fontSize: 9, fontWeight: '800', lineHeight: 11 },
+    badgeTxt: { color: '#FFFFFF', fontSize: 10, fontWeight: '800', lineHeight: 12 },
   });
 }

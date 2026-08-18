@@ -697,6 +697,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     s.on('notify:badge', onBoardChanged);
     s.on('crm:dashboard_changed', onBoardChanged);
     s.on('production:board_changed', onBoardChanged);
+    s.on('logistics:board_changed', onBoardChanged);
     s.on('logistics:project_trashed', onBoardChanged);
     s.on('logistics:project_restored', onBoardChanged);
     s.on('logistics:project_purged', onBoardChanged);
@@ -754,6 +755,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       s.off('notify:badge', onBoardChanged);
       s.off('crm:dashboard_changed', onBoardChanged);
       s.off('production:board_changed', onBoardChanged);
+      s.off('logistics:board_changed', onBoardChanged);
       s.off('logistics:project_trashed', onBoardChanged);
       s.off('logistics:project_restored', onBoardChanged);
       s.off('logistics:project_purged', onBoardChanged);

@@ -166,6 +166,15 @@ export type CrmDealSummary = {
 };
 
 /** Ghi chú nhân viên nhập trên nhiệm vụ (không phải mô tả/template). */
+export type TaskChecklistItem = {
+  id: string;
+  title: string;
+  description?: string;
+  done: boolean;
+  /** Field gốc từ API (giữ khi cập nhật). */
+  [key: string]: unknown;
+};
+
 export type TaskStaffNote = {
   id: string;
   text: string;
@@ -185,6 +194,8 @@ export type CrmTask = {
   notes?: string | null;
   description?: string | null;
   priority?: string | null;
+  /** Mục con checklist (JSONB crm_tasks.checklist / tasks.checklist). */
+  checklist?: TaskChecklistItem[];
   file_count?: number;
   note_count?: number;
   attachment_count?: number;

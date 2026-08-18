@@ -1,6 +1,6 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import * as ImagePicker from 'expo-image-picker';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -16,6 +16,7 @@ import { formatApiError } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { useProductionRealtime } from '../hooks/useProductionRealtime';
+import { REALTIME_TASK } from '../lib/realtimeModes';
 import { useRootNavigation } from '../navigation/useRootNavigation';
 import {
   fetchLogisticsWorkTasksPage,
@@ -40,7 +41,6 @@ import { Radii, Spacing, colorWithAlpha, type AppColors } from '../theme';
 import TapHighlight from './TapHighlight';
 
 type StatusFilter = 'all' | 'pending' | 'in_progress' | 'completed' | 'overdue';
-type VcAreaFilter = 'shipping' | 'install' | 'all';
 
 const STATUS_CHIPS: {
   key: StatusFilter;
@@ -52,12 +52,6 @@ const STATUS_CHIPS: {
   { key: 'in_progress', label: 'Đang', icon: 'play-outline' },
   { key: 'completed', label: 'Xong', icon: 'checkmark-circle-outline' },
   { key: 'overdue', label: 'Quá hạn', icon: 'alert-circle-outline' },
-];
-
-const AREA_CHIPS: { key: VcAreaFilter; label: string }[] = [
-  { key: 'shipping', label: 'Vận chuyển' },
-  { key: 'install', label: 'Lắp đặt' },
-  { key: 'all', label: 'Tất cả' },
 ];
 
 function statusColor(status: string, colors: AppColors): string {
@@ -77,6 +71,11 @@ type Props = {
   companyId?: string | null;
   /** Lọc nhân viên: null/undefined = tất cả (khi được phép); có id = theo người. */
   assigneeId?: string | null;
+  /** Mở sẵn section deal + làm nổi bật task (từ Tổng quan). */
+  focusLeadId?: string | null;
+  focusTaskId?: string | null;
+  /** Deep-link lọc trạng thái (vd. overdue). */
+  initialStatusFilter?: 'all' | 'pending' | 'in_progress' | 'completed' | 'overdue' | null;
 };
 
 export default function WorkProjectTasksPanel({
@@ -84,6 +83,9 @@ export default function WorkProjectTasksPanel({
   contentPaddingBottom = 24,
   companyId = null,
   assigneeId = null,
+  focusLeadId = null,
+  focusTaskId = null,
+  initialStatusFilter = null,
 }: Props) {
   const { colors } = useTheme();
   const { user } = useAuth();
@@ -92,8 +94,6 @@ export default function WorkProjectTasksPanel({
   const styles = useMemo(() => makeStyles(colors), [colors]);
 
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
-  /** Mặc định Vận chuyển — khớp ProjectDetail vcAreaTab. */
-  const [areaFilter, setAreaFilter] = useState<VcAreaFilter>('shipping');
   const [tasks, setTasks] = useState<WorkTask[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -101,6 +101,12 @@ export default function WorkProjectTasksPanel({
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   /** Section đóng mặc định — chỉ lưu leadId đang mở. */
   const [expandedLeadIds, setExpandedLeadIds] = useState<Record<string, boolean>>({});
+  const loadSeqRef = useRef(0);
+
+  useEffect(() => {
+    if (!initialStatusFilter) return;
+    setStatusFilter(initialStatusFilter);
+  }, [initialStatusFilter]);
 
   const load = useCallback(async () => {
     if (!userId) {
@@ -108,6 +114,7 @@ export default function WorkProjectTasksPanel({
       setLoading(false);
       return;
     }
+    const seq = ++loadSeqRef.current;
     setError(null);
     try {
       const page = await fetchLogisticsWorkTasksPage({
@@ -115,14 +122,16 @@ export default function WorkProjectTasksPanel({
         companyId: companyId || null,
         limit: WORK_TASKS_PAGE_SIZE * 4,
       });
+      if (seq !== loadSeqRef.current) return;
       // Khớp tab Công việc trong chi tiết deal (chỉ vc_* + workshop).
       const aligned = filterVcLogisticsUiTasks(page.tasks) as WorkTask[];
       setTasks(aligned.filter((t) => t.id && t.lead_id));
     } catch (e) {
+      if (seq !== loadSeqRef.current) return;
       setError(formatApiError(e));
       setTasks([]);
     } finally {
-      setLoading(false);
+      if (seq === loadSeqRef.current) setLoading(false);
     }
   }, [userId, assigneeId, companyId]);
 
@@ -130,6 +139,12 @@ export default function WorkProjectTasksPanel({
     setLoading(true);
     void load();
   }, [load]);
+
+  useEffect(() => {
+    const lead = focusLeadId ? String(focusLeadId) : '';
+    if (!lead) return;
+    setExpandedLeadIds((prev) => ({ ...prev, [lead]: true }));
+  }, [focusLeadId]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -143,11 +158,12 @@ export default function WorkProjectTasksPanel({
   useProductionRealtime({
     onRefresh: () => void load(),
     enabled: Boolean(userId),
-    modes: ['task'],
+    modes: REALTIME_TASK,
   });
 
   const filtered = useMemo(() => {
-    const byArea = filterVcAreaTabTasks(tasks, areaFilter, []) as WorkTask[];
+    // Luôn lọc Vận chuyển — khớp chi tiết deal (tab mặc định), không hiện chip khu vực.
+    const byArea = filterVcAreaTabTasks(tasks, 'shipping', []) as WorkTask[];
     return byArea.filter((t) => {
       const st = String(t.status || 'pending');
       if (statusFilter === 'pending') return isTaskPending(st);
@@ -156,7 +172,7 @@ export default function WorkProjectTasksPanel({
       if (statusFilter === 'overdue') return isTaskOverdue(t);
       return true;
     });
-  }, [tasks, statusFilter, areaFilter]);
+  }, [tasks, statusFilter]);
 
   const sections = useMemo(() => groupTasksByDeal(filtered), [filtered]);
 
@@ -173,14 +189,14 @@ export default function WorkProjectTasksPanel({
   }, [sections, expandedLeadIds]);
 
   const stats = useMemo(() => {
-    const base = filterVcAreaTabTasks(tasks, areaFilter, []) as WorkTask[];
+    const base = filterVcAreaTabTasks(tasks, 'shipping', []) as WorkTask[];
     return {
       pending: base.filter((t) => isTaskPending(String(t.status))).length,
       inProgress: base.filter((t) => isTaskInProgress(String(t.status))).length,
       done: base.filter((t) => isTaskDone(String(t.status))).length,
       overdue: base.filter((t) => isTaskOverdue(t)).length,
     };
-  }, [tasks, areaFilter]);
+  }, [tasks]);
 
   const toggleSection = (leadId: string) => {
     setExpandedLeadIds((prev) => ({ ...prev, [leadId]: !prev[leadId] }));
@@ -313,23 +329,6 @@ export default function WorkProjectTasksPanel({
     <View>
       {ListHeaderComponent}
 
-      <View style={styles.areaRow}>
-        {AREA_CHIPS.map((chip) => {
-          const active = areaFilter === chip.key;
-          return (
-            <Pressable
-              key={chip.key}
-              style={[styles.areaChip, active && styles.areaChipActive]}
-              onPress={() => setAreaFilter(chip.key)}
-            >
-              <Text style={[styles.areaChipTxt, active && styles.areaChipTxtActive]}>
-                {chip.label}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </View>
-
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
@@ -452,9 +451,14 @@ export default function WorkProjectTasksPanel({
         const due = taskDueIso(task);
         const busy = updatingId === String(task.id);
         const fileCount = task.file_count ?? task.attachment_count ?? 0;
+        const focused = Boolean(
+          focusTaskId
+          && (String(workTaskFocusCrmId(task) || '') === String(focusTaskId)
+            || String(task.id) === String(focusTaskId)),
+        );
 
         return (
-          <View style={[styles.card, overdue && styles.cardOverdue]}>
+          <View style={[styles.card, overdue && styles.cardOverdue, focused && styles.cardFocus]}>
             <TapHighlight onPress={() => openTask(task, item.section)}>
               <View style={styles.cardTop}>
                 <View style={[styles.dot, { backgroundColor: statusColor(st, colors) }]} />
@@ -557,27 +561,6 @@ function makeStyles(colors: AppColors) {
     },
     scopeChipTxt: { fontSize: 12, fontWeight: '700', color: colors.textMuted },
     scopeChipTxtActive: { color: colors.primary },
-    areaRow: {
-      flexDirection: 'row',
-      gap: 8,
-      paddingHorizontal: Spacing.lg,
-      marginBottom: 8,
-    },
-    areaChip: {
-      flex: 1,
-      alignItems: 'center',
-      paddingVertical: 9,
-      borderRadius: Radii.md,
-      borderWidth: 1,
-      borderColor: colors.border,
-      backgroundColor: colors.card,
-    },
-    areaChipActive: {
-      borderColor: colors.primary,
-      backgroundColor: colorWithAlpha(colors.primary, 0.12),
-    },
-    areaChipTxt: { fontSize: 12, fontWeight: '700', color: colors.textMuted },
-    areaChipTxtActive: { color: colors.primary },
     chipScroll: { flexGrow: 0, marginBottom: 8 },
     chipRow: { paddingHorizontal: Spacing.lg, gap: 6 },
     chip: {
@@ -656,6 +639,10 @@ function makeStyles(colors: AppColors) {
       borderColor: colors.border,
     },
     cardOverdue: { borderColor: colorWithAlpha(colors.danger, 0.45) },
+    cardFocus: {
+      borderColor: colors.primary,
+      backgroundColor: colorWithAlpha(colors.primary, 0.08),
+    },
     cardTop: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
     dot: { width: 8, height: 8, borderRadius: 4, marginTop: 5 },
     cardTitle: { flex: 1, fontSize: 14, fontWeight: '700', color: colors.text },

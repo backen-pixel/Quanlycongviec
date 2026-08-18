@@ -1,6 +1,6 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useNavigation } from '@react-navigation/native';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -106,6 +106,7 @@ export default function EventsScreen() {
     companyId: ownCompanyId,
     module: 'logistics',
   }));
+  const loadSeqRef = useRef(0);
 
   useEffect(() => {
     const t = setTimeout(() => setSearch(searchDraft.trim()), 300);
@@ -222,6 +223,7 @@ export default function EventsScreen() {
 
   const load = useCallback(
     async (opts?: { refresh?: boolean; silent?: boolean }) => {
+      const seq = ++loadSeqRef.current;
       if (!opts?.silent) {
         if (opts?.refresh) setRefreshing(true);
         else setLoading(true);
@@ -229,6 +231,7 @@ export default function EventsScreen() {
       setError('');
       try {
         if (!showCompanyPicker && !ownCompanyId && !filters.companyId) {
+          if (seq !== loadSeqRef.current) return;
           setEvents([]);
           setError('Tài khoản chưa gán công ty — không tải được sự kiện.');
           return;
@@ -243,12 +246,16 @@ export default function EventsScreen() {
           module: filters.module || undefined,
           userId: filters.userId || undefined,
         });
+        if (seq !== loadSeqRef.current) return;
         setEvents(list);
       } catch (e) {
+        if (seq !== loadSeqRef.current) return;
         setError(formatApiError(e));
       } finally {
-        setLoading(false);
-        setRefreshing(false);
+        if (seq === loadSeqRef.current) {
+          setLoading(false);
+          setRefreshing(false);
+        }
       }
     },
     [

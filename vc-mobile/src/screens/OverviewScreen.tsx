@@ -1,5 +1,5 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { useFocusEffect, useIsFocused, useNavigation } from '@react-navigation/native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -64,23 +64,277 @@ import {
 } from '../lib/vcBoardKpis';
 import {
   assignmentDealCardLabel,
-  fetchMyLogisticsTasks,
+  canViewTeamWork,
+  fetchLogisticsWorkTasks,
   formatTaskDeadline,
+  isTaskDone,
   isTaskInProgress,
-  isTaskOverdue,
   isTaskPending,
   statusPillLabel,
   taskDueIso,
   workTaskFocusCrmId,
   type WorkTask,
 } from '../lib/workTasksApi';
+import {
+  assignmentDealLabel,
+  fetchLogisticsAssignments,
+  fetchPrivateDealInbox,
+  type CrmAssignment,
+  type SharedInboxTask,
+} from '../lib/sharedWorkspaceApi';
+import { filterVcAreaTabTasks, filterVcLogisticsUiTasks } from '../lib/projectDetailApi';
 import type { ProductionProject } from '../types';
 import { Radii, Spacing, colorWithAlpha, type AppColors } from '../theme';
 
-const TASK_PAGE_SIZE = 5;
 const PREVIEW_NOTIFS = 5;
 const KPI_CARD_W = 132;
 const KPI_CARD_GAP = 10;
+/** Số deal / trang trong «Nhiệm vụ cần làm». */
+const TODO_DEAL_PAGE_SIZE = 4;
+
+type OverviewTodoSource = 'task' | 'assignment' | 'shared';
+type WorkTabKey = 'tasks' | 'assignments' | 'shared';
+
+type OverviewTodo = {
+  key: string;
+  source: OverviewTodoSource;
+  title: string;
+  status: string;
+  deadline?: string | null;
+  dealLabel: string;
+  leadId: string;
+  projectId?: string | null;
+  focusId: string;
+  focusLeadId?: string | null;
+  badge: string;
+  badgeTone: 'task' | 'assign' | 'shared';
+};
+
+type OverviewTodoDealGroup = {
+  key: string;
+  dealLabel: string;
+  projectId?: string | null;
+  leadId: string;
+  items: OverviewTodo[];
+};
+
+function isOpenStatus(status: string): boolean {
+  return isTaskPending(status) || isTaskInProgress(status);
+}
+
+function isDeadlineOverdue(deadline?: string | null, status?: string | null): boolean {
+  if (!deadline || isTaskDone(String(status || 'pending'))) return false;
+  const t = new Date(deadline).getTime();
+  if (Number.isNaN(t)) return false;
+  return t < Date.now();
+}
+
+function todoOverdue(t: OverviewTodo): boolean {
+  return isDeadlineOverdue(t.deadline, t.status);
+}
+
+function workTabForSource(source: OverviewTodoSource): WorkTabKey {
+  if (source === 'assignment') return 'assignments';
+  if (source === 'shared') return 'shared';
+  return 'tasks';
+}
+
+/** Chọn tab Công việc có quá hạn (ưu tiên tab duy nhất, không thì tab nhiều nhất). */
+function pickWorkTabForOverdue(todos: OverviewTodo[]): WorkTabKey {
+  const counts: Record<WorkTabKey, number> = {
+    tasks: 0,
+    assignments: 0,
+    shared: 0,
+  };
+  for (const t of todos) {
+    if (!todoOverdue(t)) continue;
+    counts[workTabForSource(t.source)] += 1;
+  }
+  const ranked: WorkTabKey[] = ['tasks', 'assignments', 'shared'];
+  const withHits = ranked.filter((k) => counts[k] > 0);
+  if (!withHits.length) return 'tasks';
+  if (withHits.length === 1) return withHits[0];
+  return withHits.slice().sort((a, b) => counts[b] - counts[a])[0];
+}
+
+function overdueWorkTabHint(todos: OverviewTodo[]): string {
+  const counts: Record<WorkTabKey, number> = {
+    tasks: 0,
+    assignments: 0,
+    shared: 0,
+  };
+  for (const t of todos) {
+    if (!todoOverdue(t)) continue;
+    counts[workTabForSource(t.source)] += 1;
+  }
+  const parts: string[] = [];
+  if (counts.tasks) parts.push(`${counts.tasks} nhiệm vụ`);
+  if (counts.assignments) parts.push(`${counts.assignments} giao việc`);
+  if (counts.shared) parts.push(`${counts.shared} KG chung`);
+  return parts.join(' · ');
+}
+
+function mapWorkTaskTodo(t: WorkTask): OverviewTodo {
+  const leadId = String(t.lead_id || t.lead?.id || '');
+  return {
+    key: `task-${t.id}`,
+    source: 'task',
+    title: t.title || 'Nhiệm vụ',
+    status: String(t.status || 'pending'),
+    deadline: taskDueIso(t),
+    dealLabel: assignmentDealCardLabel(t.lead),
+    leadId,
+    projectId: t.lead?.project_id ? String(t.lead.project_id) : null,
+    focusId: workTaskFocusCrmId(t) || String(t.id),
+    focusLeadId: leadId || null,
+    badge: 'NV',
+    badgeTone: 'task',
+  };
+}
+
+function mapAssignmentTodo(a: CrmAssignment): OverviewTodo {
+  const leadId = String(a.lead_id || a.lead?.id || '');
+  return {
+    key: `asg-${a.id}`,
+    source: 'assignment',
+    title: a.title || 'Giao việc',
+    status: String(a.status || 'pending'),
+    deadline: a.deadline || null,
+    dealLabel: assignmentDealLabel(a.lead),
+    leadId,
+    projectId: a.lead?.project_id ? String(a.lead.project_id) : null,
+    focusId: String(a.id),
+    focusLeadId: leadId || null,
+    badge: 'GV',
+    badgeTone: 'assign',
+  };
+}
+
+function mapSharedTodo(t: SharedInboxTask): OverviewTodo {
+  const asgId = t.crm_assignment_id != null ? String(t.crm_assignment_id) : '';
+  const leadId = String(t.lead_id || t.lead?.id || '');
+  return {
+    key: asgId ? `asg-${asgId}` : `shared-${t.id}`,
+    source: 'shared',
+    title: t.title || 'KG chung',
+    status: String(t.status || 'pending'),
+    deadline: t.deadline || null,
+    dealLabel: assignmentDealLabel(t.lead)
+      || [t.lead?.project_code, t.lead?.project_name].filter(Boolean).join(' · '),
+    leadId,
+    projectId: t.lead?.project_id ? String(t.lead.project_id) : null,
+    focusId: asgId || String(t.id),
+    focusLeadId: leadId || null,
+    badge: 'KG',
+    badgeTone: 'shared',
+  };
+}
+
+function groupTodosByDeal(todos: OverviewTodo[]): OverviewTodoDealGroup[] {
+  const map = new Map<string, OverviewTodoDealGroup>();
+  for (const t of todos) {
+    const gKey = t.leadId
+      || (t.projectId ? `p-${t.projectId}` : '')
+      || (t.dealLabel ? `d-${t.dealLabel}` : t.key);
+    let g = map.get(gKey);
+    if (!g) {
+      g = {
+        key: gKey,
+        dealLabel: t.dealLabel || 'Không gắn deal',
+        projectId: t.projectId || null,
+        leadId: t.leadId || '',
+        items: [],
+      };
+      map.set(gKey, g);
+    }
+    if (!g.dealLabel && t.dealLabel) g.dealLabel = t.dealLabel;
+    if (!g.projectId && t.projectId) g.projectId = t.projectId;
+    g.items.push(t);
+  }
+
+  const groups = [...map.values()];
+  for (const g of groups) {
+    g.items.sort((a, b) => {
+      const ao = todoOverdue(a) ? 0 : 1;
+      const bo = todoOverdue(b) ? 0 : 1;
+      if (ao !== bo) return ao - bo;
+      return String(a.deadline || '9999').localeCompare(String(b.deadline || '9999'));
+    });
+  }
+  groups.sort((a, b) => {
+    const ao = a.items.some(todoOverdue) ? 0 : 1;
+    const bo = b.items.some(todoOverdue) ? 0 : 1;
+    if (ao !== bo) return ao - bo;
+    const ad = a.items[0]?.deadline || '9999';
+    const bd = b.items[0]?.deadline || '9999';
+    return String(ad).localeCompare(String(bd));
+  });
+  return groups;
+}
+
+function flattenSharedInboxTasks(inbox: {
+  tasks?: SharedInboxTask[];
+  groups?: { tasks?: SharedInboxTask[] }[];
+}): SharedInboxTask[] {
+  const fromTasks = Array.isArray(inbox.tasks) ? inbox.tasks : [];
+  const fromGroups = (inbox.groups || []).flatMap((g) => g.tasks || []);
+  const merged = [...fromTasks, ...fromGroups];
+  const seen = new Set<string>();
+  return merged.filter((t) => {
+    const id = String(t.id || '');
+    if (!id || seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+}
+
+function buildOverviewTodos(opts: {
+  workTasks: WorkTask[];
+  assignments: CrmAssignment[];
+  sharedTasks: SharedInboxTask[];
+  companyId?: string;
+}): OverviewTodo[] {
+  const companyId = String(opts.companyId || '');
+  // Khớp tab Nhiệm vụ: chỉ vc vận chuyển.
+  const logistics = filterVcLogisticsUiTasks(opts.workTasks) as WorkTask[];
+  const shipping = filterVcAreaTabTasks(logistics, 'shipping', []) as WorkTask[];
+  const openWork = shipping.filter((t) => isOpenStatus(String(t.status || 'pending')));
+  const openAsg = opts.assignments.filter((a) => isOpenStatus(String(a.status || 'pending')));
+  const asgIds = new Set(openAsg.map((a) => String(a.id)));
+
+  const openShared = opts.sharedTasks.filter((t) => {
+    if (!isOpenStatus(String(t.status || 'pending'))) return false;
+    if (companyId) {
+      const co = String(t.executor_company_id || t.owner_company_id || '');
+      if (co && co !== companyId) return false;
+    }
+    const asgId = t.crm_assignment_id != null ? String(t.crm_assignment_id) : '';
+    if (asgId && asgIds.has(asgId)) return false;
+    return true;
+  });
+
+  const merged = [
+    ...openWork.map(mapWorkTaskTodo),
+    ...openAsg.map(mapAssignmentTodo),
+    ...openShared.map(mapSharedTodo),
+  ];
+
+  const seen = new Set<string>();
+  const unique = merged.filter((row) => {
+    if (seen.has(row.key)) return false;
+    seen.add(row.key);
+    return true;
+  });
+
+  return unique.sort((a, b) => {
+    const ao = todoOverdue(a) ? 0 : 1;
+    const bo = todoOverdue(b) ? 0 : 1;
+    if (ao !== bo) return ao - bo;
+    const ad = a.deadline || '9999';
+    const bd = b.deadline || '9999';
+    return String(ad).localeCompare(String(bd));
+  });
+}
 
 const EMPTY_KPI: VcBoardKpis = {
   total: 0,
@@ -135,11 +389,6 @@ function notifTime(iso: string): string {
   return `${dd}/${mm}/${d.getFullYear()}`;
 }
 
-function isOpenWorkTask(t: WorkTask): boolean {
-  const st = String(t.status || 'pending');
-  return isTaskPending(st) || isTaskInProgress(st);
-}
-
 export default function OverviewScreen() {
   const { colors, isDark } = useTheme();
   const styles = useMemo(() => createStyles(colors, isDark), [colors, isDark]);
@@ -160,20 +409,29 @@ export default function OverviewScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [kpis, setKpis] = useState<VcBoardKpis>(EMPTY_KPI);
-  const [tasks, setTasks] = useState<WorkTask[]>([]);
+  const [todos, setTodos] = useState<OverviewTodo[]>([]);
   const [events, setEvents] = useState<AppEvent[]>([]);
-  const [taskVisibleCount, setTaskVisibleCount] = useState(TASK_PAGE_SIZE);
+  const [todoPage, setTodoPage] = useState(0);
+  /** Deal mở rộng trong «Nhiệm vụ cần làm» — mặc định thu gọn. */
+  const [expandedDealKeys, setExpandedDealKeys] = useState<Record<string, boolean>>({});
   const [notifs, setNotifs] = useState<SxCommentNotification[]>([]);
   const [companies, setCompanies] = useState<CompanyOption[]>([]);
   const [filterCompany, setFilterCompany] = useState('');
   const [companyPickerOpen, setCompanyPickerOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [commentProject, setCommentProject] = useState<ProductionProject | null>(null);
+  /** Overlay khi đang mở bình luận từ thông báo (trước khi sheet hiện / đang fetch). */
+  const [commentOpening, setCommentOpening] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const boardFiltersRef = useRef<{ companyId?: string; workshopTypeId?: string }>({});
   const loadSeqRef = useRef(0);
   const companiesRef = useRef<CompanyOption[]>([]);
   companiesRef.current = companies;
+  const isFocused = useIsFocused();
+  const isFocusedRef = useRef(isFocused);
+  isFocusedRef.current = isFocused;
+  /** Filter đổi lúc Tổng quan không focus → reload khi quay lại. */
+  const pendingFilterReloadRef = useRef(false);
 
   const isAdminLike = isSystemAdmin(user) || isCompanyScopedAdmin(user);
   const canPickCompany = isSystemAdmin(user);
@@ -221,18 +479,26 @@ export default function OverviewScreen() {
     });
   }, []);
 
-  const load = useCallback(async (mode: 'init' | 'refresh' | 'silent' = 'init') => {
+  const load = useCallback(async (
+    mode: 'init' | 'refresh' | 'silent' = 'init',
+    scopes: Array<'all' | 'board' | 'todos' | 'events' | 'notifs'> = ['all'],
+  ) => {
     const seq = ++loadSeqRef.current;
+    const wantAll = scopes.includes('all');
+    const wantBoard = wantAll || scopes.includes('board');
+    const wantTodos = wantAll || scopes.includes('todos');
+    const wantEvents = wantAll || scopes.includes('events');
+    const wantNotifs = wantAll || scopes.includes('notifs');
+
     if (mode === 'init') setLoading(true);
     if (mode === 'refresh') setRefreshing(true);
     setError(null);
     try {
       const snap = await loadKanbanFilters().catch(() => null);
       let companyId = snap?.filterCompany || '';
-      const workshopTypeId = snap?.filterWorkTypeId || undefined;
 
       let companyList = companiesRef.current;
-      if (mode !== 'silent' || !companyList.length) {
+      if ((mode !== 'silent' || !companyList.length) && (wantAll || wantBoard || wantTodos)) {
         companyList = await fetchCompanies().catch(() => [] as CompanyOption[]);
         if (seq !== loadSeqRef.current) return;
         setCompanies(companyList);
@@ -263,54 +529,96 @@ export default function OverviewScreen() {
       const skipBoard = mode === 'silent' && isCachedBoardFresh(boardFilters) && !!getCachedBoard(boardFilters);
       const cachedBoard = getCachedBoard(boardFilters);
 
-      if (cachedBoard && mode !== 'refresh') {
+      if (wantBoard && cachedBoard && mode !== 'refresh') {
         setKpis(computeVcBoardKpis(cachedBoard.projects, cachedBoard.stages));
         if (mode === 'init') setLoading(false);
       }
 
       const today = ymd(new Date());
-      const tasksPromise = !userId
+      const companyParam = companyId || undefined;
+      // Khớp Công việc: admin/team xem toàn bộ NV trong phạm vi công ty; NV thường = việc của mình.
+      const teamScope = canViewTeamWork(user);
+      const assigneeParam = teamScope ? undefined : (userId || undefined);
+
+      const tasksPromise = !wantTodos || !userId
         ? Promise.resolve([] as WorkTask[])
-        : fetchMyLogisticsTasks(userId, { limit: 30 }).catch(() => [] as WorkTask[]);
-      const eventsPromise = fetchEventsRange({
-        dateFrom: today,
-        dateTo: today,
-        companyId: companyId || undefined,
-        module: 'logistics',
-        userId: userId || undefined,
-      }).catch(() => [] as AppEvent[]);
+        : fetchLogisticsWorkTasks({
+          assigneeId: assigneeParam || null,
+          companyId: companyParam,
+          limit: 80,
+        }).catch(() => [] as WorkTask[]);
+      const assignmentsPromise = !wantTodos || !userId
+        ? Promise.resolve([] as CrmAssignment[])
+        : fetchLogisticsAssignments({
+          companyId: companyParam,
+          assigneeId: assigneeParam,
+          limit: 80,
+        }).catch(() => [] as CrmAssignment[]);
+      const sharedPromise = !wantTodos || !userId
+        ? Promise.resolve({ tasks: [] as SharedInboxTask[], groups: [] })
+        : fetchPrivateDealInbox('logistics').catch(() => ({
+          tasks: [] as SharedInboxTask[],
+          groups: [],
+        }));
+      const eventsPromise = !wantEvents
+        ? Promise.resolve([] as AppEvent[])
+        : fetchEventsRange({
+          dateFrom: today,
+          dateTo: today,
+          companyId: companyParam,
+          module: 'logistics',
+          userId: userId || undefined,
+        }).catch(() => [] as AppEvent[]);
 
       // Soft-fail board: NV thiếu projects:view không làm đỏ cả Tổng quan (tasks/events vẫn hiện).
-      const boardPromise = skipBoard
-        ? Promise.resolve(cachedBoard!)
+      const boardPromise = !wantBoard || skipBoard
+        ? Promise.resolve(wantBoard ? (cachedBoard || null) : null)
         : fetchProductionBoard(mode === 'refresh', boardFilters).catch(() => null);
 
-      const [board, myTasks, todayEvents, notifList] = await Promise.all([
-        boardPromise,
-        tasksPromise,
-        eventsPromise,
-        fetchCommentNotifications(false).catch(() => ({
+      const notifsPromise = !wantNotifs
+        ? Promise.resolve({ notifications: [] as SxCommentNotification[], unread_count: 0 })
+        : fetchCommentNotifications(false).catch(() => ({
           notifications: [] as SxCommentNotification[],
           unread_count: 0,
-        })),
+        }));
+
+      const [board, workTasks, assignments, sharedInbox, todayEvents, notifList] = await Promise.all([
+        boardPromise,
+        tasksPromise,
+        assignmentsPromise,
+        sharedPromise,
+        eventsPromise,
+        notifsPromise,
       ]);
 
       if (seq !== loadSeqRef.current) return;
-      if (board) {
-        if (!skipBoard) setCachedBoard(boardFilters, board);
-        setKpis(computeVcBoardKpis(board.projects, board.stages));
-      } else if (!cachedBoard) {
-        setKpis(EMPTY_KPI);
+      if (wantBoard) {
+        if (board) {
+          if (!skipBoard) setCachedBoard(boardFilters, board);
+          setKpis(computeVcBoardKpis(board.projects, board.stages));
+        } else if (!cachedBoard) {
+          setKpis(EMPTY_KPI);
+        }
       }
-      setTasks(myTasks);
-      setEvents(todayEvents);
-      setNotifs(
-        (notifList.notifications || [])
-          .filter(isVcRelevantNotification)
-          .slice()
-          .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))
-          .slice(0, PREVIEW_NOTIFS),
-      );
+      if (wantTodos) {
+        setTodos(buildOverviewTodos({
+          workTasks,
+          assignments,
+          sharedTasks: flattenSharedInboxTasks(sharedInbox),
+          companyId,
+        }));
+        setTodoPage(0);
+      }
+      if (wantEvents) setEvents(todayEvents);
+      if (wantNotifs) {
+        setNotifs(
+          (notifList.notifications || [])
+            .filter(isVcRelevantNotification)
+            .slice()
+            .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))
+            .slice(0, PREVIEW_NOTIFS),
+        );
+      }
     } catch (e) {
       if (seq !== loadSeqRef.current) return;
       if (mode !== 'silent') setError(formatApiError(e));
@@ -320,7 +628,7 @@ export default function OverviewScreen() {
         setRefreshing(false);
       }
     }
-  }, [userId, user?.company_id, canPickCompany, persistCompanyFilter]);
+  }, [userId, user, user?.company_id, canPickCompany, persistCompanyFilter]);
 
   useEffect(() => {
     void loadKanbanFilters().then((snap) => {
@@ -329,7 +637,7 @@ export default function OverviewScreen() {
     });
   }, [load]);
 
-  // Đồng bộ khi Kanban/Planner đổi filter công ty.
+  // Đồng bộ khi Kanban/Planner đổi filter — chỉ full reload khi Tổng quan đang focus.
   useEffect(() => {
     const unsub = subscribeSharedFilters((snap) => {
       const nextFilters = boardFiltersFromSharedSnap(snap);
@@ -339,7 +647,14 @@ export default function OverviewScreen() {
         && String(prev.workshopTypeId || '') === String(nextFilters.workshopTypeId || '');
       if (same) return;
       setFilterCompany(String(snap.filterCompany || ''));
-      void load(getCachedBoard(nextFilters) ? 'silent' : 'init');
+      boardFiltersRef.current = nextFilters;
+      const cached = getCachedBoard(nextFilters);
+      if (cached) setKpis(computeVcBoardKpis(cached.projects, cached.stages));
+      if (!isFocusedRef.current) {
+        pendingFilterReloadRef.current = true;
+        return;
+      }
+      void load(cached ? 'silent' : 'init');
     });
     return unsub;
   }, [load]);
@@ -351,6 +666,11 @@ export default function OverviewScreen() {
       const cached = getCachedBoard(filters);
       if (cached) {
         setKpis(computeVcBoardKpis(cached.projects, cached.stages));
+      }
+      if (pendingFilterReloadRef.current) {
+        pendingFilterReloadRef.current = false;
+        void load(cached ? 'silent' : 'init');
+        return;
       }
       if (!isCachedBoardFresh(filters)) {
         void load('silent');
@@ -375,27 +695,38 @@ export default function OverviewScreen() {
         }
         return;
       }
-      void load('silent');
+      const t = info?.evt?.type;
+      if (t === 'calendar:event_changed') {
+        void load('silent', ['events']);
+        return;
+      }
+      if (t === 'crm:task_changed') {
+        void load('silent', ['todos']);
+        return;
+      }
+      if (t === 'project:comment_changed' || t === 'lead:comment_changed') {
+        void load('silent', ['notifs']);
+        return;
+      }
+      void load('silent', ['board']);
     },
     modes: REALTIME_BOARD_TASK_EVENT,
     debounceMs: 1500,
   });
 
-  const openTasks = useMemo(() => {
-    const list = tasks.filter(isOpenWorkTask);
-    return list.slice().sort((a, b) => {
-      const ao = isTaskOverdue(a) ? 0 : 1;
-      const bo = isTaskOverdue(b) ? 0 : 1;
-      if (ao !== bo) return ao - bo;
-      const ad = taskDueIso(a) || '9999';
-      const bd = taskDueIso(b) || '9999';
-      return String(ad).localeCompare(String(bd));
-    });
-  }, [tasks]);
+  const todoGroups = useMemo(() => groupTodosByDeal(todos), [todos]);
+  const todoPageCount = Math.max(1, Math.ceil(todoGroups.length / TODO_DEAL_PAGE_SIZE) || 1);
+  const safeTodoPage = Math.min(todoPage, todoPageCount - 1);
+  const pageTodoGroups = todoGroups.slice(
+    safeTodoPage * TODO_DEAL_PAGE_SIZE,
+    safeTodoPage * TODO_DEAL_PAGE_SIZE + TODO_DEAL_PAGE_SIZE,
+  );
+  const openTaskCount = todos.length;
+  const overdueTaskCount = useMemo(() => todos.filter((t) => todoOverdue(t)).length, [todos]);
 
-  const previewTasks = openTasks.slice(0, taskVisibleCount);
-  const hasMoreTasks = taskVisibleCount < openTasks.length;
-  const overdueTaskCount = useMemo(() => tasks.filter((t) => isTaskOverdue(t)).length, [tasks]);
+  useEffect(() => {
+    if (todoPage > todoPageCount - 1) setTodoPage(Math.max(0, todoPageCount - 1));
+  }, [todoPage, todoPageCount]);
 
   const openNotifs = useCallback(async () => {
     void ensureNotificationPermission();
@@ -404,15 +735,26 @@ export default function OverviewScreen() {
   }, [refreshUnread]);
 
   const openCommentForProjectId = useCallback(async (projectId: string) => {
+    const pid = String(projectId || '').trim();
+    if (!pid) return;
+    // Mở sheet ngay với stub — tránh khoảng trống «treo» trong lúc fetch chi tiết.
+    setCommentOpening(true);
+    setCommentProject({
+      id: pid,
+      code: '',
+      name: 'Đang mở bình luận…',
+    } as ProductionProject);
     try {
-      const proj = await fetchProductionProject(projectId);
-      setCommentProject(proj);
+      const proj = await fetchProductionProject(pid);
+      setCommentProject((cur) => (cur && String(cur.id) === pid ? proj : cur));
     } catch {
-      setCommentProject({
-        id: projectId,
-        code: '',
-        name: 'Dự án',
-      } as ProductionProject);
+      setCommentProject((cur) => (
+        cur && String(cur.id) === pid
+          ? ({ id: pid, code: '', name: 'Dự án' } as ProductionProject)
+          : cur
+      ));
+    } finally {
+      setCommentOpening(false);
     }
   }, []);
 
@@ -421,8 +763,30 @@ export default function OverviewScreen() {
     (focusKpi: VcKpiFocusKey) => tabNav.navigate('Kanban', { focusKpi }),
     [tabNav],
   );
+  const goWork = useCallback((
+    tab: WorkTabKey = 'tasks',
+    opts?: {
+      focusId?: string;
+      focusLeadId?: string;
+      statusFilter?: 'all' | 'pending' | 'in_progress' | 'completed' | 'overdue';
+    },
+  ) => {
+    tabNav.navigate('Work', {
+      tab,
+      ...(opts?.focusId ? { focusId: opts.focusId } : {}),
+      ...(opts?.focusLeadId ? { focusLeadId: opts.focusLeadId } : {}),
+      ...(opts?.statusFilter ? { statusFilter: opts.statusFilter } : {}),
+    });
+  }, [tabNav]);
+
+  /** Banner công việc quá hạn → đúng tab (Nhiệm vụ / Giao việc / KG) + lọc Quá hạn. */
+  const goWorkOverdueSmart = useCallback(() => {
+    const tab = pickWorkTabForOverdue(todos);
+    goWork(tab, { statusFilter: 'overdue' });
+  }, [goWork, todos]);
 
   const openNotification = useCallback((n: SxCommentNotification) => {
+    const type = String(n.type || '');
     const pid = notificationProjectId(n);
     const focusRaw = notificationFocusKpi(n);
     const focusKeys: VcKpiFocusKey[] = [
@@ -432,16 +796,48 @@ export default function OverviewScreen() {
     const focus = focusRaw && focusKeys.includes(focusRaw as VcKpiFocusKey)
       ? (focusRaw as VcKpiFocusKey)
       : null;
+
     if (notificationOpensComments(n)) {
       if (pid) void openCommentForProjectId(pid);
       else void openNotifs();
       return;
     }
+
+    // Công việc VC quá hạn / sắp hạn → đúng tab Công việc + lọc Quá hạn.
+    if (
+      type === 'logistics_task_deadline_overdue'
+      || type === 'logistics_task_deadline_warning'
+    ) {
+      goWorkOverdueSmart();
+      return;
+    }
+
+    // Dự án quá hạn → màn chuyên dụng (không lọc Kanban).
+    if (focus === 'overdue' || (type.includes('project') && type.includes('overdue'))) {
+      openOverdueProjects();
+      return;
+    }
+
     if (focus) goKanbanFocus(focus);
     if (pid) openProjectDetail(pid);
     else if (!focus) void openNotifs();
-  }, [goKanbanFocus, openCommentForProjectId, openNotifs, openProjectDetail]);
-  const goWork = useCallback(() => tabNav.navigate('Work'), [tabNav]);
+  }, [
+    goKanbanFocus,
+    goWork,
+    goWorkOverdueSmart,
+    openCommentForProjectId,
+    openNotifs,
+    openOverdueProjects,
+    openProjectDetail,
+  ]);
+
+  const openOverviewTodo = useCallback((t: OverviewTodo) => {
+    goWork(workTabForSource(t.source), {
+      focusId: t.focusId,
+      focusLeadId: t.focusLeadId || t.leadId || undefined,
+    });
+  }, [goWork]);
+
   const goMessages = useCallback(() => tabNav.navigate('Messages'), [tabNav]);
   const goMenu = useCallback(() => tabNav.navigate('Menu'), [tabNav]);
   const goPlanner = useCallback(() => tabNav.navigate('Planner'), [tabNav]);
@@ -464,7 +860,7 @@ export default function OverviewScreen() {
     },
     {
       key: 'shipping',
-      label: 'Đang vận chuyển',
+      label: 'Dự án sắp tới',
       value: kpis.shipping,
       tone: 'orange',
       onPress: () => goKanbanFocus('shipping'),
@@ -485,7 +881,7 @@ export default function OverviewScreen() {
     },
     {
       key: 'warranty',
-      label: 'Có vấn đề',
+      label: 'Phát sinh',
       value: kpis.warranty,
       tone: 'sky',
       onPress: () => goKanbanFocus('warranty'),
@@ -509,7 +905,7 @@ export default function OverviewScreen() {
       label: 'Dự án quá hạn',
       value: kpis.overdue,
       tone: 'red',
-      onPress: () => goKanbanFocus('overdue'),
+      onPress: openOverdueProjects,
     },
   ];
 
@@ -537,7 +933,7 @@ export default function OverviewScreen() {
       label: 'Công việc',
       icon: 'checkbox-outline',
       color: '#22C55E',
-      onPress: goWork,
+      onPress: () => goWork('tasks'),
     },
     {
       key: 'overdue',
@@ -651,7 +1047,10 @@ export default function OverviewScreen() {
             {totalOverdueItems > 0 ? (
               <Pressable
                 style={styles.alertBanner}
-                onPress={() => (kpis.overdue > 0 ? openOverdueProjects() : goWork())}
+                onPress={() => {
+                  if (kpis.overdue > 0) openOverdueProjects();
+                  else goWorkOverdueSmart();
+                }}
               >
                 <View style={styles.alertIcon}>
                   <Ionicons name="alert-circle" size={22} color={colors.danger} />
@@ -662,7 +1061,9 @@ export default function OverviewScreen() {
                   </Text>
                   <Text style={styles.alertSub}>
                     {[
-                      overdueTaskCount > 0 ? `${overdueTaskCount} công việc` : null,
+                      overdueTaskCount > 0
+                        ? (overdueWorkTabHint(todos) || `${overdueTaskCount} công việc`)
+                        : null,
                       kpis.overdue > 0 ? `${kpis.overdue} dự án VC/LĐ` : null,
                     ]
                       .filter(Boolean)
@@ -688,7 +1089,7 @@ export default function OverviewScreen() {
                 </Text>
                 <Text style={styles.boardSummarySep}>
                   {`Vận chuyển ${kpis.totalShipping} · Lắp đặt ${kpis.totalInstall}`}
-                  {kpis.warranty > 0 ? ` · BH ${kpis.warranty}` : ''}
+                  {kpis.warranty > 0 ? ` · Phát sinh ${kpis.warranty}` : ''}
                 </Text>
               </View>
             </View>
@@ -769,109 +1170,153 @@ export default function OverviewScreen() {
 
             <View style={styles.secHead}>
               <Text style={styles.secTitleInline}>Nhiệm vụ cần làm</Text>
-              <Pressable onPress={goWork} hitSlop={8}>
+              <Pressable onPress={() => goWork('tasks')} hitSlop={8}>
                 <Text style={styles.link}>
-                  {openTasks.length > 0 ? `Tất cả (${openTasks.length})` : 'Xem công việc'}
+                  {openTaskCount > 0 ? `Tất cả (${openTaskCount})` : 'Xem công việc'}
                 </Text>
               </Pressable>
             </View>
             <View style={styles.card}>
-              {previewTasks.length === 0 ? (
+              {pageTodoGroups.length === 0 ? (
                 <View style={styles.emptyRow}>
                   <Ionicons name="checkbox-outline" size={20} color={colors.textFaint} />
-                  <Text style={styles.emptyTxt}>Không có nhiệm vụ chưa làm / đang làm</Text>
+                  <Text style={styles.emptyTxt}>Không có nhiệm vụ / giao việc / KG chung cần làm</Text>
                 </View>
               ) : (
                 <>
-                  {previewTasks.map((t, idx) => {
-                    const overdue = isTaskOverdue(t);
-                    const statusKey = String(t.status || 'pending');
-                    const statusLbl = statusPillLabel(statusKey);
-                    const deal = assignmentDealCardLabel(t.lead);
-                    const due = formatTaskDeadline(taskDueIso(t));
+                  {pageTodoGroups.map((g, gIdx) => {
+                    const expanded = !!expandedDealKeys[g.key];
                     return (
+                    <View
+                      key={g.key}
+                      style={[styles.dealGroup, gIdx > 0 && styles.dealGroupBorder]}
+                    >
                       <Pressable
-                        key={t.id}
-                        style={[styles.rowItem, idx > 0 && styles.rowBorder]}
-                        onPress={() => {
-                          const pid = t.lead?.project_id;
-                          if (pid) {
-                            openProjectDetail(String(pid), { focusTaskId: workTaskFocusCrmId(t) });
-                          } else {
-                            goWork();
-                          }
-                        }}
+                        style={styles.dealGroupHead}
+                        onPress={() =>
+                          setExpandedDealKeys((prev) => ({
+                            ...prev,
+                            [g.key]: !prev[g.key],
+                          }))
+                        }
                       >
-                        <View
-                          style={[
-                            styles.rowIcon,
-                            {
-                              backgroundColor: overdue
-                                ? colors.dangerSoft
-                                : isTaskInProgress(statusKey)
-                                  ? colors.primarySoft
-                                  : colorWithAlpha(colors.warning, 0.16),
-                            },
-                          ]}
-                        >
-                          <Ionicons
-                            name={
-                              overdue
-                                ? 'alert-circle'
-                                : isTaskInProgress(statusKey)
-                                  ? 'time'
-                                  : 'ellipse-outline'
-                            }
-                            size={18}
-                            color={
-                              overdue
-                                ? colors.danger
-                                : isTaskInProgress(statusKey)
-                                  ? colors.primary
-                                  : colors.warning
-                            }
-                          />
-                        </View>
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.rowTitle} numberOfLines={1}>{t.title || 'Nhiệm vụ'}</Text>
-                          {deal ? (
-                            <View style={styles.entityRow}>
-                              <View style={[styles.entityBadge, { backgroundColor: colors.primarySoft }]}>
-                                <Text style={[styles.entityBadgeTxt, { color: colors.primary }]}>VC</Text>
-                              </View>
-                              <Text style={styles.entityName} numberOfLines={1}>{deal}</Text>
-                            </View>
-                          ) : null}
-                          <Text style={styles.rowSub} numberOfLines={1}>
-                            {statusLbl}
-                            {overdue ? ' · Quá hạn' : ''}
-                            {due ? ` · ${due}` : ''}
+                        <Ionicons
+                          name={expanded ? 'chevron-down' : 'chevron-forward'}
+                          size={16}
+                          color={colors.textMuted}
+                        />
+                        <View style={{ flex: 1, minWidth: 0 }}>
+                          <Text style={styles.dealGroupTitle} numberOfLines={1}>
+                            {g.dealLabel || 'Không gắn deal'}
+                          </Text>
+                          <Text style={styles.dealGroupMeta}>
+                            {g.items.length} việc
+                            {g.items.some(todoOverdue) ? ' · có quá hạn' : ''}
+                            {!expanded ? ' · chạm để mở' : ''}
                           </Text>
                         </View>
-                        <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
                       </Pressable>
+                      {expanded
+                        ? g.items.map((t) => {
+                        const overdue = todoOverdue(t);
+                        const statusKey = String(t.status || 'pending');
+                        const statusLbl = statusPillLabel(statusKey);
+                        const due = formatTaskDeadline(t.deadline);
+                        const badgeBg =
+                          t.badgeTone === 'assign'
+                            ? colorWithAlpha('#8B5CF6', 0.18)
+                            : t.badgeTone === 'shared'
+                              ? colorWithAlpha('#14B8A6', 0.18)
+                              : colors.primarySoft;
+                        const badgeFg =
+                          t.badgeTone === 'assign'
+                            ? '#8B5CF6'
+                            : t.badgeTone === 'shared'
+                              ? '#14B8A6'
+                              : colors.primary;
+                        return (
+                          <Pressable
+                            key={t.key}
+                            style={styles.todoRow}
+                            onPress={() => openOverviewTodo(t)}
+                          >
+                            <View style={[styles.entityBadge, { backgroundColor: badgeBg }]}>
+                              <Text style={[styles.entityBadgeTxt, { color: badgeFg }]}>{t.badge}</Text>
+                            </View>
+                            <View style={{ flex: 1, minWidth: 0 }}>
+                              <Text style={styles.todoTitle} numberOfLines={1}>
+                                {t.title || 'Nhiệm vụ'}
+                              </Text>
+                              <Text
+                                style={[styles.todoSub, overdue && { color: colors.danger }]}
+                                numberOfLines={1}
+                              >
+                                {statusLbl}
+                                {overdue ? ' · Quá hạn' : ''}
+                                {due ? ` · ${due}` : ''}
+                              </Text>
+                            </View>
+                            <Ionicons name="chevron-forward" size={14} color={colors.textFaint} />
+                          </Pressable>
+                        );
+                      })
+                        : null}
+                    </View>
                     );
                   })}
-                  {hasMoreTasks ? (
-                    <Pressable
-                      style={styles.moreBtn}
-                      onPress={() =>
-                        setTaskVisibleCount((n) => Math.min(n + TASK_PAGE_SIZE, openTasks.length))
-                      }
-                    >
-                      <Text style={styles.moreBtnTxt}>
-                        Xem thêm ({Math.min(TASK_PAGE_SIZE, openTasks.length - taskVisibleCount)})
+                  {todoGroups.length > TODO_DEAL_PAGE_SIZE ? (
+                    <View style={styles.pagerRow}>
+                      <Pressable
+                        style={[styles.pagerBtn, safeTodoPage <= 0 && styles.pagerBtnDisabled]}
+                        disabled={safeTodoPage <= 0}
+                        onPress={() => setTodoPage((p) => Math.max(0, p - 1))}
+                      >
+                        <Ionicons
+                          name="chevron-back"
+                          size={16}
+                          color={safeTodoPage <= 0 ? colors.textFaint : colors.primary}
+                        />
+                        <Text
+                          style={[
+                            styles.pagerBtnTxt,
+                            safeTodoPage <= 0 && { color: colors.textFaint },
+                          ]}
+                        >
+                          Trước
+                        </Text>
+                      </Pressable>
+                      <Text style={styles.pagerLabel}>
+                        {safeTodoPage + 1}/{todoPageCount}
                       </Text>
-                      <Ionicons name="chevron-down" size={16} color={colors.primary} />
-                    </Pressable>
-                  ) : openTasks.length > TASK_PAGE_SIZE ? (
-                    <Pressable
-                      style={styles.moreBtn}
-                      onPress={() => setTaskVisibleCount(TASK_PAGE_SIZE)}
-                    >
-                      <Text style={styles.moreBtnTxt}>Thu gọn</Text>
-                      <Ionicons name="chevron-up" size={16} color={colors.primary} />
-                    </Pressable>
+                      <Pressable
+                        style={[
+                          styles.pagerBtn,
+                          safeTodoPage >= todoPageCount - 1 && styles.pagerBtnDisabled,
+                        ]}
+                        disabled={safeTodoPage >= todoPageCount - 1}
+                        onPress={() =>
+                          setTodoPage((p) => Math.min(todoPageCount - 1, p + 1))
+                        }
+                      >
+                        <Text
+                          style={[
+                            styles.pagerBtnTxt,
+                            safeTodoPage >= todoPageCount - 1 && { color: colors.textFaint },
+                          ]}
+                        >
+                          Sau
+                        </Text>
+                        <Ionicons
+                          name="chevron-forward"
+                          size={16}
+                          color={
+                            safeTodoPage >= todoPageCount - 1
+                              ? colors.textFaint
+                              : colors.primary
+                          }
+                        />
+                      </Pressable>
+                    </View>
                   ) : null}
                 </>
               )}
@@ -956,9 +1401,21 @@ export default function OverviewScreen() {
       <ProjectCommentModal
         visible={!!commentProject}
         project={commentProject}
-        onClose={() => setCommentProject(null)}
+        onClose={() => {
+          setCommentProject(null);
+          setCommentOpening(false);
+        }}
         onPosted={() => {}}
       />
+
+      {commentOpening && !commentProject ? (
+        <View style={styles.commentOpeningOverlay} pointerEvents="auto">
+          <View style={styles.commentOpeningBox}>
+            <ActivityIndicator color={colors.primary} size="large" />
+            <Text style={styles.commentOpeningTxt}>Đang mở bình luận…</Text>
+          </View>
+        </View>
+      ) : null}
 
       <FilterPickerModal
         visible={companyPickerOpen}
@@ -1237,6 +1694,75 @@ function createStyles(colors: AppColors, isDark: boolean) {
       fontSize: 12.5,
       fontWeight: '700',
     },
+    dealGroup: {
+      paddingHorizontal: 12,
+      paddingTop: 10,
+      paddingBottom: 4,
+    },
+    dealGroupBorder: {
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: colors.border,
+    },
+    dealGroupHead: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginBottom: 6,
+      gap: 8,
+      paddingVertical: 2,
+    },
+    dealGroupTitle: {
+      color: colors.text,
+      fontSize: 13,
+      fontWeight: '800',
+    },
+    dealGroupMeta: {
+      color: colors.textMuted,
+      fontSize: 11,
+      fontWeight: '600',
+      marginTop: 1,
+    },
+    todoRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      paddingVertical: 8,
+      paddingLeft: 2,
+    },
+    todoTitle: {
+      color: colors.text,
+      fontSize: 13,
+      fontWeight: '700',
+    },
+    todoSub: {
+      color: colors.textMuted,
+      fontSize: 11,
+      fontWeight: '600',
+      marginTop: 1,
+    },
+    pagerRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: colors.border,
+      gap: 8,
+    },
+    pagerBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 2,
+      paddingVertical: 4,
+      paddingHorizontal: 4,
+    },
+    pagerBtnDisabled: { opacity: 0.55 },
+    pagerBtnTxt: { color: colors.primary, fontSize: 13, fontWeight: '800' },
+    pagerLabel: {
+      color: colors.textMuted,
+      fontSize: 12,
+      fontWeight: '700',
+    },
     moreBtn: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -1287,6 +1813,29 @@ function createStyles(colors: AppColors, isDark: boolean) {
       fontSize: 11,
       fontWeight: '700',
       textAlign: 'center',
+    },
+    commentOpeningOverlay: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: 'rgba(0,0,0,0.45)',
+      alignItems: 'center',
+      justifyContent: 'center',
+      zIndex: 50,
+    },
+    commentOpeningBox: {
+      backgroundColor: colors.card,
+      borderRadius: Radii.lg,
+      borderWidth: 1,
+      borderColor: colors.border,
+      paddingHorizontal: 28,
+      paddingVertical: 22,
+      alignItems: 'center',
+      gap: 12,
+      minWidth: 200,
+    },
+    commentOpeningTxt: {
+      color: colors.text,
+      fontSize: 14,
+      fontWeight: '700',
     },
   });
 }

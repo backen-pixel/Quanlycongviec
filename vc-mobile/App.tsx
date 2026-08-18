@@ -17,6 +17,7 @@ import { FileActionsProvider } from './src/context/FileActionsContext';
 import SystemBubbleSync from './src/components/SystemBubbleSync';
 import UpdateGate from './src/components/UpdateGate';
 import { AuthProvider, useAuth } from './src/context/AuthContext';
+import { KeyboardInsetProvider } from './src/context/KeyboardInsetContext';
 import { MessengerProvider } from './src/context/MessengerContext';
 import { NotificationProvider } from './src/context/NotificationContext';
 import { ThemeProvider, useTheme } from './src/context/ThemeContext';
@@ -201,17 +202,19 @@ export default function App() {
         }}
       >
         <ThemeProvider>
-          <AuthProvider>
-            <NotificationProvider>
-              <MessengerProvider>
-                <MessengerCallProvider>
-                  <FileActionsProvider>
-                    <AppShell />
-                  </FileActionsProvider>
-                </MessengerCallProvider>
-              </MessengerProvider>
-            </NotificationProvider>
-          </AuthProvider>
+          <KeyboardInsetProvider>
+            <AuthProvider>
+              <NotificationProvider>
+                <MessengerProvider>
+                  <MessengerCallProvider>
+                    <FileActionsProvider>
+                      <AppShell />
+                    </FileActionsProvider>
+                  </MessengerCallProvider>
+                </MessengerProvider>
+              </NotificationProvider>
+            </AuthProvider>
+          </KeyboardInsetProvider>
         </ThemeProvider>
       </ShareIntentProvider>
     </SafeAreaProvider>

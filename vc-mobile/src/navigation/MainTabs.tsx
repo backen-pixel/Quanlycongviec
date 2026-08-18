@@ -26,7 +26,15 @@ export type MainTabParamList = {
   Messages: undefined;
   Menu: undefined;
   /** Danh sách công việc — mở từ Tổng quan / Menu (ẩn khỏi tab bar). */
-  Work: undefined;
+  Work: {
+    tab?: 'tasks' | 'assignments' | 'shared';
+    /** Id việc / giao việc để mở hoặc làm nổi bật. */
+    focusId?: string;
+    /** lead_id — mở sẵn section deal trên tab Nhiệm vụ. */
+    focusLeadId?: string;
+    /** Lọc trạng thái (vd. overdue từ banner Tổng quan). */
+    statusFilter?: 'all' | 'pending' | 'in_progress' | 'completed' | 'overdue';
+  } | undefined;
   Planner: undefined;
   Profile: undefined;
 };
@@ -103,6 +111,7 @@ export default function MainTabs() {
           tabBarInactiveTintColor: colors.textFaint,
           tabBarStyle: [styles.tabBar, { height: tabBarHeight, paddingBottom: padBottom }],
           tabBarLabelStyle: styles.tabLabel,
+          tabBarHideOnKeyboard: true,
         }}
       >
         <Tab.Screen

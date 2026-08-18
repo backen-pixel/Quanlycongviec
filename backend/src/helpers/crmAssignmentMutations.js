@@ -84,6 +84,26 @@ function pushNotif(req, userId, notif) {
   if (io) io.to(`user:${userId}`).emit('notification', notif);
 }
 
+/** Mobile/web Công việc refetch khi giao việc đổi — khớp crm:task_changed. */
+function emitAssignmentRealtime(req, assignment, action = 'assignment_updated') {
+  try {
+    const io = req.app?.get?.('io');
+    if (!io) return;
+    const leadId = assignment?.lead_id ? String(assignment.lead_id) : null;
+    io.emit('crm:task_changed', {
+      lead_id: leadId,
+      task_id: assignment?.crm_task_id
+        ? String(assignment.crm_task_id)
+        : (assignment?.id ? String(assignment.id) : null),
+      action,
+      user_id: req.user?.userId ? String(req.user.userId) : null,
+      at: new Date().toISOString(),
+    });
+  } catch (e) {
+    console.warn('[assignment realtime]', e?.message || e);
+  }
+}
+
 async function createCrmAssignment(req, body) {
   const {
     title, description, assignee_id, assignee_ids, department_ids, region_ids,
@@ -176,6 +196,7 @@ async function createCrmAssignment(req, body) {
   if (error) return { error: error.message, status: 500 };
 
   await replaceAssignees(data.id, finalAssignees);
+  emitAssignmentRealtime(req, data, 'assignment_created');
   return { data: { assignment: data, assignee_ids: finalAssignees }, status: 201 };
 }
 
@@ -256,6 +277,7 @@ async function updateCrmAssignment(req, assignmentId, body) {
     }
   }
 
+  emitAssignmentRealtime(req, data, 'assignment_updated');
   return { data: { assignment: data, assignee_ids: finalAssignees }, status: 200 };
 }
 
@@ -265,6 +287,7 @@ async function deleteCrmAssignment(req, assignmentId) {
   if (!row) return { error: 'Không tìm thấy nhiệm vụ', status: 404 };
   const { error } = await supabase.from('crm_assignments').delete().eq('id', assignmentId);
   if (error) return { error: error.message, status: 500 };
+  emitAssignmentRealtime(req, row, 'assignment_deleted');
   return { data: { ok: true }, status: 200 };
 }
 
@@ -276,6 +299,11 @@ async function addCrmAssignmentComment(req, assignmentId, body) {
     parent_id: body.parent_id || null,
   }).select('id, assignment_id, user_id, parent_id, content, created_at, user:users(id, full_name, avatar)').single();
   if (error) return { error: error.message, status: 500 };
+  try {
+    const { data: asg } = await supabase.from('crm_assignments')
+      .select('id, lead_id, crm_task_id').eq('id', assignmentId).maybeSingle();
+    emitAssignmentRealtime(req, asg || { id: assignmentId }, 'assignment_comment');
+  } catch (_) { /* ignore */ }
   return { data: { comment: data }, status: 201 };
 }
 

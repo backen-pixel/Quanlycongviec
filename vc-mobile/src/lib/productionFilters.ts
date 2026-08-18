@@ -141,6 +141,35 @@ export function isInstallVcStage(stage?: {
   );
 }
 
+/** Id NV phụ trách VC/LĐ/SX trên thẻ — khớp web matchesProject + installer. */
+export function projectStaffPersonIds(project: ProductionProject): string[] {
+  const ids = new Set<string>();
+  const push = (v?: string | null) => {
+    const s = String(v || '').trim();
+    if (s) ids.add(s);
+  };
+  push(project.logistics_person_id);
+  push(project.installer_person_id);
+  push(project.production_person_id);
+  push(project.sales_person_id);
+  const deals = project.crm_deals || [];
+  const primary = deals.find((d) => String(d?.type || '') === 'deal') || deals[0] || null;
+  push(primary?.assignee?.id);
+  push(primary?.lead_owner?.id);
+  return [...ids];
+}
+
+/** Lọc NV phụ trách — khớp web useWorkshopStaffFilter.matchesProject (logistics). */
+export function projectMatchesPerson(project: ProductionProject, personId?: string | null): boolean {
+  const id = String(personId || '').trim();
+  if (!id) return true;
+  return projectStaffPersonIds(project).includes(id);
+}
+
+export function projectHasCustomerPhone(project: ProductionProject): boolean {
+  return Boolean(String(project.customer_phone || '').trim());
+}
+
 /** Lọc client-side công ty đặt hàng ngoài CRM (ext:...) — khớp web. */
 export function projectMatchesDealCompanyExternalFilter(
   project: ProductionProject,

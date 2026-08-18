@@ -6,6 +6,7 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  Keyboard,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -199,9 +200,33 @@ export default function ProjectCommentModal({
   const [showOnScreen, setShowOnScreen] = useState(true);
   /** Có deal → bình luận CRM (đồng bộ deal); không → project_comments. */
   const [dealId, setDealId] = useState<string | null>(null);
+  /** false đến khi biết chắc dealId (hoặc không có deal) — tránh load đôi chậm. */
+  const [dealReady, setDealReady] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([]);
   const [galleryOpen, setGalleryOpen] = useState(false);
   const [galleryIndex, setGalleryIndex] = useState(0);
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvent, () => setKeyboardVisible(true));
+    const hideSub = Keyboard.addListener(hideEvent, () => setKeyboardVisible(false));
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!keyboardVisible || !active) return undefined;
+    const t = setTimeout(() => {
+      scrollRef.current?.scrollToEnd({ animated: true });
+    }, 80);
+    return () => clearTimeout(t);
+  }, [keyboardVisible, active]);
+
+  const composerPadBottom = keyboardVisible ? 8 : Math.max(insets.bottom, 10);
 
   const styles = useMemo(
     () =>
@@ -558,24 +583,35 @@ export default function ProjectCommentModal({
   useEffect(() => {
     if (!active || !project?.id) {
       setDealId(null);
+      setDealReady(false);
       return undefined;
     }
     if (preferredDealId) {
       setDealId(String(preferredDealId));
+      setDealReady(true);
       return undefined;
     }
     let cancelled = false;
     const direct = resolveProjectDealId(project);
     if (direct) {
       setDealId(direct);
+      setDealReady(true);
       return undefined;
     }
+    setDealReady(false);
+    setDealId(null);
     void fetchDealIdForProject(project.id)
       .then((id) => {
-        if (!cancelled) setDealId(id);
+        if (!cancelled) {
+          setDealId(id);
+          setDealReady(true);
+        }
       })
       .catch(() => {
-        if (!cancelled) setDealId(null);
+        if (!cancelled) {
+          setDealId(null);
+          setDealReady(true);
+        }
       });
     return () => {
       cancelled = true;
@@ -643,10 +679,15 @@ export default function ProjectCommentModal({
       setGalleryOpen(false);
       setErr('');
       setShowOnScreen(true);
+      setLoading(false);
+      return;
+    }
+    if (!dealReady) {
+      setLoading(true);
       return;
     }
     void loadComments(false, dealId ?? preferredDealId ?? resolveProjectDealId(project));
-  }, [active, project?.id, dealId, preferredDealId, loadComments, project]);
+  }, [active, project?.id, dealId, dealReady, preferredDealId, loadComments, project]);
 
   const commentById = useMemo(() => {
     const m = new Map<string, ProjectComment>();
@@ -1068,13 +1109,25 @@ export default function ProjectCommentModal({
           <View style={styles.handle} />
           <View style={styles.header}>
             <Text style={styles.title}>Bình luận</Text>
+            {(loading || !dealReady) ? (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginRight: 8 }}>
+                <ActivityIndicator size="small" color={colors.primary} />
+                <Text style={{ color: colors.textMuted, fontSize: 12, fontWeight: '700' }}>
+                  Đang tải…
+                </Text>
+              </View>
+            ) : null}
             <TouchableOpacity onPress={close} style={styles.closeBtn} hitSlop={8} disabled={posting}>
               <Ionicons name="close" size={22} color={colors.textMuted} />
             </TouchableOpacity>
           </View>
 
           <View style={styles.projectMeta}>
-            <Text style={styles.projectName} numberOfLines={1}>{project.name}</Text>
+            <Text style={styles.projectName} numberOfLines={1}>
+              {(loading || !dealReady) && (!project.name || project.name.startsWith('Đang '))
+                ? 'Đang mở bình luận…'
+                : (project.name || 'Dự án')}
+            </Text>
             <Text style={styles.projectCode} numberOfLines={1}>
               {project.code}
               {project.customer_name ? ` · ${project.customer_name}` : ''}
@@ -1198,7 +1251,7 @@ export default function ProjectCommentModal({
       ) : null}
 
       {showOnScreen ? (
-        <View style={[styles.composer, { paddingBottom: embedded ? Math.max(insets.bottom, 10) : Math.max(insets.bottom, 10) }]}>
+        <View style={[styles.composer, { paddingBottom: composerPadBottom }]}>
           <View style={styles.composerRow}>
             <TapHighlight style={styles.attachBtn} onPress={() => void takePhoto()} disabled={posting}>
               <Ionicons name="camera-outline" size={20} color={colors.primary} />
@@ -1221,6 +1274,9 @@ export default function ProjectCommentModal({
               placeholderTextColor={colors.textFaint}
               multiline
               editable={!posting}
+              onFocus={() => {
+                setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
+              }}
             />
             <TouchableOpacity
               style={[
@@ -1266,11 +1322,12 @@ export default function ProjectCommentModal({
     <Modal visible={visible} transparent animationType="slide" onRequestClose={close}>
       <KeyboardAvoidingView
         style={styles.backdrop}
+        enabled={Platform.OS === 'ios'}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 8 : 0}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? Math.max(insets.top, 8) : 0}
       >
         <Pressable style={styles.backdropTouch} onPress={close} />
-        <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+        <View style={styles.sheet}>
           {threadBody}
         </View>
       </KeyboardAvoidingView>

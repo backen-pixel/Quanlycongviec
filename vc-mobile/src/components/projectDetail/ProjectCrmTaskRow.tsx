@@ -39,11 +39,12 @@ import {
   updateWorkshopTask,
   uploadCrmTaskFiles,
   uploadWorkshopTaskFiles,
+  normalizeTaskChecklist,
   type TaskAttachment,
 } from '../../lib/projectDetailApi';
 import { fetchEmployeesByCompanyForMembers } from '../../lib/leadMembersApi';
 import { Radii, Spacing } from '../../theme';
-import type { CrmTask, PersonRef, TaskStaffNote } from '../../types';
+import type { CrmTask, PersonRef, TaskChecklistItem, TaskStaffNote } from '../../types';
 import TapHighlight from '../TapHighlight';
 import { resolveMediaUrl } from '../../lib/mediaUtils';
 
@@ -142,6 +143,7 @@ export default function ProjectCrmTaskRow({
   const deadline = taskDeadline(task);
   const fileCount = task.file_count ?? 0;
   const descriptionText = task.description?.trim() || '';
+  const checklist = useMemo(() => normalizeTaskChecklist(task.checklist), [task.checklist]);
   const [modal, setModal] = useState<ModalKind>(null);
   const [busy, setBusy] = useState(false);
 
@@ -329,7 +331,36 @@ export default function ProjectCrmTaskRow({
       const updated = isWorkshop
         ? await updateWorkshopTask(task.id, { status: next })
         : await updateCrmTask(String(dealId), task.id, { status: next });
-      onUpdated({ ...updated, source: task.source });
+      onUpdated({ ...updated, source: task.source, checklist: updated.checklist ?? task.checklist });
+    } catch (e) {
+      Alert.alert('Lỗi', formatApiError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggleChecklistItem = async (ck: TaskChecklistItem) => {
+    if (!ck.id || busy) return;
+    const nextList = checklist.map((c) => (
+      String(c.id) === String(ck.id) ? { ...c, done: !c.done } : c
+    ));
+    setBusy(true);
+    try {
+      const payload = { checklist: nextList };
+      const updated = isWorkshop
+        ? await updateWorkshopTask(task.id, payload)
+        : dealId
+          ? await updateCrmTask(String(dealId), task.id, payload)
+          : null;
+      if (updated) {
+        onUpdated({
+          ...updated,
+          source: task.source,
+          checklist: normalizeTaskChecklist(updated.checklist ?? nextList),
+        });
+      } else {
+        onUpdated({ ...task, checklist: nextList });
+      }
     } catch (e) {
       Alert.alert('Lỗi', formatApiError(e));
     } finally {
@@ -791,38 +822,36 @@ export default function ProjectCrmTaskRow({
         },
         mediaBtnText: { color: colors.text, fontSize: 12, fontWeight: '700' },
         mediaBtnTextPrimary: { color: colors.primary, fontSize: 13, fontWeight: '800' },
-        quickCapture: {
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 8,
+        checklistBox: {
           marginTop: 8,
+          paddingTop: 8,
+          borderTopWidth: StyleSheet.hairlineWidth,
+          borderTopColor: colors.border,
+          gap: 4,
         },
-        quickCaptureBtn: {
-          flex: 1,
-          flexDirection: 'row',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: 6,
-          paddingVertical: 10,
-          paddingHorizontal: 8,
-          borderRadius: Radii.md,
-          backgroundColor: colors.primarySoft,
-          borderWidth: 1,
-          borderColor: colors.primary + '55',
-        },
-        quickCaptureBtnAlt: {
-          backgroundColor: colors.cardAlt,
-          borderColor: colors.border,
-        },
-        quickCaptureText: {
-          color: colors.primary,
-          fontSize: 12,
-          fontWeight: '800',
-        },
-        quickCaptureTextAlt: {
-          color: colors.text,
-          fontSize: 12,
+        checklistHead: {
+          color: colors.textMuted,
+          fontSize: 11,
           fontWeight: '700',
+          marginBottom: 2,
+        },
+        checklistRow: {
+          flexDirection: 'row',
+          alignItems: 'flex-start',
+          gap: 8,
+          paddingVertical: 5,
+        },
+        checklistTitle: {
+          flex: 1,
+          color: colors.text,
+          fontSize: 13,
+          fontWeight: '600',
+          lineHeight: 18,
+        },
+        checklistTitleDone: {
+          color: colors.textFaint,
+          textDecorationLine: 'line-through',
+          fontWeight: '500',
         },
         noteItem: {
           paddingVertical: 10,
@@ -1291,26 +1320,33 @@ export default function ProjectCrmTaskRow({
                 </View>
               )}
             </View>
-            <View style={styles.quickCapture}>
-              <TapHighlight
-                style={styles.quickCaptureBtn}
-                pressStyle={{ opacity: 0.88 }}
-                onPress={() => void takePhoto({ silent: true, openSheetAfter: true })}
-                disabled={busy}
-              >
-                <Ionicons name="camera" size={16} color={colors.primary} />
-                <Text style={styles.quickCaptureText}>Chụp nhanh</Text>
-              </TapHighlight>
-              <TapHighlight
-                style={[styles.quickCaptureBtn, styles.quickCaptureBtnAlt]}
-                pressStyle={{ opacity: 0.88 }}
-                onPress={() => void takeVideo({ silent: true, openSheetAfter: true })}
-                disabled={busy}
-              >
-                <Ionicons name="videocam" size={16} color={colors.text} />
-                <Text style={styles.quickCaptureTextAlt}>Quay video</Text>
-              </TapHighlight>
-            </View>
+            {checklist.length > 0 ? (
+              <View style={styles.checklistBox}>
+                <Text style={styles.checklistHead}>
+                  Mục con ({checklist.filter((c) => c.done).length}/{checklist.length})
+                </Text>
+                {checklist.map((ck) => (
+                  <TapHighlight
+                    key={String(ck.id)}
+                    style={styles.checklistRow}
+                    onPress={() => void toggleChecklistItem(ck)}
+                    disabled={busy}
+                  >
+                    <Ionicons
+                      name={ck.done ? 'checkbox' : 'square-outline'}
+                      size={18}
+                      color={ck.done ? colors.success : colors.textMuted}
+                    />
+                    <Text
+                      style={[styles.checklistTitle, ck.done && styles.checklistTitleDone]}
+                      numberOfLines={2}
+                    >
+                      {ck.title}
+                    </Text>
+                  </TapHighlight>
+                ))}
+              </View>
+            ) : null}
           </View>
           {assignee ? (
             <View style={styles.avatar}>

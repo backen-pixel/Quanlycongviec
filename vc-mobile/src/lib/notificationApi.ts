@@ -148,12 +148,14 @@ export function notificationOpensComments(n: SxCommentNotification): boolean {
   return String(n.type || '') === 'comment_added';
 }
 
-/** focus_kpi deep-link sang tab Dự án (Kanban/List). */
+/** focus_kpi deep-link sang tab Dự án (Kanban/List) hoặc màn quá hạn. */
 export function notificationFocusKpi(n: SxCommentNotification): string | null {
   const raw = n.metadata?.focus_kpi;
   if (raw && typeof raw === 'string' && raw.trim()) return raw.trim();
   const meta = n.metadata || {};
-  if (meta.intake || meta.vc_intake || String(n.type || '') === 'workshop_new_deal') return 'intake';
+  const type = String(n.type || '');
+  if (meta.intake || meta.vc_intake || type === 'workshop_new_deal') return 'intake';
+  if (type.includes('deadline_overdue') && !type.includes('task')) return 'overdue';
   return null;
 }
 

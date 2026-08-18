@@ -43,7 +43,6 @@ import {
   filterVcStagesByAreaTab,
   groupCrmTasksByStage,
   isCrmProductionTaskDone,
-  isInstallLogisticsPipelineStage,
   resolveVcTaskPipelineStageId,
   taskDeadline,
   updateCrmTask,
@@ -106,6 +105,7 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
   const [refreshing, setRefreshing] = useState(false);
   const [err, setErr] = useState('');
   const didApplyFocusRef = useRef('');
+  const loadSeqRef = useRef(0);
 
   useEffect(() => {
     if (!incomingFocusId) return;
@@ -129,11 +129,14 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     setErr('');
+    const seq = ++loadSeqRef.current;
     try {
       const detail = await fetchProductionProjectDetail(projectId);
+      if (seq !== loadSeqRef.current) return;
       setProject(detail);
       let resolvedDealId = detail.crmDeals?.[0]?.id || null;
       if (!resolvedDealId) resolvedDealId = await fetchDealIdForProject(projectId);
+      if (seq !== loadSeqRef.current) return;
       setDealId(resolvedDealId);
       const ownerCompanyId = detail.company_id || detail.company?.id || null;
       const sharedDocCount = Array.isArray(detail.sharedDocuments) ? detail.sharedDocuments.length : 0;
@@ -172,6 +175,7 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
           }
         })(),
       ]);
+      if (seq !== loadSeqRef.current) return;
       // Web: có deal → CRMTasksTab (API đã merge workshop logistics); không deal → bảng tasks.
       if (resolvedDealId) {
         setTasks(filterVcLogisticsUiTasks(crmTasks));
@@ -182,9 +186,10 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
       setCommentCount(commentMeta);
       setDocCount(documentsMeta);
     } catch (e) {
+      if (seq !== loadSeqRef.current) return;
       setErr(formatApiError(e));
     } finally {
-      if (!silent) setLoading(false);
+      if (seq === loadSeqRef.current && !silent) setLoading(false);
     }
   }, [projectId]);
 
@@ -334,7 +339,7 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
     [visibleTasks, areaStages],
   );
 
-  // Focus từ Work/Overview: chọn đúng tab VC, expand stage chứa task, highlight ~4s.
+  // Focus từ Work/Overview: expand stage chứa task (luôn khu vực Vận chuyển).
   useEffect(() => {
     if (!highlightTaskId || loading || !tasks.length) return;
     if (didApplyFocusRef.current === String(highlightTaskId)) return;
@@ -345,18 +350,7 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
 
     const stages = project?.vcKanbanStages || project?.sxKanbanStages || [];
     const sid = resolveVcTaskPipelineStageId(focused, stages);
-    let area: VcAreaTab = 'shipping';
-    if (sid && stages.length) {
-      const stage = stages.find((s) => String(s.id) === String(sid));
-      if (stage && isInstallLogisticsPipelineStage(stage)) area = 'install';
-    } else {
-      const meta = focused.metadata && typeof focused.metadata === 'object' ? focused.metadata : {};
-      const guessed = String((meta as { guessed_stage_slug?: string }).guessed_stage_slug || '').toLowerCase();
-      const slug = String(focused.stage_slug || '').toLowerCase();
-      if (guessed.includes('install') || slug.includes('install')) area = 'install';
-    }
-    setVcAreaTab(area);
-
+    setVcAreaTab('shipping');
     const groupKey = sid || '_other';
     setExpandedStages((p) => ({ ...p, [groupKey]: true }));
   }, [highlightTaskId, loading, tasks, project?.vcKanbanStages, project?.sxKanbanStages]);
@@ -532,22 +526,6 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
         },
         errText: { color: colors.danger, fontSize: 13, fontWeight: '600' },
         empty: { color: colors.textMuted, textAlign: 'center', paddingVertical: 32, fontSize: 14 },
-        vcAreaRow: {
-          flexDirection: 'row',
-          backgroundColor: colors.border,
-          borderRadius: Radii.md,
-          padding: 3,
-          marginBottom: 14,
-        },
-        vcAreaBtn: {
-          flex: 1,
-          paddingVertical: 8,
-          borderRadius: Radii.sm,
-          alignItems: 'center',
-        },
-        vcAreaBtnActive: { backgroundColor: colors.card },
-        vcAreaText: { fontSize: 13, fontWeight: '600', color: colors.textMuted },
-        vcAreaTextActive: { color: colors.text },
         stageCard: {
           borderWidth: 1,
           borderColor: colors.border,
@@ -747,23 +725,7 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
         <View style={{ padding: Spacing.lg }}>
           {tab === 'tasks' && (
             <>
-              <View style={styles.vcAreaRow}>
-                {([
-                  ['shipping', 'Vận chuyển'],
-                  ['install', 'Lắp đặt'],
-                  ['all', 'Tất cả'],
-                ] as [VcAreaTab, string][]).map(([id, label]) => (
-                  <TapHighlight
-                    key={id}
-                    style={[styles.vcAreaBtn, vcAreaTab === id && styles.vcAreaBtnActive]}
-                    onPress={() => setVcAreaTab(id)}
-                  >
-                    <Text style={[styles.vcAreaText, vcAreaTab === id && styles.vcAreaTextActive]}>
-                      {label}
-                    </Text>
-                  </TapHighlight>
-                ))}
-              </View>
+              {/* Luôn lọc Vận chuyển — không hiện chip Vận chuyển / Lắp đặt / Tất cả */}
               {taskGroups.length ? taskGroups.map((group) => {
                 const expanded = expandedStages[group.key] ?? group.tasks.length > 0;
                 const openInGroup = group.openCount ?? group.tasks.filter((t) => !isCrmProductionTaskDone(t.status)).length;

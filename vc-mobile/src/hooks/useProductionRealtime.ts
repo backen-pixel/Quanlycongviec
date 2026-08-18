@@ -2,6 +2,7 @@ import { useIsFocused } from '@react-navigation/native';
 import { useEffect, useRef } from 'react';
 import { useNotifications } from '../context/NotificationContext';
 import { patchCachedProjectById } from '../lib/logisticsBoardCache';
+import type { ProductionProject } from '../types';
 import type { SyncEvent } from '../lib/realtimeSync';
 import { dealIdFromSyncEvent, projectIdFromSyncEvent } from '../lib/realtimeSync';
 
@@ -55,17 +56,32 @@ function shouldRefreshForEvent(
   return false;
 }
 
-function tryPatchFromStageEvent(evt: SyncEvent): boolean {
-  if (evt.type !== 'project:stage_changed') return false;
+function tryPatchFromSyncEvent(evt: SyncEvent): boolean {
+  if (evt.type !== 'project:stage_changed' && evt.type !== 'project:board_changed') return false;
   const pid = projectIdFromSyncEvent(evt);
   if (!pid) return false;
   const payload = evt.payload as Record<string, unknown>;
+  const patch: Partial<ProductionProject> = {};
   const col = payload.vc_kanban_column_id;
-  if (col == null || col === '') return false;
-  return !!patchCachedProjectById(pid, {
-    vc_kanban_column_id: String(col),
-    resolved_column_id: String(col),
-  });
+  if (col != null && col !== '') {
+    patch.vc_kanban_column_id = String(col);
+    patch.resolved_column_id = String(col);
+  }
+  if (payload.status != null && payload.status !== '') patch.status = String(payload.status);
+  if (payload.logistics_person_id !== undefined) {
+    patch.logistics_person_id = payload.logistics_person_id != null ? String(payload.logistics_person_id) : null;
+  }
+  if (payload.logistics_person_name !== undefined) {
+    patch.logistics_person_name = payload.logistics_person_name != null ? String(payload.logistics_person_name) : null;
+  }
+  if (payload.installer_person_id !== undefined) {
+    patch.installer_person_id = payload.installer_person_id != null ? String(payload.installer_person_id) : null;
+  }
+  if (payload.installer_person_name !== undefined) {
+    patch.installer_person_name = payload.installer_person_name != null ? String(payload.installer_person_name) : null;
+  }
+  if (!Object.keys(patch).length) return false;
+  return !!patchCachedProjectById(pid, patch);
 }
 
 /**
@@ -85,6 +101,10 @@ export function useProductionRealtime({
   const isFocused = useIsFocused();
   const onRefreshRef = useRef(onRefresh);
   onRefreshRef.current = onRefresh;
+  const modesRef = useRef(modes);
+  modesRef.current = modes;
+  /** So sánh theo nội dung — tránh resubscribe khi caller truyền mảng literal mới mỗi render. */
+  const modesKey = modes?.join(',') ?? '';
   const active = enabled && (!onlyWhenFocused || isFocused);
 
   useEffect(() => {
@@ -100,10 +120,10 @@ export function useProductionRealtime({
     };
 
     const unsub = subscribeSync((evt) => {
-      if (!eventMatchesMode(evt, modes)) return;
+      if (!eventMatchesMode(evt, modesRef.current)) return;
       if (!shouldRefreshForEvent(evt, projectId, dealId)) return;
 
-      if (tryPatchFromStageEvent(evt)) {
+      if (tryPatchFromSyncEvent(evt)) {
         void Promise.resolve(onRefreshRef.current({ evt, patched: true })).catch(() => {});
         return;
       }
@@ -114,7 +134,7 @@ export function useProductionRealtime({
       if (timer) clearTimeout(timer);
       unsub();
     };
-  }, [active, projectId, dealId, debounceMs, modes, subscribeSync]);
+  }, [active, projectId, dealId, debounceMs, modesKey, subscribeSync]);
 }
 
 export type { CrmTaskChangedPayload, ProjectStageChangedPayload } from '../lib/realtimeSync';

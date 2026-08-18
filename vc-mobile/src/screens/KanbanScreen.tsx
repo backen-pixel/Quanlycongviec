@@ -24,8 +24,9 @@ import CreateDealModal from '../components/CreateDealModal';
 import CreateProjectFab from '../components/CreateProjectFab';
 import TapHighlight from '../components/TapHighlight';
 import FilterPickerModal from '../components/FilterPickerModal';
-import ProductionFilterSheet from '../components/ProductionFilterSheet';
+import ProductionFilterSheet, { type PhoneFilterId } from '../components/ProductionFilterSheet';
 import MoveColumnModal from '../components/MoveColumnModal';
+import PersonRoleChip from '../components/PersonRoleChip';
 import ProjectCommentModal from '../components/ProjectCommentModal';
 import VcListCard from '../components/VcListCard';
 import Toast, { type ToastKind, type ToastState } from '../components/Toast';
@@ -63,7 +64,9 @@ import {
   isCompanyScopedAdmin,
   isSystemAdmin,
   productionCreateCompanyOptions,
+  projectHasCustomerPhone,
   projectMatchesDealCompanyExternalFilter,
+  projectMatchesPerson,
   resolveDealCompanyExternalFilter,
   resolveDealCompanyParam,
   workshopCompaniesForCrossViewer,
@@ -73,6 +76,7 @@ import { loadKanbanFilters, saveKanbanFilters, subscribeSharedFilters } from '..
 import { loadCommentSeenMap, markProjectCommentsSeen } from '../lib/notificationApi';
 import { ensureNotificationPermission } from '../lib/pushRegistration';
 import { useProductionRealtime } from '../hooks/useProductionRealtime';
+import { REALTIME_BOARD_TASK } from '../lib/realtimeModes';
 import { useTheme } from '../context/ThemeContext';
 import {
   computeVcBoardKpis,
@@ -104,9 +108,14 @@ function projectPatchForStage(target: KanbanStage, opts?: { jumpedToInstall?: bo
   else if (
     slug === 'customer-care'
     || slug?.includes('warranty')
+    || slug?.includes('issue')
+    || slug?.includes('phat_sinh')
+    || slug?.includes('phatsinh')
     || name.includes('bảo hành')
     || name.includes('có vấn đề')
     || name.includes('vấn đề')
+    || name.includes('phát sinh')
+    || name.includes('phat sinh')
   ) status = 'warranty';
   else if (slug === 'completed' || name.includes('hoàn thành') || name.includes('hoàn tất')) {
     status = 'completed';
@@ -185,17 +194,6 @@ function crmPersonName(p: ProductionProject): string | null {
   return (fromDeal || p.sales_person_name || '').trim() || null;
 }
 
-function initials(name?: string | null): string {
-  if (!name) return '?';
-  return name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((w) => w[0])
-    .join('')
-    .toUpperCase();
-}
-
 function isToday(value?: string | null): boolean {
   if (!value) return false;
   try {
@@ -210,7 +208,7 @@ function isToday(value?: string | null): boolean {
 }
 
 export default function KanbanScreen() {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const styles = useMemo(() => createKanbanStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
@@ -239,6 +237,9 @@ export default function KanbanScreen() {
   const [filterDealCompany, setFilterDealCompany] = useState('');
   const [filterWorkTypeId, setFilterWorkTypeId] = useState('');
   const [filterRegion, setFilterRegion] = useState('');
+  const [filterPersonId, setFilterPersonId] = useState('');
+  const [filterPhone, setFilterPhone] = useState<PhoneFilterId>('');
+  const [filterPriority, setFilterPriority] = useState('');
   const [companies, setCompanies] = useState<CompanyOption[]>([]);
   const [clientCompaniesForDeal, setClientCompaniesForDeal] = useState<ClientCompanyOption[]>([]);
   const [workshopOptionsForDeal, setWorkshopOptionsForDeal] = useState<CompanyOption[]>([]);
@@ -265,7 +266,13 @@ export default function KanbanScreen() {
   const filterCompanyRef = useRef('');
   const filterDealCompanyRef = useRef('');
   const filterWorkTypeIdRef = useRef('');
+  const filterRegionRef = useRef('');
+  const filterPersonIdRef = useRef('');
+  const filterPhoneRef = useRef<PhoneFilterId>('');
+  const filterPriorityRef = useRef('');
   const loadSeqRef = useRef(0);
+  /** Auto-pick loại SX → persist im lặng, không đánh thức Overview. */
+  const quietFilterPersistRef = useRef(false);
 
   const isAdmin = user?.role === 'admin';
   const isSysAdmin = isSystemAdmin(user);
@@ -408,7 +415,8 @@ export default function KanbanScreen() {
       setBoard(cached);
       if (mode === 'init') setLoading(false);
     }
-    if (mode === 'silent' && isCachedBoardFresh(filters) && cached) return;
+    // Silent + init: cache còn tươi → khỏi network (Overview vừa fill).
+    if ((mode === 'silent' || mode === 'init') && isCachedBoardFresh(filters) && cached) return;
 
     if (mode === 'init' && !cached) setLoading(true);
     if (mode === 'refresh') setRefreshing(true);
@@ -434,14 +442,34 @@ export default function KanbanScreen() {
   useEffect(() => { filterCompanyRef.current = filterCompany; }, [filterCompany]);
   useEffect(() => { filterDealCompanyRef.current = dealCompanyParam || ''; }, [dealCompanyParam]);
   useEffect(() => { filterWorkTypeIdRef.current = filterWorkTypeId; }, [filterWorkTypeId]);
+  useEffect(() => { filterRegionRef.current = filterRegion; }, [filterRegion]);
+  useEffect(() => { filterPersonIdRef.current = filterPersonId; }, [filterPersonId]);
+  useEffect(() => { filterPhoneRef.current = filterPhone; }, [filterPhone]);
+  useEffect(() => { filterPriorityRef.current = filterPriority; }, [filterPriority]);
 
-  // Sysadmin: '' = Tất cả — vẫn tải. NV: chờ có companyId.
+  // Sysadmin: '' = Tất cả — vẫn tải. NV: chờ companyId.
+  // Có công ty → đợi work-types hydrate + auto-pick xong rồi mới fetch (tránh double board).
   useEffect(() => {
     if (!filterCompany && !isSysAdmin) return;
+    const hasCompanyContext = !!filterCompany || (!isSysAdmin && !!user?.company_id);
+    if (hasCompanyContext) {
+      if (workTypesCompanyId !== String(companyForTypes || '')) return;
+      if (workTypes.length > 0 && !filterWorkTypeId) return;
+    }
     setActiveIndex(0);
     void load('init');
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterCompany, filterDealCompany, dealCompanyParam, filterWorkTypeId, isSysAdmin]);
+  }, [
+    filterCompany,
+    filterDealCompany,
+    dealCompanyParam,
+    filterWorkTypeId,
+    isSysAdmin,
+    workTypes,
+    workTypesCompanyId,
+    companyForTypes,
+    user?.company_id,
+  ]);
 
   useProductionRealtime({
     onRefresh: (info) => {
@@ -457,7 +485,7 @@ export default function KanbanScreen() {
       }
       void load('silent');
     },
-    modes: ['board', 'task'],
+    modes: REALTIME_BOARD_TASK,
   });
 
   useEffect(() => {
@@ -628,13 +656,17 @@ export default function KanbanScreen() {
     }
 
     if (!filterWorkTypeId) {
+      quietFilterPersistRef.current = true;
       setFilterWorkTypeId(String(workTypes[0].id));
       return;
     }
     if (filterWorkTypeId === 'none') return;
 
     const stillExists = workTypes.some((w) => String(w.id) === String(filterWorkTypeId));
-    if (!stillExists) setFilterWorkTypeId(String(workTypes[0].id));
+    if (!stillExists) {
+      quietFilterPersistRef.current = true;
+      setFilterWorkTypeId(String(workTypes[0].id));
+    }
   }, [
     workTypes,
     workTypesCompanyId,
@@ -718,12 +750,21 @@ export default function KanbanScreen() {
   }, [workshopCompanyPickerList, filterCompany, isSysAdmin]);
 
   useEffect(() => {
-    void saveKanbanFilters({
-      filterCompany,
-      filterDealCompany,
-      filterWorkTypeId,
-    }).catch(() => {});
-  }, [filterCompany, filterDealCompany, filterWorkTypeId]);
+    const quiet = quietFilterPersistRef.current;
+    if (quiet) quietFilterPersistRef.current = false;
+    void saveKanbanFilters(
+      {
+        filterCompany,
+        filterDealCompany,
+        filterWorkTypeId,
+        filterRegion,
+        filterPersonId,
+        filterPhone,
+        filterPriority,
+      },
+      quiet ? { emit: false } : undefined,
+    ).catch(() => {});
+  }, [filterCompany, filterDealCompany, filterWorkTypeId, filterRegion, filterPersonId, filterPhone, filterPriority]);
 
   // Đồng bộ từ Overview/Planner khi đổi công ty.
   useEffect(() => {
@@ -731,14 +772,26 @@ export default function KanbanScreen() {
       const nextCo = String(snap.filterCompany || '');
       const nextDeal = String(snap.filterDealCompany || '');
       const nextWork = String(snap.filterWorkTypeId || '');
+      const nextRegion = String(snap.filterRegion || '');
+      const nextPerson = String(snap.filterPersonId || '');
+      const nextPhone = (snap.filterPhone || '') as PhoneFilterId;
+      const nextPriority = String(snap.filterPriority || '');
       const same =
         nextCo === String(filterCompanyRef.current || '')
         && nextDeal === String(filterDealCompanyRef.current || '')
-        && nextWork === String(filterWorkTypeIdRef.current || '');
+        && nextWork === String(filterWorkTypeIdRef.current || '')
+        && nextRegion === String(filterRegionRef.current || '')
+        && nextPerson === String(filterPersonIdRef.current || '')
+        && nextPhone === String(filterPhoneRef.current || '')
+        && nextPriority === String(filterPriorityRef.current || '');
       if (same) return;
       setFilterCompany(nextCo);
       if (nextDeal !== undefined) setFilterDealCompany(nextDeal);
       setFilterWorkTypeId(nextWork);
+      setFilterRegion(nextRegion);
+      setFilterPersonId(nextPerson);
+      setFilterPhone(nextPhone === 'has' || nextPhone === 'no' ? nextPhone : '');
+      setFilterPriority(nextPriority);
     });
     return unsub;
   }, []);
@@ -756,6 +809,16 @@ export default function KanbanScreen() {
         if (nextWork !== String(filterWorkTypeIdRef.current || '')) {
           setFilterWorkTypeId(nextWork);
         }
+        const nextRegion = String(snap.filterRegion || '');
+        if (nextRegion !== String(filterRegionRef.current || '')) setFilterRegion(nextRegion);
+        const nextPerson = String(snap.filterPersonId || '');
+        if (nextPerson !== String(filterPersonIdRef.current || '')) setFilterPersonId(nextPerson);
+        const nextPhone = (snap.filterPhone || '') as PhoneFilterId;
+        if (nextPhone !== filterPhoneRef.current) {
+          setFilterPhone(nextPhone === 'has' || nextPhone === 'no' ? nextPhone : '');
+        }
+        const nextPriority = String(snap.filterPriority || '');
+        if (nextPriority !== String(filterPriorityRef.current || '')) setFilterPriority(nextPriority);
       });
       return () => { alive = false; };
     }, []),
@@ -810,9 +873,11 @@ export default function KanbanScreen() {
     if (filterCompany && showWorkshopPicker) n += 1;
     if (filterDealCompany && canPickDealCompany) n += 1;
     if (filterRegion) n += 1;
-    if (filterWorkTypeId) n += 1;
+    if (filterPersonId) n += 1;
+    if (filterPhone) n += 1;
+    if (filterPriority) n += 1;
     return n;
-  }, [filterCompany, filterDealCompany, filterWorkTypeId, filterRegion, canPickDealCompany, showWorkshopPicker]);
+  }, [filterCompany, filterDealCompany, filterWorkTypeId, filterRegion, filterPersonId, filterPhone, filterPriority, canPickDealCompany, showWorkshopPicker]);
 
   const selectedWorkshopLabel = companyOptions.find((o) => o.id === filterCompany)?.label;
   const workTypeOptions = useMemo(
@@ -844,6 +909,37 @@ export default function KanbanScreen() {
 
   const selectedRegionLabel = regionOptions.find((o) => o.id === filterRegion)?.label || 'Khu vực';
 
+  const personFilterOptions = useMemo(() => {
+    const map = new Map<string, string>();
+    const add = (id?: string | null, name?: string | null) => {
+      const pid = String(id || '').trim();
+      if (!pid || map.has(pid)) return;
+      map.set(pid, (name || '').trim() || 'Không tên');
+    };
+    for (const p of board.projects) {
+      add(p.logistics_person_id, p.logistics_person_name);
+      add(p.installer_person_id, p.installer_person_name);
+      add(p.production_person_id, p.production_person_name);
+      add(p.sales_person_id, p.sales_person_name);
+      const deals = p.crm_deals || [];
+      const primary = deals.find((d) => String(d?.type || '') === 'deal') || deals[0] || null;
+      add(primary?.assignee?.id, primary?.assignee?.full_name);
+      add(primary?.lead_owner?.id, primary?.lead_owner?.full_name);
+    }
+    return [
+      { id: '', label: 'Tất cả NV' },
+      ...[...map.entries()]
+        .map(([id, label]) => ({ id, label }))
+        .sort((a, b) => a.label.localeCompare(b.label, 'vi')),
+    ];
+  }, [board.projects]);
+
+  useEffect(() => {
+    if (!filterPersonId) return;
+    const ok = personFilterOptions.some((o) => o.id && o.id === filterPersonId);
+    if (!ok) setFilterPersonId('');
+  }, [filterPersonId, personFilterOptions]);
+
   const activeFilterCount = useMemo(() => {
     let n = scopeFilterCount;
     if (quickFilter !== 'all') n += 1;
@@ -867,6 +963,18 @@ export default function KanbanScreen() {
     if (filterWorkTypeId) {
       parts.push(shortFilterLabel(selectedWorkTypeLabel, 'Phân loại', 12));
     }
+    if (filterPersonId) {
+      const pname = personFilterOptions.find((o) => o.id === filterPersonId)?.label;
+      parts.push(shortFilterLabel(pname, 'NV', 12));
+    }
+    if (filterPhone === 'has') parts.push('Có SĐT');
+    else if (filterPhone === 'no') parts.push('Chưa SĐT');
+    if (filterPriority) {
+      const pl = filterPriority === 'urgent' ? 'Gấp'
+        : filterPriority === 'high' ? 'Cao'
+          : filterPriority === 'medium' ? 'TB' : 'Thấp';
+      parts.push(pl);
+    }
     return parts.join(' · ');
   }, [
     quickFilter,
@@ -879,6 +987,10 @@ export default function KanbanScreen() {
     selectedRegionLabel,
     filterWorkTypeId,
     selectedWorkTypeLabel,
+    filterPersonId,
+    personFilterOptions,
+    filterPhone,
+    filterPriority,
   ]);
 
   /** Stages thực từ API — dùng cho move modal và logic stageById. */
@@ -892,14 +1004,14 @@ export default function KanbanScreen() {
         if (!hay.includes(needle)) return false;
       }
       if (quickFilter === 'mine') {
-        const mine = String(myId || '');
-        const isMine =
-          String(p.logistics_person_id || '') === mine
-          || String(p.installer_person_id || '') === mine;
-        if (!isMine) return false;
+        if (!projectMatchesPerson(p, myId)) return false;
       }
       if (quickFilter === 'overdue' && !(p.is_overdue || projectIsDeadlineOverdue(p))) return false;
       if (quickFilter === 'today' && !isToday(p.deadline)) return false;
+      if (filterPhone === 'has' && !projectHasCustomerPhone(p)) return false;
+      if (filterPhone === 'no' && projectHasCustomerPhone(p)) return false;
+      if (filterPersonId && !projectMatchesPerson(p, filterPersonId)) return false;
+      if (filterPriority && String(p.priority || '') !== String(filterPriority)) return false;
       // filterCompany: server-side. filterWorkTypeId: client-side, lọc theo loại đã chọn.
       if (filterWorkTypeId && String(p.workshop_type_id || '') !== String(filterWorkTypeId)) return false;
       if (filterRegion && !projectMatchesRegion(p, filterRegion)) return false;
@@ -908,7 +1020,7 @@ export default function KanbanScreen() {
       }
       return true;
     });
-  }, [board.projects, search, quickFilter, myId, filterWorkTypeId, filterRegion, dealCompanyExternalFilter]);
+  }, [board.projects, search, quickFilter, myId, filterWorkTypeId, filterRegion, dealCompanyExternalFilter, filterPhone, filterPersonId, filterPriority]);
 
   /** Một pipeline như web LogisticsDashboard — không tách tab Vận chuyển / Lắp đặt. */
   const displayStages = stages;
@@ -1090,6 +1202,7 @@ export default function KanbanScreen() {
   );
   const filterActive = search.trim().length > 0 || quickFilter !== 'all'
     || !!filterDealCompany || !!filterWorkTypeId || !!filterRegion
+    || !!filterPersonId || !!filterPhone || !!filterPriority
     || (showWorkshopPicker && !!filterCompany);
 
   const resetFilters = useCallback(() => {
@@ -1104,6 +1217,9 @@ export default function KanbanScreen() {
     setFilterDealCompany('');
     setFilterWorkTypeId('');
     setFilterRegion('');
+    setFilterPersonId('');
+    setFilterPhone('');
+    setFilterPriority('');
   }, [workshopCompanyPickerList, isSysAdmin]);
 
   const performMove = useCallback(
@@ -1215,7 +1331,7 @@ export default function KanbanScreen() {
       { label: 'Tổng', value: k.total, color: colors.text },
       { label: 'Đang VC', value: k.shipping, color: colors.primary },
       { label: 'Đang LĐ', value: k.installing, color: '#F59E0B' },
-      { label: 'Có vấn đề', value: k.warranty, color: '#38BDF8' },
+      { label: 'Phát sinh', value: k.warranty, color: '#38BDF8' },
       { label: 'Hoàn thành', value: k.completed, color: colors.success },
       ...(k.overdue > 0 ? [{ label: 'Quá hạn', value: k.overdue, color: colors.danger }] : []),
     ];
@@ -1465,8 +1581,13 @@ export default function KanbanScreen() {
             onPress={() => setListStageId('')}
           >
             <Text style={[styles.listStageChipTxt, !listStageId && styles.listStageChipTxtOn]}>
-              Tất cả ({filteredProjects.length})
+              Tất cả
             </Text>
+            <View style={styles.listStageCountBadge}>
+              <Text style={styles.listStageCountTxt}>
+                {filteredProjects.length > 99 ? '99+' : filteredProjects.length}
+              </Text>
+            </View>
           </TapHighlight>
           {displayStages.map((s, i) => {
             const count = projectsByStage.get(s.id)?.length ?? 0;
@@ -1490,8 +1611,13 @@ export default function KanbanScreen() {
                   ]}
                   numberOfLines={1}
                 >
-                  {s.name} ({count})
+                  {s.name}
                 </Text>
+                <View style={styles.listStageCountBadge}>
+                  <Text style={styles.listStageCountTxt}>
+                    {count > 99 ? '99+' : count}
+                  </Text>
+                </View>
               </TapHighlight>
             );
           })}
@@ -1650,28 +1776,6 @@ export default function KanbanScreen() {
             && !lastIsMine
             && (!seenAt || (commentEntry?.last_at ? String(commentEntry.last_at) > String(seenAt) : true));
 
-          const PersonChip = ({
-            label,
-            name,
-            tone,
-          }: { label: string; name: string | null; tone: 'violet' | 'teal' | 'orange' | 'amber' }) => {
-            if (!name) return null;
-            const toneStyle =
-              tone === 'violet' ? styles.personChipViolet
-                : tone === 'teal' ? styles.personChipTeal
-                  : tone === 'orange' ? styles.personChipOrange
-                    : styles.personChipAmber;
-            return (
-              <View style={[styles.personChip, toneStyle]}>
-                <View style={[styles.personChipAvatar, { backgroundColor: accent }]}>
-                  <Text style={styles.personChipAvatarText}>{initials(name)}</Text>
-                </View>
-                <Text style={styles.personChipName} numberOfLines={1}>{name}</Text>
-                <Text style={styles.personChipLabel}>{label}</Text>
-              </View>
-            );
-          };
-
           return (
             <View style={[styles.card, { borderLeftColor: accent }]}>
               <Pressable onPress={() => openProjectDetail(item.id)}>
@@ -1712,10 +1816,10 @@ export default function KanbanScreen() {
 
                 {hasPeople ? (
                   <View style={styles.personChipsWrap}>
-                    <PersonChip label="CRM" name={crmName} tone="violet" />
-                    <PersonChip label="SX" name={sxName} tone="teal" />
-                    <PersonChip label="VC" name={vcName} tone="orange" />
-                    <PersonChip label="LĐ" name={ldName} tone="amber" />
+                    <PersonRoleChip label="CRM" name={crmName} isDark={isDark} />
+                    <PersonRoleChip label="SX" name={sxName} isDark={isDark} />
+                    <PersonRoleChip label="VC" name={vcName} isDark={isDark} />
+                    <PersonRoleChip label="LĐ" name={ldName} isDark={isDark} />
                   </View>
                 ) : (
                   <Text style={styles.personEmpty}>Phụ trách: —</Text>
@@ -1890,6 +1994,7 @@ export default function KanbanScreen() {
           setFilterCompany(id);
           setFilterWorkTypeId('');
           setFilterRegion('');
+          setFilterPersonId('');
         }}
         showDealCompanyPicker={showDealCompanyFilter}
         dealCompanyOptions={dealCompanyPickerOptions}
@@ -1902,6 +2007,13 @@ export default function KanbanScreen() {
         regionOptions={regionOptions}
         filterRegion={filterRegion}
         onRegionChange={setFilterRegion}
+        personOptions={personFilterOptions}
+        filterPersonId={filterPersonId}
+        onPersonChange={setFilterPersonId}
+        filterPhone={filterPhone}
+        onPhoneChange={setFilterPhone}
+        filterPriority={filterPriority}
+        onPriorityChange={setFilterPriority}
         workTypeOptions={workTypeOptions}
         filterWorkTypeId={filterWorkTypeId}
         onWorkTypeChange={setFilterWorkTypeId}
@@ -2013,21 +2125,39 @@ function createKanbanStyles(c: AppColors) {
   },
   listStageChip: {
     height: 32,
-    paddingHorizontal: 12,
+    paddingLeft: 12,
+    paddingRight: 6,
     borderRadius: Radii.full,
     borderWidth: 1,
     borderColor: c.border,
     backgroundColor: c.card,
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    maxWidth: 180,
+    gap: 6,
+    maxWidth: 200,
   },
   listStageChipOn: {
     borderColor: colorWithAlpha(c.primary, 0.5),
     backgroundColor: c.primarySoft,
   },
-  listStageChipTxt: { color: c.textMuted, fontSize: 12, fontWeight: '700' },
+  listStageChipTxt: { color: c.textMuted, fontSize: 12, fontWeight: '700', flexShrink: 1 },
   listStageChipTxtOn: { color: c.primary },
+  listStageCountBadge: {
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    paddingHorizontal: 6,
+    backgroundColor: c.danger,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  listStageCountTxt: {
+    color: c.white,
+    fontSize: 11,
+    fontWeight: '800',
+    lineHeight: 13,
+  },
   notifBadge: {
     position: 'absolute', top: -4, right: -4, minWidth: 18, height: 18,
     borderRadius: 9, paddingHorizontal: 4,
@@ -2147,23 +2277,7 @@ function createKanbanStyles(c: AppColors) {
   customerName: { color: c.textMuted, fontSize: 12, fontWeight: '600' },
   customerPhoneLine: { color: '#16A34A', fontSize: 12, fontWeight: '600' },
 
-  personChipsWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginBottom: 6 },
-  personChip: {
-    flexDirection: 'row', alignItems: 'center', gap: 4,
-    maxWidth: '100%', paddingHorizontal: 6, paddingVertical: 3,
-    borderRadius: Radii.sm, borderWidth: 1,
-  },
-  personChipViolet: { backgroundColor: '#F5F3FF', borderColor: '#EDE9FE' },
-  personChipTeal: { backgroundColor: '#F0FDFA', borderColor: '#CCFBF1' },
-  personChipOrange: { backgroundColor: '#FFF7ED', borderColor: '#FFEDD5' },
-  personChipAmber: { backgroundColor: '#FFFBEB', borderColor: '#FEF3C7' },
-  personChipAvatar: {
-    width: 14, height: 14, borderRadius: 7,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  personChipAvatarText: { color: '#fff', fontSize: 7, fontWeight: '800' },
-  personChipName: { color: c.text, fontSize: 10, fontWeight: '600', maxWidth: 90 },
-  personChipLabel: { color: c.textMuted, fontSize: 10, fontWeight: '600' },
+  personChipsWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 6 },
   personEmpty: { color: c.textFaint, fontSize: 10, marginBottom: 4 },
 
   ageRow: { flexDirection: 'row', justifyContent: 'flex-end', marginBottom: 4 },
