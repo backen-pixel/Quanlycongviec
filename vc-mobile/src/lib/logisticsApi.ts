@@ -5,6 +5,7 @@ import type {
   ProductionBoard,
   ProductionProject,
 } from '../types';
+import { isInstallVcStage } from './productionFilters';
 
 const LOGISTICS_STAGE_SLUGS = new Set(['delivery', 'installation', 'customer-care', 'acceptance', 'completed']);
 const LOGISTICS_STATUSES = new Set(['shipping', 'installing', 'warranty', 'completed']);
@@ -73,6 +74,7 @@ export function mapProjectRow(raw: Record<string, unknown>): ProductionProject {
     is_overdue: Boolean(raw.is_overdue),
     vc_intake: Boolean(raw.vc_intake),
     vc_kanban_column_id: (raw.vc_kanban_column_id as string) ?? null,
+    vc_bucket_slug: (raw.vc_bucket_slug as string) ?? null,
     current_stage_id: (raw.current_stage_id as string) ?? stage.id ?? null,
     workshop_type_id: (raw.workshop_type_id as string) ?? workshopType.id ?? null,
     stage_name: stage.name ?? null,
@@ -126,12 +128,40 @@ function mapStageRow(raw: Record<string, unknown>, index: number): KanbanStage {
   };
 }
 
-/** Resolve cột Kanban VC — replicate enrichOneLogisticsProject (backend). */
+/** status DB → bucket pipeline VC (không map shipping — vừa intake vừa đang giao). */
+const STATUS_TO_BUCKET: Record<string, string> = {
+  installing: 'installation',
+  warranty: 'customer-care',
+  completed: 'completed',
+};
+
+function findDisplayStageByBucket(
+  sortedStages: KanbanStage[],
+  bucket?: string | null,
+): KanbanStage | null {
+  const b = String(bucket || '').trim().toLowerCase();
+  if (!b) return null;
+  const byBucket = sortedStages.find((c) => String(c.bucket_slug || '').toLowerCase() === b);
+  if (byBucket) return byBucket;
+  const bySlug = sortedStages.find((c) => String(c.slug || '').toLowerCase() === b
+    || String(c.workflow_stage?.slug || '').toLowerCase() === b);
+  if (bySlug) return bySlug;
+  if (b.includes('install')) {
+    return sortedStages.find((c) => isInstallVcStage(c)) || null;
+  }
+  return null;
+}
+
+/** Resolve cột Kanban VC trên pipeline đang hiện (kể cả «Tất cả công ty»). */
 export function resolveColumnId(
   project: ProductionProject,
   sortedStages: KanbanStage[],
 ): string | null {
-  const intakeCol = sortedStages.find((c) => c.bucket_slug === INTAKE_BUCKET);
+  const intakeCol = sortedStages.find((c) => c.bucket_slug === INTAKE_BUCKET)
+    || sortedStages.find((c) => {
+      const name = String(c.name || '').toLowerCase();
+      return name.includes('chờ giao') || name.includes('tiếp nhận') || name.includes('chờ vc') || name.includes('chờ vận');
+    });
   const firstCol = sortedStages[0] || null;
   const colIdSet = new Set(sortedStages.map((c) => String(c.id)));
   const stageSlug = project.stage_slug || null;
@@ -140,6 +170,14 @@ export function resolveColumnId(
 
   if (project.vc_kanban_column_id && colIdSet.has(String(project.vc_kanban_column_id))) {
     matchedCol = sortedStages.find((c) => String(c.id) === String(project.vc_kanban_column_id)) || null;
+  }
+
+  // Pipeline đang hiện là công ty khác — UUID cột không khớp. Map theo bucket thật / status LĐ.
+  if (!matchedCol) {
+    matchedCol = findDisplayStageByBucket(sortedStages, project.vc_bucket_slug);
+  }
+  if (!matchedCol && status && STATUS_TO_BUCKET[status]) {
+    matchedCol = findDisplayStageByBucket(sortedStages, STATUS_TO_BUCKET[status]);
   }
 
   if (!matchedCol) {
@@ -175,23 +213,59 @@ export function resolveColumnId(
   return matchedCol?.id || null;
 }
 
+/** Gắn resolved_column_id theo stages đang hiện (dùng khi patch realtime / tải board). */
+export function bindProjectToDisplayStages(
+  project: ProductionProject,
+  stages: KanbanStage[],
+): ProductionProject {
+  const stageById = new Map(stages.map((s) => [String(s.id), s]));
+  const resolved_column_id = resolveColumnId(project, stages);
+  const col = resolved_column_id ? stageById.get(String(resolved_column_id)) : undefined;
+  const vc_intake = col
+    ? (col.bucket_slug === INTAKE_BUCKET
+      || String(col.id || '').startsWith('__vc_intake')
+      || (() => {
+        const name = String(col.name || '').toLowerCase();
+        return name.includes('tiếp nhận') || name.includes('tiep nhan')
+          || name.includes('chờ vc') || name.includes('chờ vận') || name.includes('chờ giao');
+      })())
+    : Boolean(project.vc_intake);
+  return { ...project, resolved_column_id, vc_intake };
+}
+
 export type BoardFilters = {
   companyId?: string;
   dealCompanyId?: string;
   workshopTypeId?: string;
+  /** Ưu tiên — gửi lên API khi có (server filter). */
+  priority?: string;
 };
 
 const PROJECTS_PAGE_LIMIT = 200;
 const PROJECTS_MAX_PAGES = 40;
 const PROJECTS_FETCH_CONCURRENCY = 5;
+/** Trần cứng client: page×limit — vượt → meta.truncated + banner. */
+export const PROJECTS_HARD_CAP = PROJECTS_PAGE_LIMIT * PROJECTS_MAX_PAGES;
 
 const boardInflight = new Map<string, Promise<ProductionBoard>>();
 
 function boardInflightKey(filters: BoardFilters = {}): string {
-  return `${filters.companyId || ''}|${filters.dealCompanyId || ''}|${filters.workshopTypeId || ''}`;
+  return `${filters.companyId || ''}|${filters.dealCompanyId || ''}|${filters.workshopTypeId || ''}|${filters.priority || ''}`;
 }
 
-async function fetchAllProjects(noCache = false, filters: BoardFilters = {}): Promise<ProductionProject[]> {
+type ProjectsFetchResult = {
+  projects: ProductionProject[];
+  truncated: boolean;
+  totalKnown: number | null;
+};
+
+type ProjectsPageProgress = (partial: ProjectsFetchResult) => void;
+
+async function fetchAllProjects(
+  noCache = false,
+  filters: BoardFilters = {},
+  onProgress?: ProjectsPageProgress,
+): Promise<ProjectsFetchResult> {
   const buildParams = (page: number): Record<string, unknown> => {
     const params: Record<string, unknown> = {
       page,
@@ -202,6 +276,7 @@ async function fetchAllProjects(noCache = false, filters: BoardFilters = {}): Pr
     if (noCache) params._t = Date.now();
     if (filters.companyId) params.company_id = filters.companyId;
     if (filters.workshopTypeId) params.workshop_type_id = filters.workshopTypeId;
+    if (filters.priority) params.priority = filters.priority;
     return params;
   };
   const getPage = async (page: number) => {
@@ -211,30 +286,48 @@ async function fetchAllProjects(noCache = false, filters: BoardFilters = {}): Pr
       total?: number;
     }>('/logistics/projects', { params: buildParams(page) });
     const rows = Array.isArray(data?.projects) ? data.projects : [];
-    const total = Number(data?.total ?? rows.length);
+    const totalRaw = data?.total;
+    const total = totalRaw != null && Number.isFinite(Number(totalRaw)) ? Number(totalRaw) : null;
     const reportedPages = Number(data?.totalPages);
     const totalPages = Number.isFinite(reportedPages) && reportedPages > 0
       ? reportedPages
-      : Math.max(1, Math.ceil(total / PROJECTS_PAGE_LIMIT));
-    return { rows, totalPages };
+      : (total != null ? Math.max(1, Math.ceil(total / PROJECTS_PAGE_LIMIT)) : 1);
+    return { rows, totalPages, total };
+  };
+
+  const emit = (projects: ProductionProject[], truncated: boolean, totalKnown: number | null) => {
+    onProgress?.({ projects, truncated, totalKnown });
   };
 
   const first = await getPage(1);
   const out: ProductionProject[] = first.rows.map(mapProjectRow);
+  const totalKnown = first.total;
   let totalPages = Math.min(first.totalPages, PROJECTS_MAX_PAGES);
+  emit(out.slice(), false, totalKnown);
 
   // Backend cũ: total = độ dài trang → totalPages=1 dù còn data. Probe thêm trang đầy.
   if (totalPages <= 1 && first.rows.length >= PROJECTS_PAGE_LIMIT) {
+    let truncated = false;
     for (let p = 2; p <= PROJECTS_MAX_PAGES; p += 1) {
       const next = await getPage(p);
       for (const row of next.rows) out.push(mapProjectRow(row));
-      if (next.rows.length < PROJECTS_PAGE_LIMIT) break;
+      emit(out.slice(), false, totalKnown);
+      if (next.rows.length < PROJECTS_PAGE_LIMIT) {
+        return { projects: out, truncated: false, totalKnown };
+      }
+      if (p === PROJECTS_MAX_PAGES) truncated = true;
     }
-    return out;
+    truncated = truncated || (totalKnown != null && totalKnown > out.length);
+    emit(out.slice(), truncated, totalKnown);
+    return { projects: out, truncated, totalKnown };
   }
 
-  if (totalPages <= 1 || first.rows.length < PROJECTS_PAGE_LIMIT) return out;
+  if (totalPages <= 1 || first.rows.length < PROJECTS_PAGE_LIMIT) {
+    return { projects: out, truncated: false, totalKnown };
+  }
 
+  const serverPages = first.totalPages;
+  const capped = serverPages > PROJECTS_MAX_PAGES;
   const remaining: number[] = [];
   for (let p = 2; p <= totalPages; p += 1) remaining.push(p);
 
@@ -244,53 +337,81 @@ async function fetchAllProjects(noCache = false, filters: BoardFilters = {}): Pr
     results.forEach((r) => {
       for (const row of r.rows) out.push(mapProjectRow(row));
     });
+    emit(out.slice(), false, totalKnown);
   }
-  return out;
+
+  const truncated = capped
+    || (totalKnown != null && totalKnown > out.length)
+    || out.length >= PROJECTS_HARD_CAP;
+  return { projects: out, truncated, totalKnown };
+}
+
+function resolveBoardProjects(
+  projects: ProductionProject[],
+  stages: ReturnType<typeof mapStageRow>[],
+): ProductionProject[] {
+  return projects.map((p) => bindProjectToDisplayStages(p, stages));
 }
 
 async function fetchLogisticsBoardUncapped(
   noCache = false,
   filters: BoardFilters = {},
 ): Promise<ProductionBoard> {
+  const { setCachedBoard } = await import('./logisticsBoardCache');
+
   const stageParams: Record<string, unknown> = {};
   if (noCache) stageParams._t = Date.now();
   if (filters.companyId) stageParams.company_id = filters.companyId;
   if (filters.workshopTypeId) stageParams.workshop_type_id = filters.workshopTypeId;
 
-  const [stageRes, projects] = await Promise.all([
-    api
-      .get<Array<Record<string, unknown>>>('/logistics/pipeline-stages', {
-        params: Object.keys(stageParams).length ? stageParams : undefined,
-      })
-      .then((r) => (Array.isArray(r.data) ? r.data : []))
-      .catch(() => [] as Array<Record<string, unknown>>),
-    fetchAllProjects(noCache, filters),
-  ]);
+  let stages: ReturnType<typeof mapStageRow>[] = [];
+  let lastPartial: ProjectsFetchResult | null = null;
 
-  const stages = stageRes.map((s, i) => mapStageRow(s, i)).sort((a, b) => a.order_index - b.order_index);
-  const kpis = null;
-  const stageById = new Map(stages.map((s) => [String(s.id), s]));
+  const publishSoft = (partial: ProjectsFetchResult) => {
+    if (!stages.length) return;
+    const board: ProductionBoard = {
+      stages,
+      projects: resolveBoardProjects(partial.projects, stages),
+      kpis: null,
+      meta: {
+        truncated: partial.truncated,
+        fetchedCount: partial.projects.length,
+        totalKnown: partial.totalKnown,
+      },
+    };
+    setCachedBoard(filters, board, { soft: true });
+  };
 
-  const resolved = projects.map((p) => {
-    const resolved_column_id =
-      p.vc_kanban_column_id && stageById.has(String(p.vc_kanban_column_id))
-        ? p.vc_kanban_column_id
-        : resolveColumnId(p, stages);
-    const col = resolved_column_id ? stageById.get(String(resolved_column_id)) : undefined;
-    // Chỉ đánh dấu intake khi đúng cột tiếp nhận — không suy từ thiếu workflow_stage_id
-    // (cột «Đã giao» tùy chỉnh thường không gắn workflow nhưng không phải intake).
-    const vc_intake = col
-      ? (col.bucket_slug === INTAKE_BUCKET
-        || String(col.id || '').startsWith('__vc_intake')
-        || (() => {
-          const name = String(col.name || '').toLowerCase();
-          return name.includes('tiếp nhận') || name.includes('tiep nhan')
-            || name.includes('chờ vc') || name.includes('chờ vận');
-        })())
-      : Boolean(p.vc_intake);
-    return { ...p, resolved_column_id, vc_intake };
+  const stagesPromise = api
+    .get<Array<Record<string, unknown>>>('/logistics/pipeline-stages', {
+      params: Object.keys(stageParams).length ? stageParams : undefined,
+    })
+    .then((r) => (Array.isArray(r.data) ? r.data : []))
+    .catch(() => [] as Array<Record<string, unknown>>)
+    .then((stageRes) => {
+      stages = stageRes.map((s, i) => mapStageRow(s, i)).sort((a, b) => a.order_index - b.order_index);
+      if (lastPartial) publishSoft(lastPartial);
+      return stages;
+    });
+
+  const projectsPromise = fetchAllProjects(noCache, filters, (partial) => {
+    lastPartial = partial;
+    publishSoft(partial);
   });
-  return { stages, projects: resolved, kpis };
+
+  const [, fetchResult] = await Promise.all([stagesPromise, projectsPromise]);
+
+  const resolved = resolveBoardProjects(fetchResult.projects, stages);
+  return {
+    stages,
+    projects: resolved,
+    kpis: null,
+    meta: {
+      truncated: fetchResult.truncated,
+      fetchedCount: resolved.length,
+      totalKnown: fetchResult.totalKnown,
+    },
+  };
 }
 
 export function fetchLogisticsBoard(

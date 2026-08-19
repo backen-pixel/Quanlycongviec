@@ -45,6 +45,8 @@ export type ProductionProject = {
   sx_won_deal?: boolean;
   vc_intake?: boolean;
   vc_kanban_column_id?: string | null;
+  /** bucket_slug cột thật (công ty của dự án) — dùng khi pipeline đang hiện là công ty khác. */
+  vc_bucket_slug?: string | null;
   current_stage_id?: string | null;
   workshop_type_id?: string | null;
   sx_kanban_column_id?: string | null;
@@ -114,10 +116,22 @@ export type ProductionDashboard = {
   avg_progress: number;
 };
 
+/** Meta tải board (cap 8000 / snapshot đĩa). */
+export type ProductionBoardMeta = {
+  /** Đã dừng vì PROJECTS_MAX_PAGES — có thể còn data trên server. */
+  truncated?: boolean;
+  fetchedCount?: number;
+  /** total từ API trang 1 (nếu có). */
+  totalKnown?: number | null;
+  /** Snapshot đĩa đã cắt bớt so với RAM. */
+  diskPartial?: boolean;
+};
+
 export type ProductionBoard = {
   stages: KanbanStage[];
   projects: ProductionProject[];
   kpis: ProductionDashboard | null;
+  meta?: ProductionBoardMeta | null;
 };
 
 export type PersonRef = {

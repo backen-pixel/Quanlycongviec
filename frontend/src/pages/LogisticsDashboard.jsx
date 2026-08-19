@@ -48,6 +48,35 @@ import { VC_TEMP_LOCK_MSG } from '../lib/projectLogistics';
 
 const INTAKE_BUCKET = 'delivery_pending';
 
+/** Socket VC: gộp cột + status từ web/mobile khác vào thẻ đã có trên bảng (không reload). */
+function patchVcProjectFromSocket(prev, data) {
+  const pid = data?.id || data?.project_id || data?.project?.id;
+  if (!pid) return prev;
+  const src = data?.project && typeof data.project === 'object'
+    ? { ...data, ...data.project }
+    : (data || {});
+  const colId = src.vc_kanban_column_id != null && src.vc_kanban_column_id !== ''
+    ? String(src.vc_kanban_column_id)
+    : null;
+  const reason = String(src.reason || data?.reason || '');
+  return prev.map((p) => {
+    if (String(p.id) !== String(pid)) return p;
+    const next = { ...p };
+    if (colId) {
+      next.vc_kanban_column_id = colId;
+      next.vc_intake = reason === 'move_to_intake' || colId.startsWith('__vc_intake');
+    }
+    if (src.status) next.status = src.status;
+    if (src.current_stage) next.current_stage = src.current_stage;
+    if (src.current_stage_id !== undefined) next.current_stage_id = src.current_stage_id;
+    if (src.logistics_person_id !== undefined) next.logistics_person_id = src.logistics_person_id;
+    if (src.logistics_person !== undefined) next.logistics_person = src.logistics_person;
+    if (src.installer_person_id !== undefined) next.installer_person_id = src.installer_person_id;
+    if (src.installer_person !== undefined) next.installer_person = src.installer_person;
+    return next;
+  });
+}
+
 const WS_DASH_VIEW_MODES = ['kanban', 'list', 'planner', 'deadline', 'calendar'];
 const VC_VIEW_MODE_OPTIONS = [
   { id: 'kanban', icon: LayoutGrid, label: 'Kanban' },
@@ -318,25 +347,24 @@ export default function LogisticsDashboard() {
     projectsRef.current = projects;
   }, [projects]);
 
-  // Tự reload khi có project bàn giao sang VC qua socket / sự kiện local
+  // Realtime: bàn giao mới → reload; thẻ đã có → patch cột/status (mobile ↔ web).
   useEffect(() => {
     const socket = getSocket();
     const handler = (data) => {
-      // Chỉ reload khi có dự án "mới xuất hiện" trong module VC (bàn giao từ SX),
-      // tránh reload toàn trang khi user đang kéo thả đổi cột ngay trong VC.
       const pid = data?.id || data?.project_id || data?.project?.id;
       if (!pid) return;
       const existed = (projectsRef.current || []).some((p) => String(p.id) === String(pid));
       const reason = String(data?.reason || '');
-      const fromHandover = reason === 'vc_handover' || reason === 'handover_vc';
-      // Đã trên bảng (cột tạm) vẫn reload khi bàn giao thật → nhảy sang Chờ giao hàng
-      if (existed && !fromHandover) return;
+      const fromHandover = reason === 'vc_handover' || reason === 'handover_vc' || reason === 'vc_handover_reassert';
+
+      if (existed && !fromHandover) {
+        setProjects((prev) => patchVcProjectFromSocket(prev, data));
+        return;
+      }
 
       const s = data?.status || data?.project?.status;
       const handedOver = Boolean(
-        data?.reason === 'vc_handover'
-        || data?.reason === 'handover_vc'
-        || data?.reason === 'vc_handover_reassert'
+        fromHandover
         || data?.logistics_company_id
         || data?.vc_kanban_column_id
         || data?.project?.logistics_company_id
@@ -346,16 +374,23 @@ export default function LogisticsDashboard() {
         load();
       }
     };
+    const onTrashed = (data) => {
+      const pid = data?.id || data?.project_id;
+      if (!pid) return;
+      setProjects((prev) => prev.filter((p) => String(p.id) !== String(pid)));
+    };
     const onLocal = (ev) => handler(ev?.detail || {});
     if (socket) {
       socket.on('project:stage_changed', handler);
       socket.on('logistics:board_changed', handler);
+      socket.on('logistics:project_trashed', onTrashed);
     }
     window.addEventListener('vc-handover:board-refresh', onLocal);
     return () => {
       if (socket) {
         socket.off('project:stage_changed', handler);
         socket.off('logistics:board_changed', handler);
+        socket.off('logistics:project_trashed', onTrashed);
       }
       window.removeEventListener('vc-handover:board-refresh', onLocal);
     };

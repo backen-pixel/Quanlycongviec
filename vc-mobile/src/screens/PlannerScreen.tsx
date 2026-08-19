@@ -10,7 +10,7 @@ import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { useProductionRealtime } from '../hooks/useProductionRealtime';
 import { REALTIME_BOARD_TASK } from '../lib/realtimeModes';
-import { loadKanbanFilters, saveKanbanFilters, subscribeSharedFilters } from '../lib/kanbanFilterStorage';
+import { loadKanbanFilters, saveKanbanFilters, subscribeSharedFilters, boardFiltersFromSharedSnap, getSharedFiltersSync, type KanbanFilterSnapshot } from '../lib/kanbanFilterStorage';
 import { fetchCompanies, fetchProductionBoard, type CompanyOption } from '../lib/logisticsApi';
 import { getCachedBoard, isCachedBoardFresh, setCachedBoard } from '../lib/logisticsBoardCache';
 import { isSystemAdmin } from '../lib/productionFilters';
@@ -50,6 +50,8 @@ export default function PlannerScreen() {
   const [filterCompany, setFilterCompany] = useState(() => (
     sysAdmin ? '' : String(user?.company_id || '')
   ));
+  /** Đồng bộ workshopType / dealCompany với Kanban để cùng cache key board. */
+  const [sharedSnap, setSharedSnap] = useState<KanbanFilterSnapshot>(() => getSharedFiltersSync());
   const [companies, setCompanies] = useState<CompanyOption[]>([]);
   const companiesRef = useRef<CompanyOption[]>([]);
   const [board, setBoard] = useState<ProductionBoard>({ stages: [], projects: [], kpis: null });
@@ -82,6 +84,7 @@ export default function PlannerScreen() {
     let alive = true;
     void (async () => {
       const snap = await loadKanbanFilters().catch(() => null);
+      if (alive && snap) setSharedSnap({ ...snap });
       let id = sysAdmin
         ? String(snap?.filterCompany || '').trim()
         : String(user?.company_id || '');
@@ -103,6 +106,7 @@ export default function PlannerScreen() {
 
   useEffect(() => {
     const unsub = subscribeSharedFilters((snap) => {
+      setSharedSnap({ ...snap });
       if (!sysAdmin) return;
       const next = String(snap.filterCompany || '');
       setFilterCompany((prev) => (prev === next ? prev : next));
@@ -111,8 +115,11 @@ export default function PlannerScreen() {
   }, [sysAdmin]);
 
   const boardFilters = useMemo(
-    () => ({ companyId: filterCompany || undefined }),
-    [filterCompany],
+    () => boardFiltersFromSharedSnap(
+      { ...sharedSnap, filterCompany },
+      { companyIdOverride: filterCompany },
+    ),
+    [sharedSnap, filterCompany],
   );
 
   const loadSeqRef = useRef(0);

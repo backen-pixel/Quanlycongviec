@@ -334,6 +334,8 @@ function enrichOneLogisticsProject(project, sortedKanban, orphanColMeta = null) 
     vc_kanban_column_id: matchedCol?.id || project.vc_kanban_column_id || null,
     vc_intake: !matchedCol?.workflow_stage_id || matchedCol?.bucket_slug === INTAKE_BUCKET,
     vc_pipeline_percent: matchedCol?.progress_percent ?? null,
+    /** Cột logic (intake/delivery/installation…) — client «Tất cả công ty» map sang pipeline đang hiện. */
+    vc_bucket_slug: matchedCol?.bucket_slug || null,
   };
 }
 
@@ -1391,6 +1393,7 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
           companyId: project.company_id || null,
           logisticsCompanyId: logCo,
           vcKanbanColumnId: intakeColId,
+          vcBucketSlug: intakeCol?.bucket_slug || INTAKE_BUCKET,
         });
       }
 
@@ -1636,6 +1639,7 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
         companyId: project.company_id || null,
         logisticsCompanyId: project.logistics_company_id || project.company_id || null,
         vcKanbanColumnId: effectiveVcStageId || updated?.vc_kanban_column_id || null,
+        vcBucketSlug: vcPipeStageRow?.bucket_slug || null,
       });
     }
 

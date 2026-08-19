@@ -129,7 +129,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     if (!token || busyRef.current) return;
     busyRef.current = true;
     void fetchCommentUnreadCount()
-      .then((count) => setUnreadCount((c) => Math.max(c, count)))
+      .then((count) => setUnreadCount(Math.max(0, Number(count) || 0)))
       .catch(() => {})
       .finally(() => {
         busyRef.current = false;
@@ -199,21 +199,41 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     socketRef.current?.emit('leave:project', projectId);
   }, []);
 
+  const leadRoomCountsRef = useRef(new Map<string, number>());
+  /** Tập lead đang join bởi joinLeadRooms (Kanban) — sync leave khi viewport đổi. */
+  const kanbanLeadBatchRef = useRef(new Set<string>());
+
   const joinLeadRoom = useCallback((leadId: string) => {
     if (!leadId) return;
-    socketRef.current?.emit('join:lead', leadId);
+    const id = String(leadId);
+    const next = (leadRoomCountsRef.current.get(id) || 0) + 1;
+    leadRoomCountsRef.current.set(id, next);
+    if (next === 1) socketRef.current?.emit('join:lead', id);
   }, []);
 
   const leaveLeadRoom = useCallback((leadId: string) => {
     if (!leadId) return;
-    socketRef.current?.emit('leave:lead', leadId);
+    const id = String(leadId);
+    const next = (leadRoomCountsRef.current.get(id) || 0) - 1;
+    if (next <= 0) {
+      leadRoomCountsRef.current.delete(id);
+      socketRef.current?.emit('leave:lead', id);
+    } else {
+      leadRoomCountsRef.current.set(id, next);
+    }
   }, []);
 
   const joinLeadRooms = useCallback((leadIds: string[]) => {
-    for (const id of leadIds) {
-      if (id) socketRef.current?.emit('join:lead', id);
+    const next = new Set(leadIds.map(String).filter(Boolean));
+    const prev = kanbanLeadBatchRef.current;
+    for (const id of prev) {
+      if (!next.has(id)) leaveLeadRoom(id);
     }
-  }, []);
+    for (const id of next) {
+      if (!prev.has(id)) joinLeadRoom(id);
+    }
+    kanbanLeadBatchRef.current = next;
+  }, [joinLeadRoom, leaveLeadRoom]);
 
   const emitSync = useCallback((evt: SyncEvent) => {
     syncListenersRef.current.forEach((fn) => {

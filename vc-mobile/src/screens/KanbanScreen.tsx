@@ -4,7 +4,7 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { useFocusEffect, useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, FlatList, PanResponder, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Alert, DeviceEventEmitter, FlatList, PanResponder, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatApiError } from '../api/client';
 import CommentNotificationsModal from '../components/CommentNotificationsModal';
@@ -27,6 +27,7 @@ import {
   fetchClientCompanies,
   fetchWorkshopOptionsForDeal,
   fetchProductionBoard,
+  PROJECTS_HARD_CAP,
   fetchProductionProject,
   fetchCommentsIndexForProjects,
   fetchWorkshopTypes,
@@ -41,6 +42,8 @@ import {
   type WorkshopTypeOption,
 } from '../lib/logisticsApi';
 import {
+  BOARD_CACHE_UPDATED,
+  boardCacheKey,
   getCachedBoard,
   isCachedBoardFresh,
   patchCachedProjectById,
@@ -178,6 +181,13 @@ function cardTitleOf(p: ProductionProject): string {
   const primary = deals.find((d) => String(d?.type || '') === 'deal') || deals[0] || null;
   const title = (primary?.title || '').trim();
   return title || p.name || p.code || '';
+}
+
+function crmPersonName(p: ProductionProject): string | null {
+  const deals = Array.isArray(p.crm_deals) ? p.crm_deals : [];
+  const primary = deals.find((d) => String(d?.type || '') === 'deal') || deals[0] || null;
+  const fromDeal = primary?.assignee?.full_name || primary?.lead_owner?.full_name;
+  return (fromDeal || p.sales_person_name || '').trim() || null;
 }
 
 function isToday(value?: string | null): boolean {
@@ -394,8 +404,10 @@ export default function KanbanScreen() {
       companyId: filterCompanyRef.current || undefined,
       dealCompanyId: filterDealCompanyRef.current || undefined,
       workshopTypeId: workshopTypeIdForBoardApi(filterWorkTypeIdRef.current),
+      priority: filterPriorityRef.current || undefined,
     };
     const seq = ++loadSeqRef.current;
+    const cacheKey = boardCacheKey(filters);
     const cached = getCachedBoard(filters);
     if (mode !== 'refresh' && cached) {
       setBoard(cached);
@@ -407,6 +419,15 @@ export default function KanbanScreen() {
     if (mode === 'init' && !cached) setLoading(true);
     if (mode === 'refresh') setRefreshing(true);
     if (mode !== 'silent') setError(null);
+
+    const onPartial = (ev: { key?: string; board?: ProductionBoard; soft?: boolean }) => {
+      if (seq !== loadSeqRef.current) return;
+      if (ev?.key !== cacheKey || !ev.board) return;
+      setBoard(ev.board);
+      if (mode === 'init') setLoading(false);
+      setActiveIndex((prev) => Math.min(prev, Math.max(0, ev.board!.stages.length - 1)));
+    };
+    const sub = DeviceEventEmitter.addListener(BOARD_CACHE_UPDATED, onPartial);
     try {
       const data = await fetchProductionBoard(mode === 'refresh', filters);
       if (seq !== loadSeqRef.current) return;
@@ -417,6 +438,7 @@ export default function KanbanScreen() {
       if (seq !== loadSeqRef.current) return;
       if (mode !== 'silent') setError(formatApiError(e));
     } finally {
+      sub.remove();
       if (seq === loadSeqRef.current) {
         setLoading(false);
         setRefreshing(false);
@@ -459,6 +481,7 @@ export default function KanbanScreen() {
     filterDealCompany,
     dealCompanyParam,
     filterWorkTypeId,
+    filterPriority,
     isSysAdmin,
     workTypes,
     workTypesCompanyId,
@@ -472,6 +495,7 @@ export default function KanbanScreen() {
         companyId: filterCompanyRef.current || undefined,
         dealCompanyId: filterDealCompanyRef.current || undefined,
         workshopTypeId: workshopTypeIdForBoardApi(filterWorkTypeIdRef.current),
+        priority: filterPriorityRef.current || undefined,
       };
       if (info?.patched) {
         const next = getCachedBoard(filters);
@@ -1167,7 +1191,8 @@ export default function KanbanScreen() {
     const leadIds = rows
       .map((p) => resolveProjectDealId(p))
       .filter((id): id is string => Boolean(id));
-    if (leadIds.length) joinLeadRooms(leadIds);
+    joinLeadRooms(leadIds);
+    return () => joinLeadRooms([]);
   }, [viewMode, pagedProjects, pagedListProjects, joinLeadRooms]);
 
   // Reset về trang đầu khi đổi cột hoặc đổi bộ lọc.
@@ -1406,6 +1431,15 @@ export default function KanbanScreen() {
           </View>
         </View>
       </View>
+
+      {board.meta?.truncated ? (
+        <View style={styles.capBanner} accessibilityRole="alert">
+          <Ionicons name="warning-outline" size={16} color={colors.warning} />
+          <Text style={styles.capBannerText}>
+            {`Đã tải tối đa ${(board.meta.fetchedCount || PROJECTS_HARD_CAP).toLocaleString('vi-VN')} dự án — thu hẹp bộ lọc để xem đủ`}
+          </Text>
+        </View>
+      ) : null}
 
       {commentToast && !notificationsOpen ? (
         <TapHighlight
@@ -1683,6 +1717,8 @@ export default function KanbanScreen() {
                 stageColorHex={meta?.color}
                 stageIndex={meta?.index ?? 0}
                 ageLabel={calculateDays(item.created_at)}
+                crmName={crmPersonName(item)}
+                sxName={item.production_person_name}
                 vcName={item.logistics_person_name}
                 ldName={item.installer_person_name}
                 moving={movingId === item.id}
@@ -1748,9 +1784,11 @@ export default function KanbanScreen() {
           const deadlineStr = formatDate(item.deadline);
           const ageLabel = calculateDays(item.created_at);
           const title = cardTitleOf(item);
+          const crmName = crmPersonName(item);
+          const sxName = item.production_person_name?.trim() || null;
           const vcName = item.logistics_person_name?.trim() || null;
           const ldName = item.installer_person_name?.trim() || null;
-          const hasPeople = !!(vcName || ldName);
+          const hasPeople = !!(crmName || sxName || vcName || ldName);
           const showHandover =
             !!activeStage?.is_handover_to_install && !isInstallVcStage(activeStage);
           const deadlineOverdue = !!(
@@ -1810,10 +1848,19 @@ export default function KanbanScreen() {
                 ) : null}
 
                 {hasPeople ? (
-                  <View style={styles.personChipsWrap}>
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    nestedScrollEnabled
+                    keyboardShouldPersistTaps="handled"
+                    contentContainerStyle={styles.personChipsWrap}
+                    style={styles.personChipsScroll}
+                  >
+                    <PersonRoleChip label="CRM" name={crmName} isDark={isDark} />
+                    <PersonRoleChip label="SX" name={sxName} isDark={isDark} />
                     <PersonRoleChip label="VC" name={vcName} isDark={isDark} />
                     <PersonRoleChip label="LĐ" name={ldName} isDark={isDark} />
-                  </View>
+                  </ScrollView>
                 ) : (
                   <Text style={styles.personEmpty}>Phụ trách: —</Text>
                 )}
@@ -2080,6 +2127,20 @@ function createKanbanStyles(c: AppColors) {
   return StyleSheet.create({
   container: { flex: 1, backgroundColor: c.bg },
   fixedTop: { flexShrink: 0 },
+  capBanner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    marginHorizontal: Spacing.md,
+    marginBottom: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: Radii.md,
+    backgroundColor: colorWithAlpha(c.warning, 0.14),
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colorWithAlpha(c.warning, 0.45),
+  },
+  capBannerText: { flex: 1, color: c.text, fontSize: 12, lineHeight: 17, fontWeight: '600' },
   listFlex: { flex: 1 },
   center: { flex: 1, backgroundColor: c.bg, alignItems: 'center', justifyContent: 'center', gap: 12 },
   loadingText: { color: c.textMuted, fontSize: 13 },
@@ -2305,12 +2366,13 @@ function createKanbanStyles(c: AppColors) {
   customerName: { color: c.textMuted, fontSize: 12, fontWeight: '600' },
   customerPhoneLine: { color: '#16A34A', fontSize: 12, fontWeight: '600' },
 
+  personChipsScroll: { marginBottom: 6, marginHorizontal: -2 },
   personChipsWrap: {
     flexDirection: 'row',
-    flexWrap: 'nowrap',
     alignItems: 'center',
     gap: 6,
-    marginBottom: 6,
+    paddingHorizontal: 2,
+    paddingRight: 8,
   },
   personEmpty: { color: c.textFaint, fontSize: 10, marginBottom: 4 },
 

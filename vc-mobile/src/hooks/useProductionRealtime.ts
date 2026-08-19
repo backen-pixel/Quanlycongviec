@@ -63,11 +63,22 @@ function tryPatchFromSyncEvent(evt: SyncEvent): boolean {
   const payload = evt.payload as Record<string, unknown>;
   const patch: Partial<ProductionProject> = {};
   const col = payload.vc_kanban_column_id;
+  const reason = String(payload.reason || '');
   if (col != null && col !== '') {
-    patch.vc_kanban_column_id = String(col);
-    patch.resolved_column_id = String(col);
+    const colStr = String(col);
+    patch.vc_kanban_column_id = colStr;
+    if (payload.vc_intake != null) patch.vc_intake = Boolean(payload.vc_intake);
+    else {
+      patch.vc_intake = reason === 'move_to_intake' || colStr.startsWith('__vc_intake');
+    }
+  }
+  if (payload.vc_bucket_slug != null && payload.vc_bucket_slug !== '') {
+    patch.vc_bucket_slug = String(payload.vc_bucket_slug);
   }
   if (payload.status != null && payload.status !== '') patch.status = String(payload.status);
+  if (payload.current_stage_id !== undefined) {
+    patch.current_stage_id = payload.current_stage_id != null ? String(payload.current_stage_id) : null;
+  }
   if (payload.logistics_person_id !== undefined) {
     patch.logistics_person_id = payload.logistics_person_id != null ? String(payload.logistics_person_id) : null;
   }

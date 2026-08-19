@@ -1,7 +1,7 @@
 import SpinningLoader from './SpinningLoader';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import React, { useMemo } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import TapHighlight from './TapHighlight';
 import PersonRoleChip from './PersonRoleChip';
 import { useTheme } from '../context/ThemeContext';
@@ -15,6 +15,8 @@ type Props = {
   stageIndex?: number;
   ageLabel?: string;
   title: string;
+  crmName?: string | null;
+  sxName?: string | null;
   vcName?: string | null;
   ldName?: string | null;
   moving?: boolean;
@@ -45,6 +47,8 @@ export default function VcListCard({
   stageIndex = 0,
   ageLabel,
   title,
+  crmName,
+  sxName,
   vcName,
   ldName,
   moving,
@@ -64,7 +68,7 @@ export default function VcListCard({
     && item.status !== 'completed'
   );
   const customerLine = [item.customer_name, item.customer_phone].filter(Boolean).join(' · ');
-  const hasPeople = !!(vcName || ldName);
+  const hasPeople = !!(crmName || sxName || vcName || ldName);
 
   return (
     <View style={[styles.card, { borderLeftColor: accent }]}>
@@ -87,10 +91,19 @@ export default function VcListCard({
         ) : null}
 
         {hasPeople ? (
-          <View style={styles.peopleWrap}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            nestedScrollEnabled
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={styles.peopleWrap}
+            style={styles.peopleScroll}
+          >
+            <PersonRoleChip label="CRM" name={crmName} isDark={isDark} />
+            <PersonRoleChip label="SX" name={sxName} isDark={isDark} />
             <PersonRoleChip label="VC" name={vcName} isDark={isDark} />
             <PersonRoleChip label="LĐ" name={ldName} isDark={isDark} />
-          </View>
+          </ScrollView>
         ) : (
           <Text style={styles.peopleMuted}>Phụ trách: —</Text>
         )}
@@ -173,12 +186,13 @@ function makeStyles(c: AppColors) {
     stageTxt: { fontSize: 11, fontWeight: '700' },
     title: { color: c.text, fontSize: 15, fontWeight: '700', marginBottom: 4 },
     customer: { color: c.textMuted, fontSize: 12, fontWeight: '600', marginBottom: 4 },
+    peopleScroll: { marginBottom: 6, marginHorizontal: -2 },
     peopleWrap: {
       flexDirection: 'row',
-      flexWrap: 'nowrap',
       alignItems: 'center',
       gap: 6,
-      marginBottom: 6,
+      paddingHorizontal: 2,
+      paddingRight: 8,
     },
     peopleMuted: { color: c.textFaint, fontSize: 11, marginBottom: 6 },
     metaRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 2 },

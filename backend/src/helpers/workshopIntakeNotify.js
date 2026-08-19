@@ -162,6 +162,7 @@ function emitLogisticsKanbanChangedImmediate(io, {
   companyId = null,
   logisticsCompanyId = null,
   vcKanbanColumnId = null,
+  vcBucketSlug = null,
 } = {}) {
   if (!io || !projectId) return;
   const pid = String(projectId);
@@ -175,6 +176,10 @@ function emitLogisticsKanbanChangedImmediate(io, {
     logistics_company_id: logisticsCompanyId || project?.logistics_company_id || null,
     vc_kanban_column_id: vcKanbanColumnId
       || project?.vc_kanban_column_id
+      || null,
+    vc_bucket_slug: vcBucketSlug
+      || project?.vc_bucket_slug
+      || project?.bucket_slug
       || null,
   };
   const companyIds = [...new Set(

@@ -41,6 +41,14 @@ import {
   type SharedInboxTask,
 } from '../lib/sharedWorkspaceApi';
 import {
+  WORK_INBOX_FETCH_LIMIT,
+  getCachedWorkInbox,
+  invalidateWorkInboxCache,
+  isCachedWorkInboxFresh,
+  setCachedWorkInbox,
+  workInboxCacheKey,
+} from '../lib/workInboxCache';
+import {
   canViewTeamWork,
   isTaskDone,
   isTaskInProgress,
@@ -190,7 +198,7 @@ export default function WorkScreen() {
   }, [canPickScope, filterAssigneeId, filtersReady]);
 
   /** Khớp web load(): company_id chỉ khi admin chọn; assignee_id bắt buộc với NV. */
-  const load = useCallback(async () => {
+  const load = useCallback(async (opts?: { force?: boolean }) => {
     if (!userId || !filtersReady) {
       if (!userId) {
         setAssignments([]);
@@ -206,18 +214,36 @@ export default function WorkScreen() {
         ? (filterCompanyId || undefined)
         : undefined;
       const assigneeParam = filterAssigneeId || (!canPickScope ? userId : undefined);
+      const cacheKey = workInboxCacheKey({
+        companyId: companyParam,
+        assigneeId: assigneeParam,
+      });
+      const force = Boolean(opts?.force);
+      const cached = getCachedWorkInbox(cacheKey);
+      if (!force && cached && isCachedWorkInboxFresh(cacheKey)) {
+        if (seq !== loadSeqRef.current) return;
+        setAssignments(cached.assignments);
+        setSharedGroups(cached.sharedGroups);
+        return;
+      }
 
       const [list, inbox] = await Promise.all([
         fetchLogisticsAssignments({
           companyId: companyParam,
           assigneeId: assigneeParam || undefined,
-          limit: 200,
+          limit: WORK_INBOX_FETCH_LIMIT,
         }),
         fetchPrivateDealInbox('logistics'),
       ]);
       if (seq !== loadSeqRef.current) return;
       setAssignments(list);
       setSharedGroups(inbox.groups);
+      setCachedWorkInbox(cacheKey, {
+        assignments: list,
+        sharedGroups: inbox.groups || [],
+        sharedTasks: inbox.tasks || [],
+        workTasks: cached?.workTasks || [],
+      });
     } catch (e) {
       if (seq !== loadSeqRef.current) return;
       setError(formatApiError(e));
@@ -249,15 +275,29 @@ export default function WorkScreen() {
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      await load();
+      const companyParam = canPickScope ? (filterCompanyId || undefined) : undefined;
+      const assigneeParam = filterAssigneeId || (!canPickScope ? userId : undefined);
+      invalidateWorkInboxCache(workInboxCacheKey({
+        companyId: companyParam,
+        assigneeId: assigneeParam,
+      }));
+      await load({ force: true });
     } finally {
       setRefreshing(false);
     }
-  }, [load]);
+  }, [load, canPickScope, filterCompanyId, filterAssigneeId, userId]);
 
   /** Chỉ Giao việc / KG chung — tab Nhiệm vụ do WorkProjectTasksPanel subscribe (tránh tải đôi). */
   useProductionRealtime({
-    onRefresh: () => void load(),
+    onRefresh: () => {
+      const companyParam = canPickScope ? (filterCompanyId || undefined) : undefined;
+      const assigneeParam = filterAssigneeId || (!canPickScope ? userId : undefined);
+      invalidateWorkInboxCache(workInboxCacheKey({
+        companyId: companyParam,
+        assigneeId: assigneeParam,
+      }));
+      void load({ force: true });
+    },
     enabled: Boolean(userId) && filtersReady && pageTab !== 'tasks',
     modes: REALTIME_TASK,
   });
@@ -866,7 +906,7 @@ export default function WorkScreen() {
         onCreated={() => {
           if (assignShared) setPageTab('shared');
           else setPageTab('assignments');
-          void load();
+          void load({ force: true });
         }}
       />
 

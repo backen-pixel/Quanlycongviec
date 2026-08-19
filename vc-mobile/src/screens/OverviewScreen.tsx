@@ -73,8 +73,17 @@ import {
   fetchLogisticsAssignments,
   fetchPrivateDealInbox,
   type CrmAssignment,
+  type SharedInboxGroup,
   type SharedInboxTask,
 } from '../lib/sharedWorkspaceApi';
+import {
+  WORK_INBOX_FETCH_LIMIT,
+  getCachedWorkInbox,
+  invalidateWorkInboxCache,
+  isCachedWorkInboxFresh,
+  setCachedWorkInbox,
+  workInboxCacheKey,
+} from '../lib/workInboxCache';
 import { filterVcAreaTabTasks, filterVcLogisticsUiTasks } from '../lib/projectDetailApi';
 import type { ProductionProject } from '../types';
 import { Radii, Spacing, colorWithAlpha, type AppColors } from '../theme';
@@ -530,27 +539,42 @@ export default function OverviewScreen() {
       // Khớp Công việc: admin/team xem toàn bộ NV trong phạm vi công ty; NV thường = việc của mình.
       const teamScope = canViewTeamWork(user);
       const assigneeParam = teamScope ? undefined : (userId || undefined);
+      const workKey = workInboxCacheKey({ companyId: companyParam, assigneeId: assigneeParam });
+      const cachedWork = getCachedWorkInbox(workKey);
+      if (mode === 'refresh' && wantTodos) invalidateWorkInboxCache(workKey);
+      const skipWorkFetch = mode !== 'refresh'
+        && isCachedWorkInboxFresh(workKey)
+        && !!getCachedWorkInbox(workKey);
 
       const tasksPromise = !wantTodos || !userId
         ? Promise.resolve([] as WorkTask[])
-        : fetchLogisticsWorkTasks({
-          assigneeId: assigneeParam || null,
-          companyId: companyParam,
-          limit: 80,
-        }).catch(() => [] as WorkTask[]);
+        : skipWorkFetch
+          ? Promise.resolve(getCachedWorkInbox(workKey)!.workTasks)
+          : fetchLogisticsWorkTasks({
+            assigneeId: assigneeParam || null,
+            companyId: companyParam,
+            limit: WORK_INBOX_FETCH_LIMIT,
+          }).catch(() => [] as WorkTask[]);
       const assignmentsPromise = !wantTodos || !userId
         ? Promise.resolve([] as CrmAssignment[])
-        : fetchLogisticsAssignments({
-          companyId: companyParam,
-          assigneeId: assigneeParam,
-          limit: 80,
-        }).catch(() => [] as CrmAssignment[]);
+        : skipWorkFetch
+          ? Promise.resolve(getCachedWorkInbox(workKey)!.assignments)
+          : fetchLogisticsAssignments({
+            companyId: companyParam,
+            assigneeId: assigneeParam,
+            limit: WORK_INBOX_FETCH_LIMIT,
+          }).catch(() => [] as CrmAssignment[]);
       const sharedPromise = !wantTodos || !userId
-        ? Promise.resolve({ tasks: [] as SharedInboxTask[], groups: [] })
-        : fetchPrivateDealInbox('logistics').catch(() => ({
-          tasks: [] as SharedInboxTask[],
-          groups: [],
-        }));
+        ? Promise.resolve({ tasks: [] as SharedInboxTask[], groups: [] as SharedInboxGroup[] })
+        : skipWorkFetch
+          ? Promise.resolve({
+            tasks: getCachedWorkInbox(workKey)!.sharedTasks,
+            groups: getCachedWorkInbox(workKey)!.sharedGroups,
+          })
+          : fetchPrivateDealInbox('logistics').catch(() => ({
+            tasks: [] as SharedInboxTask[],
+            groups: [] as SharedInboxGroup[],
+          }));
       const eventsPromise = !wantEvents
         ? Promise.resolve([] as AppEvent[])
         : fetchEventsRange({
@@ -592,10 +616,21 @@ export default function OverviewScreen() {
         }
       }
       if (wantTodos) {
+        const flatShared = flattenSharedInboxTasks(sharedInbox);
+        if (!skipWorkFetch && userId) {
+          setCachedWorkInbox(workKey, {
+            assignments,
+            sharedGroups: (Array.isArray(sharedInbox.groups)
+              ? sharedInbox.groups
+              : []) as SharedInboxGroup[],
+            sharedTasks: flatShared,
+            workTasks,
+          });
+        }
         setTodos(buildOverviewTodos({
           workTasks,
           assignments,
-          sharedTasks: flattenSharedInboxTasks(sharedInbox),
+          sharedTasks: flatShared,
           companyId,
         }));
         setTodoPage(0);

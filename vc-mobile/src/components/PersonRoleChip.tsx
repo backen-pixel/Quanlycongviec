@@ -1,7 +1,7 @@
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
-export type PersonRoleKey = 'VC' | 'LĐ';
+export type PersonRoleKey = 'CRM' | 'SX' | 'VC' | 'LĐ';
 
 type Tone = {
   accent: string;
@@ -12,6 +12,20 @@ type Tone = {
 };
 
 const TONES: Record<PersonRoleKey, Tone> = {
+  CRM: {
+    accent: '#7C3AED',
+    bgDark: 'rgba(124, 58, 237, 0.28)',
+    bgLight: '#EDE9FE',
+    borderDark: 'rgba(167, 139, 250, 0.65)',
+    borderLight: '#C4B5FD',
+  },
+  SX: {
+    accent: '#0F766E',
+    bgDark: 'rgba(20, 184, 166, 0.26)',
+    bgLight: '#CCFBF1',
+    borderDark: 'rgba(45, 212, 191, 0.6)',
+    borderLight: '#5EEAD4',
+  },
   VC: {
     accent: '#EA580C',
     bgDark: 'rgba(234, 88, 12, 0.28)',
@@ -88,10 +102,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 4,
     flexGrow: 0,
-    flexShrink: 1,
-    flexBasis: 'auto',
-    maxWidth: '48%',
-    minWidth: 0,
+    flexShrink: 0,
+    maxWidth: 148,
     paddingLeft: 2,
     paddingRight: 3,
     paddingVertical: 2,
