@@ -12,13 +12,16 @@ function knowledgeStorageBase() {
   return (import.meta.env.VITE_KNOWLEDGE_STORAGE_URL || DEFAULT_KNOWLEDGE_STORAGE).replace(/\/$/, '');
 }
 
+/** Đổi số này khi thay ảnh cùng tên — tránh trình duyệt/CDN giữ bản cũ. */
+const KNOWLEDGE_SHOT_VER = '20260819';
+
 /** /uploads/knowledge-screenshots/lead-01.png → URL public trên Supabase */
 function resolveKnowledgeScreenshotUrl(path) {
   const m = String(path || '').trim().match(
-    /^(?:\/uploads\/knowledge-screenshots\/|uploads\/knowledge-screenshots\/)([^/?#]+)$/i,
+    /^(?:\/uploads\/knowledge-screenshots\/|uploads\/knowledge-screenshots\/)([^/?#]+)(?:\?.*)?$/i,
   );
   if (!m) return null;
-  return `${knowledgeStorageBase()}/${m[1]}`;
+  return `${knowledgeStorageBase()}/${m[1]}?v=${KNOWLEDGE_SHOT_VER}`;
 }
 
 export function publicFileUrl(pathOrUrl) {

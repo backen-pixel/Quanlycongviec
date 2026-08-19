@@ -477,7 +477,15 @@ function ResultScreen({ result, exercise, onRetry, onBack, onGoNext }) {
         >
           <BookOpen className="h-4 w-4" /> Quay lại bài học
         </button>
-        {!passed && exercise.type !== 'essay' && (
+        {passed ? (
+          <button
+            type="button"
+            onClick={onBack}
+            className="flex-1 px-5 py-2.5 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-700 flex items-center justify-center gap-2"
+          >
+            <CheckCircle2 className="h-4 w-4" /> Hoàn thành
+          </button>
+        ) : exercise.type !== 'essay' ? (
           <button
             type="button"
             onClick={onRetry}
@@ -485,7 +493,7 @@ function ResultScreen({ result, exercise, onRetry, onBack, onGoNext }) {
           >
             <RotateCcw className="h-4 w-4" /> Làm lại
           </button>
-        )}
+        ) : null}
       </div>
     </div>
   );

@@ -851,7 +851,7 @@ function ScoreGuide({ steps, answers, submitting, onSubmit, onGo }) {
         className="w-full px-5 py-3 rounded-xl bg-green-600 text-white font-bold hover:bg-green-700 disabled:opacity-50 inline-flex items-center justify-center gap-2"
       >
         {submitting ? <Loader2 className="h-5 w-5 animate-spin" /> : <CheckCircle2 className="h-5 w-5" />}
-        Nộp bài mô phỏng
+        {doneN === all.length && all.length ? 'Hoàn thành & nộp bài' : 'Nộp bài mô phỏng'}
       </button>
       <p className="text-[11px] text-gray-500 text-center">
         Sân tập không ghi dữ liệu thật — tick xanh chỉ để bạn biết đã làm đúng trước khi nộp.
