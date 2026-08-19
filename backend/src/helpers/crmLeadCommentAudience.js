@@ -4,7 +4,6 @@
  */
 
 const { parseJsonArray, canViewerSeeByCompanyAndDept } = require('./documentShareScope');
-const { isAdminLike } = require('./adminRole');
 const { fetchLeadMentionMembers } = require('./crmLeadCommentMentions');
 const { ensureLeadMembersFromProjectStaff } = require('./productionWorkshopTypeStaff');
 
@@ -95,7 +94,7 @@ async function userCanViewLeadViaVisibilitySetup(supabase, userId, leadId) {
     .eq('is_active', true)
     .maybeSingle();
   if (!user) return false;
-  if (isAdminLike(user)) return true;
+  // Không bypass theo role admin công ty — tránh admin Metalla được coi là thành viên mọi deal HCB.
 
   const scope = await collectLeadVisibilityScope(supabase, leadId);
   if (!scope.hasRestrictions) return false;

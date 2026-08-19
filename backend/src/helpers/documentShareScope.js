@@ -2,7 +2,7 @@
  * Phân quyền xem tài liệu/đính kèm chia sẻ theo công ty & module (SX / VC / Công việc).
  */
 
-const { isAdminLike } = require('./adminRole');
+const { isSystemAdmin } = require('./adminRole');
 const {
   shouldHideQuoteContractFromProduction,
   isQuoteContractLeadDocument,
@@ -80,7 +80,7 @@ function getTaskVisibilityAllowlist(taskRow) {
  */
 function canViewerSeeByCompanyAndDept(docOrAtt, user, taskRow = null) {
   if (!user) return true;
-  if (isAdminLike(user)) return true;
+  if (isSystemAdmin(user)) return true;
   const uc = user.company_id || null;
   const ud = user.department_id || null;
   const ac = parseJsonArray(docOrAtt?.allowed_companies)

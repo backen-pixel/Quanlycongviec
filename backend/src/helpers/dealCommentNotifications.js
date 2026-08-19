@@ -11,7 +11,6 @@ const {
   memberDisplayName,
 } = require('./crmLeadCommentMentions');
 const { ensureLeadMembersFromProjectStaff } = require('./productionWorkshopTypeStaff');
-const { filterUserIdsForCrmLeadScopedNotification } = require('./deadlineModuleNotifications');
 
 async function loadDealCommentContext(supabase, leadId) {
   let leadTitle = '';
@@ -19,12 +18,13 @@ async function loadDealCommentContext(supabase, leadId) {
   let leadType = 'lead';
   let projectId = null;
   let projectCode = null;
+  let companyId = null;
   let isProductionDeal = false;
   let isLogisticsDeal = false;
   try {
     const { data: leadRow } = await supabase
       .from('crm_leads')
-      .select('title, code, type, project_id, linked_project:projects!crm_leads_project_id_fkey(id, code, status, vc_kanban_column_id, production_person_id, logistics_person_id, current_stage:workflow_stages(slug))')
+      .select('title, code, type, project_id, company_id, linked_project:projects!crm_leads_project_id_fkey(id, code, company_id, status, vc_kanban_column_id, production_person_id, logistics_person_id, current_stage:workflow_stages(slug))')
       .eq('id', leadId)
       .maybeSingle();
     leadTitle = leadRow?.title || '';
@@ -33,6 +33,7 @@ async function loadDealCommentContext(supabase, leadId) {
     projectId = leadRow?.project_id || null;
     projectCode = leadRow?.linked_project?.code || null;
     const proj = leadRow?.linked_project;
+    companyId = proj?.company_id || leadRow?.company_id || null;
     const status = String(proj?.status || '');
     const stageSlug = proj?.current_stage?.slug || '';
     isLogisticsDeal = Boolean(
@@ -51,6 +52,7 @@ async function loadDealCommentContext(supabase, leadId) {
     leadType,
     projectId,
     projectCode,
+    companyId,
     isProductionDeal,
     isLogisticsDeal,
     moduleKey: ecosystemModuleKey,
@@ -72,7 +74,7 @@ async function resolveDealByProjectId(supabase, projectId) {
 async function fetchProjectCommentAudienceUserIds(supabase, projectId) {
   const { data: proj } = await supabase
     .from('projects')
-    .select('sales_person_id, designer_id, project_manager_id, supervisor_id, production_person_id, logistics_person_id, installer_person_id, responsible_person_id, created_by, code, name, status, vc_kanban_column_id, current_stage:workflow_stages(slug)')
+    .select('sales_person_id, designer_id, project_manager_id, supervisor_id, production_person_id, logistics_person_id, installer_person_id, responsible_person_id, created_by, code, name, company_id, status, vc_kanban_column_id, current_stage:workflow_stages(slug)')
     .eq('id', projectId)
     .maybeSingle();
   if (!proj) return { userIds: [], proj: null, deal: null };
@@ -117,7 +119,12 @@ async function fetchProjectCommentAudienceUserIds(supabase, projectId) {
 async function fetchCrmLeadCommentNotifyUserIds(supabase, leadId) {
   const { fetchLeadCommentAudienceMembers } = require('./crmLeadCommentAudience');
   const audienceMembers = await fetchLeadCommentAudienceMembers(supabase, leadId);
-  const memberIds = (audienceMembers || []).map((m) => String(m?.user_id || '')).filter(Boolean);
+  // Chỉ TB thành viên deal / phụ trách — không broadcast NV chỉ có quyền xem file
+  // (default_allowed_companies: mẫu Sketchup Phúc Đạt/HCB thường gồm Metalla).
+  const memberIds = (audienceMembers || [])
+    .filter((m) => String(m?.role || '') !== 'viewer')
+    .map((m) => String(m?.user_id || ''))
+    .filter(Boolean);
   const { data: participantRows } = await supabase
     .from('crm_lead_comments')
     .select('user_id')
@@ -158,6 +165,7 @@ function buildDealCommentMetadata(ctx, commentRow, senderName, senderAvatar, { m
     project_code: ctx.projectCode || null,
     module_key: ctx.moduleKey,
     ecosystem_module_key: ctx.ecosystemModuleKey,
+    company_id: ctx.companyId || null,
   };
 }
 
@@ -240,6 +248,7 @@ async function notifyProjectCommentParticipants(req, notifyMultiple, projectId, 
       leadType: 'project',
       projectId,
       projectCode: proj?.code || null,
+      companyId: proj?.company_id || null,
       isProductionDeal: isProduction,
       isLogisticsDeal: isLogistics,
       moduleKey: ecosystemModuleKey,
