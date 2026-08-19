@@ -499,15 +499,17 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
           'vc_handover_confirmed',
         ]);
         if (dealTypes.has(String(n?.type || ''))) {
-          const eco = String(n.metadata?.ecosystem_module_key || '');
+          const eco = String(n.metadata?.ecosystem_module_key || '').toLowerCase();
           const type = String(n.type || '');
           // Chỉ nhận hoạt động VC — bỏ SX / CRM và workshop intake xưởng
-          if (eco === 'production' || eco === 'crm') return;
+          if (eco === 'production' || eco === 'crm' || eco === 'sales' || eco === 'sx') return;
           if (type === 'workshop_new_deal') {
             if (eco !== 'logistics' && !n.metadata?.vc_handover) return;
           } else if (type.startsWith('logistics_') || type.startsWith('vc_handover_')) {
             // OK
-          } else if (type === 'project_assigned' || type === 'project_created' || type === 'task_assigned') {
+          } else if (type === 'task_assigned') {
+            if (eco !== 'logistics') return;
+          } else if (type === 'project_assigned' || type === 'project_created') {
             if (eco && eco !== 'logistics') return;
             const metaPid = (n.metadata as Record<string, unknown> | undefined)?.project_id;
             const pid = metaPid != null
@@ -548,10 +550,12 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
         }
         return;
       }
-      const eco = String(n.metadata?.ecosystem_module_key || '');
-      // App VC: chỉ bình luận module logistics (bỏ production / crm)
-      if (eco === 'production' || eco === 'crm') return;
-      if (eco && eco !== 'logistics' && eco !== 'projects') return;
+      const eco = String(n.metadata?.ecosystem_module_key || '').toLowerCase();
+      // App VC: chỉ bình luận module logistics (bỏ production / crm / SX)
+      if (eco === 'production' || eco === 'crm' || eco === 'sales' || eco === 'sx') return;
+      if (eco && eco !== 'logistics') return;
+      const et = String(n.entity_type || '').toLowerCase();
+      if (et === 'lead' || et === 'crm_lead' || et === 'crm_deal') return;
       // Thiếu eco → chỉ nhận nếu đã biết dự án trên board VC
       if (!eco) {
         const metaPid = (n.metadata as Record<string, unknown> | undefined)?.project_id;

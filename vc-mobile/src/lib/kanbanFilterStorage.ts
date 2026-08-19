@@ -56,14 +56,22 @@ export function dealCompanyIdForBoardApi(filterDealCompany?: string | null): str
   return raw;
 }
 
+/** «Chưa phân loại» (none) chỉ lọc client — không gửi .eq UUID lên API. */
+export function workshopTypeIdForBoardApi(filterWorkTypeId?: string | null): string | undefined {
+  const raw = String(filterWorkTypeId || '').trim();
+  if (!raw || raw === 'none') return undefined;
+  return raw;
+}
+
 /** Snapshot → filters dùng chung Overview / Kanban / Planner / cache key. */
 export function boardFiltersFromSharedSnap(
   snap: KanbanFilterSnapshot | null | undefined,
   opts?: { companyIdOverride?: string | null },
 ): BoardFiltersLite {
   const companyId = String(opts?.companyIdOverride ?? snap?.filterCompany ?? '').trim() || undefined;
-  const workRaw = String(snap?.filterWorkTypeId || '').trim();
-  const workshopTypeId = companyId && workRaw && workRaw !== 'none' ? workRaw : undefined;
+  const workshopTypeId = companyId
+    ? workshopTypeIdForBoardApi(snap?.filterWorkTypeId)
+    : undefined;
   return {
     companyId,
     dealCompanyId: dealCompanyIdForBoardApi(snap?.filterDealCompany),

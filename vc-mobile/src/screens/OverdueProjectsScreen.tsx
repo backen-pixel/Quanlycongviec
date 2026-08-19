@@ -1,16 +1,8 @@
+import SpinningLoader from '../components/SpinningLoader';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useNavigation } from '@react-navigation/native';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  FlatList,
-  RefreshControl,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import { FlatList, RefreshControl, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatApiError } from '../api/client';
 import TapHighlight from '../components/TapHighlight';
@@ -215,7 +207,7 @@ export default function OverdueProjectsScreen() {
 
       {loading && projects.length === 0 ? (
         <View style={styles.center}>
-          <ActivityIndicator color={colors.primary} size="large" />
+          <SpinningLoader color={colors.primary} size="large" />
           <Text style={styles.loadingText}>Đang tải danh sách quá hạn…</Text>
         </View>
       ) : (

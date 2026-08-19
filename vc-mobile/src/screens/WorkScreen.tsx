@@ -5,13 +5,10 @@ import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import type { RouteProp } from '@react-navigation/native';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
   Alert,
   FlatList,
-  Modal,
   Pressable,
   RefreshControl,
-  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -20,8 +17,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatApiError } from '../api/client';
 import AssignWorkModal from '../components/AssignWorkModal';
 import AssignmentDetailModal from '../components/AssignmentDetailModal';
-import FilterPickerModal, { type FilterOption } from '../components/FilterPickerModal';
+import SpinningLoader from '../components/SpinningLoader';
 import TapHighlight from '../components/TapHighlight';
+import WorkFilterSheet, { type WorkListStatus } from '../components/WorkFilterSheet';
 import WorkProjectTasksPanel from '../components/WorkProjectTasksPanel';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
@@ -30,10 +28,6 @@ import { REALTIME_TASK } from '../lib/realtimeModes';
 import type { MainTabParamList } from '../navigation/MainTabs';
 import { useRootNavigation } from '../navigation/useRootNavigation';
 import { fetchCompanies, type CompanyOption } from '../lib/logisticsApi';
-import {
-  fetchEmployeesByCompanyForMembers,
-  type CrmEmployeeOption,
-} from '../lib/leadMembersApi';
 import {
   PRIORITY_LABEL,
   STATUS_STAGE_LABEL,
@@ -70,24 +64,6 @@ const PAGE_TABS: { key: PageTab; label: string; icon: keyof typeof Ionicons.glyp
   { key: 'tasks', label: 'Nhiệm vụ', icon: 'checkbox-outline' },
   { key: 'assignments', label: 'Giao việc', icon: 'clipboard-outline' },
   { key: 'shared', label: 'KG chung', icon: 'people-outline' },
-];
-
-type WorkListStatus = 'all' | 'pending' | 'in_progress' | 'completed' | 'overdue' | 'cancelled';
-
-const WORK_STATUS_CHIPS: { id: WorkListStatus; label: string }[] = [
-  { id: 'all', label: 'Tất cả' },
-  { id: 'pending', label: 'Chưa làm' },
-  { id: 'in_progress', label: 'Đang làm' },
-  { id: 'completed', label: 'Đã làm' },
-  { id: 'overdue', label: 'Quá hạn' },
-];
-
-const WORK_PRIORITY_CHIPS: { id: string; label: string }[] = [
-  { id: '', label: 'Ưu tiên' },
-  { id: 'urgent', label: 'Gấp' },
-  { id: 'high', label: 'Cao' },
-  { id: 'medium', label: 'TB' },
-  { id: 'low', label: 'Thấp' },
 ];
 
 function pageTabTitle(tab: PageTab): string {
@@ -153,10 +129,9 @@ export default function WorkScreen() {
     canPickScope ? '' : userId
   ));
   const [companies, setCompanies] = useState<CompanyOption[]>([]);
-  const [employees, setEmployees] = useState<CrmEmployeeOption[]>([]);
-  const [companyPickerOpen, setCompanyPickerOpen] = useState(false);
-  const [assigneePickerOpen, setAssigneePickerOpen] = useState(false);
   const [scopeSheetOpen, setScopeSheetOpen] = useState(false);
+  const [listStatusFilter, setListStatusFilter] = useState<WorkListStatus>('all');
+  const [filterPriority, setFilterPriority] = useState('');
   const [filtersReady, setFiltersReady] = useState(false);
   const [assignments, setAssignments] = useState<CrmAssignment[]>([]);
   const [sharedGroups, setSharedGroups] = useState<SharedInboxGroup[]>([]);
@@ -166,6 +141,7 @@ export default function WorkScreen() {
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [assignOpen, setAssignOpen] = useState(false);
   const [assignShared, setAssignShared] = useState(false);
+  const hasWorkDataRef = useRef(false);
 
   const styles = useMemo(() => makeStyles(colors, insets.bottom), [colors, insets.bottom]);
 
@@ -213,26 +189,6 @@ export default function WorkScreen() {
     void AsyncStorage.setItem(LS_ASSIGNEE, filterAssigneeId || '__all__');
   }, [canPickScope, filterAssigneeId, filtersReady]);
 
-  const employeeCompanyId = filterCompanyId || ownCompanyId;
-
-  useEffect(() => {
-    let cancelled = false;
-    if (!employeeCompanyId || !canPickScope) {
-      setEmployees([]);
-      return undefined;
-    }
-    void fetchEmployeesByCompanyForMembers(employeeCompanyId)
-      .then((rows) => {
-        if (!cancelled) setEmployees(rows);
-      })
-      .catch(() => {
-        if (!cancelled) setEmployees([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [employeeCompanyId, canPickScope]);
-
   /** Khớp web load(): company_id chỉ khi admin chọn; assignee_id bắt buộc với NV. */
   const load = useCallback(async () => {
     if (!userId || !filtersReady) {
@@ -279,14 +235,16 @@ export default function WorkScreen() {
   ]);
 
   useEffect(() => {
-    if (!filtersReady) return;
-    if (pageTab === 'tasks') {
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
+    hasWorkDataRef.current = assignments.length > 0 || sharedGroups.length > 0;
+  }, [assignments.length, sharedGroups.length]);
+
+  /** Giao việc + KG dùng chung 1 lần tải — đổi tab không reload cả trang. */
+  const onWorkListTab = pageTab !== 'tasks';
+  useEffect(() => {
+    if (!filtersReady || !onWorkListTab) return;
+    if (!hasWorkDataRef.current) setLoading(true);
     void load();
-  }, [load, filtersReady, pageTab]);
+  }, [load, filtersReady, onWorkListTab]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -304,44 +262,23 @@ export default function WorkScreen() {
     modes: REALTIME_TASK,
   });
 
-  const companyOptions: FilterOption[] = useMemo(() => {
-    const opts: FilterOption[] = [{ id: '', label: 'Tất cả công ty' }];
-    for (const c of companies) {
-      opts.push({ id: String(c.id), label: c.name || String(c.id) });
-    }
-    return opts;
-  }, [companies]);
+  const companyOptions = useMemo(
+    () => [
+      { id: '', label: 'Tất cả công ty' },
+      ...companies.map((c) => ({ id: String(c.id), label: c.name || String(c.id) })),
+    ],
+    [companies],
+  );
 
-  const selectedCompanyLabel = useMemo(() => {
-    if (!filterCompanyId) return 'Tất cả công ty';
-    return companyOptions.find((o) => o.id === filterCompanyId)?.label
-      || companies.find((c) => String(c.id) === filterCompanyId)?.name
-      || 'Công ty';
-  }, [filterCompanyId, companyOptions, companies]);
-
-  const selectedAssigneeLabel = useMemo(() => {
-    if (!filterAssigneeId) return 'Tất cả NV';
-    if (filterAssigneeId === userId) return 'Của tôi';
-    const hit = employees.find((e) => String(e.id) === String(filterAssigneeId));
-    return hit?.full_name || 'Nhân viên';
-  }, [filterAssigneeId, userId, employees]);
+  const ownCompanyLabel = companies.find((c) => String(c.id) === ownCompanyId)?.name || 'Công ty tôi';
 
   /** Badge filter: khác mặc định (admin = tất cả NV; NV = của tôi). */
   const defaultAssigneeId = canPickScope ? '' : userId;
   const scopeFilterCount =
     (filterCompanyId ? 1 : 0)
-    + (String(filterAssigneeId || '') !== String(defaultAssigneeId || '') ? 1 : 0);
-
-  const assigneeOptions: FilterOption[] = useMemo(() => {
-    const opts: FilterOption[] = [];
-    if (canPickScope) opts.push({ id: '', label: 'Tất cả NV' });
-    opts.push({ id: userId, label: 'Của tôi' });
-    for (const e of employees) {
-      if (String(e.id) === String(userId)) continue;
-      opts.push({ id: String(e.id), label: e.full_name || String(e.id) });
-    }
-    return opts;
-  }, [canPickScope, userId, employees]);
+    + (String(filterAssigneeId || '') !== String(defaultAssigneeId || '') ? 1 : 0)
+    + (listStatusFilter !== 'all' ? 1 : 0)
+    + (filterPriority ? 1 : 0);
 
   /** companyId khi tạo giao việc — ưu tiên filter đang chọn. */
   const createCompanyId = filterCompanyId || ownCompanyId || null;
@@ -349,9 +286,6 @@ export default function WorkScreen() {
   /** Scope truyền sang tab Nhiệm vụ (overview logistics). */
   const tasksCompanyId = canPickScope ? (filterCompanyId || null) : (ownCompanyId || null);
   const tasksAssigneeId = filterAssigneeId || (!canPickScope ? userId : null);
-
-  const [listStatusFilter, setListStatusFilter] = useState<WorkListStatus>('all');
-  const [filterPriority, setFilterPriority] = useState('');
 
   const visibleAssignments = useMemo(() => {
     return assignments.filter((a) => {
@@ -616,7 +550,7 @@ export default function WorkScreen() {
               disabled={updatingId === String(a.id)}
             >
               {updatingId === String(a.id) ? (
-                <ActivityIndicator color={colors.primary} size="small" />
+                <SpinningLoader color={colors.primary} size="small" />
               ) : (
                 <Text style={styles.quickBtnTxt}>{act.label}</Text>
               )}
@@ -638,7 +572,7 @@ export default function WorkScreen() {
             <View style={styles.headerTextWrap}>
               <Text style={styles.greetTitle} numberOfLines={1}>{pageTabTitle(pageTab)}</Text>
               <Text style={styles.greetSubCompact} numberOfLines={2}>
-                Khớp web Lắp đặt — lọc công ty / nhân viên góc trên phải
+                Khớp web Lắp đặt — lọc công ty, NV, trạng thái, ưu tiên
               </Text>
             </View>
           </View>
@@ -684,48 +618,6 @@ export default function WorkScreen() {
             Việc deal / công ty khác giao cho bạn. Dùng nút «Giao việc KG chung» để tạo việc gắn deal.
           </Text>
         </View>
-      ) : null}
-
-      {pageTab !== 'tasks' ? (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.filterChipRow}
-        >
-          {WORK_STATUS_CHIPS.map((c) => {
-            const active = listStatusFilter === c.id;
-            return (
-              <TapHighlight
-                key={c.id}
-                style={[styles.filterChip, active && styles.filterChipOn]}
-                onPress={() => setListStatusFilter(c.id)}
-              >
-                <Text style={[styles.filterChipTxt, active && styles.filterChipTxtOn]}>{c.label}</Text>
-              </TapHighlight>
-            );
-          })}
-        </ScrollView>
-      ) : null}
-
-      {pageTab !== 'tasks' ? (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.filterChipRow}
-        >
-          {WORK_PRIORITY_CHIPS.map((c) => {
-            const active = filterPriority === c.id;
-            return (
-              <TapHighlight
-                key={c.id || 'all-pr'}
-                style={[styles.filterChip, active && styles.filterChipOn]}
-                onPress={() => setFilterPriority(c.id)}
-              >
-                <Text style={[styles.filterChipTxt, active && styles.filterChipTxtOn]}>{c.label}</Text>
-              </TapHighlight>
-            );
-          })}
-        </ScrollView>
       ) : null}
 
       {pageTab !== 'tasks' ? (
@@ -820,13 +712,31 @@ export default function WorkScreen() {
     </View>
   );
 
-  if (pageTab !== 'tasks' && loading && !refreshing) {
-    return (
-      <View style={[styles.center, { paddingTop: insets.top }]}>
-        <ActivityIndicator color={colors.primary} size="large" />
-      </View>
-    );
-  }
+  const listBodyLoading = loading && !refreshing;
+  const assignmentEmpty = listBodyLoading && assignments.length === 0 ? (
+    <View style={styles.inlineLoad}>
+      <SpinningLoader color={colors.primary} size="large" label="Đang tải…" />
+    </View>
+  ) : (
+    <Text style={styles.empty}>
+      {userId
+        ? (listStatusFilter !== 'all' || filterPriority
+          ? 'Không có giao việc khớp bộ lọc.'
+          : 'Chưa có giao việc Lắp đặt trong phạm vi này.')
+        : 'Đăng nhập để xem giao việc.'}
+    </Text>
+  );
+  const sharedEmpty = listBodyLoading && sharedGroups.length === 0 ? (
+    <View style={styles.inlineLoad}>
+      <SpinningLoader color={colors.primary} size="large" label="Đang tải…" />
+    </View>
+  ) : (
+    <Text style={styles.empty}>
+      {userId
+        ? 'Chưa có nhiệm vụ deal VC/LĐ được giao cho bạn.'
+        : 'Đăng nhập để xem Không gian chung.'}
+    </Text>
+  );
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
@@ -850,15 +760,7 @@ export default function WorkScreen() {
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={() => void onRefresh()} tintColor={colors.primary} />
           }
-          ListEmptyComponent={
-            <Text style={styles.empty}>
-              {userId
-                ? (listStatusFilter !== 'all' || filterPriority
-                  ? 'Không có giao việc khớp bộ lọc.'
-                  : 'Chưa có giao việc Lắp đặt trong phạm vi này.')
-                : 'Đăng nhập để xem giao việc.'}
-            </Text>
-          }
+          ListEmptyComponent={assignmentEmpty}
         />
       ) : (
         <FlatList
@@ -869,13 +771,7 @@ export default function WorkScreen() {
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={() => void onRefresh()} tintColor={colors.primary} />
           }
-          ListEmptyComponent={
-            <Text style={styles.empty}>
-              {userId
-                ? 'Chưa có nhiệm vụ deal VC/LĐ được giao cho bạn.'
-                : 'Đăng nhập để xem Không gian chung.'}
-            </Text>
-          }
+          ListEmptyComponent={sharedEmpty}
           renderItem={({ item: g, index }) => {
             const accent = [colors.primary, '#8B5CF6', '#14B8A6', '#F59E0B'][index % 4];
             const projectId = g.lead?.project_id ? String(g.lead.project_id) : '';
@@ -1002,113 +898,36 @@ export default function WorkScreen() {
         }}
       />
 
-      <FilterPickerModal
-        visible={companyPickerOpen}
-        title="Chọn công ty"
-        options={companyOptions}
-        selectedId={filterCompanyId}
-        onSelect={(id) => {
-          setFilterCompanyId(id);
-          // Đổi công ty → giữ «Của tôi» / tất cả, danh sách NV sẽ reload.
-        }}
-        onClose={() => setCompanyPickerOpen(false)}
-      />
-
-      <FilterPickerModal
-        visible={assigneePickerOpen}
-        title="Chọn nhân viên"
-        options={assigneeOptions}
-        selectedId={filterAssigneeId}
-        onSelect={setFilterAssigneeId}
-        onClose={() => setAssigneePickerOpen(false)}
-      />
-
-      <Modal
+      <WorkFilterSheet
         visible={scopeSheetOpen}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setScopeSheetOpen(false)}
-      >
-        <Pressable style={styles.scopeSheetBackdrop} onPress={() => setScopeSheetOpen(false)}>
-          <Pressable style={styles.scopeSheetCard} onPress={() => {}}>
-            <Text style={styles.scopeSheetTitle}>Bộ lọc</Text>
-            {canPickScope ? (
-              <TapHighlight
-                style={[styles.scopeSheetRow, filterCompanyId ? styles.scopeSheetRowActive : null]}
-                onPress={() => {
-                  setScopeSheetOpen(false);
-                  setCompanyPickerOpen(true);
-                }}
-              >
-                <Ionicons
-                  name="business-outline"
-                  size={18}
-                  color={filterCompanyId ? colors.primary : colors.textMuted}
-                />
-                <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text style={styles.scopeSheetRowLabel}>Công ty</Text>
-                  <Text style={styles.scopeSheetRowValue} numberOfLines={1}>
-                    {selectedCompanyLabel}
-                  </Text>
-                </View>
-                <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
-              </TapHighlight>
-            ) : (
-              <View style={styles.scopeSheetRow}>
-                <Ionicons name="business-outline" size={18} color={colors.textMuted} />
-                <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text style={styles.scopeSheetRowLabel}>Công ty</Text>
-                  <Text style={styles.scopeSheetRowValue} numberOfLines={1}>
-                    {companies.find((c) => String(c.id) === ownCompanyId)?.name || 'Công ty tôi'}
-                  </Text>
-                </View>
-              </View>
-            )}
-            {canPickScope ? (
-              <TapHighlight
-                style={[
-                  styles.scopeSheetRow,
-                  String(filterAssigneeId || '') !== String(userId || '')
-                    ? styles.scopeSheetRowActive
-                    : null,
-                ]}
-                onPress={() => {
-                  setScopeSheetOpen(false);
-                  setAssigneePickerOpen(true);
-                }}
-              >
-                <Ionicons
-                  name="person-outline"
-                  size={18}
-                  color={
-                    String(filterAssigneeId || '') !== String(userId || '')
-                      ? colors.primary
-                      : colors.textMuted
-                  }
-                />
-                <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text style={styles.scopeSheetRowLabel}>Nhân viên</Text>
-                  <Text style={styles.scopeSheetRowValue} numberOfLines={1}>
-                    {selectedAssigneeLabel}
-                  </Text>
-                </View>
-                <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
-              </TapHighlight>
-            ) : (
-              <View style={styles.scopeSheetRow}>
-                <Ionicons name="person-outline" size={18} color={colors.textMuted} />
-                <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text style={styles.scopeSheetRowLabel}>Nhân viên</Text>
-                  <Text style={styles.scopeSheetRowValue}>Của tôi</Text>
-                </View>
-              </View>
-            )}
-            <TapHighlight style={styles.scopeSheetClose} onPress={() => setScopeSheetOpen(false)}>
-              <Text style={styles.scopeSheetCloseTxt}>Đóng</Text>
-            </TapHighlight>
-          </Pressable>
-        </Pressable>
-      </Modal>
+        onClose={() => setScopeSheetOpen(false)}
+        onReset={() => {
+          setFilterCompanyId(canPickScope ? '' : ownCompanyId);
+          setFilterAssigneeId(canPickScope ? '' : userId);
+          setListStatusFilter('all');
+          setFilterPriority('');
+          setTasksStatusFilter('all');
+          setScopeSheetOpen(false);
+        }}
+        onApply={(next) => {
+          setFilterCompanyId(next.companyId);
+          setFilterAssigneeId(next.assigneeId);
+          const nextStatus = next.status === 'cancelled' ? 'all' : next.status;
+          setListStatusFilter(nextStatus);
+          setFilterPriority(next.priority);
+          setTasksStatusFilter(nextStatus);
+          setScopeSheetOpen(false);
+        }}
+        canPickScope={canPickScope}
+        companyOptions={companyOptions}
+        companyId={filterCompanyId}
+        ownCompanyId={ownCompanyId}
+        ownCompanyLabel={ownCompanyLabel}
+        userId={userId}
+        assigneeId={filterAssigneeId}
+        status={listStatusFilter}
+        priority={filterPriority}
+      />
     </View>
   );
 }
@@ -1356,6 +1175,7 @@ function makeStyles(colors: AppColors, bottomInset: number) {
     },
     errorText: { color: colors.danger, fontSize: 12, fontWeight: '600' },
     listContent: { paddingBottom: bottomInset + 96 },
+    inlineLoad: { alignItems: 'center', justifyContent: 'center', paddingTop: 36, paddingBottom: 24 },
     empty: {
       color: colors.textMuted,
       textAlign: 'center',

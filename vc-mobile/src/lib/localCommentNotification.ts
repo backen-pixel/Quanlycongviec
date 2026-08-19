@@ -18,6 +18,7 @@ export async function showLocalCommentNotification(n: SxCommentNotification): Pr
           type: n.type,
           entity_type: n.entity_type,
           entity_id: n.entity_id,
+          comment_id: n.metadata?.comment_id || undefined,
           metadata: n.metadata,
         },
         ...(Platform.OS === 'android' ? { channelId: VC_NOTIF_CHANNEL } : {}),

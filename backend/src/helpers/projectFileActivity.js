@@ -350,6 +350,103 @@ const ACTION_LABELS = {
   replaced: 'đã thay thế',
 };
 
+function commentFileUrlKeys(url) {
+  const raw = String(url || '').trim();
+  if (!raw || raw.startsWith('hidden:')) return [];
+  const noHash = raw.split('#')[0];
+  const noQuery = noHash.split('?')[0];
+  const keys = [raw, noHash, noQuery];
+  try {
+    keys.push(decodeURI(noQuery));
+  } catch (_) { /* keep */ }
+  const base = noQuery.split('/').pop();
+  if (base && base.length > 6) keys.push(base);
+  return [...new Set(keys.filter(Boolean))];
+}
+
+function hideMatchingFileLinksInBody(body, urlKeys) {
+  if (!body || !urlKeys?.length) return body;
+  const keySet = new Set(urlKeys);
+  return String(body).replace(/«([^»|]+)\|([^»]+)»/g, (full, label, url) => {
+    const u = String(url || '');
+    if (u.startsWith('hidden:')) return full;
+    const hit = commentFileUrlKeys(u).some((k) => keySet.has(k));
+    return hit ? `«${label}|hidden:${u}»` : full;
+  });
+}
+
+async function hideDeletedFileInDealComments({ leadId, projectId, fileUrl }) {
+  const urlKeys = commentFileUrlKeys(fileUrl);
+  if (!urlKeys.length) return;
+  try {
+    if (leadId) {
+      const { data } = await supabase
+        .from('crm_lead_comments')
+        .select('id, body')
+        .eq('lead_id', leadId)
+        .is('deleted_at', null)
+        .like('body', '%📎%')
+        .limit(400);
+      for (const row of data || []) {
+        const next = hideMatchingFileLinksInBody(row.body, urlKeys);
+        if (next && next !== row.body) {
+          await supabase.from('crm_lead_comments')
+            .update({ body: next, updated_at: new Date().toISOString() })
+            .eq('id', row.id);
+        }
+      }
+    }
+    if (projectId) {
+      const { data } = await supabase
+        .from('project_comments')
+        .select('id, content')
+        .eq('project_id', projectId)
+        .like('content', '%📎%')
+        .limit(400);
+      for (const row of data || []) {
+        const next = hideMatchingFileLinksInBody(row.content, urlKeys);
+        if (next && next !== row.content) {
+          await supabase.from('project_comments')
+            .update({ content: next })
+            .eq('id', row.id);
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('[hideDeletedFileInDealComments]', e.message);
+  }
+}
+
+async function redactDeletedTaskFileLinksInComments(leadId, comments) {
+  if (!leadId || !Array.isArray(comments) || !comments.length) return comments;
+  try {
+    const { data: atts } = await supabase
+      .from('crm_task_attachments')
+      .select('file_url')
+      .eq('lead_id', leadId)
+      .not('file_url', 'is', null)
+      .limit(800);
+    const live = new Set();
+    for (const a of atts || []) {
+      for (const k of commentFileUrlKeys(a.file_url)) live.add(k);
+    }
+    return comments.map((c) => {
+      const body = c.body || '';
+      if (!String(body).includes('📎') || !String(body).includes('|')) return c;
+      const next = String(body).replace(/«([^»|]+)\|([^»]+)»/g, (full, label, url) => {
+        const u = String(url || '');
+        if (u.startsWith('hidden:')) return full;
+        const stillLive = commentFileUrlKeys(u).some((k) => live.has(k));
+        return stillLive ? full : `«${label}|hidden:${u}»`;
+      });
+      return next === body ? c : { ...c, body: next };
+    });
+  } catch (e) {
+    console.warn('[redactDeletedTaskFileLinksInComments]', e.message);
+    return comments;
+  }
+}
+
 async function logProjectFileActivity(req, {
   projectId,
   leadId,
@@ -371,6 +468,9 @@ async function logProjectFileActivity(req, {
   const extraPart = extra ? ` — ${extra}` : '';
   const body = `📎 ${userName} ${actionLabel} ${safeName}${taskPart}${extraPart}`;
   await logDealActivityComment(req, { leadId, projectId, body });
+  if (action === 'deleted' && fileUrl) {
+    await hideDeletedFileInDealComments({ leadId, projectId, fileUrl });
+  }
 }
 
 async function logDealStageChangeComment(req, { leadId, projectId, stageName }) {
@@ -452,6 +552,8 @@ module.exports = {
   assertFileOwner,
   logDealActivityComment,
   logProjectFileActivity,
+  hideDeletedFileInDealComments,
+  redactDeletedTaskFileLinksInComments,
   logDealStageChangeComment,
   logDealDeadlineChangeComment,
   resolveProjectLeadId,

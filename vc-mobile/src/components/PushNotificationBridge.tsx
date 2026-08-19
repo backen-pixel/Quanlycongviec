@@ -29,6 +29,16 @@ function extractProjectId(data: Record<string, unknown> | undefined): string | n
   return null;
 }
 
+function extractCommentId(data: Record<string, unknown> | undefined): string | null {
+  if (!data) return null;
+  const direct = data.comment_id ?? data.commentId;
+  if (direct != null && String(direct).trim()) return String(direct);
+  const meta = parseMeta(data);
+  const fromMeta = meta?.comment_id ?? meta?.commentId;
+  if (fromMeta != null && String(fromMeta).trim()) return String(fromMeta);
+  return null;
+}
+
 function extractChatPayload(data: Record<string, unknown> | undefined): { groupId: string; title: string } | null {
   if (!data) return null;
   const type = String(data.type || '');
@@ -54,10 +64,11 @@ function handleNotificationData(data: Record<string, unknown> | undefined): void
   }
   const pid = extractProjectId(data);
   if (!pid) return;
-  // Bình luận → chi tiết (tab comments nếu app hỗ trợ); hoạt động cột cũng mở dự án.
+  // Bình luận → chi tiết tab comments + scroll tới comment_id (nếu có).
   const type = String(data?.type || '');
   const initialTab = type === 'comment_added' ? 'comments' as const : undefined;
-  openProjectCommentFromNotif(pid, initialTab);
+  const focusCommentId = type === 'comment_added' ? extractCommentId(data) : null;
+  openProjectCommentFromNotif(pid, initialTab, focusCommentId);
 }
 
 export default function PushNotificationBridge() {

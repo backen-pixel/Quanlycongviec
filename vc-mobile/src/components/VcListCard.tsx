@@ -1,6 +1,7 @@
+import SpinningLoader from './SpinningLoader';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import React, { useMemo } from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import TapHighlight from './TapHighlight';
 import PersonRoleChip from './PersonRoleChip';
 import { useTheme } from '../context/ThemeContext';
@@ -14,8 +15,6 @@ type Props = {
   stageIndex?: number;
   ageLabel?: string;
   title: string;
-  crmName?: string | null;
-  sxName?: string | null;
   vcName?: string | null;
   ldName?: string | null;
   moving?: boolean;
@@ -46,8 +45,6 @@ export default function VcListCard({
   stageIndex = 0,
   ageLabel,
   title,
-  crmName,
-  sxName,
   vcName,
   ldName,
   moving,
@@ -67,7 +64,7 @@ export default function VcListCard({
     && item.status !== 'completed'
   );
   const customerLine = [item.customer_name, item.customer_phone].filter(Boolean).join(' · ');
-  const hasPeople = !!(crmName || sxName || vcName || ldName);
+  const hasPeople = !!(vcName || ldName);
 
   return (
     <View style={[styles.card, { borderLeftColor: accent }]}>
@@ -91,8 +88,6 @@ export default function VcListCard({
 
         {hasPeople ? (
           <View style={styles.peopleWrap}>
-            <PersonRoleChip label="CRM" name={crmName} isDark={isDark} />
-            <PersonRoleChip label="SX" name={sxName} isDark={isDark} />
             <PersonRoleChip label="VC" name={vcName} isDark={isDark} />
             <PersonRoleChip label="LĐ" name={ldName} isDark={isDark} />
           </View>
@@ -140,7 +135,7 @@ export default function VcListCard({
           accessibilityLabel="Chuyển cột"
         >
           {moving ? (
-            <ActivityIndicator size="small" color={colors.white} />
+            <SpinningLoader size="small" color={colors.white} />
           ) : (
             <Ionicons name="swap-horizontal" size={18} color={colors.white} />
           )}
@@ -178,7 +173,13 @@ function makeStyles(c: AppColors) {
     stageTxt: { fontSize: 11, fontWeight: '700' },
     title: { color: c.text, fontSize: 15, fontWeight: '700', marginBottom: 4 },
     customer: { color: c.textMuted, fontSize: 12, fontWeight: '600', marginBottom: 4 },
-    peopleWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 6 },
+    peopleWrap: {
+      flexDirection: 'row',
+      flexWrap: 'nowrap',
+      alignItems: 'center',
+      gap: 6,
+      marginBottom: 6,
+    },
     peopleMuted: { color: c.textFaint, fontSize: 11, marginBottom: 6 },
     metaRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 2 },
     metaItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },

@@ -1,5 +1,6 @@
 /**
  * Bottom sheet bộ lọc Kanban VC — gọn, tab Phạm vi | Pipeline (đồng bộ web).
+ * Chip chỉ sửa bản nháp; danh sách reload khi bấm Áp dụng.
  */
 import Ionicons from '@expo/vector-icons/Ionicons';
 import React, { useEffect, useMemo, useState } from 'react';
@@ -23,37 +24,39 @@ type TabId = 'scope' | 'pipeline';
 export type QuickFilterId = 'all' | 'mine' | 'overdue' | 'today';
 export type PhoneFilterId = '' | 'has' | 'no';
 
+export type ProductionFilterValues = {
+  quickFilter: QuickFilterId;
+  filterPhone: PhoneFilterId;
+  filterPersonId: string;
+  filterPriority: string;
+  filterCompany: string;
+  filterDealCompany: string;
+  filterRegion: string;
+  filterWorkTypeId: string;
+};
+
 type Props = {
   visible: boolean;
   onClose: () => void;
   onReset: () => void;
+  onApply: (next: ProductionFilterValues) => void;
   initialTab?: TabId;
-  /** Lọc nhanh — tương đương NV phụ trách / quá hạn / deadline hôm nay trên web. */
   quickFilter?: QuickFilterId;
-  onQuickFilterChange?: (id: QuickFilterId) => void;
   filterPhone?: PhoneFilterId;
-  onPhoneChange?: (id: PhoneFilterId) => void;
   personOptions?: FilterPickOption[];
   filterPersonId?: string;
-  onPersonChange?: (id: string) => void;
   filterPriority?: string;
-  onPriorityChange?: (id: string) => void;
   showWorkshopPicker: boolean;
   workshopOptions: FilterPickOption[];
   filterCompany: string;
-  onWorkshopChange: (id: string) => void;
   showDealCompanyPicker: boolean;
   dealCompanyOptions: FilterPickOption[];
   filterDealCompany: string;
-  onDealCompanyChange: (id: string) => void;
   dealCompanyReadOnlyLabel?: string;
-  /** Khu vực — khớp web filterRegion (có «Chưa gắn khu vực»). */
   regionOptions?: FilterPickOption[];
   filterRegion?: string;
-  onRegionChange?: (id: string) => void;
   workTypeOptions: FilterPickOption[];
   filterWorkTypeId: string;
-  onWorkTypeChange: (id: string) => void;
 };
 
 function Chip({
@@ -116,60 +119,86 @@ const PRIORITY_FILTERS: { id: string; label: string }[] = [
   { id: 'low', label: 'Thấp' },
 ];
 
+function emptyDraft(company: string): ProductionFilterValues {
+  return {
+    quickFilter: 'all',
+    filterPhone: '',
+    filterPersonId: '',
+    filterPriority: '',
+    filterCompany: company,
+    filterDealCompany: '',
+    filterRegion: '',
+    filterWorkTypeId: '',
+  };
+}
+
 export default function ProductionFilterSheet({
   visible,
   onClose,
   onReset,
+  onApply,
   initialTab = 'scope',
   quickFilter = 'all',
-  onQuickFilterChange,
   filterPhone = '',
-  onPhoneChange,
   personOptions = [],
   filterPersonId = '',
-  onPersonChange,
   filterPriority = '',
-  onPriorityChange,
   showWorkshopPicker,
   workshopOptions,
   filterCompany,
-  onWorkshopChange,
   showDealCompanyPicker,
   dealCompanyOptions,
   filterDealCompany,
-  onDealCompanyChange,
   dealCompanyReadOnlyLabel,
   regionOptions = [],
   filterRegion = '',
-  onRegionChange,
   workTypeOptions,
   filterWorkTypeId,
-  onWorkTypeChange,
 }: Props) {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const showScopeTab = showWorkshopPicker || showDealCompanyPicker || regionOptions.length > 0
-    || personOptions.length > 0 || !!onPhoneChange;
+    || personOptions.length > 0;
   const [tab, setTab] = useState<TabId>(showScopeTab ? initialTab : 'pipeline');
   const [query, setQuery] = useState('');
+  const [draft, setDraft] = useState<ProductionFilterValues>(() => ({
+    quickFilter,
+    filterPhone,
+    filterPersonId,
+    filterPriority,
+    filterCompany,
+    filterDealCompany,
+    filterRegion,
+    filterWorkTypeId,
+  }));
 
   useEffect(() => {
     if (!visible) return;
     setTab(showScopeTab ? initialTab : 'pipeline');
     setQuery('');
-  }, [visible, initialTab, showScopeTab]);
+    setDraft({
+      quickFilter,
+      filterPhone,
+      filterPersonId,
+      filterPriority,
+      filterCompany,
+      filterDealCompany,
+      filterRegion,
+      filterWorkTypeId,
+    });
+  }, [visible]); // eslint-disable-line react-hooks/exhaustive-deps -- hydrate once when opening
 
   const scopeCount = useMemo(() => {
     let n = 0;
-    if (filterCompany) n += 1;
-    if (filterDealCompany) n += 1;
-    if (filterRegion) n += 1;
-    if (filterPersonId) n += 1;
-    if (filterPhone) n += 1;
+    if (draft.filterCompany) n += 1;
+    if (draft.filterDealCompany) n += 1;
+    if (draft.filterRegion) n += 1;
+    if (draft.filterPersonId) n += 1;
+    if (draft.filterPhone) n += 1;
     return n;
-  }, [filterCompany, filterDealCompany, filterRegion, filterPersonId, filterPhone]);
+  }, [draft]);
 
-  const pipelineCount = (filterWorkTypeId ? 1 : 0) + (filterPriority ? 1 : 0);
+  const pipelineCount = (draft.filterWorkTypeId ? 1 : 0) + (draft.filterPriority ? 1 : 0);
 
   const filterOptions = (opts: FilterPickOption[]) => {
     const q = query.trim().toLowerCase();
@@ -332,6 +361,10 @@ export default function ProductionFilterSheet({
     [colors],
   );
 
+  const patchDraft = (partial: Partial<ProductionFilterValues>) => {
+    setDraft((d) => ({ ...d, ...partial }));
+  };
+
   const renderScope = () => (
     <>
       {showWorkshopPicker && workshopOptions.length > 0 ? (
@@ -342,8 +375,16 @@ export default function ProductionFilterSheet({
               <Chip
                 key={`ws-${opt.id || 'all'}`}
                 label={opt.label}
-                active={filterCompany === opt.id}
-                onPress={() => onWorkshopChange(opt.id)}
+                active={draft.filterCompany === opt.id}
+                onPress={() => {
+                  const changed = opt.id !== draft.filterCompany;
+                  patchDraft({
+                    filterCompany: opt.id,
+                    ...(changed
+                      ? { filterWorkTypeId: '', filterRegion: '', filterPersonId: '' }
+                      : {}),
+                  });
+                }}
               />
             ))}
           </View>
@@ -363,8 +404,14 @@ export default function ProductionFilterSheet({
                 <Chip
                   key={`dc-${opt.id || 'all'}`}
                   label={opt.label}
-                  active={filterDealCompany === opt.id}
-                  onPress={() => onDealCompanyChange(opt.id)}
+                  active={draft.filterDealCompany === opt.id}
+                  onPress={() => {
+                    const changed = opt.id !== draft.filterDealCompany;
+                    patchDraft({
+                      filterDealCompany: opt.id,
+                      ...(changed ? { filterWorkTypeId: '' } : {}),
+                    });
+                  }}
                 />
               ))}
             </View>
@@ -372,7 +419,7 @@ export default function ProductionFilterSheet({
         </>
       ) : null}
 
-      {onRegionChange && regionOptions.length > 0 ? (
+      {regionOptions.length > 0 ? (
         <>
           <Text style={themed.sectionLabel}>Khu vực</Text>
           <View style={themed.chipWrap}>
@@ -380,15 +427,15 @@ export default function ProductionFilterSheet({
               <Chip
                 key={`rg-${opt.id || 'all'}`}
                 label={opt.label}
-                active={filterRegion === opt.id}
-                onPress={() => onRegionChange(opt.id)}
+                active={draft.filterRegion === opt.id}
+                onPress={() => patchDraft({ filterRegion: opt.id })}
               />
             ))}
           </View>
         </>
       ) : null}
 
-      {onPersonChange && personOptions.length > 0 ? (
+      {personOptions.length > 0 ? (
         <>
           <Text style={themed.sectionLabel}>NV phụ trách VC/LĐ</Text>
           <View style={themed.chipWrap}>
@@ -396,29 +443,25 @@ export default function ProductionFilterSheet({
               <Chip
                 key={`ps-${opt.id || 'all'}`}
                 label={opt.label}
-                active={filterPersonId === opt.id}
-                onPress={() => onPersonChange(opt.id)}
+                active={draft.filterPersonId === opt.id}
+                onPress={() => patchDraft({ filterPersonId: opt.id })}
               />
             ))}
           </View>
         </>
       ) : null}
 
-      {onPhoneChange ? (
-        <>
-          <Text style={themed.sectionLabel}>Số điện thoại KH</Text>
-          <View style={themed.chipWrap}>
-            {PHONE_FILTERS.map((opt) => (
-              <Chip
-                key={`ph-${opt.id || 'all'}`}
-                label={opt.label}
-                active={filterPhone === opt.id}
-                onPress={() => onPhoneChange(opt.id)}
-              />
-            ))}
-          </View>
-        </>
-      ) : null}
+      <Text style={themed.sectionLabel}>Số điện thoại KH</Text>
+      <View style={themed.chipWrap}>
+        {PHONE_FILTERS.map((opt) => (
+          <Chip
+            key={`ph-${opt.id || 'all'}`}
+            label={opt.label}
+            active={draft.filterPhone === opt.id}
+            onPress={() => patchDraft({ filterPhone: opt.id })}
+          />
+        ))}
+      </View>
     </>
   );
 
@@ -430,26 +473,22 @@ export default function ProductionFilterSheet({
           <Chip
             key={`wt-${opt.id || 'all'}`}
             label={opt.label}
-            active={filterWorkTypeId === opt.id}
-            onPress={() => onWorkTypeChange(opt.id)}
+            active={draft.filterWorkTypeId === opt.id}
+            onPress={() => patchDraft({ filterWorkTypeId: opt.id })}
           />
         ))}
       </View>
-      {onPriorityChange ? (
-        <>
-          <Text style={themed.sectionLabel}>Ưu tiên</Text>
-          <View style={themed.chipWrap}>
-            {PRIORITY_FILTERS.map((opt) => (
-              <Chip
-                key={`pr-${opt.id || 'all'}`}
-                label={opt.label}
-                active={filterPriority === opt.id}
-                onPress={() => onPriorityChange(opt.id)}
-              />
-            ))}
-          </View>
-        </>
-      ) : null}
+      <Text style={themed.sectionLabel}>Ưu tiên</Text>
+      <View style={themed.chipWrap}>
+        {PRIORITY_FILTERS.map((opt) => (
+          <Chip
+            key={`pr-${opt.id || 'all'}`}
+            label={opt.label}
+            active={draft.filterPriority === opt.id}
+            onPress={() => patchDraft({ filterPriority: opt.id })}
+          />
+        ))}
+      </View>
     </>
   );
 
@@ -467,7 +506,13 @@ export default function ProductionFilterSheet({
                 <Ionicons name="options-outline" size={18} color={colors.primary} />
               </View>
               <Text style={themed.title}>Bộ lọc vận chuyển</Text>
-              <TouchableOpacity onPress={onReset} style={themed.resetBtn}>
+              <TouchableOpacity
+                onPress={() => {
+                  setDraft(emptyDraft(showWorkshopPicker ? '' : filterCompany));
+                  onReset();
+                }}
+                style={themed.resetBtn}
+              >
                 <Text style={themed.resetText}>Xóa lọc</Text>
               </TouchableOpacity>
               <TouchableOpacity onPress={onClose} hitSlop={8} style={themed.closeBtn}>
@@ -518,21 +563,17 @@ export default function ProductionFilterSheet({
           </View>
 
           <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-            {onQuickFilterChange ? (
-              <>
-                <Text style={themed.sectionLabel}>Lọc nhanh</Text>
-                <View style={themed.chipWrap}>
-                  {QUICK_FILTERS.map((opt) => (
-                    <Chip
-                      key={opt.id}
-                      label={opt.label}
-                      active={quickFilter === opt.id}
-                      onPress={() => onQuickFilterChange(opt.id)}
-                    />
-                  ))}
-                </View>
-              </>
-            ) : null}
+            <Text style={themed.sectionLabel}>Lọc nhanh</Text>
+            <View style={themed.chipWrap}>
+              {QUICK_FILTERS.map((opt) => (
+                <Chip
+                  key={opt.id}
+                  label={opt.label}
+                  active={draft.quickFilter === opt.id}
+                  onPress={() => patchDraft({ quickFilter: opt.id })}
+                />
+              ))}
+            </View>
 
             {(showScopeTab || tab === 'pipeline') && (
               <View style={themed.searchBox}>
@@ -556,7 +597,11 @@ export default function ProductionFilterSheet({
           </ScrollView>
 
           <View style={themed.footer}>
-            <TouchableOpacity style={themed.applyBtn} onPress={onClose} activeOpacity={0.85}>
+            <TouchableOpacity
+              style={themed.applyBtn}
+              onPress={() => onApply(draft)}
+              activeOpacity={0.85}
+            >
               <Text style={themed.applyText}>Áp dụng</Text>
             </TouchableOpacity>
           </View>
@@ -580,4 +625,3 @@ const chipStyles = StyleSheet.create({
   chipText: { fontSize: 12, fontWeight: '600', flexShrink: 1 },
   chipTextActive: { fontWeight: '800' },
 });
-

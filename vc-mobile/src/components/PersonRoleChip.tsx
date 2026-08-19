@@ -1,7 +1,7 @@
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
-export type PersonRoleKey = 'CRM' | 'SX' | 'VC' | 'LĐ';
+export type PersonRoleKey = 'VC' | 'LĐ';
 
 type Tone = {
   accent: string;
@@ -12,20 +12,6 @@ type Tone = {
 };
 
 const TONES: Record<PersonRoleKey, Tone> = {
-  CRM: {
-    accent: '#7C3AED',
-    bgDark: 'rgba(124, 58, 237, 0.28)',
-    bgLight: '#EDE9FE',
-    borderDark: 'rgba(167, 139, 250, 0.65)',
-    borderLight: '#C4B5FD',
-  },
-  SX: {
-    accent: '#0F766E',
-    bgDark: 'rgba(20, 184, 166, 0.26)',
-    bgLight: '#CCFBF1',
-    borderDark: 'rgba(45, 212, 191, 0.6)',
-    borderLight: '#5EEAD4',
-  },
   VC: {
     accent: '#EA580C',
     bgDark: 'rgba(234, 88, 12, 0.28)',
@@ -52,6 +38,13 @@ function initials(name: string): string {
     .toUpperCase();
 }
 
+/** Tên gọn trên thẻ hẹp: giữ 2 từ cuối (họ + tên). */
+export function shortPersonName(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length <= 2) return parts.join(' ');
+  return parts.slice(-2).join(' ');
+}
+
 type Props = {
   label: PersonRoleKey;
   name?: string | null;
@@ -62,6 +55,7 @@ export default function PersonRoleChip({ label, name, isDark }: Props) {
   const trimmed = (name || '').trim();
   if (!trimmed) return null;
   const tone = TONES[label];
+  const display = shortPersonName(trimmed);
   return (
     <View
       style={[
@@ -79,7 +73,7 @@ export default function PersonRoleChip({ label, name, isDark }: Props) {
         style={[styles.name, { color: isDark ? '#F8FAFC' : '#0F172A' }]}
         numberOfLines={1}
       >
-        {trimmed}
+        {display}
       </Text>
       <View style={[styles.badge, { backgroundColor: tone.accent }]}>
         <Text style={styles.badgeTxt}>{label}</Text>
@@ -92,36 +86,42 @@ const styles = StyleSheet.create({
   chip: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    maxWidth: '100%',
-    paddingLeft: 3,
+    gap: 4,
+    flexGrow: 0,
+    flexShrink: 1,
+    flexBasis: 'auto',
+    maxWidth: '48%',
+    minWidth: 0,
+    paddingLeft: 2,
     paddingRight: 3,
-    paddingVertical: 3,
-    borderRadius: 8,
+    paddingVertical: 2,
+    borderRadius: 7,
     borderWidth: 1,
   },
   avatar: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
+    flexShrink: 0,
   },
-  avatarTxt: { color: '#fff', fontSize: 8, fontWeight: '800' },
+  avatarTxt: { color: '#fff', fontSize: 7, fontWeight: '800' },
   name: {
     flexShrink: 1,
-    fontSize: 12,
+    minWidth: 0,
+    fontSize: 11,
     fontWeight: '700',
-    maxWidth: 110,
   },
   badge: {
-    borderRadius: 4,
-    paddingHorizontal: 5,
-    paddingVertical: 2,
+    borderRadius: 3,
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    flexShrink: 0,
   },
   badgeTxt: {
     color: '#fff',
-    fontSize: 9,
+    fontSize: 8,
     fontWeight: '800',
     letterSpacing: 0.2,
   },

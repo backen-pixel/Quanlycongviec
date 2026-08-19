@@ -1,20 +1,10 @@
+import SpinningLoader from './SpinningLoader';
 /**
  * Kiểm tra cập nhật APK — lúc mở app, định kỳ và khi quay lại foreground.
  * Modal lần đầu; banner nhẹ khi đang dùng app.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  AppState,
-  Modal,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import { Alert, AppState, Modal, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import {
@@ -315,7 +305,7 @@ export default function UpdateGate() {
 
               {downloading ? (
                 <View style={styles.progressWrap}>
-                  <ActivityIndicator color={colors.primary} />
+                  <SpinningLoader color={colors.primary} />
                   <Text style={styles.progressText}>Đang tải… {pct}%</Text>
                   <View style={styles.bar}>
                     <View style={[styles.barFill, { width: `${pct}%` }]} />

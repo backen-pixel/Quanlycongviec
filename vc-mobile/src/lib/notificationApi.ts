@@ -24,6 +24,7 @@ export type SxCommentNotification = {
     project_code?: string | null;
     project_name?: string | null;
     comment_preview?: string | null;
+    comment_id?: string | null;
     author_name?: string | null;
     deal_title?: string | null;
     nav_tab?: string;
@@ -55,18 +56,22 @@ export function isWorkshopDealNotification(n: Pick<SxCommentNotification, 'type'
   return WORKSHOP_DEAL_TYPES.has(String(n.type || ''));
 }
 
-/** Thông báo thuộc module VC — loại trừ SX (production) / CRM. */
+/** Thông báo thuộc module VC — chỉ Vận chuyển & Lắp đặt, loại trừ SX / CRM. */
 export function isVcRelevantNotification(
-  n: Pick<SxCommentNotification, 'type' | 'metadata'> | null | undefined,
+  n: Pick<SxCommentNotification, 'type' | 'metadata' | 'entity_type'> | null | undefined,
 ): boolean {
   if (!n) return false;
   const type = String(n.type || '');
   const meta = n.metadata && typeof n.metadata === 'object' ? n.metadata : {};
-  const eco = String(meta.ecosystem_module_key || '').trim();
-  if (eco === 'production' || eco === 'crm') return false;
+  const eco = String(meta.ecosystem_module_key || '').trim().toLowerCase();
+  if (eco === 'production' || eco === 'crm' || eco === 'sales' || eco === 'sx') return false;
 
   if (type === 'comment_added') {
-    return !eco || eco === 'logistics' || eco === 'projects';
+    // Chỉ bình luận logistics / bàn giao VC — không lấy deal CRM / xưởng SX
+    if (eco === 'logistics' || Boolean(meta.vc_handover)) return true;
+    const et = String(n.entity_type || '').toLowerCase();
+    if (et === 'lead' || et === 'crm_lead' || et === 'crm_deal') return false;
+    return false;
   }
   if (type === 'workshop_new_deal') {
     return eco === 'logistics' || Boolean(meta.vc_handover);
@@ -79,8 +84,11 @@ export function isVcRelevantNotification(
   ) {
     return true;
   }
-  if (type === 'project_assigned' || type === 'project_created' || type === 'task_assigned') {
-    return !eco || eco === 'logistics';
+  if (type === 'project_assigned' || type === 'project_created') {
+    return eco === 'logistics' || Boolean(meta.vc_handover);
+  }
+  if (type === 'task_assigned') {
+    return eco === 'logistics';
   }
   if (type === 'messenger_chat' || type === 'incoming_call') return true;
   return false;

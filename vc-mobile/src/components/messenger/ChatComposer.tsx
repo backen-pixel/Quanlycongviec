@@ -1,15 +1,8 @@
+import SpinningLoader from '../SpinningLoader';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { Audio } from 'expo-av';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  Pressable,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useTheme } from '../../context/ThemeContext';
 import { guessAudioMimeFromFileName } from '../../lib/guessAudioMime';
 import { type PendingChatFile } from '../../lib/messengerMedia';
@@ -353,7 +346,7 @@ export default function ChatComposer({
             disabled={!canSend}
           >
             {sending ? (
-              <ActivityIndicator size="small" color="#FFF" />
+              <SpinningLoader size="small" color="#FFF" />
             ) : (
               <Ionicons name="send" size={20} color="#FFF" />
             )}

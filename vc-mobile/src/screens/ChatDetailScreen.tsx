@@ -1,21 +1,10 @@
+import SpinningLoader from '../components/SpinningLoader';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  FlatList,
-  Keyboard,
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { Alert, FlatList, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatApiError } from '../api/client';
 import ImageLightbox from '../components/messenger/ImageLightbox';
@@ -766,7 +755,7 @@ export default function ChatDetailScreen({ navigation, route }: Props) {
       >
         {loading ? (
           <View style={styles.center}>
-            <ActivityIndicator size="large" color={mc.accent} />
+            <SpinningLoader size="large" color={mc.accent} />
           </View>
         ) : (
           <View style={styles.listWrap}>
@@ -785,7 +774,7 @@ export default function ChatDetailScreen({ navigation, route }: Props) {
               onEndReachedThreshold={0.4}
               ListFooterComponent={
                 loadingOlder ? (
-                  <ActivityIndicator size="small" color={mc.accent} style={{ paddingVertical: 12 }} />
+                  <SpinningLoader size="small" color={mc.accent} style={{ paddingVertical: 12 }} />
                 ) : null
               }
               renderItem={({ item, index }) => {

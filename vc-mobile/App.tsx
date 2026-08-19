@@ -1,9 +1,10 @@
+import SpinningLoader from './src/components/SpinningLoader';
 import { DarkTheme, DefaultTheme, NavigationContainer } from '@react-navigation/native';
 import { ShareIntentProvider } from 'expo-share-intent';
 import { StatusBar } from 'expo-status-bar';
 import * as Notifications from 'expo-notifications';
 import React, { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, AppState, Platform, StyleSheet, Text, TextInput, View } from 'react-native';
+import { AppState, Platform, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import BubbleOutboundCallHandler from './src/components/BubbleOutboundCallHandler';
 import BubbleChatOverlayLauncher from './src/components/BubbleChatOverlayLauncher';
@@ -161,7 +162,7 @@ function AppShell() {
   if (loading) {
     return (
       <View style={[styles.root, bubbleBoot && styles.rootTransparent, !bubbleBoot && styles.center]}>
-        {!bubbleBoot ? <ActivityIndicator size="large" color={colors.primary} /> : null}
+        {!bubbleBoot ? <SpinningLoader size="large" color={colors.primary} /> : null}
       </View>
     );
   }

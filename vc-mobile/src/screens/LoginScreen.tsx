@@ -1,16 +1,6 @@
+import SpinningLoader from '../components/SpinningLoader';
 import React, { useMemo, useState } from 'react';
-import {
-  ActivityIndicator,
-  Image,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import { Image, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { HIT_TARGET, Radii, Spacing } from '../theme';
@@ -158,7 +148,7 @@ export default function LoginScreen() {
             disabled={busy}
             activeOpacity={0.85}
           >
-            {busy ? <ActivityIndicator color={colors.white} /> : <Text style={styles.btnText}>Đăng nhập</Text>}
+            {busy ? <SpinningLoader color={colors.white} /> : <Text style={styles.btnText}>Đăng nhập</Text>}
           </TouchableOpacity>
         </View>
       </ScrollView>

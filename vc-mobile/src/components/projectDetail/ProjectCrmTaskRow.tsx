@@ -1,23 +1,10 @@
+import SpinningLoader from '../SpinningLoader';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
-import React, { useMemo, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  FlatList,
-  KeyboardAvoidingView,
-  Linking,
-  Modal,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, FlatList, Image, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { formatApiError } from '../../api/client';
 import { useTheme } from '../../context/ThemeContext';
 import {
@@ -33,6 +20,7 @@ import {
   fetchUsersForAssign,
   fetchWorkshopTaskAttachments,
   fetchWorkshopTaskNotes,
+  filterFileAttachments,
   taskDeadline,
   updateCrmTask,
   updateCrmTaskNotes,
@@ -46,16 +34,19 @@ import { fetchEmployeesByCompanyForMembers } from '../../lib/leadMembersApi';
 import { Radii, Spacing } from '../../theme';
 import type { CrmTask, PersonRef, TaskChecklistItem, TaskStaffNote } from '../../types';
 import TapHighlight from '../TapHighlight';
-import { resolveMediaUrl } from '../../lib/mediaUtils';
+import { isImageFile, resolveMediaUrl } from '../../lib/mediaUtils';
 
 type Props = {
   task: CrmTask;
   dealId?: string | null;
   /** Công ty VC/LĐ — dùng khi gán người cho nhiệm vụ workshop */
   projectCompanyId?: string | null;
+  /** File đã gom 1 lần ở màn cha — không GET từng hàng lúc mount. */
+  seedAttachments?: TaskAttachment[];
   highlighted?: boolean;
   onUpdated: (task: CrmTask) => void;
   onDeleted: (taskId: string) => void;
+  onAttachmentsChange?: (taskId: string, files: TaskAttachment[]) => void;
 };
 
 function formatDate(value?: string | null): string {
@@ -84,7 +75,25 @@ function taskAssignees(task: CrmTask): PersonRef[] {
 }
 
 function isTaskDone(status: string): boolean {
-  return status === 'completed' || status === 'done';
+  const s = String(status || '').toLowerCase();
+  return s === 'completed' || s === 'done';
+}
+
+function isTaskInProgress(status: string): boolean {
+  const s = String(status || '').toLowerCase();
+  return s === 'in_progress' || s === 'doing' || s === 'progress';
+}
+
+function isTaskPending(status: string): boolean {
+  const s = String(status || 'pending').toLowerCase();
+  return s === 'pending' || s === 'todo' || s === '' || s === 'not_started' || s === 'open';
+}
+
+/** Khớp web: chưa làm → đang làm → hoàn thành → chưa làm. */
+function nextCircleStatus(status: string): string {
+  if (isTaskDone(status)) return 'pending';
+  if (isTaskInProgress(status)) return 'completed';
+  return 'in_progress';
 }
 
 function deadlineToIso(date: Date): string {
@@ -130,18 +139,20 @@ export default function ProjectCrmTaskRow({
   task,
   dealId,
   projectCompanyId,
+  seedAttachments,
   highlighted,
   onUpdated,
   onDeleted,
+  onAttachmentsChange,
 }: Props) {
   const { colors } = useTheme();
-  const isWorkshop = task.source === 'workshop'
-    || String(task.stage_slug || '').startsWith('vc_ws_');
+  const isWorkshop = Boolean(task._workshop_project_task)
+    || (task.source === 'workshop' && !dealId);
   const done = isTaskDone(task.status);
+  const inProgress = isTaskInProgress(task.status);
   const assignees = taskAssignees(task);
   const assignee = assignees[0] || null;
   const deadline = taskDeadline(task);
-  const fileCount = task.file_count ?? 0;
   const descriptionText = task.description?.trim() || '';
   const checklist = useMemo(() => normalizeTaskChecklist(task.checklist), [task.checklist]);
   const [modal, setModal] = useState<ModalKind>(null);
@@ -149,8 +160,11 @@ export default function ProjectCrmTaskRow({
 
   const [noteDraft, setNoteDraft] = useState('');
   const [staffNotes, setStaffNotes] = useState<TaskStaffNote[]>(task.staff_notes || []);
-  const [attachments, setAttachments] = useState<TaskAttachment[]>([]);
+  const [attachments, setAttachments] = useState<TaskAttachment[]>(() =>
+    filterFileAttachments(seedAttachments || []),
+  );
   const [attLoading, setAttLoading] = useState(false);
+  const fileCount = Math.max(task.file_count ?? 0, attachments.length);
   const noteCount = staffNotes.length || task.note_count || 0;
   const latestNote = staffNotes[0]?.text?.trim() || task.notes?.trim() || '';
   const hasNote = noteCount > 0 || Boolean(latestNote);
@@ -211,7 +225,15 @@ export default function ProjectCrmTaskRow({
         const noteAtts = list.filter(
           (a) => a.doc_type === 'task_note' || a.doc_type === 'task_inline_note' || (!a.file_url && a.notes),
         );
-        const files = list.filter((a) => a.file_url && a.doc_type !== 'task_note' && a.doc_type !== 'task_inline_note');
+        let files = list.filter((a) => a.file_url && a.doc_type !== 'task_note' && a.doc_type !== 'task_inline_note');
+        if (!files.length) {
+          try {
+            const ws = await fetchWorkshopTaskAttachments(task.id);
+            files = ws.filter((a) => a.file_url);
+          } catch {
+            files = [];
+          }
+        }
         const notes: TaskStaffNote[] = [];
         if (task.notes?.trim()) {
           notes.push({ id: `inline-${task.id}`, text: task.notes.trim(), created_at: null, user_name: null });
@@ -240,25 +262,51 @@ export default function ProjectCrmTaskRow({
     }
   };
 
-  const loadAttachments = async () => {
+  const onAttachmentsChangeRef = useRef(onAttachmentsChange);
+  onAttachmentsChangeRef.current = onAttachmentsChange;
+
+  const loadAttachments = useCallback(async () => {
     try {
-      const list = isWorkshop
-        ? await fetchWorkshopTaskAttachments(task.id)
-        : dealId
-          ? await fetchCrmTaskAttachments(dealId, task.id)
-          : [];
-      setAttachments(
-        list.filter(
-          (a) =>
-            a.file_url
-            && a.doc_type !== 'task_inline_note'
-            && a.doc_type !== 'task_note',
-        ),
-      );
+      let list: TaskAttachment[] = [];
+      if (isWorkshop) {
+        list = await fetchWorkshopTaskAttachments(task.id);
+      } else if (dealId) {
+        list = await fetchCrmTaskAttachments(dealId, task.id);
+        const crmFiles = filterFileAttachments(list);
+        if (!crmFiles.length) {
+          try {
+            const ws = await fetchWorkshopTaskAttachments(task.id);
+            if (ws.some((a) => a.file_url)) list = ws;
+          } catch {
+            /* file cũ có thể nằm bảng tasks — bỏ qua nếu không có */
+          }
+        }
+      }
+      const files = filterFileAttachments(list);
+      setAttachments(files);
+      onAttachmentsChangeRef.current?.(task.id, files);
+      return files;
     } catch {
       setAttachments([]);
+      return [];
     }
-  };
+  }, [dealId, isWorkshop, task.id]);
+
+  const seedKey = (seedAttachments || []).map((a) => a.id).join('|');
+  useEffect(() => {
+    setAttachments(filterFileAttachments(seedAttachments || []));
+    // seedAttachments đọc qua seedKey — tránh [] mới mỗi render ghi đè sau upload
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seedKey]);
+
+  const didFallbackFetch = useRef(false);
+  useEffect(() => {
+    if (didFallbackFetch.current) return;
+    if ((seedAttachments?.length ?? 0) > 0) return;
+    if (!((task.file_count ?? 0) > 0)) return;
+    didFallbackFetch.current = true;
+    void loadAttachments();
+  }, [loadAttachments, seedAttachments?.length, task.file_count]);
 
   const openAssign = () => {
     const ids = new Set(taskAssignees(task).map((u) => String(u.id)).filter(Boolean));
@@ -323,20 +371,39 @@ export default function ProjectCrmTaskRow({
     if (Platform.OS === 'android') setShowAndroidPicker(true);
   };
 
-  const toggleStatus = async () => {
+  const applyStatus = async (next: string) => {
+    if (busy) return;
     const cur = task.status || 'pending';
-    const next = cur === 'completed' ? 'pending' : cur === 'pending' ? 'in_progress' : 'completed';
+    if (isTaskDone(cur) && isTaskDone(next)) return;
+    if (isTaskInProgress(cur) && isTaskInProgress(next)) return;
+    if (isTaskPending(cur) && isTaskPending(next)) return;
+    if (cur === next) return;
     setBusy(true);
+    onUpdated({ ...task, status: next, source: task.source, checklist: task.checklist });
     try {
+      const payload: Record<string, unknown> = { status: next };
+      if (!isWorkshop) payload.skip_completion_evidence = true;
       const updated = isWorkshop
-        ? await updateWorkshopTask(task.id, { status: next })
-        : await updateCrmTask(String(dealId), task.id, { status: next });
-      onUpdated({ ...updated, source: task.source, checklist: updated.checklist ?? task.checklist });
+        ? await updateWorkshopTask(task.id, payload)
+        : await updateCrmTask(String(dealId), task.id, payload);
+      const nextCk = normalizeTaskChecklist(updated.checklist);
+      onUpdated({
+        ...task,
+        ...updated,
+        source: task.source,
+        status: updated.status || next,
+        checklist: nextCk.length ? nextCk : task.checklist,
+      });
     } catch (e) {
+      onUpdated({ ...task, source: task.source });
       Alert.alert('Lỗi', formatApiError(e));
     } finally {
       setBusy(false);
     }
+  };
+
+  const toggleStatus = async () => {
+    await applyStatus(nextCircleStatus(task.status || 'pending'));
   };
 
   const toggleChecklistItem = async (ck: TaskChecklistItem) => {
@@ -488,6 +555,16 @@ export default function ProjectCrmTaskRow({
   ) => {
     if (!files.length) return;
     setBusy(true);
+    const optimistic: TaskAttachment[] = files.map((f, i) => ({
+      id: `local-${Date.now()}-${i}`,
+      name: f.name,
+      file_name: f.name,
+      file_url: f.uri,
+      mime_type: f.mime,
+      doc_type: f.mime.startsWith('image/') ? 'image' : 'other',
+      notes: null,
+    }));
+    setAttachments((prev) => [...optimistic, ...prev.filter((a) => !String(a.id).startsWith('local-'))]);
     try {
       if (isWorkshop) await uploadWorkshopTaskFiles(task.id, files);
       else await uploadCrmTaskFiles(String(dealId), task.id, files);
@@ -502,6 +579,7 @@ export default function ProjectCrmTaskRow({
         Alert.alert('Đã tải lên', `Đã đính kèm ${files.length} file.`);
       }
     } catch (e) {
+      setAttachments((prev) => prev.filter((a) => !String(a.id).startsWith('local-')));
       Alert.alert('Lỗi upload', formatApiError(e));
     } finally {
       setBusy(false);
@@ -724,7 +802,8 @@ export default function ProjectCrmTaskRow({
           justifyContent: 'center',
           marginTop: 1,
         },
-        checkDone: { borderColor: colors.success, backgroundColor: colors.success + '22' },
+        checkDone: { borderColor: colors.success, backgroundColor: colors.success },
+        checkDoing: { borderColor: '#2563EB', backgroundColor: '#2563EB22' },
         body: { flex: 1, minWidth: 0 },
         title: { color: colors.text, fontSize: 14, fontWeight: '700' },
         titleDone: { color: colors.textMuted, textDecorationLine: 'line-through' },
@@ -741,6 +820,25 @@ export default function ProjectCrmTaskRow({
         metaTextActive: { color: colors.primary },
         metaOverdue: { color: colors.danger },
         attachBadge: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+        fileThumbRow: {
+          flexDirection: 'row',
+          flexWrap: 'wrap',
+          gap: 6,
+          marginTop: 8,
+        },
+        fileThumb: {
+          width: 56,
+          height: 56,
+          borderRadius: Radii.sm,
+          overflow: 'hidden',
+          backgroundColor: colors.cardAlt,
+          borderWidth: 1,
+          borderColor: colors.border,
+          alignItems: 'center',
+          justifyContent: 'center',
+        },
+        fileThumbImg: { width: '100%', height: '100%' },
+        fileThumbMore: { color: colors.textMuted, fontSize: 12, fontWeight: '800' },
         descBox: {
           marginTop: 8,
           paddingHorizontal: 10,
@@ -1020,7 +1118,7 @@ export default function ProjectCrmTaskRow({
                   onPress={() => void saveDeadline(pickDate)}
                   disabled={busy}
                 >
-                  {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Lưu</Text>}
+                  {busy ? <SpinningLoader color="#fff" /> : <Text style={styles.btnText}>Lưu</Text>}
                 </TapHighlight>
               </View>
             </Pressable>
@@ -1056,7 +1154,7 @@ export default function ProjectCrmTaskRow({
                     <Text style={styles.btnTextDark}>Hủy</Text>
                   </TapHighlight>
                   <TapHighlight style={[styles.btn, styles.btnPrimary]} onPress={() => void saveEdit()} disabled={busy}>
-                    {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Lưu</Text>}
+                    {busy ? <SpinningLoader color="#fff" /> : <Text style={styles.btnText}>Lưu</Text>}
                   </TapHighlight>
                 </View>
               </Pressable>
@@ -1073,7 +1171,7 @@ export default function ProjectCrmTaskRow({
             <Pressable style={[styles.sheet, { maxHeight: '75%' }]} onPress={(e) => e.stopPropagation()}>
               <Text style={styles.sheetTitle}>Gán nhân viên</Text>
               {usersLoading ? (
-                <ActivityIndicator color={colors.primary} style={{ marginVertical: 20 }} />
+                <SpinningLoader color={colors.primary} style={{ marginVertical: 20 }} />
               ) : (
                 <FlatList
                   data={users}
@@ -1102,7 +1200,7 @@ export default function ProjectCrmTaskRow({
                 </TapHighlight>
                 <TapHighlight style={[styles.btn, styles.btnPrimary]} onPress={() => void saveAssign()} disabled={busy}>
                   {busy ? (
-                    <ActivityIndicator color="#fff" />
+                    <SpinningLoader color="#fff" />
                   ) : (
                     <Text style={styles.btnText}>Gán ({selectedIds.size})</Text>
                   )}
@@ -1162,7 +1260,7 @@ export default function ProjectCrmTaskRow({
                     onPress={() => void addNote()}
                     disabled={busy}
                   >
-                    {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Thêm ghi chú</Text>}
+                    {busy ? <SpinningLoader color="#fff" /> : <Text style={styles.btnText}>Thêm ghi chú</Text>}
                   </TapHighlight>
 
                   <Text style={styles.sectionLabel}>Thêm file khác</Text>
@@ -1179,7 +1277,7 @@ export default function ProjectCrmTaskRow({
 
                   <Text style={styles.sectionLabel}>Ghi chú đã nhập ({staffNotes.length})</Text>
                   {attLoading ? (
-                    <ActivityIndicator color={colors.primary} />
+                    <SpinningLoader color={colors.primary} />
                   ) : staffNotes.length ? (
                     staffNotes.map((n) => (
                       <View key={n.id} style={styles.noteItem}>
@@ -1270,8 +1368,16 @@ export default function ProjectCrmTaskRow({
           </View>
         ) : null}
         <View style={styles.top}>
-          <TapHighlight style={[styles.check, done && styles.checkDone]} onPress={() => void toggleStatus()} disabled={busy}>
-            {done ? <Ionicons name="checkmark" size={14} color={colors.success} /> : null}
+          <TapHighlight
+            style={[styles.check, done && styles.checkDone, inProgress && styles.checkDoing]}
+            onPress={() => void toggleStatus()}
+            disabled={busy}
+          >
+            {done ? (
+              <Ionicons name="checkmark" size={14} color="#fff" />
+            ) : inProgress ? (
+              <Ionicons name="time-outline" size={15} color="#2563EB" />
+            ) : null}
           </TapHighlight>
           <View style={styles.body}>
             <Text style={[styles.title, done && styles.titleDone]} numberOfLines={2}>
@@ -1314,12 +1420,42 @@ export default function ProjectCrmTaskRow({
                 </Text>
               </TapHighlight>
               {fileCount > 0 && (
-                <View style={styles.attachBadge}>
+                <TapHighlight style={styles.attachBadge} onPress={openAttach}>
                   <Ionicons name="attach" size={12} color={colors.textFaint} />
                   <Text style={styles.metaText}>{fileCount} file</Text>
-                </View>
+                </TapHighlight>
               )}
             </View>
+            {attachments.length > 0 ? (
+              <TapHighlight style={styles.fileThumbRow} onPress={openAttach}>
+                {attachments.slice(0, 6).map((a) => {
+                  const uri = resolveMediaUrl(a.file_url);
+                  const showImg = uri && isImageFile(a) && !(a.mime_type || '').startsWith('video/');
+                  return (
+                    <View key={a.id} style={styles.fileThumb}>
+                      {showImg ? (
+                        <Image source={{ uri }} style={styles.fileThumbImg} resizeMode="cover" />
+                      ) : (
+                        <Ionicons
+                          name={
+                            (a.mime_type || '').startsWith('video/')
+                              ? 'videocam-outline'
+                              : 'document-outline'
+                          }
+                          size={20}
+                          color={colors.primary}
+                        />
+                      )}
+                    </View>
+                  );
+                })}
+                {attachments.length > 6 ? (
+                  <View style={styles.fileThumb}>
+                    <Text style={styles.fileThumbMore}>+{attachments.length - 6}</Text>
+                  </View>
+                ) : null}
+              </TapHighlight>
+            ) : null}
             {checklist.length > 0 ? (
               <View style={styles.checklistBox}>
                 <Text style={styles.checklistHead}>

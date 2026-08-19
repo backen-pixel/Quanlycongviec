@@ -1,16 +1,8 @@
+import SpinningLoader from '../components/SpinningLoader';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import React, { useEffect, useMemo, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  FlatList,
-  Image,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { Alert, FlatList, Image, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import TapHighlight from '../components/TapHighlight';
 import { useAuth } from '../context/AuthContext';
@@ -268,7 +260,7 @@ export default function ShareToChatScreen({ navigation }: Props) {
 
       {loading ? (
         <View style={styles.center}>
-          <ActivityIndicator size="large" color={mc.accent} />
+          <SpinningLoader size="large" color={mc.accent} />
         </View>
       ) : (
         <FlatList
@@ -280,7 +272,7 @@ export default function ShareToChatScreen({ navigation }: Props) {
             if (!q.trim() && hasMore && !loadingMore) void loadMore();
           }}
           ListFooterComponent={
-            loadingMore ? <ActivityIndicator color={mc.accent} style={{ marginVertical: 12 }} /> : null
+            loadingMore ? <SpinningLoader color={mc.accent} style={{ marginVertical: 12 }} /> : null
           }
           ListEmptyComponent={
             <Text style={styles.empty}>Không có hội thoại nào.</Text>
@@ -325,7 +317,7 @@ export default function ShareToChatScreen({ navigation }: Props) {
           disabled={!selectedId || sending}
         >
           {sending ? (
-            <ActivityIndicator color="#FFF" />
+            <SpinningLoader color="#FFF" />
           ) : (
             <Text style={styles.sendTxt}>Gửi</Text>
           )}

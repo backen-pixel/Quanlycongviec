@@ -1,18 +1,8 @@
+import SpinningLoader from '../components/SpinningLoader';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useNavigation } from '@react-navigation/native';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  Modal,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { Alert, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatApiError } from '../api/client';
 import {
@@ -311,7 +301,7 @@ export default function LeavesScreen() {
         </View>
 
         {loading ? (
-          <ActivityIndicator color={colors.primary} style={{ marginTop: 30 }} />
+          <SpinningLoader color={colors.primary} style={{ marginTop: 30 }} />
         ) : error ? (
           <View style={styles.center}>
             <Ionicons name="cloud-offline-outline" size={34} color={colors.textFaint} />
@@ -423,7 +413,7 @@ export default function LeavesScreen() {
                 <Text style={styles.cancelText}>Huỷ</Text>
               </Pressable>
               <Pressable style={styles.saveBtn} onPress={() => void onCreate()} disabled={saving}>
-                {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveText}>Lưu</Text>}
+                {saving ? <SpinningLoader color="#fff" /> : <Text style={styles.saveText}>Lưu</Text>}
               </Pressable>
             </View>
           </View>

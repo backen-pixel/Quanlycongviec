@@ -1,15 +1,9 @@
+import SpinningLoader from './SpinningLoader';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React, { useMemo, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  Pressable,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { formatApiError } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
@@ -244,7 +238,7 @@ export default function VcHandoverCommentCard({ comment, onUpdated }: Props) {
                     onPress={() => void confirm(s.side)}
                   >
                     {busy === `confirm-${s.side}` ? (
-                      <ActivityIndicator color="#fff" size="small" />
+                      <SpinningLoader color="#fff" size="small" />
                     ) : (
                       <>
                         <Ionicons name="checkmark" size={14} color="#fff" />

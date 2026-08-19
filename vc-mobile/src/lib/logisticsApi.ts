@@ -299,7 +299,9 @@ export function fetchLogisticsBoard(
 ): Promise<ProductionBoard> {
   const key = boardInflightKey(filters);
   const existing = boardInflight.get(key);
-  if (existing) return existing;
+  // Silent/init được join. Pull-to-refresh (noCache) không được dính request chưa bust.
+  // Refresh đang chạy → silent sau đó join (nhận data mới).
+  if (existing && !noCache) return existing;
   const pending = fetchLogisticsBoardUncapped(noCache, filters).finally(() => {
     if (boardInflight.get(key) === pending) boardInflight.delete(key);
   });
@@ -449,6 +451,7 @@ export type CommentAttachment = {
   name: string;
   mime?: string;
   size?: number;
+  deleted?: boolean;
 };
 
 export type ProjectComment = {
@@ -471,6 +474,7 @@ export type ProjectComment = {
 };
 
 export function isCommentImageAttachment(att: CommentAttachment): boolean {
+  if (att.deleted || !att.url) return false;
   const mime = String(att.mime || '').toLowerCase();
   if (mime.startsWith('image/')) return true;
   if (
@@ -515,7 +519,7 @@ function mapCommentAttachment(raw: unknown): CommentAttachment | null {
     }
   }
   return {
-    url: url.slice(0, 800),
+    url,
     name: name.slice(0, 400),
     mime,
     size: Number.isFinite(Number(a.size ?? a.file_size)) ? Number(a.size ?? a.file_size) : undefined,
@@ -565,12 +569,15 @@ function enrichSystemFileLinksInContent(
     const label = String(labelRaw || '').trim();
     let url = String(urlRaw || '').trim();
     if (!label || !url) return _full;
-    if (url.startsWith('hidden:')) return `«${label}» (đã ẩn)`;
+    if (url.startsWith('hidden:')) {
+      extra.push({ url: '', name: label, deleted: true });
+      return `«${label}» — file đã bị xóa`;
+    }
     const key = url.split('?')[0].toLowerCase();
     if (!existing.has(key)) {
       existing.add(key);
       extra.push({
-        url: url.slice(0, 800),
+        url,
         name: label.slice(0, 400),
         mime: mimeFromFileName(label) || mimeFromFileName(url),
       });
@@ -607,7 +614,7 @@ function sanitizeCommentContent(
 
   if (RAW_URL_RE.test(trimmed)) {
     if (attachments.length) return { content: '', attachments };
-    const url = trimmed.slice(0, 800);
+    const url = trimmed;
     const namePart = decodeURIComponent(url.split('/').pop()?.split('?')[0] || 'file');
     const mapped = mapCommentAttachment({ url, name: namePart });
     return { content: '', attachments: mapped ? [mapped] : [] };
@@ -687,6 +694,44 @@ function mapCommentRow(raw: Record<string, unknown>): ProjectComment {
   };
 }
 
+function systemFileLabels(body: string): string[] {
+  const out: string[] = [];
+  const re = /«([^»|]+)(?:\|[^»]*)?»/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(body)) !== null) {
+    const name = String(m[1] || '').trim().toLowerCase();
+    if (name) out.push(name);
+  }
+  return out;
+}
+
+/** Chỉ đánh dấu xóa khi tin «đã xóa» sau tin tải lên cùng tên — không suy từ danh sách file hiện tại. */
+function hideUploadsDeletedLater(list: Record<string, unknown>[]): Record<string, unknown>[] {
+  const deletes: { name: string; t: number }[] = [];
+  for (const row of list) {
+    const body = String(row.body ?? row.content ?? '');
+    if (!body.includes('📎') || !/đã xóa/.test(body)) continue;
+    const t = new Date(String(row.created_at || '')).getTime();
+    if (!Number.isFinite(t)) continue;
+    for (const name of systemFileLabels(body)) deletes.push({ name, t });
+  }
+  if (!deletes.length) return list;
+  return list.map((row) => {
+    const body = String(row.body ?? row.content ?? '');
+    if (!body.includes('📎') || !body.includes('|') || /đã xóa/.test(body)) return row;
+    const t = new Date(String(row.created_at || '')).getTime();
+    const next = body.replace(/«([^»|]+)\|([^»]+)»/g, (full, label: string, url: string) => {
+      const u = String(url || '');
+      if (u.startsWith('hidden:')) return full;
+      const name = String(label || '').trim().toLowerCase();
+      const deletedLater = Number.isFinite(t) && deletes.some((d) => d.name === name && d.t > t);
+      return deletedLater ? `«${label}|hidden:${u}»` : full;
+    });
+    if (next === body) return row;
+    return { ...row, body: next, content: next };
+  });
+}
+
 export type CommentListOpts = { limit?: number; before?: string };
 
 export type CommentListResult = {
@@ -742,9 +787,12 @@ export async function fetchDealCommentsPage(
     params: commentListParams(opts),
   });
   const list = Array.isArray(res.data) ? res.data : [];
+  const mapped = hideUploadsDeletedLater(list as Record<string, unknown>[]).map((row) => (
+    mapCommentRow(row)
+  ));
   const fallback = !!(opts?.limit && list.length >= opts.limit);
   return {
-    comments: list.map((row) => mapCommentRow(row as Record<string, unknown>)),
+    comments: mapped,
     hasMore: commentHeaderHasMore(res.headers as Record<string, unknown> | undefined, fallback),
   };
 }

@@ -1,22 +1,10 @@
+import SpinningLoader from '../components/SpinningLoader';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useFocusEffect, useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  FlatList,
-  PanResponder,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import { Alert, FlatList, PanResponder, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatApiError } from '../api/client';
 import CommentNotificationsModal from '../components/CommentNotificationsModal';
@@ -72,7 +60,12 @@ import {
   workshopCompaniesForCrossViewer,
   type ClientCompanyOption,
 } from '../lib/productionFilters';
-import { loadKanbanFilters, saveKanbanFilters, subscribeSharedFilters } from '../lib/kanbanFilterStorage';
+import {
+  loadKanbanFilters,
+  saveKanbanFilters,
+  subscribeSharedFilters,
+  workshopTypeIdForBoardApi,
+} from '../lib/kanbanFilterStorage';
 import { loadCommentSeenMap, markProjectCommentsSeen } from '../lib/notificationApi';
 import { ensureNotificationPermission } from '../lib/pushRegistration';
 import { useProductionRealtime } from '../hooks/useProductionRealtime';
@@ -185,13 +178,6 @@ function cardTitleOf(p: ProductionProject): string {
   const primary = deals.find((d) => String(d?.type || '') === 'deal') || deals[0] || null;
   const title = (primary?.title || '').trim();
   return title || p.name || p.code || '';
-}
-
-function crmPersonName(p: ProductionProject): string | null {
-  const deals = Array.isArray(p.crm_deals) ? p.crm_deals : [];
-  const primary = deals.find((d) => String(d?.type || '') === 'deal') || deals[0] || null;
-  const fromDeal = primary?.assignee?.full_name || primary?.lead_owner?.full_name;
-  return (fromDeal || p.sales_person_name || '').trim() || null;
 }
 
 function isToday(value?: string | null): boolean {
@@ -407,7 +393,7 @@ export default function KanbanScreen() {
     const filters: BoardFilters = {
       companyId: filterCompanyRef.current || undefined,
       dealCompanyId: filterDealCompanyRef.current || undefined,
-      workshopTypeId: filterWorkTypeIdRef.current || undefined,
+      workshopTypeId: workshopTypeIdForBoardApi(filterWorkTypeIdRef.current),
     };
     const seq = ++loadSeqRef.current;
     const cached = getCachedBoard(filters);
@@ -448,13 +434,22 @@ export default function KanbanScreen() {
   useEffect(() => { filterPriorityRef.current = filterPriority; }, [filterPriority]);
 
   // Sysadmin: '' = Tất cả — vẫn tải. NV: chờ companyId.
-  // Có công ty → đợi work-types hydrate + auto-pick xong rồi mới fetch (tránh double board).
+  // Có công ty → đợi work-types hydrate + type hợp lệ rồi mới fetch (tránh double board).
   useEffect(() => {
     if (!filterCompany && !isSysAdmin) return;
     const hasCompanyContext = !!filterCompany || (!isSysAdmin && !!user?.company_id);
     if (hasCompanyContext) {
       if (workTypesCompanyId !== String(companyForTypes || '')) return;
       if (workTypes.length > 0 && !filterWorkTypeId) return;
+      // Type còn thuộc công ty cũ → chờ auto-pick / Apply resolve (không fetch sớm).
+      if (
+        filterWorkTypeId
+        && filterWorkTypeId !== 'none'
+        && workTypes.length > 0
+        && !workTypes.some((w) => String(w.id) === String(filterWorkTypeId))
+      ) {
+        return;
+      }
     }
     setActiveIndex(0);
     void load('init');
@@ -476,7 +471,7 @@ export default function KanbanScreen() {
       const filters: BoardFilters = {
         companyId: filterCompanyRef.current || undefined,
         dealCompanyId: filterDealCompanyRef.current || undefined,
-        workshopTypeId: filterWorkTypeIdRef.current || undefined,
+        workshopTypeId: workshopTypeIdForBoardApi(filterWorkTypeIdRef.current),
       };
       if (info?.patched) {
         const next = getCachedBoard(filters);
@@ -1012,8 +1007,12 @@ export default function KanbanScreen() {
       if (filterPhone === 'no' && projectHasCustomerPhone(p)) return false;
       if (filterPersonId && !projectMatchesPerson(p, filterPersonId)) return false;
       if (filterPriority && String(p.priority || '') !== String(filterPriority)) return false;
-      // filterCompany: server-side. filterWorkTypeId: client-side, lọc theo loại đã chọn.
-      if (filterWorkTypeId && String(p.workshop_type_id || '') !== String(filterWorkTypeId)) return false;
+      // filterCompany: server-side. «Chưa phân loại» (none) = thiếu workshop_type_id.
+      if (filterWorkTypeId === 'none') {
+        if (p.workshop_type_id) return false;
+      } else if (filterWorkTypeId && String(p.workshop_type_id || '') !== String(filterWorkTypeId)) {
+        return false;
+      }
       if (filterRegion && !projectMatchesRegion(p, filterRegion)) return false;
       if (dealCompanyExternalFilter && !projectMatchesDealCompanyExternalFilter(p, dealCompanyExternalFilter)) {
         return false;
@@ -1340,7 +1339,7 @@ export default function KanbanScreen() {
   if (loading) {
     return (
       <View style={[styles.center, { paddingTop: insets.top }]}>
-        <ActivityIndicator color={colors.primary} size="large" />
+        <SpinningLoader color={colors.primary} size="large" label="Đang tải…" />
         <Text style={styles.loadingText}>Đang tải dữ liệu...</Text>
       </View>
     );
@@ -1641,7 +1640,7 @@ export default function KanbanScreen() {
           ListFooterComponent={
             hasMoreListCards ? (
               <View style={styles.listFooter}>
-                <ActivityIndicator color={colors.primary} size="small" />
+                <SpinningLoader color={colors.primary} size="small" />
                 <Text style={styles.listFooterText}>
                   Đang tải thêm ({pagedListProjects.length}/{listProjects.length})
                 </Text>
@@ -1684,8 +1683,6 @@ export default function KanbanScreen() {
                 stageColorHex={meta?.color}
                 stageIndex={meta?.index ?? 0}
                 ageLabel={calculateDays(item.created_at)}
-                crmName={crmPersonName(item)}
-                sxName={item.production_person_name}
                 vcName={item.logistics_person_name}
                 ldName={item.installer_person_name}
                 moving={movingId === item.id}
@@ -1715,7 +1712,7 @@ export default function KanbanScreen() {
         ListFooterComponent={
           hasMoreCards ? (
             <View style={styles.listFooter}>
-              <ActivityIndicator color={colors.primary} size="small" />
+              <SpinningLoader color={colors.primary} size="small" />
               <Text style={styles.listFooterText}>
                 Đang tải thêm ({pagedProjects.length}/{columnProjects.length})
               </Text>
@@ -1751,11 +1748,9 @@ export default function KanbanScreen() {
           const deadlineStr = formatDate(item.deadline);
           const ageLabel = calculateDays(item.created_at);
           const title = cardTitleOf(item);
-          const crmName = crmPersonName(item);
-          const sxName = item.production_person_name?.trim() || null;
           const vcName = item.logistics_person_name?.trim() || null;
           const ldName = item.installer_person_name?.trim() || null;
-          const hasPeople = !!(crmName || sxName || vcName || ldName);
+          const hasPeople = !!(vcName || ldName);
           const showHandover =
             !!activeStage?.is_handover_to_install && !isInstallVcStage(activeStage);
           const deadlineOverdue = !!(
@@ -1816,8 +1811,6 @@ export default function KanbanScreen() {
 
                 {hasPeople ? (
                   <View style={styles.personChipsWrap}>
-                    <PersonRoleChip label="CRM" name={crmName} isDark={isDark} />
-                    <PersonRoleChip label="SX" name={sxName} isDark={isDark} />
                     <PersonRoleChip label="VC" name={vcName} isDark={isDark} />
                     <PersonRoleChip label="LĐ" name={ldName} isDark={isDark} />
                   </View>
@@ -1901,7 +1894,7 @@ export default function KanbanScreen() {
                     accessibilityLabel="Chuyển cột"
                   >
                     {isMoving ? (
-                      <ActivityIndicator size="small" color={colors.white} />
+                      <SpinningLoader size="small" color={colors.white} />
                     ) : (
                       <Ionicons name="swap-horizontal" size={18} color={colors.white} />
                     )}
@@ -1985,38 +1978,73 @@ export default function KanbanScreen() {
           resetFilters();
           setFilterSheetOpen(false);
         }}
+        onApply={(next) => {
+          void (async () => {
+            const nextCompany = String(next.filterCompany || '');
+            const nextDeal = String(next.filterDealCompany || '');
+            const companyForTypesNext = nextCompany || (user?.company_id ? String(user.company_id) : '');
+
+            let types = workTypes;
+            let typesCo = workTypesCompanyId;
+            if (companyForTypesNext) {
+              const needFetch =
+                String(typesCo) !== String(companyForTypesNext)
+                || !types.length;
+              if (needFetch) {
+                try {
+                  types = await fetchWorkshopTypes(companyForTypesNext, nextDeal || null);
+                } catch {
+                  types = [];
+                }
+                typesCo = String(companyForTypesNext);
+                setWorkTypes(types);
+                setWorkTypesCompanyId(typesCo);
+              }
+            }
+
+            let resolvedType = String(next.filterWorkTypeId || '');
+            if (companyForTypesNext) {
+              if (resolvedType === 'none') {
+                /* giữ «Chưa phân loại» */
+              } else if (
+                resolvedType
+                && types.some((t) => String(t.id) === resolvedType)
+              ) {
+                /* giữ lựa chọn hợp lệ */
+              } else if (types.length) {
+                resolvedType = String(types[0].id);
+              } else {
+                resolvedType = '';
+              }
+            }
+
+            setQuickFilter(next.quickFilter);
+            setFilterPhone(next.filterPhone);
+            setFilterPersonId(next.filterPersonId);
+            setFilterPriority(next.filterPriority);
+            setFilterCompany(nextCompany);
+            setFilterDealCompany(nextDeal);
+            setFilterRegion(next.filterRegion);
+            setFilterWorkTypeId(resolvedType);
+            setFilterSheetOpen(false);
+          })();
+        }}
         quickFilter={quickFilter}
-        onQuickFilterChange={setQuickFilter}
         showWorkshopPicker={showWorkshopPicker}
         workshopOptions={companyOptions}
         filterCompany={filterCompany}
-        onWorkshopChange={(id) => {
-          setFilterCompany(id);
-          setFilterWorkTypeId('');
-          setFilterRegion('');
-          setFilterPersonId('');
-        }}
         showDealCompanyPicker={showDealCompanyFilter}
         dealCompanyOptions={dealCompanyPickerOptions}
         filterDealCompany={filterDealCompany}
-        onDealCompanyChange={(id) => {
-          setFilterDealCompany(id);
-          setFilterWorkTypeId('');
-        }}
         dealCompanyReadOnlyLabel={!canPickDealCompany ? selectedDealCompanyLabel : undefined}
         regionOptions={regionOptions}
         filterRegion={filterRegion}
-        onRegionChange={setFilterRegion}
         personOptions={personFilterOptions}
         filterPersonId={filterPersonId}
-        onPersonChange={setFilterPersonId}
         filterPhone={filterPhone}
-        onPhoneChange={setFilterPhone}
         filterPriority={filterPriority}
-        onPriorityChange={setFilterPriority}
         workTypeOptions={workTypeOptions}
         filterWorkTypeId={filterWorkTypeId}
-        onWorkTypeChange={setFilterWorkTypeId}
       />
 
       <FilterPickerModal
@@ -2277,7 +2305,13 @@ function createKanbanStyles(c: AppColors) {
   customerName: { color: c.textMuted, fontSize: 12, fontWeight: '600' },
   customerPhoneLine: { color: '#16A34A', fontSize: 12, fontWeight: '600' },
 
-  personChipsWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 6 },
+  personChipsWrap: {
+    flexDirection: 'row',
+    flexWrap: 'nowrap',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 6,
+  },
   personEmpty: { color: c.textFaint, fontSize: 10, marginBottom: 4 },
 
   ageRow: { flexDirection: 'row', justifyContent: 'flex-end', marginBottom: 4 },

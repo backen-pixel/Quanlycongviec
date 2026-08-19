@@ -1,21 +1,7 @@
+import SpinningLoader from './SpinningLoader';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  Animated,
-  Dimensions,
-  FlatList,
-  Image,
-  Modal,
-  NativeScrollEvent,
-  NativeSyntheticEvent,
-  PanResponder,
-  Pressable,
-  StatusBar,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { Animated, Dimensions, FlatList, Image, Modal, NativeScrollEvent, NativeSyntheticEvent, PanResponder, Pressable, StatusBar, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const SCREEN_W = Dimensions.get('window').width;
@@ -181,7 +167,7 @@ function ZoomableImage({
   return (
     <View style={styles.zoomStage} {...pan.panHandlers}>
       <Pressable onPress={onTap} style={styles.zoomPress}>
-        {loading ? <ActivityIndicator color="#fff" style={styles.loader} /> : null}
+        {loading ? <SpinningLoader color="#fff" style={styles.loader} /> : null}
         <Animated.Image
           source={{ uri }}
           style={[

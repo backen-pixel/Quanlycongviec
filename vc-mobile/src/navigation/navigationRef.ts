@@ -48,12 +48,23 @@ export function openMessagesFromBubble(): void {
 export function openProjectCommentFromNotif(
   projectId: string,
   initialTab?: RootStackParamList['ProjectDetail']['initialTab'],
+  focusCommentId?: string | null,
 ): void {
-  if (!navigationRef.isReady()) return;
-  navigationRef.navigate('ProjectDetail', {
-    projectId,
-    ...(initialTab ? { initialTab } : {}),
-  });
+  const go = () => {
+    if (!navigationRef.isReady()) return false;
+    navigationRef.navigate('ProjectDetail', {
+      projectId,
+      ...(initialTab ? { initialTab } : {}),
+      ...(focusCommentId ? { focusCommentId: String(focusCommentId) } : {}),
+    });
+    return true;
+  };
+  if (go()) return;
+  let tries = 0;
+  const timer = setInterval(() => {
+    tries += 1;
+    if (go() || tries >= 40) clearInterval(timer);
+  }, 150);
 }
 
 export function navigateToShareToChat(): void {

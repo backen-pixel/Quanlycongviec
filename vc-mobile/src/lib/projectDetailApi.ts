@@ -17,8 +17,16 @@ export function isCrmProductionTaskDone(status: string): boolean {
 
 /** Chuẩn hoá checklist JSONB — khớp web CRMTasksTab. */
 export function normalizeTaskChecklist(raw: unknown): TaskChecklistItem[] {
-  if (!Array.isArray(raw)) return [];
-  return raw.map((c, i) => {
+  let list: unknown = raw;
+  if (typeof list === 'string' && list.trim()) {
+    try {
+      list = JSON.parse(list);
+    } catch {
+      return [];
+    }
+  }
+  if (!Array.isArray(list)) return [];
+  return list.map((c, i) => {
     if (typeof c === 'string') {
       return {
         id: `ckidx_${i}_${c.slice(0, 8)}`,
@@ -31,7 +39,7 @@ export function normalizeTaskChecklist(raw: unknown): TaskChecklistItem[] {
     return {
       ...row,
       id: String(row.id || `ckidx_${i}`),
-      title: String(row.title || row.label || ''),
+      title: String(row.title || row.label || row.name || ''),
       description: row.description != null ? String(row.description) : '',
       done: !!(row.done ?? row.is_completed),
     };
@@ -116,10 +124,7 @@ function mapCrmTask(raw: Record<string, unknown>): CrmTask {
     ? String(raw.logistics_pipeline_stage_id)
     : (meta?.logistics_pipeline_stage_id != null ? String(meta.logistics_pipeline_stage_id) : null);
   const isWorkshop = raw._workshop_project_task === true
-    || raw.source === 'workshop'
-    || meta?.workshop_area === 'logistics'
-    || meta?.workshop_module === 'logistics'
-    || String(raw.stage_slug || '').startsWith('vc_ws_');
+    || String(raw.source || '') === 'workshop';
   return {
     id: String(raw.id || ''),
     title: String(raw.title || ''),
@@ -131,10 +136,10 @@ function mapCrmTask(raw: Record<string, unknown>): CrmTask {
     notes: raw.notes != null ? String(raw.notes) : null,
     description: raw.description != null ? String(raw.description) : null,
     priority: raw.priority != null ? String(raw.priority) : null,
-    checklist: normalizeTaskChecklist(raw.checklist),
-    file_count: Number(raw.file_count ?? 0),
-    note_count: Number(raw.note_count ?? 0),
-    attachment_count: Number(raw.attachment_count ?? 0),
+    ...(raw.checklist != null ? { checklist: normalizeTaskChecklist(raw.checklist) } : {}),
+    ...(raw.file_count != null ? { file_count: Number(raw.file_count) } : {}),
+    ...(raw.note_count != null ? { note_count: Number(raw.note_count) } : {}),
+    ...(raw.attachment_count != null ? { attachment_count: Number(raw.attachment_count) } : {}),
     assignee: mapPerson(raw.assignee),
     assignees,
     pipeline_stage: pipelineStage,
@@ -663,7 +668,9 @@ function mapWorkshopTask(row: Record<string, unknown>): CrmTask {
     notes: notePreview,
     description,
     priority: row.priority != null ? String(row.priority) : null,
-    checklist: normalizeTaskChecklist(row.checklist ?? meta.checklist),
+    checklist: row.checklist != null || meta.checklist != null
+      ? normalizeTaskChecklist(row.checklist ?? meta.checklist)
+      : undefined,
     note_count: Number(row.note_count ?? staffNotes?.length ?? 0),
     file_count: Number(row.file_count ?? 0),
     staff_notes: staffNotes,
@@ -756,7 +763,77 @@ export type TaskAttachment = {
   file_name?: string | null;
   mime_type?: string | null;
   notes?: string | null;
+  task_id?: string | null;
 };
+
+export function mapTaskAttachmentRow(row: Record<string, unknown>): TaskAttachment {
+  const task = row.task && typeof row.task === 'object' ? (row.task as Record<string, unknown>) : null;
+  return {
+    id: String(row.id || ''),
+    name: row.name != null ? String(row.name) : null,
+    doc_type: row.doc_type != null ? String(row.doc_type) : null,
+    file_url: row.file_url != null ? String(row.file_url) : null,
+    file_name: row.file_name != null ? String(row.file_name) : null,
+    mime_type: row.mime_type != null ? String(row.mime_type) : null,
+    notes: row.notes != null ? String(row.notes) : null,
+    task_id: row.task_id != null
+      ? String(row.task_id)
+      : (task?.id != null ? String(task.id) : null),
+  };
+}
+
+/** File thật (ảnh/pdf) — loại ghi chú lưu trong bảng đính kèm. */
+export function filterFileAttachments(list: TaskAttachment[]): TaskAttachment[] {
+  return list.filter(
+    (a) =>
+      Boolean(a.file_url)
+      && a.doc_type !== 'task_inline_note'
+      && a.doc_type !== 'task_note',
+  );
+}
+
+/** Gom file NV (CRM + xưởng) theo task_id — 1 lần tải cho cả màn chi tiết. */
+export function groupFileAttachmentsByTaskId(
+  crmDocs: Array<ProjectDocument & { task_id?: string | null }>,
+  workshopFiles: ProjectTaskFile[] = [],
+): Record<string, TaskAttachment[]> {
+  const map: Record<string, TaskAttachment[]> = {};
+  const seen = new Set<string>();
+  const push = (tid: string, att: TaskAttachment) => {
+    const key = `${tid}|${att.file_url || att.id}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    (map[tid] ||= []).push(att);
+  };
+  for (const d of crmDocs) {
+    const tid = d.task_id ? String(d.task_id) : '';
+    if (!tid) continue;
+    const att = mapTaskAttachmentRow({
+      id: d.id,
+      name: d.name,
+      doc_type: d.doc_type,
+      file_url: d.file_url,
+      file_name: d.file_name,
+      mime_type: d.mime_type,
+      notes: d.notes,
+      task_id: tid,
+    });
+    if (filterFileAttachments([att]).length) push(tid, att);
+  }
+  for (const f of workshopFiles) {
+    const tid = f.task?.id ? String(f.task.id) : '';
+    if (!tid || !f.file_url) continue;
+    push(tid, {
+      id: String(f.id || ''),
+      name: f.file_name ?? null,
+      file_url: f.file_url,
+      file_name: f.file_name ?? null,
+      mime_type: f.mime_type ?? null,
+      task_id: tid,
+    });
+  }
+  return map;
+}
 
 export async function fetchWorkshopTaskAttachments(taskId: string): Promise<TaskAttachment[]> {
   const { data } = await api.get<{ attachments?: unknown[] }>(`/tasks/${taskId}/attachments`, {
@@ -765,15 +842,11 @@ export async function fetchWorkshopTaskAttachments(taskId: string): Promise<Task
   const list = Array.isArray(data?.attachments) ? data.attachments : [];
   return list.map((row) => {
     const r = row as Record<string, unknown>;
-    return {
-      id: String(r.id || ''),
-      name: r.file_name != null ? String(r.file_name) : (r.name != null ? String(r.name) : null),
-      doc_type: r.doc_type != null ? String(r.doc_type) : null,
-      file_url: r.file_url != null ? String(r.file_url) : null,
-      file_name: r.file_name != null ? String(r.file_name) : null,
-      mime_type: r.mime_type != null ? String(r.mime_type) : null,
-      notes: r.notes != null ? String(r.notes) : null,
-    };
+    return mapTaskAttachmentRow({
+      ...r,
+      name: r.file_name != null ? String(r.file_name) : r.name,
+      task_id: r.task_id ?? r.entity_id ?? taskId,
+    });
   });
 }
 
@@ -912,18 +985,10 @@ export async function updateCrmTaskNotes(
 export async function fetchCrmTaskAttachments(dealId: string, taskId: string): Promise<TaskAttachment[]> {
   const { data } = await api.get<unknown>(`/crm/leads/${dealId}/tasks/${taskId}/attachments`);
   const list = Array.isArray(data) ? data : [];
-  return list.map((row) => {
-    const r = row as Record<string, unknown>;
-    return {
-      id: String(r.id || ''),
-      name: r.name != null ? String(r.name) : null,
-      doc_type: r.doc_type != null ? String(r.doc_type) : null,
-      file_url: r.file_url != null ? String(r.file_url) : null,
-      file_name: r.file_name != null ? String(r.file_name) : null,
-      mime_type: r.mime_type != null ? String(r.mime_type) : null,
-      notes: r.notes != null ? String(r.notes) : null,
-    };
-  });
+  return list.map((row) => mapTaskAttachmentRow({
+    ...(row as Record<string, unknown>),
+    task_id: (row as Record<string, unknown>).task_id ?? taskId,
+  }));
 }
 
 export async function deleteCrmTaskAttachment(
@@ -1007,6 +1072,7 @@ export type ProjectDocument = {
   creator?: PersonRef | null;
   uploader?: PersonRef | null;
   is_from_task?: boolean;
+  task_id?: string | null;
 };
 
 export type ProjectTaskFile = {
@@ -1032,6 +1098,7 @@ function mapProjectDocument(row: Record<string, unknown>): ProjectDocument {
     creator: mapPerson(row.creator),
     uploader: mapPerson(row.uploader),
     is_from_task: Boolean(row.is_from_task),
+    task_id: row.task_id != null ? String(row.task_id) : null,
   };
 }
 

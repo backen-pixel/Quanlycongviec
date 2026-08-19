@@ -1,7 +1,8 @@
+import SpinningLoader from '../components/SpinningLoader';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import type { NavigatorScreenParams } from '@react-navigation/native';
 import React, { useMemo } from 'react';
-import { ActivityIndicator, StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import LoginScreen from '../screens/LoginScreen';
@@ -26,6 +27,7 @@ export type RootStackParamList = {
   ProjectDetail: {
     projectId: string;
     focusTaskId?: string | null;
+    focusCommentId?: string | null;
     initialTab?: 'tasks' | 'shared-workspace' | 'comments' | 'documents' | 'drive' | 'info' | 'team' | 'schedule' | null;
   };
   OverdueProjects: undefined;
@@ -77,7 +79,7 @@ export default function RootNavigator() {
   if (loading) {
     return (
       <View style={[styles.center, { backgroundColor: colors.bg }]}>
-        <ActivityIndicator size="large" color={colors.primary} />
+        <SpinningLoader size="large" color={colors.primary} label="Đang tải…" />
       </View>
     );
   }

@@ -1,18 +1,8 @@
+import SpinningLoader from './SpinningLoader';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import * as DocumentPicker from 'expo-document-picker';
 import React, { useEffect, useMemo, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  Linking,
-  Modal,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { Alert, Linking, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatApiError } from '../api/client';
 import { useAuth } from '../context/AuthContext';
@@ -242,7 +232,7 @@ export default function AssignmentDetailModal({
             disabled={uploadingKind != null}
           >
             {uploadingKind === kind ? (
-              <ActivityIndicator color="#fff" size="small" />
+              <SpinningLoader color="#fff" size="small" />
             ) : (
               <>
                 <Ionicons name="cloud-upload-outline" size={14} color="#fff" />
@@ -311,7 +301,7 @@ export default function AssignmentDetailModal({
           </View>
 
           {loading && !local ? (
-            <ActivityIndicator color={colors.primary} style={{ marginVertical: 40 }} />
+            <SpinningLoader color={colors.primary} style={{ marginVertical: 40 }} />
           ) : (
             <ScrollView
               style={styles.scroll}
@@ -419,7 +409,7 @@ export default function AssignmentDetailModal({
                     disabled={postingComment || !commentText.trim()}
                   >
                     {postingComment ? (
-                      <ActivityIndicator color="#fff" size="small" />
+                      <SpinningLoader color="#fff" size="small" />
                     ) : (
                       <Ionicons name="send" size={16} color="#fff" />
                     )}

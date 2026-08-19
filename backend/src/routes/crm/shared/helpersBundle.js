@@ -6880,7 +6880,7 @@ function normalizeCrmLeadCommentAttachments(raw) {
       : (typeof a.file_url === 'string' ? a.file_url.trim() : '');
     if (!isAllowedLeadCommentAttachmentUrl(url)) continue;
     out.push({
-      url: url.slice(0, 600),
+      url: url.slice(0, 4000),
       name: String(a.name != null ? a.name : (a.file_name != null ? a.file_name : '')).slice(0, 400),
       type: String(a.type != null ? a.type : (a.mime_type != null ? a.mime_type : '')).slice(0, 120),
       size: Number.isFinite(Number(a.size != null ? a.size : a.file_size)) ? Number(a.size != null ? a.size : a.file_size) : 0,

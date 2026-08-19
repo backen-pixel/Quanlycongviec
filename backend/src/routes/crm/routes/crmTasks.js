@@ -1662,7 +1662,7 @@ r.delete('/leads/:leadId/tasks/:taskId/attachments/:attId', async (req, res) => 
   try {
     const attId = String(req.params.attId || '').trim();
     const { data: attBefore, error: fetchErr } = await supabase.from('crm_task_attachments')
-      .select('id, task_id, source_assignment_file_id, created_by, file_name, name, lead_id')
+      .select('id, task_id, source_assignment_file_id, created_by, file_name, name, file_url, lead_id')
       .eq('id', attId)
       .maybeSingle();
     if (fetchErr) throw fetchErr;
@@ -1723,6 +1723,7 @@ r.delete('/leads/:leadId/tasks/:taskId/attachments/:attId', async (req, res) => 
       leadId: resolvedLeadId,
       action: 'deleted',
       fileName: attBefore.file_name || attBefore.name,
+      fileUrl: attBefore.file_url,
       taskTitle,
     });
     await emitCrmTaskChanged(req, {

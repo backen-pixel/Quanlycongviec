@@ -1,19 +1,9 @@
+import SpinningLoader from '../components/SpinningLoader';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  Alert,
-  ActivityIndicator,
-  FlatList,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { Alert, FlatList, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Avatar from '../components/Avatar';
 import { formatApiError } from '../api/client';
@@ -382,12 +372,12 @@ export default function MessagesScreen() {
           )}
           ListFooterComponent={
             loadingMore ? (
-              <ActivityIndicator color={Colors.primary} style={{ marginVertical: 16 }} />
+              <SpinningLoader color={Colors.primary} style={{ marginVertical: 16 }} />
             ) : null
           }
           ListEmptyComponent={
             loading ? (
-              <ActivityIndicator color={Colors.primary} style={{ marginTop: 40 }} />
+              <SpinningLoader color={Colors.primary} style={{ marginTop: 40 }} />
             ) : error ? (
               <Text style={[styles.empty, { color: Colors.danger }]}>{error}</Text>
             ) : (
@@ -411,7 +401,7 @@ export default function MessagesScreen() {
           }
           ListEmptyComponent={
             callsLoading || loading ? (
-              <ActivityIndicator color={Colors.primary} style={{ marginTop: 40 }} />
+              <SpinningLoader color={Colors.primary} style={{ marginTop: 40 }} />
             ) : (
               <Text style={styles.empty}>Chưa có cuộc gọi trong lịch sử chat</Text>
             )

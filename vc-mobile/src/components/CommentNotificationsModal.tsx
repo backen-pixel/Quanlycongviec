@@ -1,16 +1,7 @@
+import SpinningLoader from './SpinningLoader';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  Modal,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import { Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatApiError } from '../api/client';
 import { useNotifications } from '../context/NotificationContext';
@@ -448,7 +439,7 @@ export default function CommentNotificationsModal({
         ) : null}
 
         {loading && !items.length ? (
-          <ActivityIndicator color={colors.primary} style={{ marginTop: 40 }} />
+          <SpinningLoader color={colors.primary} style={{ marginTop: 40 }} />
         ) : (
           <ScrollView
             style={styles.list}

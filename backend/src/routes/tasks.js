@@ -519,7 +519,7 @@ r.delete('/:taskId/attachments/:attId', async (req, res) => {
   try {
     const { data: att } = await supabase
       .from('file_attachments')
-      .select('id, file_name, uploaded_by, entity_id, entity_type')
+      .select('id, file_name, file_url, uploaded_by, entity_id, entity_type')
       .eq('id', req.params.attId)
       .eq('entity_type', 'task')
       .maybeSingle();
@@ -532,6 +532,7 @@ r.delete('/:taskId/attachments/:attId', async (req, res) => {
       projectId: task?.project_id,
       action: 'deleted',
       fileName: att.file_name,
+      fileUrl: att.file_url,
       taskTitle: task?.title,
     });
     res.json({ message: 'Đã xóa' });

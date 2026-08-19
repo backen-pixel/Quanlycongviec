@@ -1,17 +1,7 @@
+import SpinningLoader from '../SpinningLoader';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  Modal,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { Alert, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import {
   PRIORITY_LABEL,
   STATUS_STAGE_LABEL,
@@ -386,7 +376,7 @@ export default function ProjectSharedWorkspaceTab({ leadId, companyId }: Props) 
   };
 
   if (loading && !assignments.length && !members.length) {
-    return <ActivityIndicator color={Colors.primary} style={{ marginTop: 32 }} />;
+    return <SpinningLoader color={Colors.primary} style={{ marginTop: 32 }} />;
   }
 
   return (
@@ -560,7 +550,7 @@ export default function ProjectSharedWorkspaceTab({ leadId, companyId }: Props) 
               disabled={saving}
               onPress={() => void submit()}
             >
-              {saving ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.saveTxt}>Lưu</Text>}
+              {saving ? <SpinningLoader color="#fff" size="small" /> : <Text style={styles.saveTxt}>Lưu</Text>}
             </Pressable>
           </View>
 

@@ -1,23 +1,9 @@
+import SpinningLoader from './SpinningLoader';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  Image,
-  Keyboard,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import { Alert, Image, Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatApiError } from '../api/client';
 import {
@@ -55,7 +41,7 @@ import {
   saveMessengerAttachment,
 } from '../lib/messengerFileOpen';
 import { fetchDealIdForProject } from '../lib/projectDetailApi';
-import { resolveMediaUrl } from '../lib/mediaUtils';
+import { resolveMediaUrl, isHeicLike } from '../lib/mediaUtils';
 import {
   fetchNotificationPrefs,
   isCommentShowOnScreenEnabled,
@@ -124,26 +110,40 @@ function openCommentFile(att: CommentAttachment, uri: string) {
 
 function CommentImageThumb({
   uri,
+  mime,
+  name,
   style,
   brokenStyle,
   brokenTxtStyle,
   faintColor,
-  onPress,
+  onOpenGallery,
+  onOpenFile,
 }: {
   uri: string;
+  mime?: string;
+  name?: string;
   style: object;
   brokenStyle: object;
   brokenTxtStyle: object;
   faintColor: string;
-  onPress: () => void;
+  onOpenGallery: () => void;
+  onOpenFile: () => void;
 }) {
   const [broken, setBroken] = useState(false);
+  const heic = isHeicLike(uri, mime) || isHeicLike(name, mime);
+  const showFallback = broken || heic;
+  const open = () => {
+    if (heic || broken) onOpenFile();
+    else onOpenGallery();
+  };
   return (
-    <TapHighlight style={style} onPress={onPress}>
-      {broken ? (
+    <TapHighlight style={style} onPress={open}>
+      {showFallback ? (
         <View style={brokenStyle}>
           <Ionicons name="image-outline" size={22} color={faintColor} />
-          <Text style={brokenTxtStyle}>Không xem được ảnh</Text>
+          <Text style={brokenTxtStyle}>
+            {heic && !broken ? 'Ảnh HEIC — chạm để mở' : 'Chạm để mở ảnh'}
+          </Text>
         </View>
       ) : (
         <Image
@@ -166,6 +166,9 @@ type Props = {
   embedded?: boolean;
   /** Deal CRM đã resolve sẵn từ màn chi tiết. */
   preferredDealId?: string | null;
+  /** Từ thông báo: scroll + highlight bình luận này. */
+  focusCommentId?: string | null;
+  onFocusCommentHandled?: () => void;
 };
 
 export default function ProjectCommentModal({
@@ -175,6 +178,8 @@ export default function ProjectCommentModal({
   onPosted,
   embedded = false,
   preferredDealId = null,
+  focusCommentId = null,
+  onFocusCommentHandled,
 }: Props) {
   const { colors } = useTheme();
   const { user } = useAuth();
@@ -184,11 +189,16 @@ export default function ProjectCommentModal({
   const active = embedded || visible;
   const onPostedRef = useRef(onPosted);
   onPostedRef.current = onPosted;
+  const onFocusHandledRef = useRef(onFocusCommentHandled);
+  onFocusHandledRef.current = onFocusCommentHandled;
+  const pendingFocusRef = useRef<string | null>(null);
+  const commentOffsetsRef = useRef<Record<string, number>>({});
 
   const [comments, setComments] = useState<ProjectComment[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [hasMoreOlder, setHasMoreOlder] = useState(false);
+  const [highlightCommentId, setHighlightCommentId] = useState('');
   const skipAutoScrollRef = useRef(false);
   const [sort, setSort] = useState<SortMode>('newest');
   const [body, setBody] = useState('');
@@ -333,6 +343,11 @@ export default function ProjectCommentModal({
           paddingHorizontal: 12, paddingVertical: 8,
         },
         bubbleAuthor: { backgroundColor: colors.primarySoft, borderColor: colors.primary + '44' },
+        bubbleFocused: {
+          borderColor: colors.primary,
+          borderWidth: 2,
+          backgroundColor: colors.primarySoft,
+        },
         bubbleConfirmed: {
           backgroundColor: colors.success + '22',
           borderColor: colors.success + '66',
@@ -367,6 +382,20 @@ export default function ProjectCommentModal({
         },
         systemStrong: { color: colors.text, fontWeight: '800' },
         systemLink: { color: colors.primary, fontWeight: '800' },
+        systemDeleted: { color: colors.danger, fontWeight: '700' },
+        deletedFileRow: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 8,
+          paddingHorizontal: 10,
+          paddingVertical: 8,
+          borderRadius: Radii.md,
+          backgroundColor: colors.danger + '14',
+          borderWidth: 1,
+          borderColor: colors.danger + '44',
+        },
+        deletedFileName: { color: colors.textMuted, fontSize: 12, fontWeight: '600', flex: 1 },
+        deletedFileMeta: { color: colors.danger, fontSize: 11, fontWeight: '800' },
         attWrap: { marginTop: 8, gap: 6 },
         attImages: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
         attThumb: {
@@ -680,6 +709,8 @@ export default function ProjectCommentModal({
       setErr('');
       setShowOnScreen(true);
       setLoading(false);
+      setHighlightCommentId('');
+      commentOffsetsRef.current = {};
       return;
     }
     if (!dealReady) {
@@ -699,6 +730,54 @@ export default function ProjectCommentModal({
     const grouped = groupCommentsByParent(comments);
     return flattenCommentTree(grouped, sort);
   }, [comments, sort]);
+
+  useEffect(() => {
+    const cid = focusCommentId ? String(focusCommentId).trim() : '';
+    if (!cid) return;
+    pendingFocusRef.current = cid;
+    setHighlightCommentId(cid);
+    skipAutoScrollRef.current = true;
+  }, [focusCommentId]);
+
+  useEffect(() => {
+    if (!active) return undefined;
+    const cid = pendingFocusRef.current;
+    if (!cid || loading || loadingOlder) return undefined;
+
+    const found = comments.some((c) => String(c.id) === cid);
+    if (!found) {
+      if (hasMoreOlder) {
+        void loadOlderComments();
+        return undefined;
+      }
+      pendingFocusRef.current = null;
+      onFocusHandledRef.current?.();
+      const clearHl = setTimeout(() => setHighlightCommentId(''), 2000);
+      return () => clearTimeout(clearHl);
+    }
+
+    let tries = 0;
+    const timer = setInterval(() => {
+      tries += 1;
+      const y = commentOffsetsRef.current[cid];
+      if (y != null) {
+        scrollRef.current?.scrollTo({ y: Math.max(0, y - 16), animated: true });
+        pendingFocusRef.current = null;
+        onFocusHandledRef.current?.();
+        clearInterval(timer);
+        setTimeout(() => setHighlightCommentId(''), 4500);
+        return;
+      }
+      if (tries >= 30) {
+        pendingFocusRef.current = null;
+        onFocusHandledRef.current?.();
+        clearInterval(timer);
+        setTimeout(() => setHighlightCommentId(''), 4500);
+      }
+    }, 50);
+
+    return () => clearInterval(timer);
+  }, [active, comments, loading, loadingOlder, hasMoreOlder, loadOlderComments, flatList]);
 
   const mentionMembers = useMemo(() => mentionNamesFromComments(comments), [comments]);
 
@@ -772,6 +851,13 @@ export default function ProjectCommentModal({
                 </Text>
               );
             }
+            if (seg.kind === 'deleted') {
+              return (
+                <Text key={`d-${idx}`} style={styles.systemDeleted}>
+                  «{seg.label}» — file đã bị xóa
+                </Text>
+              );
+            }
             if (seg.kind === 'strong') {
               return (
                 <Text key={`s-${idx}`} style={styles.systemStrong}>«{seg.text}»</Text>
@@ -798,6 +884,7 @@ export default function ProjectCommentModal({
     styles.mentionToken,
     styles.systemLink,
     styles.systemStrong,
+    styles.systemDeleted,
   ]);
 
   const close = () => {
@@ -927,19 +1014,25 @@ export default function ProjectCommentModal({
   const renderComment = (item: ProjectComment, depth: number) => {
     if (depth === 0 && item.comment_type === 'vc_handover') {
       return (
-        <VcHandoverCommentCard
+        <View
           key={item.id}
-          comment={item}
-          onUpdated={(next) => {
-            setComments((prev) => {
-              const i = prev.findIndex((c) => c.id === next.id);
-              if (i < 0) return [...prev, next];
-              const copy = [...prev];
-              copy[i] = { ...copy[i], ...next };
-              return copy;
-            });
+          onLayout={(e) => {
+            commentOffsetsRef.current[String(item.id)] = e.nativeEvent.layout.y;
           }}
-        />
+        >
+          <VcHandoverCommentCard
+            comment={item}
+            onUpdated={(next) => {
+              setComments((prev) => {
+                const i = prev.findIndex((c) => c.id === next.id);
+                if (i < 0) return [...prev, next];
+                const copy = [...prev];
+                copy[i] = { ...copy[i], ...next };
+                return copy;
+              });
+            }}
+          />
+        </View>
       );
     }
 
@@ -957,9 +1050,16 @@ export default function ProjectCommentModal({
     const pickerOpen = reactionPickerId === item.id;
     const isHandoverConfirmedNote = /đã xác nhận giữa xưởng và vc/i.test(String(item.content || ''));
     const nestOffset = depth > 0 ? Math.min(depth - 1, 3) * REPLY_DEPTH_STEP : 0;
+    const isFocused = highlightCommentId && String(item.id) === String(highlightCommentId);
 
     return (
-      <View key={item.id} style={[styles.commentRow, nestOffset > 0 && { marginLeft: nestOffset }]}>
+      <View
+        key={item.id}
+        style={[styles.commentRow, nestOffset > 0 && { marginLeft: nestOffset }]}
+        onLayout={(e) => {
+          commentOffsetsRef.current[String(item.id)] = e.nativeEvent.layout.y;
+        }}
+      >
         {depth > 0 ? (
           <View style={styles.threadGutter}>
             <View style={[styles.threadLine, isOtherReply && styles.threadLineActive]} />
@@ -979,6 +1079,7 @@ export default function ProjectCommentModal({
               isAuthor && styles.bubbleAuthor,
               isOtherReply && styles.bubbleReplyOther,
               isHandoverConfirmedNote && styles.bubbleConfirmed,
+              isFocused && styles.bubbleFocused,
             ]}
           >
             <View style={styles.nameRow}>
@@ -995,10 +1096,21 @@ export default function ProjectCommentModal({
               <View style={styles.attWrap}>
                 {(() => {
                   const atts = item.attachments || [];
-                  const images = atts.filter(isCommentImageAttachment);
-                  const files = atts.filter((a) => !isCommentImageAttachment(a));
+                  const deleted = atts.filter((a) => a.deleted);
+                  const live = atts.filter((a) => !a.deleted);
+                  const images = live.filter(isCommentImageAttachment);
+                  const files = live.filter((a) => !isCommentImageAttachment(a));
                   return (
                     <>
+                      {deleted.map((d, di) => (
+                        <View key={`${item.id}-del-${di}`} style={styles.deletedFileRow}>
+                          <Ionicons name="trash-outline" size={18} color={colors.danger} />
+                          <View style={{ flex: 1, minWidth: 0 }}>
+                            <Text style={styles.deletedFileMeta}>File đã bị xóa</Text>
+                            <Text style={styles.deletedFileName} numberOfLines={1}>{d.name || 'Tệp'}</Text>
+                          </View>
+                        </View>
+                      ))}
                       {images.length > 0 ? (
                         <View style={styles.attImages}>
                           {images.map((img, ii) => {
@@ -1008,11 +1120,14 @@ export default function ProjectCommentModal({
                               <CommentImageThumb
                                 key={`${item.id}-img-${ii}`}
                                 uri={uri}
+                                mime={img.mime}
+                                name={img.name}
                                 style={styles.attThumb}
                                 brokenStyle={styles.attThumbBroken}
                                 brokenTxtStyle={styles.attThumbBrokenTxt}
                                 faintColor={colors.textFaint}
-                                onPress={() => openGalleryAt(uri)}
+                                onOpenGallery={() => openGalleryAt(uri)}
+                                onOpenFile={() => openCommentFile(img, uri)}
                               />
                             );
                           })}
@@ -1109,14 +1224,6 @@ export default function ProjectCommentModal({
           <View style={styles.handle} />
           <View style={styles.header}>
             <Text style={styles.title}>Bình luận</Text>
-            {(loading || !dealReady) ? (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginRight: 8 }}>
-                <ActivityIndicator size="small" color={colors.primary} />
-                <Text style={{ color: colors.textMuted, fontSize: 12, fontWeight: '700' }}>
-                  Đang tải…
-                </Text>
-              </View>
-            ) : null}
             <TouchableOpacity onPress={close} style={styles.closeBtn} hitSlop={8} disabled={posting}>
               <Ionicons name="close" size={22} color={colors.textMuted} />
             </TouchableOpacity>
@@ -1124,9 +1231,9 @@ export default function ProjectCommentModal({
 
           <View style={styles.projectMeta}>
             <Text style={styles.projectName} numberOfLines={1}>
-              {(loading || !dealReady) && (!project.name || project.name.startsWith('Đang '))
-                ? 'Đang mở bình luận…'
-                : (project.name || 'Dự án')}
+              {!project.name || project.name.startsWith('Đang ')
+                ? (project.code || 'Dự án')
+                : project.name}
             </Text>
             <Text style={styles.projectCode} numberOfLines={1}>
               {project.code}
@@ -1174,7 +1281,7 @@ export default function ProjectCommentModal({
           activeOpacity={0.8}
         >
           {loadingOlder ? (
-            <ActivityIndicator size="small" color={colors.primary} />
+            <SpinningLoader size="small" color={colors.primary} />
           ) : (
             <Text style={styles.loadMoreText}>Tải bình luận cũ hơn</Text>
           )}
@@ -1188,7 +1295,7 @@ export default function ProjectCommentModal({
         keyboardShouldPersistTaps="handled"
         onScrollBeginDrag={() => setReactionPickerId(null)}
         onContentSizeChange={() => {
-          if (skipAutoScrollRef.current) return;
+          if (skipAutoScrollRef.current || pendingFocusRef.current) return;
           if (comments.length > 0 && sort === 'newest') {
             scrollRef.current?.scrollTo({ y: 0, animated: false });
           }
@@ -1196,7 +1303,7 @@ export default function ProjectCommentModal({
       >
         {loading ? (
           <View style={styles.emptyWrap}>
-            <ActivityIndicator color={colors.primary} />
+            <SpinningLoader color={colors.primary} />
             <Text style={styles.emptyText}>Đang tải bình luận…</Text>
           </View>
         ) : !showOnScreen ? (
@@ -1288,7 +1395,7 @@ export default function ProjectCommentModal({
               activeOpacity={0.85}
             >
               {posting ? (
-                <ActivityIndicator color={colors.white} size="small" />
+                <SpinningLoader color={colors.white} size="small" />
               ) : (
                 <Ionicons name="send" size={18} color={colors.white} />
               )}

@@ -1,16 +1,9 @@
+import SpinningLoader from '../components/SpinningLoader';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import * as Application from 'expo-application';
 import { useNavigation } from '@react-navigation/native';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import { Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { checkForUpdate, currentVersionCode, currentVersionName, downloadAndInstall } from '../lib/appUpdate';
@@ -161,7 +154,7 @@ export default function UpdateFromServerScreen() {
     return (
       <View style={[styles.container, { paddingTop: insets.top }]}>
         <View style={styles.center}>
-          <ActivityIndicator size="large" color={colors.primary} />
+          <SpinningLoader size="large" color={colors.primary} />
           <Text style={styles.loadingText}>Đang đọc thông tin từ server…</Text>
         </View>
       </View>
@@ -227,7 +220,7 @@ export default function UpdateFromServerScreen() {
           activeOpacity={0.85}
         >
           {checking ? (
-            <ActivityIndicator color={colors.white} />
+            <SpinningLoader color={colors.white} />
           ) : (
             <Ionicons name="cloud-download-outline" size={18} color={colors.white} />
           )}

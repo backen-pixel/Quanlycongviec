@@ -1,16 +1,7 @@
+import SpinningLoader from '../SpinningLoader';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  ActivityIndicator,
-  Dimensions,
-  Image,
-  Linking,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { Dimensions, Image, Linking, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { formatApiError } from '../../api/client';
 import ImageGalleryLightbox, { type GalleryImage } from '../ImageGalleryLightbox';
 import TapHighlight from '../TapHighlight';
@@ -179,7 +170,7 @@ export default function ProjectDocumentsTab({
   if (loading && totalCount === 0) {
     return (
       <View style={styles.center}>
-        <ActivityIndicator size="large" color={colors.primary} />
+        <SpinningLoader size="large" color={colors.primary} />
       </View>
     );
   }

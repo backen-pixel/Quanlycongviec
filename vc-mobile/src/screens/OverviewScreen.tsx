@@ -1,17 +1,10 @@
+import SpinningLoader from '../components/SpinningLoader';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useFocusEffect, useIsFocused, useNavigation } from '@react-navigation/native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { fetchEventsRange, type AppEvent } from '../api/events';
 import { formatApiError } from '../api/client';
@@ -420,8 +413,6 @@ export default function OverviewScreen() {
   const [companyPickerOpen, setCompanyPickerOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [commentProject, setCommentProject] = useState<ProductionProject | null>(null);
-  /** Overlay khi đang mở bình luận từ thông báo (trước khi sheet hiện / đang fetch). */
-  const [commentOpening, setCommentOpening] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const boardFiltersRef = useRef<{ companyId?: string; workshopTypeId?: string }>({});
   const loadSeqRef = useRef(0);
@@ -639,6 +630,7 @@ export default function OverviewScreen() {
 
   // Đồng bộ khi Kanban/Planner đổi filter — chỉ full reload khi Tổng quan đang focus.
   useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
     const unsub = subscribeSharedFilters((snap) => {
       const nextFilters = boardFiltersFromSharedSnap(snap);
       const prev = boardFiltersRef.current;
@@ -654,9 +646,16 @@ export default function OverviewScreen() {
         pendingFilterReloadRef.current = true;
         return;
       }
-      void load(cached ? 'silent' : 'init');
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = null;
+        void load(getCachedBoard(nextFilters) ? 'silent' : 'init');
+      }, 400);
     });
-    return unsub;
+    return () => {
+      if (timer) clearTimeout(timer);
+      unsub();
+    };
   }, [load]);
 
   /** Quay lại Tổng quan → đọc cache (Kanban đã patch) rồi refresh nền nếu stale. */
@@ -738,11 +737,10 @@ export default function OverviewScreen() {
     const pid = String(projectId || '').trim();
     if (!pid) return;
     // Mở sheet ngay với stub — tránh khoảng trống «treo» trong lúc fetch chi tiết.
-    setCommentOpening(true);
     setCommentProject({
       id: pid,
       code: '',
-      name: 'Đang mở bình luận…',
+      name: '',
     } as ProductionProject);
     try {
       const proj = await fetchProductionProject(pid);
@@ -753,8 +751,6 @@ export default function OverviewScreen() {
           ? ({ id: pid, code: '', name: 'Dự án' } as ProductionProject)
           : cur
       ));
-    } finally {
-      setCommentOpening(false);
     }
   }, []);
 
@@ -1030,7 +1026,7 @@ export default function OverviewScreen() {
       >
         {loading && !refreshing ? (
           <View style={styles.centerBox}>
-            <ActivityIndicator color={colors.primary} size="large" />
+            <SpinningLoader color={colors.primary} size="large" />
             <Text style={styles.muted}>Đang tải tổng quan…</Text>
           </View>
         ) : (
@@ -1079,20 +1075,6 @@ export default function OverviewScreen() {
                 <Text style={styles.okTxt}>Không có dự án / công việc quá hạn</Text>
               </View>
             )}
-
-            <View style={styles.boardSummary}>
-              <Text style={styles.boardSummaryLbl}>Bảng Lắp đặt</Text>
-              <View style={styles.boardSummaryRight}>
-                <Text style={styles.boardSummaryVal}>
-                  {kpis.total.toLocaleString('vi-VN')}
-                  <Text style={styles.boardSummaryMuted}> thẻ</Text>
-                </Text>
-                <Text style={styles.boardSummarySep}>
-                  {`Vận chuyển ${kpis.totalShipping} · Lắp đặt ${kpis.totalInstall}`}
-                  {kpis.warranty > 0 ? ` · Phát sinh ${kpis.warranty}` : ''}
-                </Text>
-              </View>
-            </View>
 
             <Text style={styles.secTitle}>Trạng thái vận hành</Text>
             <ScrollView
@@ -1403,19 +1385,9 @@ export default function OverviewScreen() {
         project={commentProject}
         onClose={() => {
           setCommentProject(null);
-          setCommentOpening(false);
         }}
         onPosted={() => {}}
       />
-
-      {commentOpening && !commentProject ? (
-        <View style={styles.commentOpeningOverlay} pointerEvents="auto">
-          <View style={styles.commentOpeningBox}>
-            <ActivityIndicator color={colors.primary} size="large" />
-            <Text style={styles.commentOpeningTxt}>Đang mở bình luận…</Text>
-          </View>
-        </View>
-      ) : null}
 
       <FilterPickerModal
         visible={companyPickerOpen}
@@ -1567,26 +1539,6 @@ function createStyles(colors: AppColors, isDark: boolean) {
       marginBottom: 14,
     },
     okTxt: { color: colors.success, fontSize: 13.5, fontWeight: '700' },
-    boardSummary: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      marginBottom: 12,
-      paddingHorizontal: 4,
-    },
-    boardSummaryLbl: {
-      color: colors.textMuted,
-      fontSize: 12,
-      fontWeight: '700',
-    },
-    boardSummaryRight: { alignItems: 'flex-end', maxWidth: '62%' },
-    boardSummaryVal: {
-      color: colors.primary,
-      fontSize: 15,
-      fontWeight: '800',
-    },
-    boardSummarySep: { color: colors.textMuted, fontWeight: '600', fontSize: 11, marginTop: 2 },
-    boardSummaryMuted: { color: colors.textMuted, fontWeight: '600', fontSize: 12 },
     secTitle: {
       fontSize: 13,
       fontWeight: '800',
@@ -1813,29 +1765,6 @@ function createStyles(colors: AppColors, isDark: boolean) {
       fontSize: 11,
       fontWeight: '700',
       textAlign: 'center',
-    },
-    commentOpeningOverlay: {
-      ...StyleSheet.absoluteFillObject,
-      backgroundColor: 'rgba(0,0,0,0.45)',
-      alignItems: 'center',
-      justifyContent: 'center',
-      zIndex: 50,
-    },
-    commentOpeningBox: {
-      backgroundColor: colors.card,
-      borderRadius: Radii.lg,
-      borderWidth: 1,
-      borderColor: colors.border,
-      paddingHorizontal: 28,
-      paddingVertical: 22,
-      alignItems: 'center',
-      gap: 12,
-      minWidth: 200,
-    },
-    commentOpeningTxt: {
-      color: colors.text,
-      fontSize: 14,
-      fontWeight: '700',
     },
   });
 }

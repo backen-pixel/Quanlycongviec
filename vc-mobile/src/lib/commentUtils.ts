@@ -120,7 +120,8 @@ export function isImageFileName(name?: string | null): boolean {
 export type SystemBodySegment =
   | { kind: 'text'; text: string }
   | { kind: 'link'; label: string; url: string }
-  | { kind: 'strong'; text: string };
+  | { kind: 'strong'; text: string }
+  | { kind: 'deleted'; label: string };
 
 /** Chia body hệ thống: text / «label|url» / «text» đậm. */
 export function parseSystemCommentBody(text?: string | null): SystemBodySegment[] {
@@ -138,7 +139,7 @@ export function parseSystemCommentBody(text?: string | null): SystemBodySegment[
       const label = inner.slice(0, pipeIdx);
       const url = inner.slice(pipeIdx + 1);
       if (String(url).startsWith(SYSTEM_FILE_HIDDEN_PREFIX)) {
-        segments.push({ kind: 'strong', text: `${label} (đã ẩn)` });
+        segments.push({ kind: 'deleted', label });
       } else {
         segments.push({ kind: 'link', label, url });
       }

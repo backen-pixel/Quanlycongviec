@@ -1,19 +1,7 @@
+import SpinningLoader from './SpinningLoader';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  ActivityIndicator,
-  FlatList,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import { FlatList, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatApiError } from '../api/client';
 import type { AuthUser } from '../context/AuthContext';
@@ -960,7 +948,7 @@ export default function CreateDealModal({ visible, user, onClose, onCreated }: P
                 activeOpacity={0.85}
               >
                 {busy ? (
-                  <ActivityIndicator color={colors.white} />
+                  <SpinningLoader color={colors.white} />
                 ) : (
                   <Text style={[styles.footerBtnText, styles.footerBtnTextPrimary]}>Thêm dự án</Text>
                 )}

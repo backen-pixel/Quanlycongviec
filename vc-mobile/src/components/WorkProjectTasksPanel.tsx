@@ -1,17 +1,8 @@
+import SpinningLoader from './SpinningLoader';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import * as ImagePicker from 'expo-image-picker';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  FlatList,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { Alert, FlatList, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { formatApiError } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
@@ -104,7 +95,7 @@ export default function WorkProjectTasksPanel({
   const loadSeqRef = useRef(0);
 
   useEffect(() => {
-    if (!initialStatusFilter) return;
+    if (initialStatusFilter == null) return;
     setStatusFilter(initialStatusFilter);
   }, [initialStatusFilter]);
 
@@ -385,7 +376,7 @@ export default function WorkProjectTasksPanel({
     return (
       <View style={styles.center}>
         {panelHeader}
-        <ActivityIndicator color={colors.primary} style={{ marginTop: 24 }} />
+        <SpinningLoader color={colors.primary} style={{ marginTop: 24 }} label="Đang tải…" />
       </View>
     );
   }
@@ -522,7 +513,7 @@ export default function WorkProjectTasksPanel({
                   onPress={() => void applyStatus(task, act.key)}
                 >
                   {busy ? (
-                    <ActivityIndicator size="small" color={colors.primary} />
+                    <SpinningLoader size="small" color={colors.primary} />
                   ) : (
                     <Text style={styles.quickBtnTxt}>{act.label}</Text>
                   )}

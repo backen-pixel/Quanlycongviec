@@ -1,4 +1,5 @@
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import SpinningLoader from './SpinningLoader';
+import { StyleSheet, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useMemo } from 'react';
 import { useTheme } from '../context/ThemeContext';
@@ -30,7 +31,7 @@ export default function OtaBlockingScreen({ phase }: Props) {
   return (
     <View style={styles.root}>
       <StatusBar style={isDark ? 'light' : 'dark'} />
-      <ActivityIndicator size="large" color={colors.primary} />
+      <SpinningLoader size="large" color={colors.primary} />
       <Text style={styles.title}>Cập nhật bắt buộc</Text>
       <Text style={styles.sub}>
         {phase === 'checking' ? 'Đang kiểm tra bản mới…' : 'Đang tải bản cập nhật…'}

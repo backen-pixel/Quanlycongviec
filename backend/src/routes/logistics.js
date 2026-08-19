@@ -2148,21 +2148,24 @@ function isVcScopedProjectRow(p) {
   return false;
 }
 
-/** Bình luận: chỉ logistics (hoặc dự án đang trong phạm vi VC). Loại trừ production. */
+/** Bình luận: chỉ logistics (hoặc dự án đang trong phạm vi VC). Loại trừ production / CRM deal. */
 function isVcLogisticsCommentNotification(n) {
   if (!n || String(n.type || '') !== 'comment_added') return false;
   const eco = notifEcoKey(n);
-  if (eco === 'production' || eco === 'crm') return false;
+  if (eco === 'production' || eco === 'crm' || eco === 'sales' || eco === 'sx') return false;
   if (eco === 'logistics') return true;
+  const et = String(n.entity_type || '').toLowerCase();
+  // Bình luận deal CRM — không hiện trên app VC dù deal có gắn dự án Lắp đặt
+  if (et === 'lead' || et === 'crm_lead' || et === 'crm_deal') return false;
   const meta = n.metadata && typeof n.metadata === 'object' ? n.metadata : {};
-  return (n.entity_type === 'project' || n.entity_type === 'lead') && !!(meta.project_id || n.entity_id);
+  return et === 'project' && !!(meta.project_id || n.entity_id);
 }
 
 function isVcLogisticsActivityNotification(n) {
   if (!n) return false;
   const type = String(n.type || '');
   const eco = notifEcoKey(n);
-  if (eco === 'production' || eco === 'crm') return false;
+  if (eco === 'production' || eco === 'crm' || eco === 'sales' || eco === 'sx') return false;
   if (eco === 'logistics') return true;
   if (type === 'logistics_stage_changed'
     || type === 'logistics_task_deadline_warning'
@@ -2174,10 +2177,15 @@ function isVcLogisticsActivityNotification(n) {
     const meta = n.metadata && typeof n.metadata === 'object' ? n.metadata : {};
     return Boolean(meta.vc_handover) || eco === 'logistics';
   }
-  // project_assigned / project_created / task_assigned — lọc scope VC bằng DB nếu thiếu eco
-  if (type === 'project_assigned' || type === 'project_created' || type === 'task_assigned') {
-    return n.entity_type === 'project' || n.entity_type === 'task'
-      || !!(n.metadata && (n.metadata.project_id || n.metadata.ecosystem_module_key === 'logistics'));
+  // project_assigned / project_created — lọc scope VC bằng DB nếu thiếu eco
+  // task_assigned — chỉ khi gắn rõ logistics (tránh nhiệm vụ xưởng SX)
+  if (type === 'task_assigned') {
+    return eco === 'logistics';
+  }
+  if (type === 'project_assigned' || type === 'project_created') {
+    if (eco && eco !== 'logistics') return false;
+    return n.entity_type === 'project'
+      || !!(n.metadata && n.metadata.project_id);
   }
   return false;
 }
@@ -2210,31 +2218,11 @@ async function filterVcLogisticsCommentNotifications(rows) {
     return String(meta.project_id || (n.entity_type === 'project' ? n.entity_id : '') || '').trim();
   }).filter(Boolean);
 
-  // entity_type=lead → resolve project_id từ crm_leads
-  const leadIds = needScope
-    .filter((n) => n.entity_type === 'lead' || n.entity_type === 'crm_lead' || n.entity_type === 'crm_deal')
-    .map((n) => String(n.entity_id || ''))
-    .filter(Boolean);
-  const leadProjectMap = new Map();
-  if (leadIds.length) {
-    const { data: leads } = await supabase
-      .from('crm_leads')
-      .select('id, project_id')
-      .in('id', leadIds);
-    (leads || []).forEach((l) => {
-      if (l.project_id) {
-        leadProjectMap.set(String(l.id), String(l.project_id));
-        projectIds.push(String(l.project_id));
-      }
-    });
-  }
-
   const vcMap = await loadVcScopedProjectMap(projectIds);
   const scoped = needScope.filter((n) => {
     const meta = n.metadata || {};
     let pid = String(meta.project_id || '').trim();
     if (!pid && n.entity_type === 'project') pid = String(n.entity_id || '');
-    if (!pid) pid = leadProjectMap.get(String(n.entity_id || '')) || '';
     return pid && vcMap.has(pid);
   });
 
@@ -2242,7 +2230,7 @@ async function filterVcLogisticsCommentNotifications(rows) {
   const enrichIds = [
     ...new Set(list.map((n) => {
       const meta = n.metadata || {};
-      return String(meta.project_id || (n.entity_type === 'project' ? n.entity_id : '') || leadProjectMap.get(String(n.entity_id || '')) || '').trim();
+      return String(meta.project_id || (n.entity_type === 'project' ? n.entity_id : '') || '').trim();
     }).filter(Boolean)),
   ];
   const allProjMap = await loadVcScopedProjectMap(enrichIds);
@@ -2257,7 +2245,6 @@ async function filterVcLogisticsCommentNotifications(rows) {
     const meta = n.metadata && typeof n.metadata === 'object' ? { ...n.metadata } : {};
     let pid = String(meta.project_id || '').trim();
     if (!pid && n.entity_type === 'project') pid = String(n.entity_id || '');
-    if (!pid) pid = leadProjectMap.get(String(n.entity_id || '')) || '';
     const proj = pid ? allProjMap.get(pid) : null;
     return {
       ...n,

@@ -1,32 +1,9 @@
+import SpinningLoader from '../SpinningLoader';
 import Ionicons from '@expo/vector-icons/Ionicons';
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 
-import {
-
-  ActivityIndicator,
-
-  Alert,
-
-  FlatList,
-
-  Image,
-
-  Modal,
-
-  Pressable,
-
-  RefreshControl,
-
-  StyleSheet,
-
-  Text,
-
-  TouchableOpacity,
-
-  View,
-
-} from 'react-native';
+import { Alert, FlatList, Image, Modal, Pressable, RefreshControl, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import { formatApiError } from '../../api/client';
 
@@ -358,7 +335,7 @@ export default function ProjectMembersTab({ project, dealId }: Props) {
 
           {loading && !members.length ? (
 
-            <ActivityIndicator color={colors.primary} style={{ marginVertical: 24 }} />
+            <SpinningLoader color={colors.primary} style={{ marginVertical: 24 }} />
 
           ) : null}
 
@@ -496,7 +473,7 @@ export default function ProjectMembersTab({ project, dealId }: Props) {
 
               {busy ? (
 
-                <ActivityIndicator color={colors.primary} size="small" />
+                <SpinningLoader color={colors.primary} size="small" />
 
               ) : (
 

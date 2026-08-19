@@ -1,17 +1,8 @@
+import SpinningLoader from '../components/SpinningLoader';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import ProductionPipelineStepper from '../components/projectDetail/ProductionPipelineStepper';
 import ProjectCrmTaskRow from '../components/projectDetail/ProjectCrmTaskRow';
@@ -38,15 +29,18 @@ import {
   fetchProjectDocuments,
   fetchProjectTaskFiles,
   fetchUsersForAssign,
+  groupFileAttachmentsByTaskId,
   filterVcAreaTabTasks,
   filterVcLogisticsUiTasks,
   filterVcStagesByAreaTab,
   groupCrmTasksByStage,
   isCrmProductionTaskDone,
+  normalizeTaskChecklist,
   resolveVcTaskPipelineStageId,
   taskDeadline,
   updateCrmTask,
   updateWorkshopTask,
+  type TaskAttachment,
 } from '../lib/projectDetailApi';
 import {
   fetchDealCommentIndex,
@@ -76,14 +70,23 @@ function formatDate(value?: string | null): string {
 }
 
 export default function ProjectDetailScreen({ route, navigation }: Props) {
-  const { projectId, initialTab, focusTaskId: focusTaskIdParam } = route.params;
+  const {
+    projectId,
+    initialTab,
+    focusTaskId: focusTaskIdParam,
+    focusCommentId: focusCommentIdParam,
+  } = route.params;
   const incomingFocusId = focusTaskIdParam ? String(focusTaskIdParam) : '';
+  const incomingFocusCommentId = focusCommentIdParam ? String(focusCommentIdParam) : '';
   const [highlightTaskId, setHighlightTaskId] = useState(incomingFocusId);
+  const [focusCommentId, setFocusCommentId] = useState(incomingFocusCommentId);
   const { colors } = useTheme();
   const { joinProjectRoom, leaveProjectRoom, joinLeadRoom, leaveLeadRoom } = useNotifications();
   const insets = useSafeAreaInsets();
   const [tab, setTab] = useState<TabKey>(() => {
-    const t = String(initialTab || (incomingFocusId ? 'tasks' : '')).trim() as TabKey;
+    const t = String(
+      initialTab || (incomingFocusCommentId ? 'comments' : incomingFocusId ? 'tasks' : ''),
+    ).trim() as TabKey;
     return VALID_TABS.includes(t) ? t : 'tasks';
   });
   const [project, setProject] = useState<ProductionProjectDetail | null>(null);
@@ -101,6 +104,7 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
   const [activities, setActivities] = useState<ProjectActivity[]>([]);
   const [commentCount, setCommentCount] = useState(0);
   const [docCount, setDocCount] = useState(0);
+  const [attachmentsByTask, setAttachmentsByTask] = useState<Record<string, TaskAttachment[]>>({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [err, setErr] = useState('');
@@ -116,6 +120,13 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
   }, [incomingFocusId, navigation]);
 
   useEffect(() => {
+    if (!incomingFocusCommentId) return;
+    setFocusCommentId(incomingFocusCommentId);
+    setTab('comments');
+    navigation.setParams({ focusCommentId: undefined, initialTab: 'comments' });
+  }, [incomingFocusCommentId, navigation]);
+
+  useEffect(() => {
     if (!highlightTaskId) return undefined;
     const t = setTimeout(() => setHighlightTaskId(''), 4500);
     return () => clearTimeout(t);
@@ -123,6 +134,7 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
 
   useEffect(() => {
     setHighlightTaskId('');
+    setFocusCommentId('');
     didApplyFocusRef.current = '';
   }, [projectId]);
 
@@ -161,7 +173,8 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
             return 0;
           }
         })(),
-        // Khớp tab Tài liệu: CRM shared + tài liệu dự án + file NV + tài liệu NV CRM
+        // Khớp tab Tài liệu: CRM shared + tài liệu dự án + file NV + tài liệu NV CRM.
+        // Gom file theo task_id để hàng nhiệm vụ không N+1 GET attachments.
         (async () => {
           try {
             const [wDocs, tFiles, crmTaskDocs] = await Promise.all([
@@ -169,9 +182,12 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
               fetchProjectTaskFiles(projectId),
               resolvedDealId ? fetchLeadTaskDocuments(resolvedDealId) : Promise.resolve([]),
             ]);
-            return sharedDocCount + wDocs.length + tFiles.length + crmTaskDocs.length;
+            return {
+              docCount: sharedDocCount + wDocs.length + tFiles.length + crmTaskDocs.length,
+              attachmentsByTask: groupFileAttachmentsByTaskId(crmTaskDocs, tFiles),
+            };
           } catch {
-            return sharedDocCount;
+            return { docCount: sharedDocCount, attachmentsByTask: null as Record<string, TaskAttachment[]> | null };
           }
         })(),
       ]);
@@ -184,7 +200,8 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
       }
       setActivities(actRows);
       setCommentCount(commentMeta);
-      setDocCount(documentsMeta);
+      setDocCount(documentsMeta.docCount);
+      if (documentsMeta.attachmentsByTask) setAttachmentsByTask(documentsMeta.attachmentsByTask);
     } catch (e) {
       if (seq !== loadSeqRef.current) return;
       setErr(formatApiError(e));
@@ -230,22 +247,58 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
   }, [load]);
 
   const onTaskUpdated = useCallback((updated: CrmTask) => {
-    setTasks((prev) => prev.map((t) => (t.id === updated.id ? { ...t, ...updated } : t)));
+    setTasks((prev) => prev.map((t) => {
+      if (t.id !== updated.id) return t;
+      const nextCk = normalizeTaskChecklist(updated.checklist);
+      const prevCk = normalizeTaskChecklist(t.checklist);
+      return {
+        ...t,
+        ...updated,
+        checklist: nextCk.length ? nextCk : prevCk,
+        file_count: updated.file_count != null ? updated.file_count : t.file_count,
+        note_count: updated.note_count != null ? updated.note_count : t.note_count,
+        staff_notes: updated.staff_notes != null ? updated.staff_notes : t.staff_notes,
+      };
+    }));
   }, []);
 
   const onTaskDeleted = useCallback((taskId: string) => {
     setTasks((prev) => prev.filter((t) => t.id !== taskId));
   }, []);
 
+  const onTaskAttachments = useCallback((taskId: string, files: TaskAttachment[]) => {
+    setAttachmentsByTask((prev) => {
+      const prevList = prev[taskId] || [];
+      if (
+        prevList.length === files.length
+        && prevList.every((a, i) => a.id === files[i]?.id && a.file_url === files[i]?.file_url)
+      ) {
+        return prev;
+      }
+      return { ...prev, [taskId]: files };
+    });
+  }, []);
+
   const completeStageAll = useCallback((group: TaskStageGroup) => {
     const toComplete = group.tasks.filter((t) => !isCrmProductionTaskDone(t.status));
-    if (!toComplete.length) {
-      Alert.alert('Xong hết', 'Không còn nhiệm vụ chưa hoàn thành trong giai đoạn này.');
+    const withOpenChildren = group.tasks.filter((t) => {
+      const ck = normalizeTaskChecklist(t.checklist);
+      return ck.some((c) => !c.done);
+    });
+    if (!toComplete.length && !withOpenChildren.length) {
+      Alert.alert('Xong hết', 'Không còn nhiệm vụ hoặc mục con chưa hoàn thành trong giai đoạn này.');
       return;
     }
+    const childCount = withOpenChildren.reduce(
+      (n, t) => n + normalizeTaskChecklist(t.checklist).filter((c) => !c.done).length,
+      0,
+    );
+    const parts: string[] = [];
+    if (toComplete.length) parts.push(`${toComplete.length} nhiệm vụ`);
+    if (childCount) parts.push(`${childCount} mục con`);
     Alert.alert(
       'Xong hết',
-      `Đánh dấu hoàn thành ${toComplete.length} nhiệm vụ trong «${group.label}»?`,
+      `Đánh dấu hoàn thành ${parts.join(' và ')} trong «${group.label}»?`,
       [
         { text: 'Hủy', style: 'cancel' },
         {
@@ -253,15 +306,29 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
           onPress: () => {
             void (async () => {
               const prev = tasks;
-              const ids = new Set(toComplete.map((t) => t.id));
+              const idSet = new Set([
+                ...toComplete.map((t) => t.id),
+                ...withOpenChildren.map((t) => t.id),
+              ]);
               setBulkBusy(true);
-              setTasks((p) => p.map((t) => (ids.has(t.id) ? { ...t, status: 'completed' } : t)));
+              setTasks((p) => p.map((t) => {
+                if (!idSet.has(t.id)) return t;
+                const checklist = normalizeTaskChecklist(t.checklist).map((c) => ({ ...c, done: true }));
+                return { ...t, status: 'completed', checklist };
+              }));
               try {
-                await Promise.all(toComplete.map((t) => {
-                  const isWs = t.source === 'workshop' || t._workshop_project_task;
-                  if (isWs) return updateWorkshopTask(t.id, { status: 'completed' });
+                const targets = group.tasks.filter((t) => idSet.has(t.id));
+                await Promise.all(targets.map((t) => {
+                  const checklist = normalizeTaskChecklist(t.checklist).map((c) => ({ ...c, done: true }));
+                  const isWs = Boolean(t._workshop_project_task);
+                  const payload: Record<string, unknown> = {
+                    status: 'completed',
+                    skip_completion_evidence: true,
+                    ...(checklist.length ? { checklist } : {}),
+                  };
+                  if (isWs) return updateWorkshopTask(t.id, payload);
                   if (!dealId) return Promise.resolve(t);
-                  return updateCrmTask(dealId, t.id, { status: 'completed' });
+                  return updateCrmTask(dealId, t.id, payload);
                 }));
                 await load(true);
               } catch (e) {
@@ -624,7 +691,7 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
   if (loading && !project) {
     return (
       <View style={[styles.root, { alignItems: 'center', justifyContent: 'center' }]}>
-        <ActivityIndicator size="large" color={colors.primary} />
+        <SpinningLoader size="large" color={colors.primary} />
       </View>
     );
   }
@@ -777,9 +844,11 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
                             task={task}
                             dealId={dealId}
                             projectCompanyId={project?.company_id || project?.company?.id || null}
+                            seedAttachments={attachmentsByTask[task.id] || []}
                             highlighted={Boolean(highlightTaskId) && String(task.id) === String(highlightTaskId)}
                             onUpdated={onTaskUpdated}
                             onDeleted={onTaskDeleted}
+                            onAttachmentsChange={onTaskAttachments}
                           />
                         )) : (
                           <Text style={styles.stageEmptyHint}>Chưa có công việc — thêm việc bên dưới.</Text>
@@ -951,6 +1020,8 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
               embedded
               project={project}
               preferredDealId={dealId}
+              focusCommentId={focusCommentId || null}
+              onFocusCommentHandled={() => setFocusCommentId('')}
               onClose={() => {}}
               onPosted={setCommentCount}
             />

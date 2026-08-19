@@ -1,11 +1,35 @@
 import { API_ORIGIN } from '../config';
 
+/** Chỉ encode khoảng trắng / ngoặc trên path — không decode URI (làm hỏng chữ ký URL). */
+function encodeMediaPath(joined: string): string {
+  const hashIdx = joined.indexOf('#');
+  const hash = hashIdx >= 0 ? joined.slice(hashIdx) : '';
+  const noHash = hashIdx >= 0 ? joined.slice(0, hashIdx) : joined;
+  const qIdx = noHash.indexOf('?');
+  const path = qIdx >= 0 ? noHash.slice(0, qIdx) : noHash;
+  const query = qIdx >= 0 ? noHash.slice(qIdx) : '';
+  return path.replace(/ /g, '%20').replace(/\[/g, '%5B').replace(/\]/g, '%5D') + query + hash;
+}
+
 export function resolveMediaUrl(url?: string | null): string | null {
   if (!url || typeof url !== 'string') return null;
   const u = url.trim();
   if (!u) return null;
-  if (/^https?:\/\//i.test(u)) return u;
-  return `${API_ORIGIN}${u.startsWith('/') ? u : `/${u}`}`;
+  const joined = /^https?:\/\//i.test(u)
+    ? u
+    : `${API_ORIGIN}${u.startsWith('/') ? u : `/${u}`}`;
+  try {
+    return encodeMediaPath(joined);
+  } catch {
+    return joined.replace(/ /g, '%20');
+  }
+}
+
+export function isHeicLike(url?: string | null, mime?: string | null): boolean {
+  const m = String(mime || '').toLowerCase();
+  if (m.includes('heic') || m.includes('heif')) return true;
+  const path = String(url || '').split('?')[0].split('#')[0];
+  return /\.(heic|heif)$/i.test(path);
 }
 
 export type ImageFileLike = {

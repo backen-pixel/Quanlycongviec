@@ -1,16 +1,7 @@
+import SpinningLoader from './SpinningLoader';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import React, { useEffect, useMemo, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  Modal,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatApiError } from '../api/client';
 import FilterPickerModal, { type FilterOption } from './FilterPickerModal';
@@ -274,7 +265,7 @@ export default function AssignWorkModal({
           </View>
 
           {loadingMeta && users.length === 0 ? (
-            <ActivityIndicator color={colors.primary} style={{ marginVertical: 40 }} />
+            <SpinningLoader color={colors.primary} style={{ marginVertical: 40 }} />
           ) : (
             <ScrollView
               style={styles.scroll}
@@ -331,7 +322,7 @@ export default function AssignWorkModal({
                     style={styles.input}
                   />
                   {dealLoading ? (
-                    <ActivityIndicator color={colors.primary} style={{ marginVertical: 10 }} />
+                    <SpinningLoader color={colors.primary} style={{ marginVertical: 10 }} />
                   ) : (
                     <View style={styles.dealList}>
                       {pagedDeals.length === 0 ? (
@@ -503,7 +494,7 @@ export default function AssignWorkModal({
             </Pressable>
             <Pressable style={styles.saveBtn} onPress={() => void submit()} disabled={saving || loadingMeta}>
               {saving ? (
-                <ActivityIndicator color="#fff" />
+                <SpinningLoader color="#fff" />
               ) : (
                 <Text style={styles.saveTxt}>Giao việc</Text>
               )}

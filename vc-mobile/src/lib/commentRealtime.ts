@@ -39,6 +39,7 @@ export function buildNotificationFromCommentEvent(
       project_code: projectMeta?.code || null,
       project_name: projectMeta?.name || null,
       comment_preview: preview,
+      comment_id: c.id != null ? String(c.id) : null,
       author_name: authorName,
       ecosystem_module_key: 'logistics',
     },
