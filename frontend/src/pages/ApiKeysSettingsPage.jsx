@@ -892,8 +892,9 @@ export default function ApiKeysSettingsPage() {
           </thead>
           <tbody className="divide-y divide-gray-50">
             {[
-              ['title', '✅', 'Tên lead hiển thị trong CRM'],
+              ['title', '✅', 'Tên lead/deal hiển thị trong CRM'],
               ['phone', '✅', 'SĐT khách hàng — tìm hoặc tạo mới customer theo số này'],
+              ['type', '', '"lead" (mặc định) hoặc "deal" — tạo thẳng vào Kanban Deal'],
               ['region_id', '', 'UUID khu vực — tự chọn khu vực đầu tiên của công ty nếu trống'],
               ['pipeline_id', '', 'UUID pipeline — fallback default của key, sau đó default của công ty'],
               ['lead_type_id', '', 'UUID loại Lead/Deal — quyết định bộ task auto-gen (fallback default key)'],

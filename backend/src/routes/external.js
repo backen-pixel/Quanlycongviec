@@ -2,17 +2,19 @@
  * External API — xác thực qua X-Api-Key (không cần JWT).
  * Dùng cho bên ngoài (landing page, zap, webhook, ...) tạo lead vào CRM.
  *
- * POST /api/external/leads
+ * POST /api/external/leads  — tạo Lead (type=lead, hoặc body.type=deal)
+ * POST /api/external/deals  — tạo Deal (cột Deal đầu tiên)
  * Auth: header X-Api-Key: <key> hoặc query ?api_key= / ?x-api-key= (key trong giá trị, không phải tên param)
  * Body:
- *   title          (bắt buộc) — tên lead
+ *   title          (bắt buộc) — tên lead/deal
  *   phone          (bắt buộc) — SĐT (dùng để tìm / tạo customer)
+ *   type           — "lead" (mặc định) hoặc "deal" — tạo thẳng vào Kanban Deal
  *   full_name      — tên khách hàng
  *   email          — email khách hàng
  *   address        — địa chỉ
  *   company        — tên công ty KH
  *   source_name    — tên nguồn (VD: "Website", "Zalo") — tự tạo nếu chưa có
- *   stage_id       — UUID giai đoạn (nếu trống → giai đoạn đầu tiên)
+ *   stage_id       — UUID giai đoạn (nếu trống → cột đầu tiên của type)
  *   assigned_to    — UUID user phụ trách (nếu trống → default_assigned_to trong key)
  *   company_id     — UUID công ty nội bộ
  *   estimated_value — giá trị ước tính (số)
@@ -180,16 +182,17 @@ function callWebhook(url, payload) {
 /**
  * Gửi notification tới người phụ trách khi có lead mới qua API
  */
-async function notifyAssignee(req, userId, lead, apiKeyName) {
+async function notifyAssignee(req, userId, lead, apiKeyName, recordType = 'lead') {
   if (!userId) return;
   try {
     const { supabase: sb } = require('../config/supabase');
+    const typeLabel = recordType === 'deal' ? 'Deal' : 'Lead';
     await sb.from('notifications').insert({
       user_id: userId,
-      type: 'new_lead',
-      title: '🔔 Lead mới từ API ngoài',
-      message: `Lead "${lead.title}" vừa được tạo qua "${apiKeyName}". SĐT: ${lead.customer?.phone || '—'}`,
-      entity_type: 'lead',
+      type: recordType === 'deal' ? 'deal_created' : 'new_lead',
+      title: `🔔 ${typeLabel} mới từ API ngoài`,
+      message: `${typeLabel} "${lead.title}" vừa được tạo qua "${apiKeyName}". SĐT: ${lead.customer?.phone || '—'}`,
+      entity_type: recordType === 'deal' ? 'deal' : 'lead',
       entity_id: lead.id,
       is_read: false,
       created_at: new Date().toISOString(),
@@ -204,9 +207,9 @@ async function notifyAssignee(req, userId, lead, apiKeyName) {
   }
 }
 
-// ── POST /api/external/leads ──────────────────────────────────────────────────
+// ── POST /api/external/leads | /deals ─────────────────────────────────────────
 
-r.post('/leads', apiKeyAuth, async (req, res) => {
+async function handleCreateExternal(req, res) {
   const rl = checkRateLimit({ apiKeyId: req.apiKey?.id, ip: req.ip });
   if (!rl.ok) {
     await tryAuditLog(req, { status: 429, error: 'rate_limited' });
@@ -215,6 +218,7 @@ r.post('/leads', apiKeyAuth, async (req, res) => {
   try {
     const {
       title,
+      type: bodyType,
       full_name, phone, email, address, company: customerCompany,
       source_name,
       source_category_id: bodySourceCategoryId,
@@ -229,9 +233,12 @@ r.post('/leads', apiKeyAuth, async (req, res) => {
       webhook_url: bodyWebhookUrl,
     } = req.body;
 
+    const recordType = String(bodyType || 'lead').trim().toLowerCase() === 'deal' ? 'deal' : 'lead';
+    const typeLabel = recordType === 'deal' ? 'Deal' : 'Lead';
+
     if (!title || !String(title).trim()) {
       await tryAuditLog(req, { status: 400, error: 'missing_title' });
-      return res.status(400).json({ error: 'Trường title (tên lead) là bắt buộc' });
+      return res.status(400).json({ error: `Trường title (tên ${recordType}) là bắt buộc` });
     }
 
     const normalizePhone = (v) => (v == null ? '' : String(v)).replace(/\s+/g, '').trim();
@@ -353,9 +360,9 @@ r.post('/leads', apiKeyAuth, async (req, res) => {
         await tryAuditLog(req, { status: 400, error: 'stage_wrong_pipeline' });
         return res.status(400).json({ error: 'stage_id không thuộc pipeline đã chọn' });
       }
-      if (st.pipeline_type !== 'lead') {
+      if (st.pipeline_type !== recordType) {
         await tryAuditLog(req, { status: 400, error: 'stage_wrong_type' });
-        return res.status(400).json({ error: 'stage_id không phải giai đoạn Lead' });
+        return res.status(400).json({ error: `stage_id không phải giai đoạn ${typeLabel}` });
       }
       if (st.is_active === false) {
         await tryAuditLog(req, { status: 400, error: 'stage_inactive' });
@@ -367,16 +374,16 @@ r.post('/leads', apiKeyAuth, async (req, res) => {
         .from('crm_pipeline_stages')
         .select('id, name, order_index')
         .eq('pipeline_id', resolvedPipelineId)
-        .eq('pipeline_type', 'lead')
+        .eq('pipeline_type', recordType)
         .eq('is_active', true)
         .order('order_index', { ascending: true, nullsFirst: false })
         .limit(1)
         .maybeSingle();
       resolvedStageId = firstStage?.id || null;
       if (!resolvedStageId) {
-        await tryAuditLog(req, { status: 400, error: 'pipeline_has_no_lead_stage' });
+        await tryAuditLog(req, { status: 400, error: 'pipeline_has_no_stage' });
         return res.status(400).json({
-          error: 'Pipeline của công ty chưa có giai đoạn Lead nào — vào "CRM → Pipeline" để thêm cột.',
+          error: `Pipeline của công ty chưa có giai đoạn ${typeLabel} nào — vào "CRM → Pipeline" để thêm cột.`,
         });
       }
     }
@@ -401,9 +408,10 @@ r.post('/leads', apiKeyAuth, async (req, res) => {
         await tryAuditLog(req, { status: 400, error: 'lead_type_inactive' });
         return res.status(400).json({ error: 'Loại Lead/Deal đang bị ẩn' });
       }
-      if (lt.applies_to && !['lead', 'both'].includes(String(lt.applies_to))) {
-        await tryAuditLog(req, { status: 400, error: 'lead_type_not_for_lead' });
-        return res.status(400).json({ error: 'Loại này không áp dụng cho Lead' });
+      const allowedApplies = recordType === 'deal' ? ['deal', 'both'] : ['lead', 'both'];
+      if (lt.applies_to && !allowedApplies.includes(String(lt.applies_to))) {
+        await tryAuditLog(req, { status: 400, error: 'lead_type_wrong_entity' });
+        return res.status(400).json({ error: `Loại này không áp dụng cho ${typeLabel}` });
       }
     }
 
@@ -416,7 +424,7 @@ r.post('/leads', apiKeyAuth, async (req, res) => {
       .filter(Boolean)
       .join('\n\n') || null;
 
-    if (await enforceQuotaForRequest(req, res, req.apiKey.company_id, 'leads_per_month')) return;
+    if (await enforceQuotaForRequest(req, res, req.apiKey.company_id, recordType === 'deal' ? 'deals_per_month' : 'leads_per_month')) return;
 
     const leadSelect = `
         id, code, title, type, estimated_value, description, created_at, stage_entered_at,
@@ -436,13 +444,13 @@ r.post('/leads', apiKeyAuth, async (req, res) => {
     let lead = null;
     let insertErr = null;
     for (let attempt = 0; attempt < 8; attempt++) {
-      const code = await nextCrmCode('LEAD');
+      const code = await nextCrmCode(recordType === 'deal' ? 'DEAL' : 'LEAD');
       const { data: row, error } = await supabase
         .from('crm_leads')
         .insert({
           code,
           title: String(title).trim(),
-          type: 'lead',
+          type: recordType,
           customer_id: customerId,
           source_id: sourceId,
           pipeline_id: resolvedPipelineId,
@@ -471,7 +479,7 @@ r.post('/leads', apiKeyAuth, async (req, res) => {
       }
       throw error;
     }
-    if (!lead) throw insertErr || new Error('Không tạo được lead');
+    if (!lead) throw insertErr || new Error(`Không tạo được ${recordType}`);
 
     try {
       const tid = await resolveTenantIdForQuota(req, req.apiKey.company_id);
@@ -494,14 +502,14 @@ r.post('/leads', apiKeyAuth, async (req, res) => {
       await supabase.from('crm_activities').insert({
         lead_id: lead.id,
         type: 'note',
-        title: `Lead được tạo từ API ngoài (key: ${req.apiKey.name})`,
+        title: `${typeLabel} được tạo từ API ngoài (key: ${req.apiKey.name})`,
         activity_date: new Date().toISOString(),
       });
     } catch (_) { /* bảng crm_activities có thể chưa tồn tại — bỏ qua */ }
 
     // Notify người phụ trách
     if (resolvedAssignee) {
-      await notifyAssignee(req, resolvedAssignee, lead, req.apiKey.name);
+      await notifyAssignee(req, resolvedAssignee, lead, req.apiKey.name, recordType);
     }
 
     // ── Payload gọn nhất có thể: chỉ lead / khách hàng / công ty / khu vực
@@ -526,10 +534,10 @@ r.post('/leads', apiKeyAuth, async (req, res) => {
     };
 
     const webhookPayload = {
-      event: 'lead.created',
+      event: recordType === 'deal' ? 'deal.created' : 'lead.created',
       timestamp: new Date().toISOString(),
       key: req.apiKey.name,
-      lead: richLead,
+      lead: { ...richLead, type: recordType },
     };
 
     // Gọi webhook (không đồng bộ — không chờ)
@@ -540,7 +548,7 @@ r.post('/leads', apiKeyAuth, async (req, res) => {
 
     res.status(201).json({
       success: true,
-      lead: richLead,
+      lead: { ...richLead, type: recordType },
       webhook_sent: !!webhookTarget,
     });
   } catch (e) {
@@ -548,6 +556,12 @@ r.post('/leads', apiKeyAuth, async (req, res) => {
     await tryAuditLog(req, { status: 500, error: e.message });
     res.status(500).json({ error: e.message });
   }
+}
+
+r.post('/leads', apiKeyAuth, handleCreateExternal);
+r.post('/deals', apiKeyAuth, (req, res) => {
+  req.body = { ...(req.body && typeof req.body === 'object' ? req.body : {}), type: 'deal' };
+  return handleCreateExternal(req, res);
 });
 
 // ── GET /api/external/stages — danh sách giai đoạn pipeline ─────────────────
