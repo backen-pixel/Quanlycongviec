@@ -225,15 +225,21 @@ async function getCategoryProgressStats(categoryId, userId, userObj) {
     .select('lesson_id, status')
     .eq('user_id', userId)
     .in('lesson_id', lessonIds);
-  const completedSet = new Set((prog || []).filter((p) => p.status === 'completed').map((p) => p.lesson_id));
+  const progByLesson = new Map((prog || []).map((p) => [p.lesson_id, p.status]));
 
   const { data: exs } = await supabase
     .from('knowledge_exercises')
-    .select('id')
+    .select('id, lesson_id')
     .in('lesson_id', lessonIds);
   const exIds = (exs || []).map((e) => e.id);
+  const exByLesson = new Map();
+  (exs || []).forEach((e) => {
+    if (!exByLesson.has(e.lesson_id)) exByLesson.set(e.lesson_id, []);
+    exByLesson.get(e.lesson_id).push(e.id);
+  });
 
   let exerciseStats = { total: exIds.length, passed: 0, avgScore: null, pendingIds: [] };
+  const passedSet = new Set();
   if (exIds.length) {
     const { data: subs } = await supabase
       .from('knowledge_exercise_submissions')
@@ -246,7 +252,6 @@ async function getCategoryProgressStats(categoryId, userId, userObj) {
       const prev = best.get(s.exercise_id);
       if (!prev || (s.score ?? -1) > (prev.score ?? -1)) best.set(s.exercise_id, s);
     });
-    const passedSet = new Set();
     [...best.values()].forEach((s) => { if (s.status === 'passed') passedSet.add(s.exercise_id); });
     exerciseStats.passed = passedSet.size;
     exerciseStats.pendingIds = exIds.filter((id) => !passedSet.has(id));
@@ -256,10 +261,22 @@ async function getCategoryProgressStats(categoryId, userId, userObj) {
     }
   }
 
+  // Bài tính là xong khi: đã completed, hoặc đã mở + đạt hết kiểm tra (kể cả bài không có bài tập).
+  let completedLessons = 0;
+  lessonIds.forEach((lid) => {
+    const ids = exByLesson.get(lid) || [];
+    const status = progByLesson.get(lid);
+    const viewed = status === 'in_progress' || status === 'completed';
+    const allExDone = ids.length === 0 || ids.every((id) => passedSet.has(id));
+    if (status === 'completed' || (allExDone && (ids.length > 0 || viewed))) {
+      completedLessons += 1;
+    }
+  });
+
   return {
     lessons,
     lessonIds,
-    completedLessons: completedSet.size,
+    completedLessons,
     totalLessons: lessons.length,
     exerciseStats,
   };
@@ -312,6 +329,9 @@ async function tryIssueCertificate(userId, categoryId, userObj) {
     .eq('category_id', categoryId)
     .maybeSingle();
   if (existing) return null;
+
+  // Tự đánh dấu hoàn thành các bài đã mở / đã đạt hết kiểm tra, rồi mới xét cấp chứng chỉ.
+  await autoCompleteEligibleLessons(userId, categoryId, userObj);
 
   const evalResult = await evaluateCertificateEligibility(userId, categoryId, userObj);
   if (!evalResult.eligible) return null;
@@ -553,6 +573,45 @@ async function areAllLessonExercisesPassed(lessonId, userId) {
   if (!ids.length) return true;
   const { passedSet } = await getExercisePassMapForUser(userId, ids);
   return ids.every((id) => passedSet.has(id));
+}
+
+/** Đánh dấu completed các bài đã học / đã đạt hết kiểm tra (chưa mở thì bỏ qua). */
+async function autoCompleteEligibleLessons(userId, categoryId, userObj) {
+  const lessons = await getCategoryLessonsForUser(categoryId, userObj);
+  if (!lessons.length) return;
+  const lessonIds = lessons.map((l) => l.id);
+
+  const { data: exs } = await supabase
+    .from('knowledge_exercises')
+    .select('id, lesson_id')
+    .in('lesson_id', lessonIds);
+  const exByLesson = new Map();
+  (exs || []).forEach((e) => {
+    if (!exByLesson.has(e.lesson_id)) exByLesson.set(e.lesson_id, []);
+    exByLesson.get(e.lesson_id).push(e.id);
+  });
+  const { passedSet } = await getExercisePassMapForUser(userId, (exs || []).map((e) => e.id));
+
+  const { data: prog } = await supabase
+    .from('knowledge_lesson_progress')
+    .select('lesson_id, status')
+    .eq('user_id', userId)
+    .in('lesson_id', lessonIds);
+  const progBy = new Map((prog || []).map((p) => [p.lesson_id, p.status]));
+
+  for (const lesson of lessons) {
+    if (progBy.get(lesson.id) === 'completed') continue;
+    const ids = exByLesson.get(lesson.id) || [];
+    const allExDone = ids.length === 0 || ids.every((id) => passedSet.has(id));
+    if (!allExDone) continue;
+    const viewed = !!progBy.get(lesson.id) || ids.length > 0;
+    if (!viewed) continue;
+    try {
+      await markLessonCompleted(userId, lesson.id);
+    } catch (e) {
+      console.error('auto-complete lesson for certificate', lesson.id, e);
+    }
+  }
 }
 
 async function markLessonCompleted(userId, lessonId) {
