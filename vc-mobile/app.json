@@ -2,7 +2,7 @@
   "expo": {
     "name": "Lắp đặt",
     "slug": "vc-mobile",
-    "version": "1.1.83",
+    "version": "1.1.84",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
@@ -22,7 +22,7 @@
     },
     "android": {
       "package": "vn.tubeppro.vcmobile",
-      "versionCode": 103,
+      "versionCode": 104,
       "usesCleartextTraffic": true,
       "edgeToEdgeEnabled": false,
       "softwareKeyboardLayoutMode": "resize",

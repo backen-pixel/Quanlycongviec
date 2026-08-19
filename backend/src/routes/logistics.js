@@ -93,6 +93,30 @@ function buildLogisticsScopeFilter(stageIds) {
   return parts.join(',');
 }
 
+/**
+ * Ghost board VC: còn vc_kanban_column_id (cột global/cũ) nhưng vẫn đang SX,
+ * chưa bàn giao (không logistics_company_id) và không cột tạm.
+ * Ví dụ TB-2026-339 — status producing + cột «Đang giao» global → hiện sai trên mobile «Tất cả công ty».
+ */
+function isSxOnlyVcGhost(project) {
+  if (!project) return false;
+  if (project.logistics_company_id) return false;
+  if (project.vc_temp_staged) return false;
+  const status = String(project.status || '');
+  const slug = String(project.current_stage?.slug || '');
+  if (LOGISTICS_STATUSES.includes(status)) return false;
+  if (LOGISTICS_STAGE_SLUGS.includes(slug)) return false;
+  if (slug === 'acceptance' || slug === 'completed') return false;
+  if (status === 'producing' || slug === 'production' || slug === 'producing') return true;
+  const stageName = String(project.current_stage?.name || '');
+  if (/sản\s*xuất|^sx$/i.test(stageName)) return true;
+  return false;
+}
+
+function filterOutSxOnlyVcGhosts(projects) {
+  return (projects || []).filter((p) => !isSxOnlyVcGhost(p));
+}
+
 /** Áp cờ vc_deleted_at IS NULL — graceful nếu cột chưa tồn tại (migration 242 chưa chạy). */
 function applyVcNotDeletedFilter(query) {
   try { return query.is('vc_deleted_at', null); } catch { return query; }
@@ -715,7 +739,7 @@ r.get('/dashboard', requirePermission('projects', 'view'), async (req, res) => {
     const projects = projectsRaw || [];
 
     const enrichedVc = await enrichProjectsForLogistics(projects, company_id);
-    const enhanced = withLogisticsTaskStats(enrichedVc, sortedKanban);
+    const enhanced = filterOutSxOnlyVcGhosts(withLogisticsTaskStats(enrichedVc, sortedKanban));
 
     const overdueCount = enhanced.filter((p) =>
       p.deadline && new Date(p.deadline) < new Date() && p.status !== 'completed'
@@ -886,7 +910,9 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
 
     if (error && projects.length === 0) throw error;
 
-    const enrichedVc = await enrichProjectsForLogistics(projects, company_id, { lite: mobileLite });
+    const enrichedVc = filterOutSxOnlyVcGhosts(
+      await enrichProjectsForLogistics(projects, company_id, { lite: mobileLite }),
+    );
     let enhanced;
     if (mobileLite) {
       const taskMap = await loadLogisticsTasksByProjectIds(enrichedVc.map((p) => p.id));
@@ -895,12 +921,15 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
       enhanced = withLogisticsTaskStats(enrichedVc, sortedKanban);
     }
 
-    const total = count != null ? count : enhanced.length;
+    // count API gồm ghost SX — trừ phần đã lọc để totalPages không phình.
+    const ghostDropped = (projects || []).length - enrichedVc.length;
+    const totalRaw = count != null ? count : enhanced.length + Math.max(0, ghostDropped);
+    const total = Math.max(0, totalRaw - Math.max(0, ghostDropped));
     res.json({
       projects: enhanced,
       total,
       page: parsedPage,
-      totalPages: Math.max(1, Math.ceil(total / parsedLimit)),
+      totalPages: Math.max(1, Math.ceil((total || enhanced.length) / parsedLimit)),
     });
   } catch (e) {
     console.error(e);

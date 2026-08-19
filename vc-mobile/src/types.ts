@@ -64,6 +64,9 @@ export type ProductionProject = {
   installer_person_name?: string | null;
   company_name?: string | null;
   company_id?: string | null;
+  /** Công ty lắp đặt đã bàn giao — null = chưa VC thật (có thể ghost cột cũ). */
+  logistics_company_id?: string | null;
+  vc_temp_staged?: boolean;
   workshop_type_name?: string | null;
   region_id?: string | null;
   region_name?: string | null;

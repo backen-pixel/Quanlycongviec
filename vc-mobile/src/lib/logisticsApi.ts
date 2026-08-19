@@ -89,6 +89,8 @@ export function mapProjectRow(raw: Record<string, unknown>): ProductionProject {
     sales_person_name: salesPerson.full_name ?? null,
     company_name: company.short_name || company.name || null,
     company_id: (raw.logistics_company_id as string) ?? (raw.company_id as string) ?? company.id ?? null,
+    logistics_company_id: (raw.logistics_company_id as string) ?? null,
+    vc_temp_staged: Boolean(raw.vc_temp_staged),
     workshop_type_name: workshopType.name ?? null,
     region_id: (dealWithRegion?.region_id as string) ?? crmRegion.id ?? null,
     region_name: crmRegion.name ?? null,
@@ -211,6 +213,19 @@ export function resolveColumnId(
   }
 
   return matchedCol?.id || null;
+}
+
+/** Ghost: còn cột VC cũ nhưng vẫn đang SX, chưa bàn giao — không hiện board. */
+export function isSxOnlyVcGhost(project: ProductionProject): boolean {
+  if (project.logistics_company_id) return false;
+  if (project.vc_temp_staged) return false;
+  const status = String(project.status || '');
+  const slug = String(project.stage_slug || '');
+  if (LOGISTICS_STATUSES.has(status)) return false;
+  if (LOGISTICS_STAGE_SLUGS.has(slug) || slug === 'acceptance' || slug === 'completed') return false;
+  if (status === 'producing' || slug === 'production' || slug === 'producing') return true;
+  if (isProductionStageLabel(slug) || isProductionStageLabel(project.stage_name)) return true;
+  return false;
 }
 
 /** Gắn resolved_column_id theo stages đang hiện (dùng khi patch realtime / tải board). */
@@ -350,7 +365,9 @@ function resolveBoardProjects(
   projects: ProductionProject[],
   stages: ReturnType<typeof mapStageRow>[],
 ): ProductionProject[] {
-  return projects.map((p) => bindProjectToDisplayStages(p, stages));
+  return projects
+    .filter((p) => !isSxOnlyVcGhost(p))
+    .map((p) => bindProjectToDisplayStages(p, stages));
 }
 
 async function fetchLogisticsBoardUncapped(
