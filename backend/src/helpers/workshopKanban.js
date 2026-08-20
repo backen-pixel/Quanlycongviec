@@ -560,6 +560,15 @@ function shouldForceSxHandoverColumn(project, projectColRow) {
   return false;
 }
 
+/** Cột đã lưu nằm tại/sau cột bàn giao VC — không kéo thẻ về «Chuẩn bị xong». */
+function sxStoredColumnAtOrAfterHandover(projectColRow, sortedStages) {
+  if (!projectColRow) return false;
+  const handoverCols = (sortedStages || []).filter((s) => s.is_handover_to_logistics === true);
+  if (!handoverCols.length) return false;
+  const minOrder = Math.min(...handoverCols.map((s) => Number(s.order_index) || 0));
+  return (Number(projectColRow.order_index) || 0) >= minOrder;
+}
+
 /**
  * Resolver dùng chung để xác định cột SX hiển thị cho Dashboard/Detail.
  * Ưu tiên: vc handover (khi đã sang VC) -> sx_kanban_column_id -> lead sx_pipeline_stage_id.
@@ -585,6 +594,8 @@ function resolveSxDisplayColumnId(project, sortedStages, opts = {}) {
     // Kéo thẻ vào cột «Vận chuyển»/«CSKH» khiến status tự thành shipping/warranty. Đó không phải
     // bằng chứng đã bàn giao VC nên phải giữ cột vừa kéo, không ép về cột «Bàn giao VC».
     if (projectColRow && sxStatusComesFromColumn(project, projectColRow)) return projectColRow.id;
+    // Đã kéo sang ĐÃ GIAO / công nợ… — giữ cột lưu. Chỉ ép về bàn giao khi thẻ còn đứng trước cột →VC.
+    if (sxStoredColumnAtOrAfterHandover(projectColRow, sorted)) return projectColRow.id;
     let preferred = null;
     const leadColRow = sorted.find((s) => String(s.id) === String(leadColId || ''));
     if (leadColRow?.is_handover_to_logistics) preferred = leadColId;

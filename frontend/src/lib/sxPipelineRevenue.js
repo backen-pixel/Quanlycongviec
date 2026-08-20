@@ -433,6 +433,15 @@ export function isSxColumnSlaOverdue(project, stage) {
   return tone?.level === 'overdue';
 }
 
+/** Cột đã lưu nằm tại/sau cột bàn giao VC — không kéo thẻ về «Chuẩn bị xong». */
+function sxStoredColumnAtOrAfterHandover(projectColRow, sortedStages) {
+  if (!projectColRow) return false;
+  const handoverCols = (sortedStages || []).filter((s) => s.is_handover_to_logistics === true);
+  if (!handoverCols.length) return false;
+  const minOrder = Math.min(...handoverCols.map((s) => Number(s.order_index) || 0));
+  return (Number(projectColRow.order_index) || 0) >= minOrder;
+}
+
 /** Chọn cột «Bàn giao VC» theo phân loại — khớp logic BE workshopKanban. */
 export function resolveSxHandoverColumnId(stages, project, preferredColId = null) {
   const sorted = Array.isArray(stages) ? stages : [];
@@ -508,6 +517,8 @@ export function resolveSxDisplayColumnId(project, stages, opts = {}) {
 
   if (shouldForceSxHandoverColumn(project, projectColRow)) {
     if (projectColRow && sxStatusComesFromColumn(project, projectColRow)) return projectColRow.id;
+    // Đã kéo sang ĐÃ GIAO / công nợ… — giữ cột lưu. Chỉ ép về bàn giao khi thẻ còn đứng trước cột →VC.
+    if (sxStoredColumnAtOrAfterHandover(projectColRow, sorted)) return projectColRow.id;
     let preferred = null;
     const leadColRow = sorted.find((s) => String(s.id) === String(leadColId || ''));
     if (leadColRow?.is_handover_to_logistics) preferred = leadColId;
