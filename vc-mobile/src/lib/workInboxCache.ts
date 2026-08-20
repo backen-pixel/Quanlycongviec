@@ -21,6 +21,8 @@ export const WORK_INBOX_FRESH_MS = 60_000;
 
 /** Limit chung Overview + Work (trước đây Overview 80 / Work 200). */
 export const WORK_INBOX_FETCH_LIMIT = 200;
+/** Tổng quan chỉ preview vài deal — fetch nhẹ hơn Work tab. */
+export const OVERVIEW_INBOX_FETCH_LIMIT = 60;
 
 export function workInboxCacheKey(opts: {
   companyId?: string | null;

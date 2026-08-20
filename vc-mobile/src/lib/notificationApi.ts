@@ -353,8 +353,9 @@ function localNotifId(projectId: string, lastAt: string): string {
 
 async function enrichWithLatestComments(
   items: SxCommentNotification[],
+  enrichLimit = 20,
 ): Promise<SxCommentNotification[]> {
-  const need = items.filter((i) => !i.metadata?.comment_preview).slice(0, 20);
+  const need = items.filter((i) => !i.metadata?.comment_preview).slice(0, enrichLimit);
   if (!need.length) return items.map(enrichNotificationPreview);
 
   await Promise.all(
@@ -429,17 +430,32 @@ async function buildLocalCommentNotifications(
   return { notifications: enriched, unread_count: unreadCount };
 }
 
+export type FetchCommentNotificationsOptions = {
+  /** Giới hạn N+1 fetch comment preview — Tổng quan dùng 5. */
+  enrichLimit?: number;
+  /** Số thông báo server trả về (Tổng quan chỉ cần preview). */
+  limit?: number;
+};
+
 export async function fetchCommentNotifications(
   unreadOnly = false,
+  opts?: FetchCommentNotificationsOptions,
 ): Promise<{ notifications: SxCommentNotification[]; unread_count: number }> {
+  const enrichLimit = opts?.enrichLimit ?? 20;
   try {
+    const params: Record<string, string> = {};
+    if (unreadOnly) params.unread = 'true';
+    if (opts?.limit && opts.limit > 0) params.limit = String(opts.limit);
     const { data } = await api.get<{ notifications?: unknown[]; unread_count?: number }>(
       '/logistics/notifications/comments',
-      { params: unreadOnly ? { unread: 'true' } : {} },
+      { params },
     );
     const list = Array.isArray(data?.notifications) ? data.notifications : [];
     const notifications = await filterDismissedNotifications(
-      await enrichWithLatestComments(list.map((row) => mapRow(row as Record<string, unknown>))),
+      await enrichWithLatestComments(
+        list.map((row) => mapRow(row as Record<string, unknown>)),
+        enrichLimit,
+      ),
     );
     return {
       notifications,

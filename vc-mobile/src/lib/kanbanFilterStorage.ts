@@ -30,6 +30,10 @@ export function getSharedFiltersSync(): KanbanFilterSnapshot {
   return memorySnap ? { ...memorySnap } : {};
 }
 
+export function areSharedFiltersHydrated(): boolean {
+  return memoryHydrated;
+}
+
 export function subscribeSharedFilters(
   listener: (snap: KanbanFilterSnapshot) => void,
 ): () => void {
@@ -115,7 +119,7 @@ export async function saveKanbanFilters(
       const next: KanbanFilterSnapshot = { ...prev };
       (Object.keys(partial) as Array<keyof KanbanFilterSnapshot>).forEach((k) => {
         const v = partial[k];
-        if (v !== undefined) next[k] = v;
+        if (v !== undefined) (next as Record<string, unknown>)[k] = v;
       });
       memorySnap = { ...next };
       memoryHydrated = true;

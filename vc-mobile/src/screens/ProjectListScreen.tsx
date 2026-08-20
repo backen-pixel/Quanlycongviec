@@ -1,17 +1,21 @@
 import SpinningLoader from '../components/SpinningLoader';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { FlatList, RefreshControl, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatApiError } from '../api/client';
 import TapHighlight from '../components/TapHighlight';
 import { useTheme } from '../context/ThemeContext';
-import { fetchProductionBoard } from '../lib/logisticsApi';
-import { getCachedBoard, isCachedBoardFresh, setCachedBoard } from '../lib/logisticsBoardCache';
+import type { BoardFilters } from '../lib/logisticsApi';
+import { invalidateVcBoard, refreshVcBoard, useVcBoard } from '../queries/vcQueries';
 import { useProductionRealtime } from '../hooks/useProductionRealtime';
 import { useRootNavigation } from '../navigation/useRootNavigation';
 import { Radii, Spacing, getTaskProgressColor, stageColor } from '../theme';
 import type { ProductionBoard } from '../types';
+
+/** Không lọc — dùng chung entry cache board với các màn khác. */
+const EMPTY_FILTERS: BoardFilters = {};
+const EMPTY_BOARD: ProductionBoard = { stages: [], projects: [], kpis: null };
 
 function formatDate(value?: string | null): string {
   if (!value) return '';
@@ -26,10 +30,8 @@ export default function ProjectListScreen() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const { openProjectDetail } = useRootNavigation();
-  const [board, setBoard] = useState<ProductionBoard>({ stages: [], projects: [], kpis: null });
-  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
 
   const styles = useMemo(
@@ -84,34 +86,28 @@ export default function ProjectListScreen() {
     [colors],
   );
 
-  const load = useCallback(async (mode: 'init' | 'refresh' | 'silent' = 'init') => {
-    const cached = getCachedBoard();
-    if (mode !== 'refresh' && cached) {
-      setBoard(cached);
-      if (mode === 'init') setLoading(false);
-    }
-    if (mode === 'silent' && isCachedBoardFresh() && cached) return;
-    if (mode === 'init' && !cached) setLoading(true);
-    else if (mode === 'refresh') setRefreshing(true);
-    if (mode !== 'silent') setError(null);
+  const boardQuery = useVcBoard(EMPTY_FILTERS);
+  const board = boardQuery.data ?? EMPTY_BOARD;
+  const loading = boardQuery.isLoading;
+  const error = refreshError || (boardQuery.error ? formatApiError(boardQuery.error) : null);
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    setRefreshError(null);
     try {
-      const next = await fetchProductionBoard(mode === 'refresh');
-      setCachedBoard({}, next);
-      setBoard(next);
+      await refreshVcBoard(EMPTY_FILTERS);
     } catch (e) {
-      if (mode !== 'silent') setError(formatApiError(e));
+      setRefreshError(formatApiError(e));
     } finally {
-      setLoading(false);
       setRefreshing(false);
     }
   }, []);
 
-  useEffect(() => {
-    void load('init');
-  }, [load]);
-
   useProductionRealtime({
-    onRefresh: () => load('silent'),
+    onRefresh: (info) => {
+      if (info?.patched) return;
+      invalidateVcBoard();
+    },
   });
 
   const stageNameById = useMemo(() => {
@@ -165,7 +161,7 @@ export default function ProjectListScreen() {
         keyExtractor={(item) => item.id}
         contentContainerStyle={{ padding: Spacing.md, paddingBottom: 24 }}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={() => load('refresh')} tintColor={colors.primary} />
+          <RefreshControl refreshing={refreshing} onRefresh={() => void onRefresh()} tintColor={colors.primary} />
         }
         ListEmptyComponent={<Text style={styles.empty}>Không có dự án phù hợp</Text>}
         renderItem={({ item }) => {

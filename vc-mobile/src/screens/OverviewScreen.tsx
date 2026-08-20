@@ -1,12 +1,12 @@
 import SpinningLoader from '../components/SpinningLoader';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { useFocusEffect, useIsFocused, useNavigation } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { fetchEventsRange, type AppEvent } from '../api/events';
+import type { AppEvent } from '../api/events';
 import { formatApiError } from '../api/client';
 import Avatar from '../components/Avatar';
 import CommentNotificationsModal from '../components/CommentNotificationsModal';
@@ -22,7 +22,6 @@ import type { MainTabParamList } from '../navigation/MainTabs';
 import type { RootStackParamList } from '../navigation/RootNavigator';
 import { useRootNavigation } from '../navigation/useRootNavigation';
 import {
-  fetchCommentNotifications,
   isWorkshopDealNotification,
   isVcRelevantNotification,
   notificationCategoryLabel,
@@ -36,13 +35,20 @@ import {
 } from '../lib/notificationApi';
 import { ensureNotificationPermission } from '../lib/pushRegistration';
 import {
-  fetchCompanies,
-  fetchProductionBoard,
   fetchProductionProject,
+  type BoardFilters,
   type CompanyOption,
 } from '../lib/logisticsApi';
-import { getCachedBoard, isCachedBoardFresh, setCachedBoard } from '../lib/logisticsBoardCache';
-import { boardFiltersFromSharedSnap, loadKanbanFilters, saveKanbanFilters, subscribeSharedFilters } from '../lib/kanbanFilterStorage';
+import { boardFiltersFromSharedSnap, areSharedFiltersHydrated, getSharedFiltersSync, loadKanbanFilters, saveKanbanFilters, subscribeSharedFilters, type KanbanFilterSnapshot } from '../lib/kanbanFilterStorage';
+import { queryClient } from '../queries/queryClient';
+import { vcKeys } from '../queries/keys';
+import {
+  useVcCompanies,
+  useVcDayEvents,
+  useVcNotifications,
+  useVcOverviewKpis,
+  useVcWorkInbox,
+} from '../queries/vcQueries';
 import { REALTIME_BOARD_TASK_EVENT } from '../lib/realtimeModes';
 import {
   isSystemAdmin,
@@ -50,7 +56,6 @@ import {
   workshopCompaniesForCrossViewer,
 } from '../lib/productionFilters';
 import {
-  computeVcBoardKpis,
   formatVnWeekdayDate,
   type VcBoardKpis,
   type VcKpiFocusKey,
@@ -58,7 +63,6 @@ import {
 import {
   assignmentDealCardLabel,
   canViewTeamWork,
-  fetchLogisticsWorkTasks,
   formatTaskDeadline,
   isTaskDone,
   isTaskInProgress,
@@ -70,25 +74,17 @@ import {
 } from '../lib/workTasksApi';
 import {
   assignmentDealLabel,
-  fetchLogisticsAssignments,
-  fetchPrivateDealInbox,
   type CrmAssignment,
-  type SharedInboxGroup,
   type SharedInboxTask,
 } from '../lib/sharedWorkspaceApi';
-import {
-  WORK_INBOX_FETCH_LIMIT,
-  getCachedWorkInbox,
-  invalidateWorkInboxCache,
-  isCachedWorkInboxFresh,
-  setCachedWorkInbox,
-  workInboxCacheKey,
-} from '../lib/workInboxCache';
+import { OVERVIEW_INBOX_FETCH_LIMIT } from '../lib/workInboxCache';
 import { filterVcAreaTabTasks, filterVcLogisticsUiTasks } from '../lib/projectDetailApi';
 import type { ProductionProject } from '../types';
 import { Radii, Spacing, colorWithAlpha, type AppColors } from '../theme';
 
 const PREVIEW_NOTIFS = 5;
+/** Server chỉ cần trả đủ để lọc ra 5 thông báo VC — không kéo cả danh sách. */
+const NOTIF_FETCH_LIMIT = 30;
 const KPI_CARD_W = 132;
 const KPI_CARD_GAP = 10;
 /** Số deal / trang trong «Nhiệm vụ cần làm». */
@@ -274,22 +270,6 @@ function groupTodosByDeal(todos: OverviewTodo[]): OverviewTodoDealGroup[] {
   return groups;
 }
 
-function flattenSharedInboxTasks(inbox: {
-  tasks?: SharedInboxTask[];
-  groups?: { tasks?: SharedInboxTask[] }[];
-}): SharedInboxTask[] {
-  const fromTasks = Array.isArray(inbox.tasks) ? inbox.tasks : [];
-  const fromGroups = (inbox.groups || []).flatMap((g) => g.tasks || []);
-  const merged = [...fromTasks, ...fromGroups];
-  const seen = new Set<string>();
-  return merged.filter((t) => {
-    const id = String(t.id || '');
-    if (!id || seen.has(id)) return false;
-    seen.add(id);
-    return true;
-  });
-}
-
 function buildOverviewTodos(opts: {
   workTasks: WorkTask[];
   assignments: CrmAssignment[];
@@ -353,6 +333,18 @@ const EMPTY_KPI: VcBoardKpis = {
   overdue: 0,
 };
 
+type OverviewSectionLoad = {
+  board: boolean;
+  todos: boolean;
+  events: boolean;
+  notifs: boolean;
+};
+
+// Identity ổn định — tránh effect/memo chạy lại mỗi render khi query chưa có data.
+const EMPTY_EVENTS: AppEvent[] = [];
+const EMPTY_TODOS: OverviewTodo[] = [];
+const EMPTY_COMPANIES: CompanyOption[] = [];
+
 type KpiTone = 'slate' | 'orange' | 'teal' | 'amber' | 'sky' | 'violet' | 'green' | 'red';
 
 type QuickAction = {
@@ -408,33 +400,27 @@ export default function OverviewScreen() {
   const dateLabel = formatVnWeekdayDate();
   const wishLine = 'Chúc bạn một ngày vận chuyển & lắp đặt suôn sẻ!';
 
-  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [kpis, setKpis] = useState<VcBoardKpis>(EMPTY_KPI);
-  const [todos, setTodos] = useState<OverviewTodo[]>([]);
-  const [events, setEvents] = useState<AppEvent[]>([]);
   const [todoPage, setTodoPage] = useState(0);
   /** Deal mở rộng trong «Nhiệm vụ cần làm» — mặc định thu gọn. */
   const [expandedDealKeys, setExpandedDealKeys] = useState<Record<string, boolean>>({});
-  const [notifs, setNotifs] = useState<SxCommentNotification[]>([]);
-  const [companies, setCompanies] = useState<CompanyOption[]>([]);
-  const [filterCompany, setFilterCompany] = useState('');
   const [companyPickerOpen, setCompanyPickerOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [commentProject, setCommentProject] = useState<ProductionProject | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const boardFiltersRef = useRef<{ companyId?: string; workshopTypeId?: string }>({});
-  const loadSeqRef = useRef(0);
-  const companiesRef = useRef<CompanyOption[]>([]);
-  companiesRef.current = companies;
-  const isFocused = useIsFocused();
-  const isFocusedRef = useRef(isFocused);
-  isFocusedRef.current = isFocused;
-  /** Filter đổi lúc Tổng quan không focus → reload khi quay lại. */
-  const pendingFilterReloadRef = useRef(false);
+
+  /** Snapshot bộ lọc dùng chung (Kanban/Planner/Overdue cùng nguồn). */
+  const [filterSnap, setFilterSnap] = useState<KanbanFilterSnapshot>(() => getSharedFiltersSync());
+  const [snapHydrated, setSnapHydrated] = useState(() => areSharedFiltersHydrated());
+  const [filterCompany, setFilterCompany] = useState(
+    () => String(getSharedFiltersSync().filterCompany || ''),
+  );
+  const boardFiltersRef = useRef<BoardFilters>({});
 
   const isAdminLike = isSystemAdmin(user) || isCompanyScopedAdmin(user);
   const canPickCompany = isSystemAdmin(user);
+
+  const companiesQuery = useVcCompanies();
+  const companies = companiesQuery.data ?? EMPTY_COMPANIES;
 
   const companyOptions = useMemo(() => {
     if (isSystemAdmin(user)) {
@@ -479,270 +465,173 @@ export default function OverviewScreen() {
     });
   }, []);
 
-  const load = useCallback(async (
-    mode: 'init' | 'refresh' | 'silent' = 'init',
-    scopes: Array<'all' | 'board' | 'todos' | 'events' | 'notifs'> = ['all'],
-  ) => {
-    const seq = ++loadSeqRef.current;
-    const wantAll = scopes.includes('all');
-    const wantBoard = wantAll || scopes.includes('board');
-    const wantTodos = wantAll || scopes.includes('todos');
-    const wantEvents = wantAll || scopes.includes('events');
-    const wantNotifs = wantAll || scopes.includes('notifs');
+  // ─── Query layer ───────────────────────────────────────────────────────────
+  // Mỗi vùng dữ liệu là một query độc lập: hiện ngay khi có, không chờ cái chậm nhất.
 
-    if (mode === 'init') setLoading(true);
-    if (mode === 'refresh') setRefreshing(true);
-    setError(null);
-    try {
-      const snap = await loadKanbanFilters().catch(() => null);
-      let companyId = snap?.filterCompany || '';
+  /** Hydrate bộ lọc dùng chung (chỉ lần đầu, sau đó đọc RAM). */
+  useEffect(() => {
+    if (snapHydrated) return;
+    let cancelled = false;
+    void loadKanbanFilters()
+      .catch(() => null)
+      .then((snap) => {
+        if (cancelled) return;
+        setFilterSnap(snap || {});
+        setSnapHydrated(true);
+      });
+    return () => { cancelled = true; };
+  }, [snapHydrated]);
 
-      let companyList = companiesRef.current;
-      if ((mode !== 'silent' || !companyList.length) && (wantAll || wantBoard || wantTodos)) {
-        companyList = await fetchCompanies().catch(() => [] as CompanyOption[]);
-        if (seq !== loadSeqRef.current) return;
-        setCompanies(companyList);
-      }
+  /** Kanban/Planner đổi filter → Tổng quan đổi query key, cache lo phần còn lại. */
+  useEffect(() => subscribeSharedFilters((snap) => setFilterSnap(snap)), []);
 
-      if (!canPickCompany) {
-        const ownId = user?.company_id ? String(user.company_id) : '';
-        if (ownId) companyId = ownId;
-        else if (!companyId && companyList[0]?.id) companyId = String(companyList[0].id);
-        if (companyId && companyId !== (snap?.filterCompany || '')) {
-          await persistCompanyFilter(companyId);
-        }
-      } else if (companyId) {
-        // Sysadmin: '' = Tất cả công ty; chỉ clear nếu id đã chọn không còn trong list.
-        const exists = companyList.some((c) => String(c.id) === String(companyId));
-        if (!exists) {
-          companyId = '';
-          if ((snap?.filterCompany || '') !== '') await persistCompanyFilter('');
-        }
-      }
-
-      if (seq !== loadSeqRef.current) return;
-      setFilterCompany(companyId);
-
-      const boardFilters = boardFiltersFromSharedSnap(snap, { companyIdOverride: companyId });
-      boardFiltersRef.current = boardFilters;
-
-      const skipBoard = mode === 'silent' && isCachedBoardFresh(boardFilters) && !!getCachedBoard(boardFilters);
-      const cachedBoard = getCachedBoard(boardFilters);
-
-      if (wantBoard && cachedBoard && mode !== 'refresh') {
-        setKpis(computeVcBoardKpis(cachedBoard.projects, cachedBoard.stages));
-        if (mode === 'init') setLoading(false);
-      }
-
-      const today = ymd(new Date());
-      const companyParam = companyId || undefined;
-      // Khớp Công việc: admin/team xem toàn bộ NV trong phạm vi công ty; NV thường = việc của mình.
-      const teamScope = canViewTeamWork(user);
-      const assigneeParam = teamScope ? undefined : (userId || undefined);
-      const workKey = workInboxCacheKey({ companyId: companyParam, assigneeId: assigneeParam });
-      const cachedWork = getCachedWorkInbox(workKey);
-      if (mode === 'refresh' && wantTodos) invalidateWorkInboxCache(workKey);
-      const skipWorkFetch = mode !== 'refresh'
-        && isCachedWorkInboxFresh(workKey)
-        && !!getCachedWorkInbox(workKey);
-
-      const tasksPromise = !wantTodos || !userId
-        ? Promise.resolve([] as WorkTask[])
-        : skipWorkFetch
-          ? Promise.resolve(getCachedWorkInbox(workKey)!.workTasks)
-          : fetchLogisticsWorkTasks({
-            assigneeId: assigneeParam || null,
-            companyId: companyParam,
-            limit: WORK_INBOX_FETCH_LIMIT,
-          }).catch(() => [] as WorkTask[]);
-      const assignmentsPromise = !wantTodos || !userId
-        ? Promise.resolve([] as CrmAssignment[])
-        : skipWorkFetch
-          ? Promise.resolve(getCachedWorkInbox(workKey)!.assignments)
-          : fetchLogisticsAssignments({
-            companyId: companyParam,
-            assigneeId: assigneeParam,
-            limit: WORK_INBOX_FETCH_LIMIT,
-          }).catch(() => [] as CrmAssignment[]);
-      const sharedPromise = !wantTodos || !userId
-        ? Promise.resolve({ tasks: [] as SharedInboxTask[], groups: [] as SharedInboxGroup[] })
-        : skipWorkFetch
-          ? Promise.resolve({
-            tasks: getCachedWorkInbox(workKey)!.sharedTasks,
-            groups: getCachedWorkInbox(workKey)!.sharedGroups,
-          })
-          : fetchPrivateDealInbox('logistics').catch(() => ({
-            tasks: [] as SharedInboxTask[],
-            groups: [] as SharedInboxGroup[],
-          }));
-      const eventsPromise = !wantEvents
-        ? Promise.resolve([] as AppEvent[])
-        : fetchEventsRange({
-          dateFrom: today,
-          dateTo: today,
-          companyId: companyParam,
-          module: 'logistics',
-          userId: userId || undefined,
-        }).catch(() => [] as AppEvent[]);
-
-      // Soft-fail board: NV thiếu projects:view không làm đỏ cả Tổng quan (tasks/events vẫn hiện).
-      const boardPromise = !wantBoard || skipBoard
-        ? Promise.resolve(wantBoard ? (cachedBoard || null) : null)
-        : fetchProductionBoard(mode === 'refresh', boardFilters).catch(() => null);
-
-      const notifsPromise = !wantNotifs
-        ? Promise.resolve({ notifications: [] as SxCommentNotification[], unread_count: 0 })
-        : fetchCommentNotifications(false).catch(() => ({
-          notifications: [] as SxCommentNotification[],
-          unread_count: 0,
-        }));
-
-      const [board, workTasks, assignments, sharedInbox, todayEvents, notifList] = await Promise.all([
-        boardPromise,
-        tasksPromise,
-        assignmentsPromise,
-        sharedPromise,
-        eventsPromise,
-        notifsPromise,
-      ]);
-
-      if (seq !== loadSeqRef.current) return;
-      if (wantBoard) {
-        if (board) {
-          if (!skipBoard) setCachedBoard(boardFilters, board);
-          setKpis(computeVcBoardKpis(board.projects, board.stages));
-        } else if (!cachedBoard) {
-          setKpis(EMPTY_KPI);
-        }
-      }
-      if (wantTodos) {
-        const flatShared = flattenSharedInboxTasks(sharedInbox);
-        if (!skipWorkFetch && userId) {
-          setCachedWorkInbox(workKey, {
-            assignments,
-            sharedGroups: (Array.isArray(sharedInbox.groups)
-              ? sharedInbox.groups
-              : []) as SharedInboxGroup[],
-            sharedTasks: flatShared,
-            workTasks,
-          });
-        }
-        setTodos(buildOverviewTodos({
-          workTasks,
-          assignments,
-          sharedTasks: flatShared,
-          companyId,
-        }));
-        setTodoPage(0);
-      }
-      if (wantEvents) setEvents(todayEvents);
-      if (wantNotifs) {
-        setNotifs(
-          (notifList.notifications || [])
-            .filter(isVcRelevantNotification)
-            .slice()
-            .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))
-            .slice(0, PREVIEW_NOTIFS),
-        );
-      }
-    } catch (e) {
-      if (seq !== loadSeqRef.current) return;
-      if (mode !== 'silent') setError(formatApiError(e));
-    } finally {
-      if (seq === loadSeqRef.current) {
-        setLoading(false);
-        setRefreshing(false);
-      }
+  /** Chốt công ty đang xem — user thường bị khoá theo công ty của mình. */
+  useEffect(() => {
+    if (!snapHydrated) return;
+    const snapCompany = String(filterSnap.filterCompany || '');
+    if (!canPickCompany) {
+      const ownId = user?.company_id ? String(user.company_id) : '';
+      const next = ownId || snapCompany || String(companies[0]?.id || '');
+      if (!next) return;
+      if (next !== filterCompany) setFilterCompany(next);
+      if (next !== snapCompany) void persistCompanyFilter(next);
+      return;
     }
-  }, [userId, user, user?.company_id, canPickCompany, persistCompanyFilter]);
+    // Admin hệ thống: '' = tất cả công ty; id không còn tồn tại → bỏ lọc.
+    if (snapCompany && companies.length && !companies.some((c) => String(c.id) === snapCompany)) {
+      setFilterCompany('');
+      void persistCompanyFilter('');
+      return;
+    }
+    if (snapCompany !== filterCompany) setFilterCompany(snapCompany);
+  }, [
+    snapHydrated,
+    filterSnap,
+    companies,
+    canPickCompany,
+    user?.company_id,
+    filterCompany,
+    persistCompanyFilter,
+  ]);
 
-  useEffect(() => {
-    void loadKanbanFilters().then((snap) => {
-      const filters = boardFiltersFromSharedSnap(snap);
-      void load(getCachedBoard(filters) ? 'silent' : 'init');
-    });
-  }, [load]);
-
-  // Đồng bộ khi Kanban/Planner đổi filter — chỉ full reload khi Tổng quan đang focus.
-  useEffect(() => {
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const unsub = subscribeSharedFilters((snap) => {
-      const nextFilters = boardFiltersFromSharedSnap(snap);
-      const prev = boardFiltersRef.current;
-      const same =
-        String(prev.companyId || '') === String(nextFilters.companyId || '')
-        && String(prev.workshopTypeId || '') === String(nextFilters.workshopTypeId || '');
-      if (same) return;
-      setFilterCompany(String(snap.filterCompany || ''));
-      boardFiltersRef.current = nextFilters;
-      const cached = getCachedBoard(nextFilters);
-      if (cached) setKpis(computeVcBoardKpis(cached.projects, cached.stages));
-      if (!isFocusedRef.current) {
-        pendingFilterReloadRef.current = true;
-        return;
-      }
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => {
-        timer = null;
-        void load(getCachedBoard(nextFilters) ? 'silent' : 'init');
-      }, 400);
-    });
-    return () => {
-      if (timer) clearTimeout(timer);
-      unsub();
-    };
-  }, [load]);
-
-  /** Quay lại Tổng quan → đọc cache (Kanban đã patch) rồi refresh nền nếu stale. */
-  useFocusEffect(
-    useCallback(() => {
-      const filters = boardFiltersRef.current;
-      const cached = getCachedBoard(filters);
-      if (cached) {
-        setKpis(computeVcBoardKpis(cached.projects, cached.stages));
-      }
-      if (pendingFilterReloadRef.current) {
-        pendingFilterReloadRef.current = false;
-        void load(cached ? 'silent' : 'init');
-        return;
-      }
-      if (!isCachedBoardFresh(filters)) {
-        void load('silent');
-      }
-    }, [load]),
+  const boardFilters = useMemo(
+    () => boardFiltersFromSharedSnap(filterSnap, { companyIdOverride: filterCompany }),
+    [filterSnap, filterCompany],
   );
+  boardFiltersRef.current = boardFilters;
+
+  const today = ymd(new Date());
+  const teamScope = canViewTeamWork(user);
+  /** Chỉ query khi đã biết phạm vi công ty — tránh fetch rồi fetch lại. */
+  const scopeReady = snapHydrated
+    && (canPickCompany || Boolean(filterCompany) || !companiesQuery.isLoading);
+
+  const kpisQuery = useVcOverviewKpis(boardFilters, { enabled: scopeReady });
+  const inboxQuery = useVcWorkInbox(
+    {
+      companyId: filterCompany || null,
+      assigneeId: teamScope ? null : (userId || null),
+      limit: OVERVIEW_INBOX_FETCH_LIMIT,
+    },
+    { enabled: scopeReady && !!userId },
+  );
+  const eventsQuery = useVcDayEvents(
+    { day: today, companyId: filterCompany || null, userId: userId || null },
+    { enabled: scopeReady },
+  );
+  const notifsQuery = useVcNotifications(
+    { limit: NOTIF_FETCH_LIMIT, enrichLimit: PREVIEW_NOTIFS },
+    { enabled: scopeReady },
+  );
+
+  const kpis = kpisQuery.data?.kpis ?? EMPTY_KPI;
+  const events = eventsQuery.data ?? EMPTY_EVENTS;
+
+  const todos = useMemo(() => {
+    const inbox = inboxQuery.data;
+    if (!inbox) return EMPTY_TODOS;
+    return buildOverviewTodos({
+      workTasks: inbox.workTasks,
+      assignments: inbox.assignments,
+      sharedTasks: inbox.sharedTasks,
+      companyId: filterCompany,
+    });
+  }, [inboxQuery.data, filterCompany]);
+
+  const notifs = useMemo(() => (
+    (notifsQuery.data?.notifications || [])
+      .filter(isVcRelevantNotification)
+      .slice()
+      .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))
+      .slice(0, PREVIEW_NOTIFS)
+  ), [notifsQuery.data]);
+
+  const sectionLoading: OverviewSectionLoad = {
+    board: !kpisQuery.data && (kpisQuery.isLoading || !scopeReady),
+    todos: !!userId && !inboxQuery.data && (inboxQuery.isLoading || !scopeReady),
+    events: !eventsQuery.data && (eventsQuery.isLoading || !scopeReady),
+    notifs: !notifsQuery.data && (notifsQuery.isLoading || !scopeReady),
+  };
+
+  const error = useMemo(() => {
+    const err = kpisQuery.error || inboxQuery.error || eventsQuery.error || notifsQuery.error;
+    return err ? formatApiError(err) : null;
+  }, [kpisQuery.error, inboxQuery.error, eventsQuery.error, notifsQuery.error]);
+
+  useEffect(() => { setTodoPage(0); }, [inboxQuery.data]);
+
+  /** Ref giữ query mới nhất — để onRefresh / focus không phải phụ thuộc render. */
+  const refetchAllRef = useRef<() => Promise<unknown>>(() => Promise.resolve());
+  refetchAllRef.current = () => Promise.all([
+    kpisQuery.refetch(),
+    inboxQuery.refetch(),
+    eventsQuery.refetch(),
+    notifsQuery.refetch(),
+  ]);
+
+  const refetchStaleRef = useRef<() => void>(() => {});
+  refetchStaleRef.current = () => {
+    if (kpisQuery.isStale) void kpisQuery.refetch();
+    if (inboxQuery.isStale) void inboxQuery.refetch();
+    if (eventsQuery.isStale) void eventsQuery.refetch();
+    if (notifsQuery.isStale) void notifsQuery.refetch();
+  };
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await refetchAllRef.current();
+    } finally {
+      setRefreshing(false);
+    }
+  }, []);
+
+  /** Quay lại Tổng quan → chỉ gọi lại query đã cũ (staleTime lo phần cache). */
+  useFocusEffect(useCallback(() => { refetchStaleRef.current(); }, []));
 
   const onSelectCompany = useCallback(async (id: string) => {
     setCompanyPickerOpen(false);
     if (!canPickCompany && user?.company_id && id !== String(user.company_id)) return;
     setFilterCompany(id);
     await persistCompanyFilter(id);
-    void load('refresh');
-  }, [canPickCompany, user?.company_id, persistCompanyFilter, load]);
+  }, [canPickCompany, user?.company_id, persistCompanyFilter]);
 
   useProductionRealtime({
     onRefresh: (info) => {
-      if (info?.patched) {
-        const cached = getCachedBoard(boardFiltersRef.current);
-        if (cached) {
-          setKpis(computeVcBoardKpis(cached.projects, cached.stages));
-        }
-        return;
-      }
       const t = info?.evt?.type;
       if (t === 'calendar:event_changed') {
-        void load('silent', ['events']);
+        void queryClient.invalidateQueries({ queryKey: vcKeys.prefix.events() });
         return;
       }
       if (t === 'crm:task_changed') {
-        void load('silent', ['todos']);
+        void queryClient.invalidateQueries({ queryKey: vcKeys.prefix.workInbox() });
         return;
       }
       if (t === 'project:comment_changed' || t === 'lead:comment_changed') {
-        void load('silent', ['notifs']);
+        void queryClient.invalidateQueries({ queryKey: vcKeys.prefix.notifications() });
         return;
       }
-      void load('silent', ['board']);
+      void queryClient.invalidateQueries({ queryKey: vcKeys.prefix.overviewKpis() });
     },
     modes: REALTIME_BOARD_TASK_EVENT,
     debounceMs: 1500,
@@ -874,6 +763,13 @@ export default function OverviewScreen() {
   const goPlanner = useCallback(() => tabNav.navigate('Planner'), [tabNav]);
 
   const totalOverdueItems = overdueTaskCount + kpis.overdue;
+
+  const renderSectionLoading = (label: string) => (
+    <View style={styles.sectionLoading}>
+      <SpinningLoader color={colors.primary} size="small" />
+      <Text style={styles.sectionLoadingTxt}>{label}</Text>
+    </View>
+  );
 
   const kpiItems: {
     key: VcKpiFocusKey;
@@ -1053,102 +949,109 @@ export default function OverviewScreen() {
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
-            onRefresh={() => void load('refresh')}
+            onRefresh={() => void onRefresh()}
             tintColor={colors.primary}
           />
         }
         showsVerticalScrollIndicator={false}
       >
-        {loading && !refreshing ? (
-          <View style={styles.centerBox}>
-            <SpinningLoader color={colors.primary} size="large" />
-            <Text style={styles.muted}>Đang tải tổng quan…</Text>
+        {error ? (
+          <Pressable style={styles.errorBanner} onPress={() => void onRefresh()}>
+            <Ionicons name="warning-outline" size={16} color={colors.danger} />
+            <Text style={styles.errorTxt} numberOfLines={2}>
+              {error} · Chạm để thử lại
+            </Text>
+          </Pressable>
+        ) : null}
+
+        {sectionLoading.board || sectionLoading.todos ? (
+          <View style={styles.statusBanner}>
+            {renderSectionLoading('Đang kiểm tra quá hạn…')}
+          </View>
+        ) : totalOverdueItems > 0 ? (
+          <Pressable
+            style={styles.alertBanner}
+            onPress={() => {
+              if (kpis.overdue > 0) openOverdueProjects();
+              else goWorkOverdueSmart();
+            }}
+          >
+            <View style={styles.alertIcon}>
+              <Ionicons name="alert-circle" size={22} color={colors.danger} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.alertTitle}>
+                {totalOverdueItems} hạng mục quá hạn
+              </Text>
+              <Text style={styles.alertSub}>
+                {[
+                  overdueTaskCount > 0
+                    ? (overdueWorkTabHint(todos) || `${overdueTaskCount} công việc`)
+                    : null,
+                  kpis.overdue > 0 ? `${kpis.overdue} dự án VC/LĐ` : null,
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
+                {' — xử lý sớm'}
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={colors.danger} />
+          </Pressable>
+        ) : (
+          <View style={styles.okBanner}>
+            <Ionicons name="checkmark-circle" size={20} color={colors.success} />
+            <Text style={styles.okTxt}>Không có dự án / công việc quá hạn</Text>
+          </View>
+        )}
+
+        <Text style={styles.secTitle}>Trạng thái vận hành</Text>
+        {sectionLoading.board ? (
+          <View style={styles.kpiLoadingWrap}>
+            {renderSectionLoading('Đang tải trạng thái vận hành…')}
           </View>
         ) : (
-          <>
-            {error ? (
-              <Pressable style={styles.errorBanner} onPress={() => void load('init')}>
-                <Ionicons name="warning-outline" size={16} color={colors.danger} />
-                <Text style={styles.errorTxt} numberOfLines={2}>
-                  {error} · Chạm để thử lại
-                </Text>
-              </Pressable>
-            ) : null}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            decelerationRate="fast"
+            snapToInterval={KPI_CARD_W + KPI_CARD_GAP}
+            snapToAlignment="start"
+            contentContainerStyle={styles.kpiSlide}
+            style={styles.kpiSlideWrap}
+          >
+            {kpiItems.map((k) => {
+              const tone = toneMap[k.tone];
+              return (
+                <Pressable
+                  key={k.key}
+                  style={({ pressed }) => [styles.kpiCard, pressed && styles.pressed]}
+                  onPress={k.onPress}
+                >
+                  <View style={[styles.kpiDot, { backgroundColor: tone.bg }]}>
+                    <View style={[styles.kpiDotInner, { backgroundColor: tone.fg }]} />
+                  </View>
+                  <Text style={[styles.kpiValue, { color: tone.fg }]}>{k.value}</Text>
+                  <Text style={styles.kpiLabel} numberOfLines={2}>{k.label}</Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        )}
 
-            {totalOverdueItems > 0 ? (
-              <Pressable
-                style={styles.alertBanner}
-                onPress={() => {
-                  if (kpis.overdue > 0) openOverdueProjects();
-                  else goWorkOverdueSmart();
-                }}
-              >
-                <View style={styles.alertIcon}>
-                  <Ionicons name="alert-circle" size={22} color={colors.danger} />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.alertTitle}>
-                    {totalOverdueItems} hạng mục quá hạn
-                  </Text>
-                  <Text style={styles.alertSub}>
-                    {[
-                      overdueTaskCount > 0
-                        ? (overdueWorkTabHint(todos) || `${overdueTaskCount} công việc`)
-                        : null,
-                      kpis.overdue > 0 ? `${kpis.overdue} dự án VC/LĐ` : null,
-                    ]
-                      .filter(Boolean)
-                      .join(' · ')}
-                    {' — xử lý sớm'}
-                  </Text>
-                </View>
-                <Ionicons name="chevron-forward" size={18} color={colors.danger} />
-              </Pressable>
-            ) : (
-              <View style={styles.okBanner}>
-                <Ionicons name="checkmark-circle" size={20} color={colors.success} />
-                <Text style={styles.okTxt}>Không có dự án / công việc quá hạn</Text>
-              </View>
-            )}
-
-            <Text style={styles.secTitle}>Trạng thái vận hành</Text>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              decelerationRate="fast"
-              snapToInterval={KPI_CARD_W + KPI_CARD_GAP}
-              snapToAlignment="start"
-              contentContainerStyle={styles.kpiSlide}
-              style={styles.kpiSlideWrap}
-            >
-              {kpiItems.map((k) => {
-                const tone = toneMap[k.tone];
-                return (
-                  <Pressable
-                    key={k.key}
-                    style={({ pressed }) => [styles.kpiCard, pressed && styles.pressed]}
-                    onPress={k.onPress}
-                  >
-                    <View style={[styles.kpiDot, { backgroundColor: tone.bg }]}>
-                      <View style={[styles.kpiDotInner, { backgroundColor: tone.fg }]} />
-                    </View>
-                    <Text style={[styles.kpiValue, { color: tone.fg }]}>{k.value}</Text>
-                    <Text style={styles.kpiLabel} numberOfLines={2}>{k.label}</Text>
-                  </Pressable>
-                );
-              })}
-            </ScrollView>
-
-            <View style={styles.secHead}>
-              <Text style={styles.secTitleInline}>Sự kiện hôm nay</Text>
-              <Pressable onPress={() => rootNav.navigate('Events')} hitSlop={8}>
-                <Text style={styles.link}>
-                  {events.length > 0 ? `Tất cả (${events.length})` : 'Mở lịch'}
-                </Text>
-              </Pressable>
-            </View>
-            <View style={styles.card}>
-              {events.length === 0 ? (
+        <View style={styles.secHead}>
+          <Text style={styles.secTitleInline}>Sự kiện hôm nay</Text>
+          <Pressable onPress={() => rootNav.navigate('Events')} hitSlop={8}>
+            <Text style={styles.link}>
+              {sectionLoading.events
+                ? 'Đang tải…'
+                : (events.length > 0 ? `Tất cả (${events.length})` : 'Mở lịch')}
+            </Text>
+          </Pressable>
+        </View>
+        <View style={styles.card}>
+          {sectionLoading.events ? (
+            renderSectionLoading('Đang tải sự kiện hôm nay…')
+          ) : events.length === 0 ? (
                 <View style={styles.emptyRow}>
                   <Ionicons name="calendar-outline" size={20} color={colors.textFaint} />
                   <Text style={styles.emptyTxt}>Không có sự kiện VC hôm nay</Text>
@@ -1185,16 +1088,20 @@ export default function OverviewScreen() {
               )}
             </View>
 
-            <View style={styles.secHead}>
-              <Text style={styles.secTitleInline}>Nhiệm vụ cần làm</Text>
-              <Pressable onPress={() => goWork('tasks')} hitSlop={8}>
-                <Text style={styles.link}>
-                  {openTaskCount > 0 ? `Tất cả (${openTaskCount})` : 'Xem công việc'}
-                </Text>
-              </Pressable>
-            </View>
-            <View style={styles.card}>
-              {pageTodoGroups.length === 0 ? (
+        <View style={styles.secHead}>
+          <Text style={styles.secTitleInline}>Nhiệm vụ cần làm</Text>
+          <Pressable onPress={() => goWork('tasks')} hitSlop={8}>
+            <Text style={styles.link}>
+              {sectionLoading.todos
+                ? 'Đang tải…'
+                : (openTaskCount > 0 ? `Tất cả (${openTaskCount})` : 'Xem công việc')}
+            </Text>
+          </Pressable>
+        </View>
+        <View style={styles.card}>
+          {sectionLoading.todos ? (
+            renderSectionLoading('Đang tải nhiệm vụ cần làm…')
+          ) : pageTodoGroups.length === 0 ? (
                 <View style={styles.emptyRow}>
                   <Ionicons name="checkbox-outline" size={20} color={colors.textFaint} />
                   <Text style={styles.emptyTxt}>Không có nhiệm vụ / giao việc / KG chung cần làm</Text>
@@ -1339,20 +1246,24 @@ export default function OverviewScreen() {
               )}
             </View>
 
-            <View style={styles.secHead}>
-              <Text style={styles.secTitleInline}>Thông báo mới</Text>
-              <Pressable onPress={() => void openNotifs()} hitSlop={8}>
-                <Text style={styles.link}>Xem tất cả</Text>
-              </Pressable>
+        <View style={styles.secHead}>
+          <Text style={styles.secTitleInline}>Thông báo mới</Text>
+          <Pressable onPress={() => void openNotifs()} hitSlop={8}>
+            <Text style={styles.link}>
+              {sectionLoading.notifs ? 'Đang tải…' : 'Xem tất cả'}
+            </Text>
+          </Pressable>
+        </View>
+        <View style={styles.card}>
+          {sectionLoading.notifs ? (
+            renderSectionLoading('Đang tải thông báo…')
+          ) : notifs.length === 0 ? (
+            <View style={styles.emptyRow}>
+              <Ionicons name="notifications-outline" size={20} color={colors.textFaint} />
+              <Text style={styles.emptyTxt}>Chưa có thông báo mới</Text>
             </View>
-            <View style={styles.card}>
-              {notifs.length === 0 ? (
-                <View style={styles.emptyRow}>
-                  <Ionicons name="notifications-outline" size={20} color={colors.textFaint} />
-                  <Text style={styles.emptyTxt}>Chưa có thông báo mới</Text>
-                </View>
-              ) : (
-                notifs.map((n, idx) => {
+          ) : (
+            notifs.map((n, idx) => {
                   const subtitle = notificationListSubtitle(n);
                   const cat = notificationCategoryLabel(n);
                   const isDeal = isWorkshopDealNotification(n);
@@ -1379,27 +1290,25 @@ export default function OverviewScreen() {
                       <Text style={styles.notifTime}>{notifTime(n.created_at)}</Text>
                     </Pressable>
                   );
-                })
-              )}
-            </View>
+            })
+          )}
+        </View>
 
-            <Text style={[styles.secTitle, { marginTop: 16 }]}>Lối tắt</Text>
-            <View style={styles.quickGrid}>
-              {quickActions.map((a) => (
-                <Pressable
-                  key={a.key}
-                  style={({ pressed }) => [styles.quickTile, pressed && styles.pressed]}
-                  onPress={a.onPress}
-                >
-                  <View style={[styles.quickIcon, { backgroundColor: a.color + '22' }]}>
-                    <Ionicons name={a.icon} size={20} color={a.color} />
-                  </View>
-                  <Text style={styles.quickLabel} numberOfLines={1}>{a.label}</Text>
-                </Pressable>
-              ))}
-            </View>
-          </>
-        )}
+        <Text style={[styles.secTitle, { marginTop: 16 }]}>Lối tắt</Text>
+        <View style={styles.quickGrid}>
+          {quickActions.map((a) => (
+            <Pressable
+              key={a.key}
+              style={({ pressed }) => [styles.quickTile, pressed && styles.pressed]}
+              onPress={a.onPress}
+            >
+              <View style={[styles.quickIcon, { backgroundColor: a.color + '22' }]}>
+                <Ionicons name={a.icon} size={20} color={a.color} />
+              </View>
+              <Text style={styles.quickLabel} numberOfLines={1}>{a.label}</Text>
+            </Pressable>
+          ))}
+        </View>
       </ScrollView>
 
       <CommentNotificationsModal
@@ -1518,13 +1427,38 @@ function createStyles(colors: AppColors, isDark: boolean) {
       maxWidth: 220,
     },
     content: { paddingHorizontal: Spacing.lg, paddingTop: 8 },
-    centerBox: {
+    statusBanner: {
+      marginBottom: 14,
+      backgroundColor: colors.card,
+      borderRadius: Radii.lg,
+      borderWidth: 1,
+      borderColor: colors.border,
+      overflow: 'hidden',
+    },
+    sectionLoading: {
+      flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',
-      paddingVertical: 80,
-      gap: 12,
+      gap: 10,
+      paddingVertical: 22,
+      paddingHorizontal: 16,
     },
-    muted: { color: colors.textMuted, fontSize: 13, fontWeight: '600' },
+    sectionLoadingTxt: {
+      color: colors.textMuted,
+      fontSize: 13,
+      fontWeight: '600',
+    },
+    kpiLoadingWrap: {
+      marginHorizontal: -Spacing.lg,
+      marginBottom: 4,
+      backgroundColor: colors.card,
+      borderRadius: Radii.lg,
+      borderWidth: 1,
+      borderColor: colors.border,
+      marginLeft: 0,
+      marginRight: 0,
+      minHeight: 96,
+    },
     pressed: { opacity: 0.88 },
     errorBanner: {
       flexDirection: 'row',

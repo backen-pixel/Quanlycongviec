@@ -6,6 +6,7 @@ import type {
   ProductionProject,
 } from '../types';
 import { isInstallVcStage } from './productionFilters';
+import { computeVcBoardKpis, type VcBoardKpis } from './vcBoardKpis';
 
 const LOGISTICS_STAGE_SLUGS = new Set(['delivery', 'installation', 'customer-care', 'acceptance', 'completed']);
 const LOGISTICS_STATUSES = new Set(['shipping', 'installing', 'warranty', 'completed']);
@@ -431,6 +432,55 @@ async function fetchLogisticsBoardUncapped(
   };
 }
 
+/**
+ * KPI Tổng quan — API nhẹ (server đếm theo cột), KHÔNG tải danh sách dự án.
+ * Backend cũ chưa có route → fallback sang board (giữ tương thích khi app mới / server cũ).
+ */
+export async function fetchVcOverviewKpis(
+  filters: BoardFilters = {},
+  opts: { noCache?: boolean } = {},
+): Promise<{ kpis: VcBoardKpis; source: 'api' | 'board' }> {
+  const params: Record<string, unknown> = {};
+  if (filters.companyId) params.company_id = filters.companyId;
+  if (filters.workshopTypeId) params.workshop_type_id = filters.workshopTypeId;
+  if (filters.priority) params.priority = filters.priority;
+  if (opts.noCache) params._t = Date.now();
+
+  try {
+    const { data } = await api.get<{ kpis?: Partial<VcBoardKpis> }>(
+      '/logistics/overview-kpis',
+      { params: Object.keys(params).length ? params : undefined },
+    );
+    return { kpis: normalizeVcKpis(data?.kpis), source: 'api' };
+  } catch (e) {
+    const status = (e as { response?: { status?: number } })?.response?.status;
+    if (status !== 404) throw e;
+    // Server chưa deploy route KPI → dùng board như trước.
+    const board = await fetchLogisticsBoard(Boolean(opts.noCache), filters);
+    return { kpis: computeVcBoardKpis(board.projects, board.stages), source: 'board' };
+  }
+}
+
+function normalizeVcKpis(raw?: Partial<VcBoardKpis> | null): VcBoardKpis {
+  const n = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+  const shipping = n(raw?.shipping);
+  const installing = n(raw?.installing);
+  return {
+    total: n(raw?.total),
+    totalShipping: n(raw?.totalShipping),
+    totalInstall: n(raw?.totalInstall),
+    intake: n(raw?.intake),
+    shipping,
+    delivered: n(raw?.delivered),
+    installing,
+    warranty: n(raw?.warranty),
+    acceptance: n(raw?.acceptance),
+    inProgress: raw?.inProgress != null ? n(raw.inProgress) : shipping + installing,
+    completed: n(raw?.completed),
+    overdue: n(raw?.overdue),
+  };
+}
+
 export function fetchLogisticsBoard(
   noCache = false,
   filters: BoardFilters = {},
@@ -551,7 +601,17 @@ export async function fetchPersonalPlanner(): Promise<PersonalPlanner> {
 
 export type CompanyOption = { id: string; name: string };
 
+const COMPANIES_CACHE_FRESH_MS = 5 * 60_000;
+let companiesCache: { at: number; data: CompanyOption[] } | null = null;
+
+export function clearCompaniesCache(): void {
+  companiesCache = null;
+}
+
 export async function fetchCompanies(): Promise<CompanyOption[]> {
+  if (companiesCache && Date.now() - companiesCache.at < COMPANIES_CACHE_FRESH_MS) {
+    return companiesCache.data;
+  }
   const { data } = await api.get<{ companies?: unknown[] } | unknown[]>(
     '/companies',
     { params: { for_module: 'logistics' } },
@@ -561,13 +621,15 @@ export async function fetchCompanies(): Promise<CompanyOption[]> {
     : Array.isArray(data?.companies)
       ? data.companies
       : [];
-  return list.map((c) => {
+  const mapped = list.map((c) => {
     const row = c as Record<string, unknown>;
     return {
       id: String(row.id || ''),
       name: String(row.short_name || row.name || row.id || ''),
     };
   }).filter((c) => c.id);
+  companiesCache = { at: Date.now(), data: mapped };
+  return mapped;
 }
 
 export type WorkshopTypeOption = { id: string; name: string };

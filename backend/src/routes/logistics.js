@@ -37,6 +37,7 @@ const {
   notifyLogisticsStageChanged,
 } = require('../helpers/vcLogisticsNotify');
 const { emitLogisticsKanbanChangedImmediate } = require('../helpers/workshopIntakeNotify');
+const { computeVcOverviewKpis } = require('../helpers/vcOverviewKpis');
 
 const r = Router();
 r.use(auth);
@@ -360,6 +361,51 @@ function enrichOneLogisticsProject(project, sortedKanban, orphanColMeta = null) 
     vc_pipeline_percent: matchedCol?.progress_percent ?? null,
     /** Cột logic (intake/delivery/installation…) — client «Tất cả công ty» map sang pipeline đang hiện. */
     vc_bucket_slug: matchedCol?.bucket_slug || null,
+  };
+}
+
+/**
+ * Chỉ resolve cột Kanban VC (không kèm crm_deals) — dùng cho KPI Tổng quan.
+ * Trả về { projects, stagesByKey } để caller đếm theo cột mà không phải query thêm.
+ */
+async function resolveLogisticsPipelineColumns(projects, filterCompanyId = null) {
+  const f = normalizeWorkshopCompanyId(filterCompanyId);
+  const keyFor = (p) => {
+    if (f) return `__f:${f}`;
+    const id = p.logistics_company_id || p.company_id || p.company?.id;
+    return id ? String(id) : '__global__';
+  };
+  const keys = f ? [`__f:${f}`] : [...new Set((projects || []).map(keyFor))];
+  const cache = new Map();
+  for (const key of keys) {
+    const cid = key.startsWith('__f:') ? key.slice(4) : (key === '__global__' ? null : key);
+    const { stages } = await getResolvedLogisticsStages(cid);
+    const sorted = [...stages].sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
+    cache.set(key, sorted);
+  }
+
+  const orphanIds = new Set();
+  for (const p of projects || []) {
+    const colId = p?.vc_kanban_column_id ? String(p.vc_kanban_column_id) : '';
+    if (!colId) continue;
+    const stages = cache.get(keyFor(p)) || [];
+    if (!stages.some((s) => String(s.id) === colId)) orphanIds.add(colId);
+  }
+  const orphanColMeta = new Map();
+  if (orphanIds.size) {
+    const { data: orphanRows } = await supabase
+      .from(VC_PIPELINE_TABLE)
+      .select('id, bucket_slug, name')
+      .in('id', [...orphanIds]);
+    for (const row of orphanRows || []) {
+      orphanColMeta.set(String(row.id), row);
+    }
+  }
+
+  return {
+    projects: (projects || []).map((p) => enrichOneLogisticsProject(p, cache.get(keyFor(p)), orphanColMeta)),
+    stagesByKey: cache,
+    keyFor,
   };
 }
 
@@ -762,6 +808,112 @@ r.get('/dashboard', requirePermission('projects', 'view'), async (req, res) => {
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── Overview KPIs (mobile Tổng quan) ───────────────────────────────────────
+
+/**
+ * Select tối thiểu để đếm KPI: không embed tasks / customers / users / crm_deals.
+ * Chỉ đủ field cho enrichOneLogisticsProject + isSxOnlyVcGhost + đếm quá hạn.
+ */
+const KPI_SELECT = `id, status, deadline, vc_kanban_column_id, vc_temp_staged, company_id, logistics_company_id,
+        current_stage:workflow_stages(id, slug, name)`;
+const KPI_SELECT_NO_TEMP = `id, status, deadline, vc_kanban_column_id, company_id, logistics_company_id,
+        current_stage:workflow_stages(id, slug, name)`;
+const KPI_PAGE = 1000;
+const KPI_MAX_ROWS = 20000;
+
+/**
+ * GET /api/logistics/overview-kpis
+ * Trả về đúng các con số KPI Tổng quan VC/LĐ — thay cho việc mobile tải full board.
+ */
+r.get('/overview-kpis', requirePermission('projects', 'view'), async (req, res) => {
+  try {
+    const { division_id, company_id: companyIdQuery, workshop_type_id, priority } = req.query;
+    const company_id = effectiveWorkshopCompanyId(req, companyIdQuery);
+    const { ids: stageIds } = await getLogisticsStageMap();
+    const orFilter = buildLogisticsScopeFilter(stageIds);
+    if (!orFilter) {
+      return res.json({ kpis: computeVcOverviewKpis([], []), meta: { fetchedCount: 0, truncated: false } });
+    }
+
+    const buildQuery = async (selectClause, withSoftDelete) => {
+      let query = supabase.from('projects').select(selectClause).or(orFilter);
+      query = applyProjectTenantScope(query, req);
+      if (withSoftDelete) query = applyVcNotDeletedFilter(query);
+      if (division_id) query = query.eq('division_id', division_id);
+      if (company_id) query = query.or(`company_id.eq.${company_id},logistics_company_id.eq.${company_id}`);
+      if (workshop_type_id) query = query.eq('workshop_type_id', workshop_type_id);
+      if (priority) query = query.eq('priority', priority);
+      ({ query } = await applyWorkshopProjectVisibilityScope(query, req.user, company_id, null));
+      return query;
+    };
+
+    // Cột vc_temp_staged / vc_deleted_at có thể chưa tồn tại (migration chưa chạy) → thử lần lượt.
+    const attempts = [
+      { select: KPI_SELECT, soft: true },
+      { select: KPI_SELECT, soft: false },
+      { select: KPI_SELECT_NO_TEMP, soft: true },
+      { select: KPI_SELECT_NO_TEMP, soft: false },
+    ];
+
+    let rows = null;
+    let truncated = false;
+    let lastError = null;
+
+    for (const attempt of attempts) {
+      const collected = [];
+      let ok = true;
+      for (let from = 0; from < KPI_MAX_ROWS; from += KPI_PAGE) {
+        const query = await buildQuery(attempt.select, attempt.soft);
+        const { data, error } = await query
+          .order('created_at', { ascending: false })
+          .range(from, from + KPI_PAGE - 1);
+        if (error) {
+          lastError = error;
+          ok = false;
+          break;
+        }
+        const page = data || [];
+        collected.push(...page);
+        if (page.length < KPI_PAGE) break;
+        if (from + KPI_PAGE >= KPI_MAX_ROWS) truncated = true;
+      }
+      if (ok) {
+        rows = collected;
+        break;
+      }
+    }
+
+    if (rows === null) throw lastError || new Error('Không tải được dự án VC');
+
+    const { projects: resolved, stagesByKey } = await resolveLogisticsPipelineColumns(rows, company_id);
+    const visible = filterOutSxOnlyVcGhosts(resolved);
+    // «Tất cả công ty»: mỗi dự án có thể thuộc pipeline khác nhau → gộp cột của mọi key.
+    const allStages = [];
+    const seenStageIds = new Set();
+    for (const stages of stagesByKey.values()) {
+      for (const s of stages) {
+        const sid = String(s.id);
+        if (seenStageIds.has(sid)) continue;
+        seenStageIds.add(sid);
+        allStages.push(s);
+      }
+    }
+
+    res.json({
+      kpis: computeVcOverviewKpis(visible, allStages),
+      meta: {
+        fetchedCount: visible.length,
+        truncated,
+        pipelineKeys: stagesByKey.size,
+        scopedCompanyId: company_id || null,
+      },
+    });
+  } catch (e) {
+    console.error('GET /logistics/overview-kpis:', e);
+    res.status(500).json({ error: e.message || 'Lỗi tải KPI tổng quan' });
   }
 });
 

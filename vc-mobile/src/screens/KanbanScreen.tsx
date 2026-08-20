@@ -26,7 +26,6 @@ import {
   fetchCompanies,
   fetchClientCompanies,
   fetchWorkshopOptionsForDeal,
-  fetchProductionBoard,
   PROJECTS_HARD_CAP,
   fetchProductionProject,
   fetchCommentsIndexForProjects,
@@ -41,14 +40,12 @@ import {
   type RegionOption,
   type WorkshopTypeOption,
 } from '../lib/logisticsApi';
+import { patchCachedProjectById } from '../lib/logisticsBoardCache';
 import {
-  BOARD_CACHE_UPDATED,
-  boardCacheKey,
-  getCachedBoard,
-  isCachedBoardFresh,
-  patchCachedProjectById,
-  setCachedBoard,
-} from '../lib/logisticsBoardCache';
+  invalidateVcBoard,
+  refreshVcBoard,
+  useVcBoard,
+} from '../queries/vcQueries';
 import {
   isMetallaOrHucabiCompanyId,
   isInstallVcStage,
@@ -90,6 +87,8 @@ type ViewMode = 'kanban' | 'list';
 const VIEW_MODE_KEY = 'vc_kanban_view_mode_v1';
 const LIST_PAGE_SIZE = 20;
 const INTAKE_BUCKET = 'delivery_pending';
+/** Identity ổn định khi query chưa có dữ liệu. */
+const EMPTY_BOARD: ProductionBoard = { stages: [], projects: [], kpis: null };
 
 /** Cập nhật status/slug theo cột đích — để KPI + badge đổi ngay khi chuyển cột. */
 function projectPatchForStage(target: KanbanStage, opts?: { jumpedToInstall?: boolean }): Partial<ProductionProject> {
@@ -214,10 +213,8 @@ export default function KanbanScreen() {
   const route = useRoute<RouteProp<MainTabParamList, 'Kanban'>>();
   const myId = user?.id || user?.userId || null;
 
-  const [board, setBoard] = useState<ProductionBoard>({ stages: [], projects: [], kpis: null });
-  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
   const [activeIndex, setActiveIndex] = useState(0);
   const [viewMode, setViewMode] = useState<ViewMode>('kanban');
   /** Lọc cột khi xem List — '' = tất cả cột. */
@@ -266,7 +263,6 @@ export default function KanbanScreen() {
   const filterPersonIdRef = useRef('');
   const filterPhoneRef = useRef<PhoneFilterId>('');
   const filterPriorityRef = useRef('');
-  const loadSeqRef = useRef(0);
   /** Auto-pick loại SX → persist im lặng, không đánh thức Overview. */
   const quietFilterPersistRef = useRef(false);
 
@@ -320,6 +316,80 @@ export default function KanbanScreen() {
 
   const showWorkshopPicker = isSystemAdmin(user) || workshopCompanyPickerList.length > 1;
   const companyForTypes = filterCompany || user?.company_id || null;
+
+  const boardFilters = useMemo<BoardFilters>(() => ({
+    companyId: filterCompany || undefined,
+    dealCompanyId: dealCompanyParam || undefined,
+    workshopTypeId: workshopTypeIdForBoardApi(filterWorkTypeId),
+    priority: filterPriority || undefined,
+  }), [filterCompany, dealCompanyParam, filterWorkTypeId, filterPriority]);
+  const boardFiltersRef = useRef<BoardFilters>(boardFilters);
+  boardFiltersRef.current = boardFilters;
+
+  /**
+   * Sysadmin: '' = Tất cả — vẫn tải. NV: chờ companyId.
+   * Có công ty → đợi work-types hydrate + type hợp lệ rồi mới fetch (tránh double board).
+   */
+  const boardReady = useMemo(() => {
+    if (!filterCompany && !isSysAdmin) return false;
+    const hasCompanyContext = !!filterCompany || (!isSysAdmin && !!user?.company_id);
+    if (!hasCompanyContext) return true;
+    if (workTypesCompanyId !== String(companyForTypes || '')) return false;
+    if (workTypes.length > 0 && !filterWorkTypeId) return false;
+    // Type còn thuộc công ty cũ → chờ auto-pick / Apply resolve (không fetch sớm).
+    if (
+      filterWorkTypeId
+      && filterWorkTypeId !== 'none'
+      && workTypes.length > 0
+      && !workTypes.some((w) => String(w.id) === String(filterWorkTypeId))
+    ) {
+      return false;
+    }
+    return true;
+  }, [
+    filterCompany,
+    isSysAdmin,
+    user?.company_id,
+    workTypes,
+    workTypesCompanyId,
+    companyForTypes,
+    filterWorkTypeId,
+  ]);
+
+  const boardQuery = useVcBoard(boardFilters, { enabled: boardReady });
+  const board = boardQuery.data ?? EMPTY_BOARD;
+  // Đã chọn công ty nhưng còn chờ work-types resolve → vẫn là trạng thái đang tải.
+  const loading = boardQuery.isLoading || (!boardReady && !!filterCompany && !boardQuery.data);
+  const queryError = boardQuery.error ? formatApiError(boardQuery.error) : null;
+  const error = refreshError || queryError;
+
+  /** Đổi bộ lọc → về cột đầu; cột hiện tại không vượt số cột của board mới. */
+  useEffect(() => { setActiveIndex(0); }, [boardFilters]);
+  useEffect(() => {
+    setActiveIndex((prev) => Math.min(prev, Math.max(0, board.stages.length - 1)));
+  }, [board.stages.length]);
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    setRefreshError(null);
+    try {
+      await refreshVcBoard(boardFiltersRef.current);
+    } catch (e) {
+      setRefreshError(formatApiError(e));
+    } finally {
+      setRefreshing(false);
+    }
+  }, []);
+
+  useProductionRealtime({
+    onRefresh: (info) => {
+      // patched = board cache đã đổi tại chỗ → useVcBoard tự nhận qua
+      // BOARD_CACHE_UPDATED, khỏi tải lại board.
+      if (info?.patched) return;
+      invalidateVcBoard();
+    },
+    modes: REALTIME_BOARD_TASK,
+  });
 
   // Debounce ô tìm kiếm: gõ phím cập nhật `searchInput` ngay, nhưng việc lọc nặng
   // (chạy trên toàn bộ vài nghìn dự án) chỉ chạy sau 250ms ngừng gõ → không lag khi nhập.
@@ -393,60 +463,7 @@ export default function KanbanScreen() {
     if (toastTimer.current) clearTimeout(toastTimer.current);
   }, []);
 
-  const load = useCallback(async (mode: 'init' | 'refresh' | 'silent' = 'init') => {
-    // NV/admin công ty: cần companyId. Sysadmin: '' = Tất cả công ty.
-    if (!filterCompanyRef.current && !isSysAdmin) {
-      if (mode === 'init') setLoading(false);
-      if (mode === 'refresh') setRefreshing(false);
-      return;
-    }
-    const filters: BoardFilters = {
-      companyId: filterCompanyRef.current || undefined,
-      dealCompanyId: filterDealCompanyRef.current || undefined,
-      workshopTypeId: workshopTypeIdForBoardApi(filterWorkTypeIdRef.current),
-      priority: filterPriorityRef.current || undefined,
-    };
-    const seq = ++loadSeqRef.current;
-    const cacheKey = boardCacheKey(filters);
-    const cached = getCachedBoard(filters);
-    if (mode !== 'refresh' && cached) {
-      setBoard(cached);
-      if (mode === 'init') setLoading(false);
-    }
-    // Silent + init: cache còn tươi → khỏi network (Overview vừa fill).
-    if ((mode === 'silent' || mode === 'init') && isCachedBoardFresh(filters) && cached) return;
-
-    if (mode === 'init' && !cached) setLoading(true);
-    if (mode === 'refresh') setRefreshing(true);
-    if (mode !== 'silent') setError(null);
-
-    const onPartial = (ev: { key?: string; board?: ProductionBoard; soft?: boolean }) => {
-      if (seq !== loadSeqRef.current) return;
-      if (ev?.key !== cacheKey || !ev.board) return;
-      setBoard(ev.board);
-      if (mode === 'init') setLoading(false);
-      setActiveIndex((prev) => Math.min(prev, Math.max(0, ev.board!.stages.length - 1)));
-    };
-    const sub = DeviceEventEmitter.addListener(BOARD_CACHE_UPDATED, onPartial);
-    try {
-      const data = await fetchProductionBoard(mode === 'refresh', filters);
-      if (seq !== loadSeqRef.current) return;
-      setCachedBoard(filters, data);
-      setBoard(data);
-      setActiveIndex((prev) => Math.min(prev, Math.max(0, data.stages.length - 1)));
-    } catch (e) {
-      if (seq !== loadSeqRef.current) return;
-      if (mode !== 'silent') setError(formatApiError(e));
-    } finally {
-      sub.remove();
-      if (seq === loadSeqRef.current) {
-        setLoading(false);
-        setRefreshing(false);
-      }
-    }
-  }, [isSysAdmin]);
-
-  // Đồng bộ refs với state để load() luôn dùng filter mới nhất.
+  // Refs cho listener filter dùng chung — so sánh giá trị mới nhất không cần deps.
   useEffect(() => { filterCompanyRef.current = filterCompany; }, [filterCompany]);
   useEffect(() => { filterDealCompanyRef.current = dealCompanyParam || ''; }, [dealCompanyParam]);
   useEffect(() => { filterWorkTypeIdRef.current = filterWorkTypeId; }, [filterWorkTypeId]);
@@ -454,70 +471,6 @@ export default function KanbanScreen() {
   useEffect(() => { filterPersonIdRef.current = filterPersonId; }, [filterPersonId]);
   useEffect(() => { filterPhoneRef.current = filterPhone; }, [filterPhone]);
   useEffect(() => { filterPriorityRef.current = filterPriority; }, [filterPriority]);
-
-  // Sysadmin: '' = Tất cả — vẫn tải. NV: chờ companyId.
-  // Có công ty → đợi work-types hydrate + type hợp lệ rồi mới fetch (tránh double board).
-  useEffect(() => {
-    if (!filterCompany && !isSysAdmin) return;
-    const hasCompanyContext = !!filterCompany || (!isSysAdmin && !!user?.company_id);
-    if (hasCompanyContext) {
-      if (workTypesCompanyId !== String(companyForTypes || '')) return;
-      if (workTypes.length > 0 && !filterWorkTypeId) return;
-      // Type còn thuộc công ty cũ → chờ auto-pick / Apply resolve (không fetch sớm).
-      if (
-        filterWorkTypeId
-        && filterWorkTypeId !== 'none'
-        && workTypes.length > 0
-        && !workTypes.some((w) => String(w.id) === String(filterWorkTypeId))
-      ) {
-        return;
-      }
-    }
-    setActiveIndex(0);
-    void load('init');
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    filterCompany,
-    filterDealCompany,
-    dealCompanyParam,
-    filterWorkTypeId,
-    filterPriority,
-    isSysAdmin,
-    workTypes,
-    workTypesCompanyId,
-    companyForTypes,
-    user?.company_id,
-  ]);
-
-  useProductionRealtime({
-    onRefresh: (info) => {
-      const filters: BoardFilters = {
-        companyId: filterCompanyRef.current || undefined,
-        dealCompanyId: filterDealCompanyRef.current || undefined,
-        workshopTypeId: workshopTypeIdForBoardApi(filterWorkTypeIdRef.current),
-        priority: filterPriorityRef.current || undefined,
-      };
-      if (info?.patched) {
-        const next = getCachedBoard(filters);
-        if (next) setBoard(next);
-        return;
-      }
-      void load('silent');
-    },
-    modes: REALTIME_BOARD_TASK,
-  });
-
-  useEffect(() => {
-    board.projects.forEach((p) => {
-      if (p.id) {
-        projectMetaRef.current.set(p.id, {
-          code: p.code,
-          name: p.name,
-          deal_id: resolveProjectDealId(p),
-        });
-      }
-    });
-  }, [board.projects, projectMetaRef]);
 
   useEffect(() => {
     return subscribeSync((evt) => {
@@ -1258,12 +1211,6 @@ export default function KanbanScreen() {
       };
       const optimistic = projectPatchForStage(target);
       setMovingId(project.id);
-      setBoard((prev) => ({
-        ...prev,
-        projects: prev.projects.map((p) =>
-          p.id === project.id ? { ...p, ...optimistic } : p,
-        ),
-      }));
       patchCachedProjectById(project.id, optimistic);
       try {
         const result = await moveProjectToStage(project.id, target.id, {
@@ -1282,12 +1229,6 @@ export default function KanbanScreen() {
           resolved_column_id: newColId,
           current_stage_id: result.current_stage_id ?? project.current_stage_id,
         };
-        setBoard((prev) => ({
-          ...prev,
-          projects: prev.projects.map((p) =>
-            p.id === project.id ? { ...p, ...confirmed } : p,
-          ),
-        }));
         patchCachedProjectById(project.id, confirmed);
         if (result.jumped_to_install) {
           const installId = result.install_stage_id ? String(result.install_stage_id) : '';
@@ -1303,12 +1244,6 @@ export default function KanbanScreen() {
           showToast(`Đã chuyển ${project.code} → ${target.name}`, 'success');
         }
       } catch (e) {
-        setBoard((prev) => ({
-          ...prev,
-          projects: prev.projects.map((p) =>
-            p.id === project.id ? { ...p, ...fromPatch } : p,
-          ),
-        }));
         patchCachedProjectById(project.id, fromPatch);
         showToast(formatApiError(e), 'error');
       } finally {
@@ -1375,7 +1310,7 @@ export default function KanbanScreen() {
       <View style={[styles.center, { paddingTop: insets.top, paddingHorizontal: Spacing.xl }]}>
         <Ionicons name="cloud-offline-outline" size={44} color={colors.textFaint} />
         <Text style={styles.errorText}>{error}</Text>
-        <TouchableOpacity style={styles.retryBtn} onPress={() => load('init')}>
+        <TouchableOpacity style={styles.retryBtn} onPress={() => void boardQuery.refetch()}>
           <Text style={styles.retryText}>Thử lại</Text>
         </TouchableOpacity>
       </View>
@@ -1684,7 +1619,7 @@ export default function KanbanScreen() {
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
-              onRefresh={() => load('refresh')}
+              onRefresh={() => void onRefresh()}
               tintColor={colors.primary}
             />
           }
@@ -1758,7 +1693,7 @@ export default function KanbanScreen() {
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
-            onRefresh={() => load('refresh')}
+            onRefresh={() => void onRefresh()}
             tintColor={colors.primary}
           />
         }
@@ -2114,7 +2049,7 @@ export default function KanbanScreen() {
         onClose={() => setCreateDealOpen(false)}
         onCreated={(msg) => {
           showToast(msg, 'success');
-          void load('silent');
+          invalidateVcBoard();
         }}
       />
 

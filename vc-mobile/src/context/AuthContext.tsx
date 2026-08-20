@@ -9,7 +9,10 @@ import {
   startSystemBubbleOverlay,
 } from '../lib/floatingBubbleOverlay';
 import { clearKanbanFilters } from '../lib/kanbanFilterStorage';
+import { clearCompaniesCache } from '../lib/logisticsApi';
 import { clearBoardCache, hydrateBoardCacheFromDisk } from '../lib/logisticsBoardCache';
+import { clearVcKpiCache, hydrateVcKpiCacheFromDisk } from '../lib/vcKpiCache';
+import { clearQueryCache } from '../queries/queryClient';
 import { registerPushToken, unregisterPushToken } from '../lib/pushRegistration';
 import { startDeviceHeartbeat, stopDeviceHeartbeat } from '../lib/deviceHeartbeat';
 
@@ -47,7 +50,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     (async () => {
       try {
-        await hydrateBoardCacheFromDisk();
+        await Promise.all([hydrateBoardCacheFromDisk(), hydrateVcKpiCacheFromDisk()]);
         const [t, u] = await Promise.all([getStoredToken(), AsyncStorage.getItem(USER_KEY)]);
         if (t && u) {
           setToken(t);
@@ -126,6 +129,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const clearSessionLocal = useCallback(async () => {
     stopDeviceHeartbeat();
     clearBoardCache();
+    clearCompaniesCache();
+    clearVcKpiCache();
+    clearQueryCache();
     await clearKanbanFilters();
     await unregisterPushToken();
     await setStoredToken(null);

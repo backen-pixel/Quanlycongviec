@@ -8,9 +8,15 @@ import { formatApiError } from '../api/client';
 import TapHighlight from '../components/TapHighlight';
 import { useTheme } from '../context/ThemeContext';
 import { useProductionRealtime } from '../hooks/useProductionRealtime';
-import { loadKanbanFilters, subscribeSharedFilters, boardFiltersFromSharedSnap } from '../lib/kanbanFilterStorage';
-import { fetchProductionBoard } from '../lib/logisticsApi';
-import { getCachedBoard, isCachedBoardFresh } from '../lib/logisticsBoardCache';
+import {
+  areSharedFiltersHydrated,
+  boardFiltersFromSharedSnap,
+  getSharedFiltersSync,
+  loadKanbanFilters,
+  subscribeSharedFilters,
+  type KanbanFilterSnapshot,
+} from '../lib/kanbanFilterStorage';
+import { invalidateVcBoard, refreshVcBoard, useVcBoard } from '../queries/vcQueries';
 import { REALTIME_BOARD } from '../lib/realtimeModes';
 import { initialsFrom, projectIsDeadlineOverdue, shortDateLabel } from '../lib/vcBoardKpis';
 import { useRootNavigation } from '../navigation/useRootNavigation';
@@ -32,74 +38,55 @@ export default function OverdueProjectsScreen() {
   const navigation = useNavigation();
   const { openProjectDetail } = useRootNavigation();
 
-  const [projects, setProjects] = useState<ProductionProject[]>([]);
-  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
-  const loadSeqRef = useRef(0);
-  const filtersRef = useRef<{ companyId?: string; workshopTypeId?: string }>({});
 
-  const load = useCallback(async (mode: 'init' | 'refresh' | 'silent' = 'init') => {
-    const seq = ++loadSeqRef.current;
-    if (mode === 'init') setLoading(true);
-    if (mode === 'refresh') setRefreshing(true);
-    setError(null);
+  // Dùng chung board cache với Kanban → mở màn này không tải lại danh sách dự án.
+  const [filterSnap, setFilterSnap] = useState<KanbanFilterSnapshot>(() => getSharedFiltersSync());
+  const [snapHydrated, setSnapHydrated] = useState(() => areSharedFiltersHydrated());
+
+  useEffect(() => {
+    if (snapHydrated) return;
+    let cancelled = false;
+    void loadKanbanFilters().catch(() => null).then((snap) => {
+      if (cancelled) return;
+      setFilterSnap(snap || {});
+      setSnapHydrated(true);
+    });
+    return () => { cancelled = true; };
+  }, [snapHydrated]);
+
+  useEffect(() => subscribeSharedFilters((snap) => setFilterSnap(snap)), []);
+
+  const boardFilters = useMemo(() => boardFiltersFromSharedSnap(filterSnap), [filterSnap]);
+  const boardFiltersRef = useRef(boardFilters);
+  boardFiltersRef.current = boardFilters;
+
+  const boardQuery = useVcBoard(boardFilters, { enabled: snapHydrated });
+  const projects = useMemo(
+    () => (boardQuery.data?.projects ?? []).filter((p) => projectIsDeadlineOverdue(p)),
+    [boardQuery.data],
+  );
+  const loading = boardQuery.isLoading || !snapHydrated;
+  const error = refreshError || (boardQuery.error ? formatApiError(boardQuery.error) : null);
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    setRefreshError(null);
     try {
-      const snap = await loadKanbanFilters().catch(() => null);
-      const filters = boardFiltersFromSharedSnap(snap);
-      filtersRef.current = filters;
-      if (mode === 'silent' && isCachedBoardFresh(filters) && getCachedBoard(filters)) {
-        setProjects(getCachedBoard(filters)!.projects.filter((p) => projectIsDeadlineOverdue(p)));
-        return;
-      }
-      const seeded = getCachedBoard(filters);
-      if (seeded && mode !== 'refresh') {
-        setProjects(seeded.projects.filter((p) => projectIsDeadlineOverdue(p)));
-        if (mode === 'init') setLoading(false);
-      }
-      const board = await fetchProductionBoard(mode === 'refresh', filters);
-      if (seq !== loadSeqRef.current) return;
-      setProjects(board.projects.filter((p) => projectIsDeadlineOverdue(p)));
+      await refreshVcBoard(boardFiltersRef.current);
     } catch (e) {
-      if (seq !== loadSeqRef.current) return;
-      if (mode !== 'silent') setError(formatApiError(e));
+      setRefreshError(formatApiError(e));
     } finally {
-      if (seq === loadSeqRef.current) {
-        setLoading(false);
-        setRefreshing(false);
-      }
+      setRefreshing(false);
     }
   }, []);
 
-  useEffect(() => {
-    void loadKanbanFilters().then((snap) => {
-      const filters = boardFiltersFromSharedSnap(snap);
-      void load(getCachedBoard(filters) ? 'silent' : 'init');
-    });
-  }, [load]);
-
-  useEffect(() => {
-    const unsub = subscribeSharedFilters((snap) => {
-      const next = boardFiltersFromSharedSnap(snap);
-      const prev = filtersRef.current;
-      if (
-        String(prev.companyId || '') === String(next.companyId || '')
-        && String(prev.workshopTypeId || '') === String(next.workshopTypeId || '')
-      ) return;
-      void load(getCachedBoard(next) ? 'silent' : 'init');
-    });
-    return unsub;
-  }, [load]);
-
   useProductionRealtime({
     onRefresh: (info) => {
-      if (info?.patched) {
-        const cached = getCachedBoard(filtersRef.current);
-        if (cached) setProjects(cached.projects.filter((p) => projectIsDeadlineOverdue(p)));
-        return;
-      }
-      void load('silent');
+      if (info?.patched) return;
+      invalidateVcBoard();
     },
     modes: REALTIME_BOARD,
     debounceMs: 1500,
@@ -175,7 +162,7 @@ export default function OverdueProjectsScreen() {
             {filtered.length} dự án cần xử lý ưu tiên
           </Text>
         </View>
-        <TapHighlight style={styles.backBtn} onPress={() => void load('refresh')} hitSlop={8}>
+        <TapHighlight style={styles.backBtn} onPress={() => void onRefresh()} hitSlop={8}>
           <Ionicons name="refresh-outline" size={20} color={colors.text} />
         </TapHighlight>
       </View>
@@ -199,7 +186,7 @@ export default function OverdueProjectsScreen() {
       {error ? (
         <View style={styles.errorBox}>
           <Text style={styles.errorText}>{error}</Text>
-          <TapHighlight onPress={() => void load('init')}>
+          <TapHighlight onPress={() => void onRefresh()}>
             <Text style={styles.retry}>Thử lại</Text>
           </TapHighlight>
         </View>
@@ -227,7 +214,7 @@ export default function OverdueProjectsScreen() {
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
-              onRefresh={() => void load('refresh')}
+              onRefresh={() => void onRefresh()}
               tintColor={colors.primary}
             />
           }

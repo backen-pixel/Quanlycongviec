@@ -1,5 +1,6 @@
 import SpinningLoader from './src/components/SpinningLoader';
 import { DarkTheme, DefaultTheme, NavigationContainer } from '@react-navigation/native';
+import { QueryClientProvider } from '@tanstack/react-query';
 import { ShareIntentProvider } from 'expo-share-intent';
 import { StatusBar } from 'expo-status-bar';
 import * as Notifications from 'expo-notifications';
@@ -32,6 +33,7 @@ import { isVcRelevantPushData } from './src/lib/notificationApi';
 import { checkAndApplyOtaUpdate } from './src/lib/otaUpdate';
 import { navigationRef, resetToBubbleChat } from './src/navigation/navigationRef';
 import RootNavigator from './src/navigation/RootNavigator';
+import { queryClient } from './src/queries/queryClient';
 
 /** Khi app đang mở, socket đã hiện tray local — tắt banner FCM trùng để tránh 2 tiếng.
  *  Đồng thời chặn hoàn toàn push thuộc module SX (production) / kênh sx_comments. */
@@ -202,6 +204,7 @@ export default function App() {
           disabled: Platform.OS !== 'android',
         }}
       >
+        <QueryClientProvider client={queryClient}>
         <ThemeProvider>
           <KeyboardInsetProvider>
             <AuthProvider>
@@ -217,6 +220,7 @@ export default function App() {
             </AuthProvider>
           </KeyboardInsetProvider>
         </ThemeProvider>
+        </QueryClientProvider>
       </ShareIntentProvider>
     </SafeAreaProvider>
   );

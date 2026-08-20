@@ -11,9 +11,11 @@ import { useTheme } from '../context/ThemeContext';
 import { useProductionRealtime } from '../hooks/useProductionRealtime';
 import { REALTIME_BOARD_TASK } from '../lib/realtimeModes';
 import { loadKanbanFilters, saveKanbanFilters, subscribeSharedFilters, boardFiltersFromSharedSnap, getSharedFiltersSync, type KanbanFilterSnapshot } from '../lib/kanbanFilterStorage';
-import { fetchCompanies, fetchProductionBoard, type CompanyOption } from '../lib/logisticsApi';
-import { getCachedBoard, isCachedBoardFresh, setCachedBoard } from '../lib/logisticsBoardCache';
+import { fetchCompanies, type CompanyOption } from '../lib/logisticsApi';
+import { invalidateVcBoard, refreshVcBoard, useVcBoard } from '../queries/vcQueries';
 import { isSystemAdmin } from '../lib/productionFilters';
+
+const EMPTY_BOARD: ProductionBoard = { stages: [], projects: [], kpis: null };
 import { formatMoneyAmount, Radii, Spacing, stageColor } from '../theme';
 import type { ProductionBoard, ProductionProject } from '../types';
 
@@ -54,10 +56,8 @@ export default function PlannerScreen() {
   const [sharedSnap, setSharedSnap] = useState<KanbanFilterSnapshot>(() => getSharedFiltersSync());
   const [companies, setCompanies] = useState<CompanyOption[]>([]);
   const companiesRef = useRef<CompanyOption[]>([]);
-  const [board, setBoard] = useState<ProductionBoard>({ stages: [], projects: [], kpis: null });
-  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
   const [ownerVisible, setOwnerVisible] = useState<Record<string, number>>({});
   const [search, setSearch] = useState('');
   const [filterOpen, setFilterOpen] = useState(false);
@@ -122,54 +122,32 @@ export default function PlannerScreen() {
     [sharedSnap, filterCompany],
   );
 
-  const loadSeqRef = useRef(0);
+  const boardFiltersRef = useRef(boardFilters);
+  boardFiltersRef.current = boardFilters;
 
-  const load = useCallback(async (mode: 'init' | 'refresh' | 'silent' = 'init') => {
-    // Sysadmin với '' = Tất cả — vẫn tải. NV thiếu companyId thì thôi.
-    if (!sysAdmin && !filterCompany) {
-      if (mode === 'init') setLoading(true);
-      return;
-    }
-    const seq = ++loadSeqRef.current;
-    const cached = getCachedBoard(boardFilters);
-    if (mode !== 'refresh' && cached) {
-      setBoard(cached);
-      if (mode === 'init') setLoading(false);
-    }
-    if (mode === 'silent' && isCachedBoardFresh(boardFilters) && cached) return;
+  // Sysadmin với '' = Tất cả — vẫn tải. NV thiếu companyId thì chờ.
+  const boardQuery = useVcBoard(boardFilters, { enabled: sysAdmin || !!filterCompany });
+  const board = boardQuery.data ?? EMPTY_BOARD;
+  const loading = boardQuery.isLoading || (!sysAdmin && !filterCompany);
+  const error = refreshError || (boardQuery.error ? formatApiError(boardQuery.error) : null);
 
-    if (mode === 'init' && !cached) setLoading(true);
-    if (mode === 'refresh') setRefreshing(true);
-    if (mode !== 'silent') setError(null);
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    setRefreshError(null);
     try {
-      const boardData = await fetchProductionBoard(mode === 'refresh', boardFilters);
-      if (seq !== loadSeqRef.current) return;
-      setCachedBoard(boardFilters, boardData);
-      setBoard(boardData);
-      if (mode !== 'silent') setOwnerVisible({});
+      await refreshVcBoard(boardFiltersRef.current);
+      setOwnerVisible({});
     } catch (e) {
-      if (seq !== loadSeqRef.current) return;
-      if (mode !== 'silent') setError(formatApiError(e));
+      setRefreshError(formatApiError(e));
     } finally {
-      if (seq === loadSeqRef.current) {
-        setLoading(false);
-        setRefreshing(false);
-      }
+      setRefreshing(false);
     }
-  }, [boardFilters, filterCompany, sysAdmin]);
-
-  useEffect(() => {
-    void load('init');
-  }, [load]);
+  }, []);
 
   useProductionRealtime({
     onRefresh: (info) => {
-      if (info?.patched) {
-        const next = getCachedBoard(boardFilters);
-        if (next) setBoard(next);
-        return;
-      }
-      void load('silent');
+      if (info?.patched) return;
+      invalidateVcBoard();
     },
     modes: REALTIME_BOARD_TASK,
   });
@@ -483,7 +461,7 @@ export default function PlannerScreen() {
           windowSize={7}
           removeClippedSubviews
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={() => load('refresh')} tintColor={colors.primary} />
+            <RefreshControl refreshing={refreshing} onRefresh={() => void onRefresh()} tintColor={colors.primary} />
           }
           ListEmptyComponent={
             <Text style={styles.empty}>
