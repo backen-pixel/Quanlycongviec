@@ -48,6 +48,7 @@ export type BoardFiltersLite = {
   companyId?: string;
   dealCompanyId?: string;
   workshopTypeId?: string;
+  priority?: string;
 };
 
 /**
@@ -80,6 +81,9 @@ export function boardFiltersFromSharedSnap(
     companyId,
     dealCompanyId: dealCompanyIdForBoardApi(snap?.filterDealCompany),
     workshopTypeId,
+    // Phải có priority: Kanban gửi lọc này lên API, thiếu ở đây thì Kế hoạch /
+    // Quá hạn / KPI dùng cache key khác → tải board thêm một lần và số bị lệch.
+    priority: String(snap?.filterPriority || '').trim() || undefined,
   };
 }
 

@@ -847,7 +847,9 @@ r.get('/overview-kpis', requirePermission('projects', 'view'), async (req, res) 
       if (workshop_type_id) query = query.eq('workshop_type_id', workshop_type_id);
       if (priority) query = query.eq('priority', priority);
       ({ query } = await applyWorkshopProjectVisibilityScope(query, req.user, company_id, null));
-      return query;
+      // Bọc trong object: builder PostgREST là thenable, `return query` từ hàm async
+      // sẽ khiến await chạy luôn query và trả về {data,error} thay vì builder.
+      return { query };
     };
 
     // Cột vc_temp_staged / vc_deleted_at có thể chưa tồn tại (migration chưa chạy) → thử lần lượt.
@@ -866,7 +868,7 @@ r.get('/overview-kpis', requirePermission('projects', 'view'), async (req, res) 
       const collected = [];
       let ok = true;
       for (let from = 0; from < KPI_MAX_ROWS; from += KPI_PAGE) {
-        const query = await buildQuery(attempt.select, attempt.soft);
+        const { query } = await buildQuery(attempt.select, attempt.soft);
         const { data, error } = await query
           .order('created_at', { ascending: false })
           .range(from, from + KPI_PAGE - 1);

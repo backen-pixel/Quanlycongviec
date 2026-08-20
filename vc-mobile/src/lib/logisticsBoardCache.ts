@@ -29,6 +29,31 @@ export const BOARD_CACHE_UPDATED = 'vc_board_cache_updated';
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
 let hydratePromise: Promise<void> | null = null;
 
+/**
+ * Patch lạc quan chờ server xác nhận (kéo thẻ / bàn giao).
+ * Lượt phân trang đang chạy dở trả về cột CŨ → phải áp lại patch lên mọi board
+ * ghi sau đó, nếu không thẻ sẽ nhảy về cột cũ giữa lúc tải.
+ */
+const pendingPatches = new Map<string, { patch: Partial<ProductionProject>; at: number }>();
+const PENDING_PATCH_TTL_MS = 20_000;
+
+function applyPendingPatches(board: ProductionBoard): ProductionBoard {
+  if (!pendingPatches.size) return board;
+  const now = Date.now();
+  for (const [id, entry] of pendingPatches.entries()) {
+    if (now - entry.at > PENDING_PATCH_TTL_MS) pendingPatches.delete(id);
+  }
+  if (!pendingPatches.size) return board;
+  let changed = false;
+  const projects = board.projects.map((p) => {
+    const entry = pendingPatches.get(String(p.id));
+    if (!entry) return p;
+    changed = true;
+    return bindProjectToDisplayStages({ ...p, ...entry.patch }, board.stages);
+  });
+  return changed ? { ...board, projects } : board;
+}
+
 export function boardCacheKey(filters: BoardFilters = {}): string {
   return [
     filters.companyId || '',
@@ -80,9 +105,10 @@ export function setCachedBoard(
   const key = boardCacheKey(filters);
   const prev = cache.get(key);
   const soft = Boolean(opts?.soft);
+  const next = applyPendingPatches(board);
   // soft: giữ `at` cũ (hoặc 0) → isCachedBoardFresh vẫn false cho đến khi fetch xong.
   const at = soft ? (prev?.at ?? 0) : Date.now();
-  cache.set(key, { board, at });
+  cache.set(key, { board: next, at });
   // Giới hạn RAM: giữ tối đa 6 key mới nhất.
   if (cache.size > 6) {
     const ranked = [...cache.entries()].sort((a, b) => a[1].at - b[1].at);
@@ -91,7 +117,7 @@ export function setCachedBoard(
       if (oldest) cache.delete(oldest[0]);
     }
   }
-  DeviceEventEmitter.emit(BOARD_CACHE_UPDATED, { key, board, soft });
+  DeviceEventEmitter.emit(BOARD_CACHE_UPDATED, { key, board: next, soft });
   if (!soft) schedulePersist(key);
 }
 
@@ -105,6 +131,7 @@ export function patchCachedProjectById(
 ): ProductionBoard | null {
   const pid = String(projectId || '');
   if (!pid) return null;
+  pendingPatches.set(pid, { patch, at: Date.now() });
   let newest: CacheEntry | null = null;
   let newestKey = '';
   for (const [key, entry] of cache.entries()) {
@@ -136,6 +163,7 @@ export function patchCachedProjectById(
 
 export function clearBoardCache(): void {
   cache.clear();
+  pendingPatches.clear();
   if (persistTimer) {
     clearTimeout(persistTimer);
     persistTimer = null;

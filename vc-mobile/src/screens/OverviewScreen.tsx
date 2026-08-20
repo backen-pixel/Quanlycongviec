@@ -77,7 +77,7 @@ import {
   type CrmAssignment,
   type SharedInboxTask,
 } from '../lib/sharedWorkspaceApi';
-import { OVERVIEW_INBOX_FETCH_LIMIT } from '../lib/workInboxCache';
+import { WORK_INBOX_FETCH_LIMIT } from '../lib/workInboxCache';
 import { filterVcAreaTabTasks, filterVcLogisticsUiTasks } from '../lib/projectDetailApi';
 import type { ProductionProject } from '../types';
 import { Radii, Spacing, colorWithAlpha, type AppColors } from '../theme';
@@ -531,7 +531,8 @@ export default function OverviewScreen() {
     {
       companyId: filterCompany || null,
       assigneeId: teamScope ? null : (userId || null),
-      limit: OVERVIEW_INBOX_FETCH_LIMIT,
+      // Cùng limit với tab Công việc → hai màn dùng chung một lượt tải.
+      limit: WORK_INBOX_FETCH_LIMIT,
     },
     { enabled: scopeReady && !!userId },
   );

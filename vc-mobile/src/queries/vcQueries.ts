@@ -8,6 +8,7 @@ import {
   fetchCompanies,
   fetchLogisticsBoard,
   fetchVcOverviewKpis,
+  isBoardFetchStale,
 } from '../lib/logisticsApi';
 import {
   BOARD_CACHE_FRESH_MS,
@@ -22,6 +23,7 @@ import { fetchLogisticsAssignments, fetchPrivateDealInbox, type CrmAssignment, t
 import { fetchLogisticsWorkTasks, type WorkTask } from '../lib/workTasksApi';
 import {
   getCachedWorkInbox,
+  getCachedWorkInboxAt,
   setCachedWorkInbox,
   workInboxCacheKey,
   type WorkInboxPayload,
@@ -101,8 +103,10 @@ export function useVcBoard(
   return useQuery({
     queryKey: vcKeys.board(filters),
     queryFn: async () => {
-      const board = await fetchLogisticsBoard(false, filters);
-      setCachedBoard(filters, board);
+      const startedAt = Date.now();
+      const board = await fetchLogisticsBoard(false, filters, startedAt);
+      // Có refresh mới hơn trong lúc đang tải → không ghi cache bằng bản cũ.
+      if (!isBoardFetchStale(filters, startedAt)) setCachedBoard(filters, board);
       return board;
     },
     initialData: cached ?? undefined,
@@ -115,7 +119,10 @@ export function useVcBoard(
 
 /** Pull-to-refresh: buộc bỏ qua cache phía API rồi đồng bộ vào query cache. */
 export async function refreshVcBoard(filters: BoardFilters): Promise<ProductionBoard> {
-  const board = await fetchLogisticsBoard(true, filters);
+  const startedAt = Date.now();
+  const board = await fetchLogisticsBoard(true, filters, startedAt);
+  // Người dùng kéo refresh lần nữa → nhường cho lượt mới, tránh ghi đè ngược.
+  if (isBoardFetchStale(filters, startedAt)) return board;
   setCachedBoard(filters, board);
   queryClient.setQueryData(vcKeys.board(filters), board);
   return board;
@@ -158,10 +165,12 @@ export function useVcWorkInbox(
   args: VcWorkInboxArgs,
   opts: { enabled?: boolean } = {},
 ): UseQueryResult<WorkInboxPayload> {
-  const legacyKey = workInboxCacheKey({
+  const sharedKey = workInboxCacheKey({
     companyId: args.companyId,
     assigneeId: args.assigneeId,
+    limit: args.limit,
   });
+  const cachedAt = getCachedWorkInboxAt(sharedKey);
 
   return useQuery({
     queryKey: vcKeys.workInbox(args),
@@ -189,10 +198,12 @@ export function useVcWorkInbox(
         sharedTasks: flattenSharedInboxTasks(sharedInbox),
         workTasks,
       };
-      setCachedWorkInbox(legacyKey, payload);
+      setCachedWorkInbox(sharedKey, payload);
       return payload;
     },
-    initialData: () => getCachedWorkInbox(legacyKey) ?? undefined,
+    initialData: () => getCachedWorkInbox(sharedKey) ?? undefined,
+    // Tuổi thật của entry — cache cũ vẫn hiện ngay nhưng vẫn được revalidate.
+    initialDataUpdatedAt: cachedAt ?? undefined,
     staleTime: 60_000,
     enabled: opts.enabled !== false,
   });

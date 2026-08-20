@@ -3,7 +3,8 @@ import type { CrmAssignment, SharedInboxGroup, SharedInboxTask } from './sharedW
 
 /**
  * Cache giao việc / inbox dùng chung Tổng quan ↔ Công việc.
- * Key: companyId|assigneeId — cùng limit để tránh list lệch.
+ * Key gồm cả limit: hai màn fetch số lượng khác nhau sẽ KHÔNG ghi đè nhau
+ * (trước đây Tổng quan đọc entry do Work ghi và hiện thiếu việc).
  */
 export type WorkInboxPayload = {
   assignments: CrmAssignment[];
@@ -19,16 +20,16 @@ const cache = new Map<string, Entry>();
 /** Coi còn tươi trong khoảng này → Work/Overview không refetch mạng. */
 export const WORK_INBOX_FRESH_MS = 60_000;
 
-/** Limit chung Overview + Work (trước đây Overview 80 / Work 200). */
+/** Limit chung Overview + Work — cùng số lượng thì hai màn dùng chung 1 lượt tải. */
 export const WORK_INBOX_FETCH_LIMIT = 200;
-/** Tổng quan chỉ preview vài deal — fetch nhẹ hơn Work tab. */
-export const OVERVIEW_INBOX_FETCH_LIMIT = 60;
 
 export function workInboxCacheKey(opts: {
   companyId?: string | null;
   assigneeId?: string | null;
+  limit?: number;
 }): string {
-  return `${String(opts.companyId || '')}|${String(opts.assigneeId || '')}`;
+  const limit = opts.limit && opts.limit > 0 ? opts.limit : WORK_INBOX_FETCH_LIMIT;
+  return `${String(opts.companyId || '')}|${String(opts.assigneeId || '')}|${limit}`;
 }
 
 export function getCachedWorkInbox(key: string): WorkInboxPayload | null {
@@ -40,6 +41,11 @@ export function getCachedWorkInbox(key: string): WorkInboxPayload | null {
     sharedTasks: entry.sharedTasks,
     workTasks: entry.workTasks,
   };
+}
+
+/** Thời điểm entry được ghi — dùng cho initialDataUpdatedAt của React Query. */
+export function getCachedWorkInboxAt(key: string): number | null {
+  return cache.get(key)?.at ?? null;
 }
 
 export function isCachedWorkInboxFresh(key: string): boolean {

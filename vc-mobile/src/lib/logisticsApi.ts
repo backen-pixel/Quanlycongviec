@@ -264,9 +264,20 @@ const PROJECTS_FETCH_CONCURRENCY = 5;
 export const PROJECTS_HARD_CAP = PROJECTS_PAGE_LIMIT * PROJECTS_MAX_PAGES;
 
 const boardInflight = new Map<string, Promise<ProductionBoard>>();
+/** Mốc refresh gần nhất theo bộ lọc — lượt fetch bắt đầu trước đó hết hiệu lực. */
+const boardRefreshAt = new Map<string, number>();
 
 function boardInflightKey(filters: BoardFilters = {}): string {
   return `${filters.companyId || ''}|${filters.dealCompanyId || ''}|${filters.workshopTypeId || ''}|${filters.priority || ''}`;
+}
+
+/**
+ * Lượt fetch bắt đầu trước lần refresh mới nhất → KHÔNG được ghi cache,
+ * nếu không pull-to-refresh sẽ bị dữ liệu cũ (về sau) ghi đè.
+ */
+export function isBoardFetchStale(filters: BoardFilters = {}, startedAt: number): boolean {
+  const marked = boardRefreshAt.get(boardInflightKey(filters));
+  return marked != null && startedAt < marked;
 }
 
 type ProjectsFetchResult = {
@@ -374,6 +385,7 @@ function resolveBoardProjects(
 async function fetchLogisticsBoardUncapped(
   noCache = false,
   filters: BoardFilters = {},
+  startedAt = Date.now(),
 ): Promise<ProductionBoard> {
   const { setCachedBoard } = await import('./logisticsBoardCache');
 
@@ -387,6 +399,8 @@ async function fetchLogisticsBoardUncapped(
 
   const publishSoft = (partial: ProjectsFetchResult) => {
     if (!stages.length) return;
+    // Đã có refresh mới hơn → bản partial này lỗi thời, không ghi cache.
+    if (isBoardFetchStale(filters, startedAt)) return;
     const board: ProductionBoard = {
       stages,
       projects: resolveBoardProjects(partial.projects, stages),
@@ -484,13 +498,17 @@ function normalizeVcKpis(raw?: Partial<VcBoardKpis> | null): VcBoardKpis {
 export function fetchLogisticsBoard(
   noCache = false,
   filters: BoardFilters = {},
+  /** Mốc bắt đầu do caller cấp — phải khớp mốc dùng cho isBoardFetchStale. */
+  startedAt = Date.now(),
 ): Promise<ProductionBoard> {
   const key = boardInflightKey(filters);
   const existing = boardInflight.get(key);
   // Silent/init được join. Pull-to-refresh (noCache) không được dính request chưa bust.
   // Refresh đang chạy → silent sau đó join (nhận data mới).
   if (existing && !noCache) return existing;
-  const pending = fetchLogisticsBoardUncapped(noCache, filters).finally(() => {
+  // Refresh vô hiệu hoá mọi lượt fetch đang chạy dở cho cùng bộ lọc.
+  if (noCache) boardRefreshAt.set(key, startedAt);
+  const pending = fetchLogisticsBoardUncapped(noCache, filters, startedAt).finally(() => {
     if (boardInflight.get(key) === pending) boardInflight.delete(key);
   });
   boardInflight.set(key, pending);

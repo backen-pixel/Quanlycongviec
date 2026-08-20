@@ -217,6 +217,7 @@ export default function WorkScreen() {
       const cacheKey = workInboxCacheKey({
         companyId: companyParam,
         assigneeId: assigneeParam,
+        limit: WORK_INBOX_FETCH_LIMIT,
       });
       const force = Boolean(opts?.force);
       const cached = getCachedWorkInbox(cacheKey);
@@ -242,7 +243,9 @@ export default function WorkScreen() {
         assignments: list,
         sharedGroups: inbox.groups || [],
         sharedTasks: inbox.tasks || [],
-        workTasks: cached?.workTasks || [],
+        // Đọc lại tại thời điểm ghi: Tổng quan có thể vừa nạp workTasks trong lúc
+        // chờ request này — ghi mảng rỗng lên sẽ làm Tổng quan trống nhiệm vụ.
+        workTasks: getCachedWorkInbox(cacheKey)?.workTasks || cached?.workTasks || [],
       });
     } catch (e) {
       if (seq !== loadSeqRef.current) return;
@@ -280,6 +283,7 @@ export default function WorkScreen() {
       invalidateWorkInboxCache(workInboxCacheKey({
         companyId: companyParam,
         assigneeId: assigneeParam,
+        limit: WORK_INBOX_FETCH_LIMIT,
       }));
       await load({ force: true });
     } finally {
@@ -295,6 +299,7 @@ export default function WorkScreen() {
       invalidateWorkInboxCache(workInboxCacheKey({
         companyId: companyParam,
         assigneeId: assigneeParam,
+        limit: WORK_INBOX_FETCH_LIMIT,
       }));
       void load({ force: true });
     },
