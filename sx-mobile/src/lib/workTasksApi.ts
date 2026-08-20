@@ -2,6 +2,16 @@ import { api } from '../api/client';
 import { isCrmProductionTaskDone } from './projectDetailApi';
 import type { AuthUserLite } from './productionFilters';
 import type { CrmTask, PersonRef } from '../types';
+import { QUERY_TTL_SHORT, cachedQuery, invalidateQueryPrefix } from './queryCache';
+
+const K_WORK_PAGE = 'sx:workTasks:';
+const K_WORK_STATS = 'sx:workStats:';
+
+/** Sau khi đổi trạng thái / tạo việc — buộc lần đọc kế tiếp lấy dữ liệu mới. */
+export function invalidateWorkTasksCache(): void {
+  invalidateQueryPrefix(K_WORK_PAGE);
+  invalidateQueryPrefix(K_WORK_STATS);
+}
 
 /** Section key cho Giao việc không gắn deal. */
 export const ASSIGNMENT_SECTION_ID = '__giao_viec__';
@@ -42,6 +52,8 @@ export type WorkTasksQuery = {
   limit?: number;
   offset?: number;
   signal?: AbortSignal;
+  /** true = bỏ qua cache (kéo làm mới). */
+  force?: boolean;
 };
 
 export type WorkTasksPage = {
@@ -282,16 +294,29 @@ export async function fetchProductionWorkTasksPage(
   if (query.overdue) params.overdue = 1;
   if (query.q?.trim()) params.q = query.q.trim();
 
-  const { data } = await api.get<{
-    assignments?: unknown[];
-    has_more?: boolean;
-  }>('/crm/assignments', { params, signal: query.signal });
-  const list = Array.isArray(data?.assignments) ? data.assignments : Array.isArray(data) ? data : [];
-  const tasks = list
-    .map((row) => mapAssignmentToWorkTask(row as Record<string, unknown>))
-    .filter((t) => t.id);
-  const hasMore = data?.has_more != null ? Boolean(data.has_more) : tasks.length >= limit;
-  return { tasks, hasMore, offset, limit };
+  const key = K_WORK_PAGE + JSON.stringify(params);
+  return cachedQuery<WorkTasksPage>({
+    key,
+    ttlMs: QUERY_TTL_SHORT,
+    force: query.force,
+    signal: query.signal,
+    fetcher: async () => {
+      const { data } = await api.get<{
+        assignments?: unknown[];
+        has_more?: boolean;
+      }>('/crm/assignments', { params });
+      const list = Array.isArray(data?.assignments)
+        ? data.assignments
+        : Array.isArray(data)
+          ? data
+          : [];
+      const tasks = list
+        .map((row) => mapAssignmentToWorkTask(row as Record<string, unknown>))
+        .filter((t) => t.id);
+      const hasMore = data?.has_more != null ? Boolean(data.has_more) : tasks.length >= limit;
+      return { tasks, hasMore, offset, limit };
+    },
+  });
 }
 
 export type WorkTasksStats = {
@@ -305,7 +330,10 @@ export type WorkTasksStats = {
 /**
  * KPI đầy đủ (không bị cắt limit trang list) — GET /crm/assignments/stats.
  * Khớp web Giao việc SX: pending gồm cancelled; overdue = chưa xong + deadline < hôm nay.
- * Fallback: nếu BE chưa có /stats → gom mọi trang list rồi đếm client.
+ *
+ * Không có đường dự phòng đếm phía client: trước đây khi /stats lỗi, hàm này lặng lẽ
+ * kéo tới 40 trang × 500 dòng chỉ để đếm — app treo mà không rõ lý do. Giờ lỗi được
+ * ném ra để màn hình giữ KPI cũ và ta thấy được sự cố.
  */
 export async function fetchProductionWorkTaskStats(
   query: Omit<WorkTasksQuery, 'status' | 'overdue' | 'limit' | 'offset'> & { q?: string } = {},
@@ -314,74 +342,28 @@ export async function fetchProductionWorkTaskStats(
   if (query.assigneeId) params.assignee_id = query.assigneeId;
   if (query.companyId) params.company_id = query.companyId;
   if (query.q) params.q = query.q;
-  try {
-    const { data } = await api.get<WorkTasksStats>('/crm/assignments/stats', {
-      params,
-      signal: query.signal,
-    });
-    if (data && typeof data === 'object' && (data.total != null || data.pending != null)) {
-      return {
-        pending: Number(data.pending) || 0,
-        in_progress: Number(data.in_progress) || 0,
-        completed: Number(data.completed) || 0,
-        overdue: Number(data.overdue) || 0,
-        total: Number(data.total) || 0,
-      };
-    }
-  } catch {
-    /* BE cũ chưa có /stats → drain trang */
-  }
+  return cachedQuery<WorkTasksStats>({
+    key: K_WORK_STATS + JSON.stringify(params),
+    ttlMs: QUERY_TTL_SHORT,
+    force: query.force,
+    signal: query.signal,
+    fetcher: () => fetchProductionWorkTaskStatsRaw(params),
+  });
+}
 
-  const all: WorkTask[] = [];
-  let offset = 0;
-  let guard = 0;
-  while (guard < 40) {
-    guard += 1;
-    const page = await fetchProductionWorkTasksPage({
-      assigneeId: query.assigneeId,
-      companyId: query.companyId,
-      q: query.q,
-      limit: 500,
-      offset,
-      signal: query.signal,
-    });
-    all.push(...page.tasks);
-    if (!page.hasMore || page.tasks.length === 0) break;
-    offset += page.tasks.length;
-  }
-  const needle = String(query.q || '').trim().toLowerCase();
-  const scoped = needle
-    ? all.filter((t) => {
-        const hay = [
-          t.title,
-          t.description,
-          t.lead?.code,
-          t.lead?.title,
-          t.assignee?.full_name,
-          ...(t.assignees || []).map((a) => a.full_name),
-        ]
-          .filter(Boolean)
-          .join(' ')
-          .toLowerCase();
-        return hay.includes(needle);
-      })
-    : all;
-  let pending = 0;
-  let inProgress = 0;
-  let completed = 0;
-  let overdue = 0;
-  for (const t of scoped) {
-    if (isTaskDone(t.status)) completed += 1;
-    else if (isTaskInProgress(t.status)) inProgress += 1;
-    else pending += 1;
-    if (isTaskOverdue(t)) overdue += 1;
+async function fetchProductionWorkTaskStatsRaw(
+  params: Record<string, string>,
+): Promise<WorkTasksStats> {
+  const { data } = await api.get<WorkTasksStats>('/crm/assignments/stats', { params });
+  if (!data || typeof data !== 'object' || (data.total == null && data.pending == null)) {
+    throw new Error('KPI giao việc: /crm/assignments/stats trả về dữ liệu không hợp lệ');
   }
   return {
-    pending,
-    in_progress: inProgress,
-    completed,
-    overdue,
-    total: scoped.length,
+    pending: Number(data.pending) || 0,
+    in_progress: Number(data.in_progress) || 0,
+    completed: Number(data.completed) || 0,
+    overdue: Number(data.overdue) || 0,
+    total: Number(data.total) || 0,
   };
 }
 
@@ -394,13 +376,14 @@ export async function fetchProductionWorkTasks(query: WorkTasksQuery = {}): Prom
 /** Overview «của tôi» — cùng nguồn Giao việc SX (1 trang). */
 export async function fetchMyProductionTasks(
   userId: string,
-  opts?: { signal?: AbortSignal },
+  opts?: { signal?: AbortSignal; force?: boolean },
 ): Promise<WorkTask[]> {
   return fetchProductionWorkTasks({
     assigneeId: userId,
     limit: WORK_TASKS_PAGE_SIZE,
     offset: 0,
     signal: opts?.signal,
+    force: opts?.force,
   });
 }
 
@@ -416,6 +399,7 @@ export async function updateWorkTaskStatus(
       status,
       skip_completion_evidence: true,
     });
+    invalidateWorkTasksCache();
     return mapAssignmentToWorkTask({
       ...(data || {}),
       id: taskId,
@@ -428,6 +412,7 @@ export async function updateWorkTaskStatus(
     `/crm/assignments/${taskId}`,
     { status },
   );
+  invalidateWorkTasksCache();
   const row = (data?.assignment || data || {}) as Record<string, unknown>;
   return mapAssignmentToWorkTask({ ...row, id: taskId, status });
 }
@@ -538,6 +523,7 @@ export async function uploadWorkTaskFile(
   form.append('file', { uri: file.uri, name: file.name, type: file.mime } as unknown as Blob);
   form.append('kind', 'sub');
   await postMultipart(`/crm/assignments/${task.id}/files`, form, { timeoutMs: 180000 });
+  invalidateWorkTasksCache();
 }
 
 /** Task có được giao cho userId không (assignee chính hoặc multi-assignee). */

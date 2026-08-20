@@ -10,6 +10,8 @@ import {
 } from '../lib/floatingBubbleOverlay';
 import { clearKanbanFilters } from '../lib/kanbanFilterStorage';
 import { clearBoardCache, hydrateBoardCacheFromDisk } from '../lib/productionBoardCache';
+import { clearCompaniesCache } from '../lib/productionApi';
+import { clearQueryCache } from '../lib/queryCache';
 import { registerPushToken, unregisterPushToken } from '../lib/pushRegistration';
 import { startDeviceHeartbeat, stopDeviceHeartbeat } from '../lib/deviceHeartbeat';
 
@@ -126,6 +128,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const clearSessionLocal = useCallback(async () => {
     stopDeviceHeartbeat();
     clearBoardCache();
+    clearCompaniesCache();
+    clearQueryCache();
     await clearKanbanFilters();
     await unregisterPushToken();
     await setStoredToken(null);

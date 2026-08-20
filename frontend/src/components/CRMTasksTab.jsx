@@ -598,11 +598,11 @@ export default function CRMTasksTab({
     : isDealResponsibleUser(user, dealResponsible);
   const isAdmin = isAdminLike(user);
   const [tasks, setTasks] = useState([]);
-  const [vcAreaTab, setVcAreaTab] = useState(() => (
-    initialVcAreaTab === 'shipping' || initialVcAreaTab === 'install' || initialVcAreaTab === 'all'
-      ? initialVcAreaTab
-      : 'shipping'
-  ));
+  // Chi tiết deal module Lắp đặt: luôn Vận chuyển (không hiện chip LĐ / Tất cả).
+  const [vcAreaTab, setVcAreaTab] = useState('shipping');
+  useEffect(() => {
+    setVcAreaTab('shipping');
+  }, [leadId]);
   const isSxStageSlug = useMemo(() => (slug) => String(slug || '').startsWith('sx_'), []);
   const hasSxTasks = useMemo(() => tasks.some((t) => isSxStageSlug(t.stage_slug)), [tasks, isSxStageSlug]);
   const hasCrmDealTasks = useMemo(
@@ -4389,29 +4389,7 @@ export default function CRMTasksTab({
               {stats.overdue > 0 && <span className="text-red-600 ml-1">• {stats.overdue} quá hạn</span>}
             </div>
           </div>
-          {showLogisticsWorkshopInUi && (
-            <div className="flex items-center gap-1 bg-gray-50 border border-gray-200 rounded-lg p-0.5">
-              {[
-                { id: 'shipping', label: 'Vận chuyển' },
-                { id: 'install', label: 'Lắp đặt' },
-                { id: 'all', label: 'Tất cả' },
-              ].map((tab) => (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => {
-                    setVcAreaTab(tab.id);
-                    if (typeof onVcAreaTabChange === 'function') onVcAreaTabChange(tab.id);
-                  }}
-                  className={`h-6 px-2 rounded-md text-[10px] font-semibold cursor-pointer ${
-                    vcAreaTab === tab.id ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-600 hover:text-gray-900'
-                  }`}
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </div>
-          )}
+          {/* Chi tiết deal VC/LĐ: luôn lọc Vận chuyển — không hiện chip khu vực */}
         </div>
         <div className="flex items-center gap-1">
           {leadType === 'deal' && hasSxTasks && !isProductionScope && !isSharedWorkspace && (

@@ -193,7 +193,7 @@ function shouldForceSxHandoverColumn(
 }
 
 /** Index cột — tránh filter/find O(n) trên mỗi dự án khi board lớn. */
-type StageIndex = {
+export type StageIndex = {
   byId: Map<string, KanbanStage>;
   byWorkflow: Map<string, KanbanStage[]>;
   handoverByWorkshop: Map<string, KanbanStage>;
@@ -203,7 +203,7 @@ type StageIndex = {
   first: KanbanStage | null;
 };
 
-function buildStageIndex(stages: KanbanStage[]): StageIndex {
+export function buildStageIndex(stages: KanbanStage[]): StageIndex {
   const byId = new Map<string, KanbanStage>();
   const byWorkflow = new Map<string, KanbanStage[]>();
   const handoverByWorkshop = new Map<string, KanbanStage>();
@@ -382,6 +382,19 @@ export async function fetchProductionBoardSummary(
   bustCache = false,
   signal?: AbortSignal,
 ): Promise<ProductionBoardSummary | null> {
+  const {
+    getCachedBoardSummary,
+    isCachedBoardSummaryFresh,
+    setCachedBoardSummary,
+    invalidateCachedBoardSummary,
+  } = require('./productionBoardCache') as typeof import('./productionBoardCache');
+  const f = filters || {};
+  if (!bustCache && isCachedBoardSummaryFresh(f)) {
+    const hit = getCachedBoardSummary(f);
+    if (hit) return hit;
+  }
+  if (bustCache) invalidateCachedBoardSummary(f);
+
   const params: Record<string, string | number> = {
     summary: 1,
     view: 'mobile',
@@ -407,13 +420,15 @@ export async function fetchProductionBoardSummary(
     throwIfAborted(signal);
     const sk = data?.stage_kpis;
     if (!sk || typeof sk !== 'object') return null;
-    return {
+    const summary: ProductionBoardSummary = {
       total: Number(data?.total) || 0,
       producing: Number(sk.producing) || 0,
       awaitingDelivery: Number(sk.awaiting_delivery) || 0,
       shipped: Number(sk.shipped) || 0,
       overdue: Number(data?.deadline_counts?.overdue) || 0,
     };
+    setCachedBoardSummary(f, summary);
+    return summary;
   } catch (e) {
     if (isAbortError(e)) throw e;
     return null;
@@ -435,6 +450,10 @@ export async function fetchProductionBoardSummary(
 const PROJECTS_PAGE_LIMIT = 500;
 const PROJECTS_MAX_PAGES = 12;
 const PROJECTS_FETCH_CONCURRENCY = 4;
+/** Chờ luồng JS vẽ xong trang 1 rồi mới kéo trang nền — tránh giật khi vừa mở board. */
+const BOARD_BACKGROUND_START_DELAY_MS = 300;
+/** Nhường luồng JS giữa các lô trang để React commit kịp trước lô sau. */
+const BOARD_BATCH_YIELD_MS = 60;
 
 function attachColumnsIndexed(
   list: ProductionProject[],
@@ -514,7 +533,7 @@ type InflightBoard = {
 /** Shared theo filter — không tách r0/r1 (Overview preview + Kanban full cùng 1 mạng). */
 const inflightBoards = new Map<string, InflightBoard>();
 /** Chờ Kanban/Planner promote sau khi Overview mở preview trước. */
-const BOARD_PROMOTE_GRACE_MS = 450;
+const BOARD_PROMOTE_GRACE_MS = 1500;
 
 function emitPartialTo(listeners: Set<(board: ProductionBoard) => void>, board: ProductionBoard) {
   for (const fn of [...listeners]) {
@@ -646,7 +665,10 @@ async function fetchProductionBoardInternal(
   const remaining: number[] = [];
   for (let p = 2; p <= totalPages; p += 1) remaining.push(p);
 
+  await sleepMs(BOARD_BACKGROUND_START_DELAY_MS);
+
   for (let i = 0; i < remaining.length; i += PROJECTS_FETCH_CONCURRENCY) {
+    if (i > 0) await sleepMs(BOARD_BATCH_YIELD_MS);
     const batch = remaining.slice(i, i + PROJECTS_FETCH_CONCURRENCY);
     const results = await Promise.all(batch.map((p) => getPage(p)));
     const newRows: ProductionProject[] = [];
@@ -870,23 +892,47 @@ export async function fetchPersonalPlanner(): Promise<PersonalPlanner> {
 
 export type CompanyOption = { id: string; name: string };
 
-export async function fetchCompanies(): Promise<CompanyOption[]> {
-  const { data } = await api.get<{ companies?: unknown[] } | unknown[]>(
-    '/companies',
-    { params: { for_module: 'production' } },
-  );
-  const list = Array.isArray(data)
-    ? data
-    : Array.isArray(data?.companies)
-      ? data.companies
-      : [];
-  return list.map((c) => {
-    const row = c as Record<string, unknown>;
-    return {
-      id: String(row.id || ''),
-      name: String(row.short_name || row.name || row.id || ''),
-    };
-  }).filter((c) => c.id);
+const COMPANIES_CACHE_TTL_MS = 10 * 60_000;
+let companiesCache: { at: number; list: CompanyOption[] } | null = null;
+let companiesInflight: Promise<CompanyOption[]> | null = null;
+
+export async function fetchCompanies(opts?: { force?: boolean }): Promise<CompanyOption[]> {
+  const force = Boolean(opts?.force);
+  if (!force && companiesCache && Date.now() - companiesCache.at < COMPANIES_CACHE_TTL_MS) {
+    return companiesCache.list;
+  }
+  if (!force && companiesInflight) return companiesInflight;
+
+  companiesInflight = (async () => {
+    try {
+      const { data } = await api.get<{ companies?: unknown[] } | unknown[]>(
+        '/companies',
+        { params: { for_module: 'production' } },
+      );
+      const listRaw = Array.isArray(data)
+        ? data
+        : Array.isArray(data?.companies)
+          ? data.companies
+          : [];
+      const list = listRaw.map((c) => {
+        const row = c as Record<string, unknown>;
+        return {
+          id: String(row.id || ''),
+          name: String(row.short_name || row.name || row.id || ''),
+        };
+      }).filter((c) => c.id);
+      companiesCache = { at: Date.now(), list };
+      return list;
+    } finally {
+      companiesInflight = null;
+    }
+  })();
+  return companiesInflight;
+}
+
+export function clearCompaniesCache(): void {
+  companiesCache = null;
+  companiesInflight = null;
 }
 
 export type WorkshopTypeOption = { id: string; name: string };

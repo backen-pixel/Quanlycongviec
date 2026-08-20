@@ -24,6 +24,7 @@ import ProjectCrmTaskRow from '../components/projectDetail/ProjectCrmTaskRow';
 import ProjectDocumentsTab from '../components/projectDetail/ProjectDocumentsTab';
 import ProjectDriveTab from '../components/projectDetail/ProjectDriveTab';
 import ProjectMembersTab from '../components/projectDetail/ProjectMembersTab';
+import ProjectSharedWorkspaceTab from '../components/projectDetail/ProjectSharedWorkspaceTab';
 import SpinningLoader from '../components/SpinningLoader';
 import TapHighlight from '../components/TapHighlight';
 import { formatApiError } from '../api/client';
@@ -44,13 +45,15 @@ import {
   updateProjectMoney,
   type CrmTaskStageGroup,
 } from '../lib/projectDetailApi';
-import { fetchThreadComments, resolveCommentSource } from '../lib/commentApi';
 import type { RootStackParamList } from '../navigation/RootNavigator';
 import { formatMoneyAmount, Radii, Spacing, getTaskProgressColor } from '../theme';
 import type { CrmTask, ProductionProjectDetail, ProjectActivity } from '../types';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'ProjectDetail'>;
-type TabKey = 'tasks' | 'documents' | 'drive' | 'info' | 'team' | 'schedule' | 'comments';
+type TabKey = 'tasks' | 'shared' | 'documents' | 'drive' | 'info' | 'team' | 'schedule' | 'comments';
+
+/** Tab nặng — keep-alive tối đa 2 (LRU) để tránh chồng mount. */
+const HEAVY_TABS: TabKey[] = ['shared', 'documents', 'comments', 'drive', 'team'];
 type EditableDateField = 'order_date' | 'delivery_date' | 'deadline';
 type EditableMoneyField = 'production_value' | 'deposit_amount';
 
@@ -78,7 +81,12 @@ function parseDateValue(value?: string | null): Date {
 
 export default function ProjectDetailScreen({ route, navigation }: Props) {
   const { projectId, focusTaskId: focusTaskIdParam } = route.params;
-  const focusTaskId = focusTaskIdParam ? String(focusTaskIdParam) : '';
+  const incomingFocusId = focusTaskIdParam ? String(focusTaskIdParam) : '';
+  /** Highlight UX — local, tự tắt; không giữ mãi theo route params. */
+  const [highlightTaskId, setHighlightTaskId] = useState(incomingFocusId);
+  /** Id dùng lookup deal/task lần đầu — giữ ref kể cả khi highlight đã tắt. */
+  const focusLookupIdRef = useRef(incomingFocusId);
+  if (incomingFocusId) focusLookupIdRef.current = incomingFocusId;
   const { colors } = useTheme();
   const { joinProjectRoom, leaveProjectRoom, joinLeadRoom, leaveLeadRoom } = useNotifications();
   const insets = useSafeAreaInsets();
@@ -108,7 +116,8 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
   const loadSeqRef = useRef(0);
   const loadAbortRef = useRef<AbortController | null>(null);
 
-  const load = useCallback(async (silent = false) => {
+  /** force = bỏ qua queryCache (kéo làm mới / sau khi ghi dữ liệu). */
+  const load = useCallback(async (silent = false, force = false) => {
     loadAbortRef.current?.abort();
     const ac = new AbortController();
     loadAbortRef.current = ac;
@@ -118,12 +127,10 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
       setLoading(true);
       setTasksLoading(true);
       setTasks([]);
-      setActivities([]);
-      setCommentCount(0);
     }
     setErr('');
     try {
-      const detail = await fetchProductionProjectDetail(forProjectId);
+      const detail = await fetchProductionProjectDetail(forProjectId, { force, signal: ac.signal });
       if (seq !== loadSeqRef.current || ac.signal.aborted) return;
       setProject(detail);
       // Header/tabs hiện ngay — không chờ tasks/comments.
@@ -132,37 +139,34 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
       let resolvedDealId =
         pickPrimaryCrmDealId(detail.crmDeals)
         || null;
-      if (!resolvedDealId) resolvedDealId = await fetchDealIdForProject(forProjectId);
+      if (!resolvedDealId) {
+        resolvedDealId = await fetchDealIdForProject(forProjectId, { force, signal: ac.signal });
+      }
       if (seq !== loadSeqRef.current || ac.signal.aborted) return;
 
       const workshopTypeId = detail.workshop_type_id || detail.workshop_type?.id || null;
 
-      // Activities + comments chạy nền song song với tasks — không chặn tab Công việc.
-      const actPromise = fetchProjectActivities(forProjectId).catch(() => [] as ProjectActivity[]);
-      const commentDealHint = resolvedDealId;
-      const commentPromise = fetchThreadComments(
-        resolveCommentSource(forProjectId, commentDealHint),
-      ).catch(() => []);
-
       let taskRows = resolvedDealId
-        ? await fetchCrmDealTasks(resolvedDealId, { workshopTypeId })
+        ? await fetchCrmDealTasks(resolvedDealId, { workshopTypeId, force, signal: ac.signal })
         : [];
 
-      // Nếu focusTaskId không nằm trên deal chính — thử các deal còn lại song song.
+      // Nếu focus task không nằm trên deal chính — thử các deal còn lại song song.
+      const lookupTaskId = focusLookupIdRef.current;
       if (
-        focusTaskId
+        lookupTaskId
         && resolvedDealId
-        && !taskRows.some((t) => String(t.id) === String(focusTaskId))
+        && !taskRows.some((t) => String(t.id) === String(lookupTaskId))
         && (detail.crmDeals?.length || 0) > 1
       ) {
         const others = (detail.crmDeals || []).filter((d) => String(d.id) !== String(resolvedDealId));
         const altPages = await Promise.all(
-          others.map((d) => fetchCrmDealTasks(String(d.id), { workshopTypeId }).catch(() => [] as CrmTask[])),
+          others.map((d) => fetchCrmDealTasks(String(d.id), { workshopTypeId, signal: ac.signal })
+            .catch(() => [] as CrmTask[])),
         );
         if (seq !== loadSeqRef.current || ac.signal.aborted) return;
         for (let i = 0; i < others.length; i += 1) {
           const altRows = altPages[i] || [];
-          if (altRows.some((t) => String(t.id) === String(focusTaskId))) {
+          if (altRows.some((t) => String(t.id) === String(lookupTaskId))) {
             resolvedDealId = String(others[i].id);
             taskRows = altRows;
             break;
@@ -174,22 +178,6 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
       setDealId(resolvedDealId);
       setTasks(taskRows);
       setTasksLoading(false);
-
-      // Badge bình luận / hoạt động — cập nhật sau, không chặn list CV.
-      void Promise.all([actPromise, commentPromise]).then(async ([actRows, commentRows]) => {
-        if (seq !== loadSeqRef.current || ac.signal.aborted) return;
-        setActivities(actRows);
-        // Deal đổi sau fan-out focus → refetch count đúng thread.
-        if (resolvedDealId && resolvedDealId !== commentDealHint) {
-          const rows = await fetchThreadComments(
-            resolveCommentSource(forProjectId, resolvedDealId),
-          ).catch(() => []);
-          if (seq !== loadSeqRef.current || ac.signal.aborted) return;
-          setCommentCount(rows.length);
-          return;
-        }
-        setCommentCount(commentRows.length);
-      });
     } catch (e) {
       if (seq !== loadSeqRef.current) return;
       const msg = String((e as { message?: string })?.message || '');
@@ -205,7 +193,54 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
         setTasksLoading(false);
       }
     }
-  }, [projectId, focusTaskId]);
+  }, [projectId]);
+
+  const activitiesLoadedForRef = useRef<string | null>(null);
+
+  // Hoạt động — chỉ khi mở tab Thông tin/Lịch (không chặn CV lần đầu).
+  useEffect(() => {
+    if (tab !== 'info' && tab !== 'schedule') return;
+    if (activitiesLoadedForRef.current === projectId) return;
+    let cancelled = false;
+    void fetchProjectActivities(projectId)
+      .then((rows) => {
+        if (cancelled) return;
+        activitiesLoadedForRef.current = projectId;
+        setActivities(rows);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [tab, projectId]);
+
+  // Giữ tab đã mở mounted — đổi tab không remount / không fetch lại.
+  // Tab nặng chỉ giữ tối đa 2 (LRU) để tránh chồng mount shared/docs/comments/drive/team.
+  const [visitedTabs, setVisitedTabs] = useState<Set<TabKey>>(() => new Set(['tasks']));
+  const heavyOrderRef = useRef<TabKey[]>([]);
+  useEffect(() => {
+    setVisitedTabs((prev) => {
+      const next = new Set(prev);
+      next.add(tab);
+      if (HEAVY_TABS.includes(tab)) {
+        const order = heavyOrderRef.current.filter((k) => k !== tab);
+        order.push(tab);
+        while (order.length > 2) {
+          const drop = order.shift();
+          if (drop && drop !== tab) next.delete(drop);
+        }
+        heavyOrderRef.current = order;
+      }
+      if (prev.size === next.size && [...prev].every((k) => next.has(k))) return prev;
+      return next;
+    });
+  }, [tab]);
+
+  useEffect(() => {
+    activitiesLoadedForRef.current = null;
+    heavyOrderRef.current = [];
+    setVisitedTabs(new Set(['tasks']));
+    setActivities([]);
+    setCommentCount(0);
+  }, [projectId]);
 
   useEffect(() => {
     void load(false);
@@ -214,8 +249,26 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
 
   useEffect(() => {
     didFocusScroll.current = false;
-    if (focusTaskId) setTab('tasks');
-  }, [focusTaskId, projectId]);
+    focusLookupIdRef.current = '';
+    setHighlightTaskId('');
+  }, [projectId]);
+
+  useEffect(() => {
+    if (!incomingFocusId) return;
+    didFocusScroll.current = false;
+    setHighlightTaskId(incomingFocusId);
+    focusLookupIdRef.current = incomingFocusId;
+    setTab('tasks');
+    // Xóa param để không ping lại khi re-render / back.
+    navigation.setParams({ focusTaskId: undefined });
+  }, [incomingFocusId, navigation]);
+
+  // Tự tắt highlight + bỏ ghim đầu danh sách sau khi đã dẫn mắt tới CV.
+  useEffect(() => {
+    if (!highlightTaskId) return undefined;
+    const t = setTimeout(() => setHighlightTaskId(''), 4500);
+    return () => clearTimeout(t);
+  }, [highlightTaskId]);
 
   useEffect(() => {
     joinProjectRoom(projectId);
@@ -231,13 +284,14 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
   useProductionRealtime({
     projectId,
     dealId,
-    onRefresh: () => load(true),
+    // Realtime báo dữ liệu đã đổi trên server → phải bỏ qua cache.
+    onRefresh: () => load(true, true),
   });
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      await load(true);
+      await load(true, true);
     } finally {
       setRefreshing(false);
     }
@@ -275,7 +329,7 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
                 await Promise.all(
                   toComplete.map((t) => updateCrmTask(dealId, t.id, { status: 'completed' })),
                 );
-                await load(true);
+                await load(true, true);
               } catch (e) {
                 setTasks(prev);
                 Alert.alert('Lỗi', formatApiError(e));
@@ -425,8 +479,8 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
 
   /** Đưa nhóm/công việc được focus lên đầu để dễ thấy khi mở từ tab Công việc. */
   const orderedTaskGroups = useMemo(() => {
-    if (!focusTaskId) return taskGroups;
-    const fid = String(focusTaskId);
+    if (!highlightTaskId) return taskGroups;
+    const fid = String(highlightTaskId);
     const withFocus = taskGroups
       .map((g) => {
         const hit = g.tasks.find((t) => String(t.id) === fid);
@@ -439,11 +493,11 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
         return aHit - bHit;
       });
     return withFocus;
-  }, [taskGroups, focusTaskId]);
+  }, [taskGroups, highlightTaskId]);
 
   const focusedTask = useMemo(
-    () => (focusTaskId ? tasks.find((t) => String(t.id) === String(focusTaskId)) || null : null),
-    [tasks, focusTaskId],
+    () => (highlightTaskId ? tasks.find((t) => String(t.id) === String(highlightTaskId)) || null : null),
+    [tasks, highlightTaskId],
   );
 
   const taskSections = useMemo(
@@ -456,7 +510,7 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
   );
 
   useEffect(() => {
-    if (!focusTaskId || loading || !focusedTask || didFocusScroll.current) return;
+    if (!highlightTaskId || loading || !focusedTask || didFocusScroll.current) return;
     const timer = setTimeout(() => {
       didFocusScroll.current = true;
       // Task đã được đưa lên đầu section 0 — cuộn tới item đầu sau header.
@@ -468,7 +522,7 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
       });
     }, 350);
     return () => clearTimeout(timer);
-  }, [focusTaskId, loading, focusedTask]);
+  }, [highlightTaskId, loading, focusedTask]);
 
   const { done: taskDone, total: taskTotal, percent: progress } = useMemo(
     () => calcCrmProductionTaskProgress(
@@ -820,7 +874,7 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
 
   const displayTitle = displayDeal?.title || project?.name || 'Dự án';
   const displayCode = displayDeal?.code || project?.code || '';
-  const isFullHeightTab = tab === 'comments' || tab === 'documents' || tab === 'drive' || tab === 'team';
+  const isFullHeightTab = tab === 'comments' || tab === 'documents' || tab === 'drive' || tab === 'team' || tab === 'shared';
   const useTasksVirtualList = tab === 'tasks';
 
   const tabsBar = (
@@ -832,6 +886,7 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
     >
       {([
         ['tasks', `Công việc${taskTotal ? ` (${taskTotal})` : ''}`],
+        ['shared', 'Không gian chung'],
         ['comments', `Bình luận${commentCount ? ` (${commentCount})` : ''}`],
         ['documents', `Tài liệu${docCount ? ` (${docCount})` : ''}`],
         ['drive', 'Drive'],
@@ -914,7 +969,7 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
 
   const focusBannerBlock = (
     <>
-      {focusTaskId && focusedTask ? (
+      {highlightTaskId && focusedTask ? (
         <View ref={focusTargetRef} collapsable={false} style={styles.focusBanner}>
           <Ionicons name="locate" size={16} color={colors.primary} />
           <View style={{ flex: 1, minWidth: 0 }}>
@@ -922,7 +977,7 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
             <Text style={styles.focusBannerSub} numberOfLines={2}>{focusedTask.title}</Text>
           </View>
         </View>
-      ) : focusTaskId && !tasksLoading && tasks.length > 0 ? (
+      ) : highlightTaskId && !tasksLoading && tasks.length > 0 ? (
         <View style={[styles.focusBanner, styles.focusBannerWarn]}>
           <Ionicons name="information-circle-outline" size={16} color={colors.warning} />
           <Text style={[styles.focusBannerSub, { color: colors.warning, flex: 1 }]}>
@@ -977,7 +1032,7 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
           dealId={dealId}
           onUpdated={onTaskUpdated}
           onDeleted={onTaskDeleted}
-          highlighted={Boolean(focusTaskId) && String(item.id) === String(focusTaskId)}
+          highlighted={Boolean(highlightTaskId) && String(item.id) === String(highlightTaskId)}
         />
       </View>
     );
@@ -1236,8 +1291,20 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
         </ScrollView>
         )}
 
-        {tab === 'documents' ? (
-          <View style={{ flex: 1 }}>
+        {visitedTabs.has('shared') ? (
+          <View style={{ flex: 1, display: tab === 'shared' ? 'flex' : 'none' }}>
+            <ProjectSharedWorkspaceTab
+              dealId={dealId}
+              companyId={displayDeal?.company_id || null}
+              sxCompanyId={project?.company_id || project?.company?.id || null}
+              vcCompanyId={project?.logistics_company_id || null}
+              defaultModule="production"
+            />
+          </View>
+        ) : null}
+
+        {visitedTabs.has('documents') ? (
+          <View style={{ flex: 1, display: tab === 'documents' ? 'flex' : 'none' }}>
             <ProjectDocumentsTab
               projectId={projectId}
               dealId={dealId}
@@ -1246,8 +1313,8 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
           </View>
         ) : null}
 
-        {tab === 'comments' ? (
-          <View style={{ flex: 1 }}>
+        {visitedTabs.has('comments') ? (
+          <View style={{ flex: 1, display: tab === 'comments' ? 'flex' : 'none' }}>
             <ProjectCommentsTab
               projectId={projectId}
               dealId={dealId}
@@ -1257,14 +1324,14 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
           </View>
         ) : null}
 
-        {tab === 'drive' ? (
-          <View style={{ flex: 1 }}>
+        {visitedTabs.has('drive') ? (
+          <View style={{ flex: 1, display: tab === 'drive' ? 'flex' : 'none' }}>
             <ProjectDriveTab projectId={projectId} />
           </View>
         ) : null}
 
-        {tab === 'team' && project ? (
-          <View style={{ flex: 1 }}>
+        {visitedTabs.has('team') && project ? (
+          <View style={{ flex: 1, display: tab === 'team' ? 'flex' : 'none' }}>
             <ProjectMembersTab project={project} dealId={dealId} />
           </View>
         ) : null}

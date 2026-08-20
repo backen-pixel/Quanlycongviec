@@ -15,8 +15,8 @@ const { supabase } = require('../src/config/supabase');
 const { buildStandardApkFilename } = require('../src/helpers/appReleaseFilename');
 
 const APP_KEY = 'crm-mobile-v2';
-const VERSION = process.env.PUB_VERSION || '2.2.73';
-const VERSION_CODE = parseInt(process.env.PUB_CODE || '184', 10);
+const VERSION = process.env.PUB_VERSION || '2.2.142';
+const VERSION_CODE = parseInt(process.env.PUB_CODE || '253', 10);
 const PUBLIC_HOST = (process.env.PUB_HOST || 'https://tubep-backend.onrender.com').replace(/\/$/, '');
 const FILE_NAME = buildStandardApkFilename(APP_KEY, VERSION, VERSION_CODE, { release: true });
 const APK = path.resolve(__dirname, `../uploads/app-releases/crm-mobile-v2/${FILE_NAME}`);
@@ -25,10 +25,9 @@ const RELEASE_NOTES =
   process.env.PUB_NOTES
   || [
     `CRM Mobile ${VERSION} (code ${VERSION_CODE})`,
-    '- Sua crash khi bam Cap nhat ngay (thieu SpinningLoader)',
-    '- Giam RAM tab Tin nhan (avatar / dang online theo may)',
-    '- Sua tab Nhac han: badge khop ho so qua han, nut mo Deadline',
-    '- Cold start nhanh hon (cache KPI Tong quan)',
+    '- Sua badge Thong bao 99+ bi chu nho/lech tren Samsung A07',
+    '- Nen icon Menu thong bao ro hon tren man LCD yeu',
+    '- Badge tab Tin nhan/Deadline khong bi co font he thong',
   ].join('\n');
 
 async function uploadApkToProduction(releaseId) {

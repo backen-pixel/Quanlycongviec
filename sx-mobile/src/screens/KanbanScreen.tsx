@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useIsFocused, useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
+import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AppState,
@@ -17,7 +18,6 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatApiError } from '../api/client';
-import CommentNotificationsModal from '../components/CommentNotificationsModal';
 import TapHighlight from '../components/TapHighlight';
 import FilterPickerModal from '../components/FilterPickerModal';
 import ProductionFilterSheet, {
@@ -47,11 +47,13 @@ import {
   type CommentIndexEntry,
   type CompanyOption,
   type ProductionBoardSummary,
+  type StageIndex,
   type WorkshopTypeOption,
+  buildStageIndex,
   resolveColumnId,
 } from '../lib/productionApi';
-import { getCachedBoard, isCachedBoardFresh, patchCachedProjectById } from '../lib/productionBoardCache';
-import { loadKanbanFilters, saveKanbanFilters } from '../lib/kanbanFilterStorage';
+import { getCachedBoard, getCachedBoardSummary, isCachedBoardFresh, patchCachedProjectById } from '../lib/productionBoardCache';
+import { dealCompanyIdForBoardApi, loadKanbanFilters, saveKanbanFilters, subscribeSharedFilters } from '../lib/kanbanFilterStorage';
 import {
   computeSxBoardKpis,
   countsAsCompletedRevenue,
@@ -69,10 +71,10 @@ import {
   workshopCompaniesForCrossViewer,
   type ClientCompanyOption,
 } from '../lib/productionFilters';
-import { ensureNotificationPermission } from '../lib/pushRegistration';
 import { useProductionRealtime } from '../hooks/useProductionRealtime';
 import { REALTIME_BOARD_TASK } from '../lib/realtimeModes';
 import { useTheme } from '../context/ThemeContext';
+import type { MainTabParamList } from '../navigation/MainTabs';
 import { type AppColors, colorWithAlpha, HIT_TARGET, Radii, Spacing, stageColor } from '../theme';
 import type { KanbanStage, ProductionBoard, ProductionProject } from '../types';
 
@@ -157,9 +159,13 @@ function avatarColor(name?: string | null): string {
   return AVATAR_COLORS[Math.abs(h) % AVATAR_COLORS.length];
 }
 
-/** Cột hiển thị Kanban — resolve live giống web colIdFor (không dùng resolved stale). */
-function displayColumnId(p: ProductionProject, stages: KanbanStage[]): string | null {
-  return resolveColumnId(p, stages);
+/** Cột hiển thị Kanban — reuse StageIndex (tránh build lại mỗi project). */
+function displayColumnId(
+  p: ProductionProject,
+  stages: KanbanStage[],
+  stageIndex?: StageIndex,
+): string | null {
+  return resolveColumnId(p, stages, stageIndex);
 }
 
 function isToday(value?: string | null): boolean {
@@ -180,7 +186,9 @@ export default function KanbanScreen() {
   const styles = useMemo(() => createKanbanStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
-  const { unreadCount, refreshUnread, commentToast, dismissCommentToast, projectMetaRef, subscribeComment, subscribeSync } = useNotifications();
+  const isFocused = useIsFocused();
+  const route = useRoute<RouteProp<MainTabParamList, 'Kanban'>>();
+  const { commentToast, dismissCommentToast, projectMetaRef, subscribeComment, subscribeSync } = useNotifications();
   const { openProjectDetail } = useRootNavigation();
   const myId = user?.id || user?.userId || null;
 
@@ -226,12 +234,15 @@ export default function KanbanScreen() {
   const [moveModalProject, setMoveModalProject] = useState<ProductionProject | null>(null);
   const [classifyModalProject, setClassifyModalProject] = useState<ProductionProject | null>(null);
   const [commentProject, setCommentProject] = useState<ProductionProject | null>(null);
-  const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [commentIndex, setCommentIndex] = useState<Record<string, CommentIndexEntry>>({});
   const [viewMode, setViewMode] = useState<ViewMode>('kanban');
   const [viewModeReady, setViewModeReady] = useState(false);
   const [listStageId, setListStageId] = useState<string>('all');
+  const [highlightProjectId, setHighlightProjectId] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const listFlatRef = useRef<FlatList<ProductionProject>>(null);
+  const kanbanFlatRef = useRef<FlatList<ProductionProject>>(null);
+  const focusScrolledKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -250,6 +261,65 @@ export default function KanbanScreen() {
     setViewMode(next);
     void AsyncStorage.setItem(VIEW_MODE_KEY, next).catch(() => {});
   }, []);
+
+  // Overview «dự án quá hạn» → áp cùng bộ lọc sheet + focus thẻ trên List/Kanban.
+  const tabNav = useNavigation<BottomTabNavigationProp<MainTabParamList, 'Kanban'>>();
+  useEffect(() => {
+    const p = route.params;
+    if (!p) return;
+    const qf = p.quickFilter;
+    const vm = p.viewMode;
+    const focusId = p.focusProjectId ? String(p.focusProjectId) : '';
+    let touched = false;
+    if (qf === 'all' || qf === 'mine' || qf === 'overdue' || qf === 'today') {
+      setQuickFilter(qf);
+      touched = true;
+    }
+    if (vm === 'list' || vm === 'kanban') {
+      switchViewMode(vm);
+      touched = true;
+    }
+    if (focusId) {
+      setHighlightProjectId(focusId);
+      // List: xem trong danh sách quá hạn đầy đủ — dễ tìm + cuộn tới thẻ.
+      if (vm === 'list' || (!vm && viewMode === 'list')) {
+        setListStageId('all');
+      }
+      touched = true;
+    }
+    if (touched) {
+      // Xóa params ngay — timer tắt highlight nằm effect riêng (tránh clearTimeout khi setParams).
+      tabNav.setParams({
+        focusProjectId: undefined,
+        quickFilter: undefined,
+        viewMode: undefined,
+      });
+    }
+    return undefined;
+  }, [route.params, switchViewMode, tabNav, viewMode]);
+
+  // Tự tắt highlight sau khi đã dẫn mắt tới thẻ (không ghim/ping mãi).
+  useEffect(() => {
+    if (!highlightProjectId) {
+      focusScrolledKeyRef.current = null;
+      return undefined;
+    }
+    const t = setTimeout(() => setHighlightProjectId(null), 4500);
+    return () => clearTimeout(t);
+  }, [highlightProjectId]);
+
+  // Khi có focusProjectId — nhảy sang cột chứa thẻ (Kanban) / giữ «Tất cả» (List).
+  useEffect(() => {
+    if (!highlightProjectId || !board.projects.length) return;
+    const hit = board.projects.find((p) => String(p.id) === String(highlightProjectId));
+    if (!hit) return;
+    const colId = String(hit.resolved_column_id || hit.sx_kanban_column_id || '');
+    if (!colId) return;
+    const idx = board.stages.findIndex((s) => String(s.id) === colId);
+    if (idx >= 0) setActiveIndex(idx);
+    // List: đã set 'all' từ route — không ép cột (tránh mất thẻ khỏi viewport lọc).
+    if (viewMode === 'kanban') setListStageId(colId);
+  }, [highlightProjectId, board.projects, board.stages, viewMode]);
 
   // Refs để load() luôn dùng giá trị filter mới nhất mà không cần thêm vào deps array.
   const filterCompanyRef = useRef('');
@@ -336,12 +406,6 @@ export default function KanbanScreen() {
     [board.projects, showToast],
   );
 
-  const openNotifications = useCallback(async () => {
-    void ensureNotificationPermission();
-    setNotificationsOpen(true);
-    void refreshUnread();
-  }, [refreshUnread]);
-
   useEffect(() => {
     for (const p of board.projects) {
       projectMetaRef.current.set(String(p.id), { code: p.code, name: p.name });
@@ -368,7 +432,7 @@ export default function KanbanScreen() {
       : undefined;
     return {
       companyId,
-      dealCompanyId: filterDealCompanyRef.current || undefined,
+      dealCompanyId: dealCompanyIdForBoardApi(filterDealCompanyRef.current),
       workshopTypeId,
     };
   }, []);
@@ -376,7 +440,7 @@ export default function KanbanScreen() {
   const load = useCallback(async (mode: 'init' | 'refresh' | 'silent' = 'init') => {
     const filters = currentBoardFilters();
     const cachedHit = getCachedBoard(filters);
-    // Cache tươi: hydrate UI ngay; vẫn gọi summary để KPI khớp server (toàn filter).
+    // Cache tươi: hydrate UI ngay; summary chỉ gọi khi chưa tươi (tránh API lặp).
     if (mode === 'silent' && isCachedBoardFresh(filters) && cachedHit) {
       setBoard(cachedHit);
       setActiveIndex((prev) => Math.min(prev, Math.max(0, cachedHit.stages.length - 1)));
@@ -384,13 +448,17 @@ export default function KanbanScreen() {
       setRefreshing(false);
       setLoadingMore(false);
       lastSilentAtRef.current = Date.now();
-      const seq = ++loadSeqRef.current;
-      void fetchProductionBoardSummary(filters, false, undefined)
-        .then((summary) => {
-          if (seq !== loadSeqRef.current) return;
-          setSummaryKpis(summary);
-        })
-        .catch(() => {});
+      const cachedSummary = getCachedBoardSummary(filters);
+      if (cachedSummary) setSummaryKpis(cachedSummary);
+      else {
+        const seq = ++loadSeqRef.current;
+        void fetchProductionBoardSummary(filters, false, undefined)
+          .then((summary) => {
+            if (seq !== loadSeqRef.current) return;
+            if (summary) setSummaryKpis(summary);
+          })
+          .catch(() => {});
+      }
       return;
     }
     boardAbortRef.current?.abort();
@@ -468,6 +536,19 @@ export default function KanbanScreen() {
     return () => { cancel = true; };
   }, []);
 
+  // Đồng bộ khi Overview/Work đổi công ty / phân loại (không remount).
+  useEffect(() => {
+    const unsub = subscribeSharedFilters((snap) => {
+      const nextCo = String(snap.filterCompany || '');
+      const nextDeal = String(snap.filterDealCompany || '');
+      const nextType = String(snap.filterWorkTypeId || '');
+      setFilterCompany((prev) => (prev === nextCo ? prev : nextCo));
+      setFilterDealCompany((prev) => (prev === nextDeal ? prev : nextDeal));
+      setFilterWorkTypeId((prev) => (prev === nextType ? prev : nextType));
+    });
+    return unsub;
+  }, []);
+
   useEffect(() => {
     if (!filtersHydrated) return;
     void saveKanbanFilters({
@@ -479,7 +560,9 @@ export default function KanbanScreen() {
 
   // Đồng bộ refs với state để load() luôn dùng filter mới nhất.
   useEffect(() => { filterCompanyRef.current = filterCompany; }, [filterCompany]);
-  useEffect(() => { filterDealCompanyRef.current = dealCompanyParam || ''; }, [dealCompanyParam]);
+  // Board API: dùng id picker từ snap (strip ext:) — khớp Overview/Planner cache key.
+  // dealCompanyParam (client_company_id) chỉ dùng cho workshop options / types.
+  useEffect(() => { filterDealCompanyRef.current = filterDealCompany; }, [filterDealCompany]);
   useEffect(() => { filterWorkTypeIdRef.current = filterWorkTypeId; }, [filterWorkTypeId]);
 
   // Chờ phân loại sẵn sàng trước khi load board — chỉ khi đã chọn 1 xưởng.
@@ -495,26 +578,24 @@ export default function KanbanScreen() {
     workTypesCompanyId,
   ]);
 
+  // Một effect duy nhất: hydrate + load khi filter fingerprint đổi (tránh double fetch).
+  const boardFilterFingerprint = `${filterCompany}|${filterDealCompany}|${filterWorkTypeId}`;
   useEffect(() => {
     if (!boardFiltersReady) return;
     const filters = currentBoardFilters();
     const cached = getCachedBoard(filters);
-    // Hydrate UI ngay từ cache đúng key (tránh màn hình trống / spinner vô hạn).
     if (cached) {
       setBoard(cached);
       setLoading(false);
     }
-    void load(cached && isCachedBoardFresh(filters) ? 'silent' : 'init');
-  }, [load, boardFiltersReady, currentBoardFilters]);
-
-  // Re-fetch board khi company hoặc phân loại đổi (bỏ qua lần mount đầu tiên).
-  useEffect(() => {
-    if (!boardFiltersReady) return;
-    if (isFirstMount.current) { isFirstMount.current = false; return; }
+    if (isFirstMount.current) {
+      isFirstMount.current = false;
+      void load(cached && isCachedBoardFresh(filters) ? 'silent' : 'init');
+      return;
+    }
     setActiveIndex(0);
-    void load('init');
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterCompany, filterDealCompany, dealCompanyParam, filterWorkTypeId, boardFiltersReady]);
+    void load(cached && isCachedBoardFresh(filters) ? 'silent' : 'init');
+  }, [boardFiltersReady, boardFilterFingerprint, load, currentBoardFilters]);
 
   useEffect(() => { movingIdRef.current = movingId; }, [movingId]);
 
@@ -551,7 +632,7 @@ export default function KanbanScreen() {
 
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
-      if (state !== 'active' || movingIdRef.current) return;
+      if (state !== 'active' || !isFocused || movingIdRef.current) return;
       const now = Date.now();
       // Tránh reload full board mỗi lần chạm app (rất chậm).
       if (now - lastSilentAtRef.current < 60_000) return;
@@ -559,7 +640,7 @@ export default function KanbanScreen() {
       void load('silent');
     });
     return () => sub.remove();
-  }, [load]);
+  }, [load, isFocused]);
 
   useEffect(() => {
     board.projects.forEach((p) => {
@@ -780,7 +861,10 @@ export default function KanbanScreen() {
   // Callback ổn định cho card → React.memo bỏ qua render lại các thẻ không đổi.
   const classifyOptionsRef = useRef(classifyWorkTypeOptions);
   classifyOptionsRef.current = classifyWorkTypeOptions;
-  const handleCardOpen = useCallback((id: string) => openProjectDetail(id), [openProjectDetail]);
+  const handleCardOpen = useCallback((id: string) => {
+    setHighlightProjectId(null);
+    openProjectDetail(id);
+  }, [openProjectDetail]);
   const handleCardComment = useCallback((p: ProductionProject) => setCommentProject(p), []);
   const handleCardMove = useCallback((p: ProductionProject) => setMoveModalProject(p), []);
   const handleCardClassify = useCallback((p: ProductionProject) => {
@@ -796,6 +880,8 @@ export default function KanbanScreen() {
 
   /** Stages thực từ API — dùng cho move modal và logic stageById. */
   const stages = board.stages;
+  /** Index cột 1 lần / board update — tránh O(n×stages) khi regroup. */
+  const stageIndex = useMemo(() => buildStageIndex(stages), [stages]);
 
   const filteredProjects = useMemo(() => {
     const needle = search.trim().toLowerCase();
@@ -1120,6 +1206,7 @@ export default function KanbanScreen() {
         commentCount={commentIndex[item.id]?.count ?? 0}
         isMoving={movingId === item.id}
         isOrphanColumn={isOrphanColumn}
+        highlighted={highlightProjectId != null && String(item.id) === String(highlightProjectId)}
         onOpen={handleCardOpen}
         onComment={handleCardComment}
         onMove={handleCardMove}
@@ -1135,6 +1222,7 @@ export default function KanbanScreen() {
       commentIndex,
       movingId,
       isOrphanColumn,
+      highlightProjectId,
       handleCardOpen,
       handleCardComment,
       handleCardMove,
@@ -1151,11 +1239,11 @@ export default function KanbanScreen() {
         map.get(ORPHAN_COL_ID)!.push(p);
         return;
       }
-      const key = displayColumnId(p, stages);
+      const key = displayColumnId(p, stages, stageIndex);
       if (key && map.has(key)) map.get(key)!.push(p);
     });
     return map;
-  }, [displayStages, filteredProjects, stages]);
+  }, [displayStages, filteredProjects, stages, stageIndex]);
 
   const stageById = useMemo(() => {
     const m = new Map<string, KanbanStage>();
@@ -1166,22 +1254,29 @@ export default function KanbanScreen() {
     return m;
   }, [displayStages, stages]);
 
-  /** List mode: phẳng + lọc chip stage, sort updated/created desc. */
+  /** List mode: phẳng + lọc chip stage, sort updated/created desc.
+   *  Thẻ đang focus (từ Tổng quan quá hạn) được ghim đầu danh sách để luôn nhìn thấy. */
   const listProjects = useMemo(() => {
     let rows = filteredProjects;
     if (listStageId !== 'all') {
       if (listStageId === ORPHAN_COL_ID) {
         rows = rows.filter((p) => !p.workshop_type_id);
       } else {
-        rows = rows.filter((p) => displayColumnId(p, stages) === listStageId);
+        rows = rows.filter((p) => displayColumnId(p, stages, stageIndex) === listStageId);
       }
     }
-    return [...rows].sort((a, b) => {
+    const sorted = [...rows].sort((a, b) => {
+      if (highlightProjectId) {
+        const aHit = String(a.id) === String(highlightProjectId);
+        const bHit = String(b.id) === String(highlightProjectId);
+        if (aHit !== bHit) return aHit ? -1 : 1;
+      }
       const ta = new Date(a.updated_at || a.created_at || 0).getTime();
       const tb = new Date(b.updated_at || b.created_at || 0).getTime();
       return tb - ta;
     });
-  }, [filteredProjects, listStageId, stages]);
+    return sorted;
+  }, [filteredProjects, listStageId, stages, stageIndex, highlightProjectId]);
 
   const pagedListProjects = useMemo(
     () => listProjects.slice(0, visibleCount),
@@ -1189,7 +1284,16 @@ export default function KanbanScreen() {
   );
   const hasMoreListCards = visibleCount < listProjects.length;
 
-  const columnProjects = activeStage ? (projectsByStage.get(activeStage.id) || []) : [];
+  const columnProjects = useMemo(() => {
+    const rows = activeStage ? (projectsByStage.get(activeStage.id) || []) : [];
+    if (!highlightProjectId) return rows;
+    const idx = rows.findIndex((p) => String(p.id) === String(highlightProjectId));
+    if (idx <= 0) return rows;
+    const next = rows.slice();
+    const [hit] = next.splice(idx, 1);
+    next.unshift(hit);
+    return next;
+  }, [activeStage, projectsByStage, highlightProjectId]);
 
   // Phân trang phía client: chỉ render `visibleCount` card đầu, tải thêm khi cuộn tới cuối.
   const pagedProjects = useMemo(
@@ -1198,10 +1302,108 @@ export default function KanbanScreen() {
   );
   const hasMoreCards = visibleCount < columnProjects.length;
 
-  // Reset về trang đầu khi đổi cột hoặc đổi bộ lọc.
+  // Reset về trang đầu khi đổi cột hoặc đổi bộ lọc — không đụng khi đang focus thẻ.
   useEffect(() => {
+    if (highlightProjectId) return;
     setVisibleCount(CARD_PAGE_SIZE);
-  }, [activeStage?.id, search, quickFilter, filterWorkTypeId, filterCompany, listStageId, viewMode]);
+  }, [activeStage?.id, search, quickFilter, filterWorkTypeId, filterCompany, listStageId, viewMode, highlightProjectId]);
+
+  const focusTarget = useMemo(() => {
+    if (!highlightProjectId) return null;
+    const fromBoard = board.projects.find((p) => String(p.id) === String(highlightProjectId));
+    const source = viewMode === 'list' ? listProjects : columnProjects;
+    const idx = source.findIndex((p) => String(p.id) === String(highlightProjectId));
+    const hit = idx >= 0 ? source[idx] : fromBoard;
+    if (!hit) return null;
+    const colId = String(hit.resolved_column_id || hit.sx_kanban_column_id || '');
+    const stage = colId ? stageById.get(colId) : undefined;
+    return {
+      project: hit,
+      index: idx,
+      stageName: stage?.name || null,
+    };
+  }, [
+    highlightProjectId,
+    board.projects,
+    viewMode,
+    listProjects,
+    columnProjects,
+    stageById,
+  ]);
+
+  // Khi focus mà thẻ bị lọc mất — nới quickFilter một lần để hiện được.
+  useEffect(() => {
+    if (!highlightProjectId || !focusTarget) return;
+    if (focusTarget.index >= 0) return;
+    if (!focusTarget.project) return;
+    if (quickFilter !== 'all') setQuickFilter('all');
+    if (viewMode === 'list' && listStageId !== 'all') setListStageId('all');
+  }, [highlightProjectId, focusTarget, quickFilter, listStageId, viewMode]);
+
+  // Mở rộng trang để thẻ focus nằm trong data (không kéo theo scroll deps).
+  useEffect(() => {
+    if (!highlightProjectId || !focusTarget || focusTarget.index < 0) return;
+    const idx = focusTarget.index;
+    setVisibleCount((prev) => (idx + 1 > prev ? Math.max(idx + 1, CARD_PAGE_SIZE) : prev));
+  }, [highlightProjectId, focusTarget?.index]);
+
+  // Cuộn one-shot tới thẻ focus — mỗi highlight chỉ scroll 1 lần (không phụ thuộc visibleCount).
+  useEffect(() => {
+    if (!highlightProjectId) {
+      focusScrolledKeyRef.current = null;
+      return undefined;
+    }
+    if (!focusTarget || focusTarget.index < 0) return undefined;
+    const focusKey = `${highlightProjectId}:${viewMode}:${focusTarget.index}`;
+    if (focusScrolledKeyRef.current === focusKey) return undefined;
+    focusScrolledKeyRef.current = focusKey;
+
+    const idx = focusTarget.index;
+    let cancelled = false;
+    let tries = 0;
+    const scroll = () => {
+      if (cancelled) return;
+      const ref = viewMode === 'list' ? listFlatRef.current : kanbanFlatRef.current;
+      if (!ref) {
+        if (tries < 10) {
+          tries += 1;
+          setTimeout(scroll, 90);
+        }
+        return;
+      }
+      try {
+        ref.scrollToIndex({ index: idx, animated: true, viewPosition: 0.08 });
+      } catch {
+        ref.scrollToOffset({ offset: Math.max(0, idx * 120), animated: true });
+      }
+    };
+    const t1 = setTimeout(scroll, 80);
+    const t2 = setTimeout(scroll, 320);
+    return () => {
+      cancelled = true;
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
+  }, [highlightProjectId, focusTarget?.index, focusTarget?.project?.id, viewMode]);
+
+  const onFocusScrollFailed = useCallback(
+    (info: { index: number; averageItemLength: number }) => {
+      const ref = viewMode === 'list' ? listFlatRef.current : kanbanFlatRef.current;
+      if (!ref) return;
+      ref.scrollToOffset({
+        offset: Math.max(0, info.index * (info.averageItemLength || 120)),
+        animated: true,
+      });
+      setTimeout(() => {
+        try {
+          ref.scrollToIndex({ index: info.index, animated: true, viewPosition: 0.12 });
+        } catch {
+          /* ignore */
+        }
+      }, 120);
+    },
+    [viewMode],
+  );
 
   const loadMoreCards = useCallback(() => {
     const total = viewMode === 'list' ? listProjects.length : columnProjects.length;
@@ -1220,26 +1422,44 @@ export default function KanbanScreen() {
 
   const renderListCard = useCallback(
     ({ item }: { item: ProductionProject }) => {
-      const resolved = displayColumnId(item, stages);
+      const resolved = displayColumnId(item, stages, stageIndex);
       const colId = resolved
         || (!item.workshop_type_id ? ORPHAN_COL_ID : null);
       const stage = colId ? stageById.get(String(colId)) : undefined;
+      const highlighted = highlightProjectId != null && String(item.id) === String(highlightProjectId);
       return (
-        <SxListCard
-          item={item}
-          stage={stage}
-          stages={stages}
-          moving={movingId === item.id}
-          onPress={() => handleCardOpen(item.id)}
-          onMove={() => handleCardMove(item)}
-          onClassify={() => handleCardClassify(item)}
-        />
+        <View
+          style={
+            highlighted
+              ? {
+                  borderRadius: 12,
+                  borderWidth: 2,
+                  borderColor: colors.primary,
+                  backgroundColor: colorWithAlpha(colors.primary, 0.1),
+                  marginBottom: 2,
+                }
+              : undefined
+          }
+        >
+          <SxListCard
+            item={item}
+            stage={stage}
+            stages={stages}
+            moving={movingId === item.id}
+            onPress={() => handleCardOpen(item.id)}
+            onMove={() => handleCardMove(item)}
+            onClassify={() => handleCardClassify(item)}
+          />
+        </View>
       );
     },
     [
       stages,
+      stageIndex,
       stageById,
       movingId,
+      highlightProjectId,
+      colors.primary,
       handleCardOpen,
       handleCardMove,
       handleCardClassify,
@@ -1494,21 +1714,10 @@ export default function KanbanScreen() {
               </View>
             </View>
           ) : null}
-          <TapHighlight style={styles.iconBtn} onPress={() => void openNotifications()} hitSlop={8}>
-            <Ionicons name="notifications-outline" size={20} color={colors.text} />
-            {unreadCount > 0 ? (
-              <View style={styles.notifBadge}>
-                <Text style={styles.notifBadgeText}>{unreadCount > 99 ? '99+' : unreadCount}</Text>
-              </View>
-            ) : null}
-          </TapHighlight>
-          <TapHighlight style={styles.iconBtn} onPress={() => load('refresh')} hitSlop={8}>
-            <Ionicons name="refresh-outline" size={20} color={colors.text} />
-          </TapHighlight>
         </View>
       </View>
 
-      {commentToast && !notificationsOpen ? (
+      {commentToast ? (
         <TapHighlight
           style={styles.commentToast}
           onPress={() => {
@@ -1773,6 +1982,7 @@ export default function KanbanScreen() {
 
       {viewMode === 'list' ? (
         <FlatList
+          ref={listFlatRef}
           style={styles.listFlex}
           data={pagedListProjects}
           keyExtractor={(item) => item.id}
@@ -1784,6 +1994,24 @@ export default function KanbanScreen() {
           keyboardShouldPersistTaps="handled"
           onEndReachedThreshold={0.4}
           onEndReached={loadMoreCards}
+          onScrollToIndexFailed={onFocusScrollFailed}
+          ListHeaderComponent={
+            focusTarget ? (
+              <View style={styles.focusBanner}>
+                <Ionicons name="locate" size={16} color={colors.primary} />
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={styles.focusBannerTitle}>Đang xem dự án quá hạn</Text>
+                  <Text style={styles.focusBannerSub} numberOfLines={2}>
+                    {[
+                      focusTarget.project.code,
+                      focusTarget.project.name || focusTarget.project.customer_name,
+                      focusTarget.stageName ? `Cột: ${focusTarget.stageName}` : null,
+                    ].filter(Boolean).join(' · ')}
+                  </Text>
+                </View>
+              </View>
+            ) : null
+          }
           ListFooterComponent={
             hasMoreListCards ? (
               <View style={styles.listFooter}>
@@ -1816,6 +2044,7 @@ export default function KanbanScreen() {
       ) : (
         <View style={styles.listFlex} {...columnSwipe.panHandlers}>
           <FlatList
+            ref={kanbanFlatRef}
             style={styles.listFlex}
             data={pagedProjects}
             keyExtractor={(item) => item.id}
@@ -1823,9 +2052,27 @@ export default function KanbanScreen() {
             initialNumToRender={CARD_PAGE_SIZE}
             maxToRenderPerBatch={CARD_PAGE_SIZE}
             windowSize={7}
-            removeClippedSubviews
+            removeClippedSubviews={false}
             onEndReachedThreshold={0.4}
             onEndReached={loadMoreCards}
+            onScrollToIndexFailed={onFocusScrollFailed}
+            ListHeaderComponent={
+              focusTarget ? (
+                <View style={styles.focusBanner}>
+                  <Ionicons name="locate" size={16} color={colors.primary} />
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text style={styles.focusBannerTitle}>Đang xem dự án quá hạn</Text>
+                    <Text style={styles.focusBannerSub} numberOfLines={2}>
+                      {[
+                        focusTarget.project.code,
+                        focusTarget.project.name || focusTarget.project.customer_name,
+                        focusTarget.stageName ? `Cột: ${focusTarget.stageName}` : null,
+                      ].filter(Boolean).join(' · ')}
+                    </Text>
+                  </View>
+                </View>
+              ) : null
+            }
             ListFooterComponent={
               hasMoreCards ? (
                 <View style={styles.listFooter}>
@@ -1896,15 +2143,6 @@ export default function KanbanScreen() {
         }}
       />
 
-      <CommentNotificationsModal
-        visible={notificationsOpen}
-        onClose={() => {
-          setNotificationsOpen(false);
-          void refreshUnread();
-        }}
-        onOpenProject={(projectId) => void openCommentForProjectId(projectId)}
-      />
-
       <ProductionFilterSheet
         visible={filterSheetOpen}
         onClose={() => setFilterSheetOpen(false)}
@@ -1914,7 +2152,10 @@ export default function KanbanScreen() {
         }}
         search={search}
         quickFilter={quickFilter}
-        onQuickFilterChange={setQuickFilter}
+        onQuickFilterChange={(next) => {
+          setHighlightProjectId(null);
+          setQuickFilter(next);
+        }}
         filterPhone={filterPhone}
         onPhoneChange={setFilterPhone}
         personOptions={personFilterOptions}
@@ -2000,6 +2241,7 @@ type KanbanCardProps = {
   commentCount: number;
   isMoving: boolean;
   isOrphanColumn: boolean;
+  highlighted?: boolean;
   onOpen: (id: string) => void;
   onComment: (p: ProductionProject) => void;
   onMove: (p: ProductionProject) => void;
@@ -2016,6 +2258,7 @@ const KanbanCard = memo(function KanbanCard({
   commentCount,
   isMoving,
   isOrphanColumn,
+  highlighted,
   onOpen,
   onComment,
   onMove,
@@ -2032,7 +2275,13 @@ const KanbanCard = memo(function KanbanCard({
   const updatedStr = formatDateTime(item.updated_at || item.created_at);
 
   return (
-    <View style={[styles.card, { borderLeftColor: accent }]}>
+    <View
+      style={[
+        styles.card,
+        { borderLeftColor: accent },
+        highlighted ? { borderColor: colors.primary, borderWidth: 2, backgroundColor: colorWithAlpha(colors.primary, 0.08) } : null,
+      ]}
+    >
       <Pressable onPress={() => onOpen(item.id)}>
       {/* Row 1: code + tags */}
       <View style={styles.cardRow1}>
@@ -2203,18 +2452,6 @@ function createKanbanStyles(c: AppColors) {
     justifyContent: 'center',
   },
   viewModeBtnOn: { backgroundColor: c.primarySoft },
-  iconBtn: {
-    width: 38, height: 38, borderRadius: Radii.md,
-    backgroundColor: c.card, borderWidth: 1, borderColor: c.border,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  notifBadge: {
-    position: 'absolute', top: -4, right: -4, minWidth: 18, height: 18,
-    borderRadius: 9, paddingHorizontal: 4,
-    backgroundColor: c.danger, alignItems: 'center', justifyContent: 'center',
-    borderWidth: 2, borderColor: c.bg,
-  },
-  notifBadgeText: { color: c.white, fontSize: 10, fontWeight: '800' },
   commentToast: {
     flexDirection: 'row', alignItems: 'center', gap: 10,
     marginHorizontal: Spacing.lg, marginBottom: 8,
@@ -2238,6 +2475,32 @@ function createKanbanStyles(c: AppColors) {
     backgroundColor: c.warning + '18',
   },
   truncatedBannerTxt: { flex: 1, color: c.warning, fontSize: 12, fontWeight: '700', lineHeight: 16 },
+  focusBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: Radii.lg,
+    borderWidth: 1,
+    borderColor: c.primary + '66',
+    backgroundColor: c.primarySoft,
+  },
+  focusBannerTitle: {
+    color: c.primary,
+    fontSize: 11,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+  },
+  focusBannerSub: {
+    color: c.text,
+    fontSize: 13,
+    fontWeight: '700',
+    marginTop: 2,
+    lineHeight: 18,
+  },
 
   // Search
   searchRow: {

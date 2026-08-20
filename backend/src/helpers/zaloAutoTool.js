@@ -49,7 +49,8 @@ let _io = null;
 function setIO(io) { _io = io; }
 
 function emit() {
-  if (_io) _io.emit('zalo_auto_tool_state', getState());
+  // Xem chú thích ở autoTool.js — chỉ gửi cho client đang mở bảng điều khiển.
+  if (_io) _io.to('zalo_auto_tool').emit('zalo_auto_tool_state', getState());
 }
 
 function pushLog(text, level = 'info') {

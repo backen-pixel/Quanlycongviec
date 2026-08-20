@@ -33,7 +33,13 @@ import { useMessenger } from '../context/MessengerContext';
 import { useNotifications } from '../context/NotificationContext';
 import { useTheme } from '../context/ThemeContext';
 import { useProductionRealtime } from '../hooks/useProductionRealtime';
-import { loadKanbanFilters, saveKanbanFilters } from '../lib/kanbanFilterStorage';
+import { boardFiltersFromSharedSnap, loadKanbanFilters, saveKanbanFilters, subscribeSharedFilters } from '../lib/kanbanFilterStorage';
+import {
+  externalDealFilterFromSnap,
+  isSystemAdmin,
+  projectMatchesDealCompanyExternalFilter,
+  workshopCompaniesForCrossViewer,
+} from '../lib/productionFilters';
 import { ensureNotificationPermission } from '../lib/pushRegistration';
 import {
   fetchCompanies,
@@ -43,10 +49,6 @@ import {
   type CompanyOption,
 } from '../lib/productionApi';
 import { getCachedBoard, isCachedBoardFresh } from '../lib/productionBoardCache';
-import {
-  isSystemAdmin,
-  workshopCompaniesForCrossViewer,
-} from '../lib/productionFilters';
 import { REALTIME_BOARD_TASK } from '../lib/realtimeModes';
 import {
   computeSxBoardKpis,
@@ -128,7 +130,7 @@ export default function OverviewScreen() {
   const { user, logout } = useAuth();
   const { unreadCount, refreshUnread } = useNotifications();
   const { unreadTotal: messageUnread } = useMessenger();
-  const { openProjectDetail, openOverdueProjects, openMessages, navigation: rootNav } = useRootNavigation();
+  const { openProjectDetail, openOverdueProjects, openProjectOnBoard, openMessages, navigation: rootNav } = useRootNavigation();
   const tabNav = useNavigation<BottomTabNavigationProp<MainTabParamList>>();
 
   const userName = user?.full_name || user?.fullName || user?.email || 'Bạn';
@@ -160,7 +162,8 @@ export default function OverviewScreen() {
   const [companyPickerOpen, setCompanyPickerOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const boardFiltersRef = useRef<{ companyId?: string; workshopTypeId?: string }>({});
+  const boardFiltersRef = useRef<ReturnType<typeof boardFiltersFromSharedSnap>>({});
+  const externalDealFilterRef = useRef<ReturnType<typeof externalDealFilterFromSnap>>(null);
   const loadSeqRef = useRef(0);
   const boardAbortRef = useRef<AbortController | null>(null);
   const companiesRef = useRef<CompanyOption[]>([]);
@@ -228,8 +231,6 @@ export default function OverviewScreen() {
     try {
       const snap = await loadKanbanFilters().catch(() => null);
       let companyId = snap?.filterCompany || '';
-      const workshopTypeId = snap?.filterWorkTypeId || undefined;
-      const dealCompanyId = snap?.filterDealCompany || undefined;
 
       let companyList = companiesRef.current;
       if (mode !== 'silent' || !companyList.length) {
@@ -255,21 +256,21 @@ export default function OverviewScreen() {
       if (seq !== loadSeqRef.current) return;
       setFilterCompany(companyId);
 
-      const boardFilters = {
-        companyId: companyId || undefined,
-        dealCompanyId: dealCompanyId || undefined,
-        workshopTypeId:
-          companyId && workshopTypeId && workshopTypeId !== 'none'
-            ? workshopTypeId
-            : undefined,
-      };
+      const boardFilters = boardFiltersFromSharedSnap(
+        { ...snap, filterCompany: companyId },
+      );
       boardFiltersRef.current = boardFilters;
+      externalDealFilterRef.current = externalDealFilterFromSnap(snap?.filterDealCompany);
 
       const skipBoard = mode === 'silent' && isCachedBoardFresh(boardFilters) && !!getCachedBoard(boardFilters);
       const cachedBoard = getCachedBoard(boardFilters);
 
       const applyScopedBoard = (projects: ProductionProject[], stages: KanbanStage[] = [], truncated?: boolean) => {
-        const scoped = scopeProjectsForUser(projects, { userId, ownOnly });
+        const ext = externalDealFilterRef.current;
+        const dealScoped = ext
+          ? projects.filter((p) => projectMatchesDealCompanyExternalFilter(p, ext))
+          : projects;
+        const scoped = scopeProjectsForUser(dealScoped, { userId, ownOnly });
         setOverdueDeals(pickOverdueProjects(scoped, PRIORITY_FETCH_LIMIT, stages));
         if (truncated != null) setBoardTruncated(Boolean(truncated));
         return scoped;
@@ -286,12 +287,14 @@ export default function OverviewScreen() {
       const tasksPromise = !userId
         ? Promise.resolve([] as WorkTask[])
         : ownOnly
-          ? fetchMyProductionTasks(userId, { signal: ac.signal }).catch(() => [] as WorkTask[])
+          ? fetchMyProductionTasks(userId, { signal: ac.signal, force: mode === 'refresh' })
+            .catch(() => [] as WorkTask[])
           : fetchProductionWorkTasks({
               companyId: companyId || null,
               limit: WORK_TASKS_PAGE_SIZE,
               offset: 0,
               signal: ac.signal,
+              force: mode === 'refresh',
             }).catch(() => [] as WorkTask[]);
 
       const [board, summary, myTasks] = await Promise.all([
@@ -382,15 +385,29 @@ export default function OverviewScreen() {
 
   useEffect(() => {
     void loadKanbanFilters().then((snap) => {
-      const filters = {
-        companyId: snap?.filterCompany || undefined,
-        workshopTypeId:
-          snap?.filterWorkTypeId && snap.filterWorkTypeId !== 'none'
-            ? snap.filterWorkTypeId
-            : undefined,
-      };
+      const filters = boardFiltersFromSharedSnap(snap);
       void load(getCachedBoard(filters) ? 'silent' : 'init');
     });
+  }, [load]);
+
+  // Đồng bộ khi Kanban/Work đổi filter (cùng snapshot → cùng cache key).
+  useEffect(() => {
+    const unsub = subscribeSharedFilters((snap) => {
+      const nextFilters = boardFiltersFromSharedSnap(snap);
+      const prev = boardFiltersRef.current;
+      const nextExt = externalDealFilterFromSnap(snap.filterDealCompany);
+      const prevExt = externalDealFilterRef.current;
+      const same =
+        String(prev.companyId || '') === String(nextFilters.companyId || '')
+        && String(prev.dealCompanyId || '') === String(nextFilters.dealCompanyId || '')
+        && String(prev.workshopTypeId || '') === String(nextFilters.workshopTypeId || '')
+        && String(prevExt?.catalogId || '') === String(nextExt?.catalogId || '');
+      if (same) return;
+      externalDealFilterRef.current = nextExt;
+      setFilterCompany(String(snap.filterCompany || ''));
+      void load(getCachedBoard(nextFilters) ? 'silent' : 'init');
+    });
+    return unsub;
   }, [load]);
 
   const onSelectCompany = useCallback(async (id: string) => {
@@ -403,10 +420,14 @@ export default function OverviewScreen() {
 
   useProductionRealtime({
     onRefresh: (info) => {
-      if (info?.patched) {
+        if (info?.patched) {
         const cached = getCachedBoard(boardFiltersRef.current);
         if (cached) {
-          const scoped = scopeProjectsForUser(cached.projects, { userId, ownOnly });
+          const ext = externalDealFilterRef.current;
+          const dealScoped = ext
+            ? cached.projects.filter((p) => projectMatchesDealCompanyExternalFilter(p, ext))
+            : cached.projects;
+          const scoped = scopeProjectsForUser(dealScoped, { userId, ownOnly });
           setOverdueDeals(pickOverdueProjects(scoped, PRIORITY_FETCH_LIMIT, cached.stages));
           setBoardTruncated(Boolean(cached.truncated));
           if (ownOnly) {
@@ -722,13 +743,9 @@ export default function OverviewScreen() {
             <Text style={styles.muted}>Đang tải tổng quan…</Text>
           </View>
         ) : overdueTotal > 0 ? (
-          <Pressable
-            style={styles.alertBanner}
-            onPress={() => {
-              if (overdueTaskCount > 0) goWork('overdue');
-              else openOverdueProjects();
-            }}
-          >
+          // Công việc và dự án quá hạn là hai màn khác nhau — mỗi nhóm một nút riêng,
+          // nếu gộp một nút thì nhóm còn lại không có đường nào tới được.
+          <View style={styles.alertBanner}>
             <View style={styles.alertIcon}>
               <Ionicons name="alert-circle" size={22} color={colors.danger} />
             </View>
@@ -736,16 +753,31 @@ export default function OverviewScreen() {
               <Text style={styles.alertTitle}>
                 {overdueTotal} hạng mục quá hạn
               </Text>
-              <Text style={styles.alertSub}>
-                {[
-                  overdueTaskCount > 0 ? `${overdueTaskCount} công việc` : null,
-                  overdueDealCount > 0 ? `${overdueDealCount} dự án` : null,
-                ].filter(Boolean).join(' · ')}
-                {` · ${workshopLabel}`}
-              </Text>
+              <View style={styles.alertActions}>
+                {overdueTaskCount > 0 ? (
+                  <Pressable
+                    style={styles.alertChip}
+                    hitSlop={6}
+                    onPress={() => goWork('overdue')}
+                  >
+                    <Text style={styles.alertChipTxt}>{overdueTaskCount} công việc</Text>
+                    <Ionicons name="chevron-forward" size={13} color={colors.danger} />
+                  </Pressable>
+                ) : null}
+                {overdueDealCount > 0 ? (
+                  <Pressable
+                    style={styles.alertChip}
+                    hitSlop={6}
+                    onPress={openOverdueProjects}
+                  >
+                    <Text style={styles.alertChipTxt}>{overdueDealCount} dự án</Text>
+                    <Ionicons name="chevron-forward" size={13} color={colors.danger} />
+                  </Pressable>
+                ) : null}
+              </View>
+              <Text style={styles.alertSub}>{workshopLabel}</Text>
             </View>
-            <Ionicons name="chevron-forward" size={18} color={colors.danger} />
-          </Pressable>
+          </View>
         ) : (
           <View style={styles.okBanner}>
             <Ionicons name="checkmark-circle" size={20} color={colors.success} />
@@ -928,7 +960,7 @@ export default function OverviewScreen() {
                 <Pressable
                   key={p.id}
                   style={[styles.rowItem, idx > 0 && styles.rowBorder]}
-                  onPress={() => openProjectDetail(p.id)}
+                  onPress={() => openProjectOnBoard(p.id, { quickFilter: 'overdue', viewMode: 'list' })}
                 >
                   <View style={[styles.rowIcon, { backgroundColor: colors.dangerSoft }]}>
                     <Text style={[styles.avatarTxt, { color: colors.danger }]}>
@@ -1168,6 +1200,19 @@ function createStyles(colors: AppColors) {
     },
     alertTitle: { color: colors.danger, fontSize: 14.5, fontWeight: '800' },
     alertSub: { color: colors.textMuted, fontSize: 12, fontWeight: '600', marginTop: 2 },
+    alertActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 6 },
+    alertChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 2,
+      backgroundColor: colors.card,
+      borderRadius: Radii.md,
+      borderWidth: 1,
+      borderColor: colorWithAlpha(colors.danger, 0.35),
+      paddingHorizontal: 9,
+      paddingVertical: 5,
+    },
+    alertChipTxt: { color: colors.danger, fontSize: 12.5, fontWeight: '700' },
     okBanner: {
       flexDirection: 'row',
       alignItems: 'center',

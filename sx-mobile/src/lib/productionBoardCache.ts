@@ -14,13 +14,30 @@ type CacheEntry = {
   complete: boolean;
 };
 
+/** Khớp ProductionBoardSummary — khai báo local tránh circular import với productionApi. */
+export type CachedBoardSummary = {
+  total: number;
+  producing: number;
+  awaitingDelivery: number;
+  shipped: number;
+  overdue: number;
+};
+
+type SummaryEntry = {
+  summary: CachedBoardSummary;
+  at: number;
+};
+
 const cache = new Map<string, CacheEntry>();
+const summaryCache = new Map<string, SummaryEntry>();
 /** Patch socket trong lúc multi-page fetch — re-apply trước mỗi emitAttached. */
 const pendingProjectPatches = new Map<string, Partial<ProductionProject>>();
 const DISK_KEY = 'sx_board_cache_v1';
 const DISK_SCHEMA = 1;
 /** Board coi là còn "tươi" trong khoảng này → không cần refetch nền. */
 export const BOARD_CACHE_FRESH_MS = 90_000;
+/** Summary KPI cùng TTL với board — tránh /projects?summary=1 mỗi lần silent. */
+export const SUMMARY_CACHE_FRESH_MS = BOARD_CACHE_FRESH_MS;
 /** Snapshot đĩa vẫn dùng để hiện UI (sau đó refresh nền). */
 const DISK_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const DISK_MAX_PROJECTS = 2500;
@@ -44,6 +61,7 @@ export function getCachedBoard(filters: BoardFilters = {}): ProductionBoard | nu
 export function invalidateCachedBoard(filters: BoardFilters = {}): void {
   const key = boardCacheKey(filters);
   cache.delete(key);
+  summaryCache.delete(key);
 }
 
 export function isCachedBoardComplete(filters: BoardFilters = {}): boolean {
@@ -71,6 +89,36 @@ export function isCachedBoardFresh(filters: BoardFilters = {}): boolean {
   if (!entry?.complete) return false;
   if (entry.board.truncated) return false;
   return Date.now() - entry.at < BOARD_CACHE_FRESH_MS;
+}
+
+export function getCachedBoardSummary(filters: BoardFilters = {}): CachedBoardSummary | null {
+  return summaryCache.get(boardCacheKey(filters))?.summary ?? null;
+}
+
+export function isCachedBoardSummaryFresh(filters: BoardFilters = {}): boolean {
+  const entry = summaryCache.get(boardCacheKey(filters));
+  if (!entry) return false;
+  return Date.now() - entry.at < SUMMARY_CACHE_FRESH_MS;
+}
+
+export function setCachedBoardSummary(
+  filters: BoardFilters = {},
+  summary: CachedBoardSummary | null | undefined,
+): void {
+  if (!summary) return;
+  const key = boardCacheKey(filters);
+  summaryCache.set(key, { summary, at: Date.now() });
+  if (summaryCache.size > 8) {
+    const ranked = [...summaryCache.entries()].sort((a, b) => a[1].at - b[1].at);
+    while (ranked.length > 8) {
+      const oldest = ranked.shift();
+      if (oldest) summaryCache.delete(oldest[0]);
+    }
+  }
+}
+
+export function invalidateCachedBoardSummary(filters: BoardFilters = {}): void {
+  summaryCache.delete(boardCacheKey(filters));
 }
 
 export type SetCachedBoardOptions = {
@@ -202,7 +250,7 @@ export function patchCachedProjectById(
   return newest?.board ?? null;
 }
 
-/** Thêm hoặc thay dự án trong mọi snapshot cache (soft-ingest board_changed). */
+/** Thêm hoặc thay dự án trong snapshot cache khớp filter (soft-ingest board_changed). */
 export function upsertCachedProject(project: ProductionProject): ProductionBoard | null {
   const pid = String(project?.id || '');
   if (!pid) return null;
@@ -210,13 +258,28 @@ export function upsertCachedProject(project: ProductionProject): ProductionBoard
   let newest: CacheEntry | null = null;
   let newestKey = '';
   let touched = false;
+  const projCompany = String(project.company_id || '');
+  const projType = String(project.workshop_type_id || '');
+
   for (const [key, entry] of cache.entries()) {
     const idx = entry.board.projects.findIndex((p) => String(p.id) === pid);
+    const [companyId, dealCompanyId, workshopTypeId] = key.split('|');
+
+    if (idx < 0) {
+      // Chỉ chèn deal mới vào cache không lọc deal + khớp company/type.
+      if (dealCompanyId) continue;
+      if (companyId && projCompany && companyId !== projCompany) continue;
+      if (workshopTypeId && (!projType || workshopTypeId !== projType)) continue;
+    } else {
+      // Đã có trong snapshot — luôn cập nhật; nhưng bỏ qua nếu company/type lệch rõ.
+      if (companyId && projCompany && companyId !== projCompany) continue;
+      if (workshopTypeId && projType && workshopTypeId !== projType) continue;
+    }
+
     const nextProjects = entry.board.projects.slice();
     if (idx >= 0) {
       nextProjects[idx] = mergeProjectPatch(nextProjects[idx], project, entry.board.stages);
     } else {
-      // Deal mới — chèn đầu list.
       nextProjects.unshift(mergeProjectPatch(project, {}, entry.board.stages));
     }
     touched = true;
@@ -266,6 +329,7 @@ export function removeCachedProjectById(projectId: string): ProductionBoard | nu
 
 export function clearBoardCache(): void {
   cache.clear();
+  summaryCache.clear();
   pendingProjectPatches.clear();
   if (persistTimer) {
     clearTimeout(persistTimer);

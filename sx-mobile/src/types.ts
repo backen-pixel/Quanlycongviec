@@ -164,6 +164,7 @@ export type CrmDealSummary = {
   title?: string | null;
   /** lead | deal — từ crm_leads.type */
   type?: string | null;
+  company_id?: string | null;
   assignee?: PersonRef | null;
   lead_owner?: PersonRef | null;
   sx_pipeline_stage?: { id?: string; name?: string | null } | null;

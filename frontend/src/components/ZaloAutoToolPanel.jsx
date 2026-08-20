@@ -45,11 +45,16 @@ function ensureSocket() {
   const socket = getSocket();
   if (!socket || _socketBound) return;
   _socketBound = true;
+  // Server chỉ phát state cho room này — không join thì không có realtime.
+  socket.emit('join:zalo_auto_tool');
   socket.on('zalo_auto_tool_state', (s) => {
     _state = { ...EMPTY_STATE, ...s };
     notify();
   });
-  socket.on('connect', () => loadStatus());
+  socket.on('connect', () => {
+    socket.emit('join:zalo_auto_tool');
+    loadStatus();
+  });
 }
 
 export async function startZaloAutoTool() {

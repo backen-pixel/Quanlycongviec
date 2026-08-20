@@ -115,3 +115,19 @@ export function projectMatchesDealCompanyExternalFilter(
   }
   return false;
 }
+
+/**
+ * Từ snapshot filterDealCompany (kể cả khi chưa có danh sách client-companies).
+ * `ext:{catalogId}` → lọc client trên Overview/Planner/Kanban.
+ */
+export function externalDealFilterFromSnap(
+  filterDealCompany?: string | null,
+): { catalogId?: string | null; name?: string } | null {
+  const raw = String(filterDealCompany || '').trim();
+  if (!raw) return null;
+  if (raw.startsWith('ext:')) {
+    const catalogId = raw.slice(4).trim();
+    return catalogId ? { catalogId, name: undefined } : null;
+  }
+  return null;
+}

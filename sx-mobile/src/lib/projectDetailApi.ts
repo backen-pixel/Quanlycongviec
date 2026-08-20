@@ -1,6 +1,38 @@
 import { api } from '../api/client';
 import type { CrmDealSummary, CrmTask, KanbanStage, PersonRef, ProductionProjectDetail, ProjectActivity } from '../types';
 import { mapProjectRow } from './productionApi';
+import {
+  QUERY_TTL_LONG,
+  QUERY_TTL_MEDIUM,
+  cachedQuery,
+  invalidateQuery,
+  invalidateQueryPrefix,
+} from './queryCache';
+
+/** Prefix key cache — dùng chung cho invalidate sau khi mutate. */
+const K_DETAIL = 'sx:projectDetail:';
+const K_DEAL_TASKS = 'sx:dealTasks:';
+const K_ACTIVITIES = 'sx:projectActivities:';
+const K_PROJECT_DEAL = 'sx:projectDealId:';
+
+/** Gọi sau khi sửa dự án / công việc để lần đọc kế tiếp lấy dữ liệu mới. */
+export function invalidateProjectDetailCache(projectId?: string | null): void {
+  if (projectId) {
+    invalidateQuery(`${K_DETAIL}${projectId}`);
+    invalidateQuery(`${K_ACTIVITIES}${projectId}`);
+  } else {
+    invalidateQueryPrefix(K_DETAIL);
+    invalidateQueryPrefix(K_ACTIVITIES);
+  }
+}
+
+export function invalidateDealTasksCache(dealId?: string | null): void {
+  if (dealId) invalidateQueryPrefix(`${K_DEAL_TASKS}${dealId}:`);
+  else invalidateQueryPrefix(K_DEAL_TASKS);
+}
+
+/** Tham số đọc dùng chung: cache-first, force khi user kéo làm mới. */
+export type ReadOptions = { force?: boolean; signal?: AbortSignal };
 
 export function isCrmProductionTaskDone(status: string): boolean {
   return status === 'completed' || status === 'done';
@@ -51,6 +83,7 @@ function mapCrmDeal(raw: Record<string, unknown>): CrmDealSummary {
     code: raw.code != null ? String(raw.code) : null,
     title: raw.title != null ? String(raw.title) : null,
     type: raw.type != null ? String(raw.type) : null,
+    company_id: raw.company_id != null ? String(raw.company_id) : null,
     assignee: mapPerson(raw.assignee),
     lead_owner: mapPerson(raw.lead_owner),
     sx_pipeline_stage: raw.sx_pipeline_stage && typeof raw.sx_pipeline_stage === 'object'
@@ -360,7 +393,20 @@ export function groupCrmTasksByStage(
     });
 }
 
-export async function fetchProductionProjectDetail(projectId: string): Promise<ProductionProjectDetail> {
+export async function fetchProductionProjectDetail(
+  projectId: string,
+  opts?: ReadOptions,
+): Promise<ProductionProjectDetail> {
+  return cachedQuery<ProductionProjectDetail>({
+    key: `${K_DETAIL}${projectId}`,
+    ttlMs: QUERY_TTL_MEDIUM,
+    force: opts?.force,
+    signal: opts?.signal,
+    fetcher: () => fetchProductionProjectDetailRaw(projectId),
+  });
+}
+
+async function fetchProductionProjectDetailRaw(projectId: string): Promise<ProductionProjectDetail> {
   const { data } = await api.get<{ project?: Record<string, unknown> }>(
     `/production/projects/${projectId}`,
   );
@@ -421,16 +467,38 @@ export async function fetchProductionProjectDetail(projectId: string): Promise<P
 
 export async function fetchCrmDealTasks(
   dealId: string,
-  opts?: { workshopTypeId?: string | null },
+  opts?: ReadOptions & { workshopTypeId?: string | null },
 ): Promise<CrmTask[]> {
-  const params: Record<string, string> = { task_scope: 'production' };
-  if (opts?.workshopTypeId) params.workshop_type_id = String(opts.workshopTypeId);
-  const { data } = await api.get<unknown>(`/crm/leads/${dealId}/tasks`, { params });
-  const list = Array.isArray(data) ? data : [];
-  return list.map((row) => mapCrmTask(row as Record<string, unknown>));
+  const workshopTypeId = opts?.workshopTypeId ? String(opts.workshopTypeId) : '';
+  return cachedQuery<CrmTask[]>({
+    key: `${K_DEAL_TASKS}${dealId}:${workshopTypeId}`,
+    ttlMs: QUERY_TTL_MEDIUM,
+    force: opts?.force,
+    signal: opts?.signal,
+    fetcher: async () => {
+      const params: Record<string, string> = { task_scope: 'production' };
+      if (workshopTypeId) params.workshop_type_id = workshopTypeId;
+      const { data } = await api.get<unknown>(`/crm/leads/${dealId}/tasks`, { params });
+      const list = Array.isArray(data) ? data : [];
+      return list.map((row) => mapCrmTask(row as Record<string, unknown>));
+    },
+  });
 }
 
-export async function fetchProjectActivities(projectId: string): Promise<ProjectActivity[]> {
+export async function fetchProjectActivities(
+  projectId: string,
+  opts?: ReadOptions,
+): Promise<ProjectActivity[]> {
+  return cachedQuery<ProjectActivity[]>({
+    key: `${K_ACTIVITIES}${projectId}`,
+    ttlMs: QUERY_TTL_MEDIUM,
+    force: opts?.force,
+    signal: opts?.signal,
+    fetcher: () => fetchProjectActivitiesRaw(projectId),
+  });
+}
+
+async function fetchProjectActivitiesRaw(projectId: string): Promise<ProjectActivity[]> {
   try {
     const { data } = await api.get<{ activities?: unknown[] }>(`/projects/${projectId}/activities`);
     const list = Array.isArray(data?.activities) ? data.activities : [];
@@ -449,7 +517,21 @@ export async function fetchProjectActivities(projectId: string): Promise<Project
   }
 }
 
-export async function fetchDealIdForProject(projectId: string): Promise<string | null> {
+export async function fetchDealIdForProject(
+  projectId: string,
+  opts?: ReadOptions,
+): Promise<string | null> {
+  return cachedQuery<string | null>({
+    key: `${K_PROJECT_DEAL}${projectId}`,
+    // Mapping dự án → deal gần như không đổi trong một phiên.
+    ttlMs: QUERY_TTL_LONG,
+    force: opts?.force,
+    signal: opts?.signal,
+    fetcher: () => fetchDealIdForProjectRaw(projectId),
+  });
+}
+
+async function fetchDealIdForProjectRaw(projectId: string): Promise<string | null> {
   try {
     const { data } = await api.get<{ orders?: { fulfillment_lead_id?: string }[] }>(
       `/projects/${projectId}/orders`,
@@ -481,6 +563,7 @@ export async function updateProjectDates(
     body.production_deadline = patch.delivery_date;
   }
   await api.put(`/projects/${projectId}`, body);
+  invalidateProjectDetailCache(projectId);
 }
 
 /**
@@ -495,6 +578,7 @@ export async function updateProjectMoney(
   if (patch.production_value !== undefined) body.production_value = patch.production_value;
   if (patch.deposit_amount !== undefined) body.deposit_amount = patch.deposit_amount;
   await api.put(`/projects/${projectId}`, body);
+  invalidateProjectDetailCache(projectId);
 }
 
 export function taskDeadline(task: CrmTask): string | null {
@@ -507,11 +591,13 @@ export async function updateCrmTask(
   updates: Record<string, unknown>,
 ): Promise<CrmTask> {
   const { data } = await api.put<Record<string, unknown>>(`/crm/leads/${dealId}/tasks/${taskId}`, updates);
+  invalidateDealTasksCache(dealId);
   return mapCrmTask(data || { id: taskId, ...updates });
 }
 
 export async function deleteCrmTask(dealId: string, taskId: string): Promise<void> {
   await api.delete(`/crm/leads/${dealId}/tasks/${taskId}`);
+  invalidateDealTasksCache(dealId);
 }
 
 export async function updateCrmTaskNotes(
@@ -522,6 +608,7 @@ export async function updateCrmTaskNotes(
   const { data } = await api.put<Record<string, unknown>>(`/crm/leads/${dealId}/tasks/${taskId}/notes`, {
     notes,
   });
+  invalidateDealTasksCache(dealId);
   return mapCrmTask(data || { id: taskId, notes });
 }
 
@@ -558,6 +645,7 @@ export async function deleteCrmTaskAttachment(
   attachmentId: string,
 ): Promise<void> {
   await api.delete(`/crm/leads/${dealId}/tasks/${taskId}/attachments/${attachmentId}`);
+  invalidateDealTasksCache(dealId);
 }
 
 export async function uploadCrmTaskFiles(
@@ -590,12 +678,22 @@ export async function uploadCrmTaskFiles(
     }));
   if (!items.length) throw new Error('Upload không trả về file_url');
   await api.post(`/crm/leads/${dealId}/tasks/${taskId}/attachments/bulk`, { items });
+  invalidateDealTasksCache(dealId);
 }
 
-export async function fetchUsersForAssign(): Promise<PersonRef[]> {
-  const { data } = await api.get<unknown>('/users');
-  const list = Array.isArray(data) ? data : [];
-  return list.map((row) => mapPerson(row)).filter(Boolean) as PersonRef[];
+/** Danh bạ giao việc — dữ liệu tham chiếu, đổi rất ít nên cache dài. */
+export async function fetchUsersForAssign(opts?: ReadOptions): Promise<PersonRef[]> {
+  return cachedQuery<PersonRef[]>({
+    key: 'sx:usersForAssign',
+    ttlMs: QUERY_TTL_LONG,
+    force: opts?.force,
+    signal: opts?.signal,
+    fetcher: async () => {
+      const { data } = await api.get<unknown>('/users');
+      const list = Array.isArray(data) ? data : [];
+      return list.map((row) => mapPerson(row)).filter(Boolean) as PersonRef[];
+    },
+  });
 }
 
 export type LeadMember = { user_id: string; role?: string; user?: PersonRef | null };

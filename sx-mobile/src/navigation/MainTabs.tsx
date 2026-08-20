@@ -21,9 +21,18 @@ export type WorkTabParams = {
   status?: 'all' | 'pending' | 'in_progress' | 'completed' | 'overdue';
 };
 
+export type KanbanTabParams = {
+  /** Mở board và focus thẻ (từ Tổng quan dự án quá hạn). */
+  focusProjectId?: string;
+  /** Áp quick filter bộ lọc chung (ProductionFilterSheet). */
+  quickFilter?: 'all' | 'mine' | 'overdue' | 'today';
+  /** list | kanban — mặc định giữ mode đã lưu. */
+  viewMode?: 'list' | 'kanban';
+};
+
 export type MainTabParamList = {
   Overview: undefined;
-  Kanban: undefined;
+  Kanban: KanbanTabParams | undefined;
   Work: WorkTabParams | undefined;
   CreateDeal: undefined;
   Messages: undefined;

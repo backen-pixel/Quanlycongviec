@@ -21,9 +21,13 @@ import { formatApiError } from '../api/client';
 import TapHighlight from '../components/TapHighlight';
 import { useTheme } from '../context/ThemeContext';
 import { useProductionRealtime } from '../hooks/useProductionRealtime';
-import { loadKanbanFilters } from '../lib/kanbanFilterStorage';
-import { fetchProductionBoard, isAbortError } from '../lib/productionApi';
+import { boardFiltersFromSharedSnap, loadKanbanFilters } from '../lib/kanbanFilterStorage';
+import { fetchProductionBoard, isAbortError, type BoardFilters } from '../lib/productionApi';
 import { getCachedBoard, isCachedBoardFresh } from '../lib/productionBoardCache';
+import {
+  externalDealFilterFromSnap,
+  projectMatchesDealCompanyExternalFilter,
+} from '../lib/productionFilters';
 import { REALTIME_BOARD } from '../lib/realtimeModes';
 import { initialsFrom, shortDateLabel } from '../lib/sxBoardKpis';
 import { useRootNavigation } from '../navigation/useRootNavigation';
@@ -47,9 +51,14 @@ export default function OverdueProjectsScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+  const [externalDealFilter, setExternalDealFilter] = useState(() =>
+    externalDealFilterFromSnap(null),
+  );
+  const externalDealFilterRef = useRef(externalDealFilter);
+  externalDealFilterRef.current = externalDealFilter;
   const loadSeqRef = useRef(0);
   const boardAbortRef = useRef<AbortController | null>(null);
-  const filtersRef = useRef<{ companyId?: string; workshopTypeId?: string }>({});
+  const filtersRef = useRef<BoardFilters>({});
 
   const load = useCallback(async (mode: 'init' | 'refresh' | 'silent' = 'init') => {
     boardAbortRef.current?.abort();
@@ -61,35 +70,38 @@ export default function OverdueProjectsScreen() {
     setError(null);
     try {
       const snap = await loadKanbanFilters().catch(() => null);
-      const companyId = snap?.filterCompany || undefined;
-      const workshopTypeId = snap?.filterWorkTypeId;
-      const filters = {
-        companyId,
-        workshopTypeId:
-          companyId && workshopTypeId && workshopTypeId !== 'none'
-            ? workshopTypeId
-            : undefined,
-      };
+      if (seq !== loadSeqRef.current) return;
+      const ext = externalDealFilterFromSnap(snap?.filterDealCompany);
+      setExternalDealFilter(ext);
+      const filters = boardFiltersFromSharedSnap(snap);
       filtersRef.current = filters;
+
+      const pickOverdue = (list: ProductionProject[]) =>
+        list.filter((p) => {
+          if (!p.is_overdue) return false;
+          if (ext && !projectMatchesDealCompanyExternalFilter(p, ext)) return false;
+          return true;
+        });
+
       if (mode === 'silent' && isCachedBoardFresh(filters) && getCachedBoard(filters)) {
-        setProjects(getCachedBoard(filters)!.projects.filter((p) => p.is_overdue));
+        setProjects(pickOverdue(getCachedBoard(filters)!.projects));
         return;
       }
       const seeded = getCachedBoard(filters);
       if (seeded && mode !== 'refresh') {
-        setProjects(seeded.projects.filter((p) => p.is_overdue));
+        setProjects(pickOverdue(seeded.projects));
         if (mode === 'init') setLoading(false);
       }
       const board = await fetchProductionBoard(mode === 'refresh', filters, {
         signal: ac.signal,
         onPartial: (partial) => {
           if (seq !== loadSeqRef.current) return;
-          setProjects(partial.projects.filter((p) => p.is_overdue));
+          setProjects(pickOverdue(partial.projects));
           if (mode === 'init') setLoading(false);
         },
       });
       if (seq !== loadSeqRef.current) return;
-      setProjects(board.projects.filter((p) => p.is_overdue));
+      setProjects(pickOverdue(board.projects));
     } catch (e) {
       if (seq !== loadSeqRef.current || isAbortError(e)) return;
       if (mode !== 'silent') setError(formatApiError(e));
@@ -107,13 +119,7 @@ export default function OverdueProjectsScreen() {
 
   useEffect(() => {
     void loadKanbanFilters().then((snap) => {
-      const filters = {
-        companyId: snap?.filterCompany || undefined,
-        workshopTypeId:
-          snap?.filterWorkTypeId && snap.filterWorkTypeId !== 'none'
-            ? snap.filterWorkTypeId
-            : undefined,
-      };
+      const filters = boardFiltersFromSharedSnap(snap);
       void load(getCachedBoard(filters) ? 'silent' : 'init');
     });
   }, [load]);
@@ -122,7 +128,14 @@ export default function OverdueProjectsScreen() {
     onRefresh: (info) => {
       if (info?.patched) {
         const cached = getCachedBoard(filtersRef.current);
-        if (cached) setProjects(cached.projects.filter((p) => p.is_overdue));
+        if (cached) {
+          const ext = externalDealFilterRef.current;
+          setProjects(cached.projects.filter((p) => {
+            if (!p.is_overdue) return false;
+            if (ext && !projectMatchesDealCompanyExternalFilter(p, ext)) return false;
+            return true;
+          }));
+        }
         return;
       }
       void load('silent');

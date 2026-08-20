@@ -53,7 +53,9 @@ let _io = null;
 function setIO(io) { _io = io; }
 
 function emit() {
-  if (_io) _io.emit('auto_tool_state', getState());
+  // Chỉ gửi cho client đã join room (bảng điều khiển Auto Tool trên web).
+  // Broadcast toàn cục làm mọi app mobile phải tải ~5 KB mỗi lần có dòng log mới.
+  if (_io) _io.to('auto_tool').emit('auto_tool_state', getState());
 }
 
 function phoneDigitsLen(s) {

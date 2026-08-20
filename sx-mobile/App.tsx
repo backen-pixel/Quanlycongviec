@@ -31,7 +31,7 @@ import { checkAndApplyOtaUpdate } from './src/lib/otaUpdate';
 import { navigationRef, resetToBubbleChat } from './src/navigation/navigationRef';
 import RootNavigator from './src/navigation/RootNavigator';
 
-/** Khi app đang mở, socket đã hiện tray local — tắt banner FCM trùng để tránh 2 tiếng. */
+/** Khi app đang mở, socket đã hiện tray local — chỉ tắt FCM/remote trùng, không tắt local. */
 const MUTE_FCM_FOREGROUND_TYPES = new Set([
   'comment_added',
   'messenger_chat',
@@ -46,17 +46,28 @@ const MUTE_FCM_FOREGROUND_TYPES = new Set([
   'crm_task_completed',
 ]);
 
+function isRemotePushNotification(
+  notification: Notifications.Notification,
+): boolean {
+  const trigger = notification.request.trigger as { type?: string } | null;
+  if (trigger && typeof trigger === 'object' && trigger.type === 'push') return true;
+  // Một số bản Expo Android: remote không gắn type push rõ — có remoteMessage.
+  if (trigger && typeof trigger === 'object' && 'remoteMessage' in trigger) return true;
+  return false;
+}
+
 Notifications.setNotificationHandler({
   handleNotification: async (notification) => {
     const data = (notification.request.content.data || {}) as Record<string, unknown>;
     const type = String(data.type || '');
-    const muteFg =
+    const muteRemoteFg =
       AppState.currentState === 'active'
+      && isRemotePushNotification(notification)
       && (MUTE_FCM_FOREGROUND_TYPES.has(type) || type.startsWith('crm_assignment'));
     return {
-      shouldShowBanner: !muteFg,
-      shouldShowList: !muteFg,
-      shouldPlaySound: !muteFg,
+      shouldShowBanner: !muteRemoteFg,
+      shouldShowList: !muteRemoteFg,
+      shouldPlaySound: !muteRemoteFg,
       shouldSetBadge: true,
     };
   },

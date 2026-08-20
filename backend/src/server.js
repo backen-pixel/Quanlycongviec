@@ -625,6 +625,14 @@ io.on('connection', (socket) => {
   socket.on('join:dept', (id) => guardedJoin(socket, `dept:${id}`, 'dept', id));
   socket.on('leave:dept', (id) => socket.leave(`dept:${id}`));
 
+  /* ── Bảng điều khiển Auto Tool: chỉ ai đang mở panel mới nhận state.
+   *    Trước đây state (kèm 100 dòng log, ~5 KB) được broadcast cho MỌI client,
+   *    tốn ~2,5 KB/s trên mỗi máy điện thoại dù app không hề dùng sự kiện này. */
+  socket.on('join:auto_tool', () => socket.join('auto_tool'));
+  socket.on('leave:auto_tool', () => socket.leave('auto_tool'));
+  socket.on('join:zalo_auto_tool', () => socket.join('zalo_auto_tool'));
+  socket.on('leave:zalo_auto_tool', () => socket.leave('zalo_auto_tool'));
+
   /* ── Typing indicator: client phát mỗi 2-3s khi đang gõ, server relay sang
    *    cả room nhưng skip chính sender. Frontend tự auto-stop sau 4s không nhận event. */
   socket.on('messenger_group:typing', ({ group_id, is_typing } = {}) => {

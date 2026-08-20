@@ -11,6 +11,7 @@ import { AppState, type AppStateStatus } from 'react-native';
 import { io, type Socket } from 'socket.io-client';
 import { API_ORIGIN } from '../config';
 import { setAppSocket } from '../lib/appSocket';
+import { attachSocketTrafficLogger } from '../lib/socketTraffic';
 import { mapMessageRow, resolveMediaUrl, fetchMessengerGroups } from '../lib/messengerApi';
 import { buildNotificationFromCommentEvent, type ProjectCommentSocketEvent } from '../lib/commentRealtime';
 import { showLocalCommentNotification } from '../lib/localCommentNotification';
@@ -342,6 +343,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     });
     socketRef.current = s;
     setAppSocket(s);
+    const detachTrafficLogger = attachSocketTrafficLogger(s);
 
     const onAppState = (state: AppStateStatus) => {
       if (state !== 'active') return;
@@ -726,6 +728,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
 
     return () => {
       appSub.remove();
+      detachTrafficLogger();
       s.off('project:comment', onProjectComment);
       s.off('project:comment:updated', onProjectCommentUpdated);
       s.off('project:comment:deleted', onProjectCommentDeleted);

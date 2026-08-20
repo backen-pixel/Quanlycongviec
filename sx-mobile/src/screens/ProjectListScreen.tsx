@@ -14,7 +14,11 @@ import TapHighlight from '../components/TapHighlight';
 import { useTheme } from '../context/ThemeContext';
 import { fetchProductionBoard, isAbortError, type BoardFilters } from '../lib/productionApi';
 import { getCachedBoard, isCachedBoardFresh } from '../lib/productionBoardCache';
-import { loadKanbanFilters } from '../lib/kanbanFilterStorage';
+import { boardFiltersFromSharedSnap, loadKanbanFilters } from '../lib/kanbanFilterStorage';
+import {
+  externalDealFilterFromSnap,
+  projectMatchesDealCompanyExternalFilter,
+} from '../lib/productionFilters';
 import { REALTIME_BOARD_TASK } from '../lib/realtimeModes';
 import { useProductionRealtime } from '../hooks/useProductionRealtime';
 import { useRootNavigation } from '../navigation/useRootNavigation';
@@ -24,15 +28,7 @@ import type { KanbanStage, ProductionBoard, ProductionProject } from '../types';
 import SpinningLoader from '../components/SpinningLoader';
 async function resolveListFilters(): Promise<BoardFilters> {
   const snap = await loadKanbanFilters().catch(() => null);
-  const companyId = snap?.filterCompany || undefined;
-  return {
-    companyId,
-    dealCompanyId: snap?.filterDealCompany || undefined,
-    workshopTypeId:
-      companyId && snap?.filterWorkTypeId && snap.filterWorkTypeId !== 'none'
-        ? snap.filterWorkTypeId
-        : undefined,
-  };
+  return boardFiltersFromSharedSnap(snap);
 }
 
 function formatDate(value?: string | null): string {
@@ -55,6 +51,9 @@ export default function ProjectListScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+  const [externalDealFilter, setExternalDealFilter] = useState(() =>
+    externalDealFilterFromSnap(null),
+  );
   const loadSeqRef = useRef(0);
   const boardAbortRef = useRef<AbortController | null>(null);
   const filtersRef = useRef<BoardFilters>({});
@@ -129,8 +128,10 @@ export default function ProjectListScreen() {
     else if (mode === 'refresh') setRefreshing(true);
     setError(null);
     try {
-      const filters = await resolveListFilters();
+      const snap = await loadKanbanFilters().catch(() => null);
       if (seq !== loadSeqRef.current) return;
+      setExternalDealFilter(externalDealFilterFromSnap(snap?.filterDealCompany));
+      const filters = boardFiltersFromSharedSnap(snap);
       filtersRef.current = filters;
       if (mode === 'silent' && isCachedBoardFresh(filters) && getCachedBoard(filters)) {
         setBoard(getCachedBoard(filters)!);
@@ -188,11 +189,14 @@ export default function ProjectListScreen() {
 
   const filtered = useMemo(() => {
     const needle = search.trim().toLowerCase();
-    if (!needle) return board.projects;
-    return board.projects.filter((p) =>
-      `${p.code} ${p.name} ${p.customer_name || ''} ${p.customer_phone || ''}`.toLowerCase().includes(needle),
-    );
-  }, [board.projects, search]);
+    return board.projects.filter((p) => {
+      if (externalDealFilter && !projectMatchesDealCompanyExternalFilter(p, externalDealFilter)) {
+        return false;
+      }
+      if (!needle) return true;
+      return `${p.code} ${p.name} ${p.customer_name || ''} ${p.customer_phone || ''}`.toLowerCase().includes(needle);
+    });
+  }, [board.projects, search, externalDealFilter]);
 
   const stageById = useMemo(() => {
     const m = new Map<string, KanbanStage>();

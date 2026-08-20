@@ -161,18 +161,6 @@ export default function WorkshopProjectTasksPanel({
     || (workshopPipeline || []).find((s) => (workArea === 'logistics' ? VC_STAGE_SLUGS : SX_STAGE_SLUGS).has(s.slug));
   const defaultStageId = defaultStage?.id || null;
 
-  const inferInitialVcTab = () => {
-    if (initialVcAreaTab === 'shipping' || initialVcAreaTab === 'install' || initialVcAreaTab === 'all') {
-      return initialVcAreaTab;
-    }
-    if (workArea !== 'logistics') return 'all';
-    const colId = project?.vc_kanban_column_id;
-    const cols = Array.isArray(workshopPipeline) ? workshopPipeline : [];
-    const col = cols.find((s) => String(s.id) === String(colId));
-    if (col && isInstallVcStage(col)) return 'install';
-    return 'shipping';
-  };
-
   const [title, setTitle] = useState('');
   const [priority, setPriority] = useState('medium');
   const [adding, setAdding] = useState(false);
@@ -181,7 +169,8 @@ export default function WorkshopProjectTasksPanel({
   const [showTemplatePanel, setShowTemplatePanel] = useState(false);
   const [expandedTaskId, setExpandedTaskId] = useState(null);
   const [expandedStages, setExpandedStages] = useState({});
-  const [vcAreaTab, setVcAreaTab] = useState(inferInitialVcTab); // all | shipping | install
+  // Module Lắp đặt: luôn lọc Vận chuyển — không hiện chip khu vực.
+  const [vcAreaTab, setVcAreaTab] = useState(() => (workArea === 'logistics' ? 'shipping' : 'all'));
   const [pipelineColumns, setPipelineColumns] = useState([]);
   const [showAddStageId, setShowAddStageId] = useState(null);
   const [editingDueId, setEditingDueId] = useState(null);
@@ -205,16 +194,9 @@ export default function WorkshopProjectTasksPanel({
   const shareModule = workArea === 'logistics' ? 'logistics' : 'production';
   const templatesPath = workArea === 'logistics' ? '/vc/task-templates' : '/sx/task-templates';
 
-  const setVcTab = useCallback((id) => {
-    setVcAreaTab(id);
-    if (typeof onVcAreaTabChange === 'function') onVcAreaTabChange(id);
-  }, [onVcAreaTabChange]);
-
   useEffect(() => {
-    if (initialVcAreaTab === 'shipping' || initialVcAreaTab === 'install' || initialVcAreaTab === 'all') {
-      setVcAreaTab(initialVcAreaTab);
-    }
-  }, [initialVcAreaTab]);
+    if (workArea === 'logistics') setVcAreaTab('shipping');
+  }, [workArea, project?.id]);
 
   const stageColumns = useMemo(() => {
     if (pipelineColumns.length) return pipelineColumns;
@@ -1209,26 +1191,7 @@ export default function WorkshopProjectTasksPanel({
               {stats.overdue > 0 && <span className="text-red-600 ml-1">• {stats.overdue} quá hạn</span>}
             </div>
           </div>
-          {workArea === 'logistics' && (
-            <div className="flex items-center gap-1 bg-gray-50 border border-gray-200 rounded-lg p-0.5">
-              {[
-                { id: 'shipping', label: 'Vận chuyển' },
-                { id: 'install', label: 'Lắp đặt' },
-                { id: 'all', label: 'Tất cả' },
-              ].map((tab) => (
-        <button
-                  key={tab.id}
-          type="button"
-                  onClick={() => setVcTab(tab.id)}
-                  className={`h-6 px-2 rounded-md text-[10px] font-semibold cursor-pointer ${
-                    vcAreaTab === tab.id ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-600 hover:text-gray-900'
-                  }`}
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </div>
-          )}
+          {/* Module Lắp đặt: luôn lọc Vận chuyển — không hiện chip khu vực */}
         </div>
         <div className="flex items-center gap-1">
           <button

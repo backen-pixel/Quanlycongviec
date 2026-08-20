@@ -1,4 +1,5 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
+import { useFocusEffect } from '@react-navigation/native';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Pressable,
@@ -17,6 +18,11 @@ import { useTheme } from '../context/ThemeContext';
 import { useProductionRealtime } from '../hooks/useProductionRealtime';
 import { fetchPersonalPlanner, fetchProductionBoard, isAbortError } from '../lib/productionApi';
 import { getCachedBoard, isCachedBoardFresh } from '../lib/productionBoardCache';
+import { boardFiltersFromSharedSnap, loadKanbanFilters, subscribeSharedFilters } from '../lib/kanbanFilterStorage';
+import {
+  externalDealFilterFromSnap,
+  projectMatchesDealCompanyExternalFilter,
+} from '../lib/productionFilters';
 import { REALTIME_BOARD_TASK } from '../lib/realtimeModes';
 import { formatMoneyAmount, Radii, Spacing, stageColor, colorWithAlpha } from '../theme';
 import type { PersonalPlanner, ProductionBoard, ProductionProject } from '../types';
@@ -38,13 +44,23 @@ export default function PlannerScreen() {
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const isSystemAdmin = user?.role === 'admin' && !user?.company_id;
-  const scopedCompanyId = isSystemAdmin ? undefined : (user?.company_id || undefined);
+  const lockedCompanyId = isSystemAdmin ? undefined : (user?.company_id || undefined);
+  const [sharedBoardFilters, setSharedBoardFilters] = useState(() =>
+    boardFiltersFromSharedSnap(null, { companyIdOverride: lockedCompanyId }),
+  );
+  const boardFiltersRef = useRef(sharedBoardFilters);
+  boardFiltersRef.current = sharedBoardFilters;
+  const [externalDealFilter, setExternalDealFilter] = useState(() =>
+    externalDealFilterFromSnap(null),
+  );
+  const lastSilentAtRef = useRef(0);
+
   const [tab, setTab] = useState<SubTab>('by_owner');
   const [board, setBoard] = useState<ProductionBoard>(
-    () => getCachedBoard({ companyId: scopedCompanyId }) ?? { stages: [], projects: [], kpis: null },
+    () => getCachedBoard(sharedBoardFilters) ?? { stages: [], projects: [], kpis: null },
   );
   const [personal, setPersonal] = useState<PersonalPlanner>({ columns: [], items: [] });
-  const [loading, setLoading] = useState(() => !getCachedBoard({ companyId: scopedCompanyId }));
+  const [loading, setLoading] = useState(() => !getCachedBoard(sharedBoardFilters));
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [ownerVisible, setOwnerVisible] = useState<Record<string, number>>({});
@@ -72,8 +88,39 @@ export default function PlannerScreen() {
   const loadSeqRef = useRef(0);
   const boardAbortRef = useRef<AbortController | null>(null);
 
+  useEffect(() => {
+    let cancel = false;
+    void loadKanbanFilters().then((snap) => {
+      if (cancel) return;
+      setExternalDealFilter(externalDealFilterFromSnap(snap?.filterDealCompany));
+      setSharedBoardFilters(boardFiltersFromSharedSnap(snap, {
+        companyIdOverride: lockedCompanyId || snap?.filterCompany || undefined,
+      }));
+    });
+    const unsub = subscribeSharedFilters((snap) => {
+      setExternalDealFilter(externalDealFilterFromSnap(snap.filterDealCompany));
+      const next = boardFiltersFromSharedSnap(snap, {
+        companyIdOverride: lockedCompanyId || snap?.filterCompany || undefined,
+      });
+      setSharedBoardFilters((prev) => {
+        if (
+          String(prev.companyId || '') === String(next.companyId || '')
+          && String(prev.dealCompanyId || '') === String(next.dealCompanyId || '')
+          && String(prev.workshopTypeId || '') === String(next.workshopTypeId || '')
+        ) {
+          return prev;
+        }
+        return next;
+      });
+    });
+    return () => {
+      cancel = true;
+      unsub();
+    };
+  }, [lockedCompanyId]);
+
   const load = useCallback(async (mode: 'init' | 'refresh' | 'silent' = 'init') => {
-    const boardFilters = { companyId: scopedCompanyId };
+    const boardFilters = boardFiltersRef.current;
     if (mode === 'silent' && isCachedBoardFresh(boardFilters) && getCachedBoard(boardFilters)) {
       setBoard(getCachedBoard(boardFilters)!);
       return;
@@ -115,23 +162,36 @@ export default function PlannerScreen() {
         setRefreshing(false);
       }
     }
-  }, [scopedCompanyId]);
+  }, []);
 
   useEffect(() => () => {
     boardAbortRef.current?.abort();
   }, []);
 
   useEffect(() => {
-    void load(isCachedBoardFresh({ companyId: scopedCompanyId }) ? 'silent' : 'init');
-  }, [load, scopedCompanyId]);
+    lastSilentAtRef.current = Date.now();
+    void load(isCachedBoardFresh(sharedBoardFilters) ? 'silent' : 'init');
+  }, [load, sharedBoardFilters]);
+
+  // Quay lại tab → silent refetch nếu đã stale (>12s).
+  useFocusEffect(
+    useCallback(() => {
+      const now = Date.now();
+      if (now - lastSilentAtRef.current < 12_000) return undefined;
+      lastSilentAtRef.current = now;
+      void load('silent');
+      return undefined;
+    }, [load]),
+  );
 
   useProductionRealtime({
     onRefresh: (info) => {
       if (info?.patched) {
-        const cached = getCachedBoard({ companyId: scopedCompanyId });
+        const cached = getCachedBoard(boardFiltersRef.current);
         if (cached) setBoard(cached);
         return;
       }
+      lastSilentAtRef.current = Date.now();
       void load('silent');
     },
     modes: REALTIME_BOARD_TASK,
@@ -156,6 +216,9 @@ export default function PlannerScreen() {
 
   const matchesSearch = useCallback(
     (p: ProductionProject) => {
+      if (externalDealFilter && !projectMatchesDealCompanyExternalFilter(p, externalDealFilter)) {
+        return false;
+      }
       if (filters.region && String(p.region_id || '') !== filters.region) return false;
       if (filters.person && String(p.production_person_id || '') !== filters.person) return false;
       if (filters.stage && String(p.resolved_column_id || '') !== filters.stage) return false;
@@ -164,7 +227,7 @@ export default function PlannerScreen() {
       const hay = `${p.code || ''} ${p.name || ''} ${p.customer_name || ''} ${p.customer_phone || ''} ${p.production_person_name || ''}`.toLowerCase();
       return hay.includes(needle);
     },
-    [needle, filters],
+    [needle, filters, externalDealFilter],
   );
 
   // Tùy chọn bộ lọc — suy ra từ dữ liệu board hiện có.

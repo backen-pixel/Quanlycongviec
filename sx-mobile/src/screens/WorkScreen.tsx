@@ -3,6 +3,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import {
   useFocusEffect,
+  useIsFocused,
   useNavigation,
   useRoute } from '@react-navigation/native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
@@ -37,7 +38,7 @@ import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { useProductionRealtime } from '../hooks/useProductionRealtime';
 import { useRootNavigation } from '../navigation/useRootNavigation';
-import { loadKanbanFilters, saveKanbanFilters } from '../lib/kanbanFilterStorage';
+import { loadKanbanFilters, saveKanbanFilters, subscribeSharedFilters } from '../lib/kanbanFilterStorage';
 import { REALTIME_TASK } from '../lib/realtimeModes';
 import { fetchCompanies, type CompanyOption } from '../lib/productionApi';
 import {
@@ -70,6 +71,7 @@ import {
   workTaskFocusCrmId,
   WORK_TASKS_PAGE_SIZE,
 } from '../lib/workTasksApi';
+import { isQueryAbortError } from '../lib/queryCache';
 
 import SpinningLoader from '../components/SpinningLoader';
 type StatusFilter = WorkStatusFilter;
@@ -444,6 +446,7 @@ function createStyles(colors: AppColors, bottomInset: number) {
 export default function WorkScreen() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
+  const isFocused = useIsFocused();
   const { user } = useAuth();
   const { openProjectDetail } = useRootNavigation();
   const navigation = useNavigation<BottomTabNavigationProp<MainTabParamList, 'Work'>>();
@@ -558,7 +561,7 @@ export default function WorkScreen() {
   const load = useCallback(async (
     silent = false,
     append = false,
-    opts?: { quiet?: boolean },
+    opts?: { quiet?: boolean; force?: boolean },
   ) => {
     if (!userId || !filtersReady) {
       if (!userId) {
@@ -593,6 +596,7 @@ export default function WorkScreen() {
         limit: WORK_TASKS_PAGE_SIZE,
         offset,
         signal: ac.signal,
+        force: opts?.force,
       });
       if (seq !== loadSeqRef.current) return;
       setTasks((prev) => {
@@ -633,7 +637,7 @@ export default function WorkScreen() {
   ]);
 
   /** KPI server — đếm đủ mọi assignment (không cắt 200). */
-  const loadStats = useCallback(async () => {
+  const loadStats = useCallback(async (opts?: { force?: boolean }) => {
     if (!userId || !filtersReady) return;
     try {
       const assigneeId = !teamView || scope === 'mine'
@@ -644,10 +648,13 @@ export default function WorkScreen() {
         assigneeId,
         companyId,
         q: search.trim() || undefined,
+        force: opts?.force,
       });
       setServerStats(next);
-    } catch {
-      /* giữ stats cũ / fallback client */
+    } catch (e) {
+      // Giữ KPI cũ để màn hình không nhảy về 0, nhưng phải thấy được lỗi:
+      // trước đây lỗi bị nuốt và thay bằng việc kéo 40 trang để đếm tay.
+      if (!isQueryAbortError(e)) console.warn('[WorkScreen] KPI /stats lỗi:', e);
     }
   }, [
     userId,
@@ -662,7 +669,7 @@ export default function WorkScreen() {
   ]);
 
   /** Chip status → lọc server (status / overdue). */
-  const loadChip = useCallback(async (append = false) => {
+  const loadChip = useCallback(async (append = false, opts?: { force?: boolean }) => {
     const chip = statusFilterRef.current;
     if (!userId || !filtersReady || chip === 'all') return;
     if (append) {
@@ -689,6 +696,7 @@ export default function WorkScreen() {
         limit: WORK_TASKS_PAGE_SIZE,
         offset,
         signal: ac.signal,
+        force: opts?.force,
       });
       if (seq !== chipSeqRef.current || statusFilterRef.current !== chip) return;
       setChipTasks((prev) => {
@@ -753,11 +761,24 @@ export default function WorkScreen() {
     return () => { cancelled = true; };
   }, [canPickCompany, user?.company_id]);
 
+  // Đồng bộ công ty khi Overview/Kanban đổi (cùng sx_kanban_filters_v1).
+  useEffect(() => {
+    const unsub = subscribeSharedFilters((snap) => {
+      let next = String(snap.filterCompany || '');
+      if (!canPickCompany) {
+        const ownId = user?.company_id ? String(user.company_id) : '';
+        if (ownId) next = ownId;
+      }
+      setFilterCompany((prev) => (prev === next ? prev : next));
+    });
+    return unsub;
+  }, [canPickCompany, user?.company_id]);
+
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      await Promise.all([load(false), loadStats()]);
-      if (statusFilterRef.current !== 'all') await loadChip(false);
+      await Promise.all([load(false, false, { force: true }), loadStats({ force: true })]);
+      if (statusFilterRef.current !== 'all') await loadChip(false, { force: true });
     } finally {
       setRefreshing(false);
     }
@@ -800,7 +821,7 @@ export default function WorkScreen() {
     void loadChip(false);
   }, [statusFilter, filtersReady, userId, loadChip]);
 
-  // Quay lại tab / thoát ProjectDetail → refetch để KPI quá hạn + trạng thái khớp server.
+  // Quay lại tab / thoát ProjectDetail → refetch nếu đã stale (>12s).
   useFocusEffect(
     useCallback(() => {
       if (!filtersReady || !userId) return undefined;
@@ -809,9 +830,10 @@ export default function WorkScreen() {
         return undefined;
       }
       const now = Date.now();
-      if (now - lastSilentAtRef.current < 8_000) return undefined;
+      if (now - lastSilentAtRef.current < 12_000) return undefined;
       lastSilentAtRef.current = now;
       void load(true);
+      // Stats/chip chỉ refetch nếu đã cũ hơn 12s (load vừa stamp lastSilentAt).
       void loadStats();
       if (statusFilterRef.current !== 'all') void loadChip(false);
       return undefined;
@@ -820,7 +842,7 @@ export default function WorkScreen() {
 
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
-      if (state !== 'active' || !filtersReady || !userId) return;
+      if (state !== 'active' || !isFocused || !filtersReady || !userId) return;
       const now = Date.now();
       if (now - lastSilentAtRef.current < 60_000) return;
       lastSilentAtRef.current = now;
@@ -829,13 +851,14 @@ export default function WorkScreen() {
       if (statusFilterRef.current !== 'all') void loadChip(false);
     });
     return () => sub.remove();
-  }, [load, loadChip, loadStats, filtersReady, userId]);
+  }, [load, loadChip, loadStats, filtersReady, userId, isFocused]);
 
   useProductionRealtime({
+    // Server vừa đổi dữ liệu → bỏ qua cache, nếu không sẽ hiện lại bản cũ trong TTL.
     onRefresh: () => {
-      void load(true);
-      void loadStats();
-      if (statusFilterRef.current !== 'all') void loadChip(false);
+      void load(true, false, { force: true });
+      void loadStats({ force: true });
+      if (statusFilterRef.current !== 'all') void loadChip(false, { force: true });
     },
     enabled: Boolean(userId) && filtersReady,
     modes: REALTIME_TASK,

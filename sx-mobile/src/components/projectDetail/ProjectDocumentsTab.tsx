@@ -89,17 +89,14 @@ export default function ProjectDocumentsTab({ projectId, dealId, sharedDocuments
     if (!silent) setLoading(true);
     setError('');
     try {
-      const [wDocs, tFiles] = await Promise.all([
+      const [wDocs, tFiles, leadDocs] = await Promise.all([
         fetchProjectDocuments(projectId),
         fetchProjectTaskFiles(projectId),
+        dealId ? fetchLeadTaskDocuments(dealId) : Promise.resolve([] as ProjectDocument[]),
       ]);
       setWorkshopDocs(wDocs);
       setTaskFiles(tFiles);
-      if (dealId) {
-        setCrmTaskDocs(await fetchLeadTaskDocuments(dealId));
-      } else {
-        setCrmTaskDocs([]);
-      }
+      setCrmTaskDocs(leadDocs);
     } catch (e) {
       setError(formatApiError(e));
     } finally {
