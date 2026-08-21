@@ -602,6 +602,17 @@ io.on('connection', (socket) => {
     void syncPendingIncomingCalls(userId, socket);
   }
 
+  // Chỉ khi đang đếm ngược chuyển DB — hydrate client mới/reconnect (không HTTP poll)
+  try {
+    require('./helpers/supabaseManualSwitch').emitPendingSwitchToSocket(socket);
+  } catch { /* optional */ }
+
+  socket.on('supabase:switch-pending-request', () => {
+    try {
+      require('./helpers/supabaseManualSwitch').emitPendingSwitchToSocket(socket);
+    } catch { /* optional */ }
+  });
+
   // Đăng ký handler signaling cuộc gọi 1-1 thế hệ mới.
   registerCallSignaling(socket);
 
@@ -1265,7 +1276,10 @@ server.listen(config.port, () => {
     console.warn('[sx-schedule-slip] Failed to start:', e.message);
   }
 
+<<<<<<< HEAD
 
+=======
+>>>>>>> c1d6b636 (Stop polling public-pending every 2s; use socket hydrate instead.)
   // Cron quá hạn → Zalo Bot sendMessage (cấu hình ở /management/project-deadlines)
   // Disable: PROJECT_DEADLINE_DISPATCH_DISABLED=1
   try {

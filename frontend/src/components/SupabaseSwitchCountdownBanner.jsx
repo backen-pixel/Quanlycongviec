@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { AlertTriangle, Database } from 'lucide-react';
 import api from '../lib/api';
 import { connectSocket, getSocket } from '../lib/socket';
@@ -11,10 +11,13 @@ import { formatCountdownMessage } from '../lib/supabaseSwitchLabels';
 
 /**
  * Banner toàn app — đếm ngược chuyển Supabase (mọi user đăng nhập).
+ * Socket là nguồn chính. HTTP chỉ khi đang hiện banner + reconnect (xác nhận còn pending).
  */
 export default function SupabaseSwitchCountdownBanner() {
   const [countdown, setCountdown] = useState(null);
   const [syncReady, setSyncReady] = useState(null);
+  const countdownRef = useRef(null);
+  countdownRef.current = countdown;
 
   const clear = useCallback(() => {
     setCountdown(null);
@@ -25,6 +28,27 @@ export default function SupabaseSwitchCountdownBanner() {
     const next = countdownStateFromPayload(payload);
     if (next) setCountdown(next);
   }, []);
+
+  /** Xin trạng thái qua socket — server chỉ emit khi đang có đếm ngược. */
+  const requestPendingViaSocket = useCallback(() => {
+    const socket = getSocket();
+    if (socket?.connected) socket.emit('supabase:switch-pending-request');
+  }, []);
+
+  /** HTTP chỉ khi banner đang hiện — tránh miss cancel lúc offline. */
+  const verifyPendingIfShowing = useCallback(async () => {
+    const cur = countdownRef.current;
+    if (!cur || cur.done) return;
+    try {
+      const { data } = await api.get('/production/backup-sync/switch/public-pending');
+      const next = countdownStateFromPending(data?.pending);
+      if (next && next.remaining > 0) {
+        setCountdown((c) => (c?.done ? c : next));
+      } else {
+        clear();
+      }
+    } catch { /* ignore */ }
+  }, [clear]);
 
   useEffect(() => {
     connectSocket();
@@ -52,35 +76,28 @@ export default function SupabaseSwitchCountdownBanner() {
 
     const onCancel = () => clear();
 
+    const onConnect = () => {
+      requestPendingViaSocket();
+      void verifyPendingIfShowing();
+    };
+
     socket.on('supabase:switch-sync-ready', onSyncReady);
     socket.on('supabase:switch-countdown', onCountdown);
     socket.on('supabase:switch-done', onDone);
     socket.on('supabase:switch-cancelled', onCancel);
+    socket.on('connect', onConnect);
+
+    // Socket đã connect sẵn (App mount trước) — xin pending một lần
+    if (socket.connected) onConnect();
 
     return () => {
       socket.off('supabase:switch-sync-ready', onSyncReady);
       socket.off('supabase:switch-countdown', onCountdown);
       socket.off('supabase:switch-done', onDone);
       socket.off('supabase:switch-cancelled', onCancel);
+      socket.off('connect', onConnect);
     };
-  }, [applyCountdown, clear]);
-
-  useEffect(() => {
-    let cancelled = false;
-    const poll = async () => {
-      try {
-        const { data } = await api.get('/production/backup-sync/switch/public-pending');
-        if (cancelled) return;
-        const next = countdownStateFromPending(data?.pending);
-        if (next && next.remaining > 0) {
-          setCountdown((c) => (c?.done ? c : next));
-        }
-      } catch { /* ignore */ }
-    };
-    void poll();
-    const id = setInterval(poll, 2000);
-    return () => { cancelled = true; clearInterval(id); };
-  }, []);
+  }, [applyCountdown, clear, requestPendingViaSocket, verifyPendingIfShowing]);
 
   useEffect(() => {
     if (!countdown || countdown.done) return undefined;
