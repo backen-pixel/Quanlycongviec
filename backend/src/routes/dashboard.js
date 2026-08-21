@@ -469,6 +469,9 @@ r.post('/project-deadlines/configs', async (req, res) => {
       modules: normalizeModules(req.body?.modules || req.body?.module),
       status: req.body?.status,
       days_ahead: req.body?.days_ahead,
+      zalo_enabled: req.body?.zalo_enabled,
+      zalo_bot_token: req.body?.zalo_bot_token,
+      zalo_chat_id: req.body?.zalo_chat_id,
     });
     res.status(201).json(saved);
   } catch (e) {
@@ -494,6 +497,9 @@ r.put('/project-deadlines/configs/:id', async (req, res) => {
       modules: normalizeModules(req.body?.modules || req.body?.module),
       status: req.body?.status,
       days_ahead: req.body?.days_ahead,
+      zalo_enabled: req.body?.zalo_enabled,
+      zalo_bot_token: req.body?.zalo_bot_token,
+      zalo_chat_id: req.body?.zalo_chat_id,
     }, { id: req.params.id });
     res.json(saved);
   } catch (e) {
@@ -508,6 +514,34 @@ r.delete('/project-deadlines/configs/:id', async (req, res) => {
     if (!isCrmModuleAdmin(req.user)) return res.status(403).json({ error: 'Chỉ quản trị được xóa cấu hình này' });
     const { deleteProfile } = require('../jobs/projectDeadlineDispatch');
     const result = await deleteProfile(req.params.id);
+    res.json(result);
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
+});
+
+// POST /dashboard/project-deadlines/configs/:id/send — gửi Zalo ngay (chỉ mục mới)
+r.post('/project-deadlines/configs/:id/send', async (req, res) => {
+  try {
+    const { isCrmModuleAdmin } = require('../helpers/adminRole');
+    if (!isCrmModuleAdmin(req.user)) return res.status(403).json({ error: 'Chỉ quản trị được gửi Zalo' });
+    const { runProfileOnce } = require('../jobs/projectDeadlineDispatch');
+    const force = req.body?.force === true || req.query.force === '1';
+    const result = await runProfileOnce(req.params.id, {
+      force,
+      requireEnabled: false,
+      zaloBotToken: req.body?.zalo_bot_token,
+      zaloChatId: req.body?.zalo_chat_id,
+    });
+    if (result.skipped && result.reason === 'missing_zalo_bot') {
+      return res.status(400).json({
+        ...result,
+        error: 'Chưa gắn Bot Token hoặc Chat ID Zalo cho cấu hình này',
+      });
+    }
+    if (result.skipped && result.reason === 'not_found') {
+      return res.status(404).json({ ...result, error: 'Không tìm thấy cấu hình API' });
+    }
     res.json(result);
   } catch (e) {
     res.status(e.status || 500).json({ error: e.message });

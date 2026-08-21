@@ -88,6 +88,9 @@ function normalizeProfile(raw, fallbackName = 'Mặc định') {
   const id = String(v.id || '').trim() || newProfileId();
   const name = String(v.name || fallbackName).trim() || fallbackName;
   const now = new Date().toISOString();
+  const zaloEnabledRaw = v.zalo_enabled;
+  const zaloEnabled = zaloEnabledRaw === true || zaloEnabledRaw === '1' || zaloEnabledRaw === 1
+    || (zaloEnabledRaw == null && !!(sanitizeBotToken(v.zalo_bot_token || v.bot_token) && (v.zalo_chat_id || v.chat_id)));
   return {
     id,
     name,
@@ -96,12 +99,16 @@ function normalizeProfile(raw, fallbackName = 'Mặc định') {
     modules: base.modules,
     status: base.status,
     days_ahead: base.days_ahead,
+    zalo_enabled: !!zaloEnabled,
+    zalo_bot_token: sanitizeBotToken(v.zalo_bot_token || v.bot_token),
+    zalo_chat_id: String(v.zalo_chat_id || v.chat_id || '').trim(),
     created_at: v.created_at || now,
     updated_at: v.updated_at || now,
   };
 }
 
 function publicProfile(p) {
+  const token = p.zalo_bot_token || '';
   return {
     id: p.id,
     name: p.name,
@@ -110,6 +117,10 @@ function publicProfile(p) {
     modules: p.modules || [],
     status: p.status || 'overdue',
     days_ahead: p.days_ahead ?? 0,
+    zalo_enabled: !!p.zalo_enabled,
+    zalo_chat_id: p.zalo_chat_id || '',
+    zalo_bot_token_set: !!token,
+    zalo_bot_token_hint: token ? `••••${token.slice(-4)}` : '',
     created_at: p.created_at || null,
     updated_at: p.updated_at || null,
   };
@@ -205,11 +216,15 @@ async function upsertProfile(input = {}, { id = null } = {}) {
     }
   }
   const prev = existingIdx >= 0 ? store.profiles[existingIdx] : null;
+  const keepToken = !sanitizeBotToken(input.zalo_bot_token);
   const next = normalizeProfile({
     ...(prev || {}),
     ...input,
     id: prev?.id || id || newProfileId(),
     name: input.name != null ? input.name : (prev?.name || 'API mới'),
+    zalo_bot_token: keepToken ? (prev?.zalo_bot_token || '') : input.zalo_bot_token,
+    zalo_chat_id: input.zalo_chat_id !== undefined ? input.zalo_chat_id : (prev?.zalo_chat_id || ''),
+    zalo_enabled: input.zalo_enabled !== undefined ? input.zalo_enabled : (prev?.zalo_enabled ?? false),
     created_at: prev?.created_at || now,
     updated_at: now,
   });
@@ -403,63 +418,90 @@ async function filterNewNotifications(notifications, opts = {}) {
 }
 
 /**
- * @param {{
- *   force?: boolean,
- *   companyIds?: string[]|null,
- *   module?: string,
- *   zaloBotToken?: string,
- *   zaloChatId?: string,
- * }} [opts]
+ * Gửi Zalo Bot sendMessage cho một cấu hình API (chỉ mục chưa gửi).
+ * POST https://bot-api.zaloplatforms.com/bot{token}/sendMessage
+ * body: { chat_id, parse_mode: "markdown", text }
  */
-async function runOnce(opts = {}) {
-  const cfg = await loadDispatchConfig();
-  const token = sanitizeBotToken(opts.zaloBotToken || cfg.zalo_bot_token);
-  const chatIds = normalizeChatIds(opts.zaloChatId || cfg.zalo_chat_id);
-  const url = zaloSendUrl(token);
-  if (!url || !chatIds.length) {
-    console.warn('[project-deadline-dispatch] Bỏ qua: chưa có Bot Token hoặc Chat ID');
-    return { ok: false, skipped: true, reason: 'missing_zalo_bot', sent: 0 };
-  }
-  if (opts.force !== true && cfg.enabled === false) {
-    return { ok: false, skipped: true, reason: 'disabled', sent: 0 };
+async function runProfileOnce(profileOrId, opts = {}) {
+  const store = await loadStore();
+  const profile = typeof profileOrId === 'object' && profileOrId?.id
+    ? normalizeProfile(profileOrId)
+    : store.profiles.find((p) => String(p.id) === String(profileOrId));
+  if (!profile) {
+    return { ok: false, skipped: true, reason: 'not_found', sent: 0 };
   }
 
-  const companyIds = opts.companyIds !== undefined
-    ? (opts.companyIds && opts.companyIds.length ? opts.companyIds : null)
-    : (cfg.company_ids.length ? cfg.company_ids : null);
-  const module = opts.module
-    || (cfg.modules?.length ? cfg.modules : 'all');
-  const regionIds = cfg.region_ids || [];
+  const token = sanitizeBotToken(opts.zaloBotToken || profile.zalo_bot_token || store.zalo_bot_token);
+  const chatIds = normalizeChatIds(opts.zaloChatId || profile.zalo_chat_id || store.zalo_chat_id);
+  const url = zaloSendUrl(token);
+  if (!url || !chatIds.length) {
+    return {
+      ok: false,
+      skipped: true,
+      reason: 'missing_zalo_bot',
+      sent: 0,
+      config_id: profile.id,
+      config_name: profile.name,
+    };
+  }
+  if (opts.cron === true && opts.force !== true && !profile.zalo_enabled) {
+    return {
+      ok: true,
+      skipped: true,
+      reason: 'zalo_disabled',
+      sent: 0,
+      config_id: profile.id,
+    };
+  }
+
+  const companyIds = profile.company_ids?.length ? profile.company_ids : null;
+  const module = profile.modules?.length ? profile.modules : 'all';
+  const regionIds = profile.region_ids || [];
 
   const payload = await listProjectDeadlineNotifications({
     companyIds,
     regionIds,
     module,
-    status: cfg.status || 'overdue',
-    daysAhead: cfg.days_ahead ?? 0,
+    status: profile.status || 'overdue',
+    daysAhead: profile.days_ahead ?? 0,
     limit: 400,
   });
   const items = payload.notifications || [];
   if (!items.length) {
-    console.log('[project-deadline-dispatch] Không có công trình quá hạn');
-    return { ok: true, sent: 0, skipped_dup: 0, total: 0, module, company_ids: companyIds };
+    return {
+      ok: true,
+      sent: 0,
+      skipped_dup: 0,
+      total: 0,
+      config_id: profile.id,
+      config_name: profile.name,
+    };
   }
 
-  const seen = opts.force ? new Set() : await loadRecentFingerprints({ sinceMs: DEDUP_WINDOW_MS });
-  const fresh = [];
-  for (const n of items) {
-    const fp = fingerprintOf(n);
-    if (!fp || seen.has(fp)) continue;
-    seen.add(fp);
-    fresh.push({ n, fp });
-  }
+  const filtered = await filterNewNotifications(items, {
+    configId: profile.id,
+    mark: false,
+    sinceMs: opts.force ? 0 : (365 * 24 * 60 * 60 * 1000),
+  });
+  // force: gửi lại tất cả trong cửa sổ hiện tại
+  const fresh = opts.force
+    ? items.map((n) => ({ n, fp: fingerprintOf(n, profile.id) }))
+    : filtered.notifications.map((n) => ({ n, fp: fingerprintOf(n, profile.id) }));
+
   if (!fresh.length) {
-    console.log(`[project-deadline-dispatch] ${items.length} quá hạn, đã gửi gần đây — bỏ qua`);
-    return { ok: true, sent: 0, skipped_dup: items.length, total: items.length, module };
+    return {
+      ok: true,
+      sent: 0,
+      skipped_dup: filtered.skipped_dup || items.length,
+      total: items.length,
+      config_id: profile.id,
+      config_name: profile.name,
+    };
   }
 
   let sent = 0;
   let failed = 0;
+  const errors = [];
   for (const { n, fp } of fresh) {
     const text = n.text || n.message || n.title || '';
     let itemOk = true;
@@ -469,15 +511,16 @@ async function runOnce(opts = {}) {
       lastRes = res;
       if (!res.ok) {
         itemOk = false;
+        errors.push(res.error || `HTTP ${res.status}`);
         break;
       }
     }
     await logDispatch({
-      project_id: n.project?.id,
+      project_id: n.project?.id || null,
       module_key: n.deadline?.module || '',
-      kind: 'overdue',
+      kind: n.deadline?.is_overdue ? 'overdue' : 'warning',
       fingerprint: fp,
-      webhook_url: 'zalo:sendMessage',
+      webhook_url: `zalo:sendMessage:${profile.id}`,
       http_status: lastRes.status,
       error: itemOk ? null : (lastRes.error || null),
     });
@@ -485,16 +528,72 @@ async function runOnce(opts = {}) {
     else failed += 1;
   }
 
-  console.log(`[project-deadline-dispatch] Gửi Zalo ${sent}/${fresh.length} (dup ${items.length - fresh.length}, lỗi ${failed})`);
+  console.log(`[project-deadline-dispatch] [${profile.name}] Zalo ${sent}/${fresh.length} (lỗi ${failed})`);
   return {
     ok: failed === 0,
     sent,
     failed,
     skipped_dup: items.length - fresh.length,
     total: items.length,
+    config_id: profile.id,
+    config_name: profile.name,
     chat_ids: chatIds,
-    module,
-    company_ids: companyIds,
+    errors: errors.slice(0, 3),
+  };
+}
+
+/**
+ * Cron / chạy tất cả profile có bật Zalo.
+ */
+async function runOnce(opts = {}) {
+  const store = await loadStore();
+  if (opts.force !== true && store.enabled === false) {
+    return { ok: false, skipped: true, reason: 'disabled', sent: 0 };
+  }
+  const profiles = store.profiles || [];
+  if (!profiles.length) {
+    // Legacy: token ở root
+    if (store.zalo_bot_token && store.zalo_chat_id) {
+      return runProfileOnce({
+        id: 'default',
+        name: 'Mặc định',
+        company_ids: [],
+        region_ids: [],
+        modules: [],
+        status: 'overdue',
+        days_ahead: 0,
+        zalo_enabled: true,
+        zalo_bot_token: store.zalo_bot_token,
+        zalo_chat_id: store.zalo_chat_id,
+      }, { ...opts, cron: true });
+    }
+    return { ok: false, skipped: true, reason: 'no_profiles', sent: 0 };
+  }
+
+  const results = [];
+  let sent = 0;
+  let failed = 0;
+  let skipped = 0;
+  for (const p of profiles) {
+    if (!opts.force && !p.zalo_enabled) {
+      skipped += 1;
+      continue;
+    }
+    if (!p.zalo_bot_token && !store.zalo_bot_token) {
+      skipped += 1;
+      continue;
+    }
+    const r = await runProfileOnce(p, { ...opts, cron: true, requireEnabled: false });
+    results.push(r);
+    sent += r.sent || 0;
+    failed += r.failed || 0;
+  }
+  return {
+    ok: failed === 0,
+    sent,
+    failed,
+    skipped_profiles: skipped,
+    profiles: results,
   };
 }
 
@@ -508,14 +607,15 @@ function start() {
     parseInt(process.env.PROJECT_DEADLINE_DISPATCH_INTERVAL_MS || String(DEFAULT_INTERVAL_MS), 10) || DEFAULT_INTERVAL_MS,
   );
   const ttlSec = Math.max(120, Math.round(intervalMs / 1000) - 30);
-  setTimeout(() => { void runIfLeader('project-deadline-dispatch', () => runOnce(), { ttlSec }); }, 90 * 1000);
-  setInterval(() => { void runIfLeader('project-deadline-dispatch', () => runOnce(), { ttlSec }); }, intervalMs);
-  console.log(`[project-deadline-dispatch] Started — mỗi ${Math.round(intervalMs / 60000)} phút → Zalo Bot`);
+  setTimeout(() => { void runIfLeader('project-deadline-dispatch', () => runOnce({ cron: true }), { ttlSec }); }, 90 * 1000);
+  setInterval(() => { void runIfLeader('project-deadline-dispatch', () => runOnce({ cron: true }), { ttlSec }); }, intervalMs);
+  console.log(`[project-deadline-dispatch] Started — mỗi ${Math.round(intervalMs / 60000)} phút → Zalo Bot (cấu hình đã bật)`);
 }
 
 module.exports = {
   start,
   runOnce,
+  runProfileOnce,
   loadDispatchConfig,
   loadStoredConfig,
   saveDispatchConfig,

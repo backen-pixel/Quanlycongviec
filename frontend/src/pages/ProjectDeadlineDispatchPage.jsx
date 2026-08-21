@@ -3,7 +3,7 @@ import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isCompanyScopedAdmin } from '../lib/adminRole';
 import {
-  Bell, Building2, Check, Copy, ExternalLink, MapPin, Pencil, Plus, RefreshCw, Save, Trash2,
+  Bell, Building2, Check, Copy, ExternalLink, MapPin, Pencil, Plus, RefreshCw, Save, Send, Trash2,
 } from 'lucide-react';
 
 const MODULES = [
@@ -70,6 +70,11 @@ function emptyForm() {
     modules: ['crm', 'production', 'logistics'],
     status: 'overdue',
     daysAhead: 7,
+    zaloEnabled: false,
+    zaloBotToken: '',
+    zaloChatId: '',
+    zaloTokenSet: false,
+    zaloTokenHint: '',
   };
 }
 
@@ -87,6 +92,7 @@ export default function ProjectDeadlineDispatchPage() {
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [sending, setSending] = useState(false);
   const [previewing, setPreviewing] = useState(false);
   const [err, setErr] = useState(null);
   const [msg, setMsg] = useState(null);
@@ -185,6 +191,11 @@ export default function ProjectDeadlineDispatchPage() {
         : ['crm', 'production', 'logistics'],
       status: cfg?.status || 'overdue',
       daysAhead: cfg?.days_ahead ?? 7,
+      zaloEnabled: !!cfg?.zalo_enabled,
+      zaloBotToken: '',
+      zaloChatId: cfg?.zalo_chat_id || '',
+      zaloTokenSet: !!cfg?.zalo_bot_token_set,
+      zaloTokenHint: cfg?.zalo_bot_token_hint || '',
     });
   }, [companyIdList, regionIdList]);
 
@@ -302,7 +313,12 @@ export default function ProjectDeadlineDispatchPage() {
         modules: form.modules,
         status: form.status,
         days_ahead: form.status === 'overdue' ? 0 : form.daysAhead,
+        zalo_enabled: !!form.zaloEnabled,
+        zalo_chat_id: (form.zaloChatId || '').trim(),
       };
+      if ((form.zaloBotToken || '').trim()) {
+        body.zalo_bot_token = form.zaloBotToken.trim();
+      }
       let saved;
       if (editingId) {
         const { data } = await api.put(`/dashboard/project-deadlines/configs/${encodeURIComponent(editingId)}`, body);
@@ -330,6 +346,28 @@ export default function ProjectDeadlineDispatchPage() {
       setErr(e.response?.data?.error || e.message);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const sendZalo = async (cfg) => {
+    const id = cfg?.id || editingId;
+    if (!id) return;
+    setSending(true);
+    setErr(null);
+    setMsg(null);
+    try {
+      const { data } = await api.post(`/dashboard/project-deadlines/configs/${encodeURIComponent(id)}/send`, {
+        force: false,
+      });
+      if (data?.skipped) {
+        setErr(data.error || data.reason || 'Không gửi được');
+      } else {
+        setMsg(`Đã gửi Zalo: ${data?.sent || 0} tin mới${data?.failed ? `, lỗi ${data.failed}` : ''}${data?.skipped_dup ? ` (bỏ qua ${data.skipped_dup} đã gửi)` : ''}.`);
+      }
+    } catch (e) {
+      setErr(e.response?.data?.error || e.message);
+    } finally {
+      setSending(false);
     }
   };
 
@@ -404,7 +442,7 @@ export default function ProjectDeadlineDispatchPage() {
         <div>
           <h1 className="text-lg font-bold text-gray-900">Cảnh báo hạn công trình</h1>
           <p className="text-xs text-gray-500 mt-0.5">
-            Tạo nhiều API (mỗi bộ lọc một URL). Chọn để xem lại / chỉnh sửa, rồi tự gọi API gửi Zalo.
+            Tạo nhiều API (mỗi bộ lọc một URL). Gắn Zalo Bot Token + Chat ID để hệ thống tự gửi tin quá hạn, hoặc bấm «Gửi Zalo ngay».
           </p>
         </div>
       </div>
@@ -427,14 +465,15 @@ export default function ProjectDeadlineDispatchPage() {
               <tr>
                 <th className="text-left px-3 py-2 font-medium">Tên</th>
                 <th className="text-left px-3 py-2 font-medium">Phạm vi</th>
+                <th className="text-left px-3 py-2 font-medium">Zalo</th>
                 <th className="text-left px-3 py-2 font-medium">URL</th>
-                <th className="text-left px-3 py-2 font-medium w-36">Thao tác</th>
+                <th className="text-left px-3 py-2 font-medium w-44">Thao tác</th>
               </tr>
             </thead>
             <tbody>
               {!configs.length && (
                 <tr>
-                  <td colSpan={4} className="px-3 py-6 text-center text-gray-400">
+                  <td colSpan={5} className="px-3 py-6 text-center text-gray-400">
                     {loading ? 'Đang tải…' : 'Chưa có API. Bấm «Tạo API mới».'}
                   </td>
                 </tr>
@@ -453,6 +492,20 @@ export default function ProjectDeadlineDispatchPage() {
                       <div className="text-[10px] text-gray-400 font-mono">{cfg.id}</div>
                     </td>
                     <td className="px-3 py-2 text-xs text-gray-600">{summarizeConfig(cfg, companies)}</td>
+                    <td className="px-3 py-2 text-xs">
+                      {cfg.zalo_bot_token_set ? (
+                        <div>
+                          <span className={`inline-flex px-1.5 py-0.5 rounded text-[10px] font-medium ${cfg.zalo_enabled ? 'bg-emerald-50 text-emerald-700' : 'bg-gray-100 text-gray-500'}`}>
+                            {cfg.zalo_enabled ? 'Tự gửi' : 'Đã gắn'}
+                          </span>
+                          <div className="text-[10px] text-gray-400 mt-0.5 truncate max-w-[120px]">
+                            {cfg.zalo_bot_token_hint} · {cfg.zalo_chat_id || '—'}
+                          </div>
+                        </div>
+                      ) : (
+                        <span className="text-gray-400">Chưa gắn</span>
+                      )}
+                    </td>
                     <td className="px-3 py-2">
                       <code className="text-[10px] text-gray-600 break-all">{url}</code>
                     </td>
@@ -461,6 +514,10 @@ export default function ProjectDeadlineDispatchPage() {
                         <button type="button" title="Sửa" onClick={() => selectConfig(cfg)}
                           className="h-8 w-8 border rounded-lg inline-flex items-center justify-center hover:bg-gray-50 cursor-pointer">
                           <Pencil className="h-3.5 w-3.5" />
+                        </button>
+                        <button type="button" title="Gửi Zalo ngay" onClick={() => sendZalo(cfg)} disabled={sending || !cfg.zalo_bot_token_set}
+                          className="h-8 w-8 border rounded-lg inline-flex items-center justify-center hover:bg-sky-50 text-sky-700 disabled:opacity-40 cursor-pointer">
+                          <Send className="h-3.5 w-3.5" />
                         </button>
                         <button type="button" title="Copy URL" onClick={() => copy(url, `u-${cfg.id}`)}
                           className="h-8 w-8 border rounded-lg inline-flex items-center justify-center hover:bg-gray-50 cursor-pointer">
@@ -499,6 +556,45 @@ export default function ProjectDeadlineDispatchPage() {
             placeholder="VD: VPT CRM quá hạn"
             className="w-full h-10 px-3 border rounded-lg text-sm"
           />
+        </div>
+
+        <div className="rounded-lg border border-sky-100 bg-sky-50/50 p-3 space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <div className="text-xs font-semibold text-sky-900">Zalo Bot — gửi tin khi quá hạn</div>
+              <p className="text-[11px] text-gray-500 mt-0.5">
+                Backend gọi <code className="bg-white/80 px-1 rounded">POST …/bot{'{TOKEN}'}/sendMessage</code> với <code className="bg-white/80 px-1 rounded">parse_mode: markdown</code> và field <code className="bg-white/80 px-1 rounded">text</code>.
+              </p>
+            </div>
+            <label className="flex items-center gap-2 text-sm cursor-pointer shrink-0">
+              <input
+                type="checkbox"
+                checked={form.zaloEnabled}
+                onChange={(e) => setForm((p) => ({ ...p, zaloEnabled: e.target.checked }))}
+              />
+              Tự gửi (cron ~30′)
+            </label>
+          </div>
+          <div>
+            <label className="block text-[11px] font-medium text-gray-700 mb-1">Bot Token</label>
+            <input
+              type="password"
+              autoComplete="off"
+              value={form.zaloBotToken}
+              onChange={(e) => setForm((p) => ({ ...p, zaloBotToken: e.target.value }))}
+              placeholder={form.zaloTokenSet ? `Đã lưu ${form.zaloTokenHint} — nhập mới để thay` : 'YOUR_BOT_TOKEN'}
+              className="w-full h-10 px-3 border rounded-lg text-sm bg-white"
+            />
+          </div>
+          <div>
+            <label className="block text-[11px] font-medium text-gray-700 mb-1">Chat ID</label>
+            <input
+              value={form.zaloChatId}
+              onChange={(e) => setForm((p) => ({ ...p, zaloChatId: e.target.value }))}
+              placeholder="CHAT_ID (có thể nhiều, cách nhau dấu phẩy)"
+              className="w-full h-10 px-3 border rounded-lg text-sm bg-white"
+            />
+          </div>
         </div>
 
         <div>
@@ -624,6 +720,13 @@ export default function ProjectDeadlineDispatchPage() {
             className="h-10 px-4 bg-blue-600 text-white rounded-lg text-sm font-medium inline-flex items-center gap-2 disabled:opacity-50 cursor-pointer">
             <Save className="h-4 w-4" /> {saving ? 'Đang lưu…' : (editingId ? 'Lưu thay đổi' : 'Tạo API')}
           </button>
+          {editingId && (
+            <button type="button" onClick={() => sendZalo({ id: editingId, zalo_bot_token_set: form.zaloTokenSet || !!form.zaloBotToken })}
+              disabled={sending || saving || (!form.zaloTokenSet && !form.zaloBotToken.trim())}
+              className="h-10 px-4 bg-sky-600 text-white rounded-lg text-sm font-medium inline-flex items-center gap-2 disabled:opacity-50 cursor-pointer">
+              <Send className="h-4 w-4" /> {sending ? 'Đang gửi…' : 'Gửi Zalo ngay'}
+            </button>
+          )}
           {editingId && (
             <button type="button" onClick={startCreate}
               className="h-10 px-4 border rounded-lg text-sm inline-flex items-center gap-2 cursor-pointer hover:bg-gray-50">

@@ -1265,6 +1265,15 @@ server.listen(config.port, () => {
     console.warn('[sx-schedule-slip] Failed to start:', e.message);
   }
 
+
+  // Cron quá hạn → Zalo Bot sendMessage (cấu hình ở /management/project-deadlines)
+  // Disable: PROJECT_DEADLINE_DISPATCH_DISABLED=1
+  try {
+    require('./jobs/projectDeadlineDispatch').start();
+  } catch (e) {
+    console.warn('[project-deadline-dispatch] Failed to start:', e.message);
+  }
+
   // Cron refresh Zalo OA token hàng ngày 6:00 VN — disable: ZALO_OA_TOKEN_CRON_DISABLED=1
   try {
     require('./jobs/zaloOaTokenRefresh').start();
