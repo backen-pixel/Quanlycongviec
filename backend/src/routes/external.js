@@ -27,6 +27,7 @@
  * GET /api/external/users
  * GET /api/external/ping
  * GET /api/external/project-deadlines — hạn công trình + người chịu trách nhiệm + link CRM/SX/VC
+ * POST /api/external/project-deadlines/run — chạy ngay cron POST webhook quá hạn
  */
 const { Router } = require('express');
 const { apiKeyAuth } = require('../middleware/apiKeyAuth');
@@ -744,6 +745,21 @@ r.get('/project-deadlines', apiKeyAuth, async (req, res) => {
     });
     await tryAuditLog(req, { status: 200 });
     res.json(payload);
+  } catch (e) {
+    await tryAuditLog(req, { status: 500, error: e.message });
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── POST /api/external/project-deadlines/run — chạy ngay cron gửi webhook ──
+r.post('/project-deadlines/run', apiKeyAuth, async (req, res) => {
+  try {
+    const { runOnce } = require('../jobs/projectDeadlineDispatch');
+    const force = req.body?.force === true || req.query.force === '1';
+    const result = await runOnce({ force });
+    await tryAuditLog(req, { status: result.skipped ? 400 : 200 });
+    if (result.skipped) return res.status(400).json(result);
+    res.json(result);
   } catch (e) {
     await tryAuditLog(req, { status: 500, error: e.message });
     res.status(500).json({ error: e.message });
