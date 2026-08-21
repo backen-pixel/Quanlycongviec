@@ -19,6 +19,7 @@ import {
   ClipboardList, Plus, Calendar, CheckCircle2, Circle, Clock, X, Pencil, Trash2, Save,
   LayoutGrid, Target, Factory, Truck, ExternalLink, MessageSquare, Paperclip, FileUp, ImagePlus,
 } from 'lucide-react';
+import SharedWorkspaceAssignHelp from './SharedWorkspaceAssignHelp';
 
 const NOTE_DOC_TYPES = new Set(['task_inline_note', 'task_note', 'checklist_inline_note']);
 
@@ -259,6 +260,7 @@ export default function LeadMemberAssignmentsPanel({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [showForm, setShowForm] = useState(false);
+  const [showAssignHelp, setShowAssignHelp] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [moduleTab, setModuleTab] = useState(initialModule);
 
@@ -1003,6 +1005,10 @@ export default function LeadMemberAssignmentsPanel({
           </div>
         </div>
         <nav className="flex items-center gap-1 ml-auto flex-wrap">
+          <SharedWorkspaceAssignHelp
+            open={showAssignHelp}
+            onOpenChange={setShowAssignHelp}
+          />
           <Link
             to={assignmentsBoardHome(moduleTab === 'all' ? 'crm' : moduleTab)}
             className="h-8 px-2 rounded-md text-[11px] text-slate-500 hover:text-slate-800 hover:bg-slate-50 inline-flex items-center gap-1"
