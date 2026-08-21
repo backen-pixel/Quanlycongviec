@@ -1002,12 +1002,13 @@ r.put('/:id', async (req, res) => {
     }
 
     await attachAssigneesToAssignments([data]);
-    await attachCrmTaskMetaToAssignments([data]);
     try {
       await syncCrmTaskFromAssignment(data);
     } catch (syncErr) {
       console.warn('[sync] assignment→crm_task PUT:', syncErr.message);
     }
+    // Gắn meta CRM sau khi sync status để client không nhận crm_task.status cũ.
+    await attachCrmTaskMetaToAssignments([data]);
     if (
       data?.lead_id
       && data.status === 'completed'

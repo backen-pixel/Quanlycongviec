@@ -18,6 +18,8 @@ import {
   Alert,
   AppState,
   FlatList,
+  Linking,
+  Modal,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -50,11 +52,13 @@ import { Radii, Spacing, colorWithAlpha, type AppColors } from '../theme';
 import {
   type DealTaskSection,
   type WorkTask,
+  type WorkTaskAttachment,
   type WorkTasksStats,
   canViewTeamWork,
   collectAssigneeOptions,
   fetchProductionWorkTaskStats,
   fetchProductionWorkTasksPage,
+  fetchWorkTaskAttachments,
   formatTaskDeadline,
   groupTasksByDeal,
   isTaskDone,
@@ -72,6 +76,7 @@ import {
   workTaskFocusCrmId,
   WORK_TASKS_PAGE_SIZE,
 } from '../lib/workTasksApi';
+import { resolveMediaUrl } from '../lib/mediaUtils';
 import { isQueryAbortError } from '../lib/queryCache';
 
 import SpinningLoader from '../components/SpinningLoader';
@@ -450,6 +455,51 @@ function createStyles(colors: AppColors, bottomInset: number) {
       paddingHorizontal: 3,
     },
     attachBadgeDotTxt: { color: '#fff', fontSize: 9, fontWeight: '800' },
+    attachModalBackdrop: {
+      flex: 1,
+      backgroundColor: 'rgba(0,0,0,0.55)',
+      justifyContent: 'flex-end',
+    },
+    attachModalCard: {
+      backgroundColor: colors.card,
+      borderTopLeftRadius: Radii.xl,
+      borderTopRightRadius: Radii.xl,
+      borderWidth: 1,
+      borderColor: colors.border,
+      paddingHorizontal: Spacing.lg,
+      paddingTop: 14,
+      paddingBottom: bottomInset + 16,
+      maxHeight: '70%',
+    },
+    attachModalTitle: { color: colors.text, fontSize: 16, fontWeight: '800', marginBottom: 4 },
+    attachModalSub: { color: colors.textMuted, fontSize: 12, fontWeight: '600', marginBottom: 12 },
+    attachFileRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      paddingVertical: 11,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: colors.border,
+    },
+    attachFileName: { flex: 1, color: colors.text, fontSize: 13.5, fontWeight: '600' },
+    attachEmpty: { color: colors.textMuted, fontSize: 13, fontWeight: '600', paddingVertical: 16 },
+    attachModalActions: { flexDirection: 'row', gap: 8, marginTop: 12 },
+    attachModalBtn: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingVertical: 11,
+      borderRadius: Radii.md,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.bgElevated,
+    },
+    attachModalBtnPrimary: {
+      borderColor: colorWithAlpha(colors.primary, 0.4),
+      backgroundColor: colorWithAlpha(colors.primary, 0.14),
+    },
+    attachModalBtnTxt: { color: colors.text, fontSize: 13, fontWeight: '700' },
+    attachModalBtnTxtPrimary: { color: colors.primary, fontSize: 13, fontWeight: '800' },
     statusBtn: {
       paddingHorizontal: 14,
       paddingVertical: 9,
@@ -511,6 +561,11 @@ export default function WorkScreen() {
   const [filtersReady, setFiltersReady] = useState(false);
   const [search, setSearch] = useState('');
   const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const [attachSheet, setAttachSheet] = useState<{
+    task: WorkTask;
+    files: WorkTaskAttachment[];
+    loading: boolean;
+  } | null>(null);
   const updatingRef = useRef(false);
   const loadSeqRef = useRef(0);
   const chipSeqRef = useRef(0);
@@ -958,6 +1013,43 @@ export default function WorkScreen() {
     );
   }, [uploadMediaForTask]);
 
+  const openAttachSheet = useCallback(async (task: WorkTask) => {
+    setAttachSheet({ task, files: [], loading: true });
+    try {
+      const files = await fetchWorkTaskAttachments(task);
+      setAttachSheet({ task, files, loading: false });
+    } catch (e) {
+      setAttachSheet({ task, files: [], loading: false });
+      Alert.alert('Không tải được file', formatApiError(e));
+    }
+  }, []);
+
+  const onPressAttach = useCallback((task: WorkTask) => {
+    const count = task.file_count || task.attachment_count || 0;
+    if (count <= 0) {
+      void pickFileForTask(task);
+      return;
+    }
+    Alert.alert(
+      'File đính kèm',
+      `${count} file — chọn thao tác`,
+      [
+        { text: 'Hủy', style: 'cancel' },
+        { text: 'Xem file', onPress: () => void openAttachSheet(task) },
+        { text: 'Thêm file', onPress: () => void pickFileForTask(task) },
+      ],
+    );
+  }, [openAttachSheet, pickFileForTask]);
+
+  const openAttachmentUrl = useCallback((file: WorkTaskAttachment) => {
+    const url = resolveMediaUrl(file.file_url);
+    if (!url) {
+      Alert.alert('Thiếu link', 'File này không có đường dẫn để mở.');
+      return;
+    }
+    void Linking.openURL(url);
+  }, []);
+
   const capturePhotoForTask = useCallback(async (task: WorkTask) => {
     const perm = await ImagePicker.requestCameraPermissionsAsync();
     if (!perm.granted) {
@@ -1325,7 +1417,7 @@ export default function WorkScreen() {
                   styles.attachIconBtn,
                   (task.file_count || 0) > 0 && styles.attachIconBtnActive,
                 ]}
-                onPress={() => void pickFileForTask(task)}
+                onPress={() => onPressAttach(task)}
                 disabled={busy}
                 pressStyle={{ opacity: 0.8 }}
               >
@@ -1683,6 +1775,63 @@ export default function WorkScreen() {
           </Text>
         }
       />
+
+      <Modal
+        visible={!!attachSheet}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setAttachSheet(null)}
+      >
+        <Pressable style={styles.attachModalBackdrop} onPress={() => setAttachSheet(null)}>
+          <Pressable style={styles.attachModalCard} onPress={(e) => e.stopPropagation()}>
+            <Text style={styles.attachModalTitle} numberOfLines={2}>
+              {attachSheet?.task.title || 'File đính kèm'}
+            </Text>
+            <Text style={styles.attachModalSub}>
+              {attachSheet?.loading
+                ? 'Đang tải danh sách…'
+                : `${attachSheet?.files.length || 0} file — chạm để mở`}
+            </Text>
+            {attachSheet?.loading ? (
+              <SpinningLoader color={colors.primary} style={{ marginVertical: 20 }} />
+            ) : attachSheet && attachSheet.files.length > 0 ? (
+              <ScrollView style={{ maxHeight: 320 }}>
+                {attachSheet.files.map((f) => (
+                  <TapHighlight
+                    key={f.id}
+                    style={styles.attachFileRow}
+                    onPress={() => openAttachmentUrl(f)}
+                  >
+                    <Ionicons name="document-outline" size={18} color={colors.primary} />
+                    <Text style={styles.attachFileName} numberOfLines={2}>{f.name}</Text>
+                    <Ionicons name="open-outline" size={16} color={colors.textMuted} />
+                  </TapHighlight>
+                ))}
+              </ScrollView>
+            ) : (
+              <Text style={styles.attachEmpty}>Chưa tìm thấy file (có thể chỉ còn trên deal).</Text>
+            )}
+            <View style={styles.attachModalActions}>
+              <TapHighlight
+                style={styles.attachModalBtn}
+                onPress={() => setAttachSheet(null)}
+              >
+                <Text style={styles.attachModalBtnTxt}>Đóng</Text>
+              </TapHighlight>
+              <TapHighlight
+                style={[styles.attachModalBtn, styles.attachModalBtnPrimary]}
+                onPress={() => {
+                  const t = attachSheet?.task;
+                  setAttachSheet(null);
+                  if (t) void pickFileForTask(t);
+                }}
+              >
+                <Text style={styles.attachModalBtnTxtPrimary}>Thêm file</Text>
+              </TapHighlight>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
 
       <WorkFilterSheet
         visible={filterSheetOpen}

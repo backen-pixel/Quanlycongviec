@@ -105,11 +105,14 @@ function mapAssignmentToWorkTask(raw: Record<string, unknown>): WorkTask {
     (crmTask?.stage_slug != null ? String(crmTask.stage_slug) : null)
     || (raw.stage_slug != null ? String(raw.stage_slug) : null);
 
-  // Chi tiết deal đọc crm_tasks.status; tab Công việc đọc crm_assignments.status.
-  // Khi lệch (thường gặp sau hoàn thành trong deal), ưu tiên trạng thái CRM task.
+  // Chi tiết deal đọc crm_tasks; tab Công việc sửa crm_assignments.
+  // - CRM đã xong mà assignment còn pending → hiện Hoàn thành (lệch cũ).
+  // - Còn lại ưu tiên assignment để nút Đang làm / Mở lại không bị meta CRM cũ ghi đè.
   const crmStatus = crmTask?.status != null ? String(crmTask.status) : '';
   const asnStatus = raw.status != null ? String(raw.status) : '';
-  const status = crmStatus || asnStatus || 'pending';
+  const status = (isCrmProductionTaskDone(crmStatus) && !isCrmProductionTaskDone(asnStatus))
+    ? crmStatus
+    : (asnStatus || crmStatus || 'pending');
 
   return {
     id: String(raw.id || ''),
@@ -520,6 +523,7 @@ export async function uploadWorkTaskFile(
   if (dealId && crmTaskId) {
     const { uploadCrmTaskFiles } = await import('./projectDetailApi');
     await uploadCrmTaskFiles(dealId, crmTaskId, [file]);
+    invalidateWorkTasksCache();
     return;
   }
 
@@ -530,6 +534,76 @@ export async function uploadWorkTaskFile(
   form.append('kind', 'sub');
   await postMultipart(`/crm/assignments/${task.id}/files`, form, { timeoutMs: 180000 });
   invalidateWorkTasksCache();
+}
+
+export type WorkTaskAttachment = {
+  id: string;
+  name: string;
+  file_url?: string | null;
+  mime_type?: string | null;
+  source: 'crm_task' | 'assignment';
+};
+
+/** Lấy danh sách file để xem trên tab Công việc (CRM task trước, rồi assignment). */
+export async function fetchWorkTaskAttachments(task: WorkTask): Promise<WorkTaskAttachment[]> {
+  const dealId =
+    task.lead_id && task.lead_id !== ASSIGNMENT_SECTION_ID ? String(task.lead_id) : '';
+  const crmTaskId = workTaskFocusCrmId(task);
+  const out: WorkTaskAttachment[] = [];
+  const seen = new Set<string>();
+
+  if (dealId && crmTaskId) {
+    try {
+      const { fetchCrmTaskAttachments } = await import('./projectDetailApi');
+      const list = await fetchCrmTaskAttachments(dealId, crmTaskId);
+      for (const a of list) {
+        const url = a.file_url ? String(a.file_url) : '';
+        const key = a.id || url;
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        out.push({
+          id: String(a.id || key),
+          name: String(a.name || a.file_name || 'Tệp'),
+          file_url: url || null,
+          mime_type: a.mime_type ?? null,
+          source: 'crm_task',
+        });
+      }
+    } catch {
+      /* fallback assignment files */
+    }
+  }
+
+  if (task.id) {
+    for (const kind of ['sub', 'req'] as const) {
+      try {
+        const { data } = await api.get<{ files?: unknown[] }>(
+          `/crm/assignments/${task.id}/files`,
+          { params: { kind } },
+        );
+        const files = Array.isArray(data?.files) ? data.files : [];
+        for (const row of files) {
+          const r = row as Record<string, unknown>;
+          const id = String(r.id || '');
+          const url = r.file_url != null ? String(r.file_url) : '';
+          const key = id || url;
+          if (!key || seen.has(key)) continue;
+          seen.add(key);
+          out.push({
+            id: id || key,
+            name: String(r.file_name || r.name || 'Tệp'),
+            file_url: url || null,
+            mime_type: r.mime_type != null ? String(r.mime_type) : null,
+            source: 'assignment',
+          });
+        }
+      } catch {
+        /* ignore missing kind / permission */
+      }
+    }
+  }
+
+  return out;
 }
 
 /** Task có được giao cho userId không (assignee chính hoặc multi-assignee). */
