@@ -518,6 +518,9 @@ export default function ProductionDashboard() {
   const [filterAppliedHint, setFilterAppliedHint] = useState(false);
   const wasFilterBusyRef = useRef(false);
   const loadSeqRef = useRef(0);
+  /** Seq mà loadMore theo cột đã ghi thẻ — tránh bootstrap ghi đè [] xóa board. */
+  const columnFetchTouchSeqRef = useRef(0);
+  const loadMoreProjectsRef = useRef(null);
   const projectPageLoadingRef = useRef(false);
   const sxLoaderGateRef = useRef(null);
   /** Remount từ chi tiết đã hydrate snapshot → lần load đầu silent (không che board). */
@@ -1069,9 +1072,13 @@ export default function ProductionDashboard() {
           return next;
         });
         // Quay từ chi tiết: không ghi đè list đang có bằng [] (API lỗi tạm / race).
-        if (projectList.length === 0 && returningFromDetail) {
+        // Bootstrap về sau loadMore cột: không xóa thẻ đã tải (board trống dù KPI còn số).
+        if (projectList.length === 0) {
           setProjects((prev) => {
-            if (Array.isArray(prev) && prev.length > 0) return prev;
+            if (Array.isArray(prev) && prev.length > 0
+              && (returningFromDetail || columnFetchTouchSeqRef.current === seq)) {
+              return prev;
+            }
             return applyWorkshopProjectRenamePatches(projectList);
           });
         } else {
@@ -1079,6 +1086,15 @@ export default function ProductionDashboard() {
             applyWorkshopProjectRenamePatches(projectList),
             pendingStageMovesRef.current,
           );
+          // Merge thẻ column-fetch cùng seq — bootstrap không được xóa thẻ vừa tải theo cột.
+          if (columnFetchTouchSeqRef.current === seq) {
+            const existing = projectsRef.current || [];
+            if (existing.length) {
+              const byId = new Map(existing.map((row) => [String(row.id), row]));
+              next.forEach((row) => byId.set(String(row.id), row));
+              next = [...byId.values()];
+            }
+          }
           const pending = pendingNewDealProjectRef.current;
           const pid = pending?.id != null ? String(pending.id) : '';
           if (pid && !next.some((p) => String(p.id) === pid)) {
@@ -1092,6 +1108,17 @@ export default function ProductionDashboard() {
         }
       }
       markLoadComplete();
+      // Badge có số nhưng board trống / thiếu thẻ → ép tải lại theo cột (kể cả ensureInitial đã fire sớm).
+      window.setTimeout(() => {
+        if (isStale()) return;
+        const counts = pipelineStageCountsRef.current || {};
+        const ids = Object.keys(counts).filter((id) => (Number(counts[id]) || 0) > 0);
+        if (!ids.length) return;
+        const loaded = countSxProjectsByDisplayColumn(projectsRef.current || [], pipelineRef.current);
+        const need = ids.filter((id) => (Number(loaded[id]) || 0) < Math.min(SX_ENSURE_INITIAL_PER_COLUMN, Number(counts[id]) || 0));
+        if (!need.length && (projectsRef.current || []).length > 0) return;
+        void loadMoreProjectsRef.current?.(need.length ? need : ids, { ensureInitial: true, force: true });
+      }, 280);
     } catch (e) {
       console.error(e);
       if (!isStale()) {
@@ -1113,10 +1140,11 @@ export default function ProductionDashboard() {
 
   const loadMoreProjects = useCallback(async (stageIds = null, opts = {}) => {
     const ensureInitial = !!opts?.ensureInitial;
+    const force = !!opts?.force;
     const maxRecords = kanbanLoadKey === 'all' ? WS_KANBAN_LOAD_ALL_MAX
       : Math.min(parseInt(kanbanLoadKey, 10) || 500, WS_KANBAN_LOAD_ALL_MAX);
     const currentProjects = projectsRef.current || [];
-    if (currentProjects.length >= maxRecords) return;
+    if (!force && currentProjects.length >= maxRecords) return;
 
     const stageState = stagePageStateRef.current || {};
     const stageCounts = pipelineStageCountsRef.current || {};
@@ -1136,15 +1164,38 @@ export default function ProductionDashboard() {
     const intakeTotalCombined = intakeStage
       ? (Number(stageCounts[intakeId]) || 0) + (Number(stageCounts.__none__) || 0)
       : 0;
+
+    // force: mở lại cột bị exhausted / hasMore=false (board trống dù badge > 0).
+    if (force && requested.length) {
+      setStagePageState((prev) => {
+        const next = { ...prev };
+        requested.forEach((id) => {
+          next[id] = {
+            ...(next[id] || {}),
+            exhausted: false,
+            hasMore: true,
+            emptyRetries: 0,
+            noProgressCount: 0,
+            nextPage: 1,
+          };
+        });
+        stagePageStateRef.current = next;
+        return next;
+      });
+      requested.forEach((id) => stagePageLoadingRef.current.delete(id));
+    }
+
     const targets = [];
     const maxTargets = ensureInitial ? 8 : 6;
     for (const stageId of requested) {
       if (!isFetchableSxKanbanColumnId(stageId)) continue;
       if (stagePageLoadingRef.current.has(stageId)) continue;
-      const state = stageState[stageId] || {};
+      const state = force
+        ? { ...(stageState[stageId] || {}), exhausted: false, hasMore: true }
+        : (stageState[stageId] || {});
       // Cột đã exhausted (API trả rỗng / không tăng loaded) — dừng hẳn, tránh quay load mãi.
-      if (state.exhausted) continue;
-      if (state.hasMore === false) continue;
+      if (!force && state.exhausted) continue;
+      if (!force && state.hasMore === false) continue;
       const isIntakeLoad = stageId === '__none__' || (intakeId && stageId === intakeId);
       const total = isIntakeLoad && intakeTotalCombined > 0
         ? intakeTotalCombined
@@ -1166,7 +1217,7 @@ export default function ProductionDashboard() {
         ? loaded < total
         : state.hasMore !== false;
       if (!stillNeed) continue;
-      if (ensureInitial) {
+      if (ensureInitial && !force) {
         const need = Math.min(
           SX_ENSURE_INITIAL_PER_COLUMN,
           Number.isFinite(total) && total > 0 ? total : SX_ENSURE_INITIAL_PER_COLUMN,
@@ -1265,7 +1316,7 @@ export default function ProductionDashboard() {
       };
       const fetchColPage = async (stageId) => {
         const state = stagePageStateRef.current?.[stageId] || {};
-        const startPage = Math.max(Number(state.nextPage) || 1, 1);
+        const startPage = force ? 1 : Math.max(Number(state.nextPage) || 1, 1);
         const payload = await fetchWorkshopProjectPages(api, '/production/projects', {
           companyId: companyParam,
           dealCompanyId: dealCompanyParam,
@@ -1336,6 +1387,7 @@ export default function ProductionDashboard() {
       patchedIncoming.forEach((row) => byId.set(String(row.id), row));
       const nextProjects = [...byId.values()].slice(0, maxRecords);
       if (nextProjects.length) saveWorkshopBoardSnapshot('sx', { projects: nextProjects });
+      columnFetchTouchSeqRef.current = seq;
       setProjects(nextProjects);
       projectsRef.current = nextProjects;
 
@@ -1446,6 +1498,8 @@ export default function ProductionDashboard() {
     customTo,
     filterPersonId,
   ]);
+
+  loadMoreProjectsRef.current = loadMoreProjects;
 
   /** Phân trang Deadline theo bucket (API riêng) — không phụ thuộc loadMore cột Kanban. */
   const loadDeadlineBucketMore = useCallback(async (bucketKey) => {
@@ -4681,7 +4735,7 @@ const KanbanStageCard = memo(function KanbanStageCard({
                 onClick={requestColumnLoadMore}
                 className="mt-2 text-[11px] font-medium text-teal-700 hover:text-teal-800"
               >
-                Tải thẻ cột này
+                Tải lại cột này
               </button>
             )}
           </div>
@@ -5533,15 +5587,16 @@ function KanbanView({
           const serverColTotal = Number.isFinite(serverColTotalRaw)
             ? Math.max(serverColTotalRaw, loadedCount)
             : serverColTotalRaw;
+          const needsRefill = Number.isFinite(serverColTotal) && serverColTotal > 0 && loadedCount === 0;
           const anyExhausted = pageStates.length
             ? pageStates.every((s) => s.exhausted)
             : !!pageState.exhausted;
           const anyHasMore = pageStates.some((s) => s.hasMore !== false);
-          const columnHasMore = !anyExhausted && (
+          const columnHasMore = needsRefill || (!anyExhausted && (
             Number.isFinite(serverColTotal)
               ? loadedCount < serverColTotal && anyHasMore
               : (anyHasMore && !!hasMore)
-          );
+          ));
           const columnLoading = pageStates.some((s) => s.loading);
           const column = (
             <KanbanStageCard
@@ -5566,7 +5621,10 @@ function KanbanView({
               boardScrollRef={boardScrollRef}
               columnHasMore={columnHasMore}
               columnLoading={columnLoading}
-              onScrollNearEnd={columnHasMore ? () => onLoadMore?.(loadColIds.length ? loadColIds : [loadColId], { ensureInitial: false }) : null}
+              onScrollNearEnd={columnHasMore ? () => onLoadMore?.(loadColIds.length ? loadColIds : [loadColId], {
+                ensureInitial: needsRefill,
+                force: needsRefill,
+              }) : null}
               onColumnVisibilityChange={handleColumnVisibilityChange}
               stageCounts={stageCounts}
               columnServerTotal={Number.isFinite(serverColTotal) ? serverColTotal : null}
