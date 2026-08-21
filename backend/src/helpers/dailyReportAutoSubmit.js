@@ -1,6 +1,8 @@
 /**
- * Tự động chốt Phần II (KQ ngày hôm trước) từ CRM rồi nộp phiếu báo cáo ngày.
- * Dùng chung: POST /mine/auto-close, cron 17:00 VN, script seed.
+ * Tự động chốt báo cáo ngày từ CRM.
+ * - phase=plan   (~08:00): Phần I Deadline Quá hạn+Hôm nay
+ * - phase=result (~17:00): Phần II KQ CRM hôm trước
+ * Dùng chung: POST /mine/auto-close, cron, script seed.
  */
 const { supabase } = require('../config/supabase');
 const { normalizeRole } = require('./adminRole');
@@ -245,7 +247,10 @@ async function syncUserExtraLines(reportId, userId) {
 }
 
 /**
- * Chốt Phần II (section=work) từ CRM cho 1 user/ngày phiếu.
+ * Auto-chốt báo cáo ngày cho 1 user.
+ * @param {'plan'|'result'} phase
+ *   - plan   (sáng ~08:00): Phần I = Deadline Quá hạn+Hôm nay của ngày phiếu
+ *   - result (chiều ~17:00): Phần II = KQ CRM ngày hôm trước (+ plan nếu chưa nộp sáng)
  * @returns {{ report, auto_close }}
  */
 async function autoCloseDailyReportForUser({
@@ -256,11 +261,13 @@ async function autoCloseDailyReportForUser({
   departmentName = null,
   userProfile = null,
   force = true,
+  phase = 'result',
 } = {}) {
   if (!userId) throw new Error('Thiếu userId');
   const date = reportDate || crmReportTodayYmdVn();
   const resultDate = resultDateForReport(date);
   if (!resultDate) throw new Error('Không xác định được ngày kết quả (hôm trước)');
+  const mode = phase === 'plan' ? 'plan' : 'result';
 
   let me = userProfile;
   if (!me) {
@@ -283,18 +290,35 @@ async function autoCloseDailyReportForUser({
     .eq('report_date', date)
     .maybeSingle();
 
-  if (!force && report && (report.result_submitted_at || report.status === 'result_submitted')) {
-    return {
-      report,
-      auto_close: {
-        skipped: true,
-        reason: 'already_submitted',
-        report_date: date,
-        result_date: resultDate,
-        auto_filled: 0,
-        manual_left: 0,
-      },
-    };
+  if (!force && report) {
+    if (mode === 'plan' && (report.plan_submitted_at || report.status === 'plan_submitted' || report.status === 'result_submitted')) {
+      return {
+        report,
+        auto_close: {
+          skipped: true,
+          reason: 'plan_already_submitted',
+          phase: mode,
+          report_date: date,
+          result_date: resultDate,
+          auto_filled: 0,
+          manual_left: 0,
+        },
+      };
+    }
+    if (mode === 'result' && (report.result_submitted_at || report.status === 'result_submitted')) {
+      return {
+        report,
+        auto_close: {
+          skipped: true,
+          reason: 'already_submitted',
+          phase: mode,
+          report_date: date,
+          result_date: resultDate,
+          auto_filled: 0,
+          manual_left: 0,
+        },
+      };
+    }
   }
 
   let resolvedTemplateId = templateId || report?.template_id || await getAssignedTemplateId(userId) || null;
@@ -374,8 +398,17 @@ async function autoCloseDailyReportForUser({
   if (lineErr) throw lineErr;
 
   const roleKey = template.role_key || roleKeyGuess;
-  const computed = await computeAutoDailyResults(userId, resultDate, roleKey);
-  const planned = await computeAutoDailyPlans(userId, date, roleKey, resolvedCompanyId);
+  const fillPlan = mode === 'plan' || !report.plan_submitted_at;
+  const fillResult = mode === 'result';
+
+  let computed = { metrics: {}, computed_at: now };
+  let planned = { metrics: {}, computed_at: now };
+  if (fillResult) {
+    computed = await computeAutoDailyResults(userId, resultDate, roleKey);
+  }
+  if (fillPlan) {
+    planned = await computeAutoDailyPlans(userId, date, roleKey, resolvedCompanyId);
+  }
   const metrics = computed.metrics || {};
   const planMetrics = planned.metrics || {};
 
@@ -384,8 +417,8 @@ async function autoCloseDailyReportForUser({
   for (const row of linesToFill || []) {
     if (row.section !== 'work') continue;
     const key = row.metric_key || metricKeyFromLabel(row.label);
-    const m = key ? metrics[key] : null;
-    const p = key ? planMetrics[key] : null;
+    const m = fillResult && key ? metrics[key] : null;
+    const p = fillPlan && key ? planMetrics[key] : null;
     const keepResultNote = row.result_note
       && !/^tự động:/i.test(String(row.result_note))
       && !/^không tự động/i.test(String(row.result_note))
@@ -398,21 +431,28 @@ async function autoCloseDailyReportForUser({
       : null;
     const patch = {
       metric_key: key || row.metric_key,
-      auto_result: !!(m || p),
       updated_at: now,
     };
-    if (m) {
-      patch.result_value = m.value;
-      patch.result_note = keepResultNote;
-    } else {
-      patch.result_value = row.result_value != null ? row.result_value : 0;
-      patch.result_note = keepResultNote && !/^không tự động/i.test(String(keepResultNote))
-        ? keepResultNote
-        : (row.result_note && !/^không tự động/i.test(String(row.result_note)) ? row.result_note : null);
+    if (fillResult) {
+      if (m) {
+        patch.result_value = m.value;
+        patch.result_note = keepResultNote;
+      } else {
+        patch.result_value = row.result_value != null ? row.result_value : 0;
+        patch.result_note = keepResultNote && !/^không tự động/i.test(String(keepResultNote))
+          ? keepResultNote
+          : (row.result_note && !/^không tự động/i.test(String(row.result_note)) ? row.result_note : null);
+      }
     }
-    if (p) {
+    if (fillPlan && p) {
       patch.plan_value = p.value;
       patch.plan_note = keepPlanNote;
+    } else if (fillPlan && !p) {
+      patch.plan_value = row.plan_value != null ? row.plan_value : 0;
+      patch.plan_note = keepPlanNote;
+    }
+    if (fillResult || fillPlan) {
+      patch.auto_result = !!(m || p || row.auto_result);
     }
     const { error: upErr } = await supabase
       .from('crm_daily_report_lines')
@@ -426,10 +466,18 @@ async function autoCloseDailyReportForUser({
   const reportPatch = {
     updated_at: now,
     department_name: deptName || report.department_name,
-    result_submitted_at: now,
-    status: 'result_submitted',
   };
-  if (!report.plan_submitted_at) reportPatch.plan_submitted_at = now;
+  if (mode === 'plan') {
+    reportPatch.plan_submitted_at = now;
+    // Không hạ status nếu đã chốt kết quả chiều
+    if (report.status !== 'result_submitted' && report.status !== 'late') {
+      reportPatch.status = 'plan_submitted';
+    }
+  } else {
+    reportPatch.result_submitted_at = now;
+    reportPatch.status = 'result_submitted';
+    if (!report.plan_submitted_at) reportPatch.plan_submitted_at = now;
+  }
   if (resolvedCompanyId) reportPatch.company_id = resolvedCompanyId;
   if (resolvedTemplateId) reportPatch.template_id = resolvedTemplateId;
 
@@ -445,14 +493,15 @@ async function autoCloseDailyReportForUser({
     report: updatedReport,
     auto_close: {
       skipped: false,
+      phase: mode,
       auto_filled: autoFilled,
       manual_left: manualLeft,
-      computed_at: computed.computed_at,
+      computed_at: fillResult ? computed.computed_at : planned.computed_at,
       report_date: date,
       result_date: resultDate,
       role_key: roleKey,
-      metrics,
-      plan_metrics: planMetrics,
+      metrics: fillResult ? metrics : {},
+      plan_metrics: fillPlan ? planMetrics : {},
     },
   };
 }
@@ -535,15 +584,18 @@ async function listCompanyIdsForAutoClose(explicitIds = null) {
 }
 
 /**
- * Chạy batch auto-nộp Phần II cho 1 hoặc nhiều công ty.
+ * Chạy batch auto-nộp Phần I (plan) hoặc Phần II (result) cho 1 hoặc nhiều công ty.
+ * @param {'plan'|'result'} phase
  */
 async function runAutoCloseBatch({
   reportDate = null,
   companyIds = null,
   force = true,
+  phase = 'result',
   onProgress = null,
 } = {}) {
   const date = reportDate || crmReportTodayYmdVn();
+  const mode = phase === 'plan' ? 'plan' : 'result';
   const companies = await listCompanyIdsForAutoClose(companyIds);
   const results = [];
 
@@ -564,12 +616,14 @@ async function runAutoCloseBatch({
           departmentName: u.department_name,
           userProfile: u,
           force,
+          phase: mode,
         });
         const row = {
           company_id: companyId,
           user_id: u.id,
           name: u.full_name,
           role_key: out.auto_close?.role_key,
+          phase: mode,
           auto_filled: out.auto_close?.auto_filled || 0,
           manual_left: out.auto_close?.manual_left || 0,
           skipped: !!out.auto_close?.skipped,
@@ -581,6 +635,7 @@ async function runAutoCloseBatch({
           company_id: companyId,
           user_id: u.id,
           name: u.full_name,
+          phase: mode,
           error: e.message || String(e),
         };
         results.push(row);
@@ -592,6 +647,7 @@ async function runAutoCloseBatch({
   return {
     report_date: date,
     result_date: resultDateForReport(date),
+    phase: mode,
     companies: companies.length,
     processed: results.length,
     ok: results.filter((r) => !r.error && !r.skipped).length,

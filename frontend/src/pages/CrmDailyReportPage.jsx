@@ -565,9 +565,10 @@ function MyReportPanel({ date, onDateChange }) {
   return (
     <div className="space-y-4">
       <div className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-950" data-export-hide="1">
-        <strong>Phần I</strong> = kế hoạch ngày phiếu ({fmtDMY(date)}), tự lấy từ Deadline Lead/Deal cột <strong>Quá hạn + Hôm nay</strong>.{' '}
+        <strong>Phần I</strong> = kế hoạch ngày phiếu ({fmtDMY(date)}), tự lấy từ Deadline Lead/Deal cột <strong>Quá hạn + Hôm nay</strong>
+        {' '}(hệ thống tự chốt ~<strong>08:00</strong>).{' '}
         <strong>Phần II</strong> = kết quả ngày hôm trước ({fmtDMY(addDaysISO(date, -1))}), tự lấy từ CRM khi <strong>Nộp báo cáo</strong>
-        {' '}(hệ thống cũng tự chốt ~17:00 mỗi ngày).
+        {' '}(hệ thống cũng tự chốt ~<strong>17:00</strong>).
       </div>
 
       <div className="flex flex-wrap items-center justify-end gap-2" data-export-hide="1">
@@ -2186,7 +2187,7 @@ function TeamMatrixPanel({ date, onDateChange }) {
         <div className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-sm text-violet-950">
           <strong>II. Kết quả</strong> là số CRM của <strong>đúng ngày đang chọn</strong>
           ({fmtDMY(data?.result_date || date)}).
-          Muốn xem ngày 13/08 thì chọn <strong>13/08/2026</strong> trên bộ lọc — không cần chờ 17:00.
+          Muốn xem ngày 13/08 thì chọn <strong>13/08/2026</strong> trên bộ lọc — không cần chờ 08:00 / 17:00.
         </div>
       )}
 
