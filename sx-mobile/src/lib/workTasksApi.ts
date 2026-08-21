@@ -544,7 +544,27 @@ export type WorkTaskAttachment = {
   source: 'crm_task' | 'assignment';
 };
 
-/** Lấy danh sách file để xem trên tab Công việc (CRM task trước, rồi assignment). */
+/** Chuẩn hóa URL để nhận ra cùng một file giữa CRM task và assignment (mirror). */
+function attachmentDedupeKey(url?: string | null, name?: string | null): string {
+  const raw = String(url || '').trim();
+  if (raw) {
+    try {
+      const u = new URL(raw);
+      // Bỏ query/signature — cùng storage path = cùng file.
+      return `${u.origin}${u.pathname}`.toLowerCase();
+    } catch {
+      return raw.split('?')[0].toLowerCase();
+    }
+  }
+  const n = String(name || '').trim().toLowerCase();
+  return n ? `name:${n}` : '';
+}
+
+/**
+ * Lấy danh sách file để xem trên tab Công việc.
+ * File upload qua CRM task được mirror sang assignment → không gộp cả hai (tránh đôi).
+ * Có gắn crm_task → chỉ lấy CRM; không thì lấy assignment (sub + req).
+ */
 export async function fetchWorkTaskAttachments(task: WorkTask): Promise<WorkTaskAttachment[]> {
   const dealId =
     task.lead_id && task.lead_id !== ASSIGNMENT_SECTION_ID ? String(task.lead_id) : '';
@@ -552,25 +572,31 @@ export async function fetchWorkTaskAttachments(task: WorkTask): Promise<WorkTask
   const out: WorkTaskAttachment[] = [];
   const seen = new Set<string>();
 
+  const push = (item: WorkTaskAttachment) => {
+    const key = attachmentDedupeKey(item.file_url, item.name) || item.id;
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    out.push(item);
+  };
+
   if (dealId && crmTaskId) {
     try {
       const { fetchCrmTaskAttachments } = await import('./projectDetailApi');
       const list = await fetchCrmTaskAttachments(dealId, crmTaskId);
       for (const a of list) {
-        const url = a.file_url ? String(a.file_url) : '';
-        const key = a.id || url;
-        if (!key || seen.has(key)) continue;
-        seen.add(key);
-        out.push({
-          id: String(a.id || key),
+        // Ghi chú nhanh (task_note) không phải file xem được — bỏ khỏi sheet «Xem file».
+        if (String(a.doc_type || '') === 'task_note' && !a.file_url) continue;
+        push({
+          id: String(a.id || ''),
           name: String(a.name || a.file_name || 'Tệp'),
-          file_url: url || null,
+          file_url: a.file_url ? String(a.file_url) : null,
           mime_type: a.mime_type ?? null,
           source: 'crm_task',
         });
       }
+      return out;
     } catch {
-      /* fallback assignment files */
+      /* fallback assignment files bên dưới */
     }
   }
 
@@ -586,11 +612,9 @@ export async function fetchWorkTaskAttachments(task: WorkTask): Promise<WorkTask
           const r = row as Record<string, unknown>;
           const id = String(r.id || '');
           const url = r.file_url != null ? String(r.file_url) : '';
-          const key = id || url;
-          if (!key || seen.has(key)) continue;
-          seen.add(key);
-          out.push({
-            id: id || key,
+          if (!url && !id) continue;
+          push({
+            id: id || url,
             name: String(r.file_name || r.name || 'Tệp'),
             file_url: url || null,
             mime_type: r.mime_type != null ? String(r.mime_type) : null,
