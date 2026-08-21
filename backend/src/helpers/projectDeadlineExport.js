@@ -1,6 +1,6 @@
 /**
- * Xuất thông báo deadline công trình: người chịu trách nhiệm + thông tin + link CRM / SX / VC.
- * Nguồn: hạn trên projects + hạn Kanban CRM của deal gắn dự án (không lấy TB in-app).
+ * Xuất thông báo deadline: hạn trên projects + hạn Kanban/dự kiến chốt CRM
+ * (kể cả lead/deal chưa gắn công trình).
  */
 
 const { supabase } = require('../config/supabase');
@@ -46,15 +46,33 @@ const PROJECT_DEADLINE_OR = [
   'install_date.not.is.null',
 ].join(',');
 
+function csvIds(query, keys) {
+  const parts = [];
+  for (const key of keys) {
+    const raw = query[key];
+    if (Array.isArray(raw)) parts.push(...raw);
+    else if (raw != null && String(raw).trim()) parts.push(String(raw));
+  }
+  return [...new Set(parts.join(',').split(',').map((s) => s.trim()).filter(Boolean))];
+}
+
+function parseModules(query = {}) {
+  const list = csvIds(query, ['module', 'modules']).map((s) => s.toLowerCase());
+  if (!list.length || list.includes('all')) return 'all';
+  const ok = list.filter((m) => m === 'crm' || m === 'production' || m === 'logistics');
+  return ok.length ? ok : 'all';
+}
+
 function parseProjectDeadlineExportQuery(query = {}) {
   const daysAhead = Math.min(Math.max(parseInt(query.days_ahead, 10) || 7, 0), 90);
   const statusRaw = String(query.status || 'all').toLowerCase();
   const status = ['overdue', 'upcoming', 'all'].includes(statusRaw) ? statusRaw : 'all';
-  const moduleRaw = String(query.module || 'all').toLowerCase();
-  const module = ['crm', 'production', 'logistics', 'all'].includes(moduleRaw) ? moduleRaw : 'all';
+  const module = parseModules(query);
   const limit = Math.min(Math.max(parseInt(query.limit, 10) || 200, 1), 500);
   const responsibleUserId = query.responsible_user_id ? String(query.responsible_user_id).trim() : '';
-  return { daysAhead, status, module, limit, responsibleUserId };
+  const queryCompanyIds = csvIds(query, ['company_id', 'company_ids']);
+  const regionIds = csvIds(query, ['region_id', 'region_ids']);
+  return { daysAhead, status, module, limit, responsibleUserId, queryCompanyIds, regionIds };
 }
 
 function appBaseUrl() {
@@ -125,6 +143,60 @@ function daysFromNow(ts, nowMs) {
   return Math.ceil((ts - nowMs) / (24 * 60 * 60 * 1000));
 }
 
+/** Escape ký tự markdown Zalo Bot (`parse_mode: markdown`) trong dữ liệu người dùng. */
+function escapeZaloMd(raw) {
+  return String(raw || '').replace(/([\\*_`~{}])/g, '\\$1');
+}
+
+/**
+ * `text` đưa thẳng vào POST sendMessage của Zalo Bot.
+ * n8n chỉ gắn chat_id + token; parse_mode = markdown.
+ */
+function buildZaloBotText({
+  overdue, modLabel, primary, days, project, customer, responsible, links, extraDeadlines, noCrmLink,
+}) {
+  const color = overdue ? 'red' : 'orange';
+  const statusWord = overdue ? 'QUÁ HẠN' : 'SẮP HẠN';
+  const dayBit = overdue
+    ? `trễ **${Math.abs(Number(days) || 0)}** ngày`
+    : `còn **${Number(days) || 0}** ngày`;
+  const who = responsible?.full_name ? escapeZaloMd(responsible.full_name) : 'Chưa gán';
+  const mention = responsible?.zalo_mention || '';
+  const role = responsible?.role ? ` (${escapeZaloMd(responsible.role)})` : '';
+  const phone = responsible?.phone ? ` · \`${escapeZaloMd(responsible.phone)}\`` : '';
+  const lines = [
+    `# {${color}}${statusWord} ${escapeZaloMd(modLabel)}{/${color}}`,
+    `## ${escapeZaloMd(primary.label)}`,
+    '',
+    `**${escapeZaloMd(project.subject_label || 'Công trình')}:** ${escapeZaloMd(project.code || '—')} — ${escapeZaloMd(project.name || '—')}`,
+    customer?.full_name
+      ? `**Khách:** ${escapeZaloMd(customer.full_name)}${customer.phone ? ` (\`${escapeZaloMd(customer.phone)}\`)` : ''}`
+      : null,
+    `**Trạng thái:** ${escapeZaloMd(project.status_label || project.status || '—')}`,
+    `**Hạn:** ${escapeZaloMd(primary.at_vi)} (${dayBit})`,
+    `**Phụ trách ${escapeZaloMd(modLabel)}:** ${mention ? `${mention} ` : ''}${who}${role}${phone}`,
+  ].filter((line) => line != null);
+
+  if (links?.url) {
+    lines.push('', `> Link ${escapeZaloMd(modLabel)}`, `\`${links.url}\``);
+  } else if (noCrmLink) {
+    lines.push('', '> Chưa gắn deal CRM');
+  }
+
+  const extras = (extraDeadlines || []).filter((d) => d.source !== primary.source);
+  if (extras.length) {
+    lines.push('', 'Hạn khác:');
+    extras.slice(0, 6).forEach((d) => {
+      const tag = d.is_overdue ? '{red}trễ{/red}' : '{green}còn hạn{/green}';
+      lines.push(`- ${escapeZaloMd(d.label)}: ${escapeZaloMd(d.at_vi)} (${tag})`);
+    });
+  }
+
+  let text = lines.join('\n');
+  if (text.length > 1900) text = `${text.slice(0, 1890)}\n…`;
+  return text;
+}
+
 function packPerson(userMap, id, role) {
   if (!id) return null;
   const u = userMap.get(String(id));
@@ -158,17 +230,44 @@ function packCo(companyMap, id) {
   return { id: String(c.id), name: c.name || null, short_name: c.short_name || null };
 }
 
-function collectDeadlines(project, deal) {
-  return [
+function collectDeadlines(project, deal, { includeCrmDealDates = true } = {}) {
+  const rows = [
     { at: project.sx_kanban_deadline_at, source: 'sx_kanban', label: 'Hạn Kanban SX', module: 'production' },
     { at: project.production_deadline, source: 'production', label: 'Hạn SX', module: 'production' },
     { at: project.deadline, source: 'project', label: 'Hạn công trình', module: 'production' },
     { at: project.design_deadline, source: 'design', label: 'Hạn thiết kế', module: 'crm' },
     { at: project.delivery_date, source: 'delivery', label: 'Ngày giao', module: 'logistics' },
     { at: project.install_date, source: 'install', label: 'Ngày lắp', module: 'logistics' },
-    { at: deal?.kanban_deadline_at, source: 'crm_kanban', label: 'Hạn Kanban CRM', module: 'crm' },
-    { at: deal?.expected_close_date, source: 'expected_close', label: 'Dự kiến chốt', module: 'crm' },
-  ].filter((d) => d.at);
+  ];
+  if (includeCrmDealDates) {
+    rows.push(
+      { at: deal?.kanban_deadline_at, source: 'crm_kanban', label: 'Hạn Kanban CRM', module: 'crm' },
+      { at: deal?.expected_close_date, source: 'expected_close', label: 'Dự kiến chốt', module: 'crm' },
+    );
+  }
+  return rows.filter((d) => d.at);
+}
+
+function stubProjectFromCrmDeal(deal) {
+  const isDeal = String(deal?.type || '') === 'deal';
+  return {
+    id: String(deal.id),
+    code: deal.code || null,
+    name: deal.title || null,
+    status: isDeal ? 'quoting' : 'new',
+    status_label: isDeal ? 'Deal' : 'Lead',
+    subject_label: isDeal ? 'Deal' : 'Lead',
+    _crmOnly: true,
+    company_id: deal.company_id || null,
+    customer_id: deal.customer_id || null,
+    sales_person_id: deal.assigned_to || deal.lead_owner_id || null,
+  };
+}
+
+function isClosedCrmStage(deal, stageMap) {
+  if (!deal?.stage_id || !stageMap) return false;
+  const st = stageMap.get(String(deal.stage_id));
+  return !!(st?.is_won || st?.is_lost);
 }
 
 function pickPrimary(items, nowMs) {
@@ -203,6 +302,7 @@ function pickResponsibleForModule(project, deal, userMap, moduleKey) {
 
 function buildModuleLink(base, moduleKey, pid, dealId) {
   if (moduleKey === 'crm') return dealId ? `${base}/crm/leads/${dealId}` : null;
+  if (!pid) return null;
   if (moduleKey === 'production') return `${base}/sx/projects/${pid}`;
   if (moduleKey === 'logistics') return `${base}/vc/projects/${pid}`;
   return null;
@@ -224,7 +324,7 @@ function orIn(column, ids) {
   return `${column}.in.(${ids.join(',')})`;
 }
 
-const DEAL_SELECT = 'id, code, title, type, company_id, project_id, assigned_to, lead_owner_id, kanban_deadline_at, expected_close_date';
+const DEAL_SELECT = 'id, code, title, type, company_id, region_id, project_id, customer_id, stage_id, assigned_to, lead_owner_id, kanban_deadline_at, expected_close_date, deadline_disabled_at';
 
 async function paginateProjects(apply) {
   const map = new Map();
@@ -278,7 +378,6 @@ async function loadCrmDeadlineDeals(companyIds) {
       let q = supabase
         .from('crm_leads')
         .select(DEAL_SELECT)
-        .not('project_id', 'is', null)
         .or('kanban_deadline_at.not.is.null,expected_close_date.not.is.null');
       if (part) q = q.in('company_id', part);
       q = q.range(from, from + PAGE - 1);
@@ -338,7 +437,8 @@ async function loadProjectsForCompanyScope(companyIds) {
  *   companyIds: string[]|null,
  *   daysAhead?: number,
  *   status?: 'all'|'overdue'|'upcoming',
- *   module?: 'all'|'crm'|'production'|'logistics',
+ *   module?: 'all'|string[],
+ *   regionIds?: string[],
  *   limit?: number,
  *   responsibleUserId?: string,
  * }} opts
@@ -348,15 +448,16 @@ async function listProjectDeadlineNotifications(opts = {}) {
   const daysAhead = opts.daysAhead == null ? 7 : opts.daysAhead;
   const status = opts.status || 'all';
   const module = opts.module || 'all';
+  const moduleSet = Array.isArray(module) ? new Set(module) : null;
+  const regionSet = (opts.regionIds || []).length
+    ? new Set(opts.regionIds.map(String))
+    : null;
   const limit = opts.limit || 200;
   const responsibleUserId = opts.responsibleUserId ? String(opts.responsibleUserId) : '';
   const horizonMs = nowMs + daysAhead * 24 * 60 * 60 * 1000;
   const base = appBaseUrl();
 
   const { projects, deals, extraLinks } = await loadProjectsForCompanyScope(opts.companyIds);
-  if (!projects.length) {
-    return { generated_at: new Date().toISOString(), count: 0, notifications: [] };
-  }
 
   const dealById = new Map((deals || []).map((d) => [String(d.id), d]));
   const dealByProject = new Map();
@@ -381,6 +482,44 @@ async function listProjectDeadlineNotifications(opts = {}) {
         || allowed.has(String(deal?.company_id || ''));
       if (!ok) projects.splice(i, 1);
     }
+  }
+
+  if (regionSet) {
+    for (let i = projects.length - 1; i >= 0; i -= 1) {
+      const deal = dealByProject.get(String(projects[i].id));
+      if (!regionSet.has(String(deal?.region_id || ''))) projects.splice(i, 1);
+    }
+  }
+
+  const stageMap = new Map(
+    (await fetchByIds(
+      'crm_pipeline_stages',
+      'id, is_won, is_lost',
+      'id',
+      (deals || []).map((d) => d.stage_id),
+    )).map((s) => [String(s.id), s]),
+  );
+
+  const includeCrmModule = !moduleSet || moduleSet.has('crm');
+  if (includeCrmModule) {
+    const allowed = opts.companyIds ? new Set(opts.companyIds.map(String)) : null;
+    const seenIds = new Set(projects.map((p) => String(p.id)));
+    for (const d of deals || []) {
+      if (!d?.id || d.project_id) continue;
+      if (d.deadline_disabled_at) continue;
+      if (isClosedCrmStage(d, stageMap)) continue;
+      if (allowed && !allowed.has(String(d.company_id || ''))) continue;
+      if (regionSet && !regionSet.has(String(d.region_id || ''))) continue;
+      const stub = stubProjectFromCrmDeal(d);
+      if (seenIds.has(stub.id)) continue;
+      seenIds.add(stub.id);
+      projects.push(stub);
+      dealByProject.set(stub.id, d);
+    }
+  }
+
+  if (!projects.length) {
+    return { generated_at: new Date().toISOString(), count: 0, notifications: [] };
   }
 
   const userIds = [];
@@ -412,7 +551,8 @@ async function listProjectDeadlineNotifications(opts = {}) {
   const notifications = [];
   for (const p of projects) {
     const deal = dealByProject.get(String(p.id)) || null;
-    const rawDeadlines = collectDeadlines(p, deal).map((d) => {
+    const includeCrmDealDates = !!deal && !deal.deadline_disabled_at && !isClosedCrmStage(deal, stageMap);
+    const rawDeadlines = collectDeadlines(p, deal, { includeCrmDealDates }).map((d) => {
       const ts = toTs(d.at);
       if (!ts) return null;
       const days = daysFromNow(ts, nowMs);
@@ -427,7 +567,7 @@ async function listProjectDeadlineNotifications(opts = {}) {
     }).filter(Boolean);
 
     let windowed = rawDeadlines.filter((d) => d.ts < nowMs || d.ts <= horizonMs);
-    if (module !== 'all') windowed = windowed.filter((d) => d.module === module);
+    if (moduleSet) windowed = windowed.filter((d) => moduleSet.has(d.module));
     if (status === 'overdue') windowed = windowed.filter((d) => d.is_overdue);
     if (status === 'upcoming') windowed = windowed.filter((d) => !d.is_overdue);
     if (!windowed.length) continue;
@@ -454,12 +594,13 @@ async function listProjectDeadlineNotifications(opts = {}) {
     }
 
     for (const [modKey, items] of byModule) {
+      if (p._crmOnly && modKey !== 'crm') continue;
       const primary = pickPrimary(items, nowMs);
       if (!primary) continue;
       const responsible = pickResponsibleForModule(p, deal, userMap, modKey) || personByModule[modKey] || null;
       if (responsibleUserId && String(responsible?.id || '') !== responsibleUserId) continue;
 
-      const links = buildLinksForModule(base, modKey, pid, dealId);
+      const links = buildLinksForModule(base, modKey, p._crmOnly ? null : pid, dealId);
       const days = primary.days_remaining;
       const overdue = primary.is_overdue;
       const who = responsible?.full_name || 'Chưa gán';
@@ -467,30 +608,47 @@ async function listProjectDeadlineNotifications(opts = {}) {
       const title = overdue
         ? `🚨 [${modLabel}] Quá hạn: ${primary.label}`
         : `⏰ [${modLabel}] Sắp đến hạn: ${primary.label}`;
-      const message = `Công trình ${p.code || ''} ${p.name || ''} — ${primary.label} ${primary.at_vi} — ${who}`;
-      const linkLine = links.url
-        ? `Link ${modLabel}: ${links.url}`
-        : (modKey === 'crm' ? 'Link CRM: (chưa gắn deal)' : null);
-      const textLines = [
-        `${overdue ? 'QUÁ HẠN' : 'SẮP HẠN'} · ${modLabel} · ${primary.label}: ${primary.at_vi} (${overdue ? `trễ ${Math.abs(days)} ngày` : `còn ${days} ngày`})`,
-        `Công trình: ${p.code || '—'} — ${p.name || '—'}`,
-        customer?.full_name ? `Khách: ${customer.full_name}${customer.phone ? ` (${customer.phone})` : ''}` : null,
-        `Trạng thái: ${STATUS_LABEL[p.status] || p.status || '—'}`,
-        `Chịu trách nhiệm ${modLabel}: ${who}${responsible?.zalo_mention ? ` ${responsible.zalo_mention}` : ''}${responsible?.phone ? ` · ${responsible.phone}` : ''}${responsible?.role ? ` (${responsible.role})` : ''}`,
-        linkLine,
-      ].filter(Boolean);
+      const statusLabel = p._crmOnly
+        ? (p.status_label || (deal?.type === 'deal' ? 'Deal' : 'Lead'))
+        : (STATUS_LABEL[p.status] || p.status || null);
+      const message = `${p.subject_label || 'Công trình'} ${p.code || ''} ${p.name || ''} — ${primary.label} ${primary.at_vi} — ${who}`;
+      const extraDeadlines = items.map((d) => ({
+        at_vi: d.at_vi,
+        source: d.source,
+        label: d.label,
+        is_overdue: d.is_overdue,
+      }));
+      const text = buildZaloBotText({
+        overdue,
+        modLabel,
+        primary,
+        days,
+        project: {
+          code: p.code || null,
+          name: p.name || null,
+          status: p.status || null,
+          status_label: statusLabel,
+          subject_label: p.subject_label || 'Công trình',
+        },
+        customer,
+        responsible,
+        links,
+        extraDeadlines,
+        noCrmLink: modKey === 'crm' && !links.url,
+      });
 
       notifications.push({
         type: overdue ? 'project_deadline_overdue' : 'project_deadline_warning',
         title,
         message,
-        text: textLines.join('\n'),
+        parse_mode: 'markdown',
+        text,
         project: {
           id: pid,
           code: p.code || null,
           name: p.name || null,
           status: p.status || null,
-          status_label: STATUS_LABEL[p.status] || p.status || null,
+          status_label: statusLabel,
           priority: p.priority || null,
           install_address: p.install_address || null,
           estimated_value: p.estimated_value ?? null,
@@ -536,12 +694,12 @@ async function listProjectDeadlineNotifications(opts = {}) {
             company: packCo(companyMap, deal?.company_id),
           },
           production: {
-            active: !!(p.company_id || p.sx_kanban_column_id),
+            active: !p._crmOnly && !!(p.company_id || p.sx_kanban_column_id),
             person: sxPerson,
             company: packCo(companyMap, p.company_id),
           },
           logistics: {
-            active: !!(p.logistics_company_id || p.vc_kanban_column_id),
+            active: !p._crmOnly && !!(p.logistics_company_id || p.vc_kanban_column_id),
             person: vcPerson,
             company: packCo(companyMap, p.logistics_company_id),
           },

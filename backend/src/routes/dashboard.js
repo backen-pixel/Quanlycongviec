@@ -385,7 +385,7 @@ r.get('/notifications/deadlines', async (req, res) => {
   }
 });
 
-// GET /dashboard/project-deadlines — hạn công trình + người chịu trách nhiệm + link module
+// GET /dashboard/project-deadlines — hạn công trình + QLDA + link CRM / SX / VC
 r.get('/project-deadlines', async (req, res) => {
   try {
     const { isSystemAdmin } = require('../helpers/adminRole');
@@ -394,23 +394,193 @@ r.get('/project-deadlines', async (req, res) => {
       listProjectDeadlineNotifications,
     } = require('../helpers/projectDeadlineExport');
     const q = parseProjectDeadlineExportQuery(req.query);
-    const filterCompany = req.query.company_id ? String(req.query.company_id).trim() : '';
+    const rawIds = q.queryCompanyIds || [];
     let companyIds = null;
     if (isSystemAdmin(req.user)) {
-      companyIds = filterCompany ? [filterCompany] : null;
+      companyIds = rawIds.length ? rawIds : null;
     } else if (req.user.company_id) {
-      if (filterCompany && String(filterCompany) !== String(req.user.company_id)) {
+      if (rawIds.length && rawIds.some((id) => id !== String(req.user.company_id))) {
         return res.status(403).json({ error: 'Không được phép xem công ty khác' });
       }
       companyIds = [String(req.user.company_id)];
     } else {
       return res.json({ generated_at: new Date().toISOString(), count: 0, notifications: [] });
     }
-    const payload = await listProjectDeadlineNotifications({ companyIds, ...q });
+    const payload = await listProjectDeadlineNotifications({
+      companyIds,
+      regionIds: q.regionIds,
+      daysAhead: q.daysAhead,
+      status: q.status,
+      module: q.module,
+      limit: q.limit,
+      responsibleUserId: q.responsibleUserId,
+    });
     res.json(payload);
   } catch (e) {
     console.error('Dashboard project-deadlines error:', e);
     res.status(500).json({ error: e.message });
+  }
+});
+
+function resolveDeadlineCompanyScope(req, requestedIds) {
+  const { isSystemAdmin } = require('../helpers/adminRole');
+  const ids = (requestedIds || []).map((x) => String(x).trim()).filter(Boolean);
+  if (isSystemAdmin(req.user)) return ids.length ? ids : null;
+  if (req.user.company_id) {
+    const own = String(req.user.company_id);
+    if (ids.length && ids.some((id) => id !== own)) {
+      const err = new Error('Không được phép công ty khác');
+      err.status = 403;
+      throw err;
+    }
+    return [own];
+  }
+  return [];
+}
+
+// GET /dashboard/project-deadlines/configs — danh sách nhiều API đã lưu
+r.get('/project-deadlines/configs', async (req, res) => {
+  try {
+    const { isCrmModuleAdmin } = require('../helpers/adminRole');
+    if (!isCrmModuleAdmin(req.user)) return res.status(403).json({ error: 'Chỉ quản trị được xem cấu hình này' });
+    const { listProfiles } = require('../jobs/projectDeadlineDispatch');
+    const configs = await listProfiles();
+    res.json({ configs });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /dashboard/project-deadlines/configs — tạo API mới
+r.post('/project-deadlines/configs', async (req, res) => {
+  try {
+    const { isCrmModuleAdmin, isSystemAdmin } = require('../helpers/adminRole');
+    if (!isCrmModuleAdmin(req.user)) return res.status(403).json({ error: 'Chỉ quản trị được lưu cấu hình này' });
+    const { upsertProfile, normalizeCompanyIds, normalizeModules } = require('../jobs/projectDeadlineDispatch');
+    let companyIds = normalizeCompanyIds(req.body?.company_ids);
+    if (!isSystemAdmin(req.user)) {
+      if (!req.user.company_id) return res.status(403).json({ error: 'Tài khoản không gắn công ty' });
+      companyIds = [String(req.user.company_id)];
+    }
+    const saved = await upsertProfile({
+      name: req.body?.name || 'API mới',
+      company_ids: companyIds,
+      region_ids: normalizeCompanyIds(req.body?.region_ids),
+      modules: normalizeModules(req.body?.modules || req.body?.module),
+      status: req.body?.status,
+      days_ahead: req.body?.days_ahead,
+    });
+    res.status(201).json(saved);
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
+});
+
+// PUT /dashboard/project-deadlines/configs/:id
+r.put('/project-deadlines/configs/:id', async (req, res) => {
+  try {
+    const { isCrmModuleAdmin, isSystemAdmin } = require('../helpers/adminRole');
+    if (!isCrmModuleAdmin(req.user)) return res.status(403).json({ error: 'Chỉ quản trị được lưu cấu hình này' });
+    const { upsertProfile, normalizeCompanyIds, normalizeModules } = require('../jobs/projectDeadlineDispatch');
+    let companyIds = normalizeCompanyIds(req.body?.company_ids);
+    if (!isSystemAdmin(req.user)) {
+      if (!req.user.company_id) return res.status(403).json({ error: 'Tài khoản không gắn công ty' });
+      companyIds = [String(req.user.company_id)];
+    }
+    const saved = await upsertProfile({
+      name: req.body?.name,
+      company_ids: companyIds,
+      region_ids: normalizeCompanyIds(req.body?.region_ids),
+      modules: normalizeModules(req.body?.modules || req.body?.module),
+      status: req.body?.status,
+      days_ahead: req.body?.days_ahead,
+    }, { id: req.params.id });
+    res.json(saved);
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
+});
+
+// DELETE /dashboard/project-deadlines/configs/:id
+r.delete('/project-deadlines/configs/:id', async (req, res) => {
+  try {
+    const { isCrmModuleAdmin } = require('../helpers/adminRole');
+    if (!isCrmModuleAdmin(req.user)) return res.status(403).json({ error: 'Chỉ quản trị được xóa cấu hình này' });
+    const { deleteProfile } = require('../jobs/projectDeadlineDispatch');
+    const result = await deleteProfile(req.params.id);
+    res.json(result);
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
+});
+
+// GET /dashboard/project-deadlines/config — legacy: profile đầu / mặc định
+r.get('/project-deadlines/config', async (req, res) => {
+  try {
+    const { isCrmModuleAdmin } = require('../helpers/adminRole');
+    if (!isCrmModuleAdmin(req.user)) return res.status(403).json({ error: 'Chỉ quản trị được xem cấu hình này' });
+    const { getProfile, listProfiles, publicConfig, loadStoredConfig } = require('../jobs/projectDeadlineDispatch');
+    const id = req.query.id ? String(req.query.id) : '';
+    if (id) {
+      const p = await getProfile(id);
+      if (!p) return res.status(404).json({ error: 'Không tìm thấy cấu hình API' });
+      return res.json(p);
+    }
+    const configs = await listProfiles();
+    if (configs.length) return res.json(configs[0]);
+    res.json(publicConfig(await loadStoredConfig()));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PUT /dashboard/project-deadlines/config — legacy: cập nhật profile đầu
+r.put('/project-deadlines/config', async (req, res) => {
+  try {
+    const { isCrmModuleAdmin, isSystemAdmin } = require('../helpers/adminRole');
+    if (!isCrmModuleAdmin(req.user)) return res.status(403).json({ error: 'Chỉ quản trị được lưu cấu hình này' });
+    const { saveDispatchConfig, publicConfig, normalizeCompanyIds, normalizeModules } = require('../jobs/projectDeadlineDispatch');
+    let companyIds = normalizeCompanyIds(req.body?.company_ids);
+    if (!isSystemAdmin(req.user)) {
+      if (!req.user.company_id) return res.status(403).json({ error: 'Tài khoản không gắn công ty' });
+      companyIds = [String(req.user.company_id)];
+    }
+    const saved = await saveDispatchConfig({
+      name: req.body?.name,
+      company_ids: companyIds,
+      region_ids: normalizeCompanyIds(req.body?.region_ids),
+      modules: normalizeModules(req.body?.modules || req.body?.module),
+      status: req.body?.status,
+      days_ahead: req.body?.days_ahead,
+    });
+    res.json(publicConfig(saved));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /dashboard/project-deadlines/run — gửi thử webhook theo bộ lọc trang
+r.post('/project-deadlines/run', async (req, res) => {
+  try {
+    const { isCrmModuleAdmin } = require('../helpers/adminRole');
+    if (!isCrmModuleAdmin(req.user)) return res.status(403).json({ error: 'Chỉ quản trị được gửi Zalo' });
+    const { runOnce, normalizeCompanyIds, normalizeModule } = require('../jobs/projectDeadlineDispatch');
+    const requested = normalizeCompanyIds(req.body?.company_ids ?? req.body?.company_id);
+    const companyIds = resolveDeadlineCompanyScope(req, requested);
+    if (Array.isArray(companyIds) && companyIds.length === 0) {
+      return res.status(400).json({ error: 'Không có công ty trong phạm vi' });
+    }
+    const result = await runOnce({
+      force: req.body?.force === true || req.query.force === '1',
+      companyIds,
+      module: normalizeModule(req.body?.module || req.query.module),
+      zaloBotToken: req.body?.zalo_bot_token,
+      zaloChatId: req.body?.zalo_chat_id,
+    });
+    if (result.skipped) return res.status(400).json(result);
+    res.json(result);
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
   }
 });
 

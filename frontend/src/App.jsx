@@ -165,6 +165,7 @@ const PDFSettingsPage = lazyWithRetry(() => import('./pages/PDFSettingsPage'));
 const MisaSettingsPage = lazyWithRetry(() => import('./pages/MisaSettingsPage'));
 const ApiKeysSettingsPage = lazyWithRetry(() => import('./pages/ApiKeysSettingsPage'));
 const McpReportApiPage = lazyWithRetry(() => import('./pages/McpReportApiPage'));
+const ProjectDeadlineDispatchPage = lazyWithRetry(() => import('./pages/ProjectDeadlineDispatchPage'));
 const AiChatBotSettingsPage = lazyWithRetry(() => import('./pages/AiChatBotSettingsPage'));
 const CreateProject = lazyWithRetry(() => import('./pages/CreateProject'));
 const PermissionsPage = lazyWithRetry(() => import('./pages/PermissionsPage'));
@@ -403,6 +404,7 @@ export default function App() {
             <Route path="/management/deals/:leadId" element={<UnifiedDealPage />} />
             <Route path="/management/backup-sync" element={<ProductionBackupSyncPage />} />
             <Route path="/management/mcp-api" element={<RequireCrmElevated><McpReportApiPage /></RequireCrmElevated>} />
+            <Route path="/management/project-deadlines" element={<RequireCrmElevated><ProjectDeadlineDispatchPage /></RequireCrmElevated>} />
             <Route path="/dashboard/classic" element={<Navigate to="/dashboard" replace />} />
             <Route path="/dashboard/divisions" element={<Navigate to="/dashboard" replace />} />
             <Route path="/social" element={<SocialFeedPage />} />

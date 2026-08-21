@@ -720,33 +720,79 @@ const {
   listProjectDeadlineNotifications,
 } = require('../helpers/projectDeadlineExport');
 
-function allowedCompanyIdsForApiKey(apiKey) {
-  if (apiKey?.company_id) return [String(apiKey.company_id)];
-  const list = Array.isArray(apiKey?.allowed_company_ids)
-    ? apiKey.allowed_company_ids.map((x) => String(x)).filter(Boolean)
-    : [];
-  return list.length ? list : null;
-}
-
-r.get('/project-deadlines', apiKeyAuth, async (req, res) => {
+r.get('/project-deadlines', async (req, res) => {
   try {
     const q = parseProjectDeadlineExportQuery(req.query);
-    let companyIds = allowedCompanyIdsForApiKey(req.apiKey);
-    const filterCompany = req.query.company_id ? String(req.query.company_id).trim() : '';
-    if (filterCompany) {
-      if (companyIds && !companyIds.includes(filterCompany)) {
-        return res.status(403).json({ error: 'API key không được phép công ty này' });
+    const { getProfile, loadStoredConfig, filterNewNotifications } = require('../jobs/projectDeadlineDispatch');
+    const configId = String(req.query.config_id || req.query.id || '').trim();
+    let saved = {};
+    try {
+      if (configId) {
+        const profile = await getProfile(configId);
+        if (!profile) return res.status(404).json({ error: 'Không tìm thấy cấu hình API', config_id: configId });
+        saved = profile;
+      } else {
+        saved = await getProfile('') || await loadStoredConfig();
       }
-      companyIds = [filterCompany];
-    }
+    } catch { /* ignore */ }
+
+    const companyIds = q.queryCompanyIds.length
+      ? q.queryCompanyIds
+      : (saved.company_ids?.length ? saved.company_ids : null);
+    const regionIds = q.regionIds.length ? q.regionIds : (saved.region_ids || []);
+    const hasModuleQuery = !!(req.query.module || req.query.modules);
+    const module = hasModuleQuery
+      ? q.module
+      : (saved.modules?.length ? saved.modules : 'all');
+    const status = req.query.status
+      ? q.status
+      : (saved.status || 'overdue');
+    const daysAhead = req.query.days_ahead != null && String(req.query.days_ahead).trim() !== ''
+      ? q.daysAhead
+      : (status === 'overdue' ? 0 : (saved.days_ahead ?? 7));
+
+    const onlyNewRaw = String(req.query.only_new ?? '1').toLowerCase();
+    const onlyNew = !['0', 'false', 'no', 'all'].includes(onlyNewRaw);
+    const markRaw = String(req.query.mark ?? (onlyNew ? '1' : '0')).toLowerCase();
+    const mark = !['0', 'false', 'no'].includes(markRaw);
+
     const payload = await listProjectDeadlineNotifications({
       companyIds,
-      ...q,
+      regionIds,
+      daysAhead,
+      status,
+      module,
+      limit: q.limit,
+      responsibleUserId: q.responsibleUserId,
     });
-    await tryAuditLog(req, { status: 200 });
-    res.json(payload);
+
+    const resolvedConfigId = saved.id || configId || null;
+    let notifications = payload.notifications || [];
+    let skippedDup = 0;
+    let totalMatched = notifications.length;
+    if (onlyNew) {
+      const filtered = await filterNewNotifications(notifications, {
+        configId: resolvedConfigId || '',
+        mark,
+      });
+      notifications = filtered.notifications;
+      skippedDup = filtered.skipped_dup;
+      totalMatched = filtered.total_matched;
+    }
+
+    res.json({
+      generated_at: payload.generated_at,
+      count: notifications.length,
+      truncated: payload.truncated,
+      only_new: onlyNew,
+      marked: onlyNew && mark,
+      skipped_dup: skippedDup,
+      total_matched: totalMatched,
+      config_id: resolvedConfigId,
+      config_name: saved.name || null,
+      notifications,
+    });
   } catch (e) {
-    await tryAuditLog(req, { status: 500, error: e.message });
     res.status(500).json({ error: e.message });
   }
 });

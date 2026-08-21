@@ -1259,13 +1259,6 @@ server.listen(config.port, () => {
     console.warn('[crm-kanban-deadline] Failed to start:', e.message);
   }
 
-  // Cron công trình quá hạn → POST webhook n8n/Zalo — disable: PROJECT_DEADLINE_DISPATCH_DISABLED=1
-  try {
-    require('./jobs/projectDeadlineDispatch').start();
-  } catch (e) {
-    console.warn('[project-deadline-dispatch] Failed to start:', e.message);
-  }
-
   try {
     require('./jobs/sxScheduleSlipJob').start();
   } catch (e) {
