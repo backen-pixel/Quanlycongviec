@@ -1276,10 +1276,6 @@ server.listen(config.port, () => {
     console.warn('[sx-schedule-slip] Failed to start:', e.message);
   }
 
-<<<<<<< HEAD
-
-=======
->>>>>>> c1d6b636 (Stop polling public-pending every 2s; use socket hydrate instead.)
   // Cron quá hạn → Zalo Bot sendMessage (cấu hình ở /management/project-deadlines)
   // Disable: PROJECT_DEADLINE_DISPATCH_DISABLED=1
   try {
