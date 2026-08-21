@@ -23,6 +23,7 @@ const {
   attachCrmTaskMetaToAssignments,
   applyAssignmentStatusColumn,
   healAssignmentColumnStatusAlignment,
+  healAssignmentStatusFromCrmTask,
 } = require('../helpers/crmTaskAssignmentSync');
 const {
   syncAssignmentFileToTask,
@@ -816,6 +817,7 @@ r.get('/', async (req, res) => {
     if (error) throw error;
     await attachAssigneesToAssignments(data || []);
     await attachCrmTaskMetaToAssignments(data || []);
+    await healAssignmentStatusFromCrmTask(data || []);
     await healAssignmentColumnStatusAlignment(data || []);
     const rows = data || [];
     res.json({

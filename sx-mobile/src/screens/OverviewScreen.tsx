@@ -59,11 +59,12 @@ import {
   type SxBoardKpis,
 } from '../lib/sxBoardKpis';
 import {
-  assignmentDealCardLabel,
   canViewTeamWork,
   fetchMyProductionTasks,
   fetchProductionWorkTasks,
   formatTaskDeadline,
+  groupTasksByDeal,
+  isTaskDone,
   isTaskInProgress,
   isTaskOverdue,
   isTaskPending,
@@ -79,6 +80,7 @@ import type { KanbanStage, ProductionProject } from '../types';
 import { Radii, Spacing, colorWithAlpha, type AppColors } from '../theme';
 
 const PAGE_HPAD = 14;
+/** Số nhóm deal trên mỗi trang preview Tổng quan (không phải số task). */
 const TASK_PAGE_SIZE = 4;
 const DEAL_PAGE_SIZE = 4;
 const PRIORITY_FETCH_LIMIT = 80;
@@ -156,6 +158,8 @@ export default function OverviewScreen() {
   const skipNextFocusRefreshRef = useRef(true);
   const lastSilentAtRef = useRef(0);
   const [taskPage, setTaskPage] = useState(1);
+  /** Deal section đóng mặc định — chạm header để mở (giống VC / Công việc). */
+  const [expandedTaskLeads, setExpandedTaskLeads] = useState<Record<string, boolean>>({});
   const [dealPage, setDealPage] = useState(1);
   const [companies, setCompanies] = useState<CompanyOption[]>([]);
   const [filterCompany, setFilterCompany] = useState('');
@@ -501,11 +505,13 @@ export default function OverviewScreen() {
     });
   }, [tasks]);
 
-  const taskPages = totalPagesOf(openTasks.length, TASK_PAGE_SIZE);
+  const openTaskSections = useMemo(() => groupTasksByDeal(openTasks), [openTasks]);
+
+  const taskPages = totalPagesOf(openTaskSections.length, TASK_PAGE_SIZE);
   const dealPages = totalPagesOf(overdueDeals.length, DEAL_PAGE_SIZE);
   const safeTaskPage = Math.min(taskPage, taskPages);
   const safeDealPage = Math.min(dealPage, dealPages);
-  const previewTasks = pageSlice(openTasks, safeTaskPage, TASK_PAGE_SIZE);
+  const previewTaskSections = pageSlice(openTaskSections, safeTaskPage, TASK_PAGE_SIZE);
   const previewDeals = pageSlice(overdueDeals, safeDealPage, DEAL_PAGE_SIZE);
 
   useEffect(() => {
@@ -514,6 +520,10 @@ export default function OverviewScreen() {
   useEffect(() => {
     if (dealPage > dealPages) setDealPage(dealPages);
   }, [dealPage, dealPages]);
+
+  const toggleOverviewTaskSection = useCallback((leadId: string) => {
+    setExpandedTaskLeads((prev) => ({ ...prev, [leadId]: !prev[leadId] }));
+  }, []);
 
   const openNotifs = useCallback(async () => {
     void ensureNotificationPermission();
@@ -823,85 +833,119 @@ export default function OverviewScreen() {
           </Pressable>
         </View>
         <View style={styles.card}>
-          {previewTasks.length === 0 ? (
+          {previewTaskSections.length === 0 ? (
             <View style={styles.emptyRow}>
               <Ionicons name="checkbox-outline" size={20} color={colors.textFaint} />
               <Text style={styles.emptyTxt}>Không có việc chưa làm / đang làm</Text>
             </View>
           ) : (
             <>
-              {previewTasks.map((t, idx) => {
-                const overdue = isTaskOverdue(t);
-                const deal = assignmentDealCardLabel(t.lead);
-                const due = formatTaskDeadline(taskDueIso(t));
-                const people =
-                  t.assignees && t.assignees.length
-                    ? t.assignees
-                    : t.assignee
-                      ? [t.assignee]
-                      : [];
-                const assigneeName =
-                  people.map((p) => p.full_name?.trim()).filter(Boolean).join(', ')
-                  || 'Chưa gán';
+              {previewTaskSections.map((section, sIdx) => {
+                const expanded = !!expandedTaskLeads[section.leadId];
+                const openCount = section.tasks.filter((t) => !isTaskDone(String(t.status))).length;
                 return (
-                  <Pressable
-                    key={t.id}
-                    style={[styles.rowItem, idx > 0 && styles.rowBorder]}
-                    onPress={() => {
-                      const pid = t.lead?.project_id;
-                      if (pid) openProjectDetail(String(pid), { focusTaskId: workTaskFocusCrmId(t) });
-                      else goWork(overdue ? 'overdue' : 'all');
-                    }}
-                  >
-                    <View
-                      style={[
-                        styles.rowIcon,
-                        {
-                          backgroundColor: overdue
-                            ? colors.dangerSoft
-                            : isTaskInProgress(t.status)
-                              ? colors.primarySoft
-                              : colorWithAlpha(colors.warning, 0.16),
-                        },
-                      ]}
+                  <View key={section.leadId} style={sIdx > 0 ? styles.dealGroupGap : undefined}>
+                    <Pressable
+                      style={styles.dealGroupHead}
+                      onPress={() => toggleOverviewTaskSection(section.leadId)}
                     >
                       <Ionicons
-                        name={
-                          overdue
-                            ? 'alert-circle'
-                            : isTaskInProgress(t.status)
-                              ? 'time'
-                              : 'ellipse-outline'
-                        }
-                        size={18}
-                        color={
-                          overdue
-                            ? colors.danger
-                            : isTaskInProgress(t.status)
-                              ? colors.primary
-                              : colors.warning
-                        }
+                        name={expanded ? 'chevron-down' : 'chevron-forward'}
+                        size={16}
+                        color={colors.textMuted}
                       />
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.rowTitle} numberOfLines={1}>{t.title || 'Nhiệm vụ'}</Text>
-                      <Text style={styles.rowSub} numberOfLines={1}>
-                        Phụ trách: {assigneeName}
-                      </Text>
-                      {deal ? (
-                        <Text style={styles.rowSub} numberOfLines={1}>{deal}</Text>
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <Text style={styles.dealGroupTitle} numberOfLines={1}>
+                          {section.code ? `${section.code} · ` : ''}{section.title || 'Deal'}
+                        </Text>
+                        <Text style={styles.dealGroupMeta} numberOfLines={1}>
+                          {openCount}/{section.tasks.length} còn lại
+                          {section.customerName ? ` · ${section.customerName}` : ''}
+                          {!expanded ? ' · chạm để mở' : ''}
+                        </Text>
+                      </View>
+                      {section.projectId ? (
+                        <Pressable
+                          hitSlop={8}
+                          onPress={() => openProjectDetail(String(section.projectId))}
+                        >
+                          <Ionicons name="open-outline" size={16} color={colors.primary} />
+                        </Pressable>
                       ) : null}
-                      <Text style={styles.rowSub} numberOfLines={1}>
-                        {statusPillLabel(t.status)}
-                        {overdue ? ' · Quá hạn' : ''}
-                        {` · ${due}`}
-                      </Text>
-                    </View>
-                    <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
-                  </Pressable>
+                    </Pressable>
+                    {expanded
+                      ? section.tasks.map((t, idx) => {
+                          const overdue = isTaskOverdue(t);
+                          const due = formatTaskDeadline(taskDueIso(t));
+                          const people =
+                            t.assignees && t.assignees.length
+                              ? t.assignees
+                              : t.assignee
+                                ? [t.assignee]
+                                : [];
+                          const assigneeName =
+                            people.map((p) => p.full_name?.trim()).filter(Boolean).join(', ')
+                            || 'Chưa gán';
+                          return (
+                            <Pressable
+                              key={t.id}
+                              style={[styles.rowItem, styles.dealTaskRow, idx > 0 && styles.rowBorder]}
+                              onPress={() => {
+                                const pid = t.lead?.project_id || section.projectId;
+                                if (pid) openProjectDetail(String(pid), { focusTaskId: workTaskFocusCrmId(t) });
+                                else goWork(overdue ? 'overdue' : 'all');
+                              }}
+                            >
+                              <View
+                                style={[
+                                  styles.rowIcon,
+                                  {
+                                    backgroundColor: overdue
+                                      ? colors.dangerSoft
+                                      : isTaskInProgress(t.status)
+                                        ? colors.primarySoft
+                                        : colorWithAlpha(colors.warning, 0.16),
+                                  },
+                                ]}
+                              >
+                                <Ionicons
+                                  name={
+                                    overdue
+                                      ? 'alert-circle'
+                                      : isTaskInProgress(t.status)
+                                        ? 'time'
+                                        : 'ellipse-outline'
+                                  }
+                                  size={18}
+                                  color={
+                                    overdue
+                                      ? colors.danger
+                                      : isTaskInProgress(t.status)
+                                        ? colors.primary
+                                        : colors.warning
+                                  }
+                                />
+                              </View>
+                              <View style={{ flex: 1 }}>
+                                <Text style={styles.rowTitle} numberOfLines={1}>{t.title || 'Nhiệm vụ'}</Text>
+                                <Text style={styles.rowSub} numberOfLines={1}>
+                                  Phụ trách: {assigneeName}
+                                </Text>
+                                <Text style={styles.rowSub} numberOfLines={1}>
+                                  {statusPillLabel(t.status)}
+                                  {overdue ? ' · Quá hạn' : ''}
+                                  {` · ${due}`}
+                                </Text>
+                              </View>
+                              <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
+                            </Pressable>
+                          );
+                        })
+                      : null}
+                  </View>
                 );
               })}
-              {openTasks.length > TASK_PAGE_SIZE ? (
+              {openTaskSections.length > TASK_PAGE_SIZE ? (
                 <View style={styles.pager}>
                   <Pressable
                     style={[styles.pageBtn, safeTaskPage <= 1 && styles.pageBtnDisabled]}
@@ -1298,6 +1342,23 @@ function createStyles(colors: AppColors) {
       gap: 10,
       paddingHorizontal: 12,
       paddingVertical: 12,
+    },
+    dealGroupGap: {
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: colors.border,
+    },
+    dealGroupHead: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      paddingHorizontal: 12,
+      paddingVertical: 11,
+    },
+    dealGroupTitle: { color: colors.text, fontSize: 13.5, fontWeight: '800' },
+    dealGroupMeta: { color: colors.textMuted, fontSize: 11.5, fontWeight: '600', marginTop: 2 },
+    dealTaskRow: {
+      paddingLeft: 18,
+      backgroundColor: colorWithAlpha(colors.bgElevated, 0.55),
     },
     rowBorder: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
     rowIcon: {

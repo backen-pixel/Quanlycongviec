@@ -48,14 +48,15 @@ import {
 import type { MainTabParamList } from '../navigation/MainTabs';
 import { Radii, Spacing, colorWithAlpha, type AppColors } from '../theme';
 import {
+  type DealTaskSection,
   type WorkTask,
   type WorkTasksStats,
-  assignmentDealCardLabel,
   canViewTeamWork,
   collectAssigneeOptions,
   fetchProductionWorkTaskStats,
   fetchProductionWorkTasksPage,
   formatTaskDeadline,
+  groupTasksByDeal,
   isTaskDone,
   isTaskInProgress,
   isTaskOverdue,
@@ -95,6 +96,10 @@ function initials(name?: string | null): string {
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
   return `${parts[0][0] || ''}${parts[parts.length - 1][0] || ''}`.toUpperCase();
 }
+
+type ListRow =
+  | { kind: 'section'; key: string; section: DealTaskSection }
+  | { kind: 'task'; key: string; task: WorkTask };
 
 function statusColor(status: string, colors: AppColors): string {
   if (isTaskDone(status)) return colors.success;
@@ -299,6 +304,31 @@ function createStyles(colors: AppColors, bottomInset: number) {
     },
     errorText: { color: colors.danger, fontSize: 12, fontWeight: '600' },
     listContent: { paddingHorizontal: Spacing.lg, paddingBottom: bottomInset + 28, gap: 10 },
+    sectionCard: {
+      backgroundColor: colors.card,
+      borderRadius: Radii.lg,
+      borderWidth: 1,
+      borderColor: colors.border,
+      overflow: 'hidden',
+    },
+    sectionHead: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      paddingHorizontal: 12,
+      paddingVertical: 11,
+    },
+    sectionTitle: {
+      color: colors.text,
+      fontSize: 14,
+      fontWeight: '800',
+    },
+    sectionMeta: {
+      color: colors.textMuted,
+      fontSize: 11.5,
+      fontWeight: '600',
+      marginTop: 2,
+    },
     card: {
       backgroundColor: colors.card,
       borderRadius: Radii.lg,
@@ -470,6 +500,8 @@ export default function WorkScreen() {
   /** KPI từ /stats (đủ toàn bộ) — tránh lệch vì list chỉ tải 200 dòng. */
   const [serverStats, setServerStats] = useState<WorkTasksStats | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  /** Section deal đóng mặc định — chỉ lưu leadId đang mở (giống VC). */
+  const [expandedLeadIds, setExpandedLeadIds] = useState<Record<string, boolean>>({});
   const [scope, setScope] = useState<ScopeFilter>(teamView ? 'team' : 'mine');
   const [assigneeFilter, setAssigneeFilter] = useState<string>('all');
   const [filterSheetOpen, setFilterSheetOpen] = useState(false);
@@ -997,6 +1029,24 @@ export default function WorkScreen() {
     });
   }, [tasks, chipTasks, statusFilter, teamView, scope, assigneeFilter, filterCompany]);
 
+  const dealSections = useMemo(() => groupTasksByDeal(filtered), [filtered]);
+
+  const flatRows = useMemo(() => {
+    const rows: ListRow[] = [];
+    for (const section of dealSections) {
+      rows.push({ kind: 'section', key: `s-${section.leadId}`, section });
+      if (!expandedLeadIds[section.leadId]) continue;
+      for (const task of section.tasks) {
+        rows.push({ kind: 'task', key: `t-${task.id}`, task });
+      }
+    }
+    return rows;
+  }, [dealSections, expandedLeadIds]);
+
+  const toggleDealSection = useCallback((leadId: string) => {
+    setExpandedLeadIds((prev) => ({ ...prev, [leadId]: !prev[leadId] }));
+  }, []);
+
   /** Stats fallback client — scope đã tải (search/KPI ưu tiên /stats). */
   const statsScope = useMemo(() => {
     return tasks.filter((t) => {
@@ -1197,7 +1247,7 @@ export default function WorkScreen() {
 
   const styles = useMemo(() => createStyles(colors, insets.bottom), [colors, insets.bottom]);
 
-  const renderCard = ({ item: task }: { item: WorkTask }) => {
+  const renderTaskCard = (task: WorkTask) => {
     const done = isTaskDone(task.status);
     const overdue = isTaskOverdue(task);
     const accent = statusColor(task.status, colors);
@@ -1211,7 +1261,6 @@ export default function WorkScreen() {
     const assigneeName =
       people.map((p) => p.full_name?.trim()).filter(Boolean).join(', ')
       || (teamView ? 'Chưa gán' : userName);
-    const dealLabel = assignmentDealCardLabel(task.lead);
     const stage = stageSlugLabel(task.stage_slug);
     const prio = priorityLabel(task.priority);
     const due = formatTaskDeadline(taskDueIso(task));
@@ -1262,15 +1311,6 @@ export default function WorkScreen() {
               {assigneeName}
             </Text>
           </View>
-
-          {dealLabel ? (
-            <View style={styles.dealRow}>
-              <Ionicons name="business-outline" size={14} color={colors.textMuted} />
-              <Text style={styles.dealTxt} numberOfLines={1}>
-                {dealLabel}
-              </Text>
-            </View>
-          ) : null}
 
           {stage ? (
             <View style={styles.stagePill}>
@@ -1351,6 +1391,44 @@ export default function WorkScreen() {
         </View>
       </View>
     );
+  };
+
+  const renderRow = ({ item }: { item: ListRow }) => {
+    if (item.kind === 'section') {
+      const s = item.section;
+      const open = s.tasks.filter((t) => !isTaskDone(String(t.status))).length;
+      const expanded = !!expandedLeadIds[s.leadId];
+      return (
+        <View style={styles.sectionCard}>
+          <TapHighlight style={styles.sectionHead} onPress={() => toggleDealSection(s.leadId)}>
+            <Ionicons
+              name={expanded ? 'chevron-down' : 'chevron-forward'}
+              size={18}
+              color={colors.textMuted}
+            />
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={styles.sectionTitle} numberOfLines={1}>
+                {s.code ? `${s.code} · ` : ''}{s.title || 'Deal'}
+              </Text>
+              <Text style={styles.sectionMeta}>
+                {open}/{s.tasks.length} còn lại
+                {s.customerName ? ` · ${s.customerName}` : ''}
+                {!expanded ? ' · chạm để mở' : ''}
+              </Text>
+            </View>
+            {s.projectId ? (
+              <Pressable
+                hitSlop={8}
+                onPress={() => openProjectDetail(String(s.projectId))}
+              >
+                <Ionicons name="open-outline" size={18} color={colors.primary} />
+              </Pressable>
+            ) : null}
+          </TapHighlight>
+        </View>
+      );
+    }
+    return renderTaskCard(item.task);
   };
 
   if ((loading || (statusFilter !== 'all' && chipLoading && chipTasks.length === 0)) && !refreshing) {
@@ -1556,13 +1634,13 @@ export default function WorkScreen() {
 
       <FlatList
         style={styles.listFlex}
-        data={filtered}
-        keyExtractor={(item) => `asg-${item.id}`}
-        renderItem={renderCard}
+        data={flatRows}
+        keyExtractor={(item) => item.key}
+        renderItem={renderRow}
         contentContainerStyle={styles.listContent}
-        initialNumToRender={12}
+        initialNumToRender={16}
         windowSize={7}
-        maxToRenderPerBatch={10}
+        maxToRenderPerBatch={12}
         removeClippedSubviews={false}
         keyboardShouldPersistTaps="handled"
         onEndReached={() => {

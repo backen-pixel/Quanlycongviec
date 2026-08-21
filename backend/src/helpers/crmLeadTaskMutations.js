@@ -15,6 +15,7 @@ const {
   ensureActiveAssignmentForLead,
   promoteNextAssignmentAfterComplete,
 } = require('./crmSequentialAssignment');
+const { syncAssignmentFromCrmTask } = require('./crmTaskAssignmentSync');
 const { isAdminLike } = require('./adminRole');
 const { assertTenantQuota, resolveTenantIdForQuota, invalidateTenantUsageCache } = require('./tenantQuotas');
 const {
@@ -649,15 +650,41 @@ async function updateCrmLeadTask(req, leadId, taskId, body) {
 
   const runAssignmentSync = async () => {
     const lid = data.lead_id || leadId;
+    // Đồng bộ status/title/deadline của đúng NV vừa sửa → crm_assignments.
+    // Trước đây chỉ promote tuần tự nên assignment có thể kẹt «Chưa làm»
+    // trong khi crm_tasks đã «Hoàn thành» (màn Công việc lệch chi tiết deal).
+    const idsForThis = assigneeIdsForSync.length
+      ? assigneeIdsForSync
+      : await (async () => {
+          const { data: rows } = await supabase
+            .from('crm_task_assignees')
+            .select('user_id')
+            .eq('task_id', data.id);
+          const fromJoin = (rows || []).map((r) => String(r.user_id)).filter(Boolean);
+          if (fromJoin.length) return fromJoin;
+          if (data.assignee_id) return [String(data.assignee_id)];
+          return [];
+        })();
+    if (idsForThis.length) {
+      try {
+        const synced = await syncAssignmentFromCrmTask(req, data, idsForThis);
+        if (synced?.assignmentId) {
+          assignmentId = synced.assignmentId;
+          data.crm_assignment_id = synced.assignmentId;
+        }
+      } catch (e) {
+        console.warn('[crm] sync assignment from task update:', e.message);
+      }
+    }
     const justCompleted = b.status === 'completed' && priorRow && priorRow.status !== 'completed';
     const sync = justCompleted
       ? await promoteNextAssignmentAfterComplete(req, lid)
       : await ensureActiveAssignmentForLead(req, lid);
-    assignmentId = sync?.assignmentId || null;
+    if (!assignmentId) assignmentId = sync?.assignmentId || null;
     if (assignmentId && String(sync?.taskId || '') === String(data.id)) {
       data.crm_assignment_id = assignmentId;
-    } else if (assignmentId) {
-      data.next_sequential_assignment = { assignmentId, taskId: sync?.taskId || null };
+    } else if (sync?.assignmentId && String(sync?.taskId || '') !== String(data.id)) {
+      data.next_sequential_assignment = { assignmentId: sync.assignmentId, taskId: sync?.taskId || null };
     }
   };
 

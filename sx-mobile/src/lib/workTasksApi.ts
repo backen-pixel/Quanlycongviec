@@ -105,11 +105,17 @@ function mapAssignmentToWorkTask(raw: Record<string, unknown>): WorkTask {
     (crmTask?.stage_slug != null ? String(crmTask.stage_slug) : null)
     || (raw.stage_slug != null ? String(raw.stage_slug) : null);
 
+  // Chi tiết deal đọc crm_tasks.status; tab Công việc đọc crm_assignments.status.
+  // Khi lệch (thường gặp sau hoàn thành trong deal), ưu tiên trạng thái CRM task.
+  const crmStatus = crmTask?.status != null ? String(crmTask.status) : '';
+  const asnStatus = raw.status != null ? String(raw.status) : '';
+  const status = crmStatus || asnStatus || 'pending';
+
   return {
     id: String(raw.id || ''),
     lead_id: leadId,
     title: String(raw.title || crmTask?.title || 'Nhiệm vụ được giao'),
-    status: String(raw.status || 'pending'),
+    status,
     stage_slug: stageSlug,
     deadline: raw.deadline != null ? String(raw.deadline) : null,
     due_date: raw.deadline != null ? String(raw.deadline) : null,

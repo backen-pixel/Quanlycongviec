@@ -592,6 +592,9 @@ export async function updateCrmTask(
 ): Promise<CrmTask> {
   const { data } = await api.put<Record<string, unknown>>(`/crm/leads/${dealId}/tasks/${taskId}`, updates);
   invalidateDealTasksCache(dealId);
+  // Tránh vòng import với workTasksApi — cùng prefix cache ở queryCache.
+  invalidateQueryPrefix('sx:workTasks:');
+  invalidateQueryPrefix('sx:workStats:');
   return mapCrmTask(data || { id: taskId, ...updates });
 }
 

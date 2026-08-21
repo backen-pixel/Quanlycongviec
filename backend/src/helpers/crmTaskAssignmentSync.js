@@ -421,6 +421,58 @@ async function attachAssignmentIdsToCrmTasks(list) {
   return list;
 }
 
+/**
+ * Sửa lệch status assignment ↔ crm_task (KPI/list đếm theo assignment.status,
+ * còn chi tiết deal đọc crm_tasks.status). Cập nhật in-memory ngay; ghi DB nền.
+ */
+async function healAssignmentStatusFromCrmTask(list) {
+  if (!Array.isArray(list) || !list.length) return list;
+  const patches = [];
+  list.forEach((row) => {
+    if (!row?.id || !row.crm_task_id || !row.crm_task) return;
+    const asn = normalizeAssignmentStatus(row.status);
+    const task = normalizeAssignmentStatus(row.crm_task.status);
+    if (!task || asn === task) return;
+    row.status = task;
+    if (task === 'completed') {
+      row.completed_at = row.completed_at || row.crm_task.completed_at || new Date().toISOString();
+    } else {
+      row.completed_at = null;
+    }
+    patches.push({
+      id: row.id,
+      status: task,
+      completed_at: row.completed_at,
+    });
+  });
+  if (patches.length) {
+    void (async () => {
+      const CHUNK = 80;
+      for (let i = 0; i < patches.length; i += CHUNK) {
+        const slice = patches.slice(i, i + CHUNK);
+        await Promise.all(slice.map((p) => supabase
+          .from('crm_assignments')
+          .update({
+            status: p.status,
+            completed_at: p.completed_at,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', p.id)));
+      }
+    })().catch((e) => console.warn('[crm_assignments] heal status from crm_task:', e?.message || e));
+  }
+  return list;
+}
+
+function normalizeAssignmentStatus(status) {
+  const s = String(status || 'pending').toLowerCase();
+  if (s === 'done' || s === 'completed') return 'completed';
+  if (s === 'doing' || s === 'in_progress') return 'in_progress';
+  if (s === 'cancelled' || s === 'canceled') return 'cancelled';
+  if (s === 'todo' || s === 'pending') return 'pending';
+  return s || 'pending';
+}
+
 module.exports = {
   syncAssignmentFromCrmTask,
   syncCrmTaskFromAssignment,
@@ -429,5 +481,6 @@ module.exports = {
   attachCrmTaskMetaToAssignments,
   applyAssignmentStatusColumn,
   healAssignmentColumnStatusAlignment,
+  healAssignmentStatusFromCrmTask,
   columnIdForTaskStatus,
 };
