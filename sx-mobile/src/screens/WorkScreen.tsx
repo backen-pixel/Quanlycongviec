@@ -18,7 +18,7 @@ import {
   Alert,
   AppState,
   FlatList,
-  Linking,
+  Image,
   Modal,
   Pressable,
   RefreshControl,
@@ -31,6 +31,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatApiError } from '../api/client';
 import FilterPickerModal from '../components/FilterPickerModal';
+import ImageGalleryLightbox, { type GalleryImage } from '../components/ImageGalleryLightbox';
 import TapHighlight from '../components/TapHighlight';
 import WorkFilterSheet, {
   type WorkScopeFilter,
@@ -76,12 +77,50 @@ import {
   workTaskFocusCrmId,
   WORK_TASKS_PAGE_SIZE,
 } from '../lib/workTasksApi';
-import { resolveMediaUrl } from '../lib/mediaUtils';
+import { isImageFile, resolveMediaUrl } from '../lib/mediaUtils';
+import { saveMessengerAttachment } from '../lib/messengerFileOpen';
 import { isQueryAbortError } from '../lib/queryCache';
 
 import SpinningLoader from '../components/SpinningLoader';
+
 type StatusFilter = WorkStatusFilter;
 type ScopeFilter = WorkScopeFilter;
+
+type WorkFileKind = 'image' | 'pdf' | 'word' | 'excel' | 'ppt' | 'other';
+
+function workFileKind(file: WorkTaskAttachment): WorkFileKind {
+  if (isImageFile({
+    mime_type: file.mime_type,
+    file_name: file.name,
+    file_url: file.file_url,
+    name: file.name,
+  })) return 'image';
+  const mime = String(file.mime_type || '').toLowerCase();
+  const probe = `${file.name || ''} ${file.file_url || ''}`.toLowerCase();
+  if (mime.includes('pdf') || /\.pdf(\?|$)/i.test(probe)) return 'pdf';
+  if (/(word|msword|wordprocessing)/.test(mime) || /\.(docx?|rtf)(\?|$)/i.test(probe)) return 'word';
+  if (/(excel|spreadsheet|sheet)/.test(mime) || /\.(xlsx?|csv)(\?|$)/i.test(probe)) return 'excel';
+  if (/(powerpoint|presentation)/.test(mime) || /\.(pptx?)(\?|$)/i.test(probe)) return 'ppt';
+  return 'other';
+}
+
+function workFileIcon(kind: WorkFileKind): keyof typeof Ionicons.glyphMap {
+  if (kind === 'image') return 'image-outline';
+  if (kind === 'pdf') return 'document-text-outline';
+  if (kind === 'word') return 'document-outline';
+  if (kind === 'excel') return 'grid-outline';
+  if (kind === 'ppt') return 'easel-outline';
+  return 'attach-outline';
+}
+
+function workFileKindLabel(kind: WorkFileKind): string {
+  if (kind === 'image') return 'Ảnh · xem trong app';
+  if (kind === 'pdf') return 'PDF · tải về';
+  if (kind === 'word') return 'Word · tải về';
+  if (kind === 'excel') return 'Excel · tải về';
+  if (kind === 'ppt') return 'PowerPoint · tải về';
+  return 'Tải về máy';
+}
 
 const STATUS_CHIPS: {
   key: StatusFilter;
@@ -481,7 +520,22 @@ function createStyles(colors: AppColors, bottomInset: number) {
       borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: colors.border,
     },
-    attachFileName: { flex: 1, color: colors.text, fontSize: 13.5, fontWeight: '600' },
+    attachThumb: {
+      width: 40,
+      height: 40,
+      borderRadius: 8,
+      backgroundColor: colors.bgElevated,
+    },
+    attachIconWrap: {
+      width: 40,
+      height: 40,
+      borderRadius: 8,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colorWithAlpha(colors.primary, 0.12),
+    },
+    attachFileName: { color: colors.text, fontSize: 13.5, fontWeight: '600' },
+    attachFileMeta: { color: colors.textMuted, fontSize: 11, fontWeight: '600', marginTop: 2 },
     attachEmpty: { color: colors.textMuted, fontSize: 13, fontWeight: '600', paddingVertical: 16 },
     attachModalActions: { flexDirection: 'row', gap: 8, marginTop: 12 },
     attachModalBtn: {
@@ -566,6 +620,8 @@ export default function WorkScreen() {
     files: WorkTaskAttachment[];
     loading: boolean;
   } | null>(null);
+  const [gallery, setGallery] = useState<{ images: GalleryImage[]; index: number } | null>(null);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const updatingRef = useRef(false);
   const loadSeqRef = useRef(0);
   const chipSeqRef = useRef(0);
@@ -1041,14 +1097,47 @@ export default function WorkScreen() {
     );
   }, [openAttachSheet, pickFileForTask]);
 
-  const openAttachmentUrl = useCallback((file: WorkTaskAttachment) => {
+  const openWorkAttachment = useCallback(async (file: WorkTaskAttachment) => {
     const url = resolveMediaUrl(file.file_url);
     if (!url) {
       Alert.alert('Thiếu link', 'File này không có đường dẫn để mở.');
       return;
     }
-    void Linking.openURL(url);
-  }, []);
+    const kind = workFileKind(file);
+    if (kind === 'image') {
+      const images = (attachSheet?.files || [])
+        .filter((f) => workFileKind(f) === 'image')
+        .map((f) => {
+          const uri = resolveMediaUrl(f.file_url);
+          if (!uri) return null;
+          return { uri, title: f.name } as GalleryImage;
+        })
+        .filter(Boolean) as GalleryImage[];
+      const idx = Math.max(0, images.findIndex((img) => img.uri === url));
+      if (!images.length) {
+        Alert.alert('Ảnh', 'Không mở được ảnh này.');
+        return;
+      }
+      setGallery({ images, index: idx >= 0 ? idx : 0 });
+      return;
+    }
+    if (downloadingId) return;
+    setDownloadingId(file.id);
+    try {
+      const saved = await saveMessengerAttachment(url, {
+        name: file.name,
+        mime: file.mime_type,
+      });
+      Alert.alert(
+        'Đã tải về',
+        `«${saved.displayName}» đã lưu vào ${saved.locationHint}.`,
+      );
+    } catch (e) {
+      Alert.alert('Tải file', formatApiError(e) || 'Không tải được file.');
+    } finally {
+      setDownloadingId(null);
+    }
+  }, [attachSheet?.files, downloadingId]);
 
   const capturePhotoForTask = useCallback(async (task: WorkTask) => {
     const perm = await ImagePicker.requestCameraPermissionsAsync();
@@ -1790,23 +1879,46 @@ export default function WorkScreen() {
             <Text style={styles.attachModalSub}>
               {attachSheet?.loading
                 ? 'Đang tải danh sách…'
-                : `${attachSheet?.files.length || 0} file — chạm để mở`}
+                : `${attachSheet?.files.length || 0} file — ảnh xem trong app, file khác tải về`}
             </Text>
             {attachSheet?.loading ? (
               <SpinningLoader color={colors.primary} style={{ marginVertical: 20 }} />
             ) : attachSheet && attachSheet.files.length > 0 ? (
               <ScrollView style={{ maxHeight: 320 }}>
-                {attachSheet.files.map((f) => (
-                  <TapHighlight
-                    key={f.id}
-                    style={styles.attachFileRow}
-                    onPress={() => openAttachmentUrl(f)}
-                  >
-                    <Ionicons name="document-outline" size={18} color={colors.primary} />
-                    <Text style={styles.attachFileName} numberOfLines={2}>{f.name}</Text>
-                    <Ionicons name="open-outline" size={16} color={colors.textMuted} />
-                  </TapHighlight>
-                ))}
+                {attachSheet.files.map((f) => {
+                  const kind = workFileKind(f);
+                  const thumb = kind === 'image' ? resolveMediaUrl(f.file_url) : null;
+                  const busyDl = downloadingId === f.id;
+                  return (
+                    <TapHighlight
+                      key={f.id}
+                      style={styles.attachFileRow}
+                      onPress={() => void openWorkAttachment(f)}
+                      disabled={busyDl}
+                    >
+                      {thumb ? (
+                        <Image source={{ uri: thumb }} style={styles.attachThumb} />
+                      ) : (
+                        <View style={styles.attachIconWrap}>
+                          <Ionicons name={workFileIcon(kind)} size={18} color={colors.primary} />
+                        </View>
+                      )}
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <Text style={styles.attachFileName} numberOfLines={2}>{f.name}</Text>
+                        <Text style={styles.attachFileMeta}>{workFileKindLabel(kind)}</Text>
+                      </View>
+                      {busyDl ? (
+                        <SpinningLoader size="small" color={colors.primary} />
+                      ) : (
+                        <Ionicons
+                          name={kind === 'image' ? 'expand-outline' : 'download-outline'}
+                          size={16}
+                          color={colors.textMuted}
+                        />
+                      )}
+                    </TapHighlight>
+                  );
+                })}
               </ScrollView>
             ) : (
               <Text style={styles.attachEmpty}>Chưa tìm thấy file (có thể chỉ còn trên deal).</Text>
@@ -1832,6 +1944,13 @@ export default function WorkScreen() {
           </Pressable>
         </Pressable>
       </Modal>
+
+      <ImageGalleryLightbox
+        visible={!!gallery}
+        images={gallery?.images || []}
+        initialIndex={gallery?.index || 0}
+        onClose={() => setGallery(null)}
+      />
 
       <WorkFilterSheet
         visible={filterSheetOpen}

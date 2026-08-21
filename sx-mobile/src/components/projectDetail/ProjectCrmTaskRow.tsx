@@ -7,7 +7,6 @@ import {
   Alert,
   FlatList,
   KeyboardAvoidingView,
-  Linking,
   Modal,
   Platform,
   Pressable,
@@ -34,7 +33,9 @@ import {
 import { Radii, Spacing } from '../../theme';
 import type { CrmTask, PersonRef } from '../../types';
 import TapHighlight from '../TapHighlight';
-import { resolveMediaUrl } from '../../lib/mediaUtils';
+import ImageGalleryLightbox, { type GalleryImage } from '../ImageGalleryLightbox';
+import { isImageFile, resolveMediaUrl } from '../../lib/mediaUtils';
+import { saveMessengerAttachment } from '../../lib/messengerFileOpen';
 
 import SpinningLoader from '../SpinningLoader';
 type Props = {
@@ -106,6 +107,8 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted, 
   const [noteDraft, setNoteDraft] = useState('');
   const [attachments, setAttachments] = useState<TaskAttachment[]>([]);
   const [attLoading, setAttLoading] = useState(false);
+  const [gallery, setGallery] = useState<{ images: GalleryImage[]; index: number } | null>(null);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
 
   const [editTitle, setEditTitle] = useState('');
   const [editDesc, setEditDesc] = useState('');
@@ -133,10 +136,47 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted, 
     try {
       const list = await fetchCrmTaskAttachments(dealId, task.id);
       setAttachments(list.filter((a) => a.doc_type !== 'task_inline_note'));
-    } catch {
+    } catch (e) {
+      Alert.alert('Lỗi', formatApiError(e));
       setAttachments([]);
     } finally {
       setAttLoading(false);
+    }
+  };
+
+  const openAttachment = async (a: TaskAttachment) => {
+    if (a.doc_type === 'task_note' && !a.file_url) return;
+    const url = resolveMediaUrl(a.file_url);
+    if (!url) {
+      Alert.alert('Thiếu link', 'File này không có đường dẫn.');
+      return;
+    }
+    if (isImageFile(a)) {
+      const images = attachments
+        .filter((x) => isImageFile(x) && x.file_url)
+        .map((x) => {
+          const uri = resolveMediaUrl(x.file_url);
+          if (!uri) return null;
+          return { uri, title: x.name || x.file_name || 'Ảnh' } as GalleryImage;
+        })
+        .filter(Boolean) as GalleryImage[];
+      const idx = Math.max(0, images.findIndex((img) => img.uri === url));
+      if (!images.length) return;
+      setGallery({ images, index: idx >= 0 ? idx : 0 });
+      return;
+    }
+    if (downloadingId) return;
+    setDownloadingId(a.id);
+    try {
+      const saved = await saveMessengerAttachment(url, {
+        name: a.name || a.file_name,
+        mime: a.mime_type,
+      });
+      Alert.alert('Đã tải về', `«${saved.displayName}» đã lưu vào ${saved.locationHint}.`);
+    } catch (e) {
+      Alert.alert('Tải file', formatApiError(e));
+    } finally {
+      setDownloadingId(null);
     }
   };
 
@@ -870,13 +910,17 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted, 
                       <TapHighlight
                         key={a.id}
                         style={styles.attRow}
-                        onPress={() => {
-                          const url = resolveMediaUrl(a.file_url);
-                          if (url) void Linking.openURL(url);
-                        }}
+                        onPress={() => void openAttachment(a)}
+                        disabled={downloadingId === a.id}
                       >
                         <Ionicons
-                          name={a.doc_type === 'task_note' ? 'document-text-outline' : 'document-outline'}
+                          name={
+                            a.doc_type === 'task_note'
+                              ? 'document-text-outline'
+                              : isImageFile(a)
+                                ? 'image-outline'
+                                : 'document-outline'
+                          }
                           size={18}
                           color={colors.primary}
                         />
@@ -886,16 +930,31 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted, 
                           </Text>
                           {a.doc_type === 'task_note' && a.notes ? (
                             <Text style={styles.attType} numberOfLines={2}>{a.notes}</Text>
-                          ) : null}
+                          ) : (
+                            <Text style={styles.attType}>
+                              {isImageFile(a) ? 'Ảnh · xem trong app' : 'Tải về máy'}
+                            </Text>
+                          )}
                         </View>
-                        <TapHighlight
-                          style={styles.attDelete}
-                          onPress={() => confirmDeleteFile(a)}
-                          disabled={busy}
-                          hitSlop={4}
-                        >
-                          <Ionicons name="trash-outline" size={16} color={colors.danger} />
-                        </TapHighlight>
+                        {downloadingId === a.id ? (
+                          <SpinningLoader size="small" color={colors.primary} />
+                        ) : (
+                          <Ionicons
+                            name={isImageFile(a) ? 'expand-outline' : 'download-outline'}
+                            size={16}
+                            color={colors.textMuted}
+                          />
+                        )}
+                        {a.doc_type !== 'task_note' ? (
+                          <TapHighlight
+                            style={styles.attDelete}
+                            onPress={() => confirmDeleteFile(a)}
+                            disabled={busy}
+                            hitSlop={4}
+                          >
+                            <Ionicons name="trash-outline" size={16} color={colors.danger} />
+                          </TapHighlight>
+                        ) : null}
                       </TapHighlight>
                     ))}
                   </ScrollView>
@@ -1035,6 +1094,12 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted, 
         </View>
       </View>
       {renderModal()}
+      <ImageGalleryLightbox
+        visible={!!gallery}
+        images={gallery?.images || []}
+        initialIndex={gallery?.index || 0}
+        onClose={() => setGallery(null)}
+      />
     </>
   );
 }
