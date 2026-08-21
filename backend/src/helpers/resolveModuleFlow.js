@@ -128,6 +128,8 @@ async function flowAllowsProductionCreate(flowId) {
 
 /**
  * Kiểm tra bàn giao sau SX theo luồng.
+ * Chỉ chuyển hướng khi bước kế là module tùy chỉnh; bước trống / null / builtin khác
+ * không chặn bàn giao Lắp đặt.
  * @returns {{ ok: true, next: object|null }
  *   | { ok: false, error: string, nextModuleKey?: string, customModule?: object }}
  */
@@ -138,20 +140,7 @@ async function assertProductionHandoffTarget(flowId) {
   if (!keyed.length) return { ok: true, next: null };
 
   const next = await resolveNextModuleStep(flowId, 'production');
-  if (!next) {
-    // Có bước production nhưng không có bước sau → không cho VC
-    const hasProd = keyed.some((s) => normalizeModuleKey(s.module_key) === 'production');
-    if (hasProd) {
-      return {
-        ok: false,
-        error: 'Luồng không có bước sau Sản xuất. Vào Setup luồng để thêm Lắp đặt hoặc module tùy chỉnh.',
-      };
-    }
-    return { ok: true, next: null };
-  }
-
-  const mk = normalizeModuleKey(next.module_key);
-  if (mk === 'logistics') return { ok: true, next };
+  const mk = normalizeModuleKey(next?.module_key);
   if (isCustomModuleKey(mk)) {
     const customModule = await loadAppModuleByKey(mk);
     return {
@@ -162,12 +151,7 @@ async function assertProductionHandoffTarget(flowId) {
       next,
     };
   }
-  return {
-    ok: false,
-    error: `Luồng không cho bàn giao Lắp đặt — bước kế là «${mk}».`,
-    nextModuleKey: mk,
-    next,
-  };
+  return { ok: true, next: next || null };
 }
 
 /**
