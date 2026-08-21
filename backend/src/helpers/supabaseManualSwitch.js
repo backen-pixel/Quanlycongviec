@@ -270,6 +270,31 @@ function getPublicPendingSwitch() {
   return safe;
 }
 
+/** Hydrate client mới connect — chỉ emit khi đang có đếm ngược (không spam khi idle). */
+function emitPendingSwitchToSocket(socket) {
+  if (!socket?.emit) return false;
+  const pending = getPublicPendingSwitch();
+  if (!pending?.switch_at) return false;
+  try {
+    socket.emit('supabase:switch-countdown', {
+      from: pending.from,
+      target: pending.target,
+      direction: pending.direction,
+      switch_at: pending.switch_at,
+      countdown_sec: pending.countdown_sec,
+      remaining_ms: pending.remaining_ms,
+      sync_verified_100: pending.sync_verified_100 === true,
+      sync_after: pending.sync_after === true,
+      quick_switch: pending.quick_switch === true || pending.sync_after === true,
+      message: pending.message || null,
+    });
+    return true;
+  } catch (e) {
+    console.warn('[supabase-switch] emit pending to socket:', e.message);
+    return false;
+  }
+}
+
 async function runPostSwitchSync(from, target, userId) {
   const direction = from === 'primary' && target === 'backup'
     ? 'Chính → Dự phòng'
@@ -1147,6 +1172,7 @@ module.exports = {
   cancelManualSwitch,
   getPendingSwitch,
   getPublicPendingSwitch,
+  emitPendingSwitchToSocket,
   getPublicSyncActivity,
   COUNTDOWN_MS,
   QUICK_SWITCH_COUNTDOWN_MS,

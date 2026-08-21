@@ -602,6 +602,17 @@ io.on('connection', (socket) => {
     void syncPendingIncomingCalls(userId, socket);
   }
 
+  // Chỉ khi đang đếm ngược chuyển DB — hydrate client mới/reconnect (không HTTP poll)
+  try {
+    require('./helpers/supabaseManualSwitch').emitPendingSwitchToSocket(socket);
+  } catch { /* optional */ }
+
+  socket.on('supabase:switch-pending-request', () => {
+    try {
+      require('./helpers/supabaseManualSwitch').emitPendingSwitchToSocket(socket);
+    } catch { /* optional */ }
+  });
+
   // Đăng ký handler signaling cuộc gọi 1-1 thế hệ mới.
   registerCallSignaling(socket);
 
@@ -1263,6 +1274,14 @@ server.listen(config.port, () => {
     require('./jobs/sxScheduleSlipJob').start();
   } catch (e) {
     console.warn('[sx-schedule-slip] Failed to start:', e.message);
+  }
+
+  // Cron quá hạn → Zalo Bot sendMessage (cấu hình ở /management/project-deadlines)
+  // Disable: PROJECT_DEADLINE_DISPATCH_DISABLED=1
+  try {
+    require('./jobs/projectDeadlineDispatch').start();
+  } catch (e) {
+    console.warn('[project-deadline-dispatch] Failed to start:', e.message);
   }
 
   // Cron refresh Zalo OA token hàng ngày 6:00 VN — disable: ZALO_OA_TOKEN_CRON_DISABLED=1
