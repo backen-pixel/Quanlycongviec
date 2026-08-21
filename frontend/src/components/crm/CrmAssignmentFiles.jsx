@@ -6,19 +6,42 @@ import {
   ChevronLeft, ChevronRight, Trash2, Download,
 } from 'lucide-react';
 
-/** Phân loại hiển thị: image | video | audio | link | doc */
+/** Ghép url + tên file để nhận đuôi (URL storage đôi khi không có extension). */
+function fileProbeText(f) {
+  return `${f?.file_name || ''} ${f?.file_url || ''}`.trim();
+}
+
+/** Phân loại hiển thị: image | video | audio | pdf | office | link | doc */
 export function fileSlideKind(f) {
   const mime = (f.mime_type || '').toLowerCase();
   const url = (f.file_url || '').trim();
-  const isUrlOnly = !f.storage_path || mime === 'text/uri-list' || mime === 'application/link';
+  const name = (f.file_name || '').toLowerCase();
+  const probe = fileProbeText(f);
+  const explicitLink = mime === 'text/uri-list' || mime === 'application/link';
 
-  if (isUrlOnly && /^https?:\/\//i.test(url)) return 'link';
-  if (mime.startsWith('image/')) return 'image';
-  if (mime.startsWith('video/')) return 'video';
-  if (mime.startsWith('audio/')) return 'audio';
-  if (/\.(jpe?g|png|gif|webp|bmp|svg)(\?|$)/i.test(url)) return 'image';
-  if (/\.(mp4|webm|mov|ogg|m4v)(\?|$)/i.test(url)) return 'video';
-  if (/\.(mp3|wav|m4a|aac|flac|ogg)(\?|$)/i.test(url)) return 'audio';
+  // Ưu tiên nhận diện media/tài liệu theo mime + đuôi — kể cả bản ghi sync thiếu storage_path
+  if (mime.startsWith('image/') || /\.(jpe?g|png|gif|webp|bmp|svg)(\?|$)/i.test(probe)) return 'image';
+  if (mime.startsWith('video/') || /\.(mp4|webm|mov|ogg|m4v)(\?|$)/i.test(probe)) return 'video';
+  if (mime.startsWith('audio/') || /\.(mp3|wav|m4a|aac|flac)(\?|$)/i.test(probe)) return 'audio';
+  if (mime.includes('pdf') || /\.pdf(\?|$)/i.test(probe)) return 'pdf';
+  if (
+    /(word|msword|officedocument\.wordprocessing|rtf)/.test(mime)
+    || /\.(docx?|rtf)(\?|$)/i.test(probe)
+  ) return 'office';
+  if (
+    /(excel|spreadsheet|sheet)/.test(mime)
+    || /\.(xlsx?|csv)(\?|$)/i.test(probe)
+  ) return 'office';
+  if (
+    /(powerpoint|presentation)/.test(mime)
+    || /\.(pptx?)(\?|$)/i.test(probe)
+  ) return 'office';
+
+  // Chỉ coi là «link thuần» khi đánh dấu link hoặc không có dấu hiệu file đính kèm
+  if (explicitLink && /^https?:\/\//i.test(url)) return 'link';
+  if (!f.storage_path && /^https?:\/\//i.test(url) && !name.includes('.') && !/\.\w{2,5}(\?|$)/i.test(url)) {
+    return 'link';
+  }
   return 'doc';
 }
 
@@ -27,6 +50,14 @@ export function fileThumbEmoji(sk, f) {
   if (sk === 'video') return '🎬';
   if (sk === 'audio') return '🎵';
   if (sk === 'link') return '🔗';
+  if (sk === 'pdf') return '📕';
+  if (sk === 'office') {
+    const mime = (f?.mime_type || '').toLowerCase();
+    const name = (f?.file_name || '').toLowerCase();
+    if (/(sheet|excel|spreadsheet)/.test(mime) || /\.(xlsx?|csv)$/i.test(name)) return '📊';
+    if (/(presentation|powerpoint)/.test(mime) || /\.(pptx?)$/i.test(name)) return '📽️';
+    return '📄';
+  }
   const mime = (f?.mime_type || '').toLowerCase();
   const name = (f?.file_name || '').toLowerCase();
   if (mime.includes('pdf') || name.endsWith('.pdf')) return '📕';
@@ -35,6 +66,13 @@ export function fileThumbEmoji(sk, f) {
   if (/(zip|rar|7z|tar)/.test(mime) || /\.(zip|rar|7z)$/i.test(name)) return '📦';
   if (/(presentation|powerpoint)/.test(mime) || /\.(pptx?)$/i.test(name)) return '📽️';
   return '📎';
+}
+
+/** Preview Office Online (cần URL public https). */
+function officeEmbedUrl(fileUrl) {
+  const u = String(fileUrl || '').trim();
+  if (!/^https:\/\//i.test(u)) return null;
+  return `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(u)}`;
 }
 
 export function useAssignmentFiles(assignmentId, kind) {
@@ -199,6 +237,49 @@ export function RequirementFilesGallery({ assignmentId, canUpload }) {
         </div>
       );
     }
+    if (kind === 'pdf') {
+      return (
+        <iframe
+          key={cur.id}
+          title={cur.file_name || 'PDF'}
+          src={cur.file_url}
+          className="w-full h-[min(52vh,420px)] bg-white border-0"
+        />
+      );
+    }
+    if (kind === 'office') {
+      const embed = officeEmbedUrl(cur.file_url);
+      if (embed) {
+        return (
+          <div className="relative w-full">
+            <iframe
+              key={cur.id}
+              title={cur.file_name || 'Office'}
+              src={embed}
+              className="w-full h-[min(52vh,420px)] bg-white border-0"
+            />
+            <p className="absolute bottom-2 right-2 text-[10px] text-gray-500 bg-white/90 px-2 py-0.5 rounded">
+              Xem trước Office Online
+            </p>
+          </div>
+        );
+      }
+      return (
+        <div className="flex flex-col items-center justify-center gap-4 p-10 min-h-[200px]">
+          <span className="text-5xl">{fileThumbEmoji('office', cur)}</span>
+          <p className="text-sm font-medium text-gray-800 text-center px-4 max-w-md">{cur.file_name}</p>
+          <a
+            href={cur.file_url}
+            target="_blank"
+            rel="noreferrer"
+            download={cur.file_name}
+            className="h-10 px-6 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium flex items-center gap-2 shadow-sm"
+          >
+            <Download className="h-4 w-4" /> Bấm để tải file về
+          </a>
+        </div>
+      );
+    }
     if (kind === 'link') {
       return (
         <div className="flex flex-col items-center justify-center gap-3 p-8 min-h-[200px]">
@@ -268,7 +349,7 @@ export function RequirementFilesGallery({ assignmentId, canUpload }) {
           <div className="px-3 py-2 flex items-center justify-between gap-2 border-t border-blue-100 bg-white/80">
             <p className="text-xs text-gray-700 truncate flex-1" title={cur?.file_name}>{cur?.file_name}</p>
             <div className="flex items-center gap-2 shrink-0">
-              {kind === 'doc' || kind === 'audio' ? (
+              {kind === 'doc' || kind === 'audio' || kind === 'pdf' || kind === 'office' ? (
                 <a href={cur?.file_url} target="_blank" rel="noreferrer" download={cur?.file_name} className="text-[11px] text-blue-600 hover:underline flex items-center gap-0.5">
                   <Download className="h-3 w-3" /> Tải về
                 </a>

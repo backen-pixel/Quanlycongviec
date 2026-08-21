@@ -38,7 +38,7 @@ function assignmentFileRowFromAttachment(att, assignmentId, kind, uploadedBy) {
     file_url: att.file_url,
     file_size: att.file_size || 0,
     mime_type: att.mime_type || null,
-    storage_path: null,
+    storage_path: att.storage_path || null,
     uploaded_by: uploadedBy || att.created_by || null,
     source_task_attachment_id: att.id,
   };
