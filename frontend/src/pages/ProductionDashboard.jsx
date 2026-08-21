@@ -104,6 +104,7 @@ const SX_ALT_VIEW_MODES = SX_VIEW_MODES.filter((v) => v.id !== 'kanban');
 const LS_SX = 'sx_dash_filters_v1';
 const LS_SX_FILTER_PANEL_POS = 'sx_filter_panel_pos';
 const LS_SX_STAGE_KPIS = 'sx_dash_stage_kpis_v1';
+const LS_SX_COLUMN_COUNTS = 'sx_dash_column_counts_v1';
 /** v2: mặc định per-column (cuộn cột → tải thẻ); bỏ qua preference unified cũ. */
 const LS_SX_KANBAN_COLUMN_SCROLL = 'sx_kanban_column_scroll_mode_v2';
 const KANBAN_COLUMN_SCROLL_MODES = ['unified', 'per-column'];
@@ -148,6 +149,45 @@ function writeSxStageKpisCache(cacheKey, kpis) {
   } catch {
     /* ignore quota */
   }
+}
+
+function readSxColumnCountsCache(cacheKey) {
+  if (!cacheKey) return null;
+  try {
+    const all = JSON.parse(sessionStorage.getItem(LS_SX_COLUMN_COUNTS) || '{}');
+    const hit = all[cacheKey];
+    if (!hit || typeof hit !== 'object' || !hit.counts || typeof hit.counts !== 'object') return null;
+    return hit.counts;
+  } catch {
+    return null;
+  }
+}
+
+function writeSxColumnCountsCache(cacheKey, counts) {
+  if (!cacheKey || !counts || typeof counts !== 'object') return;
+  try {
+    const all = JSON.parse(sessionStorage.getItem(LS_SX_COLUMN_COUNTS) || '{}');
+    all[cacheKey] = { counts, ts: Date.now() };
+    const keys = Object.keys(all);
+    if (keys.length > 40) {
+      keys
+        .map((k) => ({ k, ts: Number(all[k]?.ts) || 0 }))
+        .sort((a, b) => a.ts - b.ts)
+        .slice(0, keys.length - 40)
+        .forEach(({ k }) => { delete all[k]; });
+    }
+    sessionStorage.setItem(LS_SX_COLUMN_COUNTS, JSON.stringify(all));
+  } catch {
+    /* ignore quota */
+  }
+}
+
+/** Badge cột = tổng summary server — không cộng dồn theo thẻ đã tải khi cuộn. */
+function resolveSxColumnBadgeTotal(serverTotal, itemsLength) {
+  if (!Number.isFinite(serverTotal)) return null;
+  // Race: summary=0 trong khi cột đã có thẻ → tạm hiện số thẻ, không khóa 0.
+  if (serverTotal === 0 && itemsLength > 0) return itemsLength;
+  return serverTotal;
 }
 /** Placeholder skeleton `ph`/`pr`/`cc` — không gọi API với id này (cột UUID thật). */
 const SX_KANBAN_COL_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -274,6 +314,16 @@ function mergeSxProjectsPreferColumns(existing, incoming, targetColIds, maxRecor
     return ib - ia;
   });
   return [...inTarget, ...rest].slice(0, cap);
+}
+
+/** Đếm thẻ theo `sx_kanban_column_id` thô — khớp badge summary / filter API tải theo cột. */
+function countSxProjectsByRawColumn(projectList) {
+  const counts = {};
+  for (const row of Array.isArray(projectList) ? projectList : []) {
+    const key = row?.sx_kanban_column_id ? String(row.sx_kanban_column_id) : '__none__';
+    counts[key] = (counts[key] || 0) + 1;
+  }
+  return counts;
 }
 
 /** Đếm thẻ theo cột hiển thị (khớp Kanban), không chỉ `sx_kanban_column_id` thô. */
@@ -940,7 +990,8 @@ export default function ProductionDashboard() {
     setProjectPageState((prev) => ({ ...prev, hasMore: false, loading: false }));
     // Giữ pipelineStageCounts cũ đến khi summary=1 về — badge cột hiện tổng ngay, không cộng dần theo thẻ tải.
     // KPI server (Tổng/Quá hạn/Đang SX…) gắn với filter hiện tại — không giữ số công ty cũ.
-    setStagePageState({});
+    // Silent refresh: không xóa phân trang cột — tránh «Tải thêm» bị reset → nhấp nháy mà không thêm thẻ.
+    if (!silent) setStagePageState({});
     const isStale = () => seq !== loadSeqRef.current;
     const fetchCompanyId = opts.companyId || companyParam;
     const fetchDealCompanyId = opts.dealCompanyId !== undefined ? opts.dealCompanyId : dealCompanyParam;
@@ -1014,6 +1065,16 @@ export default function ProductionDashboard() {
       } else {
         setSummaryStageKpis(null);
       }
+      // Badge cột: hydrate tổng từ cache ngay — không đợi summary rồi mới hiện / cộng dồn theo thẻ.
+      const cachedColCounts = readSxColumnCountsCache(stageKpiCacheKey);
+      if (cachedColCounts && Object.keys(cachedColCounts).length) {
+        setPipelineStageCounts(cachedColCounts);
+        pipelineStageCountsRef.current = cachedColCounts;
+      } else if (!silent) {
+        // Đổi filter / load đầy đủ: xóa count cũ để badge hiện «…» thay vì số filter trước.
+        setPipelineStageCounts({});
+        pipelineStageCountsRef.current = {};
+      }
       setSummaryKpisPending(true);
 
       void api.get('/production/projects', {
@@ -1023,6 +1084,8 @@ export default function ProductionDashboard() {
         if (isStale()) return;
         const counts = data?.counts && typeof data.counts === 'object' ? data.counts : {};
         setPipelineStageCounts(counts);
+        pipelineStageCountsRef.current = counts;
+        writeSxColumnCountsCache(stageKpiCacheKey, counts);
         const dlCounts = data?.deadline_counts && typeof data.deadline_counts === 'object'
           ? data.deadline_counts
           : {};
@@ -1096,33 +1159,49 @@ export default function ProductionDashboard() {
           loading: false,
         }));
         setStagePageState((prev) => {
-          const loadedByCol = countSxProjectsByDisplayColumn(projectList, pipelineRef.current);
+          // Silent: đếm trên board đã merge (giữ thẻ tải thêm); full load: đếm bootstrap.
+          const baseList = silent
+            ? (() => {
+              const existing = projectsRef.current || [];
+              if (!existing.length) return projectList;
+              const byId = new Map(existing.map((row) => [String(row.id), row]));
+              projectList.forEach((row) => byId.set(String(row.id), row));
+              return [...byId.values()];
+            })()
+            : projectList;
+          const loadedByCol = countSxProjectsByDisplayColumn(baseList, pipelineRef.current);
+          const loadedByRaw = countSxProjectsByRawColumn(baseList);
           const next = { ...prev };
           const ids = new Set([
             ...Object.keys(next),
             ...Object.keys(loadedByCol),
+            ...Object.keys(loadedByRaw),
             ...Object.keys(pipelineStageCountsRef.current || {}),
           ]);
           ids.forEach((stageId) => {
-            const loaded = Number(loadedByCol[stageId] || 0);
+            const loadedRaw = Number(loadedByRaw[stageId] || 0);
+            const loadedDisplay = Number(loadedByCol[stageId] || 0);
+            // Tiến độ tải theo cột API = raw UUID (khớp badge); display chỉ để UI.
+            const loaded = loadedRaw > 0 ? loadedRaw : loadedDisplay;
             const total = Number(
               next[stageId]?.total
               ?? pipelineStageCountsRef.current?.[stageId]
               ?? pipelineStageCounts[stageId],
             ) || 0;
+            const prevNext = Number(next[stageId]?.nextPage) || 1;
+            const guessedNext = loaded >= SX_KANBAN_PAGE_SIZE
+              ? Math.floor(loaded / SX_KANBAN_PAGE_SIZE) + 1
+              : 1;
             next[stageId] = {
               ...(next[stageId] || {}),
               loaded,
-              // Bootstrap lẫn cột: không reset page về 1 nếu cột đã có nhiều thẻ (tránh «Tải thêm» trùng trang).
-              nextPage: Math.max(
-                Number(next[stageId]?.nextPage) || 1,
-                loaded >= SX_KANBAN_PAGE_SIZE
-                  ? Math.floor(loaded / SX_KANBAN_PAGE_SIZE) + 1
-                  : 1,
-              ),
+              // Silent: không kéo nextPage lùi về 1 (tránh tải lại trang đã có).
+              nextPage: Math.max(prevNext, guessedNext),
               hasMore: total > 0 ? loaded < total : !!projectPage.hasMore,
               loading: false,
               total: total || next[stageId]?.total || 0,
+              // Silent giữ exhausted nếu đã hết trang trước đó.
+              ...(silent && next[stageId]?.exhausted ? { exhausted: true, hasMore: false } : {}),
             };
           });
           return next;
@@ -1132,7 +1211,7 @@ export default function ProductionDashboard() {
         if (projectList.length === 0) {
           setProjects((prev) => {
             if (Array.isArray(prev) && prev.length > 0
-              && (returningFromDetail || columnFetchTouchSeqRef.current === seq)) {
+              && (silent || returningFromDetail || columnFetchTouchSeqRef.current === seq)) {
               return prev;
             }
             return applyWorkshopProjectRenamePatches(projectList);
@@ -1142,14 +1221,16 @@ export default function ProductionDashboard() {
             applyWorkshopProjectRenamePatches(projectList),
             pendingStageMovesRef.current,
           );
-          // Merge thẻ column-fetch cùng seq — bootstrap không được xóa thẻ vừa tải theo cột.
-          if (columnFetchTouchSeqRef.current === seq) {
-            const existing = projectsRef.current || [];
-            if (existing.length) {
-              const byId = new Map(existing.map((row) => [String(row.id), row]));
-              next.forEach((row) => byId.set(String(row.id), row));
-              next = [...byId.values()];
-            }
+          // Silent / cùng seq với column-fetch / quay detail: giữ thẻ đã tải thêm theo cột.
+          const existing = projectsRef.current || [];
+          if (existing.length && (
+            silent
+            || returningFromDetail
+            || columnFetchTouchSeqRef.current === seq
+          )) {
+            const byId = new Map(existing.map((row) => [String(row.id), row]));
+            next.forEach((row) => byId.set(String(row.id), row));
+            next = [...byId.values()];
           }
           const pending = pendingNewDealProjectRef.current;
           const pid = pending?.id != null ? String(pending.id) : '';
@@ -1160,6 +1241,7 @@ export default function ProductionDashboard() {
             pendingNewDealProjectRef.current = null;
           }
           setProjects(next);
+          projectsRef.current = next;
           if (next.length) saveWorkshopBoardSnapshot('sx', { projects: next });
         }
       }
@@ -1170,10 +1252,21 @@ export default function ProductionDashboard() {
         const counts = pipelineStageCountsRef.current || {};
         const ids = Object.keys(counts).filter((id) => (Number(counts[id]) || 0) > 0);
         if (!ids.length) return;
-        const loaded = countSxProjectsByDisplayColumn(projectsRef.current || [], pipelineRef.current);
-        const need = ids.filter((id) => (Number(loaded[id]) || 0) < Math.min(SX_ENSURE_INITIAL_PER_COLUMN, Number(counts[id]) || 0));
+        const loadedDisp = countSxProjectsByDisplayColumn(projectsRef.current || [], pipelineRef.current);
+        const loadedRaw = countSxProjectsByRawColumn(projectsRef.current || []);
+        const colLoaded = (id) => Math.max(Number(loadedRaw[id]) || 0, Number(loadedDisp[id]) || 0);
+        // Silent: chỉ refill cột đang 0 thẻ — không force toàn board (gây nhấp nháy «Tải thêm»).
+        if (silent && (projectsRef.current || []).length > 0) {
+          const emptyCols = ids.filter((id) => colLoaded(id) === 0);
+          if (!emptyCols.length) return;
+          void loadMoreProjectsRef.current?.(emptyCols, { ensureInitial: true, force: true });
+          return;
+        }
+        const need = ids.filter((id) => colLoaded(id) < Math.min(SX_ENSURE_INITIAL_PER_COLUMN, Number(counts[id]) || 0));
         if (!need.length && (projectsRef.current || []).length > 0) return;
-        void loadMoreProjectsRef.current?.(need.length ? need : ids, { ensureInitial: true, force: true });
+        const forceRefill = !(projectsRef.current || []).length
+          || need.some((id) => colLoaded(id) === 0);
+        void loadMoreProjectsRef.current?.(need.length ? need : ids, { ensureInitial: true, force: forceRefill });
       }, 280);
     } catch (e) {
       console.error(e);
@@ -1207,6 +1300,7 @@ export default function ProductionDashboard() {
     const stageState = stagePageStateRef.current || {};
     const stageCounts = pipelineStageCountsRef.current || {};
     const loadedByDisplay = countSxProjectsByDisplayColumn(currentProjects, pipelineRef.current);
+    const loadedByRaw = countSxProjectsByRawColumn(currentProjects);
 
     const requestedRaw = Array.isArray(stageIds) && stageIds.length
       ? stageIds.map(String)
@@ -1259,6 +1353,15 @@ export default function ProductionDashboard() {
         ? intakeTotalCombined
         : Number(stageCounts[stageId] ?? state.total);
       if (Number.isFinite(total) && total <= 0) continue;
+      // Badge/API theo raw UUID — so sánh loaded raw (không dùng display, dễ lệch → tải mãi / nhấp nháy).
+      let loadedRaw = 0;
+      if (isIntakeLoad && intakeId) {
+        loadedRaw = (Number(loadedByRaw[intakeId]) || 0) + (Number(loadedByRaw.__none__) || 0);
+      } else if (stageId === '__none__') {
+        loadedRaw = Number(loadedByRaw.__none__) || 0;
+      } else {
+        loadedRaw = Number(loadedByRaw[stageId]) || 0;
+      }
       const loadedDisplay = Number(
         (intakeId && isIntakeLoad
           ? (loadedByDisplay[intakeId] || 0)
@@ -1267,12 +1370,10 @@ export default function ProductionDashboard() {
         || state.loaded
         || 0,
       );
-      // Intake: số thẻ đã hiện trên cột (UUID) là nguồn chuẩn — tránh đếm kép id+__none__.
-      const loaded = isIntakeLoad && intakeId
-        ? (Number(loadedByDisplay[intakeId]) || loadedDisplay)
-        : loadedDisplay;
+      // ensureInitial: đủ thẻ trên cột (display hoặc raw) thì thôi.
+      const loaded = Math.max(loadedRaw, loadedDisplay);
       const stillNeed = Number.isFinite(total) && total > 0
-        ? loaded < total
+        ? loadedRaw < total
         : state.hasMore !== false;
       if (!stillNeed) continue;
       if (ensureInitial && !force) {
@@ -1319,7 +1420,10 @@ export default function ProductionDashboard() {
             ...(filterPersonId ? { production_person_id: filterPersonId } : {}),
           },
         });
-        if (seq !== loadSeqRef.current) return;
+        if (seq !== loadSeqRef.current) {
+          setProjectPageState((prev) => ({ ...prev, loading: false }));
+          return;
+        }
         const incoming = applyPendingStageMoves(
           applyWorkshopProjectRenamePatches(payload.projects || []),
           pendingStageMovesRef.current,
@@ -1388,6 +1492,7 @@ export default function ProductionDashboard() {
           startPage: page,
           view: 'kanban',
           includeMeta: true,
+          bustCache: true,
           extraParams: {
             ...commonExtra,
             sx_kanban_column_id: stageId === '__none__' ? '__none__' : stageId,
@@ -1413,7 +1518,16 @@ export default function ProductionDashboard() {
         return [stageId, { ...payload, nextPage, _fetchStartPage: startPage }];
       };
       const pages = await Promise.all(targets.map(fetchColPage));
-      if (seq !== loadSeqRef.current) return;
+      if (seq !== loadSeqRef.current) {
+        setStagePageState((prev) => {
+          const next = { ...prev };
+          targets.forEach((id) => {
+            next[id] = { ...(next[id] || {}), loading: false };
+          });
+          return next;
+        });
+        return;
+      }
       const incoming = [];
       const pageMetaByStage = new Map();
       for (const [stageId, payload] of pages) {
@@ -1447,7 +1561,16 @@ export default function ProductionDashboard() {
       })();
       if (missingIntakeCompanion) {
         const companionPage = await fetchColPage(missingIntakeCompanion);
-        if (seq !== loadSeqRef.current) return;
+        if (seq !== loadSeqRef.current) {
+          setStagePageState((prev) => {
+            const next = { ...prev };
+            targets.forEach((id) => {
+              next[id] = { ...(next[id] || {}), loading: false };
+            });
+            return next;
+          });
+          return;
+        }
         const [, companionPayload] = companionPage;
         if ((companionPayload?.projects || []).length) {
           incoming.push(...companionPayload.projects);
@@ -1473,6 +1596,7 @@ export default function ProductionDashboard() {
       projectsRef.current = nextProjects;
 
       const loadedByCol = countSxProjectsByDisplayColumn(nextProjects, pipelineRef.current);
+      const loadedByRawAfter = countSxProjectsByRawColumn(nextProjects);
       let boardHasMore = false;
       setStagePageState((prev) => {
         const next = { ...prev };
@@ -1480,13 +1604,24 @@ export default function ProductionDashboard() {
           const payload = pageMetaByStage.get(stageId) || {};
           const prevLoaded = Number(prev[stageId]?.loaded) || 0;
           const isIntakeLoad = stageId === '__none__' || (intakeId && stageId === intakeId);
-          const loaded = isIntakeLoad && intakeId
+          let loadedRaw = 0;
+          if (isIntakeLoad && intakeId) {
+            loadedRaw = (Number(loadedByRawAfter[intakeId]) || 0)
+              + (Number(loadedByRawAfter.__none__) || 0);
+          } else if (stageId === '__none__') {
+            loadedRaw = Number(loadedByRawAfter.__none__) || 0;
+          } else {
+            loadedRaw = Number(loadedByRawAfter[stageId]) || 0;
+          }
+          const loadedDisplay = isIntakeLoad && intakeId
             ? (Number(loadedByCol[intakeId]) || 0)
             : (Number(
               loadedByCol[stageId]
               ?? (stageId === '__none__' ? loadedByCol.__none__ : undefined)
               ?? 0,
             ) || 0);
+          // Tiến độ vs badge = raw; UI cột có thể khác display.
+          const loaded = loadedRaw;
           const total = isIntakeLoad && intakeTotalCombined > 0
             ? intakeTotalCombined
             : (Number(stageCounts[stageId] ?? payload.total ?? next[stageId]?.total) || 0);
@@ -1500,7 +1635,7 @@ export default function ProductionDashboard() {
           ).length;
           const addedNow = Math.max(0, loaded - prevLoaded);
           // Tiến trang khi đã nhận batch — kể cả trùng (đã skip trang trong fetchColPage).
-          const nextPage = fetched > 0 || addedNow > 0
+          const nextPage = fetched > 0 || addedNow > 0 || newInPayload > 0
             ? Math.max(Number(payload.nextPage) || (startPage + 1), startPage + 1)
             : startPage;
           const noProgress = fetched > 0 && addedNow <= 0 && newInPayload <= 0;
@@ -1513,10 +1648,12 @@ export default function ProductionDashboard() {
           const emptyRetries = fetched === 0
             ? (Number(prev[stageId]?.emptyRetries) || 0) + 1
             : 0;
+          // Nhanh hơn: 2 lần không thêm thẻ mới → dừng (tránh cuộn/sentinel nhấp nháy mãi).
           const exhausted = expectMore
-            ? (fetched === 0 && emptyRetries >= 4) || noProgressCount >= 4
+            ? (fetched === 0 && emptyRetries >= 3) || noProgressCount >= 2
             : (fetched === 0 && emptyRetries >= 2) || noProgressCount >= 2;
-          const colHasMore = exhausted
+          const apiSaysDone = payload.hasMore === false && newInPayload <= 0;
+          const colHasMore = exhausted || apiSaysDone
             ? false
             : (total > 0
               // Không khóa hasMore vì trần board — merge ưu tiên cột vẫn có thể thay thẻ.
@@ -1532,6 +1669,7 @@ export default function ProductionDashboard() {
             loading: false,
             total,
             loaded,
+            loadedDisplay,
           };
           // Đồng bộ loaded/total intake — không copy exhausted (mỗi phía UUID/__none__ tự hết riêng).
           if (isIntakeLoad && intakeId) {
@@ -1684,6 +1822,14 @@ export default function ProductionDashboard() {
     boardRefreshTimerRef.current = setTimeout(() => {
       boardRefreshTimerRef.current = null;
       if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      // Đang «Tải thêm» theo cột — hoãn refresh để không abort request / xóa thẻ vừa tải.
+      if (stagePageLoadingRef.current.size > 0 || projectPageLoadingRef.current) {
+        boardRefreshTimerRef.current = setTimeout(() => {
+          boardRefreshTimerRef.current = null;
+          loadRef.current?.({ silent: true, ...opts });
+        }, 1500);
+        return;
+      }
       loadRef.current?.({ silent: true, ...opts });
     }, delay);
   }, []);
@@ -4567,12 +4713,9 @@ const KanbanStageCard = memo(function KanbanStageCard({
   const serverTotal = Number.isFinite(fromProp)
     ? fromProp
     : (Number.isFinite(fromCounts) ? fromCounts : NaN);
-  // Badge = tổng server; nếu summary/race trả 0 trong khi cột đang có thẻ → ít nhất bằng số thẻ hiện có.
-  // Tránh lỗi «có card mà badge = 0» khi đổi filter (counts về sớm, list card chưa kịp thay).
-  const displayCount = Number.isFinite(serverTotal)
-    ? Math.max(serverTotal, items.length)
-    : (columnLoading && items.length === 0 ? null : items.length);
-  const showPartialLoad = Number.isFinite(serverTotal) && items.length < serverTotal;
+  // Badge = tổng summary (ổn định). Không Math.max với items.length — tránh cộng dồn khi cuộn.
+  const displayCount = resolveSxColumnBadgeTotal(serverTotal, items.length);
+  const showPartialLoad = Number.isFinite(serverTotal) && serverTotal > 0 && items.length < serverTotal;
 
   const requestColumnLoadMore = useCallback(() => {
     if (!columnHasMore || columnLoading || !onScrollNearEnd) return;
@@ -4581,7 +4724,7 @@ const KanbanStageCard = memo(function KanbanStageCard({
     onScrollNearEnd();
     window.setTimeout(() => {
       scrollLoadCooldownRef.current = false;
-    }, 500);
+    }, 900);
   }, [columnHasMore, columnLoading, onScrollNearEnd]);
 
   // Vuốt ngang thấy cột → báo KanbanView (giống CRM IntersectionObserver).
@@ -4708,9 +4851,11 @@ const KanbanStageCard = memo(function KanbanStageCard({
               color: columnTheme.accent,
               border: `1px solid ${columnTheme.badgeBorder}`,
             }}
-            title={showPartialLoad
-              ? `${displayCount} đơn · đã tải ${items.length} — cuộn xuống để tải thêm`
-              : (displayCount != null ? `${displayCount} đơn` : 'Đang tải tổng…')}
+            title={displayCount == null
+              ? 'Đang tải tổng…'
+              : (showPartialLoad
+                ? `Tổng ${displayCount} đơn · đã tải ${items.length} — cuộn xuống để tải thêm`
+                : `Tổng ${displayCount} đơn`)}
           >
             {displayCount != null ? displayCount : '…'}
           </span>
@@ -5668,21 +5813,22 @@ function KanbanView({
             : Number(
               stageCounts?.[loadColId]
               ?? (loadColId === '__none__' ? stageCounts?.__none__ : undefined)
-              ?? pageState.total,
+              ?? (Number.isFinite(Number(pageState.total)) && Number(pageState.total) > 0
+                ? pageState.total
+                : undefined),
             );
           const loadedCount = stage.items?.length || 0;
-          // Đồng bộ với badge: không tin total=0 khi cột đang có thẻ (race summary vs list).
-          const serverColTotal = Number.isFinite(serverColTotalRaw)
-            ? Math.max(serverColTotalRaw, loadedCount)
-            : serverColTotalRaw;
+          // Tổng phân trang = summary server (không phình theo số thẻ đã tải trên cột hiển thị).
+          const serverColTotal = Number.isFinite(serverColTotalRaw) ? serverColTotalRaw : NaN;
           const needsRefill = Number.isFinite(serverColTotal) && serverColTotal > 0 && loadedCount === 0;
           const anyExhausted = pageStates.length
             ? pageStates.every((s) => s.exhausted)
             : !!pageState.exhausted;
-          const anyHasMore = pageStates.some((s) => s.hasMore !== false);
+          // Chỉ tin hasMore === true (undefined trước đây bị coi là còn tải → nhấp nháy).
+          const anyHasMore = pageStates.some((s) => s.hasMore === true);
           const columnHasMore = needsRefill || (!anyExhausted && (
             Number.isFinite(serverColTotal)
-              ? loadedCount < serverColTotal && anyHasMore
+              ? loadedCount < serverColTotal && (anyHasMore || pageStates.every((s) => s.hasMore == null))
               : (anyHasMore && !!hasMore)
           ));
           const columnLoading = pageStates.some((s) => s.loading);

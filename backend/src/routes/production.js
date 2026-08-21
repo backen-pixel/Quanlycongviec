@@ -1784,63 +1784,172 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
     const selectOpts = mobileLite
       ? (parsedPage > 1 ? {} : { count: 'estimated' })
       : { count: 'exact' };
-    let query = supabase
-      .from('projects')
-      .select(projectListSelect, selectOpts);
+    /** Kanban web + lọc cột: select embed nặng + scope OR dài → PostgREST 400 Bad Request.
+     *  Tách 2 bước: (1) id+count nhẹ theo filter cột (2) hydrate đủ field theo id. */
+    const columnScopedKanban = kanbanBoard && (wantsKanbanColumn || wantsNullKanbanColumn);
 
-    query = applyProjectTenantScope(query, req);
+    const applyProjectsListFilters = (q) => {
+      let query = applyProjectTenantScope(q, req);
 
-    if (String(sx_intake) === '1') {
-      if (!wonIds.length) {
-        return res.json({ projects: [], total: 0, page: parsedPage, totalPages: 0 });
-      }
-      query = query.in('id', wonIds);
-      if (stageIds.length) {
-        query = query.or(`current_stage_id.is.null,current_stage_id.not.in.(${stageIds.join(',')})`);
-      }
-    } else {
-      query = query.or(buildScopeOrFilter(stageIds, wonIds));
-    }
-
-    if (division_id) query = query.eq('division_id', division_id);
-    if (company_id) query = applyProductionCompanyScopeFilter(query, company_id, scopePartnerIds);
-    // workshop_type_id='none' → lọc deal CHƯA phân loại (workshop_type_id IS NULL)
-    if (wantsUnclassified) query = query.is('workshop_type_id', null);
-    else if (workshop_type_id) query = query.eq('workshop_type_id', workshop_type_id);
-    ({ query } = await applyParticipantOnlyProductionScope(query, req.user, company_id, sx_workshop_company_id, deal_company_id));
-
-    if (search) {
-      const searchPattern = `%${search}%`;
-      query = query.or(`code.ilike.${searchPattern},name.ilike.${searchPattern},notes.ilike.${searchPattern}`);
-    }
-
-    if (priority) query = query.eq('priority', priority);
-    if (createdFrom) query = query.gte('created_at', createdFrom);
-    if (createdTo) {
-      const upper = /^\d{4}-\d{2}-\d{2}$/.test(String(createdTo))
-        ? `${createdTo}T23:59:59.999Z`
-        : createdTo;
-      query = query.lte('created_at', upper);
-    }
-    if (productionPersonId) query = query.eq('production_person_id', productionPersonId);
-    if (wantsNullKanbanColumn) query = query.is('sx_kanban_column_id', null);
-    else if (wantsKanbanColumn) query = query.eq('sx_kanban_column_id', sxKanbanColumnId);
-    if (stage_slug && String(sx_intake) !== '1') {
-      if (stage_slug === INTAKE_BUCKET) {
+      if (String(sx_intake) === '1') {
+        if (!wonIds.length) return { query: null, empty: true };
         query = query.in('id', wonIds);
         if (stageIds.length) {
           query = query.or(`current_stage_id.is.null,current_stage_id.not.in.(${stageIds.join(',')})`);
         }
       } else {
-        query = query.eq('current_stage.slug', stage_slug);
+        query = query.or(buildScopeOrFilter(stageIds, wonIds));
       }
+
+      if (division_id) query = query.eq('division_id', division_id);
+      if (company_id) query = applyProductionCompanyScopeFilter(query, company_id, scopePartnerIds);
+      if (wantsUnclassified) query = query.is('workshop_type_id', null);
+      else if (workshop_type_id) query = query.eq('workshop_type_id', workshop_type_id);
+
+      if (search) {
+        const searchPattern = `%${search}%`;
+        query = query.or(`code.ilike.${searchPattern},name.ilike.${searchPattern},notes.ilike.${searchPattern}`);
+      }
+
+      if (priority) query = query.eq('priority', priority);
+      if (createdFrom) query = query.gte('created_at', createdFrom);
+      if (createdTo) {
+        const upper = /^\d{4}-\d{2}-\d{2}$/.test(String(createdTo))
+          ? `${createdTo}T23:59:59.999Z`
+          : createdTo;
+        query = query.lte('created_at', upper);
+      }
+      if (productionPersonId) query = query.eq('production_person_id', productionPersonId);
+      if (wantsNullKanbanColumn) query = query.is('sx_kanban_column_id', null);
+      else if (wantsKanbanColumn) query = query.eq('sx_kanban_column_id', sxKanbanColumnId);
+      if (stage_slug && String(sx_intake) !== '1') {
+        if (stage_slug === INTAKE_BUCKET) {
+          query = query.in('id', wonIds);
+          if (stageIds.length) {
+            query = query.or(`current_stage_id.is.null,current_stage_id.not.in.(${stageIds.join(',')})`);
+          }
+        } else {
+          query = query.eq('current_stage.slug', stage_slug);
+        }
+      }
+      return { query, empty: false };
+    };
+
+    let projects = null;
+    let error = null;
+    let count = null;
+
+    if (columnScopedKanban) {
+      let idQuery = supabase.from('projects').select('id', { count: 'exact' });
+      const appliedIds = applyProjectsListFilters(idQuery);
+      if (appliedIds.empty) {
+        return res.json({ projects: [], total: 0, page: parsedPage, totalPages: 0 });
+      }
+      idQuery = appliedIds.query;
+      ({ query: idQuery } = await applyParticipantOnlyProductionScope(
+        idQuery, req.user, company_id, sx_workshop_company_id, deal_company_id,
+      ));
+      idQuery = idQuery
+        .order('deadline', { ascending: true, nullsFirst: false })
+        .order('created_at', { ascending: false })
+        .range(offset, offset + parsedLimit - 1);
+      const idRes = await idQuery;
+      error = idRes.error;
+      count = idRes.count;
+      const pageIds = (idRes.data || []).map((row) => row.id).filter(Boolean);
+      if (error) {
+        console.error('[production/projects] column id-page failed', {
+          message: error.message,
+          code: error.code,
+          details: error.details,
+          hint: error.hint,
+          sxKanbanColumnId: sxKanbanColumnId || null,
+          company_id: company_id || null,
+        });
+        throw error;
+      }
+      if (!pageIds.length) {
+        projects = [];
+      } else {
+        let hydrate = supabase
+          .from('projects')
+          .select(projectListSelect)
+          .in('id', pageIds)
+          .order('deadline', { ascending: true, nullsFirst: false })
+          .order('created_at', { ascending: false });
+        let hyd = await hydrate;
+        error = hyd.error;
+        const needsHydrateFallback = error && (
+          error.message?.includes('production_deadline') ||
+          error.message?.includes('vc_kanban_column_id') ||
+          error.message?.includes('vc_handover_status') ||
+          error.message?.includes('vc_temp_staged') ||
+          error.message?.includes('vc_notes') ||
+          error.message?.includes('sx_kanban_column_id') ||
+          error.message?.includes('logistics_pipeline_stages') ||
+          error.message?.includes('workshop_project_types') ||
+          error.message?.includes('workshop_type_id') ||
+          error.message?.includes('relationship') ||
+          error.message === 'Bad Request' ||
+          isOrderDeliveryDateMissingError(error) ||
+          isProductionFinishDateMissingError(error) ||
+          isSxScheduleSlipMissingError(error) ||
+          isDepositAmountMissingError(error) ||
+          isCollectedAmountMissingError(error) ||
+          isExternalCompanyNameMissingError(error)
+        );
+        if (needsHydrateFallback) {
+          // Hydrate bằng select mobile-lite (ngắn hơn) rồi enrich phía dưới vẫn chạy.
+          hydrate = supabase
+            .from('projects')
+            .select(`
+              id, code, name, estimated_value, priority, deadline, install_date, ${MIGRATION_300_COLS} ${MIGRATION_520_COLS} ${MIGRATION_529_COLS} created_at, status, company_id,
+              production_deadline, sx_kanban_column_id, logistics_company_id, vc_kanban_column_id, vc_handover_status, vc_temp_staged,
+              current_stage_id, workshop_type_id,
+              current_stage:workflow_stages(id, slug, name, color, icon),
+              customer:customers(id, full_name, phone),
+              company:companies!projects_company_id_fkey(id, name, short_name),
+              logistics_company:companies!projects_logistics_company_id_fkey(id, name, short_name),
+              production_person:users!projects_production_person_id_fkey(id, full_name, avatar),
+              sales_person:users!projects_sales_person_id_fkey(id, full_name),
+              ${CRM_DEALS_PROJECT_EMBED_MOBILE},
+              workshop_type:workshop_project_types(id, name)
+            `)
+            .in('id', pageIds)
+            .order('deadline', { ascending: true, nullsFirst: false })
+            .order('created_at', { ascending: false });
+          hyd = await hydrate;
+          error = hyd.error;
+        }
+        if (error) {
+          console.error('[production/projects] column hydrate failed', {
+            message: error.message,
+            code: error.code,
+            details: error.details,
+            hint: error.hint,
+          });
+          throw error;
+        }
+        const byId = new Map((hyd.data || []).map((row) => [String(row.id), row]));
+        projects = pageIds.map((id) => byId.get(String(id))).filter(Boolean);
+      }
+    } else {
+    let query = supabase
+      .from('projects')
+      .select(projectListSelect, selectOpts);
+
+    const applied = applyProjectsListFilters(query);
+    if (applied.empty) {
+      return res.json({ projects: [], total: 0, page: parsedPage, totalPages: 0 });
     }
+    query = applied.query;
+    ({ query } = await applyParticipantOnlyProductionScope(query, req.user, company_id, sx_workshop_company_id, deal_company_id));
 
     query = query.order('deadline', { ascending: true, nullsFirst: false })
       .order('created_at', { ascending: false })
       .range(offset, offset + parsedLimit - 1);
 
-    let { data: projects, error, count } = await query;
+    ({ data: projects, error, count } = await query);
     const needsFallback = error && (
       error.message?.includes('production_deadline') ||
       error.message?.includes('vc_kanban_column_id') ||
@@ -1924,7 +2033,24 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
       fallbackQuery = fallbackQuery.order('deadline', { ascending: true, nullsFirst: false }).order('created_at', { ascending: false }).range(offset, offset + parsedLimit - 1);
       ({ data: projects, error, count } = await fallbackQuery);
     }
-    if (error) throw error;
+    } // end else !columnScopedKanban
+
+    if (error) {
+      console.error('[production/projects] query failed', {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        hint: error.hint,
+        wantsKanbanColumn,
+        wantsNullKanbanColumn,
+        sxKanbanColumnId: sxKanbanColumnId || null,
+        company_id: company_id || null,
+        page: parsedPage,
+        limit: parsedLimit,
+        columnScopedKanban,
+      });
+      throw error;
+    }
 
     // Mobile lite: vẫn enrich cột SX (sx_kanban_column_id / sx_intake) giống web —
     // bỏ staff/finance phía dưới. Trước đây bỏ enrich khiến app tự resolve cột → lệch KPI «Đang SX».

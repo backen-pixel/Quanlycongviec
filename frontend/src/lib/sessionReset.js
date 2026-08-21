@@ -21,6 +21,8 @@ export function clearWorkshopDashFilterStorage() {
     sessionStorage.removeItem('vc_focus_pipeline_card_id');
     sessionStorage.removeItem('sx_kanban_board_snap_v1');
     sessionStorage.removeItem('vc_kanban_board_snap_v1');
+    sessionStorage.removeItem('sx_dash_stage_kpis_v1');
+    sessionStorage.removeItem('sx_dash_column_counts_v1');
   } catch {
     /* ignore */
   }
