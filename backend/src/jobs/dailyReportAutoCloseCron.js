@@ -1,12 +1,14 @@
 /**
- * Cron tự động nộp Phần II (KQ ngày hôm trước từ CRM) của báo cáo hằng ngày.
- * Mặc định chạy 17:00 giờ VN mỗi ngày.
+ * Cron báo cáo hằng ngày (giờ VN):
+ *   - 08:00 → Phần I (kế hoạch Deadline Quá hạn + Hôm nay)
+ *   - 17:00 → Phần II (KQ CRM ngày hôm trước)
  *
  * Tích hợp: require('./jobs/dailyReportAutoCloseCron').start()
  * Disable: DAILY_REPORT_AUTO_CLOSE_DISABLED=1
- * Giờ chạy: DAILY_REPORT_AUTO_CLOSE_HOUR / _MINUTE (mặc định 17:00 VN)
+ * Giờ sáng: DAILY_REPORT_AUTO_PLAN_HOUR / _MINUTE (mặc định 08:00)
+ * Giờ chiều: DAILY_REPORT_AUTO_CLOSE_HOUR / _MINUTE (mặc định 17:00)
  * Lọc công ty: DAILY_REPORT_AUTO_CLOSE_COMPANY_IDS=uuid,uuid
- * Chỉ nộp nếu chưa chốt: DAILY_REPORT_AUTO_CLOSE_FORCE=0 (mặc định force=1 — cập nhật lại số CRM)
+ * Force: DAILY_REPORT_AUTO_CLOSE_FORCE=0 (mặc định force=1 — cập nhật lại số CRM)
  */
 const { runIfLeader } = require('../helpers/cronLeader');
 const { runAutoCloseBatch } = require('../helpers/dailyReportAutoSubmit');
@@ -20,24 +22,42 @@ function envInt(name, fallback) {
   return Number.isFinite(n) && n >= 0 ? n : fallback;
 }
 
+/** @returns {{ h: number, m: number, phase: 'plan'|'result' }[]} */
 function runSlotsVn() {
-  const h = Math.min(23, envInt('DAILY_REPORT_AUTO_CLOSE_HOUR', 17));
-  const m = Math.min(59, envInt('DAILY_REPORT_AUTO_CLOSE_MINUTE', 0));
-  return [{ h, m }];
+  const planH = Math.min(23, envInt('DAILY_REPORT_AUTO_PLAN_HOUR', 8));
+  const planM = Math.min(59, envInt('DAILY_REPORT_AUTO_PLAN_MINUTE', 0));
+  const resultH = Math.min(23, envInt('DAILY_REPORT_AUTO_CLOSE_HOUR', 17));
+  const resultM = Math.min(59, envInt('DAILY_REPORT_AUTO_CLOSE_MINUTE', 0));
+  return [
+    { h: planH, m: planM, phase: 'plan' },
+    { h: resultH, m: resultM, phase: 'result' },
+  ];
 }
 
 function nowVN() {
   return new Date(Date.now() + VN_OFFSET_MS);
 }
 
-function msUntilNextRun() {
+function slotLabel(slot) {
+  return `${String(slot.h).padStart(2, '0')}:${String(slot.m).padStart(2, '0')} (${slot.phase === 'plan' ? 'Phần I' : 'Phần II'})`;
+}
+
+/** Slot kế tiếp (sau thời điểm VN hiện tại) + delay ms. */
+function nextRunInfo() {
   const vn = nowVN();
   const hhmm = vn.getUTCHours() * 60 + vn.getUTCMinutes();
-  const slots = runSlotsVn().map((s) => s.h * 60 + s.m).sort((a, b) => a - b);
+  const slots = runSlotsVn()
+    .map((s) => ({ ...s, mins: s.h * 60 + s.m }))
+    .sort((a, b) => a.mins - b.mins);
   for (const slot of slots) {
-    if (slot > hhmm) return (slot - hhmm) * 60 * 1000;
+    if (slot.mins > hhmm) {
+      return { slot, delayMs: (slot.mins - hhmm) * 60 * 1000 };
+    }
   }
-  return (24 * 60 - hhmm + slots[0]) * 60 * 1000;
+  return {
+    slot: slots[0],
+    delayMs: (24 * 60 - hhmm + slots[0].mins) * 60 * 1000,
+  };
 }
 
 function forceMode() {
@@ -45,31 +65,37 @@ function forceMode() {
   return v !== '0' && v.toLowerCase() !== 'false';
 }
 
-async function runOnce() {
+/**
+ * @param {'plan'|'result'} phase
+ */
+async function runOnce(phase = 'result') {
   const startedAt = Date.now();
   const reportDate = crmReportTodayYmdVn();
   const vn = nowVN().toISOString().replace('T', ' ').slice(0, 19);
-  console.log(`[daily-report-cron] Bắt đầu auto-nộp Phần II · phiếu=${reportDate} · lúc ${vn} (VN)`);
+  const mode = phase === 'plan' ? 'plan' : 'result';
+  const label = mode === 'plan' ? 'Phần I (kế hoạch)' : 'Phần II (KQ hôm trước)';
+  console.log(`[daily-report-cron] Bắt đầu auto-nộp ${label} · phiếu=${reportDate} · lúc ${vn} (VN)`);
 
   try {
     const summary = await runAutoCloseBatch({
       reportDate,
       force: forceMode(),
+      phase: mode,
       onProgress: (row) => {
         if (row.error) {
           console.warn(`[daily-report-cron] Lỗi ${row.name || row.user_id}: ${row.error}`);
         } else if (row.skipped) {
-          console.log(`[daily-report-cron] Bỏ qua ${row.name} (đã nộp)`);
+          console.log(`[daily-report-cron] Bỏ qua ${row.name} (đã nộp ${mode})`);
         } else {
           console.log(
-            `[daily-report-cron] OK ${row.name} [${row.role_key}] filled=${row.auto_filled} manual=${row.manual_left}`,
+            `[daily-report-cron] OK ${row.name} [${row.role_key}] ${mode} filled=${row.auto_filled} manual=${row.manual_left}`,
           );
         }
       },
     });
     const elapsed = ((Date.now() - startedAt) / 1000).toFixed(1);
     console.log(
-      `[daily-report-cron] Xong sau ${elapsed}s · companies=${summary.companies}`
+      `[daily-report-cron] Xong ${mode} sau ${elapsed}s · companies=${summary.companies}`
       + ` · ok=${summary.ok} · skipped=${summary.skipped} · errors=${summary.errors}`,
     );
     return summary;
@@ -88,16 +114,20 @@ function start() {
   }
   started = true;
   const slots = runSlotsVn();
-  const delay = msUntilNextRun();
-  console.log(
-    `[daily-report-cron] Lịch ${slots.map((s) => `${String(s.h).padStart(2, '0')}:${String(s.m).padStart(2, '0')}`).join(', ')} VN`
-    + ` · lần đầu sau ${(delay / HOUR_MS).toFixed(2)}h`,
-  );
-  setTimeout(function tick() {
-    void runIfLeader('daily-report-auto-close', () => runOnce(), { ttlSec: 7200 }).finally(() => {
-      setTimeout(tick, msUntilNextRun());
-    });
-  }, delay);
+
+  function scheduleNext() {
+    const { slot, delayMs } = nextRunInfo();
+    console.log(
+      `[daily-report-cron] Hẹn ${slotLabel(slot)} · sau ${(delayMs / HOUR_MS).toFixed(2)}h`,
+    );
+    setTimeout(() => {
+      void runIfLeader(`daily-report-auto-${slot.phase}`, () => runOnce(slot.phase), { ttlSec: 7200 })
+        .finally(scheduleNext);
+    }, delayMs);
+  }
+
+  console.log(`[daily-report-cron] Lịch ${slots.map(slotLabel).join(' · ')} VN`);
+  scheduleNext();
 }
 
-module.exports = { start, runOnce };
+module.exports = { start, runOnce, runSlotsVn };
