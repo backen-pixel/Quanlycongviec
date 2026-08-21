@@ -385,6 +385,35 @@ r.get('/notifications/deadlines', async (req, res) => {
   }
 });
 
+// GET /dashboard/project-deadlines — hạn công trình + người chịu trách nhiệm + link module
+r.get('/project-deadlines', async (req, res) => {
+  try {
+    const { isSystemAdmin } = require('../helpers/adminRole');
+    const {
+      parseProjectDeadlineExportQuery,
+      listProjectDeadlineNotifications,
+    } = require('../helpers/projectDeadlineExport');
+    const q = parseProjectDeadlineExportQuery(req.query);
+    const filterCompany = req.query.company_id ? String(req.query.company_id).trim() : '';
+    let companyIds = null;
+    if (isSystemAdmin(req.user)) {
+      companyIds = filterCompany ? [filterCompany] : null;
+    } else if (req.user.company_id) {
+      if (filterCompany && String(filterCompany) !== String(req.user.company_id)) {
+        return res.status(403).json({ error: 'Không được phép xem công ty khác' });
+      }
+      companyIds = [String(req.user.company_id)];
+    } else {
+      return res.json({ generated_at: new Date().toISOString(), count: 0, notifications: [] });
+    }
+    const payload = await listProjectDeadlineNotifications({ companyIds, ...q });
+    res.json(payload);
+  } catch (e) {
+    console.error('Dashboard project-deadlines error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
 // PUT /dashboard/notifications/read-all — Mark all as read
 // ═══════════════════════════════════════════════════════════════════════════

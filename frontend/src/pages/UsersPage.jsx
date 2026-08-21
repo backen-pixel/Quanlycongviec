@@ -876,6 +876,7 @@ const STAFF_EMPTY_FORM = {
   full_name: '',
   email: '',
   phone: '',
+  zalo_id: '',
   role: 'staff',
   position: '',
   department_id: '',
@@ -896,6 +897,7 @@ function mapUserToForm(user) {
     full_name: user.full_name || '',
     email: user.email || '',
     phone: user.phone || '',
+    zalo_id: user.zalo_id || '',
     role: user.role || 'staff',
     position: user.position || '',
     department_id: user.department_id || user.department?.id || '',
@@ -1666,7 +1668,7 @@ export function StaffFormModal({
       if (editUserId) delete payload.email;
       payload.department_id = payload.department_id || null;
       payload.team_id = payload.team_id || null;
-      ['date_of_birth', 'hire_date', 'address', 'emergency_contact', 'notes', 'position'].forEach((k) => {
+      ['date_of_birth', 'hire_date', 'address', 'emergency_contact', 'notes', 'position', 'zalo_id'].forEach((k) => {
         if (payload[k] === '') payload[k] = null;
       });
       if (payload.salary === '' || payload.salary == null) payload.salary = null;
@@ -1842,6 +1844,17 @@ export function StaffFormModal({
           <div><label className="block text-sm font-medium mb-1">Họ tên *</label><input value={form.full_name || ''} onChange={e => set('full_name', e.target.value)} required className="input" autoComplete="off" /></div>
           <div><label className="block text-sm font-medium mb-1">Email *</label><input type="email" value={form.email || ''} onChange={e => set('email', e.target.value)} required className="input" disabled={!!editUserId} autoComplete="off" readOnly={!!editUserId} /></div>
           <div><label className="block text-sm font-medium mb-1">SĐT</label><input value={form.phone || ''} onChange={e => set('phone', e.target.value)} className="input" autoComplete="off" /></div>
+          <div>
+            <label className="block text-sm font-medium mb-1">ID Zalo</label>
+            <input
+              value={form.zalo_id || ''}
+              onChange={e => set('zalo_id', e.target.value)}
+              className="input"
+              autoComplete="off"
+              placeholder="UID Zalo để @mention"
+            />
+            <p className="text-[11px] text-gray-500 mt-1">API nhắc hạn gửi ID này để bot @ đúng nhân viên trên nhóm Zalo.</p>
+          </div>
           <div><label className="block text-sm font-medium mb-1">Mật khẩu {editUserId ? '(trống = giữ)' : '*'}</label><input type="password" value={form.password || ''} onChange={e => set('password', e.target.value)} className="input" required={!editUserId} placeholder={editUserId ? '••••••' : (defaultNewUserPassword || '123456')} autoComplete="new-password" /></div>
           <div><label className="block text-sm font-medium mb-1">Chức vụ</label><input value={form.position || ''} onChange={e => set('position', e.target.value)} className="input" placeholder="VD: Trưởng phòng" /></div>
         </div>
@@ -2372,6 +2385,10 @@ function StaffDetailModal({ userId, open, onClose }) {
               <div className="bg-gray-50 rounded-lg p-3">
                 <p className="text-[11px] text-gray-500">SĐT</p>
                 <p className="font-medium">{user.phone || '—'}</p>
+              </div>
+              <div className="bg-gray-50 rounded-lg p-3">
+                <p className="text-[11px] text-gray-500">ID Zalo</p>
+                <p className="font-medium">{user.zalo_id ? `@${String(user.zalo_id).replace(/^@+/, '')}` : '—'}</p>
               </div>
               <div className="bg-gray-50 rounded-lg p-3">
                 <p className="text-[11px] text-gray-500">Ngày sinh</p>

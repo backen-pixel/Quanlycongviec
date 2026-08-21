@@ -26,6 +26,7 @@
  * GET /api/external/sources
  * GET /api/external/users
  * GET /api/external/ping
+ * GET /api/external/project-deadlines — hạn công trình + người chịu trách nhiệm + link CRM/SX/VC
  */
 const { Router } = require('express');
 const { apiKeyAuth } = require('../middleware/apiKeyAuth');
@@ -603,7 +604,7 @@ r.get('/users', apiKeyAuth, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('users')
-      .select('id, full_name, email')
+      .select('id, full_name, email, phone, zalo_id')
       .eq('is_active', true)
       .order('full_name');
     if (error) throw error;
@@ -709,6 +710,43 @@ r.post('/oauth/token', async (req, res) => {
     res.json(result);
   } catch (e) {
     res.status(e.status || 500).json({ error: e.message || 'Lỗi refresh token' });
+  }
+});
+
+// ── GET /api/external/project-deadlines — hạn công trình (CRM/SX/VC) ─────────
+const {
+  parseProjectDeadlineExportQuery,
+  listProjectDeadlineNotifications,
+} = require('../helpers/projectDeadlineExport');
+
+function allowedCompanyIdsForApiKey(apiKey) {
+  if (apiKey?.company_id) return [String(apiKey.company_id)];
+  const list = Array.isArray(apiKey?.allowed_company_ids)
+    ? apiKey.allowed_company_ids.map((x) => String(x)).filter(Boolean)
+    : [];
+  return list.length ? list : null;
+}
+
+r.get('/project-deadlines', apiKeyAuth, async (req, res) => {
+  try {
+    const q = parseProjectDeadlineExportQuery(req.query);
+    let companyIds = allowedCompanyIdsForApiKey(req.apiKey);
+    const filterCompany = req.query.company_id ? String(req.query.company_id).trim() : '';
+    if (filterCompany) {
+      if (companyIds && !companyIds.includes(filterCompany)) {
+        return res.status(403).json({ error: 'API key không được phép công ty này' });
+      }
+      companyIds = [filterCompany];
+    }
+    const payload = await listProjectDeadlineNotifications({
+      companyIds,
+      ...q,
+    });
+    await tryAuditLog(req, { status: 200 });
+    res.json(payload);
+  } catch (e) {
+    await tryAuditLog(req, { status: 500, error: e.message });
+    res.status(500).json({ error: e.message });
   }
 });
 

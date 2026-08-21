@@ -97,12 +97,23 @@ function userBelongsToCompany(u, companyId) {
 }
 
 const USER_OPTIONAL_NULLABLE_FIELDS = [
-  'position', 'date_of_birth', 'hire_date', 'address', 'emergency_contact', 'salary', 'notes', 'skills',
+  'position', 'date_of_birth', 'hire_date', 'address', 'emergency_contact', 'salary', 'notes', 'skills', 'zalo_id',
 ];
+
+function normalizeZaloId(raw) {
+  if (raw == null) return null;
+  const s = String(raw).trim().replace(/^@+/, '');
+  return s || null;
+}
 
 function applyOptionalUserFields(body, target) {
   USER_OPTIONAL_NULLABLE_FIELDS.forEach((f) => {
-    if (body[f] !== undefined) target[f] = body[f] === '' || body[f] == null ? null : body[f];
+    if (body[f] === undefined) return;
+    if (f === 'zalo_id') {
+      target[f] = normalizeZaloId(body[f]);
+      return;
+    }
+    target[f] = body[f] === '' || body[f] == null ? null : body[f];
   });
 }
 
@@ -735,7 +746,7 @@ r.get('/', async (req, res) => {
     }
 
     // ── Lọc thông thường (không có ecosystem_unit_id) ──
-    const fullCols = `id,email,full_name,phone,avatar,role,position,department_id,team_id,date_of_birth,hire_date,address,emergency_contact,salary,notes,skills,is_active,last_login_at,created_at,department:departments!users_department_id_fkey(id,name,color,company_id),team:teams!users_team_id_fkey(id,name,color)`;
+    const fullCols = `id,email,full_name,phone,zalo_id,avatar,role,position,department_id,team_id,date_of_birth,hire_date,address,emergency_contact,salary,notes,skills,is_active,last_login_at,created_at,department:departments!users_department_id_fkey(id,name,color,company_id),team:teams!users_team_id_fkey(id,name,color)`;
     const basicCols = `id,email,full_name,phone,avatar,role,department_id,team_id,is_active,last_login_at,created_at,department:departments!users_department_id_fkey(id,name,color,company_id),team:teams!users_team_id_fkey(id,name,color)`;
     const basicColsNoDept = `id,email,full_name,phone,avatar,role,department_id,is_active,last_login_at,created_at`;
 
@@ -818,7 +829,7 @@ r.get('/:id', async (req, res) => {
     // Defensive: try full columns, fallback to basic
     let user = null;
     const { data: u1, error: e1 } = await supabase.from('users').select(`
-      id,email,full_name,phone,avatar,role,position,department_id,team_id,company_id,
+      id,email,full_name,phone,zalo_id,avatar,role,position,department_id,team_id,company_id,
       date_of_birth,hire_date,address,emergency_contact,salary,notes,skills,
       is_active,last_login_at,created_at,
       department:departments!users_department_id_fkey(id,name,color,company_id),
@@ -1168,7 +1179,7 @@ r.put('/:id', async (req, res) => {
 
     // Try update, fallback to basic fields if columns don't exist
     let { data, error } = await supabase.from('users').update(update).eq('id', req.params.id)
-      .select('id,email,full_name,phone,avatar,role,department_id,is_active,created_at').single();
+      .select('id,email,full_name,phone,zalo_id,avatar,role,department_id,is_active,created_at').single();
     if (error && error.message?.includes('column')) {
       const safeUpdate = {};
       ['full_name','phone','role','department_id','is_active','avatar'].forEach(f => {
