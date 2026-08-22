@@ -11,9 +11,18 @@ const { crmReportDayKeyVn, crmReportTodayYmdVn } = require('./crmReportDateBound
 const INTAKE_BUCKET = 'won_pending';
 const VC_SHIPPED_STATUSES = new Set(['shipping', 'installing', 'warranty', 'completed']);
 
+function projectLooksShipped(project) {
+  if (project?.logistics_company_id || project?.logistics_company?.id || project?.vc_kanban_column_id) {
+    return true;
+  }
+  const st = String(project?.status || '');
+  return st === 'installing' || st === 'warranty' || st === 'completed';
+}
+
 /** Bucket «Quá hạn» Deadline view — so sánh ngày lịch VN. */
 function isSxDeadlineViewOverdue(project, stage, todayMs = Date.now()) {
   if (isSxPipelineStageNoDeadline(stage)) return false;
+  if (projectLooksShipped(project)) return false;
   const raw = project?.delivery_date || project?.production_deadline || project?.deadline;
   if (!raw) return false;
   const dueKey = crmReportDayKeyVn(raw);

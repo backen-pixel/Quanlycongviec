@@ -141,8 +141,17 @@ export function resolveWorkshopCompanyForTypes({
     const s = trim(id);
     if (!s) return false;
     if (isMetallaOrHucabiCompanyId(s, companies, user)) return true;
-    // Admin / bộ lọc «Công ty sản xuất»: mọi công ty trong danh sách module SX (không chỉ HCB/Metalla).
-    return (companies || []).some((c) => String(c.id) === s);
+    // Công ty CRM (VPT) không có pipeline SX — tránh board trống / cột Global.
+    if (user?.company_id && s === trim(user.company_id) && !isMetallaOrHucabiCompanyId(s, companies, user)) {
+      return false;
+    }
+    const c = (companies || []).find((x) => String(x.id) === s);
+    if (c) {
+      const sn = String(c.short_name || '').trim().toUpperCase();
+      const name = String(c.name || '').trim().toLowerCase();
+      if (sn === 'VPT' || name.includes('vạn phú')) return false;
+    }
+    return (companies || []).some((x) => String(x.id) === s);
   };
 
   /** Chỉ HCB/Metalla — dùng khi suy ra từ JWT, tránh nhầm công ty CRM (VPT/Phúc Đạt deal). */
@@ -180,7 +189,8 @@ export function resolveWorkshopCompanyForTypes({
 
   if (ownWorkshop) return ownWorkshop;
 
-  return '';
+  const firstWorkshop = productionWorkshopFilterCompanies(companies)[0];
+  return firstWorkshop?.id ? String(firstWorkshop.id) : '';
 }
 
 /** Công ty chọn khi tạo deal SX tại xưởng (HCB, Metalla). */

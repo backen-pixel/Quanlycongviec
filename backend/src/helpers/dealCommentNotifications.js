@@ -33,7 +33,7 @@ async function loadDealCommentContext(supabase, leadId) {
     projectId = leadRow?.project_id || null;
     projectCode = leadRow?.linked_project?.code || null;
     const proj = leadRow?.linked_project;
-    companyId = proj?.company_id || leadRow?.company_id || null;
+    companyId = leadRow?.company_id || proj?.company_id || null;
     const status = String(proj?.status || '');
     const stageSlug = proj?.current_stage?.slug || '';
     isLogisticsDeal = Boolean(

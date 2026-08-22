@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Kiến trúc tổng thể — Quanlycongviec (Tủ Bếp Pro)</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <style>
+    @page { size: A4; margin: 18mm 16mm; }
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+      color: #1e293b;
+      line-height: 1.55;
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 24px 28px 40px;
+      background: #fff;
+    }
+    h1 {
+      font-size: 1.65rem;
+      color: #0f172a;
+      border-bottom: 3px solid #2563eb;
+      padding-bottom: 10px;
+      margin: 0 0 6px;
+    }
+    .subtitle { color: #64748b; font-size: 0.95rem; margin-bottom: 28px; }
+    h2 {
+      font-size: 1.15rem;
+      color: #1e40af;
+      margin: 28px 0 12px;
+      page-break-after: avoid;
+    }
+    p { margin: 8px 0; }
+    .mermaid {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 16px;
+      margin: 12px 0 20px;
+      overflow: visible;
+      page-break-inside: avoid;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.88rem;
+      margin: 12px 0 20px;
+    }
+    th, td {
+      border: 1px solid #cbd5e1;
+      padding: 8px 10px;
+      text-align: left;
+    }
+    th { background: #eff6ff; color: #1e40af; }
+    tr:nth-child(even) td { background: #f8fafc; }
+    .summary-box {
+      background: #eff6ff;
+      border-left: 4px solid #2563eb;
+      padding: 14px 16px;
+      border-radius: 0 8px 8px 0;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 0.82rem;
+      white-space: pre-line;
+      margin: 16px 0 24px;
+    }
+    .footer {
+      margin-top: 32px;
+      padding-top: 12px;
+      border-top: 1px solid #e2e8f0;
+      font-size: 0.78rem;
+      color: #94a3b8;
+      text-align: center;
+    }
+    .page-break { page-break-before: always; }
+  </style>
+</head>
+<body>
+  <h1>Kiến trúc tổng thể — Quanlycongviec</h1>
+  <p class="subtitle">Hệ thống ERP/CRM cho xưởng tủ bếp · Tủ Bếp Pro · Xuất ngày 19/08/2026</p>
+
+  <h2>1. Tầng hạ tầng (Stack)</h2>
+  <div class="mermaid">
+flowchart TB
+    subgraph Client["Client Browser / App"]
+        FE["React 18 + Vite<br/>Port 5173 dev"]
+    end
+    subgraph Server["Backend"]
+        API["Express 5 + Node.js<br/>Port 4000"]
+        IO["Socket.IO Realtime"]
+        REDIS["Redis optional"]
+    end
+    subgraph Data["Data Layer"]
+        SB["Supabase PostgreSQL<br/>Primary + Backup failover"]
+        STG["Supabase Storage + uploads"]
+    end
+    subgraph Deploy["Production"]
+        RENDER["Render Web Service"]
+    end
+    FE -->|"/api proxy"| API
+    FE -->|"socket.io"| IO
+    API --> SB
+    API --> STG
+    API --> REDIS
+    IO --> REDIS
+    RENDER --> API
+  </div>
+
+  <h2>2. Các module nghiệp vụ</h2>
+  <div class="mermaid">
+flowchart LR
+    subgraph Core["Nền tảng chung"]
+        AUTH["Auth JWT"]
+        RBAC["Permissions RBAC"]
+        COMP["Companies Tenants"]
+        FLOW["Workflow Flows"]
+    end
+    subgraph CRM["CRM /crm"]
+        LEAD["Leads and Deals Kanban"]
+        QUOT["Bao gia Don hang HD"]
+        KPI["KPI Bao cao"]
+    end
+    subgraph SX["San xuat /sx"]
+        SX_KAN["Kanban SX"]
+        SX_PROJ["Chi tiet du an SX"]
+        SX_HO["Ban giao VC"]
+    end
+    subgraph VC["Van chuyen LD /vc"]
+        VC_KAN["Kanban VC"]
+        VC_PROJ["Chi tiet du an VC"]
+        VC_TEAM["Doi lap dat"]
+    end
+    subgraph Other["Module khac"]
+        KT["Ke toan /ketoan"]
+        MH["Mua hang"]
+        CALC["Tinh gia /calc"]
+    end
+    Core --> CRM
+    Core --> SX
+    Core --> VC
+    CRM -->|"Deal thang tao project"| SX
+    SX -->|"Handover"| VC
+    CRM --> KT
+  </div>
+
+  <h2 class="page-break">3. Luồng nghiệp vụ chính (Lead → SX → VC)</h2>
+  <div class="mermaid">
+flowchart TD
+    A["Khach hang Lead"] --> B["crm_leads type lead"]
+    B --> C["Chuyen thanh Deal type deal"]
+    C --> D["Pipeline Stages"]
+    D --> E{"Cot is_won true?"}
+    E -->|Chua thang| C
+    E -->|Deal thang| F["autoCreateProject Tao du an SX"]
+    F --> G["projects + tasks SX"]
+    G --> H["crm_leads.project_id gan deal project"]
+    G --> I["Kanban San xuat /sx/dashboard"]
+    I --> J{"SX hoan thanh?"}
+    J -->|Ban giao| K["vcHandoverCore handover-vc"]
+    K --> L["Module VC Kanban /vc/dashboard"]
+    K --> M["CRM stage vc_delivery"]
+    L --> N["Lap dat xong"]
+    N --> O["Ke toan Thu chi /ketoan"]
+  </div>
+
+  <p><strong>Các cờ pipeline quan trọng:</strong></p>
+  <table>
+    <thead><tr><th>Cờ</th><th>Ý nghĩa</th></tr></thead>
+    <tbody>
+      <tr><td><code>is_won</code></td><td>Deal thắng → trigger tạo dự án SX</td></tr>
+      <tr><td><code>show_sx_transfer</code></td><td>Cột sau thắng, hiện nút "Chuyển xưởng"</td></tr>
+      <tr><td><code>is_lost</code></td><td>Deal thua, kết thúc pipeline</td></tr>
+      <tr><td><code>counts_as_completed_revenue</code></td><td>Tính doanh thu hoàn thành</td></tr>
+    </tbody>
+  </table>
+
+  <h2>4. Mô hình dữ liệu lõi</h2>
+  <div class="mermaid">
+erDiagram
+    companies ||--o{ crm_pipelines : co
+    companies ||--o{ projects : san_xuat
+    companies ||--o{ users : nhan_vien
+    crm_pipelines ||--o{ crm_pipeline_stages : cac_cot
+    crm_pipeline_stages ||--o{ crm_leads : stage_id
+    crm_leads ||--o| projects : project_id
+    crm_leads ||--o{ crm_deal_projects : multi_SX
+    crm_deal_projects }o--|| projects : project_phu
+    crm_leads ||--o{ crm_tasks : task_CRM
+    projects ||--o{ tasks : task_SX_VC
+    customers ||--o{ crm_leads : customer_id
+    crm_leads ||--o{ crm_quotations : bao_gia
+  </div>
+
+  <h2 class="page-break">5. Kiến trúc Backend API</h2>
+  <div class="mermaid">
+flowchart TB
+    subgraph MW["Middleware"]
+        AUTH_MW["auth.js JWT company_id"]
+        PERM["newPermission.js RBAC"]
+    end
+    subgraph Routes["API Routes"]
+        R_CRM["/api/crm leads deals pipelines"]
+        R_SX["/api/production Kanban SX handover"]
+        R_VC["/api/logistics Kanban VC teams"]
+        R_VCHO["/api/vc-handover Ban giao SX to VC"]
+        R_FLOW["/api/flows Workflow automation"]
+        R_ACC["/api/accounting"]
+    end
+    subgraph Helpers["Business Logic"]
+        H1["autoDealWonProject.js"]
+        H2["vcHandoverCore.js"]
+        H3["workshopApplyTemplates.js"]
+        H4["resolveModuleFlow.js"]
+    end
+    MW --> Routes
+    R_CRM --> H1
+    R_SX --> H2
+    R_VCHO --> H2
+    R_FLOW --> H4
+    Routes --> SB[("Supabase PostgreSQL")]
+  </div>
+
+  <h2>6. Kiến trúc Frontend (Routing)</h2>
+  <div class="mermaid">
+flowchart TB
+    APP["App.jsx React Router v6"]
+    APP --> LOGIN["/login"]
+    APP --> PL["ProtectedLayout Sidebar Auth"]
+    PL --> CRM_R["/crm/*"]
+    PL --> SX_R["/sx/* ProductionLayout"]
+    PL --> VC_R["/vc/* ProductionLayout"]
+    PL --> KT_R["/ketoan/* AccountingLayout"]
+    PL --> FLOW_R["/work/flows ModuleFlowSetupPage"]
+    CRM_R --> CRM_DASH["/crm/dashboard CRMDashboard"]
+    CRM_R --> CRM_LEAD["/crm/leads/:id LeadDetail"]
+    SX_R --> SX_DASH["/sx/dashboard ProductionDashboard"]
+    SX_R --> SX_DETAIL["/sx/projects/:id ProductionDetail"]
+    VC_R --> VC_DASH["/vc/dashboard LogisticsDashboard"]
+    VC_R --> VC_DETAIL["/vc/projects/:id LogisticsDetail"]
+  </div>
+  <p>SX và VC dùng chung <code>ProductionLayout</code> — chỉ khác tông màu và route prefix (<code>/sx</code> vs <code>/vc</code>).</p>
+
+  <h2>7. Phân quyền & Multi-tenant</h2>
+  <div class="mermaid">
+flowchart LR
+    USER["User dang nhap"] --> JWT["JWT Token localStorage"]
+    JWT --> ROLE{"Role?"}
+    ROLE -->|admin no company| SYS["System Admin"]
+    ROLE -->|admin + company_id| CA["Company Admin"]
+    ROLE -->|sales_admin| SA["Sales Admin"]
+    ROLE -->|user thuong| PERM["RPC user_has_permission"]
+    PERM --> CRM_A["crm read write"]
+    PERM --> SX_A["production"]
+    PERM --> VC_A["logistics"]
+    COMP["companies"] --> REG["company_regions"]
+    COMP --> WS["workshop_types"]
+  </div>
+
+  <h2 class="page-break">8. Realtime & Automation</h2>
+  <div class="mermaid">
+flowchart LR
+    subgraph Realtime
+        SOCKET["Socket.IO events"]
+        FCM["FCM Push notifications"]
+    end
+    subgraph Automation
+        FLOW["Workflow Flows flowRuntime.js"]
+        AUTO["autoCreateProject on deal won"]
+    end
+    subgraph External
+        FB["Facebook Messenger"]
+        ZALO["Zalo OA"]
+        MISA["MISA ke toan"]
+        EXT["/api/external API Key"]
+    end
+    SX_EVT["SX handover event"] --> SOCKET
+    FLOW --> AUTO
+  </div>
+
+  <h2>Tóm tắt luồng end-to-end</h2>
+  <div class="summary-box">Khách hàng
+   ↓
+Lead (CRM Kanban) → Deal → Báo giá/Đơn hàng
+   ↓ is_won = true
+Project SX (tasks, deadline, xưởng)
+   ↓ handover-vc
+Project VC (lắp đặt, đội VC, ngày lắp)
+   ↓
+CRM stage = vc_delivery → Kế toán thu chi
+
+Liên kết dữ liệu: crm_leads.project_id (Deal ↔ Project)
+Multi-xưởng: crm_deal_projects</div>
+
+  <div class="footer">Quanlycongviec · Tủ Bếp Pro · Kiến trúc tổng thể CRM / Sản xuất / Vận chuyển</div>
+
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: 'default',
+      securityLevel: 'loose',
+      flowchart: { useMaxWidth: true, htmlLabels: true },
+    });
+  </script>
+</body>
+</html>

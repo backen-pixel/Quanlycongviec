@@ -56,9 +56,20 @@ function shouldIgnoreSxOrderDeliveryOverdue(stage) {
   return false;
 }
 
+/** Đã bàn giao VC / đang lắp / BH / hoàn thành — ngày lắp/giao quá khứ là bình thường. */
+function projectLooksShippedForOverdue(project) {
+  if (!project) return false;
+  if (project.logistics_company_id || project.logistics_company?.id || project.vc_kanban_column_id) {
+    return true;
+  }
+  const st = String(project.status || '');
+  return st === 'installing' || st === 'warranty' || st === 'completed';
+}
+
 function isSxProjectDateOverdue(project, dateField) {
   const stage = project?.sx_pipeline_stage;
   if (shouldIgnoreSxOrderDeliveryOverdue(stage)) return false;
+  if (projectLooksShippedForOverdue(project)) return false;
   const raw = project?.[dateField];
   if (!raw || project?.status === 'completed') return false;
   const ms = companyWorkEndMsFromRaw(raw, project?.company_id || project?.company);
@@ -97,11 +108,13 @@ function isSxColumnSlaOverdue(project, stage) {
  * Quá hạn ngày giao/SX — khớp frontend `isSxProjectDeliveryDateOverdue`.
  * Ưu tiên: delivery_date → production_deadline → deadline.
  * So sánh theo ngày lịch (không tính «hôm nay đã qua giờ»).
- * Bỏ qua khi cột «Đã công» / «Đã thu» hoặc sla_days=0 («Bỏ quá hạn»).
+ * Bỏ qua khi cột «Đã công» / «Đã thu» hoặc sla_days=0 («Bỏ quá hạn»),
+ * hoặc dự án đã bàn giao VC / đang lắp / hoàn thành.
  */
 function isSxProjectDeliveryDateOverdue(project, stage) {
   const st = stage || project?.sx_pipeline_stage;
   if (shouldIgnoreSxOrderDeliveryOverdue(st)) return false;
+  if (projectLooksShippedForOverdue(project)) return false;
   const raw = project?.delivery_date || project?.production_deadline || project?.deadline;
   if (!raw || project?.status === 'completed') return false;
   if (crmReportIsYmdBeforeToday(raw)) return true;
@@ -117,6 +130,7 @@ module.exports = {
   crmLeadMissingPhone,
   isSxPipelineStageNoDeadline,
   shouldIgnoreSxOrderDeliveryOverdue,
+  projectLooksShippedForOverdue,
   isSxProjectDateOverdue,
   getSxPipelineStageSlaTone,
   isSxColumnSlaOverdue,

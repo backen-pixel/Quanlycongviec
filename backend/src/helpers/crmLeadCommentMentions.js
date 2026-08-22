@@ -1,7 +1,8 @@
 /** @mention trong bình luận lead/deal — đồng bộ logic với frontend crmCommentMentions.js */
 
 const MENTION_ALL_LABEL = 'Tất cả';
-const MENTION_ALL_RE = /@(tất\s*cả|tat\s*ca|all)\b/gi;
+/** Không dùng \\b — chữ Việt không phải word-char ASCII nên @Tất cả sẽ không khớp. */
+const MENTION_ALL_RE = /@(tất\s*cả|tat\s*ca|all)(?=$|[\s.,!?;:…])/i;
 
 function normalizeMentionSearch(s) {
   return String(s || '')
@@ -54,6 +55,7 @@ function resolveMentionIdsFromContent(content, members, { excludeUserId } = {}) 
   if (contentHasMentionAll(content)) {
     for (const mem of members) {
       const id = mem.user_id;
+      if (String(mem.role || '') === 'viewer') continue;
       if (id && String(id) !== ex && !ids.includes(String(id))) ids.push(String(id));
     }
   }
@@ -70,7 +72,7 @@ function resolveMentionIdsFromContent(content, members, { excludeUserId } = {}) 
       continue;
     }
     const rest = text.slice(i + 1);
-    const allMatch = rest.match(/^(tất\s*cả|tat\s*ca|all)\b/i);
+    const allMatch = rest.match(/^(tất\s*cả|tat\s*ca|all)(?=$|[\s.,!?;:…])/i);
     if (allMatch) {
       i += 1 + allMatch[0].length;
       continue;

@@ -199,8 +199,8 @@ async function computeHeartbeatBadges(req, socialCompanyId) {
       .or('metadata->>ecosystem_module_key.is.null,metadata->>ecosystem_module_key.neq.projects')
       .limit(500);
     if (error) throw error;
-    const { filterNotificationsForViewer } = require('./notifications');
-    const visible = filterNotificationsForViewer(
+    const { filterNotificationsForViewerAsync } = require('./notifications');
+    const visible = await filterNotificationsForViewerAsync(
       (rows || []).filter((n) => n && String(n.entity_type || '') !== 'project'),
       req.user,
     );

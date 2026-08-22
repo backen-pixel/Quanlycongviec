@@ -3,6 +3,12 @@ const { isSystemAdmin, isPlatformAdmin } = require('./adminRole');
 const { isNotificationAllowedForUser } = require('./notificationPrefsUser');
 const { isExpiryDeadlineNotificationType } = require('./notificationOperationalFilter');
 const { isCommentMutedForUser, isMessengerMutedForUser } = require('./notificationMutes');
+const {
+  resolveRelatedCompanyIds,
+  filterUserIdsByCompanyRelevance,
+  notificationRelevantToCompanyViewer,
+  filterNotificationsForCompanyViewerAsync,
+} = require('./notificationCompanyRelevance');
 // Lưu ý: KHÔNG gọi sendMobilePush trực tiếp ở đây — đã có server.js pushNotification gọi
 // (qua app.set('pushNotification')). Tránh gửi push trùng.
 
@@ -30,19 +36,43 @@ function withCompanyMeta(metadata, companyId) {
   return Object.keys(meta).length ? meta : (metadata || null);
 }
 
-/** Inbox: admin hệ thống thấy hết; user gắn công ty chỉ thấy TB stamped đúng công ty (hoặc TB chưa gắn company_id). */
+/**
+ * Inbox sync: admin hệ thống thấy hết; user gắn công ty chỉ thấy TB có company/related
+ * khớp công ty mình. TB chưa stamp → giữ (lọc async / dọn lịch sử).
+ */
 function notificationVisibleToViewer(n, viewer) {
   if (!n) return false;
   if (isGlobalNotificationViewer(viewer)) return true;
   const viewerCid = normalizeCompanyId(viewer?.company_id);
   if (!viewerCid) return true;
-  const nCid = extractNotificationCompanyId(n);
-  if (!nCid) return true;
-  return nCid === viewerCid;
+  return notificationRelevantToCompanyViewer(n, viewer);
 }
 
 function filterNotificationsForViewer(rows, viewer) {
   return (rows || []).filter((n) => notificationVisibleToViewer(n, viewer));
+}
+
+async function filterNotificationsForViewerAsync(rows, viewer) {
+  const syncFiltered = filterNotificationsForViewer(rows, viewer);
+  return filterNotificationsForCompanyViewerAsync(syncFiltered, viewer);
+}
+
+function withRelatedCompanyMeta(metadata, relatedCompanyIds, primaryCompanyId) {
+  const related = [...(relatedCompanyIds instanceof Set ? relatedCompanyIds : new Set(relatedCompanyIds || []))]
+    .map(normalizeCompanyId)
+    .filter(Boolean);
+  const primary = normalizeCompanyId(primaryCompanyId)
+    || related[0]
+    || normalizeCompanyId(metadata?.company_id || metadata?.companyId);
+  let meta = withCompanyMeta(metadata, primary);
+  if (related.length) {
+    meta = meta && typeof meta === 'object' ? { ...meta } : {};
+    meta.related_company_ids = related;
+    if (primary && !normalizeCompanyId(meta.company_id || meta.companyId)) {
+      meta.company_id = primary;
+    }
+  }
+  return meta;
 }
 
 /**
@@ -160,12 +190,32 @@ async function createNotification(req, userId, type, title, message, entityType,
   const allowed = await isNotificationAllowedForUser(userId, type, entityType, metadata);
   if (!allowed) return null;
 
+  let scopedMeta = metadata;
+  const alreadyScoped = Array.isArray(metadata?.related_company_ids) && metadata.related_company_ids.length > 0;
+  if (!alreadyScoped) {
+    try {
+      const related = await resolveRelatedCompanyIds({ entityType, entityId, metadata });
+      scopedMeta = withRelatedCompanyMeta(metadata, related, metadata?.company_id || metadata?.companyId);
+      const ok = await filterUserIdsByCompanyRelevance([userId], {
+        type,
+        entityType,
+        entityId,
+        metadata: scopedMeta,
+        relatedCompanyIds: related,
+      });
+      if (!ok.length) return null;
+    } catch (e) {
+      console.warn('[createNotification] company scope:', e.message || e);
+      scopedMeta = metadata;
+    }
+  }
+
   // Tắt chuông: vẫn lưu TB trong danh sách, chỉ không đẩy toast/push ra ngoài màn hình
   let suppressExternal = false;
   if (type === 'comment_added') {
-    suppressExternal = await isCommentMutedForUser(userId, entityType, entityId, metadata);
+    suppressExternal = await isCommentMutedForUser(userId, entityType, entityId, scopedMeta);
   } else if (type === 'messenger_chat') {
-    suppressExternal = await isMessengerMutedForUser(userId, entityType, entityId, metadata);
+    suppressExternal = await isMessengerMutedForUser(userId, entityType, entityId, scopedMeta);
   }
 
   const insert = {
@@ -177,7 +227,9 @@ async function createNotification(req, userId, type, title, message, entityType,
     entity_id: entityId,
   };
 
-  if (metadata) insert.metadata = withCompanyMeta(metadata, metadata.company_id || metadata.companyId);
+  if (scopedMeta) {
+    insert.metadata = withCompanyMeta(scopedMeta, scopedMeta.company_id || scopedMeta.companyId);
+  }
 
   const { data, error } = await supabase
     .from('notifications')
@@ -228,8 +280,33 @@ async function createNotification(req, userId, type, title, message, entityType,
 async function notifyMultiple(req, userIds, type, title, message, entityType, entityId, metadata = null) {
   const unique = [...new Set(userIds.filter(Boolean))];
   if (!unique.length) return [];
+
+  let related = new Set();
+  try {
+    related = await resolveRelatedCompanyIds({ entityType, entityId, metadata });
+  } catch (e) {
+    console.warn('[notifyMultiple] related companies:', e.message || e);
+  }
+
+  const scopedMeta = withRelatedCompanyMeta(metadata, related, metadata?.company_id || metadata?.companyId);
+
+  let recipients = unique;
+  try {
+    recipients = await filterUserIdsByCompanyRelevance(unique, {
+      type,
+      entityType,
+      entityId,
+      metadata: scopedMeta,
+      relatedCompanyIds: related,
+    });
+  } catch (e) {
+    console.warn('[notifyMultiple] company relevance filter:', e.message || e);
+    recipients = unique;
+  }
+  if (!recipients.length) return [];
+
   const settled = await Promise.all(
-    unique.map((uid) => createNotification(req, uid, type, title, message, entityType, entityId, metadata)),
+    recipients.map((uid) => createNotification(req, uid, type, title, message, entityType, entityId, scopedMeta)),
   );
   return settled.filter(Boolean);
 }
@@ -304,7 +381,9 @@ module.exports = {
   getCompanyScopedRoleUserIds,
   getSystemAdminUserIds,
   withCompanyMeta,
+  withRelatedCompanyMeta,
   notificationVisibleToViewer,
   filterNotificationsForViewer,
+  filterNotificationsForViewerAsync,
   isGlobalNotificationViewer,
 };

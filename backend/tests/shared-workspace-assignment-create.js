@@ -143,6 +143,7 @@ inject('../src/helpers/tenantQuotas.js', {
 });
 inject('../src/helpers/adminRole.js', {
   isAdminLike: () => true,
+  isSystemAdmin: () => true,
 });
 inject('../src/helpers/crmTaskOutbox.js', {
   createCrmTaskOutbox: () => ({
@@ -334,18 +335,21 @@ async function run() {
     assert.strictEqual(SIDE.syncCalls.length, 0);
   });
 
-  await test('reject khi NV không thuộc lead_members', async () => {
+  await test('tự thêm NV chưa thuộc lead_members khi giao việc', async () => {
     globalHandlers = baseHandlers();
     const r = await createSharedWorkspaceLinkedAssignment(req, 'lead-1', {
-      title: 'Bad member',
+      title: 'Giao người ngoài deal',
       assignee_ids: ['u-outsider'],
       assignment_module: 'crm',
       task_source_type: 'customer_request',
     });
-    assert.ok(r.error);
-    assert.strictEqual(r.status, 400);
-    assert.ok(r.invalid_user_ids?.includes('u-outsider'));
-    assert.strictEqual(SIDE.syncCalls.length, 0);
+    assert.ok(!r.error, r.error);
+    assert.strictEqual(r.status, 201);
+    assert.ok(r.data.assignment?.id);
+    const added = globalLog.some((x) => x.table === 'lead_members' && x.op === 'insert');
+    assert.ok(added, 'phải upsert lead_members cho NV chưa tham gia deal');
+    assert.strictEqual(SIDE.syncCalls.length, 1);
+    assert.deepStrictEqual(SIDE.syncCalls[0].ids, ['u-outsider']);
   });
 
   await test('reject employee_error thiếu khối phát sinh', async () => {
@@ -359,6 +363,23 @@ async function run() {
     assert.ok(r.error);
     assert.strictEqual(r.status, 400);
     assert.strictEqual(SIDE.syncCalls.length, 0);
+  });
+
+  await test('assignee_roles: primary được đưa sang sync', async () => {
+    globalHandlers = baseHandlers();
+    resetSide();
+    const r = await createSharedWorkspaceLinkedAssignment(req, 'lead-1', {
+      title: 'Lỗi NV',
+      assignee_ids: ['u-a1', 'u-a2'],
+      assignment_module: 'crm',
+      task_source_type: 'employee_error',
+      employee_error_module: 'crm',
+      assignee_roles: { 'u-a1': 'primary', 'u-a2': 'executor' },
+    });
+    assert.ok(!r.error, r.error);
+    const opts = SIDE.syncCalls[0]?.opts || {};
+    assert.strictEqual(opts.assigneeRoles['u-a1'], 'primary');
+    assert.strictEqual(opts.assigneeRoles['u-a2'], 'executor');
   });
 
   console.log(`\nKết quả: ${passed} pass, ${failed} fail`);

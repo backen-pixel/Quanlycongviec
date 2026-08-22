@@ -374,6 +374,10 @@ function DefaultRedirect() {
   const pinned = localStorage.getItem('pinned_module') || '/crm';
   if (pinned === '/sx') return <Navigate to="/sx/dashboard" replace />;
   if (pinned === '/vc') return <Navigate to="/vc/dashboard" replace />;
+  // Module Công việc: vào thẳng Dashboard dự án (không còn /work/unified)
+  if (pinned === '/work' || pinned === '/work/unified' || pinned === '/congviec') {
+    return <Navigate to="/projects" replace />;
+  }
   return <Navigate to={pinned} replace />;
 }
 
@@ -410,7 +414,7 @@ export default function App() {
             <Route path="/social" element={<SocialFeedPage />} />
             <Route path="/social/u/:userId" element={<SocialProfilePage />} />
             <Route path="/my-tasks" element={<Navigate to="/work/unified" replace />} />
-            <Route path="/work" element={<Navigate to="/work/unified" replace />} />
+            <Route path="/work" element={<Navigate to="/projects" replace />} />
             <Route path="/work/unified" element={<Suspense fallback={<PageLoader />}><WorkTasksUnifiedPage /></Suspense>} />
             <Route path="/work/flows" element={<Suspense fallback={<PageLoader />}><ModuleFlowSetupPage /></Suspense>} />
             <Route path="/projects" element={<Projects />} />

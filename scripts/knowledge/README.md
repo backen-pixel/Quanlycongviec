@@ -34,3 +34,18 @@ node scripts/knowledge/build-seeds.js                # nhúng ảnh vào SQL
 Chụp lại: `--print-mcp` (MCP Chrome) hoặc `--puppeteer` (cần env email/pass).
 
 **Thứ tự migration gợi ý:** 217 → … → 261 → **272** → **277** (cập nhật seed 5 trụ) hoặc chạy lại 259 → 262 → 263
+
+## Khoá từng nút trang chi tiết (CRM · SX · VC/LĐ)
+
+Cùng khuôn khoá 534 (ảnh, quiz, checklist, chứng nhận 14 ngày). Nội dung trong:
+
+- `scripts/knowledge/_detail_seed_crm.py`
+- `scripts/knowledge/_detail_seed_workshop.py`
+
+```bash
+python scripts/knowledge/build_detail_button_seeds.py
+# Output: database/554_*.sql, 555_*.sql, 556_*.sql
+cd backend && node scripts/apply-migration-detail-buttons.js
+```
+
+Ảnh tái sử dụng screenshot đã có trên Storage (`guide-06`, `lead-09`, `sx-vc-03`, `sx-vc-08`, `collab-01`, …).

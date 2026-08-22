@@ -88,10 +88,77 @@ async function applyLogisticsOpsOnVcIntake(projectId) {
   return applyPlannedOpsEvents(projectId, { eventTypes: LOGISTICS_OPS_TYPES });
 }
 
+/**
+ * Kéo thẻ SX vào cột is_handover_to_logistics («Đơn hàng đã chuẩn bị xong»):
+ * hoàn thành sự kiện «Hoàn thiện sản xuất» + tắt deadline thẻ Kanban.
+ * Không xóa ngày lắp / giao / hoàn thiện — VC/LĐ vẫn cần lịch đó.
+ */
+async function completeProductionFinishOnHandover(projectId, opts = {}) {
+  if (!projectId) return { ok: false, count: 0, ids: [], error: 'missing projectId' };
+  const nowIso = new Date().toISOString();
+  const reason = String(opts.reason || 'Tự hoàn thành khi kéo sang cột bàn giao vận chuyển').trim();
+
+  try {
+    let { error: dlErr } = await supabase
+      .from('projects')
+      .update({
+        sx_kanban_deadline_at: null,
+        sx_kanban_deadline_reason: null,
+        updated_at: nowIso,
+      })
+      .eq('id', projectId);
+    if (dlErr && /sx_kanban_deadline/.test(String(dlErr.message || ''))) {
+      ({ error: dlErr } = await supabase.from('projects').update({ updated_at: nowIso }).eq('id', projectId));
+    }
+    if (dlErr) console.warn('[complete-sx-finish] clear kanban deadline:', dlErr.message);
+  } catch (e) {
+    console.warn('[complete-sx-finish] clear kanban deadline:', e.message);
+  }
+
+  let rows = [];
+  try {
+    const { data, error } = await supabase
+      .from('crm_events')
+      .select('id, title, event_type, status, module')
+      .eq('project_id', projectId)
+      .in('status', ['planned', 'in_progress']);
+    if (error) throw error;
+    rows = (data || []).filter((e) => matchesWanted(e, new Set(PRODUCTION_FINISH_TYPES)));
+  } catch (e) {
+    console.warn('[complete-sx-finish] list:', e.message);
+    return { ok: false, count: 0, ids: [], error: e.message };
+  }
+
+  const ids = [];
+  for (const ev of rows) {
+    const nextTitle = stripDraftHint(ev.title);
+    const patch = {
+      status: 'completed',
+      result: reason,
+      updated_at: nowIso,
+      ...(nextTitle && nextTitle !== ev.title ? { title: nextTitle } : {}),
+    };
+    let { error } = await supabase.from('crm_events').update(patch).eq('id', ev.id);
+    if (error && /column.*result/i.test(String(error.message || ''))) {
+      const { result: _r, ...noResult } = patch;
+      void _r;
+      ({ error } = await supabase.from('crm_events').update(noResult).eq('id', ev.id));
+    }
+    if (error) {
+      console.warn('[complete-sx-finish] update', ev.id, error.message);
+      continue;
+    }
+    ids.push(String(ev.id));
+  }
+
+  return { ok: true, count: ids.length, ids };
+}
+
 module.exports = {
   applyPlannedOpsEvents,
   applyProductionFinishOnSxIntake,
   applyLogisticsOpsOnVcIntake,
+  completeProductionFinishOnHandover,
   PRODUCTION_FINISH_TYPES,
   LOGISTICS_OPS_TYPES,
 };

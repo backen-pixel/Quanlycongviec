@@ -39,6 +39,8 @@ import ProjectApprovalsTab from '../components/ProjectApprovalsTab';
 import EmployeePicker from '../components/EmployeePicker';
 import { LeadMembersTab, LeadChatTab } from '../components/LeadChatTabs';
 import { countMembersByModule } from '../lib/memberModuleCounts';
+import { resolveDealPrimaryProjectId } from '../lib/dealModulePathAccess';
+import DealModulePathStrip from '../components/DealModulePathStrip';
 import CallLogsTab from '../components/CallLogsTab';
 import LeadVoiceRecordingsTab from '../components/LeadVoiceRecordingsTab';
 import FacebookChatTab from '../components/FacebookChatTab';
@@ -55,6 +57,7 @@ import SxMultiTargetPicker, {
   sxTargetsToApiPayload,
   ShiftQuickPick,
 } from '../components/SxMultiTargetPicker';
+import MultiDayDatePicker, { formatYmdListVi } from '../components/MultiDayDatePicker';
 import { useConfirmCountdown } from '../hooks/useConfirmCountdown';
 import {
   classifyCrmLeadTypeForSx,
@@ -95,7 +98,7 @@ import {
   ArrowLeft, Phone, Mail, MapPin, Calendar, DollarSign, User, Target,
   Plus, Clock, MessageSquare, MessageCircle, Edit2, Trash2, X, Save, Building2, FolderKanban,
   FileUp, FileText, Zap, ChevronDown, Send, RefreshCw, Users, ClipboardCheck, ClipboardPen, Loader2, Mic, RotateCcw, Download,
-  Pin, CheckCircle2, ShoppingCart, Package, Search, Eye, BookOpen,
+  Pin, CheckCircle2, ShoppingCart, Package, Search, Eye, BookOpen, Truck,
 } from 'lucide-react';
 import { useProductTour } from '../components/productTour/ProductTourProvider';
 import { CRM_LEAD_DEAL_DETAIL_TOUR_ID } from '../lib/productTour/tours';
@@ -144,6 +147,95 @@ function formatVnDateTimeShort(raw) {
 
 function projectInstallDisplayRaw(pp) {
   return pp?.install_date || pp?.delivery_date || null;
+}
+
+/** Chuẩn hoá danh sách ngày lắp (YYYY-MM-DD), unique + sort. */
+function normalizeInstallOccYmds(...sources) {
+  const out = [];
+  for (const src of sources) {
+    if (Array.isArray(src)) {
+      for (const d of src) {
+        const ymd = String(d || '').slice(0, 10);
+        if (/^\d{4}-\d{2}-\d{2}$/.test(ymd)) out.push(ymd);
+      }
+    } else if (src != null && src !== '') {
+      const ymd = String(src).slice(0, 10);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(ymd)) out.push(ymd);
+    }
+  }
+  return [...new Set(out)].sort();
+}
+
+/** Gộp tên cột pipeline bị lặp «A — A». */
+function normalizeStageDisplayName(name) {
+  const s = String(name || '').trim();
+  if (!s) return '';
+  const parts = s.split(/[—–-]/).map((p) => p.trim()).filter(Boolean);
+  if (parts.length >= 2 && parts.every((p) => p.toLowerCase() === parts[0].toLowerCase())) {
+    return parts[0];
+  }
+  return s;
+}
+
+function resolveSxProgressMeta(pp, lead) {
+  const stage = pp?.sx_pipeline_stage
+    || (pp?.is_primary ? lead?.sx_pipeline_stage : null)
+    || null;
+  const rawName = stage?.name
+    || (pp?.status === 'consulting' ? 'Chờ vào xưởng' : null)
+    || (stage?.bucket_slug === 'won_pending' ? 'Chờ vào xưởng' : null);
+  const stageName = normalizeStageDisplayName(rawName) || 'Chưa có giai đoạn';
+  return { stage, stageName };
+}
+
+function resolveVcProgressMeta(pp, lead) {
+  const stage = pp?.vc_pipeline_stage
+    || (pp?.is_primary ? lead?.vc_pipeline_stage : null)
+    || null;
+  let rawName = stage?.name || null;
+  if (!rawName && stage?.bucket_slug === 'delivery_pending') rawName = 'Chờ vận chuyển';
+  const stageName = normalizeStageDisplayName(rawName);
+  return { stage, stageName };
+}
+
+function DealProjectPipelineProgress({ label, tone, stageName, icon }) {
+  const isVc = tone === 'vc';
+  const displayName = normalizeStageDisplayName(stageName);
+  const shell = isVc ? 'bg-orange-50 border-orange-100' : 'bg-teal-50 border-teal-100';
+  const badge = isVc ? 'bg-orange-100 text-orange-800' : 'bg-teal-100 text-teal-800';
+  const nameColor = isVc ? 'text-orange-950' : 'text-teal-950';
+  const fallbackIcon = isVc ? '🚚' : '🏭';
+
+  return (
+    <div className={`rounded-lg border px-2.5 py-2 min-w-0 ${shell}`}>
+      <span className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide ${badge}`}>
+        <span className="text-[11px] leading-none">{icon || fallbackIcon}</span>
+        {label}
+      </span>
+      <p className={`mt-1 text-[11px] font-semibold leading-snug line-clamp-2 ${displayName ? nameColor : 'text-gray-400 italic'}`}>
+        {displayName || 'Chưa có giai đoạn'}
+      </p>
+    </div>
+  );
+}
+
+function DealProjectMetaChip({ tone = 'gray', icon, children, title }) {
+  const tones = {
+    gray: 'bg-gray-100 text-gray-700 border-gray-200',
+    orange: 'bg-orange-50 text-orange-900 border-orange-100',
+    teal: 'bg-teal-50 text-teal-900 border-teal-100',
+    sky: 'bg-sky-50 text-sky-900 border-sky-100',
+    amber: 'bg-amber-50 text-amber-800 border-amber-100',
+  };
+  return (
+    <span
+      title={title || undefined}
+      className={`inline-flex items-center gap-1 max-w-full rounded-md border px-1.5 py-0.5 text-[10px] font-medium truncate ${tones[tone] || tones.gray}`}
+    >
+      {icon ? <span className="shrink-0">{icon}</span> : null}
+      <span className="truncate">{children}</span>
+    </span>
+  );
 }
 
 function leadDealEventLocation(lead, customer) {
@@ -252,6 +344,7 @@ export default function LeadDetail() {
   const [activeTab, setActiveTab] = useState('tasks');
   const [commentCount, setCommentCount] = useState(0);
   const [memberModuleCounts, setMemberModuleCounts] = useState({ crm: 0, production: 0, logistics: 0, total: 0 });
+  const [dealMembers, setDealMembers] = useState([]);
 
   useEffect(() => {
     if (!id) return;
@@ -266,16 +359,22 @@ export default function LeadDetail() {
   useEffect(() => {
     if (!id) {
       setMemberModuleCounts({ crm: 0, production: 0, logistics: 0, total: 0 });
+      setDealMembers([]);
       return;
     }
     let cancelled = false;
     api.get(`/crm/leads/${id}/members`)
       .then((r) => {
         if (cancelled) return;
-        setMemberModuleCounts(countMembersByModule(r.data || []));
+        const rows = r.data || [];
+        setDealMembers(rows);
+        setMemberModuleCounts(countMembersByModule(rows));
       })
       .catch(() => {
-        if (!cancelled) setMemberModuleCounts({ crm: 0, production: 0, logistics: 0, total: 0 });
+        if (!cancelled) {
+          setDealMembers([]);
+          setMemberModuleCounts({ crm: 0, production: 0, logistics: 0, total: 0 });
+        }
       });
     return () => { cancelled = true; };
   }, [id]);
@@ -346,11 +445,28 @@ export default function LeadDetail() {
   const [addSxTargets, setAddSxTargets] = useState([]);
   const [addSxBusy, setAddSxBusy] = useState(false);
   const [addSxErr, setAddSxErr] = useState('');
+  const [sxProjectsPanelOpen, setSxProjectsPanelOpen] = useState(() => {
+    try {
+      const v = localStorage.getItem('crm_deal_sx_projects_panel_open');
+      if (v === '0') return false;
+      if (v === '1') return true;
+    } catch { /* ignore */ }
+    return true;
+  });
+  const toggleSxProjectsPanel = () => {
+    setSxProjectsPanelOpen((open) => {
+      const next = !open;
+      try { localStorage.setItem('crm_deal_sx_projects_panel_open', next ? '1' : '0'); } catch { /* ignore */ }
+      return next;
+    });
+  };
   /** Sửa lịch lắp đặt / lấy hàng trên từng dự án SX (đồng bộ lịch VC/LĐ). */
   const [sxScheduleEdit, setSxScheduleEdit] = useState(null);
   const [sxScheduleBusy, setSxScheduleBusy] = useState(false);
   const [sxScheduleErr, setSxScheduleErr] = useState('');
   const [sxScheduleLogisticsCompanies, setSxScheduleLogisticsCompanies] = useState([]);
+  const [sxScheduleVcUsers, setSxScheduleVcUsers] = useState([]);
+  const [sxScheduleAssigningVc, setSxScheduleAssigningVc] = useState(false);
   const [dealStageWonWorkTypeId, setDealStageWonWorkTypeId] = useState('');
   const [dealStageWonErr, setDealStageWonErr] = useState('');
   /** Ngày lắp đặt = deadline VC/LĐ; hoàn thiện SX = deadline tổng (= lắp − 2) */
@@ -609,7 +725,9 @@ export default function LeadDetail() {
     if (id) {
       try {
         const { data } = await api.get(`/crm/leads/${id}/members`);
-        setMemberModuleCounts(countMembersByModule(data || []));
+        const rows = data || [];
+        setDealMembers(rows);
+        setMemberModuleCounts(countMembersByModule(rows));
       } catch {
         /* giữ số cũ */
       }
@@ -1876,6 +1994,11 @@ export default function LeadDetail() {
     const ymd = String(installRaw || '').slice(0, 10);
     const timeM = String(installRaw || '').match(/T(\d{2}):(\d{2})/);
     const installYmd = /^\d{4}-\d{2}-\d{2}$/.test(ymd) ? ymd : '';
+    const initialOcc = normalizeInstallOccYmds(
+      pp.install_occurrence_dates,
+      pp.installOccurrenceDates,
+      installYmd,
+    );
     const linked = lead?.linked_project;
     const sameAsLinked = linked
       && String(linked.id || lead?.project_id || '') === String(pp.project_id);
@@ -1883,21 +2006,27 @@ export default function LeadDetail() {
       || pp.logistics_company?.id
       || (sameAsLinked ? (linked.logistics_company_id || null) : null)
       || null;
+    const initialLogisticsPersonId = pp.logistics_person_id
+      || pp.logistics_person?.id
+      || (sameAsLinked ? (linked?.logistics_person_id || null) : null)
+      || null;
     setSxScheduleEdit({
       projectId: pp.project_id,
       code: pp.code || '',
       logisticsCompanyId: logisticsFromPp ? String(logisticsFromPp) : '',
-      installYmd,
+      logisticsPersonId: initialLogisticsPersonId ? String(initialLogisticsPersonId) : '',
+      installYmd: initialOcc[0] || installYmd,
       installTime: timeM ? `${timeM[1]}:${timeM[2]}` : '14:00',
-      installOccurrenceDates: installYmd ? [installYmd] : [],
+      installOccurrenceDates: initialOcc.length ? initialOcc : (installYmd ? [installYmd] : []),
       vcNotes: pp.vc_notes || (sameAsLinked ? (linked?.vc_notes || '') : '') || '',
       pickupLocal: pp.pickup_at
         ? toDatetimeLocalValue(pp.pickup_at)
         : (sameAsLinked && linked?.pickup_at
           ? toDatetimeLocalValue(linked.pickup_at)
-          : (installYmd ? `${installYmd}T08:00` : '')),
+          : ((initialOcc[0] || installYmd) ? `${initialOcc[0] || installYmd}T08:00` : '')),
     });
     setSxScheduleErr('');
+    setSxScheduleVcUsers([]);
 
     const projectId = String(pp.project_id);
     const leadIdForEvents = lead?.id || id || null;
@@ -1905,18 +2034,24 @@ export default function LeadDetail() {
     Promise.all([
       api.get('/companies', { params: { for_module: 'logistics' } }).catch(() => null),
       api.get(`/projects/${projectId}`).catch(() => null),
+      api.get('/workshop-teams/users').catch(() => null),
       // Lấy lại CT VC/LĐ từ sự kiện dự kiến nếu cột projects.logistics_company_id trống
       leadIdForEvents
         ? api.get('/events', {
           params: {
             lead_id: leadIdForEvents,
-            modules: 'logistics,production',
             limit: 100,
             include_as_participant: '1',
           },
         }).catch(() => null)
-        : Promise.resolve(null),
-    ]).then(([companiesRes, projectRes, eventsRes]) => {
+        : api.get('/events', {
+          params: {
+            project_id: projectId,
+            limit: 100,
+            include_as_participant: '1',
+          },
+        }).catch(() => null),
+    ]).then(([companiesRes, projectRes, vcUsersRes, eventsRes]) => {
       const list = companiesRes?.data?.companies || companiesRes?.data || [];
       let companies = Array.isArray(list) ? list.map((c) => ({ ...c, id: String(c.id) })) : [];
       const proj = projectRes?.data?.project || projectRes?.data || null;
@@ -1956,33 +2091,117 @@ export default function LeadDetail() {
       }
       setSxScheduleLogisticsCompanies(companies);
 
+      const personId = proj?.logistics_person_id
+        || proj?.logistics_person?.id
+        || initialLogisticsPersonId
+        || null;
+      const personName = proj?.logistics_person?.full_name
+        || pp.logistics_person_name
+        || pp.logistics_person?.full_name
+        || null;
+      const rawVcUsers = vcUsersRes?.data?.users || vcUsersRes?.data || [];
+      let vcUsers = Array.isArray(rawVcUsers) ? rawVcUsers : [];
+      if (personId && !vcUsers.some((u) => String(u.id) === String(personId))) {
+        vcUsers = [{ id: personId, full_name: personName || 'Người quản lý VC đã gán' }, ...vcUsers];
+      }
+      setSxScheduleVcUsers(vcUsers);
+
+      const companyIdForUsers = lidStr || logisticsFromPp;
+      if (companyIdForUsers) {
+        api.get(`/logistics/handover-settings/${companyIdForUsers}`)
+          .then((r) => {
+            const coUsers = r.data?.users || [];
+            if (!Array.isArray(coUsers) || !coUsers.length) return;
+            setSxScheduleVcUsers((prev) => {
+              const map = new Map();
+              for (const u of [...coUsers, ...(prev || [])]) {
+                if (u?.id) map.set(String(u.id), u);
+              }
+              return [...map.values()].sort((a, b) =>
+                String(a.full_name || '').localeCompare(String(b.full_name || ''), 'vi'));
+            });
+          })
+          .catch(() => { /* sale khác CT có thể không xem được cấu hình bàn giao */ });
+      }
+
       setSxScheduleEdit((s) => {
         if (!s || String(s.projectId) !== projectId) return s;
         const next = { ...s };
         if (lidStr) next.logisticsCompanyId = lidStr;
+        if (personId) next.logisticsPersonId = String(personId);
         if (proj?.pickup_at && !String(s.pickupLocal || '').trim()) {
           next.pickupLocal = toDatetimeLocalValue(proj.pickup_at);
         }
-        const installEv = eventList.find((e) => String(e?.event_type || '').toLowerCase() === 'installation');
-        const occ = Array.isArray(installEv?.occurrence_dates)
-          ? installEv.occurrence_dates.map((d) => String(d).slice(0, 10)).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort()
-          : [];
+        if (proj?.vc_notes != null && !String(s.vcNotes || '').trim()) {
+          next.vcNotes = String(proj.vc_notes || '');
+        }
+        const installEv = eventList.find((e) => {
+          const t = String(e?.event_type || '').toLowerCase();
+          return t === 'installation' && String(e.project_id || '') === projectId;
+        }) || eventList.find((e) => String(e?.event_type || '').toLowerCase() === 'installation');
+        const occ = normalizeInstallOccYmds(
+          installEv?.occurrence_dates,
+          proj?.install_occurrence_dates,
+          proj?.installOccurrenceDates,
+          // Fallback: khoảng start→end của sự kiện lắp (nếu không có occurrence_dates)
+          (() => {
+            if (!installEv?.start_time) return [];
+            const startYmd = String(installEv.start_time).slice(0, 10);
+            const endYmd = installEv.end_time ? String(installEv.end_time).slice(0, 10) : startYmd;
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(startYmd)) return [];
+            if (!endYmd || endYmd === startYmd || endYmd < startYmd) return [startYmd];
+            const days = [];
+            const cur = new Date(`${startYmd}T12:00:00`);
+            const end = new Date(`${endYmd}T12:00:00`);
+            const pad = (n) => String(n).padStart(2, '0');
+            while (cur <= end && days.length < 31) {
+              days.push(`${cur.getFullYear()}-${pad(cur.getMonth() + 1)}-${pad(cur.getDate())}`);
+              cur.setDate(cur.getDate() + 1);
+            }
+            return days;
+          })(),
+          s.installOccurrenceDates,
+          s.installYmd,
+        );
         if (occ.length) {
           next.installOccurrenceDates = occ;
           next.installYmd = occ[0];
           const tm = String(installEv?.start_time || '').match(/T(\d{2}):(\d{2})/)
+            || String(proj?.install_date || proj?.delivery_date || '').match(/T(\d{2}):(\d{2})/)
             || String(s.installTime || '').match(/^(\d{2}):(\d{2})$/);
           if (tm) next.installTime = `${tm[1]}:${tm[2]}`;
         }
         return next;
       });
-    }).catch(() => setSxScheduleLogisticsCompanies([]));
+    }).catch(() => {
+      setSxScheduleLogisticsCompanies([]);
+      setSxScheduleVcUsers([]);
+    });
   };
 
   const closeSxScheduleEdit = () => {
-    if (sxScheduleBusy) return;
+    if (sxScheduleBusy || sxScheduleAssigningVc) return;
     setSxScheduleEdit(null);
     setSxScheduleErr('');
+    setSxScheduleVcUsers([]);
+  };
+
+  const assignVcManagerOnDeal = async (userId) => {
+    if (!sxScheduleEdit?.projectId) return;
+    const uid = String(userId || '').trim();
+    setSxScheduleAssigningVc(true);
+    setSxScheduleErr('');
+    try {
+      await api.patch(`/workshop-teams/projects/${sxScheduleEdit.projectId}/assign`, {
+        logistics_person_id: uid || null,
+      });
+      setSxScheduleEdit((s) => (s ? { ...s, logisticsPersonId: uid } : s));
+      await softRefreshDeal();
+    } catch (e) {
+      setSxScheduleErr(e.response?.data?.error || e.message || 'Lỗi gán người quản lý vận chuyển');
+    } finally {
+      setSxScheduleAssigningVc(false);
+    }
   };
 
   /** Header: mở thiết lập kế hoạch SX + VC/LĐ (tạo dự án hoặc sửa lịch hiện có). */
@@ -2057,7 +2276,14 @@ export default function LeadDetail() {
         sync_vc_ld_events: true,
       };
       await api.put(`/projects/${sxScheduleEdit.projectId}`, patch);
+      const nextPersonId = String(sxScheduleEdit.logisticsPersonId || '').trim();
+      if (nextPersonId) {
+        await api.patch(`/workshop-teams/projects/${sxScheduleEdit.projectId}/assign`, {
+          logistics_person_id: nextPersonId,
+        });
+      }
       setSxScheduleEdit(null);
+      setSxScheduleVcUsers([]);
       await softRefreshDeal();
     } catch (e) {
       setSxScheduleErr(e.response?.data?.error || e.message || 'Lỗi lưu lịch lắp đặt');
@@ -2903,6 +3129,16 @@ export default function LeadDetail() {
         </div>
       </div>
 
+      {lead?.type === 'deal' && (
+        <DealModulePathStrip
+          leadId={id}
+          projectId={resolveDealPrimaryProjectId(lead)}
+          currentModule="crm"
+          lead={lead}
+          members={dealMembers}
+        />
+      )}
+
       {lead?.source_customer_deal_id || lead?.source_customer_deal?.id ? (
         <div className="rounded-xl border border-teal-200 bg-teal-50/80 px-4 py-2.5 text-sm text-teal-900 flex flex-wrap items-center gap-x-2 gap-y-1">
           <span className="font-medium">Phát sinh từ deal khách hàng:</span>
@@ -2969,23 +3205,55 @@ export default function LeadDetail() {
       {lead?.type === 'deal' && lead?.project_id && (
         <div className="mb-3 space-y-2">
           <p className="text-xs text-sky-800 bg-sky-50 border border-sky-200 rounded-lg px-3 py-2">
-            Deal đã có dự án SX — tiến độ xưởng/VC qua badge và module xưởng. Có thể thêm xưởng khác bên dưới.
+            Deal đã có dự án SX — tiến độ sản xuất và VC/LĐ hiển thị bên dưới từng dự án. Có thể thêm xưởng khác.
           </p>
           <div className="rounded-xl border border-teal-200 bg-white p-3 space-y-2">
             <div className="flex items-center justify-between gap-2">
-              <h4 className="text-sm font-bold text-gray-900">Dự án sản xuất</h4>
               <button
                 type="button"
-                className="h-8 px-3 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700"
-                onClick={() => { setAddSxErr(''); setAddSxTargets([]); setAddSxOpen(true); }}
+                onClick={toggleSxProjectsPanel}
+                className="inline-flex items-center gap-1.5 min-w-0 text-left cursor-pointer group"
+                title={sxProjectsPanelOpen ? 'Thu gọn danh sách dự án SX' : 'Hiện danh sách dự án SX'}
+                aria-expanded={sxProjectsPanelOpen}
               >
-                + Thêm dự án SX
+                <ChevronDown
+                  className={`h-4 w-4 shrink-0 text-teal-700 transition-transform ${sxProjectsPanelOpen ? '' : '-rotate-90'}`}
+                />
+                <h4 className="text-sm font-bold text-gray-900 group-hover:text-teal-800 truncate">
+                  Dự án sản xuất
+                </h4>
+                {!sxProjectsPanelOpen && (
+                  <span className="text-[11px] font-semibold text-teal-700 bg-teal-50 border border-teal-100 rounded-md px-1.5 py-0.5 tabular-nums shrink-0">
+                    {(Array.isArray(lead.production_projects) && lead.production_projects.length)
+                      ? lead.production_projects.length
+                      : (lead.project_id ? 1 : 0)}
+                  </span>
+                )}
               </button>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={toggleSxProjectsPanel}
+                  className="h-8 px-2.5 rounded-lg text-xs font-semibold border border-teal-200 text-teal-800 bg-teal-50 hover:bg-teal-100 cursor-pointer"
+                  title={sxProjectsPanelOpen ? 'Ẩn' : 'Hiện'}
+                >
+                  {sxProjectsPanelOpen ? 'Ẩn' : 'Hiện'}
+                </button>
+                <button
+                  type="button"
+                  className="h-8 px-3 rounded-lg text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 cursor-pointer"
+                  onClick={() => { setAddSxErr(''); setAddSxTargets([]); setAddSxOpen(true); }}
+                >
+                  + Thêm dự án SX
+                </button>
+              </div>
             </div>
+            {sxProjectsPanelOpen && (
+              <>
             <p className="text-[11px] text-gray-500 leading-snug">
               Chỉnh lịch lắp đặt / lấy hàng tại đây — lịch VC/LĐ (tab Lịch) sẽ thấy mốc dự kiến.
             </p>
-            <ul className="space-y-1.5">
+            <ul className="space-y-2.5">
               {(() => {
                 const rows = Array.isArray(lead.production_projects) && lead.production_projects.length
                   ? lead.production_projects
@@ -3002,6 +3270,8 @@ export default function LeadDetail() {
                       lead.linked_project?.logistics_company?.short_name
                       || lead.linked_project?.logistics_company?.name
                       || null,
+                    logistics_person_id: lead.linked_project?.logistics_person_id || null,
+                    logistics_person_name: lead.linked_project?.logistics_person?.full_name || null,
                     company_id: lead.linked_project?.company_id || null,
                   }];
                 const showPrimary = rows.length <= 1;
@@ -3013,40 +3283,86 @@ export default function LeadDetail() {
                     || pp.logistics_company?.short_name
                     || pp.logistics_company?.name
                     || null;
+                  const sxProgress = resolveSxProgressMeta(pp, lead);
+                  const vcProgress = resolveVcProgressMeta(pp, lead);
+                  const vcStageLabel = vcProgress.stageName || (vcName ? 'Chưa vào pipeline' : null);
+                  const logisticsPerson = pp.logistics_person_name || pp.logistics_person?.full_name || null;
                   return (
-                <li key={pp.project_id || pp.code} className="flex items-center justify-between gap-2 text-xs rounded-lg border border-gray-100 bg-gray-50 px-2.5 py-2">
-                  <div className="min-w-0 flex-1">
-                    <p className="font-semibold text-gray-900 truncate">
-                      {pp.code || '—'} {showPrimary && pp.is_primary ? <span className="text-teal-700 font-normal">(chính)</span> : null}
-                    </p>
-                    <p className="text-gray-600 truncate">
-                      {[pp.company_name, pp.workshop_type_name || pp.label, pp.name].filter(Boolean).join(' · ')}
-                    </p>
-                    <p className="mt-0.5 text-[11px] text-orange-800/90 truncate">
+                <li key={pp.project_id || pp.code} className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+                  <div className="flex items-start justify-between gap-3 p-3">
+                  <div className="min-w-0 flex-1 space-y-2">
+                    <div>
+                      <p className="font-bold text-sm text-gray-900 truncate">
+                        {pp.code || '—'}
+                        {showPrimary && pp.is_primary ? (
+                          <span className="ml-1.5 inline-flex items-center rounded-md bg-teal-100 px-1.5 py-0.5 text-[10px] font-semibold text-teal-800 align-middle">
+                            Chính
+                          </span>
+                        ) : null}
+                      </p>
+                      <p className="mt-0.5 text-[11px] text-gray-500 truncate">
+                        {[pp.company_name, pp.workshop_type_name || pp.label, pp.name].filter(Boolean).join(' · ')}
+                      </p>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <DealProjectPipelineProgress
+                        label="Sản xuất"
+                        tone="sx"
+                        stageName={sxProgress.stageName}
+                        icon={sxProgress.stage?.icon}
+                      />
+                      <DealProjectPipelineProgress
+                        label="VC / LĐ"
+                        tone="vc"
+                        stageName={vcStageLabel}
+                        icon={vcProgress.stage?.icon}
+                      />
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
                       {vcName ? (
-                        <span>VC/LĐ: <strong>{vcName}</strong></span>
+                        <DealProjectMetaChip tone="orange" icon="🏢" title="Công ty VC/LĐ">
+                          {vcName}
+                        </DealProjectMetaChip>
                       ) : (
-                        <span className="text-amber-700">Chưa chọn công ty VC/LĐ</span>
+                        <DealProjectMetaChip tone="amber" icon="⚠️">Chưa chọn công ty VC/LĐ</DealProjectMetaChip>
                       )}
-                    </p>
-                    <p className="mt-0.5 text-[11px] text-teal-800/90 truncate">
-                      {installLabel ? (
-                        <span>Lắp: <strong>{installLabel}</strong></span>
+                      {logisticsPerson ? (
+                        <DealProjectMetaChip tone="orange" icon="👤" title="Quản lý vận chuyển">
+                          {logisticsPerson}
+                        </DealProjectMetaChip>
                       ) : (
-                        <span className="text-amber-700">Chưa có lịch lắp đặt</span>
+                        <DealProjectMetaChip tone="amber" icon="👤">Chưa gán QL VC</DealProjectMetaChip>
+                      )}
+                      {installLabel ? (
+                        <DealProjectMetaChip tone="teal" icon="🔧" title="Lịch lắp đặt">
+                          {(() => {
+                            const occ = normalizeInstallOccYmds(
+                              pp.install_occurrence_dates,
+                              pp.installOccurrenceDates,
+                            );
+                            if (occ.length > 1) {
+                              return `Lắp ${occ.length} ngày: ${formatYmdListVi(occ)}`;
+                            }
+                            return `Lắp ${installLabel}`;
+                          })()}
+                        </DealProjectMetaChip>
+                      ) : (
+                        <DealProjectMetaChip tone="amber" icon="🔧">Chưa có lịch lắp</DealProjectMetaChip>
                       )}
                       {pickupLabel ? (
-                        <span className="text-sky-800"> · Lấy hàng: <strong>{pickupLabel}</strong></span>
+                        <DealProjectMetaChip tone="sky" icon="📦" title="Lịch lấy hàng">
+                          Lấy {pickupLabel}
+                        </DealProjectMetaChip>
                       ) : null}
-                    </p>
+                    </div>
                   </div>
-                  <div className="shrink-0 flex flex-col sm:flex-row items-stretch sm:items-center gap-1">
+                  <div className="shrink-0 flex flex-col items-stretch gap-1.5 pt-0.5">
                     {pp.project_id && canEditSxVcSchedule && (
                       <button
                         type="button"
-                        className="h-7 px-2 rounded-md text-[11px] font-semibold border border-teal-200 text-teal-800 bg-white hover:bg-teal-50"
+                        className="h-8 px-2.5 rounded-lg text-[11px] font-semibold border border-teal-200 text-teal-800 bg-teal-50 hover:bg-teal-100"
                         onClick={() => openSxScheduleEdit(pp)}
-                        title="Sửa lịch lắp đặt / VC-LĐ — người chịu trách nhiệm dự án"
+                        title="Sửa lịch lắp đặt / gán người quản lý vận chuyển"
                       >
                         Sửa lịch
                       </button>
@@ -3054,18 +3370,21 @@ export default function LeadDetail() {
                     {pp.project_id && (
                       <button
                         type="button"
-                        className="h-7 px-2 rounded-md text-[11px] font-semibold text-teal-700 hover:underline"
+                        className="h-8 px-2.5 rounded-lg text-[11px] font-semibold text-teal-700 hover:bg-teal-50 hover:underline"
                         onClick={() => navigate(`/sx/projects/${pp.project_id}`)}
                       >
-                        Mở SX
+                        Mở SX →
                       </button>
                     )}
+                  </div>
                   </div>
                 </li>
                   );
                 });
               })()}
             </ul>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -3074,7 +3393,7 @@ export default function LeadDetail() {
         <OverlayPortal
           open
           size="xl"
-          closeOnBackdrop={!sxScheduleBusy}
+          closeOnBackdrop={!sxScheduleBusy && !sxScheduleAssigningVc}
           onClose={closeSxScheduleEdit}
           panelClassName="p-5 space-y-3 overflow-y-auto"
         >
@@ -3082,10 +3401,10 @@ export default function LeadDetail() {
               <div>
                 <h3 className="text-lg font-bold text-gray-900">Sửa lịch lắp đặt</h3>
                 <p className="text-xs text-gray-500 mt-1">
-                  {sxScheduleEdit.code || 'Dự án'} — đồng bộ công ty VC/LĐ, ngày lắp / lấy hàng và sự kiện dự kiến.
+                  {sxScheduleEdit.code || 'Dự án'} — gán người quản lý vận chuyển, công ty VC/LĐ, ngày lắp / lấy hàng.
                 </p>
               </div>
-              <button type="button" disabled={sxScheduleBusy} onClick={closeSxScheduleEdit} className="p-1 cursor-pointer disabled:opacity-40">
+              <button type="button" disabled={sxScheduleBusy || sxScheduleAssigningVc} onClick={closeSxScheduleEdit} className="p-1 cursor-pointer disabled:opacity-40">
                 <X className="h-5 w-5 text-gray-400" />
               </button>
             </div>
@@ -3096,8 +3415,26 @@ export default function LeadDetail() {
               Công ty vận chuyển / lắp đặt
               <select
                 value={sxScheduleEdit.logisticsCompanyId || ''}
-                disabled={sxScheduleBusy}
-                onChange={(e) => setSxScheduleEdit((s) => ({ ...s, logisticsCompanyId: e.target.value }))}
+                disabled={sxScheduleBusy || sxScheduleAssigningVc}
+                onChange={(e) => {
+                  const nextCid = e.target.value;
+                  setSxScheduleEdit((s) => ({ ...s, logisticsCompanyId: nextCid }));
+                  if (!nextCid) return;
+                  api.get(`/logistics/handover-settings/${nextCid}`)
+                    .then((r) => {
+                      const coUsers = r.data?.users || [];
+                      if (!Array.isArray(coUsers) || !coUsers.length) return;
+                      setSxScheduleVcUsers((prev) => {
+                        const map = new Map();
+                        for (const u of [...coUsers, ...(prev || [])]) {
+                          if (u?.id) map.set(String(u.id), u);
+                        }
+                        return [...map.values()].sort((a, b) =>
+                          String(a.full_name || '').localeCompare(String(b.full_name || ''), 'vi'));
+                      });
+                    })
+                    .catch(() => {});
+                }}
                 className="mt-0.5 w-full h-9 px-2 border border-gray-200 rounded-lg text-sm bg-white"
               >
                 <option value="">— Chưa chọn công ty VC/LĐ —</option>
@@ -3105,6 +3442,28 @@ export default function LeadDetail() {
                   <option key={String(c.id)} value={String(c.id)}>{c.short_name || c.name}</option>
                 ))}
               </select>
+            </label>
+
+            <label className="text-[10px] font-semibold text-gray-700 block">
+              <span className="inline-flex items-center gap-1">
+                <Truck className="h-3 w-3 text-orange-500" /> Người quản lý vận chuyển
+              </span>
+              <select
+                value={sxScheduleEdit.logisticsPersonId || ''}
+                disabled={sxScheduleBusy || sxScheduleAssigningVc}
+                onChange={(e) => { void assignVcManagerOnDeal(e.target.value); }}
+                className="mt-0.5 w-full h-9 px-2 border border-orange-200 rounded-lg text-sm bg-orange-50/50"
+              >
+                <option value="">— Chưa gán — chọn để thêm và gửi thông báo —</option>
+                {sxScheduleVcUsers.map((u) => (
+                  <option key={String(u.id)} value={String(u.id)}>{u.full_name || u.email || u.id}</option>
+                ))}
+              </select>
+              <span className="mt-0.5 block text-[10px] font-normal text-orange-700/90">
+                {sxScheduleAssigningVc
+                  ? 'Đang gán và gửi thông báo…'
+                  : 'Chọn người sẽ thêm vào thành viên deal và gửi thông báo ngay.'}
+              </span>
             </label>
 
             <label className="text-[10px] font-semibold text-gray-700 block">
@@ -3123,38 +3482,66 @@ export default function LeadDetail() {
               <p className="text-[10px] font-bold uppercase tracking-wide text-teal-800">
                 Deadline lắp đặt (VC/LĐ) &amp; hoàn thiện (SX)
               </p>
-              <div className="grid grid-cols-2 gap-2">
-                <label className="text-[10px] font-semibold text-gray-700 block col-span-2 sm:col-span-1">
-                  Ngày lắp đặt <span className="font-normal text-teal-600">(deadline VC/LĐ)</span>
-                  <input
-                    type="date"
-                    value={sxScheduleEdit.installYmd}
+              <div className="space-y-2">
+                <div>
+                  <label className="text-[10px] font-semibold text-gray-700 block mb-1">
+                    Ngày lắp đặt <span className="font-normal text-teal-600">(deadline VC/LĐ · có thể nhiều ngày)</span>
+                  </label>
+                  <MultiDayDatePicker
+                    accent="teal"
                     disabled={sxScheduleBusy}
-                    onChange={(e) => {
-                      const nextYmd = e.target.value;
+                    selectedYmds={
+                      Array.isArray(sxScheduleEdit.installOccurrenceDates)
+                        && sxScheduleEdit.installOccurrenceDates.length
+                        ? sxScheduleEdit.installOccurrenceDates
+                        : (sxScheduleEdit.installYmd ? [sxScheduleEdit.installYmd] : [])
+                    }
+                    onChange={(ymds) => {
+                      const occ = normalizeInstallOccYmds(ymds);
                       setSxScheduleEdit((s) => ({
                         ...s,
-                        installYmd: nextYmd,
-                        installOccurrenceDates: nextYmd ? [nextYmd] : [],
-                        pickupLocal: s.pickupLocal || (nextYmd ? `${nextYmd}T08:00` : ''),
+                        installOccurrenceDates: occ,
+                        installYmd: occ[0] || '',
+                        pickupLocal: s.pickupLocal || (occ[0] ? `${occ[0]}T08:00` : ''),
                       }));
                     }}
-                    className="mt-0.5 w-full h-9 px-2 border border-gray-200 rounded-lg text-sm bg-white"
+                    anchorYmd={sxScheduleEdit.installYmd || undefined}
+                    hint="Bấm chọn từng ngày lắp — liên tiếp hoặc cách ngày (1, 3, 5…)"
                   />
-                </label>
-                <div className="col-span-2 sm:col-span-1">
+                  {(Array.isArray(sxScheduleEdit.installOccurrenceDates)
+                    ? sxScheduleEdit.installOccurrenceDates
+                    : []).length > 0 ? (
+                    <p className="mt-1.5 text-[11px] text-teal-900 font-medium">
+                      Đã chọn{' '}
+                      <strong>
+                        {sxScheduleEdit.installOccurrenceDates.length} ngày
+                      </strong>
+                      {': '}
+                      {formatYmdListVi(sxScheduleEdit.installOccurrenceDates)}
+                    </p>
+                  ) : null}
+                </div>
+                <div>
                   <span className="text-[10px] font-semibold text-gray-700 block">Giờ lắp đặt</span>
                   <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
                     <ShiftQuickPick
                       tone="teal"
                       hm={sxScheduleEdit.installTime || ''}
-                      disabled={sxScheduleBusy || !sxScheduleEdit.installYmd}
+                      disabled={sxScheduleBusy || !(
+                        (Array.isArray(sxScheduleEdit.installOccurrenceDates)
+                          && sxScheduleEdit.installOccurrenceDates.length)
+                        || sxScheduleEdit.installYmd
+                      )}
                       onPick={(hm) => setSxScheduleEdit((s) => ({ ...s, installTime: hm }))}
                     />
                     <input
                       type="time"
                       value={sxScheduleEdit.installTime}
-                      disabled={sxScheduleBusy || !sxScheduleEdit.installYmd}
+                      disabled={sxScheduleBusy || !(
+                        (Array.isArray(sxScheduleEdit.installOccurrenceDates)
+                          && sxScheduleEdit.installOccurrenceDates.length)
+                        || sxScheduleEdit.installYmd
+                      )}
                       onChange={(e) => setSxScheduleEdit((s) => ({ ...s, installTime: e.target.value }))}
                       title="Giờ khác — nhập trực tiếp"
                       className="w-[7.5rem] h-9 px-2 border border-gray-200 rounded-lg text-sm bg-white tabular-nums"
@@ -3164,7 +3551,7 @@ export default function LeadDetail() {
               </div>
               <label className="text-[10px] font-semibold text-indigo-700 block">
                 Ngày hoàn thiện
-                <span className="font-normal text-indigo-500"> (deadline tổng dự án SX = lắp − 2)</span>
+                <span className="font-normal text-indigo-500"> (deadline tổng dự án SX = lắp đầu − 2)</span>
                 <input
                   type="date"
                   value={sxScheduleEdit.installYmd ? (subtractCalendarDaysYmd(sxScheduleEdit.installYmd, 2) || '') : ''}
@@ -3178,7 +3565,7 @@ export default function LeadDetail() {
                   <span className="font-semibold">Quy định:</span>{' '}
                   hoàn thiện <strong>{subtractCalendarDaysYmd(sxScheduleEdit.installYmd, 2) || '—'}</strong>
                   {' = deadline tổng SX · '}
-                  lắp <strong>{sxScheduleEdit.installYmd}</strong>
+                  lắp đầu <strong>{sxScheduleEdit.installYmd}</strong>
                   {' = deadline VC/LĐ'}
                   {Array.isArray(sxScheduleEdit.installOccurrenceDates)
                     && sxScheduleEdit.installOccurrenceDates.length > 1 ? (
@@ -3186,7 +3573,7 @@ export default function LeadDetail() {
                       {' · '}
                       <strong>{sxScheduleEdit.installOccurrenceDates.length} ngày lắp</strong>
                       {': '}
-                      {sxScheduleEdit.installOccurrenceDates.join(', ')}
+                      {formatYmdListVi(sxScheduleEdit.installOccurrenceDates)}
                     </>
                   ) : null}
                 </p>
@@ -3227,7 +3614,7 @@ export default function LeadDetail() {
             <div className="flex gap-2 pt-1">
               <button
                 type="button"
-                disabled={sxScheduleBusy}
+                disabled={sxScheduleBusy || sxScheduleAssigningVc}
                 onClick={closeSxScheduleEdit}
                 className="flex-1 h-10 border border-gray-200 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50"
               >
@@ -3235,7 +3622,7 @@ export default function LeadDetail() {
               </button>
               <button
                 type="button"
-                disabled={sxScheduleBusy}
+                disabled={sxScheduleBusy || sxScheduleAssigningVc}
                 onClick={() => submitSxScheduleEdit()}
                 className="flex-1 h-10 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-sm font-semibold disabled:opacity-40 inline-flex items-center justify-center gap-1.5"
               >
@@ -4756,9 +5143,9 @@ export default function LeadDetail() {
       >
         {lead && (
           <div className="space-y-4">
-            {lead.project_id ? (
+            {lead.project_id || (Array.isArray(lead.production_projects) && lead.production_projects.length) ? (
               <p className="text-sm text-red-800 bg-red-50 border border-red-100 rounded-lg p-3">
-                Sẽ xóa luôn dự án liên kết, nhiệm vụ, tài liệu, báo giá, đơn hàng, hóa đơn liên quan. Không hoàn tác.
+                Sẽ xóa luôn dự án sản xuất liên kết (gồm dự án phát sinh / xưởng phụ), nhiệm vụ, tài liệu, báo giá, đơn hàng, hóa đơn liên quan. Không hoàn tác.
               </p>
             ) : (
               <p className="text-sm text-gray-700">
@@ -7608,7 +7995,7 @@ function LeadInfoPanel({
                     )}
                   </p>
                   <p className="text-sm font-semibold" style={{ color: sx.color || '#0c4a6e' }}>
-                    {label}
+                    {normalizeStageDisplayName(label)}
                   </p>
                 </div>
               </div>
@@ -7631,7 +8018,7 @@ function LeadInfoPanel({
                     🔧 Lắp đặt
                   </p>
                   <p className="text-sm font-semibold" style={{ color: vc.color || '#c2410c' }}>
-                    {label}
+                    {normalizeStageDisplayName(label)}
                   </p>
                 </div>
               </div>

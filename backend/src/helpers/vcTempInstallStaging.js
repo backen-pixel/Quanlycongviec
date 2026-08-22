@@ -45,9 +45,27 @@ async function resolveVcTempInstallStageId(logisticsCompanyId) {
 }
 
 /**
+ * Cột hiện tại có phải cột vận hành thật của đúng công ty VC không
+ * (không phải cột tạm, không phải cột global / công ty khác).
+ */
+async function isOnOwnCompanyOperationalVcColumn(project, logisticsCompanyId) {
+  const colId = project?.vc_kanban_column_id;
+  if (!colId || project?.vc_temp_staged) return false;
+  const { data: stage } = await supabase
+    .from('logistics_pipeline_stages')
+    .select('id, company_id, is_temp_install_staging')
+    .eq('id', colId)
+    .maybeSingle();
+  if (!stage) return false;
+  if (stage.is_temp_install_staging) return false;
+  return String(stage.company_id || '') === String(logisticsCompanyId || '');
+}
+
+/**
  * Đặt dự án vào cột «lắp đặt tạm» của công ty VC đã chọn.
  * Bỏ qua khi: chưa chọn công ty VC, công ty chưa cấu hình cột tạm,
- * hoặc dự án đã bàn giao thật / đã nằm trên bảng VC ở cột thường.
+ * đã bàn giao thật, hoặc đã nằm ở cột vận hành thật của đúng công ty VC.
+ * Cho phép kéo từ cột global / orphan (pipeline cũ) về cột tạm sau khi admin bật cột tạm.
  *
  * @returns {Promise<{ staged: boolean, reason?: string, vc_kanban_column_id?: string }>}
  */
@@ -63,10 +81,6 @@ async function stageProjectAtVcTempColumn(req, { projectId, logisticsCompanyId }
     if (HANDED_OVER_STATUSES.includes(String(project.vc_handover_status || ''))) {
       return { staged: false, reason: 'already_handed_over' };
     }
-    // Đã nằm trên bảng VC ở cột thường (bàn giao trước đó) → không kéo về cột tạm
-    if (project.vc_kanban_column_id && !project.vc_temp_staged) {
-      return { staged: false, reason: 'already_on_vc_board' };
-    }
 
     const tempStageId = await resolveVcTempInstallStageId(logisticsCompanyId);
     if (!tempStageId) return { staged: false, reason: 'no_temp_stage_configured' };
@@ -74,6 +88,12 @@ async function stageProjectAtVcTempColumn(req, { projectId, logisticsCompanyId }
     const sameStage = String(project.vc_kanban_column_id || '') === String(tempStageId);
     if (sameStage && project.vc_temp_staged) {
       return { staged: true, reason: 'unchanged', vc_kanban_column_id: tempStageId };
+    }
+
+    // Đã ở cột vận hành thật của đúng CT VC → không kéo về tạm
+    if (project.vc_kanban_column_id && !project.vc_temp_staged) {
+      const onOwnOps = await isOnOwnCompanyOperationalVcColumn(project, logisticsCompanyId);
+      if (onOwnOps) return { staged: false, reason: 'already_on_vc_board' };
     }
 
     const { error } = await supabase

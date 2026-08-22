@@ -86,7 +86,7 @@ r.get('/leads/:id/assignments', async (req, res) => {
   try {
     const ASSIGN_LIST_SELECT = `
         id, company_id, executor_company_id, column_id, lead_id, crm_task_id, assignment_module,
-        task_source_type, employee_error_module, department_id, phat_sinh_kind, title, description,
+        task_source_type, employee_error_module, error_type_id, department_id, phat_sinh_kind, title, description,
         assignee_id, created_by_id, priority, status, deadline,
         position, created_at, updated_at, completed_at,
         assignee:users!crm_assignments_assignee_id_fkey(id, full_name, email, avatar, role, drive_module),
@@ -97,7 +97,7 @@ r.get('/leads/:id/assignments', async (req, res) => {
       `;
     const ASSIGN_LIST_SELECT_NO_TASK = `
         id, company_id, executor_company_id, column_id, lead_id, crm_task_id, assignment_module,
-        task_source_type, employee_error_module, department_id, phat_sinh_kind, title, description,
+        task_source_type, employee_error_module, error_type_id, department_id, phat_sinh_kind, title, description,
         assignee_id, created_by_id, priority, status, deadline,
         position, created_at, updated_at, completed_at,
         assignee:users!crm_assignments_assignee_id_fkey(id, full_name, email, avatar, role, drive_module),
@@ -125,7 +125,7 @@ r.get('/leads/:id/assignments', async (req, res) => {
         .eq('lead_id', req.params.id)
         .order('created_at', { ascending: false }));
     }
-    if (error && /task_source_type|employee_error_module|phat_sinh_kind|department_id|crm_task_id/.test(error.message || '')) {
+    if (error && /task_source_type|employee_error_module|phat_sinh_kind|department_id|crm_task_id|error_type_id/.test(error.message || '')) {
       ({ data, error } = await supabase
         .from('crm_assignments')
         .select(ASSIGN_LIST_SELECT_LEGACY)
@@ -139,14 +139,21 @@ r.get('/leads/:id/assignments', async (req, res) => {
     const list = data || [];
     if (list.length) {
       const ids = list.map((x) => x.id);
-      const { data: rows } = await supabase
+      const { attachRoleToUser, isAssignRoleColumnError } = require('../../../helpers/assignmentAssigneeRoles');
+      let { data: rows, error: asnErr } = await supabase
         .from('crm_assignment_assignees')
-        .select('assignment_id, user_id, user:users(id, full_name, email, avatar, role, drive_module)')
+        .select('assignment_id, user_id, assign_role, user:users(id, full_name, email, avatar, role, drive_module)')
         .in('assignment_id', ids);
+      if (asnErr && isAssignRoleColumnError(asnErr)) {
+        ({ data: rows, error: asnErr } = await supabase
+          .from('crm_assignment_assignees')
+          .select('assignment_id, user_id, user:users(id, full_name, email, avatar, role, drive_module)')
+          .in('assignment_id', ids));
+      }
       const byId = new Map();
       (rows || []).forEach((r) => {
         if (!byId.has(r.assignment_id)) byId.set(r.assignment_id, []);
-        if (r.user) byId.get(r.assignment_id).push(r.user);
+        if (r.user) byId.get(r.assignment_id).push(attachRoleToUser(r.user, r.assign_role));
       });
       list.forEach((a) => {
         a.assignees = byId.get(a.id) || (a.assignee ? [a.assignee] : []);

@@ -253,13 +253,24 @@ const EVENTS_TIME_PRESETS = [
 // ═══════════════════════════════════════════════════════════════
 // MAIN PAGE
 // ═══════════════════════════════════════════════════════════════
-/** @param {{ lockedModule?: string, lockedModuleLabel?: string }} props */
-export default function EventsFeedPage({ lockedModule = '', lockedModuleLabel = '' } = {}) {
+/** @param {{ lockedModule?: string, lockedModuleLabel?: string, projectAggregate?: boolean, projectId?: string, embedded?: boolean, defaultLeadId?: string }} props */
+export default function EventsFeedPage({
+  lockedModule = '',
+  lockedModuleLabel = '',
+  projectAggregate = false,
+  projectId = '',
+  embedded = false,
+  defaultLeadId = '',
+} = {}) {
   const forcedModule = isValidLockedEventModule(lockedModule)
     ? String(lockedModule).trim().toLowerCase()
     : '';
   const customModLabel = String(lockedModuleLabel || '').trim();
   const resolveModuleMeta = (v) => moduleMeta(v, customModLabel);
+  const scopedProjectId = String(projectId || '').trim();
+  const isProjectScoped = !!scopedProjectId;
+  const isProjectAggregate = (!!projectAggregate || isProjectScoped) && !embedded;
+  const isEmbeddedProject = embedded && isProjectScoped;
   const { user } = useAuth();
   const isAdmin = isAdminLike(user);
   /** Admin chọn công ty (admin tổng / platform_admin — khớp CRM Dashboard, không chỉ isSystemAdmin). */
@@ -268,8 +279,9 @@ export default function EventsFeedPage({ lockedModule = '', lockedModuleLabel = 
 
   const [searchParams, setSearchParams] = useSearchParams();
   const initialModule = useMemo(() => {
-    // SX/VC: mặc định xem Sản xuất + Lắp đặt; người dùng lọc từng khối bằng chip.
-    if (forcedModule === 'production' || forcedModule === 'logistics') return '';
+    // Lịch SX: chỉ hoàn thiện sản xuất. Lịch VC: mặc định Sản xuất + Lắp đặt (chip lọc).
+    if (forcedModule === 'production') return 'production';
+    if (forcedModule === 'logistics') return '';
     if (forcedModule) return forcedModule;
     const v = String(searchParams.get('module') || '').toLowerCase();
     return isValidLockedEventModule(v) ? v : '';
@@ -336,9 +348,9 @@ export default function EventsFeedPage({ lockedModule = '', lockedModuleLabel = 
   }, [forcedModule, moduleAccess, isAdmin, isSystemAdmin, canAccessModule, user]);
 
   useEffect(() => {
-    // Khóa module tùy chỉnh (app module) — không khóa SX/VC (cho phép lọc crm/sx/ld).
+    // Khóa module: SX chỉ hoàn thiện sản xuất; VC vẫn cho lọc chip SX/LĐ.
     if (!forcedModule) return;
-    if (forcedModule === 'production' || forcedModule === 'logistics') return;
+    if (forcedModule === 'logistics') return;
     if (filterModule !== forcedModule) setFilterModule(forcedModule);
   }, [forcedModule, filterModule]);
 
@@ -355,14 +367,31 @@ export default function EventsFeedPage({ lockedModule = '', lockedModuleLabel = 
   const listParams = useMemo(
     () => {
       const p = {};
+      if (isProjectScoped) {
+        // Chỉ theo dự án — không gửi company_id (CRM sale ≠ xưởng SX).
+        p.project_id = scopedProjectId;
+        if (filterModule) p.module = filterModule;
+        return p;
+      }
       // Admin hệ thống chọn công ty; NV / admin công ty → luôn theo company_id tài khoản.
       if (canPickCompany && filterCompanyId) {
         p.company_id = filterCompanyId;
       } else if (!canPickCompany && user?.company_id) {
         p.company_id = String(user.company_id).trim();
       }
-      if (forcedModule === 'production' || forcedModule === 'logistics') {
-        // SX / VC: chỉ Sản xuất + Lắp đặt (không gồm Kinh doanh).
+      if (isProjectAggregate) {
+        p.project_linked = '1';
+        p.include_as_participant = '1';
+        if (filterModule) p.module = filterModule;
+        return p;
+      }
+      if (forcedModule === 'production') {
+        p.include_as_participant = '1';
+        p.module = 'production';
+        return p;
+      }
+      if (forcedModule === 'logistics') {
+        // VC: chỉ Sản xuất + Lắp đặt (không gồm Kinh doanh).
         p.include_as_participant = '1';
         if (filterModule === 'production' || filterModule === 'logistics') {
           p.module = filterModule;
@@ -375,7 +404,7 @@ export default function EventsFeedPage({ lockedModule = '', lockedModuleLabel = 
       if (filterModule) p.module = filterModule;
       return p;
     },
-    [canPickCompany, filterCompanyId, filterModule, forcedModule, user?.company_id],
+    [canPickCompany, filterCompanyId, filterModule, forcedModule, isProjectAggregate, isProjectScoped, scopedProjectId, user?.company_id],
   );
 
   /** Danh sách nhân viên cho filter / form sự kiện — chỉ trong một công ty (không «tất cả» xuyên hệ thống). */
@@ -916,7 +945,14 @@ export default function EventsFeedPage({ lockedModule = '', lockedModuleLabel = 
   };
 
   return (
-    <div className="space-y-4">
+    <div className={
+      isProjectAggregate
+        ? 'h-full min-h-0 flex flex-col overflow-hidden bg-[#f0f2f5]'
+        : isEmbeddedProject
+          ? 'space-y-3'
+          : 'space-y-4'
+    }
+    >
       {loadError && (
         <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 flex items-start gap-2">
           <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
@@ -927,17 +963,28 @@ export default function EventsFeedPage({ lockedModule = '', lockedModuleLabel = 
         </div>
       )}
       {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-3" data-tour="events-page-header">
+      {!isEmbeddedProject && (
+      <div className={`flex items-center justify-between flex-wrap gap-3 ${isProjectAggregate ? 'shrink-0 px-4 pt-3' : ''}`} data-tour="events-page-header">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
             <Calendar className="h-6 w-6 text-blue-600" />
-            {forcedModule === 'production'
-              ? 'Sự kiện Sản xuất'
+            {isProjectScoped
+              ? 'Lịch dự án'
+              : isProjectAggregate
+              ? 'Lịch tổng hợp dự án'
+              : forcedModule === 'production'
+              ? 'Lịch hoàn thiện sản xuất'
               : forcedModule === 'logistics'
                 ? 'Sự kiện VC/LĐ'
                 : 'Sự kiện'}
           </h1>
           <p className="text-sm text-gray-500 mt-0.5 flex items-center gap-2 flex-wrap">
+            {isProjectScoped && (
+              <span className="text-blue-600">Chỉ sự kiện gắn dự án này (CRM · SX · VC)</span>
+            )}
+            {!isProjectScoped && isProjectAggregate && (
+              <span className="text-blue-600">CRM · SX · VC — chỉ sự kiện gắn dự án</span>
+            )}
             <span>
               {view === 'report' ? (
                 <>
@@ -978,7 +1025,8 @@ export default function EventsFeedPage({ lockedModule = '', lockedModuleLabel = 
           {/*
            * Bộ chuyển khối:
            * - CRM: mọi khối (EVENT_MODULE_OPTIONS)
-           * - SX/VC: lọc Kinh doanh / Sản xuất / Lắp đặt (hoặc tất cả)
+           * - SX: khóa hoàn thiện sản xuất
+           * - VC: lọc Sản xuất / Lắp đặt (hoặc tất cả)
            * - App module khóa: chỉ hiện nhãn khối
            */}
           {!forcedModule && (
@@ -1002,7 +1050,7 @@ export default function EventsFeedPage({ lockedModule = '', lockedModuleLabel = 
                 })}
             </div>
           )}
-          {(forcedModule === 'production' || forcedModule === 'logistics') ? (
+          {(forcedModule === 'logistics') ? (
             <div className="flex items-center gap-1.5 bg-white border border-amber-200 rounded-lg p-1 shadow-sm" title="Lọc theo khối">
               {[
                 { value: '', label: 'Tất cả', emoji: '🌐', color: 'bg-amber-100 text-amber-900 border-amber-300' },
@@ -1028,7 +1076,9 @@ export default function EventsFeedPage({ lockedModule = '', lockedModuleLabel = 
           ) : forcedModule ? (
             <div className="flex items-center gap-2 px-2.5 h-9 rounded-lg border border-amber-200 bg-amber-50 text-amber-900 text-xs font-medium">
               <span>
-                {`${moduleMeta(forcedModule, customModLabel).emoji} ${moduleMeta(forcedModule, customModLabel).label}`}
+                {forcedModule === 'production'
+                  ? '🏭 Hoàn thiện sản xuất'
+                  : `${moduleMeta(forcedModule, customModLabel).emoji} ${moduleMeta(forcedModule, customModLabel).label}`}
               </span>
             </div>
           ) : null}
@@ -1156,11 +1206,36 @@ export default function EventsFeedPage({ lockedModule = '', lockedModuleLabel = 
           </button>
         </div>
       </div>
+      )}
+
+      {isEmbeddedProject && (
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-sm text-gray-600">
+            Lịch gắn dự án này · CRM / SX / VC
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              setEditEvent(null);
+              setCreatePresetDay(null);
+              setShowCreate(true);
+            }}
+            className="h-9 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer"
+          >
+            <Plus className="h-4 w-4" /> Tạo sự kiện
+          </button>
+        </div>
+      )}
 
       {/* Toolbar lọc gọn kiểu CRM Dashboard */}
       {(view === 'feed' || view === 'calendar' || view === 'list') && (
-        <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden relative" data-tour="events-toolbar">
-          <div className="flex flex-wrap items-center gap-1 px-2.5 py-1.5 border-b border-slate-200/60 bg-slate-50/40">
+        <div
+          className={`rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden relative ${
+            isProjectAggregate ? 'flex-1 min-h-0 flex flex-col mx-4 mb-3' : ''
+          } ${isEmbeddedProject ? 'min-h-[min(720px,75vh)] flex flex-col' : ''}`}
+          data-tour="events-toolbar"
+        >
+          <div className={`flex flex-wrap items-center gap-1 px-2.5 py-1.5 border-b border-slate-200/60 bg-slate-50/40 ${isProjectAggregate ? 'shrink-0' : ''}`}>
             <div
               data-tour="events-search"
               className={`group/search flex items-center shrink-0 flex-1 min-w-[12rem] max-w-md rounded-md border transition-colors ${
@@ -1310,13 +1385,17 @@ export default function EventsFeedPage({ lockedModule = '', lockedModuleLabel = 
             </div>
           )}
 
-          <div className={`p-4 ${view === 'calendar' ? 'space-y-4' : ''}`} data-tour="events-board">
+          <div
+            className={`${isProjectAggregate || isEmbeddedProject ? 'flex-1 min-h-0 flex flex-col overflow-hidden p-3 sm:p-4' : `p-4 ${view === 'calendar' ? 'space-y-4' : ''}`}`}
+            data-tour="events-board"
+          >
             {view === 'calendar' && calendarMode !== 'hidden' && (
               <CalendarView
                 month={calMonth} year={calYear} events={calEvents} eventTypes={eventTypes}
                 loading={calLoading} selectedDay={selectedDay}
                 mode={calendarMode}
-                pageModule={forcedModule || 'crm'}
+                fillViewport={isProjectAggregate || isEmbeddedProject}
+                pageModule={forcedModule || (isProjectScoped ? 'projects' : 'crm')}
                 onModeChange={setCalendarMode}
                 onPrevMonth={() => { if (calMonth === 1) { setCalMonth(12); setCalYear(y => y - 1); } else setCalMonth(m => m - 1); }}
                 onNextMonth={() => { if (calMonth === 12) { setCalMonth(1); setCalYear(y => y + 1); } else setCalMonth(m => m + 1); }}
@@ -1365,8 +1444,8 @@ export default function EventsFeedPage({ lockedModule = '', lockedModuleLabel = 
                 onStatusChange={handleStatusChange}
                 currentUser={currentUser}
               />
-            ) : (
-              <div>
+            ) : !(isProjectAggregate && view === 'calendar') && !(isEmbeddedProject && view === 'calendar') ? (
+              <div className={isProjectAggregate ? 'flex-1 min-h-0 flex flex-col' : ''}>
                 <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
                   <h2 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
                     <List className="h-4 w-4 text-gray-500" /> Feed sự kiện
@@ -1376,14 +1455,9 @@ export default function EventsFeedPage({ lockedModule = '', lockedModuleLabel = 
                     <span className="text-[11px] text-gray-400">Cuộn dọc để xem thêm</span>
                   )}
                 </div>
-                {/* Vùng cuộn — chiều cao phụ thuộc chế độ lịch:
-                    hidden  → feed full (chừa 260px cho header/filter)
-                    compact → lịch chỉ ~280px (chừa 540px)
-                    full    → lịch ~720px (chừa 740px khi nhiều tuần)
-                    Layout: GRID 2 cột song song trên ≥lg để hiển thị nhiều sự kiện hơn 1 viewport. */}
                 <div
-                  className="overflow-y-auto pr-1 [scrollbar-width:thin]"
-                  style={{
+                  className={`overflow-y-auto pr-1 [scrollbar-width:thin] ${isProjectAggregate ? 'flex-1 min-h-0' : ''}`}
+                  style={isProjectAggregate ? undefined : {
                     maxHeight: view === 'calendar'
                       ? calendarMode === 'hidden' ? 'calc(100vh - 260px)'
                         : calendarMode === 'compact' ? 'calc(100vh - 540px)'
@@ -1415,13 +1489,14 @@ export default function EventsFeedPage({ lockedModule = '', lockedModuleLabel = 
                   )}
                 </div>
               </div>
-            )}
+            ) : null}
           </div>
         </div>
       )}
 
       {/* Báo cáo tháng — tổng sự kiện theo nhân viên */}
       {view === 'report' && (
+        <div className={isProjectAggregate ? 'flex-1 min-h-0 overflow-y-auto px-4 pb-3' : ''}>
         <MonthlyStaffReport
           year={calYear}
           month={calMonth}
@@ -1450,11 +1525,14 @@ export default function EventsFeedPage({ lockedModule = '', lockedModuleLabel = 
           onFilterRegion={setFilterRegionId}
           onExport={handleExportReportExcel}
         />
+        </div>
       )}
 
       {/* Event Types Manager */}
       {view === 'types' && (
+        <div className={isProjectAggregate ? 'flex-1 min-h-0 overflow-y-auto px-4 pb-3' : ''}>
         <EventTypesManager types={eventTypes} onReload={loadEventTypes} />
+        </div>
       )}
 
       {/* Create/Edit Modal */}
@@ -1469,6 +1547,8 @@ export default function EventsFeedPage({ lockedModule = '', lockedModuleLabel = 
           defaultModuleLabel={forcedModule ? customModLabel : ''}
           allowedModules={forcedModule ? [forcedModule] : (isAdmin || isSystemAdmin ? null : allowedModules)}
           allowGeneralModule={!forcedModule && (isAdmin || isSystemAdmin)}
+          defaultProjectId={scopedProjectId || ''}
+          defaultLeadId={defaultLeadId || ''}
           onClose={() => { setShowCreate(false); setEditEvent(null); setCreatePresetDay(null); }}
           onSaved={() => { setShowCreate(false); setEditEvent(null); setCreatePresetDay(null); refreshEventsData(); }}
         />
@@ -2027,7 +2107,11 @@ function SelectedDayEventDetail({ ev, eventTypes, pageModule = 'crm', onEdit }) 
 // ═══════════════════════════════════════════════════════════════
 // CALENDAR VIEW — Monthly grid
 // ═══════════════════════════════════════════════════════════════
-function CalendarView({ month, year, events, eventTypes, loading, selectedDay, onPrevMonth, onNextMonth, onSelectDay, onOpenCreateForDay, onEdit, mode = 'full', onModeChange, pageModule = 'crm' }) {
+function CalendarView({
+  month, year, events, eventTypes, loading, selectedDay,
+  onPrevMonth, onNextMonth, onSelectDay, onOpenCreateForDay, onEdit,
+  mode = 'full', onModeChange, pageModule = 'crm', fillViewport = false,
+}) {
   // mode: 'compact' (mini grid, không hiện tên event — gợi ý dot màu) | 'full' (default)
   const isCompact = mode === 'compact';
   const selectedDayDetailRef = useRef(null);
@@ -2081,13 +2165,15 @@ function CalendarView({ month, year, events, eventTypes, loading, selectedDay, o
     : [];
 
   // Số event hiển thị / chiều cao cell theo mode
-  const maxChipsPerCell = isCompact ? 0 : 3;
-  const cellMinH = isCompact ? 44 : 100;
+  const maxChipsPerCell = isCompact ? 0 : (fillViewport ? 5 : 3);
+  const cellMinH = fillViewport ? (isCompact ? 56 : 110) : (isCompact ? 44 : 100);
 
   return (
-    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+    <div className={`bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden ${
+      fillViewport ? 'flex-1 min-h-0 flex flex-col' : ''
+    }`}>
       {/* Calendar header — toolbar hiện đại */}
-      <div className="flex items-center justify-between gap-3 px-4 py-2.5 bg-gradient-to-r from-blue-50/70 via-white to-blue-50/70 border-b border-gray-100">
+      <div className="shrink-0 flex items-center justify-between gap-3 px-4 py-2.5 bg-gradient-to-r from-blue-50/70 via-white to-blue-50/70 border-b border-gray-100">
         <div className="flex items-center gap-1.5">
           <button onClick={onPrevMonth} title="Tháng trước"
             className="w-8 h-8 inline-flex items-center justify-center rounded-lg text-gray-600 hover:bg-white hover:text-blue-600 hover:shadow-sm cursor-pointer transition">
@@ -2111,7 +2197,9 @@ function CalendarView({ month, year, events, eventTypes, loading, selectedDay, o
           )}
         </div>
         <div className="flex items-center gap-2">
-          <span className="text-[11px] text-gray-500 hidden md:inline">{events.length} sự kiện</span>
+          <span className="text-[11px] text-gray-500 hidden md:inline">
+            {events.length ? `${events.length} sự kiện` : 'Chưa có sự kiện'}
+          </span>
           {/* Toggle 3 mức hiển thị: Ẩn / Thu gọn / Mở rộng */}
           {onModeChange && (
             <div className="flex gap-0.5 bg-gray-100 rounded-lg p-0.5">
@@ -2142,9 +2230,9 @@ function CalendarView({ month, year, events, eventTypes, loading, selectedDay, o
       {loading ? (
         <div className="flex justify-center py-16"><Loader2 className="h-7 w-7 animate-spin text-blue-500" /></div>
       ) : (
-        <div className="p-3 sm:p-4">
+        <div className={`p-3 sm:p-4 ${fillViewport ? 'flex-1 min-h-0 flex flex-col overflow-hidden' : ''}`}>
           {/* Day headers */}
-          <div className="grid grid-cols-7 mb-1">
+          <div className="shrink-0 grid grid-cols-7 mb-1">
             {dayNames.map((d, i) => (
               <div key={d} className={`text-center text-[11px] font-bold py-1.5 uppercase tracking-wide ${
                 i === 0 ? 'text-rose-500' : 'text-gray-500'
@@ -2152,8 +2240,11 @@ function CalendarView({ month, year, events, eventTypes, loading, selectedDay, o
             ))}
           </div>
 
+          <div className={fillViewport ? 'flex-1 min-h-0 overflow-y-auto [scrollbar-width:thin] flex flex-col' : ''}>
           {/* Calendar grid */}
-          <div className="grid grid-cols-7 gap-1">
+          <div
+            className={`grid grid-cols-7 gap-1 ${fillViewport ? 'flex-1 min-h-[min(520px,55vh)] auto-rows-fr' : ''}`}
+          >
             {cells.map((day, i) => {
               const dayEvents = day ? (eventsByDay[day] || []) : [];
               const isTodayCell = isCurrentMonth && day === today.getDate();
@@ -2161,20 +2252,28 @@ function CalendarView({ month, year, events, eventTypes, loading, selectedDay, o
               const isWeekend = i % 7 === 0; // CN
               const isSiblingLit = day && hoveredDays.has(day);
               if (!day) {
-                return <div key={i} className="rounded-lg bg-gray-50/40 border border-dashed border-gray-100" style={{ minHeight: cellMinH }} />;
+                return (
+                  <div
+                    key={i}
+                    className={`rounded-lg bg-gray-50/40 border border-dashed border-gray-100 ${fillViewport ? 'min-h-0' : ''}`}
+                    style={fillViewport ? undefined : { minHeight: cellMinH }}
+                  />
+                );
               }
               return (
                 <div
                   key={i}
                   role="presentation"
                   className={`group relative rounded-lg border flex flex-col overflow-hidden transition cursor-pointer ${
+                    fillViewport ? 'min-h-0' : ''
+                  } ${
                     isSelected
                       ? 'ring-2 ring-blue-500 ring-offset-1 border-blue-300 shadow-md'
                       : isSiblingLit
                         ? 'border-amber-400 ring-2 ring-amber-300/80 shadow-md bg-amber-50/70'
                         : 'border-gray-200 hover:border-blue-300 hover:shadow-sm'
                   } ${isTodayCell && !isSiblingLit ? 'bg-blue-50/40' : isSiblingLit ? '' : 'bg-white'}`}
-                  style={{ minHeight: cellMinH }}
+                  style={fillViewport ? undefined : { minHeight: cellMinH }}
                   onClick={(e) => {
                     if (e.target.closest?.('[data-cal-event-chip]') || e.target.closest?.('[data-create-btn]')) return;
                     onSelectDay(day);
@@ -2269,12 +2368,18 @@ function CalendarView({ month, year, events, eventTypes, loading, selectedDay, o
             })}
           </div>
 
+          {!loading && events.length === 0 && (
+            <p className="mt-3 text-center text-sm text-gray-500 border border-dashed border-gray-200 rounded-xl bg-gray-50 py-6 px-4 shrink-0">
+              Chưa có sự kiện gắn dự án trong tháng này. Bấm «Tạo sự kiện» hoặc dấu + trên ngày để thêm.
+            </p>
+          )}
+
           {/* Selected day detail — cuộn tới đây khi bấm « Xem lịch » */}
           {selectedDay && (
             <div
               ref={selectedDayDetailRef}
               id="events-calendar-day-detail"
-              className="mt-4 border-t pt-4 scroll-mt-24"
+              className="mt-4 border-t pt-4 scroll-mt-24 shrink-0"
             >
               <h3 className="text-sm font-bold text-gray-800 mb-3 flex flex-wrap items-center gap-2">
                 <span>📅 Ngày {selectedDay}/{month}/{year}</span>
@@ -2298,6 +2403,7 @@ function CalendarView({ month, year, events, eventTypes, loading, selectedDay, o
               )}
             </div>
           )}
+          </div>
         </div>
       )}
     </div>

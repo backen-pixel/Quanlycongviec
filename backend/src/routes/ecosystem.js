@@ -13,7 +13,7 @@ const {
   isKnownModuleKeyAsync,
   resolveKnownModuleKeys,
 } = require('../helpers/ecosystemModuleScope');
-const { isAdminLike, canCreateStaff } = require('../helpers/adminRole');
+const { isAdminLike, canCreateStaff, isPlatformAdmin } = require('../helpers/adminRole');
 const { responseCache, invalidateTags } = require('../middleware/responseCache');
 
 const r = Router();
@@ -946,12 +946,24 @@ r.get('/module-companies', async (req, res) => {
   }
 });
 
+async function tenantDivisionIdSet(tenantId) {
+  if (!tenantId) return null;
+  const { data, error } = await supabase.from('ecosystem_units').select('id').eq('tenant_id', tenantId);
+  if (error) throw error;
+  return new Set((data || []).map((r) => String(r.id)));
+}
+
 r.get('/module-scopes', async (req, res) => {
   try {
     if (!isAdminLike(req.user)) return res.status(403).json({ error: 'Chỉ admin' });
     const { data, error } = await supabase.from('ecosystem_module_scopes').select('*');
     if (error) throw error;
-    res.json({ scopes: data || [] });
+    let scopes = data || [];
+    if (req.user?.tenant_id && !isPlatformAdmin(req.user)) {
+      const allowed = await tenantDivisionIdSet(req.user.tenant_id);
+      scopes = scopes.filter((s) => allowed.has(String(s.division_unit_id)));
+    }
+    res.json({ scopes });
   } catch (e) {
     console.error('GET /ecosystem/module-scopes', e);
     res.status(500).json({ error: e.message });
@@ -969,8 +981,37 @@ r.put('/module-scopes/:moduleKey', async (req, res) => {
     const { division_unit_ids: rawIds } = req.body;
     const ids = Array.isArray(rawIds) ? rawIds.map((x) => String(x).trim()).filter(Boolean) : [];
 
-    const { error: delErr } = await supabase.from('ecosystem_module_scopes').delete().eq('module_key', moduleKey);
-    if (delErr) throw delErr;
+    const tenantId = req.user?.tenant_id || null;
+    if (!isPlatformAdmin(req.user) && !tenantId) {
+      return res.status(400).json({ error: 'Thiếu tenant_id — không thể sửa module scopes toàn hệ thống' });
+    }
+
+    if (isPlatformAdmin(req.user) && !tenantId) {
+      const { error: delErr } = await supabase.from('ecosystem_module_scopes').delete().eq('module_key', moduleKey);
+      if (delErr) throw delErr;
+    } else {
+      const allowed = await tenantDivisionIdSet(tenantId);
+      const outside = ids.filter((id) => !allowed.has(id));
+      if (outside.length) {
+        return res.status(403).json({ error: 'Khối không thuộc hệ sinh thái hiện tại' });
+      }
+      const { data: existing, error: exErr } = await supabase
+        .from('ecosystem_module_scopes')
+        .select('division_unit_id')
+        .eq('module_key', moduleKey);
+      if (exErr) throw exErr;
+      const toDelete = (existing || [])
+        .map((r) => String(r.division_unit_id))
+        .filter((id) => allowed.has(id));
+      if (toDelete.length) {
+        const { error: delErr } = await supabase
+          .from('ecosystem_module_scopes')
+          .delete()
+          .eq('module_key', moduleKey)
+          .in('division_unit_id', toDelete);
+        if (delErr) throw delErr;
+      }
+    }
 
     if (ids.length) {
       const rows = ids.map((division_unit_id) => ({ module_key: moduleKey, division_unit_id }));

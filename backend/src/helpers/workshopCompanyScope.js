@@ -2,6 +2,7 @@ const { isSystemAdmin, isProductionAdmin, isProductionStaff } = require('./admin
 const {
   canCrossWorkshopProductionViewerUseCompanyQuery,
   isMetallaOrHucabiCompanyIdSync,
+  isVptCompanyIdSync,
 } = require('./dealParticipantProduction');
 
 /** Chuẩn hóa UUID công ty cho query pipeline (chuỗi rỗng → null). */
@@ -9,6 +10,14 @@ function normalizeWorkshopCompanyId(companyId) {
   if (companyId == null) return null;
   const s = String(companyId).trim();
   return s || null;
+}
+
+/** Chip công ty CRM (VPT…) hoặc công ty của NV — không phải xưởng HCB/Metalla. */
+function isNonWorkshopClientCompanyId(companyId, userCid = '') {
+  const id = companyId != null ? String(companyId).trim() : '';
+  if (!id || isMetallaOrHucabiCompanyIdSync(id)) return false;
+  if (isVptCompanyIdSync(id)) return true;
+  return !!(userCid && id === String(userCid));
 }
 
 /**
@@ -29,7 +38,11 @@ function effectiveWorkshopCompanyId(req, queryCompanyId) {
   }
 
   if (canCrossWorkshopProductionViewerUseCompanyQuery(req.user, q)) {
-    if (q) return q;
+    if (q) {
+      // Admin/NV CRM gửi company_id = VPT → đó là deal, không phải xưởng (dự án nằm ở HCB/Metalla).
+      if (isNonWorkshopClientCompanyId(q, userCid)) return null;
+      return q;
+    }
     if (userCid && isMetallaOrHucabiCompanyIdSync(userCid)) return userCid;
     return null;
   }
@@ -40,6 +53,7 @@ function effectiveWorkshopCompanyId(req, queryCompanyId) {
     return userCid;
   }
 
+  if (userCid && isNonWorkshopClientCompanyId(userCid, userCid)) return null;
   return userCid || null;
 }
 

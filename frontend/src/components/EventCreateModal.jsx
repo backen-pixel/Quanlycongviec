@@ -494,6 +494,7 @@ export default function EventCreateModal({
   defaultLocation = '',
   defaultDescription = '',
   defaultEventType = '',
+  defaultProjectId = '',
 }) {
   const isEdit = !!event;
   const participantsAutoFilled = useRef(false);
@@ -722,6 +723,8 @@ export default function EventCreateModal({
       if (multiDay) payload.occurrence_dates = dates;
       else if (isEdit) payload.occurrence_dates = null;
       if (companyId) payload.company_id = companyId;
+      const projectId = event?.project_id || defaultProjectId || null;
+      if (projectId) payload.project_id = projectId;
 
       if (isEdit) {
         await api.put(`/events/${event.id}`, payload);

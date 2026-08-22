@@ -53,6 +53,8 @@ export default function UserRolesModal({ userId, userName, onClose, onSaved }) {
   const [ecosystemUnits, setEcosystemUnits] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [systemRole, setSystemRole] = useState(null);
+  const [moduleRoles, setModuleRoles] = useState({});
 
   useEffect(() => {
     load();
@@ -61,19 +63,37 @@ export default function UserRolesModal({ userId, userName, onClose, onSaved }) {
   const load = async () => {
     setLoading(true);
     try {
-      const [rolesRes, userRolesRes, unitsRes] = await Promise.all([
+      const [rolesRes, userRolesRes, unitsRes, effectiveRes] = await Promise.all([
         api.get('/permissions/roles'),
         api.get(`/permissions/users/${userId}/roles`),
-        api.get('/ecosystem/units'), // Get all ecosystem units
+        api.get('/ecosystem/units'),
+        api.get(`/permissions/users/${userId}/effective`).catch(() => ({ data: null })),
       ]);
       
       setRoles(rolesRes.data.roles || []);
       setUserRoles(userRolesRes.data.user_roles || []);
       setEcosystemUnits(unitsRes.data.units || []);
+      setSystemRole(effectiveRes.data?.system_role || effectiveRes.data?.access_summary?.system_role || null);
+      setModuleRoles(effectiveRes.data?.module_roles || effectiveRes.data?.access_summary?.module_roles || {});
     } catch (e) {
       console.error('Load user roles error:', e);
     }
     setLoading(false);
+  };
+
+  const overlapHintForRole = (roleName) => {
+    const name = String(roleName || '').trim().toLowerCase();
+    if (!name) return null;
+    const hits = [];
+    if (systemRole && String(systemRole).trim().toLowerCase() === name) {
+      hits.push(`vai trò HT «${systemRole}»`);
+    }
+    const moduleHit = Object.entries(moduleRoles || {}).find(
+      ([, r]) => String(r).trim().toLowerCase() === name,
+    );
+    if (moduleHit) hits.push(`module ${moduleHit[0]}:${moduleHit[1]}`);
+    if (!hits.length) return null;
+    return `Trùng với ${hits.join(' và ')} — quyền catalog sẽ chồng (union), không nhân đôi. Vẫn có thể gán nếu cần phạm vi HST riêng.`;
   };
 
   const hasRoleAssignment = (roleId, ecosystemUnitId = null) => {
@@ -89,6 +109,11 @@ export default function UserRolesModal({ userId, userName, onClose, onSaved }) {
       alert('Nhân viên đã có vai trò này ở phạm vi đã chọn.');
       return;
     }
+    const role = roles.find((r) => r.id === roleId);
+    const overlap = overlapHintForRole(role?.name);
+    if (overlap && !confirm(`${overlap}\n\nTiếp tục gán «${role?.name}»?`)) {
+      return;
+    }
     setSaving(true);
     try {
       const { data } = await api.post(`/permissions/users/${userId}/roles`, {
@@ -100,6 +125,7 @@ export default function UserRolesModal({ userId, userName, onClose, onSaved }) {
         alert(data.message || 'Nhân viên đã có vai trò này ở phạm vi đã chọn.');
       }
       await load();
+      onSaved?.();
     } catch (e) {
       alert('Lỗi: ' + (e.response?.data?.error || e.message));
     }
@@ -149,18 +175,32 @@ export default function UserRolesModal({ userId, userName, onClose, onSaved }) {
         </div>
 
         {/* Info box */}
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4 space-y-1.5">
           <p className="text-xs text-blue-800">
             💡 <strong>Phân quyền phân cấp:</strong> Chọn cấp gán (Khối / Công ty / …) rồi chọn đơn vị theo thứ tự từ trên xuống — mỗi bước chỉ hiện đơn vị con thuộc bước trước.
             Gán ở <strong>Khối</strong> → quyền trên toàn bộ cây con; gán <strong>Công ty</strong> → quyền trên PB/Team thuộc công ty đó. Toàn hệ thống → nút «Toàn hệ thống».
           </p>
+          {(systemRole || Object.keys(moduleRoles).length > 0) && (
+            <p className="text-xs text-blue-900">
+              Hiện có:{' '}
+              {systemRole && <><strong>HT</strong> «{systemRole}»</>}
+              {systemRole && Object.keys(moduleRoles).length > 0 && ' · '}
+              {Object.keys(moduleRoles).length > 0 && (
+                <>
+                  <strong>module</strong>{' '}
+                  {Object.entries(moduleRoles).map(([k, r]) => `${k}:${r}`).join(', ')}
+                </>
+              )}
+              . Gán thêm cùng tên sẽ chồng nguồn (cảnh báo khi chọn).
+            </p>
+          )}
         </div>
 
         {/* Current Roles */}
         <div className="mb-6">
           <h3 className="text-sm font-bold text-gray-700 mb-2">Vai trò hiện tại</h3>
           {userRoles.length === 0 ? (
-            <p className="text-sm text-gray-400 italic">Chưa có vai trò nào</p>
+            <p className="text-sm text-gray-400 italic">Chưa có vai trò gán thêm (user_roles)</p>
           ) : (
             <div className="space-y-2">
               {userRoles.map(ur => {
@@ -220,6 +260,7 @@ export default function UserRolesModal({ userId, userName, onClose, onSaved }) {
                 role={role}
                 ecosystemUnits={ecosystemUnits}
                 userRoles={userRoles}
+                overlapHint={overlapHintForRole(role.name)}
                 onAssign={(unitId) => assignRole(role.id, unitId)}
                 disabled={saving}
               />
@@ -244,7 +285,7 @@ function roleScopeKey(roleId, unitId) {
   return `${roleId}::${unitId || 'global'}`;
 }
 
-function RoleAssignRow({ role, ecosystemUnits, userRoles, onAssign, disabled }) {
+function RoleAssignRow({ role, ecosystemUnits, userRoles, onAssign, disabled, overlapHint = null }) {
   const [targetDepth, setTargetDepth] = useState(null);
   /** Gốc cây khi có nhiều đơn vị không cha (cần trước khi chọn Khối). */
   const [anchorRootId, setAnchorRootId] = useState('');
@@ -340,8 +381,13 @@ function RoleAssignRow({ role, ecosystemUnits, userRoles, onAssign, disabled }) 
       >
         <Plus className="h-4 w-4 text-purple-600" />
         <span className="text-sm font-medium text-gray-700">{role.name}</span>
+        {overlapHint && (
+          <span className="text-[9px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded-full" title={overlapHint}>
+            Trùng HT/module
+          </span>
+        )}
         {role.description && (
-          <span className="text-xs text-gray-400 ml-auto">{role.description}</span>
+          <span className="text-xs text-gray-400 ml-auto truncate max-w-[40%]">{role.description}</span>
         )}
         {role.is_system && (
           <span className="text-[9px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full ml-2">
@@ -359,6 +405,11 @@ function RoleAssignRow({ role, ecosystemUnits, userRoles, onAssign, disabled }) 
           <span className="text-sm font-bold text-gray-900">{role.name}</span>
           {role.description && (
             <p className="text-xs text-gray-500 mt-0.5">{role.description}</p>
+          )}
+          {overlapHint && (
+            <p className="text-[11px] text-amber-800 mt-1 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+              {overlapHint}
+            </p>
           )}
         </div>
         <button

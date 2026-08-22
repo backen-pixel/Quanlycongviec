@@ -16,7 +16,7 @@ const {
 
 const ASSIGNMENT_SELECT = `
   id, company_id, executor_company_id, column_id, lead_id, crm_task_id, assignment_module,
-  task_source_type, employee_error_module, department_id, phat_sinh_kind,
+  task_source_type, employee_error_module, error_type_id, department_id, phat_sinh_kind,
   title, description, assignee_id, created_by_id, priority, status, deadline,
   position, created_at, updated_at, completed_at,
   assignee:users!crm_assignments_assignee_id_fkey(id, full_name, email, avatar, role, drive_module),
@@ -52,11 +52,18 @@ async function loadAssignmentById(assignmentId) {
 
 async function hydrateAssignees(assignment) {
   if (!assignment?.id) return assignment;
-  const { data: asnRows } = await supabase
+  const { attachRoleToUser, isAssignRoleColumnError } = require('./assignmentAssigneeRoles');
+  let { data: asnRows, error } = await supabase
     .from('crm_assignment_assignees')
-    .select('user:users(id, full_name, email, avatar, role, drive_module)')
+    .select('user_id, assign_role, user:users(id, full_name, email, avatar, role, drive_module)')
     .eq('assignment_id', assignment.id);
-  assignment.assignees = (asnRows || []).map((r) => r.user).filter(Boolean);
+  if (error && isAssignRoleColumnError(error)) {
+    ({ data: asnRows, error } = await supabase
+      .from('crm_assignment_assignees')
+      .select('user_id, user:users(id, full_name, email, avatar, role, drive_module)')
+      .eq('assignment_id', assignment.id));
+  }
+  assignment.assignees = (asnRows || []).map((r) => attachRoleToUser(r.user, r.assign_role)).filter(Boolean);
   if (!assignment.assignees.length && assignment.assignee) {
     assignment.assignees = [assignment.assignee];
   }
@@ -83,6 +90,10 @@ async function createSharedWorkspaceLinkedAssignment(req, leadId, body = {}) {
   if (!source.ok) return { error: source.error, status: source.status || 400 };
   const phatSinh = resolvePhatSinhFields(body);
   if (!phatSinh.ok) return { error: phatSinh.error, status: phatSinh.status || 400 };
+  const { normalizeErrorTypeId } = require('./sharedWorkspaceErrorTypes');
+  const { roleMapFromBody, pickPrimaryAssigneeId } = require('./assignmentAssigneeRoles');
+  const errorTypeId = body.error_type_id !== undefined ? normalizeErrorTypeId(body.error_type_id) : undefined;
+  const rolesByUserId = roleMapFromBody(body);
 
   const assignmentModule = normalizeAssignModule(body.assignment_module);
   const stageSlug = stageSlugForAssignModule(assignmentModule);
@@ -92,13 +103,21 @@ async function createSharedWorkspaceLinkedAssignment(req, leadId, body = {}) {
     .select('user_id')
     .eq('lead_id', leadId);
   const memberSet = new Set((memRows || []).map((m) => String(m.user_id)));
-  const invalid = rawIds.filter((id) => !memberSet.has(String(id)));
-  if (invalid.length) {
-    return {
-      error: 'Chỉ gán nhiệm vụ cho nhân viên đang tham gia lead/deal này',
-      status: 400,
-      invalid_user_ids: invalid,
-    };
+  const missing = rawIds.filter((id) => !memberSet.has(String(id)));
+  if (missing.length) {
+    const addedBy = req.user?.userId || req.user?.id || null;
+    const rows = missing.map((user_id) => ({
+      lead_id: leadId,
+      user_id,
+      role: 'member',
+      added_by: addedBy,
+    }));
+    const { error: addErr } = await supabase
+      .from('lead_members')
+      .upsert(rows, { onConflict: 'lead_id,user_id' });
+    if (addErr) {
+      console.warn('[shared-ws] auto-add lead_members:', addErr.message);
+    }
   }
 
   const { data: leadInfo } = await supabase
@@ -158,12 +177,15 @@ async function createSharedWorkspaceLinkedAssignment(req, leadId, body = {}) {
       const { loadSxHolidayIndex } = require('./sxWorkshopSchedule');
       const { resolvePhatSinhDeadlineIso } = require('./sxPhatSinhDeadline');
       const slaCompanyId = executorCompanyId || effectiveCompany || leadInfo.company_id;
-      const [cfg, holidays] = await Promise.all([
+      const { listPhatSinhKinds, findPhatSinhKind } = require('./sharedWorkspacePhatSinhKinds');
+      const [cfg, holidays, kinds] = await Promise.all([
         getSxScheduleConfig(slaCompanyId),
         loadSxHolidayIndex(slaCompanyId),
+        listPhatSinhKinds({ companyId: slaCompanyId }),
       ]);
       deadline = resolvePhatSinhDeadlineIso({
         kind: phatSinh.phat_sinh_kind,
+        kindRow: findPhatSinhKind(kinds, phatSinh.phat_sinh_kind),
         config: cfg,
         holidayIndex: holidays,
         companyId: slaCompanyId,
@@ -189,6 +211,7 @@ async function createSharedWorkspaceLinkedAssignment(req, leadId, body = {}) {
     employee_error_module: source.employee_error_module,
     department_id: phatSinh.department_id,
     phat_sinh_kind: phatSinh.phat_sinh_kind,
+    error_type_id: errorTypeId,
     sync_assignment: 'direct',
     skip_assignment_notify: true,
   });
@@ -220,6 +243,8 @@ async function createSharedWorkspaceLinkedAssignment(req, leadId, body = {}) {
       employeeErrorModule: source.employee_error_module,
       departmentId: phatSinh.department_id,
       phatSinhKind: phatSinh.phat_sinh_kind,
+      errorTypeId,
+      assigneeRoles: rolesByUserId,
       forceDirect: true,
     });
   } catch (syncErr) {
@@ -249,6 +274,7 @@ async function createSharedWorkspaceLinkedAssignment(req, leadId, body = {}) {
   patch.employee_error_module = source.employee_error_module;
   if (phatSinh.department_id !== undefined) patch.department_id = phatSinh.department_id;
   if (phatSinh.phat_sinh_kind !== undefined) patch.phat_sinh_kind = phatSinh.phat_sinh_kind;
+  if (errorTypeId !== undefined) patch.error_type_id = errorTypeId;
   if (executorCompanyId) patch.executor_company_id = executorCompanyId;
 
   let { error: patchErr } = await supabase
@@ -256,7 +282,7 @@ async function createSharedWorkspaceLinkedAssignment(req, leadId, body = {}) {
     .update(patch)
     .eq('id', assignmentId);
   if (patchErr && isTaskSourceColumnError(patchErr)) {
-    const { task_source_type: _t, employee_error_module: _e, ...legacy } = patch;
+    const { task_source_type: _t, employee_error_module: _e, error_type_id: _et, ...legacy } = patch;
     ({ error: patchErr } = await supabase.from('crm_assignments').update(legacy).eq('id', assignmentId));
   }
   if (patchErr) {

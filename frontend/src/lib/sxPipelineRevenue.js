@@ -202,6 +202,38 @@ export function projectIsAwaitingDelivery(project, stages) {
   return Boolean(col?.is_handover_to_logistics);
 }
 
+/**
+ * Thẻ đang ở cột bàn giao VC, hoặc đã đi qua cột đó (order_index ≥ cột cờ),
+ * hoặc đã sang Lắp đặt thật.
+ */
+export function projectHasPassedSxVcHandover(project, stages, currentStage = null) {
+  if (!project) return false;
+  if (projectIsShipped(project)) return true;
+
+  const col = currentStage
+    || stageById(stages, project?.sx_kanban_column_id)
+    || project?.sx_pipeline_stage
+    || null;
+  if (col?.is_handover_to_logistics === true) return true;
+  if (project?.sx_pipeline_stage?.is_handover_to_logistics === true) return true;
+
+  const handoverCols = (stages || []).filter((s) => s?.is_handover_to_logistics === true);
+  if (!handoverCols.length) return false;
+
+  const wktId = col?.workshop_type_id
+    || project?.workshop_type_id
+    || project?.workshop_type?.id
+    || null;
+  let pool = handoverCols;
+  if (wktId) {
+    const typed = handoverCols.filter((s) => String(s.workshop_type_id || '') === String(wktId));
+    if (typed.length) pool = typed;
+  }
+  const handoverOrder = Math.min(...pool.map((s) => Number(s.order_index) || 0));
+  const colOrder = Number(col?.order_index);
+  return Number.isFinite(colOrder) && colOrder >= handoverOrder;
+}
+
 export function projectIsProducing(project, stages) {
   if (project.sx_intake) return false;
   if (projectIsShipped(project)) return false;
@@ -249,8 +281,11 @@ export function resolveSxDeadlineBucket(item, todayMs = Date.now(), stage = null
   const dayMs = 86400000;
   const diffDays = Math.floor((startOfLocalDay(t).getTime() - today.getTime()) / dayMs);
   const st = stage || item?.sx_pipeline_stage;
+  const ignoreOverdue = shouldIgnoreSxOrderDeliveryOverdue(st)
+    || isSxPipelineStageNoDeadline(st)
+    || projectIsShipped(item);
   if (diffDays < 0) {
-    if (shouldIgnoreSxOrderDeliveryOverdue(st) || isSxPipelineStageNoDeadline(st)) {
+    if (ignoreOverdue) {
       return { bucket: 'later', ts: t, source };
     }
     return { bucket: 'overdue', ts: t, source };
@@ -259,8 +294,7 @@ export function resolveSxDeadlineBucket(item, todayMs = Date.now(), stage = null
     const companyRef = item?.company_id || item?.company;
     if (
       isHucabiSameDayPastWorkEnd(raw, companyRef, todayMs)
-      && !shouldIgnoreSxOrderDeliveryOverdue(st)
-      && !isSxPipelineStageNoDeadline(st)
+      && !ignoreOverdue
     ) {
       return { bucket: 'overdue', ts: t, source };
     }
@@ -399,6 +433,8 @@ export function getSxOrderDeliveryDateUrgency(dateIso, stage, companyOrId = null
 export function isSxProjectDeliveryDateOverdue(project, stage) {
   const st = stage || project?.sx_pipeline_stage;
   if (shouldIgnoreSxOrderDeliveryOverdue(st)) return false;
+  // Đã bàn giao VC / lắp / BH / xong — ngày lắp/giao quá khứ không còn là «Quá hạn».
+  if (projectIsShipped(project)) return false;
   const raw = project?.delivery_date || project?.production_deadline || project?.deadline;
   if (!raw || project?.status === 'completed') return false;
   const t = new Date(raw);

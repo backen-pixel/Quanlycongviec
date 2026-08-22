@@ -1,14 +1,36 @@
 import PermissionToggleSwitch from './PermissionToggleSwitch';
 
-const SOURCE_LABELS = {
+export const SOURCE_LABELS = {
   system_role: 'Vai trò HT',
   assigned_role: 'Gán thêm',
+  module_role: 'Vai trò module',
   role: 'Vai trò',
   override_grant: 'Ghi đè',
   override_deny: 'Thu hồi',
   template_preview: 'Vai trò mẫu',
   none: '',
 };
+
+/** Tooltip giải thích nguồn — không đổi logic quyền. */
+export const SOURCE_HINTS = {
+  system_role: 'Kế thừa từ users.role (vai trò hệ thống) → role_permissions',
+  assigned_role: 'Kế thừa từ vai trò gán thêm (user_roles)',
+  module_role: 'Kế thừa từ vai trò theo module (user_module_roles)',
+  role: 'Kế thừa từ vai trò',
+  override_grant: 'Ghi đè bật tay (user_permissions) — ưu tiên cao hơn vai trò',
+  override_deny: 'Ghi đè tắt tay — thu hồi dù vai trò vẫn có',
+  template_preview: 'Xem trước quyền của vai trò mẫu — chưa lưu cho đến khi bấm Áp dụng',
+  none: '',
+};
+
+export function sourceTooltip(source, { duplicate = false, featureLabel = '' } = {}) {
+  const base = SOURCE_HINTS[source] || (source && source !== 'none' ? `Nguồn: ${source}` : '');
+  const parts = [featureLabel, base].filter(Boolean);
+  if (duplicate) {
+    parts.push('Trùng HT + module — kết quả vẫn chỉ một lần cho phép');
+  }
+  return parts.join(' · ');
+}
 
 export function cascadeTierDraft(levels, action, value) {
   const byAction = Object.fromEntries(levels.map((l) => [l.action, l]));
@@ -41,6 +63,7 @@ export function cascadeTierDraft(levels, action, value) {
  * @param {function} [props.isIndeterminate] — (permissionId) => boolean
  * @param {function} [props.isDirty] — (permissionId) => boolean
  * @param {function} [props.getSource] — (permissionId) => string | null
+ * @param {function} [props.isDuplicateSource] — (permissionId) => boolean — cùng lúc system + module
  * @param {function} props.onToggle — (permissionId, boolean) => void
  * @param {function} props.onToggleTier — (feature, action, boolean) => void
  * @param {boolean} props.disabled
@@ -53,6 +76,7 @@ export default function PermissionCatalogPanel({
   isIndeterminate = () => false,
   isDirty = () => false,
   getSource = () => null,
+  isDuplicateSource = () => false,
   onToggle,
   onToggleTier,
   disabled = false,
@@ -86,21 +110,32 @@ export default function PermissionCatalogPanel({
         const indeterminate = isIndeterminate(id);
         const dirty = isDirty(id);
         const src = getSource(id);
+        const dup = !dirty && isDuplicateSource(id);
+        const tip = sourceTooltip(dirty ? null : src, {
+          duplicate: dup,
+          featureLabel: `${feat.label} — ${level.label}`,
+        });
         return (
-          <div key={level.action} className="flex flex-col items-center gap-1">
+          <div key={level.action} className="flex flex-col items-center gap-1" title={tip || undefined}>
             <PermissionToggleSwitch
               checked={checked}
               indeterminate={indeterminate}
               onChange={(v) => onToggleTier(feat, level.action, v)}
               disabled={disabled}
-              label={`${feat.label} — ${level.label}`}
+              label={tip || `${feat.label} — ${level.label}`}
               size="sm"
             />
             <span className="text-[9px] font-medium text-gray-500">{level.label}</span>
             {dirty ? (
               <span className="text-[9px] text-amber-700">mới</span>
             ) : src && src !== 'none' ? (
-              <span className="text-[9px] text-gray-400">{SOURCE_LABELS[src] || src}</span>
+              <span
+                className={`text-[9px] ${dup ? 'font-medium text-amber-700' : 'text-gray-400'}`}
+                title={tip || undefined}
+              >
+                {SOURCE_LABELS[src] || src}
+                {dup ? ' · trùng' : ''}
+              </span>
             ) : null}
           </div>
         );
@@ -113,12 +148,18 @@ export default function PermissionCatalogPanel({
     const indeterminate = isIndeterminate(perm.id);
     const dirty = isDirty(perm.id);
     const src = getSource(perm.id);
+    const dup = !dirty && isDuplicateSource(perm.id);
+    const tip = sourceTooltip(dirty ? null : src, {
+      duplicate: dup,
+      featureLabel: perm.label,
+    });
     return (
       <div
         key={perm.id}
         className={`flex items-center justify-between gap-3 px-3 py-2.5 ${
           dirty ? 'bg-amber-50' : 'hover:bg-gray-50/80'
         }`}
+        title={tip || undefined}
       >
         <div className="min-w-0 flex-1">
           <p className="text-sm text-gray-900">{perm.label}</p>
@@ -126,7 +167,13 @@ export default function PermissionCatalogPanel({
             {perm.resource}:{perm.action}
           </p>
           {!dirty && src && src !== 'none' && (
-            <span className="text-[10px] text-gray-400">{SOURCE_LABELS[src]}</span>
+            <span
+              className={`text-[10px] ${dup ? 'font-medium text-amber-700' : 'text-gray-400'}`}
+              title={tip || undefined}
+            >
+              {SOURCE_LABELS[src] || src}
+              {dup ? ' · trùng nguồn' : ''}
+            </span>
           )}
           {dirty && <span className="text-[10px] text-amber-700">Chưa lưu</span>}
         </div>
@@ -135,7 +182,7 @@ export default function PermissionCatalogPanel({
           indeterminate={indeterminate}
           onChange={(v) => onToggle(perm.id, v)}
           disabled={disabled}
-          label={perm.label}
+          label={tip || perm.label}
         />
       </div>
     );

@@ -57,6 +57,19 @@ export function isCompanyScopedAdmin(user) {
   return isAdminLike(user) && hasCompanyId(user);
 }
 
+/** NV Kinh doanh (SAE) hoặc Sales Admin. */
+export function isSalesRole(user) {
+  const r = normalizeRole(user?.role);
+  return r === 'sales' || r === 'sales_admin';
+}
+
+/**
+ * Sale gắn công ty — được xem module SX + VC/LĐ trong phạm vi công ty (deal/dự án của công ty mình).
+ */
+export function isSalesCompanyWorkshopViewer(user) {
+  return isSalesRole(user) && hasCompanyId(user);
+}
+
 export function isCrmProductionStaff(user) {
   return normalizeRole(user?.role) === 'crm_production_staff';
 }

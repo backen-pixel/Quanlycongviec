@@ -34,6 +34,7 @@ import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
 import { FbCrmAvatar, FbCrmCommentComposer, formatCrmCommentFullDateTime, formatCrmFbRelativeTime } from './crmFbCommentUi';
 import { CrmCommentMentionComposer, renderCrmCommentBody } from './crmCommentMentionUi';
+import { contentHasMentionAll } from '../lib/crmCommentMentions';
 import { FilePreview, FileUploadButton, uploadFilesBatch } from './FileUpload';
 import UploadProgressBubble from './UploadProgressBubble';
 import UploadFileLightbox from './UploadFileLightbox';
@@ -2296,7 +2297,13 @@ function CommentThread({
             <FbCrmAvatar user={c.user} className="h-8 w-8 shrink-0" />
             <div className="min-w-0 flex-1">
               <div className={`relative inline-block max-w-full ${showCornerRx ? 'mb-2.5' : ''}`}>
-                <div className={`max-w-full rounded-2xl border px-3 py-2 shadow-sm ${showCornerRx ? 'pb-2.5' : ''} ${isPrivateComment ? 'border-amber-300 bg-amber-50/70' : 'border-[#e4e6eb]/90 bg-white'}`}>
+                <div className={`max-w-full rounded-2xl border px-3 py-2 shadow-sm ${showCornerRx ? 'pb-2.5' : ''} ${
+                  isPrivateComment
+                    ? 'border-amber-300 bg-amber-50/70'
+                    : contentHasMentionAll(getBody(c))
+                      ? 'border-amber-500 bg-amber-200'
+                      : 'border-[#e4e6eb]/90 bg-white'
+                }`}>
                   <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0">
                     <span className="text-[13px] font-semibold text-[#050505]">{c.user?.full_name || 'Thành viên'}</span>
                     {isPrivateComment && (
@@ -2305,6 +2312,11 @@ function CommentThread({
                         className="inline-flex items-center gap-0.5 rounded-full bg-amber-200/70 px-1.5 py-0.5 text-[10px] font-semibold text-amber-900"
                       >
                         🔒 Riêng tư
+                      </span>
+                    )}
+                    {!isPrivateComment && contentHasMentionAll(getBody(c)) && (
+                      <span className="inline-flex items-center rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-bold text-amber-950">
+                        @Tất cả
                       </span>
                     )}
                     <span className="text-[11px] text-[#65676b]">

@@ -530,6 +530,19 @@ async function createPickupEventForHandover(opts) {
   return createVcHandoverEvents({ ...opts, installAt: opts.installAt || null });
 }
 
+/** Cột bàn giao VC: hoàn thành deadline «Hoàn thiện sản xuất». */
+async function completeSxFinishOnHandoverColumn(projectId) {
+  try {
+    const { completeProductionFinishOnHandover } = require('../helpers/applyPlannedOpsEvents');
+    const done = await completeProductionFinishOnHandover(projectId);
+    if (done?.count) {
+      console.info(`[vc-handover] complete SX finish events: project=${projectId} count=${done.count}`);
+    }
+  } catch (e) {
+    console.warn('[vc-handover] complete SX finish events:', e.message);
+  }
+}
+
 // ─── 1. SX yêu cầu bàn giao (đăng bình luận cho sale) ───────────────────────
 r.post('/projects/:id/request', async (req, res) => {
   try {
@@ -554,7 +567,7 @@ r.post('/projects/:id/request', async (req, res) => {
         .select('flow_id, company_id')
         .eq('id', projectId)
         .maybeSingle();
-      const gate = await assertProductionHandoffTarget(projFlow?.flow_id);
+      const gate = await assertProductionHandoffTarget(projFlow?.flow_id, { projectId });
       if (!gate.ok) {
         if (gate.customModule && isCustomModuleKey(gate.nextModuleKey)) {
           const dealForCustom = await resolveCrmDealForProject(
@@ -807,6 +820,7 @@ r.post('/projects/:id/request', async (req, res) => {
         console.warn('[vc-handover] re-request project update:', pe.message);
       }
 
+      await completeSxFinishOnHandoverColumn(projectId);
       return res.json({ comment: withReactions(enrichedRow), lead_id: deal.id, already: true });
     }
 
@@ -890,6 +904,7 @@ r.post('/projects/:id/request', async (req, res) => {
     if (puErr && !String(puErr.message || '').includes('vc_handover_status')) {
       console.warn('[vc-handover] request project update:', puErr.message);
     }
+    await completeSxFinishOnHandoverColumn(projectId);
     // Badge SX trên deal chỉ cập nhật khi đây là project chính của deal
     if (sxStageId && String(deal.project_id || '') === String(projectId)) {
       await supabase.from('crm_leads')

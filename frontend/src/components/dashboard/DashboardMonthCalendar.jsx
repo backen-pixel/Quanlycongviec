@@ -40,6 +40,7 @@ const TONE_CHIP = {
   production: 'bg-sky-100 text-sky-700 hover:bg-sky-200',
   deadline: 'bg-purple-100 text-purple-700 hover:bg-purple-200',
   install: 'bg-teal-100 text-teal-700 hover:bg-teal-200',
+  done: 'bg-slate-100 text-slate-400 hover:bg-slate-200',
   default: 'bg-slate-100 text-slate-700 hover:bg-slate-200',
 };
 
@@ -215,12 +216,13 @@ export default function DashboardMonthCalendar({
           const dayItems = dateMap[key] || [];
           const isToday = key === todayKey;
           const isPast = key < todayKey;
+          const hasOverdue = dayItems.some((i) => i.overdue && !i.done);
           const dow = idx % 7;
           return (
             <div
               key={key}
               className={`min-h-[96px] p-1.5 border-b border-r border-gray-100 ${
-                isPast && dayItems.length ? 'bg-red-50/30' : isToday ? theme.todayCell : ''
+                isPast && hasOverdue ? 'bg-red-50/30' : isToday ? theme.todayCell : ''
               }`}
             >
               <div
@@ -232,8 +234,9 @@ export default function DashboardMonthCalendar({
               </div>
               <div className="space-y-0.5">
                 {dayItems.slice(0, maxPerDay).map((item) => {
-                  const overdue = !!item.overdue;
-                  const toneKey = overdue ? 'overdue' : (item.tone || 'default');
+                  const done = !!item.done;
+                  const overdue = !done && !!item.overdue;
+                  const toneKey = done ? 'done' : (overdue ? 'overdue' : (item.tone || 'default'));
                   const chipCls = item.chipClassName
                     || TONE_CHIP[toneKey]
                     || TONE_CHIP.default;
@@ -254,7 +257,9 @@ export default function DashboardMonthCalendar({
                       title={item.title || item.label}
                       className={`px-1.5 py-0.5 rounded font-medium leading-tight ${
                         onItemClick ? 'cursor-pointer' : ''
-                      } ${hasSub ? 'text-[10px]' : 'truncate text-[10px]'} ${chipCls}`}
+                      } ${hasSub ? 'text-[10px]' : 'truncate text-[10px]'} ${chipCls} ${
+                        done ? 'line-through decoration-slate-400' : ''
+                      }`}
                       style={item.chipStyle}
                     >
                       <div className="truncate">{item.label}</div>

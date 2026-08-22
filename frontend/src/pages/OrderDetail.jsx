@@ -2,9 +2,10 @@ import { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { formatVND, formatDate } from '../lib/utils';
-import { ArrowLeft, User, Phone, MapPin, Truck, Download, Loader2, Pencil, Mail, FileText, Link2, Calendar } from 'lucide-react';
+import { ArrowLeft, User, Phone, MapPin, Truck, Download, Loader2, Pencil, Mail, FileText, Link2, Calendar, Briefcase } from 'lucide-react';
 import CrmLineItemsReadonly from '../components/CrmLineItemsReadonly';
 import { mergeOrderWithSourceQuotation, getDepositRemainingDisplay } from '../lib/quotationTermsDisplay';
+import LinkCrmDealModal from '../components/LinkCrmDealModal';
 
 const STATUS_MAP = { draft: 'Nháp', confirmed: 'Xác nhận', processing: 'Đang SX', shipped: 'Đang giao', delivered: 'Đã giao', cancelled: 'Đã hủy' };
 const STATUS_STEPS = ['draft', 'confirmed', 'processing', 'shipped', 'delivered'];
@@ -16,6 +17,7 @@ export default function OrderDetail() {
   const [loading, setLoading] = useState(true);
   const [statusLoadingStep, setStatusLoadingStep] = useState(null);
   const [pdfLoading, setPdfLoading] = useState(false);
+  const [linkDealOpen, setLinkDealOpen] = useState(false);
 
   useEffect(() => { load(); }, [id]);
   const load = async () => {
@@ -245,6 +247,25 @@ export default function OrderDetail() {
               {order.customer_address && <p className="text-xs text-gray-600 flex items-start gap-2"><MapPin className="h-3.5 w-3.5 text-gray-400 shrink-0 mt-0.5" /><span>{order.customer_address}</span></p>}
               {order.customer?.tax_code && <p className="text-xs text-gray-600">MST: {order.customer.tax_code}</p>}
               {order.delivery_date && <p className="text-xs text-gray-600 flex items-center gap-2"><Truck className="h-3.5 w-3.5 text-gray-400 shrink-0" />Giao dự kiến: {formatDate(order.delivery_date)}</p>}
+              <div className="pt-1">
+                {order.lead?.code || order.lead_id ? (
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/crm/leads/${order.lead_id}`)}
+                    className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 cursor-pointer"
+                  >
+                    <Briefcase className="h-3.5 w-3.5" /> Deal CRM {order.lead?.code || ''}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setLinkDealOpen(true)}
+                    className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 cursor-pointer"
+                  >
+                    <Link2 className="h-3.5 w-3.5" /> Gắn deal CRM
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -377,6 +398,15 @@ export default function OrderDetail() {
           )}
         </div>
       </div>
+      <LinkCrmDealModal
+        open={linkDealOpen}
+        docType="order"
+        docId={order.id}
+        docCode={order.code}
+        customerId={order.customer_id}
+        onClose={() => setLinkDealOpen(false)}
+        onLinked={() => load()}
+      />
     </div>
   );
 }

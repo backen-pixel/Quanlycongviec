@@ -20,6 +20,7 @@ export const CRM_SHARED_PATHS = [
  */
 export const CRM_CROSS_MODULE_PATHS = [
   '/crm/events',
+  '/crm/leaves',
   '/crm/activity',
   '/crm/messenger',
 ];

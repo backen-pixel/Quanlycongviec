@@ -21,7 +21,10 @@ const {
   notificationMatchesProjectIdSet,
   enrichNotificationProjectOptions,
 } = require('./notificationProjectScope');
-const { filterNotificationsForViewer } = require('./notifications');
+const {
+  filterNotificationsForViewer,
+  filterNotificationsForViewerAsync,
+} = require('./notifications');
 const EVENT_NOTIFICATION_TYPES = ['event_created', 'event_completed'];
 const ASSIGNMENT_NOTIFICATION_TYPES = [
   'crm_assignment_assigned',
@@ -197,7 +200,7 @@ async function pgDashboardNotificationStats(userId, viewer = null) {
   );
   if (!result) return null;
 
-  const filtered = filterNotificationsForViewer(
+  const filtered = await filterNotificationsForViewerAsync(
     (result.rows || []).filter((n) => !isProjectModuleNotification(n)),
     viewer,
   );
@@ -284,7 +287,7 @@ async function pgDashboardNotificationsList(userId, {
   const result = await pgQuerySafe(sql, params);
   if (!result) return null;
 
-  let rows = filterNotificationsForViewer(
+  let rows = await filterNotificationsForViewerAsync(
     (result.rows || []).filter((n) => !isProjectModuleNotification(n)),
     viewer,
   );

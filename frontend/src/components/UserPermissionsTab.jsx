@@ -4,6 +4,8 @@ import {
 } from 'lucide-react';
 import api from '../lib/api';
 import PermissionCatalogPanel, { cascadeTierDraft } from './permissions/PermissionCatalogPanel';
+import PermissionAccessSummary from './permissions/PermissionAccessSummary';
+import PermissionProjectScopePanel from './permissions/PermissionProjectScopePanel';
 
 function buildChangePayload(permissionId, desired, original) {
   const fromRole = original?.from_role === true;
@@ -219,6 +221,12 @@ export default function UserPermissionsTab({ users: initialUsers, roles: initial
     return null;
   };
 
+  const isDuplicateSource = (permissionId) => {
+    if (isBulk || draftMap[permissionId] !== undefined) return false;
+    const row = singleEffective?.permissions?.find((p) => p.permission_id === permissionId);
+    return !!(row?.effective && row.from_system_role && row.from_module_role);
+  };
+
   const onToggle = (permissionId, value) => {
     setDraftMap((prev) => ({ ...prev, [permissionId]: value }));
   };
@@ -232,6 +240,55 @@ export default function UserPermissionsTab({ users: initialUsers, roles: initial
 
   const dirtyCount = Object.keys(draftMap).length;
 
+  const overrideCount = useMemo(() => {
+    if (isBulk || !singleEffective?.permissions) return 0;
+    return singleEffective.permissions.filter((p) => p.override != null).length;
+  }, [isBulk, singleEffective]);
+
+  const roleOverlapWarning = useMemo(() => {
+    if (!applyRoleId || !selectedRoleTemplate || isBulk) return null;
+    const name = String(selectedRoleTemplate.name || '').trim().toLowerCase();
+    if (!name) return null;
+    const systemRole = String(singleEffective?.system_role || singleUser?.role || '').trim().toLowerCase();
+    const moduleRoles = Object.values(singleEffective?.module_roles || {}).map((r) =>
+      String(r).trim().toLowerCase(),
+    );
+    const assigned = (singleEffective?.user_roles || []).map((r) =>
+      String(r.role_name || '').trim().toLowerCase(),
+    );
+    const hits = [];
+    if (systemRole && systemRole === name) hits.push(`vai trò HT «${systemRole}»`);
+    if (moduleRoles.includes(name)) hits.push('vai trò module');
+    if (assigned.includes(name)) hits.push('vai trò gán thêm');
+    if (!hits.length) return null;
+    return `Vai trò mẫu «${selectedRoleTemplate.name}» trùng với ${hits.join(', ')} — quyền catalog sẽ chồng (union), không nhân đôi hiệu lực.`;
+  }, [applyRoleId, selectedRoleTemplate, isBulk, singleEffective, singleUser]);
+
+  const resetOverridesToRole = async () => {
+    if (!singleUserId || overrideCount === 0) return;
+    if (
+      !confirm(
+        `Xóa ${overrideCount} ghi đè tay — trở về quyền kế thừa từ vai trò (HT / module / gán thêm)?`,
+      )
+    ) {
+      return;
+    }
+    setSaving(true);
+    try {
+      const changes = singleEffective.permissions
+        .filter((p) => p.override != null)
+        .map((p) => ({ permission_id: p.permission_id, clear: true }));
+      await api.put(`/permissions/users/${singleUserId}/overrides`, {
+        ecosystem_unit_id: null,
+        changes,
+      });
+      await loadEffectiveForUsers(selectedUserIds);
+      setDraftMap({});
+    } catch (e) {
+      alert('Lỗi: ' + (e.response?.data?.error || e.message));
+    }
+    setSaving(false);
+  };
   const applyRoleTemplate = async () => {
     if (!applyRoleId || !selectedUserIds.length || !selectedRoleTemplate) return;
     const roleName = selectedRoleTemplate.name;
@@ -459,6 +516,18 @@ export default function UserPermissionsTab({ users: initialUsers, roles: initial
                 )}
               </div>
               <div className="flex flex-wrap items-center gap-2">
+                {!isBulk && overrideCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={resetOverridesToRole}
+                    disabled={saving}
+                    title="Xóa mọi ghi đè tay — về quyền kế thừa vai trò"
+                    className="flex h-9 items-center gap-1 rounded-lg border border-indigo-200 bg-indigo-50 px-3 text-sm text-indigo-800 hover:bg-indigo-100 disabled:opacity-50"
+                  >
+                    <RotateCcw className="h-4 w-4" />
+                    Đặt lại theo vai trò ({overrideCount})
+                  </button>
+                )}
                 {dirtyCount > 0 && (
                   <button
                     type="button"
@@ -466,7 +535,7 @@ export default function UserPermissionsTab({ users: initialUsers, roles: initial
                     className="flex h-9 items-center gap-1 rounded-lg border px-3 text-sm hover:bg-gray-50"
                   >
                     <RotateCcw className="h-4 w-4" />
-                    Hoàn tác
+                    Hoàn tác nháp
                   </button>
                 )}
                 <button
@@ -485,10 +554,30 @@ export default function UserPermissionsTab({ users: initialUsers, roles: initial
               </div>
             </div>
 
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+              <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-slate-600">
+                Luồng gán quyền (dễ · rõ nguồn)
+              </p>
+              <ol className="list-decimal space-y-1 pl-4 text-xs text-slate-700">
+                <li>
+                  <strong>Chọn vai trò mẫu</strong> bên dưới → bấm Áp dụng (ghi <code className="text-[10px]">users.role</code>).
+                </li>
+                <li>
+                  <strong>Chỉnh từng toggle</strong> nếu cần — lưu thành ghi đè tay (ưu tiên cao nhất).
+                </li>
+                <li>
+                  Dùng <strong>Đặt lại theo vai trò</strong> để xóa ghi đè, trở về kế thừa.
+                </li>
+              </ol>
+              <p className="mt-2 text-[10px] text-slate-500">
+                Vai trò theo module (CRM/SX/VC…) chỉnh ở trang Nhân viên. Membership dự án không nằm trong toggle này.
+              </p>
+            </div>
+
             <div className="flex flex-wrap items-end gap-2 rounded-lg border border-indigo-200 bg-indigo-50 p-3">
               <div className="min-w-[200px] flex-1">
                 <label className="mb-1 block text-[10px] font-bold uppercase text-indigo-800">
-                  Áp dụng bộ quyền từ vai trò mẫu
+                  1) Áp dụng bộ quyền từ vai trò mẫu
                 </label>
                 <select
                   value={applyRoleId}
@@ -513,15 +602,22 @@ export default function UserPermissionsTab({ users: initialUsers, roles: initial
               </button>
             </div>
 
+            {roleOverlapWarning && (
+              <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
+                <p className="text-xs text-amber-900">{roleOverlapWarning}</p>
+              </div>
+            )}
+
             <div className="flex items-start gap-2 rounded-lg border border-blue-200 bg-blue-50 p-3">
               <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-blue-600" />
               <p className="text-xs text-blue-800">
-                Mỗi quyền là <strong>nút bật/tắt</strong>. Module CRM/SX/VC: 3 cột Xem · Sửa · Admin.
+                <strong>2) Chỉnh tay:</strong> mỗi quyền là nút bật/tắt. Hover để xem nguồn (HT / module / ghi đè…).
+                Module CRM/SX/VC: 3 cột Xem · Sửa · Admin.
                 {applyRoleId && templatePreviewIds.size > 0 && (
                   <>
                     {' '}
-                    Chọn vai trò mẫu → toggle <strong>xanh</strong> = quyền của mẫu (nhãn &quot;Vai trò mẫu&quot;).
-                    Bấm <strong>Áp dụng</strong> để gán vai trò hệ thống.
+                    Preview mẫu → nhãn &quot;Vai trò mẫu&quot;. Bấm <strong>Áp dụng</strong> mới ghi vai trò HT.
                   </>
                 )}
                 {isBulk && (
@@ -533,6 +629,13 @@ export default function UserPermissionsTab({ users: initialUsers, roles: initial
               </p>
             </div>
 
+            {!isBulk && singleEffective?.access_summary && (
+              <>
+                <PermissionAccessSummary summary={singleEffective.access_summary} />
+                <PermissionProjectScopePanel scope={singleEffective.access_summary.project_scope} />
+              </>
+            )}
+
             <PermissionCatalogPanel
               catalog={catalog}
               activeModuleKey={activeModuleKey}
@@ -541,6 +644,7 @@ export default function UserPermissionsTab({ users: initialUsers, roles: initial
               isIndeterminate={isIndeterminate}
               isDirty={isDirty}
               getSource={getSource}
+              isDuplicateSource={isDuplicateSource}
               onToggle={onToggle}
               onToggleTier={onToggleTier}
               disabled={saving}

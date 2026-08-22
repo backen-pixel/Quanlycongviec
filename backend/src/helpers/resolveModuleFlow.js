@@ -96,7 +96,10 @@ async function resolveNextModuleStep(flowId, currentModuleKey) {
   const idx = steps.findIndex((s) => normalizeModuleKey(s.module_key) === cur);
   // Không có node current trong luồng → coi như luồng legacy / chưa gắn module → không chặn
   if (idx < 0) return null;
-  return steps[idx + 1] || null;
+  for (let i = idx + 1; i < steps.length; i += 1) {
+    if (normalizeModuleKey(steps[i].module_key)) return steps[i];
+  }
+  return null;
 }
 
 async function findModuleStep(flowId, moduleKey) {
@@ -112,9 +115,37 @@ async function flowNextAfterProduction(flowId) {
 /**
  * Luồng có bước production sau crm không? (điều kiện auto-create SX)
  * Không có bước nào gắn module_key → cho phép (back-compat).
+ *
+ * @param {object} [context] { deal, dealId } — để bộ điều hướng đồ thị chấm điều kiện thật.
  */
-async function flowAllowsProductionCreate(flowId) {
+async function flowAllowsProductionCreate(flowId, context = null) {
   const steps = await getFlowSteps(flowId);
+  const legacy = legacyAllowsProductionCreate(steps);
+
+  const runtime = require('./flowRuntime');
+  let graphAnswer = null;
+  try {
+    graphAnswer = await runtime.canReachModuleViaGraph(flowId, 'crm', 'production', context || {});
+  } catch (err) {
+    console.warn('[flow-runtime] canReachModule:', err.message);
+  }
+  if (!graphAnswer) return legacy;
+
+  await runtime.logRuntimeDecision({
+    flowId,
+    gate: 'production_create',
+    subjectType: 'deal',
+    subjectId: context?.dealId || context?.deal?.id || null,
+    legacy: { allowed: legacy },
+    graph: { allowed: graphAnswer.reachable, has_unknown: graphAnswer.hasUnknown },
+    diverged: legacy !== graphAnswer.reachable,
+    trace: graphAnswer.trace,
+  });
+
+  return runtime.isEnforced() ? graphAnswer.reachable : legacy;
+}
+
+function legacyAllowsProductionCreate(steps) {
   if (!steps.length) return true;
   const keyed = steps.filter((s) => normalizeModuleKey(s.module_key));
   if (!keyed.length) return true;
@@ -127,19 +158,11 @@ async function flowAllowsProductionCreate(flowId) {
 }
 
 /**
- * Kiểm tra bàn giao sau SX theo luồng.
+ * Từ bước kế sau SX suy ra được phép bàn giao Lắp đặt hay không.
  * Chỉ chuyển hướng khi bước kế là module tùy chỉnh; bước trống / null / builtin khác
  * không chặn bàn giao Lắp đặt.
- * @returns {{ ok: true, next: object|null }
- *   | { ok: false, error: string, nextModuleKey?: string, customModule?: object }}
  */
-async function assertProductionHandoffTarget(flowId) {
-  if (!flowId) return { ok: true, next: null };
-  const steps = await getFlowSteps(flowId);
-  const keyed = steps.filter((s) => normalizeModuleKey(s.module_key));
-  if (!keyed.length) return { ok: true, next: null };
-
-  const next = await resolveNextModuleStep(flowId, 'production');
+async function handoffVerdictFromNext(next) {
   const mk = normalizeModuleKey(next?.module_key);
   if (isCustomModuleKey(mk)) {
     const customModule = await loadAppModuleByKey(mk);
@@ -152,6 +175,56 @@ async function assertProductionHandoffTarget(flowId) {
     };
   }
   return { ok: true, next: next || null };
+}
+
+/**
+ * Kiểm tra bàn giao sau SX theo luồng.
+ *
+ * @param {object} [context] { project, projectId } — chủ thể chạy luồng là dự án xưởng.
+ * @returns {{ ok: true, next: object|null }
+ *   | { ok: false, error: string, nextModuleKey?: string, customModule?: object }}
+ */
+async function assertProductionHandoffTarget(flowId, context = null) {
+  if (!flowId) return { ok: true, next: null };
+  const steps = await getFlowSteps(flowId);
+  const keyed = steps.filter((s) => normalizeModuleKey(s.module_key));
+  if (!keyed.length) return { ok: true, next: null };
+
+  const legacyNext = await resolveNextModuleStep(flowId, 'production');
+  const legacyVerdict = await handoffVerdictFromNext(legacyNext);
+
+  const runtime = require('./flowRuntime');
+  let walked = null;
+  try {
+    walked = await runtime.resolveNextModulesViaGraph(flowId, 'production', context || {});
+  } catch (err) {
+    console.warn('[flow-runtime] resolveNextModules:', err.message);
+  }
+  if (!walked) return legacyVerdict;
+
+  const graphVerdict = await handoffVerdictFromNext(walked.next);
+  // So bằng id của bước — getFlowSteps không select node_id nên không dùng khoá đó được.
+  const diverged = legacyVerdict.ok !== graphVerdict.ok
+    || String(legacyNext?.id || '') !== String(walked.next?.id || '');
+
+  await runtime.logRuntimeDecision({
+    flowId,
+    gate: 'production_handoff',
+    subjectType: 'project',
+    subjectId: context?.projectId || context?.project?.id || null,
+    legacy: { ok: legacyVerdict.ok, next: normalizeModuleKey(legacyNext?.module_key) || null },
+    graph: {
+      ok: graphVerdict.ok,
+      next: normalizeModuleKey(walked.next?.module_key) || null,
+      candidates: walked.modules.map((m) => normalizeModuleKey(m.module_key)).filter(Boolean),
+      terminal: walked.terminal,
+      has_unknown: walked.hasUnknown,
+    },
+    diverged,
+    trace: walked.trace,
+  });
+
+  return runtime.isEnforced() ? graphVerdict : legacyVerdict;
 }
 
 /**

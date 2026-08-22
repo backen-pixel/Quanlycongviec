@@ -2,8 +2,9 @@ import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { formatVND, formatDate } from '../lib/utils';
-import { Plus, Search, FileText, Calendar, Download, Trash2, Loader2, Building2, MapPin, User as UserIcon, AlertTriangle, Briefcase, ShoppingCart } from 'lucide-react';
+import { Plus, Search, FileText, Calendar, Download, Trash2, Loader2, Building2, MapPin, User as UserIcon, AlertTriangle, Briefcase, ShoppingCart, Link2 } from 'lucide-react';
 import ExcelQuotationImport from '../components/ExcelQuotationImport';
+import LinkCrmDealModal from '../components/LinkCrmDealModal';
 
 const STATUS_MAP = { draft: 'Nháp', sent: 'Đã gửi', accepted: 'Chấp nhận', rejected: 'Từ chối', expired: 'Hết hạn', converted: 'Đã chuyển ĐH' };
 const STATUS_COLORS = { draft: 'bg-gray-100 text-gray-600', sent: 'bg-blue-100 text-blue-700', accepted: 'bg-emerald-100 text-emerald-700', rejected: 'bg-red-100 text-red-700', expired: 'bg-amber-100 text-amber-700', converted: 'bg-purple-100 text-purple-700' };
@@ -22,14 +23,29 @@ export default function QuotationsPage() {
   const [pdfLoadingId, setPdfLoadingId] = useState(null);
   const [convertLoadingId, setConvertLoadingId] = useState(null);
   const [showExcelImport, setShowExcelImport] = useState(false);
+  const [statusSavingId, setStatusSavingId] = useState(null);
+  const [linkTarget, setLinkTarget] = useState(null);
   const navigate = useNavigate();
 
   useEffect(() => { load(); }, []);
   const load = async () => {
     setLoading(true);
-    const { data } = await api.get('/crm/quotations');
+    const { data } = await api.get('/crm/quotations', { params: { limit: 500 } });
     setQuotes(data || []);
     setLoading(false);
+  };
+
+  const patchQuoteStatus = async (id, status, e) => {
+    e.stopPropagation();
+    if (statusSavingId) return;
+    setStatusSavingId(id);
+    try {
+      await api.put(`/crm/quotations/${id}`, { status });
+      await load();
+    } catch (err) {
+      alert(err.response?.data?.error || 'Không đổi được trạng thái');
+    }
+    setStatusSavingId(null);
   };
 
   const downloadPdf = async (id, code, e) => {
@@ -198,15 +214,20 @@ export default function QuotationsPage() {
                   <td className="py-3 px-3 font-bold text-blue-600">{q.code}</td>
                   <td className="py-3 px-3 font-medium" style={{ color: '#000000' }}>{q.title || '-'}</td>
                   <td className="py-3 px-3 text-gray-600">{q.customer_name || q.customer?.full_name || '-'}</td>
-                  <td className="py-3 px-3 text-xs">
+                  <td className="py-3 px-3 text-xs" onClick={e => e.stopPropagation()}>
                     {q.lead?.code ? (
                       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 font-mono">
                         <Briefcase className="h-3 w-3" />{q.lead.code}
                       </span>
                     ) : (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200 text-[10px]" title="Báo giá chưa gắn deal/cơ hội">
-                        <AlertTriangle className="h-3 w-3" /> Mồ côi
-                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setLinkTarget(q)}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200 text-[10px] font-semibold hover:bg-amber-100 cursor-pointer"
+                        title="Gắn báo giá với deal CRM"
+                      >
+                        <Link2 className="h-3 w-3" /> Gắn deal
+                      </button>
                     )}
                   </td>
                   <td className="py-3 px-3 text-[11px] text-gray-700">
@@ -218,7 +239,17 @@ export default function QuotationsPage() {
                     )}
                   </td>
                   <td className="py-3 px-3 text-right font-bold" style={{ color: '#000000' }}>{formatVND(q.total || 0)}</td>
-                  <td className="py-3 px-3"><span className={`text-xs px-2 py-0.5 rounded font-medium ${STATUS_COLORS[q.status] || ''}`}>{STATUS_MAP[q.status] || q.status}</span></td>
+                  <td className="py-3 px-3" onClick={e => e.stopPropagation()}>
+                    <select
+                      value={q.status || 'draft'}
+                      disabled={statusSavingId === q.id}
+                      onChange={e => patchQuoteStatus(q.id, e.target.value, e)}
+                      className={`h-8 px-2 rounded-lg text-xs font-medium border cursor-pointer disabled:opacity-60 ${STATUS_COLORS[q.status] || ''}`}
+                      title="Đổi trạng thái báo giá"
+                    >
+                      {Object.entries(STATUS_MAP).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                    </select>
+                  </td>
                   <td className="py-3 px-3 text-xs">
                     <span className="text-gray-700 font-medium inline-flex items-center gap-1"><UserIcon className="h-3 w-3 text-gray-400" />{q.creator?.full_name || '—'}</span>
                     {q.approver?.full_name && q.approver.full_name !== q.creator?.full_name && (
@@ -272,6 +303,15 @@ export default function QuotationsPage() {
           onClose={() => setShowExcelImport(false)}
         />
       )}
+      <LinkCrmDealModal
+        open={!!linkTarget}
+        docType="quotation"
+        docId={linkTarget?.id}
+        docCode={linkTarget?.code}
+        customerId={linkTarget?.customer_id}
+        onClose={() => setLinkTarget(null)}
+        onLinked={() => load()}
+      />
     </div>
   );
 }

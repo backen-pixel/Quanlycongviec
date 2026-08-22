@@ -141,11 +141,12 @@ async function linkDealToProject({
  */
 async function listDealProductionProjects(dealId) {
   if (!dealId) return [];
-  const projectDateCols = 'install_date, delivery_date, pickup_at, production_finish_date, logistics_company_id, vc_notes';
+  const projectDateCols = 'install_date, delivery_date, pickup_at, production_finish_date, logistics_company_id, logistics_person_id, vc_notes';
   const projectEmbed = `
         id, code, name, status, company_id, workshop_type_id, ${projectDateCols},
         company:companies!projects_company_id_fkey(id, name, short_name),
         logistics_company:companies!projects_logistics_company_id_fkey(id, name, short_name),
+        logistics_person:users!projects_logistics_person_id_fkey(id, full_name),
         workshop_type:workshop_project_types!projects_workshop_type_id_fkey(id, name)
   `;
   const mapRow = (l, p) => {
@@ -171,11 +172,13 @@ async function listDealProductionProjects(dealId) {
       production_finish_date: p.production_finish_date || null,
       logistics_company_id: p.logistics_company_id || lc.id || null,
       logistics_company_name: lc.short_name || lc.name || null,
+      logistics_person_id: p.logistics_person_id || p.logistics_person?.id || null,
+      logistics_person_name: p.logistics_person?.full_name || null,
       vc_notes: p.vc_notes || null,
     };
   };
 
-  const { data: links, error } = await supabase
+  let { data: links, error } = await supabase
     .from('crm_deal_projects')
     .select(`
       id, deal_id, project_id, is_primary, label, created_at,
@@ -183,6 +186,17 @@ async function listDealProductionProjects(dealId) {
     `)
     .eq('deal_id', dealId)
     .order('created_at', { ascending: true });
+  if (error && /logistics_person/i.test(String(error.message || ''))) {
+    const embedNoPerson = projectEmbed.replace(/logistics_person:users!projects_logistics_person_id_fkey\(id, full_name\),/, '');
+    ({ data: links, error } = await supabase
+      .from('crm_deal_projects')
+      .select(`
+        id, deal_id, project_id, is_primary, label, created_at,
+        project:projects!crm_deal_projects_project_id_fkey(${embedNoPerson})
+      `)
+      .eq('deal_id', dealId)
+      .order('created_at', { ascending: true }));
+  }
 
   let rows = [];
   if (!error && links?.length) {
@@ -236,7 +250,80 @@ async function listDealProductionProjects(dealId) {
     }
   }
 
-  return rows;
+  return enrichProductionProjectsPipeline(rows);
+}
+
+/** Gắn tiến độ pipeline SX/VC theo từng dự án (dùng LeadDetail, CRM chip). */
+async function enrichProductionProjectsPipeline(rows) {
+  if (!Array.isArray(rows) || !rows.length) return rows;
+  const pids = [...new Set(rows.map((r) => r.project_id).filter(Boolean))];
+  if (!pids.length) return rows;
+
+  let { data: projs, error } = await supabase
+    .from('projects')
+    .select('id, sx_kanban_column_id, vc_kanban_column_id, status, workshop_type_id, company_id, logistics_company_id, current_stage:workflow_stages(slug)')
+    .in('id', pids);
+  if (error) {
+    console.warn('[enrichProductionProjectsPipeline]', error.message);
+    return rows;
+  }
+
+  const projById = new Map((projs || []).map((p) => [String(p.id), p]));
+  let sxEnriched = [];
+  try {
+    const { enrichProjectsForSx, getWonDealProjectIds } = require('./workshopKanban');
+    const wonIds = await getWonDealProjectIds().catch(() => []);
+    sxEnriched = await enrichProjectsForSx(projs || [], wonIds);
+  } catch (e) {
+    console.warn('[enrichProductionProjectsPipeline] sx:', e.message);
+    sxEnriched = projs || [];
+  }
+  const sxById = new Map(sxEnriched.map((p) => [String(p.id), p]));
+
+  const vcColIds = [...new Set((projs || []).map((p) => p.vc_kanban_column_id).filter(Boolean))];
+  const vcColMap = new Map();
+  if (vcColIds.length) {
+    const { data: vcCols, error: vcErr } = await supabase
+      .from('logistics_pipeline_stages')
+      .select('id, name, color, icon, bucket_slug, progress_percent, company:companies(id, name, short_name)')
+      .in('id', vcColIds);
+    if (vcErr) {
+      console.warn('[enrichProductionProjectsPipeline] vc cols:', vcErr.message);
+    } else {
+      for (const c of vcCols || []) vcColMap.set(String(c.id), c);
+    }
+  }
+
+  const mapVcStage = (col) => {
+    if (!col?.id) return null;
+    const co = col.company || {};
+    return {
+      id: col.id,
+      name: col.name || null,
+      color: col.color || null,
+      icon: col.icon || null,
+      bucket_slug: col.bucket_slug || null,
+      progress_percent: col.progress_percent ?? null,
+      company: (co.id || col.company_id)
+        ? { id: co.id || col.company_id, name: co.name || null, short_name: co.short_name || null }
+        : null,
+    };
+  };
+
+  return rows.map((r) => {
+    const sx = sxById.get(String(r.project_id));
+    const base = projById.get(String(r.project_id));
+    const vcCol = base?.vc_kanban_column_id
+      ? vcColMap.get(String(base.vc_kanban_column_id))
+      : null;
+    return {
+      ...r,
+      sx_pipeline_percent: sx?.sx_pipeline_percent ?? null,
+      sx_pipeline_stage: sx?.sx_pipeline_stage ?? null,
+      vc_pipeline_percent: vcCol?.progress_percent ?? null,
+      vc_pipeline_stage: mapVcStage(vcCol),
+    };
+  });
 }
 
 /**
@@ -848,7 +935,7 @@ async function runAutoCreateProjectFromWonDeal({
   }
 
   try {
-    const allowsSx = await flowAllowsProductionCreate(flowId);
+    const allowsSx = await flowAllowsProductionCreate(flowId, { dealId: deal?.id || null });
     if (!allowsSx) {
       return {
         ok: false,
@@ -1111,6 +1198,14 @@ async function runAutoCreateProjectFromWonDeal({
     }),
   ]);
 
+  // Assignment vừa copy từ mẫu luồng — gán công ty thật của từng module
+  try {
+    const { syncProjectModuleAssignments } = require('./syncProjectModuleAssignments');
+    await syncProjectModuleAssignments(projectId);
+  } catch (e) {
+    console.warn('[auto-project] sync module companies:', e.message);
+  }
+
   // Bust wonIds cache — project phụ consulting cần vào scope board/detail ngay
   try {
     const { invalidateWonDealProjectIdsCache } = require('./workshopKanban');
@@ -1320,6 +1415,7 @@ async function runAutoCreateProjectFromWonDeal({
 module.exports = {
   autoCreateProjectFromWonDeal,
   listDealProductionProjects,
+  enrichProductionProjectsPipeline,
   attachProductionProjectsForList,
   linkDealToProject,
   normalizeProductionTargets,

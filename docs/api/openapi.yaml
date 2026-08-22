@@ -1,0 +1,23 @@
+openapi: 3.0.3
+info:
+  title: Quanlycongviec API (Tủ Bếp Pro)
+  version: 0.0.0-stub
+  description: |
+    Stub OpenAPI. Inventory đầy đủ hiện tại nằm ở docs/api/API_DOCUMENT.md
+    (sinh từ Express routes). Bổ sung path/schema dần theo module khi giao Issue.
+servers:
+  - url: /api
+    description: Backend Express (dev proxy Vite → :4000)
+paths: {}
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    apiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-Api-Key
+security:
+  - bearerAuth: []

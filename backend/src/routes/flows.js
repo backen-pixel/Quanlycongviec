@@ -7,18 +7,18 @@ const {
   normalizeModuleKey,
   enrichStepsWithModuleKey,
 } = require('../helpers/resolveModuleFlow');
-const { normalizeGraphPayload } = require('../helpers/flowGraph');
+const { normalizeGraphPayload, normalizeNodeKind } = require('../helpers/flowGraph');
 
 const r = Router();
 r.use(auth);
 
 const optUuid = (v) => (v && typeof v === 'string' && v.trim()) ? v.trim() : null;
 
-/** Cột đồ thị (migration 531) — tách riêng để fallback được khi DB chưa migrate. */
-const GRAPH_STEP_FIELDS = ['node_id', 'position_x', 'position_y', 'branch_mode', 'join_mode'];
+/** Cột đồ thị (migration 531/537) — tách riêng để fallback được khi DB chưa migrate. */
+const GRAPH_STEP_FIELDS = ['node_id', 'position_x', 'position_y', 'branch_mode', 'join_mode', 'node_kind', 'node_config'];
 
 const isMissingGraphColumn = (msg) =>
-  /node_id|position_x|position_y|branch_mode|join_mode|workflow_flow_edges|workflow_flow_conditions|schema cache|Could not find/i
+  /node_id|position_x|position_y|branch_mode|join_mode|node_kind|node_config|workflow_flow_edges|workflow_flow_conditions|schema cache|Could not find/i
     .test(msg || '');
 
 const stripGraphFields = (row) => {
@@ -29,7 +29,9 @@ const stripGraphFields = (row) => {
 
 /** Map body step → row insert (hỗ trợ module_key, division nullable). */
 async function mapStepInsert(flowId, s, i) {
-  let moduleKey = normalizeModuleKey(s.module_key) || null;
+  const nodeKind = normalizeNodeKind(s.node_kind);
+  const isModule = nodeKind === 'module';
+  let moduleKey = isModule ? (normalizeModuleKey(s.module_key) || null) : null;
   if (moduleKey) {
     try {
       moduleKey = await assertValidModuleKey(moduleKey);
@@ -38,26 +40,31 @@ async function mapStepInsert(flowId, s, i) {
     }
   }
   const divisionId = optUuid(s.division_unit_id);
-  if (!divisionId && !moduleKey) {
+  if (isModule && !divisionId && !moduleKey) {
     const err = new Error(`Bước ${i + 1}: cần module_key hoặc division_unit_id`);
     err.status = 400;
     throw err;
   }
+  const config = s.node_config && typeof s.node_config === 'object' && !Array.isArray(s.node_config)
+    ? s.node_config
+    : {};
   return {
     flow_id: flowId,
     division_unit_id: divisionId,
     company_unit_id: optUuid(s.company_unit_id),
     template_set_id: optUuid(s.template_set_id),
     module_key: moduleKey,
-    handoff_trigger: s.handoff_trigger || null,
+    handoff_trigger: isModule ? (s.handoff_trigger || null) : null,
     order_index: s.order_index ?? i,
     setup_days: s.setup_days || 0,
     setup_hours: s.setup_hours || 0,
     description: s.description || null,
     node_id: s.node_id || null,
+    node_kind: nodeKind,
+    node_config: config,
     position_x: s.position_x ?? null,
     position_y: s.position_y ?? null,
-    branch_mode: s.branch_mode || 'sequential',
+    branch_mode: s.branch_mode || (nodeKind === 'condition' ? 'conditional' : 'sequential'),
     join_mode: s.join_mode || 'all',
   };
 }
@@ -164,6 +171,12 @@ async function replaceFlowGraph(flowId, payload) {
     const { data, error } = await supabase.from('workflow_flow_conditions').insert(conditionRows).select();
     if (error) throw error;
     savedConditions = data || [];
+  }
+
+  try {
+    require('../helpers/flowRuntime').invalidateFlowGraphCache(flowId);
+  } catch (cacheErr) {
+    console.warn('[flows] invalidateFlowGraphCache:', cacheErr.message);
   }
 
   return {
@@ -273,6 +286,108 @@ async function loadStepDetails(steps) {
   }
   return steps;
 }
+
+// ═══ Danh mục biến của bước module (dựng menu «Chèn dữ liệu» trên canvas) ═══
+r.get('/meta/module-variables', (req, res) => {
+  const { MODULE_VARIABLES } = require('../helpers/flowModuleVariables');
+  res.json({ variables: MODULE_VARIABLES });
+});
+
+/**
+ * Danh mục sự kiện cho khối «Chờ theo sự kiện».
+ *
+ * Chỉ liệt kê sự kiện hệ thống đang thực sự ghi nhận: mốc lịch hẹn trong
+ * `crm_events.event_type` (lấy động từ bảng `event_types` nên loại do admin tự thêm
+ * cũng hiện ra), cộng các sự kiện vòng đời deal / hồ sơ / dự án đã có sẵn.
+ */
+const WAIT_EVENT_GROUPS = [
+  {
+    id: 'deal',
+    label: 'Deal & khách hàng',
+    events: [
+      { key: 'deal_won', label: 'Deal chốt thắng' },
+      { key: 'deal_lost', label: 'Deal thua' },
+      { key: 'lead_converted', label: 'Lead lên deal' },
+      { key: 'stage_changed', label: 'Deal đổi cột' },
+      { key: 'task_completed', label: 'Nhiệm vụ CRM hoàn thành' },
+      { key: 'sla_breach', label: 'Quá hạn SLA' },
+    ],
+  },
+  {
+    id: 'docs',
+    label: 'Hồ sơ & thanh toán',
+    events: [
+      { key: 'quotation_created', label: 'Có báo giá mới' },
+      { key: 'order_created', label: 'Có đơn hàng mới' },
+      { key: 'invoice_created', label: 'Có hoá đơn mới' },
+      { key: 'payment_received', label: 'Khách đã thanh toán' },
+      { key: 'document_uploaded', label: 'Có hồ sơ tải lên' },
+    ],
+  },
+  {
+    id: 'project',
+    label: 'Dự án, xưởng & vận chuyển',
+    events: [
+      { key: 'project_created', label: 'Dự án được tạo' },
+      { key: 'project_stage_changed', label: 'Dự án đổi cột sản xuất' },
+      { key: 'logistics_stage_changed', label: 'Đổi cột vận chuyển / lắp đặt' },
+      { key: 'task_assigned', label: 'Giao việc cho nhân sự' },
+    ],
+  },
+];
+
+r.get('/meta/wait-events', async (req, res) => {
+  try {
+    const { data } = await supabase.from('event_types')
+      .select('slug, name, icon').order('sort_order');
+    const calendar = (data || []).map((t) => ({
+      key: t.slug,
+      label: `${t.icon ? `${t.icon} ` : ''}${t.name}`,
+    }));
+    // Hai mốc này chỉ sinh trong code, chưa có dòng nào trong event_types
+    for (const extra of [
+      { key: 'production_finish', label: 'Hoàn thiện sản xuất' },
+      { key: 'acceptance', label: 'Nghiệm thu — bàn giao' },
+    ]) {
+      if (!calendar.some((c) => c.key === extra.key)) calendar.push(extra);
+    }
+
+    res.json({
+      groups: [
+        { id: 'calendar', label: 'Lịch hẹn & mốc thi công', events: calendar },
+        ...WAIT_EVENT_GROUPS,
+      ],
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ═══ Gợi ý chủ thể để chạy thử: deal / dự án có thật để lấy số liệu ═══
+r.get('/meta/subjects', async (req, res) => {
+  try {
+    const q = String(req.query.q || '').trim();
+    const [projects, deals] = await Promise.all([
+      supabase.from('projects')
+        .select('id, code, name')
+        .ilike('name', q ? `%${q}%` : '%')
+        .order('updated_at', { ascending: false })
+        .limit(15),
+      supabase.from('crm_leads')
+        .select('id, code, title')
+        .eq('type', 'deal')
+        .ilike('title', q ? `%${q}%` : '%')
+        .order('updated_at', { ascending: false })
+        .limit(15),
+    ]);
+    res.json({
+      projects: (projects.data || []).map((p) => ({ id: p.id, label: `${p.code || ''} · ${p.name || ''}`.trim() })),
+      deals: (deals.data || []).map((d) => ({ id: d.id, label: `${d.code || ''} · ${d.title || ''}`.trim() })),
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
 // ═══ LIST all flows (light) ═══
 // ?include_inactive=1 → trả cả luồng đang tắt (màn Setup luồng); mặc định chỉ luồng đang bật.
@@ -572,6 +687,39 @@ r.put('/:id/steps', async (req, res) => {
     });
   } catch (e) {
     console.error(e);
+    res.status(e.status || 500).json({ error: e.message });
+  }
+});
+
+// ═══ Chạy khối hành động: Lấy báo cáo → AI viết → Nhắn tin ═══
+// dry_run mặc định true: tính đủ nội dung nhưng không gửi, để xem trước trên canvas.
+r.post('/:id/run-actions', async (req, res) => {
+  try {
+    if (!['admin', 'manager'].includes(req.user.role))
+      return res.status(403).json({ error: 'Không có quyền' });
+
+    const dryRun = req.body?.dry_run !== false;
+    const { runFlowActions } = require('../helpers/flowActionRunner');
+    const { pickSampleSubject } = require('../helpers/flowModuleVariables');
+
+    // Bước module lấy số liệu từ một deal / dự án cụ thể. Chạy thử mà chưa chọn thì
+    // mượn bản ghi mới nhất của luồng để người dùng thấy ngay kết quả.
+    let subject = null;
+    if (req.body?.deal_id) subject = { dealId: req.body.deal_id };
+    else if (req.body?.project_id) subject = { projectId: req.body.project_id };
+    else subject = await pickSampleSubject(req.params.id);
+
+    const result = await runFlowActions(req.params.id, {
+      dryRun,
+      io: req.app.get('io') || null,
+      userId: req.user.userId,
+      onlyNodeId: req.body?.node_id || null,
+      subject,
+    });
+
+    res.json({ dry_run: dryRun, subject, ...result });
+  } catch (e) {
+    console.error('[flows/run-actions]', e);
     res.status(e.status || 500).json({ error: e.message });
   }
 });

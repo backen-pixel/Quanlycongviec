@@ -3,6 +3,147 @@ const {
   getUserModuleRolesMap,
   resolvePermissionIdsForRoleNames,
 } = require('./userModuleRoles');
+const {
+  isPlatformAdmin,
+  isAdminLike,
+  isSystemAdmin,
+  isTenantAdmin,
+  isLegacySystemAdmin,
+  isCompanyScopedAdmin,
+  isProductionAdmin,
+  isProductionStaff,
+  isLogisticsAdmin,
+} = require('./adminRole');
+
+/** Membership dự án — chỉ quan sát, không đổi quyền. */
+async function loadProjectScope(userId, { sampleLimit = 8 } = {}) {
+  const empty = {
+    production_staff_count: 0,
+    lead_member_count: 0,
+    production_projects: [],
+    lead_memberships: [],
+    sample_limit: sampleLimit,
+  };
+  if (!userId) return empty;
+  try {
+    const [staffCountRes, memberCountRes, staffRowsRes, memberRowsRes] = await Promise.all([
+      supabase
+        .from('project_production_staff')
+        .select('project_id', { count: 'exact', head: true })
+        .eq('user_id', userId),
+      supabase
+        .from('lead_members')
+        .select('lead_id', { count: 'exact', head: true })
+        .eq('user_id', userId),
+      supabase
+        .from('project_production_staff')
+        .select('project_id, is_primary, order_index, project:projects(id, name, code)')
+        .eq('user_id', userId)
+        .order('order_index', { ascending: true })
+        .limit(sampleLimit),
+      supabase
+        .from('lead_members')
+        .select('lead_id, role, lead:crm_leads(id, title, code, type)')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(sampleLimit),
+    ]);
+
+    const productionProjects = (staffRowsRes.data || []).map((row) => ({
+      project_id: row.project_id,
+      name: row.project?.name || null,
+      code: row.project?.code || null,
+      is_primary: row.is_primary === true,
+    }));
+
+    const leadMemberships = (memberRowsRes.data || []).map((row) => ({
+      lead_id: row.lead_id,
+      role: row.role || 'member',
+      title: row.lead?.title || null,
+      code: row.lead?.code || null,
+      type: row.lead?.type || null,
+    }));
+
+    return {
+      production_staff_count: staffCountRes.count || 0,
+      lead_member_count: memberCountRes.count || 0,
+      production_projects: productionProjects,
+      lead_memberships: leadMemberships,
+      sample_limit: sampleLimit,
+    };
+  } catch {
+    return empty;
+  }
+}
+
+/**
+ * Tóm tắt nguồn truy cập (read-only) — không ảnh hưởng enforcement.
+ * Giúp UI giải thích bypass middleware / membership ngoài catalog.
+ */
+async function buildAccessSummary(userId, {
+  systemRoleName = null,
+  moduleRolesMap = {},
+  userRoles = [],
+} = {}) {
+  const { data: userRow, error } = await supabase
+    .from('users')
+    .select('id, role, company_id, tenant_id, email')
+    .eq('id', userId)
+    .maybeSingle();
+  if (error) throw error;
+
+  const user = userRow || { role: systemRoleName };
+  const role = user.role != null ? String(user.role).trim().toLowerCase() : null;
+  const projectScope = await loadProjectScope(userId);
+
+  const fullAdminBypass = isPlatformAdmin(user) || isAdminLike(user);
+  const workshopBypass =
+    isProductionStaff(user) || isProductionAdmin(user) || isLogisticsAdmin(user);
+
+  const notes = [];
+  if (fullAdminBypass) {
+    notes.push('Middleware cho phép hầu hết API (admin-like / platform_admin) — checkbox catalog có thể thưa.');
+  }
+  if (workshopBypass && !fullAdminBypass) {
+    notes.push('Middleware mở resource xưởng (projects/workflows/…) theo role SX/VC — ngoài catalog.');
+  }
+  if (projectScope.production_staff_count > 0 || projectScope.lead_member_count > 0) {
+    notes.push('Đã gắn membership dự án/deal — phạm vi dữ liệu, không hiện trên toggle quyền.');
+  }
+
+  return {
+    user_id: userId,
+    system_role: role || systemRoleName || null,
+    company_id: user.company_id ?? null,
+    tenant_id: user.tenant_id ?? null,
+    email: user.email || null,
+    flags: {
+      is_platform_admin: isPlatformAdmin(user),
+      is_admin_like: isAdminLike(user),
+      is_system_admin: isSystemAdmin(user),
+      is_tenant_admin: isTenantAdmin(user),
+      is_legacy_system_admin: isLegacySystemAdmin(user),
+      is_company_scoped_admin: isCompanyScopedAdmin(user),
+      is_production_admin: isProductionAdmin(user),
+      is_production_staff: isProductionStaff(user),
+      is_logistics_admin: isLogisticsAdmin(user),
+    },
+    middleware_bypass: {
+      full_admin: fullAdminBypass,
+      workshop_resources: workshopBypass,
+    },
+    module_roles: moduleRolesMap || {},
+    assigned_roles: (userRoles || []).map((ur) => ({
+      id: ur.id,
+      role_id: ur.role_id,
+      role_name: ur.role?.name || ur.role_name || null,
+      ecosystem_unit_id: ur.ecosystem_unit_id ?? null,
+    })),
+    project_scope: projectScope,
+    catalog_precedence: ['override', 'assigned_role', 'module_role', 'system_role'],
+    notes,
+  };
+}
 
 /**
  * Chọn override phù hợp — khớp logic RPC user_has_permission.
@@ -71,7 +212,7 @@ async function resolveSystemRolePermissionIds(userId) {
 }
 
 /**
- * @returns {Promise<{ permissions: Array, role_permission_ids: string[], user_roles: Array, system_role: string|null, module_roles: Record<string,string> }>}
+ * @returns {Promise<{ permissions: Array, role_permission_ids: string[], user_roles: Array, system_role: string|null, module_roles: Record<string,string>, access_summary: object }>}
  */
 async function getEffectivePermissions(userId, ecosystemUnitId = null) {
   const unitId = ecosystemUnitId || null;
@@ -177,6 +318,12 @@ async function getEffectivePermissions(userId, ecosystemUnitId = null) {
     };
   });
 
+  const accessSummary = await buildAccessSummary(userId, {
+    systemRoleName: systemRoleInfo.systemRoleName,
+    moduleRolesMap: moduleRolesMap || {},
+    userRoles: userRoles || [],
+  });
+
   return {
     permissions,
     role_permission_ids: [...rolePermissionIds],
@@ -190,6 +337,7 @@ async function getEffectivePermissions(userId, ecosystemUnitId = null) {
       ecosystem_unit_id: ur.ecosystem_unit_id,
     })),
     ecosystem_unit_id: unitId,
+    access_summary: accessSummary,
   };
 }
 
@@ -244,4 +392,5 @@ module.exports = {
   getEffectivePermissions,
   applyUserPermissionOverrides,
   pickUserOverride,
+  buildAccessSummary,
 };

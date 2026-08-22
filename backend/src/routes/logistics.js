@@ -1609,6 +1609,20 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
       if (vcRow?.workflow_stage_id && !resolvedStageId) {
         resolvedStageId = vcRow.workflow_stage_id;
       }
+      if (!resolvedStageId && vcRow) {
+        try {
+          const { resolveDeliveryFieldsFromModuleColumn } = require('../helpers/syncProjectDeliveryStage');
+          const deliveryFields = await resolveDeliveryFieldsFromModuleColumn(project, vcRow, 'logistics');
+          if (deliveryFields.current_stage_id) {
+            resolvedStageId = deliveryFields.current_stage_id;
+            if (deliveryFields.from_fallback) {
+              console.info(`[logistics] delivery stage fallback for VC col ${vcRow.id} → ${resolvedStageId}`);
+            }
+          }
+        } catch (fbErr) {
+          console.warn('[logistics] delivery stage fallback:', fbErr.message);
+        }
+      }
 
       // Cột VC gắn «Chuyển LĐ» → nhảy sang cột Lắp đặt đầu tiên
       if (
@@ -1624,6 +1638,12 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
           vcPipeStageRow = installCol;
           if (installCol.workflow_stage_id) {
             resolvedStageId = installCol.workflow_stage_id;
+          } else {
+            try {
+              const { resolveDeliveryFieldsFromModuleColumn } = require('../helpers/syncProjectDeliveryStage');
+              const df = await resolveDeliveryFieldsFromModuleColumn(project, installCol, 'logistics');
+              if (df.current_stage_id) resolvedStageId = df.current_stage_id;
+            } catch (_) { /* ignore */ }
           }
         }
       }
@@ -1636,6 +1656,10 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
     const statusMap = {
       delivery: 'shipping',
       installation: 'installing',
+      acceptance: 'completed',
+      materials: 'producing',
+      production: 'producing',
+      warranty: 'warranty',
       'customer-care': 'warranty',
     };
 

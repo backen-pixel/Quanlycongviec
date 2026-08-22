@@ -6,7 +6,7 @@
 
 const TASK_SOURCE_TYPES = new Set(['customer_request', 'employee_error']);
 const ERROR_MODULES = new Set(['crm', 'production', 'logistics']);
-const PHAT_SINH_KINDS = new Set(['tempered_glass', 'glass_unpainted', 'glass_painted']);
+const { LEGACY_SLUGS: PHAT_SINH_KINDS, normalizePhatSinhKindToken } = require('./sharedWorkspacePhatSinhKinds');
 const { normalizeAssignModule, BUILTIN_ASSIGN_MODULES: ASSIGN_MODULES } = require('./assignmentModule');
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -66,10 +66,7 @@ function stageSlugForAssignModule(assignModule) {
 }
 
 function normalizePhatSinhKind(raw) {
-  if (raw === undefined) return undefined;
-  if (raw == null || raw === '') return null;
-  const v = String(raw).trim().toLowerCase();
-  return PHAT_SINH_KINDS.has(v) ? v : null;
+  return normalizePhatSinhKindToken(raw);
 }
 
 function normalizeDepartmentId(raw) {
@@ -92,7 +89,7 @@ function resolvePhatSinhFields(body = {}) {
     } else {
       phat_sinh_kind = normalizePhatSinhKind(body.phat_sinh_kind);
       if (!phat_sinh_kind) {
-        return { ok: false, error: 'Loại kính phát sinh không hợp lệ', status: 400 };
+        return { ok: false, error: 'Loại phát sinh không hợp lệ', status: 400 };
       }
     }
   }
@@ -113,7 +110,8 @@ function resolvePhatSinhFields(body = {}) {
 function isTaskSourceColumnError(err) {
   const m = String(err?.message || '').toLowerCase();
   return m.includes('task_source_type') || m.includes('employee_error_module')
-    || m.includes('phat_sinh_kind') || m.includes('department_id');
+    || m.includes('phat_sinh_kind') || m.includes('department_id')
+    || m.includes('error_type_id');
 }
 
 module.exports = {

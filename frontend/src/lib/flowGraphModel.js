@@ -151,11 +151,15 @@ export function validateGraph(nodes, edges, { moduleLabel = (k) => k } = {}) {
   const warnings = [];
 
   if (!nodes.length) {
-    errors.push('Kéo ít nhất một module lên canvas');
+    errors.push('Kéo ít nhất một node lên canvas');
     return { errors, warnings };
   }
-  if (nodes.some((n) => !n.data?.module_key)) {
-    errors.push('Có node chưa gắn module');
+  const moduleNodes = nodes.filter((n) => (n.data?.node_kind || 'module') === 'module');
+  if (moduleNodes.some((n) => !n.data?.module_key)) {
+    errors.push('Có node module chưa gắn module');
+  }
+  if (!moduleNodes.length) {
+    warnings.push('Luồng chưa có bước module — chỉ có khối điều khiển / hành động');
   }
 
   const cycles = findCycleNodeIds(nodes, edges);
@@ -169,6 +173,7 @@ export function validateGraph(nodes, edges, { moduleLabel = (k) => k } = {}) {
     const reach = reachabilityMap(nodes, edges);
     const byModule = new Map();
     for (const n of nodes) {
+      if ((n.data?.node_kind || 'module') !== 'module') continue;
       const key = n.data?.module_key;
       if (!key) continue;
       if (!byModule.has(key)) byModule.set(key, []);
@@ -202,6 +207,96 @@ export function validateGraph(nodes, edges, { moduleLabel = (k) => k } = {}) {
     warnings.push('Luồng có nhánh: phần thực thi hiện vẫn chạy theo chuỗi đã làm phẳng, nhánh mới chỉ được lưu ở phần thiết kế');
   }
 
+  const conditionNodes = nodes.filter((n) => n.data?.node_kind === 'condition');
+  for (const n of conditionNodes) {
+    if ((degrees.get(n.id)?.out || 0) < 2) {
+      warnings.push(`Khối điều kiện "${n.data?.label || n.id}" nên có ít nhất hai nhánh ra (Có / Không)`);
+    }
+  }
+
+  const ACTION_KINDS = ['report', 'ai_report', 'notify', 'ai_classify', 'ai_extract', 'ai_ask'];
+  const controlCount = nodes.filter((n) => {
+    const kind = n.data?.node_kind || 'module';
+    return kind !== 'module' && !ACTION_KINDS.includes(kind);
+  }).length;
+  if (controlCount) {
+    warnings.push(`${controlCount} khối điều khiển chỉ có hiệu lực khi bật thực thi đồ thị (FLOW_RUNTIME_ENFORCE)`);
+  }
+
+  const notifyNodes = nodes.filter((n) => n.data?.node_kind === 'notify');
+  for (const n of notifyNodes) {
+    const cfg = n.data?.node_config || {};
+    // Kênh tin riêng / thông báo nhận nhiều người; nhóm chat và phòng ban vẫn một đích.
+    const perPerson = ['dm', 'in_app'].includes(cfg.channel);
+    const hasTarget = perPerson
+      ? Boolean(cfg.recipients?.user_ids?.length || cfg.recipients?.dynamic?.length || cfg.target_id)
+      : Boolean(cfg.target_id);
+    if (!hasTarget) {
+      warnings.push(`Khối "${n.data?.label || 'Nhắn tin'}" chưa chọn nơi nhận — chạy thử được nhưng chưa gửi được`);
+    }
+  }
+
+  const aiKinds = ['ai_report', 'ai_classify', 'ai_extract', 'ai_ask'];
+  for (const n of nodes.filter((x) => aiKinds.includes(x.data?.node_kind))) {
+    const cfg = n.data?.node_config || {};
+    const name = n.data?.label || 'Khối AI';
+    if (cfg.model === 'custom' && !String(cfg.model_custom || '').trim()) {
+      warnings.push(`Khối "${name}" chưa nhập mã model`);
+    }
+    if (n.data.node_kind === 'ai_report' && cfg.mode === 'playbook' && !cfg.playbook_id) {
+      warnings.push(`Khối "${name}" đang ở chế độ mẫu AI nhưng chưa chọn mẫu`);
+    }
+  }
+
+  // Nhánh sau khối phân loại chỉ chạy khi nhãn cạnh trùng nhãn AI chọn — sai chính tả là nhánh chết.
+  for (const n of nodes.filter((x) => x.data?.node_kind === 'ai_classify')) {
+    const cfg = n.data?.node_config || {};
+    const name = n.data?.label || 'AI phân loại';
+    const labels = (Array.isArray(cfg.labels) ? cfg.labels : [])
+      .map((l) => String(l || '').trim())
+      .filter(Boolean);
+    if (labels.length < 2) {
+      warnings.push(`Khối "${name}" cần ít nhất hai nhãn để phân loại`);
+      continue;
+    }
+    const known = new Set(labels.map((l) => l.toLowerCase()));
+    const outgoing = edges.filter((e) => e.source === n.id);
+    const strays = outgoing
+      .map((e) => String(e.data?.label || '').trim())
+      .filter((l) => l && !known.has(l.toLowerCase()));
+    if (strays.length) {
+      warnings.push(`Khối "${name}" có nhánh gắn nhãn lạ (${strays.join(', ')}) — nhánh đó sẽ không bao giờ chạy`);
+    }
+    if (outgoing.length > 1 && outgoing.every((e) => !String(e.data?.label || '').trim())) {
+      warnings.push(`Khối "${name}" chưa đặt nhãn cho nhánh nào — mọi nhánh sẽ cùng chạy`);
+    }
+  }
+
+  for (const n of nodes.filter((x) => x.data?.node_kind === 'ai_extract')) {
+    const cfg = n.data?.node_config || {};
+    const name = n.data?.label || 'AI bóc dữ liệu';
+    const keys = (Array.isArray(cfg.fields) ? cfg.fields : [])
+      .map((f) => String(f?.key || '').trim())
+      .filter(Boolean);
+    if (!keys.length) warnings.push(`Khối "${name}" chưa khai báo trường nào cần bóc`);
+    if (new Set(keys).size !== keys.length) warnings.push(`Khối "${name}" có mã trường trùng nhau`);
+  }
+
+  for (const n of nodes.filter((x) => x.data?.node_kind === 'ai_ask')) {
+    const cfg = n.data?.node_config || {};
+    if (!String(cfg.question || '').trim()) {
+      warnings.push(`Khối "${n.data?.label || 'AI hỏi đáp'}" chưa nhập câu hỏi`);
+    }
+  }
+
+  const reportNodes = nodes.filter((n) => n.data?.node_kind === 'report');
+  for (const n of reportNodes) {
+    const cfg = n.data?.node_config || {};
+    if (!cfg.company_id) {
+      warnings.push(`Khối "${n.data?.label || 'Lấy báo cáo'}" chưa chọn công ty`);
+    }
+  }
+
   return { errors, warnings };
 }
 
@@ -212,20 +307,31 @@ export function validateGraph(nodes, edges, { moduleLabel = (k) => k } = {}) {
  */
 export function nodesToStepsPayload(nodes, edges) {
   const degrees = degreeMap(nodes, edges);
-  return topoOrder(nodes, edges).map((n, i) => ({
-    node_id: n.id,
-    module_key: n.data.module_key,
-    handoff_trigger: n.data.handoff_trigger || null,
-    description: n.data.description || null,
-    company_unit_id: n.data.company_unit_id || null,
-    template_set_id: n.data.template_set_id || null,
-    division_unit_id: n.data.division_unit_id || null,
-    branch_mode: (degrees.get(n.id)?.out || 0) > 1 ? (n.data.branch_mode || 'sequential') : 'sequential',
-    join_mode: (degrees.get(n.id)?.in || 0) > 1 ? (n.data.join_mode || 'all') : 'all',
-    position_x: Math.round(n.position?.x ?? 0),
-    position_y: Math.round(n.position?.y ?? 0),
-    order_index: i,
-  }));
+  return topoOrder(nodes, edges).map((n, i) => {
+    const kind = n.data.node_kind || 'module';
+    const isModule = kind === 'module';
+    return {
+      node_id: n.id,
+      node_kind: kind,
+      node_config: {
+        ...(n.data.node_config || {}),
+        ...(n.data.label && kind !== 'module' ? { label: n.data.label } : {}),
+      },
+      module_key: isModule ? n.data.module_key : null,
+      handoff_trigger: isModule ? (n.data.handoff_trigger || null) : null,
+      description: n.data.description || null,
+      company_unit_id: n.data.company_unit_id || null,
+      template_set_id: n.data.template_set_id || null,
+      division_unit_id: n.data.division_unit_id || null,
+      branch_mode: (degrees.get(n.id)?.out || 0) > 1
+        ? (n.data.branch_mode || (kind === 'condition' ? 'conditional' : 'sequential'))
+        : 'sequential',
+      join_mode: (degrees.get(n.id)?.in || 0) > 1 ? (n.data.join_mode || 'all') : 'all',
+      position_x: Math.round(n.position?.x ?? 0),
+      position_y: Math.round(n.position?.y ?? 0),
+      order_index: i,
+    };
+  });
 }
 
 export function edgesToPayload(edges) {

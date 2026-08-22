@@ -254,10 +254,10 @@ export function KanbanBoardEdgeScrollChrome({
   }, [dragging, stopHoverScroll]);
 
   const edgeActive = (side) => dragging || hoverSide === side;
-  const chevronTone = (side) => (
+  const chevronWrap = (side) => (
     edgeActive(side)
-      ? 'text-slate-700/90 opacity-100'
-      : 'text-slate-600/70 opacity-45'
+      ? 'bg-white/95 text-slate-700 shadow-md ring-1 ring-slate-200/80 opacity-100 scale-100'
+      : 'bg-white/80 text-slate-500 shadow-sm ring-1 ring-slate-200/60 opacity-0 scale-95'
   );
 
   const clickBtnBase = `kanban-edge-scroll-btn absolute top-0 ${bottomClass} z-[30] w-10 border-0 bg-transparent p-0 sm:w-12 ${
@@ -282,12 +282,12 @@ export function KanbanBoardEdgeScrollChrome({
         className={`kanban-edge-scroll-chrome pointer-events-none absolute left-0 top-0 ${bottomClass} z-[28] flex w-12 items-stretch sm:w-14`}
         aria-hidden
       >
-        <div className="flex w-full items-center justify-center bg-transparent pl-0.5 transition-opacity duration-200">
-          <ChevronLeft
-            className={`h-9 w-9 drop-shadow-[0_0_4px_rgba(255,255,255,0.85)] transition-opacity duration-200 sm:h-10 sm:w-10 ${chevronTone('left')}`}
-            strokeWidth={2.25}
-            aria-hidden
-          />
+        <div className="flex w-full items-center justify-center bg-transparent pl-0.5">
+          <span
+            className={`inline-flex h-9 w-9 sm:h-10 sm:w-10 items-center justify-center rounded-full transition-all duration-200 ${chevronWrap('left')}`}
+          >
+            <ChevronLeft className="h-5 w-5 sm:h-6 sm:w-6" strokeWidth={2.5} aria-hidden />
+          </span>
         </div>
       </div>
       <div
@@ -295,12 +295,12 @@ export function KanbanBoardEdgeScrollChrome({
         style={rightStyle ?? { right: 0 }}
         aria-hidden
       >
-        <div className="ml-auto flex w-full items-center justify-center bg-transparent pr-0.5 transition-opacity duration-200">
-          <ChevronRight
-            className={`h-9 w-9 drop-shadow-[0_0_4px_rgba(255,255,255,0.85)] transition-opacity duration-200 sm:h-10 sm:w-10 ${chevronTone('right')}`}
-            strokeWidth={2.25}
-            aria-hidden
-          />
+        <div className="ml-auto flex w-full items-center justify-center bg-transparent pr-0.5">
+          <span
+            className={`inline-flex h-9 w-9 sm:h-10 sm:w-10 items-center justify-center rounded-full transition-all duration-200 ${chevronWrap('right')}`}
+          >
+            <ChevronRight className="h-5 w-5 sm:h-6 sm:w-6" strokeWidth={2.5} aria-hidden />
+          </span>
         </div>
       </div>
 

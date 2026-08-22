@@ -52,27 +52,33 @@ const QUOTE_STATUS_VI = {
   expired: 'Hết hạn', converted: 'Đã chuyển ĐH',
 };
 const ORDER_STATUS_VI = {
-  draft: 'Nháp', confirmed: 'Đã xác nhận', processing: 'Đang xử lý',
-  shipped: 'Đã giao hàng', delivered: 'Đã bàn giao', cancelled: 'Đã hủy',
-};
-const INVOICE_STATUS_VI = {
-  draft: 'Nháp', issued: 'Đã phát hành', paid: 'Đã thanh toán',
-  cancelled: 'Đã hủy', void: 'Hủy bỏ',
+  draft: 'Nháp', confirmed: 'Xác nhận', processing: 'Đang SX',
+  shipped: 'Đang giao', delivered: 'Đã giao', cancelled: 'Đã hủy',
 };
 const INVOICE_PAYMENT_VI = {
   unpaid: 'Chưa TT', partial: 'TT một phần', paid: 'Đã TT đủ', overdue: 'Quá hạn',
 };
 
-function docStatusLabel(blockKey, doc) {
-  if (!doc) return '';
-  if (blockKey === 'quotation') return QUOTE_STATUS_VI[doc.status] || doc.status || '';
-  if (blockKey === 'order') return ORDER_STATUS_VI[doc.status] || doc.status || '';
-  if (blockKey === 'invoice') {
-    const pay = INVOICE_PAYMENT_VI[doc.payment_status];
-    if (pay) return pay;
-    return INVOICE_STATUS_VI[doc.status] || doc.status || '';
-  }
-  return doc.status || '';
+const DOC_STATUS_OPTIONS = {
+  quotation: Object.entries(QUOTE_STATUS_VI),
+  order: Object.entries(ORDER_STATUS_VI),
+  invoice: Object.entries(INVOICE_PAYMENT_VI),
+};
+
+function docStatusApiPath(blockKey, id) {
+  if (blockKey === 'order') return `/crm/orders/${id}`;
+  if (blockKey === 'invoice') return `/crm/invoices/${id}`;
+  return `/crm/quotations/${id}`;
+}
+
+function docStatusPayload(blockKey, value) {
+  if (blockKey === 'invoice') return { payment_status: value };
+  return { status: value };
+}
+
+function docStatusValue(blockKey, doc) {
+  if (blockKey === 'invoice') return doc.payment_status || 'unpaid';
+  return doc.status || 'draft';
 }
 
 function StatusPill({ status }) {
@@ -193,6 +199,7 @@ export default function AccountingDealDetail() {
   const [inlineSavingStageId, setInlineSavingStageId] = useState(null);
   const [bankModalOpen, setBankModalOpen] = useState(false);
   const [convertQuoteId, setConvertQuoteId] = useState(null);
+  const [docStatusSavingId, setDocStatusSavingId] = useState(null);
 
   const adminParams = useMemo(() => {
     if (isAccountingUser(user)) return {};
@@ -236,6 +243,19 @@ export default function AccountingDealDetail() {
   const invoices = bundle?.invoices || [];
 
   const docBlockData = { quotation: quotations, order: orders, invoice: invoices };
+
+  const updateDocStatus = async (blockKey, doc, value) => {
+    if (!doc?.id || docStatusSavingId) return;
+    setDocStatusSavingId(doc.id);
+    try {
+      await api.put(docStatusApiPath(blockKey, doc.id), docStatusPayload(blockKey, value));
+      await load();
+    } catch (e) {
+      alert(e.response?.data?.error || e.message || 'Không đổi được trạng thái');
+    } finally {
+      setDocStatusSavingId(null);
+    }
+  };
 
   const convertQuoteToOrder = async (quote) => {
     if (!quote?.id || convertQuoteId) return;
@@ -728,10 +748,18 @@ export default function AccountingDealDetail() {
                                 <p className="text-[11px] text-gray-500 tabular-nums">{formatVND(x.total || 0)}</p>
                               </div>
                               <div className="shrink-0 flex flex-col items-end gap-0.5">
-                                {docStatusLabel(block.key, x) && (
-                                  <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-white border border-gray-200 text-gray-500">
-                                    {docStatusLabel(block.key, x)}
-                                  </span>
+                                {(DOC_STATUS_OPTIONS[block.key] || []).length > 0 && (
+                                  <select
+                                    value={docStatusValue(block.key, x)}
+                                    disabled={docStatusSavingId === x.id}
+                                    onChange={(e) => updateDocStatus(block.key, x, e.target.value)}
+                                    className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-white border border-gray-200 text-gray-700 cursor-pointer disabled:opacity-50 max-w-[140px]"
+                                    title="Đổi trạng thái"
+                                  >
+                                    {DOC_STATUS_OPTIONS[block.key].map(([k, v]) => (
+                                      <option key={k} value={k}>{v}</option>
+                                    ))}
+                                  </select>
                                 )}
                                 {(block.key === 'quotation' || block.key === 'order') && x.deposit_received === true && (
                                   <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-emerald-50 border border-emerald-200 text-emerald-700">

@@ -257,7 +257,7 @@ async function performVcHandoverCore(req, {
 
   // Gate theo luồng module (CRM → SX → Lắp đặt / custom)
   try {
-    const gate = await assertProductionHandoffTarget(project.flow_id);
+    const gate = await assertProductionHandoffTarget(project.flow_id, { projectId: project.id });
     if (!gate.ok) {
       if (gate.customModule && isCustomModuleKey(gate.nextModuleKey)) {
         const deal = await resolveCrmDealForProject(projectId, 'id, company_id, assignee_id');
@@ -382,6 +382,12 @@ async function performVcHandoverCore(req, {
     ({ error: updateError } = await supabase.from('projects').update(legacyUpdate).eq('id', projectId));
   }
   if (updateError) throw updateError;
+
+  // Đã có công ty VC thật → cập nhật khối VC trên Bộ Quy Trình
+  try {
+    const { syncProjectModuleAssignmentsSafe } = require('./syncProjectModuleAssignments');
+    syncProjectModuleAssignmentsSafe(projectId);
+  } catch (_) { /* ignore */ }
 
   try {
     await ensureLeadDocumentsIncludeShareModules(projectId, ['logistics']);

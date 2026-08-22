@@ -10,6 +10,8 @@ const { notifyMultiple, createNotification } = require('../helpers/notifications
 const { assertCompanyOwnedRow, assertProjectAccessible } = require('../helpers/projectAccessScope');
 const { effectiveWorkshopCompanyId } = require('../helpers/workshopCompanyScope');
 const { isSystemAdmin } = require('../helpers/adminRole');
+const { userCanEditProjectVcSchedule } = require('../helpers/projectFileActivity');
+const { checkPermission } = require('../middleware/newPermission');
 
 const r = Router();
 r.use(auth);
@@ -23,6 +25,69 @@ async function getTeamMemberIds(teamId) {
     .select('user_id')
     .eq('team_id', teamId);
   return (data || []).map((m) => m.user_id).filter(Boolean);
+}
+
+/** Deal CRM gắn project — primary + crm_deal_projects. */
+async function listDealIdsForProject(projectId) {
+  const ids = new Set();
+  if (!projectId) return [];
+  const { data: byPid } = await supabase
+    .from('crm_leads')
+    .select('id')
+    .eq('project_id', projectId)
+    .eq('type', 'deal');
+  for (const d of byPid || []) {
+    if (d?.id) ids.add(String(d.id));
+  }
+  try {
+    const { data: links } = await supabase
+      .from('crm_deal_projects')
+      .select('deal_id')
+      .eq('project_id', projectId);
+    for (const l of links || []) {
+      if (l?.deal_id) ids.add(String(l.deal_id));
+    }
+  } catch (_) { /* bảng chưa migrate */ }
+  return [...ids];
+}
+
+/** Thêm QL VC vào tab Thành viên deal (ẩn lịch sử chat trước khi vào). */
+async function addLogisticsPersonToDealMembers(projectId, userId, addedBy) {
+  const dealIds = await listDealIdsForProject(projectId);
+  if (!dealIds.length || !userId) return [];
+  const added = [];
+  const cutoff = new Date().toISOString();
+  for (const leadId of dealIds) {
+    const { data: existing } = await supabase
+      .from('lead_members')
+      .select('user_id')
+      .eq('lead_id', leadId)
+      .eq('user_id', userId)
+      .maybeSingle();
+    if (existing?.user_id) continue;
+    const row = {
+      lead_id: leadId,
+      user_id: userId,
+      role: 'member',
+      added_by: addedBy || null,
+      history_cutoff_at: cutoff,
+    };
+    const { error } = await supabase.from('lead_members').insert(row);
+    if (error && String(error.message || '').includes('history_cutoff_at')) {
+      const { history_cutoff_at: _c, ...noCutoff } = row;
+      void _c;
+      const retry = await supabase.from('lead_members').insert(noCutoff);
+      if (retry.error) {
+        console.warn('[workshop-teams] add lead_member:', retry.error.message);
+        continue;
+      }
+    } else if (error) {
+      console.warn('[workshop-teams] add lead_member:', error.message);
+      continue;
+    }
+    added.push(leadId);
+  }
+  return added;
 }
 
 // ─── GET /workshop-teams ──────────────────────────────────────────────────────
@@ -202,15 +267,21 @@ r.delete('/:id/members/:userId', requirePermission('projects', 'edit'), async (r
 });
 
 // ─── PATCH /workshop-teams/projects/:projectId/assign ── gán đội/người ────────
-r.patch('/projects/:projectId/assign', requirePermission('projects', 'edit'), async (req, res) => {
+r.patch('/projects/:projectId/assign', async (req, res) => {
   try {
     const { projectId } = req.params;
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized - no user ID' });
+    const canEdit = await checkPermission(userId, 'projects', 'edit', null, req.user)
+      || await userCanEditProjectVcSchedule(userId, projectId, req.user);
+    if (!canEdit) {
+      return res.status(403).json({ error: 'Không có quyền gán người quản lý vận chuyển cho dự án này' });
+    }
     if (!(await assertProjectAccessible(req, res, projectId, { operation: 'WRITE' }))) return;
     const { delivery_team_id, installation_team_id, installer_person_id, logistics_person_id } = req.body;
-    const userId = req.user.userId;
 
     const { data: project } = await supabase
-      .from('projects').select('id, code, name').eq('id', projectId).single();
+      .from('projects').select('id, code, name, logistics_person_id').eq('id', projectId).single();
     if (!project) return res.status(404).json({ error: 'Project not found' });
 
     const update = {};
@@ -220,6 +291,13 @@ r.patch('/projects/:projectId/assign', requirePermission('projects', 'edit'), as
     if (logistics_person_id !== undefined)   update.logistics_person_id  = logistics_person_id || null;
 
     if (!Object.keys(update).length) return res.status(400).json({ error: 'Không có gì để cập nhật' });
+
+    const prevLogisticsPersonId = project.logistics_person_id ? String(project.logistics_person_id) : '';
+    const nextLogisticsPersonId = logistics_person_id !== undefined
+      ? (logistics_person_id ? String(logistics_person_id) : '')
+      : prevLogisticsPersonId;
+    const logisticsPersonChanged = logistics_person_id !== undefined
+      && nextLogisticsPersonId !== prevLogisticsPersonId;
 
     const { data: updated, error } = await supabase
       .from('projects').update(update).eq('id', projectId)
@@ -232,14 +310,33 @@ r.patch('/projects/:projectId/assign', requirePermission('projects', 'edit'), as
     if (error) throw error;
 
     const projectLabel = project.code || project.name;
+    let dealIdsForNotify = [];
+    if (logisticsPersonChanged && nextLogisticsPersonId) {
+      try {
+        dealIdsForNotify = await addLogisticsPersonToDealMembers(
+          projectId,
+          nextLogisticsPersonId,
+          userId,
+        );
+      } catch (memErr) {
+        console.warn('[workshop-teams] add VC manager to deal members:', memErr.message);
+        dealIdsForNotify = await listDealIdsForProject(projectId);
+      }
+    }
 
-    // Thông báo người vận chuyển mới
-    if (logistics_person_id && logistics_person_id !== userId) {
-      await createNotification(req, logistics_person_id, 'task_assigned',
-        `🚚 Bạn được giao vận chuyển`,
-        `Dự án "${projectLabel}" vừa giao cho bạn vận chuyển`,
+    // Thông báo người quản lý vận chuyển mới
+    if (logisticsPersonChanged && nextLogisticsPersonId && nextLogisticsPersonId !== String(userId)) {
+      await createNotification(req, nextLogisticsPersonId, 'task_assigned',
+        `🚚 Bạn được giao quản lý vận chuyển`,
+        `Dự án "${projectLabel}" vừa giao cho bạn quản lý vận chuyển`,
         'project', projectId,
-        { ecosystem_module_key: 'logistics', project_id: String(projectId) });
+        {
+          ecosystem_module_key: 'logistics',
+          project_id: String(projectId),
+          lead_id: dealIdsForNotify[0] || null,
+          nav_tab: 'kanban',
+          vc_manager: true,
+        });
     }
 
     // Thông báo người lắp đặt mới
@@ -295,7 +392,7 @@ r.get('/users', requirePermission('projects', 'view'), async (req, res) => {
     const { data } = await supabase
       .from('users')
       .select('id, full_name, email, role, avatar')
-      .in('role', ['logistics', 'installer', 'production', 'manager', 'admin', 'sales_admin'])
+      .in('role', ['logistics_admin', 'logistics', 'installer', 'driver', 'production', 'manager', 'admin', 'sales_admin'])
       .eq('is_active', true)
       .order('full_name');
     res.json(data || []);

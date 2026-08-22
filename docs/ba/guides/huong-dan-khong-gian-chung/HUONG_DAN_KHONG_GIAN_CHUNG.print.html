@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <title>Hướng dẫn — Không gian chung (giao việc CRM / SX / VC)</title>
+  <style>
+    @page { size: A4; margin: 16mm 14mm 18mm 14mm; }
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+      font-size: 10.5pt;
+      line-height: 1.55;
+      color: #1e293b;
+      margin: 0;
+      padding: 24px;
+      max-width: 820px;
+      margin-inline: auto;
+      background: #fff;
+    }
+    h1 {
+      font-size: 20pt;
+      color: #5b21b6;
+      margin: 0 0 6px;
+      line-height: 1.25;
+    }
+    .subtitle { font-size: 11pt; color: #475569; margin-bottom: 4px; }
+    .meta {
+      font-size: 9pt;
+      color: #64748b;
+      margin-bottom: 18px;
+      padding-bottom: 12px;
+      border-bottom: 2px solid #c4b5fd;
+    }
+    h2 {
+      font-size: 13pt;
+      color: #5b21b6;
+      margin: 20px 0 10px;
+      page-break-after: avoid;
+      border-left: 4px solid #8b5cf6;
+      padding-left: 10px;
+    }
+    h3 {
+      font-size: 11pt;
+      color: #334155;
+      margin: 14px 0 8px;
+      page-break-after: avoid;
+    }
+    p { margin: 6px 0; }
+    ul, ol { margin: 6px 0 10px; padding-left: 22px; }
+    li { margin: 3px 0; }
+    .flow {
+      background: #f5f3ff;
+      border: 1px solid #ddd6fe;
+      border-radius: 8px;
+      padding: 12px 14px;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 9pt;
+      line-height: 1.7;
+      white-space: pre-wrap;
+      margin: 10px 0 16px;
+    }
+    .roles {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin: 12px 0 16px;
+    }
+    .role-card {
+      background: #f5f3ff;
+      border: 1px solid #c4b5fd;
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 9.5pt;
+      page-break-inside: avoid;
+    }
+    .role-card strong { display: block; color: #5b21b6; margin-bottom: 4px; }
+    .step {
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      padding: 12px 14px;
+      margin: 12px 0;
+      page-break-inside: avoid;
+      background: #f8fafc;
+    }
+    .step .badge {
+      display: inline-block;
+      background: #7c3aed;
+      color: #fff;
+      font-size: 9pt;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 999px;
+      margin-bottom: 6px;
+    }
+    .note {
+      background: #eff6ff;
+      border: 1px solid #bfdbfe;
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 9.5pt;
+      color: #1e3a8a;
+      margin: 10px 0;
+      page-break-inside: avoid;
+    }
+    .warn {
+      background: #fffbeb;
+      border: 1px solid #fde68a;
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 9.5pt;
+      color: #92400e;
+      margin: 10px 0;
+      page-break-inside: avoid;
+    }
+    figure {
+      margin: 12px 0 16px;
+      page-break-inside: avoid;
+    }
+    figure img {
+      width: 100%;
+      max-height: 420px;
+      object-fit: contain;
+      object-position: top;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      background: #fff;
+    }
+    figcaption {
+      font-size: 9pt;
+      color: #64748b;
+      margin-top: 6px;
+      font-style: italic;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 9.5pt;
+      margin: 10px 0 14px;
+    }
+    th, td {
+      border: 1px solid #cbd5e1;
+      padding: 7px 8px;
+      vertical-align: top;
+      text-align: left;
+    }
+    th { background: #ede9fe; color: #5b21b6; }
+    .footer {
+      margin-top: 28px;
+      padding-top: 10px;
+      border-top: 1px solid #e2e8f0;
+      font-size: 8.5pt;
+      color: #94a3b8;
+    }
+    @media print {
+      body { padding: 0; max-width: none; }
+      .no-print { display: none !important; }
+      a { color: inherit; text-decoration: none; }
+    }
+    .toolbar.no-print {
+      position: sticky; top: 0; z-index: 10;
+      background: #f5f3ff; border-bottom: 1px solid #c4b5fd;
+      padding: 10px 14px; margin: -24px -24px 18px;
+      display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+    }
+    .toolbar button {
+      background: #7c3aed; color: #fff; border: 0; border-radius: 8px;
+      padding: 8px 14px; font-weight: 600; cursor: pointer; font-size: 13px;
+    }
+    .toolbar button.secondary { background: #fff; color: #5b21b6; border: 1px solid #c4b5fd; }
+  </style>
+</head>
+<body>
+  <div class="toolbar no-print">
+    <strong style="color:#5b21b6;margin-right:auto">Hướng dẫn Không gian chung</strong>
+    <button type="button" onclick="window.print()">In / Xuất PDF</button>
+    <button type="button" class="secondary" onclick="window.close()">Đóng</button>
+  </div>
+
+  <h1>Hướng dẫn — Không gian chung</h1>
+  <p class="subtitle">TuBep Pro — Giao việc cho người (CRM / Xưởng SX / Lắp đặt VC-LĐ) trên Lead, Deal và dự án</p>
+  <div class="meta">
+    Ngày lập: 22/08/2026 · Module: CRM · SX · VC
+    · Ví dụ: DEAL-2026-963 «CỬA+TỦ CHÚ MỸ - QUẬN 6» · deal phát sinh kính Chị Thủy Q7
+  </div>
+
+  <h2>1. Không gian chung là gì?</h2>
+  <p>
+    Tab <strong>Không gian chung</strong> là nơi <strong>giao việc cho người cụ thể</strong>
+    (Sale, xưởng, lắp đặt…), đồng bộ sang bảng <strong>Giao việc</strong> của từng khối.
+    Khác tab <strong>Công việc</strong> (checklist theo mẫu pipeline).
+  </p>
+  <div class="flow">Mở chi tiết Lead / Deal (hoặc dự án SX · VC)
+        ↓
+Bấm tab «Không gian chung»
+        ↓
+(Nếu cần) Thêm người ở tab «Thành viên»
+        ↓
+Bấm «Thêm» → chọn khối CRM / SX / LD → chọn NV → Lưu
+        ↓
+Người nhận thấy việc trên Giao việc + Công việc (đồng bộ)</div>
+
+  <div class="roles">
+    <div class="role-card">
+      <strong>Sale / NVKD / Admin CRM</strong>
+      Giao việc cho thành viên deal; lọc khối CRM / Xưởng / Lắp đặt; mở link «Giao việc» để xem bảng đầy đủ.
+    </div>
+    <div class="role-card">
+      <strong>Xưởng SX · VC/LĐ</strong>
+      Cùng tab trên trang dự án (khi dự án gắn CRM deal). Lọc sẵn khối SX hoặc LD tùy module đang mở.
+    </div>
+  </div>
+
+  <div class="warn">
+    <strong>Đừng nhầm:</strong> Giao việc trong tab <em>Công việc</em> rồi tưởng xưởng nhận —
+    xưởng nhận việc được giao ở <strong>Không gian chung</strong> / bảng Giao việc SX.
+  </div>
+
+  <h2>2. Mở tab trên Deal CRM</h2>
+  <div class="step">
+    <span class="badge">Bước 1</span>
+    <h3 style="margin-top:4px">Vào chi tiết Deal</h3>
+    <ol>
+      <li>CRM → Dashboard (Kanban) → bấm thẻ Deal.</li>
+      <li>Trên hàng tab bên phải, bấm <strong>Không gian chung</strong>
+        (tooltip: «Phân công thành viên deal và nhiệm vụ giao chéo công ty»).</li>
+    </ol>
+    <figure>
+      <img src="01-chi-tiet-deal-hang-tab.png" alt="Chi tiết deal — hàng tab Có Công việc và Không gian chung" />
+      <figcaption>Hình 1 — Chi tiết deal DEAL-2026-963: hàng tab phải có «Công việc» và «Không gian chung»</figcaption>
+    </figure>
+  </div>
+
+  <div class="step">
+    <span class="badge">Bước 2</span>
+    <h3 style="margin-top:4px">Xem panel «Phân công thành viên»</h3>
+    <ul>
+      <li>Tiêu đề: số việc · khối đang lọc · số NV.</li>
+      <li>Link <strong>Giao việc</strong> — mở bảng giao việc đầy đủ.</li>
+      <li>Nút tím <strong>Thêm · …</strong> — form giao việc mới.</li>
+      <li>Chip lọc: <strong>Tất cả</strong> · <strong>CRM</strong> · <strong>SX</strong> · <strong>LD</strong>.</li>
+      <li>Mỗi dòng: trạng thái, người nhận, ảnh/file, <strong>Sửa</strong> / <strong>Xóa</strong>, mở Giao việc.</li>
+    </ul>
+    <figure>
+      <img src="02-panel-phan-cong.png" alt="Panel Phân công thành viên với danh sách việc CRM" />
+      <figcaption>Hình 2 — Tab Không gian chung: danh sách phân công (ví dụ 8 việc CRM · 2 NV)</figcaption>
+    </figure>
+  </div>
+
+  <h2>3. Giao việc mới</h2>
+  <div class="step">
+    <span class="badge">Bước 3</span>
+    <h3 style="margin-top:4px">Bấm «Thêm» và điền form</h3>
+    <ol>
+      <li>Bấm <strong>Thêm · CRM</strong> (hoặc SX / LD tùy chip đang chọn).</li>
+      <li>Nhập <strong>Tiêu đề nhiệm vụ *</strong>, mô tả (tùy chọn).</li>
+      <li>Chọn <strong>Loại nhiệm vụ</strong>: Phát sinh từ khách hàng / Lỗi từ nhân viên.</li>
+      <li>Chọn <strong>Khối phân công *</strong>: CRM · Xưởng (SX) · Lắp đặt (LD) — danh sách NV lọc theo khối + công ty khối.</li>
+      <li>Ưu tiên, trạng thái, hạn; có thể chọn SLA kính (deadline phát sinh).</li>
+      <li>Tick người nhận → <strong>Thêm ảnh</strong> (nếu cần) → bấm <strong>Giao cho N NV</strong>.</li>
+      <li>Hoặc <strong>Hủy</strong> nếu chỉ xem form (không tạo thật).</li>
+    </ol>
+    <div class="note">
+      Hệ thống tự tạo nhiệm vụ và gán cho người được chọn (đồng bộ Giao việc ↔ Công việc).
+    </div>
+    <figure>
+      <img src="03-form-giao-viec-moi.png" alt="Form Tạo phân công · CRM" />
+      <figcaption>Hình 3 — Form «Tạo phân công»: tiêu đề, loại, khối, chọn NV, ảnh, Hủy / Giao</figcaption>
+    </figure>
+  </div>
+
+  <div class="warn">
+    <strong>Nút Thêm bị khóa?</strong> Chưa có thành viên trên deal.
+    Vào tab <strong>Thành viên</strong> → thêm NV → quay lại Không gian chung (tải lại nếu cần).
+  </div>
+
+  <h2>4. Lọc theo khối CRM / SX / LD</h2>
+  <p>
+    Chip lọc chỉ <strong>xem việc theo khối</strong>, không đổi App Switcher.
+    Badge trên chip = số phân công (và tooltip hiện số thành viên khối đó).
+  </p>
+  <figure>
+    <img src="04-loc-khoi-sx.png" alt="Lọc khối SX — chưa có phân công" />
+    <figcaption>Hình 4 — Lọc SX: 0 việc SX nhưng vẫn thấy 17 NV khối xưởng — bấm «Thêm · SX» để giao</figcaption>
+  </figure>
+
+  <h2>5. Tab Thành viên (điều kiện giao việc)</h2>
+  <p>
+    Ai <strong>không có trong Thành viên</strong> thì không vào được deal/dự án
+    (trừ admin đúng quyền). Không gian chung chỉ giao cho NV đã thuộc deal.
+  </p>
+  <ul>
+    <li><strong>Thêm thành viên</strong> — chọn công ty hệ sinh thái → khu vực → NV.</li>
+    <li>Badge số trên tab (xanh / teal / cam) ≈ số thành viên theo khối CRM / SX / VC.</li>
+    <li>Khi lập kế hoạch SX &amp; VC/LĐ, hệ thống có thể <strong>tự thêm</strong> người phụ trách VC — kiểm lại tab này sau khi lưu.</li>
+  </ul>
+  <figure>
+    <img src="05-tab-thanh-vien.png" alt="Tab Thành viên trên deal" />
+    <figcaption>Hình 5 — Tab Thành viên: thêm NV mọi công ty trong hệ sinh thái trước khi giao việc</figcaption>
+  </figure>
+
+  <h2>6. Trên dự án Sản xuất (SX)</h2>
+  <p>
+    Mở dự án SX gắn deal → tab <strong>Không gian chung</strong>
+    (URL có <code>?tab=shared-workspace</code>).
+    Panel giống CRM; mặc định lọc khối <strong>SX</strong>.
+  </p>
+  <div class="note">
+    Trên VC/LĐ cũng có tab tương tự khi dự án gắn CRM deal. Không gắn deal → không dùng được Không gian chung.
+  </div>
+  <figure>
+    <img src="06-sx-khong-gian-chung.png" alt="Không gian chung trên trang dự án SX" />
+    <figcaption>Hình 6 — Dự án SX TB-2026-586: tab Không gian chung, lọc SX, nút «Thêm · SX»</figcaption>
+  </figure>
+
+  <h2>7. Việc phát sinh / lỗi NV</h2>
+  <p>
+    Loại «Phát sinh từ khách hàng» hoặc «Lỗi từ nhân viên» dùng khi giao việc ngoài checklist mẫu
+    (ví dụ phát sinh kính ốp). Có thể gắn nhiều người nhận và file minh họa.
+  </p>
+  <figure>
+    <img src="07-viec-phat-sinh.png" alt="Việc phát sinh kính trên Không gian chung" />
+    <figcaption>Hình 7 — Ví dụ «phát sinh kính ốp»: loại Lỗi NV · CRM, nhiều người nhận, đã hoàn thành</figcaption>
+  </figure>
+
+  <h2>8. Đơn hàng phát sinh (cuối tab)</h2>
+  <p>
+    Cuối panel Có khối <strong>Đơn hàng phát sinh</strong>:
+    danh sách deal tạo từ deal khách hàng (nút header «Tạo đơn hàng phát sinh»),
+    hoặc link về deal nguồn nếu đang xem chính deal phát sinh.
+  </p>
+
+  <h2>9. So sánh nhanh</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Tab / chỗ</th>
+        <th>Dùng để</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Công việc</td>
+        <td>Checklist theo mẫu pipeline (gắn mẫu, thêm việc trên deal)</td>
+      </tr>
+      <tr>
+        <td>Không gian chung</td>
+        <td>Giao việc cho người theo khối CRM / SX / LD + đồng bộ Giao việc</td>
+      </tr>
+      <tr>
+        <td>Thành viên</td>
+        <td>Ai được xem deal/dự án — bắt buộc trước khi bấm Thêm</td>
+      </tr>
+      <tr>
+        <td>Trang Giao việc</td>
+        <td>Bảng việc đầy đủ theo module (link từ header panel)</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>10. Sự cố thường gặp</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Triệu chứng</th>
+        <th>Nguyên nhân / cách xử lý</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Không thấy tab Không gian chung trên SX/VC</td>
+        <td>Dự án chưa gắn CRM deal (<code>crmLeadId</code>)</td>
+      </tr>
+      <tr>
+        <td>Nút Thêm bị khóa / cảnh báo vàng</td>
+        <td>Chưa có thành viên — thêm ở tab Thành viên rồi tải lại</td>
+      </tr>
+      <tr>
+        <td>Lọc SX/LD = 0 việc</td>
+        <td>Chưa giao khối đó — bấm Thêm · SX/LD hoặc chuyển chip CRM / Tất cả</td>
+      </tr>
+      <tr>
+        <td>Không chọn được NV trong form</td>
+        <td>NV chưa thuộc Thành viên khối/công ty đang chọn</td>
+      </tr>
+      <tr>
+        <td>Xưởng «không nhận» việc Sale giao</td>
+        <td>Việc nằm tab Công việc thay vì Không gian chung / Giao việc SX</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="footer">
+    TuBep Pro · Hướng dẫn Không gian chung · 22/08/2026<br />
+    Ảnh chụp từ UI thật (Chrome) · Nguồn:
+    CRM Lead Detail / SX Project → tab «Không gian chung»
+    · Panel: <code>LeadMemberAssignmentsPanel</code> ·
+    API liên quan: <code>/api/crm/assignments/shared-workspace-tasks</code>
+  </div>
+</body>
+</html>

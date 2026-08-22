@@ -4,6 +4,7 @@ import api from '../lib/api';
 import { Save, ArrowLeft, ShoppingCart, Loader2, Download } from 'lucide-react';
 import ProductSearchPicker from '../components/ProductSearchPicker';
 import CustomerSearchPicker from '../components/CustomerSearchPicker';
+import LeadDealPicker from '../components/LeadDealPicker';
 import SaveToast from '../components/SaveToast';
 import CommercialItemsTable, { SimpleTotalsSummary } from '../components/CommercialItemsTable';
 import {
@@ -35,6 +36,7 @@ export default function OrderForm() {
   const [statusLoading, setStatusLoading] = useState(false);
   const [pdfLoading, setPdfLoading] = useState(false);
   const [showProductPicker, setShowProductPicker] = useState(false);
+  const [selectedDeal, setSelectedDeal] = useState(null);
   const excelHydratedRef = useRef(false);
 
   useEffect(() => {
@@ -50,6 +52,19 @@ export default function OrderForm() {
           notes: d.notes || '', discount_type: d.discount_type || 'percent', discount_value: d.discount_value || 0,
           status: d.status || 'draft', code: d.code || '', lead_id: d.lead_id || '',
         });
+        if (d.lead) {
+          setSelectedDeal({
+            id: d.lead.id,
+            code: d.lead.code,
+            title: d.lead.title,
+            type: d.lead.type,
+            company_id: d.lead.company_id,
+            region_id: d.lead.region_id,
+            customer_id: d.lead.customer_id,
+          });
+        } else {
+          setSelectedDeal(null);
+        }
         if (d.items?.length) setItems(restoreServerItems(d.items));
       });
     } else if (searchParams.get('from_excel') === '1' && !excelHydratedRef.current) {
@@ -89,6 +104,54 @@ export default function OrderForm() {
     if (c) setForm(f => ({ ...f, customer_id: c.id, customer_name: c.full_name, customer_phone: c.phone || '', customer_address: c.address || '' }));
     else setForm(f => ({ ...f, customer_id: '' }));
   };
+
+  const pickDeal = (deal) => {
+    if (!deal) {
+      setSelectedDeal(null);
+      setForm(f => ({ ...f, lead_id: '' }));
+      return;
+    }
+    setSelectedDeal(deal);
+    setForm(f => ({
+      ...f,
+      lead_id: deal.id,
+      customer_id: f.customer_id || deal.customer_id || '',
+      customer_name: f.customer_name || deal.customer_name || '',
+      customer_phone: f.customer_phone || deal.customer_phone || '',
+      title: f.title || deal.title || '',
+    }));
+  };
+
+  useEffect(() => {
+    if (!form.lead_id) {
+      if (selectedDeal) setSelectedDeal(null);
+      return;
+    }
+    if (selectedDeal && selectedDeal.id === form.lead_id) return;
+    let cancelled = false;
+    api.get(`/crm/leads/${form.lead_id}/detail`)
+      .then((r) => {
+        if (cancelled) return;
+        const lead = r.data || {};
+        setSelectedDeal({
+          id: lead.id,
+          code: lead.code,
+          title: lead.title,
+          type: lead.type,
+          company_id: lead.company_id,
+          region_id: lead.region_id,
+          customer_id: lead.customer_id,
+          customer_name: lead.customer?.full_name || lead.customer_name,
+          customer_phone: lead.customer?.phone || lead.phone,
+        });
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSelectedDeal({ id: form.lead_id, code: form.lead_id.slice(0, 8), title: '(Không tải được thông tin deal)' });
+        }
+      });
+    return () => { cancelled = true; };
+  }, [form.lead_id]);
 
   const addProductToItems = (p) => setItems(prev => [...prev, buildItemFromProduct(p)]);
 
@@ -213,8 +276,26 @@ export default function OrderForm() {
 
       {/* Customer Info */}
       <div className="bg-white rounded-xl border p-4">
-        <h2 className="text-sm font-bold text-gray-900 mb-3">Thông tin khách hàng</h2>
+        <h2 className="text-sm font-bold text-gray-900 mb-3">Liên kết deal & khách hàng</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="md:col-span-2">
+            <label className="text-xs font-medium text-gray-600">Deal / Cơ hội liên kết</label>
+            <div className="mt-1">
+              <LeadDealPicker
+                value={selectedDeal}
+                onChange={pickDeal}
+                type="deal"
+                customerId={form.customer_id || null}
+                placeholder="Tìm deal theo mã / tên / SĐT khách..."
+                emptyLabel="Chưa gắn deal — đơn hàng sẽ mồ côi"
+              />
+            </div>
+            {!selectedDeal && (
+              <p className="mt-1 text-[11px] text-amber-700">
+                ⚠️ Chưa gắn deal CRM — kế toán nên gắn để theo dõi công nợ và sản xuất.
+              </p>
+            )}
+          </div>
           <div>
             <label className="text-xs font-medium text-gray-600">Khách hàng</label>
             <div className="mt-1">

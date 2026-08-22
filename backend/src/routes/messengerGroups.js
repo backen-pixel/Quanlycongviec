@@ -908,7 +908,7 @@ function parseMentionUserIds(body) {
 }
 
 function contentHasMentionAll(content) {
-  return /@(tất\s*cả|tat\s*ca|all)\b/i.test(String(content || ''));
+  return /@(tất\s*cả|tat\s*ca|all)(?=$|[\s.,!?;:…])/i.test(String(content || ''));
 }
 
 /** @mention chỉ áp dụng nhóm (không chat 1-1); hỗ trợ @Tất cả. */

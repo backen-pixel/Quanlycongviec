@@ -5454,8 +5454,8 @@ async function resolveCanonicalCrmLeadId(rawId) {
 async function fetchCrmLeadDetailRow(leadId) {
   const LEAD_DETAIL_EMBED_CORE = 'source:crm_sources(id, name, icon), assignee:users!crm_leads_assigned_to_fkey(id, full_name, avatar), lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name, avatar), creator:users!crm_leads_created_by_fkey(id, full_name), company:companies!crm_leads_company_id_fkey(id, name, short_name)';
   const LEAD_DETAIL_REGION_EMBED = CRM_LEAD_REGION_EMBED;
-  const sxE = ', sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug, company:companies!production_pipeline_stages_company_id_fkey(id, name, short_name))';
-  const vcE = ', vc_pipeline_stage:logistics_pipeline_stages(id, name, color, icon, bucket_slug)';
+  const sxE = ', sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug, progress_percent, company:companies!production_pipeline_stages_company_id_fkey(id, name, short_name))';
+  const vcE = ', vc_pipeline_stage:logistics_pipeline_stages(id, name, color, icon, bucket_slug, progress_percent)';
   const combos = [
     { cust: 'customer:customers(id, full_name, phone, email, address, company, tax_code)', st: 'stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon, is_won, is_lost, pipeline_type)', sx: true },
     { cust: 'customer:customers(id, full_name, phone, email, address)', st: 'stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon, is_won, is_lost, pipeline_type)', sx: true },
@@ -5517,11 +5517,11 @@ async function fetchCrmLeadDetailRow(leadId) {
 /** Lead kèm embed badge SX/VC (dùng sau chuyển cột Thắng/SX). */
 async function fetchCrmLeadWithPipelineBadges(leadId) {
   const patchVcJoin = crmSchemaCompat.vcPipelineStageAvailable
-    ? ', vc_pipeline_stage:logistics_pipeline_stages(id, name, color, icon, bucket_slug)'
+    ? ', vc_pipeline_stage:logistics_pipeline_stages(id, name, color, icon, bucket_slug, progress_percent)'
     : '';
   const { data, error } = await supabase
     .from('crm_leads')
-    .select(`*, sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug, company:companies(id, name, short_name))${patchVcJoin}`)
+    .select(`*, sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug, progress_percent, company:companies(id, name, short_name))${patchVcJoin}`)
     .eq('id', leadId)
     .single();
   if (error) throw error;

@@ -517,6 +517,65 @@ const EVENT_SELECT = `*,
   event_type_ref:event_types(id, name, slug, icon, color, stage_slug),
   participants:crm_event_participants(id, user_id, status, user:users(id, full_name, avatar))`;
 
+/**
+ * Lead/deal gắn 1 dự án: crm_leads.project_id + crm_deal_projects.deal_id.
+ */
+async function resolveLeadIdsForProjectEvents(projectId) {
+  const pid = String(projectId || '').trim();
+  if (!pid) return [];
+  const [{ data: leadRows }, { data: dealLinkRows }] = await Promise.all([
+    supabase.from('crm_leads').select('id').eq('project_id', pid).limit(2000),
+    supabase.from('crm_deal_projects').select('deal_id').eq('project_id', pid).limit(2000),
+  ]);
+  return [...new Set([
+    ...(leadRows || []).map((r) => r.id),
+    ...(dealLinkRows || []).map((r) => r.deal_id),
+  ].filter(Boolean))];
+}
+
+/**
+ * Lọc sự kiện theo dự án:
+ * - project_id: đúng 1 dự án (crm_events.project_id hoặc lead/deal gắn dự án)
+ * - project_linked=1: mọi sự kiện gắn dự án (có project_id hoặc lead đã có project)
+ * @returns {Promise<{ empty?: boolean, scoped?: boolean }>}
+ */
+async function applyEventsProjectScopeFilter(queryBuilder, { projectId = null, projectLinked = false } = {}) {
+  const pid = projectId ? String(projectId).trim() : '';
+  const linked = projectLinked === true
+    || ['1', 'true', 'yes'].includes(String(projectLinked || '').toLowerCase());
+
+  if (pid) {
+    const leadIds = await resolveLeadIdsForProjectEvents(pid);
+    if (leadIds.length) {
+      // PostgREST: project_id.eq.X OR lead_id.in.(...)
+      // Lưu ý: `.or()` ghi đè param `or` trước đó — caller không được gọi `.or()` sau bước này.
+      return {
+        q: queryBuilder.or(`project_id.eq.${pid},lead_id.in.(${leadIds.join(',')})`),
+        empty: false,
+        scoped: true,
+      };
+    }
+    return { q: queryBuilder.eq('project_id', pid), empty: false, scoped: true };
+  }
+
+  if (!linked) return { q: queryBuilder, empty: false, scoped: false };
+
+  const { data: leadRows } = await supabase
+    .from('crm_leads')
+    .select('id')
+    .not('project_id', 'is', null)
+    .limit(5000);
+  const leadIds = [...new Set((leadRows || []).map((r) => r.id).filter(Boolean))];
+  if (leadIds.length) {
+    return {
+      q: queryBuilder.or(`project_id.not.is.null,lead_id.in.(${leadIds.join(',')})`),
+      empty: false,
+      scoped: true,
+    };
+  }
+  return { q: queryBuilder.not('project_id', 'is', null), empty: false, scoped: true };
+}
+
 /** SX/VC calendar: gồm event khối SX/VC + loại lắp đặt (hay lưu module=crm khi tạo từ CRM). */
 function applyEventsModuleScopeFilter(queryBuilder, moduleFilter, modulesFilter) {
   if (moduleFilter) return queryBuilder.eq('module', moduleFilter);
@@ -567,12 +626,15 @@ r.get('/', async (req, res) => {
     }
     moduleFilter = modScope.moduleFilter;
     modulesFilter = modScope.modulesFilter;
+    const projectIdQ = req.query.project_id ? String(req.query.project_id).trim() : '';
+    // Lịch theo 1 dự án: không lọc company_id — sự kiện CRM thường thuộc công ty sale,
+    // trong khi projects.company_id có thể là xưởng SX (khác công ty).
     let companyLeadIds = [];
-    if (sc.companyId) {
+    if (sc.companyId && !projectIdQ) {
       companyLeadIds = await resolveCompanyLeadIdsForEvents(sc.companyId);
     }
     const personScope = await resolveEventPersonFilter({
-      companyId: sc.companyId,
+      companyId: projectIdQ ? null : sc.companyId,
       regionId: region_id,
       userId: user_id,
     });
@@ -582,7 +644,7 @@ r.get('/', async (req, res) => {
 
     let q = supabase.from('crm_events').select(EVENT_SELECT, { count: 'exact' });
     q = applyEventsCombinedOrFilters(q, {
-      companyId: sc.companyId,
+      companyId: projectIdQ ? null : sc.companyId,
       leadIdsForCompany: companyLeadIds,
       search,
       personIds: personScope.personIds,
@@ -595,6 +657,14 @@ r.get('/', async (req, res) => {
     q = applyEventsModuleScopeFilter(q, moduleFilter, modulesFilter);
     if (lead_id) q = q.eq('lead_id', lead_id);
     if (customer_id) q = q.eq('customer_id', customer_id);
+
+    const projectScope = await applyEventsProjectScopeFilter(q, {
+      projectId: projectIdQ || req.query.project_id,
+      projectLinked: req.query.project_linked,
+    });
+    q = projectScope.q;
+    if (projectScope.empty) return res.json({ events: [], total: 0 });
+
     const fromBound = eventsDateFromBound(date_from);
     const toBound = eventsDateToBound(date_to);
     if (fromBound) q = q.gte('start_time', fromBound);
@@ -608,7 +678,7 @@ r.get('/', async (req, res) => {
     if (result.error && /column.*module.*does not exist|42703/i.test(String(result.error.message || ''))) {
       let q2 = supabase.from('crm_events').select(EVENT_SELECT, { count: 'exact' });
       q2 = applyEventsCombinedOrFilters(q2, {
-        companyId: sc.companyId,
+        companyId: projectIdQ ? null : sc.companyId,
         leadIdsForCompany: companyLeadIds,
         search,
         personIds: personScope.personIds,
@@ -631,7 +701,8 @@ r.get('/', async (req, res) => {
     let eventsOut = data || [];
     let totalOut = typeof count === 'number' ? count : eventsOut.length;
     const includeAsParticipant = ['1', 'true', 'yes'].includes(String(req.query.include_as_participant || '').toLowerCase());
-    if (includeAsParticipant) {
+    // Theo dự án: không merge sự kiện participant ngoài phạm vi (tránh lẫn lịch deal khác).
+    if (includeAsParticipant && !projectIdQ) {
       const myIds = await fetchMyParticipantEventIds(req.user.userId);
       const have = new Set(eventsOut.map((e) => String(e.id)));
       const missing = myIds.filter((id) => !have.has(String(id)));
@@ -653,7 +724,9 @@ r.get('/', async (req, res) => {
       }
     }
 
-    eventsOut = await filterOpsEventsForResponsibleStaff(req.user, eventsOut);
+    eventsOut = projectIdQ
+      ? (eventsOut || [])
+      : await filterOpsEventsForResponsibleStaff(req.user, eventsOut);
     totalOut = eventsOut.length;
 
     res.json({ events: eventsOut, total: totalOut, module_filter: moduleFilter });
@@ -1295,12 +1368,13 @@ r.get('/calendar', async (req, res) => {
     const startDate = new Date(`${y}-${pad(m)}-01T00:00:00+07:00`).toISOString();
     const endDate = new Date(`${y}-${pad(m)}-${pad(lastDay)}T23:59:59.999+07:00`).toISOString();
 
+    const projectIdQ = req.query.project_id ? String(req.query.project_id).trim() : '';
     let companyLeadIds = [];
-    if (sc.companyId) {
+    if (sc.companyId && !projectIdQ) {
       companyLeadIds = await resolveCompanyLeadIdsForEvents(sc.companyId);
     }
     const personScope = await resolveEventPersonFilter({
-      companyId: sc.companyId,
+      companyId: projectIdQ ? null : sc.companyId,
       regionId: region_id,
       userId: user_id,
     });
@@ -1310,14 +1384,10 @@ r.get('/calendar', async (req, res) => {
 
     let cq = supabase.from('crm_events')
       .select(EVENT_SELECT)
-      // Multi-day: neo start_time = ngày đầu, end_time = ngày cuối → overlap tháng
-      .lte('start_time', endDate)
-      .or(`end_time.gte.${startDate},end_time.is.null`);
-    // Giữ sự kiện 1 ngày (end null) nếu start trong tháng
-    // PostgREST: (start <= monthEnd) AND (end >= monthStart OR end is null)
-    // nhưng end null + start trước tháng sẽ lọt → lọc thêm phía dưới / client.
+      // start <= cuối tháng; overlap chính xác lọc ở calFiltered (tránh `.or` đè company/project).
+      .lte('start_time', endDate);
     cq = applyEventsCombinedOrFilters(cq, {
-      companyId: sc.companyId,
+      companyId: projectIdQ ? null : sc.companyId,
       leadIdsForCompany: companyLeadIds,
       search,
       personIds: personScope.personIds,
@@ -1328,14 +1398,21 @@ r.get('/calendar', async (req, res) => {
     if (type) cq = cq.eq('event_type', type);
     if (status) cq = cq.eq('status', status);
     cq = applyEventsModuleScopeFilter(cq, moduleFilter, modulesFilter);
+
+    const projectScope = await applyEventsProjectScopeFilter(cq, {
+      projectId: projectIdQ || req.query.project_id,
+      projectLinked: req.query.project_linked,
+    });
+    cq = projectScope.q;
+    if (projectScope.empty) return res.json([]);
+
     cq = cq.order('start_time');
     let cqRes = await cq;
     if (cqRes.error && /column.*module.*does not exist|42703/i.test(String(cqRes.error.message || ''))) {
       let cq2 = supabase.from('crm_events').select(EVENT_SELECT)
-        .lte('start_time', endDate)
-        .or(`end_time.gte.${startDate},end_time.is.null`);
+        .lte('start_time', endDate);
       cq2 = applyEventsCombinedOrFilters(cq2, {
-        companyId: sc.companyId,
+        companyId: projectIdQ ? null : sc.companyId,
         leadIdsForCompany: companyLeadIds,
         search,
         personIds: personScope.personIds,
@@ -1367,15 +1444,14 @@ r.get('/calendar', async (req, res) => {
 
     let calOut = calFiltered;
     const includeAsParticipant = ['1', 'true', 'yes'].includes(String(req.query.include_as_participant || '').toLowerCase());
-    if (includeAsParticipant) {
+    if (includeAsParticipant && !projectIdQ) {
       const myIds = await fetchMyParticipantEventIds(req.user.userId);
       const have = new Set(calOut.map((e) => String(e.id)));
       const missing = myIds.filter((id) => !have.has(String(id)));
       if (missing.length) {
         let pq = supabase.from('crm_events').select(EVENT_SELECT)
           .in('id', missing.slice(0, 500))
-          .lte('start_time', endDate)
-          .or(`end_time.gte.${startDate},end_time.is.null`);
+          .lte('start_time', endDate);
         if (type) pq = pq.eq('event_type', type);
         if (status) pq = pq.eq('status', status);
         const { data: extra, error: pErr } = await pq;
@@ -1396,7 +1472,9 @@ r.get('/calendar', async (req, res) => {
       }
     }
 
-    calOut = await filterOpsEventsForResponsibleStaff(req.user, calOut);
+    calOut = projectIdQ
+      ? calOut
+      : await filterOpsEventsForResponsibleStaff(req.user, calOut);
     res.json(calOut);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

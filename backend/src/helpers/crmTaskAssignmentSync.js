@@ -62,15 +62,9 @@ function columnIdForTaskStatus(cols, status) {
   return cols.find((c) => !c.is_done_column)?.id ?? cols[0].id;
 }
 
-async function replaceAssignmentAssignees(assignmentId, userIds) {
-  await supabase.from('crm_assignment_assignees').delete().eq('assignment_id', assignmentId);
-  const uniq = [...new Set((userIds || []).filter(Boolean).map(String))];
-  if (!uniq.length) return uniq;
-  const { error } = await supabase.from('crm_assignment_assignees').insert(
-    uniq.map((uid) => ({ assignment_id: assignmentId, user_id: uid })),
-  );
-  if (error && !/crm_assignment_assignees/.test(error.message || '')) throw error;
-  return uniq;
+async function replaceAssignmentAssignees(assignmentId, userIds, rolesByUserId) {
+  const { replaceAssignmentAssigneesWithRoles } = require('./assignmentAssigneeRoles');
+  return replaceAssignmentAssigneesWithRoles(assignmentId, userIds, rolesByUserId);
 }
 
 /**
@@ -87,12 +81,15 @@ function resolveAssignmentModuleForCrmTask(task, explicitModule) {
 
 function isTaskSourceSyncColumnError(err) {
   const m = String(err?.message || '').toLowerCase();
-  return m.includes('task_source_type') || m.includes('employee_error_module');
+  return m.includes('task_source_type') || m.includes('employee_error_module')
+    || m.includes('error_type_id');
 }
 
 async function syncAssignmentFromCrmTask(req, task, assigneeIds, opts = {}) {
   if (!task?.id) return { assignmentId: null };
   const ids = [...new Set((assigneeIds || []).filter(Boolean).map(String))];
+  const { pickPrimaryAssigneeId } = require('./assignmentAssigneeRoles');
+  const rolesByUserId = opts.assigneeRoles || {};
   const assignmentModule = resolveAssignmentModuleForCrmTask(task, opts.assignmentModule);
 
   let existing = null;
@@ -130,7 +127,7 @@ async function syncAssignmentFromCrmTask(req, task, assigneeIds, opts = {}) {
   const row = {
     title: task.title,
     description: task.description || null,
-    assignee_id: ids[0],
+    assignee_id: pickPrimaryAssigneeId(ids, rolesByUserId),
     priority: task.priority || 'medium',
     status,
     deadline: task.deadline || null,
@@ -162,6 +159,9 @@ async function syncAssignmentFromCrmTask(req, task, assigneeIds, opts = {}) {
   if (opts.phatSinhKind !== undefined || task.phat_sinh_kind !== undefined) {
     row.phat_sinh_kind = opts.phatSinhKind !== undefined ? opts.phatSinhKind : (task.phat_sinh_kind || null);
   }
+  if (opts.errorTypeId !== undefined || task.error_type_id !== undefined) {
+    row.error_type_id = opts.errorTypeId !== undefined ? opts.errorTypeId : (task.error_type_id || null);
+  }
   if (status === 'completed') {
     row.completed_at = task.completed_at || new Date().toISOString();
   } else {
@@ -184,7 +184,7 @@ async function syncAssignmentFromCrmTask(req, task, assigneeIds, opts = {}) {
       ({ error } = await supabase.from('crm_assignments').update(legacy).eq('id', assignmentId));
     }
     if (error && isTaskSourceSyncColumnError(error)) {
-      const { task_source_type: _ts, employee_error_module: _em, ...legacy } = row;
+      const { task_source_type: _ts, employee_error_module: _em, error_type_id: _et, ...legacy } = row;
       ({ error } = await supabase.from('crm_assignments').update(legacy).eq('id', assignmentId));
     }
     if (error) throw error;
@@ -212,7 +212,7 @@ async function syncAssignmentFromCrmTask(req, task, assigneeIds, opts = {}) {
       ({ data: created, error } = await supabase.from('crm_assignments').insert(legacy).select(ASSIGNMENT_SELECT).single());
     }
     if (error && isTaskSourceSyncColumnError(error)) {
-      const { task_source_type: _ts, employee_error_module: _em, ...legacy } = insertRow;
+      const { task_source_type: _ts, employee_error_module: _em, error_type_id: _et, ...legacy } = insertRow;
       ({ data: created, error } = await supabase.from('crm_assignments').insert(legacy).select(ASSIGNMENT_SELECT).single());
     }
     if (error) throw error;
@@ -220,7 +220,7 @@ async function syncAssignmentFromCrmTask(req, task, assigneeIds, opts = {}) {
   }
 
   if (assignmentId) {
-    await replaceAssignmentAssignees(assignmentId, ids);
+    await replaceAssignmentAssignees(assignmentId, ids, rolesByUserId);
     try {
       const { syncAllTaskArtifactsToAssignment } = require('./crmTaskAssignmentArtifactSync');
       await syncAllTaskArtifactsToAssignment(task.id, assignmentId, req);

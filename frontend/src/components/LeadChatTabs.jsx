@@ -1746,7 +1746,7 @@ function normalizeMentionSearch(s) {
 }
 
 function contentHasMentionAll(content) {
-  return /@(tất\s*cả|tat\s*ca|all)\b/i.test(String(content || ''));
+  return /@(tất\s*cả|tat\s*ca|all)(?=$|[\s.,!?;:…])/i.test(String(content || ''));
 }
 
 function resolveMentionIdsFromContent(content, members, { excludeUserId } = {}) {
@@ -1761,7 +1761,7 @@ function resolveMentionIdsFromContent(content, members, { excludeUserId } = {}) 
     }
   }
 
-  const stripped = String(content).replace(/@(tất\s*cả|tat\s*ca|all)\b/gi, ' ');
+  const stripped = String(content).replace(/@(tất\s*cả|tat\s*ca|all)(?=$|[\s.,!?;:…])/gi, ' ');
   const re = /@([^\s\n@]+)/g;
   let m;
   while ((m = re.exec(stripped))) {

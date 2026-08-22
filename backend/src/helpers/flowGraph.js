@@ -11,6 +11,20 @@ const JOIN_MODES = new Set(['all', 'any']);
 const CONDITION_LOGIC = new Set(['all', 'any']);
 const CONDITION_TYPES = new Set(['task_item_done', 'stage_reached', 'stage_flag']);
 const CONDITION_SOURCES = new Set(['crm', 'production', 'logistics']);
+const NODE_KINDS = new Set([
+  'module', 'condition', 'fork', 'join', 'wait', 'approve', 'end',
+  'report', 'ai_report', 'ai_deadline', 'notify',
+]);
+
+function normalizeNodeKind(raw) {
+  const s = String(raw || '').trim().toLowerCase();
+  return NODE_KINDS.has(s) ? s : 'module';
+}
+
+function sanitizeNodeConfig(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  return raw;
+}
 
 function normalizeNodeId(raw) {
   const s = String(raw == null ? '' : raw).trim();
@@ -232,7 +246,7 @@ function normalizeGraphPayload({ steps, edges, conditions }) {
   const nodes = rawSteps.map((s, i) => {
     let nodeId = normalizeNodeId(s?.node_id);
     if (!nodeId || usedIds.has(nodeId)) {
-      const base = normalizeNodeId(s?.module_key) || 'step';
+      const base = normalizeNodeId(s?.module_key) || normalizeNodeId(s?.node_kind) || 'step';
       nodeId = `n-${base}-${i}`;
       let suffix = i;
       while (usedIds.has(nodeId)) {
@@ -244,6 +258,8 @@ function normalizeGraphPayload({ steps, edges, conditions }) {
     return {
       ...s,
       node_id: nodeId,
+      node_kind: normalizeNodeKind(s?.node_kind),
+      node_config: sanitizeNodeConfig(s?.node_config),
       position_x: toNumberOrNull(s?.position_x),
       position_y: toNumberOrNull(s?.position_y),
       branch_mode: normalizeBranchMode(s?.branch_mode),
@@ -279,6 +295,8 @@ module.exports = {
   JOIN_MODES,
   CONDITION_TYPES,
   CONDITION_SOURCES,
+  NODE_KINDS,
+  normalizeNodeKind,
   normalizeNodeId,
   normalizeBranchMode,
   normalizeJoinMode,

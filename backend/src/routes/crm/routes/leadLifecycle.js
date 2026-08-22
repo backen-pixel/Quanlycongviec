@@ -15,6 +15,7 @@ const {
   isCrmCompletedStage,
   completeOpenWorkOnModuleDone,
 } = require('../../../helpers/completeOpenWorkOnModuleDone');
+const { deleteExclusiveProjectsForLeads } = require('../../../helpers/deleteExclusiveProjectsForLeads');
 
 const r = Router();
 
@@ -1032,6 +1033,7 @@ r.delete('/leads/:id', async (req, res) => {
     }
 
     // Nếu là lead/deal gốc: xóa luôn deal/lead con theo đơn + các orders liên quan
+    let deletedSxCount = 0;
     try {
       const { data: childLeads } = await supabase
         .from('crm_leads')
@@ -1040,6 +1042,23 @@ r.delete('/leads/:id', async (req, res) => {
       const childIds = (childLeads || []).map((c) => c.id);
 
       const allLeadIds = [lead.id, ...childIds];
+
+      // Xóa SX TRƯỚC khi xóa lead: crm_deal_projects CASCADE theo deal, nếu xóa deal trước
+      // thì mất liên kết và dự án phát sinh / xưởng phụ bị mồ côi trên Kanban SX.
+      try {
+        const sxDel = await deleteExclusiveProjectsForLeads(supabase, allLeadIds, {
+          io: req.app?.get?.('io') || null,
+          deletedBy: req.user?.userId || null,
+          deleteReason: deleteReason || null,
+          skipSnapshot: permanent,
+        });
+        deletedSxCount = sxDel?.deleted || 0;
+        if (sxDel?.failed?.length) {
+          console.warn('[delete lead] SX projects still present:', sxDel.failed.join(','));
+        }
+      } catch (sxErr) {
+        console.warn('[delete lead] linked SX projects:', sxErr.message);
+      }
 
       // Khóa ghi âm trước khi xóa lead (FK SET NULL) — không auto tạo lại.
       try {
@@ -1072,29 +1091,6 @@ r.delete('/leads/:id', async (req, res) => {
       console.warn('[delete lead] cascade children/orders:', e.message);
     }
 
-    if (lead.project_id) {
-      const { data: taskIds } = await supabase.from('tasks').select('id').eq('project_id', lead.project_id);
-      if (taskIds?.length) {
-        const ids = taskIds.map(t => t.id);
-        try { await supabase.from('task_checklists').delete().in('task_id', ids); } catch (_) {}
-        try { await supabase.from('task_comments').delete().in('task_id', ids); } catch (_) {}
-        try { await supabase.from('task_participants').delete().in('task_id', ids); } catch (_) {}
-        try { await supabase.from('task_time_logs').delete().in('task_id', ids); } catch (_) {}
-        try { await supabase.from('file_attachments').delete().eq('entity_type', 'task').in('entity_id', ids); } catch (_) {}
-      }
-
-      try { await supabase.from('tasks').delete().eq('project_id', lead.project_id); } catch (_) {}
-      try { await supabase.from('project_comments').delete().eq('project_id', lead.project_id); } catch (_) {}
-      try { await supabase.from('stage_transitions').delete().eq('project_id', lead.project_id); } catch (_) {}
-      try { await supabase.from('project_workflow_lines').delete().eq('project_id', lead.project_id); } catch (_) {}
-      try { await supabase.from('project_products').delete().eq('project_id', lead.project_id); } catch (_) {}
-      try { await supabase.from('project_company_assignments').delete().eq('project_id', lead.project_id); } catch (_) {}
-      try { await supabase.from('project_approvals').delete().eq('project_id', lead.project_id); } catch (_) {}
-      try { await supabase.from('activity_logs').delete().eq('entity_type', 'project').eq('entity_id', lead.project_id); } catch (_) {}
-      try { await supabase.from('notifications').delete().eq('entity_type', 'project').eq('entity_id', lead.project_id); } catch (_) {}
-      await supabase.from('projects').delete().eq('id', lead.project_id);
-    }
-
     // (lead_documents/crm_activities/crm_tasks đã dọn theo allLeadIds ở trên nếu là lead gốc)
     try { await supabase.from('lead_documents').delete().eq('lead_id', lead.id); } catch (_) {}
     try { await supabase.from('crm_activities').delete().eq('lead_id', lead.id); } catch (_) {}
@@ -1110,7 +1106,8 @@ r.delete('/leads/:id', async (req, res) => {
     if (error) throw error;
 
     emitCrmDashboardChanged(req, { type: lead.type, company_id: lead.company_id, lead_id: lead.id, action: 'deleted' });
-    res.json({ success: true, message: `Đã xóa lead "${lead.title}"${lead.project_id ? ' và dự án liên kết' : ''}` });
+    const sxNote = deletedSxCount ? ` và ${deletedSxCount} dự án sản xuất liên kết` : '';
+    res.json({ success: true, message: `Đã xóa lead "${lead.title}"${sxNote}` });
   } catch (e) {
     console.error('Delete lead error:', e);
     res.status(500).json({ error: e.message });

@@ -128,7 +128,12 @@ r.get('/leads/picker', async (req, res) => {
         if (moduleCompanyIds && moduleCompanyIds.length && !moduleCompanyIds.includes(String(cid))) {
           return res.json({ type, total: 0, results: [] });
         }
-        query = query.eq('company_id', cid);
+        const { isAccountingUser, applyAccountingCrmCompanyFilter } = require('../../../helpers/accountingScope');
+        if (isAccountingUser(req.user)) {
+          query = applyAccountingCrmCompanyFilter(query, cid);
+        } else {
+          query = query.eq('company_id', cid);
+        }
       } else if (requestedCompanyId) {
         if (moduleCompanyIds && moduleCompanyIds.length && !moduleCompanyIds.includes(String(requestedCompanyId))) {
           return res.json({ type, total: 0, results: [] });

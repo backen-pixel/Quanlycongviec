@@ -60,13 +60,9 @@ async function expandAssigneeIds({ assignee_ids, department_ids, region_ids, com
   return ids;
 }
 
-async function replaceAssignees(assignmentId, userIds) {
-  await supabase.from('crm_assignment_assignees').delete().eq('assignment_id', assignmentId);
-  const uniq = [...new Set((userIds || []).filter(Boolean).map(String))];
-  if (!uniq.length) return;
-  await supabase.from('crm_assignment_assignees').insert(
-    uniq.map((uid) => ({ assignment_id: assignmentId, user_id: uid }))
-  );
+async function replaceAssignees(assignmentId, userIds, rolesByUserId) {
+  const { replaceAssignmentAssigneesWithRoles } = require('./assignmentAssigneeRoles');
+  await replaceAssignmentAssigneesWithRoles(assignmentId, userIds, rolesByUserId);
 }
 
 async function persistNotification(userId, payload) {
@@ -108,7 +104,7 @@ async function createCrmAssignment(req, body) {
   const {
     title, description, assignee_id, assignee_ids, department_ids, region_ids,
     column_id, company_id, priority, status, deadline, lead_id, assignment_module,
-    task_source_type, employee_error_module, crm_task_id,
+    task_source_type, employee_error_module, crm_task_id, error_type_id,
   } = body || {};
   const { normalizeAssignModule } = require('./assignmentModule');
   const resolvedModule = normalizeAssignModule(assignment_module);
@@ -143,7 +139,9 @@ async function createCrmAssignment(req, body) {
     assignee_ids: assignee_ids?.length ? assignee_ids : (assignee_id ? [assignee_id] : []),
     department_ids, region_ids, company_id: effectiveCompany,
   });
-  const primaryAssignee = finalAssignees[0] || null;
+  const { roleMapFromBody, pickPrimaryAssigneeId } = require('./assignmentAssigneeRoles');
+  const rolesByUserId = roleMapFromBody(body);
+  const primaryAssignee = pickPrimaryAssigneeId(finalAssignees, rolesByUserId);
 
   let posBase = 0;
   if (column_id) {
@@ -171,6 +169,10 @@ async function createCrmAssignment(req, body) {
     insertRow.task_source_type = source.task_source_type;
     insertRow.employee_error_module = source.employee_error_module;
   }
+  if (error_type_id !== undefined) {
+    const { normalizeErrorTypeId } = require('./sharedWorkspaceErrorTypes');
+    insertRow.error_type_id = normalizeErrorTypeId(error_type_id);
+  }
 
   async function insertWithSelect(row, select) {
     return supabase.from('crm_assignments').insert(row).select(select).single();
@@ -178,7 +180,7 @@ async function createCrmAssignment(req, body) {
 
   let { data, error } = await insertWithSelect(insertRow, ASSIGNMENT_SELECT);
   if (error && isTaskSourceColumnError(error)) {
-    const { task_source_type: _t, employee_error_module: _e, ...legacy } = insertRow;
+    const { task_source_type: _t, employee_error_module: _e, error_type_id: _et, ...legacy } = insertRow;
     ({ data, error } = await insertWithSelect(legacy, ASSIGNMENT_SELECT_LEGACY));
   }
   if (error && /assignment_module/.test(error.message || '')) {
@@ -195,7 +197,7 @@ async function createCrmAssignment(req, body) {
   }
   if (error) return { error: error.message, status: 500 };
 
-  await replaceAssignees(data.id, finalAssignees);
+  await replaceAssignees(data.id, finalAssignees, rolesByUserId);
   emitAssignmentRealtime(req, data, 'assignment_created');
   return { data: { assignment: data, assignee_ids: finalAssignees }, status: 201 };
 }
@@ -227,6 +229,10 @@ async function updateCrmAssignment(req, assignmentId, body) {
       update.employee_error_module = source.employee_error_module;
     }
   }
+  if (body.error_type_id !== undefined) {
+    const { normalizeErrorTypeId } = require('./sharedWorkspaceErrorTypes');
+    update.error_type_id = normalizeErrorTypeId(body.error_type_id);
+  }
   if (update.status === 'completed' && before.status !== 'completed') {
     update.completed_at = new Date().toISOString();
   } else if (update.status && update.status !== 'completed' && before.status === 'completed') {
@@ -244,17 +250,23 @@ async function updateCrmAssignment(req, assignmentId, body) {
     update.assignee_id = finalAssignees[0] || null;
   }
 
+  const { roleMapFromBody, pickPrimaryAssigneeId } = require('./assignmentAssigneeRoles');
+  const rolesByUserId = roleMapFromBody(body);
+  if (finalAssignees) {
+    update.assignee_id = pickPrimaryAssigneeId(finalAssignees, rolesByUserId);
+  }
+
   let { data, error } = await supabase.from('crm_assignments').update(update)
     .eq('id', assignmentId).select(ASSIGNMENT_SELECT).single();
   if (error && isTaskSourceColumnError(error)) {
-    const { task_source_type: _t, employee_error_module: _e, ...legacy } = update;
+    const { task_source_type: _t, employee_error_module: _e, error_type_id: _et, ...legacy } = update;
     ({ data, error } = await supabase.from('crm_assignments').update(legacy)
       .eq('id', assignmentId).select(ASSIGNMENT_SELECT_LEGACY).single());
   }
   if (error) return { error: error.message, status: 500 };
 
   if (finalAssignees) {
-    await replaceAssignees(assignmentId, finalAssignees);
+    await replaceAssignees(assignmentId, finalAssignees, rolesByUserId);
   }
 
   try {

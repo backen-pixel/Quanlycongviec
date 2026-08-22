@@ -3246,21 +3246,42 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
         const reason = (req.body?.deadline_reason || req.body?.sx_kanban_deadline_reason || '').toString().trim();
         projectUpd.sx_kanban_deadline_reason = reason || null;
       }
-      if (colRow.workflow_stage_id) {
+      if (colRow.workflow_stage_id || colRow.id) {
         // Đã bàn giao VC: giữ status/shipping + không ghi đè current_stage_id về production
         // (kéo cột SX chỉ cập nhật badge sx_kanban_column_id).
         const alreadyInVc = Boolean(project.logistics_company_id || project.vc_kanban_column_id);
         if (!alreadyInVc) {
-          const stageFields = { current_stage_id: colRow.workflow_stage_id };
-          const { data: targetStage } = await supabase
-            .from('workflow_stages')
-            .select('slug')
-            .eq('id', colRow.workflow_stage_id)
-            .maybeSingle();
-          if (targetStage?.slug && SX_STAGE_SLUG_STATUS[targetStage.slug]) {
-            stageFields.status = SX_STAGE_SLUG_STATUS[targetStage.slug];
+          let wfId = colRow.workflow_stage_id || null;
+          let statusFromSlug = null;
+          if (!wfId) {
+            try {
+              const { resolveDeliveryFieldsFromModuleColumn } = require('../helpers/syncProjectDeliveryStage');
+              const deliveryFields = await resolveDeliveryFieldsFromModuleColumn(project, colRow, 'production');
+              wfId = deliveryFields.current_stage_id || null;
+              statusFromSlug = deliveryFields.status || null;
+              if (deliveryFields.from_fallback) {
+                console.info(`[production] delivery stage fallback for SX col ${colRow.id} → ${wfId}`);
+              }
+            } catch (fbErr) {
+              console.warn('[production] delivery stage fallback:', fbErr.message);
+            }
           }
-          projectUpd = { ...projectUpd, ...stageFields };
+          if (wfId) {
+            const stageFields = { current_stage_id: wfId };
+            if (statusFromSlug) {
+              stageFields.status = statusFromSlug;
+            } else {
+              const { data: targetStage } = await supabase
+                .from('workflow_stages')
+                .select('slug')
+                .eq('id', wfId)
+                .maybeSingle();
+              if (targetStage?.slug && SX_STAGE_SLUG_STATUS[targetStage.slug]) {
+                stageFields.status = SX_STAGE_SLUG_STATUS[targetStage.slug];
+              }
+            }
+            projectUpd = { ...projectUpd, ...stageFields };
+          }
         }
       }
       if (Object.keys(projectUpd).length) {

@@ -32,6 +32,7 @@ import UploadFileLightbox, {
 import { downloadWorkshopDocumentsZip } from '../lib/workshopDocumentsZipDownload';
 import { resolveSxProjectLeadId } from '../lib/sxProjectComments';
 import { countMembersByModule } from '../lib/memberModuleCounts';
+import DealModulePathStrip from '../components/DealModulePathStrip';
 import {
   addCalendarDaysYmd,
   buildSxInstallBackPlan,
@@ -63,7 +64,7 @@ import {
 import { isProjectAlreadyInLogistics, VC_TEMP_LOCK_MSG } from '../lib/projectLogistics';
 import { buildCrmLeadDocTaskSections, normalizeCrmChecklist } from '../lib/crmTaskDocumentTree';
 import { fetchPipelineStagesById } from '../lib/crmPipelineStages';
-import { buildSxPipelineStageMeta, resolveSxDisplayColumnId, TEMP_SX_FREE_DRAG } from '../lib/sxPipelineRevenue';
+import { buildSxPipelineStageMeta, projectIsShipped, resolveSxDisplayColumnId, TEMP_SX_FREE_DRAG } from '../lib/sxPipelineRevenue';
 import { CrmLeadCommentsPanel, ProjectCommentsPanel } from '../components/CommentsPanels';
 import SharedCRMNotes from '../components/SharedCRMNotes';
 import DriveAttachments from '../components/drive/DriveAttachments';
@@ -329,7 +330,11 @@ function WorkshopInfoPanel({
     && pickupDateObj < new Date(Date.now() + 3 * 86400000);
 
   const installDateObj = installDate ? new Date(installDate) : null;
-  const installOverdue = installDateObj && !Number.isNaN(installDateObj.getTime()) && installDateObj < new Date();
+  const deliveredDone = projectIsShipped(project) || project?.status === 'completed';
+  const installOverdue = !deliveredDone
+    && installDateObj
+    && !Number.isNaN(installDateObj.getTime())
+    && installDateObj < new Date();
   const installSoon = installDateObj && !installOverdue && !Number.isNaN(installDateObj.getTime())
     && installDateObj < new Date(Date.now() + 3 * 86400000);
 
@@ -1670,6 +1675,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   const [savingIncident, setSavingIncident] = useState(false);
   const [commentCount, setCommentCount] = useState(0);
   const [memberModuleCounts, setMemberModuleCounts] = useState({ crm: 0, production: 0, logistics: 0, total: 0 });
+  const [dealMembers, setDealMembers] = useState([]);
   const [docLightboxIndex, setDocLightboxIndex] = useState(null);
   const [docLightboxOverride, setDocLightboxOverride] = useState(null);
 
@@ -1702,16 +1708,22 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   useEffect(() => {
     if (!dealIdForCommentCount) {
       setMemberModuleCounts({ crm: 0, production: 0, logistics: 0, total: 0 });
+      setDealMembers([]);
       return;
     }
     let cancelled = false;
     api.get(`/crm/leads/${dealIdForCommentCount}/members`)
       .then((r) => {
         if (cancelled) return;
-        setMemberModuleCounts(countMembersByModule(r.data || []));
+        const rows = r.data || [];
+        setDealMembers(rows);
+        setMemberModuleCounts(countMembersByModule(rows));
       })
       .catch(() => {
-        if (!cancelled) setMemberModuleCounts({ crm: 0, production: 0, logistics: 0, total: 0 });
+        if (!cancelled) {
+          setDealMembers([]);
+          setMemberModuleCounts({ crm: 0, production: 0, logistics: 0, total: 0 });
+        }
       });
     return () => { cancelled = true; };
   }, [dealIdForCommentCount]);
@@ -2538,11 +2550,20 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
         // TEMP_SX_FREE_DRAG: bỏ qua — chuyển cột bình thường.
         if (!TEMP_SX_FREE_DRAG && sxStage?.is_handover_to_logistics === true && !isProjectAlreadyInLogistics(project)) {
           try {
+            setProject((prev) => (prev ? {
+              ...prev,
+              sx_kanban_column_id: String(sxStage?.id || stageId),
+              sx_intake: false,
+              vc_handover_status: 'pending',
+              sx_kanban_deadline_at: null,
+              sx_kanban_deadline_reason: null,
+            } : prev));
             await api.post(`/vc-handover/projects/${id}/request`, { sx_stage_id: String(sxStage?.id || stageId) });
             alert('Đã gửi thông báo cho Sale CRM phụ trách deal — họ cần chọn công ty VC/LĐ và ngày lấy/lắp (trong bình luận deal). 3 sự kiện lịch sẽ tạo sau khi Xưởng & VC/LĐ xác nhận.');
             refreshProjectSilently?.();
           } catch (e) {
             alert(e.response?.data?.error || 'Không gửi được yêu cầu bàn giao VC/LĐ');
+            refreshProjectSilently?.();
           }
           return;
         }
@@ -2593,6 +2614,9 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
               production_deadline: null,
               delivery_date: null,
               deadline: null,
+            } : sxStage?.is_handover_to_logistics ? {
+              sx_kanban_deadline_at: null,
+              sx_kanban_deadline_reason: null,
             } : {}),
           };
         }
@@ -3144,6 +3168,20 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
           )}
         </div>
       </div>
+
+      {crmLeadId && (
+        <DealModulePathStrip
+          leadId={crmLeadId}
+          projectId={project?.id}
+          currentModule={moduleKey === 'vc' ? 'logistics' : 'production'}
+          lead={{
+            ...(primaryCrmDeal || {}),
+            production_person_id: project?.production_person_id || project?.production_person?.id,
+            logistics_person_id: project?.logistics_person_id || project?.logistics_person?.id,
+          }}
+          members={dealMembers}
+        />
+      )}
 
       {/* Hint phân loại — pipeline stepper bám theo workshop_type của project (công ty + loại). */}
       {moduleKey !== 'vc' && (
@@ -3946,7 +3984,10 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                     <LeadMembersTab
                       leadId={crmLeadId}
                       refreshKey={membersRefreshKey}
-                      onMembersChange={(list) => setMemberModuleCounts(countMembersByModule(list))}
+                      onMembersChange={(list) => {
+                        setDealMembers(list || []);
+                        setMemberModuleCounts(countMembersByModule(list));
+                      }}
                       onOpenSharedWorkspace={() => setTab('shared-workspace')}
                     />
                   )

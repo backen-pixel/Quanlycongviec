@@ -146,14 +146,15 @@ main .ui-kanban-fixed .crm-kanban-card-slot {
   contain: layout style;
 }
 
-/* Nút/mũi tên mép Kanban — hoàn toàn trong suốt, không nền trắng mờ */
+/* Nút mép Kanban trong suốt; vòng mũi tên (span) vẫn hiện khi hover */
 main .ui-kanban-fixed .kanban-edge-scroll-btn,
-main .ui-kanban-fixed .kanban-edge-scroll-chrome,
-main .ui-kanban-fixed .kanban-edge-scroll-chrome > div {
-  background: transparent !important;
-  background-color: transparent !important;
+main .ui-kanban-fixed .kanban-edge-scroll-chrome {
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
+}
+main .ui-kanban-fixed .kanban-edge-scroll-btn {
+  background: transparent !important;
+  background-color: transparent !important;
   box-shadow: none !important;
 }
 

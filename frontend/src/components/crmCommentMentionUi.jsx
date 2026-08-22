@@ -5,6 +5,7 @@ import {
   CRM_MENTION_ALL_LABEL,
   applyMentionPickToText,
   buildMentionPickerItems,
+  contentHasMentionAll,
   getActiveMentionState,
   memberDisplayName,
   resolveMentionIdsFromContent,
@@ -173,6 +174,14 @@ export function CrmCommentMentionComposer({
   const pickerItems = mentionOpen ? mentionState.items : [];
   const showEmptyHint = mentionOpen && !pickerItems.length && (members || []).length === 0;
   const showNoMatch = mentionOpen && !pickerItems.length && (members || []).length > 0;
+  const mentionAllActive = contentHasMentionAll(value);
+  const mentionAllCount = mentionAllActive
+    ? (members || []).filter((m) => {
+      if (String(m?.role || '') === 'viewer') return false;
+      const id = String(m?.user_id || m?.user?.id || '');
+      return id && id !== String(meId || '');
+    }).length
+    : 0;
 
   return (
     <div className="relative">
@@ -184,17 +193,31 @@ export function CrmCommentMentionComposer({
           {pickerItems.map((item, idx) => {
             const active = idx === mentionPickIdx;
             if (item.type === 'all') {
+              const n = (members || []).filter((m) => {
+                if (String(m?.role || '') === 'viewer') return false;
+                const id = String(m?.user_id || m?.user?.id || '');
+                return id && id !== String(meId || '');
+              }).length;
               return (
                 <button
                   key={item.key}
                   type="button"
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => applyMentionPick(item)}
-                  className={`flex w-full items-center gap-2 px-3 py-2 text-left text-[14px] ${active ? 'bg-[#e7f3ff]' : 'hover:bg-[#f0f2f5]'}`}
+                  className={`flex w-full items-center gap-2 px-3 py-2 text-left text-[14px] ${
+                    active ? 'bg-amber-200' : 'bg-amber-50 hover:bg-amber-100'
+                  }`}
                 >
-                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-amber-100 text-[11px] font-bold text-amber-800">@</span>
-                  <span className="font-semibold text-[#050505]">@{CRM_MENTION_ALL_LABEL}</span>
-                  <span className="text-[12px] text-[#65676b]">— mọi thành viên</span>
+                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-amber-400 text-[11px] font-bold text-amber-950">@</span>
+                  <span className="min-w-0">
+                    <span className="font-semibold text-amber-950">@{CRM_MENTION_ALL_LABEL}</span>
+                    <span className="text-[12px] text-amber-800"> — mọi thành viên</span>
+                    <span className="block text-[11px] text-amber-800/90">
+                      {n > 0
+                        ? `Gửi sẽ thông báo «Nhắc bạn» tới ${n} người`
+                        : 'Deal chưa có thành viên khác — chưa gửi được thông báo'}
+                    </span>
+                  </span>
                 </button>
               );
             }
@@ -269,7 +292,11 @@ export function CrmCommentMentionComposer({
       )}
       <div className="flex items-end gap-2 px-3 py-2.5 bg-white">
         <FbCrmAvatar user={user} className="h-8 w-8 shrink-0 mb-px" />
-        <div className="flex-1 min-w-0 rounded-[22px] bg-[#f0f2f5] px-3 py-2 border border-transparent focus-within:border-[#1877f2]/30 transition-colors">
+        <div className={`flex-1 min-w-0 rounded-[22px] px-3 py-2 border transition-colors ${
+          mentionAllActive
+            ? 'bg-amber-100 border-amber-400 focus-within:border-amber-500 ring-1 ring-amber-300/80'
+            : 'bg-[#f0f2f5] border-transparent focus-within:border-[#1877f2]/30'
+        }`}>
           {quickReplyTemplates.length > 0 && (
             <div className="flex flex-wrap items-center gap-1.5 pb-2 mb-1 border-b border-[#e4e6eb]/70">
               <span className="text-[10px] font-semibold uppercase tracking-wide text-[#65676b] shrink-0">Tin mẫu</span>
@@ -339,6 +366,13 @@ export function CrmCommentMentionComposer({
             style={{ maxHeight: COMPOSER_MAX_H }}
           />
           </div>
+          {mentionAllActive && (
+            <p className="pt-1.5 text-[11px] font-medium text-amber-900">
+              {mentionAllCount > 0
+                ? `Gửi sẽ thông báo «Nhắc bạn» tới ${mentionAllCount} thành viên`
+                : 'Deal chưa có thành viên khác — @Tất cả chưa gửi được thông báo'}
+            </p>
+          )}
         </div>
         {allowPrivate && (
           <div className="shrink-0 flex flex-col items-end gap-0.5">
@@ -376,9 +410,13 @@ export function CrmCommentMentionComposer({
           type="button"
           disabled={posting || !(canSubmit ?? String(value || '').trim())}
           onClick={handleSubmit}
-          className="shrink-0 rounded-full bg-[#1877f2] px-4 py-2 text-[13px] font-semibold text-white shadow-sm hover:bg-[#166fe5] disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors"
+          className={`shrink-0 rounded-full px-4 py-2 text-[13px] font-semibold shadow-sm disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors ${
+            mentionAllActive
+              ? 'bg-amber-400 text-amber-950 hover:bg-amber-500'
+              : 'bg-[#1877f2] text-white hover:bg-[#166fe5]'
+          }`}
         >
-          {posting ? '…' : submitLabel}
+          {posting ? '…' : (mentionAllActive ? 'Gửi tất cả' : submitLabel)}
         </button>
       </div>
     </div>
@@ -403,12 +441,16 @@ export function renderCrmCommentBody(content, members = []) {
       continue;
     }
     const rest = text.slice(i + 1);
-    const allMatch = rest.match(/^(tất\s*cả|tat\s*ca|all)\b/i);
+    const allMatch = rest.match(/^(tất\s*cả|tat\s*ca|all)(?=$|[\s.,!?;:…])/i);
     if (allMatch) {
       if (i > last) spans.push(<span key={`t-${i}`}>{text.slice(last, i)}</span>);
       const len = 1 + allMatch[0].length;
       spans.push(
-        <span key={`m-${i}`} className="font-semibold text-amber-900 bg-amber-100/90 px-0.5 rounded">
+        <span
+          key={`m-${i}`}
+          title="Nhắc mọi thành viên — đã gửi thông báo"
+          className="inline-flex items-center font-bold text-amber-950 bg-amber-400 px-1.5 py-0 rounded-md"
+        >
           {text.slice(i, i + len)}
         </span>,
       );

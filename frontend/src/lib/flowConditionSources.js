@@ -39,6 +39,7 @@ export const STAGE_FLAGS = {
   ],
   logistics: [
     { value: 'is_handover_to_install', label: 'Cột bàn giao Lắp đặt' },
+    { value: 'is_temp_install_staging', label: 'Dự án sắp tới (chờ lắp)' },
   ],
 };
 

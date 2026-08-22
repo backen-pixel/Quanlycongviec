@@ -2,6 +2,21 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Documentation map (canonical)
+
+Full docs live under `docs/` — see [`docs/README.md`](./docs/README.md) and [`AGENTS.md`](./AGENTS.md).
+
+| Topic | Path |
+|---|---|
+| Architecture | `docs/architecture/` |
+| ADR | `docs/adr/` |
+| BA / guides | `docs/ba/` |
+| API inventory | `docs/api/API_DOCUMENT.md` |
+| DB schema | `docs/database/DATABASE_SCHEMA.md` |
+| SQL migrations | `/database/*.sql` |
+| Coding standard | `docs/project/CODING_STANDARD.md` |
+| Claude↔Cursor workflow | `docs/project/workflow-claude-cursor-github.md` |
+
 ## Project Overview
 
 Vietnamese-language ERP/CRM system for cabinet manufacturing companies ("Tủ Bếp"). Manages the full lifecycle: CRM leads/deals → production projects → logistics → accounting. Deployed on Render, backed by Supabase (PostgreSQL).

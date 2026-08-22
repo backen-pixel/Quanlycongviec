@@ -7,6 +7,8 @@ import { canCreateStaff, isSystemAdmin, hasCompanyId } from '../lib/adminRole';
 import { Plus, Search, Mail, Phone, Trash2, Edit, Users as UsersIcon, MoreVertical, Building2, Layers, UsersRound, Shield, MapPin, Camera, AlertTriangle, ChevronLeft, ChevronRight, UserRound, Sparkles, Loader2 } from 'lucide-react';
 import { formatDate, getInitials, avatarColor } from '../lib/utils';
 import PermissionCatalogPanel, { cascadeTierDraft } from '../components/permissions/PermissionCatalogPanel';
+import PermissionAccessSummary from '../components/permissions/PermissionAccessSummary';
+import PermissionProjectScopePanel from '../components/permissions/PermissionProjectScopePanel';
 
 const ROLES = { admin: 'Admin', manager: 'Quản lý', region_admin: 'Admin khu vực', sales_admin: 'Sales Admin', sales: 'Kinh doanh (SAE)', designer: 'Thiết kế', production: 'Sản xuất', production_staff: 'NV Sản xuất (Admin CV+SX)', production_admin: 'Admin Sản xuất', crm_production_staff: 'NV CRM + Admin SX', crm_production_admin: 'Admin CRM + Sản xuất', logistics_admin: 'Admin Lắp đặt', driver: 'Tài xế', installer: 'Lắp đặt', customer_care: 'CSKH', accounting: 'Kế toán', staff: 'Nhân viên' };
 const ROLE_COLORS = { admin: 'bg-red-100 text-red-700', manager: 'bg-purple-100 text-purple-700', region_admin: 'bg-rose-100 text-rose-800', sales_admin: 'bg-indigo-100 text-indigo-700', sales: 'bg-blue-100 text-blue-700', designer: 'bg-pink-100 text-pink-700', production: 'bg-orange-100 text-orange-700', production_staff: 'bg-teal-100 text-teal-800', production_admin: 'bg-orange-200 text-orange-900', crm_production_staff: 'bg-sky-100 text-sky-800', crm_production_admin: 'bg-violet-100 text-violet-800', logistics_admin: 'bg-amber-100 text-amber-800', installer: 'bg-cyan-100 text-cyan-700', customer_care: 'bg-green-100 text-green-700', driver: 'bg-amber-100 text-amber-700', accounting: 'bg-emerald-100 text-emerald-800', staff: 'bg-gray-100 text-gray-600' };
@@ -968,6 +970,9 @@ export function StaffFormModal({
   const [permDraft, setPermDraft] = useState({});
   const [permPanelOpen, setPermPanelOpen] = useState(true);
   const [permTouched, setPermTouched] = useState(false);
+  /** access_summary + rows từ /effective (edit) — chỉ hiển thị */
+  const [permAccessSummary, setPermAccessSummary] = useState(null);
+  const [permEffectiveById, setPermEffectiveById] = useState({});
   /** Module công ty — map module_key → role (mỗi module 1 role) */
   const [companyModules, setCompanyModules] = useState([]);
   const [moduleRoles, setModuleRoles] = useState({});
@@ -1470,7 +1475,11 @@ export function StaffFormModal({
 
   // Edit: nạp quyền hiệu lực hiện tại
   useEffect(() => {
-    if (!open || !editUserId) return;
+    if (!open || !editUserId) {
+      setPermAccessSummary(null);
+      setPermEffectiveById({});
+      return;
+    }
     let cancelled = false;
     api
       .get(`/permissions/users/${editUserId}/effective`)
@@ -1478,11 +1487,17 @@ export function StaffFormModal({
         if (cancelled) return;
         const rows = r.data?.permissions || [];
         const draft = {};
+        const byId = {};
         for (const p of rows) {
-          if (p.permission_id) draft[p.permission_id] = p.effective === true;
+          if (p.permission_id) {
+            draft[p.permission_id] = p.effective === true;
+            byId[p.permission_id] = p;
+          }
         }
         setPermDraft(draft);
         setPermTouched(true);
+        setPermEffectiveById(byId);
+        setPermAccessSummary(r.data?.access_summary || null);
         if (Array.isArray(r.data?.role_permission_ids)) {
           setPermBaselineIds(r.data.role_permission_ids);
         }
@@ -2148,7 +2163,7 @@ export function StaffFormModal({
                     : (ROLES[form.role] || form.role || '—')}»
                 </h4>
                 <p className="text-[10px] text-violet-700/80 mt-0.5 leading-snug">
-                  Bật/tắt từng quyền. Drive chỉ xem · SX xem tất cả · Reset theo vai trò.
+                  Bật/tắt từng quyền. Drive chỉ xem · SX xem tất cả · Reset về kế thừa.
                 </p>
               </div>
               <div className="flex items-center gap-1.5 shrink-0">
@@ -2195,7 +2210,7 @@ export function StaffFormModal({
                 onClick={resetPermsToRole}
                 className="h-7 px-2 rounded-lg border border-violet-200 bg-violet-100/80 text-[10px] font-medium text-violet-800 hover:bg-violet-100"
               >
-                Reset theo vai trò
+                Reset về kế thừa vai trò
               </button>
             </div>
           </div>
@@ -2209,27 +2224,51 @@ export function StaffFormModal({
                   {permCatalogError || 'Không tải được catalog quyền. Kiểm tra quyền admin hoặc thử lại.'}
                 </p>
               ) : (
-                <PermissionCatalogPanel
-                  catalog={filteredPermCatalog}
-                  activeModuleKey={permModuleKey}
-                  onModuleChange={setPermModuleKey}
-                  getChecked={(id) => permDraft[id] === true}
-                  isDirty={(id) => {
-                    const desired = permDraft[id] === true;
-                    const fromRole = permBaselineIds.some((x) => String(x) === String(id));
-                    return desired !== fromRole;
-                  }}
-                  getSource={(id) => {
-                    if (permDraft[id] === true && permBaselineIds.some((x) => String(x) === String(id))) return 'system_role';
-                    if (permDraft[id] === true) return 'override_grant';
-                    if (permBaselineIds.some((x) => String(x) === String(id))) return 'override_deny';
-                    return 'none';
-                  }}
-                  onToggle={onTogglePerm}
-                  onToggleTier={onTogglePermTier}
-                  disabled={loading}
-                  emptyHint="Không có quyền trong module này"
-                />
+                <>
+                  <p className="text-[10px] text-violet-800 mb-2 px-0.5 leading-snug">
+                    1) Chọn module + role bên trái · 2) Chỉnh toggle bên này · Hover để xem nguồn · «Reset về kế thừa» bỏ chỉnh tay.
+                  </p>
+                  {editUserId && permAccessSummary && (
+                    <div className="mb-2.5 space-y-2">
+                      <PermissionAccessSummary summary={permAccessSummary} compact />
+                      <PermissionProjectScopePanel scope={permAccessSummary.project_scope} compact />
+                    </div>
+                  )}
+                  <PermissionCatalogPanel
+                    catalog={filteredPermCatalog}
+                    activeModuleKey={permModuleKey}
+                    onModuleChange={setPermModuleKey}
+                    getChecked={(id) => permDraft[id] === true}
+                    isDirty={(id) => {
+                      const desired = permDraft[id] === true;
+                      const fromRole = permBaselineIds.some((x) => String(x) === String(id));
+                      return desired !== fromRole;
+                    }}
+                    getSource={(id) => {
+                      const desired = permDraft[id] === true;
+                      const fromRole = permBaselineIds.some((x) => String(x) === String(id));
+                      const dirty = desired !== fromRole;
+                      if (!dirty) {
+                        const row = permEffectiveById[id];
+                        if (row?.effective && row.source && row.source !== 'none') return row.source;
+                        if (fromRole) return 'system_role';
+                        return 'none';
+                      }
+                      if (desired && fromRole) return 'system_role';
+                      if (desired) return 'override_grant';
+                      if (fromRole) return 'override_deny';
+                      return 'none';
+                    }}
+                    isDuplicateSource={(id) => {
+                      const row = permEffectiveById[id];
+                      return !!(row?.effective && row?.from_system_role && row?.from_module_role);
+                    }}
+                    onToggle={onTogglePerm}
+                    onToggleTier={onTogglePermTier}
+                    disabled={loading}
+                    emptyHint="Không có quyền trong module này"
+                  />
+                </>
               )}
             </div>
           )}

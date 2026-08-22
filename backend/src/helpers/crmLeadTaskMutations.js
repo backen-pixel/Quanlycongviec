@@ -290,6 +290,8 @@ async function createCrmLeadTask(req, leadId, body) {
   if (!phatSinh.ok) return { error: phatSinh.error, status: phatSinh.status || 400 };
   if (phatSinh.department_id !== undefined) insertRow.department_id = phatSinh.department_id;
   if (phatSinh.phat_sinh_kind !== undefined) insertRow.phat_sinh_kind = phatSinh.phat_sinh_kind;
+  const { normalizeErrorTypeId } = require('./sharedWorkspaceErrorTypes');
+  if (b.error_type_id !== undefined) insertRow.error_type_id = normalizeErrorTypeId(b.error_type_id);
 
   let { data, error } = await supabase.from('crm_tasks').insert(insertRow).select(CRM_TASK_SELECT).single();
   if (error && isExecutorColumnError(error)) {
@@ -297,7 +299,7 @@ async function createCrmLeadTask(req, leadId, body) {
     ({ data, error } = await supabase.from('crm_tasks').insert(legacy).select(CRM_TASK_SELECT).single());
   }
   if (error && isTaskSourceColumnError(error)) {
-    const { task_source_type: _t, employee_error_module: _m, ...legacy } = insertRow;
+    const { task_source_type: _t, employee_error_module: _m, error_type_id: _et, ...legacy } = insertRow;
     ({ data, error } = await supabase.from('crm_tasks').insert(legacy).select(CRM_TASK_SELECT).single());
   }
   if (error) return { error: error.message, status: 500 };
@@ -553,6 +555,10 @@ async function updateCrmLeadTask(req, leadId, taskId, body) {
     if (ps.department_id !== undefined) update.department_id = ps.department_id;
     if (ps.phat_sinh_kind !== undefined) update.phat_sinh_kind = ps.phat_sinh_kind;
   }
+  if (b.error_type_id !== undefined) {
+    const { normalizeErrorTypeId } = require('./sharedWorkspaceErrorTypes');
+    update.error_type_id = normalizeErrorTypeId(b.error_type_id);
+  }
 
   let { data, error } = await supabase.from('crm_tasks').update(update)
     .eq('id', taskId).select(CRM_TASK_SELECT).single();
@@ -568,7 +574,7 @@ async function updateCrmLeadTask(req, leadId, taskId, body) {
       .eq('id', taskId).select(CRM_TASK_SELECT).single());
   }
   if (error && isTaskSourceColumnError(error)) {
-    const { task_source_type: _t, employee_error_module: _m, ...legacy } = update;
+    const { task_source_type: _t, employee_error_module: _m, error_type_id: _et, ...legacy } = update;
     ({ data, error } = await supabase.from('crm_tasks').update(legacy)
       .eq('id', taskId).select(CRM_TASK_SELECT).single());
   }

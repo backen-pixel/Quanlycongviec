@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Ban, Clock, Pencil, RotateCcw, X } from 'lucide-react';
+import { Ban, ChevronDown, Clock, Pencil, RotateCcw, X } from 'lucide-react';
 import api from '../lib/api';
 import { formatDate } from '../lib/utils';
 import { useAuth } from '../lib/auth';
@@ -17,6 +17,8 @@ import {
   getCrmDeadlineUrgencyBadgeClass,
 } from '../lib/crmLeadDeadlineDisplay';
 import { effectivePipelineStageSlaDays } from '../lib/crmPipelineSla';
+
+const LS_DEADLINE_OVERVIEW_OPEN = 'crm_lead_deadline_overview_open';
 
 function formatDeadlineIso(iso) {
   if (iso == null || iso === '') return null;
@@ -71,6 +73,21 @@ export default function CrmLeadDeadlineOverview({ lead, onChanged }) {
   const [taskDeadlines, setTaskDeadlines] = useState([]);
   const [taskDeadlinesLoading, setTaskDeadlinesLoading] = useState(false);
   const [deadlineEditor, setDeadlineEditor] = useState(null);
+  const [panelOpen, setPanelOpen] = useState(() => {
+    try {
+      const v = localStorage.getItem(LS_DEADLINE_OVERVIEW_OPEN);
+      if (v === '0') return false;
+      if (v === '1') return true;
+    } catch { /* ignore */ }
+    return true;
+  });
+  const togglePanel = () => {
+    setPanelOpen((open) => {
+      const next = !open;
+      try { localStorage.setItem(LS_DEADLINE_OVERVIEW_OPEN, next ? '1' : '0'); } catch { /* ignore */ }
+      return next;
+    });
+  };
 
   useEffect(() => {
     const cid = lead?.company_id;
@@ -236,7 +253,7 @@ export default function CrmLeadDeadlineOverview({ lead, onChanged }) {
 
   return (
     <>
-      <div className={`rounded-lg border p-2.5 my-1.5 ${
+    <div className={`rounded-lg border p-2.5 my-1.5 ${
       allDisabled ? 'border-slate-300 bg-slate-50' : 'border-amber-200 bg-amber-50/40'
     }`}>
       <div className="flex items-start gap-2">
@@ -247,12 +264,38 @@ export default function CrmLeadDeadlineOverview({ lead, onChanged }) {
         )}
         <div className="flex-1 min-w-0">
           <div className="flex items-start justify-between gap-2 mb-1">
-            <p className={`text-[10px] uppercase tracking-wider font-medium ${
-              allDisabled ? 'text-slate-600' : 'text-amber-700'
-            }`}>
-              Hạn trên view Deadline
-            </p>
-            {allDisabled ? (
+            <button
+              type="button"
+              onClick={togglePanel}
+              className="inline-flex items-center gap-1 min-w-0 text-left cursor-pointer group"
+              title={panelOpen ? 'Thu gọn' : 'Mở rộng'}
+              aria-expanded={panelOpen}
+            >
+              <ChevronDown
+                className={`h-3.5 w-3.5 shrink-0 transition-transform ${
+                  allDisabled ? 'text-slate-500' : 'text-amber-700'
+                } ${panelOpen ? '' : '-rotate-90'}`}
+              />
+              <p className={`text-[10px] uppercase tracking-wider font-medium ${
+                allDisabled ? 'text-slate-600' : 'text-amber-700'
+              } group-hover:underline`}>
+                Hạn trên view Deadline
+              </p>
+            </button>
+            <div className="flex items-center gap-1 shrink-0">
+              <button
+                type="button"
+                onClick={togglePanel}
+                className={`inline-flex items-center rounded-md border px-2 py-1 text-[10px] font-semibold cursor-pointer ${
+                  allDisabled
+                    ? 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100'
+                    : 'border-amber-200 bg-white text-amber-800 hover:bg-amber-50'
+                }`}
+                title={panelOpen ? 'Ẩn' : 'Hiện'}
+              >
+                {panelOpen ? 'Ẩn' : 'Hiện'}
+              </button>
+              {panelOpen && (allDisabled ? (
               <button
                 type="button"
                 onClick={enableDeadlines}
@@ -275,9 +318,40 @@ export default function CrmLeadDeadlineOverview({ lead, onChanged }) {
                 <Ban className="h-3 w-3" />
                 Tắt deadline
               </button>
-            )}
+            ))}
+            </div>
           </div>
 
+          {!panelOpen ? (
+            <button
+              type="button"
+              onClick={togglePanel}
+              className="w-full text-left cursor-pointer rounded-md border border-amber-100/80 bg-white/60 px-2 py-1.5 hover:bg-white"
+              title="Bấm để mở rộng"
+            >
+              {allDisabled ? (
+                <p className="text-xs font-semibold text-slate-700">Đã tắt tất cả deadline</p>
+              ) : hidden ? (
+                <p className="text-xs text-slate-500 italic">Không hiện trên Dashboard</p>
+              ) : resolved.deadlineTs == null ? (
+                <p className="text-xs text-gray-400 italic">Không có hạn</p>
+              ) : (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <SourceBadge source={resolved.source} />
+                  {remainLabel && (
+                    <span className={`inline-flex items-center gap-1 rounded-md border tabular-nums leading-none px-1.5 py-0.5 text-[10px] ${getCrmDeadlineUrgencyBadgeClass(urg.level)}`}>
+                      <Clock className="h-3 w-3" strokeWidth={2.6} />
+                      {urg.level === 'overdue' ? <>Quá {remainLabel}</> : <>Còn {remainLabel}</>}
+                    </span>
+                  )}
+                  <span className="text-[11px] font-semibold text-slate-700">
+                    {formatDate(new Date(resolved.deadlineTs).toISOString())}
+                  </span>
+                </div>
+              )}
+            </button>
+          ) : (
+          <>
           {allDisabled ? (
             <div className="rounded-md border border-slate-200 bg-white px-2.5 py-2">
               <p className="text-xs font-semibold text-slate-700">Đã tắt tất cả deadline</p>
@@ -455,6 +529,8 @@ export default function CrmLeadDeadlineOverview({ lead, onChanged }) {
           )}
           {deadlineError && !disableOpen && (
             <p className="mt-1.5 text-[10px] text-red-600">{deadlineError}</p>
+          )}
+          </>
           )}
         </div>
       </div>

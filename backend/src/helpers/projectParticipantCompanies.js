@@ -120,6 +120,8 @@ async function listProjectParticipantCompanies(projectId) {
     }
   } catch (_) { /* bảng chưa migrate */ }
 
+  // Không push company từ project_company_assignments (mẫu luồng) — dễ lệch SoR module
+
   const missing = [...map.keys()].filter((id) => !map.get(id).name && !map.get(id).short_name);
   if (missing.length) {
     const rows = await hydrateCompanies(missing);

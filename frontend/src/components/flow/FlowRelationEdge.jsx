@@ -2,6 +2,7 @@ import { memo, useState } from 'react';
 import { BaseEdge, EdgeLabelRenderer, getSmoothStepPath } from '@xyflow/react';
 import { GitFork, Plus, Puzzle, ShieldCheck } from 'lucide-react';
 import { PALETTE_MIME } from '../../lib/flowGraphModel';
+import { decodePalettePayload } from '../../lib/flowNodeCatalog';
 
 const EDGE_COLOR = '#296DFF';
 const PARALLEL_COLOR = '#7c3aed';
@@ -42,11 +43,12 @@ const FlowRelationEdge = memo(function FlowRelationEdge({
   const color = isParallel ? PARALLEL_COLOR : EDGE_COLOR;
 
   const insertable = (data?.availableModules || []).filter((m) => m.key);
-  const canInsert = Boolean(data?.onInsert) && insertable.length > 0;
+  const insertSpecials = data?.availableSpecials || [];
+  const canInsert = Boolean(data?.onInsert) && (insertable.length > 0 || insertSpecials.length > 0);
 
-  const pickInsert = (moduleKey) => {
+  const pickInsert = (spec) => {
     setMenuOpen(false);
-    data.onInsert(id, moduleKey);
+    data.onInsert(id, spec);
   };
 
   // Cả dải cạnh lẫn cụm nhãn đều nhận thả để người dùng không phải nhắm quá sát.
@@ -59,13 +61,12 @@ const FlowRelationEdge = memo(function FlowRelationEdge({
       },
       onDragLeave: () => setDropHover(false),
       onDrop: (e) => {
-        const moduleKey = e.dataTransfer.getData(PALETTE_MIME);
+        const spec = decodePalettePayload(e.dataTransfer.getData(PALETTE_MIME));
         setDropHover(false);
-        if (!moduleKey) return;
-        // Chặn nổi bọt để canvas không tạo thêm một node rời ở chỗ thả.
+        if (!spec) return;
         e.preventDefault();
         e.stopPropagation();
-        data.onInsert(id, moduleKey);
+        data.onInsert(id, spec);
       },
     }
     : {};
@@ -154,7 +155,7 @@ const FlowRelationEdge = memo(function FlowRelationEdge({
                 className={`flex h-5 w-5 items-center justify-center rounded-full border-2 border-white shadow-md transition-colors cursor-pointer ${
                   menuOpen ? 'bg-[#296DFF] text-white' : 'bg-white text-[#296DFF] hover:bg-[#296DFF] hover:text-white'
                 }`}
-                title="Chèn một module vào giữa hai node này"
+                title="Chèn module hoặc khối điều kiện / hành động vào giữa"
                 onClick={(e) => {
                   e.stopPropagation();
                   setMenuOpen((v) => !v);
@@ -168,7 +169,7 @@ const FlowRelationEdge = memo(function FlowRelationEdge({
                   onClick={(e) => e.stopPropagation()}
                 >
                   <div className="mb-0.5 flex items-center justify-between px-2 py-1">
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Chèn vào giữa</p>
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Chèn module</p>
                     <button
                       type="button"
                       className="cursor-pointer text-[10px] text-slate-400 hover:text-slate-600"
@@ -183,7 +184,7 @@ const FlowRelationEdge = memo(function FlowRelationEdge({
                       <button
                         key={m.key}
                         type="button"
-                        onClick={() => pickInsert(m.key)}
+                        onClick={() => pickInsert({ kind: 'module', moduleKey: m.key })}
                         className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-slate-50"
                       >
                         <span
@@ -196,6 +197,27 @@ const FlowRelationEdge = memo(function FlowRelationEdge({
                       </button>
                     );
                   })}
+                  {insertSpecials.length > 0 && (
+                    <>
+                      <p className="mt-1 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-amber-600">
+                        Điều khiển / hành động
+                      </p>
+                      {insertSpecials.map((s) => (
+                        <button
+                          key={s.kind}
+                          type="button"
+                          onClick={() => pickInsert({ kind: s.kind })}
+                          className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-slate-50"
+                        >
+                          <span
+                            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md"
+                            style={{ background: `${s.color}22` }}
+                          />
+                          <span className="truncate text-[12px] font-medium text-slate-700">{s.label}</span>
+                        </button>
+                      ))}
+                    </>
+                  )}
                 </div>
               )}
             </div>

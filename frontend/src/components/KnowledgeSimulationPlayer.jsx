@@ -19,7 +19,7 @@ export const SIM_BRIEF_SHORT = `Điền 3 mục rồi bấm **Thêm dự án**:
 
 • Công ty SX: **Xưởng HCB** (phân loại **Tủ bếp**)
 • Công ty VC/LĐ: **VC Phúc Đạt**
-• Ngày giờ: lắp **2 ngày liền nhau** (sau hôm nay) lúc **Sáng** — lấy hàng **không sau ngày lắp đầu** lúc **Chiều**`;
+• Ngày giờ: lắp **2 ngày liền nhau** (sau hôm nay) lúc **Sáng**. Ngày lấy hàng / vận chuyển: lúc **Chiều** — **vẫn không được sau ngày lắp đặt** (cùng ngày hoặc trước)`;
 
 export function BriefRich({ text, className = '' }) {
   return (
@@ -78,7 +78,7 @@ function isSimStepDone(id, a) {
     case 'pickup_shift': return a.pickup_time === '14:00';
     case 'vc_company': return a.vc_company === 'phuc-dat';
     case 'vc_notes':
-      return String(a.vc_notes || '').split('\n').map((s) => s.trim()).filter(Boolean).length >= 2;
+      return String(a.vc_notes || '').split('\n').map((s) => s.trim()).filter(Boolean).length >= 1;
     case 'saved': return a.saved === true;
     case 'temp_seen': return a.temp_card_seen === true;
     case 'drag_blocked': return a.drag_blocked_seen === true;
@@ -104,9 +104,9 @@ const SCORE_GROUPS = [
       { id: 'install_two_days', short: 'Lắp 2 ngày liền nhau' },
       { id: 'install_future', short: 'Ngày lắp sau hôm nay' },
       { id: 'install_shift', short: 'Giờ lắp: Sáng' },
-      { id: 'pickup_not_after', short: 'Lấy hàng ≤ ngày lắp đầu' },
+      { id: 'pickup_not_after', short: 'Ngày VC / lấy hàng không được sau ngày lắp đặt' },
       { id: 'pickup_shift', short: 'Giờ lấy hàng: Chiều' },
-      { id: 'vc_notes', short: 'Ghi chú VC/LĐ 2 dòng' },
+      { id: 'vc_notes', short: 'Ghi chú VC/LĐ 1 dòng' },
       { id: 'saved', short: 'Bấm Thêm dự án' },
     ],
   },
@@ -1433,7 +1433,7 @@ export default function KnowledgeSimulationPlayer({ exercise, onSubmit, submitti
                                 <div className="min-w-0">
                                   <label className="block text-[10px] font-extrabold text-amber-900 mb-0.5">
                                     Thời gian lấy hàng tại xưởng <NeedTag />
-                                    <span className="font-normal text-sky-700"> (không sau ngày lắp đầu · bấm Chiều)</span>
+                                    <span className="font-normal text-sky-700"> (ngày vận chuyển vẫn không được sau ngày lắp đặt · bấm Chiều)</span>
                                   </label>
                                   <div className="flex flex-wrap items-center gap-2">
                                     <ShiftQuickPick

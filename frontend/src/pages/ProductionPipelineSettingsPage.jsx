@@ -1298,7 +1298,11 @@ export default function ProductionPipelineSettingsPage() {
             <div className="min-w-0">
               <h2 className="text-sm font-bold text-gray-900">Giờ deadline xưởng &amp; SLA kính</h2>
               <p className="text-[11px] text-gray-600 mt-0.5 leading-snug max-w-2xl">
-                Deadline cột Kanban lưu lúc giờ này (mặc định 17:30). Có thể đổi. SLA kính phát sinh trên Không gian chung dùng cùng giờ + mốc trưa.
+                Deadline cột Kanban lưu lúc giờ này (mặc định 17:30). Loại phát sinh (kính, đá, phụ kiện…) và SLA từng loại cấu hình tại{' '}
+                <Link to="/management/error-types" className="text-rose-700 underline hover:text-rose-900">
+                  Quản lý → Loại lỗi / hạn PS
+                </Link>
+                . Giờ deadline xưởng vẫn dùng cho loại «trong ngày».
               </p>
             </div>
           </div>
@@ -1314,7 +1318,7 @@ export default function ProductionPipelineSettingsPage() {
               />
             </label>
             <label className="text-[11px] font-semibold text-slate-600">
-              Mốc «trưa báo» (kính không sơn)
+              Mốc «trưa báo» (kính có sơn)
               <input
                 type="time"
                 value={scheduleCfg.glass_cutoff_time}

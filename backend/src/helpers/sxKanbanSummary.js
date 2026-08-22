@@ -83,13 +83,21 @@ function diffCalendarDays(ymdA, ymdB) {
  * Bucket Deadline SX — khớp frontend resolveSxDeadlineBucket + shouldHide (bỏ card Đã công).
  * @returns {string|null} null = ẩn khỏi Deadline view
  */
+function rowLooksShipped(row) {
+  if (row?.logistics_company_id || row?.vc_kanban_column_id) return true;
+  const status = String(row?.status || '');
+  return status === 'installing' || status === 'warranty' || status === 'completed';
+}
+
 function resolveSxDeadlineBucketKey(row, stage, todayYmd, companyOrId, nowMs = Date.now()) {
   if (stage?.counts_as_completed_revenue) return null;
   const raw = row?.delivery_date || row?.production_deadline || row?.deadline;
   const ymd = toVnDeadlineYmd(raw);
   if (!ymd) return 'none';
   const diffDays = diffCalendarDays(ymd, todayYmd);
-  const ignoreOverdue = isSlaDisabled(stage?.sla_days);
+  const ignoreOverdue = isSlaDisabled(stage?.sla_days)
+    || !!stage?.counts_as_collected_revenue
+    || rowLooksShipped(row);
   if (diffDays < 0) {
     if (ignoreOverdue) return 'later';
     return 'overdue';

@@ -1,9 +1,315 @@
 ﻿import { useState, useEffect, useCallback, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import api from '../lib/api';
+import { formatVND, formatDate } from '../lib/utils';
 import CRMTasksTab from './CRMTasksTab';
-import { Truck, Loader2, ChevronDown, ChevronRight, Package, Factory, Trash2 } from 'lucide-react';
+import {
+  Truck, Loader2, ChevronDown, ChevronRight, Package, Factory, Trash2,
+  FileText, ShoppingCart, Receipt, ExternalLink, RefreshCw,
+} from 'lucide-react';
 
-// Internal phase UI removed per request.
+const Q_STATUS = { draft: 'Nháp', sent: 'Đã gửi', accepted: 'Đã chấp nhận', rejected: 'Từ chối', converted: '→ Đơn hàng' };
+const O_STATUS = { draft: 'Nháp', confirmed: 'Xác nhận', processing: 'Đang SX', shipped: 'Đang giao', delivered: 'Đã giao', cancelled: 'Đã hủy' };
+const PAY_STATUS = { unpaid: 'Chưa TT', partial: 'TT 1 phần', paid: 'Đã TT' };
+
+function badge(map, status, tone = 'gray') {
+  const tones = {
+    gray: 'bg-gray-100 text-gray-700',
+    green: 'bg-emerald-100 text-emerald-800',
+    red: 'bg-red-100 text-red-800',
+    amber: 'bg-amber-100 text-amber-900',
+    blue: 'bg-blue-100 text-blue-800',
+  };
+  return (
+    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold ${tones[tone] || tones.gray}`}>
+      {map[status] || status || '—'}
+    </span>
+  );
+}
+
+function payTone(s) {
+  if (s === 'paid') return 'green';
+  if (s === 'partial') return 'amber';
+  if (s === 'unpaid') return 'red';
+  return 'gray';
+}
+
+function CommercialDocsBlock({ cashflow, loading, onReload }) {
+  const quotations = cashflow?.quotations || [];
+  const orders = cashflow?.orders || [];
+  const invoices = cashflow?.invoices || [];
+  const payments = cashflow?.payments || [];
+  const s = cashflow?.summary;
+
+  if (loading && !cashflow) {
+    return (
+      <div className="flex items-center justify-center py-10 text-gray-500 gap-2">
+        <Loader2 className="h-5 w-5 animate-spin" /> Đang tải báo giá / đơn / hóa đơn…
+      </div>
+    );
+  }
+
+  const empty = !quotations.length && !orders.length && !invoices.length;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-col sm:flex-row sm:items-end gap-3 justify-between bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl p-4">
+        <div>
+          <h3 className="text-sm font-bold text-gray-900 flex items-center gap-2">
+            <ShoppingCart className="h-4 w-4 text-blue-700" />
+            Báo giá · Đơn hàng · Hóa đơn
+          </h3>
+          <p className="text-xs text-gray-600 mt-1 max-w-2xl">
+            Chứng từ CRM gắn dự án hoặc deal liên kết (kể cả multi dự án). Mở chi tiết để xem dòng hàng / thanh toán.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onReload}
+          className="h-9 px-3 border border-blue-200 bg-white rounded-lg text-sm flex items-center gap-1.5 hover:bg-blue-50 shrink-0"
+        >
+          <RefreshCw className="h-3.5 w-3.5" /> Làm mới
+        </button>
+      </div>
+
+      {s && (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+          <div className="rounded-lg border border-sky-200 bg-sky-50/80 px-3 py-2.5">
+            <p className="text-[10px] font-bold uppercase text-sky-800">Báo giá</p>
+            <p className="text-sm font-extrabold text-sky-950 tabular-nums">{formatVND(s.quotations?.total_sum || 0)}</p>
+            <p className="text-[10px] text-sky-700">{s.quotations?.count || 0} BG · cọc {formatVND(s.quotations?.deposits_sum || 0)}</p>
+          </div>
+          <div className="rounded-lg border border-indigo-200 bg-indigo-50/80 px-3 py-2.5">
+            <p className="text-[10px] font-bold uppercase text-indigo-800">Đơn hàng</p>
+            <p className="text-sm font-extrabold text-indigo-950 tabular-nums">{formatVND(s.orders?.total_sum || 0)}</p>
+            <p className="text-[10px] text-indigo-700">{s.orders?.count || 0} ĐH · đã thu {formatVND(s.orders?.paid_sum || 0)}</p>
+          </div>
+          <div className="rounded-lg border border-violet-200 bg-violet-50/80 px-3 py-2.5">
+            <p className="text-[10px] font-bold uppercase text-violet-800">Hóa đơn</p>
+            <p className="text-sm font-extrabold text-violet-950 tabular-nums">{formatVND(s.invoices?.total_sum || 0)}</p>
+            <p className="text-[10px] text-violet-700">{s.invoices?.count || 0} HĐ · đã thu {formatVND(s.invoices?.paid_sum || 0)}</p>
+          </div>
+          <div className="rounded-lg border-2 border-emerald-300 bg-emerald-50 px-3 py-2.5">
+            <p className="text-[10px] font-bold uppercase text-emerald-900">Còn phải thu</p>
+            <p className="text-sm font-extrabold text-emerald-950 tabular-nums">{formatVND(s.remaining_to_collect || 0)}</p>
+            <p className="text-[10px] text-emerald-800">Lịch sử TT: {formatVND(s.payments_recorded_sum || 0)} ({payments.length} lần)</p>
+          </div>
+        </div>
+      )}
+
+      {empty ? (
+        <div className="text-center py-10 text-gray-500 text-sm border border-dashed border-gray-200 rounded-xl bg-white">
+          <Package className="h-9 w-9 mx-auto mb-2 text-gray-300" />
+          Chưa có báo giá, đơn hàng hoặc hóa đơn gắn dự án / deal.
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-3">
+          <DocTable
+            title="Báo giá"
+            icon={FileText}
+            tone="sky"
+            rows={quotations}
+            empty="Chưa có báo giá"
+            href={(r) => `/crm/quotations/${r.id}`}
+            cols={[
+              { key: 'code', label: 'Mã', className: 'font-bold text-sky-800' },
+              { key: 'title', label: 'Tiêu đề' },
+              {
+                key: 'total',
+                label: 'Tổng',
+                align: 'right',
+                render: (r) => <span className="font-semibold tabular-nums">{formatVND(r.total || 0)}</span>,
+              },
+              {
+                key: 'status',
+                label: 'TT',
+                render: (r) => badge(Q_STATUS, r.status, r.status === 'accepted' || r.status === 'converted' ? 'green' : r.status === 'rejected' ? 'red' : 'gray'),
+              },
+              {
+                key: 'deposit',
+                label: 'Cọc',
+                align: 'right',
+                render: (r) => (Number(r.deposit_amount) > 0
+                  ? (
+                    <span className="text-[11px] tabular-nums text-amber-900">
+                      {formatVND(r.deposit_amount)}
+                      {r.deposit_received === true ? ' ✓' : r.deposit_received === false ? ' …' : ''}
+                    </span>
+                  )
+                  : <span className="text-gray-300">—</span>),
+              },
+              {
+                key: 'date',
+                label: 'Ngày',
+                render: (r) => <span className="text-[11px] text-gray-500">{formatDate(r.created_at)}</span>,
+              },
+            ]}
+          />
+          <DocTable
+            title="Đơn hàng CRM"
+            icon={ShoppingCart}
+            tone="indigo"
+            rows={orders}
+            empty="Chưa có đơn hàng"
+            href={(r) => `/crm/orders/${r.id}`}
+            cols={[
+              { key: 'code', label: 'Mã', className: 'font-bold text-indigo-800' },
+              {
+                key: 'title',
+                label: 'Tiêu đề',
+                render: (r) => r.display_label || r.title || '—',
+              },
+              {
+                key: 'total',
+                label: 'Tổng',
+                align: 'right',
+                render: (r) => <span className="font-semibold tabular-nums">{formatVND(r.total || 0)}</span>,
+              },
+              {
+                key: 'paid',
+                label: 'Đã thu',
+                align: 'right',
+                render: (r) => <span className="text-[11px] text-emerald-700 tabular-nums">{formatVND(r.paid_amount || 0)}</span>,
+              },
+              {
+                key: 'status',
+                label: 'TT',
+                render: (r) => badge(O_STATUS, r.status, r.status === 'delivered' ? 'green' : r.status === 'cancelled' ? 'red' : 'blue'),
+              },
+              {
+                key: 'pay',
+                label: 'Thanh toán',
+                render: (r) => badge(PAY_STATUS, r.payment_status, payTone(r.payment_status)),
+              },
+            ]}
+          />
+          <DocTable
+            title="Hóa đơn"
+            icon={Receipt}
+            tone="violet"
+            rows={invoices}
+            empty="Chưa có hóa đơn"
+            href={(r) => `/crm/invoices/${r.id}`}
+            cols={[
+              { key: 'code', label: 'Mã', className: 'font-bold text-violet-800' },
+              { key: 'title', label: 'Tiêu đề' },
+              {
+                key: 'total',
+                label: 'Tổng',
+                align: 'right',
+                render: (r) => <span className="font-semibold tabular-nums">{formatVND(r.total || 0)}</span>,
+              },
+              {
+                key: 'paid',
+                label: 'Đã thu',
+                align: 'right',
+                render: (r) => <span className="text-[11px] text-emerald-700 tabular-nums">{formatVND(r.paid_amount || 0)}</span>,
+              },
+              {
+                key: 'pay',
+                label: 'Thanh toán',
+                render: (r) => badge(PAY_STATUS, r.payment_status, payTone(r.payment_status)),
+              },
+              {
+                key: 'date',
+                label: 'Ngày HĐ',
+                render: (r) => <span className="text-[11px] text-gray-500">{formatDate(r.invoice_date || r.created_at)}</span>,
+              },
+            ]}
+          />
+        </div>
+      )}
+
+      {payments.length > 0 && (
+        <div className="rounded-xl border border-emerald-200 bg-white overflow-hidden">
+          <div className="px-3 py-2 border-b bg-emerald-50 flex items-center justify-between">
+            <h4 className="text-xs font-bold text-emerald-950 uppercase tracking-wide">Lịch sử thu tiền ({payments.length})</h4>
+          </div>
+          <div className="overflow-x-auto max-h-48 overflow-y-auto">
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 bg-white text-[10px] uppercase text-gray-500">
+                <tr className="border-b text-left">
+                  <th className="py-1.5 px-3">Ngày</th>
+                  <th className="py-1.5 px-3">Số tiền</th>
+                  <th className="py-1.5 px-3">PT</th>
+                  <th className="py-1.5 px-3">Ghi chú</th>
+                  <th className="py-1.5 px-3 w-16" />
+                </tr>
+              </thead>
+              <tbody>
+                {payments.map((p) => (
+                  <tr key={p.id} className="border-b border-gray-50 hover:bg-emerald-50/40">
+                    <td className="py-1.5 px-3 text-xs text-gray-600">{formatDate(p.payment_date || p.created_at)}</td>
+                    <td className="py-1.5 px-3 font-semibold text-emerald-800 tabular-nums">{formatVND(p.amount || 0)}</td>
+                    <td className="py-1.5 px-3 text-xs text-gray-600">{p.payment_method || '—'}</td>
+                    <td className="py-1.5 px-3 text-xs text-gray-500 truncate max-w-[12rem]">
+                      {[p.reference_number, p.notes].filter(Boolean).join(' · ') || '—'}
+                    </td>
+                    <td className="py-1.5 px-3 text-right">
+                      {p.invoice_id && (
+                        <Link to={`/crm/invoices/${p.invoice_id}`} className="text-[11px] text-blue-600 hover:underline">HĐ</Link>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DocTable({ title, icon: Icon, tone, rows, empty, href, cols }) {
+  const head =
+    tone === 'sky' ? 'bg-sky-50 text-sky-950 border-sky-100'
+      : tone === 'indigo' ? 'bg-indigo-50 text-indigo-950 border-indigo-100'
+        : 'bg-violet-50 text-violet-950 border-violet-100';
+
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white overflow-hidden flex flex-col min-h-[12rem]">
+      <div className={`px-3 py-2 border-b flex items-center justify-between ${head}`}>
+        <h4 className="text-xs font-bold uppercase tracking-wide flex items-center gap-1.5">
+          <Icon className="h-3.5 w-3.5" /> {title}
+        </h4>
+        <span className="text-[10px] font-bold bg-white/70 px-1.5 py-0.5 rounded-full">{rows.length}</span>
+      </div>
+      {!rows.length ? (
+        <p className="text-xs text-gray-400 text-center py-8 px-3">{empty}</p>
+      ) : (
+        <div className="overflow-auto flex-1 max-h-[min(360px,45vh)]">
+          <table className="w-full text-sm">
+            <thead className="sticky top-0 bg-white shadow-sm z-10">
+              <tr className="text-left text-[10px] text-gray-500 uppercase border-b">
+                {cols.map((c) => (
+                  <th key={c.key} className={`py-1.5 px-2 font-semibold ${c.align === 'right' ? 'text-right' : ''}`}>{c.label}</th>
+                ))}
+                <th className="py-1.5 px-2 w-8" />
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.id} className="border-b border-gray-50 hover:bg-gray-50/80">
+                  {cols.map((c) => (
+                    <td key={c.key} className={`py-2 px-2 ${c.align === 'right' ? 'text-right' : ''} ${c.className || ''}`}>
+                      {c.render ? c.render(r) : (r[c.key] || '—')}
+                    </td>
+                  ))}
+                  <td className="py-2 px-2 text-right">
+                    <Link to={href(r)} className="inline-flex text-blue-600 hover:text-blue-800" title="Mở">
+                      <ExternalLink className="h-3.5 w-3.5" />
+                    </Link>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function ProjectOrdersTab({
   projectId,
@@ -12,9 +318,12 @@ export default function ProjectOrdersTab({
   logisticsView = false,
   taskScope = 'crm',
   onTaskArtifactsSynced = null,
+  onCountsChange = null,
 }) {
   const [orders, setOrders] = useState([]);
+  const [cashflow, setCashflow] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [cashLoading, setCashLoading] = useState(true);
   const [expanded, setExpanded] = useState({});
   const [pushing, setPushing] = useState(null);
   const [msg, setMsg] = useState('');
@@ -30,17 +339,48 @@ export default function ProjectOrdersTab({
   const [sxAssigneeId, setSxAssigneeId] = useState('');
   const didAutoExpandFirstRef = useRef(false);
 
+  const notifyCounts = useCallback((fulfillmentOrders, cf) => {
+    if (!onCountsChange) return;
+    const q = (cf?.quotations || []).length;
+    const o = (cf?.orders || []).length;
+    const i = (cf?.invoices || []).length;
+    onCountsChange({
+      commercial: q + o + i,
+      fulfillment: (fulfillmentOrders || []).length,
+      total: q + o + i || (fulfillmentOrders || []).length,
+    });
+  }, [onCountsChange]);
+
+  const loadCashflow = useCallback(async () => {
+    setCashLoading(true);
+    try {
+      const { data } = await api.get(`/projects/${projectId}/cashflow`);
+      setCashflow(data);
+      return data;
+    } catch {
+      setCashflow(null);
+      return null;
+    } finally {
+      setCashLoading(false);
+    }
+  }, [projectId]);
+
   const load = useCallback(async () => {
     setLoading(true);
     setMsg('');
     try {
-      const { data } = await api.get(`/projects/${projectId}/orders`);
-      setOrders(data.orders || []);
+      const [{ data }, cf] = await Promise.all([
+        api.get(`/projects/${projectId}/orders`),
+        loadCashflow(),
+      ]);
+      const list = data.orders || [];
+      setOrders(list);
+      notifyCounts(list, cf);
     } catch (e) {
       setMsg(e.response?.data?.error || e.message || 'Lỗi tải đơn');
     }
     setLoading(false);
-  }, [projectId]);
+  }, [projectId, loadCashflow, notifyCounts]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -60,7 +400,6 @@ export default function ProjectOrdersTab({
       .catch(() => setSxUsers([]));
   }, [sxCompanyId]);
 
-  // Mặc định mở đơn đầu tiên để thấy nhiệm vụ ngay
   useEffect(() => {
     if (!orders?.length) return;
     if (didAutoExpandFirstRef.current) return;
@@ -169,7 +508,7 @@ export default function ProjectOrdersTab({
     setDeletingOrderId(null);
   };
 
-  if (loading) {
+  if (loading && cashLoading && !cashflow && !orders.length) {
     return (
       <div className="flex items-center justify-center py-16 text-gray-500 gap-2">
         <Loader2 className="h-6 w-6 animate-spin" /> Đang tải đơn hàng…
@@ -178,7 +517,16 @@ export default function ProjectOrdersTab({
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
+      <CommercialDocsBlock
+        cashflow={cashflow}
+        loading={cashLoading}
+        onReload={async () => {
+          const cf = await loadCashflow();
+          notifyCounts(orders, cf);
+        }}
+      />
+
       <Modal
         open={sxModal.open}
         title={sxModal.mode === 'bulk' ? `Chuyển SX (${selectedIds.length} đơn)` : 'Chuyển SX'}
@@ -253,13 +601,14 @@ export default function ProjectOrdersTab({
           </div>
         </div>
       </Modal>
+
       <div className="flex flex-col sm:flex-row sm:items-end gap-3 justify-between bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-xl p-4">
         <div>
-          <h3 className="text-sm font-bold text-gray-900">{logisticsView ? 'Đơn hàng trên dự án VC' : 'Đơn hàng theo dự án'}</h3>
+          <h3 className="text-sm font-bold text-gray-900">{logisticsView ? 'Đơn đợt giao (VC)' : 'Đơn đợt giao / đẩy SX–VC'}</h3>
           <p className="text-xs text-gray-600 mt-1 max-w-xl">
             {logisticsView
               ? 'Các đơn đã bàn giao từ Sản xuất sang Lắp đặt. Cập nhật tiến độ đơn và nhiệm vụ deal con.'
-              : 'Mỗi đơn (nếu có trong hệ thống) có pipeline và nhiệm vụ CRM gắn deal con. Thêm đơn mới từ giao diện đã tắt — chỉ xem/xử lý đơn đã tồn tại. Khi sẵn sàng, đẩy đơn sang VC.'}
+              : 'Đơn con theo đợt (nếu có): pipeline + nhiệm vụ CRM, chuyển SX / đẩy VC. Khác với đơn hàng CRM ở trên.'}
           </p>
         </div>
         {!logisticsView && (
@@ -297,11 +646,11 @@ export default function ProjectOrdersTab({
       )}
 
       {orders.length === 0 ? (
-        <div className="text-center py-12 text-gray-500 text-sm border border-dashed border-gray-200 rounded-xl">
-          <Package className="h-10 w-10 mx-auto mb-2 text-gray-300" />
+        <div className="text-center py-8 text-gray-500 text-sm border border-dashed border-gray-200 rounded-xl">
+          <Package className="h-8 w-8 mx-auto mb-2 text-gray-300" />
           {logisticsView
             ? 'Chưa có đơn nào bàn giao cho dự án VC này.'
-            : 'Chưa có đơn hàng con. Thêm đơn để tách pipeline và nhiệm vụ theo từng đợt giao.'}
+            : 'Không có đơn đợt giao riêng — xem báo giá / đơn CRM / hóa đơn ở khối phía trên.'}
         </div>
       ) : (
         <div className="space-y-3">
@@ -413,7 +762,6 @@ export default function ProjectOrdersTab({
   );
 }
 
-// Modal (inline)
 function Modal({ open, title, children, onClose }) {
   if (!open) return null;
   return (

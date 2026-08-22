@@ -265,6 +265,7 @@ const ASSIGNMENT_STRUCTURAL_FIELDS = [
   'title', 'description', 'assignee_id', 'assignee_ids',
   'department_ids', 'region_ids', 'company_id', 'priority', 'deadline',
   'task_source_type', 'employee_error_module', 'assignment_module', 'lead_id',
+  'error_type_id', 'assignee_roles',
 ];
 
 function bodyHasStructuralAssignmentChange(body) {
@@ -349,7 +350,7 @@ function intersectAssignmentIds(currentIds, nextIds) {
 
 const ASSIGNMENT_SELECT = `
   id, company_id, executor_company_id, column_id, lead_id, crm_task_id, assignment_module,
-  task_source_type, employee_error_module, department_id, phat_sinh_kind, title, description,
+  task_source_type, employee_error_module, error_type_id, department_id, phat_sinh_kind, title, description,
   assignee_id, created_by_id, priority, status, deadline,
   position, created_at, updated_at, completed_at,
   assignee:users!crm_assignments_assignee_id_fkey(id, full_name, email, avatar),
@@ -448,15 +449,22 @@ async function attachAssigneesToAssignments(list) {
   const ids = list.map((x) => x.id);
   const byId = new Map();
   const CHUNK = 200;
+  const { attachRoleToUser, isAssignRoleColumnError } = require('../helpers/assignmentAssigneeRoles');
   for (let i = 0; i < ids.length; i += CHUNK) {
     const slice = ids.slice(i, i + CHUNK);
-    const { data: rows } = await supabase
+    let { data: rows, error } = await supabase
       .from('crm_assignment_assignees')
-      .select('assignment_id, user_id, user:users(id, full_name, email, avatar)')
+      .select('assignment_id, user_id, assign_role, user:users(id, full_name, email, avatar)')
       .in('assignment_id', slice);
+    if (error && isAssignRoleColumnError(error)) {
+      ({ data: rows, error } = await supabase
+        .from('crm_assignment_assignees')
+        .select('assignment_id, user_id, user:users(id, full_name, email, avatar)')
+        .in('assignment_id', slice));
+    }
     (rows || []).forEach((r) => {
       if (!byId.has(r.assignment_id)) byId.set(r.assignment_id, []);
-      if (r.user) byId.get(r.assignment_id).push(r.user);
+      if (r.user) byId.get(r.assignment_id).push(attachRoleToUser(r.user, r.assign_role));
     });
   }
   list.forEach((a) => { a.assignees = byId.get(a.id) || (a.assignee ? [a.assignee] : []); });
@@ -513,12 +521,9 @@ async function expandAssigneeIds({ assignee_ids, department_ids, region_ids, com
   return ids;
 }
 
-async function replaceAssignees(assignmentId, userIds) {
-  await supabase.from('crm_assignment_assignees').delete().eq('assignment_id', assignmentId);
-  if (!userIds.length) return [];
-  const rows = userIds.map((uid) => ({ assignment_id: assignmentId, user_id: uid }));
-  await supabase.from('crm_assignment_assignees').insert(rows);
-  return userIds;
+async function replaceAssignees(assignmentId, userIds, rolesByUserId) {
+  const { replaceAssignmentAssigneesWithRoles } = require('../helpers/assignmentAssigneeRoles');
+  return replaceAssignmentAssigneesWithRoles(assignmentId, userIds, rolesByUserId);
 }
 
 const { emitNotifyBadge } = require('../helpers/notifyBadge');
@@ -791,10 +796,11 @@ r.get('/', async (req, res) => {
 
     let { data, error } = await fetchAssignmentRowsPaged(makeFull, pageOpts);
 
-    if (error && /task_source_type|employee_error_module/.test(error.message || '')) {
+    if (error && /task_source_type|employee_error_module|error_type_id/.test(error.message || '')) {
       const legacySelect = ASSIGNMENT_SELECT
         .replace(/task_source_type,\s*/g, '')
-        .replace(/employee_error_module,\s*/g, '');
+        .replace(/employee_error_module,\s*/g, '')
+        .replace(/error_type_id,\s*/g, '');
       const makeLegacy = async () => applyCommonFilters(
         supabase.from('crm_assignments').select(legacySelect),
       );
@@ -919,6 +925,10 @@ r.put('/:id', async (req, res) => {
           update.employee_error_module = source.employee_error_module;
         }
       }
+      if (req.body.error_type_id !== undefined) {
+        const { normalizeErrorTypeId } = require('../helpers/sharedWorkspaceErrorTypes');
+        update.error_type_id = normalizeErrorTypeId(req.body.error_type_id);
+      }
       if (req.body.department_id !== undefined || req.body.phat_sinh_kind !== undefined) {
         const { resolvePhatSinhFields } = require('../helpers/sharedWorkspaceTaskSource');
         const ps = resolvePhatSinhFields(req.body);
@@ -950,6 +960,12 @@ r.put('/:id', async (req, res) => {
       newAssignees = req.body.assignee_id ? [req.body.assignee_id] : [];
     }
 
+    const { roleMapFromBody, pickPrimaryAssigneeId } = require('../helpers/assignmentAssigneeRoles');
+    const rolesByUserId = roleMapFromBody(req.body);
+    if (newAssignees) {
+      update.assignee_id = pickPrimaryAssigneeId(newAssignees, rolesByUserId);
+    }
+
     if (update.status !== undefined) {
       await applyAssignmentStatusColumn(update, update.status);
     }
@@ -960,8 +976,8 @@ r.put('/:id', async (req, res) => {
       .eq('id', req.params.id)
       .select(ASSIGNMENT_SELECT)
       .single();
-    if (error && /task_source_type|employee_error_module/.test(error.message || '')) {
-      const { task_source_type: _t, employee_error_module: _e, ...legacy } = update;
+    if (error && /task_source_type|employee_error_module|error_type_id/.test(error.message || '')) {
+      const { task_source_type: _t, employee_error_module: _e, error_type_id: _et, ...legacy } = update;
       ({ data, error } = await supabase
         .from('crm_assignments')
         .update(legacy)
@@ -978,7 +994,7 @@ r.put('/:id', async (req, res) => {
         .select('user_id')
         .eq('assignment_id', data.id);
       const prev = new Set((prevRows || []).map((r) => String(r.user_id)));
-      await replaceAssignees(data.id, newAssignees);
+      await replaceAssignees(data.id, newAssignees, rolesByUserId);
       for (const uid of newAssignees) {
         if (prev.has(String(uid))) continue;
         if (String(uid) === String(req.user.userId)) continue;

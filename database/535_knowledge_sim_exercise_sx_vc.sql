@@ -26,7 +26,7 @@ INSERT INTO knowledge_exercises (
   'simulation',
   $sim${
   "mode": "simulation",
-  "brief": "Điền 3 mục rồi bấm **Thêm dự án**:\n\n• Công ty SX: **Xưởng HCB**\n• Công ty VC/LĐ: **VC Phúc Đạt**\n• Ngày giờ: lắp **2 ngày liền nhau** (sau hôm nay) lúc **Sáng** — lấy hàng **không sau ngày lắp đầu** lúc **Chiều**",
+  "brief": "Điền 3 mục rồi bấm **Thêm dự án**:\n\n• Công ty SX: **Xưởng HCB**\n• Công ty VC/LĐ: **VC Phúc Đạt**\n• Ngày giờ: lắp **2 ngày liền nhau** (sau hôm nay) lúc **Sáng**. Ngày lấy hàng / vận chuyển: lúc **Chiều** — **vẫn không được sau ngày lắp đặt** (cùng ngày hoặc trước)",
   "scenario": {
     "deal": {
       "code": "DEAL-MP-2026-01",
@@ -59,10 +59,10 @@ INSERT INTO knowledge_exercises (
     { "id": "install_two_days", "label": "Chọn 2 ngày lắp liền nhau", "points": 2, "hint": "Bấm 2 ô ngày cạnh nhau ở bước 2", "check": { "type": "consecutive_days", "field": "install_dates", "value": 2 } },
     { "id": "install_future", "label": "Ngày lắp phải ở tương lai", "points": 1, "hint": "Không chọn ngày đã qua hoặc hôm nay", "check": { "type": "after_today", "field": "install_dates" } },
     { "id": "install_shift", "label": "Giờ lắp bấm nút «Sáng» (08:00)", "points": 1, "hint": "Nút Sáng ra 08:00, nút Chiều ra 14:00", "check": { "type": "equals", "field": "install_time", "value": "08:00" } },
-    { "id": "pickup_not_after", "label": "Ngày lấy hàng VC không sau ngày lắp đầu tiên", "points": 1, "hint": "Có thể cùng ngày lắp, không được sau", "check": { "type": "not_after_field", "field": "pickup_date", "other": "install_dates" } },
+    { "id": "pickup_not_after", "label": "Ngày lấy hàng / vận chuyển không được sau ngày lắp đặt", "points": 1, "hint": "Ngày VC đi lấy hàng được chọn, nhưng vẫn không được sau ngày lắp. Cùng ngày hoặc trước thì đạt.", "check": { "type": "not_after_field", "field": "pickup_date", "other": "install_dates" } },
     { "id": "pickup_shift", "label": "Giờ lấy hàng bấm nút «Chiều» (14:00)", "points": 1, "hint": "Bước 3 của form kế hoạch", "check": { "type": "equals", "field": "pickup_time", "value": "14:00" } },
     { "id": "vc_company", "label": "Chọn công ty VC/LĐ có cột lắp đặt tạm («VC Phúc Đạt»)", "points": 2, "required": true, "hint": "Công ty chưa bật cột tạm thì tổ VC/LĐ không thấy trước", "check": { "type": "equals", "field": "vc_company", "value": "phuc-dat" } },
-    { "id": "vc_notes", "label": "Ghi chú cho VC/LĐ ít nhất 2 dòng", "points": 2, "hint": "Ghi thứ ảnh hưởng tới xe và thợ: thang máy, chỗ đậu xe, hàng dễ vỡ", "check": { "type": "min_lines", "field": "vc_notes", "value": 2 } },
+    { "id": "vc_notes", "label": "Ghi chú cho VC/LĐ ít nhất 1 dòng", "points": 2, "hint": "Ghi thứ ảnh hưởng tới xe và thợ: thang máy, chỗ đậu xe, hàng dễ vỡ", "check": { "type": "min_lines", "field": "vc_notes", "value": 1 } },
     { "id": "saved", "label": "Bấm «Thêm dự án» để lưu kế hoạch", "points": 1, "required": true, "hint": "Bước 6 của form kế hoạch", "check": { "type": "true", "field": "saved" } },
     { "id": "temp_seen", "label": "Mở bảng VC/LĐ và thấy thẻ ở cột lắp đặt tạm", "points": 1, "hint": "Tab «VC / Lắp đặt» sau khi lưu", "check": { "type": "true", "field": "temp_card_seen" } },
     { "id": "drag_blocked", "label": "Thử chuyển thẻ TẠM sang cột khác và thấy bị chặn", "points": 2, "hint": "Bấm «Chuyển thẻ vào đây» ở một cột khác khi thẻ còn badge TẠM", "check": { "type": "true", "field": "drag_blocked_seen" } },

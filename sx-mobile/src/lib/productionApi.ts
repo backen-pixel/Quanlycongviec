@@ -2,6 +2,7 @@ import axios from 'axios';
 import { api } from '../api/client';
 import { normalizeCommentAttachments } from './commentAttachments';
 import { boardCacheKey, setCachedBoard, applyPendingPatchesToProjects, clearPendingProjectPatches, invalidateCachedBoard } from './productionBoardCache';
+import { projectIsShipped } from './sxBoardKpis';
 import type {
   KanbanStage,
   PersonalPlanner,
@@ -344,6 +345,8 @@ export function isSxProjectDeliveryDateOverdue(
   const index = stageIndex || buildStageIndex(stages);
   const stage = colId ? index.byId.get(String(colId)) : undefined;
   if (shouldIgnoreSxOrderDeliveryOverdue(stage)) return false;
+  // Đã bàn giao VC / lắp / BH / xong — khớp web projectIsShipped.
+  if (projectIsShipped(project)) return false;
   const raw = project.delivery_date || project.production_deadline || project.deadline;
   if (!raw || project.status === 'completed') return false;
   const t = new Date(raw);

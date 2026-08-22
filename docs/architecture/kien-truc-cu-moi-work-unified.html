@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <title>Kiến trúc Cũ vs Mới — Work Unified & Hệ sinh thái BizMind</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <style>
+    @page { size: A4 landscape; margin: 14mm; }
+    body { font-family: "Segoe UI", system-ui, sans-serif; color: #1e293b; max-width: 1100px; margin: 0 auto; padding: 24px 32px 48px; background: #fff; }
+    h1 { font-size: 1.5rem; border-bottom: 3px solid #2563eb; padding-bottom: 8px; margin-bottom: 4px; }
+    .meta { color: #64748b; font-size: 0.9rem; margin-bottom: 24px; }
+    h2 { font-size: 1.1rem; color: #1e40af; margin: 28px 0 10px; page-break-after: avoid; }
+    h3 { font-size: 0.95rem; color: #334155; margin: 16px 0 8px; }
+    p { margin: 8px 0; line-height: 1.55; }
+    .mermaid { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; margin: 12px 0 18px; page-break-inside: avoid; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.82rem; margin: 10px 0 18px; }
+    th, td { border: 1px solid #cbd5e1; padding: 7px 9px; text-align: left; vertical-align: top; }
+    th { background: #eff6ff; color: #1e40af; }
+    tr:nth-child(even) td { background: #f8fafc; }
+    .tag-old { background: #fef3c7; color: #92400e; padding: 2px 7px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
+    .tag-new { background: #dbeafe; color: #1e40af; padding: 2px 7px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
+    .tag-gap { background: #fee2e2; color: #991b1b; padding: 2px 7px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
+    .tag-keep { background: #d1fae5; color: #065f46; padding: 2px 7px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
+    .legend { display: flex; gap: 16px; flex-wrap: wrap; margin: 12px 0 20px; font-size: 0.82rem; }
+    .callout { background: #eff6ff; border-left: 4px solid #2563eb; padding: 12px 14px; border-radius: 0 8px 8px 0; margin: 14px 0; font-size: 0.88rem; }
+    .page-break { page-break-before: always; }
+    .footer { margin-top: 28px; padding-top: 10px; border-top: 1px solid #e2e8f0; font-size: 0.75rem; color: #94a3b8; text-align: center; }
+  </style>
+</head>
+<body>
+
+<h1>Kiến trúc Cũ vs Mới — Work Unified & Hệ sinh thái BizMind</h1>
+<p class="meta">Phiên bản 1.0 · 19/08/2026 · So sánh hiện trạng TuBep Pro / Quanlycongviec với kiến trúc đích BizMind</p>
+
+<div class="legend">
+  <span><span class="tag-keep">GIỮ & MỞ RỘNG</span> Đã có, tiếp tục phát triển</span>
+  <span><span class="tag-old">HIỆN TẠI</span> Cách hệ thống đang vận hành</span>
+  <span><span class="tag-new">ĐÍCH</span> Kiến trúc mục tiêu</span>
+  <span><span class="tag-gap">KHOẢNG TRỐNG</span> Chưa có, cần xây</span>
+</div>
+
+<h2>1. Bức tranh tổng thể: Cũ → Mới</h2>
+<div class="mermaid">
+flowchart TB
+    subgraph ASIS["HIEN TAI — TuBep Pro monolith"]
+        direction TB
+        A_CRM["CRM Kanban<br/>Lead Deal Bao gia Don hang"]
+        A_WU["Work Unified<br/>GATEWAY doc task<br/>tasks + crm_tasks + crm_assignment"]
+        A_SX["San xuat /sx<br/>projects + tasks SX"]
+        A_VC["Van chuyen /vc<br/>projects + tasks VC"]
+        A_KT["Ke toan /ketoan<br/>co ban"]
+        A_FLOW["Workflow Flows<br/>dang xay"]
+        A_CRM -->|"is_won tao project"| A_SX
+        A_SX -->|"handover-vc"| A_VC
+        A_WU -.->|"doc gom"| A_CRM
+        A_WU -.->|"doc gom"| A_SX
+        A_WU -.->|"doc gom"| A_VC
+    end
+
+    subgraph TOBE["DICH — BizMind Ecosystem"]
+        direction TB
+        B_CRM["CRM — SoR ban hang<br/>Lead Deal CPQ Hop dong"]
+        B_WU["Work Unified — Work Execution Engine<br/>Project Milestone Task Dependency Evidence"]
+        B_MES["Production MES — SoR san xuat<br/>BOM Lenh SX QC WIP"]
+        B_WMS["Warehouse — SoR ton kho"]
+        B_FIELD["Field Install — SoR lap dat nghiem thu"]
+        B_FIN["Finance — SoR thu chi cong no"]
+        B_BIZ["BizMind BI Control Tower"]
+        B_AI["AI Agents + Task Registry"]
+        B_CRM -->|"Order approved"| B_WU
+        B_WU --> B_MES
+        B_WU --> B_WMS
+        B_WU --> B_FIELD
+        B_WU --> B_FIN
+        B_BIZ --> B_AI
+        B_AI -.->|"doc + canh bao + giao viec"| B_WU
+    end
+
+    ASIS -->|"Chuyen doi tung giai doan"| TOBE
+</div>
+
+<div class="callout">
+  <strong>Điểm cốt lõi:</strong> Hiện tại Work Unified là <em>màn hình gom task</em> (read gateway). Kiến trúc đích biến nó thành <em>Work Execution Engine</em> — nguồn sự thật về việc phải làm, ai làm, khi nào, phụ thuộc và bằng chứng.
+</div>
+
+<h2>2. Ranh giới trách nhiệm: Ai sở hữu dữ liệu gì?</h2>
+<div class="mermaid">
+flowchart LR
+    subgraph Legend["Nguyen tac tach SoR"]
+        direction TB
+        L1["CRM = ban duoc gi cho ai"]
+        L2["Work Unified = thuc hien cam ket"]
+        L3["Production = tao ra san pham"]
+        L4["Finance = tien va cong no"]
+    end
+
+    subgraph Now["HIEN TAI — ranh gioi mo"]
+        N1["CRM om ca ban hang<br/>+ mot phan task CRM<br/>+ stage sx_transfer"]
+        N2["Work Unified KHONG SoR<br/>chi VIEW gom 3 bang"]
+        N3["SX VC om project + task<br/>trung lap voi CRM task"]
+    end
+
+    subgraph Target["DICH — ranh gioi ro"]
+        T1["CRM chi Lead Deal Quote Order"]
+        T2["Work Unified SoR<br/>Project Milestone WorkItem"]
+        T3["MES SoR ProductionOrder QC"]
+        T4["Field SoR Installation Acceptance"]
+    end
+</div>
+
+<table>
+  <thead><tr><th>Đối tượng</th><th>Hiện tại (TuBep Pro)</th><th>Đích (BizMind)</th><th>Trạng thái</th></tr></thead>
+  <tbody>
+    <tr><td>Lead, Deal, Pipeline</td><td><code>crm_leads</code>, <code>crm_pipeline_stages</code></td><td>CRM — System of Record</td><td><span class="tag-keep">GIỮ</span></td></tr>
+    <tr><td>Task CRM trên deal</td><td><code>crm_tasks</code> (thuộc CRM)</td><td>Task pre-sale vẫn ở CRM; post-sale chuyển sang Work Unified</td><td><span class="tag-gap">TÁCH DẦN</span></td></tr>
+    <tr><td>Task SX/VC</td><td><code>tasks</code> gắn <code>project_id</code></td><td>WorkItem thuộc Milestone; SX chỉ ghi nhận tiến độ thực tế</td><td><span class="tag-gap">TÁI CẤU TRÚC</span></td></tr>
+    <tr><td>Work Unified</td><td>VIEW <code>unified_tasks_v</code> + gateway <code>/api/work-tasks</code></td><td>Engine riêng: Project → Milestone → Task → Dependency → Evidence</td><td><span class="tag-gap">NÂNG CẤP LỚN</span></td></tr>
+    <tr><td>Project / Dự án</td><td><code>projects</code> tạo từ deal won</td><td>Project vận hành (Order Execution) — khác Deal CRM</td><td><span class="tag-keep">GIỮ + MỞ RỘNG</span></td></tr>
+    <tr><td>Multi-công ty</td><td><code>company_id</code> trên mọi bảng</td><td><code>legal_entity_id</code> + chuỗi liên công ty VPT→Metala</td><td><span class="tag-gap">BỔ SUNG</span></td></tr>
+    <tr><td>AI / Agent</td><td>Flow AI nodes (đang xây), chưa registry</td><td>BizMind + 33 Agent + Task Registry + Approval</td><td><span class="tag-gap">MỚI</span></td></tr>
+    <tr><td>KPI CEO</td><td>CRM reports, SX dashboard riêng lẻ</td><td>Control Tower đọc Work Unified + BI</td><td><span class="tag-gap">MỚI</span></td></tr>
+  </tbody>
+</table>
+
+<h2 class="page-break">3. Luồng nghiệp vụ: Cũ vs Mới (VPT → Metala)</h2>
+<div class="mermaid">
+flowchart TB
+    subgraph OldFlow["LUONG HIEN TAI"]
+        O1["CRM: Lead → Deal → Won"]
+        O2["autoCreateProject<br/>crm_leads.project_id"]
+        O3["SX Kanban: tasks tu template"]
+        O4["handover-vc → VC tasks"]
+        O5["CRM stage vc_delivery<br/>dong bo thu cong"]
+        O1 --> O2 --> O3 --> O4 --> O5
+    end
+
+    subgraph NewFlow["LUONG DICH — mot hanh trinh duy nhat"]
+        N1["VPT Sales — CRM chot don"]
+        N2["VPT Project — Work Unified tao Project"]
+        N3["Metala Production — MES lenh SX"]
+        N4["Metala QC — QC Passed Failed"]
+        N5["VPT Delivery — Work Item giao hang"]
+        N6["VPT Installation — Field task"]
+        N7["Customer Acceptance — Evidence + Finance"]
+        N1 --> N2 --> N3 --> N4 --> N5 --> N6 --> N7
+    end
+
+    OldFlow -.->|"evolve"| NewFlow
+</div>
+
+<h3>Ví dụ chuỗi xuyên công ty (đích)</h3>
+<div class="mermaid">
+flowchart LR
+    S["VPT Sales<br/>CRM"] --> P["VPT Project<br/>Work Unified PM"]
+    P --> MP["Metala Production<br/>MES"]
+    MP --> QC["Metala QC"]
+    QC --> D["VPT Delivery"]
+    D --> I["VPT Installation"]
+    I --> A["Customer Acceptance"]
+    A --> F["Finance + Warranty"]
+
+    style S fill:#d1fae5
+    style P fill:#dbeafe
+    style MP fill:#fef3c7
+    style QC fill:#fef3c7
+    style D fill:#dbeafe
+    style I fill:#dbeafe
+    style A fill:#d1fae5
+    style F fill:#e0e7ff
+</div>
+<p><strong>Hai loại trách nhiệm:</strong> Với khách hàng — VPT chịu từ đầu đến cuối. Thực hiện công đoạn — thay đổi theo từng bước (Metala sản xuất/QC, VPT giao/lắp).</p>
+
+<h2>4. Work Unified — 5 tầng: Hiện có vs Cần xây</h2>
+<div class="mermaid">
+flowchart TB
+    subgraph Layer["5 TANG Work Execution Engine"]
+        L1["Tang 1 — Project/Order"]
+        L2["Tang 2 — Milestone"]
+        L3["Tang 3 — Task / WorkItem"]
+        L4["Tang 4 — Dependency"]
+        L5["Tang 5 — Evidence"]
+    end
+
+    subgraph Has["DA CO"]
+        H1["projects + crm_leads link"]
+        H3a["tasks SX/VC"]
+        H3b["crm_tasks + crm_assignments"]
+        H3c["unified_tasks_v VIEW gom"]
+        H5a["file_attachments anh file"]
+    end
+
+    subgraph Need["CAN XAY"]
+        N2["Milestone model + template"]
+        N4["Dependency graph + cascade delay"]
+        N5["Evidence contract per task type"]
+        NX["Next Action engine"]
+        NX2["Cross-company handoff chain"]
+        NX3["Agent Task Registry"]
+    end
+
+    L1 --- H1
+    L2 --- N2
+    L3 --- H3a
+    L3 --- H3b
+    L3 --- H3c
+    L4 --- N4
+    L5 --- H5a
+    L5 --- N5
+</div>
+
+<table>
+  <thead><tr><th>Tầng</th><th>Hiện tại</th><th>Đích</th><th>Gap</th></tr></thead>
+  <tbody>
+    <tr><td>1. Project</td><td><code>projects</code> + link CRM deal</td><td>Hồ sơ vận hành đầy đủ: PM, cam kết, công ty SX, giá trị HĐ</td><td>Thiếu metadata cross-company, intercompany link</td></tr>
+    <tr><td>2. Milestone</td><td>Stage CRM / cột Kanban SX/VC (visual only)</td><td>Mốc lớn: Khảo sát → Thiết kế → SX → QC → Lắp → Nghiệm thu</td><td><span class="tag-gap">Chưa có entity Milestone</span></td></tr>
+    <tr><td>3. Task</td><td>3 nguồn rời: tasks, crm_tasks, crm_assignments</td><td>WorkItem thống nhất dưới Milestone</td><td>Cần model hợp nhất, không chỉ VIEW</td></tr>
+    <tr><td>4. Dependency</td><td>Không có</td><td>Graph phụ thuộc + dự báo trễ lan truyền</td><td><span class="tag-gap">Chưa có</span></td></tr>
+    <tr><td>5. Evidence</td><td>Attachment rời trên task</td><td>Hoàn thành bắt buộc bằng chứng theo loại task</td><td>Cần contract + validation</td></tr>
+    <tr><td>Next Action</td><td>Filter quá hạn trên dashboard</td><td>Mỗi project trả lời: việc tiếp theo, ai, hạn, blocker</td><td><span class="tag-gap">Chưa có engine</span></td></tr>
+  </tbody>
+</table>
+
+<h2 class="page-break">5. Ánh xạ module phần mềm: Cũ → Mới</h2>
+<div class="mermaid">
+flowchart LR
+    subgraph Current["TU BEP PRO — module hien co"]
+        c1["/crm — CRM"]
+        c2["/work/unified — Gateway"]
+        c3["/sx — Production"]
+        c4["/vc — Logistics"]
+        c5["/ketoan — Accounting"]
+        c6["/mua-hang — Purchasing"]
+        c7["/work/flows — Workflow"]
+        c8["/drive — Files"]
+        c9["/knowledge — Training"]
+        c10["/platform — SaaS admin"]
+    end
+
+    subgraph Target2["BIZMIND — domain dich"]
+        t1["CRM and Growth"]
+        t2["Work Unified Engine"]
+        t3["MES Production"]
+        t4["WMS and Logistics"]
+        t5["Field Install"]
+        t6["Finance Integration"]
+        t7["Procurement"]
+        t8["Workflow and Approval"]
+        t9["Document and Media"]
+        t10["AI Agent Platform"]
+        t11["Data BI Control Tower"]
+    end
+
+    c1 -->|"giu mo rong"| t1
+    c2 -->|"nang cap thanh engine"| t2
+    c3 -->|"tach SoR SX"| t3
+    c4 -->|"tach SoR VC"| t4
+    c4 -->|"them field layer"| t5
+    c5 -->|"connector"| t6
+    c6 -->|"mo rong"| t7
+    c7 -->|"platform workflow"| t8
+    c8 -->|"metadata tap trung"| t9
+    c9 -->|"giu"| t9
+    c10 -->|"IAM tenant"| t11
+    t10 -.->|"moi"| t2
+    t11 -.->|"moi"| t2
+</div>
+
+<h2>6. Kiến trúc kỹ thuật: Cũ vs Mới</h2>
+<div class="mermaid">
+flowchart TB
+    subgraph TechNow["HIEN TAI"]
+        FE1["React + Vite frontend"]
+        BE1["Express modular monolith"]
+        DB1["Supabase PostgreSQL"]
+        RT1["Socket.IO"]
+        DEP1["Render single service"]
+        INT1["No event bus<br/>Direct Supabase queries"]
+    end
+
+    subgraph TechTarget["DICH — giai doan chuyen"]
+        FE2["BizMind Workspace Shell"]
+        BE2["Modular monolith + API Gateway facade"]
+        DB2["PostgreSQL + ODS + DWH"]
+        RT2["Event bus outbox"]
+        DEP2["Giữ stack hiện tại giai đoạn 1"]
+        INT2["Adapters CRM Work MES Field Finance"]
+        AI2["Agent Gateway + Tool Registry"]
+    end
+
+    TechNow -->|"bo sung dan"| TechTarget
+</div>
+
+<div class="callout">
+  <strong>Không big-bang:</strong> Giai đoạn 1 giữ frontend/backend hiện hữu. Bổ sung Organization/IAM, global ID, API facade, Agent Task Registry, audit. Work Unified evolve từ gateway → engine theo lát cắt VPT pilot.
+</div>
+
+<h2>7. Lộ trình chuyển đổi (trên nền hiện có)</h2>
+<div class="mermaid">
+gantt
+    title Chuyen doi Work Unified tren nen TuBep Pro
+    dateFormat YYYY-MM-DD
+    section Giai doan 0 — Hien trang
+    Chup kiến truc + API inventory           :done, p0, 2026-08-01, 3w
+    section Giai doan 1 — Nen tang
+    Milestone model + Project template       :p1a, 2026-09-01, 4w
+    Next Action + Blocker tren project       :p1b, after p1a, 3w
+    Agent Task Registry pilot                :p1c, after p1a, 4w
+    CEO dashboard doc Work Unified           :p1d, after p1b, 3w
+    section Giai doan 2 — Lien cong ty
+    Intercompany PO/SO VPT-Metala            :p2a, 2026-11-01, 6w
+    Cross-company milestone handoff          :p2b, after p2a, 4w
+    section Giai doan 3 — Engine day du
+    Dependency graph + cascade alert         :p3a, 2027-01-01, 6w
+    Evidence contract per task type          :p3b, after p3a, 4w
+    BizMind Control Tower                    :p3c, after p3b, 6w
+</div>
+
+<h2>8. Tóm tắt một câu</h2>
+<table>
+  <thead><tr><th></th><th>Hiện tại</th><th>Đích</th></tr></thead>
+  <tbody>
+    <tr><td><strong>CRM</strong></td><td>Biết khách & doanh thu ở đâu</td><td>Giữ nguyên vai trò — không ôm execution</td></tr>
+    <tr><td><strong>Work Unified</strong></td><td>Gom & hiển thị task từ 3 nguồn</td><td>Engine điều hành cam kết với khách</td></tr>
+    <tr><td><strong>SX / VC</strong></td><td>Module Kanban + tasks riêng</td><td>System of Record thực thi (MES/Field)</td></tr>
+    <tr><td><strong>AI</strong></td><td>Flow nodes, chưa registry</td><td>Đọc Work Unified → 5 vấn đề cần quản trị</td></tr>
+    <tr><td><strong>Multi-công ty</strong></td><td>company_id filter</td><td>Chuỗi VPT→Metala một timeline</td></tr>
+  </tbody>
+</table>
+
+<div class="footer">Quanlycongviec / BizMind · Kiến trúc Cũ vs Mới · Work Unified Work Execution Engine</div>
+
+<script>
+  mermaid.initialize({ startOnLoad: true, theme: 'default', securityLevel: 'loose', flowchart: { useMaxWidth: true, htmlLabels: true } });
+</script>
+</body>
+</html>

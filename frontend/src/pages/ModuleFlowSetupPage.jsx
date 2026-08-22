@@ -18,7 +18,9 @@ import {
   GitBranch, Plus, Save, Trash2, Copy, ArrowRight, X,
   Layers, Factory, Truck, UserCircle, Puzzle, MousePointer2, ExternalLink, FolderKanban,
   PanelLeft, PanelRight, ChevronDown, ChevronRight, Power, Link2, ListTree, Building2, Network,
-  GitFork, Waypoints,
+  GitFork, Waypoints, Split, Merge, Hourglass, Stamp, CircleStop, FileBarChart2, BellRing, Megaphone,
+  PlayCircle, Sparkles, Send, CheckCircle2, AlertCircle, Undo2, Redo2,
+  Tags, ScanText, MessageCircleQuestion, MinusCircle,
 } from 'lucide-react';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -27,6 +29,22 @@ import FlowRelationEdge from '../components/flow/FlowRelationEdge';
 import EdgeInspector from '../components/flow/EdgeInspector';
 import FlowConditionList from '../components/flow/FlowConditionList';
 import FlowConditionPicker from '../components/flow/FlowConditionPicker';
+import SpecialFlowNode from '../components/flow/SpecialFlowNode';
+import NodeOutputsPanel from '../components/flow/NodeOutputsPanel';
+import SpecialNodeInspector from '../components/flow/SpecialNodeInspector';
+import {
+  NODE_KIND,
+  SPECIAL_KINDS,
+  specialMeta,
+  isSpecialKind,
+  rfNodeType,
+  defaultNodeConfig,
+  encodePalettePayload,
+  decodePalettePayload,
+  nodeDisplayLabel,
+  MODULE_CONDITIONS,
+} from '../lib/flowNodeCatalog';
+import { buildStandardCabinetBlueprint, isBareLinearCabinetFlow } from '../lib/flowStandardBlueprint';
 import {
   BRANCH_MODE_OPTIONS,
   JOIN_MODE_OPTIONS,
@@ -146,46 +164,69 @@ function orderFromGraph(rfNodes, rfEdges) {
     .filter(Boolean);
 }
 
-function buildInitialGraph(flow, customModules) {
-  const steps = flow?.steps?.length
-    ? flow.steps
-    : [
-      { module_key: 'crm', handoff_trigger: 'on_won', description: '' },
-      { module_key: 'production', handoff_trigger: 'on_stage_flag', description: '' },
-      { module_key: 'logistics', handoff_trigger: 'manual', description: '' },
-    ];
+function stepToRfNode(s, i, customModules) {
+  const kind = s.node_kind && s.node_kind !== 'module' ? s.node_kind : NODE_KIND.MODULE;
+  const x = Number.isFinite(Number(s.position_x)) && s.position_x != null
+    ? Number(s.position_x)
+    : 80 + i * (NODE_W + 80);
+  const y = Number.isFinite(Number(s.position_y)) && s.position_y != null
+    ? Number(s.position_y)
+    : 160;
 
-  const nodes = steps.map((s, i) => {
-    const key = s.module_key || s.resolved_module_key || 'crm';
-    const meta = moduleMeta(key, customModules);
-    const x = Number.isFinite(Number(s.position_x)) && s.position_x != null
-      ? Number(s.position_x)
-      : 80 + i * (NODE_W + 80);
-    const y = Number.isFinite(Number(s.position_y)) && s.position_y != null
-      ? Number(s.position_y)
-      : 160;
+  if (isSpecialKind(kind)) {
+    const meta = specialMeta(kind);
     return {
-      id: s.node_id || `n-${key}-${i}`,
-      type: 'moduleNode',
+      id: s.node_id || `n-${kind}-${i}`,
+      type: 'specialNode',
       position: { x, y },
       data: {
-        module_key: key,
-        handoff_trigger: s.handoff_trigger || DEFAULT_TRIGGER[key] || 'manual',
+        node_kind: kind,
+        node_config: s.node_config && typeof s.node_config === 'object' ? s.node_config : defaultNodeConfig(kind),
         description: s.description || '',
-        division_unit_id: s.division_unit_id || '',
-        company_unit_id: s.company_unit_id || '',
-        template_set_id: s.template_set_id || '',
-        branch_mode: s.branch_mode || 'sequential',
+        branch_mode: s.branch_mode || (kind === 'condition' ? 'conditional' : 'sequential'),
         join_mode: s.join_mode || 'all',
-        label: meta.label,
-        color: meta.color,
-        desc: meta.desc,
-        isCustom: Boolean(meta.isCustom),
-        emoji: meta.emoji || null,
+        label: s.node_config?.label || meta?.label || kind,
+        color: meta?.color || '#64748b',
       },
     };
-  });
+  }
 
+  const key = s.module_key || s.resolved_module_key || 'crm';
+  const meta = moduleMeta(key, customModules);
+  return {
+    id: s.node_id || `n-${key}-${i}`,
+    type: 'moduleNode',
+    position: { x, y },
+    data: {
+      node_kind: NODE_KIND.MODULE,
+      module_key: key,
+      handoff_trigger: s.handoff_trigger || DEFAULT_TRIGGER[key] || 'manual',
+      description: s.description || '',
+      division_unit_id: s.division_unit_id || '',
+      company_unit_id: s.company_unit_id || '',
+      template_set_id: s.template_set_id || '',
+      branch_mode: s.branch_mode || 'sequential',
+      join_mode: s.join_mode || 'all',
+      node_config: s.node_config || {},
+      label: meta.label,
+      color: meta.color,
+      desc: meta.desc,
+      isCustom: Boolean(meta.isCustom),
+      emoji: meta.emoji || null,
+    },
+  };
+}
+
+function applyBlueprintMarker(graph) {
+  return { ...graph, fromBlueprint: true };
+}
+
+function buildInitialGraph(flow, customModules) {
+  if (!flow?.steps?.length) {
+    return applyBlueprintMarker(buildStandardCabinetBlueprint());
+  }
+
+  const nodes = flow.steps.map((s, i) => stepToRfNode(s, i, customModules));
   const nodeIds = new Set(nodes.map((n) => n.id));
   const savedEdges = (flow?.edges || [])
     .filter((e) => nodeIds.has(e.source_node_id) && nodeIds.has(e.target_node_id))
@@ -193,13 +234,16 @@ function buildInitialGraph(flow, customModules) {
       ...newEdge(e.source_node_id, e.target_node_id),
       data: { label: e.label || '', condition_logic: e.condition_logic || 'all' },
     }));
-
-  // Luồng cũ chưa có cạnh nào: dựng lại chuỗi thẳng theo thứ tự bước.
   const edges = savedEdges.length
     ? savedEdges
     : nodes.slice(0, -1).map((n, i) => newEdge(n.id, nodes[i + 1].id));
 
-  return { nodes, edges };
+  const conditions = conditionsFromApi(flow?.conditions);
+  if (isBareLinearCabinetFlow(nodes, edges, conditions)) {
+    return applyBlueprintMarker(buildStandardCabinetBlueprint());
+  }
+
+  return { nodes, edges, conditions, fromBlueprint: false };
 }
 
 const ModuleFlowNode = memo(function ModuleFlowNode({ id, data, selected }) {
@@ -208,11 +252,16 @@ const ModuleFlowNode = memo(function ModuleFlowNode({ id, data, selected }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuMode, setMenuMode] = useState('sequential');
   const available = (data.availableModules || []).filter((m) => m.key !== data.module_key);
+  const specials = data.availableSpecials || [];
   const connectTargets = data.connectTargets || [];
-  const showPlus = available.length > 0 || connectTargets.length > 0;
+  const showPlus = available.length > 0 || specials.length > 0 || connectTargets.length > 0;
 
   const pickModule = (moduleKey) => {
-    data.onAddNext?.(id, moduleKey, menuMode);
+    data.onAddNext?.(id, { kind: NODE_KIND.MODULE, moduleKey }, menuMode);
+    setMenuOpen(false);
+  };
+  const pickSpecial = (kind) => {
+    data.onAddNext?.(id, { kind }, kind === NODE_KIND.CONDITION ? 'conditional' : menuMode);
     setMenuOpen(false);
   };
 
@@ -284,6 +333,19 @@ const ModuleFlowNode = memo(function ModuleFlowNode({ id, data, selected }) {
             {triggerLabel || '— Thủ công —'}
           </p>
         </div>
+        {(MODULE_CONDITIONS[data.module_key] || []).filter((c) => c.flag).slice(0, 4).length > 0 && (
+          <div className="flex flex-wrap gap-1">
+            {(MODULE_CONDITIONS[data.module_key] || []).filter((c) => c.flag).slice(0, 4).map((c) => (
+              <span
+                key={c.flag}
+                className="rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[9px] font-semibold text-amber-800"
+                title={c.when}
+              >
+                {c.label}
+              </span>
+            ))}
+          </div>
+        )}
         {data.description ? (
           <div className="rounded-lg bg-[#f5f7fa] px-2.5 py-1.5">
             <p className="text-[9px] font-semibold uppercase tracking-wider text-slate-400 mb-0.5">Ghi chú</p>
@@ -337,7 +399,7 @@ const ModuleFlowNode = memo(function ModuleFlowNode({ id, data, selected }) {
                 <button
                   type="button"
                   onClick={() => setMenuMode('sequential')}
-                  className={`flex-1 rounded-md px-1.5 py-1 text-[10px] font-semibold cursor-pointer transition-colors ${
+                  className={`flex-1 rounded-md px-1 py-1 text-[10px] font-semibold cursor-pointer transition-colors ${
                     menuMode === 'sequential' ? 'bg-white text-[#296DFF] shadow-sm' : 'text-slate-500'
                   }`}
                   title="Chạy xong node này rồi mới sang node kế"
@@ -347,12 +409,22 @@ const ModuleFlowNode = memo(function ModuleFlowNode({ id, data, selected }) {
                 <button
                   type="button"
                   onClick={() => setMenuMode('parallel')}
-                  className={`flex-1 flex items-center justify-center gap-0.5 rounded-md px-1.5 py-1 text-[10px] font-semibold cursor-pointer transition-colors ${
+                  className={`flex-1 flex items-center justify-center gap-0.5 rounded-md px-1 py-1 text-[10px] font-semibold cursor-pointer transition-colors ${
                     menuMode === 'parallel' ? 'bg-white text-violet-600 shadow-sm' : 'text-slate-500'
                   }`}
                   title="Mở tất cả nhánh sau cùng lúc"
                 >
                   <GitFork className="h-2.5 w-2.5" /> Song song
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMenuMode('conditional')}
+                  className={`flex-1 rounded-md px-1 py-1 text-[10px] font-semibold cursor-pointer transition-colors ${
+                    menuMode === 'conditional' ? 'bg-white text-amber-700 shadow-sm' : 'text-slate-500'
+                  }`}
+                  title="Rẽ theo điều kiện của từng cạnh"
+                >
+                  Rẽ ĐK
                 </button>
               </div>
               {available.map((m) => {
@@ -374,6 +446,25 @@ const ModuleFlowNode = memo(function ModuleFlowNode({ id, data, selected }) {
                   </button>
                 );
               })}
+
+              {specials.length > 0 && (
+                <>
+                  <p className="mt-1 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-amber-600">
+                    Điều khiển / hành động
+                  </p>
+                  {specials.map((s) => (
+                    <button
+                      key={s.kind}
+                      type="button"
+                      onClick={() => pickSpecial(s.kind)}
+                      className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-slate-50 text-left cursor-pointer"
+                    >
+                      <span className="w-6 h-6 rounded-md shrink-0" style={{ background: `${s.color}22` }} />
+                      <span className="text-[12px] font-medium text-slate-700 truncate">{s.label}</span>
+                    </button>
+                  ))}
+                </>
+              )}
 
               {connectTargets.length > 0 && (
                 <>
@@ -420,15 +511,40 @@ const ModuleFlowNode = memo(function ModuleFlowNode({ id, data, selected }) {
   );
 });
 
-const nodeTypes = { moduleNode: ModuleFlowNode };
+const nodeTypes = { moduleNode: ModuleFlowNode, specialNode: SpecialFlowNode };
 const edgeTypes = { relation: FlowRelationEdge };
 
-function PaletteItem({ m, used, onDragStart, onDragEnd }) {
+const SPECIAL_ICONS = {
+  condition: GitFork,
+  fork: Split,
+  join: Merge,
+  wait: Hourglass,
+  approve: Stamp,
+  end: CircleStop,
+  report: FileBarChart2,
+  ai_report: Sparkles,
+  ai_deadline: BellRing,
+  notify: Megaphone,
+  ai_classify: Tags,
+  ai_extract: ScanText,
+  ai_ask: MessageCircleQuestion,
+};
+
+function normalizeAddSpec(spec) {
+  if (!spec) return null;
+  if (typeof spec === 'string') return { kind: NODE_KIND.MODULE, moduleKey: spec };
+  return {
+    kind: spec.kind || NODE_KIND.MODULE,
+    moduleKey: spec.moduleKey || spec.module_key || null,
+  };
+}
+
+function PaletteItem({ m, used, onDragStart, onDragEnd, payload }) {
   const Icon = m.Icon;
   return (
     <div
       draggable
-      onDragStart={(e) => onDragStart(e, m.key)}
+      onDragStart={(e) => onDragStart(e, payload || { kind: NODE_KIND.MODULE, moduleKey: m.key })}
       onDragEnd={onDragEnd}
       className={`flex items-center gap-2.5 px-2.5 py-2 rounded-xl bg-white select-none transition-all cursor-grab active:cursor-grabbing ring-1 hover:ring-[#296DFF]/40 hover:shadow-md ${
         used ? 'opacity-60 ring-slate-100' : 'ring-slate-200/80'
@@ -544,7 +660,7 @@ export default function ModuleFlowSetupPage() {
                 Setup luồng module
               </h1>
               <p className="text-xs text-gray-500 mt-0.5">
-                Canvas kéo thả · nối node CRM / Dự án / SX / Lắp đặt và cả module tùy chỉnh
+                Canvas kéo thả · nhánh rẽ · khối điều kiện / báo cáo / AI giữa các bước module
               </p>
             </div>
             <button
@@ -632,8 +748,11 @@ export default function ModuleFlowSetupPage() {
 function FlowCard({ flow, customModules, onEdit, onDelete, onClone, onToggleActive }) {
   const steps = flow.steps || [];
   const active = flow.is_active !== false;
-  const firstMeta = steps.length
-    ? moduleMeta(steps[0].module_key || steps[0].resolved_module_key, customModules)
+  const firstStep = steps[0];
+  const firstMeta = firstStep
+    ? (isSpecialKind(firstStep.node_kind)
+      ? { label: specialMeta(firstStep.node_kind)?.label || firstStep.node_kind, color: specialMeta(firstStep.node_kind)?.color }
+      : moduleMeta(firstStep.module_key || firstStep.resolved_module_key, customModules))
     : null;
   return (
     <div className={`bg-white rounded-xl border overflow-hidden hover:shadow-sm transition-shadow ${active ? '' : 'opacity-70'}`}>
@@ -659,7 +778,10 @@ function FlowCard({ flow, customModules, onEdit, onDelete, onClone, onToggleActi
         </div>
         <div className="hidden sm:flex items-center gap-1 shrink-0 max-w-[420px] overflow-x-auto">
           {steps.map((step, i) => {
-            const meta = moduleMeta(step.module_key || step.resolved_module_key, customModules);
+            const special = isSpecialKind(step.node_kind) ? specialMeta(step.node_kind) : null;
+            const meta = special
+              ? { label: step.node_config?.label || special.label, color: special.color }
+              : moduleMeta(step.module_key || step.resolved_module_key, customModules);
             return (
               <span key={step.id || i} className="flex items-center gap-1 shrink-0">
                 {i > 0 && <ArrowRight className="h-3 w-3 text-gray-300 shrink-0" />}
@@ -1681,6 +1803,94 @@ function NodeEcosystemDiagram({ moduleKey, accent = '#296DFF' }) {
   );
 }
 
+const HISTORY_LIMIT = 60;
+/** Kéo node bắn ra rất nhiều thay đổi vị trí — gộp lại thành một mốc hoàn tác. */
+const HISTORY_DEBOUNCE_MS = 350;
+
+/** Đúng các trường của node được ghi xuống DB — xem nodesToStepsPayload. */
+const HISTORY_DATA_FIELDS = [
+  'node_kind', 'node_config', 'label', 'module_key', 'handoff_trigger', 'description',
+  'company_unit_id', 'template_set_id', 'division_unit_id', 'branch_mode', 'join_mode',
+];
+
+/**
+ * Chữ ký đồ thị dùng để so hai trạng thái. Chỉ lấy phần được lưu: canvas còn nhét
+ * callback, danh sách module và cờ bung hệ sinh thái vào `node.data`, tính vào đây
+ * thì mỗi lần chọn node lại đẻ ra một mốc hoàn tác rỗng.
+ */
+function graphKey(nodes, edges, conditions) {
+  return JSON.stringify({
+    n: nodes.map((n) => [
+      n.id,
+      Math.round(n.position?.x ?? 0),
+      Math.round(n.position?.y ?? 0),
+      HISTORY_DATA_FIELDS.map((f) => n.data?.[f] ?? null),
+    ]),
+    e: edges.map((e) => [e.id, e.source, e.target, e.data?.label ?? '', e.data?.condition_logic ?? 'all']),
+    c: conditions,
+  });
+}
+
+/** Ngăn xếp hoàn tác / làm lại cho canvas: node, cạnh và điều kiện đi cùng nhau. */
+function useGraphHistory({ nodes, edges, conditions, setNodes, setEdges, setConditions, onRestore }) {
+  const ref = useRef(null);
+  const [, bump] = useState(0);
+
+  if (ref.current === null) {
+    ref.current = {
+      past: [],
+      future: [],
+      current: { nodes, edges, conditions, key: graphKey(nodes, edges, conditions) },
+    };
+  }
+
+  useEffect(() => {
+    const h = ref.current;
+    if (graphKey(nodes, edges, conditions) === h.current.key) return undefined;
+    const timer = setTimeout(() => {
+      const key = graphKey(nodes, edges, conditions);
+      if (key === h.current.key) return;
+      h.past.push(h.current);
+      if (h.past.length > HISTORY_LIMIT) h.past.shift();
+      h.future = [];
+      h.current = { nodes, edges, conditions, key };
+      bump((v) => v + 1);
+    }, HISTORY_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [nodes, edges, conditions]);
+
+  const restore = useCallback((entry) => {
+    setNodes(entry.nodes);
+    setEdges(entry.edges);
+    setConditions(entry.conditions);
+    onRestore?.();
+    bump((v) => v + 1);
+  }, [setNodes, setEdges, setConditions, onRestore]);
+
+  const undo = useCallback(() => {
+    const h = ref.current;
+    if (!h.past.length) return;
+    h.future.push(h.current);
+    h.current = h.past.pop();
+    restore(h.current);
+  }, [restore]);
+
+  const redo = useCallback(() => {
+    const h = ref.current;
+    if (!h.future.length) return;
+    h.past.push(h.current);
+    h.current = h.future.pop();
+    restore(h.current);
+  }, [restore]);
+
+  return {
+    undo,
+    redo,
+    canUndo: ref.current.past.length > 0,
+    canRedo: ref.current.future.length > 0,
+  };
+}
+
 function FlowCanvasEditor({ flow, flows = [], customModules, onCancel, onSaved, onSwitchFlow, onCreateNew }) {
   const wrapperRef = useRef(null);
   const rfRef = useRef(null);
@@ -1692,7 +1902,10 @@ function FlowCanvasEditor({ flow, flows = [], customModules, onCancel, onSaved, 
   const [isActive, setIsActive] = useState(flow?.is_active !== false);
   const [selectedId, setSelectedId] = useState(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState(null);
-  const [conditions, setConditions] = useState(() => conditionsFromApi(flow?.conditions));
+  const [conditions, setConditions] = useState(() => (
+    initial.conditions || conditionsFromApi(flow?.conditions)
+  ));
+  const [dirty, setDirty] = useState(() => Boolean(initial.fromBlueprint));
   const [conditionPicker, setConditionPicker] = useState(null);
   const [saving, setSaving] = useState(false);
   const [showLeft, setShowLeft] = useState(true);
@@ -1700,8 +1913,23 @@ function FlowCanvasEditor({ flow, flows = [], customModules, onCancel, onSaved, 
   const [showBranches, setShowBranches] = useState(false);
   const [ecosystemNodeId, setEcosystemNodeId] = useState(null);
   const [flowMenuOpen, setFlowMenuOpen] = useState(false);
-  const [dirty, setDirty] = useState(false);
   const [draggingModule, setDraggingModule] = useState(false);
+  const [actionRun, setActionRun] = useState(null);
+  const [moduleVars, setModuleVars] = useState(null);
+
+  // Biến của bước module do backend công bố — nạp một lần để dựng menu «Chèn dữ liệu».
+  useEffect(() => {
+    let alive = true;
+    api.get('/flows/meta/module-variables')
+      .then(({ data }) => { if (alive) setModuleVars(data?.variables || {}); })
+      .catch(() => { if (alive) setModuleVars({}); });
+    return () => { alive = false; };
+  }, []);
+
+  const hasActionNodes = useMemo(
+    () => nodes.some((n) => ['report', 'ai_report', 'notify'].includes(n.data?.node_kind)),
+    [nodes],
+  );
 
   const markDirty = useCallback(() => setDirty(true), []);
   const handleNodesChange = useCallback((changes) => {
@@ -1732,6 +1960,36 @@ function FlowCanvasEditor({ flow, flows = [], customModules, onCancel, onSaved, 
     () => !dirty || confirm('Luồng có thay đổi chưa lưu. Rời khỏi và bỏ thay đổi?'),
     [dirty],
   );
+
+  const { undo, redo, canUndo, canRedo } = useGraphHistory({
+    nodes,
+    edges,
+    conditions,
+    setNodes,
+    setEdges,
+    setConditions,
+    onRestore: markDirty,
+  });
+
+  // Ctrl/Cmd+Z hoàn tác, thêm Shift (hoặc Ctrl+Y) để làm lại — bỏ qua khi đang gõ chữ.
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      const tag = e.target?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target?.isContentEditable) return;
+      const key = e.key.toLowerCase();
+      if (key === 'z') {
+        e.preventDefault();
+        if (e.shiftKey) redo();
+        else undo();
+      } else if (key === 'y') {
+        e.preventDefault();
+        redo();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [undo, redo]);
 
   const selectedNode = nodes.find((n) => n.id === selectedId) || null;
   const selectedEdge = edges.find((e) => e.id === selectedEdgeId) || null;
@@ -1778,18 +2036,41 @@ function FlowCanvasEditor({ flow, flows = [], customModules, onCancel, onSaved, 
     )));
   }, [setNodes]);
 
-  const createModuleNode = useCallback((moduleKey, position) => {
+  const createFlowNode = useCallback((spec, position) => {
+    const parsed = normalizeAddSpec(spec);
+    if (!parsed) return null;
+    if (isSpecialKind(parsed.kind)) {
+      const meta = specialMeta(parsed.kind);
+      return {
+        id: `n-${parsed.kind}-${Date.now()}`,
+        type: rfNodeType(parsed.kind),
+        position: position || { x: 80 + nodesRef.current.length * (NODE_W + 80), y: 160 },
+        data: {
+          node_kind: parsed.kind,
+          node_config: defaultNodeConfig(parsed.kind),
+          description: '',
+          branch_mode: parsed.kind === NODE_KIND.CONDITION ? 'conditional' : 'sequential',
+          join_mode: parsed.kind === NODE_KIND.JOIN ? 'all' : 'all',
+          label: meta?.label || parsed.kind,
+          color: meta?.color || '#64748b',
+        },
+      };
+    }
+    const moduleKey = parsed.moduleKey;
+    if (!moduleKey) return null;
     const meta = moduleMeta(moduleKey, customModules);
     return {
       id: `n-${moduleKey}-${Date.now()}`,
       type: 'moduleNode',
       position: position || { x: 80 + nodesRef.current.length * (NODE_W + 80), y: 160 },
       data: {
+        node_kind: NODE_KIND.MODULE,
         module_key: moduleKey,
         handoff_trigger: DEFAULT_TRIGGER[moduleKey] || 'manual',
         description: '',
         branch_mode: 'sequential',
         join_mode: 'all',
+        node_config: {},
         label: meta.label,
         color: meta.color,
         desc: meta.desc,
@@ -1799,15 +2080,15 @@ function FlowCanvasEditor({ flow, flows = [], customModules, onCancel, onSaved, 
     };
   }, [customModules]);
 
-  const addModuleNode = useCallback((moduleKey, position, connectFromId, mode = 'sequential') => {
-    if (!moduleKey) return;
-    const node = createModuleNode(moduleKey, position);
+  const addFlowNode = useCallback((spec, position, connectFromId, mode = 'sequential') => {
+    const node = createFlowNode(spec, position);
+    if (!node) return;
     const id = node.id;
 
     setNodes((nds) => nds.concat(node));
     if (connectFromId) {
       setEdges((eds) => eds.concat(newEdge(connectFromId, id)));
-      if (mode === 'parallel') applyBranchMode(connectFromId, 'parallel');
+      if (mode === 'parallel' || mode === 'conditional') applyBranchMode(connectFromId, mode);
     }
     setSelectedId(id);
     setSelectedEdgeId(null);
@@ -1815,15 +2096,16 @@ function FlowCanvasEditor({ flow, flows = [], customModules, onCancel, onSaved, 
     setShowBranches(false);
     setEcosystemNodeId(null);
     setDirty(true);
-  }, [createModuleNode, setNodes, setEdges, applyBranchMode]);
+  }, [createFlowNode, setNodes, setEdges, applyBranchMode]);
 
   /**
    * Chèn một module vào giữa cạnh: cắt cạnh cũ thành hai chặng và đẩy phần
    * phía sau sang phải nếu chỗ trống không đủ cho node mới.
    */
-  const insertNodeOnEdge = useCallback((edgeId, moduleKey) => {
+  const insertNodeOnEdge = useCallback((edgeId, spec) => {
     const edge = edgesRef.current.find((e) => e.id === edgeId);
-    if (!edge || !moduleKey) return;
+    const parsed = normalizeAddSpec(spec);
+    if (!edge || !parsed) return;
     const source = nodesRef.current.find((n) => n.id === edge.source);
     const target = nodesRef.current.find((n) => n.id === edge.target);
 
@@ -1835,10 +2117,11 @@ function FlowCanvasEditor({ flow, flows = [], customModules, onCancel, onSaved, 
     const needed = (NODE_W + NODE_GAP) * 2;
     const shift = Math.max(0, needed - (tgtX - srcX));
 
-    const node = createModuleNode(moduleKey, {
+    const node = createFlowNode(parsed, {
       x: midX,
       y: Math.round((srcY + tgtY) / 2),
     });
+    if (!node) return;
 
     setNodes((nds) => nds
       .map((n) => (shift > 0 && n.id !== source?.id && (n.position?.x ?? 0) >= tgtX
@@ -1866,27 +2149,24 @@ function FlowCanvasEditor({ flow, flows = [], customModules, onCancel, onSaved, 
     setShowBranches(false);
     setEcosystemNodeId(null);
     setDirty(true);
-  }, [createModuleNode, setNodes, setEdges]);
+  }, [createFlowNode, setNodes, setEdges]);
 
-  const onAddNext = useCallback((sourceId, moduleKey, mode = 'sequential') => {
+  const onAddNext = useCallback((sourceId, spec, mode = 'sequential') => {
     const source = nodesRef.current.find((n) => n.id === sourceId);
-    if (!source) return addModuleNode(moduleKey, undefined, sourceId, mode);
+    if (!source) return addFlowNode(spec, undefined, sourceId, mode);
     const baseX = (source.position?.x || 0) + NODE_W + NODE_GAP;
     const baseY = source.position?.y || 160;
-    // Nhánh song song xếp lệch xuống dưới các nhánh đã có của node nguồn.
     const siblings = edgesRef.current.filter((e) => e.source === sourceId).length;
-    const pos = mode === 'parallel'
-      ? { x: baseX, y: baseY + siblings * 190 }
-      : { x: baseX, y: baseY };
-    return addModuleNode(moduleKey, pos, sourceId, mode);
-  }, [addModuleNode]);
+    const offset = (mode === 'parallel' || mode === 'conditional') ? siblings * 190 : 0;
+    return addFlowNode(spec, { x: baseX, y: baseY + offset }, sourceId, mode);
+  }, [addFlowNode]);
 
   const onConnectExisting = useCallback((sourceId, targetId, mode = 'sequential') => {
     setEdges((eds) => {
       if (eds.some((e) => e.source === sourceId && e.target === targetId)) return eds;
       return eds.concat(newEdge(sourceId, targetId));
     });
-    if (mode === 'parallel') applyBranchMode(sourceId, 'parallel');
+    if (mode === 'parallel' || mode === 'conditional') applyBranchMode(sourceId, mode);
     setDirty(true);
   }, [setEdges, applyBranchMode]);
 
@@ -1949,6 +2229,7 @@ function FlowCanvasEditor({ flow, flows = [], customModules, onCancel, onSaved, 
           data: {
             ...n.data,
             availableModules: availableRef.current,
+            availableSpecials: SPECIAL_KINDS,
             connectTargets: targets,
             onAddNext: stableAddNext,
             onConnectExisting: stableConnectExisting,
@@ -1988,14 +2269,15 @@ function FlowCanvasEditor({ flow, flows = [], customModules, onCancel, onSaved, 
           branch_mode: nodeById.get(e.source)?.data?.branch_mode || 'sequential',
           condition_count: conditionsForEdge(conditions, e.source, e.target).length,
           availableModules: availableModules.filter((m) => !neighbourKeys.has(m.key)),
+          availableSpecials: SPECIAL_KINDS,
           onInsert: stableInsertOnEdge,
         },
       };
     });
   }, [nodes, edges, conditions, selectedEdgeId, availableModules, stableInsertOnEdge]);
 
-  const onDragStartPalette = (e, moduleKey) => {
-    e.dataTransfer.setData(PALETTE_MIME, moduleKey);
+  const onDragStartPalette = (e, payload) => {
+    e.dataTransfer.setData(PALETTE_MIME, encodePalettePayload(payload));
     e.dataTransfer.effectAllowed = 'move';
     setDraggingModule(true);
   };
@@ -2010,12 +2292,12 @@ function FlowCanvasEditor({ flow, flows = [], customModules, onCancel, onSaved, 
   const onDropCanvas = (e) => {
     e.preventDefault();
     setDraggingModule(false);
-    const moduleKey = e.dataTransfer.getData(PALETTE_MIME);
-    if (!moduleKey) return;
+    const spec = decodePalettePayload(e.dataTransfer.getData(PALETTE_MIME));
+    if (!spec) return;
     const position = rfRef.current?.screenToFlowPosition
       ? rfRef.current.screenToFlowPosition({ x: e.clientX, y: e.clientY })
       : { x: e.clientX - 200, y: e.clientY - 120 };
-    addModuleNode(moduleKey, { x: position.x - NODE_W / 2, y: position.y - 48 }, null);
+    addFlowNode(spec, { x: position.x - NODE_W / 2, y: position.y - 48 }, null);
   };
 
   const updateSelectedData = (patch) => {
@@ -2083,8 +2365,11 @@ function FlowCanvasEditor({ flow, flows = [], customModules, onCancel, onSaved, 
 
   const openNodeConditionPicker = () => {
     if (!selectedNode) return;
+    const prevModule = [...orderFromGraph(nodes, edges)]
+      .reverse()
+      .find((n) => n.id !== selectedNode.id && n.data?.module_key);
     setConditionPicker({
-      moduleKey: selectedNode.data.module_key,
+      moduleKey: selectedNode.data.module_key || prevModule?.data?.module_key || 'crm',
       targetLabel: `node ${selectedNode.data.label}`,
       target: { scope: 'step', step_node_id: selectedNode.id, source_node_id: null, target_node_id: null },
     });
@@ -2156,10 +2441,59 @@ function FlowCanvasEditor({ flow, flows = [], customModules, onCancel, onSaved, 
       setDirty(false);
       if (stayOpen) onSaved?.(saved || { id: flowId });
       else onSaved?.(null);
+      setSaving(false);
+      return flowId;
     } catch (e) {
       alert(e.response?.data?.error || e.message || 'Lỗi lưu luồng');
     }
     setSaving(false);
+    return null;
+  };
+
+  // Khối hành động chạy trên bản đã lưu, nên lưu trước rồi mới chạy.
+  // `subject` = deal / dự án lấy số liệu cho các bước module; bỏ trống thì backend tự chọn bản mới nhất.
+  const runActions = async (dryRun, subject = null) => {
+    const flowId = await save({ stayOpen: true });
+    if (!flowId) return;
+    if (!dryRun && !confirm('Gửi thật tin nhắn tới người/nhóm đã cấu hình?')) return;
+
+    setActionRun((prev) => ({ ...(prev || {}), loading: true, dryRun, steps: [], error: null }));
+    try {
+      const { data } = await api.post(`/flows/${flowId}/run-actions`, {
+        dry_run: dryRun,
+        deal_id: subject?.dealId || undefined,
+        project_id: subject?.projectId || undefined,
+      });
+      setActionRun({
+        loading: false,
+        dryRun,
+        steps: data.steps || [],
+        subject: data.subject || null,
+        subjectLabel: subject?.label || data.subject?.label || '',
+        missingSubjects: data.missingSubjects || [],
+        error: null,
+      });
+    } catch (e) {
+      setActionRun({
+        loading: false,
+        dryRun,
+        steps: [],
+        error: e.response?.data?.error || e.message || 'Không chạy được',
+      });
+    }
+  };
+
+  const applyStandardFlow = () => {
+    if (!confirm('Dựng lại canvas theo luồng CRM → SX → Lắp đặt đang chạy (Thắng / Mất / chuyển SX / đóng gói / bàn giao LĐ)? Vị trí node hiện tại sẽ được thay.')) return;
+    const graph = buildStandardCabinetBlueprint();
+    setNodes(graph.nodes);
+    setEdges(graph.edges);
+    setConditions(graph.conditions);
+    setSelectedId(null);
+    setSelectedEdgeId(null);
+    setShowRight(false);
+    setDirty(true);
+    setTimeout(() => rfRef.current?.fitView?.({ padding: 0.25 }), 50);
   };
 
   const toggleActive = async () => {
@@ -2175,7 +2509,7 @@ function FlowCanvasEditor({ flow, flows = [], customModules, onCancel, onSaved, 
   };
 
   const chainPreview = orderFromGraph(nodes, edges)
-    .map((n) => moduleMeta(n.data.module_key, customModules).label);
+    .map((n) => nodeDisplayLabel(n.data, (key) => moduleMeta(key, customModules).label));
 
   return (
     <div className="overflow-hidden flex flex-col flex-1 min-h-0 h-full bg-[#f2f4f7]">
@@ -2188,6 +2522,27 @@ function FlowCanvasEditor({ flow, flows = [], customModules, onCancel, onSaved, 
         >
           <X className="h-4 w-4" />
         </button>
+
+        <div className="flex items-center shrink-0">
+          <button
+            type="button"
+            onClick={undo}
+            disabled={!canUndo}
+            className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-500 hover:bg-slate-100 hover:text-slate-700 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+            title="Hoàn tác (Ctrl+Z)"
+          >
+            <Undo2 className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={redo}
+            disabled={!canRedo}
+            className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-500 hover:bg-slate-100 hover:text-slate-700 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+            title="Làm lại (Ctrl+Shift+Z)"
+          >
+            <Redo2 className="h-4 w-4" />
+          </button>
+        </div>
 
         {/* Chuyển luồng */}
         <div className="relative shrink-0">
@@ -2279,6 +2634,29 @@ function FlowCanvasEditor({ flow, flows = [], customModules, onCancel, onSaved, 
 
         <button
           type="button"
+          onClick={applyStandardFlow}
+          className="h-8 px-2.5 rounded-lg text-[11px] font-semibold flex items-center gap-1.5 cursor-pointer border border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100"
+          title="Dựng canvas đúng điều kiện CRM → SX → Lắp đặt đang chạy"
+        >
+          <GitFork className="h-3.5 w-3.5" />
+          Luồng chuẩn
+        </button>
+
+        {hasActionNodes && (
+          <button
+            type="button"
+            onClick={() => runActions(true)}
+            disabled={saving || actionRun?.loading}
+            className="h-8 px-2.5 rounded-lg text-[11px] font-semibold flex items-center gap-1.5 cursor-pointer border border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100 disabled:opacity-50"
+            title="Lưu luồng rồi chạy thử chuỗi báo cáo → AI → nhắn tin (chưa gửi đi)"
+          >
+            <PlayCircle className="h-3.5 w-3.5" />
+            {actionRun?.loading ? 'Đang chạy…' : 'Chạy thử'}
+          </button>
+        )}
+
+        <button
+          type="button"
           onClick={() => save({ stayOpen: true })}
           disabled={saving}
           className="h-9 px-3.5 bg-[#296DFF] text-white rounded-xl text-[13px] font-semibold flex items-center gap-1.5 hover:bg-[#1f5ae0] cursor-pointer disabled:opacity-50 shadow-[0_4px_12px_rgba(41,109,255,0.35)]"
@@ -2289,7 +2667,7 @@ function FlowCanvasEditor({ flow, flows = [], customModules, onCancel, onSaved, 
 
       <div className="flex flex-1 min-h-0">
         {showLeft && (
-          <aside className="w-[200px] shrink-0 bg-white/70 backdrop-blur border-r border-slate-200/80 p-3 overflow-y-auto">
+          <aside className="w-[220px] shrink-0 bg-white/70 backdrop-blur border-r border-slate-200/80 p-3 overflow-y-auto">
             <div className="flex items-center justify-between mb-2 px-0.5">
               <p className="text-[10px] font-bold uppercase tracking-[0.08em] text-slate-400">Hệ thống</p>
               <button type="button" onClick={() => setShowLeft(false)} className="text-[10px] text-slate-400 hover:text-slate-600 cursor-pointer">Ẩn</button>
@@ -2298,6 +2676,38 @@ function FlowCanvasEditor({ flow, flows = [], customModules, onCancel, onSaved, 
               {paletteBuiltin.map((m) => (
                 <PaletteItem key={m.key} m={m} used={usedKeys.has(m.key)} onDragStart={onDragStartPalette} onDragEnd={onDragEndPalette} />
               ))}
+            </div>
+            <p className="text-[10px] font-bold uppercase tracking-[0.08em] text-amber-600 mb-2 px-0.5">Điều khiển</p>
+            <div className="space-y-1.5 mb-5">
+              {SPECIAL_KINDS.filter((k) => k.category === 'control').map((k) => {
+                const Icon = SPECIAL_ICONS[k.kind] || GitFork;
+                return (
+                  <PaletteItem
+                    key={k.kind}
+                    m={{ key: k.kind, label: k.label, desc: k.desc, color: k.color, Icon }}
+                    used={false}
+                    payload={{ kind: k.kind }}
+                    onDragStart={onDragStartPalette}
+                    onDragEnd={onDragEndPalette}
+                  />
+                );
+              })}
+            </div>
+            <p className="text-[10px] font-bold uppercase tracking-[0.08em] text-orange-600 mb-2 px-0.5">Hành động</p>
+            <div className="space-y-1.5 mb-5">
+              {SPECIAL_KINDS.filter((k) => k.category === 'action').map((k) => {
+                const Icon = SPECIAL_ICONS[k.kind] || BellRing;
+                return (
+                  <PaletteItem
+                    key={k.kind}
+                    m={{ key: k.kind, label: k.label, desc: k.desc, color: k.color, Icon }}
+                    used={false}
+                    payload={{ kind: k.kind }}
+                    onDragStart={onDragStartPalette}
+                    onDragEnd={onDragEndPalette}
+                  />
+                );
+              })}
             </div>
             <div className="flex items-center justify-between gap-1 mb-2 px-0.5">
               <p className="text-[10px] font-bold uppercase tracking-[0.08em] text-violet-500">Tùy chỉnh</p>
@@ -2318,7 +2728,7 @@ function FlowCanvasEditor({ flow, flows = [], customModules, onCancel, onSaved, 
             </div>
             <div className="mt-5 px-2.5 py-2.5 rounded-xl bg-slate-50 text-[10px] text-slate-500 leading-relaxed">
               <p className="font-semibold text-slate-600 flex items-center gap-1 mb-1"><MousePointer2 className="h-3 w-3" /> Hướng dẫn</p>
-              <p>Kéo node · hoặc bấm + trên node · Lưu</p>
+              <p>Kéo module hoặc khối điều kiện / hành động · bấm + trên node hoặc cạnh · Lưu</p>
             </div>
           </aside>
         )}
@@ -2430,7 +2840,7 @@ function FlowCanvasEditor({ flow, flows = [], customModules, onCancel, onSaved, 
             ) : !selectedNode ? (
               <div className="rounded-2xl bg-slate-50 px-3.5 py-6 text-center">
                 <Layers className="h-8 w-8 text-slate-300 mx-auto mb-2" />
-                <p className="text-[12px] text-slate-400 leading-relaxed">Chọn một node để chỉnh trigger và điều kiện, hoặc chọn một cạnh để chỉnh quan hệ giữa hai module.</p>
+                <p className="text-[12px] text-slate-400 leading-relaxed">Chọn một node để xem thông tin lấy được, trigger và điều kiện; chọn cạnh để chỉnh quan hệ.</p>
               </div>
             ) : (
               <div className="space-y-4">
@@ -2440,9 +2850,26 @@ function FlowCanvasEditor({ flow, flows = [], customModules, onCancel, onSaved, 
                   </div>
                   <div className="min-w-0">
                     <p className="text-[13px] font-semibold text-slate-800 truncate">{selectedNode.data.label}</p>
-                    <p className="text-[10px] text-slate-400 truncate">{selectedNode.data.isCustom ? `Custom · ${selectedNode.data.module_key}` : selectedNode.data.module_key}</p>
+                    <p className="text-[10px] text-slate-400 truncate">
+                      {isSpecialKind(selectedNode.data.node_kind)
+                        ? (specialMeta(selectedNode.data.node_kind)?.desc || selectedNode.data.node_kind)
+                        : (selectedNode.data.isCustom ? `Custom · ${selectedNode.data.module_key}` : selectedNode.data.module_key)}
+                    </p>
                   </div>
                 </div>
+                <NodeOutputsPanel key={selectedNode.id} nodeData={selectedNode.data} />
+                {isSpecialKind(selectedNode.data.node_kind) && (
+                  <SpecialNodeInspector
+                    nodeData={selectedNode.data}
+                    nodeId={selectedNode.id}
+                    nodes={nodes}
+                    edges={edges}
+                    moduleLabelFn={(key) => moduleMeta(key, customModules).label}
+                    moduleVars={moduleVars}
+                    onChange={updateSelectedData}
+                  />
+                )}
+                {!isSpecialKind(selectedNode.data.node_kind) && (
                 <div>
                   <label className="text-[11px] font-semibold text-slate-500 block mb-1.5">Trigger bàn giao</label>
                   <select value={selectedNode.data.handoff_trigger || ''} onChange={(e) => updateSelectedData({ handoff_trigger: e.target.value })} className="w-full h-10 px-3 rounded-xl text-[13px] bg-slate-50 border-0 ring-1 ring-slate-200 focus:ring-2 focus:ring-[#296DFF]/40 outline-none">
@@ -2450,6 +2877,7 @@ function FlowCanvasEditor({ flow, flows = [], customModules, onCancel, onSaved, 
                     {HANDOFF_OPTIONS.map((o) => (<option key={o.value} value={o.value}>{o.label}</option>))}
                   </select>
                 </div>
+                )}
                 <div>
                   <label className="text-[11px] font-semibold text-slate-500 block mb-1.5">Ghi chú</label>
                   <textarea value={selectedNode.data.description || ''} onChange={(e) => updateSelectedData({ description: e.target.value })} rows={3} className="w-full px-3 py-2.5 rounded-xl text-[13px] bg-slate-50 border-0 ring-1 ring-slate-200 focus:ring-2 focus:ring-[#296DFF]/40 outline-none resize-none" placeholder="Mô tả bước này…" />
@@ -2515,10 +2943,13 @@ function FlowCanvasEditor({ flow, flows = [], customModules, onCancel, onSaved, 
                     onAdd={openNodeConditionPicker}
                     onRemove={removeCondition}
                     onToggleRequired={toggleConditionRequired}
-                    emptyHint="Chưa có điều kiện. Thêm nhiệm vụ bắt buộc hoặc cờ cột để bước này chỉ được coi là xong khi đạt đủ."
+                    emptyHint={selectedNode.data.node_kind === 'condition'
+                      ? 'Thêm điều kiện rẽ nhánh. Mỗi cạnh ra nên có điều kiện hoặc dùng nhánh else.'
+                      : 'Chưa có điều kiện. Thêm nhiệm vụ bắt buộc hoặc cờ cột để bước này chỉ được coi là xong khi đạt đủ.'}
                   />
                 </div>
 
+                {!isSpecialKind(selectedNode.data.node_kind) && (
                 <button
                   type="button"
                   onClick={() => setShowBranches((v) => !v)}
@@ -2532,8 +2963,9 @@ function FlowCanvasEditor({ flow, flows = [], customModules, onCancel, onSaved, 
                   {showBranches ? 'Ẩn pipeline & nhiệm vụ' : 'Hiện pipeline & nhiệm vụ'}
                   {showBranches ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
                 </button>
+                )}
 
-                {showBranches && (
+                {!isSpecialKind(selectedNode.data.node_kind) && showBranches && (
                   <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-2.5">
                     <div className="mb-2 flex items-center gap-2 px-1">
                       <ListTree className="h-3.5 w-3.5 text-[#296DFF]" />
@@ -2579,6 +3011,227 @@ function FlowCanvasEditor({ flow, flows = [], customModules, onCancel, onSaved, 
           onAdd={addCondition}
         />
       )}
+
+      {actionRun && (
+        <ActionRunPanel
+          run={actionRun}
+          onClose={() => setActionRun(null)}
+          onSendReal={() => runActions(false, actionRun.subject)}
+          onRerun={(subject) => runActions(true, subject)}
+        />
+      )}
+    </div>
+  );
+}
+
+const ACTION_ICON = {
+  report: FileBarChart2,
+  ai_report: Sparkles,
+  notify: Send,
+  ai_classify: Tags,
+  ai_extract: ScanText,
+  ai_ask: MessageCircleQuestion,
+};
+
+/**
+ * Chọn deal / dự án lấy số liệu cho các bước module khi chạy thử.
+ * Không chọn thì backend mượn bản ghi mới nhất của luồng.
+ */
+function SubjectPicker({ value, onPick }) {
+  const [options, setOptions] = useState(null);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (!open || options) return;
+    api.get('/flows/meta/subjects')
+      .then(({ data }) => setOptions(data))
+      .catch(() => setOptions({ projects: [], deals: [] }));
+  }, [open, options]);
+
+  const groups = [
+    { key: 'projects', label: 'Dự án', items: options?.projects || [] },
+    { key: 'deals', label: 'Deal CRM', items: options?.deals || [] },
+  ];
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="h-7 px-2 rounded-lg text-[11px] font-medium border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 cursor-pointer max-w-[240px] truncate"
+      >
+        {value || 'Chọn deal / dự án'}
+      </button>
+      {open && (
+        <div className="absolute right-0 z-20 mt-1 w-72 max-h-64 overflow-auto rounded-xl bg-white shadow-lg ring-1 ring-slate-200 p-1">
+          {!options && <p className="px-2 py-1.5 text-[11px] text-slate-400">Đang tải…</p>}
+          {groups.map((g) => (g.items.length > 0 && (
+            <div key={g.key} className="mb-1">
+              <p className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">{g.label}</p>
+              {g.items.map((o) => (
+                <button
+                  key={o.id}
+                  type="button"
+                  onClick={() => {
+                    setOpen(false);
+                    onPick(g.key === 'projects'
+                      ? { projectId: o.id, label: o.label }
+                      : { dealId: o.id, label: o.label });
+                  }}
+                  className="w-full text-left px-2 py-1.5 rounded-lg text-[11px] text-slate-700 hover:bg-slate-50 truncate"
+                >
+                  {o.label}
+                </button>
+              ))}
+            </div>
+          )))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Kết quả chạy chuỗi hành động — xem AI viết gì trước khi gửi thật. */
+function ActionRunPanel({ run, onClose, onSendReal, onRerun }) {
+  const failed = run.steps.filter((s) => s.status === 'error').length;
+  const skipped = run.steps.filter((s) => s.status === 'skipped').length;
+  const okSteps = run.steps.length - failed - skipped;
+  const canSend = run.dryRun && !run.loading && !run.error && failed === 0 && run.steps.length > 0;
+
+  return (
+    <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-6">
+      <div className="w-full max-w-2xl max-h-[80vh] flex flex-col rounded-2xl bg-white shadow-2xl overflow-hidden">
+        <div className="flex items-center gap-2 px-4 py-3 border-b border-slate-200">
+          <PlayCircle className="h-4 w-4 text-violet-600" />
+          <div className="flex-1 min-w-0">
+            <p className="text-[13px] font-semibold text-slate-800">
+              {run.dryRun ? 'Chạy thử — chưa gửi đi' : 'Đã gửi thật'}
+            </p>
+            <p className="text-[10px] text-slate-400">
+              {run.loading
+                ? 'Đang chạy…'
+                : `${okSteps} khối chạy được${failed ? ` · ${failed} khối lỗi` : ''}${skipped ? ` · ${skipped} khối không thuộc nhánh đã chọn` : ''}`}
+            </p>
+          </div>
+          <SubjectPicker value={run.subjectLabel} onPick={(s) => onRerun(s)} />
+          <button type="button" onClick={onClose} className="p-1.5 rounded-lg hover:bg-slate-100 cursor-pointer">
+            <X className="h-4 w-4 text-slate-400" />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-4 space-y-2.5">
+          {run.loading && <p className="text-[12px] text-slate-500">Đang lấy số liệu và gọi AI…</p>}
+
+          {!run.loading && run.subjectLabel && (
+            <p className="text-[11px] text-slate-500">
+              Dữ liệu bước module lấy từ <span className="font-semibold text-slate-700">{run.subjectLabel}</span>
+              {run.subject?.auto && ' (tự chọn — bấm nút trên đầu để đổi)'}
+            </p>
+          )}
+
+          {!run.loading && run.missingSubjects?.length > 0 && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
+              Chưa lấy được dữ liệu cho bước: {run.missingSubjects.join(', ')}. Deal / dự án đang chọn chưa đi tới bước này.
+            </div>
+          )}
+
+          {run.error && (
+            <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5">
+              <p className="text-[12px] text-rose-700">{run.error}</p>
+            </div>
+          )}
+
+          {!run.loading && !run.error && !run.steps.length && (
+            <p className="text-[12px] text-slate-500">
+              Luồng chưa có khối hành động nào. Kéo «Lấy báo cáo», «AI viết báo cáo» hoặc «Nhắn tin» vào canvas.
+            </p>
+          )}
+
+          {run.steps.map((step) => {
+            const Icon = ACTION_ICON[step.node_kind] || FileBarChart2;
+            const out = step.output || {};
+            const body = out.report_text || out.answer || out.message || out.text || '';
+            const extracted = Object.entries(out.extracted || {});
+            const isSkipped = step.status === 'skipped';
+            return (
+              <div
+                key={step.node_id}
+                className={`rounded-xl border px-3 py-2.5 ${
+                  step.status === 'error' ? 'border-rose-200 bg-rose-50'
+                    : isSkipped ? 'border-slate-200 bg-slate-50' : 'border-slate-200 bg-white'
+                }`}
+              >
+                <div className="flex items-center gap-2 mb-1.5">
+                  <Icon className="h-3.5 w-3.5 text-slate-500 shrink-0" />
+                  <span className="text-[12px] font-semibold text-slate-700 truncate flex-1">{step.label}</span>
+                  {step.status === 'error'
+                    ? <AlertCircle className="h-3.5 w-3.5 text-rose-500 shrink-0" />
+                    : isSkipped
+                      ? <MinusCircle className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                      : <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />}
+                  <span className="text-[10px] text-slate-400 shrink-0">{step.ms}ms</span>
+                </div>
+                {step.status === 'ok' && (out.model_used || out.label) && (
+                  <p className="mb-1.5 flex flex-wrap gap-1">
+                    {out.label && (
+                      <span className="rounded-md bg-fuchsia-50 px-1.5 py-0.5 text-[10px] font-semibold text-fuchsia-700">
+                        Nhãn: {out.label}
+                        {Number.isFinite(out.confidence) ? ` · ${Math.round(out.confidence * 100)}%` : ''}
+                      </span>
+                    )}
+                    {out.model_used && (
+                      <span className="rounded-md bg-violet-50 px-1.5 py-0.5 text-[10px] font-medium text-violet-700">
+                        {out.model_used}
+                      </span>
+                    )}
+                    {out.playbook_used && (
+                      <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-600">
+                        Mẫu: {out.playbook_used}
+                      </span>
+                    )}
+                  </p>
+                )}
+                {step.status === 'error' ? (
+                  <p className="text-[11px] leading-relaxed text-rose-700">{step.error}</p>
+                ) : isSkipped ? (
+                  <p className="text-[11px] leading-relaxed text-slate-500">{step.note}</p>
+                ) : extracted.length ? (
+                  <div className="space-y-0.5">
+                    {extracted.map(([key, value]) => (
+                      <p key={key} className="text-[11px] leading-relaxed text-slate-600">
+                        <span className="font-mono text-slate-400">{key}</span>: {value || '—'}
+                      </p>
+                    ))}
+                  </div>
+                ) : (
+                  <pre className="text-[11px] leading-relaxed text-slate-600 whitespace-pre-wrap font-sans max-h-52 overflow-y-auto">
+                    {body || out.reason || 'Không có nội dung chữ — khối này chỉ tạo dữ liệu cho khối sau.'}
+                  </pre>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="flex items-center justify-end gap-2 px-4 py-3 border-t border-slate-200 bg-slate-50">
+          <button
+            type="button"
+            onClick={onClose}
+            className="h-9 px-3.5 rounded-xl text-[12px] font-semibold text-slate-600 hover:bg-slate-200 cursor-pointer"
+          >
+            Đóng
+          </button>
+          {canSend && (
+            <button
+              type="button"
+              onClick={onSendReal}
+              className="h-9 px-3.5 rounded-xl text-[12px] font-semibold bg-[#296DFF] text-white hover:bg-[#1f5ae0] cursor-pointer flex items-center gap-1.5"
+            >
+              <Send className="h-3.5 w-3.5" /> Gửi thật
+            </button>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

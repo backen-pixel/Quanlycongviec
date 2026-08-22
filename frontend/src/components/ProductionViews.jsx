@@ -22,7 +22,7 @@ import {
 } from './commentThreadLiveUx';
 import DashboardMonthCalendar, { toLocalDateKey, formatCalendarDeadlineTime } from './dashboard/DashboardMonthCalendar';
 import { workshopProductionFinishYmd } from '../lib/workshopDashboardUtils';
-import { projectIsProducing } from '../lib/sxPipelineRevenue';
+import { projectHasPassedSxVcHandover, projectIsProducing } from '../lib/sxPipelineRevenue';
 
 /** Bộ emoji được phép — đồng bộ với backend PROJECT_COMMENT_ALLOWED_REACTION_EMOJI */
 const PROJECT_COMMENT_REACTION_PICKER = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
@@ -378,11 +378,13 @@ export function ProductionCalendarView({ pipeline, filterFrom, onVisibleMonthCha
     const stages = pipeline || [];
     const out = [];
     for (const s of stages) {
+      if (s?.bucket_slug === 'won_pending' || String(s?.id || '').startsWith('__fb_')) continue;
       for (const item of s.items || []) {
-        // Đã hoàn thiện / bàn giao VC / đã VC → không hiện trên lịch hoàn thiện
-        if (!projectIsProducing(item, stages)) continue;
+        if (item.sx_intake) continue;
         const dateKey = resolveProductionFinishDateKey(item);
         if (!dateKey) continue;
+        const done = projectHasPassedSxVcHandover(item, stages, s);
+        if (!done && !projectIsProducing(item, stages)) continue;
         const timeStr = item.production_finish_date
           ? formatCalendarDeadlineTime(item.production_finish_date)
           : (item.install_date ? formatCalendarDeadlineTime(item.install_date) : '');
@@ -392,16 +394,18 @@ export function ProductionCalendarView({ pipeline, filterFrom, onVisibleMonthCha
           dateKey,
           label: `${s.icon ? `${s.icon} ` : ''}${item.code || `#${item.id}`}`,
           subLabel: item.name || item.customer_name || '',
-          meta: [timeStr, 'Hoàn thiện SX', s.name].filter(Boolean).join(' · '),
+          meta: [timeStr, done ? 'Đã hoàn thiện' : 'Hoàn thiện SX', s.name].filter(Boolean).join(' · '),
           title: [
             item.code,
             item.name,
             `Hoàn thiện SX: ${dateKey}${fromInstallFallback ? ' (lắp đặt − 2)' : ''}`,
+            done ? 'Deadline đã hoàn thành (đã qua cột bàn giao VC)' : null,
             timeStr && `Giờ: ${timeStr}`,
             s.name && `Cột: ${s.name}`,
           ].filter(Boolean).join('\n'),
-          tone: 'production',
-          overdue: dateKey < todayKey,
+          tone: done ? 'done' : 'production',
+          overdue: !done && dateKey < todayKey,
+          done,
           raw: item,
         });
       }
@@ -421,9 +425,10 @@ export function ProductionCalendarView({ pipeline, filterFrom, onVisibleMonthCha
       }}
       legend={[
         { label: 'Hoàn thiện sản xuất', className: 'bg-sky-100' },
+        { label: 'Đã hoàn thành (đã qua bàn giao VC)', className: 'bg-slate-200' },
         { label: 'Đã trễ', className: 'bg-red-100' },
       ]}
-      footerRight={`${calendarItems.length} dự án · hạn = lắp đặt − 2 ngày`}
+      footerRight={`${calendarItems.length} dự án · hạn = ngày hoàn thiện SX`}
     />
   );
 }

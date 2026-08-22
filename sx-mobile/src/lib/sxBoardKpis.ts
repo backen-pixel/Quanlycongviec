@@ -148,6 +148,7 @@ export function projectIsDeadlineOverdue(
   todayMs = Date.now(),
 ): boolean {
   if (String(p.status || '') === 'completed') return false;
+  if (projectIsShipped(p)) return false;
   const col = stageOf(p, stages, index);
   if (shouldHideDeadline(col)) return false;
   const raw = p.delivery_date || p.production_deadline || p.deadline;

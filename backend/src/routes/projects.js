@@ -34,6 +34,7 @@ const {
 } = require('../helpers/tenantScope');
 const { applyAllActiveWorkshopTemplatesForArea } = require('../helpers/workshopApplyTemplates');
 const { assertProjectAccessible } = require('../helpers/projectAccessScope');
+const { enrichProjectsModulePresence } = require('../helpers/projectModuleCompanies');
 
 const r = Router();
 r.use(auth);
@@ -87,9 +88,73 @@ async function notifyMultiple(req, userIds, type, title, message, entityType, en
   return await notifyMultipleShared(req, userIds, type, title, message, entityType, entityId, metadata || null);
 }
 
-async function logActivity(userId, action, entityType, entityId, description, oldValues, newValues) {
-  await supabase.from('activity_logs').insert({ user_id: userId, action, entity_type: entityType, entity_id: entityId, description, old_values: oldValues, new_values: newValues });
+async function logActivity(userId, action, entityType, entityId, description, oldValues, newValues, req) {
+  let row = null;
+  try {
+    const { data } = await supabase.from('activity_logs')
+      .insert({
+        user_id: userId,
+        action,
+        entity_type: entityType,
+        entity_id: entityId,
+        description,
+        old_values: oldValues || null,
+        new_values: newValues || null,
+      })
+      .select('*, user:users(id,full_name)')
+      .maybeSingle();
+    row = data;
+  } catch (e) {
+    console.warn('[logActivity]', e.message);
+    await supabase.from('activity_logs').insert({
+      user_id: userId, action, entity_type: entityType, entity_id: entityId,
+      description, old_values: oldValues || null, new_values: newValues || null,
+    });
+  }
+  if (entityType === 'project' && entityId) {
+    try {
+      const io = req?.app?.get?.('io');
+      if (io) {
+        const payload = {
+          project_id: entityId,
+          activity: row || {
+            action, description, created_at: new Date().toISOString(),
+            user_id: userId,
+          },
+        };
+        io.to(`project:${entityId}`).emit('project:activity', payload);
+        io.emit('project:activity', payload);
+      }
+    } catch (_) { /* ignore */ }
+  }
+  return row;
 }
+
+const PROJECT_FIELD_LABELS = {
+  name: 'Tên dự án',
+  description: 'Mô tả',
+  estimated_value: 'Giá trị dự kiến',
+  deadline: 'Deadline',
+  priority: 'Ưu tiên',
+  notes: 'Ghi chú',
+  quotation_files: 'Tài liệu',
+  sales_person_id: 'NV Kinh doanh',
+  designer_id: 'Thiết kế',
+  project_manager_id: 'Quản lý DA',
+  consulting_person_id: 'Tư vấn',
+  design_person_id: 'Thiết kế (giai đoạn)',
+  quotation_person_id: 'Báo giá',
+  contract_person_id: 'Hợp đồng',
+  production_person_id: 'Sản xuất',
+  shipping_person_id: 'Giao hàng',
+  logistics_person_id: 'Logistics',
+  installation_person_id: 'Lắp đặt',
+  care_person_id: 'Bảo hành',
+  supervisor_id: 'Giám sát',
+  install_date: 'Ngày lắp đặt',
+  delivery_date: 'Ngày giao hàng',
+  production_deadline: 'Hạn SX',
+};
 
 // ─── CHECK PENDING APPROVALS ──
 r.get('/pending-approvals', requirePermission('projects', 'view'), async (req, res) => {
@@ -125,14 +190,30 @@ r.get('/', requirePermission('projects', 'view'), async (req, res) => {
     // Check permission
     const canViewAll = await checkPermission(userId, 'projects', 'all_companies');
     
-    let q = supabase.from('projects').select(`
+    const listSelectFull = `
       *, customers(id,full_name,phone,email,city),
       company:companies!projects_company_id_fkey(id,name,short_name,division_unit_id),
       current_stage:workflow_stages(id,name,slug,color,icon),
-      sales_person:users!projects_sales_person_id_fkey(id,full_name),
-      designer:users!projects_designer_id_fkey(id,full_name),
-      project_manager:users!projects_project_manager_id_fkey(id,full_name)
-    `, { count: 'exact' });
+      sales_person:users!projects_sales_person_id_fkey(id,full_name,avatar),
+      designer:users!projects_designer_id_fkey(id,full_name,avatar),
+      project_manager:users!projects_project_manager_id_fkey(id,full_name,avatar),
+      production_person:users!projects_production_person_id_fkey(id,full_name,avatar),
+      logistics_person:users!projects_logistics_person_id_fkey(id,full_name,avatar),
+      shipping_person:users!projects_shipping_person_id_fkey(id,full_name,avatar),
+      installation_person:users!projects_installation_person_id_fkey(id,full_name,avatar),
+      created_by_user:users!projects_created_by_fkey(id,full_name,avatar)
+    `;
+    const listSelectBase = `
+      *, customers(id,full_name,phone,email,city),
+      company:companies!projects_company_id_fkey(id,name,short_name,division_unit_id),
+      current_stage:workflow_stages(id,name,slug,color,icon),
+      sales_person:users!projects_sales_person_id_fkey(id,full_name,avatar),
+      designer:users!projects_designer_id_fkey(id,full_name,avatar),
+      project_manager:users!projects_project_manager_id_fkey(id,full_name,avatar),
+      production_person:users!projects_production_person_id_fkey(id,full_name,avatar)
+    `;
+
+    let q = supabase.from('projects').select(listSelectFull, { count: 'exact' });
 
     q = applyCompanyTenantScope(q, req);
 
@@ -226,10 +307,34 @@ r.get('/', requirePermission('projects', 'view'), async (req, res) => {
 
     const p = +page, l = +limit;
     q = q.order('created_at', { ascending: false }).range((p-1)*l, p*l-1);
-    const { data, count, error } = await q;
-    if (error) throw error;
+    let { data, count, error } = await q;
+    if (error) {
+      console.warn('[projects list] full select failed, fallback:', error.message);
+      let q2 = supabase.from('projects').select(listSelectBase, { count: 'exact' });
+      q2 = applyCompanyTenantScope(q2, req);
+      if (status && status !== 'all') q2 = q2.eq('status', status);
+      if (search) q2 = q2.or(`code.ilike.%${search}%,name.ilike.%${search}%`);
+      if (company_id && company_id !== 'all') q2 = q2.eq('company_id', company_id);
+      // Re-apply same permission filters is hard here — keep simple company/search; privilege already applied on q.
+      // Rebuild from scratch for fallback with same filters as original where possible:
+      q2 = supabase.from('projects').select(listSelectBase, { count: 'exact' });
+      q2 = applyCompanyTenantScope(q2, req);
+      if (status && status !== 'all') q2 = q2.eq('status', status);
+      if (search) q2 = q2.or(`code.ilike.%${search}%,name.ilike.%${search}%`);
+      if (company_id && company_id !== 'all') q2 = q2.eq('company_id', company_id);
+      q2 = q2.order('created_at', { ascending: false }).range((p - 1) * l, p * l - 1);
+      ({ data, count, error } = await q2);
+      if (error) throw error;
+    }
 
-    res.json({ projects: data, total: count, page: p, totalPages: Math.ceil((count||0)/l) });
+    let projects = data || [];
+    try {
+      projects = await enrichProjectsModulePresence(projects);
+    } catch (enrErr) {
+      console.warn('[projects list] enrich modules:', enrErr.message);
+    }
+
+    res.json({ projects, total: count, page: p, totalPages: Math.ceil((count||0)/l) });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
 });
 
@@ -530,8 +635,17 @@ r.get('/:id/cashflow', async (req, res) => {
     if (!(await assertProjectAccessible(req, res, req.params.id, { mode: 'sensitive' }))) return;
     const pid = String(req.params.id || '').replace(/"/g, '');
 
-    const { data: leads } = await supabase.from('crm_leads').select('id').eq('project_id', pid);
-    const leadIds = (leads || []).map((l) => l.id);
+    const leadIdSet = new Set();
+    const { data: leadsByProject } = await supabase.from('crm_leads').select('id').eq('project_id', pid);
+    (leadsByProject || []).forEach((l) => { if (l?.id) leadIdSet.add(l.id); });
+    try {
+      const { data: dps } = await supabase
+        .from('crm_deal_projects')
+        .select('deal_id')
+        .eq('project_id', pid);
+      (dps || []).forEach((r) => { if (r?.deal_id) leadIdSet.add(r.deal_id); });
+    } catch (_) { /* bảng chưa có / không bắt buộc */ }
+    const leadIds = [...leadIdSet];
 
     const qSelectFull =
       'id, code, title, total, status, deposit_amount, deposit_received, deposit_label, created_at, project_id, lead_id';
@@ -886,7 +1000,7 @@ r.get('/:id', async (req, res) => {
     // Try to load stage persons (may fail if migration 07 not run)
     let stagePersons = {};
     try {
-      const { data: sp } = await supabase.from('projects').select(`
+      const { data: sp, error: spErr } = await supabase.from('projects').select(`
         consulting_person:users!projects_consulting_person_id_fkey(id,full_name,avatar),
         design_person:users!projects_design_person_id_fkey(id,full_name,avatar),
         quotation_person:users!projects_quotation_person_id_fkey(id,full_name,avatar),
@@ -894,9 +1008,23 @@ r.get('/:id', async (req, res) => {
         production_person:users!projects_production_person_id_fkey(id,full_name,avatar),
         shipping_person:users!projects_shipping_person_id_fkey(id,full_name,avatar),
         installation_person:users!projects_installation_person_id_fkey(id,full_name,avatar),
-        care_person:users!projects_care_person_id_fkey(id,full_name,avatar)
+        care_person:users!projects_care_person_id_fkey(id,full_name,avatar),
+        logistics_person:users!projects_logistics_person_id_fkey(id,full_name,avatar)
       `).eq('id', req.params.id).single();
-      if (sp) stagePersons = sp;
+      if (!spErr && sp) stagePersons = sp;
+      else if (spErr) {
+        const { data: sp2 } = await supabase.from('projects').select(`
+          consulting_person:users!projects_consulting_person_id_fkey(id,full_name,avatar),
+          design_person:users!projects_design_person_id_fkey(id,full_name,avatar),
+          quotation_person:users!projects_quotation_person_id_fkey(id,full_name,avatar),
+          contract_person:users!projects_contract_person_id_fkey(id,full_name,avatar),
+          production_person:users!projects_production_person_id_fkey(id,full_name,avatar),
+          shipping_person:users!projects_shipping_person_id_fkey(id,full_name,avatar),
+          installation_person:users!projects_installation_person_id_fkey(id,full_name,avatar),
+          care_person:users!projects_care_person_id_fkey(id,full_name,avatar)
+        `).eq('id', req.params.id).single();
+        if (sp2) stagePersons = sp2;
+      }
     } catch { /* migration 07 not run yet */ }
 
     // Load flow info (if project has flow_id)
@@ -923,6 +1051,16 @@ r.get('/:id', async (req, res) => {
     // Load flow assignments (company + template set per step)
     let flowAssignments = [];
     let productionStaff = [];
+    let moduleCompanies = { crm: null, production: null, logistics: null, deal_id: null };
+    try {
+      const { resolveProjectModuleCompanies } = require('../helpers/projectModuleCompanies');
+      moduleCompanies = await resolveProjectModuleCompanies(req.params.id, { project: data });
+      // Tự vá công ty/bộ mẫu trên assignment nếu lệch SoR — chạy nền, không chặn response
+      const { syncProjectModuleAssignmentsSafe } = require('../helpers/syncProjectModuleAssignments');
+      syncProjectModuleAssignmentsSafe(req.params.id, { project: data, moduleCompanies });
+    } catch (e) {
+      console.warn('[GET /projects/:id] module companies:', e.message);
+    }
     try {
       const { data: staffRows } = await supabase
         .from('project_production_staff')
@@ -939,25 +1077,106 @@ r.get('/:id', async (req, res) => {
         .filter(Boolean);
     } catch { /* migration 293/294 chưa chạy */ }
 
-    const resolveAssignmentResponsible = (assignment) => {
-      const oi = assignment.order_index ?? 0;
-      const byStep = [
-        data.sales_person || stagePersons.consulting_person,
-        data.project_manager || data.designer || stagePersons.production_person || productionStaff[0] || null,
-        data.supervisor || stagePersons.shipping_person,
-        stagePersons.installation_person,
-        stagePersons.care_person,
-      ];
-      return byStep[oi] || data.project_manager || data.sales_person || null;
+    const resolveUserCompanyId = async (userId) => {
+      if (!userId) return null;
+      const { data: u } = await supabase
+        .from('users')
+        .select('company_id, department_id, departments(company_id)')
+        .eq('id', userId)
+        .maybeSingle();
+      return u?.company_id || u?.departments?.company_id || null;
+    };
+
+    const userBelongsToCompany = async (user, companyId) => {
+      if (!user?.id || !companyId) return false;
+      const uidCompany = await resolveUserCompanyId(user.id);
+      return uidCompany && String(uidCompany) === String(companyId);
+    };
+
+    /** NV phụ trách theo module: ưu tiên role đúng khối thuộc đúng công ty module. */
+    const moduleRoleCandidates = (moduleKey) => {
+      if (moduleKey === 'crm') {
+        return [
+          data.sales_person,
+          stagePersons.consulting_person,
+          stagePersons.design_person,
+          stagePersons.quotation_person,
+          stagePersons.contract_person,
+        ].filter(Boolean);
+      }
+      if (moduleKey === 'production') {
+        return [
+          stagePersons.production_person,
+          data.project_manager,
+          data.designer,
+          ...(productionStaff || []),
+        ].filter(Boolean);
+      }
+      if (moduleKey === 'logistics') {
+        return [
+          stagePersons.logistics_person,
+          stagePersons.shipping_person,
+          stagePersons.installation_person,
+          data.supervisor,
+        ].filter(Boolean);
+      }
+      return [];
+    };
+
+    const resolveAssignmentResponsible = async (assignment, assignmentTasks, displayCompanyId, moduleKey) => {
+      const companyId = displayCompanyId || null;
+
+      // 1) Role phụ trách đúng module (sale / SX / VC) — luôn gắn vào thẻ khối
+      const roles = moduleRoleCandidates(moduleKey);
+      if (roles[0]?.id) {
+        return { user: roles[0], source: 'module_role', mismatch: false };
+      }
+
+      // 2) Fallback: người được gán nhiều NV nhất trong khối (ưu tiên cùng công ty module)
+      const counts = new Map();
+      for (const t of assignmentTasks || []) {
+        const a = t.assignee;
+        if (!a?.id) continue;
+        const prev = counts.get(String(a.id)) || { user: a, n: 0, sameCo: false };
+        prev.n += 1;
+        if (companyId && await userBelongsToCompany(a, companyId)) prev.sameCo = true;
+        counts.set(String(a.id), prev);
+      }
+      const ranked = [...counts.values()].sort((x, y) => {
+        if (x.sameCo !== y.sameCo) return x.sameCo ? -1 : 1;
+        return y.n - x.n;
+      });
+      if (ranked[0]?.user) {
+        return { user: ranked[0].user, source: 'task_assignee', mismatch: false };
+      }
+
+      return { user: null, source: null, mismatch: false };
+    };
+
+    const inferDivisionModule = (assignment) => {
+      const name = `${assignment.division?.name || ''} ${assignment.division?.short_name || ''}`;
+      if (/kinh\s*doanh|crm|\bkd\b/i.test(name) || (assignment.order_index ?? 0) === 0) return 'crm';
+      if (/l[aắ]p\s*[đd][aặ]t|v[aậ]n\s*chuy[eể]n|\bvc\b|\bld\b/i.test(name) || (assignment.order_index ?? 0) === 2) {
+        return 'logistics';
+      }
+      if (/s[aả]n\s*xu[aấ]t|\bsx\b/i.test(name) || (assignment.order_index ?? 0) === 1) return 'production';
+      return 'other';
     };
 
     if (data.id) {
       try {
+        const { displayCompanyForModule } = require('../helpers/projectModuleCompanies');
+        const { getDivisionModuleMap } = require('../helpers/syncProjectModuleAssignments');
+        let divisionModuleMap = new Map();
+        try {
+          divisionModuleMap = await getDivisionModuleMap();
+        } catch (_) { /* optional */ }
+
         const { data: assignments } = await supabase.from('project_company_assignments').select(`
           *,
           division:ecosystem_units!project_company_assignments_division_unit_id_fkey(id,name,short_name),
           company:ecosystem_units!project_company_assignments_company_unit_id_fkey(id,name,short_name,company_id),
-          template_set:company_template_sets(id,name,description,is_default)
+          template_set:company_template_sets(id,name,description,is_default,company_id)
         `).eq('project_id', data.id).order('order_index');
         flowAssignments = assignments || [];
 
@@ -969,6 +1188,31 @@ r.get('/:id', async (req, res) => {
         `).eq('project_id', data.id)
           .eq('task_type', 'project')
           .order('order_index');
+
+        const { isSxProjectTask, isVcProjectTask } = require('../helpers/projectDealBundle');
+
+        // NV CRM trên deal — khớp tab Bán hàng / CRM detail
+        let crmModuleTasks = [];
+        const dealIdForCrm = moduleCompanies?.deal_id || null;
+        if (dealIdForCrm) {
+          try {
+            const { data: crmRows } = await supabase
+              .from('crm_tasks')
+              .select(`
+                id, title, status, priority, deadline, assignee_id, stage_slug, order_index,
+                assignee:users!crm_tasks_assignee_id_fkey(id, full_name, avatar, email)
+              `)
+              .eq('lead_id', dealIdForCrm)
+              .order('order_index');
+            crmModuleTasks = (crmRows || []).map((t) => ({
+              ...t,
+              due_date: t.deadline || null,
+              source: 'crm_task',
+            }));
+          } catch (e) {
+            console.warn('[GET /projects/:id] crm_tasks for flow:', e.message);
+          }
+        }
 
         const stepToDivMap = {};
         const divToStepIds = {};
@@ -985,35 +1229,91 @@ r.get('/:id', async (req, res) => {
         }
 
         const KD_STAGE_SLUGS = new Set(['consulting', 'design', 'quoting', 'contract', 'contract_signed']);
+        const isDoneStatus = (s) => s === 'done' || s === 'completed';
 
         for (const assignment of flowAssignments) {
-          const divKey = String(assignment.division_unit_id || '');
-          const stepIdsForDiv = new Set((divToStepIds[divKey] || []).map(String));
-          const assignmentTasks = (allTasks || []).filter((t) => {
-            const meta = t.metadata || {};
-            if (meta.flow_step_id && stepToDivMap[meta.flow_step_id] === assignment.division_unit_id) return true;
-            if (meta.flow_step_id && stepIdsForDiv.has(String(meta.flow_step_id))) return true;
-            if (meta.template_set_id && meta.template_set_id === assignment.template_set_id) return true;
-            if ((assignment.order_index ?? 0) === 0) {
-              if (meta.imported_from === 'crm_deal' || meta.crm_task_id) return true;
-              const baseSlug = String(t.stage?.slug || '').replace(/-[a-f0-9]{8}$/i, '');
-              if (KD_STAGE_SLUGS.has(baseSlug) || KD_STAGE_SLUGS.has(String(t.stage?.slug || ''))) return true;
+          const scoped = divisionModuleMap.get(String(assignment.division_unit_id || ''));
+          const moduleKey = scoped || inferDivisionModule(assignment);
+          assignment.module_key = moduleKey;
+
+          // NV thẻ khối = NV thật trên module (không còn template flow lệch SX/VC)
+          let assignmentTasks = [];
+          if (moduleKey === 'production') {
+            assignmentTasks = (allTasks || []).filter(isSxProjectTask);
+          } else if (moduleKey === 'logistics') {
+            assignmentTasks = (allTasks || []).filter(isVcProjectTask);
+          } else if (moduleKey === 'crm') {
+            if (crmModuleTasks.length) {
+              assignmentTasks = crmModuleTasks;
+            } else {
+              // Fallback: bản sao NV CRM trên tasks khi chưa resolve deal
+              assignmentTasks = (allTasks || []).filter((t) => {
+                const meta = t.metadata || {};
+                if (meta.imported_from === 'crm_deal' || meta.crm_task_id) return true;
+                const baseSlug = String(t.stage?.slug || '').replace(/-[a-f0-9]{8}$/i, '');
+                return KD_STAGE_SLUGS.has(baseSlug) || KD_STAGE_SLUGS.has(String(t.stage?.slug || ''));
+              });
             }
-            return false;
-          });
+          } else {
+            const divKey = String(assignment.division_unit_id || '');
+            const stepIdsForDiv = new Set((divToStepIds[divKey] || []).map(String));
+            assignmentTasks = (allTasks || []).filter((t) => {
+              const meta = t.metadata || {};
+              if (meta.flow_step_id && stepToDivMap[meta.flow_step_id] === assignment.division_unit_id) return true;
+              if (meta.flow_step_id && stepIdsForDiv.has(String(meta.flow_step_id))) return true;
+              if (meta.template_set_id && meta.template_set_id === assignment.template_set_id) return true;
+              return false;
+            });
+          }
 
           assignment.tasks = assignmentTasks;
           const total = assignmentTasks.length;
-          const done = assignmentTasks.filter((t) => t.status === 'done' || t.status === 'completed').length;
+          const done = assignmentTasks.filter((t) => isDoneStatus(t.status)).length;
           assignment.tasks_total = total;
           assignment.tasks_completed = done;
           assignment.progress = total > 0 ? Math.round((done / total) * 100) : 0;
-          assignment.responsible_user = resolveAssignmentResponsible(assignment);
+          if (total > 0) {
+            assignment.status = done >= total ? 'done' : (done > 0 ? 'in_progress' : 'pending');
+          }
+
+          // Công ty thẻ = SoR module (CRM deal / SX project / VC logistics)
+          const moduleSor = displayCompanyForModule(moduleKey, moduleCompanies);
+          const displayCompany = moduleSor?.id
+            ? { ...moduleSor }
+            : (assignment.company_id
+              ? {
+                id: String(assignment.company_id),
+                name: null,
+                short_name: null,
+                source: 'assignment_synced',
+              }
+              : moduleSor);
+
+          if (displayCompany?.source === 'assignment_synced' && !displayCompany.name) {
+            const co = await supabase
+              .from('companies').select('id,name,short_name')
+              .eq('id', assignment.company_id).maybeSingle();
+            displayCompany.name = co.data?.name || null;
+            displayCompany.short_name = co.data?.short_name || null;
+          }
+
+          assignment.display_company = displayCompany;
+          assignment.module_company = moduleSor;
           assignment.is_project_company = !!(
             data.company_id
-            && assignment.company?.company_id
-            && String(assignment.company.company_id) === String(data.company_id)
+            && displayCompany?.id
+            && String(displayCompany.id) === String(data.company_id)
           );
+
+          const resp = await resolveAssignmentResponsible(
+            assignment,
+            assignmentTasks,
+            displayCompany?.id || null,
+            moduleKey,
+          );
+          assignment.responsible_user = resp.user;
+          assignment.responsible_source = resp.source;
+          assignment.responsible_mismatch = false;
         }
       } catch (e) { console.warn('Failed to load flow assignments:', e.message); }
     }
@@ -1026,7 +1326,7 @@ r.get('/:id', async (req, res) => {
     } catch { }
 
     try {
-      const r2 = await supabase.from('activity_logs').select('*, user:users(id,full_name)').eq('entity_type', 'project').eq('entity_id', req.params.id).order('created_at', { ascending: false }).limit(30);
+      const r2 = await supabase.from('activity_logs').select('*, user:users(id,full_name)').eq('entity_type', 'project').eq('entity_id', req.params.id).order('created_at', { ascending: false }).limit(80);
       activities = r2.data || [];
     } catch { }
 
@@ -1061,6 +1361,7 @@ r.get('/:id', async (req, res) => {
         ...data,
         ...stagePersons,
         production_staff: productionStaff,
+        module_companies: moduleCompanies,
         flow: flowInfo,
         flowAssignments,
         comments: comments || [],
@@ -1302,7 +1603,7 @@ r.post('/', requirePermission('projects', 'create'), async (req, res) => {
     }
 
     // Activity log
-    await logActivity(req.user.userId, 'created', 'project', data.id, `Tạo dự án ${data.code}: ${nameTrim}`);
+    await logActivity(req.user.userId, 'created', 'project', data.id, `Tạo dự án ${data.code}: ${nameTrim}`, null, null, req);
 
     // ── THÔNG BÁO cho tất cả người được phân công ──
     const allAssignees = [
@@ -1890,7 +2191,7 @@ r.post('/create-with-flow', requirePermission('projects', 'create'), async (req,
 
     // Activity log
     await logActivity(req.user.userId, 'created', 'project', projectId,
-      `Tạo dự án ${project.code}: ${b.name}${b.flow_id ? ' (theo luồng)' : ''}${b.deal_id ? ' (từ Deal)' : ''}`);
+      `Tạo dự án ${project.code}: ${b.name}${b.flow_id ? ' (theo luồng)' : ''}${b.deal_id ? ' (từ Deal)' : ''}`, null, null, req);
 
     res.status(201).json({
       project,
@@ -2065,7 +2366,9 @@ r.put('/:id', requireProjectEditOrSxKanbanWorkshopType(), async (req, res) => {
             } catch (memErr) {
               console.warn('[PUT /projects] VC responsible members:', memErr.message);
             }
-            // Đặt sẵn dự án vào cột «lắp đặt tạm» của công ty VC (nếu admin đã tích cột này)
+          }
+          // Đặt / kéo lại vào cột «lắp đặt tạm» khi đã chọn CT VC (kể cả chỉ đổi ngày sau khi admin mới bật cột tạm)
+          if (data.logistics_company_id) {
             try {
               const { stageProjectAtVcTempColumn } = require('../helpers/vcTempInstallStaging');
               const staged = await stageProjectAtVcTempColumn(req, {
@@ -2161,11 +2464,19 @@ r.put('/:id', requireProjectEditOrSxKanbanWorkshopType(), async (req, res) => {
       }
     }
 
+    if (
+      String(data?.company_id || '') !== String(old?.company_id || '')
+      || String(data?.logistics_company_id || '') !== String(old?.logistics_company_id || '')
+    ) {
+      const { syncProjectModuleAssignmentsSafe } = require('../helpers/syncProjectModuleAssignments');
+      syncProjectModuleAssignmentsSafe(data.id, { project: data });
+    }
+
     // Log & Notify
     if (old && update.status && update.status !== old.status) {
       await logActivity(req.user.userId, 'status_changed', 'project', data.id,
         `Chuyển trạng thái: ${old.status} → ${update.status}`,
-        { status: old.status }, { status: update.status });
+        { status: old.status }, { status: update.status }, req);
 
       // Production project → chỉ production_person; CRM → team (NVKD không nhận TB khi nhảy sang trạng thái xưởng/VC)
       let notifyIds = data.production_person_id
@@ -2179,6 +2490,40 @@ r.put('/:id', requireProjectEditOrSxKanbanWorkshopType(), async (req, res) => {
       await notifyMultiple(req, filteredIds, 'project_updated',
         '📋 Cập nhật dự án', `Dự án ${data.code || data.name} chuyển từ "${old.status}" → "${update.status}"`,
         'project', data.id);
+    }
+
+    // Ghi lịch sử thay đổi field (nhân sự, tài liệu, mốc…) — realtime tab Lịch sử
+    try {
+      const changedLabels = [];
+      const oldSnap = {};
+      const newSnap = {};
+      for (const [field, label] of Object.entries(PROJECT_FIELD_LABELS)) {
+        if (b[field] === undefined) continue;
+        if (field === 'status') continue; // đã log riêng
+        const before = old?.[field];
+        const after = b[field];
+        const same = field === 'quotation_files'
+          ? JSON.stringify(before || []) === JSON.stringify(after || [])
+          : String(before ?? '') === String(after ?? '');
+        if (same) continue;
+        changedLabels.push(label);
+        oldSnap[field] = before ?? null;
+        newSnap[field] = after ?? null;
+      }
+      if (changedLabels.length) {
+        await logActivity(
+          req.user.userId,
+          'updated',
+          'project',
+          data.id,
+          `Cập nhật dự án: ${changedLabels.join(', ')}`,
+          oldSnap,
+          newSnap,
+          req,
+        );
+      }
+    } catch (histErr) {
+      console.warn('[PUT /projects] activity history:', histErr.message);
     }
 
     // Ghi lịch sử thay đổi người phụ trách SX
@@ -2215,6 +2560,15 @@ r.put('/:id', requireProjectEditOrSxKanbanWorkshopType(), async (req, res) => {
       } catch (_) { /* ignore */ }
     }
 
+    try {
+      const io = req.app.get('io');
+      if (io) {
+        const payload = { project_id: data.id, project: data };
+        io.to(`project:${data.id}`).emit('project:updated', payload);
+        io.emit('project:updated', payload);
+      }
+    } catch (_) { /* ignore */ }
+
     res.json({ project: { ...data, production_staff } });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
 });
@@ -2224,13 +2578,28 @@ r.put('/:id/stage', async (req, res) => {
   try {
     if (!(await assertProjectAccessible(req, res, req.params.id, { operation: 'WRITE' }))) return;
     const { stage_slug, new_status, notes, attachments } = req.body;
-    const { data: stage } = await supabase.from('workflow_stages').select('id,name').eq('slug', stage_slug).single();
+    const { data: stage } = await supabase
+      .from('workflow_stages')
+      .select('id,name,slug,color')
+      .eq('slug', stage_slug)
+      .single();
     if (!stage) return res.status(404).json({ error: 'Stage không tồn tại' });
 
     const { data: old } = await supabase.from('projects').select('status,current_stage_id,name,code').eq('id', req.params.id).single();
 
+    const {
+      DELIVERY_SLUG_STATUS,
+      syncModulesFromDeliveryStage,
+    } = require('../helpers/syncProjectDeliveryStage');
+    const resolvedStatus = new_status
+      || DELIVERY_SLUG_STATUS[String(stage.slug || stage_slug || '').toLowerCase()]
+      || old?.status
+      || null;
+
     const { data, error } = await supabase.from('projects').update({
-      current_stage_id: stage.id, status: new_status, updated_at: new Date().toISOString(),
+      current_stage_id: stage.id,
+      ...(resolvedStatus ? { status: resolvedStatus } : {}),
+      updated_at: new Date().toISOString(),
     }).eq('id', req.params.id).select(`*, customers(id,full_name), current_stage:workflow_stages(id,name,slug,color)`).single();
     if (error) throw error;
 
@@ -2251,34 +2620,17 @@ r.put('/:id/stage', async (req, res) => {
       try { await autoFlow.onProjectStageChanged(req.params.id, stage.id); } catch (e) { console.error('Auto-flow sync:', e.message); }
     }
 
-    // AUTO-SYNC: Project stage → CRM Deal pipeline stage
+    // Đồng bộ SX / VC cột + CRM deal (thay map tên legacy)
+    let deliverySync = null;
     try {
-      // Map workflow stage slug → deal pipeline stage name
-      const STAGE_TO_DEAL_PIPELINE = {
-        consulting: 'Deal mới',
-        design: 'Deal mới',
-        quotation: 'Báo giá',
-        contract: 'Ký hợp đồng',
-        production: 'Ký hợp đồng',
-        delivery: 'Ký hợp đồng',
-        shipping: 'Ký hợp đồng',
-        installation: 'Ký hợp đồng',
-        'customer-care': 'Thắng',
-      };
-      const prefix = stage_slug?.split('-')?.[0] || stage_slug;
-      const dealPipelineName = STAGE_TO_DEAL_PIPELINE[prefix];
-      if (dealPipelineName) {
-        const { data: pStage } = await supabase.from('crm_pipeline_stages')
-          .select('id').eq('name', dealPipelineName).eq('pipeline_type', 'deal').eq('is_active', true).limit(1).single();
-        if (pStage) {
-          // Only update deals (type='deal') linked to this project
-          await supabase.from('crm_leads')
-            .update({ stage_id: pStage.id, updated_at: new Date().toISOString() })
-            .eq('project_id', req.params.id)
-            .eq('type', 'deal');
-        }
-      }
-    } catch (_) { /* ignore - CRM tables may not exist */ }
+      deliverySync = await syncModulesFromDeliveryStage(
+        req.params.id,
+        { id: stage.id, slug: stage.slug || stage_slug, name: stage.name },
+        { userId: req.user?.userId, skipProjectCoreUpdate: true },
+      );
+    } catch (e) {
+      console.warn('[PUT /projects/:id/stage] delivery sync:', e.message);
+    }
 
     // Auto-update customer status based on stage mapping
     if (data.customer_id) {
@@ -2303,10 +2655,16 @@ r.put('/:id/stage', async (req, res) => {
       quotation: fullProj?.quotation_person_id,
       contract: fullProj?.contract_person_id,
       production: fullProj?.production_person_id,
+      materials: fullProj?.production_person_id,
       delivery: fullProj?.shipping_person_id,
       shipping: fullProj?.shipping_person_id,
-      installation: fullProj?.shipping_person_id,
+      installation: fullProj?.installation_person_id || fullProj?.shipping_person_id,
+      acceptance: fullProj?.installation_person_id || fullProj?.care_person_id,
+      warranty: fullProj?.care_person_id,
       'customer-care': fullProj?.care_person_id,
+      order: fullProj?.sales_person_id || fullProj?.contract_person_id,
+      approve: fullProj?.design_person_id,
+      measure: fullProj?.design_person_id,
     };
     const stageAssigneeId = stagePersonMap[stage_slug] || null;
 
@@ -2366,7 +2724,7 @@ r.put('/:id/stage', async (req, res) => {
     // Log
     await logActivity(req.user.userId, 'stage_changed', 'project', data.id,
       `Chuyển giai đoạn sang: ${stage.name}`,
-      { status: old?.status }, { status: new_status, stage: stage.name });
+      { status: old?.status }, { status: new_status, stage: stage.name }, req);
 
     // ── THÔNG BÁO chuyển giai đoạn ──
     const WORKSHOP_SLUG_PREFIXES = ['production', 'delivery', 'shipping', 'installation', 'customer-care'];
@@ -2395,7 +2753,20 @@ r.put('/:id/stage', async (req, res) => {
     const io = req.app.get('io');
     if (io) io.emit('project:stage_changed', data);
 
-    res.json({ project: data });
+    // Trả project sau sync SX/VC (nếu có)
+    let projectOut = data;
+    if (deliverySync?.sx_kanban_column_id || deliverySync?.vc_kanban_column_id) {
+      try {
+        const { data: refreshed } = await supabase
+          .from('projects')
+          .select(`*, customers(id,full_name), current_stage:workflow_stages(id,name,slug,color)`)
+          .eq('id', req.params.id)
+          .single();
+        if (refreshed) projectOut = refreshed;
+      } catch (_) { /* keep data */ }
+    }
+
+    res.json({ project: projectOut, delivery_sync: deliverySync || null });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
 });
 
@@ -2509,7 +2880,7 @@ r.post('/:id/generate-tasks', async (req, res) => {
     }
 
     await logActivity(req.user.userId, 'generate_tasks', 'project', req.params.id,
-      `Tạo ${createdTasks.length} NV mẫu cho GĐ "${stage.name}"`);
+      `Tạo ${createdTasks.length} NV mẫu cho GĐ "${stage.name}"`, null, null, req);
 
     res.json({ tasks: createdTasks, count: createdTasks.length, stage: stage.name });
   } catch (e) { console.error('generate-tasks error:', e); res.status(500).json({ error: e.message }); }
@@ -2570,7 +2941,7 @@ r.post('/:id/request-approval', async (req, res) => {
 
     // Log activity
     await logActivity(req.user.userId, 'approval_requested', 'project', proj.id,
-      `Yêu cầu duyệt chuyển ${curStage?.name} → ${nextStage?.name}`);
+      `Yêu cầu duyệt chuyển ${curStage?.name} → ${nextStage?.name}`, null, null, req);
 
     res.json({ ok: true, notification_id: notif.id, approver_id: approverId });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
@@ -2626,7 +2997,7 @@ r.post('/:id/approve-advance', async (req, res) => {
         'project', req.params.id);
 
       await logActivity(req.user.userId, 'approval_approved', 'project', req.params.id,
-        `Duyệt chuyển ${meta.from_stage} → ${meta.to_stage}`);
+        `Duyệt chuyển ${meta.from_stage} → ${meta.to_stage}`, null, null, req);
 
       // Auto-create tasks for new stage (reuse existing logic from /stage endpoint)
       // Get stage person
@@ -2710,7 +3081,7 @@ r.post('/:id/approve-advance', async (req, res) => {
         'project', req.params.id);
 
       await logActivity(req.user.userId, 'approval_rejected', 'project', req.params.id,
-        `Từ chối chuyển ${meta.from_stage} → ${meta.to_stage}${reject_reason ? ': ' + reject_reason : ''}`);
+        `Từ chối chuyển ${meta.from_stage} → ${meta.to_stage}${reject_reason ? ': ' + reject_reason : ''}`, null, null, req);
 
       return res.json({ ok: true, action: 'rejected' });
     }
@@ -2789,7 +3160,13 @@ r.delete('/:id', requirePermission('projects', 'delete'), async (req, res) => {
       } catch (_) { /* ignore */ }
     }
 
-    // Xóa project
+    // Xóa project — gỡ FK RESTRICT trước (quotations/orders/invoices/stage_transitions)
+    try {
+      const { clearRestrictingProjectFks } = require('../helpers/deleteExclusiveProjectsForLeads');
+      await clearRestrictingProjectFks(supabase, req.params.id);
+    } catch (fkErr) {
+      console.warn('[projects:delete] clear restrict FKs:', fkErr?.message || fkErr);
+    }
     const { error } = await supabase.from('projects').delete().eq('id', req.params.id);
     if (error) throw error;
 

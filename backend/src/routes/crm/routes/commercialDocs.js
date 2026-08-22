@@ -26,11 +26,56 @@ const QUOTATION_LIST_SELECT_NO_REGION =
   'company:companies!quotations_company_id_fkey(id, name, short_name), ' +
   'lead:crm_leads!quotations_lead_id_fkey(id, code, title, type)';
 const ORDER_LIST_SELECT =
-  'id, code, title, customer_id, customer_name, total, status, payment_status, created_at, created_by, company_id, ' +
+  'id, code, title, customer_id, customer_name, total, status, payment_status, created_at, created_by, company_id, lead_id, quotation_id, ' +
+  'customer:customers(id, full_name, phone), creator:users!orders_created_by_fkey(id, full_name), ' +
+  'lead:crm_leads!orders_lead_id_fkey(id, code, title, type)';
+const ORDER_LIST_SELECT_NO_LEAD =
+  'id, code, title, customer_id, customer_name, total, status, payment_status, created_at, created_by, company_id, lead_id, quotation_id, ' +
   'customer:customers(id, full_name, phone), creator:users!orders_created_by_fkey(id, full_name)';
 const INVOICE_LIST_SELECT =
-  'id, code, title, customer_id, customer_name, total, paid_amount, payment_status, created_at, created_by, company_id, misa_status, misa_invoice_no, ' +
+  'id, code, title, customer_id, customer_name, total, paid_amount, payment_status, created_at, created_by, company_id, lead_id, misa_status, misa_invoice_no, ' +
   'customer:customers(id, full_name, phone), creator:users!invoices_created_by_fkey(id, full_name)';
+
+const {
+  isAccountingUser: isAccountingUserDoc,
+  getAccountingCompanyId: getAccountingCompanyIdDoc,
+} = require('../../../helpers/accountingScope');
+const { syncQuotationValueToDeal } = require('../../../helpers/syncQuotationValueToDeal');
+
+/** Kế toán: chứng từ cùng công ty KT hoặc do mình tạo (sau khi gắn deal xưởng, company_id đổi sang xưởng). */
+function applyCommercialListCompanyFilter(q, req, qScope) {
+  if (isAccountingUserDoc(req.user) && req.user?.userId) {
+    const ac = getAccountingCompanyIdDoc(req.user) || qScope.companyId;
+    if (ac) return q.or(`company_id.eq.${ac},created_by.eq.${req.user.userId}`);
+  }
+  if (qScope.companyId) return q.eq('company_id', qScope.companyId);
+  return q;
+}
+
+/** Gắn deal CRM → kế thừa công ty / khu vực / KH / dự án. */
+async function enrichCommercialUpdatesFromLead(updates, { forceScope = false, includeRegion = true } = {}) {
+  const leadId = updates.lead_id;
+  if (!leadId) return updates;
+  const { data: lead } = await supabase
+    .from('crm_leads')
+    .select('id, company_id, region_id, customer_id, project_id, phone, customer:customers(id, full_name, phone, address)')
+    .eq('id', leadId)
+    .maybeSingle();
+  if (!lead) return updates;
+  if (lead.company_id && (forceScope || !updates.company_id)) updates.company_id = lead.company_id;
+  if (includeRegion) {
+    if (forceScope) updates.region_id = lead.region_id || null;
+    else if (lead.region_id && !updates.region_id) updates.region_id = lead.region_id;
+  }
+  if (lead.project_id && (forceScope || !updates.project_id)) updates.project_id = lead.project_id;
+  if (!updates.customer_id && lead.customer_id) {
+    updates.customer_id = lead.customer_id;
+    if (!updates.customer_name) updates.customer_name = lead.customer?.full_name || null;
+    if (!updates.customer_phone) updates.customer_phone = lead.customer?.phone || lead.phone || null;
+    if (!updates.customer_address && lead.customer?.address) updates.customer_address = lead.customer.address;
+  }
+  return updates;
+}
 
 /** BG status=converted nhưng không còn ĐH gắn → trả về accepted để hiện lại nút →ĐH */
 async function restoreConvertedQuotationsWithoutOrders(quoteIds) {
@@ -56,7 +101,7 @@ async function restoreConvertedQuotationsWithoutOrders(quoteIds) {
 r.get('/quotations', responseCache({ ttl: 20, scope: 'user', tags: ['crm:list'] }), async (req, res) => {
   try {
     const {
-      status, search, limit = 50, lead_id,
+      status, search, limit = 500, lead_id,
       company_id: coQ, region_id: regQ, created_by: createdByQ,
       orphan, // 'only' | 'exclude' | undefined
     } = req.query;
@@ -66,7 +111,7 @@ r.get('/quotations', responseCache({ ttl: 20, scope: 'user', tags: ['crm:list'] 
       .limit(parseInt(limit));
     const qScope = resolveCommercialDocListCompanyScope(req, res, coQ);
     if (!qScope.ok) return;
-    if (qScope.companyId) q = q.eq('company_id', qScope.companyId);
+    q = applyCommercialListCompanyFilter(q, req, qScope);
     if (qScope.restrictToCreator && req.user?.userId) q = q.eq('created_by', req.user.userId);
     if (regQ && /^[0-9a-f-]{36}$/i.test(String(regQ))) q = q.eq('region_id', regQ);
     if (userIsAdmin(req.user?.role) && createdByQ && /^[0-9a-f-]{36}$/i.test(String(createdByQ))) {
@@ -84,7 +129,7 @@ r.get('/quotations', responseCache({ ttl: 20, scope: 'user', tags: ['crm:list'] 
         .select(QUOTATION_LIST_SELECT_NO_REGION)
         .order('created_at', { ascending: false })
         .limit(parseInt(limit));
-      if (qScope.companyId) q2 = q2.eq('company_id', qScope.companyId);
+      q2 = applyCommercialListCompanyFilter(q2, req, qScope);
       if (qScope.restrictToCreator && req.user?.userId) q2 = q2.eq('created_by', req.user.userId);
       if (userIsAdmin(req.user?.role) && createdByQ && /^[0-9a-f-]{36}$/i.test(String(createdByQ))) {
         q2 = q2.eq('created_by', createdByQ);
@@ -487,14 +532,14 @@ r.post('/quotations', async (req, res) => {
       }
     }
 
-    // Sync deal estimated_value
+    // Sync deal estimated_value + mirror dự án
     if (linkedLeadId && quote.total > 0) {
       try {
-        await supabase.from('crm_leads').update({
-          estimated_value: quote.total,
-          updated_at: new Date().toISOString(),
-        }).eq('id', linkedLeadId);
-        quote.deal_value_synced = true;
+        const valSync = await syncQuotationValueToDeal(
+          { ...quote, lead_id: linkedLeadId },
+          { syncLinkedOrders: false },
+        );
+        if (valSync.synced) quote.deal_value_synced = true;
       } catch (syncErr) {
         console.warn('[QUOTATION] Sync deal value error:', syncErr.message);
       }
@@ -551,17 +596,12 @@ r.put('/quotations/:id', async (req, res) => {
     uuidFields.forEach(f => { if (quoteData[f] === '' || quoteData[f] === undefined) quoteData[f] = null; });
     // Sanitize: empty strings → null for date fields
     ['valid_until', 'issue_date', 'sent_at', 'accepted_at', 'closed_at', 'signed_date', 'delivery_date'].forEach(f => { if (quoteData[f] === '') quoteData[f] = null; });
-    let commercialCoPut = quoteData.company_id || null;
-    let leadRegionIdPut = null;
+    const linkingLead = !!(quoteDataFromBody && quoteDataFromBody.lead_id);
     if (quoteData.lead_id) {
-      const { data: lrowPut } = await supabase
-        .from('crm_leads')
-        .select('company_id, region_id')
-        .eq('id', quoteData.lead_id)
-        .maybeSingle();
-      if (lrowPut?.company_id) commercialCoPut = lrowPut.company_id;
-      if (lrowPut?.region_id) leadRegionIdPut = lrowPut.region_id;
+      await enrichCommercialUpdatesFromLead(quoteData, { forceScope: linkingLead });
     }
+    let commercialCoPut = quoteData.company_id || null;
+    let leadRegionIdPut = quoteData.region_id || null;
     const qCoPut = await enforceCommercialDocCompanyOnWrite(req, res, commercialCoPut, 'Báo giá', {
       leadId: quoteData.lead_id || null,
     });
@@ -738,6 +778,19 @@ r.put('/quotations/:id', async (req, res) => {
         'quotation', data.id);
     } catch (ne) { console.warn('[NOTIFY] quotation_updated:', ne.message); }
 
+    // Sync giá trị deal / còn phải thu + đơn hàng gắn BG (PUT trước đây chỉ sync cọc)
+    if (data?.lead_id) {
+      try {
+        const valSync = await syncQuotationValueToDeal(data, {
+          prevTotal: prevQuote?.total,
+          replaceOrderItems: replaceItems,
+        });
+        if (valSync.synced) data.deal_value_synced = true;
+      } catch (syncErr) {
+        console.warn('[QUOTATION] Sync deal value on update error:', syncErr.message);
+      }
+    }
+
     // Sync tiền cọc + trạng thái cọc → deal + dự án SX
     if (data?.lead_id) {
       try {
@@ -747,6 +800,7 @@ r.put('/quotations/:id', async (req, res) => {
       }
     }
 
+    try { rcInvalidateTags(['crm:list']); } catch (_) { /* ignore */ }
     res.json({ ...data, auto: autoResult });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -830,19 +884,30 @@ r.delete('/quotations/:id', async (req, res) => {
 
 r.get('/orders', responseCache({ ttl: 20, scope: 'user', tags: ['crm:list'] }), async (req, res) => {
   try {
-    const { status, search, limit = 50, lead_id, company_id: coQ } = req.query;
+    const { status, search, limit = 500, lead_id, company_id: coQ } = req.query;
     let q = supabase.from('orders')
       .select(ORDER_LIST_SELECT)
       .order('created_at', { ascending: false }).limit(parseInt(limit));
     const oScope = resolveCommercialDocListCompanyScope(req, res, coQ);
     if (!oScope.ok) return;
-    if (oScope.companyId) q = q.eq('company_id', oScope.companyId);
+    q = applyCommercialListCompanyFilter(q, req, oScope);
     if (status) q = q.eq('status', status);
     if (search) q = q.or(`code.ilike.%${search}%,title.ilike.%${search}%,customer_name.ilike.%${search}%`);
     if (lead_id && /^[0-9a-f-]{36}$/i.test(String(lead_id))) q = await applyLeadOrCustomerSalesFilter(q, lead_id);
-    const { data, error } = await q;
+    let { data, error } = await q;
+    if (error && /orders_lead_id_fkey|crm_leads/i.test(String(error.message || ''))) {
+      let q2 = supabase.from('orders')
+        .select(ORDER_LIST_SELECT_NO_LEAD)
+        .order('created_at', { ascending: false }).limit(parseInt(limit));
+      q2 = applyCommercialListCompanyFilter(q2, req, oScope);
+      if (status) q2 = q2.eq('status', status);
+      if (search) q2 = q2.or(`code.ilike.%${search}%,title.ilike.%${search}%,customer_name.ilike.%${search}%`);
+      if (lead_id && /^[0-9a-f-]{36}$/i.test(String(lead_id))) q2 = await applyLeadOrCustomerSalesFilter(q2, lead_id);
+      const r2 = await q2;
+      data = r2.data; error = r2.error;
+    }
     if (error) throw error;
-    res.json(data || []);
+    res.json((data || []).map((row) => ({ ...row, is_orphan: !row.lead_id })));
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -850,9 +915,17 @@ r.get('/orders', responseCache({ ttl: 20, scope: 'user', tags: ['crm:list'] }), 
 
 r.get('/orders/:id', async (req, res) => {
   try {
-    const { data: order } = await supabase.from('orders')
-      .select('*, fulfillment_lead_id, lead_id, customer:customers(id, full_name, phone, email, address, company, tax_code)')
+    const orderSel = '*, fulfillment_lead_id, lead_id, customer:customers(id, full_name, phone, email, address, company, tax_code), lead:crm_leads!orders_lead_id_fkey(id, code, title, type, company_id, region_id, customer_id, project_id)';
+    let { data: order, error: oErr } = await supabase.from('orders')
+      .select(orderSel)
       .eq('id', req.params.id).single();
+    if (oErr && /orders_lead_id_fkey|crm_leads/i.test(String(oErr.message || ''))) {
+      const fb = await supabase.from('orders')
+        .select('*, fulfillment_lead_id, lead_id, customer:customers(id, full_name, phone, email, address, company, tax_code)')
+        .eq('id', req.params.id).single();
+      order = fb.data; oErr = fb.error;
+    }
+    if (oErr) throw oErr;
     let { data: items } = await supabase.from('order_items')
       .select('*, product:products(id, name, code)')
       .eq('order_id', req.params.id).order('item_order');
@@ -882,9 +955,18 @@ r.put('/orders/:id', async (req, res) => {
     const { items: itemsBody, ...updatesFromBody } = req.body;
     const updates = { ...updatesFromBody, updated_at: new Date().toISOString() };
     // Sanitize: empty strings → null for UUID fields
-    ['customer_id', 'lead_id', 'quotation_id', 'project_id'].forEach(f => {
+    ['customer_id', 'lead_id', 'quotation_id', 'project_id', 'company_id'].forEach(f => {
       if (updates[f] === '') updates[f] = null;
     });
+    const linkingLead = !!updatesFromBody.lead_id;
+    if (updates.lead_id) {
+      await enrichCommercialUpdatesFromLead(updates, { forceScope: linkingLead, includeRegion: false });
+      const oCoPut = await enforceCommercialDocCompanyOnWrite(req, res, updates.company_id, 'Đơn hàng', {
+        leadId: updates.lead_id,
+      });
+      if (!oCoPut.ok) return;
+      updates.company_id = oCoPut.companyId;
+    }
     if (updates.status === 'confirmed' && !updates.confirmed_at) updates.confirmed_at = new Date().toISOString();
     if (updates.status === 'shipped' && !updates.shipped_at) updates.shipped_at = new Date().toISOString();
     if (updates.status === 'delivered' && !updates.delivered_at) updates.delivered_at = new Date().toISOString();
@@ -932,6 +1014,20 @@ r.put('/orders/:id', async (req, res) => {
         'order', data.id);
     } catch (ne) { console.warn('[NOTIFY] order_updated:', ne.message); }
 
+    const orderTotalTouched = Array.isArray(itemsBody)
+      || (Object.prototype.hasOwnProperty.call(updatesFromBody, 'total') && updatesFromBody.total != null);
+    if (orderTotalTouched && data?.lead_id && Number(data.total) > 0) {
+      try {
+        await syncQuotationValueToDeal(
+          { lead_id: data.lead_id, total: data.total, deposit_amount: data.deposit_amount },
+          { syncLinkedOrders: false },
+        );
+      } catch (syncErr) {
+        console.warn('[ORDER] Sync deal value on update error:', syncErr.message);
+      }
+    }
+
+    try { rcInvalidateTags(['crm:list']); } catch (_) { /* ignore */ }
     res.json({ ...data, auto_project: autoProject });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -1107,13 +1203,13 @@ r.delete('/orders/:id', async (req, res) => {
 
 r.get('/invoices', responseCache({ ttl: 20, scope: 'user', tags: ['crm:list'] }), async (req, res) => {
   try {
-    const { status, search, limit = 50, lead_id, company_id: coQ } = req.query;
+    const { status, search, limit = 500, lead_id, company_id: coQ } = req.query;
     let q = supabase.from('invoices')
       .select(INVOICE_LIST_SELECT)
       .order('created_at', { ascending: false }).limit(parseInt(limit));
     const iScope = resolveCommercialDocListCompanyScope(req, res, coQ);
     if (!iScope.ok) return;
-    if (iScope.companyId) q = q.eq('company_id', iScope.companyId);
+    q = applyCommercialListCompanyFilter(q, req, iScope);
     if (status) q = q.eq('status', status);
     if (search) q = q.or(`code.ilike.%${search}%,title.ilike.%${search}%,customer_name.ilike.%${search}%`);
     if (lead_id && /^[0-9a-f-]{36}$/i.test(String(lead_id))) q = await applyLeadOrCustomerSalesFilter(q, lead_id);
@@ -1286,6 +1382,7 @@ r.put('/invoices/:id', async (req, res) => {
         'invoice', data.id);
     } catch (ne) { console.warn('[NOTIFY] invoice_updated:', ne.message); }
 
+    try { rcInvalidateTags(['crm:list']); } catch (_) { /* ignore */ }
     res.json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });

@@ -52,7 +52,7 @@ export default function ViewModeDropdownMenu({
       <div className={`mb-1 rounded-lg border px-2.5 py-1.5 ${t.header}`}>
         <p className="text-[10px] font-bold uppercase tracking-wider">Chế độ xem</p>
       </div>
-      <div className="flex flex-col gap-0.5">
+      <div className="flex flex-col gap-0.5 min-w-[11.5rem]">
         {modes.map((v) => {
           const active = activeId === v.id;
           const Icon = v.icon;
@@ -61,14 +61,24 @@ export default function ViewModeDropdownMenu({
               key={v.id}
               type="button"
               onClick={() => onSelect(v.id)}
-              className={`group flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs font-semibold whitespace-nowrap cursor-pointer transition-all duration-150 ${
+              className={`group flex items-start gap-2 rounded-lg px-2 py-1.5 text-left text-xs font-semibold cursor-pointer transition-all duration-150 ${
                 active ? t.active : `text-slate-700 ${t.hover}`
               }`}
             >
-              <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-colors ${active ? t.activeIcon : t.idleIcon}`}>
+              <span className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-colors ${active ? t.activeIcon : t.idleIcon}`}>
                 <Icon className="h-3.5 w-3.5" />
               </span>
-              {v.label}
+              <span className="min-w-0 flex-1">
+                <span className="block whitespace-nowrap">{v.label}</span>
+                {v.hint ? (
+                  <span className={`block text-[10px] font-medium mt-0.5 leading-snug ${
+                    active ? 'text-white/80' : 'text-slate-500'
+                  }`}
+                  >
+                    {v.hint}
+                  </span>
+                ) : null}
+              </span>
             </button>
           );
         })}

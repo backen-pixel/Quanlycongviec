@@ -6,6 +6,7 @@ const {
   isProductionStaff,
   isCrmProductionStaff,
   isCrmProductionAdmin,
+  isSalesCompanyWorkshopViewer,
 } = require('./adminRole');
 const { isAccountingUser } = require('./accountingScope');
 const { isWorkshopRoleProductionParticipant } = require('./dealParticipantProduction');
@@ -17,6 +18,8 @@ const CRM_PRODUCTION_DUAL_MODULES = new Set(['crm', 'production', 'tasks', 'proj
 const ACCOUNTING_VIEW_MODULES = new Set(['crm', 'production', 'logistics', 'projects', 'accounting']);
 /** NV lắp đặt / vận chuyển — vào module SX/VC, chỉ thấy deal được thêm thành viên. */
 const WORKSHOP_PARTICIPANT_VIEW_MODULES = new Set(['production', 'logistics', 'projects']);
+/** Sale công ty — xem SX + VC/LĐ (dữ liệu khóa theo company_id). */
+const SALES_COMPANY_WORKSHOP_MODULES = new Set(['production', 'logistics', 'projects', 'tasks']);
 
 /** Khớp module_key built-in dùng trong ecosystem_module_scopes và Sidebar.
  *  Module tùy chỉnh (app_modules) được merge động qua getAllKnownModuleKeys / isKnownModuleKeyAsync. */
@@ -114,6 +117,9 @@ async function userHasEcosystemModuleAccess(user, moduleKey) {
     if (!ok) return false;
   }
   if (isAdminLike(user)) return true;
+  if (isSalesCompanyWorkshopViewer(user) && SALES_COMPANY_WORKSHOP_MODULES.has(String(moduleKey))) {
+    return true;
+  }
 
   // Layer mới: có row user_module_roles → được vào module (+ alias)
   try {

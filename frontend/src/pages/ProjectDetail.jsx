@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
 import { getSocket } from '../lib/socket';
@@ -6,12 +6,18 @@ import TaskDetailModal from '../components/TaskDetailModal';
 import TaskCreateModal from '../components/TaskCreateModal';
 import Modal from '../components/Modal';
 import { FileUploadButton, FilePreview, FileList } from '../components/FileUpload';
+import UploadFileLightbox, {
+  collectUploadLightboxItems,
+  findUploadLightboxIndex,
+} from '../components/UploadFileLightbox';
+import { useFilePreview } from '../context/FilePreviewContext';
 import EmployeePicker from '../components/EmployeePicker';
+import ProjectSharedWorkspaceTab from '../components/ProjectSharedWorkspaceTab';
 import {
-  ArrowLeft, Plus, Send, Trash2, ChevronRight, ChevronDown, Phone, MapPin,
+  ArrowLeft, Plus, Trash2, ChevronRight, ChevronDown, Phone, MapPin,
   Calendar, Clock, CheckSquare, MessageSquare, ArrowRightCircle, ArrowRight,
   Paperclip, FileText, Edit, UserPlus, X, Shield, PlayCircle, AlertCircle, List, LayoutGrid, DollarSign, Pin, ShoppingCart,
-  Wallet, Layers,
+  Wallet, Layers, AlertTriangle, Target, Users,
 } from 'lucide-react';
 import ProjectOrdersTab from '../components/ProjectOrdersTab';
 import { togglePin, isPinned } from '../components/PinnedProjectsWidget';
@@ -22,22 +28,36 @@ import ProjectFlowTab from '../components/ProjectFlowTab';
 import ProjectCRMTab from '../components/ProjectCRMTab';
 import ProjectDealAggregateTab from '../components/ProjectDealAggregateTab';
 import ProjectDealSyncPanel from '../components/ProjectDealSyncPanel';
+import ProjectOverviewPanel from '../components/ProjectOverviewPanel';
+import DealModulePathStrip from '../components/DealModulePathStrip';
 import ProjectCashflowTab from '../components/ProjectCashflowTab';
 import SharedCRMNotes from '../components/SharedCRMNotes';
+import { CrmLeadCommentsPanel, ProjectCommentsPanel } from '../components/CommentsPanels';
+import EventsFeedPage from './EventsFeedPage';
+import { overlayDealBundleWithFlowAssignments } from '../lib/overlayDealBundleWithFlowAssignments';
 import {
   STATUS_LABELS, STATUS_COLORS, PRIORITY_LABELS, PRIORITY_COLORS,
   TASK_STATUS, TASK_COLORS, formatVND, formatDate, formatDateTime,
   getInitials, avatarColor
 } from '../lib/utils';
+import {
+  isProjectDeliveryStage,
+  mapStagesToProjectFlow,
+  projectStatusForStageSlug,
+  stageSlugForProjectStatus,
+} from '../lib/projectDeliveryStages';
 
-const STAGE_FLOW = [
-  { slug: 'consulting', status: 'consulting', label: 'Tư vấn', personKey: 'consulting_person' },
+const STAGE_FLOW_FALLBACK = [
+  { slug: 'order', status: 'contract_signed', label: 'Đơn hàng', personKey: 'contract_person' },
   { slug: 'design', status: 'designing', label: 'Thiết kế', personKey: 'design_person' },
-  { slug: 'quotation', status: 'quoting', label: 'Báo giá', personKey: 'quotation_person' },
-  { slug: 'contract', status: 'contract_signed', label: 'Hợp đồng', personKey: 'contract_person' },
+  { slug: 'approve', status: 'designing', label: 'Duyệt', personKey: 'design_person' },
+  { slug: 'measure', status: 'designing', label: 'Đo đạc', personKey: 'design_person' },
   { slug: 'production', status: 'producing', label: 'Sản xuất', personKey: 'production_person' },
-  { slug: 'delivery', status: 'shipping', label: 'Vận chuyển', personKey: 'shipping_person' },
-  { slug: 'customer-care', status: 'warranty', label: 'CSKH', personKey: 'care_person' },
+  { slug: 'materials', status: 'producing', label: 'Chuẩn bị vật tư', personKey: 'production_person' },
+  { slug: 'delivery', status: 'shipping', label: 'Giao hàng', personKey: 'shipping_person' },
+  { slug: 'installation', status: 'installing', label: 'Lắp đặt', personKey: 'installation_person' },
+  { slug: 'acceptance', status: 'completed', label: 'Nghiệm thu', personKey: 'care_person' },
+  { slug: 'warranty', status: 'warranty', label: 'Bảo hành', personKey: 'care_person' },
 ];
 
 export default function ProjectDetail() {
@@ -46,11 +66,13 @@ export default function ProjectDetail() {
   const navigate = useNavigate();
   const [project, setProject] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState(searchParams.get('tab') || 'aggregate');
+  const [activeTab, setActiveTab] = useState(() => {
+    const t = searchParams.get('tab') || 'overview';
+    return t === 'tasks' ? 'shared' : t;
+  });
   const [selectedTask, setSelectedTask] = useState(null);
   const [showCreateTask, setShowCreateTask] = useState(false);
-  const [newComment, setNewComment] = useState('');
-  const [commentFiles, setCommentFiles] = useState([]);
+  const [commentCount, setCommentCount] = useState(0);
   const [pendingApprovalCount, setPendingApprovalCount] = useState(0);
   const [approvalRule, setApprovalRule] = useState(null); // { mode: 'auto'|'manual' }
   const [orderCount, setOrderCount] = useState(0);
@@ -58,24 +80,61 @@ export default function ProjectDetail() {
   const [showApprovalRequest, setShowApprovalRequest] = useState(false);
   const [showPeople, setShowPeople] = useState(false);
   const [showFiles, setShowFiles] = useState(false);
-  const [editingLines, setEditingLines] = useState(false);
+  const [editingPeople, setEditingPeople] = useState(false);
   const [allUsers, setAllUsers] = useState([]);
   const [addLineStage, setAddLineStage] = useState('');
   const [editing, setEditing] = useState(false);
   const [editData, setEditData] = useState({});
   const [aggregateBadge, setAggregateBadge] = useState(null);
   const [dealBundle, setDealBundle] = useState(null);
+  const [dealMembers, setDealMembers] = useState([]);
+  const [deliveryStages, setDeliveryStages] = useState([]);
+  const [docLightboxIndex, setDocLightboxIndex] = useState(null);
+  const [taskModuleFilter, setTaskModuleFilter] = useState(searchParams.get('module') || 'all');
+  const filePreview = useFilePreview();
+
+  const crmLeadId = useMemo(
+    () => dealBundle?.primary_lead?.id
+      || dealBundle?.lead_id
+      || project?.module_companies?.deal_id
+      || null,
+    [dealBundle, project?.module_companies?.deal_id],
+  );
+
+  /** Bundle hiển thị: CRM chip/NV theo khối; SX/VC theo NV xưởng (khớp module chi tiết). */
+  const displayBundle = useMemo(
+    () => overlayDealBundleWithFlowAssignments(dealBundle, project?.flowAssignments),
+    [dealBundle, project?.flowAssignments],
+  );
 
   const loadBundle = useCallback(() => {
     api.get(`/management/by-project/${id}`)
       .then((r) => {
         setDealBundle(r.data);
         const t = r.data?.totals;
-        if (t) setAggregateBadge((t.tasks || 0) + (t.documents || 0));
+        if (t) setAggregateBadge(t.documents || undefined);
+        const leadId = r.data?.primary_lead?.id || r.data?.lead_id;
+        if (leadId) {
+          api.get(`/crm/leads/${leadId}/members`)
+            .then((mr) => setDealMembers(mr.data || []))
+            .catch(() => setDealMembers([]));
+          api.get(`/crm/leads/${leadId}/comments`)
+            .then((cr) => {
+              const rows = Array.isArray(cr.data) ? cr.data : (cr.data?.comments || []);
+              setCommentCount(rows.length);
+            })
+            .catch(() => {});
+        } else {
+          setDealMembers([]);
+          api.get(`/projects/${id}/comments`)
+            .then((cr) => setCommentCount((cr.data?.comments || []).length))
+            .catch(() => setCommentCount(0));
+        }
       })
       .catch(() => {
         setDealBundle(null);
         setAggregateBadge(null);
+        setDealMembers([]);
       });
   }, [id]);
 
@@ -83,6 +142,14 @@ export default function ProjectDetail() {
     setLoading(true);
     api.get(`/projects/${id}`).then(r => setProject(r.data.project)).catch(() => {}).finally(() => setLoading(false));
     api.get(`/projects/${id}/orders`).then(r => setOrderCount((r.data.orders || []).length)).catch(() => setOrderCount(0));
+    api.get(`/projects/${id}/cashflow`)
+      .then((r) => {
+        const n = (r.data?.quotations || []).length
+          + (r.data?.orders || []).length
+          + (r.data?.invoices || []).length;
+        if (n > 0) setOrderCount(n);
+      })
+      .catch(() => {});
     api.get(`/approvals/project/${id}`).then(r => {
       const pending = (r.data.approvals || []).filter(a => a.status === 'pending').length;
       setPendingApprovalCount(pending);
@@ -96,20 +163,80 @@ export default function ProjectDetail() {
   useEffect(() => { load(); api.get('/users').then(r => setAllUsers(r.data.users || [])).catch(() => {}); }, [load]);
 
   useEffect(() => {
+    api.get('/stages', { params: { company_id: '' } })
+      .then((r) => {
+        const list = (r.data.stages || [])
+          .filter(isProjectDeliveryStage)
+          .sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
+        setDeliveryStages(list);
+      })
+      .catch(() => setDeliveryStages([]));
+  }, []);
+
+  useEffect(() => {
     const socket = getSocket();
+    if (!socket || !id) return undefined;
+
+    const join = () => socket.emit('join:project', id);
+    join();
+    socket.on('connect', join);
+
     let debounceTimer = null;
-    const schedule = () => {
+    const reloadProject = () => {
       if (debounceTimer) clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
         loadBundle();
-        api.get(`/projects/${id}`).then(r => setProject(r.data.project)).catch(() => {});
-      }, 800);
+        api.get(`/projects/${id}`).then((r) => setProject(r.data.project)).catch(() => {});
+      }, 350);
     };
-    const events = ['project:stage_changed', 'task:updated', 'crm:dashboard_changed'];
-    if (socket) events.forEach((ev) => socket.on(ev, schedule));
+
+    const onActivity = (payload) => {
+      const pid = payload?.project_id;
+      if (pid && String(pid) !== String(id)) return;
+      const act = payload?.activity;
+      if (act) {
+        setProject((prev) => {
+          if (!prev) return prev;
+          const list = prev.activities || [];
+          const key = act.id || `${act.action}-${act.created_at}-${act.description}`;
+          if (list.some((a) => (a.id && act.id && a.id === act.id) || `${a.action}-${a.created_at}-${a.description}` === key)) {
+            return prev;
+          }
+          return { ...prev, activities: [act, ...list].slice(0, 80) };
+        });
+      }
+      reloadProject();
+    };
+
+    const onOther = (payload) => {
+      const pid = payload?.project_id || payload?.id || payload?.project?.id;
+      if (pid && String(pid) !== String(id)) return;
+      reloadProject();
+    };
+
+    const onCrmTask = (payload) => {
+      const pid = payload?.project_id;
+      if (!pid || String(pid) !== String(id)) return;
+      reloadProject();
+    };
+
+    socket.on('project:activity', onActivity);
+    socket.on('project:stage_changed', onOther);
+    socket.on('project:updated', onOther);
+    socket.on('project:comment', onOther);
+    socket.on('task:updated', onOther);
+    socket.on('crm:task_changed', onCrmTask);
+
     return () => {
       if (debounceTimer) clearTimeout(debounceTimer);
-      if (socket) events.forEach((ev) => socket.off(ev, schedule));
+      socket.off('connect', join);
+      socket.off('project:activity', onActivity);
+      socket.off('project:stage_changed', onOther);
+      socket.off('project:updated', onOther);
+      socket.off('project:comment', onOther);
+      socket.off('task:updated', onOther);
+      socket.off('crm:task_changed', onCrmTask);
+      socket.emit('leave:project', id);
     };
   }, [id, loadBundle]);
 
@@ -147,12 +274,6 @@ export default function ProjectDetail() {
     } catch (e) { alert('Lỗi: ' + (e.response?.data?.error || e.message)); }
   };
 
-  const addComment = async () => {
-    if (!newComment.trim() && !commentFiles.length) return;
-    await api.post(`/projects/${id}/comments`, { content: newComment, attachments: commentFiles });
-    setNewComment(''); setCommentFiles([]); load();
-  };
-
   // Workflow line CRUD
   const updateLine = async (lineId, data) => {
     try { await api.put(`/projects/${id}/workflow-lines/${lineId}`, data); load(); } catch {}
@@ -167,56 +288,92 @@ export default function ProjectDetail() {
     try { await api.post(`/projects/${id}/workflow-lines`, { stage_slug: stageSlug, label: label.trim() }); load(); } catch {}
   };
 
+  const quotationImageGallery = useMemo(() => {
+    const files = project?.quotation_files || [];
+    const images = files.filter((f) => {
+      if (f?.mime_type?.startsWith('image/')) return true;
+      const n = String(f?.file_name || f?.file_url || '').toLowerCase();
+      return /\.(jpe?g|png|gif|webp|bmp|svg)(\?|$)/i.test(n);
+    });
+    return collectUploadLightboxItems(images);
+  }, [project?.quotation_files]);
+
   if (loading) return <div className="flex items-center justify-center h-64"><svg className="animate-spin h-6 w-6 text-gray-400" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg></div>;
   if (!project) return <div className="text-center py-16 text-gray-400">Dự án không tồn tại</div>;
 
-  // Extract stages from project flow (if has flowAssignments)
-  let projectStages = STAGE_FLOW; // Default fallback
-  if (project.flowAssignments?.length > 0) {
-    // Get unique stage IDs from flow assignments
-    const stageIds = new Set();
-    project.flowAssignments.forEach(fa => {
-      fa.tasks?.forEach(t => {
-        if (t.stage_id) stageIds.add(t.stage_id);
-      });
-    });
-    
-    // Map to stage info (need to load stages from API or use task stages)
-    // For now, use tasks to get stage info
+  // Stepper: ưu tiên workflow_stages active từ API (khớp Kanban Dự án)
+  let projectStages = deliveryStages.length
+    ? mapStagesToProjectFlow(deliveryStages)
+    : STAGE_FLOW_FALLBACK;
+  if (!deliveryStages.length && project.flowAssignments?.length > 0) {
     const stagesFromTasks = new Set();
-    project.tasks?.forEach(t => {
-      if (t.stage) stagesFromTasks.add(JSON.stringify({
-        id: t.stage.id,
-        name: t.stage.name,
-        slug: t.stage.slug,
-        color: t.stage.color,
-        order: t.stage.order_index
-      }));
+    project.tasks?.forEach((t) => {
+      if (t.stage) {
+        stagesFromTasks.add(JSON.stringify({
+          id: t.stage.id,
+          name: t.stage.name,
+          slug: t.stage.slug,
+          color: t.stage.color,
+          order: t.stage.order_index,
+        }));
+      }
     });
-    
     if (stagesFromTasks.size > 0) {
       projectStages = Array.from(stagesFromTasks)
-        .map(s => JSON.parse(s))
+        .map((s) => JSON.parse(s))
         .sort((a, b) => a.order - b.order)
-        .map(s => ({
+        .map((s) => ({
           slug: s.slug,
-          status: s.slug, // Approximate mapping
+          status: projectStatusForStageSlug(s.slug),
           label: s.name,
-          personKey: null, // Will get from flowAssignments
-          color: s.color
+          personKey: null,
+          color: s.color,
         }));
     }
   }
 
-  const currentStageIdx = projectStages.findIndex(s => s.status === project.status || s.slug === project.current_stage?.slug);
+  let currentStageIdx = projectStages.findIndex(
+    (s) => s.slug === project.current_stage?.slug
+      || String(s.id) === String(project.current_stage_id),
+  );
+  if (currentStageIdx < 0) {
+    const mapped = stageSlugForProjectStatus(project.status);
+    currentStageIdx = projectStages.findIndex((s) => s.slug === mapped);
+  }
+  const currentStageMeta = currentStageIdx >= 0 ? projectStages[currentStageIdx] : null;
   const nextStage = currentStageIdx >= 0 && currentStageIdx < projectStages.length - 1 ? projectStages[currentStageIdx + 1] : null;
   const canAdvance = project.canAdvance;
 
   const totalTasks = project.tasks?.length || 0;
+  const moduleTaskTotal = displayBundle?.totals?.tasks ?? totalTasks;
   const doneTasks = project.tasks?.filter(t => t.status === 'done').length || 0;
 
+  const openQuotationImage = (file) => {
+    const path = file?.file_url || file?.file_path;
+    const idx = findUploadLightboxIndex(quotationImageGallery, path);
+    if (idx >= 0) setDocLightboxIndex(idx);
+    else if (quotationImageGallery.length) setDocLightboxIndex(0);
+  };
+
+  const openProjectDoc = (file) => {
+    if (!file?.file_url && !file?.file_path) return;
+    const path = file.file_url || file.file_path;
+    const isImg = file?.mime_type?.startsWith('image/')
+      || /\.(jpe?g|png|gif|webp|bmp|svg)(\?|$)/i.test(String(file?.file_name || path || ''));
+    if (isImg) {
+      openQuotationImage(file);
+      return;
+    }
+    filePreview?.openFilePreview?.({
+      url: path,
+      fileName: file.file_name || 'Tài liệu',
+      mimeType: file.mime_type || '',
+      title: file.file_name || 'Xem tài liệu',
+    });
+  };
+
   return (
-    <div className="space-y-5 max-w-6xl">
+    <div className="space-y-5 w-full max-w-full">
       {/* Header */}
       <div className="flex items-start justify-between">
         <div className="flex items-start gap-3">
@@ -225,6 +382,23 @@ export default function ProjectDetail() {
             <div className="flex items-center gap-2 mb-1">
               <span className="text-sm font-bold text-blue-600">{project.code}</span>
               <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${STATUS_COLORS[project.status] || ''}`}>{STATUS_LABELS[project.status]}</span>
+              {displayBundle?.overview?.status_label && (
+                <span className="text-[11px] px-2 py-0.5 rounded-full font-medium bg-blue-100 text-blue-800">
+                  {displayBundle.overview.status_label}
+                </span>
+              )}
+              {(displayBundle?.overview?.forecast === 'at_risk' || displayBundle?.overview?.forecast === 'late') && (
+                <span className={`inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full font-semibold ${
+                  displayBundle.overview.forecast === 'late'
+                    ? 'bg-red-50 text-red-700 border border-red-200'
+                    : 'bg-amber-50 text-amber-800 border border-amber-200'
+                }`}>
+                  <AlertTriangle className="h-3 w-3" />
+                  {displayBundle.overview.forecast === 'late'
+                    ? `Trễ ${displayBundle.overview.delay_days || 0} ngày`
+                    : `Nguy cơ trễ ${displayBundle.overview.delay_days || 2} ngày`}
+                </span>
+              )}
               <button onClick={() => { togglePin(id); setProject(p => ({ ...p, _pinToggle: Date.now() })); }}
                 className={`p-1 rounded-lg cursor-pointer transition-all ${isPinned(id) ? 'bg-amber-100 text-amber-600' : 'hover:bg-gray-100 text-gray-300'}`}
                 title={isPinned(id) ? 'Bỏ ghim' : 'Ghim dự án'}>
@@ -292,6 +466,27 @@ export default function ProjectDetail() {
         </div>
       </div>
 
+      {dealBundle?.primary_lead?.id && (
+        <DealModulePathStrip
+          leadId={dealBundle.primary_lead.id}
+          projectId={id}
+          currentModule={
+            (() => {
+              const cur = (displayBundle.overview?.flow || []).find((s) => s.status === 'current');
+              if (cur?.module === 'production') return 'production';
+              if (cur?.module === 'logistics') return 'logistics';
+              return 'crm';
+            })()
+          }
+          lead={{
+            ...dealBundle.primary_lead,
+            production_person_id: project?.production_person_id,
+            logistics_person_id: project?.logistics_person_id,
+          }}
+          members={dealMembers}
+        />
+      )}
+
       {/* Stage pipeline - Flow-based */}
       <div className="bg-white rounded-xl border p-4">
         <div className="flex items-center gap-2 overflow-x-auto">
@@ -322,7 +517,7 @@ export default function ProjectDetail() {
         </div>
         {/* Stage counter */}
         <div className="mt-2 text-[10px] text-gray-400 flex items-center gap-2">
-          <span>{currentStageIdx + 1}/{STAGE_FLOW.length} bước</span>
+          <span>{Math.max(currentStageIdx, 0) + 1}/{projectStages.length} bước</span>
           <span>•</span>
           <span className="text-emerald-600 font-medium">{currentStageIdx} hoàn thành</span>
         </div>
@@ -396,11 +591,11 @@ export default function ProjectDetail() {
         </div>
       </div>
 
-      {/* Quotation files — collapsible */}
+      {/* Tài liệu dự án — collapsible, ảnh xem thumbnail */}
       <div className="bg-white rounded-xl border">
-        <button onClick={() => setShowFiles(v => !v)} className="w-full px-4 py-3 flex items-center justify-between hover:bg-gray-50 transition">
+        <button type="button" onClick={() => setShowFiles(v => !v)} className="w-full px-4 py-3 flex items-center justify-between hover:bg-gray-50 transition">
           <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-1">
-            <FileText className="h-3.5 w-3.5" /> File báo giá
+            <FileText className="h-3.5 w-3.5" /> Tài liệu
             {project.quotation_files?.length > 0 && (
               <span className="ml-1 bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded text-[10px] font-bold">
                 {project.quotation_files.length}
@@ -409,7 +604,7 @@ export default function ProjectDetail() {
           </h3>
           {showFiles ? <ChevronDown className="h-4 w-4 text-gray-400" /> : <ChevronRight className="h-4 w-4 text-gray-400" />}
         </button>
-        
+
         {showFiles && (
           <div className="px-4 pb-4 border-t">
             <div className="flex justify-end mb-2 pt-2">
@@ -420,107 +615,248 @@ export default function ProjectDetail() {
               }} />
             </div>
             {project.quotation_files?.length > 0 ? (
-              <div className="space-y-1.5">
-                {project.quotation_files.map((f, fi) => (
-                  <div key={fi} className="flex items-center gap-2 bg-gray-50 rounded-lg px-3 py-2 group">
-                    <Paperclip className="h-3.5 w-3.5 text-gray-400 shrink-0" />
-                    <a href={f.file_url} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 hover:underline flex-1 truncate">{f.file_name || `File ${fi + 1}`}</a>
-                    {f.file_size && <span className="text-[10px] text-gray-400">{(f.file_size / 1024).toFixed(0)}KB</span>}
-                    <button onClick={async () => {
-                      const updated = (project.quotation_files || []).filter((_, j) => j !== fi);
-                      await api.put(`/projects/${id}`, { quotation_files: updated });
-                      load();
-                    }} className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 cursor-pointer shrink-0">
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                ))}
+              <div className="space-y-3">
+                {(() => {
+                  const isImg = (f) => {
+                    if (f?.mime_type?.startsWith('image/')) return true;
+                    const n = String(f?.file_name || f?.file_url || '').toLowerCase();
+                    return /\.(jpe?g|png|gif|webp|bmp|svg)(\?|$)/i.test(n);
+                  };
+                  const images = (project.quotation_files || []).map((f, i) => ({ f, i })).filter(({ f }) => isImg(f));
+                  const others = (project.quotation_files || []).map((f, i) => ({ f, i })).filter(({ f }) => !isImg(f));
+                  return (
+                    <>
+                      {images.length > 0 && (
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                          {images.map(({ f, i }) => (
+                            <button
+                              type="button"
+                              key={`img-${i}`}
+                              onClick={() => openQuotationImage(f)}
+                              className="relative rounded-xl border border-slate-200 overflow-hidden bg-slate-50 text-left cursor-zoom-in hover:ring-2 hover:ring-blue-400 transition-shadow"
+                              title="Xem ảnh"
+                            >
+                              <img
+                                src={f.file_url}
+                                alt={f.file_name || `Ảnh ${i + 1}`}
+                                className="w-full h-28 object-cover"
+                                loading="lazy"
+                              />
+                              <p className="px-2 py-1 text-[10px] text-slate-500 truncate bg-white/90">{f.file_name || `Ảnh ${i + 1}`}</p>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      {others.length > 0 && (
+                        <div className="space-y-1.5">
+                          {others.map(({ f, i }) => (
+                            <button
+                              type="button"
+                              key={`file-${i}`}
+                              onClick={() => openProjectDoc(f)}
+                              className="w-full flex items-center gap-2 bg-gray-50 rounded-lg px-3 py-2 text-left hover:bg-gray-100 cursor-pointer transition-colors"
+                              title="Xem tài liệu"
+                            >
+                              <Paperclip className="h-3.5 w-3.5 text-gray-400 shrink-0" />
+                              <span className="text-sm text-blue-600 hover:underline flex-1 truncate">
+                                {f.file_name || `File ${i + 1}`}
+                              </span>
+                              {f.file_size && <span className="text-[10px] text-gray-400">{(f.file_size / 1024).toFixed(0)}KB</span>}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
               </div>
             ) : (
-              <p className="text-xs text-gray-400 text-center py-3">Chưa có file báo giá</p>
+              <p className="text-xs text-gray-400 text-center py-3">Chưa có tài liệu</p>
             )}
           </div>
         )}
       </div>
 
-      {/* People — collapsible + editable */}
+      {/* Nhân sự — đồng bộ vai trò DA · Deal CRM · luồng · đội SX */}
       <div className="bg-white rounded-xl border">
-        <button onClick={() => setShowPeople(!showPeople)} className="w-full flex items-center justify-between p-3 sm:p-4 cursor-pointer hover:bg-gray-50">
-          <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Nhân sự dự án</h3>
+        <button type="button" onClick={() => setShowPeople(!showPeople)} className="w-full flex items-center justify-between p-3 sm:p-4 cursor-pointer hover:bg-gray-50">
+          <div className="text-left">
+            <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Nhân sự dự án</h3>
+            <p className="text-[10px] text-gray-400 mt-0.5">Đồng bộ vai trò DA · thành viên Deal · phụ trách luồng</p>
+          </div>
           <div className="flex items-center gap-2">
             {showPeople && (
-              <button onClick={(e) => { e.stopPropagation(); setEditingLines(!editingLines); }}
-                className={`h-6 px-2 rounded text-[10px] font-medium flex items-center gap-1 cursor-pointer ${editingLines ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-blue-50'}`}>
-                <Edit className="h-3 w-3" /> {editingLines ? 'Xong' : 'Sửa'}
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setEditingPeople(!editingPeople); }}
+                className={`h-6 px-2 rounded text-[10px] font-medium flex items-center gap-1 cursor-pointer ${editingPeople ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-blue-50'}`}
+              >
+                <Edit className="h-3 w-3" /> {editingPeople ? 'Xong' : 'Sửa'}
               </button>
             )}
             <ChevronDown className={`h-4 w-4 text-gray-400 transition-transform ${showPeople ? 'rotate-180' : ''}`} />
           </div>
         </button>
         {showPeople && (
-          <div className="px-3 sm:px-4 pb-4">
-            {/* Show people by stage with their assigned tasks */}
-            <div className="space-y-3">
-              {projectStages.map(s => {
-                // Get tasks for this stage
-                const stageTasks = (project.tasks || []).filter(t => 
-                  t.stage?.slug === s.slug || t.stage?.id === s.id
-                );
-                
-                // Group users by tasks
-                const userTasks = {};
-                stageTasks.forEach(task => {
-                  if (task.assignee) {
-                    const uid = task.assignee.id;
-                    if (!userTasks[uid]) {
-                      userTasks[uid] = { user: task.assignee, tasks: [] };
-                    }
-                    userTasks[uid].tasks.push(task);
-                  }
-                });
-                
-                const users = Object.values(userTasks);
-                
+          <div className="px-3 sm:px-4 pb-4 space-y-4 border-t border-gray-100 pt-3">
+            {(() => {
+              const ROLE_ROWS = [
+                { idKey: 'sales_person_id', personKey: 'sales_person', label: 'Kinh doanh', module: 'CRM' },
+                { idKey: 'consulting_person_id', personKey: 'consulting_person', label: 'Tư vấn', module: 'CRM' },
+                { idKey: 'designer_id', personKey: 'designer', label: 'Thiết kế (DA)', module: 'CRM' },
+                { idKey: 'design_person_id', personKey: 'design_person', label: 'Thiết kế (giai đoạn)', module: 'CRM' },
+                { idKey: 'quotation_person_id', personKey: 'quotation_person', label: 'Báo giá', module: 'CRM' },
+                { idKey: 'contract_person_id', personKey: 'contract_person', label: 'Hợp đồng', module: 'CRM' },
+                { idKey: 'project_manager_id', personKey: 'project_manager', label: 'Quản lý dự án', module: 'DA' },
+                { idKey: 'production_person_id', personKey: 'production_person', label: 'Sản xuất', module: 'SX' },
+                { idKey: 'shipping_person_id', personKey: 'shipping_person', label: 'Giao hàng', module: 'VC' },
+                { idKey: 'logistics_person_id', personKey: 'logistics_person', label: 'Vận chuyển / Logistics', module: 'VC' },
+                { idKey: 'installation_person_id', personKey: 'installation_person', label: 'Lắp đặt', module: 'VC' },
+                { idKey: 'care_person_id', personKey: 'care_person', label: 'Bảo hành', module: 'CRM' },
+                { idKey: 'supervisor_id', personKey: 'supervisor', label: 'Giám sát', module: 'DA' },
+              ];
+
+              const savePerson = async (idKey, userId) => {
+                try {
+                  await api.put(`/projects/${id}`, { [idKey]: userId || null });
+                  await Promise.all([load(), loadBundle()]);
+                } catch (e) {
+                  alert('Lỗi cập nhật: ' + (e.response?.data?.error || e.message));
+                }
+              };
+
+              const PersonChip = ({ user, sub }) => {
+                if (!user) return <span className="text-[11px] text-gray-300">Chưa chỉ định</span>;
                 return (
-                  <div key={s.slug || s.label}>
-                    <div className="flex items-center gap-2 mb-1.5">
-                      <p className="text-[10px] font-semibold text-gray-400 uppercase flex-1">
-                        {s.label} ({users.length} người)
-                      </p>
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div
+                      className="h-6 w-6 rounded-full flex items-center justify-center text-white text-[9px] font-bold shrink-0"
+                      style={{ backgroundColor: avatarColor(user.full_name) }}
+                    >
+                      {getInitials(user.full_name)}
                     </div>
-                    {users.length > 0 ? (
-                      <div className="space-y-1.5">
-                        {users.map(({ user, tasks }) => (
-                          <div key={user.id} className="bg-gray-50 rounded-lg px-2.5 py-2">
-                            <div className="flex items-center gap-2 mb-1">
-                              <div className="h-6 w-6 rounded-full flex items-center justify-center text-white text-[9px] font-bold shrink-0"
-                                style={{ backgroundColor: avatarColor(user.full_name) }}>
-                                {getInitials(user.full_name)}
+                    <div className="min-w-0">
+                      <p className="text-xs font-medium text-gray-900 truncate">{user.full_name}</p>
+                      {sub && <p className="text-[10px] text-gray-400 truncate">{sub}</p>}
+                    </div>
+                  </div>
+                );
+              };
+
+              const filledRoles = ROLE_ROWS.filter((r) => project[r.personKey]?.id || project[r.idKey]);
+              const flowPeople = (project.flowAssignments || [])
+                .filter((a) => a.responsible_user?.id)
+                .map((a) => ({
+                  id: a.responsible_user.id,
+                  user: a.responsible_user,
+                  label: a.division?.name || a.division?.short_name || a.company?.name || 'Luồng',
+                }));
+              const sxStaff = project.production_staff || [];
+
+              return (
+                <>
+                  <div>
+                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-2">Vai trò trên dự án</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {(editingPeople ? ROLE_ROWS : (filledRoles.length ? filledRoles : ROLE_ROWS.slice(0, 6))).map((r) => {
+                        const person = project[r.personKey];
+                        return (
+                          <div key={r.idKey} className="rounded-lg border border-slate-100 bg-slate-50/80 px-2.5 py-2">
+                            <div className="flex items-center justify-between gap-2 mb-1">
+                              <span className="text-[10px] font-semibold text-gray-500">{r.label}</span>
+                              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-white border text-gray-400">{r.module}</span>
+                            </div>
+                            {editingPeople ? (
+                              <UserSelect
+                                size="sm"
+                                value={person?.id || project[r.idKey] || ''}
+                                onChange={(uid) => savePerson(r.idKey, uid)}
+                                users={allUsers}
+                                emptyLabel="— Chưa chỉ định —"
+                              />
+                            ) : (
+                              <PersonChip user={person} />
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {!editingPeople && filledRoles.length === 0 && (
+                      <p className="text-[11px] text-gray-400 mt-2">Chưa gán vai trò — bấm Sửa để chỉ định NV.</p>
+                    )}
+                  </div>
+
+                  {dealMembers?.length > 0 && (
+                    <div>
+                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-2">
+                        Thành viên Deal CRM ({dealMembers.length})
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {dealMembers.map((m) => {
+                          const u = m.user || m;
+                          const uid = u?.id || m.user_id;
+                          return (
+                            <div key={m.id || uid} className="inline-flex items-center gap-1.5 rounded-full border border-emerald-100 bg-emerald-50/80 pl-1 pr-2.5 py-1">
+                              <div
+                                className="h-5 w-5 rounded-full flex items-center justify-center text-white text-[8px] font-bold"
+                                style={{ backgroundColor: avatarColor(u?.full_name || '?') }}
+                              >
+                                {getInitials(u?.full_name || '?')}
                               </div>
-                              <p className="text-xs font-medium text-gray-900">{user.full_name}</p>
-                              <span className="text-[9px] text-gray-500">({tasks.length} nhiệm vụ)</span>
+                              <span className="text-[11px] font-medium text-emerald-900">{u?.full_name || '—'}</span>
+                              {(m.role || m.member_role) && (
+                                <span className="text-[9px] text-emerald-600/80">{m.role || m.member_role}</span>
+                              )}
                             </div>
-                            <div className="ml-8 space-y-0.5">
-                              {tasks.map(task => (
-                                <div key={task.id} className="flex items-center gap-1 text-[10px] text-gray-600">
-                                  <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                                    task.status === 'done' ? 'bg-green-500' : 
-                                    task.status === 'in_progress' ? 'bg-blue-500' : 'bg-gray-300'
-                                  }`} />
-                                  <span className="truncate">{task.title}</span>
-                                </div>
-                              ))}
-                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {flowPeople.length > 0 && (
+                    <div>
+                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-2">Phụ trách theo luồng</p>
+                      <div className="space-y-1.5">
+                        {flowPeople.map((fp, i) => (
+                          <div key={`${fp.id}-${i}`} className="flex items-center justify-between gap-2 rounded-lg bg-blue-50/60 border border-blue-100 px-2.5 py-1.5">
+                            <PersonChip user={fp.user} sub={fp.label} />
                           </div>
                         ))}
                       </div>
-                    ) : (
-                      <div className="text-[10px] text-gray-300 py-1">Chưa phân công</div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
+                    </div>
+                  )}
+
+                  {sxStaff.length > 0 && (
+                    <div>
+                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-2">Đội sản xuất</p>
+                      <div className="flex flex-wrap gap-2">
+                        {sxStaff.map((u) => (
+                          <div key={u.id} className="inline-flex items-center gap-1.5 rounded-full border border-orange-100 bg-orange-50/80 pl-1 pr-2.5 py-1">
+                            <div
+                              className="h-5 w-5 rounded-full flex items-center justify-center text-white text-[8px] font-bold"
+                              style={{ backgroundColor: avatarColor(u.full_name) }}
+                            >
+                              {getInitials(u.full_name)}
+                            </div>
+                            <span className="text-[11px] font-medium text-orange-900">{u.full_name}</span>
+                            {u.is_primary && <span className="text-[9px] text-orange-600">Chính</span>}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {displayBundle?.overview?.owners && (
+                    <p className="text-[10px] text-slate-400">
+                      Tổng quan: CRM {displayBundle.overview.owners.crm?.full_name || '—'}
+                      {' · '}SX {displayBundle.overview.owners.sx?.full_name || '—'}
+                      {' · '}VC {displayBundle.overview.owners.vc?.full_name || '—'}
+                    </p>
+                  )}
+                </>
+              );
+            })()}
           </div>
         )}
       </div>
@@ -541,6 +877,10 @@ export default function ProjectDetail() {
               .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0))
               .map((assignment, idx) => {
                 const resp = assignment.responsible_user;
+                const displayCompany = assignment.display_company;
+                const companyLabel = displayCompany
+                  ? (displayCompany.name || displayCompany.short_name || '—')
+                  : (assignment.company?.name || assignment.company?.short_name || '—');
                 const statusKey = assignment.status || 'pending';
                 const statusLabel = statusKey === 'done' ? 'Hoàn thành'
                   : statusKey === 'in_progress' ? 'Đang làm' : 'Chờ';
@@ -571,13 +911,10 @@ export default function ProjectDetail() {
                             </span>
                           )}
                         </div>
-                        <p className="text-xs text-gray-700 ml-8">
-                          🏢 {assignment.company?.name || assignment.company?.short_name || '—'}
+                        <p className={`text-xs ml-8 ${displayCompany?.source === 'unset' ? 'text-amber-700' : 'text-gray-700'}`}>
+                          🏢 {companyLabel}
                         </p>
-                        <p className="text-xs text-gray-500 ml-8 mt-0.5">
-                          📋 {assignment.template_set?.name || 'Chưa chọn bộ mẫu'}
-                        </p>
-                        {resp && (
+                        {resp ? (
                           <div className="flex items-center gap-1.5 ml-8 mt-1.5">
                             <div className="h-5 w-5 rounded-full flex items-center justify-center text-white text-[8px] font-bold shrink-0"
                               style={{ backgroundColor: avatarColor(resp.full_name) }}>
@@ -587,6 +924,10 @@ export default function ProjectDetail() {
                               NV phụ trách: <span className="font-medium text-gray-800">{resp.full_name}</span>
                             </span>
                           </div>
+                        ) : (
+                          <p className="text-[11px] text-amber-700 ml-8 mt-1.5">
+                            Chưa có NV phụ trách thuộc công ty khối này
+                          </p>
                         )}
                       </div>
                       <div className="text-right shrink-0">
@@ -612,27 +953,29 @@ export default function ProjectDetail() {
       )}
 
       <ProjectDealSyncPanel
-        bundle={dealBundle}
+        bundle={displayBundle}
         projectId={id}
-        onOpenAggregate={() => setActiveTab('aggregate')}
+        onOpenAggregate={() => setActiveTab('overview')}
       />
 
       {/* Tabs */}
-      <div className="flex gap-1 border-b border-gray-200">
+      <div className="flex gap-1 border-b border-gray-200 overflow-x-auto">
         {[
-          { id: 'aggregate', label: 'Tổng hợp CRM/SX/VC', icon: Layers, count: aggregateBadge || undefined },
-          { id: 'tasks', label: 'Công việc', icon: CheckSquare, count: totalTasks },
+          { id: 'overview', label: 'Tổng quan', icon: Target, count: undefined },
+          { id: 'calendar', label: 'Lịch', icon: Calendar, count: undefined },
+          { id: 'shared', label: 'Không gian chung', icon: Users, count: undefined },
+          { id: 'aggregate', label: 'CRM/SX/VC', icon: Layers, count: moduleTaskTotal || undefined },
           { id: 'orders', label: 'Đơn hàng', icon: ShoppingCart, count: orderCount || undefined },
           { id: 'finance', label: 'Thu chi', icon: Wallet },
           { id: 'flow', label: 'Luồng', icon: ArrowRight },
           { id: 'documents', label: 'Tài liệu', icon: FileText },
           { id: 'approvals', label: 'Duyệt', icon: Shield, count: pendingApprovalCount || undefined },
-          { id: 'chat', label: 'Trao đổi', icon: MessageSquare, count: project.comments?.length },
+          { id: 'chat', label: 'Bình luận', icon: MessageSquare, count: commentCount || undefined },
           { id: 'crm', label: 'Bán hàng', icon: DollarSign },
           { id: 'history', label: 'Lịch sử', icon: Clock, count: project.activities?.length },
         ].map(t => (
           <button key={t.id} onClick={() => setActiveTab(t.id)}
-            className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 cursor-pointer ${
+            className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 cursor-pointer shrink-0 ${
               activeTab === t.id ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'
             }`}>
             <t.icon className="h-4 w-4" />{t.label}
@@ -641,201 +984,58 @@ export default function ProjectDetail() {
         ))}
       </div>
 
-      {/* ─── Tổng hợp Deal (CRM + SX + VC) ─── */}
-      {activeTab === 'aggregate' && (
-        <ProjectDealAggregateTab projectId={id} project={project} bundle={dealBundle} onReload={loadBundle} />
+      {/* ─── Tổng quan gom module ─── */}
+      {activeTab === 'overview' && (
+        <ProjectOverviewPanel
+          overview={displayBundle?.overview}
+          onOpenSections={() => setActiveTab('aggregate')}
+        />
       )}
 
-      {/* ─── Tasks Tab ─── */}
-      {activeTab === 'tasks' && (
-        <div className="space-y-4">
-          <div className="flex justify-between items-center bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl p-4">
-            <div className="flex-1">
-              <h3 className="text-sm font-bold text-gray-900 mb-1">Quản lý công việc</h3>
-              <p className="text-xs text-gray-600">Tạo task mới, gán nhân viên và theo dõi tiến độ</p>
-            </div>
-            <button onClick={() => setShowCreateTask(true)}
-              className="h-10 px-5 bg-blue-600 text-white rounded-lg text-sm font-semibold flex items-center gap-2 hover:bg-blue-700 cursor-pointer shadow-sm hover:shadow-md transition-all">
-              <Plus className="h-4 w-4" /> Thêm công việc
-            </button>
-          </div>
+      {activeTab === 'calendar' && (
+        <EventsFeedPage
+          projectId={id}
+          defaultLeadId={crmLeadId || ''}
+          embedded
+        />
+      )}
 
-          {/* Flow-based view (Company → Process → Tasks) */}
-          {project.flowAssignments?.length > 0 ? (
-            <div className="space-y-4">
-              {project.flowAssignments.map((assignment, aIdx) => {
-                const assignmentTasks = assignment.tasks || [];
-                // Group tasks by stage
-                const byStage = {};
-                assignmentTasks.forEach(t => {
-                  const slug = t.stage?.slug || 'other';
-                  if (!byStage[slug]) byStage[slug] = { stage: t.stage, tasks: [] };
-                  byStage[slug].tasks.push(t);
-                });
-                const doneCount = assignmentTasks.filter(t => t.status === 'done').length;
+      {/* ─── Không gian chung — theo công ty Bộ Quy Trình ─── */}
+      {activeTab === 'shared' && (
+        <ProjectSharedWorkspaceTab
+          projectId={id}
+          project={project}
+          dealBundle={displayBundle}
+          users={allUsers}
+          onReload={() => { load(); loadBundle(); }}
+          onOpenTask={(taskId) => setSelectedTask(taskId)}
+          onCreateTask={() => setShowCreateTask(true)}
+        />
+      )}
 
-                return (
-                  <div key={assignment.id} className="border border-gray-200 rounded-xl overflow-hidden">
-                    {/* Company Header */}
-                    <div className="bg-gray-50 border-b px-4 py-3 flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <span className="flex items-center justify-center w-7 h-7 rounded-full bg-blue-100 text-blue-700 text-xs font-bold">{aIdx + 1}</span>
-                        <div>
-                          <h4 className="text-sm font-semibold text-gray-900">{assignment.division?.name || assignment.company?.name || 'N/A'}</h4>
-                          {assignment.company && assignment.division && (
-                            <p className="text-xs text-gray-500">🏢 {assignment.company.name}</p>
-                          )}
-                          {assignment.template_set && (
-                            <p className="text-xs text-gray-500">📋 {assignment.template_set.name}</p>
-                          )}
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <div className="text-sm font-bold text-blue-600">{doneCount}/{assignmentTasks.length}</div>
-                        <div className="w-24 bg-gray-200 rounded-full h-1.5 mt-1">
-                          <div className="bg-blue-500 h-full rounded-full" style={{ width: `${assignmentTasks.length ? Math.round(doneCount/assignmentTasks.length*100) : 0}%` }} />
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Stages → Tasks */}
-                    <div className="divide-y">
-                      {Object.entries(byStage).map(([slug, group]) => {
-                        const stageDone = group.tasks.filter(t => t.status === 'done').length;
-                        const allDone = stageDone === group.tasks.length;
-                        return (
-                          <div key={slug}>
-                            {/* Stage sub-header */}
-                            <div className="flex items-center gap-2 px-4 py-2 bg-white" style={{ borderLeft: `3px solid ${group.stage?.color || '#6b7280'}` }}>
-                              <span className="text-xs font-semibold text-gray-700 flex-1">
-                                {group.stage?.name || 'Quy trình khác'}
-                              </span>
-                              <span className="text-xs text-gray-400">{stageDone}/{group.tasks.length}</span>
-                              {allDone && <span className="text-[10px] text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded-full">✓</span>}
-                            </div>
-                            {/* Tasks */}
-                            <div className="px-3 pb-2 space-y-1 bg-gray-50">
-                              {group.tasks.map(t => (
-                                <TaskRow key={t.id} task={t} isLocked={false} onSelect={setSelectedTask} companyUnitId={assignment.company?.id} onReload={load} />
-                              ))}
-                            </div>
-                          </div>
-                        );
-                      })}
-                      {assignmentTasks.length === 0 && (
-                        <div className="px-4 py-4 text-xs text-gray-400 text-center">Chưa có nhiệm vụ</div>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-          /* ── OLD: Stage-based flat view (legacy projects) ── */
-          <div className="space-y-4">
-          {STAGE_FLOW.map((sf) => {
-            const stageTasks = (project.tasks || []).filter(t => t.stage?.slug === sf.slug);
-            const stageIdx = STAGE_FLOW.findIndex(s => s.slug === sf.slug);
-            const isCurrent = sf.status === project.status;
-            const isPast = stageIdx < currentStageIdx;
-            const isFuture = stageIdx > currentStageIdx;
-            const allDone = stageTasks.length > 0 && stageTasks.every(t => t.status === 'done');
-            const done = stageTasks.filter(t => t.status === 'done').length;
-
-            let prevAllDone = true;
-            if (isFuture) {
-              for (let pi = 0; pi < stageIdx; pi++) {
-                const prevTasks = (project.tasks || []).filter(t => t.stage?.slug === STAGE_FLOW[pi].slug);
-                if (prevTasks.length > 0 && !prevTasks.every(t => t.status === 'done')) { prevAllDone = false; break; }
-              }
-            }
-            const isLocked = isFuture && !prevAllDone;
-            const wlForStage = (project.workflowLines || []).filter(l => l.stage_slug === sf.slug);
-
-            return (
-              <div key={sf.slug}>
-                <h4 className={`text-sm font-semibold mb-2 flex items-center gap-2 ${
-                  isCurrent ? 'text-blue-600' : allDone ? 'text-emerald-600' : isFuture ? 'text-gray-400' : 'text-gray-700'
-                }`}>
-                  <span className={`w-2.5 h-2.5 rounded-full ${
-                    isCurrent ? 'bg-blue-600 animate-pulse' : allDone ? 'bg-emerald-500' : isFuture ? 'bg-gray-300' : 'bg-gray-400'
-                  }`} />
-                  {sf.label}
-                  <span className="text-xs text-gray-400 font-normal">{done}/{stageTasks.length}</span>
-                  {allDone && stageTasks.length > 0 && <span className="text-[10px] text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">✓ Hoàn thành</span>}
-                  {isLocked && <span className="text-[10px] text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">🔒 Chờ quy trình trước</span>}
-                  {stageTasks.length === 0 && !isLocked && (isCurrent || isPast) && (
-                    <button onClick={async () => {
-                      if (!confirm(`Tạo nhiệm vụ mẫu cho "${sf.label}"?`)) return;
-                      try {
-                        const { data } = await api.post(`/projects/${id}/generate-tasks`, { stage_slug: sf.slug });
-                        alert(`✅ Đã tạo ${data.count} nhiệm vụ cho "${data.stage}"`);
-                        load();
-                      } catch (e) { alert(e.response?.data?.error || 'Lỗi tạo nhiệm vụ'); }
-                    }} className="text-[10px] text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full hover:bg-blue-100 cursor-pointer font-normal">
-                      + Tạo dự án mẫu
-                    </button>
-                  )}
-                </h4>
-                {wlForStage.length > 1 && stageTasks.length > 0 && (
-                  <div className="ml-3 space-y-3">
-                    {wlForStage.map(line => {
-                      const lineTasks = stageTasks.filter(t => t.workflow_line_id ? t.workflow_line_id === line.id : false);
-                      if (!lineTasks.length) return null;
-                      return (
-                        <div key={line.id}>
-                          <div className="flex items-center gap-2 mb-1">
-                            <div className="w-1.5 h-4 rounded-full" style={{ backgroundColor: line.color || '#6b7280' }} />
-                            <span className="text-xs font-medium text-gray-600">{line.label}</span>
-                            {line.assignee && <span className="text-[10px] text-gray-400">{line.assignee.full_name}</span>}
-                          </div>
-                          <div className="space-y-1">
-                            {lineTasks.map(t => (
-                              <TaskRow key={t.id} task={t} isLocked={isLocked} onSelect={setSelectedTask} />
-                            ))}
-                          </div>
-                        </div>
-                      );
-                    })}
-                    {stageTasks.filter(t => !t.workflow_line_id).length > 0 && (
-                      <div className="space-y-1">
-                        {stageTasks.filter(t => !t.workflow_line_id).map(t => (
-                          <TaskRow key={t.id} task={t} isLocked={isLocked} onSelect={setSelectedTask} />
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-                {(wlForStage.length <= 1 || !stageTasks.length) && (
-                  isLocked ? (
-                    <div className="bg-gray-50 rounded-lg p-4 text-center text-xs text-gray-400 border border-dashed">
-                      🔒 Hoàn thành tất cả nhiệm vụ ở quy trình trước để mở khóa
-                    </div>
-                  ) : (
-                    <div className="space-y-1">
-                      {stageTasks.map(t => (
-                        <TaskRow key={t.id} task={t} isLocked={false} onSelect={setSelectedTask} />
-                      ))}
-                      {!stageTasks.length && (
-                        <div className="text-xs text-gray-300 py-2 text-center">—</div>
-                      )}
-                    </div>
-                  )
-                )}
-              </div>
-            );
-          })}
-          </div>
-          )}
-          {totalTasks === 0 && <div className="text-center py-10 text-gray-400"><CheckSquare className="h-10 w-10 mx-auto mb-2 opacity-30" /><p className="text-sm">Chưa có công việc</p></div>}
-          
-          {/* Shared CRM Notes — ghi chú từ Khối Kinh doanh */}
-          <SharedCRMNotes projectId={id} forModule="workshop" />
-        </div>
+      {/* ─── CRM/SX/VC — Module → Giai đoạn → NV ─── */}
+      {activeTab === 'aggregate' && (
+        <ProjectDealAggregateTab
+          projectId={id}
+          project={project}
+          bundle={displayBundle}
+          onReload={loadBundle}
+          filterModule={taskModuleFilter}
+          onFilterChange={setTaskModuleFilter}
+          onOpenProjectTask={(taskId) => setSelectedTask(taskId)}
+          onCreateTask={() => setShowCreateTask(true)}
+        />
       )}
 
       {activeTab === 'orders' && (
-        <ProjectOrdersTab projectId={id} users={allUsers} onChanged={load} />
+        <ProjectOrdersTab
+          projectId={id}
+          users={allUsers}
+          onChanged={load}
+          onCountsChange={({ total }) => {
+            if (typeof total === 'number' && total >= 0) setOrderCount(total);
+          }}
+        />
       )}
 
       {activeTab === 'finance' && (
@@ -856,100 +1056,140 @@ export default function ProjectDetail() {
         <ProjectDocumentsTab projectId={id} project={project} />
       )}
 
-      {/* ─── Chat (Trao đổi) Tab ─── */}
+      {/* ─── Chat (Bình luận) Tab — cùng nguồn với SX: CRM deal nếu có, không thì project_comments ─── */}
       {activeTab === 'chat' && (
-        <div className="space-y-4">
-          <div className="space-y-2">
-            <div className="flex gap-2">
-              <input value={newComment} onChange={e => setNewComment(e.target.value)} onKeyDown={e => e.key === 'Enter' && !e.shiftKey && addComment()}
-                placeholder="Nhập nội dung trao đổi..." className="flex-1 h-10 px-4 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500" />
-              <FileUploadButton compact onFilesUploaded={(f) => setCommentFiles(prev => [...prev, ...f])} />
-              <button onClick={addComment} className="h-10 px-4 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 cursor-pointer"><Send className="h-4 w-4" /></button>
-            </div>
-            <FilePreview files={commentFiles} onRemove={(i) => setCommentFiles(f => f.filter((_, j) => j !== i))} small />
-          </div>
-          {project.comments?.map(c => {
-            const atts = c.attachments || [];
-            const images = atts.filter(f => f.mime_type?.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(f.file_url || f.file_name || ''));
-            const otherFiles = atts.filter(f => !images.includes(f));
-            return (
-              <div key={c.id} className="flex gap-3">
-                <div className="h-8 w-8 rounded-full flex items-center justify-center text-white text-[10px] font-bold shrink-0"
-                  style={{ backgroundColor: avatarColor(c.user?.full_name) }}>{getInitials(c.user?.full_name)}</div>
-                <div className="flex-1 bg-white rounded-xl border p-3">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="text-sm font-medium">{c.user?.full_name}</span>
-                    <span className="text-xs text-gray-400">{formatDateTime(c.created_at)}</span>
-                  </div>
-                  {c.content && <p className="text-sm text-gray-700 whitespace-pre-wrap">{c.content}</p>}
-                  {/* Inline images */}
-                  {images.length > 0 && (
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {images.map((img, ii) => (
-                        <a key={ii} href={img.file_url} target="_blank" rel="noopener noreferrer" className="block">
-                          <img src={img.file_url} alt={img.file_name || 'image'} className="max-h-48 max-w-xs rounded-lg border object-cover hover:opacity-80 transition-opacity" />
-                        </a>
-                      ))}
-                    </div>
-                  )}
-                  {/* Other files */}
-                  {otherFiles.length > 0 && (
-                    <div className="mt-2 space-y-1">
-                      {otherFiles.map((f, fi) => (
-                        <a key={fi} href={f.file_url} target="_blank" rel="noopener noreferrer"
-                          className="flex items-center gap-2 bg-gray-50 rounded-lg px-3 py-2 hover:bg-gray-100 transition-colors">
-                          <Paperclip className="h-3.5 w-3.5 text-gray-400 shrink-0" />
-                          <span className="text-xs text-blue-600 truncate flex-1">{f.file_name || 'file'}</span>
-                          {f.file_size && <span className="text-[10px] text-gray-400 shrink-0">{(f.file_size / 1024).toFixed(0)} KB</span>}
-                        </a>
-                      ))}
-                    </div>
-                  )}
-                  {/* Legacy: FileList fallback */}
-                  {!atts.length && <FileList files={[]} />}
-                </div>
-              </div>
-            );
-          })}
-          {!project.comments?.length && <p className="text-sm text-gray-400 text-center py-6">Chưa có trao đổi</p>}
-        </div>
+        crmLeadId
+          ? (
+            <CrmLeadCommentsPanel
+              leadId={crmLeadId}
+              forModule="projects"
+              onCountChange={setCommentCount}
+            />
+          )
+          : (
+            <ProjectCommentsPanel
+              projectId={id}
+              onCountChange={setCommentCount}
+            />
+          )
       )}
 
       {/* ─── CRM / Bán hàng Tab ─── */}
       {activeTab === 'crm' && <ProjectCRMTab projectId={id} />}
 
-      {/* ─── History Tab ─── */}
+      {/* ─── History Tab — timeline realtime ─── */}
       {activeTab === 'history' && (
-        <div className="space-y-2">
-          {/* Stage transitions */}
-          {project.transitions?.map(t => (
-            <div key={t.id} className="flex items-start gap-3 bg-blue-50 rounded-lg p-3 border border-blue-100">
-              <ArrowRightCircle className="h-5 w-5 text-blue-600 shrink-0 mt-0.5" />
-              <div className="flex-1">
-                <p className="text-sm font-medium text-blue-900">
-                  {t.from_stage?.name || '—'} → <strong>{t.to_stage?.name}</strong>
-                </p>
-                {t.notes && <p className="text-xs text-blue-700 mt-1">{t.notes}</p>}
-                {t.attachments?.length > 0 && <FileList files={t.attachments} />}
-                <p className="text-[10px] text-blue-400 mt-1">{t.user?.full_name} · {formatDateTime(t.created_at)}</p>
+        <div className="space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <span className="relative flex h-2.5 w-2.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500" />
+              </span>
+              <p className="text-xs text-slate-500">
+                Lịch sử cập nhật theo thời gian thực
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => load()}
+              className="text-[11px] font-medium text-blue-600 hover:underline cursor-pointer"
+            >
+              Làm mới
+            </button>
+          </div>
+
+          {(() => {
+            const items = [
+              ...(project.transitions || []).map((t) => ({
+                id: `tr-${t.id}`,
+                kind: 'transition',
+                at: t.created_at,
+                user: t.user,
+                t,
+              })),
+              ...(project.activities || []).map((a) => ({
+                id: `act-${a.id}`,
+                kind: 'activity',
+                at: a.created_at,
+                user: a.user,
+                a,
+              })),
+            ].sort((x, y) => new Date(y.at || 0) - new Date(x.at || 0));
+
+            if (!items.length) {
+              return <p className="text-sm text-gray-400 text-center py-8">Chưa có lịch sử thay đổi</p>;
+            }
+
+            return (
+              <div className="relative pl-4 border-l-2 border-slate-100 space-y-3">
+                {items.map((item) => (
+                  <div key={item.id} className="relative">
+                    <span className={`absolute -left-[21px] top-3 h-3 w-3 rounded-full border-2 border-white ${
+                      item.kind === 'transition' ? 'bg-blue-500' : 'bg-slate-400'
+                    }`} />
+                    {item.kind === 'transition' ? (
+                      <div className="flex items-start gap-3 bg-blue-50 rounded-xl p-3 border border-blue-100">
+                        <ArrowRightCircle className="h-5 w-5 text-blue-600 shrink-0 mt-0.5" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-blue-900">
+                            {item.t.from_stage?.name || '—'} → <strong>{item.t.to_stage?.name}</strong>
+                          </p>
+                          {item.t.notes && <p className="text-xs text-blue-700 mt-1">{item.t.notes}</p>}
+                          {item.t.attachments?.length > 0 && <FileList files={item.t.attachments} />}
+                          <p className="text-[10px] text-blue-400 mt-1">
+                            {item.t.user?.full_name || 'Hệ thống'} · {formatDateTime(item.t.created_at)}
+                          </p>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-start gap-3 bg-white rounded-xl p-3 border border-slate-100 hover:border-slate-200">
+                        <Clock className="h-4 w-4 text-slate-400 shrink-0 mt-0.5" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm text-slate-800">{item.a.description}</p>
+                          {item.a.action && (
+                            <span className="inline-block mt-1 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-slate-100 text-slate-500">
+                              {item.a.action}
+                            </span>
+                          )}
+                          <p className="text-[10px] text-slate-400 mt-1">
+                            {item.a.user?.full_name || 'Hệ thống'} · {formatDateTime(item.a.created_at)}
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
               </div>
-            </div>
-          ))}
-          {project.activities?.map(a => (
-            <div key={a.id} className="flex items-center gap-3 text-sm py-2 border-b border-gray-50">
-              <Clock className="h-4 w-4 text-gray-400 shrink-0" />
-              <span className="flex-1 text-gray-700">{a.description}</span>
-              <span className="text-xs text-gray-400 shrink-0">{a.user?.full_name} · {formatDateTime(a.created_at)}</span>
-            </div>
-          ))}
-          {!project.activities?.length && !project.transitions?.length && <p className="text-sm text-gray-400 text-center py-6">Chưa có lịch sử</p>}
+            );
+          })()}
         </div>
       )}
 
       {/* Modals */}
-      <TaskDetailModal taskId={selectedTask} open={!!selectedTask} onClose={() => setSelectedTask(null)} onUpdated={load} />
+      <TaskDetailModal
+        taskId={selectedTask}
+        open={!!selectedTask}
+        onClose={() => setSelectedTask(null)}
+        onUpdated={() => { load(); loadBundle(); }}
+      />
       <TaskCreateModal open={showCreateTask} onClose={() => setShowCreateTask(false)} onCreated={load} projectId={id} stageId={project.current_stage?.id} project={project} />
-      <AdvanceStageModal open={showAdvance} onClose={() => setShowAdvance(false)} project={project} nextStage={nextStage} onAdvanced={load} />
+      <AdvanceStageModal
+        open={showAdvance}
+        onClose={() => setShowAdvance(false)}
+        project={project}
+        nextStage={nextStage}
+        currentStageLabel={currentStageMeta?.label}
+        onAdvanced={load}
+      />
+      {docLightboxIndex != null && quotationImageGallery.length > 0 && (
+        <UploadFileLightbox
+          items={quotationImageGallery}
+          index={docLightboxIndex}
+          onIndexChange={setDocLightboxIndex}
+          onClose={() => setDocLightboxIndex(null)}
+        />
+      )}
     </div>
   );
 }
@@ -1210,7 +1450,7 @@ function ChecklistItem({ item: c, companyUnitId, onReload, taskId }) {
 }
 
 // ═══ Advance Stage Modal ═══
-function AdvanceStageModal({ open, onClose, project, nextStage, onAdvanced }) {
+function AdvanceStageModal({ open, onClose, project, nextStage, currentStageLabel, onAdvanced }) {
   const [notes, setNotes] = useState('');
   const [files, setFiles] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -1223,7 +1463,7 @@ function AdvanceStageModal({ open, onClose, project, nextStage, onAdvanced }) {
     try {
       await api.put(`/projects/${project.id}/stage`, {
         stage_slug: nextStage.slug,
-        new_status: nextStage.status,
+        new_status: nextStage.status || projectStatusForStageSlug(nextStage.slug),
         notes: notes || null,
         attachments: files,
       });
@@ -1239,7 +1479,7 @@ function AdvanceStageModal({ open, onClose, project, nextStage, onAdvanced }) {
       <div className="space-y-4">
         <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
           <p className="text-sm text-emerald-800">
-            ✅ Tất cả công việc giai đoạn <strong>"{STAGE_FLOW.find(s => s.status === project.status)?.label}"</strong> đã hoàn thành!
+            ✅ Tất cả công việc giai đoạn <strong>"{currentStageLabel || project.current_stage?.name || STATUS_LABELS[project.status] || 'hiện tại'}"</strong> đã hoàn thành!
           </p>
           <p className="text-xs text-emerald-600 mt-1">
             Hệ thống sẽ tự động tạo nhiệm vụ cho giai đoạn <strong>"{nextStage.label}"</strong>

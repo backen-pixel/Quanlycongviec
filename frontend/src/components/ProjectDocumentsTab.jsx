@@ -17,6 +17,8 @@ import {
   shareModuleLabels,
 } from '../lib/documentShareScope';
 import DocumentShareModulePicker from './DocumentShareModulePicker';
+import { FilePreviewOpenLink } from '../context/FilePreviewContext';
+import { resolveFilePreviewMode } from '../lib/filePreview';
 
 const ICON_NAME_TO_EMOJI = {
   MessageSquare: '💬', Palette: '🎨', Calculator: '💰', FileText: '📝',
@@ -526,18 +528,25 @@ function LeadDocumentCard({ doc, onVisibilitySaved, onOpenImage }) {
                   </button>
                 ) : null
               ) : fileOpenProps ? (
-                <a {...fileOpenProps}
-                  className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors">
+                <FilePreviewOpenLink
+                  fileUrl={rawFileRef}
+                  fileName={doc.file_name || doc.name}
+                  mimeType={doc.mime_type || ''}
+                  className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors w-full text-left"
+                >
                   <FileText className="h-8 w-8 text-gray-400" />
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-blue-600 truncate">{doc.file_name || doc.name}</p>
                     <div className="flex items-center gap-2 text-[10px] text-gray-400">
                       {doc.mime_type && <span>{doc.mime_type}</span>}
                       {doc.file_size && <span>{(doc.file_size / 1024).toFixed(0)} KB</span>}
+                      {resolveFilePreviewMode({ mimeType: doc.mime_type, fileName: doc.file_name, fileUrl: rawFileRef }) && (
+                        <span className="text-emerald-600 font-medium">Xem tại đây</span>
+                      )}
                     </div>
                   </div>
                   <Download className="h-4 w-4 text-gray-400" />
-                </a>
+                </FilePreviewOpenLink>
               ) : null}
             </div>
           )}
@@ -551,6 +560,7 @@ function FileItem({ file: f, index, small }) {
   const isImage = f.mime_type?.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(f.file_url || f.file_name || '');
   const href = f.file_url ? publicFileUrl(f.file_url) : '';
   const openProps = f.file_url ? getFileOpenAnchorProps(f.file_url, { fileName: f.file_name }) : null;
+  const cls = `flex items-center gap-2 bg-white rounded-lg hover:bg-gray-50 transition-colors w-full text-left ${small ? 'px-2 py-1.5' : 'px-3 py-2'}`;
 
   const inner = (
     <>
@@ -564,7 +574,7 @@ function FileItem({ file: f, index, small }) {
     </>
   );
 
-  if (!openProps) {
+  if (!openProps && !f.file_url) {
     return (
       <div className={`flex items-center gap-2 bg-gray-50 rounded-lg text-gray-400 ${small ? 'px-2 py-1.5' : 'px-3 py-2'}`}>
         {inner}
@@ -572,9 +582,22 @@ function FileItem({ file: f, index, small }) {
     );
   }
 
+  if (!isImage && f.file_url) {
+    return (
+      <FilePreviewOpenLink
+        fileUrl={f.file_url}
+        fileName={f.file_name || `File ${index + 1}`}
+        mimeType={f.mime_type || ''}
+        className={cls}
+      >
+        {inner}
+      </FilePreviewOpenLink>
+    );
+  }
+
   return (
     <a {...openProps}
-      className={`flex items-center gap-2 bg-white rounded-lg hover:bg-gray-50 transition-colors ${small ? 'px-2 py-1.5' : 'px-3 py-2'}`}>
+      className={cls}>
       {inner}
     </a>
   );
