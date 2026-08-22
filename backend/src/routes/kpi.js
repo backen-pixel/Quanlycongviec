@@ -49,9 +49,14 @@ r.use((req, res, next) => {
 });
 
 const MANAGER_ROLES = new Set(['admin', 'manager', 'director', 'supervisor', 'superadmin', 'super_admin', 'administrator', 'region_admin']);
+/** Tạo/duyệt đơn nghỉ hộ NV: manager+ và sales_admin (Sale Admin công ty). */
+const LEAVE_MANAGER_ROLES = new Set([...MANAGER_ROLES, 'sales_admin']);
 const ADMIN_ROLES = new Set(['admin', 'superadmin', 'super_admin', 'administrator']);
 
 function isManager(req) { return MANAGER_ROLES.has(String(req.user?.role || '').toLowerCase()); }
+function isLeaveManager(req) {
+  return LEAVE_MANAGER_ROLES.has(String(req.user?.role || '').toLowerCase());
+}
 function isAdmin(req) { return ADMIN_ROLES.has(String(req.user?.role || '').toLowerCase()); }
 
 /** Xem dashboard tổng quan KPI công ty: manager+ hoặc sales_admin có company_id. */
@@ -1484,7 +1489,7 @@ r.delete('/holidays/:id', async (req, res) => {
 
 // ─── /api/kpi/leaves ─────────────────────────────────────────────────────────
 async function resolveLeaveScopedUserIds(req) {
-  const manager = isManager(req);
+  const manager = isLeaveManager(req);
   const uid = req.user?.userId || null;
   if (!manager) return uid ? [uid] : [];
 
@@ -1494,8 +1499,26 @@ async function resolveLeaveScopedUserIds(req) {
   const regionId = req.query.region_id ? String(req.query.region_id).trim() : '';
 
   if (companyId || departmentId) {
-    const usersInCo = await resolveTargetUsers({ companyId: companyId || null, departmentId: departmentId || null });
-    ids = usersInCo.map((u) => u.id);
+    // Ưu tiên staff list rộng (company_id OR phòng ban) — không dùng resolveTargetUsers
+    // (KPI whitelist role + bắt buộc department_id) vì Sale Admin sẽ mất nhiều NV.
+    if (companyId && !departmentId) {
+      const deptIds = await getCompanyDepartmentIdsCached(companyId);
+      let q = supabase
+        .from('users')
+        .select('id')
+        .neq('is_active', false);
+      if (deptIds.length) {
+        q = q.or(`company_id.eq.${companyId},department_id.in.(${deptIds.join(',')})`);
+      } else {
+        q = q.eq('company_id', companyId);
+      }
+      const { data, error } = await q;
+      if (error) throw error;
+      ids = (data || []).map((u) => u.id).filter(Boolean);
+    } else {
+      const usersInCo = await resolveTargetUsers({ companyId: companyId || null, departmentId: departmentId || null });
+      ids = usersInCo.map((u) => u.id);
+    }
   }
 
   if (regionId) {
@@ -1554,7 +1577,7 @@ r.get('/leaves', async (req, res) => {
 r.post('/leaves', async (req, res) => {
   try {
     const b = req.body || {};
-    const manager = isManager(req);
+    const manager = isLeaveManager(req);
     const uid = req.user?.userId || null;
     if (!b.start_date || !b.end_date) {
       return res.status(400).json({ error: 'start_date, end_date bắt buộc' });
@@ -1587,7 +1610,7 @@ r.post('/leaves', async (req, res) => {
 
 r.patch('/leaves/:id', async (req, res) => {
   try {
-    const manager = isManager(req);
+    const manager = isLeaveManager(req);
     const uid = req.user?.userId || null;
     const body = req.body || {};
     const { data: existing, error: fetchErr } = await supabase.from('kpi_user_leaves')
@@ -1636,7 +1659,7 @@ r.patch('/leaves/:id', async (req, res) => {
 
 r.delete('/leaves/:id', async (req, res) => {
   try {
-    const manager = isManager(req);
+    const manager = isLeaveManager(req);
     const uid = req.user?.userId || null;
     const { data: existing, error: fetchErr } = await supabase.from('kpi_user_leaves')
       .select('id, user_id, status')

@@ -27,7 +27,7 @@ export default function LeaveSchedulePage() {
 
   const isLeaveManager = useMemo(() => {
     const r = String(user?.role || '').toLowerCase();
-    return ['admin', 'manager', 'director', 'supervisor', 'superadmin', 'super_admin', 'administrator', 'region_admin'].includes(r);
+    return ['admin', 'manager', 'director', 'supervisor', 'superadmin', 'super_admin', 'administrator', 'region_admin', 'sales_admin'].includes(r);
   }, [user?.role]);
 
   return (

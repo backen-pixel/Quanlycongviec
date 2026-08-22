@@ -4,7 +4,9 @@ import api from '../lib/api';
 import { loadLeaveScheduleUi, patchLeaveScheduleUi } from '../lib/leaveScheduleStorage';
 import { useLeaveFilterActions } from '../lib/useLeaveFilterActions';
 import { downloadLeavesExcel } from '../lib/leaveScheduleExport';
+import { fetchLeaveCompanyStaff } from '../lib/leaveStaffApi';
 import LeaveActiveFilterBar from './LeaveActiveFilterBar';
+import LeaveStaffSearchSelect from './LeaveStaffSearchSelect';
 import {
   leavePersonCalendarLabel,
   leavePersonDisplayName,
@@ -455,33 +457,33 @@ export default function EventsOffLeaveSection({
       setRegions([]);
       return;
     }
-    const userParams = { company_id: companyId };
-    if (departmentId) userParams.department_id = departmentId;
-    if (filterRegionId) userParams.region_id = filterRegionId;
     Promise.all([
-      isManager
-        ? api.get('/kpi/users', { params: userParams }).then((r) => r.data?.users || []).catch(() => [])
-        : api.get('/users', { params: { company_id: companyId } }).then((r) => r.data?.users || r.data || []).catch(() => []),
+      fetchLeaveCompanyStaff(companyId, {
+        departmentId: departmentId || '',
+        regionId: filterRegionId || '',
+      }).catch(() => []),
       api.get('/crm/company-regions', { params: { company_id: companyId } }).then((r) => (Array.isArray(r.data) ? r.data : [])).catch(() => []),
     ]).then(([u, rg]) => {
       setUsers(u);
       setRegions(rg);
     });
-  }, [isManager, companyId, departmentId, filterRegionId]);
+  }, [companyId, departmentId, filterRegionId]);
 
-  /** NV trong form tạo — lọc theo công ty / phòng / khu vực của form */
+  /** NV trong form tạo — theo công ty (+ khu vực form); không khóa theo phòng ban bộ lọc danh sách. */
   useEffect(() => {
     if (!showCreateForm || !isManager || !companyId) {
       setCreateFormUsers([]);
       return;
     }
-    const params = { company_id: companyId };
-    if (departmentId) params.department_id = departmentId;
-    if (createFormRegionId) params.region_id = createFormRegionId;
-    api.get('/kpi/users', { params })
-      .then((r) => setCreateFormUsers(r.data?.users || []))
-      .catch(() => setCreateFormUsers([]));
-  }, [showCreateForm, isManager, companyId, departmentId, createFormRegionId]);
+    let cancelled = false;
+    fetchLeaveCompanyStaff(companyId, {
+      departmentId: '',
+      regionId: createFormRegionId || '',
+    })
+      .then((list) => { if (!cancelled) setCreateFormUsers(list); })
+      .catch(() => { if (!cancelled) setCreateFormUsers([]); });
+    return () => { cancelled = true; };
+  }, [showCreateForm, isManager, companyId, createFormRegionId]);
 
   useEffect(() => {
     if (!showCreateForm) return;
@@ -767,17 +769,13 @@ export default function EventsOffLeaveSection({
         {isManager && !editingLeaveId && (
           <div className="lg:col-span-3">
             <label className="block text-[10px] font-medium text-gray-600 mb-0.5">Nhân viên</label>
-            <select
+            <LeaveStaffSearchSelect
+              users={createFormUsers}
               value={form.user_id}
-              onChange={(e) => setForm({ ...form, user_id: e.target.value })}
+              onChange={(id) => setForm({ ...form, user_id: id })}
               disabled={!companyId}
-              className="w-full px-2 py-1.5 border rounded-lg text-sm bg-white disabled:bg-gray-100"
-            >
-              <option value="">— Chọn NV —</option>
-              {createFormUsers.map((u) => (
-                <option key={u.id} value={u.id}>{u.full_name || u.email}</option>
-              ))}
-            </select>
+              placeholder="— Chọn / tìm NV —"
+            />
             {companyId && createFormUsers.length === 0 && (
               <p className="text-[10px] text-gray-500 mt-0.5">Không có NV khớp phạm vi đã chọn.</p>
             )}

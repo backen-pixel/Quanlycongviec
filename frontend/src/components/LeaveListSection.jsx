@@ -5,6 +5,7 @@ import { loadLeaveScheduleUi, patchLeaveScheduleUi } from '../lib/leaveScheduleS
 import { CRM_TIME_PRESETS, getCrmDateRangeFromPreset } from '../lib/crmDateRangePresets';
 import { useLeaveFilterActions } from '../lib/useLeaveFilterActions';
 import { downloadLeavesExcel } from '../lib/leaveScheduleExport';
+import { fetchLeaveCompanyStaff } from '../lib/leaveStaffApi';
 import {
   leaveTypeMeta,
   leaveTypeDisplayLabel,
@@ -149,18 +150,14 @@ export default function LeaveListSection({
       setRegions([]);
       return;
     }
-    const userParams = { company_id: companyId };
-    if (departmentId) userParams.department_id = departmentId;
     Promise.all([
-      isManager
-        ? api.get('/kpi/users', { params: userParams }).then((r) => r.data?.users || []).catch(() => [])
-        : api.get('/users', { params: { company_id: companyId } }).then((r) => r.data?.users || r.data || []).catch(() => []),
+      fetchLeaveCompanyStaff(companyId, { departmentId: departmentId || '' }).catch(() => []),
       api.get('/crm/company-regions', { params: { company_id: companyId } }).then((r) => (Array.isArray(r.data) ? r.data : [])).catch(() => []),
     ]).then(([u, rg]) => {
       setUsers(u);
       setRegions(rg);
     });
-  }, [isManager, companyId, departmentId]);
+  }, [companyId, departmentId]);
 
   const canEditLeave = useCallback((l) => {
     const isOwn = String(l.user_id) === String(currentUser?.id);
