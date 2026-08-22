@@ -76,9 +76,12 @@ function inferNotificationModuleKey(n) {
     return 'crm';
   }
   const meta = n.metadata && typeof n.metadata === 'object' ? n.metadata : {};
-  const mk = String(meta.module_key || meta.ecosystem_module_key || '').trim();
-  if (mk === 'crm' || mk === 'production' || mk === 'logistics' || mk === 'project' || mk === 'projects') {
-    return mk === 'projects' ? 'project' : mk;
+  let mk = String(meta.module_key || meta.ecosystem_module_key || meta.module || meta.event_module || '').trim();
+  if (mk === 'projects') mk = 'project';
+  if (mk === 'sx') mk = 'production';
+  if (mk === 'vc') mk = 'logistics';
+  if (mk === 'crm' || mk === 'production' || mk === 'logistics' || mk === 'project') {
+    return mk;
   }
   if (isAssignmentNotification(n)) return 'crm';
   const ty = String(n.type || '');
@@ -87,7 +90,8 @@ function inferNotificationModuleKey(n) {
   if (ty.includes('production_task_deadline') || ty === 'workshop_new_deal') return 'production';
   if (ty.includes('logistics_task_deadline')) return 'logistics';
   if (ty.includes('project_pipeline_deadline') || ty === 'deadline_warning' || ty === 'deadline_overdue') return 'project';
-  if (['crm_deal', 'crm_lead', 'lead'].includes(String(n.entity_type || ''))) return 'crm';
+  if (ty === 'event_created' || ty === 'event_completed') return mk || 'crm';
+  if (['crm_deal', 'crm_lead', 'lead', 'event'].includes(String(n.entity_type || ''))) return 'crm';
   return mk || '';
 }
 
@@ -182,9 +186,14 @@ function countNotificationStats(rows) {
 
 /**
  * GET /api/dashboard/ — unread notification counts grouped in SQL.
+ * @param {string} userId
+ * @param {object|null} viewer
+ * @param {{ module?: string }} [opts]
  */
-async function pgDashboardNotificationStats(userId, viewer = null) {
+async function pgDashboardNotificationStats(userId, viewer = null, opts = {}) {
   if (!isPgEnabled() || !userId) return null;
+
+  const mod = String(opts.module || 'all').toLowerCase();
 
   const result = await pgQuerySafe(
     `SELECT type, entity_type, metadata, COUNT(*)::int AS cnt
@@ -200,10 +209,13 @@ async function pgDashboardNotificationStats(userId, viewer = null) {
   );
   if (!result) return null;
 
-  const filtered = await filterNotificationsForViewerAsync(
+  let filtered = await filterNotificationsForViewerAsync(
     (result.rows || []).filter((n) => !isProjectModuleNotification(n)),
     viewer,
   );
+  if (mod && mod !== 'all') {
+    filtered = filtered.filter((n) => notificationMatchesModule(n, mod));
+  }
   return { stats: countNotificationStats(filtered) };
 }
 

@@ -270,7 +270,7 @@ r.get('/leads/search-suggest', async (req, res) => {
       : limit;
 
     const suggestSelect = [
-      'id, code, title, type, stage_id, company_id, phone, customer_id, assigned_to, lead_owner_id, created_at, updated_at',
+      'id, code, title, type, stage_id, region_id, company_id, phone, customer_id, assigned_to, lead_owner_id, created_at, updated_at',
       'customer:customers(id, full_name, phone)',
       'assignee:users!crm_leads_assigned_to_fkey(id, full_name)',
       'stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, is_won, is_lost)',
@@ -361,6 +361,7 @@ r.get('/leads/search-suggest', async (req, res) => {
         title: l.title,
         type: l.type,
         stage_id: l.stage_id,
+        region_id: l.region_id || null,
         company_id: l.company_id,
         phone: l.phone || l.customer?.phone || null,
         customer: l.customer || null,

@@ -240,6 +240,22 @@ function preserveCrmKanbanPipelineBadges(prevRows, nextRows) {
   });
 }
 
+/** Ghép lại thẻ đã pin từ tìm kiếm (chưa nằm trong trang server vừa tải). */
+function mergeCrmSearchPinnedRows(nextRows, pinnedById, type) {
+  const wantDeal = type === 'deal';
+  let out = Array.isArray(nextRows) ? nextRows : [];
+  if (!pinnedById?.size) return out;
+  for (const row of pinnedById.values()) {
+    if (!row?.id) continue;
+    const isDeal = row.type === 'deal';
+    if (wantDeal ? !isDeal : isDeal) continue;
+    const sid = String(row.id);
+    if (out.some((r) => String(r.id) === sid)) continue;
+    out = upsertCrmKanbanRow(out, row);
+  }
+  return out;
+}
+
 async function hydrateCrmLeadBadgeFields(apiClient, leadId, patch) {
   const out = { ...patch };
   if (!out.project_id) return out;
@@ -814,6 +830,12 @@ function buildCrmKanbanServerFilterParams({
   if (source && !source.startsWith('fbp:')) common.source_id = source;
   const search = String(searchText || '').trim();
   if (search) common.search = search;
+  // Khi đang tìm kiếm (Enter / server search): bỏ khung thời gian — giống search-suggest.
+  // Tránh «thấy trong gợi ý nhưng board reload theo tháng hiện tại → thẻ biến mất».
+  if (search.length >= 2) {
+    delete common.date_from;
+    delete common.date_to;
+  }
   return common;
 }
 
@@ -1206,6 +1228,7 @@ export default function CRMDashboard() {
     setRemoteSearchSuggestItems([]);
     setRemoteSearchSuggestLoading(false);
     remoteSearchSuggestSeqRef.current += 1;
+    crmSearchPinnedByIdRef.current.clear();
   }, []);
   const {
     highlightId: kanbanSearchHighlightId,
@@ -1245,6 +1268,8 @@ export default function CRMDashboard() {
   const searchBoxRef = useRef(null);
   const searchInputRef = useRef(null);
   const pendingCrmSearchFocusRef = useRef(null);
+  /** Thẻ đã hydrate từ tìm kiếm — giữ lại khi silent reload board (tránh biến mất). */
+  const crmSearchPinnedByIdRef = useRef(new Map());
   const [showAdvSearch, setShowAdvSearch] = useState(() => !!P?.showAdvSearch);
   const [crmFilterTab, setCrmFilterTab] = useState('employee');
   const [filterPanelPos, setFilterPanelPos] = useState(() => readStoredCrmFilterPanelPos());
@@ -3498,6 +3523,7 @@ export default function CRMDashboard() {
       const normalized = viewedLocal.has(String(row.id))
         ? { ...row, is_new_for_current_user: false }
         : row;
+      crmSearchPinnedByIdRef.current.set(String(normalized.id), normalized);
       const isDeal = normalized.type === 'deal';
       if (isDeal) {
         setAllLeads((prev) => removeCrmKanbanRowById(prev, normalized.id));
@@ -3516,16 +3542,22 @@ export default function CRMDashboard() {
   const ensureCrmSearchHitsLoaded = useCallback(async (leadIds) => {
     const ids = [...new Set((leadIds || []).map((x) => String(x || '').trim()).filter(Boolean))];
     if (!ids.length) return [];
-    const missing = ids.filter(
-      (id) =>
-        !allLeadsRef.current.some((r) => String(r.id) === id)
-        && !allDealsRef.current.some((r) => String(r.id) === id),
-    );
+    const onBoard = (id) =>
+      allLeadsRef.current.some((r) => String(r.id) === id)
+      || allDealsRef.current.some((r) => String(r.id) === id);
+    const pinnedOnly = ids
+      .filter((id) => !onBoard(id) && crmSearchPinnedByIdRef.current.has(id))
+      .map((id) => crmSearchPinnedByIdRef.current.get(id))
+      .filter(Boolean);
+    if (pinnedOnly.length) upsertCrmSearchHitsOnBoard(pinnedOnly);
+
+    const missing = ids.filter((id) => !onBoard(id) && !crmSearchPinnedByIdRef.current.has(id));
     if (!missing.length) {
       return ids
         .map((id) =>
           allLeadsRef.current.find((r) => String(r.id) === id)
-          || allDealsRef.current.find((r) => String(r.id) === id))
+          || allDealsRef.current.find((r) => String(r.id) === id)
+          || crmSearchPinnedByIdRef.current.get(id))
         .filter(Boolean);
     }
     const fetched = await fetchCrmKanbanRowsByIds(api, missing, { skipDeadline: true });
@@ -3534,7 +3566,8 @@ export default function CRMDashboard() {
       .map((id) =>
         fetched.find((r) => String(r.id) === id)
         || allLeadsRef.current.find((r) => String(r.id) === id)
-        || allDealsRef.current.find((r) => String(r.id) === id))
+        || allDealsRef.current.find((r) => String(r.id) === id)
+        || crmSearchPinnedByIdRef.current.get(id))
       .filter(Boolean);
   }, [upsertCrmSearchHitsOnBoard]);
 
@@ -4204,11 +4237,19 @@ export default function CRMDashboard() {
           if (activeType === 'lead') {
             setDataLead(boot.dashboard);
             setStagesLead(stagesActive);
-            setAllLeads(preserveCrmKanbanPipelineBadges(allLeads, activeMerged));
+            setAllLeads(mergeCrmSearchPinnedRows(
+              preserveCrmKanbanPipelineBadges(allLeads, activeMerged),
+              crmSearchPinnedByIdRef.current,
+              'lead',
+            ));
           } else {
             setDataDeal(boot.dashboard);
             setStagesDeal(stagesActive);
-            setAllDeals(preserveCrmKanbanPipelineBadges(allDeals, activeMerged));
+            setAllDeals(mergeCrmSearchPinnedRows(
+              preserveCrmKanbanPipelineBadges(allDeals, activeMerged),
+              crmSearchPinnedByIdRef.current,
+              'deal',
+            ));
           }
           setLoadMoreState({
             leadOffset: activeType === 'lead' ? (kanbanPage.nextOffset ?? activeMerged.length) : loadMoreState.leadOffset,
@@ -4322,15 +4363,23 @@ export default function CRMDashboard() {
 
       if (activeType === 'lead') {
         dashLeadSnapshot = dashActiveRes.data;
-        allLeadsValue = preserveCrmKanbanPipelineBadges(
-          allLeads,
-          dedupeCrmKanbanRows(mergeLeadSeenLocal(activeData)),
+        allLeadsValue = mergeCrmSearchPinnedRows(
+          preserveCrmKanbanPipelineBadges(
+            allLeads,
+            dedupeCrmKanbanRows(mergeLeadSeenLocal(activeData)),
+          ),
+          crmSearchPinnedByIdRef.current,
+          'lead',
         );
       } else {
         dashDealSnapshot = dashActiveRes.data;
-        allDealsValue = preserveCrmKanbanPipelineBadges(
-          allDeals,
-          dedupeCrmKanbanRows(mergeLeadSeenLocal(activeData)),
+        allDealsValue = mergeCrmSearchPinnedRows(
+          preserveCrmKanbanPipelineBadges(
+            allDeals,
+            dedupeCrmKanbanRows(mergeLeadSeenLocal(activeData)),
+          ),
+          crmSearchPinnedByIdRef.current,
+          'deal',
         );
       }
 
@@ -5683,11 +5732,34 @@ export default function CRMDashboard() {
     }
     const row = rows[0]
       || allLeadsRef.current.find((x) => String(x.id) === sid)
-      || allDealsRef.current.find((x) => String(x.id) === sid);
+      || allDealsRef.current.find((x) => String(x.id) === sid)
+      || crmSearchPinnedByIdRef.current.get(sid);
 
     if (!row) {
       openCrmSearchResultDetail(sid);
       return;
+    }
+
+    // Đồng bộ tab Lead / Deal / Đơn hàng với thẻ tìm được.
+    let targetTab = row.type === 'deal' ? 'deal' : 'lead';
+    if (row.type === 'deal' && dealKhSplitEnabled && showCustomerTab) {
+      const { dealTabDeals: dTab, customerTabDeals: cTab } = partitionDealsForCrmTabs(
+        [row],
+        { wonAnchorOrder, stagesDeal: stagesDealRef.current },
+      );
+      const onDeal = dTab.some((d) => String(d.id) === sid);
+      const onCust = cTab.some((d) => String(d.id) === sid);
+      if (onCust && !onDeal) targetTab = 'customer';
+      else if (onDeal && !onCust) targetTab = 'deal';
+      else if (isCrmCustomerPipelineTab(pipelineType) && onCust) targetTab = 'customer';
+      else targetTab = 'deal';
+    }
+
+    let needsWait = false;
+    if (targetTab !== pipelineType) {
+      pendingCrmSearchFocusRef.current = sid;
+      setPipelineType(targetTab);
+      needsWait = true;
     }
 
     // Công ty tách pipeline theo KV: nếu thẻ thuộc khu vực khác → chuyển KV để cột khớp rồi mới cuộn.
@@ -5699,16 +5771,28 @@ export default function CRMDashboard() {
         pendingCrmSearchFocusRef.current = sid;
         if (viewMode !== 'kanban') setViewMode('kanban');
         setFilterRegion(String(row.region_id));
-        return;
+        needsWait = true;
       }
     }
 
     if (viewMode !== 'kanban') {
       pendingCrmSearchFocusRef.current = sid;
       setViewMode('kanban');
-      return;
+      needsWait = true;
     }
-    triggerKanbanSearchHighlight(sid, { persist: true });
+
+    if (needsWait) return;
+
+    // Đợi React gắn thẻ lên DOM rồi mới highlight (setState upsert chưa flush).
+    pendingCrmSearchFocusRef.current = sid;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const still = pendingCrmSearchFocusRef.current;
+        if (still !== sid) return;
+        pendingCrmSearchFocusRef.current = null;
+        triggerKanbanSearchHighlight(sid, { persist: true });
+      });
+    });
   }, [
     viewMode,
     persistCrmPipelineUiNow,
@@ -5717,16 +5801,31 @@ export default function CRMDashboard() {
     ensureCrmSearchHitsLoaded,
     isCrmRegionSplitCompany,
     filterRegion,
+    pipelineType,
+    dealKhSplitEnabled,
+    showCustomerTab,
+    wonAnchorOrder,
   ]);
 
   useEffect(() => {
     const pendingId = pendingCrmSearchFocusRef.current;
-    if (viewMode !== 'kanban' || !pendingId) return;
+    if (viewMode !== 'kanban' || !pendingId) return undefined;
+    const onBoard = (activeItems || []).some((x) => String(x.id) === String(pendingId));
+    if (!onBoard) {
+      // Tab/KV vừa đổi — đợi thẻ xuất hiện; timeout tránh kẹt pending.
+      const t = window.setTimeout(() => {
+        if (pendingCrmSearchFocusRef.current !== pendingId) return;
+        pendingCrmSearchFocusRef.current = null;
+        triggerKanbanSearchHighlight(pendingId, { persist: true });
+      }, 1200);
+      return () => window.clearTimeout(t);
+    }
     pendingCrmSearchFocusRef.current = null;
-    requestAnimationFrame(() => {
+    const raf = requestAnimationFrame(() => {
       triggerKanbanSearchHighlight(pendingId, { persist: true });
     });
-  }, [viewMode, kanbanPipelineForView, triggerKanbanSearchHighlight]);
+    return () => cancelAnimationFrame(raf);
+  }, [viewMode, kanbanPipelineForView, pipelineType, filterRegion, activeItems, triggerKanbanSearchHighlight]);
 
   useEffect(() => {
     if (viewMode !== 'kanban' || !kanbanSearchHighlightId) return undefined;
@@ -7397,6 +7496,10 @@ export default function CRMDashboard() {
                   e.preventDefault();
                   applyServerSearchNow();
                   setSearchSuggestDismissed(true);
+                  const hitIds = crmSearchSuggestMatches.map((it) => it?.id).filter(Boolean);
+                  if (hitIds.length) {
+                    void ensureCrmSearchHitsLoaded(hitIds).catch(() => {});
+                  }
                 }}
                 onFocus={() => {
                   setSearchFocused(true);

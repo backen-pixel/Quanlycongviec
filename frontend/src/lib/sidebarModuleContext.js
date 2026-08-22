@@ -160,6 +160,19 @@ export function storeModule(module) {
   } catch { /* ignore */ }
 }
 
+/**
+ * Sidebar module (crm|sx|vc|congviec|work|…) → khóa lọc NotificationCenter / API.
+ * null = không khóa module (ketoan, knowledge, custom…).
+ */
+export function sidebarModuleToNotificationFilter(sidebarModule) {
+  const m = String(sidebarModule || '').trim().toLowerCase();
+  if (m === 'crm') return 'crm';
+  if (m === 'sx') return 'production';
+  if (m === 'vc') return 'logistics';
+  if (m === 'congviec' || m === 'work') return 'project';
+  return null;
+}
+
 export function resolveActiveModule(pathname, navStateModuleContext, searchParams) {
   // Drive dùng chung route — giữ sidebar module theo ?module= hoặc context đã lưu
   if (isDrivePath(pathname)) {

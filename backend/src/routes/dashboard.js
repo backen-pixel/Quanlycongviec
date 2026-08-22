@@ -113,9 +113,12 @@ function inferNotificationModuleKey(n) {
     return 'crm';
   }
   const meta = n.metadata && typeof n.metadata === 'object' ? n.metadata : {};
-  const mk = String(meta.module_key || meta.ecosystem_module_key || '').trim();
-  if (mk === 'crm' || mk === 'production' || mk === 'logistics' || mk === 'project' || mk === 'projects') {
-    return mk === 'projects' ? 'project' : mk;
+  let mk = String(meta.module_key || meta.ecosystem_module_key || meta.module || meta.event_module || '').trim();
+  if (mk === 'projects') mk = 'project';
+  if (mk === 'sx') mk = 'production';
+  if (mk === 'vc') mk = 'logistics';
+  if (mk === 'crm' || mk === 'production' || mk === 'logistics' || mk === 'project') {
+    return mk;
   }
   if (isAssignmentNotification(n)) return 'crm';
   const ty = String(n.type || '');
@@ -124,7 +127,8 @@ function inferNotificationModuleKey(n) {
   if (ty.includes('production_task_deadline') || ty === 'workshop_new_deal') return 'production';
   if (ty.includes('logistics_task_deadline')) return 'logistics';
   if (ty.includes('project_pipeline_deadline') || ty === 'deadline_warning' || ty === 'deadline_overdue') return 'project';
-  if (String(n.entity_type || '') === 'crm_deal' || String(n.entity_type || '') === 'crm_lead' || String(n.entity_type || '') === 'lead') {
+  if (ty === 'event_created' || ty === 'event_completed') return mk || 'crm';
+  if (String(n.entity_type || '') === 'crm_deal' || String(n.entity_type || '') === 'crm_lead' || String(n.entity_type || '') === 'lead' || String(n.entity_type || '') === 'event') {
     return 'crm';
   }
   return mk || '';
@@ -189,7 +193,8 @@ async function applyProjectScopeAndOptions(rows, scopeParams = {}) {
 
 r.get('/', responseCache({ ttl: 20, scope: 'user', tags: ['notifications'] }), async (req, res) => {
   try {
-    const pgResult = await pgDashboardNotificationStats(req.user.userId, req.user);
+    const moduleFilter = String(req.query.module || 'all').toLowerCase();
+    const pgResult = await pgDashboardNotificationStats(req.user.userId, req.user, { module: moduleFilter });
     if (pgResult) {
       return res.json(pgResult);
     }
@@ -208,7 +213,7 @@ r.get('/', responseCache({ ttl: 20, scope: 'user', tags: ['notifications'] }), a
     const filtered = filterNotificationsForViewer(
       (rows || []).filter((n) => !isProjectModuleNotification(n)),
       req.user,
-    );
+    ).filter((n) => notificationMatchesModule(n, moduleFilter));
 
     let unread = 0, unreadChat = 0, unreadActivity = 0, unreadDeadlines = 0, unreadEvents = 0, unreadAssignments = 0;
     for (const n of filtered) {

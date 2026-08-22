@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { isPlatformAdmin, isSystemAdmin } from '../lib/adminRole';
 import { alertIncomingNotification, cancelNotificationSpeech } from '../lib/notificationAlert';
 import { setNotificationPrefsCache, getNotificationPrefsCache, isNotificationTypeEnabled } from '../lib/notificationPrefsCache';
 import { isExpiryDeadlineNotificationType } from '../lib/notificationOperationalFilter';
@@ -14,6 +15,10 @@ import { AI_DEADLINE_DIGEST_EVENT } from '../lib/aiDeadlineDigestEvent';
 import { dispatchBadgeRefresh } from '../shared/lib/badgeEvents';
 import { useMessengerDock } from '../context/MessengerDockContext';
 import { markWorkshopPipelineCardFocus } from '../lib/workshopPipelineStorage';
+import {
+  resolveActiveModule,
+  sidebarModuleToNotificationFilter,
+} from '../lib/sidebarModuleContext';
 
 const ICON_MAP = {
   task_assigned: CheckSquare,
@@ -246,18 +251,28 @@ function inferNotificationModuleKey(n) {
   if (isLeadCommentMentionNotification(n)) {
     const emk = n?.metadata?.ecosystem_module_key || n?.metadata?.module_key;
     if (emk === 'production') return 'production';
+    if (emk === 'logistics') return 'logistics';
     return 'crm';
   }
-  const mk = n?.metadata && typeof n.metadata === 'object' ? String(n.metadata.module_key || '').trim() : '';
-  if (mk) return mk;
+  const meta = n?.metadata && typeof n.metadata === 'object' ? n.metadata : {};
+  let mk = String(meta.module_key || meta.ecosystem_module_key || meta.module || meta.event_module || '').trim();
+  if (mk === 'projects') mk = 'project';
+  if (mk === 'sx') mk = 'production';
+  if (mk === 'vc') mk = 'logistics';
+  if (mk === 'crm' || mk === 'production' || mk === 'logistics' || mk === 'project') return mk;
   if (isAssignmentNotification(n)) return 'crm';
   const ty = String(n?.type || '');
   if (ty === 'lead_stage_sla_reminder' || ty === 'cskh_followup_reminder') return 'crm';
-  if (ty.startsWith('crm_deadline') || ty === 'invoice_overdue') return 'crm';
-  if (ty.includes('production_task_deadline')) return 'production';
+  if (ty.startsWith('crm_deadline') || ty === 'invoice_overdue' || ty === 'deadline_reminder') return 'crm';
+  if (ty.includes('production_task_deadline') || ty === 'workshop_new_deal') return 'production';
   if (ty.includes('logistics_task_deadline')) return 'logistics';
   if (ty.includes('project_pipeline_deadline') || ty === 'deadline_warning' || ty === 'deadline_overdue') return 'project';
-  return '';
+  if (ty === 'event_created' || ty === 'event_completed') {
+    return mk || 'crm';
+  }
+  const et = String(n?.entity_type || '');
+  if (et === 'crm_deal' || et === 'crm_lead' || et === 'lead' || et === 'event') return 'crm';
+  return mk || '';
 }
 
 function eventsPathForNotification(n) {
@@ -425,8 +440,19 @@ const COMMENT_MUTE_OPTIONS = [
 
 export default function NotificationCenter({ socket }) {
   const navigate = useNavigate();
+  const location = useLocation();
+  const [searchParams] = useSearchParams();
   const { user } = useAuth();
   const { openMessengerGroupChat, openLeadChat } = useMessengerDock();
+  const canBrowseAllModules = isSystemAdmin(user) || isPlatformAdmin(user);
+  const activeSidebarModule = useMemo(
+    () => resolveActiveModule(location.pathname, location.state?.moduleContext, searchParams),
+    [location.pathname, location.state?.moduleContext, searchParams],
+  );
+  const sidebarNotifModule = useMemo(
+    () => sidebarModuleToNotificationFilter(activeSidebarModule),
+    [activeSidebarModule],
+  );
   const [open, setOpen] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const [unreadActivity, setUnreadActivity] = useState(0);
@@ -450,12 +476,34 @@ export default function NotificationCenter({ socket }) {
   const listModeRef = useRef(listMode);
   useEffect(() => { listModeRef.current = listMode; }, [listMode]);
   const [activityDate, setActivityDate] = useState('');
-  /** Phân loại module: all | crm | production | logistics | project */
+  /** Phân loại module: all | crm | production | logistics | project — khóa theo sidebar (Admin hệ thống được xem «Tất cả»). */
   const [moduleFilter, setModuleFilter] = useState(() => {
+    const fromSidebar = sidebarModuleToNotificationFilter(
+      resolveActiveModule(
+        typeof window !== 'undefined' ? window.location.pathname : '/',
+        null,
+        typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null,
+      ),
+    );
+    if (fromSidebar) return fromSidebar;
     const s = readStoredNotifFilters();
     const v = s?.moduleFilter;
     return MODULE_FILTER_OPTIONS.some((o) => o.id === v) ? v : 'all';
   });
+
+  useEffect(() => {
+    if (sidebarNotifModule) {
+      setModuleFilter(sidebarNotifModule);
+      return;
+    }
+    if (!canBrowseAllModules) setModuleFilter('all');
+  }, [sidebarNotifModule, canBrowseAllModules]);
+
+  const cskhTabAllowed = !moduleFilter || moduleFilter === 'all' || moduleFilter === 'crm';
+  useEffect(() => {
+    if (!cskhTabAllowed && tab === 'cskh') setTab('activity');
+  }, [cskhTabAllowed, tab]);
+
   /** Panel bộ lọc gộp (giống CRM) */
   const [showFilterPanel, setShowFilterPanel] = useState(false);
   /** Lọc phạm vi dự án */
@@ -746,7 +794,9 @@ export default function NotificationCenter({ socket }) {
 
   const loadCount = async ({ includeCskh = true } = {}) => {
     try {
-      const { data } = await api.get('/dashboard');
+      const params = {};
+      if (moduleFilter && moduleFilter !== 'all') params.module = moduleFilter;
+      const { data } = await api.get('/dashboard', { params });
       const a = data.stats?.unread_activity ?? 0;
       const c = data.stats?.unread_chat ?? 0;
       const d = data.stats?.unread_deadlines ?? 0;
@@ -758,7 +808,14 @@ export default function NotificationCenter({ socket }) {
       setUnreadEvents(ev);
       setUnreadAssignments(asn);
     } catch { }
-    if (!includeCskh) return;
+    const showCskh = !moduleFilter || moduleFilter === 'all' || moduleFilter === 'crm';
+    if (!includeCskh || !showCskh) {
+      if (!showCskh) {
+        setCskhCount(0);
+        setCskhNotifs([]);
+      }
+      return;
+    }
     try {
       const { data: cskhData } = await api.get('/crm/followup-care/notifications');
       const cnt = cskhData?.total ?? 0;
@@ -782,7 +839,7 @@ export default function NotificationCenter({ socket }) {
       document.removeEventListener('visibilitychange', tick);
       window.removeEventListener('badge:refresh:assignments', onAssignBadge);
     };
-  }, []);
+  }, [moduleFilter]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1298,7 +1355,9 @@ export default function NotificationCenter({ socket }) {
               { id: 'events', label: 'Sự kiện', count: unreadEvents, icon: Calendar, color: 'violet' },
               { id: 'messages', label: 'Tin nhắn', count: unreadChat, icon: MessageSquare, color: 'sky' },
               { id: 'deadlines', label: 'Nhắc hạn', count: unreadDeadlines, icon: Clock, color: 'amber' },
-              { id: 'cskh', label: 'CSKH', count: cskhCount, icon: CalendarClock, color: 'emerald' },
+              ...(cskhTabAllowed
+                ? [{ id: 'cskh', label: 'CSKH', count: cskhCount, icon: CalendarClock, color: 'emerald' }]
+                : []),
             ].map((t) => {
               const TabIcon = t.icon;
               const active = tab === t.id;
@@ -1443,18 +1502,33 @@ export default function NotificationCenter({ socket }) {
               </div>
               <div className="flex flex-wrap items-center gap-1">
                 <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mr-0.5">Phân loại</span>
-                {MODULE_FILTER_OPTIONS.map((opt) => (
+                {(canBrowseAllModules
+                  ? MODULE_FILTER_OPTIONS
+                  : MODULE_FILTER_OPTIONS.filter((opt) => opt.id === moduleFilter || (moduleFilter === 'all' && opt.id === 'all'))
+                ).map((opt) => (
                   <button
                     key={opt.id}
                     type="button"
-                    onClick={() => setModuleFilter(opt.id)}
-                    className={`px-2 py-0.5 rounded text-[10px] font-medium cursor-pointer ${
+                    onClick={() => {
+                      if (!canBrowseAllModules && sidebarNotifModule && opt.id !== sidebarNotifModule) return;
+                      setModuleFilter(opt.id);
+                    }}
+                    disabled={!canBrowseAllModules && !!sidebarNotifModule && opt.id !== moduleFilter}
+                    className={`px-2 py-0.5 rounded text-[10px] font-medium cursor-pointer disabled:cursor-default disabled:opacity-90 ${
                       moduleFilter === opt.id ? 'bg-violet-600 text-white' : 'bg-white text-gray-600 border border-gray-200'
                     }`}
+                    title={
+                      !canBrowseAllModules && sidebarNotifModule
+                        ? 'Chỉ hiện thông báo của module đang mở'
+                        : undefined
+                    }
                   >
                     {opt.label}
                   </button>
                 ))}
+                {!canBrowseAllModules && sidebarNotifModule && (
+                  <span className="text-[10px] text-gray-500 ml-1">theo module đang mở</span>
+                )}
               </div>
               <div className="grid grid-cols-2 gap-1.5">
                 <label className="flex flex-col gap-0.5 min-w-0">
@@ -1888,7 +1962,7 @@ export default function NotificationCenter({ socket }) {
                             {n.title}
                           </p>
                           <div className="flex items-center gap-1 shrink-0">
-                            {inferNotificationModuleKey(n) && (
+                            {moduleFilter === 'all' && inferNotificationModuleKey(n) && (
                               <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded-md bg-slate-100 border border-slate-200 text-slate-700">
                                 {moduleChipLabel(inferNotificationModuleKey(n))}
                               </span>

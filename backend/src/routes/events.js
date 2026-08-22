@@ -1,7 +1,7 @@
 const { Router } = require('express');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
-const { notifyMultiple } = require('../helpers/notifications');
+const { notifyMultiple, getCompanyScopedAdminIds } = require('../helpers/notifications');
 const { isCrmSystemAdminUser } = require('../helpers/crmAccessRoles');
 const { isAdminLike, isCompanyScopedAdmin, isLogisticsAdmin, isProductionAdmin } = require('../helpers/adminRole');
 
@@ -1631,6 +1631,8 @@ r.post('/', async (req, res) => {
       // Chỉ notify: participants + assignee (không broadcast all)
       const notifyIds = new Set(b.participant_ids || []);
       if (insert.assignee_id) notifyIds.add(insert.assignee_id);
+      const eventModule = normalizeEventModule(insert.module || full?.module) || 'crm';
+      const ecoKey = eventModule === 'production' || eventModule === 'logistics' ? eventModule : 'crm';
 
       if (notifyIds.size) await notifyMultiple(
         req,
@@ -1640,7 +1642,13 @@ r.post('/', async (req, res) => {
         `${creatorName} tạo sự kiện "${full.title}" vào ${timeStr}${insert.location ? ` tại ${insert.location}` : ''}`,
         'event',
         full.id,
-        { event_type: insert.event_type, lead_id: insert.lead_id }
+        {
+          event_type: insert.event_type,
+          lead_id: insert.lead_id,
+          module: eventModule,
+          ecosystem_module_key: ecoKey,
+          company_id: insert.company_id || full?.company_id || null,
+        }
       );
     } catch (notifErr) {
       console.warn('[EVENT] Notification error:', notifErr.message);
@@ -1779,19 +1787,31 @@ r.put('/:id', async (req, res) => {
       } catch (taskErr) { console.warn('[EVENT] Auto-complete task:', taskErr.message); }
     }
 
-    // Notification khi hoàn thành — chỉ user thuộc cùng công ty (theo sự kiện / lead)
+    // Notification khi hoàn thành — chỉ người liên quan + Admin công ty (không broadcast cả công ty)
     if (b.status === 'completed') {
       try {
         const { data: creator } = await supabase.from('users')
           .select('full_name').eq('id', req.user.userId).single();
-        let notifyCompanyId = data.company_id || null;
-        if (!notifyCompanyId && data.lead_id) {
-          notifyCompanyId = await resolveLeadCompanyId(data.lead_id);
+        const notifyIds = new Set();
+        if (data.assignee_id) notifyIds.add(data.assignee_id);
+        if (data.created_by) notifyIds.add(data.created_by);
+        try {
+          const { data: parts } = await supabase
+            .from('crm_event_participants')
+            .select('user_id')
+            .eq('event_id', data.id);
+          (parts || []).forEach((p) => { if (p?.user_id) notifyIds.add(p.user_id); });
+        } catch (_) { /* ignore */ }
+        const notifyCompanyId = data.company_id
+          || (data.lead_id ? await resolveLeadCompanyId(data.lead_id) : null);
+        if (notifyCompanyId) {
+          const adminIds = await getCompanyScopedAdminIds(notifyCompanyId);
+          adminIds.forEach((id) => notifyIds.add(id));
         }
-        let uq = supabase.from('users').select('id').eq('is_active', true);
-        if (notifyCompanyId) uq = uq.eq('company_id', notifyCompanyId);
-        const { data: companyUsers } = await uq;
-        const ids = (companyUsers || []).map((u) => u.id);
+        notifyIds.delete(req.user.userId);
+        const eventModule = normalizeEventModule(data.module) || 'crm';
+        const ecoKey = eventModule === 'production' || eventModule === 'logistics' ? eventModule : 'crm';
+        const ids = [...notifyIds];
         if (ids.length) {
           await notifyMultiple(
             req,
@@ -1799,7 +1819,15 @@ r.put('/:id', async (req, res) => {
             'event_completed',
             `✅ Sự kiện hoàn thành: ${data.title}`,
             `${creator?.full_name || 'Ai đó'} đã hoàn thành sự kiện "${data.title}"${data.result ? `: ${data.result}` : ''}`,
-            'event', data.id
+            'event',
+            data.id,
+            {
+              event_type: data.event_type,
+              lead_id: data.lead_id || null,
+              module: eventModule,
+              ecosystem_module_key: ecoKey,
+              company_id: notifyCompanyId || null,
+            },
           );
         }
       } catch (ne) { console.warn('[EVENT] Complete notification error:', ne.message); }
