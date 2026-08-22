@@ -1177,8 +1177,36 @@ export default function CRMDashboard() {
     return ls || '';
   });
   const [searchText, setSearchText] = useState(() => P?.searchText ?? '');
+  /** Chuỗi gửi API / reload board — chỉ cập nhật sau debounce hoặc Enter (tránh spam load khi gõ). */
+  const [serverSearchText, setServerSearchText] = useState(() => String(P?.searchText || '').trim());
   const [searchFocused, setSearchFocused] = useState(false);
   const [searchSuggestDismissed, setSearchSuggestDismissed] = useState(false);
+  const [remoteSearchSuggestItems, setRemoteSearchSuggestItems] = useState([]);
+  const [remoteSearchSuggestLoading, setRemoteSearchSuggestLoading] = useState(false);
+  const remoteSearchSuggestSeqRef = useRef(0);
+
+  /** Chỉ xóa server search khi xóa ô tìm — không auto-reload board khi gõ (dùng suggest API). Enter mới áp tìm lên Kanban. */
+  useEffect(() => {
+    const q = searchText.trim();
+    if (q) return undefined;
+    setServerSearchText((prev) => (prev === '' ? prev : ''));
+    return undefined;
+  }, [searchText]);
+
+  const applyServerSearchNow = useCallback(() => {
+    const q = searchText.trim();
+    setServerSearchText(q.length >= 2 ? q : '');
+  }, [searchText]);
+
+  const clearCrmSearch = useCallback(() => {
+    setSearchText('');
+    setServerSearchText('');
+    setSearchFocused(false);
+    setSearchSuggestDismissed(false);
+    setRemoteSearchSuggestItems([]);
+    setRemoteSearchSuggestLoading(false);
+    remoteSearchSuggestSeqRef.current += 1;
+  }, []);
   const {
     highlightId: kanbanSearchHighlightId,
     triggerHighlight: triggerKanbanSearchHighlight,
@@ -1252,13 +1280,16 @@ export default function CRMDashboard() {
     return filterCompany || '';
   }, [isCompanyScopedAdmin, isAdmin, user?.company_id, filterCompany]);
 
-  /** Công ty đã tách pipeline CRM theo khu vực → Kanban bắt buộc chọn 1 khu vực cụ thể mới hiển thị. */
+  /** Công ty đã tách pipeline CRM theo khu vực (≥2 pipeline có region_id khác nhau). */
   const isCrmRegionSplitCompany = useMemo(
     () => companyHasRegionPipelines(pipelinesAll, kanbanEffectiveCompanyId),
     [pipelinesAll, kanbanEffectiveCompanyId],
   );
-  const crmRegionPickRequired =
-    isCrmRegionSplitCompany && (!filterRegion || filterRegion === '__none__');
+  /**
+   * Trước đây: công ty tách KV bắt buộc chọn 1 khu vực cụ thể (kể cả khi đang «Tất cả khu vực»).
+   * Nay cho phép «Tất cả khu vực» — Kanban tải mọi khu vực; NV chỉ 1 KV vẫn tự chọn ở effect bên dưới.
+   */
+  const crmRegionPickRequired = false;
   /** Danh sách khu vực để gợi ý chọn nhanh khi Kanban đang yêu cầu chọn khu vực. */
   const crmRegionQuickPickOptions = useMemo(() => {
     if (!crmRegionPickRequired) return [];
@@ -2213,7 +2244,7 @@ export default function CRMDashboard() {
         filterRegion,
         filterStage,
         filterSource,
-        searchText,
+        searchText: serverSearchText,
         // pipeline suy ra từ company+region — đủ để tách cache theo cột.
         resolvedPipelineId: `${cacheCompanyId || ''}:${filterRegion || ''}`,
         customDateFrom,
@@ -2277,10 +2308,10 @@ export default function CRMDashboard() {
         .catch(() => {});
       return undefined;
     }
-    // Giữ board cũ khi đổi bộ lọc server (search/NV/ghi debounce) — tránh hydrate cache lệch.
+    // Giữ board cũ khi đổi bộ lọc server — tránh hydrate cache lệch.
     preserveKanbanDuringFilterRef.current = true;
-    // Search/tên NV: debounce dài hơn để tránh spam RPC khi gõ.
-    const debounceMs = (searchText.trim() || filterAssigneeName.trim()) ? 320 : 80;
+    // Tên NV: debounce dài hơn. Search đã debounce riêng → serverSearchText.
+    const debounceMs = filterAssigneeName.trim() ? 320 : 80;
     if (loadDebounceTimerRef.current) clearTimeout(loadDebounceTimerRef.current);
     loadDebounceTimerRef.current = setTimeout(() => {
       loadDebounceTimerRef.current = null;
@@ -2307,7 +2338,7 @@ export default function CRMDashboard() {
     filterRegion,
     filterStage,
     filterSource,
-    searchText,
+    serverSearchText,
     pipelineType,
   ]);
 
@@ -2652,7 +2683,7 @@ export default function CRMDashboard() {
           filterRegion,
           filterStage,
           filterSource,
-          searchText,
+          searchText: serverSearchText,
           customDateFrom,
           customDateTo,
         }),
@@ -2737,7 +2768,7 @@ export default function CRMDashboard() {
     filterRegion,
     filterStage,
     filterSource,
-    searchText,
+    serverSearchText,
     customDateFrom,
     customDateTo,
     user,
@@ -2816,7 +2847,7 @@ export default function CRMDashboard() {
           filterRegion,
           filterStage,
           filterSource,
-          searchText,
+          searchText: serverSearchText,
           customDateFrom,
           customDateTo,
         }),
@@ -2893,7 +2924,7 @@ export default function CRMDashboard() {
     syncing, pipelineType, pipelineStageCounts, kanbanLoadLimit, isCompanyScopedAdmin,
     user, isAdmin, filterCompany, filterPhone, filterAssignee, filterAssigneeName,
     filterLeadType, filterReferrer, filterCustomerCompany, filterRegion, filterStage,
-    filterSource, searchText, customDateFrom, customDateTo,
+    filterSource, serverSearchText, customDateFrom, customDateTo,
   ]);
   handleLoadStagePagesRef.current = handleLoadStagePages;
 
@@ -3060,7 +3091,7 @@ export default function CRMDashboard() {
         filterRegion,
         filterStage,
         filterSource,
-        searchText,
+        searchText: serverSearchText,
         customDateFrom,
         customDateTo,
       });
@@ -3133,7 +3164,7 @@ export default function CRMDashboard() {
       filterRegion,
       filterStage,
       filterSource,
-      searchText,
+      serverSearchText,
       kanbanLoadLimit,
       allLeads.length,
       allDeals.length,
@@ -3381,7 +3412,7 @@ export default function CRMDashboard() {
           filterRegion,
           filterStage: '', // stage-counts đếm mọi cột
           filterSource,
-          searchText,
+          searchText: serverSearchText,
           customDateFrom,
           customDateTo,
         });
@@ -3446,13 +3477,66 @@ export default function CRMDashboard() {
       filterReferrer,
       filterCustomerCompany,
       filterSource,
-      searchText,
+      serverSearchText,
       dashboardScopeCompanyId,
     ],
   );
 
   const stagesDealRef = useRef(stagesDeal);
   stagesDealRef.current = stagesDeal;
+  const stagesLeadRef = useRef(stagesLead);
+  stagesLeadRef.current = stagesLead;
+
+  /** Đưa lead/deal tìm được lên Kanban (nếu chưa tải) — không reload cả board. */
+  const upsertCrmSearchHitsOnBoard = useCallback((rows) => {
+    const list = Array.isArray(rows) ? rows : [];
+    if (!list.length) return;
+    const userKey = getCurrentUserKeyForLeadSeen(user);
+    const viewedLocal = getLocallyViewedLeadIdSet(userKey);
+    for (const row of list) {
+      if (!row?.id) continue;
+      const normalized = viewedLocal.has(String(row.id))
+        ? { ...row, is_new_for_current_user: false }
+        : row;
+      const isDeal = normalized.type === 'deal';
+      if (isDeal) {
+        setAllLeads((prev) => removeCrmKanbanRowById(prev, normalized.id));
+        setAllDeals((prev) =>
+          dedupeCrmKanbanRows(
+            preserveCrmKanbanPipelineBadges(prev, upsertCrmKanbanRow(prev, normalized)),
+          ),
+        );
+      } else {
+        setAllDeals((prev) => removeCrmKanbanRowById(prev, normalized.id));
+        setAllLeads((prev) => dedupeCrmKanbanRows(upsertCrmKanbanRow(prev, normalized)));
+      }
+    }
+  }, [user]);
+
+  const ensureCrmSearchHitsLoaded = useCallback(async (leadIds) => {
+    const ids = [...new Set((leadIds || []).map((x) => String(x || '').trim()).filter(Boolean))];
+    if (!ids.length) return [];
+    const missing = ids.filter(
+      (id) =>
+        !allLeadsRef.current.some((r) => String(r.id) === id)
+        && !allDealsRef.current.some((r) => String(r.id) === id),
+    );
+    if (!missing.length) {
+      return ids
+        .map((id) =>
+          allLeadsRef.current.find((r) => String(r.id) === id)
+          || allDealsRef.current.find((r) => String(r.id) === id))
+        .filter(Boolean);
+    }
+    const fetched = await fetchCrmKanbanRowsByIds(api, missing, { skipDeadline: true });
+    if (fetched.length) upsertCrmSearchHitsOnBoard(fetched);
+    return ids
+      .map((id) =>
+        fetched.find((r) => String(r.id) === id)
+        || allLeadsRef.current.find((r) => String(r.id) === id)
+        || allDealsRef.current.find((r) => String(r.id) === id))
+      .filter(Boolean);
+  }, [upsertCrmSearchHitsOnBoard]);
 
   /** Tổng tab Deal/Đơn hàng theo stage-counts + won-anchor (cùng filter SĐT/công ty/NV/ngày). */
   const refreshPipelineDealTabTotals = useCallback(async () => {
@@ -3476,7 +3560,7 @@ export default function CRMDashboard() {
       filterRegion,
       filterStage: '',
       filterSource,
-      searchText,
+      searchText: serverSearchText,
       customDateFrom,
       customDateTo,
     });
@@ -3505,7 +3589,7 @@ export default function CRMDashboard() {
     filterReferrer,
     filterCustomerCompany,
     filterSource,
-    searchText,
+    serverSearchText,
     filterPhone,
     dashboardScopeCompanyId,
   ]);
@@ -3531,7 +3615,7 @@ export default function CRMDashboard() {
       filterRegion,
       filterStage: '',
       filterSource,
-      searchText,
+      searchText: serverSearchText,
       customDateFrom,
       customDateTo,
     });
@@ -3668,7 +3752,7 @@ export default function CRMDashboard() {
     filterReferrer,
     filterCustomerCompany,
     filterSource,
-    searchText,
+    serverSearchText,
     dashboardScopeCompanyId,
     refreshPipelinePhoneTotalsForType,
     refreshPipelineDealTabTotals,
@@ -4001,7 +4085,7 @@ export default function CRMDashboard() {
         filterRegion,
         filterStage,
         filterSource,
-        searchText,
+        searchText: serverSearchText,
         customDateFrom,
         customDateTo,
       });
@@ -4336,7 +4420,7 @@ export default function CRMDashboard() {
               filterRegion,
               filterStage,
               filterSource,
-              searchText,
+              searchText: serverSearchText,
               resolvedPipelineId: `${cacheCompanyId || ''}:${filterRegion || ''}`,
               customDateFrom,
               customDateTo,
@@ -4524,7 +4608,11 @@ export default function CRMDashboard() {
     if (snap.filterAssignee && !employeeFilterListByRegion.length && !users.length) return;
     if (snap.filterRegion && snap.filterRegion !== '__none__' && !companyRegions.length) return;
 
-    if (snapshotHasProperty(snap, 'searchText')) setSearchText(snap.searchText ?? '');
+    if (snapshotHasProperty(snap, 'searchText')) {
+      const v = snap.searchText ?? '';
+      setSearchText(v);
+      setServerSearchText(String(v || '').trim().length >= 2 ? String(v).trim() : '');
+    }
     if (snapshotHasProperty(snap, 'filterAssignee')) setFilterAssignee(snap.filterAssignee ?? '');
     if (snapshotHasProperty(snap, 'assigneeListSearch')) setAssigneeListSearch(snap.assigneeListSearch ?? '');
     if (snapshotHasProperty(snap, 'filterAssigneeName')) setFilterAssigneeName(snap.filterAssigneeName ?? '');
@@ -4770,8 +4858,8 @@ export default function CRMDashboard() {
     : dealKanbanDeals;
   const activeItems = pipelineType === 'lead' ? leads : activeDeals;
 
-  /** Gợi ý tìm kiếm — dùng searchText tức thì (không deferred), tối đa 10 dòng trong dropdown */
-  const crmSearchSuggestMatches = useMemo(() => {
+  /** Gợi ý tìm kiếm — local (board đã tải) + API nhẹ (deal chưa tải). */
+  const crmSearchSuggestLocalMatches = useMemo(() => {
     const q = searchText.trim();
     if (q.length < 2) return [];
     const filteredDeals = restrictToCrmModuleCompanies(filterItemsForPipeline(allDeals, 'deal', searchText));
@@ -4786,14 +4874,115 @@ export default function CRMDashboard() {
     dealKhSplitEnabled, wonAnchorOrder, stagesDeal,
   ]);
 
+  const crmSearchSuggestMatches = useMemo(() => {
+    const q = searchText.trim();
+    if (q.length < 2) return [];
+    const seen = new Set();
+    const out = [];
+    for (const row of crmSearchSuggestLocalMatches) {
+      const id = String(row?.id || '');
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      out.push(row);
+    }
+    for (const row of remoteSearchSuggestItems) {
+      const id = String(row?.id || '');
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      out.push(row);
+    }
+    return out;
+  }, [searchText, crmSearchSuggestLocalMatches, remoteSearchSuggestItems]);
+
   const crmSearchSuggestItems = useMemo(
-    () => crmSearchSuggestMatches.slice(0, 10),
+    () => crmSearchSuggestMatches.slice(0, 12),
     [crmSearchSuggestMatches],
   );
 
-  const crmSearchSuggestOpen = searchText.trim().length >= 2
-    && crmSearchSuggestItems.length > 0
-    && !searchSuggestDismissed;
+  const crmSearchQueryTrim = searchText.trim();
+  const crmSearchServerPending = crmSearchQueryTrim.length >= 2
+    && crmSearchSuggestMatches.length === 0
+    && remoteSearchSuggestLoading;
+  const crmSearchNoServerHit = crmSearchQueryTrim.length >= 2
+    && crmSearchSuggestMatches.length === 0
+    && !remoteSearchSuggestLoading;
+
+  const crmSearchSuggestOpen = crmSearchQueryTrim.length >= 2
+    && !searchSuggestDismissed
+    && (crmSearchSuggestItems.length > 0 || crmSearchServerPending || crmSearchNoServerHit || remoteSearchSuggestLoading);
+
+  /** API gợi ý nhẹ — không reload Kanban; tìm deal chưa tải (~0.3–1s). */
+  useEffect(() => {
+    const q = searchText.trim();
+    if (q.length < 2) {
+      remoteSearchSuggestSeqRef.current += 1;
+      setRemoteSearchSuggestItems([]);
+      setRemoteSearchSuggestLoading(false);
+      return undefined;
+    }
+    const seq = ++remoteSearchSuggestSeqRef.current;
+    setRemoteSearchSuggestLoading(true);
+    const timer = window.setTimeout(() => {
+      const type = pipelineType === 'lead' ? 'lead' : 'deal';
+      const scopeCompanyId = (isCompanyScopedAdmin && user?.company_id)
+        ? String(user.company_id)
+        : (!isAdmin && user?.company_id)
+          ? String(user.company_id)
+          : (filterCompany || '');
+      const params = {
+        q,
+        type,
+        limit: 15,
+        phone_filter: resolveCrmPhoneFilterForApi(filterPhone),
+      };
+      if (scopeCompanyId) params.company_id = scopeCompanyId;
+      if (filterAssignee) params.assigned_to = filterAssignee;
+      if (filterRegion && filterRegion !== '__none__') params.region_id = filterRegion;
+      if (filterSource && !String(filterSource).startsWith('fbp:')) params.source_id = filterSource;
+      if (filterStage) params.stage_id = filterStage;
+      // Không gắn date_from/to: gợi ý tìm deal ngoài khung thời gian board (tránh «không thấy»).
+
+      api.get('/crm/leads/search-suggest', { params, headers: { 'x-no-cache': '1' } })
+        .then(async (r) => {
+          if (seq !== remoteSearchSuggestSeqRef.current) return;
+          const items = Array.isArray(r.data?.items) ? r.data.items : [];
+          setRemoteSearchSuggestItems(items);
+          // Tải thẻ Kanban cho kết quả gợi ý (deal chưa nằm trên board).
+          const hitIds = items.map((it) => it.id).filter(Boolean);
+          if (hitIds.length) {
+            try {
+              await ensureCrmSearchHitsLoaded(hitIds);
+            } catch {
+              /* gợi ý vẫn hiện; tải thẻ lỗi thì bấm dòng sẽ thử lại */
+            }
+          }
+        })
+        .catch(() => {
+          if (seq !== remoteSearchSuggestSeqRef.current) return;
+          setRemoteSearchSuggestItems([]);
+        })
+        .finally(() => {
+          if (seq !== remoteSearchSuggestSeqRef.current) return;
+          setRemoteSearchSuggestLoading(false);
+        });
+    }, 220);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [
+    searchText,
+    pipelineType,
+    filterPhone,
+    filterCompany,
+    filterAssignee,
+    filterRegion,
+    filterSource,
+    filterStage,
+    isAdmin,
+    isCompanyScopedAdmin,
+    user?.company_id,
+    ensureCrmSearchHitsLoaded,
+  ]);
 
   useEffect(() => {
     if (isCrmCustomerPipelineTab(pipelineType) && !showCustomerTab) {
@@ -5063,7 +5252,7 @@ export default function CRMDashboard() {
     filterRegion,
     filterStage,
     filterSource,
-    searchText,
+    serverSearchText,
     customDateFrom,
     customDateTo,
   ].join('|');
@@ -5090,7 +5279,7 @@ export default function CRMDashboard() {
       filterRegion,
       filterStage,
       filterSource,
-      searchText,
+      searchText: serverSearchText,
       customDateFrom,
       customDateTo,
     });
@@ -5204,7 +5393,7 @@ export default function CRMDashboard() {
         filterRegion,
         filterStage,
         filterSource,
-        searchText,
+        searchText: serverSearchText,
         customDateFrom,
         customDateTo,
       });
@@ -5315,7 +5504,7 @@ export default function CRMDashboard() {
     filterRegion,
     filterStage,
     filterSource,
-    searchText,
+    serverSearchText,
     customDateFrom,
     customDateTo,
     deadlineConfigKey,
@@ -5479,20 +5668,56 @@ export default function CRMDashboard() {
     return () => window.removeEventListener('product-tour:open-lead-detail', openFromTour);
   }, [activeItems, navigate, pipelineType, persistCrmPipelineUiNow]);
 
-  const focusCrmSearchResult = useCallback((itemId) => {
+  const focusCrmSearchResult = useCallback(async (itemId) => {
     persistCrmPipelineUiNow();
     setSearchSuggestDismissed(true);
     setSearchFocused(false);
     searchInputRef.current?.blur();
 
     const sid = String(itemId);
+    let rows = [];
+    try {
+      rows = await ensureCrmSearchHitsLoaded([sid]);
+    } catch {
+      rows = [];
+    }
+    const row = rows[0]
+      || allLeadsRef.current.find((x) => String(x.id) === sid)
+      || allDealsRef.current.find((x) => String(x.id) === sid);
+
+    if (!row) {
+      openCrmSearchResultDetail(sid);
+      return;
+    }
+
+    // Công ty tách pipeline theo KV: nếu thẻ thuộc khu vực khác → chuyển KV để cột khớp rồi mới cuộn.
+    if (isCrmRegionSplitCompany && row.region_id) {
+      const stageList = row.type === 'deal' ? stagesDealRef.current : stagesLeadRef.current;
+      const stageOk = (stageList || []).some((s) => String(s.id) === String(row.stage_id));
+      const regionMismatch = String(filterRegion || '') !== String(row.region_id);
+      if (!stageOk && regionMismatch) {
+        pendingCrmSearchFocusRef.current = sid;
+        if (viewMode !== 'kanban') setViewMode('kanban');
+        setFilterRegion(String(row.region_id));
+        return;
+      }
+    }
+
     if (viewMode !== 'kanban') {
       pendingCrmSearchFocusRef.current = sid;
       setViewMode('kanban');
       return;
     }
     triggerKanbanSearchHighlight(sid, { persist: true });
-  }, [viewMode, persistCrmPipelineUiNow, triggerKanbanSearchHighlight]);
+  }, [
+    viewMode,
+    persistCrmPipelineUiNow,
+    triggerKanbanSearchHighlight,
+    openCrmSearchResultDetail,
+    ensureCrmSearchHitsLoaded,
+    isCrmRegionSplitCompany,
+    filterRegion,
+  ]);
 
   useEffect(() => {
     const pendingId = pendingCrmSearchFocusRef.current;
@@ -6697,6 +6922,7 @@ export default function CRMDashboard() {
     deferFilterPruneRef.current = false;
     suppressSnapshotOverwriteRef.current = false;
     setSearchText('');
+    setServerSearchText('');
     setFilterAssignee('');
     setAssigneeListSearch('');
     setFilterAssigneeName('');
@@ -6729,7 +6955,7 @@ export default function CRMDashboard() {
     const push = (key, label, onClear) => chips.push({ key, label, onClear });
 
     if (searchText.trim()) {
-      push('search', `Tìm: “${searchText.trim()}”`, () => setSearchText(''));
+      push('search', `Tìm: “${searchText.trim()}”`, () => clearCrmSearch());
     }
     if (filterCompany) {
       const name = crmCompanyDisplayName(companies, filterCompany, '');
@@ -6796,6 +7022,7 @@ export default function CRMDashboard() {
     return chips;
   }, [
     searchText,
+    clearCrmSearch,
     filterCompany,
     filterRegion,
     filterAssignee,
@@ -7165,6 +7392,12 @@ export default function CRMDashboard() {
                   setSearchFocused(true);
                   setSearchSuggestDismissed(false);
                 }}
+                onKeyDown={(e) => {
+                  if (e.key !== 'Enter') return;
+                  e.preventDefault();
+                  applyServerSearchNow();
+                  setSearchSuggestDismissed(true);
+                }}
                 onFocus={() => {
                   setSearchFocused(true);
                   setSearchSuggestDismissed(false);
@@ -7178,7 +7411,7 @@ export default function CRMDashboard() {
                 className={`flex-1 min-w-[3.5rem] ${ctrlH} bg-transparent border-0 ${ctrlTxt} font-medium text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-0 ${searchText ? 'pr-7' : ''}`}
               />
               {searchText && (
-                <SearchClearButton onClick={() => { setSearchText(''); setSearchFocused(false); setSearchSuggestDismissed(false); }} />
+                <SearchClearButton onClick={clearCrmSearch} />
               )}
             </div>
             <AnchoredDropdownMenu
@@ -7191,12 +7424,35 @@ export default function CRMDashboard() {
             >
               <div className="px-3 py-2 border-b border-violet-100 bg-gradient-to-r from-violet-50 to-violet-100/60">
                 <p className="text-[11px] font-semibold text-violet-800">
-                  <span className="font-bold text-violet-700">{crmSearchSuggestMatches.length}</span>
-                  {' '}kết quả cho &ldquo;{searchText}&rdquo;
-                  <span className="block text-[10px] font-normal text-violet-600/90 mt-0.5">
-                    Nhấn dòng để cuộn tới thẻ trên Kanban · biểu tượng mắt để mở chi tiết
-                    {crmSearchSuggestMatches.length > 10 && ' · Hiển thị 10 kết quả đầu'}
-                  </span>
+                  {crmSearchSuggestMatches.length > 0 ? (
+                    <>
+                      <span className="font-bold text-violet-700">{crmSearchSuggestMatches.length}</span>
+                      {' '}kết quả cho &ldquo;{searchText}&rdquo;
+                      <span className="block text-[10px] font-normal text-violet-600/90 mt-0.5">
+                        {remoteSearchSuggestLoading
+                          ? 'Đang tải thẻ lên board…'
+                          : 'Nhấn dòng để cuộn tới thẻ (tự tải nếu chưa có) · Enter lọc board · mắt mở chi tiết'}
+                        {crmSearchSuggestMatches.length > 12 && ' · Hiển thị 12 kết quả đầu'}
+                      </span>
+                    </>
+                  ) : crmSearchServerPending || remoteSearchSuggestLoading ? (
+                    <>
+                      <span className="inline-flex items-center gap-1.5">
+                        <Loader2 className="h-3 w-3 animate-spin text-violet-600" />
+                        Đang tìm và tải thẻ lên board…
+                      </span>
+                      <span className="block text-[10px] font-normal text-violet-600/90 mt-0.5">
+                        Deal chưa tải sẽ được đưa lên Kanban ngay khi tìm thấy
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      Không thấy &ldquo;{searchText}&rdquo;
+                      <span className="block text-[10px] font-normal text-violet-600/90 mt-0.5">
+                        Thử Enter để lọc board, hoặc kiểm tra bộ lọc công ty / SĐT / thời gian
+                      </span>
+                    </>
+                  )}
                 </p>
               </div>
               {crmSearchSuggestItems.map(item => (
@@ -7217,6 +7473,9 @@ export default function CRMDashboard() {
                       <div className="flex items-center gap-2">
                         <span className="text-[10px] font-mono text-slate-400">{item.code}</span>
                         <p className="text-sm font-medium text-slate-900 truncate">{item.title}</p>
+                        {item._fromSuggest && (
+                          <span className="shrink-0 text-[9px] font-semibold uppercase text-violet-700 bg-violet-100 px-1.5 py-0.5 rounded">Server</span>
+                        )}
                         {item.is_new_for_current_user && (
                           <span className="shrink-0 text-[9px] font-bold uppercase text-white bg-rose-500 px-1.5 py-0.5 rounded-full">Mới</span>
                         )}
@@ -8348,7 +8607,8 @@ export default function CRMDashboard() {
             <div className="rounded-xl border border-dashed border-indigo-200 bg-indigo-50/60 p-8 text-center">
               <p className="text-sm font-semibold text-indigo-900 mb-1">Công ty này đã tách pipeline theo khu vực</p>
               <p className="text-xs text-indigo-700 mb-4">
-                Mỗi khu vực có bộ giai đoạn (cột) riêng — vui lòng chọn 1 khu vực cụ thể để xem Kanban.
+                Mỗi khu vực có bộ giai đoạn (cột) riêng. Chọn 1 khu vực để xem đúng pipeline,
+                hoặc chọn «Tất cả khu vực» ở bộ lọc để xem toàn bộ.
               </p>
               <div className="flex flex-wrap items-center justify-center gap-2">
                 {crmRegionQuickPickOptions.map((reg) => (
@@ -8376,7 +8636,7 @@ export default function CRMDashboard() {
               </p>
               <p className="text-xs text-amber-800/90 max-w-xl mx-auto">
                 {filterCompany
-                  ? 'Thử chọn «Tất cả công ty», hoặc công ty có dữ liệu (Phúc Đạt / Vạn Phú Thành). Với Vạn Phú Thành cần chọn thêm khu vực (TP.HCM / Q2 / Cần Thơ). Đặt thời gian = «Tất cả».'
+                  ? 'Thử chọn «Tất cả công ty», hoặc công ty có dữ liệu (Phúc Đạt / Vạn Phú Thành). Với Vạn Phú Thành có thể chọn «Tất cả khu vực» hoặc 1 khu vực (TP.HCM / Q2 / Cần Thơ). Đặt thời gian = «Tất cả».'
                   : 'Thử xóa bộ lọc NV/nguồn/giai đoạn, đặt thời gian = «Tất cả», và kiểm tra tab Lead/Deal.'}
               </p>
               {isAdmin && !isCompanyScopedAdmin && (

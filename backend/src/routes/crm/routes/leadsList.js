@@ -251,6 +251,131 @@ r.get('/leads/picker', async (req, res) => {
   }
 });
 
+/**
+ * Gợi ý tìm nhanh cho CRM Dashboard — nhẹ hơn /leads (không hydrate Kanban).
+ * Chỉ khớp mã / tiêu đề / SĐT / tên KH; tối đa ~15 dòng.
+ */
+r.get('/leads/search-suggest', async (req, res) => {
+  try {
+    const q = String(req.query.q || req.query.search || '').trim();
+    if (q.length < 2) {
+      return res.json({ items: [], total: 0, q: '' });
+    }
+    const type = req.query.type === 'lead' ? 'lead' : 'deal';
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 15, 1), 25);
+    const safe = q.replace(/[(),]/g, ' ').replace(/\s+/g, '%');
+    const phoneFilter = String(req.query.phone_filter || '').trim();
+    const fetchCap = phoneFilter === 'has_phone' || phoneFilter === 'no_phone'
+      ? Math.min(limit * 4, 60)
+      : limit;
+
+    const suggestSelect = [
+      'id, code, title, type, stage_id, company_id, phone, customer_id, assigned_to, lead_owner_id, created_at, updated_at',
+      'customer:customers(id, full_name, phone)',
+      'assignee:users!crm_leads_assigned_to_fkey(id, full_name)',
+      'stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, is_won, is_lost)',
+    ].join(', ');
+
+    let query = supabase
+      .from('crm_leads')
+      .select(suggestSelect)
+      .eq('type', type)
+      .is('parent_lead_id', null)
+      .order('updated_at', { ascending: false })
+      .limit(fetchCap);
+
+    const sac = scopedAdminCompanyId(req);
+    const requestedCompanyId = uuidQueryOrNull(req.query.company_id);
+    if (sac) {
+      query = query.eq('company_id', sac);
+    } else if (!userIsAdmin(req.user?.role)) {
+      const cid = req.user?.company_id || requireUserCompanyId(req, res);
+      if (!cid) return;
+      query = query.eq('company_id', cid);
+    } else if (requestedCompanyId) {
+      query = query.eq('company_id', requestedCompanyId);
+    }
+
+    query = applyCrmLeadRegionFilterToQuery(query, req);
+    const regionId = uuidQueryOrNull(req.query.region_id);
+    if (regionId) query = query.eq('region_id', regionId);
+
+    const assignedTo = uuidQueryOrNull(req.query.assigned_to);
+    if (assignedTo) {
+      if (type === 'lead') {
+        query = query.or(`assigned_to.eq.${assignedTo},lead_owner_id.eq.${assignedTo}`);
+      } else {
+        query = query.eq('assigned_to', assignedTo);
+      }
+    } else if (type === 'deal' && req.user?.userId && !userSeesAllCrmDealsForScope(req.user)) {
+      query = query.eq('assigned_to', req.user.userId);
+    } else if (type === 'lead' && req.user?.userId && !userSeesAllCrmLeadsForScope(req.user)) {
+      query = query.or(`assigned_to.eq.${req.user.userId},lead_owner_id.eq.${req.user.userId}`);
+    }
+
+    const dateFrom = sanitizeIsoDateQueryParam(req.query.date_from);
+    const dateTo = sanitizeIsoDateQueryParam(req.query.date_to);
+    if (dateFrom) query = query.gte('created_at', dateFrom);
+    if (dateTo) query = query.lte('created_at', `${String(dateTo).slice(0, 10)}T23:59:59.999Z`);
+
+    const sourceId = uuidQueryOrNull(req.query.source_id);
+    if (sourceId) query = query.eq('source_id', sourceId);
+
+    const stageId = uuidQueryOrNull(req.query.stage_id);
+    if (stageId) query = query.eq('stage_id', stageId);
+
+    const orParts = [`code.ilike.%${safe}%`, `title.ilike.%${safe}%`, `phone.ilike.%${safe}%`];
+    const { data: custMatchRows } = await supabase
+      .from('customers')
+      .select('id')
+      .or(`phone.ilike.%${safe}%,full_name.ilike.%${safe}%`)
+      .limit(50);
+    const custMatchIds = (custMatchRows || []).map((r) => r.id).filter(Boolean);
+    if (custMatchIds.length) {
+      orParts.push(`customer_id.in.(${custMatchIds.join(',')})`);
+    }
+    query = query.or(orParts.join(','));
+
+    const { data, error } = await query;
+    if (error) {
+      console.error('[leads/search-suggest]', error.message || error);
+      throw error;
+    }
+
+    const hasPhone = (row) => {
+      const p = String(row?.customer?.phone || row?.phone || '').trim();
+      return !!p;
+    };
+    let rows = data || [];
+    if (phoneFilter === 'has_phone') rows = rows.filter(hasPhone);
+    else if (phoneFilter === 'no_phone') rows = rows.filter((r) => !hasPhone(r));
+    rows = rows.slice(0, limit);
+
+    res.json({
+      q,
+      type,
+      total: rows.length,
+      items: rows.map((l) => ({
+        id: l.id,
+        code: l.code,
+        title: l.title,
+        type: l.type,
+        stage_id: l.stage_id,
+        company_id: l.company_id,
+        phone: l.phone || l.customer?.phone || null,
+        customer: l.customer || null,
+        assignee: l.assignee || null,
+        stage: l.stage || null,
+        created_at: l.created_at,
+        _fromSuggest: true,
+      })),
+    });
+  } catch (e) {
+    console.error('[leads/search-suggest]', e);
+    res.status(500).json({ error: e.message || 'Lỗi gợi ý tìm kiếm' });
+  }
+});
+
 async function handleCrmStageCounts(req, res) {
   try {
     const ctx = await resolveCrmLeadsMergedQuery(req, res);

@@ -223,8 +223,8 @@ export function narrowPipelinesToDefaultForCompany(allPipelines, companyId) {
 
 /**
  * True nếu công ty đã tách pipeline CRM theo khu vực (≥2 pipeline active của công ty
- * này có `region_id` khác nhau, không null) — dùng để quyết định có bắt buộc chọn
- * khu vực trước khi hiển thị Kanban hay không.
+ * này có `region_id` khác nhau, không null). Dùng để gợi ý / tự chọn KV cho NV 1 khu vực;
+ * không còn bắt buộc chọn khu vực trước khi xem Kanban («Tất cả khu vực» được phép).
  */
 export function companyHasRegionPipelines(allPipelines, companyId) {
   if (!companyId) return false;

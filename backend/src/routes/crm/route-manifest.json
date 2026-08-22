@@ -899,6 +899,12 @@
     },
     {
       "method": "GET",
+      "path": "/leads/search-suggest",
+      "file": "routes/leadsList.js",
+      "middleware": []
+    },
+    {
+      "method": "GET",
       "path": "/leads/scan-duplicates",
       "file": "routes/leadDuplicates.js",
       "middleware": []
