@@ -391,7 +391,11 @@ export default function ProjectDeadlineDispatchPage() {
       }
       setMsg(`Đã tạo & gửi tin TEST tới Zalo (${data?.sent || 0} chat). Kiểm tra nhóm/chat Bot.`);
     } catch (e) {
-      setErr(e.response?.data?.error || e.message);
+      const d = e.response?.data;
+      if (d?.notification) {
+        setItems((prev) => [d.notification, ...prev.filter((n) => !n._test)]);
+      }
+      setErr(d?.error || d?.errors?.[0] || e.message);
     } finally {
       setTesting(false);
     }

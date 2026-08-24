@@ -54,14 +54,17 @@ function normalizeChatIds(raw) {
 }
 
 function sanitizeBotToken(raw) {
-  const t = String(raw || '').trim();
+  let t = String(raw || '').trim();
   if (!t || /[/?#\s]/.test(t)) return '';
+  // User thường dán cả prefix "bot" (từ URL / bot{TOKEN}); chuẩn hoá về {id}:{secret}.
+  if (/^bot\d+:/i.test(t)) t = t.replace(/^bot/i, '');
   return t;
 }
 
 function zaloSendUrl(token) {
   const t = sanitizeBotToken(token);
   if (!t) return '';
+  // Docs: https://bot-api.zaloplatforms.com/bot${BOT_TOKEN}/sendMessage
   return `${ZALO_SEND_PATH}${t}/sendMessage`;
 }
 
@@ -391,7 +394,15 @@ async function loadRecentFingerprints(opts = {}) {
 }
 
 async function logDispatch(row) {
-  const { error } = await supabase.from('project_deadline_dispatches').insert(row);
+  const payload = { ...(row || {}) };
+  // project_id là UUID; CRM-only / tin TEST có thể không có project thật.
+  if (payload.project_id != null) {
+    const pid = String(payload.project_id);
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(pid)) {
+      payload.project_id = null;
+    }
+  }
+  const { error } = await supabase.from('project_deadline_dispatches').insert(payload);
   if (error) console.warn('[project-deadline-dispatch] log:', error.message);
 }
 
@@ -725,16 +736,7 @@ async function sendTestDeadline(profileOrId, opts = {}) {
     sent += 1;
   }
 
-  await logDispatch({
-    project_id: null,
-    module_key: 'crm',
-    kind: 'test',
-    fingerprint: `${profile.id}:test:${Date.now()}`,
-    webhook_url: `zalo:test:${profile.id}`,
-    http_status: lastRes.status,
-    error: failed ? (errors[0] || null) : null,
-  });
-
+  // Không ghi fingerprint thật cho tin TEST (tránh NOT NULL project_id / làm bẩn dedupe).
   return {
     ok: failed === 0 && sent > 0,
     sent,
