@@ -4,9 +4,9 @@
  */
 
 const { supabase } = require('../config/supabase');
-const { frontendUrl } = require('../config');
+const { frontendUrl, normalizeFrontendOrigin, defaultProductionFrontendUrl } = require('../config');
 
-const PUBLIC_APP_URL = 'https://tubep-frontend-s30w.onrender.com';
+const PUBLIC_APP_URL = defaultProductionFrontendUrl || 'https://tubep-frontend-s30w.onrender.com';
 
 const SKIP_STATUS = new Set(['completed', 'cancelled']);
 const IN_CHUNK = 150;
@@ -83,10 +83,10 @@ function appBaseUrl() {
     PUBLIC_APP_URL,
   ];
   for (const raw of candidates) {
-    const url = String(raw || '').trim().replace(/\/+$/, '');
+    const url = normalizeFrontendOrigin(raw);
     if (!url) continue;
     if (/localhost|127\.0\.0\.1/i.test(url)) continue;
-    return url;
+    return url.replace(/\/+$/, '');
   }
   return PUBLIC_APP_URL;
 }

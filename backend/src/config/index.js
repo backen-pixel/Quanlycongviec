@@ -6,6 +6,8 @@ const DEFAULT_PRODUCTION_FRONTEND_URL = 'https://tubep-frontend-s30w.onrender.co
 const LEGACY_FRONTEND_HOSTS = new Set([
   'beppro.io',
   'www.beppro.io',
+  'beppro.io.vn',
+  'www.beppro.io.vn',
   'app.tubep.vn',
   'www.app.tubep.vn',
   'crm.tubeppro.com',
@@ -85,6 +87,9 @@ module.exports = {
   responseCacheDisabled: process.env.RESPONSE_CACHE_DISABLED === '1',
   // URL gốc frontend web — deep-link bot AI, email SaaS, push.
   frontendUrl: resolveFrontendUrl(),
+  /** Chuẩn hoá origin SPA; domain legacy (beppro.io.vn…) → frontend Render. */
+  normalizeFrontendOrigin: (raw) => normalizeOriginUrl(raw, DEFAULT_PRODUCTION_FRONTEND_URL),
+  defaultProductionFrontendUrl: DEFAULT_PRODUCTION_FRONTEND_URL,
   // ── Google Drive integration (module Drive) ──
   // Hỗ trợ 2 chế độ xác thực — đặt MỘT trong hai:
   //  (A) Service Account: GDRIVE_SERVICE_ACCOUNT_JSON (chuỗi JSON đầy đủ key.json)

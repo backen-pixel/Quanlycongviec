@@ -9,15 +9,15 @@
 const { supabase } = require('../config/supabase');
 const { runIfLeader } = require('../helpers/cronLeader');
 const { listProjectDeadlineNotifications, buildZaloBotText } = require('../helpers/projectDeadlineExport');
-const { frontendUrl } = require('../config');
-const PUBLIC_APP_URL = 'https://tubep-frontend-s30w.onrender.com';
+const { frontendUrl, normalizeFrontendOrigin, defaultProductionFrontendUrl } = require('../config');
+const PUBLIC_APP_URL = defaultProductionFrontendUrl || 'https://tubep-frontend-s30w.onrender.com';
 
 function testAppBaseUrl() {
   const candidates = [process.env.PUBLIC_APP_URL, process.env.APP_BASE_URL, frontendUrl, PUBLIC_APP_URL];
   for (const raw of candidates) {
-    const url = String(raw || '').trim().replace(/\/+$/, '');
+    const url = normalizeFrontendOrigin(raw);
     if (!url || /localhost|127\.0\.0\.1/i.test(url)) continue;
-    return url;
+    return url.replace(/\/+$/, '');
   }
   return PUBLIC_APP_URL;
 }
