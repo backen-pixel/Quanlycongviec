@@ -559,15 +559,20 @@ r.post('/project-deadlines/configs/:id/test', async (req, res) => {
     const { isCrmModuleAdmin } = require('../helpers/adminRole');
     if (!isCrmModuleAdmin(req.user)) return res.status(403).json({ error: 'Chỉ quản trị được gửi tin test' });
     const { sendTestDeadline } = require('../jobs/projectDeadlineDispatch');
+    const pick = req.body?.pick && typeof req.body.pick === 'object' ? req.body.pick : null;
     const result = await sendTestDeadline(req.params.id, {
       zaloBotToken: req.body?.zalo_bot_token,
       zaloChatId: req.body?.zalo_chat_id,
+      pick,
     });
     if (result.skipped && result.reason === 'missing_zalo_bot') {
       return res.status(400).json(result);
     }
     if (result.skipped && result.reason === 'not_found') {
       return res.status(404).json({ ...result, error: 'Không tìm thấy cấu hình API' });
+    }
+    if (result.skipped && result.reason === 'pick_not_found') {
+      return res.status(404).json(result);
     }
     if (!result.ok) {
       return res.status(502).json({

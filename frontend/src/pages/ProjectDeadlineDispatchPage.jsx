@@ -6,6 +6,21 @@ import {
   Bell, Building2, Check, Copy, ExternalLink, FlaskConical, MapPin, Pencil, Plus, RefreshCw, Save, Send, Trash2,
 } from 'lucide-react';
 
+function previewKey(n) {
+  if (!n) return '';
+  return `${n.project?.id || ''}|${n.deadline?.module || ''}|${n.deadline?.source || ''}|${n.deadline?.at || ''}`;
+}
+
+function pickFromNotification(n) {
+  if (!n?.project?.id || !n?.deadline) return null;
+  return {
+    project_id: String(n.project.id),
+    module: String(n.deadline.module || ''),
+    source: String(n.deadline.source || ''),
+    at: String(n.deadline.at || ''),
+  };
+}
+
 const MODULES = [
   { v: 'crm', l: 'CRM' },
   { v: 'production', l: 'Sản xuất (SX)' },
@@ -100,6 +115,7 @@ export default function ProjectDeadlineDispatchPage() {
   const [copied, setCopied] = useState('');
   const [items, setItems] = useState([]);
   const [previewMeta, setPreviewMeta] = useState(null);
+  const [selectedPreviewKey, setSelectedPreviewKey] = useState('');
 
   const scopedCompanyId = user?.company_id ? String(user.company_id) : '';
   const companyIdList = useMemo(() => companies.map((c) => String(c.id)).filter(Boolean), [companies]);
@@ -143,6 +159,7 @@ export default function ProjectDeadlineDispatchPage() {
     if (!cfg) {
       setItems([]);
       setPreviewMeta(null);
+      setSelectedPreviewKey('');
       return;
     }
     setPreviewing(true);
@@ -158,7 +175,9 @@ export default function ProjectDeadlineDispatchPage() {
       const { data } = await api.get('/dashboard/project-deadlines', {
         params: Object.fromEntries(new URLSearchParams(qs)),
       });
-      setItems(data?.notifications || []);
+      const list = data?.notifications || [];
+      setItems(list);
+      setSelectedPreviewKey((prev) => (list.some((n) => previewKey(n) === prev) ? prev : ''));
       setPreviewMeta({
         count: data?.count || 0,
         truncated: data?.truncated,
@@ -171,6 +190,11 @@ export default function ProjectDeadlineDispatchPage() {
       setPreviewing(false);
     }
   }, []);
+
+  const selectedPreview = useMemo(
+    () => items.find((n) => previewKey(n) === selectedPreviewKey && !n._test) || null,
+    [items, selectedPreviewKey],
+  );
 
   const applyFormFromConfig = useCallback((cfg, coList = companyIdList, rgList = regionIdList) => {
     const co = Array.isArray(cfg?.company_ids) ? cfg.company_ids.map(String) : [];
@@ -372,15 +396,20 @@ export default function ProjectDeadlineDispatchPage() {
     }
   };
 
-  const testZalo = async (cfg) => {
+  const testZalo = async (cfg, pick = null) => {
     const id = cfg?.id || editingId;
     if (!id) return;
+    if (pick && !pick.project_id) {
+      setErr('Chọn một mục deadline trong danh sách trước');
+      return;
+    }
     setTesting(true);
     setErr(null);
     setMsg(null);
     try {
-      const { data } = await api.post(`/dashboard/project-deadlines/configs/${encodeURIComponent(id)}/test`);
-      if (data?.notification) {
+      const body = pick ? { pick } : {};
+      const { data } = await api.post(`/dashboard/project-deadlines/configs/${encodeURIComponent(id)}/test`, body);
+      if (data?.notification && data?.mode !== 'resend') {
         setItems((prev) => [data.notification, ...prev.filter((n) => !n._test)]);
         setPreviewMeta((m) => ({
           count: (m?.count || 0) + (data.notification ? 1 : 0),
@@ -389,10 +418,14 @@ export default function ProjectDeadlineDispatchPage() {
           id: data.config_id || m?.id,
         }));
       }
-      setMsg(`Đã tạo & gửi tin TEST tới Zalo (${data?.sent || 0} chat). Kiểm tra nhóm/chat Bot.`);
+      setMsg(
+        data?.mode === 'resend'
+          ? `Đã gửi lại mục thật tới Zalo (${data?.sent || 0} chat): ${data?.notification?.project?.code || ''} — ${data?.notification?.deadline?.label || ''}`
+          : `Đã tạo & gửi tin TEST mẫu tới Zalo (${data?.sent || 0} chat). Kiểm tra nhóm/chat Bot.`,
+      );
     } catch (e) {
       const d = e.response?.data;
-      if (d?.notification) {
+      if (d?.notification && d?.mode !== 'resend') {
         setItems((prev) => [d.notification, ...prev.filter((n) => !n._test)]);
       }
       setErr(d?.error || d?.errors?.[0] || e.message);
@@ -818,16 +851,61 @@ export default function ProjectDeadlineDispatchPage() {
             <RefreshCw className={`h-4 w-4 ${previewing ? 'animate-spin' : ''}`} />
             Tải lại danh sách
           </button>
+          <button
+            type="button"
+            title="Gửi lại mục deadline thật đã chọn (không ghi dedupe)"
+            onClick={() => testZalo(selected, pickFromNotification(selectedPreview))}
+            disabled={
+              sending || testing || previewing || !selected
+              || !(selected?.zalo_bot_token_set || form.zaloTokenSet || form.zaloBotToken.trim())
+              || !selectedPreview
+            }
+            className="h-10 px-4 bg-amber-500 text-white rounded-lg text-sm font-medium inline-flex items-center gap-2 disabled:opacity-50 cursor-pointer"
+          >
+            <Send className="h-4 w-4" />
+            {testing ? 'Đang gửi…' : 'Gửi mục đã chọn (test)'}
+          </button>
+          <button
+            type="button"
+            title="Gửi tin mẫu giả"
+            onClick={() => testZalo(selected)}
+            disabled={
+              sending || testing || !selected
+              || !(selected?.zalo_bot_token_set || form.zaloTokenSet || form.zaloBotToken.trim())
+            }
+            className="h-10 px-3 border border-amber-300 text-amber-800 rounded-lg text-sm font-medium inline-flex items-center gap-2 disabled:opacity-50 cursor-pointer hover:bg-amber-50"
+          >
+            <FlaskConical className="h-4 w-4" />
+            Tin mẫu
+          </button>
           <span className="text-xs text-gray-500">
             {previewMeta
-              ? `${previewMeta.count} mục · ${previewMeta.name || ''} (xem trước đầy đủ, không đánh dấu đã gửi)${previewMeta.truncated ? ' (cắt limit)' : ''}`
+              ? `${previewMeta.count} mục · ${previewMeta.name || ''} — chọn 1 dòng rồi «Gửi mục đã chọn» để xem dữ liệu thật trên Zalo`
               : 'Chọn một API ở bảng trên để xem danh sách'}
           </span>
         </div>
+
+        {selectedPreview && (
+          <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50/50 p-3">
+            <div className="text-xs font-semibold text-amber-900 mb-1">
+              Nội dung Zalo sẽ gửi (mục đã chọn)
+            </div>
+            <pre className="text-[11px] leading-relaxed text-gray-800 whitespace-pre-wrap break-words max-h-48 overflow-y-auto font-mono bg-white/80 rounded border px-2 py-1.5">
+              {selectedPreview.text || selectedPreview.message || '(không có text)'}
+            </pre>
+            {selectedPreview.links?.url && (
+              <div className="mt-1.5 text-[11px] text-gray-600 truncate">
+                Link: <a href={selectedPreview.links.url} target="_blank" rel="noreferrer" className="text-blue-600 underline">{selectedPreview.links.url}</a>
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="overflow-x-auto border rounded-lg">
           <table className="w-full text-sm">
             <thead className="bg-gray-50 text-xs text-gray-500">
               <tr>
+                <th className="text-left px-3 py-2 font-medium w-10">Chọn</th>
                 <th className="text-left px-3 py-2 font-medium">Mã / tên</th>
                 <th className="text-left px-3 py-2 font-medium">Module</th>
                 <th className="text-left px-3 py-2 font-medium">Hạn</th>
@@ -838,7 +916,7 @@ export default function ProjectDeadlineDispatchPage() {
             <tbody>
               {!items.length && (
                 <tr>
-                  <td colSpan={5} className="px-3 py-6 text-center text-gray-400">
+                  <td colSpan={6} className="px-3 py-6 text-center text-gray-400">
                     {previewing || loading
                       ? 'Đang tải…'
                       : selected
@@ -847,39 +925,65 @@ export default function ProjectDeadlineDispatchPage() {
                   </td>
                 </tr>
               )}
-              {items.map((n, i) => (
-                <tr key={`${n.project?.id}-${n.deadline?.module}-${n.deadline?.source}-${i}`} className={`border-t ${n._test ? 'bg-amber-50/60' : ''}`}>
-                  <td className="px-3 py-2">
-                    <div className="font-medium text-gray-900 flex items-center gap-1.5 flex-wrap">
-                      {n.project?.code || n.deal?.code || '—'}
-                      {n._test && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-200 text-amber-900 font-semibold">TEST</span>
+              {items.map((n, i) => {
+                const key = previewKey(n);
+                const isSample = !!n._test && !n._resend;
+                const checked = selectedPreviewKey === key;
+                return (
+                  <tr
+                    key={`${key}-${i}`}
+                    className={`border-t ${n._test ? 'bg-amber-50/60' : ''} ${checked ? 'bg-orange-50/90' : ''} ${isSample ? '' : 'cursor-pointer'}`}
+                    onClick={() => {
+                      if (isSample) return;
+                      setSelectedPreviewKey(key);
+                    }}
+                  >
+                    <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
+                      {!isSample && (
+                        <input
+                          type="radio"
+                          name="deadline-preview-pick"
+                          checked={checked}
+                          onChange={() => setSelectedPreviewKey(key)}
+                          className="cursor-pointer"
+                          aria-label="Chọn để gửi test"
+                        />
                       )}
-                    </div>
-                    <div className="text-xs text-gray-500 truncate max-w-[220px]">{n.project?.name || n.deal?.title}</div>
-                    {n.project?.status_label && (
-                      <div className="text-[10px] text-gray-400">{n.project.status_label}</div>
-                    )}
-                  </td>
-                  <td className="px-3 py-2">
-                    <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${moduleBadgeClass(n.deadline?.module)}`}>
-                      {n.links?.label || n.deadline?.module}
-                    </span>
-                  </td>
-                  <td className="px-3 py-2">
-                    <div>{n.deadline?.label}</div>
-                    <div className={`text-xs ${n.deadline?.is_overdue ? 'text-red-600' : 'text-gray-500'}`}>{n.deadline?.at_vi}</div>
-                  </td>
-                  <td className="px-3 py-2">{n.responsible?.full_name || 'Chưa gán'}</td>
-                  <td className="px-3 py-2">
-                    {n.links?.url ? (
-                      <a href={n.links.url} target="_blank" rel="noreferrer" className="text-blue-600 inline-flex items-center gap-0.5 text-xs">
-                        Mở <ExternalLink className="h-3 w-3" />
-                      </a>
-                    ) : '—'}
-                  </td>
-                </tr>
-              ))}
+                    </td>
+                    <td className="px-3 py-2">
+                      <div className="font-medium text-gray-900 flex items-center gap-1.5 flex-wrap">
+                        {n.project?.code || n.deal?.code || '—'}
+                        {n._test && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-200 text-amber-900 font-semibold">
+                            {n._resend ? 'GỬI LẠI' : 'TEST'}
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-xs text-gray-500 truncate max-w-[220px]">{n.project?.name || n.deal?.title}</div>
+                      {n.project?.status_label && (
+                        <div className="text-[10px] text-gray-400">{n.project.status_label}</div>
+                      )}
+                    </td>
+                    <td className="px-3 py-2">
+                      <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${moduleBadgeClass(n.deadline?.module)}`}>
+                        {n.links?.label || n.deadline?.module}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2">
+                      <div>{n.deadline?.label}</div>
+                      <div className={`text-xs ${n.deadline?.is_overdue ? 'text-red-600' : 'text-gray-500'}`}>{n.deadline?.at_vi}</div>
+                    </td>
+                    <td className="px-3 py-2">{n.responsible?.full_name || 'Chưa gán'}</td>
+                    <td className="px-3 py-2">
+                      {n.links?.url ? (
+                        <a href={n.links.url} target="_blank" rel="noreferrer" className="text-blue-600 inline-flex items-center gap-0.5 text-xs" onClick={(e) => e.stopPropagation()}>
+                          Mở <ExternalLink className="h-3 w-3" />
+                        </a>
+                      ) : '—'}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

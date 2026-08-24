@@ -622,6 +622,8 @@ async function runOnce(opts = {}) {
 
 /**
  * Tạo + gửi 1 thông báo deadline TEST qua Zalo (không ghi fingerprint thật).
+ * opts.pick — gửi lại 1 mục thật từ danh sách cấu hình:
+ *   { project_id, module, source, at }
  */
 async function sendTestDeadline(profileOrId, opts = {}) {
   const store = await loadStore();
@@ -647,87 +649,136 @@ async function sendTestDeadline(profileOrId, opts = {}) {
     };
   }
 
-  const base = testAppBaseUrl();
-  const now = new Date();
-  const overdueAt = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000);
-  const atVi = overdueAt.toLocaleDateString('vi-VN', {
-    timeZone: 'Asia/Ho_Chi_Minh',
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-  });
-  const modLabel = 'CRM';
-  const primary = { label: 'Hạn Kanban CRM (TEST)', at_vi: atVi, source: 'test_crm_kanban' };
-  const project = {
-    code: 'TEST-DEADLINE-001',
-    name: `Tin thử — ${profile.name || 'API'}`,
-    status: 'quoting',
-    status_label: 'Deal (test)',
-    subject_label: 'Deal',
-  };
-  const customer = { full_name: 'Khách test Zalo', phone: '0900000000' };
-  const responsible = {
-    full_name: 'Người phụ trách test',
-    role: 'Phụ trách deal',
-    phone: null,
-    zalo_mention: null,
-  };
-  const links = {
-    url: `${base}/management/project-deadlines`,
-    label: modLabel,
-    module: 'crm',
-  };
-  const text = buildZaloBotText({
-    overdue: true,
-    modLabel,
-    primary,
-    days: -2,
-    project,
-    customer,
-    responsible,
-    links,
-    extraDeadlines: [],
-  });
+  let notification = null;
+  let mode = 'sample';
+  const pick = opts.pick && typeof opts.pick === 'object' ? opts.pick : null;
 
-  const notification = {
-    type: 'project_deadline_overdue',
-    title: '🚨 [CRM] Quá hạn: Hạn Kanban CRM (TEST)',
-    message: `${project.code} ${project.name} — ${primary.label} ${atVi}`,
-    parse_mode: 'markdown',
-    text,
-    project: {
-      id: `test-${profile.id}`,
-      code: project.code,
-      name: project.name,
-      status: project.status,
-      status_label: project.status_label,
-      priority: null,
-      install_address: null,
-      estimated_value: null,
-    },
-    customer: { id: 'test-customer', full_name: customer.full_name, phone: customer.phone, email: null },
-    deal: { id: 'test-deal', code: project.code, title: project.name, type: 'deal' },
-    deadline: {
-      at: overdueAt.toISOString(),
-      at_vi: atVi,
-      source: 'test_crm_kanban',
-      label: primary.label,
+  if (pick) {
+    mode = 'resend';
+    const companyIds = profile.company_ids?.length ? profile.company_ids : null;
+    const module = profile.modules?.length ? profile.modules : 'all';
+    const payload = await listProjectDeadlineNotifications({
+      companyIds,
+      regionIds: profile.region_ids || [],
+      module,
+      status: profile.status || 'overdue',
+      daysAhead: profile.days_ahead ?? 0,
+      limit: 400,
+    });
+    const pid = String(pick.project_id || pick.projectId || '');
+    const mod = String(pick.module || pick.deadline_module || '');
+    const src = String(pick.source || pick.deadline_source || '');
+    const at = String(pick.at || pick.deadline_at || '');
+    notification = (payload.notifications || []).find((n) => (
+      String(n.project?.id || '') === pid
+      && String(n.deadline?.module || '') === mod
+      && String(n.deadline?.source || '') === src
+      && String(n.deadline?.at || '') === at
+    )) || null;
+    if (!notification) {
+      return {
+        ok: false,
+        skipped: true,
+        reason: 'pick_not_found',
+        sent: 0,
+        config_id: profile.id,
+        config_name: profile.name,
+        error: 'Không tìm thấy mục deadline đã chọn trong danh sách hiện tại — tải lại rồi chọn lại',
+      };
+    }
+    notification = { ...notification, _test: true, _resend: true };
+  } else {
+    const base = testAppBaseUrl();
+    const now = new Date();
+    const overdueAt = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000);
+    const atVi = overdueAt.toLocaleDateString('vi-VN', {
+      timeZone: 'Asia/Ho_Chi_Minh',
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+    });
+    const modLabel = 'CRM';
+    const primary = { label: 'Hạn Kanban CRM (TEST)', at_vi: atVi, source: 'test_crm_kanban' };
+    const project = {
+      code: 'TEST-DEADLINE-001',
+      name: `Tin thử — ${profile.name || 'API'}`,
+      status: 'quoting',
+      status_label: 'Deal (test)',
+      subject_label: 'Deal',
+    };
+    const customer = { full_name: 'Khách test Zalo', phone: '0900000000' };
+    const responsible = {
+      full_name: 'Người phụ trách test',
+      role: 'Phụ trách deal',
+      phone: null,
+      zalo_mention: null,
+    };
+    const links = {
+      url: `${base}/management/project-deadlines`,
+      label: modLabel,
       module: 'crm',
-      is_overdue: true,
-      days_remaining: -2,
-    },
-    responsible,
-    links,
-    _test: true,
-  };
+    };
+    const text = buildZaloBotText({
+      overdue: true,
+      modLabel,
+      primary,
+      days: -2,
+      project,
+      customer,
+      responsible,
+      links,
+      extraDeadlines: [],
+    });
+
+    notification = {
+      type: 'project_deadline_overdue',
+      title: '🚨 [CRM] Quá hạn: Hạn Kanban CRM (TEST)',
+      message: `${project.code} ${project.name} — ${primary.label} ${atVi}`,
+      parse_mode: 'markdown',
+      text,
+      project: {
+        id: `test-${profile.id}`,
+        code: project.code,
+        name: project.name,
+        status: project.status,
+        status_label: project.status_label,
+        priority: null,
+        install_address: null,
+        estimated_value: null,
+      },
+      customer: { id: 'test-customer', full_name: customer.full_name, phone: customer.phone, email: null },
+      deal: { id: 'test-deal', code: project.code, title: project.name, type: 'deal' },
+      deadline: {
+        at: overdueAt.toISOString(),
+        at_vi: atVi,
+        source: 'test_crm_kanban',
+        label: primary.label,
+        module: 'crm',
+        is_overdue: true,
+        days_remaining: -2,
+      },
+      responsible,
+      links,
+      _test: true,
+    };
+  }
+
+  const text = String(notification.text || notification.message || notification.title || '').slice(0, 2000);
+  if (!text) {
+    return {
+      ok: false,
+      error: 'Mục chọn không có nội dung text để gửi Zalo',
+      config_id: profile.id,
+      notification,
+      mode,
+    };
+  }
 
   let sent = 0;
   let failed = 0;
   const errors = [];
-  let lastRes = { ok: true, status: 200 };
   for (const chatId of chatIds) {
     const res = await postZaloMessage(url, chatId, text);
-    lastRes = res;
     if (!res.ok) {
       failed += 1;
       errors.push(res.error || `HTTP ${res.status}`);
@@ -736,11 +787,12 @@ async function sendTestDeadline(profileOrId, opts = {}) {
     sent += 1;
   }
 
-  // Không ghi fingerprint thật cho tin TEST (tránh NOT NULL project_id / làm bẩn dedupe).
+  // Không ghi fingerprint thật cho tin TEST / gửi lại thử.
   return {
     ok: failed === 0 && sent > 0,
     sent,
     failed,
+    mode,
     config_id: profile.id,
     config_name: profile.name,
     chat_ids: chatIds,
