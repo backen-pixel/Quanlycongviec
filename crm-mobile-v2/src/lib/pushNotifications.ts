@@ -18,11 +18,10 @@ import * as Notifications from 'expo-notifications';
 import { PermissionsAndroid, Platform } from 'react-native';
 import { api } from '../api/client';
 import { invalidateCrmHubCache, invalidateDeadlineBucketCounts, invalidatePlannerCache } from '../api/crm';
-import { navigate } from '../navigation/navigationRef';
 import { APP_KEY } from './appUpdate';
-import { requestOpenUpdateGate } from './appUpdateNotify';
 import { emitCrmRealtime, wasCrmSocketRecent } from './crmRealtimeBus';
 import { getOrCreateDeviceId } from './deviceHeartbeat';
+import { openFromNotificationPayload } from './notificationNavigation';
 
 const FCM_TOKEN_KEY = 'crmv2_fcm_push_token_v1';
 const LOG = '[crmv2 push]';
@@ -146,48 +145,7 @@ async function requestAndroidPostNotifications(): Promise<boolean> {
 
 /** Điều hướng theo loại thông báo khi người dùng bấm vào. */
 function handleNotificationData(data: Record<string, unknown> | undefined): void {
-  if (!data) return;
-  const entity = String(data.entity_type || '').toLowerCase();
-  const type = String(data.type || '').toLowerCase();
-  if (type === 'app_update' || entity === 'app_update') {
-    requestOpenUpdateGate();
-    return;
-  }
-  if (
-    type === 'deadline_overdue_local'
-    || entity === 'deadline_tab'
-    || type === 'crm_deadline_overdue'
-    || type === 'crm_kanban_deadline_overdue'
-  ) {
-    navigate('Tabs', { screen: 'Deadline' });
-    return;
-  }
-  if (entity === 'crm_deal' || type.includes('deal')) {
-    navigate('CrmHub', { initialMode: 'deals' });
-    return;
-  }
-  if (entity === 'crm_lead' || entity === 'lead' || entity === 'crm_task' || type.includes('lead')) {
-    navigate('CrmHub', { initialMode: 'leads' });
-    return;
-  }
-  if (entity === 'event' || type.includes('event')) {
-    navigate('Events');
-    return;
-  }
-  if (
-    type === 'messenger_chat'
-    || entity === 'messenger_group'
-    || data.group_id
-    || data.entity_id
-  ) {
-    const groupId = String(data.group_id || data.entity_id || '');
-    const title = String(data.group_name || data.title || 'Tin nhắn');
-    if (groupId) {
-      navigate('ChatDetail', { threadId: groupId, title });
-      return;
-    }
-  }
-  navigate('Notifications');
+  openFromNotificationPayload(data);
 }
 
 /** Gọi 1 lần lúc khởi động app — cài channels + lắng nghe người dùng bấm thông báo. */
@@ -205,17 +163,14 @@ export function configurePushNotifications(): void {
       /* bỏ qua */
     }
   });
+  // Cold start: thử mở ngay; nếu nav chưa sẵn thì stash (Gate flush sau login).
   void Notifications.getLastNotificationResponseAsync().then((response) => {
     try {
       const data = response?.notification?.request?.content?.data as
         | Record<string, unknown>
         | undefined;
       if (!data) return;
-      const type = String(data.type || '').toLowerCase();
-      const entity = String(data.entity_type || '').toLowerCase();
-      if (type === 'app_update' || entity === 'app_update') {
-        handleNotificationData(data);
-      }
+      openFromNotificationPayload(data, { allowPending: true });
     } catch {
       /* bỏ qua */
     }

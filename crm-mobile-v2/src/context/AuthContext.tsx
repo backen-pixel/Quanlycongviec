@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { api, getStoredToken, setStoredToken, setUnauthorizedHandler, hydrateMemoryToken } from '../api/client';
 import { invalidatePlannerCache, invalidateCrmHubCache } from '../api/crm';
+import { queryClient } from '../lib/queryClient';
 import {
   stopVoiceBackgroundSyncLoop,
   syncVoiceBackgroundTaskWithPrefs,
@@ -130,6 +131,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const loginWithSession = useCallback(async (auth: { token: string; user: AuthUser; session_id?: string }) => {
     invalidatePlannerCache();
     invalidateCrmHubCache();
+    queryClient.clear();
     await setStoredToken(auth.token);
     await AsyncStorage.setItem(USER_KEY, JSON.stringify(auth.user));
     setToken(auth.token);
@@ -152,6 +154,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const logout = useCallback(async () => {
     invalidatePlannerCache();
     invalidateCrmHubCache();
+    queryClient.clear();
     stopVoiceBackgroundSyncLoop();
     stopDeviceHeartbeat();
     await unregisterPushTokenV2();

@@ -1159,4 +1159,8 @@ module.exports = {
   isSxProjectTask,
   isVcProjectTask,
   isProjectDeliveryStageRow,
+  buildDeliveryFlow,
+  resolveDeliveryCurrentIndex,
+  PROJECT_STATUS_TO_STAGE_SLUG,
+  DEFAULT_DELIVERY_STAGES,
 };

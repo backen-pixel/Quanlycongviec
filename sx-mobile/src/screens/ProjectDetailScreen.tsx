@@ -32,12 +32,23 @@ import { useNotifications } from '../context/NotificationContext';
 import { useTheme } from '../context/ThemeContext';
 import { useProductionRealtime } from '../hooks/useProductionRealtime';
 import {
+  fetchThreadCommentCount,
+  invalidateThreadCommentsCache,
+  resolveCommentSource,
+} from '../lib/commentApi';
+import {
+  fetchLeadSharedAssignments,
+  invalidateLeadSharedAssignmentsCache,
+} from '../lib/sharedWorkspaceApi';
+import {
   calcCrmProductionTaskProgress,
   fetchCrmDealTasks,
   fetchDealIdForProject,
   fetchProductionProjectDetail,
   fetchProjectActivities,
   groupCrmTasksByStage,
+  invalidateDealTasksCache,
+  invalidateProjectDetailCache,
   isCrmProductionTaskDone,
   pickPrimaryCrmDealId,
   updateCrmTask,
@@ -96,6 +107,7 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
   const [dealId, setDealId] = useState<string | null>(null);
   const [activities, setActivities] = useState<ProjectActivity[]>([]);
   const [commentCount, setCommentCount] = useState(0);
+  const [sharedCount, setSharedCount] = useState(0);
   const [loading, setLoading] = useState(true);
   /** Đang chờ danh sách CV — tách khỏi header để hiện task sớm, không đợi comments. */
   const [tasksLoading, setTasksLoading] = useState(true);
@@ -212,6 +224,29 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
     return () => { cancelled = true; };
   }, [tab, projectId]);
 
+  // Badge tab: dùng cache SHORT chung với tab Comments / KG chung — không tải 2 lần trong TTL.
+  useEffect(() => {
+    let cancelled = false;
+    const src = resolveCommentSource(projectId, dealId);
+    void fetchThreadCommentCount(src)
+      .then((n) => {
+        if (!cancelled) setCommentCount(n);
+      })
+      .catch(() => {});
+    if (dealId) {
+      void fetchLeadSharedAssignments(String(dealId))
+        .then((rows) => {
+          if (!cancelled) setSharedCount(rows.length);
+        })
+        .catch(() => {
+          if (!cancelled) setSharedCount(0);
+        });
+    } else {
+      setSharedCount(0);
+    }
+    return () => { cancelled = true; };
+  }, [projectId, dealId]);
+
   // Giữ tab đã mở mounted — đổi tab không remount / không fetch lại.
   // Tab nặng chỉ giữ tối đa 2 (LRU) để tránh chồng mount shared/docs/comments/drive/team.
   const [visitedTabs, setVisitedTabs] = useState<Set<TabKey>>(() => new Set(['tasks']));
@@ -240,6 +275,7 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
     setVisitedTabs(new Set(['tasks']));
     setActivities([]);
     setCommentCount(0);
+    setSharedCount(0);
   }, [projectId]);
 
   useEffect(() => {
@@ -284,8 +320,30 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
   useProductionRealtime({
     projectId,
     dealId,
-    // Realtime báo dữ liệu đã đổi trên server → phải bỏ qua cache.
-    onRefresh: () => load(true, true),
+    debounceMs: 800,
+    onRefresh: (info) => {
+      const t = info?.evt?.type;
+      if (t === 'project:comment_changed' || t === 'lead:comment_changed') {
+        const src = resolveCommentSource(projectId, dealId);
+        invalidateThreadCommentsCache(src);
+        void fetchThreadCommentCount(src, { force: true })
+          .then(setCommentCount)
+          .catch(() => {});
+        return;
+      }
+      invalidateProjectDetailCache(projectId);
+      if (dealId) {
+        invalidateDealTasksCache(dealId);
+        if (!info?.patched) {
+          invalidateLeadSharedAssignmentsCache(dealId);
+          void fetchLeadSharedAssignments(String(dealId), { force: true })
+            .then((rows) => setSharedCount(rows.length))
+            .catch(() => {});
+        }
+      }
+      // Đã invalidate → silent load không cần force (TTL không chặn).
+      void load(true, false);
+    },
   });
 
   const onRefresh = useCallback(async () => {
@@ -661,11 +719,36 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
           borderBottomColor: colors.border,
           backgroundColor: colors.bgElevated,
         },
-        tabsInner: { flexDirection: 'row', paddingHorizontal: 4 },
-        tabBtn: { paddingVertical: 12, paddingHorizontal: 14, alignItems: 'center', borderBottomWidth: 2, borderBottomColor: 'transparent' },
+        tabsInner: { flexDirection: 'row', paddingHorizontal: 4, alignItems: 'center' },
+        tabBtn: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 6,
+          paddingVertical: 12,
+          paddingHorizontal: 14,
+          borderBottomWidth: 2,
+          borderBottomColor: 'transparent',
+        },
         tabBtnActive: { borderBottomColor: colors.primary },
         tabText: { color: colors.textMuted, fontSize: 12, fontWeight: '700' },
         tabTextActive: { color: colors.primary },
+        tabBadge: {
+          minWidth: 20,
+          height: 18,
+          borderRadius: 9,
+          paddingHorizontal: 5,
+          backgroundColor: colors.danger,
+          alignItems: 'center',
+          justifyContent: 'center',
+          borderWidth: 1.5,
+          borderColor: colors.bgElevated,
+        },
+        tabBadgeTxt: {
+          color: '#FFFFFF',
+          fontSize: 10,
+          fontWeight: '900',
+          lineHeight: 12,
+        },
         groupHeader: {
           flexDirection: 'row',
           alignItems: 'center',
@@ -885,23 +968,32 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
       contentContainerStyle={styles.tabsInner}
     >
       {([
-        ['tasks', `Công việc${taskTotal ? ` (${taskTotal})` : ''}`],
-        ['shared', 'Không gian chung'],
-        ['comments', `Bình luận${commentCount ? ` (${commentCount})` : ''}`],
-        ['documents', `Tài liệu${docCount ? ` (${docCount})` : ''}`],
-        ['drive', 'Drive'],
-        ['info', 'Thông tin'],
-        ['team', 'Đội ngũ'],
-        ['schedule', 'Lịch'],
-      ] as [TabKey, string][]).map(([key, label]) => (
-        <TapHighlight
-          key={key}
-          style={[styles.tabBtn, tab === key && styles.tabBtnActive]}
-          onPress={() => setTab(key)}
-        >
-          <Text style={[styles.tabText, tab === key && styles.tabTextActive]}>{label}</Text>
-        </TapHighlight>
-      ))}
+        ['tasks', 'Công việc', taskTotal],
+        ['shared', 'Không gian chung', sharedCount],
+        ['comments', 'Bình luận', commentCount],
+        ['documents', 'Tài liệu', docCount],
+        ['drive', 'Drive', 0],
+        ['info', 'Thông tin', 0],
+        ['team', 'Đội ngũ', 0],
+        ['schedule', 'Lịch', 0],
+      ] as [TabKey, string, number][]).map(([key, label, count]) => {
+        const active = tab === key;
+        const badge = count > 0 ? (count > 99 ? '99+' : String(count)) : null;
+        return (
+          <TapHighlight
+            key={key}
+            style={[styles.tabBtn, active && styles.tabBtnActive]}
+            onPress={() => setTab(key)}
+          >
+            <Text style={[styles.tabText, active && styles.tabTextActive]}>{label}</Text>
+            {badge ? (
+              <View style={styles.tabBadge}>
+                <Text style={styles.tabBadgeTxt}>{badge}</Text>
+              </View>
+            ) : null}
+          </TapHighlight>
+        );
+      })}
     </ScrollView>
   );
 
@@ -1295,6 +1387,7 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
           <View style={{ flex: 1, display: tab === 'shared' ? 'flex' : 'none' }}>
             <ProjectSharedWorkspaceTab
               dealId={dealId}
+              linkedProjectId={projectId}
               companyId={displayDeal?.company_id || null}
               sxCompanyId={project?.company_id || project?.company?.id || null}
               vcCompanyId={project?.logistics_company_id || null}

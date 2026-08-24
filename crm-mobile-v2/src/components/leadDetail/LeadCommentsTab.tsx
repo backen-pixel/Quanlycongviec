@@ -191,10 +191,12 @@ function ErrorBanner({ message, onRetry }: { message: string; onRetry?: () => vo
 
 export default function LeadCommentsTab({
   leadId,
+  focusCommentId,
   onItemsChange,
   onOpened,
 }: {
   leadId: string;
+  focusCommentId?: string;
   onItemsChange?: (count: number) => void;
   onOpened?: () => void;
 }) {
@@ -235,7 +237,14 @@ export default function LeadCommentsTab({
 
   const [attachOpen, setAttachOpen] = useState(false);
   const listRef = useRef<FlatList>(null);
+  const focusDoneRef = useRef<string | null>(null);
+  const [highlightCommentId, setHighlightCommentId] = useState<string | null>(null);
   const { keyboardVisible } = useKeyboardInset();
+
+  useEffect(() => {
+    focusDoneRef.current = null;
+    setHighlightCommentId(null);
+  }, [leadId, focusCommentId]);
 
   // Khi bàn phím mở: cuộn list để thấy tin mới gần composer.
   useEffect(() => {
@@ -396,6 +405,29 @@ export default function LeadCommentsTab({
 
   const byParent = useMemo(() => groupCommentsByParent(items), [items]);
   const flatRows = useMemo(() => flattenCommentTree(byParent), [byParent]);
+
+  // Deep-link từ thông báo: cuộn tới comment + highlight ngắn.
+  useEffect(() => {
+    const target = String(focusCommentId || '').trim();
+    if (!target || focusDoneRef.current === target) return undefined;
+    if (!flatRows.length) return undefined;
+    const idx = flatRows.findIndex((r) => String(r.comment.id) === target);
+    if (idx < 0) return undefined;
+    focusDoneRef.current = target;
+    setHighlightCommentId(target);
+    const tScroll = setTimeout(() => {
+      try {
+        listRef.current?.scrollToIndex({ index: idx, animated: true, viewPosition: 0.35 });
+      } catch {
+        listRef.current?.scrollToOffset({ offset: Math.max(0, idx * 120), animated: true });
+      }
+    }, 180);
+    const tClear = setTimeout(() => setHighlightCommentId(null), 3500);
+    return () => {
+      clearTimeout(tScroll);
+      clearTimeout(tClear);
+    };
+  }, [focusCommentId, flatRows]);
 
   const mentionState = useMemo(
     () => buildMentionPickerItems({ text: draft, cursorPos, members, currentUserId: myId }),
@@ -694,6 +726,7 @@ export default function LeadCommentsTab({
       ...bodyAsAttachments,
     ];
     const isSys = isSystemCommentBody(c.body);
+    const isFocused = highlightCommentId != null && String(c.id) === highlightCommentId;
 
     return (
       <View style={[styles.commentWrap, row.depth > 0 && styles.commentReply]}>
@@ -706,7 +739,7 @@ export default function LeadCommentsTab({
             <Avatar name={name} initials={initialsFromName(name)} size={34} color={colorFromName(name)} />
           )}
           <View style={styles.commentBody}>
-            <View style={[styles.commentBubble, isSys && styles.sysBubble]}>
+            <View style={[styles.commentBubble, isSys && styles.sysBubble, isFocused && styles.commentBubbleFocus]}>
               <View style={styles.commentMeta}>
                 <Text style={styles.commentAuthor}>{name}</Text>
                 <Text style={styles.metaFaint}>
@@ -836,6 +869,12 @@ export default function LeadCommentsTab({
           )
         }
         renderItem={renderComment}
+        onScrollToIndexFailed={(info) => {
+          listRef.current?.scrollToOffset({
+            offset: Math.max(0, info.averageItemLength * info.index),
+            animated: true,
+          });
+        }}
       />
 
       {replyTo ? (
@@ -1015,6 +1054,10 @@ function makeStyles(C: ThemeColors) {
       borderWidth: 1,
       borderColor: C.borderSoft,
       padding: 10,
+    },
+    commentBubbleFocus: {
+      borderColor: C.blue,
+      backgroundColor: C.blueSoft,
     },
     sysBubble: {
       backgroundColor: C.surfaceSoft,

@@ -63,6 +63,14 @@ const Dashboard = lazyWithRetry(() => import('./pages/ManagementDashboard'));
 const ManagementDashboard = lazyWithRetry(() => import('./pages/ManagementDashboard'));
 const UnifiedDealPage = lazyWithRetry(() => import('./pages/UnifiedDealPage'));
 const WorkTasksUnifiedPage = lazyWithRetry(() => import('./pages/WorkTasksUnifiedPage'));
+const WorkOverviewPage = lazyWithRetry(() => import('./pages/WorkOverviewPage'));
+const CrmOverviewPage = lazyWithRetry(() => import('./pages/CrmOverviewPage'));
+const QuotesOverviewPage = lazyWithRetry(() => import('./pages/QuotesOverviewPage'));
+const WorkUnifiedOverviewPage = lazyWithRetry(() => import('./pages/WorkUnifiedOverviewPage'));
+const WorkUnifiedProjectDetailPage = lazyWithRetry(() => import('./pages/WorkUnifiedProjectDetailPage'));
+const PurchasingOverviewPage = lazyWithRetry(() => import('./pages/PurchasingOverviewPage'));
+const ProductionOverviewPage = lazyWithRetry(() => import('./pages/ProductionOverviewPage'));
+const ProductionProjectDetailPage = lazyWithRetry(() => import('./pages/ProductionProjectDetailPage'));
 const ModuleFlowSetupPage = lazyWithRetry(() => import('./pages/ModuleFlowSetupPage'));
 const Projects = lazyWithRetry(() => import('./pages/Projects'));
 const ProjectDetail = lazyWithRetry(() => import('./pages/ProjectDetail'));
@@ -416,6 +424,14 @@ export default function App() {
             <Route path="/my-tasks" element={<Navigate to="/work/unified" replace />} />
             <Route path="/work" element={<Navigate to="/projects" replace />} />
             <Route path="/work/unified" element={<Suspense fallback={<PageLoader />}><WorkTasksUnifiedPage /></Suspense>} />
+            <Route path="/management/work-overview" element={<Suspense fallback={<PageLoader />}><WorkOverviewPage /></Suspense>} />
+            <Route path="/management/crm-overview" element={<Suspense fallback={<PageLoader />}><CrmOverviewPage /></Suspense>} />
+            <Route path="/management/quotes-overview" element={<Suspense fallback={<PageLoader />}><QuotesOverviewPage /></Suspense>} />
+            <Route path="/management/work-unified" element={<Suspense fallback={<PageLoader />}><WorkUnifiedOverviewPage /></Suspense>} />
+            <Route path="/management/work-unified/:id" element={<Suspense fallback={<PageLoader />}><WorkUnifiedProjectDetailPage /></Suspense>} />
+            <Route path="/management/purchasing-overview" element={<Suspense fallback={<PageLoader />}><PurchasingOverviewPage /></Suspense>} />
+            <Route path="/management/production-overview" element={<Suspense fallback={<PageLoader />}><ProductionOverviewPage /></Suspense>} />
+            <Route path="/management/production-overview/:id" element={<Suspense fallback={<PageLoader />}><ProductionProjectDetailPage /></Suspense>} />
             <Route path="/work/flows" element={<Suspense fallback={<PageLoader />}><ModuleFlowSetupPage /></Suspense>} />
             <Route path="/projects" element={<Projects />} />
             <Route path="/projects/create" element={<CreateProject />} />

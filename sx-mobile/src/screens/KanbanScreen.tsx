@@ -1416,9 +1416,16 @@ export default function KanbanScreen() {
     const ids = pagedListProjects.map((p) => p.id).filter(Boolean);
     if (!ids.length) return;
     void fetchProjectCommentIndex(ids)
-      .then((idx) => setCommentIndex((prev) => ({ ...prev, ...idx })))
+      .then((idx) => setCommentIndex((prev) => {
+        const next = { ...prev, ...idx };
+        const keep = new Set(board.projects.map((p) => String(p.id)));
+        for (const key of Object.keys(next)) {
+          if (!keep.has(key)) delete next[key];
+        }
+        return next;
+      }))
       .catch(() => {});
-  }, [viewMode, pagedListProjects]);
+  }, [viewMode, pagedListProjects, board.projects]);
 
   const renderListCard = useCallback(
     ({ item }: { item: ProductionProject }) => {
@@ -1480,9 +1487,17 @@ export default function KanbanScreen() {
     const ids = pagedProjects.map((p) => p.id).filter(Boolean);
     if (!ids.length) return;
     void fetchProjectCommentIndex(ids)
-      .then((idx) => setCommentIndex((prev) => ({ ...prev, ...idx })))
+      .then((idx) => setCommentIndex((prev) => {
+        const next = { ...prev, ...idx };
+        // Chỉ giữ badge cho dự án còn trên board — tránh map phình khi đổi cột lâu.
+        const keep = new Set(board.projects.map((p) => String(p.id)));
+        for (const key of Object.keys(next)) {
+          if (!keep.has(key)) delete next[key];
+        }
+        return next;
+      }))
       .catch(() => {});
-  }, [viewMode, pagedProjects]);
+  }, [viewMode, pagedProjects, board.projects]);
 
   const columnPickerOptions = useMemo(
     () =>
@@ -1893,8 +1908,13 @@ export default function KanbanScreen() {
             style={[styles.chip, listStageId === 'all' && styles.chipActive, styles.chipGap]}
           >
             <Text style={[styles.chipText, listStageId === 'all' && styles.chipTextActive]} numberOfLines={1}>
-              Tất cả ({filteredProjects.length})
+              Tất cả
             </Text>
+            <View style={styles.chipCountBadge}>
+              <Text style={styles.chipCountBadgeTxt}>
+                {filteredProjects.length > 99 ? '99+' : String(filteredProjects.length)}
+              </Text>
+            </View>
           </TapHighlight>
           {displayStages.map((s) => {
             const count = projectsByStage.get(s.id)?.length ?? 0;
@@ -1906,8 +1926,13 @@ export default function KanbanScreen() {
                 style={[styles.chip, active && styles.chipActive, styles.chipGap]}
               >
                 <Text style={[styles.chipText, active && styles.chipTextActive]} numberOfLines={1}>
-                  {s.name} ({count})
+                  {s.name}
                 </Text>
+                <View style={styles.chipCountBadge}>
+                  <Text style={styles.chipCountBadgeTxt}>
+                    {count > 99 ? '99+' : String(count)}
+                  </Text>
+                </View>
               </TapHighlight>
             );
           })}
@@ -2628,17 +2653,41 @@ function createKanbanStyles(c: AppColors) {
   activeChipClearTxt: { color: c.primary, fontSize: 12, fontWeight: '800' },
 
   // Chips — chiều cao cố định, tránh bị FlatList co
-  chipScroll: { height: 36, flexShrink: 0, flexGrow: 0 },
-  chipContent: { paddingHorizontal: Spacing.lg, alignItems: 'center', height: 36 },
+  chipScroll: { height: 40, flexShrink: 0, flexGrow: 0 },
+  chipContent: { paddingHorizontal: Spacing.lg, alignItems: 'center', height: 40 },
   chipGap: { marginRight: 6 },
   chip: {
-    paddingHorizontal: 14, height: 32, borderRadius: Radii.full,
-    backgroundColor: c.card, borderWidth: 1, borderColor: c.border,
-    alignItems: 'center', justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 6,
+    paddingHorizontal: 12,
+    height: 34,
+    borderRadius: Radii.full,
+    backgroundColor: c.card,
+    borderWidth: 1,
+    borderColor: c.border,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   chipActive: { backgroundColor: c.primary, borderColor: c.primary },
   chipText: { color: c.textMuted, fontSize: 13, fontWeight: '700', lineHeight: 16 },
   chipTextActive: { color: c.white },
+  chipCountBadge: {
+    minWidth: 20,
+    height: 18,
+    borderRadius: 9,
+    paddingHorizontal: 5,
+    backgroundColor: c.danger,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: c.bgElevated,
+  },
+  chipCountBadgeTxt: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '900',
+    lineHeight: 12,
+  },
   chipClear: {
     width: 32, height: 32, borderRadius: 16,
     backgroundColor: c.card, borderWidth: 1, borderColor: c.border,

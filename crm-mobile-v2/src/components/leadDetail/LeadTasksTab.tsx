@@ -824,6 +824,7 @@ export default function LeadTasksTab({
   const renderStageHeader = (section: TaskStageSection & { data: LeadCrmTask[] }) => {
     const collapsed = collapsedStages[section.key] === true;
     const accent = section.color || Colors.blue;
+    const showDoneAllHint = !collapsed && section.openCount > 0;
     return (
       <View style={[styles.stageHead, section.isCurrent && styles.stageHeadCurrent]}>
         <Pressable
@@ -849,16 +850,33 @@ export default function LeadTasksTab({
             color={Colors.textMuted}
           />
         </Pressable>
-        {section.openCount > 0 ? (
-          <Pressable
-            style={[styles.doneAllBtn, bulkBusy && { opacity: 0.6 }]}
-            disabled={bulkBusy}
-            onPress={() => completeStageAll(section)}
-          >
-            <Ionicons name="checkmark-done-outline" size={15} color={Colors.white} />
-            <Text style={styles.doneAllTxt}>Xong hết</Text>
-          </Pressable>
+        {showDoneAllHint ? (
+          <View style={styles.doneAllHint}>
+            <Ionicons name="arrow-down" size={13} color={Colors.green} />
+            <Text style={styles.doneAllHintTxt}>
+              Kéo xuống để chọn nút «Xong hết»
+            </Text>
+          </View>
         ) : null}
+      </View>
+    );
+  };
+
+  const renderStageFooter = (section: TaskStageSection & { data: LeadCrmTask[] }) => {
+    const collapsed = collapsedStages[section.key] === true;
+    if (collapsed || section.openCount <= 0) return null;
+    return (
+      <View style={styles.doneAllWrap}>
+        <Pressable
+          style={[styles.doneAllBtn, bulkBusy && { opacity: 0.6 }]}
+          disabled={bulkBusy}
+          onPress={() => completeStageAll(section)}
+        >
+          <Ionicons name="checkmark-done-outline" size={16} color={Colors.green} />
+          <Text style={styles.doneAllTxt}>
+            Xong hết {section.openCount} nhiệm vụ
+          </Text>
+        </Pressable>
       </View>
     );
   };
@@ -875,6 +893,7 @@ export default function LeadTasksTab({
         keyExtractor={(t) => t.id}
         renderItem={renderTask}
         renderSectionHeader={({ section }) => renderStageHeader(section as TaskStageSection & { data: LeadCrmTask[] })}
+        renderSectionFooter={({ section }) => renderStageFooter(section as TaskStageSection & { data: LeadCrmTask[] })}
         stickySectionHeadersEnabled={false}
         onScrollToLocationFailed={(info) => {
           setTimeout(() => {
@@ -1056,24 +1075,42 @@ function makeStyles(C: ThemeColors) {
       borderWidth: 1,
       borderColor: C.borderSoft,
       padding: 10,
-      gap: 8,
     },
     stageHeadCurrent: { borderColor: C.blue },
     stageHeadMain: { flexDirection: 'row', alignItems: 'center', gap: 10 },
     stageDot: { width: 10, height: 10, borderRadius: 5 },
     stageTitle: { fontSize: 14, fontWeight: '800', color: C.text },
     stageMeta: { fontSize: 11, color: C.textMuted, marginTop: 2 },
-    doneAllBtn: {
-      alignSelf: 'flex-start',
+    doneAllHint: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 5,
-      backgroundColor: C.green,
-      paddingHorizontal: 12,
+      gap: 6,
+      marginTop: 8,
       paddingVertical: 7,
+      paddingHorizontal: 8,
       borderRadius: Radii.sm,
+      backgroundColor: C.greenSoft,
+      borderWidth: 1,
+      borderColor: C.green,
     },
-    doneAllTxt: { color: C.white, fontWeight: '800', fontSize: 12 },
+    doneAllHintTxt: { flex: 1, fontSize: 12, color: C.green, fontWeight: '800' },
+    doneAllWrap: {
+      marginBottom: 8,
+      paddingHorizontal: 2,
+    },
+    doneAllBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 6,
+      backgroundColor: C.greenSoft,
+      borderWidth: 1,
+      borderColor: C.green,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      borderRadius: Radii.md,
+    },
+    doneAllTxt: { color: C.green, fontWeight: '800', fontSize: 13 },
     addTaskBtn: {
       flexDirection: 'row',
       alignItems: 'center',

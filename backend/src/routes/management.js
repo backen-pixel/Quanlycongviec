@@ -6,13 +6,19 @@ const { auth } = require('../middleware/auth');
 const { supabase } = require('../config/supabase');
 const { isAdminLike } = require('../helpers/adminRole');
 const { getWonDealProjectIds } = require('../helpers/workshopKanban');
-const { buildProjectDealBundle } = require('../helpers/projectDealBundle');
+const {
+  buildProjectDealBundle,
+  isProjectDeliveryStageRow,
+  buildDeliveryFlow,
+  DEFAULT_DELIVERY_STAGES,
+} = require('../helpers/projectDealBundle');
 const {
   resolveCompanyScopeForRequest,
   applyCompanyScopeFilter,
   applyProjectScopeFilter,
   TENANT_EMPTY_COMPANY_SENTINEL,
 } = require('../helpers/tenantScope');
+const { applyOpenOnlyFilter } = require('../helpers/unifiedTasksQuery');
 
 const r = Router();
 r.use(auth);
@@ -623,6 +629,586 @@ r.get('/overview', async (req, res) => {
   }
 });
 
+const WORK_OVERVIEW_ACTIVE_STATUSES = [
+  'consulting', 'designing', 'quoting', 'contract_signed', 'producing', 'shipping', 'installing',
+];
+
+// GET /api/management/work-overview — Tổng quan công việc (doanh thu, dự án cần chú ý, KH mới)
+r.get('/work-overview', async (req, res) => {
+  try {
+    const scope = getCompanyScope(req, req.query.company_id);
+    if (denyScope(res, scope)) return;
+
+    const now = new Date();
+    const firstDayThisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const sixMonthsAgoStart = new Date(now.getFullYear(), now.getMonth() - 5, 1);
+
+    let activeQ = supabase.from('projects').select('*', { count: 'exact', head: true })
+      .in('status', WORK_OVERVIEW_ACTIVE_STATUSES);
+    activeQ = applyProjectScopeFilter(activeQ, scope);
+
+    let trendQ = supabase.from('projects').select('estimated_value, created_at')
+      .gte('created_at', sixMonthsAgoStart.toISOString());
+    trendQ = applyProjectScopeFilter(trendQ, scope);
+
+    let newCustomersQ = supabase.from('crm_leads').select('*', { count: 'exact', head: true })
+      .eq('type', 'lead').gte('created_at', firstDayThisMonth.toISOString());
+    newCustomersQ = applyCompanyScopeFilter(newCustomersQ, scope);
+
+    let overdueTasksQ = supabase.from('unified_tasks_v').select('unified_id', { count: 'exact', head: true })
+      .lt('deadline', now.toISOString()).not('deadline', 'is', null);
+    overdueTasksQ = applyOpenOnlyFilter(overdueTasksQ);
+    overdueTasksQ = applyCompanyScopeFilter(overdueTasksQ, scope);
+
+    let atRiskQ = supabase.from('projects')
+      .select('id, code, name, status, deadline, sx_kanban_column_id, company_id')
+      .in('status', WORK_OVERVIEW_ACTIVE_STATUSES)
+      .not('deadline', 'is', null);
+    atRiskQ = applyProjectScopeFilter(atRiskQ, scope);
+
+    const [activeRes, trendRes, newCustomersRes, overdueTasksRes, atRiskRes] = await Promise.all([
+      activeQ, trendQ, newCustomersQ, overdueTasksQ, atRiskQ,
+    ]);
+    const atRiskCompanyIds = [...new Set((atRiskRes.data || []).map((p) => p.company_id).filter(Boolean))];
+    const stagesByCompany = await loadStagesByCompany('production_pipeline_stages', atRiskCompanyIds);
+
+    // Doanh thu 6 tháng gần đây — giá trị dự án (estimated_value) tạo trong tháng đó.
+    const trendBuckets = [];
+    for (let i = 5; i >= 0; i -= 1) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      trendBuckets.push({ key: `${d.getFullYear()}-${d.getMonth()}`, label: `T${d.getMonth() + 1}`, total: 0 });
+    }
+    for (const p of (trendRes.data || [])) {
+      const d = new Date(p.created_at);
+      const key = `${d.getFullYear()}-${d.getMonth()}`;
+      const bucket = trendBuckets.find((b) => b.key === key);
+      if (bucket) bucket.total += (p.estimated_value || 0);
+    }
+    trendBuckets[trendBuckets.length - 1].isCurrentMonth = true;
+
+    // Dự án cần chú ý — trễ hạn hoặc sắp hết hạn mà tiến độ SX còn thấp (theo pipeline riêng của từng công ty).
+    const nowMs = now.getTime();
+    const projectsAtRisk = (atRiskRes.data || [])
+      .map((p) => {
+        const companyStages = stagesByCompany.get(String(p.company_id)) || [];
+        const totalStages = companyStages.length || 1;
+        const stageIdx = companyStages.findIndex((s) => String(s.id) === String(p.sx_kanban_column_id));
+        const progressPct = stageIdx >= 0 ? Math.round(((stageIdx + 1) / totalStages) * 100) : null;
+        const daysLeft = Math.ceil((new Date(p.deadline).getTime() - nowMs) / 86400000);
+        let risk = null;
+        if (daysLeft < 0) risk = { level: 'overdue', label: `Trễ hạn ${Math.abs(daysLeft)} ngày` };
+        else if (daysLeft <= 3 && (progressPct == null || progressPct < 85)) risk = { level: 'warning', label: 'Nguy cơ trễ' };
+        if (!risk) return null;
+        return {
+          id: p.id, code: p.code, name: p.name, deadline: p.deadline,
+          days_left: daysLeft, progress_pct: progressPct, risk,
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.days_left - b.days_left)
+      .slice(0, 6);
+
+    res.json({
+      company_id: primaryCompanyIdFromScope(scope),
+      projects_active: activeRes.count || 0,
+      new_customers_this_month: newCustomersRes.count || 0,
+      overdue_tasks: overdueTasksRes.count || 0,
+      revenue_this_month: trendBuckets[trendBuckets.length - 1].total,
+      revenue_trend: trendBuckets.map((b, idx) => ({ label: b.label, total: b.total, is_current: idx === trendBuckets.length - 1 })),
+      projects_at_risk: projectsAtRisk,
+    });
+  } catch (e) {
+    console.error('[management/work-overview]', e);
+    res.status(500).json({ error: e.message || 'Lỗi tải tổng quan công việc' });
+  }
+});
+
+const CRM_OVERVIEW_BUCKET_LABEL = {
+  potential: 'Tiềm năng',
+  consulting: 'Đang tư vấn',
+  won: 'Đã chốt',
+  old: 'Khách cũ',
+};
+
+/** Phân nhóm 1 lead/deal cho trang tổng quan CRM đơn giản (4 nhóm cố định). */
+function classifyCrmOverviewBucket(row) {
+  if (row.stage?.is_won) return 'won';
+  if (row.stage?.is_lost) return 'old';
+  if (row.type === 'deal') return 'consulting';
+  return 'potential';
+}
+
+// GET /api/management/crm-overview — Tổng quan CRM (KH, nguồn, trạng thái, tỉ lệ chuyển đổi)
+r.get('/crm-overview', async (req, res) => {
+  try {
+    const scope = getCompanyScope(req, req.query.company_id);
+    if (denyScope(res, scope)) return;
+
+    const now = new Date();
+    const firstDayThisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const { status, q: searchQ } = req.query;
+    const { page, pageSize } = parsePagination(req, 50, 200);
+
+    const CRM_OVERVIEW_SELECT = `
+      id, code, title, type, phone, created_at, updated_at, project_id,
+      customer:customers(id, full_name, phone, address),
+      assignee:users!crm_leads_assigned_to_fkey(id, full_name),
+      stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, is_won, is_lost),
+      source:crm_sources(id, name),
+      project:projects(id, code, name)
+    `;
+    // Cột gọn dùng để quét toàn bộ tập dữ liệu (phân nhóm/thống kê) — không kéo theo các join
+    // nặng (customer/assignee/source/project) mà chỉ trang hiện tại mới cần tới.
+    const CRM_OVERVIEW_SCAN_SELECT = `
+      id, type, created_at, updated_at,
+      stage:crm_pipeline_stages!crm_leads_stage_id_fkey(is_won, is_lost)
+    `;
+
+    const applyOverviewFilters = (qq) => {
+      qq = qq.is('parent_lead_id', null);
+      qq = applyCompanyScopeFilter(qq, scope);
+      if (searchQ) {
+        const s = String(searchQ).trim();
+        qq = qq.or(`title.ilike.%${s}%,code.ilike.%${s}%,phone.ilike.%${s}%`);
+      }
+      return qq;
+    };
+
+    // Supabase/PostgREST giới hạn cứng 1000 dòng/request bất kể .limit() truyền vào bao nhiêu,
+    // nên phải đếm tổng số thật trước rồi phân trang nội bộ (range theo batch 1000, chạy song song)
+    // để lấy ĐỦ dữ liệu, tránh tổng số bị khóa cứng ở 1000 và bản ghi cũ bị cắt mất.
+    const { count: totalCount, error: countErr } = await applyOverviewFilters(
+      supabase.from('crm_leads').select('id', { count: 'exact', head: true })
+    );
+    if (countErr) throw countErr;
+
+    const BATCH = 1000;
+    const MAX_ROWS = 30000;
+    const batchStarts = [];
+    for (let from = 0; from < Math.min(totalCount || 0, MAX_ROWS); from += BATCH) batchStarts.push(from);
+    const batches = await Promise.all(batchStarts.map((from) => (
+      applyOverviewFilters(supabase.from('crm_leads').select(CRM_OVERVIEW_SCAN_SELECT))
+        .order('updated_at', { ascending: false })
+        .range(from, from + BATCH - 1)
+    )));
+    const scanRows = [];
+    batches.forEach(({ data: batch, error }) => {
+      if (error) throw error;
+      scanRows.push(...(batch || []));
+    });
+
+    const tabs = { all: 0, potential: 0, consulting: 0, won: 0, old: 0 };
+    let newThisMonth = 0;
+    const classified = scanRows.map((row) => {
+      const bucket = classifyCrmOverviewBucket(row);
+      tabs.all += 1;
+      tabs[bucket] += 1;
+      if (new Date(row.created_at) >= firstDayThisMonth) newThisMonth += 1;
+      return { id: row.id, updated_at: row.updated_at, bucket };
+    });
+    const conversionRate = tabs.all > 0 ? Math.round((tabs.won / tabs.all) * 100) : 0;
+
+    const filtered = (status && status !== 'all')
+      ? classified.filter((it) => it.bucket === status)
+      : classified;
+    const pageStart = (page - 1) * pageSize;
+    const pageMeta = filtered.slice(pageStart, pageStart + pageSize);
+
+    // Chỉ fetch đầy đủ dữ liệu (kèm các join nặng) cho đúng các dòng của trang hiện tại.
+    let items = [];
+    if (pageMeta.length > 0) {
+      const bucketById = new Map(pageMeta.map((it) => [it.id, it.bucket]));
+      const { data: pageRows, error: pageErr } = await supabase
+        .from('crm_leads').select(CRM_OVERVIEW_SELECT)
+        .in('id', pageMeta.map((it) => it.id));
+      if (pageErr) throw pageErr;
+      const rowById = new Map((pageRows || []).map((row) => [row.id, row]));
+      items = pageMeta.map((meta) => {
+        const row = rowById.get(meta.id);
+        if (!row) return null;
+        return {
+          id: row.id,
+          code: row.code,
+          title: row.title,
+          type: row.type,
+          phone: row.phone || row.customer?.phone || null,
+          customer: row.customer || null,
+          assignee: row.assignee || null,
+          source_name: row.source?.name || null,
+          project: row.project || null,
+          updated_at: row.updated_at,
+          created_at: row.created_at,
+          bucket: meta.bucket,
+          bucket_label: CRM_OVERVIEW_BUCKET_LABEL[bucketById.get(meta.id)],
+        };
+      }).filter(Boolean);
+    }
+
+    res.json({
+      company_id: primaryCompanyIdFromScope(scope),
+      stats: {
+        total: tabs.all,
+        new_this_month: newThisMonth,
+        consulting: tabs.consulting,
+        conversion_rate: conversionRate,
+      },
+      tabs,
+      items,
+      total: filtered.length,
+      page,
+      page_size: pageSize,
+    });
+  } catch (e) {
+    console.error('[management/crm-overview]', e);
+    res.status(500).json({ error: e.message || 'Lỗi tải tổng quan CRM' });
+  }
+});
+
+function startOfDayMs(d) {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x.getTime();
+}
+
+/** on_track | at_risk | late | unknown — cùng ngưỡng với buildProjectOverview (projectDealBundle.js). */
+function classifyProjectForecast(commitmentDate) {
+  if (!commitmentDate) return { forecast: 'unknown', days_remaining: null, delay_days: 0 };
+  const daysRemaining = Math.round((startOfDayMs(commitmentDate) - startOfDayMs(new Date())) / 86400000);
+  if (daysRemaining < 0) return { forecast: 'late', days_remaining: daysRemaining, delay_days: Math.abs(daysRemaining) };
+  if (daysRemaining <= 3) return { forecast: 'at_risk', days_remaining: daysRemaining, delay_days: 2 };
+  return { forecast: 'on_track', days_remaining: daysRemaining, delay_days: 0 };
+}
+
+// GET /api/management/work-unified — Tổng quan dự án theo luồng giao hàng (mockup Work Unified)
+r.get('/work-unified', async (req, res) => {
+  try {
+    const scope = getCompanyScope(req, req.query.company_id);
+    if (denyScope(res, scope)) return;
+    const { stage: stageFilter, forecast: forecastFilter } = req.query;
+
+    const { data: stageRows } = await supabase
+      .from('workflow_stages')
+      .select('id, name, slug, color, order_index, is_active, company_id')
+      .is('company_id', null)
+      .eq('is_active', true)
+      .order('order_index');
+    const stages = (stageRows || []).filter(isProjectDeliveryStageRow);
+    const deliveryStages = stages.length ? stages : DEFAULT_DELIVERY_STAGES;
+
+    let q = supabase.from('projects').select(`
+      id, code, name, status, deadline, estimated_value, production_value, deposit_amount, collected_amount,
+      customer_id, current_stage_id, install_date, delivery_date, production_deadline,
+      project_manager_id, sales_person_id, production_person_id,
+      customer:customers(id, full_name),
+      current_stage:workflow_stages(id, name, slug, color, order_index),
+      project_manager:users!projects_project_manager_id_fkey(id, full_name),
+      sales_person:users!projects_sales_person_id_fkey(id, full_name),
+      production_person:users!projects_production_person_id_fkey(id, full_name)
+    `).in('status', WORK_OVERVIEW_ACTIVE_STATUSES);
+    q = applyProjectScopeFilter(q, scope);
+    const { data: projects, error } = await q;
+    if (error) throw error;
+
+    const projectIds = (projects || []).map((p) => p.id);
+    let dealByProjectId = {};
+    if (projectIds.length) {
+      const { data: deals } = await supabase.from('crm_leads')
+        .select('id, code, title, project_id').in('project_id', projectIds);
+      (deals || []).forEach((d) => { dealByProjectId[String(d.project_id)] = d; });
+    }
+
+    const items = (projects || []).map((p) => {
+      const flow = buildDeliveryFlow({ project: p, deliveryStages, pipelines: {} });
+      const doneSteps = flow.filter((s) => s.status === 'done').length;
+      const currentStep = flow.find((s) => s.status === 'current');
+      const progressPct = flow.length
+        ? Math.round(((doneSteps + (currentStep ? 0.35 : 0)) / flow.length) * 100)
+        : 0;
+      const commitmentDate = p.install_date || p.delivery_date || p.production_deadline || p.deadline || null;
+      const { forecast, days_remaining, delay_days } = classifyProjectForecast(commitmentDate);
+      const deal = dealByProjectId[String(p.id)] || null;
+      const assignee = p.project_manager || p.sales_person || p.production_person || null;
+      return {
+        id: p.id,
+        code: p.code,
+        name: p.name,
+        customer_name: p.customer?.full_name || null,
+        deal_code: deal?.code || null,
+        deal_title: deal?.title || null,
+        flow,
+        current_stage_slug: currentStep?.key || null,
+        current_stage_label: currentStep?.stage_name || currentStep?.label || null,
+        progress_pct: progressPct,
+        forecast,
+        days_remaining,
+        delay_days,
+        deadline: commitmentDate,
+        assignee_name: assignee?.full_name || null,
+      };
+    });
+
+    const stats = { total: items.length, on_track: 0, at_risk: 0, late: 0 };
+    items.forEach((it) => {
+      if (it.forecast === 'late') stats.late += 1;
+      else if (it.forecast === 'at_risk') stats.at_risk += 1;
+      else stats.on_track += 1;
+    });
+
+    let filtered = items;
+    if (stageFilter) filtered = filtered.filter((it) => it.current_stage_slug === stageFilter);
+    if (forecastFilter && forecastFilter !== 'all') filtered = filtered.filter((it) => it.forecast === forecastFilter);
+    filtered.sort((a, b) => {
+      const da = a.deadline ? new Date(a.deadline).getTime() : Infinity;
+      const db = b.deadline ? new Date(b.deadline).getTime() : Infinity;
+      return da - db;
+    });
+
+    res.json({
+      company_id: primaryCompanyIdFromScope(scope),
+      stages: deliveryStages.map((s) => ({ slug: s.slug, label: s.name })),
+      stats,
+      items: filtered,
+    });
+  } catch (e) {
+    console.error('[management/work-unified]', e);
+    res.status(500).json({ error: e.message || 'Lỗi tải tổng quan dự án' });
+  }
+});
+
+const PR_STATUS_LABELS = {
+  draft: 'Nháp', requested: 'Đã yêu cầu', confirmed: 'NCC xác nhận', received: 'Đã nhận',
+  qc_pass: 'QC đạt', qc_fail: 'QC lỗi', delayed: 'Trễ', done: 'Hoàn tất',
+};
+const PO_STATUS_LABELS = {
+  draft: 'Nháp', submitted: 'Đã gửi MH', confirmed: 'Xác nhận', ordered: 'Đã đặt NCC',
+  partial_received: 'Nhận 1 phần', received: 'Đã nhận', cancelled: 'Đã hủy',
+};
+const PURCHASING_STAGES = [
+  { key: 'request', label: 'Đề nghị' },
+  { key: 'approve', label: 'Duyệt & chọn NCC' },
+  { key: 'po', label: 'Đã đặt hàng (PO)' },
+  { key: 'shipping', label: 'Đang giao' },
+  { key: 'received', label: 'Đã nhận & nhập kho' },
+];
+
+function prStageOf(status) {
+  if (status === 'confirmed') return 'approve';
+  if (['received', 'qc_pass', 'qc_fail', 'done'].includes(status)) return 'received';
+  return 'request';
+}
+function poStageOf(status) {
+  if (status === 'draft') return 'approve';
+  if (['submitted', 'confirmed'].includes(status)) return 'po';
+  if (status === 'ordered') return 'shipping';
+  if (['partial_received', 'received'].includes(status)) return 'received';
+  return 'po';
+}
+
+// GET /api/management/purchasing-overview — Tổng quan Mua hàng (đề nghị vật tư + đơn mua hàng NCC)
+r.get('/purchasing-overview', async (req, res) => {
+  try {
+    const scope = getCompanyScope(req, req.query.company_id);
+    if (denyScope(res, scope)) return;
+    const now = new Date();
+    const firstDayThisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
+    let prQ = supabase.from('purchase_requests').select(`
+      id, project_id, item_name, description, source_type, supplier_id,
+      requested_date, supplier_committed_date, expected_price, actual_price,
+      status, delay_reason, next_action, created_at,
+      supplier:suppliers(id, name),
+      project:projects(id, code, name)
+    `).order('created_at', { ascending: false }).limit(300);
+    prQ = applyCompanyScopeFilter(prQ, scope);
+
+    let poQ = supabase.from('purchase_orders').select(`
+      id, code, supplier_id, title, order_date, expected_date, total, status, created_at,
+      supplier:suppliers(id, name),
+      lead:crm_leads(id, code, title)
+    `).order('created_at', { ascending: false }).limit(300);
+    poQ = applyCompanyScopeFilter(poQ, scope);
+
+    const [prRes, poRes] = await Promise.all([prQ, poQ]);
+    if (prRes.error && !/purchase_requests/i.test(prRes.error.message || '')) throw prRes.error;
+    if (poRes.error && !/purchase_orders/i.test(poRes.error.message || '')) throw poRes.error;
+
+    const prItems = (prRes.data || []).map((r2) => ({
+      kind: 'PR',
+      id: r2.id,
+      ref: `YC-${String(r2.id).slice(0, 8).toUpperCase()}`,
+      title: r2.item_name,
+      subtitle: r2.project ? `${r2.project.code} · ${r2.project.name}` : null,
+      supplier_name: r2.supplier?.name || null,
+      amount: r2.actual_price ?? r2.expected_price ?? null,
+      status: r2.status,
+      status_label: PR_STATUS_LABELS[r2.status] || r2.status,
+      stage: prStageOf(r2.status),
+      late: r2.status === 'delayed',
+      date: r2.supplier_committed_date || r2.requested_date || r2.created_at,
+      created_at: r2.created_at,
+    }));
+
+    const poItems = (poRes.data || []).map((o) => {
+      const overdue = !!(o.expected_date && new Date(o.expected_date) < now && !['received', 'cancelled'].includes(o.status));
+      return {
+        kind: 'PO',
+        id: o.id,
+        ref: o.code,
+        title: o.title,
+        subtitle: o.lead ? [o.lead.code, o.lead.title].filter(Boolean).join(' · ') : null,
+        supplier_name: o.supplier?.name || null,
+        amount: o.total,
+        status: o.status,
+        status_label: PO_STATUS_LABELS[o.status] || o.status,
+        stage: poStageOf(o.status),
+        late: overdue,
+        date: o.expected_date || o.order_date || o.created_at,
+        created_at: o.created_at,
+      };
+    });
+
+    const items = [...prItems, ...poItems].sort(
+      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+    );
+
+    const orderedValueThisMonth = poItems
+      .filter((o) => o.status !== 'draft' && new Date(o.created_at) >= firstDayThisMonth)
+      .reduce((s, o) => s + (Number(o.amount) || 0), 0);
+
+    const stats = {
+      pending_approval: prItems.filter((i) => i.status === 'requested').length,
+      ordered_value_this_month: orderedValueThisMonth,
+      shipping: poItems.filter((i) => i.status === 'ordered').length,
+      late: items.filter((i) => i.late).length,
+    };
+
+    res.json({
+      company_id: primaryCompanyIdFromScope(scope),
+      stages: PURCHASING_STAGES,
+      stats,
+      items,
+    });
+  } catch (e) {
+    console.error('[management/purchasing-overview]', e);
+    res.status(500).json({ error: e.message || 'Lỗi tải tổng quan mua hàng' });
+  }
+});
+
+const PRODUCTION_SCOPE_STATUSES = ['producing', 'shipping', 'installing'];
+
+/**
+ * Pipeline công đoạn xưởng THEO TỪNG CÔNG TY riêng (không gộp) — dùng để tính đúng
+ * % tiến độ / công đoạn hiện tại của một dự án cụ thể (khác với loadWorkshopStages,
+ * vốn gộp nhiều công ty lại chỉ để đếm số lượng theo tên công đoạn).
+ */
+async function loadStagesByCompany(table, companyIds) {
+  const map = new Map();
+  if (!companyIds?.length) return map;
+  const { data } = await supabase
+    .from(table)
+    .select('id, name, order_index, company_id')
+    .eq('is_active', true)
+    .in('company_id', companyIds)
+    .order('order_index');
+  (data || []).forEach((s) => {
+    const cid = String(s.company_id);
+    if (!map.has(cid)) map.set(cid, []);
+    map.get(cid).push(s);
+  });
+  return map;
+}
+
+// GET /api/management/production-overview — Tổng quan Sản xuất (dự án đang/đã qua công đoạn SX)
+r.get('/production-overview', async (req, res) => {
+  try {
+    const scope = getCompanyScope(req, req.query.company_id);
+    if (denyScope(res, scope)) return;
+    const now = new Date();
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+    let q = supabase.from('projects').select(`
+      id, code, name, status, deadline, sx_kanban_column_id, production_person_id, updated_at, company_id,
+      production_person:users!projects_production_person_id_fkey(id, full_name)
+    `).in('status', PRODUCTION_SCOPE_STATUSES);
+    q = applyProjectScopeFilter(q, scope);
+    const { data: projects, error } = await q;
+    if (error) throw error;
+
+    const projectCompanyIds = [...new Set((projects || []).map((p) => p.company_id).filter(Boolean))];
+    const stagesByCompany = await loadStagesByCompany('production_pipeline_stages', projectCompanyIds);
+
+    const projectIds = (projects || []).map((p) => p.id);
+    const openPrProjectIds = new Set();
+    if (projectIds.length) {
+      const { data: prs } = await supabase.from('purchase_requests')
+        .select('project_id, status').in('project_id', projectIds).in('status', ['draft', 'requested']);
+      (prs || []).forEach((r2) => { if (r2.project_id) openPrProjectIds.add(String(r2.project_id)); });
+    }
+
+    const items = (projects || []).map((p) => {
+      const companyStages = stagesByCompany.get(String(p.company_id)) || [];
+      const totalStages = companyStages.length || 1;
+      const stageIdx = companyStages.findIndex((s) => String(s.id) === String(p.sx_kanban_column_id));
+      const foundStage = stageIdx >= 0;
+      const progressPct = foundStage ? Math.round(((stageIdx + 1) / totalStages) * 100) : null;
+      const movedPastProduction = p.status !== 'producing';
+      const waitingMaterial = openPrProjectIds.has(String(p.id));
+      const overdue = !!(p.deadline && new Date(p.deadline) < now);
+
+      let bucket;
+      if (movedPastProduction) bucket = 'done';
+      else if (waitingMaterial) bucket = 'waiting_material';
+      else if (overdue) bucket = 'late';
+      else bucket = 'on_track';
+
+      return {
+        id: p.id,
+        code: p.code,
+        name: p.name,
+        current_stage_label: movedPastProduction ? 'Đã qua công đoạn SX' : (foundStage ? companyStages[stageIdx].name : 'Chưa vào công đoạn'),
+        current_stage_idx: movedPastProduction ? totalStages - 1 : (foundStage ? stageIdx : null),
+        total_stages: totalStages,
+        progress_pct: movedPastProduction ? 100 : progressPct,
+        assignee_name: p.production_person?.full_name || null,
+        bucket,
+        deadline: p.deadline,
+        updated_at: p.updated_at,
+      };
+    });
+
+    items.sort((a, b) => new Date(a.deadline || '9999-12-31').getTime() - new Date(b.deadline || '9999-12-31').getTime());
+
+    const stats = {
+      active: items.filter((i) => i.bucket !== 'done').length,
+      waiting_material: items.filter((i) => i.bucket === 'waiting_material').length,
+      late: items.filter((i) => i.bucket === 'late').length,
+      done_this_week: items.filter((i) => i.bucket === 'done' && i.updated_at && new Date(i.updated_at) >= sevenDaysAgo).length,
+    };
+
+    // Danh sách nhãn công đoạn để lọc — lấy từ chính các công đoạn thật đang xuất hiện trong items,
+    // không dùng danh sách gộp nhiều công ty (tránh sai lệch khi xem "Tất cả công ty").
+    const stageLabelSet = new Map();
+    items.forEach((it) => {
+      if (it.current_stage_label && !stageLabelSet.has(it.current_stage_label)) {
+        stageLabelSet.set(it.current_stage_label, it.current_stage_idx ?? 999);
+      }
+    });
+    const stages = [...stageLabelSet.entries()]
+      .sort((a, b) => a[1] - b[1])
+      .map(([label]) => ({ label }));
+
+    res.json({
+      company_id: primaryCompanyIdFromScope(scope),
+      stages,
+      stats,
+      items,
+    });
+  } catch (e) {
+    console.error('[management/production-overview]', e);
+    res.status(500).json({ error: e.message || 'Lỗi tải tổng quan sản xuất' });
+  }
+});
+
 // GET /api/management/deals
 r.get('/deals', async (req, res) => {
   try {
@@ -918,6 +1504,121 @@ r.get('/by-project/:projectId', async (req, res) => {
   } catch (e) {
     console.error('[management/by-project]', e);
     res.status(500).json({ error: e.message || 'Lỗi tải tổng hợp dự án' });
+  }
+});
+
+const MATERIAL_READY_STATUSES = ['received', 'qc_pass', 'qc_fail', 'done'];
+const DONE_TASK_STATUSES = ['done', 'completed'];
+
+// GET /api/management/production-overview/:projectId — Chi tiết 1 dự án đang ở công đoạn sản xuất
+r.get('/production-overview/:projectId', async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    const scope = getCompanyScope(req, req.query.company_id);
+    if (denyScope(res, scope)) return;
+
+    const { data: project, error } = await supabase.from('projects').select(`
+      id, code, name, status, deadline, production_deadline, install_address,
+      sx_kanban_column_id, sx_pipeline_stage_entered_at, sx_schedule_slip_days,
+      production_person_id, company_id, updated_at,
+      company:companies!projects_company_id_fkey(id, name),
+      production_person:users!projects_production_person_id_fkey(id, full_name)
+    `).eq('id', projectId).maybeSingle();
+    if (error) throw error;
+    if (!project) return res.status(404).json({ error: 'Không tìm thấy dự án' });
+    if (!assertProjectInScope(res, scope, project)) return;
+
+    const { data: stagesRaw } = await supabase
+      .from('production_pipeline_stages')
+      .select('id, name, order_index')
+      .eq('company_id', project.company_id)
+      .eq('is_active', true)
+      .order('order_index');
+    const stages = stagesRaw || [];
+    const totalStages = stages.length || 1;
+    const stageIdx = stages.findIndex((s) => String(s.id) === String(project.sx_kanban_column_id));
+    const foundStage = stageIdx >= 0;
+    const movedPastProduction = project.status !== 'producing';
+    const progressPct = movedPastProduction ? 100 : (foundStage ? Math.round(((stageIdx + 1) / totalStages) * 100) : null);
+    const currentStageIdx = movedPastProduction ? stages.length - 1 : (foundStage ? stageIdx : null);
+    const stageList = stages.map((s, idx) => ({
+      id: s.id,
+      name: s.name,
+      status: movedPastProduction || idx < currentStageIdx ? 'done' : idx === currentStageIdx ? 'current' : 'pending',
+    }));
+
+    const { data: leadRows } = await supabase.from('crm_leads')
+      .select('id, code').eq('project_id', projectId).order('created_at', { ascending: true });
+    const primaryLead = leadRows?.[0] || null;
+    const leadIds = (leadRows || []).map((l) => l.id);
+
+    const { data: prs } = await supabase.from('purchase_requests')
+      .select('id, item_name, status').eq('project_id', projectId);
+    const materialsTotal = (prs || []).length;
+    const materialsReady = (prs || []).filter((p) => MATERIAL_READY_STATUSES.includes(p.status)).length;
+    const materialsReadyPct = materialsTotal > 0 ? Math.round((materialsReady / materialsTotal) * 100) : null;
+    const openPrCount = (prs || []).filter((p) => ['draft', 'requested'].includes(p.status)).length;
+
+    let taskQuery = supabase.from('unified_tasks_v').select('unified_id, status, deadline').eq('project_id', projectId);
+    const { data: projectTasks } = await taskQuery;
+    let crmTasks = [];
+    if (leadIds.length) {
+      const { data: ct } = await supabase.from('unified_tasks_v').select('unified_id, status, deadline').in('lead_id', leadIds);
+      crmTasks = ct || [];
+    }
+    const seenTaskIds = new Set();
+    const allTasks = [...(projectTasks || []), ...crmTasks].filter((t) => {
+      if (seenTaskIds.has(t.unified_id)) return false;
+      seenTaskIds.add(t.unified_id);
+      return true;
+    });
+    const now = new Date();
+    const openTasks = allTasks.filter((t) => !DONE_TASK_STATUSES.includes(String(t.status)));
+    const overdueTasks = openTasks.filter((t) => t.deadline && new Date(t.deadline) < now);
+
+    const overdue = !!(project.deadline && new Date(project.deadline) < now);
+    let bucket;
+    if (movedPastProduction) bucket = 'done';
+    else if (openPrCount > 0) bucket = 'waiting_material';
+    else if (overdue) bucket = 'late';
+    else bucket = 'on_track';
+
+    res.json({
+      project: {
+        id: project.id,
+        code: project.code,
+        name: project.name,
+        status: project.status,
+        company: project.company || null,
+        install_address: project.install_address || null,
+        deadline: project.production_deadline || project.deadline || null,
+        production_person: project.production_person || null,
+        sx_pipeline_stage_entered_at: project.sx_pipeline_stage_entered_at || null,
+        sx_schedule_slip_days: project.sx_schedule_slip_days ?? null,
+        updated_at: project.updated_at,
+      },
+      crm_lead: primaryLead,
+      bucket,
+      stages: stageList,
+      current_stage_idx: currentStageIdx,
+      current_stage_label: movedPastProduction ? 'Đã qua công đoạn SX' : (foundStage ? stages[stageIdx].name : 'Chưa vào công đoạn'),
+      total_stages: totalStages,
+      progress_pct: progressPct,
+      materials: {
+        total: materialsTotal,
+        ready: materialsReady,
+        pending: materialsTotal - materialsReady,
+        ready_pct: materialsReadyPct,
+      },
+      tasks: {
+        total: allTasks.length,
+        open: openTasks.length,
+        overdue: overdueTasks.length,
+      },
+    });
+  } catch (e) {
+    console.error('[management/production-overview/:projectId]', e);
+    res.status(500).json({ error: e.message || 'Lỗi tải chi tiết dự án sản xuất' });
   }
 });
 

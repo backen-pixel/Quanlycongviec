@@ -1,0 +1,595 @@
+-- 559: Tiếp nối 558 — thêm p_company_ids (mảng) vào crm_filter_summary và
+-- crm_kanban_stage_page_ids, 2 RPC còn lại truy vấn trực tiếp crm_leads theo p_company_id
+-- (1 công ty) mà chưa hỗ trợ giới hạn theo TOÀN BỘ công ty của 1 tenant.
+--
+-- crm_filter_summary: nguồn của các ô KPI Lead/Deal/Khách hàng trên CRM Dashboard.
+-- crm_kanban_stage_page_ids: nguồn tải nhiều cột Kanban cùng lúc (POST /crm/kanban-stage-pages).
+--
+-- (crm_deadline_bucket_counts / crm_deadline_bucket_page_ids KHÔNG cần sửa — 2 RPC đó nhận
+-- p_lead_ids đã được lọc sẵn từ crm_leads_page_ids, nên tự động thừa hưởng phạm vi tenant
+-- sau khi 558 chạy.)
+--
+-- ⚠️ Supabase SQL Editor: chọn TOÀN BỘ file (Ctrl+A) rồi Run.
+
+DROP FUNCTION IF EXISTS public.crm_filter_summary(
+  uuid, uuid, uuid, boolean, boolean, uuid, text, text, text, text,
+  uuid[], boolean, uuid[], uuid[], text, uuid, text, text
+);
+
+CREATE OR REPLACE FUNCTION public.crm_filter_summary(
+  p_company_id uuid DEFAULT NULL,
+  p_lead_assigned_to uuid DEFAULT NULL,
+  p_deal_assigned_to uuid DEFAULT NULL,
+  p_lead_assigned_strict boolean DEFAULT false,
+  p_deal_assigned_strict boolean DEFAULT false,
+  p_source_id uuid DEFAULT NULL,
+  p_date_from text DEFAULT NULL,
+  p_date_to text DEFAULT NULL,
+  p_search text DEFAULT NULL,
+  p_assignee_name text DEFAULT NULL,
+  p_region_ids uuid[] DEFAULT NULL,
+  p_region_unassigned boolean DEFAULT false,
+  p_lead_stage_ids uuid[] DEFAULT NULL,
+  p_deal_stage_ids uuid[] DEFAULT NULL,
+  p_phone_filter text DEFAULT NULL,
+  p_lead_type_id uuid DEFAULT NULL,
+  p_referrer_name text DEFAULT NULL,
+  p_customer_company text DEFAULT NULL,
+  p_company_ids uuid[] DEFAULT NULL
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+STABLE
+SECURITY INVOKER
+SET search_path = public
+AS $$
+DECLARE
+  v_search text;
+  v_assignee_name text;
+  v_referrer_name text;
+  v_customer_company text;
+  v_result jsonb;
+BEGIN
+  v_search := NULLIF(TRIM(COALESCE(p_search, '')), '');
+  v_assignee_name := NULLIF(TRIM(COALESCE(p_assignee_name, '')), '');
+  v_referrer_name := NULLIF(TRIM(COALESCE(p_referrer_name, '')), '');
+  v_customer_company := NULLIF(TRIM(COALESCE(p_customer_company, '')), '');
+
+  WITH base AS (
+    SELECT
+      l.id,
+      l.type,
+      l.stage_id,
+      l.estimated_value,
+      l.weighted_value,
+      -- Khớp crm_leads_stage_counts / migration 470:
+      -- has_phone = có SĐT hiển thị HOẶC có Zalo; no_phone = không có SĐT hiển thị
+      -- (Zalo-only vẫn vào cả hai bucket — không phân hoạch sạch).
+      (
+        NULLIF(TRIM(COALESCE(c.phone::text, '')), '') IS NOT NULL
+        OR NULLIF(TRIM(COALESCE(l.phone::text, '')), '') IS NOT NULL
+      ) AS has_display_phone,
+      (
+        NULLIF(TRIM(COALESCE(c.phone::text, '')), '') IS NOT NULL
+        OR NULLIF(TRIM(COALESCE(l.phone::text, '')), '') IS NOT NULL
+        OR EXISTS (
+          SELECT 1
+          FROM zalo_contacts zc
+          WHERE zc.lead_id = l.id
+        )
+      ) AS has_phone
+    FROM crm_leads l
+    LEFT JOIN customers c ON c.id = l.customer_id
+    LEFT JOIN users ua ON ua.id = l.assigned_to
+    LEFT JOIN users uo ON uo.id = l.lead_owner_id
+    LEFT JOIN crm_sources src ON src.id = l.source_id
+    WHERE l.type IN ('lead', 'deal')
+      AND l.parent_lead_id IS NULL
+      AND (p_company_id IS NULL OR l.company_id = p_company_id)
+      AND (p_company_ids IS NULL OR l.company_id = ANY(p_company_ids))
+      AND (p_source_id IS NULL OR l.source_id = p_source_id)
+      AND (p_lead_type_id IS NULL OR l.lead_type_id = p_lead_type_id)
+      AND (p_date_from IS NULL OR TRIM(p_date_from) = '' OR l.created_at >= p_date_from::timestamptz)
+      AND (
+        p_date_to IS NULL
+        OR TRIM(p_date_to) = ''
+        OR l.created_at <= (TRIM(p_date_to) || 'T23:59:59.999Z')::timestamptz
+      )
+      AND (
+        (
+          l.type = 'lead'
+          AND (
+            p_lead_assigned_to IS NULL
+            OR (
+              COALESCE(p_lead_assigned_strict, false) = true
+              AND (
+                l.assigned_to = p_lead_assigned_to
+                OR EXISTS (
+                  SELECT 1 FROM lead_members lm
+                  WHERE lm.lead_id = l.id AND lm.user_id = p_lead_assigned_to
+                )
+              )
+            )
+            OR (
+              COALESCE(p_lead_assigned_strict, false) = false
+              AND (
+                l.assigned_to = p_lead_assigned_to
+                OR l.lead_owner_id = p_lead_assigned_to
+                OR EXISTS (
+                  SELECT 1 FROM lead_members lm
+                  WHERE lm.lead_id = l.id AND lm.user_id = p_lead_assigned_to
+                )
+              )
+            )
+          )
+        )
+        OR (
+          l.type = 'deal'
+          AND (
+            p_deal_assigned_to IS NULL
+            OR (
+              COALESCE(p_deal_assigned_strict, false) = true
+              AND (
+                l.assigned_to = p_deal_assigned_to
+                OR EXISTS (
+                  SELECT 1 FROM lead_members lm
+                  WHERE lm.lead_id = l.id AND lm.user_id = p_deal_assigned_to
+                )
+              )
+            )
+            OR (
+              COALESCE(p_deal_assigned_strict, false) = false
+              AND (
+                l.assigned_to = p_deal_assigned_to
+                OR l.lead_owner_id = p_deal_assigned_to
+                OR EXISTS (
+                  SELECT 1 FROM lead_members lm
+                  WHERE lm.lead_id = l.id AND lm.user_id = p_deal_assigned_to
+                )
+              )
+            )
+          )
+        )
+      )
+      AND (
+        v_search IS NULL
+        OR l.title ILIKE '%' || v_search || '%'
+        OR l.code ILIKE '%' || v_search || '%'
+        OR COALESCE(l.phone::text, '') ILIKE '%' || v_search || '%'
+        OR COALESCE(l.description::text, '') ILIKE '%' || v_search || '%'
+        OR COALESCE(l.install_address::text, '') ILIKE '%' || v_search || '%'
+        OR COALESCE(c.phone::text, '') ILIKE '%' || v_search || '%'
+        OR COALESCE(c.full_name::text, '') ILIKE '%' || v_search || '%'
+        OR COALESCE(c.email::text, '') ILIKE '%' || v_search || '%'
+        OR COALESCE(c.address::text, '') ILIKE '%' || v_search || '%'
+        OR COALESCE(c.company::text, '') ILIKE '%' || v_search || '%'
+        OR COALESCE(ua.full_name::text, '') ILIKE '%' || v_search || '%'
+        OR COALESCE(uo.full_name::text, '') ILIKE '%' || v_search || '%'
+        OR COALESCE(src.name::text, '') ILIKE '%' || v_search || '%'
+      )
+      AND (
+        v_assignee_name IS NULL
+        OR COALESCE(ua.full_name::text, '') ILIKE '%' || v_assignee_name || '%'
+        OR COALESCE(uo.full_name::text, '') ILIKE '%' || v_assignee_name || '%'
+      )
+      AND (
+        v_referrer_name IS NULL
+        OR (
+          v_referrer_name = '__none__'
+          AND NULLIF(TRIM(COALESCE(l.referrer_name::text, '')), '') IS NULL
+        )
+        OR (
+          v_referrer_name <> '__none__'
+          AND TRIM(COALESCE(l.referrer_name::text, '')) = v_referrer_name
+        )
+      )
+      AND (
+        v_customer_company IS NULL
+        OR (
+          v_customer_company = '__none__'
+          AND NULLIF(TRIM(COALESCE(c.company::text, '')), '') IS NULL
+        )
+        OR (
+          v_customer_company <> '__none__'
+          AND TRIM(COALESCE(c.company::text, '')) = v_customer_company
+        )
+      )
+      AND (
+        CASE
+          WHEN COALESCE(p_region_unassigned, false) = true THEN
+            l.region_id IS NULL
+          WHEN p_region_ids IS NULL OR array_length(p_region_ids, 1) IS NULL THEN
+            true
+          ELSE
+            l.region_id = ANY(p_region_ids)
+            OR (
+              l.type = 'lead'
+              AND p_lead_assigned_to IS NOT NULL
+              AND (
+                l.assigned_to = p_lead_assigned_to
+                OR (
+                  COALESCE(p_lead_assigned_strict, false) = false
+                  AND l.lead_owner_id = p_lead_assigned_to
+                )
+                OR EXISTS (
+                  SELECT 1 FROM lead_members lm
+                  WHERE lm.lead_id = l.id AND lm.user_id = p_lead_assigned_to
+                )
+              )
+            )
+            OR (
+              l.type = 'deal'
+              AND p_deal_assigned_to IS NOT NULL
+              AND (
+                l.assigned_to = p_deal_assigned_to
+                OR (
+                  COALESCE(p_deal_assigned_strict, false) = false
+                  AND l.lead_owner_id = p_deal_assigned_to
+                )
+                OR EXISTS (
+                  SELECT 1 FROM lead_members lm
+                  WHERE lm.lead_id = l.id AND lm.user_id = p_deal_assigned_to
+                )
+              )
+            )
+        END
+      )
+      AND (
+        (
+          l.type = 'lead'
+          AND (
+            p_lead_stage_ids IS NULL
+            OR array_length(p_lead_stage_ids, 1) IS NULL
+            OR l.stage_id = ANY(p_lead_stage_ids)
+            OR l.stage_id IS NULL
+          )
+        )
+        OR (
+          l.type = 'deal'
+          AND (
+            p_deal_stage_ids IS NULL
+            OR array_length(p_deal_stage_ids, 1) IS NULL
+            OR l.stage_id = ANY(p_deal_stage_ids)
+            OR l.stage_id IS NULL
+          )
+        )
+      )
+  ),
+  type_agg AS (
+    SELECT
+      type,
+      COUNT(*)::bigint AS all_total,
+      COUNT(*) FILTER (WHERE has_phone)::bigint AS has_phone_total,
+      COUNT(*) FILTER (WHERE NOT has_display_phone)::bigint AS no_phone_total,
+      COUNT(*) FILTER (
+        WHERE p_phone_filter IS NULL
+          OR TRIM(p_phone_filter) = ''
+          OR TRIM(p_phone_filter) = 'all'
+          OR (TRIM(p_phone_filter) = 'has_phone' AND has_phone)
+          OR (TRIM(p_phone_filter) = 'no_phone' AND NOT has_display_phone)
+      )::bigint AS selected_total
+    FROM base
+    GROUP BY type
+  ),
+  stage_agg AS (
+    SELECT
+      type, stage_id, COUNT(*)::bigint AS cnt,
+      COALESCE(SUM(estimated_value), 0)::numeric AS value_sum,
+      COALESCE(SUM(weighted_value), 0)::numeric AS weighted_value_sum
+    FROM base
+    WHERE p_phone_filter IS NULL
+      OR TRIM(p_phone_filter) = ''
+      OR TRIM(p_phone_filter) = 'all'
+      OR (TRIM(p_phone_filter) = 'has_phone' AND has_phone)
+      OR (TRIM(p_phone_filter) = 'no_phone' AND NOT has_display_phone)
+    GROUP BY type, stage_id
+  )
+  SELECT jsonb_build_object(
+    'lead', jsonb_build_object(
+      'all', COALESCE((SELECT all_total FROM type_agg WHERE type = 'lead'), 0),
+      'has_phone', COALESCE((SELECT has_phone_total FROM type_agg WHERE type = 'lead'), 0),
+      'no_phone', COALESCE((SELECT no_phone_total FROM type_agg WHERE type = 'lead'), 0),
+      'selected_total', COALESCE((SELECT selected_total FROM type_agg WHERE type = 'lead'), 0),
+      'counts', COALESCE((
+        SELECT jsonb_object_agg(COALESCE(stage_id::text, '__none__'), cnt)
+        FROM stage_agg WHERE type = 'lead'
+      ), '{}'::jsonb)
+    ),
+    'deal', jsonb_build_object(
+      'all', COALESCE((SELECT all_total FROM type_agg WHERE type = 'deal'), 0),
+      'has_phone', COALESCE((SELECT has_phone_total FROM type_agg WHERE type = 'deal'), 0),
+      'no_phone', COALESCE((SELECT no_phone_total FROM type_agg WHERE type = 'deal'), 0),
+      'selected_total', COALESCE((SELECT selected_total FROM type_agg WHERE type = 'deal'), 0),
+      'counts', COALESCE((
+        SELECT jsonb_object_agg(COALESCE(stage_id::text, '__none__'), cnt)
+        FROM stage_agg WHERE type = 'deal'
+      ), '{}'::jsonb),
+      'value_sums', COALESCE((
+        SELECT jsonb_object_agg(COALESCE(stage_id::text, '__none__'), value_sum)
+        FROM stage_agg WHERE type = 'deal'
+      ), '{}'::jsonb),
+      'weighted_value_sums', COALESCE((
+        SELECT jsonb_object_agg(COALESCE(stage_id::text, '__none__'), weighted_value_sum)
+        FROM stage_agg WHERE type = 'deal'
+      ), '{}'::jsonb)
+    )
+  )
+  INTO v_result;
+
+  RETURN COALESCE(v_result, jsonb_build_object(
+    'lead', jsonb_build_object('all', 0, 'has_phone', 0, 'no_phone', 0, 'selected_total', 0, 'counts', '{}'::jsonb),
+    'deal', jsonb_build_object('all', 0, 'has_phone', 0, 'no_phone', 0, 'selected_total', 0, 'counts', '{}'::jsonb, 'value_sums', '{}'::jsonb, 'weighted_value_sums', '{}'::jsonb)
+  ));
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.crm_filter_summary(
+  uuid, uuid, uuid, boolean, boolean, uuid, text, text, text, text,
+  uuid[], boolean, uuid[], uuid[], text, uuid, text, text, uuid[]
+) TO service_role;
+
+GRANT EXECUTE ON FUNCTION public.crm_filter_summary(
+  uuid, uuid, uuid, boolean, boolean, uuid, text, text, text, text,
+  uuid[], boolean, uuid[], uuid[], text, uuid, text, text, uuid[]
+) TO authenticated;
+
+COMMENT ON FUNCTION public.crm_filter_summary(
+  uuid, uuid, uuid, boolean, boolean, uuid, text, text, text, text,
+  uuid[], boolean, uuid[], uuid[], text, uuid, text, text, uuid[]
+) IS 'Một lần quét cho tổng Lead/Deal, bucket SĐT, stage counts và (deal) tổng giá trị/giá trị kỳ vọng theo bộ lọc CRM Dashboard. p_company_ids giới hạn theo tenant khi admin hệ thống xem "Tất cả công ty".';
+
+DROP FUNCTION IF EXISTS public.crm_kanban_stage_page_ids(
+  text, jsonb, uuid, uuid, uuid, text, text, text, text, boolean, uuid[], text, boolean
+);
+
+CREATE OR REPLACE FUNCTION public.crm_kanban_stage_page_ids(
+  p_type text,
+  p_requests jsonb DEFAULT '[]'::jsonb,
+  p_assigned_to uuid DEFAULT NULL,
+  p_source_id uuid DEFAULT NULL,
+  p_company_id uuid DEFAULT NULL,
+  p_date_from text DEFAULT NULL,
+  p_date_to text DEFAULT NULL,
+  p_search text DEFAULT NULL,
+  p_phone_filter text DEFAULT NULL,
+  p_assigned_strict boolean DEFAULT false,
+  p_region_ids uuid[] DEFAULT NULL,
+  p_assignee_name text DEFAULT NULL,
+  p_region_unassigned boolean DEFAULT false,
+  p_company_ids uuid[] DEFAULT NULL
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+STABLE
+SECURITY INVOKER
+SET search_path = public
+AS $$
+DECLARE
+  v_search text := NULLIF(TRIM(COALESCE(p_search, '')), '');
+  v_assignee_name text := NULLIF(TRIM(COALESCE(p_assignee_name, '')), '');
+  v_result jsonb;
+BEGIN
+  WITH raw_requests AS (
+    SELECT
+      value->>'stage_id' AS stage_text,
+      GREATEST(COALESCE((value->>'offset')::integer, 0), 0) AS offset_value,
+      LEAST(GREATEST(COALESCE((value->>'limit')::integer, 20), 1), 40) AS limit_value,
+      ordinal
+    FROM jsonb_array_elements(
+      CASE
+        WHEN jsonb_typeof(p_requests) = 'array' THEN p_requests
+        ELSE '[]'::jsonb
+      END
+    ) WITH ORDINALITY AS request(value, ordinal)
+  ),
+  requests AS (
+    SELECT DISTINCT ON (stage_id)
+      stage_id,
+      offset_value,
+      limit_value,
+      ordinal
+    FROM (
+      SELECT
+        CASE
+          WHEN stage_text ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+            THEN stage_text::uuid
+          ELSE NULL
+        END AS stage_id,
+        offset_value,
+        limit_value,
+        ordinal
+      FROM raw_requests
+    ) normalized
+    WHERE stage_id IS NOT NULL
+    ORDER BY stage_id, ordinal
+    LIMIT 12
+  ),
+  base AS (
+    SELECT
+      l.id,
+      l.stage_id,
+      l.created_at,
+      CASE
+        WHEN NULLIF(TRIM(COALESCE(c.phone::text, '')), '') IS NOT NULL THEN c.phone::text
+        WHEN NULLIF(TRIM(COALESCE(l.phone::text, '')), '') IS NOT NULL THEN l.phone::text
+        ELSE NULL
+      END AS display_phone
+    FROM public.crm_leads l
+    LEFT JOIN public.customers c ON c.id = l.customer_id
+    LEFT JOIN public.users ua ON ua.id = l.assigned_to
+    LEFT JOIN public.users uo ON uo.id = l.lead_owner_id
+    LEFT JOIN public.crm_sources src ON src.id = l.source_id
+    WHERE l.type = p_type
+      AND l.parent_lead_id IS NULL
+      AND l.stage_id IN (SELECT stage_id FROM requests)
+      AND (
+        p_assigned_to IS NULL
+        OR (
+          COALESCE(p_assigned_strict, false)
+          AND (
+            l.assigned_to = p_assigned_to
+            OR EXISTS (
+              SELECT 1
+              FROM public.lead_members lm
+              WHERE lm.lead_id = l.id AND lm.user_id = p_assigned_to
+            )
+          )
+        )
+        OR (
+          NOT COALESCE(p_assigned_strict, false)
+          AND (
+            l.assigned_to = p_assigned_to
+            OR l.lead_owner_id = p_assigned_to
+            OR EXISTS (
+              SELECT 1
+              FROM public.lead_members lm
+              WHERE lm.lead_id = l.id AND lm.user_id = p_assigned_to
+            )
+          )
+        )
+      )
+      AND (p_source_id IS NULL OR l.source_id = p_source_id)
+      AND (p_company_id IS NULL OR l.company_id = p_company_id)
+      AND (p_company_ids IS NULL OR l.company_id = ANY(p_company_ids))
+      AND (p_date_from IS NULL OR TRIM(p_date_from) = '' OR l.created_at >= p_date_from::timestamptz)
+      AND (
+        p_date_to IS NULL
+        OR TRIM(p_date_to) = ''
+        OR l.created_at <= (TRIM(p_date_to) || 'T23:59:59.999Z')::timestamptz
+      )
+      AND (
+        v_search IS NULL
+        OR l.title ILIKE '%' || v_search || '%'
+        OR l.code ILIKE '%' || v_search || '%'
+        OR COALESCE(l.phone::text, '') ILIKE '%' || v_search || '%'
+        OR COALESCE(l.description::text, '') ILIKE '%' || v_search || '%'
+        OR COALESCE(l.install_address::text, '') ILIKE '%' || v_search || '%'
+        OR COALESCE(c.phone::text, '') ILIKE '%' || v_search || '%'
+        OR COALESCE(c.full_name::text, '') ILIKE '%' || v_search || '%'
+        OR COALESCE(c.email::text, '') ILIKE '%' || v_search || '%'
+        OR COALESCE(c.address::text, '') ILIKE '%' || v_search || '%'
+        OR COALESCE(c.company::text, '') ILIKE '%' || v_search || '%'
+        OR COALESCE(ua.full_name::text, '') ILIKE '%' || v_search || '%'
+        OR COALESCE(uo.full_name::text, '') ILIKE '%' || v_search || '%'
+        OR COALESCE(src.name::text, '') ILIKE '%' || v_search || '%'
+      )
+      AND (
+        v_assignee_name IS NULL
+        OR COALESCE(ua.full_name::text, '') ILIKE '%' || v_assignee_name || '%'
+        OR COALESCE(uo.full_name::text, '') ILIKE '%' || v_assignee_name || '%'
+      )
+      AND (
+        CASE
+          WHEN COALESCE(p_region_unassigned, false) THEN
+            l.region_id IS NULL
+          WHEN p_region_ids IS NULL OR array_length(p_region_ids, 1) IS NULL THEN
+            true
+          ELSE
+            l.region_id = ANY(p_region_ids)
+            OR (
+              p_assigned_to IS NOT NULL
+              AND (
+                l.assigned_to = p_assigned_to
+                OR (
+                  NOT COALESCE(p_assigned_strict, false)
+                  AND l.lead_owner_id = p_assigned_to
+                )
+                OR EXISTS (
+                  SELECT 1
+                  FROM public.lead_members lm
+                  WHERE lm.lead_id = l.id AND lm.user_id = p_assigned_to
+                )
+              )
+            )
+        END
+      )
+  ),
+  filtered AS (
+    SELECT *
+    FROM base
+    WHERE (
+      p_phone_filter IS NULL
+      OR TRIM(p_phone_filter) = ''
+      OR (
+        TRIM(p_phone_filter) = 'has_phone'
+        AND (
+          display_phone IS NOT NULL
+          OR EXISTS (
+            SELECT 1 FROM public.zalo_contacts zc WHERE zc.lead_id = base.id
+          )
+        )
+      )
+      OR (TRIM(p_phone_filter) = 'no_phone' AND display_phone IS NULL)
+    )
+  ),
+  ranked AS (
+    SELECT
+      id,
+      stage_id,
+      ROW_NUMBER() OVER (
+        PARTITION BY stage_id
+        ORDER BY (display_phone IS NOT NULL) DESC, created_at DESC, id
+      ) AS row_number,
+      COUNT(*) OVER (PARTITION BY stage_id) AS total
+    FROM filtered
+  )
+  SELECT jsonb_build_object(
+    'pages',
+    COALESCE(
+      jsonb_object_agg(
+        r.stage_id::text,
+        jsonb_build_object(
+          'ids',
+          COALESCE(
+            (
+              SELECT jsonb_agg(page_row.id ORDER BY page_row.row_number)
+              FROM ranked page_row
+              WHERE page_row.stage_id = r.stage_id
+                AND page_row.row_number > r.offset_value
+                AND page_row.row_number <= r.offset_value + r.limit_value
+            ),
+            '[]'::jsonb
+          ),
+          'total',
+          COALESCE(
+            (SELECT MAX(total) FROM ranked total_row WHERE total_row.stage_id = r.stage_id),
+            0
+          ),
+          'nextOffset',
+          r.offset_value + COALESCE(
+            (
+              SELECT COUNT(*)
+              FROM ranked page_row
+              WHERE page_row.stage_id = r.stage_id
+                AND page_row.row_number > r.offset_value
+                AND page_row.row_number <= r.offset_value + r.limit_value
+            ),
+            0
+          ),
+          'hasMore',
+          r.offset_value + r.limit_value < COALESCE(
+            (SELECT MAX(total) FROM ranked total_row WHERE total_row.stage_id = r.stage_id),
+            0
+          )
+        )
+        ORDER BY r.ordinal
+      ),
+      '{}'::jsonb
+    )
+  )
+  INTO v_result
+  FROM requests r;
+
+  RETURN COALESCE(v_result, jsonb_build_object('pages', '{}'::jsonb));
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.crm_kanban_stage_page_ids(
+  text, jsonb, uuid, uuid, uuid, text, text, text, text, boolean, uuid[], text, boolean, uuid[]
+) TO authenticated, service_role;
+
+COMMENT ON FUNCTION public.crm_kanban_stage_page_ids(
+  text, jsonb, uuid, uuid, uuid, text, text, text, text, boolean, uuid[], text, boolean, uuid[]
+) IS 'Phân trang id của nhiều cột CRM Kanban trong một lần quét dữ liệu. p_company_ids giới hạn theo tenant khi admin hệ thống xem "Tất cả công ty".';
+
+NOTIFY pgrst, 'reload schema';

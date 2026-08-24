@@ -788,15 +788,25 @@ export async function fetchLeadTaskDocuments(dealId: string): Promise<ProjectDoc
   });
 }
 
-export async function fetchLeadMembers(dealId: string): Promise<LeadMember[]> {
-  const { data } = await api.get<unknown>(`/crm/leads/${dealId}/members`);
-  const list = Array.isArray(data) ? data : [];
-  return list.map((row) => {
-    const r = row as Record<string, unknown>;
-    return {
-      user_id: String(r.user_id || (r.user as Record<string, unknown>)?.id || ''),
-      role: r.role != null ? String(r.role) : undefined,
-      user: mapPerson(r.user),
-    };
+export async function fetchLeadMembers(
+  dealId: string,
+  opts?: ReadOptions,
+): Promise<LeadMember[]> {
+  // Dùng chung cache với KG chung / Assign (cùng GET /crm/leads/:id/members).
+  const { fetchSharedWorkspaceMembers } = await import('./sharedWorkspaceApi');
+  const rows = await fetchSharedWorkspaceMembers(String(dealId), {
+    force: opts?.force,
+    signal: opts?.signal,
   });
+  return rows.map((m) => ({
+    user_id: m.user_id,
+    role: m.role,
+    user: m.user
+      ? {
+          id: String(m.user.id || m.user_id),
+          full_name: m.user.full_name ?? null,
+          avatar: m.user.avatar ?? null,
+        }
+      : null,
+  }));
 }

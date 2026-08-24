@@ -3,7 +3,7 @@
     "name": "CRM Mobile",
     "slug": "crm-mobile-v2",
     "scheme": "crmv2",
-    "version": "2.2.140",
+    "version": "2.2.151",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
@@ -23,7 +23,7 @@
     },
     "android": {
       "package": "vn.tubeppro.crmobilev2",
-      "versionCode": 251,
+      "versionCode": 262,
       "softwareKeyboardLayoutMode": "resize",
       "usesCleartextTraffic": true,
       "edgeToEdgeEnabled": false,

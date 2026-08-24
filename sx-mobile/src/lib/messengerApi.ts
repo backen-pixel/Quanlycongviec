@@ -368,7 +368,7 @@ export async function clearMessengerChatWallpaper(groupId: string): Promise<void
 export async function fetchCallHistoryItems(
   threads: MessengerThread[],
   myUserId: string,
-  maxThreads = 20,
+  maxThreads = 8,
 ): Promise<CallHistoryItem[]> {
   const candidates = threads
     .filter((t) => /cuộc gọi|📞|call/i.test(t.preview))
@@ -376,18 +376,23 @@ export async function fetchCallHistoryItems(
   if (!candidates.length) return [];
 
   const enriched: Array<MessengerThread & { lastMessage?: MessengerMessage | null }> = [];
-  await Promise.all(
-    candidates.map(async (t) => {
-      try {
-        const msgs = await fetchMessengerMessages(t.id, { limit: 40 });
-        for (const callMsg of msgs.filter(isMessengerCallLogMessage)) {
-          enriched.push({ ...t, lastMessage: callMsg });
+  // Giới hạn song song để tránh fan-out N+1 nặng trên mạng chậm.
+  const CONCURRENCY = 3;
+  for (let i = 0; i < candidates.length; i += CONCURRENCY) {
+    const slice = candidates.slice(i, i + CONCURRENCY);
+    await Promise.all(
+      slice.map(async (t) => {
+        try {
+          const msgs = await fetchMessengerMessages(t.id, { limit: 20 });
+          for (const callMsg of msgs.filter(isMessengerCallLogMessage)) {
+            enriched.push({ ...t, lastMessage: callMsg });
+          }
+        } catch {
+          /* ignore */
         }
-      } catch {
-        /* ignore */
-      }
-    }),
-  );
+      }),
+    );
+  }
 
   return buildCallHistoryFromThreads(enriched, myUserId);
 }

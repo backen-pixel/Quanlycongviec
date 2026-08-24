@@ -27,6 +27,7 @@ import {
   type NotificationChannel,
   type NotificationCounts,
 } from '../api/notifications';
+import { openFromNotificationPayload } from '../lib/notificationNavigation';
 import { setNotificationCounts } from '../lib/notificationCountsStore';
 import {
   getDeadlineOverdueBreakdown,
@@ -377,14 +378,13 @@ export default function NotificationsScreen() {
   }, [navigation]);
 
   const navigateForNotification = (n: AppNotification) => {
-    const e = (n.entity_type || '').toLowerCase();
-    if (e === 'crm_lead' || e === 'lead' || e === 'crm_task') {
-      navigation.navigate('CrmHub', { initialMode: 'leads' });
-      return;
-    }
-    if (e === 'crm_deal') {
-      navigation.navigate('CrmHub', { initialMode: 'deals' });
-    }
+    openFromNotificationPayload({
+      type: n.type,
+      entity_type: n.entity_type,
+      entity_id: n.entity_id,
+      metadata: n.metadata ?? undefined,
+      title: n.title,
+    });
   };
 
   const overduePanel = tab === 'deadlines' && overdueTotal > 0 ? (

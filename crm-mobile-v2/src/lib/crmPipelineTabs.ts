@@ -222,6 +222,20 @@ export function sumCrmDealStatsCount(
 }
 
 /**
+ * Counts đã phủ đủ pipeline để Σ ra tổng tin được?
+ * Lượt đếm có thể về thiếu (mạng chập chờn, request bị hủy, skip_counts) — Σ lúc đó
+ * ra số thấp giả, làm badge List/Kanban lệch nhau. Ngưỡng nửa số cột (tối thiểu 2).
+ */
+export function crmStageCountsLookComplete(
+  stages: { id: string }[],
+  counts: Record<string, number>,
+): boolean {
+  if (!stages.length) return false;
+  const known = stages.filter((s) => counts[s.id] != null).length;
+  return known >= Math.max(2, Math.ceil(stages.length * 0.5));
+}
+
+/**
  * Tổng Deal KPI tab Deal trên CRM Hub — khớp web `sumCrmDealTabCountsFromStageCounts.deal`.
  * Chỉ Σ cột đã biết trong pipeline (pre-Thắng) + orphan `__none__`.
  * Không cộng stage_id lạ ngoài pipeline (web cũng bỏ) — tránh lệch tổng app vs web.

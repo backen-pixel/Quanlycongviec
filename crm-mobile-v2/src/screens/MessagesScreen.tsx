@@ -2,7 +2,7 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import SpinningLoader from '../components/SpinningLoader';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import React, { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, FlatList, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Avatar from '../components/Avatar';
@@ -11,6 +11,7 @@ import { formatApiError } from '../api/client';
 import { fetchActivityUsers, type ActivityUserItem } from '../api/users';
 import { useAuth } from '../context/AuthContext';
 import { useMessenger } from '../context/MessengerContext';
+import { useNetworkStatus } from '../context/NetworkStatusContext';
 import {
   createDirectChat,
   fetchCallHistoryItems,
@@ -147,6 +148,7 @@ export default function MessagesScreen() {
   const navigation = useNavigation<Nav>();
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
+  const { isOnline } = useNetworkStatus();
   const myUserId = user?.id || user?.userId || '';
   const { threads, loading, error, refreshThreads, getPeerPresence } = useMessenger();
   const perf = useMemo(() => getMessengerPerfLimits(), []);
@@ -196,6 +198,17 @@ export default function MessagesScreen() {
       void loadOnline();
     }, [refreshThreads, loadOnline, threads.length]),
   );
+
+  /** Có mạng trở lại → làm mới hội thoại + online strip. */
+  const prevOnlineRef = useRef(isOnline);
+  useEffect(() => {
+    const wasOffline = !prevOnlineRef.current;
+    prevOnlineRef.current = isOnline;
+    if (!isOnline || !wasOffline) return;
+    void refreshThreads(true);
+    void loadOnline();
+    if (hub === 'calls') void loadCallHistory();
+  }, [isOnline, refreshThreads, loadOnline, loadCallHistory, hub]);
 
   useEffect(() => {
     if (hub === 'calls') void loadCallHistory();

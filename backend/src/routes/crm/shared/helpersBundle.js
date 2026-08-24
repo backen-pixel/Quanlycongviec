@@ -99,6 +99,7 @@ const {
   isCrmSystemAdminUser,
 } = require('../../../helpers/crmAccessRoles');
 const { isAdminLike, isSystemAdmin, isCrmModuleAdmin, isPlatformAdmin } = require('../../../helpers/adminRole');
+const { getTenantCompanyIds } = require('../../../helpers/tenantScope');
 const {
   getCrmLeadRegionConstraint,
   applyCrmLeadRegionFilterToQuery,
@@ -4495,6 +4496,7 @@ async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
     next_follow_up_from,
     next_follow_up_to,
     next_follow_up_empty,
+    company_ids_scope,
   } = reqQuery;
   const referrerNameTrim = String(referrer_name || '').trim();
   const customerCompanyTrim = String(customer_company || '').trim();
@@ -4636,6 +4638,9 @@ async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
     }
     if (source_id) x = x.eq('source_id', source_id);
     if (company_id) x = x.eq('company_id', company_id);
+    // Admin hệ thống xem "Tất cả công ty": giới hạn về đúng công ty của tenant mình
+    // (xem resolveCrmLeadsMergedQuery). Mảng rỗng ⇒ tenant chưa có công ty ⇒ không kết quả.
+    else if (Array.isArray(company_ids_scope)) x = x.in('company_id', company_ids_scope.length ? company_ids_scope : ['__none__']);
     if (lead_type_id) x = x.eq('lead_type_id', lead_type_id);
     if (referrerNameTrim) x = x.eq('referrer_name', referrerNameTrim);
     if (customerIdsForCompanyFilter) x = x.in('customer_id', customerIdsForCompanyFilter);
@@ -4840,16 +4845,21 @@ function parseCrmStageCountsRpc(raw) {
 async function invokeCrmLeadsStageCountsRpc(rpcParams) {
   let { data, error } = await supabase.rpc('crm_leads_stage_counts', rpcParams);
   if (error && /crm_leads_stage_counts|does not exist|Could not find|argument/i.test(String(error.message || ''))) {
-    // DB chưa chạy 460 — bỏ p_assignee_name / p_region_unassigned
-    const {
-      p_assignee_name: _an,
-      p_region_unassigned: _ru,
-      ...noParity
-    } = rpcParams;
-    let r2 = await supabase.rpc('crm_leads_stage_counts', noParity);
+    // DB chưa chạy 558 — bỏ p_company_ids (tham số mới nhất)
+    const { p_company_ids: _ci, ...noTenantScope } = rpcParams;
+    let r2 = await supabase.rpc('crm_leads_stage_counts', noTenantScope);
     if (r2.error && /crm_leads_stage_counts|does not exist|Could not find|argument/i.test(String(r2.error.message || ''))) {
-      const { p_region_ids: _r, p_pipeline_stage_ids: _p, ...noExtras } = noParity;
-      r2 = await supabase.rpc('crm_leads_stage_counts', noExtras);
+      // DB chưa chạy 460 — bỏ p_assignee_name / p_region_unassigned
+      const {
+        p_assignee_name: _an,
+        p_region_unassigned: _ru,
+        ...noParity
+      } = noTenantScope;
+      r2 = await supabase.rpc('crm_leads_stage_counts', noParity);
+      if (r2.error && /crm_leads_stage_counts|does not exist|Could not find|argument/i.test(String(r2.error.message || ''))) {
+        const { p_region_ids: _r, p_pipeline_stage_ids: _p, ...noExtras } = noParity;
+        r2 = await supabase.rpc('crm_leads_stage_counts', noExtras);
+      }
     }
     if (!r2.error) {
       data = r2.data;
@@ -4866,7 +4876,8 @@ async function invokeCrmLeadsStageCountsRpc(rpcParams) {
 }
 
 function buildCrmLeadsRpcFilterParams(mergedQuery, type, rpcAssigneeStrict, rpcRegionIds) {
-  const { assigned_to, source_id, company_id, date_from, date_to, search, phone_filter } = mergedQuery;
+  const { assigned_to, source_id, company_id, date_from, date_to, search, phone_filter, company_ids_scope } =
+    mergedQuery;
   const assigneeName = parseCrmAssigneeNameQuery(mergedQuery);
   const regionUnassigned = parseCrmRegionUnassignedQuery(mergedQuery);
   return {
@@ -4883,6 +4894,10 @@ function buildCrmLeadsRpcFilterParams(mergedQuery, type, rpcAssigneeStrict, rpcR
     p_region_ids: regionUnassigned ? null : rpcRegionIds,
     p_assignee_name: assigneeName || null,
     p_region_unassigned: regionUnassigned,
+    // Giới hạn theo tenant khi admin hệ thống xem "Tất cả công ty" (xem resolveCrmLeadsMergedQuery).
+    // Lưu ý: mảng RỖNG (tenant chưa có công ty nào) phải lọc về KHÔNG kết quả, không phải bỏ lọc —
+    // nên chỉ trả null khi thực sự KHÔNG áp dụng phạm vi tenant (company_ids_scope không tồn tại).
+    p_company_ids: Array.isArray(company_ids_scope) ? company_ids_scope : null,
   };
 }
 
@@ -4890,18 +4905,23 @@ function buildCrmLeadsRpcFilterParams(mergedQuery, type, rpcAssigneeStrict, rpcR
 async function invokeCrmLeadsPageIdsRpc(rpcParams) {
   let { data: rpcData, error: rpcError } = await supabase.rpc('crm_leads_page_ids', rpcParams);
   if (rpcError && /crm_leads_page_ids|does not exist|Could not find|argument/i.test(String(rpcError.message || ''))) {
-    const {
-      p_assignee_name: _an,
-      p_region_unassigned: _ru,
-      ...noParity
-    } = rpcParams;
-    let r2 = await supabase.rpc('crm_leads_page_ids', noParity);
+    // DB chưa chạy 558 — bỏ p_company_ids (tham số mới nhất)
+    const { p_company_ids: _ci, ...noTenantScope } = rpcParams;
+    let r2 = await supabase.rpc('crm_leads_page_ids', noTenantScope);
     if (r2.error && /crm_leads_page_ids|does not exist|Could not find|argument/i.test(String(r2.error.message || ''))) {
-      const { p_region_ids: _reg, ...rpcNoRegion } = noParity;
-      r2 = await supabase.rpc('crm_leads_page_ids', rpcNoRegion);
-      if (r2.error && /crm_leads_page_ids|does not exist|Could not find/i.test(String(r2.error.message || ''))) {
-        const { p_assigned_strict: _s, ...rpcLegacy } = rpcNoRegion;
-        r2 = await supabase.rpc('crm_leads_page_ids', rpcLegacy);
+      const {
+        p_assignee_name: _an,
+        p_region_unassigned: _ru,
+        ...noParity
+      } = noTenantScope;
+      r2 = await supabase.rpc('crm_leads_page_ids', noParity);
+      if (r2.error && /crm_leads_page_ids|does not exist|Could not find|argument/i.test(String(r2.error.message || ''))) {
+        const { p_region_ids: _reg, ...rpcNoRegion } = noParity;
+        r2 = await supabase.rpc('crm_leads_page_ids', rpcNoRegion);
+        if (r2.error && /crm_leads_page_ids|does not exist|Could not find/i.test(String(r2.error.message || ''))) {
+          const { p_assigned_strict: _s, ...rpcLegacy } = rpcNoRegion;
+          r2 = await supabase.rpc('crm_leads_page_ids', rpcLegacy);
+        }
       }
     }
     if (!r2.error) {
@@ -4983,6 +5003,11 @@ async function resolveCrmLeadsMergedQuery(req, res) {
     const cid = await requireUserCompanyIdResolved(req, res);
     if (!cid) return null;
     mergedQuery = { ...mergedQuery, company_id: cid };
+  } else if (!uuidQueryOrNull(mergedQuery.company_id) && req.user?.tenant_id && !isPlatformAdmin(req.user)) {
+    // Admin hệ thống thuộc 1 tenant (không phải platform_admin đa-tenant) xem "Tất cả công ty":
+    // giới hạn về đúng các công ty của TENANT mình, tránh lẫn dữ liệu tenant khác.
+    const tenantCompanyIds = await getTenantCompanyIds(req.user.tenant_id);
+    mergedQuery = { ...mergedQuery, company_ids_scope: tenantCompanyIds };
   }
   const { assigned_to } = mergedQuery;
   const dealAssigneeStrict = type === 'deal' && (!!uuidQueryOrNull(assigned_to) || forcedDealSelf);
@@ -5094,7 +5119,8 @@ async function fetchCrmLeadsPageViaRpc(req, mergedQuery, type, parsedOffset, par
   const rpcRegionIds = regionUnassigned
     ? null
     : resolveRpcRegionIdsForCrmList(req, mergedQuery.region_id);
-  const { assigned_to, source_id, search, company_id, date_from, date_to, phone_filter, stage_id } = mergedQuery;
+  const { assigned_to, source_id, search, company_id, date_from, date_to, phone_filter, stage_id, company_ids_scope } =
+    mergedQuery;
   const assigneeName = parseCrmAssigneeNameQuery(mergedQuery);
   const rpcParams = {
     p_type: type,
@@ -5112,6 +5138,8 @@ async function fetchCrmLeadsPageViaRpc(req, mergedQuery, type, parsedOffset, par
     p_region_ids: rpcRegionIds,
     p_assignee_name: assigneeName || null,
     p_region_unassigned: regionUnassigned,
+    // Giới hạn theo tenant khi admin hệ thống xem "Tất cả công ty" (xem resolveCrmLeadsMergedQuery).
+    p_company_ids: Array.isArray(company_ids_scope) ? company_ids_scope : null,
   };
   const { rpcData, rpcError } = await invokeCrmLeadsPageIdsRpc(rpcParams);
   const parsedRpc = !rpcError ? parseCrmLeadsPageRpc(rpcData) : null;
@@ -6081,8 +6109,8 @@ function getCompanyInfo() {
 }
 
 // Register Vietnamese-capable fonts
-const fontRegular = path.join(__dirname, '../../assets/fonts/DejaVuSans.ttf');
-const fontBold = path.join(__dirname, '../../assets/fonts/DejaVuSans-Bold.ttf');
+const fontRegular = path.join(__dirname, '../../../../assets/fonts/DejaVuSans.ttf');
+const fontBold = path.join(__dirname, '../../../../assets/fonts/DejaVuSans-Bold.ttf');
 
 function generateDocPdf(res, doc, items, docType) {
   const company = getCompanyInfo();
@@ -6113,7 +6141,7 @@ function generateDocPdf(res, doc, items, docType) {
   let logoDrawn = false;
   if (company.logoPath) {
     try {
-      const logoFile = path.resolve(__dirname, '../../', company.logoPath);
+      const logoFile = path.resolve(__dirname, '../../../../', company.logoPath);
       if (fs.existsSync(logoFile)) {
         pdf.image(logoFile, margin, headerStartY, { width: logoW, height: 70 });
         logoDrawn = true;

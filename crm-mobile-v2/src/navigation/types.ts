@@ -30,6 +30,8 @@ export type RootStackParamList = {
     focusAssignmentId?: string;
     /** Mở đúng nhiệm vụ crm_tasks (tab Nhiệm vụ). */
     focusTaskId?: string;
+    /** Cuộn tới bình luận (từ push / inbox). */
+    focusCommentId?: string;
   };
   ChatDetail: {
     threadId: string;

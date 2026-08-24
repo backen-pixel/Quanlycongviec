@@ -21,12 +21,20 @@ import {
 import { fetchCrmCompanies } from '../api/crm';
 import { formatApiError, isAbortError, isNetworkError } from '../api/client';
 import { useAuth } from '../context/AuthContext';
+import { useNetworkStatus } from '../context/NetworkStatusContext';
 import { formatDateShort } from '../lib/format';
+import {
+  groupAssignmentsByDeal,
+  type AssignmentDealSection,
+} from '../lib/assignmentDealGroups';
 import type { RootStackParamList } from '../navigation/types';
 import { Radii, Shadow, useColors, type ThemeColors } from '../theme';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 type StatusSegment = 'pending' | 'in_progress' | 'completed';
+type ListRow =
+  | { kind: 'section'; key: string; section: AssignmentDealSection }
+  | { kind: 'task'; key: string; task: CrmAssignment; section: AssignmentDealSection };
 
 /** Trang list — KPI lấy từ /stats (không cắt theo trang). */
 const TASKS_PAGE_SIZE = 40;
@@ -115,6 +123,7 @@ export default function TasksScreen() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<Nav>();
   const { user } = useAuth();
+  const { isOnline } = useNetworkStatus();
 
   const [rows, setRows] = useState<CrmAssignment[]>([]);
   const [serverStats, setServerStats] = useState<CrmAssignmentStats>(EMPTY_STATS);
@@ -135,6 +144,8 @@ export default function TasksScreen() {
   const [assigneePickerOpen, setAssigneePickerOpen] = useState(false);
   const [priorityPickerOpen, setPriorityPickerOpen] = useState(false);
   const [detailItem, setDetailItem] = useState<CrmAssignment | null>(null);
+  /** Section Deal đóng mặc định — chỉ lưu leadId đang mở (giống app xưởng/VC). */
+  const [expandedLeadIds, setExpandedLeadIds] = useState<Record<string, boolean>>({});
   const abortRef = useRef<AbortController | null>(null);
   const lastLoadAtRef = useRef(0);
   const rowsRef = useRef<CrmAssignment[]>([]);
@@ -311,6 +322,15 @@ export default function TasksScreen() {
     }, []),
   );
 
+  /** Có mạng trở lại → nạp lại list + KPI nhiệm vụ. */
+  const prevOnlineRef = useRef(isOnline);
+  useEffect(() => {
+    const wasOffline = !prevOnlineRef.current;
+    prevOnlineRef.current = isOnline;
+    if (!isOnline || !wasOffline) return;
+    void loadRef.current({ refresh: true, silent: true, refreshStats: true });
+  }, [isOnline]);
+
   const stats = serverStats;
 
   const segmentCounts = useMemo(
@@ -336,6 +356,29 @@ export default function TasksScreen() {
     return list;
   }, [rows]);
 
+  const dealSections = useMemo(() => groupAssignmentsByDeal(filtered), [filtered]);
+
+  const flatRows = useMemo(() => {
+    const out: ListRow[] = [];
+    for (const section of dealSections) {
+      out.push({ kind: 'section', key: `s-${section.leadId}`, section });
+      if (!expandedLeadIds[section.leadId]) continue;
+      for (const task of section.tasks) {
+        out.push({ kind: 'task', key: `t-${task.id}`, task, section });
+      }
+    }
+    return out;
+  }, [dealSections, expandedLeadIds]);
+
+  const toggleSection = useCallback((leadId: string) => {
+    setExpandedLeadIds((prev) => ({ ...prev, [leadId]: !prev[leadId] }));
+  }, []);
+
+  // Đổi tab/lọc → thu gọn lại cho gọn danh sách.
+  useEffect(() => {
+    setExpandedLeadIds({});
+  }, [statusSegment, companyFilter, assigneeFilter, priorityFilter, search]);
+
   const onEndReached = useCallback(() => {
     if (!hasMoreRef.current || loadingMoreRef.current) return;
     void load({ append: true, silent: true });
@@ -356,10 +399,9 @@ export default function TasksScreen() {
     return PRIORITY_LABEL[priorityFilter] || 'Ưu tiên';
   }, [priorityFilter]);
 
-  const renderCard = ({ item: t }: { item: CrmAssignment }) => {
+  const renderCard = (t: CrmAssignment) => {
     const pri = priorityStyle(t.priority, Colors);
     const overdue = isOverdue(t);
-    const lead = leadLabel(t);
     const done = t.status === 'completed';
 
     return (
@@ -375,14 +417,6 @@ export default function TasksScreen() {
             <Text style={[styles.taskTitle, done && styles.taskTitleDone]} numberOfLines={2}>
               {t.title || 'Không có tiêu đề'}
             </Text>
-            {lead ? (
-              <View style={styles.leadRow}>
-                <Ionicons name="link-outline" size={12} color={Colors.purple} />
-                <Text style={styles.leadTxt} numberOfLines={1}>
-                  {lead}
-                </Text>
-              </View>
-            ) : null}
             {t.description ? (
               <Text style={styles.taskDesc} numberOfLines={2}>
                 {t.description}
@@ -418,6 +452,84 @@ export default function TasksScreen() {
         </View>
       </Pressable>
     );
+  };
+
+  const renderRow = ({ item }: { item: ListRow }) => {
+    if (item.kind === 'section') {
+      const s = item.section;
+      const openCount = s.tasks.filter(
+        (t) => t.status !== 'completed' && t.status !== 'cancelled',
+      ).length;
+      const overdueCount = s.tasks.filter((t) => isOverdue(t)).length;
+      const expanded = !!expandedLeadIds[s.leadId];
+      const kindLbl = s.kind === 'deal' ? 'Deal' : s.kind === 'lead' ? 'Lead' : null;
+      return (
+        <View style={styles.dealSectionCard}>
+          <Pressable style={styles.dealSectionHead} onPress={() => toggleSection(s.leadId)}>
+            <Ionicons
+              name={expanded ? 'chevron-down' : 'chevron-forward'}
+              size={18}
+              color={Colors.textMuted}
+            />
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <View style={styles.dealSectionTitleRow}>
+                {kindLbl ? (
+                  <View
+                    style={[
+                      styles.dealKindBadge,
+                      {
+                        backgroundColor:
+                          s.kind === 'deal' ? Colors.orangeSoft : Colors.blueSoft,
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.dealKindBadgeTxt,
+                        { color: s.kind === 'deal' ? Colors.orange : Colors.blue },
+                      ]}
+                    >
+                      {kindLbl}
+                    </Text>
+                  </View>
+                ) : null}
+                <Text style={styles.dealSectionTitle} numberOfLines={1}>
+                  {s.code ? `${s.code} · ` : ''}
+                  {s.title}
+                </Text>
+              </View>
+              <Text style={styles.dealSectionMeta}>
+                {openCount}/{s.tasks.length} còn lại
+                {overdueCount ? ` · ${overdueCount} quá hạn` : ''}
+                {!expanded ? ' · chạm để mở' : ''}
+              </Text>
+            </View>
+            {s.kind ? (
+              <Pressable
+                hitSlop={8}
+                onPress={() => {
+                  const first = s.tasks[0];
+                  if (!first?.lead?.id) return;
+                  const navTo = resolveAssignmentLeadNav(first);
+                  navigation.navigate('LeadDealDetail', {
+                    leadId: first.lead.id,
+                    kind: s.kind === 'deal' ? 'deal' : 'lead',
+                    code: first.lead.code || undefined,
+                    title: first.lead.title || undefined,
+                    initialTab: navTo.initialTab,
+                    focusAssignmentId: navTo.focusAssignmentId,
+                    focusTaskId: navTo.focusTaskId,
+                  });
+                }}
+              >
+                <Ionicons name="open-outline" size={18} color={Colors.blue} />
+              </Pressable>
+            ) : null}
+          </Pressable>
+        </View>
+      );
+    }
+    return renderCard(item.task);
   };
 
   const listHeader = (
@@ -546,7 +658,9 @@ export default function TasksScreen() {
       <View style={styles.sectionHead}>
         <View style={styles.sectionDot} />
         <Text style={styles.sectionTitle}>{STATUS_STAGE_LABEL[statusSegment]}</Text>
-        <Text style={styles.sectionCount}>{segmentCounts[statusSegment]}</Text>
+        <Text style={styles.sectionCount}>
+          {dealSections.length} Deal/Lead · {segmentCounts[statusSegment]} việc
+        </Text>
       </View>
     </>
   );
@@ -559,9 +673,9 @@ export default function TasksScreen() {
         </View>
       ) : (
         <FlatList
-          data={filtered}
-          keyExtractor={(it) => it.id}
-          renderItem={renderCard}
+          data={flatRows}
+          keyExtractor={(it) => it.key}
+          renderItem={renderRow}
           ListHeaderComponent={listHeader}
           contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: insets.bottom + 24 }}
           refreshControl={
@@ -877,14 +991,45 @@ const makeStyles = (Colors: ThemeColors) =>
       backgroundColor: Colors.textFaint,
     },
     sectionTitle: { flex: 1, color: Colors.textMuted, fontSize: 14, fontWeight: '800' },
-    sectionCount: { color: Colors.textFaint, fontSize: 13, fontWeight: '700' },
+    sectionCount: { color: Colors.textFaint, fontSize: 12, fontWeight: '700', maxWidth: '48%', textAlign: 'right' },
+    dealSectionCard: {
+      backgroundColor: Colors.card,
+      borderRadius: Radii.lg,
+      borderWidth: 1,
+      borderColor: Colors.border,
+      marginBottom: 8,
+      marginTop: 4,
+      overflow: 'hidden',
+    },
+    dealSectionHead: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      paddingHorizontal: 12,
+      paddingVertical: 12,
+    },
+    dealSectionTitleRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      minWidth: 0,
+    },
+    dealKindBadge: {
+      paddingHorizontal: 6,
+      paddingVertical: 2,
+      borderRadius: Radii.sm,
+    },
+    dealKindBadgeTxt: { fontSize: 10, fontWeight: '800' },
+    dealSectionTitle: { flex: 1, color: Colors.text, fontSize: 14, fontWeight: '800' },
+    dealSectionMeta: { color: Colors.textMuted, fontSize: 11, marginTop: 3, fontWeight: '600' },
     taskCard: {
       backgroundColor: Colors.card,
       borderRadius: Radii.lg,
       borderWidth: 1,
       borderColor: Colors.border,
       padding: 12,
-      marginBottom: 10,
+      marginBottom: 8,
+      marginLeft: 12,
       ...Shadow.card,
     },
     taskCardTop: { flexDirection: 'row', gap: 10 },

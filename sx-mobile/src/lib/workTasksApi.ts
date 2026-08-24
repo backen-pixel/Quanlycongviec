@@ -63,8 +63,8 @@ export type WorkTasksPage = {
   limit: number;
 };
 
-/** Giới hạn mặc định mỗi lần tải — tránh 1 GET hàng nghìn dòng. */
-export const WORK_TASKS_PAGE_SIZE = 200;
+/** Giới hạn mặc định mỗi lần tải — first paint nhẹ hơn (trước 200). */
+export const WORK_TASKS_PAGE_SIZE = 100;
 
 function mapPerson(raw: unknown): PersonRef | null {
   if (!raw || typeof raw !== 'object') return null;

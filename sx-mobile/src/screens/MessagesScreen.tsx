@@ -7,6 +7,7 @@ import React,
   { useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState } from 'react';
 import {
   Alert,
@@ -159,6 +160,8 @@ export default function MessagesScreen() {
   const [onlineError, setOnlineError] = useState('');
   const [deletedIds, setDeletedIds] = useState<Set<string>>(new Set());
   const [actionThread, setActionThread] = useState<MessengerThread | null>(null);
+  const lastFocusRefreshRef = useRef(0);
+  const lastOnlineAtRef = useRef(0);
 
   useEffect(() => {
     void loadDeletedThreadIds(String(myUserId)).then(setDeletedIds);
@@ -186,8 +189,16 @@ export default function MessagesScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      void refreshThreads(true);
-      void loadOnline();
+      const now = Date.now();
+      // Cùng pattern Work/Kanban — tránh spam khi nhảy tab liên tục.
+      if (now - lastFocusRefreshRef.current >= 12_000) {
+        lastFocusRefreshRef.current = now;
+        void refreshThreads(true);
+      }
+      if (now - lastOnlineAtRef.current >= 12_000) {
+        lastOnlineAtRef.current = now;
+        void loadOnline();
+      }
     }, [refreshThreads, loadOnline]),
   );
 
@@ -207,6 +218,8 @@ export default function MessagesScreen() {
   const onRefresh = async () => {
     setRefreshing(true);
     try {
+      lastFocusRefreshRef.current = Date.now();
+      lastOnlineAtRef.current = Date.now();
       await refreshThreads(true);
       await loadOnline();
       if (hub === 'calls') await loadCallHistory();

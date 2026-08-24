@@ -2,8 +2,11 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import * as DocumentPicker from 'expo-document-picker';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  FlatList,
   Image,
   KeyboardAvoidingView,
+  NativeScrollEvent,
+  NativeSyntheticEvent,
   Platform,
   Pressable,
   RefreshControl,
@@ -13,6 +16,7 @@ import {
   TextInput,
   TouchableOpacity,
   View,
+  type FlatList as FlatListType,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatApiError } from '../../api/client';
@@ -86,7 +90,7 @@ export default function ProjectCommentsTab({
   const { subscribeSync } = useNotifications();
   const { state: dl, download, close: closeDownload } = useFileDownload();
   const insets = useSafeAreaInsets();
-  const scrollRef = useRef<ScrollView>(null);
+  const listRef = useRef<FlatListType<{ comment: ProjectComment; depth: number }>>(null);
   const inputRef = useRef<TextInput>(null);
   const onCountRef = useRef(onCountChange);
   onCountRef.current = onCountChange;
@@ -102,7 +106,8 @@ export default function ProjectCommentsTab({
   const [members, setMembers] = useState<CommentMentionMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [sort, setSort] = useState<SortMode>('newest');
+  /** Mặc định kiểu chat: cũ → mới (tin mới ở dưới). */
+  const [sort, setSort] = useState<SortMode>('oldest');
   const [body, setBody] = useState('');
   const [cursor, setCursor] = useState(0);
   const [replyTo, setReplyTo] = useState<{ id: string; name: string } | null>(null);
@@ -114,6 +119,14 @@ export default function ProjectCommentsTab({
   const [galleryOpen, setGalleryOpen] = useState(false);
   const [galleryIndex, setGalleryIndex] = useState(0);
   const [err, setErr] = useState('');
+  /** Đang xem gần tin mới nhất (đáy khi oldest / đỉnh khi newest). */
+  const [nearNewest, setNearNewest] = useState(true);
+  const [pendingNewCount, setPendingNewCount] = useState(0);
+  const nearNewestRef = useRef(true);
+  const prevCommentLenRef = useRef(0);
+  const didInitialScrollRef = useRef(false);
+  /** Chỉ cho phép stick-bottom khi vừa có tin mới / user gửi — tránh kéo lại vì ảnh load. */
+  const stickBottomAllowedRef = useRef(false);
 
   const mentionState = useMemo(
     () => buildCommentMentionPickerItems(body, cursor, members, myId),
@@ -147,6 +160,26 @@ export default function ProjectCommentsTab({
         },
         sortBtnText: { color: colors.text, fontSize: 13, fontWeight: '700' },
         list: { flex: 1 },
+        listWrap: { flex: 1, position: 'relative' },
+        jumpNewBtn: {
+          position: 'absolute',
+          alignSelf: 'center',
+          bottom: 12,
+          zIndex: 5,
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 6,
+          paddingHorizontal: 14,
+          paddingVertical: 10,
+          borderRadius: Radii.full,
+          backgroundColor: colors.primary,
+          elevation: 4,
+          shadowColor: '#000',
+          shadowOpacity: 0.18,
+          shadowRadius: 6,
+          shadowOffset: { width: 0, height: 2 },
+        },
+        jumpNewTxt: { color: colors.white, fontSize: 13, fontWeight: '800' },
         listContent: { paddingHorizontal: Spacing.md, paddingVertical: Spacing.md, paddingBottom: 8 },
         emptyWrap: { alignItems: 'center', paddingVertical: 40, gap: 8 },
         emptyText: { color: colors.textMuted, fontSize: 14 },
@@ -409,10 +442,12 @@ export default function ProjectCommentsTab({
     [colors],
   );
 
-  const loadComments = useCallback(async (silent = false) => {
+  const loadComments = useCallback(async (opts?: { silent?: boolean; force?: boolean }) => {
+    const silent = Boolean(opts?.silent);
+    const force = Boolean(opts?.force);
     if (!silent) setLoading(true);
     try {
-      const rows = await fetchThreadComments(source);
+      const rows = await fetchThreadComments(source, { force });
       setComments(rows);
       onCountRef.current?.(rows.length);
       setErr('');
@@ -437,28 +472,36 @@ export default function ProjectCommentsTab({
   }, [source]);
 
   useEffect(() => {
-    void loadComments(false);
+    void loadComments({ silent: false, force: false });
     void loadMembers();
   }, [loadComments, loadMembers]);
 
   useEffect(() => {
-    return subscribeSync((evt) => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const unsub = subscribeSync((evt) => {
       if (source.kind === 'lead') {
         if (evt.type !== 'lead:comment_changed') return;
         if (String(evt.payload.lead_id || '') !== String(source.leadId)) return;
-        void loadComments(true);
-        return;
+      } else {
+        if (evt.type !== 'project:comment_changed') return;
+        if (String(evt.payload.project_id || '') !== String(source.projectId)) return;
       }
-      if (evt.type !== 'project:comment_changed') return;
-      if (String(evt.payload.project_id || '') !== String(source.projectId)) return;
-      void loadComments(true);
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = null;
+        void loadComments({ silent: true, force: true });
+      }, 800);
     });
+    return () => {
+      if (timer) clearTimeout(timer);
+      unsub();
+    };
   }, [source, loadComments, subscribeSync]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      await Promise.all([loadComments(true), loadMembers()]);
+      await Promise.all([loadComments({ silent: true, force: true }), loadMembers()]);
     } finally {
       setRefreshing(false);
     }
@@ -474,6 +517,90 @@ export default function ProjectCommentsTab({
     const grouped = groupCommentsByParent(comments);
     return flattenCommentTree(grouped, sort);
   }, [comments, sort]);
+
+  const scrollToNewest = useCallback((animated = true) => {
+    const run = () => {
+      if (sort === 'oldest') {
+        listRef.current?.scrollToEnd({ animated });
+      } else {
+        listRef.current?.scrollToOffset({ offset: 0, animated });
+      }
+      nearNewestRef.current = true;
+      setNearNewest(true);
+      setPendingNewCount(0);
+      stickBottomAllowedRef.current = false;
+    };
+    stickBottomAllowedRef.current = true;
+    requestAnimationFrame(() => {
+      run();
+      setTimeout(run, animated ? 80 : 0);
+    });
+  }, [sort]);
+
+  const onListScroll = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
+    // Hysteresis: vào gần dễ hơn, ra xa khó hơn — tránh nhấp nháy nút Tin mới.
+    const enter = 80;
+    const exit = 160;
+    let dist = contentOffset.y;
+    if (sort === 'oldest') {
+      dist = contentSize.height - layoutMeasurement.height - contentOffset.y;
+    }
+    const near = nearNewestRef.current ? dist <= exit : dist <= enter;
+    if (nearNewestRef.current !== near) {
+      nearNewestRef.current = near;
+      setNearNewest(near);
+    }
+    if (near) setPendingNewCount(0);
+  }, [sort]);
+
+  // Mở tab / đổi sort / xong tải → nhảy tới tin mới nhất.
+  useEffect(() => {
+    if (loading || !flatList.length) return undefined;
+    if (!didInitialScrollRef.current) {
+      didInitialScrollRef.current = true;
+      scrollToNewest(false);
+    }
+    return undefined;
+  }, [loading, flatList.length, scrollToNewest]);
+
+  useEffect(() => {
+    didInitialScrollRef.current = false;
+    nearNewestRef.current = true;
+    setNearNewest(true);
+    setPendingNewCount(0);
+    prevCommentLenRef.current = 0;
+  }, [projectId, dealId]);
+
+  useEffect(() => {
+    // Đổi chế độ sắp xếp → cuộn lại về tin mới.
+    didInitialScrollRef.current = false;
+    if (!loading && flatList.length) {
+      const t = setTimeout(() => {
+        didInitialScrollRef.current = true;
+        scrollToNewest(false);
+      }, 40);
+      return () => clearTimeout(t);
+    }
+    return undefined;
+  }, [sort]); // eslint-disable-line react-hooks/exhaustive-deps -- chỉ khi đổi sort
+
+  // Tin mới realtime khi đang xem tin cũ → hiện nút; đang ở tin mới → theo dõi xuống dưới.
+  useEffect(() => {
+    const len = comments.length;
+    const prev = prevCommentLenRef.current;
+    prevCommentLenRef.current = len;
+    if (prev <= 0 || len <= prev) return;
+    const added = len - prev;
+    if (nearNewestRef.current) {
+      scrollToNewest(true);
+      setPendingNewCount(0);
+    } else {
+      setPendingNewCount((n) => n + added);
+    }
+  }, [comments.length, scrollToNewest]);
+
+  const showJumpToNew = !nearNewest && flatList.length > 0 && !loading;
 
   /** Tất cả ảnh trong thread → lightbox chuyển nhanh giữa các hình. */
   const threadImages: GalleryImage[] = useMemo(() => {
@@ -581,11 +708,8 @@ export default function ProjectCommentsTab({
       setReplyTo(null);
       setPendingFiles([]);
       pickedMentionIdsRef.current = new Set();
-      await loadComments(true);
-      setTimeout(() => {
-        if (sort === 'oldest') scrollRef.current?.scrollToEnd({ animated: true });
-        else scrollRef.current?.scrollTo({ y: 0, animated: true });
-      }, 120);
+      await loadComments({ silent: true, force: true });
+      setTimeout(() => scrollToNewest(true), 120);
     } catch (e) {
       setErr(formatApiError(e));
     } finally {
@@ -708,7 +832,7 @@ export default function ProjectCommentsTab({
       url: fileLink.url, name: fileLink.label, type: 'image/*', size: 0,
     }) : null;
     return (
-      <View key={item.id} style={styles.systemRow}>
+      <View style={styles.systemRow}>
         <View style={styles.systemPill}>
           {renderSystemBodyText(bodyText)}
           <Text style={styles.systemTime}>{formatCommentTime(item.created_at)}</Text>
@@ -752,7 +876,7 @@ export default function ProjectCommentsTab({
     const avatarUri = resolveMediaUrl(item.user?.avatar);
 
     return (
-      <View key={item.id} style={[styles.commentRow, nestOffset > 0 && { marginLeft: nestOffset }]}>
+      <View style={[styles.commentRow, nestOffset > 0 && { marginLeft: nestOffset }]}>
         {depth > 0 ? (
           <View style={styles.threadGutter}>
             <View style={[styles.threadLine, isOtherReply && styles.threadLineActive]} />
@@ -848,7 +972,9 @@ export default function ProjectCommentsTab({
           onPress={() => setSort((s) => (s === 'newest' ? 'oldest' : 'newest'))}
           activeOpacity={0.8}
         >
-          <Text style={styles.sortBtnText}>{sort === 'newest' ? 'Mới nhất' : 'Cũ nhất'}</Text>
+          <Text style={styles.sortBtnText}>
+            {sort === 'oldest' ? 'Mới dưới' : 'Mới trên'}
+          </Text>
           <Ionicons name="chevron-down" size={14} color={colors.textMuted} />
         </TouchableOpacity>
       </View>
@@ -859,31 +985,78 @@ export default function ProjectCommentsTab({
         </View>
       ) : null}
 
-      <ScrollView
-        ref={scrollRef}
-        style={styles.list}
-        contentContainerStyle={styles.listContent}
-        keyboardShouldPersistTaps="handled"
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void onRefresh()} />}
-        onScrollBeginDrag={() => setReactionPickerId(null)}
-      >
-        {loading ? (
-          <View style={styles.emptyWrap}>
-            <SpinningLoader color={colors.primary} />
-            <Text style={styles.emptyText}>Đang tải bình luận…</Text>
-          </View>
-        ) : flatList.length === 0 ? (
-          <View style={styles.emptyWrap}>
-            <Ionicons name="chatbubbles-outline" size={36} color={colors.textFaint} />
-            <Text style={styles.emptyText}>Chưa có bình luận</Text>
-            <Text style={styles.emptyHint}>
-              Viết bình luận, @ nhắc thành viên hoặc đính kèm file — đồng bộ realtime với web.
+      <View style={styles.listWrap}>
+        <FlatList
+          ref={listRef}
+          style={styles.list}
+          data={loading ? [] : flatList}
+          keyExtractor={(item) => item.comment.id}
+          renderItem={({ item }) => renderComment(item.comment, item.depth)}
+          contentContainerStyle={styles.listContent}
+          keyboardShouldPersistTaps="handled"
+          initialNumToRender={12}
+          maxToRenderPerBatch={10}
+          windowSize={7}
+          removeClippedSubviews={Platform.OS === 'android'}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void onRefresh()} />}
+          onScrollBeginDrag={() => setReactionPickerId(null)}
+          onScroll={onListScroll}
+          scrollEventThrottle={16}
+          onContentSizeChange={() => {
+            if (!didInitialScrollRef.current && !loading && flatList.length) {
+              didInitialScrollRef.current = true;
+              scrollToNewest(false);
+              return;
+            }
+            // Chỉ stick khi vừa đánh dấu (tin mới / gửi) — không stick vì ảnh/layout muộn.
+            if (
+              stickBottomAllowedRef.current
+              && nearNewestRef.current
+              && sort === 'oldest'
+              && !loading
+            ) {
+              stickBottomAllowedRef.current = false;
+              listRef.current?.scrollToEnd({ animated: false });
+            }
+          }}
+          ListEmptyComponent={
+            loading ? (
+              <View style={styles.emptyWrap}>
+                <SpinningLoader color={colors.primary} />
+                <Text style={styles.emptyText}>Đang tải bình luận…</Text>
+              </View>
+            ) : (
+              <View style={styles.emptyWrap}>
+                <Ionicons name="chatbubbles-outline" size={36} color={colors.textFaint} />
+                <Text style={styles.emptyText}>Chưa có bình luận</Text>
+                <Text style={styles.emptyHint}>
+                  Viết bình luận, @ nhắc thành viên hoặc đính kèm file — đồng bộ realtime với web.
+                </Text>
+              </View>
+            )
+          }
+        />
+
+        {showJumpToNew ? (
+          <Pressable
+            style={styles.jumpNewBtn}
+            onPress={() => scrollToNewest(true)}
+            accessibilityRole="button"
+            accessibilityLabel="Xem tin mới nhất"
+          >
+            <Ionicons
+              name={sort === 'oldest' ? 'arrow-down' : 'arrow-up'}
+              size={16}
+              color={colors.white}
+            />
+            <Text style={styles.jumpNewTxt}>
+              {pendingNewCount > 0
+                ? `Tin mới (${pendingNewCount > 99 ? '99+' : pendingNewCount})`
+                : 'Tin mới'}
             </Text>
-          </View>
-        ) : (
-          flatList.map(({ comment, depth }) => renderComment(comment, depth))
-        )}
-      </ScrollView>
+          </Pressable>
+        ) : null}
+      </View>
 
       {mentionState.open ? (
         <ScrollView style={styles.mentionPicker} keyboardShouldPersistTaps="handled">

@@ -6,6 +6,16 @@ import {
   toggleProjectCommentReaction,
   type ProjectComment,
 } from './productionApi';
+import {
+  QUERY_TTL_SHORT,
+  cachedQuery,
+  getQueryData,
+  invalidateQuery,
+  invalidateQueryPrefix,
+  isQueryFresh,
+  patchQueryData,
+  setQueryData,
+} from './queryCache';
 
 export type CommentThreadSource =
   | { kind: 'lead'; leadId: string }
@@ -16,6 +26,40 @@ export type PostThreadCommentOptions = {
   attachments?: CommentAttachment[] | null;
   mentionUserIds?: string[] | null;
 };
+
+export type FetchThreadCommentsOptions = {
+  force?: boolean;
+  signal?: AbortSignal;
+};
+
+const K_THREAD = 'sx:threadComments:';
+const K_COUNT = 'sx:threadCommentCount:';
+
+export function threadCommentsCacheKey(source: CommentThreadSource): string {
+  return source.kind === 'lead'
+    ? `${K_THREAD}lead:${source.leadId}`
+    : `${K_THREAD}project:${source.projectId}`;
+}
+
+export function threadCommentCountCacheKey(source: CommentThreadSource): string {
+  return source.kind === 'lead'
+    ? `${K_COUNT}lead:${source.leadId}`
+    : `${K_COUNT}project:${source.projectId}`;
+}
+
+export function invalidateThreadCommentsCache(source?: CommentThreadSource | null): void {
+  if (source) {
+    invalidateQuery(threadCommentsCacheKey(source));
+    invalidateQuery(threadCommentCountCacheKey(source));
+  } else {
+    invalidateQueryPrefix(K_THREAD);
+    invalidateQueryPrefix(K_COUNT);
+  }
+}
+
+function syncCommentCountCache(source: CommentThreadSource, count: number): void {
+  setQueryData(threadCommentCountCacheKey(source), count);
+}
 
 /** URL-like pattern: absolute http/https hoặc relative /uploads/ */
 const RAW_URL_RE = /^(https?:\/\/|\/uploads\/)\S+$/i;
@@ -102,7 +146,7 @@ export function resolveCommentSource(
   return { kind: 'project', projectId: String(projectId) };
 }
 
-export async function fetchThreadComments(source: CommentThreadSource): Promise<ProjectComment[]> {
+async function fetchThreadCommentsNetwork(source: CommentThreadSource): Promise<ProjectComment[]> {
   if (source.kind === 'project') {
     const rows = await fetchProjectComments(source.projectId);
     return rows.map((row) => {
@@ -113,6 +157,70 @@ export async function fetchThreadComments(source: CommentThreadSource): Promise<
   const { data } = await api.get<unknown>(`/crm/leads/${source.leadId}/comments`);
   const list = Array.isArray(data) ? data : [];
   return list.map((row) => mapAnyCommentRow(row as Record<string, unknown>));
+}
+
+/**
+ * Thread comments — SHORT TTL + dedupe inflight.
+ * Badge dùng index count nhẹ; tab Comments dùng full list (chung key khi đã mở).
+ */
+export async function fetchThreadComments(
+  source: CommentThreadSource,
+  opts?: FetchThreadCommentsOptions,
+): Promise<ProjectComment[]> {
+  const rows = await cachedQuery<ProjectComment[]>({
+    key: threadCommentsCacheKey(source),
+    ttlMs: QUERY_TTL_SHORT,
+    force: opts?.force,
+    signal: opts?.signal,
+    fetcher: () => fetchThreadCommentsNetwork(source),
+  });
+  syncCommentCountCache(source, rows.length);
+  return rows;
+}
+
+async function fetchCommentCountFromIndex(source: CommentThreadSource): Promise<number> {
+  if (source.kind === 'lead') {
+    const { data } = await api.get<Record<string, { count?: number }>>(
+      '/crm/lead-comments/index',
+      { params: { lead_ids: source.leadId } },
+    );
+    const entry = data?.[source.leadId] || data?.[String(source.leadId)];
+    return Math.max(0, Number(entry?.count || 0));
+  }
+  const { data } = await api.get<Record<string, { count?: number }>>(
+    '/projects/comments/index',
+    { params: { project_ids: source.projectId } },
+  );
+  const entry = data?.[source.projectId] || data?.[String(source.projectId)];
+  return Math.max(0, Number(entry?.count || 0));
+}
+
+/**
+ * Badge count — ưu tiên cache full-thread nếu còn fresh; không thì GET index nhẹ
+ * (không tải body/attachments cả thread).
+ */
+export async function fetchThreadCommentCount(
+  source: CommentThreadSource,
+  opts?: FetchThreadCommentsOptions,
+): Promise<number> {
+  if (!opts?.force) {
+    const listKey = threadCommentsCacheKey(source);
+    if (isQueryFresh(listKey, QUERY_TTL_SHORT)) {
+      const rows = getQueryData<ProjectComment[]>(listKey);
+      if (rows) {
+        syncCommentCountCache(source, rows.length);
+        return rows.length;
+      }
+    }
+  }
+
+  return cachedQuery<number>({
+    key: threadCommentCountCacheKey(source),
+    ttlMs: QUERY_TTL_SHORT,
+    force: opts?.force,
+    signal: opts?.signal,
+    fetcher: () => fetchCommentCountFromIndex(source),
+  });
 }
 
 export async function postThreadComment(
@@ -131,28 +239,32 @@ export async function postThreadComment(
   const mentionUserIds = opts.mentionUserIds?.length ? opts.mentionUserIds : undefined;
   const parentId = opts.parentId;
 
+  let created: ProjectComment;
   if (source.kind === 'project') {
-    return postProjectComment(source.projectId, trimmed, parentId, attachments);
+    created = await postProjectComment(source.projectId, trimmed, parentId, attachments);
+  } else {
+    const payload: {
+      body: string;
+      parent_id?: string | number;
+      attachments?: CommentAttachment[];
+      mention_user_ids?: string[];
+    } = { body: trimmed };
+    if (parentId) {
+      const n = Number(parentId);
+      payload.parent_id = Number.isFinite(n) ? n : parentId;
+    }
+    if (attachments?.length) payload.attachments = attachments;
+    if (mentionUserIds?.length) payload.mention_user_ids = mentionUserIds;
+
+    const { data } = await api.post<Record<string, unknown>>(
+      `/crm/leads/${source.leadId}/comments`,
+      payload,
+    );
+    created = mapAnyCommentRow((data || {}) as Record<string, unknown>);
   }
 
-  const payload: {
-    body: string;
-    parent_id?: string | number;
-    attachments?: CommentAttachment[];
-    mention_user_ids?: string[];
-  } = { body: trimmed };
-  if (parentId) {
-    const n = Number(parentId);
-    payload.parent_id = Number.isFinite(n) ? n : parentId;
-  }
-  if (attachments?.length) payload.attachments = attachments;
-  if (mentionUserIds?.length) payload.mention_user_ids = mentionUserIds;
-
-  const { data } = await api.post<Record<string, unknown>>(
-    `/crm/leads/${source.leadId}/comments`,
-    payload,
-  );
-  return mapAnyCommentRow((data || {}) as Record<string, unknown>);
+  invalidateThreadCommentsCache(source);
+  return created;
 }
 
 export async function toggleThreadCommentReaction(
@@ -160,12 +272,18 @@ export async function toggleThreadCommentReaction(
   commentId: string,
   emoji: string,
 ): Promise<ProjectComment['reactions']> {
-  if (source.kind === 'project') {
-    return toggleProjectCommentReaction(source.projectId, commentId, emoji);
-  }
-  const { data } = await api.put<ProjectComment['reactions']>(
-    `/crm/lead-comments/${commentId}/reaction`,
-    { emoji },
+  const reactions = source.kind === 'project'
+    ? await toggleProjectCommentReaction(source.projectId, commentId, emoji)
+    : ((
+      await api.put<ProjectComment['reactions']>(
+        `/crm/lead-comments/${commentId}/reaction`,
+        { emoji },
+      )
+    ).data || { summary: [], mine: null });
+
+  patchQueryData<ProjectComment[]>(threadCommentsCacheKey(source), (prev) =>
+    prev.map((c) => (c.id === commentId ? { ...c, reactions: reactions || c.reactions } : c)),
   );
-  return data || { summary: [], mine: null };
+
+  return reactions || { summary: [], mine: null };
 }

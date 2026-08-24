@@ -8,12 +8,12 @@ import { formatApiError } from '../api/client';
 import {
   fetchLeadCommentReadReceipts,
   fetchLeadCommentsIndex,
-  fetchLeadDetail,
   markLeadCommentsRead,
   type LeadDetailRow,
 } from '../api/leadDetail';
 import { currentUserId, useAuth } from '../context/AuthContext';
 import { useCrmRealtimeRefresh } from '../hooks/useCrmRealtimeRefresh';
+import { useLeadDetailQuery } from '../hooks/useCrmQueries';
 import { subscribeAppSocket } from '../lib/appSocket';
 import {
   LeadCommentsTab,
@@ -65,6 +65,7 @@ export default function LeadDealDetailScreen({ route, navigation }: Props) {
     initialTab,
     focusAssignmentId,
     focusTaskId,
+    focusCommentId,
   } = route.params;
   const Colors = useColors();
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
@@ -72,9 +73,16 @@ export default function LeadDealDetailScreen({ route, navigation }: Props) {
   const { user } = useAuth();
   const myId = currentUserId(user);
 
-  const [lead, setLead] = useState<LeadDetailRow | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  // Stale-while-revalidate: dữ liệu cũ trong cache hiện ngay, refetch chạy nền.
+  const detailQuery = useLeadDetailQuery(leadId);
+  const { refetch: refetchDetail, dataUpdatedAt } = detailQuery;
+  const lead: LeadDetailRow | null = detailQuery.data ?? null;
+  const loading = detailQuery.isPending;
+  const error = detailQuery.isError ? formatApiError(detailQuery.error) : null;
+  const reloadDetail = useCallback(() => {
+    void refetchDetail();
+  }, [refetchDetail]);
+
   const [activeTab, setActiveTab] = useState<LeadDetailTabKey>(
     (initialTab as LeadDetailTabKey) || 'info',
   );
@@ -127,36 +135,8 @@ export default function LeadDealDetailScreen({ route, navigation }: Props) {
     }
   }, [leadId]);
 
-  const abortRef = useRef<AbortController | null>(null);
-  const loadGenRef = useRef(0);
   const lastDetailLoadAtRef = useRef(0);
-
-  const load = useCallback(async (silent = false) => {
-    abortRef.current?.abort();
-    const ac = new AbortController();
-    abortRef.current = ac;
-    const gen = ++loadGenRef.current;
-    if (!silent) {
-      setLoading(true);
-      setError(null);
-    }
-    try {
-      const row = await fetchLeadDetail(leadId, ac.signal);
-      if (ac.signal.aborted || gen !== loadGenRef.current) return;
-      setLead(row);
-      lastDetailLoadAtRef.current = Date.now();
-    } catch (e) {
-      if (ac.signal.aborted || gen !== loadGenRef.current) return;
-      if (!silent) setError(formatApiError(e));
-    } finally {
-      if (!silent && gen === loadGenRef.current) setLoading(false);
-    }
-  }, [leadId]);
-
-  useEffect(() => {
-    void load();
-    return () => abortRef.current?.abort();
-  }, [load]);
+  lastDetailLoadAtRef.current = dataUpdatedAt;
 
   useEffect(() => {
     void refreshCommentBadge();
@@ -172,8 +152,8 @@ export default function LeadDealDetailScreen({ route, navigation }: Props) {
       if (detailLead != null && String(detailLead) !== String(leadId)) return;
       const DETAIL_TTL_MS = 45_000;
       if (Date.now() - lastDetailLoadAtRef.current < DETAIL_TTL_MS) return;
-      void load(true);
-    }, [leadId, load]),
+      reloadDetail();
+    }, [leadId, reloadDetail]),
   );
 
   useEffect(() => {
@@ -233,7 +213,7 @@ export default function LeadDealDetailScreen({ route, navigation }: Props) {
     if (!lead && loading) return null;
     switch (activeTab) {
       case 'info':
-        return lead ? <LeadInfoTab lead={lead} onUpdated={() => void load(true)} /> : null;
+        return lead ? <LeadInfoTab lead={lead} onUpdated={reloadDetail} /> : null;
       case 'tasks':
         return (
           <LeadTasksTab
@@ -261,6 +241,7 @@ export default function LeadDealDetailScreen({ route, navigation }: Props) {
         return (
           <LeadCommentsTab
             leadId={leadId}
+            focusCommentId={focusCommentId}
             onItemsChange={(n) => setCommentTotal(n)}
             onOpened={() => {
               setUnreadComments(0);
@@ -296,8 +277,12 @@ export default function LeadDealDetailScreen({ route, navigation }: Props) {
             <Text style={styles.headerStage} numberOfLines={1}>{lead.stage.name}</Text>
           ) : null}
         </View>
-        <Pressable onPress={() => void load()} hitSlop={8} style={styles.refreshBtn}>
-          <Ionicons name="refresh-outline" size={22} color={Colors.textMuted} />
+        <Pressable onPress={reloadDetail} hitSlop={8} style={styles.refreshBtn}>
+          {detailQuery.isFetching && lead ? (
+            <SpinningLoader size="small" color={Colors.textMuted} />
+          ) : (
+            <Ionicons name="refresh-outline" size={22} color={Colors.textMuted} />
+          )}
         </Pressable>
       </View>
 
@@ -309,7 +294,7 @@ export default function LeadDealDetailScreen({ route, navigation }: Props) {
       ) : error && !lead ? (
         <View style={styles.center}>
           <Text style={styles.errorTxt}>{error}</Text>
-          <Pressable onPress={() => void load()} style={styles.retryBtn}>
+          <Pressable onPress={reloadDetail} style={styles.retryBtn}>
             <Text style={styles.retryTxt}>Thử lại</Text>
           </Pressable>
         </View>

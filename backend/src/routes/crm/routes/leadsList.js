@@ -4,7 +4,13 @@
  */
 const { Router } = require('express');
 const helpers = require('../shared/helpersBundle');
-const { sumCrmDealTabCountsFromStageCounts } = require('../../../helpers/crmDealTabTotals');
+const {
+  sumCrmDealTabCountsFromStageCounts,
+  preWonStagesForDealStats,
+  postWonStagesForCustomerStats,
+} = require('../../../helpers/crmDealTabTotals');
+const { isLostOrCancelledPipelineStage } = require('../../../helpers/crmLostPipelineStage');
+const { computeDashboardDealKpisFromStageAggregates } = require('../../../helpers/crmDealDashboardKpis');
 
 const r = Router();
 
@@ -458,6 +464,11 @@ r.get('/filter-summary', responseCache({ ttl: 90, scope: 'user', tags: ['crm:lis
     const companyId =
       uuidQueryOrNull(leadCtx.mergedQuery.company_id)
       || uuidQueryOrNull(dealCtx.mergedQuery.company_id);
+    // Admin hệ thống xem "Tất cả công ty": giới hạn về đúng công ty của tenant mình
+    // (xem resolveCrmLeadsMergedQuery). Lead/Deal scope giống nhau nên lấy cái nào có trước.
+    const companyIdsScope = Array.isArray(leadCtx.mergedQuery.company_ids_scope)
+      ? leadCtx.mergedQuery.company_ids_scope
+      : (Array.isArray(dealCtx.mergedQuery.company_ids_scope) ? dealCtx.mergedQuery.company_ids_scope : null);
     const regionId =
       uuidQueryOrNull(leadCtx.mergedQuery.region_id)
       || uuidQueryOrNull(dealCtx.mergedQuery.region_id);
@@ -501,8 +512,18 @@ r.get('/filter-summary', responseCache({ ttl: 90, scope: 'user', tags: ['crm:lis
       p_lead_type_id: uuidQueryOrNull(req.query.lead_type_id),
       p_referrer_name: String(req.query.referrer_name || '').trim() || null,
       p_customer_company: String(req.query.customer_company || '').trim() || null,
+      p_company_ids: companyIdsScope,
     };
-    const { data, error } = await supabase.rpc('crm_filter_summary', rpcParams);
+    let { data, error } = await supabase.rpc('crm_filter_summary', rpcParams);
+    if (error && companyIdsScope != null
+      && /crm_filter_summary|does not exist|Could not find|argument/i.test(String(error.message || ''))) {
+      // DB chưa chạy 559 — bỏ p_company_ids, thử lại chữ ký cũ (giữ hành vi trước khi có
+      // giới hạn tenant thay vì hiện fallbackRequired ngay).
+      const { p_company_ids: _ci, ...noTenantScope } = rpcParams;
+      const r2 = await supabase.rpc('crm_filter_summary', noTenantScope);
+      data = r2.data;
+      error = r2.error;
+    }
     if (error) {
       const unavailable = /crm_filter_summary|does not exist|Could not find|argument/i.test(
         String(error.message || ''),
@@ -523,23 +544,79 @@ r.get('/filter-summary', responseCache({ ttl: 90, scope: 'user', tags: ['crm:lis
         const n = Number(v);
         return Number.isFinite(n) ? n : 0;
       };
+      const numMap = (v) => {
+        if (!v || typeof v !== 'object') return null;
+        const out = {};
+        Object.entries(v).forEach(([k, val]) => { out[k] = num(val); });
+        return out;
+      };
       return {
         all: num(src.all),
         hasPhone: num(src.has_phone),
         noPhone: num(src.no_phone),
         selectedTotal: num(src.selected_total),
         counts: src.counts && typeof src.counts === 'object' ? src.counts : {},
+        // Chỉ có ở deal, và chỉ sau khi migration 557 (crm_filter_summary) được chạy —
+        // null nếu RPC cũ chưa có 2 field này (chưa chạy migration).
+        valueSums: numMap(src.value_sums),
+        weightedValueSums: numMap(src.weighted_value_sums),
       };
     };
     const dealNorm = normalize(data?.deal);
     // Tính tổng tab Deal trên server (cùng dealStages dùng cho RPC) để FE hiện badge
     // cùng lượt với Lead — không phụ thuộc stagesDeal client đã tải đủ.
     const tabTotals = sumCrmDealTabCountsFromStageCounts(dealStages, dealNorm.counts);
+    // Toàn bộ ô KPI bảng Deal (Tổng Deal, Đang xử lý, Hủy/Thua, Giá trị dự kiến, Giá trị kỳ
+    // vọng...) tính trên TOÀN BỘ deal khớp bộ lọc — dùng counts/value_sums theo stage từ RPC,
+    // không phụ thuộc số thẻ Kanban client đã tải (lazy-load 40 thẻ/lượt nên luôn thiếu nếu
+    // tính ở FE). Chỉ tính được khi RPC đã có value_sums (migration 557 đã chạy).
+    const dashboardKpis = dealNorm.valueSums && dealNorm.weightedValueSums
+      ? computeDashboardDealKpisFromStageAggregates(
+        dealStages,
+        dealNorm.counts,
+        dealNorm.valueSums,
+        dealNorm.weightedValueSums,
+      )
+      : null;
+    // Bản "tách tab KH" (mặc định bật cho admin) — Tổng Deal/Đang xử lý/Hủy/Giá trị chỉ tính
+    // trên các cột TRƯỚC Thắng (không gồm cột Thắng), khớp `dealSalesKpisForDisplay` ở FE.
+    const dashboardKpisPreWon = dashboardKpis
+      ? computeDashboardDealKpisFromStageAggregates(
+        preWonStagesForDealStats(dealStages),
+        dealNorm.counts,
+        dealNorm.valueSums,
+        dealNorm.weightedValueSums,
+      )
+      : null;
+    // Bản tab "Khách hàng" (cột Thắng + sau Thắng) — khớp `customerKpisFromFilters` ở FE.
+    const dashboardKpisPostWon = dashboardKpis
+      ? computeDashboardDealKpisFromStageAggregates(
+        postWonStagesForCustomerStats(dealStages),
+        dealNorm.counts,
+        dealNorm.valueSums,
+        dealNorm.weightedValueSums,
+      )
+      : null;
+    const leadNorm = normalize(data?.lead);
+    // Đếm lead "đang xử lý" (chưa Thắng/Thua) trên TOÀN BỘ tập khớp bộ lọc — dùng cùng
+    // leadStages đã resolve cho RPC (đảm bảo khớp id với `counts`), không phụ thuộc số
+    // thẻ Kanban client đã tải (lazy-load 40 thẻ/lượt nên luôn thiếu nếu đếm ở FE).
+    const leadActive = (leadStages || []).reduce((sum, s) => {
+      if (!s?.id || s.is_won || isLostOrCancelledPipelineStage(s)) return sum;
+      const n = Number(leadNorm.counts[s.id] ?? leadNorm.counts[String(s.id)] ?? 0) || 0;
+      return sum + n;
+    }, 0);
     return res.json({
-      lead: normalize(data?.lead),
+      lead: {
+        ...leadNorm,
+        active: leadActive,
+      },
       deal: {
         ...dealNorm,
         tabTotals,
+        dashboardKpis,
+        dashboardKpisPreWon,
+        dashboardKpisPostWon,
       },
     });
   } catch (e) {
@@ -864,6 +941,108 @@ function crmDeadlineTsForRow(row, stage, config) {
   return null;
 }
 
+// ─── Snapshot ổn định cho phân trang tab Deadline ──────────────────────────────
+// Trước đây mỗi lần tải 1 trang (cuộn/bấm Tải thêm) đều tính lại TOÀN BỘ danh sách
+// id-theo-bucket từ dữ liệu MỚI NHẤT. Trên hệ thống nhiều người dùng đang hoạt động
+// liên tục, nếu 1 deal đổi bucket (đổi hạn, chuyển công đoạn...) giữa 2 lần tải trang,
+// thứ tự/kích thước của bucket bị xê dịch → phân trang lệch hoặc dừng sớm (hasMore=false)
+// dù chưa thật sự tải hết. Cache snapshot theo user+bộ lọc đủ lâu cho MỘT phiên cuộn thực tế
+// (danh sách vài trăm dòng, tải 15 dòng/lượt, realtime tick mỗi ~30s) để toàn bộ phiên dùng
+// chung MỘT danh sách id ổn định — tự hết hạn sau đó để không bị cũ quá lâu. Từng thử 3 phút
+// và vẫn bị "trôi trang" giữa chừng trên hệ thống nhiều người dùng hoạt động liên tục.
+const CRM_DEADLINE_SNAPSHOT_TTL_MS = 20 * 60 * 1000;
+const crmDeadlineSnapshotCache = new Map();
+
+function crmDeadlineSnapshotCacheKey(req, mergedQuery, type, stageIdsKey, config) {
+  return JSON.stringify({
+    u: req.user?.userId || null,
+    t: type,
+    q: mergedQuery,
+    s: stageIdsKey,
+    c: config || {},
+  });
+}
+
+function pruneCrmDeadlineSnapshotCache() {
+  const now = Date.now();
+  for (const [key, entry] of crmDeadlineSnapshotCache) {
+    if (entry.expiresAt < now) crmDeadlineSnapshotCache.delete(key);
+  }
+}
+
+async function getOrBuildCrmDeadlineSnapshot(req, mergedQuery, type, rpcAssigneeStrict, openStageIds, config) {
+  pruneCrmDeadlineSnapshotCache();
+  const stageIdsKey = [...openStageIds].sort().join(',');
+  const key = crmDeadlineSnapshotCacheKey(req, mergedQuery, type, stageIdsKey, config);
+  const hit = crmDeadlineSnapshotCache.get(key);
+  if (hit) return hit;
+
+  const openStageIdSet = new Set(openStageIds);
+  const groupedIds = Object.fromEntries(CRM_DEADLINE_BUCKET_KEYS.map((k) => [k, []]));
+  const stages = await resolveKanbanStagesForCompany(
+    type,
+    uuidQueryOrNull(mergedQuery.company_id),
+    mergedQuery.region_id,
+    req,
+  );
+  const stageById = new Map((stages || []).map((s) => [String(s.id), s]));
+  const MAX_ROWS = 20000;
+  let complete = true;
+
+  const classifyRows = (rows) => {
+    for (const row of rows || []) {
+      const sid = String(row?.stage_id || '');
+      if (!openStageIdSet.has(sid)) continue;
+      const stage = stageById.get(sid);
+      const ts = crmDeadlineTsForRow(row, stage, config);
+      groupedIds[crmDeadlineBucketFromTs(ts, config?.buckets)].push(String(row.id));
+    }
+  };
+
+  if (crmListUsesLegacyFilters(mergedQuery)) {
+    let offset = 0;
+    let scanned = 0;
+    while (scanned < MAX_ROWS) {
+      const page = await getCrmLeadsListLegacy({
+        ...mergedQuery,
+        offset,
+        limit: 2000,
+        lite: '1',
+      }, {
+        assigneeStrict: rpcAssigneeStrict,
+        viewerUserId: req.user?.userId,
+        req,
+        lite: true,
+      });
+      if (!page) { complete = false; break; }
+      const rows = page.data || [];
+      classifyRows(rows);
+      scanned += rows.length;
+      if (!page.hasMore || !rows.length) break;
+      if (scanned >= MAX_ROWS) { complete = false; break; }
+      offset = page.nextOffset ?? (offset + rows.length);
+    }
+  } else {
+    const result = await fetchCrmDeadlineCountRowsViaRpc(req, mergedQuery, type, MAX_ROWS);
+    if (!result) throw new Error('Không tải được dữ liệu Deadline');
+    classifyRows(result.rows);
+    complete = result.complete;
+  }
+
+  const snapshot = { idsByBucket: groupedIds, complete, expiresAt: Date.now() + CRM_DEADLINE_SNAPSHOT_TTL_MS };
+  crmDeadlineSnapshotCache.set(key, snapshot);
+  return snapshot;
+}
+
+function resolveCrmDeadlineOpenStageIds(stages, requestedStageIds) {
+  return (stages || [])
+    .filter((stage) => (
+      !crmDeadlineStageExcluded(stage)
+      && (!requestedStageIds.size || requestedStageIds.has(String(stage.id)))
+    ))
+    .map((stage) => String(stage.id));
+}
+
 r.post('/deadline-bucket-counts', async (req, res) => {
   try {
     const ctx = await resolveCrmLeadsMergedQuery(req, res);
@@ -880,82 +1059,15 @@ r.post('/deadline-bucket-counts', async (req, res) => {
         .map((id) => String(id || '').trim())
         .filter(Boolean),
     );
-    const openStages = (stages || []).filter((stage) => (
-      !crmDeadlineStageExcluded(stage)
-      && (!requestedIds.size || requestedIds.has(String(stage.id)))
-    ));
-    const counts = Object.fromEntries(CRM_DEADLINE_BUCKET_KEYS.map((key) => [key, 0]));
+    const openStageIds = resolveCrmDeadlineOpenStageIds(stages, requestedIds);
     const config = req.body?.config && typeof req.body.config === 'object' ? req.body.config : {};
-    const useLegacy = crmListUsesLegacyFilters(mergedQuery);
-    const PAGE_SIZE = 500;
-    const MAX_ROWS = 20000;
-    const stageById = new Map(openStages.map((stage) => [String(stage.id), stage]));
-    if (!useLegacy) {
-      const fastCounts = await helpers.fetchCrmDeadlineBucketCountsViaRpc(
-        req,
-        mergedQuery,
-        type,
-        [...stageById.keys()],
-        config,
-        MAX_ROWS,
-      );
-      if (fastCounts) {
-        return res.json({ type, ...fastCounts, source: 'rpc' });
-      }
-    }
 
-    let scannedRows = 0;
-    let countedRows = 0;
-    let complete = true;
-
-    const countRows = (rows) => {
-      for (const row of rows || []) {
-        if (scannedRows >= MAX_ROWS) {
-          complete = false;
-          break;
-        }
-        scannedRows += 1;
-        const stage = stageById.get(String(row?.stage_id || ''));
-        if (!stage) continue;
-        const ts = crmDeadlineTsForRow(row, stage, config);
-        const bucket = crmDeadlineBucketFromTs(ts, config?.buckets);
-        counts[bucket] = (counts[bucket] || 0) + 1;
-        countedRows += 1;
-      }
-    };
-
-    if (!useLegacy) {
-      const result = await fetchCrmDeadlineCountRowsViaRpc(req, mergedQuery, type, MAX_ROWS);
-      if (!result) throw new Error('Không đếm được tổng deadline');
-      countRows(result.rows);
-      complete = complete && result.complete;
-    } else {
-      let offset = 0;
-      while (scannedRows < MAX_ROWS) {
-        const pageQuery = {
-          ...mergedQuery,
-          offset,
-          limit: PAGE_SIZE,
-          lite: '1',
-        };
-        const page = await getCrmLeadsListLegacy(pageQuery, {
-            assigneeStrict: rpcAssigneeStrict,
-            viewerUserId: req.user?.userId,
-            req,
-            lite: true,
-          });
-        if (!page) throw new Error('Không đếm được tổng deadline');
-        const rows = page.data || [];
-        countRows(rows);
-        if (!page.hasMore || !rows.length || scannedRows >= MAX_ROWS) {
-          if (page.hasMore && scannedRows >= MAX_ROWS) complete = false;
-          break;
-        }
-        offset = page.nextOffset ?? (offset + rows.length);
-      }
-    }
-
-    res.json({ type, counts, total: countedRows, complete });
+    const snapshot = await getOrBuildCrmDeadlineSnapshot(req, mergedQuery, type, rpcAssigneeStrict, openStageIds, config);
+    const counts = Object.fromEntries(
+      CRM_DEADLINE_BUCKET_KEYS.map((key) => [key, (snapshot.idsByBucket[key] || []).length]),
+    );
+    const total = Object.values(counts).reduce((s, n) => s + n, 0);
+    res.json({ type, counts, total, complete: snapshot.complete });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -992,90 +1104,24 @@ r.post('/deadline-bucket-pages', async (req, res) => {
         .map((id) => String(id || '').trim())
         .filter(Boolean),
     );
-    const openStageIds = (stages || [])
-      .filter((stage) => (
-        !crmDeadlineStageExcluded(stage)
-        && (!requestedStageIds.size || requestedStageIds.has(String(stage.id)))
-      ))
-      .map((stage) => String(stage.id));
+    const openStageIds = resolveCrmDeadlineOpenStageIds(stages, requestedStageIds);
     const config = req.body?.config && typeof req.body.config === 'object' ? req.body.config : {};
-    let pageResult = null;
-    let source = 'rpc';
 
-    if (!crmListUsesLegacyFilters(mergedQuery)) {
-      pageResult = await helpers.fetchCrmDeadlineBucketPageIdsViaRpc(
-        req,
-        mergedQuery,
-        type,
-        openStageIds,
-        config,
-        requests,
-        20000,
-      );
+    const snapshot = await getOrBuildCrmDeadlineSnapshot(req, mergedQuery, type, rpcAssigneeStrict, openStageIds, config);
+    const pages = {};
+    for (const request of requests) {
+      const ids = snapshot.idsByBucket[request.bucket] || [];
+      const pageIds = ids.slice(request.offset, request.offset + request.limit);
+      const nextOffset = request.offset + pageIds.length;
+      pages[request.bucket] = {
+        ids: pageIds,
+        total: ids.length,
+        nextOffset,
+        hasMore: nextOffset < ids.length,
+      };
     }
 
-    if (!pageResult) {
-      source = 'fallback';
-      let fallback = null;
-      if (crmListUsesLegacyFilters(mergedQuery)) {
-        const rows = [];
-        let offset = 0;
-        let complete = true;
-        while (rows.length < 20000) {
-          const page = await getCrmLeadsListLegacy({
-            ...mergedQuery,
-            offset,
-            limit: 2000,
-            lite: '1',
-          }, {
-            assigneeStrict: rpcAssigneeStrict,
-            viewerUserId: req.user?.userId,
-            req,
-            lite: true,
-          });
-          if (!page) break;
-          rows.push(...(page.data || []));
-          if (!page.hasMore || !page.data?.length) break;
-          offset = page.nextOffset ?? (offset + page.data.length);
-          if (rows.length >= 20000) complete = false;
-        }
-        fallback = { rows, complete };
-      } else {
-        fallback = await fetchCrmDeadlineCountRowsViaRpc(req, mergedQuery, type, 20000);
-      }
-      if (!fallback) throw new Error('Không tải được trang Deadline');
-      const stageById = new Map(
-        (stages || []).map((stage) => [String(stage.id), stage]),
-      );
-      const groupedIds = Object.fromEntries(CRM_DEADLINE_BUCKET_KEYS.map((key) => [key, []]));
-      for (const row of fallback.rows || []) {
-        if (!openStageIds.includes(String(row?.stage_id || ''))) continue;
-        const stage = stageById.get(String(row.stage_id));
-        const ts = crmDeadlineTsForRow(row, stage, config);
-        groupedIds[crmDeadlineBucketFromTs(ts, config?.buckets)].push(String(row.id));
-      }
-      const pages = {};
-      for (const request of requests) {
-        const ids = groupedIds[request.bucket] || [];
-        const pageIds = ids.slice(request.offset, request.offset + request.limit);
-        const nextOffset = request.offset + pageIds.length;
-        pages[request.bucket] = {
-          ids: pageIds,
-          total: ids.length,
-          nextOffset,
-          hasMore: nextOffset < ids.length,
-        };
-      }
-      pageResult = { pages, complete: fallback.complete };
-    }
-
-    const rawPages = pageResult.pages || {};
-    const allIds = [...new Set(
-      Object.values(rawPages)
-        .flatMap((page) => Array.isArray(page?.ids) ? page.ids : [])
-        .map((id) => String(id || '').trim())
-        .filter(Boolean),
-    )];
+    const allIds = [...new Set(Object.values(pages).flatMap((p) => p.ids))];
     const hydrated = await fetchCrmLeadsByIdsOrdered(allIds, { skipEnrich: true, lite: true });
     const baseRows = attachLeadNewFlagForList(hydrated, req.user?.userId);
     const [withFlags, withDeadlines] = await Promise.all([
@@ -1087,12 +1133,11 @@ r.post('/deadline-bucket-pages', async (req, res) => {
       String(row.id),
       { ...row, ...(flagsById.get(String(row.id)) || {}) },
     ]));
-    const pages = {};
-    for (const [bucket, page] of Object.entries(rawPages)) {
-      const ids = Array.isArray(page?.ids) ? page.ids.map(String) : [];
-      pages[bucket] = {
+    const responsePages = {};
+    for (const [bucket, page] of Object.entries(pages)) {
+      responsePages[bucket] = {
         // Gắn bucket server để UI không xếp lại lệch với số đếm header.
-        data: ids
+        data: page.ids
           .map((id) => {
             const row = rowsById.get(id);
             return row
@@ -1100,12 +1145,69 @@ r.post('/deadline-bucket-pages', async (req, res) => {
               : null;
           })
           .filter(Boolean),
-        total: Number(page?.total) || 0,
-        nextOffset: Number(page?.nextOffset) || 0,
-        hasMore: !!page?.hasMore,
+        total: page.total,
+        nextOffset: page.nextOffset,
+        hasMore: page.hasMore,
       };
     }
-    res.json({ type, pages, complete: pageResult.complete !== false, source });
+    res.json({ type, pages: responsePages, complete: snapshot.complete, source: 'snapshot' });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /crm/kpi-ledger-total — tổng điểm KPI (sổ cái crm_kpi_ledger) trên TOÀN BỘ lead/deal
+// khớp bộ lọc Kanban hiện tại (không chỉ số thẻ đã tải) — dùng cho ô "Điểm KPI (tháng)".
+r.post('/kpi-ledger-total', async (req, res) => {
+  try {
+    const ctx = await resolveCrmLeadsMergedQuery(req, res);
+    if (!ctx) return;
+    const { type, mergedQuery, rpcAssigneeStrict } = ctx;
+    const periodStart = String(req.body?.period_start || '').trim() || defaultKpiLedgerMonthStartYmd();
+    const MAX_ROWS = 20000;
+
+    let result = null;
+    if (!crmListUsesLegacyFilters(mergedQuery)) {
+      result = await fetchCrmDeadlineCountRowsViaRpc(req, mergedQuery, type, MAX_ROWS);
+    }
+
+    let ids = [];
+    let complete = true;
+    if (result) {
+      ids = (result.rows || []).map((row) => String(row.id));
+      complete = result.complete;
+    } else {
+      let offset = 0;
+      for (;;) {
+        const page = await getCrmLeadsListLegacy({
+          ...mergedQuery,
+          offset,
+          limit: 2000,
+          lite: '1',
+        }, {
+          assigneeStrict: rpcAssigneeStrict,
+          viewerUserId: req.user?.userId,
+          req,
+          lite: true,
+        });
+        if (!page) break;
+        const rows = page.data || [];
+        ids.push(...rows.map((row) => String(row.id)));
+        if (!page.hasMore || !rows.length) break;
+        if (ids.length >= MAX_ROWS) { complete = false; break; }
+        offset = page.nextOffset ?? (offset + rows.length);
+      }
+    }
+
+    const sums = await sumCrmKpiLedgerNetByLeadIds(ids, periodStart);
+    const total = Object.values(sums).reduce((s, v) => s + Number(v || 0), 0);
+    res.json({
+      type,
+      total: Math.round(total * 100) / 100,
+      matched_count: ids.length,
+      complete,
+      period_start: periodStart,
+    });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

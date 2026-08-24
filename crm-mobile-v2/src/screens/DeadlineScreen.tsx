@@ -22,9 +22,11 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatApiError } from '../api/client';
 import {
+  fetchDeadlineBucketCountsCached,
+  fetchDeadlineBucketPageCached,
+} from '../api/crmCached';
+import {
   convertLeadToDeal,
-  fetchDeadlineBucketCounts,
-  fetchDeadlineBucketPages,
   fetchDeadlineConfig,
   fetchPipelineStages,
   invalidateDeadlineBucketCounts,
@@ -59,6 +61,7 @@ import DatePickerSheet from '../components/DatePickerSheet';
 import PickerSheet from '../components/PickerSheet';
 import SpinningLoader from '../components/SpinningLoader';
 import { currentUserId, useAuth } from '../context/AuthContext';
+import { useNetworkStatus } from '../context/NetworkStatusContext';
 import {
   buildAssignPickerOptions,
   canAssignCrmCard,
@@ -327,6 +330,7 @@ export default function DeadlineScreen() {
   const navigation = useNavigation<Nav>();
   const deadlineTabFocused = useIsFocused();
   const { user } = useAuth();
+  const { isOnline } = useNetworkStatus();
   const userId = currentUserId(user);
   const viewAll = canViewAllCrm(user);
   const lockCompany = lockCrmCompanyScope(user);
@@ -589,7 +593,7 @@ export default function DeadlineScreen() {
     countsAbortRef.current[section] = ac;
     void (async () => {
       try {
-        const res = await fetchDeadlineBucketCounts(section, fk, {
+        const res = await fetchDeadlineBucketCountsCached(section, fk, {
           ...optsBase,
           signal: ac.signal,
           force,
@@ -686,7 +690,7 @@ export default function DeadlineScreen() {
       }
     }
     if (isRefresh && !silent) setRefreshing(true);
-    if (!silent) setError('');
+    setError('');
 
     const f = filtersRef.current;
     // Không gửi search lên API — clientFilterDeadlineItems lo phần tìm kiếm.
@@ -847,6 +851,22 @@ export default function DeadlineScreen() {
     }, isFirst ? 0 : 120);
     return () => clearTimeout(t);
   }, [filtersReady, orgReady, load, serverFilterKey]);
+
+  /**
+   * Có mạng trở lại: quét đếm + tải lại card.
+   * Deadline gọi cache bằng `fetchQuery` (không có observer) nên
+   * `refetchOnReconnect` của TanStack không chạm tới — phải tự kích hoạt,
+   * nếu không màn hình giữ số 0 của lúc offline tới khi người dùng kéo refresh.
+   */
+  const prevOnlineRef = useRef(isOnline);
+  useEffect(() => {
+    const wasOffline = !prevOnlineRef.current;
+    prevOnlineRef.current = isOnline;
+    if (!isOnline || !wasOffline) return;
+    if (!filtersReady || !orgReady) return;
+    if (!userId && !viewAll) return;
+    void load({ refresh: true, silent: true, force: true, forceCounts: true, kinds: ['lead', 'deal'] });
+  }, [isOnline, filtersReady, orgReady, userId, viewAll, load]);
 
   /** Đổi Lead ↔ Deal: chỉ tải khi tab đích trống (không chạy trùng lần mount). */
   const prevKindRef = useRef<PlannerKind | null>(null);
@@ -1015,6 +1035,7 @@ export default function DeadlineScreen() {
     bucketPagesLoadingRef.current.clear();
     bucketPageStateRef.current = {};
     setBucketPageState({});
+    setLoadingMore(false);
   }, [kind, filters.phone, filters.assignee, filters.companyId, filters.regionId]);
 
   const safeBucket = buckets.includes(bucketKey) ? bucketKey : (buckets[0] || 'overdue');
@@ -1221,6 +1242,12 @@ export default function DeadlineScreen() {
     if (bucketPagesLoadingRef.current.has(pageKey)) return;
     const state = bucketPageStateRef.current[pageKey] || { nextOffset: 0, hasMore: true, loading: false, total: 0 };
     const total = Number(kindCounts?.counts?.[bucket]);
+    /**
+     * `complete: false` = lượt đếm chưa xong (mất mạng / chạm trần) nên số là cận dưới.
+     * Không được dùng nó để kết luận «cột rỗng» hay «đã tải hết», nếu không cột sẽ
+     * trống vĩnh viễn với số 0 của lúc offline.
+     */
+    const countsTrustworthy = kindCounts?.complete !== false;
     const finishLoading = () => {
       if (kind === 'lead') {
         setLeadsLoading(false);
@@ -1236,7 +1263,7 @@ export default function DeadlineScreen() {
       setLoadingMore(false);
       return;
     }
-    if (Number.isFinite(total) && total <= 0) {
+    if (Number.isFinite(total) && total <= 0 && countsTrustworthy) {
       finishLoading();
       return;
     }
@@ -1249,7 +1276,7 @@ export default function DeadlineScreen() {
       finishLoading();
       return;
     }
-    if (Number.isFinite(total) && offset >= total) {
+    if (Number.isFinite(total) && offset >= total && countsTrustworthy) {
       finishLoading();
       return;
     }
@@ -1268,9 +1295,12 @@ export default function DeadlineScreen() {
     try {
       const listOpts = buildStageFetchOpts(filtersRef.current, '', userId || '');
       const companiesList = companiesRef.current;
-      const pages = await fetchDeadlineBucketPages(
+      const pages = await fetchDeadlineBucketPageCached(
         kind,
-        [{ bucket, offset, limit: DEADLINE_BUCKET_PAGE_LIMIT }],
+        fk,
+        bucket,
+        offset,
+        DEADLINE_BUCKET_PAGE_LIMIT,
         {
           ...listOpts,
           deadlineConfig: configRef.current,
@@ -1345,7 +1375,9 @@ export default function DeadlineScreen() {
       /* giữ list cũ */
     } finally {
       bucketPagesLoadingRef.current.delete(pageKey);
-      if (generation === bucketPagesGenRef.current) setLoadingMore(false);
+      // Luôn tắt cờ «đang tải thêm»: nếu bỏ qua khi generation đã đổi (đổi lọc/tab
+      // giữa lúc request bay), cột trống sẽ hiện «Đang tải…» vĩnh viễn.
+      setLoadingMore(false);
       if (kind === 'lead') {
         setLeadsLoading(false);
         setDrainingLead(false);

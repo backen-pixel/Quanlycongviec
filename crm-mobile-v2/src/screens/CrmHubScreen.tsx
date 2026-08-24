@@ -24,9 +24,11 @@ import {
   type CrmRegion,
 } from '../api/crmMeta';
 import {
+  fetchStageCountsBatchCached,
+  fetchStagePageCached,
+} from '../api/crmCached';
+import {
   fetchCrmBoardInitial,
-  fetchCrmStageCountsBatch,
-  fetchCrmStagePage,
   fetchPipelineStages,
   fetchStageCounts,
   invalidateCrmHubCache,
@@ -45,11 +47,11 @@ import {
   fetchCrmSearchSuggest,
   type CrmSxProductionTarget,
 } from '../api/crm';
-import { formatApiError, isNetworkError } from '../api/client';
+import { formatApiError, isAbortError, isNetworkError } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useNetworkStatus } from '../context/NetworkStatusContext';
 import { colorFromName, initialsFromName } from '../lib/media';
-import { sumCrmDealHubKpiCount, sumCrmCustomerTabDealCount, sumCrmDealMergedHubCount, resolveCrmHubDisplayStages, hasCrmCustomerOrderTab, splitDealStagesForCrmTabsMulti } from '../lib/crmPipelineTabs';
+import { crmStageCountsLookComplete, sumCrmDealHubKpiCount, sumCrmCustomerTabDealCount, sumCrmDealMergedHubCount, resolveCrmHubDisplayStages, hasCrmCustomerOrderTab, splitDealStagesForCrmTabsMulti } from '../lib/crmPipelineTabs';
 import { deadlineIsoToYmd, planCrmStageMove } from '../lib/crmStageMove';
 import {
   readDefaultDealKhSplitEnabled,
@@ -131,14 +133,7 @@ function fillStageCountZeros(
  * skip_counts / trang 1 cột chỉ có 1–vài key — chưa đủ để tính badge Lead/Deal/ĐH.
  * Cần phần lớn stage đã có count (kể cả 0 sau fillStageCountZeros).
  */
-function stageCountsLookComplete(
-  stages: { id: string }[],
-  counts: Record<string, number>,
-): boolean {
-  if (!stages.length) return false;
-  const known = stages.filter((s) => counts[s.id] != null).length;
-  return known >= Math.max(2, Math.ceil(stages.length * 0.5));
-}
+const stageCountsLookComplete = crmStageCountsLookComplete;
 
 /** Ẩn cột trống: thiếu key sau khi đã có counts = coi như 0 (không hiện lại cột trống). */
 function filterStagesHideEmpty(
@@ -557,6 +552,8 @@ export default function CrmHubScreen({
     leads: null,
     deals: null,
   });
+  /** Tăng mỗi lần loadStage (non-stale) — tránh lần tải cột cũ tắt spinner / prune lệch cột đang xem. */
+  const stageLoadSeqRef = useRef(0);
   const leadDataRef = useRef(leadData);
   const dealDataRef = useRef(dealData);
   const filterKeyRef = useRef('');
@@ -817,7 +814,7 @@ export default function CrmHubScreen({
         forceBatch
         || missing.length >= Math.max(3, Math.floor(hubNow.stages.length * 0.6));
       if (needAll) {
-        const batch = await fetchCrmStageCountsBatch(type, fetchOptsRef.current());
+        const batch = await fetchStageCountsBatchCached(type, fetchOptsRef.current());
         setter((prev) => ({
           ...prev,
           stageCounts: fillStageCountZeros(prev.stages, batch.counts),
@@ -885,7 +882,7 @@ export default function CrmHubScreen({
         || peekPipelineStagesCached(type, opts)?.length
       );
       const [batch, fetchedStages] = await Promise.all([
-        fetchCrmStageCountsBatch(type, opts),
+        fetchStageCountsBatchCached(type, opts),
         needStages
           ? fetchPipelineStages(type, opts).catch(() => [] as CrmPipelineStage[])
           : Promise.resolve(null as CrmPipelineStage[] | null),
@@ -960,7 +957,8 @@ export default function CrmHubScreen({
     loadingModeRef.current[dm] = true;
     if (isRefresh && !silent) setRefreshing(true);
     else if (!silent) setLoadingByMode((p) => ({ ...p, [dm]: true }));
-    if (!silent) setError('');
+    // Reconnect silent cũng phải xóa banner lỗi mạng cũ.
+    setError('');
 
     if (isRefresh) {
       invalidatePipelineStagesCache(type);
@@ -997,7 +995,7 @@ export default function CrmHubScreen({
         countsPromise = Promise.resolve(null);
       } else {
         countsInflightRef.current[dm] = totalsFk;
-        countsPromise = fetchCrmStageCountsBatch(type, fetchOpts)
+        countsPromise = fetchStageCountsBatchCached(type, fetchOpts)
           .catch(() => null)
           .finally(() => {
             if (countsInflightRef.current[dm] === totalsFk) countsInflightRef.current[dm] = '';
@@ -1081,16 +1079,13 @@ export default function CrmHubScreen({
         });
       }
     } catch (e) {
-      if (!ac.signal.aborted && !silent) {
-        const hubNow = dm === 'leads' ? leadDataRef.current : dealDataRef.current;
-        // Có dữ liệu cũ: không đè màn hình lỗi / không xóa badge khi mất mạng.
-        if (hubNow.stages.length && isNetworkError(e)) {
-          /* giữ UI */
-        } else {
-          const msg = formatApiError(e);
-          if (msg) setError(msg);
-        }
-      }
+      // Hủy khi đổi tab/cột hoặc refresh chồng — không hiện màn lỗi.
+      if (silent || isAbortError(e) || ac.signal.aborted) return;
+      const hubNow = dm === 'leads' ? leadDataRef.current : dealDataRef.current;
+      // Đã có pipeline trên màn: giữ UI (đặc biệt khi đổi tab/cột bị timeout mạng thoáng).
+      if (hubNow.stages.length) return;
+      const msg = formatApiError(e);
+      if (msg) setError(msg);
     } finally {
       if (abortByModeRef.current[dm] === ac) {
         loadingModeRef.current[dm] = false;
@@ -1118,13 +1113,21 @@ export default function CrmHubScreen({
       setMoreLoading(false);
       return;
     }
+    // Mất mạng: không bật spinner / không gọi API — tránh vòng lặp
+    // (cột chưa loaded → load fail → stageLoading tắt → effect gọi lại = giật UI).
+    if (!isOnlineRef.current) {
+      if (!quiet) setStageLoading(false);
+      setMoreLoading(false);
+      return;
+    }
     const validStageIds = new Set(hubNow.stages.map((s) => s.id));
+    const loadToken = ++stageLoadSeqRef.current;
 
     if (append) setMoreLoading(true);
     else if (!quiet) setStageLoading(true);
     try {
       const offset = append ? cur.nextOffset : 0;
-      const page = await fetchCrmStagePage(
+      const page = await fetchStagePageCached(
         type,
         stageId,
         offset,
@@ -1132,18 +1135,23 @@ export default function CrmHubScreen({
         fetchOptsRef.current(),
         validStageIds,
       );
+      // Đã có lần tải mới hơn (đổi cột nhanh) — vẫn ghi cache cột này nhưng
+      // prune theo cột đang xem, không lấy tâm = cột cũ.
       setter((prev) => {
         const prevCur = prev.cache[stageId] ?? EMPTY_STAGE;
-        // Giới hạn cache mỗi cột — FlatList ảo hóa nhưng mảng JS lớn vẫn tốn RAM/filter.
         const MAX_STAGE_ITEMS = 120;
         let items = append ? [...prevCur.items, ...page.items] : page.items;
         if (items.length > MAX_STAGE_ITEMS) {
           items = items.slice(items.length - MAX_STAGE_ITEMS);
         }
         const allIds = prev.stages.map((s) => s.id);
+        const viewCenter =
+          lastActiveStageIdRef.current
+          || stageIdAtIndex(modeRef.current, activeIndexRef.current)
+          || stageId;
         const splitPlan =
           dealKhSplitRef.current && dm === 'deals'
-            ? dealSplitPrunePlan(prev.stages, stageId)
+            ? dealSplitPrunePlan(prev.stages, viewCenter)
             : null;
         const mergedCache = {
           ...prev.cache,
@@ -1160,8 +1168,8 @@ export default function CrmHubScreen({
           cache: pruneStageCacheAround(
             mergedCache,
             splitPlan?.pruneOrder ?? allIds,
-            stageId,
-            2,
+            viewCenter,
+            4,
             splitPlan?.protect,
           ),
         };
@@ -1169,6 +1177,8 @@ export default function CrmHubScreen({
     } catch {
       /* giữ cache cũ nếu có */
     } finally {
+      // Lần tải cũ hơn (đã đổi cột) — không đụng spinner của lần mới.
+      if (loadToken !== stageLoadSeqRef.current) return;
       if (!quiet) setStageLoading(false);
       setMoreLoading(false);
     }
@@ -1229,6 +1239,22 @@ export default function CrmHubScreen({
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []),
   );
+
+  /**
+   * Có mạng trở lại → bootstrap lại board.
+   * `loadBootstrap` chủ động bỏ qua khi offline, và focus-effect chỉ chạy lúc đổi màn,
+   * nên mở Hub lúc mất mạng sẽ để trống cột tới khi người dùng kéo refresh.
+   */
+  const prevOnlineRef = useRef(isOnline);
+  useEffect(() => {
+    const wasOffline = !prevOnlineRef.current;
+    prevOnlineRef.current = isOnline;
+    if (!isOnline || !wasOffline || !canLoadCrmRef.current) return;
+    void prefetchTabTotalsRef.current('leads');
+    void prefetchTabTotalsRef.current('deals');
+    void loadBootstrapRef.current(modeRef.current, true, undefined, true);
+    // Cột đang xem: effect `[activeStageId, isOnline]` bên dưới sẽ tự loadStage khi online.
+  }, [isOnline]);
 
   useCrmRealtimeRefresh(
     useCallback((payload) => {
@@ -1502,14 +1528,20 @@ export default function CrmHubScreen({
 
   useEffect(() => {
     if (!loaded[dataMode] || !activeStageId) return;
+    if (!isOnline) return;
     if (searchDraft.trim().length >= 2 || search.trim()) return;
     const cur = hub.cache[activeStageId];
+    // Đã có cache cột đang xem — tắt spinner (tránh kẹt từ lần tải cột trước khi vuốt nhanh).
+    if (cur?.loaded) {
+      setStageLoading(false);
+      return;
+    }
     // Cột đang xem chưa có dữ liệu → nạp lại. Không phụ thuộc cờ `loading` cấp board
     // (tránh kẹt khi cờ này không được reset đúng lúc); loadStage tự chống nạp trùng.
-    if (!cur?.loaded && !stageLoading) {
+    if (!stageLoading) {
       void loadStage(mode, activeStageId, false);
     }
-  }, [loaded, mode, activeStageId, hub.cache, stageLoading, loadStage, search, searchDraft]);
+  }, [loaded, mode, activeStageId, hub.cache, stageLoading, loadStage, search, searchDraft, isOnline]);
 
   /** Prefetch cột đầu tab đối diện (Deal↔ĐH) — đổi tab không phải chờ mạng (đặc biệt «Tất cả CT»). */
   useEffect(() => {
@@ -1558,6 +1590,7 @@ export default function CrmHubScreen({
               stages,
               activeStageId,
               fetchOptsRef.current(),
+              2,
             );
             if (cancelled || !Object.keys(neighbors).length) return;
             setHub((prev) => {
@@ -1577,7 +1610,7 @@ export default function CrmHubScreen({
                   cache,
                   splitPlan?.pruneOrder ?? allIds,
                   activeStageId,
-                  2,
+                  4,
                   splitPlan?.protect,
                 ),
               };
@@ -2518,6 +2551,7 @@ export default function CrmHubScreen({
         ref={listRef}
         style={styles.listFill}
         data={columnItems}
+        key={activeStageId || 'column'}
         keyExtractor={(item) => item.id}
         contentContainerStyle={[
           styles.listContent,
@@ -2544,7 +2578,14 @@ export default function CrmHubScreen({
           />
         }
         ListEmptyComponent={
-          !isColumnLoading ? (
+          isColumnLoading ? (
+            <View style={styles.emptyBox}>
+              <SpinningLoader color={Colors.blue} />
+              <Text style={[styles.emptyText, { marginTop: 12 }]}>
+                Đang tải cột «{activeStage?.name ?? '…'}»…
+              </Text>
+            </View>
+          ) : (
             <View style={styles.emptyBox}>
               <Ionicons name="file-tray-outline" size={38} color={Colors.textFaint} />
               <Text style={styles.emptyText}>
@@ -2554,10 +2595,15 @@ export default function CrmHubScreen({
                     : `Không có cột ${isLeads ? 'Lead' : isOrders ? 'Đơn hàng' : 'Deal'}`)
                   : filterActive
                     ? `Không tìm thấy ${isLeads ? 'lead' : isOrders ? 'đơn hàng' : 'deal'} phù hợp`
-                    : 'Cột này chưa có bản ghi'}
+                    : !isOnline
+                      && activeStageId
+                      && (hub.stageCounts[activeStageId] ?? 0) > 0
+                      && !hub.cache[activeStageId]?.loaded
+                      ? 'Chưa tải cột này (mất mạng). Sẽ tự nạp khi có mạng.'
+                      : 'Cột này chưa có bản ghi'}
               </Text>
             </View>
-          ) : null
+          )
         }
         ListFooterComponent={
           moreLoading ? (
@@ -2626,23 +2672,25 @@ export default function CrmHubScreen({
             {
               /* Tab bar đã chiếm safe-area — sát mép nội dung, chỉ chừa 6px thở. */
               bottom: embeddedInTabs ? 6 : 0,
-              paddingBottom: embeddedInTabs ? 0 : Math.max(insets.bottom, 12),
+              paddingBottom: embeddedInTabs ? 8 : Math.max(insets.bottom, 12),
+              backgroundColor: Colors.bg,
             },
           ]}
+          pointerEvents="box-none"
         >
           <Pressable
-            style={[styles.fabBtn, { backgroundColor: Colors.blueSoft, borderColor: Colors.blue }]}
+            style={[styles.fabBtn, styles.fabBtnLead]}
             onPress={() => navigation.navigate('CreateEntity', { kind: 'lead' })}
           >
-            <Ionicons name="people" size={18} color={Colors.blue} />
-            <Text style={[styles.fabBtnTxt, { color: Colors.blue }]}>Thêm Lead</Text>
+            <Ionicons name="people" size={18} color={Colors.white} />
+            <Text style={styles.fabBtnTxtOn}>Thêm Lead</Text>
           </Pressable>
           <Pressable
-            style={[styles.fabBtn, { backgroundColor: Colors.orangeSoft, borderColor: Colors.orange }]}
+            style={[styles.fabBtn, styles.fabBtnDeal]}
             onPress={() => navigation.navigate('CreateEntity', { kind: 'deal' })}
           >
-            <Ionicons name="pricetags" size={18} color={Colors.orange} />
-            <Text style={[styles.fabBtnTxt, { color: Colors.orange }]}>Thêm Deal</Text>
+            <Ionicons name="pricetags" size={18} color={Colors.white} />
+            <Text style={styles.fabBtnTxtOn}>Thêm Deal</Text>
           </Pressable>
         </View>
       ) : null}
@@ -3098,11 +3146,15 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
   cardActionBtnPrimary: { backgroundColor: Colors.blue },
   fabRow: {
     position: 'absolute',
-    left: 14,
-    right: 14,
+    left: 0,
+    right: 0,
     bottom: 0,
     flexDirection: 'row',
     gap: 10,
+    paddingHorizontal: 14,
+    paddingTop: 10,
+    zIndex: 20,
+    elevation: 8,
   },
   fabBtn: {
     flex: 1,
@@ -3112,9 +3164,11 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
     gap: 8,
     height: 48,
     borderRadius: Radii.md,
-    borderWidth: 1,
   },
+  fabBtnLead: { backgroundColor: Colors.blue },
+  fabBtnDeal: { backgroundColor: Colors.orange },
   fabBtnTxt: { fontSize: 14, fontWeight: '800' },
+  fabBtnTxtOn: { fontSize: 14, fontWeight: '800', color: Colors.white },
   toast: {
     position: 'absolute',
     left: 20,

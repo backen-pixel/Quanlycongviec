@@ -1206,7 +1206,7 @@ export default function CRMTasksTab({
     } catch (e) { console.error(e); }
     finally {
       if (fetchId === loadTasksSeqRef.current && fetchScope === taskCompanyScope) {
-        setLoading(false);
+      setLoading(false);
       }
     }
   };
@@ -1361,7 +1361,7 @@ export default function CRMTasksTab({
             : 'Đã quét — không thiếu nhiệm vụ Sản xuất nào (hoặc cột chưa có bộ mẫu).',
         );
       }
-      await loadTasks();
+        await loadTasks();
     } catch (e) {
       alert(e.response?.data?.error || e.message || 'Lỗi quét nhiệm vụ SX thiếu');
     } finally {
@@ -2123,11 +2123,11 @@ export default function CRMTasksTab({
         }
       });
     } else {
-      uiTasks.forEach((t) => {
-        const fallbackSlug = leadType === 'deal' ? (DEAL_STAGES[0]?.slug || 'deal_new') : (LEAD_STAGES[0]?.slug || 'consulting');
-        const key = t.stage_slug || fallbackSlug;
-        if (!map[key]) map[key] = [];
-        map[key].push(t);
+    uiTasks.forEach((t) => {
+      const fallbackSlug = leadType === 'deal' ? (DEAL_STAGES[0]?.slug || 'deal_new') : (LEAD_STAGES[0]?.slug || 'consulting');
+      const key = t.stage_slug || fallbackSlug;
+      if (!map[key]) map[key] = [];
+      map[key].push(t);
       });
     }
     Object.keys(map).forEach((k) => {
@@ -2216,15 +2216,15 @@ export default function CRMTasksTab({
       }
     } else {
       const withTasks = STAGES.filter((s) => (tasksByStage[s.slug]?.length || 0) > 0);
-      const known = new Set(STAGES.map((s) => s.slug));
-      const extras = Object.keys(tasksByStage)
-        .filter((k) => k && !known.has(k) && tasksByStage[k]?.length)
-        .map((k) => ALL_STAGES.find((s) => s.slug === k) || {
-          slug: k,
-          label: k,
-          icon: '📌',
-          color: '#6B7280',
-        });
+    const known = new Set(STAGES.map((s) => s.slug));
+    const extras = Object.keys(tasksByStage)
+      .filter((k) => k && !known.has(k) && tasksByStage[k]?.length)
+      .map((k) => ALL_STAGES.find((s) => s.slug === k) || {
+        slug: k,
+        label: k,
+        icon: '📌',
+        color: '#6B7280',
+      });
       stages = [...withTasks, ...extras];
     }
     if (showLogisticsWorkshopInUi && (vcAreaTab === 'shipping' || vcAreaTab === 'install')) {
@@ -2550,12 +2550,12 @@ export default function CRMTasksTab({
         } else {
           await api.post(`/crm/leads/${apiLeadIdForTaskId(taskId)}/tasks/${taskId}/attachments/bulk`, {
             items: dedupedUploads.map((up) => ({
-              name: (up.original_name || up.file_name || 'File').replace(/\.[^.]+$/, ''),
+          name: (up.original_name || up.file_name || 'File').replace(/\.[^.]+$/, ''),
               doc_type: inferAttachmentDocType(up),
-              file_url: up.file_url,
-              file_name: up.file_name,
-              file_size: up.file_size,
-              mime_type: up.mime_type,
+          file_url: up.file_url,
+          file_name: up.file_name,
+          file_size: up.file_size,
+          mime_type: up.mime_type,
             })),
           });
         }
@@ -2921,10 +2921,10 @@ export default function CRMTasksTab({
             })),
             checklist_id: ckId,
           });
-          loadAttachments({ id: taskId });
+      loadAttachments({ id: taskId });
           bumpTaskAttachmentCount(taskId, dedupedUploads.length);
         }
-        notifyArtifactsSynced(taskId);
+      notifyArtifactsSynced(taskId);
       } catch (err) {
         alert(err.response?.data?.error || err.message || 'Upload lỗi');
       }
@@ -4305,15 +4305,15 @@ export default function CRMTasksTab({
                           </div>
                           <div className="flex flex-col items-end gap-1 shrink-0">
                             <div className="flex items-center gap-0.5">
-                              <button onClick={() => handleShareClick(task.id, att.id)}
-                                onDoubleClick={() => { if (att.shared_to_project) openShareModal(task.id, att.id); }}
-                                className={`p-0.5 cursor-pointer ${att.shared_to_project ? 'text-green-500 hover:text-green-700' : 'text-gray-400 hover:text-green-500'}`}
-                                title={att.shared_to_project ? 'Click: tắt · Double-click: đổi khối' : 'Chia sẻ file sang khối SX / VC / CV'}>
-                                {att.shared_to_project ? <Share2 className="h-2.5 w-2.5" /> : <Lock className="h-2.5 w-2.5" />}
-                              </button>
-                            </div>
-                            {renderAttachmentActionButtons(task.id, att, null, { lightboxAtts: fileAtts })}
+                            <button onClick={() => handleShareClick(task.id, att.id)}
+                              onDoubleClick={() => { if (att.shared_to_project) openShareModal(task.id, att.id); }}
+                              className={`p-0.5 cursor-pointer ${att.shared_to_project ? 'text-green-500 hover:text-green-700' : 'text-gray-400 hover:text-green-500'}`}
+                              title={att.shared_to_project ? 'Click: tắt · Double-click: đổi khối' : 'Chia sẻ file sang khối SX / VC / CV'}>
+                              {att.shared_to_project ? <Share2 className="h-2.5 w-2.5" /> : <Lock className="h-2.5 w-2.5" />}
+                            </button>
                           </div>
+                            {renderAttachmentActionButtons(task.id, att, null, { lightboxAtts: fileAtts })}
+                        </div>
                         </div>
                         {img && att.file_url && (
                           <button
@@ -4608,11 +4608,11 @@ export default function CRMTasksTab({
                     : s.slug === tpl.stage_slug
                 ));
                 return (
-                  <button key={tpl.id} onClick={() => applyTemplate(tpl.id)}
-                    className="px-3 py-1.5 bg-white border border-amber-300 rounded-lg text-xs font-medium text-amber-800 hover:bg-amber-100 cursor-pointer">
+              <button key={tpl.id} onClick={() => applyTemplate(tpl.id)}
+                className="px-3 py-1.5 bg-white border border-amber-300 rounded-lg text-xs font-medium text-amber-800 hover:bg-amber-100 cursor-pointer">
                     {stage?.icon || '📋'} {tpl.name} ({tpl.items?.length || 0} việc)
-                    {tpl.is_default && ' ⭐'}
-                  </button>
+                {tpl.is_default && ' ⭐'}
+              </button>
                 );
               })}
             {pipelineTemplates.length > 8 && (
@@ -5011,18 +5011,18 @@ export default function CRMTasksTab({
                 <textarea value={editForm.description || ''} onChange={e => setEditForm(f => ({ ...f, description: e.target.value }))}
                   className="mt-1 w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-300 outline-none resize-y min-h-[70px]" placeholder="Mô tả chi tiết..." />
               </div>
-              <div>
-                <label className="text-[11px] font-semibold text-gray-500 uppercase">Giai đoạn</label>
-                <select value={editForm.stage_slug} onChange={e => setEditForm(f => ({ ...f, stage_slug: e.target.value }))}
-                  className="mt-1 w-full border rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-300 outline-none">
-                  <option value="">— Chọn giai đoạn —</option>
-                  {STAGE_OPTIONS.map(s => (<option key={s.slug} value={s.slug}>{s.icon} {s.label}</option>))}
-                </select>
-              </div>
-              <div>
-                <label className="text-[11px] font-semibold text-gray-500 uppercase">Hạn hoàn thành</label>
-                <input type="datetime-local" value={editForm.deadline} onChange={e => setEditForm(f => ({ ...f, deadline: e.target.value }))}
-                  className="mt-1 w-full border rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-300 outline-none" />
+                <div>
+                  <label className="text-[11px] font-semibold text-gray-500 uppercase">Giai đoạn</label>
+                  <select value={editForm.stage_slug} onChange={e => setEditForm(f => ({ ...f, stage_slug: e.target.value }))}
+                    className="mt-1 w-full border rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-300 outline-none">
+                    <option value="">— Chọn giai đoạn —</option>
+                    {STAGE_OPTIONS.map(s => (<option key={s.slug} value={s.slug}>{s.icon} {s.label}</option>))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[11px] font-semibold text-gray-500 uppercase">Hạn hoàn thành</label>
+                  <input type="datetime-local" value={editForm.deadline} onChange={e => setEditForm(f => ({ ...f, deadline: e.target.value }))}
+                    className="mt-1 w-full border rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-300 outline-none" />
               </div>
               <div>
                 <label className="text-[11px] font-semibold text-gray-500 uppercase">Giám sát</label>
@@ -5070,19 +5070,19 @@ export default function CRMTasksTab({
                 </div>
               </div>
               <div className="md:col-span-2">
-                <AssigneePickerBlock
-                  count={editAssigneeIds.size}
-                  pickList={assignPickList}
-                  selectedIds={editAssigneeIds}
-                  onToggle={toggleEditAssignee}
-                  onSelectAll={selectAllEditAssignees}
-                  showRolePicker
-                  roleById={assigneeRoleById}
-                  onRoleChange={setAssigneeRole}
-                  defaultNewRole={defaultNewMemberRole}
-                  onDefaultNewRoleChange={setDefaultNewMemberRole}
-                />
-              </div>
+              <AssigneePickerBlock
+                count={editAssigneeIds.size}
+                pickList={assignPickList}
+                selectedIds={editAssigneeIds}
+                onToggle={toggleEditAssignee}
+                onSelectAll={selectAllEditAssignees}
+                showRolePicker
+                roleById={assigneeRoleById}
+                onRoleChange={setAssigneeRole}
+                defaultNewRole={defaultNewMemberRole}
+                onDefaultNewRoleChange={setDefaultNewMemberRole}
+              />
+                </div>
               <div className="md:col-span-2 space-y-2">
                 <label className="flex items-start gap-2 p-2.5 border border-sky-200 bg-sky-50 rounded-lg cursor-pointer select-none">
                   <input
@@ -5100,25 +5100,25 @@ export default function CRMTasksTab({
                     </span>
                   </span>
                 </label>
-                {isAdmin && (
+              {isAdmin && (
                   <>
-                    <label className="text-[11px] font-semibold text-gray-500 uppercase">Tiện ích (admin)</label>
+                  <label className="text-[11px] font-semibold text-gray-500 uppercase">Tiện ích (admin)</label>
                     <label className="flex items-start gap-2 p-2.5 border border-emerald-200 bg-emerald-50 rounded-lg cursor-pointer select-none">
-                      <input
-                        type="checkbox"
-                        checked={!!editForm.show_excel_quotation_upload}
-                        onChange={(e) => setEditForm((f) => ({ ...f, show_excel_quotation_upload: e.target.checked }))}
-                        className="mt-0.5 accent-emerald-600"
-                      />
-                      <span className="flex-1">
-                        <span className="text-xs font-semibold text-emerald-800 flex items-center gap-1">
-                          <FileSpreadsheet className="h-3 w-3" /> Hiện nút "Upload Excel Báo giá"
-                        </span>
-                        <span className="block text-[10px] text-emerald-700 mt-0.5">
-                          Khi bật, nhiệm vụ sẽ có nút <b>📊 Upload Excel BG</b> ở tab Nhiệm vụ để tải file Excel báo giá và tạo báo giá tự động.
-                        </span>
-                      </span>
-                    </label>
+                  <input
+                    type="checkbox"
+                    checked={!!editForm.show_excel_quotation_upload}
+                    onChange={(e) => setEditForm((f) => ({ ...f, show_excel_quotation_upload: e.target.checked }))}
+                    className="mt-0.5 accent-emerald-600"
+                  />
+                  <span className="flex-1">
+                    <span className="text-xs font-semibold text-emerald-800 flex items-center gap-1">
+                      <FileSpreadsheet className="h-3 w-3" /> Hiện nút "Upload Excel Báo giá"
+                    </span>
+                    <span className="block text-[10px] text-emerald-700 mt-0.5">
+                      Khi bật, nhiệm vụ sẽ có nút <b>📊 Upload Excel BG</b> ở tab Nhiệm vụ để tải file Excel báo giá và tạo báo giá tự động.
+                    </span>
+                  </span>
+                </label>
                     <label className="flex items-start gap-2 p-2.5 border border-orange-200 bg-orange-50 rounded-lg cursor-pointer select-none">
                       <input
                         type="checkbox"
@@ -5152,8 +5152,8 @@ export default function CRMTasksTab({
                       </span>
                     </label>
                   </>
-                )}
-              </div>
+              )}
+            </div>
               </div>
             </div>
             <div className="px-5 py-4 border-t bg-gray-50 rounded-b-2xl flex items-center justify-end gap-2 shrink-0">

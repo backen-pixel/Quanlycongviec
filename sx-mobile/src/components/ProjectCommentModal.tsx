@@ -1,17 +1,20 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  FlatList,
   Image,
   KeyboardAvoidingView,
   Modal,
+  NativeScrollEvent,
+  NativeSyntheticEvent,
   Platform,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   View,
+  type FlatList as FlatListType,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatApiError } from '../api/client';
@@ -57,20 +60,26 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
   const { user } = useAuth();
   const { subscribeSync, joinLeadRoom, leaveLeadRoom } = useNotifications();
   const insets = useSafeAreaInsets();
-  const scrollRef = useRef<ScrollView>(null);
+  const listRef = useRef<FlatListType<{ comment: ProjectComment; depth: number }>>(null);
   const onPostedRef = useRef(onPosted);
   onPostedRef.current = onPosted;
 
   const [dealId, setDealId] = useState<string | null>(null);
   const [comments, setComments] = useState<ProjectComment[]>([]);
   const [loading, setLoading] = useState(false);
-  const [sort, setSort] = useState<SortMode>('newest');
+  const [sort, setSort] = useState<SortMode>('oldest');
   const [body, setBody] = useState('');
   const [replyTo, setReplyTo] = useState<{ id: string; name: string } | null>(null);
   const [posting, setPosting] = useState(false);
   const [reactionBusy, setReactionBusy] = useState<string | null>(null);
   const [reactionPickerId, setReactionPickerId] = useState<string | null>(null);
   const [err, setErr] = useState('');
+  const [nearNewest, setNearNewest] = useState(true);
+  const [pendingNewCount, setPendingNewCount] = useState(0);
+  const nearNewestRef = useRef(true);
+  const prevCommentLenRef = useRef(0);
+  const didInitialScrollRef = useRef(false);
+  const stickBottomAllowedRef = useRef(false);
 
   const source = useMemo(
     () => (project?.id ? resolveCommentSource(project.id, dealId) : null),
@@ -124,6 +133,22 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
         },
         sortBtnText: { color: colors.text, fontSize: 13, fontWeight: '700' },
         list: { flex: 1 },
+        listWrap: { flex: 1, position: 'relative' },
+        jumpNewBtn: {
+          position: 'absolute',
+          alignSelf: 'center',
+          bottom: 12,
+          zIndex: 5,
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 6,
+          paddingHorizontal: 14,
+          paddingVertical: 10,
+          borderRadius: Radii.full,
+          backgroundColor: colors.primary,
+          elevation: 4,
+        },
+        jumpNewTxt: { color: colors.white, fontSize: 13, fontWeight: '800' },
         listContent: { paddingHorizontal: Spacing.md, paddingVertical: Spacing.md, paddingBottom: 8 },
         emptyWrap: { alignItems: 'center', paddingVertical: 40, gap: 8 },
         emptyText: { color: colors.textMuted, fontSize: 14 },
@@ -238,11 +263,12 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
     [colors],
   );
 
-  const loadComments = useCallback(async (silent = false) => {
+  const loadComments = useCallback(async (opts?: { silent?: boolean; force?: boolean }) => {
     if (!source) return;
+    const silent = Boolean(opts?.silent);
     if (!silent) setLoading(true);
     try {
-      const rows = await fetchThreadComments(source);
+      const rows = await fetchThreadComments(source, { force: Boolean(opts?.force) });
       setComments(rows);
       onPostedRef.current(rows.length);
     } catch (e) {
@@ -282,17 +308,25 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
 
   useEffect(() => {
     if (!visible || !source) return undefined;
-    return subscribeSync((evt) => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const unsub = subscribeSync((evt) => {
       if (source.kind === 'lead') {
         if (evt.type !== 'lead:comment_changed') return;
         if (String(evt.payload.lead_id || '') !== String(source.leadId)) return;
-        void loadComments(true);
-        return;
+      } else {
+        if (evt.type !== 'project:comment_changed') return;
+        if (String(evt.payload.project_id || '') !== String(source.projectId)) return;
       }
-      if (evt.type !== 'project:comment_changed') return;
-      if (String(evt.payload.project_id || '') !== String(source.projectId)) return;
-      void loadComments(true);
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = null;
+        void loadComments({ silent: true, force: true });
+      }, 800);
     });
+    return () => {
+      if (timer) clearTimeout(timer);
+      unsub();
+    };
   }, [visible, source, loadComments, subscribeSync]);
 
   useEffect(() => {
@@ -302,9 +336,14 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
       setReplyTo(null);
       setReactionPickerId(null);
       setErr('');
+      didInitialScrollRef.current = false;
+      nearNewestRef.current = true;
+      setNearNewest(true);
+      setPendingNewCount(0);
+      prevCommentLenRef.current = 0;
       return;
     }
-    void loadComments(false);
+    void loadComments({ silent: false, force: false });
   }, [visible, source, loadComments]);
 
   const commentById = useMemo(() => {
@@ -317,6 +356,74 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
     const grouped = groupCommentsByParent(comments);
     return flattenCommentTree(grouped, sort);
   }, [comments, sort]);
+
+  const scrollToNewest = useCallback((animated = true) => {
+    const run = () => {
+      if (sort === 'oldest') listRef.current?.scrollToEnd({ animated });
+      else listRef.current?.scrollToOffset({ offset: 0, animated });
+      nearNewestRef.current = true;
+      setNearNewest(true);
+      setPendingNewCount(0);
+      stickBottomAllowedRef.current = false;
+    };
+    stickBottomAllowedRef.current = true;
+    requestAnimationFrame(() => {
+      run();
+      setTimeout(run, animated ? 80 : 0);
+    });
+  }, [sort]);
+
+  const onListScroll = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
+    const enter = 80;
+    const exit = 160;
+    let dist = contentOffset.y;
+    if (sort === 'oldest') {
+      dist = contentSize.height - layoutMeasurement.height - contentOffset.y;
+    }
+    const near = nearNewestRef.current ? dist <= exit : dist <= enter;
+    if (nearNewestRef.current !== near) {
+      nearNewestRef.current = near;
+      setNearNewest(near);
+    }
+    if (near) setPendingNewCount(0);
+  }, [sort]);
+
+  useEffect(() => {
+    if (!visible || loading || !flatList.length) return undefined;
+    if (!didInitialScrollRef.current) {
+      didInitialScrollRef.current = true;
+      scrollToNewest(false);
+    }
+    return undefined;
+  }, [visible, loading, flatList.length, scrollToNewest]);
+
+  useEffect(() => {
+    didInitialScrollRef.current = false;
+    if (visible && !loading && flatList.length) {
+      const t = setTimeout(() => {
+        didInitialScrollRef.current = true;
+        scrollToNewest(false);
+      }, 40);
+      return () => clearTimeout(t);
+    }
+    return undefined;
+  }, [sort]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    const len = comments.length;
+    const prev = prevCommentLenRef.current;
+    prevCommentLenRef.current = len;
+    if (!visible || prev <= 0 || len <= prev) return;
+    const added = len - prev;
+    if (nearNewestRef.current) {
+      scrollToNewest(true);
+    } else {
+      setPendingNewCount((n) => n + added);
+    }
+  }, [comments.length, scrollToNewest, visible]);
+
+  const showJumpToNew = visible && !nearNewest && flatList.length > 0 && !loading;
 
   const close = () => {
     if (posting) return;
@@ -335,8 +442,8 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
       await postThreadComment(source, text, replyTo?.id ?? null);
       setBody('');
       setReplyTo(null);
-      await loadComments(true);
-      setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 150);
+      await loadComments({ silent: true, force: true });
+      setTimeout(() => scrollToNewest(true), 120);
     } catch (e) {
       setErr(formatApiError(e));
     } finally {
@@ -375,7 +482,7 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
     const nestOffset = depth > 0 ? Math.min(depth - 1, 3) * REPLY_DEPTH_STEP : 0;
 
     return (
-      <View key={item.id} style={[styles.commentRow, nestOffset > 0 && { marginLeft: nestOffset }]}>
+      <View style={[styles.commentRow, nestOffset > 0 && { marginLeft: nestOffset }]}>
         {depth > 0 ? (
           <View style={styles.threadGutter}>
             <View style={[styles.threadLine, isOtherReply && styles.threadLineActive]} />
@@ -489,7 +596,9 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
               onPress={() => setSort((s) => (s === 'newest' ? 'oldest' : 'newest'))}
               activeOpacity={0.8}
             >
-              <Text style={styles.sortBtnText}>{sort === 'newest' ? 'Mới nhất' : 'Cũ nhất'}</Text>
+              <Text style={styles.sortBtnText}>
+                {sort === 'oldest' ? 'Mới dưới' : 'Mới trên'}
+              </Text>
               <Ionicons name="chevron-down" size={14} color={colors.textMuted} />
             </TouchableOpacity>
           </View>
@@ -500,33 +609,73 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
             </View>
           ) : null}
 
-          <ScrollView
-            ref={scrollRef}
-            style={styles.list}
-            contentContainerStyle={styles.listContent}
-            keyboardShouldPersistTaps="handled"
-            onScrollBeginDrag={() => setReactionPickerId(null)}
-            onContentSizeChange={() => {
-              if (comments.length > 0 && sort === 'newest') {
-                scrollRef.current?.scrollTo({ y: 0, animated: false });
+          <View style={styles.listWrap}>
+            <FlatList
+              ref={listRef}
+              style={styles.list}
+              data={loading ? [] : flatList}
+              keyExtractor={(item) => item.comment.id}
+              renderItem={({ item }) => renderComment(item.comment, item.depth)}
+              contentContainerStyle={styles.listContent}
+              keyboardShouldPersistTaps="handled"
+              initialNumToRender={12}
+              maxToRenderPerBatch={8}
+              windowSize={7}
+              removeClippedSubviews={Platform.OS === 'android'}
+              onScrollBeginDrag={() => setReactionPickerId(null)}
+              onScroll={onListScroll}
+              scrollEventThrottle={16}
+              onContentSizeChange={() => {
+                if (!didInitialScrollRef.current && !loading && flatList.length) {
+                  didInitialScrollRef.current = true;
+                  scrollToNewest(false);
+                  return;
+                }
+                if (
+                  stickBottomAllowedRef.current
+                  && nearNewestRef.current
+                  && sort === 'oldest'
+                  && !loading
+                ) {
+                  stickBottomAllowedRef.current = false;
+                  listRef.current?.scrollToEnd({ animated: false });
+                }
+              }}
+              ListEmptyComponent={
+                loading ? (
+                  <View style={styles.emptyWrap}>
+                    <SpinningLoader color={colors.primary} />
+                    <Text style={styles.emptyText}>Đang tải bình luận…</Text>
+                  </View>
+                ) : (
+                  <View style={styles.emptyWrap}>
+                    <Ionicons name="chatbubbles-outline" size={36} color={colors.textFaint} />
+                    <Text style={styles.emptyText}>Chưa có bình luận</Text>
+                    <Text style={styles.emptyHint}>Viết bình luận đầu tiên cho dự án này.</Text>
+                  </View>
+                )
               }
-            }}
-          >
-            {loading ? (
-              <View style={styles.emptyWrap}>
-                <SpinningLoader color={colors.primary} />
-                <Text style={styles.emptyText}>Đang tải bình luận…</Text>
-              </View>
-            ) : flatList.length === 0 ? (
-              <View style={styles.emptyWrap}>
-                <Ionicons name="chatbubbles-outline" size={36} color={colors.textFaint} />
-                <Text style={styles.emptyText}>Chưa có bình luận</Text>
-                <Text style={styles.emptyHint}>Viết bình luận đầu tiên cho dự án này.</Text>
-              </View>
-            ) : (
-              flatList.map(({ comment, depth }) => renderComment(comment, depth))
-            )}
-          </ScrollView>
+            />
+            {showJumpToNew ? (
+              <Pressable
+                style={styles.jumpNewBtn}
+                onPress={() => scrollToNewest(true)}
+                accessibilityRole="button"
+                accessibilityLabel="Xem tin mới nhất"
+              >
+                <Ionicons
+                  name={sort === 'oldest' ? 'arrow-down' : 'arrow-up'}
+                  size={16}
+                  color={colors.white}
+                />
+                <Text style={styles.jumpNewTxt}>
+                  {pendingNewCount > 0
+                    ? `Tin mới (${pendingNewCount > 99 ? '99+' : pendingNewCount})`
+                    : 'Tin mới'}
+                </Text>
+              </Pressable>
+            ) : null}
+          </View>
 
           {replyTo ? (
             <View style={styles.replyBar}>

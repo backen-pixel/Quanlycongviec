@@ -13,6 +13,8 @@ import {
   splitDealStagesForCrmTabsMulti,
 } from '../lib/crmPipelineTabs';
 import { getDeadlinePerfLimits } from '../lib/devicePerf';
+import { queryClient } from '../lib/queryClient';
+import { crmKeys } from '../lib/queryKeys';
 import { api } from './client';
 import { fetchCrmCompanies as fetchCrmCompaniesMeta } from './crmMeta';
 import type {
@@ -26,6 +28,25 @@ import type {
   LeadTemp,
   PlannerItem,
 } from '../types';
+
+/**
+ * Cache dùng chung (TanStack Query) phải hết hạn cùng lúc với các Map cache
+ * bên dưới — nếu không, một lớp trả số mới còn lớp kia vẫn giữ số cũ.
+ * `invalidateQueries` chỉ đánh dấu stale, dữ liệu cũ vẫn dùng để vẽ ngay.
+ */
+function staleBoardQueries(): void {
+  void queryClient.invalidateQueries({ queryKey: crmKeys.boardRoot() });
+}
+
+function staleDeadlineQueries(): void {
+  void queryClient.invalidateQueries({ queryKey: crmKeys.deadlineRoot() });
+}
+
+function staleLeadDetailQueries(leadId?: string): void {
+  void queryClient.invalidateQueries({
+    queryKey: leadId ? crmKeys.leadDetail(leadId) : crmKeys.detailRoot(),
+  });
+}
 
 type ApiStage = {
   id?: string;
@@ -214,6 +235,7 @@ async function fetchPipelineStagesCached(
 
 /** Xóa cache stages (sau refresh thủ công nếu cần). */
 export function invalidatePipelineStagesCache(type?: 'lead' | 'deal', opts?: CrmStageFetchOpts) {
+  staleBoardQueries();
   if (type && opts) {
     stagesCache.delete(stagesCacheKey(type, opts));
     stagesInflight.delete(stagesCacheKey(type, opts));
@@ -954,10 +976,17 @@ export async function prefetchCrmNeighborStages(
   stages: CrmPipelineStage[],
   centerStageId: string,
   opts?: CrmStageFetchOpts,
+  radius = 2,
 ): Promise<Record<string, CrmStageCache>> {
   const idx = stages.findIndex((s) => s.id === centerStageId);
   if (idx < 0) return {};
-  const neighborIds = [stages[idx - 1]?.id, stages[idx + 1]?.id].filter(Boolean) as string[];
+  const neighborIds: string[] = [];
+  for (let d = 1; d <= Math.max(1, radius); d++) {
+    const left = stages[idx - d]?.id;
+    const right = stages[idx + d]?.id;
+    if (left) neighborIds.push(left);
+    if (right) neighborIds.push(right);
+  }
   if (!neighborIds.length) return {};
   const validStageIds = new Set(stages.map((s) => s.id));
   const entries = await Promise.all(
@@ -1011,6 +1040,7 @@ export function peekCrmTotalsCache(
 }
 
 export function invalidateCrmTotalsCache(): void {
+  staleBoardQueries();
   totalsCache.clear();
   totalsInflight.clear();
 }
@@ -1092,6 +1122,7 @@ export function setCrmHubCache(
 
 export function invalidateCrmHubCache(userId?: string, opts?: { soft?: boolean }): void {
   const soft = !!opts?.soft;
+  staleBoardQueries();
   if (!userId) {
     hubCache.clear();
     bootstrapCache.clear();
@@ -1302,6 +1333,10 @@ export async function moveCrmItemStage(
     if (extra?.workshopTypeId) body.workshop_type_id = extra.workshopTypeId;
   }
   await api.patch(`/crm/leads/${id}/stage`, body);
+  // Thẻ đổi cột: trang cột nguồn/đích và badge đều sai → đánh dấu stale cả 2 nhánh.
+  staleBoardQueries();
+  staleDeadlineQueries();
+  staleLeadDetailQueries(id);
 }
 
 /** Chuyển Lead → Deal (cột thắng) — khớp web POST /crm/leads/:id/convert-to-deal. */
@@ -1316,6 +1351,9 @@ export async function convertLeadToDeal(
     `/crm/leads/${leadId}/convert-to-deal`,
     body,
   );
+  staleBoardQueries();
+  staleDeadlineQueries();
+  staleLeadDetailQueries(leadId);
   return { id: data?.id, code: data?.code };
 }
 
@@ -1329,6 +1367,9 @@ export async function setCrmKanbanDeadline(
     kanban_deadline_at: dateYmd ? deadlineDateToIso(dateYmd) : null,
     reason: (opts?.reason || '').trim(),
   });
+  staleDeadlineQueries();
+  staleBoardQueries();
+  staleLeadDetailQueries(leadId);
 }
 
 /** Bật/tắt «đã tương tác» — POST/DELETE /crm/leads/:id/interacted. */
@@ -1356,6 +1397,11 @@ export async function updateCrmAssignee(
     data?.assignee?.full_name ||
     data?.lead_owner?.full_name ||
     (assignedTo ? '—' : 'Chưa gán');
+
+  // Lọc «của tôi» / theo NV phụ thuộc người phụ trách → trang cột và badge phải tải lại.
+  staleBoardQueries();
+  staleDeadlineQueries();
+  staleLeadDetailQueries(leadId);
 
   return { assignedToId, ownerName };
 }
@@ -2103,6 +2149,7 @@ export function setDeadlineResultCache(
 }
 
 export function invalidateDeadlineResultCache(): void {
+  staleDeadlineQueries();
   deadlineResultCache.clear();
 }
 
@@ -2151,6 +2198,7 @@ export function isDeadlineBucketCountsFresh(
 }
 
 export function invalidateDeadlineBucketCounts(): void {
+  staleDeadlineQueries();
   deadlineBucketCountsCache.clear();
 }
 

@@ -1,11 +1,12 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   FlatList,
   Modal,
   Pressable,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
@@ -22,6 +23,11 @@ type Props = {
   selectedId: string;
   onSelect: (id: string) => void;
   onClose: () => void;
+  /** Bật ô tìm trong sheet (lọc theo label). */
+  searchable?: boolean;
+  searchPlaceholder?: string;
+  /** Nếu truyền — parent tự lọc options theo query; không thì lọc local. */
+  onSearchChange?: (q: string) => void;
 };
 
 export default function FilterPickerModal({
@@ -31,9 +37,24 @@ export default function FilterPickerModal({
   selectedId,
   onSelect,
   onClose,
+  searchable = false,
+  searchPlaceholder = 'Tìm…',
+  onSearchChange,
 }: Props) {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
+  const [query, setQuery] = useState('');
+
+  useEffect(() => {
+    if (!visible) setQuery('');
+  }, [visible]);
+
+  const filtered = useMemo(() => {
+    if (onSearchChange) return options;
+    const q = query.trim().toLowerCase();
+    if (!q) return options;
+    return options.filter((o) => String(o.label || '').toLowerCase().includes(q));
+  }, [options, query, onSearchChange]);
 
   const styles = useMemo(
     () =>
@@ -71,6 +92,22 @@ export default function FilterPickerModal({
         },
         title: { flex: 1, color: colors.text, fontSize: 16, fontWeight: '800' },
         closeBtn: { width: HIT_TARGET, height: HIT_TARGET, alignItems: 'center', justifyContent: 'center' },
+        searchWrap: {
+          paddingHorizontal: Spacing.lg,
+          paddingTop: 10,
+          paddingBottom: 4,
+        },
+        searchInput: {
+          borderWidth: 1,
+          borderColor: colors.border,
+          backgroundColor: colors.card,
+          borderRadius: Radii.md,
+          paddingHorizontal: 12,
+          paddingVertical: 10,
+          color: colors.text,
+          fontSize: 14,
+          fontWeight: '600',
+        },
         list: { maxHeight: 360 },
         row: {
           flexDirection: 'row',
@@ -85,9 +122,18 @@ export default function FilterPickerModal({
         rowActive: { backgroundColor: colors.primarySoft },
         rowText: { flex: 1, color: colors.text, fontSize: 14, fontWeight: '600', marginRight: 8 },
         rowTextActive: { color: colors.primary, fontWeight: '800' },
+        empty: {
+          textAlign: 'center',
+          color: colors.textFaint,
+          fontSize: 13,
+          fontWeight: '600',
+          paddingVertical: 24,
+        },
       }),
     [colors],
   );
+
+  const rowColor = colors.text;
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -100,11 +146,27 @@ export default function FilterPickerModal({
               <Ionicons name="close" size={22} color={colors.textMuted} />
             </TouchableOpacity>
           </View>
+          {searchable ? (
+            <View style={styles.searchWrap}>
+              <TextInput
+                value={query}
+                onChangeText={(t) => {
+                  setQuery(t);
+                  onSearchChange?.(t);
+                }}
+                placeholder={searchPlaceholder}
+                placeholderTextColor={colors.textFaint}
+                style={styles.searchInput}
+                autoFocus
+              />
+            </View>
+          ) : null}
           <FlatList
-            data={options}
+            data={filtered}
             keyExtractor={(item) => item.id || '__all__'}
             style={styles.list}
             keyboardShouldPersistTaps="handled"
+            ListEmptyComponent={<Text style={styles.empty}>Không có kết quả</Text>}
             renderItem={({ item }) => {
               const active = selectedId === item.id;
               return (
@@ -116,12 +178,17 @@ export default function FilterPickerModal({
                   }}
                   activeOpacity={0.75}
                 >
-                  <Text style={[styles.rowText, active && styles.rowTextActive]} numberOfLines={2}>
+                  <Text
+                    style={[
+                      styles.rowText,
+                      { color: rowColor },
+                      active && styles.rowTextActive,
+                    ]}
+                    numberOfLines={2}
+                  >
                     {item.label}
                   </Text>
-                  {active ? (
-                    <Ionicons name="checkmark-circle" size={20} color={colors.primary} />
-                  ) : null}
+                  {active ? <Ionicons name="checkmark" size={18} color={colors.primary} /> : null}
                 </TouchableOpacity>
               );
             }}

@@ -35,6 +35,15 @@ function withSplashWindowBackground(config) {
       // Cùng drawable splash (có logo) — không chỉ màu đặc.
       value: '@drawable/ic_launcher_background',
     });
+    cfg.modResults = AndroidConfig.Styles.assignStylesValue(cfg.modResults, {
+      add: true,
+      parent: {
+        name: 'AppTheme',
+        parent: 'Theme.AppCompat.DayNight.NoActionBar',
+      },
+      name: 'android:forceDarkAllowed',
+      value: 'false',
+    });
     return cfg;
   });
 

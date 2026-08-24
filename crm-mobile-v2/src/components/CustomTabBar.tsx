@@ -79,13 +79,15 @@ export default function CustomTabBar({ state, navigation }: BottomTabBarProps) {
                   color={focused ? Colors.tabActive : Colors.tabInactive}
                 />
                 {route.name === 'Messages' && unreadTotal > 0 ? (
-                  <View style={styles.badge}>
-                    <Text style={styles.badgeTxt}>{unreadTotal > 99 ? '99+' : unreadTotal}</Text>
+                  <View style={[styles.badge, unreadTotal > 99 && styles.badgeWide]}>
+                    <Text style={styles.badgeTxt} allowFontScaling={false} numberOfLines={1}>
+                      {unreadTotal > 99 ? '99+' : unreadTotal}
+                    </Text>
                   </View>
                 ) : null}
                 {route.name === 'Deadline' && deadlineOverdue > 0 ? (
-                  <View style={[styles.badge, styles.badgeOverdue]}>
-                    <Text style={styles.badgeTxt}>
+                  <View style={[styles.badge, styles.badgeOverdue, deadlineOverdue > 99 && styles.badgeWide]}>
+                    <Text style={styles.badgeTxt} allowFontScaling={false} numberOfLines={1}>
                       {deadlineOverdue > 99 ? '99+' : deadlineOverdue}
                     </Text>
                   </View>
@@ -119,14 +121,22 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
     position: 'absolute',
     top: -4,
     right: -10,
-    minWidth: 16,
-    height: 16,
-    borderRadius: 8,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
     backgroundColor: Colors.blue,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 4,
+    overflow: 'hidden',
   },
+  badgeWide: { minWidth: 26, paddingHorizontal: 6 },
   badgeOverdue: { backgroundColor: Colors.red },
-  badgeTxt: { color: '#fff', fontSize: 9, fontWeight: '800' },
+  badgeTxt: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: '800',
+    includeFontPadding: false,
+    textAlign: 'center',
+  },
 });

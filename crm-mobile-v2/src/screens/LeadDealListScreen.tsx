@@ -21,8 +21,9 @@ import { formatApiError, isAbortError, isNetworkError } from '../api/client';
 import {
   convertLeadToDeal,
   fetchCrmListPage,
-  fetchCrmStageCountsBatch,
   fetchPipelineStages,
+  invalidateCrmTotalsCache,
+  invalidatePipelineStagesCache,
   KANBAN_PAGE_SIZE,
   moveCrmItemStage,
   setCrmHubCache,
@@ -31,6 +32,7 @@ import {
   prefetchCrmProductionCompanies,
   type CrmSxProductionTarget,
 } from '../api/crm';
+import { fetchStageCountsBatchCached, invalidateBoardQueries } from '../api/crmCached';
 import { useNetworkStatus } from '../context/NetworkStatusContext';
 import {
   fetchCrmCompanies,
@@ -86,8 +88,12 @@ import {
   storeDealKhSplitPreference,
 } from '../lib/crmDealKhSplit';
 import {
+  crmStageCountsLookComplete,
   hasCrmCustomerOrderTab,
   resolveCrmHubDisplayStages,
+  sumCrmCustomerTabDealCount,
+  sumCrmDealHubKpiCount,
+  sumCrmDealMergedHubCount,
 } from '../lib/crmPipelineTabs';
 import { useCrmHubFilters } from '../hooks/useCrmHubFilters';
 import { deadlineIsoToYmd, planCrmStageMove } from '../lib/crmStageMove';
@@ -147,6 +153,8 @@ export default function LeadDealListScreen({ kind }: Props) {
   const [stages, setStages] = useState<CrmPipelineStage[]>([]);
   const [stageCounts, setStageCounts] = useState<Record<string, number>>({});
   const [listTotal, setListTotal] = useState<number | null>(null);
+  /** Badge Deal đúng gần nhất — giữ khi counts tạm thiếu sau reconnect. */
+  const [lastDealTabTotal, setLastDealTabTotal] = useState<number | null>(null);
   const [items, setItems] = useState<CrmKanbanItem[]>([]);
   const [hasMore, setHasMore] = useState(false);
   const [nextOffset, setNextOffset] = useState(0);
@@ -382,7 +390,10 @@ export default function LeadDealListScreen({ kind }: Props) {
             ? Promise.resolve(null)
             : Promise.all([
                 fetchPipelineStages(kind, { ...fetchOpts, signal: ac.signal }),
-                fetchCrmStageCountsBatch(kind, { ...fetchOpts, signal: ac.signal }).catch(() => null),
+                // Đi qua cache dùng chung với Kanban (khỏi gọi /stage-counts hai lần)
+                // và KHÔNG gắn signal của màn này: request được share giữa các màn,
+                // thoát List sẽ hủy luôn lượt đếm mà Hub/Tổng quan đang chờ.
+                fetchStageCountsBatchCached(kind, fetchOpts).catch(() => null),
               ]);
 
         const [page, meta] = await Promise.all([pagePromise, metaPromise]);
@@ -394,38 +405,50 @@ export default function LeadDealListScreen({ kind }: Props) {
         setNextOffset(page.nextOffset);
 
         if (meta) {
-          const [stg, batch] = meta;
-          setListTotal(batch?.total ?? page.total);
+          const [stg, batchRaw] = meta;
+          // Mạng vừa lên: stage-counts hay fail lần đầu trong khi /leads vẫn về.
+          // `page.total` ≠ badge KPI Deal (gồm cả Thắng/Thua hoặc ước lượng) → không dùng làm badge.
+          let batch = batchRaw;
+          if (!batch && modeLoad !== 'append') {
+            await new Promise((r) => setTimeout(r, 400));
+            if (ac.signal.aborted || gen !== loadGenRef.current) return;
+            batch = await fetchStageCountsBatchCached(kind, { ...fetchOpts, force: true }).catch(() => null);
+          }
+          if (batch) setListTotal(batch.total);
+          else if (!stageId && kind !== 'deal') setListTotal(page.total);
           setStages(stg);
-          const nextCounts = batch?.counts || {};
-          if (batch?.counts) setStageCounts(batch.counts);
-          // Warm cache cho Kanban — List→Kanban offline vẫn còn cột + badge.
-          if (myId && stg.length) {
-            const counts: Record<string, number> = { ...nextCounts };
+          if (batch?.counts) {
+            const counts: Record<string, number> = { ...batch.counts };
             for (const s of stg) {
               if (counts[s.id] === undefined) counts[s.id] = 0;
             }
-            setCrmHubCache(myId, kind, serverFilterKey(filters, ''), {
-              data: {
-                stages: stg,
-                stageCounts: counts,
-                listTotal: batch?.total ?? page.total,
-                cache: {},
-              },
-              activeStageId: String(stg[0]?.id || ''),
-              activeIndex: 0,
-            });
+            setStageCounts(counts);
+            // Warm cache cho Kanban — List→Kanban offline vẫn còn cột + badge.
+            // Chỉ ghi khi lượt đếm thành công: counts rỗng/tổng 1 cột sẽ làm
+            // badge Lead/Deal của Kanban về 0 hoặc lệch khi mở sau đó.
+            if (myId && stg.length) {
+              setCrmHubCache(myId, kind, serverFilterKey(filters, ''), {
+                data: {
+                  stages: stg,
+                  stageCounts: counts,
+                  listTotal: batch.total,
+                  cache: {},
+                },
+                activeStageId: String(stg[0]?.id || ''),
+                activeIndex: 0,
+              });
+            }
           }
-        } else if (modeLoad !== 'append') {
+        } else if (modeLoad !== 'append' && kind !== 'deal') {
           setListTotal((prev) => prev ?? page.total);
         }
       } catch (e) {
         if (isAbortError(e) || ac.signal.aborted || gen !== loadGenRef.current) return;
         const msg = formatApiError(e);
         if (!msg) return;
-        // Offline / lỗi mạng: giữ danh sách + badge đã có — tránh giật về 0.
+        // Offline / lỗi mạng thoáng khi đổi cột: giữ list, không flash banner đỏ.
         if (isNetworkError(e) || !isOnlineRef.current) {
-          setError(msg);
+          if (!itemsRef.current.length) setError(msg);
           return;
         }
         setError(msg);
@@ -468,6 +491,31 @@ export default function LeadDealListScreen({ kind }: Props) {
       void loadPage('refresh');
     }, [loadPage, filtersReady, listActive]),
   );
+
+  /**
+   * Có mạng trở lại → nạp lại ngay.
+   * Trước đây màn này chỉ tải lại nhờ focus (bị bỏ khi offline + chặn bởi TTL 45s)
+   * hoặc realtime, nên mở app lúc mất mạng sẽ đứng ở thẻ «Không có kết nối mạng»
+   * cho tới khi người dùng bấm «Thử lại».
+   * Xóa cache đếm/cột trước: lần tải ngay sau offline hay miss stage-counts và
+   * trước đây fallback `page.total` làm badge Deal thấp giả (vd. 354 vs 470).
+   */
+  const prevOnlineRef = useRef(isOnline);
+  useEffect(() => {
+    const wasOffline = !prevOnlineRef.current;
+    prevOnlineRef.current = isOnline;
+    if (!isOnline || !wasOffline) return;
+    if (!filtersReady || !listActive) return;
+    invalidateCrmTotalsCache();
+    invalidatePipelineStagesCache(kind);
+    invalidateBoardQueries(kind);
+    setLastDealTabTotal(null);
+    lastFocusLoadAtRef.current = Date.now();
+    const t = setTimeout(() => {
+      void loadPage(itemsRef.current.length ? 'refresh' : 'replace');
+    }, 350);
+    return () => clearTimeout(t);
+  }, [isOnline, filtersReady, listActive, loadPage, kind]);
 
   useCrmRealtimeRefresh((payload) => {
     if (!isOnlineRef.current) return;
@@ -640,11 +688,36 @@ export default function LeadDealListScreen({ kind }: Props) {
   }, [items, sections, searchFocusNonce, flashHighlight]);
 
   const filterBadge = countActiveFilters(filters, search);
-  /** Badge khớp dữ liệu đang xem: cột đang chọn / tab Deal·ĐH / toàn pipeline. */
+  /**
+   * Badge tổng — khớp Kanban/web:
+   * - Deal tách: chỉ pre-Thắng (không Thua/Hủy/Thắng/sau Thắng)
+   * - ĐH tách: Thắng + sau Thắng
+   * - Gộp: mọi cột trừ Thua/Hủy
+   * Trước đây List Σ displayStages (gồm cả Thắng/Thua) → lệch Kanban (vd. 954 vs 471).
+   */
+  /**
+   * null = counts chưa phủ đủ pipeline (mạng chập chờn / lượt đếm bị hủy).
+   * Σ lúc đó ra số thấp giả — Kanban ẩn badge, List giữ số đúng gần nhất.
+   */
+  const dealTabTotal = useMemo(() => {
+    if (kind !== 'deal' || !stages.length || !Object.keys(stageCounts).length) return null;
+    if (!crmStageCountsLookComplete(stages, stageCounts)) return null;
+    if (!dealKhSplitEnabled) return sumCrmDealMergedHubCount(stages, stageCounts);
+    if (dealListTab === 'orders') return sumCrmCustomerTabDealCount(stages, stageCounts);
+    return sumCrmDealHubKpiCount(stages, stageCounts);
+  }, [kind, stages, stageCounts, dealKhSplitEnabled, dealListTab]);
+
+  useEffect(() => {
+    if (dealTabTotal != null) setLastDealTabTotal(dealTabTotal);
+  }, [dealTabTotal]);
+  useEffect(() => {
+    setLastDealTabTotal(null);
+  }, [kind, dealListTab, filterKey]);
+
   const displayTotal = (() => {
     if (stageId) return stageCounts[stageId] ?? visibleItems.length;
-    if (kind === 'deal' && dealKhSplitEnabled && displayStages.length) {
-      return displayStages.reduce((sum, s) => sum + (stageCounts[s.id] ?? 0), 0);
+    if (kind === 'deal' && stages.length && Object.keys(stageCounts).length) {
+      return dealTabTotal ?? lastDealTabTotal ?? listTotal ?? visibleItems.length;
     }
     return listTotal ?? visibleItems.length;
   })();

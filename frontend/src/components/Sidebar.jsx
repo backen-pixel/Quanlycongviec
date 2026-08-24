@@ -63,6 +63,12 @@ const MENU_GROUPS = [
     emoji: '📊',
     items: [
       { to: '/dashboard', icon: LayoutDashboard, label: 'Tổng hợp Quản lý' },
+      { to: '/management/work-overview', icon: ListChecks, label: 'Tổng quan công việc' },
+      { to: '/management/crm-overview', icon: Target, label: 'Tổng quan CRM' },
+      { to: '/management/quotes-overview', icon: FileText, label: 'Dự toán & Báo giá' },
+      { to: '/management/work-unified', icon: Layers, label: 'Work Unified' },
+      { to: '/management/purchasing-overview', icon: ShoppingCart, label: 'Mua hàng' },
+      { to: '/management/production-overview', icon: Factory, label: 'Sản xuất' },
     ]
   },
   {

@@ -30,6 +30,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatApiError } from '../api/client';
+import AssignWorkModal from '../components/AssignWorkModal';
 import FilterPickerModal from '../components/FilterPickerModal';
 import ImageGalleryLightbox, { type GalleryImage } from '../components/ImageGalleryLightbox';
 import TapHighlight from '../components/TapHighlight';
@@ -62,6 +63,7 @@ import {
   fetchWorkTaskAttachments,
   formatTaskDeadline,
   groupTasksByDeal,
+  invalidateWorkTasksCache,
   isTaskDone,
   isTaskInProgress,
   isTaskOverdue,
@@ -85,6 +87,10 @@ import SpinningLoader from '../components/SpinningLoader';
 
 type StatusFilter = WorkStatusFilter;
 type ScopeFilter = WorkScopeFilter;
+
+function isAssignmentsAdmin(role?: string | null): boolean {
+  return ['admin', 'manager', 'sales_admin'].includes(String(role || '').toLowerCase());
+}
 
 type WorkFileKind = 'image' | 'pdf' | 'word' | 'excel' | 'ppt' | 'other';
 
@@ -347,7 +353,7 @@ function createStyles(colors: AppColors, bottomInset: number) {
       borderColor: colors.danger,
     },
     errorText: { color: colors.danger, fontSize: 12, fontWeight: '600' },
-    listContent: { paddingHorizontal: Spacing.lg, paddingBottom: bottomInset + 28, gap: 10 },
+    listContent: { paddingHorizontal: Spacing.lg, paddingBottom: bottomInset + 96, gap: 10 },
     sectionCard: {
       backgroundColor: colors.card,
       borderRadius: Radii.lg,
@@ -574,6 +580,20 @@ function createStyles(colors: AppColors, bottomInset: number) {
       paddingHorizontal: Spacing.xl,
       lineHeight: 21,
     },
+    fab: {
+      position: 'absolute',
+      right: 16,
+      bottom: bottomInset + 16,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      borderRadius: 999,
+      backgroundColor: colors.primary,
+      elevation: 4,
+    },
+    fabTxt: { color: '#fff', fontSize: 13, fontWeight: '800' },
   });
 }
 
@@ -590,6 +610,8 @@ export default function WorkScreen() {
   const teamView = canViewTeamWork(user);
   const isAdminLike = user?.role === 'admin' || isSystemAdmin(user);
   const canPickCompany = Boolean(isAdminLike);
+  const assignAdmin = isAssignmentsAdmin(user?.role);
+  const ownCompanyId = user?.company_id ? String(user.company_id) : '';
 
   const [tasks, setTasks] = useState<WorkTask[]>([]);
   /** List theo chip status (server) — tách khỏi `tasks` để KPI Chưa/Đang/Xong/QH không bị lệch. */
@@ -622,6 +644,7 @@ export default function WorkScreen() {
   } | null>(null);
   const [gallery, setGallery] = useState<{ images: GalleryImage[]; index: number } | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [assignOpen, setAssignOpen] = useState(false);
   const updatingRef = useRef(false);
   const loadSeqRef = useRef(0);
   const chipSeqRef = useRef(0);
@@ -997,11 +1020,12 @@ export default function WorkScreen() {
   }, [load, loadChip, loadStats, filtersReady, userId, isFocused]);
 
   useProductionRealtime({
-    // Server vừa đổi dữ liệu → bỏ qua cache, nếu không sẽ hiện lại bản cũ trong TTL.
+    // Invalidate cache rồi silent load — không force spam khi TTL còn; sau invalidate vẫn refetch.
     onRefresh: () => {
-      void load(true, false, { force: true });
-      void loadStats({ force: true });
-      if (statusFilterRef.current !== 'all') void loadChip(false, { force: true });
+      invalidateWorkTasksCache();
+      void load(true, false, { force: false });
+      void loadStats({ force: false });
+      if (statusFilterRef.current !== 'all') void loadChip(false, { force: false });
     },
     enabled: Boolean(userId) && filtersReady,
     modes: REALTIME_TASK,
@@ -1427,6 +1451,7 @@ export default function WorkScreen() {
   };
 
   const styles = useMemo(() => createStyles(colors, insets.bottom), [colors, insets.bottom]);
+  const createCompanyId = filterCompany || ownCompanyId || null;
 
   const renderTaskCard = (task: WorkTask) => {
     const done = isTaskDone(task.status);
@@ -1950,6 +1975,27 @@ export default function WorkScreen() {
         images={gallery?.images || []}
         initialIndex={gallery?.index || 0}
         onClose={() => setGallery(null)}
+      />
+
+      <TapHighlight
+        style={styles.fab}
+        onPress={() => setAssignOpen(true)}
+      >
+        <Ionicons name="add" size={22} color="#fff" />
+        <Text style={styles.fabTxt}>Giao việc</Text>
+      </TapHighlight>
+
+      <AssignWorkModal
+        visible={assignOpen}
+        companyId={createCompanyId}
+        isAdmin={assignAdmin}
+        companies={companies}
+        sharedWorkspaceMode={false}
+        onClose={() => setAssignOpen(false)}
+        onCreated={() => {
+          void load(false, false, { force: true });
+          void loadStats({ force: true });
+        }}
       />
 
       <WorkFilterSheet

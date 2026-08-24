@@ -75,6 +75,53 @@ function sumCrmDealTabCountsFromStageCounts(stagesDeal, countsMap = {}) {
   return { deal, customer, merged, lost, total: merged + lost };
 }
 
+/**
+ * Cột dùng cho KPI Deal tab (khi tách KH) — trước Thắng + Thua; không gồm cột Thắng.
+ * Khớp `preWonStagesForDealStats` ở frontend (lib/crmPipelineTabs.js), có xét theo từng
+ * pipeline khi "Tất cả công ty" gộp nhiều pipeline (mỗi pipeline 1 cột Thắng riêng).
+ */
+function preWonStagesForDealStats(stagesDeal) {
+  const stages = Array.isArray(stagesDeal) ? stagesDeal : [];
+  const stagesByPipeline = groupStagesByPipeline(stages);
+  const multiPipeline = stagesByPipeline.size > 1;
+  return stages.filter((s) => {
+    if (isLostOrCancelledPipelineStage(s)) return true;
+    const pipeStages = multiPipeline
+      ? (stagesByPipeline.get(String(s?.pipeline_id || '__none__')) || stages)
+      : stages;
+    const wonStage = resolveDealWonAnchorStage(pipeStages);
+    const wonAnchorOrder = wonStage ? stageOrderIndex(wonStage) : null;
+    if (wonAnchorOrder == null) return !s?.is_won;
+    if (wonStage && String(s?.id) === String(wonStage.id)) return false;
+    return stageOrderIndex(s) < wonAnchorOrder;
+  });
+}
+
+/**
+ * Cột dùng cho KPI tab Khách hàng (khi tách KH) — cột Thắng + các cột sau Thắng
+ * (SX, VC, Hoàn thành…), không gồm Thua/Hủy. Khớp `customerTabStages` từ
+ * `splitDealStagesForCrmTabs` ở frontend (lib/crmPipelineTabs.js), có xét theo từng
+ * pipeline khi "Tất cả công ty" gộp nhiều pipeline.
+ */
+function postWonStagesForCustomerStats(stagesDeal) {
+  const stages = Array.isArray(stagesDeal) ? stagesDeal : [];
+  const stagesByPipeline = groupStagesByPipeline(stages);
+  const multiPipeline = stagesByPipeline.size > 1;
+  return stages.filter((s) => {
+    if (isLostOrCancelledPipelineStage(s)) return false;
+    const pipeStages = multiPipeline
+      ? (stagesByPipeline.get(String(s?.pipeline_id || '__none__')) || stages)
+      : stages;
+    const wonStage = resolveDealWonAnchorStage(pipeStages);
+    const wonAnchorOrder = wonStage ? stageOrderIndex(wonStage) : null;
+    if (wonAnchorOrder == null) return false;
+    if (wonStage && String(s?.id) === String(wonStage.id)) return true;
+    return stageOrderIndex(s) > wonAnchorOrder;
+  });
+}
+
 module.exports = {
   sumCrmDealTabCountsFromStageCounts,
+  preWonStagesForDealStats,
+  postWonStagesForCustomerStats,
 };

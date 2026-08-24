@@ -4,6 +4,7 @@ import {
   NavigationContainer,
   type Theme,
 } from '@react-navigation/native';
+import { QueryClientProvider } from '@tanstack/react-query';
 import { ShareIntentProvider } from 'expo-share-intent';
 import { StatusBar } from 'expo-status-bar';
 import React, { useEffect, useMemo, useState } from 'react';
@@ -41,6 +42,8 @@ import {
   isBubbleChatNavState,
 } from './src/lib/bubbleNavInitialState';
 import { hasPendingBubbleChat, peekPendingBubbleChatSync } from './src/lib/bubbleChatPending';
+import { flushPendingNotificationNav } from './src/lib/notificationNavigation';
+import { queryClient, setupQueryAppBridges } from './src/lib/queryClient';
 
 function buildNavTheme(Colors: ThemeColors, mode: 'light' | 'dark'): Theme {
   const base = mode === 'dark' ? DarkTheme : DefaultTheme;
@@ -112,6 +115,11 @@ function Gate() {
   useEffect(() => {
     if (!token) setNavReady(false);
   }, [token]);
+
+  useEffect(() => {
+    if (!token || loading || !navReady) return;
+    void flushPendingNotificationNav();
+  }, [token, loading, navReady]);
 
   if (!loading && !token) {
     return (
@@ -194,6 +202,8 @@ function AppBody() {
 }
 
 export default function App() {
+  useEffect(() => setupQueryAppBridges(), []);
+
   return (
     <SafeAreaProvider>
       <ShareIntentProvider
@@ -202,15 +212,17 @@ export default function App() {
           disabled: Platform.OS !== 'android',
         }}
       >
-        <ThemeProvider>
-          <NetworkStatusProvider>
-            <KeyboardInsetProvider>
-              <AuthProvider>
-                <AppBody />
-              </AuthProvider>
-            </KeyboardInsetProvider>
-          </NetworkStatusProvider>
-        </ThemeProvider>
+        <QueryClientProvider client={queryClient}>
+          <ThemeProvider>
+            <NetworkStatusProvider>
+              <KeyboardInsetProvider>
+                <AuthProvider>
+                  <AppBody />
+                </AuthProvider>
+              </KeyboardInsetProvider>
+            </NetworkStatusProvider>
+          </ThemeProvider>
+        </QueryClientProvider>
       </ShareIntentProvider>
     </SafeAreaProvider>
   );

@@ -216,7 +216,10 @@ export default function MenuScreen() {
                         <View
                           style={[
                             styles.tileIcon,
-                            { backgroundColor: (interactive && pressed ? it.color + '44' : it.color + '22') },
+                            {
+                              // Nền đậm hơn (33) — trên A07/LCD yếu, red+22 dễ trông nâu bẩn.
+                              backgroundColor: interactive && pressed ? `${it.color}44` : `${it.color}33`,
+                            },
                             interactive && styles.tileIconBorder,
                             interactive && pressed && { borderColor: it.color, borderWidth: 1.5 },
                           ]}

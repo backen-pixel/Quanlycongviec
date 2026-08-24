@@ -1,6 +1,35 @@
 import { api } from '../api/client';
 import type { LeadMember } from './projectDetailApi';
 import { invalidateWorkTasksCache } from './workTasksApi';
+import {
+  QUERY_TTL_MEDIUM,
+  QUERY_TTL_SHORT,
+  cachedQuery,
+  invalidateQuery,
+  invalidateQueryPrefix,
+} from './queryCache';
+
+const K_LEAD_ASSIGN = 'sx:leadAssignments:';
+const K_LEAD_MEMBERS = 'sx:leadMembers:';
+const K_ASSIGN_COLUMNS = 'sx:assignmentColumns';
+
+export function leadSharedAssignmentsCacheKey(leadId: string): string {
+  return `${K_LEAD_ASSIGN}${leadId}`;
+}
+
+export function leadSharedMembersCacheKey(leadId: string): string {
+  return `${K_LEAD_MEMBERS}${leadId}`;
+}
+
+export function invalidateLeadSharedAssignmentsCache(leadId?: string | null): void {
+  if (leadId) invalidateQuery(leadSharedAssignmentsCacheKey(String(leadId)));
+  else invalidateQueryPrefix(K_LEAD_ASSIGN);
+}
+
+export function invalidateLeadSharedMembersCache(leadId?: string | null): void {
+  if (leadId) invalidateQuery(leadSharedMembersCacheKey(String(leadId)));
+  else invalidateQueryPrefix(K_LEAD_MEMBERS);
+}
 
 export type AssignModule = 'crm' | 'production' | 'logistics';
 export type ModuleTab = 'all' | AssignModule;
@@ -25,6 +54,8 @@ export type SharedWorkspaceMember = {
   user?: SharedWorkspacePerson | null;
 };
 
+export type PhatSinhKind = 'tempered_glass' | 'glass_unpainted' | 'glass_painted' | '';
+
 export type SharedWorkspaceAssignment = {
   id: string;
   title: string;
@@ -38,10 +69,26 @@ export type SharedWorkspaceAssignment = {
   assignment_module?: AssignModule | string | null;
   task_source_type?: TaskSourceType | string | null;
   employee_error_module?: AssignModule | string | null;
+  department_id?: string | null;
+  phat_sinh_kind?: string | null;
+  executor_company_id?: string | null;
   assignee_id?: string | null;
   assignee?: SharedWorkspacePerson | null;
   assignees?: SharedWorkspacePerson[];
   crm_task?: { id?: string; notes?: string | null } | null;
+};
+
+export type ParticipantCompany = {
+  id: string;
+  label?: string | null;
+  name?: string | null;
+  short_name?: string | null;
+  roles?: string[];
+};
+
+export type DepartmentItem = {
+  id: string;
+  name: string;
 };
 
 export type AssignmentColumn = {
@@ -62,12 +109,15 @@ export type CompanyScope = {
   companyId?: string | null;
   sxCompanyId?: string | null;
   vcCompanyId?: string | null;
+  /** Xưởng nhận chọn trên form — ưu tiên khi lọc NV khối SX. */
+  executorCompanyId?: string | null;
 };
 
 export type CreateSharedAssignmentPayload = {
   title: string;
   description?: string | null;
   priority?: AssignPriority;
+  status?: AssignStatus;
   column_id?: string | null;
   deadline?: string | null;
   assignee_ids: string[];
@@ -75,6 +125,9 @@ export type CreateSharedAssignmentPayload = {
   company_id?: string | null;
   task_source_type: TaskSourceType;
   employee_error_module?: AssignModule | null;
+  phat_sinh_kind?: string | null;
+  department_id?: string | null;
+  executor_company_id?: string | null;
 };
 
 export type UpdateSharedAssignmentPayload = {
@@ -88,6 +141,9 @@ export type UpdateSharedAssignmentPayload = {
   assignment_module?: AssignModule;
   task_source_type?: TaskSourceType;
   employee_error_module?: AssignModule | null;
+  phat_sinh_kind?: string | null;
+  department_id?: string | null;
+  executor_company_id?: string | null;
 };
 
 const LOGISTICS_ROLES = new Set([
@@ -135,6 +191,9 @@ function mapAssignment(row: Record<string, unknown>): SharedWorkspaceAssignment 
     assignment_module: row.assignment_module != null ? String(row.assignment_module) : null,
     task_source_type: row.task_source_type != null ? String(row.task_source_type) : null,
     employee_error_module: row.employee_error_module != null ? String(row.employee_error_module) : null,
+    department_id: row.department_id != null ? String(row.department_id) : null,
+    phat_sinh_kind: row.phat_sinh_kind != null ? String(row.phat_sinh_kind) : null,
+    executor_company_id: row.executor_company_id != null ? String(row.executor_company_id) : null,
     assignee_id: row.assignee_id != null ? String(row.assignee_id) : null,
     assignee: mapPerson(row.assignee),
     assignees,
@@ -198,10 +257,60 @@ export function priorityLabel(priority?: string | null): string {
 }
 
 export function companyIdForAssignModule(moduleId: string, scope: CompanyScope): string | null {
-  if (moduleId === 'production') return scope.sxCompanyId || scope.companyId || null;
+  if (moduleId === 'production') {
+    return scope.executorCompanyId || scope.sxCompanyId || scope.companyId || null;
+  }
   if (moduleId === 'logistics') return scope.vcCompanyId || scope.companyId || null;
   if (moduleId === 'crm') return scope.companyId || null;
   return scope.companyId || null;
+}
+
+export function phatSinhKindLabel(kind?: string | null): string | null {
+  if (kind === 'tempered_glass') return 'Kính CL';
+  if (kind === 'glass_unpainted') return 'Kính không sơn';
+  if (kind === 'glass_painted') return 'Kính có sơn';
+  return null;
+}
+
+/** Gợi ý hạn từ SLA kính (xấp xỉ lịch làm việc — backend vẫn có thể tinh chỉnh). */
+export function suggestPhatSinhDeadline(
+  kind: string,
+  cfg?: {
+    deadline_clock?: { hour?: number; minute?: number };
+    cutoff_clock?: { hour?: number; minute?: number };
+    tempered_glass_days?: number;
+  } | null,
+): Date | null {
+  if (!kind) return null;
+  const dh = Number(cfg?.deadline_clock?.hour);
+  const dm = Number(cfg?.deadline_clock?.minute);
+  const hour = Number.isFinite(dh) ? dh : 17;
+  const minute = Number.isFinite(dm) ? dm : 30;
+  const ch = Number(cfg?.cutoff_clock?.hour);
+  const cm = Number(cfg?.cutoff_clock?.minute);
+  const cutoffH = Number.isFinite(ch) ? ch : 12;
+  const cutoffM = Number.isFinite(cm) ? cm : 0;
+
+  const now = new Date();
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+  const addDays = (base: Date, n: number) => {
+    const d = new Date(base);
+    d.setDate(d.getDate() + n);
+    return d;
+  };
+  let day = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if (kind === 'tempered_glass') {
+    const days = Number(cfg?.tempered_glass_days) > 0 ? Number(cfg?.tempered_glass_days) : 3;
+    day = addDays(day, days);
+  } else if (kind === 'glass_unpainted') {
+    if (nowMin >= cutoffH * 60 + cutoffM) day = addDays(day, 1);
+  } else if (kind === 'glass_painted') {
+    if (nowMin >= hour * 60 + minute) day = addDays(day, 1);
+  } else {
+    return null;
+  }
+  day.setHours(hour, minute, 0, 0);
+  return day;
 }
 
 function memberBelongsToCompany(member: SharedWorkspaceMember, scopeCompanyId: string | null): boolean {
@@ -259,51 +368,137 @@ export function nextAssignStatus(status?: string | null): AssignStatus {
   return 'completed';
 }
 
-export async function fetchLeadSharedAssignments(leadId: string): Promise<SharedWorkspaceAssignment[]> {
-  const { data } = await api.get<{ assignments?: unknown[] }>(`/crm/leads/${leadId}/assignments`);
-  const list = Array.isArray(data?.assignments) ? data.assignments : [];
-  return list.map((row) => mapAssignment(row as Record<string, unknown>));
+export async function fetchLeadSharedAssignments(
+  leadId: string,
+  opts?: { force?: boolean; signal?: AbortSignal },
+): Promise<SharedWorkspaceAssignment[]> {
+  const id = String(leadId);
+  return cachedQuery<SharedWorkspaceAssignment[]>({
+    key: leadSharedAssignmentsCacheKey(id),
+    ttlMs: QUERY_TTL_SHORT,
+    force: opts?.force,
+    signal: opts?.signal,
+    fetcher: async () => {
+      const { data } = await api.get<{ assignments?: unknown[] }>(`/crm/leads/${id}/assignments`);
+      const list = Array.isArray(data?.assignments) ? data.assignments : [];
+      return list.map((row) => mapAssignment(row as Record<string, unknown>));
+    },
+  });
 }
 
-export async function fetchSharedWorkspaceMembers(leadId: string): Promise<SharedWorkspaceMember[]> {
-  const { data } = await api.get<unknown>(`/crm/leads/${leadId}/members`);
-  const list = Array.isArray(data) ? data : [];
-  return list.map((row) => {
-    const r = row as Record<string, unknown>;
-    const user = mapPerson(r.user);
-    return {
-      user_id: String(r.user_id || user?.id || ''),
-      role: r.role != null ? String(r.role) : undefined,
-      company_id: r.company_id != null ? String(r.company_id) : (user?.company_id ?? null),
-      user,
-    };
-  }).filter((m) => m.user_id);
+export async function fetchSharedWorkspaceMembers(
+  leadId: string,
+  opts?: { force?: boolean; signal?: AbortSignal },
+): Promise<SharedWorkspaceMember[]> {
+  const id = String(leadId);
+  return cachedQuery<SharedWorkspaceMember[]>({
+    key: leadSharedMembersCacheKey(id),
+    ttlMs: QUERY_TTL_SHORT,
+    force: opts?.force,
+    signal: opts?.signal,
+    fetcher: async () => {
+      const { data } = await api.get<unknown>(`/crm/leads/${id}/members`);
+      const list = Array.isArray(data) ? data : [];
+      return list.map((row) => {
+        const r = row as Record<string, unknown>;
+        const user = mapPerson(r.user);
+        return {
+          user_id: String(r.user_id || user?.id || ''),
+          role: r.role != null ? String(r.role) : undefined,
+          company_id: r.company_id != null ? String(r.company_id) : (user?.company_id ?? null),
+          user,
+        };
+      }).filter((m) => m.user_id);
+    },
+  });
 }
 
-export async function fetchAssignmentColumns(): Promise<AssignmentColumn[]> {
-  const { data } = await api.get<{ columns?: unknown[] }>('/crm/assignments/columns');
-  const list = Array.isArray(data?.columns) ? data.columns : [];
-  return list.map((row) => {
-    const r = row as Record<string, unknown>;
-    return {
-      id: String(r.id || ''),
-      name: String(r.name || 'Cột'),
-      color: r.color != null ? String(r.color) : null,
-    };
-  }).filter((c) => c.id);
+export async function fetchAssignmentColumns(
+  opts?: { force?: boolean; signal?: AbortSignal },
+): Promise<AssignmentColumn[]> {
+  return cachedQuery<AssignmentColumn[]>({
+    key: K_ASSIGN_COLUMNS,
+    ttlMs: QUERY_TTL_MEDIUM,
+    force: opts?.force,
+    signal: opts?.signal,
+    fetcher: async () => {
+      const { data } = await api.get<{ columns?: unknown[] }>('/crm/assignments/columns');
+      const list = Array.isArray(data?.columns) ? data.columns : [];
+      return list.map((row) => {
+        const r = row as Record<string, unknown>;
+        return {
+          id: String(r.id || ''),
+          name: String(r.name || 'Cột'),
+          color: r.color != null ? String(r.color) : null,
+        };
+      }).filter((c) => c.id);
+    },
+  });
 }
 
 export async function createLeadSharedAssignment(
   leadId: string,
   payload: CreateSharedAssignmentPayload,
-): Promise<SharedWorkspaceAssignment> {
-  const { data } = await api.post<{ assignment?: Record<string, unknown> }>(
-    `/crm/leads/${leadId}/assignments`,
-    payload,
-  );
-  const row = (data?.assignment || data || {}) as Record<string, unknown>;
+): Promise<{ assignment: SharedWorkspaceAssignment; taskId: string | null }> {
+  const { data } = await api.post<{
+    assignment?: Record<string, unknown>;
+    task?: { id?: string };
+  }>(`/crm/leads/${leadId}/assignments`, payload);
+  const row = (data?.assignment || {}) as Record<string, unknown>;
+  const assignment = mapAssignment(row);
+  const taskId = data?.task?.id != null
+    ? String(data.task.id)
+    : (assignment.crm_task_id || assignment.crm_task?.id || null);
   invalidateWorkTasksCache();
-  return mapAssignment(row);
+  invalidateLeadSharedAssignmentsCache(leadId);
+  return { assignment, taskId };
+}
+
+export async function fetchProjectParticipantCompanies(
+  projectId: string,
+): Promise<ParticipantCompany[]> {
+  const { data } = await api.get<{ companies?: unknown[] }>(
+    `/production/projects/${projectId}/participant-companies`,
+  );
+  const list = Array.isArray(data?.companies) ? data.companies : [];
+  return list.map((row) => {
+    const r = row as Record<string, unknown>;
+    const roles = Array.isArray(r.roles) ? r.roles.map(String) : [];
+    return {
+      id: String(r.id || ''),
+      label: r.label != null ? String(r.label) : null,
+      name: r.name != null ? String(r.name) : null,
+      short_name: r.short_name != null ? String(r.short_name) : null,
+      roles,
+    };
+  }).filter((c) => c.id);
+}
+
+export async function fetchDepartments(companyId: string): Promise<DepartmentItem[]> {
+  const { data } = await api.get<{ departments?: unknown[] } | unknown[]>(
+    '/departments',
+    { params: { company_id: companyId } },
+  );
+  const list = Array.isArray(data)
+    ? data
+    : (Array.isArray((data as { departments?: unknown[] })?.departments)
+      ? (data as { departments: unknown[] }).departments
+      : []);
+  return list.map((row) => {
+    const r = row as Record<string, unknown>;
+    return {
+      id: String(r.id || ''),
+      name: String(r.name || 'Bộ phận'),
+    };
+  }).filter((d) => d.id);
+}
+
+export async function fetchScheduleConfig(companyId: string): Promise<Record<string, unknown>> {
+  const { data } = await api.get<Record<string, unknown>>(
+    '/production/schedule-config',
+    { params: { company_id: companyId } },
+  );
+  return data && typeof data === 'object' ? data : {};
 }
 
 export async function updateSharedAssignment(
@@ -315,13 +510,16 @@ export async function updateSharedAssignment(
     payload,
   );
   const row = (data?.assignment || data || {}) as Record<string, unknown>;
+  const mapped = mapAssignment({ ...row, id: assignmentId });
   invalidateWorkTasksCache();
-  return mapAssignment({ ...row, id: assignmentId });
+  invalidateLeadSharedAssignmentsCache(mapped.lead_id || null);
+  return mapped;
 }
 
 export async function deleteSharedAssignment(assignmentId: string): Promise<void> {
   await api.delete(`/crm/assignments/${assignmentId}`);
   invalidateWorkTasksCache();
+  invalidateLeadSharedAssignmentsCache();
 }
 
 export async function fetchSpawnedAdditionalDeals(parentDealId: string): Promise<SpawnedDealItem[]> {
@@ -358,5 +556,142 @@ export function formatAssignDeadline(iso?: string | null): string {
     });
   } catch {
     return '';
+  }
+}
+
+/* ── Giao việc board SX (tạo phân công production) ── */
+
+export const PRIORITY_LABEL: Record<string, string> = {
+  low: 'Thấp',
+  medium: 'TB',
+  high: 'Cao',
+  urgent: 'Gấp',
+};
+
+export type DealPickerItem = {
+  id: string;
+  code?: string | null;
+  title?: string | null;
+  type?: string | null;
+  project_id?: string | null;
+  company_id?: string | null;
+  customer?: { full_name?: string | null } | null;
+  project?: { id?: string; code?: string | null; name?: string | null } | null;
+};
+
+export type AssignmentLookupUser = {
+  id: string;
+  full_name?: string | null;
+  email?: string | null;
+  avatar?: string | null;
+  role?: string | null;
+};
+
+export type CreateCrmAssignmentPayload = {
+  title: string;
+  description?: string | null;
+  priority?: string;
+  status?: string;
+  deadline?: string | null;
+  assignee_ids: string[];
+  column_id?: string | null;
+  company_id?: string | null;
+  lead_id?: string | null;
+  assignment_module?: AssignModule | string;
+  task_source_type?: string;
+  schedule_enabled?: boolean;
+  scheduled_start?: string | null;
+  recurrence_enabled?: boolean;
+  recurrence_type?: string | null;
+  recurrence_interval?: number | null;
+  recurrence_end_at?: string | null;
+};
+
+export async function fetchDealPicker(opts: {
+  q?: string;
+  companyId?: string | null;
+  assigneeId?: string | null;
+  limit?: number;
+  forModule?: AssignModule | string;
+} = {}): Promise<DealPickerItem[]> {
+  const params: Record<string, string> = {
+    type: 'deal',
+    for_module: String(opts.forModule || 'production'),
+    limit: String(opts.limit && opts.limit > 0 ? Math.min(opts.limit, 50) : 20),
+  };
+  if (opts.q?.trim()) params.q = opts.q.trim();
+  if (opts.companyId) params.company_id = opts.companyId;
+  if (opts.assigneeId) params.assignee_id = opts.assigneeId;
+  const { data } = await api.get<{ results?: DealPickerItem[]; total?: number }>('/crm/leads/picker', { params });
+  return Array.isArray(data?.results) ? data.results : [];
+}
+
+export async function fetchAssignmentLookups(companyId?: string | null): Promise<{
+  users: AssignmentLookupUser[];
+}> {
+  const params: Record<string, string> = {};
+  if (companyId) params.company_id = companyId;
+  const { data } = await api.get<{ users?: AssignmentLookupUser[] }>('/crm/assignments/lookups', {
+    params,
+  });
+  return {
+    users: Array.isArray(data?.users)
+      ? data.users
+        .map((u) => ({
+          id: String(u.id),
+          full_name: u.full_name ?? null,
+          email: u.email ?? null,
+          avatar: u.avatar ?? null,
+          role: u.role ?? null,
+        }))
+        .filter((u) => u.id)
+      : [],
+  };
+}
+
+/** Giao việc SX — POST /crm/assignments (module production). */
+export async function createCrmAssignment(
+  payload: CreateCrmAssignmentPayload,
+): Promise<{ id?: string; scheduleId?: string }> {
+  const { data } = await api.post<Record<string, unknown>>(
+    '/crm/assignments',
+    {
+      assignment_module: 'production',
+      task_source_type: 'customer_request',
+      ...payload,
+    },
+  );
+  invalidateWorkTasksCache();
+  if (payload.lead_id) invalidateLeadSharedAssignmentsCache(String(payload.lead_id));
+  const assignment = (data?.assignment && typeof data.assignment === 'object')
+    ? data.assignment as { id?: string }
+    : null;
+  const schedule = (data?.schedule && typeof data.schedule === 'object')
+    ? data.schedule as { id?: string }
+    : null;
+  return {
+    id: assignment?.id != null
+      ? String(assignment.id)
+      : (data?.id != null ? String(data.id) : undefined),
+    scheduleId: schedule?.id != null ? String(schedule.id) : undefined,
+  };
+}
+
+/** File yêu cầu sau khi tạo assignment (hoặc schedule). */
+export async function uploadAssignmentReqFiles(
+  targetId: string,
+  files: { uri: string; name: string; mime: string }[],
+  opts?: { schedule?: boolean },
+): Promise<void> {
+  if (!targetId || !files.length) return;
+  const { postMultipart } = await import('../api/client');
+  const base = opts?.schedule
+    ? `/crm/assignments/schedules/${targetId}/files`
+    : `/crm/assignments/${targetId}/files`;
+  for (const f of files) {
+    const form = new FormData();
+    form.append('file', { uri: f.uri, name: f.name, type: f.mime } as unknown as Blob);
+    form.append('kind', 'req');
+    await postMultipart(base, form);
   }
 }

@@ -1367,6 +1367,11 @@ export default function CRMDashboard() {
   /** Bump để refetch counts + pages Deadline khi socket / live-version. */
   const [deadlineRealtimeNonce, setDeadlineRealtimeNonce] = useState(0);
   const deadlineRealtimeTimerRef = useRef(null);
+  /** Chữ ký phạm vi Deadline (không gồm realtime nonce) — dùng để phân biệt "đổi bộ lọc thật"
+   * (cần xoá sạch tiến độ đã tải) với "chỉ tick realtime" (chỉ nên làm mới TỔNG SỐ, giữ nguyên
+   * các trang deal/lead đã cuộn tải — nếu không, mỗi lần có người khác sửa CRM sẽ xoá sạch tiến
+   * độ cuộn của người đang xem Deadline, khiến cuộn tới cuối cột vẫn không bao giờ tải hết). */
+  const deadlineScopeSignatureRef = useRef(null);
   const viewModeRef = useRef(viewMode);
   viewModeRef.current = viewMode;
   /** Map { lead_id → {count,last_at,last_user_id} } cho view "Bình luận" */
@@ -3351,10 +3356,18 @@ export default function CRMDashboard() {
 
     if (needsListRefresh) {
       const t = ctx.pipelineType === 'lead' ? 'lead' : 'deal';
-      await Promise.all([
-        ctx.refreshKanbanListAfterCreate?.(t),
-        ctx.refreshCrmDashboardSlice?.(t),
-      ]);
+      // Đang ở tab Deadline: bỏ qua refreshKanbanListAfterCreate — nó THAY THẾ TOÀN BỘ
+      // allDeals/allLeads bằng 1 trang mới theo thứ tự Kanban mặc định, xoá mất các dòng đã
+      // tải riêng cho từng bucket Deadline (khiến cuộn hoài không lên thêm được nữa). Tab
+      // Deadline tự làm mới qua scheduleDeadlineRealtimeRefresh (chỉ cập nhật tổng số).
+      if (viewModeRef.current === 'deadline') {
+        await ctx.refreshCrmDashboardSlice?.(t);
+      } else {
+        await Promise.all([
+          ctx.refreshKanbanListAfterCreate?.(t),
+          ctx.refreshCrmDashboardSlice?.(t),
+        ]);
+      }
       setLastSyncAt(new Date());
       lastCrmRealtimeAtRef.current = Date.now();
       ctx.scheduleDeadlineRealtimeRefresh?.();
@@ -3716,11 +3729,25 @@ export default function CRMDashboard() {
           hasPhone: Number(lead.hasPhone) || 0,
           noPhone: Number(lead.noPhone) || 0,
           all: Number(lead.all) || 0,
+          active: Number.isFinite(Number(lead.active)) ? Number(lead.active) : null,
         },
         deal: {
           hasPhone: Number(deal.hasPhone) || 0,
           noPhone: Number(deal.noPhone) || 0,
           all: Number(deal.all) || 0,
+          dashboardKpis: deal.dashboardKpis && typeof deal.dashboardKpis === 'object' ? deal.dashboardKpis : null,
+          dashboardKpisPreWon: deal.dashboardKpisPreWon && typeof deal.dashboardKpisPreWon === 'object'
+            ? deal.dashboardKpisPreWon
+            : null,
+          dashboardKpisPostWon: deal.dashboardKpisPostWon && typeof deal.dashboardKpisPostWon === 'object'
+            ? deal.dashboardKpisPostWon
+            : null,
+          // Tổng giá trị/giá trị kỳ vọng THEO TỪNG STAGE — dùng để hiện đúng "Dự kiến"/"KV"
+          // trên đầu mỗi cột Kanban (toàn bộ deal của cột, không chỉ số thẻ đã tải).
+          valueSums: deal.valueSums && typeof deal.valueSums === 'object' ? deal.valueSums : null,
+          weightedValueSums: deal.weightedValueSums && typeof deal.weightedValueSums === 'object'
+            ? deal.weightedValueSums
+            : null,
         },
       });
       const dealCounts = deal.counts && typeof deal.counts === 'object' ? deal.counts : {};
@@ -5048,8 +5075,6 @@ export default function CRMDashboard() {
     [pipelinePhoneTotals, pipelineType],
   );
 
-  const leadActiveCount = useMemo(() => leads.filter(isActiveCrmPipelineItem).length, [leads]);
-
   /**
    * KPI "Tổng" dùng `total` từ API (bộ lọc chính đã server-side).
    * Chỉ còn đếm trên client khi lọc Facebook page hoặc referrer «Chưa có».
@@ -5078,6 +5103,20 @@ export default function CRMDashboard() {
     const t = loadMoreState.leadTotal;
     return typeof t === 'number' ? t : leads.length;
   }, [kpiUsesClientOnlyFilters, leads.length, loadMoreState.leadTotal, pipelinePhoneTotals.lead, filterPhone]);
+
+  /**
+   * "Đang xử lý" phải tính trên TOÀN BỘ lead khớp bộ lọc (không chỉ ~40 thẻ đã tải vào Kanban do
+   * cuộn lười) — dùng `active` do server tính sẵn trong /crm/filter-summary (cộng counts theo
+   * đúng leadStages đã resolve cho RPC, tránh lệch id nếu stagesLead ở client là 1 tập con khác
+   * phạm vi — vd khi "Tất cả công ty" gộp nhiều pipeline mà Kanban chỉ hiển thị 1 pipeline).
+   * Chỉ fallback về đếm client khi filter-summary không dùng được (lọc theo Facebook page/referrer trống).
+   */
+  const leadActiveCount = useMemo(() => {
+    if (kpiUsesClientOnlyFilters) return leads.filter(isActiveCrmPipelineItem).length;
+    const active = pipelinePhoneTotals.lead?.active;
+    if (typeof active === 'number') return active;
+    return leads.filter(isActiveCrmPipelineItem).length;
+  }, [kpiUsesClientOnlyFilters, pipelinePhoneTotals.lead, leads]);
 
   /** Ghi chú khi KPI tổng ≠ số thẻ Kanban (lọc SĐT mặc định). */
   const leadKpiSublabel = useMemo(() => {
@@ -5226,14 +5265,31 @@ export default function CRMDashboard() {
     };
   }, [dashboardScopeCompanyId, kpiUsesClientOnlyFilters, allCompaniesPipelineKpi]);
 
-  const mergedDealKpisForDisplay = useMemo(
-    () => applyAllCompaniesPipelineKpi(mergedDealKpisFromFilters),
-    [applyAllCompaniesPipelineKpi, mergedDealKpisFromFilters],
-  );
+  /**
+   * Bảng KPI Deal (Tổng/Đang xử lý/Hủy-Thua/Giá trị dự kiến/Giá trị kỳ vọng) phải tính trên
+   * TOÀN BỘ deal khớp bộ lọc, không chỉ ~40 thẻ đã tải vào Kanban do cuộn lười — dùng
+   * `dashboardKpis`/`dashboardKpisPreWon` server tính sẵn trong /crm/filter-summary (cùng
+   * dealStages đã resolve, đảm bảo khớp id). Chỉ fallback về tính trên `deals` client khi
+   * lọc theo Facebook page/referrer trống (server không hỗ trợ) hoặc RPC chưa có 2 field này.
+   */
+  const mergedDealKpisForDisplay = useMemo(() => {
+    const base = (!kpiUsesClientOnlyFilters && pipelinePhoneTotals.deal?.dashboardKpis)
+      || mergedDealKpisFromFilters;
+    return applyAllCompaniesPipelineKpi(base);
+  }, [kpiUsesClientOnlyFilters, pipelinePhoneTotals.deal, mergedDealKpisFromFilters, applyAllCompaniesPipelineKpi]);
 
-  const dealSalesKpisForDisplay = useMemo(
-    () => applyAllCompaniesPipelineKpi(dealSalesKpisFromFilters),
-    [applyAllCompaniesPipelineKpi, dealSalesKpisFromFilters],
+  const dealSalesKpisForDisplay = useMemo(() => {
+    const base = (!kpiUsesClientOnlyFilters && pipelinePhoneTotals.deal?.dashboardKpisPreWon)
+      || dealSalesKpisFromFilters;
+    return applyAllCompaniesPipelineKpi(base);
+  }, [kpiUsesClientOnlyFilters, pipelinePhoneTotals.deal, dealSalesKpisFromFilters, applyAllCompaniesPipelineKpi]);
+
+  /** KPI tab KH hiển thị — ưu tiên tổng server (toàn bộ khớp bộ lọc), fallback về tính trên
+   * customerTabDeals (client) khi lọc theo Facebook page/referrer trống hoặc server chưa hỗ trợ. */
+  const customerKpisForDisplay = useMemo(
+    () => (!kpiUsesClientOnlyFilters && pipelinePhoneTotals.deal?.dashboardKpisPostWon)
+      || customerKpisFromFilters,
+    [kpiUsesClientOnlyFilters, pipelinePhoneTotals.deal, customerKpisFromFilters],
   );
 
   const ledgerMapLead = dataLead?.ledger_net_by_lead || {};
@@ -5333,18 +5389,30 @@ export default function CRMDashboard() {
       customDateTo,
     });
 
-    deadlineBucketPagesGenerationRef.current += 1;
-    deadlineBucketPagesLoadingRef.current.clear();
-    deadlineBucketPageStateRef.current = {};
-    setDeadlineBucketPageState({});
-    setDeadlineBucketCounts(null);
+    // Chữ ký phạm vi THẬT (không gồm realtime nonce) — chỉ wipe sạch tiến độ đã tải khi cái này
+    // đổi (đổi công ty/bộ lọc/pipeline). Nếu chỉ có realtime nonce tick (người khác sửa CRM) thì
+    // signature không đổi → chỉ làm mới TỔNG SỐ, giữ nguyên các trang đã cuộn tải được.
+    const signature = [
+      deadlineStageIdsKey, deadlineLoadScopeKey, deadlineConfigKey, pipelineType,
+      isCompanyScopedAdmin, user?.company_id, isAdmin,
+    ].join('||');
+    const isRealFilterChange = deadlineScopeSignatureRef.current !== signature;
+    deadlineScopeSignatureRef.current = signature;
+
+    if (isRealFilterChange) {
+      deadlineBucketPagesGenerationRef.current += 1;
+      deadlineBucketPagesLoadingRef.current.clear();
+      deadlineBucketPageStateRef.current = {};
+      setDeadlineBucketPageState({});
+      setDeadlineBucketCounts(null);
+      // Xóa stamp Deadline cũ khi đổi lọc/công ty — tránh thẻ lệch cột (vd. Quá hạn/Ngày mai).
+      const stripDeadlineBucket = (rows) => (rows || []).map((row) => (
+        row?.deadline_bucket ? { ...row, deadline_bucket: undefined } : row
+      ));
+      setAllLeads((prev) => stripDeadlineBucket(prev));
+      setAllDeals((prev) => stripDeadlineBucket(prev));
+    }
     setDeadlineBucketCountsLoading(true);
-    // Xóa stamp Deadline cũ khi đổi lọc/công ty — tránh thẻ lệch cột (vd. Quá hạn/Ngày mai).
-    const stripDeadlineBucket = (rows) => (rows || []).map((row) => (
-      row?.deadline_bucket ? { ...row, deadline_bucket: undefined } : row
-    ));
-    setAllLeads((prev) => stripDeadlineBucket(prev));
-    setAllDeals((prev) => stripDeadlineBucket(prev));
     void api
       .post('/crm/deadline-bucket-counts', {
         stage_ids: deadlineStageIds,
@@ -5352,9 +5420,21 @@ export default function CRMDashboard() {
       }, { params })
       .then((res) => {
         if (seq !== deadlineBucketCountsSeqRef.current) return;
-        const counts = res.data?.counts || {};
+        const counts = { ...(res.data?.counts || {}) };
+        // Chỉ tick realtime (không đổi bộ lọc thật): không để tổng số mới < tiến độ đã tải được
+        // của bucket đó — nếu không, khi snapshot server xoay vòng (hết hạn cache) mà tổng số
+        // trả về tạm thời thấp hơn `nextOffset` hiện có, app sẽ tưởng đã hết dữ liệu và dừng
+        // cuộn hẳn dù thực tế còn rất nhiều deal/lead chưa tải.
+        if (!isRealFilterChange) {
+          for (const [bucket, page] of Object.entries(deadlineBucketPageStateRef.current || {})) {
+            const loaded = Number(page?.nextOffset) || 0;
+            if (loaded > (Number(counts[bucket]) || 0)) counts[bucket] = loaded;
+          }
+        }
         setDeadlineBucketCounts(counts);
-        // Realtime / lần đếm mới: nạp lại trang đầu các cột đang có số (observer không luôn fire lại).
+        if (!isRealFilterChange) return;
+        // Đổi bộ lọc thật: nạp lại trang đầu các cột đang có số (observer không luôn fire lại).
+        // Không làm việc này khi chỉ realtime tick — sẽ đè mất tiến độ cuộn đã tải của người dùng.
         const keys = [
           'overdue', 'today', 'tomorrow', 'this_week', 'next_week',
           'in_2_weeks', 'in_3_weeks', 'in_4_weeks', 'in_1_month', 'next_month', 'no_deadline',
@@ -5369,7 +5449,7 @@ export default function CRMDashboard() {
       .catch((error) => {
         if (seq !== deadlineBucketCountsSeqRef.current) return;
         console.error('[deadline bucket counts]', error);
-        setDeadlineBucketCounts(null);
+        if (isRealFilterChange) setDeadlineBucketCounts(null);
       })
       .finally(() => {
         if (seq === deadlineBucketCountsSeqRef.current) setDeadlineBucketCountsLoading(false);
@@ -5389,6 +5469,228 @@ export default function CRMDashboard() {
     isAdmin,
     deadlineRealtimeNonce,
   ]);
+
+  /**
+   * Badge "N deal quá hạn" cạnh nút Ghim phải đếm trên TOÀN BỘ lead/deal khớp bộ lọc, không
+   * chỉ các thẻ đã tải vào Kanban do cuộn lười (như `overdueItems.length` bên dưới) — dùng lại
+   * đúng endpoint `/crm/deadline-bucket-counts` (đã có sẵn cho view Deadline, tính trên server
+   * tới 20.000 dòng). Tách effect riêng (không phụ thuộc viewMode) để không kéo theo các side
+   * effect tải trang riêng của view Deadline khi đang ở Kanban/List.
+   */
+  const [overdueCountAccurate, setOverdueCountAccurate] = useState(null);
+  const overdueCountSeqRef = useRef(0);
+  useEffect(() => {
+    if (!deadlineStageIds.length) {
+      setOverdueCountAccurate(null);
+      return undefined;
+    }
+    const seq = ++overdueCountSeqRef.current;
+    const type = pipelineType === 'lead' ? 'lead' : 'deal';
+    const scopeCompanyId = (isCompanyScopedAdmin && user?.company_id)
+      ? String(user.company_id)
+      : (!isAdmin && user?.company_id)
+        ? String(user.company_id)
+        : (filterCompany || '');
+    const params = buildCrmKanbanServerFilterParams({
+      type,
+      filterPhone,
+      filterAssignee,
+      filterAssigneeName,
+      filterCompany: scopeCompanyId,
+      filterLeadType,
+      filterReferrer,
+      filterCustomerCompany,
+      filterRegion,
+      filterStage,
+      filterSource,
+      searchText: serverSearchText,
+      customDateFrom,
+      customDateTo,
+    });
+    api.post('/crm/deadline-bucket-counts', {
+      stage_ids: deadlineStageIds,
+      config: deadlineConfig || {},
+    }, { params })
+      .then((res) => {
+        if (seq !== overdueCountSeqRef.current) return;
+        const n = Number(res.data?.counts?.overdue);
+        setOverdueCountAccurate(Number.isFinite(n) ? n : null);
+      })
+      .catch(() => {
+        if (seq !== overdueCountSeqRef.current) return;
+        setOverdueCountAccurate(null);
+      });
+    return () => {
+      if (seq === overdueCountSeqRef.current) overdueCountSeqRef.current += 1;
+    };
+  }, [
+    deadlineStageIdsKey,
+    deadlineLoadScopeKey,
+    deadlineConfigKey,
+    pipelineType,
+    isCompanyScopedAdmin,
+    user?.company_id,
+    isAdmin,
+    deadlineRealtimeNonce,
+  ]);
+
+  /**
+   * "Điểm KPI (tháng)" phải cộng trên TOÀN BỘ lead/deal khớp bộ lọc — không chỉ Σ ô góc thẻ
+   * Kanban đã tải (như `kpiLedgerMonthNetSumVisible` bên dưới, vốn chỉ đúng với những gì đang
+   * hiển thị trên màn hình). Dùng endpoint `/crm/kpi-ledger-total` (mới) — resolve toàn bộ id
+   * khớp bộ lọc qua RPC/legacy fallback có sẵn (không giới hạn 1000 dòng), rồi cộng điểm sổ cái
+   * `crm_kpi_ledger` cho đúng các id đó.
+   */
+  const [kpiLedgerTotalAccurate, setKpiLedgerTotalAccurate] = useState(null);
+  const kpiLedgerTotalSeqRef = useRef(0);
+  useEffect(() => {
+    const seq = ++kpiLedgerTotalSeqRef.current;
+    const type = pipelineType === 'lead' ? 'lead' : 'deal';
+    const scopeCompanyId = (isCompanyScopedAdmin && user?.company_id)
+      ? String(user.company_id)
+      : (!isAdmin && user?.company_id)
+        ? String(user.company_id)
+        : (filterCompany || '');
+    const params = buildCrmKanbanServerFilterParams({
+      type,
+      filterPhone,
+      filterAssignee,
+      filterAssigneeName,
+      filterCompany: scopeCompanyId,
+      filterLeadType,
+      filterReferrer,
+      filterCustomerCompany,
+      filterRegion,
+      filterStage,
+      filterSource,
+      searchText: serverSearchText,
+      customDateFrom,
+      customDateTo,
+    });
+    api.post('/crm/kpi-ledger-total', {
+      period_start: currentData?.kpis?.kpi_ledger_period_start || undefined,
+    }, { params })
+      .then((res) => {
+        if (seq !== kpiLedgerTotalSeqRef.current) return;
+        const n = Number(res.data?.total);
+        setKpiLedgerTotalAccurate(Number.isFinite(n) ? n : null);
+      })
+      .catch(() => {
+        if (seq !== kpiLedgerTotalSeqRef.current) return;
+        setKpiLedgerTotalAccurate(null);
+      });
+    return () => {
+      if (seq === kpiLedgerTotalSeqRef.current) kpiLedgerTotalSeqRef.current += 1;
+    };
+  }, [
+    deadlineLoadScopeKey,
+    pipelineType,
+    isCompanyScopedAdmin,
+    user?.company_id,
+    isAdmin,
+    currentData?.kpis?.kpi_ledger_period_start,
+  ]);
+
+  /** Ưu tiên tổng server (toàn bộ khớp bộ lọc); fallback về Σ ô góc thẻ đã tải khi chưa có. */
+  const kpiLedgerMonthNetDisplay = kpiLedgerTotalAccurate != null
+    ? kpiLedgerTotalAccurate
+    : kpiLedgerMonthNetSumVisible;
+
+  /**
+   * Danh sách ĐẦY ĐỦ trong popover "N deal quá hạn" — tái dùng `/crm/deadline-bucket-pages`
+   * (đã có sẵn cho view Deadline) để tải TỪNG TRANG bản ghi thật (không chỉ thẻ Kanban đã tải),
+   * đến khi hết `hasMore`. Dùng state/generation riêng (không đụng `deadlineBucketPageState`)
+   * để không xung đột với phân trang của tab Deadline khi cả hai cùng hoạt động.
+   */
+  const [overduePopoverState, setOverduePopoverState] = useState({
+    rows: [], nextOffset: 0, hasMore: true, total: null, loading: false, error: '',
+  });
+  const overduePopoverGenerationRef = useRef(0);
+
+  const mapDeadlineRowToOverdueItem = useCallback((row) => {
+    const stageMap = new Map((currentPipeline || []).map((s) => [String(s.id), s]));
+    const stage = stageMap.get(String(row.stage_id || ''));
+    const resolved = resolveCrmLeadEffectiveDeadlineSource(row, stage);
+    const tone = getCrmDeadlineUrgencyFromTs(resolved.deadlineTs);
+    return {
+      id: row.id,
+      code: row.code || `#${row.id}`,
+      title: row.title || '',
+      customerName: row.customer?.full_name || '',
+      assigneeName: row.assignee?.full_name || '',
+      stageName: stage?.name || '',
+      overdueMs: Math.abs(tone.remainingMs || 0),
+      source: resolved.source,
+    };
+  }, [currentPipeline]);
+
+  const loadOverduePopoverPage = useCallback(async (reset = false) => {
+    if (!deadlineStageIds.length) return;
+    const generation = reset
+      ? ++overduePopoverGenerationRef.current
+      : overduePopoverGenerationRef.current;
+    if (reset) {
+      setOverduePopoverState({ rows: [], nextOffset: 0, hasMore: true, total: null, loading: true, error: '' });
+    } else {
+      setOverduePopoverState((s) => ({ ...s, loading: true, error: '' }));
+    }
+    const offset = reset ? 0 : overduePopoverState.nextOffset;
+    try {
+      const type = pipelineType === 'lead' ? 'lead' : 'deal';
+      const scopeCompanyId = (isCompanyScopedAdmin && user?.company_id)
+        ? String(user.company_id)
+        : (!isAdmin && user?.company_id)
+          ? String(user.company_id)
+          : (filterCompany || '');
+      const params = buildCrmKanbanServerFilterParams({
+        type,
+        filterPhone,
+        filterAssignee,
+        filterAssigneeName,
+        filterCompany: scopeCompanyId,
+        filterLeadType,
+        filterReferrer,
+        filterCustomerCompany,
+        filterRegion,
+        filterStage,
+        filterSource,
+        searchText: serverSearchText,
+        customDateFrom,
+        customDateTo,
+      });
+      const { data } = await api.post('/crm/deadline-bucket-pages', {
+        buckets: [{ bucket: 'overdue', offset, limit: 20 }],
+        stage_ids: deadlineStageIds,
+        config: deadlineConfig || {},
+      }, { params });
+      if (generation !== overduePopoverGenerationRef.current) return;
+      const page = data?.pages?.overdue || { data: [], total: 0, nextOffset: offset, hasMore: false };
+      const newRows = (page.data || []).map(mapDeadlineRowToOverdueItem);
+      setOverduePopoverState((s) => ({
+        rows: reset ? newRows : [...s.rows, ...newRows],
+        nextOffset: Number(page.nextOffset) || (offset + newRows.length),
+        hasMore: !!page.hasMore,
+        total: Number(page.total) || 0,
+        loading: false,
+        error: '',
+      }));
+    } catch (e) {
+      if (generation !== overduePopoverGenerationRef.current) return;
+      setOverduePopoverState((s) => ({ ...s, loading: false, error: e?.response?.data?.error || 'Không tải được danh sách' }));
+    }
+  }, [
+    deadlineStageIds, deadlineConfig, pipelineType, isCompanyScopedAdmin, user?.company_id, isAdmin,
+    filterCompany, filterPhone, filterAssignee, filterAssigneeName, filterLeadType, filterReferrer,
+    filterCustomerCompany, filterRegion, filterStage, filterSource, serverSearchText,
+    customDateFrom, customDateTo, mapDeadlineRowToOverdueItem, overduePopoverState.nextOffset,
+  ]);
+
+  /** Mở popover → tải trang đầu; đổi bộ lọc trong lúc đang mở → tải lại từ đầu. */
+  useEffect(() => {
+    if (!showOverduePopover) return;
+    void loadOverduePopoverPage(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showOverduePopover, deadlineStageIdsKey, deadlineLoadScopeKey, deadlineConfigKey, pipelineType]);
 
   const handleLoadDeadlineBuckets = useCallback(async (
     bucketKeys,
@@ -5669,6 +5971,10 @@ export default function CRMDashboard() {
     return out;
   }, [viewMode, pipelineType, activeItems, activeStages]);
 
+  /** Số hiện trên badge — ưu tiên tổng server (toàn bộ, không giới hạn thẻ đã tải), fallback
+   * về đếm trên `overdueItems` (client) khi chưa có kết quả server. */
+  const overdueBadgeCount = overdueCountAccurate != null ? overdueCountAccurate : overdueItems.length;
+
   const focusOverdueItem = useCallback((it) => {
     const el = document.querySelector(`.ui-kanban-fixed [data-crm-pipeline-card="${it.id}"]`)
       || document.querySelector(`[data-crm-pipeline-card="${it.id}"]`);
@@ -5897,7 +6203,7 @@ export default function CRMDashboard() {
   const kpis = currentData?.kpis || {};
 
   const kpiCollapsedSegments = useMemo(() => {
-    const kpiPts = formatKpiLedgerNet(kpiLedgerMonthNetSumVisible);
+    const kpiPts = formatKpiLedgerNet(kpiLedgerMonthNetDisplay);
     const kpiSeg = { key: 'kpi', label: 'KPI', value: kpiPts, tone: 'kpi' };
     if (pipelineType === 'lead') {
       return [
@@ -5909,9 +6215,9 @@ export default function CRMDashboard() {
     if (isCrmCustomerPipelineTab(pipelineType)) {
       return [
         { key: 'total', label: 'Khách hàng', value: Number(customerKpiTotalCount ?? 0).toLocaleString('vi-VN'), tone: 'count' },
-        { key: 'active', label: 'Đang triển khai', value: Number(customerKpisFromFilters.project_active ?? 0).toLocaleString('vi-VN'), tone: 'processing' },
-        { key: 'won', label: 'Doanh thu thắng', value: formatVND(customerKpisFromFilters.won_value), tone: 'won' },
-        { key: 'completed', label: 'Doanh thu hoàn thành', value: formatVND(customerKpisFromFilters.completed_revenue_value), tone: 'completed' },
+        { key: 'active', label: 'Đang triển khai', value: Number(customerKpisForDisplay.project_active ?? 0).toLocaleString('vi-VN'), tone: 'processing' },
+        { key: 'won', label: 'Doanh thu thắng', value: formatVND(customerKpisForDisplay.won_value), tone: 'won' },
+        { key: 'completed', label: 'Doanh thu hoàn thành', value: formatVND(customerKpisForDisplay.completed_revenue_value), tone: 'completed' },
         kpiSeg,
       ];
     }
@@ -5930,7 +6236,7 @@ export default function CRMDashboard() {
       { key: 'expected', label: 'Doanh thu kỳ vọng', value: formatVND(dealSalesKpisForDisplay.expected_value), tone: 'expected' },
       kpiSeg,
     ];
-  }, [pipelineType, dealKhSplitEnabled, dealSalesKpisForDisplay, mergedDealKpisForDisplay, customerKpisFromFilters, leadKpiTotalCount, leadActiveCount, customerKpiTotalCount, kpiLedgerMonthNetSumVisible]);
+  }, [pipelineType, dealKhSplitEnabled, dealSalesKpisForDisplay, mergedDealKpisForDisplay, customerKpisForDisplay, leadKpiTotalCount, leadActiveCount, customerKpiTotalCount, kpiLedgerMonthNetDisplay]);
 
   const kpiCollapsedSummary = useMemo(
     () => kpiCollapsedSegments.map((s) => `${s.label} ${s.value}`).join(' · '),
@@ -6814,7 +7120,12 @@ export default function CRMDashboard() {
         crmLiveVersionRef.current = v;
         const type = pipelineTypeRef.current === 'lead' ? 'lead' : 'deal';
         const recentRealtime = Date.now() - lastCrmRealtimeAtRef.current < 45_000;
-        if (recentRealtime) {
+        // Tab Deadline có cơ chế làm mới riêng (deadlineRealtimeNonce, chỉ cập nhật tổng số —
+        // xem effect deadline-bucket-counts) — không gọi refreshKanbanListAfterCreate ở đây vì
+        // nó THAY THẾ TOÀN BỘ allDeals/allLeads bằng 1 trang mới theo thứ tự Kanban mặc định,
+        // xoá mất các dòng đã tải riêng cho từng bucket Deadline (khiến cuộn hoài không lên
+        // thêm được nữa, vì dữ liệu nền vừa bị thay bằng một tập hoàn toàn khác).
+        if (recentRealtime || viewModeRef.current === 'deadline') {
           await refreshCrmDashboardSliceRef.current?.(type);
         } else {
           await Promise.all([
@@ -7307,15 +7618,15 @@ export default function CRMDashboard() {
           >
             <Pin className={`h-3.5 w-3.5 ${pinnedTab === pipelineType ? 'rotate-45 fill-amber-500' : ''}`} />
           </button>
-          {overdueItems.length > 0 && (
+          {overdueBadgeCount > 0 && (
             <div className="relative shrink-0">
               <button
                 ref={overdueTriggerRef}
                 type="button"
                 onClick={() => setShowOverduePopover((v) => !v)}
-                aria-label={`${overdueItems.length} ${crmPipelineTabEntityLabel(pipelineType)} quá hạn`}
+                aria-label={`${overdueBadgeCount} ${crmPipelineTabEntityLabel(pipelineType)} quá hạn`}
                 aria-expanded={showOverduePopover}
-                title={`${overdueItems.length} ${crmPipelineTabEntityLabel(pipelineType)} quá hạn — bấm để xem danh sách`}
+                title={`${overdueBadgeCount} ${crmPipelineTabEntityLabel(pipelineType)} quá hạn — bấm để xem danh sách`}
                 className={`relative ${ctrlIcon} rounded-md flex items-center justify-center cursor-pointer border transition-colors ${
                   showOverduePopover
                     ? 'bg-red-600 border-red-700 text-white'
@@ -7324,7 +7635,7 @@ export default function CRMDashboard() {
               >
                 <AlertTriangle className="h-3.5 w-3.5" strokeWidth={2.5} />
                 <span className="absolute -top-1 -right-1 min-w-[15px] h-[15px] px-0.5 rounded-full bg-red-600 text-white text-[8px] font-bold flex items-center justify-center tabular-nums leading-none">
-                  {overdueItems.length > 99 ? '99+' : overdueItems.length}
+                  {overdueBadgeCount > 99 ? '99+' : overdueBadgeCount}
                 </span>
               </button>
               <AnchoredDropdownMenu
@@ -7338,9 +7649,11 @@ export default function CRMDashboard() {
                   <AlertTriangle className="h-4 w-4 text-red-600 shrink-0" />
                   <div className="min-w-0 flex-1">
                     <p className="text-xs font-bold text-red-800">
-                      {overdueItems.length} {crmPipelineTabEntityLabel(pipelineType)} quá hạn
+                      {overdueBadgeCount} {crmPipelineTabEntityLabel(pipelineType)} quá hạn
                     </p>
-                    <p className="text-[10px] text-red-600/80">NV CRM hoặc SLA cột · bấm mã để mở</p>
+                    <p className="text-[10px] text-red-600/80">
+                      {overduePopoverState.error || 'NV CRM hoặc SLA cột · bấm mã để mở'}
+                    </p>
                   </div>
                   <button
                     type="button"
@@ -7352,7 +7665,7 @@ export default function CRMDashboard() {
                   </button>
                 </div>
                 <div className="p-2 flex flex-wrap gap-1 max-h-[min(50vh,280px)] overflow-y-auto [scrollbar-width:thin] bg-white">
-                  {overdueItems.slice(0, 50).map((it) => {
+                  {(overduePopoverState.rows.length > 0 ? overduePopoverState.rows : overdueItems).map((it) => {
                     const days = Math.floor(it.overdueMs / 86400000);
                     const hours = Math.floor((it.overdueMs % 86400000) / 3600000);
                     const overdueLabel = days > 0 ? `${days}d` : `${hours}h`;
@@ -7376,10 +7689,21 @@ export default function CRMDashboard() {
                       </button>
                     );
                   })}
-                  {overdueItems.length > 50 && (
-                    <span className="inline-flex items-center px-2 py-1 text-[10px] text-red-600/80 italic">
-                      +{overdueItems.length - 50} mã khác…
+                  {overduePopoverState.loading && (
+                    <span className="w-full flex items-center justify-center gap-1.5 py-2 text-[11px] text-red-600/80">
+                      <Loader2 className="h-3 w-3 animate-spin" /> Đang tải…
                     </span>
+                  )}
+                  {!overduePopoverState.loading && overduePopoverState.hasMore && (
+                    <button
+                      type="button"
+                      onClick={() => loadOverduePopoverPage(false)}
+                      className="w-full text-center py-1.5 text-[11px] font-medium text-red-600 hover:bg-red-50 rounded-md cursor-pointer"
+                    >
+                      Tải thêm ({overduePopoverState.total != null
+                        ? `${overduePopoverState.rows.length}/${overduePopoverState.total}`
+                        : '…'})
+                    </button>
                   )}
                 </div>
               </AnchoredDropdownMenu>
@@ -8342,7 +8666,7 @@ export default function CRMDashboard() {
               iconBgColor="bg-indigo-100"
               iconColor="text-indigo-600"
               label="Điểm KPI (tháng)"
-              value={formatKpiLedgerNet(kpiLedgerMonthNetSumVisible)}
+              value={formatKpiLedgerNet(kpiLedgerMonthNetDisplay)}
               sublabel={kpis.kpi_ledger_period_start ? `Sổ cái · ${String(kpis.kpi_ledger_period_start).slice(0, 7)}` : 'Sổ cái CRM'}
               trend={null}
             />
@@ -8355,11 +8679,11 @@ export default function CRMDashboard() {
               iconBgColor="bg-cyan-100"
               iconColor="text-cyan-700"
               label="Tổng khách hàng"
-              value={customerKpisFromFilters.total_deals}
+              value={customerKpisForDisplay.total_deals}
               sublabel={
                 kpiUsesClientOnlyFilters
-                  ? `${Number(customerKpisFromFilters.won_deals ?? 0).toLocaleString('vi-VN')} thắng · sau lọc`
-                  : `${Number(customerKpisFromFilters.won_deals ?? 0).toLocaleString('vi-VN')} ở cột Thắng`
+                  ? `${Number(customerKpisForDisplay.won_deals ?? 0).toLocaleString('vi-VN')} thắng · sau lọc`
+                  : `${Number(customerKpisForDisplay.won_deals ?? 0).toLocaleString('vi-VN')} ở cột Thắng`
               }
               trend={null}
             />
@@ -8369,7 +8693,7 @@ export default function CRMDashboard() {
               iconBgColor="bg-indigo-100"
               iconColor="text-indigo-700"
               label="Đang triển khai"
-              value={customerKpisFromFilters.project_active}
+              value={customerKpisForDisplay.project_active}
               trend={null}
             />
             <KPICard
@@ -8378,7 +8702,7 @@ export default function CRMDashboard() {
               iconBgColor="bg-emerald-100"
               iconColor="text-emerald-700"
               label="Hoàn thành"
-              value={customerKpisFromFilters.project_completed}
+              value={customerKpisForDisplay.project_completed}
               sublabel="Dự án xong"
               trend={null}
             />
@@ -8389,7 +8713,7 @@ export default function CRMDashboard() {
               iconBgColor="bg-amber-100"
               iconColor="text-amber-600"
               label="Doanh thu thắng"
-              value={formatVND(customerKpisFromFilters.won_value)}
+              value={formatVND(customerKpisForDisplay.won_value)}
               trend={null}
             />
             <KPICard
@@ -8398,8 +8722,8 @@ export default function CRMDashboard() {
               iconBgColor="bg-teal-100"
               iconColor="text-teal-700"
               label="DT hoàn thành"
-              value={formatVND(customerKpisFromFilters.completed_revenue_value)}
-              sublabel={`${Number(customerKpisFromFilters.completed_revenue_deals ?? 0).toLocaleString('vi-VN')} deal`}
+              value={formatVND(customerKpisForDisplay.completed_revenue_value)}
+              sublabel={`${Number(customerKpisForDisplay.completed_revenue_deals ?? 0).toLocaleString('vi-VN')} deal`}
               trend={null}
             />
             <KPICard
@@ -8409,7 +8733,7 @@ export default function CRMDashboard() {
               iconBgColor="bg-indigo-100"
               iconColor="text-indigo-600"
               label="Điểm KPI (tháng)"
-              value={formatKpiLedgerNet(kpiLedgerMonthNetSumVisible)}
+              value={formatKpiLedgerNet(kpiLedgerMonthNetDisplay)}
               sublabel={kpis.kpi_ledger_period_start ? String(kpis.kpi_ledger_period_start).slice(0, 7) : 'Sổ cái CRM'}
               trend={null}
             />
@@ -8471,7 +8795,7 @@ export default function CRMDashboard() {
               iconBgColor="bg-indigo-100"
               iconColor="text-indigo-600"
               label="Điểm KPI (tháng)"
-              value={formatKpiLedgerNet(kpiLedgerMonthNetSumVisible)}
+              value={formatKpiLedgerNet(kpiLedgerMonthNetDisplay)}
               trend={null}
             />
           </>
@@ -8534,7 +8858,7 @@ export default function CRMDashboard() {
               iconBgColor="bg-indigo-100"
               iconColor="text-indigo-600"
               label="Điểm KPI (tháng)"
-              value={formatKpiLedgerNet(kpiLedgerMonthNetSumVisible)}
+              value={formatKpiLedgerNet(kpiLedgerMonthNetDisplay)}
               sublabel={kpis.kpi_ledger_period_start ? String(kpis.kpi_ledger_period_start).slice(0, 7) : 'Sổ cái CRM'}
               trend={null}
             />
@@ -8819,6 +9143,8 @@ export default function CRMDashboard() {
               onLoadStagePages={handleLoadStagePages}
               scrollLoad={kanbanScrollLoad}
               stageCounts={pipelineType === 'lead' ? pipelineStageCounts.lead : pipelineStageCounts.deal}
+              stageValueSums={pipelineType !== 'lead' && !kpiUsesClientOnlyFilters ? (pipelinePhoneTotals.deal?.valueSums || null) : null}
+              stageWeightedValueSums={pipelineType !== 'lead' && !kpiUsesClientOnlyFilters ? (pipelinePhoneTotals.deal?.weightedValueSums || null) : null}
               columnScrollMode={kanbanColumnScrollMode}
               searchHighlightId={kanbanSearchHighlightId}
               scopedCompanyFilter={!!filterCompany}
@@ -10195,6 +10521,8 @@ const KanbanStageCard = memo(function KanbanStageCard({
   explicitExpectedKv,
   wonStage,
   stageCounts,
+  stageValueSums = null,
+  stageWeightedValueSums = null,
   columnScrollMode = 'unified',
   columnScrollMaxH: columnScrollMaxHProp,
   onColumnScrollNearEnd,
@@ -10218,7 +10546,6 @@ const KanbanStageCard = memo(function KanbanStageCard({
   const columnTheme = useKanbanColumnTheme(columnIndex);
   const columnItemIds = (items || []).map((i) => i.id);
   const columnStagesCtx = [stage];
-  const columnRawValue = (items || []).reduce((sum, item) => sum + (Number(item.estimated_value) || 0), 0);
   const isWonColumnExcludedFromDealMetrics = isDealTabWonColumnForMetrics(stage, pipelineType, wonStage);
   const isLostColumnExcludedFromDealMetrics = isDealTabLostColumnForMetrics(stage);
   const isCustomerWonColumn = isCrmCustomerPipelineTab(pipelineType)
@@ -10228,11 +10555,30 @@ const KanbanStageCard = memo(function KanbanStageCard({
     && !isWonColumnExcludedFromDealMetrics
     && !isLostColumnExcludedFromDealMetrics
     && (!explicitExpectedKv || !!stage.counts_as_expected_revenue);
-  const columnExpectedValue = showColumnForecastKpis
-    ? (items || []).reduce((sum, item) => (
-      dealCountsTowardExpectedValue(item, columnStagesCtx) ? sum + dealWeightedValue(item, columnStagesCtx) : sum
-    ), 0)
-    : 0;
+  // "Dự kiến"/"KV" (tab Deal) và "Giá trị"/"DT thắng" (tab Khách hàng) trên đầu cột phải tính
+  // trên TOÀN BỘ deal của cột (không chỉ số thẻ đã tải vào Kanban do cuộn lười) — ưu tiên tổng
+  // server theo stage_id (`stageValueSums`/`stageWeightedValueSums` từ /crm/filter-summary),
+  // chỉ fallback về cộng dồn `items` (client) khi server chưa có (lọc Facebook page/referrer
+  // trống, hoặc cột ảo/virtual). Tab Lead không có value_sums từ server nên luôn dùng `items`.
+  const useServerColumnValue = (showColumnForecastKpis || isCrmCustomerPipelineTab(pipelineType))
+    && !stage?.__virtual
+    && !!stageValueSums;
+  const serverColumnValue = useServerColumnValue
+    ? Number(stageValueSums[String(stage?.id || '')])
+    : NaN;
+  const columnRawValue = Number.isFinite(serverColumnValue)
+    ? serverColumnValue
+    : (items || []).reduce((sum, item) => sum + (Number(item.estimated_value) || 0), 0);
+  const serverColumnExpectedValue = !stage?.__virtual && showColumnForecastKpis && stageWeightedValueSums
+    ? Number(stageWeightedValueSums[String(stage?.id || '')])
+    : NaN;
+  const columnExpectedValue = !showColumnForecastKpis
+    ? 0
+    : Number.isFinite(serverColumnExpectedValue)
+      ? serverColumnExpectedValue
+      : (items || []).reduce((sum, item) => (
+        dealCountsTowardExpectedValue(item, columnStagesCtx) ? sum + dealWeightedValue(item, columnStagesCtx) : sum
+      ), 0);
   const allInColumnSelected =
     columnItemIds.length > 0 &&
     columnItemIds.every((id) => (mergeSelectedIds || []).some((x) => String(x) === String(id)));
@@ -11207,6 +11553,8 @@ function KanbanView({
   onLoadStagePages,
   scrollLoad,
   stageCounts,
+  stageValueSums = null,
+  stageWeightedValueSums = null,
   columnScrollMode = 'unified',
   searchHighlightId = null,
   /** true = đang lọc 1 công ty; false = «Tất cả công ty» (nhiều pipeline → cần overscan lớn hơn). */
@@ -11490,6 +11838,8 @@ function KanbanView({
               explicitExpectedKv={explicitExpectedKv}
               wonStage={wonStage}
               stageCounts={stageCounts}
+              stageValueSums={stageValueSums}
+              stageWeightedValueSums={stageWeightedValueSums}
               columnScrollMode={columnScrollMode}
               onColumnScrollNearEnd={perColumnScroll ? () => onLoadStagePages?.([stage.id], { ensureInitial: false }) : undefined}
               onColumnVisibilityChange={handleColumnVisibilityChange}

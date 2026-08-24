@@ -21,6 +21,7 @@ import {
 } from '../api/assignments';
 import { formatApiError, isAbortError } from '../api/client';
 import { fetchCrmListTotal, warmCrmHubPipelines } from '../api/crm';
+import { useNetworkStatus } from '../context/NetworkStatusContext';
 import {
   fetchDeadlineFocusBreakdown,
   type DeadlineFocusBreakdown,
@@ -36,6 +37,7 @@ import ListCreateFab from '../components/ListCreateFab';
 import PickerSheet from '../components/PickerSheet';
 import SpinningLoader from '../components/SpinningLoader';
 import { peekOverviewKpiCache, saveOverviewKpiCache } from '../lib/overviewKpiCache';
+import { groupAssignmentsByDeal } from '../lib/assignmentDealGroups';
 import { useAuth, currentUserId } from '../context/AuthContext';
 import { useCreateMenu } from '../context/CreateMenuContext';
 import { useCrmHubFilters } from '../hooks/useCrmHubFilters';
@@ -146,15 +148,6 @@ function assignmentEntityKind(a: CrmAssignment): 'lead' | 'deal' | null {
   return a.lead.type === 'deal' ? 'deal' : 'lead';
 }
 
-function assignmentEntityLabel(a: CrmAssignment): string | null {
-  const lead = a.lead;
-  if (!lead?.id) return null;
-  const kind = lead.type === 'deal' ? 'Deal' : 'Lead';
-  const title = (lead.title || '').trim() || kind;
-  const code = lead.code ? `${lead.code} · ` : '';
-  return `${kind}: ${code}${title}`;
-}
-
 type KpiTone = 'blue' | 'orange';
 
 type QuickAction = {
@@ -243,6 +236,7 @@ export default function OverviewScreen() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<Nav>();
   const { user } = useAuth();
+  const { isOnline } = useNetworkStatus();
   const { toggle: toggleCreateMenu } = useCreateMenu();
   const {
     ready: filtersReady,
@@ -268,6 +262,8 @@ export default function OverviewScreen() {
   const [tasks, setTasks] = useState<CrmAssignment[]>([]);
   const [eventPage, setEventPage] = useState(0);
   const [taskPage, setTaskPage] = useState(0);
+  /** Deal group đóng mặc định — chạm header để mở (giống app xưởng). */
+  const [expandedTaskLeads, setExpandedTaskLeads] = useState<Record<string, boolean>>({});
   const [companies, setCompanies] = useState<CrmCompany[]>([]);
   const [companyPickerOpen, setCompanyPickerOpen] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
@@ -340,7 +336,8 @@ export default function OverviewScreen() {
 
       if (isRefresh && !silent) setRefreshing(true);
       else if (!silent && !hasPaintedRef.current) setLoading(true);
-      if (!silent) setError('');
+      // Luôn xóa banner lỗi khi bắt đầu tải lại (kể cả silent sau reconnect).
+      setError('');
 
       try {
         const today = vnTodayYmd();
@@ -490,6 +487,18 @@ export default function OverviewScreen() {
     }, [load]),
   );
 
+  /**
+   * Có mạng trở lại → nạp lại KPI / sự kiện / nhiệm vụ.
+   * Overview không dùng TanStack observer nên không được refetchOnReconnect.
+   */
+  const prevOnlineRef = useRef(isOnline);
+  useEffect(() => {
+    const wasOffline = !prevOnlineRef.current;
+    prevOnlineRef.current = isOnline;
+    if (!isOnline || !wasOffline || !filtersReady) return;
+    void load({ refresh: true, silent: hasPaintedRef.current });
+  }, [isOnline, filtersReady, load]);
+
   const goTab = (screen: keyof TabParamList) => {
     navigation.navigate(screen);
   };
@@ -595,19 +604,30 @@ export default function OverviewScreen() {
   ];
 
   const eventPageCount = Math.max(1, Math.ceil(events.length / OVERVIEW_PAGE_SIZE));
-  const taskPageCount = Math.max(1, Math.ceil(tasks.length / OVERVIEW_PAGE_SIZE));
+  const taskDealSections = useMemo(() => groupAssignmentsByDeal(tasks), [tasks]);
+  const taskPageCount = Math.max(1, Math.ceil(taskDealSections.length / OVERVIEW_PAGE_SIZE));
   const safeEventPage = Math.min(eventPage, eventPageCount - 1);
   const safeTaskPage = Math.min(taskPage, taskPageCount - 1);
   const previewEvents = events.slice(
     safeEventPage * OVERVIEW_PAGE_SIZE,
     safeEventPage * OVERVIEW_PAGE_SIZE + OVERVIEW_PAGE_SIZE,
   );
-  const previewTasks = tasks.slice(
+  const previewTaskSections = taskDealSections.slice(
     safeTaskPage * OVERVIEW_PAGE_SIZE,
     safeTaskPage * OVERVIEW_PAGE_SIZE + OVERVIEW_PAGE_SIZE,
   );
   const showEventPager = events.length > OVERVIEW_PAGE_SIZE;
-  const showTaskPager = tasks.length > OVERVIEW_PAGE_SIZE;
+  const showTaskPager = taskDealSections.length > OVERVIEW_PAGE_SIZE;
+
+  useEffect(() => {
+    setTaskPage(0);
+    setExpandedTaskLeads({});
+  }, [tasks]);
+
+  const toggleOverviewTaskSection = useCallback((leadId: string) => {
+    setExpandedTaskLeads((prev) => ({ ...prev, [leadId]: !prev[leadId] }));
+  }, []);
+
   const toneMap: Record<KpiTone, { fg: string; bg: string }> = {
     orange: { fg: Colors.orange, bg: Colors.orangeSoft },
     blue: { fg: Colors.blue, bg: Colors.blueSoft },
@@ -832,118 +852,175 @@ export default function OverviewScreen() {
               <Text style={styles.secTitleInline}>Nhiệm vụ cần làm</Text>
               <Pressable onPress={() => navigation.navigate('Tasks')} hitSlop={8}>
                 <Text style={styles.link}>
-                  {tasks.length > 0 ? `Tất cả (${tasks.length})` : 'Xem nhiệm vụ'}
+                  {tasks.length > 0
+                    ? `Tất cả (${taskDealSections.length} Deal · ${tasks.length} việc)`
+                    : 'Xem nhiệm vụ'}
                 </Text>
               </Pressable>
             </View>
             <View style={styles.card}>
-              {previewTasks.length === 0 ? (
+              {previewTaskSections.length === 0 ? (
                 <View style={styles.emptyRow}>
                   <Ionicons name="checkbox-outline" size={20} color={Colors.textFaint} />
                   <Text style={styles.emptyTxt}>Không có nhiệm vụ chưa làm / đang làm</Text>
                 </View>
               ) : (
                 <>
-                  {previewTasks.map((t, idx) => {
-                    const overdue = isAssignmentOverdue(t);
-                    const statusKey = String(t.status || 'pending');
-                    const statusLbl = STATUS_STAGE_LABEL[statusKey] || 'Chưa làm';
-                    const pri = PRIORITY_LABEL[String(t.priority || '')] || '';
-                    const entityLbl = assignmentEntityLabel(t);
-                    const entityKind = assignmentEntityKind(t);
+                  {previewTaskSections.map((section, sIdx) => {
+                    const expanded = !!expandedTaskLeads[section.leadId];
+                    const openCount = section.tasks.filter(
+                      (t) => t.status !== 'completed' && t.status !== 'cancelled',
+                    ).length;
+                    const overdueCount = section.tasks.filter((t) => isAssignmentOverdue(t)).length;
+                    const kindLbl =
+                      section.kind === 'deal' ? 'Deal' : section.kind === 'lead' ? 'Lead' : null;
                     return (
-                      <Pressable
-                        key={t.id}
-                        style={[styles.rowItem, idx > 0 && styles.rowBorder]}
-                        onPress={() => {
-                          if (t.lead?.id) {
-                            const nav = resolveAssignmentLeadNav(t);
-                            navigation.navigate('LeadDealDetail', {
-                              leadId: t.lead.id,
-                              kind: entityKind || 'lead',
-                              code: t.lead.code || undefined,
-                              title: t.lead.title || undefined,
-                              initialTab: nav.initialTab,
-                              focusAssignmentId: nav.focusAssignmentId,
-                              focusTaskId: nav.focusTaskId,
-                            });
-                          } else {
-                            navigation.navigate('Tasks');
-                          }
-                        }}
+                      <View
+                        key={section.leadId}
+                        style={sIdx > 0 ? styles.dealGroupBorder : undefined}
                       >
-                        <View
-                          style={[
-                            styles.rowIcon,
-                            {
-                              backgroundColor: overdue
-                                ? Colors.redSoft
-                                : statusKey === 'in_progress'
-                                  ? Colors.blueSoft
-                                  : Colors.amberSoft,
-                            },
-                          ]}
+                        <Pressable
+                          style={styles.dealGroupHead}
+                          onPress={() => toggleOverviewTaskSection(section.leadId)}
                         >
                           <Ionicons
-                            name={
-                              overdue
-                                ? 'alert-circle'
-                                : statusKey === 'in_progress'
-                                  ? 'time'
-                                  : 'ellipse-outline'
-                            }
-                            size={18}
-                            color={
-                              overdue
-                                ? Colors.red
-                                : statusKey === 'in_progress'
-                                  ? Colors.blue
-                                  : Colors.amber
-                            }
+                            name={expanded ? 'chevron-down' : 'chevron-forward'}
+                            size={16}
+                            color={Colors.textMuted}
                           />
-                        </View>
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.rowTitle} numberOfLines={1}>
-                            {t.title || 'Nhiệm vụ'}
-                          </Text>
-                          {entityLbl ? (
+                          <View style={{ flex: 1, minWidth: 0 }}>
                             <View style={styles.entityRow}>
-                              <View
-                                style={[
-                                  styles.entityBadge,
-                                  {
-                                    backgroundColor:
-                                      entityKind === 'deal' ? Colors.orangeSoft : Colors.blueSoft,
-                                  },
-                                ]}
-                              >
-                                <Text
+                              {kindLbl ? (
+                                <View
                                   style={[
-                                    styles.entityBadgeTxt,
-                                    { color: entityKind === 'deal' ? Colors.orange : Colors.blue },
+                                    styles.entityBadge,
+                                    {
+                                      backgroundColor:
+                                        section.kind === 'deal'
+                                          ? Colors.orangeSoft
+                                          : Colors.blueSoft,
+                                    },
                                   ]}
                                 >
-                                  {entityKind === 'deal' ? 'Deal' : 'Lead'}
-                                </Text>
-                              </View>
-                              <Text style={styles.entityName} numberOfLines={1}>
-                                {t.lead?.title || entityLbl}
+                                  <Text
+                                    style={[
+                                      styles.entityBadgeTxt,
+                                      {
+                                        color:
+                                          section.kind === 'deal' ? Colors.orange : Colors.blue,
+                                      },
+                                    ]}
+                                  >
+                                    {kindLbl}
+                                  </Text>
+                                </View>
+                              ) : null}
+                              <Text style={styles.dealGroupTitle} numberOfLines={1}>
+                                {section.code ? `${section.code} · ` : ''}
+                                {section.title}
                               </Text>
                             </View>
-                          ) : (
                             <Text style={styles.rowSub} numberOfLines={1}>
-                              Không gắn Lead/Deal
+                              {openCount}/{section.tasks.length} còn lại
+                              {overdueCount ? ` · ${overdueCount} quá hạn` : ''}
+                              {!expanded ? ' · chạm để mở' : ''}
                             </Text>
-                          )}
-                          <Text style={styles.rowSub} numberOfLines={1}>
-                            {statusLbl}
-                            {overdue ? ' · Quá hạn' : ''}
-                            {t.deadline ? ` · ${formatDateShort(t.deadline)}` : ''}
-                            {pri ? ` · ${pri}` : ''}
-                          </Text>
-                        </View>
-                        <Ionicons name="chevron-forward" size={16} color={Colors.textFaint} />
-                      </Pressable>
+                          </View>
+                          {section.kind && section.tasks[0]?.lead?.id ? (
+                            <Pressable
+                              hitSlop={8}
+                              onPress={() => {
+                                const t = section.tasks[0];
+                                const nav = resolveAssignmentLeadNav(t);
+                                navigation.navigate('LeadDealDetail', {
+                                  leadId: t.lead!.id,
+                                  kind: section.kind === 'deal' ? 'deal' : 'lead',
+                                  code: t.lead?.code || undefined,
+                                  title: t.lead?.title || undefined,
+                                  initialTab: nav.initialTab,
+                                  focusAssignmentId: nav.focusAssignmentId,
+                                  focusTaskId: nav.focusTaskId,
+                                });
+                              }}
+                            >
+                              <Ionicons name="open-outline" size={16} color={Colors.blue} />
+                            </Pressable>
+                          ) : null}
+                        </Pressable>
+                        {expanded
+                          ? section.tasks.map((t, idx) => {
+                              const overdue = isAssignmentOverdue(t);
+                              const statusKey = String(t.status || 'pending');
+                              const statusLbl = STATUS_STAGE_LABEL[statusKey] || 'Chưa làm';
+                              const pri = PRIORITY_LABEL[String(t.priority || '')] || '';
+                              return (
+                                <Pressable
+                                  key={t.id}
+                                  style={[styles.rowItem, styles.dealTaskRow, idx === 0 && styles.rowBorder]}
+                                  onPress={() => {
+                                    if (t.lead?.id) {
+                                      const nav = resolveAssignmentLeadNav(t);
+                                      navigation.navigate('LeadDealDetail', {
+                                        leadId: t.lead.id,
+                                        kind: assignmentEntityKind(t) || 'lead',
+                                        code: t.lead.code || undefined,
+                                        title: t.lead.title || undefined,
+                                        initialTab: nav.initialTab,
+                                        focusAssignmentId: nav.focusAssignmentId,
+                                        focusTaskId: nav.focusTaskId,
+                                      });
+                                    } else {
+                                      navigation.navigate('Tasks');
+                                    }
+                                  }}
+                                >
+                                  <View
+                                    style={[
+                                      styles.rowIcon,
+                                      {
+                                        backgroundColor: overdue
+                                          ? Colors.redSoft
+                                          : statusKey === 'in_progress'
+                                            ? Colors.blueSoft
+                                            : Colors.amberSoft,
+                                      },
+                                    ]}
+                                  >
+                                    <Ionicons
+                                      name={
+                                        overdue
+                                          ? 'alert-circle'
+                                          : statusKey === 'in_progress'
+                                            ? 'time'
+                                            : 'ellipse-outline'
+                                      }
+                                      size={18}
+                                      color={
+                                        overdue
+                                          ? Colors.red
+                                          : statusKey === 'in_progress'
+                                            ? Colors.blue
+                                            : Colors.amber
+                                      }
+                                    />
+                                  </View>
+                                  <View style={{ flex: 1 }}>
+                                    <Text style={styles.rowTitle} numberOfLines={1}>
+                                      {t.title || 'Nhiệm vụ'}
+                                    </Text>
+                                    <Text style={styles.rowSub} numberOfLines={1}>
+                                      {statusLbl}
+                                      {overdue ? ' · Quá hạn' : ''}
+                                      {t.deadline ? ` · ${formatDateShort(t.deadline)}` : ''}
+                                      {pri ? ` · ${pri}` : ''}
+                                    </Text>
+                                  </View>
+                                  <Ionicons name="chevron-forward" size={16} color={Colors.textFaint} />
+                                </Pressable>
+                              );
+                            })
+                          : null}
+                      </View>
                     );
                   })}
                   {showTaskPager ? (
@@ -1256,6 +1333,27 @@ const makeStyles = (Colors: ThemeColors) =>
       color: Colors.text,
       fontSize: 12.5,
       fontWeight: '700',
+    },
+    dealGroupBorder: {
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: Colors.border,
+    },
+    dealGroupHead: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      paddingHorizontal: 12,
+      paddingVertical: 12,
+    },
+    dealGroupTitle: {
+      flex: 1,
+      color: Colors.text,
+      fontSize: 13.5,
+      fontWeight: '800',
+    },
+    dealTaskRow: {
+      paddingLeft: 28,
+      backgroundColor: Colors.cardAlt,
     },
     rowSub: { color: Colors.textMuted, fontSize: 12, fontWeight: '600', marginTop: 2 },
     moreBtn: {
