@@ -978,7 +978,12 @@ async function getOrBuildCrmDeadlineSnapshot(req, mergedQuery, type, rpcAssignee
   if (hit) return hit;
 
   const openStageIdSet = new Set(openStageIds);
-  const groupedIds = Object.fromEntries(CRM_DEADLINE_BUCKET_KEYS.map((k) => [k, []]));
+  // Gom theo {id, ts} trước — sắp xếp theo hạn (gấp nhất trước) chỉ sau khi đã quét hết, vì
+  // nguồn hàng (crm_leads_page_ids / legacy) trả theo created_at DESC chứ không theo hạn, nên
+  // nếu cứ push thẳng id vào mảng theo thứ tự quét thì việc cắt trang theo offset sẽ xáo trộn
+  // thứ tự hiển thị — trang tải sau có thể có deal quá hạn HƠN trang đã tải trước, khiến card mới
+  // chèn lên ĐẦU cột thay vì nối ở CUỐI khi FE tự sắp lại theo hạn.
+  const groupedEntries = Object.fromEntries(CRM_DEADLINE_BUCKET_KEYS.map((k) => [k, []]));
   const stages = await resolveKanbanStagesForCompany(
     type,
     uuidQueryOrNull(mergedQuery.company_id),
@@ -995,7 +1000,7 @@ async function getOrBuildCrmDeadlineSnapshot(req, mergedQuery, type, rpcAssignee
       if (!openStageIdSet.has(sid)) continue;
       const stage = stageById.get(sid);
       const ts = crmDeadlineTsForRow(row, stage, config);
-      groupedIds[crmDeadlineBucketFromTs(ts, config?.buckets)].push(String(row.id));
+      groupedEntries[crmDeadlineBucketFromTs(ts, config?.buckets)].push({ id: String(row.id), ts });
     }
   };
 
@@ -1028,6 +1033,18 @@ async function getOrBuildCrmDeadlineSnapshot(req, mergedQuery, type, rpcAssignee
     classifyRows(result.rows);
     complete = result.complete;
   }
+
+  // Sắp theo hạn tăng dần (quá hạn lâu nhất trước) — khớp cách FE tự sắp `_deadlineTs` khi gộp
+  // các trang đã tải. Làm bước này ở đây để offset/limit cắt trang đúng thứ tự hiển thị.
+  const groupedIds = Object.fromEntries(
+    CRM_DEADLINE_BUCKET_KEYS.map((k) => [
+      k,
+      groupedEntries[k]
+        .slice()
+        .sort((a, b) => (a.ts ?? Infinity) - (b.ts ?? Infinity))
+        .map((entry) => entry.id),
+    ]),
+  );
 
   const snapshot = { idsByBucket: groupedIds, complete, expiresAt: Date.now() + CRM_DEADLINE_SNAPSHOT_TTL_MS };
   crmDeadlineSnapshotCache.set(key, snapshot);

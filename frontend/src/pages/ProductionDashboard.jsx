@@ -1105,8 +1105,14 @@ export default function ProductionDashboard() {
         setSummaryKpisPending(false);
         setStagePageState((prev) => {
           const next = { ...prev };
-          Object.entries(counts).forEach(([stageId, totalRaw]) => {
-            const total = Number(totalRaw) || 0;
+          // RPC sx_kanban_column_counts GROUP BY trên projects — cột về 0 dự án (vd. vừa kéo
+          // hết thẻ sang cột khác) sẽ KHÔNG còn key trong `counts` nữa (không có cách nào có
+          // group 0 dòng). Nếu chỉ duyệt Object.entries(counts), cột đó bị bỏ sót → total/hasMore
+          // cũ (khi còn thẻ) bị kẹt mãi → hiện nhầm nút «Tải lại cột này»/«Tải thêm» dù badge = 0.
+          // Duyệt UNION các cột đã từng biết để cột rơi về 0 được reset đúng.
+          const allStageIds = new Set([...Object.keys(prev), ...Object.keys(counts)]);
+          allStageIds.forEach((stageId) => {
+            const total = Number(counts[stageId]) || 0;
             const loaded = Number(next[stageId]?.loaded) || 0;
             next[stageId] = {
               ...(next[stageId] || {}),
@@ -1114,6 +1120,7 @@ export default function ProductionDashboard() {
               loaded,
               nextPage: next[stageId]?.nextPage || 1,
               hasMore: total > loaded,
+              exhausted: total > 0 ? (next[stageId]?.exhausted ?? false) : true,
               loading: false,
             };
           });

@@ -14,6 +14,7 @@ const {
   projectLinkedToWonDealScope,
   buildScopeOrFilter,
   loadProductionPipelineStagesRows,
+  invalidatePipelineStagesRowsCache,
   filterProductionPipelineStagesForWorkshopType,
   getResolvedKanbanStages,
   resolveSxHandoverColumnId,
@@ -61,7 +62,7 @@ const {
 } = require('../helpers/projectOrderFulfillment');
 const { assertSxKanbanAdvanceAllowed } = require('../helpers/workshopStageAdvanceGate');
 const { completeOpenWorkOnModuleDone } = require('../helpers/completeOpenWorkOnModuleDone');
-const { applyProjectTenantScope, assertRowCompanyInTenant } = require('../helpers/tenantScope');
+const { applyProjectTenantScope, assertRowCompanyInTenant, isTenantScopeEnforced } = require('../helpers/tenantScope');
 
 /** Kế toán / deal_company_id: lọc deal theo công ty CRM; company_id = xưởng SX. */
 async function applyParticipantOnlyProductionScope(
@@ -790,6 +791,7 @@ async function allowedWorkflowStageIdsForPatch(companyId = null) {
 
 async function invalidateProductionPipelineCache() {
   invalidateAllowedWorkflowStageIdsCache();
+  invalidatePipelineStagesRowsCache();
   await rcInvalidateTags(['production']);
 }
 
@@ -1192,6 +1194,7 @@ r.post('/pipeline-stages/seed-samples', requirePermission('projects', 'edit'), a
     }
     const out = await ensureSampleProductionPipelineStages(supabase, company_id, { workshopTypeId: workshop_type_id });
     invalidateAllowedWorkflowStageIdsCache();
+    invalidatePipelineStagesRowsCache();
     res.json(out);
   } catch (e) {
     console.error(e);
@@ -1208,6 +1211,7 @@ r.post('/pipeline-stages/seed-default-kitchen-glass', requirePermission('project
     if (!company_id) return res.status(400).json({ error: 'Thiếu company_id' });
     const out = await ensureKitchenAndGlassDefaults(supabase, company_id);
     invalidateAllowedWorkflowStageIdsCache();
+    invalidatePipelineStagesRowsCache();
     res.json(out);
   } catch (e) {
     console.error(e);
@@ -1677,11 +1681,17 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
     const deal_company_id = effectiveDealCompanyId(req, dealCompanyIdQuery, company_id);
     const sx_workshop_company_id = sxWorkshopCoQ && String(sxWorkshopCoQ).trim() ? String(sxWorkshopCoQ).trim() : null;
     // Prelude song song — summary KPI không bị chậm vì chờ tuần tự 3 query.
-    const [scopePartnerIds, stageMap, wonIds] = await Promise.all([
+    // wonIds rút gọn theo company_id khi có (giảm mạnh chuỗi `id.in.(...)` gửi cho mỗi cột
+    // Kanban) — union thêm scopePartnerIds để không mất project "đối tác thực thi" (executor)
+    // thuộc công ty khác vẫn đang ở bucket "Chờ tiếp nhận" (chưa có current_stage_id).
+    const [scopePartnerIds, stageMap, wonIdsScoped] = await Promise.all([
       company_id ? getExecutorProjectIdsForCompany(company_id) : Promise.resolve([]),
       getWorkshopStageMap(),
-      getWonDealProjectIds(),
+      getWonDealProjectIds(company_id || null),
     ]);
+    const wonIds = company_id && scopePartnerIds.length
+      ? [...new Set([...wonIdsScoped, ...scopePartnerIds])]
+      : wonIdsScoped;
     const parsedPage = Math.max(parseInt(page) || 1, 1);
     const parsedLimit = Math.min(Math.max(parseInt(limit) || 100, 1), 500);
     const offset = (parsedPage - 1) * parsedLimit;
@@ -1840,33 +1850,88 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
     let count = null;
 
     if (columnScopedKanban) {
-      let idQuery = supabase.from('projects').select('id', { count: 'exact' });
-      const appliedIds = applyProjectsListFilters(idQuery);
-      if (appliedIds.empty) {
-        return res.json({ projects: [], total: 0, page: parsedPage, totalPages: 0 });
-      }
-      idQuery = appliedIds.query;
-      ({ query: idQuery } = await applyParticipantOnlyProductionScope(
-        idQuery, req.user, company_id, sx_workshop_company_id, deal_company_id,
-      ));
-      idQuery = idQuery
-        .order('deadline', { ascending: true, nullsFirst: false })
-        .order('created_at', { ascending: false })
-        .range(offset, offset + parsedLimit - 1);
-      const idRes = await idQuery;
-      error = idRes.error;
-      count = idRes.count;
-      const pageIds = (idRes.data || []).map((row) => row.id).filter(Boolean);
-      if (error) {
-        console.error('[production/projects] column id-page failed', {
-          message: error.message,
-          code: error.code,
-          details: error.details,
-          hint: error.hint,
-          sxKanbanColumnId: sxKanbanColumnId || null,
-          company_id: company_id || null,
+      // RPC trước — không cần mảng wonIds trong query (an toàn ở quy mô nhiều dự án; xem
+      // migration 561). Chỉ dùng cho kịch bản chuẩn (không sx_intake/stage_slug/tenant rỗng) —
+      // lỗi hoặc không đủ điều kiện thì rơi về REST cũ (đã chạy ổn định từ trước) ngay bên dưới.
+      let pageIds = null;
+      const tenantEnforced = isTenantScopeEnforced(req);
+      const tenantCompanyIds = tenantEnforced ? (req.tenantCompanyIds || []) : null;
+      const rpcEligible = String(sx_intake) !== '1'
+        && !stage_slug
+        && !division_id
+        && !(tenantEnforced && tenantCompanyIds.length === 0);
+      if (rpcEligible) {
+        const { memberProjectIds } = await applyParticipantOnlyProductionScope(
+          supabase.from('projects').select('id'), req.user, company_id, sx_workshop_company_id, deal_company_id,
+        );
+        const { data: rpcData, error: rpcError } = await supabase.rpc('sx_kanban_stage_page_ids', {
+          p_requests: [{
+            column_id: wantsNullKanbanColumn ? null : sxKanbanColumnId,
+            null_column: wantsNullKanbanColumn,
+            offset,
+            limit: parsedLimit,
+          }],
+          p_stage_ids: stageIds.length ? stageIds : null,
+          p_statuses: WORKSHOP_STATUSES,
+          p_company_id: company_id || null,
+          p_partner_project_ids: scopePartnerIds?.length ? scopePartnerIds : null,
+          p_restrict_project_ids: memberProjectIds,
+          p_tenant_company_ids: tenantCompanyIds,
+          p_workshop_type_id: wantsUnclassified ? null : (workshop_type_id || null),
+          p_unclassified: wantsUnclassified,
+          p_created_from: createdFrom || null,
+          p_created_to: createdTo
+            ? (/^\d{4}-\d{2}-\d{2}$/.test(String(createdTo)) ? `${createdTo}T23:59:59.999Z` : createdTo)
+            : null,
+          p_production_person_id: productionPersonId || null,
+          p_priority: priority || null,
+          p_search: search || null,
         });
-        throw error;
+        if (rpcError) {
+          const rpcUnavailable = /sx_kanban_stage_page_ids|does not exist|Could not find|schema cache|argument/i
+            .test(String(rpcError.message || ''));
+          if (!rpcUnavailable) {
+            console.warn('[production/projects] sx_kanban_stage_page_ids RPC error → REST fallback:', rpcError.message);
+          }
+        } else {
+          const reqKey = wantsNullKanbanColumn ? '__none__' : sxKanbanColumnId;
+          const page = rpcData?.pages?.[reqKey];
+          if (page) {
+            pageIds = (page.ids || []).map(String);
+            count = Number(page.total) || 0;
+          }
+        }
+      }
+
+      if (pageIds == null) {
+        let idQuery = supabase.from('projects').select('id', { count: 'exact' });
+        const appliedIds = applyProjectsListFilters(idQuery);
+        if (appliedIds.empty) {
+          return res.json({ projects: [], total: 0, page: parsedPage, totalPages: 0 });
+        }
+        idQuery = appliedIds.query;
+        ({ query: idQuery } = await applyParticipantOnlyProductionScope(
+          idQuery, req.user, company_id, sx_workshop_company_id, deal_company_id,
+        ));
+        idQuery = idQuery
+          .order('deadline', { ascending: true, nullsFirst: false })
+          .order('created_at', { ascending: false })
+          .range(offset, offset + parsedLimit - 1);
+        const idRes = await idQuery;
+        error = idRes.error;
+        count = idRes.count;
+        pageIds = (idRes.data || []).map((row) => row.id).filter(Boolean);
+        if (error) {
+          console.error('[production/projects] column id-page failed', {
+            message: error.message,
+            code: error.code,
+            details: error.details,
+            hint: error.hint,
+            sxKanbanColumnId: sxKanbanColumnId || null,
+            company_id: company_id || null,
+          });
+          throw error;
+        }
       }
       if (!pageIds.length) {
         projects = [];
@@ -2093,9 +2158,18 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
       }));
     } else if (kanbanBoard) {
       // Web Kanban: staff + finance + pin flags; bỏ tasks / CRM task stats / write-on-read backfill.
+      // 3 bước enrich này độc lập nhau (đều đọc từ `enrichedSx`, chỉ CỘNG thêm field riêng, không
+      // đụng field của nhau) — chạy song song thay vì await tuần tự để giảm round-trip DB.
       const { attachProductionStaffToProjects } = require('../helpers/productionWorkshopTypeStaff');
-      const enrichedWithStaff = await attachProductionStaffToProjects(enrichedSx);
-      const withProgress = enrichedWithStaff.map((project) => ({
+      const listProjectIds = enrichedSx.map((p) => p.id).filter(Boolean);
+      const [enrichedWithStaff, withFlagsBase, dealDepositMap] = await Promise.all([
+        attachProductionStaffToProjects(enrichedSx),
+        attachLeadUserFlagsToProjects(enrichedSx, req.user?.userId),
+        loadDealDepositByProjectIds(listProjectIds),
+      ]);
+      const flagsById = new Map(withFlagsBase.map((p) => [String(p.id), p]));
+      const withUserFlags = enrichedWithStaff.map((p) => ({ ...p, ...(flagsById.get(String(p.id)) || {}) }));
+      const withProgress = withUserFlags.map((project) => ({
         ...project,
         progress: mapPipelineProgress(project),
         task_total: 0,
@@ -2104,10 +2178,7 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
         is_production_overdue: isSxProjectDateOverdue(project, 'production_deadline'),
         is_delivery_overdue: isSxProjectDateOverdue(project, 'delivery_date'),
       }));
-      const withUserFlags = await attachLeadUserFlagsToProjects(withProgress, req.user?.userId);
-      const listProjectIds = withUserFlags.map((p) => p.id).filter(Boolean);
-      const dealDepositMap = await loadDealDepositByProjectIds(listProjectIds);
-      projectsOut = attachSxFinanceToProjects(withUserFlags, dealDepositMap);
+      projectsOut = attachSxFinanceToProjects(withProgress, dealDepositMap);
     } else {
       const { attachProductionStaffToProjects, backfillMissingProductionStaff } = require('../helpers/productionWorkshopTypeStaff');
       try {
@@ -2183,11 +2254,14 @@ r.get('/deadline-bucket-page', requirePermission('projects', 'view'), async (req
       : null;
     const wantsUnclassified = String(workshop_type_id || '').toLowerCase() === 'none';
 
-    const [scopePartnerIds, stageMap, wonIds] = await Promise.all([
+    const [scopePartnerIds, stageMap, wonIdsScoped] = await Promise.all([
       company_id ? getExecutorProjectIdsForCompany(company_id) : Promise.resolve([]),
       getWorkshopStageMap(),
-      getWonDealProjectIds(),
+      getWonDealProjectIds(company_id || null),
     ]);
+    const wonIds = company_id && scopePartnerIds.length
+      ? [...new Set([...wonIdsScoped, ...scopePartnerIds])]
+      : wonIdsScoped;
     const { ids: stageIds } = stageMap;
 
     const pageMeta = await loadSxDeadlineBucketPage({

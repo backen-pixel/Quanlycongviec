@@ -74,6 +74,10 @@ async function getWorkshopStageMap() {
 /** Cache ngắn — mỗi trang Kanban gọi lại hàm này; 1000+ deal quét crm_leads rất đắt. */
 let _wonDealProjectIdsCache = { at: 0, ids: null };
 let _wonDealProjectIdsInflight = null;
+// Bản theo công ty — thu hẹp danh sách id (giảm chuỗi filter `id.in.(...)` gửi cho mỗi
+// cột Kanban) cho trường hợp phổ biến nhất: user bị khóa vào 1 công ty (admin công ty/NV).
+const _wonDealProjectIdsByCompanyCache = new Map(); // companyId -> { at, ids }
+const _wonDealProjectIdsByCompanyInflight = new Map(); // companyId -> Promise
 const WON_DEAL_IDS_TTL_MS = 90_000;
 // v2: gồm cả project phụ multi-SX (crm_deal_projects), không chỉ crm_leads.project_id.
 const WON_DEAL_IDS_REDIS_KEY = 'sx:won_deal_project_ids:v2';
@@ -82,6 +86,8 @@ const WON_DEAL_IDS_REDIS_KEY = 'sx:won_deal_project_ids:v2';
 function invalidateWonDealProjectIdsCache() {
   _wonDealProjectIdsCache = { at: 0, ids: null };
   _wonDealProjectIdsInflight = null;
+  _wonDealProjectIdsByCompanyCache.clear();
+  _wonDealProjectIdsByCompanyInflight.clear();
   try {
     const { getRedisIfReady } = require('../config/redis');
     const redis = getRedisIfReady();
@@ -124,118 +130,163 @@ async function projectLinkedToWonDealScope(projectId, wonSet = null) {
   return false;
 }
 
-async function getWonDealProjectIds() {
-  const now = Date.now();
-  if (_wonDealProjectIdsCache.ids && now - _wonDealProjectIdsCache.at < WON_DEAL_IDS_TTL_MS) {
-    return _wonDealProjectIdsCache.ids;
-  }
-  if (_wonDealProjectIdsInflight) return _wonDealProjectIdsInflight;
+/** Truy vấn thực tế — dùng chung cho bản toàn cục và bản theo công ty. */
+async function fetchWonDealProjectIds(companyId) {
+  // Lấy deals đang ở stage "Thắng" (is_won=true)
+  const { data: wonStages } = await supabase
+    .from('crm_pipeline_stages')
+    .select('id')
+    .eq('is_won', true)
+    .eq('is_active', true)
+    .or('pipeline_type.eq.deal,pipeline_type.is.null');
+  const wonStageIds = (wonStages || []).map((s) => s.id).filter(Boolean);
 
-  _wonDealProjectIdsInflight = (async () => {
-    try {
+  // Lấy deals có project:
+  // - đang ở stage is_won=true
+  // - hoặc đã từng thắng (actual_close_date IS NOT NULL)
+  // - hoặc (fallback) chỉ cần có project_id (tránh mất deal khi stage đã đổi nhưng chưa set actual_close_date)
+  // - multi-SX: project phụ chỉ nằm ở crm_deal_projects (không ghi đè crm_leads.project_id)
+  //
+  // Lọc theo companyId: PHẢI lọc theo company_id của DỰ ÁN (projects.company_id), KHÔNG PHẢI
+  // company_id của deal (crm_leads.company_id) — 1 xưởng (vd. HCB) có thể sản xuất cho deal
+  // thuộc công ty bán hàng khác (vd. Bếp Vạn Phú Thành đưa deal cho xưởng HCB gia công); lọc theo
+  // company_id của deal sẽ làm rớt gần hết dự án hợp lệ của xưởng đó (đã phát hiện qua kiểm thử
+  // trực tiếp — cột "Tiếp Nhận" của HCB thiếu 9/10 dự án do lỗi này).
+  const queries = [];
+  if (wonStageIds.length) {
+    let q = supabase
+      .from('crm_leads')
+      .select(companyId ? 'project_id, projects!inner(company_id)' : 'project_id')
+      .eq('type', 'deal')
+      .not('project_id', 'is', null)
+      .in('stage_id', wonStageIds);
+    if (companyId) q = q.eq('projects.company_id', companyId);
+    queries.push(q);
+  }
+  // Deals đã từng thắng (có actual_close_date) và được gắn project
+  {
+    let q = supabase
+      .from('crm_leads')
+      .select(companyId ? 'project_id, projects!inner(company_id)' : 'project_id')
+      .eq('type', 'deal')
+      .not('project_id', 'is', null)
+      .not('actual_close_date', 'is', null);
+    if (companyId) q = q.eq('projects.company_id', companyId);
+    queries.push(q);
+  }
+
+  // Fallback: chỉ cần có project_id (để intake không bị mất card ngay sau khi chuyển stage CRM)
+  {
+    let q = supabase
+      .from('crm_leads')
+      .select(companyId ? 'project_id, projects!inner(company_id)' : 'project_id')
+      .eq('type', 'deal')
+      .not('project_id', 'is', null);
+    if (companyId) q = q.eq('projects.company_id', companyId);
+    queries.push(q);
+  }
+
+  // Multi-xưởng: dự án xưởng 2+ gắn qua junction, không có trên crm_leads.project_id
+  {
+    let q = supabase
+      .from('crm_deal_projects')
+      .select(companyId ? 'project_id, projects!inner(company_id)' : 'project_id')
+      .not('project_id', 'is', null);
+    if (companyId) q = q.eq('projects.company_id', companyId);
+    queries.push(q);
+  }
+
+  const results = await Promise.all(queries);
+  const out = new Set();
+  for (const { data, error } of results) {
+    if (error) {
+      // DB chưa có bảng junction → bỏ qua, vẫn dùng project_id chính
+      if (!String(error.message || '').includes('crm_deal_projects')) {
+        console.warn('[getWonDealProjectIds]', error.message);
+      }
+      continue;
+    }
+    for (const l of data || []) {
+      if (l.project_id) out.add(l.project_id);
+    }
+  }
+  return [...out];
+}
+
+/**
+ * @param {string|null} [companyId] — khi truyền, trả về danh sách RÚT GỌN chỉ gồm project
+ *   thuộc công ty này (giảm mạnh độ dài filter `id.in.(...)` gửi cho mỗi cột Kanban khi user
+ *   bị khóa vào 1 công ty — trường hợp phổ biến nhất). Không truyền → giữ nguyên hành vi cũ
+ *   (toàn bộ hệ thống, có cache Redis) cho các nơi gọi khác (report, kế toán, auto-sync...).
+ */
+async function getWonDealProjectIds(companyId = null) {
+  const now = Date.now();
+
+  if (!companyId) {
+    if (_wonDealProjectIdsCache.ids && now - _wonDealProjectIdsCache.at < WON_DEAL_IDS_TTL_MS) {
+      return _wonDealProjectIdsCache.ids;
+    }
+    if (_wonDealProjectIdsInflight) return _wonDealProjectIdsInflight;
+
+    _wonDealProjectIdsInflight = (async () => {
       try {
-        const { getRedisIfReady } = require('../config/redis');
-        const redis = getRedisIfReady();
-        if (redis) {
-          const raw = await redis.get(WON_DEAL_IDS_REDIS_KEY);
-          if (raw) {
-            const parsed = JSON.parse(raw);
-            if (Array.isArray(parsed)) {
-              _wonDealProjectIdsCache = { at: Date.now(), ids: parsed };
-              return parsed;
+        try {
+          const { getRedisIfReady } = require('../config/redis');
+          const redis = getRedisIfReady();
+          if (redis) {
+            const raw = await redis.get(WON_DEAL_IDS_REDIS_KEY);
+            if (raw) {
+              const parsed = JSON.parse(raw);
+              if (Array.isArray(parsed)) {
+                _wonDealProjectIdsCache = { at: Date.now(), ids: parsed };
+                return parsed;
+              }
             }
           }
+        } catch {
+          /* ignore redis */
         }
-      } catch {
-        /* ignore redis */
-      }
 
-      // Lấy deals đang ở stage "Thắng" (is_won=true)
-      const { data: wonStages } = await supabase
-        .from('crm_pipeline_stages')
-        .select('id')
-        .eq('is_won', true)
-        .eq('is_active', true)
-        .or('pipeline_type.eq.deal,pipeline_type.is.null');
-      const wonStageIds = (wonStages || []).map((s) => s.id).filter(Boolean);
+        const ids = await fetchWonDealProjectIds(null);
+        _wonDealProjectIdsCache = { at: Date.now(), ids };
 
-      // Lấy deals có project:
-      // - đang ở stage is_won=true
-      // - hoặc đã từng thắng (actual_close_date IS NOT NULL)
-      // - hoặc (fallback) chỉ cần có project_id (tránh mất deal khi stage đã đổi nhưng chưa set actual_close_date)
-      // - multi-SX: project phụ chỉ nằm ở crm_deal_projects (không ghi đè crm_leads.project_id)
-      const queries = [];
-      if (wonStageIds.length) {
-        queries.push(
-          supabase
-            .from('crm_leads')
-            .select('project_id')
-            .eq('type', 'deal')
-            .not('project_id', 'is', null)
-            .in('stage_id', wonStageIds),
-        );
-      }
-      // Deals đã từng thắng (có actual_close_date) và được gắn project
-      queries.push(
-        supabase
-          .from('crm_leads')
-          .select('project_id')
-          .eq('type', 'deal')
-          .not('project_id', 'is', null)
-          .not('actual_close_date', 'is', null),
-      );
-
-      // Fallback: chỉ cần có project_id (để intake không bị mất card ngay sau khi chuyển stage CRM)
-      queries.push(
-        supabase
-          .from('crm_leads')
-          .select('project_id')
-          .eq('type', 'deal')
-          .not('project_id', 'is', null),
-      );
-
-      // Multi-xưởng: dự án xưởng 2+ gắn qua junction, không có trên crm_leads.project_id
-      queries.push(
-        supabase
-          .from('crm_deal_projects')
-          .select('project_id')
-          .not('project_id', 'is', null),
-      );
-
-      const results = await Promise.all(queries);
-      const out = new Set();
-      for (const { data, error } of results) {
-        if (error) {
-          // DB chưa có bảng junction → bỏ qua, vẫn dùng project_id chính
-          if (!String(error.message || '').includes('crm_deal_projects')) {
-            console.warn('[getWonDealProjectIds]', error.message);
+        try {
+          const { getRedisIfReady } = require('../config/redis');
+          const redis = getRedisIfReady();
+          if (redis) {
+            await redis.set(WON_DEAL_IDS_REDIS_KEY, JSON.stringify(ids), 'EX', Math.ceil(WON_DEAL_IDS_TTL_MS / 1000));
           }
-          continue;
+        } catch {
+          /* ignore redis */
         }
-        for (const l of data || []) {
-          if (l.project_id) out.add(l.project_id);
-        }
-      }
-      const ids = [...out];
-      _wonDealProjectIdsCache = { at: Date.now(), ids };
 
-      try {
-        const { getRedisIfReady } = require('../config/redis');
-        const redis = getRedisIfReady();
-        if (redis) {
-          await redis.set(WON_DEAL_IDS_REDIS_KEY, JSON.stringify(ids), 'EX', Math.ceil(WON_DEAL_IDS_TTL_MS / 1000));
-        }
-      } catch {
-        /* ignore redis */
+        return ids;
+      } finally {
+        _wonDealProjectIdsInflight = null;
       }
+    })();
 
+    return _wonDealProjectIdsInflight;
+  }
+
+  const cached = _wonDealProjectIdsByCompanyCache.get(companyId);
+  if (cached && now - cached.at < WON_DEAL_IDS_TTL_MS) {
+    return cached.ids;
+  }
+  const inflight = _wonDealProjectIdsByCompanyInflight.get(companyId);
+  if (inflight) return inflight;
+
+  const promise = (async () => {
+    try {
+      const ids = await fetchWonDealProjectIds(companyId);
+      _wonDealProjectIdsByCompanyCache.set(companyId, { at: Date.now(), ids });
       return ids;
     } finally {
-      _wonDealProjectIdsInflight = null;
+      _wonDealProjectIdsByCompanyInflight.delete(companyId);
     }
   })();
-
-  return _wonDealProjectIdsInflight;
+  _wonDealProjectIdsByCompanyInflight.set(companyId, promise);
+  return promise;
 }
 
 function buildScopeOrFilter(stageIds, wonIds) {
@@ -246,7 +297,31 @@ function buildScopeOrFilter(stageIds, wonIds) {
   return parts.join(',');
 }
 
+// Cấu hình cột pipeline đổi hiếm (admin chỉnh trong Cài đặt) nhưng bị gọi lại ở MỌI request
+// Kanban (kể cả từng cột lazy-load) — cache ngắn để khỏi quét production_pipeline_stages
+// liên tục, giống pattern getWorkshopStageMap().
+const _pipelineStagesRowsCache = new Map(); // cacheKey -> { at, value }
+const PIPELINE_STAGES_ROWS_TTL_MS = 60_000;
+
 async function loadProductionPipelineStagesRows(includeInactive = false, companyId = null, legacyUnscoped = false) {
+  const cacheKey = `${includeInactive ? 1 : 0}:${legacyUnscoped ? 'legacy' : (companyId || 'null')}`;
+  const cached = _pipelineStagesRowsCache.get(cacheKey);
+  const now = Date.now();
+  if (cached && now - cached.at < PIPELINE_STAGES_ROWS_TTL_MS) {
+    return cached.value;
+  }
+  const value = await loadProductionPipelineStagesRowsUncached(includeInactive, companyId, legacyUnscoped);
+  // Không cache lỗi (null) — để lần gọi sau thử lại ngay thay vì kẹt 60s.
+  if (value !== null) _pipelineStagesRowsCache.set(cacheKey, { at: now, value });
+  return value;
+}
+
+/** Xóa cache cấu hình cột pipeline — gọi sau khi tạo/sửa/xóa production_pipeline_stages. */
+function invalidatePipelineStagesRowsCache() {
+  _pipelineStagesRowsCache.clear();
+}
+
+async function loadProductionPipelineStagesRowsUncached(includeInactive = false, companyId = null, legacyUnscoped = false) {
   const cid = legacyUnscoped ? null : normalizeWorkshopCompanyId(companyId);
 
   const runBase = (scope) => {
@@ -1695,6 +1770,7 @@ module.exports = {
   projectLinkedToWonDealScope,
   buildScopeOrFilter,
   loadProductionPipelineStagesRows,
+  invalidatePipelineStagesRowsCache,
   filterProductionPipelineStagesForWorkshopType,
   getResolvedKanbanStages,
   firstSxPipelineColumnId,
