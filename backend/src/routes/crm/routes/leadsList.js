@@ -1274,10 +1274,19 @@ r.post('/kanban-stage-pages', async (req, res) => {
           skipEnrich: true,
           lite: true,
         });
-        let baseRows = attachLeadNewFlagForList(hydrated, req.user?.userId);
-        baseRows = await attachLeadUserFlagsForList(baseRows, req.user?.userId);
-        // Multi-SX: mỗi xưởng một chip pipeline trên thẻ CRM
-        baseRows = await helpers.attachProductionProjectsForList(baseRows);
+        const withNewFlag = attachLeadNewFlagForList(hydrated, req.user?.userId);
+        // Độc lập nhau (chỉ cộng field riêng theo id) — chạy song song thay vì await tuần tự
+        // để bớt 1 round-trip độ trễ mạng tới Supabase.
+        const [withUserFlags, withProdProjects] = await Promise.all([
+          attachLeadUserFlagsForList(withNewFlag, req.user?.userId),
+          // Multi-SX: mỗi xưởng một chip pipeline trên thẻ CRM
+          helpers.attachProductionProjectsForList(withNewFlag),
+        ]);
+        const prodById = new Map(withProdProjects.map((row) => [String(row.id), row]));
+        const baseRows = withUserFlags.map((row) => ({
+          ...row,
+          ...(prodById.get(String(row.id)) || {}),
+        }));
         const rowsById = new Map(baseRows.map((row) => [String(row.id), row]));
         const pages = {};
         for (const [stageId, page] of Object.entries(batchPages)) {

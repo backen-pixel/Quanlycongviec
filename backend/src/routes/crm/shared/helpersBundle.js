@@ -5024,12 +5024,22 @@ async function hydrateCrmLeadsRpcPage(parsedRpc, req, parsedOffset, parsedLimit,
   const { total, ids } = parsedRpc;
   const hydrated = await fetchCrmLeadsByIdsOrdered(ids, { skipEnrich: lite, lite });
   const windowLen = Array.isArray(ids) ? ids.length : hydrated.length;
+  // attachLeadUserFlagsForList (ghim/đã tương tác) và attachProductionProjectsForList (chip SX)
+  // đều chỉ CỘNG field riêng theo id, không đụng field của nhau — chạy song song thay vì await
+  // tuần tự để bớt 1 round-trip độ trễ mạng tới Supabase (mỗi round-trip local→Supabase ~150-250ms).
+  const mergeById = (base, extra) => {
+    const byId = new Map(extra.map((row) => [String(row.id), row]));
+    return base.map((row) => ({ ...row, ...(byId.get(String(row.id)) || {}) }));
+  };
   if (lite) {
-    let page = attachLeadNewFlagForList(hydrated, req.user?.userId);
-    page = await attachLeadUserFlagsForList(page, req.user?.userId);
-    if (!skipDeadline) page = await attachCrmNextOpenTaskDeadline(page);
-    // Multi-SX: 1 chip / xưởng trên thẻ Kanban
-    page = await attachProductionProjectsForList(page);
+    const withNewFlag = attachLeadNewFlagForList(hydrated, req.user?.userId);
+    const [withUserFlags, withProdProjects, withDeadline] = await Promise.all([
+      attachLeadUserFlagsForList(withNewFlag, req.user?.userId),
+      attachProductionProjectsForList(withNewFlag),
+      skipDeadline ? null : attachCrmNextOpenTaskDeadline(withNewFlag),
+    ]);
+    let page = mergeById(mergeById(withNewFlag, withUserFlags), withProdProjects);
+    if (withDeadline) page = mergeById(page, withDeadline);
     return {
       data: page,
       total,
@@ -5039,10 +5049,13 @@ async function hydrateCrmLeadsRpcPage(parsedRpc, req, parsedOffset, parsedLimit,
       nextOffset: parsedOffset + windowLen,
     };
   }
-  const rows = await attachCrmNextOpenTaskDeadline(hydrated);
-  const page = attachLeadNewFlagForList(rows, req.user?.userId);
-  let pageWithUserFlags = await attachLeadUserFlagsForList(page, req.user?.userId);
-  pageWithUserFlags = await attachProductionProjectsForList(pageWithUserFlags);
+  const withNewFlag = attachLeadNewFlagForList(hydrated, req.user?.userId);
+  const [withDeadline, withUserFlags, withProdProjects] = await Promise.all([
+    attachCrmNextOpenTaskDeadline(withNewFlag),
+    attachLeadUserFlagsForList(withNewFlag, req.user?.userId),
+    attachProductionProjectsForList(withNewFlag),
+  ]);
+  const pageWithUserFlags = mergeById(mergeById(withDeadline, withUserFlags), withProdProjects);
   return {
     data: pageWithUserFlags,
     total,
