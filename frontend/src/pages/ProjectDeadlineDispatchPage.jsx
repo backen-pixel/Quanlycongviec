@@ -3,7 +3,7 @@ import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isCompanyScopedAdmin } from '../lib/adminRole';
 import {
-  Bell, Building2, Check, Copy, ExternalLink, MapPin, Pencil, Plus, RefreshCw, Save, Send, Trash2,
+  Bell, Building2, Check, Copy, ExternalLink, FlaskConical, MapPin, Pencil, Plus, RefreshCw, Save, Send, Trash2,
 } from 'lucide-react';
 
 const MODULES = [
@@ -93,6 +93,7 @@ export default function ProjectDeadlineDispatchPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [sending, setSending] = useState(false);
+  const [testing, setTesting] = useState(false);
   const [previewing, setPreviewing] = useState(false);
   const [err, setErr] = useState(null);
   const [msg, setMsg] = useState(null);
@@ -371,6 +372,31 @@ export default function ProjectDeadlineDispatchPage() {
     }
   };
 
+  const testZalo = async (cfg) => {
+    const id = cfg?.id || editingId;
+    if (!id) return;
+    setTesting(true);
+    setErr(null);
+    setMsg(null);
+    try {
+      const { data } = await api.post(`/dashboard/project-deadlines/configs/${encodeURIComponent(id)}/test`);
+      if (data?.notification) {
+        setItems((prev) => [data.notification, ...prev.filter((n) => !n._test)]);
+        setPreviewMeta((m) => ({
+          count: (m?.count || 0) + (data.notification ? 1 : 0),
+          truncated: m?.truncated,
+          name: data.config_name || m?.name,
+          id: data.config_id || m?.id,
+        }));
+      }
+      setMsg(`Đã tạo & gửi tin TEST tới Zalo (${data?.sent || 0} chat). Kiểm tra nhóm/chat Bot.`);
+    } catch (e) {
+      setErr(e.response?.data?.error || e.message);
+    } finally {
+      setTesting(false);
+    }
+  };
+
   const remove = async (cfg) => {
     if (!cfg?.id) return;
     if (!window.confirm(`Xóa cấu hình «${cfg.name}»?`)) return;
@@ -515,9 +541,13 @@ export default function ProjectDeadlineDispatchPage() {
                           className="h-8 w-8 border rounded-lg inline-flex items-center justify-center hover:bg-gray-50 cursor-pointer">
                           <Pencil className="h-3.5 w-3.5" />
                         </button>
-                        <button type="button" title="Gửi Zalo ngay" onClick={() => sendZalo(cfg)} disabled={sending || !cfg.zalo_bot_token_set}
+                        <button type="button" title="Gửi Zalo ngay" onClick={() => sendZalo(cfg)} disabled={sending || testing || !cfg.zalo_bot_token_set}
                           className="h-8 w-8 border rounded-lg inline-flex items-center justify-center hover:bg-sky-50 text-sky-700 disabled:opacity-40 cursor-pointer">
                           <Send className="h-3.5 w-3.5" />
+                        </button>
+                        <button type="button" title="Tạo thông báo test" onClick={() => testZalo(cfg)} disabled={sending || testing || !cfg.zalo_bot_token_set}
+                          className="h-8 w-8 border rounded-lg inline-flex items-center justify-center hover:bg-amber-50 text-amber-700 disabled:opacity-40 cursor-pointer">
+                          <FlaskConical className="h-3.5 w-3.5" />
                         </button>
                         <button type="button" title="Copy URL" onClick={() => copy(url, `u-${cfg.id}`)}
                           className="h-8 w-8 border rounded-lg inline-flex items-center justify-center hover:bg-gray-50 cursor-pointer">
@@ -722,9 +752,16 @@ export default function ProjectDeadlineDispatchPage() {
           </button>
           {editingId && (
             <button type="button" onClick={() => sendZalo({ id: editingId, zalo_bot_token_set: form.zaloTokenSet || !!form.zaloBotToken })}
-              disabled={sending || saving || (!form.zaloTokenSet && !form.zaloBotToken.trim())}
+              disabled={sending || testing || saving || (!form.zaloTokenSet && !form.zaloBotToken.trim())}
               className="h-10 px-4 bg-sky-600 text-white rounded-lg text-sm font-medium inline-flex items-center gap-2 disabled:opacity-50 cursor-pointer">
               <Send className="h-4 w-4" /> {sending ? 'Đang gửi…' : 'Gửi Zalo ngay'}
+            </button>
+          )}
+          {editingId && (
+            <button type="button" onClick={() => testZalo({ id: editingId })}
+              disabled={sending || testing || saving || (!form.zaloTokenSet && !form.zaloBotToken.trim())}
+              className="h-10 px-4 bg-amber-500 text-white rounded-lg text-sm font-medium inline-flex items-center gap-2 disabled:opacity-50 cursor-pointer">
+              <FlaskConical className="h-4 w-4" /> {testing ? 'Đang test…' : 'Tạo thông báo test'}
             </button>
           )}
           {editingId && (
@@ -807,9 +844,14 @@ export default function ProjectDeadlineDispatchPage() {
                 </tr>
               )}
               {items.map((n, i) => (
-                <tr key={`${n.project?.id}-${n.deadline?.module}-${n.deadline?.source}-${i}`} className="border-t">
+                <tr key={`${n.project?.id}-${n.deadline?.module}-${n.deadline?.source}-${i}`} className={`border-t ${n._test ? 'bg-amber-50/60' : ''}`}>
                   <td className="px-3 py-2">
-                    <div className="font-medium text-gray-900">{n.project?.code || n.deal?.code || '—'}</div>
+                    <div className="font-medium text-gray-900 flex items-center gap-1.5 flex-wrap">
+                      {n.project?.code || n.deal?.code || '—'}
+                      {n._test && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-200 text-amber-900 font-semibold">TEST</span>
+                      )}
+                    </div>
                     <div className="text-xs text-gray-500 truncate max-w-[220px]">{n.project?.name || n.deal?.title}</div>
                     {n.project?.status_label && (
                       <div className="text-[10px] text-gray-400">{n.project.status_label}</div>

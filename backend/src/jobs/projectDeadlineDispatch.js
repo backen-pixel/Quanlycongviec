@@ -8,7 +8,19 @@
  */
 const { supabase } = require('../config/supabase');
 const { runIfLeader } = require('../helpers/cronLeader');
-const { listProjectDeadlineNotifications } = require('../helpers/projectDeadlineExport');
+const { listProjectDeadlineNotifications, buildZaloBotText } = require('../helpers/projectDeadlineExport');
+const { frontendUrl } = require('../config');
+const PUBLIC_APP_URL = 'https://tubep-frontend-s30w.onrender.com';
+
+function testAppBaseUrl() {
+  const candidates = [process.env.PUBLIC_APP_URL, process.env.APP_BASE_URL, frontendUrl, PUBLIC_APP_URL];
+  for (const raw of candidates) {
+    const url = String(raw || '').trim().replace(/\/+$/, '');
+    if (!url || /localhost|127\.0\.0\.1/i.test(url)) continue;
+    return url;
+  }
+  return PUBLIC_APP_URL;
+}
 const { getAppSettingValue, invalidateAppSettingKey } = require('../helpers/appSettingsCache');
 
 const SETTING_KEY = 'project_deadline_dispatch';
@@ -597,6 +609,144 @@ async function runOnce(opts = {}) {
   };
 }
 
+/**
+ * Tạo + gửi 1 thông báo deadline TEST qua Zalo (không ghi fingerprint thật).
+ */
+async function sendTestDeadline(profileOrId, opts = {}) {
+  const store = await loadStore();
+  const profile = typeof profileOrId === 'object' && profileOrId?.id
+    ? normalizeProfile(profileOrId)
+    : store.profiles.find((p) => String(p.id) === String(profileOrId));
+  if (!profile) {
+    return { ok: false, skipped: true, reason: 'not_found', sent: 0 };
+  }
+
+  const token = sanitizeBotToken(opts.zaloBotToken || profile.zalo_bot_token || store.zalo_bot_token);
+  const chatIds = normalizeChatIds(opts.zaloChatId || profile.zalo_chat_id || store.zalo_chat_id);
+  const url = zaloSendUrl(token);
+  if (!url || !chatIds.length) {
+    return {
+      ok: false,
+      skipped: true,
+      reason: 'missing_zalo_bot',
+      sent: 0,
+      config_id: profile.id,
+      config_name: profile.name,
+      error: 'Chưa gắn Bot Token hoặc Chat ID Zalo',
+    };
+  }
+
+  const base = testAppBaseUrl();
+  const now = new Date();
+  const overdueAt = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000);
+  const atVi = overdueAt.toLocaleDateString('vi-VN', {
+    timeZone: 'Asia/Ho_Chi_Minh',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  });
+  const modLabel = 'CRM';
+  const primary = { label: 'Hạn Kanban CRM (TEST)', at_vi: atVi, source: 'test_crm_kanban' };
+  const project = {
+    code: 'TEST-DEADLINE-001',
+    name: `Tin thử — ${profile.name || 'API'}`,
+    status: 'quoting',
+    status_label: 'Deal (test)',
+    subject_label: 'Deal',
+  };
+  const customer = { full_name: 'Khách test Zalo', phone: '0900000000' };
+  const responsible = {
+    full_name: 'Người phụ trách test',
+    role: 'Phụ trách deal',
+    phone: null,
+    zalo_mention: null,
+  };
+  const links = {
+    url: `${base}/management/project-deadlines`,
+    label: modLabel,
+    module: 'crm',
+  };
+  const text = buildZaloBotText({
+    overdue: true,
+    modLabel,
+    primary,
+    days: -2,
+    project,
+    customer,
+    responsible,
+    links,
+    extraDeadlines: [],
+  });
+
+  const notification = {
+    type: 'project_deadline_overdue',
+    title: '🚨 [CRM] Quá hạn: Hạn Kanban CRM (TEST)',
+    message: `${project.code} ${project.name} — ${primary.label} ${atVi}`,
+    parse_mode: 'markdown',
+    text,
+    project: {
+      id: `test-${profile.id}`,
+      code: project.code,
+      name: project.name,
+      status: project.status,
+      status_label: project.status_label,
+      priority: null,
+      install_address: null,
+      estimated_value: null,
+    },
+    customer: { id: 'test-customer', full_name: customer.full_name, phone: customer.phone, email: null },
+    deal: { id: 'test-deal', code: project.code, title: project.name, type: 'deal' },
+    deadline: {
+      at: overdueAt.toISOString(),
+      at_vi: atVi,
+      source: 'test_crm_kanban',
+      label: primary.label,
+      module: 'crm',
+      is_overdue: true,
+      days_remaining: -2,
+    },
+    responsible,
+    links,
+    _test: true,
+  };
+
+  let sent = 0;
+  let failed = 0;
+  const errors = [];
+  let lastRes = { ok: true, status: 200 };
+  for (const chatId of chatIds) {
+    const res = await postZaloMessage(url, chatId, text);
+    lastRes = res;
+    if (!res.ok) {
+      failed += 1;
+      errors.push(res.error || `HTTP ${res.status}`);
+      break;
+    }
+    sent += 1;
+  }
+
+  await logDispatch({
+    project_id: null,
+    module_key: 'crm',
+    kind: 'test',
+    fingerprint: `${profile.id}:test:${Date.now()}`,
+    webhook_url: `zalo:test:${profile.id}`,
+    http_status: lastRes.status,
+    error: failed ? (errors[0] || null) : null,
+  });
+
+  return {
+    ok: failed === 0 && sent > 0,
+    sent,
+    failed,
+    config_id: profile.id,
+    config_name: profile.name,
+    chat_ids: chatIds,
+    errors: errors.slice(0, 3),
+    notification,
+  };
+}
+
 function start() {
   if (process.env.PROJECT_DEADLINE_DISPATCH_DISABLED === '1') {
     console.log('[project-deadline-dispatch] Disabled (env)');
@@ -616,6 +766,7 @@ module.exports = {
   start,
   runOnce,
   runProfileOnce,
+  sendTestDeadline,
   loadDispatchConfig,
   loadStoredConfig,
   saveDispatchConfig,

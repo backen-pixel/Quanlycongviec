@@ -726,4 +726,5 @@ async function listProjectDeadlineNotifications(opts = {}) {
 module.exports = {
   parseProjectDeadlineExportQuery,
   listProjectDeadlineNotifications,
+  buildZaloBotText,
 };

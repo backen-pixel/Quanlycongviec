@@ -553,6 +553,34 @@ r.post('/project-deadlines/configs/:id/send', async (req, res) => {
   }
 });
 
+// POST /dashboard/project-deadlines/configs/:id/test — tạo + gửi 1 tin deadline TEST
+r.post('/project-deadlines/configs/:id/test', async (req, res) => {
+  try {
+    const { isCrmModuleAdmin } = require('../helpers/adminRole');
+    if (!isCrmModuleAdmin(req.user)) return res.status(403).json({ error: 'Chỉ quản trị được gửi tin test' });
+    const { sendTestDeadline } = require('../jobs/projectDeadlineDispatch');
+    const result = await sendTestDeadline(req.params.id, {
+      zaloBotToken: req.body?.zalo_bot_token,
+      zaloChatId: req.body?.zalo_chat_id,
+    });
+    if (result.skipped && result.reason === 'missing_zalo_bot') {
+      return res.status(400).json(result);
+    }
+    if (result.skipped && result.reason === 'not_found') {
+      return res.status(404).json({ ...result, error: 'Không tìm thấy cấu hình API' });
+    }
+    if (!result.ok) {
+      return res.status(502).json({
+        ...result,
+        error: result.errors?.[0] || 'Gửi Zalo thất bại',
+      });
+    }
+    res.json(result);
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
+});
+
 // GET /dashboard/project-deadlines/config — legacy: profile đầu / mặc định
 r.get('/project-deadlines/config', async (req, res) => {
   try {
