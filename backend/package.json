@@ -40,7 +40,8 @@
     "test:crm-transfer": "node tests/crm-lead-company-transfer.js",
     "test:mcp-audit": "node tests/mcp-audit-reason-codes.js",
     "crm:route-inventory": "node scripts/crm-route-inventory.js --write",
-    "cron:crm-missing-tasks": "node scripts/run-crm-missing-tasks-cron.js"
+    "cron:crm-missing-tasks": "node scripts/run-crm-missing-tasks-cron.js",
+    "test:kanban-grouping": "node tests/project-kanban-grouping-smoke.js"
   },
   "keywords": [],
   "author": "",

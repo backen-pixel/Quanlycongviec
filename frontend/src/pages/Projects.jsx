@@ -86,6 +86,55 @@ function filterByTime(items, tf, dFrom, dTo) {
   return items.filter(i => { const d = i.created_at ? new Date(i.created_at) : null; return d && d >= start; });
 }
 
+/**
+ * Mốc created_at cho bộ lọc thời gian — cùng semantics filterByTime() ở trên, nhưng trả về
+ * biên để gửi LÊN SERVER thay vì lọc mảng đã tải.
+ */
+function timeRangeBounds(tf, dFrom, dTo) {
+  if (tf === 'custom' || dFrom || dTo) {
+    const to = dTo ? new Date(dTo) : null;
+    if (to) to.setHours(23, 59, 59, 999);
+    return { from: dFrom ? new Date(dFrom).toISOString() : null, to: to ? to.toISOString() : null };
+  }
+  if (tf === 'all' || !tf) return { from: null, to: null };
+  const now = new Date();
+  const start = new Date();
+  if (tf === 'today') start.setHours(0, 0, 0, 0);
+  else if (tf === 'week') { start.setDate(now.getDate() - now.getDay()); start.setHours(0, 0, 0, 0); }
+  else if (tf === 'month') { start.setDate(1); start.setHours(0, 0, 0, 0); }
+  else if (tf === 'quarter') { start.setMonth(Math.floor(now.getMonth() / 3) * 3, 1); start.setHours(0, 0, 0, 0); }
+  else return { from: null, to: null };
+  return { from: start.toISOString(), to: null };
+}
+
+/**
+ * Mốc "tải thêm" ở đáy một cột Kanban.
+ *
+ * KHÔNG truyền `root` → quan sát theo viewport. Nếu lấy khung cuộn của cột làm root thì chỉ
+ * bắt được khi cuộn BÊN TRONG cột; khi người dùng cuộn vùng chung thì scrollTop của cột
+ * không đổi nên sentinel không bao giờ "vào" khung của cột → không tải thêm. Theo spec, vùng
+ * giao vẫn bị cắt bởi mọi khung cuộn tổ tiên, nên cuộn trong cột vẫn hoạt động đúng.
+ */
+function ColumnLoadMoreSentinel({ stageId, loading, onNeedMore, loadedKey }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || loading || typeof IntersectionObserver === 'undefined') return undefined;
+    const io = new IntersectionObserver(
+      (entries) => { if (entries.some((e) => e.isIntersecting)) onNeedMore(stageId); },
+      { rootMargin: '320px 0px', threshold: 0 },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [stageId, loading, onNeedMore, loadedKey]);
+
+  return (
+    <div ref={ref} className="py-2 text-center text-[11px] text-slate-400" aria-hidden={!loading}>
+      {loading ? 'Đang tải thêm…' : ''}
+    </div>
+  );
+}
+
 export default function Projects() {
   const navigate = useNavigate();
   const [projects, setProjects] = useState([]);
@@ -117,6 +166,24 @@ export default function Projects() {
   const [kpiPanelOpen, setKpiPanelOpen] = useState(readKpiPanelOpen);
   const [moduleKpis, setModuleKpis] = useState(null);
   const [workflowStages, setWorkflowStages] = useState([]);
+  /**
+   * Kanban tải theo TỪNG CỘT từ server (RPC migration 570/571) thay vì kéo hết dự án về
+   * rồi lọc/nhóm/đếm ở client.
+   *   boardSummary : { total, counts{stage_id:n}, working, done, overdue, no_deadline, value_sum }
+   *   colMeta      : { [stage_id]: { loaded, total, has_more, loading } }
+   *   stageOf      : { [project_id]: stage_id }  ← cột do SERVER quyết, khớp 100% logic cũ
+   * Nhờ vậy thời gian tải không còn phụ thuộc tổng số dự án (500 dự án 1,3s → 8.000 vẫn ~1,3s).
+   */
+  const [boardSummary, setBoardSummary] = useState(null);
+  /** Danh sách: phân trang thật (thay limit=500 cứng). */
+  const [listMeta, setListMeta] = useState({ total: 0, loaded: 0, loading: false });
+  /** Theo hạn: đếm 6 nhóm từ server + trạng thái trang của từng nhóm. */
+  const [deadlineSummary, setDeadlineSummary] = useState(null);
+  const [dlMeta, setDlMeta] = useState({});
+  const LIST_PAGE = 100;
+  const [colMeta, setColMeta] = useState({});
+  const [stageOf, setStageOf] = useState({});
+  const COL_PAGE = 40;
 
   const toggleKpiPanel = () => {
     setKpiPanelOpen((open) => {
@@ -141,6 +208,228 @@ export default function Projects() {
       .catch(() => setModuleKpis(null));
   };
 
+  /** Tham số lọc gửi LÊN SERVER — thay cho việc lọc ở client sau khi tải hết. */
+  const serverFilterParams = (searchOverride) => {
+    const q = searchOverride !== undefined ? searchOverride : search;
+    const prm = {};
+    if (q) prm.search = q;
+    if (filterCompany !== 'all') prm.company_id = filterCompany;
+    else if (filterDivision !== 'all') prm.division_id = filterDivision;
+    if (filterCustomer !== 'all') prm.customer_id = filterCustomer;
+    if (filterPerson !== 'all') prm.person_id = filterPerson;
+    // filterByTime chỉ là khoảng created_at → quy về mốc from/to cho server.
+    const { from, to } = timeRangeBounds(filterTime, dateFrom, dateTo);
+    if (from) prm.date_from = from;
+    if (to) prm.date_to = to;
+    return prm;
+  };
+
+  /** Nạp Kanban: 1 lượt summary (đếm + KPI, không trả dòng) + 1 lượt trang đầu MỌI cột. */
+  const loadBoard = (searchOverride) => {
+    setLoading(true);
+    const params = serverFilterParams(searchOverride);
+    Promise.all([
+      api.get('/projects/kanban', { params: { ...params, mode: 'summary' } }),
+      api.get('/projects/kanban-pages', { params: { ...params, limit: COL_PAGE } }),
+    ])
+      .then(([sumRes, pagesRes]) => {
+        setBoardSummary(sumRes.data || null);
+        const cols = pagesRes.data?.columns || {};
+        const flat = [];
+        const meta = {};
+        const stage = {};
+        for (const [sid, v] of Object.entries(cols)) {
+          const list = v.projects || [];
+          list.forEach((pr) => { flat.push(pr); stage[String(pr.id)] = sid; });
+          meta[sid] = {
+            loaded: list.length, total: v.total || 0, has_more: !!v.has_more, loading: false,
+          };
+        }
+        setProjects(flat);
+        setColMeta(meta);
+        setStageOf(stage);
+        loadTaskAssignees(flat.map((pr) => pr.id));
+      })
+      .catch(() => { setProjects([]); setColMeta({}); setStageOf({}); })
+      .finally(() => setLoading(false));
+  };
+
+  /** Cuộn tới đáy một cột → nạp trang tiếp của ĐÚNG cột đó. */
+  const loadMoreColumn = (stageId) => {
+    const m = colMeta[stageId];
+    if (!m || m.loading || !m.has_more) return;
+    setColMeta((prev) => ({ ...prev, [stageId]: { ...prev[stageId], loading: true } }));
+    api.get('/projects/kanban', {
+      params: {
+        ...serverFilterParams(), mode: 'page', stage_id: stageId,
+        offset: m.loaded, limit: COL_PAGE,
+      },
+    })
+      .then((r) => {
+        const list = r.data?.projects || [];
+        setProjects((prev) => {
+          const seen = new Set(prev.map((x) => String(x.id)));
+          return [...prev, ...list.filter((x) => !seen.has(String(x.id)))];
+        });
+        setStageOf((prev) => {
+          const next = { ...prev };
+          list.forEach((pr) => { next[String(pr.id)] = stageId; });
+          return next;
+        });
+        setColMeta((prev) => ({
+          ...prev,
+          [stageId]: {
+            ...prev[stageId],
+            loaded: (prev[stageId]?.loaded || 0) + list.length,
+            has_more: !!r.data?.has_more,
+            loading: false,
+          },
+        }));
+        loadTaskAssignees(list.map((pr) => pr.id));
+      })
+      .catch(() => setColMeta((prev) => ({
+        ...prev, [stageId]: { ...prev[stageId], loading: false },
+      })));
+  };
+
+  const loadTaskAssignees = (projectIds) => {
+    if (!projectIds?.length) return;
+    api.post('/tasks/lite-by-projects', { project_ids: projectIds })
+      .then((tr) => {
+        const map = {};
+        (tr.data.tasks || []).forEach((t) => {
+          if (!t.assignee_id) return;
+          if (!map[t.project_id]) map[t.project_id] = new Set();
+          map[t.project_id].add(t.assignee_id);
+        });
+        Object.keys(map).forEach((k) => { map[k] = [...map[k]]; });
+        setTaskAssigneeMap((prev) => ({ ...prev, ...map }));
+      })
+      .catch(() => {});
+  };
+
+  /** Biên 5 mốc nhóm "Theo hạn" — tính ở CLIENT rồi gửi lên để không lệch múi giờ. */
+  const deadlineBounds = () => {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate() + 1);
+    const d2 = new Date(tomorrow); d2.setDate(d2.getDate() + 1);
+    const endNextWeek = new Date(today); endNextWeek.setDate(endNextWeek.getDate() + (7 - endNextWeek.getDay()) + 7);
+    const endNextMonth = new Date(today.getFullYear(), today.getMonth() + 2, 0);
+    return [today, tomorrow, d2, endNextWeek, endNextMonth].map((d) => d.toISOString());
+  };
+
+  /** Danh sách — trang đầu (server phân trang, không còn limit=500 cứng). */
+  const loadListPage = (searchOverride) => {
+    setLoading(true);
+    api.get('/projects/list-page', {
+      params: { ...serverFilterParams(searchOverride), offset: 0, limit: LIST_PAGE },
+    })
+      .then((r) => {
+        const list = r.data?.projects || [];
+        setProjects(list);
+        setListMeta({ total: r.data?.total || 0, loaded: list.length, loading: false });
+        loadTaskAssignees(list.map((x) => x.id));
+      })
+      .catch(() => { setProjects([]); setListMeta({ total: 0, loaded: 0, loading: false }); })
+      .finally(() => setLoading(false));
+  };
+
+  const loadMoreList = () => {
+    if (listMeta.loading || listMeta.loaded >= listMeta.total) return;
+    setListMeta((m) => ({ ...m, loading: true }));
+    api.get('/projects/list-page', {
+      params: { ...serverFilterParams(), offset: listMeta.loaded, limit: LIST_PAGE },
+    })
+      .then((r) => {
+        const list = r.data?.projects || [];
+        setProjects((prev) => {
+          const seen = new Set(prev.map((x) => String(x.id)));
+          return [...prev, ...list.filter((x) => !seen.has(String(x.id)))];
+        });
+        setListMeta((m) => ({
+          total: r.data?.total || m.total, loaded: m.loaded + list.length, loading: false,
+        }));
+        loadTaskAssignees(list.map((x) => x.id));
+      })
+      .catch(() => setListMeta((m) => ({ ...m, loading: false })));
+  };
+
+  /** Lịch — chỉ dự án có mốc ngày trong THÁNG đang xem. */
+  const loadCalendar = () => {
+    setLoading(true);
+    const y = calMonth.getFullYear(); const m = calMonth.getMonth();
+    const from = new Date(y, m, 1).toISOString();
+    const to = new Date(y, m + 1, 0, 23, 59, 59, 999).toISOString();
+    api.get('/projects/calendar', { params: { ...serverFilterParams(), from, to, limit: 500 } })
+      .then((r) => {
+        const list = r.data?.projects || [];
+        setProjects(list);
+        loadTaskAssignees(list.map((x) => x.id));
+      })
+      .catch(() => setProjects([]))
+      .finally(() => setLoading(false));
+  };
+
+  /** Theo hạn — đếm 6 nhóm + trang đầu của mỗi nhóm. */
+  const loadDeadlineBoard = () => {
+    setLoading(true);
+    const bounds = JSON.stringify(deadlineBounds());
+    const base = { ...serverFilterParams(), bounds };
+    const BUCKETS = ['overdue', 'today', 'tomorrow', 'next_week', 'next_month', 'later'];
+    Promise.all([
+      api.get('/projects/deadline-board', { params: { ...base, mode: 'summary' } }),
+      ...BUCKETS.map((b) => api.get('/projects/deadline-board', {
+        params: { ...base, mode: 'page', bucket: b, offset: 0, limit: 40 },
+      }).then((r) => [b, r.data]).catch(() => [b, null])),
+    ])
+      .then(([sumRes, ...pairs]) => {
+        setDeadlineSummary(sumRes.data || null);
+        const flat = []; const meta = {};
+        for (const [b, d] of pairs) {
+          const list = d?.projects || [];
+          flat.push(...list);
+          meta[b] = { loaded: list.length, total: d?.total || 0, has_more: !!d?.has_more, loading: false };
+        }
+        const seen = new Set(); const uniq = [];
+        for (const x of flat) { if (!seen.has(String(x.id))) { seen.add(String(x.id)); uniq.push(x); } }
+        setProjects(uniq);
+        setDlMeta(meta);
+        loadTaskAssignees(uniq.map((x) => x.id));
+      })
+      .catch(() => { setProjects([]); setDlMeta({}); })
+      .finally(() => setLoading(false));
+  };
+
+  const loadMoreDeadline = (bucket) => {
+    const m = dlMeta[bucket];
+    if (!m || m.loading || !m.has_more) return;
+    setDlMeta((prev) => ({ ...prev, [bucket]: { ...prev[bucket], loading: true } }));
+    api.get('/projects/deadline-board', {
+      params: {
+        ...serverFilterParams(), bounds: JSON.stringify(deadlineBounds()),
+        mode: 'page', bucket, offset: m.loaded, limit: 40,
+      },
+    })
+      .then((r) => {
+        const list = r.data?.projects || [];
+        setProjects((prev) => {
+          const seen = new Set(prev.map((x) => String(x.id)));
+          return [...prev, ...list.filter((x) => !seen.has(String(x.id)))];
+        });
+        setDlMeta((prev) => ({
+          ...prev,
+          [bucket]: {
+            ...prev[bucket], loaded: (prev[bucket]?.loaded || 0) + list.length,
+            has_more: !!r.data?.has_more, loading: false,
+          },
+        }));
+        loadTaskAssignees(list.map((x) => x.id));
+      })
+      .catch(() => setDlMeta((prev) => ({ ...prev, [bucket]: { ...prev[bucket], loading: false } })));
+  };
+
+  /** Chỉ còn Planner/Comments dùng đường cũ (chúng có endpoint riêng, không tải hết dự án). */
   const load = (searchOverride) => {
     setLoading(true);
     const q = searchOverride !== undefined ? searchOverride : search;
@@ -167,7 +456,22 @@ export default function Projects() {
       .finally(() => setLoading(false));
   };
 
-  useEffect(load, []);
+  // Kanban → đường mới (theo cột). Các view khác → đường cũ (cần toàn bộ dự án).
+  // Đổi bộ lọc thì nạp lại từ SERVER, không lọc lại mảng đã tải.
+  useEffect(() => {
+    if (viewMode === 'kanban') loadBoard();
+    else if (viewMode === 'list') loadListPage();
+    else if (viewMode === 'calendar') loadCalendar();
+    else if (viewMode === 'deadline') loadDeadlineBoard();
+    else load();   // planner/comments có endpoint riêng, không tải hết dự án
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewMode, filterDivision, filterCompany, filterCustomer, filterPerson, filterTime, dateFrom, dateTo]);
+
+  // Lịch: đổi tháng → nạp lại đúng khoảng ngày đó (không tải cả năm).
+  useEffect(() => {
+    if (viewMode === 'calendar') loadCalendar();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [calMonth]);
   useEffect(() => { loadModuleKpis(filterCompany); }, [filterCompany]);
 
   useEffect(() => {
@@ -291,6 +595,18 @@ export default function Projects() {
   const hasActiveFilters = filterDivision !== 'all' || filterCompany !== 'all' || filterCustomer !== 'all' || filterPerson !== 'all' || filterTime !== 'all' || dateFrom || dateTo;
 
   const kpi = useMemo(() => {
+    // Ở Kanban, KPI lấy từ summary phía server: tính trên TOÀN BỘ dự án khớp filter,
+    // không phải trên ~87 thẻ đang tải. Các view khác vẫn tính từ mảng đã tải như cũ.
+    if (viewMode === 'kanban' && boardSummary) {
+      return {
+        total: boardSummary.total || 0,
+        working: boardSummary.working || 0,
+        done: boardSummary.done || 0,
+        overdue: boardSummary.overdue || 0,
+        noDeadline: boardSummary.no_deadline || 0,
+        valueSum: Number(boardSummary.value_sum) || 0,
+      };
+    }
     const now = new Date();
     let working = 0;
     let done = 0;
@@ -314,7 +630,7 @@ export default function Projects() {
       noDeadline,
       valueSum,
     };
-  }, [filtered]);
+  }, [filtered, viewMode, boardSummary]);
 
   const VIEW_MODES = useMemo(() => [
     { id: 'kanban', label: 'Kanban', hint: 'Cột giai đoạn giao hàng dự án', icon: LayoutGrid },
@@ -503,12 +819,17 @@ export default function Projects() {
     workflowStages.forEach((col) => { data[col.id] = []; });
     const fallbackId = workflowStages[0]?.id;
     filtered.forEach((proj) => {
-      const stageId = resolveProjectKanbanStageId(proj, workflowStages) || fallbackId;
+      // Ưu tiên cột do SERVER gán (đã đối chiếu khớp 100% với resolveProjectKanbanStageId
+      // trên toàn bộ 596 dự án). Chỉ dùng hàm client khi chưa có — ví dụ thẻ vừa kéo-thả
+      // hoặc dữ liệu đến từ đường tải cũ của các view khác.
+      const stageId = stageOf[String(proj.id)]
+        || resolveProjectKanbanStageId(proj, workflowStages)
+        || fallbackId;
       if (stageId && data[stageId]) data[stageId].push(proj);
       else if (fallbackId) data[fallbackId].push(proj);
     });
     return data;
-  }, [filtered, workflowStages]);
+  }, [filtered, workflowStages, stageOf]);
 
   const visibleKanbanColumns = useMemo(() => workflowStages, [workflowStages]);
 
@@ -1311,7 +1632,10 @@ export default function Projects() {
               className="flex gap-3 overflow-x-auto pb-3 px-1 [scrollbar-width:thin] [scrollbar-gutter:stable]"
             >
             {visibleKanbanColumns.map((col) => {
-              const count = projectsByStage[col.id]?.length || 0;
+              const loadedCount = projectsByStage[col.id]?.length || 0;
+              const meta = colMeta[col.id];
+              // Badge = tổng THẬT của cột (server đếm), không phải số thẻ đã tải.
+              const count = meta ? meta.total : loadedCount;
               const colColor = col.color || '#6b7280';
               return (
                 <div
@@ -1341,6 +1665,17 @@ export default function Projects() {
                       <div
                         ref={provided.innerRef}
                         {...provided.droppableProps}
+                        // Trigger CHÍNH để tải thêm. Không dùng IntersectionObserver làm
+                        // đường chính vì thẻ nằm trong 4 khung cuộn/cắt lồng nhau (thân cột
+                        // overflow-y-auto → wrapper overflow-hidden → board overflow-x-auto
+                        // (CSS ép overflow-y thành auto) → khung cuộn trang), đo thực tế
+                        // sentinel ở trong viewport mà intersectionRect vẫn ra 0.
+                        onScroll={meta?.has_more ? (ev) => {
+                          const el = ev.currentTarget;
+                          if (el.scrollHeight - el.scrollTop - el.clientHeight < 320) {
+                            loadMoreColumn(col.id);
+                          }
+                        } : undefined}
                         className={`flex-1 p-2 space-y-2 overflow-y-auto transition-colors ${
                           snapshot.isDraggingOver ? 'bg-violet-50/80' : ''
                         }`}
@@ -1361,6 +1696,16 @@ export default function Projects() {
                           </Draggable>
                         ))}
                         {provided.placeholder}
+                        {/* Cuộn tới đây → nạp trang tiếp của ĐÚNG cột này. Quan sát theo
+                            VIEWPORT nên chạy được cả khi cuộn riêng cột lẫn cuộn chung. */}
+                        {meta?.has_more && (
+                          <ColumnLoadMoreSentinel
+                            stageId={col.id}
+                            loading={!!meta.loading}
+                            onNeedMore={loadMoreColumn}
+                            loadedKey={meta.loaded}
+                          />
+                        )}
                         {count === 0 && !snapshot.isDraggingOver && (
                           <div className="text-center py-10 text-[11px] text-slate-300 border border-dashed border-slate-200 rounded-xl bg-white/40">
                             Kéo dự án vào đây
@@ -1386,7 +1731,12 @@ export default function Projects() {
           const dayAfterTomorrow = new Date(tomorrow); dayAfterTomorrow.setDate(dayAfterTomorrow.getDate() + 1);
           const endOfNextWeek = new Date(today); endOfNextWeek.setDate(endOfNextWeek.getDate() + (7 - endOfNextWeek.getDay()) + 7);
           const endOfNextMonth = new Date(today.getFullYear(), today.getMonth() + 2, 0);
-          const getD = (p) => p.deadline || p.design_deadline || p.install_date || null;
+          // Cùng thứ tự ưu tiên với enrich/thẻ Kanban và với project_deadline_at() phía SQL
+          // (migration 574). Đo trên dữ liệu thật: deadline và design_deadline RỖNG toàn bộ
+          // 596 dự án; mốc thật nằm ở production_deadline (74) / delivery_date (68) /
+          // install_date (75) — nên bản cũ bỏ sót phần lớn dự án có hạn.
+          const getD = (p) => p.deadline || p.sx_kanban_deadline_at || p.production_deadline
+            || p.design_deadline || p.delivery_date || p.install_date || null;
 
           const DEADLINE_COLS = [
             { id: 'overdue', label: 'Quá hạn', color: '#EF4444', filter: (p) => { const d = getD(p); return d && new Date(d) < today && p.status !== 'completed'; } },
@@ -1412,11 +1762,24 @@ export default function Projects() {
                   <div className="rounded-t-xl p-3 border border-b-0 bg-white" style={{ borderTopColor: col.color, borderTopWidth: '4px' }}>
                     <div className="flex items-center justify-between">
                       <h3 className="text-sm font-bold text-gray-900">{col.label}</h3>
-                      <span className="text-xs text-gray-400 font-medium bg-gray-100 px-2 py-0.5 rounded-full">{deadlineData[col.id].length}</span>
+                      {/* Tổng THẬT của nhóm (server đếm), không phải số thẻ đã tải. */}
+                      <span className="text-xs text-gray-400 font-medium bg-gray-100 px-2 py-0.5 rounded-full">
+                        {deadlineSummary?.counts?.[col.id] ?? deadlineData[col.id].length}
+                      </span>
                     </div>
                   </div>
-                  <div className="flex-1 rounded-b-xl border p-2 space-y-2 bg-gray-50/50 overflow-y-auto" style={{ minHeight: '200px', maxHeight: '75vh' }}>
+                  <div
+                    className="flex-1 rounded-b-xl border p-2 space-y-2 bg-gray-50/50 overflow-y-auto"
+                    style={{ minHeight: '200px', maxHeight: '75vh' }}
+                    onScroll={dlMeta[col.id]?.has_more ? (ev) => {
+                      const el = ev.currentTarget;
+                      if (el.scrollHeight - el.scrollTop - el.clientHeight < 280) loadMoreDeadline(col.id);
+                    } : undefined}
+                  >
                     {deadlineData[col.id].map(proj => <ProjectCard key={proj.id} proj={proj} />)}
+                    {dlMeta[col.id]?.loading && (
+                      <p className="py-2 text-center text-[11px] text-gray-400">Đang tải thêm…</p>
+                    )}
                     {deadlineData[col.id].length === 0 && <div className="text-center py-8 text-xs text-gray-300">Trống</div>}
                   </div>
                 </div>
@@ -1809,6 +2172,26 @@ export default function Projects() {
               </div>
             </Link>
           ))}
+          {/* Phân trang thật: trước đây view này lấy limit=500 cứng nên bỏ bớt dự án
+              (569 tổng → 500) và ở 8.000 thì chỉ hiện 500. */}
+          {listMeta.total > 0 && (
+            <div className="pt-1 pb-3 text-center">
+              <p className="text-[11px] text-slate-400 mb-2">
+                Đang xem {Math.min(listMeta.loaded, listMeta.total).toLocaleString('vi-VN')}
+                {' / '}{listMeta.total.toLocaleString('vi-VN')} dự án
+              </p>
+              {listMeta.loaded < listMeta.total && (
+                <button
+                  type="button"
+                  onClick={loadMoreList}
+                  disabled={listMeta.loading}
+                  className="h-9 px-4 rounded-lg bg-white border border-slate-200 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 cursor-pointer"
+                >
+                  {listMeta.loading ? 'Đang tải…' : `Tải thêm ${Math.min(LIST_PAGE, listMeta.total - listMeta.loaded)} dự án`}
+                </button>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

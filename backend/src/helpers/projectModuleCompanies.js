@@ -203,7 +203,43 @@ async function enrichProjectsModulePresence(projects) {
     'id, project_id, company_id, type, code, title, assigned_to, lead_owner_id, created_by, '
     + 'kanban_deadline_at, expected_close_date, updated_at';
 
-  {
+  // ── Đường nhanh: RPC gộp 3 lượt REST thành 1 truy vấn (migration 569) ──
+  // Đo thực tế: 3 lượt REST (crm_leads theo project_id 400ms → crm_deal_projects 143ms →
+  // crm_tasks deadline 300ms) mất ~950ms; cùng logic bằng SQL chạy ~15ms.
+  // Lỗi hoặc chưa chạy migration → rơi về đường REST cũ bên dưới.
+  const nextTaskDeadlineByDeal = new Map();
+  let usedRpc = false;
+  try {
+    const { data: rows, error } = await supabase.rpc('project_list_enrich', {
+      p_project_ids: ids,
+    });
+    if (error) throw error;
+    for (const r of rows || []) {
+      if (r.next_task_deadline && r.deal_id) {
+        nextTaskDeadlineByDeal.set(String(r.deal_id), r.next_task_deadline);
+      }
+      if (!r.deal_id) continue;
+      crmByProject.set(String(r.project_id), {
+        id: r.deal_id,
+        project_id: r.project_id,
+        company_id: r.deal_company_id,
+        type: r.deal_type,
+        code: r.deal_code,
+        title: r.deal_title,
+        assigned_to: r.assigned_to,
+        lead_owner_id: r.lead_owner_id,
+        created_by: r.deal_created_by,
+        kanban_deadline_at: r.kanban_deadline_at,
+        expected_close_date: r.expected_close_date,
+      });
+    }
+    usedRpc = true;
+  } catch (rpcErr) {
+    console.warn('[enrichProjectsModulePresence] RPC project_list_enrich không dùng được'
+      + `: ${rpcErr.message} — dùng đường REST cũ (chậm hơn ~60 lần).`);
+  }
+
+  if (!usedRpc) {
     // Không ORDER BY ở DB: sắp xếp 500 dòng bằng JS rẻ hơn ~100ms so với sort phía Postgres.
     const { data: byProject, error } = await supabase
       .from('crm_leads')
@@ -220,32 +256,32 @@ async function enrichProjectsModulePresence(projects) {
       if (crmByProject.has(pid)) continue;
       crmByProject.set(pid, row);
     }
-  }
 
-  const missing = ids.filter((id) => !crmByProject.has(String(id)));
-  if (missing.length) {
-    try {
-      const { data: links } = await supabase
-        .from('crm_deal_projects')
-        .select('project_id, deal_id')
-        .in('project_id', missing);
-      const dealIds = [...new Set((links || []).map((r) => r.deal_id).filter(Boolean))];
-      const dealMap = new Map();
-      if (dealIds.length) {
-        const { data: deals } = await supabase
-          .from('crm_leads')
-          .select(dealCols)
-          .in('id', dealIds);
-        for (const d of deals || []) dealMap.set(String(d.id), d);
-      }
-      for (const link of links || []) {
-        const pid = String(link.project_id);
-        if (crmByProject.has(pid)) continue;
-        const deal = dealMap.get(String(link.deal_id));
-        if (!deal) continue;
-        crmByProject.set(pid, { ...deal, project_id: link.project_id });
-      }
-    } catch (_) { /* bảng có thể chưa có */ }
+    const missing = ids.filter((id) => !crmByProject.has(String(id)));
+    if (missing.length) {
+      try {
+        const { data: links } = await supabase
+          .from('crm_deal_projects')
+          .select('project_id, deal_id')
+          .in('project_id', missing);
+        const dealIds = [...new Set((links || []).map((r) => r.deal_id).filter(Boolean))];
+        const dealMap = new Map();
+        if (dealIds.length) {
+          const { data: deals } = await supabase
+            .from('crm_leads')
+            .select(dealCols)
+            .in('id', dealIds);
+          for (const d of deals || []) dealMap.set(String(d.id), d);
+        }
+        for (const link of links || []) {
+          const pid = String(link.project_id);
+          if (crmByProject.has(pid)) continue;
+          const deal = dealMap.get(String(link.deal_id));
+          if (!deal) continue;
+          crmByProject.set(pid, { ...deal, project_id: link.project_id });
+        }
+      } catch (_) { /* bảng có thể chưa có */ }
+    }
   }
 
   // Deadline NV CRM mở gần nhất theo deal
@@ -280,9 +316,10 @@ async function enrichProjectsModulePresence(projects) {
     ].forEach((uid) => { if (uid) userIds.add(String(uid)); });
   }
 
-  // 3 truy vấn dưới đây độc lập nhau → chạy song song (trước đây tuần tự, cộng dồn ~600ms).
+  // Đường nhanh đã trả sẵn deadline nhiệm vụ trong cùng truy vấn → bỏ hẳn lượt crm_tasks.
+  // (Lượt cũ còn có `.limit(dealIds*8, tối đa 2000)` nên với >250 deal là bị cắt âm thầm.)
   const [taskRows, companyRows, userRows] = await Promise.all([
-    allDealIds.length
+    (!usedRpc && allDealIds.length)
       ? supabase
         .from('crm_tasks')
         .select('lead_id, deadline, status, updated_at')
@@ -303,8 +340,7 @@ async function enrichProjectsModulePresence(projects) {
       : Promise.resolve([]),
   ]);
 
-  const nextTaskDeadlineByDeal = new Map();
-  {
+  if (!usedRpc) {
     const done = new Set(['done', 'completed', 'cancelled', 'canceled']);
     for (const t of taskRows) {
       if (done.has(String(t.status || '').toLowerCase())) continue;

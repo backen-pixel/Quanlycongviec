@@ -223,20 +223,51 @@ async function loadCrmLeadStages(scope) {
   return loadCrmStagesForScope(scope, 'lead');
 }
 
+/** Danh sách company_id mà scope cho phép — null = không lọc. */
+function scopeCompanyIdArray(scope) {
+  if (!scope?.ok) return null;
+  if (scope.companyId === TENANT_EMPTY_COMPANY_SENTINEL) return [TENANT_EMPTY_COMPANY_SENTINEL];
+  if (scope.companyId) return [scope.companyId];
+  if (scope.companyIds?.length) return scope.companyIds;
+  return null;
+}
+
 async function countLeadsByStage(scope, type, dateFrom, dateTo, assigneeId) {
-  let q = supabase
-    .from('crm_leads')
-    .select('stage_id')
-    .eq('type', type);
-  q = applyCompanyScopeFilter(q, scope);
-  if (dateFrom) q = q.gte('created_at', dateFrom);
-  if (dateTo) q = q.lte('created_at', dateTo);
-  if (assigneeId) q = q.or(`assigned_to.eq.${assigneeId},lead_owner_id.eq.${assigneeId}`);
-  const { data } = await q;
+  // Đường nhanh: đếm bằng GROUP BY trong SQL (migration 573).
+  // Cách cũ tải HẾT cột stage_id rồi đếm trong JS → bị PostgREST cắt ở 1.000 dòng và không
+  // báo lỗi, nên crm_leads/crm_deals luôn dính đúng 1.000 (thật: 5.870 / 2.281), kéo theo
+  // crm_won và số đếm từng cột pipeline cũng sai.
+  const { data: rpc, error: rpcErr } = await supabase.rpc('overview_lead_stage_counts', {
+    p_type: type,
+    p_company_ids: scopeCompanyIdArray(scope),
+    p_date_from: dateFrom || null,
+    p_date_to: dateTo || null,
+    p_assignee_id: assigneeId || null,
+  });
+  if (!rpcErr && rpc && typeof rpc === 'object') {
+    const counts = {};
+    for (const [k, v] of Object.entries(rpc)) counts[k] = Number(v) || 0;
+    return counts;
+  }
+  console.warn('[countLeadsByStage] RPC overview_lead_stage_counts không dùng được'
+    + (rpcErr ? `: ${rpcErr.message}` : '') + ' — đọc phân trang (chậm hơn).');
+
+  // Đường lùi: phân trang cho ĐỦ, không để bị cắt 1.000 dòng như trước.
   const counts = {};
-  for (const row of data || []) {
-    const sid = row.stage_id ? String(row.stage_id) : '__none__';
-    counts[sid] = (counts[sid] || 0) + 1;
+  const PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    let q = supabase.from('crm_leads').select('stage_id').eq('type', type);
+    q = applyCompanyScopeFilter(q, scope);
+    if (dateFrom) q = q.gte('created_at', dateFrom);
+    if (dateTo) q = q.lte('created_at', dateTo);
+    if (assigneeId) q = q.or(`assigned_to.eq.${assigneeId},lead_owner_id.eq.${assigneeId}`);
+    const { data, error } = await q.range(from, from + PAGE - 1);
+    if (error) break;
+    for (const row of data || []) {
+      const sid = row.stage_id ? String(row.stage_id) : '__none__';
+      counts[sid] = (counts[sid] || 0) + 1;
+    }
+    if (!data || data.length < PAGE) break;
   }
   return counts;
 }
@@ -468,6 +499,30 @@ function countByStageIds(rows, idField, stages) {
   return { counts, pipeline };
 }
 
+/**
+ * Mốc hạn của dự án — cùng thứ tự ưu tiên với enrich/thẻ Kanban và với hàm
+ * project_deadline_at() phía SQL (migration 574).
+ *
+ * Trước đây 3 chỗ dưới đây chỉ đọc `p.deadline`. Đo trên dữ liệu thật: cột đó NULL cho
+ * TOÀN BỘ 596 dự án, nên sx_overdue / vc_overdue / install_overdue LUÔN bằng 0 bất kể thực
+ * tế — trông như số cứng. Dữ liệu thật nằm ở production_deadline (74) / delivery_date (68)
+ * / install_date (75).
+ */
+const PROJECT_DEADLINE_COLS = 'deadline, sx_kanban_deadline_at, production_deadline, '
+  + 'design_deadline, delivery_date, install_date';
+
+function projectDeadlineAt(p) {
+  return p?.deadline || p?.sx_kanban_deadline_at || p?.production_deadline
+    || p?.design_deadline || p?.delivery_date || p?.install_date || null;
+}
+
+function isProjectOverdue(p, nowMs) {
+  const d = projectDeadlineAt(p);
+  if (!d) return false;
+  const t = new Date(d).getTime();
+  return Number.isFinite(t) && t < nowMs && p.status !== 'completed';
+}
+
 async function loadSxPipelineSummary(scope) {
   const empty = { kpis: { active: 0, intake: 0, overdue: 0 }, pipeline: [] };
 
@@ -475,7 +530,8 @@ async function loadSxPipelineSummary(scope) {
   // Chưa có cột → giữ nguyên cách cũ (nhét mảng id, URL dài dần theo số deal thắng).
   const hasCrmDealColumn = await ensureHasCrmDealColumn();
 
-  let q = supabase.from('projects').select('id, sx_kanban_column_id, deadline, status, company_id');
+  let q = supabase.from('projects')
+    .select(`id, sx_kanban_column_id, status, company_id, ${PROJECT_DEADLINE_COLS}`);
   if (hasCrmDealColumn) {
     q = q.eq('has_crm_deal', true);
   } else {
@@ -502,7 +558,7 @@ async function loadSxPipelineSummary(scope) {
   let overdue = 0;
   let intake = 0;
   for (const p of projects || []) {
-    if (p.deadline && new Date(p.deadline).getTime() < now && p.status !== 'completed') overdue += 1;
+    if (isProjectOverdue(p, now)) overdue += 1;
     if (!p.sx_kanban_column_id) intake += 1;
   }
 
@@ -520,7 +576,7 @@ async function loadSxPipelineSummary(scope) {
 async function loadVcInstallPipelines(scope) {
   let q = supabase
     .from('projects')
-    .select('id, vc_kanban_column_id, deadline, status, company_id, logistics_company_id')
+    .select(`id, vc_kanban_column_id, status, company_id, logistics_company_id, ${PROJECT_DEADLINE_COLS}`)
     .not('vc_kanban_column_id', 'is', null);
   q = applyProjectScopeFilter(q, scope);
   let { data: projects, error } = await q;
@@ -543,7 +599,7 @@ async function loadVcInstallPipelines(scope) {
   let installOverdue = 0;
   for (const p of projects || []) {
     const col = p.vc_kanban_column_id ? String(p.vc_kanban_column_id) : '';
-    const overdue = p.deadline && new Date(p.deadline).getTime() < now && p.status !== 'completed';
+    const overdue = isProjectOverdue(p, now);
     if (col && installIds.has(col)) {
       installProjects.push(p);
       if (overdue) installOverdue += 1;
