@@ -8,7 +8,9 @@
  */
 const { supabase } = require('../config/supabase');
 const { runIfLeader } = require('../helpers/cronLeader');
-const { listProjectDeadlineNotifications, buildZaloBotText } = require('../helpers/projectDeadlineExport');
+const {
+  listProjectDeadlineNotifications, buildZaloBotText, deadlineToTs,
+} = require('../helpers/projectDeadlineExport');
 const { rescanCompletedAndClearDeadlines } = require('../helpers/clearCompletedProjectDeadlines');
 const { frontendUrl, normalizeFrontendOrigin, defaultProductionFrontendUrl } = require('../config');
 const PUBLIC_APP_URL = defaultProductionFrontendUrl || 'https://tubep-frontend-s30w.onrender.com';
@@ -37,9 +39,18 @@ const { getAppSettingValue, invalidateAppSettingKey } = require('../helpers/appS
 
 const SETTING_KEY = 'project_deadline_dispatch';
 const ZALO_SEND_PATH = 'https://bot-api.zaloplatforms.com/bot';
-const DEFAULT_INTERVAL_MS = 30 * 60 * 1000;
+const DEFAULT_INTERVAL_MS = 15 * 60 * 1000;
+const DUE_WATCH_INTERVAL_MS = Math.max(
+  60_000,
+  parseInt(process.env.PROJECT_DEADLINE_DUE_WATCH_MS || String(5 * 60 * 1000), 10) || 5 * 60 * 1000,
+);
+const DUE_GRACE_MS = Math.max(
+  DUE_WATCH_INTERVAL_MS,
+  parseInt(process.env.PROJECT_DEADLINE_DUE_GRACE_MS || String(5 * 60 * 1000), 10) || 5 * 60 * 1000,
+);
 const DEDUP_WINDOW_MS = 12 * 60 * 60 * 1000;
 const POST_TIMEOUT_MS = 12000;
+let dueWatchTriggerTimer = null;
 const MODULES = new Set(['all', 'crm', 'production', 'logistics']);
 
 function parseCompanyIdsEnv() {
@@ -452,6 +463,114 @@ async function filterNewNotifications(notifications, opts = {}) {
   };
 }
 
+function matchesJustDueNotification(n, profile, nowMs, graceMs) {
+  const ts = deadlineToTs(n?.deadline?.at);
+  if (!ts) return false;
+  const status = profile.status || 'overdue';
+  const overdue = ts <= nowMs;
+  if (overdue) {
+    if (status === 'upcoming') return false;
+    return ts > nowMs - graceMs;
+  }
+  if (status === 'overdue') return false;
+  const horizonMs = Math.max(0, Number(profile.days_ahead) || 0) * 86400000;
+  if (ts > nowMs + horizonMs) return false;
+  return ts <= nowMs + graceMs;
+}
+
+async function sendZaloNotificationItem({ profile, n, fp, url, chatIds, webhookTag = 'due' }) {
+  const text = n.text || n.message || n.title || '';
+  if (!text) {
+    return { ok: false, error: 'empty_text' };
+  }
+  let itemOk = true;
+  let lastRes = { ok: true, status: 200 };
+  for (const chatId of chatIds) {
+    const res = await postZaloMessage(url, chatId, text);
+    lastRes = res;
+    if (!res.ok) {
+      itemOk = false;
+      break;
+    }
+  }
+  await logDispatch({
+    project_id: n.project?.id || null,
+    module_key: n.deadline?.module || '',
+    kind: n.deadline?.is_overdue ? 'overdue' : 'warning',
+    fingerprint: fp,
+    webhook_url: `zalo:${webhookTag}:${profile.id}`,
+    http_status: lastRes.status,
+    error: itemOk ? null : (lastRes.error || null),
+  });
+  return { ok: itemOk, status: lastRes.status, error: itemOk ? null : lastRes.error };
+}
+
+/**
+ * Gửi Zalo khi hạn vừa tới (poll ~5 phút), không chờ cron backup 15 phút.
+ */
+async function dispatchDueNotifications(opts = {}) {
+  const graceMs = opts.graceMs == null ? DUE_GRACE_MS : Number(opts.graceMs);
+  const nowMs = Date.now();
+  await rescanCompletedDeadlinesQuietly();
+  const store = await loadStore();
+  if (store.enabled === false) {
+    return { ok: true, skipped: true, reason: 'disabled', sent: 0 };
+  }
+
+  let sent = 0;
+  let failed = 0;
+  const profiles = store.profiles || [];
+  for (const raw of profiles) {
+    const profile = normalizeProfile(raw);
+    if (!profile.zalo_enabled) continue;
+    const token = sanitizeBotToken(profile.zalo_bot_token || store.zalo_bot_token);
+    const chatIds = normalizeChatIds(profile.zalo_chat_id || store.zalo_chat_id);
+    const url = zaloSendUrl(token);
+    if (!url || !chatIds.length) continue;
+
+    const payload = await listProjectDeadlineNotifications({
+      companyIds: profile.company_ids?.length ? profile.company_ids : null,
+      regionIds: profile.region_ids || [],
+      module: profile.modules?.length ? profile.modules : 'all',
+      status: profile.status || 'overdue',
+      daysAhead: profile.days_ahead ?? 0,
+      limit: 400,
+    });
+    const dueNow = (payload.notifications || []).filter((n) => matchesJustDueNotification(n, profile, nowMs, graceMs));
+    if (!dueNow.length) continue;
+
+    const seen = await loadRecentFingerprints({
+      sinceMs: 365 * 24 * 60 * 60 * 1000,
+      configId: profile.id,
+    });
+    for (const n of dueNow) {
+      const fp = fingerprintOf(n, profile.id);
+      if (!fp || seen.has(fp)) continue;
+      const r = await sendZaloNotificationItem({ profile, n, fp, url, chatIds });
+      if (r.ok) sent += 1;
+      else failed += 1;
+      seen.add(fp);
+    }
+  }
+
+  if (sent || failed) {
+    console.log(`[project-deadline-dispatch] due-watch sent ${sent}, failed ${failed}${opts.reason ? ` (${opts.reason})` : ''}`);
+  }
+  return { ok: failed === 0, sent, failed, reason: opts.reason || 'due_watch' };
+}
+
+function triggerAfterDeadlineChange() {
+  if (process.env.PROJECT_DEADLINE_DISPATCH_DISABLED === '1') return;
+  clearTimeout(dueWatchTriggerTimer);
+  dueWatchTriggerTimer = setTimeout(() => {
+    void runIfLeader(
+      'project-deadline-due-watch',
+      () => dispatchDueNotifications({ graceMs: 5 * 60 * 1000, reason: 'change' }),
+      { ttlSec: 45 },
+    );
+  }, 1500);
+}
+
 /**
  * Gửi Zalo Bot sendMessage cho một cấu hình API (chỉ mục chưa gửi).
  * POST https://bot-api.zaloplatforms.com/bot{token}/sendMessage
@@ -539,29 +658,12 @@ async function runProfileOnce(profileOrId, opts = {}) {
   let failed = 0;
   const errors = [];
   for (const { n, fp } of fresh) {
-    const text = n.text || n.message || n.title || '';
-    let itemOk = true;
-    let lastRes = { ok: true, status: 200 };
-    for (const chatId of chatIds) {
-      const res = await postZaloMessage(url, chatId, text);
-      lastRes = res;
-      if (!res.ok) {
-        itemOk = false;
-        errors.push(res.error || `HTTP ${res.status}`);
-        break;
-      }
+    const r = await sendZaloNotificationItem({ profile, n, fp, url, chatIds, webhookTag: 'sendMessage' });
+    if (r.ok) sent += 1;
+    else {
+      failed += 1;
+      if (r.error) errors.push(r.error);
     }
-    await logDispatch({
-      project_id: n.project?.id || null,
-      module_key: n.deadline?.module || '',
-      kind: n.deadline?.is_overdue ? 'overdue' : 'warning',
-      fingerprint: fp,
-      webhook_url: `zalo:sendMessage:${profile.id}`,
-      http_status: lastRes.status,
-      error: itemOk ? null : (lastRes.error || null),
-    });
-    if (itemOk) sent += 1;
-    else failed += 1;
   }
 
   console.log(`[project-deadline-dispatch] [${profile.name}] Zalo ${sent}/${fresh.length} (lỗi ${failed})`);
@@ -815,11 +917,25 @@ async function sendTestDeadline(profileOrId, opts = {}) {
   };
 }
 
+function startDueWatcher() {
+  const tick = () => {
+    void runIfLeader(
+      'project-deadline-due-watch',
+      () => dispatchDueNotifications({ reason: 'due_watch' }),
+      { ttlSec: Math.max(25, Math.round(DUE_WATCH_INTERVAL_MS / 1000) - 5) },
+    );
+  };
+  setTimeout(tick, 60_000);
+  setInterval(tick, DUE_WATCH_INTERVAL_MS);
+  console.log(`[project-deadline-dispatch] Due watcher — mỗi ${Math.round(DUE_WATCH_INTERVAL_MS / 1000)}s (grace ${Math.round(DUE_GRACE_MS / 1000)}s)`);
+}
+
 function start() {
   if (process.env.PROJECT_DEADLINE_DISPATCH_DISABLED === '1') {
     console.log('[project-deadline-dispatch] Disabled (env)');
     return;
   }
+  startDueWatcher();
   const intervalMs = Math.max(
     5 * 60 * 1000,
     parseInt(process.env.PROJECT_DEADLINE_DISPATCH_INTERVAL_MS || String(DEFAULT_INTERVAL_MS), 10) || DEFAULT_INTERVAL_MS,
@@ -827,7 +943,7 @@ function start() {
   const ttlSec = Math.max(120, Math.round(intervalMs / 1000) - 30);
   setTimeout(() => { void runIfLeader('project-deadline-dispatch', () => runOnce({ cron: true }), { ttlSec }); }, 90 * 1000);
   setInterval(() => { void runIfLeader('project-deadline-dispatch', () => runOnce({ cron: true }), { ttlSec }); }, intervalMs);
-  console.log(`[project-deadline-dispatch] Started — mỗi ${Math.round(intervalMs / 60000)} phút → Zalo Bot (cấu hình đã bật)`);
+  console.log(`[project-deadline-dispatch] Backup sweep — mỗi ${Math.round(intervalMs / 60000)} phút (bắt sót nếu due-watch miss)`);
 }
 
 module.exports = {
@@ -835,6 +951,8 @@ module.exports = {
   runOnce,
   runProfileOnce,
   sendTestDeadline,
+  dispatchDueNotifications,
+  triggerAfterDeadlineChange,
   loadDispatchConfig,
   loadStoredConfig,
   saveDispatchConfig,

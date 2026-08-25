@@ -740,4 +740,5 @@ module.exports = {
   parseProjectDeadlineExportQuery,
   listProjectDeadlineNotifications,
   buildZaloBotText,
+  deadlineToTs: toTs,
 };

@@ -2589,6 +2589,11 @@ r.put('/:id', requireProjectEditOrSxKanbanWorkshopType(), async (req, res) => {
       }
     } catch (_) { /* ignore */ }
 
+    const deadlineFields = ['deadline', 'design_deadline', 'production_deadline', 'order_date', 'delivery_date', 'production_finish_date', 'install_date'];
+    if (deadlineFields.some((f) => b[f] !== undefined)) {
+      try { require('../jobs/projectDeadlineDispatch').triggerAfterDeadlineChange(); } catch (_) { /* ignore */ }
+    }
+
     res.json({ project: { ...data, production_staff } });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
 });

@@ -639,7 +639,7 @@ export default function ProjectDeadlineDispatchPage() {
                 checked={form.zaloEnabled}
                 onChange={(e) => setForm((p) => ({ ...p, zaloEnabled: e.target.checked }))}
               />
-              Tự gửi (cron ~30′)
+              Tự gửi (ngay khi hết hạn, ~5 phút)
             </label>
           </div>
           <div>

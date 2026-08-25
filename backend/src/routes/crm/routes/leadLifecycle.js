@@ -2943,6 +2943,7 @@ r.patch('/leads/:id/deadline', async (req, res) => {
     });
 
     res.json({ ok: true, kanban_deadline_at: newIso, kanban_deadline_reason: reason || null });
+    try { require('../../../jobs/projectDeadlineDispatch').triggerAfterDeadlineChange(); } catch (_) { /* ignore */ }
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
