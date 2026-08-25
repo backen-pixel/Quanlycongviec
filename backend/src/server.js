@@ -1200,9 +1200,9 @@ server.listen(config.port, () => {
   // Cron CSKH: nhắc chăm lại lead lúc 8h30 & 13h30 VN (disable bằng CSKH_CRON_DISABLED=1)
   try { require('./jobs/cskhReminder').start(io); } catch (e) { console.warn('[cskh-cron] Failed to start:', e.message); }
 
-  // Cron BC ngày: 08:00 Phần I (Deadline) + 17:00 Phần II (KQ hôm trước) — disable: DAILY_REPORT_AUTO_CLOSE_DISABLED=1
+  // Cron BC ngày: 08:00 Phần I (Deadline) + 16:45 Phần II (KQ ngày phiếu) — disable: DAILY_REPORT_AUTO_CLOSE_DISABLED=1
   try {
-    require('./jobs/dailyReportAutoCloseCron').start();
+    require('./jobs/dailyReportAutoCloseCron').start(io);
   } catch (e) {
     console.warn('[daily-report-cron] Failed to start:', e.message);
   }

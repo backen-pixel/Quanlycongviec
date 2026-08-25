@@ -593,9 +593,10 @@ async function buildProjectDealBundle(projectId, opts = {}) {
 
 const LEAD_BUNDLE_SELECT = `
   id, code, title, type, estimated_value, company_id, project_id, customer_id,
-  assigned_to, lead_owner_id, stage_id,
+  assigned_to, lead_owner_id, stage_id, description,
   stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon, is_won, order_index),
-  customer:customers(id, full_name, phone),
+  customer:customers(id, full_name, phone, source),
+  source:crm_sources(id, name),
   assignee:users!crm_leads_assigned_to_fkey(id, full_name),
   lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name)
 `;
@@ -1133,12 +1134,21 @@ async function buildProjectDealBundleWithProject(project, user) {
     deliveryStages,
   });
 
+  let inbox_links = { facebook: false, zalo: false };
+  if (leadId && primaryLead) {
+    try {
+      const { resolveLeadInboxLinks } = require('./crmLeadInboxChannel');
+      inbox_links = await resolveLeadInboxLinks(supabase, leadId, primaryLead);
+    } catch (_) { /* optional */ }
+  }
+
   return {
     project,
     leads: hardLeads.length ? hardLeads : (softLeads || []),
     primary_lead: primaryLead,
     lead_id: leadId,
     lead_link: leadLinkKind || null,
+    inbox_links,
     pipelines,
     sections,
     totals: {

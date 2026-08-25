@@ -1456,4 +1456,5 @@ module.exports = {
   insertDepartmentBotMessage,
   insertGroupBotMessage,
   ensureDmGroupWithBot,
+  notifyBotMessageRecipients,
 };

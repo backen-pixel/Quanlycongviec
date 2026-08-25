@@ -11,6 +11,7 @@ const {
   resolveLogisticsHandoverInstallerUserId,
   resolveLogisticsHandoverConfirmUserId,
 } = require('./logisticsHandoverSettings');
+const { extraAlwaysWorkshopStaffUserIds } = require('./dealParticipantProduction');
 
 /** Toàn bộ user đang active của công ty VC/LĐ (dùng khi cần blast — mặc định không). */
 async function listActiveCompanyUserIds(companyId) {
@@ -53,6 +54,9 @@ async function listLogisticsResponsibleUserIds(logisticsCompanyId, {
       if (confirm) ids.add(String(confirm));
     } catch (e) {
       console.warn('[vcHandoverDealMembers] resolve responsible:', e.message);
+    }
+    for (const uid of extraAlwaysWorkshopStaffUserIds(logisticsCompanyId)) {
+      ids.add(String(uid));
     }
   }
   return [...ids];

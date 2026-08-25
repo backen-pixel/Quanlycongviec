@@ -24,6 +24,16 @@ backend/data/api-keys.json
 
 # Database dump files
 backend/uploads/_clone/*.dump
+backend/uploads/_tmp_*
+backend/uploads/_auth_*
 
 # Local backup from CRM route split (regenerable from git history)
 backend/src/routes/crm/core.js.bak
+
+# Local scratch / JVM / clone junk — KHÔNG commit
+_tmp_*
+**/_tmp_*
+hs_err_*.log
+replay_*.log
+.jscpd-report/
+backend/supabase/.temp/

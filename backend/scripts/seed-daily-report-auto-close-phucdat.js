@@ -1,5 +1,5 @@
 /**
- * Seed / auto-nộp Phần II (KQ ngày hôm qua) cho NV CRM — thử bảng tổng hợp.
+ * Seed / auto-nộp Phần II (KQ CRM đúng ngày phiếu) cho NV CRM — thử bảng tổng hợp.
  * Usage:
  *   node scripts/seed-daily-report-auto-close-phucdat.js [YYYY-MM-DD]
  *   DAILY_REPORT_AUTO_CLOSE_COMPANY_IDS=<uuid> node scripts/seed-daily-report-auto-close-phucdat.js
@@ -18,7 +18,7 @@ async function main() {
     ? null // helper đọc env
     : [PHUC_DAT];
 
-  console.log(`Report date=${reportDate} · auto-nộp Phần II (KQ hôm trước)`);
+  console.log(`Report date=${reportDate} · auto-nộp Phần II (KQ ngày phiếu)`);
   const summary = await runAutoCloseBatch({
     reportDate,
     companyIds,

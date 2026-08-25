@@ -973,7 +973,11 @@ export default function ProjectDeadlineDispatchPage() {
                       <div>{n.deadline?.label}</div>
                       <div className={`text-xs ${n.deadline?.is_overdue ? 'text-red-600' : 'text-gray-500'}`}>{n.deadline?.at_vi}</div>
                     </td>
-                    <td className="px-3 py-2">{n.responsible?.full_name || 'Chưa gán'}</td>
+                    <td className="px-3 py-2">
+                      <span className={`font-semibold ${n.responsible?.full_name ? 'text-red-800' : 'text-red-400 italic'}`}>
+                        {n.responsible?.full_name || 'Chưa gán'}
+                      </span>
+                    </td>
                     <td className="px-3 py-2">
                       {n.links?.url ? (
                         <a href={n.links.url} target="_blank" rel="noreferrer" className="text-blue-600 inline-flex items-center gap-0.5 text-xs" onClick={(e) => e.stopPropagation()}>

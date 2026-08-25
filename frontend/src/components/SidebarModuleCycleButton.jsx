@@ -9,6 +9,7 @@ import {
   sidebarAccentFromColor,
 } from '../lib/appSwitcherModules';
 import { preloadModuleIconsFromModules } from '../lib/moduleIconPreload';
+import { navigateToAppModule } from '../lib/sidebarModuleContext';
 
 const SWAP_MS = 420;
 
@@ -185,7 +186,7 @@ export default function SidebarModuleCycleButton({
 
     if (swapTimerRef.current) window.clearTimeout(swapTimerRef.current);
     swapTimerRef.current = window.setTimeout(() => {
-      navigate(target.path);
+      navigateToAppModule(navigate, target);
       setSwapping(false);
       setPreviousDisplayIdx(null);
       swapTimerRef.current = null;

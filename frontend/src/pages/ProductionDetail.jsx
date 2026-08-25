@@ -54,6 +54,8 @@ import UnifiedTaskHistoryWidget from '../components/UnifiedTaskHistoryWidget';
 import ProjectApprovalsTab from '../components/ProjectApprovalsTab';
 import { LeadMembersTab, LeadChatTab } from '../components/LeadChatTabs';
 import CrmChatNotesPanel from '../components/CrmChatNotesPanel';
+import FacebookChatTab from '../components/FacebookChatTab';
+import ZaloChatTab from '../components/ZaloChatTab';
 import PipelineStepper from '../components/PipelineStepper';
 import BlockingTasksAlertModal from '../components/BlockingTasksAlertModal';
 import CrmDeadlineModal from '../components/CrmDeadlineModal';
@@ -72,8 +74,8 @@ import ProjectProcurementTab from '../components/ProjectProcurementTab';
 import { driveLinksCountByEntity } from '../lib/drive';
 import { canManageWorkshopProjectFiles } from '../lib/fileOwnership';
 
-/** Cùng tên tab với LeadDetail (chi tiết deal) — bỏ facebook và calls */
-const DEAL_TAB_KEYS = new Set(['tasks', 'shared-workspace', 'documents', 'notes', 'comments', 'team', 'approvals', 'incidents', 'procurement']);
+/** Cùng tên tab với LeadDetail (chi tiết deal) — bỏ calls; facebook/zalo chỉ hiện khi có liên kết inbox */
+const DEAL_TAB_KEYS = new Set(['tasks', 'shared-workspace', 'documents', 'notes', 'comments', 'team', 'approvals', 'incidents', 'procurement', 'facebook', 'zalo']);
 const LEGACY_TAB_MAP = {
   timeline: 'comments',
   'crm-notes': 'notes',
@@ -1584,8 +1586,11 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   const [ensuringCrmDeal, setEnsuringCrmDeal] = useState(false);
   const tabFromUrl = searchParams.get('tab');
   const normalizedUrlTab = LEGACY_TAB_MAP[tabFromUrl] || tabFromUrl;
-  const tabAllowed = (t) => {
+  const [inboxLinks, setInboxLinks] = useState({ facebook: false, zalo: false });
+  const tabAllowed = (t, links = inboxLinks, leadId = null) => {
     if (!DEAL_TAB_KEYS.has(t)) return false;
+    if (t === 'facebook') return !!(leadId && links?.facebook);
+    if (t === 'zalo') return !!(leadId && links?.zalo);
     if (moduleKey === 'vc' && (t === 'approvals' || t === 'procurement')) return false;
     return true;
   };
@@ -1905,7 +1910,13 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     }
     if (!t) return;
     const next = LEGACY_TAB_MAP[t] || t;
-    if (!tabAllowed(next)) {
+    const leadId = project
+      ? (resolveSxProjectLeadId({
+        crm_lead_id: project.crm_lead_id,
+        crm_deals: project.crmDeals || project.crm_deals,
+      }) || fallbackDealIdForTasks)
+      : null;
+    if (!tabAllowed(next, inboxLinks, leadId)) {
       setActiveTab('tasks');
       const p = new URLSearchParams(searchParams);
       p.delete('tab');
@@ -1919,7 +1930,36 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
       else p.set('tab', next);
       setSearchParams(p, { replace: true });
     }
-  }, [id, searchParams, moduleKey, setSearchParams]);
+  }, [id, searchParams, moduleKey, setSearchParams, inboxLinks, project, fallbackDealIdForTasks]);
+
+  useEffect(() => {
+    if (!project?.id) {
+      setInboxLinks({ facebook: false, zalo: false });
+      return undefined;
+    }
+    const leadId = resolveSxProjectLeadId({
+      crm_lead_id: project.crm_lead_id,
+      crm_deals: project.crmDeals || project.crm_deals,
+    }) || fallbackDealIdForTasks;
+    if (!leadId) {
+      setInboxLinks({ facebook: false, zalo: false });
+      return undefined;
+    }
+    let cancelled = false;
+    api.get(`/crm/leads/${leadId}/inbox-links`)
+      .then((r) => {
+        if (!cancelled) setInboxLinks(r.data || { facebook: false, zalo: false });
+      })
+      .catch(() => {
+        if (!cancelled) setInboxLinks({ facebook: false, zalo: false });
+      });
+    return () => { cancelled = true; };
+  }, [project?.id, project?.crm_lead_id, project?.crmDeals, project?.crm_deals, fallbackDealIdForTasks]);
+
+  useEffect(() => {
+    if (activeTab === 'facebook' && !(inboxLinks.facebook)) setActiveTab('tasks');
+    else if (activeTab === 'zalo' && !(inboxLinks.zalo)) setActiveTab('tasks');
+  }, [activeTab, inboxLinks.facebook, inboxLinks.zalo]);
 
   useEffect(() => {
     if (!id) return;
@@ -3496,6 +3536,8 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
               {tabBtn('documents', `📋 Tài liệu (${documentsForZipTotal})`)}
               {tabBtn('drive', `☁️ Drive (${driveFileCount})`)}
               {tabBtn('notes', `📝 Ghi chú (${sharedNotes.length})`)}
+              {crmLeadId && inboxLinks.facebook && tabBtn('facebook', '📘 Facebook')}
+              {crmLeadId && inboxLinks.zalo && tabBtn('zalo', '💬 Zalo OA')}
               {tabBtn('comments', `💬 Bình luận${commentCount > 0 ? ` (${commentCount})` : ''}`)}
               {tabBtn('incidents', incidents.filter(i => i.status === 'open' || i.status === 'in_progress').length > 0
                 ? `⚠️ Sự cố (${incidents.filter(i => i.status === 'open' || i.status === 'in_progress').length})`
@@ -3864,6 +3906,17 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                 ) : (
                   <p className="text-sm text-gray-500 text-center py-8">Liên kết deal CRM để dùng ghi chú.</p>
                 )
+              )}
+
+              {activeTab === 'facebook' && crmLeadId && inboxLinks.facebook && (
+                <FacebookChatTab
+                  leadId={crmLeadId}
+                  companyId={primaryCrmDeal?.company_id || project?.company_id || null}
+                />
+              )}
+
+              {activeTab === 'zalo' && crmLeadId && inboxLinks.zalo && (
+                <ZaloChatTab leadId={crmLeadId} />
               )}
 
               {/* Sự cố */}

@@ -7,6 +7,9 @@ const {
   ensureDealProductionAutoParticipants,
   ensureProjectProductionAutoParticipants,
   getDealCompanyAutoParticipantUserIds,
+  extraAlwaysWorkshopStaffUserIds,
+  isAlwaysWorkshopStaffUser,
+  HCB_COMPANY_ID,
 } = require('./dealParticipantProduction');
 
 /** Users thuộc công ty SX (users.company_id ∪ phòng ban của công ty). */
@@ -52,6 +55,9 @@ async function loadUsersForProductionCompany(companyId) {
 
 async function userBelongsToProductionCompany(userId, companyId) {
   if (!userId || !companyId) return false;
+  if (isAlwaysWorkshopStaffUser({ id: userId }) && String(companyId) === String(HCB_COMPANY_ID)) {
+    return true;
+  }
   const { data: ru } = await supabase
     .from('users')
     .select('id, company_id, department:departments!users_department_id_fkey(id, company_id)')
@@ -121,10 +127,11 @@ async function filterUserIdsEligibleForAutoLeadMembers(userIds) {
   if (!ids.length) return [];
   const { data: users } = await supabase
     .from('users')
-    .select('id, role, drive_module')
+    .select('id, role, drive_module, email')
     .in('id', ids);
   return (users || [])
     .filter((u) => {
+      if (isAlwaysWorkshopStaffUser(u)) return true;
       const drive = String(u.drive_module || '').trim().toLowerCase();
       if (SX_VC_DRIVE_MODULES.has(drive)) return true;
       return AUTO_LEAD_MEMBER_ROLES.has(String(u.role || '').trim().toLowerCase());
@@ -152,6 +159,21 @@ async function resolveFallbackStaffForProductionCompany(companyId) {
 }
 
 /** @returns {{ userIds: string[], primaryUserId: string|null }} */
+function withAlwaysWorkshopStaff(companyId, block) {
+  const extra = extraAlwaysWorkshopStaffUserIds(companyId);
+  const userIds = [...(block?.userIds || []).map(String)];
+  if (!userIds.length || !extra.length) {
+    return { userIds, primaryUserId: block?.primaryUserId || null };
+  }
+  for (const uid of extra) {
+    if (!userIds.includes(String(uid))) userIds.push(String(uid));
+  }
+  return {
+    userIds,
+    primaryUserId: block?.primaryUserId || null,
+  };
+}
+
 async function getDefaultStaffForType(companyId, workshopTypeId, opts = {}) {
   if (!companyId) {
     return { userIds: [], primaryUserId: null };
@@ -160,10 +182,10 @@ async function getDefaultStaffForType(companyId, workshopTypeId, opts = {}) {
   if (workshopTypeId) {
     const map = await loadWorkshopTypeDefaultStaffMap(companyId);
     const block = map.get(String(workshopTypeId));
-    if (block?.userIds?.length) return block;
+    if (block?.userIds?.length) return withAlwaysWorkshopStaff(companyId, block);
   }
-  if (!allowFallback) return { userIds: [], primaryUserId: null };
-  return resolveFallbackStaffForProductionCompany(companyId);
+  if (!allowFallback) return withAlwaysWorkshopStaff(companyId, { userIds: [], primaryUserId: null });
+  return withAlwaysWorkshopStaff(companyId, await resolveFallbackStaffForProductionCompany(companyId));
 }
 
 /** @deprecated dùng getDefaultStaffForType */
@@ -303,6 +325,7 @@ const SX_VC_DRIVE_MODULES = new Set(['sx', 'production', 'vc', 'logistics']);
 
 function isSxOrVcMemberUser(user) {
   if (!user) return false;
+  if (isAlwaysWorkshopStaffUser(user)) return true;
   const drive = String(user.drive_module || '').trim().toLowerCase();
   if (SX_VC_DRIVE_MODULES.has(drive)) return true;
   const role = String(user.role || '').trim().toLowerCase();
@@ -375,7 +398,7 @@ async function pruneNonResponsibleCrmLeadMembersForDeal(dealId) {
 
   const { data: members, error: memErr } = await supabase
     .from('lead_members')
-    .select('user_id, user:users!lead_members_user_id_fkey(id, role, drive_module)')
+    .select('user_id, user:users!lead_members_user_id_fkey(id, role, drive_module, email)')
     .eq('lead_id', dealId);
   if (memErr) {
     console.warn('[productionWorkshopTypeStaff] prune load members:', memErr.message);

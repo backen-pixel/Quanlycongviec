@@ -12,6 +12,7 @@ import {
 } from '../lib/appSwitcherModules';
 import ModuleAccessDeniedModal from './ModuleAccessDeniedModal';
 import ModuleBrandIcon from './ModuleBrandIcon';
+import { navigateToAppModule } from '../lib/sidebarModuleContext';
 
 function normalizeSearch(s) {
   return String(s || '').trim().toLowerCase();
@@ -182,7 +183,7 @@ export default function AppSwitcherPanel({
     }
     setDeniedModule(null);
     onClose();
-    navigate(mod.path);
+    navigateToAppModule(navigate, mod);
   }, [moduleAccessCtx, navigate, onClose]);
 
   const closeDeniedModal = useCallback(() => {

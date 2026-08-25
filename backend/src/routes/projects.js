@@ -79,6 +79,22 @@ async function getAllChildUnits(unitId) {
   }
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** `projects.created_by` là text, không có FK → không embed được qua PostgREST. */
+async function attachCreatedByUsers(projects) {
+  const list = Array.isArray(projects) ? projects : [];
+  const ids = [...new Set(list.map((p) => String(p.created_by || '').trim()).filter((id) => UUID_RE.test(id)))];
+  if (!ids.length) return list;
+  const { data: users, error } = await supabase.from('users').select('id,full_name,avatar').in('id', ids);
+  if (error) throw error;
+  const map = new Map((users || []).map((u) => [String(u.id), u]));
+  return list.map((p) => ({
+    ...p,
+    created_by_user: map.get(String(p.created_by || '')) || null,
+  }));
+}
+
 // ─── HELPER: Create notification (backward compatible wrapper) ──
 async function createNotification(req, userId, type, title, message, entityType, entityId, metadata) {
   return await createNotif(req, userId, type, title, message, entityType, entityId, metadata || null);
@@ -200,8 +216,7 @@ r.get('/', requirePermission('projects', 'view'), async (req, res) => {
       production_person:users!projects_production_person_id_fkey(id,full_name,avatar),
       logistics_person:users!projects_logistics_person_id_fkey(id,full_name,avatar),
       shipping_person:users!projects_shipping_person_id_fkey(id,full_name,avatar),
-      installation_person:users!projects_installation_person_id_fkey(id,full_name,avatar),
-      created_by_user:users!projects_created_by_fkey(id,full_name,avatar)
+      installation_person:users!projects_installation_person_id_fkey(id,full_name,avatar)
     `;
     const listSelectBase = `
       *, customers(id,full_name,phone,email,city),
@@ -328,6 +343,11 @@ r.get('/', requirePermission('projects', 'view'), async (req, res) => {
     }
 
     let projects = data || [];
+    try {
+      projects = await attachCreatedByUsers(projects);
+    } catch (cbErr) {
+      console.warn('[projects list] created_by users:', cbErr.message);
+    }
     try {
       projects = await enrichProjectsModulePresence(projects);
     } catch (enrErr) {

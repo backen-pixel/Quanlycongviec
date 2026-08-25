@@ -446,7 +446,14 @@ async function enrichProjectsForLogistics(projects, filterCompanyId = null, opts
   }
 
   const pipelineEnriched = (projects || []).map((p) => enrichOneLogisticsProject(p, cache.get(keyFor(p)), orphanColMeta));
-  return attachCrmDealsToProjects(pipelineEnriched, opts);
+  const withDeals = await attachCrmDealsToProjects(pipelineEnriched, opts);
+  try {
+    const { attachInstallEventDatesToProjects } = require('../helpers/createPlannedVcLdEvents');
+    return attachInstallEventDatesToProjects(withDeals);
+  } catch (err) {
+    console.warn('[logistics] attach install event dates:', err.message);
+    return withDeals;
+  }
 }
 
 function stripProjectTasks(projects) {

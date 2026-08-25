@@ -27,10 +27,28 @@ const CLIENT_COMPANY_PRODUCTION_AUTO_PARTICIPANT_EMAILS = new Set([
 ]);
 
 /** UUID công ty SX — đồng bộ với DB prod (HCB, Metalla). */
+const HCB_COMPANY_ID = '18c2563f-3495-498d-8199-23200c9f420e';
 const METALLA_HUCABI_COMPANY_ID_SET = new Set([
-  '18c2563f-3495-498d-8199-23200c9f420e', // Công ty Hucabi
+  HCB_COMPANY_ID, // Công ty Hucabi
   'b78baba2-2486-434c-a72d-9c937fac2164', // Công Ty Metalla
 ]);
+
+/** NV luôn gắn đội SX + VC/LĐ HCB khi thiết lập sản xuất / lắp đặt. */
+const ALWAYS_HCB_WORKSHOP_STAFF = [
+  { id: '646e364e-504d-4362-af1a-4f4694b0d05d', email: 'trongthanh0800@gmail.com' },
+];
+
+function extraAlwaysWorkshopStaffUserIds(companyId) {
+  if (String(companyId || '') !== HCB_COMPANY_ID) return [];
+  return ALWAYS_HCB_WORKSHOP_STAFF.map((r) => String(r.id));
+}
+
+function isAlwaysWorkshopStaffUser(user) {
+  if (!user) return false;
+  const id = String(user.id || '');
+  const email = normalizeEmail(user.email);
+  return ALWAYS_HCB_WORKSHOP_STAFF.some((r) => r.id === id || r.email === email);
+}
 
 let cachedMetallaHucabiIds = null;
 
@@ -724,4 +742,7 @@ module.exports = {
   ensureDealProductionAutoParticipants,
   ensureProjectProductionAutoParticipants,
   listWorkshopCompaniesForDealCompany,
+  HCB_COMPANY_ID,
+  extraAlwaysWorkshopStaffUserIds,
+  isAlwaysWorkshopStaffUser,
 };

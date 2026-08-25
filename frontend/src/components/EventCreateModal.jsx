@@ -558,6 +558,31 @@ export default function EventCreateModal({
     } catch { /* ignore */ }
   }, [isEdit]);
 
+  /** Lấy hàng / lắp đặt / hoàn thiện / duyệt thiết kế: tự mời mọi người trên dự án. */
+  useEffect(() => {
+    if (isEdit) return;
+    const et = String(form.event_type || '');
+    if (!['installation', 'production_finish', 'design_review', 'pickup', 'delivery'].includes(et)) return;
+    const leadId = form.lead_id || defaultLeadId || defaultLead?.id || '';
+    const projectId = defaultProjectId || '';
+    if (!leadId && !projectId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await api.get('/events/module-owners', {
+          params: {
+            ...(leadId ? { lead_id: leadId } : {}),
+            ...(projectId ? { project_id: projectId } : {}),
+          },
+        });
+        const extra = Array.isArray(data?.user_ids) ? data.user_ids.map(String) : [];
+        if (cancelled || !extra.length) return;
+        setParticipantIds((prev) => [...new Set([...(prev || []).map(String), ...extra])]);
+      } catch { /* ignore */ }
+    })();
+    return () => { cancelled = true; };
+  }, [isEdit, form.event_type, form.lead_id, defaultLeadId, defaultLead?.id, defaultProjectId]);
+
   const customersFromDeals = (list) => {
     const map = new Map();
     for (const l of list || []) {

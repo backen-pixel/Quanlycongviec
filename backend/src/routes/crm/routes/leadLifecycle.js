@@ -448,6 +448,30 @@ r.get('/deals/:id/spawned-additional', async (req, res) => {
   }
 });
 
+r.get('/leads/:id/inbox-links', async (req, res) => {
+  try {
+    const leadId = String(req.params.id || '').trim();
+    if (!leadId) return res.status(400).json({ error: 'Thiếu lead id' });
+    const { data: lead } = await supabase
+      .from('crm_leads')
+      .select(`
+        id, company_id, customer_id, title, description,
+        customer:customers(id, source),
+        source:crm_sources(id, name)
+      `)
+      .eq('id', leadId)
+      .maybeSingle();
+    if (!lead) return res.status(404).json({ error: 'Không tìm thấy lead/deal' });
+    const ar = assertLeadReadableByRegionScope(req, lead);
+    if (!ar.ok) return res.status(403).json({ error: ar.error });
+    const { resolveLeadInboxLinks } = require('../../../helpers/crmLeadInboxChannel');
+    const links = await resolveLeadInboxLinks(supabase, leadId, lead);
+    res.json(links);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 r.get('/leads/:id/badge', async (req, res) => {
   try {
     const data = await fetchCrmLeadWithPipelineBadges(req.params.id);

@@ -63,10 +63,7 @@ const MENU_GROUPS = [
     emoji: '📊',
     items: [
       { to: '/dashboard', icon: LayoutDashboard, label: 'Tổng hợp Quản lý' },
-      { to: '/management/work-overview', icon: ListChecks, label: 'Tổng quan công việc' },
-      { to: '/management/crm-overview', icon: Target, label: 'Tổng quan CRM' },
       { to: '/management/quotes-overview', icon: FileText, label: 'Dự toán & Báo giá' },
-      { to: '/management/work-unified', icon: Layers, label: 'Work Unified' },
       { to: '/management/purchasing-overview', icon: ShoppingCart, label: 'Mua hàng' },
       { to: '/management/production-overview', icon: Factory, label: 'Sản xuất' },
     ]
@@ -125,11 +122,21 @@ const MENU_GROUPS = [
   }
 ];
 
-/** DỰ ÁN VÀ CÔNG VIỆC — nhiệm vụ tổng hợp + dự án + setup luồng module */
+/** DỰ ÁN VÀ CÔNG VIỆC — overview + nhiệm vụ tổng hợp + dự án + setup luồng */
 const CONGVIEC_MENU_GROUPS = [
   {
     id: 'congviec-overview',
-    title: '1. Làm việc',
+    title: '1. Tổng quan',
+    emoji: '📊',
+    items: [
+      { to: '/management/work-overview', icon: ListChecks, label: 'Tổng quan công việc' },
+      { to: '/management/crm-overview', icon: Target, label: 'Tổng quan CRM' },
+      { to: '/management/work-unified', icon: Layers, label: 'Work Unified' },
+    ],
+  },
+  {
+    id: 'congviec-work',
+    title: '2. Làm việc',
     emoji: '✅',
     items: [
       { to: '/projects', icon: LayoutDashboard, label: 'Dashboard dự án', end: true },
@@ -139,7 +146,7 @@ const CONGVIEC_MENU_GROUPS = [
   },
   {
     id: 'congviec-setup',
-    title: '2. Thiết lập',
+    title: '3. Thiết lập',
     emoji: '⚙️',
     adminOnly: true,
     items: [

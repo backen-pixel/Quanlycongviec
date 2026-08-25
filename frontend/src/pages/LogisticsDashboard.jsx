@@ -21,7 +21,7 @@ import {
   Filter, Clock, Layers, Trash2, Settings, BarChart3,
   ChevronDown, ChevronUp, MessageSquare, Phone, ExternalLink, Lock,
 } from 'lucide-react';
-import { LogisticsListView, LogisticsPlannerView, LogisticsCalendarView, LogisticsDeadlineView } from '../components/LogisticsViews';
+import { LogisticsListView, LogisticsPlannerView, LogisticsCalendarView, LogisticsDeadlineView, resolveVcDeadlineRaw } from '../components/LogisticsViews';
 import { getCalendarMonthRange } from '../components/dashboard/DashboardMonthCalendar';
 import NewLogisticsProjectModal from '../components/NewLogisticsProjectModal';
 import WorkshopPipelineKanbanScroll, { useWorkshopKanbanScrollLayout } from '../components/WorkshopPipelineKanbanScroll';
@@ -612,7 +612,9 @@ export default function LogisticsDashboard() {
     if (!bulkDeadlineVal || !selectedIds.size) return;
     setBulkSaving(true);
     try {
-      await Promise.all([...selectedIds].map(id => api.put(`/projects/${id}`, { deadline: bulkDeadlineVal })));
+      await Promise.all([...selectedIds].map(id => api.put(`/projects/${id}`, {
+        install_date: `${bulkDeadlineVal}T14:00:00+07:00`,
+      })));
       await load();
       setShowBulkDeadline(false);
       setBulkDeadlineVal('');
@@ -657,9 +659,11 @@ export default function LogisticsDashboard() {
         list.sort((a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0));
       } else if (sortBy === 'deadline') {
         list.sort((a, b) => {
-          const ta = a.deadline ? new Date(a.deadline).getTime() : Infinity;
-          const tb = b.deadline ? new Date(b.deadline).getTime() : Infinity;
-          return ta - tb;
+          const ta = resolveVcDeadlineRaw(a).raw;
+          const tb = resolveVcDeadlineRaw(b).raw;
+          const na = ta ? new Date(ta).getTime() : Infinity;
+          const nb = tb ? new Date(tb).getTime() : Infinity;
+          return na - nb;
         });
       } else if (sortBy === 'value') {
         list.sort((a, b) => (Number(b.estimated_value) || 0) - (Number(a.estimated_value) || 0));

@@ -211,10 +211,12 @@ if (typeof window !== 'undefined') {
     try {
       const url = (api.defaults.baseURL || '') + '/user-activity';
       const token = localStorage.getItem('token');
-      const body = JSON.stringify({ entries: queue.splice(0, queue.length) });
+      const payload = JSON.stringify({
+        entries: queue.splice(0, queue.length),
+        access_token: token || undefined,
+      });
       if (navigator.sendBeacon) {
-        const blob = new Blob([body], { type: 'application/json' });
-        navigator.sendBeacon(`${url}?bearer=${encodeURIComponent(token || '')}`, blob);
+        navigator.sendBeacon(url, new Blob([payload], { type: 'application/json' }));
       }
     } catch {}
   });

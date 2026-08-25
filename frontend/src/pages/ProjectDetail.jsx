@@ -17,7 +17,7 @@ import {
   ArrowLeft, Plus, Trash2, ChevronRight, ChevronDown, Phone, MapPin,
   Calendar, Clock, CheckSquare, MessageSquare, ArrowRightCircle, ArrowRight,
   Paperclip, FileText, Edit, UserPlus, X, Shield, PlayCircle, AlertCircle, List, LayoutGrid, DollarSign, Pin, ShoppingCart,
-  Wallet, Layers, AlertTriangle, Target, Users,
+  Wallet, Layers, AlertTriangle, Target, Users, Cloud, Mic, Star, Package,
 } from 'lucide-react';
 import ProjectOrdersTab from '../components/ProjectOrdersTab';
 import { togglePin, isPinned } from '../components/PinnedProjectsWidget';
@@ -32,6 +32,18 @@ import ProjectOverviewPanel from '../components/ProjectOverviewPanel';
 import DealModulePathStrip from '../components/DealModulePathStrip';
 import ProjectCashflowTab from '../components/ProjectCashflowTab';
 import SharedCRMNotes from '../components/SharedCRMNotes';
+import FacebookChatTab from '../components/FacebookChatTab';
+import ZaloChatTab from '../components/ZaloChatTab';
+import CrmChatNotesPanel from '../components/CrmChatNotesPanel';
+import { LeadMembersTab } from '../components/LeadChatTabs';
+import LeadVoiceRecordingsTab from '../components/LeadVoiceRecordingsTab';
+import DealCrossScoresPanel from '../components/DealCrossScoresPanel';
+import DriveAttachments from '../components/drive/DriveAttachments';
+import { driveLinksCountByEntity } from '../lib/drive';
+import { countMembersByModule } from '../lib/memberModuleCounts';
+import { useAuth } from '../lib/auth';
+import { isAdminLike } from '../lib/adminRole';
+import { PO_STATUS, PO_COLORS } from './PurchasingInboxPage';
 import { CrmLeadCommentsPanel, ProjectCommentsPanel } from '../components/CommentsPanels';
 import EventsFeedPage from './EventsFeedPage';
 import { overlayDealBundleWithFlowAssignments } from '../lib/overlayDealBundleWithFlowAssignments';
@@ -47,6 +59,15 @@ import {
   stageSlugForProjectStatus,
 } from '../lib/projectDeliveryStages';
 
+/** Cột deal «Hoàn thành» — hiện tab Điểm chéo & KH */
+function isCrmDealStageHoanThanhName(name) {
+  const ascii = String(name || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+  return ascii.includes('hoan thanh');
+}
 const STAGE_FLOW_FALLBACK = [
   { slug: 'order', status: 'contract_signed', label: 'Đơn hàng', personKey: 'contract_person' },
   { slug: 'design', status: 'designing', label: 'Thiết kế', personKey: 'design_person' },
@@ -64,11 +85,16 @@ export default function ProjectDetail() {
   const { id } = useParams();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [project, setProject] = useState(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState(() => {
     const t = searchParams.get('tab') || 'overview';
-    return t === 'tasks' ? 'shared' : t;
+    if (t === 'tasks') return 'shared';
+    if (t === 'comments') return 'chat';
+    if (t === 'notes' || t === 'activities') return 'notes';
+    if (t === 'orders' || t === 'purchase_orders' || t === 'dat-hang') return t === 'orders' ? 'orders' : 'purchase_orders';
+    return t;
   });
   const [selectedTask, setSelectedTask] = useState(null);
   const [showCreateTask, setShowCreateTask] = useState(false);
@@ -76,6 +102,11 @@ export default function ProjectDetail() {
   const [pendingApprovalCount, setPendingApprovalCount] = useState(0);
   const [approvalRule, setApprovalRule] = useState(null); // { mode: 'auto'|'manual' }
   const [orderCount, setOrderCount] = useState(0);
+  const [driveFileCount, setDriveFileCount] = useState(0);
+  const [noteActivities, setNoteActivities] = useState([]);
+  const [dealPurchaseOrders, setDealPurchaseOrders] = useState([]);
+  const [poStatusFilter, setPoStatusFilter] = useState('');
+  const [memberModuleCounts, setMemberModuleCounts] = useState({ crm: 0, production: 0, logistics: 0 });
   const [showAdvance, setShowAdvance] = useState(false);
   const [showApprovalRequest, setShowApprovalRequest] = useState(false);
   const [showPeople, setShowPeople] = useState(false);
@@ -101,11 +132,97 @@ export default function ProjectDetail() {
     [dealBundle, project?.module_companies?.deal_id],
   );
 
+  const inboxLinks = useMemo(
+    () => dealBundle?.inbox_links || { facebook: false, zalo: false },
+    [dealBundle?.inbox_links],
+  );
+
+  const crmLeadCompanyId = useMemo(
+    () => dealBundle?.primary_lead?.company_id || project?.company_id || null,
+    [dealBundle?.primary_lead?.company_id, project?.company_id],
+  );
+
+  const primaryLead = dealBundle?.primary_lead || null;
+
   /** Bundle hiển thị: CRM chip/NV theo khối; SX/VC theo NV xưởng (khớp module chi tiết). */
   const displayBundle = useMemo(
     () => overlayDealBundleWithFlowAssignments(dealBundle, project?.flowAssignments),
     [dealBundle, project?.flowAssignments],
   );
+
+  const isDealCompleted = useMemo(() => {
+    if (!primaryLead || String(primaryLead.type || '') !== 'deal') return false;
+    const stageName = displayBundle?.pipelines?.crm?.name
+      || primaryLead?.stage?.name
+      || '';
+    return isCrmDealStageHoanThanhName(stageName);
+  }, [primaryLead, displayBundle?.pipelines?.crm?.name]);
+
+  const loadCrmNotes = useCallback(() => {
+    if (!crmLeadId) {
+      setNoteActivities([]);
+      return;
+    }
+    api.get(`/crm/leads/${crmLeadId}/activities`)
+      .then((r) => {
+        const rows = Array.isArray(r.data) ? r.data : (r.data?.activities || []);
+        setNoteActivities(rows);
+      })
+      .catch(() => setNoteActivities([]));
+  }, [crmLeadId]);
+
+  const loadDealPurchaseOrders = useCallback(() => {
+    if (!crmLeadId) {
+      setDealPurchaseOrders([]);
+      return;
+    }
+    api.get('/purchasing/orders', { params: { lead_id: crmLeadId } })
+      .then((r) => {
+        const rows = Array.isArray(r.data) ? r.data : [];
+        setDealPurchaseOrders(rows.slice(0, 50));
+      })
+      .catch(() => setDealPurchaseOrders([]));
+  }, [crmLeadId]);
+
+  useEffect(() => {
+    const t = searchParams.get('tab');
+    if (!t) return;
+    if (t === 'facebook' && crmLeadId && inboxLinks.facebook) setActiveTab('facebook');
+    else if (t === 'zalo' && crmLeadId && inboxLinks.zalo) setActiveTab('zalo');
+    else if (t === 'notes' || t === 'activities') setActiveTab('notes');
+    else if (t === 'drive') setActiveTab('drive');
+    else if (t === 'team' && crmLeadId) setActiveTab('team');
+    else if ((t === 'voice_crm' || t === 'voice') && crmLeadId) setActiveTab('voice_crm');
+    else if ((t === 'purchase_orders' || t === 'dat-hang') && crmLeadId) setActiveTab('purchase_orders');
+    else if (t === 'deal_scores' && crmLeadId && isDealCompleted) setActiveTab('deal_scores');
+  }, [searchParams, crmLeadId, inboxLinks.facebook, inboxLinks.zalo, isDealCompleted]);
+
+  useEffect(() => {
+    if (activeTab === 'facebook' && !(crmLeadId && inboxLinks.facebook)) setActiveTab('overview');
+    else if (activeTab === 'zalo' && !(crmLeadId && inboxLinks.zalo)) setActiveTab('overview');
+    else if (activeTab === 'deal_scores' && !(crmLeadId && isDealCompleted)) setActiveTab('overview');
+    else if (['notes', 'team', 'voice_crm', 'purchase_orders'].includes(activeTab) && !crmLeadId) {
+      setActiveTab('overview');
+    }
+  }, [activeTab, crmLeadId, inboxLinks.facebook, inboxLinks.zalo, isDealCompleted]);
+
+  useEffect(() => {
+    loadCrmNotes();
+    loadDealPurchaseOrders();
+  }, [loadCrmNotes, loadDealPurchaseOrders]);
+
+  useEffect(() => {
+    if (activeTab === 'purchase_orders') loadDealPurchaseOrders();
+  }, [activeTab, loadDealPurchaseOrders]);
+
+  useEffect(() => {
+    if (!id) return undefined;
+    let cancelled = false;
+    driveLinksCountByEntity('project', id)
+      .then((count) => { if (!cancelled) setDriveFileCount(count || 0); })
+      .catch(() => { if (!cancelled) setDriveFileCount(0); });
+    return () => { cancelled = true; };
+  }, [id]);
 
   const loadBundle = useCallback(() => {
     api.get(`/management/by-project/${id}`)
@@ -116,8 +233,15 @@ export default function ProjectDetail() {
         const leadId = r.data?.primary_lead?.id || r.data?.lead_id;
         if (leadId) {
           api.get(`/crm/leads/${leadId}/members`)
-            .then((mr) => setDealMembers(mr.data || []))
-            .catch(() => setDealMembers([]));
+            .then((mr) => {
+              const list = mr.data || [];
+              setDealMembers(list);
+              setMemberModuleCounts(countMembersByModule(list));
+            })
+            .catch(() => {
+              setDealMembers([]);
+              setMemberModuleCounts({ crm: 0, production: 0, logistics: 0 });
+            });
           api.get(`/crm/leads/${leadId}/comments`)
             .then((cr) => {
               const rows = Array.isArray(cr.data) ? cr.data : (cr.data?.comments || []);
@@ -126,6 +250,7 @@ export default function ProjectDetail() {
             .catch(() => {});
         } else {
           setDealMembers([]);
+          setMemberModuleCounts({ crm: 0, production: 0, logistics: 0 });
           api.get(`/projects/${id}/comments`)
             .then((cr) => setCommentCount((cr.data?.comments || []).length))
             .catch(() => setCommentCount(0));
@@ -135,6 +260,7 @@ export default function ProjectDetail() {
         setDealBundle(null);
         setAggregateBadge(null);
         setDealMembers([]);
+        setMemberModuleCounts({ crm: 0, production: 0, logistics: 0 });
       });
   }, [id]);
 
@@ -958,27 +1084,39 @@ export default function ProjectDetail() {
         onOpenAggregate={() => setActiveTab('overview')}
       />
 
-      {/* Tabs */}
+      {/* Tabs — sắp xếp theo mức dùng thường xuyên của NV (thường dùng bên trái) */}
       <div className="flex gap-1 border-b border-gray-200 overflow-x-auto">
         {[
-          { id: 'overview', label: 'Tổng quan', icon: Target, count: undefined },
-          { id: 'calendar', label: 'Lịch', icon: Calendar, count: undefined },
-          { id: 'shared', label: 'Không gian chung', icon: Users, count: undefined },
+          // Cao: làm việc hàng ngày
+          { id: 'overview', label: 'Tổng quan', icon: Target },
           { id: 'aggregate', label: 'CRM/SX/VC', icon: Layers, count: moduleTaskTotal || undefined },
-          { id: 'orders', label: 'Đơn hàng', icon: ShoppingCart, count: orderCount || undefined },
-          { id: 'finance', label: 'Thu chi', icon: Wallet },
-          { id: 'flow', label: 'Luồng', icon: ArrowRight },
-          { id: 'documents', label: 'Tài liệu', icon: FileText },
-          { id: 'approvals', label: 'Duyệt', icon: Shield, count: pendingApprovalCount || undefined },
           { id: 'chat', label: 'Bình luận', icon: MessageSquare, count: commentCount || undefined },
+          { id: 'shared', label: 'Không gian chung', icon: Users },
+          { id: 'documents', label: 'Tài liệu', icon: FileText },
+          ...(crmLeadId ? [{ id: 'notes', label: 'Ghi chú & HĐ', icon: MessageSquare, count: noteActivities.length || undefined }] : []),
+          { id: 'calendar', label: 'Lịch', icon: Calendar },
+          // Trung bình: nghiệp vụ theo nhu cầu
+          { id: 'orders', label: 'Đơn hàng', icon: ShoppingCart, count: orderCount || undefined },
+          ...(crmLeadId ? [{ id: 'purchase_orders', label: 'Đặt hàng', icon: Package, count: dealPurchaseOrders.length || undefined }] : []),
+          ...(crmLeadId ? [{ id: 'team', label: 'Thành viên', icon: Users, count: (memberModuleCounts.crm + memberModuleCounts.production + memberModuleCounts.logistics) || undefined }] : []),
+          { id: 'drive', label: 'Drive', icon: Cloud, count: driveFileCount || undefined },
+          { id: 'approvals', label: 'Duyệt', icon: Shield, count: pendingApprovalCount || undefined },
+          ...(crmLeadId && inboxLinks.facebook ? [{ id: 'facebook', label: 'Facebook', emoji: '📘' }] : []),
+          ...(crmLeadId && inboxLinks.zalo ? [{ id: 'zalo', label: 'Zalo OA', emoji: '💬' }] : []),
+          // Thấp / theo giai đoạn
+          { id: 'finance', label: 'Thu chi', icon: Wallet },
           { id: 'crm', label: 'Bán hàng', icon: DollarSign },
+          { id: 'flow', label: 'Luồng', icon: ArrowRight },
+          ...(crmLeadId ? [{ id: 'voice_crm', label: 'Ghi âm', icon: Mic }] : []),
+          ...(crmLeadId && isDealCompleted ? [{ id: 'deal_scores', label: 'Điểm chéo & KH', icon: Star }] : []),
           { id: 'history', label: 'Lịch sử', icon: Clock, count: project.activities?.length },
         ].map(t => (
           <button key={t.id} onClick={() => setActiveTab(t.id)}
             className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 cursor-pointer shrink-0 ${
               activeTab === t.id ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'
             }`}>
-            <t.icon className="h-4 w-4" />{t.label}
+            {t.emoji ? <span className="text-base leading-none">{t.emoji}</span> : t.icon ? <t.icon className="h-4 w-4" /> : null}
+            {t.label}
             {t.count > 0 && <span className="text-xs bg-gray-100 px-1.5 rounded-full">{t.count}</span>}
           </button>
         ))}
@@ -1072,6 +1210,186 @@ export default function ProjectDetail() {
               onCountChange={setCommentCount}
             />
           )
+      )}
+
+      {activeTab === 'facebook' && crmLeadId && inboxLinks.facebook && (
+        <FacebookChatTab leadId={crmLeadId} companyId={crmLeadCompanyId} />
+      )}
+
+      {activeTab === 'zalo' && crmLeadId && inboxLinks.zalo && (
+        <ZaloChatTab leadId={crmLeadId} />
+      )}
+
+      {activeTab === 'notes' && crmLeadId && (
+        <div className="space-y-4">
+          <SharedCRMNotes projectId={id} forModule="projects" />
+          <CrmChatNotesPanel
+            variant="embedded"
+            leadId={crmLeadId}
+            notes={noteActivities.filter((a) => String(a.type || '') === 'note' || !a.type)}
+            onPosted={loadCrmNotes}
+            currentUserId={user?.id || user?.userId}
+            canEditAnyNote={isAdminLike(user) || user?.role === 'manager'}
+            includeVoiceTimeline
+            defaultShareToWorkshop
+            defaultShareModules={['production', 'workshop', 'logistics']}
+            contextLine={
+              primaryLead
+                ? `🎯 Deal ${[primaryLead.code, primaryLead.title].filter(Boolean).join(' — ')}`
+                : `📋 Dự án ${project?.code || ''}`
+            }
+            contextBadge={primaryLead?.code || project?.code || ''}
+          />
+          <div className="border-t pt-4">
+            <h3 className="text-sm font-semibold text-gray-800 mb-3">Hoạt động gần đây</h3>
+            {noteActivities.length === 0 ? (
+              <p className="text-sm text-gray-400 text-center py-6">Chưa có hoạt động</p>
+            ) : (
+              <div className="space-y-2 max-h-[min(420px,55vh)] overflow-y-auto">
+                {noteActivities.map((act) => (
+                  <div key={act.id} className="p-3 bg-gray-50 rounded-lg border">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-sm font-medium text-gray-900">{act.title || act.type || 'Hoạt động'}</p>
+                      <span className="text-[10px] text-gray-400 shrink-0">{formatDate(act.activity_date || act.created_at)}</span>
+                    </div>
+                    {act.creator?.full_name && (
+                      <p className="text-[10px] text-gray-400 mt-0.5">{act.creator.full_name}</p>
+                    )}
+                    {act.description && <p className="text-xs text-gray-600 mt-1 whitespace-pre-wrap">{act.description}</p>}
+                    {act.outcome && <p className="text-xs text-blue-600 font-medium mt-1">→ {act.outcome}</p>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'drive' && (
+        <DriveAttachments
+          entityType="project"
+          entityId={id}
+          onCountChange={setDriveFileCount}
+        />
+      )}
+
+      {activeTab === 'team' && crmLeadId && (
+        <LeadMembersTab
+          leadId={crmLeadId}
+          onMembersChange={(list) => setMemberModuleCounts(countMembersByModule(list))}
+          onMembersMutated={() => {
+            api.get(`/crm/leads/${crmLeadId}/members`)
+              .then((mr) => {
+                const list = mr.data || [];
+                setDealMembers(list);
+                setMemberModuleCounts(countMembersByModule(list));
+              })
+              .catch(() => {});
+          }}
+          onOpenSharedWorkspace={() => setActiveTab('shared')}
+        />
+      )}
+
+      {activeTab === 'voice_crm' && crmLeadId && (
+        <LeadVoiceRecordingsTab leadId={crmLeadId} />
+      )}
+
+      {activeTab === 'deal_scores' && crmLeadId && isDealCompleted && (
+        <DealCrossScoresPanel dealLeadId={crmLeadId} user={user} />
+      )}
+
+      {activeTab === 'purchase_orders' && crmLeadId && (
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-semibold text-gray-900">Đặt hàng</h3>
+              <p className="text-xs text-gray-500 mt-0.5">{dealPurchaseOrders.length} bản ghi gắn deal</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => navigate(`/mua-hang/orders/new?lead_id=${encodeURIComponent(crmLeadId)}`)}
+              className="h-8 px-3 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 cursor-pointer"
+            >
+              <Plus className="h-3.5 w-3.5" /> Thêm
+            </button>
+          </div>
+          <div className="flex gap-2 overflow-x-auto pb-0.5">
+            <button
+              type="button"
+              onClick={() => setPoStatusFilter('')}
+              className={`px-3 py-1.5 rounded-full text-xs font-medium border cursor-pointer whitespace-nowrap ${!poStatusFilter ? 'bg-amber-600 text-white border-amber-600' : 'hover:bg-gray-50'}`}
+            >
+              Tất cả ({dealPurchaseOrders.length})
+            </button>
+            {Object.entries(PO_STATUS).map(([k, v]) => {
+              const n = dealPurchaseOrders.filter((o) => o.status === k).length;
+              if (!n) return null;
+              return (
+                <button
+                  key={k}
+                  type="button"
+                  onClick={() => setPoStatusFilter(poStatusFilter === k ? '' : k)}
+                  className={`px-3 py-1.5 rounded-full text-xs font-medium border cursor-pointer whitespace-nowrap ${poStatusFilter === k ? 'bg-amber-600 text-white border-amber-600' : PO_COLORS[k]}`}
+                >
+                  {v} ({n})
+                </button>
+              );
+            })}
+          </div>
+          {(() => {
+            const filtered = poStatusFilter
+              ? dealPurchaseOrders.filter((o) => o.status === poStatusFilter)
+              : dealPurchaseOrders;
+            if (!filtered.length) {
+              return (
+                <div className="text-center py-10 text-gray-400">
+                  <ShoppingCart className="h-10 w-10 mx-auto mb-2 opacity-30" />
+                  <p className="text-sm">Chưa có đặt hàng</p>
+                </div>
+              );
+            }
+            return (
+              <div className="overflow-auto rounded-lg border" style={{ maxHeight: 'min(480px, 60vh)' }}>
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50 sticky top-0">
+                    <tr className="border-b text-left text-xs text-gray-500 uppercase">
+                      <th className="py-2.5 px-3">Mã</th>
+                      <th className="py-2.5 px-3">Tiêu đề</th>
+                      <th className="py-2.5 px-3 text-right">Tổng</th>
+                      <th className="py-2.5 px-3">Trạng thái</th>
+                      <th className="py-2.5 px-3">Ngày</th>
+                      <th className="py-2.5 px-3 w-28" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filtered.map((o) => (
+                      <tr key={o.id} className="border-b hover:bg-amber-50/40">
+                        <td className="py-2.5 px-3 font-bold text-amber-700">{o.code}</td>
+                        <td className="py-2.5 px-3 font-medium">{o.title || '—'}</td>
+                        <td className="py-2.5 px-3 text-right">{formatVND(o.total_amount || o.total || 0)}</td>
+                        <td className="py-2.5 px-3">
+                          <span className={`text-xs px-2 py-0.5 rounded font-medium ${PO_COLORS[o.status] || ''}`}>
+                            {PO_STATUS[o.status] || o.status}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-3 text-xs text-gray-500">{formatDate(o.order_date || o.created_at)}</td>
+                        <td className="py-2.5 px-3">
+                          <button
+                            type="button"
+                            onClick={() => navigate(`/mua-hang/orders/${o.id}`)}
+                            className="text-xs font-medium text-blue-600 hover:underline cursor-pointer"
+                          >
+                            Chi tiết
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            );
+          })()}
+        </div>
       )}
 
       {/* ─── CRM / Bán hàng Tab ─── */}

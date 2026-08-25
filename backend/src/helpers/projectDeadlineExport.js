@@ -5,6 +5,8 @@
 
 const { supabase } = require('../config/supabase');
 const { frontendUrl, normalizeFrontendOrigin, defaultProductionFrontendUrl } = require('../config');
+const { isCrmCompletedStage } = require('./completeOpenWorkOnModuleDone');
+const { loadCompletedKanbanColumnSets, projectIsInCompletedKanban } = require('./clearCompletedProjectDeadlines');
 
 const PUBLIC_APP_URL = defaultProductionFrontendUrl || 'https://tubep-frontend-s30w.onrender.com';
 
@@ -174,7 +176,7 @@ function buildZaloBotText({
       : null,
     `**Trạng thái:** ${escapeZaloMd(project.status_label || project.status || '—')}`,
     `**Hạn:** ${escapeZaloMd(primary.at_vi)} (${dayBit})`,
-    `**Phụ trách ${escapeZaloMd(modLabel)}:** ${mention ? `${mention} ` : ''}${who}${role}${phone}`,
+    `**Phụ trách ${escapeZaloMd(modLabel)}:** ${mention ? `${mention} ` : ''}{red}${who}{/red}${role}${phone}`,
   ].filter((line) => line != null);
 
   if (links?.url) {
@@ -267,7 +269,9 @@ function stubProjectFromCrmDeal(deal) {
 function isClosedCrmStage(deal, stageMap) {
   if (!deal?.stage_id || !stageMap) return false;
   const st = stageMap.get(String(deal.stage_id));
-  return !!(st?.is_won || st?.is_lost);
+  if (!st) return false;
+  if (st.is_won || st.is_lost || st.counts_as_completed_revenue) return true;
+  return isCrmCompletedStage(st);
 }
 
 function pickPrimary(items, nowMs) {
@@ -491,10 +495,19 @@ async function listProjectDeadlineNotifications(opts = {}) {
     }
   }
 
+  try {
+    const doneCols = await loadCompletedKanbanColumnSets();
+    for (let i = projects.length - 1; i >= 0; i -= 1) {
+      if (projectIsInCompletedKanban(projects[i], doneCols)) projects.splice(i, 1);
+    }
+  } catch (skipErr) {
+    console.warn('[projectDeadlineExport] skip completed kanban:', skipErr.message);
+  }
+
   const stageMap = new Map(
     (await fetchByIds(
       'crm_pipeline_stages',
-      'id, is_won, is_lost',
+      'id, is_won, is_lost, counts_as_completed_revenue, canonical_slug, name',
       'id',
       (deals || []).map((d) => d.stage_id),
     )).map((s) => [String(s.id), s]),

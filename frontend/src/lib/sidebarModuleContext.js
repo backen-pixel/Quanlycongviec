@@ -84,11 +84,25 @@ export function appendDriveModuleQuery(path, moduleKey) {
   return `${path}${sep}module=${encodeURIComponent(moduleKey)}`;
 }
 
-/** Module Dự án và công việc — tổng hợp NV + setup luồng. */
+/** Các trang overview đã chuyển sang module Dự án & công việc (vẫn dùng URL /management/…). */
+export function isCongViecOverviewPath(pathname) {
+  const p = String(pathname || '');
+  return (
+    p === '/management/work-overview'
+    || p.startsWith('/management/work-overview/')
+    || p === '/management/crm-overview'
+    || p.startsWith('/management/crm-overview/')
+    || p === '/management/work-unified'
+    || p.startsWith('/management/work-unified/')
+  );
+}
+
+/** Module Dự án và công việc — tổng hợp NV + setup luồng + overview. */
 export function isCongViecPrimaryPath(pathname) {
   return (
-    pathname.startsWith('/work') ||
-    pathname.startsWith('/personal-tasks')
+    pathname.startsWith('/work')
+    || pathname.startsWith('/personal-tasks')
+    || isCongViecOverviewPath(pathname)
   );
 }
 
@@ -161,6 +175,18 @@ export function storeModule(module) {
 }
 
 /**
+ * Chuyển module: ghi sessionStorage + location.state.
+ * Bắt buộc với /projects (dùng chung Quản lý ↔ Dự án và công việc) —
+ * navigate(path) thuần sẽ giữ module cũ, kể cả khi đã đổi URL.
+ */
+export function navigateToAppModule(navigate, mod) {
+  if (!mod?.path || typeof navigate !== 'function') return;
+  const id = mod.id || null;
+  if (id) storeModule(id);
+  navigate(mod.path, { state: id ? { moduleContext: id } : undefined });
+}
+
+/**
  * Sidebar module (crm|sx|vc|congviec|work|…) → khóa lọc NotificationCenter / API.
  * null = không khóa module (ketoan, knowledge, custom…).
  */
@@ -189,11 +215,12 @@ export function resolveActiveModule(pathname, navStateModuleContext, searchParam
   if (isCrmCrossModulePath(pathname)) {
     return navStateModuleContext || readStoredModule() || 'crm';
   }
-  // /projects dùng chung Quản lý ↔ Dự án và công việc
+  // /projects dùng chung Quản lý ↔ Dự án và công việc.
+  // Trang chủ của module Dự án là /projects — mặc định congviec khi chưa có context.
   if (isProjectsSharedPath(pathname)) {
     const stored = navStateModuleContext || readStoredModule();
     if (stored === 'congviec' || stored === 'work') return stored;
-    return 'work';
+    return 'congviec';
   }
   const fromPath = resolveModuleFromPathname(pathname);
   if (fromPath) return fromPath;

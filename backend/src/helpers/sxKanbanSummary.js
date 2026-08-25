@@ -7,7 +7,7 @@ const { supabase } = require('../config/supabase');
 const { applyProjectTenantScope, isTenantScopeEnforced } = require('./tenantScope');
 const { applyProductionCompanyScopeFilter } = require('./crossCompanyWorkspace');
 const { applyWorkshopProjectVisibilityScope } = require('./dealParticipantProduction');
-const { buildScopeOrFilter, WORKSHOP_STATUSES, getResolvedKanbanStages } = require('./workshopKanban');
+const { applySxKanbanRowScope, WORKSHOP_STATUSES, getResolvedKanbanStages } = require('./workshopKanban');
 const { isHucabiSameDayPastWorkEnd } = require('./companyDeadlineClock');
 
 const VN_TZ = 'Asia/Ho_Chi_Minh';
@@ -198,31 +198,21 @@ function applyCreatedToBound(query, createdTo) {
  */
 function applySxSummaryFiltersSync(query, ctx) {
   let q = applyProjectTenantScope(query, ctx.req);
-  if (String(ctx.sx_intake) === '1') {
-    if (!ctx.wonIds?.length) return { empty: true, query: q };
-    q = q.in('id', ctx.wonIds);
-    if (ctx.stageIds?.length) {
-      q = q.or(`current_stage_id.is.null,current_stage_id.not.in.(${ctx.stageIds.join(',')})`);
-    }
-  } else {
-    q = q.or(buildScopeOrFilter(ctx.stageIds || [], ctx.wonIds || []));
-  }
-  if (ctx.division_id) q = q.eq('division_id', ctx.division_id);
+  const scoped = applySxKanbanRowScope(q, {
+    stageIds: ctx.stageIds || [],
+    wonIds: ctx.wonIds || [],
+    restrictIds: ctx.restrictIds,
+    sxIntake: String(ctx.sx_intake) === '1',
+  });
+  if (scoped.empty) return { empty: true, query: scoped.query };
+  q = scoped.query;
   if (ctx.company_id) {
-    q = applyProductionCompanyScopeFilter(q, ctx.company_id, ctx.scopePartnerIds || []);
+    // Đã khóa id theo deal CRM → không OR thêm partner ids (URL PostgREST).
+    const partnerIds = (ctx.restrictIds && ctx.restrictIds.length) ? [] : (ctx.scopePartnerIds || []);
+    q = applyProductionCompanyScopeFilter(q, ctx.company_id, partnerIds);
   }
   if (ctx.wantsUnclassified) q = q.is('workshop_type_id', null);
   else if (ctx.workshop_type_id) q = q.eq('workshop_type_id', ctx.workshop_type_id);
-
-  if (ctx.restrictIds !== null && ctx.restrictIds !== undefined) {
-    if (!ctx.restrictIds.length) {
-      return {
-        empty: true,
-        query: q.in('id', ['00000000-0000-0000-0000-000000000000']),
-      };
-    }
-    q = q.in('id', ctx.restrictIds);
-  }
 
   if (ctx.search) {
     const searchPattern = `%${ctx.search}%`;
@@ -253,10 +243,14 @@ async function tryRpcColumnCounts(ctx) {
 
   const params = {
     p_stage_ids: ctx.stageIds?.length ? ctx.stageIds : null,
-    p_won_ids: ctx.wonIds?.length ? ctx.wonIds : null,
+    p_won_ids: (ctx.restrictIds && ctx.restrictIds.length)
+      ? null
+      : (ctx.wonIds?.length ? ctx.wonIds : null),
     p_statuses: WORKSHOP_STATUSES,
     p_company_id: ctx.company_id || null,
-    p_partner_project_ids: ctx.scopePartnerIds?.length ? ctx.scopePartnerIds : null,
+    p_partner_project_ids: (ctx.restrictIds && ctx.restrictIds.length)
+      ? null
+      : (ctx.scopePartnerIds?.length ? ctx.scopePartnerIds : null),
     p_restrict_project_ids: ctx.restrictIds === null || ctx.restrictIds === undefined
       ? null
       : ctx.restrictIds,

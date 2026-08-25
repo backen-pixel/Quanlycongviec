@@ -303,6 +303,36 @@ function buildScopeOrFilter(stageIds, wonIds) {
 const _pipelineStagesRowsCache = new Map(); // cacheKey -> { at, value }
 const PIPELINE_STAGES_ROWS_TTL_MS = 60_000;
 
+const SX_EMPTY_PROJECT_ID = '00000000-0000-0000-0000-000000000000';
+
+/**
+ * Phạm vi dòng Kanban SX.
+ * Khi đã có restrictIds (deal công ty CRM / thành viên): chỉ .in(id) đó —
+ * không nhét wonIds toàn hệ thống vào OR (PostgREST 400 URL quá dài → board trống).
+ */
+function applySxKanbanRowScope(query, {
+  stageIds = [],
+  wonIds = [],
+  restrictIds = null,
+  sxIntake = false,
+} = {}) {
+  if (restrictIds !== null && restrictIds !== undefined) {
+    if (!restrictIds.length) {
+      return { query: query.in('id', [SX_EMPTY_PROJECT_ID]), empty: true };
+    }
+    return { query: query.in('id', restrictIds), empty: false };
+  }
+  if (sxIntake) {
+    if (!wonIds.length) return { query, empty: true };
+    let q = query.in('id', wonIds);
+    if (stageIds.length) {
+      q = q.or(`current_stage_id.is.null,current_stage_id.not.in.(${stageIds.join(',')})`);
+    }
+    return { query: q, empty: false };
+  }
+  return { query: query.or(buildScopeOrFilter(stageIds, wonIds)), empty: false };
+}
+
 async function loadProductionPipelineStagesRows(includeInactive = false, companyId = null, legacyUnscoped = false) {
   const cacheKey = `${includeInactive ? 1 : 0}:${legacyUnscoped ? 'legacy' : (companyId || 'null')}`;
   const cached = _pipelineStagesRowsCache.get(cacheKey);
@@ -1769,6 +1799,7 @@ module.exports = {
   invalidateWonDealProjectIdsCache,
   projectLinkedToWonDealScope,
   buildScopeOrFilter,
+  applySxKanbanRowScope,
   loadProductionPipelineStagesRows,
   invalidatePipelineStagesRowsCache,
   filterProductionPipelineStagesForWorkshopType,

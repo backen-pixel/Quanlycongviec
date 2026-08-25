@@ -567,8 +567,8 @@ function MyReportPanel({ date, onDateChange }) {
       <div className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-950" data-export-hide="1">
         <strong>Phần I</strong> = kế hoạch ngày phiếu ({fmtDMY(date)}), tự lấy từ Deadline Lead/Deal cột <strong>Quá hạn + Hôm nay</strong>
         {' '}(hệ thống tự chốt ~<strong>08:00</strong>).{' '}
-        <strong>Phần II</strong> = kết quả ngày hôm trước ({fmtDMY(addDaysISO(date, -1))}), tự lấy từ CRM khi <strong>Nộp báo cáo</strong>
-        {' '}(hệ thống cũng tự chốt ~<strong>17:00</strong>).
+        <strong>Phần II</strong> = kết quả CRM đúng ngày phiếu ({fmtDMY(date)}), tự lấy khi <strong>Nộp báo cáo</strong>
+        {' '}(hệ thống tự chốt ~<strong>16:45</strong>).
       </div>
 
       <div className="flex flex-wrap items-center justify-end gap-2" data-export-hide="1">
@@ -775,9 +775,9 @@ function MyReportPanel({ date, onDateChange }) {
         <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
           <div className="flex items-center justify-between gap-2 bg-slate-700 px-4 py-2.5 text-sm font-semibold text-white">
             <span>
-              II. NỘI DUNG BÁO CÁO CÔNG VIỆC CỦA NGÀY ĐÃ QUA
+              II. NỘI DUNG BÁO CÁO CÔNG VIỆC TRONG NGÀY
               <span className="ml-2 font-bold tracking-normal text-amber-200">
-                ({fmtDMY(addDaysISO(date, -1))})
+                ({fmtDMY(date)} · chốt 16:45)
               </span>
             </span>
             <div className="flex items-center gap-2">
@@ -2187,7 +2187,7 @@ function TeamMatrixPanel({ date, onDateChange }) {
         <div className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-sm text-violet-950">
           <strong>II. Kết quả</strong> là số CRM của <strong>đúng ngày đang chọn</strong>
           ({fmtDMY(data?.result_date || date)}).
-          Muốn xem ngày 13/08 thì chọn <strong>13/08/2026</strong> trên bộ lọc — không cần chờ 08:00 / 17:00.
+          Muốn xem ngày 13/08 thì chọn <strong>13/08/2026</strong> trên bộ lọc — không cần chờ 08:00 / 16:45.
         </div>
       )}
 
@@ -2277,7 +2277,7 @@ export default function CrmDailyReportPage() {
           <p className="mt-1 text-sm text-gray-500">
             {wideTeam
               ? 'Tổng hợp theo từng mục I–IV (và theo mẫu) — cột là nhân viên.'
-              : 'Điền kế hoạch (Phần I) · Nộp báo cáo để chốt kết quả ngày hôm trước từ CRM (Phần II).'}
+              : 'Điền kế hoạch (Phần I) · Nộp báo cáo để chốt kết quả CRM ngày phiếu (Phần II, tự chốt 16:45).'}
           </p>
         </div>
         <div className="inline-flex rounded-lg border border-gray-200 bg-white p-0.5 shadow-sm">

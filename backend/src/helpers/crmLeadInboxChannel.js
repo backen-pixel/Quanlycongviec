@@ -1,3 +1,36 @@
+async function hasInboxContactLink(supabase, table, leadId, customerId) {
+  const id = String(leadId || '').trim();
+  if (!id) return false;
+  const { data: byLead } = await supabase.from(table).select('id').eq('lead_id', id).limit(1).maybeSingle();
+  if (byLead?.id) return true;
+  if (customerId) {
+    const { data: byCust } = await supabase.from(table).select('id').eq('customer_id', customerId).limit(1).maybeSingle();
+    if (byCust?.id) return true;
+  }
+  return false;
+}
+
+/**
+ * Liên kết inbox theo từng kênh — chỉ true khi có contact gắn lead/khách.
+ * Dùng hiện tab Facebook / Zalo trên dự án (không hiện nếu chỉ đoán theo nguồn).
+ * @returns {{ facebook: boolean, zalo: boolean }}
+ */
+async function resolveLeadInboxLinks(supabase, leadId, lead = null) {
+  const id = String(leadId || '').trim();
+  if (!id) return { facebook: false, zalo: false };
+
+  const customerId = lead?.customer_id || lead?.customer?.id || null;
+  const [zaloContact, fbContact] = await Promise.all([
+    hasInboxContactLink(supabase, 'zalo_contacts', id, customerId),
+    hasInboxContactLink(supabase, 'facebook_contacts', id, customerId),
+  ]);
+
+  return {
+    zalo: !!zaloContact,
+    facebook: !!fbContact,
+  };
+}
+
 /**
  * Xác định kênh inbox (Facebook / Zalo OA) gắn với lead/deal CRM.
  * @returns {'facebook'|'zalo'|null}
@@ -53,4 +86,4 @@ async function resolveLeadInboxChannel(supabase, leadId, lead = null) {
   return null;
 }
 
-module.exports = { resolveLeadInboxChannel };
+module.exports = { resolveLeadInboxChannel, resolveLeadInboxLinks };

@@ -1479,6 +1479,26 @@ r.get('/calendar', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// GET /events/module-owners — người trên dự án (thành viên + NV xưởng + phụ trách) để mời sự kiện kế hoạch
+r.get('/module-owners', async (req, res) => {
+  try {
+    const leadId = req.query.lead_id ? String(req.query.lead_id).trim() : '';
+    const projectId = req.query.project_id ? String(req.query.project_id).trim() : '';
+    if (!leadId && !projectId) {
+      return res.json({ user_ids: [], owners: { crm: [], sx: [], vc: [] } });
+    }
+    const { collectProjectEventParticipantIds } = require('../helpers/dealModuleResponsibleUsers');
+    const owners = await collectProjectEventParticipantIds({
+      leadId: leadId || null,
+      projectId: projectId || null,
+    });
+    res.json({
+      user_ids: owners.userIds,
+      owners: { crm: owners.crmIds, sx: owners.sxIds, vc: owners.vcIds },
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // GET /events/:id
 r.get('/:id', async (req, res) => {
   try {
@@ -1600,9 +1620,27 @@ r.post('/', async (req, res) => {
     const { data, error } = insertRes;
     if (error) throw error;
 
+    // Lắp đặt / duyệt thiết kế / hoàn thiện: tự mời người chịu trách nhiệm CRM + SX + VC/LĐ
+    let participantIds = Array.isArray(b.participant_ids) ? b.participant_ids.filter(Boolean).map(String) : [];
+    try {
+      const { shouldInviteAllModuleOwners, collectProjectEventParticipantIds } = require('../helpers/dealModuleResponsibleUsers');
+      if (
+        shouldInviteAllModuleOwners(insert.event_type, insert.title)
+        && (insert.lead_id || insert.project_id)
+      ) {
+        const owners = await collectProjectEventParticipantIds({
+          leadId: insert.lead_id,
+          projectId: insert.project_id,
+        });
+        participantIds = [...new Set([...participantIds, ...(owners.userIds || [])])];
+      }
+    } catch (ownerErr) {
+      console.warn('[events] module owners:', ownerErr.message);
+    }
+
     // Add participants
-    if (b.participant_ids?.length) {
-      const parts = b.participant_ids.map(uid => ({
+    if (participantIds.length) {
+      const parts = participantIds.map(uid => ({
         event_id: data.id, user_id: uid, status: 'pending',
       }));
       await supabase.from('crm_event_participants').insert(parts);
@@ -1629,7 +1667,7 @@ r.post('/', async (req, res) => {
       });
 
       // Chỉ notify: participants + assignee (không broadcast all)
-      const notifyIds = new Set(b.participant_ids || []);
+      const notifyIds = new Set(participantIds);
       if (insert.assignee_id) notifyIds.add(insert.assignee_id);
       const eventModule = normalizeEventModule(insert.module || full?.module) || 'crm';
       const ecoKey = eventModule === 'production' || eventModule === 'logistics' ? eventModule : 'crm';
@@ -1655,6 +1693,12 @@ r.post('/', async (req, res) => {
     }
 
     emitCalendarEventChanged(req, full || data, 'created');
+    try {
+      const { syncProjectInstallDateFromInstallationEvent } = require('../helpers/createPlannedVcLdEvents');
+      await syncProjectInstallDateFromInstallationEvent(full || data);
+    } catch (syncErr) {
+      console.warn('[events] sync install deadline:', syncErr.message);
+    }
     res.status(201).json(full);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1834,6 +1878,12 @@ r.put('/:id', async (req, res) => {
     }
 
     emitCalendarEventChanged(req, data, 'updated');
+    try {
+      const { syncProjectInstallDateFromInstallationEvent } = require('../helpers/createPlannedVcLdEvents');
+      await syncProjectInstallDateFromInstallationEvent(data);
+    } catch (syncErr) {
+      console.warn('[events] sync install deadline:', syncErr.message);
+    }
     res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

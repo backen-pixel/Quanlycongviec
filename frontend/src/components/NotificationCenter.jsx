@@ -1890,6 +1890,12 @@ export default function NotificationCenter({ socket }) {
                         return;
                       }
                     }
+                    if (n.type === 'daily_report' && n.metadata?.file_url) {
+                      window.open(n.metadata.file_url, '_blank', 'noopener,noreferrer');
+                      if (n.metadata.nav_url) navigate(n.metadata.nav_url);
+                      setOpen(false);
+                      return;
+                    }
                     if (n.metadata?.nav_url) {
                       navigate(n.metadata.nav_url);
                       setOpen(false);

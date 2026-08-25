@@ -12,7 +12,7 @@ const {
   getWorkshopStageMap,
   getWonDealProjectIds,
   projectLinkedToWonDealScope,
-  buildScopeOrFilter,
+  applySxKanbanRowScope,
   loadProductionPipelineStagesRows,
   invalidatePipelineStagesRowsCache,
   filterProductionPipelineStagesForWorkshopType,
@@ -61,7 +61,7 @@ const {
   ensureMissingSxTasksForLead,
 } = require('../helpers/projectOrderFulfillment');
 const { assertSxKanbanAdvanceAllowed } = require('../helpers/workshopStageAdvanceGate');
-const { completeOpenWorkOnModuleDone } = require('../helpers/completeOpenWorkOnModuleDone');
+const { clearSxSchedulesOnCompletedForProjects } = require('../helpers/clearCompletedProjectDeadlines');
 const { applyProjectTenantScope, assertRowCompanyInTenant, isTenantScopeEnforced } = require('../helpers/tenantScope');
 
 /** Kế toán / deal_company_id: lọc deal theo công ty CRM; company_id = xưởng SX. */
@@ -74,6 +74,13 @@ async function applyParticipantOnlyProductionScope(
 ) {
   return applyWorkshopProjectVisibilityScope(query, user, workshopCompanyId, sxWorkshopCompanyId, dealCompanyId);
 }
+
+const {
+  resolveSxVisibilityRestrictIds,
+  loadSxKanbanColumnSummary,
+  loadSxDeadlineBucketPage,
+  DEADLINE_BUCKET_KEYS,
+} = require('../helpers/sxKanbanSummary');
 
 const { notifyMultiple: notifyMultipleShared, createNotification: createNotif } = require('../helpers/notifications');
 const { notifyVcHandoverFromSx } = require('../helpers/vcHandoverNotify');
@@ -234,120 +241,6 @@ async function touchProjectSxPipelineStageEnteredAt(projectId, targetColId, curr
 /** Cột «Đã công» / «Đã thu» (Hoàn thành) — tắt hết deadline SX. */
 function isSxColumnClearsDeadlines(col) {
   return !!(col?.counts_as_completed_revenue || col?.counts_as_collected_revenue);
-}
-
-/**
- * Kéo vào cột «Hoàn thành» / Đã công / Đã thu:
- * xóa deadline SX + hoàn thành NV SX còn mở + hủy lịch hẹn SX.
- */
-async function clearSxSchedulesOnCompletedForProjects(projectIds) {
-  const ids = [...new Set((projectIds || []).map(String).filter(Boolean))];
-  if (!ids.length) return;
-  const nowIso = new Date().toISOString();
-
-  const projectPatch = {
-    sx_kanban_deadline_at: null,
-    sx_kanban_deadline_reason: null,
-    production_deadline: null,
-    delivery_date: null,
-    production_finish_date: null,
-    deadline: null,
-    updated_at: nowIso,
-  };
-  let { error: projErr } = await supabase.from('projects').update(projectPatch).in('id', ids);
-  if (projErr) {
-    const m = String(projErr.message || '');
-    const fallback = { ...projectPatch };
-    if (/sx_kanban_deadline/.test(m)) {
-      delete fallback.sx_kanban_deadline_at;
-      delete fallback.sx_kanban_deadline_reason;
-    }
-    if (/production_deadline/.test(m)) delete fallback.production_deadline;
-    if (/delivery_date/.test(m)) delete fallback.delivery_date;
-    if (/production_finish_date/.test(m)) delete fallback.production_finish_date;
-    ({ error: projErr } = await supabase.from('projects').update(fallback).in('id', ids));
-    if (projErr && !/sx_kanban_deadline|production_deadline|delivery_date|production_finish_date|deadline/.test(String(projErr.message || ''))) {
-      throw projErr;
-    }
-  }
-
-  const { data: deals, error: dealErr } = await supabase
-    .from('crm_leads')
-    .select('id')
-    .eq('type', 'deal')
-    .in('project_id', ids);
-  if (dealErr) throw dealErr;
-  const leadIds = [...new Set((deals || []).map((d) => String(d.id)).filter(Boolean))];
-
-  if (leadIds.length) {
-    {
-      const { error: dealDlErr } = await supabase
-        .from('crm_leads')
-        .update({
-          kanban_deadline_at: null,
-          kanban_deadline_reason: null,
-          updated_at: nowIso,
-        })
-        .in('id', leadIds);
-      if (dealDlErr && !/kanban_deadline/.test(dealDlErr.message || '')) throw dealDlErr;
-    }
-
-    // Deadline nhiệm vụ SX trên deal (slug sx_*)
-    {
-      const { error: crmTaskErr } = await supabase
-        .from('crm_tasks')
-        .update({ deadline: null, updated_at: nowIso })
-        .in('lead_id', leadIds)
-        .like('stage_slug', 'sx_%')
-        .not('deadline', 'is', null);
-      if (crmTaskErr) {
-        console.warn('[production] clear sx task deadlines on complete:', crmTaskErr.message);
-      }
-    }
-
-    // Hủy lịch hẹn SX còn mở gắn deal / dự án
-    {
-      const { error: evtErr } = await supabase
-        .from('crm_events')
-        .update({
-          status: 'cancelled',
-          cancel_reason: 'Tự hủy khi kéo dự án SX sang cột hoàn thành',
-          updated_at: nowIso,
-        })
-        .in('lead_id', leadIds)
-        .eq('module', 'production')
-        .in('status', ['planned', 'in_progress']);
-      if (evtErr) {
-        console.warn('[production] cancel production events on complete:', evtErr.message);
-      }
-    }
-  }
-
-  {
-    const { error: projEvtErr } = await supabase
-      .from('crm_events')
-      .update({
-        status: 'cancelled',
-        cancel_reason: 'Tự hủy khi kéo dự án SX sang cột hoàn thành',
-        updated_at: nowIso,
-      })
-      .in('project_id', ids)
-      .eq('module', 'production')
-      .in('status', ['planned', 'in_progress']);
-    if (projEvtErr) {
-      console.warn('[production] cancel project production events on complete:', projEvtErr.message);
-    }
-  }
-
-  try {
-    await completeOpenWorkOnModuleDone({
-      module: 'production',
-      leadIds,
-      projectIds: ids,
-    });
-  } catch (doneErr) {
-    console.warn('[production] complete SX tasks on completed column:', doneErr.message);
-  }
 }
 
 /** Alias cũ — dùng khi bật cờ hoàn thành trên cột. */
@@ -1474,13 +1367,39 @@ r.get('/dashboard', requirePermission('projects', 'view'), responseCache({ ttl: 
     const scopePartnerIds = company_id ? await getExecutorProjectIdsForCompany(company_id) : [];
     const { ids: stageIds } = await getWorkshopStageMap();
     const wonIds = await getWonDealProjectIds();
-    // Truyền workshop_type_id xuống resolver để pipeline Kanban khớp với phân loại đang chọn
+    const restrictIds = await resolveSxVisibilityRestrictIds(
+      req.user, company_id, sx_workshop_company_id, deal_company_id,
+    );
+    const partnerIdsForCompany = (restrictIds && restrictIds.length) ? [] : scopePartnerIds;
     const { stages: kanbanStages } = await getResolvedKanbanStages(company_id, {
       workshopTypeId: workshop_type_id || null,
     });
     const sortedKanban = [...kanbanStages].sort((a, b) => a.order_index - b.order_index);
 
-    const orFilter = buildScopeOrFilter(stageIds, wonIds);
+    if (Array.isArray(restrictIds) && restrictIds.length === 0) {
+      return res.json({
+        kpis: {
+          total_projects: 0, producing: 0, awaiting_delivery: 0, shipped: 0,
+          delivering: 0, customer_care: 0, completed: 0, overdue: 0, intake_pending: 0,
+          total_value: 0, avg_progress: 0, won_revenue_value: 0, completed_revenue_value: 0,
+          collected_revenue_value: 0, debt_revenue_value: 0, debt_count: 0, collected_count: 0,
+          weighted_pipeline_value: 0,
+        },
+        pipeline: buildPipelineSummary(sortedKanban, []),
+      });
+    }
+
+    const applyDashRowScope = (q) => applySxKanbanRowScope(q, {
+      stageIds, wonIds, restrictIds, sxIntake: false,
+    });
+    const finishDashQuery = (q) => {
+      const scoped = applyDashRowScope(q);
+      if (scoped.empty) return { query: scoped.query, empty: true };
+      let query = scoped.query;
+      if (company_id) query = applyProductionCompanyScopeFilter(query, company_id, partnerIdsForCompany);
+      query = applyWorkshopTypeFilter(query);
+      return { query, empty: false };
+    };
     /**
      * Modes:
      *  - 'full': join workshop_type + scalar workshop_type_id
@@ -1501,8 +1420,7 @@ r.get('/dashboard', requirePermission('projects', 'view'), responseCache({ ttl: 
           customer:customers(id, full_name),
           company:companies!projects_company_id_fkey(id, name, short_name),
           logistics_company:companies!projects_logistics_company_id_fkey(id, name, short_name)${wtJoin}
-        `)
-        .or(orFilter);
+        `);
     };
 
     // workshop_type_id='none' → lọc deal CHƯA phân loại (workshop_type_id IS NULL)
@@ -1513,11 +1431,20 @@ r.get('/dashboard', requirePermission('projects', 'view'), responseCache({ ttl: 
       return q;
     };
 
-    let query = runQuery('full');
-    if (division_id) query = query.eq('division_id', division_id);
-    if (company_id) query = applyProductionCompanyScopeFilter(query, company_id, scopePartnerIds);
-    query = applyWorkshopTypeFilter(query);
-    ({ query } = await applyParticipantOnlyProductionScope(query, req.user, company_id, sx_workshop_company_id, deal_company_id));
+    let dash = finishDashQuery(runQuery('full'));
+    if (dash.empty) {
+      return res.json({
+        kpis: {
+          total_projects: 0, producing: 0, awaiting_delivery: 0, shipped: 0,
+          delivering: 0, customer_care: 0, completed: 0, overdue: 0, intake_pending: 0,
+          total_value: 0, avg_progress: 0, won_revenue_value: 0, completed_revenue_value: 0,
+          collected_revenue_value: 0, debt_revenue_value: 0, debt_count: 0, collected_count: 0,
+          weighted_pipeline_value: 0,
+        },
+        pipeline: buildPipelineSummary(sortedKanban, []),
+      });
+    }
+    let query = dash.query;
 
     let projects = [];
     let { data, error } = await query.order('created_at', { ascending: false });
@@ -1528,21 +1455,13 @@ r.get('/dashboard', requirePermission('projects', 'view'), responseCache({ ttl: 
       (error.message?.includes('relationship') && !error.message?.includes('workflow_stages'))
     );
     if (needsNoJoin) {
-      let q2 = runQuery('no_join');
-      if (division_id) q2 = q2.eq('division_id', division_id);
-      if (company_id) q2 = applyProductionCompanyScopeFilter(q2, company_id, scopePartnerIds);
-      q2 = applyWorkshopTypeFilter(q2);
-      ({ query: q2 } = await applyParticipantOnlyProductionScope(q2, req.user, company_id, sx_workshop_company_id, deal_company_id));
-      ({ data, error } = await q2.order('created_at', { ascending: false }));
+      const next = finishDashQuery(runQuery('no_join'));
+      ({ data, error } = await next.query.order('created_at', { ascending: false }));
     }
     // Bước 2: nếu vẫn lỗi do cột workshop_type_id chưa tồn tại trên bảng projects → fallback hoàn toàn
     if (error && error.message?.includes('workshop_type_id')) {
-      let q3 = runQuery('no_col');
-      if (division_id) q3 = q3.eq('division_id', division_id);
-      if (company_id) q3 = applyProductionCompanyScopeFilter(q3, company_id, scopePartnerIds);
-      ({ query: q3 } = await applyParticipantOnlyProductionScope(q3, req.user, company_id, sx_workshop_company_id, deal_company_id));
-      // Không thể filter theo workshop_type_id khi DB chưa có cột — bỏ filter này
-      ({ data, error } = await q3.order('created_at', { ascending: false }));
+      const next = finishDashQuery(runQuery('no_col'));
+      ({ data, error } = await next.query.order('created_at', { ascending: false }));
     }
     // Bước 3: chưa migrate deadline thẻ SX
     if (error && /sx_kanban_deadline/.test(error.message || '')) {
@@ -1559,15 +1478,10 @@ r.get('/dashboard', requirePermission('projects', 'view'), responseCache({ ttl: 
           customer:customers(id, full_name),
           company:companies!projects_company_id_fkey(id, name, short_name),
           logistics_company:companies!projects_logistics_company_id_fkey(id, name, short_name)${wtJoin}
-        `)
-          .or(orFilter);
+        `);
       };
-      let qDl = runNoKanbanDl(needsNoJoin ? 'no_join' : (error.message?.includes('workshop_type_id') ? 'no_col' : 'full'));
-      if (division_id) qDl = qDl.eq('division_id', division_id);
-      if (company_id) qDl = applyProductionCompanyScopeFilter(qDl, company_id, scopePartnerIds);
-      qDl = applyWorkshopTypeFilter(qDl);
-      ({ query: qDl } = await applyParticipantOnlyProductionScope(qDl, req.user, company_id, sx_workshop_company_id, deal_company_id));
-      ({ data, error } = await qDl.order('created_at', { ascending: false }));
+      const next = finishDashQuery(runNoKanbanDl(needsNoJoin ? 'no_join' : (error.message?.includes('workshop_type_id') ? 'no_col' : 'full')));
+      ({ data, error } = await next.query.order('created_at', { ascending: false }));
     }
     if (error) throw error;
     projects = data || [];
@@ -1684,14 +1598,16 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
     // wonIds rút gọn theo company_id khi có (giảm mạnh chuỗi `id.in.(...)` gửi cho mỗi cột
     // Kanban) — union thêm scopePartnerIds để không mất project "đối tác thực thi" (executor)
     // thuộc công ty khác vẫn đang ở bucket "Chờ tiếp nhận" (chưa có current_stage_id).
-    const [scopePartnerIds, stageMap, wonIdsScoped] = await Promise.all([
+    const [scopePartnerIds, stageMap, wonIdsScoped, restrictIds] = await Promise.all([
       company_id ? getExecutorProjectIdsForCompany(company_id) : Promise.resolve([]),
       getWorkshopStageMap(),
       getWonDealProjectIds(company_id || null),
+      resolveSxVisibilityRestrictIds(req.user, company_id, sx_workshop_company_id, deal_company_id),
     ]);
     const wonIds = company_id && scopePartnerIds.length
       ? [...new Set([...wonIdsScoped, ...scopePartnerIds])]
       : wonIdsScoped;
+    const partnerIdsForCompany = (restrictIds && restrictIds.length) ? [] : scopePartnerIds;
     const parsedPage = Math.max(parseInt(page) || 1, 1);
     const parsedLimit = Math.min(Math.max(parseInt(limit) || 100, 1), 500);
     const offset = (parsedPage - 1) * parsedLimit;
@@ -1800,19 +1716,16 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
 
     const applyProjectsListFilters = (q) => {
       let query = applyProjectTenantScope(q, req);
+      const scoped = applySxKanbanRowScope(query, {
+        stageIds,
+        wonIds,
+        restrictIds,
+        sxIntake: String(sx_intake) === '1',
+      });
+      if (scoped.empty) return { query: scoped.query, empty: true };
+      query = scoped.query;
 
-      if (String(sx_intake) === '1') {
-        if (!wonIds.length) return { query: null, empty: true };
-        query = query.in('id', wonIds);
-        if (stageIds.length) {
-          query = query.or(`current_stage_id.is.null,current_stage_id.not.in.(${stageIds.join(',')})`);
-        }
-      } else {
-        query = query.or(buildScopeOrFilter(stageIds, wonIds));
-      }
-
-      if (division_id) query = query.eq('division_id', division_id);
-      if (company_id) query = applyProductionCompanyScopeFilter(query, company_id, scopePartnerIds);
+      if (company_id) query = applyProductionCompanyScopeFilter(query, company_id, partnerIdsForCompany);
       if (wantsUnclassified) query = query.is('workshop_type_id', null);
       else if (workshop_type_id) query = query.eq('workshop_type_id', workshop_type_id);
 
@@ -1834,7 +1747,7 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
       else if (wantsKanbanColumn) query = query.eq('sx_kanban_column_id', sxKanbanColumnId);
       if (stage_slug && String(sx_intake) !== '1') {
         if (stage_slug === INTAKE_BUCKET) {
-          query = query.in('id', wonIds);
+          query = query.in('id', (restrictIds && restrictIds.length) ? restrictIds : wonIds);
           if (stageIds.length) {
             query = query.or(`current_stage_id.is.null,current_stage_id.not.in.(${stageIds.join(',')})`);
           }
@@ -1859,11 +1772,13 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
       const rpcEligible = String(sx_intake) !== '1'
         && !stage_slug
         && !division_id
-        && !(tenantEnforced && tenantCompanyIds.length === 0);
+        && !(tenantEnforced && tenantCompanyIds.length === 0)
+        && !(Array.isArray(restrictIds) && restrictIds.length === 0);
       if (rpcEligible) {
         const { memberProjectIds } = await applyParticipantOnlyProductionScope(
           supabase.from('projects').select('id'), req.user, company_id, sx_workshop_company_id, deal_company_id,
         );
+        const rpcRestrictIds = (restrictIds && restrictIds.length) ? restrictIds : memberProjectIds;
         const { data: rpcData, error: rpcError } = await supabase.rpc('sx_kanban_stage_page_ids', {
           p_requests: [{
             column_id: wantsNullKanbanColumn ? null : sxKanbanColumnId,
@@ -1875,7 +1790,7 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
           p_statuses: WORKSHOP_STATUSES,
           p_company_id: company_id || null,
           p_partner_project_ids: scopePartnerIds?.length ? scopePartnerIds : null,
-          p_restrict_project_ids: memberProjectIds,
+          p_restrict_project_ids: rpcRestrictIds,
           p_tenant_company_ids: tenantCompanyIds,
           p_workshop_type_id: wantsUnclassified ? null : (workshop_type_id || null),
           p_unclassified: wantsUnclassified,
@@ -2008,7 +1923,6 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
       return res.json({ projects: [], total: 0, page: parsedPage, totalPages: 0 });
     }
     query = applied.query;
-    ({ query } = await applyParticipantOnlyProductionScope(query, req.user, company_id, sx_workshop_company_id, deal_company_id));
 
     query = query.order('deadline', { ascending: true, nullsFirst: false })
       .order('created_at', { ascending: false })
@@ -2071,30 +1985,11 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
       let fallbackQuery = supabase
         .from('projects')
         .select(fallbackSelect, { count: 'exact' });
-      if (String(sx_intake) === '1') {
-        if (!wonIds.length) return res.json({ projects: [], total: 0, page: parsedPage, totalPages: 0 });
-        fallbackQuery = fallbackQuery.in('id', wonIds);
-        if (stageIds.length) fallbackQuery = fallbackQuery.or(`current_stage_id.is.null,current_stage_id.not.in.(${stageIds.join(',')})`);
-      } else {
-        fallbackQuery = fallbackQuery.or(buildScopeOrFilter(stageIds, wonIds));
+      const appliedFb = applyProjectsListFilters(fallbackQuery);
+      if (appliedFb.empty) {
+        return res.json({ projects: [], total: 0, page: parsedPage, totalPages: 0 });
       }
-      if (search) fallbackQuery = fallbackQuery.or(`code.ilike.%${search}%,name.ilike.%${search}%`);
-      if (priority) fallbackQuery = fallbackQuery.eq('priority', priority);
-      if (createdFrom) fallbackQuery = fallbackQuery.gte('created_at', createdFrom);
-      if (createdTo) {
-        const upper = /^\d{4}-\d{2}-\d{2}$/.test(String(createdTo))
-          ? `${createdTo}T23:59:59.999Z`
-          : createdTo;
-        fallbackQuery = fallbackQuery.lte('created_at', upper);
-      }
-      if (productionPersonId) fallbackQuery = fallbackQuery.eq('production_person_id', productionPersonId);
-      if (wantsNullKanbanColumn) fallbackQuery = fallbackQuery.is('sx_kanban_column_id', null);
-      else if (wantsKanbanColumn) fallbackQuery = fallbackQuery.eq('sx_kanban_column_id', sxKanbanColumnId);
-      if (division_id) fallbackQuery = fallbackQuery.eq('division_id', division_id);
-      if (company_id) fallbackQuery = applyProductionCompanyScopeFilter(fallbackQuery, company_id, scopePartnerIds);
-      if (wantsUnclassified) fallbackQuery = fallbackQuery.is('workshop_type_id', null);
-      else if (workshop_type_id) fallbackQuery = fallbackQuery.eq('workshop_type_id', workshop_type_id);
-      ({ query: fallbackQuery } = await applyParticipantOnlyProductionScope(fallbackQuery, req.user, company_id, sx_workshop_company_id, deal_company_id));
+      fallbackQuery = appliedFb.query;
       fallbackQuery = fallbackQuery.order('deadline', { ascending: true, nullsFirst: false }).order('created_at', { ascending: false }).range(offset, offset + parsedLimit - 1);
       ({ data: projects, error, count } = await fallbackQuery);
     }

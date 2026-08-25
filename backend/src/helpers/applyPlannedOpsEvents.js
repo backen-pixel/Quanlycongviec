@@ -50,7 +50,7 @@ async function applyPlannedOpsEvents(projectId, opts = {}) {
   try {
     const { data, error } = await supabase
       .from('crm_events')
-      .select('id, title, event_type, status, module')
+      .select('id, title, event_type, status, module, lead_id, project_id')
       .eq('project_id', projectId)
       .eq('status', 'planned');
     if (error) throw error;
@@ -75,6 +75,22 @@ async function applyPlannedOpsEvents(projectId, opts = {}) {
       continue;
     }
     ids.push(String(ev.id));
+    try {
+      const { shouldInviteAllModuleOwners, collectProjectEventParticipantIds } = require('./dealModuleResponsibleUsers');
+      if (!shouldInviteAllModuleOwners(ev.event_type, ev.title)) continue;
+      const owners = await collectProjectEventParticipantIds({
+        leadId: ev.lead_id,
+        projectId: ev.project_id || projectId,
+      });
+      const uids = owners.userIds || [];
+      if (!uids.length) continue;
+      await supabase.from('crm_event_participants').upsert(
+        uids.map((uid) => ({ event_id: ev.id, user_id: uid, status: 'confirmed' })),
+        { onConflict: 'event_id,user_id' },
+      );
+    } catch (ownerErr) {
+      console.warn('[apply-planned-ops] module owners:', ownerErr.message);
+    }
   }
 
   return { ok: true, count: ids.length, ids };

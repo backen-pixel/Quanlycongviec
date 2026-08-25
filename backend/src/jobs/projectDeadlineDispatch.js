@@ -9,8 +9,20 @@
 const { supabase } = require('../config/supabase');
 const { runIfLeader } = require('../helpers/cronLeader');
 const { listProjectDeadlineNotifications, buildZaloBotText } = require('../helpers/projectDeadlineExport');
+const { rescanCompletedAndClearDeadlines } = require('../helpers/clearCompletedProjectDeadlines');
 const { frontendUrl, normalizeFrontendOrigin, defaultProductionFrontendUrl } = require('../config');
 const PUBLIC_APP_URL = defaultProductionFrontendUrl || 'https://tubep-frontend-s30w.onrender.com';
+
+let lastCompletedRescanAt = 0;
+async function rescanCompletedDeadlinesQuietly() {
+  if (Date.now() - lastCompletedRescanAt < 60 * 1000) return;
+  lastCompletedRescanAt = Date.now();
+  try {
+    await rescanCompletedAndClearDeadlines();
+  } catch (e) {
+    console.warn('[project-deadline-dispatch] rescan completed deadlines:', e.message);
+  }
+}
 
 function testAppBaseUrl() {
   const candidates = [process.env.PUBLIC_APP_URL, process.env.APP_BASE_URL, frontendUrl, PUBLIC_APP_URL];
@@ -446,6 +458,7 @@ async function filterNewNotifications(notifications, opts = {}) {
  * body: { chat_id, parse_mode: "markdown", text }
  */
 async function runProfileOnce(profileOrId, opts = {}) {
+  await rescanCompletedDeadlinesQuietly();
   const store = await loadStore();
   const profile = typeof profileOrId === 'object' && profileOrId?.id
     ? normalizeProfile(profileOrId)
@@ -569,6 +582,7 @@ async function runProfileOnce(profileOrId, opts = {}) {
  * Cron / chạy tất cả profile có bật Zalo.
  */
 async function runOnce(opts = {}) {
+  await rescanCompletedDeadlinesQuietly();
   const store = await loadStore();
   if (opts.force !== true && store.enabled === false) {
     return { ok: false, skipped: true, reason: 'disabled', sent: 0 };

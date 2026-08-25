@@ -20,6 +20,27 @@ const { assertProjectAccessible } = require('../helpers/projectAccessScope');
 const r = Router();
 r.use(auth);
 
+/** Index assignee theo nhiều project — body JSON, tránh GET URL > 16KB (Vite 431). */
+r.post('/lite-by-projects', async (req, res) => {
+  try {
+    const ids = [...new Set((Array.isArray(req.body?.project_ids) ? req.body.project_ids : [])
+      .map((id) => String(id || '').trim())
+      .filter(Boolean))].slice(0, 500);
+    if (!ids.length) return res.json({ tasks: [] });
+    const { data, error } = await supabase
+      .from('tasks')
+      .select('id,project_id,assignee_id')
+      .in('project_id', ids)
+      .not('assignee_id', 'is', null)
+      .limit(5000);
+    if (error) throw error;
+    res.json({ tasks: data || [] });
+  } catch (e) {
+    console.error('[tasks/lite-by-projects]', e);
+    res.status(500).json({ error: e.message || 'Lỗi' });
+  }
+});
+
 /** Load task.project_id rồi assert — null = đã trả lỗi. */
 async function assertTaskProjectAccess(req, res, taskId, opts = {}) {
   const { data: task } = await supabase

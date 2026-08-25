@@ -12,6 +12,7 @@ import { isInstallVcStage } from '../lib/managementDashboardUtils';
 import { formatDateTime, PRIORITY_LABELS, TASK_PRIORITY_COLORS as PRIORITY_COLORS } from '../lib/utils';
 import UploadProgressBubble from './UploadProgressBubble';
 import { mergeUploadProgressState, uploadSingleFileWithProgress, formatUploadProgressMeta } from '../lib/uploadProgressEta';
+import { handleChatImagePaste } from '../lib/chatClipboard';
 import {
   ClipboardList, X, ChevronDown, ChevronRight, UserPlus, Trash2, Save,
   Circle, CheckCircle2, Clock, Calendar, ListChecks, Plus, User, List,
@@ -468,64 +469,66 @@ export default function WorkshopProjectTasksPanel({
     }
   };
 
+  const uploadTaskFiles = async (taskId, fileList) => {
+    const rawFiles = Array.from(fileList || []).slice(0, 50);
+    if (!rawFiles.length) return;
+    setUploadingTask(taskId);
+    try {
+      const imageFiles = rawFiles.filter((f) => f.type.startsWith('image/'));
+      const otherFiles = rawFiles.filter((f) => !f.type.startsWith('image/'));
+      const allUploaded = [];
+      if (imageFiles.length) {
+        const compressed = await Promise.all(imageFiles.map((f) => compressImage(f)));
+        const formData = new FormData();
+        compressed.forEach((f) => formData.append('files', f));
+        const { data: uploadRes } = await api.post('/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+        allUploaded.push(...(uploadRes.files || (Array.isArray(uploadRes) ? uploadRes : [uploadRes])));
+      }
+      for (const file of otherFiles) {
+        setUploadProgress((p) => ({ ...p, [taskId]: { percent: 0, name: file.name, size: file.size } }));
+        const isLarge = file.size > 10 * 1024 * 1024;
+        const result = await uploadSingleFileWithProgress({
+          file,
+          endpoint: isLarge ? '/upload/stream' : '/upload/single',
+          baseURL: api.defaults.baseURL,
+          token: localStorage.getItem('token'),
+          onProgress: (stats) => {
+            setUploadProgress((p) => ({
+              ...p,
+              [taskId]: mergeUploadProgressState({ percent: 0, name: file.name, size: file.size }, stats),
+            }));
+          },
+        });
+        allUploaded.push(result);
+      }
+      setUploadProgress((p) => { const n = { ...p }; delete n[taskId]; return n; });
+      if (!allUploaded.length) throw new Error('Upload không trả về file');
+      await api.post(`/tasks/${taskId}/attachments/bulk`, {
+        items: allUploaded.map((up) => ({
+          original_name: up.original_name || up.file_name || 'File',
+          file_name: up.file_name,
+          file_url: up.file_url,
+          file_size: up.file_size,
+          mime_type: up.mime_type,
+          doc_type: inferAttachmentDocType(up),
+          allowed_share_modules: [shareModule],
+        })),
+      });
+      await loadAttachments(taskId);
+      onReload();
+    } catch (err) {
+      setUploadProgress((p) => { const n = { ...p }; delete n[taskId]; return n; });
+      alert(err.response?.data?.error || err.message || 'Upload lỗi');
+    }
+    setUploadingTask(null);
+  };
+
   const uploadTaskFile = (taskId) => {
     const input = document.createElement('input');
     input.type = 'file';
     input.multiple = true;
     input.accept = TASK_ATTACHMENT_FILE_ACCEPT;
-    input.onchange = async (e) => {
-      const rawFiles = Array.from(e.target.files || []).slice(0, 50);
-      if (!rawFiles.length) return;
-      setUploadingTask(taskId);
-      try {
-        const imageFiles = rawFiles.filter((f) => f.type.startsWith('image/'));
-        const otherFiles = rawFiles.filter((f) => !f.type.startsWith('image/'));
-        const allUploaded = [];
-        if (imageFiles.length) {
-          const compressed = await Promise.all(imageFiles.map((f) => compressImage(f)));
-          const formData = new FormData();
-          compressed.forEach((f) => formData.append('files', f));
-          const { data: uploadRes } = await api.post('/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
-          allUploaded.push(...(uploadRes.files || (Array.isArray(uploadRes) ? uploadRes : [uploadRes])));
-        }
-        for (const file of otherFiles) {
-          setUploadProgress((p) => ({ ...p, [taskId]: { percent: 0, name: file.name, size: file.size } }));
-          const isLarge = file.size > 10 * 1024 * 1024;
-          const result = await uploadSingleFileWithProgress({
-            file,
-            endpoint: isLarge ? '/upload/stream' : '/upload/single',
-            baseURL: api.defaults.baseURL,
-            token: localStorage.getItem('token'),
-            onProgress: (stats) => {
-              setUploadProgress((p) => ({
-                ...p,
-                [taskId]: mergeUploadProgressState({ percent: 0, name: file.name, size: file.size }, stats),
-              }));
-            },
-          });
-          allUploaded.push(result);
-        }
-        setUploadProgress((p) => { const n = { ...p }; delete n[taskId]; return n; });
-        if (!allUploaded.length) throw new Error('Upload không trả về file');
-        await api.post(`/tasks/${taskId}/attachments/bulk`, {
-          items: allUploaded.map((up) => ({
-            original_name: up.original_name || up.file_name || 'File',
-            file_name: up.file_name,
-            file_url: up.file_url,
-            file_size: up.file_size,
-            mime_type: up.mime_type,
-            doc_type: inferAttachmentDocType(up),
-            allowed_share_modules: [shareModule],
-          })),
-        });
-        await loadAttachments(taskId);
-        onReload();
-      } catch (err) {
-        setUploadProgress((p) => { const n = { ...p }; delete n[taskId]; return n; });
-        alert(err.response?.data?.error || err.message || 'Upload lỗi');
-      }
-      setUploadingTask(null);
-    };
+    input.onchange = (e) => { void uploadTaskFiles(taskId, e.target.files); };
     input.click();
   };
 
@@ -1016,7 +1019,9 @@ export default function WorkshopProjectTasksPanel({
               <textarea
                 value={descDraft[task.id] !== undefined ? descDraft[task.id] : (task.description || '')}
                 onChange={(e) => setDescDraft((d) => ({ ...d, [task.id]: e.target.value }))}
-                placeholder="Nhập ghi chú cho nhiệm vụ này..."
+                onPaste={(e) => handleChatImagePaste(e, (files) => { void uploadTaskFiles(task.id, files); })}
+                placeholder="Nhập ghi chú cho nhiệm vụ này... (Ctrl+V dán ảnh)"
+                title="Ctrl+V để dán ảnh từ clipboard"
                 rows={3}
                 className="w-full px-3 py-2 border rounded-lg text-sm leading-relaxed outline-none focus:border-blue-400 resize-y mb-1.5"
               />

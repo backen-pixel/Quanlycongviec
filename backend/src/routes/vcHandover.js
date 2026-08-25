@@ -47,6 +47,7 @@ const {
   fetchCrmLeadCommentNotifyUserIds,
 } = require('../helpers/dealCommentNotifications');
 const { ensureLeadMembersFromProjectStaff } = require('../helpers/productionWorkshopTypeStaff');
+const { collectProjectEventParticipantIds } = require('../helpers/dealModuleResponsibleUsers');
 const {
   fetchLeadMentionMembers,
   resolveLeadCommentMentionIds,
@@ -404,13 +405,20 @@ async function createVcHandoverEvents({
     .from('crm_leads').select('id, code, title, company_id, customer_id').eq('id', leadId).maybeSingle();
 
   const { data: memberRows } = await supabase.from('lead_members').select('user_id').eq('lead_id', leadId);
-  const participantIds = [...new Set([
+  let participantIds = [...new Set([
     ...(memberRows || []).map((m) => String(m.user_id)).filter(Boolean),
     meta.production_person_id ? String(meta.production_person_id) : null,
     logisticsPersonId ? String(logisticsPersonId) : null,
     meta.logistics_person_id ? String(meta.logistics_person_id) : null,
     meta.installer_person_id ? String(meta.installer_person_id) : null,
   ].filter(Boolean))];
+
+  try {
+    const people = await collectProjectEventParticipantIds({ leadId, projectId });
+    participantIds = [...new Set([...participantIds, ...(people.userIds || [])])];
+  } catch (ownerErr) {
+    console.warn('[vc-handover] project people:', ownerErr.message);
+  }
 
   const projLabel = meta.project_name || meta.project_code || lead?.title || 'dự án';
   const skipVcBoard = !!meta.skip_logistics_module;

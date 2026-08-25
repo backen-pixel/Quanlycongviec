@@ -46,6 +46,7 @@ import TaskQuickVerdictBar from './TaskQuickVerdictBar';
 import EmployeePicker from './EmployeePicker';
 import UploadProgressBubble from './UploadProgressBubble';
 import { mergeUploadProgressState, uploadSingleFileWithProgress, formatUploadProgressMeta } from '../lib/uploadProgressEta';
+import { handleChatImagePaste } from '../lib/chatClipboard';
 
 // Checklist con của nhiệm vụ — chuẩn hoá về { id, title, description, done } (hỗ trợ dữ liệu cũ dạng chuỗi).
 let _ckSeq = 0;
@@ -2477,98 +2478,100 @@ export default function CRMTasksTab({
     }
   };
 
+  const uploadTaskFiles = async (taskId, fileList) => {
+    const rawFiles = Array.from(fileList || []).slice(0, 50);
+    if (!rawFiles.length) return;
+    setUploadingTask(taskId);
+
+    try {
+      // Chia thành ảnh và video/file
+      const imageFiles = rawFiles.filter(f => f.type.startsWith('image/'));
+      const otherFiles = rawFiles.filter(f => !f.type.startsWith('image/'));
+
+      const allUploaded = [];
+
+      // Upload ảnh: nén + batch
+      if (imageFiles.length) {
+        const compressed = await Promise.all(imageFiles.map(f => compressImage(f)));
+        const formData = new FormData();
+        compressed.forEach(f => formData.append('files', f));
+        // Không set Content-Type tay — browser cần boundary cho multipart
+        const { data: uploadRes } = await api.post('/upload', formData);
+        const ok = uploadRes.uploaded || uploadRes.files || (Array.isArray(uploadRes) ? uploadRes : [uploadRes]);
+        allUploaded.push(...(Array.isArray(ok) ? ok : [ok]));
+      }
+
+      // Upload video/file: từng file riêng với progress + stream endpoint
+      for (const file of otherFiles) {
+        setUploadProgress(p => ({ ...p, [taskId]: { percent: 0, name: file.name, size: file.size } }));
+        const isLarge = file.size > 10 * 1024 * 1024;
+        const endpoint = isLarge ? '/upload/stream' : '/upload/single';
+        const result = await uploadSingleFileWithProgress({
+          file,
+          endpoint,
+          baseURL: api.defaults.baseURL,
+          token: localStorage.getItem('token'),
+          onProgress: (stats) => {
+            setUploadProgress(p => ({
+              ...p,
+              [taskId]: mergeUploadProgressState({
+                percent: 0,
+                name: file.name,
+                size: file.size,
+              }, stats),
+            }));
+          },
+        });
+        allUploaded.push(result);
+      }
+
+      setUploadProgress(p => { const n = { ...p }; delete n[taskId]; return n; });
+
+      const successUploads = allUploaded.filter((up) => up?.file_url && !String(up.file_url).startsWith('data:'));
+      if (!successUploads.length) throw new Error('Upload không trả về file');
+
+      // Tạo attachments — dedupe theo file_url để tránh insert trùng
+      const seenUrls = new Set();
+      const dedupedUploads = [];
+      for (const up of successUploads) {
+        const url = String(up.file_url);
+        if (seenUrls.has(url)) continue;
+        seenUrls.add(url);
+        dedupedUploads.push(up);
+      }
+      if (isWorkshopTaskId(taskId)) {
+        await api.post(`/tasks/${taskId}/attachments/bulk`, {
+          items: workshopAttachmentItems(dedupedUploads),
+        });
+      } else {
+        await api.post(`/crm/leads/${apiLeadIdForTaskId(taskId)}/tasks/${taskId}/attachments/bulk`, {
+          items: dedupedUploads.map((up) => ({
+            name: (up.original_name || up.file_name || 'File').replace(/\.[^.]+$/, ''),
+            doc_type: inferAttachmentDocType(up),
+            file_url: up.file_url,
+            file_name: up.file_name,
+            file_size: up.file_size,
+            mime_type: up.mime_type,
+          })),
+        });
+      }
+      setExpandedTask(taskId);
+      loadAttachments({ id: taskId, _workshop_project_task: isWorkshopTaskId(taskId) || undefined });
+      bumpTaskAttachmentCount(taskId, dedupedUploads.length);
+      notifyArtifactsSynced(taskId);
+    } catch (err) {
+      setUploadProgress(p => { const n = { ...p }; delete n[taskId]; return n; });
+      alert(err.response?.data?.error || err.message || 'Upload lỗi');
+    }
+    setUploadingTask(null);
+  };
+
   const uploadTaskFile = (taskId) => {
     const input = document.createElement('input');
     input.type = 'file';
     input.multiple = true;
     input.accept = TASK_ATTACHMENT_FILE_ACCEPT;
-    input.onchange = async (e) => {
-      const rawFiles = Array.from(e.target.files || []).slice(0, 50);
-      if (!rawFiles.length) return;
-      setUploadingTask(taskId);
-
-      try {
-        // Chia thành ảnh và video/file
-        const imageFiles = rawFiles.filter(f => f.type.startsWith('image/'));
-        const otherFiles = rawFiles.filter(f => !f.type.startsWith('image/'));
-
-        const allUploaded = [];
-
-        // Upload ảnh: nén + batch
-        if (imageFiles.length) {
-          const compressed = await Promise.all(imageFiles.map(f => compressImage(f)));
-          const formData = new FormData();
-          compressed.forEach(f => formData.append('files', f));
-          // Không set Content-Type tay — browser cần boundary cho multipart
-          const { data: uploadRes } = await api.post('/upload', formData);
-          const ok = uploadRes.uploaded || uploadRes.files || (Array.isArray(uploadRes) ? uploadRes : [uploadRes]);
-          allUploaded.push(...(Array.isArray(ok) ? ok : [ok]));
-        }
-
-        // Upload video/file: từng file riêng với progress + stream endpoint
-        for (const file of otherFiles) {
-          setUploadProgress(p => ({ ...p, [taskId]: { percent: 0, name: file.name, size: file.size } }));
-          const isLarge = file.size > 10 * 1024 * 1024;
-          const endpoint = isLarge ? '/upload/stream' : '/upload/single';
-          const result = await uploadSingleFileWithProgress({
-            file,
-            endpoint,
-            baseURL: api.defaults.baseURL,
-            token: localStorage.getItem('token'),
-            onProgress: (stats) => {
-              setUploadProgress(p => ({
-                ...p,
-                [taskId]: mergeUploadProgressState({
-                  percent: 0,
-                  name: file.name,
-                  size: file.size,
-                }, stats),
-              }));
-            },
-          });
-          allUploaded.push(result);
-        }
-
-        setUploadProgress(p => { const n = { ...p }; delete n[taskId]; return n; });
-
-        const successUploads = allUploaded.filter((up) => up?.file_url && !String(up.file_url).startsWith('data:'));
-        if (!successUploads.length) throw new Error('Upload không trả về file');
-
-        // Tạo attachments — dedupe theo file_url để tránh insert trùng
-        const seenUrls = new Set();
-        const dedupedUploads = [];
-        for (const up of successUploads) {
-          const url = String(up.file_url);
-          if (seenUrls.has(url)) continue;
-          seenUrls.add(url);
-          dedupedUploads.push(up);
-        }
-        if (isWorkshopTaskId(taskId)) {
-          await api.post(`/tasks/${taskId}/attachments/bulk`, {
-            items: workshopAttachmentItems(dedupedUploads),
-          });
-        } else {
-          await api.post(`/crm/leads/${apiLeadIdForTaskId(taskId)}/tasks/${taskId}/attachments/bulk`, {
-            items: dedupedUploads.map((up) => ({
-          name: (up.original_name || up.file_name || 'File').replace(/\.[^.]+$/, ''),
-              doc_type: inferAttachmentDocType(up),
-          file_url: up.file_url,
-          file_name: up.file_name,
-          file_size: up.file_size,
-          mime_type: up.mime_type,
-            })),
-          });
-        }
-        setExpandedTask(taskId);
-        loadAttachments({ id: taskId, _workshop_project_task: isWorkshopTaskId(taskId) || undefined });
-        bumpTaskAttachmentCount(taskId, dedupedUploads.length);
-        notifyArtifactsSynced(taskId);
-      } catch (err) {
-        setUploadProgress(p => { const n = { ...p }; delete n[taskId]; return n; });
-        alert(err.response?.data?.error || err.message || 'Upload lỗi');
-      }
-      setUploadingTask(null);
-    };
+    input.onchange = (e) => { void uploadTaskFiles(taskId, e.target.files); };
     input.click();
   };
 
@@ -2836,101 +2839,111 @@ export default function CRMTasksTab({
     }
   };
 
+  const uploadChecklistFiles = async (taskId, ckId, fileList) => {
+    const rawFiles = Array.from(fileList || []).slice(0, 50);
+    if (!rawFiles.length) return;
+    const upKey = ckStateKey(taskId, ckId);
+    setUploadingChecklistKey(upKey);
+    try {
+      const imageFiles = rawFiles.filter((f) => f.type.startsWith('image/'));
+      const otherFiles = rawFiles.filter((f) => !f.type.startsWith('image/'));
+      const allUploaded = [];
+      if (imageFiles.length) {
+        const compressed = await Promise.all(imageFiles.map((f) => compressImage(f)));
+        const formData = new FormData();
+        compressed.forEach((f) => formData.append('files', f));
+        const { data: uploadRes } = await api.post('/upload', formData);
+        const ok = uploadRes.uploaded || uploadRes.files || (Array.isArray(uploadRes) ? uploadRes : [uploadRes]);
+        allUploaded.push(...(Array.isArray(ok) ? ok : [ok]));
+      }
+      for (const file of otherFiles) {
+        const isLarge = file.size > 10 * 1024 * 1024;
+        const endpoint = isLarge ? '/upload/stream' : '/upload/single';
+        const result = await new Promise((resolve, reject) => {
+          const formData = new FormData();
+          formData.append('file', file);
+          const xhr = new XMLHttpRequest();
+          xhr.open('POST', `${api.defaults.baseURL}${endpoint}`);
+          xhr.setRequestHeader('Authorization', `Bearer ${localStorage.getItem('token')}`);
+          xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) resolve(JSON.parse(xhr.responseText));
+            else reject(new Error(`Upload lỗi: ${xhr.status}`));
+          };
+          xhr.onerror = () => reject(new Error('Lỗi mạng'));
+          xhr.send(formData);
+        });
+        allUploaded.push(result);
+      }
+      const successUploads = allUploaded.filter((up) => up?.file_url && !String(up.file_url).startsWith('data:'));
+      if (!successUploads.length) throw new Error('Upload không trả về file');
+      const seenUrls = new Set();
+      const dedupedUploads = [];
+      for (const up of successUploads) {
+        const url = String(up.file_url);
+        if (seenUrls.has(url)) continue;
+        seenUrls.add(url);
+        dedupedUploads.push(up);
+      }
+      if (isWorkshopTaskId(taskId)) {
+        const task = findTaskRow(taskId);
+        const ck = normalizeChecklist(task?.checklist).find((c) => String(c.id) === String(ckId));
+        const prevAtts = Array.isArray(ck?.attachments) ? [...ck.attachments] : [];
+        const seen = new Set(prevAtts.map((a) => String(a.file_url || '')));
+        const added = [];
+        for (const up of dedupedUploads) {
+          const url = String(up.file_url || '');
+          if (!url || seen.has(url)) continue;
+          seen.add(url);
+          added.push({
+            id: `wck_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
+            name: (up.original_name || up.file_name || 'File').replace(/\.[^.]+$/, ''),
+            file_name: up.file_name || up.original_name || 'File',
+            file_url: up.file_url,
+            file_size: up.file_size,
+            mime_type: up.mime_type,
+            doc_type: inferAttachmentDocType(up),
+          });
+        }
+        if (!added.length) throw new Error('Không có file mới để gắn checklist');
+        await patchWorkshopChecklist(taskId, ckId, { attachments: [...prevAtts, ...added] });
+        bumpTaskAttachmentCount(taskId, added.length);
+      } else {
+        await api.post(`/crm/leads/${apiLeadIdForTaskId(taskId)}/tasks/${taskId}/attachments/bulk`, {
+          items: dedupedUploads.map((up) => ({
+            name: (up.original_name || up.file_name || 'File').replace(/\.[^.]+$/, ''),
+            doc_type: inferAttachmentDocType(up),
+            file_url: up.file_url,
+            file_name: up.file_name,
+            file_size: up.file_size,
+            mime_type: up.mime_type,
+          })),
+          checklist_id: ckId,
+        });
+        loadAttachments({ id: taskId });
+        bumpTaskAttachmentCount(taskId, dedupedUploads.length);
+      }
+      notifyArtifactsSynced(taskId);
+    } catch (err) {
+      alert(err.response?.data?.error || err.message || 'Upload lỗi');
+    }
+    setUploadingChecklistKey(null);
+  };
+
   const uploadChecklistFile = (taskId, ckId) => {
     const input = document.createElement('input');
     input.type = 'file';
     input.multiple = true;
     input.accept = TASK_ATTACHMENT_FILE_ACCEPT;
-    input.onchange = async (e) => {
-      const rawFiles = Array.from(e.target.files || []).slice(0, 50);
-      if (!rawFiles.length) return;
-      const upKey = ckStateKey(taskId, ckId);
-      setUploadingChecklistKey(upKey);
-      try {
-        const imageFiles = rawFiles.filter((f) => f.type.startsWith('image/'));
-        const otherFiles = rawFiles.filter((f) => !f.type.startsWith('image/'));
-        const allUploaded = [];
-        if (imageFiles.length) {
-          const compressed = await Promise.all(imageFiles.map((f) => compressImage(f)));
-          const formData = new FormData();
-          compressed.forEach((f) => formData.append('files', f));
-          const { data: uploadRes } = await api.post('/upload', formData);
-          const ok = uploadRes.uploaded || uploadRes.files || (Array.isArray(uploadRes) ? uploadRes : [uploadRes]);
-          allUploaded.push(...(Array.isArray(ok) ? ok : [ok]));
-        }
-        for (const file of otherFiles) {
-          const isLarge = file.size > 10 * 1024 * 1024;
-          const endpoint = isLarge ? '/upload/stream' : '/upload/single';
-          const result = await new Promise((resolve, reject) => {
-            const formData = new FormData();
-            formData.append('file', file);
-            const xhr = new XMLHttpRequest();
-            xhr.open('POST', `${api.defaults.baseURL}${endpoint}`);
-            xhr.setRequestHeader('Authorization', `Bearer ${localStorage.getItem('token')}`);
-            xhr.onload = () => {
-              if (xhr.status >= 200 && xhr.status < 300) resolve(JSON.parse(xhr.responseText));
-              else reject(new Error(`Upload lỗi: ${xhr.status}`));
-            };
-            xhr.onerror = () => reject(new Error('Lỗi mạng'));
-            xhr.send(formData);
-          });
-          allUploaded.push(result);
-        }
-        const successUploads = allUploaded.filter((up) => up?.file_url && !String(up.file_url).startsWith('data:'));
-        if (!successUploads.length) throw new Error('Upload không trả về file');
-        const seenUrls = new Set();
-        const dedupedUploads = [];
-        for (const up of successUploads) {
-          const url = String(up.file_url);
-          if (seenUrls.has(url)) continue;
-          seenUrls.add(url);
-          dedupedUploads.push(up);
-        }
-        if (isWorkshopTaskId(taskId)) {
-          const task = findTaskRow(taskId);
-          const ck = normalizeChecklist(task?.checklist).find((c) => String(c.id) === String(ckId));
-          const prevAtts = Array.isArray(ck?.attachments) ? [...ck.attachments] : [];
-          const seen = new Set(prevAtts.map((a) => String(a.file_url || '')));
-          const added = [];
-          for (const up of dedupedUploads) {
-            const url = String(up.file_url || '');
-            if (!url || seen.has(url)) continue;
-            seen.add(url);
-            added.push({
-              id: `wck_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
-              name: (up.original_name || up.file_name || 'File').replace(/\.[^.]+$/, ''),
-              file_name: up.file_name || up.original_name || 'File',
-              file_url: up.file_url,
-              file_size: up.file_size,
-              mime_type: up.mime_type,
-              doc_type: inferAttachmentDocType(up),
-            });
-          }
-          if (!added.length) throw new Error('Không có file mới để gắn checklist');
-          await patchWorkshopChecklist(taskId, ckId, { attachments: [...prevAtts, ...added] });
-          bumpTaskAttachmentCount(taskId, added.length);
-        } else {
-          await api.post(`/crm/leads/${apiLeadIdForTaskId(taskId)}/tasks/${taskId}/attachments/bulk`, {
-            items: dedupedUploads.map((up) => ({
-              name: (up.original_name || up.file_name || 'File').replace(/\.[^.]+$/, ''),
-              doc_type: inferAttachmentDocType(up),
-              file_url: up.file_url,
-              file_name: up.file_name,
-              file_size: up.file_size,
-              mime_type: up.mime_type,
-            })),
-            checklist_id: ckId,
-          });
-      loadAttachments({ id: taskId });
-          bumpTaskAttachmentCount(taskId, dedupedUploads.length);
-        }
-      notifyArtifactsSynced(taskId);
-      } catch (err) {
-        alert(err.response?.data?.error || err.message || 'Upload lỗi');
-      }
-      setUploadingChecklistKey(null);
-    };
+    input.onchange = (e) => { void uploadChecklistFiles(taskId, ckId, e.target.files); };
     input.click();
+  };
+
+  const pasteImagesToTaskNotes = (e, taskId, { viewOnly = false, checklistId = null } = {}) => {
+    if (viewOnly) return;
+    const handled = checklistId
+      ? handleChatImagePaste(e, (files) => { void uploadChecklistFiles(taskId, checklistId, files); })
+      : handleChatImagePaste(e, (files) => { void uploadTaskFiles(taskId, files); });
+    if (handled) e.stopPropagation();
   };
 
   const isImageAtt = (att) => {
@@ -3447,9 +3460,12 @@ export default function CRMTasksTab({
                   )}
                 </div>
                 <textarea
+                  data-checklist-paste-id={ck.id}
                   value={checklistNoteText[ckKey] ?? ck.notes ?? ''}
                   onChange={(e) => setChecklistNoteText((p) => ({ ...p, [ckKey]: e.target.value }))}
-                  placeholder="Nhập ghi chú cho mục checklist..."
+                  onPaste={(e) => pasteImagesToTaskNotes(e, task.id, { checklistId: ck.id })}
+                  placeholder="Nhập ghi chú cho mục checklist... (Ctrl+V dán ảnh)"
+                  title="Ctrl+V để dán ảnh từ clipboard"
                   rows={2}
                   className="w-full px-2.5 py-1.5 border rounded-lg text-xs outline-none focus:border-emerald-400 resize-none mb-1.5"
                 />
@@ -3904,6 +3920,10 @@ export default function CRMTasksTab({
           <div
             data-tour="crm-task-notes-panel"
             className="px-3 pb-3 space-y-3 border-t border-gray-200 mx-3 pt-3"
+            onPaste={(e) => {
+              if (e.target.closest?.('[data-checklist-paste-id]')) return;
+              pasteImagesToTaskNotes(e, task.id, { viewOnly: workshopViewOnly });
+            }}
           >
             {!!task.show_fill_form && hasFilledFormData(task.form_data) && renderFillFormSummary(task)}
             {hasDesc && (
@@ -4150,9 +4170,12 @@ export default function CRMTasksTab({
                                   )}
                                 </div>
                                 <textarea
+                                  data-checklist-paste-id={ck.id}
                                   value={checklistNoteText[ckKey] ?? ck.notes ?? ''}
                                   onChange={(e) => setChecklistNoteText((p) => ({ ...p, [ckKey]: e.target.value }))}
-                                  placeholder="Nhập ghi chú cho mục checklist..."
+                                  onPaste={(e) => pasteImagesToTaskNotes(e, task.id, { checklistId: ck.id })}
+                                  placeholder="Nhập ghi chú cho mục checklist... (Ctrl+V dán ảnh)"
+                                  title="Ctrl+V để dán ảnh từ clipboard"
                                   rows={2}
                                   className="w-full px-2.5 py-1.5 border rounded-lg text-xs outline-none focus:border-emerald-400 resize-none mb-1.5"
                                 />
@@ -4256,7 +4279,9 @@ export default function CRMTasksTab({
                   const val = e.target.value;
                   setTaskNoteText(p => ({ ...p, [task.id]: val }));
                 }}
-                placeholder="Nhập ghi chú cho nhiệm vụ này..."
+                onPaste={(e) => pasteImagesToTaskNotes(e, task.id, { viewOnly: workshopViewOnly })}
+                placeholder="Nhập ghi chú cho nhiệm vụ này... (Ctrl+V dán ảnh)"
+                title="Ctrl+V để dán ảnh từ clipboard"
                 rows={2}
                 className="w-full px-2.5 py-1.5 border rounded-lg text-xs outline-none focus:border-blue-400 resize-none mb-1.5"
               />

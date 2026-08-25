@@ -3,6 +3,25 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { writeFileSync, mkdirSync } from 'node:fs'
 import { resolve } from 'node:path'
+import http from 'node:http'
+import https from 'node:https'
+
+/** Node mặc định maxHeaderSize=16KB → Vite trả 431 khi Cookie/Authorization + URL dài. */
+const MAX_HEADER_SIZE = 1024 * 1024
+function patchHttpCreateServer(mod) {
+  const orig = mod.createServer
+  mod.createServer = function patchedCreateServer(...args) {
+    if (typeof args[0] === 'function') {
+      return orig.call(this, { maxHeaderSize: MAX_HEADER_SIZE }, args[0])
+    }
+    if (args[0] && typeof args[0] === 'object' && typeof args[0].listen !== 'function') {
+      args[0] = { ...args[0], maxHeaderSize: MAX_HEADER_SIZE }
+    }
+    return orig.apply(this, args)
+  }
+}
+patchHttpCreateServer(http)
+patchHttpCreateServer(https)
 
 const BUILD_VERSION = String(Date.now());
 

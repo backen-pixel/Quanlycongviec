@@ -3,6 +3,7 @@
  * - Lắp đặt + lấy hàng → module=logistics (assignee = NV phụ trách VC)
  * - Hoàn thiện SX (production_finish_date) → module=production
  * Chỉ NV chịu trách nhiệm được gán participant → họ mới thấy trên lịch (NV thường).
+ * Sự kiện lấy hàng + lắp đặt + hoàn thiện SX: mời toàn bộ người trên dự án.
  */
 const { supabase } = require('../config/supabase');
 const {
@@ -10,6 +11,7 @@ const {
   resolveLogisticsHandoverInstallerUserId,
   resolveLogisticsHandoverConfirmUserId,
 } = require('./logisticsHandoverSettings');
+const { collectProjectEventParticipantIds } = require('./dealModuleResponsibleUsers');
 
 async function resolveEventTypeBySlugs(slugs) {
   for (const slug of slugs) {
@@ -270,10 +272,15 @@ async function upsertPlannedVcLdEvents({
     userId,
   ].filter(Boolean).map(String))];
 
-  const productionParticipants = [...new Set([
-    productionAssigneeId,
-    userId,
-  ].filter(Boolean).map(String))];
+  // Lấy hàng + lắp đặt + hoàn thiện: mời toàn bộ người trên dự án
+  let projectPeopleIds = [];
+  try {
+    const people = await collectProjectEventParticipantIds({ leadId, projectId });
+    projectPeopleIds = people.userIds || [];
+  } catch (ownerErr) {
+    console.warn('[planned-vc-ld-events] project people:', ownerErr.message);
+  }
+  const planParticipants = [...new Set([...logisticsParticipants, ...projectPeopleIds])];
 
   const addr = installAddress ? `Địa chỉ: ${installAddress}` : null;
   const vcNoteLine = resolvedVcNotes ? `Ghi chú VC/LĐ: ${resolvedVcNotes}` : null;
@@ -328,7 +335,7 @@ async function upsertPlannedVcLdEvents({
       const prev = findExisting('pickup');
       pickupEventId = await insertOrUpdatePlannedEvent({
         existingId: prev?.id || null,
-        participantUserIds: logisticsParticipants,
+        participantUserIds: planParticipants,
         payload: {
           ...baseLogistics,
           status: keepStatus(prev),
@@ -353,7 +360,7 @@ async function upsertPlannedVcLdEvents({
         : null;
       installEventId = await insertOrUpdatePlannedEvent({
         existingId: prev?.id || null,
-        participantUserIds: logisticsParticipants,
+        participantUserIds: planParticipants,
         payload: {
           ...baseLogistics,
           status: keepStatus(prev),
@@ -385,7 +392,7 @@ async function upsertPlannedVcLdEvents({
       const finishDay = vnDayKey(finishIso);
       finishEventId = await insertOrUpdatePlannedEvent({
         existingId: prev?.id || null,
-        participantUserIds: productionParticipants,
+        participantUserIds: planParticipants,
         payload: {
           lead_id: leadId || null,
           project_id: projectId,
@@ -427,8 +434,178 @@ async function upsertPlannedVcLdEvents({
   }
 }
 
+async function resolveProjectIdForInstallEvent(event) {
+  if (event?.project_id) return String(event.project_id);
+  const leadId = event?.lead_id ? String(event.lead_id) : '';
+  if (!leadId) return null;
+  try {
+    const { data: lead } = await supabase
+      .from('crm_leads')
+      .select('project_id')
+      .eq('id', leadId)
+      .maybeSingle();
+    if (lead?.project_id) return String(lead.project_id);
+  } catch (_) { /* ignore */ }
+  try {
+    const { data: link } = await supabase
+      .from('crm_deal_projects')
+      .select('project_id')
+      .eq('deal_id', leadId)
+      .limit(1)
+      .maybeSingle();
+    if (link?.project_id) return String(link.project_id);
+  } catch (_) { /* ignore */ }
+  return null;
+}
+
+/**
+ * Sự kiện lắp đặt = deadline VC/LĐ. Ghi ngày (và giờ) sự kiện lên projects.install_date
+ * để lịch Deadline / Lịch module Lắp đặt cùng ngày với sự kiện.
+ */
+async function syncProjectInstallDateFromInstallationEvent(event) {
+  if (!event) return { ok: false, skipped: true };
+  const type = String(event.event_type || '').toLowerCase();
+  if (type !== 'installation') return { ok: true, skipped: true };
+  const status = String(event.status || '').toLowerCase();
+  if (status === 'cancelled') return { ok: true, skipped: true };
+
+  const projectId = await resolveProjectIdForInstallEvent(event);
+  if (!projectId) return { ok: true, skipped: true, reason: 'no_project' };
+
+  const occ = normalizeOccurrenceYmds(event.occurrence_dates);
+  const startIso = event.start_time ? String(event.start_time).trim() : null;
+  const firstYmd = occ[0] || vnDayKey(startIso);
+  if (!firstYmd) return { ok: true, skipped: true, reason: 'no_date' };
+
+  const installIso = isoOnYmdWithHm(firstYmd, startIso, '14:00') || `${firstYmd}T14:00:00+07:00`;
+
+  let proj = null;
+  try {
+    const { data } = await supabase
+      .from('projects')
+      .select('id, install_date')
+      .eq('id', projectId)
+      .maybeSingle();
+    proj = data || null;
+  } catch (err) {
+    console.warn('[planned-vc-ld-events] load project for install sync:', err.message);
+    return { ok: false, error: err.message };
+  }
+  if (!proj) return { ok: true, skipped: true, reason: 'project_missing' };
+
+  if (vnDayKey(proj.install_date) === firstYmd && String(proj.install_date || '') === installIso) {
+    return { ok: true, skipped: true, reason: 'unchanged' };
+  }
+  // Cùng ngày + cùng giờ (ISO khác format) → bỏ qua
+  if (vnDayKey(proj.install_date) === firstYmd) {
+    const oldIso = isoOnYmdWithHm(firstYmd, proj.install_date, '14:00');
+    if (oldIso && oldIso === installIso) return { ok: true, skipped: true, reason: 'unchanged' };
+  }
+
+  const patch = {
+    install_date: installIso,
+    updated_at: new Date().toISOString(),
+  };
+  const { error } = await supabase.from('projects').update(patch).eq('id', projectId);
+  if (error) {
+    console.warn('[planned-vc-ld-events] sync install_date:', error.message);
+    return { ok: false, error: error.message };
+  }
+  return { ok: true, projectId, install_date: installIso };
+}
+
+function chunkIds(arr, size = 80) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
+/**
+ * Gắn ngày sự kiện lắp đặt vào list dự án VC (lịch Deadline / Lịch).
+ * Ưu tiên occurrence_dates của sự kiện; fallback start_time.
+ */
+async function attachInstallEventDatesToProjects(projects) {
+  const list = Array.isArray(projects) ? projects : [];
+  const ids = [...new Set(list.map((p) => p?.id).filter(Boolean).map(String))];
+  if (!ids.length) return list;
+
+  const byProject = new Map();
+  try {
+    for (const part of chunkIds(ids, 80)) {
+      const { data, error } = await supabase
+        .from('crm_events')
+        .select('project_id, start_time, occurrence_dates, status')
+        .in('project_id', part)
+        .eq('event_type', 'installation')
+        .neq('status', 'cancelled');
+      if (error) {
+        if (/occurrence_dates/i.test(String(error.message || ''))) {
+          const retry = await supabase
+            .from('crm_events')
+            .select('project_id, start_time, status')
+            .in('project_id', part)
+            .eq('event_type', 'installation')
+            .neq('status', 'cancelled');
+          for (const ev of retry.data || []) {
+            const pid = ev?.project_id ? String(ev.project_id) : '';
+            if (!pid) continue;
+            const ymd = vnDayKey(ev.start_time);
+            const prev = byProject.get(pid) || { ymds: [], startTime: null };
+            if (ymd && !prev.ymds.includes(ymd)) prev.ymds.push(ymd);
+            if (!prev.startTime && ev.start_time) prev.startTime = ev.start_time;
+            prev.ymds.sort();
+            byProject.set(pid, prev);
+          }
+          continue;
+        }
+        console.warn('[planned-vc-ld-events] attach install dates:', error.message);
+        break;
+      }
+      for (const ev of data || []) {
+        const pid = ev?.project_id ? String(ev.project_id) : '';
+        if (!pid) continue;
+        const occ = normalizeOccurrenceYmds(ev.occurrence_dates);
+        const ymds = occ.length ? occ : (vnDayKey(ev.start_time) ? [vnDayKey(ev.start_time)] : []);
+        if (!ymds.length) continue;
+        const prev = byProject.get(pid) || { ymds: [], startTime: null };
+        for (const y of ymds) {
+          if (!prev.ymds.includes(y)) prev.ymds.push(y);
+        }
+        if (ev.start_time && (!prev.startTime || String(ev.start_time) < String(prev.startTime))) {
+          prev.startTime = ev.start_time;
+        }
+        prev.ymds.sort();
+        byProject.set(pid, prev);
+      }
+    }
+  } catch (err) {
+    console.warn('[planned-vc-ld-events] attach install dates:', err.message);
+    return list;
+  }
+
+  if (!byProject.size) return list;
+  return list.map((p) => {
+    const hit = byProject.get(String(p.id));
+    if (!hit) return p;
+    const firstYmd = hit.ymds[0];
+    const sameDay = firstYmd && vnDayKey(p.install_date) === firstYmd;
+    const overlayIso = sameDay
+      ? p.install_date
+      : (firstYmd
+        ? (isoOnYmdWithHm(firstYmd, hit.startTime || p.install_date, '14:00') || hit.startTime || p.install_date)
+        : (hit.startTime || p.install_date));
+    return {
+      ...p,
+      install_occurrence_dates: hit.ymds,
+      install_date: overlayIso || p.install_date,
+    };
+  });
+}
+
 module.exports = {
   upsertPlannedVcLdEvents,
   toProductionFinishIso,
   normalizeOccurrenceYmds,
+  syncProjectInstallDateFromInstallationEvent,
+  attachInstallEventDatesToProjects,
 };

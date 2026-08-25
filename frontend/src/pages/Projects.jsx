@@ -149,7 +149,7 @@ export default function Projects() {
         setProjects(r.data.projects || []);
         const projectIds = (r.data.projects || []).map(p => p.id);
         if (projectIds.length > 0) {
-          api.get('/tasks', { params: { project_ids: projectIds.join(','), limit: 5000, fields: 'id,project_id,assignee_id' } })
+          api.post('/tasks/lite-by-projects', { project_ids: projectIds })
             .then(tr => {
               const map = {};
               (tr.data.tasks || []).forEach(t => {

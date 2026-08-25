@@ -88,11 +88,16 @@ export function LogisticsListView({ pipeline, calculateDays }) {
                       <span className="text-gray-600 truncate block" title={ldName}>{ldName}</span>
                     </td>
                     <td className={`${bodyCellCls} whitespace-nowrap`}>
-                      {p.deadline ? (
-                        <span className={`text-xs px-2 py-1 rounded font-medium ${new Date(p.deadline) < new Date() ? 'bg-red-100 text-red-600' : 'bg-gray-100 text-gray-600'}`}>
-                          {formatDate(p.deadline)}
-                        </span>
-                      ) : <span className="text-gray-400">—</span>}
+                      {(() => {
+                        const { raw } = resolveVcDeadlineRaw(p);
+                        if (!raw) return <span className="text-gray-400">—</span>;
+                        const overdue = new Date(raw) < new Date();
+                        return (
+                          <span className={`text-xs px-2 py-1 rounded font-medium ${overdue ? 'bg-red-100 text-red-600' : 'bg-gray-100 text-gray-600'}`}>
+                            {formatDate(raw)}
+                          </span>
+                        );
+                      })()}
                     </td>
                     <td className={`${bodyCellCls} whitespace-nowrap`}>
                       <span className="text-xs text-gray-500">{calculateDays?.(p.created_at) || '—'}</span>
@@ -182,17 +187,24 @@ function startOfDay(d) {
   return x;
 }
 
-/** Ưu tiên deadline dự án; fallback ngày lắp đặt (install_date hoặc delivery_date từ CRM/SX). */
-function resolveVcDeadlineRaw(item) {
-  if (item?.deadline) return { raw: item.deadline, source: 'deadline' };
+/** Deadline VC/LĐ = ngày lắp (sự kiện lắp đặt / install_date), không dùng hạn SX. */
+export function resolveVcDeadlineRaw(item) {
   if (item?.install_date) return { raw: item.install_date, source: 'install_date' };
   if (item?.delivery_date) return { raw: item.delivery_date, source: 'delivery_date' };
   return { raw: null, source: null };
 }
 
-/** Ngày lắp dự kiến trên lịch VC: install_date → delivery_date (CRM ghi delivery khi tạo SX). */
+/** Ngày lắp trên lịch VC: sự kiện nhiều ngày → occurrence; không thì install_date. */
 function resolveVcInstallRaw(item) {
   return item?.install_date || item?.delivery_date || null;
+}
+
+function resolveVcInstallDateKeys(item) {
+  const occ = Array.isArray(item?.install_occurrence_dates) ? item.install_occurrence_dates : [];
+  const keys = [...new Set(occ.map((d) => resolveVcDateKey(d)).filter(Boolean))].sort();
+  if (keys.length) return keys;
+  const one = resolveVcDateKey(resolveVcInstallRaw(item));
+  return one ? [one] : [];
 }
 
 /** YYYY-MM-DD từ install_date / pickup_at. */
@@ -201,6 +213,13 @@ function resolveVcDateKey(raw) {
   const ymd = String(raw).slice(0, 10);
   if (/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return ymd;
   return toLocalDateKey(raw);
+}
+
+function isoOnVcDateKey(ymd, sourceIso) {
+  if (!ymd) return sourceIso || null;
+  const m = sourceIso ? String(sourceIso).match(/T(\d{2}:\d{2})/) : null;
+  const hm = m ? m[1] : '14:00';
+  return `${ymd}T${hm}:00+07:00`;
 }
 
 function shouldHideVcDeadlineCard(item, stage) {
@@ -253,13 +272,14 @@ export function LogisticsCalendarView({ pipeline, filterFrom, onVisibleMonthChan
           });
         }
 
+        const installKeys = resolveVcInstallDateKeys(p);
         const installRaw = resolveVcInstallRaw(p);
-        const installKey = resolveVcDateKey(installRaw);
-        if (installKey) {
+        for (const installKey of installKeys) {
           const overdue = installKey < todayKey;
-          const timeStr = formatCalendarDeadlineTime(installRaw);
+          const dayIso = isoOnVcDateKey(installKey, installRaw);
+          const timeStr = formatCalendarDeadlineTime(dayIso || installRaw);
           built.push({
-            id: `${p.id}:install`,
+            id: `${p.id}:install:${installKey}`,
             kind: 'install',
             dateKey: installKey,
             label: `LĐ · ${code}`,
@@ -270,6 +290,7 @@ export function LogisticsCalendarView({ pipeline, filterFrom, onVisibleMonthChan
               name,
               `Lắp đặt: ${installKey}`,
               timeStr && `Giờ: ${timeStr}`,
+              installKeys.length > 1 ? `Các ngày: ${installKeys.join(', ')}` : null,
               s.name && `Cột: ${s.name}`,
             ].filter(Boolean).join('\n'),
             tone: overdue ? 'overdue' : 'install',
@@ -295,7 +316,7 @@ export function LogisticsCalendarView({ pipeline, filterFrom, onVisibleMonthChan
     [pipeline],
   );
   const installCount = useMemo(
-    () => (pipeline || []).flatMap((s) => s.items || []).filter((p) => resolveVcDateKey(resolveVcInstallRaw(p))).length,
+    () => (pipeline || []).flatMap((s) => s.items || []).filter((p) => resolveVcInstallDateKeys(p).length).length,
     [pipeline],
   );
 
@@ -648,13 +669,8 @@ export function LogisticsDeadlineView({ pipeline }) {
     if (!target) return;
 
     const newDate = targetDateForVcBucket(toBucket);
-    // Giữ field nguồn nếu đã có; mặc định ghi deadline
-    const fieldKey = target.deadline
-      ? 'deadline'
-      : target.install_date
-        ? 'install_date'
-        : 'deadline';
-    const newTs = newDate ? new Date(`${newDate}T00:00:00`).getTime() : null;
+    const fieldKey = 'install_date';
+    const newTs = newDate ? new Date(`${newDate}T14:00:00+07:00`).getTime() : null;
     const newSource = newDate ? fieldKey : null;
 
     setLocalOverride((prev) => ({
@@ -663,7 +679,7 @@ export function LogisticsDeadlineView({ pipeline }) {
     }));
     setSavingId(id);
     try {
-      await api.put(`/projects/${id}`, { [fieldKey]: newDate });
+      await api.put(`/projects/${id}`, { [fieldKey]: newDate ? `${newDate}T14:00:00+07:00` : null });
     } catch (e) {
       alert(e?.response?.data?.error || 'Lỗi cập nhật deadline');
       setLocalOverride((prev) => {

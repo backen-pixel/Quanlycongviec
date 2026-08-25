@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "cross-env NODE_OPTIONS=--max-http-header-size=1048576 vite",
     "build": "node ../scripts/knowledge/sync-screenshots-deploy.js && cross-env NODE_OPTIONS=--max-old-space-size=4096 vite build",
     "build:analyze": "cross-env ANALYZE=1 NODE_OPTIONS=--max-old-space-size=4096 vite build",
     "preview": "vite preview"

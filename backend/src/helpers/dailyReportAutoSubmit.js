@@ -1,7 +1,7 @@
 /**
  * Tự động chốt báo cáo ngày từ CRM.
  * - phase=plan   (~08:00): Phần I Deadline Quá hạn+Hôm nay
- * - phase=result (~17:00): Phần II KQ CRM hôm trước
+ * - phase=result (~16:45): Phần II KQ CRM đúng ngày phiếu
  * Dùng chung: POST /mine/auto-close, cron, script seed.
  */
 const { supabase } = require('../config/supabase');
@@ -64,8 +64,9 @@ function looksLikeNonCrmUser(user) {
   return false;
 }
 
+/** Phần II = CRM đúng ngày phiếu (chốt 16:45), không lệch −1. */
 function resultDateForReport(reportDate) {
-  return crmReportAddDaysYmd(reportDate, -1);
+  return reportDate;
 }
 
 async function listTemplates(companyId = null) {
@@ -250,7 +251,7 @@ async function syncUserExtraLines(reportId, userId) {
  * Auto-chốt báo cáo ngày cho 1 user.
  * @param {'plan'|'result'} phase
  *   - plan   (sáng ~08:00): Phần I = Deadline Quá hạn+Hôm nay của ngày phiếu
- *   - result (chiều ~17:00): Phần II = KQ CRM ngày hôm trước (+ plan nếu chưa nộp sáng)
+ *   - result (chiều ~16:45): Phần II = KQ CRM đúng ngày phiếu (+ plan nếu chưa nộp sáng)
  * @returns {{ report, auto_close }}
  */
 async function autoCloseDailyReportForUser({
@@ -266,7 +267,7 @@ async function autoCloseDailyReportForUser({
   if (!userId) throw new Error('Thiếu userId');
   const date = reportDate || crmReportTodayYmdVn();
   const resultDate = resultDateForReport(date);
-  if (!resultDate) throw new Error('Không xác định được ngày kết quả (hôm trước)');
+  if (!resultDate) throw new Error('Không xác định được ngày kết quả (ngày phiếu)');
   const mode = phase === 'plan' ? 'plan' : 'result';
 
   let me = userProfile;
