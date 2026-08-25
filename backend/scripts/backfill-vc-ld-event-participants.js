@@ -14,12 +14,29 @@ const TYPES = ['pickup', 'installation', 'delivery', 'production_finish'];
 async function loadEvents() {
   const { data, error } = await supabase
     .from('crm_events')
-    .select('id, title, event_type, module, status, lead_id, project_id')
+    .select('id, title, event_type, module, status, lead_id, project_id, assignee_id, created_by')
     .in('event_type', TYPES)
     .neq('status', 'cancelled')
-    .limit(2000);
+    .limit(5000);
   if (error) throw error;
-  return (data || []).filter((e) => e.lead_id || e.project_id);
+  const rows = data || [];
+  const extra = [];
+  try {
+    const { data: byTitle } = await supabase
+      .from('crm_events')
+      .select('id, title, event_type, module, status, lead_id, project_id, assignee_id, created_by')
+      .neq('status', 'cancelled')
+      .ilike('title', '%hoàn thiện sản xuất%')
+      .limit(500);
+    extra.push(...(byTitle || []));
+  } catch (_) { /* ignore */ }
+  const seen = new Set();
+  return [...rows, ...extra].filter((e) => {
+    if (!e?.id || seen.has(e.id)) return false;
+    if (!e.lead_id && !e.project_id) return false;
+    seen.add(e.id);
+    return true;
+  });
 }
 
 async function loadExistingParticipantIds(eventId) {
@@ -51,7 +68,11 @@ async function main() {
       });
       peopleCache.set(cacheKey, people);
     }
-    const wanted = people.userIds || [];
+    const wanted = [...new Set([
+      ...(people.userIds || []),
+      ev.assignee_id,
+      ev.created_by,
+    ].filter(Boolean).map(String))];
     if (!wanted.length) continue;
 
     const have = await loadExistingParticipantIds(ev.id);

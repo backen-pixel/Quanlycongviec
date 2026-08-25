@@ -1,44 +1,43 @@
 /**
- * Seed / auto-nộp Phần II (KQ CRM đúng ngày phiếu) cho NV CRM — thử bảng tổng hợp.
+ * Seed snapshot báo cáo ngày (Pha 2) cho Phúc Đạt / VPT.
  * Usage:
- *   node scripts/seed-daily-report-auto-close-phucdat.js [YYYY-MM-DD]
- *   DAILY_REPORT_AUTO_CLOSE_COMPANY_IDS=<uuid> node scripts/seed-daily-report-auto-close-phucdat.js
+ *   node scripts/seed-daily-report-auto-close-phucdat.js [YYYY-MM-DD] [plan|result]
  */
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
-const { runAutoCloseBatch } = require('../src/helpers/dailyReportAutoSubmit');
+const { runSnapshotBatch } = require('../src/helpers/dailyReportSnapshot');
 const { crmReportTodayYmdVn } = require('../src/helpers/crmReportDateBounds');
 
 const PHUC_DAT = '29677f68-967e-4256-92fd-492bb580e888';
+const VPT = '991dc79d-cbf5-49f9-a364-35227cb47635';
 
 async function main() {
   const reportDate = process.argv[2] || crmReportTodayYmdVn();
+  const phase = process.argv[3] === 'plan' ? 'plan' : 'result';
   const companyIds = process.env.DAILY_REPORT_AUTO_CLOSE_COMPANY_IDS
-    ? null // helper đọc env
-    : [PHUC_DAT];
+    ? null
+    : [PHUC_DAT, VPT];
 
-  console.log(`Report date=${reportDate} · auto-nộp Phần II (KQ ngày phiếu)`);
-  const summary = await runAutoCloseBatch({
+  console.log(`Snapshot ${phase} · date=${reportDate}`);
+  const summary = await runSnapshotBatch({
     reportDate,
     companyIds,
-    force: true,
+    phase,
     onProgress: (row) => {
       if (row.error) console.warn(`ERR ${row.name}: ${row.error}`);
-      else if (row.skipped) console.log(`SKIP ${row.name}`);
-      else console.log(`OK ${row.name} [${row.role_key}] filled=${row.auto_filled}`, row);
+      else console.log(`OK ${row.name} [${row.role_key}] filled=${row.auto_filled}`);
     },
   });
 
   console.log('\n=== SUMMARY ===');
   console.log(JSON.stringify({
     report_date: summary.report_date,
-    result_date: summary.result_date,
+    phase: summary.phase,
     companies: summary.companies,
     ok: summary.ok,
     skipped: summary.skipped,
     errors: summary.errors,
-    results: summary.results,
   }, null, 2));
   process.exit(summary.errors ? 1 : 0);
 }

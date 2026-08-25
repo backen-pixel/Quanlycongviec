@@ -1809,6 +1809,38 @@ r.put('/:id', async (req, res) => {
       }
     }
 
+    // Lắp đặt / hoàn thiện / lấy hàng: luôn bổ sung thành viên dự án (không để form sửa làm rớt người)
+    try {
+      const { shouldInviteAllModuleOwners, collectProjectEventParticipantIds } = require('../helpers/dealModuleResponsibleUsers');
+      if (
+        shouldInviteAllModuleOwners(data.event_type, data.title)
+        && (data.lead_id || data.project_id)
+      ) {
+        const owners = await collectProjectEventParticipantIds({
+          leadId: data.lead_id,
+          projectId: data.project_id,
+        });
+        const extraIds = [...new Set([
+          ...(owners.userIds || []),
+          data.assignee_id,
+          data.created_by,
+          req.user?.userId,
+        ].filter(Boolean).map(String))];
+        if (extraIds.length) {
+          await supabase.from('crm_event_participants').upsert(
+            extraIds.map((uid) => ({
+              event_id: req.params.id,
+              user_id: uid,
+              status: 'confirmed',
+            })),
+            { onConflict: 'event_id,user_id' },
+          );
+        }
+      }
+    } catch (ownerErr) {
+      console.warn('[events] PUT module owners:', ownerErr.message);
+    }
+
     // Auto-complete linked task when event completed
     if (b.status === 'completed' && data.lead_id && data.event_type_ref?.stage_slug) {
       try {

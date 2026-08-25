@@ -3,31 +3,16 @@
  * và tab "Tổng hợp theo từng mục I–IV" trên /crm/daily-reports.
  */
 const { supabase } = require('../config/supabase');
-const { computeAutoDailyResults, computeAutoDailyPlans, metricKeyFromLabel } = require('./dailyReportAutoClose');
-const { guessRoleKey, isCrmSalesDept, looksLikeNonCrmUser } = require('./dailyReportAutoSubmit');
+const { metricKeyFromLabel, computeForUser } = require('./dailyReportMetrics');
+const { guessRoleKey, isCrmSalesDept, looksLikeNonCrmUser } = require('./dailyReportStaffing');
 const { loadAssignedTemplateIds } = require('./dailyReportUserTemplates');
 const { crmReportAddDaysYmd } = require('./crmReportDateBounds');
+const { loadSnapshotsMap, snapKey, resultUntilIso } = require('./dailyReportSnapshot');
 
 const TEMPLATE_FIELDS = 'id, company_id, role_key, name, description, has_sharpen_section, is_active, created_at, updated_at';
 const ITEM_FIELDS = 'id, template_id, section, label, order_index, unit_label, metric_key, created_at';
 const REPORT_FIELDS =
   'id, company_id, user_id, template_id, report_date, department_name, status, plan_submitted_at, result_submitted_at, manager_note, created_at, updated_at';
-
-async function mapLimit(items, limit, fn) {
-  const list = items || [];
-  const out = new Array(list.length);
-  let next = 0;
-  async function worker() {
-    while (next < list.length) {
-      const i = next;
-      next += 1;
-      out[i] = await fn(list[i], i);
-    }
-  }
-  const n = Math.min(Math.max(1, limit), list.length || 1);
-  await Promise.all(Array.from({ length: list.length ? n : 0 }, () => worker()));
-  return out;
-}
 
 function normalizeDailyRoleKey(roleKey) {
   const k = String(roleKey || '').trim();
@@ -86,6 +71,7 @@ async function loadTeamDailyReportMatrix({
   departmentId = null,
   roleKey = null,
   q = '',
+  preview = false,
 } = {}) {
   if (!companyId) throw new Error('Thiếu company_id');
   const resultDate = date;
@@ -305,36 +291,37 @@ async function loadTeamDailyReportMatrix({
     ));
   }
 
-  const AUTO_RESULT_ROLES = new Set(['sale_admin', 'sale_deal', 'deal_admin', 'design_survey']);
-  const AUTO_PLAN_ROLES = new Set(['sale_admin', 'sale_deal', 'deal_admin']);
-  const liveByUser = new Map();
-  const needLive = employees.some((e) => AUTO_RESULT_ROLES.has(e.role_key) || AUTO_PLAN_ROLES.has(e.role_key));
-  if (needLive) {
-    await mapLimit(
-      employees.filter((e) => (
-        (AUTO_RESULT_ROLES.has(e.role_key) || AUTO_PLAN_ROLES.has(e.role_key))
-        && (e.report_id || isCrmSalesDept(e.department_name) || lastTemplateByUser.has(String(e.id)))
-      )),
-      6,
-      async (emp) => {
-        try {
-          const [computed, planned] = await Promise.all([
-            AUTO_RESULT_ROLES.has(emp.role_key)
-              ? computeAutoDailyResults(String(emp.id), resultDate, emp.role_key)
-              : Promise.resolve({ metrics: {} }),
-            AUTO_PLAN_ROLES.has(emp.role_key)
-              ? computeAutoDailyPlans(String(emp.id), date, emp.role_key, companyId)
-              : Promise.resolve({ metrics: {} }),
-          ]);
-          liveByUser.set(String(emp.id), {
-            result: computed.metrics || {},
-            plan: planned.metrics || {},
+  const snapshotMap = await loadSnapshotsMap(date, companyId);
+  if (preview) {
+    const untilIso = resultUntilIso(date);
+    for (const emp of employees) {
+      const rk = emp.role_key === 'deal_admin' ? 'sale_deal' : emp.role_key;
+      if (!rk || rk === 'none' || rk === 'unknown') continue;
+      try {
+        const [planPack, resultPack] = await Promise.all([
+          computeForUser(emp.id, date, rk, 'plan', { companyId }),
+          computeForUser(emp.id, date, rk, 'result', { companyId, untilIso }),
+        ]);
+        for (const [mk, m] of Object.entries(planPack.metrics || {})) {
+          snapshotMap.set(snapKey(emp.id, 'plan', mk), {
+            value: m.value,
+            entity_ids: m.ids,
+            note: m.note,
+            source: m.source,
           });
-        } catch (err) {
-          console.warn('[daily-reports] live matrix', emp.id, err.message || err);
         }
-      },
-    );
+        for (const [mk, m] of Object.entries(resultPack.metrics || {})) {
+          snapshotMap.set(snapKey(emp.id, 'result', mk), {
+            value: m.value,
+            entity_ids: m.ids,
+            note: m.note,
+            source: m.source,
+          });
+        }
+      } catch (e) {
+        console.warn('[daily-report-matrix] preview', emp.full_name || emp.id, e.message || e);
+      }
+    }
   }
 
   function rowKey(section, line) {
@@ -399,13 +386,14 @@ async function loadTeamDailyReportMatrix({
         if (!row.metric_key && line.metric_key) row.metric_key = line.metric_key;
         row.order_index = Math.min(row.order_index, Number(line.order_index) || 0);
         let display = null;
-        const live = liveByUser.get(String(emp.id));
         const mk = line.metric_key || metricKeyFromLabel(line.label);
         if (valueField === 'plan') {
-          if (live?.plan && mk && live.plan[mk] && live.plan[mk].value != null) display = live.plan[mk].value;
+          const snap = mk ? snapshotMap.get(snapKey(emp.id, 'plan', mk)) : null;
+          if (snap && snap.value != null) display = snap.value;
           else display = line.plan_value;
         } else if (valueField === 'result') {
-          if (live?.result && mk && live.result[mk] && live.result[mk].value != null) display = live.result[mk].value;
+          const snap = mk ? snapshotMap.get(snapKey(emp.id, 'result', mk)) : null;
+          if (snap && snap.value != null) display = snap.value;
           else display = line.result_value;
         } else if (valueField === 'note') {
           const note = line.result_note || line.plan_note;
@@ -503,8 +491,10 @@ async function loadTeamDailyReportMatrix({
   return {
     date,
     result_date: resultDate,
-    result_live: needLive,
-    plan_live: needLive,
+    result_live: !!preview,
+    plan_live: !!preview,
+    snapshot: !preview && snapshotMap.size > 0,
+    preview: !!preview,
     company_id: companyId,
     department_id: departmentId,
     role_key: templateRoleFilter,

@@ -531,12 +531,60 @@ function writeOverviewSheet(wb, {
   };
 }
 
+function uniqueSheetNameFactory() {
+  const used = new Set();
+  return (raw) => {
+    let base = sheetName(raw);
+    if (!base) base = 'Sheet';
+    let name = base;
+    let n = 2;
+    while (used.has(name.toLowerCase())) {
+      const suffix = ` ${n}`;
+      name = sheetName(`${base.slice(0, Math.max(1, 31 - suffix.length))}${suffix}`);
+      n += 1;
+    }
+    used.add(name.toLowerCase());
+    return name;
+  };
+}
+
 function shortRole(g) {
   const name = String(g.template_name || g.role_key || '').trim();
   if (/sale.?admin|sale admin/i.test(name) || g.role_key === 'sale_admin') return 'Sale Admin';
   if (/sale.?deal|deal/i.test(name) || g.role_key === 'sale_deal' || g.role_key === 'deal_admin') return 'Sale-Deal';
   return name.slice(0, 14) || 'Mẫu';
 }
+
+const SECTION_EXPORT_META = {
+  plan: {
+    prefix: 'I KH',
+    title: 'I. KẾ HOẠCH',
+    note: 'Deadline Lead/Deal cột Quá hạn + Hôm nay, gom theo cột Kanban lúc snapshot 08:00.',
+    headerArgb: 'E0F2FE',
+    titleArgb: '0369A1',
+  },
+  result: {
+    prefix: 'II KQ',
+    title: 'II. KẾT QUẢ',
+    note: 'Điểm đến cuối trong ngày (cắt 16:45), không cộng hành trình. Ô đậm = số cao nhất trong hàng.',
+    headerArgb: 'EDE9FE',
+    titleArgb: '6D28D9',
+  },
+  sharpen: {
+    prefix: 'III MD',
+    title: 'III. MÀI DAO',
+    note: 'NV điền tay trên phiếu.',
+    headerArgb: 'FEF3C7',
+    titleArgb: 'B45309',
+  },
+  proposal: {
+    prefix: 'IV DX',
+    title: 'IV. ĐỀ XUẤT',
+    note: 'NV điền tay trên phiếu.',
+    headerArgb: 'D1FAE5',
+    titleArgb: '047857',
+  },
+};
 
 export async function downloadDailyReportMatrixExcel({
   date,
@@ -545,46 +593,48 @@ export async function downloadDailyReportMatrixExcel({
   roleLabel,
   summary,
   groups,
+  sectionKeys = ['plan', 'result'],
 }) {
   const ExcelJS = (await import('exceljs')).default;
   const wb = new ExcelJS.Workbook();
   wb.creator = 'QLCV CRM';
   wb.created = new Date();
+  const want = new Set(
+    (Array.isArray(sectionKeys) && sectionKeys.length ? sectionKeys : ['plan'])
+      .filter((k) => SECTION_EXPORT_META[k]),
+  );
+
+  const nextName = uniqueSheetNameFactory();
+  nextName('Tổng quan');
+  nextName('So sánh KH vs KQ');
 
   writeOverviewSheet(wb, { date, companyName, departmentName, roleLabel, summary, groups });
 
   for (const g of groups || []) {
     const role = shortRole(g);
     const emps = g.employees || [];
-    const plan = (g.sections || []).find((s) => s.key === 'plan');
-    const result = (g.sections || []).find((s) => s.key === 'result');
-    if (plan) {
+    const coTag = g.company_short || '';
+    for (const key of ['plan', 'result', 'sharpen', 'proposal']) {
+      if (!want.has(key)) continue;
+      const section = (g.sections || []).find((s) => s.key === key);
+      if (!section) continue;
+      const meta = SECTION_EXPORT_META[key];
       writeMatrixSheet(wb, {
-        name: `KH ${role}`,
-        title: `I. KẾ HOẠCH — ${g.template_name || role}`,
+        name: nextName(`${meta.prefix} ${coTag} ${role}`.replace(/\s+/g, ' ').trim()),
+        title: `${meta.title} — ${g.template_name || role}${g.company_name ? ` · ${g.company_name}` : ''}`,
         subtitle: `Ngày phiếu ${fmtDmy(date)}  ·  ${emps.length} nhân viên`,
-        note: 'Nguồn: Deadline Lead/Deal, cột Quá hạn + Hôm nay, gom theo cột Kanban hiện tại. Ô đậm = số cao nhất trong hàng.',
-        headerArgb: 'E0F2FE',
-        titleArgb: '0369A1',
+        note: meta.note,
+        headerArgb: meta.headerArgb,
+        titleArgb: meta.titleArgb,
         employees: emps,
-        rows: plan.rows || [],
-      });
-    }
-    if (result) {
-      writeMatrixSheet(wb, {
-        name: `KQ ${role}`,
-        title: `II. KẾT QUẢ — ${g.template_name || role}`,
-        subtitle: `CRM ngày ${fmtDmy(date)}  ·  ${emps.length} nhân viên`,
-        note: 'Nguồn: số CRM đúng ngày đang chọn trên bộ lọc (không lệch −1). Ô đậm = số cao nhất trong hàng.',
-        headerArgb: 'EDE9FE',
-        titleArgb: '6D28D9',
-        employees: emps,
-        rows: result.rows || [],
+        rows: section.rows || [],
       });
     }
   }
 
-  writeCompareSheet(wb, { date, groups });
+  if (want.has('plan') && want.has('result')) {
+    writeCompareSheet(wb, { date, groups });
+  }
 
   const buffer = await wb.xlsx.writeBuffer();
   const blob = new Blob([buffer], {
@@ -597,5 +647,7 @@ export async function downloadDailyReportMatrixExcel({
     .replace(/[^a-zA-Z0-9]+/g, '_')
     .replace(/^_|_$/g, '')
     .slice(0, 40) || 'cong_ty';
-  saveAs(blob, `Bao_cao_ngay_KH_KQ_${co}_${dmy}.xlsx`);
+  const TAG = { plan: 'I', result: 'II', sharpen: 'III', proposal: 'IV' };
+  const tag = [...want].map((k) => TAG[k] || k).join('-') || 'I';
+  saveAs(blob, `Bao_cao_ngay_${tag}_${co}_${dmy}.xlsx`);
 }

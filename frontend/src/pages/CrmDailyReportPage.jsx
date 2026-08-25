@@ -6,7 +6,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import { createPortal } from 'react-dom';
 import {
   CalendarDays, ChevronLeft, ChevronRight, ClipboardCheck, Loader2,
-  Save, Send, Users, X, AlertTriangle, CheckCircle2, Clock, Sparkles, History,
+  Save, Send, Users, X, AlertTriangle, CheckCircle2, Clock, History,
   Plus, Trash2, HelpCircle, Filter, Search, ExternalLink, FileDown, Copy, Sheet,
   SlidersHorizontal,
 } from 'lucide-react';
@@ -42,25 +42,44 @@ const fmtTime = (iso) => {
   }
 };
 
-/** Giải thích hạng mục AUTO (hover dấu ?) */
+const SNAPSHOT_METRIC_KEYS = new Set([
+  'lead_new', 'not_contacted', 'care_cold', 'care_warm', 'care_hot', 'survey_scheduled',
+  'deal_new', 'deal_interact', 'deal_survey', 'deal_to_quote', 'deal_to_contract',
+  'deal_producing', 'deal_installing', 'deal_completed', 'deal_overdue',
+  'survey_event', 'install_follow',
+]);
+
+function isSnapshotMetricLine(l) {
+  if (!l || l.is_user_extra) return false;
+  const key = String(l.metric_key || '');
+  if (!key || key.startsWith('user_extra:')) return false;
+  return SNAPSHOT_METRIC_KEYS.has(key);
+}
+
+function snapshotDisplay(value) {
+  if (value === '' || value == null) return '—';
+  return value;
+}
+
+/** Giải thích hạng mục hệ thống (hover dấu ?) */
 const METRIC_HELP = {
-  lead_new: 'Số lead vào cột Tiếp nhận trong ngày (hoặc lead bạn tạo mới cùng ngày). Đếm lead bạn phụ trách hoặc bạn là người chuyển cột. Lấy max hai nguồn, không cộng trùng.',
-  not_contacted: 'Số lead (distinct) vào cột Không trả lời / không phản hồi trong ngày.',
-  care_cold: 'Ưu tiên: số lead đang ở Cold mà bạn có activity trong ngày. Nếu không có activity thì đếm lead vào cột Cold trong ngày.',
-  care_warm: 'Ưu tiên: số lead đang ở Warm mà bạn có activity trong ngày. Nếu không có activity thì đếm lead vào cột Warm trong ngày.',
-  care_hot: 'Ưu tiên: số lead đang ở Hot mà bạn có activity trong ngày. Nếu không có activity thì đếm lead vào cột Hot trong ngày.',
-  survey_scheduled: 'Số lead bạn convert Lead → Deal trong ngày (KPI lead_converted hoặc chuyển sang pipeline Deal) — không phải số vào cột Hẹn khảo sát.',
-  deal_new: 'Số deal tiếp nhận trong ngày (deal tạo mới hoặc lead→deal). Lấy max hai nguồn.',
-  deal_interact: 'Số sự kiện khảo sát / đo đạc trong ngày có liên kết lead/deal (bạn tạo hoặc được giao).',
-  deal_survey: 'Số sự kiện khảo sát / đo đạc trong ngày có liên kết lead/deal.',
-  deal_to_quote: 'Số deal chuyển sang báo giá hoặc đang thiết kế/BG trong ngày (cộng hai cột, có thể trùng nếu cùng deal đi cả hai).',
-  deal_to_contract: 'Số deal ký hợp đồng hoặc chờ cọc trong ngày.',
-  deal_producing: 'Số deal vào sản xuất trong ngày.',
-  deal_installing: 'Số deal VC / lắp đặt trong ngày.',
-  deal_completed: 'Số deal hoàn thành trong ngày.',
-  deal_overdue: 'Số deal chưa thắng/thua có deadline thẻ hoặc ngày đóng kỳ vọng rơi vào ngày đó.',
+  lead_new: 'Lead còn đứng Tiếp nhận / Mới lúc cắt 16:45 (điểm đến cuối trong ngày). Lead tạo rồi chuyển sang Cold/Mất không còn đếm ở đây.',
+  not_contacted: 'Lead điểm đến cuối trong ngày = Không phản hồi. Comment chăm mà không chuyển cột cũng tính.',
+  care_cold: 'Lead điểm đến cuối = Cold. Đã đi Mới → Cold trong ngày chỉ vào Cold, không còn ở Lead mới.',
+  care_warm: 'Lead điểm đến cuối = Warm. Không cộng các cột trung gian đã đi qua cùng ngày.',
+  care_hot: 'Lead điểm đến cuối = Hot. Không cộng các cột trung gian đã đi qua cùng ngày.',
+  survey_scheduled: 'Lead điểm đến cuối = Hẹn khảo sát / chốt Deal. Không đếm nếu sau đó đã sang cột khác.',
+  deal_new: 'Deal điểm đến cuối = Deal mới / tiếp nhận. Deal tạo rồi chuyển HĐ/SX cùng ngày không còn đếm ở đây.',
+  deal_interact: 'Deal điểm đến cuối = Đã khảo sát, hoặc sự kiện KS nếu không chuyển cột.',
+  deal_survey: 'Giống Tương tác: điểm đến cuối = Đã khảo sát.',
+  deal_to_quote: 'Deal điểm đến cuối = Thiết kế / Báo giá / Đàm phán. Đi tiếp sang HĐ thì chỉ đếm HĐ.',
+  deal_to_contract: 'Deal điểm đến cuối = Chờ cọc / Đã ký HĐ.',
+  deal_producing: 'Deal điểm đến cuối = Sản xuất.',
+  deal_installing: 'Deal điểm đến cuối = VC / lắp đặt.',
+  deal_completed: 'Deal điểm đến cuối = Hoàn thành.',
+  deal_overdue: 'Số deal chưa thắng/thua có deadline thẻ hoặc ngày đóng kỳ vọng rơi vào ngày phiếu.',
   survey_event: 'Số sự kiện khảo sát / đo đạc trong ngày (bạn được giao hoặc tạo).',
-  install_follow: 'Số deal theo dõi lắp đặt (chuyển cột hoặc task) trong ngày.',
+  install_follow: 'Deal điểm đến cuối = lắp đặt trong ngày.',
   design_consult: 'Điền tay: số lần hỗ trợ tư vấn.',
   design_new: 'Điền tay: số thiết kế mới.',
   design_edit: 'Điền tay: số lần sửa thiết kế.',
@@ -139,6 +158,45 @@ function addDaysISO(iso, n) {
   d.setDate(d.getDate() + n);
   return toISO(d);
 }
+
+const RESULT_CUTOFF_MINUTES = 16 * 60 + 45; // 16:45 VN
+
+function vnCalendarNow() {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Ho_Chi_Minh',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(new Date());
+  const get = (type) => parts.find((p) => p.type === type)?.value;
+  return {
+    date: `${get('year')}-${get('month')}-${get('day')}`,
+    minutes: Number(get('hour')) * 60 + Number(get('minute')),
+  };
+}
+
+/** II–IV chỉ xuất được ngày đã qua, hoặc hôm nay từ 16:45 VN. */
+function canExportAfterPlanSections(reportDate) {
+  if (!reportDate || !/^\d{4}-\d{2}-\d{2}$/.test(reportDate)) return false;
+  const vn = vnCalendarNow();
+  if (reportDate < vn.date) return true;
+  if (reportDate > vn.date) return false;
+  return vn.minutes >= RESULT_CUTOFF_MINUTES;
+}
+
+function defaultExportSections(reportDate) {
+  return canExportAfterPlanSections(reportDate) ? ['plan', 'result'] : ['plan'];
+}
+
+const SECTION_EXPORT_OPTIONS = [
+  { key: 'plan', label: 'I. Kế hoạch', hint: 'Snapshot 08:00' },
+  { key: 'result', label: 'II. Kết quả', hint: 'Cắt 16:45' },
+  { key: 'sharpen', label: 'III. Mài dao', hint: 'NV điền tay' },
+  { key: 'proposal', label: 'IV. Đề xuất', hint: 'NV điền tay' },
+];
 
 const STATUS_META = {
   draft: { label: 'Nháp', cls: 'bg-gray-100 text-gray-600' },
@@ -235,30 +293,6 @@ function mapLines(list) {
   });
 }
 
-/** Gắn số liệu CRM preview vào dòng Phần I (Deadline) và Phần II (funnel). */
-function applyAutoPreview(list, resultMetrics, planMetrics) {
-  const hasResult = resultMetrics && typeof resultMetrics === 'object';
-  const hasPlan = planMetrics && typeof planMetrics === 'object';
-  if (!hasResult && !hasPlan) return list;
-  return (list || []).map((l) => {
-    if (l.section !== 'work') return l;
-    const key = l.metric_key;
-    const m = key && hasResult ? resultMetrics[key] : null;
-    const p = key && hasPlan ? planMetrics[key] : null;
-    if ((!m || m.value == null) && (!p || p.value == null)) return l;
-    return {
-      ...l,
-      result_value: (m && m.value != null) ? m.value : l.result_value,
-      plan_value: (p && p.value != null) ? p.value : l.plan_value,
-      auto_result: true,
-      preview_live: !!(m && m.value != null),
-      preview_live_plan: !!(p && p.value != null),
-      auto_hint: m?.note || null,
-      auto_plan_hint: p?.note || null,
-    };
-  });
-}
-
 // ─── Form nhập của NV ────────────────────────────────────────────────────────
 function MyReportPanel({ date, onDateChange }) {
   const { user } = useAuth();
@@ -266,7 +300,6 @@ function MyReportPanel({ date, onDateChange }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [closing, setClosing] = useState(false);
-  const [previewing, setPreviewing] = useState(false);
   const [exporting, setExporting] = useState(''); // 'pdf' | 'copy' | ''
   const [error, setError] = useState('');
   const [okMsg, setOkMsg] = useState('');
@@ -325,48 +358,6 @@ function MyReportPanel({ date, onDateChange }) {
     }
   };
 
-  const fillPreview = useCallback(async (baseLines, tplId, tplList, rep) => {
-    const tpl = (tplList || []).find((t) => String(t.id) === String(tplId || rep?.template_id));
-    const roleKey = tpl?.role_key || rep?.template?.role_key || null;
-    setPreviewing(true);
-    try {
-      const { data } = await api.get('/crm/daily-reports/mine/preview-auto', {
-        params: { date, role_key: roleKey || undefined },
-      });
-      // Phiếu đã chốt: giữ số đã lưu, chỉ bổ sung ghi chú preview nếu trống
-      const isClosed = rep?.status === 'result_submitted' || rep?.status === 'late';
-      if (isClosed) {
-        const metrics = data.metrics || {};
-        const planMetrics = data.plan_metrics || {};
-        setLines((baseLines || []).map((l) => {
-          if (l.section !== 'work') return l;
-          const m = l.metric_key ? metrics[l.metric_key] : null;
-          const p = l.metric_key ? planMetrics[l.metric_key] : null;
-          if (!m && !p) return { ...l, auto_result: l.auto_result || false };
-          const hasSaved = l.result_value !== '' && l.result_value != null;
-          const hasSavedPlan = l.plan_value !== '' && l.plan_value != null;
-          return {
-            ...l,
-            result_value: hasSaved ? l.result_value : (m?.value ?? l.result_value),
-            plan_value: hasSavedPlan ? l.plan_value : (p?.value ?? l.plan_value),
-            auto_result: true,
-            preview_live: !hasSaved && !!m,
-            preview_live_plan: !hasSavedPlan && !!p,
-            auto_hint: m?.note || null,
-            auto_plan_hint: p?.note || null,
-          };
-        }));
-      } else {
-        setLines(applyAutoPreview(baseLines, data.metrics, data.plan_metrics));
-      }
-    } catch (e) {
-      setLines(baseLines);
-      console.warn('[daily-report] preview-auto failed', e?.message || e);
-    } finally {
-      setPreviewing(false);
-    }
-  }, [date]);
-
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
@@ -378,7 +369,6 @@ function MyReportPanel({ date, onDateChange }) {
       const mapped = mapLines(data.report?.lines);
       setTemplateId(data.report?.template_id || '');
       setLines(mapped);
-      await fillPreview(mapped, data.report?.template_id, data.templates, data.report);
     } catch (e) {
       setError(e.response?.data?.error || e.message || 'Không tải được báo cáo');
       setReport(null);
@@ -386,7 +376,7 @@ function MyReportPanel({ date, onDateChange }) {
     } finally {
       setLoading(false);
     }
-  }, [date, fillPreview]);
+  }, [date]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -423,23 +413,16 @@ function MyReportPanel({ date, onDateChange }) {
     setError('');
     setOkMsg('');
     try {
-      await api.put('/crm/daily-reports/mine', {
+      const { data } = await api.put('/crm/daily-reports/mine', {
         date,
         template_id: templateId || report?.template_id,
-        phase: closed ? 'draft' : 'plan',
+        phase: 'result',
         lines: buildPayloadLines(),
-      });
-      const { data } = await api.post('/crm/daily-reports/mine/auto-close', {
-        date,
-        template_id: templateId || report?.template_id,
       });
       setReport(data.report);
       setTemplateId(data.report?.template_id || templateId);
       setLines(mapLines(data.report?.lines));
-      let msg = 'Đã nộp báo cáo';
-      if (data.auto_close?.auto_filled) msg += ` · chốt ${data.auto_close.auto_filled} hạng mục từ CRM`;
-      if (data.auto_close?.manual_left) msg += ` · ${data.auto_close.manual_left} hạng mục điền tay`;
-      setOkMsg(msg);
+      setOkMsg('Đã nộp báo cáo (Phần III/IV và ghi chú). Phần I–II lấy snapshot 08:00 / 16:45.');
     } catch (e) {
       setError(e.response?.data?.error || e.message || 'Nộp báo cáo thất bại');
     } finally {
@@ -460,7 +443,6 @@ function MyReportPanel({ date, onDateChange }) {
       const mapped = mapLines(data.report?.lines);
       setLines(mapped);
       setTemplateId(data.report?.template_id || id);
-      await fillPreview(mapped, data.report?.template_id || id, data.templates || templates, data.report);
     } catch (e) {
       setError(e.response?.data?.error || e.message || 'Đổi mẫu thất bại');
     } finally {
@@ -492,7 +474,6 @@ function MyReportPanel({ date, onDateChange }) {
             : l
         ));
         setLines(mapped);
-        await fillPreview(mapped, data.report.template_id || templateId, templates, data.report);
       } else if (data.extra) {
         setLines((prev) => [
           ...prev,
@@ -534,7 +515,6 @@ function MyReportPanel({ date, onDateChange }) {
         setReport(data.report);
         const mapped = mapLines(data.report.lines);
         setLines(mapped);
-        await fillPreview(mapped, data.report.template_id || templateId, templates, data.report);
       } else {
         setLines((prev) => prev.filter((l) => l.user_extra_id !== line.user_extra_id));
       }
@@ -565,10 +545,11 @@ function MyReportPanel({ date, onDateChange }) {
   return (
     <div className="space-y-4">
       <div className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-950" data-export-hide="1">
-        <strong>Phần I</strong> = kế hoạch ngày phiếu ({fmtDMY(date)}), tự lấy từ Deadline Lead/Deal cột <strong>Quá hạn + Hôm nay</strong>
-        {' '}(hệ thống tự chốt ~<strong>08:00</strong>).{' '}
-        <strong>Phần II</strong> = kết quả CRM đúng ngày phiếu ({fmtDMY(date)}), tự lấy khi <strong>Nộp báo cáo</strong>
-        {' '}(hệ thống tự chốt ~<strong>16:45</strong>).
+        <strong>Phần I</strong> = Deadline Lead/Deal cột <strong>Quá hạn + Hôm nay</strong>
+        {' '}(snapshot <strong>08:00</strong> ngày phiếu {fmtDMY(date)}).{' '}
+        <strong>Phần II</strong> = kết quả CRM đúng ngày phiếu, cắt tới <strong>16:45</strong>
+        {' '}— mỗi lead/deal chỉ tính <strong>cột đích cuối</strong>, không cộng hành trình.{' '}
+        <strong>Phần III/IV</strong> và dòng tự thêm: điền tay rồi nộp.
       </div>
 
       <div className="flex flex-wrap items-center justify-end gap-2" data-export-hide="1">
@@ -669,8 +650,7 @@ function MyReportPanel({ date, onDateChange }) {
             </span>
             <div className="flex items-center gap-2">
               <span className="inline-flex items-center gap-1 rounded-md bg-sky-500/90 px-2 py-0.5 text-[11px] font-semibold tracking-wide">
-                {previewing ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
-                DEADLINE QH + HÔM NAY
+                SNAPSHOT 08:00
               </span>
               <button
                 type="button"
@@ -697,7 +677,7 @@ function MyReportPanel({ date, onDateChange }) {
               </thead>
               <tbody>
                 {workLines.map((l, i) => {
-                  const planManual = l.is_user_extra || !l.metric_key || String(l.metric_key).startsWith('user_extra:');
+                  const planManual = !isSnapshotMetricLine(l);
                   return (
                   <tr key={l.id || l.user_extra_id || `p-${i}`} className="border-t border-gray-100">
                     <td className="px-3 py-2 text-gray-500">{i + 1}</td>
@@ -727,9 +707,6 @@ function MyReportPanel({ date, onDateChange }) {
                       ) : (
                         <span className="inline-flex items-center gap-1">
                           <span>{l.label}</span>
-                          {(l.preview_live_plan || l.auto_result) && !l.is_user_extra && (
-                            <span className="rounded bg-sky-50 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700">AUTO</span>
-                          )}
                         </span>
                       )}
                     </td>
@@ -741,11 +718,9 @@ function MyReportPanel({ date, onDateChange }) {
                       ) : (
                         <div
                           className="rounded-md border border-dashed border-sky-200 bg-sky-50/50 px-2 py-1.5 text-right tabular-nums font-semibold text-sky-900"
-                          title={l.auto_plan_hint || ''}
+                          title={l.auto_plan_hint || l.plan_note || ''}
                         >
-                          {previewing && (l.plan_value === '' || l.plan_value == null)
-                            ? '…'
-                            : (l.plan_value === '' || l.plan_value == null ? 0 : l.plan_value)}
+                          {snapshotDisplay(l.plan_value)}
                         </div>
                       )}
                     </td>
@@ -770,7 +745,7 @@ function MyReportPanel({ date, onDateChange }) {
         </div>
       )}
 
-      {/* II. Báo cáo kết quả — tự động điền từ CRM */}
+      {/* II. Báo cáo kết quả — snapshot 16:45 */}
       {!!workLines.length && (
         <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
           <div className="flex items-center justify-between gap-2 bg-slate-700 px-4 py-2.5 text-sm font-semibold text-white">
@@ -782,8 +757,7 @@ function MyReportPanel({ date, onDateChange }) {
             </span>
             <div className="flex items-center gap-2">
               <span className="inline-flex items-center gap-1 rounded-md bg-violet-500/90 px-2 py-0.5 text-[11px] font-semibold tracking-wide">
-                {previewing ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
-                TỰ ĐỘNG ĐIỀN
+                SNAPSHOT 16:45
               </span>
               <button
                 type="button"
@@ -812,7 +786,7 @@ function MyReportPanel({ date, onDateChange }) {
               <tbody>
                 {workLines.map((l, i) => {
                   const pct = lineAchieve(l.plan_value === '' ? null : l.plan_value, l.result_value === '' ? null : l.result_value);
-                  const manual = l.is_user_extra || !l.metric_key || String(l.metric_key).startsWith('user_extra:');
+                  const manual = !isSnapshotMetricLine(l);
                   return (
                     <tr key={l.id || l.user_extra_id || `r-${i}`} className="border-t border-gray-100">
                       <td className="px-3 py-2 text-gray-500">{i + 1}</td>
@@ -845,9 +819,6 @@ function MyReportPanel({ date, onDateChange }) {
                             {(l.metric_key && !l.is_user_extra) && (
                               <MetricHelpIcon text={metricHelpText(l.metric_key, l.label)} />
                             )}
-                            {(l.auto_result || l.preview_live) && !l.is_user_extra && (
-                              <span className="rounded bg-violet-50 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700">AUTO</span>
-                            )}
                           </span>
                         )}
                       </td>
@@ -864,9 +835,7 @@ function MyReportPanel({ date, onDateChange }) {
                           />
                         ) : (
                           <div className="rounded-md border border-dashed border-violet-200 bg-violet-50/50 px-2 py-1.5 text-right tabular-nums font-semibold text-violet-900">
-                            {previewing && (l.result_value === '' || l.result_value == null)
-                              ? '…'
-                              : (l.result_value === '' || l.result_value == null ? 0 : l.result_value)}
+                            {snapshotDisplay(l.result_value)}
                           </div>
                         )}
                       </td>
@@ -1860,6 +1829,866 @@ function MatrixSectionTable({
   );
 }
 
+function companyExportLabel(c) {
+  return (c?.short_name || c?.name || 'Công ty').trim();
+}
+
+function filterGroupsByEmployeeIds(groups, employeeIds) {
+  const want = new Set((employeeIds || []).map(String).filter(Boolean));
+  if (!want.size) return groups || [];
+  return (groups || []).map((g) => {
+    const employees = (g.employees || []).filter((e) => want.has(String(e.id)));
+    if (!employees.length) return null;
+    const keep = new Set(employees.map((e) => String(e.id)));
+    const sections = (g.sections || []).map((sec) => ({
+      ...sec,
+      rows: (sec.rows || []).map((row) => {
+        if (!row?.values || typeof row.values !== 'object') return row;
+        const values = {};
+        for (const [k, v] of Object.entries(row.values)) {
+          if (keep.has(String(k))) values[k] = v;
+        }
+        return { ...row, values };
+      }),
+    }));
+    return { ...g, employees, sections };
+  }).filter(Boolean);
+}
+
+function mergeExportSummaries(list) {
+  const s = { total: 0, with_report: 0, plan_ok: 0, result_ok: 0, missing: 0 };
+  for (const x of list || []) {
+    s.total += Number(x?.total) || 0;
+    s.with_report += Number(x?.with_report) || 0;
+    s.plan_ok += Number(x?.plan_ok) || 0;
+    s.result_ok += Number(x?.result_ok) || 0;
+    s.missing += Number(x?.missing) || 0;
+  }
+  return s;
+}
+
+const EXPORT_REGION_NONE = '__none__';
+
+function staffMatchesRegions(u, regionIds) {
+  if (!regionIds?.length) return true;
+  const ids = (u?.crm_region_ids || []).map(String);
+  const wantNone = regionIds.includes(EXPORT_REGION_NONE);
+  const want = new Set(regionIds.filter((id) => id !== EXPORT_REGION_NONE).map(String));
+  if (wantNone && !ids.length) return true;
+  return ids.some((id) => want.has(id));
+}
+
+function MatrixExportModal({
+  open,
+  onClose,
+  initialDate,
+  initialCompanyId,
+  initialDepartmentId,
+  initialRoleKey,
+  lockedCompany,
+  companies,
+  templates: initialTemplates,
+}) {
+  const [exportDate, setExportDate] = useState(initialDate);
+  const [companyIds, setCompanyIds] = useState(() => (
+    lockedCompany || initialCompanyId ? [String(lockedCompany || initialCompanyId)] : []
+  ));
+  const [departmentIds, setDepartmentIds] = useState(() => (
+    initialDepartmentId ? [String(initialDepartmentId)] : []
+  ));
+  const [departments, setDepartments] = useState([]);
+  const [deptLoading, setDeptLoading] = useState(false);
+  const [regionIds, setRegionIds] = useState([]);
+  const [regions, setRegions] = useState([]);
+  const [regionLoading, setRegionLoading] = useState(false);
+  const [roleKey, setRoleKey] = useState(initialRoleKey || '');
+  const [sections, setSections] = useState(() => defaultExportSections(initialDate));
+  const [templates, setTemplates] = useState(initialTemplates || []);
+  const [staff, setStaff] = useState([]);
+  const [staffLoading, setStaffLoading] = useState(false);
+  const [employeeIds, setEmployeeIds] = useState([]);
+  const [empQ, setEmpQ] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [, setNowTick] = useState(0);
+  const companyKey = companyIds.slice().sort().join('|');
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const start = lockedCompany || initialCompanyId ? [String(lockedCompany || initialCompanyId)] : [];
+    setExportDate(initialDate);
+    setCompanyIds(start);
+    setDepartmentIds(initialDepartmentId ? [String(initialDepartmentId)] : []);
+    setRegionIds([]);
+    setRoleKey(initialRoleKey || '');
+    setSections(defaultExportSections(initialDate));
+    setTemplates(initialTemplates || []);
+    setEmployeeIds([]);
+    setEmpQ('');
+    setStaffLoading(!!start.length);
+    setDeptLoading(!!start.length);
+    setRegionLoading(!!start.length);
+    setError('');
+    setBusy(false);
+    return undefined;
+  }, [open]); // chỉ snapshot khi mở — không reset khi parent re-render
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const id = setInterval(() => setNowTick((n) => n + 1), 15000);
+    return () => clearInterval(id);
+  }, [open]);
+
+  const laterUnlocked = canExportAfterPlanSections(exportDate);
+
+  const applyExportDate = (iso) => {
+    setExportDate(iso);
+    setSections(defaultExportSections(iso));
+  };
+
+  useEffect(() => {
+    if (!open || laterUnlocked) return;
+    setSections((prev) => {
+      const next = prev.filter((k) => k === 'plan');
+      return next.length ? next : ['plan'];
+    });
+  }, [open, laterUnlocked, exportDate]);
+
+  useEffect(() => {
+    if (!open || !companyIds.length) {
+      if (open && !companyIds.length) {
+        setTemplates([]);
+        setStaff([]);
+      }
+      return undefined;
+    }
+    let cancelled = false;
+    Promise.all(companyIds.map((cid) => (
+      api.get('/crm/daily-reports/templates', {
+        params: { company_id: cid },
+        headers: { 'x-no-cache': '1' },
+      }).then((r) => r.data?.templates || []).catch(() => [])
+    ))).then((chunks) => {
+      if (cancelled) return;
+      const byRole = new Map();
+      for (const list of chunks) {
+        for (const t of list) {
+          const rk = String(t.role_key || t.id || '');
+          if (!rk || byRole.has(rk)) continue;
+          byRole.set(rk, t);
+        }
+      }
+      const merged = [...byRole.values()];
+      setTemplates(merged);
+      setRoleKey((prev) => {
+        if (!prev) return prev;
+        return merged.some((t) => String(t.role_key || t.id) === String(prev)) ? prev : '';
+      });
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [open, companyKey]);
+
+  useEffect(() => {
+    if (!open || !companyIds.length) {
+      if (open && !companyIds.length) {
+        setDepartments([]);
+        setDeptLoading(false);
+      }
+      return undefined;
+    }
+    let cancelled = false;
+    setDeptLoading(true);
+    Promise.all(companyIds.map((cid) => (
+      api.get('/departments', {
+        params: { company_id: cid },
+        headers: { 'x-no-cache': '1' },
+      }).then((r) => {
+        const co = companies.find((c) => String(c.id) === String(cid));
+        return departmentsForDailyReportFilter(r.data?.departments || r.data || []).map((d) => ({
+          ...d,
+          company_id: cid,
+          company_label: companyExportLabel(co),
+        }));
+      }).catch(() => [])
+    ))).then((chunks) => {
+      if (cancelled) return;
+      const seen = new Set();
+      const list = [];
+      for (const chunk of chunks) {
+        for (const d of chunk) {
+          const id = String(d.id);
+          if (seen.has(id)) continue;
+          seen.add(id);
+          list.push(d);
+        }
+      }
+      setDepartments(list);
+      setDepartmentIds((prev) => prev.filter((id) => seen.has(String(id))));
+    }).catch(() => {}).finally(() => {
+      if (!cancelled) setDeptLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [open, companyKey]);
+
+  useEffect(() => {
+    if (!open || !companyIds.length) {
+      if (open && !companyIds.length) {
+        setRegions([]);
+        setRegionLoading(false);
+      }
+      return undefined;
+    }
+    let cancelled = false;
+    setRegionLoading(true);
+    Promise.all(companyIds.map((cid) => (
+      api.get('/crm/company-regions', {
+        params: { company_id: cid, for_module: 'crm' },
+        headers: { 'x-no-cache': '1' },
+      }).then((r) => {
+        const co = companies.find((c) => String(c.id) === String(cid));
+        const list = Array.isArray(r.data) ? r.data : (r.data?.regions || []);
+        return list
+          .filter((reg) => reg?.is_active !== false)
+          .map((reg) => ({
+            ...reg,
+            company_id: cid,
+            company_label: companyExportLabel(co),
+          }));
+      }).catch(() => [])
+    ))).then((chunks) => {
+      if (cancelled) return;
+      const seen = new Set();
+      const list = [];
+      for (const chunk of chunks) {
+        for (const reg of chunk) {
+          const id = String(reg.id);
+          if (!id || seen.has(id)) continue;
+          seen.add(id);
+          list.push(reg);
+        }
+      }
+      list.sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'vi'));
+      setRegions(list);
+      setRegionIds((prev) => prev.filter((id) => id === EXPORT_REGION_NONE || seen.has(String(id))));
+    }).catch(() => {}).finally(() => {
+      if (!cancelled) setRegionLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [open, companyKey]);
+
+  useEffect(() => {
+    if (!open || !companyIds.length) return undefined;
+    let cancelled = false;
+    setStaffLoading(true);
+    Promise.all(companyIds.map((cid) => (
+      api.get('/crm/employees-by-company', {
+        params: { company_id: cid, for_module: 'crm' },
+        headers: { 'x-no-cache': '1' },
+      }).then((r) => {
+        const co = companies.find((c) => String(c.id) === String(cid));
+        const deptNameById = new Map(
+          (r.data?.departments || []).map((d) => [String(d.id), d.name || '']),
+        );
+        return (r.data?.users || [])
+          .filter((u) => u?.is_active !== false)
+          .map((u) => ({
+            id: u.id,
+            full_name: u.full_name,
+            email: u.email,
+            company_id: cid,
+            company_label: companyExportLabel(co),
+            department_id: u.department_id || u.department?.id || null,
+            department_name: u.department?.name || deptNameById.get(String(u.department_id || '')) || '',
+            crm_region_ids: (u.crm_region_ids || []).map(String),
+          }));
+      }).catch(() => [])
+    ))).then((chunks) => {
+      if (cancelled) return;
+      const seen = new Set();
+      const list = [];
+      for (const chunk of chunks) {
+        for (const u of chunk) {
+          const id = String(u.id);
+          if (seen.has(id)) continue;
+          seen.add(id);
+          list.push(u);
+        }
+      }
+      list.sort((a, b) => String(a.full_name || '').localeCompare(String(b.full_name || ''), 'vi'));
+      setStaff(list);
+      setEmployeeIds((prev) => prev.filter((id) => seen.has(String(id))));
+    }).finally(() => {
+      if (!cancelled) setStaffLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [open, companyKey]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKey = (e) => {
+      if (e.key === 'Escape' && !busy) onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, busy, onClose]);
+
+  const toggleSection = (key) => {
+    if (key !== 'plan' && !laterUnlocked) return;
+    setSections((prev) => {
+      if (prev.includes(key)) {
+        const next = prev.filter((k) => k !== key);
+        return next.length ? next : ['plan'];
+      }
+      return [...prev, key];
+    });
+  };
+
+  const toggleCompany = (id) => {
+    if (lockedCompany) return;
+    const cid = String(id);
+    setCompanyIds((prev) => (
+      prev.includes(cid) ? prev.filter((x) => x !== cid) : [...prev, cid]
+    ));
+    setRoleKey('');
+  };
+
+  const toggleRegion = (id) => {
+    const rid = String(id);
+    setRegionIds((prev) => (
+      prev.includes(rid) ? prev.filter((x) => x !== rid) : [...prev, rid]
+    ));
+    setEmployeeIds([]);
+  };
+
+  const toggleDepartment = (id) => {
+    const did = String(id);
+    setDepartmentIds((prev) => (
+      prev.includes(did) ? prev.filter((x) => x !== did) : [...prev, did]
+    ));
+    setEmployeeIds([]);
+  };
+
+  const toggleEmployee = (id) => {
+    const eid = String(id);
+    setEmployeeIds((prev) => (
+      prev.includes(eid) ? prev.filter((x) => x !== eid) : [...prev, eid]
+    ));
+  };
+
+  const visibleStaff = useMemo(() => {
+    const deptSet = new Set(departmentIds.map(String));
+    let list = staff;
+    if (deptSet.size) {
+      list = list.filter((u) => u.department_id && deptSet.has(String(u.department_id)));
+    }
+    if (regionIds.length) {
+      list = list.filter((u) => staffMatchesRegions(u, regionIds));
+    }
+    const q = empQ.trim().toLowerCase();
+    if (!q) return list;
+    return list.filter((u) => {
+      const name = String(u.full_name || '').toLowerCase();
+      const email = String(u.email || '').toLowerCase();
+      const dept = String(u.department_name || '').toLowerCase();
+      return name.includes(q) || email.includes(q) || dept.includes(q);
+    });
+  }, [staff, empQ, departmentIds, regionIds]);
+
+  const runExport = async () => {
+    if (busy) return;
+    if (!companyIds.length) {
+      setError('Chọn ít nhất một công ty.');
+      return;
+    }
+    const keys = laterUnlocked
+      ? sections.filter((k) => SECTION_EXPORT_OPTIONS.some((o) => o.key === k))
+      : ['plan'];
+    if (!keys.length) {
+      setError('Chọn ít nhất một mục.');
+      return;
+    }
+    setBusy(true);
+    setError('');
+    try {
+      const picked = companies.filter((c) => companyIds.includes(String(c.id)));
+      const payloads = await Promise.all(companyIds.map(async (cid) => {
+        const res = await api.get('/crm/daily-reports/team/matrix', {
+          params: {
+            date: exportDate,
+            company_id: cid,
+            role_key: roleKey || undefined,
+          },
+          headers: { 'x-no-cache': '1' },
+        });
+        const co = companies.find((c) => String(c.id) === String(cid));
+        const short = companyExportLabel(co);
+        let empFilter = employeeIds;
+        if (!empFilter.length && (departmentIds.length || regionIds.length)) {
+          empFilter = staff
+            .filter((u) => {
+              if (String(u.company_id) !== String(cid)) return false;
+              if (departmentIds.length && !departmentIds.includes(String(u.department_id))) return false;
+              if (!staffMatchesRegions(u, regionIds)) return false;
+              return true;
+            })
+            .map((u) => String(u.id));
+          if (!empFilter.length) {
+            return { groups: [], summary: { total: 0, with_report: 0, plan_ok: 0, result_ok: 0, missing: 0 } };
+          }
+        }
+        const groups = filterGroupsByEmployeeIds(res.data?.groups || [], empFilter).map((g) => ({
+          ...g,
+          company_id: cid,
+          company_short: short,
+          company_name: co?.name || short,
+          template_name: g.template_name ? `${g.template_name} · ${short}` : short,
+        }));
+        return { groups, summary: res.data?.summary };
+      }));
+      const groups = payloads.flatMap((p) => p.groups);
+      if (!groups.length) {
+        setError('Không có nhân viên / báo cáo khớp bộ lọc.');
+        return;
+      }
+      const roleLabel = templates.find((t) => String(t.role_key || t.id) === String(roleKey))?.name || '';
+      const companyName = picked.map(companyExportLabel).join(' + ') || 'cong-ty';
+      const deptLabel = departmentIds.length
+        ? departments.filter((d) => departmentIds.includes(String(d.id))).map((d) => d.name).join(', ')
+        : '';
+      const regionLabel = regionIds.length
+        ? regionIds.map((id) => (
+          id === EXPORT_REGION_NONE
+            ? 'Chưa gán KV'
+            : (regions.find((r) => String(r.id) === String(id))?.name || '')
+        )).filter(Boolean).join(', ')
+        : '';
+      const extraLabel = [deptLabel, regionLabel, employeeIds.length ? `${employeeIds.length} NV đã chọn` : '']
+        .filter(Boolean)
+        .join(' · ');
+      await downloadDailyReportMatrixExcel({
+        date: exportDate,
+        companyName,
+        departmentName: extraLabel,
+        roleLabel,
+        summary: mergeExportSummaries(payloads.map((p) => p.summary)),
+        groups,
+        sectionKeys: keys,
+      });
+      onClose();
+    } catch (e) {
+      setError(e.response?.data?.error || e?.message || 'Xuất Excel thất bại');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!open || typeof document === 'undefined') return null;
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[80] flex items-end justify-center bg-black/40 p-3 sm:items-center"
+      onClick={() => { if (!busy) onClose(); }}
+    >
+      <div
+        className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-violet-200 bg-white shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="daily-report-export-title"
+      >
+        <div className="flex items-start justify-between gap-3 border-b border-violet-100 bg-violet-50/80 px-4 py-3">
+          <div>
+            <h2 id="daily-report-export-title" className="flex items-center gap-2 text-sm font-bold text-violet-950">
+              <Sheet className="h-4 w-4 text-emerald-600" /> Xuất Excel báo cáo ngày
+            </h2>
+            <p className="mt-0.5 text-[11px] text-violet-800/80">
+              Chọn ngày, công ty, khu vực, phòng ban, mẫu, nhân viên và mục I–IV. Trước 16:45 chỉ xuất được mục I.
+            </p>
+          </div>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={onClose}
+            className="rounded-md p-1 text-violet-700 hover:bg-violet-100 disabled:opacity-50"
+            aria-label="Đóng"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="space-y-3 overflow-y-auto px-4 py-3">
+          <div>
+            <label className={CRM_FILTER_LABEL}>Thời gian</label>
+            <div className="flex items-center gap-1">
+              <button type="button" onClick={() => applyExportDate(addDaysISO(exportDate, -1))} className="rounded-md border border-violet-200 bg-white p-1.5 text-violet-700 hover:bg-violet-50">
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+              <input
+                type="date"
+                value={exportDate}
+                onChange={(e) => applyExportDate(e.target.value)}
+                className={`${CRM_FILTER_FIELD} w-auto flex-1`}
+              />
+              <button type="button" onClick={() => applyExportDate(addDaysISO(exportDate, 1))} className="rounded-md border border-violet-200 bg-white p-1.5 text-violet-700 hover:bg-violet-50">
+                <ChevronRight className="h-4 w-4" />
+              </button>
+              <button type="button" onClick={() => applyExportDate(todayISO())} className="rounded-md border border-violet-200 bg-white px-2 py-1.5 text-[11px] font-semibold text-violet-800 hover:bg-violet-50">
+                Hôm nay
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <label className={`${CRM_FILTER_LABEL} mb-0`}>Công ty (chọn nhiều)</label>
+              {!lockedCompany && companies.length > 1 && (
+                <button
+                  type="button"
+                  className="text-[11px] font-semibold text-violet-700 hover:underline"
+                  onClick={() => {
+                    const all = companies.map((c) => String(c.id));
+                    setCompanyIds((prev) => (prev.length === all.length ? [] : all));
+                    setRoleKey('');
+                  }}
+                >
+                  {companyIds.length === companies.length ? 'Bỏ chọn hết' : 'Chọn tất cả'}
+                </button>
+              )}
+            </div>
+            {lockedCompany ? (
+              <div className={`${CRM_FILTER_FIELD} flex items-center bg-indigo-50/80 border-indigo-200 text-indigo-900 cursor-default truncate`}>
+                {companies.find((c) => String(c.id) === String(lockedCompany))?.short_name
+                  || companies.find((c) => String(c.id) === String(lockedCompany))?.name
+                  || 'Công ty của bạn'}
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                {companies.map((c) => {
+                  const cid = String(c.id);
+                  const checked = companyIds.includes(cid);
+                  return (
+                    <label
+                      key={cid}
+                      className={`flex items-center gap-2 rounded-lg border px-2.5 py-2 text-xs ${
+                        checked
+                          ? 'cursor-pointer border-emerald-300 bg-emerald-50 text-emerald-950'
+                          : 'cursor-pointer border-violet-200 bg-white text-violet-950 hover:bg-violet-50'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleCompany(cid)}
+                      />
+                      <span className="min-w-0 truncate font-semibold">{c.short_name || c.name}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <div>
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <label className={`${CRM_FILTER_LABEL} mb-0`}>
+                Khu vực {regionIds.length ? `(đã chọn ${regionIds.length})` : '(tất cả)'}
+              </label>
+              {regions.length > 1 && (
+                <button
+                  type="button"
+                  className="text-[11px] font-semibold text-violet-700 hover:underline"
+                  onClick={() => {
+                    const all = regions.map((r) => String(r.id));
+                    setRegionIds((prev) => (prev.length === all.length ? [] : all));
+                    setEmployeeIds([]);
+                  }}
+                >
+                  {regionIds.length === regions.length ? 'Bỏ chọn hết' : 'Chọn tất cả'}
+                </button>
+              )}
+            </div>
+            {!companyIds.length ? (
+              <p className="rounded-lg border border-dashed border-violet-200 px-2.5 py-2 text-[11px] text-slate-500">
+                Chọn công ty để hiện khu vực.
+              </p>
+            ) : regionLoading ? (
+              <p className="flex items-center gap-2 rounded-lg border border-violet-200 px-2.5 py-2 text-[11px] text-slate-500">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" /> Đang tải khu vực…
+              </p>
+            ) : regions.length === 0 ? (
+              <p className="rounded-lg border border-dashed border-violet-200 px-2.5 py-2 text-[11px] text-slate-500">
+                Công ty chưa có khu vực CRM.
+              </p>
+            ) : (
+              <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                {regions.map((reg) => {
+                  const rid = String(reg.id);
+                  const checked = regionIds.includes(rid);
+                  return (
+                    <label
+                      key={rid}
+                      className={`flex items-center gap-2 rounded-lg border px-2.5 py-2 text-xs ${
+                        checked
+                          ? 'cursor-pointer border-emerald-300 bg-emerald-50 text-emerald-950'
+                          : 'cursor-pointer border-violet-200 bg-white text-violet-950 hover:bg-violet-50'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleRegion(rid)}
+                      />
+                      <span className="min-w-0 truncate font-semibold">{reg.name}</span>
+                      {companyIds.length > 1 && reg.company_label ? (
+                        <span className="shrink-0 text-[10px] font-normal opacity-70">{reg.company_label}</span>
+                      ) : null}
+                    </label>
+                  );
+                })}
+                <label
+                  className={`flex items-center gap-2 rounded-lg border px-2.5 py-2 text-xs ${
+                    regionIds.includes(EXPORT_REGION_NONE)
+                      ? 'cursor-pointer border-emerald-300 bg-emerald-50 text-emerald-950'
+                      : 'cursor-pointer border-violet-200 bg-white text-violet-950 hover:bg-violet-50'
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={regionIds.includes(EXPORT_REGION_NONE)}
+                    onChange={() => toggleRegion(EXPORT_REGION_NONE)}
+                  />
+                  <span className="min-w-0 truncate font-semibold">Chưa gán khu vực</span>
+                </label>
+              </div>
+            )}
+            <p className="mt-1 text-[10px] text-violet-700/80">
+              Không tick = tất cả khu vực. NV được gán nhiều khu vực thì khớp nếu trùng một khu đã chọn.
+            </p>
+          </div>
+
+          <div>
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <label className={`${CRM_FILTER_LABEL} mb-0`}>
+                Phòng ban {departmentIds.length ? `(đã chọn ${departmentIds.length})` : '(tất cả)'}
+              </label>
+              {departments.length > 1 && (
+                <button
+                  type="button"
+                  className="text-[11px] font-semibold text-violet-700 hover:underline"
+                  onClick={() => {
+                    const all = departments.map((d) => String(d.id));
+                    setDepartmentIds((prev) => (prev.length === all.length ? [] : all));
+                    setEmployeeIds([]);
+                  }}
+                >
+                  {departmentIds.length === departments.length ? 'Bỏ chọn hết' : 'Chọn tất cả'}
+                </button>
+              )}
+            </div>
+            {!companyIds.length ? (
+              <p className="rounded-lg border border-dashed border-violet-200 px-2.5 py-2 text-[11px] text-slate-500">
+                Chọn công ty để hiện phòng ban.
+              </p>
+            ) : deptLoading ? (
+              <p className="flex items-center gap-2 rounded-lg border border-violet-200 px-2.5 py-2 text-[11px] text-slate-500">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" /> Đang tải phòng ban…
+              </p>
+            ) : departments.length === 0 ? (
+              <p className="rounded-lg border border-dashed border-violet-200 px-2.5 py-2 text-[11px] text-slate-500">
+                Không có phòng ban CRM.
+              </p>
+            ) : (
+              <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                {departments.map((d) => {
+                  const did = String(d.id);
+                  const checked = departmentIds.includes(did);
+                  return (
+                    <label
+                      key={did}
+                      className={`flex items-center gap-2 rounded-lg border px-2.5 py-2 text-xs ${
+                        checked
+                          ? 'cursor-pointer border-emerald-300 bg-emerald-50 text-emerald-950'
+                          : 'cursor-pointer border-violet-200 bg-white text-violet-950 hover:bg-violet-50'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleDepartment(did)}
+                      />
+                      <span className="min-w-0 truncate font-semibold">{d.name}</span>
+                      {companyIds.length > 1 && d.company_label ? (
+                        <span className="shrink-0 text-[10px] font-normal opacity-70">{d.company_label}</span>
+                      ) : null}
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+            <p className="mt-1 text-[10px] text-violet-700/80">
+              Không tick = tất cả phòng ban của công ty đã chọn.
+            </p>
+          </div>
+
+          <div className="min-w-0">
+            <label className={CRM_FILTER_LABEL}>Mẫu</label>
+            <select
+              value={roleKey}
+              onChange={(e) => setRoleKey(e.target.value)}
+              disabled={!companyIds.length}
+              className={`${CRM_FILTER_SELECT} ${!companyIds.length ? 'opacity-60 cursor-not-allowed' : ''}`}
+            >
+              <option value="">{companyIds.length ? 'Tất cả mẫu' : 'Chọn công ty trước'}</option>
+              {templates.map((t) => (
+                <option key={t.id || t.role_key} value={t.role_key || t.id}>
+                  {t.name}{t.company_id ? ' · công ty' : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <label className={`${CRM_FILTER_LABEL} mb-0`}>
+                Nhân viên {employeeIds.length ? `(đã chọn ${employeeIds.length})` : '(tất cả)'}
+              </label>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={!visibleStaff.length}
+                  className="text-[11px] font-semibold text-violet-700 hover:underline disabled:opacity-40"
+                  onClick={() => setEmployeeIds(visibleStaff.map((u) => String(u.id)))}
+                >
+                  Chọn đang lọc
+                </button>
+                <button
+                  type="button"
+                  disabled={!employeeIds.length}
+                  className="text-[11px] font-semibold text-violet-700 hover:underline disabled:opacity-40"
+                  onClick={() => setEmployeeIds([])}
+                >
+                  Tất cả NV
+                </button>
+              </div>
+            </div>
+            <div className="relative mb-1.5">
+              <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-violet-400" />
+              <input
+                type="search"
+                value={empQ}
+                onChange={(e) => setEmpQ(e.target.value)}
+                placeholder="Tìm tên / email / phòng…"
+                disabled={!companyIds.length}
+                className={`${CRM_FILTER_FIELD} pl-7`}
+              />
+            </div>
+            <div className="max-h-44 overflow-y-auto rounded-lg border border-violet-200 bg-white">
+              {!companyIds.length ? (
+                <p className="px-2.5 py-3 text-[11px] text-slate-500">Chọn công ty để hiện danh sách nhân viên.</p>
+              ) : staffLoading ? (
+                <p className="flex items-center gap-2 px-2.5 py-3 text-[11px] text-slate-500">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Đang tải nhân viên…
+                </p>
+              ) : visibleStaff.length === 0 ? (
+                <p className="px-2.5 py-3 text-[11px] text-slate-500">Không khớp tìm kiếm.</p>
+              ) : (
+                visibleStaff.map((u) => {
+                  const id = String(u.id);
+                  const checked = employeeIds.includes(id);
+                  return (
+                    <label
+                      key={id}
+                      className={`flex items-center gap-2 border-b border-violet-50 px-2.5 py-1.5 text-xs last:border-b-0 ${
+                        checked ? 'bg-emerald-50' : 'hover:bg-violet-50'
+                      }`}
+                    >
+                      <input type="checkbox" checked={checked} onChange={() => toggleEmployee(id)} />
+                      <span className="min-w-0 flex-1 truncate font-medium text-slate-800">{u.full_name || u.email}</span>
+                      <span className="shrink-0 text-[10px] text-slate-500">
+                        {companyIds.length > 1 ? u.company_label : (u.department_name || '')}
+                      </span>
+                    </label>
+                  );
+                })
+              )}
+            </div>
+            <p className="mt-1 text-[10px] text-violet-700/80">
+              Không tick ai = xuất tất cả NV của công ty đã chọn. Tick từng người để xuất đúng những người đó.
+            </p>
+          </div>
+
+          <div>
+            <label className={CRM_FILTER_LABEL}>Mục (chọn nhiều)</label>
+            <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+              {SECTION_EXPORT_OPTIONS.map((opt) => {
+                const locked = opt.key !== 'plan' && !laterUnlocked;
+                const checked = sections.includes(opt.key);
+                return (
+                  <label
+                    key={opt.key}
+                    className={`flex items-start gap-2 rounded-lg border px-2.5 py-2 text-xs ${
+                      locked
+                        ? 'cursor-not-allowed border-slate-200 bg-slate-50 text-slate-400'
+                        : checked
+                          ? 'cursor-pointer border-emerald-300 bg-emerald-50 text-emerald-950'
+                          : 'cursor-pointer border-violet-200 bg-white text-violet-950 hover:bg-violet-50'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      className="mt-0.5"
+                      checked={checked}
+                      disabled={locked}
+                      onChange={() => toggleSection(opt.key)}
+                    />
+                    <span>
+                      <span className="font-semibold">{opt.label}</span>
+                      <span className="mt-0.5 block text-[10px] opacity-80">{opt.hint}</span>
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+            {!laterUnlocked && (
+              <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] text-amber-900">
+                Trước 16:45 (giờ VN) ngày {fmtDMY(exportDate)} chỉ xuất được <strong>mục I. Kế hoạch</strong>.
+                Mục II–IV mở sau 16:45 hoặc khi chọn ngày đã qua.
+              </p>
+            )}
+          </div>
+
+          {error && (
+            <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /> {error}
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center justify-end gap-2 border-t border-violet-100 bg-slate-50 px-4 py-3">
+          <button
+            type="button"
+            disabled={busy}
+            onClick={onClose}
+            className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+          >
+            Hủy
+          </button>
+          <button
+            type="button"
+            disabled={busy || !companyIds.length || !sections.length}
+            onClick={runExport}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sheet className="h-3.5 w-3.5" />}
+            {busy ? 'Đang xuất…' : 'Xuất Excel'}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 function TeamMatrixPanel({ date, onDateChange }) {
   const { user } = useAuth();
   const lockedCompany = isCompanyScopedAdmin(user) ? String(user.company_id) : null;
@@ -1877,7 +2706,7 @@ function TeamMatrixPanel({ date, onDateChange }) {
   const [companies, setCompanies] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [templates, setTemplates] = useState([]);
-  const [exportingExcel, setExportingExcel] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
   const [assigningUserId, setAssigningUserId] = useState('');
 
   useEffect(() => {
@@ -1997,32 +2826,7 @@ function TeamMatrixPanel({ date, onDateChange }) {
   const s = data?.summary || { total: 0, with_report: 0, plan_ok: 0, result_ok: 0, missing: 0 };
   const tplOptions = templates.length ? templates : (data?.templates || []);
 
-  /** Flatten: từng mục → danh sách { section, group } để render theo phần. */
-  const companyName = companies.find((c) => String(c.id) === String(companyId))?.short_name
-    || companies.find((c) => String(c.id) === String(companyId))?.name
-    || '';
-  const departmentName = departments.find((d) => String(d.id) === String(filter.departmentId))?.name || '';
-  const roleLabel = tplOptions.find((t) => String(t.role_key || t.id) === String(filter.roleKey))?.name || '';
-
-  const exportExcel = async () => {
-    if (!groups.length || exportingExcel) return;
-    setExportingExcel(true);
-    setError('');
-    try {
-      await downloadDailyReportMatrixExcel({
-        date,
-        companyName,
-        departmentName,
-        roleLabel,
-        summary: s,
-        groups,
-      });
-    } catch (e) {
-      setError(e?.message || 'Xuất Excel thất bại');
-    } finally {
-      setExportingExcel(false);
-    }
-  };
+  const exportExcel = () => setExportOpen(true);
 
   const sectionBlocks = useMemo(() => {
     const keys = sectionTab === 'all'
@@ -2138,15 +2942,15 @@ function TeamMatrixPanel({ date, onDateChange }) {
             </div>
           </div>
           <div className="text-[11px] text-violet-700/80">
-            Ngày đang chọn {fmtDMY(date)} · Tab Kết quả đếm đúng CRM ngày này
-            {data?.result_live ? ' (lấy trực tiếp từ CRM)' : ''}
+            Ngày đang chọn {fmtDMY(date)} · I = Deadline QH+hôm nay · II = điểm đến cuối (không hành trình)
+            {data?.preview ? ' · preview live' : data?.snapshot ? ' · đã có snapshot' : ''}
           </div>
         </div>
       </div>
 
-      {/* Tab theo từng mục I–IV */}
-      {companyId && (
-        <div className="flex flex-wrap items-center gap-2">
+      {/* Tab theo từng mục I–IV + xuất Excel */}
+      <div className="flex flex-wrap items-center gap-2">
+        {companyId ? (
           <div className="flex min-w-0 flex-1 flex-wrap gap-1.5 rounded-xl border border-violet-200 bg-white p-1.5 shadow-sm">
             {SECTION_TAB_META.map((tab) => (
               <button
@@ -2163,18 +2967,19 @@ function TeamMatrixPanel({ date, onDateChange }) {
               </button>
             ))}
           </div>
-          <button
-            type="button"
-            disabled={!groups.length || loading || exportingExcel}
-            onClick={exportExcel}
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-600 px-3 py-2 text-xs font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
-            title="Xuất Excel tab Kế hoạch và Kết quả (kèm tổng quan + so sánh KH/KQ)"
-          >
-            {exportingExcel ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sheet className="h-4 w-4" />}
-            Xuất Excel KH + KQ
-          </button>
-        </div>
-      )}
+        ) : (
+          <div className="min-w-0 flex-1" />
+        )}
+        <button
+          type="button"
+          onClick={exportExcel}
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-600 px-3 py-2 text-xs font-semibold text-white shadow-sm hover:bg-emerald-700"
+          title="Xuất Excel — chọn ngày, công ty, mẫu và mục I–IV"
+        >
+          <Sheet className="h-4 w-4" />
+          Xuất Excel
+        </button>
+      </div>
 
       {!companyId && (
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
@@ -2247,6 +3052,18 @@ function TeamMatrixPanel({ date, onDateChange }) {
       ) : null}
 
       {detailId && <ReportDetailDrawer reportId={detailId} onClose={() => setDetailId(null)} />}
+
+      <MatrixExportModal
+        open={exportOpen}
+        onClose={() => setExportOpen(false)}
+        initialDate={date}
+        initialCompanyId={companyId}
+        initialDepartmentId={filter.departmentId}
+        initialRoleKey={filter.roleKey}
+        lockedCompany={lockedCompany}
+        companies={companies}
+        templates={tplOptions}
+      />
     </div>
   );
 }
@@ -2277,7 +3094,7 @@ export default function CrmDailyReportPage() {
           <p className="mt-1 text-sm text-gray-500">
             {wideTeam
               ? 'Tổng hợp theo từng mục I–IV (và theo mẫu) — cột là nhân viên.'
-              : 'Điền kế hoạch (Phần I) · Nộp báo cáo để chốt kết quả CRM ngày phiếu (Phần II, tự chốt 16:45).'}
+              : 'Phần I Deadline QH+hôm nay (08:00) · Phần II điểm đến cuối ngày (16:45) · III/IV điền tay.'}
           </p>
         </div>
         <div className="inline-flex rounded-lg border border-gray-200 bg-white p-0.5 shadow-sm">

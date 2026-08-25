@@ -4,7 +4,7 @@
  * Usage: node scripts/backfill-vpt-sale-admin-aug.js
  */
 require('dotenv').config();
-const { autoCloseDailyReportForUser } = require('../src/helpers/dailyReportAutoSubmit');
+const { snapshotUser } = require('../src/helpers/dailyReportSnapshot');
 
 const COMPANY_ID = '991dc79d-cbf5-49f9-a364-35227cb47635';
 const SALE_ADMIN_TPL = 'a1000000-0000-4000-8000-000000000001';
@@ -34,21 +34,21 @@ async function main() {
   for (const [userId, label] of USERS) {
     for (const reportDate of dates) {
       try {
-        const out = await autoCloseDailyReportForUser({
+        const plan = await snapshotUser({
           userId,
           reportDate,
           companyId: COMPANY_ID,
-          templateId: SALE_ADMIN_TPL,
-          force: true,
+          userProfile: { id: userId, full_name: label },
+          phase: 'plan',
         });
-        const ac = out.auto_close || {};
-        const m = ac.metrics || {};
-        console.log(
-          `${label} ${reportDate} → auto=${ac.auto_filled} `
-          + `new=${m.lead_new?.value ?? '-'} cold=${m.care_cold?.value ?? '-'} `
-          + `warm=${m.care_warm?.value ?? '-'} hot=${m.care_hot?.value ?? '-'} `
-          + `survey=${m.survey_scheduled?.value ?? '-'}`,
-        );
+        const out = await snapshotUser({
+          userId,
+          reportDate,
+          companyId: COMPANY_ID,
+          userProfile: { id: userId, full_name: label },
+          phase: 'result',
+        });
+        console.log(`${label} ${reportDate} → plan=${plan.auto_filled} result=${out.auto_filled}`);
         ok += 1;
       } catch (e) {
         fail += 1;

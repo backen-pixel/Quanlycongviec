@@ -115,10 +115,35 @@ async function collectProjectEventParticipantIds({ leadId = null, projectId = nu
     try {
       const { data: p } = await supabase
         .from('projects')
-        .select('consulting_person_id, quotation_person_id, contract_person_id, shipping_person_id, care_person_id, project_manager_id, supervisor_id')
+        .select('consulting_person_id, quotation_person_id, contract_person_id, shipping_person_id, care_person_id, project_manager_id, supervisor_id, logistics_company_id')
         .eq('id', pid)
         .maybeSingle();
-      if (p) extra.push(...Object.values(p));
+      if (p) {
+        extra.push(
+          p.consulting_person_id,
+          p.quotation_person_id,
+          p.contract_person_id,
+          p.shipping_person_id,
+          p.care_person_id,
+          p.project_manager_id,
+          p.supervisor_id,
+        );
+        if (p.logistics_company_id) {
+          try {
+            const {
+              resolveLogisticsHandoverResponsibleUserId,
+              resolveLogisticsHandoverInstallerUserId,
+              resolveLogisticsHandoverConfirmUserId,
+            } = require('./logisticsHandoverSettings');
+            const logCo = p.logistics_company_id;
+            extra.push(
+              await resolveLogisticsHandoverResponsibleUserId(logCo),
+              await resolveLogisticsHandoverInstallerUserId(logCo),
+              await resolveLogisticsHandoverConfirmUserId(logCo, owners.vcIds[0] || null),
+            );
+          } catch (_) { /* ignore */ }
+        }
+      }
     } catch (_) { /* ignore */ }
   }
 

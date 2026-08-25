@@ -16,8 +16,9 @@ const REPORT_FIELDS =
   'id, company_id, user_id, template_id, report_date, department_name, status, plan_submitted_at, result_submitted_at, manager_note, created_at, updated_at';
 const LINE_FIELDS =
   'id, report_id, template_item_id, section, label, order_index, plan_value, result_value, plan_note, result_note, metric_key, auto_result, created_at, updated_at';
-const { computeAutoDailyResults, computeAutoDailyPlans, loadMetricEntityLinks, metricKeyFromLabel } = require('../helpers/dailyReportAutoClose');
-const { autoCloseDailyReportForUser, guessRoleKey, isCrmSalesDept, looksLikeNonCrmUser } = require('../helpers/dailyReportAutoSubmit');
+const { metricKeyFromLabel, isSnapshotWorkMetric, computeForUser } = require('../helpers/dailyReportMetrics');
+const { guessRoleKey } = require('../helpers/dailyReportStaffing');
+const { loadSnapshotsMap, snapKey, resultUntilIso } = require('../helpers/dailyReportSnapshot');
 const {
   loadAssignedTemplateIds,
   getAssignedTemplateId,
@@ -239,6 +240,45 @@ async function canViewReport(req, report) {
     }
   }
   return false;
+}
+
+async function overlaySnapshotOnLines(lines, userId, reportDate, companyId) {
+  const snaps = await loadSnapshotsMap(reportDate, companyId);
+  if (!snaps.size) return lines;
+  return (lines || []).map((l) => {
+    if (l.section !== 'work' || !isSnapshotWorkMetric(l.metric_key)) return l;
+    const plan = snaps.get(snapKey(userId, 'plan', l.metric_key));
+    const result = snaps.get(snapKey(userId, 'result', l.metric_key));
+    if (!plan && !result) return l;
+    return {
+      ...l,
+      plan_value: plan?.value != null ? Number(plan.value) : l.plan_value,
+      result_value: result?.value != null ? Number(result.value) : l.result_value,
+      auto_result: true,
+    };
+  });
+}
+
+async function overlayBundleSnapshots(bundle, companyId) {
+  if (!bundle?.user_id || !bundle.report_date) return bundle;
+  const lines = await overlaySnapshotOnLines(bundle.lines, bundle.user_id, bundle.report_date, companyId);
+  const workLines = (lines || []).filter((l) => l.section === 'work');
+  let planSum = 0;
+  let resultSum = 0;
+  for (const l of workLines) {
+    if (l.plan_value != null) planSum += Number(l.plan_value);
+    if (l.result_value != null) resultSum += Number(l.result_value);
+  }
+  return {
+    ...bundle,
+    lines,
+    stats: {
+      ...(bundle.stats || {}),
+      plan_sum: planSum,
+      result_sum: resultSum,
+      achieve_pct: planSum > 0 ? Math.round((resultSum / planSum) * 1000) / 10 : null,
+    },
+  };
 }
 
 /** Đồng bộ dòng từ template vào phiếu (thêm thiếu + gỡ hạng mục không còn trong mẫu). */
@@ -598,7 +638,10 @@ r.get('/mine', async (req, res) => {
       } else {
         await syncUserExtraLines(existing.id, userId);
       }
-      const bundle = await loadReportBundle(existing.id);
+      const bundle = await overlayBundleSnapshots(
+        await loadReportBundle(existing.id),
+        me?.company_id || req.user.company_id || null,
+      );
       return res.json({ report: bundle, templates: await listTemplates(me?.company_id || req.user.company_id || null) });
     }
 
@@ -615,7 +658,7 @@ r.get('/mine', async (req, res) => {
     let template = templateId ? await getTemplateById(templateId) : null;
     if (template && !templateAllowedForCompany(template, companyId)) template = null;
     const extras = await listUserExtras(userId);
-    const skeletonLines = [
+    const skeletonLines = await overlaySnapshotOnLines([
       ...(template?.items || []).map((it) => ({
         id: null,
         template_item_id: it.id,
@@ -630,7 +673,7 @@ r.get('/mine', async (req, res) => {
         auto_result: false,
       })),
       ...skeletonLinesFromExtras(extras),
-    ];
+    ], userId, date, companyId);
 
     return res.json({
       report: {
@@ -664,21 +707,16 @@ r.get('/mine', async (req, res) => {
   }
 });
 
-// ─── PUT /mine — buổi sáng: lưu / nộp kế hoạch ───────────────────────────────
-// body: { date, template_id, phase: 'plan'|'draft', lines: [...] }
+// ─── PUT /mine — lưu nháp / nộp III–IV; số I–II do snapshot 08:00 / 16:45 ──
+// body: { date, template_id, phase: 'draft'|'plan'|'result', lines: [...] }
 r.put('/mine', async (req, res) => {
   try {
     const userId = req.user.userId;
     const date = String(req.body?.date || nowVnParts().date);
     const phase = String(req.body?.phase || 'draft');
     if (!isValidDate(date)) return res.status(400).json({ error: 'Ngày không hợp lệ' });
-    if (phase === 'result') {
-      return res.status(400).json({
-        error: 'Buổi chiều hãy dùng nút “Chốt kết quả từ hệ thống” (POST /mine/auto-close).',
-      });
-    }
-    if (!['draft', 'plan'].includes(phase)) {
-      return res.status(400).json({ error: 'phase phải là draft|plan' });
+    if (!['draft', 'plan', 'result'].includes(phase)) {
+      return res.status(400).json({ error: 'phase phải là draft|plan|result' });
     }
 
     const me = await loadUserProfile(userId);
@@ -786,12 +824,12 @@ r.put('/mine', async (req, res) => {
       const patch = { id: row.id, updated_at: now };
       const section = row.section || 'work';
       const isUserExtra = String(row.metric_key || '').startsWith('user_extra:');
+      const snapshotOwned = !isUserExtra && isSnapshotWorkMetric(row.metric_key);
       if (section === 'work') {
-        if ('plan_value' in raw) patch.plan_value = toNumOrNull(raw.plan_value);
         if ('plan_note' in raw) patch.plan_note = raw.plan_note != null ? String(raw.plan_note) : null;
-        // Ghi chú kết quả: NV tự ghi (kể cả hạng mục AUTO)
         if ('result_note' in raw) patch.result_note = raw.result_note != null ? String(raw.result_note) : null;
-        if (isUserExtra) {
+        if (isUserExtra || !snapshotOwned) {
+          if ('plan_value' in raw) patch.plan_value = toNumOrNull(raw.plan_value);
           if ('label' in raw && raw.label != null) patch.label = String(raw.label);
           if ('result_value' in raw) patch.result_value = toNumOrNull(raw.result_value);
         }
@@ -821,6 +859,10 @@ r.put('/mine', async (req, res) => {
         reportPatch.status = 'plan_submitted';
       }
     }
+    if (phase === 'result') {
+      reportPatch.result_submitted_at = now;
+      reportPatch.status = 'result_submitted';
+    }
 
     const { data: updatedReport, error: repErr } = await supabase
       .from('crm_daily_reports')
@@ -838,36 +880,11 @@ r.put('/mine', async (req, res) => {
   }
 });
 
-// ─── POST /mine/auto-close — buổi chiều: tự chốt KQ Phần II từ CRM rồi nộp ───
-r.post('/mine/auto-close', async (req, res) => {
-  try {
-    const userId = req.user.userId;
-    const date = String(req.body?.date || nowVnParts().date);
-    if (!isValidDate(date)) return res.status(400).json({ error: 'Ngày không hợp lệ' });
-
-    const me = await loadUserProfile(userId);
-    const companyId = me?.company_id || req.user.company_id || null;
-    const deptName = me?.departments?.name || null;
-
-    const out = await autoCloseDailyReportForUser({
-      userId,
-      reportDate: date,
-      companyId,
-      templateId: req.body?.template_id || null,
-      departmentName: deptName,
-      userProfile: me,
-      force: true,
-    });
-
-    const bundle = await loadReportBundle(out.report.id);
-    return res.json({
-      report: bundle,
-      auto_close: out.auto_close,
-    });
-  } catch (e) {
-    console.error('[daily-reports] POST /mine/auto-close:', e.message || e);
-    return res.status(500).json({ error: e.message || 'Lỗi chốt kết quả tự động' });
-  }
+// ─── POST /mine/auto-close — đã gỡ: số AUTO chỉ do cron snapshot ──────────────
+r.post('/mine/auto-close', async (_req, res) => {
+  return res.status(410).json({
+    error: 'Đã tắt chốt tay từ CRM. Hệ thống snapshot 08:00 (Phần I) và 16:45 (Phần II).',
+  });
 });
 
 // ─── POST /mine/extras — thêm dòng tự tạo (lưu theo user, dùng lại ngày sau) ─
@@ -1086,20 +1103,36 @@ r.get('/mine/preview-auto', async (req, res) => {
       if (assignedId) roleKey = (await getTemplateById(assignedId))?.role_key || null;
     }
     if (!roleKey) roleKey = guessRoleKey(me || req.user, deptName);
-    const resultDate = resultDateForReport(date);
-    if (!resultDate) return res.status(400).json({ error: 'Không xác định được ngày kết quả (ngày phiếu)' });
-    const [computed, planned] = await Promise.all([
-      computeAutoDailyResults(userId, resultDate, roleKey),
-      computeAutoDailyPlans(userId, date, roleKey, req.user.company_id || me?.company_id || null),
-    ]);
+    const snaps = await loadSnapshotsMap(date, me?.company_id || req.user.company_id || null);
+    const livePreview = String(req.query.preview || '') === '1';
+    let metrics = {};
+    let plan_metrics = {};
+    if (livePreview) {
+      const companyId = me?.company_id || req.user.company_id || null;
+      const [planPack, resultPack] = await Promise.all([
+        computeForUser(userId, date, roleKey, 'plan', { companyId }),
+        computeForUser(userId, date, roleKey, 'result', { untilIso: resultUntilIso(date), companyId }),
+      ]);
+      plan_metrics = planPack.metrics || {};
+      metrics = resultPack.metrics || {};
+    } else {
+      for (const [key, row] of snaps) {
+        if (!String(key).startsWith(`${userId}|`)) continue;
+        const payload = { value: row.value, note: row.note, source: row.source, ids: row.entity_ids || [] };
+        if (row.phase === 'result') metrics[row.metric_key] = payload;
+        if (row.phase === 'plan') plan_metrics[row.metric_key] = payload;
+      }
+    }
     return res.json({
       date,
-      result_date: resultDate,
+      result_date: date,
       plan_date: date,
       role_key: roleKey,
-      ...computed,
-      plan_metrics: planned.metrics || {},
-      plan_raw: planned.raw || null,
+      metrics,
+      plan_metrics,
+      result_until: resultUntilIso(date),
+      snapshot: !livePreview,
+      preview: livePreview,
     });
   } catch (e) {
     console.error('[daily-reports] GET /mine/preview-auto:', e.message || e);
@@ -1263,27 +1296,45 @@ r.get('/team/matrix-cell-links', async (req, res) => {
     if (!userId) return res.status(400).json({ error: 'Thiếu user_id' });
     const metricKey = String(req.query.metric_key || '').trim();
     if (!metricKey) return res.status(400).json({ error: 'Thiếu metric_key' });
-    const roleKey = String(req.query.role_key || 'sale_admin').trim() || 'sale_admin';
     const section = String(req.query.section || 'result').trim();
 
-    // Bảng tổng hợp: ô Kết quả / Kế hoạch đều bám ngày đang chọn trên bộ lọc.
-    const crmDate = reportDate;
-
-    const payload = await loadMetricEntityLinks(
-      userId,
-      crmDate,
-      roleKey,
-      metricKey,
-      section === 'plan' ? 'plan' : 'result',
-      String(req.query.company_id || '').trim() || null,
-    );
+    const phase = section === 'plan' ? 'plan' : 'result';
+    const snaps = await loadSnapshotsMap(reportDate, String(req.query.company_id || '').trim() || null);
+    const hit = snaps.get(snapKey(userId, phase, metricKey));
+    const ids = [...new Set((hit?.entity_ids || []).map(String).filter(Boolean))];
+    const items = [];
+    for (let i = 0; i < ids.length; i += 200) {
+      const chunk = ids.slice(i, i + 200);
+      const { data, error } = await supabase
+        .from('crm_leads')
+        .select('id, code, title, type, phone, company_id, stage:crm_pipeline_stages!stage_id(id, name)')
+        .in('id', chunk);
+      if (error) throw error;
+      for (const row of data || []) {
+        items.push({
+          id: row.id,
+          code: row.code || null,
+          name: row.title || null,
+          type: row.type || 'lead',
+          phone: row.phone || null,
+          stage_name: row.stage?.name || null,
+          path: `/crm/leads/${row.id}`,
+        });
+      }
+    }
     return res.json({
       date: reportDate,
-      crm_date: crmDate,
+      crm_date: reportDate,
       user_id: userId,
       role_key: roleKey,
       section,
-      ...payload,
+      metric_key: metricKey,
+      value: hit?.value ?? null,
+      note: hit?.note || null,
+      source: hit?.source || 'snapshot',
+      ids,
+      items,
+      computed_at: hit?.computed_at || null,
     });
   } catch (e) {
     console.error('[daily-reports] GET /team/matrix-cell-links:', e.message || e);
@@ -1318,12 +1369,14 @@ r.get('/team/matrix', async (req, res) => {
     }
 
     const templateRoleFilter = String(req.query.role_key || req.query.template_id || '').trim() || null;
+    const preview = String(req.query.preview || '') === '1';
     const payload = await loadTeamDailyReportMatrix({
       date,
       companyId,
       departmentId,
       roleKey: templateRoleFilter,
       q: qSearch,
+      preview,
     });
     res.set('Cache-Control', 'no-store');
     return res.json(payload);
