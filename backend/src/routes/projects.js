@@ -35,6 +35,8 @@ const {
 const { applyAllActiveWorkshopTemplatesForArea } = require('../helpers/workshopApplyTemplates');
 const { assertProjectAccessible } = require('../helpers/projectAccessScope');
 const { enrichProjectsModulePresence } = require('../helpers/projectModuleCompanies');
+const { responseCache } = require('../middleware/responseCache');
+const { PROJECTS_LIST_TAG } = require('../middleware/projectsCacheInvalidation');
 
 const r = Router();
 r.use(auth);
@@ -93,6 +95,31 @@ async function attachCreatedByUsers(projects) {
     ...p,
     created_by_user: map.get(String(p.created_by || '')) || null,
   }));
+}
+
+/**
+ * Cột jsonb "nặng" chỉ trang chi tiết dự án cần — không dùng ở bất kỳ danh sách nào.
+ * `quotation_files` chiếm ~70% payload của GET /api/projects (có dự án lên tới 1.2MB),
+ * nên loại khỏi SELECT danh sách để giảm mạnh thời gian tải.
+ */
+const LIST_OMIT_COLUMNS = ['quotation_files'];
+let listColumnsCache = { cols: null, at: 0 };
+const LIST_COLUMNS_TTL = 10 * 60 * 1000;
+
+/** Lấy danh sách cột của `projects` (trừ cột nặng). Fallback '*' nếu không dò được. */
+async function getProjectListColumns() {
+  const now = Date.now();
+  if (listColumnsCache.cols && now - listColumnsCache.at < LIST_COLUMNS_TTL) return listColumnsCache.cols;
+  try {
+    const { data, error } = await supabase.from('projects').select('*').limit(1);
+    if (error || !data?.length) return '*';
+    const cols = Object.keys(data[0]).filter((c) => !LIST_OMIT_COLUMNS.includes(c));
+    if (!cols.length) return '*';
+    listColumnsCache = { cols: cols.join(','), at: now };
+    return listColumnsCache.cols;
+  } catch {
+    return '*';
+  }
 }
 
 // ─── HELPER: Create notification (backward compatible wrapper) ──
@@ -198,7 +225,12 @@ r.get('/pending-approvals', requirePermission('projects', 'view'), async (req, r
 });
 
 // ─── LIST PROJECTS ──
-r.get('/', requirePermission('projects', 'view'), async (req, res) => {
+// Cache 20s, scope 'user' (danh sách đã lọc theo quyền của từng người). Mọi request ghi
+// vào các prefix liên quan tới dự án sẽ xoá tag này ngay — xem middleware/projectsCacheInvalidation.js.
+r.get('/',
+  requirePermission('projects', 'view'),
+  responseCache({ ttl: 20, scope: 'user', tags: [PROJECTS_LIST_TAG] }),
+  async (req, res) => {
   try {
     const { status, search, stage_slug, page = 1, limit = 50, company_id, division_id } = req.query;
     const userId = req.user.userId;
@@ -206,8 +238,11 @@ r.get('/', requirePermission('projects', 'view'), async (req, res) => {
     // Check permission
     const canViewAll = await checkPermission(userId, 'projects', 'all_companies');
     
+    // Bỏ cột nặng (quotation_files) khỏi danh sách — chỉ trang chi tiết mới cần.
+    const baseCols = await getProjectListColumns();
+
     const listSelectFull = `
-      *, customers(id,full_name,phone,email,city),
+      ${baseCols}, customers(id,full_name,phone,email,city),
       company:companies!projects_company_id_fkey(id,name,short_name,division_unit_id),
       current_stage:workflow_stages(id,name,slug,color,icon),
       sales_person:users!projects_sales_person_id_fkey(id,full_name,avatar),
@@ -219,7 +254,7 @@ r.get('/', requirePermission('projects', 'view'), async (req, res) => {
       installation_person:users!projects_installation_person_id_fkey(id,full_name,avatar)
     `;
     const listSelectBase = `
-      *, customers(id,full_name,phone,email,city),
+      ${baseCols}, customers(id,full_name,phone,email,city),
       company:companies!projects_company_id_fkey(id,name,short_name,division_unit_id),
       current_stage:workflow_stages(id,name,slug,color,icon),
       sales_person:users!projects_sales_person_id_fkey(id,full_name,avatar),
@@ -343,20 +378,30 @@ r.get('/', requirePermission('projects', 'view'), async (req, res) => {
     }
 
     let projects = data || [];
-    try {
-      projects = await attachCreatedByUsers(projects);
-    } catch (cbErr) {
-      console.warn('[projects list] created_by users:', cbErr.message);
-    }
-    try {
-      projects = await enrichProjectsModulePresence(projects);
-    } catch (enrErr) {
-      console.warn('[projects list] enrich modules:', enrErr.message);
+    // 2 bước làm giàu độc lập nhau (enrich tự tra user từ `created_by` nếu chưa có
+    // `created_by_user`) → chạy song song rồi ghép, thay vì tuần tự.
+    const [withCreators, enriched] = await Promise.all([
+      attachCreatedByUsers(projects).catch((cbErr) => {
+        console.warn('[projects list] created_by users:', cbErr.message);
+        return null;
+      }),
+      enrichProjectsModulePresence(projects).catch((enrErr) => {
+        console.warn('[projects list] enrich modules:', enrErr.message);
+        return null;
+      }),
+    ]);
+    projects = enriched || projects;
+    if (withCreators) {
+      const creatorById = new Map(withCreators.map((p) => [String(p.id), p.created_by_user || null]));
+      projects = projects.map((p) => ({
+        ...p,
+        created_by_user: p.created_by_user || creatorById.get(String(p.id)) || null,
+      }));
     }
 
     res.json({ projects, total: count, page: p, totalPages: Math.ceil((count||0)/l) });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
-});
+  });
 
 // ─── ĐƠN HÀNG CON (tab Đơn hàng — pipeline + deal nhiệm vụ + đẩy VC) ───────
 // Không bọc requirePermission: thao tác đơn/nhiệm vụ theo đơn chỉ cần đăng nhập (auth middleware).

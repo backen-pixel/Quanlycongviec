@@ -5,9 +5,9 @@ import api from '../lib/api';
 import {
   Plus, Search, Phone, Calendar, FolderKanban, X, User, List,
   CalendarClock, Pin, ChevronLeft, ChevronRight, ChevronUp, ChevronDown,
-  LayoutGrid, AlertTriangle, BarChart3, Filter, Trash2,
+  LayoutGrid, BarChart3, Filter, Trash2,
   Factory, Truck, Briefcase, CheckSquare, Settings2, MessageSquare,
-  GripVertical, RotateCcw, Clock,
+  GripVertical, RotateCcw, Clock, MoreHorizontal,
 } from 'lucide-react';
 import { togglePin, isPinned } from '../components/PinnedProjectsWidget';
 import { STATUS_LABELS, STATUS_COLORS, PRIORITY_COLORS, PRIORITY_LABELS, formatVND, formatDate, getInitials, avatarColor } from '../lib/utils';
@@ -290,11 +290,6 @@ export default function Projects() {
 
   const hasActiveFilters = filterDivision !== 'all' || filterCompany !== 'all' || filterCustomer !== 'all' || filterPerson !== 'all' || filterTime !== 'all' || dateFrom || dateTo;
 
-  const overdueCount = filtered.filter((p) => {
-    const d = p.schedule?.at || p.deadline || p.design_deadline || p.production_deadline || p.delivery_date || p.dates?.deal_task_deadline;
-    return d && new Date(d) < new Date() && p.status !== 'completed';
-  }).length;
-
   const kpi = useMemo(() => {
     const now = new Date();
     let working = 0;
@@ -332,6 +327,12 @@ export default function Projects() {
   ], []);
   const ALT_VIEW_MODES = useMemo(
     () => VIEW_MODES.filter((v) => v.id !== 'kanban'),
+    [VIEW_MODES],
+  );
+  // 3 chế độ dùng nhiều nhất hiện nút riêng (khớp mockup); còn lại gộp vào menu "Khác".
+  const PRIMARY_VIEW_IDS = ['kanban', 'list', 'calendar'];
+  const MORE_VIEW_MODES = useMemo(
+    () => VIEW_MODES.filter((v) => !PRIMARY_VIEW_IDS.includes(v.id)),
     [VIEW_MODES],
   );
   const [showViewModeMenu, setShowViewModeMenu] = useState(false);
@@ -662,6 +663,50 @@ export default function Projects() {
     const deliveryDate = dates.delivery_date || dates.production_deadline || proj.delivery_date || proj.production_deadline;
     const installDate = dates.install_date || proj.install_date;
 
+    // Ngày rút gọn "d/m" (không năm) — khớp mật độ mockup; giữ formatDate() đầy đủ cho title hover.
+    const shortDate = (v) => {
+      if (!v) return '';
+      const d = new Date(v);
+      if (Number.isNaN(d.getTime())) return '';
+      return `${d.getDate()}/${d.getMonth() + 1}`;
+    };
+    const dateChips = [
+      hasDeadline && { label: deadlineLabel, v: deadlineAt },
+      orderDate && { label: 'Đặt', v: orderDate },
+      deliveryDate && { label: 'Giao', v: deliveryDate },
+      installDate && { label: 'Lắp', v: installDate },
+    ].filter(Boolean);
+
+    // Người phụ trách theo module đang active — 1 avatar/tên mỗi người (bỏ trùng theo tên).
+    const staffChips = [];
+    const seenStaff = new Set();
+    for (const row of activeModules) {
+      const name = row.person?.full_name;
+      if (!name || seenStaff.has(name)) continue;
+      seenStaff.add(name);
+      staffChips.push({ name, key: row.key });
+    }
+
+    const originName = origin?.created_by?.full_name || proj.customers?.full_name || null;
+
+    // Đích của tag module: mở dự án ngay trong module đó (không phải trang chi tiết chung).
+    const moduleHref = (key) => {
+      if (key === 'sx') return `/sx/projects/${proj.id}`;
+      if (key === 'vc') return `/vc/projects/${proj.id}`;
+      if (key === 'crm') {
+        return origin?.deal_id
+          ? `/crm/leads/${origin.deal_id}`
+          : `/projects/${proj.id}?tab=crm`;
+      }
+      return `/projects/${proj.id}?tab=overview`;
+    };
+    const moduleHint = (key) => {
+      if (key === 'sx') return 'Mở dự án trong Sản xuất';
+      if (key === 'vc') return 'Mở dự án trong Vận chuyển / Lắp đặt';
+      if (key === 'crm') return origin?.deal_id ? 'Mở deal trong CRM' : 'Mở phần bán hàng của dự án';
+      return 'Mở dự án';
+    };
+
     return (
       <Link
         to={`/projects/${proj.id}?tab=overview`}
@@ -669,20 +714,6 @@ export default function Projects() {
           overdue ? 'border-red-200 ring-1 ring-red-100' : 'border-slate-200/90'
         }`}
       >
-        {/* Dải module luôn 3 ô — nhìn 1 phát biết dự án chạm CRM / SX / VC */}
-        <div className="flex items-center gap-1 mb-2" title="Module đang gắn với dự án">
-          {moduleDefs.map((m) => (
-            <span
-              key={m.key}
-              className={`flex-1 text-center text-[10px] font-extrabold tracking-wide rounded-md border px-1 py-1 ${
-                m.active ? m.on.pill : m.off.pill
-              }`}
-            >
-              {m.short}
-            </span>
-          ))}
-        </div>
-
         <div className="flex items-start justify-between gap-2 mb-1">
           <div className="flex items-center gap-1.5 min-w-0">
             <span className="text-[11px] font-bold text-violet-700 font-mono truncate">{proj.code}</span>
@@ -704,110 +735,84 @@ export default function Projects() {
           </button>
         </div>
 
-        <h4 className="text-[13px] font-bold text-slate-900 leading-snug line-clamp-2 group-hover:text-violet-700 mb-1.5">
+        <h4 className="text-[13px] font-bold text-slate-900 leading-snug line-clamp-2 group-hover:text-violet-700 mb-1">
           {proj.name}
         </h4>
 
-        <div className="mb-1.5 text-[10px] leading-snug">
-          {origin?.kind === 'crm_deal' ? (
-            <p className="truncate text-emerald-800 font-semibold" title={[origin.deal_code, origin.deal_title].filter(Boolean).join(' — ')}>
-              Từ CRM
-              {origin.deal_code && <span className="ml-1 font-mono">{origin.deal_code}</span>}
-              {origin.created_by?.full_name && (
-                <span className="font-medium text-slate-500"> · {origin.created_by.full_name}</span>
-              )}
-            </p>
-          ) : (
-            <p className="truncate text-slate-600 font-medium">
-              {origin?.label || 'Tạo thủ công'}
-              {origin?.created_by?.full_name && (
-                <span className="text-slate-500"> · {origin.created_by.full_name}</span>
-              )}
-            </p>
-          )}
-        </div>
-
-        {hasDeadline ? (
-          <div className="mb-1.5">
-            <span
-              className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-semibold tabular-nums ${deadlineTone}`}
-              title={`${deadlineLabel}: ${formatDate(deadlineAt)}`}
-            >
-              <Clock className="h-3 w-3" strokeWidth={2.4} />
-              <span className="uppercase tracking-wide font-extrabold">{deadlineLabel}</span>
-              <span className="opacity-70">·</span>
-              {overdue ? `Quá hạn ${formatDate(deadlineAt)}` : `Hạn ${formatDate(deadlineAt)}`}
-            </span>
-          </div>
-        ) : null}
-
-        {(orderDate || deliveryDate || installDate) && (
-          <div className="flex flex-wrap gap-1 mb-1.5">
-            {orderDate && (
-              <span className="inline-flex items-center rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 tabular-nums">
-                Đặt {formatDate(orderDate)}
-              </span>
-            )}
-            {deliveryDate && (
-              <span className="inline-flex items-center rounded border border-teal-200 bg-teal-50 px-1.5 py-0.5 text-[10px] font-medium text-teal-700 tabular-nums">
-                Giao {formatDate(deliveryDate)}
-              </span>
-            )}
-            {installDate && (
-              <span className="inline-flex items-center rounded border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-[10px] font-medium text-sky-800 tabular-nums">
-                Lắp {formatDate(installDate)}
-              </span>
-            )}
-          </div>
+        {(origin?.deal_code || originName) && (
+          <p
+            className="flex items-center gap-1 text-[11px] text-slate-500 truncate mb-1"
+            title={[origin?.deal_code, originName].filter(Boolean).join(' · ')}
+          >
+            <FolderKanban className="h-3 w-3 shrink-0 text-slate-400" />
+            {origin?.deal_code && <span className="font-mono font-medium text-slate-600">{origin.deal_code}</span>}
+            {origin?.deal_code && originName && <span className="text-slate-300">·</span>}
+            {originName && <span className="truncate">{originName}</span>}
+          </p>
         )}
 
-        {/* Chi tiết từng module đang active — màu + vạch trái tách biệt */}
-        {activeModules.length > 0 && (
-          <div className="space-y-1 mb-1.5">
-            {activeModules.map((row) => (
-              <div
-                key={row.key}
-                className={`flex items-stretch gap-0 rounded-md border overflow-hidden ${row.on.row}`}
-              >
-                <span className={`w-1 shrink-0 ${row.on.bar}`} aria-hidden />
-                <div className="flex items-center gap-1.5 px-1.5 py-1 min-w-0 flex-1">
-                  <span className={`text-[9px] font-extrabold shrink-0 px-1.5 py-0.5 rounded ${row.on.badge}`}>
-                    {row.label}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-[11px] font-bold truncate text-slate-900">
-                      {row.person?.full_name || <span className="font-medium text-slate-400">Chưa gán</span>}
-                    </p>
-                    <p className="text-[9px] font-medium text-slate-600 truncate">
-                      {[row.stage, row.role, row.company].filter(Boolean).join(' · ')}
-                    </p>
-                  </div>
-                </div>
-              </div>
+        {dateChips.length > 0 && (
+          <p className="flex items-center gap-1 text-[11px] text-slate-600 mb-1.5" title={dateChips.map((c) => `${c.label} ${formatDate(c.v)}`).join(' · ')}>
+            <Clock className={`h-3 w-3 shrink-0 ${overdue ? 'text-red-500' : 'text-slate-400'}`} />
+            <span className={`truncate tabular-nums ${overdue ? 'font-semibold text-red-600' : ''}`}>
+              {dateChips.map((c) => `${c.label} ${shortDate(c.v)}`).join(' · ')}
+            </span>
+          </p>
+        )}
+
+        {staffChips.length > 0 && (
+          <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 mb-1.5">
+            {staffChips.map((s) => (
+              <span key={s.key} className="inline-flex items-center gap-1 min-w-0" title={s.name}>
+                <span
+                  className="h-4 w-4 shrink-0 rounded-full flex items-center justify-center text-[8px] font-bold text-white"
+                  style={{ backgroundColor: avatarColor(s.name) }}
+                >
+                  {getInitials(s.name)}
+                </span>
+                <span className="text-[11px] font-medium text-slate-700 truncate max-w-[6rem]">{s.name}</span>
+              </span>
             ))}
           </div>
         )}
 
         {(proj.customers?.full_name || proj.customers?.phone) && (
-          <p className="text-[11px] leading-snug min-w-0 truncate mb-1" title={[proj.customers?.full_name, proj.customers?.phone].filter(Boolean).join(' · ')}>
+          <p className="flex items-center gap-1 text-[11px] leading-snug min-w-0 truncate mb-1.5" title={[proj.customers?.full_name, proj.customers?.phone].filter(Boolean).join(' · ')}>
+            <Phone className="h-3 w-3 shrink-0 text-slate-400" />
             {proj.customers?.full_name && (
-              <span className="font-medium text-slate-800">{proj.customers.full_name}</span>
+              <span className="font-medium text-slate-700 truncate">{proj.customers.full_name}</span>
             )}
             {proj.customers?.full_name && proj.customers?.phone && (
-              <span className="text-slate-300 mx-1">·</span>
+              <span className="text-slate-300">·</span>
             )}
             {proj.customers?.phone && (
-              <span className="font-mono tabular-nums text-slate-700">{proj.customers.phone}</span>
+              <span className="font-mono tabular-nums text-slate-600 shrink-0">{proj.customers.phone}</span>
             )}
           </p>
         )}
 
-        <div className="flex items-center justify-between gap-2 mt-1.5 pt-1.5 border-t border-slate-100">
-          <span className="text-[10px] font-medium text-slate-500 truncate">
-            {activeModules.length
-              ? `${activeModules.length} module · ${activeModules.map((m) => m.short).join(' · ')}`
-              : 'Chưa gắn module'}
-          </span>
+        <div className="flex items-center justify-between gap-2 pt-1.5 border-t border-slate-100">
+          {activeModules.length ? (
+            <div className="flex items-center gap-1 min-w-0">
+              {activeModules.map((m) => (
+                <button
+                  key={m.key}
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    navigate(moduleHref(m.key));
+                  }}
+                  className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded shrink-0 cursor-pointer hover:brightness-110 ${m.on.badge}`}
+                  title={moduleHint(m.key)}
+                >
+                  {m.short}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <span className="text-[10px] font-semibold text-slate-500 truncate">Chưa gắn module</span>
+          )}
           {proj.estimated_value > 0 && (
             <span className="text-[11px] font-bold text-emerald-600 tabular-nums shrink-0">
               {formatVND(proj.estimated_value)}
@@ -823,22 +828,10 @@ export default function Projects() {
       <div className="ui-solid-white rounded-xl border border-slate-200/90 bg-white shadow-sm overflow-hidden">
         {/* Hàng 1 — tab + hành động */}
         <div className="border-b border-slate-200/60">
-          <div className="flex items-center justify-between gap-1.5 flex-wrap px-2.5 py-1 sm:px-3 bg-slate-50/50">
-            <div className="flex items-center gap-1 min-w-0">
-              <div data-tour="pipeline-tabs" className="inline-flex gap-px p-0.5 bg-slate-200/60 border border-slate-300/50 rounded-lg shrink-0">
-                <button
-                  type="button"
-                  className="rounded-md font-semibold transition-colors flex items-center gap-1 px-2 py-1 text-[11px] whitespace-nowrap bg-white text-blue-700 shadow-sm"
-                >
-                  Dự án {filtered.length}
-                </button>
-              </div>
-              {overdueCount > 0 && (
-                <span className="inline-flex items-center gap-1 h-6 px-1.5 rounded-md bg-red-50 border border-red-200 text-red-600 text-[10px] font-bold">
-                  <AlertTriangle className="h-3 w-3" /> {overdueCount}
-                </span>
-              )}
-              <span className="text-[10px] text-slate-400 hidden sm:inline">
+          <div className="flex items-center justify-between gap-1.5 flex-wrap px-2.5 py-2 sm:px-3 bg-white">
+            <div className="flex items-center gap-2 min-w-0">
+              <h1 data-tour="pipeline-tabs" className="text-base sm:text-lg font-extrabold text-slate-900 shrink-0">Dự án</h1>
+              <span className="text-[11px] text-slate-400 hidden sm:inline whitespace-nowrap">
                 Cập nhật {new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
               </span>
             </div>
@@ -846,7 +839,7 @@ export default function Projects() {
               <button
                 type="button"
                 onClick={() => navigate('/workflow-settings')}
-                className="h-7 px-2.5 rounded-md border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
+                className="h-8 px-2.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
                 title="Thêm / đổi tên / ẩn / sắp xếp cột Kanban"
               >
                 <Settings2 className="h-3.5 w-3.5" />
@@ -855,7 +848,7 @@ export default function Projects() {
               <button
                 type="button"
                 onClick={() => navigate('/projects/create')}
-                className="h-7 px-2.5 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-semibold flex items-center gap-1 cursor-pointer shadow-sm"
+                className="h-8 px-3 rounded-lg bg-violet-600 hover:bg-violet-700 text-white text-[11px] font-semibold flex items-center gap-1 cursor-pointer shadow-sm"
               >
                 <Plus className="h-3.5 w-3.5" /> Thêm dự án
               </button>
@@ -931,19 +924,26 @@ export default function Projects() {
               data-tour="projects-view-mode"
               className="flex items-center gap-0.5 shrink-0 ml-auto pl-1 border-l border-slate-200/80"
             >
-              <div className="inline-flex items-center gap-px p-0.5 rounded-md bg-slate-100 border border-slate-200/80">
-                <button
-                  type="button"
-                  onClick={() => setViewMode('kanban')}
-                  className={`h-8 px-2 rounded-md text-xs font-medium inline-flex items-center gap-1 cursor-pointer transition-colors shrink-0 ${
-                    viewMode === 'kanban'
-                      ? 'bg-white text-violet-700 shadow-sm'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  <LayoutGrid className="h-3.5 w-3.5" />
-                  <span className="hidden md:inline">Kanban</span>
-                </button>
+              <div className="inline-flex items-center gap-px p-0.5 rounded-lg bg-slate-100 border border-slate-200/80">
+                {[
+                  { id: 'kanban', label: 'Kanban', icon: LayoutGrid },
+                  { id: 'list', label: 'Danh sách', icon: List },
+                  { id: 'calendar', label: 'Lịch', icon: Calendar },
+                ].map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => setViewMode(m.id)}
+                    className={`h-8 px-2.5 rounded-md text-xs font-semibold inline-flex items-center gap-1 cursor-pointer transition-colors shrink-0 ${
+                      viewMode === m.id
+                        ? 'bg-violet-600 text-white shadow-sm'
+                        : 'text-slate-600 hover:text-slate-900 hover:bg-white'
+                    }`}
+                  >
+                    <m.icon className="h-3.5 w-3.5" />
+                    <span className="hidden md:inline">{m.label}</span>
+                  </button>
+                ))}
                 <div className="relative">
                   <button
                     ref={viewModeTriggerRef}
@@ -951,33 +951,33 @@ export default function Projects() {
                     data-tour="projects-view-mode-more"
                     onClick={() => setShowViewModeMenu((v) => !v)}
                     className={`h-8 px-2 rounded-md text-xs font-medium inline-flex items-center gap-1 cursor-pointer transition-colors shrink-0 ${
-                      viewMode !== 'kanban'
-                        ? 'bg-white text-violet-700 shadow-sm'
-                        : 'text-slate-600 hover:text-slate-900'
+                      MORE_VIEW_MODES.some((v) => v.id === viewMode)
+                        ? 'bg-violet-600 text-white shadow-sm'
+                        : 'text-slate-500 hover:text-slate-900 hover:bg-white'
                     }`}
-                    title="Chọn dạng giao diện khác"
+                    title="Các chế độ xem khác"
                     aria-expanded={showViewModeMenu}
                     aria-label="Chế độ xem khác"
                   >
                     {(() => {
-                      const active = ALT_VIEW_MODES.find((v) => v.id === viewMode);
-                      const Icon = active?.icon || List;
-                      return (
-                        <>
-                          <Icon className="h-3.5 w-3.5" />
-                          <span className="hidden md:inline max-w-[6.5rem] truncate">
-                            {active?.label || 'Khác'}
-                          </span>
-                          <ChevronDown className={`h-3 w-3 shrink-0 transition-transform ${showViewModeMenu ? 'rotate-180' : ''}`} />
-                        </>
-                      );
+                      const active = MORE_VIEW_MODES.find((v) => v.id === viewMode);
+                      if (active) {
+                        const Icon = active.icon;
+                        return (
+                          <>
+                            <Icon className="h-3.5 w-3.5" />
+                            <span className="hidden md:inline max-w-[6.5rem] truncate">{active.label}</span>
+                          </>
+                        );
+                      }
+                      return <MoreHorizontal className="h-3.5 w-3.5" />;
                     })()}
                   </button>
                   <ViewModeDropdownMenu
                     open={showViewModeMenu}
                     onClose={() => setShowViewModeMenu(false)}
                     anchorRef={viewModeTriggerRef}
-                    modes={ALT_VIEW_MODES}
+                    modes={MORE_VIEW_MODES}
                     activeId={viewMode}
                     theme="violet"
                     onSelect={(id) => {
@@ -1004,12 +1004,47 @@ export default function Projects() {
               KPI<span className="ml-1 font-medium text-blue-600">· Đa module</span>
             </span>
             {!kpiPanelOpen && (
-              <span className="text-[10px] text-slate-500 truncate ml-2">
-                {kpi.total} DA
+              <span className="flex items-center gap-1.5 truncate ml-2">
+                <span className="inline-flex items-baseline gap-0.5">
+                  <span className="text-xs font-extrabold text-violet-700 tabular-nums">{kpi.total}</span>
+                  <span className="text-[10px] font-medium text-slate-400">DA</span>
+                </span>
                 {moduleKpis ? (
-                  <> · {moduleKpis.crm_deals || 0} deal · {moduleKpis.sx_active || 0} SX · {(moduleKpis.vc_active || 0) + (moduleKpis.install_active || 0)} VC · {moduleKpis.overdue_tasks || 0} task trễ</>
+                  <>
+                    <span className="text-slate-300">·</span>
+                    <span className="inline-flex items-baseline gap-0.5">
+                      <span className="text-xs font-extrabold text-blue-600 tabular-nums">{moduleKpis.crm_deals || 0}</span>
+                      <span className="text-[10px] font-medium text-slate-400">deal</span>
+                    </span>
+                    <span className="text-slate-300">·</span>
+                    <span className="inline-flex items-baseline gap-0.5">
+                      <span className="text-xs font-extrabold text-orange-600 tabular-nums">{moduleKpis.sx_active || 0}</span>
+                      <span className="text-[10px] font-medium text-slate-400">SX</span>
+                    </span>
+                    <span className="text-slate-300">·</span>
+                    <span className="inline-flex items-baseline gap-0.5">
+                      <span className="text-xs font-extrabold text-amber-600 tabular-nums">{(moduleKpis.vc_active || 0) + (moduleKpis.install_active || 0)}</span>
+                      <span className="text-[10px] font-medium text-slate-400">VC</span>
+                    </span>
+                    <span className="text-slate-300">·</span>
+                    <span className="inline-flex items-baseline gap-0.5">
+                      <span className={`text-xs font-extrabold tabular-nums ${moduleKpis.overdue_tasks > 0 ? 'text-red-600' : 'text-slate-700'}`}>{moduleKpis.overdue_tasks || 0}</span>
+                      <span className="text-[10px] font-medium text-slate-400">task trễ</span>
+                    </span>
+                  </>
                 ) : (
-                  <> · {kpi.overdue} quá hạn · {kpi.done} xong</>
+                  <>
+                    <span className="text-slate-300">·</span>
+                    <span className="inline-flex items-baseline gap-0.5">
+                      <span className={`text-xs font-extrabold tabular-nums ${kpi.overdue > 0 ? 'text-red-600' : 'text-slate-700'}`}>{kpi.overdue}</span>
+                      <span className="text-[10px] font-medium text-slate-400">quá hạn</span>
+                    </span>
+                    <span className="text-slate-300">·</span>
+                    <span className="inline-flex items-baseline gap-0.5">
+                      <span className="text-xs font-extrabold text-emerald-600 tabular-nums">{kpi.done}</span>
+                      <span className="text-[10px] font-medium text-slate-400">xong</span>
+                    </span>
+                  </>
                 )}
               </span>
             )}
@@ -1028,24 +1063,19 @@ export default function Projects() {
                   href="/projects"
                   items={[
                     { label: 'Tổng', value: kpi.total },
-                    { label: 'Đang làm', value: kpi.working },
                     { label: 'Quá hạn', value: kpi.overdue, alert: kpi.overdue > 0 },
-                    { label: 'Hoàn thành', value: kpi.done },
                   ]}
-                  footer={kpi.valueSum > 0 ? `GT: ${formatVND(kpi.valueSum)}` : null}
+                  footer={kpi.valueSum > 0 ? { label: 'GT:', value: formatVND(kpi.valueSum) } : null}
                 />
                 <ModuleKpiGroup
                   title="CRM"
                   icon={<Briefcase className="h-3.5 w-3.5" />}
-                  tone="emerald"
+                  tone="blue"
                   href="/crm/dashboard"
                   items={[
-                    { label: 'Lead', value: moduleKpis?.crm_leads ?? '—' },
                     { label: 'Deal', value: moduleKpis?.crm_deals ?? '—' },
                     { label: 'Won', value: moduleKpis?.crm_won ?? '—' },
-                    { label: 'Quá hạn', value: moduleKpis?.crm_overdue ?? '—', alert: (moduleKpis?.crm_overdue || 0) > 0 },
                   ]}
-                  footer={moduleKpis?.pipeline_value != null ? `Pipeline: ${formatVND(moduleKpis.pipeline_value)}` : null}
                 />
                 <ModuleKpiGroup
                   title="Sản xuất"
@@ -1054,7 +1084,6 @@ export default function Projects() {
                   href="/sx"
                   items={[
                     { label: 'Đang SX', value: moduleKpis?.sx_active ?? '—' },
-                    { label: 'Tiếp nhận', value: moduleKpis?.sx_intake ?? '—' },
                     { label: 'Quá hạn', value: moduleKpis?.sx_overdue ?? '—', alert: (moduleKpis?.sx_overdue || 0) > 0 },
                   ]}
                 />
@@ -1066,19 +1095,23 @@ export default function Projects() {
                   items={[
                     { label: 'VC', value: moduleKpis?.vc_active ?? '—' },
                     { label: 'Lắp', value: moduleKpis?.install_active ?? '—' },
-                    { label: 'VC trễ', value: moduleKpis?.vc_overdue ?? '—', alert: (moduleKpis?.vc_overdue || 0) > 0 },
-                    { label: 'Lắp trễ', value: moduleKpis?.install_overdue ?? '—', alert: (moduleKpis?.install_overdue || 0) > 0 },
+                    {
+                      label: 'Trễ',
+                      value: (moduleKpis?.vc_overdue != null || moduleKpis?.install_overdue != null)
+                        ? (Number(moduleKpis?.vc_overdue) || 0) + (Number(moduleKpis?.install_overdue) || 0)
+                        : '—',
+                      alert: ((Number(moduleKpis?.vc_overdue) || 0) + (Number(moduleKpis?.install_overdue) || 0)) > 0,
+                    },
                   ]}
                 />
                 <ModuleKpiGroup
                   title="Nhiệm vụ"
                   icon={<CheckSquare className="h-3.5 w-3.5" />}
-                  tone="sky"
+                  tone="indigo"
                   href="/work/unified"
                   items={[
                     { label: 'Đang mở', value: moduleKpis?.open_tasks ?? '—' },
                     { label: 'Quá hạn', value: moduleKpis?.overdue_tasks ?? '—', alert: (moduleKpis?.overdue_tasks || 0) > 0 },
-                    { label: 'Chưa hạn', value: kpi.noDeadline },
                   ]}
                 />
               </div>
@@ -1261,7 +1294,8 @@ export default function Projects() {
         >
           <div
             ref={kanbanWrapRef}
-            className={`relative min-h-[min(700px,calc(100vh-128px))] ${UI_KANBAN_FIXED_CLASS}`}
+            className={`relative ${UI_KANBAN_FIXED_CLASS}`}
+            style={{ minHeight: `min(700px, calc(100vh - ${kpiPanelOpen ? 128 : 40}px))` }}
           >
             <KanbanBoardEdgeScrollChrome
               wrapRef={kanbanWrapRef}
@@ -1284,10 +1318,8 @@ export default function Projects() {
                   key={col.id}
                   className="flex flex-col flex-shrink-0 w-[280px] sm:w-[300px] rounded-2xl border border-slate-200/90 bg-slate-50/80 overflow-hidden shadow-sm"
                 >
-                  <div
-                    className="sticky top-0 z-10 px-3 py-2.5 bg-white/95 backdrop-blur border-b border-slate-100 flex items-center justify-between gap-2"
-                    style={{ boxShadow: `inset 0 3px 0 0 ${colColor}` }}
-                  >
+                  <div className="h-1.5 w-full shrink-0" style={{ backgroundColor: colColor }} aria-hidden />
+                  <div className="sticky top-0 z-10 px-3 py-2.5 bg-white/95 backdrop-blur border-b border-slate-100 flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2 min-w-0">
                       <span
                         className="h-2 w-2 rounded-full shrink-0"
@@ -1312,7 +1344,7 @@ export default function Projects() {
                         className={`flex-1 p-2 space-y-2 overflow-y-auto transition-colors ${
                           snapshot.isDraggingOver ? 'bg-violet-50/80' : ''
                         }`}
-                        style={{ minHeight: '180px', maxHeight: 'calc(100vh - 280px)' }}
+                        style={{ minHeight: '180px', maxHeight: `calc(100vh - ${kpiPanelOpen ? 280 : 192}px)` }}
                       >
                         {(projectsByStage[col.id] || []).map((proj, index) => (
                           <Draggable key={proj.id} draggableId={String(proj.id)} index={index}>
@@ -1785,39 +1817,48 @@ export default function Projects() {
 
 function ModuleKpiGroup({ title, icon, tone = 'violet', href, items = [], footer }) {
   const tones = {
-    violet: { border: 'border-violet-200/90', head: 'bg-violet-50 text-violet-800', icon: 'text-violet-600' },
-    emerald: { border: 'border-emerald-200/90', head: 'bg-emerald-50 text-emerald-800', icon: 'text-emerald-600' },
-    orange: { border: 'border-orange-200/90', head: 'bg-orange-50 text-orange-800', icon: 'text-orange-600' },
-    amber: { border: 'border-amber-200/90', head: 'bg-amber-50 text-amber-900', icon: 'text-amber-700' },
-    sky: { border: 'border-sky-200/90', head: 'bg-sky-50 text-sky-800', icon: 'text-sky-600' },
+    violet: { bar: 'bg-violet-500', icon: 'text-violet-600' },
+    blue: { bar: 'bg-blue-500', icon: 'text-blue-600' },
+    orange: { bar: 'bg-orange-500', icon: 'text-orange-600' },
+    amber: { bar: 'bg-amber-500', icon: 'text-amber-600' },
+    indigo: { bar: 'bg-indigo-500', icon: 'text-indigo-600' },
   };
   const t = tones[tone] || tones.violet;
   return (
-    <div className={`rounded-xl border ${t.border} bg-white shadow-sm overflow-hidden flex flex-col min-h-[96px]`}>
-      <div className={`flex items-center justify-between gap-1 px-2.5 py-1.5 ${t.head}`}>
-        <span className="inline-flex items-center gap-1.5 text-[11px] font-bold">
+    <div className="rounded-xl border border-slate-200/90 bg-white shadow-sm overflow-hidden flex flex-col">
+      <div className={`h-1 w-full ${t.bar}`} aria-hidden />
+      <div className="flex items-center justify-between gap-1 px-3 pt-2 pb-1.5">
+        <span className="inline-flex items-center gap-1.5 text-[12px] font-bold text-slate-800">
           <span className={t.icon}>{icon}</span>
           {title}
         </span>
         {href && (
-          <Link to={href} className="text-[10px] font-medium opacity-70 hover:opacity-100 hover:underline">
+          <Link to={href} className="text-[10px] font-semibold text-slate-400 hover:text-violet-600">
             Mở →
           </Link>
         )}
       </div>
-      <div className="grid grid-cols-2 gap-px bg-slate-100/80 flex-1">
+      <div className="px-3 pb-2 flex-1 flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
         {items.map((it) => (
-          <div key={it.label} className="bg-white px-2 py-1.5 text-center">
-            <p className="text-[9px] font-semibold uppercase tracking-wide text-slate-400 truncate">{it.label}</p>
-            <p className={`text-sm font-bold tabular-nums leading-tight ${it.alert ? 'text-red-600' : 'text-slate-900'}`}>
+          <span key={it.label} className="inline-flex items-baseline gap-1 whitespace-nowrap">
+            <span className={`text-base font-extrabold tabular-nums ${it.alert ? 'text-red-600' : 'text-slate-900'}`}>
               {typeof it.value === 'number' ? it.value.toLocaleString('vi-VN') : it.value}
-            </p>
-          </div>
+            </span>
+            <span className="text-[10px] font-medium text-slate-400">{it.label.toLowerCase()}</span>
+          </span>
         ))}
       </div>
       {footer && (
-        <p className="px-2 py-1 text-[10px] text-slate-500 border-t border-slate-100 truncate" title={footer}>
-          {footer}
+        <p
+          className="px-3 pb-2 text-[11px] text-slate-500 truncate"
+          title={typeof footer === 'string' ? footer : `${footer.label} ${footer.value}`}
+        >
+          {typeof footer === 'string' ? footer : (
+            <>
+              {footer.label}{' '}
+              <span className="font-bold text-slate-900">{footer.value}</span>
+            </>
+          )}
         </p>
       )}
     </div>

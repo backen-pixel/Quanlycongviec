@@ -1,6 +1,12 @@
 const { Router } = require('express');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
+const { fetchAllByIds } = require('../helpers/supabaseFetchAll');
+const {
+  resolveDivisionProjectIds,
+  ACTIVE_PROJECT_STATUSES,
+  DONE_PROJECT_STATUSES,
+} = require('../helpers/divisionProjectScope');
 
 const r = Router();
 r.use(auth);
@@ -50,13 +56,12 @@ r.get('/by-division', async (req, res) => {
     // 2. Lấy stats cho từng division
     const divisionsWithStats = await Promise.all(
       divisions.map(async (division) => {
-        // Tìm flows chứa division này
-        const { data: flowSteps } = await supabase
-          .from('workflow_flow_steps')
-          .select('flow_id')
-          .eq('division_unit_id', division.id);
+        // Dự án của Khối — hợp cả 3 cách liên kết (xem helpers/divisionProjectScope.js).
+        // Trước đây chỉ dùng workflow_flow_steps.division_unit_id — cột đó NULL toàn bộ
+        // nên mọi thẻ Khối hiện 0 dự án / 0 nhiệm vụ.
+        const divProjectIds = await resolveDivisionProjectIds(division.id);
 
-        if (!flowSteps || flowSteps.length === 0) {
+        if (!divProjectIds.length) {
           return {
             ...division,
             stats: {
@@ -73,49 +78,41 @@ r.get('/by-division', async (req, res) => {
           };
         }
 
-        const flowIds = [...new Set(flowSteps.map(s => s.flow_id))];
+        const projects = await fetchAllByIds({
+          table: 'projects', columns: 'id, status', key: 'id', ids: divProjectIds,
+        });
 
-        // Đếm projects theo flows
-        const { data: projects } = await supabase
-          .from('projects')
-          .select('id, status')
-          .in('flow_id', flowIds);
-
-        const totalProjects = projects?.length || 0;
-        const activeProjects = projects?.filter(p => 
-          ['planning', 'in-progress'].includes(p.status)
-        ).length || 0;
-        const completedProjects = projects?.filter(p => 
-          p.status === 'done'
-        ).length || 0;
-        const planningProjects = projects?.filter(p => 
-          p.status === 'planning'
-        ).length || 0;
-        const inProgressProjects = projects?.filter(p => 
-          p.status === 'in-progress'
-        ).length || 0;
+        // Status thật: producing/consulting/shipping/installing/contract_signed.
+        // Bộ lọc cũ ('planning','in-progress','done') không khớp dòng nào → luôn ra 0.
+        const totalProjects = projects.length;
+        const activeProjects = projects.filter(p => ACTIVE_PROJECT_STATUSES.includes(p.status)).length;
+        const completedProjects = projects.filter(p => DONE_PROJECT_STATUSES.includes(p.status)).length;
+        const planningProjects = projects.filter(p => p.status === 'consulting').length;
+        const inProgressProjects = projects.filter(p => p.status === 'producing').length;
 
         // Lấy tasks của các projects này
-        const projectIds = projects?.map(p => p.id) || [];
+        const projectIds = projects.map(p => p.id);
         let totalTasks = 0;
         let completedTasks = 0;
         let inProgressTasks = 0;
         let overdueTasks = 0;
 
         if (projectIds.length > 0) {
-          const { data: tasks } = await supabase
-            .from('tasks')
-            .select('id, status, due_date')
-            .in('project_id', projectIds);
+          // Phải đọc đủ: ~26,7 task/dự án nên chỉ 37 dự án là vượt ngưỡng cắt 1.000 dòng,
+          // mà Khối Sản Xuất có 552 dự án → total_tasks trước đây dính đúng 1.000.
+          const tasks = await fetchAllByIds({
+            table: 'tasks', columns: 'id, status, due_date', key: 'project_id', ids: projectIds,
+          });
 
-          totalTasks = tasks?.length || 0;
-          completedTasks = tasks?.filter(t => t.status === 'done').length || 0;
-          inProgressTasks = tasks?.filter(t => t.status === 'in-progress').length || 0;
-          
+          totalTasks = tasks.length;
+          completedTasks = tasks.filter(t => t.status === 'done').length;
+          // DB dùng 'in_progress' (gạch DƯỚI), không phải 'in-progress'.
+          inProgressTasks = tasks.filter(t => t.status === 'in_progress').length;
+
           const now = new Date();
-          overdueTasks = tasks?.filter(t => 
+          overdueTasks = tasks.filter(t =>
             t.status !== 'done' && t.due_date && new Date(t.due_date) < now
-          ).length || 0;
+          ).length;
         }
 
         return {

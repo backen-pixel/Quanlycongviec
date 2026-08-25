@@ -289,11 +289,60 @@ async function getWonDealProjectIds(companyId = null) {
   return promise;
 }
 
-function buildScopeOrFilter(stageIds, wonIds) {
+/**
+ * Cột `projects.has_crm_deal` (migration 568) thay cho việc nhét cả mảng wonIds vào URL.
+ *
+ * Mỗi UUID tốn ~39 byte sau khi mã hoá URL; với ~580 deal thắng thì riêng vế `id.in.(...)`
+ * đã 23KB, đẩy tổng URL vượt giới hạn ~25KB của PostgREST → `Bad Request` (danh sách rỗng,
+ * không báo lỗi). Dùng cột boolean thì bộ lọc chỉ còn ~24 byte và không phụ thuộc số deal.
+ *
+ * Dò một lần rồi nhớ kết quả: chưa chạy migration → tự quay về cách cũ (mảng id).
+ */
+let _hasCrmDealColumn = null; // null = chưa dò, true/false = đã biết
+let _hasCrmDealProbe = null;
+
+async function ensureHasCrmDealColumn() {
+  if (_hasCrmDealColumn !== null) return _hasCrmDealColumn;
+  if (_hasCrmDealProbe) return _hasCrmDealProbe;
+  _hasCrmDealProbe = (async () => {
+    try {
+      const { error } = await supabase.from('projects').select('has_crm_deal').limit(1);
+      _hasCrmDealColumn = !error;
+      if (error) {
+        console.warn(
+          '[workshopKanban] Chưa có cột projects.has_crm_deal — dùng mảng wonIds (URL dài, '
+          + 'có thể lỗi 400 khi nhiều deal). Chạy database/568_projects_has_crm_deal_column.sql.',
+        );
+      }
+      return _hasCrmDealColumn;
+    } catch {
+      _hasCrmDealColumn = false;
+      return false;
+    } finally {
+      _hasCrmDealProbe = null;
+    }
+  })();
+  return _hasCrmDealProbe;
+}
+
+/** Cho test/kiểm thử: quên kết quả dò để lần gọi sau kiểm tra lại. */
+function resetHasCrmDealColumnProbe() {
+  _hasCrmDealColumn = null;
+  _hasCrmDealProbe = null;
+}
+
+function buildScopeOrFilter(stageIds, wonIds, useHasCrmDealColumn = false, extraIds = []) {
   const parts = [];
   if (stageIds.length) parts.push(`current_stage_id.in.(${stageIds.join(',')})`);
   parts.push(`status.in.(${WORKSHOP_STATUSES.join(',')})`);
-  if (wonIds.length) parts.push(`id.in.(${wonIds.join(',')})`);
+  if (useHasCrmDealColumn) {
+    parts.push('has_crm_deal.is.true');
+    // Dự án "đối tác thực thi" có thể KHÔNG gắn deal CRM → cột không phủ hết, phải giữ
+    // riêng. Danh sách này bó theo 1 công ty nên rất ngắn, không làm URL phình.
+    if (extraIds.length) parts.push(`id.in.(${extraIds.join(',')})`);
+  } else if (wonIds.length) {
+    parts.push(`id.in.(${wonIds.join(',')})`);
+  }
   return parts.join(',');
 }
 
@@ -309,12 +358,22 @@ const SX_EMPTY_PROJECT_ID = '00000000-0000-0000-0000-000000000000';
  * Phạm vi dòng Kanban SX.
  * Khi đã có restrictIds (deal công ty CRM / thành viên): chỉ .in(id) đó —
  * không nhét wonIds toàn hệ thống vào OR (PostgREST 400 URL quá dài → board trống).
+ *
+ * @param {object} opts
+ * @param {boolean} [opts.hasCrmDealColumn] Có cột `projects.has_crm_deal` (migration 568)
+ *   → thay mảng wonIds bằng bộ lọc boolean, giữ URL ngắn bất kể số deal. Caller lấy giá trị
+ *   này từ `ensureHasCrmDealColumn()`.
+ * @param {string[]} [opts.extraIds] Id phải giữ NGOÀI cột `has_crm_deal` — hiện là dự án
+ *   "đối tác thực thi" của công ty đang xem (có thể không gắn deal CRM). Chỉ dùng khi
+ *   `hasCrmDealColumn` bật; ở nhánh cũ chúng đã nằm sẵn trong `wonIds`.
  */
 function applySxKanbanRowScope(query, {
   stageIds = [],
   wonIds = [],
   restrictIds = null,
   sxIntake = false,
+  hasCrmDealColumn = false,
+  extraIds = [],
 } = {}) {
   if (restrictIds !== null && restrictIds !== undefined) {
     if (!restrictIds.length) {
@@ -323,14 +382,26 @@ function applySxKanbanRowScope(query, {
     return { query: query.in('id', restrictIds), empty: false };
   }
   if (sxIntake) {
-    if (!wonIds.length) return { query, empty: true };
-    let q = query.in('id', wonIds);
+    // Có cột → lọc bằng cột (không cần wonIds, cũng không "empty" nhầm khi mảng rỗng
+    // vì cache chưa nạp); chưa có cột → giữ nguyên hành vi cũ.
+    if (!hasCrmDealColumn && !wonIds.length) return { query, empty: true };
+    let q;
+    if (hasCrmDealColumn) {
+      q = extraIds.length
+        ? query.or(`has_crm_deal.is.true,id.in.(${extraIds.join(',')})`)
+        : query.eq('has_crm_deal', true);
+    } else {
+      q = query.in('id', wonIds);
+    }
     if (stageIds.length) {
       q = q.or(`current_stage_id.is.null,current_stage_id.not.in.(${stageIds.join(',')})`);
     }
     return { query: q, empty: false };
   }
-  return { query: query.or(buildScopeOrFilter(stageIds, wonIds)), empty: false };
+  return {
+    query: query.or(buildScopeOrFilter(stageIds, wonIds, hasCrmDealColumn, extraIds)),
+    empty: false,
+  };
 }
 
 async function loadProductionPipelineStagesRows(includeInactive = false, companyId = null, legacyUnscoped = false) {
@@ -1800,6 +1871,8 @@ module.exports = {
   projectLinkedToWonDealScope,
   buildScopeOrFilter,
   applySxKanbanRowScope,
+  ensureHasCrmDealColumn,
+  resetHasCrmDealColumnProbe,
   loadProductionPipelineStagesRows,
   invalidatePipelineStagesRowsCache,
   filterProductionPipelineStagesForWorkshopType,

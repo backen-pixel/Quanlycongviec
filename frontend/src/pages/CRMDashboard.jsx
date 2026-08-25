@@ -10633,6 +10633,30 @@ const KanbanStageCard = memo(function KanbanStageCard({
     }
   };
 
+  // Sentinel đáy cột — quan sát theo VIEWPORT (không truyền `root`).
+  //
+  // Ở chế độ cuộn CHUNG, trigger duy nhất trước đây là listener trên khung cuộn của cả bảng
+  // (`scrollTop + clientHeight >= scrollHeight - 180`). Nhưng scrollHeight của bảng do cột
+  // CAO NHẤT quyết định, nên khi đang xem một cột ngắn thì bảng chưa gần đáy → không tải
+  // thêm; người dùng phải cuộn tới khi cột cao nhất gần hết mới thấy dữ liệu về.
+  //
+  // Quan sát theo viewport thì đáy của CHÍNH cột đang xem lọt vào tầm nhìn là tải — và theo
+  // spec, vùng giao vẫn bị cắt bởi mọi khung cuộn tổ tiên nên chế độ per-column không đổi.
+  const loadMoreSentinelRef = useRef(null);
+  useEffect(() => {
+    if (!onColumnScrollNearEnd) return undefined;
+    const sentinel = loadMoreSentinelRef.current;
+    if (!sentinel || typeof IntersectionObserver === 'undefined') return undefined;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) onColumnScrollNearEnd();
+      },
+      { rootMargin: '240px 0px', threshold: 0 },
+    );
+    io.observe(sentinel);
+    return () => io.disconnect();
+  }, [onColumnScrollNearEnd, loadedInColumn]);
+
   useEffect(() => {
     if (!onColumnVisibilityChange || isVirtualColumn) return undefined;
     const column = columnRef.current;
@@ -10824,6 +10848,8 @@ const KanbanStageCard = memo(function KanbanStageCard({
             renderCard={renderCard}
           />
         )}
+        {/* Cuộn tới đây → IntersectionObserver gọi tải thêm cho ĐÚNG cột này */}
+        <div ref={loadMoreSentinelRef} className="h-1 w-full shrink-0" aria-hidden />
       </div>
     </div>
   );
@@ -11841,7 +11867,10 @@ function KanbanView({
               stageValueSums={stageValueSums}
               stageWeightedValueSums={stageWeightedValueSums}
               columnScrollMode={columnScrollMode}
-              onColumnScrollNearEnd={perColumnScroll ? () => onLoadStagePages?.([stage.id], { ensureInitial: false }) : undefined}
+              // Cấp cho CẢ HAI chế độ cuộn. Trước đây chỉ cấp khi per-column nên ở chế
+              // độ cuộn CHUNG cột không có cách nào tự tải thêm — phải đợi cả bảng chạm đáy,
+              // mà chiều cao bảng do cột CAO NHẤT quyết định.
+              onColumnScrollNearEnd={() => onLoadStagePages?.([stage.id], { ensureInitial: false })}
               onColumnVisibilityChange={handleColumnVisibilityChange}
               searchHighlightId={searchHighlightId}
               boardScrollRef={kanbanHScrollRef}

@@ -194,14 +194,19 @@ async function sumAttachmentBytes(companyIds) {
       .in('owner_id', companyIds);
     const rootIds = (driveRoots || []).map((r) => r.id);
     if (rootIds.length) {
-      const { data: files } = await supabase
+      // Cột đúng là `trashed_at` — `is_trashed` KHÔNG tồn tại, và vì `error` không được
+      // đọc nên lỗi bị nuốt và toàn bộ dung lượng Drive biến mất khỏi phép tính.
+      const { data: files, error: fErr } = await supabase
         .from('drive_files')
         .select('size_bytes')
         .in('root_id', rootIds)
-        .eq('is_trashed', false);
+        .is('trashed_at', null);
+      if (fErr) throw fErr;
       for (const row of files || []) total += Number(row.size_bytes) || 0;
     }
-  } catch (_) { /* drive chưa migrate */ }
+  } catch (e) {
+    console.warn('[tenantQuotas] dung lượng Drive:', e.message);
+  }
 
   try {
     const { data: voice } = await supabase
@@ -221,12 +226,19 @@ async function estimateNotesBytes(companyIds) {
   if (!leadIds.length) return 0;
 
   let total = 0;
-  const { data: comments } = await supabase
+  // Cột đúng là `body` — `content` KHÔNG tồn tại, và vì `error` không được đọc nên lỗi
+  // bị nuốt, `comments` = null → notes_mb LUÔN bằng 0 bất kể dữ liệu thật.
+  const { data: comments, error: cErr } = await supabase
     .from('crm_lead_comments')
-    .select('content')
-    .in('lead_id', leadIds.slice(0, 5000));
+    .select('body')
+    .in('lead_id', leadIds)
+    .is('deleted_at', null);
+  if (cErr) {
+    console.warn('[tenantQuotas] dung lượng ghi chú:', cErr.message);
+    return 0;
+  }
   for (const c of comments || []) {
-    total += Buffer.byteLength(String(c.content || ''), 'utf8');
+    total += Buffer.byteLength(String(c.body || ''), 'utf8');
   }
   return total;
 }
@@ -237,25 +249,42 @@ async function getTenantUsage(tenantId) {
   const cached = usageCache.get(cacheKey);
   if (cached && Date.now() - cached.at < USAGE_CACHE_MS) return cached.data;
 
-  const companyIds = await getTenantCompanyIds(tenantId);
   const monthStart = getMonthStartIsoVn();
   const dayStart = getDayStartIsoVn();
 
-  const [
-    leadsMonth,
-    dealsMonth,
-    projectsTotal,
-    crmTasksMonth,
-    attachmentBytes,
-    notesBytes,
-  ] = await Promise.all([
-    countCrmLeads(companyIds, 'lead', monthStart),
-    countCrmLeads(companyIds, 'deal', monthStart),
-    countProjects(companyIds),
-    countCrmTasks(companyIds, monthStart),
-    sumAttachmentBytes(companyIds),
-    estimateNotesBytes(companyIds),
-  ]);
+  let leadsMonth; let dealsMonth; let projectsTotal; let crmTasksMonth;
+  let attachmentBytes; let notesBytes;
+
+  // Ưu tiên RPC (migration 567): tính gộp bằng SQL. Chuỗi truy vấn REST cũ vừa bị cắt
+  // 1.000 dòng (crm_leads của tenant có 8.142 dòng) vừa dùng sai tên cột nên `storage_mb`
+  // và `crm_tasks_per_month` gần như luôn = 0 → cổng hạn mức không bao giờ chặn.
+  const { data: rpc, error: rpcErr } = await supabase.rpc('tenant_usage_summary', {
+    p_tenant_id: tenantId,
+    p_month_start: monthStart,
+  });
+
+  if (!rpcErr && rpc) {
+    leadsMonth = Number(rpc.leads_per_month) || 0;
+    dealsMonth = Number(rpc.deals_per_month) || 0;
+    projectsTotal = Number(rpc.projects_total) || 0;
+    crmTasksMonth = Number(rpc.crm_tasks_per_month) || 0;
+    attachmentBytes = (Number(rpc.attachment_bytes) || 0) + (Number(rpc.drive_bytes) || 0);
+    notesBytes = Number(rpc.notes_bytes) || 0;
+  } else {
+    // Chưa chạy migration 567 → quay về đường cũ (biết là thiếu, nhưng không tệ hơn trước).
+    console.warn('[tenantQuotas] RPC tenant_usage_summary không dùng được'
+      + (rpcErr ? `: ${rpcErr.message}` : '') + ' — dùng đường REST cũ (số liệu có thể thiếu).');
+    const companyIds = await getTenantCompanyIds(tenantId);
+    ([leadsMonth, dealsMonth, projectsTotal, crmTasksMonth, attachmentBytes, notesBytes] =
+      await Promise.all([
+        countCrmLeads(companyIds, 'lead', monthStart),
+        countCrmLeads(companyIds, 'deal', monthStart),
+        countProjects(companyIds),
+        countCrmTasks(companyIds, monthStart),
+        sumAttachmentBytes(companyIds),
+        estimateNotesBytes(companyIds),
+      ]));
+  }
 
   const data = {
     leads_per_month: leadsMonth,

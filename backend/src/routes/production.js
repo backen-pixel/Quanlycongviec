@@ -13,6 +13,7 @@ const {
   getWonDealProjectIds,
   projectLinkedToWonDealScope,
   applySxKanbanRowScope,
+  ensureHasCrmDealColumn,
   loadProductionPipelineStagesRows,
   invalidatePipelineStagesRowsCache,
   filterProductionPipelineStagesForWorkshopType,
@@ -1389,8 +1390,11 @@ r.get('/dashboard', requirePermission('projects', 'view'), responseCache({ ttl: 
       });
     }
 
+    // wonIds ở route này là danh sách TOÀN HỆ THỐNG (getWonDealProjectIds() không tham số)
+    // nên không có phần "đối tác thực thi" cần giữ riêng → extraIds rỗng.
+    const hasCrmDealColumn = await ensureHasCrmDealColumn();
     const applyDashRowScope = (q) => applySxKanbanRowScope(q, {
-      stageIds, wonIds, restrictIds, sxIntake: false,
+      stageIds, wonIds, restrictIds, sxIntake: false, hasCrmDealColumn, extraIds: [],
     });
     const finishDashQuery = (q) => {
       const scoped = applyDashRowScope(q);
@@ -1598,15 +1602,19 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
     // wonIds rút gọn theo company_id khi có (giảm mạnh chuỗi `id.in.(...)` gửi cho mỗi cột
     // Kanban) — union thêm scopePartnerIds để không mất project "đối tác thực thi" (executor)
     // thuộc công ty khác vẫn đang ở bucket "Chờ tiếp nhận" (chưa có current_stage_id).
-    const [scopePartnerIds, stageMap, wonIdsScoped, restrictIds] = await Promise.all([
+    const [scopePartnerIds, stageMap, wonIdsScoped, restrictIds, hasCrmDealColumn] = await Promise.all([
       company_id ? getExecutorProjectIdsForCompany(company_id) : Promise.resolve([]),
       getWorkshopStageMap(),
       getWonDealProjectIds(company_id || null),
       resolveSxVisibilityRestrictIds(req.user, company_id, sx_workshop_company_id, deal_company_id),
+      ensureHasCrmDealColumn(),
     ]);
     const wonIds = company_id && scopePartnerIds.length
       ? [...new Set([...wonIdsScoped, ...scopePartnerIds])]
       : wonIdsScoped;
+    // Khi lọc bằng cột `has_crm_deal`, phần "đối tác thực thi" phải giữ riêng vì các dự án
+    // đó có thể không gắn deal CRM (nhánh cũ union sẵn chúng vào wonIds ở trên).
+    const scopeExtraIds = company_id ? scopePartnerIds : [];
     const partnerIdsForCompany = (restrictIds && restrictIds.length) ? [] : scopePartnerIds;
     const parsedPage = Math.max(parseInt(page) || 1, 1);
     const parsedLimit = Math.min(Math.max(parseInt(limit) || 100, 1), 500);
@@ -1652,6 +1660,7 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
         wantsNullKanbanColumn,
         wantsKanbanColumn,
         sxKanbanColumnId,
+        hasCrmDealColumn,
       });
       return res.json(summary);
     }
@@ -1721,6 +1730,8 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
         wonIds,
         restrictIds,
         sxIntake: String(sx_intake) === '1',
+        hasCrmDealColumn,
+        extraIds: scopeExtraIds,
       });
       if (scoped.empty) return { query: scoped.query, empty: true };
       query = scoped.query;
@@ -2091,10 +2102,24 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
         is_production_overdue: isSxProjectDateOverdue(project, 'production_deadline'),
         is_delivery_overdue: isSxProjectDateOverdue(project, 'delivery_date'),
       }));
-      const enhanced = await attachCrmProductionTaskStatsToProjects(workflowProjects);
-      const withUserFlags = await attachLeadUserFlagsToProjects(enhanced, req.user?.userId);
-      const listProjectIds = withUserFlags.map((p) => p.id).filter(Boolean);
-      const dealDepositMap = await loadDealDepositByProjectIds(listProjectIds);
+      // 3 bước này độc lập nhau (đều đọc `workflowProjects`, mỗi bước chỉ CỘNG thêm field
+      // riêng) → chạy song song thay vì await tuần tự, giống nhánh kanbanBoard ở trên.
+      const listProjectIds = workflowProjects.map((p) => p.id).filter(Boolean);
+      const [enhanced, flagsBase, dealDepositMap] = await Promise.all([
+        attachCrmProductionTaskStatsToProjects(workflowProjects),
+        attachLeadUserFlagsToProjects(workflowProjects, req.user?.userId),
+        loadDealDepositByProjectIds(listProjectIds),
+      ]);
+      // Chỉ lấy đúng 5 field mà attachLeadUserFlagsToProjects thêm vào — không spread cả
+      // object (nó chứa bản `workflowProjects` chưa có task stats, dễ ghi đè nhầm về sau).
+      const flagsById = new Map(flagsBase.map((p) => [String(p.id), {
+        crm_lead_id: p.crm_lead_id,
+        is_pinned: p.is_pinned,
+        pinned_at: p.pinned_at,
+        is_interacted: p.is_interacted,
+        interacted_at: p.interacted_at,
+      }]));
+      const withUserFlags = enhanced.map((p) => ({ ...p, ...(flagsById.get(String(p.id)) || {}) }));
       projectsOut = attachSxFinanceToProjects(withUserFlags, dealDepositMap);
     }
 

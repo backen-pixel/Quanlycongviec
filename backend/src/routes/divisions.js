@@ -2,6 +2,12 @@ const { Router } = require('express');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
 const { responseCache, invalidateTags } = require('../middleware/responseCache');
+const { fetchAllByIds } = require('../helpers/supabaseFetchAll');
+const {
+  resolveDivisionProjectIds,
+  NOT_STARTED_TASK_STATUSES,
+  ACTIVE_PROJECT_STATUSES,
+} = require('../helpers/divisionProjectScope');
 
 const r = Router();
 r.use(auth);
@@ -91,41 +97,19 @@ r.get('/:divisionId/projects-overview', async (req, res) => {
     const { divisionId } = req.params;
     const { status, search } = req.query;
 
-    // 1. Get all flow_ids that contain this division
-    const { data: flowSteps, error: flowError } = await supabase
-      .from('workflow_flow_steps')
-      .select('flow_id')
-      .eq('division_unit_id', divisionId);
-
-    if (flowError) throw flowError;
-
-    if (!flowSteps || flowSteps.length === 0) {
+    // 1-2. Dự án của Khối — hợp cả 3 cách liên kết (xem resolveDivisionProjectIds).
+    const divProjectIds = await resolveDivisionProjectIds(divisionId);
+    if (!divProjectIds.length) {
       return res.json({ projects: [] });
     }
 
-    const flowIds = [...new Set(flowSteps.map(s => s.flow_id))];
-
-    // 2. Get all projects using these flows
-    let projectQuery = supabase
-      .from('projects')
-      .select(`
-        id,
-        name,
-        code,
-        status,
-        start_date,
-        end_date,
-        customer_name,
-        customer_phone,
-        flow_id,
-        created_at,
-        flow:workflow_flows(id, name)
-      `)
-      .in('flow_id', flowIds)
-      .order('created_at', { ascending: false });
-
-    const { data: projects, error: projectError } = await projectQuery;
-    if (projectError) throw projectError;
+    // projects KHÔNG có start_date/end_date/customer_name/customer_phone.
+    const projects = (await fetchAllByIds({
+      table: 'projects',
+      columns: 'id, name, code, status, deadline, flow_id, created_at, flow:workflow_flows(id, name)',
+      key: 'id',
+      ids: divProjectIds,
+    })).sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
 
     if (!projects || projects.length === 0) {
       return res.json({ projects: [] });
@@ -134,25 +118,17 @@ r.get('/:divisionId/projects-overview', async (req, res) => {
     // 3. Get tasks for these projects
     const projectIds = projects.map(p => p.id);
 
-    const { data: tasks, error: taskError } = await supabase
-      .from('tasks')
-      .select(`
-        id,
-        project_id,
-        title,
-        status,
-        priority,
-        stage,
-        assigned_to,
-        assignee:users!tasks_assigned_to_fkey(id,full_name,avatar_url),
-        due_date,
-        completed_at,
-        created_at
-      `)
-      .in('project_id', projectIds)
-      .order('created_at');
-
-    if (taskError) throw taskError;
+    // tasks: cột thật là `assignee_id` (không có `assigned_to`), FK là tasks_assignee_id_fkey,
+    // và users dùng `avatar` (không có avatar_url). Phải đọc đủ: ~26,7 task/dự án nên chỉ 37
+    // dự án là vượt ngưỡng cắt 1.000 dòng.
+    const tasks = await fetchAllByIds({
+      table: 'tasks',
+      columns: 'id, project_id, title, status, priority, assignee_id,'
+        + ' assignee:users!tasks_assignee_id_fkey(id,full_name,avatar),'
+        + ' due_date, completed_at, created_at',
+      key: 'project_id',
+      ids: projectIds,
+    });
 
     // 4. Group tasks by project
     const tasksByProject = {};
@@ -174,7 +150,7 @@ r.get('/:divisionId/projects-overview', async (req, res) => {
         division:ecosystem_units!workflow_flow_steps_division_unit_id_fkey(id,name,short_name,code),
         company:ecosystem_units!workflow_flow_steps_company_unit_id_fkey(id,name,short_name,code)
       `)
-      .in('flow_id', flowIds)
+      .in('flow_id', [...new Set(projects.map((p) => p.flow_id).filter(Boolean))])
       .eq('division_unit_id', divisionId);
 
     if (stepsError) throw stepsError;
@@ -196,8 +172,9 @@ r.get('/:divisionId/projects-overview', async (req, res) => {
       // Calculate stats
       const totalTasks = projectTasks.length;
       const completedTasks = projectTasks.filter(t => t.status === 'done').length;
-      const inProgressTasks = projectTasks.filter(t => t.status === 'in-progress').length;
-      const pendingTasks = projectTasks.filter(t => t.status === 'pending').length;
+      // DB dùng 'in_progress' (gạch DƯỚI); 'todo' cũng là chưa bắt đầu.
+      const inProgressTasks = projectTasks.filter(t => t.status === 'in_progress').length;
+      const pendingTasks = projectTasks.filter(t => NOT_STARTED_TASK_STATUSES.includes(t.status)).length;
       const overdueTasks = projectTasks.filter(t => 
         t.status !== 'done' && t.due_date && new Date(t.due_date) < new Date()
       ).length;
@@ -209,10 +186,9 @@ r.get('/:divisionId/projects-overview', async (req, res) => {
           name: project.name,
           code: project.code,
           status: project.status,
-          start_date: project.start_date,
-          end_date: project.end_date,
-          customer_name: project.customer_name,
-          customer_phone: project.customer_phone,
+          // projects KHÔNG có start_date/end_date/customer_name/customer_phone —
+          // trước đây 4 field này luôn undefined.
+          deadline: project.deadline,
           created_at: project.created_at
         },
         division: flowStep?.division || { id: divisionId, name: 'N/A' },
@@ -263,13 +239,9 @@ r.get('/:divisionId/task-summary', async (req, res) => {
   try {
     const { divisionId } = req.params;
 
-    // Get flows containing this division
-    const { data: flowSteps } = await supabase
-      .from('workflow_flow_steps')
-      .select('flow_id')
-      .eq('division_unit_id', divisionId);
-
-    if (!flowSteps || flowSteps.length === 0) {
+    // Dự án của Khối — hợp cả 3 cách liên kết (xem resolveDivisionProjectIds).
+    const divProjectIds = await resolveDivisionProjectIds(divisionId);
+    if (!divProjectIds.length) {
       return res.json({
         total: 0,
         by_status: {},
@@ -277,14 +249,7 @@ r.get('/:divisionId/task-summary', async (req, res) => {
         overdue: 0
       });
     }
-
-    const flowIds = [...new Set(flowSteps.map(s => s.flow_id))];
-
-    // Get projects using these flows
-    const { data: projects } = await supabase
-      .from('projects')
-      .select('id')
-      .in('flow_id', flowIds);
+    const projects = divProjectIds.map((id) => ({ id }));
 
     if (!projects || projects.length === 0) {
       return res.json({
@@ -297,13 +262,15 @@ r.get('/:divisionId/task-summary', async (req, res) => {
 
     const projectIds = projects.map(p => p.id);
 
-    // Get all tasks
-    const { data: tasks, error } = await supabase
-      .from('tasks')
-      .select('id, status, priority, due_date')
-      .in('project_id', projectIds);
-
-    if (error) throw error;
+    // Endpoint này chỉ để ĐẾM, nên bị cắt 1.000 dòng là sai hoàn toàn: `total` dính đúng
+    // 1.000 và mọi ô by_status/by_priority bị hụt theo. ~26,7 task/dự án → chỉ 37 dự án
+    // là vượt ngưỡng, mà Khối Sản Xuất có tới 484+ dự án.
+    const tasks = await fetchAllByIds({
+      table: 'tasks',
+      columns: 'id, status, priority, due_date',
+      key: 'project_id',
+      ids: projectIds,
+    });
 
     // Calculate summary
     const now = new Date();
@@ -426,13 +393,15 @@ r.get('/:divisionId/dashboard', async (req, res) => {
 
     const projectIds = (projects || []).map(p => p.id);
 
-    // Get tasks
-    const { data: tasks } = projectIds.length > 0
-      ? await supabase
-          .from('tasks')
-          .select('id, title, status, priority, project_id, assignee_id, due_date')
-          .in('project_id', projectIds)
-      : { data: [] };
+    // Get tasks — projectIds bị chặn ở .limit(50) phía trên, nhưng 50 > ngưỡng 37 dự án
+    // (~26,7 task/dự án ≈ 1.335 dòng) nên vẫn bị cắt. Cái chặn đó được đặt cho độ dài
+    // request, không chống được giới hạn 1.000 dòng.
+    const tasks = await fetchAllByIds({
+      table: 'tasks',
+      columns: 'id, title, status, priority, project_id, assignee_id, due_date',
+      key: 'project_id',
+      ids: projectIds,
+    });
 
     // Get employees count from company or division
     let employees = [];
@@ -498,20 +467,21 @@ r.get('/:divisionId/active-projects', async (req, res) => {
       .select('flow_id, company_unit_id, company:ecosystem_units!workflow_flow_steps_company_unit_id_fkey(id,name,short_name)')
       .eq('division_unit_id', divisionId);
 
-    if (!flowSteps || flowSteps.length === 0) {
+    // Dự án của Khối — hợp cả 3 cách liên kết (xem helpers/divisionProjectScope.js).
+    const divProjectIds = await resolveDivisionProjectIds(divisionId);
+    if (!divProjectIds.length) {
       return res.json({ projects: [] });
     }
 
-    const flowIds = [...new Set(flowSteps.map(s => s.flow_id))];
-
-    // Get active projects
-    const { data, error } = await supabase
-      .from('projects')
-      .select('id, name, code, status, customer_name, flow_id')
-      .in('flow_id', flowIds)
-      .in('status', ['planning', 'in-progress']);
-
-    if (error) throw error;
+    // projects KHÔNG có customer_name; status thật là producing/consulting/… nên bộ lọc
+    // ['planning','in-progress'] cũ không khớp dòng nào.
+    const data = await fetchAllByIds({
+      table: 'projects',
+      columns: 'id, name, code, status, flow_id',
+      key: 'id',
+      ids: divProjectIds,
+      tune: (q) => q.in('status', ACTIVE_PROJECT_STATUSES),
+    });
 
     // Map company info from flow steps
     const stepsByFlow = {};
