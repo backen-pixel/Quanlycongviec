@@ -195,6 +195,12 @@ export function resolveWorkshopCompanyForTypes({
 
   if (ownWorkshop) return ownWorkshop;
 
+  // NV công ty tự vận hành xưởng riêng (không phải HCB/Metalla, ví dụ Phúc Đạt) — chưa chọn chip
+  // công ty nào (tab «Tất cả») thì mặc định lấy phân loại của chính công ty mình, tránh rơi nhầm
+  // vào phân loại của HCB/Metalla bên dưới.
+  const fromUserLoose = workshopIdFromFilter(userCompanyId);
+  if (fromUserLoose) return fromUserLoose;
+
   const firstWorkshop = productionWorkshopFilterCompanies(companies)[0];
   return firstWorkshop?.id ? String(firstWorkshop.id) : '';
 }
