@@ -298,6 +298,7 @@ Tiếp tục dùng chứng từ và bảng nghiệp vụ hiện hữu làm Syste
 - Database staging phải vượt read-only audit của migration 473 và 567–580; test Business OS, tenant isolation, CRM parity có xác thực, live smoke và frontend build đều phải PASS.
 - Rollback code không chạy down migration và không xóa dữ liệu/audit UAT; route legacy được giữ làm fallback.
 - UAT 3–5 hồ sơ thật chỉ bắt đầu sau khi có backup hoàn tất mới hơn schema freeze của baseline; PITR hiện chưa bật.
+- Cổng tự động `npm run db:gate:business-os-uat` là điều kiện kỹ thuật bắt buộc; trạng thái `BLOCKED` không được bỏ qua để chạy UAT thật.
 - Sau UAT và sửa blocker mới mở lát cắt Mua hàng → Chi phí Project → Hóa đơn/Thanh toán → Công nợ.
 - Hồ sơ baseline: `docs/baseline/BUSINESS_OS_VNEXT_STAGING_BASELINE_01.md`.
 

@@ -23,9 +23,10 @@ Lệnh chuẩn:
 ```bash
 cd backend
 npm run db:audit:business-os
+npm run db:gate:business-os-uat
 ```
 
-Audit là read-only, không tự chạy hay sửa migration.
+Hai lệnh đều read-only, không tự chạy hay sửa migration. Lệnh `db:gate:business-os-uat` chỉ trả exit code `0` khi migration đủ và backup hoàn tất mới hơn schema freeze; exit code khác `0` cùng `uat_gate.status="BLOCKED"` nghĩa là UAT còn bị khóa vì recovery point chưa đạt. Khi chạy trực tiếp file audit, trạng thái này dùng exit code `3`; npm có thể quy đổi thành mã lỗi chung của tiến trình.
 
 | Migration | Capability kiểm chứng | Staging |
 |---|---|---|
@@ -70,6 +71,8 @@ Backup gần nhất có trước thời điểm schema freeze của chuỗi migr
 
 1. `npm run db:audit:business-os` hiển thị một backup `COMPLETED` có thời gian sau `2026-08-26T10:21:23.977Z`; hoặc
 2. có logical dump đã mã hóa, lưu ngoài Git và đã thử restore vào database tách biệt.
+
+Lệnh quyết định mở UAT là `cd backend && npm run db:gate:business-os-uat`; chỉ tiếp tục khi JSON trả `uat_gate.status="READY"`.
 
 ## Phạm vi đã khóa
 

@@ -3,7 +3,7 @@
 ## Điều kiện bắt đầu
 
 - [ ] Tag `business-os-vnext-staging-baseline-01` tồn tại và commit đã được ghi vào biên bản.
-- [ ] Migration audit có `all_applied=true`.
+- [ ] `cd backend && npm run db:gate:business-os-uat` trả exit code `0`, `all_applied=true` và `uat_gate.status="READY"`.
 - [ ] Có backup `COMPLETED` sau `2026-08-26T10:21:23.977Z`; ghi backup id: `____________`.
 - [ ] Frontend/backend staging đang chạy đúng commit của tag.
 - [ ] Chỉ Công ty TNHH Bếp Vạn Phú Thành được bật pilot.

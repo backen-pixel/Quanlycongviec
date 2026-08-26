@@ -26,8 +26,8 @@ Trong triển khai staging, redeploy commit của tag thay vì `git reset --hard
 
 ## Backup trước UAT
 
-1. Chạy `cd backend && npm run db:audit:business-os`.
-2. Xác nhận `all_applied=true`.
+1. Chạy `cd backend && npm run db:gate:business-os-uat`.
+2. Xác nhận `all_applied=true` và `uat_gate.status="READY"`.
 3. Xác nhận `backup.verified=true` và `latest_completed_backup_at` sau `2026-08-26T10:21:23.977Z`.
 4. Ghi backup id/thời gian vào biên bản UAT.
 5. Nếu chưa có backup đủ mới, dừng UAT hoặc tạo logical dump ngoài Git bằng credential database được quản trị cấp.

@@ -11,6 +11,15 @@ require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 const token = process.env.SUPABASE_ACCESS_TOKEN;
 const supabaseUrl = process.env.SUPABASE_URL;
 
+function cliValue(prefix) {
+  const entry = process.argv.slice(2).find((value) => value.startsWith(`${prefix}=`));
+  return entry ? entry.slice(prefix.length + 1).trim() : '';
+}
+
+function validIsoDate(value) {
+  return value && Number.isFinite(Date.parse(value));
+}
+
 function projectRefFromUrl(value) {
   try {
     const host = new URL(value).hostname;
@@ -167,8 +176,33 @@ async function main() {
   report.all_applied = report.migrations.length === 15
     && report.migrations.every((item) => item.applied);
 
+  const requiredBackupAfter = cliValue('--require-backup-after')
+    || String(process.env.BUSINESS_OS_UAT_BACKUP_AFTER || '').trim();
+  if (requiredBackupAfter && !validIsoDate(requiredBackupAfter)) {
+    throw new Error(`Mốc --require-backup-after không hợp lệ: ${requiredBackupAfter}`);
+  }
+  if (requiredBackupAfter) {
+    const latestBackupAt = report.backup?.latest_completed_backup_at || null;
+    const backupFresh = validIsoDate(latestBackupAt)
+      && Date.parse(latestBackupAt) > Date.parse(requiredBackupAfter);
+    report.uat_gate = {
+      required_backup_after: requiredBackupAfter,
+      latest_completed_backup_at: latestBackupAt,
+      migrations_ready: report.all_applied,
+      backup_verified: report.backup?.verified === true,
+      backup_fresh: backupFresh,
+      ready: report.all_applied
+        && report.backup?.verified === true
+        && backupFresh,
+      status: report.all_applied && report.backup?.verified === true && backupFresh
+        ? 'READY'
+        : 'BLOCKED',
+    };
+  }
+
   console.log(JSON.stringify(report, null, 2));
   if (!report.all_applied) process.exitCode = 2;
+  else if (report.uat_gate && !report.uat_gate.ready) process.exitCode = 3;
 }
 
 main().catch((error) => {
