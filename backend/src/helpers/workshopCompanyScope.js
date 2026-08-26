@@ -12,12 +12,13 @@ function normalizeWorkshopCompanyId(companyId) {
   return s || null;
 }
 
-/** Chip công ty CRM (VPT…) hoặc công ty của NV — không phải xưởng HCB/Metalla. */
+/** Chip công ty CRM (VPT) — không phải xưởng HCB/Metalla và không có pipeline SX riêng.
+ *  Không chặn công ty tự vận hành xưởng riêng (vd Phúc Đạt) dù trùng company_id người dùng —
+ *  công ty đó có production_pipeline_stages riêng, vẫn phải scope đúng theo company_id đó. */
 function isNonWorkshopClientCompanyId(companyId, userCid = '') {
   const id = companyId != null ? String(companyId).trim() : '';
   if (!id || isMetallaOrHucabiCompanyIdSync(id)) return false;
-  if (isVptCompanyIdSync(id)) return true;
-  return !!(userCid && id === String(userCid));
+  return isVptCompanyIdSync(id);
 }
 
 /**
