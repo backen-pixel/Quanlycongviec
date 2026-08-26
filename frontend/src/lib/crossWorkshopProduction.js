@@ -24,6 +24,18 @@ export function isMetallaOrHucabiCompany(company) {
   return sn === 'HCB' || name.includes('metalla') || name.includes('hucabi');
 }
 
+/** Nhãn chip xưởng — Metalla thường thiếu short_name. */
+export function workshopCompanyDisplayName(company) {
+  if (!company) return '';
+  const sn = String(company.short_name || '').trim();
+  if (sn) return sn;
+  const name = String(company.name || '').trim();
+  const lower = name.toLowerCase();
+  if (lower.includes('metalla')) return 'Metalla';
+  if (lower.includes('hucabi')) return 'HCB';
+  return name;
+}
+
 /** Bộ lọc 1 — xưởng / công ty thực hiện sản xuất (HCB, Metalla…). */
 export function productionWorkshopFilterCompanies(companies) {
   return (companies || []).filter(isMetallaOrHucabiCompany);
@@ -142,9 +154,7 @@ export function resolveWorkshopCompanyForTypes({
     if (!s) return false;
     if (isMetallaOrHucabiCompanyId(s, companies, user)) return true;
     // Công ty CRM (VPT) không có pipeline SX — tránh board trống / cột Global.
-    if (user?.company_id && s === trim(user.company_id) && !isMetallaOrHucabiCompanyId(s, companies, user)) {
-      return false;
-    }
+    // (Chỉ chặn đúng VPT theo short_name/tên — không chặn công ty tự vận hành xưởng riêng như Phúc Đạt.)
     const c = (companies || []).find((x) => String(x.id) === s);
     if (c) {
       const sn = String(c.short_name || '').trim().toUpperCase();
@@ -177,11 +187,7 @@ export function resolveWorkshopCompanyForTypes({
   );
   const fromFilter = workshopIdFromFilter(filterCompany);
 
-  // NV xưởng: không giữ filter localStorage trỏ sang xưởng khác (vd. Metalla vs HCB Cánh kính).
-  if (ownWorkshop && fromFilter && fromFilter !== ownWorkshop) {
-    return ownWorkshop;
-  }
-
+  // Chip xưởng trên UI (Metalla / HCB) — không ghi đè bằng xưởng JWT của NV.
   if (fromFilter) return fromFilter;
 
   const fromUser = workshopIdStrict(userCompanyId);
