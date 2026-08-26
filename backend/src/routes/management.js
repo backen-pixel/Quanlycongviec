@@ -5,7 +5,8 @@ const { Router } = require('express');
 const { auth } = require('../middleware/auth');
 const { supabase } = require('../config/supabase');
 const { isAdminLike } = require('../helpers/adminRole');
-const { getWonDealProjectIds } = require('../helpers/workshopKanban');
+const { getWonDealProjectIds, ensureHasCrmDealColumn } = require('../helpers/workshopKanban');
+const { fetchAllByIds, fetchAllPages } = require('../helpers/supabaseFetchAll');
 const {
   buildProjectDealBundle,
   isProjectDeliveryStageRow,
@@ -19,6 +20,8 @@ const {
   TENANT_EMPTY_COMPANY_SENTINEL,
 } = require('../helpers/tenantScope');
 const { applyOpenOnlyFilter } = require('../helpers/unifiedTasksQuery');
+const { responseCache } = require('../middleware/responseCache');
+const { PROJECTS_LIST_TAG } = require('../middleware/projectsCacheInvalidation');
 
 const r = Router();
 r.use(auth);
@@ -220,20 +223,51 @@ async function loadCrmLeadStages(scope) {
   return loadCrmStagesForScope(scope, 'lead');
 }
 
+/** Danh sách company_id mà scope cho phép — null = không lọc. */
+function scopeCompanyIdArray(scope) {
+  if (!scope?.ok) return null;
+  if (scope.companyId === TENANT_EMPTY_COMPANY_SENTINEL) return [TENANT_EMPTY_COMPANY_SENTINEL];
+  if (scope.companyId) return [scope.companyId];
+  if (scope.companyIds?.length) return scope.companyIds;
+  return null;
+}
+
 async function countLeadsByStage(scope, type, dateFrom, dateTo, assigneeId) {
-  let q = supabase
-    .from('crm_leads')
-    .select('stage_id')
-    .eq('type', type);
-  q = applyCompanyScopeFilter(q, scope);
-  if (dateFrom) q = q.gte('created_at', dateFrom);
-  if (dateTo) q = q.lte('created_at', dateTo);
-  if (assigneeId) q = q.or(`assigned_to.eq.${assigneeId},lead_owner_id.eq.${assigneeId}`);
-  const { data } = await q;
+  // Đường nhanh: đếm bằng GROUP BY trong SQL (migration 573).
+  // Cách cũ tải HẾT cột stage_id rồi đếm trong JS → bị PostgREST cắt ở 1.000 dòng và không
+  // báo lỗi, nên crm_leads/crm_deals luôn dính đúng 1.000 (thật: 5.870 / 2.281), kéo theo
+  // crm_won và số đếm từng cột pipeline cũng sai.
+  const { data: rpc, error: rpcErr } = await supabase.rpc('overview_lead_stage_counts', {
+    p_type: type,
+    p_company_ids: scopeCompanyIdArray(scope),
+    p_date_from: dateFrom || null,
+    p_date_to: dateTo || null,
+    p_assignee_id: assigneeId || null,
+  });
+  if (!rpcErr && rpc && typeof rpc === 'object') {
+    const counts = {};
+    for (const [k, v] of Object.entries(rpc)) counts[k] = Number(v) || 0;
+    return counts;
+  }
+  console.warn('[countLeadsByStage] RPC overview_lead_stage_counts không dùng được'
+    + (rpcErr ? `: ${rpcErr.message}` : '') + ' — đọc phân trang (chậm hơn).');
+
+  // Đường lùi: phân trang cho ĐỦ, không để bị cắt 1.000 dòng như trước.
   const counts = {};
-  for (const row of data || []) {
-    const sid = row.stage_id ? String(row.stage_id) : '__none__';
-    counts[sid] = (counts[sid] || 0) + 1;
+  const PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    let q = supabase.from('crm_leads').select('stage_id').eq('type', type);
+    q = applyCompanyScopeFilter(q, scope);
+    if (dateFrom) q = q.gte('created_at', dateFrom);
+    if (dateTo) q = q.lte('created_at', dateTo);
+    if (assigneeId) q = q.or(`assigned_to.eq.${assigneeId},lead_owner_id.eq.${assigneeId}`);
+    const { data, error } = await q.range(from, from + PAGE - 1);
+    if (error) break;
+    for (const row of data || []) {
+      const sid = row.stage_id ? String(row.stage_id) : '__none__';
+      counts[sid] = (counts[sid] || 0) + 1;
+    }
+    if (!data || data.length < PAGE) break;
   }
   return counts;
 }
@@ -261,22 +295,29 @@ async function loadWonStageIds(scope) {
 }
 
 async function loadDealPipelineMetrics(scope, dateFrom, dateTo, assigneeId) {
-  let q = supabase
-    .from('crm_leads')
-    .select('budget, estimated_value, deadline, stage_id, stage:crm_pipeline_stages!crm_leads_stage_id_fkey(is_won, is_lost)')
-    .eq('type', 'deal');
-  q = applyCompanyScopeFilter(q, scope);
-  if (dateFrom) q = q.gte('created_at', dateFrom);
-  if (dateTo) q = q.lte('created_at', dateTo);
-  if (assigneeId) q = q.or(`assigned_to.eq.${assigneeId},lead_owner_id.eq.${assigneeId}`);
-  const { data } = await q;
+  // `budget` KHÔNG phải cột của crm_leads (chỉ có estimated_value / weighted_value /
+  // deposit_amount). Trước đây select nó → PostgREST lỗi, `error` không được đọc nên
+  // `data` = null và pipeline_value luôn = 0. Ngoài ra phải đọc đủ: 1.689 deal vượt
+  // ngưỡng cắt 1.000 dòng (giá trị thật 26,58 tỷ, đọc 1 phát chỉ ra 20,8 tỷ ≈ 78%).
+  const data = await fetchAllPages(() => {
+    let q = supabase
+      .from('crm_leads')
+      .select('estimated_value, kanban_deadline_at, stage_id, stage:crm_pipeline_stages!crm_leads_stage_id_fkey(is_won, is_lost)')
+      .eq('type', 'deal');
+    q = applyCompanyScopeFilter(q, scope);
+    if (dateFrom) q = q.gte('created_at', dateFrom);
+    if (dateTo) q = q.lte('created_at', dateTo);
+    if (assigneeId) q = q.or(`assigned_to.eq.${assigneeId},lead_owner_id.eq.${assigneeId}`);
+    return q;
+  });
   const now = Date.now();
   let pipelineValue = 0;
   let crmOverdue = 0;
-  for (const row of data || []) {
+  for (const row of data) {
     if (row.stage?.is_won || row.stage?.is_lost) continue;
-    pipelineValue += Number(row.budget || row.estimated_value || 0);
-    if (row.deadline && new Date(row.deadline).getTime() < now) crmOverdue += 1;
+    pipelineValue += Number(row.estimated_value || 0);
+    // crm_leads KHÔNG có cột `deadline`; hạn của thẻ CRM là `kanban_deadline_at`.
+    if (row.kanban_deadline_at && new Date(row.kanban_deadline_at).getTime() < now) crmOverdue += 1;
   }
   return { pipeline_value: pipelineValue, crm_overdue: crmOverdue };
 }
@@ -389,29 +430,30 @@ async function attachTaskAndDocCounts(rows) {
   const leadIds = (rows || []).map((d) => d.id).filter(Boolean);
   const taskCounts = {};
   const docCounts = {};
-  const CHUNK = 150;
-  for (let i = 0; i < leadIds.length; i += CHUNK) {
-    const chunk = leadIds.slice(i, i + CHUNK);
-    const [{ data: crmTasks }, { data: docs }] = await Promise.all([
-      supabase.from('crm_tasks').select('lead_id, status').in('lead_id', chunk),
-      supabase.from('lead_documents').select('lead_id').in('lead_id', chunk),
-    ]);
-    for (const t of crmTasks || []) {
-      const lid = String(t.lead_id);
-      if (!taskCounts[lid]) taskCounts[lid] = { crm_total: 0, crm_done: 0 };
-      taskCounts[lid].crm_total += 1;
-      if (t.status === 'completed') taskCounts[lid].crm_done += 1;
-    }
-    for (const d of docs || []) {
-      const lid = String(d.lead_id);
-      docCounts[lid] = (docCounts[lid] || 0) + 1;
-    }
+
+  // Chia khúc 150 lead trước đây CHỈ chặn URL dài, không chặn PostgREST cắt ở 1.000 dòng:
+  // đo thực tế 150 deal → 2.015 dòng crm_tasks, tức MỌI khúc đều bị cắt. Deal mất dòng
+  // rơi về `{ crm_total: 0, crm_done: 0 }` bên dưới → deal có 30 nhiệm vụ hiện "0/0".
+  const [crmTasks, docs] = await Promise.all([
+    fetchAllByIds({ table: 'crm_tasks', columns: 'lead_id, status', key: 'lead_id', ids: leadIds }),
+    fetchAllByIds({ table: 'lead_documents', columns: 'lead_id', key: 'lead_id', ids: leadIds }),
+  ]);
+  for (const t of crmTasks) {
+    const lid = String(t.lead_id);
+    if (!taskCounts[lid]) taskCounts[lid] = { crm_total: 0, crm_done: 0 };
+    taskCounts[lid].crm_total += 1;
+    if (t.status === 'completed') taskCounts[lid].crm_done += 1;
   }
+  for (const d of docs) {
+    const lid = String(d.lead_id);
+    docCounts[lid] = (docCounts[lid] || 0) + 1;
+  }
+
   return (rows || []).map((d) => ({
     ...d,
     task_stats: taskCounts[String(d.id)] || { crm_total: 0, crm_done: 0 },
     document_count: docCounts[String(d.id)] || 0,
-    value: d.budget || d.estimated_value || d.project?.estimated_value || 0,
+    value: d.estimated_value || d.project?.estimated_value || 0,
   }));
 }
 
@@ -457,22 +499,56 @@ function countByStageIds(rows, idField, stages) {
   return { counts, pipeline };
 }
 
-async function loadSxPipelineSummary(scope) {
-  let wonIds = await getWonDealProjectIds();
-  if (!wonIds.length) return { kpis: { active: 0, intake: 0, overdue: 0 }, pipeline: [] };
+/**
+ * Mốc hạn của dự án — cùng thứ tự ưu tiên với enrich/thẻ Kanban và với hàm
+ * project_deadline_at() phía SQL (migration 574).
+ *
+ * Trước đây 3 chỗ dưới đây chỉ đọc `p.deadline`. Đo trên dữ liệu thật: cột đó NULL cho
+ * TOÀN BỘ 596 dự án, nên sx_overdue / vc_overdue / install_overdue LUÔN bằng 0 bất kể thực
+ * tế — trông như số cứng. Dữ liệu thật nằm ở production_deadline (74) / delivery_date (68)
+ * / install_date (75).
+ */
+const PROJECT_DEADLINE_COLS = 'deadline, sx_kanban_deadline_at, production_deadline, '
+  + 'design_deadline, delivery_date, install_date';
 
-  if (scope?.ok && (scope.companyIds?.length || scope.companyId === TENANT_EMPTY_COMPANY_SENTINEL)) {
-    let pq = supabase.from('projects').select('id').in('id', wonIds);
-    pq = applyCompanyScopeFilter(pq, scope);
-    const { data: filtered } = await pq;
-    wonIds = (filtered || []).map((p) => p.id);
-    if (!wonIds.length) return { kpis: { active: 0, intake: 0, overdue: 0 }, pipeline: [] };
+function projectDeadlineAt(p) {
+  return p?.deadline || p?.sx_kanban_deadline_at || p?.production_deadline
+    || p?.design_deadline || p?.delivery_date || p?.install_date || null;
+}
+
+function isProjectOverdue(p, nowMs) {
+  const d = projectDeadlineAt(p);
+  if (!d) return false;
+  const t = new Date(d).getTime();
+  return Number.isFinite(t) && t < nowMs && p.status !== 'completed';
+}
+
+async function loadSxPipelineSummary(scope) {
+  const empty = { kpis: { active: 0, intake: 0, overdue: 0 }, pipeline: [] };
+
+  // Có cột `has_crm_deal` (migration 566) → lọc bằng boolean, URL không phụ thuộc số deal.
+  // Chưa có cột → giữ nguyên cách cũ (nhét mảng id, URL dài dần theo số deal thắng).
+  const hasCrmDealColumn = await ensureHasCrmDealColumn();
+
+  let q = supabase.from('projects')
+    .select(`id, sx_kanban_column_id, status, company_id, ${PROJECT_DEADLINE_COLS}`);
+  if (hasCrmDealColumn) {
+    q = q.eq('has_crm_deal', true);
+  } else {
+    let wonIds = await getWonDealProjectIds();
+    if (!wonIds.length) return empty;
+
+    if (scope?.ok && (scope.companyIds?.length || scope.companyId === TENANT_EMPTY_COMPANY_SENTINEL)) {
+      // Thu hẹp trước cho chuỗi `id.in.(...)` ngắn bớt (scope vẫn được áp lại bên dưới).
+      let pq = supabase.from('projects').select('id').in('id', wonIds);
+      pq = applyCompanyScopeFilter(pq, scope);
+      const { data: filtered } = await pq;
+      wonIds = (filtered || []).map((p) => p.id);
+      if (!wonIds.length) return empty;
+    }
+    q = q.in('id', wonIds);
   }
 
-  let q = supabase
-    .from('projects')
-    .select('id, sx_kanban_column_id, deadline, status, company_id')
-    .in('id', wonIds);
   q = applyCompanyScopeFilter(q, scope);
   const { data: projects } = await q;
 
@@ -482,7 +558,7 @@ async function loadSxPipelineSummary(scope) {
   let overdue = 0;
   let intake = 0;
   for (const p of projects || []) {
-    if (p.deadline && new Date(p.deadline).getTime() < now && p.status !== 'completed') overdue += 1;
+    if (isProjectOverdue(p, now)) overdue += 1;
     if (!p.sx_kanban_column_id) intake += 1;
   }
 
@@ -500,7 +576,7 @@ async function loadSxPipelineSummary(scope) {
 async function loadVcInstallPipelines(scope) {
   let q = supabase
     .from('projects')
-    .select('id, vc_kanban_column_id, deadline, status, company_id, logistics_company_id')
+    .select(`id, vc_kanban_column_id, status, company_id, logistics_company_id, ${PROJECT_DEADLINE_COLS}`)
     .not('vc_kanban_column_id', 'is', null);
   q = applyProjectScopeFilter(q, scope);
   let { data: projects, error } = await q;
@@ -523,7 +599,7 @@ async function loadVcInstallPipelines(scope) {
   let installOverdue = 0;
   for (const p of projects || []) {
     const col = p.vc_kanban_column_id ? String(p.vc_kanban_column_id) : '';
-    const overdue = p.deadline && new Date(p.deadline).getTime() < now && p.status !== 'completed';
+    const overdue = isProjectOverdue(p, now);
     if (col && installIds.has(col)) {
       installProjects.push(p);
       if (overdue) installOverdue += 1;
@@ -546,14 +622,31 @@ async function loadVcInstallPipelines(scope) {
 }
 
 // GET /api/management/overview
-r.get('/overview', async (req, res) => {
+// KPI tổng hợp — chỉ là số đếm, chấp nhận trễ 30s; xoá cùng tag với danh sách dự án.
+r.get('/overview',
+  responseCache({ ttl: 30, scope: 'user', tags: [PROJECTS_LIST_TAG] }),
+  async (req, res) => {
   try {
     const scope = getCompanyScope(req, req.query.company_id);
     if (denyScope(res, scope)) return;
     const companyId = primaryCompanyIdFromScope(scope);
     const { date_from: dateFrom, date_to: dateTo, assignee_id: assigneeId } = req.query;
 
-    const [dealStages, leadStages, dealCounts, leadCounts, sx, vcInstall, pipelineMetrics] = await Promise.all([
+    // 2 count trên unified_tasks_v khá nặng → chạy song song cùng các loader khác
+    // thay vì tuần tự sau Promise.all (trước đây cộng dồn vào thời gian phản hồi).
+    let taskQ = supabase.from('unified_tasks_v').select('unified_id', { count: 'exact', head: true })
+      .neq('status', 'completed').neq('status', 'done');
+    taskQ = applyCompanyScopeFilter(taskQ, scope);
+
+    let overdueQ = supabase.from('unified_tasks_v').select('unified_id', { count: 'exact', head: true })
+      .lt('deadline', new Date().toISOString())
+      .neq('status', 'completed').neq('status', 'done');
+    overdueQ = applyCompanyScopeFilter(overdueQ, scope);
+
+    const [
+      dealStages, leadStages, dealCounts, leadCounts, sx, vcInstall, pipelineMetrics,
+      openTasksRes, overdueTasksRes,
+    ] = await Promise.all([
       loadCrmDealStages(scope),
       loadCrmLeadStages(scope),
       countLeadsByStage(scope, 'deal', dateFrom, dateTo, assigneeId),
@@ -561,20 +654,13 @@ r.get('/overview', async (req, res) => {
       loadSxPipelineSummary(scope),
       loadVcInstallPipelines(scope),
       loadDealPipelineMetrics(scope, dateFrom, dateTo, assigneeId),
+      taskQ,
+      overdueQ,
     ]);
     const vc = vcInstall.vc;
     const install = vcInstall.install;
-
-    let taskQ = supabase.from('unified_tasks_v').select('unified_id', { count: 'exact', head: true })
-      .neq('status', 'completed').neq('status', 'done');
-    taskQ = applyCompanyScopeFilter(taskQ, scope);
-    const { count: openTasks } = await taskQ;
-
-    let overdueQ = supabase.from('unified_tasks_v').select('unified_id', { count: 'exact', head: true })
-      .lt('deadline', new Date().toISOString())
-      .neq('status', 'completed').neq('status', 'done');
-    overdueQ = applyCompanyScopeFilter(overdueQ, scope);
-    const { count: overdueTasks } = await overdueQ;
+    const openTasks = openTasksRes?.count;
+    const overdueTasks = overdueTasksRes?.count;
 
     const totalDeals = Object.values(dealCounts).reduce((s, n) => s + n, 0);
     const totalLeads = Object.values(leadCounts).reduce((s, n) => s + n, 0);
@@ -627,7 +713,7 @@ r.get('/overview', async (req, res) => {
     console.error('[management/overview]', e);
     res.status(500).json({ error: e.message || 'Lỗi tải tổng quan' });
   }
-});
+  });
 
 const WORK_OVERVIEW_ACTIVE_STATUSES = [
   'consulting', 'designing', 'quoting', 'contract_signed', 'producing', 'shipping', 'installing',
@@ -1239,7 +1325,7 @@ r.get('/deals', async (req, res) => {
     const installStageIds = collectStageIds(vcStagesAll.filter(isInstallStageMeta), () => true);
 
     const listSelect = `
-          id, code, title, type, budget, estimated_value, created_at, updated_at, deadline,
+          id, code, title, type, estimated_value, created_at, updated_at, kanban_deadline_at,
           project_id, company_id, assigned_to, lead_owner_id,
           stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon, is_won, is_lost),
           customer:customers(id, full_name, phone),

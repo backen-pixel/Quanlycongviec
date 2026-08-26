@@ -13,6 +13,33 @@ const L1_MAX = 2000;
 const L1 = new Map(); // key -> { entry, expires }
 const tagIndex = new Map(); // tag -> Set<key>
 
+/**
+ * Single-flight: khi cache trống mà nhiều request cùng key ập đến một lúc (ví dụ ngay sau
+ * khi cache bị xoá), chỉ request ĐẦU TIÊN chạy handler thật; các request còn lại chờ rồi
+ * dùng chung kết quả. Nếu không có, mỗi request đều tự chạy lại toàn bộ truy vấn nặng.
+ */
+const inflight = new Map(); // key -> { promise, resolve }
+const INFLIGHT_MAX_WAIT_MS = 15_000;
+
+function beginFlight(key) {
+  let resolve;
+  const promise = new Promise((r) => { resolve = r; });
+  inflight.set(key, { promise, resolve });
+  return () => {
+    const cur = inflight.get(key);
+    if (cur && cur.resolve === resolve) inflight.delete(key);
+    resolve();
+  };
+}
+
+/** Chờ request dẫn đầu xong (có trần thời gian để không treo nếu nó chết giữa chừng). */
+function waitForFlight(entry) {
+  return Promise.race([
+    entry.promise,
+    new Promise((r) => setTimeout(r, INFLIGHT_MAX_WAIT_MS)),
+  ]);
+}
+
 let _metrics = null;
 function _inc(name) {
   if (_metrics === null) {
@@ -169,7 +196,19 @@ async function invalidateTags(tags) {
   await Promise.all([...keysToDelete].map((k) => deleteCacheKey(k)));
 }
 
-function cacheControlHeader(scope, ttlSec) {
+/**
+ * MẶC ĐỊNH `no-cache`: trình duyệt được phép lưu nhưng phải hỏi lại server trước khi dùng.
+ *
+ * Lý do: cache này xoá theo tag khi có thay đổi (xem `invalidateTags`). Nếu gửi `max-age`,
+ * trình duyệt sẽ tự phục vụ bản cũ trong local cache dù server đã xoá — người dùng sửa xong
+ * tải lại vẫn thấy dữ liệu cũ tới hết TTL (có route TTL 300s = 5 phút). `no-cache` vẫn rất
+ * rẻ vì đi kèm ETag: server trả 304 rỗng và đọc từ L1 trong bộ nhớ (~1ms).
+ *
+ * Chỉ đặt `revalidate: false` cho dữ liệu KHÔNG bao giờ cần thấy thay đổi ngay lập tức và
+ * bị gọi dày hơn TTL — hiện chưa route nào rơi vào trường hợp này.
+ */
+function cacheControlHeader(scope, ttlSec, revalidate) {
+  if (revalidate) return scope === 'global' ? 'public, no-cache' : 'private, no-cache';
   return scope === 'global'
     ? `public, max-age=${ttlSec}`
     : `private, max-age=${ttlSec}`;
@@ -177,12 +216,14 @@ function cacheControlHeader(scope, ttlSec) {
 
 /**
  * Express middleware — cache GET responses.
- * @param {{ ttl?: number, scope?: 'user'|'role'|'company'|'global', tags?: string[] }} opts
+ * @param {{ ttl?: number, scope?: 'user'|'role'|'company'|'global', tags?: string[],
+ *           revalidate?: boolean }} opts `revalidate` mặc định true — xem cacheControlHeader.
  */
 function responseCache(opts = {}) {
   const ttlSec = Math.max(1, Number(opts.ttl) || 60);
   const scope = opts.scope || 'user';
   const tags = Array.isArray(opts.tags) ? opts.tags : [];
+  const revalidate = opts.revalidate !== false;
 
   return async (req, res, next) => {
     if (isDisabled()) return next();
@@ -192,24 +233,51 @@ function responseCache(opts = {}) {
     const key = buildCacheKey(req, scope);
     if (!key) return next();
 
+    /** Trả response từ entry cache. `hitLabel` để phân biệt HIT thường và HIT nhờ chờ ghép. */
+    const serveCached = (cached, hitLabel) => {
+      res.set('ETag', cached.etag);
+      res.set('Cache-Control', cacheControlHeader(scope, ttlSec, revalidate));
+      res.set('X-Cache', hitLabel);
+      res.set('Age', String(Math.floor((Date.now() - cached.storedAt) / 1000)));
+      if (cached.contentType) res.set('Content-Type', cached.contentType);
+
+      const inm = req.headers['if-none-match'];
+      if (inm && inm === cached.etag) {
+        _inc('rc_304');
+        return res.status(304).end();
+      }
+      return res.status(cached.status || 200).send(cached.body);
+    };
+
     try {
       const cached = await readCache(key);
-      if (cached) {
-        res.set('ETag', cached.etag);
-        res.set('Cache-Control', cacheControlHeader(scope, ttlSec));
-        res.set('X-Cache', 'HIT');
-        res.set('Age', String(Math.floor((Date.now() - cached.storedAt) / 1000)));
-        if (cached.contentType) res.set('Content-Type', cached.contentType);
-
-        const inm = req.headers['if-none-match'];
-        if (inm && inm === cached.etag) {
-          _inc('rc_304');
-          return res.status(304).end();
-        }
-        return res.status(cached.status || 200).send(cached.body);
-      }
+      if (cached) return serveCached(cached, 'HIT');
     } catch {
       return next();
+    }
+
+    // Cache trống: nếu đã có request khác đang dựng đúng key này thì chờ dùng ké kết quả.
+    const leader = inflight.get(key);
+    if (leader) {
+      await waitForFlight(leader);
+      try {
+        const cached = await readCache(key);
+        if (cached) {
+          _inc('rc_coalesced');
+          return serveCached(cached, 'HIT-COALESCED');
+        }
+      } catch { /* rơi xuống chạy thật bên dưới */ }
+      // Request dẫn đầu lỗi/hết giờ → tự chạy, không bắt client chờ thêm.
+      return next();
+    }
+
+    const endFlight = beginFlight(key);
+    // Lưới an toàn: giải phóng khi response kết thúc dù thành công hay lỗi/ngắt kết nối,
+    // nếu không các request đang chờ sẽ treo tới hết INFLIGHT_MAX_WAIT_MS.
+    // (Đường thành công giải phóng sớm hơn, ngay trong tryStore.)
+    if (typeof res.on === 'function') {
+      res.on('finish', endFlight);
+      res.on('close', endFlight);
     }
 
     _inc('rc_miss');
@@ -219,7 +287,11 @@ function responseCache(opts = {}) {
     const originalSend = res.send.bind(res);
 
     const tryStore = (body, isJson) => {
-      if (stored || res.statusCode >= 400) return;
+      if (stored || res.statusCode >= 400) {
+        // Lỗi → không cache, nhưng vẫn phải thả các request đang chờ ra ngay.
+        if (!stored) endFlight();
+        return;
+      }
       stored = true;
       const bodyStr = isJson
         ? JSON.stringify(body)
@@ -239,9 +311,12 @@ function responseCache(opts = {}) {
         const uid = req.user?.userId || req.user?.id;
         if (uid) scopedTags.push(`user:${uid}`);
       }
+      // writeCache đặt L1 đồng bộ trước await đầu tiên → sau dòng này các request đang
+      // chờ đọc cache là chắc chắn thấy, nên giải phóng single-flight được ngay tại đây.
       void writeCache(key, entry, scopedTags, ttlSec);
+      endFlight();
       res.set('ETag', etag);
-      res.set('Cache-Control', cacheControlHeader(scope, ttlSec));
+      res.set('Cache-Control', cacheControlHeader(scope, ttlSec, revalidate));
       res.set('X-Cache', 'MISS');
     };
 

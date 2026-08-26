@@ -5,9 +5,9 @@ import api from '../lib/api';
 import {
   Plus, Search, Phone, Calendar, FolderKanban, X, User, List,
   CalendarClock, Pin, ChevronLeft, ChevronRight, ChevronUp, ChevronDown,
-  LayoutGrid, AlertTriangle, BarChart3, Filter, Trash2,
+  LayoutGrid, BarChart3, Filter, Trash2,
   Factory, Truck, Briefcase, CheckSquare, Settings2, MessageSquare,
-  GripVertical, RotateCcw, Clock,
+  GripVertical, RotateCcw, Clock, MoreHorizontal,
 } from 'lucide-react';
 import { togglePin, isPinned } from '../components/PinnedProjectsWidget';
 import { STATUS_LABELS, STATUS_COLORS, PRIORITY_COLORS, PRIORITY_LABELS, formatVND, formatDate, getInitials, avatarColor } from '../lib/utils';
@@ -86,6 +86,55 @@ function filterByTime(items, tf, dFrom, dTo) {
   return items.filter(i => { const d = i.created_at ? new Date(i.created_at) : null; return d && d >= start; });
 }
 
+/**
+ * Mốc created_at cho bộ lọc thời gian — cùng semantics filterByTime() ở trên, nhưng trả về
+ * biên để gửi LÊN SERVER thay vì lọc mảng đã tải.
+ */
+function timeRangeBounds(tf, dFrom, dTo) {
+  if (tf === 'custom' || dFrom || dTo) {
+    const to = dTo ? new Date(dTo) : null;
+    if (to) to.setHours(23, 59, 59, 999);
+    return { from: dFrom ? new Date(dFrom).toISOString() : null, to: to ? to.toISOString() : null };
+  }
+  if (tf === 'all' || !tf) return { from: null, to: null };
+  const now = new Date();
+  const start = new Date();
+  if (tf === 'today') start.setHours(0, 0, 0, 0);
+  else if (tf === 'week') { start.setDate(now.getDate() - now.getDay()); start.setHours(0, 0, 0, 0); }
+  else if (tf === 'month') { start.setDate(1); start.setHours(0, 0, 0, 0); }
+  else if (tf === 'quarter') { start.setMonth(Math.floor(now.getMonth() / 3) * 3, 1); start.setHours(0, 0, 0, 0); }
+  else return { from: null, to: null };
+  return { from: start.toISOString(), to: null };
+}
+
+/**
+ * Mốc "tải thêm" ở đáy một cột Kanban.
+ *
+ * KHÔNG truyền `root` → quan sát theo viewport. Nếu lấy khung cuộn của cột làm root thì chỉ
+ * bắt được khi cuộn BÊN TRONG cột; khi người dùng cuộn vùng chung thì scrollTop của cột
+ * không đổi nên sentinel không bao giờ "vào" khung của cột → không tải thêm. Theo spec, vùng
+ * giao vẫn bị cắt bởi mọi khung cuộn tổ tiên, nên cuộn trong cột vẫn hoạt động đúng.
+ */
+function ColumnLoadMoreSentinel({ stageId, loading, onNeedMore, loadedKey }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || loading || typeof IntersectionObserver === 'undefined') return undefined;
+    const io = new IntersectionObserver(
+      (entries) => { if (entries.some((e) => e.isIntersecting)) onNeedMore(stageId); },
+      { rootMargin: '320px 0px', threshold: 0 },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [stageId, loading, onNeedMore, loadedKey]);
+
+  return (
+    <div ref={ref} className="py-2 text-center text-[11px] text-slate-400" aria-hidden={!loading}>
+      {loading ? 'Đang tải thêm…' : ''}
+    </div>
+  );
+}
+
 export default function Projects() {
   const navigate = useNavigate();
   const [projects, setProjects] = useState([]);
@@ -117,6 +166,24 @@ export default function Projects() {
   const [kpiPanelOpen, setKpiPanelOpen] = useState(readKpiPanelOpen);
   const [moduleKpis, setModuleKpis] = useState(null);
   const [workflowStages, setWorkflowStages] = useState([]);
+  /**
+   * Kanban tải theo TỪNG CỘT từ server (RPC migration 570/571) thay vì kéo hết dự án về
+   * rồi lọc/nhóm/đếm ở client.
+   *   boardSummary : { total, counts{stage_id:n}, working, done, overdue, no_deadline, value_sum }
+   *   colMeta      : { [stage_id]: { loaded, total, has_more, loading } }
+   *   stageOf      : { [project_id]: stage_id }  ← cột do SERVER quyết, khớp 100% logic cũ
+   * Nhờ vậy thời gian tải không còn phụ thuộc tổng số dự án (500 dự án 1,3s → 8.000 vẫn ~1,3s).
+   */
+  const [boardSummary, setBoardSummary] = useState(null);
+  /** Danh sách: phân trang thật (thay limit=500 cứng). */
+  const [listMeta, setListMeta] = useState({ total: 0, loaded: 0, loading: false });
+  /** Theo hạn: đếm 6 nhóm từ server + trạng thái trang của từng nhóm. */
+  const [deadlineSummary, setDeadlineSummary] = useState(null);
+  const [dlMeta, setDlMeta] = useState({});
+  const LIST_PAGE = 100;
+  const [colMeta, setColMeta] = useState({});
+  const [stageOf, setStageOf] = useState({});
+  const COL_PAGE = 40;
 
   const toggleKpiPanel = () => {
     setKpiPanelOpen((open) => {
@@ -141,6 +208,228 @@ export default function Projects() {
       .catch(() => setModuleKpis(null));
   };
 
+  /** Tham số lọc gửi LÊN SERVER — thay cho việc lọc ở client sau khi tải hết. */
+  const serverFilterParams = (searchOverride) => {
+    const q = searchOverride !== undefined ? searchOverride : search;
+    const prm = {};
+    if (q) prm.search = q;
+    if (filterCompany !== 'all') prm.company_id = filterCompany;
+    else if (filterDivision !== 'all') prm.division_id = filterDivision;
+    if (filterCustomer !== 'all') prm.customer_id = filterCustomer;
+    if (filterPerson !== 'all') prm.person_id = filterPerson;
+    // filterByTime chỉ là khoảng created_at → quy về mốc from/to cho server.
+    const { from, to } = timeRangeBounds(filterTime, dateFrom, dateTo);
+    if (from) prm.date_from = from;
+    if (to) prm.date_to = to;
+    return prm;
+  };
+
+  /** Nạp Kanban: 1 lượt summary (đếm + KPI, không trả dòng) + 1 lượt trang đầu MỌI cột. */
+  const loadBoard = (searchOverride) => {
+    setLoading(true);
+    const params = serverFilterParams(searchOverride);
+    Promise.all([
+      api.get('/projects/kanban', { params: { ...params, mode: 'summary' } }),
+      api.get('/projects/kanban-pages', { params: { ...params, limit: COL_PAGE } }),
+    ])
+      .then(([sumRes, pagesRes]) => {
+        setBoardSummary(sumRes.data || null);
+        const cols = pagesRes.data?.columns || {};
+        const flat = [];
+        const meta = {};
+        const stage = {};
+        for (const [sid, v] of Object.entries(cols)) {
+          const list = v.projects || [];
+          list.forEach((pr) => { flat.push(pr); stage[String(pr.id)] = sid; });
+          meta[sid] = {
+            loaded: list.length, total: v.total || 0, has_more: !!v.has_more, loading: false,
+          };
+        }
+        setProjects(flat);
+        setColMeta(meta);
+        setStageOf(stage);
+        loadTaskAssignees(flat.map((pr) => pr.id));
+      })
+      .catch(() => { setProjects([]); setColMeta({}); setStageOf({}); })
+      .finally(() => setLoading(false));
+  };
+
+  /** Cuộn tới đáy một cột → nạp trang tiếp của ĐÚNG cột đó. */
+  const loadMoreColumn = (stageId) => {
+    const m = colMeta[stageId];
+    if (!m || m.loading || !m.has_more) return;
+    setColMeta((prev) => ({ ...prev, [stageId]: { ...prev[stageId], loading: true } }));
+    api.get('/projects/kanban', {
+      params: {
+        ...serverFilterParams(), mode: 'page', stage_id: stageId,
+        offset: m.loaded, limit: COL_PAGE,
+      },
+    })
+      .then((r) => {
+        const list = r.data?.projects || [];
+        setProjects((prev) => {
+          const seen = new Set(prev.map((x) => String(x.id)));
+          return [...prev, ...list.filter((x) => !seen.has(String(x.id)))];
+        });
+        setStageOf((prev) => {
+          const next = { ...prev };
+          list.forEach((pr) => { next[String(pr.id)] = stageId; });
+          return next;
+        });
+        setColMeta((prev) => ({
+          ...prev,
+          [stageId]: {
+            ...prev[stageId],
+            loaded: (prev[stageId]?.loaded || 0) + list.length,
+            has_more: !!r.data?.has_more,
+            loading: false,
+          },
+        }));
+        loadTaskAssignees(list.map((pr) => pr.id));
+      })
+      .catch(() => setColMeta((prev) => ({
+        ...prev, [stageId]: { ...prev[stageId], loading: false },
+      })));
+  };
+
+  const loadTaskAssignees = (projectIds) => {
+    if (!projectIds?.length) return;
+    api.post('/tasks/lite-by-projects', { project_ids: projectIds })
+      .then((tr) => {
+        const map = {};
+        (tr.data.tasks || []).forEach((t) => {
+          if (!t.assignee_id) return;
+          if (!map[t.project_id]) map[t.project_id] = new Set();
+          map[t.project_id].add(t.assignee_id);
+        });
+        Object.keys(map).forEach((k) => { map[k] = [...map[k]]; });
+        setTaskAssigneeMap((prev) => ({ ...prev, ...map }));
+      })
+      .catch(() => {});
+  };
+
+  /** Biên 5 mốc nhóm "Theo hạn" — tính ở CLIENT rồi gửi lên để không lệch múi giờ. */
+  const deadlineBounds = () => {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate() + 1);
+    const d2 = new Date(tomorrow); d2.setDate(d2.getDate() + 1);
+    const endNextWeek = new Date(today); endNextWeek.setDate(endNextWeek.getDate() + (7 - endNextWeek.getDay()) + 7);
+    const endNextMonth = new Date(today.getFullYear(), today.getMonth() + 2, 0);
+    return [today, tomorrow, d2, endNextWeek, endNextMonth].map((d) => d.toISOString());
+  };
+
+  /** Danh sách — trang đầu (server phân trang, không còn limit=500 cứng). */
+  const loadListPage = (searchOverride) => {
+    setLoading(true);
+    api.get('/projects/list-page', {
+      params: { ...serverFilterParams(searchOverride), offset: 0, limit: LIST_PAGE },
+    })
+      .then((r) => {
+        const list = r.data?.projects || [];
+        setProjects(list);
+        setListMeta({ total: r.data?.total || 0, loaded: list.length, loading: false });
+        loadTaskAssignees(list.map((x) => x.id));
+      })
+      .catch(() => { setProjects([]); setListMeta({ total: 0, loaded: 0, loading: false }); })
+      .finally(() => setLoading(false));
+  };
+
+  const loadMoreList = () => {
+    if (listMeta.loading || listMeta.loaded >= listMeta.total) return;
+    setListMeta((m) => ({ ...m, loading: true }));
+    api.get('/projects/list-page', {
+      params: { ...serverFilterParams(), offset: listMeta.loaded, limit: LIST_PAGE },
+    })
+      .then((r) => {
+        const list = r.data?.projects || [];
+        setProjects((prev) => {
+          const seen = new Set(prev.map((x) => String(x.id)));
+          return [...prev, ...list.filter((x) => !seen.has(String(x.id)))];
+        });
+        setListMeta((m) => ({
+          total: r.data?.total || m.total, loaded: m.loaded + list.length, loading: false,
+        }));
+        loadTaskAssignees(list.map((x) => x.id));
+      })
+      .catch(() => setListMeta((m) => ({ ...m, loading: false })));
+  };
+
+  /** Lịch — chỉ dự án có mốc ngày trong THÁNG đang xem. */
+  const loadCalendar = () => {
+    setLoading(true);
+    const y = calMonth.getFullYear(); const m = calMonth.getMonth();
+    const from = new Date(y, m, 1).toISOString();
+    const to = new Date(y, m + 1, 0, 23, 59, 59, 999).toISOString();
+    api.get('/projects/calendar', { params: { ...serverFilterParams(), from, to, limit: 500 } })
+      .then((r) => {
+        const list = r.data?.projects || [];
+        setProjects(list);
+        loadTaskAssignees(list.map((x) => x.id));
+      })
+      .catch(() => setProjects([]))
+      .finally(() => setLoading(false));
+  };
+
+  /** Theo hạn — đếm 6 nhóm + trang đầu của mỗi nhóm. */
+  const loadDeadlineBoard = () => {
+    setLoading(true);
+    const bounds = JSON.stringify(deadlineBounds());
+    const base = { ...serverFilterParams(), bounds };
+    const BUCKETS = ['overdue', 'today', 'tomorrow', 'next_week', 'next_month', 'later'];
+    Promise.all([
+      api.get('/projects/deadline-board', { params: { ...base, mode: 'summary' } }),
+      ...BUCKETS.map((b) => api.get('/projects/deadline-board', {
+        params: { ...base, mode: 'page', bucket: b, offset: 0, limit: 40 },
+      }).then((r) => [b, r.data]).catch(() => [b, null])),
+    ])
+      .then(([sumRes, ...pairs]) => {
+        setDeadlineSummary(sumRes.data || null);
+        const flat = []; const meta = {};
+        for (const [b, d] of pairs) {
+          const list = d?.projects || [];
+          flat.push(...list);
+          meta[b] = { loaded: list.length, total: d?.total || 0, has_more: !!d?.has_more, loading: false };
+        }
+        const seen = new Set(); const uniq = [];
+        for (const x of flat) { if (!seen.has(String(x.id))) { seen.add(String(x.id)); uniq.push(x); } }
+        setProjects(uniq);
+        setDlMeta(meta);
+        loadTaskAssignees(uniq.map((x) => x.id));
+      })
+      .catch(() => { setProjects([]); setDlMeta({}); })
+      .finally(() => setLoading(false));
+  };
+
+  const loadMoreDeadline = (bucket) => {
+    const m = dlMeta[bucket];
+    if (!m || m.loading || !m.has_more) return;
+    setDlMeta((prev) => ({ ...prev, [bucket]: { ...prev[bucket], loading: true } }));
+    api.get('/projects/deadline-board', {
+      params: {
+        ...serverFilterParams(), bounds: JSON.stringify(deadlineBounds()),
+        mode: 'page', bucket, offset: m.loaded, limit: 40,
+      },
+    })
+      .then((r) => {
+        const list = r.data?.projects || [];
+        setProjects((prev) => {
+          const seen = new Set(prev.map((x) => String(x.id)));
+          return [...prev, ...list.filter((x) => !seen.has(String(x.id)))];
+        });
+        setDlMeta((prev) => ({
+          ...prev,
+          [bucket]: {
+            ...prev[bucket], loaded: (prev[bucket]?.loaded || 0) + list.length,
+            has_more: !!r.data?.has_more, loading: false,
+          },
+        }));
+        loadTaskAssignees(list.map((x) => x.id));
+      })
+      .catch(() => setDlMeta((prev) => ({ ...prev, [bucket]: { ...prev[bucket], loading: false } })));
+  };
+
+  /** Chỉ còn Planner/Comments dùng đường cũ (chúng có endpoint riêng, không tải hết dự án). */
   const load = (searchOverride) => {
     setLoading(true);
     const q = searchOverride !== undefined ? searchOverride : search;
@@ -167,7 +456,22 @@ export default function Projects() {
       .finally(() => setLoading(false));
   };
 
-  useEffect(load, []);
+  // Kanban → đường mới (theo cột). Các view khác → đường cũ (cần toàn bộ dự án).
+  // Đổi bộ lọc thì nạp lại từ SERVER, không lọc lại mảng đã tải.
+  useEffect(() => {
+    if (viewMode === 'kanban') loadBoard();
+    else if (viewMode === 'list') loadListPage();
+    else if (viewMode === 'calendar') loadCalendar();
+    else if (viewMode === 'deadline') loadDeadlineBoard();
+    else load();   // planner/comments có endpoint riêng, không tải hết dự án
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewMode, filterDivision, filterCompany, filterCustomer, filterPerson, filterTime, dateFrom, dateTo]);
+
+  // Lịch: đổi tháng → nạp lại đúng khoảng ngày đó (không tải cả năm).
+  useEffect(() => {
+    if (viewMode === 'calendar') loadCalendar();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [calMonth]);
   useEffect(() => { loadModuleKpis(filterCompany); }, [filterCompany]);
 
   useEffect(() => {
@@ -290,12 +594,19 @@ export default function Projects() {
 
   const hasActiveFilters = filterDivision !== 'all' || filterCompany !== 'all' || filterCustomer !== 'all' || filterPerson !== 'all' || filterTime !== 'all' || dateFrom || dateTo;
 
-  const overdueCount = filtered.filter((p) => {
-    const d = p.schedule?.at || p.deadline || p.design_deadline || p.production_deadline || p.delivery_date || p.dates?.deal_task_deadline;
-    return d && new Date(d) < new Date() && p.status !== 'completed';
-  }).length;
-
   const kpi = useMemo(() => {
+    // Ở Kanban, KPI lấy từ summary phía server: tính trên TOÀN BỘ dự án khớp filter,
+    // không phải trên ~87 thẻ đang tải. Các view khác vẫn tính từ mảng đã tải như cũ.
+    if (viewMode === 'kanban' && boardSummary) {
+      return {
+        total: boardSummary.total || 0,
+        working: boardSummary.working || 0,
+        done: boardSummary.done || 0,
+        overdue: boardSummary.overdue || 0,
+        noDeadline: boardSummary.no_deadline || 0,
+        valueSum: Number(boardSummary.value_sum) || 0,
+      };
+    }
     const now = new Date();
     let working = 0;
     let done = 0;
@@ -319,7 +630,7 @@ export default function Projects() {
       noDeadline,
       valueSum,
     };
-  }, [filtered]);
+  }, [filtered, viewMode, boardSummary]);
 
   const VIEW_MODES = useMemo(() => [
     { id: 'kanban', label: 'Kanban', hint: 'Cột giai đoạn giao hàng dự án', icon: LayoutGrid },
@@ -332,6 +643,12 @@ export default function Projects() {
   ], []);
   const ALT_VIEW_MODES = useMemo(
     () => VIEW_MODES.filter((v) => v.id !== 'kanban'),
+    [VIEW_MODES],
+  );
+  // 3 chế độ dùng nhiều nhất hiện nút riêng (khớp mockup); còn lại gộp vào menu "Khác".
+  const PRIMARY_VIEW_IDS = ['kanban', 'list', 'calendar'];
+  const MORE_VIEW_MODES = useMemo(
+    () => VIEW_MODES.filter((v) => !PRIMARY_VIEW_IDS.includes(v.id)),
     [VIEW_MODES],
   );
   const [showViewModeMenu, setShowViewModeMenu] = useState(false);
@@ -502,12 +819,17 @@ export default function Projects() {
     workflowStages.forEach((col) => { data[col.id] = []; });
     const fallbackId = workflowStages[0]?.id;
     filtered.forEach((proj) => {
-      const stageId = resolveProjectKanbanStageId(proj, workflowStages) || fallbackId;
+      // Ưu tiên cột do SERVER gán (đã đối chiếu khớp 100% với resolveProjectKanbanStageId
+      // trên toàn bộ 596 dự án). Chỉ dùng hàm client khi chưa có — ví dụ thẻ vừa kéo-thả
+      // hoặc dữ liệu đến từ đường tải cũ của các view khác.
+      const stageId = stageOf[String(proj.id)]
+        || resolveProjectKanbanStageId(proj, workflowStages)
+        || fallbackId;
       if (stageId && data[stageId]) data[stageId].push(proj);
       else if (fallbackId) data[fallbackId].push(proj);
     });
     return data;
-  }, [filtered, workflowStages]);
+  }, [filtered, workflowStages, stageOf]);
 
   const visibleKanbanColumns = useMemo(() => workflowStages, [workflowStages]);
 
@@ -662,6 +984,50 @@ export default function Projects() {
     const deliveryDate = dates.delivery_date || dates.production_deadline || proj.delivery_date || proj.production_deadline;
     const installDate = dates.install_date || proj.install_date;
 
+    // Ngày rút gọn "d/m" (không năm) — khớp mật độ mockup; giữ formatDate() đầy đủ cho title hover.
+    const shortDate = (v) => {
+      if (!v) return '';
+      const d = new Date(v);
+      if (Number.isNaN(d.getTime())) return '';
+      return `${d.getDate()}/${d.getMonth() + 1}`;
+    };
+    const dateChips = [
+      hasDeadline && { label: deadlineLabel, v: deadlineAt },
+      orderDate && { label: 'Đặt', v: orderDate },
+      deliveryDate && { label: 'Giao', v: deliveryDate },
+      installDate && { label: 'Lắp', v: installDate },
+    ].filter(Boolean);
+
+    // Người phụ trách theo module đang active — 1 avatar/tên mỗi người (bỏ trùng theo tên).
+    const staffChips = [];
+    const seenStaff = new Set();
+    for (const row of activeModules) {
+      const name = row.person?.full_name;
+      if (!name || seenStaff.has(name)) continue;
+      seenStaff.add(name);
+      staffChips.push({ name, key: row.key });
+    }
+
+    const originName = origin?.created_by?.full_name || proj.customers?.full_name || null;
+
+    // Đích của tag module: mở dự án ngay trong module đó (không phải trang chi tiết chung).
+    const moduleHref = (key) => {
+      if (key === 'sx') return `/sx/projects/${proj.id}`;
+      if (key === 'vc') return `/vc/projects/${proj.id}`;
+      if (key === 'crm') {
+        return origin?.deal_id
+          ? `/crm/leads/${origin.deal_id}`
+          : `/projects/${proj.id}?tab=crm`;
+      }
+      return `/projects/${proj.id}?tab=overview`;
+    };
+    const moduleHint = (key) => {
+      if (key === 'sx') return 'Mở dự án trong Sản xuất';
+      if (key === 'vc') return 'Mở dự án trong Vận chuyển / Lắp đặt';
+      if (key === 'crm') return origin?.deal_id ? 'Mở deal trong CRM' : 'Mở phần bán hàng của dự án';
+      return 'Mở dự án';
+    };
+
     return (
       <Link
         to={`/projects/${proj.id}?tab=overview`}
@@ -669,20 +1035,6 @@ export default function Projects() {
           overdue ? 'border-red-200 ring-1 ring-red-100' : 'border-slate-200/90'
         }`}
       >
-        {/* Dải module luôn 3 ô — nhìn 1 phát biết dự án chạm CRM / SX / VC */}
-        <div className="flex items-center gap-1 mb-2" title="Module đang gắn với dự án">
-          {moduleDefs.map((m) => (
-            <span
-              key={m.key}
-              className={`flex-1 text-center text-[10px] font-extrabold tracking-wide rounded-md border px-1 py-1 ${
-                m.active ? m.on.pill : m.off.pill
-              }`}
-            >
-              {m.short}
-            </span>
-          ))}
-        </div>
-
         <div className="flex items-start justify-between gap-2 mb-1">
           <div className="flex items-center gap-1.5 min-w-0">
             <span className="text-[11px] font-bold text-violet-700 font-mono truncate">{proj.code}</span>
@@ -704,110 +1056,84 @@ export default function Projects() {
           </button>
         </div>
 
-        <h4 className="text-[13px] font-bold text-slate-900 leading-snug line-clamp-2 group-hover:text-violet-700 mb-1.5">
+        <h4 className="text-[13px] font-bold text-slate-900 leading-snug line-clamp-2 group-hover:text-violet-700 mb-1">
           {proj.name}
         </h4>
 
-        <div className="mb-1.5 text-[10px] leading-snug">
-          {origin?.kind === 'crm_deal' ? (
-            <p className="truncate text-emerald-800 font-semibold" title={[origin.deal_code, origin.deal_title].filter(Boolean).join(' — ')}>
-              Từ CRM
-              {origin.deal_code && <span className="ml-1 font-mono">{origin.deal_code}</span>}
-              {origin.created_by?.full_name && (
-                <span className="font-medium text-slate-500"> · {origin.created_by.full_name}</span>
-              )}
-            </p>
-          ) : (
-            <p className="truncate text-slate-600 font-medium">
-              {origin?.label || 'Tạo thủ công'}
-              {origin?.created_by?.full_name && (
-                <span className="text-slate-500"> · {origin.created_by.full_name}</span>
-              )}
-            </p>
-          )}
-        </div>
-
-        {hasDeadline ? (
-          <div className="mb-1.5">
-            <span
-              className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-semibold tabular-nums ${deadlineTone}`}
-              title={`${deadlineLabel}: ${formatDate(deadlineAt)}`}
-            >
-              <Clock className="h-3 w-3" strokeWidth={2.4} />
-              <span className="uppercase tracking-wide font-extrabold">{deadlineLabel}</span>
-              <span className="opacity-70">·</span>
-              {overdue ? `Quá hạn ${formatDate(deadlineAt)}` : `Hạn ${formatDate(deadlineAt)}`}
-            </span>
-          </div>
-        ) : null}
-
-        {(orderDate || deliveryDate || installDate) && (
-          <div className="flex flex-wrap gap-1 mb-1.5">
-            {orderDate && (
-              <span className="inline-flex items-center rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 tabular-nums">
-                Đặt {formatDate(orderDate)}
-              </span>
-            )}
-            {deliveryDate && (
-              <span className="inline-flex items-center rounded border border-teal-200 bg-teal-50 px-1.5 py-0.5 text-[10px] font-medium text-teal-700 tabular-nums">
-                Giao {formatDate(deliveryDate)}
-              </span>
-            )}
-            {installDate && (
-              <span className="inline-flex items-center rounded border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-[10px] font-medium text-sky-800 tabular-nums">
-                Lắp {formatDate(installDate)}
-              </span>
-            )}
-          </div>
+        {(origin?.deal_code || originName) && (
+          <p
+            className="flex items-center gap-1 text-[11px] text-slate-500 truncate mb-1"
+            title={[origin?.deal_code, originName].filter(Boolean).join(' · ')}
+          >
+            <FolderKanban className="h-3 w-3 shrink-0 text-slate-400" />
+            {origin?.deal_code && <span className="font-mono font-medium text-slate-600">{origin.deal_code}</span>}
+            {origin?.deal_code && originName && <span className="text-slate-300">·</span>}
+            {originName && <span className="truncate">{originName}</span>}
+          </p>
         )}
 
-        {/* Chi tiết từng module đang active — màu + vạch trái tách biệt */}
-        {activeModules.length > 0 && (
-          <div className="space-y-1 mb-1.5">
-            {activeModules.map((row) => (
-              <div
-                key={row.key}
-                className={`flex items-stretch gap-0 rounded-md border overflow-hidden ${row.on.row}`}
-              >
-                <span className={`w-1 shrink-0 ${row.on.bar}`} aria-hidden />
-                <div className="flex items-center gap-1.5 px-1.5 py-1 min-w-0 flex-1">
-                  <span className={`text-[9px] font-extrabold shrink-0 px-1.5 py-0.5 rounded ${row.on.badge}`}>
-                    {row.label}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-[11px] font-bold truncate text-slate-900">
-                      {row.person?.full_name || <span className="font-medium text-slate-400">Chưa gán</span>}
-                    </p>
-                    <p className="text-[9px] font-medium text-slate-600 truncate">
-                      {[row.stage, row.role, row.company].filter(Boolean).join(' · ')}
-                    </p>
-                  </div>
-                </div>
-              </div>
+        {dateChips.length > 0 && (
+          <p className="flex items-center gap-1 text-[11px] text-slate-600 mb-1.5" title={dateChips.map((c) => `${c.label} ${formatDate(c.v)}`).join(' · ')}>
+            <Clock className={`h-3 w-3 shrink-0 ${overdue ? 'text-red-500' : 'text-slate-400'}`} />
+            <span className={`truncate tabular-nums ${overdue ? 'font-semibold text-red-600' : ''}`}>
+              {dateChips.map((c) => `${c.label} ${shortDate(c.v)}`).join(' · ')}
+            </span>
+          </p>
+        )}
+
+        {staffChips.length > 0 && (
+          <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 mb-1.5">
+            {staffChips.map((s) => (
+              <span key={s.key} className="inline-flex items-center gap-1 min-w-0" title={s.name}>
+                <span
+                  className="h-4 w-4 shrink-0 rounded-full flex items-center justify-center text-[8px] font-bold text-white"
+                  style={{ backgroundColor: avatarColor(s.name) }}
+                >
+                  {getInitials(s.name)}
+                </span>
+                <span className="text-[11px] font-medium text-slate-700 truncate max-w-[6rem]">{s.name}</span>
+              </span>
             ))}
           </div>
         )}
 
         {(proj.customers?.full_name || proj.customers?.phone) && (
-          <p className="text-[11px] leading-snug min-w-0 truncate mb-1" title={[proj.customers?.full_name, proj.customers?.phone].filter(Boolean).join(' · ')}>
+          <p className="flex items-center gap-1 text-[11px] leading-snug min-w-0 truncate mb-1.5" title={[proj.customers?.full_name, proj.customers?.phone].filter(Boolean).join(' · ')}>
+            <Phone className="h-3 w-3 shrink-0 text-slate-400" />
             {proj.customers?.full_name && (
-              <span className="font-medium text-slate-800">{proj.customers.full_name}</span>
+              <span className="font-medium text-slate-700 truncate">{proj.customers.full_name}</span>
             )}
             {proj.customers?.full_name && proj.customers?.phone && (
-              <span className="text-slate-300 mx-1">·</span>
+              <span className="text-slate-300">·</span>
             )}
             {proj.customers?.phone && (
-              <span className="font-mono tabular-nums text-slate-700">{proj.customers.phone}</span>
+              <span className="font-mono tabular-nums text-slate-600 shrink-0">{proj.customers.phone}</span>
             )}
           </p>
         )}
 
-        <div className="flex items-center justify-between gap-2 mt-1.5 pt-1.5 border-t border-slate-100">
-          <span className="text-[10px] font-medium text-slate-500 truncate">
-            {activeModules.length
-              ? `${activeModules.length} module · ${activeModules.map((m) => m.short).join(' · ')}`
-              : 'Chưa gắn module'}
-          </span>
+        <div className="flex items-center justify-between gap-2 pt-1.5 border-t border-slate-100">
+          {activeModules.length ? (
+            <div className="flex items-center gap-1 min-w-0">
+              {activeModules.map((m) => (
+                <button
+                  key={m.key}
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    navigate(moduleHref(m.key));
+                  }}
+                  className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded shrink-0 cursor-pointer hover:brightness-110 ${m.on.badge}`}
+                  title={moduleHint(m.key)}
+                >
+                  {m.short}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <span className="text-[10px] font-semibold text-slate-500 truncate">Chưa gắn module</span>
+          )}
           {proj.estimated_value > 0 && (
             <span className="text-[11px] font-bold text-emerald-600 tabular-nums shrink-0">
               {formatVND(proj.estimated_value)}
@@ -823,22 +1149,10 @@ export default function Projects() {
       <div className="ui-solid-white rounded-xl border border-slate-200/90 bg-white shadow-sm overflow-hidden">
         {/* Hàng 1 — tab + hành động */}
         <div className="border-b border-slate-200/60">
-          <div className="flex items-center justify-between gap-1.5 flex-wrap px-2.5 py-1 sm:px-3 bg-slate-50/50">
-            <div className="flex items-center gap-1 min-w-0">
-              <div data-tour="pipeline-tabs" className="inline-flex gap-px p-0.5 bg-slate-200/60 border border-slate-300/50 rounded-lg shrink-0">
-                <button
-                  type="button"
-                  className="rounded-md font-semibold transition-colors flex items-center gap-1 px-2 py-1 text-[11px] whitespace-nowrap bg-white text-blue-700 shadow-sm"
-                >
-                  Dự án {filtered.length}
-                </button>
-              </div>
-              {overdueCount > 0 && (
-                <span className="inline-flex items-center gap-1 h-6 px-1.5 rounded-md bg-red-50 border border-red-200 text-red-600 text-[10px] font-bold">
-                  <AlertTriangle className="h-3 w-3" /> {overdueCount}
-                </span>
-              )}
-              <span className="text-[10px] text-slate-400 hidden sm:inline">
+          <div className="flex items-center justify-between gap-1.5 flex-wrap px-2.5 py-2 sm:px-3 bg-white">
+            <div className="flex items-center gap-2 min-w-0">
+              <h1 data-tour="pipeline-tabs" className="text-base sm:text-lg font-extrabold text-slate-900 shrink-0">Dự án</h1>
+              <span className="text-[11px] text-slate-400 hidden sm:inline whitespace-nowrap">
                 Cập nhật {new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
               </span>
             </div>
@@ -846,7 +1160,7 @@ export default function Projects() {
               <button
                 type="button"
                 onClick={() => navigate('/workflow-settings')}
-                className="h-7 px-2.5 rounded-md border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
+                className="h-8 px-2.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
                 title="Thêm / đổi tên / ẩn / sắp xếp cột Kanban"
               >
                 <Settings2 className="h-3.5 w-3.5" />
@@ -855,7 +1169,7 @@ export default function Projects() {
               <button
                 type="button"
                 onClick={() => navigate('/projects/create')}
-                className="h-7 px-2.5 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-semibold flex items-center gap-1 cursor-pointer shadow-sm"
+                className="h-8 px-3 rounded-lg bg-violet-600 hover:bg-violet-700 text-white text-[11px] font-semibold flex items-center gap-1 cursor-pointer shadow-sm"
               >
                 <Plus className="h-3.5 w-3.5" /> Thêm dự án
               </button>
@@ -931,19 +1245,26 @@ export default function Projects() {
               data-tour="projects-view-mode"
               className="flex items-center gap-0.5 shrink-0 ml-auto pl-1 border-l border-slate-200/80"
             >
-              <div className="inline-flex items-center gap-px p-0.5 rounded-md bg-slate-100 border border-slate-200/80">
-                <button
-                  type="button"
-                  onClick={() => setViewMode('kanban')}
-                  className={`h-8 px-2 rounded-md text-xs font-medium inline-flex items-center gap-1 cursor-pointer transition-colors shrink-0 ${
-                    viewMode === 'kanban'
-                      ? 'bg-white text-violet-700 shadow-sm'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  <LayoutGrid className="h-3.5 w-3.5" />
-                  <span className="hidden md:inline">Kanban</span>
-                </button>
+              <div className="inline-flex items-center gap-px p-0.5 rounded-lg bg-slate-100 border border-slate-200/80">
+                {[
+                  { id: 'kanban', label: 'Kanban', icon: LayoutGrid },
+                  { id: 'list', label: 'Danh sách', icon: List },
+                  { id: 'calendar', label: 'Lịch', icon: Calendar },
+                ].map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => setViewMode(m.id)}
+                    className={`h-8 px-2.5 rounded-md text-xs font-semibold inline-flex items-center gap-1 cursor-pointer transition-colors shrink-0 ${
+                      viewMode === m.id
+                        ? 'bg-violet-600 text-white shadow-sm'
+                        : 'text-slate-600 hover:text-slate-900 hover:bg-white'
+                    }`}
+                  >
+                    <m.icon className="h-3.5 w-3.5" />
+                    <span className="hidden md:inline">{m.label}</span>
+                  </button>
+                ))}
                 <div className="relative">
                   <button
                     ref={viewModeTriggerRef}
@@ -951,33 +1272,33 @@ export default function Projects() {
                     data-tour="projects-view-mode-more"
                     onClick={() => setShowViewModeMenu((v) => !v)}
                     className={`h-8 px-2 rounded-md text-xs font-medium inline-flex items-center gap-1 cursor-pointer transition-colors shrink-0 ${
-                      viewMode !== 'kanban'
-                        ? 'bg-white text-violet-700 shadow-sm'
-                        : 'text-slate-600 hover:text-slate-900'
+                      MORE_VIEW_MODES.some((v) => v.id === viewMode)
+                        ? 'bg-violet-600 text-white shadow-sm'
+                        : 'text-slate-500 hover:text-slate-900 hover:bg-white'
                     }`}
-                    title="Chọn dạng giao diện khác"
+                    title="Các chế độ xem khác"
                     aria-expanded={showViewModeMenu}
                     aria-label="Chế độ xem khác"
                   >
                     {(() => {
-                      const active = ALT_VIEW_MODES.find((v) => v.id === viewMode);
-                      const Icon = active?.icon || List;
-                      return (
-                        <>
-                          <Icon className="h-3.5 w-3.5" />
-                          <span className="hidden md:inline max-w-[6.5rem] truncate">
-                            {active?.label || 'Khác'}
-                          </span>
-                          <ChevronDown className={`h-3 w-3 shrink-0 transition-transform ${showViewModeMenu ? 'rotate-180' : ''}`} />
-                        </>
-                      );
+                      const active = MORE_VIEW_MODES.find((v) => v.id === viewMode);
+                      if (active) {
+                        const Icon = active.icon;
+                        return (
+                          <>
+                            <Icon className="h-3.5 w-3.5" />
+                            <span className="hidden md:inline max-w-[6.5rem] truncate">{active.label}</span>
+                          </>
+                        );
+                      }
+                      return <MoreHorizontal className="h-3.5 w-3.5" />;
                     })()}
                   </button>
                   <ViewModeDropdownMenu
                     open={showViewModeMenu}
                     onClose={() => setShowViewModeMenu(false)}
                     anchorRef={viewModeTriggerRef}
-                    modes={ALT_VIEW_MODES}
+                    modes={MORE_VIEW_MODES}
                     activeId={viewMode}
                     theme="violet"
                     onSelect={(id) => {
@@ -1004,12 +1325,47 @@ export default function Projects() {
               KPI<span className="ml-1 font-medium text-blue-600">· Đa module</span>
             </span>
             {!kpiPanelOpen && (
-              <span className="text-[10px] text-slate-500 truncate ml-2">
-                {kpi.total} DA
+              <span className="flex items-center gap-1.5 truncate ml-2">
+                <span className="inline-flex items-baseline gap-0.5">
+                  <span className="text-xs font-extrabold text-violet-700 tabular-nums">{kpi.total}</span>
+                  <span className="text-[10px] font-medium text-slate-400">DA</span>
+                </span>
                 {moduleKpis ? (
-                  <> · {moduleKpis.crm_deals || 0} deal · {moduleKpis.sx_active || 0} SX · {(moduleKpis.vc_active || 0) + (moduleKpis.install_active || 0)} VC · {moduleKpis.overdue_tasks || 0} task trễ</>
+                  <>
+                    <span className="text-slate-300">·</span>
+                    <span className="inline-flex items-baseline gap-0.5">
+                      <span className="text-xs font-extrabold text-blue-600 tabular-nums">{moduleKpis.crm_deals || 0}</span>
+                      <span className="text-[10px] font-medium text-slate-400">deal</span>
+                    </span>
+                    <span className="text-slate-300">·</span>
+                    <span className="inline-flex items-baseline gap-0.5">
+                      <span className="text-xs font-extrabold text-orange-600 tabular-nums">{moduleKpis.sx_active || 0}</span>
+                      <span className="text-[10px] font-medium text-slate-400">SX</span>
+                    </span>
+                    <span className="text-slate-300">·</span>
+                    <span className="inline-flex items-baseline gap-0.5">
+                      <span className="text-xs font-extrabold text-amber-600 tabular-nums">{(moduleKpis.vc_active || 0) + (moduleKpis.install_active || 0)}</span>
+                      <span className="text-[10px] font-medium text-slate-400">VC</span>
+                    </span>
+                    <span className="text-slate-300">·</span>
+                    <span className="inline-flex items-baseline gap-0.5">
+                      <span className={`text-xs font-extrabold tabular-nums ${moduleKpis.overdue_tasks > 0 ? 'text-red-600' : 'text-slate-700'}`}>{moduleKpis.overdue_tasks || 0}</span>
+                      <span className="text-[10px] font-medium text-slate-400">task trễ</span>
+                    </span>
+                  </>
                 ) : (
-                  <> · {kpi.overdue} quá hạn · {kpi.done} xong</>
+                  <>
+                    <span className="text-slate-300">·</span>
+                    <span className="inline-flex items-baseline gap-0.5">
+                      <span className={`text-xs font-extrabold tabular-nums ${kpi.overdue > 0 ? 'text-red-600' : 'text-slate-700'}`}>{kpi.overdue}</span>
+                      <span className="text-[10px] font-medium text-slate-400">quá hạn</span>
+                    </span>
+                    <span className="text-slate-300">·</span>
+                    <span className="inline-flex items-baseline gap-0.5">
+                      <span className="text-xs font-extrabold text-emerald-600 tabular-nums">{kpi.done}</span>
+                      <span className="text-[10px] font-medium text-slate-400">xong</span>
+                    </span>
+                  </>
                 )}
               </span>
             )}
@@ -1028,24 +1384,19 @@ export default function Projects() {
                   href="/projects"
                   items={[
                     { label: 'Tổng', value: kpi.total },
-                    { label: 'Đang làm', value: kpi.working },
                     { label: 'Quá hạn', value: kpi.overdue, alert: kpi.overdue > 0 },
-                    { label: 'Hoàn thành', value: kpi.done },
                   ]}
-                  footer={kpi.valueSum > 0 ? `GT: ${formatVND(kpi.valueSum)}` : null}
+                  footer={kpi.valueSum > 0 ? { label: 'GT:', value: formatVND(kpi.valueSum) } : null}
                 />
                 <ModuleKpiGroup
                   title="CRM"
                   icon={<Briefcase className="h-3.5 w-3.5" />}
-                  tone="emerald"
+                  tone="blue"
                   href="/crm/dashboard"
                   items={[
-                    { label: 'Lead', value: moduleKpis?.crm_leads ?? '—' },
                     { label: 'Deal', value: moduleKpis?.crm_deals ?? '—' },
                     { label: 'Won', value: moduleKpis?.crm_won ?? '—' },
-                    { label: 'Quá hạn', value: moduleKpis?.crm_overdue ?? '—', alert: (moduleKpis?.crm_overdue || 0) > 0 },
                   ]}
-                  footer={moduleKpis?.pipeline_value != null ? `Pipeline: ${formatVND(moduleKpis.pipeline_value)}` : null}
                 />
                 <ModuleKpiGroup
                   title="Sản xuất"
@@ -1054,7 +1405,6 @@ export default function Projects() {
                   href="/sx"
                   items={[
                     { label: 'Đang SX', value: moduleKpis?.sx_active ?? '—' },
-                    { label: 'Tiếp nhận', value: moduleKpis?.sx_intake ?? '—' },
                     { label: 'Quá hạn', value: moduleKpis?.sx_overdue ?? '—', alert: (moduleKpis?.sx_overdue || 0) > 0 },
                   ]}
                 />
@@ -1066,19 +1416,23 @@ export default function Projects() {
                   items={[
                     { label: 'VC', value: moduleKpis?.vc_active ?? '—' },
                     { label: 'Lắp', value: moduleKpis?.install_active ?? '—' },
-                    { label: 'VC trễ', value: moduleKpis?.vc_overdue ?? '—', alert: (moduleKpis?.vc_overdue || 0) > 0 },
-                    { label: 'Lắp trễ', value: moduleKpis?.install_overdue ?? '—', alert: (moduleKpis?.install_overdue || 0) > 0 },
+                    {
+                      label: 'Trễ',
+                      value: (moduleKpis?.vc_overdue != null || moduleKpis?.install_overdue != null)
+                        ? (Number(moduleKpis?.vc_overdue) || 0) + (Number(moduleKpis?.install_overdue) || 0)
+                        : '—',
+                      alert: ((Number(moduleKpis?.vc_overdue) || 0) + (Number(moduleKpis?.install_overdue) || 0)) > 0,
+                    },
                   ]}
                 />
                 <ModuleKpiGroup
                   title="Nhiệm vụ"
                   icon={<CheckSquare className="h-3.5 w-3.5" />}
-                  tone="sky"
+                  tone="indigo"
                   href="/work/unified"
                   items={[
                     { label: 'Đang mở', value: moduleKpis?.open_tasks ?? '—' },
                     { label: 'Quá hạn', value: moduleKpis?.overdue_tasks ?? '—', alert: (moduleKpis?.overdue_tasks || 0) > 0 },
-                    { label: 'Chưa hạn', value: kpi.noDeadline },
                   ]}
                 />
               </div>
@@ -1261,7 +1615,8 @@ export default function Projects() {
         >
           <div
             ref={kanbanWrapRef}
-            className={`relative min-h-[min(700px,calc(100vh-128px))] ${UI_KANBAN_FIXED_CLASS}`}
+            className={`relative ${UI_KANBAN_FIXED_CLASS}`}
+            style={{ minHeight: `min(700px, calc(100vh - ${kpiPanelOpen ? 128 : 40}px))` }}
           >
             <KanbanBoardEdgeScrollChrome
               wrapRef={kanbanWrapRef}
@@ -1277,17 +1632,18 @@ export default function Projects() {
               className="flex gap-3 overflow-x-auto pb-3 px-1 [scrollbar-width:thin] [scrollbar-gutter:stable]"
             >
             {visibleKanbanColumns.map((col) => {
-              const count = projectsByStage[col.id]?.length || 0;
+              const loadedCount = projectsByStage[col.id]?.length || 0;
+              const meta = colMeta[col.id];
+              // Badge = tổng THẬT của cột (server đếm), không phải số thẻ đã tải.
+              const count = meta ? meta.total : loadedCount;
               const colColor = col.color || '#6b7280';
               return (
                 <div
                   key={col.id}
                   className="flex flex-col flex-shrink-0 w-[280px] sm:w-[300px] rounded-2xl border border-slate-200/90 bg-slate-50/80 overflow-hidden shadow-sm"
                 >
-                  <div
-                    className="sticky top-0 z-10 px-3 py-2.5 bg-white/95 backdrop-blur border-b border-slate-100 flex items-center justify-between gap-2"
-                    style={{ boxShadow: `inset 0 3px 0 0 ${colColor}` }}
-                  >
+                  <div className="h-1.5 w-full shrink-0" style={{ backgroundColor: colColor }} aria-hidden />
+                  <div className="sticky top-0 z-10 px-3 py-2.5 bg-white/95 backdrop-blur border-b border-slate-100 flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2 min-w-0">
                       <span
                         className="h-2 w-2 rounded-full shrink-0"
@@ -1309,10 +1665,21 @@ export default function Projects() {
                       <div
                         ref={provided.innerRef}
                         {...provided.droppableProps}
+                        // Trigger CHÍNH để tải thêm. Không dùng IntersectionObserver làm
+                        // đường chính vì thẻ nằm trong 4 khung cuộn/cắt lồng nhau (thân cột
+                        // overflow-y-auto → wrapper overflow-hidden → board overflow-x-auto
+                        // (CSS ép overflow-y thành auto) → khung cuộn trang), đo thực tế
+                        // sentinel ở trong viewport mà intersectionRect vẫn ra 0.
+                        onScroll={meta?.has_more ? (ev) => {
+                          const el = ev.currentTarget;
+                          if (el.scrollHeight - el.scrollTop - el.clientHeight < 320) {
+                            loadMoreColumn(col.id);
+                          }
+                        } : undefined}
                         className={`flex-1 p-2 space-y-2 overflow-y-auto transition-colors ${
                           snapshot.isDraggingOver ? 'bg-violet-50/80' : ''
                         }`}
-                        style={{ minHeight: '180px', maxHeight: 'calc(100vh - 280px)' }}
+                        style={{ minHeight: '180px', maxHeight: `calc(100vh - ${kpiPanelOpen ? 280 : 192}px)` }}
                       >
                         {(projectsByStage[col.id] || []).map((proj, index) => (
                           <Draggable key={proj.id} draggableId={String(proj.id)} index={index}>
@@ -1329,6 +1696,16 @@ export default function Projects() {
                           </Draggable>
                         ))}
                         {provided.placeholder}
+                        {/* Cuộn tới đây → nạp trang tiếp của ĐÚNG cột này. Quan sát theo
+                            VIEWPORT nên chạy được cả khi cuộn riêng cột lẫn cuộn chung. */}
+                        {meta?.has_more && (
+                          <ColumnLoadMoreSentinel
+                            stageId={col.id}
+                            loading={!!meta.loading}
+                            onNeedMore={loadMoreColumn}
+                            loadedKey={meta.loaded}
+                          />
+                        )}
                         {count === 0 && !snapshot.isDraggingOver && (
                           <div className="text-center py-10 text-[11px] text-slate-300 border border-dashed border-slate-200 rounded-xl bg-white/40">
                             Kéo dự án vào đây
@@ -1354,7 +1731,12 @@ export default function Projects() {
           const dayAfterTomorrow = new Date(tomorrow); dayAfterTomorrow.setDate(dayAfterTomorrow.getDate() + 1);
           const endOfNextWeek = new Date(today); endOfNextWeek.setDate(endOfNextWeek.getDate() + (7 - endOfNextWeek.getDay()) + 7);
           const endOfNextMonth = new Date(today.getFullYear(), today.getMonth() + 2, 0);
-          const getD = (p) => p.deadline || p.design_deadline || p.install_date || null;
+          // Cùng thứ tự ưu tiên với enrich/thẻ Kanban và với project_deadline_at() phía SQL
+          // (migration 574). Đo trên dữ liệu thật: deadline và design_deadline RỖNG toàn bộ
+          // 596 dự án; mốc thật nằm ở production_deadline (74) / delivery_date (68) /
+          // install_date (75) — nên bản cũ bỏ sót phần lớn dự án có hạn.
+          const getD = (p) => p.deadline || p.sx_kanban_deadline_at || p.production_deadline
+            || p.design_deadline || p.delivery_date || p.install_date || null;
 
           const DEADLINE_COLS = [
             { id: 'overdue', label: 'Quá hạn', color: '#EF4444', filter: (p) => { const d = getD(p); return d && new Date(d) < today && p.status !== 'completed'; } },
@@ -1380,11 +1762,24 @@ export default function Projects() {
                   <div className="rounded-t-xl p-3 border border-b-0 bg-white" style={{ borderTopColor: col.color, borderTopWidth: '4px' }}>
                     <div className="flex items-center justify-between">
                       <h3 className="text-sm font-bold text-gray-900">{col.label}</h3>
-                      <span className="text-xs text-gray-400 font-medium bg-gray-100 px-2 py-0.5 rounded-full">{deadlineData[col.id].length}</span>
+                      {/* Tổng THẬT của nhóm (server đếm), không phải số thẻ đã tải. */}
+                      <span className="text-xs text-gray-400 font-medium bg-gray-100 px-2 py-0.5 rounded-full">
+                        {deadlineSummary?.counts?.[col.id] ?? deadlineData[col.id].length}
+                      </span>
                     </div>
                   </div>
-                  <div className="flex-1 rounded-b-xl border p-2 space-y-2 bg-gray-50/50 overflow-y-auto" style={{ minHeight: '200px', maxHeight: '75vh' }}>
+                  <div
+                    className="flex-1 rounded-b-xl border p-2 space-y-2 bg-gray-50/50 overflow-y-auto"
+                    style={{ minHeight: '200px', maxHeight: '75vh' }}
+                    onScroll={dlMeta[col.id]?.has_more ? (ev) => {
+                      const el = ev.currentTarget;
+                      if (el.scrollHeight - el.scrollTop - el.clientHeight < 280) loadMoreDeadline(col.id);
+                    } : undefined}
+                  >
                     {deadlineData[col.id].map(proj => <ProjectCard key={proj.id} proj={proj} />)}
+                    {dlMeta[col.id]?.loading && (
+                      <p className="py-2 text-center text-[11px] text-gray-400">Đang tải thêm…</p>
+                    )}
                     {deadlineData[col.id].length === 0 && <div className="text-center py-8 text-xs text-gray-300">Trống</div>}
                   </div>
                 </div>
@@ -1777,6 +2172,26 @@ export default function Projects() {
               </div>
             </Link>
           ))}
+          {/* Phân trang thật: trước đây view này lấy limit=500 cứng nên bỏ bớt dự án
+              (569 tổng → 500) và ở 8.000 thì chỉ hiện 500. */}
+          {listMeta.total > 0 && (
+            <div className="pt-1 pb-3 text-center">
+              <p className="text-[11px] text-slate-400 mb-2">
+                Đang xem {Math.min(listMeta.loaded, listMeta.total).toLocaleString('vi-VN')}
+                {' / '}{listMeta.total.toLocaleString('vi-VN')} dự án
+              </p>
+              {listMeta.loaded < listMeta.total && (
+                <button
+                  type="button"
+                  onClick={loadMoreList}
+                  disabled={listMeta.loading}
+                  className="h-9 px-4 rounded-lg bg-white border border-slate-200 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 cursor-pointer"
+                >
+                  {listMeta.loading ? 'Đang tải…' : `Tải thêm ${Math.min(LIST_PAGE, listMeta.total - listMeta.loaded)} dự án`}
+                </button>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -1785,39 +2200,48 @@ export default function Projects() {
 
 function ModuleKpiGroup({ title, icon, tone = 'violet', href, items = [], footer }) {
   const tones = {
-    violet: { border: 'border-violet-200/90', head: 'bg-violet-50 text-violet-800', icon: 'text-violet-600' },
-    emerald: { border: 'border-emerald-200/90', head: 'bg-emerald-50 text-emerald-800', icon: 'text-emerald-600' },
-    orange: { border: 'border-orange-200/90', head: 'bg-orange-50 text-orange-800', icon: 'text-orange-600' },
-    amber: { border: 'border-amber-200/90', head: 'bg-amber-50 text-amber-900', icon: 'text-amber-700' },
-    sky: { border: 'border-sky-200/90', head: 'bg-sky-50 text-sky-800', icon: 'text-sky-600' },
+    violet: { bar: 'bg-violet-500', icon: 'text-violet-600' },
+    blue: { bar: 'bg-blue-500', icon: 'text-blue-600' },
+    orange: { bar: 'bg-orange-500', icon: 'text-orange-600' },
+    amber: { bar: 'bg-amber-500', icon: 'text-amber-600' },
+    indigo: { bar: 'bg-indigo-500', icon: 'text-indigo-600' },
   };
   const t = tones[tone] || tones.violet;
   return (
-    <div className={`rounded-xl border ${t.border} bg-white shadow-sm overflow-hidden flex flex-col min-h-[96px]`}>
-      <div className={`flex items-center justify-between gap-1 px-2.5 py-1.5 ${t.head}`}>
-        <span className="inline-flex items-center gap-1.5 text-[11px] font-bold">
+    <div className="rounded-xl border border-slate-200/90 bg-white shadow-sm overflow-hidden flex flex-col">
+      <div className={`h-1 w-full ${t.bar}`} aria-hidden />
+      <div className="flex items-center justify-between gap-1 px-3 pt-2 pb-1.5">
+        <span className="inline-flex items-center gap-1.5 text-[12px] font-bold text-slate-800">
           <span className={t.icon}>{icon}</span>
           {title}
         </span>
         {href && (
-          <Link to={href} className="text-[10px] font-medium opacity-70 hover:opacity-100 hover:underline">
+          <Link to={href} className="text-[10px] font-semibold text-slate-400 hover:text-violet-600">
             Mở →
           </Link>
         )}
       </div>
-      <div className="grid grid-cols-2 gap-px bg-slate-100/80 flex-1">
+      <div className="px-3 pb-2 flex-1 flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
         {items.map((it) => (
-          <div key={it.label} className="bg-white px-2 py-1.5 text-center">
-            <p className="text-[9px] font-semibold uppercase tracking-wide text-slate-400 truncate">{it.label}</p>
-            <p className={`text-sm font-bold tabular-nums leading-tight ${it.alert ? 'text-red-600' : 'text-slate-900'}`}>
+          <span key={it.label} className="inline-flex items-baseline gap-1 whitespace-nowrap">
+            <span className={`text-base font-extrabold tabular-nums ${it.alert ? 'text-red-600' : 'text-slate-900'}`}>
               {typeof it.value === 'number' ? it.value.toLocaleString('vi-VN') : it.value}
-            </p>
-          </div>
+            </span>
+            <span className="text-[10px] font-medium text-slate-400">{it.label.toLowerCase()}</span>
+          </span>
         ))}
       </div>
       {footer && (
-        <p className="px-2 py-1 text-[10px] text-slate-500 border-t border-slate-100 truncate" title={footer}>
-          {footer}
+        <p
+          className="px-3 pb-2 text-[11px] text-slate-500 truncate"
+          title={typeof footer === 'string' ? footer : `${footer.label} ${footer.value}`}
+        >
+          {typeof footer === 'string' ? footer : (
+            <>
+              {footer.label}{' '}
+              <span className="font-bold text-slate-900">{footer.value}</span>
+            </>
+          )}
         </p>
       )}
     </div>

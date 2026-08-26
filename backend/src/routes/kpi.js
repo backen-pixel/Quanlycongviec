@@ -33,6 +33,7 @@ const {
   crmReportCreatedAtToIso,
 } = require('../helpers/crmReportDateBounds');
 const { KPI_RECOMPUTE_USER_ROLES_DEFAULT } = require('../services/kpiRoleApplies');
+const { fetchAllByIds } = require('../helpers/supabaseFetchAll');
 const { responseCache, invalidateTags } = require('../middleware/responseCache');
 
 const r = Router();
@@ -474,22 +475,23 @@ r.get('/scorecard', responseCache({ ttl: 60, scope: 'user', tags: ['kpi', 'kpi:s
       const userIds = usersList.map((u) => u.id);
       let scores = [];
       if (period && userIds.length) {
-        const chunks = [];
-        for (let i = 0; i < userIds.length; i += 200) chunks.push(userIds.slice(i, i + 200));
-        for (const chunk of chunks) {
-          const { data } = await supabase
-            .from('kpi_scores')
-            .select(`
-              user_id, kpi_definition_id, actual_value, target_value,
-              raw_score, capped_score, weight_used, breakdown,
-              kpi_definition:kpi_definitions!kpi_definition_id(
-                id, code, name, group_code, formula_type, weight, is_gating, min_threshold
-              )
-            `)
-            .eq('period_id', period.id)
-            .in('user_id', chunk);
-          scores.push(...(data || []));
-        }
+        // Chia khúc 200 user CHỈ chặn URL dài, không chặn PostgREST cắt ở 1.000 dòng: kỳ
+        // hiện tại đã có 1.087 dòng kpi_scores (92 user × ~12 KPI) nên bị cắt NGAY hôm nay.
+        // Bị cắt → user mất điểm hiện total_score = 0 (hoặc tổng thiếu KPI), mà đây là
+        // bảng điểm dùng cho họp giao ban.
+        scores = await fetchAllByIds({
+          table: 'kpi_scores',
+          columns: `
+            user_id, kpi_definition_id, actual_value, target_value,
+            raw_score, capped_score, weight_used, breakdown,
+            kpi_definition:kpi_definitions!kpi_definition_id(
+              id, code, name, group_code, formula_type, weight, is_gating, min_threshold
+            )
+          `,
+          key: 'user_id',
+          ids: userIds,
+          tune: (q) => q.eq('period_id', period.id),
+        });
       }
 
       const scoresByUser = new Map();
@@ -590,11 +592,15 @@ r.get('/leaderboard', async (req, res) => {
 
     const userMap = Object.fromEntries(usersList.map((u) => [u.id, u]));
 
-    const { data: scores } = await supabase
-      .from('kpi_scores')
-      .select('user_id, kpi_definition_id, capped_score, actual_value, kpi_definition:kpi_definitions!kpi_definition_id(code, weight, is_gating, min_threshold)')
-      .eq('period_id', period.id)
-      .in('user_id', [...allowedIds]);
+    // Bảng xếp hạng chỉ dựng từ các key có trong `byUser`, nên dòng bị cắt = user BỊ LOẠI
+    // khỏi xếp hạng (không phải điểm thấp). Kỳ hiện tại 1.087 dòng > 1.000 → cắt ngay.
+    const scores = await fetchAllByIds({
+      table: 'kpi_scores',
+      columns: 'user_id, kpi_definition_id, capped_score, actual_value, kpi_definition:kpi_definitions!kpi_definition_id(code, weight, is_gating, min_threshold)',
+      key: 'user_id',
+      ids: [...allowedIds],
+      tune: (q) => q.eq('period_id', period.id),
+    });
 
     const byUser = new Map();
     for (const s of scores || []) {
@@ -1204,15 +1210,15 @@ r.get('/company-overview', async (req, res) => {
     // ── Scores của period hiện tại ──
     let scores = [];
     if (period && userIds.length) {
-      const chunks = [];
-      for (let i = 0; i < userIds.length; i += 200) chunks.push(userIds.slice(i, i + 200));
-      for (const chunk of chunks) {
-        const { data } = await supabase
-          .from('kpi_scores')
-          .select('user_id, kpi_definition_id, actual_value, target_value, capped_score, weight_used')
-          .eq('period_id', period.id).in('user_id', chunk);
-        scores.push(...(data || []));
-      }
+      // Kỳ hiện tại 1.087 dòng > 1.000 → chia khúc 200 user không giúp gì (cắt theo DÒNG).
+      // Ô trống trên heatmap KPI×nhân viên do bị cắt trông y như "chưa chấm điểm".
+      scores = await fetchAllByIds({
+        table: 'kpi_scores',
+        columns: 'user_id, kpi_definition_id, actual_value, target_value, capped_score, weight_used',
+        key: 'user_id',
+        ids: userIds,
+        tune: (q) => q.eq('period_id', period.id),
+      });
     }
 
     // Aggregate per user
@@ -1249,11 +1255,16 @@ r.get('/company-overview', async (req, res) => {
     const periodIds = (trendPeriods || []).map((p) => p.id);
     let trendScores = [];
     if (periodIds.length && userIds.length) {
-      const { data } = await supabase
-        .from('kpi_scores')
-        .select('user_id, period_id, capped_score')
-        .in('period_id', periodIds).in('user_id', userIds);
-      trendScores = data || [];
+      // Nặng nhất trong nhóm KPI: nhân cả 2 chiều (tới 12 kỳ × toàn bộ user × ~12 KPI).
+      // Toàn bảng kpi_scores hiện 4.124 dòng → truy vấn một phát chỉ thấy 1.000 (24%), và
+      // vì dòng bị bỏ rải rác khắp các kỳ nên đường xu hướng 6 tháng tự đổi hình dạng.
+      trendScores = await fetchAllByIds({
+        table: 'kpi_scores',
+        columns: 'user_id, period_id, capped_score',
+        key: 'user_id',
+        ids: userIds,
+        tune: (q) => q.in('period_id', periodIds),
+      });
     }
     const periodById = Object.fromEntries((trendPeriods || []).map((p) => [p.id, p.period_start]));
     const trendByPeriod = {};

@@ -31,10 +31,13 @@ const {
   assertCompanyAccessible,
   assertRowCompanyInTenant,
   intersectCompanyIdsWithTenant,
+  isTenantScopeEnforced,
 } = require('../helpers/tenantScope');
 const { applyAllActiveWorkshopTemplatesForArea } = require('../helpers/workshopApplyTemplates');
 const { assertProjectAccessible } = require('../helpers/projectAccessScope');
 const { enrichProjectsModulePresence } = require('../helpers/projectModuleCompanies');
+const { responseCache } = require('../middleware/responseCache');
+const { PROJECTS_LIST_TAG } = require('../middleware/projectsCacheInvalidation');
 
 const r = Router();
 r.use(auth);
@@ -93,6 +96,31 @@ async function attachCreatedByUsers(projects) {
     ...p,
     created_by_user: map.get(String(p.created_by || '')) || null,
   }));
+}
+
+/**
+ * Cột jsonb "nặng" chỉ trang chi tiết dự án cần — không dùng ở bất kỳ danh sách nào.
+ * `quotation_files` chiếm ~70% payload của GET /api/projects (có dự án lên tới 1.2MB),
+ * nên loại khỏi SELECT danh sách để giảm mạnh thời gian tải.
+ */
+const LIST_OMIT_COLUMNS = ['quotation_files'];
+let listColumnsCache = { cols: null, at: 0 };
+const LIST_COLUMNS_TTL = 10 * 60 * 1000;
+
+/** Lấy danh sách cột của `projects` (trừ cột nặng). Fallback '*' nếu không dò được. */
+async function getProjectListColumns() {
+  const now = Date.now();
+  if (listColumnsCache.cols && now - listColumnsCache.at < LIST_COLUMNS_TTL) return listColumnsCache.cols;
+  try {
+    const { data, error } = await supabase.from('projects').select('*').limit(1);
+    if (error || !data?.length) return '*';
+    const cols = Object.keys(data[0]).filter((c) => !LIST_OMIT_COLUMNS.includes(c));
+    if (!cols.length) return '*';
+    listColumnsCache = { cols: cols.join(','), at: now };
+    return listColumnsCache.cols;
+  } catch {
+    return '*';
+  }
 }
 
 // ─── HELPER: Create notification (backward compatible wrapper) ──
@@ -197,8 +225,354 @@ r.get('/pending-approvals', requirePermission('projects', 'view'), async (req, r
   } catch (e) { console.error(e); res.json({ approvals: {} }); }
 });
 
+// ─── KANBAN DỰ ÁN: đếm theo cột + phân trang TỪNG cột ───────────────────────────
+//
+// Trang /projects trước đây gọi `GET /api/projects?limit=500` rồi lọc/nhóm/đếm toàn bộ ở
+// client. Đo được: 500 dự án = 1,3s + 2,2MB; ngoại suy 8.000 dự án = ~9,6s + ~35MB. Và
+// `limit: 500` là số cứng không phân trang nên đang âm thầm bỏ bớt dự án (569 tổng → 500).
+//
+// Endpoint này (RPC migration 570) tách làm 2 chế độ, nên thời gian tải KHÔNG còn phụ
+// thuộc tổng số dự án:
+//   ?mode=summary                      → { total, counts{stage_id:n}, KPI }  (không trả dòng nào)
+//   ?mode=page&stage_id=..&offset=..    → { projects: [...], has_more }        (~40 thẻ/cột)
+//
+// Cột được giải theo ĐÚNG 4 mức fallback của resolveProjectKanbanStageId() phía frontend.
+
+/** Các giai đoạn giao hàng dự án — khớp isProjectDeliveryStage() ở frontend. */
+async function loadProjectDeliveryStageIds() {
+  const { data, error } = await supabase
+    .from('workflow_stages')
+    .select('id, slug, order_index')
+    .eq('is_active', true)
+    .is('company_id', null)
+    .order('order_index', { ascending: true });
+  if (error) throw error;
+  return (data || [])
+    .filter((s) => !String(s.slug || '').startsWith('sx-sample-'))
+    .map((s) => s.id);
+}
+
+r.get('/kanban',
+  requirePermission('projects', 'view'),
+  responseCache({ ttl: 20, scope: 'user', tags: [PROJECTS_LIST_TAG] }),
+  async (req, res) => {
+    try {
+      const {
+        mode = 'summary', stage_id: stageId, offset = 0, limit = 40,
+        company_id: companyId, division_id: divisionId,
+        customer_id: customerId, person_id: personId,
+        search, date_from: dateFrom, date_to: dateTo,
+      } = req.query;
+
+      const stageIds = await loadProjectDeliveryStageIds();
+      if (!stageIds.length) {
+        return res.json(mode === 'page'
+          ? { projects: [], has_more: false }
+          : { total: 0, counts: {}, working: 0, done: 0, overdue: 0, no_deadline: 0, value_sum: 0 });
+      }
+
+      // Lọc Khối → danh sách công ty; lọc Công ty → 1 công ty. Cả hai giao với phạm vi tenant.
+      let companyIds = null;
+      if (companyId && companyId !== 'all') {
+        if (!assertCompanyAccessible(req, res, companyId)) return undefined;
+        companyIds = [companyId];
+      } else if (divisionId && divisionId !== 'all') {
+        const { data: divCos } = await supabase
+          .from('companies').select('id').eq('division_unit_id', divisionId);
+        companyIds = (divCos || []).map((c) => c.id);
+        if (!companyIds.length) {
+          return res.json(mode === 'page'
+            ? { projects: [], has_more: false }
+            : { total: 0, counts: {}, working: 0, done: 0, overdue: 0, no_deadline: 0, value_sum: 0 });
+        }
+      }
+      if (companyIds) companyIds = intersectCompanyIdsWithTenant(req, companyIds);
+
+      const { data: board, error: rpcErr } = await supabase.rpc('project_kanban_board', {
+        p_stage_ids: stageIds,
+        p_company_ids: companyIds,
+        p_customer_id: customerId && customerId !== 'all' ? customerId : null,
+        p_person_id: personId && personId !== 'all' ? personId : null,
+        p_search: search || null,
+        p_date_from: dateFrom || null,
+        p_date_to: dateTo || null,
+        p_mode: mode === 'page' ? 'page' : 'summary',
+        p_stage_id: mode === 'page' ? stageId : null,
+        p_offset: Number(offset) || 0,
+        p_limit: Number(limit) || 40,
+        p_tenant_company_ids: isTenantScopeEnforced(req) ? (req.tenantCompanyIds || []) : null,
+      });
+      if (rpcErr) throw rpcErr;
+
+      if (mode !== 'page') return res.json({ ...board, stage_ids: stageIds });
+
+      // mode=page: hydrate ĐÚNG các id của trang này qua chính đường select + enrich đang
+      // dùng cho danh sách → payload y hệt thẻ Kanban hiện tại, không phải viết lại.
+      const ids = Array.isArray(board?.ids) ? board.ids : [];
+      if (!ids.length) return res.json({ projects: [], has_more: false });
+      const projects = await hydrateProjectsByIds(ids);
+      return res.json({ projects, has_more: !!board?.has_more });
+    } catch (e) {
+      console.error('[projects/kanban]', e);
+      return res.status(500).json({ error: e.message || 'Lỗi tải bảng Kanban' });
+    }
+  });
+
+// mode=pages — trang đầu của NHIỀU cột trong 1 request (RPC migration 571).
+// Chỉ 1 lần select + 1 lần enrich cho toàn bộ thẻ, nên nạp N cột tốn xấp xỉ bằng 1 cột
+// (mỗi cột riêng lẻ mất ~0,85s, gần hết là 4 lượt round-trip tới Supabase).
+r.get('/kanban-pages',
+  requirePermission('projects', 'view'),
+  responseCache({ ttl: 20, scope: 'user', tags: [PROJECTS_LIST_TAG] }),
+  async (req, res) => {
+    try {
+      const {
+        requests, limit = 40,
+        company_id: companyId, division_id: divisionId,
+        customer_id: customerId, person_id: personId,
+        search, date_from: dateFrom, date_to: dateTo,
+      } = req.query;
+
+      const stageIds = await loadProjectDeliveryStageIds();
+      if (!stageIds.length) return res.json({ columns: {} });
+
+      // requests = JSON [{stage_id, offset, limit}] hoặc bỏ trống → trang đầu MỌI cột.
+      let reqList;
+      try {
+        reqList = requests ? JSON.parse(requests) : null;
+      } catch {
+        return res.status(400).json({ error: 'requests không phải JSON hợp lệ' });
+      }
+      if (!Array.isArray(reqList) || !reqList.length) {
+        reqList = stageIds.map((id) => ({ stage_id: id, offset: 0, limit: Number(limit) || 40 }));
+      }
+
+      const scope = await resolveKanbanCompanyScope(req, res, { companyId, divisionId });
+      if (scope === undefined) return undefined;          // đã trả 403
+      if (scope === false) return res.json({ columns: {} }); // Khối không có công ty nào
+
+      const { data: cols, error: rpcErr } = await supabase.rpc('project_kanban_pages', {
+        p_stage_ids: stageIds,
+        p_requests: reqList,
+        p_company_ids: scope,
+        p_customer_id: customerId && customerId !== 'all' ? customerId : null,
+        p_person_id: personId && personId !== 'all' ? personId : null,
+        p_search: search || null,
+        p_date_from: dateFrom || null,
+        p_date_to: dateTo || null,
+        p_tenant_company_ids: isTenantScopeEnforced(req) ? (req.tenantCompanyIds || []) : null,
+      });
+      if (rpcErr) throw rpcErr;
+
+      // Gom id của MỌI cột rồi hydrate 1 lần duy nhất.
+      const allIds = [];
+      for (const v of Object.values(cols || {})) {
+        for (const id of (v.ids || [])) allIds.push(id);
+      }
+      const hydrated = await hydrateProjectsByIds(allIds);
+      const byId = new Map(hydrated.map((p) => [String(p.id), p]));
+
+      const columns = {};
+      for (const [sid, v] of Object.entries(cols || {})) {
+        columns[sid] = {
+          projects: (v.ids || []).map((id) => byId.get(String(id))).filter(Boolean),
+          has_more: !!v.has_more,
+          total: Number(v.total) || 0,
+        };
+      }
+      return res.json({ columns, stage_ids: stageIds });
+    } catch (e) {
+      console.error('[projects/kanban-pages]', e);
+      return res.status(500).json({ error: e.message || 'Lỗi tải bảng Kanban' });
+    }
+  });
+
+// ─── 3 view còn lại: Danh sách · Lịch · Theo hạn (RPC migration 572) ──────────
+// Trước đây cả 3 đều dùng `GET /api/projects?limit=500` nên vẫn bị giới hạn 500 (đang bỏ
+// 69/569 dự án; ở 8.000 thì bỏ 94%) và nặng tuyến tính theo tổng số dự án.
+
+/** Bộ lọc dùng chung cho 3 endpoint dưới đây. */
+function readViewFilters(req) {
+  const {
+    customer_id: customerId, person_id: personId,
+    search, date_from: dateFrom, date_to: dateTo,
+  } = req.query;
+  return {
+    p_customer_id: customerId && customerId !== 'all' ? customerId : null,
+    p_person_id: personId && personId !== 'all' ? personId : null,
+    p_search: search || null,
+    p_date_from: dateFrom || null,
+    p_date_to: dateTo || null,
+    p_tenant_company_ids: isTenantScopeEnforced(req) ? (req.tenantCompanyIds || []) : null,
+  };
+}
+
+// Danh sách — phân trang thật (thay cho limit=500 cứng).
+r.get('/list-page',
+  requirePermission('projects', 'view'),
+  responseCache({ ttl: 20, scope: 'user', tags: [PROJECTS_LIST_TAG] }),
+  async (req, res) => {
+    try {
+      const scope = await resolveKanbanCompanyScope(req, res, {
+        companyId: req.query.company_id, divisionId: req.query.division_id,
+      });
+      if (scope === undefined) return undefined;
+      if (scope === false) return res.json({ projects: [], total: 0 });
+
+      const f = readViewFilters(req);
+      const { data, error } = await supabase.rpc('project_list_page', {
+        ...f,
+        p_company_ids: scope,
+        p_offset: Number(req.query.offset) || 0,
+        p_limit: Number(req.query.limit) || 100,
+      });
+      if (error) throw error;
+      const projects = await hydrateProjectsByIds(data?.ids || []);
+      return res.json({ projects, total: Number(data?.total) || 0 });
+    } catch (e) {
+      console.error('[projects/list-page]', e);
+      return res.status(500).json({ error: e.message || 'Lỗi tải danh sách' });
+    }
+  });
+
+// Lịch — chỉ dự án có mốc ngày rơi trong tháng đang xem.
+r.get('/calendar',
+  requirePermission('projects', 'view'),
+  responseCache({ ttl: 20, scope: 'user', tags: [PROJECTS_LIST_TAG] }),
+  async (req, res) => {
+    try {
+      const { from, to } = req.query;
+      if (!from || !to) return res.status(400).json({ error: 'Thiếu from/to' });
+      const scope = await resolveKanbanCompanyScope(req, res, {
+        companyId: req.query.company_id, divisionId: req.query.division_id,
+      });
+      if (scope === undefined) return undefined;
+      if (scope === false) return res.json({ projects: [], total: 0 });
+
+      const f = readViewFilters(req);
+      delete f.p_date_from; delete f.p_date_to;   // hàm này dùng from/to của MỐC, không phải created_at
+      const { data, error } = await supabase.rpc('project_dates_in_range', {
+        ...f,
+        p_from: from,
+        p_to: to,
+        p_company_ids: scope,
+        p_limit: Number(req.query.limit) || 500,
+      });
+      if (error) throw error;
+      const projects = await hydrateProjectsByIds(data?.ids || []);
+      return res.json({ projects, total: Number(data?.total) || 0 });
+    } catch (e) {
+      console.error('[projects/calendar]', e);
+      return res.status(500).json({ error: e.message || 'Lỗi tải lịch' });
+    }
+  });
+
+// Theo hạn — đếm 6 nhóm, hoặc 1 trang của 1 nhóm. Biên nhóm do CLIENT gửi (tránh lệch múi giờ).
+r.get('/deadline-board',
+  requirePermission('projects', 'view'),
+  responseCache({ ttl: 20, scope: 'user', tags: [PROJECTS_LIST_TAG] }),
+  async (req, res) => {
+    try {
+      const { mode = 'summary', bucket, bounds, offset = 0, limit = 40 } = req.query;
+      let bs;
+      try { bs = bounds ? JSON.parse(bounds) : null; } catch { bs = null; }
+      if (!Array.isArray(bs) || bs.length !== 5) {
+        return res.status(400).json({ error: 'bounds phải là JSON mảng 5 mốc thời gian' });
+      }
+      const scope = await resolveKanbanCompanyScope(req, res, {
+        companyId: req.query.company_id, divisionId: req.query.division_id,
+      });
+      if (scope === undefined) return undefined;
+      if (scope === false) {
+        return res.json(mode === 'page'
+          ? { projects: [], has_more: false, total: 0 }
+          : { total: 0, counts: {} });
+      }
+
+      const f = readViewFilters(req);
+      delete f.p_date_from; delete f.p_date_to;
+      const { data, error } = await supabase.rpc('project_deadline_board', {
+        ...f,
+        p_bounds: bs,
+        p_mode: mode === 'page' ? 'page' : 'summary',
+        p_bucket: mode === 'page' ? bucket : null,
+        p_company_ids: scope,
+        p_offset: Number(offset) || 0,
+        p_limit: Number(limit) || 40,
+      });
+      if (error) throw error;
+      if (mode !== 'page') return res.json(data || { total: 0, counts: {} });
+      const projects = await hydrateProjectsByIds(data?.ids || []);
+      return res.json({
+        projects, has_more: !!data?.has_more, total: Number(data?.total) || 0,
+      });
+    } catch (e) {
+      console.error('[projects/deadline-board]', e);
+      return res.status(500).json({ error: e.message || 'Lỗi tải bảng theo hạn' });
+    }
+  });
+
+/** Gộp lọc Khối/Công ty + phạm vi tenant. undefined = đã trả 403; false = rỗng. */
+async function resolveKanbanCompanyScope(req, res, { companyId, divisionId }) {
+  let ids = null;
+  if (companyId && companyId !== 'all') {
+    if (!assertCompanyAccessible(req, res, companyId)) return undefined;
+    ids = [companyId];
+  } else if (divisionId && divisionId !== 'all') {
+    const { data: divCos } = await supabase
+      .from('companies').select('id').eq('division_unit_id', divisionId);
+    ids = (divCos || []).map((c) => c.id);
+    if (!ids.length) return false;
+  }
+  return ids ? intersectCompanyIdsWithTenant(req, ids) : null;
+}
+
+/** Hydrate danh sách id thành payload thẻ đầy đủ — dùng chung cho 'page' và 'pages'. */
+async function hydrateProjectsByIds(ids) {
+  if (!ids.length) return [];
+  const baseCols = await getProjectListColumns();
+      const { data: rows, error: selErr } = await supabase
+        .from('projects')
+        .select(`
+          ${baseCols}, customers(id,full_name,phone,email,city),
+          company:companies!projects_company_id_fkey(id,name,short_name,division_unit_id),
+          current_stage:workflow_stages(id,name,slug,color,icon),
+          sales_person:users!projects_sales_person_id_fkey(id,full_name,avatar),
+          designer:users!projects_designer_id_fkey(id,full_name,avatar),
+          project_manager:users!projects_project_manager_id_fkey(id,full_name,avatar),
+          production_person:users!projects_production_person_id_fkey(id,full_name,avatar),
+          logistics_person:users!projects_logistics_person_id_fkey(id,full_name,avatar),
+          shipping_person:users!projects_shipping_person_id_fkey(id,full_name,avatar),
+          installation_person:users!projects_installation_person_id_fkey(id,full_name,avatar)
+        `)
+        .in('id', ids);
+      if (selErr) throw selErr;
+
+      const [withCreators, enriched] = await Promise.all([
+        attachCreatedByUsers(rows || []).catch(() => null),
+        enrichProjectsModulePresence(rows || []).catch(() => null),
+      ]);
+      let projects = enriched || rows || [];
+      if (withCreators) {
+        const byId = new Map(withCreators.map((p) => [String(p.id), p.created_by_user || null]));
+        projects = projects.map((p) => ({
+          ...p,
+          created_by_user: p.created_by_user || byId.get(String(p.id)) || null,
+        }));
+      }
+  // Giữ đúng thứ tự mà RPC đã sắp (created_at DESC) — `.in()` không bảo toàn thứ tự.
+  const order = new Map(ids.map((id, i) => [String(id), i]));
+  projects.sort((a, b) => (order.get(String(a.id)) ?? 0) - (order.get(String(b.id)) ?? 0));
+  return projects;
+}
+
 // ─── LIST PROJECTS ──
-r.get('/', requirePermission('projects', 'view'), async (req, res) => {
+// Cache 20s, scope 'user' (danh sách đã lọc theo quyền của từng người). Mọi request ghi
+// vào các prefix liên quan tới dự án sẽ xoá tag này ngay — xem middleware/projectsCacheInvalidation.js.
+r.get('/',
+  requirePermission('projects', 'view'),
+  responseCache({ ttl: 20, scope: 'user', tags: [PROJECTS_LIST_TAG] }),
+  async (req, res) => {
   try {
     const { status, search, stage_slug, page = 1, limit = 50, company_id, division_id } = req.query;
     const userId = req.user.userId;
@@ -206,8 +580,11 @@ r.get('/', requirePermission('projects', 'view'), async (req, res) => {
     // Check permission
     const canViewAll = await checkPermission(userId, 'projects', 'all_companies');
     
+    // Bỏ cột nặng (quotation_files) khỏi danh sách — chỉ trang chi tiết mới cần.
+    const baseCols = await getProjectListColumns();
+
     const listSelectFull = `
-      *, customers(id,full_name,phone,email,city),
+      ${baseCols}, customers(id,full_name,phone,email,city),
       company:companies!projects_company_id_fkey(id,name,short_name,division_unit_id),
       current_stage:workflow_stages(id,name,slug,color,icon),
       sales_person:users!projects_sales_person_id_fkey(id,full_name,avatar),
@@ -219,7 +596,7 @@ r.get('/', requirePermission('projects', 'view'), async (req, res) => {
       installation_person:users!projects_installation_person_id_fkey(id,full_name,avatar)
     `;
     const listSelectBase = `
-      *, customers(id,full_name,phone,email,city),
+      ${baseCols}, customers(id,full_name,phone,email,city),
       company:companies!projects_company_id_fkey(id,name,short_name,division_unit_id),
       current_stage:workflow_stages(id,name,slug,color,icon),
       sales_person:users!projects_sales_person_id_fkey(id,full_name,avatar),
@@ -343,20 +720,30 @@ r.get('/', requirePermission('projects', 'view'), async (req, res) => {
     }
 
     let projects = data || [];
-    try {
-      projects = await attachCreatedByUsers(projects);
-    } catch (cbErr) {
-      console.warn('[projects list] created_by users:', cbErr.message);
-    }
-    try {
-      projects = await enrichProjectsModulePresence(projects);
-    } catch (enrErr) {
-      console.warn('[projects list] enrich modules:', enrErr.message);
+    // 2 bước làm giàu độc lập nhau (enrich tự tra user từ `created_by` nếu chưa có
+    // `created_by_user`) → chạy song song rồi ghép, thay vì tuần tự.
+    const [withCreators, enriched] = await Promise.all([
+      attachCreatedByUsers(projects).catch((cbErr) => {
+        console.warn('[projects list] created_by users:', cbErr.message);
+        return null;
+      }),
+      enrichProjectsModulePresence(projects).catch((enrErr) => {
+        console.warn('[projects list] enrich modules:', enrErr.message);
+        return null;
+      }),
+    ]);
+    projects = enriched || projects;
+    if (withCreators) {
+      const creatorById = new Map(withCreators.map((p) => [String(p.id), p.created_by_user || null]));
+      projects = projects.map((p) => ({
+        ...p,
+        created_by_user: p.created_by_user || creatorById.get(String(p.id)) || null,
+      }));
     }
 
     res.json({ projects, total: count, page: p, totalPages: Math.ceil((count||0)/l) });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
-});
+  });
 
 // ─── ĐƠN HÀNG CON (tab Đơn hàng — pipeline + deal nhiệm vụ + đẩy VC) ───────
 // Không bọc requirePermission: thao tác đơn/nhiệm vụ theo đơn chỉ cần đăng nhập (auth middleware).

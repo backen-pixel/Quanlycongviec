@@ -4752,20 +4752,28 @@ const KanbanStageCard = memo(function KanbanStageCard({
   }, [boardScrollRef, onColumnVisibilityChange, stage.id]);
 
   // Sentinel đáy cột: cuộn gần cuối → tải thêm (ổn định hơn chỉ nghe onScroll).
+  //
+  // KHÔNG truyền `root`, tức dùng viewport. Trước đây root là chính khung cuộn của cột
+  // (containerRef) nên chỉ bắt được khi cuộn BÊN TRONG cột; ở chế độ cuộn CHUNG cả bảng thì
+  // scrollTop của cột không đổi → sentinel không bao giờ "vào" khung của cột → không tải
+  // thêm, phải đợi cột khác chạm đáy mới kéo dữ liệu. Effect này còn bị chặn bởi
+  // `perColumnScroll` nên ở chế độ cuộn chung không có trigger nào cả.
+  //
+  // Dùng viewport xử được cả hai: theo spec, vùng giao được CẮT bởi mọi khung cuộn tổ tiên,
+  // nên khi cuộn trong cột sentinel vẫn bị cột che đúng như cũ.
   useEffect(() => {
-    if (!perColumnScroll || !columnHasMore || columnLoading) return undefined;
-    const root = containerRef.current;
+    if (!columnHasMore || columnLoading) return undefined;
     const sentinel = loadMoreSentinelRef.current;
-    if (!root || !sentinel || typeof IntersectionObserver === 'undefined') return undefined;
+    if (!sentinel || typeof IntersectionObserver === 'undefined') return undefined;
     const io = new IntersectionObserver(
       (entries) => {
         if (entries.some((e) => e.isIntersecting)) requestColumnLoadMore();
       },
-      { root, rootMargin: '240px 0px', threshold: 0 },
+      { rootMargin: '240px 0px', threshold: 0 },
     );
     io.observe(sentinel);
     return () => io.disconnect();
-  }, [perColumnScroll, columnHasMore, columnLoading, items.length, requestColumnLoadMore]);
+  }, [columnHasMore, columnLoading, items.length, requestColumnLoadMore]);
 
   // Cột ngắn (chưa đủ cao để scroll) nhưng còn thẻ server → tự tải thêm.
   useEffect(() => {

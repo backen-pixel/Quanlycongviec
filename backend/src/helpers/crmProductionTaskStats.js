@@ -1,4 +1,5 @@
 const { supabase } = require('../config/supabase');
+const { fetchAllByIds } = require('./supabaseFetchAll');
 
 const CRM_TASK_DONE = new Set(['completed', 'done']);
 
@@ -91,11 +92,20 @@ async function computeCrmProductionStatsForDeals(dealIds) {
     }
   }
 
-  const { data: tasks, error: taskErr } = await supabase
-    .from('crm_tasks')
-    .select('lead_id, status, stage_slug')
-    .in('lead_id', [...allQueryLeadIds]);
-  if (taskErr) throw taskErr;
+  // PHẢI đọc hết: PostgREST cắt ở 1.000 dòng và KHÔNG báo lỗi. crm_tasks ~11,7 dòng/deal
+  // nên chỉ ~85 deal là vỡ — thấp hơn cả page mặc định (limit=100) của
+  // GET /api/production/projects. Đo thực tế trên dữ liệu hiện tại:
+  //   limit=100 → 1.000/2.064 dòng, mất stats của  27/96  deal
+  //   limit=200 → 1.000/3.935 dòng, mất stats của 131/189 deal
+  //   limit=500 → 1.000/9.409 dòng, mất stats của 386/441 deal
+  // Deal bị mất rơi vào nhánh `if (!stats || stats.total <= 0) return project` bên dưới →
+  // thẻ dự án hiện % tiến độ SAI (lấy theo task workflow) thay vì theo nhiệm vụ CRM.
+  const tasks = await fetchAllByIds({
+    table: 'crm_tasks',
+    columns: 'lead_id, status, stage_slug',
+    key: 'lead_id',
+    ids: [...allQueryLeadIds],
+  });
 
   const tasksByLead = new Map();
   for (const t of tasks || []) {

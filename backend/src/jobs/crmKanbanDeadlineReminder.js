@@ -12,10 +12,30 @@
  */
 const { supabase } = require('../config/supabase');
 const { runIfLeader } = require('../helpers/cronLeader');
+const { fetchAllPages, fetchAllByIds } = require('../helpers/supabaseFetchAll');
 
 const RUN_INTERVAL_MS = 30 * 60 * 1000;
 const WARN_WINDOW_MS = 24 * 60 * 60 * 1000;
-const DEDUP_WINDOW_MS = 20 * 60 * 60 * 1000;
+const VN_TZ = 'Asia/Ho_Chi_Minh';
+
+/**
+ * Dedup theo NGÀY LỊCH VN thay vì cửa sổ trôi 20 giờ.
+ *
+ * Cửa sổ 20 giờ cũ ngắn hơn thời gian một thẻ ở trạng thái quá hạn (thường vài ngày), nên
+ * cùng một thông báo bị gửi lại mỗi 20 giờ. Vì 20 < 24 nên giờ gửi còn TRÔI dần về sáng.
+ * Đo trên dữ liệu thật (7 ngày): 407/1.340 thông báo (30%) là gửi trùng, tệ nhất 1 người
+ * nhận cùng 1 thông báo 9 lần, khoảng cách 1214/1201/1202/1211/1223/1230/1200/1201 phút
+ * — khớp đúng 20 giờ.
+ *
+ * Mốc theo ngày lịch cho kết quả xác định: tối đa 1 thông báo/ngày/thẻ/người, không trôi.
+ * Cùng cách mà jobs/aiDeadlineReminder.js đang dùng (khoá `ai_digest:{uid}:{ymd}`).
+ */
+function vnDayStartIso(d = new Date()) {
+  const ymd = new Intl.DateTimeFormat('en-CA', {
+    timeZone: VN_TZ, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(d);
+  return `${ymd}T00:00:00+07:00`;
+}
 
 function fmtDt(iso) {
   try {
@@ -52,24 +72,27 @@ async function runOnce(io) {
     const ids = active.map((l) => l.id);
     const memberMap = new Map();
     try {
-      const { data: members } = await supabase
-        .from('lead_members')
-        .select('lead_id, user_id')
-        .in('lead_id', ids);
+      // Đọc đủ: job lấy tới 500 lead, lead_members ~12 dòng/lead → có thể vượt 1.000 dòng
+      // khi dữ liệu lớn hơn. Bị cắt = thành viên tham gia KHÔNG nhận được nhắc hạn (im lặng).
+      const members = await fetchAllByIds({
+        table: 'lead_members', columns: 'lead_id, user_id', key: 'lead_id', ids,
+      });
       (members || []).forEach((m) => {
         if (!memberMap.has(m.lead_id)) memberMap.set(m.lead_id, []);
         memberMap.get(m.lead_id).push(m.user_id);
       });
     } catch (_) { /* bảng có thể chưa có — bỏ qua */ }
 
-    // Dedup
-    const since = new Date(now.getTime() - DEDUP_WINDOW_MS).toISOString();
-    const { data: recent } = await supabase
+    // Dedup — từ 00:00 hôm nay theo giờ VN (xem vnDayStartIso). Phải PHÂN TRANG: bảng
+    // notifications có 415k dòng, PostgREST cắt ở 1.000 và không báo lỗi → dedup mù sẽ
+    // gửi lại hàng loạt.
+    const since = vnDayStartIso(now);
+    const recent = await fetchAllPages(() => supabase
       .from('notifications')
       .select('type, entity_id, user_id')
       .in('type', ['crm_kanban_deadline_warning', 'crm_kanban_deadline_overdue'])
-      .gte('created_at', since);
-    const seen = new Set((recent || []).map((n) => `${n.type}:${n.entity_id}:${n.user_id}`));
+      .gte('created_at', since));
+    const seen = new Set(recent.map((n) => `${n.type}:${n.entity_id}:${n.user_id}`));
 
     const notifs = [];
     for (const l of active) {

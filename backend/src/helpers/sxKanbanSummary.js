@@ -203,6 +203,9 @@ function applySxSummaryFiltersSync(query, ctx) {
     wonIds: ctx.wonIds || [],
     restrictIds: ctx.restrictIds,
     sxIntake: String(ctx.sx_intake) === '1',
+    hasCrmDealColumn: !!ctx.hasCrmDealColumn,
+    // Cùng lý do như route list: partner ids không được cột `has_crm_deal` phủ.
+    extraIds: ctx.company_id ? (ctx.scopePartnerIds || []) : [],
   });
   if (scoped.empty) return { empty: true, query: scoped.query };
   q = scoped.query;

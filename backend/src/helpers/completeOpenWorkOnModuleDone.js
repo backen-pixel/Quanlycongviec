@@ -4,6 +4,7 @@
  */
 
 const { supabase } = require('../config/supabase');
+const { fetchAllByIds } = require('./supabaseFetchAll');
 const { isLogisticsWorkshopTask } = require('./logisticsTaskSplit');
 const { applyAssignmentStatusColumn } = require('./crmTaskAssignmentSync');
 
@@ -79,48 +80,55 @@ function workshopTaskMatchesModule(task, moduleKey) {
   return false;
 }
 
+// Chia khúc id (chunk) CHỈ chặn URL dài, KHÔNG chặn PostgREST cắt ở 1.000 dòng.
+// Đo thực tế: 8.788 nhiệm vụ CRM sx_* còn mở trải trên 848 deal (~10/deal) → mỗi khúc 120
+// deal ra ~1.240 dòng; còn `tasks` là 11.916 dòng mở trên 594 dự án (~20/dự án) → khúc 120
+// dự án ra ~2.400 dòng. Bị cắt nghĩa là nhiệm vụ KHÔNG được đóng: đóng cột "Đã công" rồi
+// mà việc vẫn mở, vẫn báo trễ, tiến độ không lên 100%. Dùng fetchAllByIds để đọc đủ.
 async function fetchOpenCrmTasks(leadIds) {
   const ids = uniqIds(leadIds);
   if (!ids.length) return [];
-  const rows = [];
-  for (const part of chunk(ids)) {
-    const { data, error } = await supabase
-      .from('crm_tasks')
-      .select('id, lead_id, stage_slug, status, checklist')
-      .in('lead_id', part);
-    if (error) {
-      console.warn('[completeOpenWork] crm_tasks fetch:', error.message);
-      continue;
-    }
-    for (const t of data || []) {
-      if (!isTerminalStatus(t.status)) rows.push(t);
-    }
+  try {
+    const data = await fetchAllByIds({
+      table: 'crm_tasks',
+      columns: 'id, lead_id, stage_slug, status, checklist',
+      key: 'lead_id',
+      ids,
+    });
+    return data.filter((t) => !isTerminalStatus(t.status));
+  } catch (error) {
+    console.warn('[completeOpenWork] crm_tasks fetch:', error.message);
+    return [];
   }
-  return rows;
 }
 
 async function fetchWorkshopTasks(projectIds) {
   const ids = uniqIds(projectIds);
   if (!ids.length) return [];
-  const rows = [];
-  for (const part of chunk(ids)) {
-    let { data, error } = await supabase
-      .from('tasks')
-      .select('id, project_id, status, metadata, title, stage:workflow_stages(slug)')
-      .in('project_id', part);
-    if (error && String(error.message || '').includes('workflow_stages')) {
-      ({ data, error } = await supabase
-        .from('tasks')
-        .select('id, project_id, status, metadata, title')
-        .in('project_id', part));
+  try {
+    return await fetchAllByIds({
+      table: 'tasks',
+      columns: 'id, project_id, status, metadata, title, stage:workflow_stages(slug)',
+      key: 'project_id',
+      ids,
+    });
+  } catch (error) {
+    if (String(error.message || '').includes('workflow_stages')) {
+      try {
+        return await fetchAllByIds({
+          table: 'tasks',
+          columns: 'id, project_id, status, metadata, title',
+          key: 'project_id',
+          ids,
+        });
+      } catch (e2) {
+        console.warn('[completeOpenWork] tasks fetch (fallback):', e2.message);
+        return [];
+      }
     }
-    if (error) {
-      console.warn('[completeOpenWork] tasks fetch:', error.message);
-      continue;
-    }
-    rows.push(...(data || []));
+    console.warn('[completeOpenWork] tasks fetch:', error.message);
+    return [];
   }
-  return rows;
 }
 
 async function completeCrmTaskRows(tasks) {
