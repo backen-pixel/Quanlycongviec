@@ -262,7 +262,7 @@ export default function VcHandoverEventsPopup({
       fetches.push(api.get(`/events/${id}`).catch(() => null));
     }
     if (!leadId && !idList.length && projectId) {
-      fetches.push(api.get('/events', { params: { ...base, limit: 100 } }).catch(() => null));
+      fetches.push(api.get('/events', { params: { ...base, project_id: projectId, limit: 100 } }).catch(() => null));
     }
     if (!fetches.length) {
       setDealEvents([]);

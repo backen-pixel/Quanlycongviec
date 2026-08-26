@@ -6,7 +6,7 @@ import { companyWorkEndMsFromRaw } from './companyDeadlineClock';
 export function isCrmPipelineStageWon(stage) {
   if (!stage) return false;
   if (stage.is_won) return true;
-  if (stage.canonical_slug === 'won') return true;
+  if (stage.canonical_slug === 'completed') return true;
   if (stage.deal_report_bucket === 'won') return true;
   return false;
 }

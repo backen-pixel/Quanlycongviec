@@ -10633,30 +10633,6 @@ const KanbanStageCard = memo(function KanbanStageCard({
     }
   };
 
-  // Sentinel đáy cột — quan sát theo VIEWPORT (không truyền `root`).
-  //
-  // Ở chế độ cuộn CHUNG, trigger duy nhất trước đây là listener trên khung cuộn của cả bảng
-  // (`scrollTop + clientHeight >= scrollHeight - 180`). Nhưng scrollHeight của bảng do cột
-  // CAO NHẤT quyết định, nên khi đang xem một cột ngắn thì bảng chưa gần đáy → không tải
-  // thêm; người dùng phải cuộn tới khi cột cao nhất gần hết mới thấy dữ liệu về.
-  //
-  // Quan sát theo viewport thì đáy của CHÍNH cột đang xem lọt vào tầm nhìn là tải — và theo
-  // spec, vùng giao vẫn bị cắt bởi mọi khung cuộn tổ tiên nên chế độ per-column không đổi.
-  const loadMoreSentinelRef = useRef(null);
-  useEffect(() => {
-    if (!onColumnScrollNearEnd) return undefined;
-    const sentinel = loadMoreSentinelRef.current;
-    if (!sentinel || typeof IntersectionObserver === 'undefined') return undefined;
-    const io = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((e) => e.isIntersecting)) onColumnScrollNearEnd();
-      },
-      { rootMargin: '240px 0px', threshold: 0 },
-    );
-    io.observe(sentinel);
-    return () => io.disconnect();
-  }, [onColumnScrollNearEnd, loadedInColumn]);
-
   useEffect(() => {
     if (!onColumnVisibilityChange || isVirtualColumn) return undefined;
     const column = columnRef.current;
@@ -10848,8 +10824,6 @@ const KanbanStageCard = memo(function KanbanStageCard({
             renderCard={renderCard}
           />
         )}
-        {/* Cuộn tới đây → IntersectionObserver gọi tải thêm cho ĐÚNG cột này */}
-        <div ref={loadMoreSentinelRef} className="h-1 w-full shrink-0" aria-hidden />
       </div>
     </div>
   );
@@ -11109,6 +11083,27 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
 
     return chips.length ? chips : null;
   })();
+
+  // Xưởng đã hoàn thiện, chờ Sale vào xác nhận VC/LĐ (chọn công ty + ngày lấy hàng).
+  const vcHandoverPending = isDealCard && item.linked_project?.vc_handover_status === 'pending';
+  const vcHandoverBadge = vcHandoverPending ? (
+    <button
+      type="button"
+      data-kanban-vc-handover-btn
+      onClick={(ev) => {
+        ev.stopPropagation();
+        persistCrmPipelineUiNow();
+        localStorage.setItem('crm_pinned_tab', pipelineType);
+        markCrmPipelineCardFocus(item.id);
+        navigate(`/crm/leads/${item.id}?tab=comments`);
+      }}
+      className="w-full min-w-0 flex items-center gap-1.5 rounded-md border border-red-300 bg-red-50 px-2 py-1 text-[11px] font-bold text-red-700 hover:bg-red-100 transition-colors cursor-pointer"
+      title="Xưởng đã hoàn thiện sản phẩm — vào xác nhận VC/LĐ (chọn công ty vận chuyển + ngày lấy hàng) để tạo sự kiện."
+    >
+      <AlertTriangle className="h-3.5 w-3.5 shrink-0 animate-pulse" strokeWidth={2.6} />
+      <span className="uppercase tracking-wide">Chờ xác nhận VC/LĐ</span>
+    </button>
+  ) : null;
 
   const orderDateChip = item.linked_project?.order_date ? (
     <span
@@ -11375,6 +11370,10 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
 
         {scheduleBadge && (
           <div className="w-full min-w-0 flex">{scheduleBadge}</div>
+        )}
+
+        {vcHandoverBadge && (
+          <div className="w-full min-w-0 flex">{vcHandoverBadge}</div>
         )}
 
         {/* Khách hàng — một dòng gọn */}
@@ -11867,10 +11866,7 @@ function KanbanView({
               stageValueSums={stageValueSums}
               stageWeightedValueSums={stageWeightedValueSums}
               columnScrollMode={columnScrollMode}
-              // Cấp cho CẢ HAI chế độ cuộn. Trước đây chỉ cấp khi per-column nên ở chế
-              // độ cuộn CHUNG cột không có cách nào tự tải thêm — phải đợi cả bảng chạm đáy,
-              // mà chiều cao bảng do cột CAO NHẤT quyết định.
-              onColumnScrollNearEnd={() => onLoadStagePages?.([stage.id], { ensureInitial: false })}
+              onColumnScrollNearEnd={perColumnScroll ? () => onLoadStagePages?.([stage.id], { ensureInitial: false }) : undefined}
               onColumnVisibilityChange={handleColumnVisibilityChange}
               searchHighlightId={searchHighlightId}
               boardScrollRef={kanbanHScrollRef}

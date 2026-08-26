@@ -155,7 +155,7 @@ const COLOR_MAP = {
   invoice_overdue: 'bg-red-100 text-red-600',
   workshop_new_deal: 'bg-sky-100 text-sky-700',
   vc_plan_ready: 'bg-amber-100 text-amber-700',
-  vc_handover_request: 'bg-amber-100 text-amber-700',
+  vc_handover_request: 'bg-red-100 text-red-700',
   sx_schedule_changed: 'bg-indigo-100 text-indigo-700',
   system: 'bg-gray-100 text-gray-600',
   crm_deadline_1h: 'bg-amber-100 text-amber-700',

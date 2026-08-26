@@ -153,6 +153,7 @@ function applyEventsCombinedOrFilters(queryBuilder, {
   personIds = null,
   regionLeadIds = null,
   regionLeadAnd = false,
+  moduleOrGroup = null,
 } = {}) {
   const orGroups = [];
 
@@ -193,6 +194,9 @@ function applyEventsCombinedOrFilters(queryBuilder, {
   }
   if (cappedRegionLeads.length && regionLeadAnd) {
     orGroups.push(`lead_id.in.(${cappedRegionLeads.join(',')})`);
+  }
+  if (moduleOrGroup) {
+    orGroups.push(moduleOrGroup);
   }
 
   if (orGroups.length === 0) return queryBuilder;
@@ -576,16 +580,32 @@ async function applyEventsProjectScopeFilter(queryBuilder, { projectId = null, p
   return { q: queryBuilder.not('project_id', 'is', null), empty: false, scoped: true };
 }
 
-/** SX/VC calendar: gồm event khối SX/VC + loại lắp đặt (hay lưu module=crm khi tạo từ CRM). */
+/**
+ * Group OR cho khối SX/VC (+ loại lắp đặt) — phải gộp vào applyEventsCombinedOrFilters()
+ * (moduleOrGroup) thay vì gọi .or() riêng: PostgREST chỉ giữ 1 param `or` trên 1 request,
+ * gọi `.or()` lần hai sẽ mất lọc công ty/search/person đã áp trước đó.
+ * @returns {string|null}
+ */
+function eventsModuleOrGroup(moduleFilter, modulesFilter) {
+  if (moduleFilter) return null;
+  if (!modulesFilter?.length) return null;
+  const hasWorkshop = modulesFilter.some((m) => m === 'production' || m === 'logistics');
+  if (!hasWorkshop) return null;
+  const mods = modulesFilter.map((m) => String(m).replace(/[(),]/g, '')).filter(Boolean);
+  if (!mods.length) return null;
+  return `module.in.(${mods.join(',')}),event_type.eq.installation`;
+}
+
+/**
+ * SX/VC calendar: gồm event khối SX/VC + loại lắp đặt (hay lưu module=crm khi tạo từ CRM).
+ * Case OR (SX/VC) đã áp qua moduleOrGroup trong applyEventsCombinedOrFilters(); ở đây chỉ
+ * còn xử lý case lọc trực tiếp bằng module= (không phải OR).
+ */
 function applyEventsModuleScopeFilter(queryBuilder, moduleFilter, modulesFilter) {
   if (moduleFilter) return queryBuilder.eq('module', moduleFilter);
   if (!modulesFilter?.length) return queryBuilder;
   const hasWorkshop = modulesFilter.some((m) => m === 'production' || m === 'logistics');
-  if (hasWorkshop) {
-    const mods = modulesFilter.map((m) => String(m).replace(/[(),]/g, '')).filter(Boolean);
-    if (!mods.length) return queryBuilder;
-    return queryBuilder.or(`module.in.(${mods.join(',')}),event_type.eq.installation`);
-  }
+  if (hasWorkshop) return queryBuilder;
   return queryBuilder.in('module', modulesFilter);
 }
 
@@ -643,6 +663,7 @@ r.get('/', async (req, res) => {
     }
 
     let q = supabase.from('crm_events').select(EVENT_SELECT, { count: 'exact' });
+    const feedModuleOrGroup = eventsModuleOrGroup(moduleFilter, modulesFilter);
     q = applyEventsCombinedOrFilters(q, {
       companyId: projectIdQ ? null : sc.companyId,
       leadIdsForCompany: companyLeadIds,
@@ -650,6 +671,7 @@ r.get('/', async (req, res) => {
       personIds: personScope.personIds,
       regionLeadIds: personScope.regionLeadIds,
       regionLeadAnd: !!personScope.regionLeadAnd,
+      moduleOrGroup: feedModuleOrGroup,
     });
 
     if (type) q = q.eq('event_type', type);
@@ -1386,6 +1408,7 @@ r.get('/calendar', async (req, res) => {
       .select(EVENT_SELECT)
       // start <= cuối tháng; overlap chính xác lọc ở calFiltered (tránh `.or` đè company/project).
       .lte('start_time', endDate);
+    const calModuleOrGroup = eventsModuleOrGroup(moduleFilter, modulesFilter);
     cq = applyEventsCombinedOrFilters(cq, {
       companyId: projectIdQ ? null : sc.companyId,
       leadIdsForCompany: companyLeadIds,
@@ -1393,6 +1416,7 @@ r.get('/calendar', async (req, res) => {
       personIds: personScope.personIds,
       regionLeadIds: personScope.regionLeadIds,
       regionLeadAnd: !!personScope.regionLeadAnd,
+      moduleOrGroup: calModuleOrGroup,
     });
 
     if (type) cq = cq.eq('event_type', type);

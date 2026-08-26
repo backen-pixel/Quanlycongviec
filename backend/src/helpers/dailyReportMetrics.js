@@ -750,7 +750,7 @@ function deadlineStageExcluded(stage) {
     stage?.is_won
     || stage?.is_lost
     || stage?.counts_as_completed_revenue
-    || stage?.canonical_slug === 'won'
+    || stage?.canonical_slug === 'completed'
     || stage?.canonical_slug === 'lost'
     || stage?.deal_report_bucket === 'won'
     || stage?.deal_report_bucket === 'lost'
