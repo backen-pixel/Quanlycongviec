@@ -69,10 +69,10 @@ Audit Management API lúc `2026-08-26T10:21:23.977Z`:
 
 Backup gần nhất có trước thời điểm schema freeze của chuỗi migration hiện hành, do đó **không dùng nó làm pre-UAT recovery point**. Chỉ bắt đầu UAT hồ sơ thật khi thỏa một trong hai điều kiện:
 
-1. `npm run db:audit:business-os` hiển thị một backup `COMPLETED` có thời gian sau `2026-08-26T10:21:23.977Z`; hoặc
+1. `npm run uat:readiness:business-os` hiển thị một backup `COMPLETED` có thời gian sau `2026-08-26T10:21:23.977Z` và trả `uat_gate.status="READY"`; hoặc
 2. có logical dump đã mã hóa, lưu ngoài Git và đã thử restore vào database tách biệt.
 
-Lệnh quyết định mở UAT là `cd backend && npm run db:gate:business-os-uat`; chỉ tiếp tục khi JSON trả `uat_gate.status="READY"`.
+Lệnh quyết định mở UAT là `cd backend && npm run uat:readiness:business-os`; chỉ tiếp tục khi JSON trả `uat_gate.status="READY"` và preflight hoàn tất.
 
 ## Phạm vi đã khóa
 

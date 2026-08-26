@@ -8,16 +8,17 @@
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
+const {
+  evaluateBusinessOsUatGate,
+  validIsoDate,
+} = require('../src/helpers/businessOsUatGate');
+
 const token = process.env.SUPABASE_ACCESS_TOKEN;
 const supabaseUrl = process.env.SUPABASE_URL;
 
 function cliValue(prefix) {
   const entry = process.argv.slice(2).find((value) => value.startsWith(`${prefix}=`));
   return entry ? entry.slice(prefix.length + 1).trim() : '';
-}
-
-function validIsoDate(value) {
-  return value && Number.isFinite(Date.parse(value));
 }
 
 function projectRefFromUrl(value) {
@@ -182,22 +183,11 @@ async function main() {
     throw new Error(`Mốc --require-backup-after không hợp lệ: ${requiredBackupAfter}`);
   }
   if (requiredBackupAfter) {
-    const latestBackupAt = report.backup?.latest_completed_backup_at || null;
-    const backupFresh = validIsoDate(latestBackupAt)
-      && Date.parse(latestBackupAt) > Date.parse(requiredBackupAfter);
-    report.uat_gate = {
-      required_backup_after: requiredBackupAfter,
-      latest_completed_backup_at: latestBackupAt,
-      migrations_ready: report.all_applied,
-      backup_verified: report.backup?.verified === true,
-      backup_fresh: backupFresh,
-      ready: report.all_applied
-        && report.backup?.verified === true
-        && backupFresh,
-      status: report.all_applied && report.backup?.verified === true && backupFresh
-        ? 'READY'
-        : 'BLOCKED',
-    };
+    report.uat_gate = evaluateBusinessOsUatGate({
+      allApplied: report.all_applied,
+      backup: report.backup,
+      requiredBackupAfter,
+    });
   }
 
   console.log(JSON.stringify(report, null, 2));

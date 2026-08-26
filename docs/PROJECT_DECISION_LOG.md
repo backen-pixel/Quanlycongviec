@@ -301,6 +301,7 @@ Tiếp tục dùng chứng từ và bảng nghiệp vụ hiện hữu làm Syste
 - Cổng tự động `npm run db:gate:business-os-uat` là điều kiện kỹ thuật bắt buộc; trạng thái `BLOCKED` không được bỏ qua để chạy UAT thật.
 - Preflight `npm run uat:preflight:business-os` chỉ đọc số liệu tổng hợp, không xuất PII; dùng để xác định slot UAT còn thiếu nhưng không tự chọn hoặc sửa hồ sơ khách.
 - Lệnh chuẩn để mở phiên là `npm run uat:readiness:business-os`; gate backup phải PASS trước khi preflight và phân công hồ sơ được thực hiện.
+- Logic backup gate có unit test riêng cho `READY`, backup cũ/bằng schema freeze, backup chưa xác minh, migration thiếu và timestamp sai; kiểm thử hiện tại đạt **5/5**, toàn bộ Business OS đạt **28/28**.
 - Sau UAT và sửa blocker mới mở lát cắt Mua hàng → Chi phí Project → Hóa đơn/Thanh toán → Công nợ.
 - Hồ sơ baseline: `docs/baseline/BUSINESS_OS_VNEXT_STAGING_BASELINE_01.md`.
 

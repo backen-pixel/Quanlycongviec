@@ -18,6 +18,8 @@ Lệnh thực hiện tuần tự:
 
 ## Khi kết quả là BLOCKED
 
+- Backup vật lý của Supabase chạy theo lịch tự động; Management API của luồng này chỉ dùng để đọc và xác minh recovery point, không gọi restore hoặc giả lập một backup mới.
+- Tài liệu tham chiếu: <https://supabase.com/docs/guides/platform/backups>.
 - Không tạo Lead/Deal/Project chỉ để vượt gate.
 - Không chạy lại migration đã áp dụng.
 - Không bỏ qua backup bằng cách đổi mốc schema freeze.
