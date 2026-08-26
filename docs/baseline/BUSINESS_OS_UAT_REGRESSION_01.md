@@ -16,6 +16,7 @@
 | Tenant isolation | `PASS` | `cd backend && npm run test:tenant` |
 | Frontend production build | `PASS` | Exit code `0`; 10.289 module; hoàn tất trong `2m06s` |
 | Dist integrity | `PASS` | 6/6 local reference tồn tại; 340 JS chunks |
+| Browser smoke Business OS | `PASS 11/11` | Đủ nội dung/đúng heading; không login redirect, fatal text hoặc console error |
 | Migration staging | `PASS 15/15` | Migration 473 và 567–580 |
 | Evidence khi gate BLOCKED | `PASS` | Exit code `3`; không tạo `backend/.uat-evidence/` |
 
@@ -37,6 +38,8 @@ Không dùng biên bản hồi quy này để bỏ qua backup gate. Khi có reco
 
 ## Phạm vi không thay đổi
 
+- `Sidebar.jsx` trùng checksum Git; trạng thái sửa cục bộ trước đó chỉ là cache metadata Windows.
+- Chuỗi commit sau baseline chỉ đổi công cụ gate/test/tài liệu, không đổi component hoặc route nghiệp vụ Business OS.
 - Không chạy migration mới.
 - Không sửa hoặc tạo hồ sơ khách hàng.
 - Không deploy production.
