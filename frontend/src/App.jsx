@@ -62,7 +62,6 @@ import SaasCheckoutPage from './pages/SaasCheckoutPage';
 const Dashboard = lazyWithRetry(() => import('./pages/ManagementDashboard'));
 const ManagementDashboard = lazyWithRetry(() => import('./pages/ManagementDashboard'));
 const UnifiedDealPage = lazyWithRetry(() => import('./pages/UnifiedDealPage'));
-const WorkTasksUnifiedPage = lazyWithRetry(() => import('./pages/WorkTasksUnifiedPage'));
 const WorkOverviewPage = lazyWithRetry(() => import('./pages/WorkOverviewPage'));
 const CrmOverviewPage = lazyWithRetry(() => import('./pages/CrmOverviewPage'));
 const QuotesOverviewPage = lazyWithRetry(() => import('./pages/QuotesOverviewPage'));
@@ -72,7 +71,6 @@ const PurchasingOverviewPage = lazyWithRetry(() => import('./pages/PurchasingOve
 const ProductionOverviewPage = lazyWithRetry(() => import('./pages/ProductionOverviewPage'));
 const ProductionProjectDetailPage = lazyWithRetry(() => import('./pages/ProductionProjectDetailPage'));
 const ModuleFlowSetupPage = lazyWithRetry(() => import('./pages/ModuleFlowSetupPage'));
-const Projects = lazyWithRetry(() => import('./pages/Projects'));
 const ProjectDetail = lazyWithRetry(() => import('./pages/ProjectDetail'));
 const Tasks = lazyWithRetry(() => import('./pages/Tasks'));
 const StageView = lazyWithRetry(() => import('./pages/StageView'));
@@ -384,7 +382,7 @@ function DefaultRedirect() {
   if (pinned === '/vc') return <Navigate to="/vc/dashboard" replace />;
   // Module Dự án và công việc (và pin legacy /work): vào Dashboard dự án với đúng sidebar.
   if (pinned === '/work' || pinned === '/work/unified' || pinned === '/congviec' || pinned === '/projects') {
-    return <Navigate to="/projects" replace state={{ moduleContext: 'congviec' }} />;
+    return <Navigate to="/management/work-unified" replace state={{ moduleContext: 'congviec' }} />;
   }
   return <Navigate to={pinned} replace />;
 }
@@ -421,9 +419,8 @@ export default function App() {
             <Route path="/dashboard/divisions" element={<Navigate to="/dashboard" replace />} />
             <Route path="/social" element={<SocialFeedPage />} />
             <Route path="/social/u/:userId" element={<SocialProfilePage />} />
-            <Route path="/my-tasks" element={<Navigate to="/work/unified" replace />} />
-            <Route path="/work" element={<Navigate to="/projects" replace state={{ moduleContext: 'congviec' }} />} />
-            <Route path="/work/unified" element={<Suspense fallback={<PageLoader />}><WorkTasksUnifiedPage /></Suspense>} />
+            <Route path="/my-tasks" element={<Navigate to="/management/work-unified" replace state={{ moduleContext: 'congviec' }} />} />
+            <Route path="/work" element={<Navigate to="/management/work-unified" replace state={{ moduleContext: 'congviec' }} />} />
             <Route path="/management/work-overview" element={<Suspense fallback={<PageLoader />}><WorkOverviewPage /></Suspense>} />
             <Route path="/management/crm-overview" element={<Suspense fallback={<PageLoader />}><CrmOverviewPage /></Suspense>} />
             <Route path="/management/quotes-overview" element={<Suspense fallback={<PageLoader />}><QuotesOverviewPage /></Suspense>} />
@@ -433,10 +430,10 @@ export default function App() {
             <Route path="/management/production-overview" element={<Suspense fallback={<PageLoader />}><ProductionOverviewPage /></Suspense>} />
             <Route path="/management/production-overview/:id" element={<Suspense fallback={<PageLoader />}><ProductionProjectDetailPage /></Suspense>} />
             <Route path="/work/flows" element={<Suspense fallback={<PageLoader />}><ModuleFlowSetupPage /></Suspense>} />
-            <Route path="/projects" element={<Projects />} />
+            <Route path="/projects" element={<Navigate to="/management/work-unified" replace state={{ moduleContext: 'congviec' }} />} />
             <Route path="/projects/create" element={<CreateProject />} />
             <Route path="/projects/:id" element={<ProjectDetail />} />
-            <Route path="/project-workflow" element={<Navigate to="/work/unified" replace />} />
+            <Route path="/project-workflow" element={<Navigate to="/management/work-unified" replace state={{ moduleContext: 'congviec' }} />} />
             <Route path="/tasks" element={<Tasks />} />
             <Route path="/tasks/regions" element={<CompanyCrmRegionsPage />} />
             <Route path="/workspace/org-setup" element={<OrganizationQuickSetupPage />} />

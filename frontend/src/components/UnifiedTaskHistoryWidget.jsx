@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import UnifiedTaskHistoryTimeline from './UnifiedTaskHistoryTimeline';
 import { History } from 'lucide-react';
@@ -54,9 +53,6 @@ export default function UnifiedTaskHistoryWidget({
           <History className="h-4 w-4 text-blue-600" />
           {title}
         </h3>
-        <Link to="/work/unified" className="text-xs text-blue-600 hover:underline">
-          Xem tất cả
-        </Link>
       </div>
       <UnifiedTaskHistoryTimeline items={items} loading={loading} compact />
     </div>

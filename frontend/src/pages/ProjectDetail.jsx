@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, Fragment } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
 import { getSocket } from '../lib/socket';
@@ -17,7 +17,7 @@ import {
   ArrowLeft, Plus, Trash2, ChevronRight, ChevronDown, Phone, MapPin,
   Calendar, Clock, CheckSquare, MessageSquare, ArrowRightCircle, ArrowRight,
   Paperclip, FileText, Edit, UserPlus, X, Shield, PlayCircle, AlertCircle, List, LayoutGrid, DollarSign, Pin, ShoppingCart,
-  Wallet, Layers, AlertTriangle, Target, Users, Cloud, Mic, Star, Package,
+  Wallet, Layers, AlertTriangle, Target, Users, Cloud, Mic, Star, Package, Check, ClipboardCheck,
 } from 'lucide-react';
 import ProjectOrdersTab from '../components/ProjectOrdersTab';
 import { togglePin, isPinned } from '../components/PinnedProjectsWidget';
@@ -473,6 +473,8 @@ export default function ProjectDetail() {
   const totalTasks = project.tasks?.length || 0;
   const moduleTaskTotal = displayBundle?.totals?.tasks ?? totalTasks;
   const doneTasks = project.tasks?.filter(t => t.status === 'done').length || 0;
+  const progressPct = totalTasks > 0 ? Math.round((doneTasks / totalTasks) * 100) : 0;
+  const isDeadlineOverdue = !!project.deadline && new Date(project.deadline) < new Date() && project.status !== 'completed';
 
   const openQuotationImage = (file) => {
     const path = file?.file_url || file?.file_path;
@@ -501,7 +503,7 @@ export default function ProjectDetail() {
   return (
     <div className="space-y-5 w-full max-w-full">
       {/* Header */}
-      <div className="flex items-start justify-between">
+      <div className="flex items-start justify-between flex-wrap gap-y-3">
         <div className="flex items-start gap-3">
           <button onClick={() => navigate('/projects')} className="mt-1 w-8 h-8 rounded-lg hover:bg-gray-100 flex items-center justify-center text-gray-400 cursor-pointer"><ArrowLeft className="h-5 w-5" /></button>
           <div>
@@ -562,33 +564,60 @@ export default function ProjectDetail() {
             )}
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap justify-end">
           {editing ? (
             <>
-              <button onClick={saveEdit} className="h-8 px-4 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 cursor-pointer">💾 Lưu</button>
-              <button onClick={() => setEditing(false)} className="h-8 px-3 bg-gray-100 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-200 cursor-pointer">Hủy</button>
+              <button onClick={saveEdit} className="h-9 px-4 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 cursor-pointer">Lưu</button>
+              <button onClick={() => setEditing(false)} className="h-9 px-3 bg-gray-100 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-200 cursor-pointer">Hủy</button>
             </>
           ) : (
-            <button onClick={startEditing} className="h-8 px-3 bg-blue-50 text-blue-600 rounded-lg text-sm font-medium hover:bg-blue-100 cursor-pointer flex items-center gap-1">✏️ Sửa</button>
+            <>
+              {nextStage && (
+                approvalRule?.mode === 'auto' ? (
+                  <button
+                    type="button"
+                    onClick={() => { if (canAdvance) setShowAdvance(true); }}
+                    disabled={!canAdvance}
+                    title={canAdvance ? undefined : (project.stageTasksTotal > 0 ? `${project.stageTasksDone}/${project.stageTasksTotal} việc hoàn thành trước khi chuyển` : undefined)}
+                    className={`h-9 px-3.5 rounded-lg text-sm font-medium flex items-center gap-1.5 border ${
+                      canAdvance
+                        ? 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50 cursor-pointer'
+                        : 'bg-gray-50 border-gray-100 text-gray-300 cursor-not-allowed'
+                    }`}
+                  >
+                    <ArrowRightCircle className="h-4 w-4" /> Chuyển → {nextStage.label}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => { if (canAdvance) { setActiveTab('approvals'); setShowApprovalRequest(true); } }}
+                    disabled={!canAdvance}
+                    title={canAdvance ? undefined : (project.stageTasksTotal > 0 ? `${project.stageTasksDone}/${project.stageTasksTotal} việc hoàn thành trước khi yêu cầu duyệt` : undefined)}
+                    className={`h-9 px-3.5 rounded-lg text-sm font-medium flex items-center gap-1.5 border ${
+                      canAdvance
+                        ? 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50 cursor-pointer'
+                        : 'bg-gray-50 border-gray-100 text-gray-300 cursor-not-allowed'
+                    }`}
+                  >
+                    <ClipboardCheck className="h-4 w-4" /> Yêu cầu phê duyệt
+                  </button>
+                )
+              )}
+              <button
+                type="button"
+                onClick={() => setShowCreateTask(true)}
+                className="h-9 px-3.5 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 cursor-pointer flex items-center gap-1.5"
+              >
+                <Plus className="h-4 w-4" /> Tạo công việc
+              </button>
+              <button type="button" onClick={startEditing} title="Sửa dự án" className="h-9 w-9 rounded-lg hover:bg-gray-100 flex items-center justify-center text-gray-500 cursor-pointer shrink-0">
+                <Edit className="h-4 w-4" />
+              </button>
+              <button type="button" onClick={deleteProject} title="Xóa dự án" className="h-9 w-9 rounded-lg hover:bg-red-50 flex items-center justify-center text-red-500 cursor-pointer shrink-0">
+                <Trash2 className="h-4 w-4" />
+              </button>
+            </>
           )}
-          {canAdvance && nextStage && approvalRule?.mode === 'auto' && (
-            <button onClick={() => setShowAdvance(true)}
-              className="h-9 px-4 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 cursor-pointer flex items-center gap-1 animate-pulse">
-              <ArrowRightCircle className="h-4 w-4" /> Chuyển → {nextStage.label}
-            </button>
-          )}
-          {canAdvance && nextStage && approvalRule?.mode !== 'auto' && (
-            <button onClick={() => { setActiveTab('approvals'); setShowApprovalRequest(true); }}
-              className="h-9 px-4 bg-amber-500 text-white rounded-lg text-sm font-medium hover:bg-amber-600 cursor-pointer flex items-center gap-1 animate-pulse">
-              <Shield className="h-4 w-4" /> Chờ duyệt → {nextStage.label}
-            </button>
-          )}
-          {!canAdvance && nextStage && project.stageTasksTotal > 0 && (
-            <span className="text-xs text-gray-400">
-              {project.stageTasksDone}/{project.stageTasksTotal} hoàn thành
-            </span>
-          )}
-          <button onClick={deleteProject} className="h-9 px-3 bg-red-50 text-red-600 rounded-lg text-sm hover:bg-red-100 cursor-pointer"><Trash2 className="h-4 w-4" /></button>
         </div>
       </div>
 
@@ -614,42 +643,76 @@ export default function ProjectDetail() {
       )}
 
       {/* Stage pipeline - Flow-based */}
-      <div className="bg-white rounded-xl border p-4">
-        <div className="flex items-center gap-2 overflow-x-auto">
+      <div className="bg-white rounded-xl border border-gray-100 p-4">
+        <div className="flex items-start overflow-x-auto pb-1">
           {projectStages.map((s, i) => {
-            const isCurrent = s.slug === project.current_stage?.slug || s.status === project.status;
+            const isCurrent = i === currentStageIdx;
             const isPast = i < currentStageIdx;
-            const person = project[s.personKey]; // Will be null for flow-based stages, handled below
-            
             return (
-              <div key={s.slug || i} className="flex items-center gap-1">
-                <div className={`h-8 px-2.5 rounded-lg text-xs font-medium whitespace-nowrap flex items-center gap-1.5 ${
-                  isCurrent ? 'bg-blue-600 text-white' : isPast ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500'
-                }`} style={{ borderLeftColor: s.color, borderLeftWidth: '3px' }}>
-                  {isPast && <CheckSquare className="h-3 w-3" />}
-                  {isCurrent && <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />}
-                  {s.label}
-                  {person && (
-                    <div className="h-4 w-4 rounded-full flex items-center justify-center text-white text-[7px] font-bold ml-0.5"
-                      style={{ backgroundColor: avatarColor(person.full_name) }} title={person.full_name}>
-                      {getInitials(person.full_name)}
-                    </div>
-                  )}
+              <Fragment key={s.slug || i}>
+                <div className="flex flex-col items-center gap-1.5 shrink-0 px-1.5">
+                  <div className={`h-8 w-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
+                    isPast ? 'bg-emerald-500 text-white' : isCurrent ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-400 border border-gray-200'
+                  }`}>
+                    {isPast ? <Check className="h-4 w-4" /> : i + 1}
+                  </div>
+                  <span className={`text-[11px] font-medium whitespace-nowrap ${
+                    isCurrent ? 'text-blue-600' : isPast ? 'text-gray-600' : 'text-gray-400'
+                  }`}>
+                    {s.label}
+                  </span>
                 </div>
-                {i < projectStages.length - 1 && <ChevronRight className="h-3 w-3 text-gray-300 shrink-0" />}
-              </div>
+                {i < projectStages.length - 1 && (
+                  <div className={`flex-1 h-0.5 mt-4 min-w-[24px] ${isPast ? 'bg-emerald-400' : 'bg-gray-200'}`} />
+                )}
+              </Fragment>
             );
           })}
-        </div>
-        {/* Stage counter */}
-        <div className="mt-2 text-[10px] text-gray-400 flex items-center gap-2">
-          <span>{Math.max(currentStageIdx, 0) + 1}/{projectStages.length} bước</span>
-          <span>•</span>
-          <span className="text-emerald-600 font-medium">{currentStageIdx} hoàn thành</span>
         </div>
       </div>
 
       {/* Info cards */}
+      {!editing ? (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="bg-white rounded-xl border border-gray-100 p-4">
+            <h3 className="text-xs font-medium text-gray-500 mb-2">Tiến độ tổng thể</h3>
+            <p className="text-3xl font-bold text-emerald-600 mb-3">{progressPct}%</p>
+            <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
+              <div className="h-full bg-emerald-500 rounded-full transition-all" style={{ width: `${progressPct}%` }} />
+            </div>
+          </div>
+          <div className="bg-white rounded-xl border border-gray-100 p-4">
+            <div className="flex items-center gap-2 mb-2">
+              <div className="h-8 w-8 rounded-lg bg-blue-50 flex items-center justify-center shrink-0">
+                <Calendar className="h-4 w-4 text-blue-600" />
+              </div>
+              <h3 className="text-xs font-medium text-gray-500">Hạn bàn giao</h3>
+            </div>
+            <p className={`text-2xl font-bold ${isDeadlineOverdue ? 'text-red-600' : 'text-gray-900'}`}>
+              {project.deadline ? formatDate(project.deadline) : '—'}
+            </p>
+          </div>
+          <div className="bg-white rounded-xl border border-gray-100 p-4">
+            <div className="flex items-center gap-2 mb-2">
+              <div className="h-8 w-8 rounded-lg bg-emerald-50 flex items-center justify-center shrink-0">
+                <DollarSign className="h-4 w-4 text-emerald-600" />
+              </div>
+              <h3 className="text-xs font-medium text-gray-500">Ngân sách dự án</h3>
+            </div>
+            <p className="text-2xl font-bold text-gray-900">{formatVND(project.estimated_value)}</p>
+          </div>
+          <div className="bg-white rounded-xl border border-gray-100 p-4">
+            <h3 className="text-xs font-medium text-gray-500 mb-2">Khách hàng</h3>
+            {project.customers ? (
+              <div className="space-y-1">
+                <p className="text-sm font-semibold text-gray-900 truncate">{project.customers.full_name}</p>
+                {project.customers.phone && <p className="text-xs text-gray-500 flex items-center gap-1"><Phone className="h-3 w-3" />{project.customers.phone}</p>}
+                {project.customers.city && <p className="text-xs text-gray-500 flex items-center gap-1"><MapPin className="h-3 w-3" />{project.customers.city}</p>}
+              </div>
+            ) : <p className="text-xs text-gray-300">Chưa có khách hàng</p>}
+          </div>
+        </div>
+      ) : (
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="bg-white rounded-xl border p-4">
           <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Khách hàng</h3>
@@ -716,6 +779,7 @@ export default function ProjectDetail() {
           </div>
         </div>
       </div>
+      )}
 
       {/* Tài liệu dự án — collapsible, ảnh xem thumbnail */}
       <div className="bg-white rounded-xl border">
@@ -1127,6 +1191,7 @@ export default function ProjectDetail() {
         <ProjectOverviewPanel
           overview={displayBundle?.overview}
           onOpenSections={() => setActiveTab('aggregate')}
+          onOpenTasks={() => setActiveTab('aggregate')}
         />
       )}
 

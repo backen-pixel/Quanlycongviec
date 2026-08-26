@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isAdminLike, isCompanyScopedAdmin } from '../lib/adminRole';
@@ -201,7 +200,6 @@ export default function WorkOverviewPage() {
         <div className="rounded-xl border border-gray-100 bg-white p-4 shadow-sm">
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-sm font-semibold text-gray-800">Dự án cần chú ý</h2>
-            <Link to="/work/unified" className="text-xs text-blue-600 hover:text-blue-800 font-medium">Xem tất cả</Link>
           </div>
           {loading ? (
             <p className="text-sm text-gray-400 py-6 text-center">Đang tải...</p>
@@ -238,7 +236,6 @@ export default function WorkOverviewPage() {
         <div className="rounded-xl border border-gray-100 bg-white p-4 shadow-sm">
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-sm font-semibold text-gray-800">Việc cần làm hôm nay</h2>
-            <Link to="/work/unified" className="text-xs text-blue-600 hover:text-blue-800 font-medium">Xem tất cả</Link>
           </div>
           {loading ? (
             <p className="text-sm text-gray-400 py-6 text-center">Đang tải...</p>

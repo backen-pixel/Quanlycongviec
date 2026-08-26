@@ -197,12 +197,6 @@ export default function ProjectDealSyncPanel({ bundle, projectId, onOpenAggregat
           >
             Xem tổng quan
           </button>
-          <Link
-            to="/work/unified"
-            className="inline-flex items-center gap-1 h-7 px-2.5 rounded-lg border border-gray-200 bg-white text-gray-700 text-[11px] font-medium hover:bg-gray-50"
-          >
-            <CheckSquare className="h-3 w-3" /> Tổng hợp NV
-          </Link>
         </div>
       </div>
 

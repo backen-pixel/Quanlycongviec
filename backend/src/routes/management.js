@@ -5,7 +5,8 @@ const { Router } = require('express');
 const { auth } = require('../middleware/auth');
 const { supabase } = require('../config/supabase');
 const { isAdminLike } = require('../helpers/adminRole');
-const { getWonDealProjectIds } = require('../helpers/workshopKanban');
+const { getWonDealProjectIds, ensureHasCrmDealColumn } = require('../helpers/workshopKanban');
+const { fetchAllByIds, fetchAllPages, fetchAllByIdsParallel, fetchAllPagesParallel } = require('../helpers/supabaseFetchAll');
 const {
   buildProjectDealBundle,
   isProjectDeliveryStageRow,
@@ -884,7 +885,11 @@ r.get('/work-unified', async (req, res) => {
   try {
     const scope = getCompanyScope(req, req.query.company_id);
     if (denyScope(res, scope)) return;
-    const { stage: stageFilter, forecast: forecastFilter } = req.query;
+    const {
+      stage: stageFilter, forecast: forecastFilter,
+      search: searchQuery, user_id: userIdFilter, region_id: regionIdFilter,
+      date_from: dateFrom, date_to: dateTo, page: pageParam, page_size: pageSizeParam,
+    } = req.query;
 
     const { data: stageRows } = await supabase
       .from('workflow_stages')
@@ -895,26 +900,36 @@ r.get('/work-unified', async (req, res) => {
     const stages = (stageRows || []).filter(isProjectDeliveryStageRow);
     const deliveryStages = stages.length ? stages : DEFAULT_DELIVERY_STAGES;
 
-    let q = supabase.from('projects').select(`
-      id, code, name, status, deadline, estimated_value, production_value, deposit_amount, collected_amount,
-      customer_id, current_stage_id, install_date, delivery_date, production_deadline,
-      project_manager_id, sales_person_id, production_person_id,
-      customer:customers(id, full_name),
-      current_stage:workflow_stages(id, name, slug, color, order_index),
-      project_manager:users!projects_project_manager_id_fkey(id, full_name),
-      sales_person:users!projects_sales_person_id_fkey(id, full_name),
-      production_person:users!projects_production_person_id_fkey(id, full_name)
-    `).in('status', WORK_OVERVIEW_ACTIVE_STATUSES);
-    q = applyProjectScopeFilter(q, scope);
-    const { data: projects, error } = await q;
-    if (error) throw error;
+    // fetchAllPagesParallel: PostgREST âm thầm cắt ở 1.000 dòng bất kể select trả về bao nhiêu —
+    // công ty >1.000 dự án active sẽ mất dữ liệu nếu query trực tiếp không .range() theo trang.
+    // Bản song song bắn nhiều trang cùng lúc — nhanh hơn nhiều ở quy mô 8.000+ dự án.
+    const projects = await fetchAllPagesParallel(() => {
+      const pq = supabase.from('projects').select(`
+        id, code, name, status, deadline, estimated_value, production_value, deposit_amount, collected_amount,
+        customer_id, current_stage_id, install_date, delivery_date, production_deadline,
+        project_manager_id, sales_person_id, production_person_id, company_id, logistics_company_id,
+        customer:customers(id, full_name, phone),
+        current_stage:workflow_stages(id, name, slug, color, order_index),
+        project_manager:users!projects_project_manager_id_fkey(id, full_name),
+        sales_person:users!projects_sales_person_id_fkey(id, full_name),
+        production_person:users!projects_production_person_id_fkey(id, full_name)
+      `).in('status', WORK_OVERVIEW_ACTIVE_STATUSES);
+      return applyProjectScopeFilter(pq, scope);
+    });
 
     const projectIds = (projects || []).map((p) => p.id);
     let dealByProjectId = {};
     if (projectIds.length) {
-      const { data: deals } = await supabase.from('crm_leads')
-        .select('id, code, title, project_id').in('project_id', projectIds);
-      (deals || []).forEach((d) => { dealByProjectId[String(d.project_id)] = d; });
+      // fetchAllByIdsParallel: cùng lý do — chia khúc id (tránh URL quá dài) + phân trang mỗi
+      // khúc (tránh cắt ở 1.000 dòng), chạy song song nhiều khúc — xem
+      // backend/src/helpers/supabaseFetchAll.js.
+      const deals = await fetchAllByIdsParallel({
+        table: 'crm_leads',
+        columns: 'id, code, title, project_id, region_id, crm_region:company_regions(id, name, company_id)',
+        key: 'project_id',
+        ids: projectIds,
+      });
+      deals.forEach((d) => { dealByProjectId[String(d.project_id)] = d; });
     }
 
     const items = (projects || []).map((p) => {
@@ -928,11 +943,22 @@ r.get('/work-unified', async (req, res) => {
       const { forecast, days_remaining, delay_days } = classifyProjectForecast(commitmentDate);
       const deal = dealByProjectId[String(p.id)] || null;
       const assignee = p.project_manager || p.sales_person || p.production_person || null;
+      const person1 = p.project_manager || p.sales_person || null;
+      const person2 = p.production_person && p.production_person.id !== person1?.id ? p.production_person : null;
+      const hasCrm = !!deal;
+      const hasSx = !!p.company_id;
+      const hasVc = !!(p.logistics_company_id || p.install_date || p.delivery_date);
+      // Khu vực chỉ hợp lệ khi thuộc đúng công ty của dự án — deal có thể đã bị chuyển
+      // công ty (crmLeadCompanyTransfer) mà region_id cũ chưa được xoá/cập nhật theo.
+      const region = (deal?.crm_region && String(deal.crm_region.company_id) === String(p.company_id))
+        ? deal.crm_region
+        : null;
       return {
         id: p.id,
         code: p.code,
         name: p.name,
         customer_name: p.customer?.full_name || null,
+        customer_phone: p.customer?.phone || null,
         deal_code: deal?.code || null,
         deal_title: deal?.title || null,
         flow,
@@ -943,7 +969,21 @@ r.get('/work-unified', async (req, res) => {
         days_remaining,
         delay_days,
         deadline: commitmentDate,
+        production_deadline: p.production_deadline || null,
+        delivery_date: p.delivery_date || null,
+        install_date: p.install_date || null,
+        value: p.estimated_value || p.production_value || null,
+        has_crm: hasCrm,
+        has_sx: hasSx,
+        has_vc: hasVc,
         assignee_name: assignee?.full_name || null,
+        assignee_id: assignee?.id || null,
+        person1_name: person1?.full_name || null,
+        person1_id: person1?.id || null,
+        person2_name: person2?.full_name || null,
+        person2_id: person2?.id || null,
+        region_id: region?.id || null,
+        region_name: region?.name || null,
       };
     });
 
@@ -957,17 +997,52 @@ r.get('/work-unified', async (req, res) => {
     let filtered = items;
     if (stageFilter) filtered = filtered.filter((it) => it.current_stage_slug === stageFilter);
     if (forecastFilter && forecastFilter !== 'all') filtered = filtered.filter((it) => it.forecast === forecastFilter);
+    const searchQ = String(searchQuery || '').trim().toLowerCase();
+    if (searchQ) {
+      filtered = filtered.filter((it) => {
+        const hay = [it.code, it.name, it.customer_name, it.deal_code, it.deal_title]
+          .filter(Boolean).join(' ').toLowerCase();
+        return hay.includes(searchQ);
+      });
+    }
+    if (userIdFilter) {
+      filtered = filtered.filter((it) => [it.person1_id, it.person2_id, it.assignee_id]
+        .some((id) => String(id) === String(userIdFilter)));
+    }
+    if (regionIdFilter) {
+      filtered = filtered.filter((it) => String(it.region_id || '') === String(regionIdFilter));
+    }
+    if (dateFrom || dateTo) {
+      filtered = filtered.filter((it) => {
+        const d = it.deadline ? String(it.deadline).slice(0, 10) : '';
+        if (!d) return false;
+        if (dateFrom && d < dateFrom) return false;
+        if (dateTo && d > dateTo) return false;
+        return true;
+      });
+    }
     filtered.sort((a, b) => {
       const da = a.deadline ? new Date(a.deadline).getTime() : Infinity;
       const db = b.deadline ? new Date(b.deadline).getTime() : Infinity;
       return da - db;
     });
 
+    const total = filtered.length;
+    // page_size chỉ áp dụng khi client yêu cầu (view Danh sách) — Kanban/Lịch cần đủ tập đã lọc để gom nhóm.
+    const pageSize = pageSizeParam ? Math.max(1, Math.min(200, parseInt(pageSizeParam, 10) || 20)) : null;
+    let pageItems = filtered;
+    if (pageSize) {
+      const page = Math.max(1, parseInt(pageParam, 10) || 1);
+      const start = (page - 1) * pageSize;
+      pageItems = filtered.slice(start, start + pageSize);
+    }
+
     res.json({
       company_id: primaryCompanyIdFromScope(scope),
       stages: deliveryStages.map((s) => ({ slug: s.slug, label: s.name })),
       stats,
-      items: filtered,
+      items: pageItems,
+      total,
     });
   } catch (e) {
     console.error('[management/work-unified]', e);

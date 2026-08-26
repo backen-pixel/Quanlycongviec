@@ -1023,7 +1023,7 @@ function NodeModuleBranches({ moduleKey, branchMode = false }) {
     return (
       <div className="rounded-xl bg-blue-50/60 border border-blue-100 px-3 py-2.5 text-[11px] text-blue-800 leading-relaxed">
         Node <b>Dự án</b> — luồng chứa node này sẽ xuất hiện trong dropdown «Luồng quy trình» khi tạo dự án từ Lead/Deal.
-        <Link to="/projects" state={{ moduleContext: 'congviec' }} className="mt-1.5 flex items-center gap-1 font-semibold text-blue-700 hover:underline">
+        <Link to="/management/work-unified" state={{ moduleContext: 'congviec' }} className="mt-1.5 flex items-center gap-1 font-semibold text-blue-700 hover:underline">
           <ExternalLink className="h-3 w-3" /> Mở Dashboard dự án
         </Link>
       </div>

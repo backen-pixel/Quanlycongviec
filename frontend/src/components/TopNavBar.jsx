@@ -19,7 +19,6 @@ const MENUS = [
     emoji: '📊',
     items: [
       { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
-      { to: '/work/unified', icon: Layers, label: 'Công việc tổng hợp' },
       { to: '/personal-tasks', icon: UserPlus, label: 'NV cá nhân' },
     ]
   },
@@ -29,7 +28,7 @@ const MENUS = [
     icon: FolderKanban,
     emoji: '🏢',
     items: [
-      { to: '/projects', icon: FolderKanban, label: 'Dự án' },
+      { to: '/management/work-unified', icon: FolderKanban, label: 'Dự án' },
       { to: '/tasks', icon: CheckSquare, label: 'Tất cả CV' },
       { to: '/customers', icon: UserCircle, label: 'Khách hàng' },
       { to: '/products', icon: Package, label: 'Sản phẩm' },

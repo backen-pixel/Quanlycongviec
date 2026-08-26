@@ -73,7 +73,7 @@ const MENU_GROUPS = [
     title: '2. Làm việc',
     emoji: '🏢',
     items: [
-      { to: '/projects', icon: FolderKanban, label: 'Dự án', moduleKey: 'projects' },
+      { to: '/management/work-unified', icon: FolderKanban, label: 'Dự án', moduleKey: 'projects' },
       { to: '/tasks', icon: CheckSquare, label: 'Tất cả CV', adminOnly: true, moduleKey: 'tasks' },
       { to: '/tasks/regions', icon: MapPin, label: 'Khu vực công ty', adminOnly: true, moduleKey: 'tasks' },
       { to: '/workspace/org-setup', icon: UsersRound, label: 'Tổ chức nhanh', adminOnly: true, moduleKey: 'tasks' },
@@ -139,8 +139,7 @@ const CONGVIEC_MENU_GROUPS = [
     title: '2. Làm việc',
     emoji: '✅',
     items: [
-      { to: '/projects', icon: LayoutDashboard, label: 'Dashboard dự án', end: true },
-      { to: '/work/unified', icon: Layers, label: 'Công việc tổng hợp', end: true },
+      { to: '/management/work-unified', icon: LayoutDashboard, label: 'Dashboard dự án', end: true },
       { to: '/personal-tasks', icon: UserPlus, label: 'NV cá nhân' },
     ],
   },
@@ -566,7 +565,6 @@ function badgeForMenuLink(to, {
   sxAssignmentsUnread = 0,
   vcAssignmentsUnread = 0,
   socialUnread = 0,
-  unifiedTasksOpen = 0,
 } = {}) {
   const key = serializeMenuLinkTo(to);
   if (key === '/updates') return updatesUnread;
@@ -574,7 +572,6 @@ function badgeForMenuLink(to, {
   if (key === '/sx/assignments') return sxAssignmentsUnread;
   if (key === '/vc/assignments') return vcAssignmentsUnread;
   if (key === '/social') return socialUnread;
-  if (key === '/work/unified') return unifiedTasksOpen;
   return 0;
 }
 

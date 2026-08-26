@@ -110,9 +110,6 @@ function UrgentBar({ urgent, alerts, onFilter }) {
     if (urgent?.vc_overdue > 0) {
       list.push({ key: 'vc_overdue', label: `${urgent.vc_overdue} dự án VC trễ`, tone: 'text-amber-700 bg-amber-50 border-amber-100' });
     }
-    if (urgent?.overdue_tasks > 0) {
-      list.push({ key: 'overdue_tasks', label: `${urgent.overdue_tasks} NV quá hạn`, tone: 'text-rose-700 bg-rose-50 border-rose-100', link: '/work/unified' });
-    }
     if (alerts?.pending_approvals > 0) {
       list.push({ key: 'approvals', label: `${alerts.pending_approvals} chờ duyệt`, tone: 'text-indigo-700 bg-indigo-50 border-indigo-100', link: '/approval-rules' });
     }
@@ -554,7 +551,6 @@ export default function ManagementDashboard() {
     else if (key === 'overdue_crm') setFocus('overdue_crm');
     else if (key === 'sx_overdue') setFocus('sx_overdue');
     else if (key === 'vc_overdue') setFocus('vc_overdue');
-    else if (key === 'overdue_tasks') navigate('/work/unified');
   };
 
   const kpis = overview?.kpis;
@@ -765,13 +761,6 @@ export default function ManagementDashboard() {
             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
             Làm mới
           </button>
-          <Link
-            to="/work/unified"
-            className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700"
-          >
-            <CheckSquare className="h-4 w-4" />
-            Tổng hợp NV
-          </Link>
           {isAdmin && <SupabaseMonitorButton />}
         </div>
       </div>
@@ -906,7 +895,6 @@ export default function ManagementDashboard() {
                 value={kpis.open_tasks}
                 bg="bg-indigo-50 border-indigo-100"
                 color="text-indigo-700"
-                onClick={() => navigate('/work/unified')}
               />
               <KpiTile
                 label="NV quá hạn"

@@ -525,6 +525,8 @@ function buildProjectOverview({
     on_track: Math.max(0, critical_tasks.filter((t) => t.ui_state !== 'warning').length),
   };
 
+  const customer = project?.customer || primaryLead?.customer || null;
+
   return {
     progress_pct,
     commitment_date,
@@ -544,6 +546,12 @@ function buildProjectOverview({
       sx: owners.sx ? { id: owners.sx.id, full_name: owners.sx.full_name } : null,
       vc: owners.vc ? { id: owners.vc.id, full_name: owners.vc.full_name } : null,
     },
+    // Hồ sơ liên thông — CRM/SX/VC quy về cùng 1 dự án.
+    customer_name: customer?.full_name || null,
+    customer_phone: customer?.phone || null,
+    company_name: project?.company?.short_name || project?.company?.name || null,
+    deal_ref: primaryLead ? { code: primaryLead.code, title: primaryLead.title, href: crmHref } : null,
+    production_ref: projectId ? { code: project?.code, href: sxHref } : null,
   };
 }
 
@@ -565,7 +573,9 @@ async function buildProjectDealBundle(projectId, opts = {}) {
       current_stage:workflow_stages(id, name, slug, color, order_index),
       production_person:users!projects_production_person_id_fkey(id, full_name),
       logistics_person:users!projects_logistics_person_id_fkey(id, full_name),
-      installation_person:users!projects_installation_person_id_fkey(id, full_name)
+      installation_person:users!projects_installation_person_id_fkey(id, full_name),
+      company:companies!projects_company_id_fkey(id, name, short_name),
+      customer:customers(id, full_name, phone)
     `)
     .eq('id', projectId)
     .maybeSingle();
@@ -579,7 +589,9 @@ async function buildProjectDealBundle(projectId, opts = {}) {
         company_id, customer_id, sx_kanban_column_id, vc_kanban_column_id, current_stage_id,
         install_date, delivery_date, production_deadline,
         production_person_id, logistics_person_id, installation_person_id,
-        current_stage:workflow_stages(id, name, slug, color, order_index)
+        current_stage:workflow_stages(id, name, slug, color, order_index),
+        company:companies!projects_company_id_fkey(id, name, short_name),
+        customer:customers(id, full_name, phone)
       `)
       .eq('id', projectId)
       .maybeSingle();

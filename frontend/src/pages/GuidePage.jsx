@@ -143,7 +143,7 @@ const GUIDES = [
       {
         title: 'Dự án được tạo từ đâu?',
         content: 'TỰ ĐỘNG:\n• Báo giá chấp nhận → Auto tạo dự án\n• Đơn hàng xác nhận → Auto tạo dự án\n\nTHỦ CÔNG:\n• Deal đạt "Thắng" → Bấm "📁 Tạo dự án" trong chi tiết Deal\n• Menu Công việc → "Dự án" → "+ Tạo dự án"',
-        link: { to: '/projects', label: 'Xem dự án' },
+        link: { to: '/management/work-unified', label: 'Xem dự án' },
       },
       {
         title: 'Form tạo dự án',
@@ -345,7 +345,7 @@ export default function GuidePage() {
             { to: '/crm/quotations/new', icon: FileText, label: 'Tạo báo giá', color: 'text-amber-600 bg-amber-50' },
             { to: '/crm/orders', icon: ShoppingCart, label: 'Đơn hàng', color: 'text-blue-600 bg-blue-50' },
             { to: '/crm/invoices/new', icon: Receipt, label: 'Tạo hóa đơn', color: 'text-purple-600 bg-purple-50' },
-            { to: '/projects', icon: FolderKanban, label: 'Dự án', color: 'text-indigo-600 bg-indigo-50' },
+            { to: '/management/work-unified', icon: FolderKanban, label: 'Dự án', color: 'text-indigo-600 bg-indigo-50' },
             { to: '/projects/create', icon: FolderKanban, label: 'Tạo dự án', color: 'text-teal-600 bg-teal-50' },
             { to: '/users', icon: Users, label: 'Nhân viên', color: 'text-gray-600 bg-gray-50' },
             { to: '/drive', icon: HardDrive, label: 'Drive (Quản lý)', color: 'text-sky-600 bg-sky-50' },

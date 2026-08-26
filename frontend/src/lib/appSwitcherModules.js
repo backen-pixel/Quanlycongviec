@@ -123,7 +123,7 @@ export const APP_MODULE_DEFINITIONS = [
   },
   {
     id: 'congviec',
-    path: '/projects',
+    path: '/management/work-unified',
     name: CONGVIEC_MODULE_LABEL,
     desc: 'Dashboard dự án, nhiệm vụ tổng hợp & setup luồng module',
     Icon: Layers,
@@ -289,7 +289,7 @@ export function writeAppSwitcherFavorites(paths) {
 }
 
 export function defaultAppSwitcherFavorites(allPaths) {
-  const preferred = ['/crm', '/sx', '/mua-hang', '/projects', '/dashboard', '/knowledge', '/vc'];
+  const preferred = ['/crm', '/sx', '/mua-hang', '/management/work-unified', '/dashboard', '/knowledge', '/vc'];
   const picked = preferred.filter((p) => allPaths.includes(p));
   if (picked.length >= 2) return picked.slice(0, 5);
   return allPaths.slice(0, 5);

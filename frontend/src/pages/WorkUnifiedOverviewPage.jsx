@@ -1,14 +1,58 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isAdminLike, isCompanyScopedAdmin } from '../lib/adminRole';
-import { formatDate } from '../lib/utils';
+import { formatDate, formatVND } from '../lib/utils';
+import KanbanColumnVirtualList from '../components/KanbanColumnVirtualList';
 import {
   RefreshCw, Building2, Plus, Users, FileText, Package, ChevronLeft, ChevronRight,
+  List, LayoutGrid, Clock, Phone, Calendar, EyeOff, Eye, X, Search, SlidersHorizontal, MapPin, User,
 } from 'lucide-react';
 
+const TIME_PRESETS = [
+  { key: '', label: 'Tất cả' },
+  { key: 'today', label: 'Hôm nay' },
+  { key: 'this_week', label: 'Tuần này' },
+  { key: 'this_month', label: 'Tháng này' },
+  { key: 'this_quarter', label: 'Quý này' },
+];
+
+function getPresetDateRange(preset) {
+  const pad = (n) => String(n).padStart(2, '0');
+  const iso = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  switch (preset) {
+    case 'today':
+      return { from: iso(today), to: iso(today) };
+    case 'this_week': {
+      const dow = today.getDay();
+      const monday = new Date(today);
+      monday.setDate(today.getDate() - (dow === 0 ? 6 : dow - 1));
+      const sunday = new Date(monday);
+      sunday.setDate(monday.getDate() + 6);
+      return { from: iso(monday), to: iso(sunday) };
+    }
+    case 'this_month': {
+      const first = new Date(now.getFullYear(), now.getMonth(), 1);
+      const last = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+      return { from: iso(first), to: iso(last) };
+    }
+    case 'this_quarter': {
+      const qm = Math.floor(now.getMonth() / 3) * 3;
+      const first = new Date(now.getFullYear(), qm, 1);
+      const last = new Date(now.getFullYear(), qm + 3, 0);
+      return { from: iso(first), to: iso(last) };
+    }
+    default:
+      return { from: '', to: '' };
+  }
+}
+
 const PAGE_SIZE = 20;
+
+const KANBAN_COLORS = ['#3b82f6', '#8b5cf6', '#f59e0b', '#10b981', '#ef4444', '#06b6d4', '#ec4899', '#6366f1'];
 
 const FORECAST_TABS = [
   { key: 'all', label: 'Tất cả' },
@@ -31,6 +75,268 @@ function forecastLabel(it) {
   return 'Chưa có hạn';
 }
 
+const MODULE_BADGE_CLS = {
+  crm: 'bg-emerald-600 text-white',
+  sx: 'bg-orange-600 text-white',
+  vc: 'bg-amber-600 text-white',
+};
+
+function shortDate(v) {
+  if (!v) return '';
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return '';
+  return `${d.getDate()}/${d.getMonth() + 1}`;
+}
+
+function initials(name) {
+  if (!name) return '?';
+  const parts = name.trim().split(/\s+/);
+  return parts.slice(-2).map((p) => p[0]).join('').toUpperCase();
+}
+
+function WorkKanbanCard({ it }) {
+  const modules = [
+    it.has_crm && { key: 'crm', label: 'CRM' },
+    it.has_sx && { key: 'sx', label: 'SX' },
+    it.has_vc && { key: 'vc', label: 'VC' },
+  ].filter(Boolean);
+  const isMultiModule = modules.length >= 2;
+
+  const people = [it.person1_name, it.person2_name].filter(Boolean);
+
+  const dateBits = [];
+  if (it.production_deadline) dateBits.push(`Hạn SX ${shortDate(it.production_deadline)}`);
+  if (it.delivery_date) dateBits.push(`Giao ${shortDate(it.delivery_date)}`);
+  if (it.install_date) dateBits.push(`Lắp ${shortDate(it.install_date)}`);
+
+  const overdue = it.forecast === 'late';
+  const atRisk = it.forecast === 'at_risk';
+  const dateTone = overdue ? 'text-red-600' : atRisk ? 'text-amber-600' : 'text-gray-500';
+
+  return (
+    <Link
+      to={`/management/work-unified/${it.id}`}
+      className="block rounded-xl border border-gray-100 bg-white p-3 shadow-sm hover:shadow-md hover:border-gray-200 transition-shadow space-y-1.5"
+    >
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <span className="text-sm font-bold text-violet-700 truncate">{it.code}</span>
+        {isMultiModule && (
+          <span className="shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-violet-50 text-violet-700 whitespace-nowrap">
+            ĐA MODULE
+          </span>
+        )}
+      </div>
+      <p className="text-sm font-bold text-gray-900 leading-snug line-clamp-2" title={it.name}>{it.name}</p>
+      {(it.deal_code || people[0]) && (
+        <p className="text-xs text-gray-500 flex items-center gap-1 min-w-0">
+          <FileText className="h-3 w-3 shrink-0 text-gray-400" />
+          <span className="truncate">{[it.deal_code, people[0]].filter(Boolean).join(' · ')}</span>
+        </p>
+      )}
+      {dateBits.length > 0 && (
+        <p className={`text-xs flex items-center gap-1 min-w-0 ${dateTone}`}>
+          <Clock className="h-3 w-3 shrink-0" />
+          <span className="truncate">{dateBits.join(' · ')}</span>
+        </p>
+      )}
+      {people.length > 0 && (
+        <div className="flex items-center gap-2 flex-wrap">
+          {people.map((p, i) => (
+            <span key={i} className="inline-flex items-center gap-1 text-xs text-gray-600" title={p}>
+              <span className="h-5 w-5 rounded-full bg-blue-500 text-white text-[9px] font-bold flex items-center justify-center shrink-0">
+                {initials(p)}
+              </span>
+              <span className="truncate max-w-[90px]">{p}</span>
+            </span>
+          ))}
+        </div>
+      )}
+      {(it.customer_name || it.customer_phone) && (
+        <p className="text-xs text-gray-500 flex items-center gap-1 min-w-0">
+          <Phone className="h-3 w-3 shrink-0 text-gray-400" />
+          <span className="truncate">{[it.customer_name, it.customer_phone].filter(Boolean).join(' · ')}</span>
+        </p>
+      )}
+      <div className="flex items-center justify-between pt-1 gap-2">
+        <div className="flex items-center gap-1 flex-wrap">
+          {modules.map((m) => (
+            <span key={m.key} className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${MODULE_BADGE_CLS[m.key]}`}>
+              {m.label}
+            </span>
+          ))}
+        </div>
+        {it.value ? (
+          <span className="text-sm font-bold text-emerald-600 whitespace-nowrap shrink-0">{formatVND(it.value)}</span>
+        ) : null}
+      </div>
+    </Link>
+  );
+}
+
+/** 1 cột Kanban — tự quản ref cuộn riêng để ảo hoá (@tanstack/react-virtual) khi cột có nhiều thẻ (>=8). */
+function WorkKanbanColumn({ col }) {
+  const scrollRef = useRef(null);
+  // Chỉ mount KanbanColumnVirtualList sau khi scrollRef đã gắn vào DOM (tick kế tiếp) —
+  // tránh useVirtualizer khởi tạo lúc scrollRef.current còn null, khiến getVirtualItems() rỗng.
+  const [scrollReady, setScrollReady] = useState(false);
+  useEffect(() => { setScrollReady(true); }, []);
+  return (
+    <div
+      data-col-slug={col.slug}
+      className="flex flex-col flex-shrink-0 w-[260px] rounded-xl border border-gray-100 bg-gray-50/70 overflow-hidden"
+    >
+      <div className="h-1 w-full shrink-0" style={{ backgroundColor: col.color }} aria-hidden />
+      <div className="flex items-center justify-between gap-2 px-3 py-2 bg-white border-b border-gray-100">
+        <span className="text-xs font-bold text-gray-700 truncate flex items-center gap-1.5 min-w-0">
+          <span className="h-1.5 w-1.5 rounded-full shrink-0" style={{ backgroundColor: col.color }} />
+          <span className="truncate">{col.label}</span>
+        </span>
+        <span
+          className="text-[11px] font-bold tabular-nums px-2 py-0.5 rounded-full shrink-0"
+          style={{ backgroundColor: `${col.color}18`, color: col.color }}
+        >
+          {col.items.length}
+        </span>
+      </div>
+      <div
+        ref={scrollRef}
+        className="flex-1 p-2 overflow-y-auto"
+        style={{ minHeight: '160px', maxHeight: 'calc(100vh - 420px)' }}
+      >
+        {col.items.length === 0 ? (
+          <div className="text-center py-8 text-[11px] text-gray-300 border border-dashed border-gray-200 rounded-lg bg-white/40">
+            Không có dự án
+          </div>
+        ) : scrollReady ? (
+          <KanbanColumnVirtualList
+            items={col.items}
+            columnScrollRef={scrollRef}
+            renderCard={(it) => <WorkKanbanCard it={it} />}
+          />
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+const WEEKDAY_SHORT = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
+
+function parseDateStr(dateStr) {
+  if (!dateStr) return null;
+  const [y, m, d] = dateStr.split('-').map(Number);
+  if (!y || !m || !d) return null;
+  return new Date(y, m - 1, d);
+}
+
+function CalendarDayFeed({ activeDay, isExplicitSelection, events, onClear, onShiftDay, onPickDate, toneClass }) {
+  const d = parseDateStr(activeDay);
+  const weekday = d ? WEEKDAY_SHORT[d.getDay()] : '';
+  const dayNum = d ? d.getDate() : '';
+  const fullLabel = d
+    ? d.toLocaleDateString('vi-VN', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' })
+    : '';
+
+  return (
+    <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50/60 p-3">
+      <div className="flex items-center justify-between mb-2.5 gap-2 flex-wrap">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <button
+            type="button"
+            onClick={() => onShiftDay(-1)}
+            title="Ngày trước"
+            className="shrink-0 h-7 w-7 rounded-lg border border-gray-200 bg-white flex items-center justify-center text-gray-400 hover:bg-gray-100 hover:text-gray-600 cursor-pointer"
+          >
+            <ChevronLeft className="h-3.5 w-3.5" />
+          </button>
+          <div className="shrink-0 w-11 rounded-lg text-center py-1 bg-white border border-gray-200">
+            <p className="text-[9px] font-bold uppercase leading-tight text-gray-400">{weekday}</p>
+            <p className="text-base font-bold leading-none text-gray-800">{dayNum}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => onShiftDay(1)}
+            title="Ngày sau"
+            className="shrink-0 h-7 w-7 rounded-lg border border-gray-200 bg-white flex items-center justify-center text-gray-400 hover:bg-gray-100 hover:text-gray-600 cursor-pointer"
+          >
+            <ChevronRight className="h-3.5 w-3.5" />
+          </button>
+          <div className="min-w-0 ml-1">
+            <p className="text-sm font-bold text-gray-900 capitalize truncate">{fullLabel}</p>
+            <p className="text-xs text-gray-500">{events.length} mốc trong ngày</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-1.5 shrink-0">
+          <input
+            type="date"
+            value={activeDay || ''}
+            onChange={(e) => e.target.value && onPickDate(e.target.value)}
+            title="Chọn ngày bất kỳ"
+            className="h-7 px-1.5 text-xs border border-gray-200 rounded-md text-gray-600 bg-white cursor-pointer focus:outline-none focus:ring-2 focus:ring-violet-200"
+          />
+          {isExplicitSelection && (
+            <button
+              type="button"
+              onClick={onClear}
+              title="Bỏ chọn — quay về hôm nay"
+              className="shrink-0 h-7 w-7 rounded-lg flex items-center justify-center text-gray-400 hover:bg-gray-100 hover:text-gray-600 cursor-pointer"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          )}
+        </div>
+      </div>
+      {events.length === 0 ? (
+        <p className="text-xs text-gray-400 text-center py-6">Không có mốc SX/Giao/Lắp nào trong ngày này.</p>
+      ) : (
+        <div className="space-y-2">
+          {events.map((ev) => (
+            <Link
+              key={ev.id}
+              to={`/management/work-unified/${ev.itemId}`}
+              className="block rounded-lg border border-gray-200 bg-white p-2.5 hover:shadow-sm hover:border-gray-300 transition-shadow"
+            >
+              <div className="flex items-center gap-1.5 flex-wrap mb-1">
+                <Package className="h-3.5 w-3.5 text-gray-400 shrink-0" />
+                <span className="text-sm font-bold text-gray-900">{ev.code}</span>
+                <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded-full border ${toneClass(ev)}`}>{ev.label}</span>
+                {ev.overdue && (
+                  <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded-full bg-red-100 text-red-700">Quá hạn</span>
+                )}
+              </div>
+              <p className="text-sm font-semibold text-gray-800 line-clamp-1" title={ev.name}>{ev.name}</p>
+              {(ev.dealCode || ev.stageLabel) && (
+                <p className="text-xs text-gray-500 flex items-center gap-1 mt-0.5 min-w-0">
+                  <FileText className="h-3 w-3 shrink-0 text-gray-400" />
+                  <span className="truncate">{[ev.dealCode, ev.stageLabel].filter(Boolean).join(' · ')}</span>
+                </p>
+              )}
+              {(ev.customerName || ev.customerPhone) && (
+                <p className="text-xs text-gray-500 flex items-center gap-1 mt-0.5 min-w-0">
+                  <Phone className="h-3 w-3 shrink-0 text-gray-400" />
+                  <span className="truncate">{[ev.customerName, ev.customerPhone].filter(Boolean).join(' · ')}</span>
+                </p>
+              )}
+              <div className="flex items-center gap-2 flex-wrap mt-1.5">
+                {ev.modules.map((m) => (
+                  <span
+                    key={m}
+                    className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                      m === 'CRM' ? 'bg-emerald-600 text-white' : m === 'SX' ? 'bg-orange-600 text-white' : 'bg-amber-600 text-white'
+                    }`}
+                  >
+                    {m}
+                  </span>
+                ))}
+                {ev.person && <span className="text-xs text-gray-500">· {ev.person}</span>}
+              </div>
+            </Link>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function WorkUnifiedOverviewPage() {
   const { user } = useAuth();
   const isAdmin = isAdminLike(user);
@@ -45,6 +351,24 @@ export default function WorkUnifiedOverviewPage() {
   const [stageFilter, setStageFilter] = useState('');
   const [forecastFilter, setForecastFilter] = useState('all');
   const [page, setPage] = useState(1);
+  const [viewMode, setViewMode] = useState('list');
+  const [calMonth, setCalMonth] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); });
+  const [calendarMode, setCalendarMode] = useState('sx');
+  const [selectedDay, setSelectedDay] = useState(null);
+  const [showCalendarGrid, setShowCalendarGrid] = useState(true);
+  const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [filterUserId, setFilterUserId] = useState('');
+  const [filterRegionId, setFilterRegionId] = useState('');
+  const [timePreset, setTimePreset] = useState('');
+  const [rangeFrom, setRangeFrom] = useState('');
+  const [rangeTo, setRangeTo] = useState('');
+  const [filterPanelOpen, setFilterPanelOpen] = useState(false);
+  const [users, setUsers] = useState([]);
+  const [regions, setRegions] = useState([]);
+  const resultsCardRef = useRef(null);
+  const kanbanBoardRef = useRef(null);
+  const pageMountedRef = useRef(false);
 
   useEffect(() => {
     api.get('/companies', { params: { for_module: 'crm' } }).then((res) => {
@@ -53,7 +377,73 @@ export default function WorkUnifiedOverviewPage() {
     }).catch(() => setCompanies([]));
   }, []);
 
-  useEffect(() => { setPage(1); }, [stageFilter, forecastFilter, companyId]);
+  const effectiveCompanyIdForUsers = useMemo(() => {
+    if (canPickCompany) return companyId || '';
+    const cid = user?.company_id != null ? String(user.company_id).trim() : '';
+    return cid || '';
+  }, [canPickCompany, companyId, user?.company_id]);
+
+  useEffect(() => {
+    if (!effectiveCompanyIdForUsers) { setUsers([]); return; }
+    api.get('/users', { params: { company_id: effectiveCompanyIdForUsers } })
+      .then((r) => setUsers(r.data.users || r.data || []))
+      .catch(() => setUsers([]));
+  }, [effectiveCompanyIdForUsers]);
+
+  useEffect(() => {
+    const params = {};
+    if (effectiveCompanyIdForUsers) {
+      params.company_id = effectiveCompanyIdForUsers;
+    } else if (canPickCompany && companies.length > 0) {
+      params.company_ids = companies.map((c) => c.id).join(',');
+    } else {
+      setRegions([]);
+      return;
+    }
+    api.get('/crm/company-regions', { params })
+      .then((r) => setRegions((Array.isArray(r.data) ? r.data : []).filter((rg) => rg.is_active !== false)))
+      .catch(() => setRegions([]));
+  }, [effectiveCompanyIdForUsers, canPickCompany, companies]);
+
+  useEffect(() => {
+    setFilterUserId('');
+    setFilterRegionId('');
+  }, [effectiveCompanyIdForUsers]);
+
+  /** Debounce ô tìm kiếm 300ms — tránh gọi API/lọc lại toàn bộ danh sách trên mỗi phím gõ (quan trọng khi công ty có hàng nghìn dự án). */
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search.trim()), 300);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  const handleTimePresetChange = (preset) => {
+    setTimePreset(preset);
+    const range = getPresetDateRange(preset);
+    setRangeFrom(range.from);
+    setRangeTo(range.to);
+  };
+
+  const activeFilterCount = [
+    !!filterUserId, !!filterRegionId, !!timePreset, canPickCompany && !!companyId,
+  ].filter(Boolean).length;
+
+  const emptyResultsMessage = useMemo(() => {
+    if (filterRegionId) {
+      const regionName = regions.find((r) => String(r.id) === String(filterRegionId))?.name;
+      return `Không có dự án nào thuộc khu vực${regionName ? ` "${regionName}"` : ' này'}.`;
+    }
+    return 'Không có dự án phù hợp bộ lọc.';
+  }, [filterRegionId, regions]);
+
+  const clearAdvancedFilters = () => {
+    setFilterUserId('');
+    setFilterRegionId('');
+    setTimePreset('');
+    setRangeFrom('');
+    setRangeTo('');
+  };
+
+  useEffect(() => { setPage(1); }, [stageFilter, forecastFilter, companyId, debouncedSearch, filterUserId, filterRegionId, rangeFrom, rangeTo]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -63,6 +453,16 @@ export default function WorkUnifiedOverviewPage() {
       if (stageFilter) params.stage = stageFilter;
       if (forecastFilter !== 'all') params.forecast = forecastFilter;
       if (canPickCompany && companyId) params.company_id = companyId;
+      if (debouncedSearch) params.search = debouncedSearch;
+      if (filterUserId) params.user_id = filterUserId;
+      if (filterRegionId) params.region_id = filterRegionId;
+      if (rangeFrom) params.date_from = rangeFrom;
+      if (rangeTo) params.date_to = rangeTo;
+      // Chỉ phân trang ở view Danh sách — Kanban/Lịch cần đủ tập đã lọc để gom nhóm theo cột/ngày.
+      if (viewMode === 'list') {
+        params.page = page;
+        params.page_size = PAGE_SIZE;
+      }
       const res = await api.get('/management/work-unified', { params });
       setData(res.data);
     } catch (e) {
@@ -70,9 +470,24 @@ export default function WorkUnifiedOverviewPage() {
     } finally {
       setLoading(false);
     }
-  }, [stageFilter, forecastFilter, canPickCompany, companyId]);
+  }, [
+    stageFilter, forecastFilter, canPickCompany, companyId, debouncedSearch,
+    filterUserId, filterRegionId, rangeFrom, rangeTo, viewMode, page,
+  ]);
 
   useEffect(() => { load(); }, [load]);
+
+  /**
+   * Có dữ liệu mới (đổi filter/trang/company/view...) và có kết quả → tự cuộn tới khung
+   * kết quả để người dùng thấy ngay, không phải tự cuộn tay. Bỏ qua lần tải đầu (mount).
+   */
+  useEffect(() => {
+    if (!data) return;
+    if (!pageMountedRef.current) { pageMountedRef.current = true; return; }
+    if ((data.items || []).length > 0) {
+      resultsCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [data]);
 
   const companyName = useMemo(() => {
     if (canPickCompany) {
@@ -83,37 +498,253 @@ export default function WorkUnifiedOverviewPage() {
   }, [canPickCompany, companyId, companies, user?.company_id]);
 
   const stages = data?.stages || [];
+  // Ở view Danh sách, backend đã trả đúng 1 trang (page/page_size) + total của toàn bộ tập đã lọc.
+  // Ở Kanban/Lịch, backend trả đủ tập đã lọc (không phân trang) để gom nhóm theo cột/ngày.
   const items = data?.items || [];
   const stats = data?.stats || { total: 0, on_track: 0, at_risk: 0, late: 0 };
-  const totalPages = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
+  const totalFiltered = data?.total ?? items.length;
+  const totalPages = Math.max(1, Math.ceil(totalFiltered / PAGE_SIZE));
   const pageStart = (page - 1) * PAGE_SIZE;
-  const pageItems = items.slice(pageStart, pageStart + PAGE_SIZE);
+  const pageItems = items;
+
+  const kanbanColumns = useMemo(() => {
+    const bySlug = new Map();
+    stages.forEach((s, i) => {
+      bySlug.set(s.slug, { slug: s.slug, label: s.label, color: KANBAN_COLORS[i % KANBAN_COLORS.length], items: [] });
+    });
+    const unassigned = { slug: '__none', label: 'Chưa xác định', color: '#9ca3af', items: [] };
+    items.forEach((it) => {
+      const col = it.current_stage_slug && bySlug.get(it.current_stage_slug);
+      if (col) col.items.push(it);
+      else unassigned.items.push(it);
+    });
+    const cols = Array.from(bySlug.values());
+    if (unassigned.items.length) cols.push(unassigned);
+    return cols;
+  }, [stages, items]);
+
+  /**
+   * Đang tìm kiếm ở view Kanban → dự án khớp có thể nằm ở cột đã cuộn khuất bên phải.
+   * Tự cuộn ngang bảng Kanban tới cột đầu tiên có kết quả để người dùng thấy ngay.
+   */
+  useEffect(() => {
+    if (viewMode !== 'kanban' || !debouncedSearch) return;
+    const target = kanbanColumns.find((c) => c.items.length > 0);
+    if (!target || !kanbanBoardRef.current) return;
+    const raf = requestAnimationFrame(() => {
+      const el = kanbanBoardRef.current?.querySelector(`[data-col-slug="${window.CSS?.escape ? CSS.escape(target.slug) : target.slug}"]`);
+      el?.scrollIntoView({ behavior: 'smooth', inline: 'start', block: 'nearest' });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [viewMode, debouncedSearch, kanbanColumns]);
+
+  const calendarEventsByDay = useMemo(() => {
+    const map = new Map();
+    const dayKey = (raw) => {
+      if (!raw) return null;
+      const s = String(raw);
+      return s.length >= 10 ? s.substring(0, 10) : null;
+    };
+    const todayStr = dayKey(new Date().toISOString());
+    items.forEach((it) => {
+      const modules = [it.has_crm && 'CRM', it.has_sx && 'SX', it.has_vc && 'VC'].filter(Boolean);
+      const person = it.person1_name || it.person2_name || null;
+      const addEvent = (kind, label, at, tone) => {
+        const dateStr = dayKey(at);
+        if (!dateStr) return;
+        if (!map.has(dateStr)) map.set(dateStr, []);
+        map.get(dateStr).push({
+          id: `${it.id}-${kind}`,
+          itemId: it.id,
+          code: it.code,
+          name: it.name,
+          label,
+          modules,
+          person,
+          dealCode: it.deal_code,
+          customerName: it.customer_name,
+          customerPhone: it.customer_phone,
+          stageLabel: it.current_stage_label,
+          tone,
+          overdue: dateStr < todayStr,
+        });
+      };
+      if (calendarMode === 'sx') {
+        addEvent('deadline', 'Hạn SX', it.production_deadline, 'deadline');
+      } else {
+        addEvent('delivery', 'Giao', it.delivery_date, 'delivery');
+        addEvent('install', 'Lắp', it.install_date, 'install');
+      }
+    });
+    const order = { deadline: 0, delivery: 1, install: 2 };
+    map.forEach((list) => list.sort((a, b) => (order[a.tone] ?? 9) - (order[b.tone] ?? 9)));
+    return map;
+  }, [items, calendarMode]);
+
+  const calendarWeeks = useMemo(() => {
+    const y = calMonth.getFullYear();
+    const m = calMonth.getMonth();
+    const firstDay = new Date(y, m, 1).getDay();
+    const daysInMonth = new Date(y, m + 1, 0).getDate();
+    const weeks = [];
+    let week = new Array(firstDay).fill(null);
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dateStr = `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+      week.push({ day: d, date: dateStr });
+      if (week.length === 7) { weeks.push(week); week = []; }
+    }
+    if (week.length > 0) { while (week.length < 7) week.push(null); weeks.push(week); }
+    return weeks;
+  }, [calMonth]);
+
+  const calendarToneClass = (ev) => {
+    if (ev.overdue) return 'bg-red-50 text-red-700 border-red-200';
+    if (ev.tone === 'deadline') return 'bg-green-50 text-green-700 border-green-200';
+    if (ev.tone === 'delivery') return 'bg-yellow-50 text-yellow-700 border-yellow-200';
+    if (ev.tone === 'install') return 'bg-purple-50 text-purple-700 border-purple-200';
+    return 'bg-blue-50 text-blue-700 border-blue-200';
+  };
+
+  const todayDateStr = new Date().toISOString().substring(0, 10);
+
+  const applySelectedDay = (d) => {
+    if (!d) return;
+    const y = d.getFullYear();
+    const m = d.getMonth();
+    const day = d.getDate();
+    const dateStr = `${y}-${String(m + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    setSelectedDay(dateStr);
+    setCalMonth((cm) => (cm.getFullYear() === y && cm.getMonth() === m) ? cm : new Date(y, m, 1));
+  };
+  const shiftSelectedDay = (delta) => {
+    const base = parseDateStr(selectedDay || todayDateStr);
+    if (!base) return;
+    base.setDate(base.getDate() + delta);
+    applySelectedDay(base);
+  };
+  const pickSelectedDay = (dateStr) => applySelectedDay(parseDateStr(dateStr));
 
   return (
     <div className="p-4 md:p-6 max-w-6xl mx-auto space-y-6">
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <div>
-          <h1 className="text-xl font-bold" style={{ color: '#111827' }}>Work Unified</h1>
-          <p className="text-sm mt-0.5" style={{ color: '#6b7280' }}>
-            Danh sách toàn bộ dự án của {companyName}, xuyên suốt từ lúc chốt khách hàng đến khi bàn giao
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          {canPickCompany && companies.length > 0 && (
-            <div className="relative">
-              <Building2 className="h-4 w-4 text-gray-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-              <select
-                value={companyId}
-                onChange={(e) => setCompanyId(e.target.value)}
-                className="h-9 pl-8 pr-3 rounded-lg border border-gray-200 bg-white text-sm font-medium text-gray-700 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-300"
-              >
-                <option value="">Tất cả công ty</option>
-                {companies.map((c) => (
-                  <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
-                ))}
-              </select>
-            </div>
-          )}
+      <div>
+        <h1 className="text-xl font-bold" style={{ color: '#111827' }}>Work Unified</h1>
+        <p className="text-sm mt-0.5" style={{ color: '#6b7280' }}>
+          Danh sách toàn bộ dự án của {companyName}, xuyên suốt từ lúc chốt khách hàng đến khi bàn giao
+        </p>
+      </div>
+
+      <div className="sticky top-14 z-30 flex items-center justify-between flex-wrap gap-2 rounded-xl border border-gray-100 bg-white px-3 py-2.5 shadow-sm">
+        <div className="relative">
+            <Search className="h-4 w-4 text-gray-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Tìm mã, tên dự án, khách hàng, deal..."
+              className="h-9 w-52 sm:w-72 pl-8 pr-9 rounded-lg border border-gray-200 bg-white text-sm text-gray-700 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-300"
+            />
+            <button
+              type="button"
+              onClick={() => setFilterPanelOpen((v) => !v)}
+              title="Bộ lọc nâng cao"
+              className={`absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7 rounded-md flex items-center justify-center cursor-pointer ${
+                activeFilterCount > 0 ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-100'
+              }`}
+            >
+              <SlidersHorizontal className="h-3.5 w-3.5" />
+              {activeFilterCount > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 h-3.5 w-3.5 rounded-full bg-red-500 text-white text-[8px] font-bold flex items-center justify-center leading-none">
+                  {activeFilterCount}
+                </span>
+              )}
+            </button>
+
+            {filterPanelOpen && (
+              <>
+                <div className="fixed inset-0 z-30" onClick={() => setFilterPanelOpen(false)} />
+                <div className="absolute right-0 top-full mt-2 z-40 w-72 rounded-xl border border-gray-200 bg-white shadow-lg p-3 space-y-3">
+                  {canPickCompany && companies.length > 0 && (
+                    <div>
+                      <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1 flex items-center gap-1">
+                        <Building2 className="h-3 w-3" /> Công ty
+                      </label>
+                      <select
+                        value={companyId}
+                        onChange={(e) => setCompanyId(e.target.value)}
+                        className="w-full h-8 px-2 rounded-md border border-gray-200 text-xs text-gray-700 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-200"
+                      >
+                        <option value="">Tất cả công ty</option>
+                        {companies.map((c) => (
+                          <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                  <div>
+                    <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1 flex items-center gap-1">
+                      <User className="h-3 w-3" /> Nhân viên
+                    </label>
+                    <select
+                      value={filterUserId}
+                      onChange={(e) => setFilterUserId(e.target.value)}
+                      disabled={!users.length}
+                      className="w-full h-8 px-2 rounded-md border border-gray-200 text-xs text-gray-700 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <option value="">Tất cả nhân viên</option>
+                      {users.map((u) => (
+                        <option key={u.id} value={u.id}>{u.full_name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1 flex items-center gap-1">
+                      <MapPin className="h-3 w-3" /> Khu vực
+                    </label>
+                    <select
+                      value={filterRegionId}
+                      onChange={(e) => setFilterRegionId(e.target.value)}
+                      disabled={!regions.length}
+                      className="w-full h-8 px-2 rounded-md border border-gray-200 text-xs text-gray-700 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <option value="">Tất cả khu vực</option>
+                      {regions.map((rg) => (
+                        <option key={rg.id} value={rg.id}>{rg.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1 flex items-center gap-1">
+                      <Clock className="h-3 w-3" /> Thời gian (hạn bàn giao)
+                    </label>
+                    <div className="flex flex-wrap gap-1">
+                      {TIME_PRESETS.map((t) => (
+                        <button
+                          key={t.key}
+                          type="button"
+                          onClick={() => handleTimePresetChange(t.key)}
+                          className={`text-[11px] font-medium px-2 py-1 rounded-md cursor-pointer transition-colors ${
+                            timePreset === t.key ? 'bg-blue-600 text-white' : 'bg-gray-50 text-gray-600 hover:bg-gray-100'
+                          }`}
+                        >
+                          {t.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  {activeFilterCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={clearAdvancedFilters}
+                      className="w-full text-xs font-medium text-red-600 hover:bg-red-50 rounded-md py-1.5 cursor-pointer"
+                    >
+                      Xóa bộ lọc
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={load}
@@ -130,7 +761,7 @@ export default function WorkUnifiedOverviewPage() {
             <Plus className="h-4 w-4" />
             Tạo dự án
           </Link>
-        </div>
+          </div>
       </div>
 
       {error && (
@@ -206,22 +837,234 @@ export default function WorkUnifiedOverviewPage() {
         </div>
       </div>
 
-      <div className="rounded-xl border border-gray-100 bg-white shadow-sm overflow-hidden">
-        <div className="flex items-center gap-1 p-2 border-b border-gray-100 overflow-x-auto">
-          {FORECAST_TABS.map((t) => (
+      <div ref={resultsCardRef} className="rounded-xl border border-gray-100 bg-white shadow-sm overflow-hidden">
+        <div className="flex items-center justify-between gap-2 p-2 border-b border-gray-100 flex-wrap">
+          <div className="flex items-center gap-1 overflow-x-auto">
+            {FORECAST_TABS.map((t) => (
+              <button
+                key={t.key}
+                type="button"
+                onClick={() => setForecastFilter(t.key)}
+                className={`shrink-0 text-sm font-medium px-3 py-1.5 rounded-lg cursor-pointer transition-colors ${
+                  forecastFilter === t.key ? 'bg-emerald-600 text-white' : 'text-gray-600 hover:bg-gray-50'
+                }`}
+              >
+                {t.label} · {t.key === 'all' ? stats.total : stats[t.key] || 0}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center gap-1 shrink-0 rounded-lg border border-gray-200 p-0.5">
             <button
-              key={t.key}
               type="button"
-              onClick={() => setForecastFilter(t.key)}
-              className={`shrink-0 text-sm font-medium px-3 py-1.5 rounded-lg cursor-pointer transition-colors ${
-                forecastFilter === t.key ? 'bg-emerald-600 text-white' : 'text-gray-600 hover:bg-gray-50'
+              onClick={() => setViewMode('list')}
+              title="Xem dạng danh sách"
+              className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-md cursor-pointer transition-colors ${
+                viewMode === 'list' ? 'bg-gray-800 text-white' : 'text-gray-500 hover:bg-gray-50'
               }`}
             >
-              {t.label} · {t.key === 'all' ? stats.total : stats[t.key] || 0}
+              <List className="h-3.5 w-3.5" />
+              Danh sách
             </button>
-          ))}
+            <button
+              type="button"
+              onClick={() => setViewMode('kanban')}
+              title="Xem dạng Kanban"
+              className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-md cursor-pointer transition-colors ${
+                viewMode === 'kanban' ? 'bg-gray-800 text-white' : 'text-gray-500 hover:bg-gray-50'
+              }`}
+            >
+              <LayoutGrid className="h-3.5 w-3.5" />
+              Kanban
+            </button>
+            <div className="relative group">
+              <button
+                type="button"
+                onClick={() => setViewMode('calendar')}
+                title="Xem dạng Lịch — hover để chọn Lịch SX / VC-LĐ"
+                className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-md cursor-pointer transition-colors ${
+                  viewMode === 'calendar'
+                    ? calendarMode === 'sx' ? 'bg-green-600 text-white' : 'bg-purple-600 text-white'
+                    : 'text-gray-500 hover:bg-gray-50'
+                }`}
+              >
+                <Calendar className="h-3.5 w-3.5" />
+                {viewMode === 'calendar' ? (calendarMode === 'sx' ? 'Lịch SX' : 'Lịch VC-LĐ') : 'Lịch'}
+              </button>
+              {/* pt-1 (không phải mt-1) để vùng đệm vẫn nằm trong hitbox hover — tránh mất hover khi rê chuột xuống */}
+              <div className="hidden group-hover:block absolute right-0 top-full pt-1 z-20 min-w-[140px]">
+                <div className="flex flex-col gap-0.5 p-1 rounded-lg border border-gray-200 bg-white shadow-lg">
+                  <button
+                    type="button"
+                    onClick={() => { setViewMode('calendar'); setCalendarMode('sx'); }}
+                    className={`text-left text-xs font-medium px-2.5 py-1.5 rounded-md cursor-pointer transition-colors ${
+                      viewMode === 'calendar' && calendarMode === 'sx' ? 'bg-green-600 text-white' : 'text-gray-600 hover:bg-gray-50'
+                    }`}
+                  >
+                    Lịch SX
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setViewMode('calendar'); setCalendarMode('vc'); }}
+                    className={`text-left text-xs font-medium px-2.5 py-1.5 rounded-md cursor-pointer transition-colors ${
+                      viewMode === 'calendar' && calendarMode === 'vc' ? 'bg-purple-600 text-white' : 'text-gray-600 hover:bg-gray-50'
+                    }`}
+                  >
+                    Lịch VC-LĐ
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
 
+        {viewMode === 'calendar' ? (
+          <div className="p-4">
+            <div className="flex items-center justify-between mb-4 gap-2 flex-wrap">
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setCalMonth((d) => new Date(d.getFullYear(), d.getMonth() - 1, 1))}
+                  className="p-2 hover:bg-gray-100 rounded-lg cursor-pointer"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </button>
+                <h3 className="text-base font-bold text-gray-900">
+                  {(() => {
+                    const label = calMonth.toLocaleDateString('vi-VN', { month: 'long', year: 'numeric' });
+                    return label.charAt(0).toUpperCase() + label.slice(1);
+                  })()}
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setCalMonth((d) => new Date(d.getFullYear(), d.getMonth() + 1, 1))}
+                  className="p-2 hover:bg-gray-100 rounded-lg cursor-pointer"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </button>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowCalendarGrid((v) => !v)}
+                className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-md border border-gray-200 text-gray-600 hover:bg-gray-50 cursor-pointer"
+              >
+                {showCalendarGrid ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                {showCalendarGrid ? 'Ẩn' : 'Hiện'}
+              </button>
+            </div>
+
+            {loading ? (
+              <div className="px-4 py-8 text-center text-gray-400 text-sm">Đang tải...</div>
+            ) : (
+              <>
+                {showCalendarGrid && (
+                  <>
+                    <div className="grid grid-cols-7 gap-px bg-gray-200 rounded-t-lg overflow-hidden">
+                      {['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'].map((d) => (
+                        <div key={d} className="bg-gray-50 p-2 text-center text-xs font-bold text-gray-500">{d}</div>
+                      ))}
+                    </div>
+                    <div className="grid grid-cols-7 gap-px bg-gray-200 rounded-b-lg overflow-hidden">
+                      {calendarWeeks.flat().map((cell, i) => {
+                        if (!cell) return <div key={i} className="bg-gray-50 min-h-[110px]" />;
+                        const isToday = cell.date === todayDateStr;
+                        const isSelected = cell.date === selectedDay;
+                        const events = calendarEventsByDay.get(cell.date) || [];
+                        const MAX_SHOW = 3;
+                        const shown = events.slice(0, MAX_SHOW);
+                        const more = events.length - shown.length;
+                        return (
+                          <div
+                            key={i}
+                            onClick={() => setSelectedDay(cell.date)}
+                            className={`bg-white p-1.5 min-h-[110px] flex flex-col cursor-pointer transition-colors hover:bg-gray-50/80 ${
+                              isSelected ? 'ring-2 ring-inset ring-violet-500 bg-violet-50/40' : isToday ? 'ring-2 ring-inset ring-blue-400' : ''
+                            }`}
+                          >
+                            <div className={`text-[11px] font-semibold mb-1 ${isToday ? 'text-blue-600 font-bold bg-blue-100 rounded-full w-6 h-6 flex items-center justify-center' : 'text-gray-500'}`}>
+                              {cell.day}
+                            </div>
+                            <div className="space-y-1 flex-1">
+                              {shown.map((ev) => (
+                                <Link
+                                  key={ev.id}
+                                  to={`/management/work-unified/${ev.itemId}`}
+                                  className={`block rounded-md border px-1 py-0.5 hover:brightness-95 transition-[filter] ${calendarToneClass(ev)}`}
+                                  title={[ev.code, ev.name, ev.label, ev.stageLabel, ev.modules.join(' · '), ev.person].filter(Boolean).join(' — ')}
+                                >
+                                  <div className="flex items-center justify-between gap-0.5">
+                                    <span className="text-[9px] font-extrabold font-mono truncate">{ev.code}</span>
+                                    <span className="text-[8px] font-bold uppercase opacity-90 shrink-0">{ev.label}</span>
+                                  </div>
+                                  <p className="text-[9px] font-semibold leading-tight line-clamp-2 opacity-95">{ev.name}</p>
+                                  {ev.modules.length > 0 && (
+                                    <div className="flex items-center gap-0.5 mt-0.5 flex-wrap">
+                                      {ev.modules.map((m) => (
+                                        <span
+                                          key={m}
+                                          className={`text-[7px] font-extrabold px-0.5 rounded ${
+                                            m === 'CRM' ? 'bg-emerald-100 text-emerald-800' : m === 'SX' ? 'bg-orange-100 text-orange-800' : 'bg-amber-100 text-amber-900'
+                                          }`}
+                                        >
+                                          {m}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  )}
+                                </Link>
+                              ))}
+                              {more > 0 && (
+                                <div className="text-[9px] text-center font-semibold text-slate-500 bg-slate-50 rounded border border-slate-200 py-0.5">
+                                  +{more} mốc nữa
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-3 mt-3 text-[10px] text-gray-600">
+                      {calendarMode === 'sx' ? (
+                        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-green-500 inline-block" /> Hạn SX</span>
+                      ) : (
+                        <>
+                          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-yellow-500 inline-block" /> Giao</span>
+                          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-purple-500 inline-block" /> Lắp</span>
+                        </>
+                      )}
+                      <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-red-500 inline-block" /> Quá hạn</span>
+                      <span className="text-slate-400">Click 1 ngày để xem chi tiết bên dưới · click thẻ để mở dự án</span>
+                    </div>
+                  </>
+                )}
+
+                <CalendarDayFeed
+                  activeDay={selectedDay || todayDateStr}
+                  isExplicitSelection={!!selectedDay}
+                  events={calendarEventsByDay.get(selectedDay || todayDateStr) || []}
+                  onClear={() => { setSelectedDay(null); setCalMonth(() => { const t = new Date(); return new Date(t.getFullYear(), t.getMonth(), 1); }); }}
+                  onShiftDay={shiftSelectedDay}
+                  onPickDate={pickSelectedDay}
+                  toneClass={calendarToneClass}
+                />
+              </>
+            )}
+          </div>
+        ) : viewMode === 'kanban' ? (
+          <div className="p-3">
+            {loading ? (
+              <div className="px-4 py-8 text-center text-gray-400 text-sm">Đang tải...</div>
+            ) : items.length === 0 ? (
+              <div className="px-4 py-8 text-center text-gray-400 text-sm">{emptyResultsMessage}</div>
+            ) : (
+              <div ref={kanbanBoardRef} className="flex gap-3 overflow-x-auto pb-2">
+                {kanbanColumns.map((col) => (
+                  <WorkKanbanColumn key={col.slug} col={col} />
+                ))}
+              </div>
+            )}
+          </div>
+        ) : (
+        <>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[960px] text-sm table-fixed">
             <colgroup>
@@ -248,7 +1091,7 @@ export default function WorkUnifiedOverviewPage() {
               {loading ? (
                 <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-400">Đang tải...</td></tr>
               ) : pageItems.length === 0 ? (
-                <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-400">Không có dự án phù hợp bộ lọc.</td></tr>
+                <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-400">{emptyResultsMessage}</td></tr>
               ) : (
                 pageItems.map((it) => (
                   <tr key={it.id} className="border-b border-gray-50 last:border-0 hover:bg-gray-50/60">
@@ -293,11 +1136,11 @@ export default function WorkUnifiedOverviewPage() {
           </table>
         </div>
 
-        {!loading && items.length > 0 && (
+        {!loading && totalFiltered > 0 && (
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-4 py-3 border-t border-gray-100">
             <p className="text-xs text-gray-500">
-              Hiển thị <span className="font-medium text-gray-700">{pageStart + 1}-{Math.min(pageStart + PAGE_SIZE, items.length)}</span> trong tổng số{' '}
-              <span className="font-medium text-gray-700">{items.length}</span> dự án
+              Hiển thị <span className="font-medium text-gray-700">{pageStart + 1}-{Math.min(pageStart + PAGE_SIZE, totalFiltered)}</span> trong tổng số{' '}
+              <span className="font-medium text-gray-700">{totalFiltered}</span> dự án
             </p>
             <div className="flex items-center gap-1.5">
               <button
@@ -323,6 +1166,8 @@ export default function WorkUnifiedOverviewPage() {
               </button>
             </div>
           </div>
+        )}
+        </>
         )}
       </div>
     </div>

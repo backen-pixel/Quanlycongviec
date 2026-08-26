@@ -4,6 +4,8 @@ import api from '../lib/api';
 import ProjectOverviewPanel from '../components/ProjectOverviewPanel';
 import UnifiedTaskRow from '../components/UnifiedTaskRow';
 import WorkTaskExtrasPanel from '../components/WorkTaskExtrasPanel';
+import ProjectSharedWorkspaceTab from '../components/ProjectSharedWorkspaceTab';
+import { LeadMembersTab } from '../components/LeadChatTabs';
 import { CrmLeadCommentsPanel, ProjectCommentsPanel } from '../components/CommentsPanels';
 import { useMessengerDock } from '../context/MessengerDockContext';
 import { useAuth } from '../lib/auth';
@@ -11,12 +13,13 @@ import { FilePreviewOpenLink } from '../context/FilePreviewContext';
 import { getFileDownloadAnchorProps } from '../lib/publicFileUrl';
 import { formatVND, formatDate, formatDateTime } from '../lib/utils';
 import {
-  ChevronRight, AlertTriangle, Shield, Plus, ExternalLink, Download, FileText as FileIcon, ArrowLeft,
-  CheckCircle2, X as XIcon, MessageCircle, Loader2,
+  ChevronRight, ChevronDown, AlertTriangle, Shield, Plus, ExternalLink, Download, FileText as FileIcon, ArrowLeft,
+  CheckCircle2, X as XIcon, MessageCircle, Loader2, Package, Truck,
 } from 'lucide-react';
 
 const SECONDARY_TABS = [
   { key: 'tasks', label: 'Công việc' },
+  { key: 'shared', label: 'Không gian chung' },
   { key: 'progress', label: 'Tiến độ' },
   { key: 'documents', label: 'Tài liệu' },
   { key: 'finance', label: 'Chi phí' },
@@ -24,10 +27,12 @@ const SECONDARY_TABS = [
   { key: 'chat', label: 'Bình luận' },
   { key: 'history', label: 'Lịch sử' },
 ];
+/** Chỉ hiện khi dự án có deal CRM gắn kèm (cần leadId để tải thành viên). */
+const TEAM_TAB = { key: 'team', label: 'Thành viên' };
 
 /** Trang đầy đủ /projects/:id có tab tương ứng — dùng khi cần vào sâu (sửa, upload, tạo mới). */
 const FULL_PAGE_TAB = {
-  tasks: 'aggregate', progress: 'flow', documents: 'documents',
+  tasks: 'aggregate', shared: 'shared', team: 'team', progress: 'flow', documents: 'documents',
   finance: 'finance', acceptance: 'approvals', chat: 'chat', history: 'history',
 };
 
@@ -49,10 +54,51 @@ export function EmptyNote({ children }) {
 
 const DONE_TASK_STATUSES = ['done', 'completed'];
 
+/** Nhóm công việc theo khối — khớp task.task_kind trả về từ /work-tasks/by-project. */
+const TASK_GROUPS = [
+  {
+    key: 'deal',
+    label: 'Deal',
+    icon: FileIcon,
+    match: (k) => k === 'CRM-Deal' || k === 'CRM-Lead' || k === 'Giao việc',
+    accent: 'text-emerald-700',
+    header: 'bg-emerald-50 hover:bg-emerald-100',
+  },
+  {
+    key: 'sx',
+    label: 'Sản xuất',
+    icon: Package,
+    match: (k) => k === 'SX',
+    accent: 'text-orange-700',
+    header: 'bg-orange-50 hover:bg-orange-100',
+  },
+  {
+    key: 'vc',
+    label: 'VC-LĐ',
+    icon: Truck,
+    match: (k) => k === 'VC',
+    accent: 'text-violet-700',
+    header: 'bg-violet-50 hover:bg-violet-100',
+  },
+];
+const OTHER_TASK_GROUP = {
+  key: 'other',
+  label: 'Khác',
+  icon: FileIcon,
+  accent: 'text-gray-700',
+  header: 'bg-gray-50 hover:bg-gray-100',
+};
+
 export function TasksTab({ projectId }) {
   const [state, setState] = useState({ loading: true, error: '', data: null });
   const [savingId, setSavingId] = useState(null);
   const [extrasTask, setExtrasTask] = useState(null);
+  const [openGroups, setOpenGroups] = useState(() => new Set());
+  const toggleGroup = (key) => setOpenGroups((prev) => {
+    const next = new Set(prev);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    return next;
+  });
 
   const load = useCallback(() => {
     setState((prev) => ({ ...prev, loading: true, error: '' }));
@@ -83,6 +129,38 @@ export function TasksTab({ projectId }) {
   const tasks = state.data?.tasks || [];
   const progress = state.data?.progress || { completed: 0, total: 0 };
 
+  const buckets = TASK_GROUPS.map((g) => ({ ...g, tasks: [] }));
+  const other = { ...OTHER_TASK_GROUP, tasks: [] };
+  for (const t of tasks) {
+    const bucket = buckets.find((b) => b.match(t.task_kind));
+    (bucket || other).tasks.push(t);
+  }
+  const groups = (other.tasks.length ? [...buckets, other] : buckets).filter((g) => g.tasks.length > 0);
+
+  const renderTaskRow = (t) => {
+    const isDone = DONE_TASK_STATUSES.includes(String(t.status));
+    return (
+      <div key={t.unified_id} className={`relative rounded-xl ${isDone ? 'ring-1 ring-emerald-200' : ''}`}>
+        {isDone && (
+          <span
+            title="Đã hoàn thành"
+            className="absolute -left-1.5 -top-1.5 z-10 h-5 w-5 rounded-full bg-white flex items-center justify-center"
+          >
+            <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+          </span>
+        )}
+        <div className={savingId === t.unified_id ? 'opacity-50 pointer-events-none' : ''}>
+          <UnifiedTaskRow
+            task={t}
+            compact
+            onStatusChange={handleStatusChange}
+            onOpenExtras={setExtrasTask}
+          />
+        </div>
+      </div>
+    );
+  };
+
   return (
     <>
       <Section
@@ -93,26 +171,32 @@ export function TasksTab({ projectId }) {
           <EmptyNote>Chưa có công việc nào gắn với dự án này.</EmptyNote>
         ) : (
           <div className="space-y-2">
-            {tasks.map((t) => {
-              const isDone = DONE_TASK_STATUSES.includes(String(t.status));
+            {groups.map((g) => {
+              const isOpen = openGroups.has(g.key);
+              const doneCount = g.tasks.filter((t) => DONE_TASK_STATUSES.includes(String(t.status))).length;
+              const Icon = g.icon;
               return (
-                <div key={t.unified_id} className={`relative rounded-xl ${isDone ? 'ring-1 ring-emerald-200' : ''}`}>
-                  {isDone && (
-                    <span
-                      title="Đã hoàn thành"
-                      className="absolute -left-1.5 -top-1.5 z-10 h-5 w-5 rounded-full bg-white flex items-center justify-center"
-                    >
-                      <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+                <div key={g.key} className="rounded-xl border border-gray-100 overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => toggleGroup(g.key)}
+                    className={`w-full flex items-center justify-between gap-2 px-3 py-2.5 transition-colors cursor-pointer ${g.header}`}
+                  >
+                    <span className={`flex items-center gap-2 text-sm font-bold ${g.accent}`}>
+                      <Icon className="h-4 w-4" />
+                      {g.label}
+                      <span className="text-[11px] font-medium text-gray-500">({g.tasks.length})</span>
                     </span>
+                    <span className="flex items-center gap-2 shrink-0">
+                      <span className="text-[11px] text-gray-500 whitespace-nowrap">{doneCount}/{g.tasks.length} hoàn thành</span>
+                      <ChevronDown className={`h-4 w-4 text-gray-400 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+                    </span>
+                  </button>
+                  {isOpen && (
+                    <div className="p-2 space-y-2 bg-white border-t border-gray-100">
+                      {g.tasks.map(renderTaskRow)}
+                    </div>
                   )}
-                  <div className={savingId === t.unified_id ? 'opacity-50 pointer-events-none' : ''}>
-                    <UnifiedTaskRow
-                      task={t}
-                      compact
-                      onStatusChange={handleStatusChange}
-                      onOpenExtras={setExtrasTask}
-                    />
-                  </div>
                 </div>
               );
             })}
@@ -431,6 +515,8 @@ export default function WorkUnifiedProjectDetailPage() {
   const [error, setError] = useState('');
   const [activeTab, setActiveTab] = useState('overview');
   const [messagingId, setMessagingId] = useState(null);
+  const [companyUsers, setCompanyUsers] = useState([]);
+  const [commentCount, setCommentCount] = useState(0);
 
   const startDirectChat = async (peerUser) => {
     const peerId = peerUser?.id;
@@ -471,6 +557,30 @@ export default function WorkUnifiedProjectDetailPage() {
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => { setActiveTab('overview'); }, [id]);
+
+  const bundleCompanyId = bundle?.project?.company_id || null;
+  useEffect(() => {
+    if (!bundleCompanyId) { setCompanyUsers([]); return; }
+    api.get('/users', { params: { company_id: bundleCompanyId } })
+      .then((r) => setCompanyUsers(r.data.users || r.data || []))
+      .catch(() => setCompanyUsers([]));
+  }, [bundleCompanyId]);
+
+  const bundleLeadId = bundle?.primary_lead?.id || bundle?.lead_id || null;
+  useEffect(() => {
+    if (bundleLeadId) {
+      api.get(`/crm/leads/${bundleLeadId}/comments`)
+        .then((cr) => {
+          const rows = Array.isArray(cr.data) ? cr.data : (cr.data?.comments || []);
+          setCommentCount(rows.length);
+        })
+        .catch(() => {});
+    } else if (id) {
+      api.get(`/projects/${id}/comments`)
+        .then((cr) => setCommentCount((cr.data?.comments || []).length))
+        .catch(() => setCommentCount(0));
+    }
+  }, [bundleLeadId, id]);
 
   if (loading) {
     return <div className="p-6 text-center text-gray-400 text-sm">Đang tải...</div>;
@@ -581,22 +691,50 @@ export default function WorkUnifiedProjectDetailPage() {
         >
           Tổng quan
         </button>
-        {SECONDARY_TABS.map((t) => (
+        {SECONDARY_TABS.flatMap((t) => (
+          t.key === 'shared' && effectiveLeadId ? [t, TEAM_TAB] : [t]
+        )).map((t) => (
           <button
             key={t.key}
             type="button"
             onClick={() => setActiveTab(t.key)}
-            className={`shrink-0 text-sm font-medium px-3 py-2 -mb-px cursor-pointer ${
+            className={`shrink-0 inline-flex items-center gap-1.5 text-sm font-medium px-3 py-2 -mb-px cursor-pointer ${
               activeTab === t.key ? 'font-semibold text-blue-700 border-b-2 border-blue-600' : 'text-gray-500 hover:text-gray-700'
             }`}
           >
             {t.label}
+            {t.key === 'chat' && commentCount > 0 && (
+              <span className="inline-flex items-center justify-center min-w-[1.15rem] h-[1.15rem] px-1 rounded-full bg-red-600 text-white text-[10px] font-bold leading-none shadow-sm ring-1 ring-white">
+                {commentCount > 99 ? '99+' : commentCount}
+              </span>
+            )}
           </button>
         ))}
       </div>
 
-      {activeTab === 'overview' && <ProjectOverviewPanel overview={overview} />}
+      {activeTab === 'overview' && (
+        <ProjectOverviewPanel
+          overview={overview}
+          onOpenTasks={() => setActiveTab('tasks')}
+          fullPageHref={`/projects/${id}?tab=overview`}
+        />
+      )}
       {activeTab === 'tasks' && <TasksTab projectId={id} />}
+      {activeTab === 'shared' && (
+        <ProjectSharedWorkspaceTab
+          projectId={id}
+          project={project}
+          dealBundle={bundle}
+          users={companyUsers}
+          onReload={load}
+        />
+      )}
+      {activeTab === 'team' && effectiveLeadId && (
+        <LeadMembersTab
+          leadId={effectiveLeadId}
+          onOpenSharedWorkspace={() => setActiveTab('shared')}
+        />
+      )}
       {activeTab === 'progress' && <ProgressTab projectId={id} flow={overview.flow} />}
       {activeTab === 'documents' && <DocumentsTab projectId={id} leadId={effectiveLeadId} />}
       {activeTab === 'finance' && <FinanceTab projectId={id} />}
@@ -604,20 +742,22 @@ export default function WorkUnifiedProjectDetailPage() {
       {activeTab === 'chat' && (
         <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
           {effectiveLeadId ? (
-            <CrmLeadCommentsPanel leadId={effectiveLeadId} forModule="projects" />
+            <CrmLeadCommentsPanel leadId={effectiveLeadId} forModule="projects" onCountChange={setCommentCount} />
           ) : (
-            <ProjectCommentsPanel projectId={id} />
+            <ProjectCommentsPanel projectId={id} onCountChange={setCommentCount} />
           )}
         </div>
       )}
       {activeTab === 'history' && <HistoryTab projectId={id} />}
 
-      <p className="text-xs text-gray-400 text-right pt-1">
-        <Link to={`/projects/${id}?tab=${FULL_PAGE_TAB[activeTab] || 'overview'}`} className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-800">
-          Mở trang dự án đầy đủ (CRM · Sản xuất · Vận chuyển)
-          <ExternalLink className="h-3 w-3" />
-        </Link>
-      </p>
+      {activeTab !== 'overview' && (
+        <p className="text-xs text-gray-400 text-right pt-1">
+          <Link to={`/projects/${id}?tab=${FULL_PAGE_TAB[activeTab] || 'overview'}`} className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-800">
+            Mở trang dự án đầy đủ (CRM · Sản xuất · Vận chuyển)
+            <ExternalLink className="h-3 w-3" />
+          </Link>
+        </p>
+      )}
     </div>
   );
 }
