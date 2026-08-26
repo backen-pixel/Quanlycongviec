@@ -296,6 +296,9 @@ const ACTIVITY_TYPES = [
   { value: 'quote_sent', label: 'Gửi báo giá', icon: '💰', color: 'bg-emerald-100 text-emerald-700' },
 ];
 
+/** Loại hệ thống tự sinh (vd chuyển cột xưởng) — không cho chọn tay, chỉ dùng để hiện icon. */
+const SYSTEM_ACTIVITY_TYPE = { value: 'system', label: 'Hệ thống', icon: '🔄', color: 'bg-teal-100 text-teal-700' };
+
 export default function LeadDetail() {
   const { id } = useParams();
   const productTour = useProductTour();
@@ -4863,7 +4866,7 @@ export default function LeadDetail() {
                         <div className="relative">
                           <div className="absolute left-5 top-0 bottom-0 w-0.5 bg-gradient-to-b from-blue-300 to-blue-100" />
                           {activities.map((act) => {
-                            const typeInfo = ACTIVITY_TYPES.find(t => t.value === act.type) || ACTIVITY_TYPES[4];
+                            const typeInfo = (act.type === 'system' ? SYSTEM_ACTIVITY_TYPE : ACTIVITY_TYPES.find(t => t.value === act.type)) || ACTIVITY_TYPES[4];
                             return (
                               <div key={act.id} className="p-3 bg-gray-50 rounded-lg border relative z-10 ml-4 mb-2">
                                 <div className="absolute -left-5 top-4 w-3 h-3 bg-blue-600 rounded-full border-2 border-white" />

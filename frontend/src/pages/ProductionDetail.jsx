@@ -200,6 +200,7 @@ const ACTIVITY_TYPES = [
   { value: 'zalo', label: 'Zalo', icon: '💬', color: 'bg-blue-100 text-blue-700' },
   { value: 'note', label: 'Ghi chú', icon: '📝', color: 'bg-gray-100 text-gray-700' },
   { value: 'quote_sent', label: 'Gửi báo giá', icon: '💰', color: 'bg-emerald-100 text-emerald-700' },
+  { value: 'system', label: 'Hệ thống', icon: '🔄', color: 'bg-teal-100 text-teal-700' },
 ];
 
 const ACTIVITY_FORM_TYPES = ACTIVITY_TYPES.filter((t) =>

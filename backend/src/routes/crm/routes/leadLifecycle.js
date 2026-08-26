@@ -3189,7 +3189,58 @@ r.get('/leads/:id/activities', async (req, res) => {
     .select('*, creator:users!crm_activities_created_by_fkey(id, full_name)')
     .eq('lead_id', req.params.id)
     .order('activity_date', { ascending: false });
-  res.json(data || []);
+  let list = data || [];
+
+  // Ghép lịch sử chuyển cột SX/VC (stage_transitions) làm hoạt động hệ thống — tự động đánh dấu
+  // «đã chia sẻ xưởng» để tab Hoạt động bên SX/VC hiện được các mốc chuyển cột, giống cách CRM
+  // tự ghi log khi đổi giai đoạn. Trước đây bảng stage_transitions có ghi nhận nhưng không nơi
+  // nào trên UI đọc tới, nên xưởng luôn thấy tab Hoạt động trống dù deal vẫn di chuyển bình thường.
+  try {
+    const { data: lead } = await supabase
+      .from('crm_leads')
+      .select('project_id')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (lead?.project_id) {
+      const { data: transitions } = await supabase
+        .from('stage_transitions')
+        .select(`
+          id, notes, created_at,
+          from_stage:workflow_stages!stage_transitions_from_stage_id_fkey(id, name),
+          to_stage:workflow_stages!stage_transitions_to_stage_id_fkey(id, name)
+        `)
+        .eq('project_id', lead.project_id)
+        .order('created_at', { ascending: false })
+        .limit(200);
+      const sysActivities = (transitions || []).map((t) => {
+        const fromName = t.from_stage?.name || null;
+        const toName = t.to_stage?.name || null;
+        let title;
+        if (fromName && toName) title = `🔄 Chuyển cột: ${fromName} → ${toName}`;
+        else if (toName) title = `🔄 Vào cột: ${toName}`;
+        else if (fromName) title = `🔄 Rời cột: ${fromName}`;
+        else title = '🔄 Cập nhật quy trình xưởng';
+        return {
+          id: `st_${t.id}`,
+          lead_id: req.params.id,
+          type: 'system',
+          title,
+          description: t.notes || null,
+          activity_date: t.created_at,
+          created_at: t.created_at,
+          shared_to_workshop: true,
+          system_generated: true,
+        };
+      });
+      list = [...list, ...sysActivities].sort(
+        (a, b) => new Date(b.activity_date) - new Date(a.activity_date),
+      );
+    }
+  } catch (e) {
+    console.warn('[crm/leads/:id/activities] merge stage_transitions:', e.message);
+  }
+
+  res.json(list);
 });
 
 r.post('/leads/:id/activities/upload', crmNoteActivityUpload.single('file'), async (req, res) => {
