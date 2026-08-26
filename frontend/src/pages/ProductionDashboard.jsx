@@ -2225,6 +2225,10 @@ export default function ProductionDashboard() {
   useEffect(() => {
     // Chỉ resolve khi workTypes đã đúng công ty hiện hành — tránh "nhảy" sang loại của công ty cũ.
     if (workTypesCompanyId !== companyForTypes) return;
+    // companyForTypes rỗng chỉ là trạng thái tạm lúc mới mount (localStorage đã khôi phục filterCompany
+    // nhưng `companies` từ API chưa kịp tải) — không xoá filterWorkTypeId đã lưu vì lý do này, kẻo
+    // mất lọc «Phân loại» mỗi lần vào chi tiết dự án rồi quay ra (component remount).
+    if (!companyForTypes) return;
     if (!Array.isArray(workTypes) || workTypes.length === 0) {
       if (filterWorkTypeId && filterWorkTypeId !== 'none') setFilterWorkTypeId('');
       return;
