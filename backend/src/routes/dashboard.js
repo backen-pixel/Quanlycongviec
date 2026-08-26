@@ -957,7 +957,7 @@ r.get('/overview', responseCache({ ttl: 60, scope: 'global', tags: ['dashboard:o
       supabase.from('crm_leads').select('*', { count: 'exact', head: true }).eq('type', 'lead').gte('created_at', thirtyDaysAgo.toISOString()),
       supabase.from('crm_leads').select('*', { count: 'exact', head: true }).eq('type', 'deal').gte('created_at', thirtyDaysAgo.toISOString()),
       supabase.from('crm_leads').select('*', { count: 'exact', head: true }).eq('type', 'deal').not('project_id', 'is', null),
-      supabase.from('crm_leads').select('budget').eq('type', 'deal').is('project_id', null),
+      supabase.from('crm_leads').select('estimated_value').eq('type', 'deal').is('project_id', null),
     ]);
 
     const totalProjects = totalProjectsRes.count;
@@ -1002,7 +1002,7 @@ r.get('/overview', responseCache({ ttl: 60, scope: 'global', tags: ['dashboard:o
     const dealToProjectRate = totalDeals > 0 ? (((wonDeals || 0) / totalDeals) * 100).toFixed(1) : 0;
 
     const dealValues = dealValuesRes.data;
-    const dealPipelineValue = (dealValues || []).reduce((sum, d) => sum + (d.budget || 0), 0);
+    const dealPipelineValue = (dealValues || []).reduce((sum, d) => sum + (d.estimated_value || 0), 0);
 
     res.json({
       projects: {

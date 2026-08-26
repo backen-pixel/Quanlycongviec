@@ -379,6 +379,8 @@ app.use('/api/flows', require('./routes/flows'));
 app.use('/api/company-processes', require('./routes/companyProcesses'));
 app.use('/api/permissions', require('./routes/permissions'));
 app.use('/api/platform', require('./routes/platform'));
+app.use('/api/business-os/customer-care', require('./routes/businessOsCustomerCare'));
+app.use('/api/business-os', require('./routes/businessOs'));
 try { app.use('/api/tenant', require('./routes/tenantUsage')); } catch (e) { console.warn('⚠️ Tenant usage route failed:', e.message); }
 try {
   const { publicRouter: saasPublicRouter, adminRouter: saasAdminRouter } = require('./routes/saasStore');
@@ -1193,6 +1195,13 @@ server.listen(config.port, () => {
 
   // Cron KPI Tủ bếp: recompute hàng đêm 01:00 (disable bằng KPI_CRON_DISABLED=1)
   try { require('./jobs/kpiNightly').start(); } catch (e) { console.warn('[kpi-cron] Failed to start:', e.message); }
+
+  // Business OS: cảnh báo Qualification SLA nội bộ, có dedupe theo process instance.
+  try {
+    require('./jobs/businessOsSlaEscalation').start();
+  } catch (e) {
+    console.warn('[business-os-sla] Failed to start:', e.message);
+  }
 
   // Cron AI User Memory — ~02:30, học thói quen từ user_activity_log → ai_chat_bot_user_facts
   try { require('./jobs/aiUserMemoryNightly').start(); } catch (e) { console.warn('[ai-memory-cron] Failed to start:', e.message); }

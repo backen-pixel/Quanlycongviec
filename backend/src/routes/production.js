@@ -4,7 +4,12 @@ const { auth } = require('../middleware/auth');
 const { requirePermission } = require('../middleware/newPermission');
 const { responseCache, invalidateTags: rcInvalidateTags } = require('../middleware/responseCache');
 const { effectiveWorkshopCompanyId, effectiveDealCompanyId, normalizeWorkshopCompanyId } = require('../helpers/workshopCompanyScope');
-const { isSystemAdmin } = require('../helpers/adminRole');
+const { isSystemAdmin, isAdminLike, isProductionAdmin } = require('../helpers/adminRole');
+const {
+  validateProjectChangePayload,
+  hasApprovalSensitiveChanges,
+  validateProjectChangeOwnerForProject,
+} = require('../helpers/projectChangeRecord');
 const {
   WORKSHOP_STAGE_SLUGS,
   WORKSHOP_STATUSES,
@@ -5021,7 +5026,40 @@ r.post('/projects/:id/tasks/ensure-missing-sx', requirePermission('projects', 'e
   }
 });
 
-// ═══ INCIDENTS (Sự cố xưởng) ═══
+// ═══ PROJECT CHANGES / INCIDENTS (Phát sinh & Thay đổi) ═══
+
+const PROJECT_CHANGE_SELECT = `
+  id, project_id, reported_by, title, description, severity, status, created_at, updated_at,
+  resolved_at, change_type, cause, phase_key, owner_user_id, cost_impact,
+  schedule_impact_days, cost_bearer, requires_approval, approval_status,
+  approval_notes, approved_at, rejected_reason, attachments, related_links,
+  reporter:users!project_incidents_reported_by_fkey(id, full_name, avatar),
+  resolver:users!project_incidents_resolved_by_fkey(id, full_name, avatar),
+  owner:users!project_incidents_owner_user_id_fkey(id, full_name, avatar, department_id),
+  approver:users!project_incidents_approved_by_fkey(id, full_name, avatar)
+`;
+
+function canApproveProjectChange(user) {
+  return isAdminLike(user)
+    || isProductionAdmin(user)
+    || String(user?.role || '').trim().toLowerCase() === 'manager';
+}
+
+async function logProjectChangeActivity(req, action, incidentId, description, oldValues, newValues) {
+  try {
+    await supabase.from('activity_logs').insert({
+      user_id: req.user.userId,
+      action,
+      entity_type: 'project_change',
+      entity_id: incidentId,
+      description,
+      old_values: oldValues || null,
+      new_values: newValues || null,
+    });
+  } catch (error) {
+    console.warn('[project-change] activity log:', error.message);
+  }
+}
 
 r.get('/projects/:id/incidents', requirePermission('projects', 'view'), async (req, res) => {
   try {
@@ -5030,11 +5068,7 @@ r.get('/projects/:id/incidents', requirePermission('projects', 'view'), async (r
     const { id } = req.params;
     const { data, error } = await supabase
       .from('project_incidents')
-      .select(`
-        id, title, description, severity, status, created_at, resolved_at,
-        reporter:users!project_incidents_reported_by_fkey(id, full_name, avatar),
-        resolver:users!project_incidents_resolved_by_fkey(id, full_name, avatar)
-      `)
+      .select(PROJECT_CHANGE_SELECT)
       .eq('project_id', id)
       .order('created_at', { ascending: false });
     if (error) throw error;
@@ -5053,25 +5087,34 @@ r.post('/projects/:id/incidents', requirePermission('projects', 'edit'), async (
     const { assertProjectAccessible } = require('../helpers/projectAccessScope');
     if (!(await assertProjectAccessible(req, res, req.params.id, { operation: 'WRITE' }))) return;
     const { id } = req.params;
-    const { title, description, severity } = req.body;
     const userId = req.user.userId;
-    if (!title?.trim()) return res.status(400).json({ error: 'Thiếu tiêu đề sự cố' });
+    const validated = validateProjectChangePayload(req.body);
+    if (!validated.ok) return res.status(400).json({ error: validated.error });
+    const input = validated.value;
+    const ownerValidation = await validateProjectChangeOwnerForProject(supabase, id, input.owner_user_id);
+    if (!ownerValidation.ok) return res.status(400).json({ error: ownerValidation.error });
+    const approvalStatus = input.requires_approval ? 'pending' : 'not_required';
     const { data, error } = await supabase
       .from('project_incidents')
       .insert({
         project_id: id,
         reported_by: userId,
-        title: title.trim(),
-        description: description || null,
-        severity: severity || 'medium',
+        ...input,
         status: 'open',
+        approval_status: approvalStatus,
       })
-      .select(`
-        id, title, description, severity, status, created_at,
-        reporter:users!project_incidents_reported_by_fkey(id, full_name, avatar)
-      `)
+      .select(PROJECT_CHANGE_SELECT)
       .single();
     if (error) throw error;
+
+    await logProjectChangeActivity(
+      req,
+      'created',
+      data.id,
+      `Tạo phát sinh Project: ${data.title}`,
+      null,
+      data,
+    );
 
     // Notify managers / admin đúng công ty dự án (+ admin hệ thống)
     try {
@@ -5088,8 +5131,8 @@ r.post('/projects/:id/incidents', requirePermission('projects', 'edit'), async (
       if (!DISABLE_PRODUCTION_PUSH_NOTIFICATIONS && recipientIds.length) {
         await notifyM(
           req, recipientIds, 'project_updated',
-          `⚠️ Sự cố: ${title}`,
-          `Dự án ${id} báo sự cố mức ${severity || 'medium'}`,
+          `⚠️ Phát sinh: ${input.title}`,
+          `Dự án ${id} có phát sinh mức ${input.severity}${input.requires_approval ? ' đang chờ duyệt' : ''}`,
           'project', id,
           {
             ecosystem_module_key: 'production',
@@ -5104,8 +5147,8 @@ r.post('/projects/:id/incidents', requirePermission('projects', 'edit'), async (
 
     res.status(201).json({ incident: data });
   } catch (e) {
-    if (e.message?.includes('project_incidents')) {
-      return res.status(503).json({ error: 'Tính năng báo sự cố chưa được kích hoạt. Vui lòng chạy migration 76.' });
+    if (/change_type|owner_user_id|approval_status|attachments|related_links/i.test(String(e.message || ''))) {
+      return res.status(503).json({ error: 'Hồ sơ Phát sinh & Thay đổi chưa được kích hoạt. Vui lòng chạy migration 580.' });
     }
     console.error(e);
     res.status(500).json({ error: e.message });
@@ -5115,23 +5158,127 @@ r.post('/projects/:id/incidents', requirePermission('projects', 'edit'), async (
 r.patch('/projects/:projectId/incidents/:incidentId', requirePermission('projects', 'edit'), async (req, res) => {
   try {
     const { projectId, incidentId } = req.params;
-    const { status, description } = req.body;
+    const { assertProjectAccessible } = require('../helpers/projectAccessScope');
+    if (!(await assertProjectAccessible(req, res, projectId, { operation: 'WRITE' }))) return;
     const userId = req.user.userId;
-    const update = { updated_at: new Date().toISOString() };
-    if (status) update.status = status;
-    if (description !== undefined) update.description = description;
-    if (status === 'resolved' || status === 'closed') {
+
+    const { data: existing, error: existingError } = await supabase
+      .from('project_incidents')
+      .select(PROJECT_CHANGE_SELECT)
+      .eq('id', incidentId)
+      .eq('project_id', projectId)
+      .maybeSingle();
+    if (existingError) throw existingError;
+    if (!existing) return res.status(404).json({ error: 'Không tìm thấy hồ sơ phát sinh' });
+
+    const approvalAction = String(req.body?.approval_action || '').trim().toLowerCase();
+    if (approvalAction) {
+      if (!canApproveProjectChange(req.user)) return res.status(403).json({ error: 'Chỉ quản lý hoặc quản trị Sản xuất được duyệt phát sinh' });
+      if (!existing.requires_approval) return res.status(400).json({ error: 'Hồ sơ này không yêu cầu phê duyệt' });
+      if (!['approve', 'reject'].includes(approvalAction)) return res.status(400).json({ error: 'Hành động phê duyệt không hợp lệ' });
+      const approvalNotes = String(req.body?.approval_notes || '').trim() || null;
+      const rejectedReason = String(req.body?.rejected_reason || '').trim() || null;
+      if (approvalAction === 'reject' && !rejectedReason) return res.status(400).json({ error: 'Nhập lý do từ chối' });
+      const decisionPatch = approvalAction === 'approve'
+        ? {
+          approval_status: 'approved', approval_notes: approvalNotes, approved_by: userId,
+          approved_at: new Date().toISOString(), rejected_reason: null, updated_at: new Date().toISOString(),
+        }
+        : {
+          approval_status: 'rejected', approval_notes: approvalNotes, approved_by: userId,
+          approved_at: new Date().toISOString(), rejected_reason: rejectedReason, updated_at: new Date().toISOString(),
+        };
+      const { data, error } = await supabase
+        .from('project_incidents')
+        .update(decisionPatch)
+        .eq('id', incidentId)
+        .eq('project_id', projectId)
+        .select(PROJECT_CHANGE_SELECT)
+        .single();
+      if (error) throw error;
+      await logProjectChangeActivity(
+        req,
+        approvalAction === 'approve' ? 'approved' : 'rejected',
+        incidentId,
+        `${approvalAction === 'approve' ? 'Duyệt' : 'Từ chối'} phát sinh: ${existing.title}`,
+        { approval_status: existing.approval_status },
+        decisionPatch,
+      );
+      if (existing.reported_by && existing.reported_by !== userId) {
+        await createNotif(
+          req,
+          existing.reported_by,
+          'project_updated',
+          `${approvalAction === 'approve' ? '✅ Đã duyệt' : '❌ Từ chối'} phát sinh`,
+          existing.title,
+          'project',
+          projectId,
+          { project_id: projectId, project_change_id: incidentId, nav_tab: 'incidents' },
+        );
+      }
+      return res.json({ incident: data });
+    }
+
+    const validated = validateProjectChangePayload(req.body, { partial: true });
+    if (!validated.ok) return res.status(400).json({ error: validated.error });
+    const update = { ...validated.value, updated_at: new Date().toISOString() };
+    if (Object.prototype.hasOwnProperty.call(update, 'owner_user_id')) {
+      const ownerValidation = await validateProjectChangeOwnerForProject(supabase, projectId, update.owner_user_id);
+      if (!ownerValidation.ok) return res.status(400).json({ error: ownerValidation.error });
+    }
+    const nextRequiresApproval = update.requires_approval ?? existing.requires_approval;
+    if (update.requires_approval !== undefined) {
+      if (existing.approval_status === 'approved' && !canApproveProjectChange(req.user)) {
+        return res.status(403).json({ error: 'Hồ sơ đã duyệt chỉ quản lý mới được thay đổi yêu cầu phê duyệt' });
+      }
+      update.approval_status = update.requires_approval
+        ? (existing.approval_status === 'approved' ? 'approved' : 'pending')
+        : 'not_required';
+      if (!update.requires_approval) {
+        update.approved_by = null;
+        update.approved_at = null;
+        update.approval_notes = null;
+        update.rejected_reason = null;
+      }
+    } else if (existing.requires_approval && hasApprovalSensitiveChanges(req.body)) {
+      update.approval_status = 'pending';
+      update.approved_by = null;
+      update.approved_at = null;
+      update.approval_notes = null;
+      update.rejected_reason = null;
+      if (['resolved', 'closed'].includes(existing.status)) {
+        update.status = 'open';
+        update.resolved_at = null;
+        update.resolved_by = null;
+      }
+    }
+    if (['resolved', 'closed'].includes(update.status)) {
+      const approvalStatus = update.approval_status || existing.approval_status;
+      if (nextRequiresApproval && approvalStatus !== 'approved') {
+        return res.status(409).json({ error: 'Phát sinh đang yêu cầu phê duyệt; cần duyệt trước khi đóng hồ sơ' });
+      }
       update.resolved_at = new Date().toISOString();
       update.resolved_by = userId;
+    } else if (update.status && ['open', 'in_progress'].includes(update.status)) {
+      update.resolved_at = null;
+      update.resolved_by = null;
     }
     const { data, error } = await supabase
       .from('project_incidents')
       .update(update)
       .eq('id', incidentId)
       .eq('project_id', projectId)
-      .select('id, title, severity, status, resolved_at')
+      .select(PROJECT_CHANGE_SELECT)
       .single();
     if (error) throw error;
+    await logProjectChangeActivity(
+      req,
+      update.status && update.status !== existing.status ? 'status_changed' : 'updated',
+      incidentId,
+      `Cập nhật phát sinh: ${existing.title}`,
+      existing,
+      update,
+    );
     res.json({ incident: data });
   } catch (e) {
     console.error(e);

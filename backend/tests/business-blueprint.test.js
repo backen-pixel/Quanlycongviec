@@ -1,0 +1,83 @@
+const assert = require('node:assert/strict');
+const {
+  normalizeBlueprintDefinition,
+  validateBlueprintDefinition,
+  buildBlueprintChangePlan,
+  isMissingBlueprintSchema,
+} = require('../src/helpers/businessBlueprint');
+
+const normalized = normalizeBlueprintDefinition({
+  schema_version: 2,
+  modules: [
+    'crm',
+    { key: 'production', enabled: false, config: { mode: 'kanban' } },
+    { key: 'crm', enabled: false },
+    null,
+  ],
+  department_templates: ['sales', 'production', 'sales', '', null],
+  processes: [{ key: 'sales_v1' }],
+});
+
+assert.equal(normalized.schema_version, 2);
+assert.deepEqual(normalized.modules, [
+  { key: 'crm', enabled: true, config: {} },
+  { key: 'production', enabled: false, config: { mode: 'kanban' } },
+]);
+assert.deepEqual(normalized.department_templates, ['sales', 'production']);
+assert.deepEqual(normalized.processes, [{ key: 'sales_v1' }]);
+
+const invalid = validateBlueprintDefinition({
+  modules: [],
+  processes: [{ key: 'sales_v1', name: '', stages: [] }],
+});
+assert.equal(invalid.errors.length, 3);
+
+const valid = validateBlueprintDefinition({
+  modules: ['crm'],
+  processes: [{ key: 'sales_v1', name: 'Kinh doanh', stages: ['lead', 'deal'] }],
+});
+assert.deepEqual(valid.errors, []);
+
+const plan = buildBlueprintChangePlan(
+  {
+    modules: [
+      { key: 'crm', enabled: true, config: { mode: 'classic' } },
+      { key: 'legacy', enabled: true },
+      { key: 'production', enabled: true },
+    ],
+    department_templates: ['sales', 'legacy-team'],
+    processes: [
+      { key: 'sales', name: 'Sales', stages: ['lead', 'deal'] },
+      { key: 'legacy-process', name: 'Legacy', stages: ['open'] },
+    ],
+  },
+  {
+    modules: [
+      { key: 'crm', enabled: true, config: { mode: 'business-os' } },
+      { key: 'production', enabled: false },
+      { key: 'finance', enabled: true },
+    ],
+    department_templates: ['sales', 'accounting'],
+    processes: [
+      { key: 'sales', name: 'Sales', stages: ['lead', 'qualification', 'deal'] },
+      { key: 'order', name: 'Order', stages: ['confirmed'] },
+    ],
+  },
+);
+assert.equal(plan.has_changes, true);
+assert.deepEqual(plan.modules.enable, ['finance']);
+assert.deepEqual(plan.modules.disable, ['production']);
+assert.deepEqual(plan.modules.reconfigure, ['crm']);
+assert.deepEqual(plan.modules.retained_outside_blueprint, ['legacy']);
+assert.deepEqual(plan.departments.add_templates, ['accounting']);
+assert.deepEqual(plan.departments.retained_outside_blueprint, ['legacy-team']);
+assert.deepEqual(plan.processes.add, ['order']);
+assert.deepEqual(plan.processes.update, ['sales']);
+assert.deepEqual(plan.processes.retained_outside_blueprint, ['legacy-process']);
+assert.deepEqual(plan.destructive_actions, []);
+
+assert.equal(isMissingBlueprintSchema({ code: '42P01', message: 'missing relation' }), true);
+assert.equal(isMissingBlueprintSchema({ code: 'PGRST205', message: 'schema cache' }), true);
+assert.equal(isMissingBlueprintSchema({ code: 'XX000', message: 'network timeout' }), false);
+
+console.log('business-blueprint.test: OK');

@@ -625,7 +625,7 @@ export default function QuotationForm() {
                 <option value="accepted">✅ KH chấp nhận</option>
                 <option value="rejected">❌ Từ chối</option>
                 <option value="expired">⏰ Hết hạn</option>
-                <option value="converted">🔁 Đã chuyển ĐH</option>
+                {form.status === 'converted' && <option value="converted">🔁 Đã chuyển ĐH</option>}
               </select>
               {statusLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-gray-500 absolute right-7 pointer-events-none" />}
             </div>
@@ -636,7 +636,7 @@ export default function QuotationForm() {
               {pdfLoading ? 'Đang tải...' : 'Xuất PDF'}
             </button>
           )}
-          {isEdit && form.status !== 'converted' && (
+          {isEdit && form.status === 'accepted' && (
             <button
               onClick={convertToOrder}
               disabled={convertLoading}

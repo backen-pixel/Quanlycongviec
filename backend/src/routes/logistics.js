@@ -38,6 +38,13 @@ const {
 } = require('../helpers/vcLogisticsNotify');
 const { emitLogisticsKanbanChangedImmediate } = require('../helpers/workshopIntakeNotify');
 const { computeVcOverviewKpis } = require('../helpers/vcOverviewKpis');
+const { resolveCrmDealForProject } = require('../helpers/vcHandoverCore');
+const { recordInstallationCompleted } = require('../helpers/businessOsCommercialWorkflow');
+const {
+  validateProjectChangePayload,
+  hasApprovalSensitiveChanges,
+  validateProjectChangeOwnerForProject,
+} = require('../helpers/projectChangeRecord');
 
 const r = Router();
 r.use(auth);
@@ -1771,6 +1778,8 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
       console.warn('[logistics/stage] crm_sync_type:', crmSyncErr.message);
     }
 
+    let businessOsProcess = null;
+
     // Gen bộ nhiệm vụ theo cột pipeline VC/LĐ khi chuyển cột (idempotent theo workshop_template_id)
     try {
       let targetCol = vcPipeStageRow;
@@ -1782,7 +1791,13 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
           .maybeSingle();
         targetCol = data;
       }
-      if (targetCol && effectiveVcStageId && isLogisticsCompletedColumn(targetCol)) {
+      const logisticsCompleted = !!(targetCol && effectiveVcStageId && isLogisticsCompletedColumn(targetCol));
+      const customerCareStarted = !!(
+        targetCol
+        && effectiveVcStageId
+        && String(targetCol.crm_sync_type || '') === 'customer_care'
+      );
+      if (logisticsCompleted) {
         try {
           await completeOpenWorkOnModuleDone({
             module: 'logistics',
@@ -1800,6 +1815,26 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
         });
         if (!out?.ok) {
           console.warn('[logistics/stage] gen logistics templates:', out?.error || 'unknown');
+        }
+      }
+      if (logisticsCompleted || customerCareStarted) {
+        try {
+          const deal = await resolveCrmDealForProject(id, 'id, company_id');
+          if (deal?.id) {
+            businessOsProcess = await recordInstallationCompleted({
+              leadId: deal.id,
+              projectId: id,
+              logisticsStageId: effectiveVcStageId,
+              actorUserId: userId,
+              requestId: String(req.get('X-Request-Id') || '').trim() || null,
+              completionSource: customerCareStarted
+                ? 'logistics_customer_care_column'
+                : 'logistics_completed_column',
+              sourceReferenceId: effectiveVcStageId,
+            });
+          }
+        } catch (processError) {
+          console.warn('[logistics/stage] Business OS installation-completed transition skipped:', processError.message);
         }
       }
     } catch (tplErr) {
@@ -1859,6 +1894,7 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
 
     res.json({
       project: updated,
+      business_os_process: businessOsProcess,
       ...(jumpedToInstall ? {
         jumped_to_install: true,
         install_stage_id: effectiveVcStageId,
@@ -1891,14 +1927,23 @@ r.get('/projects/:id/incidents', requirePermission('projects', 'view'), async (r
 r.post('/projects/:id/incidents', requirePermission('projects', 'edit'), async (req, res) => {
   try {
     if (!(await assertProjectAccessible(req, res, req.params.id, { operation: 'WRITE' }))) return;
-    const { title, description, severity = 'medium' } = req.body;
-    if (!title?.trim()) return res.status(400).json({ error: 'Thiếu tiêu đề sự cố' });
+    const validated = validateProjectChangePayload(req.body);
+    if (!validated.ok) return res.status(400).json({ error: validated.error });
+    const input = validated.value;
+    const ownerValidation = await validateProjectChangeOwnerForProject(supabase, req.params.id, input.owner_user_id);
+    if (!ownerValidation.ok) return res.status(400).json({ error: ownerValidation.error });
     const { data, error } = await supabase
       .from('project_incidents')
-      .insert({ project_id: req.params.id, title: title.trim(), description, severity, reported_by: req.user.userId, status: 'open' })
+      .insert({
+        project_id: req.params.id,
+        reported_by: req.user.userId,
+        ...input,
+        status: 'open',
+        approval_status: input.requires_approval ? 'pending' : 'not_required',
+      })
       .select('*').single();
     if (error) throw error;
-    res.status(201).json(data);
+    res.status(201).json({ incident: data });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: e.message });
@@ -1908,11 +1953,53 @@ r.post('/projects/:id/incidents', requirePermission('projects', 'edit'), async (
 r.patch('/projects/:projectId/incidents/:incidentId', requirePermission('projects', 'edit'), async (req, res) => {
   try {
     if (!(await assertProjectAccessible(req, res, req.params.projectId, { operation: 'WRITE' }))) return;
-    const update = {};
-    ['title', 'description', 'severity', 'status'].forEach((f) => { if (req.body[f] !== undefined) update[f] = req.body[f]; });
+    const { data: existing, error: existingError } = await supabase
+      .from('project_incidents')
+      .select('*')
+      .eq('id', req.params.incidentId)
+      .eq('project_id', req.params.projectId)
+      .maybeSingle();
+    if (existingError) throw existingError;
+    if (!existing) return res.status(404).json({ error: 'Không tìm thấy hồ sơ phát sinh' });
+    const validated = validateProjectChangePayload(req.body, { partial: true });
+    if (!validated.ok) return res.status(400).json({ error: validated.error });
+    const update = { ...validated.value, updated_at: new Date().toISOString() };
+    const nextRequiresApproval = update.requires_approval ?? existing.requires_approval;
+    if (Object.prototype.hasOwnProperty.call(update, 'owner_user_id')) {
+      const ownerValidation = await validateProjectChangeOwnerForProject(
+        supabase,
+        req.params.projectId,
+        update.owner_user_id,
+      );
+      if (!ownerValidation.ok) return res.status(400).json({ error: ownerValidation.error });
+    }
+    if (update.requires_approval !== undefined) {
+      update.approval_status = update.requires_approval
+        ? (existing.approval_status === 'approved' ? 'approved' : 'pending')
+        : 'not_required';
+      if (!update.requires_approval) {
+        update.approved_by = null;
+        update.approved_at = null;
+        update.approval_notes = null;
+        update.rejected_reason = null;
+      }
+    } else if (existing.requires_approval && hasApprovalSensitiveChanges(req.body)) {
+      update.approval_status = 'pending';
+      update.approved_by = null;
+      update.approved_at = null;
+      update.approval_notes = null;
+      update.rejected_reason = null;
+    }
     if (['resolved', 'closed'].includes(update.status)) {
+      const approvalStatus = update.approval_status || existing.approval_status;
+      if (nextRequiresApproval && approvalStatus !== 'approved') {
+        return res.status(409).json({ error: 'Phát sinh đang yêu cầu phê duyệt; cần duyệt trước khi đóng hồ sơ' });
+      }
       update.resolved_at = new Date().toISOString();
       update.resolved_by = req.user.userId;
+    } else if (update.status && ['open', 'in_progress'].includes(update.status)) {
+      update.resolved_at = null;
+      update.resolved_by = null;
     }
     const { data, error } = await supabase
       .from('project_incidents').update(update).eq('id', req.params.incidentId).eq('project_id', req.params.projectId).select('*').single();

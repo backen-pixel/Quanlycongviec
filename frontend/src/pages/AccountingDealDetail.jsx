@@ -60,7 +60,7 @@ const INVOICE_PAYMENT_VI = {
 };
 
 const DOC_STATUS_OPTIONS = {
-  quotation: Object.entries(QUOTE_STATUS_VI),
+  quotation: Object.entries(QUOTE_STATUS_VI).filter(([key]) => key !== 'converted'),
   order: Object.entries(ORDER_STATUS_VI),
   invoice: Object.entries(INVOICE_PAYMENT_VI),
 };
@@ -201,20 +201,28 @@ export default function AccountingDealDetail() {
   const [convertQuoteId, setConvertQuoteId] = useState(null);
   const [docStatusSavingId, setDocStatusSavingId] = useState(null);
 
+  const requestedClientCompanyId = (
+    searchParams.get('client_company_id')
+    || searchParams.get('company_id')
+    || ''
+  ).trim();
+  const selectedClientCompanyId = isAccountingUser(user)
+    ? String(user?.company_id || '').trim()
+    : (requestedClientCompanyId || String(user?.company_id || bundle?.client_company?.id || '').trim());
+  const companySearch = selectedClientCompanyId
+    ? `?client_company_id=${encodeURIComponent(selectedClientCompanyId)}`
+    : '';
+  const dashboardHref = `/ketoan/dashboard${companySearch}`;
+
   const adminParams = useMemo(() => {
-    if (isAccountingUser(user)) return {};
-    const cid = user?.company_id || bundle?.client_company?.id;
-    return cid ? { client_company_id: cid } : {};
-  }, [user, bundle?.client_company?.id]);
+    return selectedClientCompanyId ? { client_company_id: selectedClientCompanyId } : {};
+  }, [selectedClientCompanyId]);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      const params = {};
-      if (!isAccountingUser(user) && user?.company_id) {
-        params.client_company_id = user.company_id;
-      }
+      const params = selectedClientCompanyId ? { client_company_id: selectedClientCompanyId } : {};
       const { data } = await api.get(`/accounting/deals/${leadId}`, { params });
       setBundle(data);
       const lead = data.lead || {};
@@ -228,7 +236,7 @@ export default function AccountingDealDetail() {
     } finally {
       setLoading(false);
     }
-  }, [leadId, user]);
+  }, [leadId, selectedClientCompanyId]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -458,7 +466,7 @@ export default function AccountingDealDetail() {
     return (
       <div className="max-w-lg mx-auto mt-12 text-center space-y-3">
         <p className="text-red-600">{error || 'Không tìm thấy deal'}</p>
-        <Link to="/ketoan/dashboard" className="text-indigo-600 hover:underline text-sm">← Về dashboard</Link>
+        <Link to={dashboardHref} className="text-indigo-600 hover:underline text-sm">← Về dashboard</Link>
       </div>
     );
   }
@@ -471,7 +479,7 @@ export default function AccountingDealDetail() {
         <div className="relative p-4 sm:p-5">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="flex items-start gap-3 min-w-0">
-              <Link to="/ketoan/dashboard" className="p-2 rounded-lg bg-white/10 hover:bg-white/20 shrink-0 mt-0.5 transition">
+              <Link to={dashboardHref} className="p-2 rounded-lg bg-white/10 hover:bg-white/20 shrink-0 mt-0.5 transition">
                 <ArrowLeft className="h-5 w-5 text-white" />
               </Link>
               <div className="min-w-0">
@@ -738,7 +746,7 @@ export default function AccountingDealDetail() {
                   ) : (
                     <ul className="space-y-2 border-t border-gray-100 pt-2">
                       {list.slice(0, 6).map((x) => {
-                        const canConvert = block.key === 'quotation' && x.status !== 'converted';
+                        const canConvert = block.key === 'quotation' && x.status === 'accepted';
                         const converting = convertQuoteId === x.id;
                         return (
                           <li key={x.id} className="rounded-lg border border-gray-100 bg-gray-50/60 px-2.5 py-2 space-y-1.5">
@@ -756,7 +764,9 @@ export default function AccountingDealDetail() {
                                     className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-white border border-gray-200 text-gray-700 cursor-pointer disabled:opacity-50 max-w-[140px]"
                                     title="Đổi trạng thái"
                                   >
-                                    {DOC_STATUS_OPTIONS[block.key].map(([k, v]) => (
+                                    {(block.key === 'quotation' && x.status === 'converted'
+                                      ? [...DOC_STATUS_OPTIONS.quotation, ['converted', QUOTE_STATUS_VI.converted]]
+                                      : DOC_STATUS_OPTIONS[block.key]).map(([k, v]) => (
                                       <option key={k} value={k}>{v}</option>
                                     ))}
                                   </select>
@@ -1233,7 +1243,7 @@ export default function AccountingDealDetail() {
           docType={importType}
           leadId={leadId}
           dealId={leadId}
-          returnTo={`/ketoan/deals/${leadId}`}
+          returnTo={`/ketoan/deals/${leadId}${companySearch}`}
           initialFileUrl={importDocSource?.file_url}
           initialFileName={importDocSource?.file_name}
           initialSourceFile={importDocSource ? { file_url: importDocSource.file_url, file_name: importDocSource.file_name } : null}

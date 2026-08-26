@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import api from '../../lib/api';
-import { Globe, Plus, Search, Building2, Users, ChevronRight } from 'lucide-react';
+import { Globe, Plus, Search, Building2, Users, ChevronRight, Copy } from 'lucide-react';
 import { TIER_LABELS, TIER_BADGE_COLORS } from '../../lib/platformConstants';
 
 export default function PlatformTenantsPage() {
@@ -116,17 +116,40 @@ export default function PlatformTenantsPage() {
 }
 
 function CreateTenantModal({ onClose, onCreated }) {
-  const [form, setForm] = useState({ name: '', slug: '', tier: 'free', max_users: 50, max_companies: 5, admin_email: '', admin_password: '', admin_full_name: '' });
+  const [form, setForm] = useState({
+    name: '', slug: '', tier: 'free', max_users: 50, max_companies: 5,
+    admin_email: '', admin_password: '', admin_full_name: '',
+    blueprint_key: '', bootstrap_company: true, company_name: '', company_short_name: '',
+  });
+  const [blueprints, setBlueprints] = useState([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    let active = true;
+    api.get('/platform/blueprints')
+      .then(({ data }) => {
+        if (!active) return;
+        const rows = data?.blueprints || [];
+        setBlueprints(rows);
+        setForm((previous) => ({ ...previous, blueprint_key: previous.blueprint_key || rows[0]?.blueprint_key || '' }));
+      })
+      .catch(() => {
+        if (active) setBlueprints([]);
+      });
+    return () => { active = false; };
+  }, []);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!form.name.trim() || !form.slug.trim()) return setError('Nhập tên và slug');
+    if (form.bootstrap_company && form.blueprint_key && !form.admin_email.trim()) return setError('Cần email Admin để tự tạo công ty theo bộ mẫu');
+    if (form.bootstrap_company && form.blueprint_key && !form.company_name.trim()) return setError('Nhập tên công ty đầu tiên');
     setSaving(true);
     setError('');
     try {
-      await api.post('/platform/tenants/onboard', form);
+      const { data } = await api.post('/platform/tenants/onboard', form);
+      if (data?.blueprint_warning) alert(data.blueprint_warning);
       onCreated();
     } catch (err) {
       setError(err.response?.data?.error || 'Lỗi tạo hệ sinh thái');
@@ -148,7 +171,12 @@ function CreateTenantModal({ onClose, onCreated }) {
           <input
             type="text"
             value={form.name}
-            onChange={(e) => setForm((p) => ({ ...p, name: e.target.value, slug: p.slug === autoSlug(p.name) ? autoSlug(e.target.value) : p.slug }))}
+            onChange={(e) => setForm((p) => ({
+              ...p,
+              name: e.target.value,
+              slug: p.slug === autoSlug(p.name) ? autoSlug(e.target.value) : p.slug,
+              company_name: !p.company_name || p.company_name === p.name ? e.target.value : p.company_name,
+            }))}
             className="w-full border rounded-xl px-3 py-2 text-sm"
             placeholder="VD: Hệ sinh thái ABC"
           />
@@ -181,6 +209,54 @@ function CreateTenantModal({ onClose, onCreated }) {
             <input type="number" value={form.max_companies} onChange={(e) => setForm((p) => ({ ...p, max_companies: +e.target.value }))} className="w-full border rounded-xl px-3 py-2 text-sm" />
           </div>
         </div>
+
+        {blueprints.length > 0 && (
+          <div className="border-t pt-4 space-y-3">
+            <h3 className="flex items-center gap-2 text-sm font-semibold">
+              <Copy className="h-4 w-4 text-teal-600" /> Bộ mẫu vận hành
+            </h3>
+            <select
+              value={form.blueprint_key}
+              onChange={(e) => setForm((p) => ({ ...p, blueprint_key: e.target.value }))}
+              className="w-full border rounded-xl px-3 py-2 text-sm"
+            >
+              <option value="">Không áp dụng ngay</option>
+              {blueprints.map((blueprint) => (
+                <option key={blueprint.id} value={blueprint.blueprint_key}>
+                  {blueprint.name} · v{blueprint.published_version?.version_number || '—'}
+                </option>
+              ))}
+            </select>
+            {!!form.blueprint_key && (
+              <>
+                <label className="flex items-center gap-2 text-sm text-gray-700">
+                  <input
+                    type="checkbox"
+                    checked={form.bootstrap_company}
+                    onChange={(e) => setForm((p) => ({ ...p, bootstrap_company: e.target.checked }))}
+                  />
+                  Tự tạo công ty, CRM pipeline và phòng ban mẫu
+                </label>
+                {form.bootstrap_company && (
+                  <div className="grid grid-cols-[minmax(0,1fr)_140px] gap-2">
+                    <input
+                      value={form.company_name}
+                      onChange={(e) => setForm((p) => ({ ...p, company_name: e.target.value }))}
+                      className="w-full border rounded-xl px-3 py-2 text-sm"
+                      placeholder="Tên công ty đầu tiên"
+                    />
+                    <input
+                      value={form.company_short_name}
+                      onChange={(e) => setForm((p) => ({ ...p, company_short_name: e.target.value }))}
+                      className="w-full border rounded-xl px-3 py-2 text-sm"
+                      placeholder="Viết tắt"
+                    />
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
 
         <div className="border-t pt-4">
           <h3 className="text-sm font-semibold mb-2">Tài khoản Admin (tùy chọn)</h3>

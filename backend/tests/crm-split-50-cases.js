@@ -22,6 +22,8 @@ const FEATURE_MODULES = [
   'reports',
   'pipelines',
   'taxonomy',
+  'errorTypes',
+  'phatSinhKinds',
   'visibleProduction',
   'leadDuplicates',
   'leadsList',
@@ -33,6 +35,7 @@ const FEATURE_MODULES = [
   'leadComments',
   'membersChat',
   'vcBooking',
+  'salesQualificationPilot',
   'leadLifecycle',
 ];
 
@@ -176,7 +179,7 @@ function createRunner() {
     }
   });
 
-  test(3, 'Đủ 16 file feature router', () => {
+  test(3, `Đủ ${FEATURE_MODULES.length} file feature router`, () => {
     for (const m of FEATURE_MODULES) {
       const p = path.join(CRM_DIR, 'routes', `${m}.js`);
       if (!fs.existsSync(p)) throw new Error(`Missing ${m}.js`);
@@ -238,9 +241,11 @@ function createRunner() {
     if (names.length < 3) throw new Error(`Chỉ ${names.length} middleware cha`);
   });
 
-  test(12, 'Đúng 16 nested feature routers trên parent stack', () => {
+  test(12, `Đúng ${FEATURE_MODULES.length} nested feature routers trên parent stack`, () => {
     const nested = (ctx.crm.stack || []).filter((l) => l.name === 'router').length;
-    if (nested !== 16) throw new Error(`nested routers=${nested} (expect 16: +visibleProduction +vcBooking)`);
+    if (nested !== FEATURE_MODULES.length) {
+      throw new Error(`nested routers=${nested} (expect ${FEATURE_MODULES.length})`);
+    }
   });
 
   test(13, 'Mount order: leadsList / leadDuplicates trước leadLifecycle', () => {

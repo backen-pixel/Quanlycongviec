@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isAdminLike, isCompanyScopedAdmin } from '../lib/adminRole';
@@ -32,13 +32,14 @@ function forecastLabel(it) {
 }
 
 export default function WorkUnifiedOverviewPage() {
+  const [searchParams] = useSearchParams();
   const { user } = useAuth();
   const isAdmin = isAdminLike(user);
   const isCompanyScoped = isCompanyScopedAdmin(user);
   const canPickCompany = isAdmin && !isCompanyScoped;
 
   const [companies, setCompanies] = useState([]);
-  const [companyId, setCompanyId] = useState('');
+  const [companyId, setCompanyId] = useState(() => searchParams.get('company_id') || '');
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -253,7 +254,7 @@ export default function WorkUnifiedOverviewPage() {
                 pageItems.map((it) => (
                   <tr key={it.id} className="border-b border-gray-50 last:border-0 hover:bg-gray-50/60">
                     <td className="px-4 py-3 align-top">
-                      <Link to={`/management/work-unified/${it.id}`} className="text-sm font-semibold text-blue-700 hover:underline truncate block" title={it.name}>
+                      <Link to={`/management/work-unified/${it.id}${companyId ? `?company_id=${companyId}` : ''}`} className="text-sm font-semibold text-blue-700 hover:underline truncate block" title={it.name}>
                         {it.code}
                       </Link>
                       <p className="text-xs text-gray-500 truncate mt-0.5" title={it.name}>{it.name}</p>

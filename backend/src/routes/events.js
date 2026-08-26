@@ -26,6 +26,55 @@ const OPS_ASSIGNEE_EVENT_TYPES = new Set([
 ]);
 
 /**
+ * Sự kiện lắp đặt của đội thuê ngoài được tạo từ thẻ bàn giao VC nhưng không có
+ * project trên bảng Logistics. Chỉ marker gốc này mới được phép đóng quy trình
+ * Business OS khi người phụ trách hoàn tất sự kiện lịch.
+ */
+async function findExternalInstallationHandover(event) {
+  const eventType = String(event?.event_type || event?.event_type_ref?.slug || '').toLowerCase();
+  if (
+    eventType !== 'installation'
+    || !event?.id
+    || !event?.lead_id
+    || !event?.project_id
+  ) return null;
+
+  const { data, error } = await supabase
+    .from('crm_lead_comments')
+    .select('id, metadata, created_at')
+    .eq('lead_id', event.lead_id)
+    .eq('comment_type', 'vc_handover')
+    .eq('metadata->>install_event_id', String(event.id))
+    .is('deleted_at', null)
+    .order('created_at', { ascending: false })
+    .limit(5);
+  if (error) throw error;
+
+  return (data || []).find((comment) => {
+    const meta = comment?.metadata || {};
+    return meta.skip_logistics_module === true
+      && String(meta.state || '') === 'done'
+      && String(meta.project_id || '') === String(event.project_id)
+      && String(meta.install_event_id || '') === String(event.id);
+  }) || null;
+}
+
+async function syncExternalInstallationCompleted(req, event) {
+  const handover = await findExternalInstallationHandover(event);
+  if (!handover) return null;
+  const { recordInstallationCompleted } = require('../helpers/businessOsCommercialWorkflow');
+  return recordInstallationCompleted({
+    leadId: event.lead_id,
+    projectId: event.project_id,
+    logisticsStageId: null,
+    actorUserId: req.user?.userId || req.user?.id || null,
+    requestId: String(req.get('X-Request-Id') || '').trim() || null,
+    completionSource: 'external_installation_event',
+    sourceReferenceId: event.id,
+  });
+}
+
+/**
  * NV thường: sự kiện ops (lấy hàng/lắp/giao/hoàn thiện) có assignee
  * → chỉ hiện nếu là assignee / người tạo / participant.
  */
@@ -1861,6 +1910,17 @@ r.put('/:id', async (req, res) => {
           data.auto_task_completed = { taskId: tasks[0].id, taskTitle: tasks[0].title };
         }
       } catch (taskErr) { console.warn('[EVENT] Auto-complete task:', taskErr.message); }
+    }
+
+    // Thuê lắp đặt bên ngoài không đi qua bảng Logistics: hoàn tất sự kiện lịch
+    // là tín hiệu nghiệp vụ để đóng quy trình Business OS của đúng project.
+    if (b.status === 'completed') {
+      try {
+        const businessOsProcess = await syncExternalInstallationCompleted(req, data);
+        if (businessOsProcess) data.business_os_process = businessOsProcess;
+      } catch (processError) {
+        console.warn('[events] Business OS external installation completion skipped:', processError.message);
+      }
     }
 
     // Notification khi hoàn thành — chỉ người liên quan + Admin công ty (không broadcast cả công ty)

@@ -1,12 +1,29 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../../lib/api';
-import { Globe, Users, Building2, BarChart3, Puzzle, Save, CreditCard, ChevronLeft, Network } from 'lucide-react';
+import { Globe, Users, Building2, BarChart3, Puzzle, Save, CreditCard, ChevronLeft, Network, Copy, CheckCircle2, AlertTriangle, Eye, ArrowRight, ShieldCheck } from 'lucide-react';
 import {
   TIER_LABELS, FEATURE_LABELS, formatSubscriptionDate,
   subscriptionStatus, toDateInputValue,
 } from '../../lib/platformConstants';
 import TenantEcosystemDiagram from '../../components/platform/TenantEcosystemDiagram';
+
+function ChangeList({ label, items, tone = 'teal' }) {
+  if (!items?.length) return null;
+  const toneClass = tone === 'amber'
+    ? 'border-amber-200 bg-amber-50 text-amber-800'
+    : tone === 'red'
+      ? 'border-red-200 bg-red-50 text-red-700'
+      : 'border-teal-200 bg-teal-50 text-teal-800';
+  return (
+    <div>
+      <div className="mb-1 text-[11px] font-semibold text-gray-500">{label}</div>
+      <div className="flex flex-wrap gap-1.5">
+        {items.map((item) => <span key={item} className={`rounded-lg border px-2 py-1 text-[11px] font-medium ${toneClass}`}>{item}</span>)}
+      </div>
+    </div>
+  );
+}
 
 export default function PlatformTenantDetailPage() {
   const { id } = useParams();
@@ -20,14 +37,29 @@ export default function PlatformTenantDetailPage() {
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
   const [tab, setTab] = useState('overview');
+  const [blueprints, setBlueprints] = useState([]);
+  const [blueprintInstallations, setBlueprintInstallations] = useState([]);
+  const [blueprintError, setBlueprintError] = useState('');
+  const [blueprintSuccess, setBlueprintSuccess] = useState('');
+  const [blueprintPreview, setBlueprintPreview] = useState(null);
+  const [previewingBlueprint, setPreviewingBlueprint] = useState(false);
+  const [applyingBlueprint, setApplyingBlueprint] = useState(false);
+  const [blueprintForm, setBlueprintForm] = useState({
+    blueprint_key: '',
+    bootstrap_company: false,
+    company_name: '',
+    company_short_name: '',
+  });
 
   const load = useCallback(async () => {
     try {
-      const [tRes, uRes, cRes, sRes] = await Promise.all([
+      const [tRes, uRes, cRes, sRes, bpRes, biRes] = await Promise.all([
         api.get(`/platform/tenants/${id}`),
         api.get(`/platform/tenants/${id}/users`),
         api.get(`/platform/tenants/${id}/companies`),
         api.get(`/platform/tenants/${id}/stats`).catch(() => ({ data: null })),
+        api.get('/platform/blueprints').catch((error) => ({ blueprintError: error.response?.data?.error || 'Không tải được bộ mẫu' })),
+        api.get(`/platform/tenants/${id}/blueprints`).catch((error) => ({ blueprintError: error.response?.data?.error || 'Không tải được trạng thái bộ mẫu' })),
       ]);
       const t = tRes.data;
       setTenant(t);
@@ -43,6 +75,16 @@ export default function PlatformTenantDetailPage() {
       });
       setUsers(uRes.data);
       setCompanies(cRes.data);
+      const availableBlueprints = bpRes.data?.blueprints || [];
+      setBlueprints(availableBlueprints);
+      setBlueprintInstallations(biRes.data?.installations || []);
+      setBlueprintError(bpRes.blueprintError || biRes.blueprintError || '');
+      setBlueprintForm((previous) => ({
+        ...previous,
+        blueprint_key: previous.blueprint_key || availableBlueprints[0]?.blueprint_key || '',
+        bootstrap_company: previous.bootstrap_company || !(cRes.data || []).length,
+        company_name: previous.company_name || t.name,
+      }));
       setStats(sRes.data || {
         total_users: uRes.data?.length || 0,
         active_users: (uRes.data || []).filter((u) => u.is_active).length,
@@ -95,6 +137,53 @@ export default function PlatformTenantDetailPage() {
     }
   };
 
+  const previewBlueprint = async () => {
+    if (!blueprintForm.blueprint_key) return;
+    setPreviewingBlueprint(true);
+    setBlueprintError('');
+    setBlueprintSuccess('');
+    try {
+      const { data } = await api.get(`/platform/tenants/${id}/blueprints/preview`, {
+        params: { blueprint_key: blueprintForm.blueprint_key },
+      });
+      setBlueprintPreview(data?.preview || null);
+    } catch (error) {
+      setBlueprintPreview(null);
+      setBlueprintError(error.response?.data?.error || 'Không lập được kế hoạch thay đổi.');
+    } finally {
+      setPreviewingBlueprint(false);
+    }
+  };
+
+  const applyBlueprint = async () => {
+    if (!blueprintForm.blueprint_key) return;
+    if (!blueprintPreview || blueprintPreview.blueprint?.blueprint_key !== blueprintForm.blueprint_key) {
+      setBlueprintError('Hãy xem trước thay đổi trước khi áp dụng bộ mẫu.');
+      return;
+    }
+    if (blueprintForm.bootstrap_company && !blueprintForm.company_name.trim()) {
+      setBlueprintError('Nhập tên công ty đầu tiên trước khi áp dụng bộ mẫu.');
+      return;
+    }
+    if (!confirm(`Áp dụng Blueprint v${blueprintPreview.target?.version_number}? Không có dữ liệu hiện tại nào bị xoá.`)) return;
+    setApplyingBlueprint(true);
+    setBlueprintError('');
+    setBlueprintSuccess('');
+    try {
+      await api.post(`/platform/tenants/${id}/blueprints/apply`, {
+        ...blueprintForm,
+        expected_current_version: blueprintPreview.current?.version_number ?? null,
+      });
+      setBlueprintSuccess(`Đã áp dụng Blueprint v${blueprintPreview.target?.version_number} thành công.`);
+      setBlueprintPreview(null);
+      await load();
+    } catch (error) {
+      setBlueprintError(error.response?.data?.error || 'Không áp dụng được bộ mẫu.');
+    } finally {
+      setApplyingBlueprint(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64 text-gray-500">
@@ -114,6 +203,7 @@ export default function PlatformTenantDetailPage() {
     { key: 'ecosystem', label: 'Sơ đồ HST', icon: Network },
     { key: 'billing', label: 'Gói thuê bao', icon: CreditCard },
     { key: 'features', label: 'Tính năng', icon: Puzzle },
+    { key: 'blueprint', label: 'Bộ mẫu vận hành', icon: Copy },
     { key: 'users', label: `Users (${users.length})`, icon: Users },
     { key: 'companies', label: `Công ty (${companies.length})`, icon: Building2 },
   ];
@@ -269,6 +359,156 @@ export default function PlatformTenantDetailPage() {
                 </button>
               );
             })}
+          </div>
+        </div>
+      )}
+
+      {tab === 'blueprint' && (
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1.25fr)_minmax(280px,0.75fr)]">
+          <div className="bg-white border rounded-2xl p-5 space-y-4">
+            <div>
+              <h3 className="font-semibold">Bộ mẫu đang áp dụng</h3>
+              <p className="text-sm text-gray-500 mt-1">Nhân bản cấu hình module, phòng ban và quy trình; không sao chép dữ liệu giao dịch.</p>
+            </div>
+
+            {blueprintError && (
+              <div className="flex items-start gap-2 rounded-xl bg-amber-50 px-3 py-2.5 text-sm text-amber-800">
+                <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+                <span>{blueprintError}</span>
+              </div>
+            )}
+            {blueprintSuccess && (
+              <div className="flex items-start gap-2 rounded-xl bg-green-50 px-3 py-2.5 text-sm text-green-800">
+                <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0" />
+                <span>{blueprintSuccess}</span>
+              </div>
+            )}
+
+            {blueprintInstallations.length === 0 ? (
+              <div className="rounded-xl border border-dashed p-5 text-sm text-gray-500">Hệ sinh thái chưa được gắn bộ mẫu vận hành.</div>
+            ) : (
+              <div className="space-y-2">
+                {blueprintInstallations.map((installation) => (
+                  <div key={installation.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border p-4">
+                    <div>
+                      <div className="font-medium text-gray-900">{installation.blueprint?.name}</div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        Phiên bản {installation.version?.version_number || '—'}
+                        {installation.applied_at ? ` • Áp dụng ${new Date(installation.applied_at).toLocaleString('vi-VN')}` : ''}
+                      </div>
+                    </div>
+                    <span className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-medium ${installation.status === 'active' ? 'bg-green-50 text-green-700' : installation.status === 'failed' ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-700'}`}>
+                      {installation.status === 'active' && <CheckCircle2 className="h-3.5 w-3.5" />}
+                      {{ active: 'Đang hoạt động', applying: 'Đang áp dụng', pending: 'Chờ áp dụng', failed: 'Cần xử lý' }[installation.status] || installation.status}
+                    </span>
+                    {installation.last_error && <p className="w-full text-xs text-red-600">{installation.last_error}</p>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="bg-white border rounded-2xl p-5 space-y-4">
+            <div>
+              <h3 className="font-semibold">Áp dụng hoặc nâng cấp</h3>
+              <p className="text-xs text-gray-500 mt-1">Thao tác có tính lặp an toàn và giữ các dữ liệu đang có.</p>
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Bộ mẫu</label>
+              <select
+                value={blueprintForm.blueprint_key}
+                onChange={(event) => {
+                  setBlueprintForm((previous) => ({ ...previous, blueprint_key: event.target.value }));
+                  setBlueprintPreview(null);
+                  setBlueprintError('');
+                  setBlueprintSuccess('');
+                }}
+                className="w-full border rounded-xl px-3 py-2.5 text-sm"
+              >
+                {blueprints.map((blueprint) => (
+                  <option key={blueprint.id} value={blueprint.blueprint_key}>
+                    {blueprint.name} · v{blueprint.published_version?.version_number || '—'}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {!companies.length && (
+              <>
+                <label className="flex items-center gap-2 text-sm text-gray-700">
+                  <input
+                    type="checkbox"
+                    checked={blueprintForm.bootstrap_company}
+                    onChange={(event) => setBlueprintForm((previous) => ({ ...previous, bootstrap_company: event.target.checked }))}
+                  />
+                  Tạo công ty và phòng ban mẫu
+                </label>
+                {blueprintForm.bootstrap_company && (
+                  <div className="space-y-2">
+                    <input
+                      value={blueprintForm.company_name}
+                      onChange={(event) => setBlueprintForm((previous) => ({ ...previous, company_name: event.target.value }))}
+                      className="w-full border rounded-xl px-3 py-2.5 text-sm"
+                      placeholder="Tên công ty đầu tiên"
+                    />
+                    <input
+                      value={blueprintForm.company_short_name}
+                      onChange={(event) => setBlueprintForm((previous) => ({ ...previous, company_short_name: event.target.value }))}
+                      className="w-full border rounded-xl px-3 py-2.5 text-sm"
+                      placeholder="Tên viết tắt"
+                    />
+                  </div>
+                )}
+              </>
+            )}
+
+            {blueprintPreview && (
+              <div className="space-y-3 rounded-xl border border-teal-200 bg-teal-50/40 p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 text-sm font-semibold text-gray-900">
+                    <span>{blueprintPreview.current ? `v${blueprintPreview.current.version_number}` : 'Chưa cài'}</span>
+                    <ArrowRight className="h-4 w-4 text-teal-600" />
+                    <span>v{blueprintPreview.target?.version_number}</span>
+                  </div>
+                  <span className="rounded-lg bg-white px-2 py-1 text-[11px] font-semibold text-teal-700">
+                    {blueprintPreview.plan?.change_count || 0} thay đổi
+                  </span>
+                </div>
+                {!blueprintPreview.plan?.has_changes && (
+                  <p className="text-xs text-gray-600">Tenant đã ở cùng cấu hình Blueprint. Có thể áp dụng lại để đồng bộ trạng thái.</p>
+                )}
+                <ChangeList label="Bật module" items={blueprintPreview.plan?.modules?.enable} />
+                <ChangeList label="Tắt module" items={blueprintPreview.plan?.modules?.disable} tone="red" />
+                <ChangeList label="Cập nhật cấu hình module" items={blueprintPreview.plan?.modules?.reconfigure} tone="amber" />
+                <ChangeList label="Thêm mẫu phòng ban" items={blueprintPreview.plan?.departments?.add_templates} />
+                <ChangeList label="Thêm quy trình" items={blueprintPreview.plan?.processes?.add} />
+                <ChangeList label="Cập nhật quy trình" items={blueprintPreview.plan?.processes?.update} tone="amber" />
+                {!!blueprintPreview.plan?.retained_count && (
+                  <p className="text-[11px] leading-5 text-gray-600">{blueprintPreview.plan.retained_count} cấu hình ngoài Blueprint vẫn được giữ nguyên.</p>
+                )}
+                <div className="flex items-center gap-1.5 text-[11px] font-semibold text-green-700">
+                  <ShieldCheck className="h-3.5 w-3.5" /> Không có thao tác xoá dữ liệu
+                </div>
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={previewBlueprint}
+              disabled={!blueprintForm.blueprint_key || previewingBlueprint || applyingBlueprint}
+              className="flex w-full items-center justify-center gap-2 rounded-xl border border-teal-200 bg-white px-4 py-2.5 text-sm font-medium text-teal-700 hover:bg-teal-50 disabled:opacity-50"
+            >
+              <Eye className="h-4 w-4" /> {previewingBlueprint ? 'Đang lập kế hoạch…' : 'Xem trước thay đổi'}
+            </button>
+
+            <button
+              type="button"
+              onClick={applyBlueprint}
+              disabled={!blueprintForm.blueprint_key || !blueprintPreview || applyingBlueprint || previewingBlueprint}
+              className="w-full rounded-xl bg-teal-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-teal-700 disabled:opacity-50"
+            >
+              {applyingBlueprint ? 'Đang áp dụng…' : blueprintInstallations.length ? 'Cập nhật bộ mẫu' : 'Áp dụng bộ mẫu'}
+            </button>
           </div>
         </div>
       )}

@@ -247,7 +247,7 @@ export default function QuotationsPage() {
                       className={`h-8 px-2 rounded-lg text-xs font-medium border cursor-pointer disabled:opacity-60 ${STATUS_COLORS[q.status] || ''}`}
                       title="Đổi trạng thái báo giá"
                     >
-                      {Object.entries(STATUS_MAP).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                      {Object.entries(STATUS_MAP).filter(([k]) => k !== 'converted' || q.status === 'converted').map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                     </select>
                   </td>
                   <td className="py-3 px-3 text-xs">
@@ -265,7 +265,7 @@ export default function QuotationsPage() {
                   <td className="py-3 px-3">
                     {q.status === 'converted' ? (
                       <span className="text-xs text-purple-600 font-medium">Đã ĐH</span>
-                    ) : (
+                    ) : q.status === 'accepted' ? (
                       <button
                         onClick={e => convertToOrder(q.id, q.code, e)}
                         disabled={convertLoadingId === q.id}
@@ -275,6 +275,8 @@ export default function QuotationsPage() {
                         {convertLoadingId === q.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShoppingCart className="h-3.5 w-3.5" />}
                         {convertLoadingId === q.id ? 'Đang tạo...' : '→ĐH'}
                       </button>
+                    ) : (
+                      <span className="text-[10px] font-medium text-slate-400">Chờ khách duyệt</span>
                     )}
                   </td>
                   <td className="py-3 px-3 text-center"><button onClick={e => { e.stopPropagation(); if(confirm('Xóa báo giá ' + q.code + '?')) api.delete('/crm/quotations/' + q.id).then(load).catch(() => alert('Lỗi xóa')); }} className="p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg cursor-pointer" title="Xóa"><Trash2 className="h-4 w-4" /></button></td>

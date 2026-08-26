@@ -4,10 +4,119 @@ const { auth } = require('../middleware/auth');
 const { requirePlatformAdmin } = require('../middleware/tenantGate');
 const { onboardTenant } = require('../helpers/tenantOnboarding');
 const { invalidateTenantCache } = require('../helpers/tenantScope');
+const {
+  listPublishedBlueprints,
+  listBlueprintCatalog,
+  getBlueprintDetail,
+  createBlueprint,
+  createBlueprintVersion,
+  publishBlueprintVersion,
+  updateBlueprint,
+  getTenantBlueprintInstallation,
+  previewBlueprintForTenant,
+  applyBlueprintToTenant,
+  isMissingBlueprintSchema,
+} = require('../helpers/businessBlueprint');
 
 const r = Router();
 r.use(auth);
 r.use(requirePlatformAdmin);
+
+function blueprintErrorResponse(res, error) {
+  if (isMissingBlueprintSchema(error)) {
+    return res.status(503).json({
+      error: 'Chưa cài đặt cấu trúc Business Blueprint. Hãy chạy migration 567_business_blueprint_control_plane.sql.',
+      code: 'BUSINESS_BLUEPRINT_SCHEMA_REQUIRED',
+    });
+  }
+  if (error?.code === 'BLUEPRINT_VALIDATION') {
+    return res.status(400).json({ error: error.message, validation_errors: error.validation_errors || [] });
+  }
+  if (error?.code === '23505') {
+    return res.status(409).json({ error: 'Blueprint key hoặc số phiên bản đã tồn tại.' });
+  }
+  if (error?.code === 'BLUEPRINT_VERSION_CONFLICT') {
+    return res.status(409).json({
+      error: error.message,
+      code: error.code,
+      expected_version: error.expected_version,
+      actual_version: error.actual_version,
+    });
+  }
+  return res.status(500).json({ error: error.message || 'Lỗi Business Blueprint' });
+}
+
+// ─── Business Blueprint catalog ─────────────────────────────
+r.get('/blueprints', async (req, res) => {
+  try {
+    const blueprints = req.query.catalog === '1'
+      ? await listBlueprintCatalog()
+      : await listPublishedBlueprints();
+    res.json({ blueprints });
+  } catch (error) {
+    return blueprintErrorResponse(res, error);
+  }
+});
+
+r.post('/blueprints', async (req, res) => {
+  try {
+    const blueprint = await createBlueprint({
+      blueprintKey: req.body?.blueprint_key,
+      name: req.body?.name,
+      industry: req.body?.industry,
+      description: req.body?.description,
+      actorUserId: req.user?.userId || req.user?.id,
+    });
+    res.status(201).json({ blueprint });
+  } catch (error) {
+    return blueprintErrorResponse(res, error);
+  }
+});
+
+r.get('/blueprints/:id', async (req, res) => {
+  try {
+    const blueprint = await getBlueprintDetail(req.params.id);
+    if (!blueprint) return res.status(404).json({ error: 'Không tìm thấy Blueprint.' });
+    res.json({ blueprint });
+  } catch (error) {
+    return blueprintErrorResponse(res, error);
+  }
+});
+
+r.patch('/blueprints/:id', async (req, res) => {
+  try {
+    const blueprint = await updateBlueprint(req.params.id, req.body || {});
+    res.json({ blueprint });
+  } catch (error) {
+    return blueprintErrorResponse(res, error);
+  }
+});
+
+r.post('/blueprints/:id/versions', async (req, res) => {
+  try {
+    const version = await createBlueprintVersion({
+      blueprintId: req.params.id,
+      definition: req.body?.definition,
+      releaseNotes: req.body?.release_notes,
+      actorUserId: req.user?.userId || req.user?.id,
+    });
+    res.status(201).json({ version });
+  } catch (error) {
+    return blueprintErrorResponse(res, error);
+  }
+});
+
+r.post('/blueprints/:id/versions/:versionId/publish', async (req, res) => {
+  try {
+    const version = await publishBlueprintVersion({
+      blueprintId: req.params.id,
+      versionId: req.params.versionId,
+    });
+    res.json({ version });
+  } catch (error) {
+    return blueprintErrorResponse(res, error);
+  }
+});
 
 // ─── List tenants ───────────────────────────────────────────
 r.get('/tenants', async (req, res) => {
@@ -198,6 +307,50 @@ r.get('/tenants/:id/companies', async (req, res) => {
   }
 });
 
+// ─── Blueprint installed in tenant ─────────────────────────
+r.get('/tenants/:id/blueprints', async (req, res) => {
+  try {
+    const installations = await getTenantBlueprintInstallation(req.params.id);
+    res.json({ installations });
+  } catch (error) {
+    return blueprintErrorResponse(res, error);
+  }
+});
+
+r.get('/tenants/:id/blueprints/preview', async (req, res) => {
+  try {
+    const preview = await previewBlueprintForTenant({
+      tenantId: req.params.id,
+      blueprintKey: req.query.blueprint_key,
+      versionNumber: req.query.version_number,
+    });
+    res.json({ preview });
+  } catch (error) {
+    return blueprintErrorResponse(res, error);
+  }
+});
+
+r.post('/tenants/:id/blueprints/apply', async (req, res) => {
+  try {
+    const b = req.body || {};
+    const result = await applyBlueprintToTenant({
+      tenantId: req.params.id,
+      blueprintKey: b.blueprint_key,
+      versionNumber: b.version_number,
+      actorUserId: req.user?.userId || req.user?.id,
+      companyName: b.company_name,
+      companyShortName: b.company_short_name,
+      bootstrapCompany: b.bootstrap_company === true,
+      expectedCurrentVersion: Object.prototype.hasOwnProperty.call(b, 'expected_current_version')
+        ? b.expected_current_version
+        : undefined,
+    });
+    res.json(result);
+  } catch (error) {
+    return blueprintErrorResponse(res, error);
+  }
+});
+
 function buildEcosystemTree(units) {
   const map = {};
   (units || []).forEach((u) => { map[u.id] = { ...u, children: [] }; });
@@ -334,7 +487,31 @@ r.post('/tenants/onboard', async (req, res) => {
       adminFullName: b.admin_full_name,
     });
 
-    res.status(201).json(result);
+    let blueprint = null;
+    let blueprintWarning = null;
+    if (b.blueprint_key) {
+      try {
+        blueprint = await applyBlueprintToTenant({
+          tenantId: result.tenant.id,
+          blueprintKey: b.blueprint_key,
+          versionNumber: b.blueprint_version,
+          actorUserId: req.user?.userId || req.user?.id,
+          companyName: b.company_name,
+          companyShortName: b.company_short_name,
+          bootstrapCompany: b.bootstrap_company === true,
+        });
+      } catch (blueprintError) {
+        blueprintWarning = isMissingBlueprintSchema(blueprintError)
+          ? 'Tenant đã được tạo nhưng chưa áp dụng Blueprint vì migration 567 chưa được cài đặt.'
+          : `Tenant đã được tạo nhưng áp dụng Blueprint chưa hoàn tất: ${blueprintError.message}`;
+      }
+    }
+
+    res.status(201).json({
+      ...result,
+      blueprint,
+      blueprint_warning: blueprintWarning,
+    });
   } catch (e) {
     if (e.code === '23505') return res.status(400).json({ error: 'Slug đã tồn tại' });
     res.status(500).json({ error: e.message });

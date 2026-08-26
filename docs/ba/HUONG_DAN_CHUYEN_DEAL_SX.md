@@ -8,6 +8,10 @@ Mẫu thực tế: Công ty Nhôm Kính Phúc Đạt · Deal DEAL-2026-440 → D
 
 ## Tổng quan luồng
 
+> **Business OS pilot (Vạn Phú Thành):** luồng chuẩn mới là `Báo giá được duyệt → tạo Đơn hàng → xác nhận Đơn hàng → tự tạo/liên kết Dự án → Sale bàn giao Sản xuất`. Việc duyệt báo giá không còn tự tạo Dự án. Nút bàn giao chỉ thành công khi có Đơn hàng xác nhận + Dự án, task `sx_*` hoàn tất, công ty xưởng hợp lệ và đủ lịch dự kiến.
+>
+> Luồng chuyển Deal sang cột Thắng bên dưới vẫn được giữ cho các công ty/CRM legacy chưa cutover Business OS. Không dùng hai luồng để tạo hai Dự án cho cùng một hồ sơ.
+
 ```text
 CRM Kanban (Deal)
     → Chuyển cột nhanh / kéo thả sang cột Thắng (Phúc Đạt: «Đã ký hợp đồng.»)

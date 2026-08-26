@@ -2,9 +2,9 @@
 
 Tài liệu **đầy đủ** các HTTP endpoint được khai báo trong Express routes.
 
-- Cập nhật: **2026-08-20**
-- Số mount `/api/*` trong `server.js`: **74**
-- Số endpoint (method + path) quét được: **1440**
+- Cập nhật: **2026-08-26**
+- Số mount `/api/*` trong `server.js`: **76**
+- Số endpoint (method + path) quét được: **1514**
 - Nguồn: `backend/src/server.js` + `backend/src/routes/**/*.js`
 - Regenerate: `node docs/api/generate-api-doc.js`
 
@@ -39,6 +39,8 @@ Middleware: `auth.js`, `newPermission.js`, `apiKeyAuth.js`. Client: `frontend/sr
 - `/api/auth`
 - `/api/auth-events`
 - `/api/batch-jobs`
+- `/api/business-os`
+- `/api/business-os/customer-care`
 - `/api/calc`
 - `/api/companies`
 - `/api/company-processes`
@@ -319,6 +321,39 @@ Middleware: `auth.js`, `newPermission.js`, `apiKeyAuth.js`. Client: `frontend/sr
 | POST | `/api/batch-jobs/:id/retry` | `batchJobs.js` |
 | GET | `/api/batch-jobs/types` | `batchJobs.js` |
 
+### `/api/business-os` (19)
+
+| Method | Path đầy đủ | File |
+|---|---|---|
+| GET | `/api/business-os/companies` | `businessOs.js` |
+| GET | `/api/business-os/overview` | `businessOs.js` |
+| GET | `/api/business-os/qualification-automation` | `businessOs.js` |
+| PUT | `/api/business-os/qualification-automation` | `businessOs.js` |
+| POST | `/api/business-os/qualification-automation/rollback` | `businessOs.js` |
+| GET | `/api/business-os/qualification-automation/versions` | `businessOs.js` |
+| GET | `/api/business-os/qualification-contract` | `businessOs.js` |
+| PUT | `/api/business-os/qualification-contract` | `businessOs.js` |
+| POST | `/api/business-os/qualification-contract/rollback` | `businessOs.js` |
+| GET | `/api/business-os/qualification-contract/versions` | `businessOs.js` |
+| POST | `/api/business-os/qualification-custom-fields` | `businessOs.js` |
+| DELETE | `/api/business-os/qualification-custom-fields/:id` | `businessOs.js` |
+| PUT | `/api/business-os/qualification-custom-fields/:id` | `businessOs.js` |
+| POST | `/api/business-os/qualification-sla/evaluate` | `businessOs.js` |
+| GET | `/api/business-os/stage-automations/:stageKey` | `businessOs.js` |
+| PUT | `/api/business-os/stage-automations/:stageKey` | `businessOs.js` |
+| POST | `/api/business-os/stage-automations/:stageKey/rollback` | `businessOs.js` |
+| GET | `/api/business-os/stage-automations/:stageKey/versions` | `businessOs.js` |
+| POST | `/api/business-os/stage-sla/:stageKey/evaluate` | `businessOs.js` |
+
+### `/api/business-os/customer-care` (4)
+
+| Method | Path đầy đủ | File |
+|---|---|---|
+| POST | `/api/business-os/customer-care/cases` | `businessOsCustomerCare.js` |
+| PATCH | `/api/business-os/customer-care/cases/:id` | `businessOsCustomerCare.js` |
+| GET | `/api/business-os/customer-care/overview` | `businessOsCustomerCare.js` |
+| POST | `/api/business-os/customer-care/plans/:projectId/complete` | `businessOsCustomerCare.js` |
+
 ### `/api/calc` (30)
 
 | Method | Path đầy đủ | File |
@@ -416,11 +451,273 @@ Middleware: `auth.js`, `newPermission.js`, `apiKeyAuth.js`. Client: `frontend/sr
 | GET | `/api/company-templates/units/:unitId/template-sets` | `companyTemplates.js` |
 | POST | `/api/company-templates/units/:unitId/template-sets` | `companyTemplates.js` |
 
-### `/api/crm` (1)
+### `/api/crm` (263)
 
 | Method | Path đầy đủ | File |
 |---|---|---|
-| GET | `/api/crm/io` | `crm/shared/helpersBundle.js` |
+| GET | `/api/crm/_version` | `crm/routes/dashboard.js` |
+| GET | `/api/crm/admin/sla-at-risk` | `crm/routes/reports.js` |
+| POST | `/api/crm/admin/sla-remind` | `crm/routes/reports.js` |
+| GET | `/api/crm/alerts/follow-ups` | `crm/routes/dashboard.js` |
+| GET | `/api/crm/auto-lead-blocked-phones` | `crm/routes/leadLifecycle.js` |
+| POST | `/api/crm/auto-lead-blocked-phones` | `crm/routes/leadLifecycle.js` |
+| DELETE | `/api/crm/auto-lead-blocked-phones/:id` | `crm/routes/leadLifecycle.js` |
+| GET | `/api/crm/auto-project-config` | `crm/routes/leadLifecycle.js` |
+| PUT | `/api/crm/auto-project-config` | `crm/routes/leadLifecycle.js` |
+| GET | `/api/crm/companies/:companyId/visible-production-companies` | `crm/routes/visibleProduction.js` |
+| PUT | `/api/crm/companies/:companyId/visible-production-companies` | `crm/routes/visibleProduction.js` |
+| GET | `/api/crm/company-regions` | `crm/routes/customers.js` |
+| POST | `/api/crm/company-regions` | `crm/routes/customers.js` |
+| PATCH | `/api/crm/company-regions/:id` | `crm/routes/customers.js` |
+| POST | `/api/crm/company-regions/:id/regeocode` | `crm/routes/customers.js` |
+| GET | `/api/crm/contract-signed-revenue` | `crm/routes/dashboard.js` |
+| GET | `/api/crm/customers` | `crm/routes/customers.js` |
+| POST | `/api/crm/customers` | `crm/routes/customers.js` |
+| GET | `/api/crm/customers-overview` | `crm/routes/customers.js` |
+| GET | `/api/crm/customers-overview/:id` | `crm/routes/customers.js` |
+| PUT | `/api/crm/customers/:id` | `crm/routes/customers.js` |
+| GET | `/api/crm/dashboard` | `crm/routes/dashboard.js` |
+| POST | `/api/crm/deadline-bucket-counts` | `crm/routes/leadsList.js` |
+| POST | `/api/crm/deadline-bucket-pages` | `crm/routes/leadsList.js` |
+| POST | `/api/crm/deals` | `crm/routes/leadLifecycle.js` |
+| POST | `/api/crm/deals/:id/auto-create-project` | `crm/routes/leadLifecycle.js` |
+| POST | `/api/crm/deals/:id/reassign-sx` | `crm/routes/leadLifecycle.js` |
+| POST | `/api/crm/deals/:id/spawn-additional` | `crm/routes/leadLifecycle.js` |
+| GET | `/api/crm/deals/:id/spawned-additional` | `crm/routes/leadLifecycle.js` |
+| GET | `/api/crm/deals/spawn-source-ids` | `crm/routes/leadLifecycle.js` |
+| PUT | `/api/crm/documents/:docId/visibility` | `crm/routes/leadLifecycle.js` |
+| GET | `/api/crm/employees-by-company` | `crm/routes/dashboard.js` |
+| GET | `/api/crm/error-types` | `crm/routes/errorTypes.js` |
+| POST | `/api/crm/error-types` | `crm/routes/errorTypes.js` |
+| DELETE | `/api/crm/error-types/:id` | `crm/routes/errorTypes.js` |
+| PUT | `/api/crm/error-types/:id` | `crm/routes/errorTypes.js` |
+| PUT | `/api/crm/error-types/:id/staff` | `crm/routes/errorTypes.js` |
+| GET | `/api/crm/filter-summary` | `crm/routes/leadsList.js` |
+| DELETE | `/api/crm/followup-care/dismiss` | `crm/routes/followupPlanner.js` |
+| POST | `/api/crm/followup-care/dismiss` | `crm/routes/followupPlanner.js` |
+| POST | `/api/crm/followup-care/dismiss-all` | `crm/routes/followupPlanner.js` |
+| POST | `/api/crm/followup-care/dismiss/undo` | `crm/routes/followupPlanner.js` |
+| GET | `/api/crm/followup-care/notifications` | `crm/routes/followupPlanner.js` |
+| GET | `/api/crm/invoices` | `crm/routes/commercialDocs.js` |
+| POST | `/api/crm/invoices` | `crm/routes/commercialDocs.js` |
+| DELETE | `/api/crm/invoices/:id` | `crm/routes/commercialDocs.js` |
+| GET | `/api/crm/invoices/:id` | `crm/routes/commercialDocs.js` |
+| PUT | `/api/crm/invoices/:id` | `crm/routes/commercialDocs.js` |
+| POST | `/api/crm/invoices/:id/items` | `crm/routes/commercialDocs.js` |
+| POST | `/api/crm/invoices/:id/misa-publish` | `crm/routes/commercialDocs.js` |
+| POST | `/api/crm/invoices/:id/misa-send-email` | `crm/routes/commercialDocs.js` |
+| GET | `/api/crm/invoices/:id/misa-status` | `crm/routes/commercialDocs.js` |
+| POST | `/api/crm/invoices/:id/payments` | `crm/routes/commercialDocs.js` |
+| GET | `/api/crm/invoices/:id/pdf` | `crm/routes/commercialDocs.js` |
+| GET | `/api/crm/io` | `crm/routes/crmTasks.js` |
+| GET | `/api/crm/kanban-bootstrap` | `crm/routes/leadsList.js` |
+| GET | `/api/crm/kanban-rows` | `crm/routes/dashboard.js` |
+| POST | `/api/crm/kanban-stage-pages` | `crm/routes/leadsList.js` |
+| POST | `/api/crm/kpi-ledger-total` | `crm/routes/leadsList.js` |
+| GET | `/api/crm/lead-care-marks` | `crm/routes/followupPlanner.js` |
+| DELETE | `/api/crm/lead-comments/:cid` | `crm/routes/leadComments.js` |
+| PATCH | `/api/crm/lead-comments/:cid` | `crm/routes/leadComments.js` |
+| PUT | `/api/crm/lead-comments/:cid/reaction` | `crm/routes/leadComments.js` |
+| GET | `/api/crm/lead-comments/index` | `crm/routes/leadComments.js` |
+| GET | `/api/crm/lead-types` | `crm/routes/taxonomy.js` |
+| POST | `/api/crm/lead-types` | `crm/routes/taxonomy.js` |
+| DELETE | `/api/crm/lead-types/:id` | `crm/routes/taxonomy.js` |
+| PUT | `/api/crm/lead-types/:id` | `crm/routes/taxonomy.js` |
+| GET | `/api/crm/leads` | `crm/routes/leadsList.js` |
+| POST | `/api/crm/leads` | `crm/routes/leadLifecycle.js` |
+| GET | `/api/crm/leads-by-fb-page` | `crm/routes/leadsList.js` |
+| GET | `/api/crm/leads-deadlines` | `crm/routes/leadsList.js` |
+| POST | `/api/crm/leads-deadlines` | `crm/routes/leadsList.js` |
+| DELETE | `/api/crm/leads/:id` | `crm/routes/leadLifecycle.js` |
+| GET | `/api/crm/leads/:id` | `crm/routes/leadLifecycle.js` |
+| PUT | `/api/crm/leads/:id` | `crm/routes/leadLifecycle.js` |
+| GET | `/api/crm/leads/:id/activities` | `crm/routes/leadLifecycle.js` |
+| POST | `/api/crm/leads/:id/activities` | `crm/routes/leadLifecycle.js` |
+| PATCH | `/api/crm/leads/:id/activities/:activityId` | `crm/routes/leadLifecycle.js` |
+| PUT | `/api/crm/leads/:id/activities/:activityId/share` | `crm/routes/leadLifecycle.js` |
+| POST | `/api/crm/leads/:id/activities/upload` | `crm/routes/leadLifecycle.js` |
+| GET | `/api/crm/leads/:id/assignments` | `crm/routes/membersChat.js` |
+| POST | `/api/crm/leads/:id/assignments` | `crm/routes/membersChat.js` |
+| GET | `/api/crm/leads/:id/badge` | `crm/routes/leadLifecycle.js` |
+| DELETE | `/api/crm/leads/:id/care-mark` | `crm/routes/followupPlanner.js` |
+| POST | `/api/crm/leads/:id/care-mark` | `crm/routes/followupPlanner.js` |
+| GET | `/api/crm/leads/:id/chat` | `crm/routes/membersChat.js` |
+| POST | `/api/crm/leads/:id/chat` | `crm/routes/membersChat.js` |
+| PUT | `/api/crm/leads/:id/chat/:msgId/pin` | `crm/routes/membersChat.js` |
+| POST | `/api/crm/leads/:id/chat/:msgId/react` | `crm/routes/membersChat.js` |
+| POST | `/api/crm/leads/:id/chat/drive` | `crm/routes/membersChat.js` |
+| GET | `/api/crm/leads/:id/chat/pinned` | `crm/routes/membersChat.js` |
+| POST | `/api/crm/leads/:id/chat/upload` | `crm/routes/membersChat.js` |
+| GET | `/api/crm/leads/:id/comments` | `crm/routes/leadComments.js` |
+| POST | `/api/crm/leads/:id/comments` | `crm/routes/leadComments.js` |
+| PATCH | `/api/crm/leads/:id/comments/read` | `crm/routes/leadComments.js` |
+| GET | `/api/crm/leads/:id/comments/read-receipts` | `crm/routes/leadComments.js` |
+| POST | `/api/crm/leads/:id/convert-to-deal` | `crm/routes/leadLifecycle.js` |
+| POST | `/api/crm/leads/:id/convert-to-lead` | `crm/routes/leadLifecycle.js` |
+| POST | `/api/crm/leads/:id/convert-to-project` | `crm/routes/leadLifecycle.js` |
+| POST | `/api/crm/leads/:id/create-project` | `crm/routes/leadLifecycle.js` |
+| PATCH | `/api/crm/leads/:id/deadline` | `crm/routes/leadLifecycle.js` |
+| GET | `/api/crm/leads/:id/deadline-history` | `crm/routes/leadLifecycle.js` |
+| PATCH | `/api/crm/leads/:id/deadline/disable-all` | `crm/routes/leadLifecycle.js` |
+| GET | `/api/crm/leads/:id/deal-workflow` | `crm/routes/salesQualificationPilot.js` |
+| POST | `/api/crm/leads/:id/deal-workflow/complete-design` | `crm/routes/salesQualificationPilot.js` |
+| POST | `/api/crm/leads/:id/deal-workflow/complete-design-review` | `crm/routes/salesQualificationPilot.js` |
+| POST | `/api/crm/leads/:id/deal-workflow/complete-survey` | `crm/routes/salesQualificationPilot.js` |
+| POST | `/api/crm/leads/:id/deal-workflow/start-design-review` | `crm/routes/salesQualificationPilot.js` |
+| POST | `/api/crm/leads/:id/deal-workflow/start-survey` | `crm/routes/salesQualificationPilot.js` |
+| GET | `/api/crm/leads/:id/detail` | `crm/routes/leadLifecycle.js` |
+| GET | `/api/crm/leads/:id/documents` | `crm/routes/leadLifecycle.js` |
+| POST | `/api/crm/leads/:id/documents` | `crm/routes/leadLifecycle.js` |
+| DELETE | `/api/crm/leads/:id/documents/:docId` | `crm/routes/leadLifecycle.js` |
+| POST | `/api/crm/leads/:id/documents/bulk` | `crm/routes/leadLifecycle.js` |
+| GET | `/api/crm/leads/:id/inbox-links` | `crm/routes/leadLifecycle.js` |
+| DELETE | `/api/crm/leads/:id/interacted` | `crm/routes/followupPlanner.js` |
+| POST | `/api/crm/leads/:id/interacted` | `crm/routes/followupPlanner.js` |
+| GET | `/api/crm/leads/:id/members` | `crm/routes/membersChat.js` |
+| POST | `/api/crm/leads/:id/members` | `crm/routes/membersChat.js` |
+| DELETE | `/api/crm/leads/:id/members/:userId` | `crm/routes/membersChat.js` |
+| DELETE | `/api/crm/leads/:id/pin` | `crm/routes/followupPlanner.js` |
+| POST | `/api/crm/leads/:id/pin` | `crm/routes/followupPlanner.js` |
+| GET | `/api/crm/leads/:id/preview-project-tasks` | `crm/routes/leadLifecycle.js` |
+| GET | `/api/crm/leads/:id/project-setup` | `crm/routes/leadLifecycle.js` |
+| GET | `/api/crm/leads/:id/project-tasks` | `crm/routes/leadLifecycle.js` |
+| GET | `/api/crm/leads/:id/qualification` | `crm/routes/salesQualificationPilot.js` |
+| POST | `/api/crm/leads/:id/qualification/complete` | `crm/routes/salesQualificationPilot.js` |
+| PUT | `/api/crm/leads/:id/qualification/custom-fields` | `crm/routes/salesQualificationPilot.js` |
+| POST | `/api/crm/leads/:id/qualification/start` | `crm/routes/salesQualificationPilot.js` |
+| POST | `/api/crm/leads/:id/reopen` | `crm/routes/leadLifecycle.js` |
+| POST | `/api/crm/leads/:id/repair-pipeline-display` | `crm/routes/leadLifecycle.js` |
+| PATCH | `/api/crm/leads/:id/stage` | `crm/routes/leadLifecycle.js` |
+| GET | `/api/crm/leads/:id/stage-advance-check` | `crm/routes/leadLifecycle.js` |
+| POST | `/api/crm/leads/:id/sx-handover` | `crm/routes/leadLifecycle.js` |
+| POST | `/api/crm/leads/:id/sync-stage` | `crm/routes/leadLifecycle.js` |
+| GET | `/api/crm/leads/:id/task-attachments` | `crm/routes/crmTasks.js` |
+| GET | `/api/crm/leads/:id/task-documents` | `crm/routes/leadLifecycle.js` |
+| GET | `/api/crm/leads/:id/tasks` | `crm/routes/crmTasks.js` |
+| POST | `/api/crm/leads/:id/tasks` | `crm/routes/crmTasks.js` |
+| POST | `/api/crm/leads/:id/tasks/:taskId/import-quotation-excel` | `crm/routes/crmTasks.js` |
+| POST | `/api/crm/leads/:id/tasks/ensure-missing` | `crm/routes/crmTasks.js` |
+| POST | `/api/crm/leads/:id/tasks/ensure-missing-sx` | `crm/routes/crmTasks.js` |
+| POST | `/api/crm/leads/:id/tasks/from-template` | `crm/routes/crmTasks.js` |
+| POST | `/api/crm/leads/:id/tasks/generate-production-template` | `crm/routes/crmTasks.js` |
+| POST | `/api/crm/leads/:id/tasks/resync-pipeline` | `crm/routes/crmTasks.js` |
+| GET | `/api/crm/leads/:id/transfer-options` | `crm/routes/leadLifecycle.js` |
+| POST | `/api/crm/leads/:id/transfer-region` | `crm/routes/leadLifecycle.js` |
+| PATCH | `/api/crm/leads/:id/vc-booking` | `crm/routes/vcBooking.js` |
+| GET | `/api/crm/leads/:id/zalo-notify-preview` | `crm/routes/taxonomy.js` |
+| POST | `/api/crm/leads/:id/zalo-notify-send` | `crm/routes/taxonomy.js` |
+| POST | `/api/crm/leads/:id/zalo-template-fill` | `crm/routes/taxonomy.js` |
+| DELETE | `/api/crm/leads/:leadId/tasks/:taskId` | `crm/routes/crmTasks.js` |
+| PUT | `/api/crm/leads/:leadId/tasks/:taskId` | `crm/routes/crmTasks.js` |
+| GET | `/api/crm/leads/:leadId/tasks/:taskId/attachments` | `crm/routes/crmTasks.js` |
+| POST | `/api/crm/leads/:leadId/tasks/:taskId/attachments` | `crm/routes/crmTasks.js` |
+| DELETE | `/api/crm/leads/:leadId/tasks/:taskId/attachments/:attId` | `crm/routes/crmTasks.js` |
+| PUT | `/api/crm/leads/:leadId/tasks/:taskId/attachments/:attId/share-scope` | `crm/routes/crmTasks.js` |
+| PUT | `/api/crm/leads/:leadId/tasks/:taskId/attachments/:attId/toggle-share` | `crm/routes/crmTasks.js` |
+| POST | `/api/crm/leads/:leadId/tasks/:taskId/attachments/bulk` | `crm/routes/crmTasks.js` |
+| PUT | `/api/crm/leads/:leadId/tasks/:taskId/checklist/:checklistId/notes` | `crm/routes/crmTasks.js` |
+| PUT | `/api/crm/leads/:leadId/tasks/:taskId/notes` | `crm/routes/crmTasks.js` |
+| POST | `/api/crm/leads/:leadId/tasks/:taskId/restore-checklist` | `crm/routes/crmTasks.js` |
+| PUT | `/api/crm/leads/:leadId/tasks/:taskId/toggle-share` | `crm/routes/crmTasks.js` |
+| POST | `/api/crm/leads/bulk-assign` | `crm/routes/leadDuplicates.js` |
+| POST | `/api/crm/leads/cleanup-duplicates` | `crm/routes/leadDuplicates.js` |
+| POST | `/api/crm/leads/merge-duplicates` | `crm/routes/leadDuplicates.js` |
+| POST | `/api/crm/leads/merge-selected` | `crm/routes/leadDuplicates.js` |
+| GET | `/api/crm/leads/picker` | `crm/routes/leadsList.js` |
+| GET | `/api/crm/leads/scan-duplicates` | `crm/routes/leadDuplicates.js` |
+| GET | `/api/crm/leads/search-suggest` | `crm/routes/leadsList.js` |
+| GET | `/api/crm/leads/stage-counts` | `crm/routes/leadsList.js` |
+| POST | `/api/crm/leads/stage-history-summary` | `crm/routes/leadsList.js` |
+| GET | `/api/crm/ledger-net-by-leads` | `crm/routes/dashboard.js` |
+| POST | `/api/crm/ledger-net-by-leads` | `crm/routes/dashboard.js` |
+| GET | `/api/crm/live-version` | `crm/routes/dashboard.js` |
+| GET | `/api/crm/orders` | `crm/routes/commercialDocs.js` |
+| POST | `/api/crm/orders` | `crm/routes/commercialDocs.js` |
+| DELETE | `/api/crm/orders/:id` | `crm/routes/commercialDocs.js` |
+| GET | `/api/crm/orders/:id` | `crm/routes/commercialDocs.js` |
+| PUT | `/api/crm/orders/:id` | `crm/routes/commercialDocs.js` |
+| POST | `/api/crm/orders/:id/create-invoice` | `crm/routes/commercialDocs.js` |
+| GET | `/api/crm/orders/:id/pdf` | `crm/routes/commercialDocs.js` |
+| GET | `/api/crm/phat-sinh-kinds` | `crm/routes/phatSinhKinds.js` |
+| POST | `/api/crm/phat-sinh-kinds` | `crm/routes/phatSinhKinds.js` |
+| DELETE | `/api/crm/phat-sinh-kinds/:id` | `crm/routes/phatSinhKinds.js` |
+| PUT | `/api/crm/phat-sinh-kinds/:id` | `crm/routes/phatSinhKinds.js` |
+| GET | `/api/crm/pipeline-stages` | `crm/routes/pipelines.js` |
+| POST | `/api/crm/pipeline-stages` | `crm/routes/pipelines.js` |
+| PUT | `/api/crm/pipeline-stages-reorder` | `crm/routes/pipelines.js` |
+| DELETE | `/api/crm/pipeline-stages/:id` | `crm/routes/pipelines.js` |
+| PUT | `/api/crm/pipeline-stages/:id` | `crm/routes/pipelines.js` |
+| POST | `/api/crm/pipeline-stages/:id/assign-production-columns` | `crm/routes/pipelines.js` |
+| GET | `/api/crm/pipeline-stages/:id/production-columns` | `crm/routes/pipelines.js` |
+| GET | `/api/crm/pipelines` | `crm/routes/pipelines.js` |
+| POST | `/api/crm/pipelines` | `crm/routes/pipelines.js` |
+| DELETE | `/api/crm/pipelines/:id` | `crm/routes/pipelines.js` |
+| GET | `/api/crm/pipelines/:id` | `crm/routes/pipelines.js` |
+| PUT | `/api/crm/pipelines/:id` | `crm/routes/pipelines.js` |
+| POST | `/api/crm/pipelines/:id/copy` | `crm/routes/pipelines.js` |
+| POST | `/api/crm/planner/columns` | `crm/routes/followupPlanner.js` |
+| DELETE | `/api/crm/planner/columns/:id` | `crm/routes/followupPlanner.js` |
+| PATCH | `/api/crm/planner/columns/:id` | `crm/routes/followupPlanner.js` |
+| POST | `/api/crm/planner/columns/:id/items` | `crm/routes/followupPlanner.js` |
+| DELETE | `/api/crm/planner/items/:id` | `crm/routes/followupPlanner.js` |
+| GET | `/api/crm/planner/me` | `crm/routes/followupPlanner.js` |
+| POST | `/api/crm/planner/reorder` | `crm/routes/followupPlanner.js` |
+| GET | `/api/crm/production-companies` | `crm/routes/visibleProduction.js` |
+| POST | `/api/crm/products` | `crm/routes/commercialDocs.js` |
+| GET | `/api/crm/products-list` | `crm/routes/commercialDocs.js` |
+| PUT | `/api/crm/products/:id` | `crm/routes/commercialDocs.js` |
+| POST | `/api/crm/project/:projectId/auto-invoice` | `crm/routes/leadLifecycle.js` |
+| GET | `/api/crm/project/:projectId/lead-documents` | `crm/routes/leadLifecycle.js` |
+| GET | `/api/crm/project/:projectId/shared-notes` | `crm/routes/crmTasks.js` |
+| GET | `/api/crm/project/:projectId/summary` | `crm/routes/leadLifecycle.js` |
+| GET | `/api/crm/projects/:projectId/documents` | `crm/routes/leadLifecycle.js` |
+| GET | `/api/crm/quotations` | `crm/routes/commercialDocs.js` |
+| POST | `/api/crm/quotations` | `crm/routes/commercialDocs.js` |
+| DELETE | `/api/crm/quotations/:id` | `crm/routes/commercialDocs.js` |
+| GET | `/api/crm/quotations/:id` | `crm/routes/commercialDocs.js` |
+| PUT | `/api/crm/quotations/:id` | `crm/routes/commercialDocs.js` |
+| POST | `/api/crm/quotations/:id/convert-to-order` | `crm/routes/commercialDocs.js` |
+| GET | `/api/crm/quotations/:id/history` | `crm/routes/commercialDocs.js` |
+| GET | `/api/crm/quotations/:id/pdf` | `crm/routes/commercialDocs.js` |
+| POST | `/api/crm/quotations/excel-sheets` | `crm/routes/commercialDocs.js` |
+| POST | `/api/crm/quotations/parse-excel` | `crm/routes/commercialDocs.js` |
+| GET | `/api/crm/referrers` | `crm/routes/taxonomy.js` |
+| POST | `/api/crm/referrers` | `crm/routes/taxonomy.js` |
+| GET | `/api/crm/reports/org-activity-feed` | `crm/routes/reports.js` |
+| GET | `/api/crm/reports/org-overview` | `crm/routes/reports.js` |
+| GET | `/api/crm/reports/org-overview/export.pdf` | `crm/routes/reports.js` |
+| GET | `/api/crm/reports/org-overview/survey-visits` | `crm/routes/reports.js` |
+| GET | `/api/crm/reports/staff-lead-deal` | `crm/routes/reports.js` |
+| GET | `/api/crm/reports/staff-lead-deal/:userId/pipelines` | `crm/routes/reports.js` |
+| GET | `/api/crm/reports/staff-lead-deal/:userId/pipelines/export.pdf` | `crm/routes/reports.js` |
+| GET | `/api/crm/reports/staff-lead-deal/export.pdf` | `crm/routes/reports.js` |
+| GET | `/api/crm/settings/deadline-config` | `crm/routes/followupPlanner.js` |
+| PUT | `/api/crm/settings/deadline-config` | `crm/routes/followupPlanner.js` |
+| GET | `/api/crm/settings/deal-stage-report-buckets` | `crm/routes/reports.js` |
+| PUT | `/api/crm/settings/deal-stage-report-buckets` | `crm/routes/reports.js` |
+| GET | `/api/crm/source-categories` | `crm/routes/taxonomy.js` |
+| POST | `/api/crm/source-categories` | `crm/routes/taxonomy.js` |
+| DELETE | `/api/crm/source-categories/:id` | `crm/routes/taxonomy.js` |
+| PUT | `/api/crm/source-categories/:id` | `crm/routes/taxonomy.js` |
+| GET | `/api/crm/sources` | `crm/routes/taxonomy.js` |
+| POST | `/api/crm/sources` | `crm/routes/taxonomy.js` |
+| PUT | `/api/crm/sources/:id` | `crm/routes/taxonomy.js` |
+| GET | `/api/crm/stage-counts` | `crm/routes/leadsList.js` |
+| GET | `/api/crm/task-templates` | `crm/routes/taskTemplates.js` |
+| POST | `/api/crm/task-templates` | `crm/routes/taskTemplates.js` |
+| DELETE | `/api/crm/task-templates/:id` | `crm/routes/taskTemplates.js` |
+| PUT | `/api/crm/task-templates/:id` | `crm/routes/taskTemplates.js` |
+| POST | `/api/crm/task-templates/:tplId/items` | `crm/routes/taskTemplates.js` |
+| DELETE | `/api/crm/task-templates/:tplId/items/:itemId` | `crm/routes/taskTemplates.js` |
+| PUT | `/api/crm/task-templates/:tplId/items/:itemId` | `crm/routes/taskTemplates.js` |
+| POST | `/api/crm/task-templates/apply-to-company-regions` | `crm/routes/taskTemplates.js` |
+| PUT | `/api/crm/task-templates/set-default-bundle` | `crm/routes/taskTemplates.js` |
+| GET | `/api/crm/tasks/overview` | `crm/routes/taskTemplates.js` |
+| GET | `/api/crm/tasks/planner` | `crm/routes/taskTemplates.js` |
+| GET | `/api/crm/web-dashboard-bootstrap` | `crm/routes/leadsList.js` |
+| GET | `/api/crm/zalo-notify-settings` | `crm/routes/taxonomy.js` |
+| PUT | `/api/crm/zalo-notify-settings` | `crm/routes/taxonomy.js` |
+| POST | `/api/crm/zalo-notify-test` | `crm/routes/taxonomy.js` |
 
 ### `/api/crm/assignments` (29)
 
@@ -501,253 +798,12 @@ Middleware: `auth.js`, `newPermission.js`, `apiKeyAuth.js`. Client: `frontend/sr
 | PATCH | `/api/crm/dept-plans/tasks/:id` | `crmDeptPlans.js` |
 | POST | `/api/crm/dept-plans/tasks/import` | `crmDeptPlans.js` |
 
-### `/api/crm/executive` (243)
+### `/api/crm/executive` (2)
 
 | Method | Path đầy đủ | File |
 |---|---|---|
-| GET | `/api/crm/executive/_version` | `crm` |
 | POST | `/api/crm/executive/acceptance` | `executiveKpi.js` |
-| GET | `/api/crm/executive/admin/sla-at-risk` | `crm` |
-| POST | `/api/crm/executive/admin/sla-remind` | `crm` |
-| GET | `/api/crm/executive/alerts/follow-ups` | `crm` |
-| GET | `/api/crm/executive/auto-lead-blocked-phones` | `crm` |
-| POST | `/api/crm/executive/auto-lead-blocked-phones` | `crm` |
-| DELETE | `/api/crm/executive/auto-lead-blocked-phones/:id` | `crm` |
-| GET | `/api/crm/executive/auto-project-config` | `crm` |
-| PUT | `/api/crm/executive/auto-project-config` | `crm` |
-| GET | `/api/crm/executive/companies/:companyId/visible-production-companies` | `crm` |
-| PUT | `/api/crm/executive/companies/:companyId/visible-production-companies` | `crm` |
-| GET | `/api/crm/executive/company-regions` | `crm` |
-| POST | `/api/crm/executive/company-regions` | `crm` |
-| PATCH | `/api/crm/executive/company-regions/:id` | `crm` |
-| POST | `/api/crm/executive/company-regions/:id/regeocode` | `crm` |
-| GET | `/api/crm/executive/contract-signed-revenue` | `crm` |
-| GET | `/api/crm/executive/customers` | `crm` |
-| POST | `/api/crm/executive/customers` | `crm` |
-| GET | `/api/crm/executive/customers-overview` | `crm` |
-| GET | `/api/crm/executive/customers-overview/:id` | `crm` |
-| PUT | `/api/crm/executive/customers/:id` | `crm` |
-| GET | `/api/crm/executive/dashboard` | `crm` |
-| POST | `/api/crm/executive/deadline-bucket-counts` | `crm` |
-| POST | `/api/crm/executive/deadline-bucket-pages` | `crm` |
-| POST | `/api/crm/executive/deals` | `crm` |
-| POST | `/api/crm/executive/deals/:id/auto-create-project` | `crm` |
-| POST | `/api/crm/executive/deals/:id/reassign-sx` | `crm` |
-| POST | `/api/crm/executive/deals/:id/spawn-additional` | `crm` |
-| GET | `/api/crm/executive/deals/:id/spawned-additional` | `crm` |
-| GET | `/api/crm/executive/deals/spawn-source-ids` | `crm` |
-| PUT | `/api/crm/executive/documents/:docId/visibility` | `crm` |
-| GET | `/api/crm/executive/employees-by-company` | `crm` |
-| GET | `/api/crm/executive/filter-summary` | `crm` |
-| DELETE | `/api/crm/executive/followup-care/dismiss` | `crm` |
-| POST | `/api/crm/executive/followup-care/dismiss` | `crm` |
-| POST | `/api/crm/executive/followup-care/dismiss-all` | `crm` |
-| POST | `/api/crm/executive/followup-care/dismiss/undo` | `crm` |
-| GET | `/api/crm/executive/followup-care/notifications` | `crm` |
-| GET | `/api/crm/executive/invoices` | `crm` |
-| POST | `/api/crm/executive/invoices` | `crm` |
-| DELETE | `/api/crm/executive/invoices/:id` | `crm` |
-| GET | `/api/crm/executive/invoices/:id` | `crm` |
-| PUT | `/api/crm/executive/invoices/:id` | `crm` |
-| POST | `/api/crm/executive/invoices/:id/items` | `crm` |
-| POST | `/api/crm/executive/invoices/:id/misa-publish` | `crm` |
-| POST | `/api/crm/executive/invoices/:id/misa-send-email` | `crm` |
-| GET | `/api/crm/executive/invoices/:id/misa-status` | `crm` |
-| POST | `/api/crm/executive/invoices/:id/payments` | `crm` |
-| GET | `/api/crm/executive/invoices/:id/pdf` | `crm` |
-| GET | `/api/crm/executive/io` | `crm` |
-| GET | `/api/crm/executive/kanban-bootstrap` | `crm` |
-| GET | `/api/crm/executive/kanban-rows` | `crm` |
-| POST | `/api/crm/executive/kanban-stage-pages` | `crm` |
-| GET | `/api/crm/executive/lead-care-marks` | `crm` |
-| DELETE | `/api/crm/executive/lead-comments/:cid` | `crm` |
-| PATCH | `/api/crm/executive/lead-comments/:cid` | `crm` |
-| PUT | `/api/crm/executive/lead-comments/:cid/reaction` | `crm` |
-| GET | `/api/crm/executive/lead-comments/index` | `crm` |
-| GET | `/api/crm/executive/lead-types` | `crm` |
-| POST | `/api/crm/executive/lead-types` | `crm` |
-| DELETE | `/api/crm/executive/lead-types/:id` | `crm` |
-| PUT | `/api/crm/executive/lead-types/:id` | `crm` |
-| GET | `/api/crm/executive/leads` | `crm` |
-| POST | `/api/crm/executive/leads` | `crm` |
-| GET | `/api/crm/executive/leads-by-fb-page` | `crm` |
-| GET | `/api/crm/executive/leads-deadlines` | `crm` |
-| POST | `/api/crm/executive/leads-deadlines` | `crm` |
-| DELETE | `/api/crm/executive/leads/:id` | `crm` |
-| GET | `/api/crm/executive/leads/:id` | `crm` |
-| PUT | `/api/crm/executive/leads/:id` | `crm` |
-| GET | `/api/crm/executive/leads/:id/activities` | `crm` |
-| POST | `/api/crm/executive/leads/:id/activities` | `crm` |
-| PATCH | `/api/crm/executive/leads/:id/activities/:activityId` | `crm` |
-| PUT | `/api/crm/executive/leads/:id/activities/:activityId/share` | `crm` |
-| POST | `/api/crm/executive/leads/:id/activities/upload` | `crm` |
-| GET | `/api/crm/executive/leads/:id/assignments` | `crm` |
-| POST | `/api/crm/executive/leads/:id/assignments` | `crm` |
-| GET | `/api/crm/executive/leads/:id/badge` | `crm` |
-| DELETE | `/api/crm/executive/leads/:id/care-mark` | `crm` |
-| POST | `/api/crm/executive/leads/:id/care-mark` | `crm` |
-| GET | `/api/crm/executive/leads/:id/chat` | `crm` |
-| POST | `/api/crm/executive/leads/:id/chat` | `crm` |
-| PUT | `/api/crm/executive/leads/:id/chat/:msgId/pin` | `crm` |
-| POST | `/api/crm/executive/leads/:id/chat/:msgId/react` | `crm` |
-| POST | `/api/crm/executive/leads/:id/chat/drive` | `crm` |
-| GET | `/api/crm/executive/leads/:id/chat/pinned` | `crm` |
-| POST | `/api/crm/executive/leads/:id/chat/upload` | `crm` |
-| GET | `/api/crm/executive/leads/:id/comments` | `crm` |
-| POST | `/api/crm/executive/leads/:id/comments` | `crm` |
-| PATCH | `/api/crm/executive/leads/:id/comments/read` | `crm` |
-| GET | `/api/crm/executive/leads/:id/comments/read-receipts` | `crm` |
-| POST | `/api/crm/executive/leads/:id/convert-to-deal` | `crm` |
-| POST | `/api/crm/executive/leads/:id/convert-to-lead` | `crm` |
-| POST | `/api/crm/executive/leads/:id/convert-to-project` | `crm` |
-| POST | `/api/crm/executive/leads/:id/create-project` | `crm` |
-| PATCH | `/api/crm/executive/leads/:id/deadline` | `crm` |
-| GET | `/api/crm/executive/leads/:id/deadline-history` | `crm` |
-| PATCH | `/api/crm/executive/leads/:id/deadline/disable-all` | `crm` |
-| GET | `/api/crm/executive/leads/:id/detail` | `crm` |
-| GET | `/api/crm/executive/leads/:id/documents` | `crm` |
-| POST | `/api/crm/executive/leads/:id/documents` | `crm` |
-| DELETE | `/api/crm/executive/leads/:id/documents/:docId` | `crm` |
-| POST | `/api/crm/executive/leads/:id/documents/bulk` | `crm` |
-| DELETE | `/api/crm/executive/leads/:id/interacted` | `crm` |
-| POST | `/api/crm/executive/leads/:id/interacted` | `crm` |
-| GET | `/api/crm/executive/leads/:id/members` | `crm` |
-| POST | `/api/crm/executive/leads/:id/members` | `crm` |
-| DELETE | `/api/crm/executive/leads/:id/members/:userId` | `crm` |
-| DELETE | `/api/crm/executive/leads/:id/pin` | `crm` |
-| POST | `/api/crm/executive/leads/:id/pin` | `crm` |
-| GET | `/api/crm/executive/leads/:id/preview-project-tasks` | `crm` |
-| GET | `/api/crm/executive/leads/:id/project-setup` | `crm` |
-| GET | `/api/crm/executive/leads/:id/project-tasks` | `crm` |
-| POST | `/api/crm/executive/leads/:id/reopen` | `crm` |
-| POST | `/api/crm/executive/leads/:id/repair-pipeline-display` | `crm` |
-| PATCH | `/api/crm/executive/leads/:id/stage` | `crm` |
-| GET | `/api/crm/executive/leads/:id/stage-advance-check` | `crm` |
-| POST | `/api/crm/executive/leads/:id/sx-handover` | `crm` |
-| POST | `/api/crm/executive/leads/:id/sync-stage` | `crm` |
-| GET | `/api/crm/executive/leads/:id/task-attachments` | `crm` |
-| GET | `/api/crm/executive/leads/:id/task-documents` | `crm` |
-| GET | `/api/crm/executive/leads/:id/tasks` | `crm` |
-| POST | `/api/crm/executive/leads/:id/tasks` | `crm` |
-| POST | `/api/crm/executive/leads/:id/tasks/:taskId/import-quotation-excel` | `crm` |
-| POST | `/api/crm/executive/leads/:id/tasks/ensure-missing` | `crm` |
-| POST | `/api/crm/executive/leads/:id/tasks/ensure-missing-sx` | `crm` |
-| POST | `/api/crm/executive/leads/:id/tasks/from-template` | `crm` |
-| POST | `/api/crm/executive/leads/:id/tasks/generate-production-template` | `crm` |
-| POST | `/api/crm/executive/leads/:id/tasks/resync-pipeline` | `crm` |
-| GET | `/api/crm/executive/leads/:id/transfer-options` | `crm` |
-| POST | `/api/crm/executive/leads/:id/transfer-region` | `crm` |
-| PATCH | `/api/crm/executive/leads/:id/vc-booking` | `crm` |
-| GET | `/api/crm/executive/leads/:id/zalo-notify-preview` | `crm` |
-| POST | `/api/crm/executive/leads/:id/zalo-notify-send` | `crm` |
-| POST | `/api/crm/executive/leads/:id/zalo-template-fill` | `crm` |
-| DELETE | `/api/crm/executive/leads/:leadId/tasks/:taskId` | `crm` |
-| PUT | `/api/crm/executive/leads/:leadId/tasks/:taskId` | `crm` |
-| GET | `/api/crm/executive/leads/:leadId/tasks/:taskId/attachments` | `crm` |
-| POST | `/api/crm/executive/leads/:leadId/tasks/:taskId/attachments` | `crm` |
-| DELETE | `/api/crm/executive/leads/:leadId/tasks/:taskId/attachments/:attId` | `crm` |
-| PUT | `/api/crm/executive/leads/:leadId/tasks/:taskId/attachments/:attId/share-scope` | `crm` |
-| PUT | `/api/crm/executive/leads/:leadId/tasks/:taskId/attachments/:attId/toggle-share` | `crm` |
-| POST | `/api/crm/executive/leads/:leadId/tasks/:taskId/attachments/bulk` | `crm` |
-| PUT | `/api/crm/executive/leads/:leadId/tasks/:taskId/checklist/:checklistId/notes` | `crm` |
-| PUT | `/api/crm/executive/leads/:leadId/tasks/:taskId/notes` | `crm` |
-| POST | `/api/crm/executive/leads/:leadId/tasks/:taskId/restore-checklist` | `crm` |
-| PUT | `/api/crm/executive/leads/:leadId/tasks/:taskId/toggle-share` | `crm` |
-| POST | `/api/crm/executive/leads/bulk-assign` | `crm` |
-| POST | `/api/crm/executive/leads/cleanup-duplicates` | `crm` |
-| POST | `/api/crm/executive/leads/merge-duplicates` | `crm` |
-| POST | `/api/crm/executive/leads/merge-selected` | `crm` |
-| GET | `/api/crm/executive/leads/picker` | `crm` |
-| GET | `/api/crm/executive/leads/scan-duplicates` | `crm` |
-| GET | `/api/crm/executive/leads/stage-counts` | `crm` |
-| POST | `/api/crm/executive/leads/stage-history-summary` | `crm` |
-| GET | `/api/crm/executive/ledger-net-by-leads` | `crm` |
-| POST | `/api/crm/executive/ledger-net-by-leads` | `crm` |
-| GET | `/api/crm/executive/live-version` | `crm` |
-| GET | `/api/crm/executive/orders` | `crm` |
-| POST | `/api/crm/executive/orders` | `crm` |
-| DELETE | `/api/crm/executive/orders/:id` | `crm` |
-| GET | `/api/crm/executive/orders/:id` | `crm` |
-| PUT | `/api/crm/executive/orders/:id` | `crm` |
-| POST | `/api/crm/executive/orders/:id/create-invoice` | `crm` |
-| GET | `/api/crm/executive/orders/:id/pdf` | `crm` |
-| GET | `/api/crm/executive/pipeline-stages` | `crm` |
-| POST | `/api/crm/executive/pipeline-stages` | `crm` |
-| PUT | `/api/crm/executive/pipeline-stages-reorder` | `crm` |
-| DELETE | `/api/crm/executive/pipeline-stages/:id` | `crm` |
-| PUT | `/api/crm/executive/pipeline-stages/:id` | `crm` |
-| POST | `/api/crm/executive/pipeline-stages/:id/assign-production-columns` | `crm` |
-| GET | `/api/crm/executive/pipeline-stages/:id/production-columns` | `crm` |
-| GET | `/api/crm/executive/pipelines` | `crm` |
-| POST | `/api/crm/executive/pipelines` | `crm` |
-| DELETE | `/api/crm/executive/pipelines/:id` | `crm` |
-| GET | `/api/crm/executive/pipelines/:id` | `crm` |
-| PUT | `/api/crm/executive/pipelines/:id` | `crm` |
-| POST | `/api/crm/executive/pipelines/:id/copy` | `crm` |
-| POST | `/api/crm/executive/planner/columns` | `crm` |
-| DELETE | `/api/crm/executive/planner/columns/:id` | `crm` |
-| PATCH | `/api/crm/executive/planner/columns/:id` | `crm` |
-| POST | `/api/crm/executive/planner/columns/:id/items` | `crm` |
-| DELETE | `/api/crm/executive/planner/items/:id` | `crm` |
-| GET | `/api/crm/executive/planner/me` | `crm` |
-| POST | `/api/crm/executive/planner/reorder` | `crm` |
-| GET | `/api/crm/executive/production-companies` | `crm` |
-| POST | `/api/crm/executive/products` | `crm` |
-| GET | `/api/crm/executive/products-list` | `crm` |
-| PUT | `/api/crm/executive/products/:id` | `crm` |
-| POST | `/api/crm/executive/project/:projectId/auto-invoice` | `crm` |
-| GET | `/api/crm/executive/project/:projectId/lead-documents` | `crm` |
-| GET | `/api/crm/executive/project/:projectId/shared-notes` | `crm` |
-| GET | `/api/crm/executive/project/:projectId/summary` | `crm` |
-| GET | `/api/crm/executive/projects/:projectId/documents` | `crm` |
-| GET | `/api/crm/executive/quotations` | `crm` |
-| POST | `/api/crm/executive/quotations` | `crm` |
-| DELETE | `/api/crm/executive/quotations/:id` | `crm` |
-| GET | `/api/crm/executive/quotations/:id` | `crm` |
-| PUT | `/api/crm/executive/quotations/:id` | `crm` |
-| POST | `/api/crm/executive/quotations/:id/convert-to-order` | `crm` |
-| GET | `/api/crm/executive/quotations/:id/history` | `crm` |
-| GET | `/api/crm/executive/quotations/:id/pdf` | `crm` |
-| POST | `/api/crm/executive/quotations/excel-sheets` | `crm` |
-| POST | `/api/crm/executive/quotations/parse-excel` | `crm` |
-| GET | `/api/crm/executive/referrers` | `crm` |
-| POST | `/api/crm/executive/referrers` | `crm` |
-| GET | `/api/crm/executive/reports/org-activity-feed` | `crm` |
-| GET | `/api/crm/executive/reports/org-overview` | `crm` |
-| GET | `/api/crm/executive/reports/org-overview/export.pdf` | `crm` |
-| GET | `/api/crm/executive/reports/org-overview/survey-visits` | `crm` |
-| GET | `/api/crm/executive/reports/staff-lead-deal` | `crm` |
-| GET | `/api/crm/executive/reports/staff-lead-deal/:userId/pipelines` | `crm` |
-| GET | `/api/crm/executive/reports/staff-lead-deal/:userId/pipelines/export.pdf` | `crm` |
-| GET | `/api/crm/executive/reports/staff-lead-deal/export.pdf` | `crm` |
-| GET | `/api/crm/executive/settings/deadline-config` | `crm` |
-| PUT | `/api/crm/executive/settings/deadline-config` | `crm` |
-| GET | `/api/crm/executive/settings/deal-stage-report-buckets` | `crm` |
-| PUT | `/api/crm/executive/settings/deal-stage-report-buckets` | `crm` |
-| GET | `/api/crm/executive/source-categories` | `crm` |
-| POST | `/api/crm/executive/source-categories` | `crm` |
-| DELETE | `/api/crm/executive/source-categories/:id` | `crm` |
-| PUT | `/api/crm/executive/source-categories/:id` | `crm` |
-| GET | `/api/crm/executive/sources` | `crm` |
-| POST | `/api/crm/executive/sources` | `crm` |
-| PUT | `/api/crm/executive/sources/:id` | `crm` |
-| GET | `/api/crm/executive/stage-counts` | `crm` |
 | GET | `/api/crm/executive/summary` | `executiveKpi.js` |
-| GET | `/api/crm/executive/task-templates` | `crm` |
-| POST | `/api/crm/executive/task-templates` | `crm` |
-| DELETE | `/api/crm/executive/task-templates/:id` | `crm` |
-| PUT | `/api/crm/executive/task-templates/:id` | `crm` |
-| POST | `/api/crm/executive/task-templates/:tplId/items` | `crm` |
-| DELETE | `/api/crm/executive/task-templates/:tplId/items/:itemId` | `crm` |
-| PUT | `/api/crm/executive/task-templates/:tplId/items/:itemId` | `crm` |
-| POST | `/api/crm/executive/task-templates/apply-to-company-regions` | `crm` |
-| PUT | `/api/crm/executive/task-templates/set-default-bundle` | `crm` |
-| GET | `/api/crm/executive/tasks/overview` | `crm` |
-| GET | `/api/crm/executive/tasks/planner` | `crm` |
-| GET | `/api/crm/executive/web-dashboard-bootstrap` | `crm` |
-| GET | `/api/crm/executive/zalo-notify-settings` | `crm` |
-| PUT | `/api/crm/executive/zalo-notify-settings` | `crm` |
-| POST | `/api/crm/executive/zalo-notify-test` | `crm` |
 
 ### `/api/customers` (8)
 
@@ -762,7 +818,7 @@ Middleware: `auth.js`, `newPermission.js`, `apiKeyAuth.js`. Client: `frontend/sr
 | GET | `/api/customers/:id/interactions` | `customers.js` |
 | POST | `/api/customers/:id/interactions` | `customers.js` |
 
-### `/api/dashboard` (24)
+### `/api/dashboard` (34)
 
 | Method | Path đầy đủ | File |
 |---|---|---|
@@ -787,6 +843,16 @@ Middleware: `auth.js`, `newPermission.js`, `apiKeyAuth.js`. Client: `frontend/sr
 | GET | `/api/dashboard/notifications/mutes` | `dashboard.js` |
 | PUT | `/api/dashboard/notifications/read-all` | `dashboard.js` |
 | GET | `/api/dashboard/overview` | `dashboard.js` |
+| GET | `/api/dashboard/project-deadlines` | `dashboard.js` |
+| GET | `/api/dashboard/project-deadlines/config` | `dashboard.js` |
+| PUT | `/api/dashboard/project-deadlines/config` | `dashboard.js` |
+| GET | `/api/dashboard/project-deadlines/configs` | `dashboard.js` |
+| POST | `/api/dashboard/project-deadlines/configs` | `dashboard.js` |
+| DELETE | `/api/dashboard/project-deadlines/configs/:id` | `dashboard.js` |
+| PUT | `/api/dashboard/project-deadlines/configs/:id` | `dashboard.js` |
+| POST | `/api/dashboard/project-deadlines/configs/:id/send` | `dashboard.js` |
+| POST | `/api/dashboard/project-deadlines/configs/:id/test` | `dashboard.js` |
+| POST | `/api/dashboard/project-deadlines/run` | `dashboard.js` |
 | GET | `/api/dashboard/team` | `dashboard.js` |
 | GET | `/api/dashboard/timeline` | `dashboard.js` |
 | GET | `/api/dashboard/workload` | `dashboard.js` |
@@ -944,7 +1010,7 @@ Middleware: `auth.js`, `newPermission.js`, `apiKeyAuth.js`. Client: `frontend/sr
 | GET | `/api/ecosystem/units/:unitId/users` | `ecosystem.js` |
 | POST | `/api/ecosystem/units/members` | `ecosystem.js` |
 
-### `/api/events` (16)
+### `/api/events` (17)
 
 | Method | Path đầy đủ | File |
 |---|---|---|
@@ -963,9 +1029,10 @@ Middleware: `auth.js`, `newPermission.js`, `apiKeyAuth.js`. Client: `frontend/sr
 | DELETE | `/api/events/event-types/:id` | `events.js` |
 | PUT | `/api/events/event-types/:id` | `events.js` |
 | GET | `/api/events/map` | `events.js` |
+| GET | `/api/events/module-owners` | `events.js` |
 | GET | `/api/events/overview` | `events.js` |
 
-### `/api/external` (13)
+### `/api/external` (15)
 
 | Method | Path đầy đủ | File |
 |---|---|---|
@@ -977,6 +1044,8 @@ Middleware: `auth.js`, `newPermission.js`, `apiKeyAuth.js`. Client: `frontend/sr
 | POST | `/api/external/oauth/token` | `external.js` |
 | GET | `/api/external/ping` | `external.js` |
 | GET | `/api/external/pipelines` | `external.js` |
+| GET | `/api/external/project-deadlines` | `external.js` |
+| POST | `/api/external/project-deadlines/run` | `external.js` |
 | GET | `/api/external/regions` | `external.js` |
 | GET | `/api/external/source-categories` | `external.js` |
 | GET | `/api/external/sources` | `external.js` |
@@ -1246,14 +1315,20 @@ Middleware: `auth.js`, `newPermission.js`, `apiKeyAuth.js`. Client: `frontend/sr
 | DELETE | `/api/logistics/trash/:id` | `logistics.js` |
 | POST | `/api/logistics/trash/:id/restore` | `logistics.js` |
 
-### `/api/management` (4)
+### `/api/management` (10)
 
 | Method | Path đầy đủ | File |
 |---|---|---|
 | GET | `/api/management/by-project/:projectId` | `management.js` |
+| GET | `/api/management/crm-overview` | `management.js` |
 | GET | `/api/management/deals` | `management.js` |
 | GET | `/api/management/deals/:leadId` | `management.js` |
 | GET | `/api/management/overview` | `management.js` |
+| GET | `/api/management/production-overview` | `management.js` |
+| GET | `/api/management/production-overview/:projectId` | `management.js` |
+| GET | `/api/management/purchasing-overview` | `management.js` |
+| GET | `/api/management/work-overview` | `management.js` |
+| GET | `/api/management/work-unified` | `management.js` |
 
 ### `/api/mcp` (9)
 
@@ -1336,16 +1411,25 @@ Middleware: `auth.js`, `newPermission.js`, `apiKeyAuth.js`. Client: `frontend/sr
 | POST | `/api/permissions/users/custom-permission` | `permissions.js` |
 | POST | `/api/permissions/users/effective/bulk` | `permissions.js` |
 
-### `/api/platform` (16)
+### `/api/platform` (25)
 
 | Method | Path đầy đủ | File |
 |---|---|---|
+| GET | `/api/platform/blueprints` | `platform.js` |
+| POST | `/api/platform/blueprints` | `platform.js` |
+| GET | `/api/platform/blueprints/:id` | `platform.js` |
+| PATCH | `/api/platform/blueprints/:id` | `platform.js` |
+| POST | `/api/platform/blueprints/:id/versions` | `platform.js` |
+| POST | `/api/platform/blueprints/:id/versions/:versionId/publish` | `platform.js` |
 | GET | `/api/platform/stats/overview` | `platform.js` |
 | GET | `/api/platform/tenants` | `platform.js` |
 | POST | `/api/platform/tenants` | `platform.js` |
 | DELETE | `/api/platform/tenants/:id` | `platform.js` |
 | GET | `/api/platform/tenants/:id` | `platform.js` |
 | PATCH | `/api/platform/tenants/:id` | `platform.js` |
+| GET | `/api/platform/tenants/:id/blueprints` | `platform.js` |
+| POST | `/api/platform/tenants/:id/blueprints/apply` | `platform.js` |
+| GET | `/api/platform/tenants/:id/blueprints/preview` | `platform.js` |
 | GET | `/api/platform/tenants/:id/companies` | `platform.js` |
 | GET | `/api/platform/tenants/:id/ecosystem` | `platform.js` |
 | GET | `/api/platform/tenants/:id/features` | `platform.js` |
@@ -1642,7 +1726,7 @@ Middleware: `auth.js`, `newPermission.js`, `apiKeyAuth.js`. Client: `frontend/sr
 | GET | `/api/stages/status-mapping` | `stages.js` |
 | PUT | `/api/stages/status-mapping` | `stages.js` |
 
-### `/api/tasks` (28)
+### `/api/tasks` (29)
 
 | Method | Path đầy đủ | File |
 |---|---|---|
@@ -1670,6 +1754,7 @@ Middleware: `auth.js`, `newPermission.js`, `apiKeyAuth.js`. Client: `frontend/sr
 | DELETE | `/api/tasks/:taskId/time-logs/:logId` | `tasks.js` |
 | PUT | `/api/tasks/checklists/:clId` | `tasks.js` |
 | GET | `/api/tasks/io` | `tasks.js` |
+| POST | `/api/tasks/lite-by-projects` | `tasks.js` |
 | GET | `/api/tasks/my` | `tasks.js` |
 | GET | `/api/tasks/overdue` | `tasks.js` |
 | GET | `/api/tasks/planner/board` | `tasks.js` |
@@ -1902,6 +1987,7 @@ Xem header `backend/src/routes/external.js`.
 | GET | /api/external/users | — |
 | GET | /api/external/ping | — |
 | GET | /api/external/leads/stats | — |
+| GET | /api/external/project-deadlines | query days_ahead, status=all\|overdue\|upcoming, module=all\|crm\|production\|logistics, company_id?, responsible_user_id?, limit |
 
 ---
 
@@ -1909,6 +1995,25 @@ Xem header `backend/src/routes/external.js`.
 
 Sửa trong `backend/src/routes/crm/routes/`:
 
+- `crm/routes/commercialDocs.js`
+- `crm/routes/crmTasks.js`
+- `crm/routes/customers.js`
+- `crm/routes/dashboard.js`
+- `crm/routes/errorTypes.js`
+- `crm/routes/followupPlanner.js`
+- `crm/routes/leadComments.js`
+- `crm/routes/leadDuplicates.js`
+- `crm/routes/leadLifecycle.js`
+- `crm/routes/leadsList.js`
+- `crm/routes/membersChat.js`
+- `crm/routes/phatSinhKinds.js`
+- `crm/routes/pipelines.js`
+- `crm/routes/reports.js`
+- `crm/routes/salesQualificationPilot.js`
+- `crm/routes/taskTemplates.js`
+- `crm/routes/taxonomy.js`
+- `crm/routes/vcBooking.js`
+- `crm/routes/visibleProduction.js`
 
 ---
 

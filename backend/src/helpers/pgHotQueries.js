@@ -485,7 +485,7 @@ async function pgDashboardOverview({
          COUNT(*) FILTER (WHERE type = 'lead' AND created_at >= $1::timestamptz)::int AS new_leads_30d,
          COUNT(*) FILTER (WHERE type = 'deal' AND created_at >= $1::timestamptz)::int AS new_deals_30d,
          COUNT(*) FILTER (WHERE type = 'deal' AND project_id IS NOT NULL)::int AS won_deals,
-         COALESCE(SUM(budget) FILTER (WHERE type = 'deal' AND project_id IS NULL), 0)::float8 AS deal_pipeline_value
+         COALESCE(SUM(estimated_value) FILTER (WHERE type = 'deal' AND project_id IS NULL), 0)::float8 AS deal_pipeline_value
        FROM crm_leads`,
       [thirtyDaysAgo],
     ),

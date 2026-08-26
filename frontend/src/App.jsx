@@ -229,6 +229,8 @@ const PlatformBillingPage = lazyWithRetry(() => import('./pages/platform/Platfor
 const PlatformModulesPage = lazyWithRetry(() => import('./pages/platform/PlatformModulesPage'));
 const PlatformPlansPage = lazyWithRetry(() => import('./pages/platform/PlatformPlansPage'));
 const PlatformPurchasesPage = lazyWithRetry(() => import('./pages/platform/PlatformPurchasesPage'));
+const PlatformBlueprintsPage = lazyWithRetry(() => import('./pages/platform/PlatformBlueprintsPage'));
+const BusinessOSPage = lazyWithRetry(() => import('./pages/BusinessOSPage'));
 
 import { Settings } from 'lucide-react';
 
@@ -320,6 +322,12 @@ function ProtectedLayout() {
     if (!allowed) {
       return <Navigate to="/crm/dashboard" replace />;
     }
+  }
+
+  // Business OS có shell điều hành riêng. Không bọc sidebar cũ để tránh hai
+  // hệ điều hướng chồng lên nhau và giữ toàn bộ không gian cho dashboard mới.
+  if (location.pathname.startsWith('/business-os')) {
+    return <Suspense fallback={<PageLoader />}><Outlet /></Suspense>;
   }
 
   const fullscreenPages = ['/projects/create', '/crm/messenger', '/work/flows'];
@@ -463,9 +471,11 @@ export default function App() {
               <Route path="plans" element={<PlatformPlansPage />} />
               <Route path="modules" element={<PlatformModulesPage />} />
               <Route path="purchases" element={<PlatformPurchasesPage />} />
+              <Route path="blueprints" element={<PlatformBlueprintsPage />} />
               <Route path="tier-features" element={<PlatformTierFeaturesPage />} />
               <Route path="stats" element={<PlatformStatsPage />} />
             </Route>
+            <Route path="/business-os/*" element={<BusinessOSPage />} />
             <Route path="/ecosystem" element={<EcosystemPage />} />
             <Route path="/ecosystem/modules" element={<EcosystemModulesPage />} />
             <Route path="/ecosystem/app-modules" element={<AppModulesAdminPage />} />

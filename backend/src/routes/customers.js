@@ -16,12 +16,22 @@ r.use(auth);
 // ─── LIST CUSTOMERS (CRM) ──
 r.get('/', async (req, res) => {
   try {
-    const { search, status, status_id, assigned_to, source, page = 1, limit = 50 } = req.query;
+    const {
+      search, status, status_id, assigned_to, source,
+      company_id: requestedCompanyId, page = 1, limit = 50,
+    } = req.query;
+    const companyId = requestedCompanyId && requestedCompanyId !== 'all'
+      ? String(requestedCompanyId).trim()
+      : null;
+    if (companyId && !assertCompanyAccessible(req, res, companyId)) return;
+    const applyRequestedScope = (query) => (
+      companyId ? query.eq('company_id', companyId) : applyCompanyTenantScope(query, req)
+    );
     let q = supabase.from('customers').select(`
       *, assigned_user:users!customers_assigned_to_fkey(id,full_name,avatar),
       customer_status:customer_statuses(id,name,slug,color,icon)
     `, { count: 'exact' });
-    q = applyCompanyTenantScope(q, req);
+    q = applyRequestedScope(q);
     if (search) q = q.or(`full_name.ilike.%${search}%,phone.ilike.%${search}%,email.ilike.%${search}%,company.ilike.%${search}%`);
     if (status_id && status_id !== 'all') q = q.eq('status_id', status_id);
     else if (status && status !== 'all') q = q.eq('status', status);
@@ -36,14 +46,14 @@ r.get('/', async (req, res) => {
     let stats = { total: 0 };
     try {
       let statsQ = supabase.from('customers').select('status_id, company_id');
-      statsQ = applyCompanyTenantScope(statsQ, req);
+      statsQ = applyRequestedScope(statsQ);
       const { data: all } = await statsQ;
       stats.total = all?.length || 0;
       all?.forEach(c => { if (c.status_id) stats[c.status_id] = (stats[c.status_id] || 0) + 1; });
     } catch (_) {
       // Fallback: count by old status field
       let statsQ = supabase.from('customers').select('status, company_id');
-      statsQ = applyCompanyTenantScope(statsQ, req);
+      statsQ = applyRequestedScope(statsQ);
       const { data: all } = await statsQ;
       stats.total = all?.length || 0;
       all?.forEach(c => { stats[c.status] = (stats[c.status] || 0) + 1; });

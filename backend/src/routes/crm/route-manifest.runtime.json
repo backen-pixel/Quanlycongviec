@@ -1,21 +1,24 @@
 {
-  "generated_at": "2026-07-27T04:39:54.470Z",
-  "total_routes": 231,
+  "generated_at": "2026-08-25T23:43:07.460Z",
+  "total_routes": 262,
   "by_file": {
     "routes/dashboard.js": 9,
     "routes/reports.js": 12,
-    "routes/leadLifecycle.js": 47,
+    "routes/leadLifecycle.js": 51,
     "routes/visibleProduction.js": 3,
     "routes/customers.js": 9,
+    "routes/leadsList.js": 16,
+    "routes/errorTypes.js": 5,
     "routes/followupPlanner.js": 21,
     "routes/commercialDocs.js": 31,
-    "routes/leadsList.js": 9,
     "routes/leadComments.js": 8,
     "routes/taxonomy.js": 19,
     "routes/membersChat.js": 12,
+    "routes/salesQualificationPilot.js": 10,
     "routes/crmTasks.js": 22,
     "routes/vcBooking.js": 1,
     "routes/leadDuplicates.js": 5,
+    "routes/phatSinhKinds.js": 4,
     "routes/pipelines.js": 13,
     "routes/taskTemplates.js": 11
   },
@@ -154,6 +157,18 @@
     },
     {
       "method": "POST",
+      "path": "/deadline-bucket-counts",
+      "file": "routes/leadsList.js",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/deadline-bucket-pages",
+      "file": "routes/leadsList.js",
+      "middleware": []
+    },
+    {
+      "method": "POST",
       "path": "/deals",
       "file": "routes/leadLifecycle.js",
       "middleware": []
@@ -171,6 +186,24 @@
       "middleware": []
     },
     {
+      "method": "POST",
+      "path": "/deals/:id/spawn-additional",
+      "file": "routes/leadLifecycle.js",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/deals/:id/spawned-additional",
+      "file": "routes/leadLifecycle.js",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/deals/spawn-source-ids",
+      "file": "routes/leadLifecycle.js",
+      "middleware": []
+    },
+    {
       "method": "PUT",
       "path": "/documents/:docId/visibility",
       "file": "routes/leadLifecycle.js",
@@ -180,6 +213,42 @@
       "method": "GET",
       "path": "/employees-by-company",
       "file": "routes/dashboard.js",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/error-types",
+      "file": "routes/errorTypes.js",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/error-types",
+      "file": "routes/errorTypes.js",
+      "middleware": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/error-types/:id",
+      "file": "routes/errorTypes.js",
+      "middleware": []
+    },
+    {
+      "method": "PUT",
+      "path": "/error-types/:id",
+      "file": "routes/errorTypes.js",
+      "middleware": []
+    },
+    {
+      "method": "PUT",
+      "path": "/error-types/:id/staff",
+      "file": "routes/errorTypes.js",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/filter-summary",
+      "file": "routes/leadsList.js",
       "middleware": []
     },
     {
@@ -288,6 +357,18 @@
       "method": "GET",
       "path": "/kanban-rows",
       "file": "routes/dashboard.js",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/kanban-stage-pages",
+      "file": "routes/leadsList.js",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/kpi-ledger-total",
+      "file": "routes/leadsList.js",
       "middleware": []
     },
     {
@@ -557,6 +638,12 @@
       "middleware": []
     },
     {
+      "method": "GET",
+      "path": "/leads/:id/deadline-history",
+      "file": "routes/leadLifecycle.js",
+      "middleware": []
+    },
+    {
       "method": "PATCH",
       "path": "/leads/:id/deadline/disable-all",
       "file": "routes/leadLifecycle.js",
@@ -564,8 +651,38 @@
     },
     {
       "method": "GET",
-      "path": "/leads/:id/deadline-history",
-      "file": "routes/leadLifecycle.js",
+      "path": "/leads/:id/deal-workflow",
+      "file": "routes/salesQualificationPilot.js",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/deal-workflow/complete-design",
+      "file": "routes/salesQualificationPilot.js",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/deal-workflow/complete-design-review",
+      "file": "routes/salesQualificationPilot.js",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/deal-workflow/complete-survey",
+      "file": "routes/salesQualificationPilot.js",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/deal-workflow/start-design-review",
+      "file": "routes/salesQualificationPilot.js",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/deal-workflow/start-survey",
+      "file": "routes/salesQualificationPilot.js",
       "middleware": []
     },
     {
@@ -595,6 +712,12 @@
     {
       "method": "POST",
       "path": "/leads/:id/documents/bulk",
+      "file": "routes/leadLifecycle.js",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/leads/:id/inbox-links",
       "file": "routes/leadLifecycle.js",
       "middleware": []
     },
@@ -656,6 +779,30 @@
       "method": "GET",
       "path": "/leads/:id/project-tasks",
       "file": "routes/leadLifecycle.js",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/leads/:id/qualification",
+      "file": "routes/salesQualificationPilot.js",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/qualification/complete",
+      "file": "routes/salesQualificationPilot.js",
+      "middleware": []
+    },
+    {
+      "method": "PUT",
+      "path": "/leads/:id/qualification/custom-fields",
+      "file": "routes/salesQualificationPilot.js",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/qualification/start",
+      "file": "routes/salesQualificationPilot.js",
       "middleware": []
     },
     {
@@ -758,14 +905,14 @@
       "middleware": []
     },
     {
-      "method": "POST",
-      "path": "/leads/:id/transfer-region",
+      "method": "GET",
+      "path": "/leads/:id/transfer-options",
       "file": "routes/leadLifecycle.js",
       "middleware": []
     },
     {
-      "method": "GET",
-      "path": "/leads/:id/transfer-options",
+      "method": "POST",
+      "path": "/leads/:id/transfer-region",
       "file": "routes/leadLifecycle.js",
       "middleware": []
     },
@@ -899,15 +1046,23 @@
     },
     {
       "method": "GET",
+      "path": "/leads/scan-duplicates",
+      "file": "routes/leadDuplicates.js",
+      "middleware": []
+    },
+    {
+      "method": "GET",
       "path": "/leads/search-suggest",
       "file": "routes/leadsList.js",
       "middleware": []
     },
     {
       "method": "GET",
-      "path": "/leads/scan-duplicates",
-      "file": "routes/leadDuplicates.js",
-      "middleware": []
+      "path": "/leads/stage-counts",
+      "file": "routes/leadsList.js",
+      "middleware": [
+        "handleCrmStageCounts"
+      ]
     },
     {
       "method": "POST",
@@ -973,6 +1128,30 @@
       "method": "GET",
       "path": "/orders/:id/pdf",
       "file": "routes/commercialDocs.js",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/phat-sinh-kinds",
+      "file": "routes/phatSinhKinds.js",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/phat-sinh-kinds",
+      "file": "routes/phatSinhKinds.js",
+      "middleware": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/phat-sinh-kinds/:id",
+      "file": "routes/phatSinhKinds.js",
+      "middleware": []
+    },
+    {
+      "method": "PUT",
+      "path": "/phat-sinh-kinds/:id",
+      "file": "routes/phatSinhKinds.js",
       "middleware": []
     },
     {
@@ -1345,7 +1524,9 @@
       "method": "GET",
       "path": "/stage-counts",
       "file": "routes/leadsList.js",
-      "middleware": []
+      "middleware": [
+        "handleCrmStageCounts"
+      ]
     },
     {
       "method": "GET",
@@ -1440,12 +1621,12 @@
   ],
   "source": "runtime+source",
   "label": "postsplit_runtime",
-  "live_unique_count": 230,
+  "live_unique_count": 262,
   "parent_middleware": [
     "auth",
     "<anonymous>",
     "enforceCrmDealAssigneeAccess"
   ],
-  "nested_routers": 16,
-  "checksum": "28698fd51817f17c"
+  "nested_routers": 19,
+  "checksum": "0ee0e864ce265f81"
 }

@@ -2,9 +2,9 @@
 
 Chuẩn code + **inventory đầy đủ** file helpers / middleware / routes / lib / pages / migrations.
 
-- Cập nhật: **2026-08-20**
-- Helpers: **320** · Middleware: **8** · Route files: **95**
-- Frontend lib: **169** · Pages: **170** · SQL migrations: **580**
+- Cập nhật: **2026-08-25**
+- Helpers: **339** · Middleware: **8** · Route files: **99**
+- Frontend lib: **171** · Pages: **182** · SQL migrations: **607**
 - Regenerate inventory: `node docs/project/generate-coding-standard-doc.js`
 
 ---
@@ -79,7 +79,7 @@ Helpers: `isAdminLike`, `isSystemAdmin`, `isCompanyScopedAdmin`, `isProductionSt
 - Sau đổi `crm_pipeline_stages` → whitelist PUT.
 - Không commit dump `backend/uploads/_clone/`.
 
-Tổng file SQL hiện có: **580** (danh sách mục 10).
+Tổng file SQL hiện có: **607** (danh sách mục 10).
 
 ## 6. Checklist PR
 
@@ -104,7 +104,7 @@ Tổng file SQL hiện có: **580** (danh sách mục 10).
 - `backend/src/middleware/scopeFilter.js`
 - `backend/src/middleware/tenantGate.js`
 
-## 8. Inventory route files (95)
+## 8. Inventory route files (99)
 
 - `backend/src/routes/accounting.js`
 - `backend/src/routes/aiChatBot.js`
@@ -115,6 +115,7 @@ Tổng file SQL hiện có: **580** (danh sách mục 10).
 - `backend/src/routes/auth.js`
 - `backend/src/routes/authEventLog.js`
 - `backend/src/routes/batchJobs.js`
+- `backend/src/routes/businessOs.js`
 - `backend/src/routes/calc.js`
 - `backend/src/routes/companies.js`
 - `backend/src/routes/companyProcesses.js`
@@ -126,14 +127,17 @@ Tổng file SQL hiện có: **580** (danh sách mục 10).
 - `backend/src/routes/crm/routes/crmTasks.js`
 - `backend/src/routes/crm/routes/customers.js`
 - `backend/src/routes/crm/routes/dashboard.js`
+- `backend/src/routes/crm/routes/errorTypes.js`
 - `backend/src/routes/crm/routes/followupPlanner.js`
 - `backend/src/routes/crm/routes/leadComments.js`
 - `backend/src/routes/crm/routes/leadDuplicates.js`
 - `backend/src/routes/crm/routes/leadLifecycle.js`
 - `backend/src/routes/crm/routes/leadsList.js`
 - `backend/src/routes/crm/routes/membersChat.js`
+- `backend/src/routes/crm/routes/phatSinhKinds.js`
 - `backend/src/routes/crm/routes/pipelines.js`
 - `backend/src/routes/crm/routes/reports.js`
+- `backend/src/routes/crm/routes/salesQualificationPilot.js`
 - `backend/src/routes/crm/routes/taskTemplates.js`
 - `backend/src/routes/crm/routes/taxonomy.js`
 - `backend/src/routes/crm/routes/vcBooking.js`
@@ -202,7 +206,7 @@ Tổng file SQL hiện có: **580** (danh sách mục 10).
 - `backend/src/routes/workshopTypes.js`
 - `backend/src/routes/zalo.js`
 
-## 9. Inventory helpers (320)
+## 9. Inventory helpers (339)
 
 - `backend/src/helpers/accountingDealDetail.js`
 - `backend/src/helpers/accountingDeals.js`
@@ -241,6 +245,7 @@ Tổng file SQL hiện có: **580** (danh sách mục 10).
 - `backend/src/helpers/appUpdateNotify.js`
 - `backend/src/helpers/applyPlannedOpsEvents.js`
 - `backend/src/helpers/approvalCrossModuleNotify.js`
+- `backend/src/helpers/assignmentAssigneeRoles.js`
 - `backend/src/helpers/assignmentModule.js`
 - `backend/src/helpers/auditLog.js`
 - `backend/src/helpers/authEventLog.js`
@@ -254,6 +259,10 @@ Tổng file SQL hiện có: **580** (danh sách mục 10).
 - `backend/src/helpers/batchJobHandlers.js`
 - `backend/src/helpers/batchQueue.js`
 - `backend/src/helpers/batchQueueRateLimit.js`
+- `backend/src/helpers/businessBlueprint.js`
+- `backend/src/helpers/businessOsCustomFields.js`
+- `backend/src/helpers/businessOsOverview.js`
+- `backend/src/helpers/businessOsQualificationAutomation.js`
 - `backend/src/helpers/calc3dParsers/csvParser.js`
 - `backend/src/helpers/calc3dParsers/daeParser.js`
 - `backend/src/helpers/calc3dParsers/dxfStub.js`
@@ -268,6 +277,7 @@ Tổng file SQL hiện có: **580** (danh sách mục 10).
 - `backend/src/helpers/callRingtoneStorage.js`
 - `backend/src/helpers/callSessionStore.js`
 - `backend/src/helpers/checklistItemEvidence.js`
+- `backend/src/helpers/clearCompletedProjectDeadlines.js`
 - `backend/src/helpers/clearProjectDeliveryDeadline.js`
 - `backend/src/helpers/companyDeadlineClock.js`
 - `backend/src/helpers/completeOpenWorkOnModuleDone.js`
@@ -282,6 +292,7 @@ Tổng file SQL hiện có: **580** (danh sách mục 10).
 - `backend/src/helpers/crmAutoLeadPhoneBlocklist.js`
 - `backend/src/helpers/crmChecklistArtifacts.js`
 - `backend/src/helpers/crmDealAssigneeLock.js`
+- `backend/src/helpers/crmDealDashboardKpis.js`
 - `backend/src/helpers/crmDealKhSplit.js`
 - `backend/src/helpers/crmDealStageGate.js`
 - `backend/src/helpers/crmDealTabTotals.js`
@@ -325,12 +336,18 @@ Tổng file SQL hiện có: **580** (danh sách mục 10).
 - `backend/src/helpers/crmVisibleProductionCompanies.js`
 - `backend/src/helpers/cronLeader.js`
 - `backend/src/helpers/crossCompanyWorkspace.js`
+- `backend/src/helpers/dailyReportAdminNotify.js`
 - `backend/src/helpers/dailyReportAutoClose.js`
 - `backend/src/helpers/dailyReportAutoSubmit.js`
+- `backend/src/helpers/dailyReportMetrics.js`
+- `backend/src/helpers/dailyReportSnapshot.js`
+- `backend/src/helpers/dailyReportStaffing.js`
+- `backend/src/helpers/dailyReportTeamMatrix.js`
 - `backend/src/helpers/dailyReportUserTemplates.js`
 - `backend/src/helpers/dailyWorkHistory.js`
 - `backend/src/helpers/deadlineModuleNotifications.js`
 - `backend/src/helpers/dealCommentNotifications.js`
+- `backend/src/helpers/dealModuleResponsibleUsers.js`
 - `backend/src/helpers/dealParticipantProduction.js`
 - `backend/src/helpers/defaultChecklists.js`
 - `backend/src/helpers/deleteExclusiveProjectsForLeads.js`
@@ -388,6 +405,7 @@ Tổng file SQL hiện có: **580** (danh sách mục 10).
 - `backend/src/helpers/moduleLeadDocuments.js`
 - `backend/src/helpers/normalizeTimestamp.js`
 - `backend/src/helpers/notificationCenterChannels.js`
+- `backend/src/helpers/notificationCompanyRelevance.js`
 - `backend/src/helpers/notificationMutes.js`
 - `backend/src/helpers/notificationOperationalFilter.js`
 - `backend/src/helpers/notificationPrefTypes.js`
@@ -417,6 +435,7 @@ Tổng file SQL hiện có: **580** (danh sách mục 10).
 - `backend/src/helpers/productionWorkshopTypeStaff.js`
 - `backend/src/helpers/projectAccessScope.js`
 - `backend/src/helpers/projectCode.js`
+- `backend/src/helpers/projectDeadlineExport.js`
 - `backend/src/helpers/projectDealBundle.js`
 - `backend/src/helpers/projectDeliveryDates.js`
 - `backend/src/helpers/projectFileActivity.js`
@@ -439,9 +458,12 @@ Tổng file SQL hiện có: **580** (danh sách mục 10).
 - `backend/src/helpers/saasPaymentNotify.js`
 - `backend/src/helpers/saasPlans.js`
 - `backend/src/helpers/saasProvision.js`
+- `backend/src/helpers/salesQualificationPilot.js`
 - `backend/src/helpers/scopeQueryParams.js`
 - `backend/src/helpers/sharedWorkspaceAssignmentCreate.js`
+- `backend/src/helpers/sharedWorkspaceErrorTypes.js`
 - `backend/src/helpers/sharedWorkspaceInbox.js`
+- `backend/src/helpers/sharedWorkspacePhatSinhKinds.js`
 - `backend/src/helpers/sharedWorkspaceTaskSource.js`
 - `backend/src/helpers/socketAbuseGuard.js`
 - `backend/src/helpers/socketAuth.js`
@@ -474,6 +496,7 @@ Tổng file SQL hiện có: **580** (danh sách mục 10).
 - `backend/src/helpers/sxWorkshopSchedule.js`
 - `backend/src/helpers/syncCrmArtifactShareToLeadDocuments.js`
 - `backend/src/helpers/syncLeadDocumentsToProject.js`
+- `backend/src/helpers/syncProjectDeliveryStage.js`
 - `backend/src/helpers/syncProjectModuleAssignments.js`
 - `backend/src/helpers/syncProjectTaskToLeadDocument.js`
 - `backend/src/helpers/syncQuotationDepositToDealAndProject.js`
@@ -525,7 +548,7 @@ Tổng file SQL hiện có: **580** (danh sách mục 10).
 - `backend/src/helpers/zaloOaMessaging.js`
 - `backend/src/helpers/zaloOaToken.js`
 
-## 10. Inventory frontend lib (169)
+## 10. Inventory frontend lib (171)
 
 - `frontend/src/lib/activityLogger.js`
 - `frontend/src/lib/adminRole.js`
@@ -619,6 +642,7 @@ Tổng file SQL hiện có: **580** (danh sách mục 10).
 - `frontend/src/lib/leaveScheduleExport.js`
 - `frontend/src/lib/leaveScheduleStorage.js`
 - `frontend/src/lib/leaveScheduleUtils.js`
+- `frontend/src/lib/leaveStaffApi.js`
 - `frontend/src/lib/managementDashboardUtils.js`
 - `frontend/src/lib/mediaUrl.js`
 - `frontend/src/lib/memberModuleCounts.js`
@@ -642,6 +666,7 @@ Tổng file SQL hiện có: **580** (danh sách mục 10).
 - `frontend/src/lib/notificationPrefsCache.js`
 - `frontend/src/lib/notificationPresets.js`
 - `frontend/src/lib/notificationSoundIdb.js`
+- `frontend/src/lib/overlayDealBundleWithFlowAssignments.js`
 - `frontend/src/lib/pipelineDealStackChart.js`
 - `frontend/src/lib/platformConstants.js`
 - `frontend/src/lib/productTour/storage.js`
@@ -697,7 +722,7 @@ Tổng file SQL hiện có: **580** (danh sách mục 10).
 - `frontend/src/lib/workshopTaskScope.js`
 - `frontend/src/lib/xlsxLoader.js`
 
-## 11. Inventory frontend pages (170)
+## 11. Inventory frontend pages (182)
 
 - `frontend/src/pages/AccountingBankAccountsPage.jsx`
 - `frontend/src/pages/AccountingDashboard.jsx`
@@ -712,6 +737,7 @@ Tổng file SQL hiện có: **580** (danh sách mục 10).
 - `frontend/src/pages/AppUpdatesPage.jsx`
 - `frontend/src/pages/ApprovalRulesPage.jsx`
 - `frontend/src/pages/AutoProjectConfigPage.jsx`
+- `frontend/src/pages/BusinessOSPage.jsx`
 - `frontend/src/pages/CRMAssignmentsPage.jsx`
 - `frontend/src/pages/CRMCustomersPage.jsx`
 - `frontend/src/pages/CRMDashboard.jsx`
@@ -733,6 +759,7 @@ Tổng file SQL hiện có: **580** (danh sách mục 10).
 - `frontend/src/pages/CrmDeptPlanPage.jsx`
 - `frontend/src/pages/CrmFollowUpCarePage.jsx`
 - `frontend/src/pages/CrmOrgOverviewReport.jsx`
+- `frontend/src/pages/CrmOverviewPage.jsx`
 - `frontend/src/pages/CrmSlaWatchlistPage.jsx`
 - `frontend/src/pages/CrmStaffLeadDealReport.jsx`
 - `frontend/src/pages/CustomModuleAssignmentsPage.jsx`
@@ -809,11 +836,14 @@ Tổng file SQL hiện có: **580** (danh sách mục 10).
 - `frontend/src/pages/ProductionDashboard.jsx`
 - `frontend/src/pages/ProductionDetail.jsx`
 - `frontend/src/pages/ProductionHandoverSettingsPage.jsx`
+- `frontend/src/pages/ProductionOverviewPage.jsx`
 - `frontend/src/pages/ProductionPipeline.jsx`
 - `frontend/src/pages/ProductionPipelineSettingsPage.jsx`
+- `frontend/src/pages/ProductionProjectDetailPage.jsx`
 - `frontend/src/pages/ProductionRegionsPage.jsx`
 - `frontend/src/pages/ProductionTrashPage.jsx`
 - `frontend/src/pages/ProductsPage.jsx`
+- `frontend/src/pages/ProjectDeadlineDispatchPage.jsx`
 - `frontend/src/pages/ProjectDetail.jsx`
 - `frontend/src/pages/ProjectTemplatesPage.jsx`
 - `frontend/src/pages/Projects.jsx`
@@ -822,14 +852,17 @@ Tổng file SQL hiện có: **580** (danh sách mục 10).
 - `frontend/src/pages/PurchasingBrandsPage.jsx`
 - `frontend/src/pages/PurchasingCategoriesPage.jsx`
 - `frontend/src/pages/PurchasingInboxPage.jsx`
+- `frontend/src/pages/PurchasingOverviewPage.jsx`
 - `frontend/src/pages/PurchasingProductsPage.jsx`
 - `frontend/src/pages/QrScanPage.jsx`
 - `frontend/src/pages/QuotationForm.jsx`
 - `frontend/src/pages/QuotationsPage.jsx`
+- `frontend/src/pages/QuotesOverviewPage.jsx`
 - `frontend/src/pages/ReleaseNotesPage.jsx`
 - `frontend/src/pages/RequestMonitorPage.jsx`
 - `frontend/src/pages/SaasCheckoutPage.jsx`
 - `frontend/src/pages/SaasPaymentReturnPage.jsx`
+- `frontend/src/pages/SharedWorkspaceErrorTypesPage.jsx`
 - `frontend/src/pages/SocialFeedPage.jsx`
 - `frontend/src/pages/SocialProfilePage.jsx`
 - `frontend/src/pages/StageGroupsPage.jsx`
@@ -845,7 +878,10 @@ Tổng file SQL hiện có: **580** (danh sách mục 10).
 - `frontend/src/pages/UnifiedTrashPage.jsx`
 - `frontend/src/pages/UsersPage.jsx`
 - `frontend/src/pages/VoiceRecordingsPage.jsx`
+- `frontend/src/pages/WorkOverviewPage.jsx`
 - `frontend/src/pages/WorkTasksUnifiedPage.jsx`
+- `frontend/src/pages/WorkUnifiedOverviewPage.jsx`
+- `frontend/src/pages/WorkUnifiedProjectDetailPage.jsx`
 - `frontend/src/pages/WorkflowFlowsPage.jsx`
 - `frontend/src/pages/WorkflowHubPage.jsx`
 - `frontend/src/pages/WorkflowSettings.jsx`
@@ -860,6 +896,7 @@ Tổng file SQL hiện có: **580** (danh sách mục 10).
 - `frontend/src/pages/calc/HopCungCostPage.jsx`
 - `frontend/src/pages/calc/HopCungDesignWizardPage.jsx`
 - `frontend/src/pages/platform/PlatformBillingPage.jsx`
+- `frontend/src/pages/platform/PlatformBlueprintsPage.jsx`
 - `frontend/src/pages/platform/PlatformDashboard.jsx`
 - `frontend/src/pages/platform/PlatformModulesPage.jsx`
 - `frontend/src/pages/platform/PlatformPlansPage.jsx`
@@ -870,7 +907,7 @@ Tổng file SQL hiện có: **580** (danh sách mục 10).
 - `frontend/src/pages/platform/PlatformTierFeaturesPage.jsx`
 - `frontend/src/pages/platform/PlatformUsersPage.jsx`
 
-## 12. Inventory migrations SQL (580)
+## 12. Inventory migrations SQL (607)
 
 - `database/000_verify_crm_supabase_project.sql`
 - `database/100_companies_is_active_null.sql`
@@ -1314,6 +1351,7 @@ Tổng file SQL hiện có: **580** (danh sách mục 10).
 - `database/472_crm_search_trigram_indexes.sql`
 - `database/472_task_file_note_recorded.sql`
 - `database/473_accounting_role.sql`
+- `database/473_business_os_sales_qualification_pilot.sql`
 - `database/473_crm_deadline_bucket_counts_rpc.sql`
 - `database/474_crm_deadline_bucket_pages_rpc.sql`
 - `database/474_custom_app_modules.sql`
@@ -1400,9 +1438,35 @@ Tổng file SQL hiện có: **580** (danh sách mục 10).
 - `database/543_project_delivery_workflow_stages.sql`
 - `database/544_project_module_company_sync.sql`
 - `database/545_sx_post_delivery_ignore_overdue.sql`
+- `database/546_vpt_vc_temp_install_staging.sql`
+- `database/547_backfill_vc_temp_install_staging.sql`
+- `database/548_vpt_remap_global_vc_columns.sql`
+- `database/549_shared_workspace_error_types.sql`
 - `database/54_crm_leads_sx_pipeline_stage.sql`
+- `database/550_users_zalo_id.sql`
+- `database/551_shared_workspace_phat_sinh_kinds.sql`
+- `database/552_shared_workspace_ecosystem_scope.sql`
+- `database/553_project_deadline_dispatches.sql`
+- `database/554_knowledge_seed_crm_detail_buttons.sql`
+- `database/554_project_deadline_dispatches_nullable_project.sql`
+- `database/555_knowledge_seed_sx_detail_buttons.sql`
+- `database/556_knowledge_seed_vc_detail_buttons.sql`
+- `database/557_crm_filter_summary_deal_value_sums.sql`
+- `database/558_crm_leads_rpc_tenant_scope.sql`
+- `database/559_crm_filter_summary_kanban_tenant_scope.sql`
 - `database/55_workshop_task_templates.sql`
+- `database/560_projects_sx_kanban_column_composite_index.sql`
+- `database/561_sx_kanban_stage_page_ids_rpc.sql`
+- `database/562_crm_leads_page_ids_fast_path.sql`
+- `database/563_hcb_truong_trong_thanh_all_projects.sql`
+- `database/564_sx_kanban_column_counts_no_division.sql`
+- `database/565_rescan_clear_deadlines_on_completed.sql`
+- `database/566_crm_daily_report_snapshots.sql`
+- `database/567_business_blueprint_control_plane.sql`
+- `database/568_business_os_stage_contracts.sql`
+- `database/569_business_os_dynamic_custom_fields.sql`
 - `database/56_seed_workshop_task_templates.sql`
+- `database/570_business_os_qualification_automation.sql`
 - `database/57_workshop_template_crm_parity.sql`
 - `database/58_crm_leads_page_ids_assignee_strict.sql`
 - `database/59_crm_lead_seen_by.sql`

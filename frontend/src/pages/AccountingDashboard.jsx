@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
   Search, X, Receipt, ExternalLink, RefreshCw, Building2, Factory,
   Download, AlertTriangle, FileText, ShoppingCart,
@@ -91,6 +91,7 @@ function DocCell({ total, code, docId, viewHref, createHref }) {
 
 export default function AccountingDashboard() {
   const { user } = useAuth();
+  const [searchParams] = useSearchParams();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -107,6 +108,18 @@ export default function AccountingDashboard() {
   const [page, setPage] = useState(1);
   const limit = 50;
 
+  const requestedClientCompanyId = (
+    searchParams.get('client_company_id')
+    || searchParams.get('company_id')
+    || ''
+  ).trim();
+  const selectedClientCompanyId = isAccountingUser(user)
+    ? String(user?.company_id || '').trim()
+    : (requestedClientCompanyId || String(user?.company_id || '').trim());
+  const detailCompanySearch = selectedClientCompanyId
+    ? `?client_company_id=${encodeURIComponent(selectedClientCompanyId)}`
+    : '';
+
   useEffect(() => {
     const t = setTimeout(() => setSearchDebounced(searchQuery.trim()), 300);
     return () => clearTimeout(t);
@@ -114,7 +127,7 @@ export default function AccountingDashboard() {
 
   useEffect(() => {
     setPage(1);
-  }, [filterWorkshop, filterFinancial, searchDebounced]);
+  }, [filterWorkshop, filterFinancial, searchDebounced, selectedClientCompanyId]);
 
   const queryParams = useMemo(() => {
     const p = {
@@ -128,28 +141,27 @@ export default function AccountingDashboard() {
     } else if (filterFinancial) {
       p.financial_status = filterFinancial;
     }
-    // Admin công ty: truyền company_id để API xác định phạm vi kế toán
-    if (!isAccountingUser(user) && user?.company_id) {
-      p.client_company_id = user.company_id;
+    if (selectedClientCompanyId) {
+      p.client_company_id = selectedClientCompanyId;
     }
     return p;
-  }, [page, limit, filterWorkshop, filterFinancial, searchDebounced, user]);
+  }, [page, limit, filterWorkshop, filterFinancial, searchDebounced, selectedClientCompanyId]);
 
   const summaryParams = useMemo(() => {
     const p = filterWorkshop ? { workshop_company_id: filterWorkshop } : {};
-    if (!isAccountingUser(user) && user?.company_id) {
-      p.client_company_id = user.company_id;
+    if (selectedClientCompanyId) {
+      p.client_company_id = selectedClientCompanyId;
     }
     return p;
-  }, [filterWorkshop, user]);
+  }, [filterWorkshop, selectedClientCompanyId]);
 
   const loadData = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     else setRefreshing(true);
     setError('');
     try {
-      const workshopParams = (!isAccountingUser(user) && user?.company_id)
-        ? { client_company_id: user.company_id }
+      const workshopParams = selectedClientCompanyId
+        ? { client_company_id: selectedClientCompanyId }
         : {};
       const [summaryRes, dealsRes, workshopsRes] = await Promise.all([
         api.get('/accounting/summary', { params: summaryParams }),
@@ -167,7 +179,7 @@ export default function AccountingDashboard() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [queryParams, summaryParams, user]);
+  }, [queryParams, summaryParams, selectedClientCompanyId]);
 
   useEffect(() => {
     if (!user) return;
@@ -479,7 +491,7 @@ export default function AccountingDashboard() {
                   className={`transition-colors hover:bg-indigo-50/30 ${d.sx_production_done && d.financial_status !== 'invoiced' ? 'bg-amber-50/40' : ''}`}
                 >
                   <td className="py-3 px-3">
-                    <Link to={`/ketoan/deals/${d.id}`} className="font-semibold text-indigo-700 hover:underline">
+                    <Link to={`/ketoan/deals/${d.id}${detailCompanySearch}`} className="font-semibold text-indigo-700 hover:underline">
                       {d.code || d.title}
                     </Link>
                     <p className="text-gray-800 truncate max-w-[14rem]" title={d.title}>{d.title}</p>
@@ -547,7 +559,7 @@ export default function AccountingDashboard() {
                   <td className="py-3 px-3">
                     <div className="flex items-center gap-1">
                       <Link
-                        to={`/ketoan/deals/${d.id}`}
+                        to={`/ketoan/deals/${d.id}${detailCompanySearch}`}
                         title="Chi tiết kế toán"
                         className="p-1.5 rounded-lg text-teal-600 hover:text-teal-800 hover:bg-teal-50"
                       >

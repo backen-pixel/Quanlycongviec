@@ -13,7 +13,7 @@ const {
   assertRowCompanyInTenant,
   TENANT_EMPTY_COMPANY_SENTINEL,
 } = require('../src/helpers/tenantScope');
-const { guardTenantCompanyParams } = require('../src/middleware/tenantGate');
+const { guardTenantCompanyParams, normalizeCompanyParamValues } = require('../src/middleware/tenantGate');
 const { applyCrmLeadRegionFilterToQuery } = require('../src/helpers/crmRegionScope');
 
 function mockQuery() {
@@ -106,6 +106,28 @@ async function run() {
   nextCalled = false;
   guardTenantCompanyParams(reqGuard, resGuard, () => { nextCalled = true; });
   assert.strictEqual(nextCalled, true);
+
+  // Danh sách company_id: hỗ trợ CSV, JSON string và array; chỉ một ID ngoài tenant là bị chặn.
+  assert.deepStrictEqual(normalizeCompanyParamValues(`${co1},${co2}`), [co1, co2]);
+  assert.deepStrictEqual(normalizeCompanyParamValues(JSON.stringify([co1, co2])), [co1, co2]);
+  assert.deepStrictEqual(normalizeCompanyParamValues([co1, co2]), [co1, co2]);
+  assert.deepStrictEqual(normalizeCompanyParamValues('all'), []);
+
+  const reqListGuard = mockReq(tenantA, [co1, co2]);
+  reqListGuard.query = { company_ids: `${co1},${coOther}` };
+  const resListGuard = mockRes();
+  nextCalled = false;
+  guardTenantCompanyParams(reqListGuard, resListGuard, () => { nextCalled = true; });
+  assert.strictEqual(nextCalled, false);
+  assert.strictEqual(resListGuard.statusCode, 403);
+
+  const reqExecutorGuard = mockReq(tenantA, [co1]);
+  reqExecutorGuard.body = { executor_company_id: coOther };
+  const resExecutorGuard = mockRes();
+  nextCalled = false;
+  guardTenantCompanyParams(reqExecutorGuard, resExecutorGuard, () => { nextCalled = true; });
+  assert.strictEqual(nextCalled, false);
+  assert.strictEqual(resExecutorGuard.statusCode, 403);
 
   // CRM region filter chains tenant scope
   const qCrm = mockQuery();

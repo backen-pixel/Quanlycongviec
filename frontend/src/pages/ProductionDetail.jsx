@@ -2785,6 +2785,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
 
   const saveIncident = async () => {
     if (!incidentForm.title.trim()) { alert('Nhập tiêu đề sự cố'); return; }
+    if (!incidentForm.description.trim()) { alert('Nhập nguyên nhân sự cố'); return; }
     setSavingIncident(true);
     try {
       const { data } = await api.post(`${MOD.apiPrefix}/projects/${project.id}/incidents`, incidentForm);
@@ -3947,9 +3948,9 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                           className="w-full h-9 px-2 border border-gray-200 rounded-lg mt-1 text-sm" placeholder="Ví dụ: Máy cắt bị hỏng, nguyên liệu thiếu..." />
                       </div>
                       <div>
-                        <label className="text-xs font-medium text-gray-600">Mô tả chi tiết</label>
+                        <label className="text-xs font-medium text-gray-600">Nguyên nhân / mô tả *</label>
                         <textarea value={incidentForm.description} onChange={e => setIncidentForm(f => ({ ...f, description: e.target.value }))}
-                          className="w-full min-h-[80px] px-2 py-2 border border-gray-200 rounded-lg mt-1 text-sm resize-none" placeholder="Mô tả thêm về sự cố..." />
+                          className="w-full min-h-[80px] px-2 py-2 border border-gray-200 rounded-lg mt-1 text-sm resize-none" placeholder="Vì sao xảy ra sự cố và phạm vi ảnh hưởng..." />
                       </div>
                       <div>
                         <label className="text-xs font-medium text-gray-600">Mức độ</label>

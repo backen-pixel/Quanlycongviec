@@ -55,6 +55,10 @@ const {
   memberDisplayName,
 } = require('../helpers/crmLeadCommentMentions');
 const { isAdminLike } = require('../helpers/adminRole');
+const {
+  recordDeliveryReady,
+  recordInstallationStarted,
+} = require('../helpers/businessOsCommercialWorkflow');
 
 const r = Router();
 r.use(auth);
@@ -77,6 +81,25 @@ function canActAsVcHandoverSale(req, saleIds) {
 function emitComment(req, leadId, action, row) {
   const io = req.app.get('io');
   if (io) io.to(`lead:${leadId}`).emit('lead:comment', { lead_id: leadId, action, comment: row });
+}
+
+function processRequestId(req) {
+  return String(req.get('X-Request-Id') || '').trim() || null;
+}
+
+async function syncBusinessOsDeliveryReady(req, { leadId, projectId, commentId, actorUserId }) {
+  try {
+    return await recordDeliveryReady({
+      leadId,
+      projectId,
+      handoverCommentId: commentId,
+      actorUserId,
+      requestId: processRequestId(req),
+    });
+  } catch (error) {
+    console.warn('[vc-handover] Business OS delivery-ready transition skipped:', error.message);
+    return null;
+  }
 }
 
 async function loadVcComment(commentId) {
@@ -829,7 +852,18 @@ r.post('/projects/:id/request', async (req, res) => {
       }
 
       await completeSxFinishOnHandoverColumn(projectId);
-      return res.json({ comment: withReactions(enrichedRow), lead_id: deal.id, already: true });
+      const businessOsProcess = await syncBusinessOsDeliveryReady(req, {
+        leadId: deal.id,
+        projectId,
+        commentId: enrichedRow.id,
+        actorUserId: actor,
+      });
+      return res.json({
+        comment: withReactions(enrichedRow),
+        lead_id: deal.id,
+        already: true,
+        business_os_process: businessOsProcess,
+      });
     }
 
     let leadTypeName = null;
@@ -947,7 +981,13 @@ r.post('/projects/:id/request', async (req, res) => {
       console.warn('[vc-handover] comment notify:', cerr.message);
     }
 
-    res.json({ comment: row, lead_id: deal.id });
+    const businessOsProcess = await syncBusinessOsDeliveryReady(req, {
+      leadId: deal.id,
+      projectId,
+      commentId: row.id,
+      actorUserId: actor,
+    });
+    res.json({ comment: row, lead_id: deal.id, business_os_process: businessOsProcess });
   } catch (e) {
     console.error('POST /vc-handover/projects/:id/request:', e);
     res.status(500).json({ error: e.message || 'Lỗi server' });
@@ -1443,6 +1483,21 @@ r.patch('/comments/:cid/select', async (req, res) => {
       }
     } catch (nerr) { console.warn('[vc-handover] notify select:', nerr.message); }
 
+    let businessOsProcess = null;
+    try {
+      businessOsProcess = await recordInstallationStarted({
+        leadId: comment.lead_id,
+        projectId,
+        handoverCommentId: cid,
+        logisticsCompanyId: resolvedLogisticsCompanyId,
+        externalCompanyName: skipLogistics ? companyName : null,
+        actorUserId: userId,
+        requestId: processRequestId(req),
+      });
+    } catch (processError) {
+      console.warn('[vc-handover] Business OS installation transition skipped:', processError.message);
+    }
+
     res.json({
       comment: row,
       event_id: nextMeta.event_id || null,
@@ -1460,6 +1515,7 @@ r.patch('/comments/:cid/select', async (req, res) => {
       vc_kanban_column_id: result.vc_kanban_column_id || null,
       handed_over: skipLogistics ? false : result.handed_over !== false,
       already_in_logistics: !!result.already_in_logistics,
+      business_os_process: businessOsProcess,
     });
   } catch (e) {
     console.error('PATCH /vc-handover/comments/:cid/select:', e);

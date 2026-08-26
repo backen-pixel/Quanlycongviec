@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isAdminLike, isCompanyScopedAdmin } from '../lib/adminRole';
@@ -29,10 +29,11 @@ const BUCKET_LABEL = {
   on_track: 'Đúng tiến độ',
   waiting_material: 'Chờ vật tư',
   late: 'Trễ hạn',
-  done: 'Hoàn tất',
+  done: 'Đã qua sản xuất',
 };
 
 export default function ProductionOverviewPage() {
+  const [searchParams] = useSearchParams();
   const { user } = useAuth();
   const isAdmin = isAdminLike(user);
   const isCompanyScoped = isCompanyScopedAdmin(user);
@@ -51,9 +52,11 @@ export default function ProductionOverviewPage() {
     api.get('/companies', { params: { for_module: 'production' } }).then((res) => {
       const list = Array.isArray(res.data) ? res.data : (res.data?.companies || []);
       setCompanies(list);
-      if (list.length > 0) setCompanyId((prev) => prev || list[0].id);
+      const requestedCompanyId = searchParams.get('company_id');
+      const requestedAllowed = requestedCompanyId && list.some((company) => String(company.id) === String(requestedCompanyId));
+      if (list.length > 0) setCompanyId((prev) => prev || (requestedAllowed ? requestedCompanyId : list[0].id));
     }).catch(() => setCompanies([]));
-  }, []);
+  }, [searchParams]);
 
   useEffect(() => { setPage(1); }, [stageFilter, bucketTab, companyId]);
 
@@ -62,7 +65,7 @@ export default function ProductionOverviewPage() {
     setError('');
     try {
       const params = {};
-      if (canPickCompany && companyId) params.company_id = companyId;
+      if (companyId) params.company_id = companyId;
       const res = await api.get('/management/production-overview', { params });
       setData(res.data);
     } catch (e) {
@@ -83,7 +86,7 @@ export default function ProductionOverviewPage() {
   }, [canPickCompany, companyId, companies, user?.company_id]);
 
   const stages = data?.stages || [];
-  const stats = data?.stats || { active: 0, waiting_material: 0, late: 0, done_this_week: 0 };
+  const stats = data?.stats || { in_pipeline: 0, active: 0, waiting_material: 0, late: 0, done_this_week: 0 };
   const allItems = data?.items || [];
 
   const filteredItems = useMemo(() => {
@@ -137,7 +140,7 @@ export default function ProductionOverviewPage() {
             Làm mới
           </button>
           <Link
-            to="/sx/dashboard"
+            to={`/sx/dashboard${companyId ? `?company_id=${companyId}` : ''}`}
             className="inline-flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700"
           >
             Mở bảng Kanban xưởng
@@ -181,8 +184,9 @@ export default function ProductionOverviewPage() {
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <div className="rounded-xl border border-gray-100 bg-white p-4 shadow-sm">
-          <p className="text-xs text-gray-500">Dự án đang sản xuất</p>
-          <p className="text-2xl font-bold mt-1.5 text-gray-900">{loading ? '…' : stats.active}</p>
+          <p className="text-xs text-gray-500">Hồ sơ trong luồng SX</p>
+          <p className="text-2xl font-bold mt-1.5 text-gray-900">{loading ? '…' : (stats.in_pipeline ?? allItems.length)}</p>
+          <p className="text-[11px] text-gray-400 mt-0.5">{stats.active} hồ sơ chưa qua sản xuất</p>
         </div>
         <div className="rounded-xl border border-gray-100 bg-white p-4 shadow-sm">
           <p className="text-xs text-gray-500">Dự án chờ vật tư</p>
@@ -243,7 +247,7 @@ export default function ProductionOverviewPage() {
                 pageItems.map((it) => (
                   <tr key={it.id} className="border-b border-gray-50 last:border-0 hover:bg-gray-50/60">
                     <td className="px-4 py-3 align-top">
-                      <Link to={`/management/production-overview/${it.id}`} className="text-sm font-semibold text-blue-700 hover:underline truncate block" title={it.name}>
+                      <Link to={`/management/production-overview/${it.id}${companyId ? `?company_id=${companyId}` : ''}`} className="text-sm font-semibold text-blue-700 hover:underline truncate block" title={it.name}>
                         {it.code}
                       </Link>
                       <p className="text-xs text-gray-500 truncate mt-0.5" title={it.name}>{it.name}</p>

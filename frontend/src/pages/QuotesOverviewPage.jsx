@@ -423,7 +423,7 @@ export default function QuotesOverviewPage() {
                   <Download className="h-4 w-4" />
                   Tải PDF
                 </button>
-                {(detail.status === 'accepted' || detail.status === 'sent') && (
+                {detail.status === 'accepted' && (
                   <button
                     type="button"
                     onClick={handleConvert}

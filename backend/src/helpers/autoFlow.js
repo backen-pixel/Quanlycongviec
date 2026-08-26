@@ -4,7 +4,7 @@
 //
 // LUỒNG TỰ ĐỘNG:
 // 1. Lead chốt (is_won)      → Auto tạo Project + Gen Tasks
-// 2. BG chấp nhận (accepted)  → Tạo dự án nếu lead chưa có (không tạo đơn hàng)
+// 2. BG chấp nhận (accepted)  → Chờ tạo Đơn hàng (không tạo Project sớm)
 // 3. ĐH xác nhận (confirmed) → Auto tạo Project (nếu chưa có) + Gen Tasks
 // 4. Project chuyển stage     → Sync ĐH status (SX → processing, Giao → shipped...)
 // 5. Project hoàn thành       → Auto tạo Hóa đơn từ ĐH chưa xuất HĐ
@@ -115,72 +115,40 @@ async function createProjectFromLead(lead, userId, overrideFlowId) {
   return project;
 }
 
-// ─── 2. BÁO GIÁ CHẤP NHẬN → DỰ ÁN (không tạo đơn hàng) ───────────────
-
-async function createProjectFromAcceptedQuotation(quote, userId) {
-  if (!quote?.lead_id) return null;
-  const { data: lead } = await supabase.from('crm_leads').select('project_id').eq('id', quote.lead_id).single();
-  if (!lead) return null;
-  if (lead.project_id) {
-    await supabase
-      .from('quotations')
-      .update({ project_id: lead.project_id, updated_at: new Date().toISOString() })
-      .eq('id', quote.id)
-      .is('project_id', null);
-    return { id: lead.project_id, code: 'existing', existing: true };
-  }
-
-  const [flowId, firstStageId, code] = await Promise.all([getDefaultFlow(), getFirstStage(), nextProjectCode()]);
-  const { data: project, error } = await supabase
-    .from('projects')
-    .insert({
-      code,
-      name: quote.title || `Báo giá ${quote.code}`,
-      status: 'active',
-      customer_id: quote.customer_id,
-      estimated_value: quote.total,
-      flow_id: flowId,
-      current_stage_id: firstStageId,
-      created_by: userId,
-    })
-    .select('*')
-    .single();
-  if (error) throw error;
-
-  await supabase.from('orders').update({ project_id: project.id }).eq('lead_id', quote.lead_id).is('project_id', null);
-  await supabase.from('crm_leads').update({ project_id: project.id, updated_at: new Date().toISOString() }).eq('id', quote.lead_id);
-  await supabase.from('quotations').update({ project_id: project.id, updated_at: new Date().toISOString() }).eq('id', quote.id);
-
-  await generateTasksForProject(project.id, userId);
-  return project;
-}
+// ─── 2. BÁO GIÁ CHẤP NHẬN → CHỜ ĐƠN HÀNG ──────────────────────────────
 
 async function onQuotationAccepted(quotationId, userId) {
   const { data: quote } = await supabase.from('quotations').select('*').eq('id', quotationId).single();
   if (!quote) return null;
-
-  let autoProject = null;
-  if (quote.lead_id) {
-    const { data: lead } = await supabase.from('crm_leads').select('project_id').eq('id', quote.lead_id).single();
-    if (lead && !lead.project_id) {
-      autoProject = await createProjectFromAcceptedQuotation(quote, userId);
-    }
-  }
-
-  return { order: null, autoProject };
+  return {
+    order: null,
+    autoProject: null,
+    project_creation_deferred_to: 'order_confirmed',
+    accepted_by: userId || null,
+  };
 }
 
 // ─── 3. ĐƠN HÀNG XÁC NHẬN → AUTO PROJECT ──────────────────────────────
 
 async function onOrderConfirmed(orderId, userId) {
   const { data: order } = await supabase.from('orders').select('*').eq('id', orderId).single();
-  if (!order || order.project_id) return null;
+  if (!order || order.status !== 'confirmed') return null;
+  if (order.project_id) {
+    const { data: existing } = await supabase.from('projects').select('*').eq('id', order.project_id).maybeSingle();
+    return existing ? { ...existing, existing: true } : { id: order.project_id, code: 'existing', existing: true };
+  }
 
   // Check lead đã có project chưa
   if (order.lead_id) {
     const { data: lead } = await supabase.from('crm_leads').select('project_id').eq('id', order.lead_id).single();
     if (lead?.project_id) {
       await supabase.from('orders').update({ project_id: lead.project_id }).eq('id', orderId);
+      await supabase.from('crm_deal_projects').upsert({
+        deal_id: order.lead_id,
+        project_id: lead.project_id,
+        is_primary: true,
+        created_by: userId || null,
+      }, { onConflict: 'deal_id,project_id' });
       return { id: lead.project_id, code: 'existing', existing: true };
     }
   }
@@ -188,18 +156,27 @@ async function onOrderConfirmed(orderId, userId) {
   // Tạo project mới
   const [flowId, firstStageId, code] = await Promise.all([getDefaultFlow(), getFirstStage(), nextProjectCode()]);
 
-  const { data: project } = await supabase.from('projects').insert({
+  const { data: project, error: projectError } = await supabase.from('projects').insert({
     code, name: order.title || `Đơn hàng ${order.code}`,
-    status: 'active', customer_id: order.customer_id,
+    status: 'new', customer_id: order.customer_id,
     estimated_value: order.total, flow_id: flowId,
     current_stage_id: firstStageId, created_by: userId,
+    company_id: order.company_id || null,
+    install_address: order.install_address || null,
   }).select('*').single();
+  if (projectError) throw projectError;
 
   // Link
   await supabase.from('orders').update({ project_id: project.id }).eq('id', orderId);
   if (order.lead_id) {
-    await supabase.from('crm_leads').update({ project_id: project.id }).eq('id', order.lead_id);
+    await supabase.from('crm_leads').update({ project_id: project.id, updated_at: new Date().toISOString() }).eq('id', order.lead_id);
     await supabase.from('quotations').update({ project_id: project.id }).eq('lead_id', order.lead_id);
+    await supabase.from('crm_deal_projects').upsert({
+      deal_id: order.lead_id,
+      project_id: project.id,
+      is_primary: true,
+      created_by: userId || null,
+    }, { onConflict: 'deal_id,project_id' });
   }
 
   await generateTasksForProject(project.id, userId);

@@ -5,6 +5,13 @@
 const { Router } = require('express');
 const helpers = require('../shared/helpersBundle');
 const { getCompanyScopedAdminIds } = require('../../../helpers/notifications');
+const {
+  recordQuotationCreated,
+  recordQuotationStatusChanged,
+  getPilotOrderCreationGate,
+  recordOrderCreated,
+  recordProjectStarted,
+} = require('../../../helpers/businessOsCommercialWorkflow');
 
 const r = Router();
 
@@ -413,6 +420,9 @@ r.post('/quotations', async (req, res) => {
           .order('created_at', { ascending: false })
           .limit(1);
 
+        // Không auto-link sang Deal của công ty khác khi tìm theo khách hàng/tên.
+        if (commercialCo) dealQuery = dealQuery.eq('company_id', commercialCo);
+
         if (quote.customer_id) {
           dealQuery = dealQuery.eq('customer_id', quote.customer_id);
         } else if (quote.customer_name) {
@@ -555,6 +565,26 @@ r.post('/quotations', async (req, res) => {
       }
     }
 
+    // Business OS adapter: quotations vẫn là SoR; kernel chỉ ghi nhận mốc Design -> Quotation.
+    if (linkedLeadId) {
+      try {
+        const processTransition = await recordQuotationCreated({
+          leadId: linkedLeadId,
+          quotation: { ...quote, lead_id: linkedLeadId, company_id: commercialCo || quote.company_id },
+          actorUserId: req.user.userId,
+          requestId: String(req.get('X-Request-Id') || '').trim() || null,
+        });
+        quote.business_os_process = {
+          applied: processTransition.applied === true,
+          reason: processTransition.reason || null,
+          current_stage_key: processTransition.instance?.current_stage_key || null,
+        };
+      } catch (processError) {
+        // Không rollback báo giá thật nếu projection/process kernel chưa migrate hoặc tạm lỗi.
+        console.warn('[QUOTATION] Business OS transition skipped:', processError.message);
+      }
+    }
+
     res.status(201).json({ ...quote, synced_products: syncedProducts });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -578,6 +608,13 @@ r.put('/quotations/:id', async (req, res) => {
     const { data: prevQuote } = await supabase.from('quotations')
       .select('title, total, status, customer_name, discount_value, discount_type, code')
       .eq('id', req.params.id).single();
+
+    if (quoteDataFromBody?.status === 'converted' && prevQuote?.status !== 'converted') {
+      return res.status(409).json({
+        code: 'QUOTATION_CONVERT_ENDPOINT_REQUIRED',
+        error: 'Trạng thái Đã chuyển ĐH chỉ được hệ thống ghi sau khi tạo đơn hàng thật.',
+      });
+    }
 
     let quoteData = quoteDataFromBody;
     if (itemsBody === undefined) {
@@ -769,6 +806,20 @@ r.put('/quotations/:id', async (req, res) => {
       try { autoResult = await onQuotationAccepted(req.params.id, req.user.userId); } catch (e) { console.error('Auto-flow BG→ĐH error:', e.message); }
     }
 
+    let businessOsProcess = null;
+    if (Object.prototype.hasOwnProperty.call(quoteDataFromBody || {}, 'status')) {
+      try {
+        businessOsProcess = await recordQuotationStatusChanged({
+          leadId: data.lead_id || qAuth.lead_id,
+          quotation: data,
+          actorUserId: req.user.userId,
+          requestId: String(req.get('X-Request-Id') || '').trim() || null,
+        });
+      } catch (processError) {
+        console.warn('[QUOTATION] Business OS commercial transition skipped:', processError.message);
+      }
+    }
+
     // 🔔 NOTIFICATION: Cập nhật báo giá
     try {
       const t = await getNotifyTargets(data.lead_id);
@@ -801,7 +852,7 @@ r.put('/quotations/:id', async (req, res) => {
     }
 
     try { rcInvalidateTags(['crm:list']); } catch (_) { /* ignore */ }
-    res.json({ ...data, auto: autoResult });
+    res.json({ ...data, auto: autoResult, business_os_process: businessOsProcess });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -815,6 +866,46 @@ r.post('/quotations/:id/convert-to-order', async (req, res) => {
       return res.status(403).json({ error: 'Không có quyền chuyển báo giá này sang đơn hàng' });
     }
 
+    const { data: existingOrder } = await supabase
+      .from('orders')
+      .select('*')
+      .eq('quotation_id', quote.id)
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (existingOrder) {
+      return res.status(200).json({ ...existingOrder, existing: true });
+    }
+    if (quote.status !== 'accepted') {
+      return res.status(409).json({
+        code: 'QUOTATION_NOT_ACCEPTED',
+        error: 'Chỉ được tạo đơn hàng sau khi khách hàng chấp nhận báo giá.',
+      });
+    }
+
+    try {
+      await recordQuotationStatusChanged({
+        leadId: quote.lead_id,
+        quotation: quote,
+        actorUserId: req.user.userId,
+        requestId: String(req.get('X-Request-Id') || '').trim() || null,
+      });
+    } catch (processError) {
+      console.warn('[QUOTATION] Business OS acceptance reconciliation skipped:', processError.message);
+    }
+    const orderGate = await getPilotOrderCreationGate({
+      leadId: quote.lead_id,
+      companyId: quote.company_id,
+      quotationId: quote.id,
+    });
+    if (!orderGate.allowed) {
+      return res.status(409).json({
+        code: 'BUSINESS_OS_ORDER_GATE_BLOCKED',
+        error: 'Business OS chưa đạt bước Sẵn sàng đặt hàng. Hãy xác nhận đúng báo giá được khách duyệt.',
+        gate: orderGate,
+      });
+    }
+
     const { data: qItems } = await supabase.from('quotation_items').select('*').eq('quotation_id', req.params.id).order('item_order');
 
     const orderCode = await nextCode('DH');
@@ -823,6 +914,14 @@ r.post('/quotations/:id/convert-to-order', async (req, res) => {
       ...snapshotOrderRowFromQuotation(quote),
       created_by: req.user.userId,
     }).select('*').single();
+    if (error?.code === '23505') {
+      const { data: concurrentOrder } = await supabase
+        .from('orders')
+        .select('*')
+        .eq('quotation_id', quote.id)
+        .maybeSingle();
+      if (concurrentOrder) return res.status(200).json({ ...concurrentOrder, existing: true });
+    }
     if (error) throw error;
 
     if (qItems?.length) {
@@ -831,6 +930,17 @@ r.post('/quotations/:id/convert-to-order', async (req, res) => {
 
     // Update quotation status
     await supabase.from('quotations').update({ status: 'converted', updated_at: new Date().toISOString() }).eq('id', req.params.id);
+
+    let businessOsProcess = null;
+    try {
+      businessOsProcess = await recordOrderCreated({
+        order,
+        actorUserId: req.user.userId,
+        requestId: String(req.get('X-Request-Id') || '').trim() || null,
+      });
+    } catch (processError) {
+      console.warn('[ORDER] Business OS order transition skipped:', processError.message);
+    }
 
     // 🔔 NOTIFICATION: BG → ĐH
     try {
@@ -842,7 +952,7 @@ r.post('/quotations/:id/convert-to-order', async (req, res) => {
         'order', order.id);
     } catch (ne) { console.warn('[NOTIFY] bg_to_dh:', ne.message); }
 
-    res.status(201).json(order);
+    res.status(201).json({ ...order, business_os_process: businessOsProcess });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -996,10 +1106,34 @@ r.put('/orders/:id', async (req, res) => {
     const { data, error } = await supabase.from('orders').update(updates).eq('id', req.params.id).select('*').single();
     if (error) throw error;
 
+    let businessOsProcess = null;
+    try {
+      businessOsProcess = await recordOrderCreated({
+        order: data,
+        actorUserId: req.user.userId,
+        requestId: String(req.get('X-Request-Id') || '').trim() || null,
+      });
+    } catch (processError) {
+      console.warn('[ORDER] Business OS order reconciliation skipped:', processError.message);
+    }
+
     // AUTO-FLOW: ĐH xác nhận → tự động tạo Project + Gen Tasks
     let autoProject = null;
+    let projectProcess = null;
     if (updates.status === 'confirmed') {
       try { autoProject = await onOrderConfirmed(req.params.id, req.user.userId); } catch (e) { console.error('Auto-flow error:', e.message); }
+      if (autoProject?.id) {
+        try {
+          projectProcess = await recordProjectStarted({
+            order: data,
+            project: autoProject,
+            actorUserId: req.user.userId,
+            requestId: String(req.get('X-Request-Id') || '').trim() || null,
+          });
+        } catch (processError) {
+          console.warn('[PROJECT] Business OS project transition skipped:', processError.message);
+        }
+      }
     }
 
     // 🔔 NOTIFICATION: Cập nhật đơn hàng
@@ -1028,7 +1162,12 @@ r.put('/orders/:id', async (req, res) => {
     }
 
     try { rcInvalidateTags(['crm:list']); } catch (_) { /* ignore */ }
-    res.json({ ...data, auto_project: autoProject });
+    res.json({
+      ...data,
+      project_id: autoProject?.id || data.project_id || null,
+      auto_project: autoProject,
+      business_os_process: projectProcess || businessOsProcess,
+    });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -1065,6 +1204,47 @@ r.post('/orders', async (req, res) => {
     orderCo = oCoWrite.companyId;
     orderData.company_id = orderCo;
 
+    let linkedQuotation = null;
+    if (orderData.quotation_id) {
+      const { data: qrow, error: qrowError } = await supabase
+        .from('quotations')
+        .select('id, code, status, total, lead_id, company_id')
+        .eq('id', orderData.quotation_id)
+        .maybeSingle();
+      if (qrowError) throw qrowError;
+      if (!qrow) return res.status(400).json({ error: 'Báo giá nguồn không tồn tại.' });
+      if (qrow.status !== 'accepted') {
+        return res.status(409).json({
+          code: 'QUOTATION_NOT_ACCEPTED',
+          error: 'Báo giá nguồn phải được khách hàng chấp nhận trước khi tạo đơn hàng.',
+        });
+      }
+      linkedQuotation = qrow;
+      orderData.lead_id = orderData.lead_id || qrow.lead_id || null;
+      try {
+        await recordQuotationStatusChanged({
+          leadId: orderData.lead_id,
+          quotation: qrow,
+          actorUserId: req.user.userId,
+          requestId: String(req.get('X-Request-Id') || '').trim() || null,
+        });
+      } catch (processError) {
+        console.warn('[ORDER] Business OS acceptance reconciliation skipped:', processError.message);
+      }
+    }
+    const orderGate = await getPilotOrderCreationGate({
+      leadId: orderData.lead_id || orderLeadIdForScope,
+      companyId: orderCo,
+      quotationId: linkedQuotation?.id || null,
+    });
+    if (!orderGate.allowed) {
+      return res.status(409).json({
+        code: 'BUSINESS_OS_ORDER_GATE_BLOCKED',
+        error: 'Business OS chưa đạt bước Sẵn sàng đặt hàng. Cần có báo giá được khách chấp nhận.',
+        gate: orderGate,
+      });
+    }
+
     // Calc totals with per-item VAT + spec_factor (hệ số quy cách) — cùng logic với /quotations
     // Excel fidelity: nếu item.lock_amount && imported_amount → giữ NGUYÊN số tiền Excel.
     const processedItems = buildProcessedCommercialItems(items);
@@ -1077,6 +1257,12 @@ r.post('/orders', async (req, res) => {
       ...orderData, code, subtotal, discount_amount: discountAmt,
       tax_amount: taxAmt, total: afterDiscount + taxAmt, created_by: req.user.userId,
     }).select('*').single();
+    if (error?.code === '23505' && orderData.quotation_id) {
+      return res.status(409).json({
+        code: 'ORDER_ALREADY_EXISTS_FOR_QUOTATION',
+        error: 'Báo giá này đã có đơn hàng nguồn. Hãy mở đơn hàng hiện có.',
+      });
+    }
     if (error) throw error;
 
     // AUTO: create fulfillment deal (CRMTasks) for this order
@@ -1110,6 +1296,35 @@ r.post('/orders', async (req, res) => {
       })));
     }
 
+    let businessOsProcess = null;
+    try {
+      businessOsProcess = await recordOrderCreated({
+        order: data,
+        actorUserId: req.user.userId,
+        requestId: String(req.get('X-Request-Id') || '').trim() || null,
+      });
+    } catch (processError) {
+      console.warn('[ORDER] Business OS order transition skipped:', processError.message);
+    }
+
+    let autoProject = null;
+    let projectProcess = null;
+    if (data.status === 'confirmed') {
+      try { autoProject = await onOrderConfirmed(data.id, req.user.userId); } catch (e) { console.error('Auto-flow error:', e.message); }
+      if (autoProject?.id) {
+        try {
+          projectProcess = await recordProjectStarted({
+            order: data,
+            project: autoProject,
+            actorUserId: req.user.userId,
+            requestId: String(req.get('X-Request-Id') || '').trim() || null,
+          });
+        } catch (processError) {
+          console.warn('[PROJECT] Business OS project transition skipped:', processError.message);
+        }
+      }
+    }
+
     // 🔔 NOTIFICATION: Đơn hàng mới
     try {
       const t = await getNotifyTargets(data.lead_id);
@@ -1120,7 +1335,12 @@ r.post('/orders', async (req, res) => {
         'order', data.id);
     } catch (ne) { console.warn('[NOTIFY] order_created:', ne.message); }
 
-    res.status(201).json(data);
+    res.status(201).json({
+      ...data,
+      project_id: autoProject?.id || data.project_id || null,
+      auto_project: autoProject,
+      business_os_process: projectProcess || businessOsProcess,
+    });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

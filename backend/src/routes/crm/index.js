@@ -32,6 +32,7 @@ const crmTasks = require('./routes/crmTasks');
 const followupPlanner = require('./routes/followupPlanner');
 const leadComments = require('./routes/leadComments');
 const membersChat = require('./routes/membersChat');
+const salesQualificationPilot = require('./routes/salesQualificationPilot');
 const leadLifecycle = require('./routes/leadLifecycle');
 const vcBooking = require('./routes/vcBooking');
 
@@ -116,6 +117,7 @@ r.use(followupPlanner);
 r.use(leadComments);
 r.use(membersChat);
 r.use(vcBooking);
+r.use(salesQualificationPilot);
 r.use(leadLifecycle);
 
 if (typeof helpers.computeOrgOverviewReportData === 'function') {

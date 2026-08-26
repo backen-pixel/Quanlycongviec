@@ -12,6 +12,7 @@ Repo: **Quanlycongviec** (CRM–ERP tủ bếp). UI text tiếng Việt.
 
 | Cần biết | Đọc |
 |---|---|
+| Xứ mệnh, quyết định và trạng thái Business OS hiện tại | `docs/PROJECT_DECISION_LOG.md` |
 | Kiến trúc | `docs/architecture/` |
 | Quyết định | `docs/adr/` |
 | Nghiệp vụ / guide | `docs/ba/` |

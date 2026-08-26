@@ -1,12 +1,13 @@
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
-  LayoutDashboard, Globe, Users, CreditCard, Puzzle, BarChart3, Plus, Globe2, Package, ShoppingCart,
+  LayoutDashboard, Globe, Users, CreditCard, Puzzle, BarChart3, Plus, Globe2, Package, ShoppingCart, Copy,
 } from 'lucide-react';
 
 const NAV_ITEMS = [
   { to: '/platform', label: 'Tổng quan', icon: LayoutDashboard, end: true },
   { to: '/platform/plans', label: '4 gói chính', icon: CreditCard },
   { to: '/platform/tenants', label: 'Hệ sinh thái', icon: Globe, matchPrefix: '/platform/tenants' },
+  { to: '/platform/blueprints', label: 'Business Blueprint', icon: Copy },
   { to: '/platform/modules', label: 'Modun add-on', icon: Package },
   { to: '/platform/purchases', label: 'Đơn mua', icon: ShoppingCart },
   { to: '/platform/users', label: 'Users', icon: Users },

@@ -4,6 +4,10 @@
  */
 const { Router } = require('express');
 const helpers = require('../shared/helpersBundle');
+const {
+  getPilotProductionHandoverGate,
+  recordProductionStarted,
+} = require('../../../helpers/businessOsCommercialWorkflow');
 const { markVoiceRecordingsSkipAutoCreateForLeadIds } = require('../../../helpers/voiceRecordingCrmAuto');
 const { getCompanyScopedAdminIds } = require('../../../helpers/notifications');
 const {
@@ -16,6 +20,10 @@ const {
   completeOpenWorkOnModuleDone,
 } = require('../../../helpers/completeOpenWorkOnModuleDone');
 const { deleteExclusiveProjectsForLeads } = require('../../../helpers/deleteExclusiveProjectsForLeads');
+const {
+  assertQualificationConversionAllowed,
+  recordQualificationConverted,
+} = require('../../../helpers/salesQualificationPilot');
 
 const r = Router();
 
@@ -1663,6 +1671,18 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
     if (!lead) return res.status(404).json({ error: 'Lead không tồn tại' });
     if (lead.type === 'deal') return res.status(400).json({ error: 'Đã là Deal rồi' });
 
+    const qualificationGate = await assertQualificationConversionAllowed({
+      lead,
+      actorUserId: req.user.userId,
+    });
+    if (!qualificationGate.ok) {
+      return res.status(qualificationGate.status || 409).json({
+        error: qualificationGate.error,
+        code: qualificationGate.code,
+        qualification: qualificationGate.qualification,
+      });
+    }
+
     // Chỉ cần có khách hàng liên kết, không bắt buộc đủ SĐT để có thể convert nhanh
     if (!lead.customer_id) {
       return res.status(400).json({ error: 'Lead chưa được liên kết khách hàng. Vào chi tiết Lead → chọn Khách hàng trước khi chuyển Deal.' });
@@ -1787,6 +1807,23 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
       .single();
 
     if (leadError) throw leadError;
+
+    try {
+      await recordQualificationConverted({
+        lead: updatedLead,
+        actorUserId: req.user.userId,
+        idempotencyKey: String(
+          req.get('Idempotency-Key')
+          || req.body?.command_id
+          || `crm-convert-${req.params.id}-${Date.now()}`,
+        ).trim(),
+        requestId: String(req.get('X-Request-Id') || '').trim() || null,
+      });
+    } catch (qualificationEventError) {
+      // CRM conversion đã hoàn tất; không trả 500 gây người dùng thao tác lặp.
+      // Log để vận hành có thể đối soát và bổ sung event nếu kernel tạm lỗi.
+      console.error('[convert-to-deal] record Business OS event:', qualificationEventError.message);
+    }
 
     try {
       if (ownerId && String(ownerId) !== String(req.user.userId)) {
@@ -4069,7 +4106,7 @@ r.post('/leads/:id/sx-handover', async (req, res) => {
     const leadId = req.params.id;
     const uid = req.user.userId;
     const { data: lead, error: leadErr } = await supabase.from('crm_leads')
-      .select('id, type, project_id, assigned_to, lead_owner_id, sx_handover_at')
+      .select('id, type, company_id, project_id, assigned_to, lead_owner_id, sx_handover_at')
       .eq('id', leadId)
       .single();
     if (leadErr || !lead) return res.status(404).json({ error: 'Không tìm thấy' });
@@ -4097,6 +4134,22 @@ r.post('/leads/:id/sx-handover', async (req, res) => {
         return res.status(400).json({ error: 'Dự án không thuộc deal này' });
       }
       handoverProjectId = link.project_id;
+    }
+
+    const processRequestId = String(req.get('X-Request-Id') || '').trim() || null;
+    const productionGate = await getPilotProductionHandoverGate({
+      leadId,
+      companyId: lead.company_id,
+      projectId: handoverProjectId,
+      actorUserId: uid,
+      requestId: processRequestId,
+    });
+    if (!productionGate.allowed) {
+      return res.status(409).json({
+        code: 'BUSINESS_OS_PRODUCTION_GATE_BLOCKED',
+        error: 'Chưa thể bàn giao Sản xuất. Deal cần có đơn hàng đã xác nhận và dự án được liên kết trước.',
+        gate: productionGate,
+      });
     }
 
     const targetTaskLeadId = await resolveCrmTaskWriteLeadId(leadId);
@@ -4269,12 +4322,26 @@ r.post('/leads/:id/sx-handover', async (req, res) => {
       console.warn('[sx-handover] gen all workshop templates:', e.message);
     }
 
+    let businessOsProcess = null;
+    try {
+      businessOsProcess = await recordProductionStarted({
+        leadId,
+        projectId: handoverProjectId,
+        productionCompanyId: pcv.company.id,
+        actorUserId: uid,
+        requestId: processRequestId,
+      });
+    } catch (processError) {
+      console.warn('[sx-handover] Business OS production transition skipped:', processError.message);
+    }
+
     res.json({
       ok: true,
       sx_handover_at: now,
       construction_start_date: cStart,
       expected_production_start_date: pStart,
       expected_production_end_date: pEnd,
+      business_os_process: businessOsProcess,
     });
   } catch (e) {
     res.status(500).json({ error: e.message });

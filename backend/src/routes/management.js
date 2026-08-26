@@ -18,7 +18,21 @@ const {
   applyProjectScopeFilter,
   TENANT_EMPTY_COMPANY_SENTINEL,
 } = require('../helpers/tenantScope');
-const { applyOpenOnlyFilter } = require('../helpers/unifiedTasksQuery');
+const {
+  applyOpenOnlyFilter,
+  countUnifiedOpenTasks,
+  countUnifiedOverdueTasks,
+} = require('../helpers/unifiedTasksQuery');
+const {
+  loadOperationalProjectIdsForScope,
+  loadOperationalProjectAccess,
+} = require('../helpers/operationalProjectScope');
+const {
+  buildOperationsMetricContract,
+  buildOperationsQueue,
+} = require('../helpers/operationsReadModel');
+const { buildProjectHealthContract } = require('../helpers/projectHealthContract');
+const { buildProjectChangeReadModel } = require('../helpers/projectChangeReadModel');
 
 const r = Router();
 r.use(auth);
@@ -71,28 +85,6 @@ function assertLeadInScope(res, scope, lead) {
   }
   if (scope.companyIds?.length && !scope.companyIds.includes(cid)) {
     res.status(403).json({ error: 'Không có quyền xem deal này' });
-    return false;
-  }
-  return true;
-}
-
-function assertProjectInScope(res, scope, project) {
-  if (!project) return true;
-  if (!scope?.ok) return denyScope(res, scope);
-  if (scope.companyId === TENANT_EMPTY_COMPANY_SENTINEL) {
-    res.status(404).json({ error: 'Không tìm thấy dự án' });
-    return false;
-  }
-  const cid = project.company_id != null ? String(project.company_id) : null;
-  const lcid = project.logistics_company_id != null ? String(project.logistics_company_id) : null;
-  const inScope = (id) => {
-    if (!id) return false;
-    if (scope.companyId) return scope.companyId === id;
-    if (scope.companyIds?.length) return scope.companyIds.includes(id);
-    return true;
-  };
-  if (!inScope(cid) && !inScope(lcid)) {
-    res.status(403).json({ error: 'Không có quyền xem dự án này' });
     return false;
   }
   return true;
@@ -221,15 +213,18 @@ async function loadCrmLeadStages(scope) {
 }
 
 async function countLeadsByStage(scope, type, dateFrom, dateTo, assigneeId) {
-  let q = supabase
-    .from('crm_leads')
-    .select('stage_id')
-    .eq('type', type);
-  q = applyCompanyScopeFilter(q, scope);
-  if (dateFrom) q = q.gte('created_at', dateFrom);
-  if (dateTo) q = q.lte('created_at', dateTo);
-  if (assigneeId) q = q.or(`assigned_to.eq.${assigneeId},lead_owner_id.eq.${assigneeId}`);
-  const { data } = await q;
+  const data = await fetchAllLeadRows(() => {
+    let q = supabase
+      .from('crm_leads')
+      .select('stage_id')
+      .eq('type', type)
+      .order('id');
+    q = applyCompanyScopeFilter(q, scope);
+    if (dateFrom) q = q.gte('created_at', dateFrom);
+    if (dateTo) q = q.lte('created_at', dateTo);
+    if (assigneeId) q = q.or(`assigned_to.eq.${assigneeId},lead_owner_id.eq.${assigneeId}`);
+    return q;
+  });
   const counts = {};
   for (const row of data || []) {
     const sid = row.stage_id ? String(row.stage_id) : '__none__';
@@ -261,21 +256,24 @@ async function loadWonStageIds(scope) {
 }
 
 async function loadDealPipelineMetrics(scope, dateFrom, dateTo, assigneeId) {
-  let q = supabase
-    .from('crm_leads')
-    .select('budget, estimated_value, deadline, stage_id, stage:crm_pipeline_stages!crm_leads_stage_id_fkey(is_won, is_lost)')
-    .eq('type', 'deal');
-  q = applyCompanyScopeFilter(q, scope);
-  if (dateFrom) q = q.gte('created_at', dateFrom);
-  if (dateTo) q = q.lte('created_at', dateTo);
-  if (assigneeId) q = q.or(`assigned_to.eq.${assigneeId},lead_owner_id.eq.${assigneeId}`);
-  const { data } = await q;
+  const data = await fetchAllLeadRows(() => {
+    let q = supabase
+      .from('crm_leads')
+      .select('estimated_value, deadline:kanban_deadline_at, stage_id, stage:crm_pipeline_stages!crm_leads_stage_id_fkey(is_won, is_lost)')
+      .eq('type', 'deal')
+      .order('id');
+    q = applyCompanyScopeFilter(q, scope);
+    if (dateFrom) q = q.gte('created_at', dateFrom);
+    if (dateTo) q = q.lte('created_at', dateTo);
+    if (assigneeId) q = q.or(`assigned_to.eq.${assigneeId},lead_owner_id.eq.${assigneeId}`);
+    return q;
+  });
   const now = Date.now();
   let pipelineValue = 0;
   let crmOverdue = 0;
   for (const row of data || []) {
     if (row.stage?.is_won || row.stage?.is_lost) continue;
-    pipelineValue += Number(row.budget || row.estimated_value || 0);
+    pipelineValue += Number(row.estimated_value || 0);
     if (row.deadline && new Date(row.deadline).getTime() < now) crmOverdue += 1;
   }
   return { pipeline_value: pipelineValue, crm_overdue: crmOverdue };
@@ -411,7 +409,7 @@ async function attachTaskAndDocCounts(rows) {
     ...d,
     task_stats: taskCounts[String(d.id)] || { crm_total: 0, crm_done: 0 },
     document_count: docCounts[String(d.id)] || 0,
-    value: d.budget || d.estimated_value || d.project?.estimated_value || 0,
+    value: d.estimated_value || d.project?.estimated_value || 0,
   }));
 }
 
@@ -433,6 +431,40 @@ async function loadWorkshopStages(table, scope) {
   }
   const { data } = await stagesQuery;
   return mergeStagesForPipeline(data || []);
+}
+
+async function loadWorkshopStagesForCompanies(table, companyIds, referencedStageIds = []) {
+  const ids = [...new Set((companyIds || []).filter(Boolean).map(String))];
+  const stageIds = [...new Set((referencedStageIds || []).filter(Boolean).map(String))];
+  if (!ids.length && !stageIds.length) return [];
+
+  const queries = [];
+  if (ids.length) {
+    let companyQ = supabase
+      .from(table)
+      .select('id, name, color, icon, order_index, bucket_slug, company_id')
+      .eq('is_active', true)
+      .order('order_index');
+    companyQ = ids.length === 1 ? companyQ.eq('company_id', ids[0]) : companyQ.in('company_id', ids);
+    queries.push(companyQ);
+  }
+  if (stageIds.length) {
+    queries.push(
+      supabase
+        .from(table)
+        .select('id, name, color, icon, order_index, bucket_slug, company_id')
+        .in('id', stageIds)
+        .order('order_index'),
+    );
+  }
+
+  const results = await Promise.all(queries);
+  const byId = new Map();
+  for (const result of results) {
+    if (result.error) throw result.error;
+    for (const stage of result.data || []) byId.set(String(stage.id), stage);
+  }
+  return mergeStagesForPipeline([...byId.values()]);
 }
 
 function countByStageIds(rows, idField, stages) {
@@ -457,61 +489,90 @@ function countByStageIds(rows, idField, stages) {
   return { counts, pipeline };
 }
 
-async function loadSxPipelineSummary(scope) {
+async function loadSxPipelineSummary(scope, scopedProjectIdsPromise = loadOperationalProjectIdsForScope(scope)) {
   let wonIds = await getWonDealProjectIds();
-  if (!wonIds.length) return { kpis: { active: 0, intake: 0, overdue: 0 }, pipeline: [] };
+  if (!wonIds.length) return { kpis: { active: 0, intake: 0, overdue: 0 }, pipeline: [], projects: [] };
 
-  if (scope?.ok && (scope.companyIds?.length || scope.companyId === TENANT_EMPTY_COMPANY_SENTINEL)) {
-    let pq = supabase.from('projects').select('id').in('id', wonIds);
-    pq = applyCompanyScopeFilter(pq, scope);
-    const { data: filtered } = await pq;
-    wonIds = (filtered || []).map((p) => p.id);
-    if (!wonIds.length) return { kpis: { active: 0, intake: 0, overdue: 0 }, pipeline: [] };
+  const scopedProjectIds = await scopedProjectIdsPromise;
+  if (scopedProjectIds !== null) {
+    const allowed = new Set(scopedProjectIds.map(String));
+    wonIds = wonIds.filter((id) => allowed.has(String(id)));
+    if (!wonIds.length) return { kpis: { active: 0, intake: 0, overdue: 0 }, pipeline: [], projects: [] };
   }
 
   let q = supabase
     .from('projects')
-    .select('id, sx_kanban_column_id, deadline, status, company_id')
+    .select(`
+      id, code, name, status, deadline, production_deadline, delivery_date, install_date,
+      install_address, sx_kanban_column_id, vc_kanban_column_id, production_person_id,
+      logistics_person_id, installation_person_id, installer_person_id,
+      company_id, logistics_company_id, updated_at
+    `)
     .in('id', wonIds);
-  q = applyCompanyScopeFilter(q, scope);
-  const { data: projects } = await q;
+  const { data: projects, error } = await q;
+  if (error) throw error;
 
-  const stages = await loadWorkshopStages('production_pipeline_stages', scope);
+  const stages = await loadWorkshopStagesForCompanies(
+    'production_pipeline_stages',
+    (projects || []).map((project) => project.company_id),
+    (projects || []).map((project) => project.sx_kanban_column_id),
+  );
 
   const now = Date.now();
   let overdue = 0;
   let intake = 0;
   for (const p of projects || []) {
-    if (p.deadline && new Date(p.deadline).getTime() < now && p.status !== 'completed') overdue += 1;
+    const productionDeadline = p.production_deadline || p.deadline;
+    if (productionDeadline && new Date(productionDeadline).getTime() < now && !['completed', 'cancelled'].includes(p.status)) overdue += 1;
     if (!p.sx_kanban_column_id) intake += 1;
   }
 
   const { pipeline } = countByStageIds(projects, 'sx_kanban_column_id', stages);
   if (intake > 0) {
-    pipeline.unshift({ id: '__intake__', name: 'Tiếp nhận', color: '#2563EB', icon: '📥', count: intake });
+    pipeline.unshift({ id: '__intake__', name: 'Chờ xưởng tiếp nhận', color: '#2563EB', icon: '📥', count: intake });
   }
 
   return {
     kpis: { active: (projects || []).length, intake, overdue },
     pipeline,
+    projects: (projects || []).map((project) => ({
+      ...project,
+      stage: stages.find((stage) => (stage.stage_ids || [String(stage.id)]).includes(String(project.sx_kanban_column_id))) || null,
+    })),
   };
 }
 
-async function loadVcInstallPipelines(scope) {
+async function loadVcInstallPipelines(scope, scopedProjectIdsPromise = loadOperationalProjectIdsForScope(scope)) {
+  const scopedProjectIds = await scopedProjectIdsPromise;
+  if (scopedProjectIds?.length === 0) {
+    return {
+      vc: { kpis: { active: 0, overdue: 0 }, pipeline: [], projects: [] },
+      install: { kpis: { active: 0, overdue: 0 }, pipeline: [], projects: [] },
+    };
+  }
   let q = supabase
     .from('projects')
-    .select('id, vc_kanban_column_id, deadline, status, company_id, logistics_company_id')
+    .select(`
+      id, code, name, status, deadline, production_deadline, delivery_date, install_date,
+      install_address, sx_kanban_column_id, vc_kanban_column_id, production_person_id,
+      logistics_person_id, installation_person_id, installer_person_id,
+      company_id, logistics_company_id, updated_at
+    `)
     .not('vc_kanban_column_id', 'is', null);
-  q = applyProjectScopeFilter(q, scope);
+  if (scopedProjectIds) q = q.in('id', scopedProjectIds);
   let { data: projects, error } = await q;
   if (error && /vc_kanban_column_id/.test(error.message || '')) {
     return {
-      vc: { kpis: { active: 0, overdue: 0 }, pipeline: [] },
-      install: { kpis: { active: 0, overdue: 0 }, pipeline: [] },
+      vc: { kpis: { active: 0, overdue: 0 }, pipeline: [], projects: [] },
+      install: { kpis: { active: 0, overdue: 0 }, pipeline: [], projects: [] },
     };
   }
 
-  const stages = await loadWorkshopStages('logistics_pipeline_stages', scope);
+  const stages = await loadWorkshopStagesForCompanies(
+    'logistics_pipeline_stages',
+    (projects || []).flatMap((project) => [project.logistics_company_id, project.company_id]),
+    (projects || []).map((project) => project.vc_kanban_column_id),
+  );
   const installStages = stages.filter(isInstallStageMeta);
   const vcStages = stages.filter((s) => !isInstallStageMeta(s));
   const installIds = collectStageIds(installStages, () => true);
@@ -537,13 +598,122 @@ async function loadVcInstallPipelines(scope) {
     vc: {
       kpis: { active: vcProjects.length, overdue: vcOverdue },
       pipeline: countByStageIds(vcProjects, 'vc_kanban_column_id', vcStages).pipeline,
+      projects: vcProjects.map((project) => ({
+        ...project,
+        stage: vcStages.find((stage) => (stage.stage_ids || [String(stage.id)]).includes(String(project.vc_kanban_column_id))) || null,
+      })),
     },
     install: {
       kpis: { active: installProjects.length, overdue: installOverdue },
       pipeline: countByStageIds(installProjects, 'vc_kanban_column_id', installStages).pipeline,
+      projects: installProjects.map((project) => ({
+        ...project,
+        stage: installStages.find((stage) => (stage.stage_ids || [String(stage.id)]).includes(String(project.vc_kanban_column_id))) || null,
+      })),
     },
   };
 }
+
+async function loadOperationsCommercialRecords(scope, projectIds) {
+  const byProject = {};
+  const ids = [...new Set((projectIds || []).filter(Boolean).map(String))];
+  const chunkSize = 150;
+  for (let offset = 0; offset < ids.length; offset += chunkSize) {
+    let query = supabase
+      .from('crm_leads')
+      .select(`
+        id, code, title, type, project_id, company_id, updated_at,
+        stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, is_won, is_lost),
+        customer:customers(id, full_name, phone),
+        assignee:users!crm_leads_assigned_to_fkey(id, full_name),
+        lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name)
+      `)
+      .in('project_id', ids.slice(offset, offset + chunkSize))
+      .in('type', ['lead', 'deal'])
+      .order('updated_at', { ascending: false });
+    query = applyCompanyScopeFilter(query, scope);
+    const { data, error } = await query;
+    if (error) throw error;
+    for (const row of data || []) {
+      const key = String(row.project_id);
+      const score = (row.stage?.is_won ? 4 : 0) + (row.type === 'deal' ? 2 : 0);
+      const current = byProject[key];
+      const currentScore = current ? ((current.stage?.is_won ? 4 : 0) + (current.type === 'deal' ? 2 : 0)) : -1;
+      if (!current || score > currentScore) byProject[key] = row;
+    }
+  }
+  return byProject;
+}
+
+async function loadLookupByIds(table, ids, select = 'id, name') {
+  const uniqueIds = [...new Set((ids || []).filter(Boolean).map(String))];
+  if (!uniqueIds.length) return {};
+  const byId = {};
+  const chunkSize = 150;
+  for (let offset = 0; offset < uniqueIds.length; offset += chunkSize) {
+    const { data, error } = await supabase
+      .from(table)
+      .select(select)
+      .in('id', uniqueIds.slice(offset, offset + chunkSize));
+    if (error) throw error;
+    for (const row of data || []) byId[String(row.id)] = row;
+  }
+  return byId;
+}
+
+async function loadOperationsReadModel(scope, sx = null, vcInstall = null) {
+  const operationalProjectIdsPromise = loadOperationalProjectIdsForScope(scope);
+  const [sxData, vcInstallData] = await Promise.all([
+    sx ? Promise.resolve(sx) : loadSxPipelineSummary(scope, operationalProjectIdsPromise),
+    vcInstall ? Promise.resolve(vcInstall) : loadVcInstallPipelines(scope, operationalProjectIdsPromise),
+  ]);
+  const allProjects = [
+    ...(sxData.projects || []),
+    ...(vcInstallData.vc?.projects || []),
+    ...(vcInstallData.install?.projects || []),
+  ];
+  const projectIds = allProjects.map((project) => project.id);
+  const [recordsByProject, companiesById, usersById] = await Promise.all([
+    loadOperationsCommercialRecords(scope, projectIds),
+    loadLookupByIds('companies', allProjects.flatMap((project) => [project.company_id, project.logistics_company_id]), 'id, name, short_name'),
+    loadLookupByIds('users', allProjects.flatMap((project) => [
+      project.production_person_id,
+      project.logistics_person_id,
+      project.installation_person_id,
+      project.installer_person_id,
+    ]), 'id, full_name, avatar'),
+  ]);
+  const companyId = primaryCompanyIdFromScope(scope);
+  return {
+    ...buildOperationsQueue({
+      production: sxData.projects || [],
+      delivery: vcInstallData.vc?.projects || [],
+      installation: vcInstallData.install?.projects || [],
+      recordsByProject,
+      companiesById,
+      usersById,
+      companyId,
+    }),
+    pipelines: {
+      production: sxData.pipeline || [],
+      delivery: vcInstallData.vc?.pipeline || [],
+      installation: vcInstallData.install?.pipeline || [],
+    },
+  };
+}
+
+// GET /api/management/operations-queue — read model Project duy nhất cho SX → VC → Lắp đặt
+r.get('/operations-queue', async (req, res) => {
+  try {
+    const scope = getCompanyScope(req, req.query.company_id);
+    if (denyScope(res, scope)) return;
+    res.set('Cache-Control', 'no-store');
+    res.json(await loadOperationsReadModel(scope));
+  } catch (e) {
+    console.error('[management/operations-queue]', e);
+    res.status(500).json({ error: e.message || 'Lỗi tải hàng đợi vận hành' });
+  }
+});
 
 // GET /api/management/overview
 r.get('/overview', async (req, res) => {
@@ -552,29 +722,28 @@ r.get('/overview', async (req, res) => {
     if (denyScope(res, scope)) return;
     const companyId = primaryCompanyIdFromScope(scope);
     const { date_from: dateFrom, date_to: dateTo, assignee_id: assigneeId } = req.query;
+    const operationalProjectIdsPromise = loadOperationalProjectIdsForScope(scope);
 
     const [dealStages, leadStages, dealCounts, leadCounts, sx, vcInstall, pipelineMetrics] = await Promise.all([
       loadCrmDealStages(scope),
       loadCrmLeadStages(scope),
       countLeadsByStage(scope, 'deal', dateFrom, dateTo, assigneeId),
       countLeadsByStage(scope, 'lead', dateFrom, dateTo, assigneeId),
-      loadSxPipelineSummary(scope),
-      loadVcInstallPipelines(scope),
+      loadSxPipelineSummary(scope, operationalProjectIdsPromise),
+      loadVcInstallPipelines(scope, operationalProjectIdsPromise),
       loadDealPipelineMetrics(scope, dateFrom, dateTo, assigneeId),
     ]);
     const vc = vcInstall.vc;
     const install = vcInstall.install;
 
-    let taskQ = supabase.from('unified_tasks_v').select('unified_id', { count: 'exact', head: true })
-      .neq('status', 'completed').neq('status', 'done');
-    taskQ = applyCompanyScopeFilter(taskQ, scope);
-    const { count: openTasks } = await taskQ;
-
-    let overdueQ = supabase.from('unified_tasks_v').select('unified_id', { count: 'exact', head: true })
-      .lt('deadline', new Date().toISOString())
-      .neq('status', 'completed').neq('status', 'done');
-    overdueQ = applyCompanyScopeFilter(overdueQ, scope);
-    const { count: overdueTasks } = await overdueQ;
+    const taskScope = {
+      company_id: scope.companyId || undefined,
+      company_ids: scope.companyIds || undefined,
+    };
+    const [openTasks, overdueTasks] = await Promise.all([
+      countUnifiedOpenTasks(req.user, taskScope),
+      countUnifiedOverdueTasks(req.user, taskScope),
+    ]);
 
     const totalDeals = Object.values(dealCounts).reduce((s, n) => s + n, 0);
     const totalLeads = Object.values(leadCounts).reduce((s, n) => s + n, 0);
@@ -592,6 +761,7 @@ r.get('/overview', async (req, res) => {
     res.json({
       company_id: companyId,
       tenant_scoped: !!(scope.companyIds?.length || scope.companyId === TENANT_EMPTY_COMPANY_SENTINEL),
+      metric_contract: buildOperationsMetricContract(companyId),
       kpis: {
         crm_leads: totalLeads,
         crm_deals: totalDeals,
@@ -897,6 +1067,7 @@ r.get('/work-unified', async (req, res) => {
 
     let q = supabase.from('projects').select(`
       id, code, name, status, deadline, estimated_value, production_value, deposit_amount, collected_amount,
+      company_id, logistics_company_id,
       customer_id, current_stage_id, install_date, delivery_date, production_deadline,
       project_manager_id, sales_person_id, production_person_id,
       customer:customers(id, full_name),
@@ -932,6 +1103,8 @@ r.get('/work-unified', async (req, res) => {
         id: p.id,
         code: p.code,
         name: p.name,
+        company_id: p.company_id,
+        logistics_company_id: p.logistics_company_id,
         customer_name: p.customer?.full_name || null,
         deal_code: deal?.code || null,
         deal_title: deal?.title || null,
@@ -1094,7 +1267,7 @@ r.get('/purchasing-overview', async (req, res) => {
   }
 });
 
-const PRODUCTION_SCOPE_STATUSES = ['producing', 'shipping', 'installing'];
+const PRODUCTION_PAST_STATUSES = new Set(['shipping', 'installing', 'completed', 'cancelled']);
 
 /**
  * Pipeline công đoạn xưởng THEO TỪNG CÔNG TY riêng (không gộp) — dùng để tính đúng
@@ -1123,19 +1296,19 @@ r.get('/production-overview', async (req, res) => {
   try {
     const scope = getCompanyScope(req, req.query.company_id);
     if (denyScope(res, scope)) return;
+    res.set('Cache-Control', 'no-store');
     const now = new Date();
     const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-
-    let q = supabase.from('projects').select(`
-      id, code, name, status, deadline, sx_kanban_column_id, production_person_id, updated_at, company_id,
-      production_person:users!projects_production_person_id_fkey(id, full_name)
-    `).in('status', PRODUCTION_SCOPE_STATUSES);
-    q = applyProjectScopeFilter(q, scope);
-    const { data: projects, error } = await q;
-    if (error) throw error;
+    const sx = await loadSxPipelineSummary(scope);
+    const projects = sx.projects || [];
 
     const projectCompanyIds = [...new Set((projects || []).map((p) => p.company_id).filter(Boolean))];
     const stagesByCompany = await loadStagesByCompany('production_pipeline_stages', projectCompanyIds);
+    const usersById = await loadLookupByIds(
+      'users',
+      (projects || []).map((project) => project.production_person_id),
+      'id, full_name, avatar',
+    );
 
     const projectIds = (projects || []).map((p) => p.id);
     const openPrProjectIds = new Set();
@@ -1151,9 +1324,10 @@ r.get('/production-overview', async (req, res) => {
       const stageIdx = companyStages.findIndex((s) => String(s.id) === String(p.sx_kanban_column_id));
       const foundStage = stageIdx >= 0;
       const progressPct = foundStage ? Math.round(((stageIdx + 1) / totalStages) * 100) : null;
-      const movedPastProduction = p.status !== 'producing';
+      const movedPastProduction = PRODUCTION_PAST_STATUSES.has(String(p.status || '').toLowerCase());
       const waitingMaterial = openPrProjectIds.has(String(p.id));
-      const overdue = !!(p.deadline && new Date(p.deadline) < now);
+      const effectiveDeadline = p.production_deadline || p.deadline;
+      const overdue = !!(effectiveDeadline && new Date(effectiveDeadline) < now && !movedPastProduction);
 
       let bucket;
       if (movedPastProduction) bucket = 'done';
@@ -1169,16 +1343,19 @@ r.get('/production-overview', async (req, res) => {
         current_stage_idx: movedPastProduction ? totalStages - 1 : (foundStage ? stageIdx : null),
         total_stages: totalStages,
         progress_pct: movedPastProduction ? 100 : progressPct,
-        assignee_name: p.production_person?.full_name || null,
+        assignee_name: usersById[String(p.production_person_id)]?.full_name || null,
         bucket,
-        deadline: p.deadline,
+        deadline: effectiveDeadline,
         updated_at: p.updated_at,
+        company_id: p.company_id,
+        logistics_company_id: p.logistics_company_id,
       };
     });
 
     items.sort((a, b) => new Date(a.deadline || '9999-12-31').getTime() - new Date(b.deadline || '9999-12-31').getTime());
 
     const stats = {
+      in_pipeline: items.length,
       active: items.filter((i) => i.bucket !== 'done').length,
       waiting_material: items.filter((i) => i.bucket === 'waiting_material').length,
       late: items.filter((i) => i.bucket === 'late').length,
@@ -1199,6 +1376,7 @@ r.get('/production-overview', async (req, res) => {
 
     res.json({
       company_id: primaryCompanyIdFromScope(scope),
+      metric_contract: buildOperationsMetricContract(primaryCompanyIdFromScope(scope)),
       stages,
       stats,
       items,
@@ -1239,7 +1417,7 @@ r.get('/deals', async (req, res) => {
     const installStageIds = collectStageIds(vcStagesAll.filter(isInstallStageMeta), () => true);
 
     const listSelect = `
-          id, code, title, type, budget, estimated_value, created_at, updated_at, deadline,
+          id, code, title, type, estimated_value, created_at, updated_at, deadline:kanban_deadline_at,
           project_id, company_id, assigned_to, lead_owner_id,
           stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon, is_won, is_lost),
           customer:customers(id, full_name, phone),
@@ -1279,7 +1457,7 @@ r.get('/deals', async (req, res) => {
         query = query.not('project_id', 'is', null);
       }
       if (focus === 'overdue_crm') {
-        query = query.lt('deadline', new Date().toISOString()).not('deadline', 'is', null);
+        query = query.lt('kanban_deadline_at', new Date().toISOString()).not('kanban_deadline_at', 'is', null);
         if (wonStageIds.length) query = query.not('stage_id', 'in', `(${wonStageIds.join(',')})`);
       }
       if (searchQ) {
@@ -1499,7 +1677,8 @@ r.get('/by-project/:projectId', async (req, res) => {
     if (denyScope(res, scope)) return;
     const bundle = await buildProjectDealBundle(req.params.projectId, { user: req.user });
     if (!bundle) return res.status(404).json({ error: 'Không tìm thấy dự án' });
-    if (!assertProjectInScope(res, scope, bundle.project)) return;
+    const access = await loadOperationalProjectAccess(req.params.projectId, scope);
+    if (!access) return res.status(404).json({ error: 'Không tìm thấy dự án trong phạm vi vận hành' });
     res.json(bundle);
   } catch (e) {
     console.error('[management/by-project]', e);
@@ -1510,27 +1689,34 @@ r.get('/by-project/:projectId', async (req, res) => {
 const MATERIAL_READY_STATUSES = ['received', 'qc_pass', 'qc_fail', 'done'];
 const DONE_TASK_STATUSES = ['done', 'completed'];
 
-// GET /api/management/production-overview/:projectId — Chi tiết 1 dự án đang ở công đoạn sản xuất
+// GET /api/management/production-overview/:projectId — Project Cockpit chuyển tiếp, đọc xuyên suốt 8 macro phase
 r.get('/production-overview/:projectId', async (req, res) => {
   try {
     const { projectId } = req.params;
     const scope = getCompanyScope(req, req.query.company_id);
     if (denyScope(res, scope)) return;
+    res.set('Cache-Control', 'no-store');
 
     const { data: project, error } = await supabase.from('projects').select(`
-      id, code, name, status, deadline, production_deadline, install_address,
+      id, code, name, status, deadline, design_deadline, production_deadline, install_address,
+      production_start_date, production_finish_date, completed_date, sx_reception_date,
       sx_kanban_column_id, sx_pipeline_stage_entered_at, sx_schedule_slip_days,
-      production_person_id, company_id, updated_at,
+      vc_kanban_column_id, delivery_date, install_date, pickup_at,
+      designer_id, design_person_id, project_manager_id, production_person_id, shipping_person_id,
+      logistics_person_id, installation_person_id, installer_person_id,
+      company_id, logistics_company_id, updated_at,
       company:companies!projects_company_id_fkey(id, name),
-      production_person:users!projects_production_person_id_fkey(id, full_name)
+      production_person:users!projects_production_person_id_fkey(id, full_name),
+      current_stage:workflow_stages(id, slug, name)
     `).eq('id', projectId).maybeSingle();
     if (error) throw error;
     if (!project) return res.status(404).json({ error: 'Không tìm thấy dự án' });
-    if (!assertProjectInScope(res, scope, project)) return;
+    const access = await loadOperationalProjectAccess(projectId, scope);
+    if (!access) return res.status(404).json({ error: 'Không tìm thấy dự án trong phạm vi vận hành' });
 
     const { data: stagesRaw } = await supabase
       .from('production_pipeline_stages')
-      .select('id, name, order_index')
+      .select('id, name, order_index, bucket_slug, progress_percent, counts_as_collected_revenue, is_packaging_done, deadline_group')
       .eq('company_id', project.company_id)
       .eq('is_active', true)
       .order('order_index');
@@ -1538,7 +1724,7 @@ r.get('/production-overview/:projectId', async (req, res) => {
     const totalStages = stages.length || 1;
     const stageIdx = stages.findIndex((s) => String(s.id) === String(project.sx_kanban_column_id));
     const foundStage = stageIdx >= 0;
-    const movedPastProduction = project.status !== 'producing';
+    const movedPastProduction = PRODUCTION_PAST_STATUSES.has(String(project.status || '').toLowerCase());
     const progressPct = movedPastProduction ? 100 : (foundStage ? Math.round(((stageIdx + 1) / totalStages) * 100) : null);
     const currentStageIdx = movedPastProduction ? stages.length - 1 : (foundStage ? stageIdx : null);
     const stageList = stages.map((s, idx) => ({
@@ -1547,23 +1733,108 @@ r.get('/production-overview/:projectId', async (req, res) => {
       status: movedPastProduction || idx < currentStageIdx ? 'done' : idx === currentStageIdx ? 'current' : 'pending',
     }));
 
+    let logisticsStage = null;
+    let logisticsStages = [];
+    if (project.vc_kanban_column_id) {
+      const { data: stage, error: logisticsStageError } = await supabase
+        .from('logistics_pipeline_stages')
+        .select('id, name, order_index, bucket_slug, color, company_id, progress_percent, crm_sync_type')
+        .eq('id', project.vc_kanban_column_id)
+        .maybeSingle();
+      if (logisticsStageError) throw logisticsStageError;
+      logisticsStage = stage || null;
+      if (logisticsStage) {
+        let logisticsStagesQuery = supabase
+          .from('logistics_pipeline_stages')
+          .select('id, name, order_index, bucket_slug, color, company_id, progress_percent, crm_sync_type')
+          .eq('is_active', true)
+          .order('order_index');
+        logisticsStagesQuery = logisticsStage.company_id
+          ? logisticsStagesQuery.eq('company_id', logisticsStage.company_id)
+          : logisticsStagesQuery.is('company_id', null);
+        const { data: stageRows, error: logisticsStagesError } = await logisticsStagesQuery;
+        if (logisticsStagesError) throw logisticsStagesError;
+        logisticsStages = stageRows || [];
+      }
+    }
+    const [operationUsers, operationCompanies] = await Promise.all([
+      loadLookupByIds('users', [
+        project.designer_id,
+        project.design_person_id,
+        project.project_manager_id,
+        project.shipping_person_id,
+        project.logistics_person_id,
+        project.installation_person_id,
+        project.installer_person_id,
+      ], 'id, full_name, avatar'),
+      loadLookupByIds('companies', [project.logistics_company_id], 'id, name, short_name'),
+    ]);
+
     const { data: leadRows } = await supabase.from('crm_leads')
       .select('id, code').eq('project_id', projectId).order('created_at', { ascending: true });
     const primaryLead = leadRows?.[0] || null;
     const leadIds = (leadRows || []).map((l) => l.id);
 
+    const [incidentsRes, approvalsRes, additionalDealsRes] = await Promise.all([
+      supabase.from('project_incidents').select(`
+        id, title, description, severity, status, created_at, resolved_at,
+        change_type, cause, phase_key, owner_user_id, cost_impact, schedule_impact_days,
+        cost_bearer, requires_approval, approval_status, approval_notes, approved_at,
+        rejected_reason, attachments, related_links,
+        reporter:users!project_incidents_reported_by_fkey(id, full_name, avatar),
+        resolver:users!project_incidents_resolved_by_fkey(id, full_name, avatar),
+        owner:users!project_incidents_owner_user_id_fkey(id, full_name, avatar, department_id),
+        approver:users!project_incidents_approved_by_fkey(id, full_name, avatar)
+      `).eq('project_id', projectId).order('created_at', { ascending: false }),
+      supabase.from('project_approvals').select(`
+        id, project_id, stage_id, status, notes, attachments, reject_reason, approve_notes,
+        decided_at, created_at,
+        stage:workflow_stages(id, name, slug),
+        requester:users!project_approvals_requested_by_fkey(id, full_name, avatar),
+        decider:users!project_approvals_decided_by_fkey(id, full_name, avatar)
+      `).eq('project_id', projectId).order('created_at', { ascending: false }),
+      leadIds.length
+        ? supabase.from('crm_leads')
+          .select('id, code, title, description, created_at, stage_id, estimated_value, source_customer_deal_id, project_id, assigned_to, lead_owner_id')
+          .in('source_customer_deal_id', leadIds)
+          .eq('type', 'deal')
+          .order('created_at', { ascending: false })
+        : Promise.resolve({ data: [], error: null }),
+    ]);
+    if (incidentsRes.error) throw incidentsRes.error;
+    if (approvalsRes.error) throw approvalsRes.error;
+    if (additionalDealsRes.error) throw additionalDealsRes.error;
+
+    const additionalDeals = additionalDealsRes.data || [];
+    const [additionalStages, additionalOwners] = await Promise.all([
+      loadLookupByIds('crm_pipeline_stages', additionalDeals.map((item) => item.stage_id), 'id, name, color, is_won, is_lost'),
+      loadLookupByIds('users', additionalDeals.flatMap((item) => [item.assigned_to, item.lead_owner_id]), 'id, full_name, avatar'),
+    ]);
+    const changeContract = buildProjectChangeReadModel({
+      projectId,
+      incidents: incidentsRes.data || [],
+      approvals: approvalsRes.data || [],
+      commercialAdditions: additionalDeals.map((item) => ({
+        ...item,
+        stage: additionalStages[String(item.stage_id)] || null,
+        assignee: additionalOwners[String(item.assigned_to)] || null,
+        lead_owner: additionalOwners[String(item.lead_owner_id)] || null,
+      })),
+    });
+
     const { data: prs } = await supabase.from('purchase_requests')
-      .select('id, item_name, status').eq('project_id', projectId);
+      .select('id, item_name, status, qc_status, owner_user_id, requested_date, supplier_committed_date, delay_reason, next_action')
+      .eq('project_id', projectId);
     const materialsTotal = (prs || []).length;
     const materialsReady = (prs || []).filter((p) => MATERIAL_READY_STATUSES.includes(p.status)).length;
     const materialsReadyPct = materialsTotal > 0 ? Math.round((materialsReady / materialsTotal) * 100) : null;
     const openPrCount = (prs || []).filter((p) => ['draft', 'requested'].includes(p.status)).length;
 
-    let taskQuery = supabase.from('unified_tasks_v').select('unified_id, status, deadline').eq('project_id', projectId);
+    let taskQuery = supabase.from('unified_tasks_v').select('unified_id, title, task_kind, status, deadline').eq('project_id', projectId);
     const { data: projectTasks } = await taskQuery;
     let crmTasks = [];
     if (leadIds.length) {
-      const { data: ct } = await supabase.from('unified_tasks_v').select('unified_id, status, deadline').in('lead_id', leadIds);
+      const { data: ct } = await supabase.from('unified_tasks_v').select('unified_id, title, task_kind, status, deadline').in('lead_id', leadIds);
       crmTasks = ct || [];
     }
     const seenTaskIds = new Set();
@@ -1576,12 +1847,42 @@ r.get('/production-overview/:projectId', async (req, res) => {
     const openTasks = allTasks.filter((t) => !DONE_TASK_STATUSES.includes(String(t.status)));
     const overdueTasks = openTasks.filter((t) => t.deadline && new Date(t.deadline) < now);
 
-    const overdue = !!(project.deadline && new Date(project.deadline) < now);
+    const effectiveDeadline = project.production_deadline || project.deadline;
+    const overdue = !!(effectiveDeadline && new Date(effectiveDeadline) < now && !movedPastProduction);
     let bucket;
     if (movedPastProduction) bucket = 'done';
     else if (openPrCount > 0) bucket = 'waiting_material';
     else if (overdue) bucket = 'late';
     else bucket = 'on_track';
+
+    const materialOwnerIds = (prs || []).map((item) => item.owner_user_id).filter(Boolean);
+    const materialOwners = await loadLookupByIds('users', materialOwnerIds, 'id, full_name, avatar');
+    const projectManager = operationUsers[String(project.project_manager_id)] || null;
+    const procurementOwnerId = (prs || []).find((item) => !MATERIAL_READY_STATUSES.includes(item.status) && item.owner_user_id)?.owner_user_id
+      || (prs || []).find((item) => item.owner_user_id)?.owner_user_id;
+    const deliveryOwner = operationUsers[String(project.logistics_person_id || project.shipping_person_id)] || projectManager;
+    const installationOwner = operationUsers[String(project.installation_person_id || project.installer_person_id)] || projectManager;
+    const healthContract = buildProjectHealthContract({
+      project,
+      productionStages: stages,
+      productionStage: foundStage ? stages[stageIdx] : null,
+      logisticsStages,
+      logisticsStage,
+      materials: prs || [],
+      tasks: allTasks,
+      externalBlockers: changeContract.blockers,
+      owners: {
+        design: operationUsers[String(project.design_person_id || project.designer_id)] || projectManager,
+        procurement: materialOwners[String(procurementOwnerId)] || projectManager,
+        production: project.production_person || projectManager,
+        quality: project.production_person || projectManager,
+        packing: project.production_person || projectManager,
+        delivery: deliveryOwner,
+        installation: installationOwner,
+        acceptance: installationOwner,
+      },
+      now,
+    });
 
     res.json({
       project: {
@@ -1590,8 +1891,10 @@ r.get('/production-overview/:projectId', async (req, res) => {
         name: project.name,
         status: project.status,
         company: project.company || null,
+        company_id: project.company_id,
+        logistics_company_id: project.logistics_company_id,
         install_address: project.install_address || null,
-        deadline: project.production_deadline || project.deadline || null,
+        deadline: effectiveDeadline || null,
         production_person: project.production_person || null,
         sx_pipeline_stage_entered_at: project.sx_pipeline_stage_entered_at || null,
         sx_schedule_slip_days: project.sx_schedule_slip_days ?? null,
@@ -1615,10 +1918,23 @@ r.get('/production-overview/:projectId', async (req, res) => {
         open: openTasks.length,
         overdue: overdueTasks.length,
       },
+      logistics: {
+        phase: logisticsStage ? (isInstallStageMeta(logisticsStage) ? 'installation' : 'delivery') : null,
+        stage: logisticsStage,
+        company: operationCompanies[String(project.logistics_company_id)] || null,
+        logistics_person: operationUsers[String(project.logistics_person_id)] || null,
+        installation_person: operationUsers[String(project.installation_person_id || project.installer_person_id)] || null,
+        delivery_date: project.delivery_date || null,
+        install_date: project.install_date || null,
+        pickup_at: project.pickup_at || null,
+      },
+      health_contract: healthContract,
+      changes_contract: changeContract,
+      metric_contract: buildOperationsMetricContract(primaryCompanyIdFromScope(scope)),
     });
   } catch (e) {
     console.error('[management/production-overview/:projectId]', e);
-    res.status(500).json({ error: e.message || 'Lỗi tải chi tiết dự án sản xuất' });
+    res.status(500).json({ error: e.message || 'Lỗi tải Tổng quan Project' });
   }
 });
 

@@ -559,7 +559,7 @@ async function buildProjectDealBundle(projectId, opts = {}) {
     .from('projects')
     .select(`
       id, code, name, status, deadline, estimated_value, production_value, deposit_amount, collected_amount,
-      company_id, customer_id, sx_kanban_column_id, vc_kanban_column_id, current_stage_id,
+      company_id, logistics_company_id, customer_id, sx_kanban_column_id, vc_kanban_column_id, current_stage_id,
       install_date, delivery_date, production_deadline,
       production_person_id, logistics_person_id, installation_person_id,
       current_stage:workflow_stages(id, name, slug, color, order_index),
@@ -576,7 +576,7 @@ async function buildProjectDealBundle(projectId, opts = {}) {
       .from('projects')
       .select(`
         id, code, name, status, deadline, estimated_value, production_value, deposit_amount, collected_amount,
-        company_id, customer_id, sx_kanban_column_id, vc_kanban_column_id, current_stage_id,
+        company_id, logistics_company_id, customer_id, sx_kanban_column_id, vc_kanban_column_id, current_stage_id,
         install_date, delivery_date, production_deadline,
         production_person_id, logistics_person_id, installation_person_id,
         current_stage:workflow_stages(id, name, slug, color, order_index)

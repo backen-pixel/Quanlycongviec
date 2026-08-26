@@ -164,14 +164,12 @@ async function completeWorkshopTaskRows(tasks) {
     let { error } = await supabase
       .from('tasks')
       .update({ status: 'done', completed_at: nowIso, updated_at: nowIso })
-      .in('id', part)
-      .not('status', 'in', '(done,completed,cancelled,canceled)');
+      .in('id', part);
     if (error && /completed_at/.test(String(error.message || ''))) {
       ({ error } = await supabase
         .from('tasks')
         .update({ status: 'done', updated_at: nowIso })
-        .in('id', part)
-        .not('status', 'in', '(done,completed,cancelled,canceled)'));
+        .in('id', part));
     }
     if (error) {
       console.warn('[completeOpenWork] tasks complete:', error.message);
@@ -214,7 +212,7 @@ async function completeLinkedAssignments({ leadIds, crmTaskIds, moduleKey }) {
       .from('crm_assignments')
       .update(patch)
       .in('crm_task_id', part)
-      .not('status', 'in', '(completed,done,cancelled,canceled)')
+      .in('status', ['pending', 'in_progress'])
       .select('id');
     if (error && /crm_task_id/.test(String(error.message || ''))) break;
     if (error) {
@@ -222,7 +220,7 @@ async function completeLinkedAssignments({ leadIds, crmTaskIds, moduleKey }) {
         .from('crm_assignments')
         .update(legacy)
         .in('crm_task_id', part)
-        .not('status', 'in', '(completed,done,cancelled,canceled)')
+        .in('status', ['pending', 'in_progress'])
         .select('id'));
     }
     if (error) console.warn('[completeOpenWork] assignments task_id:', error.message);
@@ -236,7 +234,7 @@ async function completeLinkedAssignments({ leadIds, crmTaskIds, moduleKey }) {
         .update(patch)
         .in('lead_id', part)
         .eq('assignment_module', moduleKey)
-        .not('status', 'in', '(completed,done,cancelled,canceled)')
+        .in('status', ['pending', 'in_progress'])
         .select('id');
       if (error && /assignment_module/.test(String(error.message || ''))) break;
       if (error) {
@@ -245,7 +243,7 @@ async function completeLinkedAssignments({ leadIds, crmTaskIds, moduleKey }) {
           .update(legacy)
           .in('lead_id', part)
           .eq('assignment_module', moduleKey)
-          .not('status', 'in', '(completed,done,cancelled,canceled)')
+          .in('status', ['pending', 'in_progress'])
           .select('id'));
       }
       if (error && /assignment_module/.test(String(error.message || ''))) break;

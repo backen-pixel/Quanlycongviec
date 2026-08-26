@@ -31,6 +31,8 @@ import DealSharedWorkspaceTab from '../components/DealSharedWorkspaceTab';
 import CrmTaskDocumentsPanel from '../components/CrmTaskDocumentsPanel';
 import UnifiedTaskHistoryWidget from '../components/UnifiedTaskHistoryWidget';
 import BlockingTasksAlertModal from '../components/BlockingTasksAlertModal';
+import SalesQualificationPilot from '../components/SalesQualificationPilot';
+import SalesDealWorkflowPilot from '../components/SalesDealWorkflowPilot';
 import FlowModuleComposer from '../components/FlowModuleComposer';
 import ExcelQuotationImport from '../components/ExcelQuotationImport';
 import QuotationSourceExcelLink from '../components/QuotationSourceExcelLink';
@@ -325,6 +327,8 @@ export default function LeadDetail() {
   const [showCreateEvent, setShowCreateEvent] = useState(false);
   const [createEventTypes, setCreateEventTypes] = useState([]);
   const [showConvertModal, setShowConvertModal] = useState(false);
+  const [qualificationState, setQualificationState] = useState(null);
+  const [dealWorkflowState, setDealWorkflowState] = useState(null);
   const [showRevertModal, setShowRevertModal] = useState(false);
   const [showTransferRegionModal, setShowTransferRegionModal] = useState(false);
   const [transferCompanyId, setTransferCompanyId] = useState('');
@@ -345,6 +349,10 @@ export default function LeadDetail() {
   const [commentCount, setCommentCount] = useState(0);
   const [memberModuleCounts, setMemberModuleCounts] = useState({ crm: 0, production: 0, logistics: 0, total: 0 });
   const [dealMembers, setDealMembers] = useState([]);
+
+  useEffect(() => {
+    setDealWorkflowState(null);
+  }, [id]);
 
   useEffect(() => {
     if (!id) return;
@@ -2470,7 +2478,11 @@ export default function LeadDetail() {
   const stages = lead.type === 'deal' ? stagesDeal : stagesLead;
   const currentStageIdx = stages.findIndex(s => s.id === lead.stage_id);
   const isPipelineComplete = stages.some(s => s.id === lead.stage_id && s.is_won);
-  const canConvert = (lead.type === 'lead' || !lead.type || lead.type === '') && !lead.project_id;
+  const qualificationAllowsConvert = qualificationState?.enabled !== true
+    || qualificationState?.allowed_actions?.convert_to_deal === true;
+  const canConvert = (lead.type === 'lead' || !lead.type || lead.type === '')
+    && !lead.project_id
+    && qualificationAllowsConvert;
   const currentStageObj = stages.find((s) => s.id === lead.stage_id) || null;
   // Luôn hiện nút trên Deal — không phụ thuộc flag stage (cache taxonomy dễ làm mất cờ).
   // Backend vẫn chọn cột lead đích (is_revert_to_lead_target / cột lead đầu).
@@ -3128,6 +3140,20 @@ export default function LeadDetail() {
           ) : null}
         </div>
       </div>
+
+      <SalesQualificationPilot
+        lead={lead}
+        onRefresh={() => load({ silent: true })}
+        onConvert={() => setShowConvertModal(true)}
+        onStateChange={setQualificationState}
+      />
+
+      <SalesDealWorkflowPilot
+        lead={lead}
+        onRefresh={() => load({ silent: true })}
+        onOpenTasks={() => setActiveTab('tasks')}
+        onStateChange={setDealWorkflowState}
+      />
 
       {lead?.type === 'deal' && (
         <DealModulePathStrip
@@ -3867,6 +3893,7 @@ export default function LeadDetail() {
             }}
             currentUser={user}
             productionCompaniesSx={productionCompaniesSx}
+            businessOsDealStage={dealWorkflowState?.instance?.current_stage_key || null}
             onOpenTransferAssignee={canTransferRegion ? openTransferRegionModal : null}
             onAdditionalSxCreate={async (targets) => {
               setAutoCreateError('');
@@ -6494,6 +6521,7 @@ function LeadInfoPanel({
   onUpdate,
   currentUser,
   productionCompaniesSx = [],
+  businessOsDealStage = null,
   onOpenTransferAssignee = null,
   onAdditionalSxCreate = null,
 }) {
@@ -7507,7 +7535,9 @@ function LeadInfoPanel({
         displayValue={lead?.description || null}
         type="textarea" />
 
-      {lead?.type === 'deal' && lead?.stage?.is_won && !lead?.sx_handover_at && (
+      {lead?.type === 'deal'
+        && (lead?.stage?.is_won || businessOsDealStage === 'project')
+        && !lead?.sx_handover_at && (
         <div className="rounded-xl border-2 border-amber-300 bg-amber-50/90 p-4 space-y-3">
           {!sxHandoverExpanded ? (
             <button
@@ -7515,13 +7545,13 @@ function LeadInfoPanel({
               onClick={() => setSxHandoverExpanded(true)}
               className="w-full sm:w-auto h-10 px-4 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-sm font-semibold cursor-pointer"
             >
-              Bàn giao Sản xuất (thủ công)
+              Bàn giao Sản xuất
             </button>
           ) : (
             <>
               <div>
                 <div className="flex items-center justify-between gap-2">
-                  <p className="text-xs font-bold text-amber-900 uppercase tracking-wide">🏭 Bàn giao Sản xuất (thủ công)</p>
+                  <p className="text-xs font-bold text-amber-900 uppercase tracking-wide">🏭 Bàn giao Sản xuất</p>
                   <button
                     type="button"
                     onClick={() => { setSxHandoverExpanded(false); setSxHandoverNotice(''); }}

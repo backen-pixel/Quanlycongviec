@@ -3,14 +3,114 @@
   "split_commit": "3290fc613ce81b278991352a2d947ccaae933587",
   "counts": {
     "presplit": 224,
-    "runtime": 230,
+    "runtime": 262,
     "missing": 0,
-    "extra": 6,
-    "intentional_extra": 6,
+    "extra": 38,
+    "intentional_extra": 38,
     "unexpected_extra": 0
   },
   "missing": [],
   "extra": [
+    {
+      "method": "GET",
+      "path": "/error-types",
+      "file": "routes/errorTypes.js",
+      "existed_before_split": false,
+      "duplicate_mount": false,
+      "intentional": true,
+      "reason": "Post-split product: danh mục loại lỗi",
+      "decision": "accept_intentional_post_split"
+    },
+    {
+      "method": "POST",
+      "path": "/error-types",
+      "file": "routes/errorTypes.js",
+      "existed_before_split": false,
+      "duplicate_mount": false,
+      "intentional": true,
+      "reason": "Post-split product: tạo loại lỗi",
+      "decision": "accept_intentional_post_split"
+    },
+    {
+      "method": "PUT",
+      "path": "/error-types/:id",
+      "file": "routes/errorTypes.js",
+      "existed_before_split": false,
+      "duplicate_mount": false,
+      "intentional": true,
+      "reason": "Post-split product: cập nhật loại lỗi",
+      "decision": "accept_intentional_post_split"
+    },
+    {
+      "method": "DELETE",
+      "path": "/error-types/:id",
+      "file": "routes/errorTypes.js",
+      "existed_before_split": false,
+      "duplicate_mount": false,
+      "intentional": true,
+      "reason": "Post-split product: xoá loại lỗi",
+      "decision": "accept_intentional_post_split"
+    },
+    {
+      "method": "PUT",
+      "path": "/error-types/:id/staff",
+      "file": "routes/errorTypes.js",
+      "existed_before_split": false,
+      "duplicate_mount": false,
+      "intentional": true,
+      "reason": "Post-split product: phân công loại lỗi",
+      "decision": "accept_intentional_post_split"
+    },
+    {
+      "method": "GET",
+      "path": "/deals/spawn-source-ids",
+      "file": "routes/leadLifecycle.js",
+      "existed_before_split": false,
+      "duplicate_mount": false,
+      "intentional": true,
+      "reason": "Post-split product: nguồn deal phát sinh",
+      "decision": "accept_intentional_post_split"
+    },
+    {
+      "method": "POST",
+      "path": "/deals/:id/spawn-additional",
+      "file": "routes/leadLifecycle.js",
+      "existed_before_split": false,
+      "duplicate_mount": false,
+      "intentional": true,
+      "reason": "Post-split product: tạo deal phát sinh",
+      "decision": "accept_intentional_post_split"
+    },
+    {
+      "method": "GET",
+      "path": "/deals/:id/spawned-additional",
+      "file": "routes/leadLifecycle.js",
+      "existed_before_split": false,
+      "duplicate_mount": false,
+      "intentional": true,
+      "reason": "Post-split product: danh sách deal phát sinh",
+      "decision": "accept_intentional_post_split"
+    },
+    {
+      "method": "GET",
+      "path": "/leads/:id/inbox-links",
+      "file": "routes/leadLifecycle.js",
+      "existed_before_split": false,
+      "duplicate_mount": false,
+      "intentional": true,
+      "reason": "Post-split product: liên kết inbox của lead",
+      "decision": "accept_intentional_post_split"
+    },
+    {
+      "method": "GET",
+      "path": "/leads/:id/transfer-options",
+      "file": "routes/leadLifecycle.js",
+      "existed_before_split": false,
+      "duplicate_mount": false,
+      "intentional": true,
+      "reason": "Post-split product: tuỳ chọn chuyển phụ trách",
+      "decision": "accept_intentional_post_split"
+    },
     {
       "method": "POST",
       "path": "/leads/:id/transfer-region",
@@ -22,6 +122,16 @@
       "decision": "accept_intentional_post_split"
     },
     {
+      "method": "PATCH",
+      "path": "/leads/:id/deadline/disable-all",
+      "file": "routes/leadLifecycle.js",
+      "existed_before_split": false,
+      "duplicate_mount": false,
+      "intentional": true,
+      "reason": "Post-split product: tắt deadline lead",
+      "decision": "accept_intentional_post_split"
+    },
+    {
       "method": "POST",
       "path": "/deals/:id/reassign-sx",
       "file": "routes/leadLifecycle.js",
@@ -29,6 +139,216 @@
       "duplicate_mount": false,
       "intentional": true,
       "reason": "Post-split product: gán lại công ty SX",
+      "decision": "accept_intentional_post_split"
+    },
+    {
+      "method": "GET",
+      "path": "/leads/search-suggest",
+      "file": "routes/leadsList.js",
+      "existed_before_split": false,
+      "duplicate_mount": false,
+      "intentional": true,
+      "reason": "Post-split product: gợi ý tìm kiếm lead",
+      "decision": "accept_intentional_post_split"
+    },
+    {
+      "method": "GET",
+      "path": "/leads/stage-counts",
+      "file": "routes/leadsList.js",
+      "existed_before_split": false,
+      "duplicate_mount": false,
+      "intentional": true,
+      "reason": "Post-split product: đếm lead theo stage",
+      "decision": "accept_intentional_post_split"
+    },
+    {
+      "method": "GET",
+      "path": "/filter-summary",
+      "file": "routes/leadsList.js",
+      "existed_before_split": false,
+      "duplicate_mount": false,
+      "intentional": true,
+      "reason": "Post-split product: tổng hợp bộ lọc CRM",
+      "decision": "accept_intentional_post_split"
+    },
+    {
+      "method": "POST",
+      "path": "/deadline-bucket-counts",
+      "file": "routes/leadsList.js",
+      "existed_before_split": false,
+      "duplicate_mount": false,
+      "intentional": true,
+      "reason": "Post-split product: đếm bucket deadline",
+      "decision": "accept_intentional_post_split"
+    },
+    {
+      "method": "POST",
+      "path": "/deadline-bucket-pages",
+      "file": "routes/leadsList.js",
+      "existed_before_split": false,
+      "duplicate_mount": false,
+      "intentional": true,
+      "reason": "Post-split product: phân trang bucket deadline",
+      "decision": "accept_intentional_post_split"
+    },
+    {
+      "method": "POST",
+      "path": "/kpi-ledger-total",
+      "file": "routes/leadsList.js",
+      "existed_before_split": false,
+      "duplicate_mount": false,
+      "intentional": true,
+      "reason": "Post-split product: tổng KPI ledger",
+      "decision": "accept_intentional_post_split"
+    },
+    {
+      "method": "POST",
+      "path": "/kanban-stage-pages",
+      "file": "routes/leadsList.js",
+      "existed_before_split": false,
+      "duplicate_mount": false,
+      "intentional": true,
+      "reason": "Post-split product: phân trang Kanban stage",
+      "decision": "accept_intentional_post_split"
+    },
+    {
+      "method": "GET",
+      "path": "/phat-sinh-kinds",
+      "file": "routes/phatSinhKinds.js",
+      "existed_before_split": false,
+      "duplicate_mount": false,
+      "intentional": true,
+      "reason": "Post-split product: danh mục phát sinh",
+      "decision": "accept_intentional_post_split"
+    },
+    {
+      "method": "POST",
+      "path": "/phat-sinh-kinds",
+      "file": "routes/phatSinhKinds.js",
+      "existed_before_split": false,
+      "duplicate_mount": false,
+      "intentional": true,
+      "reason": "Post-split product: tạo loại phát sinh",
+      "decision": "accept_intentional_post_split"
+    },
+    {
+      "method": "PUT",
+      "path": "/phat-sinh-kinds/:id",
+      "file": "routes/phatSinhKinds.js",
+      "existed_before_split": false,
+      "duplicate_mount": false,
+      "intentional": true,
+      "reason": "Post-split product: cập nhật loại phát sinh",
+      "decision": "accept_intentional_post_split"
+    },
+    {
+      "method": "DELETE",
+      "path": "/phat-sinh-kinds/:id",
+      "file": "routes/phatSinhKinds.js",
+      "existed_before_split": false,
+      "duplicate_mount": false,
+      "intentional": true,
+      "reason": "Post-split product: xoá loại phát sinh",
+      "decision": "accept_intentional_post_split"
+    },
+    {
+      "method": "GET",
+      "path": "/leads/:id/qualification",
+      "file": "routes/salesQualificationPilot.js",
+      "existed_before_split": false,
+      "duplicate_mount": false,
+      "intentional": true,
+      "reason": "Business OS pilot: đọc trạng thái Qualification",
+      "decision": "accept_intentional_post_split"
+    },
+    {
+      "method": "PUT",
+      "path": "/leads/:id/qualification/custom-fields",
+      "file": "routes/salesQualificationPilot.js",
+      "existed_before_split": false,
+      "duplicate_mount": false,
+      "intentional": true,
+      "reason": "Business OS pilot: lưu Dynamic Custom Fields có tenant scope",
+      "decision": "accept_intentional_post_split"
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/qualification/start",
+      "file": "routes/salesQualificationPilot.js",
+      "existed_before_split": false,
+      "duplicate_mount": false,
+      "intentional": true,
+      "reason": "Business OS pilot: bắt đầu Qualification",
+      "decision": "accept_intentional_post_split"
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/qualification/complete",
+      "file": "routes/salesQualificationPilot.js",
+      "existed_before_split": false,
+      "duplicate_mount": false,
+      "intentional": true,
+      "reason": "Business OS pilot: hoàn tất Qualification",
+      "decision": "accept_intentional_post_split"
+    },
+    {
+      "method": "GET",
+      "path": "/leads/:id/deal-workflow",
+      "file": "routes/salesQualificationPilot.js",
+      "existed_before_split": false,
+      "duplicate_mount": false,
+      "intentional": true,
+      "reason": "Business OS pilot: đọc trạng thái Deal → Khảo sát → Thiết kế",
+      "decision": "accept_intentional_post_split"
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/deal-workflow/start-survey",
+      "file": "routes/salesQualificationPilot.js",
+      "existed_before_split": false,
+      "duplicate_mount": false,
+      "intentional": true,
+      "reason": "Business OS pilot: bắt đầu Khảo sát có idempotency",
+      "decision": "accept_intentional_post_split"
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/deal-workflow/start-design-review",
+      "file": "routes/salesQualificationPilot.js",
+      "existed_before_split": false,
+      "duplicate_mount": false,
+      "intentional": true,
+      "reason": "Business OS pilot: chọn nhánh khách đã có thiết kế",
+      "decision": "accept_intentional_post_split"
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/deal-workflow/complete-survey",
+      "file": "routes/salesQualificationPilot.js",
+      "existed_before_split": false,
+      "duplicate_mount": false,
+      "intentional": true,
+      "reason": "Business OS pilot: task gate Khảo sát và bàn giao Thiết kế",
+      "decision": "accept_intentional_post_split"
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/deal-workflow/complete-design",
+      "file": "routes/salesQualificationPilot.js",
+      "existed_before_split": false,
+      "duplicate_mount": false,
+      "intentional": true,
+      "reason": "Business OS pilot: task gate hoàn tất Thiết kế",
+      "decision": "accept_intentional_post_split"
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/deal-workflow/complete-design-review",
+      "file": "routes/salesQualificationPilot.js",
+      "existed_before_split": false,
+      "duplicate_mount": false,
+      "intentional": true,
+      "reason": "Business OS pilot: task gate thiết kế khách cung cấp",
       "decision": "accept_intentional_post_split"
     },
     {
@@ -108,17 +428,209 @@
       "path": "/deals/:id/reassign-sx",
       "reason": "Post-split product: gán lại công ty SX",
       "file": "routes/leadLifecycle.js"
+    },
+    {
+      "method": "GET",
+      "path": "/error-types",
+      "reason": "Post-split product: danh mục loại lỗi",
+      "file": "routes/errorTypes.js"
+    },
+    {
+      "method": "POST",
+      "path": "/error-types",
+      "reason": "Post-split product: tạo loại lỗi",
+      "file": "routes/errorTypes.js"
+    },
+    {
+      "method": "PUT",
+      "path": "/error-types/:id",
+      "reason": "Post-split product: cập nhật loại lỗi",
+      "file": "routes/errorTypes.js"
+    },
+    {
+      "method": "DELETE",
+      "path": "/error-types/:id",
+      "reason": "Post-split product: xoá loại lỗi",
+      "file": "routes/errorTypes.js"
+    },
+    {
+      "method": "PUT",
+      "path": "/error-types/:id/staff",
+      "reason": "Post-split product: phân công loại lỗi",
+      "file": "routes/errorTypes.js"
+    },
+    {
+      "method": "GET",
+      "path": "/deals/spawn-source-ids",
+      "reason": "Post-split product: nguồn deal phát sinh",
+      "file": "routes/leadLifecycle.js"
+    },
+    {
+      "method": "POST",
+      "path": "/deals/:id/spawn-additional",
+      "reason": "Post-split product: tạo deal phát sinh",
+      "file": "routes/leadLifecycle.js"
+    },
+    {
+      "method": "GET",
+      "path": "/deals/:id/spawned-additional",
+      "reason": "Post-split product: danh sách deal phát sinh",
+      "file": "routes/leadLifecycle.js"
+    },
+    {
+      "method": "GET",
+      "path": "/leads/:id/inbox-links",
+      "reason": "Post-split product: liên kết inbox của lead",
+      "file": "routes/leadLifecycle.js"
+    },
+    {
+      "method": "GET",
+      "path": "/leads/:id/transfer-options",
+      "reason": "Post-split product: tuỳ chọn chuyển phụ trách",
+      "file": "routes/leadLifecycle.js"
+    },
+    {
+      "method": "PATCH",
+      "path": "/leads/:id/deadline/disable-all",
+      "reason": "Post-split product: tắt deadline lead",
+      "file": "routes/leadLifecycle.js"
+    },
+    {
+      "method": "GET",
+      "path": "/leads/search-suggest",
+      "reason": "Post-split product: gợi ý tìm kiếm lead",
+      "file": "routes/leadsList.js"
+    },
+    {
+      "method": "GET",
+      "path": "/leads/stage-counts",
+      "reason": "Post-split product: đếm lead theo stage",
+      "file": "routes/leadsList.js"
+    },
+    {
+      "method": "GET",
+      "path": "/filter-summary",
+      "reason": "Post-split product: tổng hợp bộ lọc CRM",
+      "file": "routes/leadsList.js"
+    },
+    {
+      "method": "POST",
+      "path": "/deadline-bucket-counts",
+      "reason": "Post-split product: đếm bucket deadline",
+      "file": "routes/leadsList.js"
+    },
+    {
+      "method": "POST",
+      "path": "/deadline-bucket-pages",
+      "reason": "Post-split product: phân trang bucket deadline",
+      "file": "routes/leadsList.js"
+    },
+    {
+      "method": "POST",
+      "path": "/kpi-ledger-total",
+      "reason": "Post-split product: tổng KPI ledger",
+      "file": "routes/leadsList.js"
+    },
+    {
+      "method": "POST",
+      "path": "/kanban-stage-pages",
+      "reason": "Post-split product: phân trang Kanban stage",
+      "file": "routes/leadsList.js"
+    },
+    {
+      "method": "GET",
+      "path": "/phat-sinh-kinds",
+      "reason": "Post-split product: danh mục phát sinh",
+      "file": "routes/phatSinhKinds.js"
+    },
+    {
+      "method": "POST",
+      "path": "/phat-sinh-kinds",
+      "reason": "Post-split product: tạo loại phát sinh",
+      "file": "routes/phatSinhKinds.js"
+    },
+    {
+      "method": "PUT",
+      "path": "/phat-sinh-kinds/:id",
+      "reason": "Post-split product: cập nhật loại phát sinh",
+      "file": "routes/phatSinhKinds.js"
+    },
+    {
+      "method": "DELETE",
+      "path": "/phat-sinh-kinds/:id",
+      "reason": "Post-split product: xoá loại phát sinh",
+      "file": "routes/phatSinhKinds.js"
+    },
+    {
+      "method": "GET",
+      "path": "/leads/:id/qualification",
+      "reason": "Business OS pilot: đọc trạng thái Qualification",
+      "file": "routes/salesQualificationPilot.js"
+    },
+    {
+      "method": "PUT",
+      "path": "/leads/:id/qualification/custom-fields",
+      "reason": "Business OS pilot: lưu Dynamic Custom Fields có tenant scope",
+      "file": "routes/salesQualificationPilot.js"
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/qualification/start",
+      "reason": "Business OS pilot: bắt đầu Qualification",
+      "file": "routes/salesQualificationPilot.js"
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/qualification/complete",
+      "reason": "Business OS pilot: hoàn tất Qualification",
+      "file": "routes/salesQualificationPilot.js"
+    },
+    {
+      "method": "GET",
+      "path": "/leads/:id/deal-workflow",
+      "reason": "Business OS pilot: đọc trạng thái Deal → Khảo sát → Thiết kế",
+      "file": "routes/salesQualificationPilot.js"
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/deal-workflow/start-survey",
+      "reason": "Business OS pilot: bắt đầu Khảo sát có idempotency",
+      "file": "routes/salesQualificationPilot.js"
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/deal-workflow/start-design-review",
+      "reason": "Business OS pilot: chọn nhánh khách đã có thiết kế",
+      "file": "routes/salesQualificationPilot.js"
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/deal-workflow/complete-survey",
+      "reason": "Business OS pilot: task gate Khảo sát và bàn giao Thiết kế",
+      "file": "routes/salesQualificationPilot.js"
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/deal-workflow/complete-design",
+      "reason": "Business OS pilot: task gate hoàn tất Thiết kế",
+      "file": "routes/salesQualificationPilot.js"
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/deal-workflow/complete-design-review",
+      "reason": "Business OS pilot: task gate thiết kế khách cung cấp",
+      "file": "routes/salesQualificationPilot.js"
     }
   ],
   "stale_manifest_reconciliation": {
     "note": "Previous route-manifest.json internals (before this regeneration)",
-    "total_routes_field": 230,
-    "routes_array_length": 230,
-    "by_file_sum": 230,
+    "total_routes_field": 260,
+    "routes_array_length": 260,
+    "by_file_sum": 260,
     "explanation": [
-      "total_routes=230 matched pre-split Git baseline (224) but was not regenerated after post-split routers.",
-      "routes[] length 230 vs by_file sum 230: leadLifecycle under-counted in by_file (off-by-one bookkeeping).",
-      "runtime=230: pre-split 224 + intentional extras 6 (+ any other drift listed in extra)."
+      "total_routes=260 matched pre-split Git baseline (224) but was not regenerated after post-split routers.",
+      "routes[] length 260 vs by_file sum 260: leadLifecycle under-counted in by_file (off-by-one bookkeeping).",
+      "runtime=262: pre-split 224 + intentional extras 38 (+ any other drift listed in extra)."
     ]
   },
   "visibleProduction": {
@@ -145,16 +657,16 @@
     ]
   },
   "runtime_meta": {
-    "liveCount": 230,
+    "liveCount": 262,
     "parentMw": [
       "auth",
       "<anonymous>",
       "enforceCrmDealAssigneeAccess"
     ],
-    "nestedRouters": 16
+    "nestedRouters": 19
   },
   "checksums": {
     "presplit": "d37880ae512a85ed",
-    "runtime": "28698fd51817f17c"
+    "runtime": "0ee0e864ce265f81"
   }
 }

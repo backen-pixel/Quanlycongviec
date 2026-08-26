@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
 import ProjectOverviewPanel from '../components/ProjectOverviewPanel';
 import UnifiedTaskRow from '../components/UnifiedTaskRow';
@@ -47,19 +47,20 @@ export function EmptyNote({ children }) {
   return <p className="text-sm text-gray-400 text-center py-8">{children}</p>;
 }
 
-const DONE_TASK_STATUSES = ['done', 'completed'];
+const DONE_TASK_STATUSES = ['done', 'completed', 'cancelled'];
 
-export function TasksTab({ projectId }) {
+export function TasksTab({ projectId, companyId }) {
   const [state, setState] = useState({ loading: true, error: '', data: null });
   const [savingId, setSavingId] = useState(null);
   const [extrasTask, setExtrasTask] = useState(null);
+  const [focus, setFocus] = useState('open');
 
   const load = useCallback(() => {
     setState((prev) => ({ ...prev, loading: true, error: '' }));
-    return api.get(`/work-tasks/by-project/${projectId}`)
+    return api.get(`/work-tasks/by-project/${projectId}`, { params: companyId ? { company_id: companyId } : {} })
       .then((res) => setState({ loading: false, error: '', data: res.data }))
       .catch((e) => setState({ loading: false, error: e?.response?.data?.error || 'Không tải được công việc', data: null }));
-  }, [projectId]);
+  }, [projectId, companyId]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -82,19 +83,57 @@ export function TasksTab({ projectId }) {
   if (state.error) return <Section title="Công việc"><EmptyNote>{state.error}</EmptyNote></Section>;
   const tasks = state.data?.tasks || [];
   const progress = state.data?.progress || { completed: 0, total: 0 };
+  const nextActions = state.data?.next_actions || [];
+  const nowMs = Date.now();
+  const visibleTasks = tasks.filter((task) => {
+    const done = DONE_TASK_STATUSES.includes(String(task.status || '').toLowerCase());
+    const overdue = !done && task.deadline && new Date(task.deadline).getTime() < nowMs;
+    if (focus === 'open') return !done;
+    if (focus === 'overdue') return overdue;
+    if (focus === 'done') return done;
+    return true;
+  });
 
   return (
     <>
+      <Section title="Việc cần làm tiếp theo" action={<span className="text-[11px] text-gray-500">Ưu tiên quá hạn → gần hạn</span>}>
+        {nextActions.length === 0 ? (
+          <EmptyNote>Dự án không còn công việc đang mở.</EmptyNote>
+        ) : (
+          <div className="grid gap-2 md:grid-cols-2">
+            {nextActions.map((task, index) => {
+              const overdue = task.deadline && new Date(task.deadline).getTime() < nowMs;
+              return (
+                <button key={task.unified_id} type="button" onClick={() => setExtrasTask(task)} className="flex items-start gap-3 rounded-xl border border-slate-200 p-3 text-left hover:border-blue-200 hover:bg-blue-50/40">
+                  <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[10px] font-black ${overdue ? 'bg-red-50 text-red-700' : 'bg-blue-50 text-blue-700'}`}>{index + 1}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-xs font-bold text-slate-900">{task.title || 'Công việc chưa có tên'}</span>
+                    <span className={`mt-1 block text-[10px] font-semibold ${overdue ? 'text-red-600' : 'text-slate-500'}`}>{task.task_kind || 'Công việc'} · {task.deadline ? formatDate(task.deadline) : 'Chưa đặt hạn'}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </Section>
       <Section
         title="Công việc"
-        action={<span className="text-[11px] text-gray-500">{progress.completed}/{progress.total} hoàn thành</span>}
+        action={<span className="text-[11px] text-gray-500">{progress.open || 0} mở · {progress.overdue || 0} quá hạn · {progress.completed}/{progress.total} hoàn thành</span>}
       >
-        {tasks.length === 0 ? (
+        <div className="mb-3 flex flex-wrap gap-2">
+          {[
+            ['open', `Đang mở · ${progress.open || 0}`],
+            ['overdue', `Quá hạn · ${progress.overdue || 0}`],
+            ['done', `Đã xong · ${progress.completed || 0}`],
+            ['all', `Tất cả · ${progress.total || 0}`],
+          ].map(([key, label]) => <button key={key} type="button" onClick={() => setFocus(key)} className={`rounded-full px-3 py-1.5 text-[11px] font-semibold ${focus === key ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>{label}</button>)}
+        </div>
+        {visibleTasks.length === 0 ? (
           <EmptyNote>Chưa có công việc nào gắn với dự án này.</EmptyNote>
         ) : (
           <div className="space-y-2">
-            {tasks.map((t) => {
-              const isDone = DONE_TASK_STATUSES.includes(String(t.status));
+            {visibleTasks.map((t) => {
+              const isDone = DONE_TASK_STATUSES.includes(String(t.status || '').toLowerCase());
               return (
                 <div key={t.unified_id} className={`relative rounded-xl ${isDone ? 'ring-1 ring-emerald-200' : ''}`}>
                   {isDone && (
@@ -423,6 +462,9 @@ export function HistoryTab({ projectId }) {
 
 export default function WorkUnifiedProjectDetailPage() {
   const { id } = useParams();
+  const [searchParams] = useSearchParams();
+  const companyId = searchParams.get('company_id') || '';
+  const listPath = `/management/work-unified${companyId ? `?company_id=${companyId}` : ''}`;
   const navigate = useNavigate();
   const { user: currentUser } = useAuth();
   const { openMessengerGroupChat, markGroupRead } = useMessengerDock();
@@ -460,14 +502,14 @@ export default function WorkUnifiedProjectDetailPage() {
     setLoading(true);
     setError('');
     try {
-      const res = await api.get(`/management/by-project/${id}`);
+      const res = await api.get(`/management/by-project/${id}`, { params: companyId ? { company_id: companyId } : {} });
       setBundle(res.data);
     } catch (e) {
       setError(e?.response?.data?.error || 'Không tải được dữ liệu dự án');
     } finally {
       setLoading(false);
     }
-  }, [id]);
+  }, [id, companyId]);
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => { setActiveTab('overview'); }, [id]);
@@ -500,13 +542,13 @@ export default function WorkUnifiedProjectDetailPage() {
       <div className="flex items-center gap-2 text-xs text-gray-400">
         <button
           type="button"
-          onClick={() => navigate('/management/work-unified')}
+          onClick={() => navigate(listPath)}
           title="Thoát khỏi chi tiết dự án"
           className="inline-flex items-center justify-center h-6 w-6 rounded-md text-gray-500 hover:text-gray-800 hover:bg-gray-100 cursor-pointer shrink-0"
         >
           <ArrowLeft className="h-4 w-4" />
         </button>
-        <Link to="/management/work-unified" className="hover:text-gray-600">Work Unified</Link>
+        <Link to={listPath} className="hover:text-gray-600">Work Unified</Link>
         <ChevronRight className="h-3 w-3" />
         <span>Dự án</span>
         <ChevronRight className="h-3 w-3" />
@@ -596,7 +638,7 @@ export default function WorkUnifiedProjectDetailPage() {
       </div>
 
       {activeTab === 'overview' && <ProjectOverviewPanel overview={overview} />}
-      {activeTab === 'tasks' && <TasksTab projectId={id} />}
+      {activeTab === 'tasks' && <TasksTab projectId={id} companyId={companyId} />}
       {activeTab === 'progress' && <ProgressTab projectId={id} flow={overview.flow} />}
       {activeTab === 'documents' && <DocumentsTab projectId={id} leadId={effectiveLeadId} />}
       {activeTab === 'finance' && <FinanceTab projectId={id} />}

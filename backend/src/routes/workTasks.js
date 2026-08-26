@@ -4,7 +4,11 @@
 const { Router } = require('express');
 const { auth } = require('../middleware/auth');
 const { supabase } = require('../config/supabase');
-const { isSystemAdmin } = require('../helpers/adminRole');
+const {
+  resolveCompanyScopeForRequest,
+  applyCompanyScopeFilter,
+} = require('../helpers/tenantScope');
+const { loadOperationalProjectAccess } = require('../helpers/operationalProjectScope');
 const {
   createProjectTask,
   updateProjectTask,
@@ -31,6 +35,7 @@ const {
 const { mergeDeadlineHistoryIntoUnified } = require('../helpers/crmKanbanDeadlineHistory');
 const { enrichUnifiedCrmTasks } = require('../helpers/crmTaskAttachmentCounts');
 const {
+  DONE_STATUSES,
   isManagerLike,
   applyEmployeeScope,
   applyOpenOnlyFilter,
@@ -71,6 +76,36 @@ function parsePagination(req, defaultSize = 50, maxSize = 500) {
   return { page, pageSize, from, to };
 }
 
+function applyWorkStateGroup(q, stateGroup) {
+  if (stateGroup === 'open') return applyOpenOnlyFilter(q);
+  if (stateGroup === 'done') return q.in('status', DONE_STATUSES);
+  if (stateGroup === 'overdue') {
+    return applyOpenOnlyFilter(q)
+      .not('deadline', 'is', null)
+      .lt('deadline', new Date().toISOString());
+  }
+  if (stateGroup === 'today') {
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 1);
+    return applyOpenOnlyFilter(q)
+      .gte('deadline', start.toISOString())
+      .lt('deadline', end.toISOString());
+  }
+  return q;
+}
+
+function resolveWorkScope(req, res, requestedCompanyId) {
+  const scope = resolveCompanyScopeForRequest(req, requestedCompanyId);
+  if (scope.ok) return scope;
+  res.status(scope.code === 'tenant_company_denied' ? 403 : 400).json({
+    error: scope.error || 'Không có quyền truy cập',
+    code: scope.code,
+  });
+  return null;
+}
+
 /** Gate quyền lead trước mutation crm_task — cùng chuẩn với /api/crm/leads/:id/tasks*. */
 async function gateCrmTaskLeadAccess(req, leadId, taskId = null, operation = 'READ') {
   const lead = await loadLeadForTaskAccess(supabase, leadId);
@@ -101,8 +136,13 @@ r.get('/summary', async (req, res) => {
       assignee_id, company_id, date_from, date_to, lead_id,
       status, task_kind, q, open_only,
     } = req.query;
+    const scope = resolveWorkScope(req, res, company_id);
+    if (!scope) return;
     const summary = await fetchUnifiedTasksSummary(req.user, {
-      assignee_id, company_id, date_from, date_to, lead_id,
+      assignee_id,
+      company_id: scope.companyId || undefined,
+      company_ids: scope.companyIds || undefined,
+      date_from, date_to, lead_id,
       status, task_kind, q, open_only,
     });
     res.json(summary);
@@ -117,8 +157,14 @@ r.get('/lead-options', async (req, res) => {
   try {
     const { assignee_id, company_id } = req.query;
     if (!assignee_id) return res.json({ leads: [] });
-    const effectiveCompany = company_id || (!isSystemAdmin(req.user) ? req.user?.company_id : null);
-    const leads = await fetchLeadOptionsForAssignee(assignee_id, effectiveCompany || null);
+    const scope = resolveWorkScope(req, res, company_id);
+    if (!scope) return;
+    const leads = await fetchLeadOptionsForAssignee(
+      assignee_id,
+      scope.companyId || null,
+      300,
+      scope.companyIds || [],
+    );
     res.json({ leads });
   } catch (e) {
     console.error('[work-tasks] lead-options:', e);
@@ -131,12 +177,13 @@ r.get('/', async (req, res) => {
   try {
     const {
       source, project_id, assignee_id, status, q: searchQ, task_kind,
-      date_from, date_to, company_id, open_only, module_key, lead_id,
+      date_from, date_to, company_id, open_only, module_key, lead_id, state_group: stateGroup,
     } = req.query;
     const { page, pageSize, from, to } = parsePagination(req);
+    const scope = resolveWorkScope(req, res, company_id);
+    if (!scope) return;
 
-    let q = supabase.from('unified_tasks_v').select(TASK_SELECT, { count: 'exact' })
-      .order('updated_at', { ascending: false });
+    let q = supabase.from('unified_tasks_v').select(TASK_SELECT, { count: 'exact' });
 
     if (source) {
       const sources = String(source).split(',').map((s) => s.trim()).filter((s) => VALID_SOURCES.has(s));
@@ -144,11 +191,14 @@ r.get('/', async (req, res) => {
       else if (sources.length > 1) q = q.in('source', sources);
     }
     if (project_id) q = q.eq('project_id', project_id);
-    const effectiveCompany = company_id || (!isSystemAdmin(req.user) ? req.user?.company_id : null);
     if (lead_id) {
       q = q.eq('lead_id', lead_id);
     } else if (assignee_id) {
-      const assigneeLeadIds = await resolveAssigneeLeadScope(assignee_id, effectiveCompany || null);
+      const assigneeLeadIds = await resolveAssigneeLeadScope(
+        assignee_id,
+        scope.companyId || null,
+        scope.companyIds || [],
+      );
       q = applyAssigneeFilter(q, assignee_id, assigneeLeadIds);
     }
     if (status) q = q.eq('status', status);
@@ -157,6 +207,7 @@ r.get('/', async (req, res) => {
     if (date_from) q = q.gte('deadline', date_from);
     if (date_to) q = q.lte('deadline', date_to);
     if (open_only === '1' || open_only === 'true') q = applyOpenOnlyFilter(q);
+    q = applyWorkStateGroup(q, stateGroup);
 
     const MODULE_KIND_FILTER = {
       crm: ['CRM-Deal', 'CRM-Lead'],
@@ -169,12 +220,18 @@ r.get('/', async (req, res) => {
       q = q.in('task_kind', MODULE_KIND_FILTER[module_key]);
     }
 
-    if (effectiveCompany) q = q.eq('company_id', effectiveCompany);
+    q = applyCompanyScopeFilter(q, scope);
 
     if (!isManagerLike(req.user)) {
       q = applyEmployeeScope(q, req.user.userId);
     }
 
+    if (['open', 'overdue', 'today'].includes(stateGroup)) {
+      q = q.order('deadline', { ascending: true, nullsFirst: false })
+        .order('updated_at', { ascending: false });
+    } else {
+      q = q.order('updated_at', { ascending: false });
+    }
     q = q.range(from, to);
     const { data, error, count } = await q;
     if (error) throw error;
@@ -191,7 +248,12 @@ r.get('/', async (req, res) => {
 r.get('/by-project/:projectId', async (req, res) => {
   try {
     const projectId = req.params.projectId;
-    const leadIds = await getLeadIdsForProject(projectId);
+    const scope = resolveWorkScope(req, res, req.query.company_id);
+    if (!scope) return;
+    const projectAccess = await loadOperationalProjectAccess(projectId, scope);
+    if (!projectAccess) return res.status(404).json({ error: 'Không tìm thấy dự án trong phạm vi vận hành' });
+
+    const leadIds = await getLeadIdsForProject(projectId, scope);
 
     let qProject = supabase.from('unified_tasks_v').select(TASK_SELECT).eq('project_id', projectId);
     if (!isManagerLike(req.user)) qProject = applyEmployeeScope(qProject, req.user.userId);
@@ -208,11 +270,32 @@ r.get('/by-project/:projectId', async (req, res) => {
     }
 
     const seen = new Set();
+    const doneStatuses = new Set(DONE_STATUSES);
+    const nowMs = Date.now();
+    const priorityRank = { urgent: 0, high: 1, medium: 2, low: 3 };
+    const actionRank = (task) => {
+      const status = String(task.status || '').toLowerCase();
+      if (doneStatuses.has(status)) return 3;
+      const deadlineMs = task.deadline ? new Date(task.deadline).getTime() : null;
+      if (deadlineMs != null && !Number.isNaN(deadlineMs) && deadlineMs < nowMs) return 0;
+      if (deadlineMs != null && !Number.isNaN(deadlineMs)) return 1;
+      return 2;
+    };
     const data = [...(projectTasks || []), ...crmTasks].filter((t) => {
       if (seen.has(t.unified_id)) return false;
       seen.add(t.unified_id);
       return true;
-    }).sort((a, b) => String(a.task_kind).localeCompare(String(b.task_kind)));
+    }).sort((a, b) => {
+      const rankDiff = actionRank(a) - actionRank(b);
+      if (rankDiff !== 0) return rankDiff;
+      const aDeadline = a.deadline ? new Date(a.deadline).getTime() : Infinity;
+      const bDeadline = b.deadline ? new Date(b.deadline).getTime() : Infinity;
+      if (aDeadline !== bDeadline) return aDeadline - bDeadline;
+      const priorityDiff = (priorityRank[String(a.priority || '').toLowerCase()] ?? 4)
+        - (priorityRank[String(b.priority || '').toLowerCase()] ?? 4);
+      if (priorityDiff !== 0) return priorityDiff;
+      return String(a.title || '').localeCompare(String(b.title || ''), 'vi');
+    });
 
     const groups = {
       crm_deal: [],
@@ -236,13 +319,21 @@ r.get('/by-project/:projectId', async (req, res) => {
     });
 
     const all = data || [];
-    const doneStatuses = new Set(['done', 'completed', 'cancelled']);
-    const completed = all.filter((t) => doneStatuses.has(t.status)).length;
+    const completed = all.filter((t) => doneStatuses.has(String(t.status || '').toLowerCase())).length;
+    const openTasks = all.filter((t) => !doneStatuses.has(String(t.status || '').toLowerCase()));
+    const overdue = openTasks.filter((t) => {
+      const deadlineMs = t.deadline ? new Date(t.deadline).getTime() : null;
+      return deadlineMs != null && !Number.isNaN(deadlineMs) && deadlineMs < nowMs;
+    }).length;
 
     res.json({
       project_id: projectId,
+      company_id: projectAccess.company_id,
+      logistics_company_id: projectAccess.logistics_company_id,
+      scope_company_id: scope.companyId || null,
       groups,
-      progress: { completed, total: all.length },
+      progress: { completed, open: openTasks.length, overdue, total: all.length },
+      next_actions: openTasks.slice(0, 5),
       tasks: all,
     });
   } catch (e) {
@@ -251,21 +342,35 @@ r.get('/by-project/:projectId', async (req, res) => {
   }
 });
 
-async function getLeadIdsForProject(projectId) {
-  const { data } = await supabase.from('crm_leads').select('id').eq('project_id', projectId);
+async function getLeadIdsForProject(projectId, scope = null) {
+  let query = supabase.from('crm_leads').select('id').eq('project_id', projectId);
+  if (scope) query = applyCompanyScopeFilter(query, scope);
+  const { data, error } = await query;
+  if (error) throw error;
   return (data || []).map((l) => l.id);
 }
 
 // GET /api/work-tasks/history
 r.get('/history', async (req, res) => {
   try {
-    const { source, id, project_id, lead_id, assignee_id, page: _p } = req.query;
+    const { source, id, project_id, lead_id, assignee_id, company_id, page: _p } = req.query;
     const { page, pageSize, from, to } = parsePagination(req, 50, 500);
+    const scope = resolveWorkScope(req, res, company_id);
+    if (!scope) return;
+
+    if (lead_id) {
+      let leadAccessQuery = supabase.from('crm_leads').select('id').eq('id', lead_id);
+      leadAccessQuery = applyCompanyScopeFilter(leadAccessQuery, scope);
+      const { data: leadAccess, error: leadAccessError } = await leadAccessQuery.maybeSingle();
+      if (leadAccessError) throw leadAccessError;
+      if (!leadAccess) return res.status(404).json({ error: 'Không tìm thấy lead/deal' });
+    }
 
     let q = supabase.from('unified_task_history').select(`
       *,
       actor:users!unified_task_history_actor_user_id_fkey(id, full_name, avatar)
     `, { count: 'exact' }).order('created_at', { ascending: false });
+    q = applyCompanyScopeFilter(q, scope);
 
     if (source && id) {
       q = q.eq('source', source).eq('source_id', String(id));

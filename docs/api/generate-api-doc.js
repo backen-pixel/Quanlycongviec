@@ -32,7 +32,11 @@ function extractMounts(serverSrc) {
 
 function extractRoutes(filePath) {
   const text = fs.readFileSync(filePath, 'utf8');
-  const rel = filePath.replace(/\\/g, '/').split('/routes/')[1] || filePath;
+  // A CRM route path contains two "routes" segments
+  // (backend/src/routes/crm/routes/*.js). Using split('/routes/')[1]
+  // truncated it to "crm" and made the generated document guess the
+  // /api/crm/executive mount. Always resolve relative to the actual route root.
+  const rel = path.relative(ROOT, filePath).replace(/\\/g, '/');
   const rows = [];
   const seen = new Set();
   // r.get('/x'), router.post("/x"), app.delete(`/x`)
@@ -126,6 +130,8 @@ function guessPrefixes(file, mounts) {
     drive: '/api/drive',
     batchJobs: '/api/batch-jobs',
     supabaseOps: '/api/admin/supabase',
+    businessOs: '/api/business-os',
+    businessOsCustomerCare: '/api/business-os/customer-care',
   };
   if (map[base]) return [map[base]];
   // fallback: find mount containing similar slug

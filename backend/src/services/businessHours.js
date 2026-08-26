@@ -208,6 +208,52 @@ async function businessMinutesBetween(startUtc, endUtc, { companyId = null, user
   return Math.max(0, total);
 }
 
+/**
+ * Cộng số phút làm việc vào một mốc UTC.
+ * Dùng cùng calendar với businessMinutesBetween: giờ làm, nghỉ trưa, cuối tuần,
+ * ngày lễ và nghỉ phép full-day. Đây là phép toán nghịch để tạo deadline SLA.
+ */
+async function addBusinessMinutes(startUtc, minutes, { companyId = null, userId = null } = {}) {
+  let remaining = Math.max(0, Number(minutes) || 0);
+  const config = await loadConfig(companyId);
+  const holidays = await loadHolidays(companyId);
+  const leaves = await loadUserLeaves(userId);
+  const tz = config.tz_offset_hours;
+  const effective = await effectiveStart(startUtc, { companyId, userId });
+  let cursor = toLocal(effective, tz);
+  if (remaining <= 0) return toUtc(cursor, tz);
+
+  for (let dayGuard = 0; dayGuard < 730; dayGuard++) {
+    const dayStart = new Date(cursor); dayStart.setUTCHours(0, 0, 0, 0);
+    if (isWorkingDay(cursor, config, holidays, leaves)) {
+      const intervals = [];
+      const workStart = new Date(dayStart); workStart.setUTCMinutes(config.start_minute);
+      const workEnd = new Date(dayStart); workEnd.setUTCMinutes(config.end_minute);
+      if (config.lunch_start_minute != null && config.lunch_end_minute != null) {
+        const lunchStart = new Date(dayStart); lunchStart.setUTCMinutes(config.lunch_start_minute);
+        const lunchEnd = new Date(dayStart); lunchEnd.setUTCMinutes(config.lunch_end_minute);
+        intervals.push([workStart, lunchStart], [lunchEnd, workEnd]);
+      } else {
+        intervals.push([workStart, workEnd]);
+      }
+
+      for (const [intervalStart, intervalEnd] of intervals) {
+        const segmentStart = new Date(Math.max(cursor.getTime(), intervalStart.getTime()));
+        if (segmentStart >= intervalEnd) continue;
+        const available = (intervalEnd.getTime() - segmentStart.getTime()) / 60_000;
+        if (remaining <= available) {
+          return toUtc(new Date(segmentStart.getTime() + remaining * 60_000), tz);
+        }
+        remaining -= available;
+        cursor = intervalEnd;
+      }
+    }
+    cursor = new Date(dayStart.getTime() + 86_400_000);
+    cursor.setUTCMinutes(config.start_minute);
+  }
+  throw new Error('Không thể tính deadline theo lịch làm việc trong phạm vi 730 ngày.');
+}
+
 /** Số phút phản hồi tính theo giờ HC (cho A1/A2). */
 async function responseMinutes(createdAt, firstTouchAt, ctx = {}) {
   const start = await effectiveStart(createdAt, ctx);
@@ -226,6 +272,7 @@ module.exports = {
   effectiveStart,
   responseMinutes,
   businessMinutesBetween,
+  addBusinessMinutes,
   isUserOff,
   loadConfig,
   loadHolidays,

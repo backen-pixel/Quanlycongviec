@@ -14,6 +14,7 @@ GitHub repository là **nguồn chuẩn**. Claude / Cursor đọc theo map bên 
 | [`ui/`](./ui/) | UI / cài đặt giao diện |
 | [`project/`](./project/) | Coding standard, kế hoạch module, báo cáo, workflow |
 | [`ops/`](./ops/) | Triển khai server, call/Coturn, vận hành hạ tầng |
+| [`baseline/`](./baseline/) | Mốc staging, migration/test evidence, rollback/backup và UAT checklist |
 
 Migration SQL thật nằm ở `/database/*.sql` (root repo) — không nhân bản vào `docs/`.
 
@@ -24,6 +25,7 @@ Migration SQL thật nằm ở `/database/*.sql` (root repo) — không nhân b�
 3. API → [`api/API_DOCUMENT.md`](./api/API_DOCUMENT.md)
 4. Coding / inventory → [`project/CODING_STANDARD.md`](./project/CODING_STANDARD.md)
 5. Workflow Claude ↔ Cursor ↔ GitHub → [`project/workflow-claude-cursor-github.md`](./project/workflow-claude-cursor-github.md)
+6. Business OS staging baseline → [`baseline/BUSINESS_OS_VNEXT_STAGING_BASELINE_01.md`](./baseline/BUSINESS_OS_VNEXT_STAGING_BASELINE_01.md)
 
 ## Regenerate tài liệu máy sinh
 
