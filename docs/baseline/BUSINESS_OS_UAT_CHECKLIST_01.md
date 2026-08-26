@@ -4,12 +4,15 @@
 
 - [ ] Tag `business-os-vnext-staging-baseline-01` tồn tại và commit đã được ghi vào biên bản.
 - [ ] `cd backend && npm run db:gate:business-os-uat` trả exit code `0`, `all_applied=true` và `uat_gate.status="READY"`.
+- [ ] Chạy `cd backend && npm run uat:preflight:business-os`; lưu phần đếm tổng hợp và phân công hồ sơ cho các slot còn `NEEDS_UAT_RECORD`.
 - [ ] Có backup `COMPLETED` sau `2026-08-26T10:21:23.977Z`; ghi backup id: `____________`.
 - [ ] Frontend/backend staging đang chạy đúng commit của tag.
 - [ ] Chỉ Công ty TNHH Bếp Vạn Phú Thành được bật pilot.
 - [ ] Mỗi hồ sơ có người phụ trách thật, deadline thật và bằng chứng thật; không dùng dữ liệu giả xen vào hồ sơ khách.
 
 Quy ước kết quả: `PASS`, `FAIL`, `BLOCKED`. Mọi `FAIL/BLOCKED` phải có link hồ sơ, ảnh/chứng cứ, người xử lý và deadline sửa.
+
+Preflight chỉ đọc và chỉ trả số lượng tổng hợp, không hiển thị PII. `EXISTING_COVERAGE_FOUND` chỉ hỗ trợ chọn hồ sơ; nhân viên chịu trách nhiệm phải xác nhận trước khi dùng hồ sơ khách hiện hữu cho UAT.
 
 ## Hồ sơ 1 — Khách chưa có thiết kế, lộ trình đầy đủ
 

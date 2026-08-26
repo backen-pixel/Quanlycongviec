@@ -299,6 +299,7 @@ Tiếp tục dùng chứng từ và bảng nghiệp vụ hiện hữu làm Syste
 - Rollback code không chạy down migration và không xóa dữ liệu/audit UAT; route legacy được giữ làm fallback.
 - UAT 3–5 hồ sơ thật chỉ bắt đầu sau khi có backup hoàn tất mới hơn schema freeze của baseline; PITR hiện chưa bật.
 - Cổng tự động `npm run db:gate:business-os-uat` là điều kiện kỹ thuật bắt buộc; trạng thái `BLOCKED` không được bỏ qua để chạy UAT thật.
+- Preflight `npm run uat:preflight:business-os` chỉ đọc số liệu tổng hợp, không xuất PII; dùng để xác định slot UAT còn thiếu nhưng không tự chọn hoặc sửa hồ sơ khách.
 - Sau UAT và sửa blocker mới mở lát cắt Mua hàng → Chi phí Project → Hóa đơn/Thanh toán → Công nợ.
 - Hồ sơ baseline: `docs/baseline/BUSINESS_OS_VNEXT_STAGING_BASELINE_01.md`.
 

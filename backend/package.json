@@ -29,6 +29,7 @@
     "db:migrate:579": "node scripts/run-migration-579.js",
     "db:audit:business-os": "node scripts/audit-business-os-baseline.js",
     "db:gate:business-os-uat": "node scripts/audit-business-os-baseline.js --require-backup-after=2026-08-26T10:21:23.977Z",
+    "uat:preflight:business-os": "node scripts/preflight-business-os-uat.js --company-id=991dc79d-cbf5-49f9-a364-35227cb47635",
     "db:sync-backup": "node scripts/sync-supabase-backup.js",
     "db:verify-backup": "node scripts/sync-supabase-backup.js --verify",
     "db:sync-failover-merge": "node scripts/sync-failover-merge-to-primary.js",
