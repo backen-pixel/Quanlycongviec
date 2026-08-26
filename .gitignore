@@ -19,6 +19,9 @@ scripts/knowledge/node_modules/
 # Local data store cho external API keys (chứa secret) — KHÔNG commit
 backend/data/api-keys.json
 
+# Local UAT evidence (may contain internal identifiers; archive outside Git)
+backend/.uat-evidence/
+
 # APK reverse-engineering dumps (local only, chứa file name reserved trên Windows)
 .apk-analysis/
 

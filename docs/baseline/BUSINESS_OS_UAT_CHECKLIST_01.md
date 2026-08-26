@@ -4,6 +4,7 @@
 
 - [ ] Tag `business-os-vnext-staging-baseline-01` tồn tại và commit đã được ghi vào biên bản.
 - [ ] `cd backend && npm run uat:readiness:business-os` hoàn tất exit code `0`, `all_applied=true` và `uat_gate.status="READY"`.
+- [ ] Lưu `session_id` và hai file evidence JSON/Markdown do readiness sinh; không commit evidence vào Git.
 - [ ] Lưu phần đếm preflight tổng hợp và phân công hồ sơ cho các slot còn `NEEDS_UAT_RECORD`.
 - [ ] Có backup `COMPLETED` sau `2026-08-26T10:21:23.977Z`; ghi backup id: `____________`.
 - [ ] Frontend/backend staging đang chạy đúng commit của tag.

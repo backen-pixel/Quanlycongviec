@@ -6,7 +6,7 @@
  * 567-580 are present on the configured Supabase project.
  */
 const path = require('path');
-require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
+require('dotenv').config({ path: path.join(__dirname, '..', '.env'), quiet: true });
 
 const {
   evaluateBusinessOsUatGate,
