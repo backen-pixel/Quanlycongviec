@@ -2,7 +2,6 @@ const { Router } = require('express');
 const { auth } = require('../middleware/auth');
 const { supabase } = require('../config/supabase');
 const { lookupCache } = require('../helpers/ttlCache');
-const { fetchAllPages } = require('../helpers/supabaseFetchAll');
 const {
   pgDashboardNotificationStats,
   pgDashboardNotificationsList,
@@ -958,10 +957,7 @@ r.get('/overview', responseCache({ ttl: 60, scope: 'global', tags: ['dashboard:o
       supabase.from('crm_leads').select('*', { count: 'exact', head: true }).eq('type', 'lead').gte('created_at', thirtyDaysAgo.toISOString()),
       supabase.from('crm_leads').select('*', { count: 'exact', head: true }).eq('type', 'deal').gte('created_at', thirtyDaysAgo.toISOString()),
       supabase.from('crm_leads').select('*', { count: 'exact', head: true }).eq('type', 'deal').not('project_id', 'is', null),
-      // `budget` KHÔNG phải cột của crm_leads (chỉ có estimated_value) → trước đây lỗi và
-      // `dealPipelineValue` luôn = 0. Đọc đủ vì 1.689 deal vượt ngưỡng cắt 1.000 dòng.
-      fetchAllPages(() => supabase.from('crm_leads').select('estimated_value')
-        .eq('type', 'deal').is('project_id', null)).then((rows) => ({ data: rows })),
+      supabase.from('crm_leads').select('budget').eq('type', 'deal').is('project_id', null),
     ]);
 
     const totalProjects = totalProjectsRes.count;
@@ -1006,7 +1002,7 @@ r.get('/overview', responseCache({ ttl: 60, scope: 'global', tags: ['dashboard:o
     const dealToProjectRate = totalDeals > 0 ? (((wonDeals || 0) / totalDeals) * 100).toFixed(1) : 0;
 
     const dealValues = dealValuesRes.data;
-    const dealPipelineValue = (dealValues || []).reduce((sum, d) => sum + (Number(d.estimated_value) || 0), 0);
+    const dealPipelineValue = (dealValues || []).reduce((sum, d) => sum + (d.budget || 0), 0);
 
     res.json({
       projects: {

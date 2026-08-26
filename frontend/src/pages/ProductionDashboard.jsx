@@ -21,6 +21,7 @@ import {
   isWorkshopProductionStaff,
   productionWorkshopFilterCompanies,
   isOwnWorkshopCompanyAdmin,
+  workshopCompanyDisplayName,
 } from '../lib/crossWorkshopProduction';
 import { formatVND, formatDate, formatStaffDisplayName, getStaffInitials } from '../lib/utils';
 import { rememberCompanyDeadlineClock } from '../lib/companyDeadlineClock';
@@ -379,14 +380,6 @@ function readSxDashPersisted() {
     if (!raw) return null;
     const data = JSON.parse(raw);
     if (!data || typeof data !== 'object') return null;
-    // NV xưởng: sửa filter công ty xưởng khác còn trong localStorage (vd. Metalla khi user thuộc HCB).
-    try {
-      const u = JSON.parse(localStorage.getItem('user') || 'null');
-      const ownWs = resolveStaffWorkshopCompanyId(u, []);
-      if (ownWs && data.filterCompany && String(data.filterCompany) !== ownWs) {
-        data.filterCompany = ownWs;
-      }
-    } catch { /* ignore */ }
     return data;
   } catch {
     try { localStorage.removeItem(LS_SX); } catch { /* ignore */ }
@@ -902,11 +895,12 @@ export default function ProductionDashboard() {
   }, []);
 
   const companyParam = useMemo(() => {
+    if (filterAllWorkshops && !filterCompany) return undefined;
+    const selected = String(filterCompany || '').trim();
+    if (selected) return selected;
     const staffWs = resolveStaffWorkshopCompanyId(user, companies);
-    if (staffWs) return staffWs;
-    if (filterCompany) return String(filterCompany);
-    return undefined;
-  }, [filterCompany, user, companies]);
+    return staffWs || undefined;
+  }, [filterAllWorkshops, filterCompany, user, companies]);
 
   useEffect(() => {
     if (!companyParam) return undefined;
@@ -2319,9 +2313,13 @@ export default function ProductionDashboard() {
       if (dealCompanyExternalFilter && !projectMatchesDealCompanyExternalFilter(p, dealCompanyExternalFilter)) {
         return false;
       }
+      if (companyParam) {
+        const pcid = p.company_id || p.company?.id;
+        if (pcid && String(pcid) !== String(companyParam)) return false;
+      }
       return true;
     });
-  }, [projects, dateFromTo, matchesProject, deferredPersonName, filterPhone, filterWorkTypeId, showOrphanColumn, dealCompanyExternalFilter, viewMode]);
+  }, [projects, dateFromTo, matchesProject, deferredPersonName, filterPhone, filterWorkTypeId, showOrphanColumn, dealCompanyExternalFilter, viewMode, companyParam]);
 
   const toggleSelect = useCallback((id, e) => {
     e?.stopPropagation();
@@ -3619,12 +3617,24 @@ export default function ProductionDashboard() {
 
   const workTypeFilterLabel = useMemo(() => {
     if (!companyForTypes || !workTypes.length) return '';
-    if (filterWorkTypeId === 'none') return 'Chưa phân loại';
+    const co = (companies || []).find((x) => String(x.id) === String(companyForTypes));
+    const coLabel = workshopCompanyDisplayName(co);
+    if (filterWorkTypeId === 'none') return coLabel ? `${coLabel} · Chưa phân loại` : 'Chưa phân loại';
     if (filterWorkTypeId) {
-      return workTypes.find((wt) => String(wt.id) === String(filterWorkTypeId))?.name || 'Phân loại';
+      const name = workTypes.find((wt) => String(wt.id) === String(filterWorkTypeId))?.name || 'Phân loại';
+      return coLabel ? `${coLabel} · ${name}` : name;
     }
-    return 'Tất cả phân loại';
-  }, [companyForTypes, workTypes, filterWorkTypeId]);
+    return coLabel ? `${coLabel} · Tất cả phân loại` : 'Tất cả phân loại';
+  }, [companyForTypes, workTypes, filterWorkTypeId, companies]);
+
+  const workTypeCompanyPrefix = useMemo(() => {
+    const workshops = (workshopCompanyPickerList || []).filter((c) => (
+      isMetallaOrHucabiCompanyId(c.id, companies, user)
+    ));
+    if (workshops.length < 2) return '';
+    const co = (companies || []).find((x) => String(x.id) === String(companyForTypes));
+    return workshopCompanyDisplayName(co);
+  }, [workshopCompanyPickerList, companies, user, companyForTypes]);
 
   return (
     <div className="space-y-3">
@@ -3849,10 +3859,12 @@ export default function ProductionDashboard() {
                       : filterWorkTypeId ? 'text-teal-800' : 'text-violet-800'
                     }`}
                   >
-                    <option value="">Phân loại: Tất cả</option>
+                    <option value="">Phân loại: Tất cả{workTypeCompanyPrefix ? ` (${workTypeCompanyPrefix})` : ''}</option>
                     <option value="none">Chưa phân loại</option>
                     {workTypes.map((wt) => (
-                      <option key={wt.id} value={wt.id}>{wt.name}</option>
+                      <option key={wt.id} value={wt.id}>
+                        {workTypeCompanyPrefix ? `${workTypeCompanyPrefix} · ${wt.name}` : wt.name}
+                      </option>
                     ))}
                   </select>
                   {!filterBusy && !filterWorkTypeId && (
@@ -4752,28 +4764,20 @@ const KanbanStageCard = memo(function KanbanStageCard({
   }, [boardScrollRef, onColumnVisibilityChange, stage.id]);
 
   // Sentinel đáy cột: cuộn gần cuối → tải thêm (ổn định hơn chỉ nghe onScroll).
-  //
-  // KHÔNG truyền `root`, tức dùng viewport. Trước đây root là chính khung cuộn của cột
-  // (containerRef) nên chỉ bắt được khi cuộn BÊN TRONG cột; ở chế độ cuộn CHUNG cả bảng thì
-  // scrollTop của cột không đổi → sentinel không bao giờ "vào" khung của cột → không tải
-  // thêm, phải đợi cột khác chạm đáy mới kéo dữ liệu. Effect này còn bị chặn bởi
-  // `perColumnScroll` nên ở chế độ cuộn chung không có trigger nào cả.
-  //
-  // Dùng viewport xử được cả hai: theo spec, vùng giao được CẮT bởi mọi khung cuộn tổ tiên,
-  // nên khi cuộn trong cột sentinel vẫn bị cột che đúng như cũ.
   useEffect(() => {
-    if (!columnHasMore || columnLoading) return undefined;
+    if (!perColumnScroll || !columnHasMore || columnLoading) return undefined;
+    const root = containerRef.current;
     const sentinel = loadMoreSentinelRef.current;
-    if (!sentinel || typeof IntersectionObserver === 'undefined') return undefined;
+    if (!root || !sentinel || typeof IntersectionObserver === 'undefined') return undefined;
     const io = new IntersectionObserver(
       (entries) => {
         if (entries.some((e) => e.isIntersecting)) requestColumnLoadMore();
       },
-      { rootMargin: '240px 0px', threshold: 0 },
+      { root, rootMargin: '240px 0px', threshold: 0 },
     );
     io.observe(sentinel);
     return () => io.disconnect();
-  }, [columnHasMore, columnLoading, items.length, requestColumnLoadMore]);
+  }, [perColumnScroll, columnHasMore, columnLoading, items.length, requestColumnLoadMore]);
 
   // Cột ngắn (chưa đủ cao để scroll) nhưng còn thẻ server → tự tải thêm.
   useEffect(() => {

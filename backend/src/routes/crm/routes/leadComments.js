@@ -3,7 +3,6 @@
  * Auto-extracted — handlers close over shared helpers via IIFE.
  */
 const { Router } = require('express');
-const { fetchAllByIds } = require('../../../helpers/supabaseFetchAll');
 const helpers = require('../shared/helpersBundle');
 
 const r = Router();
@@ -456,32 +455,15 @@ r.get('/lead-comments/index', async (req, res) => {
     let leadIds = raw
       ? raw.split(',').map((s) => s.trim()).filter(Boolean)
       : [];
-    let data;
-    try {
-      if (leadIds.length) {
-        // Nhánh này TRƯỚC ĐÂY không có giới hạn nào (cái `.limit(5000)` bên dưới chỉ áp cho
-        // nhánh không truyền lead_ids) nên bị PostgREST cắt ở 1.000 dòng. Đo thực tế:
-        // 400 lead → 973 dòng (sát ngưỡng), 2.000 lead (đúng số FE gửi) → 5.081 dòng.
-        // Bị cắt → badge số bình luận hiện 0 cho deal thật ra có hàng chục bình luận.
-        data = await fetchAllByIds({
-          table: 'crm_lead_comments',
-          columns: 'lead_id, user_id, created_at',
-          key: 'lead_id',
-          ids: leadIds,
-          tune: (qq) => qq.is('deleted_at', null),
-        });
-      } else {
-        // Không truyền lead_ids: giữ nguyên chặn 5000 dòng gần nhất để tránh tải nặng.
-        const { data: rows, error } = await supabase
-          .from('crm_lead_comments')
-          .select('lead_id, user_id, created_at')
-          .is('deleted_at', null)
-          .order('created_at', { ascending: false })
-          .limit(5000);
-        if (error) throw error;
-        data = rows;
-      }
-    } catch (error) {
+    let q = supabase
+      .from('crm_lead_comments')
+      .select('lead_id, user_id, created_at')
+      .is('deleted_at', null);
+    if (leadIds.length) q = q.in('lead_id', leadIds);
+    // Bảo vệ: nếu không truyền lead_ids, giới hạn 5000 dòng gần nhất để tránh tải nặng.
+    if (!leadIds.length) q = q.order('created_at', { ascending: false }).limit(5000);
+    const { data, error } = await q;
+    if (error) {
       if (commentsTableMissing(error)) return res.json({});
       throw error;
     }

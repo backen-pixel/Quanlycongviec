@@ -1,5 +1,4 @@
 const { Router } = require('express');
-const { fetchAllByIds } = require('../helpers/supabaseFetchAll');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
 const { pgDashboardMainStats } = require('../helpers/pgHotQueries');
@@ -39,7 +38,7 @@ r.get('/', async (req, res) => {
         role,
         department_id,
         primary_division_id,
-        departments!users_department_id_fkey(
+        departments(
           id,
           name,
           company_id,
@@ -80,26 +79,42 @@ r.get('/', async (req, res) => {
     }
 
     // 3. Lấy thông tin dự án
-    // 595 project id ≈ 23KB URL — sát ngưỡng ~25KB; fetchAllByIds tự chia khúc id.
-    const projects = (await fetchAllByIds({
-      table: 'projects',
-      // projects KHÔNG có start_date/end_date/customer_name/customer_phone.
-      columns: 'id, name, code, status, deadline, created_at, created_by,'
-        + ' flow:workflow_flows(id, name)',
-      key: 'id',
-      ids: projectIds,
-    })).sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
+    const { data: projects, error: projectsError } = await supabase
+      .from('projects')
+      .select(`
+        id,
+        name,
+        code,
+        status,
+        start_date,
+        end_date,
+        customer_name,
+        customer_phone,
+        created_at,
+        created_by,
+        flow:workflow_flows(id, name)
+      `)
+      .in('id', projectIds)
+      .order('created_at', { ascending: false });
 
-    // 4. Lấy tasks của các dự án — phải đọc đủ: 595 dự án × ~26,7 task ≈ 15.900 dòng,
-    // vượt xa ngưỡng cắt 1.000 của PostgREST. Bị cắt thì thẻ dự án hiện "0 nhiệm vụ" và
-    // các ô thống kê (total/overdue/my_tasks) đều hụt. Đồng thời tránh URL quá dài.
-    const tasks = await fetchAllByIds({
-      table: 'tasks',
-      // tasks KHÔNG có `assigned_to`; cột thật là `assignee_id`.
-      columns: 'id, project_id, title, status, priority, assignee_id, due_date, completed_at',
-      key: 'project_id',
-      ids: projectIds,
-    });
+    if (projectsError) throw projectsError;
+
+    // 4. Lấy tasks của các dự án
+    const { data: tasks, error: tasksError } = await supabase
+      .from('tasks')
+      .select(`
+        id,
+        project_id,
+        title,
+        status,
+        priority,
+        assigned_to,
+        due_date,
+        completed_at
+      `)
+      .in('project_id', projectIds);
+
+    if (tasksError) throw tasksError;
 
     // 5. Tính toán thống kê
     const stats = calculateStats(projects, tasks, userId);
@@ -116,15 +131,15 @@ r.get('/', async (req, res) => {
     // 7. Build response
     const projectsWithStats = projects.map(project => {
       const projectTasks = tasksByProject[project.id] || [];
-      const myTasks = projectTasks.filter(t => t.assignee_id === userId);
+      const myTasks = projectTasks.filter(t => t.assigned_to === userId);
 
       return {
         ...project,
         task_count: projectTasks.length,
         my_task_count: myTasks.length,
         completed_tasks: projectTasks.filter(t => t.status === 'done').length,
-        in_progress_tasks: projectTasks.filter(t => t.status === 'in_progress').length,
-        pending_tasks: projectTasks.filter(t => NOT_STARTED_TASK_STATUSES.includes(t.status)).length,
+        in_progress_tasks: projectTasks.filter(t => t.status === 'in-progress').length,
+        pending_tasks: projectTasks.filter(t => t.status === 'pending').length,
         overdue_tasks: projectTasks.filter(t => 
           t.status !== 'done' && t.due_date && new Date(t.due_date) < new Date()
         ).length
@@ -193,20 +208,13 @@ r.get('/stats', responseCache({ ttl: 30, scope: 'user', tags: ['dashboard-main']
       .select('id', { count: 'exact', head: true })
       .in('id', projectIds);
 
-    // Đếm tasks — 3 lỗi cùng lúc ở chỗ này trước đây:
-    //  1. `error` không được đọc → khi lỗi thì `tasks` = null và `tasks.filter` ném
-    //     "Cannot read properties of null (reading 'filter')" → endpoint trả 500.
-    //  2. URL quá dài: 595 project id ≈ 23KB, vượt ngưỡng ~25KB khi cộng phần select.
-    //  3. Cắt 1.000 dòng: 595 dự án × ~26,7 task = ~15.900 dòng → mọi con số đếm bị hụt.
-    // fetchAllByIds tự chia khúc id (lỗi 2) và phân trang (lỗi 3), lỗi thì ném ra rõ ràng.
-    const tasks = await fetchAllByIds({
-      table: 'tasks',
-      columns: 'id, status, assignee_id, due_date',
-      key: 'project_id',
-      ids: projectIds,
-    });
+    // Đếm tasks
+    const { data: tasks } = await supabase
+      .from('tasks')
+      .select('id, status, assigned_to, due_date')
+      .in('project_id', projectIds);
 
-    const myTasks = tasks.filter(t => t.assignee_id === userId);
+    const myTasks = tasks.filter(t => t.assigned_to === userId);
     const now = new Date();
 
     const stats = {
@@ -214,10 +222,8 @@ r.get('/stats', responseCache({ ttl: 30, scope: 'user', tags: ['dashboard-main']
       total_tasks: tasks.length,
       my_tasks: myTasks.length,
       completed_tasks: tasks.filter(t => t.status === 'done').length,
-      // DB dùng 'in_progress' (gạch DƯỚI), và 'todo' cũng là chưa bắt đầu — xem chú thích
-      // ở calculateStats phía dưới.
-      in_progress_tasks: tasks.filter(t => t.status === 'in_progress').length,
-      pending_tasks: tasks.filter(t => NOT_STARTED_TASK_STATUSES.includes(t.status)).length,
+      in_progress_tasks: tasks.filter(t => t.status === 'in-progress').length,
+      pending_tasks: tasks.filter(t => t.status === 'pending').length,
       overdue_tasks: tasks.filter(t => 
         t.status !== 'done' && t.due_date && new Date(t.due_date) < now
       ).length,
@@ -308,13 +314,12 @@ async function getProjectIdsByDepartment(departmentId, req) {
   const userIds = users.map(u => u.id);
 
   // Lấy projects mà users tham gia (assigned tasks)
-  // Đây là nơi SINH RA projectIds, nên bị cắt thì dự án BIẾN MẤT khỏi danh sách (không
-  // chỉ sai số đếm), rồi tập thiếu đó lại bị cắt lần nữa ở truy vấn tasks phía sau.
-  const tasks = await fetchAllByIds({
-    table: 'tasks', columns: 'project_id', key: 'assignee_id', ids: userIds,
-  });
+  const { data: tasks } = await supabase
+    .from('tasks')
+    .select('project_id')
+    .in('assigned_to', userIds);
 
-  return filterProjectIdsByTenant(req, [...new Set(tasks.map(t => t.project_id))]);
+  return filterProjectIdsByTenant(req, [...new Set((tasks || []).map(t => t.project_id))]);
 }
 
 async function getProjectIdsByUser(userId, req) {
@@ -328,7 +333,7 @@ async function getProjectIdsByUser(userId, req) {
   const { data: tasks } = await supabase
     .from('tasks')
     .select('project_id')
-    .eq('assignee_id', userId);
+    .eq('assigned_to', userId);
 
   const projectIds = [
     ...(created || []).map(p => p.id),
@@ -338,46 +343,32 @@ async function getProjectIdsByUser(userId, req) {
   return filterProjectIdsByTenant(req, [...new Set(projectIds)]);
 }
 
-/**
- * Trạng thái thật trong DB (đã đối chiếu):
- *   projects.status : producing 495 · consulting 92 · shipping 5 · installing 3 · contract_signed 1
- *   tasks.status    : todo 9.683 · done 3.940 · pending 2.232 · in_progress 1
- *
- * Code cũ lọc theo những giá trị KHÔNG tồn tại nên luôn ra 0:
- *   - projects: ['planning','in-progress'] và 'done'  → active_projects/completed_projects = 0
- *   - tasks: 'in-progress' (gạch NGANG) trong khi DB là 'in_progress' (gạch DƯỚI)
- *   - 'todo' (9.683 dòng = 61% tổng task) không được đếm vào bất kỳ ô nào
- */
-const ACTIVE_PROJECT_STATUSES = [
-  'consulting', 'designing', 'quoting', 'contract_signed', 'producing', 'shipping', 'installing',
-];
-const DONE_PROJECT_STATUSES = ['completed'];
-/** Chưa bắt đầu: cả `pending` lẫn `todo`. */
-const NOT_STARTED_TASK_STATUSES = ['pending', 'todo'];
-
 function calculateStats(projects, tasks, userId) {
   const now = new Date();
-  const myTasks = tasks.filter(t => t.assignee_id === userId);
-  const isOverdue = (t) => t.status !== 'done' && t.due_date && new Date(t.due_date) < now;
+  const myTasks = tasks.filter(t => t.assigned_to === userId);
 
   return {
     total_projects: projects.length,
-    active_projects: projects.filter(p => ACTIVE_PROJECT_STATUSES.includes(p.status)).length,
-    completed_projects: projects.filter(p => DONE_PROJECT_STATUSES.includes(p.status)).length,
-
+    active_projects: projects.filter(p => ['planning', 'in-progress'].includes(p.status)).length,
+    completed_projects: projects.filter(p => p.status === 'done').length,
+    
     total_tasks: tasks.length,
     my_tasks: myTasks.length,
-
+    
     completed_tasks: tasks.filter(t => t.status === 'done').length,
-    in_progress_tasks: tasks.filter(t => t.status === 'in_progress').length,
-    pending_tasks: tasks.filter(t => NOT_STARTED_TASK_STATUSES.includes(t.status)).length,
-
-    overdue_tasks: tasks.filter(isOverdue).length,
-
+    in_progress_tasks: tasks.filter(t => t.status === 'in-progress').length,
+    pending_tasks: tasks.filter(t => t.status === 'pending').length,
+    
+    overdue_tasks: tasks.filter(t => 
+      t.status !== 'done' && t.due_date && new Date(t.due_date) < now
+    ).length,
+    
     my_completed_tasks: myTasks.filter(t => t.status === 'done').length,
-    my_in_progress_tasks: myTasks.filter(t => t.status === 'in_progress').length,
-    my_pending_tasks: myTasks.filter(t => NOT_STARTED_TASK_STATUSES.includes(t.status)).length,
-    my_overdue_tasks: myTasks.filter(isOverdue).length,
+    my_in_progress_tasks: myTasks.filter(t => t.status === 'in-progress').length,
+    my_pending_tasks: myTasks.filter(t => t.status === 'pending').length,
+    my_overdue_tasks: myTasks.filter(t => 
+      t.status !== 'done' && t.due_date && new Date(t.due_date) < now
+    ).length
   };
 }
 

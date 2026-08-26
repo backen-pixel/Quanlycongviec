@@ -49,3 +49,13 @@ cd backend && node scripts/apply-migration-detail-buttons.js
 ```
 
 Ảnh tái sử dụng screenshot đã có trên Storage (`guide-06`, `lead-09`, `sx-vc-03`, `sx-vc-08`, `collab-01`, …).
+
+## Khoá Đặt xưởng khác (nút trên trang chi tiết SX)
+
+Nội dung: `scripts/knowledge/_detail_seed_place_workshop.py` — 5 bài, quiz/checklist bám khoá 534 (cùng form ngày/VC).
+
+```bash
+python scripts/knowledge/build_place_workshop_seed.py
+# Output: database/567_knowledge_seed_dat_xuong_khac.sql
+cd backend && node scripts/apply-migration-567.js
+```

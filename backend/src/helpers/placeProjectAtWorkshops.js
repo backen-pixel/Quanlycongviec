@@ -15,6 +15,21 @@ function ymdOrNull(raw) {
   return String(raw).trim().slice(0, 10);
 }
 
+function isoOrNull(raw) {
+  if (raw == null || raw === '') return null;
+  const d = new Date(String(raw).trim());
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
+function occYmds(raw, fallbackYmd = null) {
+  const list = Array.isArray(raw) ? raw : [];
+  const out = [...new Set(
+    list.map((d) => String(d || '').slice(0, 10)).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)),
+  )].sort();
+  if (!out.length && fallbackYmd) out.push(fallbackYmd);
+  return out;
+}
+
 function resolveTargetDates(target, source = {}) {
   const targetDelivery = ymdOrNull(target?.delivery_date ?? target?.production_deadline);
   const sourceDelivery = ymdOrNull(source?.delivery_date ?? source?.production_deadline);
@@ -49,10 +64,18 @@ function normalizeTargets(targets, sourceDates = {}) {
     if (seen.has(key)) continue;
     seen.add(key);
     const dates = resolveTargetDates(t, sourceDates);
+    const occ = occYmds(t?.install_occurrence_dates, dates.delivery_date);
+    const installIso = isoOrNull(t?.install_date)
+      || (dates.delivery_date ? `${dates.delivery_date}T14:00:00+07:00` : null);
     out.push({
       production_company_id: String(cid),
       workshop_type_id: String(wtid),
       ...dates,
+      install_date: installIso,
+      pickup_at: isoOrNull(t?.pickup_at),
+      logistics_company_id: t?.logistics_company_id ? String(t.logistics_company_id) : null,
+      vc_notes: t?.vc_notes ? String(t.vc_notes).trim() || null : null,
+      install_occurrence_dates: occ,
     });
   }
   return out;
@@ -127,7 +150,7 @@ async function loadSourceContext(sourceProjectId) {
 }
 
 async function applyProjectDates(projectId, dates) {
-  if (!dates?.delivery_date && !dates?.production_finish_date) return;
+  if (!dates) return;
   const patch = {
     updated_at: new Date().toISOString(),
   };
@@ -138,6 +161,14 @@ async function applyProjectDates(projectId, dates) {
   if (dates.production_finish_date) {
     patch.production_finish_date = dates.production_finish_date;
   }
+  if (dates.install_date) patch.install_date = dates.install_date;
+  if (dates.pickup_at) patch.pickup_at = dates.pickup_at;
+  if (dates.logistics_company_id) patch.logistics_company_id = dates.logistics_company_id;
+  if (dates.vc_notes) patch.vc_notes = dates.vc_notes;
+  if (Array.isArray(dates.install_occurrence_dates) && dates.install_occurrence_dates.length) {
+    patch.install_occurrence_dates = dates.install_occurrence_dates;
+  }
+  if (Object.keys(patch).length <= 1) return;
   try {
     const { resolveSxReceptionDateForCompany } = require('./sxWorkshopSchedule');
     const { data: p } = await supabase.from('projects').select('company_id').eq('id', projectId).maybeSingle();
@@ -148,15 +179,57 @@ async function applyProjectDates(projectId, dates) {
   } catch (_) { /* optional */ }
 
   let { error } = await supabase.from('projects').update(patch).eq('id', projectId);
-  if (error && /production_finish_date/i.test(String(error.message || ''))) {
-    delete patch.production_finish_date;
-    ({ error } = await supabase.from('projects').update(patch).eq('id', projectId));
-  }
-  if (error && /sx_reception_date/i.test(String(error.message || ''))) {
-    delete patch.sx_reception_date;
+  const dropCols = [
+    /production_finish_date/i,
+    /sx_reception_date/i,
+    /install_occurrence_dates/i,
+    /vc_notes/i,
+    /pickup_at/i,
+    /install_date/i,
+    /logistics_company_id/i,
+  ];
+  for (const re of dropCols) {
+    if (!error || !re.test(String(error.message || ''))) continue;
+    const keys = Object.keys(patch).filter((k) => re.test(k));
+    for (const k of keys) delete patch[k];
     ({ error } = await supabase.from('projects').update(patch).eq('id', projectId));
   }
   if (error) console.warn('[place-at-workshops] dates:', error.message);
+}
+
+async function applyPlannedVcLdEvents({ userId, projectId, deal, source, target, intake }) {
+  if (!projectId || !target) return;
+  const hasSchedule = !!(
+    target.install_date
+    || target.pickup_at
+    || target.production_finish_date
+    || (Array.isArray(target.install_occurrence_dates) && target.install_occurrence_dates.length)
+  );
+  if (!hasSchedule) return;
+  try {
+    const { upsertPlannedVcLdEvents } = require('./createPlannedVcLdEvents');
+    const evRes = await upsertPlannedVcLdEvents({
+      projectId,
+      leadId: deal?.id || intake?.deal_id || null,
+      userId,
+      companyId: source?.company_id || target.production_company_id,
+      logisticsCompanyId: target.logistics_company_id || null,
+      customerId: deal?.customer_id || source?.customer_id || null,
+      projectCode: intake?.project_code || null,
+      projectName: intake?.project_name || null,
+      installAddress: deal?.install_address || source?.install_address || null,
+      installAt: target.install_date,
+      pickupAt: target.pickup_at,
+      productionFinishAt: target.production_finish_date,
+      installOccurrenceDates: target.install_occurrence_dates,
+      vcNotes: target.vc_notes,
+    });
+    if (!evRes.ok && !evRes.skipped) {
+      console.warn('[place-at-workshops] planned events:', evRes.error);
+    }
+  } catch (e) {
+    console.warn('[place-at-workshops] planned events:', e.message);
+  }
 }
 
 async function applyProjectDatesPatch(projectIds, patch) {
@@ -644,6 +717,14 @@ async function placeProjectAtWorkshops(opts) {
     }
 
     await applyProjectDates(intake.project_id, t);
+    await applyPlannedVcLdEvents({
+      userId,
+      projectId: intake.project_id,
+      deal,
+      source,
+      target: t,
+      intake,
+    });
 
     const { data: placement, error: placeErr } = await supabase
       .from('project_workshop_placements')

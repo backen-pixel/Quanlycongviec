@@ -13,7 +13,6 @@ const {
   getWonDealProjectIds,
   projectLinkedToWonDealScope,
   applySxKanbanRowScope,
-  ensureHasCrmDealColumn,
   loadProductionPipelineStagesRows,
   invalidatePipelineStagesRowsCache,
   filterProductionPipelineStagesForWorkshopType,
@@ -39,6 +38,7 @@ const {
   userNeedsParticipantOnlyProductionScope,
   isCrossWorkshopProductionViewer,
   isMetallaOrHucabiCompanyIdSync,
+  isolateWorkshopBoardPartnerIds,
   applyCrossWorkshopVptProductionFilter,
   resolveVptCompanyId,
   getLeadMemberProjectIdsForUser,
@@ -1365,7 +1365,12 @@ r.get('/dashboard', requirePermission('projects', 'view'), responseCache({ ttl: 
     const company_id = effectiveWorkshopCompanyId(req, companyIdQuery);
     const deal_company_id = effectiveDealCompanyId(req, dealCompanyIdQuery, company_id);
     const sx_workshop_company_id = sxWorkshopCoQ && String(sxWorkshopCoQ).trim() ? String(sxWorkshopCoQ).trim() : null;
-    const scopePartnerIds = company_id ? await getExecutorProjectIdsForCompany(company_id) : [];
+    const scopePartnerIds = isolateWorkshopBoardPartnerIds(
+      company_id,
+      (company_id && !isMetallaOrHucabiCompanyIdSync(company_id))
+        ? await getExecutorProjectIdsForCompany(company_id)
+        : [],
+    );
     const { ids: stageIds } = await getWorkshopStageMap();
     const wonIds = await getWonDealProjectIds();
     const restrictIds = await resolveSxVisibilityRestrictIds(
@@ -1390,11 +1395,8 @@ r.get('/dashboard', requirePermission('projects', 'view'), responseCache({ ttl: 
       });
     }
 
-    // wonIds ở route này là danh sách TOÀN HỆ THỐNG (getWonDealProjectIds() không tham số)
-    // nên không có phần "đối tác thực thi" cần giữ riêng → extraIds rỗng.
-    const hasCrmDealColumn = await ensureHasCrmDealColumn();
     const applyDashRowScope = (q) => applySxKanbanRowScope(q, {
-      stageIds, wonIds, restrictIds, sxIntake: false, hasCrmDealColumn, extraIds: [],
+      stageIds, wonIds, restrictIds, sxIntake: false,
     });
     const finishDashQuery = (q) => {
       const scoped = applyDashRowScope(q);
@@ -1600,21 +1602,19 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
     const sx_workshop_company_id = sxWorkshopCoQ && String(sxWorkshopCoQ).trim() ? String(sxWorkshopCoQ).trim() : null;
     // Prelude song song — summary KPI không bị chậm vì chờ tuần tự 3 query.
     // wonIds rút gọn theo company_id khi có (giảm mạnh chuỗi `id.in.(...)` gửi cho mỗi cột
-    // Kanban) — union thêm scopePartnerIds để không mất project "đối tác thực thi" (executor)
-    // thuộc công ty khác vẫn đang ở bucket "Chờ tiếp nhận" (chưa có current_stage_id).
-    const [scopePartnerIds, stageMap, wonIdsScoped, restrictIds, hasCrmDealColumn] = await Promise.all([
-      company_id ? getExecutorProjectIdsForCompany(company_id) : Promise.resolve([]),
+    // Kanban). HCB/Metalla không union project đối tác — tránh board Metalla ra thẻ HCB.
+    const [scopePartnerIdsRaw, stageMap, wonIdsScoped, restrictIds] = await Promise.all([
+      (company_id && !isMetallaOrHucabiCompanyIdSync(company_id))
+        ? getExecutorProjectIdsForCompany(company_id)
+        : Promise.resolve([]),
       getWorkshopStageMap(),
       getWonDealProjectIds(company_id || null),
       resolveSxVisibilityRestrictIds(req.user, company_id, sx_workshop_company_id, deal_company_id),
-      ensureHasCrmDealColumn(),
     ]);
+    const scopePartnerIds = isolateWorkshopBoardPartnerIds(company_id, scopePartnerIdsRaw);
     const wonIds = company_id && scopePartnerIds.length
       ? [...new Set([...wonIdsScoped, ...scopePartnerIds])]
       : wonIdsScoped;
-    // Khi lọc bằng cột `has_crm_deal`, phần "đối tác thực thi" phải giữ riêng vì các dự án
-    // đó có thể không gắn deal CRM (nhánh cũ union sẵn chúng vào wonIds ở trên).
-    const scopeExtraIds = company_id ? scopePartnerIds : [];
     const partnerIdsForCompany = (restrictIds && restrictIds.length) ? [] : scopePartnerIds;
     const parsedPage = Math.max(parseInt(page) || 1, 1);
     const parsedLimit = Math.min(Math.max(parseInt(limit) || 100, 1), 500);
@@ -1660,7 +1660,6 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
         wantsNullKanbanColumn,
         wantsKanbanColumn,
         sxKanbanColumnId,
-        hasCrmDealColumn,
       });
       return res.json(summary);
     }
@@ -1730,8 +1729,6 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
         wonIds,
         restrictIds,
         sxIntake: String(sx_intake) === '1',
-        hasCrmDealColumn,
-        extraIds: scopeExtraIds,
       });
       if (scoped.empty) return { query: scoped.query, empty: true };
       query = scoped.query;
@@ -2102,24 +2099,10 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
         is_production_overdue: isSxProjectDateOverdue(project, 'production_deadline'),
         is_delivery_overdue: isSxProjectDateOverdue(project, 'delivery_date'),
       }));
-      // 3 bước này độc lập nhau (đều đọc `workflowProjects`, mỗi bước chỉ CỘNG thêm field
-      // riêng) → chạy song song thay vì await tuần tự, giống nhánh kanbanBoard ở trên.
-      const listProjectIds = workflowProjects.map((p) => p.id).filter(Boolean);
-      const [enhanced, flagsBase, dealDepositMap] = await Promise.all([
-        attachCrmProductionTaskStatsToProjects(workflowProjects),
-        attachLeadUserFlagsToProjects(workflowProjects, req.user?.userId),
-        loadDealDepositByProjectIds(listProjectIds),
-      ]);
-      // Chỉ lấy đúng 5 field mà attachLeadUserFlagsToProjects thêm vào — không spread cả
-      // object (nó chứa bản `workflowProjects` chưa có task stats, dễ ghi đè nhầm về sau).
-      const flagsById = new Map(flagsBase.map((p) => [String(p.id), {
-        crm_lead_id: p.crm_lead_id,
-        is_pinned: p.is_pinned,
-        pinned_at: p.pinned_at,
-        is_interacted: p.is_interacted,
-        interacted_at: p.interacted_at,
-      }]));
-      const withUserFlags = enhanced.map((p) => ({ ...p, ...(flagsById.get(String(p.id)) || {}) }));
+      const enhanced = await attachCrmProductionTaskStatsToProjects(workflowProjects);
+      const withUserFlags = await attachLeadUserFlagsToProjects(enhanced, req.user?.userId);
+      const listProjectIds = withUserFlags.map((p) => p.id).filter(Boolean);
+      const dealDepositMap = await loadDealDepositByProjectIds(listProjectIds);
       projectsOut = attachSxFinanceToProjects(withUserFlags, dealDepositMap);
     }
 
@@ -2174,11 +2157,14 @@ r.get('/deadline-bucket-page', requirePermission('projects', 'view'), async (req
       : null;
     const wantsUnclassified = String(workshop_type_id || '').toLowerCase() === 'none';
 
-    const [scopePartnerIds, stageMap, wonIdsScoped] = await Promise.all([
-      company_id ? getExecutorProjectIdsForCompany(company_id) : Promise.resolve([]),
+    const [scopePartnerIdsRaw, stageMap, wonIdsScoped] = await Promise.all([
+      (company_id && !isMetallaOrHucabiCompanyIdSync(company_id))
+        ? getExecutorProjectIdsForCompany(company_id)
+        : Promise.resolve([]),
       getWorkshopStageMap(),
       getWonDealProjectIds(company_id || null),
     ]);
+    const scopePartnerIds = isolateWorkshopBoardPartnerIds(company_id, scopePartnerIdsRaw);
     const wonIds = company_id && scopePartnerIds.length
       ? [...new Set([...wonIdsScoped, ...scopePartnerIds])]
       : wonIdsScoped;
@@ -3780,6 +3766,7 @@ r.patch('/projects/:id/switch-workshop-type', requireProductionKanbanEdit(), asy
     const projectUpd = {
       workshop_type_id: targetTypeId,
       sx_pipeline_stage_entered_at: nowIso,
+      sx_kanban_column_id: firstCol.id,
     };
     if (firstCol.workflow_stage_id) {
       projectUpd.current_stage_id = firstCol.workflow_stage_id;
@@ -3793,7 +3780,12 @@ r.patch('/projects/:id/switch-workshop-type', requireProductionKanbanEdit(), asy
       }
     }
 
-    const { error: updErr } = await supabase.from('projects').update(projectUpd).eq('id', id);
+    let { error: updErr } = await supabase.from('projects').update(projectUpd).eq('id', id);
+    if (updErr && String(updErr.message || '').includes('sx_kanban_column_id')) {
+      const retryUpd = { ...projectUpd };
+      delete retryUpd.sx_kanban_column_id;
+      ({ error: updErr } = await supabase.from('projects').update(retryUpd).eq('id', id));
+    }
     if (updErr) throw updErr;
 
     try {
@@ -3815,6 +3807,31 @@ r.patch('/projects/:id/switch-workshop-type', requireProductionKanbanEdit(), asy
       await applyWorkshopTypeDefaultStaffToProject(id, companyId, targetTypeId);
     } catch (staffErr) {
       console.warn('[production/switch-workshop-type] default staff:', staffErr.message);
+    }
+
+    // Gen bộ nhiệm vụ SX của phân loại đích (vd. Metalla Data đầu ra)
+    let sxTasksApplied = { created: 0 };
+    try {
+      const { data: deals } = await supabase
+        .from('crm_leads')
+        .select('id, company_id')
+        .eq('project_id', id)
+        .eq('type', 'deal')
+        .order('created_at', { ascending: true })
+        .limit(1);
+      const deal = deals?.[0];
+      if (deal?.id) {
+        sxTasksApplied = await ensureMissingSxTasksForLead({
+          leadId: deal.id,
+          userId,
+          req,
+          templateSourceCompanyId: companyId,
+          dealCompanyId: deal.company_id || null,
+          allPipelineStages: true,
+        });
+      }
+    } catch (tplErr) {
+      console.warn('[production/switch-workshop-type] SX templates:', tplErr.message);
     }
 
     try {
@@ -3874,6 +3891,7 @@ r.patch('/projects/:id/switch-workshop-type', requireProductionKanbanEdit(), asy
       to_workshop_type_id: targetTypeId,
       pipeline_stage_id: firstCol.id,
       switched: true,
+      sx_tasks_created: sxTasksApplied?.created || 0,
     });
 
     const ioSw = req.app.get('io');

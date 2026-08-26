@@ -146,6 +146,44 @@ async function upsertSnapshots({ reportDate, companyId, userId, phase, metrics }
   return rows.length;
 }
 
+function snapshotMapHasPhase(snapshotMap, phase, userId = null) {
+  if (!snapshotMap || !snapshotMap.size) return false;
+  const prefix = userId ? `${userId}|${phase}|` : null;
+  for (const key of snapshotMap.keys()) {
+    const k = String(key);
+    if (prefix) {
+      if (k.startsWith(prefix)) return true;
+    } else if (k.includes(`|${phase}|`)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Snapshot chỉ có sau cron 08:00 / 16:45 ngày phiếu.
+ * Ngày mai (và hôm nay trước cron) cần tính live — không thì matrix/Excel toàn "—".
+ */
+function resolveDailyReportLivePhases({ explicitPreview = false, date, snapshotMap, userId = null } = {}) {
+  const today = crmReportTodayYmdVn();
+  if (explicitPreview) return { plan: true, result: true, reason: 'explicit' };
+  if (!date || date < today) {
+    return { plan: false, result: false, reason: snapshotMap?.size ? 'snapshot' : 'none' };
+  }
+  const hasPlan = snapshotMapHasPhase(snapshotMap, 'plan', userId);
+  const hasResult = snapshotMapHasPhase(snapshotMap, 'result', userId);
+  if (date > today) {
+    return { plan: true, result: false, reason: 'future' };
+  }
+  const plan = !hasPlan;
+  const result = !hasResult;
+  let reason = 'snapshot';
+  if (plan && result) reason = 'today_no_snapshot';
+  else if (plan) reason = 'today_no_plan_snapshot';
+  else if (result) reason = 'today_no_result_snapshot';
+  return { plan, result, reason };
+}
+
 async function loadSnapshotsMap(reportDate, companyId = null) {
   let q = supabase
     .from('crm_daily_report_snapshots')
@@ -367,6 +405,8 @@ module.exports = {
   resultUntilIso,
   snapKey,
   loadSnapshotsMap,
+  snapshotMapHasPhase,
+  resolveDailyReportLivePhases,
   snapshotUser,
   runSnapshotBatch,
   listCompanyIdsForSnapshot,

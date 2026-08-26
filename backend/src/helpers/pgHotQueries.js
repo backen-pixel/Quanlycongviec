@@ -407,20 +407,18 @@ async function pgDashboardMainStats(userId, projectIds) {
     `SELECT
        COUNT(DISTINCT p.id)::int AS total_projects,
        COUNT(t.id)::int AS total_tasks,
-       -- tasks KHONG co cot assigned_to (that la assignee_id), va status trong DB la
-       -- 'in_progress' (gach DUOI) chu khong phai 'in-progress'; 'todo' cung la chua bat dau.
-       COUNT(t.id) FILTER (WHERE t.assignee_id = $2)::int AS my_tasks,
-       COUNT(t.id) FILTER (WHERE t.status::text = 'done')::int AS completed_tasks,
-       COUNT(t.id) FILTER (WHERE t.status::text = 'in_progress')::int AS in_progress_tasks,
-       COUNT(t.id) FILTER (WHERE t.status::text IN ('pending','todo'))::int AS pending_tasks,
+       COUNT(t.id) FILTER (WHERE t.assigned_to = $2)::int AS my_tasks,
+       COUNT(t.id) FILTER (WHERE t.status = 'done')::int AS completed_tasks,
+       COUNT(t.id) FILTER (WHERE t.status = 'in-progress')::int AS in_progress_tasks,
+       COUNT(t.id) FILTER (WHERE t.status = 'pending')::int AS pending_tasks,
        COUNT(t.id) FILTER (
-         WHERE t.status::text IS DISTINCT FROM 'done'
+         WHERE t.status IS DISTINCT FROM 'done'
            AND t.due_date IS NOT NULL
            AND t.due_date < NOW()
        )::int AS overdue_tasks,
        COUNT(t.id) FILTER (
-         WHERE t.assignee_id = $2
-           AND t.status::text IS DISTINCT FROM 'done'
+         WHERE t.assigned_to = $2
+           AND t.status IS DISTINCT FROM 'done'
            AND t.due_date IS NOT NULL
            AND t.due_date < NOW()
        )::int AS my_overdue_tasks
@@ -487,10 +485,7 @@ async function pgDashboardOverview({
          COUNT(*) FILTER (WHERE type = 'lead' AND created_at >= $1::timestamptz)::int AS new_leads_30d,
          COUNT(*) FILTER (WHERE type = 'deal' AND created_at >= $1::timestamptz)::int AS new_deals_30d,
          COUNT(*) FILTER (WHERE type = 'deal' AND project_id IS NOT NULL)::int AS won_deals,
-         -- Trước đây dùng SUM(budget) nhưng crm_leads KHÔNG có cột budget → câu SQL này
-         -- vốn LUÔN lỗi, pgQuerySafe nuốt lỗi và trả null nên cả khối bị bỏ, rơi về
-         -- đường REST (cũng hỏng vì cùng lý do). Cột đúng là estimated_value.
-         COALESCE(SUM(estimated_value) FILTER (WHERE type = 'deal' AND project_id IS NULL), 0)::float8 AS deal_pipeline_value
+         COALESCE(SUM(budget) FILTER (WHERE type = 'deal' AND project_id IS NULL), 0)::float8 AS deal_pipeline_value
        FROM crm_leads`,
       [thirtyDaysAgo],
     ),

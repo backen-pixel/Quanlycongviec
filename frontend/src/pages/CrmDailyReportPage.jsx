@@ -178,6 +178,14 @@ function vnCalendarNow() {
   };
 }
 
+function vnTodayISO() {
+  return vnCalendarNow().date;
+}
+
+function isFutureReportDate(iso) {
+  return !!iso && iso > vnTodayISO();
+}
+
 /** II–IV chỉ xuất được ngày đã qua, hoặc hôm nay từ 16:45 VN. */
 function canExportAfterPlanSections(reportDate) {
   if (!reportDate || !/^\d{4}-\d{2}-\d{2}$/.test(reportDate)) return false;
@@ -546,9 +554,14 @@ function MyReportPanel({ date, onDateChange }) {
     <div className="space-y-4">
       <div className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-950" data-export-hide="1">
         <strong>Phần I</strong> = Deadline Lead/Deal cột <strong>Quá hạn + Hôm nay</strong>
-        {' '}(snapshot <strong>08:00</strong> ngày phiếu {fmtDMY(date)}).{' '}
+        {isFutureReportDate(date)
+          ? ` — ngày ${fmtDMY(date)} chưa có snapshot 08:00 nên đang tính live.`
+          : ` (snapshot 08:00 ngày phiếu ${fmtDMY(date)}).`}
+        {' '}
         <strong>Phần II</strong> = kết quả CRM đúng ngày phiếu, cắt tới <strong>16:45</strong>
-        {' '}— mỗi lead/deal chỉ tính <strong>cột đích cuối</strong>, không cộng hành trình.{' '}
+        {' '}— mỗi lead/deal chỉ tính <strong>cột đích cuối</strong>, không cộng hành trình
+        {isFutureReportDate(date) ? ' (ngày mai chưa có KQ).' : '.'}
+        {' '}
         <strong>Phần III/IV</strong> và dòng tự thêm: điền tay rồi nộp.
       </div>
 
@@ -2655,6 +2668,13 @@ function MatrixExportModal({
                 Mục II–IV mở sau 16:45 hoặc khi chọn ngày đã qua.
               </p>
             )}
+            {isFutureReportDate(exportDate) && (
+              <p className="mt-2 rounded-md border border-sky-200 bg-sky-50 px-2.5 py-1.5 text-[11px] text-sky-950">
+                Ngày {fmtDMY(exportDate)} chưa tới snapshot 08:00 — Excel tính <strong>live Phần I</strong> từ
+                Deadline Quá hạn + ngày phiếu (cùng nguồn với bảng trên màn hình). Phần II ngày mai chưa có kết quả
+                vì chưa có chuyển cột trong ngày đó.
+              </p>
+            )}
           </div>
 
           {error && (
@@ -2698,7 +2718,9 @@ function TeamMatrixPanel({ date, onDateChange }) {
     roleKey: '',
     q: '',
   }));
-  const [sectionTab, setSectionTab] = useState('result');
+  const [sectionTab, setSectionTab] = useState(() => (
+    isFutureReportDate(date) ? 'plan' : 'result'
+  ));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [data, setData] = useState(null);
@@ -2803,6 +2825,10 @@ function TeamMatrixPanel({ date, onDateChange }) {
   }, [date, companyId, filter.departmentId, filter.roleKey, filter.q]);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    if (isFutureReportDate(date)) setSectionTab('plan');
+  }, [date]);
 
   const assignTemplate = async (emp, templateId) => {
     if (!emp?.id || assigningUserId) return;
@@ -2943,7 +2969,9 @@ function TeamMatrixPanel({ date, onDateChange }) {
           </div>
           <div className="text-[11px] text-violet-700/80">
             Ngày đang chọn {fmtDMY(date)} · I = Deadline QH+hôm nay · II = điểm đến cuối (không hành trình)
-            {data?.preview ? ' · preview live' : data?.snapshot ? ' · đã có snapshot' : ''}
+            {data?.plan_live || data?.result_live
+              ? ` · live${data?.preview_reason === 'future' ? ' (chưa snapshot 08:00)' : ''}`
+              : data?.snapshot ? ' · đã có snapshot' : ''}
           </div>
         </div>
       </div>
@@ -2988,11 +3016,28 @@ function TeamMatrixPanel({ date, onDateChange }) {
         </div>
       )}
 
-      {companyId && (sectionTab === 'result' || sectionTab === 'all') && (
+      {companyId && data?.plan_live && (
+        <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-950">
+          <strong>Phần I</strong> ngày {fmtDMY(date)} đang tính <strong>live</strong> từ Deadline
+          {' '}Quá hạn + ngày phiếu (chưa có snapshot 08:00). Cùng nguồn này khi xuất Excel.
+          Lịch CRM hiện thẻ theo hạn; báo cáo ngày gom theo cột Kanban hiện tại và bỏ thẻ đã tick tương tác.
+        </div>
+      )}
+
+      {companyId && isFutureReportDate(date) && (sectionTab === 'result' || sectionTab === 'all') && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+          <strong>II. Kết quả</strong> ngày {fmtDMY(date)} chưa có dữ liệu — ngày đó chưa diễn ra
+          (chưa có chuyển cột / chốt 16:45). Xem <strong>I. Kế hoạch</strong>.
+        </div>
+      )}
+
+      {companyId && !isFutureReportDate(date) && (sectionTab === 'result' || sectionTab === 'all') && (
         <div className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-sm text-violet-950">
           <strong>II. Kết quả</strong> là số CRM của <strong>đúng ngày đang chọn</strong>
           ({fmtDMY(data?.result_date || date)}).
-          Muốn xem ngày 13/08 thì chọn <strong>13/08/2026</strong> trên bộ lọc — không cần chờ 08:00 / 16:45.
+          {data?.result_live
+            ? ' Chưa tới 16:45 — đang hiện số live, chưa chốt snapshot.'
+            : ' Muốn xem ngày khác thì chọn ngày đó trên bộ lọc.'}
         </div>
       )}
 

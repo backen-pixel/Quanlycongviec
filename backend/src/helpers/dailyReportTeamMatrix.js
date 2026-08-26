@@ -7,7 +7,7 @@ const { metricKeyFromLabel, computeForUser } = require('./dailyReportMetrics');
 const { guessRoleKey, isCrmSalesDept, looksLikeNonCrmUser } = require('./dailyReportStaffing');
 const { loadAssignedTemplateIds } = require('./dailyReportUserTemplates');
 const { crmReportAddDaysYmd } = require('./crmReportDateBounds');
-const { loadSnapshotsMap, snapKey, resultUntilIso } = require('./dailyReportSnapshot');
+const { loadSnapshotsMap, snapKey, resultUntilIso, resolveDailyReportLivePhases } = require('./dailyReportSnapshot');
 
 const TEMPLATE_FIELDS = 'id, company_id, role_key, name, description, has_sharpen_section, is_active, created_at, updated_at';
 const ITEM_FIELDS = 'id, template_id, section, label, order_index, unit_label, metric_key, created_at';
@@ -30,6 +30,22 @@ function pickTemplateByRole(templates, roleKey, companyId = null) {
     if (own) return own;
   }
   return same.find((t) => t.company_id == null) || same[0];
+}
+
+async function mapLimit(items, limit, fn) {
+  const list = items || [];
+  const out = new Array(list.length);
+  let next = 0;
+  async function worker() {
+    while (next < list.length) {
+      const i = next;
+      next += 1;
+      out[i] = await fn(list[i], i);
+    }
+  }
+  const n = Math.min(Math.max(1, limit), list.length || 1);
+  await Promise.all(Array.from({ length: list.length ? n : 0 }, () => worker()));
+  return out;
 }
 
 function preferCompanyTemplates(rows, companyId) {
@@ -292,36 +308,46 @@ async function loadTeamDailyReportMatrix({
   }
 
   const snapshotMap = await loadSnapshotsMap(date, companyId);
-  if (preview) {
+  const live = resolveDailyReportLivePhases({
+    explicitPreview: !!preview,
+    date,
+    snapshotMap,
+  });
+  if (live.plan || live.result) {
     const untilIso = resultUntilIso(date);
-    for (const emp of employees) {
+    const empsToCompute = employees.filter((emp) => {
       const rk = emp.role_key === 'deal_admin' ? 'sale_deal' : emp.role_key;
-      if (!rk || rk === 'none' || rk === 'unknown') continue;
+      return rk && rk !== 'none' && rk !== 'unknown';
+    });
+    await mapLimit(empsToCompute, 4, async (emp) => {
+      const rk = emp.role_key === 'deal_admin' ? 'sale_deal' : emp.role_key;
       try {
-        const [planPack, resultPack] = await Promise.all([
-          computeForUser(emp.id, date, rk, 'plan', { companyId }),
-          computeForUser(emp.id, date, rk, 'result', { companyId, untilIso }),
-        ]);
-        for (const [mk, m] of Object.entries(planPack.metrics || {})) {
-          snapshotMap.set(snapKey(emp.id, 'plan', mk), {
-            value: m.value,
-            entity_ids: m.ids,
-            note: m.note,
-            source: m.source,
-          });
+        const jobs = [];
+        if (live.plan) {
+          jobs.push(
+            computeForUser(emp.id, date, rk, 'plan', { companyId }).then((pack) => ({ phase: 'plan', pack })),
+          );
         }
-        for (const [mk, m] of Object.entries(resultPack.metrics || {})) {
-          snapshotMap.set(snapKey(emp.id, 'result', mk), {
-            value: m.value,
-            entity_ids: m.ids,
-            note: m.note,
-            source: m.source,
-          });
+        if (live.result) {
+          jobs.push(
+            computeForUser(emp.id, date, rk, 'result', { companyId, untilIso }).then((pack) => ({ phase: 'result', pack })),
+          );
+        }
+        const packs = await Promise.all(jobs);
+        for (const { phase, pack } of packs) {
+          for (const [mk, m] of Object.entries(pack?.metrics || {})) {
+            snapshotMap.set(snapKey(emp.id, phase, mk), {
+              value: m.value,
+              entity_ids: m.ids,
+              note: m.note,
+              source: m.source,
+            });
+          }
         }
       } catch (e) {
         console.warn('[daily-report-matrix] preview', emp.full_name || emp.id, e.message || e);
       }
-    }
+    });
   }
 
   function rowKey(section, line) {
@@ -491,10 +517,11 @@ async function loadTeamDailyReportMatrix({
   return {
     date,
     result_date: resultDate,
-    result_live: !!preview,
-    plan_live: !!preview,
-    snapshot: !preview && snapshotMap.size > 0,
-    preview: !!preview,
+    result_live: !!live.result,
+    plan_live: !!live.plan,
+    snapshot: !live.plan && !live.result && snapshotMap.size > 0,
+    preview: !!(live.plan || live.result),
+    preview_reason: live.reason,
     company_id: companyId,
     department_id: departmentId,
     role_key: templateRoleFilter,

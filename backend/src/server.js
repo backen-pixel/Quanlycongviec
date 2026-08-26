@@ -350,18 +350,6 @@ app.post('/api/seed-passwords', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// Mọi request ghi vào các prefix có thể sửa bảng `projects` đều xoá cache danh sách dự án.
-// Đặt TRƯỚC phần mount route để chạy sớm; xem middleware/projectsCacheInvalidation.js.
-{
-  const { invalidateProjectsListOnWrite } = require('./middleware/projectsCacheInvalidation');
-  for (const prefix of [
-    '/api/projects', '/api/production', '/api/logistics', '/api/crm',
-    '/api/vc-handover', '/api/workshop-teams', '/api/customers', '/api/orders',
-  ]) {
-    app.use(prefix, invalidateProjectsListOnWrite);
-  }
-}
-
 // Routes
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/heartbeat', require('./routes/heartbeat'));

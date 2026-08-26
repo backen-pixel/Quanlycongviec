@@ -83,6 +83,13 @@ function isMetallaOrHucabiCompanyIdSync(companyId) {
   return METALLA_HUCABI_COMPANY_ID_SET.has(String(companyId));
 }
 
+function isolateWorkshopBoardPartnerIds(companyId, partnerIds) {
+  if (!companyId || !Array.isArray(partnerIds) || !partnerIds.length) return [];
+  // Board HCB/Metalla chỉ theo projects.company_id — không kéo thẻ xưởng kia qua executor.
+  if (isMetallaOrHucabiCompanyIdSync(companyId)) return [];
+  return partnerIds;
+}
+
 async function isMetallaOrHucabiCompanyId(companyId) {
   if (!companyId) return false;
   if (isMetallaOrHucabiCompanyIdSync(companyId)) return true;
@@ -725,6 +732,7 @@ module.exports = {
   canCrossWorkshopProductionViewerUseCompanyQuery,
   isMetallaOrHucabiCompanyId,
   isMetallaOrHucabiCompanyIdSync,
+  isolateWorkshopBoardPartnerIds,
   resolveMetallaHucabiCompanyIds,
   isVptCompanyIdSync,
   resolveVptCompanyId,

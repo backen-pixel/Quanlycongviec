@@ -57,6 +57,7 @@ import CrmChatNotesPanel from '../components/CrmChatNotesPanel';
 import FacebookChatTab from '../components/FacebookChatTab';
 import ZaloChatTab from '../components/ZaloChatTab';
 import PipelineStepper from '../components/PipelineStepper';
+import { OverlayPortal } from '../components/Modal';
 import BlockingTasksAlertModal from '../components/BlockingTasksAlertModal';
 import CrmDeadlineModal from '../components/CrmDeadlineModal';
 import {
@@ -101,6 +102,53 @@ function normalizeWorkshopProjectDetail(proj) {
   if (!proj) return proj;
   const crmDeals = proj.crmDeals || proj.crm_deals || [];
   return { ...proj, crmDeals };
+}
+
+function toDatetimeLocalVn(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return '';
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(s)) return s;
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) {
+    const ymd = s.slice(0, 10);
+    return /^\d{4}-\d{2}-\d{2}$/.test(ymd) ? `${ymd}T08:00` : '';
+  }
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Ho_Chi_Minh',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(d);
+  const get = (t) => parts.find((p) => p.type === t)?.value || '';
+  return `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}`;
+}
+
+/** Prefill ngày lắp / VC từ dự án nguồn khi mở «Đặt xưởng khác». */
+function placeSxInitialRowFromProject(project) {
+  const occRaw = project?.install_occurrence_dates;
+  const fromOcc = (Array.isArray(occRaw) ? occRaw : [])
+    .map((d) => String(d || '').slice(0, 10))
+    .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d));
+  const delivery = String(project?.delivery_date || project?.production_deadline || '').slice(0, 10);
+  const installYmd = String(project?.install_date || '').slice(0, 10);
+  const primary = fromOcc[0]
+    || (/^\d{4}-\d{2}-\d{2}$/.test(delivery) ? delivery : '')
+    || (/^\d{4}-\d{2}-\d{2}$/.test(installYmd) ? installYmd : '');
+  const occ = fromOcc.length ? [...new Set(fromOcc)].sort() : (primary ? [primary] : []);
+  const timeM = String(project?.install_date || '').match(/T(\d{2}):(\d{2})/);
+  return {
+    companyId: '',
+    workshopTypeId: '',
+    deliveryDate: primary || '',
+    installOccurrenceDates: occ,
+    installTime: timeM ? `${timeM[1]}:${timeM[2]}` : '14:00',
+    logisticsCompanyId: String(project?.logistics_company_id || project?.logistics_company?.id || ''),
+    vcNotes: String(project?.vc_notes || ''),
+    pickupAt: toDatetimeLocalVn(project?.pickup_at) || (primary ? `${primary}T08:00` : ''),
+  };
 }
 
 function resolvePersonFromList(person, personId, users) {
@@ -4191,67 +4239,73 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
         </div>
       )}
 
-      {/* Đặt xưởng khác — chọn công ty SX + phân loại + ngày lắp/HT */}
-      {placeSxOpen && moduleKey !== 'vc' && (
-        <div
-          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4"
-          onClick={() => { if (!placeSxBusy) setPlaceSxOpen(false); }}
-        >
-          <div
-            className="bg-white rounded-2xl shadow-xl w-full max-w-lg p-5 space-y-3 max-h-[90vh] overflow-y-auto"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-start justify-between gap-2">
-              <div>
+      {/* Đặt xưởng khác — cùng bảng CRM: công ty + phân loại + ngày/VC + lịch sự kiện */}
+      <OverlayPortal
+        open={placeSxOpen && moduleKey !== 'vc'}
+        size="full"
+        closeOnBackdrop={!placeSxBusy}
+        onClose={() => { if (!placeSxBusy) setPlaceSxOpen(false); }}
+      >
+        <div className="px-6 pt-5 pb-3 border-b border-slate-100 shrink-0">
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <Factory className="h-6 w-6 text-teal-600" />
                 <h3 className="text-lg font-bold text-gray-900">Đặt xưởng khác</h3>
-                <p className="text-xs text-gray-500 mt-1">
-                  Chọn công ty SX + phân loại. Hệ thống tạo dự án ở xưởng nhận, thêm NV mặc định vào thành viên deal,
-                  và gửi bình luận @ thông báo giống CRM → Sản xuất.
-                </p>
               </div>
-              <button type="button" onClick={() => !placeSxBusy && setPlaceSxOpen(false)} disabled={placeSxBusy} className="p-1 cursor-pointer disabled:opacity-40">
-                <X className="h-5 w-5 text-gray-400" />
-              </button>
-            </div>
-            {placeSxCompanies.length === 0 ? (
-              <p className="text-sm text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
-                Không còn công ty SX khác để đặt (hoặc đang tải danh sách).
+              <p className="text-sm text-gray-600">
+                Chọn công ty SX + phân loại, ngày lắp / lấy hàng (VC/LĐ) và lịch sự kiện bên phải.
+                Hệ thống tạo dự án ở xưởng nhận, thêm NV mặc định vào thành viên deal, và gửi bình luận @ thông báo.
               </p>
-            ) : (
-              <SxMultiTargetPicker
-                companies={placeSxCompanies}
-                showDates
-                accent="indigo"
-                disabled={placeSxBusy}
-                defaultDeliveryDate={String(project?.delivery_date || project?.production_deadline || '').slice(0, 10)}
-                onChange={setPlaceSxTargets}
-              />
-            )}
-            {placeSxErr && (
-              <p className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{placeSxErr}</p>
-            )}
-            <div className="flex gap-2 pt-1">
-              <button
-                type="button"
-                disabled={placeSxBusy}
-                onClick={() => setPlaceSxOpen(false)}
-                className="flex-1 h-10 rounded-xl border text-sm font-medium disabled:opacity-40 cursor-pointer"
-              >
-                Hủy
-              </button>
-              <button
-                type="button"
-                disabled={placeSxBusy || !!validateSxTargets(placeSxTargets) || placeSxCompanies.length === 0}
-                onClick={submitPlaceSx}
-                className="flex-1 h-10 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-sm font-semibold inline-flex items-center justify-center gap-1.5 disabled:opacity-40 cursor-pointer"
-              >
-                {placeSxBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Factory className="h-4 w-4" />}
-                {placeSxBusy ? 'Đang tạo…' : 'Tạo dự án'}
-              </button>
             </div>
+            <button type="button" onClick={() => !placeSxBusy && setPlaceSxOpen(false)} disabled={placeSxBusy} className="p-1 cursor-pointer disabled:opacity-40">
+              <X className="h-5 w-5 text-gray-400" />
+            </button>
           </div>
         </div>
-      )}
+        <div className="px-6 py-4 overflow-y-auto flex-1 min-h-0">
+          {placeSxCompanies.length === 0 ? (
+            <p className="text-sm text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+              Không còn công ty SX khác để đặt (hoặc đang tải danh sách).
+            </p>
+          ) : (
+            <SxMultiTargetPicker
+              key={`place-sx-${id}`}
+              companies={placeSxCompanies}
+              accent="teal"
+              showDates
+              showVcSetup
+              leadId={crmLeadId || null}
+              disabled={placeSxBusy}
+              defaultDeliveryDate={String(project?.delivery_date || project?.production_deadline || '').slice(0, 10)}
+              initialRows={[placeSxInitialRowFromProject(project)]}
+              onChange={setPlaceSxTargets}
+            />
+          )}
+          {placeSxErr && (
+            <p className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2 mt-3">{placeSxErr}</p>
+          )}
+        </div>
+        <div className="px-6 py-4 border-t border-slate-100 flex gap-2 shrink-0">
+          <button
+            type="button"
+            disabled={placeSxBusy}
+            onClick={() => setPlaceSxOpen(false)}
+            className="flex-1 h-11 border border-gray-200 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-40 cursor-pointer"
+          >
+            Hủy
+          </button>
+          <button
+            type="button"
+            disabled={placeSxBusy || !!validateSxTargets(placeSxTargets) || placeSxCompanies.length === 0}
+            onClick={submitPlaceSx}
+            className="flex-1 h-11 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-sm font-semibold inline-flex items-center justify-center gap-1.5 disabled:opacity-40 cursor-pointer"
+          >
+            {placeSxBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Factory className="h-4 w-4" />}
+            {placeSxBusy ? 'Đang tạo…' : 'Tạo dự án'}
+          </button>
+        </div>
+      </OverlayPortal>
 
       {/* SX → VC handover modal (khi đổi stage tới cột có cờ bàn giao VC) */}
       {handoverModal && moduleKey !== 'vc' && (

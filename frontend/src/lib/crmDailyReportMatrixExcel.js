@@ -559,7 +559,7 @@ const SECTION_EXPORT_META = {
   plan: {
     prefix: 'I KH',
     title: 'I. KẾ HOẠCH',
-    note: 'Deadline Lead/Deal cột Quá hạn + Hôm nay, gom theo cột Kanban lúc snapshot 08:00.',
+    note: 'Deadline Lead/Deal cột Quá hạn + Hôm nay, gom theo cột Kanban. Ngày chưa có snapshot 08:00 thì tính live.',
     headerArgb: 'E0F2FE',
     titleArgb: '0369A1',
   },

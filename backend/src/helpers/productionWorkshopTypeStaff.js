@@ -1,5 +1,4 @@
 const { supabase } = require('../config/supabase');
-const { fetchExistingKeySet } = require('./supabaseFetchAll');
 const { createNotification } = require('./notifications');
 const {
   resolveProductionHandoverResponsibleUserId,
@@ -813,38 +812,6 @@ async function applyWorkshopTypeDefaultStaffToAllProjects(companyId, workshopTyp
   };
 }
 
-/**
- * Cache âm: cặp (công ty SX, loại xưởng) KHÔNG có nhân sự mặc định — và cũng không có nhân sự
- * fallback của công ty — nên `applyWorkshopTypeDefaultStaffToProject()` không ghi được gì.
- *
- * Vì không ghi được, `project_production_staff` vẫn trống → lần gọi API sau lại chọn đúng
- * những dự án đó và thử lại. Đây là vòng "write-on-read không bao giờ hội tụ": đo được
- * 5.396 / 5.570 / 5.678 ms ở 3 lần gọi GET /api/production/projects?limit=200 liên tiếp
- * (chiếm ~53% thời gian phản hồi), với 120/200 dự án thiếu roster và cả 13 cặp liên quan
- * đều có 0 nhân sự mặc định.
- *
- * Nhớ lại các cặp "không thể gán" để bỏ qua. TTL ngắn + xoá ngay khi admin lưu cấu hình
- * nhân sự mặc định (xem saveWorkshopTypeDefaultStaff) nên không sợ kẹt cấu hình cũ.
- */
-const _noDefaultStaffPairs = new Map(); // `${companyId}|${workshopTypeId}` -> timestamp
-const NO_DEFAULT_STAFF_TTL_MS = 5 * 60_000;
-
-function _staffPairKey(companyId, workshopTypeId) {
-  return `${companyId}|${workshopTypeId || ''}`;
-}
-
-/** Quên cache âm (gọi khi cấu hình nhân sự mặc định thay đổi). */
-function invalidateNoDefaultStaffCache(companyId = null) {
-  if (!companyId) {
-    _noDefaultStaffPairs.clear();
-    return;
-  }
-  const prefix = `${companyId}|`;
-  for (const key of _noDefaultStaffPairs.keys()) {
-    if (key.startsWith(prefix)) _noDefaultStaffPairs.delete(key);
-  }
-}
-
 /** Tự gán NV mặc định cho dự án đã có phân loại nhưng chưa có dòng project_production_staff. */
 async function backfillMissingProductionStaff(projects) {
   const candidates = (projects || []).filter((p) => p?.id && p?.company_id && p?.workshop_type_id);
@@ -853,48 +820,23 @@ async function backfillMissingProductionStaff(projects) {
   const ids = candidates.map((p) => p.id);
   let existing = new Set();
   try {
-    // PHẢI đọc hết: PostgREST cắt ở 1.000 dòng. Bảng này ~12,9 dòng/dự án nên chỉ 77 dự án
-    // là vỡ; với 200 dự án thì truy vấn một phát chỉ thấy 82/187 dự án đã có roster. 105 dự
-    // án bị coi nhầm là "thiếu" rồi bị ghi lại ở MỌI request (delete + insert nhân sự,
-    // update projects, sync lead_members) — vòng lặp không hội tụ, đo được ~5,6s mỗi lần
-    // gọi GET /api/production/projects?limit=200.
-    existing = await fetchExistingKeySet({
-      table: 'project_production_staff',
-      key: 'project_id',
-      ids,
-    });
+    const { data } = await supabase
+      .from('project_production_staff')
+      .select('project_id')
+      .in('project_id', ids);
+    existing = new Set((data || []).map((r) => String(r.project_id)));
   } catch (e) {
     if (String(e.message || '').includes('project_production_staff')) return 0;
     throw e;
   }
 
-  const now = Date.now();
-  const missing = candidates
-    .filter((p) => !existing.has(String(p.id)))
-    // Bỏ cặp đã biết là không gán được — nếu không sẽ lặp lại y hệt ở mọi request.
-    .filter((p) => {
-      const at = _noDefaultStaffPairs.get(_staffPairKey(p.company_id, p.workshop_type_id));
-      return !(at && now - at < NO_DEFAULT_STAFF_TTL_MS);
-    })
-    .slice(0, 30);
+  const missing = candidates.filter((p) => !existing.has(String(p.id))).slice(0, 30);
   if (!missing.length) return 0;
 
-  const results = await Promise.all(
-    missing.map((p) => applyWorkshopTypeDefaultStaffToProject(p.id, p.company_id, p.workshop_type_id)
-      .then((primaryId) => ({ p, primaryId }))
-      .catch((err) => {
-        console.warn('[productionWorkshopTypeStaff] backfill', p.id, err.message);
-        return { p, primaryId: null };
-      })),
+  await Promise.all(
+    missing.map((p) => applyWorkshopTypeDefaultStaffToProject(p.id, p.company_id, p.workshop_type_id)),
   );
-
-  // Trả null = không có NV nào để gán → ghi nhớ cặp đó, khỏi thử lại ở request sau.
-  let applied = 0;
-  for (const { p, primaryId } of results) {
-    if (primaryId) applied += 1;
-    else _noDefaultStaffPairs.set(_staffPairKey(p.company_id, p.workshop_type_id), Date.now());
-  }
-  return applied;
+  return missing.length;
 }
 
 /** Gắn production_staff[] lên deal/lead (qua project_id). */
@@ -1625,9 +1567,6 @@ async function saveWorkshopTypeDefaultStaff(companyId, defaultsInput) {
     if (insErr) throw insErr;
   }
 
-  // Cấu hình đổi → các cặp từng bị đánh dấu "không gán được" giờ có thể gán được.
-  invalidateNoDefaultStaffCache(companyId);
-
   return { saved: rows.length };
 }
 
@@ -1651,7 +1590,6 @@ module.exports = {
   loadProjectProductionStaffUserIds,
   attachProductionStaffToProjects,
   backfillMissingProductionStaff,
-  invalidateNoDefaultStaffCache,
   enrichCrmLeadsWithProductionStaff,
   loadProjectProductionStaffForApi,
   applyWorkshopTypeDefaultStaffToProject,

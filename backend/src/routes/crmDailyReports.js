@@ -18,7 +18,7 @@ const LINE_FIELDS =
   'id, report_id, template_item_id, section, label, order_index, plan_value, result_value, plan_note, result_note, metric_key, auto_result, created_at, updated_at';
 const { metricKeyFromLabel, isSnapshotWorkMetric, computeForUser } = require('../helpers/dailyReportMetrics');
 const { guessRoleKey } = require('../helpers/dailyReportStaffing');
-const { loadSnapshotsMap, snapKey, resultUntilIso } = require('../helpers/dailyReportSnapshot');
+const { loadSnapshotsMap, snapKey, resultUntilIso, resolveDailyReportLivePhases } = require('../helpers/dailyReportSnapshot');
 const {
   loadAssignedTemplateIds,
   getAssignedTemplateId,
@@ -242,13 +242,42 @@ async function canViewReport(req, report) {
   return false;
 }
 
-async function overlaySnapshotOnLines(lines, userId, reportDate, companyId) {
+async function overlaySnapshotOnLines(lines, userId, reportDate, companyId, opts = {}) {
   const snaps = await loadSnapshotsMap(reportDate, companyId);
-  if (!snaps.size) return lines;
+  const live = resolveDailyReportLivePhases({
+    date: reportDate,
+    snapshotMap: snaps,
+    userId,
+  });
+  let planMetrics = null;
+  let resultMetrics = null;
+  if (live.plan || live.result) {
+    const roleKey = opts.roleKey || 'sale_admin';
+    try {
+      if (live.plan) {
+        planMetrics = (await computeForUser(userId, reportDate, roleKey, 'plan', { companyId }))?.metrics || {};
+      }
+      if (live.result) {
+        resultMetrics = (await computeForUser(userId, reportDate, roleKey, 'result', {
+          companyId,
+          untilIso: resultUntilIso(reportDate),
+        }))?.metrics || {};
+      }
+    } catch (e) {
+      console.warn('[daily-reports] overlay live', userId, e.message || e);
+    }
+  }
+  if (!snaps.size && !planMetrics && !resultMetrics) return lines;
   return (lines || []).map((l) => {
-    if (l.section !== 'work' || !isSnapshotWorkMetric(l.metric_key)) return l;
-    const plan = snaps.get(snapKey(userId, 'plan', l.metric_key));
-    const result = snaps.get(snapKey(userId, 'result', l.metric_key));
+    if (l.section !== 'work') return l;
+    const mk = l.metric_key || metricKeyFromLabel(l.label);
+    if (!isSnapshotWorkMetric(mk)) return l;
+    const planSnap = snaps.get(snapKey(userId, 'plan', mk));
+    const resultSnap = snaps.get(snapKey(userId, 'result', mk));
+    const planLive = planMetrics?.[mk];
+    const resultLive = resultMetrics?.[mk];
+    const plan = planSnap || (planLive ? { value: planLive.value } : null);
+    const result = resultSnap || (resultLive ? { value: resultLive.value } : null);
     if (!plan && !result) return l;
     return {
       ...l,
@@ -261,7 +290,13 @@ async function overlaySnapshotOnLines(lines, userId, reportDate, companyId) {
 
 async function overlayBundleSnapshots(bundle, companyId) {
   if (!bundle?.user_id || !bundle.report_date) return bundle;
-  const lines = await overlaySnapshotOnLines(bundle.lines, bundle.user_id, bundle.report_date, companyId);
+  const lines = await overlaySnapshotOnLines(
+    bundle.lines,
+    bundle.user_id,
+    bundle.report_date,
+    companyId,
+    { roleKey: bundle.template?.role_key },
+  );
   const workLines = (lines || []).filter((l) => l.section === 'work');
   let planSum = 0;
   let resultSum = 0;
@@ -673,7 +708,7 @@ r.get('/mine', async (req, res) => {
         auto_result: false,
       })),
       ...skeletonLinesFromExtras(extras),
-    ], userId, date, companyId);
+    ], userId, date, companyId, { roleKey: template?.role_key });
 
     return res.json({
       report: {
@@ -697,7 +732,16 @@ r.get('/mine', async (req, res) => {
             }
           : null,
         lines: skeletonLines,
-        stats: { plan_sum: 0, result_sum: 0, achieve_pct: null, lines_hit_ratio: null },
+        stats: (() => {
+          const workLines = skeletonLines.filter((l) => l.section === 'work');
+          let planSum = 0;
+          let resultSum = 0;
+          for (const l of workLines) {
+            if (l.plan_value != null) planSum += Number(l.plan_value);
+            if (l.result_value != null) resultSum += Number(l.result_value);
+          }
+          return { plan_sum: planSum, result_sum: resultSum, achieve_pct: null, lines_hit_ratio: null };
+        })(),
       },
       templates,
     });
@@ -1104,17 +1148,32 @@ r.get('/mine/preview-auto', async (req, res) => {
     }
     if (!roleKey) roleKey = guessRoleKey(me || req.user, deptName);
     const snaps = await loadSnapshotsMap(date, me?.company_id || req.user.company_id || null);
-    const livePreview = String(req.query.preview || '') === '1';
+    const live = resolveDailyReportLivePhases({
+      explicitPreview: String(req.query.preview || '') === '1',
+      date,
+      snapshotMap: snaps,
+      userId,
+    });
+    const livePreview = !!(live.plan || live.result);
     let metrics = {};
     let plan_metrics = {};
     if (livePreview) {
       const companyId = me?.company_id || req.user.company_id || null;
-      const [planPack, resultPack] = await Promise.all([
-        computeForUser(userId, date, roleKey, 'plan', { companyId }),
-        computeForUser(userId, date, roleKey, 'result', { untilIso: resultUntilIso(date), companyId }),
-      ]);
-      plan_metrics = planPack.metrics || {};
-      metrics = resultPack.metrics || {};
+      const jobs = [];
+      if (live.plan) {
+        jobs.push(computeForUser(userId, date, roleKey, 'plan', { companyId }).then((p) => {
+          plan_metrics = p.metrics || {};
+        }));
+      }
+      if (live.result) {
+        jobs.push(computeForUser(userId, date, roleKey, 'result', {
+          untilIso: resultUntilIso(date),
+          companyId,
+        }).then((p) => {
+          metrics = p.metrics || {};
+        }));
+      }
+      await Promise.all(jobs);
     } else {
       for (const [key, row] of snaps) {
         if (!String(key).startsWith(`${userId}|`)) continue;
@@ -1298,9 +1357,35 @@ r.get('/team/matrix-cell-links', async (req, res) => {
     if (!metricKey) return res.status(400).json({ error: 'Thiếu metric_key' });
     const section = String(req.query.section || 'result').trim();
 
+    const roleKey = String(req.query.role_key || '').trim() || null;
+    const companyId = String(req.query.company_id || '').trim() || null;
     const phase = section === 'plan' ? 'plan' : 'result';
-    const snaps = await loadSnapshotsMap(reportDate, String(req.query.company_id || '').trim() || null);
-    const hit = snaps.get(snapKey(userId, phase, metricKey));
+    const snaps = await loadSnapshotsMap(reportDate, companyId);
+    const live = resolveDailyReportLivePhases({ date: reportDate, snapshotMap: snaps, userId });
+    let hit = snaps.get(snapKey(userId, phase, metricKey));
+    const wantLive = String(req.query.preview || '') === '1'
+      || (phase === 'plan' && live.plan)
+      || (phase === 'result' && live.result);
+    if ((!hit || hit.value == null) && wantLive) {
+      try {
+        const pack = await computeForUser(userId, reportDate, roleKey || 'sale_admin', phase, {
+          companyId,
+          untilIso: phase === 'result' ? resultUntilIso(reportDate) : null,
+        });
+        const m = pack?.metrics?.[metricKey];
+        if (m) {
+          hit = {
+            value: m.value,
+            entity_ids: m.ids,
+            note: m.note,
+            source: m.source || 'live',
+            computed_at: pack.computed_at,
+          };
+        }
+      } catch (e) {
+        console.warn('[daily-reports] matrix-cell-links live', e.message || e);
+      }
+    }
     const ids = [...new Set((hit?.entity_ids || []).map(String).filter(Boolean))];
     const items = [];
     for (let i = 0; i < ids.length; i += 200) {

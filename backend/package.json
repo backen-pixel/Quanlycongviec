@@ -22,10 +22,8 @@
     "storage:sync-backup": "node scripts/sync-storage-to-backup.js",
     "storage:sync-backup:dry": "node scripts/sync-storage-to-backup.js --dry-run",
     "ota:publish": "node scripts/publish-ota.js",
-    "test:cache": "node tests/response-cache-smoke.js && node tests/response-cache-singleflight-smoke.js",
+    "test:cache": "node tests/response-cache-smoke.js",
     "test:tenant": "node tests/tenant-isolation-smoke.js",
-    "test:fetch-all": "node tests/supabase-fetch-all-smoke.js",
-    "test:kanban-dedup": "node tests/crm-kanban-deadline-dedup-smoke.js",
     "test:crm-split": "node tests/crm-split-50-cases.js",
     "test:crm-split:b": "node tests/crm-split-50-cases-b.js",
     "test:crm-split:all": "node tests/crm-split-50-cases.js && node tests/crm-split-50-cases-b.js",
@@ -40,8 +38,7 @@
     "test:crm-transfer": "node tests/crm-lead-company-transfer.js",
     "test:mcp-audit": "node tests/mcp-audit-reason-codes.js",
     "crm:route-inventory": "node scripts/crm-route-inventory.js --write",
-    "cron:crm-missing-tasks": "node scripts/run-crm-missing-tasks-cron.js",
-    "test:kanban-grouping": "node tests/project-kanban-grouping-smoke.js"
+    "cron:crm-missing-tasks": "node scripts/run-crm-missing-tasks-cron.js"
   },
   "keywords": [],
   "author": "",
