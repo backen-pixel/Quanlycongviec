@@ -405,14 +405,16 @@ async function listLinkedSurveyEvents(userId, reportDate, untilIso = null) {
     }
   };
 
+  // Đếm theo start_time (ngày khảo sát THỰC TẾ diễn ra) HOẶC created_at (ngày ghi log) —
+  // trước đây chỉ lọc theo created_at nên lịch hẹn đặt trước ngày khảo sát bị bỏ sót
+  // (đây là nguyên nhân mục "Deal tương tác (Khảo sát)" hay ra 0).
   const { data, error } = await supabase
     .from('crm_events')
     .select('id, lead_id, created_by, assignee_id, start_time, created_at')
     .in('event_type', ['site_visit', 'measurement'])
     .not('lead_id', 'is', null)
     .or(`created_by.eq.${uid},assignee_id.eq.${uid}`)
-    .gte('created_at', startISO)
-    .lte('created_at', endISO)
+    .or(`and(start_time.gte.${startISO},start_time.lte.${endISO}),and(created_at.gte.${startISO},created_at.lte.${endISO})`)
     .limit(1000);
   if (!error) pick(data);
   else {
@@ -422,56 +424,79 @@ async function listLinkedSurveyEvents(userId, reportDate, untilIso = null) {
       .in('event_type', ['site_visit', 'measurement'])
       .not('lead_id', 'is', null)
       .or(`created_by.eq.${uid},assignee_id.eq.${uid}`)
-      .gte('start_time', startISO)
-      .lte('start_time', endISO)
+      .gte('created_at', startISO)
+      .lte('created_at', endISO)
       .limit(1000);
     pick(d2);
   }
   return { count: eventIds.size, ids: [...leadIds] };
 }
 
-/** Deal quá hạn trong ngày (kanban_deadline_at / expected_close_date rơi vào ngày báo cáo, chưa won/lost). */
-async function listDealsOverdueOnDay(userId, reportDate, untilIso = null) {
+/**
+ * Lead vừa chuyển sang Deal trong ngày — nguồn đúng cho "Deal mới tiếp nhận".
+ * Ghi bởi crm_kpi_ledger:lead_converted khi gọi POST /leads/:id/convert-to-deal
+ * (xem recordLeadConvertedKpi trong leadLifecycle.js). Đáng tin hơn last-destination
+ * vì pipeline Deal không có cột nào mang canonical_slug lead_new/survey_scheduled/survey_done
+ * (những slug đó chỉ tồn tại ở pipeline Lead) nên grouped.byMetric.deal_new luôn rỗng.
+ */
+async function listDealConversionsToday(userId, reportDate, untilIso = null) {
   const { startISO, endISO } = dateRange(reportDate, untilIso);
   const uid = String(userId);
   const seen = new Set();
 
-  const { data: byKanban } = await supabase
-    .from('crm_leads')
-    .select(`
-      id, kanban_deadline_at, expected_close_date, deadline_disabled_at,
-      stage:crm_pipeline_stages!stage_id(is_won, is_lost)
-    `)
-    .eq('type', 'deal')
-    .or(`lead_owner_id.eq.${uid},assigned_to.eq.${uid}`)
-    .is('deadline_disabled_at', null)
-    .not('kanban_deadline_at', 'is', null)
-    .gte('kanban_deadline_at', startISO)
-    .lte('kanban_deadline_at', endISO)
+  const { data: ledger, error: ledgerErr } = await supabase
+    .from('crm_kpi_ledger')
+    .select('lead_id, user_id, created_by, occurred_at, created_at')
+    .eq('event_type', 'lead_converted')
+    .or(`user_id.eq.${uid},created_by.eq.${uid}`)
+    .gte('occurred_at', startISO)
+    .lte('occurred_at', endISO)
     .limit(2000);
-
-  for (const row of byKanban || []) {
-    if (row.stage?.is_won || row.stage?.is_lost) continue;
-    seen.add(String(row.id));
+  if (!ledgerErr) {
+    for (const row of ledger || []) {
+      if (row.lead_id) seen.add(String(row.lead_id));
+    }
+  } else {
+    const { data: ledger2 } = await supabase
+      .from('crm_kpi_ledger')
+      .select('lead_id, user_id, created_by, created_at')
+      .eq('event_type', 'lead_converted')
+      .or(`user_id.eq.${uid},created_by.eq.${uid}`)
+      .gte('created_at', startISO)
+      .lte('created_at', endISO)
+      .limit(2000);
+    for (const row of ledger2 || []) {
+      if (row.lead_id) seen.add(String(row.lead_id));
+    }
   }
+  return { count: seen.size, ids: [...seen] };
+}
 
-  const { data: byClose } = await supabase
-    .from('crm_leads')
-    .select(`
-      id, expected_close_date,
-      stage:crm_pipeline_stages!stage_id(is_won, is_lost)
-    `)
-    .eq('type', 'deal')
-    .or(`lead_owner_id.eq.${uid},assigned_to.eq.${uid}`)
-    .eq('expected_close_date', reportDate)
-    .limit(2000);
+/**
+ * Deal quá hạn trong ngày — DÙNG ĐÚNG bộ lọc + thứ tự ưu tiên deadline như màn Deadline
+ * (deadlineTsForLead + deadlineBucketOnDate), giống hệt phần Kế hoạch (computeAutoDailyPlans).
+ * Thay cho bản cũ (listDealsOverdueOnDay) chỉ nhìn kanban_deadline_at / expected_close_date nên
+ * bỏ sót deal quá hạn theo SLA cột (chưa ai gán deadline tay) hoặc theo task còn mở gần nhất —
+ * hai nguồn này màn Deadline vẫn tính, khiến mục 8 báo cáo ngày ra số THẤP HƠN màn Deadline.
+ */
+async function listDealsOverdueProper(userId, reportDate, companyId = null) {
+  let cards = await listOwnedOpenCards(userId, 'deal', companyId);
+  cards = cards.filter((row) => {
+    if (row.deadline_disabled_at) return false;
+    if (!row.stage || row.stage.is_active === false) return false;
+    if (row.pipeline_id && row.stage.pipeline_id && String(row.pipeline_id) !== String(row.stage.pipeline_id)) return false;
+    if (deadlineStageExcluded(row.stage)) return false;
+    return crmLeadHasPhone(row);
+  });
+  cards = await attachNextOpenTaskDeadline(cards);
+  cards = await attachLeadUserFlagsForList(cards, userId);
 
-  for (const row of byClose || []) {
-    if (row.stage?.is_won || row.stage?.is_lost) continue;
-    seen.add(String(row.id));
+  const ids = [];
+  for (const row of cards) {
+    if (row.is_interacted) continue;
+    const ts = deadlineTsForLead(row);
+    if (deadlineBucketOnDate(ts, reportDate) === 'overdue') ids.push(String(row.id));
   }
-
-  const ids = [...seen];
   return { count: ids.length, ids };
 }
 
@@ -584,7 +609,7 @@ function unionIds(...lists) {
   return [...s];
 }
 
-async function computeAutoDailyResults(userId, reportDate, roleKey = 'sale_admin', untilIso = null) {
+async function computeAutoDailyResults(userId, reportDate, roleKey = 'sale_admin', untilIso = null, companyId = null) {
   const results = {};
   const rk = roleKey === 'deal_admin' ? 'sale_deal' : roleKey;
   let lastMap = new Map();
@@ -646,13 +671,15 @@ async function computeAutoDailyResults(userId, reportDate, roleKey = 'sale_admin
     const movedIds = new Set(lastMap.keys());
     const dealCreated = await listLeadsCreatedToday(userId, reportDate, 'deal', untilIso);
     const createdOnly = dealCreated.ids.filter((id) => !movedIds.has(id));
+    const converted = await listDealConversionsToday(userId, reportDate, untilIso);
     const destNew = grouped.byMetric.deal_new || [];
-    const dealNewIds = unionIds(destNew, createdOnly);
+    const dealNewIds = unionIds(destNew, createdOnly, converted.ids);
     results.deal_new = metricPayload(
       dealNewIds.length,
-      `Tự động: ${destNew.length} điểm đến cuối = Deal mới`
+      `Tự động: ${converted.ids.length} Lead vừa chuyển Deal`
+        + (destNew.length ? ` + ${destNew.length} điểm đến cuối = Deal mới` : '')
         + (createdOnly.length ? ` + ${createdOnly.length} tạo mới chưa chuyển cột` : ''),
-      'crm_lead_stage_history:last_destination|crm_leads.created_at',
+      'crm_kpi_ledger:lead_converted|crm_lead_stage_history:last_destination|crm_leads.created_at',
       dealNewIds,
     );
 
@@ -677,11 +704,11 @@ async function computeAutoDailyResults(userId, reportDate, roleKey = 'sale_admin
     results.deal_installing = lastDestPayload(grouped.byMetric, 'deal_installing');
     results.deal_completed = lastDestPayload(grouped.byMetric, 'deal_completed');
 
-    const overdue = await listDealsOverdueOnDay(userId, reportDate, untilIso);
+    const overdue = await listDealsOverdueProper(userId, reportDate, companyId);
     results.deal_overdue = metricPayload(
       overdue.count,
-      `Tự động: ${overdue.count} deal quá hạn trong ngày (deadline / ngày đóng kỳ vọng)`,
-      'crm_leads.kanban_deadline_at|expected_close_date',
+      `Tự động: ${overdue.count} deal quá hạn trong ngày (cùng logic màn Deadline: kanban/SLA/task mở)`,
+      'crm_leads.kanban_deadline_at|expected_close_date|crm_tasks|sla',
       overdue.ids,
     );
   }
@@ -1008,7 +1035,7 @@ async function computeForUser(userId, reportDate, roleKey, phase, opts = {}) {
   if (phase === 'plan') {
     return computeAutoDailyPlans(userId, reportDate, rk, opts.companyId || null);
   }
-  return computeAutoDailyResults(userId, reportDate, rk, opts.untilIso || null);
+  return computeAutoDailyResults(userId, reportDate, rk, opts.untilIso || null, opts.companyId || null);
 }
 
 async function computeMetric(userId, reportDate, roleKey, metricKey, phase, opts = {}) {
