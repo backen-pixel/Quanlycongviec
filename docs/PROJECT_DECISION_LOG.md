@@ -298,6 +298,16 @@ Nghiệm thu theo vai trò thực tế, kiểm tra task gate, SLA, thông báo, 
 
 ## 8. Lịch sử quyết định
 
+### 2026-08-26 — Báo cáo điều hành và AI dùng chung Executive Intelligence
+
+- Backend phát hành `executive_intelligence_v1`, hợp nhất Sales, Work KPI, `operations_kpi_v1` và `project_finance_v1` trong đúng company/tenant scope.
+- Màn Báo cáo và AI Agent Center cùng đọc `/api/management/executive-brief`; mọi cảnh báo/khuyến nghị có evidence và deep link về hồ sơ nguồn.
+- AI hiện chỉ `read_recommend`, không ghi dữ liệu, không gửi ra ngoài và mọi đề xuất cần người xem xét.
+- Không công bố lợi nhuận toàn danh mục khi còn Project thiếu nguồn chi phí; phải hiển thị rõ độ phủ complete/partial.
+- Live smoke tại công ty pilot đọc được 71 Project, 15 Project cần chú ý và 18 khuyến nghị có evidence; do migration 581 chưa áp dụng nên lợi nhuận danh mục được ẩn đúng guard.
+- Hồi quy sau lát cắt đạt Business OS **37/37**, tenant isolation PASS và frontend production build exit code `0`.
+- Chi tiết quyết định: `docs/adr/0015-executive-intelligence-report-ai-contract.md`.
+
 ### 2026-08-26 — Đổi thứ tự: hoàn thiện module trước, UAT người dùng sau
 
 - Theo quyết định mới của anh Hùng, Codex tiếp tục hoàn thiện các vertical slice còn lại trước khi anh kiểm thử nghiệp vụ toàn hệ thống.

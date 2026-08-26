@@ -1,6 +1,8 @@
+import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Activity,
+  AlertTriangle,
   ArrowRight,
   Bot,
   BrainCircuit,
@@ -15,12 +17,14 @@ import {
   Play,
   Plus,
   RotateCcw,
+  RefreshCw,
   ShieldCheck,
   Sparkles,
   UserCheck,
   Workflow,
   Wrench,
 } from 'lucide-react';
+import api from '../lib/api';
 import QualificationContractEditor from './QualificationContractEditor';
 import QualificationAutomationEditor from './QualificationAutomationEditor';
 
@@ -125,18 +129,22 @@ const AGENTS = [
 ];
 
 export function OSAIView({ data }) {
-  const records = data?.records || [];
-  const summary = data?.summary || {};
-  const priorities = records
-    .filter((record) => record.operational_status !== 'completed')
-    .slice(0, 12)
-    .map((record) => {
-      if (record.sla_status === 'overdue') return { ...record, reason: 'Đã quá hạn SLA Qualification', tone: 'bg-red-50 text-red-700' };
-      if (record.sla_status === 'at_risk') return { ...record, reason: 'SLA sắp đến hạn', tone: 'bg-amber-50 text-amber-700' };
-      if (record.blocking_task_count > 0) return { ...record, reason: `${record.blocking_task_count} công việc đang chặn`, tone: 'bg-orange-50 text-orange-700' };
-      if (record.missing_requirement_labels?.length) return { ...record, reason: `Thiếu ${record.missing_requirement_labels.length} thông tin`, tone: 'bg-blue-50 text-blue-700' };
-      return { ...record, reason: 'Cần xác định hành động tiếp theo', tone: 'bg-slate-100 text-slate-600' };
-    });
+  const companyId = data?.company?.id;
+  const [state, setState] = useState({ brief: null, loading: true, refreshing: false, error: '' });
+  const load = useCallback(async (silent = false) => {
+    if (!companyId) return;
+    setState((current) => ({ ...current, loading: !silent, refreshing: silent, error: '' }));
+    try {
+      const response = await api.get('/management/executive-brief', { params: { company_id: companyId } });
+      setState({ brief: response.data || {}, loading: false, refreshing: false, error: '' });
+    } catch (error) {
+      setState((current) => ({ ...current, loading: false, refreshing: false, error: error.response?.data?.error || 'Không tải được brief điều hành.' }));
+    }
+  }, [companyId]);
+  useEffect(() => { void load(); }, [load]);
+  const brief = state.brief || {};
+  const metrics = brief.metrics || {};
+  const priorities = brief.recommendations || [];
   return (
     <div className="mx-auto max-w-[1540px] space-y-5 px-4 py-5 sm:px-6 lg:px-8 lg:py-7">
       <section className="relative overflow-hidden rounded-[28px] bg-gradient-to-br from-[#15102d] via-[#24134f] to-[#312e81] p-7 text-white shadow-[0_24px_70px_rgba(49,46,129,0.2)] lg:p-10">
@@ -150,10 +158,13 @@ export function OSAIView({ data }) {
           <div className="rounded-2xl border border-white/15 bg-white/[0.08] p-5 backdrop-blur-sm">
             <div className="flex items-center justify-between"><Bot className="h-6 w-6 text-violet-200" /><span className="rounded-full bg-emerald-400/15 px-2.5 py-1 text-[9px] font-extrabold text-emerald-200">READ · RECOMMEND</span></div>
             <p className="mt-4 text-sm font-extrabold">Brief hiện tại</p>
-            <p className="mt-2 text-xs leading-5 text-violet-100/75">{records.length ? `${records.length} hồ sơ Sales, ${priorities.length} hồ sơ ưu tiên và ${(summary.sla_overdue || 0) + (summary.sla_at_risk || 0)} cảnh báo SLA cần xem.` : 'Chưa có Lead trong phạm vi dữ liệu đang chọn để phân tích.'}</p>
+            <p className="mt-2 text-xs leading-5 text-violet-100/75">{state.loading ? 'Đang đọc Project, công việc và tài chính trong phạm vi công ty…' : `${metrics.active_projects || 0} Project, ${metrics.attention_projects || 0} Project cần chú ý và ${priorities.length} khuyến nghị có evidence.`}</p>
+            <button type="button" onClick={() => load(true)} disabled={state.refreshing} className="mt-4 inline-flex items-center gap-2 rounded-xl border border-white/15 bg-white/10 px-3 py-2 text-[10px] font-extrabold text-white disabled:opacity-50"><RefreshCw className={`h-3.5 w-3.5 ${state.refreshing ? 'animate-spin' : ''}`} /> Đọc lại dữ liệu</button>
           </div>
         </div>
       </section>
+
+      {state.error && <div className="flex items-start gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-xs font-semibold text-red-800"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /><div><p className="font-extrabold">Chưa dựng được brief điều hành</p><p className="mt-1">{state.error}</p></div></div>}
 
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {[
@@ -175,21 +186,22 @@ export function OSAIView({ data }) {
           <div className="border-b border-slate-100 px-5 py-4"><h3 className="text-sm font-extrabold text-slate-950">Hàng đợi khuyến nghị có bằng chứng</h3><p className="mt-1 text-xs text-slate-500">Mỗi dòng mở về đúng hồ sơ nguồn để người phụ trách kiểm tra và quyết định.</p></div>
           <div className="divide-y divide-slate-100">
             {priorities.map((record) => (
-              <Link key={record.id} to={`/crm/leads/${record.id}`} className="grid gap-3 px-5 py-4 transition hover:bg-violet-50/40 sm:grid-cols-[minmax(190px,0.8fr)_130px_minmax(220px,1fr)_24px] sm:items-center">
-                <div className="min-w-0"><p className="truncate text-xs font-extrabold text-slate-900">{record.title}</p><p className="mt-1 truncate text-[10px] text-slate-500">{record.customer?.full_name || record.code || 'Hồ sơ Sales'}</p></div>
-                <span className="text-[10px] font-bold text-slate-500">{record.owner?.full_name || 'Chưa gán owner'}</span>
-                <span className={`w-fit rounded-full px-2.5 py-1 text-[9px] font-extrabold ${record.tone}`}>{record.reason}</span>
+              <Link key={record.id} to={`${record.href || '/business-os'}${record.href?.includes('?') ? '&' : '?'}company_id=${companyId}`} className="grid gap-3 px-5 py-4 transition hover:bg-violet-50/40 sm:grid-cols-[minmax(190px,0.8fr)_110px_minmax(240px,1fr)_24px] sm:items-center">
+                <div className="min-w-0"><p className="truncate text-xs font-extrabold text-slate-900">{record.title}</p><p className="mt-1 text-[10px] leading-4 text-slate-500">{record.recommendation}</p></div>
+                <span className="text-[9px] font-black uppercase tracking-wide text-violet-600">{record.domain}</span>
+                <div><span className={`w-fit rounded-full px-2.5 py-1 text-[9px] font-extrabold ${record.severity === 'high' || record.severity === 'critical' ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-700'}`}>{record.reason}</span><p className="mt-2 text-[9px] text-slate-400">{record.evidence?.length || 0} evidence · cần người duyệt</p></div>
                 <ChevronRight className="h-4 w-4 text-slate-300" />
               </Link>
             ))}
-            {!priorities.length && <div className="p-8 text-center text-xs font-semibold text-emerald-700"><CheckCircle2 className="mx-auto mb-2 h-6 w-6" />Không có hồ sơ Sales cần ưu tiên trong dữ liệu hiện tại.</div>}
+            {!state.loading && !priorities.length && !state.error && <div className="p-8 text-center text-xs font-semibold text-emerald-700"><CheckCircle2 className="mx-auto mb-2 h-6 w-6" />Không có ngoại lệ cần ưu tiên trong dữ liệu hiện tại.</div>}
+            {state.loading && <div className="p-8 text-center text-xs font-semibold text-violet-700"><RefreshCw className="mx-auto mb-2 h-6 w-6 animate-spin" />Đang dựng khuyến nghị từ nguồn thật…</div>}
           </div>
         </section>
         <section className="rounded-2xl border border-slate-200 bg-white p-5">
           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-950 text-white"><LockKeyhole className="h-5 w-5" /></div>
           <h3 className="mt-4 text-sm font-extrabold text-slate-950">Ranh giới không được vượt qua</h3>
           <div className="mt-4 space-y-3">
-            {['Không ghi trực tiếp vào cơ sở dữ liệu', 'Không tự Won/Lost hoặc duyệt báo giá', 'Không truy cập ngoài công ty và quyền người dùng', 'Không chạy action thiếu idempotency và audit', 'Hành động nhạy cảm luôn cần người duyệt'].map((item) => (
+            {['Chỉ đọc và khuyến nghị trong giai đoạn hiện tại', 'Không tự Won/Lost hoặc duyệt báo giá', 'Không truy cập ngoài công ty và quyền người dùng', 'Mỗi khuyến nghị phải kèm evidence nguồn', 'Hành động nhạy cảm luôn cần người duyệt'].map((item) => (
               <p key={item} className="flex items-start gap-2 text-[11px] font-semibold leading-5 text-slate-700"><ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-violet-600" />{item}</p>
             ))}
           </div>

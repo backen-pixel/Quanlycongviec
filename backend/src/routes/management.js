@@ -33,6 +33,8 @@ const {
 } = require('../helpers/operationsReadModel');
 const { buildProjectHealthContract } = require('../helpers/projectHealthContract');
 const { buildProjectChangeReadModel } = require('../helpers/projectChangeReadModel');
+const { buildProjectFinanceReadModel } = require('../helpers/projectFinanceReadModel');
+const { buildExecutiveIntelligence } = require('../helpers/executiveIntelligenceReadModel');
 
 const r = Router();
 r.use(auth);
@@ -702,6 +704,271 @@ async function loadOperationsReadModel(scope, sx = null, vcInstall = null) {
   };
 }
 
+function uniqueRowsById(rows) {
+  const seen = new Map();
+  for (const row of rows || []) {
+    if (row?.id && !seen.has(String(row.id))) seen.set(String(row.id), row);
+  }
+  return [...seen.values()];
+}
+
+function rowsByProject(projectIds) {
+  const grouped = new Map(projectIds.map((projectId) => [String(projectId), []]));
+  return {
+    add(projectId, row) {
+      const key = String(projectId || '');
+      if (grouped.has(key)) grouped.get(key).push(row);
+    },
+    get(projectId) {
+      return grouped.get(String(projectId)) || [];
+    },
+  };
+}
+
+async function loadExecutiveFinancePortfolio(operations) {
+  const projectIds = [...new Set((operations?.queues?.all || [])
+    .map((item) => item.project_id)
+    .filter(Boolean)
+    .map(String))];
+  if (!projectIds.length) return new Map();
+
+  const [projectsResult, leadsResult, dealLinksResult] = await Promise.all([
+    supabase.from('projects').select('id, code, name, estimated_value, production_value').in('id', projectIds),
+    supabase.from('crm_leads').select('id, project_id, parent_lead_id, estimated_value, stage_id').in('project_id', projectIds),
+    supabase.from('crm_deal_projects').select('project_id, deal_id').in('project_id', projectIds),
+  ]);
+  if (projectsResult.error) throw projectsResult.error;
+  if (leadsResult.error) throw leadsResult.error;
+
+  const projects = projectsResult.data || [];
+  const leadToProject = new Map();
+  const leadRows = [...(leadsResult.data || [])];
+  for (const lead of leadRows) leadToProject.set(String(lead.id), String(lead.project_id));
+  const linkedLeadIds = [];
+  for (const link of dealLinksResult.error ? [] : (dealLinksResult.data || [])) {
+    leadToProject.set(String(link.deal_id), String(link.project_id));
+    if (!leadRows.some((lead) => String(lead.id) === String(link.deal_id))) linkedLeadIds.push(link.deal_id);
+  }
+  if (linkedLeadIds.length) {
+    const { data: linkedLeads, error: linkedLeadsError } = await supabase
+      .from('crm_leads')
+      .select('id, project_id, parent_lead_id, estimated_value, stage_id')
+      .in('id', [...new Set(linkedLeadIds)]);
+    if (linkedLeadsError) throw linkedLeadsError;
+    leadRows.push(...(linkedLeads || []));
+  }
+  const leadIds = [...leadToProject.keys()];
+
+  const queryByProjectAndLead = async (table, select) => {
+    const byProject = await supabase.from(table).select(select).in('project_id', projectIds);
+    if (byProject.error) return byProject;
+    const byLead = leadIds.length
+      ? await supabase.from(table).select(select).in('lead_id', leadIds)
+      : { data: [], error: null };
+    if (byLead.error) return byLead;
+    return { data: uniqueRowsById([...(byProject.data || []), ...(byLead.data || [])]), error: null };
+  };
+
+  const [quotationsResult, ordersResult, purchaseRequestsResult, purchaseOrdersV2, supplierBillsResult, expensesV2] = await Promise.all([
+    queryByProjectAndLead('quotations', 'id, project_id, lead_id, total, status, created_at'),
+    queryByProjectAndLead('orders', 'id, project_id, logistics_project_id, lead_id, total, status, created_at'),
+    supabase.from('purchase_requests').select('id, project_id, expected_price, actual_price, status, supplier_committed_date, created_at').in('project_id', projectIds),
+    supabase.from('purchase_orders').select('id, project_id, lead_id, total, paid_amount, payment_status, status, expected_date, due_date, created_at').in('project_id', projectIds),
+    supabase.from('supplier_bills').select('id, project_id, purchase_order_id, total, paid_amount, status, due_date, created_at').in('project_id', projectIds),
+    supabase.from('project_expenses').select('id, project_id, amount, status, supplier_bill_id, source_type, expense_date, created_at').in('project_id', projectIds),
+  ]);
+  if (quotationsResult.error) throw quotationsResult.error;
+  if (ordersResult.error) throw ordersResult.error;
+
+  let purchaseOrders = purchaseOrdersV2.data || [];
+  const sourceAvailability = {
+    sales: true,
+    procurement: !purchaseRequestsResult.error,
+    purchasing: !purchaseOrdersV2.error,
+    supplier_payables: !supplierBillsResult.error,
+    expenses: !expensesV2.error,
+  };
+  if (purchaseOrdersV2.error && leadIds.length) {
+    const legacy = await supabase
+      .from('purchase_orders')
+      .select('id, lead_id, total, status, expected_date, created_at')
+      .in('lead_id', leadIds);
+    if (!legacy.error) purchaseOrders = legacy.data || [];
+  }
+  let expenses = expensesV2.data || [];
+  if (expensesV2.error) {
+    const legacy = await supabase
+      .from('project_expenses')
+      .select('id, project_id, amount, expense_date, created_at')
+      .in('project_id', projectIds);
+    if (!legacy.error) {
+      expenses = legacy.data || [];
+      sourceAvailability.expenses = true;
+    }
+  }
+
+  const orders = ordersResult.data || [];
+  const orderToProject = new Map();
+  for (const order of orders) {
+    const projectId = order.project_id || order.logistics_project_id || leadToProject.get(String(order.lead_id));
+    if (projectId) orderToProject.set(String(order.id), String(projectId));
+  }
+  const orderIds = [...orderToProject.keys()];
+  const invoiceByProject = await queryByProjectAndLead(
+    'invoices',
+    'id, project_id, lead_id, order_id, total, paid_amount, status, due_date, created_at',
+  );
+  if (invoiceByProject.error) throw invoiceByProject.error;
+  let invoices = invoiceByProject.data || [];
+  if (orderIds.length) {
+    const invoiceByOrder = await supabase
+      .from('invoices')
+      .select('id, project_id, lead_id, order_id, total, paid_amount, status, due_date, created_at')
+      .in('order_id', orderIds);
+    if (invoiceByOrder.error) throw invoiceByOrder.error;
+    invoices = uniqueRowsById([...invoices, ...(invoiceByOrder.data || [])]);
+  }
+  const invoiceToProject = new Map();
+  for (const invoice of invoices) {
+    const projectId = invoice.project_id
+      || leadToProject.get(String(invoice.lead_id))
+      || orderToProject.get(String(invoice.order_id));
+    if (projectId) invoiceToProject.set(String(invoice.id), String(projectId));
+  }
+  const invoiceIds = [...invoiceToProject.keys()];
+  const customerPaymentsResult = invoiceIds.length
+    ? await supabase.from('payment_records').select('id, invoice_id, amount, payment_date, created_at').in('invoice_id', invoiceIds)
+    : { data: [], error: null };
+  if (customerPaymentsResult.error) throw customerPaymentsResult.error;
+
+  const supplierBills = supplierBillsResult.data || [];
+  const billToProject = new Map(supplierBills.map((bill) => [String(bill.id), String(bill.project_id)]));
+  const supplierPaymentsResult = supplierBills.length
+    ? await supabase.from('supplier_payments').select('id, supplier_bill_id, project_id, amount, payment_date, created_at').in('supplier_bill_id', supplierBills.map((bill) => bill.id))
+    : { data: [], error: null };
+  if (supplierPaymentsResult.error) sourceAvailability.supplier_payables = false;
+
+  const stageIds = [...new Set(leadRows.map((lead) => lead.stage_id).filter(Boolean))];
+  const stagesResult = stageIds.length
+    ? await supabase.from('crm_pipeline_stages').select('id, is_won, is_lost').in('id', stageIds)
+    : { data: [], error: null };
+  const stageById = new Map((stagesResult.data || []).map((stage) => [String(stage.id), stage]));
+
+  const grouped = {
+    quotations: rowsByProject(projectIds),
+    orders: rowsByProject(projectIds),
+    invoices: rowsByProject(projectIds),
+    customerPayments: rowsByProject(projectIds),
+    purchaseRequests: rowsByProject(projectIds),
+    purchaseOrders: rowsByProject(projectIds),
+    supplierBills: rowsByProject(projectIds),
+    supplierPayments: rowsByProject(projectIds),
+    expenses: rowsByProject(projectIds),
+    commercialChanges: rowsByProject(projectIds),
+  };
+  for (const row of quotationsResult.data || []) grouped.quotations.add(row.project_id || leadToProject.get(String(row.lead_id)), row);
+  for (const row of orders) grouped.orders.add(orderToProject.get(String(row.id)), row);
+  for (const row of invoices) grouped.invoices.add(invoiceToProject.get(String(row.id)), row);
+  for (const row of customerPaymentsResult.data || []) grouped.customerPayments.add(invoiceToProject.get(String(row.invoice_id)), row);
+  for (const row of purchaseRequestsResult.data || []) grouped.purchaseRequests.add(row.project_id, row);
+  for (const row of purchaseOrders) grouped.purchaseOrders.add(row.project_id || leadToProject.get(String(row.lead_id)), row);
+  for (const row of supplierBills) grouped.supplierBills.add(row.project_id, row);
+  for (const row of supplierPaymentsResult.data || []) grouped.supplierPayments.add(row.project_id || billToProject.get(String(row.supplier_bill_id)), row);
+  for (const row of expenses) grouped.expenses.add(row.project_id, row);
+  for (const lead of leadRows.filter((row) => row.parent_lead_id)) {
+    grouped.commercialChanges.add(leadToProject.get(String(lead.id)), {
+      id: lead.id,
+      lead_id: lead.id,
+      estimated_value: lead.estimated_value,
+      stage: stageById.get(String(lead.stage_id)) || null,
+    });
+  }
+
+  return new Map(projects.map((project) => [String(project.id), buildProjectFinanceReadModel({
+    project,
+    quotations: grouped.quotations.get(project.id),
+    orders: grouped.orders.get(project.id),
+    invoices: grouped.invoices.get(project.id),
+    customerPayments: grouped.customerPayments.get(project.id),
+    purchaseRequests: grouped.purchaseRequests.get(project.id),
+    purchaseOrders: grouped.purchaseOrders.get(project.id),
+    supplierBills: grouped.supplierBills.get(project.id),
+    supplierPayments: grouped.supplierPayments.get(project.id),
+    expenses: grouped.expenses.get(project.id),
+    commercialChanges: grouped.commercialChanges.get(project.id),
+    sourceAvailability,
+  })]));
+}
+
+async function loadManagementOverviewSnapshot(req, scope) {
+  const companyId = primaryCompanyIdFromScope(scope);
+  const { date_from: dateFrom, date_to: dateTo, assignee_id: assigneeId } = req.query;
+  const operationalProjectIdsPromise = loadOperationalProjectIdsForScope(scope);
+  const [dealStages, leadStages, dealCounts, leadCounts, sx, vcInstall, pipelineMetrics] = await Promise.all([
+    loadCrmDealStages(scope),
+    loadCrmLeadStages(scope),
+    countLeadsByStage(scope, 'deal', dateFrom, dateTo, assigneeId),
+    countLeadsByStage(scope, 'lead', dateFrom, dateTo, assigneeId),
+    loadSxPipelineSummary(scope, operationalProjectIdsPromise),
+    loadVcInstallPipelines(scope, operationalProjectIdsPromise),
+    loadDealPipelineMetrics(scope, dateFrom, dateTo, assigneeId),
+  ]);
+  const vc = vcInstall.vc;
+  const install = vcInstall.install;
+  const taskScope = {
+    company_id: scope.companyId || undefined,
+    company_ids: scope.companyIds || undefined,
+  };
+  const [openTasks, overdueTasks] = await Promise.all([
+    countUnifiedOpenTasks(req.user, taskScope),
+    countUnifiedOverdueTasks(req.user, taskScope),
+  ]);
+  const totalDeals = Object.values(dealCounts).reduce((sum, value) => sum + value, 0);
+  const totalLeads = Object.values(leadCounts).reduce((sum, value) => sum + value, 0);
+  const wonDeals = dealStages
+    .filter((stage) => stage.is_won)
+    .reduce((sum, stage) => sum + (dealCounts[String(stage.id)] || 0), 0);
+  const crmLeadPipeline = buildPipelineFromStages(leadStages, leadCounts);
+  const crmDealPipeline = buildPipelineFromStages(dealStages, dealCounts);
+  if (leadCounts.__none__ > 0) crmLeadPipeline.push({ id: '__none__', name: 'Chưa gán giai đoạn', color: '#94a3b8', icon: '❓', count: leadCounts.__none__ });
+  if (dealCounts.__none__ > 0) crmDealPipeline.push({ id: '__none__', name: 'Chưa gán giai đoạn', color: '#94a3b8', icon: '❓', count: dealCounts.__none__ });
+  return {
+    company_id: companyId,
+    tenant_scoped: !!(scope.companyIds?.length || scope.companyId === TENANT_EMPTY_COMPANY_SENTINEL),
+    metric_contract: buildOperationsMetricContract(companyId),
+    kpis: {
+      crm_leads: totalLeads,
+      crm_deals: totalDeals,
+      crm_won: wonDeals,
+      crm_overdue: pipelineMetrics.crm_overdue,
+      pipeline_value: pipelineMetrics.pipeline_value,
+      sx_active: sx.kpis.active,
+      sx_intake: sx.kpis.intake,
+      sx_overdue: sx.kpis.overdue,
+      vc_active: vc.kpis.active,
+      vc_overdue: vc.kpis.overdue,
+      install_active: install.kpis.active,
+      install_overdue: install.kpis.overdue,
+      open_tasks: openTasks || 0,
+      overdue_tasks: overdueTasks || 0,
+    },
+    urgent: {
+      crm_deal_overdue: pipelineMetrics.crm_overdue,
+      sx_intake: sx.kpis.intake,
+      sx_overdue: sx.kpis.overdue,
+      vc_overdue: vc.kpis.overdue,
+      overdue_tasks: overdueTasks || 0,
+    },
+    pipelines: {
+      crm_lead: crmLeadPipeline,
+      crm_deal: crmDealPipeline,
+      sx: sx.pipeline,
+      vc: vc.pipeline,
+      install: install.pipeline,
+    },
+  };
+}
+
 // GET /api/management/operations-queue — read model Project duy nhất cho SX → VC → Lắp đặt
 r.get('/operations-queue', async (req, res) => {
   try {
@@ -720,82 +987,34 @@ r.get('/overview', async (req, res) => {
   try {
     const scope = getCompanyScope(req, req.query.company_id);
     if (denyScope(res, scope)) return;
-    const companyId = primaryCompanyIdFromScope(scope);
-    const { date_from: dateFrom, date_to: dateTo, assignee_id: assigneeId } = req.query;
-    const operationalProjectIdsPromise = loadOperationalProjectIdsForScope(scope);
-
-    const [dealStages, leadStages, dealCounts, leadCounts, sx, vcInstall, pipelineMetrics] = await Promise.all([
-      loadCrmDealStages(scope),
-      loadCrmLeadStages(scope),
-      countLeadsByStage(scope, 'deal', dateFrom, dateTo, assigneeId),
-      countLeadsByStage(scope, 'lead', dateFrom, dateTo, assigneeId),
-      loadSxPipelineSummary(scope, operationalProjectIdsPromise),
-      loadVcInstallPipelines(scope, operationalProjectIdsPromise),
-      loadDealPipelineMetrics(scope, dateFrom, dateTo, assigneeId),
-    ]);
-    const vc = vcInstall.vc;
-    const install = vcInstall.install;
-
-    const taskScope = {
-      company_id: scope.companyId || undefined,
-      company_ids: scope.companyIds || undefined,
-    };
-    const [openTasks, overdueTasks] = await Promise.all([
-      countUnifiedOpenTasks(req.user, taskScope),
-      countUnifiedOverdueTasks(req.user, taskScope),
-    ]);
-
-    const totalDeals = Object.values(dealCounts).reduce((s, n) => s + n, 0);
-    const totalLeads = Object.values(leadCounts).reduce((s, n) => s + n, 0);
-    const wonDeals = dealStages.filter((s) => s.is_won).reduce((s, st) => s + (dealCounts[String(st.id)] || 0), 0);
-
-    const crmLeadPipeline = buildPipelineFromStages(leadStages, leadCounts);
-    const crmDealPipeline = buildPipelineFromStages(dealStages, dealCounts);
-    if (leadCounts.__none__ > 0) {
-      crmLeadPipeline.push({ id: '__none__', name: 'Chưa gán giai đoạn', color: '#94a3b8', icon: '❓', count: leadCounts.__none__ });
-    }
-    if (dealCounts.__none__ > 0) {
-      crmDealPipeline.push({ id: '__none__', name: 'Chưa gán giai đoạn', color: '#94a3b8', icon: '❓', count: dealCounts.__none__ });
-    }
-
-    res.json({
-      company_id: companyId,
-      tenant_scoped: !!(scope.companyIds?.length || scope.companyId === TENANT_EMPTY_COMPANY_SENTINEL),
-      metric_contract: buildOperationsMetricContract(companyId),
-      kpis: {
-        crm_leads: totalLeads,
-        crm_deals: totalDeals,
-        crm_won: wonDeals,
-        crm_overdue: pipelineMetrics.crm_overdue,
-        pipeline_value: pipelineMetrics.pipeline_value,
-        sx_active: sx.kpis.active,
-        sx_intake: sx.kpis.intake,
-        sx_overdue: sx.kpis.overdue,
-        vc_active: vc.kpis.active,
-        vc_overdue: vc.kpis.overdue,
-        install_active: install.kpis.active,
-        install_overdue: install.kpis.overdue,
-        open_tasks: openTasks || 0,
-        overdue_tasks: overdueTasks || 0,
-      },
-      urgent: {
-        crm_deal_overdue: pipelineMetrics.crm_overdue,
-        sx_intake: sx.kpis.intake,
-        sx_overdue: sx.kpis.overdue,
-        vc_overdue: vc.kpis.overdue,
-        overdue_tasks: overdueTasks || 0,
-      },
-      pipelines: {
-        crm_lead: crmLeadPipeline,
-        crm_deal: crmDealPipeline,
-        sx: sx.pipeline,
-        vc: vc.pipeline,
-        install: install.pipeline,
-      },
-    });
+    res.set('Cache-Control', 'no-store');
+    res.json(await loadManagementOverviewSnapshot(req, scope));
   } catch (e) {
     console.error('[management/overview]', e);
     res.status(500).json({ error: e.message || 'Lỗi tải tổng quan' });
+  }
+});
+
+// GET /api/management/executive-brief — nguồn chung cho Báo cáo điều hành và AI đọc/khuyến nghị
+r.get('/executive-brief', async (req, res) => {
+  try {
+    const scope = getCompanyScope(req, req.query.company_id);
+    if (denyScope(res, scope)) return;
+    const [overview, operations] = await Promise.all([
+      loadManagementOverviewSnapshot(req, scope),
+      loadOperationsReadModel(scope),
+    ]);
+    const financeByProject = await loadExecutiveFinancePortfolio(operations);
+    res.set('Cache-Control', 'no-store');
+    res.json(buildExecutiveIntelligence({
+      companyId: primaryCompanyIdFromScope(scope),
+      overview,
+      operations,
+      financeByProject,
+    }));
+  } catch (e) {
+    console.error('[management/executive-brief]', e);
+    res.status(500).json({ error: e.message || 'Lỗi tải báo cáo điều hành' });
   }
 });
 

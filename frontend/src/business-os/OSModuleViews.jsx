@@ -779,51 +779,61 @@ export function OSReportsView({ companyId }) {
     if (!companyId) return;
     setState((current) => ({ ...current, loading: !silent, refreshing: silent, error: '' }));
     try {
-      const response = await api.get('/management/overview', { params: { company_id: companyId } });
+      const response = await api.get('/management/executive-brief', { params: { company_id: companyId } });
       setState({ data: response.data || {}, loading: false, refreshing: false, error: '' });
     } catch (error) {
       setState((current) => ({ ...current, loading: false, refreshing: false, error: error.response?.data?.error || 'Không tải được báo cáo.' }));
     }
   }, [companyId]);
   useEffect(() => { void load(); }, [load]);
-  const kpis = state.data?.kpis || {};
-  const pipelineGroups = [
-    ['Lead', state.data?.pipelines?.crm_lead || [], 'bg-blue-500'],
-    ['Deal', state.data?.pipelines?.crm_deal || [], 'bg-violet-500'],
-    ['Sản xuất', state.data?.pipelines?.sx || [], 'bg-orange-500'],
-    ['Vận chuyển', state.data?.pipelines?.vc || [], 'bg-amber-500'],
-    ['Lắp đặt', state.data?.pipelines?.install || [], 'bg-emerald-500'],
-  ];
+  const metrics = state.data?.metrics || {};
+  const coverage = state.data?.coverage || {};
+  const risks = state.data?.risks || [];
   return (
     <div className="mx-auto max-w-[1540px] space-y-5 px-4 py-5 sm:px-6 lg:px-8 lg:py-7">
-      <ModuleHeader eyebrow="Decision Intelligence" title="Báo cáo & chỉ số" description="Một bức tranh điều hành có thể truy ngược từ chỉ số tới đúng hồ sơ đang tạo ra kết quả hoặc rủi ro." icon={TrendingUp} actionTo={`/management?company_id=${companyId}`} actionLabel="Phân tích chi tiết" onRefresh={() => load(true)} refreshing={state.refreshing} />
+      <ModuleHeader eyebrow="Executive Intelligence v1" title="Báo cáo điều hành" description="Sales, Project, công việc và tài chính dùng cùng một hợp đồng đọc; mọi cảnh báo đều mở về đúng hồ sơ nguồn." icon={TrendingUp} actionTo={`/management?company_id=${companyId}`} actionLabel="Mở dashboard hiện tại" onRefresh={() => load(true)} refreshing={state.refreshing} />
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <MetricCard label="Giá trị pipeline" value={money(kpis.pipeline_value)} hint={`${number(kpis.crm_deals)} deal đang được theo dõi`} icon={TrendingUp} />
-        <MetricCard label="Deal thắng" value={number(kpis.crm_won)} hint={`${number(kpis.crm_leads)} lead đầu vào`} icon={CheckCircle2} tone="emerald" />
-        <MetricCard label="Công việc đang mở" value={number(kpis.open_tasks)} hint={`${number(kpis.overdue_tasks)} việc quá hạn`} icon={BriefcaseBusiness} tone="amber" />
-        <MetricCard label="Ngoại lệ vận hành" value={number((kpis.sx_overdue || 0) + (kpis.vc_overdue || 0) + (kpis.install_overdue || 0))} hint="Sản xuất, vận chuyển và lắp đặt" icon={AlertTriangle} tone="red" />
+        <MetricCard label="Giá trị pipeline" value={money(metrics.sales_pipeline_value)} hint={`${number(metrics.crm_deals)} Deal · ${number(metrics.crm_won)} đã thắng`} icon={TrendingUp} />
+        <MetricCard label="Project cần chú ý" value={number(metrics.attention_projects)} hint={`${number(metrics.active_projects)} Project đang trong luồng vận hành`} icon={AlertTriangle} tone={metrics.attention_projects > 0 ? 'red' : 'emerald'} />
+        <MetricCard label="Phải thu khách hàng" value={money(metrics.receivables_outstanding)} hint="Theo hóa đơn và thanh toán đã ghi nhận" icon={CircleDollarSign} tone="amber" />
+        <MetricCard label="Lợi nhuận dự báo" value={metrics.forecast_profit == null ? 'Chưa đủ dữ liệu' : money(metrics.forecast_profit)} hint={coverage.finance_note || 'Đọc từ chi phí Project'} icon={TrendingUp} tone={metrics.forecast_profit == null ? 'amber' : 'emerald'} />
       </div>
       <ModuleState loading={state.loading} error={state.error} onRetry={() => load()}>
+        {!coverage.finance_portfolio_complete && (
+          <div className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-xs leading-5 text-amber-900">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <div><p className="font-extrabold">Chưa công bố lợi nhuận toàn danh mục</p><p>{coverage.finance_note} Đã đủ nguồn ở {number(coverage.finance_complete_projects)}/{number(coverage.finance_total_projects)} Project.</p></div>
+          </div>
+        )}
         <div className="grid gap-5 xl:grid-cols-[minmax(0,1.3fr)_minmax(320px,0.7fr)]">
-          <section className="rounded-2xl border border-slate-200 bg-white p-5">
-            <h3 className="text-sm font-extrabold text-slate-950">Dòng chảy hồ sơ theo công đoạn</h3><p className="mt-1 text-[10px] text-slate-500">Quy mô cột thể hiện số hồ sơ đang nằm tại mỗi bước.</p>
-            <div className="mt-5 space-y-5">
-              {pipelineGroups.map(([name, rows, tone]) => {
-                const total = rows.reduce((sum, row) => sum + (Number(row.count) || 0), 0);
-                return <div key={name}><div className="mb-2 flex items-center justify-between"><span className="text-xs font-extrabold text-slate-800">{name}</span><span className="text-[10px] font-bold text-slate-400">{number(total)} hồ sơ</span></div><div className="flex h-9 overflow-hidden rounded-xl bg-slate-100">{rows.filter((row) => row.count > 0).map((row) => <div key={row.id || row.name} title={`${row.name}: ${row.count}`} style={{ flexGrow: Math.max(1, Number(row.count) || 0) }} className={`flex min-w-8 items-center justify-center border-r border-white/70 px-2 text-[9px] font-extrabold text-white last:border-0 ${tone}`}><span className="truncate">{row.name} · {row.count}</span></div>)}</div></div>;
+          <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+            <div className="border-b border-slate-100 p-5"><h3 className="text-sm font-extrabold text-slate-950">Danh sách rủi ro có thể truy nguồn</h3><p className="mt-1 text-[10px] text-slate-500">Sắp xếp theo mức độ; không trộn trạng thái tài chính vào tiến độ sản xuất.</p></div>
+            <div className="divide-y divide-slate-100">
+              {risks.slice(0, 30).map((risk) => {
+                const separator = risk.href?.includes('?') ? '&' : '?';
+                return (
+                  <Link key={risk.id} to={`${risk.href || '/business-os'}${separator}company_id=${companyId}`} className="grid gap-3 px-5 py-4 transition hover:bg-slate-50 sm:grid-cols-[110px_minmax(0,1fr)_150px_24px] sm:items-center">
+                    <span className={`w-fit rounded-full px-2.5 py-1 text-[9px] font-black uppercase ${risk.severity === 'high' || risk.severity === 'critical' ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-700'}`}>{risk.domain}</span>
+                    <div className="min-w-0"><p className="truncate text-xs font-extrabold text-slate-900">{risk.project_code ? `${risk.project_code} · ` : ''}{risk.title}</p><p className="mt-1 text-[10px] leading-4 text-slate-500">{risk.reason}</p></div>
+                    <span className="text-[10px] font-semibold text-slate-500">{risk.owner?.full_name || date(risk.deadline)}</span>
+                    <ArrowRight className="h-4 w-4 text-slate-300" />
+                  </Link>
+                );
               })}
+              {!risks.length && <EmptyRow icon={CheckCircle2}>Không có ngoại lệ cần ưu tiên trong phạm vi đang chọn.</EmptyRow>}
             </div>
           </section>
           <section className="rounded-2xl border border-slate-200 bg-white p-5">
-            <h3 className="text-sm font-extrabold text-slate-950">Cần quyết định</h3><p className="mt-1 text-[10px] text-slate-500">Các ngoại lệ được ưu tiên theo tác động vận hành.</p>
+            <h3 className="text-sm font-extrabold text-slate-950">Phạm vi và độ phủ</h3><p className="mt-1 text-[10px] text-slate-500">Cho biết báo cáo đang dựa vào nguồn nào và phần nào còn thiếu.</p>
             <div className="mt-4 space-y-3">
               {[
-                ['Deal CRM quá hạn', state.data?.urgent?.crm_deal_overdue, '/business-os/sales'],
-                ['Hồ sơ chờ tiếp nhận SX', state.data?.urgent?.sx_intake, '/business-os/operations'],
-                ['Dự án sản xuất trễ', state.data?.urgent?.sx_overdue, '/business-os/operations'],
-                ['Công việc quá hạn', state.data?.urgent?.overdue_tasks, '/business-os/work'],
-              ].map(([label, value, to]) => <Link key={label} to={`${to}?company_id=${companyId}`} className="flex items-center justify-between rounded-xl border border-slate-100 p-3 hover:bg-slate-50"><span className="text-[10px] font-bold text-slate-700">{label}</span><span className={`rounded-full px-2.5 py-1 text-[9px] font-black ${value > 0 ? 'bg-red-50 text-red-700' : 'bg-emerald-50 text-emerald-700'}`}>{number(value)}</span></Link>)}
+                ['Project đang theo dõi', metrics.active_projects, 'operations_kpi_v1'],
+                ['Project đủ nguồn tài chính', coverage.finance_complete_projects, 'project_finance_v1'],
+                ['Project thiếu nguồn tài chính', coverage.finance_partial_projects, 'project_finance_v1'],
+                ['Công việc quá hạn', metrics.overdue_tasks, 'work_kpi_v1'],
+              ].map(([label, value, source]) => <div key={label} className="rounded-xl border border-slate-100 p-3"><div className="flex items-center justify-between"><span className="text-[10px] font-bold text-slate-700">{label}</span><span className="rounded-full bg-slate-100 px-2.5 py-1 text-[9px] font-black text-slate-700">{number(value)}</span></div><p className="mt-2 font-mono text-[9px] text-slate-400">{source}</p></div>)}
             </div>
+            <div className="mt-4 rounded-xl bg-slate-950 p-4 text-white"><p className="text-[9px] font-black uppercase tracking-[0.14em] text-slate-400">Contract</p><p className="mt-2 font-mono text-[11px] font-bold">{state.data?.version || 'executive_intelligence_v1'}</p><p className="mt-2 text-[10px] leading-4 text-slate-300">AI và Báo cáo đọc cùng contract, không tự tính KPI khác ở frontend.</p></div>
           </section>
         </div>
       </ModuleState>
