@@ -303,6 +303,7 @@ Tiếp tục dùng chứng từ và bảng nghiệp vụ hiện hữu làm Syste
 - Lệnh chuẩn để mở phiên là `npm run uat:readiness:business-os`; gate backup phải PASS trước khi preflight và phân công hồ sơ được thực hiện.
 - Logic backup gate có unit test riêng cho `READY`, backup cũ/bằng schema freeze, backup chưa xác minh, migration thiếu và timestamp sai; kiểm thử gate/session hiện tại đạt **8/8**, toàn bộ Business OS đạt **31/31**.
 - Khi gate `READY`, lệnh readiness mới được sinh biên bản phiên UAT cục bộ; manifest chỉ whitelist số liệu tổng hợp, commit/database/backup/migration và không đưa PII vào Git.
+- Hồi quy commit `d71f8a2d`: Business OS **31/31**, tenant isolation PASS, frontend build exit code `0`; kỹ thuật đạt nhưng UAT thật vẫn `BLOCKED_BY_BACKUP`.
 - Sau UAT và sửa blocker mới mở lát cắt Mua hàng → Chi phí Project → Hóa đơn/Thanh toán → Công nợ.
 - Hồ sơ baseline: `docs/baseline/BUSINESS_OS_VNEXT_STAGING_BASELINE_01.md`.
 
