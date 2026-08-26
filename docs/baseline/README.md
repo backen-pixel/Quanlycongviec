@@ -7,3 +7,4 @@ Thư mục này là hồ sơ kiểm soát phiên bản staging. Mỗi baseline p
 - [`BUSINESS_OS_ROLLBACK_BACKUP_RUNBOOK_01.md`](./BUSINESS_OS_ROLLBACK_BACKUP_RUNBOOK_01.md): rollback code, backup và phục hồi dữ liệu.
 - [`BUSINESS_OS_UAT_CHECKLIST_01.md`](./BUSINESS_OS_UAT_CHECKLIST_01.md): kịch bản 3–5 hồ sơ thật.
 - [`BUSINESS_OS_UAT_PREFLIGHT_01.md`](./BUSINESS_OS_UAT_PREFLIGHT_01.md): snapshot coverage không PII và các slot UAT còn thiếu.
+- [`BUSINESS_OS_UAT_OPERATOR_GUIDE_01.md`](./BUSINESS_OS_UAT_OPERATOR_GUIDE_01.md): một lệnh mở UAT và quy tắc dừng/tiếp tục.
