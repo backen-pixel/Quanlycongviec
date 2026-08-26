@@ -68,7 +68,7 @@ import { isProjectAlreadyInLogistics, VC_TEMP_LOCK_MSG } from '../lib/projectLog
 import { buildCrmLeadDocTaskSections, normalizeCrmChecklist } from '../lib/crmTaskDocumentTree';
 import { fetchPipelineStagesById } from '../lib/crmPipelineStages';
 import { buildSxPipelineStageMeta, projectIsShipped, resolveSxDisplayColumnId, TEMP_SX_FREE_DRAG } from '../lib/sxPipelineRevenue';
-import { CrmLeadCommentsPanel, ProjectCommentsPanel } from '../components/CommentsPanels';
+import { CrmLeadCommentsPanel, CrmLeadHistoryPanel, ProjectCommentsPanel } from '../components/CommentsPanels';
 import SharedCRMNotes from '../components/SharedCRMNotes';
 import DriveAttachments from '../components/drive/DriveAttachments';
 import ProjectProcurementTab from '../components/ProjectProcurementTab';
@@ -3588,6 +3588,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
               {crmLeadId && inboxLinks.facebook && tabBtn('facebook', '📘 Facebook')}
               {crmLeadId && inboxLinks.zalo && tabBtn('zalo', '💬 Zalo OA')}
               {tabBtn('comments', `💬 Bình luận${commentCount > 0 ? ` (${commentCount})` : ''}`)}
+              {crmLeadId && tabBtn('history', '🕘 Lịch sử')}
               {tabBtn('incidents', incidents.filter(i => i.status === 'open' || i.status === 'in_progress').length > 0
                 ? `⚠️ Sự cố (${incidents.filter(i => i.status === 'open' || i.status === 'in_progress').length})`
                 : '⚠️ Sự cố')}
@@ -4077,6 +4078,14 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                     ? <CrmLeadCommentsPanel leadId={crmLeadId} forModule={workshopShareMod} onCountChange={setCommentCount} />
                     : <ProjectCommentsPanel projectId={project.id} onCountChange={setCommentCount} />)
                   : <p className="text-sm text-gray-500 text-center py-8">Chưa có dữ liệu để bình luận.</p>
+              )}
+
+              {/* Lịch sử hoạt động hệ thống — hoàn thành nhiệm vụ, chuyển cột, đổi hạn chót...
+                  Tách khỏi Bình luận để không lẫn thông báo tự động với hội thoại thật. */}
+              {activeTab === 'history' && (
+                crmLeadId
+                  ? <CrmLeadHistoryPanel leadId={crmLeadId} forModule={workshopShareMod} />
+                  : <p className="text-sm text-gray-500 text-center py-8">Liên kết deal CRM để xem lịch sử.</p>
               )}
 
               {/* Thành viên */}

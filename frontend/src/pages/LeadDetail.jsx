@@ -77,7 +77,7 @@ import SxPickGuideList from '../components/SxPickGuideList';
 import Modal, { OverlayPortal } from '../components/Modal';
 import DealCrossScoresPanel from '../components/DealCrossScoresPanel';
 import LeadKpiLedgerPanel from '../components/LeadKpiLedgerPanel';
-import { CrmLeadCommentsPanel } from '../components/CommentsPanels';
+import { CrmLeadCommentsPanel, CrmLeadHistoryPanel } from '../components/CommentsPanels';
 import { CRM_DEAL_COMMENT_QUICK_REPLIES } from '../lib/crmCommentMentions';
 import { TASK_ATTACHMENT_FILE_ACCEPT } from '../lib/attachmentFileIcon';
 import DriveAttachments from '../components/drive/DriveAttachments';
@@ -4132,6 +4132,18 @@ export default function LeadDetail() {
               </button>
               <button
                 type="button"
+                data-tour="lead-tab-history"
+                onClick={() => setActiveTab('history')}
+                className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all ${
+                  activeTab === 'history'
+                    ? 'text-blue-600 border-b-2 border-blue-600'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                🕘 Lịch sử
+              </button>
+              <button
+                type="button"
                 data-tour="lead-tab-voice"
                 onClick={() => setActiveTab('voice_crm')}
                 className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all inline-flex items-center justify-center gap-1 ${
@@ -4917,6 +4929,10 @@ export default function LeadDetail() {
                     onCountChange={setCommentCount}
                     quickReplyTemplates={lead?.type === 'deal' ? CRM_DEAL_COMMENT_QUICK_REPLIES : []}
                   />
+                </div>
+              ) : activeTab === 'history' ? (
+                <div data-tour="lead-history-panel">
+                  <CrmLeadHistoryPanel leadId={id} />
                 </div>
               ) : activeTab === 'chat' ? (
                 <LeadChatTab leadId={id} socket={socket} />

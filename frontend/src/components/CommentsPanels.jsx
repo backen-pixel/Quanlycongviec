@@ -7,6 +7,7 @@ import {
   Check,
   CheckCheck,
   CheckCircle2,
+  Clock,
   Download,
   ExternalLink,
   Eye,
@@ -2606,7 +2607,10 @@ export function CrmLeadCommentsPanel({
     try {
       const params = forModule ? { for_module: forModule } : undefined;
       const r = await api.get(`/crm/leads/${activeLeadId}/comments`, { params });
-      const rows = Array.isArray(r.data) ? r.data : [];
+      const allRows = Array.isArray(r.data) ? r.data : [];
+      // Thông báo hệ thống (hoàn thành nhiệm vụ, chuyển giai đoạn...) chuyển sang tab Lịch sử —
+      // không hiện lẫn trong luồng Bình luận nữa (xem CrmLeadHistoryPanel bên dưới).
+      const rows = allRows.filter((c) => c.comment_type !== 'system');
       setComments(rows.map((c) => ({ ...c, reactions: c.reactions || { summary: [], mine: null } })));
       onCountChange?.(rows.length);
     } catch (e) {
@@ -2887,6 +2891,75 @@ export function CrmLeadCommentsPanel({
       onVcConfirm={vcConfirm}
       onVcReschedule={vcReschedule}
     />
+  );
+}
+
+/**
+ * Lịch sử hoạt động hệ thống của deal/lead — tách khỏi Bình luận (comment_type='system'):
+ * hoàn thành nhiệm vụ, chuyển giai đoạn, đổi hạn chót, bàn giao VC/LĐ, đổi người phụ trách...
+ * Chỉ đọc — không có ô soạn/reply, vì đây là log tự động, không phải hội thoại.
+ */
+export function CrmLeadHistoryPanel({ leadId, forModule = null }) {
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+
+  const load = useCallback(async () => {
+    if (!leadId) return;
+    setLoading(true);
+    setLoadError('');
+    try {
+      const params = forModule ? { for_module: forModule } : undefined;
+      const r = await api.get(`/crm/leads/${leadId}/comments`, { params });
+      const rows = Array.isArray(r.data) ? r.data : [];
+      const sys = rows
+        .filter((c) => c.comment_type === 'system')
+        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+      setItems(sys);
+    } catch (e) {
+      setItems([]);
+      setLoadError(e?.response?.data?.error || 'Không tải được lịch sử');
+    } finally {
+      setLoading(false);
+    }
+  }, [leadId, forModule]);
+
+  useEffect(() => { load(); }, [load]);
+
+  if (!leadId) {
+    return <p className="text-sm text-gray-500 text-center py-8">Chưa có dữ liệu để xem lịch sử.</p>;
+  }
+  if (loading) {
+    return <div className="text-center py-8 text-sm text-gray-400">Đang tải...</div>;
+  }
+  if (loadError) {
+    return <div className="text-center py-8 text-sm text-red-500">{loadError}</div>;
+  }
+  if (!items.length) {
+    return (
+      <div className="text-center py-8">
+        <Clock className="h-10 w-10 text-gray-200 mx-auto mb-2" />
+        <p className="text-sm text-gray-400">Chưa có lịch sử hoạt động nào</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2 max-h-[32rem] overflow-y-auto">
+      <div className="relative">
+        <div className="absolute left-5 top-0 bottom-0 w-0.5 bg-gradient-to-b from-teal-300 to-teal-100" />
+        {items.map((it) => (
+          <div key={it.id} className="p-3 bg-gray-50 rounded-lg border relative z-10 ml-4 mb-2">
+            <div className="absolute -left-5 top-4 w-3 h-3 bg-teal-600 rounded-full border-2 border-white" />
+            <div className="flex items-start justify-between gap-2">
+              <p className="text-sm text-gray-800 flex-1">{renderCrmCommentBody ? renderCrmCommentBody(it.body) : it.body}</p>
+              <span className="text-[10px] text-gray-400 shrink-0 whitespace-nowrap">{formatCrmCommentFullDateTime(it.created_at)}</span>
+            </div>
+            {it.user?.full_name && <p className="text-[10px] text-gray-400 mt-1">{it.user.full_name}</p>}
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 

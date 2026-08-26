@@ -297,7 +297,7 @@ async function resolveProjectLeadId(projectId) {
   return row?.id || null;
 }
 
-async function logDealActivityComment(req, { leadId, projectId, body }) {
+async function logDealActivityComment(req, { leadId, projectId, body, commentType = 'system' }) {
   try {
     const uid = getRequestUserId(req);
     if (!uid || !body) return;
@@ -308,11 +308,25 @@ async function logDealActivityComment(req, { leadId, projectId, body }) {
     const io = req.app?.get?.('io');
 
     if (resolvedLeadId) {
-      const { data, error } = await supabase
+      // Mặc định gắn comment_type='system': mọi lời gọi qua hàm này đều là thông báo tự động
+      // (hoàn thành nhiệm vụ, chuyển giai đoạn, đổi hạn chót...), không phải NV tự gõ — để tab
+      // Bình luận lọc ẩn được, chuyển hẳn sang tab Lịch sử. logProjectFileActivity() override về
+      // null cho các thông báo file (upload/xóa/đổi quyền...) vì NV vẫn muốn thấy chung với bình luận.
+      const insertRow = { lead_id: resolvedLeadId, user_id: uid, body };
+      if (commentType !== undefined) insertRow.comment_type = commentType;
+      let { data, error } = await supabase
         .from('crm_lead_comments')
-        .insert({ lead_id: resolvedLeadId, user_id: uid, body })
-        .select('id, lead_id, user_id, parent_id, body, attachments, created_at, updated_at, user:users!crm_lead_comments_user_id_fkey(id,full_name,avatar)')
+        .insert(insertRow)
+        .select('id, lead_id, user_id, parent_id, body, attachments, comment_type, created_at, updated_at, user:users!crm_lead_comments_user_id_fkey(id,full_name,avatar)')
         .single();
+      // Cột comment_type chưa migrate ở môi trường cũ → thử lại không kèm cột này.
+      if (error && String(error.message || '').includes('comment_type')) {
+        ({ data, error } = await supabase
+          .from('crm_lead_comments')
+          .insert({ lead_id: resolvedLeadId, user_id: uid, body })
+          .select('id, lead_id, user_id, parent_id, body, attachments, created_at, updated_at, user:users!crm_lead_comments_user_id_fkey(id,full_name,avatar)')
+          .single());
+      }
       if (!error && data && io) {
         io.to(`lead:${resolvedLeadId}`).emit('lead:comment', {
           lead_id: resolvedLeadId,
@@ -467,7 +481,9 @@ async function logProjectFileActivity(req, {
   const taskPart = taskTitle ? ` (nhiệm vụ: ${taskTitle})` : '';
   const extraPart = extra ? ` — ${extra}` : '';
   const body = `📎 ${userName} ${actionLabel} ${safeName}${taskPart}${extraPart}`;
-  await logDealActivityComment(req, { leadId, projectId, body });
+  // Thông báo file vẫn muốn NV thấy chung trong Bình luận (không tách sang Lịch sử) —
+  // giữ comment_type=null như hành vi cũ.
+  await logDealActivityComment(req, { leadId, projectId, body, commentType: null });
   if (action === 'deleted' && fileUrl) {
     await hideDeletedFileInDealComments({ leadId, projectId, fileUrl });
   }
