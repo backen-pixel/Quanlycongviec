@@ -35,6 +35,7 @@ const {
 const { applyAllActiveWorkshopTemplatesForArea } = require('../helpers/workshopApplyTemplates');
 const { assertProjectAccessible } = require('../helpers/projectAccessScope');
 const { enrichProjectsModulePresence } = require('../helpers/projectModuleCompanies');
+const { buildProjectFinanceReadModel } = require('../helpers/projectFinanceReadModel');
 
 const r = Router();
 r.use(auth);
@@ -655,8 +656,18 @@ r.get('/:id/cashflow', async (req, res) => {
     if (!(await assertProjectAccessible(req, res, req.params.id, { mode: 'sensitive' }))) return;
     const pid = String(req.params.id || '').replace(/"/g, '');
 
+    const { data: financeProject, error: financeProjectError } = await supabase
+      .from('projects')
+      .select('id, company_id, code, name, estimated_value, production_value')
+      .eq('id', pid)
+      .maybeSingle();
+    if (financeProjectError) throw financeProjectError;
+
     const leadIdSet = new Set();
-    const { data: leadsByProject } = await supabase.from('crm_leads').select('id').eq('project_id', pid);
+    const { data: leadsByProject } = await supabase
+      .from('crm_leads')
+      .select('id, parent_lead_id, estimated_value, stage_id')
+      .eq('project_id', pid);
     (leadsByProject || []).forEach((l) => { if (l?.id) leadIdSet.add(l.id); });
     try {
       const { data: dps } = await supabase
@@ -666,6 +677,31 @@ r.get('/:id/cashflow', async (req, res) => {
       (dps || []).forEach((r) => { if (r?.deal_id) leadIdSet.add(r.deal_id); });
     } catch (_) { /* bảng chưa có / không bắt buộc */ }
     const leadIds = [...leadIdSet];
+
+    let leadMeta = leadsByProject || [];
+    const knownLeadIds = new Set(leadMeta.map((lead) => String(lead.id)));
+    const missingLeadIds = leadIds.filter((leadId) => !knownLeadIds.has(String(leadId)));
+    if (missingLeadIds.length) {
+      const { data: linkedLeadMeta } = await supabase
+        .from('crm_leads')
+        .select('id, parent_lead_id, estimated_value, stage_id')
+        .in('id', missingLeadIds);
+      leadMeta = [...leadMeta, ...(linkedLeadMeta || [])];
+    }
+
+    const stageIds = [...new Set(leadMeta.map((lead) => lead.stage_id).filter(Boolean))];
+    const { data: financeStages } = stageIds.length
+      ? await supabase.from('crm_pipeline_stages').select('id, is_won, is_lost').in('id', stageIds)
+      : { data: [] };
+    const financeStageById = new Map((financeStages || []).map((stage) => [String(stage.id), stage]));
+    const commercialChanges = leadMeta
+      .filter((lead) => lead.parent_lead_id)
+      .map((lead) => ({
+        id: lead.id,
+        lead_id: lead.id,
+        estimated_value: num(lead.estimated_value),
+        stage: financeStageById.get(String(lead.stage_id)) || null,
+      }));
 
     const qSelectFull =
       'id, code, title, total, status, deposit_amount, deposit_received, deposit_label, created_at, project_id, lead_id';
@@ -703,7 +739,7 @@ r.get('/:id/cashflow', async (req, res) => {
     let orders = uniqById([...(oByProj || []), ...(oByLead || [])]);
 
     const iSelect =
-      'id, code, title, total, paid_amount, payment_status, status, invoice_date, created_at, project_id, lead_id, order_id';
+      'id, code, title, total, paid_amount, payment_status, status, invoice_date, due_date, created_at, project_id, lead_id, order_id';
     const [{ data: iByProject }, { data: iByLead }] = await Promise.all([
       supabase.from('invoices').select(iSelect).eq('project_id', pid),
       leadIds.length ? supabase.from('invoices').select(iSelect).in('lead_id', leadIds) : Promise.resolve({ data: [] }),
@@ -732,16 +768,80 @@ r.get('/:id/cashflow', async (req, res) => {
     const invById = new Map((invoices || []).map((i) => [i.id, i]));
 
     let expenses = [];
-    try {
-      const { data: ex } = await supabase
+    const expenseV2 = await supabase
+      .from('project_expenses')
+      .select('id, amount, expense_date, category, description, source_type, status, purchase_order_id, supplier_bill_id, created_at, created_by')
+      .eq('project_id', pid)
+      .order('expense_date', { ascending: false })
+      .order('created_at', { ascending: false });
+    if (!expenseV2.error) {
+      expenses = expenseV2.data || [];
+    } else {
+      const legacyExpenses = await supabase
         .from('project_expenses')
         .select('id, amount, expense_date, category, description, created_at, created_by')
         .eq('project_id', pid)
         .order('expense_date', { ascending: false })
         .order('created_at', { ascending: false });
-      expenses = ex || [];
-    } catch (_) {
-      expenses = [];
+      expenses = legacyExpenses.data || [];
+    }
+
+    let purchaseRequests = [];
+    let purchaseOrders = [];
+    let supplierBills = [];
+    let supplierPayments = [];
+    const financeSourceAvailability = {
+      sales: true,
+      procurement: true,
+      purchasing: true,
+      supplier_payables: true,
+      expenses: true,
+    };
+
+    const purchaseRequestResult = await supabase
+      .from('purchase_requests')
+      .select('id, project_id, expected_price, actual_price, status, supplier_committed_date, created_at')
+      .eq('project_id', pid);
+    if (purchaseRequestResult.error) {
+      financeSourceAvailability.procurement = false;
+    } else {
+      purchaseRequests = purchaseRequestResult.data || [];
+    }
+
+    const purchaseOrderV2 = await supabase
+      .from('purchase_orders')
+      .select('id, code, project_id, lead_id, supplier_id, total, paid_amount, payment_status, status, order_date, expected_date, due_date, created_at')
+      .eq('project_id', pid);
+    if (purchaseOrderV2.error) {
+      financeSourceAvailability.purchasing = false;
+      if (leadIds.length) {
+        const legacyPurchaseOrders = await supabase
+          .from('purchase_orders')
+          .select('id, code, lead_id, supplier_id, total, status, order_date, expected_date, created_at')
+          .in('lead_id', leadIds);
+        if (!legacyPurchaseOrders.error) purchaseOrders = legacyPurchaseOrders.data || [];
+      }
+    } else {
+      purchaseOrders = purchaseOrderV2.data || [];
+    }
+
+    const supplierBillResult = await supabase
+      .from('supplier_bills')
+      .select('id, code, project_id, purchase_order_id, supplier_id, total, paid_amount, status, bill_date, due_date, created_at')
+      .eq('project_id', pid);
+    if (supplierBillResult.error) {
+      financeSourceAvailability.supplier_payables = false;
+    } else {
+      supplierBills = supplierBillResult.data || [];
+      const supplierBillIds = supplierBills.map((bill) => bill.id).filter(Boolean);
+      if (supplierBillIds.length) {
+        const supplierPaymentResult = await supabase
+          .from('supplier_payments')
+          .select('id, supplier_bill_id, project_id, amount, payment_date, created_at')
+          .in('supplier_bill_id', supplierBillIds);
+        if (supplierPaymentResult.error) financeSourceAvailability.supplier_payables = false;
+        else supplierPayments = supplierPaymentResult.data || [];
+      }
     }
 
     const ts = (d) => {
@@ -854,6 +954,26 @@ r.get('/:id/cashflow', async (req, res) => {
     const payments_total = payments.reduce((s, p) => s + num(p.amount), 0);
     const expenses_total = expenses.reduce((s, e) => s + num(e.amount), 0);
 
+    const changeLeadIds = new Set(commercialChanges.map((change) => String(change.lead_id)));
+    const financeOrders = orders.map((order) => ({
+      ...order,
+      is_commercial_change: changeLeadIds.has(String(order.lead_id || '')),
+    }));
+    const financeContract = buildProjectFinanceReadModel({
+      project: financeProject || { id: pid },
+      quotations,
+      orders: financeOrders,
+      invoices,
+      customerPayments: payments,
+      purchaseRequests,
+      purchaseOrders,
+      supplierBills,
+      supplierPayments,
+      expenses,
+      commercialChanges,
+      sourceAvailability: financeSourceAvailability,
+    });
+
     let remaining_to_collect = 0;
     let remaining_basis = 'none';
     if (invoices.length > 0) {
@@ -873,7 +993,12 @@ r.get('/:id/cashflow', async (req, res) => {
       invoices,
       payments,
       expenses,
+      purchase_requests: purchaseRequests,
+      purchase_orders: purchaseOrders,
+      supplier_bills: supplierBills,
+      supplier_payments: supplierPayments,
       timeline,
+      finance_contract: financeContract,
       summary: {
         quotations: {
           count: quotations.length,
@@ -914,16 +1039,38 @@ r.post('/:id/expenses', async (req, res) => {
     const amount = num(b.amount);
     if (!(amount > 0)) return res.status(400).json({ error: 'Nhập số tiền chi > 0' });
 
+    const { data: projectScope } = await supabase
+      .from('projects')
+      .select('id, company_id, company:companies(tenant_id)')
+      .eq('id', pid)
+      .maybeSingle();
+
     const row = {
       project_id: pid,
+      company_id: projectScope?.company_id || null,
+      tenant_id: projectScope?.company?.tenant_id || req.user?.tenant_id || null,
       amount,
       expense_date: b.expense_date || null,
       category: b.category?.trim() || null,
       description: b.description?.trim() || null,
-      created_by: req.user.userId,
+      source_type: b.source_type || 'manual',
+      status: b.status === 'draft' ? 'draft' : 'confirmed',
+      purchase_order_id: b.purchase_order_id || null,
+      created_by: req.user.userId || req.user.id,
     };
 
-    const { data, error } = await supabase.from('project_expenses').insert(row).select('*').single();
+    let { data, error } = await supabase.from('project_expenses').insert(row).select('*').single();
+    if (error && (error.code === '42703' || String(error.message || '').toLowerCase().includes('column'))) {
+      const legacyRow = {
+        project_id: row.project_id,
+        amount: row.amount,
+        expense_date: row.expense_date,
+        category: row.category,
+        description: row.description,
+        created_by: row.created_by,
+      };
+      ({ data, error } = await supabase.from('project_expenses').insert(legacyRow).select('*').single());
+    }
     if (error) {
       if (error.message?.includes('does not exist') || error.code === '42P01') {
         return res.status(503).json({ error: 'Chưa chạy migration project_expenses (114_project_expenses.sql)' });

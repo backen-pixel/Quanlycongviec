@@ -14,6 +14,7 @@ import {
   FileText,
   GraduationCap,
   Package,
+  Plus,
   RefreshCw,
   Search,
   ShoppingCart,
@@ -373,9 +374,16 @@ export function OSOperationsView({ companyId }) {
 }
 
 export function OSPurchasingView({ companyId }) {
-  const [state, setState] = useState({ orders: [], products: [], suppliers: [], loading: true, refreshing: false, error: '' });
+  const [state, setState] = useState({ orders: [], products: [], suppliers: [], bills: [], payablesReady: true, loading: true, refreshing: false, error: '' });
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
+  const [view, setView] = useState('orders');
+  const [billFormOpen, setBillFormOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState('');
+  const [billForm, setBillForm] = useState({ purchase_order_id: '', supplier_invoice_number: '', bill_date: new Date().toISOString().slice(0, 10), due_date: '', total: '', notes: '' });
+  const [paymentBill, setPaymentBill] = useState(null);
+  const [paymentForm, setPaymentForm] = useState({ amount: '', payment_date: new Date().toISOString().slice(0, 10), payment_method: 'Chuyển khoản', reference_number: '' });
   const load = useCallback(async (silent = false) => {
     if (!companyId) return;
     setState((current) => ({ ...current, loading: !silent, refreshing: silent, error: '' }));
@@ -385,6 +393,7 @@ export function OSPurchasingView({ companyId }) {
         api.get('/purchasing/orders', { params }),
         api.get('/purchasing/products', { params }),
         api.get('/purchasing/suppliers', { params }),
+        api.get('/purchasing/bills', { params }),
       ]);
       const denied = results.find((result) => result.status === 'rejected' && result.reason?.response?.status === 403);
       if (denied && results.every((result) => result.status === 'rejected')) throw denied.reason;
@@ -392,6 +401,8 @@ export function OSPurchasingView({ companyId }) {
         orders: results[0].status === 'fulfilled' ? results[0].value.data || [] : [],
         products: results[1].status === 'fulfilled' ? results[1].value.data || [] : [],
         suppliers: results[2].status === 'fulfilled' ? results[2].value.data || [] : [],
+        bills: results[3].status === 'fulfilled' ? results[3].value.data || [] : [],
+        payablesReady: results[3].status === 'fulfilled' || results[3].reason?.response?.data?.code !== 'SUPPLIER_PAYABLES_SCHEMA_REQUIRED',
         loading: false, refreshing: false, error: '',
       });
     } catch (error) {
@@ -402,27 +413,92 @@ export function OSPurchasingView({ companyId }) {
   const openOrders = state.orders.filter((order) => !['received', 'cancelled'].includes(order.status));
   const dueOrders = openOrders.filter((order) => isPast(order.expected_date));
   const totalValue = openOrders.reduce((sum, order) => sum + (Number(order.total) || 0), 0);
+  const openBills = state.bills.filter((bill) => !['paid', 'cancelled', 'draft'].includes(bill.status));
+  const totalPayable = openBills.reduce((sum, bill) => sum + Math.max(0, (Number(bill.total) || 0) - (Number(bill.paid_amount) || 0)), 0);
+  const overdueBills = openBills.filter((bill) => isPast(bill.due_date));
   const filtered = useMemo(() => state.orders.filter((order) => {
     if (status && order.status !== status) return false;
     const keyword = search.trim().toLowerCase();
     return !keyword || [order.code, order.title, order.customer_name, order.supplier?.name].some((value) => String(value || '').toLowerCase().includes(keyword));
   }), [search, state.orders, status]);
+  const filteredBills = useMemo(() => state.bills.filter((bill) => {
+    const keyword = search.trim().toLowerCase();
+    return !keyword || [bill.code, bill.supplier_invoice_number, bill.supplier?.name, bill.project?.code, bill.project?.name].some((value) => String(value || '').toLowerCase().includes(keyword));
+  }), [search, state.bills]);
+
+  const choosePurchaseOrder = (purchaseOrderId) => {
+    const order = state.orders.find((item) => String(item.id) === String(purchaseOrderId));
+    setBillForm((current) => ({ ...current, purchase_order_id: purchaseOrderId, total: order ? String(Number(order.total) || 0) : current.total }));
+  };
+
+  const saveBill = async (event) => {
+    event.preventDefault();
+    setSaving(true);
+    setFormError('');
+    try {
+      await api.post('/purchasing/bills', {
+        company_id: companyId,
+        purchase_order_id: billForm.purchase_order_id || null,
+        supplier_invoice_number: billForm.supplier_invoice_number || null,
+        bill_date: billForm.bill_date,
+        due_date: billForm.due_date || null,
+        total: Number(billForm.total) || 0,
+        status: 'confirmed',
+        notes: billForm.notes || null,
+      });
+      setBillFormOpen(false);
+      setBillForm({ purchase_order_id: '', supplier_invoice_number: '', bill_date: new Date().toISOString().slice(0, 10), due_date: '', total: '', notes: '' });
+      setView('bills');
+      await load(true);
+    } catch (error) {
+      setFormError(error.response?.data?.error || 'Không ghi được hóa đơn nhà cung cấp.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const savePayment = async (event) => {
+    event.preventDefault();
+    if (!paymentBill) return;
+    setSaving(true);
+    setFormError('');
+    try {
+      await api.post(`/purchasing/bills/${paymentBill.id}/payments`, {
+        amount: Number(paymentForm.amount) || 0,
+        payment_date: paymentForm.payment_date,
+        payment_method: paymentForm.payment_method || null,
+        reference_number: paymentForm.reference_number || null,
+      });
+      setPaymentBill(null);
+      setPaymentForm({ amount: '', payment_date: new Date().toISOString().slice(0, 10), payment_method: 'Chuyển khoản', reference_number: '' });
+      await load(true);
+    } catch (error) {
+      setFormError(error.response?.data?.error || 'Không ghi được giao dịch chi.');
+    } finally {
+      setSaving(false);
+    }
+  };
   return (
     <div className="mx-auto max-w-[1540px] space-y-5 px-4 py-5 sm:px-6 lg:px-8 lg:py-7">
       <ModuleHeader eyebrow="Procurement" title="Mua hàng & nhà cung cấp" description="Theo dõi yêu cầu mua, đơn đặt hàng, ngày giao và danh mục vật tư theo đúng công ty đang chọn." icon={ShoppingCart} actionTo={`/mua-hang?company_id=${companyId}`} actionLabel="Mở nghiệp vụ mua hàng" onRefresh={() => load(true)} refreshing={state.refreshing} />
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <MetricCard label="Đơn đang mở" value={number(openOrders.length)} hint="Chưa nhận đủ hoặc chưa kết thúc" icon={ShoppingCart} tone="amber" />
         <MetricCard label="Giá trị đang mua" value={money(totalValue)} hint="Tổng giá trị đơn đang mở" icon={CircleDollarSign} />
-        <MetricCard label="Trễ ngày giao" value={number(dueOrders.length)} hint="Cần làm việc lại với nhà cung cấp" icon={AlertTriangle} tone="red" />
-        <MetricCard label="Danh mục nguồn" value={number(state.products.length)} hint={`${number(state.suppliers.length)} nhà cung cấp hoạt động`} icon={Package} tone="emerald" />
+        <MetricCard label="Công nợ phải trả" value={money(totalPayable)} hint={`${number(overdueBills.length)} hóa đơn NCC quá hạn`} icon={FileText} tone={overdueBills.length ? 'red' : 'amber'} />
+        <MetricCard label="Cảnh báo mua hàng" value={number(dueOrders.length + overdueBills.length)} hint={`${number(dueOrders.length)} đơn trễ giao · ${number(state.suppliers.length)} nhà cung cấp`} icon={AlertTriangle} tone="red" />
       </div>
       <ModuleState loading={state.loading} error={state.error} onRetry={() => load()}>
         <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
           <div className="flex flex-col gap-3 border-b border-slate-100 p-4 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex flex-wrap gap-2"><button type="button" onClick={() => setStatus('')} className={`rounded-full px-3 py-1.5 text-[10px] font-extrabold ${!status ? 'bg-slate-950 text-white' : 'bg-slate-100 text-slate-600'}`}>Tất cả</button>{Object.entries(PO_STATUS).map(([key, label]) => state.orders.some((order) => order.status === key) && <button key={key} type="button" onClick={() => setStatus(status === key ? '' : key)} className={`rounded-full px-3 py-1.5 text-[10px] font-extrabold ${status === key ? 'bg-orange-600 text-white' : 'bg-orange-50 text-orange-700'}`}>{label}</button>)}</div>
-            <SearchBox value={search} onChange={setSearch} placeholder="Tìm mã đơn, khách hàng, nhà cung cấp…" />
+            <div className="flex flex-wrap gap-2">
+              <button type="button" onClick={() => setView('orders')} className={`rounded-full px-3 py-1.5 text-[10px] font-extrabold ${view === 'orders' ? 'bg-slate-950 text-white' : 'bg-slate-100 text-slate-600'}`}>Đơn mua · {number(state.orders.length)}</button>
+              <button type="button" onClick={() => setView('bills')} className={`rounded-full px-3 py-1.5 text-[10px] font-extrabold ${view === 'bills' ? 'bg-slate-950 text-white' : 'bg-slate-100 text-slate-600'}`}>Công nợ NCC · {number(state.bills.length)}</button>
+              {view === 'orders' && Object.entries(PO_STATUS).map(([key, label]) => state.orders.some((order) => order.status === key) && <button key={key} type="button" onClick={() => setStatus(status === key ? '' : key)} className={`rounded-full px-3 py-1.5 text-[10px] font-extrabold ${status === key ? 'bg-orange-600 text-white' : 'bg-orange-50 text-orange-700'}`}>{label}</button>)}
+            </div>
+            <div className="flex flex-1 items-center justify-end gap-2"><SearchBox value={search} onChange={setSearch} placeholder="Tìm mã, Project, nhà cung cấp…" /><button type="button" disabled={!state.payablesReady} onClick={() => { setFormError(''); setBillFormOpen(true); }} className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl bg-orange-600 px-3 text-[10px] font-extrabold text-white disabled:cursor-not-allowed disabled:opacity-40"><Plus className="h-3.5 w-3.5" /> Hóa đơn NCC</button></div>
           </div>
-          <div className="divide-y divide-slate-100">
+          {!state.payablesReady && <div className="flex items-start gap-2 border-b border-amber-200 bg-amber-50 px-4 py-3 text-[11px] leading-5 text-amber-800"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /><p>Cần áp dụng migration 581 để mở hóa đơn, thanh toán và công nợ nhà cung cấp. Danh sách đơn mua hiện hữu vẫn hoạt động bình thường.</p></div>}
+          {view === 'orders' ? <div className="divide-y divide-slate-100">
             {filtered.map((order) => (
               <Link key={order.id} to={`/mua-hang/orders/${order.id}`} className="grid gap-3 px-5 py-4 transition hover:bg-orange-50/50 lg:grid-cols-[130px_minmax(0,1fr)_170px_125px_130px_24px] lg:items-center">
                 <span className="text-[10px] font-black text-orange-700">{order.code || 'CHƯA CÓ MÃ'}</span>
@@ -434,9 +510,24 @@ export function OSPurchasingView({ companyId }) {
               </Link>
             ))}
             {!filtered.length && <EmptyRow icon={ShoppingCart}>Chưa có đơn mua hàng phù hợp.</EmptyRow>}
-          </div>
+          </div> : <div className="divide-y divide-slate-100">
+            {filteredBills.map((bill) => {
+              const outstanding = Math.max(0, (Number(bill.total) || 0) - (Number(bill.paid_amount) || 0));
+              return <div key={bill.id} className="grid gap-3 px-5 py-4 lg:grid-cols-[130px_minmax(0,1fr)_180px_135px_120px_105px] lg:items-center">
+                <span className="text-[10px] font-black text-orange-700">{bill.code}</span>
+                <div className="min-w-0"><p className="truncate text-xs font-extrabold text-slate-900">{bill.supplier?.name || 'Chưa chọn nhà cung cấp'}</p><p className="mt-1 truncate text-[10px] text-slate-500">{bill.project?.code || 'Chưa gắn Project'} · HĐ NCC {bill.supplier_invoice_number || 'chưa nhập số'}</p></div>
+                <span className="truncate text-[10px] font-semibold text-slate-600">{bill.purchase_order?.code || 'Không gắn PO'}</span>
+                <div className="text-right"><p className="text-[10px] font-extrabold text-slate-900">{money(bill.total)}</p><p className="mt-1 text-[9px] text-amber-700">Còn {money(outstanding)}</p></div>
+                <div><span className={`rounded-full px-2.5 py-1 text-[9px] font-extrabold ${statusTone(bill.status)}`}>{bill.status === 'confirmed' ? 'Chờ thanh toán' : bill.status === 'partial_paid' ? 'Đã trả một phần' : bill.status === 'paid' ? 'Đã thanh toán' : bill.status}</span><p className={`mt-1 text-[9px] ${outstanding > 0 && isPast(bill.due_date) ? 'font-bold text-red-600' : 'text-slate-400'}`}>{date(bill.due_date)}</p></div>
+                <button type="button" disabled={outstanding <= 0 || ['draft', 'cancelled'].includes(bill.status)} onClick={() => { setFormError(''); setPaymentBill(bill); setPaymentForm((current) => ({ ...current, amount: String(outstanding) })); }} className="rounded-lg border border-emerald-200 px-2 py-1.5 text-[10px] font-bold text-emerald-700 disabled:opacity-40">Ghi chi</button>
+              </div>;
+            })}
+            {!filteredBills.length && <EmptyRow icon={FileText}>Chưa có hóa đơn nhà cung cấp phù hợp.</EmptyRow>}
+          </div>}
         </section>
       </ModuleState>
+      {billFormOpen && <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/45 p-4" onClick={() => setBillFormOpen(false)}><form onSubmit={saveBill} onClick={(event) => event.stopPropagation()} className="w-full max-w-xl rounded-2xl bg-white p-5 shadow-2xl"><div className="flex items-start justify-between gap-3"><div><h3 className="text-lg font-black text-slate-950">Ghi hóa đơn nhà cung cấp</h3><p className="mt-1 text-xs text-slate-500">Chọn PO để tự gắn Project, nhà cung cấp và giá trị cam kết.</p></div><button type="button" onClick={() => setBillFormOpen(false)} className="text-slate-400">×</button></div><div className="mt-5 grid gap-3 sm:grid-cols-2"><label className="sm:col-span-2 text-[10px] font-bold text-slate-600">Đơn mua hàng<select required value={billForm.purchase_order_id} onChange={(event) => choosePurchaseOrder(event.target.value)} className="mt-1 h-10 w-full rounded-xl border border-slate-200 px-3 text-xs"><option value="">Chọn PO</option>{state.orders.filter((order) => !['draft', 'cancelled'].includes(order.status)).map((order) => <option key={order.id} value={order.id}>{order.code} · {order.project?.code || order.lead?.title || order.title}</option>)}</select></label><label className="text-[10px] font-bold text-slate-600">Số hóa đơn NCC<input value={billForm.supplier_invoice_number} onChange={(event) => setBillForm((current) => ({ ...current, supplier_invoice_number: event.target.value }))} className="mt-1 h-10 w-full rounded-xl border border-slate-200 px-3 text-xs" /></label><label className="text-[10px] font-bold text-slate-600">Tổng tiền<input required type="number" min="1" value={billForm.total} onChange={(event) => setBillForm((current) => ({ ...current, total: event.target.value }))} className="mt-1 h-10 w-full rounded-xl border border-slate-200 px-3 text-xs" /></label><label className="text-[10px] font-bold text-slate-600">Ngày hóa đơn<input required type="date" value={billForm.bill_date} onChange={(event) => setBillForm((current) => ({ ...current, bill_date: event.target.value }))} className="mt-1 h-10 w-full rounded-xl border border-slate-200 px-3 text-xs" /></label><label className="text-[10px] font-bold text-slate-600">Hạn thanh toán<input type="date" value={billForm.due_date} onChange={(event) => setBillForm((current) => ({ ...current, due_date: event.target.value }))} className="mt-1 h-10 w-full rounded-xl border border-slate-200 px-3 text-xs" /></label><label className="sm:col-span-2 text-[10px] font-bold text-slate-600">Ghi chú<textarea value={billForm.notes} onChange={(event) => setBillForm((current) => ({ ...current, notes: event.target.value }))} className="mt-1 min-h-20 w-full rounded-xl border border-slate-200 p-3 text-xs" /></label></div>{formError && <p className="mt-3 text-xs font-bold text-red-600">{formError}</p>}<div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setBillFormOpen(false)} className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-bold text-slate-600">Hủy</button><button disabled={saving} className="rounded-xl bg-orange-600 px-4 py-2 text-xs font-bold text-white disabled:opacity-50">{saving ? 'Đang lưu…' : 'Xác nhận hóa đơn'}</button></div></form></div>}
+      {paymentBill && <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/45 p-4" onClick={() => setPaymentBill(null)}><form onSubmit={savePayment} onClick={(event) => event.stopPropagation()} className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-2xl"><h3 className="text-lg font-black text-slate-950">Ghi chi {paymentBill.code}</h3><p className="mt-1 text-xs text-slate-500">Giao dịch sẽ cập nhật tự động công nợ hóa đơn và PO.</p><div className="mt-5 grid gap-3 sm:grid-cols-2"><label className="text-[10px] font-bold text-slate-600">Số tiền<input required type="number" min="1" max={Math.max(0, (Number(paymentBill.total) || 0) - (Number(paymentBill.paid_amount) || 0))} value={paymentForm.amount} onChange={(event) => setPaymentForm((current) => ({ ...current, amount: event.target.value }))} className="mt-1 h-10 w-full rounded-xl border border-slate-200 px-3 text-xs" /></label><label className="text-[10px] font-bold text-slate-600">Ngày chi<input required type="date" value={paymentForm.payment_date} onChange={(event) => setPaymentForm((current) => ({ ...current, payment_date: event.target.value }))} className="mt-1 h-10 w-full rounded-xl border border-slate-200 px-3 text-xs" /></label><label className="text-[10px] font-bold text-slate-600">Phương thức<input value={paymentForm.payment_method} onChange={(event) => setPaymentForm((current) => ({ ...current, payment_method: event.target.value }))} className="mt-1 h-10 w-full rounded-xl border border-slate-200 px-3 text-xs" /></label><label className="text-[10px] font-bold text-slate-600">Mã tham chiếu<input value={paymentForm.reference_number} onChange={(event) => setPaymentForm((current) => ({ ...current, reference_number: event.target.value }))} className="mt-1 h-10 w-full rounded-xl border border-slate-200 px-3 text-xs" /></label></div>{formError && <p className="mt-3 text-xs font-bold text-red-600">{formError}</p>}<div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setPaymentBill(null)} className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-bold text-slate-600">Hủy</button><button disabled={saving} className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white disabled:opacity-50">{saving ? 'Đang lưu…' : 'Ghi nhận chi'}</button></div></form></div>}
     </div>
   );
 }

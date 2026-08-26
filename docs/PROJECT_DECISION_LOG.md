@@ -227,59 +227,65 @@ Trước khi mở thêm tính năng hoặc làm lại sâu một module, xử l�
 3. Chuẩn hóa định nghĩa, phạm vi và nguồn dữ liệu của KPI/read model.
 4. Kiểm thử staging theo công ty pilot và giữ đường quay lại giao diện hiện tại.
 
-Làn cải tổ giao diện/nghiệp vụ được thực hiện tuần tự: **Dự án & Công việc → Vận hành/Sản xuất/VC-LĐ → CRM chi tiết → Mua hàng & Tài chính → Báo cáo & AI → UAT cutover và rút giao diện cũ**. Làn này không thay thế lộ trình nghiệp vụ bên dưới; mỗi bước phải phục vụ và được nghiệm thu trong vertical slice tương ứng.
+Làn cải tổ giao diện/nghiệp vụ được thực hiện tuần tự: **Dự án & Công việc → Vận hành/Sản xuất/VC-LĐ → CRM chi tiết → Mua hàng & Tài chính → Báo cáo & AI → Blueprint đa công ty → UAT cutover và rút giao diện cũ**. Mỗi vertical slice vẫn phải vượt test tự động, tenant isolation và build trước khi mở lát cắt kế tiếp; UAT của anh và người dùng nghiệp vụ được gom về cuối, sau khi baseline 02 đủ module.
 
-### Giai đoạn 1 — UAT dữ liệu thật tại một công ty
-
-Chạy xuyên suốt tối thiểu 3–5 hồ sơ thật, bao phủ các tình huống:
-
-1. Khách đi đủ quy trình Khảo sát → Thiết kế → Báo giá.
-2. Khách đã có thiết kế và chỉ cần kiểm tra hồ sơ trước Báo giá.
-3. Dự án lắp đặt bằng đội nội bộ.
-4. Dự án lắp đặt bằng đội thuê ngoài.
-5. Một kế hoạch CSKH 7/30/90 ngày và một case Bảo hành/Dịch vụ/Khiếu nại có ảnh hoặc minh chứng.
-6. Một phát sinh Project có bằng chứng, người chịu trách nhiệm, ảnh hưởng chi phí/tiến độ, bên chịu chi phí và kết quả phê duyệt.
-
-Nghiệm thu theo vai trò thực tế, kiểm tra task gate, SLA, thông báo, KPI, phân quyền và khả năng truy vết. Lỗi chặn vận hành phải được sửa và kiểm thử lại trên staging trước khi mở rộng.
-
-### Giai đoạn 2 — Mua hàng → Chi phí → Công nợ
+### Giai đoạn 1 — Mua hàng → Chi phí → Công nợ
 
 Triển khai một vertical slice nối từ Dự án/Sản xuất đến:
 
 1. Yêu cầu mua hàng.
-2. Đơn mua hàng.
+2. Đơn mua hàng gắn Project và truy ngược yêu cầu nguồn.
 3. Nhận hàng và đối chiếu.
 4. Ghi nhận chi phí theo Dự án.
 5. Hóa đơn, thanh toán và công nợ phải thu/phải trả.
 6. Phát sinh thương mại đã duyệt và ảnh hưởng của nó tới doanh thu/forecast Project.
 7. Read model tài chính Project, tách riêng P&L, dòng tiền và dự báo.
 
-Tiếp tục dùng chứng từ và bảng nghiệp vụ hiện hữu làm System of Record; Business OS chỉ điều phối stage, task, SLA, KPI và audit, không tạo nguồn dữ liệu song song.
+Tiếp tục dùng chứng từ và bảng nghiệp vụ hiện hữu làm System of Record; Business OS chỉ điều phối stage, task, SLA, KPI và audit, không tạo nguồn dữ liệu song song. Các lát cắt phải có test tự động và fallback tương thích khi migration mới chưa được áp dụng.
 
-### Giai đoạn 3 — Báo cáo điều hành
+### Giai đoạn 2 — Báo cáo điều hành
 
 - Dashboard xuyên phòng ban từ Lead đến doanh thu, chi phí, biên lợi nhuận, công nợ và sau bán.
 - Project Cockpit hiển thị doanh thu hợp đồng, phát sinh đã duyệt, chi phí kế hoạch/cam kết/thực tế/dự báo, lợi nhuận và biên lợi nhuận; mọi số liệu phải drill-down về chứng từ nguồn.
 - KPI phải truy ngược được về hồ sơ/chứng từ thật; không dùng số liệu minh họa khi chạy thật.
 - Có góc nhìn theo công ty, phòng ban, người phụ trách, quy trình và thời gian.
 
-### Giai đoạn 4 — Governed AI Agent
+### Giai đoạn 3 — Governed AI Agent
 
 - AI đọc dữ liệu theo đúng tenant và quyền người dùng.
 - AI ưu tiên tóm tắt, cảnh báo, đề xuất hành động và soạn nội dung; gồm cảnh báo phát sinh chưa duyệt, công nợ đến hạn và nguy cơ giảm biên lợi nhuận Project.
 - Mọi hành động làm thay đổi dữ liệu quan trọng phải có quyền, xác nhận và audit; AI không tự ý duyệt chứng từ hoặc bỏ qua process gate.
 
-### Giai đoạn 5 — Blueprint đa công ty
+### Giai đoạn 4 — Blueprint đa công ty
 
 - Chuẩn hóa process template, stage contract, task/SLA/KPI template, role mapping và cấu hình module thành Blueprint có version.
 - Nhân bản thử sang công ty thứ hai mà không sao chép dữ liệu giao dịch của công ty pilot.
 - Kiểm thử tenant isolation, cấu hình riêng từng công ty và rollback version trước khi cho phép nhân rộng.
 
-### Giai đoạn 6 — Sẵn sàng triển khai rộng
+### Giai đoạn 5 — Ổn định tích hợp và chốt baseline 02
+
+- Chạy hồi quy tự động toàn tuyến, tenant isolation, build và browser smoke trên toàn bộ module Business OS.
+- Kiểm tra migration additive, schema, hiệu năng truy vấn và khả năng drill-down về chứng từ nguồn.
+- Chốt commit/tag baseline 02, database/migration manifest, test evidence, backup và rollback trước khi giao anh kiểm thử.
+
+### Giai đoạn 6 — UAT toàn hệ thống với dữ liệu thật
+
+Chạy xuyên suốt tối thiểu 3–5 hồ sơ thật, bao phủ:
+
+1. Hai lộ trình Sales: khách cần thiết kế và khách đã có thiết kế.
+2. Dự án lắp đặt nội bộ và thuê ngoài.
+3. Mua hàng, nhận hàng, chi phí, hóa đơn, thu/chi và công nợ.
+4. Phát sinh Project có phê duyệt, bằng chứng và ảnh hưởng lợi nhuận/tiến độ.
+5. CSKH 7/30/90 và một case Bảo hành/Dịch vụ/Khiếu nại.
+6. Dashboard, AI cảnh báo và Blueprint công ty thứ hai trong đúng tenant scope.
+
+Nghiệm thu theo vai trò thực tế, kiểm tra task gate, SLA, thông báo, KPI, phân quyền và khả năng truy vết. Lỗi chặn vận hành phải được sửa, kiểm thử lại và cập nhật baseline 02 trước cutover.
+
+### Giai đoạn 7 — Sẵn sàng triển khai rộng
 
 - Hoàn tất kiểm thử hồi quy, hiệu năng, sao lưu/khôi phục, quan sát lỗi, hướng dẫn sử dụng và đào tạo người dùng.
 - Chỉ deploy production hoặc mở rộng nhiều công ty sau khi staging một công ty đạt tiêu chí nghiệm thu.
-- Thứ tự thực hiện đã chốt: **UAT dữ liệu thật → Mua hàng/Chi phí/Công nợ → Báo cáo → AI có kiểm soát → Blueprint công ty thứ hai → Deploy rộng**.
+- Thứ tự thực hiện đã chốt ngày 2026-08-26: **Mua hàng/Chi phí/Công nợ → Báo cáo → AI có kiểm soát → Blueprint công ty thứ hai → baseline 02 → UAT toàn hệ thống → Deploy rộng**.
 
 ## 7. Nguyên tắc làm việc giữa anh Hùng và Codex
 
@@ -292,9 +298,17 @@ Tiếp tục dùng chứng từ và bảng nghiệp vụ hiện hữu làm Syste
 
 ## 8. Lịch sử quyết định
 
+### 2026-08-26 — Đổi thứ tự: hoàn thiện module trước, UAT người dùng sau
+
+- Theo quyết định mới của anh Hùng, Codex tiếp tục hoàn thiện các vertical slice còn lại trước khi anh kiểm thử nghiệp vụ toàn hệ thống.
+- Quyết định này thay thế phần thứ tự “không mở thêm module trước UAT” của baseline 01 và lộ trình UAT-trước đó; không xóa hoặc di chuyển tag baseline 01.
+- Baseline 01 chỉ còn là mốc lịch sử/rollback. Nhánh phát triển tiến tới baseline 02 sau khi Mua hàng/Tài chính, Báo cáo/AI và Blueprint đã qua test tự động.
+- Mỗi lát cắt vẫn phải kiểm thử hồi quy, tenant isolation và build; việc dời UAT người dùng không được hiểu là bỏ kiểm thử kỹ thuật.
+- Quyết định này không cho phép deploy production. Chỉ UAT/cutover sau khi baseline 02 có migration manifest, backup và rollback rõ ràng.
+
 ### 2026-08-26 — Khóa Business OS vNext staging baseline 01
 
-- Mốc code dùng tag `business-os-vnext-staging-baseline-01`; không mở thêm module trước UAT.
+- Mốc code dùng tag `business-os-vnext-staging-baseline-01`; điều kiện “không mở thêm module trước UAT” đã được quyết định mới cùng ngày thay thế, còn tag vẫn giữ nguyên làm mốc lịch sử.
 - Database staging phải vượt read-only audit của migration 473 và 567–580; test Business OS, tenant isolation, CRM parity có xác thực, live smoke và frontend build đều phải PASS.
 - Rollback code không chạy down migration và không xóa dữ liệu/audit UAT; route legacy được giữ làm fallback.
 - UAT 3–5 hồ sơ thật chỉ bắt đầu sau khi có backup hoàn tất mới hơn schema freeze của baseline; PITR hiện chưa bật.
@@ -305,7 +319,7 @@ Tiếp tục dùng chứng từ và bảng nghiệp vụ hiện hữu làm Syste
 - Khi gate `READY`, lệnh readiness mới được sinh biên bản phiên UAT cục bộ; manifest chỉ whitelist số liệu tổng hợp, commit/database/backup/migration và không đưa PII vào Git.
 - Hồi quy commit `d71f8a2d`: Business OS **31/31**, tenant isolation PASS, frontend build exit code `0`; kỹ thuật đạt nhưng UAT thật vẫn `BLOCKED_BY_BACKUP`.
 - Browser smoke chỉ đọc đạt **11/11** màn Business OS, không màn trắng, login redirect hoặc console error; localhost được trả về `/business-os` sau kiểm tra.
-- Sau UAT và sửa blocker mới mở lát cắt Mua hàng → Chi phí Project → Hóa đơn/Thanh toán → Công nợ.
+- Trình tự “sau UAT mới mở lát cắt Mua hàng/Tài chính” đã được quyết định mới cùng ngày thay thế; lát cắt này là bước phát triển đầu tiên hướng tới baseline 02.
 - Hồ sơ baseline: `docs/baseline/BUSINESS_OS_VNEXT_STAGING_BASELINE_01.md`.
 
 ### 2026-08-26 — Đưa Project Cockpit vào cùng Business OS shell

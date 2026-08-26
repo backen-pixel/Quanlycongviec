@@ -10,7 +10,7 @@ import { FileUploadButton, FilePreview } from '../components/FileUpload';
 import { formatDate } from '../lib/utils';
 import {
   ArrowLeft, ChevronRight, ExternalLink, Shield, MessageCircle, Loader2, CheckCircle2, Package, AlertTriangle,
-  Pencil, Plus, XCircle, X as XIcon,
+  Pencil, Plus, XCircle, X as XIcon, CircleDollarSign, ReceiptText, WalletCards, TrendingUp,
 } from 'lucide-react';
 
 const DONE_TASK_STATUSES_SX = ['done', 'completed', 'cancelled'];
@@ -219,6 +219,7 @@ const DETAIL_TABS = [
   { key: 'tasks', label: 'Công việc' },
   { key: 'materials', label: 'Vật tư' },
   { key: 'changes', label: 'Phát sinh & thay đổi' },
+  { key: 'finance', label: 'Tài chính & lợi nhuận' },
   { key: 'documents', label: 'Hồ sơ - bản vẽ' },
   { key: 'history', label: 'Hoạt động' },
 ];
@@ -660,6 +661,129 @@ function MaterialsTab({ projectId }) {
   );
 }
 
+function FinanceMetric({ label, value, hint, tone = 'slate', icon: Icon = CircleDollarSign }) {
+  const tones = {
+    slate: 'bg-slate-50 text-slate-700',
+    blue: 'bg-blue-50 text-blue-700',
+    emerald: 'bg-emerald-50 text-emerald-700',
+    amber: 'bg-amber-50 text-amber-700',
+    red: 'bg-red-50 text-red-700',
+  };
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">{label}</p>
+          <p className="mt-2 text-lg font-black text-slate-950">{value}</p>
+        </div>
+        <span className={`flex h-9 w-9 items-center justify-center rounded-xl ${tones[tone] || tones.slate}`}><Icon className="h-4 w-4" /></span>
+      </div>
+      <p className="mt-2 text-[10px] leading-4 text-slate-500">{hint}</p>
+    </div>
+  );
+}
+
+function ProjectFinanceTab({ projectId, companyId }) {
+  const [state, setState] = useState({ loading: true, error: '', data: null });
+  const load = useCallback(() => {
+    setState((current) => ({ ...current, loading: true, error: '' }));
+    return api.get(`/projects/${projectId}/cashflow`, { params: companyId ? { company_id: companyId } : {} })
+      .then((response) => setState({ loading: false, error: '', data: response.data || {} }))
+      .catch((error) => setState({ loading: false, error: error?.response?.data?.error || 'Không tải được tài chính Project', data: null }));
+  }, [companyId, projectId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  if (state.loading) return <Section title="Tài chính & lợi nhuận"><EmptyNote>Đang tổng hợp chứng từ nguồn...</EmptyNote></Section>;
+  if (state.error) return <Section title="Tài chính & lợi nhuận"><EmptyNote>{state.error}</EmptyNote></Section>;
+
+  const data = state.data || {};
+  const finance = data.finance_contract;
+  if (!finance) return <Section title="Tài chính & lợi nhuận"><EmptyNote>Backend chưa cung cấp contract project_finance_v1.</EmptyNote></Section>;
+  const revenue = finance.revenue || {};
+  const cost = finance.cost || {};
+  const profit = finance.profitability || {};
+  const receivables = finance.receivables || {};
+  const payables = finance.payables || {};
+  const cashflow = finance.cashflow || {};
+  const counts = finance.counts || {};
+  const forecastComplete = profit.forecast_complete === true;
+  const marginTone = !forecastComplete ? 'amber' : Number(profit.forecast_margin_pct) < 0 ? 'red' : Number(profit.forecast_margin_pct) < 15 ? 'amber' : 'emerald';
+  const sourceDocuments = [
+    ...(data.orders || []).map((item) => ({ key: `order-${item.id}`, type: 'Đơn bán', code: item.code, amount: item.total, status: item.status, href: `/crm/orders/${item.id}` })),
+    ...(data.invoices || []).map((item) => ({ key: `invoice-${item.id}`, type: 'Hóa đơn khách', code: item.code, amount: item.total, status: item.payment_status || item.status, href: `/crm/invoices/${item.id}` })),
+    ...(data.purchase_orders || []).map((item) => ({ key: `po-${item.id}`, type: 'Đơn mua', code: item.code, amount: item.total, status: item.status, href: `/mua-hang/orders/${item.id}` })),
+    ...(data.supplier_bills || []).map((item) => ({ key: `supplier-bill-${item.id}`, type: 'Hóa đơn NCC', code: item.code, amount: item.total, status: item.status, href: `/business-os/purchasing?company_id=${encodeURIComponent(companyId || '')}` })),
+  ];
+
+  return (
+    <div className="space-y-4">
+      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-600">project_finance_v1</p>
+            <h2 className="mt-1 text-sm font-bold text-slate-900">P&amp;L · Dòng tiền · Dự báo Project</h2>
+            <p className="mt-1 text-xs text-slate-500">Số liệu tổng hợp từ chứng từ nguồn; trạng thái tài chính không làm thay đổi chặng vận hành.</p>
+          </div>
+          <Link to={`/ketoan/dashboard?client_company_id=${encodeURIComponent(companyId || '')}`} className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700">
+            Mở sổ tài chính <ExternalLink className="h-3.5 w-3.5" />
+          </Link>
+        </div>
+        {finance.status === 'partial' && (
+          <div className="mt-4 flex items-start gap-2 rounded-xl bg-amber-50 px-3 py-2 text-[11px] leading-5 text-amber-800">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <p><span className="font-bold">Dữ liệu tài chính chưa đủ nguồn.</span> Cần áp dụng migration 581 để gắn PO với Project và mở công nợ nhà cung cấp; số liệu hiện tại vẫn dùng chứng từ cũ có thể truy ngược.</p>
+          </div>
+        )}
+      </section>
+
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <FinanceMetric label="Doanh thu dự báo" value={formatCurrency(revenue.forecast)} hint={`${formatCurrency(revenue.contract)} hợp đồng · ${formatCurrency(revenue.approved_changes)} phát sinh duyệt`} icon={TrendingUp} tone="blue" />
+        <FinanceMetric label="Chi phí dự báo" value={formatCurrency(cost.forecast)} hint={`${formatCurrency(cost.committed)} đã cam kết · ${formatCurrency(cost.actual)} thực tế`} icon={ReceiptText} tone="amber" />
+        <FinanceMetric label="Lợi nhuận dự báo" value={forecastComplete ? formatCurrency(profit.forecast_profit) : 'Chưa đủ chi phí'} hint={forecastComplete ? 'Doanh thu dự báo trừ chi phí dự báo' : `${formatCurrency(profit.forecast_profit)} là số tạm tính theo nguồn đang có`} icon={CircleDollarSign} tone={marginTone} />
+        <FinanceMetric label="Biên lợi nhuận" value={!forecastComplete || profit.forecast_margin_pct == null ? 'Chưa đủ dữ liệu' : `${profit.forecast_margin_pct}%`} hint={forecastComplete ? `${formatCurrency(profit.current_profit)} lợi nhuận trên phần đã xuất hóa đơn` : 'Không công bố biên khi nguồn chi phí chưa hoàn chỉnh'} icon={TrendingUp} tone={marginTone} />
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-3">
+        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="flex items-center gap-2"><CircleDollarSign className="h-4 w-4 text-blue-600" /><h3 className="text-sm font-bold text-slate-900">Phải thu khách hàng</h3></div>
+          <p className="mt-3 text-2xl font-black text-blue-700">{formatCurrency(receivables.outstanding)}</p>
+          <div className="mt-3 space-y-1 text-[11px] text-slate-500"><p>Đã xuất hóa đơn: <span className="font-semibold text-slate-700">{formatCurrency(revenue.invoiced)}</span></p><p>Đã thu: <span className="font-semibold text-slate-700">{formatCurrency(receivables.customer_cash_received)}</span></p><p>Còn phải xuất HĐ: <span className="font-semibold text-slate-700">{formatCurrency(revenue.remaining_to_invoice)}</span></p></div>
+        </section>
+        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="flex items-center gap-2"><ReceiptText className="h-4 w-4 text-amber-600" /><h3 className="text-sm font-bold text-slate-900">Phải trả nhà cung cấp</h3></div>
+          <p className="mt-3 text-2xl font-black text-amber-700">{formatCurrency(payables.outstanding)}</p>
+          <div className="mt-3 space-y-1 text-[11px] text-slate-500"><p>Hóa đơn NCC: <span className="font-semibold text-slate-700">{formatCurrency(cost.supplier_billed)}</span></p><p>Đã chi NCC: <span className="font-semibold text-slate-700">{formatCurrency(payables.supplier_cash_paid)}</span></p><p>PO chưa có hóa đơn: <span className="font-semibold text-slate-700">{formatCurrency(cost.unbilled_commitment)}</span></p></div>
+        </section>
+        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="flex items-center gap-2"><WalletCards className="h-4 w-4 text-emerald-600" /><h3 className="text-sm font-bold text-slate-900">Dòng tiền Project</h3></div>
+          <p className={`mt-3 text-2xl font-black ${Number(cashflow.net) < 0 ? 'text-red-700' : 'text-emerald-700'}`}>{formatCurrency(cashflow.net)}</p>
+          <div className="mt-3 space-y-1 text-[11px] text-slate-500"><p>Tiền vào: <span className="font-semibold text-slate-700">{formatCurrency(cashflow.cash_in)}</span></p><p>Tiền ra: <span className="font-semibold text-slate-700">{formatCurrency(cashflow.cash_out)}</span></p><p>Chi phí trực tiếp: <span className="font-semibold text-slate-700">{formatCurrency(cost.direct_expenses)}</span></p></div>
+        </section>
+      </div>
+
+      {finance.warnings?.length > 0 && (
+        <section className="rounded-2xl border border-red-100 bg-red-50/60 p-4">
+          <h3 className="flex items-center gap-2 text-sm font-bold text-red-800"><AlertTriangle className="h-4 w-4" /> Cảnh báo tài chính</h3>
+          <div className="mt-3 flex flex-wrap gap-2">{finance.warnings.map((warning) => <span key={warning.key} className="rounded-full bg-white px-3 py-1.5 text-[10px] font-bold text-red-700 shadow-sm">{warning.message}</span>)}</div>
+        </section>
+      )}
+
+      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <h3 className="text-sm font-bold text-slate-900">Khả năng truy vết chứng từ</h3>
+        <div className="mt-3 grid gap-2 text-[11px] sm:grid-cols-2 lg:grid-cols-5">
+          <p className="rounded-lg bg-slate-50 px-3 py-2">Yêu cầu mua: <span className="font-bold">{counts.purchase_requests || 0}</span></p>
+          <p className="rounded-lg bg-slate-50 px-3 py-2">Đơn mua: <span className="font-bold">{counts.purchase_orders || 0}</span></p>
+          <p className="rounded-lg bg-slate-50 px-3 py-2">Hóa đơn NCC: <span className="font-bold">{counts.supplier_bills || 0}</span></p>
+          <p className="rounded-lg bg-slate-50 px-3 py-2">Hóa đơn khách: <span className="font-bold">{counts.customer_invoices || 0}</span></p>
+          <p className="rounded-lg bg-slate-50 px-3 py-2">Phát sinh duyệt: <span className="font-bold">{counts.approved_commercial_changes || 0}</span></p>
+        </div>
+        {sourceDocuments.length > 0 && <div className="mt-4 divide-y divide-slate-100 border-t border-slate-100">{sourceDocuments.slice(0, 20).map((document) => <Link key={document.key} to={document.href} className="grid gap-2 py-2.5 text-[11px] hover:bg-slate-50 sm:grid-cols-[120px_1fr_130px_100px_18px] sm:items-center"><span className="font-bold text-slate-500">{document.type}</span><span className="font-semibold text-blue-700">{document.code || 'Chưa có mã'}</span><span className="font-bold text-slate-800 sm:text-right">{formatCurrency(document.amount)}</span><span className="text-slate-500 sm:text-right">{document.status || '—'}</span><ExternalLink className="h-3.5 w-3.5 text-slate-300" /></Link>)}</div>}
+      </section>
+    </div>
+  );
+}
+
 function StageStepper({ stages }) {
   if (!stages.length) return <EmptyNote>Công ty này chưa cấu hình pipeline công đoạn xưởng.</EmptyNote>;
 
@@ -964,6 +1088,7 @@ export default function ProductionProjectDetailPage({
           onChanged={load}
         />
       )}
+      {activeTab === 'finance' && <ProjectFinanceTab projectId={id} companyId={companyId} />}
       {activeTab === 'documents' && <DocumentsTab projectId={id} leadId={crmLead?.id} />}
       {activeTab === 'history' && <HistoryTab projectId={id} />}
 
