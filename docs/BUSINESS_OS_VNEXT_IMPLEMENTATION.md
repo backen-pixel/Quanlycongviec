@@ -29,9 +29,11 @@ Facet **Phát sinh & Thay đổi** trong cùng Project Cockpit dùng read model 
 
 ## Business Blueprint đa công ty
 
-Platform Admin quản trị bộ mẫu tại `/platform/blueprints`, phát hành từng phiên bản bất biến và cài bộ mẫu cho từng tenant trong tab **Bộ mẫu vận hành**. Trước khi áp dụng hoặc nâng cấp, hệ thống lập kế hoạch thay đổi gồm module, phòng ban và quy trình; mọi cấu hình nằm ngoài Blueprint được giữ nguyên.
+Platform Admin quản trị bộ mẫu tại `/platform/blueprints`, phát hành từng phiên bản bất biến và cài mặc định theo tenant hoặc cài riêng cho từng công ty trong tab **Bộ mẫu vận hành**. Trước khi áp dụng hoặc nâng cấp, hệ thống lập kế hoạch thay đổi gồm module, phòng ban và quy trình; mọi cấu hình nằm ngoài Blueprint được giữ nguyên.
 
-Lệnh áp dụng mang theo phiên bản tenant đã xem trước. Nếu một quản trị viên khác nâng cấp Blueprint trong lúc đó, backend trả `BLUEPRINT_VERSION_CONFLICT` và yêu cầu tải lại kế hoạch, tránh ghi đè từ giao diện cũ.
+Migration additive `582_company_blueprint_installations.sql` bổ sung lifecycle cài đặt theo công ty và ràng buộc công ty phải thuộc đúng tenant. Mỗi công ty giữ `company_overrides`; khi nâng Blueprint, backend hợp nhất lại override vào version mới và lưu `effective_definition`. Business OS ưu tiên bản cài của công ty đang chọn, sau đó mới fallback về mặc định tenant. Apply chỉ tạo thêm phòng ban mẫu còn thiếu; process/module được lưu dưới dạng cấu hình có version và không sao chép Lead, Deal, Project, task đang chạy, hóa đơn hay thanh toán.
+
+Lệnh áp dụng mang theo phiên bản đã xem trước. Nếu một quản trị viên khác nâng cấp Blueprint trong lúc đó, backend trả `BLUEPRINT_VERSION_CONFLICT` và yêu cầu tải lại kế hoạch, tránh ghi đè từ giao diện cũ. Chi tiết tại ADR-0016.
 
 ## Pilot dùng thật
 

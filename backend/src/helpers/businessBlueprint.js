@@ -2,8 +2,10 @@ const { supabase } = require('../config/supabase');
 const {
   completeTenantFirstSetup,
   setupTenantDepartments,
+  DEPT_TEMPLATES,
 } = require('./tenantSetup');
 const { invalidateTenantCache } = require('./tenantScope');
+const { syncDepartmentToEcosystem } = require('./ecosystemSync');
 
 const DEFAULT_BLUEPRINT_KEY = 'cabinet-business-os';
 
@@ -153,12 +155,152 @@ function buildBlueprintChangePlan(currentInput = {}, targetInput = {}) {
   };
 }
 
+function objectValue(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+
+/**
+ * Override chỉ là cấu hình riêng của một công ty. Không nhận bất kỳ bản ghi
+ * giao dịch nào; apply chỉ materialize phòng ban còn thiếu và lưu effective
+ * definition để Business OS đọc theo company_id.
+ */
+function normalizeCompanyBlueprintOverrides(input = {}) {
+  const raw = objectValue(input);
+  const modules = {};
+  for (const [key, value] of Object.entries(objectValue(raw.modules))) {
+    const moduleKey = text(key);
+    if (!moduleKey) continue;
+    const item = objectValue(value);
+    modules[moduleKey] = {
+      ...(typeof item.enabled === 'boolean' ? { enabled: item.enabled } : {}),
+      ...(Object.keys(objectValue(item.config)).length ? { config: objectValue(item.config) } : {}),
+    };
+  }
+
+  const processes = {};
+  for (const [key, value] of Object.entries(objectValue(raw.processes))) {
+    const processKey = text(key);
+    if (!processKey) continue;
+    const item = objectValue(value);
+    processes[processKey] = {
+      ...(typeof item.enabled === 'boolean' ? { enabled: item.enabled } : {}),
+      ...(Object.keys(objectValue(item.definition)).length
+        ? { definition: { ...objectValue(item.definition), key: processKey } }
+        : {}),
+    };
+  }
+
+  const departments = objectValue(raw.department_templates);
+  return {
+    schema_version: 1,
+    modules,
+    department_templates: {
+      add: uniqueStrings(departments.add),
+      hidden: uniqueStrings(departments.hidden),
+    },
+    processes,
+    operating_kernel: objectValue(raw.operating_kernel),
+  };
+}
+
+function mergeCompanyBlueprintOverrides(currentInput = {}, patchInput) {
+  const current = normalizeCompanyBlueprintOverrides(currentInput);
+  if (patchInput === undefined) return current;
+  const rawPatch = objectValue(patchInput);
+  const patch = normalizeCompanyBlueprintOverrides(rawPatch);
+  const modules = { ...current.modules };
+  for (const [rawKey, rawValue] of Object.entries(objectValue(rawPatch.modules))) {
+    const key = text(rawKey);
+    if (!key) continue;
+    if (rawValue === null) {
+      delete modules[key];
+      continue;
+    }
+    const value = patch.modules[key] || {};
+    modules[key] = {
+      ...objectValue(modules[key]),
+      ...value,
+      ...(value.config
+        ? { config: { ...objectValue(modules[key]?.config), ...value.config } }
+        : {}),
+    };
+  }
+  const processes = { ...current.processes };
+  for (const [rawKey, rawValue] of Object.entries(objectValue(rawPatch.processes))) {
+    const key = text(rawKey);
+    if (!key) continue;
+    if (rawValue === null) {
+      delete processes[key];
+      continue;
+    }
+    const value = patch.processes[key] || {};
+    processes[key] = { ...objectValue(processes[key]), ...value };
+  }
+  const patchDepartments = objectValue(rawPatch.department_templates);
+  return normalizeCompanyBlueprintOverrides({
+    modules,
+    department_templates: {
+      add: Object.prototype.hasOwnProperty.call(patchDepartments, 'add')
+        ? patch.department_templates.add
+        : current.department_templates.add,
+      hidden: Object.prototype.hasOwnProperty.call(patchDepartments, 'hidden')
+        ? patch.department_templates.hidden
+        : current.department_templates.hidden,
+    },
+    processes,
+    operating_kernel: {
+      ...current.operating_kernel,
+      ...patch.operating_kernel,
+    },
+  });
+}
+
+function resolveCompanyBlueprintDefinition(baseInput = {}, overrideInput = {}) {
+  const base = normalizeBlueprintDefinition(baseInput);
+  const overrides = normalizeCompanyBlueprintOverrides(overrideInput);
+  const moduleMap = keyed(base.modules, (item) => item.key);
+  for (const [key, override] of Object.entries(overrides.modules)) {
+    const previous = moduleMap.get(key) || { key, enabled: true, config: {} };
+    moduleMap.set(key, {
+      ...previous,
+      ...(typeof override.enabled === 'boolean' ? { enabled: override.enabled } : {}),
+      config: { ...objectValue(previous.config), ...objectValue(override.config) },
+    });
+  }
+
+  const hiddenDepartments = new Set(overrides.department_templates.hidden);
+  const departmentTemplates = uniqueStrings([
+    ...base.department_templates.filter((key) => !hiddenDepartments.has(key)),
+    ...overrides.department_templates.add,
+  ]);
+
+  const processMap = keyed(base.processes, (item) => text(item?.key));
+  for (const [key, override] of Object.entries(overrides.processes)) {
+    if (override.enabled === false) {
+      processMap.delete(key);
+      continue;
+    }
+    if (override.definition) {
+      processMap.set(key, { ...objectValue(processMap.get(key)), ...override.definition, key });
+    }
+  }
+
+  return normalizeBlueprintDefinition({
+    ...base,
+    modules: [...moduleMap.values()],
+    department_templates: departmentTemplates,
+    processes: [...processMap.values()],
+    operating_kernel: { ...base.operating_kernel, ...overrides.operating_kernel },
+  });
+}
+
 function isMissingBlueprintSchema(error) {
   const message = text(error?.message).toLowerCase();
   return error?.code === '42P01'
     || error?.code === 'PGRST205'
     || message.includes('business_blueprints')
-    || message.includes('tenant_blueprint_installations');
+    || message.includes('tenant_blueprint_installations')
+    || message.includes('company_blueprint_installations');
 }
 
 async function listPublishedBlueprints() {
@@ -352,6 +494,98 @@ async function getTenantBlueprintInstallation(tenantId) {
       ? { ...installation.version, definition: normalizeBlueprintDefinition(installation.version.definition) }
       : null,
   }));
+}
+
+async function getCompanyBlueprintInstallations({ tenantId, companyId = null } = {}) {
+  if (!text(tenantId)) throw new Error('Thiếu tenant_id để đọc Blueprint theo công ty.');
+  let query = supabase
+    .from('company_blueprint_installations')
+    .select(`
+      *,
+      company:companies(id, name, short_name, tenant_id),
+      blueprint:business_blueprints(id, blueprint_key, name, industry, description),
+      version:business_blueprint_versions(id, version_number, status, definition, release_notes, published_at)
+    `)
+    .eq('tenant_id', tenantId)
+    .order('applied_at', { ascending: false });
+  if (text(companyId)) query = query.eq('company_id', companyId);
+  const { data, error } = await query;
+  if (error) throw error;
+  return (data || []).map((installation) => ({
+    ...installation,
+    company_overrides: normalizeCompanyBlueprintOverrides(installation.company_overrides),
+    version: installation.version
+      ? { ...installation.version, definition: normalizeBlueprintDefinition(installation.version.definition) }
+      : null,
+  }));
+}
+
+async function assertCompanyBlueprintTarget(tenantId, companyId) {
+  if (!text(companyId)) throw new Error('Thiếu company_id để áp dụng Blueprint theo công ty.');
+  const { data, error } = await supabase
+    .from('companies')
+    .select('id, tenant_id, name, short_name, division_unit_id')
+    .eq('id', companyId)
+    .eq('tenant_id', tenantId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) {
+    const targetError = new Error('Công ty không thuộc hệ sinh thái đang chọn.');
+    targetError.code = 'BLUEPRINT_COMPANY_SCOPE';
+    throw targetError;
+  }
+  return data;
+}
+
+async function previewBlueprintForCompany({
+  tenantId,
+  companyId,
+  blueprintKey = DEFAULT_BLUEPRINT_KEY,
+  versionNumber = null,
+  companyOverrides,
+} = {}) {
+  const company = await assertCompanyBlueprintTarget(tenantId, companyId);
+  const [{ blueprint, version }, installations] = await Promise.all([
+    resolvePublishedBlueprint(blueprintKey, versionNumber),
+    getCompanyBlueprintInstallations({ tenantId, companyId }),
+  ]);
+  const currentInstallation = installations.find((item) => String(item.blueprint_id) === String(blueprint.id)) || null;
+  const overrides = mergeCompanyBlueprintOverrides(
+    currentInstallation?.company_overrides,
+    companyOverrides,
+  );
+  const currentDefinition = currentInstallation?.configuration?.effective_definition
+    || (currentInstallation?.version?.definition
+      ? resolveCompanyBlueprintDefinition(currentInstallation.version.definition, currentInstallation.company_overrides)
+      : {});
+  const targetDefinition = resolveCompanyBlueprintDefinition(version.definition, overrides);
+  return {
+    tenant_id: tenantId,
+    company: { id: company.id, name: company.name, short_name: company.short_name || null },
+    scope: 'company',
+    blueprint: {
+      id: blueprint.id,
+      blueprint_key: blueprint.blueprint_key,
+      name: blueprint.name,
+    },
+    current: currentInstallation
+      ? {
+        installation_id: currentInstallation.id,
+        status: currentInstallation.status,
+        version_number: currentInstallation.version?.version_number || null,
+        applied_at: currentInstallation.applied_at || null,
+      }
+      : null,
+    target: {
+      version_id: version.id,
+      version_number: version.version_number,
+      release_notes: version.release_notes || null,
+    },
+    company_overrides: overrides,
+    effective_definition: targetDefinition,
+    transaction_data_copied: false,
+    plan: buildBlueprintChangePlan(currentDefinition, targetDefinition),
+  };
 }
 
 async function previewBlueprintForTenant({ tenantId, blueprintKey = DEFAULT_BLUEPRINT_KEY, versionNumber = null } = {}) {
@@ -557,11 +791,199 @@ async function applyBlueprintToTenant({
   }
 }
 
+function departmentTemplateName(templateKey) {
+  const key = text(templateKey);
+  return DEPT_TEMPLATES[key] || key;
+}
+
+function blueprintDepartmentSlug(templateKey, companyId) {
+  const base = text(templateKey)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'department';
+  return `bp-${base}-${String(companyId).replace(/-/g, '')}`.slice(0, 240);
+}
+
+async function ensureCompanyBlueprintDepartments(company, templateKeys) {
+  const { data: existing, error: existingError } = await supabase
+    .from('departments')
+    .select('id, name, slug, company_id, division_unit_id, is_active')
+    .eq('company_id', company.id);
+  if (existingError) throw existingError;
+  const byName = new Map((existing || []).map((item) => [text(item.name).toLocaleLowerCase('vi'), item]));
+  const departments = [];
+  const created = [];
+
+  for (const templateKey of uniqueStrings(templateKeys)) {
+    const name = departmentTemplateName(templateKey);
+    const found = byName.get(name.toLocaleLowerCase('vi'));
+    if (found) {
+      departments.push(found);
+      continue;
+    }
+    const { data, error } = await supabase
+      .from('departments')
+      .insert({
+        name,
+        slug: blueprintDepartmentSlug(templateKey, company.id),
+        company_id: company.id,
+        division_unit_id: company.division_unit_id || null,
+        color: '#6366F1',
+        is_active: true,
+      })
+      .select('id, name, slug, company_id, division_unit_id, is_active')
+      .single();
+    if (error) throw error;
+    await syncDepartmentToEcosystem(data);
+    byName.set(name.toLocaleLowerCase('vi'), data);
+    departments.push(data);
+    created.push(data);
+  }
+  return { departments, created };
+}
+
+async function markCompanyInstallation({
+  tenantId,
+  companyId,
+  blueprintId,
+  versionId,
+  actorUserId,
+  status,
+  configuration,
+  companyOverrides,
+  errorMessage,
+}) {
+  const now = new Date().toISOString();
+  const payload = {
+    tenant_id: tenantId,
+    company_id: companyId,
+    blueprint_id: blueprintId,
+    blueprint_version_id: versionId,
+    status,
+    configuration: configuration || {},
+    company_overrides: normalizeCompanyBlueprintOverrides(companyOverrides),
+    applied_by: actorUserId || null,
+    applied_at: status === 'active' ? now : null,
+    last_error: errorMessage ? text(errorMessage).slice(0, 2000) : null,
+    updated_at: now,
+  };
+  const { data, error } = await supabase
+    .from('company_blueprint_installations')
+    .upsert(payload, { onConflict: 'company_id,blueprint_id' })
+    .select('*')
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+async function applyBlueprintToCompany({
+  tenantId,
+  companyId,
+  blueprintKey = DEFAULT_BLUEPRINT_KEY,
+  versionNumber = null,
+  actorUserId = null,
+  expectedCurrentVersion,
+  companyOverrides,
+} = {}) {
+  const company = await assertCompanyBlueprintTarget(tenantId, companyId);
+  const { blueprint, version } = await resolvePublishedBlueprint(blueprintKey, versionNumber);
+  const installations = await getCompanyBlueprintInstallations({ tenantId, companyId });
+  const current = installations.find((item) => String(item.blueprint_id) === String(blueprint.id)) || null;
+  if (expectedCurrentVersion !== undefined) {
+    const actualVersion = current?.version?.version_number ?? null;
+    const expectedVersion = expectedCurrentVersion == null ? null : Number(expectedCurrentVersion);
+    if (actualVersion !== expectedVersion) {
+      const conflict = new Error('Blueprint công ty đã thay đổi sau lần xem trước. Hãy tải lại kế hoạch trước khi áp dụng.');
+      conflict.code = 'BLUEPRINT_VERSION_CONFLICT';
+      conflict.expected_version = expectedVersion;
+      conflict.actual_version = actualVersion;
+      throw conflict;
+    }
+  }
+
+  const overrides = mergeCompanyBlueprintOverrides(current?.company_overrides, companyOverrides);
+  const effectiveDefinition = resolveCompanyBlueprintDefinition(version.definition, overrides);
+  const baseConfiguration = {
+    schema_version: effectiveDefinition.schema_version,
+    blueprint_key: blueprint.blueprint_key,
+    version_number: version.version_number,
+    effective_definition: effectiveDefinition,
+    applied_modules: effectiveDefinition.modules.filter((item) => item.enabled !== false).map((item) => item.key),
+    department_templates: effectiveDefinition.department_templates,
+    process_keys: effectiveDefinition.processes.map((item) => item.key),
+    transaction_data_copied: false,
+  };
+
+  await markCompanyInstallation({
+    tenantId,
+    companyId,
+    blueprintId: blueprint.id,
+    versionId: version.id,
+    actorUserId,
+    status: 'applying',
+    configuration: baseConfiguration,
+    companyOverrides: overrides,
+  });
+
+  try {
+    const departmentResult = await ensureCompanyBlueprintDepartments(
+      company,
+      effectiveDefinition.department_templates,
+    );
+    const installation = await markCompanyInstallation({
+      tenantId,
+      companyId,
+      blueprintId: blueprint.id,
+      versionId: version.id,
+      actorUserId,
+      status: 'active',
+      configuration: {
+        ...baseConfiguration,
+        materialized_department_ids: departmentResult.departments.map((item) => item.id),
+        created_department_ids: departmentResult.created.map((item) => item.id),
+      },
+      companyOverrides: overrides,
+    });
+    invalidateTenantCache(tenantId);
+    return {
+      blueprint,
+      version,
+      company,
+      installation,
+      departments: departmentResult.departments,
+      created_departments: departmentResult.created,
+      transaction_data_copied: false,
+    };
+  } catch (error) {
+    try {
+      await markCompanyInstallation({
+        tenantId,
+        companyId,
+        blueprintId: blueprint.id,
+        versionId: version.id,
+        actorUserId,
+        status: 'failed',
+        configuration: baseConfiguration,
+        companyOverrides: overrides,
+        errorMessage: error.message,
+      });
+    } catch (markError) {
+      console.warn('[business-blueprint/company] Không ghi được trạng thái lỗi:', markError.message);
+    }
+    throw error;
+  }
+}
+
 module.exports = {
   DEFAULT_BLUEPRINT_KEY,
   normalizeBlueprintDefinition,
   validateBlueprintDefinition,
   buildBlueprintChangePlan,
+  normalizeCompanyBlueprintOverrides,
+  mergeCompanyBlueprintOverrides,
+  resolveCompanyBlueprintDefinition,
   isMissingBlueprintSchema,
   listPublishedBlueprints,
   listBlueprintCatalog,
@@ -571,6 +993,9 @@ module.exports = {
   publishBlueprintVersion,
   updateBlueprint,
   getTenantBlueprintInstallation,
+  getCompanyBlueprintInstallations,
   previewBlueprintForTenant,
+  previewBlueprintForCompany,
   applyBlueprintToTenant,
+  applyBlueprintToCompany,
 };

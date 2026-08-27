@@ -298,6 +298,15 @@ Nghiệm thu theo vai trò thực tế, kiểm tra task gate, SLA, thông báo, 
 
 ## 8. Lịch sử quyết định
 
+### 2026-08-26 — Blueprint có bản cài và override độc lập theo công ty
+
+- Thêm control plane `company_blueprint_installations` bằng migration additive `582`; trigger database và backend cùng chặn company/tenant scope sai.
+- Platform Admin có thể preview/apply Blueprint cho mặc định tenant hoặc một công ty cụ thể. Business OS ưu tiên effective definition của công ty và fallback tenant để tương thích ngược.
+- Override module, phòng ban, quy trình và operating kernel của từng công ty được giữ khi nâng Blueprint version; override công ty A không ảnh hưởng công ty B.
+- Apply theo công ty chỉ tạo phòng ban mẫu còn thiếu; không xóa cấu hình ngoài Blueprint và không sao chép dữ liệu giao dịch.
+- Migration `581` và `582` đã áp dụng, verify và audit đủ 17/17 capability trên staging ngày 27/08/2026; backup hậu-migration vẫn là gate bắt buộc trước khi chốt baseline 02 và mở UAT.
+- Chi tiết quyết định: `docs/adr/0016-company-scoped-blueprint-installation.md`.
+
 ### 2026-08-26 — Báo cáo điều hành và AI dùng chung Executive Intelligence
 
 - Backend phát hành `executive_intelligence_v1`, hợp nhất Sales, Work KPI, `operations_kpi_v1` và `project_finance_v1` trong đúng company/tenant scope.

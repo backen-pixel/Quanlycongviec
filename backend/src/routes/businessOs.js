@@ -43,6 +43,7 @@ const {
 } = require('../helpers/businessOsDealWorkflow');
 const {
   getTenantBlueprintInstallation,
+  getCompanyBlueprintInstallations,
   isMissingBlueprintSchema,
 } = require('../helpers/businessBlueprint');
 
@@ -270,10 +271,39 @@ function rolloutCatalog(activeProcessKey, allModulesEnabled = false, enabledModu
   ];
 }
 
-async function resolveTenantBlueprint(req) {
+async function resolveTenantBlueprint(req, companyId) {
   const tenantId = text(req.user?.tenant_id);
   if (!tenantId) return null;
   try {
+    if (text(companyId)) {
+      try {
+        const companyInstallations = await getCompanyBlueprintInstallations({ tenantId, companyId });
+        const activeCompany = companyInstallations.find((installation) => installation.status === 'active');
+        if (activeCompany) {
+          const definition = activeCompany.configuration?.effective_definition
+            || activeCompany.version?.definition
+            || {};
+          return {
+            key: activeCompany.blueprint?.blueprint_key || null,
+            name: activeCompany.blueprint?.name || null,
+            industry: activeCompany.blueprint?.industry || null,
+            version: activeCompany.version?.version_number || null,
+            applied_at: activeCompany.applied_at,
+            scope: 'company_blueprint',
+            company_id: activeCompany.company_id,
+            modules: (definition.modules || []).filter((module) => module.enabled !== false).map((module) => module.key),
+            processes: definition.processes || [],
+            operating_kernel: definition.operating_kernel || {},
+            has_company_overrides: Object.keys(activeCompany.company_overrides?.modules || {}).length > 0
+              || Object.keys(activeCompany.company_overrides?.processes || {}).length > 0
+              || (activeCompany.company_overrides?.department_templates?.add || []).length > 0
+              || (activeCompany.company_overrides?.department_templates?.hidden || []).length > 0,
+          };
+        }
+      } catch (companyError) {
+        if (!isMissingBlueprintSchema(companyError)) throw companyError;
+      }
+    }
     const installations = await getTenantBlueprintInstallation(tenantId);
     const active = installations.find((installation) => installation.status === 'active');
     if (!active) return null;
@@ -284,6 +314,8 @@ async function resolveTenantBlueprint(req) {
       industry: active.blueprint?.industry || null,
       version: active.version?.version_number || null,
       applied_at: active.applied_at,
+      scope: 'tenant_blueprint',
+      company_id: null,
       modules: (definition.modules || []).filter((module) => module.enabled !== false).map((module) => module.key),
       processes: definition.processes || [],
       operating_kernel: definition.operating_kernel || {},
@@ -310,7 +342,7 @@ r.get('/overview', async (req, res) => {
 
     const [pilot, tenantBlueprint, qualificationContract, qualificationAutomation, surveyAutomation, designAutomation, designReviewAutomation] = await Promise.all([
       isSalesPilotCompany(companyId),
-      resolveTenantBlueprint(req),
+      resolveTenantBlueprint(req, companyId),
       getQualificationStageContract(companyId),
       getQualificationAutomation(companyId),
       getStageAutomation(companyId, 'survey'),
@@ -327,7 +359,7 @@ r.get('/overview', async (req, res) => {
       rollout: {
         enabled: pilot.enabled || !!tenantBlueprint,
         mode: pilot.config.mode,
-        scope: pilot.enabled ? 'single_company' : (tenantBlueprint ? 'tenant_blueprint' : 'connected_read_only'),
+        scope: pilot.enabled ? 'single_company' : (tenantBlueprint?.scope || (tenantBlueprint ? 'tenant_blueprint' : 'connected_read_only')),
         environment: 'staging',
         feature_flag: 'business_os_sales_pilot_v1',
         legacy_fallback: true,

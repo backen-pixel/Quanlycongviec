@@ -13,8 +13,11 @@ const {
   publishBlueprintVersion,
   updateBlueprint,
   getTenantBlueprintInstallation,
+  getCompanyBlueprintInstallations,
   previewBlueprintForTenant,
+  previewBlueprintForCompany,
   applyBlueprintToTenant,
+  applyBlueprintToCompany,
   isMissingBlueprintSchema,
 } = require('../helpers/businessBlueprint');
 
@@ -25,9 +28,12 @@ r.use(requirePlatformAdmin);
 function blueprintErrorResponse(res, error) {
   if (isMissingBlueprintSchema(error)) {
     return res.status(503).json({
-      error: 'Chưa cài đặt cấu trúc Business Blueprint. Hãy chạy migration 567_business_blueprint_control_plane.sql.',
+      error: 'Chưa cài đặt đủ cấu trúc Business Blueprint. Hãy chạy migration 567 và 582 theo thứ tự.',
       code: 'BUSINESS_BLUEPRINT_SCHEMA_REQUIRED',
     });
+  }
+  if (error?.code === 'BLUEPRINT_COMPANY_SCOPE') {
+    return res.status(400).json({ error: error.message, code: error.code });
   }
   if (error?.code === 'BLUEPRINT_VALIDATION') {
     return res.status(400).json({ error: error.message, validation_errors: error.validation_errors || [] });
@@ -310,8 +316,11 @@ r.get('/tenants/:id/companies', async (req, res) => {
 // ─── Blueprint installed in tenant ─────────────────────────
 r.get('/tenants/:id/blueprints', async (req, res) => {
   try {
-    const installations = await getTenantBlueprintInstallation(req.params.id);
-    res.json({ installations });
+    const [installations, companyInstallations] = await Promise.all([
+      getTenantBlueprintInstallation(req.params.id),
+      getCompanyBlueprintInstallations({ tenantId: req.params.id }),
+    ]);
+    res.json({ installations, company_installations: companyInstallations });
   } catch (error) {
     return blueprintErrorResponse(res, error);
   }
@@ -319,11 +328,14 @@ r.get('/tenants/:id/blueprints', async (req, res) => {
 
 r.get('/tenants/:id/blueprints/preview', async (req, res) => {
   try {
-    const preview = await previewBlueprintForTenant({
+    const params = {
       tenantId: req.params.id,
       blueprintKey: req.query.blueprint_key,
       versionNumber: req.query.version_number,
-    });
+    };
+    const preview = req.query.company_id
+      ? await previewBlueprintForCompany({ ...params, companyId: req.query.company_id })
+      : await previewBlueprintForTenant(params);
     res.json({ preview });
   } catch (error) {
     return blueprintErrorResponse(res, error);
@@ -333,18 +345,29 @@ r.get('/tenants/:id/blueprints/preview', async (req, res) => {
 r.post('/tenants/:id/blueprints/apply', async (req, res) => {
   try {
     const b = req.body || {};
-    const result = await applyBlueprintToTenant({
+    const shared = {
       tenantId: req.params.id,
       blueprintKey: b.blueprint_key,
       versionNumber: b.version_number,
       actorUserId: req.user?.userId || req.user?.id,
-      companyName: b.company_name,
-      companyShortName: b.company_short_name,
-      bootstrapCompany: b.bootstrap_company === true,
       expectedCurrentVersion: Object.prototype.hasOwnProperty.call(b, 'expected_current_version')
         ? b.expected_current_version
         : undefined,
-    });
+    };
+    const result = b.company_id
+      ? await applyBlueprintToCompany({
+        ...shared,
+        companyId: b.company_id,
+        companyOverrides: Object.prototype.hasOwnProperty.call(b, 'company_overrides')
+          ? b.company_overrides
+          : undefined,
+      })
+      : await applyBlueprintToTenant({
+        ...shared,
+        companyName: b.company_name,
+        companyShortName: b.company_short_name,
+        bootstrapCompany: b.bootstrap_company === true,
+      });
     res.json(result);
   } catch (error) {
     return blueprintErrorResponse(res, error);

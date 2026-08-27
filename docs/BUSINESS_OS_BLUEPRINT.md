@@ -618,6 +618,16 @@ Mỗi câu trả lời hoặc đề xuất nghiệp vụ phải chỉ ra nguồn
 - Draft action sau khi dữ liệu/process ổn định.
 - Execute chỉ với allowlist, approval, idempotency và audit.
 
+### Phase 8 — Blueprint đa công ty và nhân bản có kiểm soát
+
+- Blueprint version là cấu hình chuẩn cấp tenant; mỗi công ty có installation, lifecycle và override độc lập.
+- Effective definition của công ty được tạo bằng cách hợp nhất version đã publish với override module, phòng ban, quy trình và operating kernel.
+- Khi nâng version, override công ty được tái áp dụng; cấu hình ngoài Blueprint được giữ và không có thao tác xóa tự động.
+- Chỉ materialize cấu hình idempotent. Customer, Lead, Deal, Order, Project, task đang chạy, hóa đơn và thanh toán không bao giờ được nhân bản.
+- Business OS đọc Blueprint theo `company_id`, fallback về tenant để hỗ trợ công ty chưa cutover.
+
+**Gate:** cài thử cùng Blueprint cho công ty thứ hai trong staging; xác nhận tenant isolation, override A/B độc lập, migration/rollback và không phát sinh dữ liệu giao dịch sao chép.
+
 ## 11. Chiến lược chuyển đổi an toàn
 
 - Không big-bang rewrite.

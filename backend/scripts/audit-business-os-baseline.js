@@ -3,7 +3,7 @@
  *
  * This script intentionally does not apply or repair migrations. It reports
  * whether the schema/config signatures expected from migrations 473 and
- * 567-580 are present on the configured Supabase project.
+ * 567-582 are present on the configured Supabase project.
  */
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '..', '.env'), quiet: true });
@@ -137,7 +137,17 @@ with audit as (
             'schedule_impact_days', 'cost_bearer', 'requires_approval', 'approval_status',
             'approval_notes', 'approved_by', 'approved_at', 'rejected_reason',
             'attachments', 'related_links'
-          )))
+          ))),
+    ('581', 'project procurement + finance bridge',
+      to_regclass('public.supplier_bills') is not null
+      and to_regclass('public.supplier_payments') is not null
+      and exists (select 1 from information_schema.columns where table_schema='public' and table_name='purchase_orders' and column_name='project_id')
+      and exists (select 1 from information_schema.columns where table_schema='public' and table_name='project_expenses' and column_name='supplier_bill_id')
+      and to_regprocedure('public.sync_supplier_payable_totals(uuid)') is not null),
+    ('582', 'company blueprint installations',
+      to_regclass('public.company_blueprint_installations') is not null
+      and to_regprocedure('public.enforce_company_blueprint_tenant_scope()') is not null
+      and exists (select 1 from pg_indexes where schemaname='public' and tablename='company_blueprint_installations' and indexname='idx_company_blueprint_installations_company'))
   ) as checks(migration, capability, applied)
 )
 select
@@ -174,7 +184,7 @@ async function main() {
       applied: applied === true,
     })),
   };
-  report.all_applied = report.migrations.length === 15
+  report.all_applied = report.migrations.length === 17
     && report.migrations.every((item) => item.applied);
 
   const requiredBackupAfter = cliValue('--require-backup-after')

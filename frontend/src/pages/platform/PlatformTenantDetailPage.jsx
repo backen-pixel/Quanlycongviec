@@ -39,6 +39,7 @@ export default function PlatformTenantDetailPage() {
   const [tab, setTab] = useState('overview');
   const [blueprints, setBlueprints] = useState([]);
   const [blueprintInstallations, setBlueprintInstallations] = useState([]);
+  const [companyBlueprintInstallations, setCompanyBlueprintInstallations] = useState([]);
   const [blueprintError, setBlueprintError] = useState('');
   const [blueprintSuccess, setBlueprintSuccess] = useState('');
   const [blueprintPreview, setBlueprintPreview] = useState(null);
@@ -46,6 +47,7 @@ export default function PlatformTenantDetailPage() {
   const [applyingBlueprint, setApplyingBlueprint] = useState(false);
   const [blueprintForm, setBlueprintForm] = useState({
     blueprint_key: '',
+    company_id: '',
     bootstrap_company: false,
     company_name: '',
     company_short_name: '',
@@ -78,11 +80,15 @@ export default function PlatformTenantDetailPage() {
       const availableBlueprints = bpRes.data?.blueprints || [];
       setBlueprints(availableBlueprints);
       setBlueprintInstallations(biRes.data?.installations || []);
+      setCompanyBlueprintInstallations(biRes.data?.company_installations || []);
       setBlueprintError(bpRes.blueprintError || biRes.blueprintError || '');
       setBlueprintForm((previous) => ({
         ...previous,
         blueprint_key: previous.blueprint_key || availableBlueprints[0]?.blueprint_key || '',
-        bootstrap_company: previous.bootstrap_company || !(cRes.data || []).length,
+        company_id: (cRes.data || []).some((company) => company.id === previous.company_id)
+          ? previous.company_id
+          : (cRes.data?.[0]?.id || ''),
+        bootstrap_company: !(cRes.data || []).length,
         company_name: previous.company_name || t.name,
       }));
       setStats(sRes.data || {
@@ -144,7 +150,10 @@ export default function PlatformTenantDetailPage() {
     setBlueprintSuccess('');
     try {
       const { data } = await api.get(`/platform/tenants/${id}/blueprints/preview`, {
-        params: { blueprint_key: blueprintForm.blueprint_key },
+        params: {
+          blueprint_key: blueprintForm.blueprint_key,
+          ...(blueprintForm.company_id ? { company_id: blueprintForm.company_id } : {}),
+        },
       });
       setBlueprintPreview(data?.preview || null);
     } catch (error) {
@@ -157,7 +166,9 @@ export default function PlatformTenantDetailPage() {
 
   const applyBlueprint = async () => {
     if (!blueprintForm.blueprint_key) return;
-    if (!blueprintPreview || blueprintPreview.blueprint?.blueprint_key !== blueprintForm.blueprint_key) {
+    if (!blueprintPreview
+      || blueprintPreview.blueprint?.blueprint_key !== blueprintForm.blueprint_key
+      || (blueprintForm.company_id && blueprintPreview.company?.id !== blueprintForm.company_id)) {
       setBlueprintError('Hãy xem trước thay đổi trước khi áp dụng bộ mẫu.');
       return;
     }
@@ -165,7 +176,8 @@ export default function PlatformTenantDetailPage() {
       setBlueprintError('Nhập tên công ty đầu tiên trước khi áp dụng bộ mẫu.');
       return;
     }
-    if (!confirm(`Áp dụng Blueprint v${blueprintPreview.target?.version_number}? Không có dữ liệu hiện tại nào bị xoá.`)) return;
+    const targetLabel = blueprintPreview.company?.name || 'toàn hệ sinh thái';
+    if (!confirm(`Áp dụng Blueprint v${blueprintPreview.target?.version_number} cho ${targetLabel}? Không có dữ liệu hiện tại nào bị xoá.`)) return;
     setApplyingBlueprint(true);
     setBlueprintError('');
     setBlueprintSuccess('');
@@ -174,7 +186,7 @@ export default function PlatformTenantDetailPage() {
         ...blueprintForm,
         expected_current_version: blueprintPreview.current?.version_number ?? null,
       });
-      setBlueprintSuccess(`Đã áp dụng Blueprint v${blueprintPreview.target?.version_number} thành công.`);
+      setBlueprintSuccess(`Đã áp dụng Blueprint v${blueprintPreview.target?.version_number} cho ${targetLabel} thành công.`);
       setBlueprintPreview(null);
       await load();
     } catch (error) {
@@ -207,6 +219,16 @@ export default function PlatformTenantDetailPage() {
     { key: 'users', label: `Users (${users.length})`, icon: Users },
     { key: 'companies', label: `Công ty (${companies.length})`, icon: Building2 },
   ];
+  const blueprintInstallationRows = [
+    ...blueprintInstallations.map((installation) => ({ ...installation, scope_label: 'Mặc định hệ sinh thái' })),
+    ...companyBlueprintInstallations.map((installation) => ({
+      ...installation,
+      scope_label: installation.company?.name || 'Công ty',
+    })),
+  ];
+  const selectedScopeInstallations = blueprintForm.company_id
+    ? companyBlueprintInstallations.filter((installation) => installation.company_id === blueprintForm.company_id)
+    : blueprintInstallations;
 
   return (
     <div className="space-y-4">
@@ -384,16 +406,16 @@ export default function PlatformTenantDetailPage() {
               </div>
             )}
 
-            {blueprintInstallations.length === 0 ? (
+            {blueprintInstallationRows.length === 0 ? (
               <div className="rounded-xl border border-dashed p-5 text-sm text-gray-500">Hệ sinh thái chưa được gắn bộ mẫu vận hành.</div>
             ) : (
               <div className="space-y-2">
-                {blueprintInstallations.map((installation) => (
-                  <div key={installation.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border p-4">
+                {blueprintInstallationRows.map((installation) => (
+                  <div key={`${installation.company_id || 'tenant'}-${installation.id}`} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border p-4">
                     <div>
                       <div className="font-medium text-gray-900">{installation.blueprint?.name}</div>
                       <div className="text-xs text-gray-500 mt-1">
-                        Phiên bản {installation.version?.version_number || '—'}
+                        {installation.scope_label} · Phiên bản {installation.version?.version_number || '—'}
                         {installation.applied_at ? ` • Áp dụng ${new Date(installation.applied_at).toLocaleString('vi-VN')}` : ''}
                       </div>
                     </div>
@@ -414,6 +436,26 @@ export default function PlatformTenantDetailPage() {
               <p className="text-xs text-gray-500 mt-1">Thao tác có tính lặp an toàn và giữ các dữ liệu đang có.</p>
             </div>
             <div>
+              {companies.length > 0 && (
+                <>
+                  <label className="block text-xs text-gray-500 mb-1">Công ty nhận bộ mẫu</label>
+                  <select
+                    value={blueprintForm.company_id}
+                    onChange={(event) => {
+                      setBlueprintForm((previous) => ({ ...previous, company_id: event.target.value }));
+                      setBlueprintPreview(null);
+                      setBlueprintError('');
+                      setBlueprintSuccess('');
+                    }}
+                    className="mb-3 w-full border rounded-xl px-3 py-2.5 text-sm"
+                  >
+                    <option value="">Mặc định toàn hệ sinh thái</option>
+                    {companies.map((company) => (
+                      <option key={company.id} value={company.id}>{company.name}</option>
+                    ))}
+                  </select>
+                </>
+              )}
               <label className="block text-xs text-gray-500 mb-1">Bộ mẫu</label>
               <select
                 value={blueprintForm.blueprint_key}
@@ -464,6 +506,9 @@ export default function PlatformTenantDetailPage() {
 
             {blueprintPreview && (
               <div className="space-y-3 rounded-xl border border-teal-200 bg-teal-50/40 p-3">
+                <div className="text-xs font-semibold text-teal-800">
+                  Phạm vi: {blueprintPreview.company?.name || 'Mặc định toàn hệ sinh thái'}
+                </div>
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex items-center gap-2 text-sm font-semibold text-gray-900">
                     <span>{blueprintPreview.current ? `v${blueprintPreview.current.version_number}` : 'Chưa cài'}</span>
@@ -475,7 +520,7 @@ export default function PlatformTenantDetailPage() {
                   </span>
                 </div>
                 {!blueprintPreview.plan?.has_changes && (
-                  <p className="text-xs text-gray-600">Tenant đã ở cùng cấu hình Blueprint. Có thể áp dụng lại để đồng bộ trạng thái.</p>
+                  <p className="text-xs text-gray-600">Phạm vi này đã ở cùng cấu hình Blueprint. Có thể áp dụng lại để đồng bộ trạng thái.</p>
                 )}
                 <ChangeList label="Bật module" items={blueprintPreview.plan?.modules?.enable} />
                 <ChangeList label="Tắt module" items={blueprintPreview.plan?.modules?.disable} tone="red" />
@@ -507,7 +552,7 @@ export default function PlatformTenantDetailPage() {
               disabled={!blueprintForm.blueprint_key || !blueprintPreview || applyingBlueprint || previewingBlueprint}
               className="w-full rounded-xl bg-teal-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-teal-700 disabled:opacity-50"
             >
-              {applyingBlueprint ? 'Đang áp dụng…' : blueprintInstallations.length ? 'Cập nhật bộ mẫu' : 'Áp dụng bộ mẫu'}
+              {applyingBlueprint ? 'Đang áp dụng…' : selectedScopeInstallations.length ? 'Cập nhật bộ mẫu' : 'Áp dụng bộ mẫu'}
             </button>
           </div>
         </div>
