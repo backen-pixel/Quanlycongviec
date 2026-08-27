@@ -942,7 +942,7 @@ async function fetchCrmLeadsForOrgReportBatched(type, {
   for (;;) {
     let q = supabase
       .from('crm_leads')
-      .select('id, stage_id, estimated_value, probability, type, phone, assigned_to, lead_owner_id, company_id, region_id, created_at, source_id, stage_entered_at, first_touch_time, lead_type_id, kanban_deadline_at')
+      .select('id, stage_id, estimated_value, probability, type, phone, assigned_to, lead_owner_id, company_id, region_id, created_at, source_id, stage_entered_at, first_touch_time, lead_type_id, kanban_deadline_at, deadline_disabled_at')
       .eq('type', type)
       .is('parent_lead_id', null);
     if (company_id) {
@@ -1942,6 +1942,7 @@ function orgReportStageIsClosed(st) {
 function orgReportIsSlaOverdue(row, st, asOfMs = Date.now()) {
   if (!st || orgReportStageIsClosed(st)) return false;
   if (crmLeadMissingPhone(row)) return false;
+  if (row?.deadline_disabled_at) return false;
   const slaDays = effectivePipelineStageSlaDays(st.sla_days);
   if (slaDays == null) return false;
   const entered = row.stage_entered_at || row.created_at;
