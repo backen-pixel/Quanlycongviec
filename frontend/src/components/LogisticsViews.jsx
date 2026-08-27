@@ -384,7 +384,7 @@ const VC_DEADLINE_BUCKETS = [
   { key: 'this_week', label: 'Tuần này', color: '#d97706' },
   { key: 'next_week', label: 'Tuần sau', color: '#0891b2' },
   { key: 'this_month', label: 'Tháng này', color: '#0d9488' },
-  { key: 'later', label: 'Sau', color: '#475569' },
+  { key: 'later', label: 'Sau tháng này', color: '#475569' },
   { key: 'none', label: 'Chưa có deadline', color: '#9ca3af' },
 ];
 

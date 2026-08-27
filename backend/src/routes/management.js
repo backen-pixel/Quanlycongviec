@@ -20,6 +20,8 @@ const {
   TENANT_EMPTY_COMPANY_SENTINEL,
 } = require('../helpers/tenantScope');
 const { applyOpenOnlyFilter } = require('../helpers/unifiedTasksQuery');
+const { responseCache } = require('../middleware/responseCache');
+const { PROJECTS_LIST_TAG } = require('../middleware/projectsCacheInvalidation');
 
 const r = Router();
 r.use(auth);
@@ -661,53 +663,77 @@ r.get('/work-overview', async (req, res) => {
     overdueTasksQ = applyOpenOnlyFilter(overdueTasksQ);
     overdueTasksQ = applyCompanyScopeFilter(overdueTasksQ, scope);
 
+    const todayYmd = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' });
+    const plus3 = (() => {
+      const [y, m, d] = todayYmd.split('-').map(Number);
+      const dt = new Date(Date.UTC(y, m - 1, d + 3));
+      return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`;
+    })();
+    // Hạn thực tế = lắp / giao / hạn SX / deadline — cùng nguồn với Work Unified (không chỉ projects.deadline).
     let atRiskQ = supabase.from('projects')
-      .select('id, code, name, status, deadline, sx_kanban_column_id, company_id')
+      .select(`
+        id, code, name, status, deadline, production_deadline, delivery_date, install_date,
+        sx_kanban_column_id, company_id, project_manager_id, sales_person_id, production_person_id,
+        project_manager:users!projects_project_manager_id_fkey(id, full_name),
+        sales_person:users!projects_sales_person_id_fkey(id, full_name),
+        production_person:users!projects_production_person_id_fkey(id, full_name)
+      `)
       .in('status', WORK_OVERVIEW_ACTIVE_STATUSES)
-      .not('deadline', 'is', null);
+      .or(`deadline.lte.${plus3},production_deadline.lte.${plus3},delivery_date.lte.${plus3},install_date.lte.${plus3}`);
     atRiskQ = applyProjectScopeFilter(atRiskQ, scope);
 
     const [activeRes, trendRes, newCustomersRes, overdueTasksRes, atRiskRes] = await Promise.all([
       activeQ, trendQ, newCustomersQ, overdueTasksQ, atRiskQ,
     ]);
-    const atRiskCompanyIds = [...new Set((atRiskRes.data || []).map((p) => p.company_id).filter(Boolean))];
-    const stagesByCompany = await loadStagesByCompany('production_pipeline_stages', atRiskCompanyIds);
+    if (atRiskRes.error) console.warn('[work-overview] at-risk:', atRiskRes.error.message);
 
     // Doanh thu 6 tháng gần đây — giá trị dự án (estimated_value) tạo trong tháng đó.
     const trendBuckets = [];
     for (let i = 5; i >= 0; i -= 1) {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      trendBuckets.push({ key: `${d.getFullYear()}-${d.getMonth()}`, label: `T${d.getMonth() + 1}`, total: 0 });
+      trendBuckets.push({
+        key: `${d.getFullYear()}-${d.getMonth()}`,
+        label: `T${d.getMonth() + 1}`,
+        year: d.getFullYear(),
+        month: d.getMonth() + 1,
+        total: 0,
+        count: 0,
+      });
     }
     for (const p of (trendRes.data || [])) {
       const d = new Date(p.created_at);
       const key = `${d.getFullYear()}-${d.getMonth()}`;
       const bucket = trendBuckets.find((b) => b.key === key);
-      if (bucket) bucket.total += (p.estimated_value || 0);
+      if (bucket) {
+        bucket.total += (p.estimated_value || 0);
+        bucket.count += 1;
+      }
     }
     trendBuckets[trendBuckets.length - 1].isCurrentMonth = true;
 
-    // Dự án cần chú ý — trễ hạn hoặc sắp hết hạn mà tiến độ SX còn thấp (theo pipeline riêng của từng công ty).
-    const nowMs = now.getTime();
+    // Dự án cần chú ý — quá hạn (late) hoặc hạn trong 3 ngày (at_risk), cùng ngưỡng Work Unified.
     const projectsAtRisk = (atRiskRes.data || [])
       .map((p) => {
-        const companyStages = stagesByCompany.get(String(p.company_id)) || [];
-        const totalStages = companyStages.length || 1;
-        const stageIdx = companyStages.findIndex((s) => String(s.id) === String(p.sx_kanban_column_id));
-        const progressPct = stageIdx >= 0 ? Math.round(((stageIdx + 1) / totalStages) * 100) : null;
-        const daysLeft = Math.ceil((new Date(p.deadline).getTime() - nowMs) / 86400000);
-        let risk = null;
-        if (daysLeft < 0) risk = { level: 'overdue', label: `Trễ hạn ${Math.abs(daysLeft)} ngày` };
-        else if (daysLeft <= 3 && (progressPct == null || progressPct < 85)) risk = { level: 'warning', label: 'Nguy cơ trễ' };
-        if (!risk) return null;
+        const commitmentDate = p.install_date || p.delivery_date || p.production_deadline || p.deadline || null;
+        const { forecast, days_remaining, delay_days } = classifyProjectForecast(commitmentDate);
+        if (forecast !== 'late' && forecast !== 'at_risk') return null;
+        const owner = p.project_manager || p.sales_person || p.production_person || null;
+        const risk = forecast === 'late'
+          ? { level: 'overdue', label: `Trễ hạn ${delay_days} ngày` }
+          : { level: 'warning', label: 'Nguy cơ trễ' };
         return {
-          id: p.id, code: p.code, name: p.name, deadline: p.deadline,
-          days_left: daysLeft, progress_pct: progressPct, risk,
+          id: p.id, code: p.code, name: p.name, deadline: commitmentDate,
+          days_left: days_remaining, owner_name: owner?.full_name || null, risk,
         };
       })
       .filter(Boolean)
-      .sort((a, b) => a.days_left - b.days_left)
-      .slice(0, 6);
+      .sort((a, b) => {
+        const ao = a.risk.level === 'overdue' ? 0 : 1;
+        const bo = b.risk.level === 'overdue' ? 0 : 1;
+        if (ao !== bo) return ao - bo;
+        return a.days_left - b.days_left;
+      })
+      .slice(0, 50);
 
     res.json({
       company_id: primaryCompanyIdFromScope(scope),
@@ -715,7 +741,14 @@ r.get('/work-overview', async (req, res) => {
       new_customers_this_month: newCustomersRes.count || 0,
       overdue_tasks: overdueTasksRes.count || 0,
       revenue_this_month: trendBuckets[trendBuckets.length - 1].total,
-      revenue_trend: trendBuckets.map((b, idx) => ({ label: b.label, total: b.total, is_current: idx === trendBuckets.length - 1 })),
+      revenue_trend: trendBuckets.map((b, idx) => ({
+        label: b.label,
+        year: b.year,
+        month: b.month,
+        total: b.total,
+        count: b.count,
+        is_current: idx === trendBuckets.length - 1,
+      })),
       projects_at_risk: projectsAtRisk,
     });
   } catch (e) {
@@ -880,6 +913,93 @@ function classifyProjectForecast(commitmentDate) {
   return { forecast: 'on_track', days_remaining: daysRemaining, delay_days: 0 };
 }
 
+// GET /api/management/work-unified/search — tìm nhanh dự án (ô nhảy trang chi tiết)
+r.get('/work-unified/search', async (req, res) => {
+  try {
+    const scope = getCompanyScope(req, req.query.company_id);
+    if (denyScope(res, scope)) return;
+    const raw = String(req.query.q || '').trim();
+    const q = raw.replace(/[%_,.()]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60);
+    if (q.length < 2) return res.json({ items: [] });
+
+    const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const userId = uuidRe.test(String(req.query.user_id || '').trim()) ? String(req.query.user_id).trim() : '';
+    const regionRaw = String(req.query.region_id || '').trim();
+    const regionNone = regionRaw === '__none__';
+    const regionId = uuidRe.test(regionRaw) ? regionRaw : '';
+    const dateFrom = String(req.query.date_from || '').trim().slice(0, 10);
+    const dateTo = String(req.query.date_to || '').trim().slice(0, 10);
+    const hasExtra = !!(userId || regionId || regionNone || dateFrom || dateTo);
+
+    let regionProjectIds = null;
+    if (regionId) {
+      const { data: leads, error: leadErr } = await supabase
+        .from('crm_leads')
+        .select('project_id')
+        .eq('region_id', regionId)
+        .not('project_id', 'is', null)
+        .limit(800);
+      if (leadErr) throw leadErr;
+      regionProjectIds = [...new Set((leads || []).map((l) => l.project_id).filter(Boolean))];
+      if (!regionProjectIds.length) return res.json({ items: [] });
+    }
+
+    const like = `%${q}%`;
+    let query = supabase
+      .from('projects')
+      .select(`
+        id, code, name, status, deadline, install_date, delivery_date, production_deadline,
+        project_manager_id, sales_person_id, production_person_id,
+        customer:customers(full_name)
+      `)
+      .or(`code.ilike."${like}",name.ilike."${like}"`)
+      .in('status', WORK_OVERVIEW_ACTIVE_STATUSES)
+      .order('code', { ascending: false })
+      .limit(hasExtra ? 60 : 8);
+    query = applyProjectScopeFilter(query, scope);
+    if (regionProjectIds) query = query.in('id', regionProjectIds);
+    const { data, error } = await query;
+    if (error) throw error;
+
+    let rows = data || [];
+    if (regionNone) {
+      const { data: withRegionLeads } = await supabase
+        .from('crm_leads')
+        .select('project_id')
+        .not('region_id', 'is', null)
+        .not('project_id', 'is', null)
+        .limit(2000);
+      const withRegion = new Set((withRegionLeads || []).map((l) => String(l.project_id)));
+      rows = rows.filter((p) => !withRegion.has(String(p.id)));
+    }
+    if (userId) {
+      rows = rows.filter((p) => [p.project_manager_id, p.sales_person_id, p.production_person_id]
+        .some((id) => String(id || '') === userId));
+    }
+    if (dateFrom || dateTo) {
+      rows = rows.filter((p) => {
+        const d = String(p.install_date || p.delivery_date || p.production_deadline || p.deadline || '').slice(0, 10);
+        if (!d) return false;
+        if (dateFrom && d < dateFrom) return false;
+        if (dateTo && d > dateTo) return false;
+        return true;
+      });
+    }
+
+    res.json({
+      items: rows.slice(0, 8).map((p) => ({
+        id: p.id,
+        code: p.code,
+        name: p.name,
+        customer_name: p.customer?.full_name || null,
+      })),
+    });
+  } catch (e) {
+    console.error('[management/work-unified/search]', e);
+    res.status(500).json({ error: e.message || 'Lỗi tìm dự án' });
+  }
+});
+
 // GET /api/management/work-unified — Tổng quan dự án theo luồng giao hàng (mockup Work Unified)
 r.get('/work-unified', async (req, res) => {
   try {
@@ -1009,7 +1129,9 @@ r.get('/work-unified', async (req, res) => {
       filtered = filtered.filter((it) => [it.person1_id, it.person2_id, it.assignee_id]
         .some((id) => String(id) === String(userIdFilter)));
     }
-    if (regionIdFilter) {
+    if (regionIdFilter === '__none__') {
+      filtered = filtered.filter((it) => !it.region_id);
+    } else if (regionIdFilter) {
       filtered = filtered.filter((it) => String(it.region_id || '') === String(regionIdFilter));
     }
     if (dateFrom || dateTo) {
@@ -1568,7 +1690,7 @@ r.get('/deals/:leadId', async (req, res) => {
 });
 
 // GET /api/management/by-project/:projectId — tổng hợp deal theo dự án
-r.get('/by-project/:projectId', async (req, res) => {
+r.get('/by-project/:projectId', responseCache({ ttl: 15, scope: 'user', tags: ['project-deal', PROJECTS_LIST_TAG] }), async (req, res) => {
   try {
     const scope = getCompanyScope(req, req.query.company_id);
     if (denyScope(res, scope)) return;

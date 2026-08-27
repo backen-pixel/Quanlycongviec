@@ -1,54 +1,20 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isAdminLike, isCompanyScopedAdmin } from '../lib/adminRole';
 import { formatDate, formatVND } from '../lib/utils';
 import KanbanColumnVirtualList from '../components/KanbanColumnVirtualList';
 import {
-  RefreshCw, Building2, Plus, Users, FileText, Package, ChevronLeft, ChevronRight,
-  List, LayoutGrid, Clock, Phone, Calendar, EyeOff, Eye, X, Search, SlidersHorizontal, MapPin, User,
+  RefreshCw, Plus, FileText, Package, ChevronLeft, ChevronRight,
+  List, LayoutGrid, Clock, Phone, Calendar, EyeOff, Eye, X, Search,
 } from 'lucide-react';
-
-const TIME_PRESETS = [
-  { key: '', label: 'Tất cả' },
-  { key: 'today', label: 'Hôm nay' },
-  { key: 'this_week', label: 'Tuần này' },
-  { key: 'this_month', label: 'Tháng này' },
-  { key: 'this_quarter', label: 'Quý này' },
-];
-
-function getPresetDateRange(preset) {
-  const pad = (n) => String(n).padStart(2, '0');
-  const iso = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  switch (preset) {
-    case 'today':
-      return { from: iso(today), to: iso(today) };
-    case 'this_week': {
-      const dow = today.getDay();
-      const monday = new Date(today);
-      monday.setDate(today.getDate() - (dow === 0 ? 6 : dow - 1));
-      const sunday = new Date(monday);
-      sunday.setDate(monday.getDate() + 6);
-      return { from: iso(monday), to: iso(sunday) };
-    }
-    case 'this_month': {
-      const first = new Date(now.getFullYear(), now.getMonth(), 1);
-      const last = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-      return { from: iso(first), to: iso(last) };
-    }
-    case 'this_quarter': {
-      const qm = Math.floor(now.getMonth() / 3) * 3;
-      const first = new Date(now.getFullYear(), qm, 1);
-      const last = new Date(now.getFullYear(), qm + 3, 0);
-      return { from: iso(first), to: iso(last) };
-    }
-    default:
-      return { from: '', to: '' };
-  }
-}
+import SearchInlineFilterChips, { SearchClearButton, AdvFilterButton, searchGroupClass } from '../components/SearchInlineFilterChips';
+import WorkUnifiedFilterPanel, {
+  WORK_UNIFIED_TIME_PRESETS,
+  WORK_UNIFIED_REGION_NONE,
+  getWorkUnifiedPresetDateRange,
+} from '../components/WorkUnifiedFilterFields';
 
 const PAGE_SIZE = 20;
 
@@ -342,14 +308,23 @@ export default function WorkUnifiedOverviewPage() {
   const isAdmin = isAdminLike(user);
   const isCompanyScoped = isCompanyScopedAdmin(user);
   const canPickCompany = isAdmin && !isCompanyScoped;
+  const [searchParams] = useSearchParams();
 
   const [companies, setCompanies] = useState([]);
   const [companyId, setCompanyId] = useState('');
+  const lockedCompanyLabel = useMemo(() => {
+    const cid = user?.company_id != null ? String(user.company_id).trim() : '';
+    const c = companies.find((x) => String(x.id) === cid);
+    return c?.short_name || c?.name || 'Công ty của bạn';
+  }, [user?.company_id, companies]);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [stageFilter, setStageFilter] = useState('');
-  const [forecastFilter, setForecastFilter] = useState('all');
+  const [forecastFilter, setForecastFilter] = useState(() => {
+    const f = String(searchParams.get('forecast') || '').trim();
+    return FORECAST_TABS.some((t) => t.key === f) ? f : 'all';
+  });
   const [page, setPage] = useState(1);
   const [viewMode, setViewMode] = useState('list');
   const [calMonth, setCalMonth] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); });
@@ -364,8 +339,10 @@ export default function WorkUnifiedOverviewPage() {
   const [rangeFrom, setRangeFrom] = useState('');
   const [rangeTo, setRangeTo] = useState('');
   const [filterPanelOpen, setFilterPanelOpen] = useState(false);
+  const [searchFocused, setSearchFocused] = useState(false);
   const [users, setUsers] = useState([]);
   const [regions, setRegions] = useState([]);
+  const searchBoxRef = useRef(null);
   const resultsCardRef = useRef(null);
   const kanbanBoardRef = useRef(null);
   const pageMountedRef = useRef(false);
@@ -384,11 +361,20 @@ export default function WorkUnifiedOverviewPage() {
   }, [canPickCompany, companyId, user?.company_id]);
 
   useEffect(() => {
-    if (!effectiveCompanyIdForUsers) { setUsers([]); return; }
-    api.get('/users', { params: { company_id: effectiveCompanyIdForUsers } })
-      .then((r) => setUsers(r.data.users || r.data || []))
-      .catch(() => setUsers([]));
-  }, [effectiveCompanyIdForUsers]);
+    if (effectiveCompanyIdForUsers) {
+      api.get('/users', { params: { company_id: effectiveCompanyIdForUsers } })
+        .then((r) => setUsers(r.data.users || r.data || []))
+        .catch(() => setUsers([]));
+      return;
+    }
+    if (canPickCompany) {
+      api.get('/users')
+        .then((r) => setUsers(r.data.users || r.data || []))
+        .catch(() => setUsers([]));
+      return;
+    }
+    setUsers([]);
+  }, [effectiveCompanyIdForUsers, canPickCompany]);
 
   useEffect(() => {
     const params = {};
@@ -418,7 +404,7 @@ export default function WorkUnifiedOverviewPage() {
 
   const handleTimePresetChange = (preset) => {
     setTimePreset(preset);
-    const range = getPresetDateRange(preset);
+    const range = getWorkUnifiedPresetDateRange(preset);
     setRangeFrom(range.from);
     setRangeTo(range.to);
   };
@@ -427,7 +413,53 @@ export default function WorkUnifiedOverviewPage() {
     !!filterUserId, !!filterRegionId, !!timePreset, canPickCompany && !!companyId,
   ].filter(Boolean).length;
 
+  const wuInlineFilterChips = useMemo(() => {
+    const chips = [];
+    if (canPickCompany && companyId) {
+      const c = companies.find((x) => String(x.id) === String(companyId));
+      chips.push({
+        key: 'company',
+        label: c?.short_name || c?.name || 'Công ty',
+        onClear: () => setCompanyId(''),
+      });
+    }
+    if (filterUserId) {
+      const u = users.find((x) => String(x.id) === String(filterUserId));
+      chips.push({
+        key: 'user',
+        label: u?.full_name || 'Nhân viên',
+        onClear: () => setFilterUserId(''),
+      });
+    }
+    if (filterRegionId === WORK_UNIFIED_REGION_NONE) {
+      chips.push({
+        key: 'region',
+        label: 'Chưa gán khu vực',
+        onClear: () => setFilterRegionId(''),
+      });
+    } else if (filterRegionId) {
+      const rg = regions.find((x) => String(x.id) === String(filterRegionId));
+      chips.push({
+        key: 'region',
+        label: rg?.name || 'Khu vực',
+        onClear: () => setFilterRegionId(''),
+      });
+    }
+    if (timePreset) {
+      const t = WORK_UNIFIED_TIME_PRESETS.find((x) => x.key === timePreset);
+      chips.push({
+        key: 'time',
+        label: t?.label || 'Thời gian',
+        onClear: () => handleTimePresetChange(''),
+      });
+    }
+    return chips;
+  }, [canPickCompany, companyId, companies, filterUserId, users, filterRegionId, regions, timePreset]);
+
   const emptyResultsMessage = useMemo(() => {
+    if (filterRegionId === WORK_UNIFIED_REGION_NONE) {
+      return 'Không có dự án nào chưa gán khu vực.';
+    }
     if (filterRegionId) {
       const regionName = regions.find((r) => String(r.id) === String(filterRegionId))?.name;
       return `Không có dự án nào thuộc khu vực${regionName ? ` "${regionName}"` : ' này'}.`;
@@ -441,6 +473,7 @@ export default function WorkUnifiedOverviewPage() {
     setTimePreset('');
     setRangeFrom('');
     setRangeTo('');
+    if (canPickCompany) setCompanyId('');
   };
 
   useEffect(() => { setPage(1); }, [stageFilter, forecastFilter, companyId, debouncedSearch, filterUserId, filterRegionId, rangeFrom, rangeTo]);
@@ -634,113 +667,80 @@ export default function WorkUnifiedOverviewPage() {
       </div>
 
       <div className="sticky top-14 z-30 flex items-center justify-between flex-wrap gap-2 rounded-xl border border-gray-100 bg-white px-3 py-2.5 shadow-sm">
-        <div className="relative">
-            <Search className="h-4 w-4 text-gray-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Tìm mã, tên dự án, khách hàng, deal..."
-              className="h-9 w-52 sm:w-72 pl-8 pr-9 rounded-lg border border-gray-200 bg-white text-sm text-gray-700 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-300"
-            />
-            <button
-              type="button"
-              onClick={() => setFilterPanelOpen((v) => !v)}
-              title="Bộ lọc nâng cao"
-              className={`absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7 rounded-md flex items-center justify-center cursor-pointer ${
-                activeFilterCount > 0 ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-100'
+        <div ref={searchBoxRef} className="relative flex-1 min-w-0 max-w-none sm:max-w-[22rem] lg:max-w-[28rem]">
+            <div
+              className={`group/search flex items-center shrink-0 w-full rounded-md border transition-colors ${
+                searchGroupClass({
+                  focused: searchFocused,
+                  hasQuery: !!search.trim(),
+                  hasChips: wuInlineFilterChips.length > 0,
+                  panelOpen: filterPanelOpen,
+                })
               }`}
             >
-              <SlidersHorizontal className="h-3.5 w-3.5" />
-              {activeFilterCount > 0 && (
-                <span className="absolute -top-1.5 -right-1.5 h-3.5 w-3.5 rounded-full bg-red-500 text-white text-[8px] font-bold flex items-center justify-center leading-none">
-                  {activeFilterCount}
-                </span>
-              )}
-            </button>
+              <div className="relative flex-1 min-w-0 flex items-center gap-1 pl-7 pr-1">
+                <Search
+                  className={`absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 pointer-events-none transition-colors ${
+                    searchFocused || search.trim() ? 'text-violet-600' : 'text-slate-400'
+                  }`}
+                />
+                {!filterPanelOpen && wuInlineFilterChips.length > 0 && (
+                  <SearchInlineFilterChips
+                    chips={wuInlineFilterChips}
+                    opacityClass={
+                      searchFocused ? 'opacity-40' : search.trim() ? 'opacity-35' : 'opacity-45 group-hover/search:opacity-100'
+                    }
+                    onClearChip={(chip) => { chip.onClear(); }}
+                    onClearAll={clearAdvancedFilters}
+                    showClearAll={wuInlineFilterChips.length > 1}
+                  />
+                )}
+                <input
+                  type="text"
+                  value={search}
+                  onChange={(e) => {
+                    setSearch(e.target.value);
+                    setSearchFocused(true);
+                  }}
+                  onFocus={() => setSearchFocused(true)}
+                  onBlur={() => setTimeout(() => setSearchFocused(false), 180)}
+                  placeholder="Tìm mã, tên dự án, khách hàng, deal..."
+                  className={`flex-1 min-w-[3.5rem] h-8 bg-transparent border-0 text-xs font-medium text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-0 ${search ? 'pr-7' : ''}`}
+                />
+                {search && (
+                  <SearchClearButton onClick={() => { setSearch(''); setSearchFocused(false); }} />
+                )}
+              </div>
+              <div className="shrink-0 pr-1">
+                <AdvFilterButton
+                  open={filterPanelOpen}
+                  active={activeFilterCount > 0}
+                  onClick={() => setFilterPanelOpen((v) => !v)}
+                />
+              </div>
+            </div>
 
             {filterPanelOpen && (
               <>
                 <div className="fixed inset-0 z-30" onClick={() => setFilterPanelOpen(false)} />
-                <div className="absolute right-0 top-full mt-2 z-40 w-72 rounded-xl border border-gray-200 bg-white shadow-lg p-3 space-y-3">
-                  {canPickCompany && companies.length > 0 && (
-                    <div>
-                      <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1 flex items-center gap-1">
-                        <Building2 className="h-3 w-3" /> Công ty
-                      </label>
-                      <select
-                        value={companyId}
-                        onChange={(e) => setCompanyId(e.target.value)}
-                        className="w-full h-8 px-2 rounded-md border border-gray-200 text-xs text-gray-700 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-200"
-                      >
-                        <option value="">Tất cả công ty</option>
-                        {companies.map((c) => (
-                          <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
-                  <div>
-                    <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1 flex items-center gap-1">
-                      <User className="h-3 w-3" /> Nhân viên
-                    </label>
-                    <select
-                      value={filterUserId}
-                      onChange={(e) => setFilterUserId(e.target.value)}
-                      disabled={!users.length}
-                      className="w-full h-8 px-2 rounded-md border border-gray-200 text-xs text-gray-700 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      <option value="">Tất cả nhân viên</option>
-                      {users.map((u) => (
-                        <option key={u.id} value={u.id}>{u.full_name}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1 flex items-center gap-1">
-                      <MapPin className="h-3 w-3" /> Khu vực
-                    </label>
-                    <select
-                      value={filterRegionId}
-                      onChange={(e) => setFilterRegionId(e.target.value)}
-                      disabled={!regions.length}
-                      className="w-full h-8 px-2 rounded-md border border-gray-200 text-xs text-gray-700 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      <option value="">Tất cả khu vực</option>
-                      {regions.map((rg) => (
-                        <option key={rg.id} value={rg.id}>{rg.name}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1 flex items-center gap-1">
-                      <Clock className="h-3 w-3" /> Thời gian (hạn bàn giao)
-                    </label>
-                    <div className="flex flex-wrap gap-1">
-                      {TIME_PRESETS.map((t) => (
-                        <button
-                          key={t.key}
-                          type="button"
-                          onClick={() => handleTimePresetChange(t.key)}
-                          className={`text-[11px] font-medium px-2 py-1 rounded-md cursor-pointer transition-colors ${
-                            timePreset === t.key ? 'bg-blue-600 text-white' : 'bg-gray-50 text-gray-600 hover:bg-gray-100'
-                          }`}
-                        >
-                          {t.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  {activeFilterCount > 0 && (
-                    <button
-                      type="button"
-                      onClick={clearAdvancedFilters}
-                      className="w-full text-xs font-medium text-red-600 hover:bg-red-50 rounded-md py-1.5 cursor-pointer"
-                    >
-                      Xóa bộ lọc
-                    </button>
-                  )}
-                </div>
+                <WorkUnifiedFilterPanel
+                  onClose={() => setFilterPanelOpen(false)}
+                  canPickCompany={canPickCompany}
+                  lockedCompanyLabel={lockedCompanyLabel}
+                  companies={companies}
+                  companyId={companyId}
+                  onCompanyChange={setCompanyId}
+                  users={users}
+                  filterUserId={filterUserId}
+                  onUserChange={setFilterUserId}
+                  regions={regions}
+                  filterRegionId={filterRegionId}
+                  onRegionChange={setFilterRegionId}
+                  timePreset={timePreset}
+                  onTimePresetChange={handleTimePresetChange}
+                  activeFilterCount={activeFilterCount}
+                  onClear={clearAdvancedFilters}
+                />
               </>
             )}
           </div>
@@ -767,26 +767,6 @@ export default function WorkUnifiedOverviewPage() {
       {error && (
         <div className="rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-2">{error}</div>
       )}
-
-      <div className="rounded-xl border border-gray-100 bg-white p-4 shadow-sm">
-        <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mb-3">
-          Vòng đời một dự án — 3 tầng dữ liệu
-        </p>
-        <div className="grid md:grid-cols-3 gap-3">
-          <div className="rounded-lg border border-gray-100 p-3">
-            <p className="text-sm font-bold text-gray-800 flex items-center gap-1.5"><Users className="h-4 w-4 text-blue-600" /> Khách hàng</p>
-            <p className="text-xs text-gray-500 mt-1">Hồ sơ liên hệ, tồn tại xuyên suốt mọi quan hệ — quản lý bên CRM. Một khách hàng có thể có nhiều deal theo thời gian.</p>
-          </div>
-          <div className="rounded-lg border border-gray-100 p-3">
-            <p className="text-sm font-bold text-gray-800 flex items-center gap-1.5"><FileText className="h-4 w-4 text-violet-600" /> Deal / Cơ hội</p>
-            <p className="text-xs text-gray-500 mt-1">Một thương vụ cụ thể, có giá trị & báo giá riêng — quản lý bên Dự toán &amp; Báo giá. Khi được duyệt và chốt, Deal sinh ra một dự án.</p>
-          </div>
-          <div className="rounded-lg border border-emerald-200 bg-emerald-50/40 p-3">
-            <p className="text-sm font-bold text-gray-800 flex items-center gap-1.5"><Package className="h-4 w-4 text-emerald-600" /> Dự án</p>
-            <p className="text-xs text-gray-500 mt-1">Sinh ra khi Deal chốt, đi qua các công đoạn thi công bên dưới — quản lý ngay tại Work Unified.</p>
-          </div>
-        </div>
-      </div>
 
       <div className="rounded-xl border border-gray-100 bg-white p-4 shadow-sm">
         <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mb-3">

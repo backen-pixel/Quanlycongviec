@@ -29,6 +29,7 @@ const {
 const { applyAllActiveWorkshopTemplatesForArea } = require('../helpers/workshopApplyTemplates');
 const {
   isLogisticsCompletedColumn,
+  projectStatusFromLogisticsColumn,
   completeOpenWorkOnModuleDone,
 } = require('../helpers/completeOpenWorkOnModuleDone');
 const { assertProjectAccessible } = require('../helpers/projectAccessScope');
@@ -1673,7 +1674,10 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
     const updatePayload = {};
     if (resolvedStageId) updatePayload.current_stage_id = resolvedStageId;
     if (effectiveVcStageId) updatePayload.vc_kanban_column_id = effectiveVcStageId;
-    if (jumpedToInstall || isInstallLogisticsStageRow(vcPipeStageRow)) {
+    const fromVcCol = projectStatusFromLogisticsColumn(vcPipeStageRow);
+    if (fromVcCol) {
+      updatePayload.status = fromVcCol;
+    } else if (jumpedToInstall || isInstallLogisticsStageRow(vcPipeStageRow)) {
       updatePayload.status = 'installing';
     } else if (statusMap[targetStage?.slug]) {
       updatePayload.status = statusMap[targetStage.slug];

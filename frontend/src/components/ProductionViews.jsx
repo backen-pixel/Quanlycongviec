@@ -1204,7 +1204,7 @@ function ProductionPlannerPersonal({ allItems, goProject }) {
 /**
  * Deadline view — gom dự án theo `production_deadline` (ưu tiên) hoặc `deadline`
  * vào các bucket cố định: Quá hạn / Hôm nay / Tuần này / Tuần sau / Tháng này /
- * Sau / Chưa có. Layout grid columns giống Kanban để quen mắt.
+ * Sau tháng này / Chưa có. Layout grid columns giống Kanban để quen mắt.
  */
 const SX_DEADLINE_BUCKETS = [
   { key: 'overdue',   label: 'Quá hạn',         color: '#dc2626', accent: 'bg-red-50 border-red-200' },
@@ -1212,7 +1212,7 @@ const SX_DEADLINE_BUCKETS = [
   { key: 'this_week', label: 'Tuần này',        color: '#d97706', accent: 'bg-amber-50 border-amber-200' },
   { key: 'next_week', label: 'Tuần sau',        color: '#0891b2', accent: 'bg-cyan-50 border-cyan-200' },
   { key: 'this_month',label: 'Tháng này',       color: '#0d9488', accent: 'bg-teal-50 border-teal-200' },
-  { key: 'later',     label: 'Sau',             color: '#475569', accent: 'bg-slate-50 border-slate-200' },
+  { key: 'later',     label: 'Sau tháng này',   color: '#475569', accent: 'bg-slate-50 border-slate-200' },
   { key: 'none',      label: 'Chưa có deadline', color: '#9ca3af', accent: 'bg-gray-50 border-gray-200' },
 ];
 

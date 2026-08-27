@@ -15,3 +15,52 @@ export function isProjectAlreadyInLogistics(project) {
   if (project.logistics_company_id) return true;
   return false;
 }
+
+function foldViProgressName(s) {
+  return String(s || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd');
+}
+
+/** Cột Kanban VC/LĐ đã xong (Hoàn thiện / Hoàn thành). */
+export function isLogisticsProgressCompleted(stage) {
+  if (!stage) return false;
+  const slug = String(stage.bucket_slug || stage.slug || '').toLowerCase().trim();
+  if (slug === 'completed' || slug === 'done' || slug === 'install_completed') return true;
+  const name = foldViProgressName(stage.name);
+  return name === 'hoan thanh' || name === 'hoan thien'
+    || name.startsWith('hoan thanh ') || name.startsWith('hoan thien ');
+}
+
+/**
+ * Nhãn tiến độ VC/LĐ trên thẻ SX — ưu tiên cột Kanban VC hiện tại, không dùng status cũ.
+ * @returns {{ label: string, done: boolean, color: string|null } | null}
+ */
+export function sxCardLogisticsProgress(item) {
+  if (!item) return null;
+  const stage = item.vc_stage;
+  if (stage?.name) {
+    const done = isLogisticsProgressCompleted(stage);
+    return {
+      label: stage.name,
+      done,
+      color: stage.color || (done ? '#16a34a' : null),
+    };
+  }
+  if (!isProjectAlreadyInLogistics(item)
+    && item.status !== 'shipping'
+    && item.status !== 'installing'
+    && item.status !== 'warranty'
+    && item.status !== 'completed') {
+    return null;
+  }
+  const st = String(item.status || '');
+  if (st === 'completed') return { label: 'Hoàn thành', done: true, color: '#16a34a' };
+  if (st === 'installing') return { label: 'Đang lắp đặt', done: false, color: null };
+  if (st === 'warranty') return { label: 'Bảo hành', done: false, color: null };
+  if (st === 'shipping') return { label: 'Đang vận chuyển', done: false, color: null };
+  if (isProjectAlreadyInLogistics(item)) return { label: 'Đã bàn giao VC', done: false, color: null };
+  return null;
+}

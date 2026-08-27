@@ -37,7 +37,7 @@ import {
 import {
   CheckCircle2, Search, X, Calendar, Plus,
   Factory, Users, LayoutGrid, List,
-  CheckSquare, UserCheck, Loader2, Truck, Filter, Clock, Layers, Trash2, MessageSquare, Pin, Building2, ArrowRightLeft, Settings, ChevronDown, Eye, ChevronRight,
+  CheckSquare, UserCheck, Loader2, Truck, Clock, Layers, Trash2, MessageSquare, Pin, Building2, ArrowRightLeft, Settings, ChevronDown, Eye, ChevronRight,
 } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { ProductionListView, ProductionPlannerView, ProductionCalendarView, ProductionCommentsView, ProductionDeadlineView } from '../components/ProductionViews';
@@ -74,7 +74,7 @@ import {
   getSxOrderDeliveryDateUrgency,
   TEMP_SX_FREE_DRAG,
 } from '../lib/sxPipelineRevenue';
-import { isProjectAlreadyInLogistics } from '../lib/projectLogistics';
+import { isProjectAlreadyInLogistics, sxCardLogisticsProgress } from '../lib/projectLogistics';
 import CrmDeadlineModal from '../components/CrmDeadlineModal';
 import DateRangePickerPopover from '../components/DateRangePickerPopover';
 import NewDealModal from '../components/NewDealModal';
@@ -84,7 +84,7 @@ import { isClickOutside } from '../lib/domUtils';
 import { getCrmDeadlineUrgencyFromIso, getCrmDeadlineUrgencyBadgeClass } from '../lib/crmLeadDeadlineDisplay';
 import { companyWorkEndMsFromRaw } from '../lib/companyDeadlineClock';
 import { showCopyToast } from '../lib/copyToast';
-import SearchInlineFilterChips, { SearchClearButton } from '../components/SearchInlineFilterChips';
+import SearchInlineFilterChips, { SearchClearButton, AdvFilterButton, searchGroupClass } from '../components/SearchInlineFilterChips';
 import ViewModeDropdownMenu from '../components/ViewModeDropdownMenu';
 import AnchoredDropdownMenu from '../components/AnchoredDropdownMenu';
 
@@ -2699,7 +2699,10 @@ export default function ProductionDashboard() {
       const isOwnMove = pid
         ? pendingStageMovesRef.current.has(String(pid))
         : pendingStageMovesRef.current.size > 0;
-      scheduleBoardRefresh(2000, isOwnMove ? { bustCache: true } : {});
+      // Kéo cột bên VC/LĐ cũng phải bỏ cache SX — nếu không thẻ giữ «Đang vận chuyển» tới 20s.
+      const reason = String(payload?.reason || '');
+      const fromLogistics = /stage_changed|jump_to_install|vc_handover|move_to_intake/.test(reason);
+      scheduleBoardRefresh(2000, (isOwnMove || fromLogistics) ? { bustCache: true } : {});
     };
     socket.on('project:stage_changed', onChanged);
     socket.on('production:board_changed', onChanged);
@@ -3697,20 +3700,19 @@ export default function ProductionDashboard() {
             <div className="flex items-center gap-2 flex-1 min-w-0 order-2 lg:order-none">
               <div
                 ref={searchBoxRef}
-                className={`group/search flex items-center flex-1 min-w-0 max-w-none lg:max-w-[22rem] xl:max-w-[26rem] rounded-lg border transition-all duration-200 ${
-                  searchFocused
-                    ? 'border-violet-400 bg-white shadow-md shadow-violet-500/15 ring-2 ring-violet-200/60'
-                    : searchQuery.trim()
-                      ? 'border-violet-300 bg-violet-50/90 shadow-sm ring-1 ring-violet-200/40'
-                      : sxInlineFilterChips.length && !showAdvFilter
-                        ? 'border-violet-200 bg-violet-50/50 shadow-sm ring-1 ring-violet-100/60'
-                        : 'border-violet-200/90 bg-white/80 hover:border-violet-300 hover:bg-white hover:shadow-sm'
+                className={`group/search flex items-center flex-1 min-w-0 max-w-none sm:max-w-[22rem] lg:max-w-[28rem] rounded-md border transition-colors ${
+                  searchGroupClass({
+                    focused: searchFocused,
+                    hasQuery: !!searchQuery.trim(),
+                    hasChips: sxInlineFilterChips.length > 0,
+                    panelOpen: showAdvFilter,
+                  })
                 }`}
               >
-                <div className="relative flex-1 min-w-0 flex items-center gap-1 pl-8 pr-1">
+                <div className="relative flex-1 min-w-0 flex items-center gap-1 pl-7 pr-1">
                   <Search
-                    className={`absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 pointer-events-none transition-colors duration-200 ${
-                      searchFocused || searchQuery.trim() ? 'text-violet-600' : 'text-violet-500'
+                    className={`absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 pointer-events-none transition-colors ${
+                      searchFocused || searchQuery.trim() ? 'text-violet-600' : 'text-slate-400'
                     }`}
                   />
                   {!showAdvFilter && sxInlineFilterChips.length > 0 && (
@@ -3739,7 +3741,7 @@ export default function ProductionDashboard() {
                     }}
                     onBlur={() => setTimeout(() => setSearchFocused(false), 180)}
                     placeholder="Tìm mã TB, tên khách, SĐT…"
-                    className={`flex-1 min-w-[4.5rem] h-8 bg-transparent border-0 text-xs font-medium text-slate-900 placeholder:text-violet-500/60 focus:outline-none focus:ring-0 rounded-l-lg ${searchQuery ? 'pr-7' : ''}`}
+                    className={`flex-1 min-w-[4.5rem] h-8 bg-transparent border-0 text-xs font-medium text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-0 ${searchQuery ? 'pr-7' : ''}`}
                   />
                   {searchQuery && (
                     <SearchClearButton onClick={() => { setSearchQuery(''); setSearchFocused(false); setSearchSuggestDismissed(false); }} />
@@ -3810,24 +3812,12 @@ export default function ProductionDashboard() {
                     </div>
                   ))}
                 </AnchoredDropdownMenu>
-                <div className="shrink-0 pr-1 pl-0.5">
-                  <button
-                    type="button"
+                <div className="shrink-0 pr-1">
+                  <AdvFilterButton
+                    open={showAdvFilter}
+                    active={!!(sxFilterPanelActive || activeSxFilterCount)}
                     onClick={openSxFilterPanel}
-                    aria-expanded={showAdvFilter}
-                    className={`relative h-6 w-6 flex items-center justify-center rounded-md border transition-all duration-200 cursor-pointer ${
-                      showAdvFilter || sxFilterPanelActive
-                        ? 'bg-violet-200 text-violet-800 border-violet-400 shadow-sm ring-1 ring-violet-200/60'
-                        : 'bg-violet-50 text-violet-600 border-violet-200 hover:bg-violet-100 hover:text-violet-800 hover:border-violet-300'
-                    }`}
-                    title={showAdvFilter ? 'Thu gọn bộ lọc' : 'Bộ lọc nâng cao'}
-                    aria-label="Bộ lọc"
-                  >
-                    <Filter className="h-3 w-3" />
-                    {activeSxFilterCount > 0 && (
-                      <span className="absolute top-0 right-0 h-1.5 w-1.5 rounded-full bg-violet-600 ring-1 ring-white" />
-            )}
-          </button>
+                  />
                 </div>
               </div>
             </div>
@@ -5532,19 +5522,22 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
         </p>
       )}
 
-      {/* VC status — chỉ khi đã bàn giao thật hoặc status đang ở luồng VC */}
-      {(isProjectAlreadyInLogistics(item) || item.status === 'shipping' || item.status === 'installing' || item.status === 'warranty') && (
-        <div className="mt-1.5 flex items-center gap-1 text-[10px] text-orange-700 bg-orange-50 border border-orange-200 rounded px-1.5 py-0.5">
-          <Truck className="h-2.5 w-2.5" />
-          <span className="font-medium">
-            {item.vc_stage?.name
-              || (item.status === 'shipping' ? 'Đang vận chuyển'
-                : item.status === 'installing' ? 'Đang lắp đặt'
-                  : item.status === 'warranty' ? 'Bảo hành'
-                    : 'Đã bàn giao VC')}
-          </span>
-        </div>
-      )}
+      {/* Tiến độ VC/LĐ — cột Kanban vận chuyển/lắp đặt hiện tại */}
+      {(() => {
+        const vcProg = sxCardLogisticsProgress(item);
+        if (!vcProg) return null;
+        const tone = vcProg.done
+          ? 'text-emerald-800 bg-emerald-50 border-emerald-200'
+          : 'text-orange-700 bg-orange-50 border-orange-200';
+        return (
+          <div className={`mt-1.5 flex items-center gap-1 text-[10px] border rounded px-1.5 py-0.5 ${tone}`}>
+            <Truck className="h-2.5 w-2.5 shrink-0" />
+            <span className="font-medium truncate" title={`VC/LĐ: ${vcProg.label}`}>
+              VC/LĐ: {vcProg.label}
+            </span>
+          </div>
+        );
+      })()}
 
       {/* Nút Bàn giao VC: chỉ hiện ở cột được đánh dấu is_handover_to_logistics */}
       {onHandoverVC && stage?.is_handover_to_logistics === true && !isProjectAlreadyInLogistics(item) && (

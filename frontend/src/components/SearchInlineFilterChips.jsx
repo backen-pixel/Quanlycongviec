@@ -1,5 +1,35 @@
-import { X } from 'lucide-react';
+import { Filter, X } from 'lucide-react';
 import { useHorizontalDragScroll } from '../lib/useHorizontalDragScroll';
+
+/** Nút phễu 24×24 trong ô tìm — cùng chrome với CRM (`data-tour="crm-filter"`). */
+export function AdvFilterButton({ open, active, onClick, className = '' }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-expanded={!!open}
+      className={`relative h-6 w-6 flex items-center justify-center rounded border transition-colors cursor-pointer ${
+        open || active
+          ? 'bg-violet-100 text-violet-700 border-violet-300'
+          : 'bg-slate-50 text-slate-500 border-slate-200 hover:bg-slate-100 hover:text-slate-700'
+      } ${className}`}
+      title={open ? 'Thu gọn bộ lọc' : 'Bộ lọc nâng cao'}
+      aria-label="Bộ lọc"
+    >
+      <Filter className="h-3 w-3" />
+      {active ? (
+        <span className="absolute -top-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-violet-600 ring-1 ring-white" />
+      ) : null}
+    </button>
+  );
+}
+
+export function searchGroupClass({ focused, hasQuery, hasChips, panelOpen }) {
+  if (focused) return 'border-violet-400 bg-white ring-1 ring-violet-200/60';
+  if (hasQuery) return 'border-violet-300 bg-violet-50/80';
+  if (hasChips && !panelOpen) return 'border-violet-200 bg-violet-50/40';
+  return 'border-slate-200 bg-white hover:border-slate-300';
+}
 
 const CHIP_CLASS = 'inline-flex items-center gap-0.5 shrink-0 pl-1.5 pr-0.5 py-0.5 rounded-md border text-[10px] font-medium backdrop-blur-[1px] transition-colors duration-200 bg-white/25 border-violet-200/35 text-violet-900/45 group-hover/search:bg-violet-100 group-hover/search:border-violet-300 group-hover/search:text-violet-900';
 

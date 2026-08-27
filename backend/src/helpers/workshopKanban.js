@@ -805,6 +805,30 @@ function enrichOneSxProject(project, sortedStages, wonSet, leadMeta = null) {
  * @param {string|null} [workshopTypeId]  Khi dashboard filter 1 phân loại → dùng pipeline của phân loại đó.
  *                                         'none' = bộ chung; <uuid> = loại + bộ chung (fallback).
  */
+/** Gắn `vc_stage` (cột Kanban VC/LĐ hiện tại) — Kanban SX không embed join này. */
+async function attachVcStagesToProjects(projects) {
+  const list = Array.isArray(projects) ? projects : [];
+  const ids = [...new Set(list.map((p) => p?.vc_kanban_column_id).filter(Boolean).map(String))];
+  if (!ids.length) return list;
+  const { data, error } = await supabase
+    .from('logistics_pipeline_stages')
+    .select('id, name, color, icon, bucket_slug')
+    .in('id', ids);
+  if (error) {
+    console.warn('[attachVcStagesToProjects]', error.message);
+    return list;
+  }
+  const map = new Map((data || []).map((s) => [String(s.id), s]));
+  return list.map((p) => {
+    const colId = p?.vc_kanban_column_id;
+    if (!colId) return p;
+    const stage = map.get(String(colId));
+    if (!stage) return p;
+    if (p.vc_stage?.name) return p;
+    return { ...p, vc_stage: stage };
+  });
+}
+
 async function enrichProjectsForSx(projects, wonIds, filterCompanyId = null, workshopTypeId = null) {
   const wonSet = new Set(wonIds);
   const f = normalizeWorkshopCompanyId(filterCompanyId);
@@ -826,12 +850,13 @@ async function enrichProjectsForSx(projects, wonIds, filterCompanyId = null, wor
     cache.set(key, sorted);
   }
   const leadMetaMap = await loadDealSxPipelineMetaByProjectIds((projects || []).map((p) => p.id));
-  return (projects || []).map((p) => enrichOneSxProject(
+  const enriched = (projects || []).map((p) => enrichOneSxProject(
     p,
     cache.get(keyFor(p)),
     wonSet,
     leadMetaMap.get(String(p.id)) || null,
   ));
+  return attachVcStagesToProjects(enriched);
 }
 
 function buildPipelineSummary(sortedStages, enhancedProjects) {

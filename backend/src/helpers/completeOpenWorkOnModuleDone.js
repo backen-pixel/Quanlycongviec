@@ -4,7 +4,7 @@
  */
 
 const { supabase } = require('../config/supabase');
-const { isLogisticsWorkshopTask } = require('./logisticsTaskSplit');
+const { isLogisticsWorkshopTask, isInstallLogisticsStageRow } = require('./logisticsTaskSplit');
 const { applyAssignmentStatusColumn } = require('./crmTaskAssignmentSync');
 
 const TERMINAL_STATUSES = new Set(['completed', 'done', 'cancelled', 'canceled']);
@@ -51,6 +51,42 @@ function isLogisticsCompletedColumn(col) {
   const name = foldVi(col.name);
   return name === 'hoan thanh' || name === 'hoan thien'
     || name.startsWith('hoan thanh ') || name.startsWith('hoan thien ');
+}
+
+/**
+ * `projects.status` theo cột Kanban VC/LĐ — không phụ thuộc workflow_stage_id
+ * (nhiều cột công ty chỉ gắn bucket_slug / tên).
+ * @returns {'shipping'|'installing'|'warranty'|'completed'|null}
+ */
+function projectStatusFromLogisticsColumn(col) {
+  if (!col) return null;
+  if (isLogisticsCompletedColumn(col)) return 'completed';
+  if (isInstallLogisticsStageRow(col)) return 'installing';
+  const slug = String(col.bucket_slug || col.slug || '').toLowerCase().trim();
+  if (slug === 'warranty' || slug === 'customer-care' || slug === 'customer_care' || slug.includes('warranty')) {
+    return 'warranty';
+  }
+  if (slug === 'acceptance') return 'installing';
+  if (
+    slug === 'delivered'
+    || slug === 'delivery'
+    || slug === 'shipping'
+    || slug === 'delivery_pending'
+  ) {
+    return 'shipping';
+  }
+  const name = foldVi(col.name);
+  if (name.includes('bao hanh') || name.includes('cham soc')) return 'warranty';
+  if (
+    name.includes('dang giao')
+    || name.includes('van chuyen')
+    || name.includes('da giao')
+    || name.includes('cho giao')
+    || name.includes('tiep nhan giao')
+  ) {
+    return 'shipping';
+  }
+  return null;
 }
 
 function crmTaskMatchesModule(task, moduleKey) {
@@ -406,5 +442,6 @@ async function completeOpenWorkOnModuleDone({ module, leadIds = [], projectIds =
 module.exports = {
   isCrmCompletedStage,
   isLogisticsCompletedColumn,
+  projectStatusFromLogisticsColumn,
   completeOpenWorkOnModuleDone,
 };

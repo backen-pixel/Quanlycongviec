@@ -2921,6 +2921,7 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
         sx_won_deal: sxRow.sx_won_deal,
         sx_kanban_column_id: finalSxKanbanColumnId,
         sx_intake: finalIntakeFromCrm,
+        vc_stage: sxRow.vc_stage || project.vc_stage || null,
         taskProgress,
         productionTaskProgress,
         logisticsTaskProgress,

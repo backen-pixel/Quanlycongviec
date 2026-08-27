@@ -1,6 +1,13 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import api from '../lib/api';
+import { isAdminLike, isCompanyScopedAdmin } from '../lib/adminRole';
+import SearchInlineFilterChips, { SearchClearButton, AdvFilterButton, searchGroupClass } from '../components/SearchInlineFilterChips';
+import WorkUnifiedFilterPanel, {
+  WORK_UNIFIED_TIME_PRESETS,
+  WORK_UNIFIED_REGION_NONE,
+  getWorkUnifiedPresetDateRange,
+} from '../components/WorkUnifiedFilterFields';
 import ProjectOverviewPanel from '../components/ProjectOverviewPanel';
 import UnifiedTaskRow from '../components/UnifiedTaskRow';
 import WorkTaskExtrasPanel from '../components/WorkTaskExtrasPanel';
@@ -14,7 +21,7 @@ import { getFileDownloadAnchorProps } from '../lib/publicFileUrl';
 import { formatVND, formatDate, formatDateTime } from '../lib/utils';
 import {
   ChevronRight, ChevronDown, AlertTriangle, Shield, Plus, ExternalLink, Download, FileText as FileIcon, ArrowLeft,
-  CheckCircle2, X as XIcon, MessageCircle, Loader2, Package, Truck,
+  CheckCircle2, X as XIcon, MessageCircle, Loader2, Package, Truck, RefreshCw, Search,
 } from 'lucide-react';
 
 const SECONDARY_TABS = [
@@ -505,6 +512,320 @@ export function HistoryTab({ projectId }) {
   );
 }
 
+function isRetryableNetworkError(e) {
+  if (!e) return false;
+  if (e.code === 'ERR_NETWORK' || e.code === 'ECONNABORTED') return true;
+  if (!e.response) return true;
+  const status = e.response.status;
+  return status === 502 || status === 503 || status === 504;
+}
+
+function projectLoadErrorMessage(e) {
+  if (e?.response?.data?.error) return e.response.data.error;
+  if (isRetryableNetworkError(e)) return 'Không kết nối được máy chủ. Bấm Thử lại.';
+  return 'Không tải được dữ liệu dự án';
+}
+
+function ProjectJumpSearch({ currentId }) {
+  const navigate = useNavigate();
+  const { user } = useAuth();
+  const canPickCompany = isAdminLike(user) && !isCompanyScopedAdmin(user);
+  const boxRef = useRef(null);
+  const [q, setQ] = useState('');
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [items, setItems] = useState([]);
+  const [searchFocused, setSearchFocused] = useState(false);
+  const [filterPanelOpen, setFilterPanelOpen] = useState(false);
+  const [companies, setCompanies] = useState([]);
+  const [companyId, setCompanyId] = useState('');
+  const [users, setUsers] = useState([]);
+  const [regions, setRegions] = useState([]);
+  const [filterUserId, setFilterUserId] = useState('');
+  const [filterRegionId, setFilterRegionId] = useState('');
+  const [timePreset, setTimePreset] = useState('');
+  const [rangeFrom, setRangeFrom] = useState('');
+  const [rangeTo, setRangeTo] = useState('');
+
+  useEffect(() => {
+    api.get('/companies', { params: { for_module: 'crm' } }).then((res) => {
+      const list = Array.isArray(res.data) ? res.data : (res.data?.companies || []);
+      setCompanies(list);
+    }).catch(() => setCompanies([]));
+  }, []);
+
+  const effectiveCompanyIdForUsers = useMemo(() => {
+    if (canPickCompany) return companyId || '';
+    const cid = user?.company_id != null ? String(user.company_id).trim() : '';
+    return cid || '';
+  }, [canPickCompany, companyId, user?.company_id]);
+
+  const lockedCompanyLabel = useMemo(() => {
+    const cid = user?.company_id != null ? String(user.company_id).trim() : '';
+    const c = companies.find((x) => String(x.id) === cid);
+    return c?.short_name || c?.name || 'Công ty của bạn';
+  }, [user?.company_id, companies]);
+
+  useEffect(() => {
+    if (effectiveCompanyIdForUsers) {
+      api.get('/users', { params: { company_id: effectiveCompanyIdForUsers } })
+        .then((r) => setUsers(r.data.users || r.data || []))
+        .catch(() => setUsers([]));
+      return undefined;
+    }
+    if (canPickCompany) {
+      api.get('/users')
+        .then((r) => setUsers(r.data.users || r.data || []))
+        .catch(() => setUsers([]));
+      return undefined;
+    }
+    setUsers([]);
+    return undefined;
+  }, [effectiveCompanyIdForUsers, canPickCompany]);
+
+  useEffect(() => {
+    const params = {};
+    if (effectiveCompanyIdForUsers) {
+      params.company_id = effectiveCompanyIdForUsers;
+    } else if (canPickCompany && companies.length > 0) {
+      params.company_ids = companies.map((c) => c.id).join(',');
+    } else {
+      setRegions([]);
+      return undefined;
+    }
+    api.get('/crm/company-regions', { params })
+      .then((r) => setRegions((Array.isArray(r.data) ? r.data : []).filter((rg) => rg.is_active !== false)))
+      .catch(() => setRegions([]));
+    return undefined;
+  }, [effectiveCompanyIdForUsers, canPickCompany, companies]);
+
+  useEffect(() => {
+    setFilterUserId('');
+    setFilterRegionId('');
+  }, [effectiveCompanyIdForUsers]);
+
+  const handleTimePresetChange = (preset) => {
+    setTimePreset(preset);
+    const range = getWorkUnifiedPresetDateRange(preset);
+    setRangeFrom(range.from);
+    setRangeTo(range.to);
+  };
+
+  const clearAdvancedFilters = () => {
+    setFilterUserId('');
+    setFilterRegionId('');
+    setTimePreset('');
+    setRangeFrom('');
+    setRangeTo('');
+    if (canPickCompany) setCompanyId('');
+  };
+
+  const activeFilterCount = [
+    !!filterUserId, !!filterRegionId, !!timePreset, canPickCompany && !!companyId,
+  ].filter(Boolean).length;
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      const term = q.trim();
+      if (term.length < 2) {
+        setItems([]);
+        setLoading(false);
+        return;
+      }
+      setLoading(true);
+      const params = { q: term };
+      if (canPickCompany && companyId) params.company_id = companyId;
+      if (filterUserId) params.user_id = filterUserId;
+      if (filterRegionId) params.region_id = filterRegionId;
+      if (rangeFrom) params.date_from = rangeFrom;
+      if (rangeTo) params.date_to = rangeTo;
+      api.get('/management/work-unified/search', { params })
+        .then((res) => setItems(res.data?.items || []))
+        .catch(() => setItems([]))
+        .finally(() => setLoading(false));
+    }, 250);
+    return () => clearTimeout(t);
+  }, [q, companyId, canPickCompany, filterUserId, filterRegionId, rangeFrom, rangeTo]);
+
+  useEffect(() => {
+    const onDoc = (e) => {
+      if (!boxRef.current?.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, []);
+
+  const go = (id) => {
+    if (!id || String(id) === String(currentId)) {
+      setOpen(false);
+      return;
+    }
+    setOpen(false);
+    setFilterPanelOpen(false);
+    setQ('');
+    setItems([]);
+    navigate(`/management/work-unified/${id}`);
+  };
+
+  const jumpChips = useMemo(() => {
+    const chips = [];
+    if (canPickCompany && companyId) {
+      const c = companies.find((x) => String(x.id) === String(companyId));
+      chips.push({
+        key: 'company',
+        label: c?.short_name || c?.name || 'Công ty',
+        onClear: () => setCompanyId(''),
+      });
+    }
+    if (filterUserId) {
+      const u = users.find((x) => String(x.id) === String(filterUserId));
+      chips.push({
+        key: 'user',
+        label: u?.full_name || 'Nhân viên',
+        onClear: () => setFilterUserId(''),
+      });
+    }
+    if (filterRegionId === WORK_UNIFIED_REGION_NONE) {
+      chips.push({
+        key: 'region',
+        label: 'Chưa gán khu vực',
+        onClear: () => setFilterRegionId(''),
+      });
+    } else if (filterRegionId) {
+      const rg = regions.find((x) => String(x.id) === String(filterRegionId));
+      chips.push({
+        key: 'region',
+        label: rg?.name || 'Khu vực',
+        onClear: () => setFilterRegionId(''),
+      });
+    }
+    if (timePreset) {
+      const t = WORK_UNIFIED_TIME_PRESETS.find((x) => x.key === timePreset);
+      chips.push({
+        key: 'time',
+        label: t?.label || 'Thời gian',
+        onClear: () => handleTimePresetChange(''),
+      });
+    }
+    return chips;
+  }, [canPickCompany, companyId, companies, filterUserId, users, filterRegionId, regions, timePreset]);
+
+  return (
+    <div ref={boxRef} className="relative ml-auto w-52 sm:w-80 shrink-0">
+      <div
+        className={`group/search flex items-center w-full rounded-md border transition-colors ${
+          searchGroupClass({
+            focused: searchFocused,
+            hasQuery: !!q.trim(),
+            hasChips: jumpChips.length > 0,
+            panelOpen: filterPanelOpen,
+          })
+        }`}
+      >
+        <div className="relative flex-1 min-w-0 flex items-center gap-1 pl-7 pr-1">
+          <Search
+            className={`absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 pointer-events-none transition-colors ${
+              searchFocused || q.trim() ? 'text-violet-600' : 'text-slate-400'
+            }`}
+          />
+          {!filterPanelOpen && jumpChips.length > 0 && (
+            <SearchInlineFilterChips
+              chips={jumpChips}
+              opacityClass={searchFocused ? 'opacity-40' : q.trim() ? 'opacity-35' : 'opacity-45 group-hover/search:opacity-100'}
+              onClearChip={(chip) => { chip.onClear(); }}
+              onClearAll={clearAdvancedFilters}
+              showClearAll={jumpChips.length > 1}
+            />
+          )}
+          <input
+            type="text"
+            value={q}
+            onChange={(e) => { setQ(e.target.value); setOpen(true); setSearchFocused(true); }}
+            onFocus={() => { setOpen(true); setSearchFocused(true); }}
+            onBlur={() => setTimeout(() => setSearchFocused(false), 180)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && items[0]) {
+                e.preventDefault();
+                go(items[0].id);
+              }
+              if (e.key === 'Escape') {
+                setOpen(false);
+                setFilterPanelOpen(false);
+              }
+            }}
+            placeholder="Tìm mã, tên dự án..."
+            className={`flex-1 min-w-[3.5rem] h-8 bg-transparent border-0 text-xs font-medium text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-0 ${q ? 'pr-7' : ''}`}
+          />
+          {q && (
+            <SearchClearButton onClick={() => { setQ(''); setItems([]); setSearchFocused(false); }} />
+          )}
+        </div>
+        <div className="shrink-0 pr-1">
+          <AdvFilterButton
+            open={filterPanelOpen}
+            active={activeFilterCount > 0}
+            onClick={() => {
+              setFilterPanelOpen((v) => !v);
+              setOpen(false);
+            }}
+          />
+        </div>
+      </div>
+      {filterPanelOpen && (
+        <>
+          <div className="fixed inset-0 z-30" onClick={() => setFilterPanelOpen(false)} />
+          <WorkUnifiedFilterPanel
+            align="right"
+            onClose={() => setFilterPanelOpen(false)}
+            canPickCompany={canPickCompany}
+            lockedCompanyLabel={lockedCompanyLabel}
+            companies={companies}
+            companyId={companyId}
+            onCompanyChange={setCompanyId}
+            users={users}
+            filterUserId={filterUserId}
+            onUserChange={setFilterUserId}
+            regions={regions}
+            filterRegionId={filterRegionId}
+            onRegionChange={setFilterRegionId}
+            timePreset={timePreset}
+            onTimePresetChange={handleTimePresetChange}
+            activeFilterCount={activeFilterCount}
+            onClear={clearAdvancedFilters}
+          />
+        </>
+      )}
+      {open && !filterPanelOpen && q.trim().length >= 2 && (
+        <div className="absolute right-0 top-full mt-1 z-40 w-full min-w-[18rem] rounded-xl border-2 border-violet-200 bg-white shadow-xl shadow-violet-500/15 overflow-hidden">
+          {loading ? (
+            <p className="px-3 py-2 text-xs text-gray-400">Đang tìm...</p>
+          ) : items.length === 0 ? (
+            <p className="px-3 py-2 text-xs text-gray-400">Không có dự án khớp</p>
+          ) : (
+            items.map((it) => {
+              const active = String(it.id) === String(currentId);
+              return (
+                <button
+                  key={it.id}
+                  type="button"
+                  onClick={() => go(it.id)}
+                  className={`w-full text-left px-3 py-2 cursor-pointer ${active ? 'bg-violet-50' : 'hover:bg-gray-50'}`}
+                >
+                  <p className="text-xs font-medium text-violet-700 truncate">{it.code}</p>
+                  <p className="text-[11px] text-gray-600 truncate">{it.name}</p>
+                  {it.customer_name && (
+                    <p className="text-[10px] text-gray-400 truncate">{it.customer_name}</p>
+                  )}
+                </button>
+              );
+            })
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function WorkUnifiedProjectDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -543,16 +864,29 @@ export default function WorkUnifiedProjectDetailPage() {
   };
 
   const load = useCallback(async () => {
+    if (!id) {
+      setError('Thiếu mã dự án');
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError('');
-    try {
-      const res = await api.get(`/management/by-project/${id}`);
-      setBundle(res.data);
-    } catch (e) {
-      setError(e?.response?.data?.error || 'Không tải được dữ liệu dự án');
-    } finally {
-      setLoading(false);
+    let lastErr = null;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        const res = await api.get(`/management/by-project/${id}`);
+        setBundle(res.data);
+        setCommentCount(Number(res.data?.comment_count) || 0);
+        setLoading(false);
+        return;
+      } catch (e) {
+        lastErr = e;
+        if (!isRetryableNetworkError(e) || attempt === 2) break;
+        await new Promise((r) => setTimeout(r, 600 * (attempt + 1)));
+      }
     }
+    setError(projectLoadErrorMessage(lastErr));
+    setLoading(false);
   }, [id]);
 
   useEffect(() => { load(); }, [load]);
@@ -560,41 +894,44 @@ export default function WorkUnifiedProjectDetailPage() {
 
   const bundleCompanyId = bundle?.project?.company_id || null;
   useEffect(() => {
-    if (!bundleCompanyId) { setCompanyUsers([]); return; }
+    if (!bundleCompanyId || (activeTab !== 'shared' && activeTab !== 'team')) return;
     api.get('/users', { params: { company_id: bundleCompanyId } })
       .then((r) => setCompanyUsers(r.data.users || r.data || []))
       .catch(() => setCompanyUsers([]));
-  }, [bundleCompanyId]);
-
-  const bundleLeadId = bundle?.primary_lead?.id || bundle?.lead_id || null;
-  useEffect(() => {
-    if (bundleLeadId) {
-      api.get(`/crm/leads/${bundleLeadId}/comments`)
-        .then((cr) => {
-          const rows = Array.isArray(cr.data) ? cr.data : (cr.data?.comments || []);
-          setCommentCount(rows.length);
-        })
-        .catch(() => {});
-    } else if (id) {
-      api.get(`/projects/${id}/comments`)
-        .then((cr) => setCommentCount((cr.data?.comments || []).length))
-        .catch(() => setCommentCount(0));
-    }
-  }, [bundleLeadId, id]);
+  }, [bundleCompanyId, activeTab]);
 
   if (loading) {
     return <div className="p-6 text-center text-gray-400 text-sm">Đang tải...</div>;
   }
   if (error) {
     return (
-      <div className="p-4 md:p-6 max-w-5xl mx-auto">
-        <div className="rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-2">{error}</div>
+      <div className="p-4 md:p-6 max-w-5xl mx-auto space-y-3">
+        <button
+          type="button"
+          onClick={() => navigate('/management/work-unified')}
+          className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 cursor-pointer"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Quay lại Work Unified
+        </button>
+        <div className="rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3 flex items-center justify-between gap-3">
+          <span>{error}</span>
+          <button
+            type="button"
+            onClick={load}
+            className="shrink-0 inline-flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg bg-white border border-red-200 text-red-700 hover:bg-red-100 cursor-pointer"
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+            Thử lại
+          </button>
+        </div>
       </div>
     );
   }
   if (!bundle?.project) return null;
 
-  const { project, overview, primary_lead: primaryLead, lead_id: leadId } = bundle;
+  const { project, primary_lead: primaryLead, lead_id: leadId } = bundle;
+  const overview = bundle.overview || {};
   const effectiveLeadId = primaryLead?.id || leadId || null;
   const currentFlow = (overview.flow || []).find((s) => s.status === 'current');
   const ownerKey = currentFlow?.module === 'production' ? 'sx' : currentFlow?.module === 'logistics' ? 'vc' : 'crm';
@@ -607,7 +944,7 @@ export default function WorkUnifiedProjectDetailPage() {
 
   return (
     <div className="p-4 md:p-6 max-w-5xl mx-auto space-y-5">
-      <div className="flex items-center gap-2 text-xs text-gray-400">
+      <div className="flex items-center gap-2 text-xs text-gray-400 flex-wrap">
         <button
           type="button"
           onClick={() => navigate('/management/work-unified')}
@@ -621,6 +958,7 @@ export default function WorkUnifiedProjectDetailPage() {
         <span>Dự án</span>
         <ChevronRight className="h-3 w-3" />
         <span className="text-gray-600 font-medium">{project.code}</span>
+        <ProjectJumpSearch currentId={id} />
       </div>
 
       <div className="flex items-start justify-between flex-wrap gap-3">

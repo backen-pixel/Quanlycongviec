@@ -180,6 +180,14 @@ r.get('/', async (req, res) => {
     if (error) throw error;
 
     const tasks = await enrichUnifiedCrmTasks(supabase, data || []);
+    const assigneeIds = [...new Set(tasks.map((t) => t.assignee_id).filter(Boolean))];
+    if (assigneeIds.length) {
+      const { data: users } = await supabase.from('users').select('id, full_name').in('id', assigneeIds);
+      const nameById = Object.fromEntries((users || []).map((u) => [String(u.id), u.full_name]));
+      for (const t of tasks) {
+        t.assignee_name = t.assignee_id ? (nameById[String(t.assignee_id)] || null) : null;
+      }
+    }
     res.json({ tasks, total: count ?? tasks.length ?? 0, page, page_size: pageSize });
   } catch (e) {
     console.error('[work-tasks] list:', e);
