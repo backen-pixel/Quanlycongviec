@@ -272,12 +272,14 @@ export function resolveCrmLeadDeadlineViewSource(item, stage, config) {
 
 /**
  * Gom cột Deadline view — khớp BE `crmDeadlineTsForRow` / RPC counts.
- * Không dùng `shouldHide` / `deadline_disabled_at` (BE counts cũng không).
+ * Không dùng `shouldHide` (ẩn theo bối cảnh hiển thị thẻ), nhưng VẪN loại theo
+ * `deadline_disabled_at` (đã tắt hẳn ở chi tiết) để khớp BE — nếu không thì Dashboard
+ * xếp/đếm deal đã tắt deadline vào cột như «Quá hạn» dù chi tiết đã ẩn.
  */
 export function resolveCrmLeadDeadlineBucketSource(item, stage, config) {
   const st = stage || item?._stage || item?.stage;
   const hasPhone = crmLeadHasPhone(item);
-  if (!hasPhone || item?.is_interacted || isCrmPipelineStageNoDeadline(st)) {
+  if (!hasPhone || item?.is_interacted || item?.deadline_disabled_at || isCrmPipelineStageNoDeadline(st)) {
     return { deadlineTs: null, source: null, forcedNoDeadline: true };
   }
 

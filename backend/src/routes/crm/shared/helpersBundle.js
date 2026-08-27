@@ -5242,7 +5242,7 @@ async function fetchCrmDeadlineCountRowsViaRpc(req, mergedQuery, type, maxRows =
   const filtered = await fetchCrmFilteredLeadIdsViaRpc(req, mergedQuery, type, maxRows);
   if (!filtered) return null;
   const { ids, total, complete } = filtered;
-  const select = 'id, phone, stage_id, stage_entered_at, kanban_deadline_at, expected_close_date, customer:customers(phone)';
+  const select = 'id, phone, stage_id, stage_entered_at, kanban_deadline_at, expected_close_date, deadline_disabled_at, customer:customers(phone)';
   const byId = new Map();
   const chunks = [];
   for (let i = 0; i < ids.length; i += 200) chunks.push(ids.slice(i, i + 200));
