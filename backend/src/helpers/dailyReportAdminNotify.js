@@ -50,7 +50,9 @@ function shortRole(g) {
   if (/sale.?admin|sale admin/i.test(name) || g.role_key === 'sale_admin') return 'Sale Admin';
   if (/sale.?deal|deal/i.test(name) || g.role_key === 'sale_deal' || g.role_key === 'deal_admin') return 'Sale-Deal';
   if (/survey|khảo sát|khao sat/i.test(name) || g.role_key === 'design_survey') return 'KS';
-  return name.slice(0, 14) || 'Mẫu';
+  // Mẫu lạ (ngoài 3 loại chuẩn ở trên) — giữ đủ tên mẫu (không cắt còn 14 ký tự như cũ) để không
+  // bị trùng nhãn giữa 2 mẫu khác nhau khi tên gốc hơi dài.
+  return name.slice(0, 20) || 'Mẫu';
 }
 
 function safeFilePart(s) {
@@ -207,7 +209,7 @@ function buildWorkbookBuffer({ reportDate, phase, slot, packs }) {
       XLSX.utils.book_append_sheet(
         wb,
         ws,
-        uniqueSheetName(used, `${meta.code}.${coShort} ${role}`),
+        uniqueSheetName(used, `${meta.code}.${coShort} · ${role}`),
       );
     }
   }
