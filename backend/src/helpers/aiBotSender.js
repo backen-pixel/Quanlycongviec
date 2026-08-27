@@ -635,7 +635,7 @@ async function buildChannelContextPayload(memberIds, opts = {}) {
     for (let from = 0; from < 10000; from += PAGE) {
       const { data, error } = await supabase
         .from('crm_leads')
-        .select('id, code, title, type, phone, estimated_value, assigned_to, stage_entered_at, created_at, '
+        .select('id, code, title, type, phone, estimated_value, assigned_to, stage_entered_at, created_at, deadline_disabled_at, '
           + 'stage:crm_pipeline_stages!crm_leads_stage_id_fkey(name, sla_days, is_won, is_lost)')
         .in('assigned_to', ids)
         .is('actual_close_date', null)
@@ -650,6 +650,7 @@ async function buildChannelContextPayload(memberIds, opts = {}) {
     const olderBreached = [];
     openLeads.forEach((l) => {
       if (l.stage?.is_won || l.stage?.is_lost) return;
+      if (l.deadline_disabled_at) return;
       if (crmLeadMissingPhone(l)) return;
       const slaDays = effectivePipelineStageSlaDays(l.stage?.sla_days);
       if (slaDays == null) return;

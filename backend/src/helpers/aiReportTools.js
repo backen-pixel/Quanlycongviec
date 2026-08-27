@@ -2101,7 +2101,7 @@ async function getLeadDealRiskReport({
     .from('crm_leads')
     .select(
       'id, code, title, type, phone, company_id, stage_id, stage_entered_at, created_at, '
-      + 'estimated_value, assigned_to, '
+      + 'estimated_value, assigned_to, deadline_disabled_at, '
       + 'assignee:users!crm_leads_assigned_to_fkey(id, full_name), '
       + 'stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, sla_days, pipeline_type, is_won, is_lost)'
     )
@@ -2133,8 +2133,8 @@ async function getLeadDealRiskReport({
     const entered = l.stage_entered_at || l.created_at;
     const enteredMs = entered ? new Date(entered).getTime() : null;
 
-    // SLA breach / due soon — bỏ lead chưa có SĐT
-    if (slaDays != null && enteredMs && !crmLeadMissingPhone(l)) {
+    // SLA breach / due soon — bỏ lead chưa có SĐT / đã tắt deadline
+    if (slaDays != null && enteredMs && !crmLeadMissingPhone(l) && !l.deadline_disabled_at) {
       const dueMs = enteredMs + slaDays * 24 * 3600 * 1000;
       const baseItem = {
         id: l.id,

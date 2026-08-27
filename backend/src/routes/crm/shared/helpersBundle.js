@@ -1478,7 +1478,7 @@ async function fetchAllLeadsForSlaWatchlist(req, effectiveCompanyId, typeFilter,
   for (;;) {
     let q = supabase
       .from('crm_leads')
-      .select('id, code, title, type, phone, company_id, stage_id, assigned_to, lead_owner_id, stage_entered_at, created_at, region_id')
+      .select('id, code, title, type, phone, company_id, stage_id, assigned_to, lead_owner_id, stage_entered_at, created_at, region_id, deadline_disabled_at')
       .order('updated_at', { ascending: false });
     if (typeFilter === 'lead' || typeFilter === 'deal') q = q.eq('type', typeFilter);
     if (effectiveCompanyId) q = q.eq('company_id', effectiveCompanyId);

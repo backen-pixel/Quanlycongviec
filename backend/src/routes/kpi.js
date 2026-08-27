@@ -400,7 +400,7 @@ r.get('/dashboard/deal', async (req, res) => {
     // Deal sắp quá SLA (active, ngấp nghé sla_days)
     const { data: dueDeals } = await supabase
       .from('crm_leads')
-      .select('id, code, title, stage_id, stage_entered_at, estimated_value, type, phone, stage:crm_pipeline_stages!stage_id(name, sla_days, is_won, is_lost)')
+      .select('id, code, title, stage_id, stage_entered_at, estimated_value, type, phone, deadline_disabled_at, stage:crm_pipeline_stages!stage_id(name, sla_days, is_won, is_lost)')
       .eq('type', 'deal')
       .or(`lead_owner_id.eq.${userId},assigned_to.eq.${userId}`)
       .order('stage_entered_at', { ascending: true }).limit(50);
@@ -408,6 +408,7 @@ r.get('/dashboard/deal', async (req, res) => {
     const breaching = (dueDeals || []).filter((d) => {
       const s = d.stage;
       if (!s || s.is_won || s.is_lost || !d.stage_entered_at) return false;
+      if (d.deadline_disabled_at) return false;
       if (crmLeadMissingPhone(d)) return false;
       const slaDays = effectivePipelineStageSlaDays(s.sla_days);
       if (slaDays == null) return false;
@@ -1281,12 +1282,13 @@ r.get('/company-overview', async (req, res) => {
     if (userIds.length) {
       const { data: leads } = await supabase
         .from('crm_leads')
-        .select('id, code, title, phone, lead_owner_id, assigned_to, stage_entered_at, stage:crm_pipeline_stages!stage_id(canonical_slug, sla_days, is_won, is_lost)')
+        .select('id, code, title, phone, lead_owner_id, assigned_to, stage_entered_at, deadline_disabled_at, stage:crm_pipeline_stages!stage_id(canonical_slug, sla_days, is_won, is_lost)')
         .or(`lead_owner_id.in.(${userIds.join(',')}),assigned_to.in.(${userIds.join(',')})`);
       const now = Date.now();
       leadsOverSla = (leads || []).filter((l) => {
         const s = l.stage;
         if (!s || s.is_won || s.is_lost || !l.stage_entered_at) return false;
+        if (l.deadline_disabled_at) return false;
         if (crmLeadMissingPhone(l)) return false;
         const slaDays = effectivePipelineStageSlaDays(s.sla_days);
         if (slaDays == null) return false;
