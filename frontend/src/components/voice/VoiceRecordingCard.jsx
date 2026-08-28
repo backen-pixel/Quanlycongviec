@@ -90,11 +90,13 @@ export default function VoiceRecordingCard({
 
   return (
     <article className="group rounded-[20px] border border-slate-200/80 bg-white p-4 shadow-[0_8px_30px_rgba(15,23,42,0.06)] hover:shadow-[0_16px_40px_rgba(124,58,237,0.12)] hover:-translate-y-0.5 transition-all duration-300">
-      <div className="flex gap-4">
-        {/* Cover 90x90 */}
-        <div className="relative shrink-0">
+      <div className="flex gap-3 sm:gap-4">
+        {/* Cover 90x90 — thu còn 56px ở mobile: ảnh chỉ là trang trí (sóng âm tĩnh),
+            nhưng mang badge trạng thái nên không bỏ hẳn. Nhường chỗ cho phần chữ:
+            140px → ~187px, đỡ bị xuống dòng liên tục. */}
+        <div className="relative shrink-0 self-start">
           <div
-            className={`w-[90px] h-[90px] rounded-2xl bg-gradient-to-br ${gradient} shadow-lg flex items-center justify-center overflow-hidden`}
+            className={`w-14 h-14 sm:w-[90px] sm:h-[90px] rounded-2xl bg-gradient-to-br ${gradient} shadow-lg flex items-center justify-center overflow-hidden`}
           >
             <div className="absolute inset-0 bg-black/10" />
             <div className="relative flex items-end justify-center gap-[3px] h-10 px-2 pb-3 opacity-90">
@@ -113,7 +115,7 @@ export default function VoiceRecordingCard({
             </span>
           </div>
           <span
-            className={`absolute -top-1.5 -right-1.5 inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-semibold border shadow-sm ${
+            className={`absolute -top-1.5 -right-1.5 inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-semibold border shadow-sm whitespace-nowrap ${
               linked
                 ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                 : 'bg-amber-50 text-amber-700 border-amber-200'

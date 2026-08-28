@@ -7,6 +7,7 @@ import { resolveDefaultCrmAdminCompanyId } from '../lib/crmCompanyFilter';
 import { Upload, RefreshCw, Square, Circle, ScanLine, Calendar as CalendarIcon, Search, SlidersHorizontal, ChevronLeft, ChevronRight, UserPlus, Mic, AudioLines } from 'lucide-react';
 import VoiceCalendarPanel from '../components/VoiceCalendarPanel';
 import VoiceRecordingCard from '../components/voice/VoiceRecordingCard';
+import { useIsMobile } from '../hooks/useIsMobile';
 
 function toLocalISODate(d) {
   if (!d) return '';
@@ -240,6 +241,9 @@ export default function VoiceRecordingsPage() {
   }, [filteredList, searchQuery]);
 
   const totalPages = Math.max(1, Math.ceil(searchedList.length / pageSize));
+  const isMobile = useIsMobile();
+  /** Mobile chỉ đủ chỗ 3 nút số trang bên cạnh nút lùi/tiến. */
+  const maxPageButtons = isMobile ? 3 : 5;
   const paginatedList = useMemo(() => {
     const start = (page - 1) * pageSize;
     return searchedList.slice(start, start + pageSize);
@@ -1061,7 +1065,9 @@ export default function VoiceRecordingsPage() {
                 <p className="text-xs text-slate-500">
                   Hiển thị {(page - 1) * pageSize + 1} – {Math.min(page * pageSize, searchedList.length)} trong tổng số {searchedList.length} ghi âm
                 </p>
-                <div className="flex items-center gap-2">
+                {/* Mobile: hàng này cần ~420px (prev + 5 nút trang + next + select 112px)
+                    trong khi chỉ có ~280px → cho xuống hàng và rút còn 3 nút trang. */}
+                <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2">
                   <button
                     type="button"
                     disabled={page <= 1}
@@ -1070,12 +1076,13 @@ export default function VoiceRecordingsPage() {
                   >
                     <ChevronLeft size={16} />
                   </button>
-                  {Array.from({ length: Math.min(totalPages, 5) }, (_, i) => {
+                  {Array.from({ length: Math.min(totalPages, maxPageButtons) }, (_, i) => {
+                    const half = Math.floor(maxPageButtons / 2);
                     let pageNum = i + 1;
-                    if (totalPages > 5) {
-                      if (page <= 3) pageNum = i + 1;
-                      else if (page >= totalPages - 2) pageNum = totalPages - 4 + i;
-                      else pageNum = page - 2 + i;
+                    if (totalPages > maxPageButtons) {
+                      if (page <= half + 1) pageNum = i + 1;
+                      else if (page >= totalPages - half) pageNum = totalPages - maxPageButtons + 1 + i;
+                      else pageNum = page - half + i;
                     }
                     return (
                       <button
@@ -1103,7 +1110,7 @@ export default function VoiceRecordingsPage() {
                   <select
                     value={pageSize}
                     onChange={(e) => setPageSize(Number(e.target.value))}
-                    className="h-9 px-2 border border-slate-200 rounded-xl text-sm bg-white ml-2"
+                    className="h-9 px-2 border border-slate-200 rounded-xl text-sm bg-white sm:ml-2"
                   >
                     <option value={10}>10 / trang</option>
                     <option value={20}>20 / trang</option>
