@@ -21,7 +21,9 @@ import {
   PhoneCall,
   MoreHorizontal,
   SlidersHorizontal,
+  ArrowLeft,
 } from 'lucide-react';
+import { useIsMobile } from '../hooks/useIsMobile';
 import { useMessengerDock } from '../context/MessengerDockContext';
 import { useCall } from '../calling';
 import GroupCallMemberPickerModal from '../components/GroupCallMemberPickerModal';
@@ -233,6 +235,14 @@ export default function MessengerHubPage() {
   });
   const detailPanelClosedByUserRef = useRef(false);
   const [leftOpen, setLeftOpen] = useState(true);
+  const isMobile = useIsMobile();
+  /**
+   * Mobile chỉ đủ chỗ cho MỘT cột: chưa chọn hội thoại thì hiện danh sách full màn,
+   * chọn rồi thì nhường hết cho khung chat (quay lại bằng nút mũi tên ở header).
+   * Desktop giữ nguyên cơ chế `leftOpen` thu gọn/mở của người dùng.
+   */
+  const showList = isMobile ? !selectedGroupId : leftOpen;
+  const showChatPane = isMobile ? !!selectedGroupId : true;
   const [rightSection, setRightSection] = useState('members');
   const [createOpen, setCreateOpen] = useState(false);
   const [groupName, setGroupName] = useState('');
@@ -1167,7 +1177,7 @@ export default function MessengerHubPage() {
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col text-slate-800 bg-slate-50/80">
       <div className="relative flex min-h-0 flex-1 border-t border-slate-200/80">
-        {!leftOpen && (
+        {!leftOpen && !isMobile && (
           <div className="flex w-[56px] shrink-0 flex-col border-r border-slate-200 bg-white z-[1]">
             <div className="flex shrink-0 justify-center border-b border-slate-100 py-2">
               <button
@@ -1213,8 +1223,8 @@ export default function MessengerHubPage() {
           </div>
         )}
         {/* —— Cột trái: danh sách —— */}
-        {leftOpen && (
-        <aside className="w-[320px] shrink-0 flex flex-col bg-white border-r border-slate-200 shadow-sm">
+        {showList && (
+        <aside className="w-full lg:w-[320px] shrink-0 flex flex-col bg-white border-r border-slate-200 shadow-sm">
           <div className="px-4 pt-4 pb-3 border-b border-slate-100 bg-white">
             <div className="flex items-center justify-between mb-3">
               <div>
@@ -1557,6 +1567,7 @@ export default function MessengerHubPage() {
         )}
 
         {/* —— Giữa: chat —— */}
+        {showChatPane && (
         <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-white">
           {!selectedGroupId ? (
             <div className="flex flex-1 flex-col items-center justify-center p-8 bg-slate-50/50">
@@ -1578,6 +1589,15 @@ export default function MessengerHubPage() {
           ) : (
             <>
               <header className="h-[60px] shrink-0 flex items-center gap-3 px-4 bg-white border-b border-slate-200">
+                {/* Mobile: danh sách và chat không hiện cùng lúc — cần nút quay lại danh sách */}
+                <button
+                  type="button"
+                  onClick={() => setSelectedGroupId(null)}
+                  aria-label="Quay lại danh sách"
+                  className="lg:hidden shrink-0 -ml-1 inline-flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-800 cursor-pointer"
+                >
+                  <ArrowLeft className="h-5 w-5" />
+                </button>
                 <div className="relative shrink-0">
                   <HubAvatar
                     src={threadAvatarSrc(selected)}
@@ -1840,6 +1860,7 @@ export default function MessengerHubPage() {
             </>
           )}
         </section>
+        )}
       </div>
 
       <MessengerCreateGroupModal
