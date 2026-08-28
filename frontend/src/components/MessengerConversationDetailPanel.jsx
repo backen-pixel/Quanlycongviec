@@ -371,7 +371,8 @@ export default function MessengerConversationDetailPanel({
 
   return (
     <>
-    <aside className="flex w-[320px] shrink-0 flex-col border-l border-slate-200 bg-slate-100/80 min-h-0 h-full overflow-y-auto [scrollbar-width:thin]">
+    // Panel chi tiết hội thoại là phụ trợ — ẩn dưới lg để khung chat không bị bóp trên màn hẹp.
+    <aside className="hidden lg:flex w-[320px] shrink-0 flex-col border-l border-slate-200 bg-slate-100/80 min-h-0 h-full overflow-y-auto [scrollbar-width:thin]">
       {/* Header gradient */}
       <div className="relative px-4 pt-8 pb-5 bg-gradient-to-br from-rose-500 via-fuchsia-600 to-indigo-700 text-white text-center">
         <div className="relative mx-auto w-[88px] h-[88px] rounded-full p-[3px] bg-white/95 shadow-lg mb-3">

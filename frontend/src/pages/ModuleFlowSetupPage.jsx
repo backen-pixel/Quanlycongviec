@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef, memo } from 'react';
 import { Link } from 'react-router-dom';
+import { useIsMobile } from '../hooks/useIsMobile';
 import {
   ReactFlow,
   Background,
@@ -1908,7 +1909,10 @@ function FlowCanvasEditor({ flow, flows = [], customModules, onCancel, onSaved, 
   const [dirty, setDirty] = useState(() => Boolean(initial.fromBlueprint));
   const [conditionPicker, setConditionPicker] = useState(null);
   const [saving, setSaving] = useState(false);
-  const [showLeft, setShowLeft] = useState(true);
+  const isMobileCanvas = useIsMobile();
+  // Palette 220px + inspector 300px chen ngang canvas: ở 375px canvas chỉ còn ~190px.
+  // Mặc định thu gọn palette trên mobile — vẫn bật lại được bằng nút trên thanh công cụ.
+  const [showLeft, setShowLeft] = useState(() => !isMobileCanvas);
   const [showRight, setShowRight] = useState(false);
   const [showBranches, setShowBranches] = useState(false);
   const [ecosystemNodeId, setEcosystemNodeId] = useState(null);
