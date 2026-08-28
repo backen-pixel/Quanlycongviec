@@ -12159,7 +12159,7 @@ function NewLeadModal({ onClose, onSuccess, leadTypes, companies, type, defaultC
       >
 
         {/* ── LEFT: Form ── */}
-        <div className="flex-1 flex flex-col min-w-0 border-r border-gray-100">
+        <div className="flex-1 flex flex-col min-w-0 sm:border-r sm:border-gray-100">
           {/* Header */}
           <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
             <div>
@@ -12341,8 +12341,9 @@ function NewLeadModal({ onClose, onSuccess, leadTypes, companies, type, defaultC
           </div>
         </div>
 
-        {/* ── RIGHT: Kanban Card Preview ── */}
-        <div className="w-72 shrink-0 bg-gray-50 flex flex-col">
+        {/* ── RIGHT: Kanban Card Preview ── ẩn dưới sm: panel cố định 288px sẽ bóp
+             form nhập chỉ còn ~55px trên máy 375px (giống NewDealModal đã xử lý) */}
+        <div className="w-72 shrink-0 bg-gray-50 flex-col hidden sm:flex">
           <div className="px-5 py-4 border-b border-gray-100">
             <p className="text-xs font-bold text-gray-500 uppercase tracking-wide">Xem trước thẻ Lead</p>
           </div>
