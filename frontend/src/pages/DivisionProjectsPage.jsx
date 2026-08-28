@@ -364,7 +364,7 @@ export default function DivisionProjectsPage() {
                               </div>
                             </div>
                             <button
-                              onClick={() => navigate(`/projects/${task.project_id}`)}
+                              onClick={() => navigate(`/management/work-unified/${task.project_id}`)}
                               className="text-sm text-purple-600 hover:text-purple-700 font-medium"
                             >
                               Xem chi tiết →

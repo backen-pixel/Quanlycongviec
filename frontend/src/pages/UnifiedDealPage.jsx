@@ -156,7 +156,7 @@ export default function UnifiedDealPage() {
                 )}
                 {value > 0 && <span className="font-semibold text-emerald-700">{formatVND(value)}</span>}
                 {project?.code && (
-                  <Link to={`/projects/${project.id}`} className="flex items-center gap-1 text-blue-600 hover:underline">
+                  <Link to={`/management/work-unified/${project.id}`} className="flex items-center gap-1 text-blue-600 hover:underline">
                     <FolderKanban className="h-3 w-3" />{project.code}
                   </Link>
                 )}
@@ -171,7 +171,7 @@ export default function UnifiedDealPage() {
               </Link>
               {project?.id && (
                 <Link
-                  to={`/sx/projects/${project.id}`}
+                  to={`/sx/management/work-unified/${project.id}`}
                   className="hidden sm:inline-flex items-center gap-1 h-8 px-3 rounded-lg border border-orange-200 bg-orange-50 text-orange-800 text-xs font-medium hover:bg-orange-100"
                 >
                   SX <ExternalLink className="h-3 w-3" />
@@ -323,7 +323,7 @@ export default function UnifiedDealPage() {
             </div>
             {project?.id && (
               <div className="bg-white rounded-xl border p-4">
-                <Link to={`/projects/${project.id}?tab=documents`} className="text-sm text-blue-600 hover:underline flex items-center gap-1">
+                <Link to={`/management/work-unified/${project.id}?tab=documents`} className="text-sm text-blue-600 hover:underline flex items-center gap-1">
                   <ExternalLink className="h-4 w-4" /> Tài liệu dự án đầy đủ
                 </Link>
               </div>
@@ -336,7 +336,7 @@ export default function UnifiedDealPage() {
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-bold text-gray-900">Nhiệm vụ Sản xuất</h2>
               {project?.id && (
-                <Link to={`/sx/projects/${project.id}`} className="text-xs text-orange-600 hover:underline flex items-center gap-1">
+                <Link to={`/sx/management/work-unified/${project.id}`} className="text-xs text-orange-600 hover:underline flex items-center gap-1">
                   Mở chi tiết SX <ExternalLink className="h-3 w-3" />
                 </Link>
               )}
@@ -362,7 +362,7 @@ export default function UnifiedDealPage() {
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-bold text-gray-900">Nhiệm vụ Lắp đặt</h2>
               {project?.id && (
-                <Link to={`/vc/projects/${project.id}`} className="text-xs text-amber-700 hover:underline flex items-center gap-1">
+                <Link to={`/vc/management/work-unified/${project.id}`} className="text-xs text-amber-700 hover:underline flex items-center gap-1">
                   Mở chi tiết VC <ExternalLink className="h-3 w-3" />
                 </Link>
               )}

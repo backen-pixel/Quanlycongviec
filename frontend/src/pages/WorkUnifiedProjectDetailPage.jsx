@@ -39,7 +39,7 @@ import UploadFileLightbox, {
   findUploadLightboxIndex,
 } from '../components/UploadFileLightbox';
 import {
-  ChevronRight, ChevronDown, AlertTriangle, Shield, Plus, ExternalLink, Download, FileText as FileIcon, ArrowLeft,
+  ChevronRight, ChevronDown, AlertTriangle, Plus, ExternalLink, Download, FileText as FileIcon, ArrowLeft,
   CheckCircle2, X as XIcon, MessageCircle, Loader2, Package, Truck, RefreshCw, Search, FolderOpen, Image as ImageIcon,
   Bell, Eye,
 } from 'lucide-react';
@@ -56,12 +56,6 @@ const SECONDARY_TABS = [
 ];
 /** Chỉ hiện khi dự án có deal CRM gắn kèm (cần leadId để tải thành viên). */
 const TEAM_TAB = { key: 'team', label: 'Thành viên' };
-
-/** Trang đầy đủ /projects/:id có tab tương ứng — dùng khi cần vào sâu (sửa, upload, tạo mới). */
-const FULL_PAGE_TAB = {
-  tasks: 'aggregate', shared: 'shared', team: 'team', progress: 'flow', documents: 'documents',
-  finance: 'finance', acceptance: 'approvals', chat: 'chat', history: 'history',
-};
 
 export function Section({ title, action, children }) {
   return (
@@ -1259,12 +1253,6 @@ export function DocumentsTab({ projectId, leadId, projectHint = null }) {
                 <Plus className="h-3 w-3" /> Upload CRM
                   </Link>
             )}
-            <Link
-              to={`/projects/${projectId}?tab=documents`}
-              className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-600 hover:text-blue-800"
-            >
-              Trang đầy đủ <ExternalLink className="h-3 w-3" />
-            </Link>
               </div>
         )}
       >
@@ -1431,8 +1419,7 @@ function AcceptanceTab({ flow, projectId }) {
             </span>
           </div>
           <p className="text-sm text-gray-500">
-            Chưa có checklist nghiệm thu chi tiết cho dự án — dùng tab{' '}
-            <Link to={`/projects/${projectId}?tab=approvals`} className="text-blue-600 hover:underline">Duyệt</Link> ở trang dự án đầy đủ để ghi nhận kết quả nghiệm thu.
+            Chưa có checklist nghiệm thu chi tiết cho dự án này.
           </p>
         </div>
       )}
@@ -2111,20 +2098,14 @@ export default function WorkUnifiedProjectDetailPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Link
-            to={`/projects/${id}?tab=approvals`}
-            className="inline-flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg border border-gray-200 bg-white hover:bg-gray-50"
-          >
-            <Shield className="h-4 w-4" />
-            Yêu cầu phê duyệt
-          </Link>
-          <Link
-            to={`/projects/${id}?tab=aggregate`}
-            className="inline-flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700"
+          <button
+            type="button"
+            onClick={() => setActiveTab('tasks')}
+            className="inline-flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 cursor-pointer"
           >
             <Plus className="h-4 w-4" />
             Tạo công việc
-          </Link>
+          </button>
         </div>
       </div>
 
@@ -2241,14 +2222,6 @@ export default function WorkUnifiedProjectDetailPage() {
       )}
       {activeTab === 'history' && <HistoryTab projectId={id} leadId={effectiveLeadId} />}
 
-      {activeTab !== 'overview' && (
-        <p className="text-xs text-gray-400 text-right pt-1">
-          <Link to={`/projects/${id}?tab=${FULL_PAGE_TAB[activeTab] || 'overview'}`} className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-800">
-            Mở trang dự án đầy đủ (CRM · Sản xuất · Vận chuyển)
-            <ExternalLink className="h-3 w-3" />
-          </Link>
-        </p>
-      )}
     </div>
   );
 }

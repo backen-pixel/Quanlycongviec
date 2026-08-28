@@ -208,7 +208,7 @@ function PinnedCard({ project: p, expanded, onToggle, onUnpin }) {
               })
             }
           </div>
-          <Link to={`/projects/${p.id}`} className="block mt-2 text-center text-[10px] text-blue-600 hover:underline font-medium" data-no-drag>Xem chi tiết →</Link>
+          <Link to={`/management/work-unified/${p.id}`} className="block mt-2 text-center text-[10px] text-blue-600 hover:underline font-medium" data-no-drag>Xem chi tiết →</Link>
         </div>
       )}
     </div>

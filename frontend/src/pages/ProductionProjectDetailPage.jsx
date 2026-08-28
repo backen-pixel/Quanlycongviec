@@ -8,7 +8,7 @@ import UnifiedTaskRow from '../components/UnifiedTaskRow';
 import WorkTaskExtrasPanel from '../components/WorkTaskExtrasPanel';
 import { formatDate } from '../lib/utils';
 import {
-  ArrowLeft, ChevronRight, ExternalLink, Shield, MessageCircle, Loader2, CheckCircle2, X as XIcon,
+  ArrowLeft, ChevronRight, ExternalLink, MessageCircle, Loader2, CheckCircle2, X as XIcon,
 } from 'lucide-react';
 
 const DONE_TASK_STATUSES_SX = ['done', 'completed'];
@@ -369,13 +369,7 @@ export default function ProductionProjectDetailPage() {
         </div>
         <div className="flex items-center gap-2">
           <Link
-            to={`/projects/${id}?tab=approvals`}
-            className="inline-flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg border border-gray-200 bg-white hover:bg-gray-50"
-          >
-            <Shield className="h-4 w-4" /> Yêu cầu phê duyệt
-          </Link>
-          <Link
-            to={`/projects/${id}`}
+            to={`/management/work-unified/${id}`}
             className="inline-flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700"
           >
             <ExternalLink className="h-4 w-4" /> Mở dự án
@@ -452,7 +446,7 @@ export default function ProductionProjectDetailPage() {
       {activeTab === 'history' && <HistoryTab projectId={id} />}
 
       <p className="text-xs text-gray-400 text-right pt-1">
-        <Link to={`/projects/${id}?tab=aggregate`} className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-800">
+        <Link to={`/management/work-unified/${id}?tab=tasks`} className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-800">
           Mở trang dự án đầy đủ (CRM · Sản xuất · Vận chuyển)
           <ExternalLink className="h-3 w-3" />
         </Link>

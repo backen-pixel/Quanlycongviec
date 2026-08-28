@@ -167,7 +167,7 @@ export default function CreateProject() {
       };
       const { data } = await api.post('/projects/create-with-flow', payload);
       setAutoStatus('✅ Tạo dự án thành công!');
-      setTimeout(() => navigate(`/projects/${data.project.id}`), 800);
+      setTimeout(() => navigate(`/management/work-unified/${data.project.id}`), 800);
     } catch (e) {
       setAutoStatus('❌ Lỗi: ' + (e.response?.data?.error || e.message));
       setLoading(false);
@@ -330,7 +330,7 @@ export default function CreateProject() {
         deadline: form.deadline || null,
       };
       const { data } = await api.post('/projects/create-with-flow', payload);
-      navigate(`/projects/${data.project.id}`);
+      navigate(`/management/work-unified/${data.project.id}`);
     } catch (e) {
       alert(e.response?.data?.error || 'Lỗi tạo dự án');
     }

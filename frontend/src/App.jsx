@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate, Outlet, useLocation } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, Outlet, useLocation, useParams, useSearchParams } from 'react-router-dom';
 import { Suspense, lazy, Component, useEffect } from 'react';
 import { AuthProvider, useAuth } from './lib/auth';
 import { lazyWithRetry, isChunkLoadErrorMessage } from './lib/lazyWithRetry';
@@ -71,7 +71,6 @@ const PurchasingOverviewPage = lazyWithRetry(() => import('./pages/PurchasingOve
 const ProductionOverviewPage = lazyWithRetry(() => import('./pages/ProductionOverviewPage'));
 const ProductionProjectDetailPage = lazyWithRetry(() => import('./pages/ProductionProjectDetailPage'));
 const ModuleFlowSetupPage = lazyWithRetry(() => import('./pages/ModuleFlowSetupPage'));
-const ProjectDetail = lazyWithRetry(() => import('./pages/ProjectDetail'));
 const Tasks = lazyWithRetry(() => import('./pages/Tasks'));
 const StageView = lazyWithRetry(() => import('./pages/StageView'));
 const UsersPage = lazyWithRetry(() => import('./pages/UsersPage'));
@@ -378,6 +377,32 @@ function ProtectedLayout() {
   );
 }
 
+/**
+ * Ánh xạ tab của trang /projects/:id (đã xoá) sang tab tương ứng ở Work Unified.
+ * Các tab không có bên Work Unified (approvals, orders, purchase_orders, drive,
+ * calendar, crm, notes, facebook, zalo, voice_crm, deal_scores) rơi về 'overview'.
+ */
+const LEGACY_PROJECT_TAB_MAP = {
+  overview: 'overview',
+  aggregate: 'tasks',
+  shared: 'shared',
+  team: 'team',
+  flow: 'progress',
+  documents: 'documents',
+  finance: 'finance',
+  approvals: 'acceptance',
+  chat: 'chat',
+  history: 'history',
+};
+
+/** /projects/:id đã bị gỡ — chuyển hướng sang trang chi tiết dự án của Work Unified. */
+function LegacyProjectDetailRedirect() {
+  const { id } = useParams();
+  const [searchParams] = useSearchParams();
+  const tab = LEGACY_PROJECT_TAB_MAP[searchParams.get('tab')];
+  return <Navigate to={`/management/work-unified/${id}${tab ? `?tab=${tab}` : ''}`} replace />;
+}
+
 function DefaultRedirect() {
   const pinned = localStorage.getItem('pinned_module') || '/crm';
   if (pinned === '/sx') return <Navigate to="/sx/dashboard" replace />;
@@ -434,7 +459,7 @@ export default function App() {
             <Route path="/work/flows" element={<Suspense fallback={<PageLoader />}><ModuleFlowSetupPage /></Suspense>} />
             <Route path="/projects" element={<Navigate to="/management/work-unified" replace state={{ moduleContext: 'congviec' }} />} />
             <Route path="/projects/create" element={<CreateProject />} />
-            <Route path="/projects/:id" element={<ProjectDetail />} />
+            <Route path="/projects/:id" element={<LegacyProjectDetailRedirect />} />
             <Route path="/project-workflow" element={<Navigate to="/management/work-unified" replace state={{ moduleContext: 'congviec' }} />} />
             <Route path="/tasks" element={<Tasks />} />
             <Route path="/tasks/regions" element={<CompanyCrmRegionsPage />} />

@@ -696,7 +696,7 @@ function UnitDetailModal({ unitId, levels, stageGroups, allUsers, units, isAdmin
         {tab === 'templates' && isCo && <TemplatesTab unitId={unitId} sets={tplSets} onReload={ld} isAdmin={isAdmin} />}
 
         {/* Projects */}
-        {tab === 'projects' && (projects.length > 0 ? <div className="space-y-1">{projects.map(p => <a key={p.id} href={`/projects/${p.id}`} className="flex items-center gap-2 p-2 bg-white rounded-lg border hover:bg-gray-50 text-sm"><span className="text-xs font-bold text-blue-600">{p.code}</span><span className="text-gray-900 truncate flex-1">{p.name}</span></a>)}</div> : <p className="text-xs text-gray-400 text-center py-6">Chưa gán dự án</p>)}
+        {tab === 'projects' && (projects.length > 0 ? <div className="space-y-1">{projects.map(p => <a key={p.id} href={`/management/work-unified/${p.id}`} className="flex items-center gap-2 p-2 bg-white rounded-lg border hover:bg-gray-50 text-sm"><span className="text-xs font-bold text-blue-600">{p.code}</span><span className="text-gray-900 truncate flex-1">{p.name}</span></a>)}</div> : <p className="text-xs text-gray-400 text-center py-6">Chưa gán dự án</p>)}
       </div>
     </Modal>
   );

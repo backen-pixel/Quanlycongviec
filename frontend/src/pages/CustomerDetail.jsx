@@ -182,7 +182,7 @@ export default function CustomerDetail() {
       {tab === 'projects' && (
         <div className="space-y-2">
           {customer.projects?.map(p => (
-            <Link to={`/projects/${p.id}`} key={p.id} className="bg-white rounded-xl border p-4 hover:shadow-md transition-all flex items-center justify-between">
+            <Link to={`/management/work-unified/${p.id}`} key={p.id} className="bg-white rounded-xl border p-4 hover:shadow-md transition-all flex items-center justify-between">
               <div>
                 <div className="flex items-center gap-2 mb-0.5">
                   <span className="text-sm font-bold text-blue-600">{p.code}</span>

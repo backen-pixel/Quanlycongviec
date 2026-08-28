@@ -483,7 +483,7 @@ export default function StageView() {
                         'border-gray-200'
                       }`}>
                         {/* Project header */}
-                        <Link to={`/projects/${proj.id}`} className="block hover:opacity-80">
+                        <Link to={`/management/work-unified/${proj.id}`} className="block hover:opacity-80">
                           <div className="flex items-start justify-between mb-1">
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-1.5 mb-0.5">
