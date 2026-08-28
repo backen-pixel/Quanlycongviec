@@ -5,6 +5,7 @@ import { useAuth } from '../lib/auth';
 import { isAdminLike, isCompanyScopedAdmin } from '../lib/adminRole';
 import { formatDate, formatVND } from '../lib/utils';
 import KanbanColumnVirtualList from '../components/KanbanColumnVirtualList';
+import ResponsiveTable from '../components/ResponsiveTable';
 import {
   RefreshCw, Plus, FileText, Package, ChevronLeft, ChevronRight,
   List, LayoutGrid, Clock, Phone, Calendar, EyeOff, Eye, X, Search, Users,
@@ -1144,74 +1145,96 @@ export default function WorkUnifiedOverviewPage() {
         ) : (
         <>
         <div className="flex-1 min-h-0 overflow-auto">
-          <table className="w-full min-w-[960px] text-sm table-fixed">
-            <colgroup>
-              <col className="w-[18%]" />
-              <col className="w-[16%]" />
-              <col className="w-[20%]" />
-              <col className="w-[8%]" />
-              <col className="w-[13%]" />
-              <col className="w-[13%]" />
-              <col className="w-[12%]" />
-            </colgroup>
-            <thead>
-              <tr className="text-left text-[11px] uppercase tracking-wide text-gray-400 border-b border-gray-100">
-                <th className="px-4 py-2.5 font-semibold">Dự án</th>
-                <th className="px-4 py-2.5 font-semibold">Khách hàng → Deal</th>
-                <th className="px-4 py-2.5 font-semibold">Công đoạn hiện tại</th>
-                <th className="px-4 py-2.5 font-semibold">Tiến độ</th>
-                <th className="px-4 py-2.5 font-semibold">Trạng thái</th>
-                <th className="px-4 py-2.5 font-semibold">Người phụ trách</th>
-                <th className="px-4 py-2.5 font-semibold">Hạn bàn giao</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-400">Đang tải...</td></tr>
-              ) : pageItems.length === 0 ? (
-                <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-400">{emptyResultsMessage}</td></tr>
-              ) : (
-                pageItems.map((it) => (
-                  <tr key={it.id} className="border-b border-gray-50 last:border-0 hover:bg-gray-50/60">
-                    <td className="px-4 py-3 align-top">
-                      <Link to={`/management/work-unified/${it.id}`} className="text-sm font-semibold text-blue-700 hover:underline truncate block" title={it.name}>
-                        {it.code}
-                      </Link>
-                      <p className="text-xs text-gray-500 truncate mt-0.5" title={it.name}>{it.name}</p>
-                    </td>
-                    <td className="px-4 py-3 align-top">
-                      <p className="text-sm text-gray-800 truncate" title={it.customer_name || ''}>{it.customer_name || '—'}</p>
-                      {it.deal_code && (
-                        <p className="text-xs text-violet-600 truncate mt-0.5" title={it.deal_title || ''}>{it.deal_code}</p>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 align-top">
-                      <div className="flex items-center gap-0.5 mb-1">
-                        {it.flow.map((s) => (
-                          <span
-                            key={s.key}
-                            title={s.label}
-                            className={`h-1.5 w-1.5 rounded-full shrink-0 ${
-                              s.status === 'done' ? 'bg-emerald-500' : s.status === 'current' ? 'bg-blue-500' : 'bg-gray-200'
-                            }`}
-                          />
-                        ))}
-                      </div>
-                      <p className="text-xs text-gray-600 truncate">{it.current_stage_label || '—'}</p>
-                    </td>
-                    <td className="px-4 py-3 align-top text-gray-700 font-medium">{it.progress_pct}%</td>
-                    <td className="px-4 py-3 align-top">
-                      <span className={`text-xs font-medium px-2 py-0.5 rounded-full whitespace-nowrap ${FORECAST_BADGE_CLS[it.forecast]}`}>
-                        {forecastLabel(it)}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 align-top text-gray-600 truncate">{it.assignee_name || '—'}</td>
-                    <td className="px-4 py-3 align-top text-gray-600 whitespace-nowrap">{it.deadline ? formatDate(it.deadline) : '—'}</td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+        {loading ? (
+          <p className="px-4 py-8 text-center text-gray-400 text-sm">Đang tải...</p>
+        ) : (
+          <ResponsiveTable
+            rows={pageItems}
+            rowKey={(it) => it.id}
+            empty={emptyResultsMessage}
+            tableClassName="min-w-[960px] table-fixed"
+            colWidths={['w-[18%]', 'w-[16%]', 'w-[20%]', 'w-[8%]', 'w-[13%]', 'w-[13%]', 'w-[12%]']}
+            columns={[
+              {
+                key: 'project',
+                header: 'Dự án',
+                primary: true,
+                cellClassName: 'px-4 py-3 align-top',
+                cell: (it) => (
+                  <>
+                    <Link to={`/management/work-unified/${it.id}`} className="text-sm font-semibold text-blue-700 hover:underline truncate block" title={it.name}>
+                      {it.code}
+                    </Link>
+                    <p className="text-xs text-gray-500 truncate mt-0.5" title={it.name}>{it.name}</p>
+                  </>
+                ),
+              },
+              {
+                key: 'customer',
+                header: 'Khách hàng → Deal',
+                secondary: true,
+                cellClassName: 'px-4 py-3 align-top',
+                cell: (it) => (
+                  <>
+                    <span className="text-sm text-gray-800 truncate block" title={it.customer_name || ''}>{it.customer_name || '—'}</span>
+                    {it.deal_code && (
+                      <span className="text-xs text-violet-600 truncate block mt-0.5" title={it.deal_title || ''}>{it.deal_code}</span>
+                    )}
+                  </>
+                ),
+              },
+              {
+                key: 'stage',
+                header: 'Công đoạn hiện tại',
+                cellClassName: 'px-4 py-3 align-top',
+                cell: (it) => (
+                  <>
+                    <span className="flex items-center gap-0.5 mb-1">
+                      {it.flow.map((s) => (
+                        <span
+                          key={s.key}
+                          title={s.label}
+                          className={`h-1.5 w-1.5 rounded-full shrink-0 ${
+                            s.status === 'done' ? 'bg-emerald-500' : s.status === 'current' ? 'bg-blue-500' : 'bg-gray-200'
+                          }`}
+                        />
+                      ))}
+                    </span>
+                    <span className="text-xs text-gray-600 truncate block">{it.current_stage_label || '—'}</span>
+                  </>
+                ),
+              },
+              {
+                key: 'progress',
+                header: 'Tiến độ',
+                cellClassName: 'px-4 py-3 align-top text-gray-700 font-medium',
+                cell: (it) => `${it.progress_pct}%`,
+              },
+              {
+                key: 'forecast',
+                header: 'Trạng thái',
+                cellClassName: 'px-4 py-3 align-top',
+                cell: (it) => (
+                  <span className={`text-xs font-medium px-2 py-0.5 rounded-full whitespace-nowrap ${FORECAST_BADGE_CLS[it.forecast]}`}>
+                    {forecastLabel(it)}
+                  </span>
+                ),
+              },
+              {
+                key: 'assignee',
+                header: 'Người phụ trách',
+                cellClassName: 'px-4 py-3 align-top text-gray-600 truncate',
+                cell: (it) => it.assignee_name || '—',
+              },
+              {
+                key: 'deadline',
+                header: 'Hạn bàn giao',
+                cellClassName: 'px-4 py-3 align-top text-gray-600 whitespace-nowrap',
+                cell: (it) => (it.deadline ? formatDate(it.deadline) : '—'),
+              },
+            ]}
+          />
+        )}
         </div>
 
         {!loading && totalFiltered > 0 && (

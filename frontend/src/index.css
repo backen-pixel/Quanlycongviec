@@ -858,6 +858,74 @@ button:disabled,
   animation: dash-loader-skeleton-wave 1.8s ease-in-out infinite;
 }
 
+/* ─────────────────────────────────────────────────────────────
+   MOBILE FIRST — lớp nền dùng chung cho toàn app
+   Đặt ở đây thay vì sửa từng file: app có 693 file / 208 route,
+   các quy tắc dưới đây áp dụng một lần cho tất cả.
+   ───────────────────────────────────────────────────────────── */
+
+/* 1. iOS tự phóng to trang khi focus vào input có font < 16px.
+      Đây là lỗi mobile phổ biến nhất và chỉ sửa được bằng font-size.
+      Chỉ áp dụng cho thiết bị cảm ứng màn nhỏ để không đổi giao diện desktop. */
+@media (max-width: 1023px) and (pointer: coarse) {
+  input:not([type='checkbox']):not([type='radio']):not([type='range']),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
+
+/* 2. Bỏ độ trễ ~300ms khi chạm, và chặn double-tap-to-zoom trên nút.
+      Không đổi giao diện, chỉ làm thao tác chạm nhạy hơn. */
+@media (pointer: coarse) {
+  button,
+  a,
+  [role='button'],
+  input,
+  select,
+  textarea,
+  label {
+    touch-action: manipulation;
+  }
+}
+
+/* 3. Cuộn quán tính (momentum) cho mọi vùng cuộn ngang — Kanban, bảng, hàng chip.
+      Thiếu dòng này thì vuốt ngang trên iOS bị khựng, không trôi. */
+@media (pointer: coarse) {
+  [class*='overflow-x-auto'],
+  [class*='overflow-auto'],
+  [class*='overflow-y-auto'] {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
+}
+
+/* 4. Máy có tai thỏ / thanh gạt dưới: chừa vùng an toàn cho thanh cố định. */
+@media (max-width: 1023px) {
+  .mobile-safe-top {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+  .mobile-safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+}
+
+/* 5. Chặn tràn ngang toàn trang. `clip` thay vì `hidden` để không phá position:sticky. */
+@media (max-width: 1023px) {
+  body {
+    overflow-x: clip;
+  }
+}
+
+/* 6. Bảng trong vùng cuộn ngang: giữ ô không bị bóp méo khi màn hẹp. */
+@media (max-width: 1023px) {
+  table th,
+  table td {
+    word-break: normal;
+    overflow-wrap: anywhere;
+  }
+}
+
 /* Print styles for PDF export */
 @media print {
   aside, nav, [data-print-hide] { display: none !important; }
