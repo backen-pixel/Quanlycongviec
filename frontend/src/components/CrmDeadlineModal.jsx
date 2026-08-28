@@ -148,6 +148,17 @@ export default function CrmDeadlineModal({
             {timeHint && (
               <p className="mt-1 text-[11px] text-slate-500">{timeHint}</p>
             )}
+            {(() => {
+              const iso = value ? dateInputToIso(value, companyId) : null;
+              if (!iso) return null;
+              const ts = new Date(iso).getTime();
+              if (!Number.isFinite(ts) || ts >= Date.now()) return null;
+              return (
+                <p className="mt-1 text-[11px] font-medium text-rose-600">
+                  Ngày này đã qua giờ hết hạn trong ngày — thẻ vẫn hiện Quá hạn. Hãy chọn ngày sau.
+                </p>
+              );
+            })()}
           </div>
 
           <div>

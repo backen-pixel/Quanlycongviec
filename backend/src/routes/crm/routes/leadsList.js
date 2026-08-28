@@ -11,6 +11,12 @@ const {
 } = require('../../../helpers/crmDealTabTotals');
 const { isLostOrCancelledPipelineStage } = require('../../../helpers/crmLostPipelineStage');
 const { computeDashboardDealKpisFromStageAggregates } = require('../../../helpers/crmDealDashboardKpis');
+const { companyWorkEndMsFromRaw } = require('../../../helpers/companyDeadlineClock');
+const {
+  CRM_DEADLINE_SNAPSHOT_TTL_MS,
+  crmDeadlineSnapshotCache,
+  pruneCrmDeadlineSnapshotCache,
+} = require('../../../helpers/crmDeadlineSnapshotCache');
 
 const r = Router();
 
@@ -915,10 +921,11 @@ function crmDeadlineTsForRow(row, stage, config) {
   ).trim();
   if (!hasPhone || row?.is_interacted || row?.deadline_disabled_at || crmDeadlineStageExcluded(stage)) return null;
 
+  // NV trước Setup: hạn user vừa ghi vào Setup chỉ có hiệu lực sau khi đã sync NV đang đếm.
   for (const field of ['crm_next_open_task_deadline', 'kanban_deadline_at']) {
     const raw = row?.[field];
     if (!raw) continue;
-    const ts = new Date(raw).getTime();
+    const ts = companyWorkEndMsFromRaw(raw, row) ?? new Date(raw).getTime();
     if (!Number.isNaN(ts)) return ts;
   }
 
@@ -950,9 +957,6 @@ function crmDeadlineTsForRow(row, stage, config) {
 // (danh sách vài trăm dòng, tải 15 dòng/lượt, realtime tick mỗi ~30s) để toàn bộ phiên dùng
 // chung MỘT danh sách id ổn định — tự hết hạn sau đó để không bị cũ quá lâu. Từng thử 3 phút
 // và vẫn bị "trôi trang" giữa chừng trên hệ thống nhiều người dùng hoạt động liên tục.
-const CRM_DEADLINE_SNAPSHOT_TTL_MS = 20 * 60 * 1000;
-const crmDeadlineSnapshotCache = new Map();
-
 function crmDeadlineSnapshotCacheKey(req, mergedQuery, type, stageIdsKey, config) {
   return JSON.stringify({
     u: req.user?.userId || null,
@@ -961,13 +965,6 @@ function crmDeadlineSnapshotCacheKey(req, mergedQuery, type, stageIdsKey, config
     s: stageIdsKey,
     c: config || {},
   });
-}
-
-function pruneCrmDeadlineSnapshotCache() {
-  const now = Date.now();
-  for (const [key, entry] of crmDeadlineSnapshotCache) {
-    if (entry.expiresAt < now) crmDeadlineSnapshotCache.delete(key);
-  }
 }
 
 async function getOrBuildCrmDeadlineSnapshot(req, mergedQuery, type, rpcAssigneeStrict, openStageIds, config) {

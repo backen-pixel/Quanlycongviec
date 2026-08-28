@@ -4,6 +4,7 @@
  */
 const { Router } = require('express');
 const helpers = require('../shared/helpersBundle');
+const { invalidateCrmDeadlineSnapshots } = require('../../../helpers/crmDeadlineSnapshotCache');
 
 const r = Router();
 
@@ -546,6 +547,7 @@ r.put('/settings/deadline-config', async (req, res) => {
       }
       throw error;
     }
+    invalidateCrmDeadlineSnapshots();
     res.json({
       company_id: data.company_id,
       primary_field: data.primary_field,
