@@ -355,7 +355,8 @@ function ProtectedLayout() {
             )
           )}
           <Sidebar />
-          <div className="flex-1 flex flex-col min-w-0 relative z-10">
+          {/* pt-12 < lg: chừa chỗ cho thanh hamburger cố định của Sidebar ở mobile */}
+          <div className="flex-1 flex flex-col min-w-0 relative z-10 pt-12 lg:pt-0">
             <main
               className={
                 isFullscreen ? 'flex-1 flex flex-col min-h-0 overflow-hidden w-full' : 'flex-1 overflow-y-auto w-full'
@@ -364,7 +365,7 @@ function ProtectedLayout() {
               {isFullscreen ? (
                 <Suspense fallback={<PageLoader />}><Outlet /></Suspense>
               ) : (
-                <div className={`px-6 w-full max-w-full ${compactKanbanChrome ? 'pt-3 pb-0' : 'pt-6 pb-6'}`}>
+                <div className={`px-3 lg:px-6 w-full max-w-full ${compactKanbanChrome ? 'pt-3 pb-0' : 'pt-4 lg:pt-6 pb-6'}`}>
                   <Suspense fallback={<PageLoader />}><Outlet /></Suspense>
                 </div>
               )}

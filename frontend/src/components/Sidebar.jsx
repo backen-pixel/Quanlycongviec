@@ -13,7 +13,9 @@ import {
   Target, FileText, ShoppingCart, ShoppingBag, Receipt, Activity, BarChart3, Phone, Palette, ListChecks, Mic, Award, Plus,
   BookOpen, FolderTree, Factory, Calendar, CalendarClock, CalendarRange, Megaphone, MessageCircle, ArrowRightLeft, ClipboardCheck, FileCheck, Key, Puzzle, Tags, MapPin, UserCog, LayoutGrid, Timer, Trash2, Clock, Share2, ShieldOff, Smartphone, GraduationCap, Bot, Download, UserMinus,
   Sigma, Calculator, FileUp, History as HistoryIcon, History, HardDrive, Database, Globe, CreditCard, Sparkles, Pin,
+  Menu as MenuIcon, X as XIcon,
 } from 'lucide-react';
+import { useIsMobile } from '../hooks/useIsMobile';
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import {
   isCrmSidebarActive,
@@ -818,6 +820,9 @@ export default function Sidebar() {
     updatesUnread, assignmentsUnread, sxAssignmentsUnread, vcAssignmentsUnread, socialUnread, unifiedTasksOpen,
   } = useSidebarUnreadBadges();
   const { canAccessModule, crmOnly } = useModuleAccess();
+  const isMobile = useIsMobile();
+  /** < 1024px: sidebar thành drawer off-canvas, mặc định đóng để nội dung có đủ chiều rộng. */
+  const [mobileOpen, setMobileOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [userPanelHidden, setUserPanelHidden] = useState(() => {
     try { return localStorage.getItem('sidebar_user_panel_hidden') === '1'; } catch { return false; }
@@ -845,6 +850,34 @@ export default function Sidebar() {
     const isQuotationForm = /\/crm\/quotations\/(new|[0-9a-f-]{36})/.test(location.pathname);
     if (isQuotationForm && !collapsed) setCollapsed(true);
   }, [location.pathname]);
+
+  /** Điều hướng xong thì đóng drawer — nếu không, người dùng bấm menu xong vẫn thấy drawer che trang. */
+  useEffect(() => { setMobileOpen(false); }, [location.pathname]);
+
+  /**
+   * Quay lại desktop: bỏ trạng thái drawer để sidebar về in-flow bình thường.
+   * Vào mobile: bỏ thu gọn — drawer đã chiếm hết chỗ nên hiện đủ nhãn menu, không dùng dạng 60px.
+   */
+  useEffect(() => {
+    if (isMobile) setCollapsed(false);
+    else setMobileOpen(false);
+  }, [isMobile]);
+
+  /** Khoá cuộn nền khi drawer mở (tránh cuộn trang bên dưới lớp phủ). */
+  useEffect(() => {
+    if (!isMobile || !mobileOpen) return undefined;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prev; };
+  }, [isMobile, mobileOpen]);
+
+  /** Esc để đóng drawer. */
+  useEffect(() => {
+    if (!isMobile || !mobileOpen) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') setMobileOpen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isMobile, mobileOpen]);
 
   const isAdmin = isAdminLike(user) || user?.role === 'manager';
   const isPlatformAdminUser = isPlatformAdmin(user);
@@ -1102,15 +1135,52 @@ export default function Sidebar() {
         panelRef={appSwitcherRef}
       />
 
+      {/* Thanh trên cùng chỉ có ở mobile — chỗ bấm mở drawer (sidebar đã bị đẩy ra ngoài màn hình) */}
+      {isMobile && (
+        <div className="lg:hidden fixed top-0 left-0 right-0 h-12 z-40 flex items-center gap-2 px-3 bg-[var(--color-sidebar)] text-white shadow-md">
+          <button
+            type="button"
+            onClick={() => setMobileOpen(true)}
+            aria-label="Mở menu"
+            aria-expanded={mobileOpen}
+            className="inline-flex items-center justify-center h-9 w-9 rounded-lg hover:bg-white/10 cursor-pointer"
+          >
+            <MenuIcon className="h-5 w-5" />
+          </button>
+          <span className="text-sm font-semibold truncate">TuBep Pro</span>
+        </div>
+      )}
+
+      {/* Lớp phủ — bấm ra ngoài để đóng drawer */}
+      {isMobile && mobileOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black/50"
+          onClick={() => setMobileOpen(false)}
+          aria-hidden
+        />
+      )}
+
       <aside
       style={{
         backdropFilter: 'var(--sidebar-backdrop, none)',
         WebkitBackdropFilter: 'var(--sidebar-backdrop, none)',
       }}
-      className={`flex flex-col bg-[var(--color-sidebar)] transition-all duration-200 relative z-30 shrink-0 overflow-visible ${
-        collapsed ? 'w-[60px]' : 'w-[240px]'
+      className={`flex flex-col bg-[var(--color-sidebar)] transition-transform duration-200 overflow-visible ${
+        isMobile
+          ? `fixed inset-y-0 left-0 z-50 w-[260px] shadow-2xl ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`
+          : `relative z-30 shrink-0 transition-all ${collapsed ? 'w-[60px]' : 'w-[240px]'}`
       }`}
     >
+      {isMobile && (
+        <button
+          type="button"
+          onClick={() => setMobileOpen(false)}
+          aria-label="Đóng menu"
+          className="absolute top-2 right-2 z-10 inline-flex items-center justify-center h-8 w-8 rounded-lg text-white/80 hover:text-white hover:bg-white/10 cursor-pointer"
+        >
+          <XIcon className="h-4 w-4" />
+        </button>
+      )}
       {/* App Switcher + vòng xoay module */}
       <div
         className={`border-b border-white/10 shrink-0 ${
@@ -1360,13 +1430,15 @@ export default function Sidebar() {
       )}
       </div>
 
-      {/* Toggle button */}
-      <button
-        onClick={() => setCollapsed(!collapsed)}
-        className="absolute -right-3 top-20 w-6 h-6 bg-[var(--color-sidebar)] border border-white/20 rounded-full flex items-center justify-center text-white hover:bg-white/10 cursor-pointer shadow-lg"
-      >
-        {collapsed ? <ChevronRight className="h-3 w-3" /> : <ChevronLeft className="h-3 w-3" />}
-      </button>
+      {/* Toggle thu gọn — chỉ desktop; ở mobile drawer đóng/mở bằng hamburger và lớp phủ */}
+      {!isMobile && (
+        <button
+          onClick={() => setCollapsed(!collapsed)}
+          className="absolute -right-3 top-20 w-6 h-6 bg-[var(--color-sidebar)] border border-white/20 rounded-full flex items-center justify-center text-white hover:bg-white/10 cursor-pointer shadow-lg"
+        >
+          {collapsed ? <ChevronRight className="h-3 w-3" /> : <ChevronLeft className="h-3 w-3" />}
+        </button>
+      )}
     </aside>
     </>
   );
