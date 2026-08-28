@@ -734,8 +734,15 @@ export default function WorkUnifiedOverviewPage() {
   };
   const pickSelectedDay = (dateStr) => applySelectedDay(parseDateStr(dateStr));
 
+  // Khoá chiều cao bằng màn hình CHỈ cho Kanban/Lịch — các view đó cần đáy cố định để cột
+  // tự cuộn. Dạng Danh sách mà khoá thì phần trên (tiêu đề + 10 công đoạn + KPI) ăn mất
+  // ~313px, danh sách chỉ còn ~454px cho 1.287px nội dung → xem được rất ít dòng.
   return (
-    <div className="flex flex-col gap-3 w-full h-[calc(100vh-0.75rem)] max-h-[calc(100vh-0.75rem)] overflow-hidden pb-3">
+    <div className={`flex flex-col gap-3 w-full pb-3 ${
+      viewMode === 'list'
+        ? 'min-h-[calc(100vh-0.75rem)]'
+        : 'h-[calc(100vh-0.75rem)] max-h-[calc(100vh-0.75rem)] overflow-hidden'
+    }`}>
       <div className="shrink-0">
         <h1 className="text-xl font-bold" style={{ color: '#111827' }}>Work Unified</h1>
         <p className="text-sm mt-0.5" style={{ color: '#6b7280' }}>
@@ -1144,9 +1151,9 @@ export default function WorkUnifiedOverviewPage() {
           </div>
         ) : (
         <>
-        {/* Ràng buộc chiều cao (cuộn trong khung) chỉ áp cho desktop — ở mobile
-            khung này chỉ còn ~160px nên phải để danh sách trôi theo trang. */}
-        <div className="lg:flex-1 lg:min-h-0 lg:overflow-auto">
+        {/* Không cuộn trong khung nữa — để bảng trải hết và cuộn theo trang,
+            nếu không danh sách bị bóp còn ~454px trong khi nội dung cao 1.287px. */}
+        <div>
         {loading ? (
           <p className="px-4 py-8 text-center text-gray-400 text-sm">Đang tải...</p>
         ) : (
