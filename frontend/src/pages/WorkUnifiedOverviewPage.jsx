@@ -1144,7 +1144,9 @@ export default function WorkUnifiedOverviewPage() {
           </div>
         ) : (
         <>
-        <div className="flex-1 min-h-0 overflow-auto">
+        {/* Ràng buộc chiều cao (cuộn trong khung) chỉ áp cho desktop — ở mobile
+            khung này chỉ còn ~160px nên phải để danh sách trôi theo trang. */}
+        <div className="lg:flex-1 lg:min-h-0 lg:overflow-auto">
         {loading ? (
           <p className="px-4 py-8 text-center text-gray-400 text-sm">Đang tải...</p>
         ) : (
