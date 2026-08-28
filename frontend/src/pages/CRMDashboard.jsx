@@ -7022,11 +7022,16 @@ export default function CRMDashboard() {
         await api.patch(`/crm/leads/${ctx.leadId}/deadline`, {
           kanban_deadline_at: deadlineIso,
           reason: reason || '',
+          sync_open_tasks: true,
         });
         const lid = String(ctx.leadId);
         const patch = {
           kanban_deadline_at: deadlineIso,
           kanban_deadline_reason: reason || null,
+          crm_next_open_task_deadline: ctx.card?.crm_next_open_task_deadline
+            ? (deadlineIso || null)
+            : ctx.card?.crm_next_open_task_deadline,
+          updated_at: new Date().toISOString(),
         };
         if (pipelineType === 'lead') {
           setAllLeads((prev) => prev.map((l) => (String(l.id) === lid ? { ...l, ...patch } : l)));
@@ -9774,18 +9779,38 @@ export default function CRMDashboard() {
 
       <CrmDeadlineModal
         open={!!deadlineCtx}
-        title={deadlineCtx?.mode === 'edit_only' ? 'Deadline thẻ' : 'Đặt deadline khi chuyển cột'}
+        title={
+          deadlineCtx?.mode === 'edit_only'
+            ? (deadlineCtx?.card?.crm_next_open_task_deadline ? 'Đổi hạn đang hiện trên thẻ' : 'Deadline thẻ')
+            : 'Đặt deadline khi chuyển cột'
+        }
         subtitle={
           deadlineCtx?.mode === 'edit_only'
-            ? 'Mọi thay đổi đều được ghi vào lịch sử trong chi tiết lead/deal.'
+            ? (deadlineCtx?.card?.crm_next_open_task_deadline
+              ? 'Thẻ đang lấy hạn từ nhiệm vụ CRM (NV). Lưu sẽ đổi cả Ngày hẹn NV đang mở ở cột hiện tại và Deadline tự setup — nếu chỉ sửa Setup thì NV cũ vẫn hiện Quá hạn.'
+              : 'Mọi thay đổi đều được ghi vào lịch sử trong chi tiết lead/deal.')
             : 'Chọn hạn xử lý cho thẻ ở cột mới. Mọi thay đổi đều được ghi vào lịch sử.'
         }
         stageName={deadlineCtx?.mode === 'stage_move' ? deadlineCtx?.targetStage?.name : ''}
-        initialDeadline={deadlineCtx?.card?.kanban_deadline_at || null}
-        currentDeadline={deadlineCtx?.card?.kanban_deadline_at || null}
+        initialDeadline={
+          deadlineCtx?.card?.crm_next_open_task_deadline
+          || deadlineCtx?.card?.kanban_deadline_at
+          || null
+        }
+        currentDeadline={
+          deadlineCtx?.card?.crm_next_open_task_deadline
+          || deadlineCtx?.card?.kanban_deadline_at
+          || null
+        }
         mandatory={deadlineCtx?.mode === 'stage_move'}
-        requireReason={deadlineCtx?.mode === 'edit_only' && !!deadlineCtx?.card?.kanban_deadline_at}
-        allowClear={deadlineCtx?.mode === 'edit_only' && !!deadlineCtx?.card?.kanban_deadline_at}
+        requireReason={
+          deadlineCtx?.mode === 'edit_only'
+          && !!(deadlineCtx?.card?.kanban_deadline_at || deadlineCtx?.card?.crm_next_open_task_deadline)
+        }
+        allowClear={
+          deadlineCtx?.mode === 'edit_only'
+          && !!(deadlineCtx?.card?.kanban_deadline_at || deadlineCtx?.card?.crm_next_open_task_deadline)
+        }
         submitting={deadlineBusy}
         companyId={deadlineCtx?.card?.company_id || null}
         onClose={() => { if (!deadlineBusy) setDeadlineCtx(null); }}
@@ -10921,7 +10946,7 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
       `Hạn: ${deadlineDateLabel}`,
       `Loại: ${sourceLabel}`,
       isOverdue ? 'Đã quá hạn' : '',
-      unifiedSchedule.source === 'deadline' ? 'Bấm để sửa deadline thẻ' : '',
+      typeof onOpenDeadline === 'function' ? 'Bấm để sửa hạn đang hiện trên thẻ' : '',
     ].filter(Boolean).join('\n');
     const badgeContent = (
       <>
@@ -10931,7 +10956,7 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
         {isOverdue ? <>Quá hạn {deadlineDateLabel}</> : <>Hạn {deadlineDateLabel}</>}
       </>
     );
-    if (unifiedSchedule.source === 'deadline' && typeof onOpenDeadline === 'function') {
+    if (typeof onOpenDeadline === 'function') {
       return (
         <button
           type="button"
@@ -11508,7 +11533,7 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
               item={item}
               theme="crm"
               hideDeadlineOption={hideColumnDeadline}
-              deadlineAt={item.kanban_deadline_at}
+              deadlineAt={item.crm_next_open_task_deadline || item.kanban_deadline_at}
               onOpenDeadline={onOpenDeadline}
               onTogglePin={onTogglePin}
               onToggleInteracted={onToggleInteracted}
@@ -11528,6 +11553,8 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
   && prev.item?.is_new_for_current_user === next.item?.is_new_for_current_user
   && prev.item?.kpi_ledger_month_net === next.item?.kpi_ledger_month_net
   && prev.item?.crm_next_open_task_deadline === next.item?.crm_next_open_task_deadline
+  && prev.item?.kanban_deadline_at === next.item?.kanban_deadline_at
+  && prev.item?.deadline_disabled_at === next.item?.deadline_disabled_at
   && prev.item?.source_customer_deal_id === next.item?.source_customer_deal_id
   && prev.item?.sx_pipeline_stage?.id === next.item?.sx_pipeline_stage?.id
   && prev.item?.vc_pipeline_stage?.id === next.item?.vc_pipeline_stage?.id

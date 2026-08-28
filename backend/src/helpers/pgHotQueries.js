@@ -44,12 +44,13 @@ const DEAL_ACTIVITY_NOTIFICATION_TYPES = [
 function isProjectModuleNotification(n) {
   if (!n) return false;
   const meta = n.metadata && typeof n.metadata === 'object' ? n.metadata : {};
-  if (String(meta.ecosystem_module_key || '') === 'production') return false;
+  const eco = String(meta.ecosystem_module_key || '').trim();
+  /** SX / VC / CRM — không gom vào QLCV dù entity_type = project. */
+  if (eco === 'production' || eco === 'crm' || eco === 'logistics') return false;
   const key = preferenceKeyForNotificationType(n.type, n.entity_type, n.metadata);
   if (key === 'project_notifications') return true;
   if (n.entity_type === 'project') return true;
-  if (n.metadata && typeof n.metadata === 'object'
-      && String(n.metadata.ecosystem_module_key || '') === 'projects') return true;
+  if (eco === 'projects') return true;
   return false;
 }
 
@@ -98,6 +99,12 @@ function inferNotificationModuleKey(n) {
 function notificationMatchesModule(n, mod) {
   const m = String(mod || 'all').toLowerCase();
   if (!m || m === 'all') return true;
+  /** Tin nhắn / @mention / Messenger — luôn hiện, không khóa theo sidebar CRM/SX/VC. */
+  if (isChatChannelNotification(n)) return true;
+  /** Bàn giao xưởng → Lắp đặt: hiện cả SX lẫn VC. */
+  if (String(n?.type || '') === 'workshop_new_deal' && (m === 'production' || m === 'logistics')) {
+    return true;
+  }
   return inferNotificationModuleKey(n) === m;
 }
 
@@ -201,7 +208,10 @@ async function pgDashboardNotificationStats(userId, viewer = null, opts = {}) {
      WHERE user_id = $1
        AND is_read = false
        AND dismissed_at IS NULL
-       AND entity_type IS DISTINCT FROM 'project'
+       AND (
+         entity_type IS DISTINCT FROM 'project'
+         OR COALESCE(metadata->>'ecosystem_module_key','') IN ('production','crm','logistics')
+       )
        AND (metadata->>'ecosystem_module_key' IS NULL
             OR metadata->>'ecosystem_module_key' <> 'projects')
      GROUP BY type, entity_type, metadata`,
@@ -248,7 +258,10 @@ async function pgDashboardNotificationsList(userId, {
   const conditions = [
     'user_id = $1',
     'dismissed_at IS NULL',
-    "entity_type IS DISTINCT FROM 'project'",
+    `(
+      entity_type IS DISTINCT FROM 'project'
+      OR COALESCE(metadata->>'ecosystem_module_key','') IN ('production','crm','logistics')
+    )`,
     "(metadata->>'ecosystem_module_key' IS NULL OR metadata->>'ecosystem_module_key' <> 'projects')",
   ];
   const params = [userId];
@@ -739,7 +752,10 @@ async function pgDashboardNotificationsReadAll(userId, channel) {
     conditions.push(
       `(type IN (${dealActivityList}) OR (entity_type = 'crm_deal' AND type IS DISTINCT FROM 'comment_added'))`,
     );
-    conditions.push(`entity_type IS DISTINCT FROM 'project'`);
+    conditions.push(`(
+      entity_type IS DISTINCT FROM 'project'
+      OR COALESCE(metadata->>'ecosystem_module_key','') IN ('production','crm','logistics')
+    )`);
     conditions.push(
       `(metadata->>'ecosystem_module_key' IS NULL OR metadata->>'ecosystem_module_key' <> 'projects')`,
     );

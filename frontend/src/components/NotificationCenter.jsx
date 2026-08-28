@@ -22,6 +22,7 @@ import {
 
 const ICON_MAP = {
   task_assigned: CheckSquare,
+  task_complete_reminder: Bell,
   task_updated: CheckSquare,
   task_overdue: AlertTriangle,
   task_completed: CheckSquare,
@@ -125,6 +126,7 @@ function isDealActivityNotification(n) {
 
 const COLOR_MAP = {
   task_assigned: 'bg-blue-100 text-blue-600',
+  task_complete_reminder: 'bg-amber-100 text-amber-700',
   task_updated: 'bg-emerald-100 text-emerald-600',
   task_overdue: 'bg-red-100 text-red-600',
   task_completed: 'bg-emerald-100 text-emerald-600',
@@ -245,6 +247,14 @@ function navigateCrmAssignment(navigate, nOrEntityId) {
   const navPath = meta?.nav_path || (meta?.module_key === 'production' ? '/sx/assignments' : '/crm/assignments');
   const moduleContext = meta?.module_key === 'production' ? 'production' : 'crm';
   navigate(id ? `${navPath}?open=${id}` : navPath, { state: { moduleContext } });
+}
+
+function notificationMatchesSidebarModule(n, moduleFilter) {
+  const m = String(moduleFilter || 'all').toLowerCase();
+  if (!m || m === 'all') return true;
+  if (isChatChannelNotification(n)) return true;
+  if (String(n?.type || '') === 'workshop_new_deal' && (m === 'production' || m === 'logistics')) return true;
+  return inferNotificationModuleKey(n) === m;
 }
 
 function inferNotificationModuleKey(n) {
@@ -466,8 +476,8 @@ export default function NotificationCenter({ socket }) {
   const [cskhDismissingAll, setCskhDismissingAll] = useState(false);
   const [dismissingKeys, setDismissingKeys] = useState(new Set());
   const bellBadgeCount = useMemo(
-    () => unreadActivity + unreadDeadlines + unreadEvents + unreadAssignments + cskhCount,
-    [unreadActivity, unreadDeadlines, unreadEvents, unreadAssignments, cskhCount],
+    () => unreadActivity + unreadChat + unreadDeadlines + unreadEvents + unreadAssignments + cskhCount,
+    [unreadActivity, unreadChat, unreadDeadlines, unreadEvents, unreadAssignments, cskhCount],
   );
   const [loading, setLoading] = useState(false);
   const [tab, setTab] = useState('activity');
@@ -893,7 +903,7 @@ export default function NotificationCenter({ socket }) {
       const isAssign = isAssignmentNotification(notif);
       const canShowLive = listModeRef.current === 'unread';
       // Live: chỉ áp module + project_id; company/region/type/name cần resolve BE → không prepend khi đang lọc scope
-      const liveOk = (moduleFilter === 'all' || inferNotificationModuleKey(notif) === moduleFilter)
+      const liveOk = notificationMatchesSidebarModule(notif, moduleFilter)
         && notificationMatchesProjectFilter(notif, projectFilter)
         && !filterCompanyId && !filterRegionId && !filterWorkTypeId && !projectNameDebounced;
       const opt = extractNotificationProjectOption(notif);

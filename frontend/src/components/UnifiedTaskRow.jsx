@@ -1,7 +1,13 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ExternalLink, Calendar, User, MessageSquare } from 'lucide-react';
+import { ExternalLink, Calendar, User, MessageSquare, Bell } from 'lucide-react';
+import api from '../lib/api';
+import { useAuth } from '../lib/auth';
+import { isWorkProductionModuleAdmin } from '../lib/adminRole';
 import { formatDate, PRIORITY_LABELS, PRIORITY_COLORS } from '../lib/utils';
 import { normalizeKanbanStatus } from '../lib/workTasksDashboardUtils';
+
+const DONE_STATUSES = new Set(['done', 'completed', 'cancelled']);
 
 const SOURCE_LABELS = {
   task: 'Công việc',
@@ -44,11 +50,37 @@ function getDeepLink(task) {
 }
 
 export default function UnifiedTaskRow({ task, onStatusChange, onOpenExtras, compact = false }) {
+  const { user } = useAuth();
+  const [reminding, setReminding] = useState(false);
+  const [reminded, setReminded] = useState(false);
   if (!task) return null;
   const deepLink = getDeepLink(task);
   const priorityCls = PRIORITY_COLORS[task.priority] || 'bg-gray-100 text-gray-600';
   const kindCls = KIND_COLORS[task.task_kind] || 'bg-gray-100 text-gray-600';
   const kanbanStatus = normalizeKanbanStatus(task.status);
+  const isOpenTask = !DONE_STATUSES.has(String(task.status || '').toLowerCase());
+  const canRemind = isWorkProductionModuleAdmin(user) && isOpenTask && task.source && task.source_id;
+
+  const handleRemind = async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (reminding || reminded) return;
+    setReminding(true);
+    try {
+      const res = await api.post(`/work-tasks/${task.source}/${task.source_id}/remind-complete`);
+      const sent = res.data?.sent ?? 0;
+      if (!sent) {
+        alert('Không gửi được thông báo. Người nhận có thể đã tắt nhắc công việc.');
+        return;
+      }
+      setReminded(true);
+      window.setTimeout(() => setReminded(false), 4000);
+    } catch (err) {
+      alert(err?.response?.data?.error || 'Không gửi được nhắc hoàn thành');
+    } finally {
+      setReminding(false);
+    }
+  };
 
   return (
     <div className={`flex items-start gap-3 p-3 rounded-xl border border-gray-100 bg-white hover:border-blue-200 transition-colors ${compact ? 'p-2' : ''}`}>
@@ -85,9 +117,9 @@ export default function UnifiedTaskRow({ task, onStatusChange, onOpenExtras, com
             )}
           </div>
         )}
-        {onStatusChange && (
+        {(onStatusChange || canRemind) && (
           <div className="flex flex-wrap items-center gap-1.5 mt-2">
-            {STATUS_ACTIONS.map((a) => (
+            {onStatusChange && STATUS_ACTIONS.map((a) => (
               <button
                 key={a.key}
                 type="button"
@@ -102,6 +134,28 @@ export default function UnifiedTaskRow({ task, onStatusChange, onOpenExtras, com
                 {a.label}
               </button>
             ))}
+            {canRemind && (
+              <button
+                type="button"
+                onClick={handleRemind}
+                disabled={reminding || reminded}
+                title={
+                  task.task_kind === 'SX' || task.task_kind === 'Dự án'
+                    ? 'Nhắc xưởng hoàn thành việc này'
+                    : task.task_kind === 'VC'
+                      ? 'Nhắc VC/LĐ hoàn thành việc này'
+                      : 'Nhắc Sales hoàn thành việc này (bản vẽ, render, bảng mô tả nộp tại Ghi chú & file)'
+                }
+                className={`inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md border font-medium cursor-pointer disabled:cursor-default ${
+                  reminded
+                    ? 'bg-amber-50 text-amber-800 border-amber-200'
+                    : 'bg-white text-amber-700 border-amber-200 hover:bg-amber-50'
+                }`}
+              >
+                <Bell className={`h-3 w-3 ${reminding ? 'animate-pulse' : ''}`} />
+                {reminded ? 'Đã nhắc' : reminding ? 'Đang gửi…' : 'Nhắc hoàn thành'}
+              </button>
+            )}
           </div>
         )}
       </div>

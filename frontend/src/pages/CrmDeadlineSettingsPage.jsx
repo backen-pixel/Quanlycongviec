@@ -79,7 +79,7 @@ export default function CrmDeadlineSettingsPage() {
     setMsg(null);
     try {
       await api.put('/crm/settings/deadline-config', {
-        company_id: Number(companyId),
+        company_id: companyId,
         primary_field: primaryField,
         fallback_field: fallbackField || null,
         buckets,
@@ -105,8 +105,9 @@ export default function CrmDeadlineSettingsPage() {
         <div>
           <h1 className="text-lg font-bold text-gray-900">Cấu hình Deadline CRM</h1>
           <p className="text-xs text-gray-500">
-            Hạn hiệu lực trên thẻ/Kanban: <b>Deadline nhiệm vụ</b> → <b>Deadline tự setup</b> → <b>SLA cột</b>.
-            Phần dưới cấu hình bucket view Deadline và trường dự phòng khi không có 3 nguồn trên.
+            Hạn hiệu lực trên thẻ/Kanban luôn là <b>Deadline nhiệm vụ (NV)</b> → <b>Deadline tự setup</b> → <b>SLA cột</b>.
+            Đổi «Trường chính» không đảo thứ tự này — chỉ dùng khi không có 3 nguồn trên (thường là ngày dự kiến chốt).
+            Phần dưới cấu hình nhóm view Deadline.
           </p>
         </div>
       </div>
@@ -136,7 +137,9 @@ export default function CrmDeadlineSettingsPage() {
                 <p className="text-sm font-bold mb-2" style={{ color: '#000000' }}>Trường nguồn deadline</p>
                 <div className="space-y-2">
                   <div>
-                    <label className="block text-xs font-medium text-gray-700 mb-1">Trường chính</label>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">
+                      Trường thêm (chỉ khi không có NV / Setup / SLA)
+                    </label>
                     <select value={primaryField} onChange={(e) => {
                       const v = e.target.value;
                       setPrimaryField(v);
@@ -147,7 +150,7 @@ export default function CrmDeadlineSettingsPage() {
                     </select>
                   </div>
                   <div>
-                    <label className="block text-xs font-medium text-gray-700 mb-1">Trường dự phòng (khi trường chính rỗng)</label>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">Trường dự phòng (khi trường thêm rỗng)</label>
                     <select value={fallbackField} onChange={(e) => setFallbackField(e.target.value)}
                       className="w-full h-10 px-3 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
                       {fallbackOptions.map(o => <option key={o.v || 'none'} value={o.v}>{o.l}</option>)}

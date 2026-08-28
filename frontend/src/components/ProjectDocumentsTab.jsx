@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import api from '../lib/api';
 import { publicFileUrl, getFileOpenAnchorProps, printUploadImage } from '../lib/publicFileUrl';
 import UploadFileLightbox, {
@@ -32,7 +32,13 @@ function stageIcon(s) {
   return ICON_NAME_TO_EMOJI[s.icon] || '📋';
 }
 
-export default function ProjectDocumentsTab({ projectId, project }) {
+export default function ProjectDocumentsTab({
+  projectId,
+  project,
+  leadId = null,
+  forModule = 'workshop',
+  showLeadDocuments = true,
+}) {
   const [approvals, setApprovals] = useState([]);
   const [leadDocuments, setLeadDocuments] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -42,15 +48,31 @@ export default function ProjectDocumentsTab({ projectId, project }) {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      // Parallel fetch — 2 requests only (no N+1!)
-      const [leadDocsRes, approvalsRes] = await Promise.allSettled([
-        api.get(`/crm/project/${projectId}/lead-documents`, { params: { for_module: 'workshop' } }),
+      const leadDocsReq = showLeadDocuments
+        ? api.get(
+          `/crm/project/${projectId}/lead-documents`,
+          forModule ? { params: { for_module: forModule } } : undefined,
+        )
+        : Promise.resolve({ data: [] });
+      const byLeadReq = showLeadDocuments && leadId
+        ? api.get(`/crm/leads/${leadId}/documents`)
+        : Promise.resolve({ data: [] });
+      const [leadDocsRes, byLeadRes, approvalsRes] = await Promise.allSettled([
+        leadDocsReq,
+        byLeadReq,
         api.get(`/approvals/project/${projectId}`),
       ]);
 
-      if (leadDocsRes.status === 'fulfilled') {
-        setLeadDocuments(leadDocsRes.value.data || []);
-      }
+      const merged = new Map();
+      const addRows = (raw) => {
+        const rows = Array.isArray(raw) ? raw : (Array.isArray(raw?.documents) ? raw.documents : []);
+        rows.forEach((d) => { if (d?.id) merged.set(String(d.id), d); });
+      };
+      if (leadDocsRes.status === 'fulfilled') addRows(leadDocsRes.value.data);
+      if (byLeadRes.status === 'fulfilled') addRows(byLeadRes.value.data);
+      setLeadDocuments([...merged.values()].sort(
+        (a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0),
+      ));
 
       if (approvalsRes.status === 'fulfilled') {
         const approved = (approvalsRes.value.data.approvals || [])
@@ -59,7 +81,7 @@ export default function ProjectDocumentsTab({ projectId, project }) {
       }
     } catch {}
     setLoading(false);
-  }, [projectId]);
+  }, [projectId, leadId, forModule, showLeadDocuments]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -141,11 +163,12 @@ export default function ProjectDocumentsTab({ projectId, project }) {
   });
 
   const totalDocs = stageDocuments.filter(s => s.hasContent).length;
+  const showProcess = showLeadDocuments || totalDocs > 0;
 
   return (
     <div className="space-y-4">
       {/* Lead Documents Section */}
-      {leadDocuments.length > 0 && (
+      {showLeadDocuments && leadDocuments.length > 0 && (
         <div className="bg-gradient-to-r from-amber-50 to-orange-50 rounded-xl border border-amber-200 overflow-hidden">
           <div className="flex items-center gap-2 p-4 pb-3">
             <FileText className="h-5 w-5 text-amber-600" />
@@ -160,6 +183,8 @@ export default function ProjectDocumentsTab({ projectId, project }) {
         </div>
       )}
 
+      {showProcess && (
+      <>
       {/* Header */}
       <div className="flex items-center gap-2">
         <FolderOpen className="h-4 w-4 text-blue-600" />
@@ -316,12 +341,14 @@ export default function ProjectDocumentsTab({ projectId, project }) {
         </div>
       )}
 
-      {totalDocs === 0 && !leadDocuments.length && (
+      {totalDocs === 0 && !(showLeadDocuments && leadDocuments.length) && (
         <div className="text-center py-10 text-gray-400">
           <FolderOpen className="h-10 w-10 mx-auto mb-2 opacity-30" />
           <p className="text-sm">Chưa có tài liệu quy trình</p>
           <p className="text-[10px] mt-1">Tài liệu sẽ tự động xuất hiện khi các giai đoạn được duyệt</p>
         </div>
+      )}
+      </>
       )}
 
       {lightbox?.items?.length > 0 && (

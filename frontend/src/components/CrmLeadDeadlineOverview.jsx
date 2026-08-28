@@ -188,6 +188,7 @@ export default function CrmLeadDeadlineOverview({ lead, onChanged }) {
         await api.patch(`/crm/leads/${lead.id}/deadline`, {
           kanban_deadline_at: deadlineIso,
           reason,
+          sync_open_tasks: true,
         });
       } else if (deadlineEditor.type === 'expected_close') {
         await api.put(`/crm/leads/${lead.id}`, {
@@ -442,6 +443,11 @@ export default function CrmLeadDeadlineOverview({ lead, onChanged }) {
                 )}
               >
                 {kanbanLabel ? kanbanLabel : <span className="text-slate-400 italic">Chưa đặt</span>}
+                {resolved.source === 'task' && (
+                  <p className="mt-0.5 text-[10px] text-amber-800">
+                    Thẻ đang lấy hạn NV — sửa Setup không hết Quá hạn cho đến khi sửa/xóa Ngày hẹn NV ở trên.
+                  </p>
+                )}
               </SourceRow>
               <SourceRow
                 label="3. SLA cột (áp dụng mọi thẻ)"

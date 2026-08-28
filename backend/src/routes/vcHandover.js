@@ -6,12 +6,13 @@
  *      → đăng bình luận tương tác (comment_type='vc_handover') cho sale CRM, KHÔNG bàn giao thật.
  *   2. Sale CRM phụ trách deal hoặc admin chọn công ty VC/LĐ + ngày lấy/lắp → PATCH /comments/:cid/select
  *      → bàn giao thật (thẻ rời cột lắp đặt tạm sang Chờ giao hàng) + thông báo VC/LĐ;
- *      (Chưa tạo 3 sự kiện lịch — tránh phải sửa lịch khi còn đổi giờ.)
+ *      CRM chịu trách nhiệm + Xưởng tự xác nhận; (Chưa tạo 3 sự kiện lịch — tránh phải sửa lịch khi còn đổi giờ.)
+ *      Nếu kế hoạch SX/VC đã có công ty VC + ngày: bước này chạy tự động khi xưởng gửi yêu cầu.
  *      Hoặc chọn «công ty lắp đặt bên ngoài» (skip_logistics_module): không vào bảng VC/LĐ,
  *      tự tạo sự kiện Giao hàng xưởng + Lắp đặt trên lịch SX/CRM để nội bộ cập nhật tiến độ.
  *   3. (Legacy) Sale chỉ chọn ngày → PATCH /comments/:cid/schedule nếu còn bình luận awaiting_date.
  *   3b. Sale sửa ngày đề xuất → PATCH /comments/:cid/reschedule (khi awaiting_confirm, chưa có sự kiện).
- *      → giữ Xưởng đã xác nhận (mặc định); reset xác nhận VC/LĐ.
+ *      → giữ CRM + Xưởng đã xác nhận (mặc định); reset xác nhận VC/LĐ.
  *   4. Đúng phụ trách VC/LĐ xác nhận → PATCH /comments/:cid/confirm
  *      → đủ 2 bên: tạo 3 sự kiện (Giao hàng xưởng + Lắp đặt + Lắp đặt) rồi khóa lịch.
  */
@@ -20,6 +21,15 @@
 function defaultProductionConfirmMeta(meta, atIso = new Date().toISOString()) {
   return {
     user_id: meta?.production_confirm_user_id || meta?.production_person_id || null,
+    at: atIso,
+    auto: true,
+  };
+}
+
+/** CRM chịu trách nhiệm mặc định xác nhận khi chọn công ty/ngày (hoặc khi kế hoạch đã điền). */
+function defaultCrmConfirmMeta(meta, atIso = new Date().toISOString()) {
+  return {
+    user_id: meta?.crm_responsible_user_id || null,
     at: atIso,
     auto: true,
   };
@@ -75,7 +85,7 @@ function canActAsVcHandoverSale(req, saleIds) {
 }
 
 function emitComment(req, leadId, action, row) {
-  const io = req.app.get('io');
+  const io = req.app?.get?.('io');
   if (io) io.to(`lead:${leadId}`).emit('lead:comment', { lead_id: leadId, action, comment: row });
 }
 
@@ -551,6 +561,290 @@ async function completeSxFinishOnHandoverColumn(projectId) {
   }
 }
 
+/**
+ * Kế hoạch SX/VC đã có công ty + ngày → tự bàn giao & xác nhận phía CRM chịu trách nhiệm.
+ * Sale vẫn sửa ngày được (reschedule) trước khi VC/LĐ xác nhận.
+ */
+async function autoApplyCrmPlanSelect(req, comment, { deal, project, allowTodayFallback = false } = {}) {
+  const meta = comment?.metadata || {};
+  if ((meta.state || 'awaiting_company') !== 'awaiting_company') {
+    return { comment, applied: false, reason: meta.state || 'not_awaiting_company' };
+  }
+  const projectId = meta.project_id || project?.id || null;
+  if (!projectId) return { comment, applied: false, reason: 'no_project' };
+
+  if (!project) {
+    const { data: projRowFull } = await supabase
+      .from('projects')
+      .select('id, code, name, production_person_id, company_id, install_address, install_date, delivery_date, production_finish_date, pickup_at, pickup_notes, logistics_company_id, vc_notes')
+      .eq('id', projectId)
+      .maybeSingle();
+    project = projRowFull || null;
+  }
+  if (!deal && comment.lead_id) {
+    const { data: dealRow } = await supabase
+      .from('crm_leads')
+      .select('id, assigned_to, lead_owner_id, company_id')
+      .eq('id', comment.lead_id)
+      .maybeSingle();
+    deal = dealRow || null;
+  }
+
+  let logisticsCompanyId = project?.logistics_company_id || meta.plan_logistics_company_id || null;
+  if (!logisticsCompanyId && project?.company_id) {
+    const { data: lhs } = await supabase
+      .from('logistics_handover_settings')
+      .select('logistics_company_id')
+      .eq('logistics_company_id', project.company_id)
+      .maybeSingle();
+    if (lhs?.logistics_company_id) logisticsCompanyId = project.company_id;
+  }
+
+  const pickupAtRaw = meta.pickup_at
+    || project?.pickup_at
+    || meta.install_date
+    || project?.install_date
+    || project?.delivery_date
+    || (allowTodayFallback ? new Date().toISOString() : null);
+  const crmId = resolveCrmResponsibleUserId(deal, meta)
+    || (Array.isArray(meta.sale_user_ids) ? meta.sale_user_ids[0] : null)
+    || comment?.user_id
+    || null;
+  if (!logisticsCompanyId) return { comment, applied: false, reason: 'no_vc_company' };
+  if (!pickupAtRaw) return { comment, applied: false, reason: 'no_pickup_date' };
+  if (!crmId) return { comment, applied: false, reason: 'no_crm_responsible' };
+  const pickupDate = new Date(pickupAtRaw);
+  if (Number.isNaN(pickupDate.getTime())) return { comment, applied: false, reason: 'bad_pickup_date' };
+
+  const pickupAt = pickupDate.toISOString();
+  const userId = String(crmId);
+  let installOccurrenceDates = normalizeOccurrenceYmds(meta.plan_install_occurrence_dates);
+  let installDate = meta.install_date || project?.install_date || project?.delivery_date || pickupAt;
+  if (installDate && !installOccurrenceDates.length) {
+    const d = vnCalendarDayKey(installDate);
+    if (d) installOccurrenceDates = [d];
+  }
+  if (installOccurrenceDates.length && (!installDate || String(installDate).slice(0, 10) !== installOccurrenceDates[0])) {
+    if (!meta.install_date && !project?.install_date) {
+      installDate = `${installOccurrenceDates[0]}T14:00:00+07:00`;
+    }
+  }
+  const vcArriveAt = pickupAt;
+  const pickupNotes = meta.pickup_notes || project?.pickup_notes || null;
+  const selectNotes = meta.select_notes
+    || [meta.lead_type_name, meta.workshop_company_name].map((s) => String(s || '').trim()).filter(Boolean).join(' - ')
+    || '';
+  const installAddress = meta.install_address || project?.install_address || null;
+  const vcNotes = meta.vc_notes || meta.plan_vc_notes || project?.vc_notes || null;
+  const deliveryDate = project?.delivery_date || meta.delivery_date || null;
+
+  const result = await performVcHandoverCore(req, {
+    projectId,
+    logisticsCompanyId,
+    sxHandoverPipelineStageId: meta.sx_stage_id || null,
+    actorUserId: userId,
+  });
+  void rcInvalidateTags(['production', 'logistics', 'crm']);
+
+  const responsibleId = await resolveLogisticsHandoverResponsibleUserId(logisticsCompanyId);
+  const installerId = await resolveLogisticsHandoverInstallerUserId(logisticsCompanyId);
+  const addIds = [...new Set([responsibleId, installerId].filter(Boolean).map(String))];
+  let vcMemberIds = [];
+  let vcCompanyDeal = null;
+  try {
+    const visibility = await afterVcCompanySelected({
+      sourceLeadId: comment.lead_id,
+      logisticsCompanyId,
+      projectId,
+      vcKanbanColumnId: result.vc_kanban_column_id || null,
+      logisticsPersonId: result.logistics_person_id || responsibleId || null,
+      installerPersonId: result.installer_person_id || installerId || null,
+      actorUserId: userId,
+      extraUserIds: addIds,
+      addMembersFn: addVcMembersWithCutoff,
+    });
+    vcMemberIds = [...new Set([
+      ...(visibility.addedToSource || []),
+      ...(visibility.addedToVcDeal || []),
+      ...(visibility.memberIds || []),
+    ])];
+    vcCompanyDeal = visibility.vcDeal || null;
+  } catch (memErr) {
+    console.warn('[vc-handover] auto CRM afterVcCompanySelected:', memErr.message);
+    vcMemberIds = await addVcMembersWithCutoff(comment.lead_id, addIds, userId);
+  }
+
+  let productionPersonId = meta.production_person_id || project?.production_person_id || null;
+  let workshopCompanyId = meta.workshop_company_id || project?.company_id || null;
+  const { data: projRow } = await supabase
+    .from('projects')
+    .select('production_person_id, company_id')
+    .eq('id', projectId)
+    .maybeSingle();
+  if (projRow?.production_person_id) productionPersonId = projRow.production_person_id;
+  if (projRow?.company_id) workshopCompanyId = projRow.company_id;
+
+  const logisticsPersonId = result.logistics_person_id || responsibleId || installerId || null;
+  let productionConfirmUserId = productionPersonId;
+  let logisticsConfirmUserId = logisticsPersonId;
+  try {
+    productionConfirmUserId = await resolveProductionDeliveryConfirmUserId(workshopCompanyId, productionPersonId);
+  } catch (e) {
+    console.warn('[vc-handover] auto CRM resolve SX confirm:', e.message);
+  }
+  try {
+    logisticsConfirmUserId = await resolveLogisticsHandoverConfirmUserId(logisticsCompanyId, logisticsPersonId);
+  } catch (e) {
+    console.warn('[vc-handover] auto CRM resolve VC confirm:', e.message);
+  }
+
+  const { data: company } = await supabase
+    .from('companies').select('name, short_name').eq('id', logisticsCompanyId).maybeSingle();
+  const companyName = company?.short_name || company?.name || meta.plan_logistics_company_name || 'Công ty VC/LĐ';
+
+  const [
+    productionPersonName,
+    logisticsPersonName,
+    crmName,
+    productionConfirmUserName,
+    logisticsConfirmUserName,
+  ] = await Promise.all([
+    getUserName(productionPersonId),
+    getUserName(logisticsPersonId),
+    getUserName(userId),
+    getUserName(productionConfirmUserId),
+    getUserName(logisticsConfirmUserId),
+  ]);
+
+  try {
+    await syncProjectHandoverDates(projectId, {
+      pickupAt,
+      installAt: installDate || null,
+      pickupNotes: pickupNotes || selectNotes || null,
+    });
+  } catch (dateErr) {
+    console.warn('[vc-handover] auto CRM sync dates:', dateErr.message);
+  }
+
+  const nowIso = new Date().toISOString();
+  const pickupLabel = formatVnDateTime(pickupDate);
+  const arriveLabel = formatVnDateTime(new Date(vcArriveAt));
+  const installLabel = installDate
+    ? formatInstallDaysLabel(installDate, installOccurrenceDates)
+    : pickupLabel;
+  const nextMeta = {
+    ...meta,
+    state: 'awaiting_confirm',
+    skip_logistics_module: false,
+    logistics_company_id: logisticsCompanyId,
+    logistics_company_name: companyName,
+    workshop_company_id: workshopCompanyId || meta.workshop_company_id || null,
+    service_type: 'both',
+    select_notes: selectNotes || null,
+    crm_responsible_user_id: userId,
+    crm_responsible_user_name: crmName || null,
+    production_person_id: productionPersonId,
+    production_person_name: productionPersonName || null,
+    logistics_person_id: logisticsPersonId,
+    logistics_person_name: logisticsPersonName || null,
+    production_confirm_user_id: productionConfirmUserId || null,
+    production_confirm_user_name: productionConfirmUserName || null,
+    logistics_confirm_user_id: logisticsConfirmUserId || null,
+    logistics_confirm_user_name: logisticsConfirmUserName || null,
+    vc_member_ids: [...new Set([...(meta.vc_member_ids || []), ...vcMemberIds, ...addIds])],
+    vc_company_deal_id: vcCompanyDeal?.dealId || null,
+    vc_company_deal_created: !!vcCompanyDeal?.created,
+    pickup_at: pickupAt,
+    pickup_notes: pickupNotes || null,
+    vc_arrive_at: vcArriveAt,
+    event_id: null,
+    event_ids: [],
+    sx_event_id: null,
+    transport_event_id: null,
+    install_event_id: null,
+    events_mode: 'pending_confirm',
+    delivery_date: deliveryDate || null,
+    install_date: installDate || pickupAt,
+    install_occurrence_dates: installOccurrenceDates.length ? installOccurrenceDates : null,
+    install_address: installAddress || null,
+    vc_notes: vcNotes || null,
+    confirmed_crm: { ...defaultCrmConfirmMeta({ crm_responsible_user_id: userId }, nowIso), from_plan: true },
+    confirmed_production: defaultProductionConfirmMeta({
+      production_confirm_user_id: productionConfirmUserId,
+      production_person_id: productionPersonId,
+    }, nowIso),
+    confirmed_logistics: null,
+  };
+
+  const projLabel = meta.project_name || meta.project_code || 'dự án';
+  const body = [
+    String(comment.body || '').split('\n')[0],
+    `— Đã chọn: ${companyName}${selectNotes ? ` · ${selectNotes}` : ''}`,
+    `— Ngày nhận hàng: ${pickupLabel}`,
+    `— VC tới nơi LĐ: ${arriveLabel}`,
+    installLabel ? `— Ngày lắp đặt: ${installLabel}` : null,
+    installAddress ? `— Địa chỉ lắp: ${installAddress}` : null,
+    `— CRM (${crmName || 'chịu trách nhiệm'}) đã xác nhận mặc định từ kế hoạch SX/VC.`,
+    '— Xưởng đã xác nhận (mặc định).',
+    '— 3 sự kiện lịch sẽ tạo sau khi VC/LĐ xác nhận.',
+    '— Chờ xác nhận VC/LĐ.',
+  ].filter(Boolean).join('\n');
+
+  const { data: updated, error } = await supabase
+    .from('crm_lead_comments')
+    .update({ metadata: nextMeta, body, updated_at: nowIso })
+    .eq('id', comment.id)
+    .select(COMMENT_SELECT)
+    .single();
+  if (error) throw error;
+
+  await supabase.from('projects').update({ vc_handover_status: 'scheduled' }).eq('id', projectId)
+    .then(({ error: e }) => {
+      if (e && !String(e.message || '').includes('vc_handover_status')) {
+        console.warn('[vc-handover] auto CRM status:', e.message);
+      }
+    });
+
+  const row = withReactions(updated);
+  emitComment(req, comment.lead_id, 'updated', row);
+
+  try {
+    const notifyIds = [...new Set([
+      logisticsPersonId, logisticsConfirmUserId, installerId, ...vcMemberIds, ...addIds,
+      productionPersonId, productionConfirmUserId,
+      ...(meta.sale_user_ids || []),
+    ].filter(Boolean).map(String))];
+    if (notifyIds.length) {
+      await notifyMultiple(
+        req,
+        notifyIds,
+        'vc_handover_assigned',
+        `📦 Bàn giao VC/LĐ: ${projLabel}`,
+        [
+          `CRM ${crmName || ''} đã xác nhận bàn giao từ kế hoạch.`.replace(/\s+/g, ' ').trim(),
+          `Công ty: ${companyName}.`,
+          `Lấy hàng: ${pickupLabel}.`,
+          logisticsConfirmUserName ? `Chờ xác nhận VC/LĐ: ${logisticsConfirmUserName}.` : 'Chờ xác nhận VC/LĐ.',
+        ].join(' '),
+        'lead',
+        vcCompanyDeal?.dealId || comment.lead_id,
+        {
+          nav_tab: 'comments',
+          ecosystem_module_key: 'logistics',
+          project_id: String(projectId),
+          pickup_at: pickupAt,
+          vc_handover: true,
+          auto_crm_confirm: true,
+        },
+      );
+    }
+  } catch (nerr) {
+    console.warn('[vc-handover] auto CRM notify:', nerr.message);
+  }
+
+  return { comment: row, applied: true, reason: 'ok' };
+}
+
 // ─── 1. SX yêu cầu bàn giao (đăng bình luận cho sale) ───────────────────────
 r.post('/projects/:id/request', async (req, res) => {
   try {
@@ -769,6 +1063,25 @@ r.post('/projects/:id/request', async (req, res) => {
         }
       }
       try {
+        const auto = await autoApplyCrmPlanSelect(req, enrichedRow, { deal, project });
+        if (auto.applied && auto.comment) {
+          await completeSxFinishOnHandoverColumn(projectId);
+          return res.json({
+            comment: withReactions(auto.comment),
+            lead_id: deal.id,
+            already: true,
+            auto_crm_confirm: true,
+          });
+        }
+      } catch (autoErr) {
+        console.warn('[vc-handover] auto CRM select (existing):', autoErr.message);
+      }
+      const stillWaitingCompany = ((enrichedRow?.metadata?.state || 'awaiting_company') === 'awaiting_company');
+      if (!stillWaitingCompany) {
+        await completeSxFinishOnHandoverColumn(projectId);
+        return res.json({ comment: withReactions(enrichedRow), lead_id: deal.id, already: true });
+      }
+      try {
         await notifyCrmVcHandoverRequest(req, {
           saleUserIds: saleUserIds.length ? saleUserIds : (openComment.metadata?.sale_user_ids || []),
           actorName,
@@ -858,6 +1171,9 @@ r.post('/projects/:id/request', async (req, res) => {
       workshopTypeName = wsType?.name || null;
     }
 
+    const crmResponsibleUserId = resolveCrmResponsibleUserId(deal) || saleUserIds[0] || null;
+    const crmResponsibleUserName = await getUserName(crmResponsibleUserId);
+
     const metadata = {
       state: 'awaiting_company',
       project_id: projectId,
@@ -866,7 +1182,8 @@ r.post('/projects/:id/request', async (req, res) => {
       sx_stage_id: sxStageId,
       production_person_id: project.production_person_id || null,
       sale_user_ids: saleUserIds,
-      crm_responsible_user_id: resolveCrmResponsibleUserId(deal) || saleUserIds[0] || null,
+      crm_responsible_user_id: crmResponsibleUserId,
+      crm_responsible_user_name: crmResponsibleUserName || null,
       requested_by: actor,
       company_id: deal.company_id || null,
       lead_type_id: deal.lead_type_id || null,
@@ -924,6 +1241,19 @@ r.post('/projects/:id/request', async (req, res) => {
     const row = withReactions(inserted);
     emitComment(req, deal.id, 'created', row);
     void rcInvalidateTags(['production']);
+
+    try {
+      const auto = await autoApplyCrmPlanSelect(req, inserted, { deal, project });
+      if (auto.applied && auto.comment) {
+        return res.json({
+          comment: withReactions(auto.comment),
+          lead_id: deal.id,
+          auto_crm_confirm: true,
+        });
+      }
+    } catch (autoErr) {
+      console.warn('[vc-handover] auto CRM select:', autoErr.message);
+    }
 
     try {
       await notifyCrmVcHandoverRequest(req, {
@@ -1139,18 +1469,21 @@ r.patch('/comments/:cid/select', async (req, res) => {
       companyName = company?.short_name || company?.name || 'Công ty VC/LĐ';
     }
 
+    const crmResponsibleUserId = meta.crm_responsible_user_id || saleIds[0] || userId || null;
     const [
       productionPersonName,
       logisticsPersonName,
       actorName,
       productionConfirmUserName,
       logisticsConfirmUserName,
+      crmResponsibleUserName,
     ] = await Promise.all([
       getUserName(productionPersonId),
       getUserName(logisticsPersonId),
       getUserName(userId),
       getUserName(productionConfirmUserId),
       getUserName(logisticsConfirmUserId),
+      getUserName(crmResponsibleUserId),
     ]);
 
     // Chỉ lưu ngày đề xuất — 3 sự kiện lịch tạo sau khi cả Xưởng + VC/LĐ xác nhận.
@@ -1181,7 +1514,8 @@ r.patch('/comments/:cid/select', async (req, res) => {
       workshop_company_id: workshopCompanyId || meta.workshop_company_id || null,
       service_type: serviceType,
       select_notes: selectNotes || null,
-      crm_responsible_user_id: meta.crm_responsible_user_id || saleIds[0] || userId || null,
+      crm_responsible_user_id: crmResponsibleUserId,
+      crm_responsible_user_name: crmResponsibleUserName || null,
       production_person_id: productionPersonId,
       production_person_name: productionPersonName || null,
       logistics_person_id: logisticsPersonId,
@@ -1208,6 +1542,7 @@ r.patch('/comments/:cid/select', async (req, res) => {
       install_address: installAddress || null,
       vc_notes: vcNotes != null ? (vcNotes || null) : (meta.vc_notes || meta.plan_vc_notes || null),
       external_company_name: otherName || (skipLogistics ? companyName : null),
+      confirmed_crm: defaultCrmConfirmMeta({ crm_responsible_user_id: crmResponsibleUserId }),
       confirmed_production: defaultProductionConfirmMeta({
         production_confirm_user_id: productionConfirmUserId,
         production_person_id: productionPersonId,
@@ -1265,6 +1600,7 @@ r.patch('/comments/:cid/select', async (req, res) => {
         `— VC tới nơi LĐ: ${arriveLabel}`,
         installLabel ? `— Ngày lắp đặt: ${installLabel}` : null,
         installAddress ? `— Địa chỉ lắp: ${installAddress}` : null,
+        '— CRM chịu trách nhiệm đã xác nhận (mặc định).',
         '— Xưởng đã xác nhận (mặc định).',
         '— 3 sự kiện lịch (Giao hàng xưởng + VC tới nơi LĐ + Lắp đặt) sẽ tạo sau khi VC/LĐ xác nhận.',
         '— Chờ xác nhận VC/LĐ.',
@@ -1345,6 +1681,7 @@ r.patch('/comments/:cid/select', async (req, res) => {
           vcCompanyDeal?.created
             ? `• Đã tạo deal CRM cho công ty VC/LĐ: ${vcCompanyDeal.code || vcCompanyDeal.dealId}.`
             : null,
+          '• CRM chịu trách nhiệm đã xác nhận (mặc định khi chọn công ty/ngày).',
           '• Xưởng đã xác nhận (mặc định khi Sale tạo bàn giao).',
           '• Lịch: 3 sự kiện sẽ tạo sau khi VC/LĐ xác nhận (Giao hàng xưởng + VC tới nơi LĐ + Lắp đặt).',
           '• Module VC/LĐ: mở board công ty đã chọn — dự án giữ mã SX, gắn công ty VC.',
@@ -1517,12 +1854,13 @@ r.patch('/comments/:cid/schedule', async (req, res) => {
       events_mode: 'pending_confirm',
       production_person_name: productionPersonName || meta.production_person_name || null,
       logistics_person_name: logisticsPersonName || meta.logistics_person_name || null,
+      confirmed_crm: defaultCrmConfirmMeta(meta),
       confirmed_production: defaultProductionConfirmMeta(meta),
       confirmed_logistics: null,
     };
     const pickupLabel = pickupDate.toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
     const notesLine = meta.select_notes ? ` · ${meta.select_notes}` : '';
-    const body = `${comment.body.split('\n')[0]}\n— ${meta.logistics_company_name || 'VC/LĐ'}${notesLine}\n— Ngày lấy hàng đề xuất: ${pickupLabel}. Xưởng đã xác nhận (mặc định). 3 sự kiện lịch sẽ tạo sau khi VC/LĐ xác nhận.`;
+    const body = `${comment.body.split('\n')[0]}\n— ${meta.logistics_company_name || 'VC/LĐ'}${notesLine}\n— Ngày lấy hàng đề xuất: ${pickupLabel}. CRM + Xưởng đã xác nhận (mặc định). 3 sự kiện lịch sẽ tạo sau khi VC/LĐ xác nhận.`;
 
     const { data: updated, error } = await supabase
       .from('crm_lead_comments')
@@ -1666,6 +2004,7 @@ r.patch('/comments/:cid/reschedule', async (req, res) => {
       vc_arrive_at: vcArriveAt,
       install_date: installAt,
       install_occurrence_dates: installOccurrenceDates.length ? installOccurrenceDates : null,
+      confirmed_crm: defaultCrmConfirmMeta({ ...meta, crm_responsible_user_id: crmResponsibleId }),
       confirmed_production: defaultProductionConfirmMeta(meta),
       confirmed_logistics: null,
       event_id: null,
@@ -2075,3 +2414,4 @@ r.patch('/comments/:cid/confirm', async (req, res) => {
 });
 
 module.exports = r;
+module.exports.autoApplyCrmPlanSelect = autoApplyCrmPlanSelect;

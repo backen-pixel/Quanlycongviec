@@ -119,10 +119,13 @@ export function getPipelineStageSlaDeadlineTs(stageEnteredAt, stage, leadItem) {
 }
 
 /**
- * Thứ tự ưu tiên hạn hiệu lực trên lead/deal:
+ * Thứ tự ưu tiên hạn hiệu lực trên lead/deal (khi ĐỌC):
  * 1) Deadline nhiệm vụ (NV CRM đang mở có Ngày hẹn)
  * 2) Deadline tự setup (kanban_deadline_at / Deadline thẻ)
  * 3) SLA cột
+ *
+ * Khi USER TẠO/ĐỔI hạn (thẻ, chuyển cột, chi tiết): backend phải gắn ngày mới
+ * vào NV đang đếm (`sync_open_tasks`). Nếu không, bước 1 nuốt hạn mới ở bước 2.
  */
 export function resolveCrmLeadEffectiveDeadlineSource(item, stage) {
   const st = stage || item?.stage || item?._stage;

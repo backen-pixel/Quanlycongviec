@@ -16,6 +16,8 @@ const {
   completeOpenWorkOnModuleDone,
 } = require('../../../helpers/completeOpenWorkOnModuleDone');
 const { deleteExclusiveProjectsForLeads } = require('../../../helpers/deleteExclusiveProjectsForLeads');
+const { invalidateCrmDeadlineSnapshots } = require('../../../helpers/crmDeadlineSnapshotCache');
+const { syncOpenCrmTaskDeadlines } = require('../../../helpers/crmOpenTaskDeadlineSync');
 
 const r = Router();
 
@@ -2563,6 +2565,7 @@ r.patch('/leads/:id/stage', async (req, res) => {
 
     // Bổ sung nhiệm vụ CRM thiếu theo bộ mẫu của cột đích (chỉ thêm phần chưa có).
     // Cột hoàn thành: không gen thêm NV — đóng hết NV + deadline CRM còn mở.
+    let taskWriteLeadId = req.params.id;
     if (isStageChange && stage_id && isCrmCompletedStage(stage)) {
       try {
         const done = await completeOpenWorkOnModuleDone({
@@ -2582,19 +2585,19 @@ r.patch('/leads/:id/stage', async (req, res) => {
       }
     } else if (isStageChange && stage_id) {
       try {
-        const taskLeadId = await resolveCrmTaskWriteLeadId(req.params.id);
+        taskWriteLeadId = await resolveCrmTaskWriteLeadId(req.params.id);
         const ensureResult = await ensureMissingCrmTasksForPipelineStage({
-          leadId: taskLeadId,
+          leadId: taskWriteLeadId,
           pipelineStageId: stage_id,
           userId: req.user.userId,
           req,
         });
         if (ensureResult.created > 0) {
           console.log(
-            `[crm/stage] ensure missing tasks: +${ensureResult.created} for lead=${taskLeadId} stage=${stage_id}`,
+            `[crm/stage] ensure missing tasks: +${ensureResult.created} for lead=${taskWriteLeadId} stage=${stage_id}`,
           );
           await emitCrmTaskChanged(req, {
-            leadId: taskLeadId,
+            leadId: taskWriteLeadId,
             action: 'bulk_created',
             count: ensureResult.created,
           });
@@ -2602,6 +2605,27 @@ r.patch('/leads/:id/stage', async (req, res) => {
       } catch (ensureErr) {
         console.warn('[crm/stage] ensureMissingCrmTasksForPipelineStage:', ensureErr.message);
       }
+    }
+
+    // Thứ tự đọc hạn: NV → Setup → SLA. Hạn vừa đặt lúc chuyển cột phải thắng:
+    // NV mẫu gen ngay sau đó (offset từ «bây giờ») nếu để nguyên sẽ che mất hạn mới.
+    if (hasDeadlineInput && !stage?.is_won && !stage?.is_lost && !stage?.counts_as_completed_revenue) {
+      try {
+        const newDlIso = new Date(parsedDeadlineTs).toISOString();
+        const syncResult = await syncOpenCrmTaskDeadlines(supabase, {
+          leadId: taskWriteLeadId,
+          stageId: stage_id,
+          newIso: newDlIso,
+        });
+        if (syncResult.synced) {
+          try {
+            emitCrmTaskChanged(req, { lead_id: taskWriteLeadId, action: 'deadline_sync' });
+          } catch (_) { /* ignore */ }
+        }
+      } catch (syncErr) {
+        console.warn('[crm/stage] sync open tasks to user deadline:', syncErr.message);
+      }
+      invalidateCrmDeadlineSnapshots();
     }
 
     // Ghi lịch sử deadline khi đặt deadline lúc chuyển cột.
@@ -2889,24 +2913,50 @@ r.patch('/leads/:id/deadline', async (req, res) => {
     }
 
     const reason = (req.body?.reason || '').toString().trim();
+    const syncOpenTasks = req.body?.sync_open_tasks === true;
     // Bắt buộc lý do khi thẻ ĐÃ có deadline (sửa/đổi/xóa).
     if (lead.kanban_deadline_at && !reason) {
       return res.status(400).json({ error: 'Vui lòng nhập lý do thay đổi deadline', code: 'reason_required' });
     }
-    // Không đổi gì thì thôi.
-    if (String(lead.kanban_deadline_at || '') === String(newIso || '')) {
+    const kanbanUnchanged = String(lead.kanban_deadline_at || '') === String(newIso || '');
+    if (kanbanUnchanged && !syncOpenTasks) {
       return res.json({ ok: true, unchanged: true, kanban_deadline_at: lead.kanban_deadline_at });
     }
 
-    const { error: upErr } = await supabase
-      .from('crm_leads')
-      .update({
-        kanban_deadline_at: newIso,
-        kanban_deadline_reason: reason || null,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', leadId);
-    if (upErr) throw upErr;
+    if (!kanbanUnchanged) {
+      const { error: upErr } = await supabase
+        .from('crm_leads')
+        .update({
+          kanban_deadline_at: newIso,
+          kanban_deadline_reason: reason || null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', leadId);
+      if (upErr) throw upErr;
+    }
+
+    let syncedOpenTasks = 0;
+    if (syncOpenTasks) {
+      try {
+        const syncResult = await syncOpenCrmTaskDeadlines(supabase, {
+          leadId,
+          stageId: lead.stage_id,
+          newIso,
+        });
+        syncedOpenTasks = syncResult.synced;
+        if (syncedOpenTasks) {
+          try { emitCrmTaskChanged(req, { lead_id: leadId, action: 'deadline_sync' }); } catch (_) { /* ignore */ }
+        }
+      } catch (syncErr) {
+        console.warn('[crm/deadline] sync open tasks:', syncErr.message);
+      }
+    }
+
+    if (kanbanUnchanged && !syncedOpenTasks) {
+      return res.json({ ok: true, unchanged: true, kanban_deadline_at: lead.kanban_deadline_at });
+    }
+
+    invalidateCrmDeadlineSnapshots();
 
     try {
       await supabase.from('crm_lead_deadline_history').insert({
@@ -2942,7 +2992,13 @@ r.patch('/leads/:id/deadline', async (req, res) => {
       cleared: !newIso,
     });
 
-    res.json({ ok: true, kanban_deadline_at: newIso, kanban_deadline_reason: reason || null });
+    res.json({
+      ok: true,
+      kanban_deadline_at: newIso,
+      kanban_deadline_reason: reason || null,
+      crm_next_open_task_deadline: syncOpenTasks ? (newIso || null) : undefined,
+      synced_open_tasks: syncedOpenTasks,
+    });
     try { require('../../../jobs/projectDeadlineDispatch').triggerAfterDeadlineChange(); } catch (_) { /* ignore */ }
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -3060,6 +3116,7 @@ r.patch('/leads/:id/deadline/disable-all', async (req, res) => {
       });
     } catch (_) { /* ignore activity log */ }
 
+    invalidateCrmDeadlineSnapshots();
     emitCrmDashboardChanged(req, {
       type: lead.type,
       company_id: lead.company_id,

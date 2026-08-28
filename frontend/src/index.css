@@ -612,6 +612,24 @@ button:disabled,
 }
 .animate-pulse-dot { animation: pulse-dot 1.5s ease-in-out infinite; }
 
+/* Lịch VC/LĐ — chip sự kiện của đúng dự án đang sửa (màu đậm + nhấp nháy) */
+@keyframes vc-own-event-pulse {
+  0%, 100% {
+    filter: brightness(1);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--own-glow, #d97706) 0%, transparent);
+  }
+  50% {
+    filter: brightness(1.22);
+    box-shadow: 0 0 7px 2px color-mix(in srgb, var(--own-glow, #d97706) 80%, transparent);
+  }
+}
+.vc-own-event-chip {
+  animation: vc-own-event-pulse 1.35s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .vc-own-event-chip { animation: none; }
+}
+
 /* Kanban — thẻ vừa tìm / focus (viền inset — không bị overflow-hidden cột cắt) */
 @keyframes kanban-search-hit-glow {
   0%, 100% {

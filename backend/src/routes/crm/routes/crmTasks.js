@@ -12,6 +12,7 @@ const {
   isDeadlineOffsetColumnError,
   stripDeadlineOffsetColumns,
 } = require('../../../helpers/crmTaskSequentialDeadline');
+const { invalidateCrmDeadlineSnapshots } = require('../../../helpers/crmDeadlineSnapshotCache');
 
 const r = Router();
 
@@ -854,6 +855,7 @@ r.put('/leads/:leadId/tasks/:taskId', async (req, res) => {
       return res.status(result.status || 500).json({ error: result.error });
     }
     const data = result.data;
+    if (b.deadline !== undefined) invalidateCrmDeadlineSnapshots();
 
     // 🔔 NOTIFICATION: Task CRM cập nhật
     try {

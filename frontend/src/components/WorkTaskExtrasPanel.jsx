@@ -319,6 +319,9 @@ function CrmTaskNotesAttachments({ task }) {
 
   return (
     <div className="space-y-3 pt-1">
+      <p className="text-[11px] text-slate-500 leading-relaxed rounded-lg border border-amber-100 bg-amber-50/80 px-2.5 py-1.5">
+        File tiến trình Sales (bản vẽ, render, bảng mô tả) nộp tại đây. Không đưa vào tab Bình luận — file bình luận không thay thế công việc và dễ bị xóa.
+      </p>
       <div className="flex items-center justify-between gap-2">
         <Link
           to={`/crm/leads/${leadId}`}
