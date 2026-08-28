@@ -7,7 +7,7 @@ import { formatDate, formatVND } from '../lib/utils';
 import KanbanColumnVirtualList from '../components/KanbanColumnVirtualList';
 import {
   RefreshCw, Plus, FileText, Package, ChevronLeft, ChevronRight,
-  List, LayoutGrid, Clock, Phone, Calendar, EyeOff, Eye, X, Search,
+  List, LayoutGrid, Clock, Phone, Calendar, EyeOff, Eye, X, Search, Users,
 } from 'lucide-react';
 import SearchInlineFilterChips, { SearchClearButton, AdvFilterButton, searchGroupClass } from '../components/SearchInlineFilterChips';
 import WorkUnifiedFilterPanel, {
@@ -19,6 +19,46 @@ import WorkUnifiedFilterPanel, {
 const PAGE_SIZE = 20;
 
 const KANBAN_COLORS = ['#3b82f6', '#8b5cf6', '#f59e0b', '#10b981', '#ef4444', '#06b6d4', '#ec4899', '#6366f1'];
+
+/** Gom hạn Work Unified — khớp Deadline SX: Quá hạn / Hôm nay / tuần / tháng / sau tháng này. */
+const WU_DEADLINE_BUCKETS = [
+  { key: 'overdue', label: 'Quá hạn', color: '#dc2626' },
+  { key: 'today', label: 'Hôm nay', color: '#ea580c' },
+  { key: 'this_week', label: 'Tuần này', color: '#d97706' },
+  { key: 'next_week', label: 'Tuần sau', color: '#0891b2' },
+  { key: 'this_month', label: 'Tháng này', color: '#0d9488' },
+  { key: 'later', label: 'Sau tháng này', color: '#475569' },
+  { key: 'none', label: 'Chưa có deadline', color: '#9ca3af' },
+];
+
+function wuDeadlineRaw(it) {
+  return it?.deadline || it?.production_deadline || it?.delivery_date || it?.install_date || null;
+}
+
+function startOfLocalDay(d) {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
+
+function resolveWuDeadlineBucket(it, todayMs = Date.now()) {
+  const raw = wuDeadlineRaw(it);
+  if (!raw) return 'none';
+  const t = new Date(raw);
+  if (!Number.isFinite(t.getTime())) return 'none';
+  const today = startOfLocalDay(new Date(todayMs));
+  const diffDays = Math.floor((startOfLocalDay(t).getTime() - today.getTime()) / 86400000);
+  if (diffDays < 0) return 'overdue';
+  if (diffDays === 0) return 'today';
+  const dow = today.getDay() === 0 ? 7 : today.getDay();
+  const daysToEndOfWeek = 7 - dow;
+  if (diffDays <= daysToEndOfWeek) return 'this_week';
+  if (diffDays <= daysToEndOfWeek + 7) return 'next_week';
+  const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+  endOfMonth.setHours(23, 59, 59, 999);
+  if (t.getTime() <= endOfMonth.getTime()) return 'this_month';
+  return 'later';
+}
 
 const FORECAST_TABS = [
   { key: 'all', label: 'Tất cả' },
@@ -82,57 +122,50 @@ function WorkKanbanCard({ it }) {
   return (
     <Link
       to={`/management/work-unified/${it.id}`}
-      className="block rounded-xl border border-gray-100 bg-white p-3 shadow-sm hover:shadow-md hover:border-gray-200 transition-shadow space-y-1.5"
+      className="block rounded-lg border border-gray-100 bg-white px-2.5 py-2 shadow-sm hover:shadow-md hover:border-gray-200 transition-shadow space-y-1"
     >
-      <div className="flex items-center gap-1.5 flex-wrap">
-        <span className="text-sm font-bold text-violet-700 truncate">{it.code}</span>
+      <div className="flex items-center gap-1.5 min-w-0">
+        <span className="text-xs font-bold text-violet-700 truncate">{it.code}</span>
         {isMultiModule && (
-          <span className="shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-violet-50 text-violet-700 whitespace-nowrap">
+          <span className="shrink-0 text-[9px] font-semibold px-1 py-0.5 rounded-full bg-violet-50 text-violet-700 whitespace-nowrap">
             ĐA MODULE
           </span>
         )}
       </div>
-      <p className="text-sm font-bold text-gray-900 leading-snug line-clamp-2" title={it.name}>{it.name}</p>
+      <p className="text-xs font-bold text-gray-900 leading-snug line-clamp-1" title={it.name}>{it.name}</p>
       {(it.deal_code || people[0]) && (
-        <p className="text-xs text-gray-500 flex items-center gap-1 min-w-0">
+        <p className="text-[11px] text-gray-500 flex items-center gap-1 min-w-0">
           <FileText className="h-3 w-3 shrink-0 text-gray-400" />
           <span className="truncate">{[it.deal_code, people[0]].filter(Boolean).join(' · ')}</span>
         </p>
       )}
       {dateBits.length > 0 && (
-        <p className={`text-xs flex items-center gap-1 min-w-0 ${dateTone}`}>
+        <p className={`text-[11px] flex items-center gap-1 min-w-0 ${dateTone}`}>
           <Clock className="h-3 w-3 shrink-0" />
           <span className="truncate">{dateBits.join(' · ')}</span>
         </p>
       )}
-      {people.length > 0 && (
-        <div className="flex items-center gap-2 flex-wrap">
-          {people.map((p, i) => (
-            <span key={i} className="inline-flex items-center gap-1 text-xs text-gray-600" title={p}>
-              <span className="h-5 w-5 rounded-full bg-blue-500 text-white text-[9px] font-bold flex items-center justify-center shrink-0">
-                {initials(p)}
-              </span>
-              <span className="truncate max-w-[90px]">{p}</span>
-            </span>
-          ))}
-        </div>
-      )}
       {(it.customer_name || it.customer_phone) && (
-        <p className="text-xs text-gray-500 flex items-center gap-1 min-w-0">
+        <p className="text-[11px] text-gray-500 flex items-center gap-1 min-w-0">
           <Phone className="h-3 w-3 shrink-0 text-gray-400" />
           <span className="truncate">{[it.customer_name, it.customer_phone].filter(Boolean).join(' · ')}</span>
         </p>
       )}
-      <div className="flex items-center justify-between pt-1 gap-2">
-        <div className="flex items-center gap-1 flex-wrap">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1 min-w-0">
+          {people.length > 0 && (
+            <span className="h-4 w-4 rounded-full bg-blue-500 text-white text-[8px] font-bold flex items-center justify-center shrink-0" title={people.join(', ')}>
+              {initials(people[0])}
+            </span>
+          )}
           {modules.map((m) => (
-            <span key={m.key} className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${MODULE_BADGE_CLS[m.key]}`}>
+            <span key={m.key} className={`text-[9px] font-bold px-1 py-0.5 rounded ${MODULE_BADGE_CLS[m.key]}`}>
               {m.label}
             </span>
           ))}
         </div>
         {it.value ? (
-          <span className="text-sm font-bold text-emerald-600 whitespace-nowrap shrink-0">{formatVND(it.value)}</span>
+          <span className="text-xs font-bold text-emerald-600 whitespace-nowrap shrink-0">{formatVND(it.value)}</span>
         ) : null}
       </div>
     </Link>
@@ -149,10 +182,10 @@ function WorkKanbanColumn({ col }) {
   return (
     <div
       data-col-slug={col.slug}
-      className="flex flex-col flex-shrink-0 w-[260px] rounded-xl border border-gray-100 bg-gray-50/70 overflow-hidden"
+      className="flex flex-col flex-shrink-0 w-[260px] h-full min-h-[28rem] rounded-xl border border-gray-100 bg-gray-50/70 overflow-hidden"
     >
       <div className="h-1 w-full shrink-0" style={{ backgroundColor: col.color }} aria-hidden />
-      <div className="flex items-center justify-between gap-2 px-3 py-2 bg-white border-b border-gray-100">
+      <div className="flex items-center justify-between gap-2 px-3 py-2 bg-white border-b border-gray-100 shrink-0">
         <span className="text-xs font-bold text-gray-700 truncate flex items-center gap-1.5 min-w-0">
           <span className="h-1.5 w-1.5 rounded-full shrink-0" style={{ backgroundColor: col.color }} />
           <span className="truncate">{col.label}</span>
@@ -166,8 +199,7 @@ function WorkKanbanColumn({ col }) {
       </div>
       <div
         ref={scrollRef}
-        className="flex-1 p-2 overflow-y-auto"
-        style={{ minHeight: '160px', maxHeight: 'calc(100vh - 420px)' }}
+        className="flex-1 min-h-0 p-2 overflow-y-auto"
       >
         {col.items.length === 0 ? (
           <div className="text-center py-8 text-[11px] text-gray-300 border border-dashed border-gray-200 rounded-lg bg-white/40">
@@ -177,6 +209,7 @@ function WorkKanbanColumn({ col }) {
           <KanbanColumnVirtualList
             items={col.items}
             columnScrollRef={scrollRef}
+            compact
             renderCard={(it) => <WorkKanbanCard it={it} />}
           />
         ) : null}
@@ -491,7 +524,7 @@ export default function WorkUnifiedOverviewPage() {
       if (filterRegionId) params.region_id = filterRegionId;
       if (rangeFrom) params.date_from = rangeFrom;
       if (rangeTo) params.date_to = rangeTo;
-      // Chỉ phân trang ở view Danh sách — Kanban/Lịch cần đủ tập đã lọc để gom nhóm theo cột/ngày.
+      // Chỉ phân trang ở view Danh sách — Kanban / Deadline / Planner / Lịch cần đủ tập đã lọc.
       if (viewMode === 'list') {
         params.page = page;
         params.page_size = PAGE_SIZE;
@@ -517,10 +550,11 @@ export default function WorkUnifiedOverviewPage() {
   useEffect(() => {
     if (!data) return;
     if (!pageMountedRef.current) { pageMountedRef.current = true; return; }
+    if (viewMode !== 'list') return;
     if ((data.items || []).length > 0) {
       resultsCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
-  }, [data]);
+  }, [data, viewMode]);
 
   const companyName = useMemo(() => {
     if (canPickCompany) {
@@ -532,7 +566,7 @@ export default function WorkUnifiedOverviewPage() {
 
   const stages = data?.stages || [];
   // Ở view Danh sách, backend đã trả đúng 1 trang (page/page_size) + total của toàn bộ tập đã lọc.
-  // Ở Kanban/Lịch, backend trả đủ tập đã lọc (không phân trang) để gom nhóm theo cột/ngày.
+  // Ở Kanban / Deadline / Planner / Lịch, backend trả đủ tập đã lọc (không phân trang).
   const items = data?.items || [];
   const stats = data?.stats || { total: 0, on_track: 0, at_risk: 0, late: 0 };
   const totalFiltered = data?.total ?? items.length;
@@ -555,6 +589,48 @@ export default function WorkUnifiedOverviewPage() {
     if (unassigned.items.length) cols.push(unassigned);
     return cols;
   }, [stages, items]);
+
+  const deadlineColumns = useMemo(() => {
+    const out = WU_DEADLINE_BUCKETS.map((b) => ({
+      slug: b.key,
+      label: b.label,
+      color: b.color,
+      items: [],
+    }));
+    const byKey = new Map(out.map((c) => [c.slug, c]));
+    items.forEach((it) => {
+      const key = resolveWuDeadlineBucket(it);
+      (byKey.get(key) || byKey.get('none')).items.push(it);
+    });
+    out.forEach((col) => {
+      col.items.sort((a, b) => String(wuDeadlineRaw(a) || '').localeCompare(String(wuDeadlineRaw(b) || '')));
+    });
+    return out;
+  }, [items]);
+
+  const plannerColumns = useMemo(() => {
+    const map = new Map();
+    const unassigned = { slug: '__none', label: 'Chưa gán', color: '#9ca3af', items: [] };
+    items.forEach((it) => {
+      const name = String(it.assignee_name || it.person1_name || '').trim();
+      if (!name) {
+        unassigned.items.push(it);
+        return;
+      }
+      if (!map.has(name)) {
+        map.set(name, {
+          slug: name,
+          label: name,
+          color: KANBAN_COLORS[map.size % KANBAN_COLORS.length],
+          items: [],
+        });
+      }
+      map.get(name).items.push(it);
+    });
+    const cols = Array.from(map.values()).sort((a, b) => a.label.localeCompare(b.label, 'vi'));
+    if (unassigned.items.length) cols.push(unassigned);
+    return cols;
+  }, [items]);
 
   /**
    * Đang tìm kiếm ở view Kanban → dự án khớp có thể nằm ở cột đã cuộn khuất bên phải.
@@ -658,15 +734,15 @@ export default function WorkUnifiedOverviewPage() {
   const pickSelectedDay = (dateStr) => applySelectedDay(parseDateStr(dateStr));
 
   return (
-    <div className="p-4 md:p-6 max-w-6xl mx-auto space-y-6">
-      <div>
+    <div className="flex flex-col gap-3 w-full h-[calc(100vh-0.75rem)] max-h-[calc(100vh-0.75rem)] overflow-hidden pb-3">
+      <div className="shrink-0">
         <h1 className="text-xl font-bold" style={{ color: '#111827' }}>Work Unified</h1>
         <p className="text-sm mt-0.5" style={{ color: '#6b7280' }}>
           Danh sách toàn bộ dự án của {companyName}, xuyên suốt từ lúc chốt khách hàng đến khi bàn giao
         </p>
       </div>
 
-      <div className="sticky top-14 z-30 flex items-center justify-between flex-wrap gap-2 rounded-xl border border-gray-100 bg-white px-3 py-2.5 shadow-sm">
+      <div className="sticky top-0 z-30 shrink-0 flex items-center justify-between flex-wrap gap-2 rounded-xl border border-gray-100 bg-white px-3 py-2.5 shadow-sm">
         <div ref={searchBoxRef} className="relative flex-1 min-w-0 max-w-none sm:max-w-[22rem] lg:max-w-[28rem]">
             <div
               className={`group/search flex items-center shrink-0 w-full rounded-md border transition-colors ${
@@ -768,8 +844,8 @@ export default function WorkUnifiedOverviewPage() {
         <div className="rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-2">{error}</div>
       )}
 
-      <div className="rounded-xl border border-gray-100 bg-white p-4 shadow-sm">
-        <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mb-3">
+      <div className="rounded-xl border border-gray-100 bg-white p-3 shadow-sm shrink-0">
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mb-2">
           {stages.length} công đoạn
         </p>
         <div className="flex items-center gap-1 overflow-x-auto pb-1">
@@ -798,27 +874,27 @@ export default function WorkUnifiedOverviewPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <div className="rounded-xl border border-gray-100 bg-white p-4 shadow-sm">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 shrink-0">
+        <div className="rounded-xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
           <p className="text-xs text-gray-500">Đang thực hiện</p>
-          <p className="text-2xl font-bold mt-1.5 text-gray-900">{loading ? '…' : stats.total}</p>
+          <p className="text-2xl font-bold mt-1 text-gray-900">{loading ? '…' : stats.total}</p>
         </div>
-        <div className="rounded-xl border border-gray-100 bg-white p-4 shadow-sm">
+        <div className="rounded-xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
           <p className="text-xs text-gray-500">Đúng tiến độ</p>
-          <p className="text-2xl font-bold mt-1.5 text-emerald-600">{loading ? '…' : stats.on_track}</p>
+          <p className="text-2xl font-bold mt-1 text-emerald-600">{loading ? '…' : stats.on_track}</p>
         </div>
-        <div className="rounded-xl border border-gray-100 bg-white p-4 shadow-sm">
+        <div className="rounded-xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
           <p className="text-xs text-gray-500">Nguy cơ trễ</p>
-          <p className="text-2xl font-bold mt-1.5 text-amber-600">{loading ? '…' : stats.at_risk}</p>
+          <p className="text-2xl font-bold mt-1 text-amber-600">{loading ? '…' : stats.at_risk}</p>
         </div>
-        <div className="rounded-xl border border-gray-100 bg-white p-4 shadow-sm">
+        <div className="rounded-xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
           <p className="text-xs text-gray-500">Trễ hạn</p>
-          <p className="text-2xl font-bold mt-1.5 text-red-600">{loading ? '…' : stats.late}</p>
+          <p className="text-2xl font-bold mt-1 text-red-600">{loading ? '…' : stats.late}</p>
         </div>
       </div>
 
-      <div ref={resultsCardRef} className="rounded-xl border border-gray-100 bg-white shadow-sm overflow-hidden">
-        <div className="flex items-center justify-between gap-2 p-2 border-b border-gray-100 flex-wrap">
+      <div ref={resultsCardRef} className="rounded-xl border border-gray-100 bg-white shadow-sm overflow-hidden flex-1 min-h-0 flex flex-col">
+        <div className="flex items-center justify-between gap-2 p-2 border-b border-gray-100 flex-wrap shrink-0">
           <div className="flex items-center gap-1 overflow-x-auto">
             {FORECAST_TABS.map((t) => (
               <button
@@ -833,7 +909,7 @@ export default function WorkUnifiedOverviewPage() {
               </button>
             ))}
           </div>
-          <div className="flex items-center gap-1 shrink-0 rounded-lg border border-gray-200 p-0.5">
+          <div className="flex items-center gap-1 shrink-0 rounded-lg border border-gray-200 p-0.5 overflow-x-auto max-w-full">
             <button
               type="button"
               onClick={() => setViewMode('list')}
@@ -848,13 +924,35 @@ export default function WorkUnifiedOverviewPage() {
             <button
               type="button"
               onClick={() => setViewMode('kanban')}
-              title="Xem dạng Kanban"
+              title="Xem dạng Kanban theo công đoạn"
               className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-md cursor-pointer transition-colors ${
                 viewMode === 'kanban' ? 'bg-gray-800 text-white' : 'text-gray-500 hover:bg-gray-50'
               }`}
             >
               <LayoutGrid className="h-3.5 w-3.5" />
               Kanban
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('deadline')}
+              title="Xem dạng Deadline — gom theo hạn bàn giao / hạn SX"
+              className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-md cursor-pointer transition-colors ${
+                viewMode === 'deadline' ? 'bg-gray-800 text-white' : 'text-gray-500 hover:bg-gray-50'
+              }`}
+            >
+              <Clock className="h-3.5 w-3.5" />
+              Deadline
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('planner')}
+              title="Xem dạng Planner — gom theo người phụ trách"
+              className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-md cursor-pointer transition-colors ${
+                viewMode === 'planner' ? 'bg-gray-800 text-white' : 'text-gray-500 hover:bg-gray-50'
+              }`}
+            >
+              <Users className="h-3.5 w-3.5" />
+              Planner
             </button>
             <div className="relative group">
               <button
@@ -898,7 +996,7 @@ export default function WorkUnifiedOverviewPage() {
         </div>
 
         {viewMode === 'calendar' ? (
-          <div className="p-4">
+          <div className="p-4 flex-1 min-h-0 overflow-y-auto">
             <div className="flex items-center justify-between mb-4 gap-2 flex-wrap">
               <div className="flex items-center gap-1">
                 <button
@@ -1029,15 +1127,15 @@ export default function WorkUnifiedOverviewPage() {
               </>
             )}
           </div>
-        ) : viewMode === 'kanban' ? (
-          <div className="p-3">
+        ) : viewMode === 'kanban' || viewMode === 'deadline' || viewMode === 'planner' ? (
+          <div className="p-3 flex-1 min-h-0">
             {loading ? (
               <div className="px-4 py-8 text-center text-gray-400 text-sm">Đang tải...</div>
             ) : items.length === 0 ? (
               <div className="px-4 py-8 text-center text-gray-400 text-sm">{emptyResultsMessage}</div>
             ) : (
-              <div ref={kanbanBoardRef} className="flex gap-3 overflow-x-auto pb-2">
-                {kanbanColumns.map((col) => (
+              <div ref={viewMode === 'kanban' ? kanbanBoardRef : undefined} className="flex gap-3 overflow-x-auto h-full min-h-[28rem] items-stretch">
+                {(viewMode === 'kanban' ? kanbanColumns : viewMode === 'deadline' ? deadlineColumns : plannerColumns).map((col) => (
                   <WorkKanbanColumn key={col.slug} col={col} />
                 ))}
               </div>
@@ -1045,7 +1143,7 @@ export default function WorkUnifiedOverviewPage() {
           </div>
         ) : (
         <>
-        <div className="overflow-x-auto">
+        <div className="flex-1 min-h-0 overflow-auto">
           <table className="w-full min-w-[960px] text-sm table-fixed">
             <colgroup>
               <col className="w-[18%]" />

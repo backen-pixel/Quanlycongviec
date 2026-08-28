@@ -1190,6 +1190,14 @@ export default function ProjectDetail() {
       {activeTab === 'overview' && (
         <ProjectOverviewPanel
           overview={displayBundle?.overview}
+          lead={primaryLead}
+          leadId={crmLeadId}
+          onReload={() => {
+            load();
+            api.get(`/management/by-project/${id}`, { headers: { 'X-No-Cache': '1' } })
+              .then((r) => setDealBundle(r.data))
+              .catch(() => {});
+          }}
           onOpenSections={() => setActiveTab('aggregate')}
           onOpenTasks={() => setActiveTab('aggregate')}
         />

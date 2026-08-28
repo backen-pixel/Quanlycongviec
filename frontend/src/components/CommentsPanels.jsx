@@ -971,7 +971,7 @@ function toDatetimeLocalValue(raw) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-/** Bình luận tương tác bàn giao VC/LĐ (chọn công ty + ngày → sự kiện + xác nhận 2 phụ trách). */
+/** Bình luận tương tác bàn giao VC/LĐ (chọn công ty + ngày → CRM/Xưởng tự xác nhận, chờ VC/LĐ). */
 function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onReschedule }) {
   const md = comment?.metadata || {};
   const state = md.state || 'awaiting_company';
@@ -1351,7 +1351,7 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
                 {hasPlanInfo ? (
                   <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1.5 space-y-0.5">
                     <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-800">
-                      Thông tin VC/LĐ đã điền khi lập kế hoạch — xác nhận hoặc sửa lại
+                      Thông tin VC/LĐ đã điền khi lập kế hoạch — CRM chịu trách nhiệm tự xác nhận, bạn vẫn sửa được
                     </p>
                     {md.plan_logistics_company_name ? (
                       <p className="text-[11px] text-emerald-900">
@@ -1747,7 +1747,7 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
               <p className="text-[11px] text-orange-700/80 pt-0.5">
                 {skipLogisticsModule
                   ? 'Đối tác không dùng app. Sale/xưởng tự cập nhật tiến độ trên lịch sự kiện (Giao hàng xưởng + Lắp đặt) và kéo cột kanban SX khi xong.'
-                  : 'Xưởng đã xác nhận mặc định khi tạo bàn giao. Chỉ người cấu hình xác nhận VC/LĐ được bấm.'}
+                  : 'CRM chịu trách nhiệm và Xưởng đã xác nhận mặc định. Chỉ người cấu hình xác nhận VC/LĐ được bấm.'}
                 {!skipLogisticsModule && state === 'awaiting_confirm' && !(Array.isArray(md.event_ids) && md.event_ids.length)
                   ? ' Sau khi VC/LĐ xác nhận, hệ thống mới tạo 3 sự kiện trên lịch.'
                   : null}
@@ -1795,8 +1795,15 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
                 Thuê ngoài — không chờ xác nhận VC/LĐ. Tự cập nhật tiến độ trên lịch sự kiện và kanban SX.
               </div>
             ) : (
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-3 gap-2">
                 {[
+                  {
+                    side: 'crm',
+                    label: 'CRM',
+                    personName: md.crm_responsible_user_name,
+                    confirmed: md.confirmed_crm || { auto: true },
+                    can: false,
+                  },
                   {
                     side: 'production',
                     label: 'Xưởng (SX)',
@@ -1824,7 +1831,9 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
                     {s.personName ? (
                       <p className={`text-[10px] mb-1 truncate ${s.confirmed ? 'text-emerald-700 font-semibold' : 'text-gray-500'}`} title={s.personName}>{s.personName}</p>
                     ) : (
-                      <p className="text-[10px] text-gray-400 mb-1">Chưa gán phụ trách</p>
+                      <p className="text-[10px] text-gray-400 mb-1">
+                        {s.side === 'crm' ? 'Người chịu trách nhiệm CRM' : 'Chưa gán phụ trách'}
+                      </p>
                     )}
                     {s.confirmed ? (
                       <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700">
