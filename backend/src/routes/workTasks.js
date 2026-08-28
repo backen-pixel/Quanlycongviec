@@ -28,6 +28,7 @@ const {
   assertCrmTaskLeadAccess,
   loadLeadForTaskAccess,
 } = require('../helpers/crmTaskLeadAccess');
+const { createNotification } = require('../helpers/notifications');
 const { mergeDeadlineHistoryIntoUnified } = require('../helpers/crmKanbanDeadlineHistory');
 const { enrichUnifiedCrmTasks } = require('../helpers/crmTaskAttachmentCounts');
 const {
@@ -93,6 +94,104 @@ const TASK_SELECT = `
   completed_at, created_by_id, created_at, updated_at, task_kind,
   project_code, project_name, lead_title
 `;
+
+const DONE_REMIND_STATUSES = new Set(['done', 'completed', 'cancelled']);
+
+const REMIND_GROUPS = new Set(['deal', 'sx', 'vc']);
+
+/** Khối tiến độ: sales (Deal) | production (xưởng) | logistics (VC-LĐ). Không trộn người nhận. */
+function taskOwnerLane(task) {
+  const kind = String(task?.task_kind || '');
+  if (kind === 'SX' || kind === 'Dự án') return 'production';
+  if (kind === 'VC') return 'logistics';
+  if (kind === 'CRM-Deal' || kind === 'CRM-Lead' || kind === 'Giao việc') return 'sales';
+  if (task?.source === 'crm_task' || task?.source === 'crm_assignment') return 'sales';
+  return 'production';
+}
+
+function laneToGroup(lane) {
+  if (lane === 'sales') return 'deal';
+  if (lane === 'logistics') return 'vc';
+  return 'sx';
+}
+
+function taskMatchesRemindGroup(task, group) {
+  const k = String(task?.task_kind || '');
+  if (group === 'deal') return k === 'CRM-Deal' || k === 'CRM-Lead' || k === 'Giao việc';
+  if (group === 'sx') return k === 'SX' || k === 'Dự án';
+  if (group === 'vc') return k === 'VC';
+  return false;
+}
+
+function remindNavUrl(task) {
+  const group = laneToGroup(taskOwnerLane(task));
+  if (task?.project_id) {
+    return `/management/work-unified/${task.project_id}?tab=tasks&group=${group}`;
+  }
+  if (task?.source === 'crm_task' && task?.lead_id) return `/crm/leads/${task.lead_id}?tab=tasks`;
+  if (task?.source === 'crm_assignment' && task?.source_id) return `/crm/assignments?focus=${task.source_id}`;
+  return '/management/work-unified?tab=tasks';
+}
+
+function remindModuleKey(task) {
+  const lane = taskOwnerLane(task);
+  if (lane === 'production') return 'production';
+  if (lane === 'logistics') return 'logistics';
+  return 'crm';
+}
+
+function remindGroupLabel(group) {
+  if (group === 'deal') return 'Sales';
+  if (group === 'sx') return 'xưởng';
+  if (group === 'vc') return 'VC-LĐ';
+  return 'công việc';
+}
+
+/** Sales → sales/deal; SX → xưởng; VC → VC. Không broadcast chéo khối. */
+async function resolveCompleteReminderTargets(task) {
+  if (task?.assignee_id) return [task.assignee_id];
+
+  const lane = taskOwnerLane(task);
+  const ids = [];
+  if (task?.project_id) {
+    const { data: p } = await supabase
+      .from('projects')
+      .select('project_manager_id, sales_person_id, designer_id, production_person_id, logistics_person_id, installer_person_id, installation_person_id')
+      .eq('id', task.project_id)
+      .maybeSingle();
+    if (lane === 'production') {
+      ids.push(p?.production_person_id, p?.project_manager_id);
+    } else if (lane === 'logistics') {
+      ids.push(p?.logistics_person_id, p?.installer_person_id, p?.installation_person_id, p?.production_person_id);
+    } else {
+      ids.push(p?.sales_person_id, p?.designer_id);
+    }
+  }
+  if (lane === 'sales' && !ids.filter(Boolean).length && task?.lead_id) {
+    const { data: lead } = await supabase
+      .from('crm_leads')
+      .select('assigned_to, lead_owner_id')
+      .eq('id', task.lead_id)
+      .maybeSingle();
+    ids.push(lead?.assigned_to, lead?.lead_owner_id);
+  }
+  return [...new Set(ids.filter(Boolean))];
+}
+
+async function sendCompleteReminderToUsers(req, {
+  targets, actorId, title, message, entityType, entityId, meta,
+}) {
+  const uids = [...new Set((targets || []).map(String))]
+    .filter((uid) => uid && uid !== String(actorId || ''));
+  let sent = 0;
+  for (const uid of uids) {
+    const n = await createNotification(
+      req, uid, 'task_complete_reminder', title, message, entityType, entityId, meta,
+    );
+    if (n) sent += 1;
+  }
+  return { sent, recipient_count: uids.length, recipients: uids };
+}
 
 // GET /api/work-tasks/summary — KPI + phân bổ theo module
 r.get('/summary', async (req, res) => {
@@ -411,6 +510,201 @@ r.delete('/:source/:id', async (req, res) => {
   } catch (e) {
     console.error('[work-tasks] delete:', e);
     res.status(500).json({ error: e.message || 'Lỗi xóa' });
+  }
+});
+
+function buildCompleteReminderMeta(task, extra = {}) {
+  const moduleKey = remindModuleKey(task);
+  return {
+    kind: 'task_complete_reminder',
+    unified_id: task.unified_id,
+    source: task.source,
+    source_id: task.source_id,
+    project_id: task.project_id || null,
+    lead_id: task.lead_id || null,
+    company_id: task.company_id || null,
+    module_key: moduleKey,
+    ecosystem_module_key: moduleKey,
+    nav_tab: 'tasks',
+    nav_url: remindNavUrl(task),
+    owner_lane: taskOwnerLane(task),
+    ...extra,
+  };
+}
+
+function remindEntityType(source) {
+  if (source === 'crm_task') return 'crm_task';
+  if (source === 'crm_assignment') return 'crm_assignment';
+  return 'task';
+}
+
+// POST /api/work-tasks/by-project/:projectId/remind-complete — nhắc cả khối Deal/SX/VC
+r.post('/by-project/:projectId/remind-complete', async (req, res) => {
+  try {
+    if (!isManagerLike(req.user)) {
+      return res.status(403).json({ error: 'Chỉ quản lý mới gửi được nhắc hoàn thành' });
+    }
+    const projectId = req.params.projectId;
+    const group = String(req.body?.group || '').trim();
+    if (!REMIND_GROUPS.has(group)) {
+      return res.status(400).json({ error: 'group phải là deal | sx | vc' });
+    }
+
+    const { data: project, error: pe } = await supabase
+      .from('projects')
+      .select('id, code, name, company_id')
+      .eq('id', projectId)
+      .maybeSingle();
+    if (pe) throw pe;
+    if (!project) return res.status(404).json({ error: 'Không tìm thấy dự án' });
+    if (!isSystemAdmin(req.user) && req.user?.company_id && project.company_id
+      && String(project.company_id) !== String(req.user.company_id)) {
+      return res.status(403).json({ error: 'Không có quyền nhắc công việc công ty khác' });
+    }
+
+    const leadIds = await getLeadIdsForProject(projectId);
+    let qProject = supabase.from('unified_tasks_v').select(TASK_SELECT).eq('project_id', projectId);
+    const { data: projectTasks, error: e1 } = await qProject;
+    if (e1) throw e1;
+    let crmTasks = [];
+    if (leadIds.length) {
+      const { data: ct, error: e2 } = await supabase
+        .from('unified_tasks_v')
+        .select(TASK_SELECT)
+        .in('lead_id', leadIds);
+      if (e2) throw e2;
+      crmTasks = ct || [];
+    }
+    const seen = new Set();
+    const openTasks = [...(projectTasks || []), ...crmTasks].filter((t) => {
+      if (!t?.unified_id || seen.has(t.unified_id)) return false;
+      seen.add(t.unified_id);
+      if (!taskMatchesRemindGroup(t, group)) return false;
+      return !DONE_REMIND_STATUSES.has(String(t.status || '').toLowerCase());
+    });
+    if (!openTasks.length) {
+      return res.status(400).json({ error: 'Khối này không còn việc mở để nhắc' });
+    }
+
+    const actorId = String(req.user.userId || req.user.id || '');
+    const actorName = req.user.full_name || req.user.email || 'Quản lý';
+    const byUser = new Map();
+    for (const task of openTasks) {
+      const targets = await resolveCompleteReminderTargets(task);
+      for (const uid of targets.map(String).filter((id) => id && id !== actorId)) {
+        if (!byUser.has(uid)) byUser.set(uid, []);
+        byUser.get(uid).push(task);
+      }
+    }
+    if (!byUser.size) {
+      return res.status(400).json({
+        error: 'Không có người nhận. Gán nhân viên cho việc, hoặc gán người phụ trách Sales / xưởng.',
+      });
+    }
+
+    const groupLabel = remindGroupLabel(group);
+    const sample = openTasks[0];
+    const moduleKey = group === 'deal' ? 'crm' : (group === 'vc' ? 'logistics' : 'production');
+    const titles = openTasks.slice(0, 4).map((t) => t.title).filter(Boolean);
+    const extra = openTasks.length > 4 ? ` và ${openTasks.length - 4} việc khác` : '';
+    const title = `Nhắc hoàn thành — ${groupLabel}`;
+    const message = `${actorName} nhắc hoàn thành phần ${groupLabel} trên ${project.code || 'dự án'}: ${openTasks.length} việc còn mở (${titles.join(', ')}${extra}). Nộp bản vẽ / render / bảng mô tả trong Công việc, không đưa vào Bình luận.`;
+    const meta = {
+      kind: 'task_complete_reminder',
+      project_id: projectId,
+      company_id: project.company_id || null,
+      module_key: moduleKey,
+      ecosystem_module_key: moduleKey,
+      nav_tab: 'tasks',
+      nav_url: `/management/work-unified/${projectId}?tab=tasks&group=${group}`,
+      owner_lane: group === 'deal' ? 'sales' : (group === 'vc' ? 'logistics' : 'production'),
+      remind_group: group,
+      open_count: openTasks.length,
+    };
+
+    const result = await sendCompleteReminderToUsers(req, {
+      targets: [...byUser.keys()],
+      actorId,
+      title,
+      message,
+      entityType: remindEntityType(sample?.source),
+      entityId: sample?.source_id || projectId,
+      meta,
+    });
+    res.json({
+      ok: true,
+      sent: result.sent,
+      recipient_count: result.recipient_count,
+      open_count: openTasks.length,
+      group,
+    });
+  } catch (e) {
+    console.error('[work-tasks] group remind-complete:', e);
+    res.status(500).json({ error: e.message || 'Không gửi được nhắc' });
+  }
+});
+
+// POST /api/work-tasks/:source/:id/remind-complete — quản lý nhắc NV hoàn thành việc
+r.post('/:source/:id/remind-complete', async (req, res) => {
+  try {
+    if (!isManagerLike(req.user)) {
+      return res.status(403).json({ error: 'Chỉ quản lý mới gửi được nhắc hoàn thành' });
+    }
+    const { source, id } = req.params;
+    if (!VALID_SOURCES.has(source)) return res.status(400).json({ error: 'source không hợp lệ' });
+
+    const { data: rows, error: te } = await supabase
+      .from('unified_tasks_v')
+      .select(TASK_SELECT)
+      .eq('source', source)
+      .eq('source_id', String(id))
+      .limit(1);
+    if (te) throw te;
+    const task = (rows || [])[0];
+    if (!task) return res.status(404).json({ error: 'Không tìm thấy công việc' });
+
+    if (!isSystemAdmin(req.user) && req.user?.company_id && task.company_id
+      && String(task.company_id) !== String(req.user.company_id)) {
+      return res.status(403).json({ error: 'Không có quyền nhắc công việc công ty khác' });
+    }
+
+    if (DONE_REMIND_STATUSES.has(String(task.status || '').toLowerCase())) {
+      return res.status(400).json({ error: 'Công việc đã kết thúc — không cần nhắc hoàn thành' });
+    }
+
+    const actorId = String(req.user.userId || req.user.id || '');
+    const targets = await resolveCompleteReminderTargets(task);
+    if (!targets.filter((uid) => String(uid) !== actorId).length) {
+      return res.status(400).json({
+        error: 'Không có người nhận. Gán nhân viên cho việc, hoặc gán người phụ trách Sales / xưởng.',
+      });
+    }
+
+    const actorName = req.user.full_name || req.user.email || 'Quản lý';
+    const lane = taskOwnerLane(task);
+    const laneLabel = lane === 'sales' ? 'Sales' : (lane === 'logistics' ? 'VC-LĐ' : 'xưởng');
+    const label = [task.project_code, task.title].filter(Boolean).join(' · ');
+    const title = `Nhắc hoàn thành — ${laneLabel}`;
+    const message = `${actorName} nhắc ${laneLabel} hoàn thành: ${label || 'công việc'}. Nộp file tiến trình (bản vẽ, render, bảng mô tả) trong Công việc.`;
+    const result = await sendCompleteReminderToUsers(req, {
+      targets,
+      actorId,
+      title,
+      message,
+      entityType: remindEntityType(source),
+      entityId: task.source_id,
+      meta: buildCompleteReminderMeta(task),
+    });
+    if (!result.recipient_count) {
+      return res.status(400).json({
+        error: 'Không có người nhận. Gán nhân viên cho việc, hoặc gán người phụ trách Sales / xưởng.',
+      });
+    }
+
+    res.json({ ok: true, sent: result.sent, recipient_count: result.recipient_count, owner_lane: lane });
+  } catch (e) {
+    console.error('[work-tasks] remind-complete:', e);
+    res.status(500).json({ error: e.message || 'Không gửi được nhắc' });
   }
 });
 

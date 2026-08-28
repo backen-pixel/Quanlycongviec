@@ -137,6 +137,10 @@ function inferNotificationModuleKey(n) {
 function notificationMatchesModule(n, mod) {
   const m = String(mod || 'all').toLowerCase();
   if (!m || m === 'all') return true;
+  if (isChatChannelNotification(n)) return true;
+  if (String(n?.type || '') === 'workshop_new_deal' && (m === 'production' || m === 'logistics')) {
+    return true;
+  }
   return inferNotificationModuleKey(n) === m;
 }
 
@@ -205,7 +209,7 @@ r.get('/', responseCache({ ttl: 20, scope: 'user', tags: ['notifications'] }), a
       .eq('user_id', req.user.userId)
       .eq('is_read', false)
       .is('dismissed_at', null)
-      .neq('entity_type', 'project')
+      .or('entity_type.neq.project,metadata->>ecosystem_module_key.in.(production,crm,logistics)')
       .or("metadata->>ecosystem_module_key.is.null,metadata->>ecosystem_module_key.neq.projects")
       .limit(1000);
     if (error) return res.status(500).json({ error: error.message });
@@ -288,7 +292,7 @@ r.get('/notifications', responseCache({ ttl: 20, scope: 'user', tags: ['notifica
       .select('*')
       .eq('user_id', req.user.userId)
       .is('dismissed_at', null)
-      .neq('entity_type', 'project')
+      .or('entity_type.neq.project,metadata->>ecosystem_module_key.in.(production,crm,logistics)')
       .or("metadata->>ecosystem_module_key.is.null,metadata->>ecosystem_module_key.neq.projects")
       .order('created_at', { ascending: false })
       .limit(fetchCap);
