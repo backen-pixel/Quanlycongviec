@@ -7562,7 +7562,7 @@ export default function CRMDashboard() {
               className="h-9 px-4 bg-white text-emerald-700 hover:bg-emerald-50 rounded-lg text-sm font-semibold cursor-pointer transition">
               Xem xưởng →
             </button>
-            <button onClick={() => navigate(`/management/work-unified/${autoCreateResult.project_id}`)}
+            <button onClick={() => navigate(`/projects/${autoCreateResult.project_id}`)}
               className="h-9 px-4 bg-white/90 text-gray-800 hover:bg-white rounded-lg text-sm font-medium cursor-pointer transition">
               Dự án đầy đủ
             </button>
