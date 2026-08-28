@@ -1,4 +1,5 @@
 import { Clock, Filter, RotateCcw, X } from 'lucide-react';
+import api from '../lib/api';
 
 export const WORK_UNIFIED_TIME_PRESETS = [
   { key: '', label: 'Tất cả' },
@@ -9,6 +10,66 @@ export const WORK_UNIFIED_TIME_PRESETS = [
 ];
 
 export const WORK_UNIFIED_REGION_NONE = '__none__';
+
+/** NV Work Unified: cùng nguồn CRM (`employees-by-company` + `crm_region_ids`). */
+export function filterWorkUnifiedStaff(users, { companyId = '', regionId = '' } = {}) {
+  let list = Array.isArray(users) ? users : [];
+  if (companyId) {
+    list = list.filter((u) => String(u.company_id || '') === String(companyId));
+  }
+  if (!regionId) return list;
+  if (regionId === WORK_UNIFIED_REGION_NONE) {
+    return list.filter((u) => !(u.crm_region_ids && u.crm_region_ids.length));
+  }
+  const fr = String(regionId);
+  return list.filter((u) => (u.crm_region_ids || []).map(String).includes(fr));
+}
+
+function mapEmployeesForCompany(users, companyId, companies) {
+  const co = (companies || []).find((c) => String(c.id) === String(companyId));
+  const coName = co?.short_name || co?.name || '';
+  return (users || []).map((u) => ({
+    ...u,
+    company_id: u.company_id || companyId,
+    company_name: u.company_name || coName,
+  }));
+}
+
+/** Load NV theo 1 công ty, hoặc gộp mọi công ty trong list (admin «Tất cả công ty»). */
+export async function loadWorkUnifiedEmployees({ companyId, companies = [], canPickCompany = false }) {
+  if (companyId) {
+    const { data } = await api.get('/crm/employees-by-company', {
+      params: { for_module: 'all', company_id: companyId },
+    });
+    return mapEmployeesForCompany(data?.users, companyId, companies);
+  }
+  if (!canPickCompany || !companies.length) return [];
+  const ids = [...new Set(companies.map((c) => String(c.id)).filter(Boolean))];
+  const merged = [];
+  const seen = new Set();
+  for (let i = 0; i < ids.length; i += 6) {
+    const chunk = ids.slice(i, i + 6);
+    const results = await Promise.all(chunk.map(async (cid) => {
+      try {
+        const { data } = await api.get('/crm/employees-by-company', {
+          params: { for_module: 'all', company_id: cid },
+        });
+        return { cid, users: data?.users || [] };
+      } catch {
+        return { cid, users: [] };
+      }
+    }));
+    for (const { cid, users } of results) {
+      for (const u of mapEmployeesForCompany(users, cid, companies)) {
+        if (!u?.id || seen.has(u.id)) continue;
+        seen.add(u.id);
+        merged.push(u);
+      }
+    }
+  }
+  merged.sort((a, b) => String(a.full_name || '').localeCompare(String(b.full_name || ''), 'vi'));
+  return merged;
+}
 
 export function getWorkUnifiedPresetDateRange(preset) {
   const pad = (n) => String(n).padStart(2, '0');
@@ -71,9 +132,7 @@ export default function WorkUnifiedFilterPanel({
   activeFilterCount = 0,
   onClear,
 }) {
-  const staffOptions = companyId
-    ? users.filter((u) => String(u.company_id || '') === String(companyId))
-    : users;
+  const staffOptions = filterWorkUnifiedStaff(users, { companyId, regionId: filterRegionId });
   const hideCompanySuffix = !!companyId;
 
   const handleCompanyChange = (v) => {
@@ -154,12 +213,12 @@ export default function WorkUnifiedFilterPanel({
               value={filterUserId}
               onChange={(e) => onUserChange(e.target.value)}
               className={FILTER_SELECT_CLS}
-              title="Chỉ hiện NV thuộc công ty đã chọn (khi có)"
+              title="NV thuộc công ty và khu vực đã chọn"
             >
               <option value="">Tất cả nhân viên</option>
               {staffOptions.map((u) => (
                 <option key={u.id} value={u.id}>
-                  {u.full_name}{u.position ? ` (${u.position})` : ''}
+                  {u.full_name}{u.position ? ` (${u.position})` : ''}{!companyId && u.company_name ? ` — ${u.company_name}` : ''}
                 </option>
               ))}
             </select>

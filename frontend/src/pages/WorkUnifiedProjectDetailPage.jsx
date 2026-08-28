@@ -8,6 +8,8 @@ import WorkUnifiedFilterPanel, {
   WORK_UNIFIED_TIME_PRESETS,
   WORK_UNIFIED_REGION_NONE,
   getWorkUnifiedPresetDateRange,
+  loadWorkUnifiedEmployees,
+  filterWorkUnifiedStaff,
 } from '../components/WorkUnifiedFilterFields';
 import { WorkUnifiedOpenTabProvider, workUnifiedPath } from '../components/WorkUnifiedOpenTabMenu';
 import ProjectOverviewPanel from '../components/ProjectOverviewPanel';
@@ -1507,21 +1509,27 @@ function ProjectJumpSearch({ currentId }) {
 
   useEffect(() => {
     if (!catalogsNeeded) return undefined;
-    if (effectiveCompanyIdForUsers) {
-      api.get('/users', { params: { company_id: effectiveCompanyIdForUsers } })
-        .then((r) => setUsers(r.data.users || r.data || []))
-        .catch(() => setUsers([]));
+    let cancelled = false;
+    const cid = effectiveCompanyIdForUsers;
+    if (!cid && !canPickCompany) {
+      setUsers([]);
       return undefined;
     }
-    if (canPickCompany) {
-      api.get('/users')
-        .then((r) => setUsers(r.data.users || r.data || []))
-        .catch(() => setUsers([]));
+    if (!cid && canPickCompany && companies.length === 0) {
+      setUsers([]);
       return undefined;
     }
-    setUsers([]);
-    return undefined;
-  }, [catalogsNeeded, effectiveCompanyIdForUsers, canPickCompany]);
+    loadWorkUnifiedEmployees({
+      companyId: cid,
+      companies,
+      canPickCompany,
+    }).then((list) => {
+      if (!cancelled) setUsers(list);
+    }).catch(() => {
+      if (!cancelled) setUsers([]);
+    });
+    return () => { cancelled = true; };
+  }, [catalogsNeeded, effectiveCompanyIdForUsers, canPickCompany, companies]);
 
   useEffect(() => {
     if (!catalogsNeeded) return undefined;
@@ -1544,6 +1552,13 @@ function ProjectJumpSearch({ currentId }) {
     setFilterUserId('');
     setFilterRegionId('');
   }, [effectiveCompanyIdForUsers]);
+
+  useEffect(() => {
+    if (!filterUserId) return;
+    const ok = filterWorkUnifiedStaff(users, { companyId, regionId: filterRegionId })
+      .some((u) => String(u.id) === String(filterUserId));
+    if (!ok) setFilterUserId('');
+  }, [users, companyId, filterRegionId, filterUserId]);
 
   const handleTimePresetChange = (preset) => {
     setTimePreset(preset);

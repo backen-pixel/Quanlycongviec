@@ -16,6 +16,8 @@ import WorkUnifiedFilterPanel, {
   WORK_UNIFIED_TIME_PRESETS,
   WORK_UNIFIED_REGION_NONE,
   getWorkUnifiedPresetDateRange,
+  loadWorkUnifiedEmployees,
+  filterWorkUnifiedStaff,
 } from '../components/WorkUnifiedFilterFields';
 
 const PAGE_SIZE = 20;
@@ -421,20 +423,27 @@ export default function WorkUnifiedOverviewPage() {
   }, [canPickCompany, companyId, user?.company_id]);
 
   useEffect(() => {
-    if (effectiveCompanyIdForUsers) {
-      api.get('/users', { params: { company_id: effectiveCompanyIdForUsers } })
-        .then((r) => setUsers(r.data.users || r.data || []))
-        .catch(() => setUsers([]));
-      return;
+    let cancelled = false;
+    const cid = effectiveCompanyIdForUsers;
+    if (!cid && !canPickCompany) {
+      setUsers([]);
+      return undefined;
     }
-    if (canPickCompany) {
-      api.get('/users')
-        .then((r) => setUsers(r.data.users || r.data || []))
-        .catch(() => setUsers([]));
-      return;
+    if (!cid && canPickCompany && companies.length === 0) {
+      setUsers([]);
+      return undefined;
     }
-    setUsers([]);
-  }, [effectiveCompanyIdForUsers, canPickCompany]);
+    loadWorkUnifiedEmployees({
+      companyId: cid,
+      companies,
+      canPickCompany,
+    }).then((list) => {
+      if (!cancelled) setUsers(list);
+    }).catch(() => {
+      if (!cancelled) setUsers([]);
+    });
+    return () => { cancelled = true; };
+  }, [effectiveCompanyIdForUsers, canPickCompany, companies]);
 
   useEffect(() => {
     const params = {};
@@ -455,6 +464,13 @@ export default function WorkUnifiedOverviewPage() {
     setFilterUserId('');
     setFilterRegionId('');
   }, [effectiveCompanyIdForUsers]);
+
+  useEffect(() => {
+    if (!filterUserId) return;
+    const ok = filterWorkUnifiedStaff(users, { companyId, regionId: filterRegionId })
+      .some((u) => String(u.id) === String(filterUserId));
+    if (!ok) setFilterUserId('');
+  }, [users, companyId, filterRegionId, filterUserId]);
 
   /** Debounce ô tìm kiếm 300ms — tránh gọi API/lọc lại toàn bộ danh sách trên mỗi phím gõ (quan trọng khi công ty có hàng nghìn dự án). */
   useEffect(() => {
