@@ -28,9 +28,10 @@ import {
   ChevronDown,
   ChevronUp,
   MoreHorizontal,
-  Settings,
 } from 'lucide-react';
 import { ymdFromLocalDate, vnTodayYmd, vnDayKey } from '../lib/vnDate';
+import ResponsiveTable from '../components/ResponsiveTable';
+import { useIsMobile } from '../hooks/useIsMobile';
 
 function parseStageIdsFromSearchParams(sp) {
   const multi = sp.get('stage_ids');
@@ -754,6 +755,35 @@ export default function CrmFollowUpCarePage() {
     [paginatedRows, selectedIds],
   );
 
+  const isMobile = useIsMobile();
+  /**
+   * Khoá chiều cao vùng danh sách chỉ ở desktop. Ở mobile bảng đã đổi sang dạng thẻ
+   * và cuộn theo trang — giữ maxHeight sẽ nhốt thẻ trong khung ~300px.
+   */
+  const rowsViewportStyle = isMobile
+    ? undefined
+    : { maxHeight: 'calc(100vh - 280px)', minHeight: '420px' };
+
+  /** Giá trị dẫn xuất dùng chung cho các ô của một dòng (bảng desktop + thẻ mobile). */
+  const rowMeta = useCallback((row) => {
+    const assignee = row.assignee || row.lead_owner;
+    const assigneeName = assignee?.full_name || assignee?.email || '';
+    const rowMoveStages = getMoveStagesForRow(row);
+    return {
+      assigneeName,
+      sourceLabel: row.source?.name || '',
+      mark: careMarks[row.id],
+      isMarked: !!careMarks[row.id],
+      busy: careBusyId === row.id,
+      rowMoveStages,
+      moveDisabled: stageMoveBusyId === row.id || rowMoveStages.length === 0,
+      rowTypeLabel: row.type === 'deal' ? 'DEAL' : 'LEAD',
+      initials: getPersonInitials(assigneeName),
+      avatarColor: avatarColorFromName(assigneeName || row.id),
+      isSelected: selectedIds.has(String(row.id)),
+    };
+  }, [careMarks, careBusyId, stageMoveBusyId, selectedIds, getMoveStagesForRow]);
+
   const toggleSelectAllOnPage = useCallback(() => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
@@ -1225,167 +1255,197 @@ export default function CrmFollowUpCarePage() {
         </div>
       ) : (
         <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
-          <div className="overflow-auto" style={{ maxHeight: 'calc(100vh - 280px)', minHeight: '420px' }}>
-            <table className="min-w-full text-sm">
-              <thead className="bg-gray-50 text-left text-[11px] font-semibold text-gray-500 uppercase tracking-wide sticky top-0 z-10 border-b border-gray-200">
-                <tr>
-                  <th className="px-3 py-3 w-10">
-                    <input
-                      type="checkbox"
-                      checked={paginatedRows.length > 0 && pageSelectedCount === paginatedRows.length}
-                      onChange={toggleSelectAllOnPage}
-                      className="rounded border-gray-300 accent-violet-600"
-                      aria-label="Chọn tất cả trang"
-                    />
-                  </th>
-                  <th className="px-3 py-3 text-center w-16">CSKH</th>
-                  <th className="px-3 py-3 min-w-[14rem]">Lead / Deal</th>
-                  <th className="px-3 py-3 min-w-[12rem]">Khách hàng</th>
-                  <th className="px-3 py-3">Nguồn</th>
-                  <th className="px-3 py-3 min-w-[10rem]">NV phụ trách</th>
-                  <th className="px-3 py-3">Giai đoạn</th>
-                  <th className="px-3 py-3">Tuổi lead</th>
-                  <th className="px-3 py-3 whitespace-nowrap">Cập nhật cuối</th>
-                  <th className="px-3 py-3 w-10">
-                    <Settings className="h-4 w-4 text-gray-400 mx-auto" aria-hidden />
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {paginatedRows.map((row) => {
-                  const st = row.stage;
-                  const assignee = row.assignee || row.lead_owner;
-                  const assigneeName = assignee?.full_name || assignee?.email || '';
-                  const src = row.source;
-                  const mark = careMarks[row.id];
-                  const isMarked = !!mark;
-                  const busy = careBusyId === row.id;
-                  const moving = stageMoveBusyId === row.id;
-                  const rowMoveStages = getMoveStagesForRow(row);
-                  const moveDisabled = moving || rowMoveStages.length === 0;
-                  const rowTypeLabel = row.type === 'deal' ? 'DEAL' : 'LEAD';
-                  const leadAge = getLeadAgeDays(row.created_at);
-                  const lastUpdate = row.updated_at || row.stage_entered_at || row.created_at;
-                  const initials = getPersonInitials(assigneeName);
-                  const avatarColor = avatarColorFromName(assigneeName || row.id);
-                  const isSelected = selectedIds.has(String(row.id));
-                  const sourceLabel = src?.name || '';
-                  return (
-                    <tr
-                      key={row.id}
-                      className={`hover:bg-violet-50/30 ${isMarked ? 'bg-emerald-50/40' : ''} ${isSelected ? 'bg-violet-50/50' : ''}`}
-                    >
-                      <td className="px-3 py-3 align-middle">
-                        <input
-                          type="checkbox"
-                          checked={isSelected}
-                          onChange={() => toggleSelectRow(row.id)}
-                          className="rounded border-gray-300 accent-violet-600"
-                          aria-label={`Chọn ${row.code || row.title}`}
-                        />
-                      </td>
-                      <td className="px-3 py-3 align-middle text-center">
-                        <button
-                          type="button"
-                          onClick={() => toggleCareMark(row.id)}
-                          disabled={busy}
-                          className={`w-9 h-9 rounded-full inline-flex items-center justify-center text-[11px] font-bold text-white shadow-sm transition-all cursor-pointer ${
-                            isMarked ? 'ring-2 ring-emerald-500 ring-offset-1' : 'hover:scale-105'
-                          } ${busy ? 'opacity-50 cursor-wait' : ''}`}
-                          style={{ backgroundColor: avatarColor }}
-                          title={
-                            isMarked
-                              ? `Đã chăm sóc${mark?.marked_at ? ` lúc ${formatDate(mark.marked_at)}` : ''} — bấm để bỏ`
-                              : `${assigneeName || 'Chưa có NV'} — đánh dấu đã CSKH`
-                          }
-                        >
-                          {initials}
-                        </button>
-                      </td>
-                      <td className="px-3 py-3 align-top">
-                        <div className="space-y-1">
-                          <div className="flex flex-wrap items-center gap-1.5">
-                            <span
-                              className={`shrink-0 text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${
-                                row.type === 'deal' ? 'bg-cyan-100 text-cyan-800' : 'bg-violet-100 text-violet-800'
-                              }`}
-                            >
-                              {rowTypeLabel}
-                            </span>
-                            <Link
-                              to={`/crm/leads/${row.id}`}
-                              className="font-semibold text-gray-900 hover:text-violet-700 hover:underline"
-                            >
-                              {row.code || row.title}
-                            </Link>
-                          </div>
-                          <p className="text-xs text-gray-600 line-clamp-2">
-                            {sourceLabel ? `[${sourceLabel}] ` : ''}
-                            {row.title}
-                            {row.customer?.full_name ? ` · ${row.customer.full_name}` : ''}
-                          </p>
-                        </div>
-                      </td>
-                      <td className="px-3 py-3 align-top">
-                        <span className="inline-flex items-start gap-1.5 text-gray-800">
-                          <Building2 className="h-4 w-4 text-gray-400 shrink-0 mt-0.5" />
-                          <span className="line-clamp-2">{row.customer?.full_name || row.customer?.company_name || '—'}</span>
+          {/* Chọn tất cả: trước nằm ở ô đầu <thead>, nay tách ra đây để dùng được
+              cả khi bảng đổi sang dạng thẻ trên mobile (không còn hàng tiêu đề). */}
+          <label className="flex items-center gap-2 px-3 py-2 border-b border-gray-100 bg-gray-50/70 text-xs text-gray-600 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={paginatedRows.length > 0 && pageSelectedCount === paginatedRows.length}
+              onChange={toggleSelectAllOnPage}
+              className="rounded border-gray-300 accent-violet-600"
+            />
+            Chọn tất cả trang
+            {pageSelectedCount > 0 && (
+              <span className="font-semibold text-violet-700">· đã chọn {pageSelectedCount}</span>
+            )}
+          </label>
+          <div className="lg:overflow-auto" style={rowsViewportStyle}>
+            <ResponsiveTable
+              rows={paginatedRows}
+              rowKey={(row) => row.id}
+              cardClassName="mx-3"
+              tableClassName="min-w-full"
+              columns={[
+                {
+                  key: 'lead',
+                  header: 'Lead / Deal',
+                  primary: true,
+                  headerClassName: 'min-w-[14rem]',
+                  cellClassName: 'px-3 py-3 align-top',
+                  cell: (row) => {
+                    const m = rowMeta(row);
+                    return (
+                      <span className="block space-y-1">
+                        <span className="flex flex-wrap items-center gap-1.5">
+                          {/* Checkbox gộp vào ô chính: ở dạng thẻ trên mobile nó không còn cột riêng */}
+                          <input
+                            type="checkbox"
+                            checked={m.isSelected}
+                            onClick={(e) => e.stopPropagation()}
+                            onChange={() => toggleSelectRow(row.id)}
+                            className="rounded border-gray-300 accent-violet-600 shrink-0"
+                            aria-label={`Chọn ${row.code || row.title}`}
+                          />
+                          <span
+                            className={`shrink-0 text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${
+                              row.type === 'deal' ? 'bg-cyan-100 text-cyan-800' : 'bg-violet-100 text-violet-800'
+                            }`}
+                          >
+                            {m.rowTypeLabel}
+                          </span>
+                          <Link
+                            to={`/crm/leads/${row.id}`}
+                            className="font-semibold text-gray-900 hover:text-violet-700 hover:underline"
+                          >
+                            {row.code || row.title}
+                          </Link>
                         </span>
-                      </td>
-                      <td className="px-3 py-3 align-top text-gray-700">
-                        {src ? (
-                          <span className="inline-flex items-center gap-1 text-xs">
-                            {src.icon ? <span aria-hidden>{src.icon}</span> : null}
-                            {src.name || '—'}
-                          </span>
-                        ) : (
-                          '—'
-                        )}
-                      </td>
-                      <td className="px-3 py-3 align-top">
-                        {assigneeName ? (
-                          <span className="inline-flex items-center gap-2 text-gray-800">
-                            <span
-                              className="w-7 h-7 rounded-full inline-flex items-center justify-center text-[10px] font-bold text-white shrink-0"
-                              style={{ backgroundColor: avatarColor }}
-                            >
-                              {initials}
-                            </span>
-                            <span className="text-sm">{assigneeName}</span>
-                          </span>
-                        ) : (
-                          '—'
-                        )}
-                      </td>
-                      <td className="px-3 py-3 align-top">
+                        <span className="block text-xs text-gray-600 line-clamp-2">
+                          {m.sourceLabel ? `[${m.sourceLabel}] ` : ''}
+                          {row.title}
+                          {row.customer?.full_name ? ` · ${row.customer.full_name}` : ''}
+                        </span>
+                      </span>
+                    );
+                  },
+                },
+                {
+                  key: 'customer',
+                  header: 'Khách hàng',
+                  secondary: true,
+                  headerClassName: 'min-w-[12rem]',
+                  cellClassName: 'px-3 py-3 align-top',
+                  cell: (row) => (
+                    <span className="inline-flex items-start gap-1.5 text-gray-800">
+                      <Building2 className="h-4 w-4 text-gray-400 shrink-0 mt-0.5" />
+                      <span className="line-clamp-2">{row.customer?.full_name || row.customer?.company_name || '—'}</span>
+                    </span>
+                  ),
+                },
+                {
+                  key: 'care',
+                  header: 'CSKH',
+                  align: 'center',
+                  headerClassName: 'w-16',
+                  cellClassName: 'px-3 py-3 align-middle text-center',
+                  cell: (row) => {
+                    const m = rowMeta(row);
+                    return (
+                      <button
+                        type="button"
+                        onClick={() => toggleCareMark(row.id)}
+                        disabled={m.busy}
+                        className={`w-9 h-9 rounded-full inline-flex items-center justify-center text-[11px] font-bold text-white shadow-sm transition-all cursor-pointer ${
+                          m.isMarked ? 'ring-2 ring-emerald-500 ring-offset-1' : 'hover:scale-105'
+                        } ${m.busy ? 'opacity-50 cursor-wait' : ''}`}
+                        style={{ backgroundColor: m.avatarColor }}
+                        title={
+                          m.isMarked
+                            ? `Đã chăm sóc${m.mark?.marked_at ? ` lúc ${formatDate(m.mark.marked_at)}` : ''} — bấm để bỏ`
+                            : `${m.assigneeName || 'Chưa có NV'} — đánh dấu đã CSKH`
+                        }
+                      >
+                        {m.initials}
+                      </button>
+                    );
+                  },
+                },
+                {
+                  key: 'source',
+                  header: 'Nguồn',
+                  // Ẩn trên mobile: nguồn đã nằm sẵn trong dòng mô tả "[Nguồn] tiêu đề"
+                  hideOnMobile: true,
+                  cellClassName: 'px-3 py-3 align-top text-gray-700',
+                  cell: (row) => {
+                    const src = row.source;
+                    return src ? (
+                      <span className="inline-flex items-center gap-1 text-xs">
+                        {src.icon ? <span aria-hidden>{src.icon}</span> : null}
+                        {src.name || '—'}
+                      </span>
+                    ) : '—';
+                  },
+                },
+                {
+                  key: 'assignee',
+                  header: 'NV phụ trách',
+                  headerClassName: 'min-w-[10rem]',
+                  cellClassName: 'px-3 py-3 align-top',
+                  cell: (row) => {
+                    const m = rowMeta(row);
+                    return m.assigneeName ? (
+                      <span className="inline-flex items-center gap-2 text-gray-800">
+                        <span
+                          className="w-7 h-7 rounded-full inline-flex items-center justify-center text-[10px] font-bold text-white shrink-0"
+                          style={{ backgroundColor: m.avatarColor }}
+                        >
+                          {m.initials}
+                        </span>
+                        <span className="text-sm">{m.assigneeName}</span>
+                      </span>
+                    ) : '—';
+                  },
+                },
+                {
+                  key: 'stage',
+                  header: 'Giai đoạn',
+                  cellClassName: 'px-3 py-3 align-top',
+                  cell: (row) => {
+                    const st = row.stage;
+                    return (
+                      <>
                         {st ? (
                           <span className="inline-flex items-center gap-1.5 text-sm text-gray-800">
-                            <span
-                              className="w-2 h-2 rounded-full shrink-0"
-                              style={{ backgroundColor: st.color || '#64748b' }}
-                            />
+                            <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: st.color || '#64748b' }} />
                             {st.name}
                           </span>
-                        ) : (
-                          '—'
-                        )}
+                        ) : '—'}
                         {row.lost_reason && (
-                          <p className="mt-1 text-[11px] text-red-600 line-clamp-2" title={row.lost_reason}>
+                          <span className="block mt-1 text-[11px] text-red-600 line-clamp-2" title={row.lost_reason}>
                             {row.lost_reason}
-                          </p>
+                          </span>
                         )}
-                      </td>
-                      <td className="px-3 py-3 align-top whitespace-nowrap">
-                        {leadAge != null ? (
-                          <span className="font-semibold text-amber-600">{leadAge} ngày</span>
-                        ) : (
-                          '—'
-                        )}
-                      </td>
-                      <td className="px-3 py-3 align-top whitespace-nowrap text-gray-700 text-xs">
-                        {formatDateTimeVi(lastUpdate)}
-                      </td>
-                      <td className="px-3 py-3 align-middle relative" data-row-menu>
+                      </>
+                    );
+                  },
+                },
+                {
+                  key: 'age',
+                  header: 'Tuổi lead',
+                  cellClassName: 'px-3 py-3 align-top whitespace-nowrap',
+                  cell: (row) => {
+                    const leadAge = getLeadAgeDays(row.created_at);
+                    return leadAge != null ? <span className="font-semibold text-amber-600">{leadAge} ngày</span> : '—';
+                  },
+                },
+                {
+                  key: 'updated',
+                  header: 'Cập nhật cuối',
+                  headerClassName: 'whitespace-nowrap',
+                  cellClassName: 'px-3 py-3 align-top whitespace-nowrap text-gray-700 text-xs',
+                  cell: (row) => formatDateTimeVi(row.updated_at || row.stage_entered_at || row.created_at),
+                },
+                {
+                  key: 'actions',
+                  header: 'Thao tác',
+                  align: 'center',
+                  headerClassName: 'w-10',
+                  cellClassName: 'px-3 py-3 align-middle',
+                  cell: (row) => {
+                    const m = rowMeta(row);
+                    return (
+                      // relative ở đây (không phải ở <td>) để menu định vị đúng ở cả bảng lẫn thẻ
+                      <span className="relative inline-block" data-row-menu>
                         <button
                           type="button"
                           onClick={() => setRowMenuOpenId((id) => (id === row.id ? null : row.id))}
@@ -1395,7 +1455,7 @@ export default function CrmFollowUpCarePage() {
                           <MoreHorizontal className="h-4 w-4" />
                         </button>
                         {rowMenuOpenId === row.id && (
-                          <div className="absolute right-2 top-full z-30 mt-1 w-52 rounded-xl border border-gray-200 bg-white shadow-lg py-1 text-sm">
+                          <span className="absolute right-0 top-full z-30 mt-1 block w-52 rounded-xl border border-gray-200 bg-white shadow-lg py-1 text-sm text-left">
                             <Link
                               to={`/crm/leads/${row.id}`}
                               className="block px-3 py-2 text-gray-800 hover:bg-violet-50"
@@ -1411,13 +1471,13 @@ export default function CrmFollowUpCarePage() {
                                 void toggleCareMark(row.id);
                               }}
                             >
-                              {isMarked ? 'Bỏ đánh dấu CSKH' : 'Đánh dấu đã CSKH'}
+                              {m.isMarked ? 'Bỏ đánh dấu CSKH' : 'Đánh dấu đã CSKH'}
                             </button>
-                            <div className="border-t border-gray-100 my-1 px-3 py-2">
-                              <p className="text-[10px] font-semibold text-gray-500 uppercase mb-1.5">Chuyển giai đoạn</p>
+                            <span className="block border-t border-gray-100 my-1 px-3 py-2">
+                              <span className="block text-[10px] font-semibold text-gray-500 uppercase mb-1.5">Chuyển giai đoạn</span>
                               <select
                                 value={String(row.stage_id || '')}
-                                disabled={moveDisabled}
+                                disabled={m.moveDisabled}
                                 onChange={(e) => {
                                   const v = e.target.value;
                                   if (v && v !== String(row.stage_id || '')) {
@@ -1427,10 +1487,8 @@ export default function CrmFollowUpCarePage() {
                                 }}
                                 className="w-full h-8 px-2 rounded-lg border border-gray-200 text-xs bg-white"
                               >
-                                <option value={row.stage_id || ''}>
-                                  {st ? st.name : '— Chọn cột —'}
-                                </option>
-                                {rowMoveStages
+                                <option value={row.stage_id || ''}>{row.stage ? row.stage.name : '— Chọn cột —'}</option>
+                                {m.rowMoveStages
                                   .filter((s) => String(s.id) !== String(row.stage_id || ''))
                                   .map((s) => (
                                     <option key={s.id} value={s.id}>
@@ -1440,15 +1498,15 @@ export default function CrmFollowUpCarePage() {
                                     </option>
                                   ))}
                               </select>
-                            </div>
-                          </div>
+                            </span>
+                          </span>
                         )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                      </span>
+                    );
+                  },
+                },
+              ]}
+            />
           </div>
 
           <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-t border-gray-100 bg-gray-50/50">
