@@ -910,22 +910,24 @@ export default function WorkUnifiedOverviewPage() {
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 shrink-0">
-        <div className="rounded-xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
-          <p className="text-xs text-gray-500">Đang thực hiện</p>
-          <p className="text-2xl font-bold mt-1 text-gray-900">{loading ? '…' : stats.total}</p>
-        </div>
-        <div className="rounded-xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
-          <p className="text-xs text-gray-500">Đúng tiến độ</p>
-          <p className="text-2xl font-bold mt-1 text-emerald-600">{loading ? '…' : stats.on_track}</p>
-        </div>
-        <div className="rounded-xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
-          <p className="text-xs text-gray-500">Nguy cơ trễ</p>
-          <p className="text-2xl font-bold mt-1 text-amber-600">{loading ? '…' : stats.at_risk}</p>
-        </div>
-        <div className="rounded-xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
-          <p className="text-xs text-gray-500">Trễ hạn</p>
-          <p className="text-2xl font-bold mt-1 text-red-600">{loading ? '…' : stats.late}</p>
-        </div>
+        {[
+          { key: 'all', label: 'Đang thực hiện', value: stats.total, valueCls: 'text-gray-900' },
+          { key: 'on_track', label: 'Đúng tiến độ', value: stats.on_track, valueCls: 'text-emerald-600' },
+          { key: 'at_risk', label: 'Nguy cơ trễ', value: stats.at_risk, valueCls: 'text-amber-600' },
+          { key: 'late', label: 'Trễ hạn', value: stats.late, valueCls: 'text-red-600' },
+        ].map((card) => (
+          <button
+            key={card.key}
+            type="button"
+            onClick={() => setForecastFilter(card.key)}
+            className={`rounded-xl border bg-white px-4 py-3 shadow-sm text-left cursor-pointer transition-colors ${
+              forecastFilter === card.key ? 'border-emerald-400 ring-1 ring-emerald-200' : 'border-gray-100 hover:border-gray-200'
+            }`}
+          >
+            <p className="text-xs text-gray-500">{card.label}</p>
+            <p className={`text-2xl font-bold mt-1 ${card.valueCls}`}>{loading ? '…' : card.value}</p>
+          </button>
+        ))}
       </div>
 
       <div ref={resultsCardRef} className="rounded-xl border border-gray-100 bg-white shadow-sm overflow-hidden flex-1 min-h-0 flex flex-col">

@@ -1217,7 +1217,6 @@ export default function Sidebar() {
           customModuleName={customModMeta?.name || customAppModuleKey || null}
           customModuleMeta={customModMeta}
           extraModules={customAppModules}
-          taskBadge={unifiedTasksOpen}
         />
       </div>
 

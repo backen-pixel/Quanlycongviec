@@ -71,7 +71,6 @@ export default function SidebarModuleCycleButton({
   customModuleName = null,
   customModuleMeta = null,
   extraModules = [],
-  taskBadge = 0,
 }) {
   const [swapping, setSwapping] = useState(false);
   const [displayIdx, setDisplayIdx] = useState(0);
@@ -222,11 +221,6 @@ export default function SidebarModuleCycleButton({
       } ${swapping ? 'is-swapping' : ''}`}
       style={{ width: dial, height: dial }}
     >
-      {displayMod?.id === 'congviec' && taskBadge > 0 && (
-        <span className="absolute -top-0.5 -right-0.5 z-10 min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full bg-rose-500 text-white text-[10px] font-bold ring-2 ring-[var(--color-sidebar)]">
-          {taskBadge > 99 ? '99+' : taskBadge}
-        </span>
-      )}
       <span className="module-cycle-dial-bg absolute inset-0 rounded-full" aria-hidden />
       <span className="module-cycle-dial-shine absolute inset-0 rounded-full pointer-events-none" aria-hidden />
 

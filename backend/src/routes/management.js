@@ -1107,16 +1107,8 @@ r.get('/work-unified', async (req, res) => {
       };
     });
 
-    const stats = { total: items.length, on_track: 0, at_risk: 0, late: 0 };
-    items.forEach((it) => {
-      if (it.forecast === 'late') stats.late += 1;
-      else if (it.forecast === 'at_risk') stats.at_risk += 1;
-      else stats.on_track += 1;
-    });
-
     let filtered = items;
     if (stageFilter) filtered = filtered.filter((it) => it.current_stage_slug === stageFilter);
-    if (forecastFilter && forecastFilter !== 'all') filtered = filtered.filter((it) => it.forecast === forecastFilter);
     const searchQ = String(searchQuery || '').trim().toLowerCase();
     if (searchQ) {
       filtered = filtered.filter((it) => {
@@ -1142,6 +1134,19 @@ r.get('/work-unified', async (req, res) => {
         if (dateTo && d > dateTo) return false;
         return true;
       });
+    }
+
+    // KPI + tab «Tất cả / Đúng tiến độ / …» theo bộ lọc (công đoạn, NV, khu vực, hạn, tìm kiếm).
+    // Không trừ tab forecast — để vẫn thấy phân bố khi đang xem «Trễ hạn».
+    const stats = { total: filtered.length, on_track: 0, at_risk: 0, late: 0 };
+    filtered.forEach((it) => {
+      if (it.forecast === 'late') stats.late += 1;
+      else if (it.forecast === 'at_risk') stats.at_risk += 1;
+      else stats.on_track += 1;
+    });
+
+    if (forecastFilter && forecastFilter !== 'all') {
+      filtered = filtered.filter((it) => it.forecast === forecastFilter);
     }
     filtered.sort((a, b) => {
       const da = a.deadline ? new Date(a.deadline).getTime() : Infinity;
