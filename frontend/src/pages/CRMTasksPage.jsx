@@ -286,15 +286,16 @@ export default function CRMTasksPage() {
               className={`relative overflow-hidden bg-gradient-to-br ${kpi.gradient} border ${kpi.border} rounded-2xl p-4 shadow-md hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200`}
             >
               <div className={`absolute top-0 left-0 right-0 h-1 ${kpi.accent}`} />
-              <div className="flex items-center gap-3">
-                <div className={`h-11 w-11 rounded-xl ${kpi.iconBg} flex items-center justify-center shrink-0 shadow-sm`}>
-                  <Icon className={`h-5 w-5 ${kpi.iconColor}`} />
+              <div className="flex items-center gap-2 sm:gap-3">
+                <div className={`h-9 w-9 sm:h-11 sm:w-11 rounded-xl ${kpi.iconBg} flex items-center justify-center shrink-0 shadow-sm`}>
+                  <Icon className={`h-4 w-4 sm:h-5 sm:w-5 ${kpi.iconColor}`} />
                 </div>
                 <div className="flex-1 min-w-0 text-left">
-                  <p className="text-3xl font-extrabold leading-none tracking-tight" style={{ color: '#000000' }}>
+                  <p className="text-2xl sm:text-3xl font-extrabold leading-none tracking-tight" style={{ color: '#000000' }}>
                     {kpi.value}
                   </p>
-                  <p className="text-xs font-semibold mt-1 uppercase tracking-wide" style={{ color: '#000000' }}>
+                  {/* mobile: bỏ tracking-wide, "HOÀN THÀNH" tràn 2 dòng làm 4 thẻ lệch nhau */}
+                  <p className="text-[11px] sm:text-xs font-semibold mt-1 uppercase tracking-normal sm:tracking-wide whitespace-nowrap" style={{ color: '#000000' }}>
                     {kpi.label}
                   </p>
                 </div>
@@ -304,30 +305,31 @@ export default function CRMTasksPage() {
         })}
       </div>
 
-      {/* Filters */}
-      <div className="flex items-center gap-2 flex-wrap">
-        <div className="relative flex-1 min-w-[200px]">
+      {/* Filters — mobile: lưới 2 cột đều nhau. Trước dùng flex-wrap nên mỗi select co
+          theo nội dung (122/147/299/123px), rơi mỗi cái một dòng và hở 230px bên phải. */}
+      <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center sm:flex-wrap">
+        <div className="relative col-span-2 sm:col-span-1 sm:flex-1 sm:min-w-[200px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Tìm công việc, lead, deal..."
             className="w-full h-9 pl-9 pr-3 rounded-lg border text-sm outline-none focus:border-blue-500" />
         </div>
-        <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="h-9 px-3 rounded-lg border text-xs">
+        <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="w-full sm:w-auto h-9 px-3 rounded-lg border text-xs">
           <option value="">Trạng thái</option>
           <option value="pending">Chờ</option><option value="in_progress">Đang làm</option><option value="completed">Xong</option>
         </select>
-        <select value={filterStage} onChange={e => setFilterStage(e.target.value)} className="h-9 px-3 rounded-lg border text-xs">
+        <select value={filterStage} onChange={e => setFilterStage(e.target.value)} className="w-full sm:w-auto h-9 px-3 rounded-lg border text-xs">
           <option value="">Giai đoạn</option>
           {ALL_STAGES.map(s => <option key={s.slug} value={s.slug}>{s.icon} {s.label}</option>)}
         </select>
-        <select value={filterAssignee} onChange={e => setFilterAssignee(e.target.value)} className="h-9 px-3 rounded-lg border text-xs">
-          <option value="">{isAdmin ? 'Người thực hiện (tất cả)' : 'Tất cả NV (trong công ty)'}</option>
+        <select value={filterAssignee} onChange={e => setFilterAssignee(e.target.value)} className="w-full sm:w-auto h-9 px-3 rounded-lg border text-xs">
+          <option value="">{isAdmin ? 'Người thực hiện' : 'Tất cả NV'}</option>
           {users.map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
         </select>
-        <select value={filterType} onChange={e => setFilterType(e.target.value)} className="h-9 px-3 rounded-lg border text-xs">
+        <select value={filterType} onChange={e => setFilterType(e.target.value)} className="w-full sm:w-auto h-9 px-3 rounded-lg border text-xs">
           <option value="">Lead/Deal</option>
           <option value="lead">💼 Lead</option><option value="deal">🎯 Deal</option>
         </select>
-        {hasFilters && <button onClick={clearFilters} className="h-9 px-3 text-xs text-red-500 hover:bg-red-50 rounded-lg cursor-pointer flex items-center gap-1"><X className="h-3 w-3" />Xóa lọc</button>}
+        {hasFilters && <button onClick={clearFilters} className="col-span-2 sm:col-span-1 h-9 px-3 text-xs text-red-500 hover:bg-red-50 rounded-lg cursor-pointer flex items-center justify-center sm:justify-start gap-1"><X className="h-3 w-3" />Xóa lọc</button>}
       </div>
 
       {/* LIST VIEW */}
