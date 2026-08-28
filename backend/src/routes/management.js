@@ -1694,7 +1694,10 @@ r.get('/by-project/:projectId', responseCache({ ttl: 15, scope: 'user', tags: ['
   try {
     const scope = getCompanyScope(req, req.query.company_id);
     if (denyScope(res, scope)) return;
-    const bundle = await buildProjectDealBundle(req.params.projectId, { user: req.user });
+    const bundle = await buildProjectDealBundle(req.params.projectId, {
+      user: req.user,
+      lite: ['1', 'true'].includes(String(req.query.lite || '').toLowerCase()),
+    });
     if (!bundle) return res.status(404).json({ error: 'Không tìm thấy dự án' });
     if (!assertProjectInScope(res, scope, bundle.project)) return;
     res.json(bundle);

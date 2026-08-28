@@ -645,8 +645,15 @@ async function loadProjectSxLeadMemberUserIds(projectId) {
 }
 
 /** Lazy backfill: mọi NV setup SX (mọi dự án gắn deal) + prune CRM chỉ còn 1 người chịu trách nhiệm. */
+let _ensureLeadMembersAt = new Map();
+const ENSURE_LEAD_MEMBERS_TTL_MS = 60_000;
+
 async function ensureLeadMembersFromProjectStaff(leadId) {
   if (!leadId) return { synced: 0 };
+  const cacheKey = String(leadId);
+  const last = _ensureLeadMembersAt.get(cacheKey) || 0;
+  if (Date.now() - last < ENSURE_LEAD_MEMBERS_TTL_MS) return { synced: 0, skipped: true };
+  _ensureLeadMembersAt.set(cacheKey, Date.now());
 
   const projectIds = await loadProjectIdsForDeal(leadId);
   if (!projectIds.length) return { synced: 0 };

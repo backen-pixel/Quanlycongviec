@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
-import { isAdminLike, isCompanyScopedAdmin } from '../lib/adminRole';
+import { getSocket, connectSocket } from '../lib/socket';
+import { isAdminLike, isCompanyScopedAdmin, isWorkProductionModuleAdmin } from '../lib/adminRole';
 import SearchInlineFilterChips, { SearchClearButton, AdvFilterButton, searchGroupClass } from '../components/SearchInlineFilterChips';
 import WorkUnifiedFilterPanel, {
   WORK_UNIFIED_TIME_PRESETS,
@@ -9,19 +10,38 @@ import WorkUnifiedFilterPanel, {
   getWorkUnifiedPresetDateRange,
 } from '../components/WorkUnifiedFilterFields';
 import ProjectOverviewPanel from '../components/ProjectOverviewPanel';
+import { PipelineChip, withPipelineProgress, displayPipelineStageName } from '../components/ProjectDealSyncPanel';
+import PipelineStepper from '../components/PipelineStepper';
+import { resolveSxDisplayColumnId, TEMP_SX_FREE_DRAG } from '../lib/sxPipelineRevenue';
+import { isProjectAlreadyInLogistics, VC_TEMP_LOCK_MSG } from '../lib/projectLogistics';
+import {
+  crmDealRevertFromPostWonBlockedMessage,
+  crmDealStageMoveBlockedMessage,
+} from '../lib/crmDealStageGate';
+import { resolveDealWonAnchorOrderIndex } from '../lib/crmPipelineTabs';
 import UnifiedTaskRow from '../components/UnifiedTaskRow';
+import UnifiedTaskHistoryTimeline from '../components/UnifiedTaskHistoryTimeline';
 import WorkTaskExtrasPanel from '../components/WorkTaskExtrasPanel';
 import ProjectSharedWorkspaceTab from '../components/ProjectSharedWorkspaceTab';
 import { LeadMembersTab } from '../components/LeadChatTabs';
 import { CrmLeadCommentsPanel, ProjectCommentsPanel } from '../components/CommentsPanels';
 import { useMessengerDock } from '../context/MessengerDockContext';
 import { useAuth } from '../lib/auth';
-import { FilePreviewOpenLink } from '../context/FilePreviewContext';
-import { getFileDownloadAnchorProps } from '../lib/publicFileUrl';
-import { formatVND, formatDate, formatDateTime } from '../lib/utils';
+import { FilePreviewOpenLink, useFilePreview } from '../context/FilePreviewContext';
+import { getFileDownloadAnchorProps, getFileOpenAnchorProps, publicFileUrl } from '../lib/publicFileUrl';
+import { resolveFilePreviewMode } from '../lib/filePreview';
+import { formatVND, formatDate, getFileEmoji } from '../lib/utils';
+import ProjectDocumentsTab from '../components/ProjectDocumentsTab';
+import DriveAttachments from '../components/drive/DriveAttachments';
+import CrmTaskDocumentsPanel from '../components/CrmTaskDocumentsPanel';
+import UploadFileLightbox, {
+  collectUploadLightboxItems,
+  findUploadLightboxIndex,
+} from '../components/UploadFileLightbox';
 import {
   ChevronRight, ChevronDown, AlertTriangle, Shield, Plus, ExternalLink, Download, FileText as FileIcon, ArrowLeft,
-  CheckCircle2, X as XIcon, MessageCircle, Loader2, Package, Truck, RefreshCw, Search,
+  CheckCircle2, X as XIcon, MessageCircle, Loader2, Package, Truck, RefreshCw, Search, FolderOpen, Image as ImageIcon,
+  Bell, Eye,
 } from 'lucide-react';
 
 const SECONDARY_TABS = [
@@ -61,6 +81,36 @@ export function EmptyNote({ children }) {
 
 const DONE_TASK_STATUSES = ['done', 'completed'];
 
+const WORK_UNIFIED_LITE_MEM = new Map();
+function readWorkUnifiedLiteCache(projectId) {
+  if (!projectId) return null;
+  const key = String(projectId);
+  const mem = WORK_UNIFIED_LITE_MEM.get(key);
+  if (mem?.project?.id && String(mem.project.id) === key) return mem;
+  try {
+    const raw = sessionStorage.getItem(`wu-lite:${key}`);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed?.project?.id && String(parsed.project.id) === key) {
+      WORK_UNIFIED_LITE_MEM.set(key, parsed);
+      return parsed;
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+function writeWorkUnifiedLiteCache(projectId, data) {
+  if (!projectId || !data?.project) return;
+  const key = String(projectId);
+  WORK_UNIFIED_LITE_MEM.set(key, data);
+  try {
+    sessionStorage.setItem(`wu-lite:${key}`, JSON.stringify(data));
+  } catch {
+    /* quota */
+  }
+}
+
 /** Nhóm công việc theo khối — khớp task.task_kind trả về từ /work-tasks/by-project. */
 const TASK_GROUPS = [
   {
@@ -96,16 +146,35 @@ const OTHER_TASK_GROUP = {
   header: 'bg-gray-50 hover:bg-gray-100',
 };
 
-export function TasksTab({ projectId }) {
+const GROUP_REMIND = {
+  deal: { label: 'Nhắc Sales', title: 'Gửi thông báo hoàn thành phần Sales (bản vẽ, render, bảng mô tả)' },
+  sx: { label: 'Nhắc xưởng', title: 'Gửi thông báo hoàn thành phần sản xuất về xưởng' },
+  vc: { label: 'Nhắc VC', title: 'Gửi thông báo hoàn thành phần vận chuyển / lắp đặt' },
+};
+
+export function TasksTab({ projectId, initialGroup = '' }) {
+  const { user } = useAuth();
   const [state, setState] = useState({ loading: true, error: '', data: null });
   const [savingId, setSavingId] = useState(null);
   const [extrasTask, setExtrasTask] = useState(null);
-  const [openGroups, setOpenGroups] = useState(() => new Set());
+  const [remindingGroup, setRemindingGroup] = useState('');
+  const [remindedGroup, setRemindedGroup] = useState('');
+  const [openGroups, setOpenGroups] = useState(() => new Set(initialGroup ? [initialGroup] : []));
+  const canRemindGroup = isWorkProductionModuleAdmin(user);
   const toggleGroup = (key) => setOpenGroups((prev) => {
     const next = new Set(prev);
     if (next.has(key)) next.delete(key); else next.add(key);
     return next;
   });
+
+  useEffect(() => {
+    if (initialGroup) setOpenGroups((prev) => {
+      if (prev.has(initialGroup)) return prev;
+      const next = new Set(prev);
+      next.add(initialGroup);
+      return next;
+    });
+  }, [initialGroup]);
 
   const load = useCallback(() => {
     setState((prev) => ({ ...prev, loading: true, error: '' }));
@@ -128,6 +197,27 @@ export function TasksTab({ projectId }) {
       alert(e?.response?.data?.error || 'Không cập nhật được trạng thái công việc');
     } finally {
       setSavingId(null);
+    }
+  };
+
+  const handleGroupRemind = async (e, groupKey) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (remindingGroup || remindedGroup === groupKey) return;
+    setRemindingGroup(groupKey);
+    try {
+      const res = await api.post(`/work-tasks/by-project/${projectId}/remind-complete`, { group: groupKey });
+      const sent = res.data?.sent ?? 0;
+      if (!sent) {
+        alert('Không gửi được thông báo. Người nhận có thể đã tắt nhắc công việc.');
+        return;
+      }
+      setRemindedGroup(groupKey);
+      window.setTimeout(() => setRemindedGroup((cur) => (cur === groupKey ? '' : cur)), 4000);
+    } catch (err) {
+      alert(err?.response?.data?.error || 'Không gửi được nhắc hoàn thành');
+    } finally {
+      setRemindingGroup('');
     }
   };
 
@@ -174,6 +264,10 @@ export function TasksTab({ projectId }) {
         title="Công việc"
         action={<span className="text-[11px] text-gray-500">{progress.completed}/{progress.total} hoàn thành</span>}
       >
+        <p className="text-[11px] text-slate-500 mb-3 leading-relaxed">
+          Bản vẽ, render, bảng mô tả nộp tại <span className="font-semibold text-slate-700">Ghi chú &amp; file</span> của từng việc.
+          Không đẩy vào Bình luận — file ở đó không giữ tiến trình Sales và dễ bị xóa.
+        </p>
         {tasks.length === 0 ? (
           <EmptyNote>Chưa có công việc nào gắn với dự án này.</EmptyNote>
         ) : (
@@ -181,24 +275,50 @@ export function TasksTab({ projectId }) {
             {groups.map((g) => {
               const isOpen = openGroups.has(g.key);
               const doneCount = g.tasks.filter((t) => DONE_TASK_STATUSES.includes(String(t.status))).length;
+              const openCount = g.tasks.length - doneCount;
               const Icon = g.icon;
+              const remindCfg = GROUP_REMIND[g.key];
+              const showGroupRemind = canRemindGroup && remindCfg && openCount > 0;
               return (
                 <div key={g.key} className="rounded-xl border border-gray-100 overflow-hidden">
+                  <div className={`w-full flex items-center justify-between gap-2 px-3 py-2.5 ${g.header}`}>
                   <button
                     type="button"
                     onClick={() => toggleGroup(g.key)}
-                    className={`w-full flex items-center justify-between gap-2 px-3 py-2.5 transition-colors cursor-pointer ${g.header}`}
+                      className={`flex-1 min-w-0 flex items-center gap-2 text-sm font-bold text-left cursor-pointer ${g.accent}`}
                   >
-                    <span className={`flex items-center gap-2 text-sm font-bold ${g.accent}`}>
                       <Icon className="h-4 w-4" />
                       {g.label}
                       <span className="text-[11px] font-medium text-gray-500">({g.tasks.length})</span>
-                    </span>
+                    </button>
                     <span className="flex items-center gap-2 shrink-0">
                       <span className="text-[11px] text-gray-500 whitespace-nowrap">{doneCount}/{g.tasks.length} hoàn thành</span>
+                      {showGroupRemind && (
+                        <button
+                          type="button"
+                          onClick={(e) => handleGroupRemind(e, g.key)}
+                          disabled={!!remindingGroup || remindedGroup === g.key}
+                          title={remindCfg.title}
+                          className={`inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md border font-medium cursor-pointer disabled:cursor-default ${
+                            remindedGroup === g.key
+                              ? 'bg-amber-50 text-amber-800 border-amber-200'
+                              : 'bg-white text-amber-700 border-amber-200 hover:bg-amber-50'
+                          }`}
+                        >
+                          <Bell className={`h-3 w-3 ${remindingGroup === g.key ? 'animate-pulse' : ''}`} />
+                          {remindedGroup === g.key ? 'Đã nhắc' : remindingGroup === g.key ? 'Đang gửi…' : remindCfg.label}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => toggleGroup(g.key)}
+                        className="p-0.5 cursor-pointer"
+                        aria-label={isOpen ? 'Thu gọn' : 'Mở'}
+                      >
                       <ChevronDown className={`h-4 w-4 text-gray-400 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
-                    </span>
                   </button>
+                    </span>
+                  </div>
                   {isOpen && (
                     <div className="p-2 space-y-2 bg-white border-t border-gray-100">
                       {g.tasks.map(renderTaskRow)}
@@ -241,65 +361,592 @@ export function TasksTab({ projectId }) {
   );
 }
 
-/** Dùng chung cho tab Tiến độ + Lịch sử — cả 2 đọc từ GET /api/projects/:id (transitions + activities). */
-function useProjectDetailBundle(projectId, enabled) {
-  const [state, setState] = useState({ loading: true, error: '', data: null });
+/** Dùng chung cho tab Tiến độ + Lịch sử — work-tasks/history + hoạt động CRM (không gọi GET /projects/:id nặng). */
+function useProjectOperationHistory(projectId, leadId, enabled = true) {
+  const [taskHistory, setTaskHistory] = useState([]);
+  const [taskLoading, setTaskLoading] = useState(!!enabled);
+  const [crmActs, setCrmActs] = useState([]);
+  const [crmLoading, setCrmLoading] = useState(!!(enabled && leadId));
+
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled || !projectId) {
+      if (!enabled) setTaskLoading(false);
+      return undefined;
+    }
     let cancelled = false;
-    setState({ loading: true, error: '', data: null });
-    api.get(`/projects/${projectId}`)
-      .then((res) => { if (!cancelled) setState({ loading: false, error: '', data: res.data?.project || null }); })
-      .catch((e) => { if (!cancelled) setState({ loading: false, error: e?.response?.data?.error || 'Không tải được dữ liệu', data: null }); });
+    setTaskLoading(true);
+    api.get('/work-tasks/history', { params: { project_id: projectId, page_size: 50 } })
+      .then((r) => { if (!cancelled) setTaskHistory(r.data?.history || []); })
+      .catch(() => { if (!cancelled) setTaskHistory([]); })
+      .finally(() => { if (!cancelled) setTaskLoading(false); });
     return () => { cancelled = true; };
   }, [projectId, enabled]);
-  return state;
+
+  useEffect(() => {
+    if (!enabled || !leadId) {
+      setCrmActs([]);
+      setCrmLoading(false);
+      return undefined;
+    }
+    let cancelled = false;
+    setCrmLoading(true);
+    api.get(`/crm/leads/${leadId}/activities`)
+      .then((r) => {
+        const list = Array.isArray(r.data) ? r.data : (r.data?.activities || []);
+        if (!cancelled) setCrmActs(list);
+      })
+      .catch(() => { if (!cancelled) setCrmActs([]); })
+      .finally(() => { if (!cancelled) setCrmLoading(false); });
+    return () => { cancelled = true; };
+  }, [leadId, enabled]);
+
+  const items = useMemo(() => {
+    const mapped = [];
+    for (const a of crmActs) {
+      mapped.push({
+        id: `crm-${a.id}`,
+        event_type: a.type || 'comment_added',
+        description: crmActivityText(a),
+        created_at: a.created_at,
+        actor: a.user || a.creator || a.author || null,
+        source: 'crm_task',
+      });
+    }
+    const byId = new Map();
+    for (const it of [...(taskHistory || []), ...mapped]) {
+      if (!it?.id) continue;
+      byId.set(String(it.id), it);
+    }
+    return [...byId.values()].sort((x, y) => new Date(y.created_at || 0) - new Date(x.created_at || 0));
+  }, [taskHistory, crmActs]);
+
+  return { loading: taskLoading || crmLoading, error: '', items };
 }
 
-function ProgressTab({ projectId, flow }) {
-  const { loading, error, data } = useProjectDetailBundle(projectId, true);
-  const transitions = data?.transitions || [];
+function crmActivityText(a) {
+  if (!a) return 'Thao tác CRM';
+  const raw = a.title || a.description || a.content || a.notes || '';
+  if (typeof raw === 'string' && raw.trim()) {
+    try {
+      const parsed = JSON.parse(raw);
+      return parsed.title || parsed.description || parsed.outcome || raw;
+    } catch {
+      return raw.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 220);
+    }
+  }
+  return a.type || 'Thao tác CRM';
+}
+
+function ProjectOperationHistory({ loading, error, items }) {
+  if (error) return <EmptyNote>{error}</EmptyNote>;
+  return (
+    <div className="max-h-[420px] overflow-y-auto pr-1">
+      <UnifiedTaskHistoryTimeline items={items} loading={loading} />
+        </div>
+  );
+}
+
+function pipelineCurrentId(stages, preferredId, fallbackStage) {
+  const list = Array.isArray(stages) ? stages : [];
+  const raw = preferredId != null && preferredId !== '' ? String(preferredId) : '';
+  if (raw && list.some((s) => String(s.id) === raw)) return raw;
+  const fbId = fallbackStage?.id != null ? String(fallbackStage.id) : '';
+  if (fbId && list.some((s) => String(s.id) === fbId)) return fbId;
+  const slug = fallbackStage?.bucket_slug || null;
+  if (slug) {
+    const hit = list.find((s) => String(s.bucket_slug || '') === String(slug));
+    if (hit?.id) return String(hit.id);
+  }
+  return raw || fbId || null;
+}
+
+function ModuleStepperBlock({ label, href, loading, empty, children }) {
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="text-sm font-bold text-slate-900">{label}</h3>
+        {href ? (
+          <Link to={href} className="text-xs font-medium text-blue-700 hover:underline shrink-0">
+            Mở chi tiết →
+          </Link>
+        ) : null}
+                      </div>
+      {loading ? (
+        <div className="rounded-xl border border-gray-200 bg-white px-4 py-8 text-center text-sm text-gray-400">
+          Đang tải pipeline…
+                    </div>
+      ) : empty ? (
+        <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 px-4 py-6 text-center text-sm text-gray-400">
+          {empty}
+                </div>
+      ) : children}
+    </div>
+  );
+}
+
+function asStageList(data) {
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.stages)) return data.stages;
+  return [];
+}
+
+function labeledWorkshopStages(stages) {
+  return (Array.isArray(stages) ? stages : []).map((s) => {
+    const name = displayPipelineStageName(s);
+    if (!s || name === s.name) return s;
+    return { ...s, name };
+  });
+}
+
+function notifyProjectBadges(projectId) {
+  if (!projectId || typeof window === 'undefined') return;
+  window.setTimeout(() => {
+    window.dispatchEvent(new CustomEvent('crm-project-badges-refresh', {
+      detail: { projectId: String(projectId) },
+    }));
+  }, 200);
+}
+
+function ProgressTab({ projectId, leadId, project, lead, pipelines, onReload, syncKey }) {
+  const [pipesReady, setPipesReady] = useState(false);
+  const { loading, error, items } = useProjectOperationHistory(projectId, leadId, pipesReady);
+  const [crmStages, setCrmStages] = useState([]);
+  const [sxStages, setSxStages] = useState([]);
+  const [vcStages, setVcStages] = useState([]);
+  const [visitedStageIds, setVisitedStageIds] = useState(() => new Set());
+  const [pipesLoading, setPipesLoading] = useState(true);
+  const [crmLead, setCrmLead] = useState(null);
+  const [sxProject, setSxProject] = useState(null);
+  const [vcProject, setVcProject] = useState(null);
+  const [liveCrmStageId, setLiveCrmStageId] = useState(null);
+  const [liveSxColId, setLiveSxColId] = useState(null);
+  const [liveVcColId, setLiveVcColId] = useState(null);
+  const [moving, setMoving] = useState(false);
+
+  const loadPipes = useCallback(async ({ silent } = {}) => {
+    if (!silent) setPipesLoading(true);
+    const liveLead = lead
+      ? {
+        ...lead,
+        sx_pipeline_stage: lead.sx_pipeline_stage || pipelines?.sx || null,
+        vc_pipeline_stage: lead.vc_pipeline_stage || pipelines?.vc || null,
+        project_id: lead.project_id || projectId,
+      }
+      : null;
+    setCrmLead(liveLead);
+    setSxProject(project || null);
+    setVcProject(project || null);
+    if (lead?.stage_id) setLiveCrmStageId(String(lead.stage_id));
+    if (project?.sx_kanban_column_id) setLiveSxColId(String(project.sx_kanban_column_id));
+    else if (project?.sx_intake) {
+      /* cột intake — id sẽ gán sau khi có danh sách stage */
+    }
+    if (project?.vc_kanban_column_id) setLiveVcColId(String(project.vc_kanban_column_id));
+
+    const leadType = lead?.type === 'lead' ? 'lead' : 'deal';
+    const crmParams = lead?.pipeline_id
+      ? { type: leadType, pipeline_id: lead.pipeline_id }
+      : { type: leadType, ...(lead?.company_id ? { company_id: lead.company_id } : {}) };
+    if (lead?.stage_id) crmParams.ensure_stage_id = lead.stage_id;
+
+    const sxCompanyId = project?.company_id || project?.company?.id || null;
+    const vcCompanyId = project?.logistics_company_id
+      || project?.logistics_company?.id
+      || sxCompanyId;
+    const wtId = project?.workshop_type_id || project?.workshop_type?.id || null;
+    const sxParams = { company_id: sxCompanyId };
+    if (wtId) sxParams.workshop_type_id = wtId;
+
+    const histBody = { lead_ids: leadId ? [leadId] : [] };
+    const pipeId = liveLead?.pipeline_id || lead?.pipeline_id;
+    const coId = liveLead?.company_id || lead?.company_id;
+    if (pipeId) histBody.pipeline_id = pipeId;
+    else if (coId) histBody.company_id = coId;
+
+    const [crmRes, sxRes, vcRes, histRes] = await Promise.all([
+      leadId
+        ? api.get('/crm/pipeline-stages', { params: crmParams }).catch(() => ({ data: [] }))
+        : Promise.resolve({ data: [] }),
+      sxCompanyId
+        ? api.get('/production/pipeline-stages', { params: sxParams }).catch(() => ({ data: [] }))
+        : Promise.resolve({ data: [] }),
+      vcCompanyId
+        ? api.get('/logistics/pipeline-stages', { params: { company_id: vcCompanyId } }).catch(() => ({ data: [] }))
+        : Promise.resolve({ data: [] }),
+      leadId
+        ? api.post('/crm/leads/stage-history-summary', histBody).catch(() => ({ data: null }))
+        : Promise.resolve({ data: null }),
+    ]);
+
+    const nextCrm = asStageList(crmRes.data);
+    const nextSx = labeledWorkshopStages(asStageList(sxRes.data));
+    const nextVc = labeledWorkshopStages(asStageList(vcRes.data));
+
+    setCrmStages(nextCrm);
+    setSxStages(nextSx);
+    setVcStages(nextVc);
+    if (!project?.sx_kanban_column_id && project?.sx_intake && nextSx.length) {
+      const intake = nextSx.find((s) => s.bucket_slug === 'won_pending');
+      if (intake?.id) setLiveSxColId(String(intake.id));
+    }
+
+    if (leadId) {
+      const rows = histRes?.data?.by_lead?.[leadId]
+        || histRes?.data?.by_lead?.[String(leadId)]
+        || [];
+      const visited = new Set();
+      for (const h of rows) {
+        if (h?.to_stage_id) visited.add(String(h.to_stage_id));
+      }
+      const sid = liveLead?.stage_id || lead?.stage_id;
+      if (sid) visited.add(String(sid));
+      setVisitedStageIds(visited);
+    } else {
+      setVisitedStageIds(new Set());
+    }
+    setPipesLoading(false);
+    setPipesReady(true);
+  }, [
+    leadId,
+    projectId,
+    lead?.pipeline_id,
+    lead?.company_id,
+    lead?.stage_id,
+    lead?.type,
+    project?.company_id,
+    project?.sx_kanban_column_id,
+    project?.vc_kanban_column_id,
+    project?.sx_intake,
+    project?.logistics_company_id,
+    project?.workshop_type_id,
+    pipelines?.sx?.id,
+    pipelines?.vc?.id,
+    pipelines?.crm?.id,
+  ]);
+
+  useEffect(() => { loadPipes(); }, [loadPipes, syncKey]);
+
+  useEffect(() => {
+    if (lead?.stage_id) setLiveCrmStageId(String(lead.stage_id));
+  }, [lead?.stage_id]);
+  useEffect(() => {
+    if (project?.sx_kanban_column_id) setLiveSxColId(String(project.sx_kanban_column_id));
+  }, [project?.sx_kanban_column_id]);
+  useEffect(() => {
+    if (project?.vc_kanban_column_id) setLiveVcColId(String(project.vc_kanban_column_id));
+  }, [project?.vc_kanban_column_id]);
+
+  useEffect(() => {
+    const onBadge = (e) => {
+      const pid = e?.detail?.projectId;
+      if (pid && projectId && String(pid) !== String(projectId)) return;
+      loadPipes({ silent: true });
+    };
+    window.addEventListener('crm-project-badges-refresh', onBadge);
+    return () => window.removeEventListener('crm-project-badges-refresh', onBadge);
+  }, [loadPipes, projectId]);
+
+  useEffect(() => {
+    const socket = getSocket() || connectSocket();
+    if (!socket) return undefined;
+    const onProject = (payload) => {
+      const pid = payload?.project_id || payload?.id || payload?.project?.id;
+      if (pid && projectId && String(pid) !== String(projectId)) return;
+      if (payload?.sx_kanban_column_id) setLiveSxColId(String(payload.sx_kanban_column_id));
+      if (payload?.vc_kanban_column_id) setLiveVcColId(String(payload.vc_kanban_column_id));
+      loadPipes({ silent: true });
+    };
+    const onCrmLead = (payload) => {
+      const lid = payload?.lead_id;
+      if (lid && leadId && String(lid) === String(leadId)) {
+        if (payload?.stage_id) setLiveCrmStageId(String(payload.stage_id));
+        loadPipes({ silent: true });
+        return;
+      }
+      const pid = payload?.project_id;
+      if (pid && projectId && String(pid) === String(projectId)) loadPipes({ silent: true });
+    };
+    const join = () => {
+      if (projectId) socket.emit('join:project', projectId);
+      if (leadId) socket.emit('join:lead', leadId);
+    };
+    join();
+    socket.on('connect', join);
+    socket.on('project:updated', onProject);
+    socket.on('project:stage_changed', onProject);
+    socket.on('crm:dashboard_changed', onCrmLead);
+    socket.on('crm:badge_updated', onCrmLead);
+    socket.on('crm:task_changed', onProject);
+    socket.on('lead:activity', onCrmLead);
+    return () => {
+      socket.off('connect', join);
+      socket.off('project:updated', onProject);
+      socket.off('project:stage_changed', onProject);
+      socket.off('crm:dashboard_changed', onCrmLead);
+      socket.off('crm:badge_updated', onCrmLead);
+      socket.off('crm:task_changed', onProject);
+      socket.off('lead:activity', onCrmLead);
+    };
+  }, [loadPipes, projectId, leadId]);
+
+  const afterMove = () => {
+    notifyProjectBadges(projectId);
+    onReload?.();
+    window.setTimeout(() => loadPipes({ silent: true }), 160);
+  };
+
+  const moveCrm = async (stageId) => {
+    if (!leadId || moving) return;
+    if (String(liveCrmStageId || crmLead?.stage_id || lead?.stage_id || '') === String(stageId)) return;
+    const targetStage = crmStages.find((s) => String(s.id) === String(stageId));
+    const live = {
+      ...(lead || {}),
+      ...(crmLead || {}),
+      stage_id: liveCrmStageId || crmLead?.stage_id || lead?.stage_id,
+      project_id: crmLead?.project_id || lead?.project_id || projectId,
+      sx_pipeline_stage: crmLead?.sx_pipeline_stage || pipelines?.sx || lead?.sx_pipeline_stage || null,
+      vc_pipeline_stage: crmLead?.vc_pipeline_stage || pipelines?.vc || lead?.vc_pipeline_stage || null,
+    };
+    if (live?.type === 'deal' && targetStage) {
+      const currentStage = crmStages.find((s) => String(s.id) === String(live.stage_id)) || live.stage;
+      const revertBlocked = crmDealRevertFromPostWonBlockedMessage(live, currentStage, targetStage);
+      if (revertBlocked) {
+        alert(revertBlocked);
+        return;
+      }
+      const validStageIds = new Set(crmStages.map((s) => String(s.id)));
+      const sid = live?.stage_id ? String(live.stage_id) : '';
+      const isOrphanSource =
+        !sid
+        || !validStageIds.has(sid)
+        || (!!live?.project_id && !live?.sx_pipeline_stage?.id && !live?.vc_pipeline_stage?.id);
+      if (!isOrphanSource) {
+        const blocked = crmDealStageMoveBlockedMessage(live, targetStage, 'deal', {
+          wonAnchorOrder: resolveDealWonAnchorOrderIndex(crmStages),
+        });
+        if (blocked) {
+          alert(blocked);
+          return;
+        }
+      }
+    }
+    if (targetStage?.is_lost) {
+      alert('Đánh dấu Thua cần nhập lý do — mở chi tiết CRM để chuyển.');
+      return;
+    }
+    if (targetStage?.is_won && live?.type !== 'deal') {
+      alert('Chuyển sang Thắng cần convert Lead → Deal — mở chi tiết CRM.');
+      return;
+    }
+    if (live?.type === 'deal' && targetStage?.is_won && !live?.project_id) {
+      alert('Chuyển sang Thắng sẽ tạo dự án SX — mở chi tiết CRM để chọn xưởng.');
+      return;
+    }
+    if (targetStage && !targetStage.is_won && !targetStage.is_lost) {
+      try {
+        const { data: chk } = await api.get(`/crm/leads/${leadId}/stage-advance-check`, {
+          params: { target_stage_id: stageId },
+        });
+        if (chk && chk.ok === false && chk.code === 'CRM_BLOCKING_TASKS_INCOMPLETE') {
+          const names = (chk.remaining_tasks || []).map((t) => t.title || t.name).filter(Boolean);
+          alert(`Còn nhiệm vụ chặn chuyển giai đoạn${chk.current_stage_name ? ` tại «${chk.current_stage_name}»` : ''}${names.length ? `:\n• ${names.slice(0, 8).join('\n• ')}` : ''}`);
+          return;
+        }
+      } catch { /* pre-check lỗi → backend vẫn chặn */ }
+    }
+    setMoving(true);
+    setLiveCrmStageId(String(stageId));
+    try {
+      const { data } = await api.patch(`/crm/leads/${leadId}/stage`, { stage_id: stageId });
+      const nextId = data?.stage_id || stageId;
+      setLiveCrmStageId(String(nextId));
+      setVisitedStageIds((prev) => {
+        const next = new Set(prev);
+        next.add(String(nextId));
+        return next;
+      });
+      if (data?.id) setCrmLead((prev) => (prev ? { ...prev, ...data, stage_id: nextId } : data));
+      afterMove();
+    } catch (e) {
+      const body = e?.response?.data || {};
+      if (body.code === 'requires_deadline') {
+        alert(body.error || 'Cột CRM này bắt buộc deadline — mở chi tiết CRM để nhập hạn.');
+      } else if (body.code === 'CRM_BLOCKING_TASKS_INCOMPLETE') {
+        const names = (body.remaining_tasks || []).map((t) => t.title || t.name).filter(Boolean);
+        alert(`Còn nhiệm vụ chặn chuyển giai đoạn${body.current_stage_name ? ` tại «${body.current_stage_name}»` : ''}${names.length ? `:\n• ${names.slice(0, 8).join('\n• ')}` : ''}`);
+      } else {
+        alert(body.error || e.message || 'Không chuyển được giai đoạn CRM');
+      }
+      loadPipes({ silent: true });
+    } finally {
+      setMoving(false);
+    }
+  };
+
+  const moveSx = async (stageId) => {
+    if (!projectId || moving) return;
+    const sxStage = sxStages.find((s) => String(s.id) === String(stageId));
+    const proj = sxProject || project;
+    if (!TEMP_SX_FREE_DRAG && sxStage?.is_handover_to_logistics === true && !isProjectAlreadyInLogistics(proj)) {
+      setMoving(true);
+      try {
+        setLiveSxColId(String(sxStage?.id || stageId));
+        await api.post(`/vc-handover/projects/${projectId}/request`, { sx_stage_id: String(sxStage?.id || stageId) });
+        alert('Đã gửi thông báo cho Sale CRM — chọn công ty VC/LĐ và ngày lấy/lắp trong bình luận deal. VC xác nhận xong mới tạo lịch.');
+        afterMove();
+      } catch (e) {
+        alert(e.response?.data?.error || 'Không gửi được yêu cầu bàn giao VC/LĐ');
+        loadPipes({ silent: true });
+      } finally {
+        setMoving(false);
+      }
+      return;
+    }
+    if (sxStage?.is_switch_workshop_type === true && sxStage?.target_workshop_type_id) {
+      alert('Cột này đổi phân loại xưởng — mở chi tiết Sản xuất để chuyển.');
+      return;
+    }
+    let body;
+    if (sxStage?.bucket_slug === 'won_pending' || String(sxStage?.id || '').startsWith('__fb_')) {
+      body = { move_to_intake: true };
+    } else {
+      body = {
+        sx_pipeline_stage_id: sxStage?.id || stageId,
+        current_sx_pipeline_stage_id: liveSxColId || proj?.sx_kanban_column_id || null,
+      };
+    }
+    setMoving(true);
+    setLiveSxColId(String(sxStage?.id || stageId));
+    try {
+      await api.patch(`/production/projects/${projectId}/stage`, body);
+      afterMove();
+    } catch (e) {
+      const bodyErr = e?.response?.data || {};
+      if (bodyErr.code === 'SX_BLOCKING_TASKS_INCOMPLETE') {
+        const names = (bodyErr.remaining_tasks || []).map((t) => t.title || t.name).filter(Boolean);
+        alert(`Còn nhiệm vụ SX chặn chuyển cột${bodyErr.current_stage_name ? ` tại «${bodyErr.current_stage_name}»` : ''}${names.length ? `:\n• ${names.slice(0, 8).join('\n• ')}` : ''}`);
+      } else if (bodyErr.code === 'requires_deadline') {
+        alert(bodyErr.error || 'Cột này bắt buộc deadline — mở chi tiết Sản xuất để nhập hạn.');
+      } else {
+        alert(bodyErr.error || e.message || 'Không chuyển được cột Sản xuất');
+      }
+      loadPipes({ silent: true });
+    } finally {
+      setMoving(false);
+    }
+  };
+
+  const moveVc = async (stageId) => {
+    if (!projectId || moving) return;
+    const proj = vcProject || project;
+    if (proj?.vc_temp_staged && String(stageId) !== String(proj?.vc_kanban_column_id || liveVcColId || '')) {
+      alert(VC_TEMP_LOCK_MSG);
+      return;
+    }
+    const vcStage = vcStages.find((s) => String(s.id) === String(stageId));
+    let body = { vc_stage_id: stageId };
+    if (vcStage?.workflow_stage_id) body.stage_id = vcStage.workflow_stage_id;
+    if (vcStage?.bucket_slug === 'delivery_pending') body = { move_to_intake: true };
+    setMoving(true);
+    setLiveVcColId(String(stageId));
+    try {
+      await api.patch(`/logistics/projects/${projectId}/stage`, body);
+      afterMove();
+    } catch (e) {
+      const bodyErr = e?.response?.data || {};
+      if (bodyErr.code === 'SX_BLOCKING_TASKS_INCOMPLETE' || bodyErr.code === 'VC_BLOCKING_TASKS_INCOMPLETE') {
+        const names = (bodyErr.remaining_tasks || []).map((t) => t.title || t.name).filter(Boolean);
+        alert(`Còn nhiệm vụ VC chặn chuyển cột${names.length ? `:\n• ${names.slice(0, 8).join('\n• ')}` : ''}`);
+      } else {
+        alert(bodyErr.error || e.message || 'Không chuyển được cột VC/LĐ');
+      }
+      loadPipes({ silent: true });
+    } finally {
+      setMoving(false);
+    }
+  };
+
+  const crmCurrentId = pipelineCurrentId(
+    crmStages,
+    liveCrmStageId || crmLead?.stage_id || lead?.stage_id,
+    pipelines?.crm,
+  );
+  const sxResolved = resolveSxDisplayColumnId(
+    {
+      ...(sxProject || {}),
+      ...(project || {}),
+      sx_kanban_column_id: liveSxColId || sxProject?.sx_kanban_column_id || project?.sx_kanban_column_id,
+      crmDeals: sxProject?.crmDeals || (crmLead ? [crmLead] : []),
+    },
+    sxStages,
+    {
+      leadColId: crmLead?.sx_pipeline_stage?.id || crmLead?.sx_pipeline_stage_id || pipelines?.sx?.id || null,
+    },
+  );
+  const sxCurrentId = pipelineCurrentId(
+    sxStages,
+    sxResolved || liveSxColId || project?.sx_kanban_column_id,
+    pipelines?.sx,
+  );
+  const vcList = vcStages;
+  const vcColRaw = liveVcColId || vcProject?.vc_kanban_column_id || project?.vc_kanban_column_id;
+  let vcCurrentId = pipelineCurrentId(vcList, vcColRaw, pipelines?.vc);
+  if ((!vcCurrentId || !vcList.some((s) => String(s.id) === String(vcCurrentId))) && (vcProject?.vc_intake || pipelines?.vc?.bucket_slug === 'delivery_pending')) {
+    const intake = vcList.find((s) => String(s.bucket_slug || '') === 'delivery_pending');
+    if (intake?.id) vcCurrentId = String(intake.id);
+  }
+
+  const crmHref = leadId ? `/crm/leads/${leadId}` : null;
+
   return (
     <div className="space-y-4">
-      <Section title="Luồng công đoạn hiện tại">
-        <div className="flex flex-wrap gap-2">
-          {(flow || []).map((s, idx) => (
-            <span
-              key={s.key}
-              className={`text-xs font-medium px-2.5 py-1 rounded-full ${
-                s.status === 'done' ? 'bg-emerald-50 text-emerald-700'
-                  : s.status === 'current' ? 'bg-blue-50 text-blue-700'
-                    : 'bg-gray-100 text-gray-500'
-              }`}
-            >
-              {idx + 1}. {s.label}
-            </span>
-          ))}
-        </div>
-      </Section>
-      <Section title="Lịch sử chuyển công đoạn">
-        {loading ? <EmptyNote>Đang tải...</EmptyNote>
-          : error ? <EmptyNote>{error}</EmptyNote>
-            : transitions.length === 0 ? <EmptyNote>Chưa có lần chuyển công đoạn nào được ghi nhận.</EmptyNote>
-              : (
-                <div className="space-y-3">
-                  {transitions.map((t) => (
-                    <div key={t.id} className="flex items-start gap-3 text-sm">
-                      <div className="h-2 w-2 rounded-full bg-blue-500 mt-1.5 shrink-0" />
-                      <div className="min-w-0">
-                        <p className="text-gray-800">
-                          {t.from_stage?.name ? `${t.from_stage.name} → ` : ''}
-                          <span className="font-medium">{t.to_stage?.name || '—'}</span>
-                        </p>
-                        <p className="text-xs text-gray-400 mt-0.5">
-                          {t.user?.full_name ? `${t.user.full_name} · ` : ''}{formatDateTime(t.created_at)}
-                        </p>
-                        {t.notes && <p className="text-xs text-gray-500 mt-0.5">{t.notes}</p>}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
+      <ModuleStepperBlock
+        label="CRM"
+        href={crmHref}
+        loading={pipesLoading}
+        empty={!leadId ? 'Chưa gắn Deal CRM' : (!crmStages.length ? 'Chưa có pipeline CRM' : null)}
+      >
+        <PipelineStepper
+          stages={crmStages}
+          currentStageId={crmCurrentId}
+          currentStageName={crmLead?.stage?.name || lead?.stage?.name || pipelines?.crm?.name}
+          visitedStageIds={visitedStageIds}
+          onMoveToStage={moving ? undefined : moveCrm}
+        />
+      </ModuleStepperBlock>
+      <ModuleStepperBlock
+        label="Sản xuất"
+        href={projectId ? `/sx/projects/${projectId}` : null}
+        loading={pipesLoading}
+        empty={!sxStages.length ? 'Chưa có pipeline sản xuất' : null}
+      >
+        <PipelineStepper
+          stages={sxStages}
+          currentStageId={sxCurrentId}
+          currentStageName={pipelines?.sx?.name}
+          linearProgress
+          onMoveToStage={moving ? undefined : moveSx}
+        />
+      </ModuleStepperBlock>
+      <ModuleStepperBlock
+        label="VC / LĐ"
+        href={projectId ? `/vc/projects/${projectId}` : null}
+        loading={pipesLoading}
+        empty={!vcStages.length ? 'Chưa có pipeline VC/LĐ' : null}
+      >
+        <PipelineStepper
+          stages={vcStages}
+          currentStageId={vcCurrentId}
+          currentStageName={pipelines?.vc?.name}
+          linearProgress
+          onMoveToStage={moving ? undefined : moveVc}
+        />
+      </ModuleStepperBlock>
+      <Section
+        title="Lịch sử thao tác"
+        action={<span className="text-[11px] text-gray-500">{items.length} sự kiện</span>}
+      >
+        <ProjectOperationHistory loading={loading} error={error} items={items} />
       </Section>
     </div>
   );
@@ -312,93 +959,401 @@ function extractInternalLink(notes) {
   return m ? m[1] : null;
 }
 
-export function DocumentsTab({ projectId, leadId }) {
-  const [state, setState] = useState({ loading: true, error: '', docs: [] });
-  useEffect(() => {
-    let cancelled = false;
-    setState({ loading: true, error: '', docs: [] });
-    Promise.all([
-      leadId ? api.get(`/crm/leads/${leadId}/documents`).catch(() => ({ data: [] })) : Promise.resolve({ data: [] }),
-      api.get(`/projects/${projectId}/documents`).catch(() => ({ data: { documents: [] } })),
-    ]).then(([leadRes, projectRes]) => {
-      if (cancelled) return;
-      const fromDeal = (Array.isArray(leadRes.data) ? leadRes.data : []).map((d) => ({
-        id: `deal-${d.id}`,
-        name: d.name || d.file_name || 'Tệp không tên',
-        file_url: d.file_url,
-        mime_type: d.mime_type,
-        created_at: d.created_at,
-        uploader_name: d.creator?.full_name || null,
-        source_label: 'Deal',
-        internal_link: !d.file_url ? extractInternalLink(d.notes) : null,
-      }));
-      const fromProject = (projectRes.data?.documents || []).map((d) => ({
-        id: `project-${d.id}`,
-        name: d.file_name || 'Tệp không tên',
-        file_url: d.file_url,
-        mime_type: d.mime_type,
-        created_at: d.created_at,
-        uploader_name: d.uploader?.full_name || null,
-        source_label: 'Dự án',
-      }));
-      const merged = [...fromDeal, ...fromProject].sort(
-        (a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0),
-      );
-      setState({ loading: false, error: '', docs: merged });
-    }).catch((e) => {
-      if (!cancelled) setState({ loading: false, error: e?.response?.data?.error || 'Không tải được tài liệu', docs: [] });
-    });
-    return () => { cancelled = true; };
-  }, [projectId, leadId]);
+const DOC_TYPE_BADGE = {
+  requirement: { label: 'Yêu cầu KH', emoji: '📝', cls: 'text-blue-700 bg-blue-50' },
+  drawing: { label: 'Bản vẽ', emoji: '📐', cls: 'text-purple-700 bg-purple-50' },
+  image: { label: 'Hình ảnh', emoji: '🖼️', cls: 'text-pink-700 bg-pink-50' },
+  contract: { label: 'Hợp đồng', emoji: '📄', cls: 'text-emerald-700 bg-emerald-50' },
+  measurement: { label: 'Số đo', emoji: '📏', cls: 'text-orange-700 bg-orange-50' },
+  note: { label: 'Ghi chú', emoji: '📝', cls: 'text-amber-700 bg-amber-50' },
+  pdf: { label: 'PDF', emoji: '📕', cls: 'text-red-700 bg-red-50' },
+  spreadsheet: { label: 'Bảng tính', emoji: '📗', cls: 'text-emerald-700 bg-emerald-50' },
+  other: { label: 'Tệp', emoji: '📎', cls: 'text-gray-600 bg-gray-50' },
+};
 
-  if (state.loading) return <Section title="Tài liệu"><EmptyNote>Đang tải...</EmptyNote></Section>;
-  if (state.error) return <Section title="Tài liệu"><EmptyNote>{state.error}</EmptyNote></Section>;
-  const docs = state.docs;
+function asDocArray(data) {
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.documents)) return data.documents;
+  if (Array.isArray(data?.taskFiles)) return data.taskFiles;
+  return [];
+}
+
+function isImageDoc(d) {
+  return d?.doc_type === 'image'
+    || String(d?.mime_type || '').startsWith('image/')
+    || /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(d?.file_url || d?.file_path || d?.file_name || d?.name || '');
+}
+
+function isVideoDoc(d) {
+  return d?.doc_type === 'video'
+    || String(d?.mime_type || '').startsWith('video/')
+    || /\.(mp4|mov|webm|avi)$/i.test(d?.file_url || d?.file_name || d?.name || '');
+}
+
+function fileRefOf(d) {
+  return String(d?.file_url || d?.file_path || '').trim();
+}
+
+function formatFileSize(bytes) {
+  const n = Number(bytes) || 0;
+  if (n <= 0) return '';
+  if (n > 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
+  return `${Math.max(1, Math.round(n / 1024))} KB`;
+}
+
+function mapUnifiedDoc(d, sourceLabel, idPrefix) {
+  const fileUrl = fileRefOf(d);
+  return {
+    id: `${idPrefix}-${d.id || fileUrl || d.file_name || Math.random()}`,
+    sourceId: d.id ? String(d.id) : '',
+    name: d.name || d.file_name || 'Tệp không tên',
+    file_name: d.file_name || d.name || '',
+    file_url: fileUrl,
+    mime_type: d.mime_type || '',
+    doc_type: d.doc_type || '',
+    file_size: d.file_size || 0,
+    notes: d.notes || '',
+    created_at: d.created_at,
+    uploader_name: d.creator?.full_name || d.uploader?.full_name || null,
+    source_label: sourceLabel,
+    internal_link: !fileUrl ? extractInternalLink(d.notes) : null,
+  };
+}
+
+function UnifiedDocCard({ doc, onOpenImage }) {
+  const preview = useFilePreview();
+  const typeInfo = DOC_TYPE_BADGE[doc.doc_type] || DOC_TYPE_BADGE.other;
+  const img = isImageDoc(doc);
+  const video = isVideoDoc(doc);
+  const href = doc.file_url ? publicFileUrl(doc.file_url) : '';
+  const previewName = doc.file_name || doc.name;
+  const previewMode = resolveFilePreviewMode({
+    mimeType: doc.mime_type,
+    fileName: previewName,
+    fileUrl: doc.file_url,
+  });
+  const canPreviewInApp = !!(doc.file_url && (img || previewMode));
+  const openTabProps = doc.file_url ? getFileOpenAnchorProps(doc.file_url, { fileName: previewName }) : null;
+
+  const openOnWeb = (e) => {
+    e?.preventDefault?.();
+    e?.stopPropagation?.();
+    if (img) {
+      onOpenImage?.(doc.file_url);
+      return;
+    }
+    if (previewMode && preview?.openFilePreview) {
+      preview.openFilePreview({
+        url: doc.file_url,
+        fileName: previewName,
+        mimeType: doc.mime_type,
+        title: doc.name,
+      });
+    }
+  };
 
   return (
-    <Section title="Tài liệu" action={<span className="text-[11px] text-gray-500">{docs.length} tệp</span>}>
-      {docs.length === 0 ? (
-        <EmptyNote>Chưa có tài liệu nào được tải lên (từ Deal hoặc Dự án).</EmptyNote>
+    <div className="rounded-lg border border-slate-200 bg-white overflow-hidden hover:shadow-sm transition-shadow">
+      {img && href ? (
+        <button
+          type="button"
+          onClick={openOnWeb}
+          className="block w-full bg-slate-100 cursor-zoom-in"
+          title="Xem ảnh"
+        >
+          <img src={href} alt={doc.name} className="h-36 w-full object-cover" loading="lazy" />
+        </button>
+      ) : video && href ? (
+        <video src={href} controls preload="metadata" className="h-36 w-full bg-black object-contain" />
+      ) : canPreviewInApp ? (
+        <button
+          type="button"
+          onClick={openOnWeb}
+          className="h-16 w-full flex items-center gap-2 px-3 bg-slate-50 border-b border-slate-100 text-left hover:bg-slate-100 cursor-pointer"
+          title="Xem trên web"
+        >
+          <span className="text-2xl leading-none">{getFileEmoji(previewName)}</span>
+          <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${typeInfo.cls}`}>
+            {typeInfo.emoji} {typeInfo.label}
+          </span>
+          <span className="ml-auto text-[10px] font-semibold text-emerald-700">Xem trên web</span>
+        </button>
+      ) : openTabProps ? (
+        <a
+          {...openTabProps}
+          className="h-16 w-full flex items-center gap-2 px-3 bg-slate-50 border-b border-slate-100 hover:bg-slate-100"
+          title="Mở file"
+        >
+          <span className="text-2xl leading-none">{getFileEmoji(previewName)}</span>
+          <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${typeInfo.cls}`}>
+            {typeInfo.emoji} {typeInfo.label}
+          </span>
+          <span className="ml-auto text-[10px] font-semibold text-blue-700">Mở</span>
+        </a>
       ) : (
-        <div className="divide-y divide-gray-50">
-          {docs.map((d) => (
-            <div key={d.id} className="flex items-center gap-3 py-2.5">
-              <FileIcon className="h-4 w-4 text-gray-400 shrink-0" />
-              <div className="min-w-0 flex-1">
-                {d.file_url ? (
-                  <FilePreviewOpenLink
-                    fileUrl={d.file_url}
-                    fileName={d.name}
-                    mimeType={d.mime_type}
-                    className="text-sm text-gray-800 hover:text-blue-700 hover:underline truncate block text-left cursor-pointer"
-                  >
-                    {d.name}
-                  </FilePreviewOpenLink>
-                ) : d.internal_link ? (
-                  <Link to={d.internal_link} className="text-sm text-gray-800 hover:text-blue-700 hover:underline truncate block">
-                    {d.name}
+        <div className="h-16 flex items-center gap-2 px-3 bg-slate-50 border-b border-slate-100">
+          <span className="text-2xl leading-none">{getFileEmoji(previewName)}</span>
+          <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${typeInfo.cls}`}>
+            {typeInfo.emoji} {typeInfo.label}
+          </span>
+        </div>
+      )}
+      <div className="p-3 space-y-1.5">
+        {doc.file_url ? (
+          <FilePreviewOpenLink
+            fileUrl={doc.file_url}
+            fileName={previewName}
+            mimeType={doc.mime_type}
+            className="text-sm font-semibold text-slate-900 hover:text-blue-700 truncate block text-left cursor-pointer w-full"
+          >
+            {doc.name}
+          </FilePreviewOpenLink>
+        ) : doc.internal_link ? (
+          <Link to={doc.internal_link} className="text-sm font-semibold text-slate-900 hover:text-blue-700 truncate block">
+            {doc.name}
+          </Link>
+        ) : (
+          <p className="text-sm font-semibold text-slate-900 truncate">{doc.name}</p>
+        )}
+        {doc.notes?.trim() && !doc.internal_link && (
+          <p className="text-xs text-slate-500 line-clamp-2 whitespace-pre-wrap">{doc.notes}</p>
+        )}
+        <p className="text-[11px] text-slate-400">
+          <span className="text-violet-600 font-medium">{doc.source_label}</span>
+          {doc.uploader_name ? ` · ${doc.uploader_name}` : ''}
+          {doc.created_at ? ` · ${formatDate(doc.created_at)}` : ''}
+          {doc.file_size ? ` · ${formatFileSize(doc.file_size)}` : ''}
+        </p>
+        {doc.file_url && (
+          <div className="flex items-center gap-3 pt-0.5">
+            {canPreviewInApp ? (
+              <button
+                type="button"
+                onClick={openOnWeb}
+                className="inline-flex items-center gap-1 text-xs text-emerald-700 hover:text-emerald-900 font-semibold"
+              >
+                <Eye className="h-3.5 w-3.5" /> Xem
+              </button>
+            ) : openTabProps ? (
+              <a
+                {...openTabProps}
+                className="inline-flex items-center gap-1 text-xs text-emerald-700 hover:text-emerald-900 font-semibold"
+              >
+                <ExternalLink className="h-3.5 w-3.5" /> Mở
+              </a>
+            ) : null}
+            <a
+              {...getFileDownloadAnchorProps(doc.file_url, { fileName: previewName })}
+              className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 font-medium"
+            >
+              <Download className="h-3.5 w-3.5" /> Tải xuống
+            </a>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export function DocumentsTab({ projectId, leadId, projectHint = null }) {
+  const [state, setState] = useState({ loading: true, error: '', docs: [], project: null, crmTaskDocs: [] });
+  const [lightbox, setLightbox] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setState((prev) => ({ ...prev, loading: true, error: '' }));
+    Promise.all([
+      leadId ? api.get(`/crm/leads/${leadId}/documents`).catch(() => ({ data: [] })) : Promise.resolve({ data: [] }),
+      api.get(`/crm/project/${projectId}/lead-documents`).catch(() => ({ data: [] })),
+      api.get(`/projects/${projectId}/documents`).catch(() => ({ data: { documents: [] } })),
+      api.get(`/projects/${projectId}/task-files`).catch(() => ({ data: { taskFiles: [] } })),
+      leadId ? api.get(`/crm/leads/${leadId}/task-documents`).catch(() => ({ data: [] })) : Promise.resolve({ data: [] }),
+      projectHint
+        ? Promise.resolve({ data: { project: projectHint } })
+        : api.get(`/projects/${projectId}`).catch(() => ({ data: {} })),
+    ]).then(([leadRes, byProjectRes, projectDocsRes, taskFilesRes, crmTaskDocsRes, projectRes]) => {
+      if (cancelled) return;
+      const seen = new Set();
+      const docs = [];
+      const push = (row, source, prefix) => {
+        const mapped = mapUnifiedDoc(row, source, prefix);
+        const dedupe = mapped.sourceId
+          ? `id:${mapped.sourceId}`
+          : mapped.file_url
+            ? `url:${mapped.file_url}`
+            : mapped.id;
+        if (seen.has(dedupe)) return;
+        seen.add(dedupe);
+        docs.push(mapped);
+      };
+      asDocArray(leadRes.data).forEach((d) => push(d, 'Deal', 'deal'));
+      asDocArray(byProjectRes.data).forEach((d) => push(d, 'Deal', 'deal'));
+      asDocArray(projectDocsRes.data).forEach((d) => push(d, 'Dự án', 'project'));
+      asDocArray(taskFilesRes.data).forEach((d) => {
+        const label = d.task?.title ? `NV: ${d.task.title}` : 'Nhiệm vụ dự án';
+        push(d, label, 'taskfile');
+      });
+      docs.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+      const seenUrls = new Set(docs.map((d) => d.file_url).filter(Boolean));
+      const crmTaskDocs = asDocArray(crmTaskDocsRes.data).filter((d) => {
+        const url = fileRefOf(d);
+        return !url || !seenUrls.has(url);
+      });
+      setState({
+        loading: false,
+        error: '',
+        docs,
+        project: projectRes.data?.project || null,
+        crmTaskDocs,
+      });
+    }).catch((e) => {
+      if (!cancelled) {
+        setState({
+          loading: false,
+          error: e?.response?.data?.error || 'Không tải được tài liệu',
+          docs: [],
+          project: null,
+          crmTaskDocs: [],
+        });
+      }
+    });
+    return () => { cancelled = true; };
+  }, [projectId, leadId, projectHint?.id]);
+
+  const images = useMemo(() => state.docs.filter((d) => d.file_url && isImageDoc(d)), [state.docs]);
+  const otherDocs = useMemo(() => state.docs.filter((d) => !isImageDoc(d)), [state.docs]);
+  const galleryItems = useMemo(() => collectUploadLightboxItems(images), [images]);
+
+  const openImage = (rawPath) => {
+    const idx = findUploadLightboxIndex(galleryItems, rawPath);
+    if (idx >= 0) setLightbox({ items: galleryItems, index: idx });
+    else if (rawPath) setLightbox({ items: collectUploadLightboxItems([{ file_url: rawPath }]), index: 0 });
+  };
+
+  if (state.loading) {
+    return (
+      <Section title="Tài liệu">
+        <div className="flex items-center justify-center py-10">
+          <Loader2 className="h-5 w-5 animate-spin text-gray-400" />
+        </div>
+      </Section>
+    );
+  }
+  if (state.error) return <Section title="Tài liệu"><EmptyNote>{state.error}</EmptyNote></Section>;
+
+  const docs = state.docs;
+  const hasFiles = docs.length > 0;
+
+  return (
+    <div className="space-y-4">
+      <Section
+        title="Tài liệu"
+        action={(
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] text-gray-500">{docs.length} tệp</span>
+            {leadId && (
+              <Link
+                to={`/crm/leads/${leadId}`}
+                className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-700 hover:text-amber-900"
+              >
+                <Plus className="h-3 w-3" /> Upload CRM
                   </Link>
-                ) : (
-                  <p className="text-sm text-gray-800 truncate">{d.name}</p>
-                )}
-                <p className="text-xs text-gray-400 mt-0.5">
-                  <span className="text-violet-600 font-medium">{d.source_label}</span>
-                  {d.uploader_name ? ` · ${d.uploader_name}` : ''} · {formatDate(d.created_at)}
-                </p>
+            )}
+            <Link
+              to={`/projects/${projectId}?tab=documents`}
+              className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-600 hover:text-blue-800"
+            >
+              Trang đầy đủ <ExternalLink className="h-3 w-3" />
+            </Link>
               </div>
-              {d.file_url && (
-                <a
-                  {...getFileDownloadAnchorProps(d.file_url, { fileName: d.name })}
-                  className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 font-medium shrink-0"
-                >
-                  <Download className="h-3.5 w-3.5" /> Tải
-                </a>
-              )}
+        )}
+      >
+        {!hasFiles ? (
+          <div className="text-center py-8">
+            <FolderOpen className="h-10 w-10 mx-auto mb-2 text-gray-300" />
+            <p className="text-sm text-gray-500">Chưa có tài liệu nào được tải lên (Deal, dự án hoặc nhiệm vụ).</p>
+            <p className="text-xs text-gray-400 mt-1">Upload trên CRM hoặc trang dự án đầy đủ — file sẽ hiện ở đây.</p>
+          </div>
+        ) : (
+          <div className="space-y-5">
+            {images.length > 0 && (
+              <div>
+                <div className="flex items-center gap-2 mb-2">
+                  <ImageIcon className="h-4 w-4 text-pink-600" />
+                  <p className="text-xs font-bold text-slate-600 uppercase">Hình ảnh ({images.length})</p>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-2">
+                  {images.map((d) => (
+                    <button
+                      key={d.id}
+                      type="button"
+                      onClick={() => openImage(d.file_url)}
+                      className="group relative aspect-square rounded-lg overflow-hidden border border-slate-200 bg-slate-100 cursor-zoom-in"
+                      title={d.name}
+                    >
+                      <img src={publicFileUrl(d.file_url)} alt={d.name} className="h-full w-full object-cover group-hover:opacity-90" loading="lazy" />
+                      <span className="absolute inset-x-0 bottom-0 bg-black/55 text-white text-[10px] truncate px-1.5 py-1">
+                        {d.name}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            {otherDocs.length > 0 && (
+              <div>
+                <div className="flex items-center gap-2 mb-2">
+                  <FileIcon className="h-4 w-4 text-blue-600" />
+                  <p className="text-xs font-bold text-slate-600 uppercase">Tệp & văn bản ({otherDocs.length})</p>
             </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-2">
+                  {otherDocs.map((d) => (
+                    <UnifiedDocCard key={d.id} doc={d} onOpenImage={openImage} />
           ))}
+                </div>
+              </div>
+            )}
         </div>
       )}
     </Section>
+
+      {state.crmTaskDocs.length > 0 && (
+        <Section title="File nhiệm vụ CRM">
+          <CrmTaskDocumentsPanel
+            tasks={[]}
+            artifacts={state.crmTaskDocs}
+            leadType="deal"
+            onOpenImage={openImage}
+          />
+        </Section>
+      )}
+
+      <ProjectDocumentsTab
+        projectId={projectId}
+        project={state.project}
+        leadId={leadId}
+        forModule={null}
+        showLeadDocuments={false}
+      />
+
+      <Section title="Drive dự án">
+        <DriveAttachments entityType="project" entityId={projectId} />
+      </Section>
+      {leadId && (
+        <Section title="Drive Deal">
+          <DriveAttachments entityType="deal" entityId={leadId} />
+        </Section>
+      )}
+
+      {lightbox?.items?.length > 0 && (
+        <UploadFileLightbox
+          items={lightbox.items}
+          index={lightbox.index}
+          onIndexChange={(index) => setLightbox((prev) => (prev ? { ...prev, index } : prev))}
+          onClose={() => setLightbox(null)}
+        />
+      )}
+    </div>
   );
 }
 
@@ -485,29 +1440,14 @@ function AcceptanceTab({ flow, projectId }) {
   );
 }
 
-export function HistoryTab({ projectId }) {
-  const { loading, error, data } = useProjectDetailBundle(projectId, true);
-  const activities = data?.activities || [];
+export function HistoryTab({ projectId, leadId }) {
+  const { loading, error, items } = useProjectOperationHistory(projectId, leadId);
   return (
-    <Section title="Lịch sử hoạt động" action={<span className="text-[11px] text-gray-500">{activities.length} sự kiện</span>}>
-      {loading ? <EmptyNote>Đang tải...</EmptyNote>
-        : error ? <EmptyNote>{error}</EmptyNote>
-          : activities.length === 0 ? <EmptyNote>Chưa có hoạt động nào được ghi nhận.</EmptyNote>
-            : (
-              <div className="space-y-3 max-h-[520px] overflow-y-auto pr-1">
-                {activities.map((a) => (
-                  <div key={a.id} className="flex items-start gap-3 text-sm">
-                    <div className="h-2 w-2 rounded-full bg-gray-300 mt-1.5 shrink-0" />
-                    <div className="min-w-0">
-                      <p className="text-gray-800">{a.description || a.action}</p>
-                      <p className="text-xs text-gray-400 mt-0.5">
-                        {a.user?.full_name ? `${a.user.full_name} · ` : ''}{formatDateTime(a.created_at)}
-                      </p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+    <Section
+      title="Lịch sử thao tác"
+      action={<span className="text-[11px] text-gray-500">{items.length} sự kiện</span>}
+    >
+      <ProjectOperationHistory loading={loading} error={error} items={items} />
     </Section>
   );
 }
@@ -547,12 +1487,16 @@ function ProjectJumpSearch({ currentId }) {
   const [rangeFrom, setRangeFrom] = useState('');
   const [rangeTo, setRangeTo] = useState('');
 
+  const catalogsNeeded = searchFocused || filterPanelOpen || q.trim().length >= 2;
+
   useEffect(() => {
+    if (!catalogsNeeded) return undefined;
     api.get('/companies', { params: { for_module: 'crm' } }).then((res) => {
       const list = Array.isArray(res.data) ? res.data : (res.data?.companies || []);
       setCompanies(list);
     }).catch(() => setCompanies([]));
-  }, []);
+    return undefined;
+  }, [catalogsNeeded]);
 
   const effectiveCompanyIdForUsers = useMemo(() => {
     if (canPickCompany) return companyId || '';
@@ -567,6 +1511,7 @@ function ProjectJumpSearch({ currentId }) {
   }, [user?.company_id, companies]);
 
   useEffect(() => {
+    if (!catalogsNeeded) return undefined;
     if (effectiveCompanyIdForUsers) {
       api.get('/users', { params: { company_id: effectiveCompanyIdForUsers } })
         .then((r) => setUsers(r.data.users || r.data || []))
@@ -581,9 +1526,10 @@ function ProjectJumpSearch({ currentId }) {
     }
     setUsers([]);
     return undefined;
-  }, [effectiveCompanyIdForUsers, canPickCompany]);
+  }, [catalogsNeeded, effectiveCompanyIdForUsers, canPickCompany]);
 
   useEffect(() => {
+    if (!catalogsNeeded) return undefined;
     const params = {};
     if (effectiveCompanyIdForUsers) {
       params.company_id = effectiveCompanyIdForUsers;
@@ -597,7 +1543,7 @@ function ProjectJumpSearch({ currentId }) {
       .then((r) => setRegions((Array.isArray(r.data) ? r.data : []).filter((rg) => rg.is_active !== false)))
       .catch(() => setRegions([]));
     return undefined;
-  }, [effectiveCompanyIdForUsers, canPickCompany, companies]);
+  }, [catalogsNeeded, effectiveCompanyIdForUsers, canPickCompany, companies]);
 
   useEffect(() => {
     setFilterUserId('');
@@ -829,15 +1775,19 @@ function ProjectJumpSearch({ currentId }) {
 export default function WorkUnifiedProjectDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { user: currentUser } = useAuth();
   const { openMessengerGroupChat, markGroupRead } = useMessengerDock();
   const [bundle, setBundle] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [activeTab, setActiveTab] = useState('overview');
+  const tabFromUrl = searchParams.get('tab') || 'overview';
+  const groupFromUrl = searchParams.get('group') || '';
+  const [activeTab, setActiveTab] = useState(() => tabFromUrl);
   const [messagingId, setMessagingId] = useState(null);
   const [companyUsers, setCompanyUsers] = useState([]);
   const [commentCount, setCommentCount] = useState(0);
+  const bundleLeadIdRef = useRef(null);
 
   const startDirectChat = async (peerUser) => {
     const peerId = peerUser?.id;
@@ -863,20 +1813,36 @@ export default function WorkUnifiedProjectDetailPage() {
     }
   };
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (opts = {}) => {
     if (!id) {
       setError('Thiếu mã dự án');
       setLoading(false);
       return;
     }
-    setLoading(true);
+    const silent = !!opts.silent;
+    const noCache = !!opts.noCache;
+    if (!silent) {
+      const cached = readWorkUnifiedLiteCache(id);
+      if (cached) {
+        setBundle(cached);
+        setCommentCount(Number(cached.comment_count) || 0);
+        setLoading(false);
+      } else {
+        setBundle(null);
+        setLoading(true);
+      }
+    }
     setError('');
     let lastErr = null;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
-        const res = await api.get(`/management/by-project/${id}`);
+        const res = await api.get(`/management/by-project/${id}`, {
+          params: { lite: 1 },
+          headers: noCache ? { 'X-No-Cache': '1' } : undefined,
+        });
         setBundle(res.data);
         setCommentCount(Number(res.data?.comment_count) || 0);
+        writeWorkUnifiedLiteCache(id, res.data);
         setLoading(false);
         return;
       } catch (e) {
@@ -890,7 +1856,109 @@ export default function WorkUnifiedProjectDetailPage() {
   }, [id]);
 
   useEffect(() => { load(); }, [load]);
-  useEffect(() => { setActiveTab('overview'); }, [id]);
+  useEffect(() => {
+    const socket = getSocket() || connectSocket();
+    if (!socket || !id) return undefined;
+    const join = () => {
+      socket.emit('join:project', id);
+      const lid = bundleLeadIdRef.current;
+      if (lid) socket.emit('join:lead', lid);
+    };
+    join();
+    socket.on('connect', join);
+    let timer = null;
+    const reload = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => load({ silent: true, noCache: true }), 350);
+    };
+    const onProject = (payload) => {
+      const pid = payload?.project_id || payload?.id || payload?.project?.id;
+      if (pid && String(pid) !== String(id)) return;
+      reload();
+    };
+    const onCrmTask = (payload) => {
+      const pid = payload?.project_id;
+      if (pid && String(pid) !== String(id)) return;
+      reload();
+    };
+    const onCrmLead = (payload) => {
+      const lid = payload?.lead_id;
+      const currentLead = bundleLeadIdRef.current;
+      if (lid && currentLead && String(lid) === String(currentLead)) {
+        reload();
+        return;
+      }
+      const pid = payload?.project_id;
+      if (pid && String(pid) === String(id)) reload();
+    };
+    const onBadge = (payload) => {
+      const pid = payload?.project_id;
+      if (pid && String(pid) === String(id)) {
+        reload();
+        return;
+      }
+      const lid = payload?.lead_id;
+      const currentLead = bundleLeadIdRef.current;
+      if (lid && currentLead && String(lid) === String(currentLead)) reload();
+    };
+    socket.on('project:updated', onProject);
+    socket.on('project:stage_changed', onProject);
+    socket.on('task:updated', onProject);
+    socket.on('crm:task_changed', onCrmTask);
+    socket.on('crm:badge_updated', onBadge);
+    socket.on('crm:dashboard_changed', onCrmLead);
+    socket.on('lead:activity', onCrmLead);
+    return () => {
+      if (timer) clearTimeout(timer);
+      socket.off('connect', join);
+      socket.off('project:updated', onProject);
+      socket.off('project:stage_changed', onProject);
+      socket.off('task:updated', onProject);
+      socket.off('crm:task_changed', onCrmTask);
+      socket.off('crm:badge_updated', onBadge);
+      socket.off('crm:dashboard_changed', onCrmLead);
+      socket.off('lead:activity', onCrmLead);
+    };
+  }, [id, load]);
+
+  useEffect(() => {
+    const lid = bundle?.primary_lead?.id || bundle?.lead_id || null;
+    bundleLeadIdRef.current = lid;
+    const socket = getSocket() || connectSocket();
+    if (!socket || !lid) return undefined;
+    const joinLead = () => socket.emit('join:lead', lid);
+    joinLead();
+    socket.on('connect', joinLead);
+    return () => {
+      socket.off('connect', joinLead);
+      socket.emit('leave:lead', lid);
+    };
+  }, [bundle?.primary_lead?.id, bundle?.lead_id]);
+
+  useEffect(() => {
+    const onBadgeEvt = (e) => {
+      const pid = e?.detail?.projectId;
+      if (pid && String(pid) !== String(id)) return;
+      load({ silent: true, noCache: true });
+    };
+    window.addEventListener('crm-project-badges-refresh', onBadgeEvt);
+    return () => window.removeEventListener('crm-project-badges-refresh', onBadgeEvt);
+  }, [id, load]);
+
+  useEffect(() => {
+    const allowed = new Set(['overview', ...SECONDARY_TABS.map((t) => t.key), 'team']);
+    setActiveTab(allowed.has(tabFromUrl) ? tabFromUrl : 'overview');
+  }, [id, tabFromUrl]);
+
+  const selectTab = (key) => {
+    setActiveTab(key);
+    const next = new URLSearchParams(searchParams);
+    if (!key || key === 'overview') next.delete('tab');
+    else next.set('tab', key);
+    if (key !== 'tasks') next.delete('group');
+    const qs = next.toString();
+    navigate({ search: qs ? `?${qs}` : '' }, { replace: true });
+  };
 
   const bundleCompanyId = bundle?.project?.company_id || null;
   useEffect(() => {
@@ -900,12 +1968,12 @@ export default function WorkUnifiedProjectDetailPage() {
       .catch(() => setCompanyUsers([]));
   }, [bundleCompanyId, activeTab]);
 
-  if (loading) {
-    return <div className="p-6 text-center text-gray-400 text-sm">Đang tải...</div>;
+  if (loading && !bundle) {
+    return <div className="h-full min-h-0 flex items-center justify-center text-gray-400 text-sm">Đang tải...</div>;
   }
-  if (error) {
+  if (error && !bundle?.project) {
     return (
-      <div className="p-4 md:p-6 max-w-5xl mx-auto space-y-3">
+      <div className="h-full min-h-0 overflow-y-auto px-4 md:px-6 py-3 space-y-3">
         <button
           type="button"
           onClick={() => navigate('/management/work-unified')}
@@ -933,6 +2001,19 @@ export default function WorkUnifiedProjectDetailPage() {
   const { project, primary_lead: primaryLead, lead_id: leadId } = bundle;
   const overview = bundle.overview || {};
   const effectiveLeadId = primaryLead?.id || leadId || null;
+  const currentPp = (overview.production_projects || []).find((p) => String(p.project_id) === String(id))
+    || (overview.production_projects || [])[0]
+    || null;
+  const projectForPipes = {
+    ...project,
+    logistics_company_id: project.logistics_company_id
+      || currentPp?.logistics_company_id
+      || null,
+    workshop_type_id: project.workshop_type_id || currentPp?.workshop_type_id || null,
+    sx_intake: project.sx_intake ?? currentPp?.sx_intake ?? null,
+    vc_temp_staged: project.vc_temp_staged ?? currentPp?.vc_temp_staged ?? null,
+    vc_handover_status: project.vc_handover_status || currentPp?.vc_handover_status || null,
+  };
   const currentFlow = (overview.flow || []).find((s) => s.status === 'current');
   const ownerKey = currentFlow?.module === 'production' ? 'sx' : currentFlow?.module === 'logistics' ? 'vc' : 'crm';
   const ownerUser = overview.owners?.[ownerKey]
@@ -941,9 +2022,37 @@ export default function WorkUnifiedProjectDetailPage() {
     || overview.owners?.vc
     || null;
   const ownerName = ownerUser?.full_name || null;
+  bundleLeadIdRef.current = effectiveLeadId;
+  const pipeSyncKey = [
+    primaryLead?.stage_id,
+    project?.sx_kanban_column_id,
+    project?.vc_kanban_column_id,
+    bundle.pipelines?.crm?.id,
+    bundle.pipelines?.sx?.id,
+    bundle.pipelines?.vc?.id,
+  ].filter(Boolean).join('|');
+
+  const withOwner = (pipe, owner) => {
+    if (!pipe) return pipe;
+    if (pipe.person?.full_name || !owner?.full_name) return pipe;
+    return { ...pipe, person: owner };
+  };
+  const pipelineSections = bundle.sections || {};
+  const crmPipe = withOwner(
+    withPipelineProgress(bundle.pipelines?.crm, pipelineSections, 'crm'),
+    overview.owners?.crm,
+  );
+  const sxPipe = withOwner(
+    withPipelineProgress(bundle.pipelines?.sx, pipelineSections, 'sx'),
+    overview.owners?.sx,
+  );
+  const vcPipe = withOwner(
+    withPipelineProgress(bundle.pipelines?.vc, pipelineSections, 'vc'),
+    overview.owners?.vc,
+  );
 
   return (
-    <div className="p-4 md:p-6 max-w-5xl mx-auto space-y-5">
+    <div className="h-full min-h-0 overflow-y-auto px-4 md:px-6 py-3 space-y-5">
       <div className="flex items-center gap-2 text-xs text-gray-400 flex-wrap">
         <button
           type="button"
@@ -1019,10 +2128,34 @@ export default function WorkUnifiedProjectDetailPage() {
         </div>
       </div>
 
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+        <PipelineChip
+          label="CRM"
+          moduleKey="crm"
+          stage={crmPipe}
+          href={effectiveLeadId ? `/crm/leads/${effectiveLeadId}` : null}
+          title="Mở chi tiết CRM — cùng giai đoạn và tiến độ NV"
+        />
+        <PipelineChip
+          label="Sản xuất"
+          moduleKey="sx"
+          stage={sxPipe}
+          href={`/sx/projects/${id}`}
+          title="Mở chi tiết Sản xuất — cùng cột kanban SX"
+        />
+        <PipelineChip
+          label="VC / LĐ"
+          moduleKey="vc"
+          stage={vcPipe}
+          href={`/vc/projects/${id}`}
+          title="Mở chi tiết VC/LĐ — cùng cột kanban vận chuyển"
+        />
+      </div>
+
       <div className="border-b border-gray-100 flex items-center gap-1 overflow-x-auto">
         <button
           type="button"
-          onClick={() => setActiveTab('overview')}
+          onClick={() => selectTab('overview')}
           className={`shrink-0 text-sm font-medium px-3 py-2 -mb-px cursor-pointer ${
             activeTab === 'overview' ? 'font-semibold text-blue-700 border-b-2 border-blue-600' : 'text-gray-500 hover:text-gray-700'
           }`}
@@ -1035,7 +2168,7 @@ export default function WorkUnifiedProjectDetailPage() {
           <button
             key={t.key}
             type="button"
-            onClick={() => setActiveTab(t.key)}
+            onClick={() => selectTab(t.key)}
             className={`shrink-0 inline-flex items-center gap-1.5 text-sm font-medium px-3 py-2 -mb-px cursor-pointer ${
               activeTab === t.key ? 'font-semibold text-blue-700 border-b-2 border-blue-600' : 'text-gray-500 hover:text-gray-700'
             }`}
@@ -1053,11 +2186,14 @@ export default function WorkUnifiedProjectDetailPage() {
       {activeTab === 'overview' && (
         <ProjectOverviewPanel
           overview={overview}
-          onOpenTasks={() => setActiveTab('tasks')}
+          lead={primaryLead}
+          leadId={effectiveLeadId}
+          onReload={() => load({ silent: true, noCache: true })}
+          onOpenTasks={() => selectTab('tasks')}
           fullPageHref={`/projects/${id}?tab=overview`}
         />
       )}
-      {activeTab === 'tasks' && <TasksTab projectId={id} />}
+      {activeTab === 'tasks' && <TasksTab projectId={id} initialGroup={groupFromUrl} />}
       {activeTab === 'shared' && (
         <ProjectSharedWorkspaceTab
           projectId={id}
@@ -1070,15 +2206,32 @@ export default function WorkUnifiedProjectDetailPage() {
       {activeTab === 'team' && effectiveLeadId && (
         <LeadMembersTab
           leadId={effectiveLeadId}
-          onOpenSharedWorkspace={() => setActiveTab('shared')}
+          onOpenSharedWorkspace={() => selectTab('shared')}
         />
       )}
-      {activeTab === 'progress' && <ProgressTab projectId={id} flow={overview.flow} />}
-      {activeTab === 'documents' && <DocumentsTab projectId={id} leadId={effectiveLeadId} />}
+      {activeTab === 'progress' && (
+        <ProgressTab
+          projectId={id}
+          leadId={effectiveLeadId}
+          project={projectForPipes}
+          lead={primaryLead}
+          pipelines={bundle.pipelines}
+          onReload={() => load({ silent: true, noCache: true })}
+          syncKey={pipeSyncKey}
+        />
+      )}
+      {activeTab === 'documents' && <DocumentsTab projectId={id} leadId={effectiveLeadId} projectHint={project} />}
       {activeTab === 'finance' && <FinanceTab projectId={id} />}
       {activeTab === 'acceptance' && <AcceptanceTab projectId={id} flow={overview.flow} />}
       {activeTab === 'chat' && (
         <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+          <div className="mx-4 mt-4 mb-1 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-900 leading-relaxed">
+            Bình luận chỉ để trao đổi nhanh. Bản vẽ, render, bảng mô tả phải nộp trong tab{' '}
+            <button type="button" onClick={() => selectTab('tasks')} className="font-semibold underline cursor-pointer">
+              Công việc
+            </button>
+            {' '}(Ghi chú &amp; file) — nếu đẩy hết vào đây, tiến trình Sales trên công việc sẽ mất.
+          </div>
           {effectiveLeadId ? (
             <CrmLeadCommentsPanel leadId={effectiveLeadId} forModule="projects" onCountChange={setCommentCount} />
           ) : (
@@ -1086,7 +2239,7 @@ export default function WorkUnifiedProjectDetailPage() {
           )}
         </div>
       )}
-      {activeTab === 'history' && <HistoryTab projectId={id} />}
+      {activeTab === 'history' && <HistoryTab projectId={id} leadId={effectiveLeadId} />}
 
       {activeTab !== 'overview' && (
         <p className="text-xs text-gray-400 text-right pt-1">

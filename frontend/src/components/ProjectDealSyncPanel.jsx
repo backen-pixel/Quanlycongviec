@@ -68,9 +68,47 @@ function resolveStageColor(raw, fallback) {
   return c;
 }
 
-function PipelineChip({ label, stage, moduleKey = 'crm' }) {
+function normalizeStageDisplayName(name) {
+  const s = String(name || '').trim();
+  if (!s) return '';
+  const parts = s.split(/[—–-]/).map((p) => p.trim()).filter(Boolean);
+  if (parts.length >= 2 && parts.every((p) => p.toLowerCase() === parts[0].toLowerCase())) {
+    return parts[0];
+  }
+  return s;
+}
+
+export function displayPipelineStageName(stage) {
+  if (!stage) return 'Chưa có';
+  if (stage.bucket_slug === 'won_pending') return 'Chờ vào xưởng';
+  if (stage.bucket_slug === 'delivery_pending') return 'Chờ vận chuyển';
+  return normalizeStageDisplayName(stage.name) || stage.name || 'Chưa có';
+}
+
+/** Fallback tiến độ từ sections nếu API cũ chưa có tasks_* trên pipelines. */
+export function withPipelineProgress(pipe, sections, sectionKey) {
+  const stats = sections?.[sectionKey]?.stats?.tasks || { done: 0, total: 0 };
+  if (!pipe) {
+    return {
+      name: 'Chưa có',
+      empty: true,
+      tasks_done: stats.done,
+      tasks_total: stats.total,
+      pct: stats.total ? Math.round((stats.done / stats.total) * 100) : 0,
+    };
+  }
+  if (pipe.tasks_total != null) return pipe;
+  return {
+    ...pipe,
+    tasks_done: stats.done,
+    tasks_total: stats.total,
+    pct: stats.total ? Math.round((stats.done / stats.total) * 100) : 0,
+  };
+}
+
+export function PipelineChip({ label, stage, moduleKey = 'crm', href, title }) {
   const tone = CHIP_TONE[moduleKey] || CHIP_TONE.crm;
-  const name = stage?.name || 'Chưa có';
+  const name = displayPipelineStageName(stage);
   const done = stage?.tasks_done ?? 0;
   const total = stage?.tasks_total ?? 0;
   const pct = stage?.pct ?? (total ? Math.round((done / total) * 100) : 0);
@@ -79,8 +117,8 @@ function PipelineChip({ label, stage, moduleKey = 'crm' }) {
   const companyHint = stage?.company_label || null;
   const personHint = stage?.person?.full_name || null;
 
-  return (
-    <div className={`rounded-lg border-2 px-3 py-2.5 shadow-sm ${tone.wrap} ${muted ? 'opacity-75' : ''}`}>
+  const inner = (
+    <div className={`rounded-lg border-2 px-3 py-2.5 shadow-sm h-full ${tone.wrap} ${muted ? 'opacity-75' : ''}`}>
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
           <p className={`text-[10px] font-bold uppercase tracking-wide ${tone.label}`}>{label}</p>
@@ -110,6 +148,19 @@ function PipelineChip({ label, stage, moduleKey = 'crm' }) {
       </div>
     </div>
   );
+
+  if (href) {
+    return (
+      <Link
+        to={href}
+        title={title || `Mở chi tiết ${label}`}
+        className="block min-w-0 hover:brightness-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 rounded-lg"
+      >
+        {inner}
+      </Link>
+    );
+  }
+  return inner;
 }
 
 function ModuleStat({ icon: Icon, label, tasks, documents, color }) {
@@ -133,27 +184,6 @@ export default function ProjectDealSyncPanel({ bundle, projectId, onOpenAggregat
 
   const { primary_lead, pipelines, sections, totals } = bundle;
   const hasData = (totals?.tasks || 0) > 0 || (totals?.documents || 0) > 0;
-
-  // Fallback tiến độ từ sections nếu API cũ chưa có tasks_* trên pipelines
-  const withProgress = (pipe, sectionKey) => {
-    const stats = sections?.[sectionKey]?.stats?.tasks || { done: 0, total: 0 };
-    if (!pipe) {
-      return {
-        name: 'Chưa có',
-        empty: true,
-        tasks_done: stats.done,
-        tasks_total: stats.total,
-        pct: stats.total ? Math.round((stats.done / stats.total) * 100) : 0,
-      };
-    }
-    if (pipe.tasks_total != null) return pipe;
-    return {
-      ...pipe,
-      tasks_done: stats.done,
-      tasks_total: stats.total,
-      pct: stats.total ? Math.round((stats.done / stats.total) * 100) : 0,
-    };
-  };
 
   return (
     <div className="bg-gradient-to-r from-slate-50 via-blue-50/40 to-indigo-50/30 rounded-xl border border-blue-100 p-4">
@@ -203,18 +233,21 @@ export default function ProjectDealSyncPanel({ bundle, projectId, onOpenAggregat
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-3">
         <PipelineChip
           label="CRM"
-          stage={withProgress(pipelines?.crm, 'crm')}
+          stage={withPipelineProgress(pipelines?.crm, sections, 'crm')}
           moduleKey="crm"
+          href={primary_lead?.id ? `/crm/leads/${primary_lead.id}` : null}
         />
         <PipelineChip
           label="Sản xuất"
-          stage={withProgress(pipelines?.sx, 'sx')}
+          stage={withPipelineProgress(pipelines?.sx, sections, 'sx')}
           moduleKey="sx"
+          href={projectId ? `/sx/projects/${projectId}` : null}
         />
         <PipelineChip
-          label="Lắp đặt"
-          stage={withProgress(pipelines?.vc, 'vc')}
+          label="VC / LĐ"
+          stage={withPipelineProgress(pipelines?.vc, sections, 'vc')}
           moduleKey="vc"
+          href={projectId ? `/vc/projects/${projectId}` : null}
         />
       </div>
 

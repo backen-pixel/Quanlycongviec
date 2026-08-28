@@ -322,8 +322,9 @@ function ProtectedLayout() {
 
   const fullscreenPages = ['/projects/create', '/crm/messenger', '/work/flows'];
   const isFullscreen = fullscreenPages.some((p) => location.pathname.startsWith(p))
-    || /^\/m\/[^/]+\/messenger$/.test(location.pathname);
-  const compactKanbanChrome = /^\/(crm\/(dashboard|pipeline)|sx\/(dashboard|pipeline)|work\/unified|personal-tasks|projects|m\/)/.test(location.pathname);
+    || /^\/m\/[^/]+\/messenger$/.test(location.pathname)
+    || /^\/management\/work-unified\/[^/]+/.test(location.pathname);
+  const compactKanbanChrome = /^\/(crm\/(dashboard|pipeline)|sx\/(dashboard|pipeline)|management\/work-unified|work\/unified|personal-tasks|projects|m\/)/.test(location.pathname);
 
   return (
     <CrmNotesFabProvider>

@@ -198,13 +198,22 @@ function resolveVcProgressMeta(pp, lead) {
   return { stage, stageName };
 }
 
-function DealProjectPipelineProgress({ label, tone, stageName, icon }) {
+function DealProjectPipelineProgress({
+  label,
+  tone,
+  stageName,
+  icon,
+  projectId = null,
+  logisticsCompanyName = null,
+  logisticsCompanyId = null,
+}) {
   const isVc = tone === 'vc';
   const displayName = normalizeStageDisplayName(stageName);
   const shell = isVc ? 'bg-orange-50 border-orange-100' : 'bg-teal-50 border-teal-100';
   const badge = isVc ? 'bg-orange-100 text-orange-800' : 'bg-teal-100 text-teal-800';
   const nameColor = isVc ? 'text-orange-950' : 'text-teal-950';
   const fallbackIcon = isVc ? '🚚' : '🏭';
+  const vcLabel = logisticsCompanyName || (logisticsCompanyId ? 'Công ty vận chuyển' : null);
 
   return (
     <div className={`rounded-lg border px-2.5 py-2 min-w-0 ${shell}`}>
@@ -215,6 +224,22 @@ function DealProjectPipelineProgress({ label, tone, stageName, icon }) {
       <p className={`mt-1 text-[11px] font-semibold leading-snug line-clamp-2 ${displayName ? nameColor : 'text-gray-400 italic'}`}>
         {displayName || 'Chưa có giai đoạn'}
       </p>
+      {projectId && vcLabel ? (
+        <Link
+          to={`/vc/projects/${projectId}`}
+          title={`Mở Kanban công ty vận chuyển: ${vcLabel}`}
+          onClick={() => {
+            if (logisticsCompanyId) {
+              try { localStorage.setItem('vc_pipeline_settings_company_id', String(logisticsCompanyId)); } catch { /* ignore */ }
+            }
+          }}
+          className="mt-1.5 block truncate text-[10px] font-semibold text-orange-800 hover:underline"
+        >
+          🚚 {vcLabel}
+        </Link>
+      ) : (
+        <p className="mt-1.5 truncate text-[10px] text-amber-800/80">🚚 Chưa chọn công ty VC</p>
+      )}
     </div>
   );
 }
@@ -3313,12 +3338,18 @@ export default function LeadDetail() {
                         tone="sx"
                         stageName={sxProgress.stageName}
                         icon={sxProgress.stage?.icon}
+                        projectId={pp.project_id}
+                        logisticsCompanyName={vcName}
+                        logisticsCompanyId={pp.logistics_company_id || pp.logistics_company?.id || null}
                       />
                       <DealProjectPipelineProgress
                         label="VC / LĐ"
                         tone="vc"
                         stageName={vcStageLabel}
                         icon={vcProgress.stage?.icon}
+                        projectId={pp.project_id}
+                        logisticsCompanyName={vcName}
+                        logisticsCompanyId={pp.logistics_company_id || pp.logistics_company?.id || null}
                       />
                     </div>
                     <div className="flex flex-wrap gap-1.5">
@@ -6993,6 +7024,7 @@ function LeadInfoPanel({
       await api.patch(`/crm/leads/${lead.id}/deadline`, {
         kanban_deadline_at: deadlineIso,
         reason: reason || '',
+        sync_open_tasks: true,
       });
       setDeadlineModalOpen(false);
       onUpdate();
@@ -7363,8 +7395,12 @@ function LeadInfoPanel({
       {!lead?.stage?.is_won && !lead?.stage?.counts_as_completed_revenue && (
       <CrmDeadlineModal
         open={deadlineModalOpen}
-        title={lead?.kanban_deadline_at ? 'Sửa deadline thẻ' : 'Đặt deadline thẻ'}
-        subtitle={lead?.kanban_deadline_at ? 'Bắt buộc nhập lý do khi thay đổi deadline.' : 'Mọi thay đổi đều được ghi vào lịch sử.'}
+        title={lead?.kanban_deadline_at ? 'Sửa hạn đang hiện trên thẻ' : 'Đặt deadline thẻ'}
+        subtitle={
+          lead?.kanban_deadline_at
+            ? 'Lưu sẽ đổi Deadline tự setup và Ngày hẹn NV đang mở (nếu có). Nếu chỉ sửa Setup mà để NV cũ quá hạn, thẻ vẫn báo Quá hạn.'
+            : 'Nếu thẻ đang lấy hạn từ nhiệm vụ CRM, lưu sẽ đổi luôn Ngày hẹn NV đang mở. Mọi thay đổi đều được ghi vào lịch sử.'
+        }
         initialDeadline={lead?.kanban_deadline_at || null}
         currentDeadline={lead?.kanban_deadline_at || null}
         requireReason={!!lead?.kanban_deadline_at}

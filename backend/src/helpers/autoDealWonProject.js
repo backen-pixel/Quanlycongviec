@@ -139,7 +139,7 @@ async function linkDealToProject({
 /**
  * Danh sách dự án SX gắn deal (junction + fallback project_id).
  */
-async function listDealProductionProjects(dealId) {
+async function listDealProductionProjects(dealId, opts = {}) {
   if (!dealId) return [];
   const projectDateCols = 'install_date, delivery_date, pickup_at, production_finish_date, logistics_company_id, logistics_person_id, vc_notes';
   const projectEmbed = `
@@ -215,7 +215,9 @@ async function listDealProductionProjects(dealId) {
   }
 
   // Bổ sung tên CT VC/LĐ từ sự kiện lắp/lấy hàng khi projects.logistics_company_id trống
-  const needFill = rows.filter((r) => r.project_id && !r.logistics_company_id);
+  const needFill = opts.skipEventFill
+    ? []
+    : rows.filter((r) => r.project_id && !r.logistics_company_id);
   if (needFill.length) {
     const pids = needFill.map((r) => r.project_id);
     try {
@@ -250,6 +252,7 @@ async function listDealProductionProjects(dealId) {
     }
   }
 
+  if (opts.skipPipelineEnrich) return rows;
   return enrichProductionProjectsPipeline(rows);
 }
 

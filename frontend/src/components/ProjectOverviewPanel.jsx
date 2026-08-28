@@ -4,6 +4,7 @@ import {
   Users, Building2, FileText, Package, Wrench, ExternalLink,
 } from 'lucide-react';
 import { formatVND, formatDate, getInitials, avatarColor } from '../lib/utils';
+import DealProductionProjectsPanel from './DealProductionProjectsPanel';
 
 const FLOW_STATUS = {
   done: {
@@ -103,7 +104,15 @@ function LinkedRow({ icon: Icon, label, value, href, valueCls }) {
 /**
  * Tổng quan dự án — gom CRM/SX/VC (mockup Work Unified).
  */
-export default function ProjectOverviewPanel({ overview, onOpenSections, onOpenTasks, fullPageHref }) {
+export default function ProjectOverviewPanel({
+  overview,
+  onOpenSections,
+  onOpenTasks,
+  fullPageHref,
+  lead = null,
+  leadId = null,
+  onReload,
+}) {
   if (!overview) {
     return (
       <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-8 text-center text-sm text-gray-500">
@@ -128,6 +137,8 @@ export default function ProjectOverviewPanel({ overview, onOpenSections, onOpenT
     company_name,
     deal_ref,
     production_ref,
+    production_projects = [],
+    current_project_id,
   } = overview;
 
   const paymentLabel = budget?.total != null
@@ -376,6 +387,14 @@ export default function ProjectOverviewPanel({ overview, onOpenSections, onOpenT
           )}
         </div>
       </div>
+
+      <DealProductionProjectsPanel
+        projects={production_projects}
+        currentProjectId={current_project_id}
+        lead={lead}
+        leadId={leadId}
+        onReload={onReload}
+      />
     </div>
   );
 }
