@@ -56,6 +56,9 @@ const DOC_TYPE_CONFIG = {
  * Excel không có cột chiết khấu riêng cho dòng đó. Dùng chung cho preview & apply-to-form.
  */
 function resolveEffectiveDiscountPercent(item) {
+  // Parser (backend/src/helpers/quotationExcelParser.js) đã chốt sẵn CK theo đúng Excel —
+  // preview và apply-to-form đều dùng chung số này, không nơi nào suy luận lại nữa.
+  if (typeof item.resolved_discount_percent === 'number') return item.resolved_discount_percent;
   if (item.is_freebie) return 0;
   const rowPct = item.row_discount_percent || 0;
   if (rowPct > 0) return rowPct;
@@ -97,6 +100,13 @@ export function buildQuotationDraftFromPreview(preview, file, user, leadId, sour
         itemDiscount = 0;
         specFactor = 0;
         price = 0;
+      } else if (typeof i.resolved_discount_percent === 'number') {
+        // ── Nguồn sự thật duy nhất: parser đã đọc thẳng CK từ Excel và tách phần chênh lệch
+        // định lượng (m² / mét dài / SL lẻ) ra spec_factor. Không suy luận CK từ tỉ lệ nữa —
+        // đó chính là chỗ đẻ ra CK ảo kiểu 0,35md → "chiết khấu 65%".
+        qty = i.resolved_quantity || qty;
+        specFactor = i.resolved_spec_factor || 0;
+        itemDiscount = i.resolved_discount_percent;
       } else if (hasExplicitDiscountCol) {
         // Excel có cột % CHIẾT KHẤU / SỐ TIỀN CHIẾT KHẤU riêng cho dòng này → đọc & lấy nguyên,
         // KHÔNG suy luận/tính lại từ tỉ lệ Thành tiền (đúng yêu cầu: import lấy kết quả 100%).

@@ -31,6 +31,63 @@ function isExcelNonProductSectionTitle(label) {
     || /GIÁ\s*TRỊ\s*(LÀM\s*TRÒN|HỢP\s*ĐỒNG)/.test(u);
 }
 
+/**
+ * % chiết khấu ghi trong tiêu đề nhóm: "CHIẾT KHẤU 35%", "CK: 7,5%", "(CK 35%)", "35% CHIẾT KHẤU".
+ * Bản cũ dùng /(?:CHIẾT\s*KHẤU|CK)\s*(\d+)\s*%/ nên rớt số thập phân ("7.5%" → 0) và rớt luôn
+ * dạng có dấu ngăn ("CHIẾT KHẤU: 35%" → 0).
+ */
+function parseExcelGroupDiscountPercent(text) {
+  const s = String(text || '');
+  if (!s) return 0;
+  const after = s.match(/(?:CHIẾT\s*KHẤU|CHIET\s*KHAU|\bCK\b)\s*[:\-–]?\s*(\d+(?:[.,]\d+)?)\s*%/i);
+  if (after) return parseFloat(String(after[1]).replace(',', '.')) || 0;
+  const before = s.match(/(\d+(?:[.,]\d+)?)\s*%\s*(?:CHIẾT\s*KHẤU|CHIET\s*KHAU|\bCK\b)/i);
+  if (before) return parseFloat(String(before[1]).replace(',', '.')) || 0;
+  return 0;
+}
+
+/**
+ * Nhãn chỉ thuần là "% chiết khấu" (vd. "% CHIẾT KHẤU", "CK%", "CK (%)") — dùng cho dòng phụ đề
+ * bên dưới header gộp. Phải loại được tiêu đề NHÓM như "PHỤ KIỆN - CHIẾT KHẤU 35%": nhãn đó cũng
+ * chứa "CHIẾT KHẤU" + "%" nhưng còn chữ/số khác, nếu nhận nhầm sẽ nuốt luôn dòng nhóm.
+ */
+function isPureDiscountPercentLabel(label) {
+  const s = String(label || '').trim();
+  if (!s || s.length > 24 || !s.includes('%')) return false;
+  const rest = s.toUpperCase()
+    .replace(/CHIẾT\s*KHẤU/g, '')
+    .replace(/CHIET\s*KHAU/g, '')
+    .replace(/\bCK\b/g, '')
+    .replace(/[%()\-–:.\s]/g, '');
+  return rest === '';
+}
+
+/**
+ * Đọc % chiết khấu của MỘT ô. `displayText` = chuỗi Excel hiển thị (sheet_to_json raw:false).
+ * Ô định dạng phần trăm lưu 0.35 nhưng hiển thị "35%" → phải ×100; ô số thường ghi 1 nghĩa là 1%.
+ * Bản cũ đoán bằng `n <= 1 ? n*100 : n` nên ô ghi 1 (ý 1%) bị hiểu thành 100% (miễn phí).
+ * @returns {number|null} null = ô trống (không có ý kiến), số = % chiết khấu (0 là "không giảm").
+ */
+function parseExcelDiscountPercentCell(rawVal, displayText) {
+  if (rawVal == null || rawVal === '') return null;
+  if (typeof rawVal === 'number') {
+    if (!Number.isFinite(rawVal) || rawVal < 0) return null;
+    // Ô định dạng phần trăm: Excel lưu 0.35 và hiển thị "35%".
+    if (displayText != null && /%/.test(String(displayText))) return rawVal * 100;
+    // Gõ tay 0,35 trong cột "%" vẫn là 35% (không ai giảm 0,35%); từ 1 trở lên lấy nguyên,
+    // nên ô ghi 1 = 1% chứ không còn bị nhân thành 100% như bản cũ.
+    if (rawVal > 0 && rawVal < 1) return rawVal * 100;
+    return rawVal;
+  }
+  const s = String(rawVal).trim();
+  if (!s) return null;
+  const hasPercentSign = s.includes('%');
+  const n = parseFloat(s.replace('%', '').replace(/\s/g, '').replace(',', '.'));
+  if (!Number.isFinite(n) || n < 0) return null;
+  if (!hasPercentSign && n > 0 && n < 1) return n * 100;
+  return n;
+}
+
 /** TỔNG cộng gộp / làm tròn — không gán làm subtotal 1 nhóm. */
 function isExcelGrandOrRoundTotalLabel(label) {
   const u = String(label || '').trim().toUpperCase();
@@ -121,6 +178,12 @@ async function parseQuotationExcelBuffer(buffer, options = {}) {
     const { sheetName: parsedSheetName, ws } = resolveExcelWorksheet(wb, options.sheetName || options.sheet_name);
     if (!ws) throw new Error('File không có sheet');
     const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: true });
+    // Bản CHUỖI HIỂN THỊ song song (raw:false) — ô định dạng phần trăm lưu 0.35 nhưng hiển thị
+    // "35%". Không có bản này thì không thể phân biệt "1" (1%) với 1 = 100% của ô định dạng %.
+    let rowsText = [];
+    try {
+      rowsText = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: false }) || [];
+    } catch (_) { rowsText = []; }
 
     if (!rows.length) throw new Error('File rỗng');
 
@@ -175,22 +238,42 @@ async function parseQuotationExcelBuffer(buffer, options = {}) {
         } else if (
           label.includes('% CHIẾT KHẤU') || label.includes('%CHIẾT KHẤU') ||
           (label.includes('CHIẾT KHẤU') && label.includes('%')) ||
-          label === '%CK' || label === '% CK' || label === 'CK%' || label === 'CK %'
+          (/\bCK\b/.test(label) && label.includes('%'))
         ) {
           // Cột "CK%" đứng riêng (không kèm chữ CHIẾT KHẤU đầy đủ) — mẫu báo giá phổ biến
           // dạng "... Thành tiền | CK% | Ghi chú". Phải nhận đúng để đọc thẳng %, KHÔNG suy luận lại.
           if (cm.discount_percent === undefined) cm.discount_percent = ci;
         } else if (
+          (label.includes('SỐ TIỀN') || label.includes('TIỀN') || label.includes('THÀNH')) &&
+          (label.includes('CHIẾT KHẤU') || /\bCK\b/.test(label)) &&
+          label.includes('SAU')
+        ) {
+          // "THÀNH TIỀN SAU CK" / "SỐ TIỀN SAU CHIẾT KHẤU" — tiền CÒN LẠI sau chiết khấu,
+          // KHÔNG phải số tiền chiết khấu. Bản cũ thiếu chốt !SAU nên đọc nhầm cột này thành
+          // tiền CK (vd. món 10tr còn 9tr → hiểu thành "chiết khấu 90%").
+          if (cm.amount_after_discount === undefined) cm.amount_after_discount = ci;
+        } else if (
           (label.includes('SỐ TIỀN') || label.includes('TIỀN')) &&
-          (label.includes('CHIẾT KHẤU') || label.includes('CK')) &&
-          !label.includes('THÀNH')
+          (label.includes('CHIẾT KHẤU') || /\bCK\b/.test(label)) &&
+          !label.includes('THÀNH') && !label.includes('SAU')
         ) {
           // "SỐ TIỀN CHIẾT KHẤU" / "TIỀN CK" — cột số tiền chiết khấu tuyệt đối theo dòng
           // (đọc thẳng, không suy luận).
           if (cm.discount_amount === undefined) cm.discount_amount = ci;
-        } else if (label.includes('ĐƠN GIÁ') && label.includes('SAU') && label.includes('CHIẾT KHẤU')) {
-          // "ĐƠN GIÁ SAU CHIẾT KHẤU" — đơn giá đã trừ CK, chỉ dùng để đối chiếu/hiển thị.
+        } else if (
+          label.includes('ĐƠN GIÁ') && label.includes('SAU')
+          && (label.includes('CHIẾT KHẤU') || /\bCK\b/.test(label))
+        ) {
+          // "ĐƠN GIÁ SAU CHIẾT KHẤU" — đơn giá đã trừ CK, dùng để đối chiếu & suy ra % CK chuẩn.
           if (cm.unit_price_after_discount === undefined) cm.unit_price_after_discount = ci;
+        } else if (
+          (label.includes('CHIẾT KHẤU') || label.includes('CHIET KHAU') || /\bCK\b/.test(label))
+          && !label.includes('SAU') && !label.includes('ĐƠN GIÁ') && !label.includes('THÀNH')
+        ) {
+          // Cột chỉ ghi "CHIẾT KHẤU" / "CK" / "CK (%)" — chưa nói rõ là % hay số tiền.
+          // Bản cũ bỏ qua hẳn cột này → CK bị mất, rồi bị suy luận sai từ tỉ lệ Thành tiền.
+          // Nay giữ lại và quyết định theo giá trị từng dòng (≤100 → %, >100 → số tiền).
+          if (cm.discount_ambiguous === undefined) cm.discount_ambiguous = ci;
         } else if (
           label.includes('ĐƠN GIÁ') &&
           !label.includes('SAU') && !label.includes('SỐ TIỀN') && !label.includes('CHIẾT KHẤU')
@@ -222,7 +305,7 @@ async function parseQuotationExcelBuffer(buffer, options = {}) {
             subAdvance = true;
           } else if ((label.includes('KHỐI LƯỢNG') || label.includes('SỐ LƯỢNG') || label === 'SL' || label === 'KL') && cm.quantity === undefined) {
             cm.quantity = ci; subAdvance = true;
-          } else if ((label.includes('% CHIẾT KHẤU') || label === 'CK%' || label === '%CK') && cm.discount_percent === undefined) {
+          } else if (isPureDiscountPercentLabel(label) && cm.discount_percent === undefined) {
             cm.discount_percent = ci; subAdvance = true;
           }
         });
@@ -486,8 +569,7 @@ async function parseQuotationExcelBuffer(buffer, options = {}) {
           groupName = `${groupName} (${n + 1})`;
         }
         currentGroup = groupName;
-        const ckMatch = groupName.match(/(?:CHIẾT\s*KHẤU|CK)\s*(\d+)\s*%/i);
-        currentGroupDiscount = ckMatch ? parseFloat(ckMatch[1]) : 0;
+        currentGroupDiscount = parseExcelGroupDiscountPercent(groupName);
         items.push({
           is_group: true, group_name: groupName, name: groupName,
           description: '', unit: '', quantity: 0, unit_price: 0, amount: 0,
@@ -589,8 +671,7 @@ async function parseQuotationExcelBuffer(buffer, options = {}) {
         }
         currentGroup = groupName;
         // Parse chiết khấu % từ header nhóm: "PHỤ KIỆN BẾP (CHIẾT KHẤU 35%)" hoặc "CK 35%"
-        const ckMatch = groupName.match(/(?:CHIẾT\s*KHẤU|CK)\s*(\d+)\s*%/i);
-        currentGroupDiscount = ckMatch ? parseFloat(ckMatch[1]) : 0;
+        currentGroupDiscount = parseExcelGroupDiscountPercent(groupName);
         items.push({
           is_group: true, group_name: groupName, name: groupName,
           description: '', unit: '', quantity: 0, unit_price: 0, amount: 0,
@@ -644,18 +725,42 @@ async function parseQuotationExcelBuffer(buffer, options = {}) {
         notesCell,
       ].filter(Boolean).join('\n\n');
 
-      // % CHIẾT KHẤU per-row: hỗ trợ "35%", "0.35", "0,35" — đọc thẳng từ Excel, KHÔNG suy luận/tính lại.
+      // % CHIẾT KHẤU per-row — đọc thẳng từ Excel, dùng chuỗi hiển thị để biết ô có định dạng %
+      // (0.35 hiển thị "35%") thay vì đoán theo ngưỡng ≤ 1 như bản cũ (ô ghi 1 = 1% bị hoá 100%).
+      const rowText = rowsText[i] || [];
       let rowDiscount = 0;
+      // Ô CK có nội dung (kể cả ghi 0) → Excel đã phát biểu rõ, cấm mọi suy luận lại về sau.
+      let rowDiscountFilled = false;
       if (colMap.discount_percent !== undefined) {
-        const raw = row[colMap.discount_percent];
-        if (raw != null && raw !== '') {
-          const n = typeof raw === 'number' ? raw : parseFloat(String(raw).replace('%', '').replace(',', '.'));
-          if (!isNaN(n) && n > 0) rowDiscount = n <= 1 ? n * 100 : n;
-        }
+        const pct = parseExcelDiscountPercentCell(row[colMap.discount_percent], rowText[colMap.discount_percent]);
+        if (pct != null) { rowDiscount = pct; rowDiscountFilled = true; }
       }
       // SỐ TIỀN CHIẾT KHẤU per-row (giá trị tuyệt đối) — đọc thẳng, giữ nguyên số Excel.
-      const rowDiscountAmount = colMap.discount_amount !== undefined
+      let rowDiscountAmount = colMap.discount_amount !== undefined
         ? parseVietnameseMoney(row[colMap.discount_amount]) || 0
+        : 0;
+      if (colMap.discount_amount !== undefined) {
+        const rawAmtCell = row[colMap.discount_amount];
+        if (rawAmtCell != null && rawAmtCell !== '') rowDiscountFilled = true;
+      }
+      // Cột chỉ ghi "CHIẾT KHẤU" / "CK": ≤ 100 → hiểu là %, > 100 → hiểu là số tiền.
+      if (colMap.discount_ambiguous !== undefined && !rowDiscountFilled) {
+        const rawAmb = row[colMap.discount_ambiguous];
+        if (rawAmb != null && rawAmb !== '') {
+          rowDiscountFilled = true;
+          const dispAmb = rowText[colMap.discount_ambiguous];
+          const asPct = parseExcelDiscountPercentCell(rawAmb, dispAmb);
+          const asMoney = parseVietnameseMoney(rawAmb) || 0;
+          if (/%/.test(String(dispAmb == null ? '' : dispAmb)) || (asPct != null && asPct <= 100 && asMoney <= 100)) {
+            rowDiscount = asPct || 0;
+          } else {
+            rowDiscountAmount = asMoney;
+          }
+        }
+      }
+      // THÀNH TIỀN SAU CK — chỉ để đối chiếu, không bao giờ coi là số tiền chiết khấu.
+      const rowAmountAfterDiscount = colMap.amount_after_discount !== undefined
+        ? parseVietnameseMoney(row[colMap.amount_after_discount]) || 0
         : 0;
       // ĐƠN GIÁ SAU CHIẾT KHẤU per-row — chỉ để đối chiếu/hiển thị, không dùng để suy luận % CK.
       const rowUnitPriceAfterDiscount = colMap.unit_price_after_discount !== undefined
@@ -671,7 +776,9 @@ async function parseQuotationExcelBuffer(buffer, options = {}) {
         // Ưu tiên dùng nguyên các giá trị này ở bước build draft, không suy luận lại từ tỉ lệ.
         row_discount_percent: rowDiscount,
         row_discount_amount: rowDiscountAmount,
+        row_discount_filled: rowDiscountFilled,
         unit_price_after_discount: rowUnitPriceAfterDiscount || null,
+        amount_after_discount: rowAmountAfterDiscount || null,
         sku: skuRaw || null,
         name: itemName,
         description: mergedDescription,
@@ -774,6 +881,96 @@ async function parseQuotationExcelBuffer(buffer, options = {}) {
         });
         console.log('[parse-excel] applied summaryCK', ckPercent, '% to', applied, 'items in group:', groupItem.name.slice(0,30));
       }
+    }
+
+    // ── 5b. CHỐT số lượng / CK cuối cùng cho từng dòng — MỘT nguồn sự thật duy nhất ──
+    // Trước đây frontend (ExcelQuotationImport.jsx) và backend (crmTasks.js) mỗi nơi tự suy luận
+    // lại CK từ tỉ lệ Thành tiền / (SL × Đơn giá). Khi con số định lượng thật (m², mét dài, số
+    // lượng lẻ) nằm ở cột parser chưa map thì SL mặc định = 1 → tỉ lệ 0,35 bị hiểu thành
+    // "chiết khấu 65%" (đá mặt bếp 0,35md ở BG-2026-086 là ca thật). Nay parser chốt sẵn và
+    // nguyên tắc là: Excel nói gì nghe nấy, phần chênh lệch còn lại KHÔNG bao giờ hoá thành CK.
+    for (const it of items) {
+      if (it.is_group) continue;
+      // Nhóm có CK ở dòng tổng kết (group_summary_discount_percent) giữ nguyên luồng cũ —
+      // ở đó Thành tiền từng dòng là giá TRƯỚC chiết khấu, FE có xử lý riêng.
+      if (it.group_summary_discount_percent > 0) continue;
+
+      const price = it.unit_price || 0;
+      const amount = it.amount || 0;
+      const declaredQty = Number(it.quantity) || 1;
+      const lengthVal = Number(it.length) || 0;
+      let qty = declaredQty;
+      let specFactor = 0;
+      let pct = 0;
+      let source = 'none';
+
+      if (it.is_freebie) {
+        it.resolved_quantity = qty;
+        it.resolved_spec_factor = 0;
+        it.resolved_discount_percent = 0;
+        it.resolved_discount_amount = 0;
+        it.discount_source = 'freebie';
+        continue;
+      }
+
+      // Đối chiếu chéo: TIỀN là sự thật. Nếu Excel có "Đơn giá sau CK" hoặc "Số tiền CK" thì %
+      // suy ra từ chúng mới là chuẩn — dùng để sửa lại ô "%" ghi mập mờ (0,35 / 35 / 35%).
+      let pctFromMoney = null;
+      if (price > 0 && it.unit_price_after_discount > 0 && it.unit_price_after_discount < price) {
+        pctFromMoney = Math.round((1 - it.unit_price_after_discount / price) * 100000) / 1000;
+      } else if (price > 0 && it.row_discount_amount > 0) {
+        const grossDecl = declaredQty * price;
+        if (grossDecl > 0 && it.row_discount_amount < grossDecl) {
+          pctFromMoney = Math.round((it.row_discount_amount / grossDecl) * 100000) / 1000;
+        }
+      }
+
+      if (it.row_discount_percent > 0) {
+        pct = it.row_discount_percent;
+        source = 'row_percent';
+        if (pctFromMoney != null && Math.abs(pctFromMoney - pct) > 0.5) {
+          pct = pctFromMoney;
+          source = 'row_percent_corrected';
+        }
+      } else if (it.row_discount_amount > 0 && price > 0) {
+        const grossDeclared = declaredQty * price;
+        if (grossDeclared > 0 && it.row_discount_amount < grossDeclared) {
+          pct = Math.round((it.row_discount_amount / grossDeclared) * 100000) / 1000;
+          source = 'row_amount';
+        }
+      } else if (it.row_discount_filled) {
+        // Excel ghi rõ 0 → dòng này KHÔNG có chiết khấu, chấm hết.
+        pct = 0;
+        source = 'row_zero';
+      } else if (price > 0 && it.unit_price_after_discount > 0 && it.unit_price_after_discount < price) {
+        pct = Math.round((1 - it.unit_price_after_discount / price) * 100000) / 1000;
+        source = 'unit_price_after';
+      } else if (it.group_discount_percent > 0) {
+        pct = it.group_discount_percent;
+        source = 'group_header';
+      }
+
+      // Thành tiền = Dài × Đơn giá (× CK) → cột "Dài" chính là số lượng thật, không phải CK.
+      if (price > 0 && amount > 0 && lengthVal > 0 && declaredQty === 1) {
+        const expect = lengthVal * price * (1 - pct / 100);
+        if (expect > 0 && Math.abs(amount - expect) <= Math.max(amount, expect) * 0.015) qty = lengthVal;
+      }
+
+      // Phần chênh còn lại là HỆ SỐ ĐỊNH LƯỢNG (spec_factor), tuyệt đối không phải chiết khấu.
+      const grossAfterPct = qty * price * (1 - pct / 100);
+      if (price > 0 && amount > 0 && grossAfterPct > 0) {
+        const ratio = amount / grossAfterPct;
+        if (ratio > 1.005 || ratio < 0.995) specFactor = Math.round(ratio * 100000) / 100000;
+      }
+
+      const grossFinal = (specFactor > 0 ? specFactor : 1) * qty * price;
+      it.resolved_quantity = qty;
+      it.resolved_spec_factor = specFactor;
+      it.resolved_discount_percent = pct;
+      it.resolved_discount_amount = it.row_discount_amount > 0
+        ? it.row_discount_amount
+        : Math.round(grossFinal * pct / 100);
+      it.discount_source = source;
     }
 
     // If no grand total found, sum item amounts

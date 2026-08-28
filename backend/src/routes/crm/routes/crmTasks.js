@@ -89,7 +89,7 @@ r.post('/leads/:id/tasks/:taskId/import-quotation-excel', excelUpload.single('fi
     // lại từ tỉ lệ Thành tiền. Chỉ fallback khi Excel không có cột chiết khấu rõ ràng theo dòng.
     // Cũng khoá luôn Thành tiền (imported_amount/lock_amount) theo giá trị Excel gốc.
     const items = parseRes.items.filter(i => !i.is_group).map(i => {
-      const qty = i.quantity || 1;
+      let qty = i.quantity || 1;
       const price = i.unit_price || 0;
       const excelAmount = i.amount || 0;
       let specFactor = 0, itemDiscount = 0;
@@ -100,7 +100,13 @@ r.post('/leads/:id/tasks/:taskId/import-quotation-excel', excelUpload.single('fi
 
       const rowPct = i.row_discount_percent || 0;
       const rowAmt = i.row_discount_amount || 0;
-      if (rowPct > 0) {
+      if (typeof i.resolved_discount_percent === 'number') {
+        // Dùng đúng số parser đã chốt (xem quotationExcelParser.js) — trước đây chỗ này tự suy
+        // luận lại CK từ tỉ lệ Thành tiền/(SL×Đơn giá) nên lệch với frontend và đẻ ra CK ảo.
+        itemDiscount = i.resolved_discount_percent;
+        specFactor = i.resolved_spec_factor || 0;
+        if (i.resolved_quantity) qty = i.resolved_quantity;
+      } else if (rowPct > 0) {
         itemDiscount = rowPct;
       } else if (rowAmt > 0 && qty > 0 && price > 0) {
         itemDiscount = Math.round((rowAmt / (qty * price)) * 10000) / 100;
