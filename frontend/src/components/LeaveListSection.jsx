@@ -20,6 +20,7 @@ import {
 import DateRangePickerPopover from './DateRangePickerPopover';
 import ScopeFilterBar from '../shared/components/ScopeFilterBar';
 import LeaveActiveFilterBar from './LeaveActiveFilterBar';
+import ResponsiveTable from './ResponsiveTable';
 import {
   Loader2, Plus, Filter, X, Clock, CalendarRange, MapPin, FileSpreadsheet,
   MoreHorizontal, Pencil, Trash2, Users, CalendarDays, ListChecks, Search,
@@ -464,57 +465,76 @@ export default function LeaveListSection({
         {loading ? (
           <div className="flex justify-center py-20"><Loader2 className="h-8 w-8 animate-spin text-violet-600" /></div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 border-b border-gray-100 bg-gray-50/80">
-                  <th className="text-left px-5 py-3">Nhân viên</th>
-                  <th className="text-left px-5 py-3">Ngày nghỉ</th>
-                  <th className="text-left px-5 py-3">Loại nghỉ</th>
-                  <th className="text-left px-5 py-3">Thời gian</th>
-                  <th className="text-left px-5 py-3">Ghi chú</th>
-                  <th className="text-left px-5 py-3">Tạo lúc</th>
-                  <th className="text-right px-5 py-3">Thao tác</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredRows.length === 0 ? (
-                  <tr>
-                    <td colSpan={7} className="text-center text-gray-400 py-16">
-                      Không có đơn nghỉ phù hợp bộ lọc.
-                    </td>
-                  </tr>
-                ) : filteredRows.map((l) => {
-                  const typeColor = leaveTypeMeta(l.leave_type).color;
+          <ResponsiveTable
+            rows={filteredRows}
+            rowKey={(l) => l.id}
+            empty="Không có đơn nghỉ phù hợp bộ lọc."
+            cardClassName="mx-3"
+            columns={[
+              {
+                key: 'person',
+                header: 'Nhân viên',
+                primary: true,
+                cellClassName: 'px-5 py-3.5',
+                cell: (l) => {
                   const personName = leavePersonDisplayName(l, usersById, currentUser);
                   const personEmail = resolveLeaveUser(l, usersById, currentUser)?.email || '';
                   return (
-                    <tr key={l.id} className="border-b border-gray-50 hover:bg-gray-50/70">
-                      <td className="px-5 py-3.5">
-                        <p className="font-semibold text-gray-900">{personName}</p>
-                        {personEmail && personName !== personEmail && (
-                          <p className="text-xs text-gray-500 truncate max-w-[180px]">{personEmail}</p>
-                        )}
-                      </td>
-                      <td className="px-5 py-3.5 text-gray-800 whitespace-nowrap">
-                        {formatLeaveDateWithWeekday(l.start_date, l.end_date)}
-                      </td>
-                      <td className="px-5 py-3.5">
-                        <span className="inline-flex items-center gap-2">
-                          <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: typeColor }} />
-                          {leaveTypeDisplayLabel(l.leave_type)}
-                        </span>
-                      </td>
-                      <td className="px-5 py-3.5 text-gray-600">{halfDayDisplayLabel(l.half_day)}</td>
-                      <td className="px-5 py-3.5 text-gray-600 max-w-[280px] truncate" title={formatLeaveNote(l)}>{formatLeaveNote(l)}</td>
-                      <td className="px-5 py-3.5 text-gray-500 tabular-nums whitespace-nowrap">{fmtCreatedAt(l.created_at)}</td>
-                      <td className="px-5 py-3.5 text-right">{renderLeaveRowMenu(l)}</td>
-                    </tr>
+                    <>
+                      <span className="block font-semibold text-gray-900">{personName}</span>
+                      {personEmail && personName !== personEmail && (
+                        <span className="block text-xs text-gray-500 truncate max-w-[180px]">{personEmail}</span>
+                      )}
+                    </>
                   );
-                })}
-              </tbody>
-            </table>
-          </div>
+                },
+              },
+              {
+                key: 'date',
+                header: 'Ngày nghỉ',
+                secondary: true,
+                cellClassName: 'px-5 py-3.5 text-gray-800 whitespace-nowrap',
+                cell: (l) => formatLeaveDateWithWeekday(l.start_date, l.end_date),
+              },
+              {
+                key: 'type',
+                header: 'Loại nghỉ',
+                cellClassName: 'px-5 py-3.5',
+                cell: (l) => (
+                  <span className="inline-flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: leaveTypeMeta(l.leave_type).color }} />
+                    {leaveTypeDisplayLabel(l.leave_type)}
+                  </span>
+                ),
+              },
+              {
+                key: 'half',
+                header: 'Thời gian',
+                cellClassName: 'px-5 py-3.5 text-gray-600',
+                cell: (l) => halfDayDisplayLabel(l.half_day),
+              },
+              {
+                key: 'note',
+                header: 'Ghi chú',
+                cellClassName: 'px-5 py-3.5 text-gray-600 max-w-[280px] truncate',
+                cell: (l) => <span title={formatLeaveNote(l)}>{formatLeaveNote(l)}</span>,
+              },
+              {
+                key: 'created',
+                header: 'Tạo lúc',
+                hideOnMobile: true,
+                cellClassName: 'px-5 py-3.5 text-gray-500 tabular-nums whitespace-nowrap',
+                cell: (l) => fmtCreatedAt(l.created_at),
+              },
+              {
+                key: 'actions',
+                header: 'Thao tác',
+                align: 'right',
+                cellClassName: 'px-5 py-3.5 text-right',
+                cell: (l) => renderLeaveRowMenu(l),
+              },
+            ]}
+          />
         )}
       </div>
 

@@ -21,6 +21,7 @@ import {
   getCrmDateRangeFromPreset,
 } from '../lib/crmDateRangePresets';
 import DateRangePickerPopover from './DateRangePickerPopover';
+import ResponsiveTable from './ResponsiveTable';
 import ScopeFilterBar from '../shared/components/ScopeFilterBar';
 import {
   Calendar, ChevronLeft, ChevronRight, Loader2, UserMinus,
@@ -1082,9 +1083,11 @@ export default function EventsOffLeaveSection({
                     <ChevronRight className="h-4 w-4" />
                   </button>
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
+                {/* Mobile: lưới 2 cột cho 4 nút đều nhau — trước đó flex-wrap + select
+                    min-w-[140px] làm chúng rơi thành 3 hàng lệch nhau. */}
+                <div className="grid grid-cols-2 gap-2 w-full sm:w-auto sm:flex sm:flex-wrap sm:items-center">
                   <button type="button" onClick={goToday}
-                    className="h-9 px-3.5 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white text-sm font-medium text-gray-700 hover:border-violet-300 hover:text-violet-700 cursor-pointer">
+                    className="h-9 px-3.5 inline-flex items-center justify-center sm:justify-start gap-1.5 rounded-lg border border-gray-200 bg-white text-sm font-medium text-gray-700 hover:border-violet-300 hover:text-violet-700 cursor-pointer">
                     <Calendar className="h-4 w-4 text-violet-600" /> Hôm nay
                   </button>
                   <select
@@ -1094,7 +1097,7 @@ export default function EventsOffLeaveSection({
                       changeMonth(m, y);
                       setSelectedDay(null);
                     }}
-                    className="h-9 px-3 rounded-lg border border-gray-200 bg-white text-sm font-medium text-gray-700 cursor-pointer min-w-[140px]"
+                    className="h-9 px-3 rounded-lg border border-gray-200 bg-white text-sm font-medium text-gray-700 cursor-pointer w-full sm:w-auto sm:min-w-[140px]"
                     aria-label="Chọn tháng"
                   >
                     {monthYearOptions.map((opt) => (
@@ -1169,7 +1172,7 @@ export default function EventsOffLeaveSection({
                             e.stopPropagation();
                             prefillFormForDay(cell.day);
                           }}
-                          className={`min-h-[112px] border-b border-r border-gray-100 p-2 flex flex-col cursor-pointer transition ${
+                          className={`min-h-[62px] sm:min-h-[112px] border-b border-r border-gray-100 p-1 sm:p-2 flex flex-col cursor-pointer transition ${
                             isWeekendCol ? 'bg-rose-50/50' : 'bg-white'
                           } ${isSelected ? 'ring-2 ring-inset ring-violet-500 z-[1] bg-violet-50/20' : 'hover:bg-violet-50/25'} ${
                             !isCurrentMonthCell ? 'opacity-60' : ''
@@ -1186,7 +1189,15 @@ export default function EventsOffLeaveSection({
                                     ? 'text-red-500'
                                     : 'text-gray-800'
                           }`}>{cell.day}</span>
-                          <div className="mt-1.5 space-y-1 flex-1 min-w-0">
+                          {/* Mobile: ô chỉ rộng ~42px, không đủ cho chip tên (bị xuống dòng,
+                              không đọc được) → hiện chấm + số lượng, bấm ngày xem chi tiết bên dưới. */}
+                          {chips.length > 0 && (
+                            <div className="sm:hidden mt-1 flex items-center gap-1">
+                              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${holiday ? 'bg-orange-400' : 'bg-violet-600'}`} />
+                              <span className="text-[10px] font-semibold text-gray-600 tabular-nums">{dayLeaves.length || chips.length}</span>
+                            </div>
+                          )}
+                          <div className="hidden sm:block mt-1.5 space-y-1 flex-1 min-w-0">
                             {chips.map((chip) => (
                               <div
                                 key={chip.key}
@@ -1234,6 +1245,46 @@ export default function EventsOffLeaveSection({
                     })}
                   </div>
 
+                  {/* Mobile: ô lịch chỉ hiện số — chi tiết ngày đang chọn nằm ở đây.
+                      Dùng selectedDayLeaves/selectedHoliday vốn đã tính sẵn nhưng chưa hiển thị ở đâu. */}
+                  {selectedDay && (
+                    <div className="sm:hidden mt-3 rounded-xl border border-gray-200 bg-white p-3">
+                      <p className="text-xs font-bold text-gray-900 mb-2">
+                        Ngày {selectedDay}/{month}/{year}
+                        <span className="ml-1.5 font-medium text-gray-400">
+                          · {selectedDayLeaves.length} người nghỉ
+                        </span>
+                      </p>
+                      {selectedHoliday && (
+                        <p className="mb-2 rounded-md bg-orange-100 px-2 py-1 text-[11px] font-medium text-orange-800">
+                          {selectedHoliday.name || selectedHoliday.title || 'Ngày lễ'}
+                        </p>
+                      )}
+                      {selectedDayLeaves.length === 0 ? (
+                        <p className="text-xs text-gray-400">Không có ai nghỉ trong ngày này.</p>
+                      ) : (
+                        <ul className="space-y-1.5">
+                          {selectedDayLeaves.map((lv) => (
+                            <li key={lv.id}>
+                              <button
+                                type="button"
+                                onClick={() => openEditForm(lv)}
+                                className="w-full text-left rounded-lg border border-gray-100 bg-gray-50/70 px-2.5 py-2 active:bg-gray-100 cursor-pointer"
+                              >
+                                <span className="block text-xs font-semibold text-gray-900 truncate">
+                                  {usersById?.[String(lv.user_id)]?.full_name || lv.user_name || 'Nhân viên'}
+                                </span>
+                                <span className="block text-[11px] text-gray-500 truncate">
+                                  {[lv.leave_type_label || lv.leave_type, lv.note].filter(Boolean).join(' · ') || '—'}
+                                </span>
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  )}
+
                   <div className="mt-4 flex flex-wrap gap-x-5 gap-y-2 text-xs text-gray-500">
                     <span className="inline-flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-violet-600" /> Nghỉ phép</span>
                     <span className="inline-flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-pink-400" /> Nửa ngày</span>
@@ -1273,51 +1324,76 @@ export default function EventsOffLeaveSection({
               {loading ? (
                 <div className="flex justify-center py-12"><Loader2 className="h-7 w-7 animate-spin text-violet-600" /></div>
               ) : (
-                <div className={`overflow-x-auto ${showAllRecent && canExpandRecent ? 'max-h-[420px] overflow-y-auto' : ''}`}>
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 border-b border-gray-100">
-                        <th className="text-left px-5 py-3">Nhân viên</th>
-                        <th className="text-left px-5 py-3">Ngày nghỉ</th>
-                        <th className="text-left px-5 py-3">Loại nghỉ</th>
-                        <th className="text-left px-5 py-3">Thời gian</th>
-                        <th className="text-left px-5 py-3">Ghi chú</th>
-                        <th className="text-left px-5 py-3">Tạo lúc</th>
-                        <th className="text-right px-5 py-3">Thao tác</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {displayedRecent.length === 0 ? (
-                        <tr><td colSpan={7} className="text-center text-gray-400 py-12">Chưa có đơn nghỉ nào.</td></tr>
-                      ) : displayedRecent.map((l) => {
-                        const typeColor = leaveTypeMeta(l.leave_type).color;
-                        const personName = leavePersonDisplayName(l, usersById, currentUser);
-                        return (
-                          <tr key={l.id} className="border-b border-gray-50 hover:bg-gray-50/60">
-                            <td className="px-5 py-3.5">
-                              <p className="font-semibold text-gray-900">{personName}</p>
+                <div className={showAllRecent && canExpandRecent ? 'max-h-[420px] overflow-y-auto' : ''}>
+                  <ResponsiveTable
+                    rows={displayedRecent}
+                    rowKey={(l) => l.id}
+                    empty="Chưa có đơn nghỉ nào."
+                    cardClassName="mx-3"
+                    columns={[
+                      {
+                        key: 'person',
+                        header: 'Nhân viên',
+                        primary: true,
+                        cellClassName: 'px-5 py-3.5',
+                        cell: (l) => {
+                          const personName = leavePersonDisplayName(l, usersById, currentUser);
+                          return (
+                            <>
+                              <span className="block font-semibold text-gray-900">{personName}</span>
                               {l.user?.email && personName !== l.user.email && (
-                                <p className="text-xs text-gray-500 truncate max-w-[160px]">{l.user.email}</p>
+                                <span className="block text-xs text-gray-500 truncate max-w-[160px]">{l.user.email}</span>
                               )}
-                            </td>
-                            <td className="px-5 py-3.5 text-gray-800 whitespace-nowrap">
-                              {formatLeaveDateWithWeekday(l.start_date, l.end_date)}
-                            </td>
-                            <td className="px-5 py-3.5">
-                              <span className="inline-flex items-center gap-2">
-                                <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: typeColor }} />
-                                <span className="font-medium text-gray-800">{leaveTypeDisplayLabel(l.leave_type)}</span>
-                              </span>
-                            </td>
-                            <td className="px-5 py-3.5 text-gray-600">{halfDayDisplayLabel(l.half_day)}</td>
-                            <td className="px-5 py-3.5 text-gray-600 max-w-[280px] truncate" title={formatLeaveNote(l)}>{formatLeaveNote(l)}</td>
-                            <td className="px-5 py-3.5 text-gray-500 tabular-nums whitespace-nowrap">{fmtCreatedAt(l.created_at)}</td>
-                            <td className="px-5 py-3.5 text-right">{renderLeaveRowMenu(l)}</td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                            </>
+                          );
+                        },
+                      },
+                      {
+                        key: 'date',
+                        header: 'Ngày nghỉ',
+                        secondary: true,
+                        cellClassName: 'px-5 py-3.5 text-gray-800 whitespace-nowrap',
+                        cell: (l) => formatLeaveDateWithWeekday(l.start_date, l.end_date),
+                      },
+                      {
+                        key: 'type',
+                        header: 'Loại nghỉ',
+                        cellClassName: 'px-5 py-3.5',
+                        cell: (l) => (
+                          <span className="inline-flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: leaveTypeMeta(l.leave_type).color }} />
+                            <span className="font-medium text-gray-800">{leaveTypeDisplayLabel(l.leave_type)}</span>
+                          </span>
+                        ),
+                      },
+                      {
+                        key: 'half',
+                        header: 'Thời gian',
+                        cellClassName: 'px-5 py-3.5 text-gray-600',
+                        cell: (l) => halfDayDisplayLabel(l.half_day),
+                      },
+                      {
+                        key: 'note',
+                        header: 'Ghi chú',
+                        cellClassName: 'px-5 py-3.5 text-gray-600 max-w-[280px] truncate',
+                        cell: (l) => <span title={formatLeaveNote(l)}>{formatLeaveNote(l)}</span>,
+                      },
+                      {
+                        key: 'created',
+                        header: 'Tạo lúc',
+                        hideOnMobile: true,
+                        cellClassName: 'px-5 py-3.5 text-gray-500 tabular-nums whitespace-nowrap',
+                        cell: (l) => fmtCreatedAt(l.created_at),
+                      },
+                      {
+                        key: 'actions',
+                        header: 'Thao tác',
+                        align: 'right',
+                        cellClassName: 'px-5 py-3.5 text-right',
+                        cell: (l) => renderLeaveRowMenu(l),
+                      },
+                    ]}
+                  />
                 </div>
               )}
             </div>
