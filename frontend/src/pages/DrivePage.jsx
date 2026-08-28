@@ -817,11 +817,13 @@ export default function DrivePage() {
 
   if (health && !health.configured) {
     return (
-      <div className="p-8 max-w-3xl mx-auto">
-        <div className="bg-amber-50 border border-amber-200 rounded-xl p-6">
+      <div className="p-4 sm:p-8 max-w-3xl mx-auto">
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 sm:p-6">
           <div className="flex items-start gap-3">
             <AlertCircle className="text-amber-600 shrink-0 mt-0.5" size={22} />
-            <div className="flex-1">
+            {/* min-w-0: thiếu nó thì flex item không co dưới bề rộng nội dung, các khối
+                <pre> lệnh .env đẩy cả cụm ra 564px và overflow-x-auto của chúng vô hiệu. */}
+            <div className="flex-1 min-w-0">
               <h2 className="text-amber-900 font-semibold">Google Drive chưa được cấu hình</h2>
               <p className="text-amber-800 text-xs mt-1">Chế độ phát hiện: <code className="bg-amber-100 px-1.5 rounded">{health.auth_mode || 'none'}</code></p>
 
