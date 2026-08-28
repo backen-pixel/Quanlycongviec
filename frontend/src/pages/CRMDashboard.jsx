@@ -7809,7 +7809,7 @@ export default function CRMDashboard() {
         <div
             ref={searchBoxRef}
             data-tour="crm-search"
-            className={`group/search flex items-center shrink-0 flex-1 min-w-0 max-w-none sm:max-w-[22rem] lg:max-w-[28rem] rounded-md border transition-colors ${
+            className={`group/search flex items-center shrink-0 basis-full sm:basis-auto flex-1 min-w-0 max-w-none sm:max-w-[22rem] lg:max-w-[28rem] rounded-md border transition-colors ${
               searchFocused
                 ? 'border-violet-400 bg-white ring-1 ring-violet-200/60'
                 : searchText.trim()
@@ -10019,7 +10019,9 @@ function CrmKpiSummaryStrip({ segments, title }) {
   return (
     <div
       className="flex-1 min-w-0 grid gap-px mx-1"
-      style={{ gridTemplateColumns: `repeat(${segments.length}, minmax(0, 1fr))` }}
+      /* auto-fit + tối thiểu 72px: màn rộng xếp hết 1 hàng như cũ, màn hẹp tự xuống hàng
+         thay vì nhồi 5 ô vào 218px (43px/ô) khiến cả nhãn lẫn số đều bị cắt. */
+      style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(92px, 1fr))' }}
       title={title}
     >
       {segments.map((seg) => (
