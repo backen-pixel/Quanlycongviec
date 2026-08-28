@@ -7740,7 +7740,10 @@ export default function CRMDashboard() {
             </div>
           )}
         </div>
-        <div className="flex items-center gap-1 shrink-0 ml-auto">
+        {/* Mobile: nhóm nút xuống hàng riêng — bỏ ml-auto (nếu không sẽ dồn phải, hở ~150px
+            bên trái). Chiếm trọn dòng, icon gom về trái, nút chính đẩy sang phải.
+            Desktop giữ nguyên: cả nhóm dồn phải cùng hàng với tab. */}
+        <div className="flex items-center gap-1 shrink-0 basis-full sm:basis-auto sm:ml-auto max-sm:[&>:last-child]:ml-auto">
           {firstLoading ? (
             <span className="inline-flex items-center gap-1.5 shrink-0 rounded-full border border-violet-200/80 bg-violet-50/90 px-2 py-0.5 text-[11px] font-semibold text-violet-800">
               <span className="relative flex h-1.5 w-1.5">
@@ -7988,7 +7991,7 @@ export default function CRMDashboard() {
 
           <div
             data-tour="crm-view-mode"
-            className="flex items-center gap-0.5 shrink-0 ml-auto pl-1 border-l border-slate-200/80"
+            className="flex items-center gap-0.5 shrink-0 basis-full sm:basis-auto sm:ml-auto max-sm:[&>:last-child]:ml-auto sm:pl-1 sm:border-l sm:border-slate-200/80"
           >
             <div className="inline-flex items-center gap-px p-0.5 rounded-md bg-slate-100 border border-slate-200/80">
               <button
