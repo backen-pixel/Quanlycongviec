@@ -430,7 +430,7 @@ export default function CreateProject() {
           <h1 className="text-2xl font-bold text-gray-900">
             {dealId ? '🎉 Tạo Dự Án Từ Deal' : 'Tạo Dự Án Mới'}
           </h1>
-          <p className="text-sm mt-1 drop-shadow-sm" style={{ color: '#ffffff' }}>Nhập thông tin, chọn luồng và phân công nhiệm vụ</p>
+          <p className="text-sm mt-1 text-force-black">Nhập thông tin, chọn luồng và phân công nhiệm vụ</p>
         </div>
         <button
           onClick={handleCancel}
@@ -441,7 +441,7 @@ export default function CreateProject() {
       </div>
 
       {/* Tabs */}
-      <div data-tour="create-tabs" className="flex gap-0 border-b border-white/30">
+      <div data-tour="create-tabs" className="flex gap-0 border-b border-gray-200">
         {[
           { id: 'info', label: '📋 Thông Tin', desc: 'Dự án & khách hàng' },
           { id: 'flow', label: '🔄 Quy Trình', desc: 'Luồng, nhiệm vụ & phân công' },
@@ -453,13 +453,12 @@ export default function CreateProject() {
               data-tour={`tab-${tab.id}`}
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`px-6 py-3 font-medium text-sm border-b-2 transition ${
-                isActive ? 'border-white' : 'border-transparent hover:border-white/40'
+              className={`px-6 py-3 font-medium text-sm border-b-2 transition cursor-pointer ${
+                isActive ? 'border-blue-600' : 'border-transparent hover:border-gray-300'
               }`}
-              style={{ color: '#ffffff' }}
             >
-              <div className="drop-shadow-sm" style={{ color: '#ffffff', opacity: isActive ? 1 : 0.85 }}>{tab.label}</div>
-              <div className="text-xs drop-shadow-sm" style={{ color: '#ffffff', opacity: isActive ? 0.95 : 0.7 }}>{tab.desc}</div>
+              <div className="text-force-black">{tab.label}</div>
+              <div className="text-xs text-force-black">{tab.desc}</div>
             </button>
           );
         })}
