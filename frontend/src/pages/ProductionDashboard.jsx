@@ -658,6 +658,9 @@ export default function ProductionDashboard() {
   const [kanbanLoadKey, setKanbanLoadKey] = useState(() => P0?.kanbanLoadKey ?? '500');
   const [filterPhone, setFilterPhone] = useState(() => P0?.filterPhone ?? '');
   const [showAdvFilter, setShowAdvFilter] = useState(() => !!P0?.showAdvFilter);
+  // Dải KPI 7 thẻ: dưới 768px xếp 2 cột = 4 hàng, chiếm hết màn trước khi thấy Kanban.
+  // Thu gọn mặc định, chỉ hiện thanh tóm tắt 1 dòng. Từ md trở lên luôn mở (CSS).
+  const [kpiOpen, setKpiOpen] = useState(false);
   const [sxFilterTab, setSxFilterTab] = useState(() => P0?.sxFilterTab || 'employee');
   const [filterPanelPos, setFilterPanelPos] = useState(() => readStoredSxFilterPanelPos());
   const [searchFocused, setSearchFocused] = useState(false);
@@ -4032,7 +4035,26 @@ export default function ProductionDashboard() {
 
         {/* KPI */}
         <div className="px-3 py-2 sm:px-4 border-b border-slate-100 bg-slate-50/40">
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-7 gap-1.5 sm:gap-2">
+          {/* Thanh tóm tắt — chỉ dưới md, giữ 3 số quan trọng nhất khi đang thu gọn */}
+          <button
+            type="button"
+            onClick={() => setKpiOpen((v) => !v)}
+            aria-expanded={kpiOpen}
+            className={`md:hidden w-full flex items-center gap-2 py-1.5 -my-0.5 text-left cursor-pointer ${kpiOpen ? 'mb-1' : ''}`}
+          >
+            <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-slate-400 transition-transform ${kpiOpen ? 'rotate-180' : ''}`} />
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 shrink-0">Tổng quan</span>
+            {!kpiOpen && (
+              <span className="flex-1 min-w-0 flex items-center justify-end gap-2 text-[11px] tabular-nums">
+                <span className="text-slate-700"><b className="font-bold">{scopeKpis.total}</b> dự án</span>
+                <span className="text-teal-700"><b className="font-bold">{scopeKpis.producing}</b> SX</span>
+                <span className={scopeKpis.overdue > 0 ? 'text-red-600' : 'text-slate-400'}>
+                  <b className="font-bold">{scopeKpis.overdue}</b> quá hạn
+                </span>
+              </span>
+            )}
+          </button>
+          <div className={`${kpiOpen ? 'grid' : 'hidden'} md:grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-7 gap-1.5 sm:gap-2`}>
             <KPICard
               accent="bg-violet-500"
               label="Tổng dự án"
