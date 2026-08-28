@@ -267,7 +267,8 @@ export default function AppSwitcherPanel({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex">
+    // z-[60] để luôn nằm trên drawer sidebar mobile (z-50) — cả hai đều trượt từ cạnh trái.
+    <div className="fixed inset-0 z-[60] flex">
       {deniedModule && (
         <ModuleAccessDeniedModal
           moduleName={deniedModule.name}

@@ -835,6 +835,14 @@ export default function Sidebar() {
     });
   };
   const [showAppSwitcher, setShowAppSwitcher] = useState(false);
+  /**
+   * Panel "Tất cả ứng dụng" cũng là panel trượt từ cạnh trái — ở mobile nó trùng chỗ với
+   * drawer sidebar. Mở panel thì đóng drawer, nếu không panel bị drawer che gần hết.
+   */
+  const openAppSwitcher = useCallback((next) => {
+    setShowAppSwitcher(next);
+    if (next) setMobileOpen(false);
+  }, []);
   const [pinnedModule, setPinnedModule] = useState(() => localStorage.getItem('pinned_module') || '/crm');
   const appSwitcherRef = useRef(null);
   const { user, logout, socket } = useAuth();
@@ -1097,15 +1105,15 @@ export default function Sidebar() {
   }, [showAppSwitcher]);
 
   useEffect(() => {
-    const openSwitcher = () => setShowAppSwitcher(true);
-    const closeSwitcher = () => setShowAppSwitcher(false);
+    const openSwitcher = () => openAppSwitcher(true);
+    const closeSwitcher = () => openAppSwitcher(false);
     window.addEventListener('product-tour:open-app-switcher', openSwitcher);
     window.addEventListener('product-tour:close-app-switcher', closeSwitcher);
     return () => {
       window.removeEventListener('product-tour:open-app-switcher', openSwitcher);
       window.removeEventListener('product-tour:close-app-switcher', closeSwitcher);
     };
-  }, []);
+  }, [openAppSwitcher]);
 
   const doLogout = async () => {
     await logout();
@@ -1189,7 +1197,7 @@ export default function Sidebar() {
       >
         <AppSwitcherButton
           open={showAppSwitcher}
-          onClick={() => setShowAppSwitcher(!showAppSwitcher)}
+          onClick={() => openAppSwitcher(!showAppSwitcher)}
           collapsed={collapsed}
         />
         <SidebarModuleCycleButton
