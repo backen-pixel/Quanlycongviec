@@ -298,6 +298,17 @@ Nghiệm thu theo vai trò thực tế, kiểm tra task gate, SLA, thông báo, 
 
 ## 8. Lịch sử quyết định
 
+### 2026-08-28 — UAT kỹ thuật 6/6 đạt; chưa cutover vì chờ backup hậu-migration và nghiệm thu nghiệp vụ
+
+- Đã chạy đủ sáu kịch bản UAT bằng fixture staging cô lập; các fixture Sales/Project/Tài chính đã dọn sạch, Blueprint công ty thứ hai được giữ lại có chủ đích.
+- UAT phát hiện lỗi schema Hóa đơn thiếu `payment_terms`; sửa bằng migration additive 583, áp dụng/verify staging và không sửa migration cũ.
+- UAT Blueprint phát hiện node Company inactive gây insert trùng cây hệ sinh thái; đồng bộ nay tái sử dụng/kích hoạt node cũ và đã repair các phòng ban materialized.
+- Hồi quy hậu-sửa: Business OS 37/37, tenant isolation PASS, CRM parity có xác thực 100/100, frontend build PASS, audit migration 18/18 và browser Báo cáo/AI PASS.
+- Báo cáo và AI tiếp tục dùng cùng `executive_intelligence_v1`; AI chỉ `read_recommend`, mọi khuyến nghị có evidence/deep link và cần người duyệt.
+- Số lượng giao dịch của công ty thứ hai không thay đổi sau apply Blueprint; override rollout ring không rò sang công ty pilot và tenant khác bị chặn.
+- Chưa tạo baseline/cutover mới vì backup managed mới nhất cũ hơn migration 583; production vẫn không được deploy. Sau khi có backup mới hơn schema freeze phải chạy lại gate và cần anh xác nhận nghiệp vụ.
+- Biên bản: `docs/baseline/BUSINESS_OS_UAT_RESULT_02.md`.
+
 ### 2026-08-28 — Chốt baseline 02, sẵn sàng UAT có kiểm soát
 
 - Các lát cắt theo lộ trình đã hoàn tất ở mức code/schema: Mua hàng–Tài chính Project, Báo cáo/AI có kiểm soát và Blueprint theo công ty.

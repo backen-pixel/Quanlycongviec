@@ -35,8 +35,9 @@ async function findSubsidiaryUnderDivision(companyId, divisionUnitId) {
     .select('id')
     .eq('company_id', companyId)
     .eq('parent_id', divisionUnitId)
-    .eq('is_active', true)
     .maybeSingle();
+  // Unique index áp dụng cả node đã ngừng hoạt động. Trả lại node cũ để
+  // syncCompanyToEcosystem kích hoạt lại thay vì INSERT và vướng 23505.
   return data?.id || null;
 }
 

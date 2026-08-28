@@ -3055,6 +3055,7 @@ customers → crm_leads (lead|deal) → crm_tasks
 | 43 | `misa_error_message` | text | YES |  |
 | 44 | `company_id` | uuid | YES |  |
 | 45 | `region_id` | uuid | YES |  |
+| 46 | `payment_terms` | text | YES |  |
 
 <a id="knowledge_categories"></a>
 

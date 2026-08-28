@@ -18,3 +18,4 @@ Thư mục này là hồ sơ kiểm soát phiên bản staging. Mỗi baseline p
 - [`BUSINESS_OS_UAT_CHECKLIST_02.md`](./BUSINESS_OS_UAT_CHECKLIST_02.md): 6 kịch bản UAT xuyên toàn hệ thống.
 - [`BUSINESS_OS_UAT_PREFLIGHT_02.md`](./BUSINESS_OS_UAT_PREFLIGHT_02.md): snapshot aggregate read-only/PII-safe để phân công hồ sơ.
 - [`BUSINESS_OS_UAT_OPERATOR_GUIDE_02.md`](./BUSINESS_OS_UAT_OPERATOR_GUIDE_02.md): lệnh readiness, điều kiện dừng và quy tắc phân công.
+- [`BUSINESS_OS_UAT_RESULT_02.md`](./BUSINESS_OS_UAT_RESULT_02.md): kết quả 6/6 kịch bản kỹ thuật, lỗi đã sửa và blocker backup/nghiệm thu trước cutover.

@@ -3,7 +3,7 @@
  *
  * This script intentionally does not apply or repair migrations. It reports
  * whether the schema/config signatures expected from migrations 473 and
- * 567-582 are present on the configured Supabase project.
+ * 567-583 are present on the configured Supabase project.
  */
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '..', '.env'), quiet: true });
@@ -147,7 +147,10 @@ with audit as (
     ('582', 'company blueprint installations',
       to_regclass('public.company_blueprint_installations') is not null
       and to_regprocedure('public.enforce_company_blueprint_tenant_scope()') is not null
-      and exists (select 1 from pg_indexes where schemaname='public' and tablename='company_blueprint_installations' and indexname='idx_company_blueprint_installations_company'))
+      and exists (select 1 from pg_indexes where schemaname='public' and tablename='company_blueprint_installations' and indexname='idx_company_blueprint_installations_company')),
+    ('583', 'invoice payment terms contract',
+      exists (select 1 from information_schema.columns
+        where table_schema='public' and table_name='invoices' and column_name='payment_terms'))
   ) as checks(migration, capability, applied)
 )
 select
@@ -184,7 +187,7 @@ async function main() {
       applied: applied === true,
     })),
   };
-  report.all_applied = report.migrations.length === 17
+  report.all_applied = report.migrations.length === 18
     && report.migrations.every((item) => item.applied);
 
   const requiredBackupAfter = cliValue('--require-backup-after')
