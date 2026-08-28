@@ -3524,6 +3524,10 @@ export default function CRMDashboard() {
   stagesDealRef.current = stagesDeal;
   const stagesLeadRef = useRef(stagesLead);
   stagesLeadRef.current = stagesLead;
+  const dealTabStagesRef = useRef(dealTabStages);
+  dealTabStagesRef.current = dealTabStages;
+  const customerTabStagesRef = useRef(customerTabStages);
+  customerTabStagesRef.current = customerTabStages;
 
   /** Đưa lead/deal tìm được lên Kanban (nếu chưa tải) — không reload cả board. */
   const upsertCrmSearchHitsOnBoard = useCallback((rows) => {
@@ -4883,13 +4887,18 @@ export default function CRMDashboard() {
   /**
    * Admin «Tất cả công ty» — Kanban/KPI chỉ deal/lead thuộc khối CRM (`/companies?for_module=crm`).
    * Tránh cộng deal công ty ngoài CRM (vd. HCB) vào tab Deal khi stage không thuộc pipeline CRM.
+   * Ngoại lệ: bản ghi người dùng vừa bấm từ kết quả tìm kiếm (`crmSearchPinnedByIdRef`) luôn được
+   * giữ lại dù công ty ngoài CRM — tìm thấy rồi mà bấm vào không hiện thẻ thì vô nghĩa với người dùng.
    */
   const restrictToCrmModuleCompanies = useCallback((items) => {
     if (dashboardScopeCompanyId || filterCompany) return items;
     if (!isAdmin) return items;
     const ids = new Set((companies || []).map((c) => String(c.id)).filter(Boolean));
     if (!ids.size) return items;
-    return (items || []).filter((row) => ids.has(String(row.company_id || '')));
+    return (items || []).filter((row) => (
+      ids.has(String(row.company_id || ''))
+      || crmSearchPinnedByIdRef.current.has(String(row.id))
+    ));
   }, [dashboardScopeCompanyId, filterCompany, isAdmin, companies]);
 
   const leads = useMemo(
@@ -6059,6 +6068,22 @@ export default function CRMDashboard() {
       else if (onDeal && !onCust) targetTab = 'deal';
       else if (isCrmCustomerPipelineTab(pipelineType) && onCust) targetTab = 'customer';
       else targetTab = 'deal';
+    }
+
+    // Cột (stage) của thẻ có thực sự tồn tại ở tab đích không — `splitDealStagesForCrmTabs` xếp
+    // CỘT theo anchor gộp toàn hệ thống trong khi `partitionDealsForCrmTabs` xếp DEAL theo anchor
+    // riêng từng pipeline, nên 1 deal có thể được xếp vào tab Khách hàng mà cột stage của nó lại
+    // rơi vào danh sách cột tab Deal (hoặc ngược lại) — vd. công ty không tham gia pipeline gộp
+    // «Tất cả công ty» (như HCB) có anchor lệch hẳn. Không có cột thì không cuộn/highlight được.
+    const targetStages = targetTab === 'lead'
+      ? stagesLeadRef.current
+      : targetTab === 'customer'
+        ? customerTabStagesRef.current
+        : dealTabStagesRef.current;
+    const hasMatchingStage = (targetStages || []).some((s) => String(s.id) === String(row.stage_id || ''));
+    if (!hasMatchingStage) {
+      openCrmSearchResultDetail(sid);
+      return;
     }
 
     let needsWait = false;
@@ -7537,7 +7562,7 @@ export default function CRMDashboard() {
               className="h-9 px-4 bg-white text-emerald-700 hover:bg-emerald-50 rounded-lg text-sm font-semibold cursor-pointer transition">
               Xem xưởng →
             </button>
-            <button onClick={() => navigate(`/projects/${autoCreateResult.project_id}`)}
+            <button onClick={() => navigate(`/management/work-unified/${autoCreateResult.project_id}`)}
               className="h-9 px-4 bg-white/90 text-gray-800 hover:bg-white rounded-lg text-sm font-medium cursor-pointer transition">
               Dự án đầy đủ
             </button>
