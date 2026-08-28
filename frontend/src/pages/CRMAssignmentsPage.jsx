@@ -584,6 +584,16 @@ function InboxDeadlineBoard({ tasks, actionLabel }) {
 
 /** Modal phải portal ra body — tránh bị sidebar (z-30) đè vì main nằm trong stacking context z-10. */
 const ASSIGNMENTS_MODAL_Z = 'z-[100]';
+/**
+ * Dải KPI 5 thẻ: dưới 768px xếp 2 cột = 3 hàng (~290px), đẩy bảng Kanban xuống
+ * quá nửa màn. Mặc định thu gọn ở màn hẹp — dòng tóm tắt trên nút vẫn đủ số liệu,
+ * và người dùng bấm mở lại được. Chỉ là giá trị khởi tạo nên không khoá thao tác.
+ */
+function defaultKpiPanelOpen() {
+  if (typeof window === 'undefined') return true;
+  return window.innerWidth >= 768;
+}
+
 function portalAssignmentsModal(node) {
   if (typeof document === 'undefined') return null;
   return createPortal(node, document.body);
@@ -595,7 +605,7 @@ function PrivateDealInbox({ groups, loading, assignmentModule, search, onSearchC
   const [inboxView, setInboxView] = useState('deal');
   const [collapsed, setCollapsed] = useState({});
   const [searchFocused, setSearchFocused] = useState(false);
-  const [kpiPanelOpen, setKpiPanelOpen] = useState(true);
+  const [kpiPanelOpen, setKpiPanelOpen] = useState(defaultKpiPanelOpen);
   const [showAdvFilter, setShowAdvFilter] = useState(false);
   const [filterStatus, setFilterStatus] = useState('');
   const [filterPriority, setFilterPriority] = useState('');
@@ -791,12 +801,13 @@ function PrivateDealInbox({ groups, loading, assignmentModule, search, onSearchC
             onClick={() => setKpiPanelOpen((v) => !v)}
             className={`w-full flex items-center gap-2 px-3 py-1.5 sm:px-4 text-left border-b ${t.kpiToggle} bg-white/40 hover:bg-slate-50/80 cursor-pointer transition-colors`}
           >
-            <span className="text-[11px] font-semibold text-slate-700">
+            <span className="text-[11px] font-semibold text-slate-700 shrink-0">
               KPI
-              <span className={`ml-1 font-medium ${t.activeText}`}>· Không gian chung</span>
+              {/* Ẩn tên trang khi đang thu gọn ở màn hẹp — nhường chỗ cho dòng số liệu */}
+              <span className={`ml-1 font-medium ${t.activeText} ${kpiPanelOpen ? '' : 'hidden sm:inline'}`}>· Không gian chung</span>
             </span>
             {!kpiPanelOpen && (
-              <span className="text-[10px] text-slate-500 tabular-nums truncate">
+              <span className="min-w-0 text-[10px] text-slate-500 tabular-nums truncate">
                 {stats.total} tổng · {stats.pending} chưa · {stats.inProgress} đang · {stats.completed} xong
                 {stats.overdue > 0 ? ` · ${stats.overdue} quá hạn` : ''}
               </span>
@@ -1147,7 +1158,7 @@ export default function CRMAssignmentsPage({
   const [schedules, setSchedules] = useState([]);
   const [showSchedulesPanel, setShowSchedulesPanel] = useState(false);
   const [showAdvFilter, setShowAdvFilter] = useState(false);
-  const [kpiPanelOpen, setKpiPanelOpen] = useState(true);
+  const [kpiPanelOpen, setKpiPanelOpen] = useState(defaultKpiPanelOpen);
   const [searchFocused, setSearchFocused] = useState(false);
   const [searchSuggestDismissed, setSearchSuggestDismissed] = useState(false);
   const [dealSuggestResults, setDealSuggestResults] = useState([]);
@@ -1907,7 +1918,7 @@ export default function CRMAssignmentsPage({
                       setCreateForSharedWorkspace(false);
                       setShowItemModal(true);
                     }}
-                    className={`h-8 px-3 rounded-md text-white text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer shadow-sm ${theme.cta}`}
+                    className={`h-8 px-3 rounded-md text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 cursor-pointer shadow-sm flex-1 sm:flex-none ${theme.cta}`}
                   >
                     <Plus className="h-3.5 w-3.5" strokeWidth={2.5} />Giao việc
                   </button>
@@ -1919,7 +1930,7 @@ export default function CRMAssignmentsPage({
                       setCreateForSharedWorkspace(true);
                       setShowItemModal(true);
                     }}
-                    className="h-8 px-3 rounded-md bg-white border border-teal-200 text-teal-800 text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer hover:bg-teal-50 shadow-sm"
+                    className="h-8 px-3 rounded-md bg-white border border-teal-200 text-teal-800 text-xs font-semibold inline-flex items-center justify-center gap-1.5 cursor-pointer hover:bg-teal-50 shadow-sm flex-1 sm:flex-none"
                     title="Tạo giao việc gắn deal — hiện ở Không gian chung"
                   >
                     <Plus className="h-3.5 w-3.5" strokeWidth={2.5} />KG chung
@@ -2132,12 +2143,13 @@ export default function CRMAssignmentsPage({
               onClick={() => setKpiPanelOpen((v) => !v)}
               className={`w-full flex items-center gap-2 px-3 py-1.5 sm:px-4 text-left border-b ${theme.kpiToggle} bg-white/40 hover:bg-slate-50/80 cursor-pointer transition-colors`}
             >
-              <span className="text-[11px] font-semibold text-slate-700">
+              <span className="text-[11px] font-semibold text-slate-700 shrink-0">
                 KPI
-                <span className={`ml-1 font-medium ${theme.activeText}`}>· {displayTitle}</span>
+                {/* Ẩn tên trang khi đang thu gọn ở màn hẹp — nhường chỗ cho dòng số liệu */}
+                <span className={`ml-1 font-medium ${theme.activeText} ${kpiPanelOpen ? '' : 'hidden sm:inline'}`}>· {displayTitle}</span>
               </span>
               {!kpiPanelOpen && (
-                <span className="text-[10px] text-slate-500 tabular-nums truncate">
+                <span className="min-w-0 text-[10px] text-slate-500 tabular-nums truncate">
                   {stats.total} tổng · {stats.pending} chưa · {stats.inProgress} đang · {stats.completed} xong
                   {stats.overdue > 0 ? ` · ${stats.overdue} quá hạn` : ''}
                 </span>
