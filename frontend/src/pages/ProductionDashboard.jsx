@@ -3848,7 +3848,7 @@ export default function ProductionDashboard() {
                     value={filterWorkTypeId}
                     onChange={(e) => setFilterWorkTypeId(e.target.value)}
                     disabled={filterBusy && !firstLoaded}
-                    className={`h-6 text-[11px] bg-transparent border-0 focus:ring-0 cursor-pointer max-w-[11rem] font-semibold ${
+                    className={`h-6 text-[11px] bg-transparent border-0 focus:ring-0 cursor-pointer max-w-[13.5rem] sm:max-w-[11rem] font-semibold ${
                       filterWorkTypeId === 'none' ? 'text-amber-700'
                       : filterWorkTypeId ? 'text-teal-800' : 'text-violet-800'
                     }`}

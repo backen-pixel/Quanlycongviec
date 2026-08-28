@@ -64,7 +64,7 @@ export default function SearchInlineFilterChips({
       <div
         ref={ref}
         onMouseDown={onMouseDown}
-        className={`flex items-center gap-1 shrink-0 max-w-[min(58%,13rem)] overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden transition-opacity duration-200 cursor-grab active:cursor-grabbing ${opacityClass}`}
+        className={`flex items-center gap-1 shrink-0 max-w-[min(42%,7rem)] sm:max-w-[min(58%,13rem)] overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden transition-opacity duration-200 cursor-grab active:cursor-grabbing ${opacityClass}`}
         aria-label="Bộ lọc đang áp dụng"
         title="Giữ chuột trái và kéo để xem thêm bộ lọc"
       >
