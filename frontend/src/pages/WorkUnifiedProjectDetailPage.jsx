@@ -9,6 +9,7 @@ import WorkUnifiedFilterPanel, {
   WORK_UNIFIED_REGION_NONE,
   getWorkUnifiedPresetDateRange,
 } from '../components/WorkUnifiedFilterFields';
+import { WorkUnifiedOpenTabProvider, workUnifiedPath } from '../components/WorkUnifiedOpenTabMenu';
 import ProjectOverviewPanel from '../components/ProjectOverviewPanel';
 import { PipelineChip, withPipelineProgress, displayPipelineStageName } from '../components/ProjectDealSyncPanel';
 import PipelineStepper from '../components/PipelineStepper';
@@ -315,7 +316,14 @@ export function TasksTab({ projectId, initialGroup = '' }) {
                   </div>
                   {isOpen && (
                     <div className="p-2 space-y-2 bg-white border-t border-gray-100">
-                      {g.tasks.map(renderTaskRow)}
+                      {g.tasks
+                        .slice()
+                        .sort((a, b) => {
+                          const ad = DONE_TASK_STATUSES.includes(String(a.status)) ? 1 : 0;
+                          const bd = DONE_TASK_STATUSES.includes(String(b.status)) ? 1 : 0;
+                          return ad - bd;
+                        })
+                        .map(renderTaskRow)}
                     </div>
                   )}
                 </div>
@@ -1597,7 +1605,14 @@ function ProjectJumpSearch({ currentId }) {
     setFilterPanelOpen(false);
     setQ('');
     setItems([]);
-    navigate(`/management/work-unified/${id}`);
+    navigate(workUnifiedPath(id));
+  };
+
+  const closeJump = () => {
+    setOpen(false);
+    setFilterPanelOpen(false);
+    setQ('');
+    setItems([]);
   };
 
   const jumpChips = useMemo(() => {
@@ -1738,18 +1753,20 @@ function ProjectJumpSearch({ currentId }) {
             items.map((it) => {
               const active = String(it.id) === String(currentId);
               return (
-                <button
+                <Link
                   key={it.id}
-                  type="button"
-                  onClick={() => go(it.id)}
-                  className={`w-full text-left px-3 py-2 cursor-pointer ${active ? 'bg-violet-50' : 'hover:bg-gray-50'}`}
+                  to={workUnifiedPath(it.id)}
+                  data-wu-open-tab={it.id}
+                  title="Chuột phải để mở tab mới"
+                  onClick={closeJump}
+                  className={`block w-full text-left px-3 py-2 ${active ? 'bg-violet-50' : 'hover:bg-gray-50'}`}
                 >
                   <p className="text-xs font-medium text-violet-700 truncate">{it.code}</p>
                   <p className="text-[11px] text-gray-600 truncate">{it.name}</p>
                   {it.customer_name && (
                     <p className="text-[10px] text-gray-400 truncate">{it.customer_name}</p>
                   )}
-                </button>
+                </Link>
               );
             })
           )}
@@ -1759,7 +1776,28 @@ function ProjectJumpSearch({ currentId }) {
   );
 }
 
+function ProjectSelfLink({ id, className, children }) {
+  return (
+    <Link
+      to={workUnifiedPath(id)}
+      data-wu-open-tab={id}
+      title="Chuột phải để mở tab mới"
+      className={className}
+    >
+      {children}
+    </Link>
+  );
+}
+
 export default function WorkUnifiedProjectDetailPage() {
+  return (
+    <WorkUnifiedOpenTabProvider>
+      <WorkUnifiedProjectDetailInner />
+    </WorkUnifiedOpenTabProvider>
+  );
+}
+
+function WorkUnifiedProjectDetailInner() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -2041,26 +2079,31 @@ export default function WorkUnifiedProjectDetailPage() {
   return (
     <div className="h-full min-h-0 overflow-y-auto px-4 md:px-6 py-3 space-y-5">
       <div className="flex items-center gap-2 text-xs text-gray-400 flex-wrap">
-        <button
-          type="button"
-          onClick={() => navigate('/management/work-unified')}
+        <Link
+          to="/management/work-unified"
           title="Thoát khỏi chi tiết dự án"
-          className="inline-flex items-center justify-center h-6 w-6 rounded-md text-gray-500 hover:text-gray-800 hover:bg-gray-100 cursor-pointer shrink-0"
+          className="inline-flex items-center justify-center h-6 w-6 rounded-md text-gray-500 hover:text-gray-800 hover:bg-gray-100 shrink-0"
         >
           <ArrowLeft className="h-4 w-4" />
-        </button>
+        </Link>
         <Link to="/management/work-unified" className="hover:text-gray-600">Work Unified</Link>
         <ChevronRight className="h-3 w-3" />
         <span>Dự án</span>
         <ChevronRight className="h-3 w-3" />
-        <span className="text-gray-600 font-medium">{project.code}</span>
+        <ProjectSelfLink id={id} className="text-gray-600 font-medium hover:text-violet-700 hover:underline">
+          {project.code}
+        </ProjectSelfLink>
         <ProjectJumpSearch currentId={id} />
       </div>
 
       <div className="flex items-start justify-between flex-wrap gap-3">
         <div>
           <div className="flex items-center gap-2 flex-wrap">
-            <h1 className="text-xl font-bold" style={{ color: '#111827' }}>{project.name}</h1>
+            <h1 className="text-xl font-bold" style={{ color: '#111827' }}>
+              <ProjectSelfLink id={id} className="hover:text-violet-800">
+                {project.name}
+              </ProjectSelfLink>
+            </h1>
             {overview.status_label && (
               <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 whitespace-nowrap">
                 Đang {overview.status_label.toLowerCase()}

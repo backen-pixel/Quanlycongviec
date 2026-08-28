@@ -6,6 +6,7 @@ import { isAdminLike, isCompanyScopedAdmin } from '../lib/adminRole';
 import { formatDate, formatVND } from '../lib/utils';
 import KanbanColumnVirtualList from '../components/KanbanColumnVirtualList';
 import ResponsiveTable from '../components/ResponsiveTable';
+import { WorkUnifiedOpenTabProvider, workUnifiedPath } from '../components/WorkUnifiedOpenTabMenu';
 import {
   RefreshCw, Plus, FileText, Package, ChevronLeft, ChevronRight,
   List, LayoutGrid, Clock, Phone, Calendar, EyeOff, Eye, X, Search, Users,
@@ -101,6 +102,20 @@ function initials(name) {
   return parts.slice(-2).map((p) => p[0]).join('').toUpperCase();
 }
 
+function WorkUnifiedListProjectLink({ it }) {
+  return (
+    <Link
+      to={workUnifiedPath(it.id)}
+      data-wu-open-tab={it.id}
+      title="Chuột phải để mở tab mới"
+      className="block min-w-0"
+    >
+      <span className="text-sm font-semibold text-blue-700 hover:underline truncate block">{it.code}</span>
+      <span className="text-xs text-gray-500 truncate mt-0.5 block">{it.name}</span>
+    </Link>
+  );
+}
+
 function WorkKanbanCard({ it }) {
   const modules = [
     it.has_crm && { key: 'crm', label: 'CRM' },
@@ -122,7 +137,9 @@ function WorkKanbanCard({ it }) {
 
   return (
     <Link
-      to={`/management/work-unified/${it.id}`}
+      to={workUnifiedPath(it.id)}
+      data-wu-open-tab={it.id}
+      title="Chuột phải để mở tab mới"
       className="block rounded-lg border border-gray-100 bg-white px-2.5 py-2 shadow-sm hover:shadow-md hover:border-gray-200 transition-shadow space-y-1"
     >
       <div className="flex items-center gap-1.5 min-w-0">
@@ -228,6 +245,19 @@ function parseDateStr(dateStr) {
   return new Date(y, m - 1, d);
 }
 
+function CalendarEventLink({ ev, className, children, title }) {
+  return (
+    <Link
+      to={workUnifiedPath(ev.itemId)}
+      data-wu-open-tab={ev.itemId}
+      title={title || 'Chuột phải để mở tab mới'}
+      className={className || 'block rounded-lg border border-gray-200 bg-white p-2.5 hover:shadow-sm hover:border-gray-300 transition-shadow'}
+    >
+      {children}
+    </Link>
+  );
+}
+
 function CalendarDayFeed({ activeDay, isExplicitSelection, events, onClear, onShiftDay, onPickDate, toneClass }) {
   const d = parseDateStr(activeDay);
   const weekday = d ? WEEKDAY_SHORT[d.getDay()] : '';
@@ -290,11 +320,7 @@ function CalendarDayFeed({ activeDay, isExplicitSelection, events, onClear, onSh
       ) : (
         <div className="space-y-2">
           {events.map((ev) => (
-            <Link
-              key={ev.id}
-              to={`/management/work-unified/${ev.itemId}`}
-              className="block rounded-lg border border-gray-200 bg-white p-2.5 hover:shadow-sm hover:border-gray-300 transition-shadow"
-            >
+            <CalendarEventLink key={ev.id} ev={ev}>
               <div className="flex items-center gap-1.5 flex-wrap mb-1">
                 <Package className="h-3.5 w-3.5 text-gray-400 shrink-0" />
                 <span className="text-sm font-bold text-gray-900">{ev.code}</span>
@@ -329,7 +355,7 @@ function CalendarDayFeed({ activeDay, isExplicitSelection, events, onClear, onSh
                 ))}
                 {ev.person && <span className="text-xs text-gray-500">· {ev.person}</span>}
               </div>
-            </Link>
+            </CalendarEventLink>
           ))}
         </div>
       )}
@@ -738,6 +764,7 @@ export default function WorkUnifiedOverviewPage() {
   // tự cuộn. Dạng Danh sách mà khoá thì phần trên (tiêu đề + 10 công đoạn + KPI) ăn mất
   // ~313px, danh sách chỉ còn ~454px cho 1.287px nội dung → xem được rất ít dòng.
   return (
+    <WorkUnifiedOpenTabProvider>
     <div className={`flex flex-col gap-3 w-full pb-3 ${
       viewMode === 'list'
         ? 'min-h-[calc(100vh-0.75rem)]'
@@ -1071,11 +1098,11 @@ export default function WorkUnifiedOverviewPage() {
                             </div>
                             <div className="space-y-1 flex-1">
                               {shown.map((ev) => (
-                                <Link
+                                <CalendarEventLink
                                   key={ev.id}
-                                  to={`/management/work-unified/${ev.itemId}`}
+                                  ev={ev}
                                   className={`block rounded-md border px-1 py-0.5 hover:brightness-95 transition-[filter] ${calendarToneClass(ev)}`}
-                                  title={[ev.code, ev.name, ev.label, ev.stageLabel, ev.modules.join(' · '), ev.person].filter(Boolean).join(' — ')}
+                                  title={[ev.code, ev.name, ev.label, ev.stageLabel, ev.modules.join(' · '), ev.person, 'Chuột phải: mở tab mới'].filter(Boolean).join(' — ')}
                                 >
                                   <div className="flex items-center justify-between gap-0.5">
                                     <span className="text-[9px] font-extrabold font-mono truncate">{ev.code}</span>
@@ -1096,7 +1123,7 @@ export default function WorkUnifiedOverviewPage() {
                                       ))}
                                     </div>
                                   )}
-                                </Link>
+                                </CalendarEventLink>
                               ))}
                               {more > 0 && (
                                 <div className="text-[9px] text-center font-semibold text-slate-500 bg-slate-50 rounded border border-slate-200 py-0.5">
@@ -1169,14 +1196,7 @@ export default function WorkUnifiedOverviewPage() {
                 header: 'Dự án',
                 primary: true,
                 cellClassName: 'px-4 py-3 align-top',
-                cell: (it) => (
-                  <>
-                    <Link to={`/management/work-unified/${it.id}`} className="text-sm font-semibold text-blue-700 hover:underline truncate block" title={it.name}>
-                      {it.code}
-                    </Link>
-                    <p className="text-xs text-gray-500 truncate mt-0.5" title={it.name}>{it.name}</p>
-                  </>
-                ),
+                cell: (it) => <WorkUnifiedListProjectLink it={it} />,
               },
               {
                 key: 'customer',
@@ -1281,5 +1301,6 @@ export default function WorkUnifiedOverviewPage() {
         )}
       </div>
     </div>
+    </WorkUnifiedOpenTabProvider>
   );
 }

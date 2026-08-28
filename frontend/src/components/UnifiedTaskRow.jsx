@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { ExternalLink, Calendar, User, MessageSquare, Bell } from 'lucide-react';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
-import { isWorkProductionModuleAdmin } from '../lib/adminRole';
+import { isWorkProductionModuleAdmin, isLogisticsAdmin } from '../lib/adminRole';
 import { formatDate, PRIORITY_LABELS, PRIORITY_COLORS } from '../lib/utils';
 import { normalizeKanbanStatus } from '../lib/workTasksDashboardUtils';
 
@@ -32,6 +32,40 @@ const STATUS_ACTIONS = [
   { key: 'cancelled', label: 'Hủy' },
 ];
 
+/** Khối người chịu trách nhiệm — khớp backend taskOwnerLane. */
+function taskRemindLane(task) {
+  const kind = String(task?.task_kind || '');
+  if (kind === 'SX' || kind === 'Dự án') return 'production';
+  if (kind === 'VC') return 'logistics';
+  if (kind === 'CRM-Deal' || kind === 'CRM-Lead' || kind === 'Giao việc') return 'sales';
+  if (task?.source === 'crm_task' || task?.source === 'crm_assignment') return 'sales';
+  return 'production';
+}
+
+function remindButtonCopy(task) {
+  const lane = taskRemindLane(task);
+  if (lane === 'sales') {
+    return {
+      label: 'Nhắc Sales',
+      title: 'Nhắc người phụ trách khối CRM/Sales thực hiện việc này (bản vẽ, render, bảng mô tả nộp tại Ghi chú & file)',
+    };
+  }
+  if (lane === 'logistics') {
+    return {
+      label: 'Nhắc VC',
+      title: 'Nhắc người phụ trách vận chuyển / lắp đặt thực hiện việc này',
+    };
+  }
+  return {
+    label: 'Nhắc xưởng',
+    title: 'Nhắc người phụ trách sản xuất thực hiện việc này',
+  };
+}
+
+function canSendTaskRemind(user) {
+  return isWorkProductionModuleAdmin(user) || isLogisticsAdmin(user);
+}
+
 function getDeepLink(task) {
   if (!task) return null;
   if (task.source === 'crm_task' && task.lead_id) {
@@ -59,12 +93,17 @@ export default function UnifiedTaskRow({ task, onStatusChange, onOpenExtras, com
   const kindCls = KIND_COLORS[task.task_kind] || 'bg-gray-100 text-gray-600';
   const kanbanStatus = normalizeKanbanStatus(task.status);
   const isOpenTask = !DONE_STATUSES.has(String(task.status || '').toLowerCase());
-  const canRemind = isWorkProductionModuleAdmin(user) && isOpenTask && task.source && task.source_id;
+  const remindCopy = remindButtonCopy(task);
+  const canShowRemind = !!(task.source && task.source_id
+    && (canSendTaskRemind(user) || typeof onStatusChange === 'function'));
+  const remindTitle = isOpenTask
+    ? remindCopy.title
+    : 'Việc đã kết thúc — không cần nhắc người phụ trách';
 
   const handleRemind = async (e) => {
     e.preventDefault();
     e.stopPropagation();
-    if (reminding || reminded) return;
+    if (!isOpenTask || reminding || reminded) return;
     setReminding(true);
     try {
       const res = await api.post(`/work-tasks/${task.source}/${task.source_id}/remind-complete`);
@@ -117,7 +156,7 @@ export default function UnifiedTaskRow({ task, onStatusChange, onOpenExtras, com
             )}
           </div>
         )}
-        {(onStatusChange || canRemind) && (
+        {(onStatusChange || canShowRemind) && (
           <div className="flex flex-wrap items-center gap-1.5 mt-2">
             {onStatusChange && STATUS_ACTIONS.map((a) => (
               <button
@@ -134,26 +173,22 @@ export default function UnifiedTaskRow({ task, onStatusChange, onOpenExtras, com
                 {a.label}
               </button>
             ))}
-            {canRemind && (
+            {canShowRemind && (
               <button
                 type="button"
                 onClick={handleRemind}
-                disabled={reminding || reminded}
-                title={
-                  task.task_kind === 'SX' || task.task_kind === 'Dự án'
-                    ? 'Nhắc xưởng hoàn thành việc này'
-                    : task.task_kind === 'VC'
-                      ? 'Nhắc VC/LĐ hoàn thành việc này'
-                      : 'Nhắc Sales hoàn thành việc này (bản vẽ, render, bảng mô tả nộp tại Ghi chú & file)'
-                }
-                className={`inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md border font-medium cursor-pointer disabled:cursor-default ${
-                  reminded
-                    ? 'bg-amber-50 text-amber-800 border-amber-200'
-                    : 'bg-white text-amber-700 border-amber-200 hover:bg-amber-50'
+                disabled={!isOpenTask || reminding || reminded}
+                title={remindTitle}
+                className={`inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md border font-semibold ${
+                  !isOpenTask
+                    ? 'bg-gray-50 text-gray-400 border-gray-200 cursor-not-allowed'
+                    : reminded
+                      ? 'bg-amber-50 text-amber-800 border-amber-200 cursor-pointer disabled:cursor-default'
+                      : 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100 cursor-pointer disabled:cursor-default'
                 }`}
               >
                 <Bell className={`h-3 w-3 ${reminding ? 'animate-pulse' : ''}`} />
-                {reminded ? 'Đã nhắc' : reminding ? 'Đang gửi…' : 'Nhắc hoàn thành'}
+                {reminded ? 'Đã nhắc' : reminding ? 'Đang gửi…' : remindCopy.label}
               </button>
             )}
           </div>
