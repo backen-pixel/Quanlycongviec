@@ -178,6 +178,13 @@ export default function VcHandoverCommentCard({ comment, onUpdated, onHistoryCom
 
   const sides = [
     {
+      side: 'crm' as const,
+      label: 'CRM',
+      personName: md.crm_responsible_user_name ? String(md.crm_responsible_user_name) : '',
+      confirmed: isConfirmed(md.confirmed_crm) || state === 'awaiting_confirm' || state === 'done',
+      can: false,
+    },
+    {
       side: 'production' as const,
       label: 'Xưởng (SX)',
       personName: md.production_person_name ? String(md.production_person_name) : '',
@@ -440,7 +447,7 @@ export default function VcHandoverCommentCard({ comment, onUpdated, onHistoryCom
                 <Text style={styles.strong}>{formatVcDateTime(md.install_date)}</Text>
               </Text>
             ) : null}
-            <Text style={styles.rule}>Chỉ phụ trách chính Xưởng và VC/LĐ được xác nhận.</Text>
+            <Text style={styles.rule}>CRM + Xưởng đã xác nhận mặc định. Chỉ người xác nhận VC/LĐ được bấm.</Text>
 
             <Pressable style={styles.calBtn} onPress={() => navigation.navigate('Events')}>
               <Ionicons name="calendar-outline" size={15} color="#9A3412" />
@@ -476,7 +483,9 @@ export default function VcHandoverCommentCard({ comment, onUpdated, onHistoryCom
                   <Pressable
                     style={styles.confirmBtn}
                     disabled={busy === `confirm-${s.side}`}
-                    onPress={() => void confirm(s.side)}
+                    onPress={() => {
+                      if (s.side === 'production' || s.side === 'logistics') void confirm(s.side);
+                    }}
                   >
                     {busy === `confirm-${s.side}` ? (
                       <SpinningLoader color="#fff" size="small" />

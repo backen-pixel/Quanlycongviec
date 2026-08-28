@@ -147,6 +147,16 @@ function resolveTypeSlug(eventTypes, slugs) {
   return slugs[0] || 'pickup';
 }
 
+/** Sự kiện thuộc đúng deal/dự án đang mở (kể cả lịch tạm trên form). */
+function isOwnProjectCalEvent(ev, { projectId, leadId, dealIds }) {
+  if (!ev) return false;
+  if (ev._draft) return true;
+  if (dealIds?.has(String(ev.id))) return true;
+  if (projectId && String(ev.project_id || '') === String(projectId)) return true;
+  if (!projectId && leadId && String(ev.lead_id || '') === String(leadId)) return true;
+  return false;
+}
+
 /** Chuẩn hoá datetime-local / ISO → ISO string để vẽ lịch tạm */
 function toPreviewIso(raw) {
   if (!raw) return null;
@@ -467,6 +477,8 @@ export default function VcHandoverEventsPopup({
         start_time: finishIso,
         status: 'planned',
         color: '#4f46e5',
+        project_id: projectId || null,
+        lead_id: leadId || null,
         occurrence_dates: [parseDay(finishIso)].filter(Boolean),
       });
     }
@@ -481,6 +493,8 @@ export default function VcHandoverEventsPopup({
         start_time: arriveIso || pickupIso,
         status: 'planned',
         color: '#ea580c',
+        project_id: projectId || null,
+        lead_id: leadId || null,
       });
     }
     if (installIso) {
@@ -494,11 +508,13 @@ export default function VcHandoverEventsPopup({
         start_time: installIso || pickupIso,
         status: 'planned',
         color: '#d97706',
+        project_id: projectId || null,
+        lead_id: leadId || null,
         occurrence_dates: installOccurrenceDates.length ? installOccurrenceDates : undefined,
       });
     }
     return drafts;
-  }, [vcAt, arriveAt, installAt, installOccurrenceDates, anchorPickupAt, anchorArriveAt, anchorInstallAt, anchorFinishAt, idList, pickMode]);
+  }, [vcAt, arriveAt, installAt, installOccurrenceDates, anchorPickupAt, anchorArriveAt, anchorInstallAt, anchorFinishAt, idList, pickMode, projectId, leadId]);
 
   const filteredCalendarEvents = useMemo(() => {
     let scoped = scheduleOnly
@@ -1371,18 +1387,27 @@ export default function VcHandoverEventsPopup({
                                 {shown.map((ev) => {
                             const t = typeInfo(ev);
                             const isDraft = !!ev._draft;
+                            const isOwn = isOwnProjectCalEvent(ev, { projectId, leadId, dealIds });
                             const isDeal = !isDraft && dealIds.has(String(ev.id));
                             const color = ev.color || t.color || '#3B82F6';
+                            const pulseOwn = isOwn && (isDraft || pickMode || embedded);
                             if (isDraft) {
                               return (
                                 <div
                                   key={ev.id}
-                                  className="w-full text-left text-[9px] leading-tight px-1 py-0.5 rounded truncate font-semibold border border-dashed"
-                                  style={{
-                                    backgroundColor: `${color}18`,
-                                    color,
-                                    borderColor: `${color}88`,
-                                  }}
+                                  className={`w-full text-left text-[9px] leading-tight px-1 py-0.5 rounded truncate font-bold border ${pulseOwn ? 'vc-own-event-chip border-solid text-force-white' : 'font-semibold border-dashed'}`}
+                                  style={pulseOwn
+                                    ? {
+                                      backgroundColor: color,
+                                      color: '#fff',
+                                      borderColor: color,
+                                      '--own-glow': color,
+                                    }
+                                    : {
+                                      backgroundColor: `${color}18`,
+                                      color,
+                                      borderColor: `${color}88`,
+                                    }}
                                   title={`${ev.title} — ${formatTime(ev.start_time)} (đang chỉnh / chưa lưu)`}
                                 >
                                   {t.icon} {ev.short_label || ev.title}
@@ -1393,12 +1418,20 @@ export default function VcHandoverEventsPopup({
                               <button
                                 key={ev.id}
                                 type="button"
-                                className="w-full text-left text-[9px] leading-tight px-1 py-0.5 rounded truncate font-medium"
-                                style={{
-                                  backgroundColor: `${color}22`,
-                                  color,
-                                  outline: isDeal ? '1px solid currentColor' : undefined,
-                                }}
+                                className={`w-full text-left text-[9px] leading-tight px-1 py-0.5 rounded truncate ${
+                                  pulseOwn ? 'vc-own-event-chip font-bold text-force-white' : 'font-medium'
+                                } ${!isOwn ? 'opacity-65' : ''}`}
+                                style={pulseOwn
+                                  ? {
+                                    backgroundColor: color,
+                                    color: '#fff',
+                                    '--own-glow': color,
+                                  }
+                                  : {
+                                    backgroundColor: `${color}22`,
+                                    color,
+                                    outline: isDeal ? '1px solid currentColor' : undefined,
+                                  }}
                                 title={`${ev.title} — ${formatTime(ev.start_time)}`}
                                 onClick={(e) => {
                                   e.stopPropagation();
@@ -1449,16 +1482,23 @@ export default function VcHandoverEventsPopup({
                         const BadgeIcon = badge.Icon;
                         const curMod = String(ev.module || '').toLowerCase();
                         const isDraft = !!ev._draft;
+                        const isOwn = isOwnProjectCalEvent(ev, { projectId, leadId, dealIds });
                         const isDeal = !isDraft && dealIds.has(String(ev.id));
                         const color = ev.color || t.color || '#3B82F6';
+                        const pulseOwn = isOwn && (isDraft || pickMode || embedded);
                         return (
                           <div
                             key={ev.id}
                             className={`rounded-xl border px-3 py-2.5 ${
-                              isDraft
-                                ? 'border-dashed border-amber-300 bg-amber-50/50'
-                                : isDeal ? 'border-orange-100 bg-orange-50/40' : 'border-gray-100 bg-gray-50/80'
+                              pulseOwn
+                                ? 'border-2 bg-white'
+                                : isDraft
+                                  ? 'border-dashed border-amber-300 bg-amber-50/50'
+                                  : isDeal ? 'border-orange-100 bg-orange-50/40' : 'border-gray-100 bg-gray-50/80'
                             }`}
+                            style={pulseOwn
+                              ? { borderColor: color, boxShadow: `inset 4px 0 0 ${color}` }
+                              : undefined}
                           >
                             <button
                               type="button"
@@ -1487,7 +1527,15 @@ export default function VcHandoverEventsPopup({
                                         Tạm
                                       </span>
                                     )}
-                                    {isDeal && <span className="text-[9px] font-semibold text-emerald-700">Deal này</span>}
+                                    {pulseOwn && (
+                                      <span
+                                        className="text-[9px] font-bold uppercase tracking-wide text-white px-1.5 py-0.5 rounded"
+                                        style={{ backgroundColor: color }}
+                                      >
+                                        Dự án này
+                                      </span>
+                                    )}
+                                    {isDeal && !pulseOwn && <span className="text-[9px] font-semibold text-emerald-700">Deal này</span>}
                                     <span className="text-[10px] font-semibold text-gray-500">{t.name || ev.event_type}</span>
                                   </div>
                                   <p className="text-sm font-bold text-gray-900 truncate">{ev.title}</p>
