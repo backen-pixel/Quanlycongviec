@@ -2,6 +2,25 @@ const { Router } = require('express');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
 const { responseCache, invalidateTags } = require('../middleware/responseCache');
+const {
+  loadDivisionProjects,
+  loadTasksForProjectIds,
+  isOpenTaskStatus,
+  ACTIVE_PROJECT_STATUSES,
+  NOT_STARTED_TASK_STATUSES,
+} = require('../helpers/divisionProjectScope');
+
+const OVERVIEW_PROJECT_COLUMNS = `
+  id, name, code, status, start_date, end_date, customer_name, customer_phone,
+  flow_id, company_id, created_at,
+  flow:workflow_flows(id, name),
+  company:companies(id, name, short_name)
+`;
+const OVERVIEW_TASK_COLUMNS = `
+  id, project_id, title, status, priority, stage, assigned_to, due_date, completed_at, created_at,
+  assignee:users!tasks_assigned_to_fkey(id,full_name,avatar_url)
+`;
+
 
 const r = Router();
 r.use(auth);
@@ -83,127 +102,48 @@ r.get('/:divisionId', async (req, res) => {
 
 /**
  * GET /api/divisions/:divisionId/projects-overview
- * Lấy tất cả dự án và nhiệm vụ của Khối
- * Logic: Lấy từ projects.flow_id → workflow_flow_steps → lọc division_unit_id
+ * Lấy tất cả dự án và nhiệm vụ của Khối (companies + assignments + flow steps).
  */
 r.get('/:divisionId/projects-overview', async (req, res) => {
   try {
     const { divisionId } = req.params;
     const { status, search } = req.query;
 
-    // 1. Get all flow_ids that contain this division
-    const { data: flowSteps, error: flowError } = await supabase
-      .from('workflow_flow_steps')
-      .select('flow_id')
-      .eq('division_unit_id', divisionId);
+    const { data: divisionRow } = await supabase
+      .from('ecosystem_units')
+      .select('id, name, short_name, code')
+      .eq('id', divisionId)
+      .maybeSingle();
+    const divisionInfo = divisionRow || { id: divisionId, name: 'N/A' };
 
-    if (flowError) throw flowError;
-
-    if (!flowSteps || flowSteps.length === 0) {
+    const projects = await loadDivisionProjects(divisionId, OVERVIEW_PROJECT_COLUMNS);
+    if (!projects.length) {
       return res.json({ projects: [] });
     }
+    projects.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
 
-    const flowIds = [...new Set(flowSteps.map(s => s.flow_id))];
+    const tasks = await loadTasksForProjectIds(projects.map((p) => p.id), OVERVIEW_TASK_COLUMNS);
+    tasks.sort((a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0));
 
-    // 2. Get all projects using these flows
-    let projectQuery = supabase
-      .from('projects')
-      .select(`
-        id,
-        name,
-        code,
-        status,
-        start_date,
-        end_date,
-        customer_name,
-        customer_phone,
-        flow_id,
-        created_at,
-        flow:workflow_flows(id, name)
-      `)
-      .in('flow_id', flowIds)
-      .order('created_at', { ascending: false });
-
-    const { data: projects, error: projectError } = await projectQuery;
-    if (projectError) throw projectError;
-
-    if (!projects || projects.length === 0) {
-      return res.json({ projects: [] });
-    }
-
-    // 3. Get tasks for these projects
-    const projectIds = projects.map(p => p.id);
-
-    const { data: tasks, error: taskError } = await supabase
-      .from('tasks')
-      .select(`
-        id,
-        project_id,
-        title,
-        status,
-        priority,
-        stage,
-        assigned_to,
-        assignee:users!tasks_assigned_to_fkey(id,full_name,avatar_url),
-        due_date,
-        completed_at,
-        created_at
-      `)
-      .in('project_id', projectIds)
-      .order('created_at');
-
-    if (taskError) throw taskError;
-
-    // 4. Group tasks by project
     const tasksByProject = {};
-    (tasks || []).forEach(task => {
-      if (!tasksByProject[task.project_id]) {
-        tasksByProject[task.project_id] = [];
-      }
+    tasks.forEach((task) => {
+      if (!tasksByProject[task.project_id]) tasksByProject[task.project_id] = [];
       tasksByProject[task.project_id].push(task);
     });
 
-    // 5. Get flow steps for each project to find company info
-    const { data: allFlowSteps, error: stepsError } = await supabase
-      .from('workflow_flow_steps')
-      .select(`
-        flow_id,
-        division_unit_id,
-        company_unit_id,
-        order_index,
-        division:ecosystem_units!workflow_flow_steps_division_unit_id_fkey(id,name,short_name,code),
-        company:ecosystem_units!workflow_flow_steps_company_unit_id_fkey(id,name,short_name,code)
-      `)
-      .in('flow_id', flowIds)
-      .eq('division_unit_id', divisionId);
-
-    if (stepsError) throw stepsError;
-
-    // Group flow steps by flow_id
-    const stepsByFlow = {};
-    (allFlowSteps || []).forEach(step => {
-      if (!stepsByFlow[step.flow_id]) {
-        stepsByFlow[step.flow_id] = [];
-      }
-      stepsByFlow[step.flow_id].push(step);
-    });
-
-    // 6. Build result structure
-    const projectsWithData = projects.map(project => {
+    const now = new Date();
+    const projectsWithData = projects.map((project) => {
       const projectTasks = tasksByProject[project.id] || [];
-      const flowStep = stepsByFlow[project.flow_id]?.[0]; // Get first step for this division
-      
-      // Calculate stats
       const totalTasks = projectTasks.length;
-      const completedTasks = projectTasks.filter(t => t.status === 'done').length;
-      const inProgressTasks = projectTasks.filter(t => t.status === 'in-progress').length;
-      const pendingTasks = projectTasks.filter(t => t.status === 'pending').length;
-      const overdueTasks = projectTasks.filter(t => 
-        t.status !== 'done' && t.due_date && new Date(t.due_date) < new Date()
+      const completedTasks = projectTasks.filter((t) => t.status === 'done').length;
+      const inProgressTasks = projectTasks.filter((t) => t.status === 'in_progress').length;
+      const pendingTasks = projectTasks.filter((t) => NOT_STARTED_TASK_STATUSES.includes(t.status)).length;
+      const overdueTasks = projectTasks.filter((t) =>
+        isOpenTaskStatus(t.status) && t.due_date && new Date(t.due_date) < now
       ).length;
 
       return {
-        assignment_id: project.id, // Use project.id as fallback
+        assignment_id: project.id,
         project: {
           id: project.id,
           name: project.name,
@@ -213,10 +153,10 @@ r.get('/:divisionId/projects-overview', async (req, res) => {
           end_date: project.end_date,
           customer_name: project.customer_name,
           customer_phone: project.customer_phone,
-          created_at: project.created_at
+          created_at: project.created_at,
         },
-        division: flowStep?.division || { id: divisionId, name: 'N/A' },
-        company: flowStep?.company || null,
+        division: divisionInfo,
+        company: project.company || null,
         template_set: null,
         assigned_at: project.created_at,
         tasks: projectTasks,
@@ -226,8 +166,8 @@ r.get('/:divisionId/projects-overview', async (req, res) => {
           in_progress: inProgressTasks,
           pending: pendingTasks,
           overdue: overdueTasks,
-          completion_rate: totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0
-        }
+          completion_rate: totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0,
+        },
       };
     });
 
@@ -262,68 +202,23 @@ r.get('/:divisionId/projects-overview', async (req, res) => {
 r.get('/:divisionId/task-summary', async (req, res) => {
   try {
     const { divisionId } = req.params;
-
-    // Get flows containing this division
-    const { data: flowSteps } = await supabase
-      .from('workflow_flow_steps')
-      .select('flow_id')
-      .eq('division_unit_id', divisionId);
-
-    if (!flowSteps || flowSteps.length === 0) {
-      return res.json({
-        total: 0,
-        by_status: {},
-        by_priority: {},
-        overdue: 0
-      });
+    const projects = await loadDivisionProjects(divisionId, 'id');
+    if (!projects.length) {
+      return res.json({ total: 0, by_status: {}, by_priority: {}, overdue: 0 });
     }
 
-    const flowIds = [...new Set(flowSteps.map(s => s.flow_id))];
+    const tasks = await loadTasksForProjectIds(
+      projects.map((p) => p.id),
+      'id, status, priority, due_date',
+    );
 
-    // Get projects using these flows
-    const { data: projects } = await supabase
-      .from('projects')
-      .select('id')
-      .in('flow_id', flowIds);
-
-    if (!projects || projects.length === 0) {
-      return res.json({
-        total: 0,
-        by_status: {},
-        by_priority: {},
-        overdue: 0
-      });
-    }
-
-    const projectIds = projects.map(p => p.id);
-
-    // Get all tasks
-    const { data: tasks, error } = await supabase
-      .from('tasks')
-      .select('id, status, priority, due_date')
-      .in('project_id', projectIds);
-
-    if (error) throw error;
-
-    // Calculate summary
     const now = new Date();
-    const summary = {
-      total: tasks?.length || 0,
-      by_status: {},
-      by_priority: {},
-      overdue: 0
-    };
-
-    (tasks || []).forEach(task => {
-      // By status
+    const summary = { total: tasks.length, by_status: {}, by_priority: {}, overdue: 0 };
+    tasks.forEach((task) => {
       summary.by_status[task.status] = (summary.by_status[task.status] || 0) + 1;
-      
-      // By priority
       summary.by_priority[task.priority] = (summary.by_priority[task.priority] || 0) + 1;
-      
-      // Overdue
-      if (task.status !== 'done' && task.due_date && new Date(task.due_date) < now) {
-        summary.overdue++;
+      if (isOpenTaskStatus(task.status) && task.due_date && new Date(task.due_date) < now) {
+        summary.overdue += 1;
       }
     });
 
@@ -366,73 +261,34 @@ r.get('/:divisionId/dashboard', async (req, res) => {
       .map(e => ({ id: e.id, name: e.name, short_name: e.short_name || e.code, logo_url: null, _eco: true }));
     const companies = [...(divCompanies || []), ...ecoCompanies];
 
-    // Get flows containing this division
-    const { data: flowSteps } = await supabase
-      .from('workflow_flow_steps')
-      .select('flow_id, company_unit_id')
-      .eq('division_unit_id', divisionId);
-
-    const flowIds = [...new Set((flowSteps || []).map(s => s.flow_id))];
-
-    // Also get projects directly assigned to this division
-    const { data: directAssignments } = await supabase
-      .from('project_company_assignments')
-      .select('project_id')
-      .eq('division_unit_id', divisionId);
-    const directProjectIds = [...new Set((directAssignments || []).map(a => a.project_id))];
-
-    // Build project query — combine flow-based + direct assignments
-    let allProjectIds = new Set(directProjectIds);
-
-    if (flowIds.length > 0) {
-      let flowProjectQuery = supabase
-        .from('projects')
-        .select('id')
-        .in('flow_id', flowIds);
-      if (company_id) flowProjectQuery = flowProjectQuery.eq('company_id', company_id);
-      const { data: flowProjects } = await flowProjectQuery;
-      (flowProjects || []).forEach(p => allProjectIds.add(p.id));
+    let allProjects = await loadDivisionProjects(divisionId, `
+      id, name, code, status, start_date, end_date,
+      estimated_value, customer_name, created_at, flow_id, company_id,
+      company:companies(id, name, short_name)
+    `);
+    if (company_id) {
+      allProjects = allProjects.filter((p) => String(p.company_id) === String(company_id));
     }
+    allProjects.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
 
-    if (allProjectIds.size === 0) {
+    if (!allProjects.length) {
       return res.json({
         stats: { projects: 0, active: 0, tasks: 0, members: 0, overdue: 0, completed: 0 },
         projects: [],
         tasks: [],
         activities: [],
         companies,
-        employees: []
+        employees: [],
       });
     }
 
-    // Load full project data
-    let projectQuery = supabase
-      .from('projects')
-      .select(`
-        id, name, code, status, start_date, end_date,
-        estimated_value, customer_name, created_at, flow_id, company_id,
-        company:companies(id, name, short_name)
-      `)
-      .in('id', [...allProjectIds])
-      .order('created_at', { ascending: false })
-      .limit(50);
-
-    // Apply company filter using companies.id (not ecosystem_unit id)
-    if (company_id) {
-      projectQuery = projectQuery.eq('company_id', company_id);
-    }
-
-    const { data: projects } = await projectQuery;
-
-    const projectIds = (projects || []).map(p => p.id);
-
-    // Get tasks
-    const { data: tasks } = projectIds.length > 0
-      ? await supabase
-          .from('tasks')
-          .select('id, title, status, priority, project_id, assignee_id, due_date')
-          .in('project_id', projectIds)
-      : { data: [] };
+    const allTasks = await loadTasksForProjectIds(
+      allProjects.map((p) => p.id),
+      'id, title, status, priority, project_id, assignee_id, due_date',
+    );
+    const projects = allProjects.slice(0, 50);
+    const listedIds = new Set(projects.map((p) => String(p.id)));
+    const listedTasks = allTasks.filter((t) => listedIds.has(String(t.project_id)));
 
     // Get employees count from company or division
     let employees = [];
@@ -460,23 +316,22 @@ r.get('/:divisionId/dashboard', async (req, res) => {
       }
     }
 
-    const allTasks = tasks || [];
     const stats = {
-      projects: (projects || []).length,
-      active: (projects || []).filter(p => !['completed', 'warranty', 'cancelled'].includes(p.status)).length,
+      projects: allProjects.length,
+      active: allProjects.filter((p) => ACTIVE_PROJECT_STATUSES.includes(p.status)).length,
       tasks: allTasks.length,
       members: employees.length,
-      overdue: allTasks.filter(t => t.status !== 'done' && t.due_date && new Date(t.due_date) < new Date()).length,
-      completed: allTasks.filter(t => t.status === 'done').length
+      overdue: allTasks.filter((t) => isOpenTaskStatus(t.status) && t.due_date && new Date(t.due_date) < new Date()).length,
+      completed: allTasks.filter((t) => t.status === 'done').length,
     };
 
     res.json({
       stats,
-      projects: projects || [],
-      tasks: allTasks,
+      projects,
+      tasks: listedTasks,
       activities: [],
       companies,
-      employees
+      employees,
     });
   } catch (e) {
     console.error('Get division dashboard error:', e);
@@ -491,44 +346,20 @@ r.get('/:divisionId/dashboard', async (req, res) => {
 r.get('/:divisionId/active-projects', async (req, res) => {
   try {
     const { divisionId } = req.params;
-
-    // Get flows containing this division
-    const { data: flowSteps } = await supabase
-      .from('workflow_flow_steps')
-      .select('flow_id, company_unit_id, company:ecosystem_units!workflow_flow_steps_company_unit_id_fkey(id,name,short_name)')
-      .eq('division_unit_id', divisionId);
-
-    if (!flowSteps || flowSteps.length === 0) {
-      return res.json({ projects: [] });
-    }
-
-    const flowIds = [...new Set(flowSteps.map(s => s.flow_id))];
-
-    // Get active projects
-    const { data, error } = await supabase
-      .from('projects')
-      .select('id, name, code, status, customer_name, flow_id')
-      .in('flow_id', flowIds)
-      .in('status', ['planning', 'in-progress']);
-
-    if (error) throw error;
-
-    // Map company info from flow steps
-    const stepsByFlow = {};
-    flowSteps.forEach(step => {
-      if (!stepsByFlow[step.flow_id]) {
-        stepsByFlow[step.flow_id] = step;
-      }
-    });
-
-    const activeProjects = (data || []).map(p => ({
-      project_id: p.id,
-      project_name: p.name,
-      project_code: p.code,
-      project_status: p.status,
-      customer_name: p.customer_name,
-      company_name: stepsByFlow[p.flow_id]?.company?.name || null
-    }));
+    const rows = await loadDivisionProjects(
+      divisionId,
+      'id, name, code, status, customer_name, company_id, company:companies(id, name, short_name)',
+    );
+    const activeProjects = rows
+      .filter((p) => ACTIVE_PROJECT_STATUSES.includes(p.status))
+      .map((p) => ({
+        project_id: p.id,
+        project_name: p.name,
+        project_code: p.code,
+        project_status: p.status,
+        customer_name: p.customer_name,
+        company_name: p.company?.name || null,
+      }));
 
     res.json({ projects: activeProjects });
   } catch (e) {
