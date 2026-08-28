@@ -6,7 +6,7 @@ const {
   validIsoDate,
 } = require('../src/helpers/businessOsUatGate');
 
-const FREEZE = '2026-08-26T10:21:23.977Z';
+const FREEZE = '2026-08-27T01:01:30.141Z';
 
 function backupAt(timestamp, verified = true) {
   return {
@@ -18,7 +18,7 @@ function backupAt(timestamp, verified = true) {
 test('READY khi migration đủ và backup đã xác minh mới hơn schema freeze', () => {
   const gate = evaluateBusinessOsUatGate({
     allApplied: true,
-    backup: backupAt('2026-08-26T10:21:23.978Z'),
+    backup: backupAt('2026-08-27T01:01:30.142Z'),
     requiredBackupAfter: FREEZE,
   });
 
@@ -28,7 +28,7 @@ test('READY khi migration đủ và backup đã xác minh mới hơn schema free
 });
 
 test('BLOCKED khi backup bằng hoặc cũ hơn schema freeze', () => {
-  for (const timestamp of [FREEZE, '2026-08-25T22:13:36.512Z']) {
+  for (const timestamp of [FREEZE, '2026-08-26T22:14:29.630Z']) {
     const gate = evaluateBusinessOsUatGate({
       allApplied: true,
       backup: backupAt(timestamp),
@@ -43,7 +43,7 @@ test('BLOCKED khi backup bằng hoặc cũ hơn schema freeze', () => {
 test('BLOCKED khi backup chưa được xác minh dù timestamp đủ mới', () => {
   const gate = evaluateBusinessOsUatGate({
     allApplied: true,
-    backup: backupAt('2026-08-27T00:00:00.000Z', false),
+    backup: backupAt('2026-08-27T02:00:00.000Z', false),
     requiredBackupAfter: FREEZE,
   });
 
@@ -55,7 +55,7 @@ test('BLOCKED khi backup chưa được xác minh dù timestamp đủ mới', ()
 test('BLOCKED khi migration chưa đủ dù backup hợp lệ', () => {
   const gate = evaluateBusinessOsUatGate({
     allApplied: false,
-    backup: backupAt('2026-08-27T00:00:00.000Z'),
+    backup: backupAt('2026-08-27T02:00:00.000Z'),
     requiredBackupAfter: FREEZE,
   });
 
@@ -68,7 +68,7 @@ test('từ chối mốc thời gian không hợp lệ', () => {
   assert.throws(
     () => evaluateBusinessOsUatGate({
       allApplied: true,
-      backup: backupAt('2026-08-27T00:00:00.000Z'),
+      backup: backupAt('2026-08-27T02:00:00.000Z'),
       requiredBackupAfter: 'not-a-date',
     }),
     /không hợp lệ/,

@@ -88,7 +88,7 @@ function buildBusinessOsUatSessionManifest({
     guardrails: [
       'Nhân viên phụ trách xác nhận hồ sơ trước khi dùng dữ liệu khách thật.',
       'Chạy tuần tự từng hồ sơ; FAIL/BLOCKED phải có bằng chứng và người xử lý.',
-      'Không deploy production hoặc mở công ty thứ hai trong phiên baseline 01.',
+      'Không deploy production; Blueprint công ty thứ hai chỉ preview/apply trong đúng tenant và theo checklist UAT.',
     ],
   };
 }
@@ -123,7 +123,7 @@ function renderBusinessOsUatSessionMarkdown(manifest) {
     '',
     ...manifest.guardrails.map((item) => `- ${item}`),
     '',
-    'Biên bản này không phải kết quả PASS UAT. Kết quả từng hồ sơ phải ghi vào checklist baseline 01.',
+    `Biên bản này không phải kết quả PASS UAT. Kết quả từng hồ sơ phải ghi vào checklist của ${markdownCell(manifest.baseline.tag)}.`,
     '',
   ].join('\n');
 }

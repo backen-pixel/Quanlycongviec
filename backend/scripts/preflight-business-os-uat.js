@@ -60,17 +60,30 @@ async function main() {
   if (!UUID_RE.test(companyId)) throw new Error('Thiếu hoặc sai --company-id cho công ty pilot UAT.');
 
   const rows = await runQuery(projectRef, `
-    with sales as (
+    with pilot_company as (
+      select tenant_id
+      from public.companies
+      where id = '${companyId}'::uuid
+    ), sales as (
       select *
       from public.business_os_process_instances
       where company_id = '${companyId}'::uuid
         and process_key = 'sales_lead_qualification_v1'
         and record_type = 'crm_lead'
-    ), scoped_projects as (
-      select id, company_id, logistics_company_id
+    ), scoped_project_ids as (
+      select id
       from public.projects
       where company_id = '${companyId}'::uuid
          or logistics_company_id = '${companyId}'::uuid
+      union
+      select project_id as id
+      from public.crm_leads
+      where company_id = '${companyId}'::uuid
+        and project_id is not null
+    ), scoped_projects as (
+      select project.id, project.company_id, project.logistics_company_id
+      from public.projects project
+      join scoped_project_ids scoped on scoped.id = project.id
     )
     select
       (select count(*) from sales) as sales_processes,
@@ -103,7 +116,42 @@ async function main() {
         where pi.requires_approval = true) as approval_project_changes,
       (select count(*) from public.project_incidents pi
         join scoped_projects sp on sp.id = pi.project_id
-        where pi.approval_status = 'pending') as pending_project_change_approvals;
+        where pi.approval_status = 'pending') as pending_project_change_approvals,
+      (select count(*) from public.purchase_requests pr
+        join scoped_projects sp on sp.id = pr.project_id) as project_purchase_requests,
+      (select count(*) from public.purchase_orders po
+        join scoped_projects sp on sp.id = po.project_id
+        where po.status <> 'cancelled') as project_purchase_orders,
+      (select count(*) from public.purchase_orders po
+        join scoped_projects sp on sp.id = po.project_id
+        where po.status in ('partial_received', 'received')) as received_purchase_orders,
+      (select count(*) from public.project_expenses pe
+        join scoped_projects sp on sp.id = pe.project_id
+        where pe.status = 'confirmed') as confirmed_project_expenses,
+      (select count(*) from public.supplier_bills sb
+        join scoped_projects sp on sp.id = sb.project_id
+        where sb.status <> 'cancelled') as project_supplier_bills,
+      (select count(*) from public.supplier_payments payment
+        join scoped_projects sp on sp.id = payment.project_id) as project_supplier_payments,
+      (select count(*) from public.invoices invoice
+        join scoped_projects sp on sp.id = invoice.project_id
+        where invoice.status not in ('cancelled', 'void')) as project_customer_invoices,
+      (select count(*) from public.payment_records payment
+        join public.invoices invoice on invoice.id = payment.invoice_id
+        join scoped_projects sp on sp.id = invoice.project_id) as project_customer_payments,
+      (select count(*) from public.business_blueprints blueprint
+        where blueprint.is_active = true
+          and blueprint.published_version_id is not null) as published_blueprints,
+      (select count(*) from public.tenant_blueprint_installations installation
+        where installation.tenant_id = (select tenant_id from pilot_company)
+          and installation.status = 'active') as active_tenant_blueprints,
+      (select count(*) from public.company_blueprint_installations installation
+        where installation.company_id = '${companyId}'::uuid
+          and installation.tenant_id = (select tenant_id from pilot_company)
+          and installation.status = 'active') as active_company_blueprints,
+      (select count(*) from public.companies company
+        where company.tenant_id = (select tenant_id from pilot_company)
+          and company.id <> '${companyId}'::uuid) as second_company_candidates;
   `);
   const row = Array.isArray(rows) ? rows[0] : rows;
   if (!row) throw new Error('Không nhận được dữ liệu preflight UAT.');
@@ -125,9 +173,20 @@ async function main() {
       { key: 'cross_company_project', count: coverage.cross_company_projects, met: coverage.cross_company_projects > 0 },
       { key: 'after_sales_process', count: coverage.after_sales_processes, met: coverage.after_sales_processes > 0 },
     ]),
-    slot('uat_05_project_change', 'Phát sinh và phê duyệt Project', [
+    slot('uat_05_project_change_finance', 'Phát sinh, Mua hàng và Tài chính Project', [
       { key: 'project_change', count: coverage.project_changes, met: coverage.project_changes > 0 },
       { key: 'approval_project_change', count: coverage.approval_project_changes, met: coverage.approval_project_changes > 0 },
+      { key: 'project_purchase_request', count: coverage.project_purchase_requests, met: coverage.project_purchase_requests > 0 },
+      { key: 'project_purchase_order', count: coverage.project_purchase_orders, met: coverage.project_purchase_orders > 0 },
+      { key: 'confirmed_project_expense', count: coverage.confirmed_project_expenses, met: coverage.confirmed_project_expenses > 0 },
+      { key: 'project_supplier_bill', count: coverage.project_supplier_bills, met: coverage.project_supplier_bills > 0 },
+      { key: 'project_customer_invoice', count: coverage.project_customer_invoices, met: coverage.project_customer_invoices > 0 },
+    ]),
+    slot('uat_06_executive_blueprint', 'Báo cáo, AI và Blueprint công ty thứ hai', [
+      { key: 'executive_project_portfolio', count: coverage.scoped_projects, met: coverage.scoped_projects > 0 },
+      { key: 'published_blueprint', count: coverage.published_blueprints, met: coverage.published_blueprints > 0 },
+      { key: 'second_company_candidate', count: coverage.second_company_candidates, met: coverage.second_company_candidates > 0 },
+      { key: 'active_company_blueprint', count: coverage.active_company_blueprints, met: coverage.active_company_blueprints > 0 },
     ]),
   ];
 

@@ -298,6 +298,18 @@ Nghiệm thu theo vai trò thực tế, kiểm tra task gate, SLA, thông báo, 
 
 ## 8. Lịch sử quyết định
 
+### 2026-08-28 — Chốt baseline 02, sẵn sàng UAT có kiểm soát
+
+- Các lát cắt theo lộ trình đã hoàn tất ở mức code/schema: Mua hàng–Tài chính Project, Báo cáo/AI có kiểm soát và Blueprint theo công ty.
+- Staging đã áp dụng migration additive 581–582; audit toàn chuỗi đạt 17/17 capability tại schema freeze `2026-08-27T01:01:30.141Z`.
+- CRM parity chạy liền mạch trên backend Node độc lập đạt 100/100; Business OS đạt 37/37 và tenant isolation PASS.
+- Backup `1499151552` hoàn tất lúc `2026-08-27T22:13:42.536Z`, mới hơn schema freeze; audit trả `uat_gate.status="READY"`.
+- Tag `business-os-vnext-staging-baseline-02` chỉ trỏ commit hồ sơ baseline đã kiểm chứng; baseline 01 không bị di chuyển.
+- Lệnh readiness baseline 02 bắt buộc đồng thời: migration/backup READY, tag tồn tại và trỏ đúng commit đang chạy, preflight read-only/PII-safe hoàn tất.
+- UAT cuối gồm 6 kịch bản: hai lộ trình Sales; Project/vận hành nội bộ; liên công ty/After-sales; phát sinh–Mua hàng–Tài chính; Báo cáo/AI; Blueprint công ty thứ hai.
+- Không deploy production và không sao chép dữ liệu giao dịch khi nhân Blueprint.
+- Hồ sơ baseline: `docs/baseline/BUSINESS_OS_VNEXT_STAGING_BASELINE_02.md`.
+
 ### 2026-08-26 — Blueprint có bản cài và override độc lập theo công ty
 
 - Thêm control plane `company_blueprint_installations` bằng migration additive `582`; trigger database và backend cùng chặn company/tenant scope sai.

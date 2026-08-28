@@ -20,7 +20,7 @@ function readyGate() {
     uat_gate: {
       status: 'READY',
       ready: true,
-      required_backup_after: '2026-08-26T10:21:23.977Z',
+      required_backup_after: '2026-08-27T01:01:30.141Z',
     },
   };
 }
@@ -53,7 +53,7 @@ test('không tạo manifest khi backup gate chưa READY', () => {
       sessionId: 's1',
       generatedAt: '2026-08-27T00:01:00.000Z',
       baselineTag: 'baseline',
-      schemaFreeze: '2026-08-26T10:21:23.977Z',
+      schemaFreeze: '2026-08-27T01:01:30.141Z',
       code: {},
       gateReport,
       preflightReport: safePreflight(),
@@ -67,7 +67,7 @@ test('manifest chỉ giữ whitelist tổng hợp và không mang PII ngoài d�
     sessionId: 's1',
     generatedAt: '2026-08-27T00:01:00.000Z',
     baselineTag: 'baseline',
-    schemaFreeze: '2026-08-26T10:21:23.977Z',
+    schemaFreeze: '2026-08-27T01:01:30.141Z',
     code: { commit: 'abc', dirtyFileCount: 2 },
     gateReport: readyGate(),
     preflightReport: safePreflight(),
@@ -78,6 +78,7 @@ test('manifest chỉ giữ whitelist tổng hợp và không mang PII ngoài d�
   assert.equal(manifest.status, 'READY_TO_ASSIGN');
   assert.equal(manifest.coverage.sales_processes, 1);
   assert.equal(manifest.code.dirty_file_count, 2);
+  assert.match(manifest.guardrails.join(' '), /Blueprint công ty thứ hai/);
   assert.equal(serialized.includes('khong-duoc-ghi@example.com'), false);
   assert.equal(markdown.includes('khong-duoc-ghi@example.com'), false);
 });
@@ -90,7 +91,7 @@ test('từ chối ghép gate và preflight từ hai database khác nhau', () => 
       sessionId: 's1',
       generatedAt: '2026-08-27T00:01:00.000Z',
       baselineTag: 'baseline',
-      schemaFreeze: '2026-08-26T10:21:23.977Z',
+      schemaFreeze: '2026-08-27T01:01:30.141Z',
       code: {},
       gateReport: readyGate(),
       preflightReport,

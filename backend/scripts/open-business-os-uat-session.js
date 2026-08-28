@@ -13,8 +13,8 @@ const {
 
 const BACKEND_DIR = path.join(__dirname, '..');
 const REPO_DIR = path.join(BACKEND_DIR, '..');
-const BASELINE_TAG = 'business-os-vnext-staging-baseline-01';
-const SCHEMA_FREEZE = '2026-08-26T10:21:23.977Z';
+const BASELINE_TAG = 'business-os-vnext-staging-baseline-02';
+const SCHEMA_FREEZE = '2026-08-27T01:01:30.141Z';
 const PILOT_COMPANY_ID = '991dc79d-cbf5-49f9-a364-35227cb47635';
 
 function cliValue(prefix) {
@@ -70,6 +70,19 @@ function main() {
     return;
   }
 
+  const code = gitContext();
+  if (!code.baselineTagCommit || code.baselineTagCommit !== code.commit) {
+    console.error(JSON.stringify({
+      status: 'BLOCKED',
+      reason: !code.baselineTagCommit
+        ? `Chưa tạo tag ${BASELINE_TAG}.`
+        : `Tag ${BASELINE_TAG} không trỏ tới commit đang chạy.`,
+      code,
+    }, null, 2));
+    process.exitCode = 4;
+    return;
+  }
+
   const preflight = runJsonScript('preflight-business-os-uat.js', [
     `--company-id=${PILOT_COMPANY_ID}`,
   ]);
@@ -87,7 +100,7 @@ function main() {
     generatedAt,
     baselineTag: BASELINE_TAG,
     schemaFreeze: SCHEMA_FREEZE,
-    code: gitContext(),
+    code,
     gateReport: gate.report,
     preflightReport: preflight.report,
   });
