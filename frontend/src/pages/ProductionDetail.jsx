@@ -2824,7 +2824,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     if (!activityForm.title.trim()) { alert('Nhập tiêu đề hoạt động'); return; }
     setSavingActivity(true);
     try {
-      await api.post(`/management/work-unified/${project.id}/activities`, activityForm);
+      await api.post(`/projects/${project.id}/activities`, activityForm);
       await loadProjectActivities(project.id);
       setShowAddActivity(false);
       setActivityForm({ type: 'note', title: '', description: '', outcome: '' });
@@ -2836,7 +2836,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     if (!incidentForm.title.trim()) { alert('Nhập tiêu đề sự cố'); return; }
     setSavingIncident(true);
     try {
-      const { data } = await api.post(`${MOD.apiPrefix}/management/work-unified/${project.id}/incidents`, incidentForm);
+      const { data } = await api.post(`${MOD.apiPrefix}/projects/${project.id}/incidents`, incidentForm);
       setIncidents((prev) => [data.incident, ...prev]);
       setShowIncidentForm(false);
       setIncidentForm({ title: '', description: '', severity: 'medium' });
@@ -2846,7 +2846,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
 
   const resolveIncident = async (incidentId) => {
     try {
-      await api.patch(`${MOD.apiPrefix}/management/work-unified/${project.id}/incidents/${incidentId}`, { status: 'resolved' });
+      await api.patch(`${MOD.apiPrefix}/projects/${project.id}/incidents/${incidentId}`, { status: 'resolved' });
       setIncidents((prev) => prev.map((inc) => inc.id === incidentId ? { ...inc, status: 'resolved' } : inc));
     } catch (e) { alert(e.response?.data?.error || 'Lỗi cập nhật sự cố'); }
   };
@@ -2864,7 +2864,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
         for (const file of files) {
           const fd = new FormData();
           fd.append('file', file);
-          const { data } = await api.post('/upload', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+          const { data } = await api.post('/upload', fd);
           const up = getUploadFilePayload(data);
           if (!up?.file_url && !up?.url) continue;
           uploaded.push({
@@ -2876,9 +2876,9 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
           });
         }
         if (!uploaded.length) throw new Error('Upload chưa trả URL file hợp lệ');
-        await api.post(`/management/work-unified/${project.id}/documents/bulk`, { items: uploaded });
+        await api.post(`/projects/${project.id}/documents/bulk`, { items: uploaded });
         await loadProjectDocs(project.id);
-      } catch (err) { alert(err.response?.data?.error || 'Lỗi upload file'); }
+      } catch (err) { alert(err.response?.data?.error || err.message || 'Lỗi upload file'); }
       setUploadingDoc(false);
     };
     input.click();
@@ -2949,7 +2949,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
         for (const file of files) {
           const fd = new FormData();
           fd.append('file', file);
-          const { data } = await api.post('/upload', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+          const { data } = await api.post('/upload', fd);
           const up = getUploadFilePayload(data);
           if (!up?.file_url && !up?.url) continue;
           uploaded.push({
@@ -2961,11 +2961,11 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
           });
         }
         if (!uploaded.length) throw new Error('Upload chưa trả URL file hợp lệ');
-        await api.post(`/crm/leads/${dealId}/documents/bulk`, { documents: uploaded });
+        await api.post(`/crm/leads/${dealId}/documents/bulk`, { items: uploaded });
         const { data: docs } = await api.get(`/crm/leads/${dealId}/documents`);
         setCrmDealDocs(Array.isArray(docs) ? docs : []);
       } catch (err) {
-        alert(err.response?.data?.error || 'Lỗi upload file');
+        alert(err.response?.data?.error || err.message || 'Lỗi upload file');
       }
       setUploadingDoc(false);
     };
@@ -4432,7 +4432,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                   const content = textDocForm.notes || '';
                   const dataUrl = content ? `data:text/plain;charset=utf-8,${encodeURIComponent(content)}` : '';
                   try {
-                    await api.post(`/management/work-unified/${project.id}/documents/bulk`, { items: [{ file_name: textDocForm.name + '.txt', file_url: dataUrl, file_size: content.length, mime_type: 'text/plain', original_name: textDocForm.name + '.txt', notes: content }] });
+                    await api.post(`/projects/${project.id}/documents/bulk`, { items: [{ file_name: textDocForm.name + '.txt', file_url: dataUrl, file_size: content.length, mime_type: 'text/plain', original_name: textDocForm.name + '.txt', notes: content }] });
                     await loadProjectDocs(project.id);
                     setShowAddTextDoc(false);
                     setTextDocForm({ name: '', notes: '' });

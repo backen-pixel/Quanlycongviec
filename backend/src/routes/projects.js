@@ -25,7 +25,7 @@ const {
 const { isPostgresUniqueViolation, nextTbProjectCode } = require('../helpers/projectCode');
 const { enforceQuotaForRequest, invalidateTenantUsageCache, resolveTenantIdForQuota } = require('../helpers/tenantQuotas');
 const { ensureDealLeadDocumentsForModuleTransition } = require('../helpers/ensureDealLeadDocumentsForModuleTransition');
-const { assertDealResponsible, assertFileAttachmentMutation, assertLeadDocumentOwner, logProjectFileActivity, logDealStageChangeComment, logDealDeadlineChangeComment, logDealActivityComment, requireProjectEditOrSxKanbanWorkshopType } = require('../helpers/projectFileActivity');
+const { assertDealResponsible, assertFileAttachmentMutation, assertLeadDocumentOwner, logProjectFileActivity, logDealStageChangeComment, logDealDeadlineChangeComment, logDealActivityComment, requireProjectEditOrSxKanbanWorkshopType, resolveDealRow } = require('../helpers/projectFileActivity');
 const {
   applyCompanyTenantScope,
   assertCompanyAccessible,
@@ -3705,7 +3705,8 @@ r.get('/:id/documents', async (req, res) => {
 r.post('/:id/documents/bulk', async (req, res) => {
   try {
     if (!(await assertProjectAccessible(req, res, req.params.id, { operation: 'WRITE', mode: 'sensitive' }))) return;
-    if (!(await assertDealResponsible(req, res, { projectId: req.params.id }))) return;
+    const dealRow = await resolveDealRow(null, req.params.id);
+    if (dealRow && !(await assertDealResponsible(req, res, { projectId: req.params.id }))) return;
     const baseItems = (req.body.items || []).map(f => ({
       entity_type: 'project', entity_id: req.params.id,
       file_name: f.original_name || f.file_name,
@@ -3729,7 +3730,7 @@ r.post('/:id/documents/bulk', async (req, res) => {
       });
     }
     res.status(201).json({ documents: data });
-  } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message || 'Lỗi lưu tài liệu' }); }
 });
 
 r.put('/:id/documents/:docId/share-crm', async (req, res) => {
