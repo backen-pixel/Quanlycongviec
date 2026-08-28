@@ -251,7 +251,10 @@ async function parseQuotationExcelBuffer(buffer, options = {}) {
           // "THÀNH TIỀN SAU CK" / "SỐ TIỀN SAU CHIẾT KHẤU" — tiền CÒN LẠI sau chiết khấu,
           // KHÔNG phải số tiền chiết khấu. Bản cũ thiếu chốt !SAU nên đọc nhầm cột này thành
           // tiền CK (vd. món 10tr còn 9tr → hiểu thành "chiết khấu 90%").
+          // Nhưng nó VẪN là thành tiền của dòng: nếu bảng không có cột "Thành tiền" nào khác
+          // thì phải dùng chính nó, kẻo dòng hàng mất số tiền và bị bỏ qua.
           if (cm.amount_after_discount === undefined) cm.amount_after_discount = ci;
+          if (cm.amount === undefined) cm.amount = ci;
         } else if (
           (label.includes('SỐ TIỀN') || label.includes('TIỀN')) &&
           (label.includes('CHIẾT KHẤU') || /\bCK\b/.test(label)) &&
@@ -269,6 +272,8 @@ async function parseQuotationExcelBuffer(buffer, options = {}) {
         } else if (
           (label.includes('CHIẾT KHẤU') || label.includes('CHIET KHAU') || /\bCK\b/.test(label))
           && !label.includes('SAU') && !label.includes('ĐƠN GIÁ') && !label.includes('THÀNH')
+          && !label.includes('GHI CHÚ') && !label.includes('NOTE')
+          && !label.includes('VAT') && !label.includes('THUẾ') && !label.includes('ĐVT')
         ) {
           // Cột chỉ ghi "CHIẾT KHẤU" / "CK" / "CK (%)" — chưa nói rõ là % hay số tiền.
           // Bản cũ bỏ qua hẳn cột này → CK bị mất, rồi bị suy luận sai từ tỉ lệ Thành tiền.
@@ -280,7 +285,9 @@ async function parseQuotationExcelBuffer(buffer, options = {}) {
         ) {
           if (cm.unit_price === undefined) cm.unit_price = ci;
         } else if (label.includes('THÀNH TIỀN') || label.includes('T.TIỀN') || label.includes('TT (VNĐ)')) {
-          if (cm.amount === undefined) cm.amount = ci;
+          // Cột Thành tiền "chính chủ" luôn thắng cột SAU-CK đã tạm giữ vai trò ở trên.
+          const heldBySauCk = cm.amount_after_discount !== undefined && cm.amount === cm.amount_after_discount;
+          if (cm.amount === undefined || heldBySauCk) cm.amount = ci;
         } else if (label.includes('GHI CHÚ') || label.includes('NOTE')) {
           if (cm.notes === undefined) cm.notes = ci;
         } else if (label.includes('VAT') || label.includes('THUẾ')) {
