@@ -36,6 +36,13 @@ const DOCK_PANEL_GAP = 12;
 const VIEWPORT_MARGIN = 8;
 /** Trên layout CRM (main z-10); dưới modal toàn trang (vd. z-220) nhờ createPortal ra document.body */
 const Z_BUBBLE = 100;
+/**
+ * Màn hẹp: cửa sổ chat bám lề phải nên chồng lên thanh chat nhanh (z-[120]).
+ * Nâng lên trên thanh đó để nút thu nhỏ/ghim/đóng ở header không bị che —
+ * đang chat thì không cần thanh rail, đóng cửa sổ là thấy lại.
+ * Vẫn dưới nút cuộn Kanban z-[130] của chính dock.
+ */
+const Z_BUBBLE_NARROW = 125;
 const DOCK_MAX_SHORTCUTS = 50;
 
 function useViewportSize() {
@@ -58,6 +65,24 @@ function computeBubbleLayout(index, viewport, panelExpanded) {
   const bubbleH = Math.min(BUBBLE_MAX_H, viewport.h - margin * 2);
   const slotW = BUBBLE_W + BUBBLE_GAP;
 
+  /**
+   * Màn hẹp: không đủ chỗ đặt cửa sổ 340px BÊN TRÁI dock (~112px).
+   * Vd. 375px → right = 126, left = 375-126-340 = -91 ⇒ cắt mất 91px bên trái.
+   * Khi đó cho cửa sổ bám lề phải và co theo màn hình, không tính dockOffset nữa.
+   */
+  const needsW = dockOffset + BUBBLE_GAP + BUBBLE_W + margin;
+  const narrow = viewport.w < needsW;
+  const bubbleW = narrow ? Math.min(BUBBLE_W, viewport.w - margin * 2) : BUBBLE_W;
+
+  if (narrow) {
+    const rowLift = Math.min(72, Math.max(28, Math.floor(bubbleH * 0.12)));
+    let bottom = margin + index * rowLift;
+    if (viewport.h - bottom - bubbleH < margin) {
+      bottom = Math.max(margin, viewport.h - bubbleH - margin);
+    }
+    return { right: margin, bottom, width: bubbleW, height: bubbleH, zIndex: Z_BUBBLE_NARROW + index };
+  }
+
   const maxRight = viewport.w - margin - BUBBLE_W;
   const availableW = Math.max(slotW, maxRight - dockOffset - BUBBLE_GAP);
   const cols = Math.max(1, Math.floor(availableW / slotW));
@@ -72,7 +97,7 @@ function computeBubbleLayout(index, viewport, panelExpanded) {
     bottom = Math.max(margin, viewport.h - bubbleH - margin);
   }
 
-  return { right, bottom, height: bubbleH, zIndex: Z_BUBBLE + index };
+  return { right, bottom, width: bubbleW, height: bubbleH, zIndex: Z_BUBBLE + index };
 }
 
 /** Thứ tự trên thanh compact: ghim → có tin mới/chưa đọc → gần đây nhất */
@@ -656,7 +681,7 @@ export default function MessengerDock() {
           className="fixed flex flex-col rounded-2xl border border-white/40 bg-white/95 backdrop-blur-xl shadow-2xl overflow-hidden ring-1 ring-black/5 transition-all"
           style={{
             zIndex: bubbleLayout.zIndex,
-            width: BUBBLE_W,
+            width: bubbleLayout.width,
             height: bubbleLayout.height,
             right: bubbleLayout.right,
             bottom: bubbleLayout.bottom,
