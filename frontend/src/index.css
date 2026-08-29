@@ -158,6 +158,18 @@ main .ui-kanban-fixed .kanban-edge-scroll-btn {
   box-shadow: none !important;
 }
 
+/* Nút mép Kanban chỉ có tác dụng khi thiết bị có hover: mũi tên hiện qua
+   onMouseEnter (opacity-0 -> opacity-100). Trên cảm ứng không có hover nên
+   chúng vô hình hoàn toàn, nhưng vẫn là 2 nút rộng 40px cao suốt board nằm
+   NGOÀI vùng cuộn (z-30) — chắn 80/375px = 21% bề ngang, khiến vuốt ngang
+   lúc ăn lúc không. Tắt hẳn khi không có hover. */
+@media (hover: none) {
+  .kanban-edge-scroll-btn,
+  .kanban-edge-scroll-chrome {
+    display: none !important;
+  }
+}
+
 /* Thanh cuộn ngang cố định — chỉ thumb, không nền (`bottom`/vị trí do JS) */
 .kanban-fixed-h-scrollbar {
   position: fixed;
