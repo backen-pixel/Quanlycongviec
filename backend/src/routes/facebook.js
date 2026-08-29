@@ -135,7 +135,9 @@ async function fetchAllAnalyticsContacts({ page_id, page_ids }) {
   while (true) {
     let q = supabase
       .from('facebook_contacts')
-      .select('id, phone, lead_id, page_id, created_at')
+      // Join customer để lấy display_phone (giống logic display_phone ở GET /contacts) — contact.phone
+      // riêng thường trống, SĐT thật thường nằm ở customer liên kết, nếu không join sẽ đếm thiếu rất nhiều.
+      .select('id, phone, lead_id, page_id, created_at, customer:customers(phone)')
       .order('id', { ascending: true });
     if (page_id) q = q.eq('page_id', page_id);
     else if (Array.isArray(page_ids) && page_ids.length) q = q.in('page_id', page_ids);
@@ -147,6 +149,21 @@ async function fetchAllAnalyticsContacts({ page_id, page_ids }) {
     from += FB_ANALYTICS_PAGE_SIZE;
   }
   return contacts;
+}
+
+/** SĐT hiệu lực của contact: ưu tiên phone riêng, fallback sang SĐT của customer liên kết. */
+function analyticsContactHasPhone(c) {
+  const own = c.phone && String(c.phone).trim();
+  if (own) return true;
+  const cust = c.customer?.phone && String(c.customer.phone).trim();
+  return !!cust;
+}
+
+/** Quy đổi 1 mốc thời gian UTC sang "ngày/giờ theo giờ VN (UTC+7, không có DST)" mà không phụ thuộc
+ * timezone của máy chủ chạy Node — cộng thẳng 7h rồi đọc bằng getUTC*. */
+function vnDayHourOf(isoOrDate) {
+  const vn = new Date(new Date(isoOrDate).getTime() + 7 * 3600000);
+  return { day: vn.toISOString().split('T')[0], hour: vn.getUTCHours() };
 }
 
 /** Mọi tin trong khoảng thời gian (không lọc page). */
@@ -5021,15 +5038,20 @@ r.get('/analytics', authMiddleware, async (req, res) => {
       ? String(scope.companyId || req.query.company_id || req.user?.company_id || '').trim() || null
       : (req.query.company_id && String(req.query.company_id).trim() ? String(req.query.company_id).trim() : null);
 
-    // 1. Contacts — phân trang (Supabase mặc định tối đa ~1000/request)
-    const contacts = await fetchAllAnalyticsContacts({ page_id, page_ids: scopedPageIds });
+    // 1. Contacts — phân trang (Supabase mặc định tối đa ~1000/request). contactsAll = TOÀN BỘ trong
+    // phạm vi Page/công ty (không lọc ngày) — cần đủ tập này để không bỏ sót tin nhắn của contact cũ khi
+    // tính biểu đồ theo ngày/giờ bên dưới. contactsInPeriod = chỉ những contact được TẠO trong "days" đã
+    // chọn — dùng cho KPI/phễu/bảng theo Page, để đổi 7/30/90 ngày thực sự đổi số liệu (trước đây các số
+    // này luôn tính all-time, không phản ứng gì với bộ lọc ngày).
+    const contactsAll = await fetchAllAnalyticsContacts({ page_id, page_ids: scopedPageIds });
+    const contactsInPeriod = contactsAll.filter((c) => c.created_at && c.created_at >= since);
 
-    const totalContacts = contacts.length;
-    const hasPhone = contacts.filter(c => c.phone).length;
-    const hasLead = contacts.filter(c => c.lead_id).length;
+    const totalContacts = contactsInPeriod.length;
+    const hasPhone = contactsInPeriod.filter(analyticsContactHasPhone).length;
+    const hasLead = contactsInPeriod.filter(c => c.lead_id).length;
 
     // Deals — .in() quá dài có thể lỗi; chia batch
-    const leadIds = contacts.filter(c => c.lead_id).map(c => c.lead_id);
+    const leadIds = contactsInPeriod.filter(c => c.lead_id).map(c => c.lead_id);
     let dealCount = 0;
     const DEAL_IN_BATCH = 500;
     for (let b = 0; b < leadIds.length; b += DEAL_IN_BATCH) {
@@ -5043,8 +5065,9 @@ r.get('/analytics', authMiddleware, async (req, res) => {
       dealCount += count || 0;
     }
 
-    // 2. Messages — theo contact trong phạm vi (không quét toàn hệ thống khi đã lọc công ty/page)
-    const pageContactIds = contacts.map(c => c.id);
+    // 2. Messages — theo TOÀN BỘ contact trong phạm vi (không chỉ contact mới trong kỳ), lọc theo since
+    // ngay trên created_at của tin nhắn — giữ đúng hành vi cũ cho các biểu đồ theo ngày/giờ.
+    const pageContactIds = contactsAll.map(c => c.id);
     let messages = [];
     if (pageContactIds.length) {
       messages = await fetchAllAnalyticsMessagesForContactIds(pageContactIds, since);
@@ -5052,26 +5075,26 @@ r.get('/analytics', authMiddleware, async (req, res) => {
       messages = await fetchAllAnalyticsMessagesSince(since);
     }
 
-    // By day + hour
+    // By day + hour — quy đổi sang giờ VN (UTC+7) trước khi bucket, khớp với nhãn "(UTC+7)" ở giao diện.
+    // Trước đây dùng thẳng d.getUTCHours()/toISOString() (giờ UTC) nên toàn bộ khung giờ/ngày bị lệch 7h.
     const byDay = {};
     const byHour = Array(24).fill(0);
     const inboundByHour = Array(24).fill(0);
     messages.forEach(m => {
-      const d = new Date(m.created_at);
-      const day = d.toISOString().split('T')[0];
+      const { day, hour } = vnDayHourOf(m.created_at);
       if (!byDay[day]) byDay[day] = { date: day, inbound: 0, outbound: 0, total: 0 };
       byDay[day][m.direction === 'inbound' ? 'inbound' : 'outbound']++;
       byDay[day].total++;
-      const hour = d.getUTCHours();
       byHour[hour]++;
       if (m.direction === 'inbound') inboundByHour[hour]++;
     });
 
-    // New contacts by day
+    // New contacts by day (theo giờ VN, và chỉ trong contactsInPeriod cho nhất quán với KPI ở trên)
+    const sinceDayVn = vnDayHourOf(since).day;
     const newByDay = {};
-    contacts.forEach(c => {
-      const day = new Date(c.created_at).toISOString().split('T')[0];
-      if (day >= since.split('T')[0]) { newByDay[day] = (newByDay[day] || 0) + 1; }
+    contactsInPeriod.forEach(c => {
+      const { day } = vnDayHourOf(c.created_at);
+      if (day >= sinceDayVn) { newByDay[day] = (newByDay[day] || 0) + 1; }
     });
 
     // Funnel
@@ -5084,7 +5107,8 @@ r.get('/analytics', authMiddleware, async (req, res) => {
       overall_rate: totalContacts ? Math.round(dealCount / totalContacts * 100) : 0,
     };
 
-    // Page breakdown — Page trong phạm vi công ty (admin ?company_id= hoặc NV theo công ty đăng nhập)
+    // Page breakdown — Page trong phạm vi công ty (admin ?company_id= hoặc NV theo công ty đăng nhập).
+    // Dùng contactsInPeriod để bảng "Theo Page" cũng phản ứng đúng theo bộ lọc ngày, đồng nhất với KPI/phễu.
     let pagesQuery = supabase.from('facebook_pages').select('page_id, page_name, is_active');
     if (scope.mode === 'filter') pagesQuery = pagesQuery.in('page_id', scope.pageIds);
     const { data: pages } = await pagesQuery;
@@ -5099,12 +5123,12 @@ r.get('/analytics', authMiddleware, async (req, res) => {
         has_lead: 0,
       };
     });
-    contacts.forEach((c) => {
+    contactsInPeriod.forEach((c) => {
       if (!pageBk[c.page_id]) {
         pageBk[c.page_id] = { page_id: c.page_id, page_name: String(c.page_id), contacts: 0, has_phone: 0, has_lead: 0 };
       }
       pageBk[c.page_id].contacts++;
-      if (c.phone) pageBk[c.page_id].has_phone++;
+      if (analyticsContactHasPhone(c)) pageBk[c.page_id].has_phone++;
       if (c.lead_id) pageBk[c.page_id].has_lead++;
     });
 
