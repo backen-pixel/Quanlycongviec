@@ -273,6 +273,70 @@ async function fetchLastInboundAtByContactIds(contactIds) {
   return map;
 }
 
+async function fetchAttendedStatusByContactIds(contactIds) {
+  if (!contactIds?.length) return new Map();
+  const map = new Map();
+  const CHUNK = 500;
+  for (let i = 0; i < contactIds.length; i += CHUNK) {
+    const chunk = contactIds.slice(i, i + CHUNK);
+    const { data, error } = await supabase.rpc('fb_attended_status_for_contacts', { contact_ids: chunk });
+    if (error) {
+      console.warn('[FB] RPC fb_attended_status_for_contacts:', error.message, '(chạy database/51_fb_attended_status_rpc.sql)');
+      continue;
+    }
+    (data || []).forEach((row) => {
+      if (!row.contact_id) return;
+      const lastInbound = row.last_inbound_at ? new Date(row.last_inbound_at).getTime() : 0;
+      const lastOutbound = row.last_outbound_at ? new Date(row.last_outbound_at).getTime() : 0;
+      let status = 'no_message';
+      if (lastInbound > 0) {
+        status = lastOutbound >= lastInbound ? 'attended' : 'unattended';
+      }
+      map.set(row.contact_id, {
+        status,
+        last_inbound_at: row.last_inbound_at || null,
+        last_outbound_at: row.last_outbound_at || null,
+        last_outbound_by: row.last_outbound_by || null,
+      });
+    });
+  }
+  return map;
+}
+
+/**
+ * Gắn attended_status ("đã chăm" / "chưa chăm" / "chưa có tin nhắn") + tên NV trả lời cuối vào từng contact (mutate).
+ * Nếu truyền sẵn precomputedMap (đã tính cho tập rộng hơn, ví dụ khi lọc theo attended) thì tái dùng, tránh gọi RPC 2 lần.
+ */
+async function attachAttendedStatus(contacts, precomputedMap = null) {
+  if (!contacts?.length) return precomputedMap;
+  const ids = contacts.map((c) => c.id).filter(Boolean);
+  const map = precomputedMap || await fetchAttendedStatusByContactIds(ids);
+  const staffIds = new Set();
+  contacts.forEach((c) => {
+    const info = map.get(c.id);
+    if (info) {
+      c.attended_status = info.status;
+      c.last_inbound_at = info.last_inbound_at;
+      c.last_outbound_at = info.last_outbound_at;
+      c.last_outbound_by = info.last_outbound_by;
+      if (info.last_outbound_by) staffIds.add(info.last_outbound_by);
+    } else {
+      c.attended_status = 'no_message';
+      c.last_inbound_at = null;
+      c.last_outbound_at = null;
+      c.last_outbound_by = null;
+    }
+  });
+  if (staffIds.size) {
+    const { data: staffRows } = await supabase.from('users').select('id, full_name').in('id', [...staffIds]);
+    const nameMap = new Map((staffRows || []).map((u) => [u.id, u.full_name]));
+    contacts.forEach((c) => {
+      if (c.last_outbound_by) c.last_outbound_by_name = nameMap.get(c.last_outbound_by) || null;
+    });
+  }
+  return map;
+}
+
 /**
  * Giữ contact còn “nóng”: có inbound KH trong vòng STALE, hoặc chưa có inbound trong DB thì xét last_message_at.
  * Loại thread không liên lạc quá ngưỡng (ưu tiên thời điểm KH nhắn; không có inbound thì dùng mọi hoạt động trên contact).
@@ -4029,7 +4093,7 @@ r.get('/contacts', authMiddleware, async (req, res) => {
         hasMore: false, nextOffset: 0,
       });
     }
-    const { page_id, has_lead, search, source_category_id, source_id, limit: rawLimit, offset: rawOffset, activity_from, activity_to } = req.query;
+    const { page_id, has_lead, search, source_category_id, source_id, limit: rawLimit, offset: rawOffset, activity_from, activity_to, attended } = req.query;
     if (page_id && scope.mode === 'filter' && !scope.pageIds.includes(String(page_id))) {
       return res.status(403).json({ error: 'Không có quyền xem Page này' });
     }
@@ -4109,6 +4173,18 @@ r.get('/contacts', authMiddleware, async (req, res) => {
       result = result.filter((c) => String(c?.lead?.source?.id || '') === wantSrc);
     }
 
+    // Lọc "đã chăm / chưa chăm / chưa có tin nhắn" — tính trên toàn bộ result (trước khi phân trang) để đếm/lọc đúng.
+    const attendedFilter = ['unattended', 'attended', 'no_message'].includes(attended) ? attended : null;
+    let attendedMapForResult = null;
+    if (attendedFilter) {
+      attendedMapForResult = await fetchAttendedStatusByContactIds(result.map((c) => c.id));
+      result = result.filter((c) => {
+        const info = attendedMapForResult.get(c.id);
+        const status = info ? info.status : 'no_message';
+        return status === attendedFilter;
+      });
+    }
+
     const total = result.length;
     const page = result.slice(offset, offset + maxLimit);
     
@@ -4126,6 +4202,8 @@ r.get('/contacts', authMiddleware, async (req, res) => {
         c.display_phone = p;
         Object.assign(c, enrichContactActivityFields(c));
       });
+      // "Đã chăm / chưa chăm" — tái dùng map đã tính cho result nếu có (khi có lọc attended), tránh gọi RPC 2 lần.
+      await attachAttendedStatus(page, attendedMapForResult);
     }
 
     res.json({
@@ -4781,24 +4859,28 @@ r.get('/stats', authMiddleware, async (req, res) => {
       return col.in('page_id', scope.pageIds);
     };
 
-    const [contacts, messages, leadAds, comments, unread, allContacts, pages] = await Promise.all([
+    const [contacts, messages, leadAds, comments, unread, allContacts, pages, unattended] = await Promise.all([
       inPages(supabase.from('facebook_contacts').select('id', { count: 'exact', head: true })),
       (async () => {
         const { data: cids } = await inPages(supabase.from('facebook_contacts').select('id'));
         const ids = (cids || []).map((c) => c.id);
-        if (!ids.length) return { count: 0 };
+        if (!ids.length) return { count: 0, senderCount: 0 };
         let total = 0;
+        const senderSet = new Set();
         const CH = 500;
         for (let i = 0; i < ids.length; i += CH) {
           const slice = ids.slice(i, i + CH);
-          const { count } = await supabase.from('facebook_messages')
-            .select('id', { count: 'exact', head: true })
+          const { data: rows } = await supabase.from('facebook_messages')
+            .select('contact_id')
             .eq('direction', 'inbound')
             .gte('created_at', today)
             .in('contact_id', slice);
-          total += count || 0;
+          (rows || []).forEach((row) => {
+            total += 1;
+            if (row.contact_id) senderSet.add(row.contact_id);
+          });
         }
-        return { count: total };
+        return { count: total, senderCount: senderSet.size };
       })(),
       supabase.from('facebook_lead_ads').select('id', { count: 'exact', head: true }).gte('created_at', today),
       supabase.from('facebook_comments').select('id', { count: 'exact', head: true }).gte('created_at', today),
@@ -4809,6 +4891,10 @@ r.get('/stats', authMiddleware, async (req, res) => {
         if (scope.mode === 'filter') q = q.in('page_id', scope.pageIds);
         return await q;
       })(),
+      // Số hội thoại "chưa chăm" (tin cuối là của khách, NV chưa trả lời sau đó) — tính bằng RPC gộp, không kéo dữ liệu về app.
+      supabase.rpc('fb_unattended_count', { p_page_ids: scope.mode === 'filter' ? scope.pageIds : null })
+        .then((r) => (r.error ? (console.warn('[FB] RPC fb_unattended_count:', r.error.message), 0) : Number(r.data) || 0))
+        .catch(() => 0),
     ]);
 
     // Tính số user mới theo page (7 ngày gần nhất)
@@ -4839,9 +4925,11 @@ r.get('/stats', authMiddleware, async (req, res) => {
     res.json({
       total_contacts: contacts.count || 0,
       messages_today: messages.count || 0,
+      senders_today: messages.senderCount || 0,
       lead_ads_today: leadAds.count || 0,
       comments_today: comments.count || 0,
       total_unread: (unread.data || []).reduce((s, c) => s + c.unread_count, 0),
+      unattended_total: unattended || 0,
       page_stats: pageStats,
     });
   } catch (e) { res.status(500).json({ error: e.message }); }

@@ -267,8 +267,14 @@ export default function FacebookPage() {
         </div>
         {stats && (
           <div className="flex gap-4 text-xs text-gray-500">
-            <span className="bg-blue-50 px-2.5 py-1 rounded-full">📨 {stats.messages_today} hôm nay</span>
+            <span className="bg-blue-50 px-2.5 py-1 rounded-full">📨 {stats.messages_today} tin hôm nay</span>
+            <span className="bg-indigo-50 px-2.5 py-1 rounded-full">🗣 {stats.senders_today ?? 0} người nhắn hôm nay</span>
             <span className="bg-green-50 px-2.5 py-1 rounded-full">👥 {stats.total_contacts} liên hệ</span>
+            {stats.unattended_total > 0 && (
+              <span className="bg-amber-50 text-amber-700 px-2.5 py-1 rounded-full font-medium" title="Khách nhắn tin cuối, chưa có nhân viên trả lời">
+                ⏳ {stats.unattended_total} chưa chăm
+              </span>
+            )}
           </div>
         )}
       </div>
@@ -811,12 +817,14 @@ function InboxTab({ pageStats, fbCompanyQs = '', companyId = null }) {
     if (mediaRecorder) { mediaRecorder.stop(); setRecording(false); setMediaRecorder(null); }
   };
 
-  const [contactFilter, setContactFilter] = useState('all'); // all | has_phone | no_phone | has_lead
+  const [contactFilter, setContactFilter] = useState('all'); // all | has_phone | no_phone | has_lead | unattended | attended
 
   const contactFilterOptions = useMemo(() => {
     const hasPhone = (c) => !!(c.display_phone || c.phone || c.customer?.phone);
     return [
       { key: 'all', label: 'Tất cả', count: contacts.length },
+      { key: 'unattended', label: '⏳ Chưa chăm sóc', count: contacts.filter((c) => c.attended_status === 'unattended').length },
+      { key: 'attended', label: '✅ Đã chăm sóc', count: contacts.filter((c) => c.attended_status === 'attended').length },
       { key: 'has_phone', label: '📞 Có SĐT', count: contacts.filter(hasPhone).length },
       { key: 'no_phone', label: '❌ Chưa có SĐT', count: contacts.filter((c) => !hasPhone(c)).length },
       { key: 'has_lead', label: '🏷 Có Lead', count: contacts.filter((c) => c.lead).length },
@@ -836,6 +844,8 @@ function InboxTab({ pageStats, fbCompanyQs = '', companyId = null }) {
     if (contactFilter === 'no_lead') return !c.lead;
     if (contactFilter === 'lead_has_phone') return !!c.lead && !!phone;
     if (contactFilter === 'lead_no_phone') return !!c.lead && !phone;
+    if (contactFilter === 'unattended') return c.attended_status === 'unattended';
+    if (contactFilter === 'attended') return c.attended_status === 'attended';
     return true;
   });
 
@@ -1001,6 +1011,9 @@ function InboxTab({ pageStats, fbCompanyQs = '', companyId = null }) {
                 )}
               </div>
               <div className="text-[10px] text-gray-400 shrink-0 text-right max-w-[76px]">
+                {c.attended_status === 'unattended' && (
+                  <span className="block text-[9px] font-semibold text-amber-600 mb-0.5" title="Khách nhắn tin cuối, chưa có nhân viên trả lời">⏳ Chờ trả lời</span>
+                )}
                 {c.fb_is_recent_activity && (
                   <span className="block text-[9px] font-semibold text-emerald-600 mb-0.5">Mới</span>
                 )}
@@ -1012,6 +1025,11 @@ function InboxTab({ pageStats, fbCompanyQs = '', companyId = null }) {
                 <span className="block text-[9px] text-gray-400 truncate max-w-[76px]" title={fbActivitySourceLabel(c)}>
                   {fbActivitySourceLabel(c)}
                 </span>
+                {c.attended_status === 'attended' && c.last_outbound_by_name && (
+                  <span className="block text-[9px] text-gray-400 truncate max-w-[76px]" title="Nhân viên trả lời gần nhất">
+                    ✓ {c.last_outbound_by_name}
+                  </span>
+                )}
               </div>
             </div>
           ))}
@@ -1660,6 +1678,8 @@ function ContactsTab({ fbCompanyQs = '', companyId = '', isAdmin = false }) {
     if (search) p.set('search', search);
     if (filter === 'has_lead') p.set('has_lead', 'true');
     if (filter === 'no_lead') p.set('has_lead', 'false');
+    if (filter === 'unattended') p.set('attended', 'unattended');
+    if (filter === 'attended') p.set('attended', 'attended');
     if (sourceFilter) {
       p.set('source_id', sourceFilter);
       // Lọc theo nguồn chỉ áp dụng cho contact có lead
@@ -2659,7 +2679,7 @@ function ContactsTab({ fbCompanyQs = '', companyId = '', isAdmin = false }) {
             className="w-full pl-9 pr-3 py-2 text-sm border rounded-lg focus:ring-2 focus:ring-blue-500" />
         </div>
         <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
-          {[['all','Tất cả'], ['has_lead','Có Lead'], ['no_lead','Chưa có Lead']].map(([k,l]) => (
+          {[['all','Tất cả'], ['unattended','⏳ Chưa chăm'], ['has_lead','Có Lead'], ['no_lead','Chưa có Lead']].map(([k,l]) => (
             <button key={k} onClick={() => setFilter(k)}
               className={`px-3 py-1.5 rounded-lg text-sm font-medium transition cursor-pointer ${filter === k ? 'bg-white shadow text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}>{l}</button>
           ))}
@@ -2736,6 +2756,7 @@ function ContactsTab({ fbCompanyQs = '', companyId = '', isAdmin = false }) {
                         <div>
                           <span className="font-medium text-gray-800">{c.fb_name}</span>
                           {c.unread_count > 0 && <span className="ml-1.5 bg-red-500 text-white text-[9px] px-1.5 py-0.5 rounded-full font-bold">{c.unread_count} mới</span>}
+                          {c.attended_status === 'unattended' && <span className="ml-1.5 bg-amber-100 text-amber-700 text-[9px] px-1.5 py-0.5 rounded-full font-bold" title="Khách nhắn tin cuối, chưa có nhân viên trả lời">⏳ Chưa chăm</span>}
                         </div>
                       </button>
                     </td>
