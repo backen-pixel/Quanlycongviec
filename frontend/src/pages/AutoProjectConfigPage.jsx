@@ -44,12 +44,16 @@ export default function AutoProjectConfigPage() {
       setFlows(flowsRes.data || []);
       const units = divRes.data || [];
       setDivisions(units.filter(u => u.level === 1));
-      setCompanies(units.filter(u => u.level === 2));
+      const companyUnits = units.filter(u => u.level === 2);
+      setCompanies(companyUnits);
 
-      // Load template sets
+      // Load template sets — không có API liệt kê toàn bộ, phải gọi theo từng công ty rồi gộp lại.
       try {
-        const tsRes = await api.get('/company-templates/sets');
-        setTemplateSets(tsRes.data || []);
+        const tsResList = await Promise.all(
+          companyUnits.map(c => api.get(`/company-templates/units/${c.id}/template-sets`).catch(() => null))
+        );
+        const allSets = tsResList.flatMap(res => res?.data?.sets || []);
+        setTemplateSets(allSets);
       } catch { setTemplateSets([]); }
 
       // Load flow steps if flow selected
