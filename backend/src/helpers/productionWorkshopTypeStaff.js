@@ -1015,7 +1015,7 @@ function collectUserIdsFromPipelineStaffBlock(block) {
     ...(block.userIds || []),
     block.logisticsPersonId,
     block.installerPersonId,
-  ].map(String).filter(Boolean);
+  ].filter(Boolean).map(String);
 }
 
 async function enrichPipelineStagesWithDefaultStaff(stages) {

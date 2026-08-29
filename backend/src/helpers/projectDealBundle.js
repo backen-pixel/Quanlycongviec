@@ -1025,7 +1025,7 @@ async function buildProjectDealBundleWithProject(project, user, opts = {}) {
       : supabase.from('users').select('id, full_name').in('id', [...assigneeIds]),
     lite || !(crmSlugs.length && primaryLead?.company_id)
       ? Promise.resolve({ data: [] })
-      : supabase.from('crm_pipeline_stages').select('slug, name, color').in('slug', crmSlugs),
+      : supabase.from('crm_pipeline_stages').select('canonical_slug, name, color').in('canonical_slug', crmSlugs),
     lite || !leadId || !primaryLead
       ? Promise.resolve({ facebook: false, zalo: false })
       : resolveLeadInboxLinksSafe(leadId, primaryLead),
@@ -1315,7 +1315,7 @@ async function buildProjectDealBundleWithProject(project, user, opts = {}) {
   }
 
   const bySlug = {};
-  for (const st of crmStagesRes.data || []) bySlug[st.slug] = st;
+  for (const st of crmStagesRes.data || []) bySlug[st.canonical_slug] = st;
   if (Object.keys(bySlug).length) {
     sections.crm.tasks = (sections.crm.tasks || []).map((t) => ({
       ...t,

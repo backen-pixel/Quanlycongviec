@@ -185,7 +185,7 @@ async function loadSxDoneColumnIds() {
 async function loadVcDoneColumnIds() {
   const rows = await fetchAllRows(
     'logistics_pipeline_stages',
-    'id, name, bucket_slug, slug',
+    'id, name, bucket_slug',
   );
   return uniqIds(rows.filter((c) => isLogisticsCompletedColumn(c)).map((c) => c.id));
 }
@@ -193,7 +193,7 @@ async function loadVcDoneColumnIds() {
 async function loadCrmDoneStageIds() {
   const rows = await fetchAllRows(
     'crm_pipeline_stages',
-    'id, name, canonical_slug, slug, counts_as_completed_revenue',
+    'id, name, canonical_slug, counts_as_completed_revenue',
   );
   return uniqIds(rows.filter((s) => isCrmCompletedStage(s)).map((s) => s.id));
 }
