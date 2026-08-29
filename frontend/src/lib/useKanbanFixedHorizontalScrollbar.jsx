@@ -167,6 +167,14 @@ export function useKanbanFixedHorizontalScrollbar(mainScrollRef, wrapRef, remeas
     const main = mainScrollRef.current;
     const bar = fixedBarRef.current;
     if (!main || !bar || syncFromRef.current === 'main') return;
+    // Sự kiện `scroll` bắn ở frame SAU, lúc đó syncFromRef đã được reset về null
+    // (onMainScroll reset đồng bộ), nên guard 'main' ở trên không bao giờ khớp:
+    // mỗi nhịp vuốt board đều ghi ngược vào main.scrollLeft. Ghi scrollLeft giữa
+    // lúc ngón tay đang vuốt sẽ triệt tiêu quán tính → cuộn ngang trên cảm ứng
+    // khựng/dừng giữa chừng. Chỉ ghi khi hai bên thực sự lệch — đối xứng với
+    // guard sẵn có trong syncBarFromMain. Kéo trực tiếp thanh cuộn vẫn chạy vì
+    // lúc đó bar.scrollLeft khác main.scrollLeft thật.
+    if (Math.abs(main.scrollLeft - bar.scrollLeft) <= 0.5) return;
     syncFromRef.current = 'bar';
     main.scrollLeft = bar.scrollLeft;
     syncFromRef.current = null;
