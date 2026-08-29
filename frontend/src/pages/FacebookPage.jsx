@@ -324,7 +324,8 @@ export default function FacebookPage() {
 function PageSelector({ value, onChange, pages, pageStats }) {
   const [isOpen, setIsOpen] = useState(false);
   const selectedPage = pages.find(p => p.page_id === value);
-  const count = (ps) => (ps?.new_contacts_7d || 0) + (ps?.unread_count || 0);
+  // Số người nhắn tin MỚI hôm nay cho riêng Page này (không lẫn hội thoại cũ được NV "chăm lại").
+  const count = (ps) => ps?.senders_today || 0;
 
   return (
     <div className="relative">
@@ -346,7 +347,7 @@ function PageSelector({ value, onChange, pages, pageStats }) {
               <button key={p.id} onClick={() => { onChange(p.page_id); setIsOpen(false); }}
                 className={`w-full flex items-center justify-between px-3 py-2 text-xs hover:bg-gray-50 ${value === p.page_id ? 'bg-blue-50' : ''}`}>
                 <span className="truncate">{p.page_name}</span>
-                {cnt > 0 && <span className="bg-red-500 text-white px-1.5 py-0.5 rounded-full text-[9px]">{cnt}</span>}
+                {cnt > 0 && <span className="bg-red-500 text-white px-1.5 py-0.5 rounded-full text-[9px]" title="Số người nhắn tin mới hôm nay">{cnt}</span>}
               </button>
             );
           })}

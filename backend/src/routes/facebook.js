@@ -4119,26 +4119,44 @@ r.get('/contacts', authMiddleware, async (req, res) => {
 
     /**
      * Lấy rộng hơn để sort rồi mới paginate.
-     * Khi có lọc ngày: filter trực tiếp trên DB (last_message_at / created_at) thay vì quét 6000 rồi lọc RAM.
+     * KHÔNG lọc ngày theo last_message_at nữa — cột này bị bump cả khi NV trả lời (outbound/"chăm lại"),
+     * nên "Hôm nay" trước đây tính lẫn cả hội thoại cũ được chăm lại hôm nay (số liệu thực tế: có Page bị
+     * đếm dư 5-12 lần). Khi có lọc ngày: xác định trước tập contact có tin INBOUND thật sự trong khoảng đó
+     * qua RPC, rồi mới truy vấn facebook_contacts theo đúng tập id này.
      */
-    const [withMsgRes, noMsgRes] = await Promise.all([
-      (() => {
-        let q = base().not('last_message_at', 'is', null);
-        if (hasDateFilter) q = q.gte('last_message_at', fromIso).lte('last_message_at', toIso);
-        return q
+    let merged;
+    if (hasDateFilter) {
+      const rpcPageIds = page_id
+        ? [String(page_id)]
+        : (scope.mode === 'filter' ? scope.pageIds : null);
+      const { data: idRows, error: idErr } = await supabase.rpc('fb_contact_ids_with_inbound_in_range', {
+        p_page_ids: rpcPageIds,
+        p_from: fromIso,
+        p_to: toIso,
+      });
+      if (idErr) console.warn('[FB] RPC fb_contact_ids_with_inbound_in_range:', idErr.message, '(chạy database/52_fb_contact_ids_inbound_range_rpc.sql)');
+      const qualifyingIds = [...new Set((idRows || []).map((r) => r.contact_id).filter(Boolean))];
+      merged = [];
+      const CH = 800;
+      for (let i = 0; i < qualifyingIds.length; i += CH) {
+        const slice = qualifyingIds.slice(i, i + CH);
+        const { data } = await base().in('id', slice)
+          .order('last_message_at', { ascending: false })
+          .order('created_at', { ascending: false });
+        merged.push(...(data || []));
+      }
+    } else {
+      const [withMsgRes, noMsgRes] = await Promise.all([
+        base().not('last_message_at', 'is', null)
           .order('last_message_at', { ascending: false })
           .order('created_at', { ascending: false })
-          .limit(hasDateFilter ? 2000 : 3500);
-      })(),
-      (() => {
-        let q = base().is('last_message_at', null);
-        if (hasDateFilter) q = q.gte('created_at', fromIso).lte('created_at', toIso);
-        return q
+          .limit(3500),
+        base().is('last_message_at', null)
           .order('created_at', { ascending: false })
-          .limit(hasDateFilter ? 500 : 2500);
-      })(),
-    ]);
-    const merged = [...(withMsgRes.data || []), ...(noMsgRes.data || [])];
+          .limit(2500),
+      ]);
+      merged = [...(withMsgRes.data || []), ...(noMsgRes.data || [])];
+    }
     // Dedup by id (tránh trường hợp query overlap do filter).
     const seen = new Set();
     let result = [];
@@ -4862,11 +4880,14 @@ r.get('/stats', authMiddleware, async (req, res) => {
     const [contacts, messages, leadAds, comments, unread, allContacts, pages, unattended] = await Promise.all([
       inPages(supabase.from('facebook_contacts').select('id', { count: 'exact', head: true })),
       (async () => {
-        const { data: cids } = await inPages(supabase.from('facebook_contacts').select('id'));
-        const ids = (cids || []).map((c) => c.id);
-        if (!ids.length) return { count: 0, senderCount: 0 };
+        const { data: cidRows } = await inPages(supabase.from('facebook_contacts').select('id, page_id'));
+        const rows0 = cidRows || [];
+        const ids = rows0.map((c) => c.id);
+        if (!ids.length) return { count: 0, senderCount: 0, senderCountByPage: {} };
+        const pageOf = new Map(rows0.map((c) => [c.id, c.page_id]));
         let total = 0;
         const senderSet = new Set();
+        const senderSetByPage = new Map();
         const CH = 500;
         for (let i = 0; i < ids.length; i += CH) {
           const slice = ids.slice(i, i + CH);
@@ -4877,10 +4898,18 @@ r.get('/stats', authMiddleware, async (req, res) => {
             .in('contact_id', slice);
           (rows || []).forEach((row) => {
             total += 1;
-            if (row.contact_id) senderSet.add(row.contact_id);
+            if (!row.contact_id) return;
+            senderSet.add(row.contact_id);
+            const pid = pageOf.get(row.contact_id);
+            if (pid) {
+              if (!senderSetByPage.has(pid)) senderSetByPage.set(pid, new Set());
+              senderSetByPage.get(pid).add(row.contact_id);
+            }
           });
         }
-        return { count: total, senderCount: senderSet.size };
+        const senderCountByPage = {};
+        senderSetByPage.forEach((set, pid) => { senderCountByPage[pid] = set.size; });
+        return { count: total, senderCount: senderSet.size, senderCountByPage };
       })(),
       supabase.from('facebook_lead_ads').select('id', { count: 'exact', head: true }).gte('created_at', today),
       supabase.from('facebook_comments').select('id', { count: 'exact', head: true }).gte('created_at', today),
@@ -4920,6 +4949,8 @@ r.get('/stats', authMiddleware, async (req, res) => {
       total_contacts: totalByPage[p.page_id] || 0,
       new_contacts_7d: newContactsByPage[p.page_id] || 0,
       unread_count: unreadMap[p.page_id] || 0,
+      // Số người thực sự nhắn tin MỚI hôm nay cho riêng Page này (không lẫn hội thoại cũ được "chăm lại").
+      senders_today: messages.senderCountByPage?.[p.page_id] || 0,
     }));
 
     res.json({
