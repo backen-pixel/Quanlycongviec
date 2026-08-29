@@ -5108,8 +5108,7 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
 
   // Deal mới từ CRM (sx_intake) luôn ưu tiên badge "Mới"; fallback theo 24h như cũ
   const isNew = !!item.sx_intake || (item.created_at && (Date.now() - new Date(item.created_at).getTime()) < 86400000);
-  // Khoá kéo khi đang ở luồng VC thật. Không khoá producing+logistics (vẫn kéo trên SX).
-  // Không khoá shipping do chính cột SX delivery/CSKH sinh ra.
+  // Khoá kéo khi đang lắp/bảo hành mà chưa gắn VC. Đã bàn giao VC: vẫn kéo Đã giao → Công nợ.
   const lockedInVc = projectLockedOnSxKanban(item, sxStage);
   const crmRegionName = (() => {
     try {

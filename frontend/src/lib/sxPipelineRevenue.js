@@ -123,14 +123,20 @@ export function shouldForceSxHandoverColumn(project, projectColRow) {
 export function projectLockedOnSxKanban(project, sxStage) {
   if (TEMP_SX_FREE_DRAG) return false;
   const st = String(project?.status || '');
-  if (sxStatusComesFromColumn(project, sxStage) && !project?.vc_kanban_column_id && !project?.logistics_company_id) {
+  const inLogistics = Boolean(
+    project?.vc_kanban_column_id
+    || project?.logistics_company_id
+    || project?.logistics_company?.id,
+  );
+  if (sxStatusComesFromColumn(project, sxStage) && !inLogistics) {
     return false;
   }
+  // Đã bàn giao VC: PATCH chỉ đổi cột SX, không đè status VC — vẫn cho kéo
+  // Đơn hàng đã giao → Công nợ (theo dõi thu tiền trên board SX).
+  if (inLogistics) return false;
   if (st === 'installing' || st === 'warranty') return true;
-  if (st === 'shipping' || st === 'completed') {
-    const inLogistics = Boolean(project?.vc_kanban_column_id || project?.logistics_company_id);
-    if (inLogistics) return true;
-    return st === 'shipping' && !sxStatusComesFromColumn(project, sxStage);
+  if (st === 'shipping') {
+    return !sxStatusComesFromColumn(project, sxStage);
   }
   return false;
 }
