@@ -2996,6 +2996,13 @@ export default function CRMDashboard() {
     if (opts.companyFilter) setCompanyFilterLoading(true);
     setSyncing(true);
     setLoadMoreState((prev) => ({ ...prev, loading: false }));
+    // Thẻ ghim từ tìm kiếm (crmSearchPinnedByIdRef) được thiết kế để sống sót qua
+    // silent reload (tránh biến mất khi board tự làm mới ngầm) — nhưng nó không có
+    // điều kiện khớp bộ lọc, nên khi đổi Công ty/Nhân viên/Khu vực... thẻ ghim của
+    // một tìm kiếm cũ (có thể thuộc NV/công ty khác) vẫn dính lại trên board, làm
+    // tưởng như bộ lọc không áp dụng cho đúng những thẻ đó. Đổi bộ lọc thực sự (khác
+    // với silent reload) thì bỏ ghim — board sẽ khớp hoàn toàn với bộ lọc mới.
+    crmSearchPinnedByIdRef.current.clear();
   }, []);
 
   /** Công ty đang áp dụng cho dashboard (admin: theo bộ lọc; user: theo company_id). */
