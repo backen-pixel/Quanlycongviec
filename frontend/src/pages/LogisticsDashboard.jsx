@@ -142,6 +142,10 @@ function readVcKpiPanelOpen() {
     if (v === '0') return false;
     if (v === '1') return true;
   } catch { /* ignore */ }
+  // Chưa từng chọn: 6 thẻ KPI xếp 2 cột dưới 768px = 3 hàng (255px), đẩy bảng
+  // Kanban xuống quá nửa màn. Mặc định thu gọn ở màn hẹp; lựa chọn đã lưu ở
+  // trên vẫn được tôn trọng.
+  if (typeof window !== 'undefined' && window.innerWidth < 768) return false;
   return true;
 }
 
@@ -1038,7 +1042,7 @@ export default function LogisticsDashboard() {
   const ctrlH = 'h-8';
   const ctrlIcon = 'h-7 w-7';
   const ctrlTxt = 'text-xs';
-  const toolbarBtn = `${ctrlH} px-2 rounded-md ${ctrlTxt} font-medium inline-flex items-center gap-1 cursor-pointer transition-colors shrink-0`;
+  const toolbarBtn = `${ctrlH} px-2 rounded-md ${ctrlTxt} font-medium inline-flex flex-1 sm:flex-none justify-center items-center gap-1 cursor-pointer transition-colors sm:shrink-0`;
 
   if (loading) {
     return (
@@ -1147,7 +1151,7 @@ export default function LogisticsDashboard() {
                 </div>
               )}
             </div>
-            <div className="flex items-center gap-1 shrink-0 ml-auto">
+            <div className="flex items-center gap-1 w-full sm:w-auto sm:shrink-0 sm:ml-auto">
               {loading ? (
                 <span className="hidden lg:inline-flex items-center gap-1 text-[10px] text-amber-700 mr-1">
                   <Loader2 className="h-3 w-3 animate-spin" /> Đang tải…
@@ -1167,7 +1171,7 @@ export default function LogisticsDashboard() {
                 to="/vc/assignments"
                 assignmentModule="logistics"
                 variant="outlined"
-                className="!h-7 !rounded-md !text-[11px]"
+                className="!h-7 !rounded-md !text-[11px] flex-1 sm:flex-none justify-center"
               />
               <button
                 type="button"
@@ -1189,7 +1193,7 @@ export default function LogisticsDashboard() {
               <button
                 type="button"
                 onClick={() => setShowNewProject(true)}
-                className={`${ctrlH} shrink-0 px-2.5 rounded-md font-semibold flex items-center gap-1 cursor-pointer transition-colors text-white shadow-sm bg-orange-600 hover:bg-orange-700`}
+                className={`${ctrlH} shrink-0 px-2.5 rounded-md font-semibold flex flex-1 sm:flex-none justify-center items-center gap-1 cursor-pointer transition-colors text-white shadow-sm bg-orange-600 hover:bg-orange-700`}
               >
                 <Plus className="h-3.5 w-3.5" strokeWidth={2.5} />
                 <span className={ctrlTxt}>Thêm dự án</span>
@@ -1200,7 +1204,7 @@ export default function LogisticsDashboard() {
           {/* Hàng 2 — tìm kiếm & chế độ xem */}
           <div className="flex flex-wrap items-center gap-1 px-2.5 py-1 sm:px-3 border-t border-slate-200/50">
             <div
-              className={`group/search flex items-center shrink-0 flex-1 min-w-0 max-w-none sm:max-w-[22rem] lg:max-w-[28rem] rounded-md border transition-colors ${
+              className={`group/search flex items-center shrink-0 flex-1 min-w-0 basis-full sm:basis-auto max-w-none sm:max-w-[22rem] lg:max-w-[28rem] rounded-md border transition-colors ${
                 searchQuery.trim()
                   ? 'border-orange-300 bg-orange-50/80'
                   : vcInlineFilterChips.length && !showAdvFilter
@@ -1255,8 +1259,8 @@ export default function LogisticsDashboard() {
               </div>
             </div>
 
-            <div className="flex items-center gap-0.5 shrink-0 ml-auto pl-1 border-l border-slate-200/80">
-              <div className="inline-flex items-center gap-0.5 p-0.5 rounded-md bg-slate-100 border border-slate-200/80">
+            <div className="flex items-center gap-0.5 w-full sm:w-auto sm:shrink-0 sm:ml-auto sm:pl-1 sm:border-l border-slate-200/80">
+              <div className="inline-flex flex-1 sm:flex-none items-center gap-0.5 p-0.5 rounded-md bg-slate-100 border border-slate-200/80">
                 <button
                   type="button"
                   onClick={() => setViewMode('kanban')}
@@ -1269,7 +1273,7 @@ export default function LogisticsDashboard() {
                   <LayoutGrid className="h-3.5 w-3.5" />
                   <span className="hidden sm:inline">Kanban</span>
                 </button>
-                <div className="relative">
+                <div className="relative flex-1 sm:flex-none">
                   <button
                     ref={viewModeTriggerRef}
                     type="button"
