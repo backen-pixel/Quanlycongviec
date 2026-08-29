@@ -3408,8 +3408,27 @@ function AnalyticsTab({ fbCompanyQs = '' }) {
   if (!data) return <p className="text-center py-8 text-gray-400">Không có dữ liệu</p>;
 
   const f = data.conversionFunnel;
+  const cmp = data.comparison || {};
+  const frt = data.firstResponseTime || {};
   const maxMsg = Math.max(...(data.messagesByHour || []).map(h => h.total), 1);
   const maxDay = Math.max(...(data.messagesByDay || []).map(d => d.total), 1);
+
+  /** Badge nhỏ "▲12% so kỳ trước" / "▼8%" / "Mới" bên dưới mỗi thẻ KPI. */
+  function DeltaBadge({ cmpKey }) {
+    const c = cmp[cmpKey];
+    if (!c) return null;
+    if (c.pct === null) {
+      if (!c.current) return null;
+      return <span className="text-[10px] text-blue-500 font-medium">✨ Mới so kỳ trước</span>;
+    }
+    if (c.pct === 0) return <span className="text-[10px] text-gray-400">— so kỳ trước</span>;
+    const up = c.pct > 0;
+    return (
+      <span className={`text-[10px] font-medium ${up ? 'text-green-600' : 'text-red-500'}`}>
+        {up ? '▲' : '▼'} {Math.abs(c.pct)}% so kỳ trước
+      </span>
+    );
+  }
 
   return (
     <div className="p-6 overflow-y-auto h-full space-y-6">
@@ -3435,14 +3454,15 @@ function AnalyticsTab({ fbCompanyQs = '' }) {
       </div>
 
       {/* KPI Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
         {[
-          { label: 'Tổng liên hệ', value: data.totalContacts, icon: '👥', color: 'blue' },
-          { label: 'Có SĐT', value: data.hasPhone, icon: '📞', color: 'green', sub: `${f.phone_rate}%` },
-          { label: 'Có Lead', value: data.hasLead, icon: '🏷️', color: 'purple', sub: `${f.lead_rate}%` },
-          { label: 'Đã chuyển Deal', value: data.dealCount, icon: '🤝', color: 'orange', sub: `${f.deal_rate}%` },
-          { label: 'Tin nhắn', value: data.totalMessages, icon: '💬', color: 'cyan' },
-          { label: 'TG phản hồi', value: data.avgResponseTime ? `${data.avgResponseTime} phút` : '—', icon: '⏱️', color: 'pink' },
+          { label: 'Liên hệ mới trong kỳ', value: data.totalContacts, icon: '👥', color: 'blue', cmpKey: 'totalContacts' },
+          { label: 'Có SĐT', value: data.hasPhone, icon: '📞', color: 'green', sub: `${f.phone_rate}%`, cmpKey: 'hasPhone' },
+          { label: 'Có Lead', value: data.hasLead, icon: '🏷️', color: 'purple', sub: `${f.lead_rate}%`, cmpKey: 'hasLead' },
+          { label: 'Đã chuyển Deal', value: data.dealCount, icon: '🤝', color: 'orange', sub: `${f.deal_rate}%`, cmpKey: 'dealCount' },
+          { label: 'Tin nhắn', value: data.totalMessages, icon: '💬', color: 'cyan', cmpKey: 'totalMessages' },
+          { label: 'TG phản hồi (mọi lượt)', value: data.avgResponseTime ? `${data.avgResponseTime} phút` : '—', icon: '⏱️', color: 'pink' },
+          { label: 'Chưa chăm sóc', value: data.unattendedTotal || 0, icon: '⏳', color: 'amber' },
         ].map((kpi, i) => (
           <div key={i} className={`bg-white rounded-xl border p-4 space-y-1`}>
             <div className="flex items-center justify-between">
@@ -3451,6 +3471,7 @@ function AnalyticsTab({ fbCompanyQs = '' }) {
             </div>
             <p className="text-2xl font-bold text-gray-900">{kpi.value}</p>
             <p className="text-xs text-gray-500">{kpi.label}</p>
+            {kpi.cmpKey && <DeltaBadge cmpKey={kpi.cmpKey} />}
           </div>
         ))}
       </div>
@@ -3477,6 +3498,36 @@ function AnalyticsTab({ fbCompanyQs = '' }) {
           ))}
         </div>
       </div>
+
+      {/* First Response Time */}
+      {frt.sampleCount > 0 && (
+        <div className="bg-white rounded-xl border p-5">
+          <h3 className="text-sm font-bold text-gray-700 mb-4">⏱️ Thời gian phản hồi lần đầu</h3>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            <div className="space-y-1">
+              <p className="text-2xl font-bold text-gray-900">{frt.avgMinutes ?? '—'} phút</p>
+              <p className="text-xs text-gray-500">Trung bình</p>
+            </div>
+            <div className="space-y-1">
+              <p className="text-2xl font-bold text-gray-900">{frt.medianMinutes ?? '—'} phút</p>
+              <p className="text-xs text-gray-500">Trung vị (median)</p>
+            </div>
+            <div className="space-y-1">
+              <p className="text-2xl font-bold text-green-600">{frt.slaUnder15m}%</p>
+              <p className="text-xs text-gray-500">Trả lời &lt; 15 phút</p>
+            </div>
+            <div className="space-y-1">
+              <p className="text-2xl font-bold text-blue-600">{frt.slaUnder1h}%</p>
+              <p className="text-xs text-gray-500">Trả lời &lt; 1 giờ</p>
+            </div>
+            <div className="space-y-1">
+              <p className="text-2xl font-bold text-gray-700">{frt.slaUnder4h}%</p>
+              <p className="text-xs text-gray-500">Trả lời &lt; 4 giờ</p>
+            </div>
+          </div>
+          <p className="text-[10px] text-gray-400 mt-3">Dựa trên {frt.sampleCount} lượt phản hồi đầu tiên (tin nhắn đầu tiên của khách → tin nhắn đầu tiên nhân viên trả lời)</p>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Messages by Hour */}
@@ -3520,6 +3571,35 @@ function AnalyticsTab({ fbCompanyQs = '' }) {
         </div>
       </div>
 
+      {/* Employee Performance */}
+      {data.employeePerformance?.length > 0 && (
+        <div className="bg-white rounded-xl border p-5">
+          <h3 className="text-sm font-bold text-gray-700 mb-4">👤 Hiệu suất theo nhân viên</h3>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b text-left text-gray-500">
+                  <th className="py-2 font-medium">Nhân viên</th>
+                  <th className="py-2 font-medium text-center">Tin đã gửi</th>
+                  <th className="py-2 font-medium text-center">Khách đã chăm</th>
+                  <th className="py-2 font-medium text-center">TG phản hồi TB</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.employeePerformance.map(emp => (
+                  <tr key={emp.user_id} className="border-b border-gray-50 hover:bg-gray-50">
+                    <td className="py-2.5 font-medium">{emp.name}</td>
+                    <td className="py-2.5 text-center">{emp.messages_sent}</td>
+                    <td className="py-2.5 text-center text-purple-600">{emp.contacts_handled}</td>
+                    <td className="py-2.5 text-center">{emp.avg_response_minutes != null ? `${emp.avg_response_minutes} phút` : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {/* Page Breakdown */}
       {data.pageBreakdown?.length > 0 && (
         <div className="bg-white rounded-xl border p-5">
@@ -3533,6 +3613,7 @@ function AnalyticsTab({ fbCompanyQs = '' }) {
                   <th className="py-2 font-medium text-center">Có SĐT</th>
                   <th className="py-2 font-medium text-center">Có Lead</th>
                   <th className="py-2 font-medium text-center">Tỷ lệ SĐT</th>
+                  <th className="py-2 font-medium text-center">Chưa chăm</th>
                 </tr>
               </thead>
               <tbody>
@@ -3546,6 +3627,13 @@ function AnalyticsTab({ fbCompanyQs = '' }) {
                       <span className="bg-green-50 text-green-700 px-2 py-0.5 rounded-full text-xs font-medium">
                         {p.contacts ? Math.round(p.has_phone / p.contacts * 100) : 0}%
                       </span>
+                    </td>
+                    <td className="py-2.5 text-center">
+                      {p.unattended > 0 ? (
+                        <span className="bg-amber-50 text-amber-700 px-2 py-0.5 rounded-full text-xs font-medium">⏳ {p.unattended}</span>
+                      ) : (
+                        <span className="text-gray-300">0</span>
+                      )}
                     </td>
                   </tr>
                 ))}
