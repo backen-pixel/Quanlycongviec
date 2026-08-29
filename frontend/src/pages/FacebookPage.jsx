@@ -8,7 +8,9 @@ import {
   Link2, Plus, ChevronRight, Bell, Image, Paperclip, RefreshCw, ToggleLeft, ToggleRight,
   X, Trash2, Edit3, UserPlus, Phone, Mail, MoreHorizontal, Check, Copy, Save, Eye, EyeOff,
   Mic, MicOff, File, Camera, Smile, ArrowLeft, BarChart3, StickyNote, Activity, Images,
+  Calendar,
 } from 'lucide-react';
+import DateRangePickerPopover from '../components/DateRangePickerPopover';
 import AutoToolPanel from '../components/AutoToolPanel';
 import BatchActionsBar from '../components/BatchActionsBar';
 import { FacebookAutoCompaniesPanel } from './FacebookAutoCompaniesPage';
@@ -3375,11 +3377,27 @@ function CommentsTab() {
 // ANALYTICS TAB — Phân tích hành vi khách hàng
 // ═══════════════════════════════════════════════════════════════
 
+function lastNDaysYmd(n) {
+  const toD = new Date();
+  const fromD = new Date();
+  fromD.setDate(fromD.getDate() - (Math.max(1, n) - 1));
+  return { from: vnYmd(fromD), to: vnYmd(toD) };
+}
+
+function formatYmdVi(s) {
+  const m = String(s || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : s || '';
+}
+
 function AnalyticsTab({ fbCompanyQs = '' }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [pageFilter, setPageFilter] = useState('');
-  const [days, setDays] = useState(30);
+  const [daysPreset, setDaysPreset] = useState('30');
+  const [customFrom, setCustomFrom] = useState('');
+  const [customTo, setCustomTo] = useState('');
+  const [rangePickerOpen, setRangePickerOpen] = useState(false);
   const [pages, setPages] = useState([]);
 
   useEffect(() => {
@@ -3393,18 +3411,41 @@ function AnalyticsTab({ fbCompanyQs = '' }) {
   }, [fbCompanyQs]);
 
   useEffect(() => {
+    if (daysPreset === 'custom' && (!customFrom || !customTo)) return undefined;
+    const ac = new AbortController();
     setLoading(true);
-    const params = new URLSearchParams({ days });
+    setLoadError('');
+    const params = new URLSearchParams();
+    if (daysPreset === 'custom') {
+      params.set('from', customFrom);
+      params.set('to', customTo);
+    } else {
+      params.set('days', daysPreset);
+    }
     if (pageFilter) params.set('page_id', pageFilter);
     if (fbCompanyQs) {
       new URLSearchParams(fbCompanyQs).forEach((v, k) => params.set(k, v));
     }
-    fetch(`${API}/api/facebook/analytics?${params}`, { headers: hdr() })
-      .then(r => r.ok ? r.json() : null).then(d => { setData(d); setLoading(false); })
-      .catch(() => setLoading(false));
-  }, [pageFilter, days, fbCompanyQs]);
+    fetch(`${API}/api/facebook/analytics?${params}`, { headers: hdr(), signal: ac.signal })
+      .then(async (r) => {
+        const j = await r.json().catch(() => null);
+        if (!r.ok) {
+          setLoadError(j?.error || 'Không tải được thống kê');
+          return null;
+        }
+        return j;
+      })
+      .then((d) => { if (d) setData(d); setLoading(false); })
+      .catch((e) => {
+        if (e?.name === 'AbortError') return;
+        setLoadError('Không tải được thống kê');
+        setLoading(false);
+      });
+    return () => ac.abort();
+  }, [pageFilter, daysPreset, customFrom, customTo, fbCompanyQs]);
 
-  if (loading) return <div className="flex items-center justify-center h-64"><div className="animate-spin w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full" /></div>;
+  if (loading && !data) return <div className="flex items-center justify-center h-64"><div className="animate-spin w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full" /></div>;
+  if (!data && loadError) return <p className="text-center py-8 text-red-500">{loadError}</p>;
   if (!data) return <p className="text-center py-8 text-gray-400">Không có dữ liệu</p>;
 
   const f = data.conversionFunnel;
@@ -3435,7 +3476,7 @@ function AnalyticsTab({ fbCompanyQs = '' }) {
       {/* Header + Filters */}
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-bold text-gray-800">📊 Phân tích hành vi khách hàng</h2>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2">
           {pages.length > 1 && (
             <select value={pageFilter} onChange={e => setPageFilter(e.target.value)}
               className="text-sm border rounded-lg px-3 py-1.5 bg-white">
@@ -3443,15 +3484,61 @@ function AnalyticsTab({ fbCompanyQs = '' }) {
               {pages.map(p => <option key={p.id} value={p.page_id}>{p.page_name}</option>)}
             </select>
           )}
-          <select value={days} onChange={e => setDays(Number(e.target.value))}
-            className="text-sm border rounded-lg px-3 py-1.5 bg-white">
-            <option value={7}>7 ngày</option>
-            <option value={14}>14 ngày</option>
-            <option value={30}>30 ngày</option>
-            <option value={90}>90 ngày</option>
+          <select
+            value={daysPreset}
+            onChange={(e) => {
+              const v = e.target.value;
+              setDaysPreset(v);
+              if (v === 'custom') {
+                if (!customFrom || !customTo) {
+                  const r = lastNDaysYmd(30);
+                  setCustomFrom(r.from);
+                  setCustomTo(r.to);
+                }
+                setRangePickerOpen(true);
+              }
+            }}
+            className="text-sm border rounded-lg px-3 py-1.5 bg-white"
+            aria-label="Khoảng thời gian"
+          >
+            <option value="7">7 ngày</option>
+            <option value="14">14 ngày</option>
+            <option value="30">30 ngày</option>
+            <option value="90">90 ngày</option>
+            <option value="custom">Tùy chọn ngày</option>
           </select>
+          {daysPreset === 'custom' && (
+            <button
+              type="button"
+              onClick={() => setRangePickerOpen(true)}
+              className="inline-flex items-center gap-1.5 text-sm border rounded-lg px-3 py-1.5 bg-white hover:bg-gray-50"
+              title="Chọn khoảng ngày"
+            >
+              <Calendar className="h-3.5 w-3.5 text-gray-500" />
+              {customFrom && customTo ? `${formatYmdVi(customFrom)} → ${formatYmdVi(customTo)}` : 'Chọn ngày'}
+            </button>
+          )}
+          {loading && data && <span className="text-xs text-gray-400">Đang tải…</span>}
         </div>
       </div>
+      {loadError && (
+        <p className="text-sm text-red-500">{loadError}</p>
+      )}
+      <DateRangePickerPopover
+        open={rangePickerOpen}
+        title="Chọn khoảng thời gian thống kê"
+        from={customFrom}
+        to={customTo}
+        allowClear={false}
+        onClose={() => setRangePickerOpen(false)}
+        onChange={({ from, to }) => {
+          if (!from || !to) return;
+          setCustomFrom(from);
+          setCustomTo(to);
+          setDaysPreset('custom');
+          setRangePickerOpen(false);
+        }}
+      />
 
       {/* KPI Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
@@ -3554,7 +3641,7 @@ function AnalyticsTab({ fbCompanyQs = '' }) {
         <div className="bg-white rounded-xl border p-5">
           <h3 className="text-sm font-bold text-gray-700 mb-4">📅 Tin nhắn theo ngày</h3>
           <div className="flex items-end gap-0.5 h-40">
-            {(data.messagesByDay || []).slice(-days).map((d, i) => (
+            {(daysPreset === 'custom' ? (data.messagesByDay || []) : (data.messagesByDay || []).slice(-Number(daysPreset) || 30)).map((d, i) => (
               <div key={i} className="flex-1 flex flex-col items-center justify-end" style={{ height: '120px' }}>
                 <div className="w-full rounded-t-sm transition-all" style={{ height: `${Math.max(d.total / maxDay * 100, 2)}%` }}
                   title={`${d.date}: ${d.inbound} đến + ${d.outbound} đi = ${d.total}`}>

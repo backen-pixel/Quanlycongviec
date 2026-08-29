@@ -3,6 +3,7 @@ const jwt = require('jsonwebtoken');
 const config = require('../config');
 const r = express.Router();
 const { supabase } = require('../config/supabase');
+const { fetchAllPagesParallel } = require('../helpers/supabaseFetchAll');
 const axios = require('axios');
 const { isAdminLike, isSystemAdmin, hasCompanyId } = require('../helpers/adminRole');
 const { runIfLeader, tryAcquireLeader, renewLeader, releaseLeader } = require('../helpers/cronLeader');
@@ -119,36 +120,117 @@ const STALE_NO_CUSTOMER_REPLY_MS = AUTO_PIPELINE_RECENT_HOURS * 60 * 60 * 1000;
 /** Graph: lấy nhiều trang tin (mặc định FB chỉ trả ~100/trang). SĐT nằm trong text ở tin cũ vẫn cần kéo đủ. */
 const FB_GRAPH_MESSAGES_FIELDS = 'message,from,created_time,attachments';
 
-/** GET /facebook/analytics — mặc định 500 dòng/trang; ENV: FB_ANALYTICS_PAGE_SIZE (500–2000). */
-const FB_ANALYTICS_PAGE_SIZE = Math.min(
-  2000,
-  Math.max(200, parseInt(process.env.FB_ANALYTICS_PAGE_SIZE || '500', 10) || 500),
-);
-const FB_ANALYTICS_CONTACT_IN_BATCH = Math.min(
-  200,
-  Math.max(50, parseInt(process.env.FB_ANALYTICS_CONTACT_IN_BATCH || '150', 10) || 150),
-);
+/** GET /facebook/analytics — PostgREST max 1000 dòng/trang. */
+const FB_ANALYTICS_RPC_PAGE = 1000;
+const FB_ANALYTICS_CACHE_MS = 45_000;
+const fbAnalyticsCache = new Map();
 
-async function fetchAllAnalyticsContacts({ page_id, page_ids }) {
-  const contacts = [];
-  let from = 0;
-  while (true) {
+function fbAnalyticsCacheGet(key) {
+  const hit = fbAnalyticsCache.get(key);
+  if (!hit) return null;
+  if (Date.now() > hit.exp) {
+    fbAnalyticsCache.delete(key);
+    return null;
+  }
+  return hit.val;
+}
+
+function fbAnalyticsCacheSet(key, val) {
+  if (fbAnalyticsCache.size > 40) {
+    const oldest = fbAnalyticsCache.keys().next().value;
+    fbAnalyticsCache.delete(oldest);
+  }
+  fbAnalyticsCache.set(key, { val, exp: Date.now() + FB_ANALYTICS_CACHE_MS });
+}
+
+function isMissingRpcError(err) {
+  const code = String(err?.code || '');
+  const msg = String(err?.message || err?.details || '');
+  return code === 'PGRST202' || code === '42883' || /could not find the function|schema cache/i.test(msg);
+}
+
+function createdAtIso(v) {
+  if (!v) return '';
+  if (typeof v === 'string') return v;
+  try { return new Date(v).toISOString(); } catch { return String(v); }
+}
+
+function mapAnalyticsContactRow(row) {
+  const customerPhone = row.customer_phone || row.customer?.phone || null;
+  return {
+    id: row.id,
+    phone: row.phone,
+    lead_id: row.lead_id,
+    page_id: row.page_id,
+    created_at: createdAtIso(row.created_at),
+    customer: customerPhone ? { phone: customerPhone } : null,
+  };
+}
+
+function mapAnalyticsMessageRow(row) {
+  return {
+    id: row.id,
+    direction: row.direction,
+    created_at: createdAtIso(row.created_at),
+    contact_id: row.contact_id,
+    sent_by: row.sent_by || null,
+  };
+}
+
+async function fetchAnalyticsRpcPages(fnName, baseParams) {
+  const first = await supabase.rpc(fnName, { ...baseParams, p_offset: 0, p_limit: FB_ANALYTICS_RPC_PAGE });
+  if (first.error) throw first.error;
+  const firstRows = first.data || [];
+  if (firstRows.length < FB_ANALYTICS_RPC_PAGE) return firstRows;
+
+  const out = firstRows.slice();
+  let offset = FB_ANALYTICS_RPC_PAGE;
+  const batchSize = 5;
+  for (;;) {
+    const results = await Promise.all(
+      Array.from({ length: batchSize }, (_, i) => supabase.rpc(fnName, {
+        ...baseParams,
+        p_offset: offset + i * FB_ANALYTICS_RPC_PAGE,
+        p_limit: FB_ANALYTICS_RPC_PAGE,
+      })),
+    );
+    let short = false;
+    for (const r of results) {
+      if (r.error) throw r.error;
+      const chunk = r.data || [];
+      out.push(...chunk);
+      if (chunk.length < FB_ANALYTICS_RPC_PAGE) short = true;
+    }
+    if (short) return out;
+    offset += batchSize * FB_ANALYTICS_RPC_PAGE;
+  }
+}
+
+async function fetchAllAnalyticsContacts({ page_id, page_ids, sinceIso, untilIso }) {
+  const rpcPageIds = page_id ? [page_id] : (Array.isArray(page_ids) && page_ids.length ? page_ids : null);
+  try {
+    const rows = await fetchAnalyticsRpcPages('fb_analytics_contacts_in_range', {
+      p_page_ids: rpcPageIds,
+      p_from: sinceIso || null,
+      p_to: untilIso || null,
+    });
+    return rows.map(mapAnalyticsContactRow);
+  } catch (e) {
+    if (!isMissingRpcError(e)) throw e;
+  }
+
+  const rows = await fetchAllPagesParallel(() => {
     let q = supabase
       .from('facebook_contacts')
-      // Join customer để lấy display_phone (giống logic display_phone ở GET /contacts) — contact.phone
-      // riêng thường trống, SĐT thật thường nằm ở customer liên kết, nếu không join sẽ đếm thiếu rất nhiều.
       .select('id, phone, lead_id, page_id, created_at, customer:customers(phone)')
       .order('id', { ascending: true });
     if (page_id) q = q.eq('page_id', page_id);
     else if (Array.isArray(page_ids) && page_ids.length) q = q.in('page_id', page_ids);
-    const { data, error } = await q.range(from, from + FB_ANALYTICS_PAGE_SIZE - 1);
-    if (error) throw error;
-    const chunk = data || [];
-    contacts.push(...chunk);
-    if (chunk.length < FB_ANALYTICS_PAGE_SIZE) break;
-    from += FB_ANALYTICS_PAGE_SIZE;
-  }
-  return contacts;
+    if (sinceIso) q = q.gte('created_at', sinceIso);
+    if (untilIso) q = q.lt('created_at', untilIso);
+    return q;
+  });
+  return rows.map(mapAnalyticsContactRow);
 }
 
 /** SĐT hiệu lực của contact: ưu tiên phone riêng, fallback sang SĐT của customer liên kết. */
@@ -166,63 +248,47 @@ function vnDayHourOf(isoOrDate) {
   return { day: vn.toISOString().split('T')[0], hour: vn.getUTCHours() };
 }
 
-/** Mọi tin trong khoảng thời gian (không lọc page). */
 async function fetchAllAnalyticsMessagesSince(sinceIso, untilIso = null) {
-  const messages = [];
-  let from = 0;
-  while (true) {
+  const rows = await fetchAllPagesParallel(() => {
     let q = supabase
       .from('facebook_messages')
       .select('id, direction, created_at, contact_id, sent_by')
-      .gte('created_at', sinceIso);
-    if (untilIso) q = q.lt('created_at', untilIso);
-    const { data, error } = await q
+      .gte('created_at', sinceIso)
       .order('created_at', { ascending: true })
-      .order('id', { ascending: true })
-      .range(from, from + FB_ANALYTICS_PAGE_SIZE - 1);
-    if (error) throw error;
-    const chunk = data || [];
-    messages.push(...chunk);
-    if (chunk.length < FB_ANALYTICS_PAGE_SIZE) break;
-    from += FB_ANALYTICS_PAGE_SIZE;
-  }
-  return messages;
+      .order('id', { ascending: true });
+    if (untilIso) q = q.lt('created_at', untilIso);
+    return q;
+  });
+  return rows.map(mapAnalyticsMessageRow);
 }
 
-/**
- * Tin theo danh sách contact (lọc Page) — batch .in() + phân trang từng batch.
- * untilIso (optional): giới hạn trên (exclusive) — dùng để lấy tin của "kỳ trước" khi so sánh tăng/giảm.
- */
-async function fetchAllAnalyticsMessagesForContactIds(contactIds, sinceIso, untilIso = null) {
-  if (!contactIds.length) return [];
-  const out = [];
-  const seen = new Set();
-  for (let i = 0; i < contactIds.length; i += FB_ANALYTICS_CONTACT_IN_BATCH) {
-    const batch = contactIds.slice(i, i + FB_ANALYTICS_CONTACT_IN_BATCH);
-    let from = 0;
-    while (true) {
-      let q = supabase
-        .from('facebook_messages')
-        .select('id, direction, created_at, contact_id, sent_by')
-        .in('contact_id', batch)
-        .gte('created_at', sinceIso);
-      if (untilIso) q = q.lt('created_at', untilIso);
-      const { data, error } = await q
-        .order('created_at', { ascending: true })
-        .order('id', { ascending: true })
-        .range(from, from + FB_ANALYTICS_PAGE_SIZE - 1);
-      if (error) throw error;
-      const chunk = data || [];
-      for (const m of chunk) {
-        if (seen.has(m.id)) continue;
-        seen.add(m.id);
-        out.push(m);
-      }
-      if (chunk.length < FB_ANALYTICS_PAGE_SIZE) break;
-      from += FB_ANALYTICS_PAGE_SIZE;
-    }
+async function fetchAllAnalyticsMessagesForPages(pageIds, sinceIso, untilIso = null) {
+  const rpcPageIds = Array.isArray(pageIds) && pageIds.length ? pageIds : null;
+  try {
+    const rows = await fetchAnalyticsRpcPages('fb_analytics_messages_in_range', {
+      p_page_ids: rpcPageIds,
+      p_from: sinceIso || null,
+      p_to: untilIso || null,
+    });
+    return rows.map(mapAnalyticsMessageRow);
+  } catch (e) {
+    if (!isMissingRpcError(e)) throw e;
   }
-  return out;
+
+  if (!rpcPageIds) return fetchAllAnalyticsMessagesSince(sinceIso, untilIso);
+
+  const rows = await fetchAllPagesParallel(() => {
+    let q = supabase
+      .from('facebook_messages')
+      .select('id, direction, created_at, contact_id, sent_by, facebook_contacts!inner(page_id)')
+      .in('facebook_contacts.page_id', rpcPageIds)
+      .gte('created_at', sinceIso)
+      .order('created_at', { ascending: true })
+      .order('id', { ascending: true });
+    if (untilIso) q = q.lt('created_at', untilIso);
+    return q;
+  });
+  return rows.map(mapAnalyticsMessageRow);
 }
 
 /** Trung vị (median) một mảng số (ms). */
@@ -238,6 +304,57 @@ function analyticsPctChange(curr, prev) {
   if (prev > 0) return Math.round((curr - prev) / prev * 100);
   if (curr > 0) return null;
   return 0;
+}
+
+const FB_ANALYTICS_MAX_DAYS = 366;
+const FB_ANALYTICS_YMD = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Khoảng thống kê: `from`+`to` (YYYY-MM-DD, giờ VN) hoặc `days` lùi từ hiện tại. */
+function resolveFacebookAnalyticsWindow(query) {
+  const fromRaw = String(query.from || query.activity_from || '').trim();
+  const toRaw = String(query.to || query.activity_to || '').trim();
+  if (FB_ANALYTICS_YMD.test(fromRaw) && FB_ANALYTICS_YMD.test(toRaw)) {
+    const from = fromRaw <= toRaw ? fromRaw : toRaw;
+    const to = fromRaw <= toRaw ? toRaw : fromRaw;
+    const sinceMs = new Date(vnDateStartIso(from)).getTime();
+    const untilMs = new Date(vnDateStartIso(to)).getTime() + 86400000;
+    if (!Number.isFinite(sinceMs) || !Number.isFinite(untilMs) || untilMs <= sinceMs) {
+      return { error: 'Khoảng ngày không hợp lệ.' };
+    }
+    const spanDays = Math.round((untilMs - sinceMs) / 86400000);
+    if (spanDays > FB_ANALYTICS_MAX_DAYS) {
+      return { error: `Khoảng thời gian tối đa ${FB_ANALYTICS_MAX_DAYS} ngày.` };
+    }
+    const prevSinceMs = sinceMs - (untilMs - sinceMs);
+    return {
+      since: new Date(sinceMs).toISOString(),
+      until: new Date(untilMs).toISOString(),
+      prevSince: new Date(prevSinceMs).toISOString(),
+      prevUntil: new Date(sinceMs).toISOString(),
+      days: spanDays,
+    };
+  }
+  const days = Math.min(FB_ANALYTICS_MAX_DAYS, Math.max(1, parseInt(query.days, 10) || 30));
+  const now = Date.now();
+  const since = new Date(now - days * 86400000).toISOString();
+  return {
+    since,
+    until: null,
+    prevSince: new Date(now - 2 * days * 86400000).toISOString(),
+    prevUntil: since,
+    days,
+  };
+}
+
+function analyticsCreatedAtInWindow(createdAt, since, until) {
+  const t = new Date(createdAt).getTime();
+  const s = new Date(since).getTime();
+  if (!Number.isFinite(t) || !Number.isFinite(s) || t < s) return false;
+  if (until) {
+    const u = new Date(until).getTime();
+    if (Number.isFinite(u) && t >= u) return false;
+  }
+  return true;
 }
 const FB_SYNC_SINGLE_MAX_PAGES = 25; // đồng bộ 1 contact (bấm tay): tới ~2500 tin
 
@@ -5066,28 +5183,54 @@ r.get('/analytics', authMiddleware, async (req, res) => {
       return res.json(emptyFacebookAnalyticsPayload());
     }
 
-    const { page_id: rawPageId, days = 30 } = req.query;
+    const { page_id: rawPageId } = req.query;
     const page_id = rawPageId && String(rawPageId).trim() ? String(rawPageId).trim() : null;
     if (page_id && scope.mode === 'filter' && !scope.pageIds.some((p) => String(p) === page_id)) {
       return res.status(403).json({ error: 'Page không thuộc phạm vi công ty.' });
     }
     const scopedPageIds = !page_id && scope.mode === 'filter' ? scope.pageIds : null;
-    const since = new Date(Date.now() - days * 86400000).toISOString();
-    // Kỳ trước liền kề — cùng độ dài (days) — để tính % tăng/giảm so với kỳ trước.
-    const prevSince = new Date(Date.now() - 2 * days * 86400000).toISOString();
+    const window = resolveFacebookAnalyticsWindow(req.query);
+    if (window.error) return res.status(400).json({ error: window.error });
+    const { since, until, prevSince, prevUntil } = window;
+    const untilExclusive = until || new Date().toISOString();
     const analyticsCompanyId = scope.mode === 'filter'
       ? String(scope.companyId || req.query.company_id || req.user?.company_id || '').trim() || null
       : (req.query.company_id && String(req.query.company_id).trim() ? String(req.query.company_id).trim() : null);
 
-    // 1. Contacts — phân trang (Supabase mặc định tối đa ~1000/request). contactsAll = TOÀN BỘ trong
-    // phạm vi Page/công ty (không lọc ngày) — cần đủ tập này để không bỏ sót tin nhắn của contact cũ khi
-    // tính biểu đồ theo ngày/giờ bên dưới. contactsInPeriod = chỉ những contact được TẠO trong "days" đã
-    // chọn — dùng cho KPI/phễu/bảng theo Page, để đổi 7/30/90 ngày thực sự đổi số liệu (trước đây các số
-    // này luôn tính all-time, không phản ứng gì với bộ lọc ngày). contactsInPrevPeriod = cùng khoảng độ
-    // dài NGAY TRƯỚC đó, dùng để tính % tăng/giảm.
-    const contactsAll = await fetchAllAnalyticsContacts({ page_id, page_ids: scopedPageIds });
-    const contactsInPeriod = contactsAll.filter((c) => c.created_at && c.created_at >= since);
-    const contactsInPrevPeriod = contactsAll.filter((c) => c.created_at && c.created_at >= prevSince && c.created_at < since);
+    const cacheKey = JSON.stringify({
+      page_id: page_id || '',
+      pages: scopedPageIds || 'all',
+      since, until: until || '',
+      company: analyticsCompanyId || '',
+    });
+    const cached = fbAnalyticsCacheGet(cacheKey);
+    if (cached) return res.json(cached);
+
+    const messagePageIds = page_id ? [page_id] : scopedPageIds;
+    const unattendedByPageIds = page_id ? [page_id] : scopedPageIds;
+    let pagesQuery = supabase.from('facebook_pages').select('page_id, page_name, is_active');
+    if (scope.mode === 'filter') pagesQuery = pagesQuery.in('page_id', scope.pageIds);
+
+    // Contacts chỉ lấy từ đầu kỳ trước → hết kỳ hiện tại (đủ KPI + % so sánh). Tin nhắn lấy theo
+    // page + khoảng ngày (1 query SQL / phân trang 1000), không quét từng contact.
+    const [contactsWindow, messagesWindow, unattendedRes, pagesRes] = await Promise.all([
+      fetchAllAnalyticsContacts({
+        page_id, page_ids: scopedPageIds, sinceIso: prevSince, untilIso: untilExclusive,
+      }),
+      (messagePageIds && messagePageIds.length) || scope.mode === 'all'
+        ? fetchAllAnalyticsMessagesForPages(messagePageIds, prevSince, untilExclusive)
+        : Promise.resolve([]),
+      supabase.rpc('fb_unattended_count_by_page', { p_page_ids: unattendedByPageIds }).then((r) => r).catch((e) => {
+        console.warn('[FB] RPC fb_unattended_count_by_page threw:', e.message);
+        return { data: null, error: e };
+      }),
+      pagesQuery,
+    ]);
+
+    const contactsInPeriod = contactsWindow.filter((c) => analyticsCreatedAtInWindow(c.created_at, since, untilExclusive));
+    const contactsInPrevPeriod = contactsWindow.filter((c) => analyticsCreatedAtInWindow(c.created_at, prevSince, prevUntil));
+    const messages = messagesWindow.filter((m) => analyticsCreatedAtInWindow(m.created_at, since, untilExclusive));
+    const messagesPrev = messagesWindow.filter((m) => analyticsCreatedAtInWindow(m.created_at, prevSince, prevUntil));
 
     const totalContacts = contactsInPeriod.length;
     const hasPhone = contactsInPeriod.filter(analyticsContactHasPhone).length;
@@ -5113,22 +5256,10 @@ r.get('/analytics', authMiddleware, async (req, res) => {
     }
     const leadIds = contactsInPeriod.filter(c => c.lead_id).map(c => c.lead_id);
     const leadIdsPrev = contactsInPrevPeriod.filter(c => c.lead_id).map(c => c.lead_id);
-    const dealCount = await countDealsForLeadIds(leadIds);
-    const dealCountPrev = await countDealsForLeadIds(leadIdsPrev);
-
-    // 2. Messages — theo TOÀN BỘ contact trong phạm vi (không chỉ contact mới trong kỳ), lọc theo since
-    // ngay trên created_at của tin nhắn — giữ đúng hành vi cũ cho các biểu đồ theo ngày/giờ. messagesPrev
-    // lấy đúng khoảng kỳ trước [prevSince, since) để so sánh % tăng/giảm.
-    const pageContactIds = contactsAll.map(c => c.id);
-    let messages = [];
-    let messagesPrev = [];
-    if (pageContactIds.length) {
-      messages = await fetchAllAnalyticsMessagesForContactIds(pageContactIds, since);
-      messagesPrev = await fetchAllAnalyticsMessagesForContactIds(pageContactIds, prevSince, since);
-    } else if (!page_id && scope.mode === 'all') {
-      messages = await fetchAllAnalyticsMessagesSince(since);
-      messagesPrev = await fetchAllAnalyticsMessagesSince(prevSince, since);
-    }
+    const [dealCount, dealCountPrev] = await Promise.all([
+      countDealsForLeadIds(leadIds),
+      countDealsForLeadIds(leadIdsPrev),
+    ]);
 
     const comparison = {
       totalContacts: { current: totalContacts, previous: contactsInPrevPeriod.length, pct: analyticsPctChange(totalContacts, contactsInPrevPeriod.length) },
@@ -5154,10 +5285,11 @@ r.get('/analytics', authMiddleware, async (req, res) => {
 
     // New contacts by day (theo giờ VN, và chỉ trong contactsInPeriod cho nhất quán với KPI ở trên)
     const sinceDayVn = vnDayHourOf(since).day;
+    const untilDayVn = vnDayHourOf(new Date(new Date(untilExclusive).getTime() - 1)).day;
     const newByDay = {};
     contactsInPeriod.forEach(c => {
       const { day } = vnDayHourOf(c.created_at);
-      if (day >= sinceDayVn) { newByDay[day] = (newByDay[day] || 0) + 1; }
+      if (day >= sinceDayVn && (!untilDayVn || day <= untilDayVn)) { newByDay[day] = (newByDay[day] || 0) + 1; }
     });
 
     // Funnel
@@ -5172,22 +5304,15 @@ r.get('/analytics', authMiddleware, async (req, res) => {
 
     // "Chưa chăm sóc" theo từng Page (tin cuối là của khách, NV chưa trả lời) — trạng thái TẠI THỜI ĐIỂM
     // HIỆN TẠI của hội thoại (không lệ thuộc "days" đã chọn, vì đây là tồn đọng đang mở, không phải lịch sử).
-    const unattendedByPageIds = page_id ? [page_id] : scopedPageIds;
     let unattendedByPage = new Map();
-    try {
-      const { data: unattendedRows, error: unattendedErr } = await supabase.rpc('fb_unattended_count_by_page', { p_page_ids: unattendedByPageIds });
-      if (unattendedErr) console.warn('[FB] RPC fb_unattended_count_by_page:', unattendedErr.message, '(chạy database/53_fb_unattended_count_by_page_rpc.sql)');
-      else unattendedByPage = new Map((unattendedRows || []).map((r) => [r.page_id, Number(r.unattended_count) || 0]));
-    } catch (e) {
-      console.warn('[FB] RPC fb_unattended_count_by_page threw:', e.message);
+    if (unattendedRes?.error) {
+      console.warn('[FB] RPC fb_unattended_count_by_page:', unattendedRes.error.message, '(chạy database/53_fb_unattended_count_by_page_rpc.sql)');
+    } else {
+      unattendedByPage = new Map((unattendedRes?.data || []).map((r) => [r.page_id, Number(r.unattended_count) || 0]));
     }
     const unattendedTotal = [...unattendedByPage.values()].reduce((s, n) => s + n, 0);
 
-    // Page breakdown — Page trong phạm vi công ty (admin ?company_id= hoặc NV theo công ty đăng nhập).
-    // Dùng contactsInPeriod để bảng "Theo Page" cũng phản ứng đúng theo bộ lọc ngày, đồng nhất với KPI/phễu.
-    let pagesQuery = supabase.from('facebook_pages').select('page_id, page_name, is_active');
-    if (scope.mode === 'filter') pagesQuery = pagesQuery.in('page_id', scope.pageIds);
-    const { data: pages } = await pagesQuery;
+    const pages = pagesRes?.data;
     const pageBk = {};
     (pages || []).forEach((p) => {
       const label = p.page_name || p.page_id;
@@ -5217,6 +5342,12 @@ r.get('/analytics', authMiddleware, async (req, res) => {
     let totalRT = 0, rtCount = 0;
     const byC = {};
     messages.forEach(m => { if (!byC[m.contact_id]) byC[m.contact_id] = []; byC[m.contact_id].push(m); });
+    Object.values(byC).forEach((cm) => {
+      cm.sort((a, b) => {
+        const c = String(a.created_at).localeCompare(String(b.created_at));
+        return c !== 0 ? c : String(a.id).localeCompare(String(b.id));
+      });
+    });
 
     const firstResponseSamplesMs = [];
     const employeeStats = new Map(); // sent_by -> { messagesSent, contactsHandled: Set, rtSum, rtCount }
@@ -5286,7 +5417,7 @@ r.get('/analytics', authMiddleware, async (req, res) => {
       })
       .sort((a, b) => b.messages_sent - a.messages_sent);
 
-    res.json({
+    const payload = {
       totalContacts,
       registeredPages: (pages || []).length,
       hasPhone,
@@ -5305,7 +5436,9 @@ r.get('/analytics', authMiddleware, async (req, res) => {
       firstResponseTime,
       employeePerformance,
       unattendedTotal,
-    });
+    };
+    fbAnalyticsCacheSet(cacheKey, payload);
+    res.json(payload);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
