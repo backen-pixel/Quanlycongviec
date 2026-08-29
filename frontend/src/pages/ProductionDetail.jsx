@@ -31,7 +31,7 @@ import UploadFileLightbox, {
   isUploadImageFile,
 } from '../components/UploadFileLightbox';
 import { downloadWorkshopDocumentsZip } from '../lib/workshopDocumentsZipDownload';
-import { resolveSxProjectLeadId } from '../lib/sxProjectComments';
+import { resolveSxProjectLeadId, pickPrimarySxCrmDeal } from '../lib/sxProjectComments';
 import { countMembersByModule } from '../lib/memberModuleCounts';
 import DealModulePathStrip from '../components/DealModulePathStrip';
 import {
@@ -164,9 +164,7 @@ function resolveSxKanbanCurrentStageId(project, stages) {
   const rawCol = project?.sx_kanban_column_id != null ? String(project.sx_kanban_column_id) : '';
   if (rawCol && list.some((s) => String(s.id) === rawCol)) return rawCol;
 
-  const primaryDeal = Array.isArray(project?.crmDeals)
-    ? (project.crmDeals.find((d) => d?.type === 'deal') || project.crmDeals[0])
-    : null;
+  const primaryDeal = pickPrimarySxCrmDeal(project?.crmDeals || project?.crm_deals);
   const isDealPrimaryProject = !!(
     primaryDeal
     && project?.id
@@ -3097,7 +3095,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   const currentStageId = moduleKey === 'vc'
     ? resolveVcKanbanCurrentStageId(project, safePipelineStages)
     : resolveSxKanbanCurrentStageId(project, safePipelineStages);
-  const primaryCrmDeal = project.crmDeals?.[0];
+  const primaryCrmDeal = pickPrimarySxCrmDeal(project.crmDeals || project.crm_deals) || project.crmDeals?.[0];
   const crmAssigneePerson = resolvePersonFromList(
     primaryCrmDeal?.assignee || primaryCrmDeal?.lead_owner,
     primaryCrmDeal?.assigned_to || primaryCrmDeal?.lead_owner_id,

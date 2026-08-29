@@ -2663,6 +2663,7 @@ export function CrmLeadCommentsPanel({
     }
     const row = payload.comment;
     if (!row?.id) return;
+    if (row.comment_type === 'system') return;
     // SX / VC: ẩn bình luận hoạt động Báo giá / Hợp đồng (VPT & Phúc Đạt — khớp API for_module)
     if (
       shouldHideQuoteContractComments(forModule)

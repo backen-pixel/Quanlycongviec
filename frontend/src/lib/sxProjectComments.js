@@ -1,3 +1,28 @@
+function isCrmDealChild(d) {
+  const pid = d?.parent_lead_id;
+  return pid != null && String(pid).trim() !== '';
+}
+
+/**
+ * Deal gốc của dự án SX/VC (bình luận, nhiệm vụ, thành viên).
+ * Deal con (parent_lead_id — bàn giao VC/xưởng khác công ty) không được ưu tiên:
+ * API từng sort created_at DESC nên deal con mới nhất nhảy lên [0] và thread gốc “biến mất”.
+ */
+export function pickPrimarySxCrmDeal(deals) {
+  const list = Array.isArray(deals) ? deals.filter(Boolean) : [];
+  if (!list.length) return null;
+  const typed = list.filter((d) => String(d?.type || '') === 'deal');
+  const pool = typed.length ? typed : list;
+  const roots = pool.filter((d) => !isCrmDealChild(d));
+  const preferred = roots.length ? roots : pool;
+  return [...preferred].sort((a, b) => {
+    const ca = String(a?.created_at || '');
+    const cb = String(b?.created_at || '');
+    if (ca !== cb) return ca.localeCompare(cb);
+    return String(a?.id || '').localeCompare(String(b?.id || ''));
+  })[0] || null;
+}
+
 /** Lead/deal CRM gắn dự án SX — dùng chung cho Kanban, view Bình luận và chi tiết. */
 export function resolveSxProjectLeadId(project) {
   if (project?.crm_lead_id) return String(project.crm_lead_id);
@@ -6,7 +31,7 @@ export function resolveSxProjectLeadId(project) {
     : Array.isArray(project?.crmDeals)
       ? project.crmDeals
       : [];
-  const deal = deals.find((d) => String(d?.type || '') === 'deal') || deals[0];
+  const deal = pickPrimarySxCrmDeal(deals);
   return deal?.id ? String(deal.id) : null;
 }
 

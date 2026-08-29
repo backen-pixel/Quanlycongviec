@@ -428,7 +428,7 @@ function attachSxFinanceToProjects(projects, dealDepositByProjectId = {}) {
 }
 
 const CRM_DEALS_FOR_PROJECT_EMBED = `
-  id, code, title, type, company_id, estimated_value, created_at, sx_handover_at, region_id, project_id,
+  id, code, title, type, parent_lead_id, company_id, estimated_value, created_at, sx_handover_at, region_id, project_id,
   crm_region:company_regions!crm_leads_region_id_fkey(id, name, code),
   assignee:users!crm_leads_assigned_to_fkey(id, full_name, avatar),
   lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name, avatar),
@@ -437,7 +437,7 @@ const CRM_DEALS_FOR_PROJECT_EMBED = `
 
 // Một số DB cũ chưa có các cột `status`, `lost_reason` trên crm_leads.
 // Giữ select tối thiểu để không làm vỡ màn hình chi tiết xưởng.
-const CRM_DEALS_FOR_PROJECT_MIN = 'id, code, title, type, company_id, estimated_value, created_at, project_id';
+const CRM_DEALS_FOR_PROJECT_MIN = 'id, code, title, type, parent_lead_id, company_id, estimated_value, created_at, project_id';
 
 async function nextDealCode() {
   const year = new Date().getFullYear();
@@ -533,13 +533,14 @@ async function insertCrmDealForProjectResilient(insertRow) {
  * Fallback: đơn CRM (orders) gắng project_id nhưng deal chưa được set project_id — lấy lead_id / fulfillment_lead_id.
  */
 async function loadCrmDealsSummaryForProductionProject(projectId) {
+  const { sortProjectCrmDeals } = require('../helpers/workshopCrmDeals');
   let rows = [];
   try {
     const { data, error } = await supabase
       .from('crm_leads')
       .select(CRM_DEALS_FOR_PROJECT_EMBED)
       .eq('project_id', projectId)
-      .order('created_at', { ascending: false });
+      .order('created_at', { ascending: true });
     if (error) throw error;
     rows = data || [];
   } catch (e) {
@@ -548,10 +549,10 @@ async function loadCrmDealsSummaryForProductionProject(projectId) {
       .from('crm_leads')
       .select(CRM_DEALS_FOR_PROJECT_MIN)
       .eq('project_id', projectId)
-      .order('created_at', { ascending: false });
+      .order('created_at', { ascending: true });
     rows = data || [];
   }
-  if (rows.length) return rows;
+  if (rows.length) return sortProjectCrmDeals(rows);
 
   // Multi-SX: project phụ gắn qua crm_deal_projects (không có trên crm_leads.project_id)
   try {
@@ -576,7 +577,7 @@ async function loadCrmDealsSummaryForProductionProject(projectId) {
           .in('id', junctionIds);
         rows = data || [];
       }
-      if (rows.length) return rows;
+      if (rows.length) return sortProjectCrmDeals(rows);
     }
   } catch (e) {
     if (!String(e.message || '').includes('crm_deal_projects')) {
@@ -628,7 +629,7 @@ async function loadCrmDealsSummaryForProductionProject(projectId) {
   }
   const rank = new Map(idOrder.map((id, i) => [String(id), i]));
   rows.sort((a, b) => (rank.get(String(a.id)) ?? 999) - (rank.get(String(b.id)) ?? 999));
-  return rows;
+  return sortProjectCrmDeals(rows);
 }
 
 const ALLOWED_WORKFLOW_STAGE_CACHE_MS = 45_000;

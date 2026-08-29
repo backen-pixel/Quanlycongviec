@@ -1,7 +1,7 @@
 const { supabase } = require('../config/supabase');
 
 const CRM_DEALS_LIST_EMBED = `
-  id, code, title, type, region_id, created_at, assigned_to, lead_owner_id, external_company_name,
+  id, code, title, type, parent_lead_id, region_id, created_at, assigned_to, lead_owner_id, external_company_name,
   install_address,
   crm_region:company_regions!crm_leads_region_id_fkey(id, name, code),
   assignee:users!crm_leads_assigned_to_fkey(id, full_name, avatar),
@@ -12,14 +12,35 @@ const CRM_DEALS_LIST_EMBED = `
 
 /** Mobile Kanban: không avatar / pipeline stage — payload nhỏ khi 200–1000 dự án/trang. */
 const CRM_DEALS_LIST_EMBED_LITE = `
-  id, title, type, region_id, project_id, assigned_to, lead_owner_id, external_company_name,
+  id, title, type, parent_lead_id, created_at, region_id, project_id, assigned_to, lead_owner_id, external_company_name,
   crm_region:company_regions!crm_leads_region_id_fkey(id, name),
   assignee:users!crm_leads_assigned_to_fkey(id, full_name),
   lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name)
 `;
 
-const CRM_DEALS_LIST_MIN = 'id, code, title, type, created_at, assigned_to, lead_owner_id';
-const CRM_DEALS_LIST_MIN_LITE = 'id, title, type, region_id, project_id, assigned_to, lead_owner_id, external_company_name';
+const CRM_DEALS_LIST_MIN = 'id, code, title, type, parent_lead_id, created_at, assigned_to, lead_owner_id';
+const CRM_DEALS_LIST_MIN_LITE = 'id, title, type, parent_lead_id, created_at, region_id, project_id, assigned_to, lead_owner_id, external_company_name';
+
+function isCrmDealChild(d) {
+  const pid = d?.parent_lead_id;
+  return pid != null && String(pid).trim() !== '';
+}
+
+/** Deal gốc (không parent_lead_id) trước, rồi created_at tăng — tránh deal con bàn giao VC che thread gốc. */
+function sortProjectCrmDeals(rows) {
+  return [...(rows || [])].sort((a, b) => {
+    const ac = isCrmDealChild(a) ? 1 : 0;
+    const bc = isCrmDealChild(b) ? 1 : 0;
+    if (ac !== bc) return ac - bc;
+    const at = String(a?.type || '') === 'deal' ? 0 : 1;
+    const bt = String(b?.type || '') === 'deal' ? 0 : 1;
+    if (at !== bt) return at - bt;
+    const ca = String(a?.created_at || '');
+    const cb = String(b?.created_at || '');
+    if (ca !== cb) return ca.localeCompare(cb);
+    return String(a?.id || '').localeCompare(String(b?.id || ''));
+  });
+}
 
 async function queryCrmDealsEmbed(filterFn) {
   try {
@@ -39,9 +60,9 @@ async function queryCrmDealsEmbed(filterFn) {
 
 async function loadCrmDealsForProjectDetail(projectId) {
   let rows = await queryCrmDealsEmbed((q) =>
-    q.eq('project_id', projectId).order('created_at', { ascending: false }),
+    q.eq('project_id', projectId).order('created_at', { ascending: true }),
   );
-  if (rows.length) return rows;
+  if (rows.length) return sortProjectCrmDeals(rows);
 
   // Multi-SX: project phụ gắn qua crm_deal_projects
   try {
@@ -52,7 +73,7 @@ async function loadCrmDealsForProjectDetail(projectId) {
     const junctionIds = [...new Set((links || []).map((r) => r.deal_id).filter(Boolean))];
     if (junctionIds.length) {
       rows = await queryCrmDealsEmbed((q) => q.in('id', junctionIds));
-      if (rows.length) return rows;
+      if (rows.length) return sortProjectCrmDeals(rows);
     }
   } catch (e) {
     if (!String(e.message || '').includes('crm_deal_projects')) {
@@ -90,7 +111,7 @@ async function loadCrmDealsForProjectDetail(projectId) {
   rows = await queryCrmDealsEmbed((q) => q.in('id', idOrder));
   const rank = new Map(idOrder.map((id, i) => [String(id), i]));
   rows.sort((a, b) => (rank.get(String(a.id)) ?? 999) - (rank.get(String(b.id)) ?? 999));
-  return rows;
+  return sortProjectCrmDeals(rows);
 }
 
 /** Gắn crm_deals (kèm assignee CRM) lên danh sách dự án VC/SX. */
@@ -115,7 +136,7 @@ async function attachCrmDealsToProjects(projects, opts = {}) {
         .select(embedWithProject)
         .in('project_id', chunk)
         .eq('type', 'deal')
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: true });
       if (error) throw error;
       rows.push(...(data || []));
     } catch (e) {
@@ -125,7 +146,7 @@ async function attachCrmDealsToProjects(projects, opts = {}) {
         .select(minWithProject)
         .in('project_id', chunk)
         .eq('type', 'deal')
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: true });
       rows.push(...(data || []));
     }
   }
@@ -194,7 +215,7 @@ async function attachCrmDealsToProjects(projects, opts = {}) {
 
   return list.map((p) => ({
     ...p,
-    crm_deals: byProject.get(String(p.id)) || p.crm_deals || [],
+    crm_deals: sortProjectCrmDeals(byProject.get(String(p.id)) || p.crm_deals || []),
   }));
 }
 
@@ -264,4 +285,5 @@ module.exports = {
   attachCrmDealsToProjects,
   loadCrmDealsForProjectDetail,
   hydrateWorkshopProjectPeople,
+  sortProjectCrmDeals,
 };
