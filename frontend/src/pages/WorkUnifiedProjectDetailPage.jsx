@@ -13,6 +13,7 @@ import WorkUnifiedFilterPanel, {
 } from '../components/WorkUnifiedFilterFields';
 import { WorkUnifiedOpenTabProvider, workUnifiedPath } from '../components/WorkUnifiedOpenTabMenu';
 import ProjectOverviewPanel from '../components/ProjectOverviewPanel';
+import WorkshopPlacementsPanel from '../components/WorkshopPlacementsPanel';
 import { PipelineChip, withPipelineProgress, displayPipelineStageName } from '../components/ProjectDealSyncPanel';
 import PipelineStepper from '../components/PipelineStepper';
 import { resolveSxDisplayColumnId, TEMP_SX_FREE_DRAG } from '../lib/sxPipelineRevenue';
@@ -1827,6 +1828,7 @@ function WorkUnifiedProjectDetailInner() {
   const [messagingId, setMessagingId] = useState(null);
   const [companyUsers, setCompanyUsers] = useState([]);
   const [commentCount, setCommentCount] = useState(0);
+  const [workshopPlacements, setWorkshopPlacements] = useState({ placed: [], received_from: [] });
   const bundleLeadIdRef = useRef(null);
 
   const startDirectChat = async (peerUser) => {
@@ -1893,6 +1895,26 @@ function WorkUnifiedProjectDetailInner() {
     }
     setError(projectLoadErrorMessage(lastErr));
     setLoading(false);
+  }, [id]);
+
+  useEffect(() => {
+    if (!id) {
+      setWorkshopPlacements({ placed: [], received_from: [] });
+      return undefined;
+    }
+    let cancelled = false;
+    api.get(`/production/projects/${id}/workshop-placements`)
+      .then((res) => {
+        if (cancelled) return;
+        setWorkshopPlacements({
+          placed: Array.isArray(res.data?.placed) ? res.data.placed : [],
+          received_from: Array.isArray(res.data?.received_from) ? res.data.received_from : [],
+        });
+      })
+      .catch(() => {
+        if (!cancelled) setWorkshopPlacements({ placed: [], received_from: [] });
+      });
+    return () => { cancelled = true; };
   }, [id]);
 
   useEffect(() => { load(); }, [load]);
@@ -2190,6 +2212,14 @@ function WorkUnifiedProjectDetailInner() {
           title="Mở chi tiết VC/LĐ — cùng cột kanban vận chuyển"
         />
       </div>
+
+      {(workshopPlacements.placed.length > 0 || workshopPlacements.received_from.length > 0) && (
+        <WorkshopPlacementsPanel
+          placed={workshopPlacements.placed}
+          receivedFrom={workshopPlacements.received_from}
+          onOpenComments={() => selectTab('chat')}
+        />
+      )}
 
       <div className="border-b border-gray-100 flex items-center gap-1 overflow-x-auto">
         <button

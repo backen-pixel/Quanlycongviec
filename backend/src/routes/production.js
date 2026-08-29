@@ -1188,7 +1188,7 @@ r.post('/projects/:id/place-at-workshops', requirePermission('projects', 'create
         errors: result.errors,
       });
     }
-    await rcInvalidateTags(['production', 'crm']);
+    void rcInvalidateTags(['production', 'crm']);
     res.status(201).json({
       created: result.created,
       errors: result.errors,

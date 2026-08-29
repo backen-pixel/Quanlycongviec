@@ -115,6 +115,17 @@ async function loadSourceContext(sourceProjectId) {
       .eq('id', sourceProjectId)
       .maybeSingle());
   }
+  if (error && /customers|relationship|column/i.test(String(error.message || '')) && !/delivery_date|production_deadline|production_finish_date|order_date/i.test(String(error.message || ''))) {
+    ({ data: project, error } = await supabase
+      .from('projects')
+      .select(`
+        id, code, name, description, company_id, customer_id, install_address,
+        production_value, estimated_value, deposit_amount,
+        delivery_date, production_deadline, production_finish_date, order_date
+      `)
+      .eq('id', sourceProjectId)
+      .maybeSingle());
+  }
   if (error) return { ok: false, error: error.message, statusCode: 500 };
   if (!project) return { ok: false, error: 'Không tìm thấy dự án nguồn', statusCode: 404 };
 
@@ -683,29 +694,39 @@ async function placeProjectAtWorkshops(opts) {
     const suffix = targetCo.company.short_name || targetCo.company.name || '';
     const title = suffix ? `${titleBase} · ${suffix}` : titleBase;
 
-    const intake = await createWorkshopIntakeOrder({
-      req,
-      userId,
-      companyId: t.production_company_id,
-      workshopTypeId: t.workshop_type_id,
-      title,
-      customerId: null,
-      customerName: customer?.full_name || titleBase,
-      customerPhone: customer?.phone || '',
-      customerEmail: customer?.email || null,
-      installAddress,
-      regionId: deal?.region_id || null,
-      estimatedValue: deal?.estimated_value ?? source.estimated_value ?? null,
-      productionValue: source.production_value ?? null,
-      description: [
-        deal?.description || source.description || '',
-        `Đặt từ dự án ${source.code || source.id} (${coCheck.company.short_name || coCheck.company.name})`,
-      ].filter(Boolean).join('\n').slice(0, 2000),
-      externalCompanyId: source.company_id,
-      externalCompanyName: coCheck.company.short_name || coCheck.company.name,
-      // Chỉ NV trong setup phân loại xưởng — không fallback cả phòng SX.
-      staffAllowFallback: false,
-    });
+    let intake;
+    try {
+      intake = await createWorkshopIntakeOrder({
+        req,
+        userId,
+        companyId: t.production_company_id,
+        workshopTypeId: t.workshop_type_id,
+        title,
+        customerId: null,
+        customerName: customer?.full_name || titleBase,
+        customerPhone: customer?.phone || '',
+        customerEmail: customer?.email || null,
+        installAddress,
+        regionId: null,
+        estimatedValue: deal?.estimated_value ?? source.estimated_value ?? null,
+        productionValue: source.production_value ?? null,
+        description: [
+          deal?.description || source.description || '',
+          `Đặt từ dự án ${source.code || source.id} (${coCheck.company.short_name || coCheck.company.name})`,
+        ].filter(Boolean).join('\n').slice(0, 2000),
+        externalCompanyId: source.company_id,
+        externalCompanyName: coCheck.company.short_name || coCheck.company.name,
+        // Chỉ NV trong setup phân loại xưởng — không fallback cả phòng SX.
+        staffAllowFallback: false,
+      });
+    } catch (e) {
+      errors.push({
+        production_company_id: t.production_company_id,
+        workshop_type_id: t.workshop_type_id,
+        error: e?.message || e?.error || 'Không tạo được dự án xưởng',
+      });
+      continue;
+    }
 
     if (!intake.ok) {
       errors.push({
@@ -716,15 +737,11 @@ async function placeProjectAtWorkshops(opts) {
       continue;
     }
 
-    await applyProjectDates(intake.project_id, t);
-    await applyPlannedVcLdEvents({
-      userId,
-      projectId: intake.project_id,
-      deal,
-      source,
-      target: t,
-      intake,
-    });
+    try {
+      await applyProjectDates(intake.project_id, t);
+    } catch (e) {
+      console.warn('[place-at-workshops] dates:', e.message);
+    }
 
     const { data: placement, error: placeErr } = await supabase
       .from('project_workshop_placements')
@@ -765,6 +782,19 @@ async function placeProjectAtWorkshops(opts) {
       delivery_date: t.delivery_date || null,
       production_finish_date: t.production_finish_date || null,
     });
+
+    const eventTarget = t;
+    const eventIntake = intake;
+    setImmediate(() => {
+      void applyPlannedVcLdEvents({
+        userId,
+        projectId: eventIntake.project_id,
+        deal,
+        source,
+        target: eventTarget,
+        intake: eventIntake,
+      });
+    });
   }
 
   if (!created.length) {
@@ -776,26 +806,23 @@ async function placeProjectAtWorkshops(opts) {
     };
   }
 
-  let notifyMeta = { members_added: 0, comment: null };
-  try {
-    notifyMeta = await notifySourceDealOfWorkshopPlacement({
+  setImmediate(() => {
+    void notifySourceDealOfWorkshopPlacement({
       req,
       user,
       source,
       deal,
       created,
-    });
-  } catch (e) {
-    console.warn('[place-at-workshops] notify/members:', e.message);
-  }
+    }).catch((e) => console.warn('[place-at-workshops] notify/members:', e.message));
+  });
 
   return {
     ok: true,
     created,
     errors: errors.length ? errors : undefined,
     partial: errors.length > 0,
-    members_added: notifyMeta?.members_added || 0,
-    notified: !!notifyMeta?.comment,
+    members_added: 0,
+    notified: true,
   };
 }
 

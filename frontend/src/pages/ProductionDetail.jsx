@@ -20,6 +20,7 @@ import SxMultiTargetPicker, {
   validateSxTargets,
   sxTargetsToApiPayload,
 } from '../components/SxMultiTargetPicker';
+import WorkshopPlacementsPanel, { WorkshopPlaceSuccessBanner } from '../components/WorkshopPlacementsPanel';
 import { formatDate, formatVND, getInitials, avatarColor, getFileEmoji } from '../lib/utils';
 import { publicFileUrl as pubUrl, downloadUploadFile, printUploadImage } from '../lib/publicFileUrl';
 import { FilePreviewOpenLink } from '../context/FilePreviewContext';
@@ -1716,6 +1717,8 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   const [placeSxBusy, setPlaceSxBusy] = useState(false);
   const [placeSxErr, setPlaceSxErr] = useState('');
   const [workshopPlacements, setWorkshopPlacements] = useState({ placed: [], received_from: [] });
+  const [placeSxNotice, setPlaceSxNotice] = useState(null);
+  const workshopPlacementsRef = useRef(null);
   const [membersRefreshKey, setMembersRefreshKey] = useState(0);
 
   // Document upload state
@@ -2368,22 +2371,49 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
       const { data } = await api.post(`/production/projects/${id}/place-at-workshops`, {
         targets: sxTargetsToApiPayload(placeSxTargets),
       });
+      const created = (Array.isArray(data?.created) ? data.created : []).map((row) => {
+        const match = placeSxTargets.find((t) => (
+          String(t.companyId || t.production_company_id) === String(row.company_id || row.target_company_id)
+          && String(t.workshopTypeId || t.workshop_type_id) === String(row.workshop_type_id)
+        ));
+        const wt = (match?.workshopTypes || []).find((x) => String(x.id) === String(row.workshop_type_id));
+        const co = placeSxCompanies.find((c) => String(c.id) === String(row.company_id || row.target_company_id));
+        return {
+          ...row,
+          workshop_type_name: wt?.name || row.workshop_type_name,
+          company_name: row.company_name || co?.short_name || co?.name,
+        };
+      });
       setPlaceSxOpen(false);
       setPlaceSxTargets([]);
       await loadWorkshopPlacements();
-      const n = (data?.created || []).length;
-      const members = Number(data?.members_added) || 0;
-      const notified = data?.notified ? ' Đã thêm thành viên xưởng nhận và gửi bình luận @ thông báo.' : '';
-      const membersNote = members > 0 && !data?.notified ? ` Đã thêm ${members} thành viên.` : '';
-      const partial = data?.partial ? ` (một số dòng lỗi: ${(data.errors || []).map((e) => e.error).join('; ')})` : '';
-      alert(`Đã tạo ${n} dự án xưởng.${notified || membersNote}${partial}`);
-      setTab('comments');
+      setPlaceSxNotice({
+        created,
+        errors: data?.errors || [],
+        partial: !!data?.partial,
+      });
+      requestAnimationFrame(() => {
+        workshopPlacementsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      });
     } catch (e) {
-      setPlaceSxErr(e.response?.data?.error || e.message || 'Không đặt được xưởng');
+      const d = e.response?.data;
+      const serverMsg = (
+        (typeof d?.error === 'string' && d.error)
+        || (typeof d?.message === 'string' && d.message)
+        || (Array.isArray(d?.errors) && d.errors[0]?.error)
+        || ''
+      );
+      const status = e.response?.status;
+      setPlaceSxErr(
+        serverMsg
+        || (status >= 500 ? `Lỗi máy chủ (${status}) — thử lại.` : '')
+        || e.message
+        || 'Không đặt được xưởng',
+      );
     } finally {
       setPlaceSxBusy(false);
     }
-  }, [placeSxTargets, id, loadWorkshopPlacements, setTab]);
+  }, [placeSxTargets, placeSxCompanies, id, loadWorkshopPlacements]);
 
   /** Realtime: đồng bộ Kanban + nhiệm vụ CRM giữa web và mobile */
   useEffect(() => {
@@ -3272,6 +3302,13 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
         />
       )}
 
+      {placeSxNotice && moduleKey !== 'vc' && (
+        <WorkshopPlaceSuccessBanner
+          notice={placeSxNotice}
+          onDismiss={() => setPlaceSxNotice(null)}
+        />
+      )}
+
       {/* Hint phân loại — pipeline stepper bám theo workshop_type của project (công ty + loại). */}
       {moduleKey !== 'vc' && (
         <div className="flex items-center gap-2 text-xs">
@@ -3337,79 +3374,13 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
           />
 
           {moduleKey !== 'vc' && (workshopPlacements.placed.length > 0 || workshopPlacements.received_from.length > 0) && (
-            <div className="bg-white rounded-xl border p-4 space-y-3">
-              <h3 className="text-sm font-bold text-gray-900 uppercase flex items-center gap-1.5">
-                <Factory className="h-4 w-4 text-indigo-600" /> Đặt xưởng
-              </h3>
-              {workshopPlacements.placed.length > 0 && (
-                <div>
-                  <p className="text-[10px] text-indigo-600 uppercase font-semibold mb-1.5">
-                    Đã đặt ({workshopPlacements.placed.length})
-                  </p>
-                  <ul className="space-y-2">
-                    {workshopPlacements.placed.map((row) => {
-                      const co = row.target_company;
-                      const wt = row.workshop_type;
-                      const tp = row.target_project;
-                      const staff = Array.isArray(row.staff) ? row.staff : [];
-                      return (
-                        <li key={row.id} className="rounded-lg border border-indigo-100 bg-indigo-50/40 px-2.5 py-2 text-xs">
-                          <Link
-                            to={`/sx/projects/${row.target_project_id}`}
-                            className="font-semibold text-indigo-800 hover:underline"
-                          >
-                            {tp?.code || '—'} · {co?.short_name || co?.name || 'Xưởng'}
-                          </Link>
-                          {wt?.name && <p className="text-gray-600 mt-0.5">{wt.name}</p>}
-                          {(row.delivery_date || row.production_finish_date) && (
-                            <p className="text-gray-500 mt-0.5">
-                              {row.delivery_date ? `Lắp ${formatDate(row.delivery_date)}` : ''}
-                              {row.delivery_date && row.production_finish_date ? ' · ' : ''}
-                              {row.production_finish_date ? `HT ${formatDate(row.production_finish_date)}` : ''}
-                            </p>
-                          )}
-                          {staff.length > 0 && (
-                            <p className="text-indigo-700/90 mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
-                              <Users className="h-3 w-3 shrink-0" />
-                              {staff.map((u) => u.full_name || 'NV').join(', ')}
-                            </p>
-                          )}
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </div>
-              )}
-              {workshopPlacements.received_from.length > 0 && (
-                <div>
-                  <p className="text-[10px] text-amber-700 uppercase font-semibold mb-1.5">Nhận đặt từ</p>
-                  <ul className="space-y-1.5">
-                    {workshopPlacements.received_from.map((row) => {
-                      const co = row.source_company || row.source_project?.company;
-                      const sp = row.source_project;
-                      return (
-                        <li key={row.id} className="rounded-lg border border-amber-100 bg-amber-50/50 px-2.5 py-2 text-xs">
-                          <Link
-                            to={`/sx/projects/${row.source_project_id}`}
-                            className="font-semibold text-amber-900 hover:underline"
-                          >
-                            {sp?.code || '—'} · {co?.short_name || co?.name || 'Xưởng nguồn'}
-                          </Link>
-                          {sp?.name && <p className="text-gray-600 mt-0.5 truncate">{sp.name}</p>}
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </div>
-              )}
-              <button
-                type="button"
-                onClick={() => setTab('comments')}
-                className="w-full text-[11px] text-indigo-700 hover:text-indigo-900 font-medium text-left cursor-pointer"
-              >
-                Xem bình luận thông báo →
-              </button>
-            </div>
+            <WorkshopPlacementsPanel
+              panelRef={workshopPlacementsRef}
+              placed={workshopPlacements.placed}
+              receivedFrom={workshopPlacements.received_from}
+              highlightIds={(placeSxNotice?.created || []).map((r) => r.project_id || r.target_project_id)}
+              onOpenComments={() => setTab('comments')}
+            />
           )}
 
           <div className="grid grid-cols-3 gap-2">

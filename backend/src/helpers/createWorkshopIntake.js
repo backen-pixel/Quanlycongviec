@@ -208,10 +208,52 @@ async function insertWorkshopProject({ deal, companyId, workshopTypeId, userId, 
   return project;
 }
 
-/** Template SX, thông báo, activity — không chặn response. */
-function scheduleWorkshopIntakeBackground({ req, dealId, projectId, userId, companyId, projectCode, dealTitle }) {
+/** NV mặc định, template, kanban, thông báo — không chặn HTTP (tránh 500 / timeout 20–50s). */
+function scheduleWorkshopIntakeBackground({
+  req, dealId, projectId, userId, companyId, projectCode, dealTitle,
+  workshopTypeId, staffAllowFallback = true,
+}) {
   setImmediate(() => {
     void (async () => {
+      try {
+        if (workshopTypeId) {
+          await applyWorkshopTypeDefaultStaffToProject(projectId, companyId, workshopTypeId, {
+            allowFallback: staffAllowFallback !== false,
+          });
+        }
+      } catch (e) {
+        console.warn('[workshop-intake/bg] default staff:', e.message);
+      }
+
+      try {
+        const { data: hop } = await supabase
+          .from('production_handover_settings')
+          .select('default_production_team_id')
+          .eq('production_company_id', companyId)
+          .maybeSingle();
+        if (hop?.default_production_team_id) {
+          await supabase.from('projects').update({
+            production_workshop_team_id: hop.default_production_team_id,
+            updated_at: new Date().toISOString(),
+          }).eq('id', projectId);
+        }
+      } catch (he) {
+        console.warn('[workshop-intake/bg] team:', he.message);
+      }
+
+      try {
+        await syncCrmLeadSxPipelineFromProject(projectId);
+      } catch (syncErr) {
+        console.warn('[workshop-intake/bg] sync kanban:', syncErr.message);
+      }
+
+      try {
+        const { ensureDealLeadDocumentsForModuleTransition } = require('./ensureDealLeadDocumentsForModuleTransition');
+        await ensureDealLeadDocumentsForModuleTransition({ leadId: dealId, projectId });
+      } catch (docErr) {
+        console.warn('[workshop-intake/bg] lead_documents:', docErr.message);
+      }
+
       try {
         const { applyProductionTemplateToFulfillmentLead } = require('./projectOrderFulfillment');
         await applyProductionTemplateToFulfillmentLead({
@@ -242,6 +284,22 @@ function scheduleWorkshopIntakeBackground({ req, dealId, projectId, userId, comp
           created_by: userId,
         });
       } catch (_) { /* ignore */ }
+
+      try {
+        const { notifyWorkshopIntakeNewDeal, emitProductionBoardRealtime } = require('./workshopIntakeNotify');
+        await notifyWorkshopIntakeNewDeal({
+          req,
+          projectId,
+          projectCode,
+          projectName: dealTitle,
+          dealTitle,
+          actorUserId: userId,
+        });
+        const io = req?.app?.get('io');
+        await emitProductionBoardRealtime(projectId, io, 'workshop_intake');
+      } catch (intakeNotifyErr) {
+        console.warn('[workshop-intake/bg] notify/socket:', intakeNotifyErr.message);
+      }
 
       if (!req) return;
       try {
@@ -429,6 +487,17 @@ async function createWorkshopIntakeOrder(opts) {
   }
   timer.mark('partner');
 
+  // Khu vực CRM của deal nguồn (công ty khác) không gắn lên deal xưởng nhận.
+  let safeRegionId = regionId || null;
+  if (safeRegionId) {
+    const { data: rg } = await supabase
+      .from('company_regions')
+      .select('id, company_id')
+      .eq('id', safeRegionId)
+      .maybeSingle();
+    if (!rg || String(rg.company_id) !== String(companyUuid)) safeRegionId = null;
+  }
+
   // Deal nội bộ liên kết SX — không gán phụ trách CRM (= người tạo đơn xưởng).
   // Nếu gán assigned_to = userId thì deal xuất hiện oan trong «Deal của tôi» trên CRM mobile/web.
   const dealRow = {
@@ -439,7 +508,7 @@ async function createWorkshopIntakeOrder(opts) {
     company_id: companyUuid,
     pipeline_id: pipelineId,
     stage_id: wonStageId,
-    region_id: regionId || null,
+    region_id: safeRegionId,
     assigned_to: null,
     lead_owner_id: null,
     created_by: userId,
@@ -455,7 +524,13 @@ async function createWorkshopIntakeOrder(opts) {
 
   const { data: deal, error: dealErr } = await insertCrmLeadResilient(dealRow, 'id, code, title');
   timer.mark('insert_deal');
-  if (dealErr) return { ok: false, error: dealErr.message, statusCode: 500 };
+  if (dealErr) {
+    return {
+      ok: false,
+      error: dealErr.message || dealErr.details || 'Không tạo được deal xưởng',
+      statusCode: 500,
+    };
+  }
 
   try {
     const { ensureDealProductionAutoParticipants } = require('./dealParticipantProduction');
@@ -492,26 +567,6 @@ async function createWorkshopIntakeOrder(opts) {
       .update({ project_id: projectId, updated_at: nowIso })
       .eq('id', deal.id);
     if (linkDealErr) throw linkDealErr;
-
-    await applyWorkshopTypeDefaultStaffToProject(projectId, companyUuid, wtCheck.type.id, {
-      allowFallback: staffAllowFallback !== false,
-    });
-
-    try {
-      const { data: hop } = await supabase
-        .from('production_handover_settings')
-        .select('default_production_team_id')
-        .eq('production_company_id', companyUuid)
-        .maybeSingle();
-      if (hop?.default_production_team_id) {
-        await supabase.from('projects').update({
-          production_workshop_team_id: hop.default_production_team_id,
-          updated_at: nowIso,
-        }).eq('id', projectId);
-      }
-    } catch (he) {
-      console.warn('[workshop-intake] team:', he.message);
-    }
   } catch (linkErr) {
     return {
       ok: false,
@@ -520,22 +575,7 @@ async function createWorkshopIntakeOrder(opts) {
       deal_id: deal.id,
     };
   }
-  timer.mark('link_staff');
-
-  try {
-    await syncCrmLeadSxPipelineFromProject(projectId);
-  } catch (syncErr) {
-    console.warn('[workshop-intake] sync kanban:', syncErr.message);
-  }
-  timer.mark('sync_kanban');
-
-  try {
-    const { ensureDealLeadDocumentsForModuleTransition } = require('./ensureDealLeadDocumentsForModuleTransition');
-    await ensureDealLeadDocumentsForModuleTransition({ leadId: deal.id, projectId });
-  } catch (docErr) {
-    console.warn('[workshop-intake] lead_documents:', docErr.message);
-  }
-  timer.mark('docs');
+  timer.mark('link_deal');
 
   scheduleWorkshopIntakeBackground({
     req,
@@ -545,24 +585,9 @@ async function createWorkshopIntakeOrder(opts) {
     companyId: companyUuid,
     projectCode: project.code,
     dealTitle: deal.title,
+    workshopTypeId: wtCheck.type.id,
+    staffAllowFallback,
   });
-
-  try {
-    const { notifyWorkshopIntakeNewDeal, emitProductionBoardRealtime } = require('./workshopIntakeNotify');
-    await notifyWorkshopIntakeNewDeal({
-      req,
-      projectId,
-      projectCode: project.code,
-      projectName: project.name,
-      dealTitle: deal.title,
-      actorUserId: userId,
-    });
-    const io = req?.app?.get('io');
-    await emitProductionBoardRealtime(projectId, io, 'workshop_intake');
-  } catch (intakeNotifyErr) {
-    console.warn('[workshop-intake] notify/socket:', intakeNotifyErr.message);
-  }
-  timer.mark('notify');
 
   const timing = timer.done();
   console.info('[workshop-intake] timing', {
