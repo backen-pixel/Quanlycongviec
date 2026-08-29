@@ -3,6 +3,7 @@
  */
 
 const { supabase } = require('../config/supabase');
+const { fetchAllByIdsParallel, fetchAllPagesParallel } = require('./supabaseFetchAll');
 
 function pushCompany(map, row, role) {
   const id = row?.id ? String(row.id) : '';
@@ -139,7 +140,84 @@ function isParticipantCompany(list, companyId) {
   return (list || []).some((c) => String(c.id) === String(companyId));
 }
 
+/**
+ * Dự án SX/VC có thể thuộc xưởng khác, nhưng deal CRM vẫn của công ty đang xem.
+ * Work Unified theo công ty CRM phải gồm các project_id gắn deal đó (kể cả junction multi-xưởng).
+ */
+async function listCrmLinkedProjectIds(companyIds) {
+  const ids = [...new Set((companyIds || []).filter(Boolean).map(String))];
+  if (!ids.length) return [];
+
+  const deals = await fetchAllPagesParallel(() => supabase
+    .from('crm_leads')
+    .select('id, project_id')
+    .eq('type', 'deal')
+    .in('company_id', ids));
+  const projectIds = new Set();
+  const dealIds = [];
+  (deals || []).forEach((d) => {
+    if (d?.id) dealIds.push(d.id);
+    if (d?.project_id) projectIds.add(String(d.project_id));
+  });
+  if (dealIds.length) {
+    try {
+      const links = await fetchAllByIdsParallel({
+        table: 'crm_deal_projects',
+        columns: 'project_id',
+        key: 'deal_id',
+        ids: dealIds,
+      });
+      (links || []).forEach((r) => {
+        if (r?.project_id) projectIds.add(String(r.project_id));
+      });
+    } catch (e) {
+      if (!String(e.message || '').includes('crm_deal_projects')) {
+        console.warn('[crmLinkedProjects] junction:', e.message);
+      }
+    }
+  }
+  return [...projectIds];
+}
+
+async function projectHasCrmDealInCompanies(projectId, companyIds) {
+  const pid = projectId ? String(projectId) : '';
+  const ids = [...new Set((companyIds || []).filter(Boolean).map(String))];
+  if (!pid || !ids.length) return false;
+
+  const { data: byProject } = await supabase
+    .from('crm_leads')
+    .select('id')
+    .eq('project_id', pid)
+    .eq('type', 'deal')
+    .in('company_id', ids)
+    .limit(1);
+  if (byProject?.length) return true;
+
+  try {
+    const { data: links } = await supabase
+      .from('crm_deal_projects')
+      .select('deal_id')
+      .eq('project_id', pid);
+    const dealIds = [...new Set((links || []).map((r) => r.deal_id).filter(Boolean).map(String))];
+    if (!dealIds.length) return false;
+    const { data: linked } = await supabase
+      .from('crm_leads')
+      .select('id')
+      .in('id', dealIds)
+      .in('company_id', ids)
+      .limit(1);
+    return !!(linked && linked.length);
+  } catch (e) {
+    if (!String(e.message || '').includes('crm_deal_projects')) {
+      console.warn('[crmLinkedProjects] detail junction:', e.message);
+    }
+    return false;
+  }
+}
+
 module.exports = {
   listProjectParticipantCompanies,
   isParticipantCompany,
+  listCrmLinkedProjectIds,
+  projectHasCrmDealInCompanies,
 };

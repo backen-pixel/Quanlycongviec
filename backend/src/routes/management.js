@@ -13,6 +13,11 @@ const {
   buildDeliveryFlow,
   DEFAULT_DELIVERY_STAGES,
 } = require('../helpers/projectDealBundle');
+const { sortProjectCrmDeals } = require('../helpers/workshopCrmDeals');
+const {
+  listCrmLinkedProjectIds,
+  projectHasCrmDealInCompanies,
+} = require('../helpers/projectParticipantCompanies');
 const {
   resolveCompanyScopeForRequest,
   applyCompanyScopeFilter,
@@ -48,6 +53,42 @@ function primaryCompanyIdFromScope(scope) {
   return scope.companyIds?.[0] || null;
 }
 
+function scopeCompanyIdList(scope) {
+  if (!scope?.ok) return [];
+  if (scope.companyId === TENANT_EMPTY_COMPANY_SENTINEL) return [];
+  if (scope.companyIds?.length) return scope.companyIds.map(String);
+  if (scope.companyId) return [String(scope.companyId)];
+  return [];
+}
+
+function pickWorkUnifiedDeal(deals, scopeIds) {
+  const list = deals || [];
+  if (!list.length) return null;
+  const scoped = scopeIds?.size
+    ? list.filter((d) => scopeIds.has(String(d.company_id)))
+    : list;
+  return sortProjectCrmDeals(scoped.length ? scoped : list)[0] || null;
+}
+
+function attachDealToProjectMap(map, projectId, deal) {
+  if (!projectId || !deal?.id) return;
+  const k = String(projectId);
+  if (!map.has(k)) map.set(k, []);
+  const arr = map.get(k);
+  if (!arr.some((d) => String(d.id) === String(deal.id))) arr.push(deal);
+}
+
+const WORK_UNIFIED_PROJECT_COLUMNS = `
+        id, code, name, status, deadline, estimated_value, production_value, deposit_amount, collected_amount,
+        customer_id, current_stage_id, install_date, delivery_date, production_deadline,
+        project_manager_id, sales_person_id, production_person_id, company_id, logistics_company_id,
+        customer:customers(id, full_name, phone),
+        current_stage:workflow_stages(id, name, slug, color, order_index),
+        project_manager:users!projects_project_manager_id_fkey(id, full_name),
+        sales_person:users!projects_sales_person_id_fkey(id, full_name),
+        production_person:users!projects_production_person_id_fkey(id, full_name)
+      `;
+
 function denyScope(res, scope) {
   if (scope?.ok) return false;
   res.status(scope?.code === 'tenant_company_denied' ? 403 : 400).json({
@@ -79,7 +120,7 @@ function assertLeadInScope(res, scope, lead) {
   return true;
 }
 
-function assertProjectInScope(res, scope, project) {
+async function assertProjectInScope(res, scope, project) {
   if (!project) return true;
   if (!scope?.ok) return denyScope(res, scope);
   if (scope.companyId === TENANT_EMPTY_COMPANY_SENTINEL) {
@@ -94,11 +135,13 @@ function assertProjectInScope(res, scope, project) {
     if (scope.companyIds?.length) return scope.companyIds.includes(id);
     return true;
   };
-  if (!inScope(cid) && !inScope(lcid)) {
-    res.status(403).json({ error: 'Không có quyền xem dự án này' });
-    return false;
+  if (inScope(cid) || inScope(lcid)) return true;
+  const scopedCompanies = scopeCompanyIdList(scope);
+  if (scopedCompanies.length && await projectHasCrmDealInCompanies(project.id, scopedCompanies)) {
+    return true;
   }
-  return true;
+  res.status(403).json({ error: 'Không có quyền xem dự án này' });
+  return false;
 }
 
 function parsePagination(req, defaultSize = 50, maxSize = 200) {
@@ -945,13 +988,14 @@ r.get('/work-unified/search', async (req, res) => {
     }
 
     const like = `%${q}%`;
-    let query = supabase
-      .from('projects')
-      .select(`
+    const searchSelect = `
         id, code, name, status, deadline, install_date, delivery_date, production_deadline,
         project_manager_id, sales_person_id, production_person_id,
         customer:customers(full_name)
-      `)
+      `;
+    let query = supabase
+      .from('projects')
+      .select(searchSelect)
       .or(`code.ilike."${like}",name.ilike."${like}"`)
       .in('status', WORK_OVERVIEW_ACTIVE_STATUSES)
       .order('code', { ascending: false })
@@ -962,6 +1006,30 @@ r.get('/work-unified/search', async (req, res) => {
     if (error) throw error;
 
     let rows = data || [];
+    const extraIds = await listCrmLinkedProjectIds(scopeCompanyIdList(scope));
+    if (extraIds.length) {
+      const have = new Set(rows.map((p) => String(p.id)));
+      const missing = extraIds.filter((id) => !have.has(String(id)));
+      if (missing.length) {
+        let extraQ = supabase
+          .from('projects')
+          .select(searchSelect)
+          .or(`code.ilike."${like}",name.ilike."${like}"`)
+          .in('status', WORK_OVERVIEW_ACTIVE_STATUSES)
+          .in('id', missing.slice(0, 500))
+          .order('code', { ascending: false })
+          .limit(hasExtra ? 60 : 8);
+        if (regionProjectIds) extraQ = extraQ.in('id', regionProjectIds);
+        const extraRes = await extraQ;
+        if (extraRes.error) throw extraRes.error;
+        (extraRes.data || []).forEach((p) => {
+          if (!have.has(String(p.id))) {
+            have.add(String(p.id));
+            rows.push(p);
+          }
+        });
+      }
+    }
     if (regionNone) {
       const { data: withRegionLeads } = await supabase
         .from('crm_leads')
@@ -973,8 +1041,26 @@ r.get('/work-unified/search', async (req, res) => {
       rows = rows.filter((p) => !withRegion.has(String(p.id)));
     }
     if (userId) {
-      rows = rows.filter((p) => [p.project_manager_id, p.sales_person_id, p.production_person_id]
-        .some((id) => String(id || '') === userId));
+      const byProjectPeople = new Set();
+      rows.forEach((p) => {
+        const hit = [p.project_manager_id, p.sales_person_id, p.production_person_id]
+          .some((id) => String(id || '') === userId);
+        if (hit) byProjectPeople.add(String(p.id));
+      });
+      const leftover = rows.filter((p) => !byProjectPeople.has(String(p.id))).map((p) => p.id);
+      if (leftover.length) {
+        const { data: dealRows } = await supabase
+          .from('crm_leads')
+          .select('project_id, assigned_to, lead_owner_id')
+          .in('project_id', leftover)
+          .eq('type', 'deal');
+        (dealRows || []).forEach((d) => {
+          if ([d.assigned_to, d.lead_owner_id].some((id) => String(id || '') === userId) && d.project_id) {
+            byProjectPeople.add(String(d.project_id));
+          }
+        });
+      }
+      rows = rows.filter((p) => byProjectPeople.has(String(p.id)));
     }
     if (dateFrom || dateTo) {
       rows = rows.filter((p) => {
@@ -1023,33 +1109,79 @@ r.get('/work-unified', async (req, res) => {
     // fetchAllPagesParallel: PostgREST âm thầm cắt ở 1.000 dòng bất kể select trả về bao nhiêu —
     // công ty >1.000 dự án active sẽ mất dữ liệu nếu query trực tiếp không .range() theo trang.
     // Bản song song bắn nhiều trang cùng lúc — nhanh hơn nhiều ở quy mô 8.000+ dự án.
-    const projects = await fetchAllPagesParallel(() => {
-      const pq = supabase.from('projects').select(`
-        id, code, name, status, deadline, estimated_value, production_value, deposit_amount, collected_amount,
-        customer_id, current_stage_id, install_date, delivery_date, production_deadline,
-        project_manager_id, sales_person_id, production_person_id, company_id, logistics_company_id,
-        customer:customers(id, full_name, phone),
-        current_stage:workflow_stages(id, name, slug, color, order_index),
-        project_manager:users!projects_project_manager_id_fkey(id, full_name),
-        sales_person:users!projects_sales_person_id_fkey(id, full_name),
-        production_person:users!projects_production_person_id_fkey(id, full_name)
-      `).in('status', WORK_OVERVIEW_ACTIVE_STATUSES);
+    const ownedProjects = await fetchAllPagesParallel(() => {
+      const pq = supabase.from('projects').select(WORK_UNIFIED_PROJECT_COLUMNS)
+        .in('status', WORK_OVERVIEW_ACTIVE_STATUSES);
       return applyProjectScopeFilter(pq, scope);
     });
 
-    const projectIds = (projects || []).map((p) => p.id);
-    let dealByProjectId = {};
+    const scopedCompanyIds = scopeCompanyIdList(scope);
+    const scopeIdSet = new Set(scopedCompanyIds);
+    const projectsById = new Map();
+    (ownedProjects || []).forEach((p) => { if (p?.id) projectsById.set(String(p.id), p); });
+
+    // Deal CRM của công ty đang xem nhưng SX đặt ở xưởng khác (vd. Phúc Đạt → Hucabi).
+    if (scopedCompanyIds.length) {
+      const linkedIds = await listCrmLinkedProjectIds(scopedCompanyIds);
+      const missing = linkedIds.filter((id) => !projectsById.has(String(id)));
+      if (missing.length) {
+        const extra = await fetchAllByIdsParallel({
+          table: 'projects',
+          columns: WORK_UNIFIED_PROJECT_COLUMNS,
+          key: 'id',
+          ids: missing,
+          tune: (q) => q.in('status', WORK_OVERVIEW_ACTIVE_STATUSES),
+        });
+        (extra || []).forEach((p) => { if (p?.id) projectsById.set(String(p.id), p); });
+      }
+    }
+
+    const projects = [...projectsById.values()];
+    const projectIds = projects.map((p) => p.id);
+    const dealsForProject = new Map();
     if (projectIds.length) {
       // fetchAllByIdsParallel: cùng lý do — chia khúc id (tránh URL quá dài) + phân trang mỗi
       // khúc (tránh cắt ở 1.000 dòng), chạy song song nhiều khúc — xem
       // backend/src/helpers/supabaseFetchAll.js.
       const deals = await fetchAllByIdsParallel({
         table: 'crm_leads',
-        columns: 'id, code, title, project_id, region_id, crm_region:company_regions(id, name, company_id)',
+        columns: 'id, code, title, project_id, company_id, parent_lead_id, created_at, assigned_to, lead_owner_id, region_id, crm_region:company_regions(id, name, company_id)',
         key: 'project_id',
         ids: projectIds,
       });
-      deals.forEach((d) => { dealByProjectId[String(d.project_id)] = d; });
+      const dealById = new Map();
+      (deals || []).forEach((d) => {
+        if (d?.id) dealById.set(String(d.id), d);
+        attachDealToProjectMap(dealsForProject, d.project_id, d);
+      });
+      try {
+        const links = await fetchAllByIdsParallel({
+          table: 'crm_deal_projects',
+          columns: 'deal_id, project_id',
+          key: 'project_id',
+          ids: projectIds,
+        });
+        const missingDealIds = [...new Set((links || [])
+          .map((r) => r.deal_id)
+          .filter((id) => id && !dealById.has(String(id)))
+          .map(String))];
+        if (missingDealIds.length) {
+          const extraDeals = await fetchAllByIdsParallel({
+            table: 'crm_leads',
+            columns: 'id, code, title, project_id, company_id, parent_lead_id, created_at, assigned_to, lead_owner_id, region_id, crm_region:company_regions(id, name, company_id)',
+            key: 'id',
+            ids: missingDealIds,
+          });
+          (extraDeals || []).forEach((d) => { if (d?.id) dealById.set(String(d.id), d); });
+        }
+        (links || []).forEach((r) => {
+          attachDealToProjectMap(dealsForProject, r.project_id, dealById.get(String(r.deal_id)));
+        });
+      } catch (e) {
+        if (!String(e.message || '').includes('crm_deal_projects')) {
+          console.warn('[work-unified] junction deals:', e.message);
+        }
+      }
     }
 
     const items = (projects || []).map((p) => {
@@ -1061,16 +1193,22 @@ r.get('/work-unified', async (req, res) => {
         : 0;
       const commitmentDate = p.install_date || p.delivery_date || p.production_deadline || p.deadline || null;
       const { forecast, days_remaining, delay_days } = classifyProjectForecast(commitmentDate);
-      const deal = dealByProjectId[String(p.id)] || null;
+      const deal = pickWorkUnifiedDeal(dealsForProject.get(String(p.id)), scopeIdSet);
       const assignee = p.project_manager || p.sales_person || p.production_person || null;
       const person1 = p.project_manager || p.sales_person || null;
       const person2 = p.production_person && p.production_person.id !== person1?.id ? p.production_person : null;
       const hasCrm = !!deal;
       const hasSx = !!p.company_id;
       const hasVc = !!(p.logistics_company_id || p.install_date || p.delivery_date);
-      // Khu vực chỉ hợp lệ khi thuộc đúng công ty của dự án — deal có thể đã bị chuyển
-      // công ty (crmLeadCompanyTransfer) mà region_id cũ chưa được xoá/cập nhật theo.
-      const region = (deal?.crm_region && String(deal.crm_region.company_id) === String(p.company_id))
+      // Khu vực theo công ty CRM của deal (không theo xưởng SX) — deal Phúc Đạt đặt Hucabi
+      // vẫn giữ region Showroom. Bỏ region nếu company_id của region không khớp deal/xưởng
+      // (deal đã chuyển công ty mà region_id cũ chưa cập nhật).
+      const regionCompany = deal?.crm_region?.company_id != null ? String(deal.crm_region.company_id) : '';
+      const region = (deal?.crm_region && (
+        !regionCompany
+        || regionCompany === String(deal.company_id || '')
+        || regionCompany === String(p.company_id || '')
+      ))
         ? deal.crm_region
         : null;
       return {
@@ -1102,8 +1240,9 @@ r.get('/work-unified', async (req, res) => {
         person1_id: person1?.id || null,
         person2_name: person2?.full_name || null,
         person2_id: person2?.id || null,
-        region_id: region?.id || null,
+        region_id: region?.id || deal?.region_id || null,
         region_name: region?.name || null,
+        deal_assignee_id: deal?.assigned_to || deal?.lead_owner_id || null,
       };
     });
 
@@ -1118,7 +1257,7 @@ r.get('/work-unified', async (req, res) => {
       });
     }
     if (userIdFilter) {
-      filtered = filtered.filter((it) => [it.person1_id, it.person2_id, it.assignee_id]
+      filtered = filtered.filter((it) => [it.person1_id, it.person2_id, it.assignee_id, it.deal_assignee_id]
         .some((id) => String(id) === String(userIdFilter)));
     }
     if (regionIdFilter === '__none__') {
@@ -1704,7 +1843,7 @@ r.get('/by-project/:projectId', responseCache({ ttl: 15, scope: 'user', tags: ['
       lite: ['1', 'true'].includes(String(req.query.lite || '').toLowerCase()),
     });
     if (!bundle) return res.status(404).json({ error: 'Không tìm thấy dự án' });
-    if (!assertProjectInScope(res, scope, bundle.project)) return;
+    if (!await assertProjectInScope(res, scope, bundle.project)) return;
     res.json(bundle);
   } catch (e) {
     console.error('[management/by-project]', e);
@@ -1731,7 +1870,7 @@ r.get('/production-overview/:projectId', async (req, res) => {
     `).eq('id', projectId).maybeSingle();
     if (error) throw error;
     if (!project) return res.status(404).json({ error: 'Không tìm thấy dự án' });
-    if (!assertProjectInScope(res, scope, project)) return;
+    if (!await assertProjectInScope(res, scope, project)) return;
 
     const { data: stagesRaw } = await supabase
       .from('production_pipeline_stages')

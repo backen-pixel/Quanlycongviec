@@ -105,15 +105,16 @@ function initials(name) {
 }
 
 function WorkUnifiedListProjectLink({ it }) {
+  const fullName = String(it.name || '').trim();
   return (
     <Link
       to={workUnifiedPath(it.id)}
       data-wu-open-tab={it.id}
-      title="Chuột phải để mở tab mới"
+      title={fullName || undefined}
       className="block min-w-0"
     >
-      <span className="text-sm font-semibold text-blue-700 hover:underline truncate block">{it.code}</span>
-      <span className="text-xs text-gray-500 truncate mt-0.5 block">{it.name}</span>
+      <span className="text-sm font-semibold text-blue-700 hover:underline truncate block">{fullName || '—'}</span>
+      <span className="text-xs text-gray-500 truncate mt-0.5 block">{it.code}</span>
     </Link>
   );
 }
