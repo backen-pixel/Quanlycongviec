@@ -4550,11 +4550,20 @@ export default function CRMDashboard() {
       console.error(e);
       if (loadTimeoutId) window.clearTimeout(loadTimeoutId);
       if (!background && !isStale()) {
-        // Retry một lần khi 500/network (backend restart / Supabase tạm nghẽn).
-        if (isCrmTransientApiError(e) && !opts?.__retried) {
-          await new Promise((r) => setTimeout(r, 500));
+        // Retry khi 500/network (backend restart / Supabase tạm nghẽn).
+        // Backend dev (`node --watch`) mất ~1.7-1.8s để sẵn sàng lại sau khi
+        // restart (đo từ log "Server ready in 1.7s"), cộng thời gian --watch
+        // phát hiện + respawn. 1 lần retry duy nhất sau 500ms gần như luôn
+        // rơi đúng lúc backend chưa kịp lên → request thất bại lần 2 luôn,
+        // và vì đã __retried=true nên không retry nữa — dashboard kẹt lại dữ
+        // liệu cũ của filter trước cho tới khi người dùng F5. Tăng lên 2 lần,
+        // giãn cách đủ dài để vượt qua cửa sổ downtime thực tế.
+        const retryCount = opts?.__retryCount || 0;
+        if (isCrmTransientApiError(e) && retryCount < 2) {
+          const retryDelayMs = retryCount === 0 ? 800 : 2200;
+          await new Promise((r) => setTimeout(r, retryDelayMs));
           if (!isStale()) {
-            return load({ ...opts, silent: true, __retried: true });
+            return load({ ...opts, silent: true, __retryCount: retryCount + 1 });
           }
         }
         setKanbanLoadError(formatCrmApiError(e, 'Không thể tải dữ liệu CRM. Dữ liệu cũ vẫn được giữ lại.'));
