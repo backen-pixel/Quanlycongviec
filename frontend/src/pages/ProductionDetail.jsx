@@ -446,7 +446,7 @@ function WorkshopInfoPanel({
           ? (addCalendarDaysYmd(payloadValue, -2) || null)
           : null;
       }
-      await api.put(`/management/work-unified/${project.id}`, projectPatch);
+      await api.put(`/projects/${project.id}`, projectPatch);
 
       // Đồng bộ sang deal CRM (cùng nguồn với phiếu/bàn giao VC của sale).
       if (crmDeal?.id) {
@@ -2594,9 +2594,9 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
       const personField = moduleKey === 'vc' ? 'logistics_person_id' : 'production_person_id';
       if (moduleKey === 'vc') {
         // Dùng endpoint assign để kèm thông báo
-        await api.patch(`/workshop-teams/management/work-unified/${project.id}/assign`, { [personField]: userId || null });
+        await api.patch(`/workshop-teams/projects/${project.id}/assign`, { [personField]: userId || null });
       } else {
-        await api.put(`/management/work-unified/${project.id}`, { [personField]: userId || null });
+        await api.put(`/projects/${project.id}`, { [personField]: userId || null });
       }
       await refreshProjectSilently();
     } catch (e) {
@@ -2609,7 +2609,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     if (!project?.id || moduleKey !== 'vc') return;
     setSavingTeamAssign(true);
     try {
-      await api.patch(`/workshop-teams/management/work-unified/${project.id}/assign`, { [field]: value || null });
+      await api.patch(`/workshop-teams/projects/${project.id}/assign`, { [field]: value || null });
       await refreshProjectSilently();
     } catch (e) {
       alert(e.response?.data?.error || 'Lỗi gán đội');
@@ -2839,7 +2839,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
         patchCrmDashboardCacheLeadFields(dealId, { title: savedTitle });
         if (project?.id) markWorkshopProjectRename(project.id, { name: savedTitle, dealTitle: savedTitle });
       } else if (project?.id) {
-        await api.put(`/management/work-unified/${project.id}`, { name: nextTitle });
+        await api.put(`/projects/${project.id}`, { name: nextTitle });
         setProject((prev) => (prev ? { ...prev, name: nextTitle } : prev));
         markWorkshopProjectRename(project.id, { name: nextTitle });
       }
