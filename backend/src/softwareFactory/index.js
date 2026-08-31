@@ -29,6 +29,8 @@ const {
 } = require('./plainJson');
 const { DurableControlPlaneFoundation } = require('./durableControlPlane');
 const { assertDurableStatePortContract } = require('./durableStatePort');
+const { HttpDurableStatePortProof } = require('./adapters/httpDurableStatePortProof');
+const { HttpKmsKeyProviderProof } = require('./adapters/httpKmsKeyProviderProof');
 const {
   assertAuthorizationVerifierContract,
   authorizationDecisionDigest,
@@ -62,6 +64,8 @@ module.exports = {
   SoftwareFactoryMutationGuard,
   SoftwareFactoryStateCoordinator,
   DurableControlPlaneFoundation,
+  HttpDurableStatePortProof,
+  HttpKmsKeyProviderProof,
   assertDurableStatePortContract,
   assertAuthorizationVerifierContract,
   assertKeyProviderContract,
