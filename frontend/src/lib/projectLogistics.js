@@ -7,6 +7,14 @@ export const LOGISTICS_PROJECT_STATUSES = ['shipping', 'installing', 'warranty',
 /** Thẻ ở cột lắp đặt tạm bị khoá chuyển cột tới khi xưởng bàn giao + Sale CRM xác nhận. */
 export const VC_TEMP_LOCK_MSG = 'Dự án đang ở cột lắp đặt tạm (badge TẠM) — chờ xưởng SX bàn giao và Sale CRM xác nhận lại thông tin VC/LĐ thì mới chuyển cột được.';
 
+/** Khoá kéo khi còn TẠM và chưa sang lắp/bảo hành (chưa bàn giao thật). */
+export function isVcTempColumnLocked(project) {
+  if (!project?.vc_temp_staged) return false;
+  const st = String(project.status || '');
+  if (st === 'installing' || st === 'warranty' || st === 'completed' || st === 'shipping') return false;
+  return true;
+}
+
 export function isProjectAlreadyInLogistics(project) {
   if (!project) return false;
   // Đang ở cột «lắp đặt tạm» (setup kế hoạch SX/VC) → chưa bàn giao thật từ xưởng.

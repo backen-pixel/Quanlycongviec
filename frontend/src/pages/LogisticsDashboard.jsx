@@ -44,7 +44,7 @@ import {
   peekWorkshopPipelineCardFocus, clearWorkshopPipelineCardFocus, markWorkshopPipelineCardFocus,
   applyWorkshopProjectRenamePatches,
 } from '../lib/workshopPipelineStorage';
-import { VC_TEMP_LOCK_MSG } from '../lib/projectLogistics';
+import { VC_TEMP_LOCK_MSG, isVcTempColumnLocked } from '../lib/projectLogistics';
 
 const INTAKE_BUCKET = 'delivery_pending';
 
@@ -740,7 +740,7 @@ export default function LogisticsDashboard() {
     // Chưa bàn giao thật (đang ở cột lắp đặt tạm) → không cho kéo sang cột khác
     const moving = projects.find((p) => String(p.id) === String(projectId));
     let forceTempMove = false;
-    if (moving?.vc_temp_staged && String(moving.vc_kanban_column_id || '') !== String(targetCol?.id || '')) {
+    if (isVcTempColumnLocked(moving) && String(moving.vc_kanban_column_id || '') !== String(targetCol?.id || '')) {
       if (!isAdmin) {
         alert(VC_TEMP_LOCK_MSG);
         return;
@@ -1912,7 +1912,7 @@ const KanbanCard = memo(function KanbanCard({
   item, stage, calculateDays, isSelected, onToggleSelect, onDelete, onMoveStage, pipelineStages = [],
 }) {
   const navigate = useNavigate();
-  const tempLocked = !!item.vc_temp_staged;
+  const tempLocked = isVcTempColumnLocked(item);
   const handleDragStart = (e) => {
     if (
       tempLocked
@@ -2031,7 +2031,7 @@ const KanbanCard = memo(function KanbanCard({
 
       <div className="flex items-start justify-between pr-7 mb-2 gap-1.5">
         <p className="text-xs font-semibold text-orange-600">{item.code}</p>
-        {item.vc_temp_staged && (
+        {tempLocked && (
           <span
             className="shrink-0 inline-flex items-center gap-0.5 text-[9px] font-bold uppercase tracking-wide text-fuchsia-800 bg-fuchsia-50 border border-fuchsia-200 px-1.5 py-0.5 rounded leading-tight"
             title={VC_TEMP_LOCK_MSG}

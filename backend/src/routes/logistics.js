@@ -21,7 +21,7 @@ const {
 } = require('../helpers/workshopCrmDeals');
 const { validateLogisticsCompanyId } = require('../helpers/logisticsCompanyGate');
 const { isSystemAdmin } = require('../helpers/adminRole');
-const { assertVcTempStagedMovable } = require('../helpers/vcTempInstallStaging');
+const { assertVcTempStagedMovable, HANDED_OVER_STATUSES } = require('../helpers/vcTempInstallStaging');
 const {
   isInstallLogisticsStageRow,
   attachSplitLogisticsTaskStats,
@@ -1502,7 +1502,7 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
 
     const { data: project } = await supabase
       .from('projects')
-      .select('id, current_stage_id, code, name, status, company_id, logistics_company_id')
+      .select('id, current_stage_id, code, name, status, company_id, logistics_company_id, vc_kanban_column_id, vc_temp_staged, vc_handover_status')
       .eq('id', id)
       .single();
     if (!project) return res.status(404).json({ error: 'Project not found' });
@@ -1681,6 +1681,12 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
       updatePayload.status = 'installing';
     } else if (statusMap[targetStage?.slug]) {
       updatePayload.status = statusMap[targetStage.slug];
+    }
+    if (tempGuard.release_temp || tempGuard.forced) {
+      updatePayload.vc_temp_staged = false;
+      if (!HANDED_OVER_STATUSES.includes(String(project.vc_handover_status || ''))) {
+        updatePayload.vc_handover_status = 'scheduled';
+      }
     }
 
     // Thử update với vc_kanban_column_id; nếu cột chưa tồn tại, fallback không có cột đó

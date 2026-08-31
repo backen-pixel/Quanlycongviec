@@ -147,11 +147,41 @@ async function stageProjectAtVcTempColumn(req, { projectId, logisticsCompanyId }
 
 const VC_TEMP_LOCK_MESSAGE = 'Dự án đang ở cột lắp đặt tạm — chờ xưởng SX bàn giao và Sale CRM xác nhận lại thông tin VC/LĐ thì mới chuyển cột được.';
 
+async function sxColumnAtOrAfterVcHandover(projectId) {
+  const { data: p } = await supabase
+    .from('projects')
+    .select('id, company_id, status, sx_kanban_column_id')
+    .eq('id', projectId)
+    .maybeSingle();
+  if (!p) return false;
+  const st = String(p.status || '');
+  if (['installing', 'warranty', 'completed', 'shipping'].includes(st)) return true;
+  if (!p.sx_kanban_column_id) return false;
+  const { data: col } = await supabase
+    .from('production_pipeline_stages')
+    .select('id, order_index, company_id, is_handover_to_logistics')
+    .eq('id', p.sx_kanban_column_id)
+    .maybeSingle();
+  if (!col) return false;
+  if (col.is_handover_to_logistics) return true;
+  const companyId = col.company_id || p.company_id;
+  if (!companyId) return false;
+  const { data: handoverCols } = await supabase
+    .from('production_pipeline_stages')
+    .select('order_index')
+    .eq('company_id', companyId)
+    .eq('is_active', true)
+    .eq('is_handover_to_logistics', true);
+  if (!handoverCols?.length) return false;
+  const minOrder = Math.min(...handoverCols.map((s) => Number(s.order_index) || 0));
+  return (Number(col.order_index) || 0) >= minOrder;
+}
+
 /**
  * Chặn chuyển cột khi dự án còn ở cột «lắp đặt tạm» (chưa bàn giao thật).
- * Cho phép: đích trùng cột hiện tại (no-op), đã bàn giao thật, hoặc admin ép chuyển.
+ * Cho phép: đích trùng cột hiện tại (no-op), đã bàn giao thật, SX đã qua cột →VC, hoặc admin ép chuyển.
  *
- * @returns {Promise<{ ok: boolean, error?: string, forced?: boolean }>}
+ * @returns {Promise<{ ok: boolean, error?: string, forced?: boolean, release_temp?: boolean }>}
  */
 async function assertVcTempStagedMovable(req, { projectId, targetVcStageId = null, allowForce = false } = {}) {
   if (!projectId) return { ok: true };
@@ -164,11 +194,15 @@ async function assertVcTempStagedMovable(req, { projectId, targetVcStageId = nul
     // Migration 532 chưa chạy → không có gì để chặn
     if (error) return { ok: true };
     if (!data?.vc_temp_staged) return { ok: true };
-    if (HANDED_OVER_STATUSES.includes(String(data.vc_handover_status || ''))) return { ok: true };
+    if (HANDED_OVER_STATUSES.includes(String(data.vc_handover_status || ''))) return { ok: true, release_temp: true };
     if (targetVcStageId && String(targetVcStageId) === String(data.vc_kanban_column_id || '')) return { ok: true };
 
+    if (await sxColumnAtOrAfterVcHandover(projectId)) {
+      return { ok: true, release_temp: true };
+    }
+
     const { isAdminLike } = require('./adminRole');
-    if (allowForce && isAdminLike(req?.user)) return { ok: true, forced: true };
+    if (allowForce && isAdminLike(req?.user)) return { ok: true, forced: true, release_temp: true };
     return { ok: false, error: VC_TEMP_LOCK_MESSAGE };
   } catch (e) {
     console.warn('[vcTempStaging] movable guard:', e.message);
