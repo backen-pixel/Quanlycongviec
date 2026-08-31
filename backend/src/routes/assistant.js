@@ -1,7 +1,14 @@
 const { Router } = require('express');
 const { auth } = require('../middleware/auth');
 const { supabase } = require('../config/supabase');
-const { ACTIONS, findCustomer, findProject, findLead, parseValue, fmt } = require('../helpers/aiActions');
+const {
+  ACTIONS,
+  findCustomer,
+  findProject,
+  findLead,
+  parseValue,
+  fmt,
+} = require('../legacy/assistant/legacyAiActions');
 const { buildPersonalBriefingPayload } = require('../helpers/personalBriefing');
 
 const r = Router();
