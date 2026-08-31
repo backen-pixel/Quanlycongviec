@@ -46,9 +46,12 @@ function replicationConfig() {
 function skipTablesSet() {
   const cfg = replicationConfig();
   const lightSkips = 'notifications,auth_event_log,facebook_webhook_logs,user_activity_log,audit_logs';
+  // business_os_* không còn tồn tại trên primary (tính năng cũ đã gỡ) — chặn để không
+  // enqueue lại nếu có job nào lỡ tham chiếu tới, tránh lỗi lặp vô nghĩa trên backup.
+  const deadTables = 'business_os_sla_escalations,business_os_process_instances';
   const defaults = cfg.light
-    ? `supabase_failback_log,user_last_activity,user_devices,user_current_location,app_heartbeat,${lightSkips}`
-    : 'supabase_failback_log,user_last_activity,user_devices,user_current_location,app_heartbeat';
+    ? `supabase_failback_log,user_last_activity,user_devices,user_current_location,app_heartbeat,${deadTables},${lightSkips}`
+    : `supabase_failback_log,user_last_activity,user_devices,user_current_location,app_heartbeat,${deadTables}`;
   const raw = process.env.SUPABASE_REPLICATION_SKIP_TABLES || defaults;
   return new Set(raw.split(',').map((s) => s.trim()).filter(Boolean));
 }
@@ -265,6 +268,28 @@ function sanitizeReplicationHeaders(headers = {}) {
   return h;
 }
 
+/**
+ * Một số unique constraint không nằm trong query string on_conflict của request gốc
+ * (vì primary insert thường/không phải upsert) — khi backup báo trùng (23505), suy ra
+ * cột dùng để match từ TÊN constraint trong lỗi Postgres, rồi PATCH theo cột đó thay vì
+ * insert lại. Bổ sung dần khi phát hiện constraint mới gây lỗi lặp lại trên backup.
+ */
+const KNOWN_UNIQUE_CONSTRAINTS = {
+  crm_daily_reports_user_id_report_date_key: ['user_id', 'report_date'],
+  business_os_sla_escalations_dedupe_uq: ['process_instance_id', 'stage_key', 'level', 'recipient_user_id'],
+};
+
+function parseUniqueConstraintNameFromError(errOrText) {
+  const text = String(errOrText?.message || errOrText || '');
+  const m = text.match(/unique constraint "([^"]+)"/);
+  return m ? m[1] : null;
+}
+
+function conflictColumnsFromError(errOrText) {
+  const name = parseUniqueConstraintNameFromError(errOrText);
+  return name ? (KNOWN_UNIQUE_CONSTRAINTS[name] || null) : null;
+}
+
 function parseOnConflictColumns(path) {
   try {
     const u = new URL(String(path || ''), 'http://local');
@@ -319,6 +344,62 @@ async function retryDuplicateUpsertOnBackup(table, path, body) {
   const rows = Array.isArray(parsed) ? parsed : [parsed];
   for (const row of rows) {
     const ok = await patchBackupRowByConflictColumns(table, conflictCols, row);
+    if (!ok) return false;
+  }
+  return true;
+}
+
+/**
+ * Xoá dòng đang xung đột (match theo cột tự nhiên) rồi insert lại dòng mới nguyên id.
+ * Dùng khi request gốc trên primary là INSERT thường (không upsert) — id trong payload
+ * là id "chuẩn" cần khớp với các bảng con tham chiếu tới (vd crm_daily_report_lines.report_id),
+ * nên không thể giữ lại id cũ đang có trên backup như patchBackupRowByConflictColumns.
+ */
+async function replaceBackupRowByConflictColumns(table, columns, row) {
+  if (!table || !columns?.length || !row || typeof row !== 'object') return false;
+  const backupBase = trimBase(config.supabaseBackupUrl);
+  const filters = columns.map((col) => {
+    const val = row[col];
+    if (val == null) return null;
+    return `${col}=eq.${encodeURIComponent(String(val))}`;
+  }).filter(Boolean);
+  if (filters.length !== columns.length) return false;
+  const delRes = await undiciFetch(
+    `${backupBase}/rest/v1/${table}?${filters.join('&')}`,
+    {
+      method: 'DELETE',
+      headers: { ...backupHeaders({}), prefer: 'return=minimal' },
+      dispatcher: supabaseDispatcher,
+    },
+  );
+  if (!delRes.ok) return false;
+  const insRes = await undiciFetch(
+    `${backupBase}/rest/v1/${table}`,
+    {
+      method: 'POST',
+      headers: {
+        ...backupHeaders({}),
+        'content-type': 'application/json',
+        prefer: 'return=minimal',
+      },
+      body: JSON.stringify(stripRowForBackupReplication(table, row)),
+      dispatcher: supabaseDispatcher,
+    },
+  );
+  return insRes.ok;
+}
+
+/** Chỉ áp dụng khi request gốc KHÔNG có on_conflict (insert thường) và lỗi khớp một
+ * constraint đã biết trong KNOWN_UNIQUE_CONSTRAINTS. */
+async function recoverPlainInsertDuplicateOnBackup(table, path, body, errText) {
+  if (parseOnConflictColumns(path)?.length) return false;
+  const conflictCols = conflictColumnsFromError(errText);
+  if (!table || !conflictCols?.length) return false;
+  const parsed = parseJsonBody(body);
+  if (!parsed) return false;
+  const rows = Array.isArray(parsed) ? parsed : [parsed];
+  for (const row of rows) {
+    const ok = await replaceBackupRowByConflictColumns(table, conflictCols, row);
     if (!ok) return false;
   }
   return true;
@@ -644,7 +725,16 @@ async function postRowToBackup(table, row, depth = 0) {
     }
     return postRowToBackup(table, row, depth + 1);
   }
-  // 409 duplicate mà không có on_conflict hiệu lực → PATCH theo id
+  // 409 duplicate do backup có sẵn dòng khác id cho cùng khoá tự nhiên → xoá dòng cũ,
+  // insert lại nguyên id primary (payload này lấy từ primary nên id là id chuẩn).
+  if (res.status === 409 || /23505|duplicate key/i.test(text)) {
+    const conflictCols = conflictColumnsFromError(text);
+    if (conflictCols?.length) {
+      const ok = await replaceBackupRowByConflictColumns(table, conflictCols, payload);
+      if (ok) return;
+    }
+  }
+  // Không suy được cột từ tên constraint (hoặc patch theo cột đó vẫn lỗi) → thử PATCH theo id
   if ((res.status === 409 || /23505|duplicate key/i.test(text)) && payload?.id) {
     const { id, created_at, ...patch } = payload;
     const patchRes = await undiciFetch(
@@ -892,6 +982,13 @@ async function applyRestJob(job) {
       }
     }
     if (ok && rows.length) return;
+  }
+  if (
+    method === 'POST'
+    && (res.status === 409 || /23505|duplicate key/i.test(text))
+    && await recoverPlainInsertDuplicateOnBackup(table, path, body, text)
+  ) {
+    return;
   }
   if (
     method === 'POST'
