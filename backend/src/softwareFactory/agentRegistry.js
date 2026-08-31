@@ -1,0 +1,258 @@
+const { AGENT_TYPES } = require('./constants');
+const { factoryError } = require('./errors');
+
+function deepFreeze(value) {
+  if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
+  Object.values(value).forEach(deepFreeze);
+  return Object.freeze(value);
+}
+
+function definition(input) {
+  return deepFreeze({
+    identity_namespace: 'software_factory',
+    policy_version: 'sf-policy-v1',
+    can_modify_test_code: false,
+    requires_domain_context: false,
+    ...input,
+  });
+}
+
+const DEFAULT_AGENT_DEFINITIONS = deepFreeze([
+  definition({
+    agent_id: 'sf-orchestrator',
+    agent_type: AGENT_TYPES.ORCHESTRATOR,
+    name: 'Software Factory Orchestrator',
+    responsibility: 'Điều phối workflow, prerequisite, handoff, quality gate và audit.',
+    allowed_tools: ['artifact.read', 'handoff.create', 'quality_gate.transition', 'audit.read'],
+    prohibited_tools: ['source.write', 'database.write', 'release.approve', 'deploy.production'],
+    allowed_paths: ['docs/architecture/**', 'docs/adr/**'],
+    prohibited_paths: ['database/**', 'backend/src/domains/**', 'frontend/src/**'],
+    read_scope: ['repository', 'factory_artifacts', 'factory_audit'],
+    write_scope: ['factory_run_state', 'handoff'],
+    approval_level: 'ORCHESTRATE_ONLY',
+    can_modify_code: false,
+    can_modify_schema: false,
+    can_run_tests: false,
+    can_create_migration: false,
+    can_commit: false,
+    can_tag: false,
+    can_deploy_staging: false,
+    can_deploy_production: false,
+    required_reviewers: [],
+    handoff_targets: [AGENT_TYPES.PRODUCT_OWNER, AGENT_TYPES.SOLUTION_ARCHITECT, AGENT_TYPES.BACKEND_DOMAIN, AGENT_TYPES.FRONTEND, AGENT_TYPES.DATABASE_MIGRATION, AGENT_TYPES.QA_UAT, AGENT_TYPES.SECURITY_ARCHITECTURE_REVIEWER, AGENT_TYPES.RELEASE_BASELINE],
+  }),
+  definition({
+    agent_id: 'sf-product-owner',
+    agent_type: AGENT_TYPES.PRODUCT_OWNER,
+    name: 'Product Owner Agent',
+    responsibility: 'Phân tích yêu cầu, scope, acceptance criteria, risk và Definition of Done.',
+    allowed_tools: ['artifact.requirement.create', 'repository.read'],
+    prohibited_tools: ['source.write', 'database.write', 'test.execute', 'release.approve'],
+    allowed_paths: ['docs/ba/**', 'docs/project/**'],
+    prohibited_paths: ['backend/**', 'frontend/**', 'database/**'],
+    read_scope: ['repository', 'business_requirements'],
+    write_scope: ['RequirementArtifact'],
+    approval_level: 'REQUIREMENT_ONLY',
+    can_modify_code: false,
+    can_modify_schema: false,
+    can_run_tests: false,
+    can_create_migration: false,
+    can_commit: false,
+    can_tag: false,
+    can_deploy_staging: false,
+    can_deploy_production: false,
+    required_reviewers: [AGENT_TYPES.SOLUTION_ARCHITECT],
+    handoff_targets: [AGENT_TYPES.SOLUTION_ARCHITECT, AGENT_TYPES.ORCHESTRATOR],
+  }),
+  definition({
+    agent_id: 'sf-solution-architect',
+    agent_type: AGENT_TYPES.SOLUTION_ARCHITECT,
+    name: 'Solution Architect Agent',
+    responsibility: 'Xác định domain boundary, service/API/schema/tenant impact, migration và test strategy.',
+    allowed_tools: ['artifact.architecture.create', 'repository.read', 'architecture.docs.write'],
+    prohibited_tools: ['implementation.write', 'database.migrate', 'release.approve'],
+    allowed_paths: ['docs/architecture/**', 'docs/adr/**'],
+    prohibited_paths: ['backend/src/**', 'frontend/src/**', 'database/**'],
+    read_scope: ['repository', 'requirements', 'architecture', 'schema'],
+    write_scope: ['ArchitectureArtifact', 'architecture_docs'],
+    approval_level: 'ARCHITECTURE_GATE',
+    can_modify_code: false,
+    can_modify_schema: false,
+    can_run_tests: false,
+    can_create_migration: false,
+    can_commit: false,
+    can_tag: false,
+    can_deploy_staging: false,
+    can_deploy_production: false,
+    required_reviewers: [AGENT_TYPES.SECURITY_ARCHITECTURE_REVIEWER],
+    handoff_targets: [AGENT_TYPES.ORCHESTRATOR, AGENT_TYPES.BACKEND_DOMAIN, AGENT_TYPES.FRONTEND, AGENT_TYPES.DATABASE_MIGRATION],
+  }),
+  definition({
+    agent_id: 'sf-backend-domain',
+    agent_type: AGENT_TYPES.BACKEND_DOMAIN,
+    name: 'Backend / Domain Agent',
+    responsibility: 'Triển khai approved architecture trong đúng Domain Context và Application Service.',
+    allowed_tools: ['repository.read', 'source.write', 'test.execute'],
+    prohibited_tools: ['database.production', 'release.approve', 'policy.modify'],
+    allowed_paths: ['backend/src/domains/{domain}/**', 'backend/tests/**'],
+    prohibited_paths: ['database/**', 'frontend/**', 'backend/src/softwareFactory/**'],
+    read_scope: ['approved_requirement', 'approved_architecture', 'domain_code'],
+    write_scope: ['domain_code', 'ImplementationArtifact'],
+    approval_level: 'BUILD_ONLY',
+    can_modify_code: true,
+    can_modify_schema: false,
+    can_run_tests: true,
+    can_create_migration: false,
+    can_commit: false,
+    can_tag: false,
+    can_deploy_staging: false,
+    can_deploy_production: false,
+    required_reviewers: [AGENT_TYPES.SECURITY_ARCHITECTURE_REVIEWER, AGENT_TYPES.QA_UAT],
+    handoff_targets: [AGENT_TYPES.SECURITY_ARCHITECTURE_REVIEWER, AGENT_TYPES.QA_UAT, AGENT_TYPES.ORCHESTRATOR],
+    requires_domain_context: true,
+  }),
+  definition({
+    agent_id: 'sf-frontend',
+    agent_type: AGENT_TYPES.FRONTEND,
+    name: 'Frontend Agent',
+    responsibility: 'Triển khai UI theo API contract; không thay backend/domain validation.',
+    allowed_tools: ['repository.read', 'source.write', 'test.execute', 'frontend.build'],
+    prohibited_tools: ['database.write', 'domain_rule.define', 'release.approve'],
+    allowed_paths: ['frontend/src/**', 'frontend/tests/**'],
+    prohibited_paths: ['database/**', 'backend/src/domains/**', 'backend/src/softwareFactory/**'],
+    read_scope: ['approved_requirement', 'approved_architecture', 'api_contract'],
+    write_scope: ['frontend_code', 'ImplementationArtifact'],
+    approval_level: 'BUILD_ONLY',
+    can_modify_code: true,
+    can_modify_schema: false,
+    can_run_tests: true,
+    can_create_migration: false,
+    can_commit: false,
+    can_tag: false,
+    can_deploy_staging: false,
+    can_deploy_production: false,
+    required_reviewers: [AGENT_TYPES.SECURITY_ARCHITECTURE_REVIEWER, AGENT_TYPES.QA_UAT],
+    handoff_targets: [AGENT_TYPES.SECURITY_ARCHITECTURE_REVIEWER, AGENT_TYPES.QA_UAT, AGENT_TYPES.ORCHESTRATOR],
+  }),
+  definition({
+    agent_id: 'sf-database-migration',
+    agent_type: AGENT_TYPES.DATABASE_MIGRATION,
+    name: 'Database / Migration Agent',
+    responsibility: 'Phân tích schema, migration additive, isolation, rollback, backup và recovery requirement.',
+    allowed_tools: ['repository.read', 'migration.create', 'schema.analyze'],
+    prohibited_tools: ['database.production.migrate', 'database.destructive', 'release.approve'],
+    allowed_paths: ['database/**', 'backend/scripts/run-migration-*.js', 'docs/database/**'],
+    prohibited_paths: ['frontend/**', 'backend/src/domains/**', 'backend/src/softwareFactory/**'],
+    read_scope: ['approved_requirement', 'approved_architecture', 'schema', 'migration_history'],
+    write_scope: ['new_migration', 'ImplementationArtifact', 'rollback_plan'],
+    approval_level: 'SCHEMA_PROPOSAL_ONLY',
+    can_modify_code: false,
+    can_modify_schema: true,
+    can_run_tests: false,
+    can_create_migration: true,
+    can_commit: false,
+    can_tag: false,
+    can_deploy_staging: false,
+    can_deploy_production: false,
+    required_reviewers: [AGENT_TYPES.SECURITY_ARCHITECTURE_REVIEWER, AGENT_TYPES.QA_UAT],
+    handoff_targets: [AGENT_TYPES.SECURITY_ARCHITECTURE_REVIEWER, AGENT_TYPES.QA_UAT, AGENT_TYPES.ORCHESTRATOR],
+  }),
+  definition({
+    agent_id: 'sf-qa-uat',
+    agent_type: AGENT_TYPES.QA_UAT,
+    name: 'QA / UAT Agent',
+    responsibility: 'Sinh/chạy test độc lập, kiểm tra fixture, cleanup và recovery evidence.',
+    allowed_tools: ['repository.read', 'test.write', 'test.execute', 'artifact.test.create'],
+    prohibited_tools: ['implementation.modify', 'test.standard.weaken', 'release.approve'],
+    allowed_paths: ['backend/tests/**', 'frontend/tests/**', 'docs/baseline/**'],
+    prohibited_paths: ['backend/src/**', 'frontend/src/**', 'database/**'],
+    read_scope: ['requirement', 'architecture', 'implementation', 'review', 'test_environment'],
+    write_scope: ['test_code', 'TestArtifact', 'test_evidence'],
+    approval_level: 'TEST_GATE',
+    can_modify_code: false,
+    can_modify_test_code: true,
+    can_modify_schema: false,
+    can_run_tests: true,
+    can_create_migration: false,
+    can_commit: false,
+    can_tag: false,
+    can_deploy_staging: false,
+    can_deploy_production: false,
+    required_reviewers: [],
+    handoff_targets: [AGENT_TYPES.RELEASE_BASELINE, AGENT_TYPES.BACKEND_DOMAIN, AGENT_TYPES.FRONTEND, AGENT_TYPES.DATABASE_MIGRATION, AGENT_TYPES.ORCHESTRATOR],
+  }),
+  definition({
+    agent_id: 'sf-independent-reviewer',
+    agent_type: AGENT_TYPES.SECURITY_ARCHITECTURE_REVIEWER,
+    name: 'Independent Security / Architecture Reviewer',
+    responsibility: 'Review độc lập domain boundary, tenant, permission, audit, destructive action và architecture drift.',
+    allowed_tools: ['repository.read', 'diff.review', 'artifact.review.create', 'quality_gate.block'],
+    prohibited_tools: ['source.write', 'test.standard.weaken', 'self.approve', 'release.execute'],
+    allowed_paths: ['**'],
+    prohibited_paths: [],
+    read_scope: ['repository', 'diff', 'all_factory_artifacts', 'audit'],
+    write_scope: ['ReviewArtifact', 'review_finding'],
+    approval_level: 'INDEPENDENT_REVIEW_GATE',
+    can_modify_code: false,
+    can_modify_schema: false,
+    can_run_tests: false,
+    can_create_migration: false,
+    can_commit: false,
+    can_tag: false,
+    can_deploy_staging: false,
+    can_deploy_production: false,
+    required_reviewers: [],
+    handoff_targets: [AGENT_TYPES.QA_UAT, AGENT_TYPES.BACKEND_DOMAIN, AGENT_TYPES.FRONTEND, AGENT_TYPES.DATABASE_MIGRATION, AGENT_TYPES.ORCHESTRATOR],
+  }),
+  definition({
+    agent_id: 'sf-release-baseline',
+    agent_type: AGENT_TYPES.RELEASE_BASELINE,
+    name: 'Release / Baseline Agent',
+    responsibility: 'Kiểm tra gate/evidence và lập release candidate, commit/tag/baseline proposal.',
+    allowed_tools: ['repository.read', 'diff.read', 'evidence.read', 'git.commit.propose', 'git.tag.propose', 'artifact.release.create'],
+    prohibited_tools: ['deploy.production', 'migration.production', 'founder.approve', 'quality_gate.weaken'],
+    allowed_paths: ['docs/baseline/**', 'docs/PROJECT_DECISION_LOG.md', 'docs/adr/**'],
+    prohibited_paths: ['backend/src/**', 'frontend/src/**', 'database/**'],
+    read_scope: ['repository', 'diff', 'artifacts', 'audit', 'migration_state', 'backup_evidence'],
+    write_scope: ['ReleaseArtifact', 'release_candidate', 'baseline_proposal'],
+    approval_level: 'RELEASE_PROPOSAL_ONLY',
+    can_modify_code: false,
+    can_modify_schema: false,
+    can_run_tests: false,
+    can_create_migration: false,
+    can_commit: true,
+    can_tag: true,
+    can_deploy_staging: false,
+    can_deploy_production: false,
+    required_reviewers: [AGENT_TYPES.SECURITY_ARCHITECTURE_REVIEWER, AGENT_TYPES.QA_UAT],
+    handoff_targets: [AGENT_TYPES.ORCHESTRATOR],
+  }),
+]);
+
+class SoftwareFactoryAgentRegistry {
+  #definitions;
+
+  constructor() {
+    this.#definitions = new Map(DEFAULT_AGENT_DEFINITIONS.map((item) => [item.agent_id, item]));
+  }
+
+  get(agentId) {
+    const found = this.#definitions.get(String(agentId || ''));
+    if (!found) throw factoryError('AGENT_NOT_REGISTERED', `Agent không nằm trong registry: ${agentId}`);
+    return found;
+  }
+
+  has(agentId) {
+    return this.#definitions.has(String(agentId || ''));
+  }
+
+  list() {
+    return [...this.#definitions.values()];
+  }
+}
+
+module.exports = {
+  DEFAULT_AGENT_DEFINITIONS,
+  SoftwareFactoryAgentRegistry,
+  deepFreeze,
+};
