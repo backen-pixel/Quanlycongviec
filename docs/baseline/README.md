@@ -2,6 +2,12 @@
 
 Thư mục này là hồ sơ kiểm soát phiên bản staging. Mỗi baseline phải trả lời được: phiên bản code, database, migration, test đã chạy và đường phục hồi.
 
+## SF2-C2 canonical technical baseline
+
+- [`SF2C2_CANONICAL_BASELINE.md`](./SF2C2_CANONICAL_BASELINE.md): Founder-approved exact commit/tree, TT-1, IR-1 và residual-risk disposition; không phải Production readiness.
+- [`SF2C2_EVIDENCE_INDEX.md`](./SF2C2_EVIDENCE_INDEX.md): chỉ mục TT-1, IR-1, raw-result hashes và chuỗi traceability gắn với exact commit/tree.
+- [`SF2C2_RESIDUAL_RISK_REGISTER.md`](./SF2C2_RESIDUAL_RISK_REGISTER.md): ba P2 được Founder chấp nhận nhưng vẫn mở; không được miễn cho Runtime hoặc Production.
+
 - [`BUSINESS_OS_VNEXT_STAGING_BASELINE_01.md`](./BUSINESS_OS_VNEXT_STAGING_BASELINE_01.md): manifest mốc chuẩn.
 - [`BUSINESS_OS_CHANGE_INVENTORY_01.md`](./BUSINESS_OS_CHANGE_INVENTORY_01.md): phạm vi thay đổi được đóng gói.
 - [`BUSINESS_OS_ROLLBACK_BACKUP_RUNBOOK_01.md`](./BUSINESS_OS_ROLLBACK_BACKUP_RUNBOOK_01.md): rollback code, backup và phục hồi dữ liệu.

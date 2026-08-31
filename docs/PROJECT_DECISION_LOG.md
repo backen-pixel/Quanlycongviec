@@ -298,6 +298,16 @@ Nghiệm thu theo vai trò thực tế, kiểm tra task gate, SLA, thông báo, 
 
 ## 8. Lịch sử quyết định
 
+### 2026-08-31 — Founder phê duyệt SF2-C2 canonical technical baseline
+
+- Baseline bất biến được ghi nhận tại full commit `9c1bae61aa853eb438922b14bff720a32b6125d8`, tree `4cc8bde842bab081323e196caf41947112749b71`; trạng thái: **FOUNDER-APPROVED SF2-C2 CANONICAL BASELINE**.
+- TT-1 formal traceable test chạy trên exact SHA/tree đạt CP1 `23/23`, Software Factory `57/57`, SF2-C1 `14/14`, SF2-C2 `13/13`, Business OS `37/37`; tổng `144/144 PASS`, source/test không đổi và worktree sạch.
+- IR-1 **PASS / STOP**, independent rerun `144/144 PASS`, `P0=0`, `P1=0`; reviewer không sửa candidate/source/test.
+- Founder chấp nhận ba P2 của IR-1 làm residual risk cho quyết định baseline: chưa có canonical aggregate regression command; chưa có dependency-vulnerability audit; historical provenance/non-repudiation còn partial và commit/attestation chưa ký. Các P2 vẫn được giữ trong audit trail, không được xem là đã sửa hoặc được miễn cho Production.
+- Quyết định này không đồng nghĩa production-ready và không cho phép push, tag, merge, deploy hoặc migration.
+- AF3, BOS-AI1, REG4, MG5, OC6, Business AI Runtime, OpenClaw Production, Production Deployment và mọi phase tiếp theo vẫn `STOP / NO_GO / NOT_AUTHORIZED` cho đến Founder decision riêng.
+- Hồ sơ kiểm soát: `docs/MASTER_CONTEXT.md`, `docs/baseline/SF2C2_CANONICAL_BASELINE.md`, `docs/baseline/SF2C2_EVIDENCE_INDEX.md` và `docs/baseline/SF2C2_RESIDUAL_RISK_REGISTER.md`.
+
 ### 2026-08-28 — UAT kỹ thuật 6/6 đạt; chưa cutover vì chờ backup hậu-migration và nghiệm thu nghiệp vụ
 
 - Đã chạy đủ sáu kịch bản UAT bằng fixture staging cô lập; các fixture Sales/Project/Tài chính đã dọn sạch, Blueprint công ty thứ hai được giữ lại có chủ đích.

@@ -20,12 +20,14 @@ Migration SQL thật nằm ở `/database/*.sql` (root repo) — không nhân b�
 
 ## Điểm vào nhanh
 
-1. Tổng quan kiến trúc → [`architecture/kien-truc-tong-the.html`](./architecture/kien-truc-tong-the.html)
-2. Schema DB → [`database/DATABASE_SCHEMA.md`](./database/DATABASE_SCHEMA.md)
-3. API → [`api/API_DOCUMENT.md`](./api/API_DOCUMENT.md)
-4. Coding / inventory → [`project/CODING_STANDARD.md`](./project/CODING_STANDARD.md)
-5. Workflow Claude ↔ Cursor ↔ GitHub → [`project/workflow-claude-cursor-github.md`](./project/workflow-claude-cursor-github.md)
-6. Business OS staging baseline → [`baseline/BUSINESS_OS_VNEXT_STAGING_BASELINE_01.md`](./baseline/BUSINESS_OS_VNEXT_STAGING_BASELINE_01.md)
+1. Trạng thái kiểm soát hiện hành → [`MASTER_CONTEXT.md`](./MASTER_CONTEXT.md)
+2. Tổng quan kiến trúc → [`architecture/kien-truc-tong-the.html`](./architecture/kien-truc-tong-the.html)
+3. Schema DB → [`database/DATABASE_SCHEMA.md`](./database/DATABASE_SCHEMA.md)
+4. API → [`api/API_DOCUMENT.md`](./api/API_DOCUMENT.md)
+5. Coding / inventory → [`project/CODING_STANDARD.md`](./project/CODING_STANDARD.md)
+6. Workflow Claude ↔ Cursor ↔ GitHub → [`project/workflow-claude-cursor-github.md`](./project/workflow-claude-cursor-github.md)
+7. SF2-C2 canonical baseline → [`baseline/SF2C2_CANONICAL_BASELINE.md`](./baseline/SF2C2_CANONICAL_BASELINE.md)
+8. Business OS staging baseline → [`baseline/BUSINESS_OS_VNEXT_STAGING_BASELINE_01.md`](./baseline/BUSINESS_OS_VNEXT_STAGING_BASELINE_01.md)
 
 ## Regenerate tài liệu máy sinh
 
