@@ -65,6 +65,7 @@
     "test:agent-control-plane": "node --test tests/agent-control-plane-cp1.test.js",
     "test:software-factory": "node --test tests/software-factory-control-plane.test.js",
     "test:software-factory-sf2c1": "node --test tests/software-factory-sf2c1-distributed-proof.test.js",
+    "test:software-factory-sf2c2": "node --test tests/software-factory-sf2c2-staging-factory.test.js",
     "crm:route-inventory": "node scripts/crm-route-inventory.js --write",
     "cron:crm-missing-tasks": "node scripts/run-crm-missing-tasks-cron.js"
   },

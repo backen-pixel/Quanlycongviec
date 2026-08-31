@@ -28,6 +28,13 @@ const {
   assertPlainJsonValue,
 } = require('./plainJson');
 const { DurableControlPlaneFoundation } = require('./durableControlPlane');
+const { StagingDurableFactoryControlPlane } = require('./stagingFactoryControlPlane');
+const {
+  SF2C2_FACTORY_STATE_SCHEMA_VERSION,
+  SF2C2_OPERATIONS,
+  artifactReference,
+  verifyStagingFactoryState,
+} = require('./factoryStateContracts');
 const { assertDurableStatePortContract } = require('./durableStatePort');
 const { HttpDurableStatePortProof } = require('./adapters/httpDurableStatePortProof');
 const { HttpKmsKeyProviderProof } = require('./adapters/httpKmsKeyProviderProof');
@@ -64,6 +71,11 @@ module.exports = {
   SoftwareFactoryMutationGuard,
   SoftwareFactoryStateCoordinator,
   DurableControlPlaneFoundation,
+  StagingDurableFactoryControlPlane,
+  SF2C2_FACTORY_STATE_SCHEMA_VERSION,
+  SF2C2_OPERATIONS,
+  artifactReference,
+  verifyStagingFactoryState,
   HttpDurableStatePortProof,
   HttpKmsKeyProviderProof,
   assertDurableStatePortContract,
