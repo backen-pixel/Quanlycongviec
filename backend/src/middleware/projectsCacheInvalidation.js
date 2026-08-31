@@ -20,9 +20,27 @@ function invalidateProjectsList() {
   void invalidateTags([PROJECTS_LIST_TAG, 'project-deal']).catch(() => {});
 }
 
+/**
+ * POST nhưng CHỈ ĐỌC — các endpoint truy vấn buộc dùng POST vì payload dài (danh sách id).
+ * CRM Dashboard gọi chúng liên tục mỗi lần tải/đổi bộ lọc. Nếu tính là "ghi" thì cache
+ * `projects:list` bị xoá gần như không ngừng — mà xoá theo tag nên ảnh hưởng cache của MỌI
+ * người dùng, triệt tiêu tác dụng của cache (đo được: 2.3s → 0.12s khi còn cache).
+ * Đã rà từng handler: không có .update/.insert/.delete/.upsert nào.
+ * Đường dẫn tính theo req.path (tương đối với prefix đã mount, vd '/api/crm').
+ */
+const READ_ONLY_POST_PATHS = new Set([
+  '/ledger-net-by-leads',
+  '/leads-deadlines',
+  '/kanban-stage-pages',
+  '/deadline-bucket-counts',
+  '/deadline-bucket-pages',
+  '/kpi-ledger-total',
+]);
+
 /** Middleware: xoá cache sau khi một request ghi kết thúc thành công. */
 function invalidateProjectsListOnWrite(req, res, next) {
   if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return next();
+  if (req.method === 'POST' && READ_ONLY_POST_PATHS.has(req.path)) return next();
   res.on('finish', () => {
     if (res.statusCode < 400) invalidateProjectsList();
   });

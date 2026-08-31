@@ -350,6 +350,34 @@ app.post('/api/seed-passwords', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+/**
+ * Xoá response-cache danh sách dự án (tag `projects:list`) sau mỗi request GHI vào các
+ * prefix có thể sửa bảng `projects` — hoặc sửa dữ liệu mà /management/work-unified nhúng
+ * kèm (deal CRM, khách hàng, công ty). Danh sách prefix dưới đây lấy từ việc rà thực tế
+ * các file route có `.update/.insert/.delete/.upsert` trên `from('projects')`.
+ *
+ * CỐ Ý không mount ở '/api': client poll `POST /api/users/presence` và
+ * `POST /api/devices/ping` mỗi vài giây, mount rộng sẽ xoá cache liên tục và triệt tiêu
+ * luôn tác dụng của cache (đo được cache giúp 2.4s → ~0.1s).
+ *
+ * TTL của cache vẫn là lưới an toàn nếu sau này có đường ghi mới chưa kịp thêm vào đây.
+ */
+const { invalidateProjectsListOnWrite } = require('./middleware/projectsCacheInvalidation');
+[
+  '/api/projects',       // routes/projects.js
+  '/api/production',     // routes/production.js
+  '/api/logistics',      // routes/logistics.js
+  '/api/vc-handover',    // routes/vcHandover.js
+  '/api/crm',            // crm/routes/{leadLifecycle,vcBooking,crmTasks}.js
+  '/api/customers',      // routes/customers.js
+  '/api/companies',      // routes/companies.js
+  '/api/approvals',      // routes/approvals.js
+  '/api/accounting',     // routes/accounting.js
+  '/api/stages',         // routes/stages.js
+  '/api/workshop-teams', // routes/workshopTeams.js
+  '/api/assistant',      // routes/assistant.js
+].forEach((prefix) => app.use(prefix, invalidateProjectsListOnWrite));
+
 // Routes
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/heartbeat', require('./routes/heartbeat'));
