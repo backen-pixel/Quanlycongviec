@@ -4581,6 +4581,11 @@ export default function CRMDashboard() {
           if (!isStale()) {
             return load({ ...opts, silent: true, __retryCount: retryCount + 1 });
           }
+          // Đã có lần tải MỚI HƠN chen vào trong lúc chờ retry (đổi bộ lọc, đổi tab,
+          // refresh định kỳ, socket…). Lần tải này bị thay thế nên phải im lặng rút lui:
+          // trước đây nó rơi xuống và vẫn vẽ banner "Mất kết nối máy chủ", trong khi lần
+          // tải mới vẫn chạy bình thường → banner báo lỗi nằm cạnh bảng có dữ liệu đầy đủ.
+          return;
         }
         setKanbanLoadError(formatCrmApiError(e, 'Không thể tải dữ liệu CRM. Dữ liệu cũ vẫn được giữ lại.'));
         if (shouldTrackProgress) resetCrmLoadProgress();
