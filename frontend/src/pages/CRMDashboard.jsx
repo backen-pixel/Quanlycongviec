@@ -4037,11 +4037,20 @@ export default function CRMDashboard() {
     if (scopeCid) {
       const pid = resolvePipelineIdForCompany(scopeCid);
       if (pid) return { type, pipeline_id: pid };
-      return { type };
+      // Chưa resolve được pipeline_id (danh sách pipelines chưa tải xong — đua khi
+      // vừa vào trang / vừa đổi công ty). Trước đây trả { type } trống, làm MẤT scope
+      // công ty: với admin hệ thống, backend rơi vào nhánh "xem toàn bộ" và trả stage
+      // TRỘN của mọi pipeline (đo được: 140 stage từ 10 pipeline). Cột Kanban khi đó
+      // lấy theo cột Thắng có order_index lớn nhất trong cả đống — có thể là pipeline
+      // công ty khác — nên tab Khách hàng hiện cột của công ty khác và đếm 0 thẻ.
+      // Backend đã hỗ trợ company_id/region_id để tự resolve đúng pipeline → giữ scope.
+      const params = { type, company_id: scopeCid };
+      if (filterRegion && filterRegion !== '__none__') params.region_id = filterRegion;
+      return params;
     }
     // Non-admin chưa có company: backend fallback default pipeline
     return { type };
-  }, [isAdmin, filterCompany, user?.company_id, resolvePipelineIdForCompany]);
+  }, [isAdmin, filterCompany, filterRegion, user?.company_id, resolvePipelineIdForCompany]);
 
   useEffect(() => {
     const onSeen = (e) => {
