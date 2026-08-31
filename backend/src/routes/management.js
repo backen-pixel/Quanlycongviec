@@ -89,6 +89,29 @@ const WORK_UNIFIED_PROJECT_COLUMNS = `
         production_person:users!projects_production_person_id_fkey(id, full_name)
       `;
 
+/**
+ * Bộ cột NHẸ cho lượt quét lọc/đếm của /work-unified (view Danh sách).
+ * Bỏ hết embed nặng (customer, workflow_stages, 3× users) — chỉ giữ cột phẳng đủ để
+ * tính luồng giao hàng, forecast, và mọi bộ lọc. Embed chỉ tốn thời gian khi phải
+ * serialize cho CẢ tập (8.000 dòng), trong khi người dùng chỉ xem 20 dòng/trang.
+ * `current_stage_id` là cột phẳng nên resolveDeliveryCurrentIndex() vẫn khớp đúng công
+ * đoạn mà không cần embed workflow_stages.
+ */
+const WORK_UNIFIED_PROJECT_COLUMNS_LITE = `
+        id, code, name, status, deadline, install_date, delivery_date, production_deadline,
+        customer_id, current_stage_id,
+        project_manager_id, sales_person_id, production_person_id, company_id, logistics_company_id
+      `;
+
+/** Như trên nhưng thêm tên khách — chỉ cần khi có tham số `search` (tìm theo tên KH). */
+const WORK_UNIFIED_PROJECT_COLUMNS_LITE_SEARCH = `${WORK_UNIFIED_PROJECT_COLUMNS_LITE}, customer:customers(full_name)`;
+
+/** Cột deal nhẹ — bỏ embed company_regions; bộ lọc khu vực chỉ dùng `region_id` phẳng. */
+const WORK_UNIFIED_DEAL_COLUMNS_LITE = 'id, code, title, project_id, company_id, parent_lead_id, created_at, assigned_to, lead_owner_id, region_id';
+
+/** Cột deal đầy đủ — cần `crm_region` để trả `region_name` ra ngoài. */
+const WORK_UNIFIED_DEAL_COLUMNS = `${WORK_UNIFIED_DEAL_COLUMNS_LITE}, crm_region:company_regions(id, name, company_id)`;
+
 function denyScope(res, scope) {
   if (scope?.ok) return false;
   res.status(scope?.code === 'tenant_company_denied' ? 403 : 400).json({
@@ -1087,7 +1110,13 @@ r.get('/work-unified/search', async (req, res) => {
 });
 
 // GET /api/management/work-unified — Tổng quan dự án theo luồng giao hàng (mockup Work Unified)
-r.get('/work-unified', async (req, res) => {
+// responseCache: trang tổng quan này đọc rất nặng (quét cả tập dự án để tính KPI + đếm tab)
+// và người dùng thường bấm qua lại giữa các tab/trang cùng bộ lọc. scope 'user' vì phạm vi
+// dữ liệu phụ thuộc quyền của từng người (getCompanyScope). Cache key đã gồm query string
+// nên mỗi tổ hợp bộ lọc/trang là một entry riêng. TTL ngắn theo đúng mức module
+// projectsCacheInvalidation ghi nhận (20–30s) — đủ để hứng các lần bấm liên tiếp mà không
+// làm dữ liệu cũ quá lâu.
+r.get('/work-unified', responseCache({ ttl: 20, scope: 'user', tags: [PROJECTS_LIST_TAG] }), async (req, res) => {
   try {
     const scope = getCompanyScope(req, req.query.company_id);
     if (denyScope(res, scope)) return;
@@ -1097,23 +1126,39 @@ r.get('/work-unified', async (req, res) => {
       date_from: dateFrom, date_to: dateTo, page: pageParam, page_size: pageSizeParam,
     } = req.query;
 
-    const { data: stageRows } = await supabase
-      .from('workflow_stages')
-      .select('id, name, slug, color, order_index, is_active, company_id')
-      .is('company_id', null)
-      .eq('is_active', true)
-      .order('order_index');
-    const stages = (stageRows || []).filter(isProjectDeliveryStageRow);
-    const deliveryStages = stages.length ? stages : DEFAULT_DELIVERY_STAGES;
+    const searchQ = String(searchQuery || '').trim().toLowerCase();
+    // page_size chỉ áp dụng khi client yêu cầu (view Danh sách) — Kanban/Lịch cần đủ tập đã lọc để gom nhóm.
+    const pageSize = pageSizeParam ? Math.max(1, Math.min(200, parseInt(pageSizeParam, 10) || 20)) : null;
 
+    // Có phân trang → quét bằng cột NHẸ rồi chỉ hydrate embed nặng cho đúng 1 trang.
+    // Không phân trang (Kanban/Deadline/Planner/Lịch) → phải trả item đầy đủ cho cả tập,
+    // nên quét luôn bằng cột đầy đủ, không hydrate lại.
+    const scanProjectColumns = !pageSize
+      ? WORK_UNIFIED_PROJECT_COLUMNS
+      : (searchQ ? WORK_UNIFIED_PROJECT_COLUMNS_LITE_SEARCH : WORK_UNIFIED_PROJECT_COLUMNS_LITE);
+    const scanDealColumns = pageSize ? WORK_UNIFIED_DEAL_COLUMNS_LITE : WORK_UNIFIED_DEAL_COLUMNS;
+
+    // Chi phí chính của route này là SỐ LƯỢT gọi Supabase tuần tự (đo được ~360ms/lượt do
+    // Supabase ở xa), không phải khối lượng dòng (deal chỉ ~657, junction ~506). Vì vậy hai
+    // truy vấn ĐỘC LẬP nhau — bảng công đoạn và danh sách dự án — được bắn song song thay vì
+    // chờ nhau, tiết kiệm trọn một lượt trên MỌI request.
     // fetchAllPagesParallel: PostgREST âm thầm cắt ở 1.000 dòng bất kể select trả về bao nhiêu —
     // công ty >1.000 dự án active sẽ mất dữ liệu nếu query trực tiếp không .range() theo trang.
-    // Bản song song bắn nhiều trang cùng lúc — nhanh hơn nhiều ở quy mô 8.000+ dự án.
-    const ownedProjects = await fetchAllPagesParallel(() => {
-      const pq = supabase.from('projects').select(WORK_UNIFIED_PROJECT_COLUMNS)
-        .in('status', WORK_OVERVIEW_ACTIVE_STATUSES);
-      return applyProjectScopeFilter(pq, scope);
-    });
+    const [stageRowsRes, ownedProjects] = await Promise.all([
+      supabase
+        .from('workflow_stages')
+        .select('id, name, slug, color, order_index, is_active, company_id')
+        .is('company_id', null)
+        .eq('is_active', true)
+        .order('order_index'),
+      fetchAllPagesParallel(() => {
+        const pq = supabase.from('projects').select(scanProjectColumns)
+          .in('status', WORK_OVERVIEW_ACTIVE_STATUSES);
+        return applyProjectScopeFilter(pq, scope);
+      }),
+    ]);
+    const stages = (stageRowsRes?.data || []).filter(isProjectDeliveryStageRow);
+    const deliveryStages = stages.length ? stages : DEFAULT_DELIVERY_STAGES;
 
     const scopedCompanyIds = scopeCompanyIdList(scope);
     const scopeIdSet = new Set(scopedCompanyIds);
@@ -1127,7 +1172,7 @@ r.get('/work-unified', async (req, res) => {
       if (missing.length) {
         const extra = await fetchAllByIdsParallel({
           table: 'projects',
-          columns: WORK_UNIFIED_PROJECT_COLUMNS,
+          columns: scanProjectColumns,
           key: 'id',
           ids: missing,
           tune: (q) => q.in('status', WORK_OVERVIEW_ACTIVE_STATUSES),
@@ -1143,24 +1188,34 @@ r.get('/work-unified', async (req, res) => {
       // fetchAllByIdsParallel: cùng lý do — chia khúc id (tránh URL quá dài) + phân trang mỗi
       // khúc (tránh cắt ở 1.000 dòng), chạy song song nhiều khúc — xem
       // backend/src/helpers/supabaseFetchAll.js.
-      const deals = await fetchAllByIdsParallel({
-        table: 'crm_leads',
-        columns: 'id, code, title, project_id, company_id, parent_lead_id, created_at, assigned_to, lead_owner_id, region_id, crm_region:company_regions(id, name, company_id)',
-        key: 'project_id',
-        ids: projectIds,
-      });
+      // Deal và bảng junction đều chỉ cần `projectIds` → độc lập nhau, bắn song song để
+      // bớt một lượt tuần tự nữa. Junction có thể chưa tồn tại ở DB cũ nên bọc riêng.
+      const [deals, linksOrNull] = await Promise.all([
+        fetchAllByIdsParallel({
+          table: 'crm_leads',
+          columns: scanDealColumns,
+          key: 'project_id',
+          ids: projectIds,
+        }),
+        fetchAllByIdsParallel({
+          table: 'crm_deal_projects',
+          columns: 'deal_id, project_id',
+          key: 'project_id',
+          ids: projectIds,
+        }).catch((e) => {
+          if (!String(e.message || '').includes('crm_deal_projects')) {
+            console.warn('[work-unified] junction deals:', e.message);
+          }
+          return null;
+        }),
+      ]);
       const dealById = new Map();
       (deals || []).forEach((d) => {
         if (d?.id) dealById.set(String(d.id), d);
         attachDealToProjectMap(dealsForProject, d.project_id, d);
       });
       try {
-        const links = await fetchAllByIdsParallel({
-          table: 'crm_deal_projects',
-          columns: 'deal_id, project_id',
-          key: 'project_id',
-          ids: projectIds,
-        });
+        const links = linksOrNull;
         const missingDealIds = [...new Set((links || [])
           .map((r) => r.deal_id)
           .filter((id) => id && !dealById.has(String(id)))
@@ -1168,7 +1223,7 @@ r.get('/work-unified', async (req, res) => {
         if (missingDealIds.length) {
           const extraDeals = await fetchAllByIdsParallel({
             table: 'crm_leads',
-            columns: 'id, code, title, project_id, company_id, parent_lead_id, created_at, assigned_to, lead_owner_id, region_id, crm_region:company_regions(id, name, company_id)',
+            columns: scanDealColumns,
             key: 'id',
             ids: missingDealIds,
           });
@@ -1184,7 +1239,9 @@ r.get('/work-unified', async (req, res) => {
       }
     }
 
-    const items = (projects || []).map((p) => {
+    // Dựng 1 item đầu ra — dùng cho CẢ lượt quét (cột nhẹ) và lượt hydrate 1 trang (cột đầy đủ),
+    // nên logic chỉ tồn tại một chỗ, hai lượt không thể lệch nhau.
+    const buildItem = (p, dealMap) => {
       const flow = buildDeliveryFlow({ project: p, deliveryStages, pipelines: {} });
       const doneSteps = flow.filter((s) => s.status === 'done').length;
       const currentStep = flow.find((s) => s.status === 'current');
@@ -1193,10 +1250,17 @@ r.get('/work-unified', async (req, res) => {
         : 0;
       const commitmentDate = p.install_date || p.delivery_date || p.production_deadline || p.deadline || null;
       const { forecast, days_remaining, delay_days } = classifyProjectForecast(commitmentDate);
-      const deal = pickWorkUnifiedDeal(dealsForProject.get(String(p.id)), scopeIdSet);
+      const deal = pickWorkUnifiedDeal(dealMap.get(String(p.id)), scopeIdSet);
       const assignee = p.project_manager || p.sales_person || p.production_person || null;
       const person1 = p.project_manager || p.sales_person || null;
       const person2 = p.production_person && p.production_person.id !== person1?.id ? p.production_person : null;
+      // Id nhân sự suy từ cột phẳng để lượt quét NHẸ (không embed users) vẫn lọc theo
+      // `user_id` đúng như lượt đầy đủ — embed chỉ dùng để lấy TÊN.
+      const person1IdFlat = p.project_manager_id || p.sales_person_id || null;
+      const person2IdFlat = p.production_person_id
+        && String(p.production_person_id) !== String(person1IdFlat || '')
+        ? p.production_person_id
+        : null;
       const hasCrm = !!deal;
       const hasSx = !!p.company_id;
       const hasVc = !!(p.logistics_company_id || p.install_date || p.delivery_date);
@@ -1235,20 +1299,69 @@ r.get('/work-unified', async (req, res) => {
         has_sx: hasSx,
         has_vc: hasVc,
         assignee_name: assignee?.full_name || null,
-        assignee_id: assignee?.id || null,
+        assignee_id: assignee?.id || person1IdFlat || p.production_person_id || null,
         person1_name: person1?.full_name || null,
-        person1_id: person1?.id || null,
+        person1_id: person1?.id || person1IdFlat || null,
         person2_name: person2?.full_name || null,
-        person2_id: person2?.id || null,
+        person2_id: person2?.id || person2IdFlat || null,
         region_id: region?.id || deal?.region_id || null,
         region_name: region?.name || null,
         deal_assignee_id: deal?.assigned_to || deal?.lead_owner_id || null,
       };
-    });
+    };
+
+    /**
+     * Hydrate embed nặng cho đúng các dòng của 1 trang: nạp lại project (cột đầy đủ) +
+     * deal kèm `crm_region` chỉ cho ≤ page_size id, rồi dựng lại item bằng cùng `buildItem`.
+     * Giữ nguyên thứ tự đã sắp xếp ở lượt quét.
+     */
+    const hydratePage = async (liteItems) => {
+      const ids = liteItems.map((it) => it.id).filter(Boolean);
+      if (!ids.length) return liteItems;
+      const [fullProjects, fullDeals, fullLinks] = await Promise.all([
+        fetchAllByIdsParallel({
+          table: 'projects', columns: WORK_UNIFIED_PROJECT_COLUMNS, key: 'id', ids,
+        }),
+        fetchAllByIdsParallel({
+          table: 'crm_leads', columns: WORK_UNIFIED_DEAL_COLUMNS, key: 'project_id', ids,
+        }),
+        fetchAllByIdsParallel({
+          table: 'crm_deal_projects', columns: 'deal_id, project_id', key: 'project_id', ids,
+        }).catch(() => []),
+      ]);
+      const pageDealMap = new Map();
+      const dealById = new Map();
+      (fullDeals || []).forEach((d) => {
+        if (d?.id) dealById.set(String(d.id), d);
+        attachDealToProjectMap(pageDealMap, d.project_id, d);
+      });
+      // Deal nối qua bảng junction (deal ở công ty khác project) — nạp thêm cho đủ.
+      const missingDealIds = [...new Set((fullLinks || [])
+        .map((r) => r.deal_id)
+        .filter((id) => id && !dealById.has(String(id)))
+        .map(String))];
+      if (missingDealIds.length) {
+        const extra = await fetchAllByIdsParallel({
+          table: 'crm_leads', columns: WORK_UNIFIED_DEAL_COLUMNS, key: 'id', ids: missingDealIds,
+        });
+        (extra || []).forEach((d) => { if (d?.id) dealById.set(String(d.id), d); });
+      }
+      (fullLinks || []).forEach((r) => {
+        attachDealToProjectMap(pageDealMap, r.project_id, dealById.get(String(r.deal_id)));
+      });
+
+      const fullById = new Map();
+      (fullProjects || []).forEach((p) => { if (p?.id) fullById.set(String(p.id), p); });
+      return liteItems.map((it) => {
+        const p = fullById.get(String(it.id));
+        return p ? buildItem(p, pageDealMap) : it;
+      });
+    };
+
+    const items = (projects || []).map((p) => buildItem(p, dealsForProject));
 
     let filtered = items;
     if (stageFilter) filtered = filtered.filter((it) => it.current_stage_slug === stageFilter);
-    const searchQ = String(searchQuery || '').trim().toLowerCase();
     if (searchQ) {
       filtered = filtered.filter((it) => {
         const hay = [it.code, it.name, it.customer_name, it.deal_code, it.deal_title]
@@ -1294,13 +1407,14 @@ r.get('/work-unified', async (req, res) => {
     });
 
     const total = filtered.length;
-    // page_size chỉ áp dụng khi client yêu cầu (view Danh sách) — Kanban/Lịch cần đủ tập đã lọc để gom nhóm.
-    const pageSize = pageSizeParam ? Math.max(1, Math.min(200, parseInt(pageSizeParam, 10) || 20)) : null;
     let pageItems = filtered;
     if (pageSize) {
       const page = Math.max(1, parseInt(pageParam, 10) || 1);
       const start = (page - 1) * pageSize;
       pageItems = filtered.slice(start, start + pageSize);
+      // Lượt quét ở trên dùng cột NHẸ nên item chưa có tên KH/công đoạn/nhân sự/khu vực.
+      // Hydrate embed nặng cho ĐÚNG các dòng của trang (≤ 200) — thay vì cho cả tập.
+      pageItems = await hydratePage(pageItems);
     }
 
     res.json({
