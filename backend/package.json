@@ -62,6 +62,9 @@
     "test:crm-upload": "node tests/crm-upload-integration.js",
     "test:crm-transfer": "node tests/crm-lead-company-transfer.js",
     "test:mcp-audit": "node tests/mcp-audit-reason-codes.js",
+    "test:agent-control-plane": "node --test tests/agent-control-plane-cp1.test.js",
+    "test:software-factory": "node --test tests/software-factory-control-plane.test.js",
+    "test:software-factory-sf2c1": "node --test tests/software-factory-sf2c1-distributed-proof.test.js",
     "crm:route-inventory": "node scripts/crm-route-inventory.js --write",
     "cron:crm-missing-tasks": "node scripts/run-crm-missing-tasks-cron.js"
   },
