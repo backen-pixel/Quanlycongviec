@@ -24,6 +24,7 @@ const XLSX_MAIN = require.resolve('xlsx');
 
 const MAX_XLSX_INPUT_BYTES = 10 * 1024 * 1024;
 const PARSE_TIMEOUT_MS = 5_000;
+const MODULE_LOAD_TIMEOUT_MS = 15_000;
 const WORKER_OLD_GENERATION_MB = 64;
 
 function sha256(buffer) {
@@ -210,7 +211,7 @@ test('existing business XLSX import and export APIs remain compatible without so
   const loadCheck = spawnSync(
     process.execPath,
     ['-e', "require('./src/helpers/dailyReportAdminNotify'); process.exit(0)"],
-    { cwd: BACKEND_ROOT, timeout: PARSE_TIMEOUT_MS, encoding: 'utf8' },
+    { cwd: BACKEND_ROOT, timeout: MODULE_LOAD_TIMEOUT_MS, encoding: 'utf8' },
   );
   assert.equal(loadCheck.status, 0, loadCheck.stderr || loadCheck.error?.message);
 });

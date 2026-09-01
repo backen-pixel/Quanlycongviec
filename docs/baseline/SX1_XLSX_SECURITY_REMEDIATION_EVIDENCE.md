@@ -1,6 +1,6 @@
 # SX-1 Controlled XLSX Security Remediation Evidence
 
-Status: `DEVELOPMENT VALIDATION PASS / AWAITING FOUNDER REVIEW`
+Status: `DEVELOPMENT VALIDATION PASS / FAST-TRACK CANDIDATE REQUIRES FRESH FTT`
 
 This record covers only the Founder-authorized replacement of backend
 `xlsx@0.18.5` with the official SheetJS Community Edition `0.20.3` tarball.
@@ -118,6 +118,27 @@ Existing development aggregate: `153/153 PASS`.
 
 Additional SX-1 checks: `7/7 PASS`.
 
+### Fast-track remediation loop 1
+
+The first Formal Traceable Test attempt against candidate
+`684d25fd34928bbde23c1bc01bd5572ea2a4d5dd` stopped at `6/7` in the SX-1
+suite because the separate child process used only to load the existing
+daily-report export module exceeded a shared five-second timeout under the
+sandbox. The XLS/XLSX/ODS, import/export, malformed/oversized, Prototype
+Pollution and ReDoS checks all passed in that stopped attempt.
+
+The approved test-only remediation gives the module-load probe its own
+15-second startup timeout. The adversarial XLSX parser deadline remains
+unchanged at five seconds and its worker memory controls remain unchanged.
+No application source, Business Rule, database or migration was modified.
+
+Post-remediation development validation produced SX-1 `7/7 PASS` and all
+existing suites passed. The SF2-C2 multi-process proof timed out under the
+restricted sandbox but passed `13/13` when rerun under the authorized host
+identity; no SF2-C2 file was changed. A new exact-SHA FTT package is required
+for the new candidate, and the stopped attempt must not be represented as a
+formal PASS.
+
 ## 5. Dependency audit
 
 Command: `npm audit --omit=dev --json`
@@ -162,7 +183,8 @@ the immutable parent `4d5ef23d28ea25f38229f71b416b6e007ec0beed`.
 - Full existing development checks: `153/153 PASS`.
 - npm audit: `0` vulnerabilities at every severity.
 - Ready for Founder decision on Formal Traceable Test: `YES`.
-- Formal Traceable Test opened: `NO`.
+- Formal Traceable Test PASS: `NO` — the first attempt stopped and a fresh
+  exact-SHA run is required for the new candidate.
 - Independent Review opened: `NO`.
 
 `STOP / AWAITING FOUNDER REVIEW`.
