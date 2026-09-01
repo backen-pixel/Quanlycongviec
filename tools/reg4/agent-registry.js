@@ -64,6 +64,7 @@ class RegistryError extends Error {
     super(message);
     this.name = 'RegistryError';
     this.code = code;
+    this.correlation_id = null;
   }
 }
 
@@ -72,7 +73,26 @@ function fail(code, message) {
 }
 
 function isPlainObject(value) {
-  return value !== null && typeof value === 'object' && Object.getPrototypeOf(value) === Object.prototype;
+  try {
+    return value !== null && typeof value === 'object' && Object.getPrototypeOf(value) === Object.prototype;
+  } catch {
+    return false;
+  }
+}
+
+function normalizeRegistryError(error, fallbackCode, fallbackMessage) {
+  try {
+    if (error instanceof RegistryError) return error;
+  } catch {
+    // A hostile thrown Proxy can trap prototype inspection. Fall through to a
+    // new bounded error without reading or retaining the untrusted exception.
+  }
+  return new RegistryError(fallbackCode, fallbackMessage);
+}
+
+function attachCorrelationId(error, correlationId) {
+  error.correlation_id = correlationId;
+  return error;
 }
 
 function assertExactDataObject(value, requiredKeys, label, optionalKeys = []) {
@@ -276,10 +296,15 @@ function assertActor(actor) {
     }
     return { actor_id: actorId, role: actor.role };
   } catch (error) {
-    if (error instanceof RegistryError && error.code === 'INVALID_INPUT') {
-      throw new RegistryError('INVALID_ACTOR', error.message);
+    const normalized = normalizeRegistryError(
+      error,
+      'INVALID_ACTOR',
+      'actor context is invalid',
+    );
+    if (normalized.code === 'INVALID_INPUT') {
+      throw new RegistryError('INVALID_ACTOR', 'actor context is invalid');
     }
-    throw error;
+    throw normalized;
   }
 }
 
@@ -296,10 +321,14 @@ function assertCanonicalTimestamp(value) {
 }
 
 function safeDataProperty(value, key) {
-  if (!isPlainObject(value)) return null;
-  const descriptor = Object.getOwnPropertyDescriptor(value, key);
-  if (!descriptor || !Object.prototype.hasOwnProperty.call(descriptor, 'value')) return null;
-  return descriptor.value;
+  try {
+    if (!isPlainObject(value)) return null;
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor || !Object.prototype.hasOwnProperty.call(descriptor, 'value')) return null;
+    return descriptor.value;
+  } catch {
+    return null;
+  }
 }
 
 function safeAgentId(value) {
@@ -319,12 +348,16 @@ function safeStatus(value) {
 }
 
 function safeActorContext(actor) {
-  const actorId = safeDataProperty(actor, 'actor_id');
-  const role = safeDataProperty(actor, 'role');
-  return {
-    actor_id: typeof actorId === 'string' && TOKEN_PATTERN.test(actorId) ? actorId : null,
-    actor_role: Object.values(ACTOR_ROLES).includes(role) ? role : null,
-  };
+  try {
+    const actorId = safeDataProperty(actor, 'actor_id');
+    const role = safeDataProperty(actor, 'role');
+    return {
+      actor_id: typeof actorId === 'string' && TOKEN_PATTERN.test(actorId) ? actorId : null,
+      actor_role: Object.values(ACTOR_ROLES).includes(role) ? role : null,
+    };
+  } catch {
+    return { actor_id: null, actor_role: null };
+  }
 }
 
 function clonePackage(record) {
@@ -366,12 +399,14 @@ function createAgentRegistry(options) {
 
   function appendAudit(details) {
     const sequence = auditRecords.length + 1;
+    const correlationId = `reg4-correlation-${String(sequence).padStart(10, '0')}`;
     const previousAuditSha256 = sequence === 1
       ? ZERO_SHA256
       : auditRecords[auditRecords.length - 1].audit_sha256;
     const body = {
       sequence,
       audit_id: `reg4-audit-${String(sequence).padStart(6, '0')}`,
+      correlation_id: correlationId,
       operation: details.operation,
       outcome: details.outcome,
       reason_code: details.reason_code,
@@ -387,6 +422,7 @@ function createAgentRegistry(options) {
       previous_audit_sha256: previousAuditSha256,
     };
     auditRecords.push({ ...body, audit_sha256: hashJsonBody(body) });
+    return correlationId;
   }
 
   function registerAgentPackage(request, actor) {
@@ -463,11 +499,13 @@ function createAgentRegistry(options) {
       });
       return clonePackage(record);
     } catch (error) {
-      const registryError = error instanceof RegistryError
-        ? error
-        : new RegistryError('INVALID_INPUT', 'registration request is invalid');
+      const registryError = normalizeRegistryError(
+        error,
+        'INVALID_INPUT',
+        'registration request is invalid',
+      );
       const existing = agentId && version ? packages.get(internalKey(agentId, version)) : null;
-      appendAudit({
+      const correlationId = appendAudit({
         operation: 'REGISTER',
         outcome: 'REJECTED',
         reason_code: registryError.code,
@@ -481,7 +519,7 @@ function createAgentRegistry(options) {
         resolved_package_sha256: existing ? existing.package_sha256 : resolvedPackageSha256,
         occurred_at: occurredAt,
       });
-      throw registryError;
+      throw attachCorrelationId(registryError, correlationId);
     }
   }
 
@@ -561,10 +599,12 @@ function createAgentRegistry(options) {
       });
       return clonePackage(existing);
     } catch (error) {
-      const registryError = error instanceof RegistryError
-        ? error
-        : new RegistryError('INVALID_INPUT', 'transition command is invalid');
-      appendAudit({
+      const registryError = normalizeRegistryError(
+        error,
+        'INVALID_INPUT',
+        'transition command is invalid',
+      );
+      const correlationId = appendAudit({
         operation: 'TRANSITION',
         outcome: 'REJECTED',
         reason_code: registryError.code,
@@ -578,7 +618,7 @@ function createAgentRegistry(options) {
         resolved_package_sha256: existing ? existing.package_sha256 : null,
         occurred_at: occurredAt,
       });
-      throw registryError;
+      throw attachCorrelationId(registryError, correlationId);
     }
   }
 

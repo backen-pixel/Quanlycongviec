@@ -449,9 +449,18 @@ test('REG4-B08 creates one independently verifiable hash-chained audit per mutat
     'reg4-audit-000005',
     'reg4-audit-000006',
   ]);
+  assert.deepEqual(records.map((record) => record.correlation_id), [
+    'reg4-correlation-0000000001',
+    'reg4-correlation-0000000002',
+    'reg4-correlation-0000000003',
+    'reg4-correlation-0000000004',
+    'reg4-correlation-0000000005',
+    'reg4-correlation-0000000006',
+  ]);
   assert.deepEqual(Object.keys(records[0]), [
     'sequence',
     'audit_id',
+    'correlation_id',
     'operation',
     'outcome',
     'reason_code',
@@ -762,4 +771,170 @@ test('REG4-B12 uses deterministic timestamps and rejection never updates a packa
   assert.deepEqual(registry.getAgentPackage(content.agent_id, content.version).timestamps, reviewed.timestamps);
   assert.deepEqual(registry.listAuditRecords().map((record) => record.occurred_at), times);
   assert.equal(index, 4);
+});
+
+test('REG4-P1-01 contains registration and transition Proxy traps with one safe correlated audit', () => {
+  const sensitiveMarker = 'credential-secret-proxy-stack-raw-marker';
+  const registry = createAgentRegistry({ now: clock('2026-09-01T02:00:00.000Z') });
+  const registrationContent = packageContent({
+    agent_id: 'proxy.registration',
+    version: '1.0.0',
+  });
+  const validRequest = registrationRequest(registrationContent);
+  const validAuthor = actor(registrationContent.created_by, ACTOR_ROLES.AUTHOR);
+  const transitionContent = packageContent({
+    agent_id: 'proxy.transition',
+    version: '1.0.0',
+  });
+  register(registry, transitionContent);
+  const transitionSnapshot = registry.getAgentPackage(
+    transitionContent.agent_id,
+    transitionContent.version,
+  );
+
+  function trappedProxy(target, trapName, thrownValue = new Error(sensitiveMarker)) {
+    return new Proxy(target, {
+      [trapName]() {
+        throw thrownValue;
+      },
+    });
+  }
+
+  function captureRejectedAttempt(action, expectedCode, expectedOperation) {
+    const before = registry.listAuditRecords().length;
+    let caught;
+    try {
+      action();
+      assert.fail('Proxy-backed mutating attempt must be rejected');
+    } catch (error) {
+      caught = error;
+    }
+
+    assert.equal(caught.name, 'RegistryError');
+    assert.equal(caught.code, expectedCode);
+    assert.match(caught.correlation_id, /^reg4-correlation-[0-9]{10}$/);
+    assert.doesNotMatch(caught.message, new RegExp(sensitiveMarker));
+    assert.doesNotMatch(caught.stack, new RegExp(sensitiveMarker));
+    assert.equal(Object.prototype.hasOwnProperty.call(caught, 'cause'), false);
+    assert.doesNotMatch(JSON.stringify(caught), new RegExp(sensitiveMarker));
+
+    const records = registry.listAuditRecords();
+    assert.equal(records.length, before + 1);
+    const audit = records.at(-1);
+    assert.equal(audit.operation, expectedOperation);
+    assert.equal(audit.outcome, 'REJECTED');
+    assert.equal(audit.reason_code, expectedCode);
+    assert.equal(audit.correlation_id, caught.correlation_id);
+    assert.match(audit.occurred_at, /^2026-09-01T02:00:[0-9]{2}\.000Z$/);
+    assert(Object.prototype.hasOwnProperty.call(audit, 'actor_id'));
+    assert(Object.prototype.hasOwnProperty.call(audit, 'actor_role'));
+    assert(Object.values(audit).every((value) =>
+      value === null || typeof value === 'string' || typeof value === 'number'));
+    const serializedAudit = JSON.stringify(audit);
+    assert.doesNotMatch(serializedAudit, new RegExp(sensitiveMarker));
+    assert.doesNotMatch(serializedAudit, /credential-secret|proxy-stack|raw-marker/);
+  }
+
+  for (const trapName of ['getPrototypeOf', 'ownKeys', 'getOwnPropertyDescriptor']) {
+    captureRejectedAttempt(
+      () => registry.registerAgentPackage(
+        trappedProxy(validRequest, trapName),
+        validAuthor,
+      ),
+      'INVALID_INPUT',
+      'REGISTER',
+    );
+    assert.equal(registry.getAgentPackage(registrationContent.agent_id, registrationContent.version), null);
+  }
+
+  const hostileThrownProxy = new Proxy({}, {
+    getPrototypeOf() {
+      throw new Error(sensitiveMarker);
+    },
+  });
+  captureRejectedAttempt(
+    () => registry.registerAgentPackage(
+      trappedProxy(validRequest, 'ownKeys', hostileThrownProxy),
+      validAuthor,
+    ),
+    'INVALID_INPUT',
+    'REGISTER',
+  );
+
+  for (const trapName of ['getPrototypeOf', 'ownKeys', 'getOwnPropertyDescriptor']) {
+    captureRejectedAttempt(
+      () => registry.registerAgentPackage(
+        validRequest,
+        trappedProxy(validAuthor, trapName),
+      ),
+      'INVALID_ACTOR',
+      'REGISTER',
+    );
+  }
+
+  const nestedProxyRequest = registrationRequest(registrationContent);
+  nestedProxyRequest.permissions = trappedProxy(nestedProxyRequest.permissions, 'ownKeys');
+  captureRejectedAttempt(
+    () => registry.registerAgentPackage(nestedProxyRequest, validAuthor),
+    'INVALID_INPUT',
+    'REGISTER',
+  );
+
+  const validCommand = {
+    agent_id: transitionContent.agent_id,
+    version: transitionContent.version,
+    to_status: STATUSES.IN_REVIEW,
+  };
+  const validReviewer = actor('reviewer.proxy', ACTOR_ROLES.REVIEWER);
+  for (const trapName of ['getPrototypeOf', 'ownKeys', 'getOwnPropertyDescriptor']) {
+    captureRejectedAttempt(
+      () => registry.transitionApproval(
+        trappedProxy(validCommand, trapName),
+        validReviewer,
+      ),
+      'INVALID_INPUT',
+      'TRANSITION',
+    );
+    assert.deepEqual(
+      registry.getAgentPackage(transitionContent.agent_id, transitionContent.version),
+      transitionSnapshot,
+    );
+  }
+
+  for (const trapName of ['getPrototypeOf', 'ownKeys', 'getOwnPropertyDescriptor']) {
+    captureRejectedAttempt(
+      () => registry.transitionApproval(
+        validCommand,
+        trappedProxy(validReviewer, trapName),
+      ),
+      'INVALID_ACTOR',
+      'TRANSITION',
+    );
+    assert.deepEqual(
+      registry.getAgentPackage(transitionContent.agent_id, transitionContent.version),
+      transitionSnapshot,
+    );
+  }
+
+  const records = registry.listAuditRecords();
+  assert.deepEqual(
+    records.map((record) => record.correlation_id),
+    records.map((record) => `reg4-correlation-${String(record.sequence).padStart(10, '0')}`),
+  );
+  let previous = '0'.repeat(64);
+  for (const record of records) {
+    assert.equal(record.previous_audit_sha256, previous);
+    const body = { ...record };
+    delete body.audit_sha256;
+    const expected = createHash('sha256')
+      .update(Buffer.from(JSON.stringify(body), 'utf8'))
+      .digest('hex');
+    assert.equal(record.audit_sha256, expected);
+    previous = record.audit_sha256;
+  }
+  assert.equal(
+    registry.getAgentPackage(transitionContent.agent_id, transitionContent.version).approval_status,
+    STATUSES.DRAFT,
+  );
+  assert.equal(registry.getAgentPackage(registrationContent.agent_id, registrationContent.version), null);
 });
