@@ -99,6 +99,32 @@ test('rejects missing keys, extra keys, and non-object entries', () => {
   }
 });
 
+test('rejects sparse arrays at every counted entry position', () => {
+  const onlyHole = new Array(1);
+  const leadingHole = new Array(2);
+  leadingHole[1] = descriptor('present.txt');
+
+  for (const input of [onlyHole, leadingHole]) {
+    assert.throws(
+      () => createCanonicalEvidenceManifest(input),
+      { name: 'TypeError', message: /entries\[0\].*object/ },
+    );
+  }
+});
+
+test('rejects unknown enumerable Symbol keys', () => {
+  const metadata = Symbol('metadata');
+  const entry = {
+    ...descriptor('symbol.txt'),
+    [metadata]: 'not allowed',
+  };
+
+  assert.throws(
+    () => createCanonicalEvidenceManifest([entry]),
+    { name: 'TypeError', message: /exactly.*keys/ },
+  );
+});
+
 test('rejects invalid path forms and duplicate paths', () => {
   const invalidPaths = [
     '',

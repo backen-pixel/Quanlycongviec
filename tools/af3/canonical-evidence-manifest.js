@@ -11,11 +11,13 @@ const PATH_CHARACTERS = /^[A-Za-z0-9._/-]+$/;
 const SHA256 = /^[0-9a-f]{64}$/;
 
 function assertExactKeys(entry, index) {
-  const keys = Object.keys(entry).sort();
+  const keys = Reflect.ownKeys(entry).filter((key) =>
+    Object.prototype.propertyIsEnumerable.call(entry, key),
+  );
 
   if (
     keys.length !== REQUIRED_KEYS.length ||
-    !keys.every((key, keyIndex) => key === REQUIRED_KEYS[keyIndex])
+    !REQUIRED_KEYS.every((requiredKey) => keys.includes(requiredKey))
   ) {
     throw new TypeError(
       `entries[${index}] must have exactly the enumerable own keys path, sha256, and bytes`,
@@ -86,7 +88,9 @@ function createCanonicalEvidenceManifest(entries) {
   }
 
   const paths = new Set();
-  const validatedEntries = entries.map((entry, index) => {
+  const validatedEntries = [];
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index];
     if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) {
       throw new TypeError(`entries[${index}] must be an object`);
     }
@@ -101,12 +105,12 @@ function createCanonicalEvidenceManifest(entries) {
     }
     paths.add(entry.path);
 
-    return {
+    validatedEntries.push({
       path: entry.path,
       sha256: entry.sha256,
       bytes: entry.bytes,
-    };
-  });
+    });
+  }
 
   validatedEntries.sort(compareAsciiPaths);
 
