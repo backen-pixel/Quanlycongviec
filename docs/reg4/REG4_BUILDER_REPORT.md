@@ -4,22 +4,25 @@
 
 | Field | Value |
 |---|---|
-| Status | `BUILDER CANDIDATE READY FOR INDEPENDENT QA` |
+| Status | `REPAIRED BUILDER CANDIDATE READY FOR INDEPENDENT QA RE-TEST` |
 | Actor | Builder Agent (`/root/reg4_builder`) |
 | Technical Git identity | `tudonghoa-dev <tudonghoa@vanphuthanh.net>` |
 | Working branch | `work/reg4-agent-registry-v1` |
 | Architect input commit | `7dea5f83a8ce8ba23807f974c143a5844759a8b3` |
 | Architect input tree | `40e8d1df7b916ad2b21e70a2e0aefb5391e30233` |
-| Implementation candidate commit | `66b291fe01aaf62d61c72b3cf9feecd4c2d1a9ef` |
-| Implementation candidate tree | `ba3162906f1cbcac5c8a703bbe9bf4367195efef` |
-| Builder self-repair rounds used | `1 / 2` |
+| Original implementation candidate commit / tree | `66b291fe01aaf62d61c72b3cf9feecd4c2d1a9ef` / `ba3162906f1cbcac5c8a703bbe9bf4367195efef` |
+| Founder-authorized repair parent commit / tree | `65d268aa682ff0c7888f731ed7aa98f632a307ca` / `6c5cb33fd988f0bb4f0520dcc68df9014b3f16f3` |
+| Repaired implementation candidate commit | `2e8e42af4bfb4d41881cee1eaeae56e487e54d26` |
+| Repaired implementation candidate tree | `f2ac3f068ae58c1ac53defd23d955a645edbbf78` |
+| Builder self-repair rounds used | `2 / 2` — exhausted |
 | Builder exception / waiver | None |
 
-The Builder verified the exact Architect input before implementation and read
-the complete root `AGENTS.md` and `docs/reg4/REG4_ARCHITECT_DESIGN.md`. The
-Builder changed only the three Builder-owned paths authorized by the design.
-The source and Builder test were committed together as the immutable
-implementation candidate before this report was created.
+The Builder verified the exact repair parent and clean worktree before repair,
+then reread the complete root `AGENTS.md` and relevant REG4 design, Builder,
+and Independent QA artifacts. Founder authorized repair round 2/2 for P1-01
+only. The Builder changed only the three Builder-owned paths authorized by the
+repair order. Source and Builder test were committed together as the repaired
+implementation candidate before this report update.
 
 ## 2. Proof implementation
 
@@ -38,6 +41,13 @@ using Node.js built-ins only. It implements:
 - one deterministic, append-only, SHA-256 hash-chained audit record for every
   accepted or rejected registration and transition attempt.
 
+Repair round 2 makes Proxy-sensitive extraction total/non-throwing, converts
+untrusted exceptions into bounded generic `RegistryError` values, and binds a
+deterministic fixed-format `correlation_id` into each audit preimage. The same
+correlation ID is returned on rejected-operation errors. No raw thrown object,
+message, cause, credential marker, or originating stack is retained or written
+to audit.
+
 The implementation does not access an application entry point, filesystem,
 environment, network, database, randomness, real data, Runtime, or Production.
 
@@ -45,13 +55,14 @@ environment, network, database, randomness, real data, Runtime, or Production.
 
 | File | Purpose | SHA-256 at candidate verification |
 |---|---|---|
-| `tools/reg4/agent-registry.js` | Registry implementation | `554e6447a85ad83f3e7c9a00cc323f6f653fd634b3a7386508c961e475ed1245` |
-| `tools/reg4/agent-registry.test.js` | Builder trace suite `REG4-B01` through `REG4-B12` | `ac3c66fc0e360caf1697fccffd0fe18b3040801696d00e98cff4687c460598e6` |
+| `tools/reg4/agent-registry.js` | Registry implementation and P1-01 containment | `ad54349471cea6080855e0ccf9f28d45d93aa9faaed2abeb0889659689adc97a` |
+| `tools/reg4/agent-registry.test.js` | Builder trace suite `REG4-B01` through `REG4-B12` plus `REG4-P1-01` | `7bbbfd00d9bc9bb9a98596703e1074fc55d25c6e1b1d8a3d22b9512297d8ca70` |
 | `docs/reg4/REG4_BUILDER_REPORT.md` | This Builder handoff record | Created after the candidate and excluded from the candidate tree |
 
-Relative to the Architect input, implementation candidate
-`66b291fe01aaf62d61c72b3cf9feecd4c2d1a9ef` changes exactly the first two
-paths. No existing file, dependency manifest, lockfile, application source,
+Relative to repair parent
+`65d268aa682ff0c7888f731ed7aa98f632a307ca`, repaired implementation candidate
+`2e8e42af4bfb4d41881cee1eaeae56e487e54d26` changes exactly the first two
+paths. No QA-owned file, dependency manifest, lockfile, application source,
 database, migration, baseline, deployment, Runtime, or Production artifact was
 modified.
 
@@ -71,6 +82,7 @@ modified.
 | `REG4-B10` | Input non-mutation, deep-copy getters/returns/audits, registry isolation, and read-only no-audit behavior |
 | `REG4-B11` | Exact shape, bounds, sparse positions, duplicate values, extra/Symbol/non-enumerable keys, and accessor rejection without getter execution |
 | `REG4-B12` | Deterministic injected timestamps and rejected-operation package timestamp non-mutation |
+| `REG4-P1-01` | Registration/transition Proxy traps, stable safe errors, exactly-one rejection audit, no partial state, correlation binding, no sensitive exception leakage, and complete hash-chain recomputation |
 
 ## 5. Commands and exact results
 
@@ -86,41 +98,38 @@ Before Builder changes these returned Architect commit
 `7dea5f83a8ce8ba23807f974c143a5844759a8b3`, Architect tree
 `40e8d1df7b916ad2b21e70a2e0aefb5391e30233`, and an empty porcelain status.
 
-### 5.2 Formal candidate test
+### 5.2 Formal repaired-candidate tests
 
 ```powershell
+node --test --test-name-pattern="REG4-P1-01" tools/reg4/agent-registry.test.js
 node --test tools/reg4/agent-registry.test.js
 ```
 
-Run from exact candidate commit
-`66b291fe01aaf62d61c72b3cf9feecd4c2d1a9ef`:
+Run from exact repaired candidate commit
+`2e8e42af4bfb4d41881cee1eaeae56e487e54d26`:
 
-- exit code: `0`;
-- tests: `12`;
-- pass: `12`;
-- fail: `0`;
-- cancelled: `0`;
-- skipped: `0`;
-- todo: `0`.
+| Command | Exit | Tests | Pass | Fail | Cancelled | Skipped | Todo |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Targeted `REG4-P1-01` | 0 | 1 | 1 | 0 | 0 | 0 | 0 |
+| Full Builder suite | 0 | 13 | 13 | 0 | 0 | 0 | 0 |
 
 ### 5.3 Repository and ownership gates
 
 ```powershell
+git diff --check 65d268aa682ff0c7888f731ed7aa98f632a307ca..HEAD
 git diff --check b19fef26e6ded04d6496c6478ff84eaf879f074e..HEAD
-git diff --name-only b19fef26e6ded04d6496c6478ff84eaf879f074e..HEAD
-git diff --name-only 7dea5f83a8ce8ba23807f974c143a5844759a8b3..HEAD
+git diff --name-only 65d268aa682ff0c7888f731ed7aa98f632a307ca..HEAD
 git status --short
 git rev-parse HEAD
 git show -s --format=%T HEAD
 git show -s --format="%an <%ae>" HEAD
 ```
 
-At candidate verification:
+At repaired-candidate verification:
 
-- `git diff --check` exited `0` with no output;
-- the branch-start diff listed exactly the Architect design and the two
-  implementation-candidate files;
-- the Architect-input diff listed exactly
+- both repair-parent and branch-start `git diff --check` commands exited `0`
+  with no output;
+- the repair-parent diff listed exactly
   `tools/reg4/agent-registry.js` and
   `tools/reg4/agent-registry.test.js`;
 - `git status --short` was empty;
@@ -133,11 +142,13 @@ At candidate verification:
 | Round | Trigger | Scope | Result |
 |---:|---|---|---|
 | 1 | First pre-candidate run passed `11/12`; the B11 fixture helper attempted to calculate a digest for deliberately duplicate malformed content before invoking the Registry | Builder test fixture only; replaced helper calculation with a syntactically valid placeholder digest so the malformed registration reaches the audited API | Next run and exact-candidate formal run passed `12/12` |
+| 2 | Founder-authorized P1-01: Proxy traps could throw outside safe extraction/catch boundaries, exposing a raw exception and omitting the required rejection audit | Builder source/test only; total safe extraction for hostile introspection, safe error normalization, deterministic correlated audit schema, and dedicated Proxy security test | Exact repaired candidate targeted test passed `1/1`; full Builder suite passed `13/13`; no partial mutation, double audit, or sensitive exception leakage observed |
 
-No implementation defect was found by the Builder suite. No second repair round
-was used. No exception, waiver, architecture deviation, new dependency,
-database, migration, Business Rule, secret, credential, real data, external
-service, Runtime, or Production access was required.
+Both authorized Builder repair rounds are now consumed; no third repair is
+authorized. No exception, waiver, dependency, database, migration, Business
+Rule, real secret, credential, real data, external service, Runtime, or
+Production access was required. The `correlation_id` audit extension is the
+Founder-authorized P1-01 remediation and must be independently re-tested.
 
 ## 7. Limitations retained by design
 
@@ -156,11 +167,12 @@ service, Runtime, or Production access was required.
 
 ## 8. Builder handoff
 
-Implementation candidate
-`66b291fe01aaf62d61c72b3cf9feecd4c2d1a9ef` at tree
-`ba3162906f1cbcac5c8a703bbe9bf4367195efef` is ready for a separately authored
-Independent QA suite and review. Builder does not claim Independent QA,
-Independent Review, a REG4 baseline, or Founder approval.
+Repaired implementation candidate
+`2e8e42af4bfb4d41881cee1eaeae56e487e54d26` at tree
+`f2ac3f068ae58c1ac53defd23d955a645edbbf78` is ready for separately authored
+Independent QA re-test and Independent Review. Builder does not claim P1-01
+closure, Independent QA, Independent Review, a REG4 baseline, or Founder
+approval.
 
 No push, force push, merge, tag, release, deployment, baseline mutation, MG5,
 OC6, OpenClaw, Model Gateway, Runtime, or Production action was performed by
