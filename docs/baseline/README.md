@@ -4,9 +4,10 @@ Thư mục này là hồ sơ kiểm soát phiên bản staging. Mỗi baseline p
 
 ## SF2-C2 canonical technical baseline
 
-- [`SF2C2_CANONICAL_BASELINE.md`](./SF2C2_CANONICAL_BASELINE.md): Founder-approved exact commit/tree, TT-1, IR-1 và residual-risk disposition; không phải Production readiness.
-- [`SF2C2_EVIDENCE_INDEX.md`](./SF2C2_EVIDENCE_INDEX.md): chỉ mục TT-1, IR-1, raw-result hashes và chuỗi traceability gắn với exact commit/tree.
-- [`SF2C2_RESIDUAL_RISK_REGISTER.md`](./SF2C2_RESIDUAL_RISK_REGISTER.md): ba P2 được Founder chấp nhận nhưng vẫn mở; không được miễn cho Runtime hoặc Production.
+- [`SF2C2_CANONICAL_BASELINE.md`](./SF2C2_CANONICAL_BASELINE.md): baseline hiện hành `bd281ab1...` / tree `3eb2266e...`, FTT `160/160`, Independent Review `160/160`, audit toàn bộ severity `0`; không phải Production readiness.
+- [`SF2C2_HISTORICAL_BASELINE_9c1bae61.md`](./SF2C2_HISTORICAL_BASELINE_9c1bae61.md): baseline tiền nhiệm `9c1bae61...` được bảo tồn làm historical audit record; không còn là mốc phát triển hiện hành.
+- [`SF2C2_EVIDENCE_INDEX.md`](./SF2C2_EVIDENCE_INDEX.md): chỉ mục candidate, FTT, IR, archive/artifact hashes, Founder approval và chuỗi traceability exact-SHA.
+- [`SF2C2_RESIDUAL_RISK_REGISTER.md`](./SF2C2_RESIDUAL_RISK_REGISTER.md): ba P2 hiện hành được Founder chấp nhận nhưng vẫn mở/theo dõi; không được suy rộng sang Runtime hoặc Production.
 
 - [`BUSINESS_OS_VNEXT_STAGING_BASELINE_01.md`](./BUSINESS_OS_VNEXT_STAGING_BASELINE_01.md): manifest mốc chuẩn.
 - [`BUSINESS_OS_CHANGE_INVENTORY_01.md`](./BUSINESS_OS_CHANGE_INVENTORY_01.md): phạm vi thay đổi được đóng gói.

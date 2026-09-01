@@ -298,6 +298,19 @@ Nghiệm thu theo vai trò thực tế, kiểm tra task gate, SLA, thông báo, 
 
 ## 8. Lịch sử quyết định
 
+### 2026-09-01 — Founder phê duyệt SF2-C2 canonical baseline mới sau Security Fast Track
+
+- Baseline hiện hành được ghi nhận tại full commit `bd281ab1d61d7177a593e449ac04ba1d4c79d882`, tree `3eb2266e4177fba76960316fa167895b01ec84fb`; trạng thái: **FOUNDER-APPROVED NEW SF2-C2 CANONICAL BASELINE / STOP**.
+- Baseline này thay thế `9c1bae61aa853eb438922b14bff720a32b6125d8` làm mốc phát triển SF2-C2 hiện hành. Baseline cũ vẫn là ancestor và được bảo tồn làm historical baseline; không được xóa hoặc viết lại.
+- Security scope thay `xlsx@0.18.5` bằng SheetJS Community Edition `0.20.3` từ `https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz`, SHA-256 `8dc73fc3b00203e72d176e85b50938627c7b086e607c682e8d3c22c02bb99fe8`, Git blob `b9df84a5c07d3bb78d75e310b7931e3dbf56783e`, sử dụng dependency local `file:../vendor/xlsx-0.20.3.tgz`.
+- SX-1 không đổi business source, Business Rules, database hoặc migration. Một remediation loop chỉ ổn định test harness; không nới deadline/memory control của adversarial parser.
+- Formal Traceable Test gắn exact SHA/tree đạt `160/160 PASS`; toàn bộ `153/153` development checks hiện hữu đạt; dependency audit Critical/High/Moderate/Low/Info đều `0`; pre/post worktree sạch.
+- Independent Review trong workspace riêng đạt **PASS / STOP**, rerun `160/160 PASS`, audit toàn bộ severity `0`, `P0=0`, `P1=0`, blocking findings `0`; reviewer không sửa candidate/source/test/FTT evidence.
+- Founder chấp nhận ba P2 còn mở cho quyết định baseline: commit/attestation chưa ký mật mã; resource limits mới là test evidence chứ chưa phải runtime assurance; export chưa chạy qua live delivery/storage. Các P2 vẫn `OPEN / TRACKED` và không được chuyển thành Production assurance.
+- FTT archive SHA-256: `714c4d2c63e41f1e5f1f82bb91b159ed41615b87ae6518618c8ee86748c9d6a4`. IR archive SHA-256: `23d6b7d8c0d93df85232343b1b2d49e02808ea933e35039a395e13fe6f2ad9be`.
+- Quyết định không cho phép merge vào main, push, tag, release, AF3, BOS-AI1, REG4, MG5, OC6, Business AI Runtime, OpenClaw Production, Production Deployment, migration, deploy hoặc tự mở phase tiếp theo.
+- Hồ sơ kiểm soát: `docs/MASTER_CONTEXT.md`, `docs/baseline/SF2C2_CANONICAL_BASELINE.md`, `docs/baseline/SF2C2_HISTORICAL_BASELINE_9c1bae61.md`, `docs/baseline/SF2C2_EVIDENCE_INDEX.md` và `docs/baseline/SF2C2_RESIDUAL_RISK_REGISTER.md`.
+
 ### 2026-08-31 — Founder phê duyệt SF2-C2 canonical technical baseline
 
 - Baseline bất biến được ghi nhận tại full commit `9c1bae61aa853eb438922b14bff720a32b6125d8`, tree `4cc8bde842bab081323e196caf41947112749b71`; trạng thái: **FOUNDER-APPROVED SF2-C2 CANONICAL BASELINE**.
