@@ -298,6 +298,43 @@ Nghiệm thu theo vai trò thực tế, kiểm tra task gate, SLA, thông báo, 
 
 ## 8. Lịch sử quyết định
 
+### 2026-09-01 — Founder phê duyệt AF3 Engineering Cell V1 Proof
+
+- Founder verdict: **AF3 Engineering Cell V1 Proof APPROVED**.
+- AF3 implementation baseline được khóa tại full commit
+  `c05d2f9a7cc8f8591df6d300301788dbca0ecc9b`, tree
+  `46f858c4b7bfc324f65d43b85c7c3a685cfc6087`.
+- AF3 final evidence record được khóa riêng tại full commit
+  `f26885ca99a533e8d1a221b9b9290584d3ebd23e`, tree
+  `ed52b2b39b5d8bc860a39ee551c0ae1bf32335aa`.
+- Điều kiện phân tách hai mốc đã được kiểm tra: diff từ `c05d2f9...` đến
+  `f26885c...` chỉ gồm Builder report, evidence package, Independent QA report
+  và QA-owned independent test. Implementation source và Builder test không
+  đổi sau mốc `c05d2f9...`.
+- Luồng vai trò đã được chứng minh và giữ tách biệt:
+  Founder Requirement → Architect Agent → Builder Agent → Independent QA Agent
+  → Evidence → Founder Decision.
+- Phạm vi proof: `7/20` file; không thay Business Rules, database/migration,
+  dependency, Runtime hoặc Production.
+- Formal result: Builder `11/11 PASS`, Independent QA `12/12 PASS`, combined
+  `23/23 PASS`; Independent Review `PASS`.
+- Open findings: `P0=0`, `P1=0`, `P2=0`; hai P2 lịch sử được sửa trong repair
+  round `1/2`; audit completeness `COMPLETE`; không waiver.
+- Worktree sạch; branch `work/af3-engineering-cell-v1` được push không force và
+  remote ref được xác minh đúng final evidence commit.
+- Quyết định này thay thế trạng thái `AF3 NOT_AUTHORIZED` của quyết định SF2-C2
+  trước đó chỉ cho phạm vi ghi nhận AF3 V1 Proof đã hoàn thành.
+- Quyết định không cho phép merge vào main, tag/release, BOS-AI1, REG4, MG5,
+  OC6, Business AI Runtime, OpenClaw Production, Production Deployment hoặc tự
+  mở một phase lớn tiếp theo.
+- Hồ sơ kiểm soát: `docs/MASTER_CONTEXT.md`,
+  `docs/af3/AF3_EVIDENCE_INDEX.md`, `docs/af3/AF3_ARCHITECT_DESIGN.md`,
+  `docs/af3/AF3_BUILDER_REPORT.md`,
+  `docs/af3/AF3_INDEPENDENT_QA_REPORT.md` và
+  `docs/af3/AF3_EVIDENCE_PACKAGE.md`.
+- Trạng thái sau cập nhật hồ sơ: **STOP / PENDING FOUNDER NEXT-PHASE
+  SELECTION**.
+
 ### 2026-09-01 — Founder phê duyệt SF2-C2 canonical baseline mới sau Security Fast Track
 
 - Baseline hiện hành được ghi nhận tại full commit `bd281ab1d61d7177a593e449ac04ba1d4c79d882`, tree `3eb2266e4177fba76960316fa167895b01ec84fb`; trạng thái: **FOUNDER-APPROVED NEW SF2-C2 CANONICAL BASELINE / STOP**.
