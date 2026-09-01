@@ -74,7 +74,7 @@ function errorJsonMiddleware(error, _req, res, _next) {
   });
 }
 
-test('dependency contract pins the 13 remediated packages and preserves xlsx', () => {
+test('dependency contract pins the 13 remediated packages and resolves approved vendored xlsx', () => {
   const expectedLockedVersions = {
     axios: '1.20.0',
     'body-parser': '2.3.0',
@@ -101,8 +101,9 @@ test('dependency contract pins the 13 remediated packages and preserves xlsx', (
 
   assert.equal(packageJson.dependencies['form-data'], '4.0.6');
   assert.equal(packageLock.packages[''].dependencies['form-data'], '4.0.6');
-  assert.equal(packageJson.dependencies.xlsx, '^0.18.5');
-  assert.equal(packageLock.packages['node_modules/xlsx'].version, '0.18.5');
+  assert.equal(packageJson.dependencies.xlsx, 'file:../vendor/xlsx-0.20.3.tgz');
+  assert.equal(packageLock.packages['node_modules/xlsx'].version, '0.20.3');
+  assert.equal(packageLock.packages['node_modules/xlsx'].resolved, 'file:../vendor/xlsx-0.20.3.tgz');
 });
 
 test('form-data escapes multipart field names and filenames against CRLF injection', () => {

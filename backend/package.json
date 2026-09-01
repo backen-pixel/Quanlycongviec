@@ -67,6 +67,7 @@
     "test:software-factory-sf2c1": "node --test tests/software-factory-sf2c1-distributed-proof.test.js",
     "test:software-factory-sf2c2": "node --test tests/software-factory-sf2c2-staging-factory.test.js",
     "test:sf2c2-security-remediation": "node --test tests/sf2c2-dependency-security-remediation.test.js",
+    "test:sx1-xlsx": "node --test tests/sx1-xlsx-security-remediation.test.js",
     "crm:route-inventory": "node scripts/crm-route-inventory.js --write",
     "cron:crm-missing-tasks": "node scripts/run-crm-missing-tasks-cron.js"
   },
@@ -100,7 +101,7 @@
     "tus-js-client": "^4.3.1",
     "undici": "8.10.1",
     "web-push": "^3.6.7",
-    "xlsx": "^0.18.5"
+    "xlsx": "file:../vendor/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
     "playwright": "^1.61.1"
