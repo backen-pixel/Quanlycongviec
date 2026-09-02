@@ -775,6 +775,44 @@ test('REG4-B12 uses deterministic timestamps and rejection never updates a packa
 
 test('REG4-P1-01 contains registration and transition Proxy traps with one safe correlated audit', () => {
   const sensitiveMarker = 'credential-secret-proxy-stack-raw-marker';
+  const canonicalMessages = {
+    INVALID_INPUT: 'input is invalid',
+    INVALID_ACTOR: 'actor context is invalid',
+  };
+  const allowedReasonCodes = new Set([
+    'REGISTERED',
+    'STATE_TRANSITIONED',
+    'INVALID_INPUT',
+    'INVALID_ACTOR',
+    'CREATOR_MISMATCH',
+    'PACKAGE_SHA256_MISMATCH',
+    'AGENT_VERSION_ALREADY_REGISTERED',
+    'IMMUTABLE_VERSION_CONFLICT',
+    'AGENT_VERSION_NOT_FOUND',
+    'INVALID_STATE_TRANSITION',
+    'ACTOR_NOT_AUTHORIZED',
+    'SELF_APPROVAL_DENIED',
+    'REQUIRED_EVIDENCE_MISSING',
+  ]);
+  const auditKeys = [
+    'sequence',
+    'audit_id',
+    'correlation_id',
+    'operation',
+    'outcome',
+    'reason_code',
+    'actor_id',
+    'actor_role',
+    'agent_id',
+    'version',
+    'from_status',
+    'to_status',
+    'supplied_package_sha256',
+    'resolved_package_sha256',
+    'occurred_at',
+    'previous_audit_sha256',
+    'audit_sha256',
+  ];
   const registry = createAgentRegistry({ now: clock('2026-09-01T02:00:00.000Z') });
   const registrationContent = packageContent({
     agent_id: 'proxy.registration',
@@ -812,7 +850,13 @@ test('REG4-P1-01 contains registration and transition Proxy traps with one safe 
 
     assert.equal(caught.name, 'RegistryError');
     assert.equal(caught.code, expectedCode);
+    assert.equal(caught.message, canonicalMessages[expectedCode]);
+    assert.equal(caught.stack, `RegistryError: ${canonicalMessages[expectedCode]}`);
     assert.match(caught.correlation_id, /^reg4-correlation-[0-9]{10}$/);
+    assert.deepEqual(
+      [...Reflect.ownKeys(caught)].sort(),
+      ['code', 'correlation_id', 'message', 'name', 'stack'],
+    );
     assert.doesNotMatch(caught.message, new RegExp(sensitiveMarker));
     assert.doesNotMatch(caught.stack, new RegExp(sensitiveMarker));
     assert.equal(Object.prototype.hasOwnProperty.call(caught, 'cause'), false);
@@ -824,7 +868,9 @@ test('REG4-P1-01 contains registration and transition Proxy traps with one safe 
     assert.equal(audit.operation, expectedOperation);
     assert.equal(audit.outcome, 'REJECTED');
     assert.equal(audit.reason_code, expectedCode);
+    assert(allowedReasonCodes.has(audit.reason_code));
     assert.equal(audit.correlation_id, caught.correlation_id);
+    assert.deepEqual(Object.keys(audit), auditKeys);
     assert.match(audit.occurred_at, /^2026-09-01T02:00:[0-9]{2}\.000Z$/);
     assert(Object.prototype.hasOwnProperty.call(audit, 'actor_id'));
     assert(Object.prototype.hasOwnProperty.call(audit, 'actor_role'));
@@ -916,7 +962,62 @@ test('REG4-P1-01 contains registration and transition Proxy traps with one safe 
     );
   }
 
+  const poisonRegistry = createAgentRegistry({ now: clock('2026-09-01T03:00:00.000Z') });
+  let previouslyIssuedError;
+  try {
+    poisonRegistry.registerAgentPackage({}, actor('author.one', ACTOR_ROLES.AUTHOR));
+  } catch (error) {
+    previouslyIssuedError = error;
+  }
+  previouslyIssuedError.code = 'SELF_APPROVAL_DENIED';
+  previouslyIssuedError.message = sensitiveMarker;
+  previouslyIssuedError.stack = sensitiveMarker;
+  previouslyIssuedError.cause = sensitiveMarker;
+  previouslyIssuedError.origin_stack = sensitiveMarker;
+  previouslyIssuedError.request_payload = { raw: sensitiveMarker };
+  captureRejectedAttempt(
+    () => registry.registerAgentPackage(
+      trappedProxy(validRequest, 'ownKeys', previouslyIssuedError),
+      validAuthor,
+    ),
+    'INVALID_INPUT',
+    'REGISTER',
+  );
+
+  previouslyIssuedError.code = 'HOSTILE_UNTRUSTED_CODE';
+  captureRejectedAttempt(
+    () => registry.registerAgentPackage(
+      trappedProxy(validRequest, 'getOwnPropertyDescriptor', previouslyIssuedError),
+      validAuthor,
+    ),
+    'INVALID_INPUT',
+    'REGISTER',
+  );
+
+  const proxyWrappedIssuedError = new Proxy(previouslyIssuedError, {
+    getPrototypeOf() {
+      throw new Error(sensitiveMarker);
+    },
+    get() {
+      throw new Error(sensitiveMarker);
+    },
+  });
+  captureRejectedAttempt(
+    () => registry.transitionApproval(
+      trappedProxy(validCommand, 'ownKeys', proxyWrappedIssuedError),
+      validReviewer,
+    ),
+    'INVALID_INPUT',
+    'TRANSITION',
+  );
+  assert.deepEqual(
+    registry.getAgentPackage(transitionContent.agent_id, transitionContent.version),
+    transitionSnapshot,
+  );
+
   const records = registry.listAuditRecords();
+  assert(records.every((record) => allowedReasonCodes.has(record.reason_code)));
+  assert(records.every((record) => Object.keys(record).join('|') === auditKeys.join('|')));
   assert.deepEqual(
     records.map((record) => record.correlation_id),
     records.map((record) => `reg4-correlation-${String(record.sequence).padStart(10, '0')}`),

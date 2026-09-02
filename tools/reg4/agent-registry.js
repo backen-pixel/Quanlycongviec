@@ -40,6 +40,25 @@ const ZERO_SHA256 = '0'.repeat(64);
 const MAX_COLLECTION_SIZE = 100;
 const MAX_REASON_LENGTH = 500;
 
+const ERROR_REASON_CATALOG = Object.freeze({
+  INVALID_INPUT: 'input is invalid',
+  INVALID_ACTOR: 'actor context is invalid',
+  CREATOR_MISMATCH: 'created_by does not match the registering actor',
+  PACKAGE_SHA256_MISMATCH: 'package SHA-256 does not match immutable content',
+  AGENT_VERSION_ALREADY_REGISTERED: 'Agent version is already registered',
+  IMMUTABLE_VERSION_CONFLICT: 'Agent version already binds different content',
+  AGENT_VERSION_NOT_FOUND: 'Agent version is not registered',
+  INVALID_STATE_TRANSITION: 'approval-state transition is not allowed',
+  ACTOR_NOT_AUTHORIZED: 'actor is not authorized for this operation',
+  SELF_APPROVAL_DENIED: 'self-approval is denied',
+  REQUIRED_EVIDENCE_MISSING: 'required approval evidence is missing',
+});
+const ACCEPTED_AUDIT_REASONS = Object.freeze({
+  REGISTER: 'REGISTERED',
+  TRANSITION: 'STATE_TRANSITIONED',
+});
+const registryErrorProvenance = new WeakMap();
+
 const TRANSITIONS = Object.freeze({
   [STATUSES.DRAFT]: Object.freeze({
     [STATUSES.IN_REVIEW]: ACTOR_ROLES.REVIEWER,
@@ -60,16 +79,22 @@ const TRANSITIONS = Object.freeze({
 });
 
 class RegistryError extends Error {
-  constructor(code, message) {
-    super(message);
+  constructor(code) {
+    const canonicalCode = Object.hasOwn(ERROR_REASON_CATALOG, code)
+      ? code
+      : 'INVALID_INPUT';
+    const canonicalMessage = ERROR_REASON_CATALOG[canonicalCode];
+    super(canonicalMessage);
     this.name = 'RegistryError';
-    this.code = code;
+    this.code = canonicalCode;
     this.correlation_id = null;
+    this.stack = `RegistryError: ${canonicalMessage}`;
+    registryErrorProvenance.set(this, canonicalCode);
   }
 }
 
-function fail(code, message) {
-  throw new RegistryError(code, message);
+function fail(code) {
+  throw new RegistryError(code);
 }
 
 function isPlainObject(value) {
@@ -80,14 +105,17 @@ function isPlainObject(value) {
   }
 }
 
-function normalizeRegistryError(error, fallbackCode, fallbackMessage) {
+function provenRegistryErrorCode(error) {
   try {
-    if (error instanceof RegistryError) return error;
+    return registryErrorProvenance.get(error) || null;
   } catch {
-    // A hostile thrown Proxy can trap prototype inspection. Fall through to a
-    // new bounded error without reading or retaining the untrusted exception.
+    return null;
   }
-  return new RegistryError(fallbackCode, fallbackMessage);
+}
+
+function normalizeRegistryError(error, fallbackCode) {
+  const provenCode = provenRegistryErrorCode(error);
+  return new RegistryError(provenCode || fallbackCode);
 }
 
 function attachCorrelationId(error, correlationId) {
@@ -296,13 +324,9 @@ function assertActor(actor) {
     }
     return { actor_id: actorId, role: actor.role };
   } catch (error) {
-    const normalized = normalizeRegistryError(
-      error,
-      'INVALID_ACTOR',
-      'actor context is invalid',
-    );
-    if (normalized.code === 'INVALID_INPUT') {
-      throw new RegistryError('INVALID_ACTOR', 'actor context is invalid');
+    const normalized = normalizeRegistryError(error, 'INVALID_ACTOR');
+    if (provenRegistryErrorCode(normalized) === 'INVALID_INPUT') {
+      throw new RegistryError('INVALID_ACTOR');
     }
     throw normalized;
   }
@@ -400,6 +424,12 @@ function createAgentRegistry(options) {
   function appendAudit(details) {
     const sequence = auditRecords.length + 1;
     const correlationId = `reg4-correlation-${String(sequence).padStart(10, '0')}`;
+    const reasonCode = details.outcome === 'ACCEPTED' &&
+      Object.hasOwn(ACCEPTED_AUDIT_REASONS, details.operation)
+      ? ACCEPTED_AUDIT_REASONS[details.operation]
+      : details.outcome === 'REJECTED' && Object.hasOwn(ERROR_REASON_CATALOG, details.reason_code)
+        ? details.reason_code
+        : 'INVALID_INPUT';
     const previousAuditSha256 = sequence === 1
       ? ZERO_SHA256
       : auditRecords[auditRecords.length - 1].audit_sha256;
@@ -409,7 +439,7 @@ function createAgentRegistry(options) {
       correlation_id: correlationId,
       operation: details.operation,
       outcome: details.outcome,
-      reason_code: details.reason_code,
+      reason_code: reasonCode,
       actor_id: details.actor_id,
       actor_role: details.actor_role,
       agent_id: details.agent_id,
@@ -499,16 +529,12 @@ function createAgentRegistry(options) {
       });
       return clonePackage(record);
     } catch (error) {
-      const registryError = normalizeRegistryError(
-        error,
-        'INVALID_INPUT',
-        'registration request is invalid',
-      );
+      const registryError = normalizeRegistryError(error, 'INVALID_INPUT');
       const existing = agentId && version ? packages.get(internalKey(agentId, version)) : null;
       const correlationId = appendAudit({
         operation: 'REGISTER',
         outcome: 'REJECTED',
-        reason_code: registryError.code,
+        reason_code: provenRegistryErrorCode(registryError),
         actor_id: safeActor.actor_id,
         actor_role: safeActor.actor_role,
         agent_id: agentId,
@@ -599,15 +625,11 @@ function createAgentRegistry(options) {
       });
       return clonePackage(existing);
     } catch (error) {
-      const registryError = normalizeRegistryError(
-        error,
-        'INVALID_INPUT',
-        'transition command is invalid',
-      );
+      const registryError = normalizeRegistryError(error, 'INVALID_INPUT');
       const correlationId = appendAudit({
         operation: 'TRANSITION',
         outcome: 'REJECTED',
-        reason_code: registryError.code,
+        reason_code: provenRegistryErrorCode(registryError),
         actor_id: safeActor.actor_id,
         actor_role: safeActor.actor_role,
         agent_id: agentId,
