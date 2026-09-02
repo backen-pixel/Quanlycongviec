@@ -123,49 +123,91 @@ function attachCorrelationId(error, correlationId) {
   return error;
 }
 
-function assertExactDataObject(value, requiredKeys, label, optionalKeys = []) {
-  if (!isPlainObject(value)) {
-    fail('INVALID_INPUT', `${label} must be a plain object`);
+function withinValidationBoundary(contextCode, operation) {
+  try {
+    return operation();
+  } catch {
+    throw new RegistryError(contextCode);
   }
+}
+
+function snapshotExactDataObject(
+  value,
+  requiredKeys,
+  label,
+  optionalKeys = [],
+  contextCode = 'INVALID_INPUT',
+) {
+  if (value === null || typeof value !== 'object') fail(contextCode);
+
+  const prototype = withinValidationBoundary(
+    contextCode,
+    () => Object.getPrototypeOf(value),
+  );
+  if (prototype !== Object.prototype) fail(contextCode);
 
   const allowedKeys = new Set([...requiredKeys, ...optionalKeys]);
-  const ownKeys = Reflect.ownKeys(value);
+  const ownKeys = withinValidationBoundary(contextCode, () => Reflect.ownKeys(value));
   if (
     ownKeys.some((key) => typeof key !== 'string' || !allowedKeys.has(key)) ||
     requiredKeys.some((key) => !ownKeys.includes(key))
   ) {
-    fail('INVALID_INPUT', `${label} has an invalid key set`);
+    fail(contextCode);
   }
 
+  const snapshot = {};
   for (const key of ownKeys) {
-    const descriptor = Object.getOwnPropertyDescriptor(value, key);
-    if (!descriptor.enumerable || !Object.prototype.hasOwnProperty.call(descriptor, 'value')) {
-      fail('INVALID_INPUT', `${label}.${String(key)} must be an enumerable data property`);
+    const descriptor = withinValidationBoundary(
+      contextCode,
+      () => Object.getOwnPropertyDescriptor(value, key),
+    );
+    if (
+      !descriptor ||
+      !descriptor.enumerable ||
+      !Object.prototype.hasOwnProperty.call(descriptor, 'value')
+    ) {
+      fail(contextCode);
     }
+    snapshot[key] = descriptor.value;
   }
+  return snapshot;
 }
 
-function assertDenseDataArray(value, label, minimum) {
-  if (!Array.isArray(value)) {
-    fail('INVALID_INPUT', `${label} must be an array`);
+function snapshotDenseDataArray(value, label, minimum) {
+  const isArray = withinValidationBoundary('INVALID_INPUT', () => Array.isArray(value));
+  if (!isArray) fail('INVALID_INPUT');
+
+  const lengthDescriptor = withinValidationBoundary(
+    'INVALID_INPUT',
+    () => Object.getOwnPropertyDescriptor(value, 'length'),
+  );
+  if (!lengthDescriptor || !Object.prototype.hasOwnProperty.call(lengthDescriptor, 'value')) {
+    fail('INVALID_INPUT');
   }
-  if (value.length < minimum || value.length > MAX_COLLECTION_SIZE) {
-    fail('INVALID_INPUT', `${label} must contain between ${minimum} and ${MAX_COLLECTION_SIZE} entries`);
+  const length = lengthDescriptor.value;
+  if (!Number.isInteger(length) || length < minimum || length > MAX_COLLECTION_SIZE) {
+    fail('INVALID_INPUT');
   }
 
-  const expectedKeys = Array.from({ length: value.length }, (_, index) => String(index));
-  const ownKeys = Reflect.ownKeys(value);
+  const expectedKeys = Array.from({ length }, (_, index) => String(index));
+  const ownKeys = withinValidationBoundary('INVALID_INPUT', () => Reflect.ownKeys(value));
   const permitted = new Set([...expectedKeys, 'length']);
   if (ownKeys.some((key) => typeof key !== 'string' || !permitted.has(key))) {
-    fail('INVALID_INPUT', `${label} must not contain extra keys`);
+    fail('INVALID_INPUT');
   }
 
+  const snapshot = [];
   for (const key of expectedKeys) {
-    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    const descriptor = withinValidationBoundary(
+      'INVALID_INPUT',
+      () => Object.getOwnPropertyDescriptor(value, key),
+    );
     if (!descriptor || !descriptor.enumerable || !Object.prototype.hasOwnProperty.call(descriptor, 'value')) {
-      fail('INVALID_INPUT', `${label} must be dense and contain data properties only`);
+      fail('INVALID_INPUT');
     }
+    snapshot.push(descriptor.value);
   }
+  return snapshot;
 }
 
 function assertAgentId(value, label = 'agent_id') {
@@ -217,11 +259,11 @@ function assertName(value) {
 }
 
 function copyUniqueTokenArray(value, label, minimum) {
-  assertDenseDataArray(value, label, minimum);
+  const source = snapshotDenseDataArray(value, label, minimum);
   const copy = [];
   const seen = new Set();
-  for (let index = 0; index < value.length; index += 1) {
-    const token = assertToken(value[index], `${label}[${index}]`);
+  for (let index = 0; index < source.length; index += 1) {
+    const token = assertToken(source[index], `${label}[${index}]`);
     if (seen.has(token)) {
       fail('INVALID_INPUT', `${label} contains duplicate token ${token}`);
     }
@@ -232,45 +274,45 @@ function copyUniqueTokenArray(value, label, minimum) {
 }
 
 function copyEvidenceReferences(value) {
-  assertDenseDataArray(value, 'evidence_references', 0);
+  const source = snapshotDenseDataArray(value, 'evidence_references', 0);
   const copy = [];
   const seenIds = new Set();
-  for (let index = 0; index < value.length; index += 1) {
-    const reference = value[index];
+  for (let index = 0; index < source.length; index += 1) {
+    const reference = source[index];
     const label = `evidence_references[${index}]`;
-    assertExactDataObject(reference, EVIDENCE_KEYS, label);
-    const evidenceId = assertToken(reference.evidence_id, `${label}.evidence_id`);
+    const referenceData = snapshotExactDataObject(reference, EVIDENCE_KEYS, label);
+    const evidenceId = assertToken(referenceData.evidence_id, `${label}.evidence_id`);
     if (seenIds.has(evidenceId)) {
       fail('INVALID_INPUT', `evidence_references contains duplicate evidence_id ${evidenceId}`);
     }
-    if (!['AUTOMATED_TEST', 'INDEPENDENT_REVIEW'].includes(reference.evidence_type)) {
+    if (!['AUTOMATED_TEST', 'INDEPENDENT_REVIEW'].includes(referenceData.evidence_type)) {
       fail('INVALID_INPUT', `${label}.evidence_type is invalid`);
     }
-    if (!['PASS', 'FAIL'].includes(reference.result)) {
+    if (!['PASS', 'FAIL'].includes(referenceData.result)) {
       fail('INVALID_INPUT', `${label}.result is invalid`);
     }
     seenIds.add(evidenceId);
     copy.push({
       evidence_id: evidenceId,
-      evidence_type: reference.evidence_type,
-      result: reference.result,
-      sha256: assertSha256(reference.sha256, `${label}.sha256`),
+      evidence_type: referenceData.evidence_type,
+      result: referenceData.result,
+      sha256: assertSha256(referenceData.sha256, `${label}.sha256`),
     });
   }
   return copy;
 }
 
 function copyImmutableContent(content) {
-  assertExactDataObject(content, IMMUTABLE_KEYS, 'package content');
+  const source = snapshotExactDataObject(content, IMMUTABLE_KEYS, 'package content');
   return {
-    agent_id: assertAgentId(content.agent_id),
-    name: assertName(content.name),
-    version: assertVersion(content.version),
-    created_by: assertToken(content.created_by, 'created_by'),
-    permissions: copyUniqueTokenArray(content.permissions, 'permissions', 1),
-    required_tools: copyUniqueTokenArray(content.required_tools, 'required_tools', 0),
-    prohibited_actions: copyUniqueTokenArray(content.prohibited_actions, 'prohibited_actions', 1),
-    evidence_references: copyEvidenceReferences(content.evidence_references),
+    agent_id: assertAgentId(source.agent_id),
+    name: assertName(source.name),
+    version: assertVersion(source.version),
+    created_by: assertToken(source.created_by, 'created_by'),
+    permissions: copyUniqueTokenArray(source.permissions, 'permissions', 1),
+    required_tools: copyUniqueTokenArray(source.required_tools, 'required_tools', 0),
+    prohibited_actions: copyUniqueTokenArray(source.prohibited_actions, 'prohibited_actions', 1),
+    evidence_references: copyEvidenceReferences(source.evidence_references),
   };
 }
 
@@ -317,12 +359,18 @@ function digestMatches(supplied, resolved) {
 
 function assertActor(actor) {
   try {
-    assertExactDataObject(actor, ACTOR_KEYS, 'actor');
-    const actorId = assertToken(actor.actor_id, 'actor.actor_id');
-    if (!Object.values(ACTOR_ROLES).includes(actor.role)) {
+    const source = snapshotExactDataObject(
+      actor,
+      ACTOR_KEYS,
+      'actor',
+      [],
+      'INVALID_ACTOR',
+    );
+    const actorId = assertToken(source.actor_id, 'actor.actor_id');
+    if (!Object.values(ACTOR_ROLES).includes(source.role)) {
       fail('INVALID_ACTOR', 'actor.role is invalid');
     }
-    return { actor_id: actorId, role: actor.role };
+    return { actor_id: actorId, role: source.role };
   } catch (error) {
     const normalized = normalizeRegistryError(error, 'INVALID_ACTOR');
     if (provenRegistryErrorCode(normalized) === 'INVALID_INPUT') {
@@ -408,12 +456,12 @@ function internalKey(agentId, version) {
 }
 
 function createAgentRegistry(options) {
-  assertExactDataObject(options, ['now'], 'registry options');
-  if (typeof options.now !== 'function') {
+  const optionData = snapshotExactDataObject(options, ['now'], 'registry options');
+  if (typeof optionData.now !== 'function') {
     fail('INVALID_INPUT', 'registry options.now must be a function');
   }
 
-  const now = options.now;
+  const now = optionData.now;
   const packages = new Map();
   const auditRecords = [];
 
@@ -465,10 +513,14 @@ function createAgentRegistry(options) {
 
     try {
       const validatedActor = assertActor(actor);
-      assertExactDataObject(request, REGISTER_KEYS, 'registration request');
-      const suppliedDigest = assertSha256(request.package_sha256, 'package_sha256');
+      const requestData = snapshotExactDataObject(
+        request,
+        REGISTER_KEYS,
+        'registration request',
+      );
+      const suppliedDigest = assertSha256(requestData.package_sha256, 'package_sha256');
       const immutableInput = {};
-      for (const key of IMMUTABLE_KEYS) immutableInput[key] = request[key];
+      for (const key of IMMUTABLE_KEYS) immutableInput[key] = requestData[key];
       const immutableContent = copyImmutableContent(immutableInput);
 
       agentId = immutableContent.agent_id;
@@ -559,20 +611,25 @@ function createAgentRegistry(options) {
 
     try {
       const validatedActor = assertActor(actor);
-      assertExactDataObject(command, TRANSITION_KEYS, 'transition command', ['reason']);
-      agentId = assertAgentId(command.agent_id);
-      version = assertVersion(command.version);
-      if (!Object.values(STATUSES).includes(command.to_status)) {
+      const commandData = snapshotExactDataObject(
+        command,
+        TRANSITION_KEYS,
+        'transition command',
+        ['reason'],
+      );
+      agentId = assertAgentId(commandData.agent_id);
+      version = assertVersion(commandData.version);
+      if (!Object.values(STATUSES).includes(commandData.to_status)) {
         fail('INVALID_INPUT', 'to_status is invalid');
       }
-      toStatus = command.to_status;
-      if (Object.prototype.hasOwnProperty.call(command, 'reason')) {
+      toStatus = commandData.to_status;
+      if (Object.prototype.hasOwnProperty.call(commandData, 'reason')) {
         if (
-          typeof command.reason !== 'string' ||
-          command.reason !== command.reason.trim() ||
-          command.reason.length < 1 ||
-          command.reason.length > MAX_REASON_LENGTH ||
-          /\p{Cc}/u.test(command.reason)
+          typeof commandData.reason !== 'string' ||
+          commandData.reason !== commandData.reason.trim() ||
+          commandData.reason.length < 1 ||
+          commandData.reason.length > MAX_REASON_LENGTH ||
+          /\p{Cc}/u.test(commandData.reason)
         ) {
           fail('INVALID_INPUT', `reason must be trimmed text of 1 through ${MAX_REASON_LENGTH} characters`);
         }

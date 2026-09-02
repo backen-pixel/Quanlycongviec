@@ -1015,6 +1015,158 @@ test('REG4-P1-01 contains registration and transition Proxy traps with one safe 
     transitionSnapshot,
   );
 
+  function genuinePolicyErrors() {
+    const source = createAgentRegistry({ now: clock('2026-09-01T04:00:00.000Z') });
+    const selfContent = packageContent({
+      agent_id: 'replay.source-self',
+      version: '1.0.0',
+      created_by: 'replay.author',
+    });
+    register(source, selfContent);
+    transition(
+      source,
+      selfContent,
+      STATUSES.IN_REVIEW,
+      actor('replay.reviewer', ACTOR_ROLES.REVIEWER),
+    );
+    let selfApproval;
+    try {
+      transition(
+        source,
+        selfContent,
+        STATUSES.APPROVED,
+        actor(selfContent.created_by, ACTOR_ROLES.APPROVER),
+      );
+    } catch (error) {
+      selfApproval = error;
+    }
+    assert.equal(selfApproval.code, 'SELF_APPROVAL_DENIED');
+
+    const roleContent = packageContent({
+      agent_id: 'replay.source-role',
+      version: '1.0.0',
+      created_by: 'replay.role-author',
+    });
+    register(source, roleContent);
+    let unauthorized;
+    try {
+      transition(
+        source,
+        roleContent,
+        STATUSES.IN_REVIEW,
+        actor('replay.wrong-role', ACTOR_ROLES.AUTHOR),
+      );
+    } catch (error) {
+      unauthorized = error;
+    }
+    assert.equal(unauthorized.code, 'ACTOR_NOT_AUTHORIZED');
+    return { selfApproval, unauthorized };
+  }
+
+  const replayed = genuinePolicyErrors();
+  for (const [label, error] of Object.entries(replayed)) {
+    error.code = `PUBLIC_TAMPER_${label}`;
+    error.message = `${sensitiveMarker}:${label}:message`;
+    error.stack = `${sensitiveMarker}:${label}:stack:C:\\internal\\registry.js`;
+    error.cause = { raw: `${sensitiveMarker}:${label}:cause` };
+    error.request_payload = { credential: sensitiveMarker };
+    error[Symbol(`replay-${label}`)] = sensitiveMarker;
+  }
+  const wrappedSelfApproval = new Proxy(replayed.selfApproval, {});
+  const wrappedUnauthorized = new Proxy(replayed.unauthorized, {});
+
+  const replayCases = [
+    {
+      action: () => registry.registerAgentPackage(
+        trappedProxy(validRequest, 'ownKeys', replayed.selfApproval),
+        validAuthor,
+      ),
+      code: 'INVALID_INPUT',
+      operation: 'REGISTER',
+    },
+    {
+      action: () => registry.registerAgentPackage(
+        validRequest,
+        trappedProxy(validAuthor, 'getOwnPropertyDescriptor', replayed.unauthorized),
+      ),
+      code: 'INVALID_ACTOR',
+      operation: 'REGISTER',
+    },
+    {
+      action: () => registry.transitionApproval(
+        trappedProxy(validCommand, 'ownKeys', replayed.selfApproval),
+        validReviewer,
+      ),
+      code: 'INVALID_INPUT',
+      operation: 'TRANSITION',
+    },
+    {
+      action: () => registry.transitionApproval(
+        validCommand,
+        trappedProxy(validReviewer, 'getOwnPropertyDescriptor', replayed.unauthorized),
+      ),
+      code: 'INVALID_ACTOR',
+      operation: 'TRANSITION',
+    },
+    {
+      action: () => registry.registerAgentPackage(
+        trappedProxy(validRequest, 'ownKeys', wrappedSelfApproval),
+        validAuthor,
+      ),
+      code: 'INVALID_INPUT',
+      operation: 'REGISTER',
+    },
+    {
+      action: () => registry.transitionApproval(
+        validCommand,
+        trappedProxy(validReviewer, 'getOwnPropertyDescriptor', wrappedUnauthorized),
+      ),
+      code: 'INVALID_ACTOR',
+      operation: 'TRANSITION',
+    },
+  ];
+  for (const replayCase of replayCases) {
+    captureRejectedAttempt(replayCase.action, replayCase.code, replayCase.operation);
+    assert.equal(
+      registry.getAgentPackage(registrationContent.agent_id, registrationContent.version),
+      null,
+    );
+    assert.deepEqual(
+      registry.getAgentPackage(transitionContent.agent_id, transitionContent.version),
+      transitionSnapshot,
+    );
+  }
+
+  const getContent = packageContent({
+    agent_id: 'proxy.get-snapshot',
+    version: '1.0.0',
+    created_by: 'proxy.get-author',
+  });
+  const getRequest = registrationRequest(getContent);
+  const getAuthor = actor(getContent.created_by, ACTOR_ROLES.AUTHOR);
+  const beforeGetRegistration = registry.listAuditRecords().length;
+  const getRegistered = registry.registerAgentPackage(
+    trappedProxy(getRequest, 'get', replayed.selfApproval),
+    trappedProxy(getAuthor, 'get', replayed.unauthorized),
+  );
+  assert.equal(getRegistered.approval_status, STATUSES.DRAFT);
+  assert.equal(registry.listAuditRecords().length, beforeGetRegistration + 1);
+  assert.equal(registry.listAuditRecords().at(-1).reason_code, 'REGISTERED');
+
+  const beforeGetTransition = registry.listAuditRecords().length;
+  const getReviewed = registry.transitionApproval(
+    trappedProxy({
+      agent_id: getContent.agent_id,
+      version: getContent.version,
+      to_status: STATUSES.IN_REVIEW,
+    }, 'get', replayed.selfApproval),
+    trappedProxy(actor('proxy.get-reviewer', ACTOR_ROLES.REVIEWER), 'get', replayed.unauthorized),
+  );
+  assert.equal(getReviewed.approval_status, STATUSES.IN_REVIEW);
+  assert.equal(registry.listAuditRecords().length, beforeGetTransition + 1);
+  assert.equal(registry.listAuditRecords().at(-1).reason_code, 'STATE_TRANSITIONED');
+  assert.doesNotMatch(JSON.stringify(getReviewed), new RegExp(sensitiveMarker));
+
   const records = registry.listAuditRecords();
   assert(records.every((record) => allowedReasonCodes.has(record.reason_code)));
   assert(records.every((record) => Object.keys(record).join('|') === auditKeys.join('|')));
