@@ -514,3 +514,84 @@ test('L05 rollback and compensation are explicit for READ and DRAFT', () => {
   assert.deepEqual([read.rollback, read.compensation], ['NOT_APPLICABLE', 'NOT_APPLICABLE']);
   assert.deepEqual([draft.rollback, draft.compensation, draft.draft_disposition], ['NOT_REQUIRED', 'EXPIRE_DRAFT', 'COMMITTED_NON_CANONICAL']);
 });
+
+test('P1C-01 hostile Proxy exception returns one safe DENY audit record', () => {
+  const { proof } = setup();
+  const hostileThrown = new Proxy({}, {
+    getPrototypeOf() { throw new Error('secondary attacker-controlled trap'); },
+    get() { throw new Error('attacker-controlled metadata'); },
+  });
+  const hostileRequest = new Proxy({}, {
+    getPrototypeOf() { throw hostileThrown; },
+  });
+  let result;
+  assert.doesNotThrow(() => { result = proof.invoke(hostileRequest); });
+  assert.deepEqual([result.decision, result.reason_code], [DECISIONS.DENY, REASON_CODES.INVALID_REQUEST]);
+  assert.equal(proof.listDrafts().length, 0);
+  const records = proof.listAuditRecords();
+  assert.equal(records.length, 1);
+  assert.equal(records[0].effect, 'NONE');
+  assert.equal(JSON.stringify(records).includes('attacker-controlled'), false);
+});
+
+test('P1C-02 final trusted resolver retirement is caught by last REG4 revalidation', () => {
+  const reg = makeRegistry();
+  const fixtures = makeFixtures();
+  fixtures.identities.executor.package_sha256 = reg.sha256;
+  const originalGetPolicy = fixtures.resolvers.getPolicy;
+  let policyReads = 0;
+  fixtures.resolvers.getPolicy = (companyId) => {
+    policyReads += 1;
+    if (policyReads === 2) {
+      reg.registry.transitionApproval(
+        { agent_id: AGENT_CONTRACT.agent_id, version: AGENT_CONTRACT.version, to_status: STATUSES.RETIRED },
+        { actor_id: 'registry.admin', role: ACTOR_ROLES.REGISTRY_ADMIN },
+      );
+    }
+    return originalGetPolicy(companyId);
+  };
+  const proof = createProjectProgressBriefProof({ registry: reg.registry, now: () => NOW, resolvers: fixtures.resolvers });
+  const result = proof.invoke(makeRequest(reg.sha256, 'DRAFT'));
+  assert.deepEqual([result.decision, result.reason_code], [DECISIONS.DENY, REASON_CODES.AGENT_RETIRED]);
+  assertNoEffect(proof);
+  assert.equal(proof.listAuditRecords().length, 1);
+});
+
+test('P1C-03 unresolved claimed approver is denied and not recorded as verified', () => {
+  const { proof, sha256, fixtures } = setup();
+  delete fixtures.identities.approver;
+  const result = proof.invoke(makeRequest(sha256, 'DRAFT'));
+  assert.deepEqual([result.decision, result.reason_code], [DECISIONS.DENY, REASON_CODES.FORGED_AUTHORITY]);
+  assertNoEffect(proof);
+  const records = proof.listAuditRecords();
+  assert.equal(records.length, 1);
+  assert.equal(records[0].claimed_approver_id, 'approver');
+  assert.equal(records[0].approver_id, null);
+});
+
+test('P1C-04 reentrant same delivery commits one draft and outer call recovers duplicate', () => {
+  const reg = makeRegistry();
+  const fixtures = makeFixtures();
+  fixtures.identities.executor.package_sha256 = reg.sha256;
+  let proof;
+  let entered = false;
+  let nestedResult = null;
+  proof = createProjectProgressBriefProof({
+    registry: reg.registry,
+    now: () => NOW,
+    resolvers: fixtures.resolvers,
+    beforeFinalRevalidation: ({ request }) => {
+      if (entered) return;
+      entered = true;
+      nestedResult = proof.invoke({ ...request, request_id: 'request-reentrant-inner', correlation_id: 'reentrant-inner' });
+    },
+  });
+  const outerResult = proof.invoke(makeRequest(reg.sha256, 'DRAFT'));
+  assert.deepEqual([nestedResult.decision, nestedResult.reason_code], [DECISIONS.ALLOW, REASON_CODES.OK]);
+  assert.deepEqual([outerResult.decision, outerResult.reason_code], [DECISIONS.ALLOW, REASON_CODES.DUPLICATE_REQUEST]);
+  assert.equal(proof.listDrafts().length, 1);
+  const records = proof.listAuditRecords();
+  assert.equal(records.length, 2);
+  assert.deepEqual(records.map((record) => record.effect), ['DRAFT_CREATED', 'DUPLICATE_RETURNED']);
+  assert.deepEqual(records.map((record) => record.duplicate), [false, true]);
+});

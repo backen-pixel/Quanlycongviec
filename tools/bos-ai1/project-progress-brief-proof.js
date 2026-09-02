@@ -82,17 +82,20 @@ const REQUEST_KEYS = Object.freeze([
 const REQUIRED_REQUEST_KEYS = Object.freeze(REQUEST_KEYS.filter((key) =>
   !['approval_id', 'claimed_role', 'claimed_permissions'].includes(key)));
 
-class ProofDecision extends Error {
-  constructor(decision, reasonCode) {
-    super(reasonCode);
-    this.name = 'ProofDecision';
-    this.decision = decision;
-    this.reason_code = reasonCode;
-  }
-}
+const proofDecisionProvenance = new WeakMap();
 
 function decide(decision, reasonCode) {
-  throw new ProofDecision(decision, reasonCode);
+  const marker = Object.freeze(Object.create(null));
+  proofDecisionProvenance.set(marker, Object.freeze({ decision, reason_code: reasonCode }));
+  throw marker;
+}
+
+function provenProofDecision(value) {
+  try {
+    return proofDecisionProvenance.get(value) || null;
+  } catch {
+    return null;
+  }
 }
 
 function isPlainObject(value) {
@@ -329,7 +332,9 @@ function createProjectProgressBriefProof({ registry, now, resolvers, beforeFinal
     const executor = resolve('getIdentity', request.executor_id);
     const represented = resolve('getIdentity', request.on_behalf_of);
     const approver = request.approver_id === 'none' ? null : resolve('getIdentity', request.approver_id);
-    if (!requester || !executor || !represented || requester.identity_id !== request.requester_id ||
+    const approverRequired = request.approver_id !== 'none';
+    if (!requester || !executor || !represented || (approverRequired && !approver) ||
+        requester.identity_id !== request.requester_id ||
         executor.identity_id !== request.executor_id || represented.identity_id !== request.on_behalf_of ||
         (approver && approver.identity_id !== request.approver_id) ||
         principalsInactive(requester, executor, represented, approver)) {
@@ -454,14 +459,15 @@ function createProjectProgressBriefProof({ registry, now, resolvers, beforeFinal
     };
   }
 
-  function auditContext(request) {
+  function auditContext(request, verifiedApproverId) {
     if (!request) return {};
     const copyIfToken = (value) => typeof value === 'string' && TOKEN_PATTERN.test(value) ? value : null;
     return {
       request_id: copyIfToken(request.request_id),
       idempotency_key_sha256: typeof request.idempotency_key === 'string' ? hashValue(request.idempotency_key) : null,
       requester_id: copyIfToken(request.requester_id), executor_id: copyIfToken(request.executor_id),
-      on_behalf_of: copyIfToken(request.on_behalf_of), approver_id: copyIfToken(request.approver_id),
+      on_behalf_of: copyIfToken(request.on_behalf_of),
+      claimed_approver_id: copyIfToken(request.approver_id), approver_id: copyIfToken(verifiedApproverId),
       approval_id: copyIfToken(request.approval_id), agent_id: copyIfToken(request.agent_id),
       agent_version: copyIfToken(request.agent_version), package_sha256: SHA256_PATTERN.test(request.package_sha256 || '') ? request.package_sha256 : null,
       reg4_baseline_commit: request.reg4_baseline_commit === REG4_BASELINE.commit ? REG4_BASELINE.commit : null,
@@ -476,7 +482,7 @@ function createProjectProgressBriefProof({ registry, now, resolvers, beforeFinal
     };
   }
 
-  function appendLedger({ timestamp, request, response, effect, duplicate, contextDigestValue }) {
+  function appendLedger({ timestamp, request, response, effect, duplicate, contextDigestValue, verifiedApproverId }) {
     const sequence = ledger.length + 1;
     const previous = sequence === 1 ? ZERO_SHA256 : ledger[ledger.length - 1].audit_sha256;
     let rollback = 'NOT_APPLICABLE';
@@ -500,7 +506,7 @@ function createProjectProgressBriefProof({ registry, now, resolvers, beforeFinal
       audit_id: `bos-ai1-audit-${String(sequence).padStart(6, '0')}`,
       correlation_id: `bos-ai1-correlation-${String(sequence).padStart(10, '0')}`,
       occurred_at: timestamp,
-      ...auditContext(request),
+      ...auditContext(request, verifiedApproverId),
       duplicate: duplicate === true,
       context_sha256: contextDigestValue || null,
       decision: response.decision,
@@ -525,6 +531,7 @@ function createProjectProgressBriefProof({ registry, now, resolvers, beforeFinal
     let effect = 'NONE';
     let duplicate = false;
     let digestOfContext = null;
+    let verifiedApproverId = null;
     try {
       if (clock.unavailable) decide(DECISIONS.DENY, REASON_CODES.DEPENDENCY_UNAVAILABLE);
       request = copyRequest(rawRequest);
@@ -533,6 +540,7 @@ function createProjectProgressBriefProof({ registry, now, resolvers, beforeFinal
       validateTool(request);
       readAgent(request, false);
       const initialContext = trustedContext(request, clock.value);
+      verifiedApproverId = initialContext.approver ? initialContext.approver.identity_id : null;
       digestOfContext = contextDigest(initialContext);
       const semanticDigest = requestDigest(request);
       const existingDelivery = idempotency.get(request.idempotency_key);
@@ -545,11 +553,17 @@ function createProjectProgressBriefProof({ registry, now, resolvers, beforeFinal
       } catch {
         decide(DECISIONS.DENY, REASON_CODES.DEPENDENCY_UNAVAILABLE);
       }
-      readAgent(request, true);
+      verifiedApproverId = null;
       const finalContext = trustedContext(request, clock.value);
+      verifiedApproverId = finalContext.approver ? finalContext.approver.identity_id : null;
       if (contextDigest(finalContext) !== digestOfContext) decide(DECISIONS.DENY, REASON_CODES.CONTEXT_CHANGED);
-      if (existingDelivery) {
-        const draft = drafts.get(existingDelivery.draft_id);
+      readAgent(request, true);
+      const finalDelivery = idempotency.get(request.idempotency_key);
+      if (finalDelivery && finalDelivery.request_sha256 !== semanticDigest) {
+        decide(DECISIONS.DENY, REASON_CODES.IDEMPOTENCY_CONFLICT);
+      }
+      if (finalDelivery) {
+        const draft = drafts.get(finalDelivery.draft_id);
         if (!draft) decide(DECISIONS.DENY, REASON_CODES.DEPENDENCY_UNAVAILABLE);
         duplicate = true;
         effect = 'DUPLICATE_RETURNED';
@@ -580,14 +594,23 @@ function createProjectProgressBriefProof({ registry, now, resolvers, beforeFinal
         decide(DECISIONS.STOP, REASON_CODES.FOUNDER_DECISION_REQUIRED);
       }
     } catch (error) {
-      if (error instanceof ProofDecision && OUTCOME.has(error.decision) && Object.hasOwn(REASON_CODES, error.reason_code)) {
-        response = { decision: error.decision, reason_code: error.reason_code, result: null };
+      const provenDecision = provenProofDecision(error);
+      if (provenDecision && OUTCOME.has(provenDecision.decision) && Object.hasOwn(REASON_CODES, provenDecision.reason_code)) {
+        response = { decision: provenDecision.decision, reason_code: provenDecision.reason_code, result: null };
       } else {
         response = { decision: DECISIONS.DENY, reason_code: REASON_CODES.INVALID_REQUEST, result: null };
       }
       effect = 'NONE';
     }
-    appendLedger({ timestamp: clock.value, request, response, effect, duplicate, contextDigestValue: digestOfContext });
+    appendLedger({
+      timestamp: clock.value,
+      request,
+      response,
+      effect,
+      duplicate,
+      contextDigestValue: digestOfContext,
+      verifiedApproverId,
+    });
     return deepFreeze(clone(response));
   }
 
