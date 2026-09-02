@@ -291,4 +291,3 @@ After a successful matching push, the only remaining decision belongs to the
 Founder:
 
 `APPROVE REG4 BASELINE` or `DENY REG4 BASELINE`.
-
