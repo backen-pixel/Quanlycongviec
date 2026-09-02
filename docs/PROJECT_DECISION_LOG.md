@@ -298,6 +298,49 @@ Nghiệm thu theo vai trò thực tế, kiểm tra task gate, SLA, thông báo, 
 
 ## 8. Lịch sử quyết định
 
+### 2026-09-02 — Founder phê duyệt MG5 Proof Baseline V1
+
+- Founder verdict: **MG5 Proof Baseline V1 APPROVED**.
+- MG5 Proof Technical Baseline được khóa tại full commit
+  `c0ba1b282422c68bd96478d7585f2c2381198420`, tree
+  `02f6ed227a288009f449ef9de4e94ba98ceb6c33`.
+- MG5 Final Evidence Record được khóa riêng tại full commit
+  `347ddd2d97a2dfb4f52322086b2c49d568404fee`, tree
+  `1751d0de44d1096764c535cd2a33940b8d6a2120`. Mốc hồ sơ không thay thế
+  Technical Baseline.
+- Formal Traceable Test và Independent Review đều được xác minh gắn exact
+  Technical Baseline `c0ba1b28...` / `02f6ed22...`, không chuyển kết quả sang
+  commit/tree khác.
+- Kết quả chính thức: Builder `36/36 PASS`; Independent QA `12/12 PASS`; MG5
+  combined `48/48 PASS`; REG4 combined `27/27 PASS`; BOS-AI1 `40/40 PASS`;
+  full combined regression `115/115 PASS` và deterministic reruns `PASS`.
+- Independent Review kết luận `P0=0`, `P1=0`, `P2=0`; audit completeness
+  `COMPLETE` trong proof scope; exact candidate worktree sạch trước và sau
+  review.
+- Builder dùng đủ `2/2` repair rounds. Lần `11/12` ban đầu của Independent QA
+  là lỗi oracle raw SHA-1/Git blob trong chính QA harness; expected baseline
+  không đổi và candidate không bị sửa sau repair round 2.
+- Tổng phạm vi tại Final Evidence Record là `11/20` path, chỉ gồm MG5 proof
+  source, test và tài liệu. REG4/BOS-AI1 source/test blobs không đổi; không có
+  dependency, database/migration, application/runtime hoặc Production change.
+- Remote branch `proof/mg5-v1` đã được tạo bằng non-force push và xác minh tip
+  khớp exact Final Evidence Record. Remote `main` không đổi.
+- Founder cho phép đúng một documentation-only commit có parent trực tiếp
+  `347ddd2d97a2dfb4f52322086b2c49d568404fee` để cập nhật
+  `docs/MASTER_CONTEXT.md`, `docs/PROJECT_DECISION_LOG.md`,
+  `docs/mg5/MG5_EVIDENCE_INDEX.md` và tạo
+  `docs/mg5/MG5_PROOF_BASELINE_V1.md`, sau đó fast-forward push lên đúng nhánh
+  `proof/mg5-v1`.
+- Documentation-only closure không được sửa source/test, force push, merge
+  main, tạo Pull Request, tag hoặc release; không mở OC6, OpenClaw, Business AI
+  Runtime, Production hoặc bất kỳ phase tiếp theo.
+- MG5 V1 chỉ là synthetic, deterministic, in-memory proof cho governed model
+  request admission, fake catalog/adapters, proof data policy, symbolic
+  cost/budget, bounded retry/fallback, idempotency, T1 revalidation, strict
+  `UNTRUSTED` output và safe linked audit. Không có real provider/API, secret,
+  tenant data hoặc business effect.
+- Trạng thái sau documentation-only closure: **APPROVED / COMPLETE / STOP**.
+
 ### 2026-09-02 — Founder phê duyệt BOS-AI1 Proof Baseline V1.2B
 
 - Founder verdict: **BOS-AI1 Proof Baseline APPROVED**.

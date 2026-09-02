@@ -2,9 +2,9 @@
 
 > Cập nhật: 2026-09-02
 >
-> Authority: Founder Approval — New SF2-C2 Canonical Baseline; AF3 Engineering Cell V1 Proof; REG4 Agent Registry V1 Baseline; BOS-AI1 Proof Baseline
+> Authority: Founder Approval — New SF2-C2 Canonical Baseline; AF3 Engineering Cell V1 Proof; REG4 Agent Registry V1 Baseline; BOS-AI1 Proof Baseline; MG5 Proof Baseline V1
 >
-> Trạng thái: **SF2-C2 BASELINE APPROVED / AF3 V1 PROOF APPROVED / REG4 V1 BASELINE APPROVED / BOS-AI1 PROOF BASELINE APPROVED / STOP**
+> Trạng thái: **SF2-C2 BASELINE APPROVED / AF3 V1 PROOF APPROVED / REG4 V1 BASELINE APPROVED / BOS-AI1 PROOF BASELINE APPROVED / MG5 PROOF BASELINE APPROVED / STOP**
 
 ## 1. Baseline có thẩm quyền
 
@@ -68,6 +68,21 @@ Formal Traceable Test và Independent Review đều gắn exact BOS-AI1 Technica
 Baseline `f44c1436...` / `f17e4c4f...`. Final Evidence Record chỉ bổ sung hồ
 sơ bằng chứng; source và test có blob hash giống Technical Baseline và mốc hồ
 sơ không thay thế Technical Baseline.
+
+MG5 Model Gateway Proof V1 có hai mốc được Founder phê duyệt và phải được
+phân biệt:
+
+- MG5 Proof Technical Baseline: commit
+  `c0ba1b282422c68bd96478d7585f2c2381198420`, tree
+  `02f6ed227a288009f449ef9de4e94ba98ceb6c33`.
+- MG5 Final Evidence Record: commit
+  `347ddd2d97a2dfb4f52322086b2c49d568404fee`, tree
+  `1751d0de44d1096764c535cd2a33940b8d6a2120`.
+
+Formal Traceable Test và Independent Review đều gắn exact MG5 Proof Technical
+Baseline `c0ba1b28...` / `02f6ed22...`. Final Evidence Record bổ sung hồ sơ
+bằng chứng, giữ nguyên source/test của Technical Baseline và không thay thế
+Technical Baseline.
 
 ## 2. Căn cứ phê duyệt
 
@@ -150,6 +165,32 @@ assurance; và export chưa được kiểm tra qua live delivery/storage. Các 
 - Kết quả chỉ phê duyệt BOS-AI1 Proof Baseline; không phải durable audit,
   Runtime, Production hoặc quyền mở phase tiếp theo.
 
+### 2.5. MG5 Proof Baseline V1
+
+- Founder verdict: **MG5 Proof Baseline V1 APPROVED**.
+- Technical Baseline: `c0ba1b282422c68bd96478d7585f2c2381198420`,
+  tree `02f6ed227a288009f449ef9de4e94ba98ceb6c33`.
+- Final Evidence Record: `347ddd2d97a2dfb4f52322086b2c49d568404fee`,
+  tree `1751d0de44d1096764c535cd2a33940b8d6a2120`.
+- Builder `36/36 PASS`; Independent QA `12/12 PASS`; MG5 combined `48/48
+  PASS`; REG4 combined `27/27 PASS`; BOS-AI1 `40/40 PASS`; full combined
+  regression `115/115 PASS`.
+- Formal Traceable Test: `PASS` trên exact Technical Baseline. Independent
+  Review: `PASS` trên cùng commit/tree; `P0=0`, `P1=0`, `P2=0`; audit
+  completeness `COMPLETE` trong phạm vi proof in-memory.
+- Builder đã dùng đủ `2/2` repair rounds. Independent QA chỉ sửa một lỗi oracle
+  Git-blob của chính suite QA; không sửa candidate hoặc thay expected baseline.
+- Final Evidence Record có tổng phạm vi `11/20` path. Source/test MG5, REG4 và
+  BOS-AI1 giữ nguyên giữa Technical Baseline và hồ sơ bằng chứng cuối.
+- Remote branch `proof/mg5-v1` đã được xác minh tại Final Evidence Record bằng
+  exact SHA; push không force. Documentation-only closure có parent trực tiếp
+  là Final Evidence Record và không định nghĩa lại Technical Baseline.
+- MG5 V1 chỉ chứng minh model-request admission, fake catalog/adapters,
+  proof-only D0–D4 policy, symbolic budget/cost, bounded retry/fallback,
+  idempotency, T1 revalidation, strict `UNTRUSTED` output và safe linked audit
+  bằng synthetic in-memory data. Kết quả không phải real provider/API,
+  durable audit, Business AI Runtime hoặc Production.
+
 ## 3. Trạng thái quyền hạn
 
 | Hạng mục | Trạng thái |
@@ -162,7 +203,7 @@ assurance; và export chưa được kiểm tra qua live delivery/storage. Các 
 | AF3 Engineering Cell V1 Proof | `FOUNDER-APPROVED / COMPLETE` |
 | BOS-AI1 | `FOUNDER-APPROVED PROOF BASELINE / COMPLETE` |
 | REG4 | `FOUNDER-APPROVED V1 TECHNICAL BASELINE / COMPLETE` |
-| MG5 | `NOT_AUTHORIZED` |
+| MG5 | `FOUNDER-APPROVED PROOF BASELINE / COMPLETE` |
 | OC6 | `NOT_AUTHORIZED` |
 | Business AI Runtime | `NO_GO / NOT_AUTHORIZED` |
 | OpenClaw Production | `NO_GO / NOT_AUTHORIZED` |
@@ -171,8 +212,9 @@ assurance; và export chưa được kiểm tra qua live delivery/storage. Các 
 
 Việc ghi nhận canonical baseline tự nó không cho phép push, merge, tag,
 release, migration, deploy hoặc thay đổi canonical main. Ngoại lệ hiện hành
-chỉ là đúng một documentation-only closure commit và fast-forward push được
-Founder phê duyệt riêng trên nhánh BOS-AI1. Mọi phase tiếp theo cần Founder
+chỉ là đúng một documentation-only closure commit có parent trực tiếp
+`347ddd2d97a2dfb4f52322086b2c49d568404fee` và fast-forward push được Founder
+phê duyệt riêng trên nhánh `proof/mg5-v1`. Mọi phase tiếp theo cần Founder
 decision riêng.
 
 Founder approval AF3 thay thế trạng thái `AF3 NOT_AUTHORIZED` trước đó chỉ để
@@ -191,6 +233,11 @@ Founder approval BOS-AI1 thay thế trạng thái `BOS-AI1 NOT_AUTHORIZED / PEND
 FOUNDER DECISION` chỉ để ghi nhận BOS-AI1 Proof Baseline đã hoàn thành. Quyết
 định không cho phép source/test change sau baseline, merge main, tag/release,
 MG5, OC6, OpenClaw, Business AI Runtime, Production hoặc tự mở phase tiếp theo.
+
+Founder approval MG5 thay thế trạng thái `MG5 NOT_AUTHORIZED` trước đó chỉ để
+ghi nhận MG5 Proof Baseline V1 đã hoàn thành. Quyết định không cho phép sửa
+source/test sau baseline, merge main, force push, tag/release, OC6, OpenClaw,
+Business AI Runtime, Production hoặc tự mở phase tiếp theo.
 
 ## 4. Hồ sơ kiểm soát liên quan
 
@@ -212,6 +259,12 @@ MG5, OC6, OpenClaw, Business AI Runtime, Production hoặc tự mở phase tiế
 - [BOS-AI1 P1 Closure Evidence Package](./bos-ai1/BOS_AI1_P1_CLOSURE_EVIDENCE_PACKAGE.md)
 - [BOS-AI1 Formal Traceable Test](./bos-ai1/BOS_AI1_P1_CLOSURE_FORMAL_TRACEABLE_TEST.md)
 - [BOS-AI1 Independent Review](./bos-ai1/BOS_AI1_P1_CLOSURE_INDEPENDENT_REVIEW.md)
+- [MG5 Proof Baseline](./mg5/MG5_PROOF_BASELINE_V1.md)
+- [MG5 Evidence Index](./mg5/MG5_EVIDENCE_INDEX.md)
+- [MG5 Evidence Package](./mg5/MG5_EVIDENCE_PACKAGE.md)
+- [MG5 Formal Traceable Test](./mg5/MG5_FORMAL_TRACEABLE_TEST.md)
+- [MG5 Independent Review](./mg5/MG5_INDEPENDENT_REVIEW.md)
+- [MG5 Provenance Manifest](./mg5/MG5_PROVENANCE_MANIFEST.md)
 
 Nếu tài liệu cũ mâu thuẫn với trạng thái này, các Founder approval và exact
 commit/tree trong Mục 1 là điểm đối chiếu hiện hành. Trạng thái điều hành sau
@@ -222,3 +275,7 @@ phase tiếp theo; không phase nào được tự động mở.
 
 Sau Founder approval BOS-AI1 Proof Baseline và documentation-only closure,
 trạng thái điều hành vẫn là **STOP**. Không phase nào được tự động mở.
+
+Sau Founder approval MG5 Proof Baseline V1 và documentation-only closure,
+trạng thái điều hành vẫn là **APPROVED / COMPLETE / STOP**. Không phase nào
+được tự động mở.
