@@ -298,6 +298,49 @@ Nghiệm thu theo vai trò thực tế, kiểm tra task gate, SLA, thông báo, 
 
 ## 8. Lịch sử quyết định
 
+### 2026-09-02 — Founder phê duyệt BOS-AI1 Proof Baseline V1.2B
+
+- Founder verdict: **BOS-AI1 Proof Baseline APPROVED**.
+- BOS-AI1 Technical Baseline được khóa tại full commit
+  `f44c14365589b7ff9f1df2ce40185ef8ebece05f`, tree
+  `f17e4c4f699335ddad056310c8d70e3ed3df6909`.
+- Technical Baseline có parent trực tiếp là failed candidate
+  `bfca56ef3fe242f2595813e734d8a6b3b94341e0`, tree
+  `a5f9c21afc9c379f5de9bd17a2d3d8d3cef2d788`. Failed candidate và
+  workspace tương ứng được giữ nguyên làm bằng chứng bốn finding P1 trước
+  closure.
+- Bốn P1 đã đóng: hostile Proxy/thrown value không điều khiển reason/error
+  metadata; final REG4 read nằm sau external trust resolver cuối; approver
+  không xác minh được bị fail-closed và audit phân biệt claimed/verified;
+  reentrant duplicate chỉ tạo một draft.
+- Kết quả chính thức: P1 targeted `4/4 PASS`; BOS-AI1 `40/40 PASS`; REG4
+  Builder `13/13 PASS`; REG4 Independent QA `14/14 PASS`; REG4 combined
+  `27/27 PASS`; full combined regression `67/67 PASS`.
+- Formal Traceable Test và Independent Review đều `PASS`, gắn exact Technical
+  Baseline `f44c1436...` / `f17e4c4f...`. Independent Review kết luận
+  `P0=0`, `P1=0`, `P2=0`; audit completeness `COMPLETE`; repair rounds used
+  `1/2`.
+- BOS-AI1 Final Evidence Record được khóa riêng tại full commit
+  `2c8950670ab481c18ac371e32d46107a15912174`, tree
+  `3e2b9ab56f5fdcfe879d35484939cee70657885a`. Mốc hồ sơ chỉ bổ sung bốn tài
+  liệu closure; source và test có blob hash giống Technical Baseline và không
+  thay thế Technical Baseline.
+- Tổng phạm vi tại Final Evidence Record là `8/10` file, chỉ gồm BOS-AI1
+  source, test và tài liệu. Không sửa REG4, Business Rules, database/migration,
+  dependency, MG5, OC6, OpenClaw, Runtime hoặc Production.
+- Remote branch `proof/bos-ai1-v1.2b-p1-closure` đã khớp Final Evidence Record
+  trước closure. Founder cho phép đúng một documentation-only commit có parent
+  trực tiếp `2c895067...` và fast-forward push lên đúng branch này.
+- Documentation-only closure không được sửa source/test, force push, merge,
+  tag hoặc release và không tự mở phase tiếp theo.
+- Hồ sơ kiểm soát: `docs/MASTER_CONTEXT.md`,
+  `docs/bos-ai1/BOS_AI1_PROOF_BASELINE.md`,
+  `docs/bos-ai1/BOS_AI1_EVIDENCE_INDEX.md`,
+  `docs/bos-ai1/BOS_AI1_P1_CLOSURE_FORMAL_TRACEABLE_TEST.md`,
+  `docs/bos-ai1/BOS_AI1_P1_CLOSURE_INDEPENDENT_REVIEW.md` và
+  `docs/bos-ai1/BOS_AI1_P1_CLOSURE_EVIDENCE_PACKAGE.md`.
+- Trạng thái sau documentation-only closure: **APPROVED / COMPLETE / STOP**.
+
 ### 2026-09-02 — Founder phê duyệt REG4 Agent Registry V1 Baseline
 
 - Founder verdict: **REG4 Agent Registry V1 Proof APPROVED**.

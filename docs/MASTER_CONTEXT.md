@@ -2,9 +2,9 @@
 
 > Cập nhật: 2026-09-02
 >
-> Authority: Founder Approval — New SF2-C2 Canonical Baseline; AF3 Engineering Cell V1 Proof; REG4 Agent Registry V1 Baseline
+> Authority: Founder Approval — New SF2-C2 Canonical Baseline; AF3 Engineering Cell V1 Proof; REG4 Agent Registry V1 Baseline; BOS-AI1 Proof Baseline
 >
-> Trạng thái: **SF2-C2 BASELINE APPROVED / AF3 V1 PROOF APPROVED / REG4 V1 BASELINE APPROVED / STOP**
+> Trạng thái: **SF2-C2 BASELINE APPROVED / AF3 V1 PROOF APPROVED / REG4 V1 BASELINE APPROVED / BOS-AI1 PROOF BASELINE APPROVED / STOP**
 
 ## 1. Baseline có thẩm quyền
 
@@ -53,6 +53,21 @@ REG4 Agent Registry V1 có hai mốc được Founder phê duyệt và không đ
 Formal Traceable Test và Independent Review đều gắn exact Technical Baseline
 `3def4012...` / `aef6c623...`. Final Evidence Record chỉ tổng hợp hồ sơ và
 không thay thế Technical Baseline.
+
+BOS-AI1 Project Progress Brief Proof V1.2B có hai mốc được Founder phê duyệt
+và phải được phân biệt:
+
+- BOS-AI1 Technical Baseline: commit
+  `f44c14365589b7ff9f1df2ce40185ef8ebece05f`, tree
+  `f17e4c4f699335ddad056310c8d70e3ed3df6909`.
+- BOS-AI1 Final Evidence Record: commit
+  `2c8950670ab481c18ac371e32d46107a15912174`, tree
+  `3e2b9ab56f5fdcfe879d35484939cee70657885a`.
+
+Formal Traceable Test và Independent Review đều gắn exact BOS-AI1 Technical
+Baseline `f44c1436...` / `f17e4c4f...`. Final Evidence Record chỉ bổ sung hồ
+sơ bằng chứng; source và test có blob hash giống Technical Baseline và mốc hồ
+sơ không thay thế Technical Baseline.
 
 ## 2. Căn cứ phê duyệt
 
@@ -111,6 +126,30 @@ assurance; và export chưa được kiểm tra qua live delivery/storage. Các 
   trong phạm vi proof in-memory. Kết quả không phải Registry production hoặc
   runtime eligibility.
 
+### 2.4. BOS-AI1 Proof Baseline
+
+- Founder verdict: **BOS-AI1 Proof Baseline APPROVED**.
+- Technical Baseline: `f44c14365589b7ff9f1df2ce40185ef8ebece05f`,
+  tree `f17e4c4f699335ddad056310c8d70e3ed3df6909`.
+- Failed candidate `bfca56ef3fe242f2595813e734d8a6b3b94341e0`, tree
+  `a5f9c21afc9c379f5de9bd17a2d3d8d3cef2d788`, được giữ nguyên làm bằng
+  chứng bốn P1 trước closure.
+- P1 closure targeted `4/4 PASS`; BOS-AI1 `40/40 PASS`; REG4 Builder `13/13
+  PASS`; REG4 Independent QA `14/14 PASS`; REG4 combined `27/27 PASS`; full
+  combined regression `67/67 PASS`.
+- Formal Traceable Test: `PASS` trên exact Technical Baseline. Independent
+  Review: `PASS` trên cùng commit/tree; `P0=0`, `P1=0`, `P2=0`.
+- Bốn P1 đã đóng: hostile thrown-value provenance, final REG4 revalidation
+  ordering, trusted approver verification/audit distinction và reentrant
+  idempotency. Audit completeness: `COMPLETE` trong phạm vi proof in-memory;
+  duplicate reentrant tạo đúng một draft.
+- Final Evidence Record: `2c8950670ab481c18ac371e32d46107a15912174`,
+  tree `3e2b9ab56f5fdcfe879d35484939cee70657885a`.
+- Branch `proof/bos-ai1-v1.2b-p1-closure` được xác minh tại Final Evidence
+  Record trước documentation-only closure; không force push.
+- Kết quả chỉ phê duyệt BOS-AI1 Proof Baseline; không phải durable audit,
+  Runtime, Production hoặc quyền mở phase tiếp theo.
+
 ## 3. Trạng thái quyền hạn
 
 | Hạng mục | Trạng thái |
@@ -121,7 +160,7 @@ assurance; và export chưa được kiểm tra qua live delivery/storage. Các 
 | Merge vào main | `NOT_AUTHORIZED` |
 | Tag / release | `NOT_AUTHORIZED` |
 | AF3 Engineering Cell V1 Proof | `FOUNDER-APPROVED / COMPLETE` |
-| BOS-AI1 | `NOT_AUTHORIZED / PENDING FOUNDER DECISION` |
+| BOS-AI1 | `FOUNDER-APPROVED PROOF BASELINE / COMPLETE` |
 | REG4 | `FOUNDER-APPROVED V1 TECHNICAL BASELINE / COMPLETE` |
 | MG5 | `NOT_AUTHORIZED` |
 | OC6 | `NOT_AUTHORIZED` |
@@ -130,8 +169,10 @@ assurance; và export chưa được kiểm tra qua live delivery/storage. Các 
 | Production Deployment | `NO_GO / NOT_AUTHORIZED` |
 | Phase tiếp theo | `PENDING FOUNDER SELECTION / NOT_OPENED` |
 
-Việc ghi nhận canonical baseline không cho phép push, merge, tag, release,
-migration, deploy hoặc thay đổi canonical main. Mọi phase tiếp theo cần Founder
+Việc ghi nhận canonical baseline tự nó không cho phép push, merge, tag,
+release, migration, deploy hoặc thay đổi canonical main. Ngoại lệ hiện hành
+chỉ là đúng một documentation-only closure commit và fast-forward push được
+Founder phê duyệt riêng trên nhánh BOS-AI1. Mọi phase tiếp theo cần Founder
 decision riêng.
 
 Founder approval AF3 thay thế trạng thái `AF3 NOT_AUTHORIZED` trước đó chỉ để
@@ -141,8 +182,15 @@ Production, Production Deployment hoặc tự mở phase tiếp theo.
 
 Founder approval REG4 thay thế trạng thái `REG4 NOT_AUTHORIZED` trước đó chỉ để
 ghi nhận REG4 Agent Registry V1 Technical Baseline đã hoàn thành. Quyết định
-không cho phép merge vào main, tag/release, BOS-AI1 implementation, MG5, OC6,
-OpenClaw, Business AI Runtime, Production Deployment hoặc tự mở phase tiếp theo.
+REG4 tự nó không cấp quyền BOS-AI1; các Founder authorization và baseline
+approval BOS-AI1 ban hành sau chỉ thay thế giới hạn đó trong đúng phạm vi proof.
+Không quyết định nào cho phép merge vào main, tag/release, MG5, OC6, OpenClaw,
+Business AI Runtime, Production Deployment hoặc tự mở phase tiếp theo.
+
+Founder approval BOS-AI1 thay thế trạng thái `BOS-AI1 NOT_AUTHORIZED / PENDING
+FOUNDER DECISION` chỉ để ghi nhận BOS-AI1 Proof Baseline đã hoàn thành. Quyết
+định không cho phép source/test change sau baseline, merge main, tag/release,
+MG5, OC6, OpenClaw, Business AI Runtime, Production hoặc tự mở phase tiếp theo.
 
 ## 4. Hồ sơ kiểm soát liên quan
 
@@ -159,13 +207,18 @@ OpenClaw, Business AI Runtime, Production Deployment hoặc tự mở phase ti�
 - [REG4 Evidence Index](./reg4/REG4_EVIDENCE_INDEX.md)
 - [REG4 Final Evidence Package](./reg4/REG4_EVIDENCE_PACKAGE.md)
 - [REG4 to BOS-AI1 Design Alignment](./reg4/REG4_BOS_AI1_DESIGN_ALIGNMENT.md)
+- [BOS-AI1 Proof Baseline](./bos-ai1/BOS_AI1_PROOF_BASELINE.md)
+- [BOS-AI1 Evidence Index](./bos-ai1/BOS_AI1_EVIDENCE_INDEX.md)
+- [BOS-AI1 P1 Closure Evidence Package](./bos-ai1/BOS_AI1_P1_CLOSURE_EVIDENCE_PACKAGE.md)
+- [BOS-AI1 Formal Traceable Test](./bos-ai1/BOS_AI1_P1_CLOSURE_FORMAL_TRACEABLE_TEST.md)
+- [BOS-AI1 Independent Review](./bos-ai1/BOS_AI1_P1_CLOSURE_INDEPENDENT_REVIEW.md)
 
-Nếu tài liệu cũ mâu thuẫn với trạng thái này, Founder approval gắn exact
-commit/tree `bd281ab1...` / `3eb2266e...` là điểm đối chiếu hiện hành. Trạng
-thái điều hành sau khi ghi nhận: **STOP**.
+Nếu tài liệu cũ mâu thuẫn với trạng thái này, các Founder approval và exact
+commit/tree trong Mục 1 là điểm đối chiếu hiện hành. Trạng thái điều hành sau
+khi ghi nhận: **STOP**.
 
 Sau Founder approval AF3, trạng thái điều hành vẫn là **STOP** để Founder chọn
 phase tiếp theo; không phase nào được tự động mở.
 
-Sau Founder approval REG4 và documentation-only closure, trạng thái điều hành
-vẫn là **STOP** để Founder quyết định có mở BOS-AI1 implementation hay không.
+Sau Founder approval BOS-AI1 Proof Baseline và documentation-only closure,
+trạng thái điều hành vẫn là **STOP**. Không phase nào được tự động mở.
