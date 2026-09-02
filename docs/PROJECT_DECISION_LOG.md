@@ -298,6 +298,43 @@ Nghiệm thu theo vai trò thực tế, kiểm tra task gate, SLA, thông báo, 
 
 ## 8. Lịch sử quyết định
 
+### 2026-09-02 — Founder phê duyệt REG4 Agent Registry V1 Baseline
+
+- Founder verdict: **REG4 Agent Registry V1 Proof APPROVED**.
+- REG4 Technical Baseline được khóa tại full commit
+  `3def40122e4072f266c943bc4eb84d3164501339`, tree
+  `aef6c623ce7f549b560af46e73a7ee6d0abd35ae`.
+- Formal Traceable Test và Independent Review đều được xác minh gắn exact
+  Technical Baseline trên. Kết quả: targeted P1-01 `3/3 PASS`, Builder `13/13
+  PASS`, Independent QA `14/14 PASS`, combined `27/27 PASS`; review `PASS`,
+  `P0=0`, `P1=0`, `P2=0`, `P1-01 CLOSED`, audit completeness `COMPLETE`.
+- REG4 Final Evidence Record được khóa riêng tại full commit
+  `4d2093c83d80e1de5b2de174d77e871bad2fb1f5`, tree
+  `f7fbcf6e3de4853bf8ff3be3db6781256ce81342`. Mốc này không thay thế REG4
+  Technical Baseline.
+- Branch `work/reg4-agent-registry-v1` đã được push không force và remote SHA
+  được xác minh tại Final Evidence Record trước documentation-only closure.
+- Founder cho phép cập nhật MASTER CONTEXT, Decision Log, REG4 Evidence Index,
+  lập đối chiếu thiết kế BOS-AI1 và fast-forward push một documentation-only
+  commit lên đúng branch REG4. Không sửa source hoặc test.
+- Work đối chiếu chỉ-read phát hiện chưa có hồ sơ thiết kế BOS-AI1 chuyên biệt
+  trong exact baseline tree. Intent CP1/Business OS khớp một phần với REG4,
+  nhưng còn thiếu contract commit-bound cho APPROVED-only eligibility,
+  fingerprint verification, policy enforcement, evidence resolution,
+  revocation, Company Context binding và audit durable/atomic.
+- Kết luận đối chiếu: **BOS-AI1 IMPLEMENTATION NO_GO / NOT AUTHORIZED**. Đề xuất
+  tiếp theo chỉ là Founder cân nhắc một phase kiến trúc/design-only; không tự mở
+  implementation.
+- Quyết định REG4 không cho phép merge main, tag/release, BOS-AI1
+  implementation, MG5, OC6, OpenClaw, Business AI Runtime, Business Rules,
+  database/migration hoặc Production Deployment.
+- Hồ sơ kiểm soát: `docs/MASTER_CONTEXT.md`,
+  `docs/reg4/REG4_EVIDENCE_INDEX.md`,
+  `docs/reg4/REG4_EVIDENCE_PACKAGE.md` và
+  `docs/reg4/REG4_BOS_AI1_DESIGN_ALIGNMENT.md`.
+- Trạng thái sau documentation-only closure: **STOP / PENDING FOUNDER
+  DECISION; DO NOT OPEN BOS-AI1 IMPLEMENTATION**.
+
 ### 2026-09-01 — Founder phê duyệt AF3 Engineering Cell V1 Proof
 
 - Founder verdict: **AF3 Engineering Cell V1 Proof APPROVED**.
