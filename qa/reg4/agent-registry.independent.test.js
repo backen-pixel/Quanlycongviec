@@ -459,6 +459,7 @@ test('REG4-Q08 independently recomputes a complete accepted/rejected audit hash 
     assert.deepEqual(Object.keys(record), [
       'sequence',
       'audit_id',
+      'correlation_id',
       'operation',
       'outcome',
       'reason_code',
@@ -479,6 +480,7 @@ test('REG4-Q08 independently recomputes a complete accepted/rejected audit hash 
     const independentlyOrderedAuditBody = {
       sequence: record.sequence,
       audit_id: record.audit_id,
+      correlation_id: record.correlation_id,
       operation: record.operation,
       outcome: record.outcome,
       reason_code: record.reason_code,
@@ -806,4 +808,510 @@ test('REG4-Q12 independently verifies deterministic timestamps and rejection non
   assert.deepEqual(approved.timestamps, { created_at: times[0], updated_at: times[4] });
   assert.deepEqual(registry.listAuditRecords().map((record) => record.occurred_at), times);
   assert.equal(index, times.length);
+});
+
+test('REG4-QP1-01 independently contains hostile registration and transition Proxies', () => {
+  const sensitiveMarker = 'QA_RAW_SECRET_CREDENTIAL_CAUSE_ORIGIN_STACK_91F67C';
+  const registry = createAgentRegistry({ now: qaClock('2026-09-01T13:00:00.000Z') });
+  const registrationContent = qaContent({
+    agent_id: 'qa.proxy-registration',
+    version: '1.0.0',
+  });
+  const registrationRequest = qaRequest(registrationContent);
+  const author = qaActor(registrationContent.created_by, ACTOR_ROLES.AUTHOR);
+  const transitionContent = qaContent({
+    agent_id: 'qa.proxy-transition',
+    version: '1.0.0',
+  });
+  qaRegister(registry, transitionContent);
+  const transitionSnapshot = registry.getAgentPackage(
+    transitionContent.agent_id,
+    transitionContent.version,
+  );
+
+  function proxyThrowing(target, trapName, thrownValue = new Error(sensitiveMarker)) {
+    return new Proxy(target, {
+      [trapName]() {
+        throw thrownValue;
+      },
+    });
+  }
+
+  function assertNoSensitiveLeak(value) {
+    assert.doesNotMatch(value.message, new RegExp(sensitiveMarker));
+    assert.doesNotMatch(value.stack, new RegExp(sensitiveMarker));
+    assert.doesNotMatch(JSON.stringify(value), new RegExp(sensitiveMarker));
+    assert.equal(Object.prototype.hasOwnProperty.call(value, 'cause'), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(value, 'origin_stack'), false);
+  }
+
+  function captureRejectedAttempt(action, expectation) {
+    const beforeCount = registry.listAuditRecords().length;
+    let caught;
+    try {
+      action();
+      assert.fail('hostile Proxy-backed mutation must be rejected');
+    } catch (error) {
+      caught = error;
+    }
+
+    assert.equal(caught.name, 'RegistryError');
+    assert.equal(caught.code, expectation.code);
+    assert.match(caught.correlation_id, /^reg4-correlation-[0-9]{10}$/);
+    assertNoSensitiveLeak(caught);
+
+    const records = registry.listAuditRecords();
+    assert.equal(records.length, beforeCount + 1);
+    const audit = records.at(-1);
+    assert.equal(audit.sequence, beforeCount + 1);
+    assert.equal(audit.operation, expectation.operation);
+    assert.equal(audit.outcome, 'REJECTED');
+    assert.equal(audit.reason_code, expectation.code);
+    assert.equal(audit.actor_id, expectation.actor_id);
+    assert.equal(audit.actor_role, expectation.actor_role);
+    assert.equal(audit.correlation_id, caught.correlation_id);
+    assert.equal(
+      audit.correlation_id,
+      `reg4-correlation-${String(audit.sequence).padStart(10, '0')}`,
+    );
+    assert.match(audit.occurred_at, /^2026-09-01T13:00:[0-9]{2}\.000Z$/);
+    assert.doesNotMatch(JSON.stringify(audit), new RegExp(sensitiveMarker));
+    assert(Object.values(audit).every((item) =>
+      item === null || typeof item === 'string' || typeof item === 'number'));
+    return audit;
+  }
+
+  const requestTrapExpectations = {
+    getPrototypeOf: { actor_id: 'qa.author', actor_role: ACTOR_ROLES.AUTHOR },
+    ownKeys: { actor_id: 'qa.author', actor_role: ACTOR_ROLES.AUTHOR },
+    getOwnPropertyDescriptor: { actor_id: 'qa.author', actor_role: ACTOR_ROLES.AUTHOR },
+  };
+  for (const [trapName, safeActor] of Object.entries(requestTrapExpectations)) {
+    captureRejectedAttempt(
+      () => registry.registerAgentPackage(
+        proxyThrowing(registrationRequest, trapName),
+        author,
+      ),
+      { operation: 'REGISTER', code: 'INVALID_INPUT', ...safeActor },
+    );
+    assert.equal(
+      registry.getAgentPackage(registrationContent.agent_id, registrationContent.version),
+      null,
+    );
+  }
+
+  const actorTrapExpectations = {
+    getPrototypeOf: { actor_id: null, actor_role: null },
+    ownKeys: { actor_id: 'qa.author', actor_role: ACTOR_ROLES.AUTHOR },
+    getOwnPropertyDescriptor: { actor_id: null, actor_role: null },
+  };
+  for (const [trapName, safeActor] of Object.entries(actorTrapExpectations)) {
+    captureRejectedAttempt(
+      () => registry.registerAgentPackage(
+        registrationRequest,
+        proxyThrowing(author, trapName),
+      ),
+      { operation: 'REGISTER', code: 'INVALID_ACTOR', ...safeActor },
+    );
+    assert.equal(
+      registry.getAgentPackage(registrationContent.agent_id, registrationContent.version),
+      null,
+    );
+  }
+
+  const nestedRequest = qaRequest(registrationContent);
+  nestedRequest.permissions = proxyThrowing(nestedRequest.permissions, 'ownKeys');
+  captureRejectedAttempt(
+    () => registry.registerAgentPackage(nestedRequest, author),
+    {
+      operation: 'REGISTER',
+      code: 'INVALID_INPUT',
+      actor_id: 'qa.author',
+      actor_role: ACTOR_ROLES.AUTHOR,
+    },
+  );
+  assert.equal(
+    registry.getAgentPackage(registrationContent.agent_id, registrationContent.version),
+    null,
+  );
+
+  const thrownProxy = new Proxy(new Error(sensitiveMarker), {
+    getPrototypeOf() {
+      throw new Error(sensitiveMarker);
+    },
+    get() {
+      throw new Error(sensitiveMarker);
+    },
+  });
+  captureRejectedAttempt(
+    () => registry.registerAgentPackage(
+      proxyThrowing(registrationRequest, 'ownKeys', thrownProxy),
+      author,
+    ),
+    {
+      operation: 'REGISTER',
+      code: 'INVALID_INPUT',
+      actor_id: 'qa.author',
+      actor_role: ACTOR_ROLES.AUTHOR,
+    },
+  );
+
+  const command = {
+    agent_id: transitionContent.agent_id,
+    version: transitionContent.version,
+    to_status: STATUSES.IN_REVIEW,
+  };
+  const reviewer = qaActor('qa.proxy-reviewer', ACTOR_ROLES.REVIEWER);
+  for (const trapName of ['getPrototypeOf', 'ownKeys', 'getOwnPropertyDescriptor']) {
+    captureRejectedAttempt(
+      () => registry.transitionApproval(proxyThrowing(command, trapName), reviewer),
+      {
+        operation: 'TRANSITION',
+        code: 'INVALID_INPUT',
+        actor_id: reviewer.actor_id,
+        actor_role: reviewer.role,
+      },
+    );
+    assert.deepEqual(
+      registry.getAgentPackage(transitionContent.agent_id, transitionContent.version),
+      transitionSnapshot,
+    );
+  }
+
+  const transitionActorTrapExpectations = {
+    getPrototypeOf: { actor_id: null, actor_role: null },
+    ownKeys: { actor_id: reviewer.actor_id, actor_role: reviewer.role },
+    getOwnPropertyDescriptor: { actor_id: null, actor_role: null },
+  };
+  for (const [trapName, safeActor] of Object.entries(transitionActorTrapExpectations)) {
+    captureRejectedAttempt(
+      () => registry.transitionApproval(command, proxyThrowing(reviewer, trapName)),
+      { operation: 'TRANSITION', code: 'INVALID_ACTOR', ...safeActor },
+    );
+    assert.deepEqual(
+      registry.getAgentPackage(transitionContent.agent_id, transitionContent.version),
+      transitionSnapshot,
+    );
+  }
+
+  const poisonRegistry = createAgentRegistry({ now: qaClock() });
+  let poisonedRegistryError;
+  try {
+    poisonRegistry.registerAgentPackage({}, qaActor('qa.author', ACTOR_ROLES.AUTHOR));
+  } catch (error) {
+    poisonedRegistryError = error;
+  }
+  poisonedRegistryError.code = 'HOSTILE_UNTRUSTED_CODE';
+  poisonedRegistryError.message = sensitiveMarker;
+  poisonedRegistryError.stack = sensitiveMarker;
+  poisonedRegistryError.cause = sensitiveMarker;
+  poisonedRegistryError.origin_stack = sensitiveMarker;
+
+  captureRejectedAttempt(
+    () => registry.registerAgentPackage(
+      proxyThrowing(registrationRequest, 'ownKeys', poisonedRegistryError),
+      author,
+    ),
+    {
+      operation: 'REGISTER',
+      code: 'INVALID_INPUT',
+      actor_id: 'qa.author',
+      actor_role: ACTOR_ROLES.AUTHOR,
+    },
+  );
+  assert.equal(
+    registry.getAgentPackage(registrationContent.agent_id, registrationContent.version),
+    null,
+  );
+
+  const records = registry.listAuditRecords();
+  let previousAuditSha256 = '0'.repeat(64);
+  for (const record of records) {
+    assert.equal(record.previous_audit_sha256, previousAuditSha256);
+    const independentBody = {
+      sequence: record.sequence,
+      audit_id: record.audit_id,
+      correlation_id: record.correlation_id,
+      operation: record.operation,
+      outcome: record.outcome,
+      reason_code: record.reason_code,
+      actor_id: record.actor_id,
+      actor_role: record.actor_role,
+      agent_id: record.agent_id,
+      version: record.version,
+      from_status: record.from_status,
+      to_status: record.to_status,
+      supplied_package_sha256: record.supplied_package_sha256,
+      resolved_package_sha256: record.resolved_package_sha256,
+      occurred_at: record.occurred_at,
+      previous_audit_sha256: record.previous_audit_sha256,
+    };
+    assert.equal(record.audit_sha256, sha256Utf8(JSON.stringify(independentBody)));
+    previousAuditSha256 = record.audit_sha256;
+  }
+  assert.deepEqual(
+    registry.getAgentPackage(transitionContent.agent_id, transitionContent.version),
+    transitionSnapshot,
+  );
+});
+
+test('REG4-QP1-01 rejects cross-context replay of genuine system reason codes', () => {
+  const replayMarker = 'QA_SYSTEM_CODE_REPLAY_SECRET_PAYLOAD_6D20A9';
+  const canonicalMessages = {
+    INVALID_INPUT: 'input is invalid',
+    INVALID_ACTOR: 'actor context is invalid',
+  };
+  const errorKeys = ['code', 'correlation_id', 'message', 'name', 'stack'];
+  const auditKeys = [
+    'sequence',
+    'audit_id',
+    'correlation_id',
+    'operation',
+    'outcome',
+    'reason_code',
+    'actor_id',
+    'actor_role',
+    'agent_id',
+    'version',
+    'from_status',
+    'to_status',
+    'supplied_package_sha256',
+    'resolved_package_sha256',
+    'occurred_at',
+    'previous_audit_sha256',
+    'audit_sha256',
+  ];
+
+  function captureSystemErrors() {
+    const source = createAgentRegistry({ now: qaClock('2026-09-01T14:00:00.000Z') });
+    const selfContent = qaContent({
+      agent_id: 'qa.replay-source-self',
+      version: '1.0.0',
+      created_by: 'qa.replay-author',
+    });
+    qaRegister(source, selfContent);
+    qaTransition(
+      source,
+      selfContent,
+      STATUSES.IN_REVIEW,
+      qaActor('qa.replay-reviewer', ACTOR_ROLES.REVIEWER),
+    );
+
+    let selfApprovalError;
+    try {
+      qaTransition(
+        source,
+        selfContent,
+        STATUSES.APPROVED,
+        qaActor(selfContent.created_by, ACTOR_ROLES.APPROVER),
+      );
+    } catch (error) {
+      selfApprovalError = error;
+    }
+    assert.equal(selfApprovalError.code, 'SELF_APPROVAL_DENIED');
+
+    const roleContent = qaContent({
+      agent_id: 'qa.replay-source-role',
+      version: '1.0.0',
+      created_by: 'qa.role-author',
+    });
+    qaRegister(source, roleContent);
+    let unauthorizedError;
+    try {
+      qaTransition(
+        source,
+        roleContent,
+        STATUSES.IN_REVIEW,
+        qaActor('qa.wrong-role', ACTOR_ROLES.AUTHOR),
+      );
+    } catch (error) {
+      unauthorizedError = error;
+    }
+    assert.equal(unauthorizedError.code, 'ACTOR_NOT_AUTHORIZED');
+    return { selfApprovalError, unauthorizedError };
+  }
+
+  function poison(error, label) {
+    error.code = `PUBLIC_TAMPER_${label}`;
+    error.message = `${replayMarker}:${label}:message`;
+    error.stack = `${replayMarker}:${label}:origin-stack:C:\\internal\\registry.js`;
+    error.cause = { secret: `${replayMarker}:${label}:cause` };
+    error.request_payload = { credential: `${replayMarker}:${label}:payload` };
+    error.arbitrary = `${replayMarker}:${label}:arbitrary`;
+    error[Symbol(`replay-${label}`)] = `${replayMarker}:${label}:symbol`;
+    return error;
+  }
+
+  function trap(target, trapName, thrown) {
+    return new Proxy(target, {
+      [trapName]() {
+        throw thrown;
+      },
+    });
+  }
+
+  const systemErrors = captureSystemErrors();
+  const replayedSelfError = poison(systemErrors.selfApprovalError, 'self');
+  const replayedRoleError = poison(systemErrors.unauthorizedError, 'role');
+  const wrappedSelfError = new Proxy(replayedSelfError, {});
+  const wrappedRoleError = new Proxy(replayedRoleError, {});
+
+  const registry = createAgentRegistry({ now: qaClock('2026-09-01T15:00:00.000Z') });
+  const registrationContent = qaContent({
+    agent_id: 'qa.replay-registration',
+    version: '1.0.0',
+  });
+  const request = qaRequest(registrationContent);
+  const author = qaActor(registrationContent.created_by, ACTOR_ROLES.AUTHOR);
+  const transitionContent = qaContent({
+    agent_id: 'qa.replay-transition',
+    version: '1.0.0',
+  });
+  qaRegister(registry, transitionContent);
+  const transitionSnapshot = registry.getAgentPackage(
+    transitionContent.agent_id,
+    transitionContent.version,
+  );
+  const command = {
+    agent_id: transitionContent.agent_id,
+    version: transitionContent.version,
+    to_status: STATUSES.IN_REVIEW,
+  };
+  const reviewer = qaActor('qa.replay-target-reviewer', ACTOR_ROLES.REVIEWER);
+
+  const cases = [
+    {
+      label: 'raw system error from registration request Proxy',
+      action: () => registry.registerAgentPackage(trap(request, 'ownKeys', replayedSelfError), author),
+      expectedCode: 'INVALID_INPUT',
+      operation: 'REGISTER',
+      actor_id: author.actor_id,
+      actor_role: author.role,
+    },
+    {
+      label: 'raw system error from registration actor Proxy',
+      action: () => registry.registerAgentPackage(
+        request,
+        trap(author, 'getOwnPropertyDescriptor', replayedRoleError),
+      ),
+      expectedCode: 'INVALID_ACTOR',
+      operation: 'REGISTER',
+      actor_id: null,
+      actor_role: null,
+    },
+    {
+      label: 'raw system error from transition command Proxy',
+      action: () => registry.transitionApproval(trap(command, 'ownKeys', replayedSelfError), reviewer),
+      expectedCode: 'INVALID_INPUT',
+      operation: 'TRANSITION',
+      actor_id: reviewer.actor_id,
+      actor_role: reviewer.role,
+    },
+    {
+      label: 'raw system error from transition actor Proxy',
+      action: () => registry.transitionApproval(
+        command,
+        trap(reviewer, 'getOwnPropertyDescriptor', replayedRoleError),
+      ),
+      expectedCode: 'INVALID_ACTOR',
+      operation: 'TRANSITION',
+      actor_id: null,
+      actor_role: null,
+    },
+    {
+      label: 'Proxy-wrapped system error from registration request Proxy',
+      action: () => registry.registerAgentPackage(trap(request, 'ownKeys', wrappedSelfError), author),
+      expectedCode: 'INVALID_INPUT',
+      operation: 'REGISTER',
+      actor_id: author.actor_id,
+      actor_role: author.role,
+    },
+    {
+      label: 'Proxy-wrapped system error from transition actor Proxy',
+      action: () => registry.transitionApproval(
+        command,
+        trap(reviewer, 'getOwnPropertyDescriptor', wrappedRoleError),
+      ),
+      expectedCode: 'INVALID_ACTOR',
+      operation: 'TRANSITION',
+      actor_id: null,
+      actor_role: null,
+    },
+  ];
+
+  const observations = [];
+  for (const replayCase of cases) {
+    const beforeCount = registry.listAuditRecords().length;
+    let caught;
+    try {
+      replayCase.action();
+      assert.fail(`${replayCase.label} must be rejected`);
+    } catch (error) {
+      caught = error;
+    }
+    const records = registry.listAuditRecords();
+    assert.equal(records.length, beforeCount + 1, `${replayCase.label} must create exactly one audit`);
+    const audit = records.at(-1);
+
+    assert.equal(caught.name, 'RegistryError');
+    assert.deepEqual([...Reflect.ownKeys(caught)].sort(), [...errorKeys].sort());
+    assert.equal(caught.correlation_id, audit.correlation_id);
+    assert.match(caught.message, /^(?:input is invalid|actor context is invalid|self-approval is denied|actor is not authorized for this operation)$/);
+    assert.equal(caught.stack, `RegistryError: ${caught.message}`);
+    assert(caught.stack.length <= 96);
+    assert.doesNotMatch(caught.stack, /(?:[A-Za-z]:\\|\/tools\/|node:internal|\bat\s)/);
+    assert.doesNotMatch(JSON.stringify(caught), new RegExp(replayMarker));
+
+    assert.deepEqual(Object.keys(audit), auditKeys);
+    assert.equal(audit.operation, replayCase.operation);
+    assert.equal(audit.outcome, 'REJECTED');
+    assert.equal(audit.actor_id, replayCase.actor_id);
+    assert.equal(audit.actor_role, replayCase.actor_role);
+    assert.match(audit.correlation_id, /^reg4-correlation-[0-9]{10}$/);
+    assert.doesNotMatch(JSON.stringify(audit), new RegExp(replayMarker));
+    assert(Object.values(audit).every((value) =>
+      value === null || typeof value === 'string' || typeof value === 'number'));
+    observations.push({ replayCase, caught, audit });
+
+    assert.equal(
+      registry.getAgentPackage(registrationContent.agent_id, registrationContent.version),
+      null,
+    );
+    assert.deepEqual(
+      registry.getAgentPackage(transitionContent.agent_id, transitionContent.version),
+      transitionSnapshot,
+    );
+  }
+
+  let previousAuditSha256 = '0'.repeat(64);
+  for (const audit of registry.listAuditRecords()) {
+    assert.equal(audit.previous_audit_sha256, previousAuditSha256);
+    const auditBody = {
+      sequence: audit.sequence,
+      audit_id: audit.audit_id,
+      correlation_id: audit.correlation_id,
+      operation: audit.operation,
+      outcome: audit.outcome,
+      reason_code: audit.reason_code,
+      actor_id: audit.actor_id,
+      actor_role: audit.actor_role,
+      agent_id: audit.agent_id,
+      version: audit.version,
+      from_status: audit.from_status,
+      to_status: audit.to_status,
+      supplied_package_sha256: audit.supplied_package_sha256,
+      resolved_package_sha256: audit.resolved_package_sha256,
+      occurred_at: audit.occurred_at,
+      previous_audit_sha256: audit.previous_audit_sha256,
+    };
+    assert.equal(audit.audit_sha256, sha256Utf8(JSON.stringify(auditBody)));
+    previousAuditSha256 = audit.audit_sha256;
+  }
+
+  for (const { replayCase, caught, audit } of observations) {
+    assert.equal(caught.code, replayCase.expectedCode, `${replayCase.label} leaked a replayed system code`);
+    assert.equal(caught.message, canonicalMessages[replayCase.expectedCode]);
+    assert.equal(caught.stack, `RegistryError: ${canonicalMessages[replayCase.expectedCode]}`);
+    assert.equal(audit.reason_code, replayCase.expectedCode, `${replayCase.label} audited a replayed system code`);
+  }
 });
