@@ -1,73 +1,87 @@
-# REG4 — Agent Registry V1 Proof — Independent QA Report
+# REG4 — Agent Registry V1 Proof — Final Independent QA Report
 
 ## Control record
 
 | Field | Value |
 |---|---|
-| Status | `INDEPENDENT QA PASS` |
+| Status | `INDEPENDENT QA PASS — P1-01 CLOSED` |
 | Actor | Independent QA Agent (`/root/reg4_independent_qa`) |
-| Technical Git identity | `tudonghoa-dev <tudonghoa@vanphuthanh.net>` |
-| Branch | `work/reg4-agent-registry-v1` |
-| Implementation candidate | `66b291fe01aaf62d61c72b3cf9feecd4c2d1a9ef` |
-| Candidate tree | `ba3162906f1cbcac5c8a703bbe9bf4367195efef` |
-| Builder report input HEAD | `510ade1a06d572b07ace02c40e17da34702b6b21` |
-| Builder report input tree | `4f43c1ea6b6479b57c033c431cdc8cf1e118462e` |
-| QA test artifact / formally tested HEAD | `c4cf2d2af8ad95f3196e846ac84e499cadcbee18` |
-| QA test artifact / formally tested tree | `90b50c2d223ddb08c980e0881d8febda48657a3b` |
-| QA repair or candidate-fix rounds | `0` |
-| Exception / waiver | None |
+| Technical identity | `tudonghoa-dev <tudonghoa@vanphuthanh.net>` |
+| Execution state | Detached HEAD in the approved REG4 hardening workspace |
+| Original implementation candidate | `66b291fe01aaf62d61c72b3cf9feecd4c2d1a9ef` |
+| First audit-hardening candidate / tree | `907636bccca80e3a6921aa6a5e9e3e473409971f` / `4cc9677a8c81cd8f13bb34bf9aa5ecb290968606` |
+| Final context-hardening candidate / tree | `a5f3770e9795938d1d5d445a143a4015bf3be58a` / `c423554dccff7d949dc2aa946ec0fd2f0250751a` |
+| Final Builder report HEAD / tree | `38a77fe65812c82b5b9fe3895d60f9dec685ac4b` / `1c06d0211b426e98c0e7fd97c4a3a29be586f3d8` |
+| Formally tested QA commit / tree | `8efbadac8513c7abb28ed50b3ff743c1cae40c52` / `bc17216d9ded5271f98de9afaa4feb0634f36cf9` |
+| Builder repair budget | `2/2` consumed |
+| Founder-authorized audit-hardening exception budget | `2/2` consumed |
+| Exception / waiver remaining | None |
 
-QA read the root `AGENTS.md`, Architect design, implementation source, Builder
-test, and Builder report. QA authored independent fixtures and SHA-256/audit
-oracles using `node:crypto`; it did not import Builder test helpers.
+QA preserved its independently authored fixtures and `node:crypto` package/audit
+oracles and did not import Builder helpers.
+
+## Preserved QA artifacts and exception history
+
+| Evidence | SHA-256 / result |
+|---|---|
+| Original P1 failure test copied before Builder hardening | `a73aecdc712fff1b017793ff18a53dc711bc7b6c69a158a860cc89ad5a95f0d9` |
+| Strengthened final Independent QA test | `dce0facb1bcddd00bd995b53cbfbdfe6c5ac78625edd4b27f09a4864bea9055d` |
+| First hardening candidate targeted re-test | Original test passed; strengthened replay test failed: `1/2` pass, P1 remained |
+| First hardening failure | A genuine prior `SELF_APPROVAL_DENIED` error replayed from a malformed registration-request Proxy was emitted and audited as `SELF_APPROVAL_DENIED`, not context-owned `INVALID_INPUT` |
+| Final hardening candidate targeted re-test | Original and strengthened tests passed: `2/2` |
+
+The original hostile Proxy assertions remain present. The strengthened test adds
+raw and Proxy-wrapped replay of genuine prior `SELF_APPROVAL_DENIED` and
+`ACTOR_NOT_AUTHORIZED` errors through registration request/actor and transition
+command/actor traps. No assertion was removed or weakened.
 
 ## Candidate immutability and artifact identity
 
-`git diff --exit-code 66b291fe01aaf62d61c72b3cf9feecd4c2d1a9ef..c4cf2d2af8ad95f3196e846ac84e499cadcbee18 -- tools/reg4/agent-registry.js tools/reg4/agent-registry.test.js`
-exited `0` with no output.
+The command below exited `0` with no output:
 
-| Artifact | Git blob at candidate and tested HEAD | File SHA-256 |
+```powershell
+git diff --exit-code a5f3770e9795938d1d5d445a143a4015bf3be58a..8efbadac8513c7abb28ed50b3ff743c1cae40c52 -- tools/reg4/agent-registry.js tools/reg4/agent-registry.test.js
+```
+
+| Artifact | Git blob at candidate and tested QA commit | File SHA-256 |
 |---|---|---|
-| `tools/reg4/agent-registry.js` | `e08b58ba8c5e8dbdcdc0a097defb54f74f26f586` | `554e6447a85ad83f3e7c9a00cc323f6f653fd634b3a7386508c961e475ed1245` |
-| `tools/reg4/agent-registry.test.js` | `762223cf28a489615e813d67eaf9219ba39f3075` | `ac3c66fc0e360caf1697fccffd0fe18b3040801696d00e98cff4687c460598e6` |
-| `qa/reg4/agent-registry.independent.test.js` | Tested at QA artifact commit | `79176b1c6b7b23971f45ec4bd67d754f1113549b9dc35e6a5025be5032545a28` |
+| `tools/reg4/agent-registry.js` | `be69c77be7559f8fb2ccf896612e65e0f605b595` | `417cab2beaa09c6e9649a9f1126f2af7937036f5ce84c721c84d1e1d001e6120` |
+| `tools/reg4/agent-registry.test.js` | `9f77ce02b3d7dd8a499a6b77a7ee42e72259178c` | `019ac839a15f652cf43d314e04f29c206b545b0651f2b237948be9c37f827ae1` |
+| `qa/reg4/agent-registry.independent.test.js` | QA-owned artifact at `8efbadac...` | `dce0facb1bcddd00bd995b53cbfbdfe6c5ac78625edd4b27f09a4864bea9055d` |
 
-The AF3 implementation commit `c05d2f9a7cc8f8591df6d300301788dbca0ecc9b`
-and SF2-C2 canonical commit `bd281ab1d61d7177a593e449ac04ba1d4c79d882`
-were both verified as ancestors of branch start
-`b19fef26e6ded04d6496c6478ff84eaf879f074e`.
+Builder did not edit the QA test. QA did not edit the implementation, Builder
+test/report, Architect design, dependencies, application code, database,
+migration, baseline, Runtime, or Production files.
 
-## Formal commands and totals
+## Exact formal commands and totals
 
-| Command | Exact Git state | Exit | Tests | Pass | Fail | Cancelled | Skipped | Todo |
-|---|---|---:|---:|---:|---:|---:|---:|---:|
-| `node --test tools/reg4/agent-registry.test.js` | `510ade1a06d572b07ace02c40e17da34702b6b21` | 0 | 12 | 12 | 0 | 0 | 0 | 0 |
-| `node --test qa/reg4/agent-registry.independent.test.js` | `c4cf2d2af8ad95f3196e846ac84e499cadcbee18` | 0 | 12 | 12 | 0 | 0 | 0 | 0 |
-| `node --test tools/reg4/agent-registry.test.js qa/reg4/agent-registry.independent.test.js` | `c4cf2d2af8ad95f3196e846ac84e499cadcbee18` | 0 | 24 | 24 | 0 | 0 | 0 | 0 |
+All commands below were repeated after QA test commit
+`8efbadac8513c7abb28ed50b3ff743c1cae40c52` and produced the exact totals shown.
 
-At the formally tested QA commit, `git diff --check
-b19fef26e6ded04d6496c6478ff84eaf879f074e..HEAD` exited `0`, the worktree
-was clean, the branch was exact, and the commit author matched the authorized
-technical identity.
+| Command | Exit | Tests | Pass | Fail | Cancelled | Skipped | Todo |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `node --test --test-name-pattern="REG4-QP1" qa/reg4/agent-registry.independent.test.js` | 0 | 2 | 2 | 0 | 0 | 0 | 0 |
+| `node --test qa/reg4/agent-registry.independent.test.js` | 0 | 14 | 14 | 0 | 0 | 0 | 0 |
+| `node --test tools/reg4/agent-registry.test.js` | 0 | 13 | 13 | 0 | 0 | 0 | 0 |
+| `node --test tools/reg4/agent-registry.test.js qa/reg4/agent-registry.independent.test.js` | 0 | 27 | 27 | 0 | 0 | 0 | 0 |
 
-## Independent trace matrix
+The same four commands also passed with identical totals immediately before the
+QA artifact commit.
 
-| QA ID | Independent control | Result |
-|---|---|---|
-| `REG4-Q01` | Registration identity, exact minimum record, initial `DRAFT`, accepted audit | PASS |
-| `REG4-Q02` | All five statuses and all seven legal lifecycle edges | PASS |
-| `REG4-Q03` | Self-approval denial for creator and Agent identity | PASS |
-| `REG4-Q04` | Same-content duplicate and different-content same-version immutability | PASS |
-| `REG4-Q05` | Valid-format mismatched package SHA-256 rejection | PASS |
-| `REG4-Q06` | Both mandatory passing evidence types required for approval | PASS |
-| `REG4-Q07` | Every illegal edge, every wrong role on legal edges, missing package and invalid target | PASS |
-| `REG4-Q08` | One audit per accepted/rejected attempt, sequence continuity and independent hash-chain recomputation | PASS |
-| `REG4-Q09` | Hard-coded canonical known answer, independent preimage, permutations and field sensitivity | PASS |
-| `REG4-Q10` | Deep-copy isolation for inputs, returns, reads and audit snapshots; reads do not audit | PASS |
-| `REG4-Q11` | Strict objects, bounds, duplicates, sparse arrays, extra/non-enumerable/Symbol/accessor rejection without getter execution | PASS |
-| `REG4-Q12` | Deterministic timestamps and rejected-operation package timestamp non-mutation | PASS |
+## Independent trace and audit completeness
 
-## Findings and separation of duties
+| Test scope | Result |
+|---|---|
+| `REG4-Q01`–`REG4-Q12`: registration, all lifecycle states/edges, roles, self-approval, evidence, immutable versions, fingerprint, strict input, deep copy, timestamps, and canonical SHA | PASS |
+| Original `REG4-QP1-01`: registration/transition Proxy traps, nested/hostile thrown Proxy, poisoned error, exactly-one correlated audit, no partial state | PASS |
+| Strengthened `REG4-QP1-01`: raw and Proxy-wrapped genuine system-code replay across request/actor/command contexts | PASS |
+| Context ownership | Malformed request/command resolves to `INVALID_INPUT`; malformed actor resolves to `INVALID_ACTOR`; prior system reason codes are not replayed | PASS |
+| Outgoing error | Fixed metadata allowlist, canonical bounded message/stack, no internal path, cause, origin stack, payload, arbitrary property, secret, or credential marker | PASS |
+| Audit record | Fixed key allowlist and reason catalog; exactly one rejected audit per attempt; safe actor/null fields; no raw payload or secret | PASS |
+| Audit continuity | Deterministic correlation IDs, continuous sequence, previous-hash linkage, and independent full-chain SHA-256 recomputation including `correlation_id` | PASS |
+| Mutation safety | Rejected attempts create no package and do not change status, fingerprint, evidence, or timestamps | PASS |
+
+## Findings and scope
 
 | Severity | Open findings |
 |---|---:|
@@ -75,29 +89,26 @@ technical identity.
 | P1 | 0 |
 | P2 | 0 |
 
-QA made no fix to Builder source, Builder tests, Builder report, or Architect
-design. QA changed only its two owned paths: the independent test and this
-report. No candidate failure was returned to Builder, and no QA waiver was
-used.
+P1-01 closure conclusion: `CLOSED BY FINAL INDEPENDENT QA`.
 
-At tested commit `c4cf2d2a`, the branch-start diff contained exactly five
-planned REG4 files: Architect design, the two implementation-candidate files,
-Builder report, and QA test. This report is the sixth planned REG4 file, keeping
-the proof within `6/20` changed files. No dependency, database, migration,
-Business Rule, application code, AF3 artifact, baseline record, Runtime,
-Production, secret, credential, or real data was changed or required.
+QA made no source fix. Its only owned changes are
+`qa/reg4/agent-registry.independent.test.js` and this report. The REG4 proof
+still changes only the six planned paths relative to branch start, within the
+Founder limit of `20`. No dependency, database, migration, Business Rule,
+secret, credential, real data, OpenClaw, Model Gateway, Runtime, deployment, or
+Production access was introduced.
 
-## Limitations and QA decision
+## Limitations and decision
 
-The proof remains intentionally in-memory and process-local. Actor contexts
-and evidence references are synthetic trusted metadata, declared permissions
-are not runtime enforcement, and the audit chain is neither durable nor
-externally signed. Concurrency, persistence, authentication, API integration,
-OpenClaw, Model Gateway, Business AI Runtime, deployment, and Production remain
-out of scope.
+The proof remains process-local and in-memory. Synthetic actor contexts are not
+authenticated, evidence references are declared metadata rather than opened
+artifacts, declared permissions are not Runtime enforcement, and the audit
+chain is not durable or externally signed. Concurrency, persistence, APIs,
+deployment, Runtime, and Production remain out of scope.
 
-Independent QA decision: `PASS — READY FOR INDEPENDENT REVIEW AND EVIDENCE PACKAGING`.
+Independent QA decision:
+`PASS — READY FOR INDEPENDENT REVIEW AND EVIDENCE PACKAGING`.
 
-This is not Independent Review, Founder approval, or an REG4 baseline claim.
-QA did not push, force push, merge, tag, release, deploy, or open MG5, OC6,
-Runtime, or Production.
+This report is not Founder approval or a REG4 baseline declaration. QA did not
+push, force push, merge, tag, release, deploy, or open MG5, OC6, Runtime, or
+Production.
