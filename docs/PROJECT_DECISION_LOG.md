@@ -298,6 +298,39 @@ Nghiệm thu theo vai trò thực tế, kiểm tra task gate, SLA, thông báo, 
 
 ## 8. Lịch sử quyết định
 
+### 2026-09-02 — Founder phê duyệt BOS-AI1 Controlled Publish Proof Baseline V1
+
+- Technical Baseline được phê duyệt: `1317f1468a341379f51e33b5631d7767af7c8848`,
+  tree chính xác `ab7296b7ac316ea24324f5dc431a66c3375d91ca`.
+- Final Evidence Record: `24f5cec5880e5f37c60930cd07388a8ec360d414`, tree
+  `0bed4862bc3dbc7a1b6806481519785fd7103a81`. Đây là mốc bằng chứng, không thay
+  technical baseline. Giữa hai mốc chỉ thêm bốn hồ sơ trong `docs/bos-ai1`;
+  mọi source/test giữ nguyên.
+- Xác minh đóng hồ sơ ngày 2026-09-02: Git tree khớp; 24 artifact nhúng trong
+  evidence record khớp SHA-256; manifest và log gốc xác nhận Formal 195/195
+  và Independent Adversarial 152/152 cùng gắn đúng technical commit/tree.
+- P0=0/P1=0/P2=0; proof thay 8/12 file, repair 0/2, worktrees CLEAN; evidence
+  được push đúng nhánh `proof/bos-ai1-controlled-publish-v1`.
+- `f44c14365589b7ff9f1df2ce40185ef8ebece05f` / tree
+  `f17e4c4f699335ddad056310c8d70e3ed3df6909` giữ nguyên làm historical READ/DRAFT
+  baseline. Không xóa, amend, thay source/test hoặc viết lại lịch sử.
+- Baseline mới công nhận LIMITED_WRITE Publish hoàn toàn giả lập: approval
+  phải quay lại BOS-AI1 tái kiểm tra; exactly-once trong một vòng đời proof;
+  approver được xác minh; partial/unknown trả COMPENSATION_REQUIRED, không
+  retry mù; audit/correlation đầy đủ. Không công nhận vận hành thật hoặc Production.
+- Được cập nhật MASTER CONTEXT, PROJECT DECISION LOG, BOS-AI1 Evidence Index
+  và Controlled Publish Baseline bằng đúng một documentation-only commit có
+  parent là Final Evidence Record; chỉ fast-forward push cùng nhánh.
+- Sau closure, OC6 được chạy lại G0 với baseline mới. Nếu PASS, tiếp tục đúng
+  Fast Track đã duyệt (P01–P14, G0–G9, IR-OC6-1, ≤20 file, ≤2 vòng sửa).
+  Nếu FAIL, STOP và báo khoảng trống chính xác. Không đổi acceptance criteria
+  hoặc tự phê duyệt OC6 baseline.
+- Không OpenClaw thật, model/API thật, database, dữ liệu doanh nghiệp thật,
+  Runtime, Production, force push, merge main, tag/release hoặc phase lớn mới.
+- Hồ sơ chuẩn: [Controlled Publish Baseline V1](./bos-ai1/BOS_AI1_CONTROLLED_PUBLISH_BASELINE.md).
+  Closure SHA/tree và kết quả G0 được ghi trong handoff sau khi chúng tồn tại;
+  không đưa SHA tự tham chiếu vào chính commit và không pre-claim G0 PASS.
+
 ### 2026-09-02 — Founder phê duyệt BOS-AI1 Proof Baseline V1.2B
 
 - Founder verdict: **BOS-AI1 Proof Baseline APPROVED**.

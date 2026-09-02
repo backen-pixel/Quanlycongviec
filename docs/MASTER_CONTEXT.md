@@ -2,9 +2,9 @@
 
 > Cập nhật: 2026-09-02
 >
-> Authority: Founder Approval — New SF2-C2 Canonical Baseline; AF3 Engineering Cell V1 Proof; REG4 Agent Registry V1 Baseline; BOS-AI1 Proof Baseline
+> Authority: các Founder Approval trước đây và Founder Approval — BOS-AI1 Controlled Publish Proof Baseline V1, 2026-09-02
 >
-> Trạng thái: **SF2-C2 BASELINE APPROVED / AF3 V1 PROOF APPROVED / REG4 V1 BASELINE APPROVED / BOS-AI1 PROOF BASELINE APPROVED / STOP**
+> Trạng thái: **BOS-AI1 CONTROLLED PUBLISH V1 FOUNDER-APPROVED / DOCUMENTATION CLOSURE AUTHORIZED / OC6 G0 PENDING CLOSURE**
 
 ## 1. Baseline có thẩm quyền
 
@@ -68,6 +68,22 @@ Formal Traceable Test và Independent Review đều gắn exact BOS-AI1 Technica
 Baseline `f44c1436...` / `f17e4c4f...`. Final Evidence Record chỉ bổ sung hồ
 sơ bằng chứng; source và test có blob hash giống Technical Baseline và mốc hồ
 sơ không thay thế Technical Baseline.
+
+### 1.1. BOS-AI1 Controlled Publish Proof Baseline V1 — quyết định mới nhất
+
+- Technical Baseline: `1317f1468a341379f51e33b5631d7767af7c8848`.
+- Git tree: `ab7296b7ac316ea24324f5dc431a66c3375d91ca`.
+- Final Evidence Record: `24f5cec5880e5f37c60930cd07388a8ec360d414`.
+- Evidence tree: `0bed4862bc3dbc7a1b6806481519785fd7103a81`.
+- Historical READ/DRAFT Technical Baseline: `f44c14365589b7ff9f1df2ce40185ef8ebece05f`,
+  tree `f17e4c4f699335ddad056310c8d70e3ed3df6909`; giữ nguyên lịch sử và source/test.
+
+Baseline mới chỉ bổ sung `project.publish_status_update` / LIMITED_WRITE giả
+lập trong bộ nhớ. Mốc bằng chứng không thay phiên bản code chuẩn. Xác minh
+đóng hồ sơ đã đọc Git object và 24 artifact từ evidence đã commit: Formal
+195/195 và Independent Adversarial 152/152 cùng gắn đúng technical commit/tree
+trên; source/test ở evidence record không đổi. Chi tiết:
+[Controlled Publish Baseline V1](./bos-ai1/BOS_AI1_CONTROLLED_PUBLISH_BASELINE.md).
 
 ## 2. Căn cứ phê duyệt
 
@@ -150,6 +166,19 @@ assurance; và export chưa được kiểm tra qua live delivery/storage. Các 
 - Kết quả chỉ phê duyệt BOS-AI1 Proof Baseline; không phải durable audit,
   Runtime, Production hoặc quyền mở phase tiếp theo.
 
+### 2.5. Controlled Publish Proof Baseline V1
+
+- Founder verdict: **APPROVED**; Formal 195/195, Independent Adversarial 152/152.
+- P0=0, P1=0, P2=0; proof diff 8/12 file; implementation repair 0/2.
+- Worktrees clean; evidence đã push đúng `proof/bos-ai1-controlled-publish-v1`.
+- Chỉ dữ liệu, approval, adapter và effect giả trong bộ nhớ. Không chứng minh
+  Publish thật, database/email/hệ thống thật, durable audit, chịu tải, phục hồi
+  hoặc readiness Production.
+- Founder cho phép đúng một documentation-only closure commit nối tiếp
+  `24f5cec5880e5f37c60930cd07388a8ec360d414` và fast-forward push cùng nhánh.
+- Sau đóng hồ sơ: chạy lại OC6 G0 với baseline mới. G0 PASS mới tiếp tục OC6
+  Fast Track đã duyệt; G0 FAIL thì STOP và báo exact gap. Không tự duyệt OC6 baseline.
+
 ## 3. Trạng thái quyền hạn
 
 | Hạng mục | Trạng thái |
@@ -160,20 +189,20 @@ assurance; và export chưa được kiểm tra qua live delivery/storage. Các 
 | Merge vào main | `NOT_AUTHORIZED` |
 | Tag / release | `NOT_AUTHORIZED` |
 | AF3 Engineering Cell V1 Proof | `FOUNDER-APPROVED / COMPLETE` |
-| BOS-AI1 | `FOUNDER-APPROVED PROOF BASELINE / COMPLETE` |
+| BOS-AI1 | `CONTROLLED PUBLISH V1 FOUNDER-APPROVED; f44c1436 READ/DRAFT HISTORICAL` |
 | REG4 | `FOUNDER-APPROVED V1 TECHNICAL BASELINE / COMPLETE` |
-| MG5 | `NOT_AUTHORIZED` |
-| OC6 | `NOT_AUTHORIZED` |
+| MG5 | `PINNED PROOF DEPENDENCY c0ba1b28; NO NEW MG5 WORK` |
+| OC6 | `G0 RE-RUN AFTER CLOSURE; CONTINUE EXISTING FAST TRACK ONLY IF PASS` |
 | Business AI Runtime | `NO_GO / NOT_AUTHORIZED` |
 | OpenClaw Production | `NO_GO / NOT_AUTHORIZED` |
 | Production Deployment | `NO_GO / NOT_AUTHORIZED` |
-| Phase tiếp theo | `PENDING FOUNDER SELECTION / NOT_OPENED` |
+| Phase lớn mới | `NOT_AUTHORIZED` |
 
 Việc ghi nhận canonical baseline tự nó không cho phép push, merge, tag,
 release, migration, deploy hoặc thay đổi canonical main. Ngoại lệ hiện hành
 chỉ là đúng một documentation-only closure commit và fast-forward push được
-Founder phê duyệt riêng trên nhánh BOS-AI1. Mọi phase tiếp theo cần Founder
-decision riêng.
+Founder phê duyệt riêng trên nhánh Controlled Publish. Quyền OC6 tiếp tục có
+điều kiện theo Mục 2.5; không mở phase lớn mới.
 
 Founder approval AF3 thay thế trạng thái `AF3 NOT_AUTHORIZED` trước đó chỉ để
 ghi nhận AF3 V1 Proof đã hoàn thành. Quyết định này không cho phép merge vào
@@ -184,8 +213,9 @@ Founder approval REG4 thay thế trạng thái `REG4 NOT_AUTHORIZED` trước đ
 ghi nhận REG4 Agent Registry V1 Technical Baseline đã hoàn thành. Quyết định
 REG4 tự nó không cấp quyền BOS-AI1; các Founder authorization và baseline
 approval BOS-AI1 ban hành sau chỉ thay thế giới hạn đó trong đúng phạm vi proof.
-Không quyết định nào cho phép merge vào main, tag/release, MG5, OC6, OpenClaw,
-Business AI Runtime, Production Deployment hoặc tự mở phase tiếp theo.
+Các giới hạn của quyết định cũ áp dụng tại thời điểm ban hành. Founder Decision
+mới chỉ thay thế chúng trong đúng hành lang proof được nêu ở Mục 2.5; merge
+main, tag/release, OpenClaw thật, Runtime và Production vẫn không được phép.
 
 Founder approval BOS-AI1 thay thế trạng thái `BOS-AI1 NOT_AUTHORIZED / PENDING
 FOUNDER DECISION` chỉ để ghi nhận BOS-AI1 Proof Baseline đã hoàn thành. Quyết
@@ -207,7 +237,8 @@ MG5, OC6, OpenClaw, Business AI Runtime, Production hoặc tự mở phase tiế
 - [REG4 Evidence Index](./reg4/REG4_EVIDENCE_INDEX.md)
 - [REG4 Final Evidence Package](./reg4/REG4_EVIDENCE_PACKAGE.md)
 - [REG4 to BOS-AI1 Design Alignment](./reg4/REG4_BOS_AI1_DESIGN_ALIGNMENT.md)
-- [BOS-AI1 Proof Baseline](./bos-ai1/BOS_AI1_PROOF_BASELINE.md)
+- [Controlled Publish Proof Baseline V1](./bos-ai1/BOS_AI1_CONTROLLED_PUBLISH_BASELINE.md)
+- [Historical READ/DRAFT Proof Baseline](./bos-ai1/BOS_AI1_PROOF_BASELINE.md)
 - [BOS-AI1 Evidence Index](./bos-ai1/BOS_AI1_EVIDENCE_INDEX.md)
 - [BOS-AI1 P1 Closure Evidence Package](./bos-ai1/BOS_AI1_P1_CLOSURE_EVIDENCE_PACKAGE.md)
 - [BOS-AI1 Formal Traceable Test](./bos-ai1/BOS_AI1_P1_CLOSURE_FORMAL_TRACEABLE_TEST.md)
@@ -215,10 +246,11 @@ MG5, OC6, OpenClaw, Business AI Runtime, Production hoặc tự mở phase tiế
 
 Nếu tài liệu cũ mâu thuẫn với trạng thái này, các Founder approval và exact
 commit/tree trong Mục 1 là điểm đối chiếu hiện hành. Trạng thái điều hành sau
-khi ghi nhận: **STOP**.
+khi ghi nhận theo quyết định mới nhất: **đóng hồ sơ baseline, rồi chạy OC6 G0**.
 
 Sau Founder approval AF3, trạng thái điều hành vẫn là **STOP** để Founder chọn
 phase tiếp theo; không phase nào được tự động mở.
 
-Sau Founder approval BOS-AI1 Proof Baseline và documentation-only closure,
-trạng thái điều hành vẫn là **STOP**. Không phase nào được tự động mở.
+Trạng thái STOP của BOS-AI1 V1.2B ở quyết định cũ được giữ làm lịch sử. Founder
+Approval Controlled Publish V1 cho phép chạy lại G0 sau closure và tiếp tục
+đúng OC6 Fast Track hiện hữu nếu PASS; không tự công nhận OC6 baseline.

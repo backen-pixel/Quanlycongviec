@@ -1,14 +1,49 @@
-# BOS-AI1 Project Progress Brief Proof V1.2B — Founder-Approved Evidence Index
+# BOS-AI1 — Founder-Approved Evidence Index
 
 > Record date: 2026-09-02
 >
-> Authority: Founder Approval — BOS-AI1 Proof Baseline V1.2B
+> Authority: Founder Approval — BOS-AI1 Controlled Publish Proof Baseline V1, with preserved V1.2B READ/DRAFT history
 >
-> Verdict: **APPROVED / COMPLETE / STOP**
+> Verdict: **CONTROLLED PUBLISH V1 APPROVED / DOCUMENTATION CLOSURE / OC6 G0 CONDITIONAL**
+
+## 0. Controlled Publish Proof Baseline V1 — current approval
+
+| Record | Exact commit | Exact tree |
+|---|---|---|
+| Controlled Publish Technical Baseline V1 | `1317f1468a341379f51e33b5631d7767af7c8848` | `ab7296b7ac316ea24324f5dc431a66c3375d91ca` |
+| Controlled Publish Final Evidence Record | `24f5cec5880e5f37c60930cd07388a8ec360d414` | `0bed4862bc3dbc7a1b6806481519785fd7103a81` |
+| Historical READ/DRAFT Technical Baseline | `f44c14365589b7ff9f1df2ce40185ef8ebece05f` | `f17e4c4f699335ddad056310c8d70e3ed3df6909` |
+
+Formal 195/195 and Independent Adversarial 152/152 are both bound to the
+Controlled Publish technical commit/tree above. Closure verification decoded
+the committed portable evidence, checked all 24 artifact hashes and matched
+both original manifests and raw PASS counts. P0/P1/P2=0/0/0; proof files 8/12;
+implementation repairs 0/2. Evidence adds only documentation to the technical
+baseline; source/test blobs are identical. READ/DRAFT historical blobs remain
+unchanged, and its immutable commit is retained.
+
+| Current evidence | Purpose |
+|---|---|
+| [Controlled Publish Baseline](./BOS_AI1_CONTROLLED_PUBLISH_BASELINE.md) | Founder approval, full identities, scope and closure authority |
+| [Formal Test](./BOS_AI1_CONTROLLED_PUBLISH_FORMAL_TEST.md) | Exact-commit 195/195 execution |
+| [Independent Review](./BOS_AI1_CONTROLLED_PUBLISH_INDEPENDENT_REVIEW.md) | Independent 152/152 adversarial, 195/195 regression and findings |
+| [Decision Evidence](./BOS_AI1_CONTROLLED_PUBLISH_EVIDENCE.md) | Preserved pre-approval decision package |
+| [Portable Evidence](./BOS_AI1_CONTROLLED_PUBLISH_EVIDENCE.json) | Original artifact bytes, manifests, test source and SHA-256 |
+
+Exactly one documentation-only closure commit may follow `24f5cec5...`, with
+fast-forward push to `proof/bos-ai1-controlled-publish-v1`. Its actual SHA/tree
+is reported externally after creation. No source/test, merge, force push,
+tag or release is authorized. After closure, rerun OC6 G0 using this baseline:
+PASS permits continuation of the already approved OC6 proof Fast Track; FAIL
+requires STOP. Real OpenClaw, Runtime and Production remain NO_GO.
+
+Sections 1–8 below preserve the earlier V1.2B READ/DRAFT evidence and its
+authority at that historical decision. Their old STOP/no-OC6 statements are
+superseded only by the narrowly authorized continuation in this section.
 
 ## 1. Authoritative identities
 
-BOS-AI1 has two approved records with different purposes. They must not be
+BOS-AI1 V1.2B historical READ/DRAFT has two approved records with different purposes. They must not be
 substituted for each other.
 
 | Record | Commit | Tree | Meaning |
