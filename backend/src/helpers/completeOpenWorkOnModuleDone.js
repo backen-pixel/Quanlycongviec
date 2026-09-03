@@ -168,7 +168,7 @@ async function completeCrmTaskRows(tasks) {
       .from('crm_tasks')
       .update({ status: 'completed', completed_at: nowIso, updated_at: nowIso })
       .in('id', part)
-      .not('status', 'in', '(completed,done,cancelled,canceled)');
+      .not('status', 'in', CRM_TASKS_DONE_STATUSES);
     if (error) {
       console.warn('[completeOpenWork] crm_tasks complete:', error.message);
     }
@@ -192,6 +192,24 @@ async function completeCrmTaskRows(tasks) {
   return { count: ids.length, ids };
 }
 
+/**
+ * Danh sách trạng thái "đã xong/đã huỷ" để LOẠI khi hoàn thành hàng loạt.
+ *
+ * BẮT BUỘC chỉ chứa nhãn có thật trong enum của đúng bảng đó: PostgREST parse danh sách
+ * `.not('status','in', ...)` thành giá trị enum, nên một nhãn lạ làm CẢ câu lệnh lỗi
+ * ("invalid input value for enum") — update im lặng không chạy, chỉ còn console.warn.
+ * Bản trước dùng chung một danh sách '(completed,done,cancelled,canceled)' cho cả hai
+ * bảng nên KHÔNG bảng nào chạy được: `tasks` không có 'completed'/'cancelled', còn
+ * `crm_assignments` không có 'done'/'canceled'.
+ *
+ *   task_status           : pending, todo, in_progress, review, done, blocked, deferred
+ *   crm_assignment_status : pending, in_progress, completed, cancelled
+ */
+const TASKS_DONE_STATUSES = '(done)';
+const CRM_ASSIGNMENT_DONE_STATUSES = '(completed,cancelled)';
+/** `crm_tasks.status` là text tự do (không enum) nên giữ được danh sách rộng, vô hại. */
+const CRM_TASKS_DONE_STATUSES = '(completed,done,cancelled,canceled)';
+
 async function completeWorkshopTaskRows(tasks) {
   if (!tasks.length) return { count: 0, ids: [] };
   const nowIso = new Date().toISOString();
@@ -201,13 +219,13 @@ async function completeWorkshopTaskRows(tasks) {
       .from('tasks')
       .update({ status: 'done', completed_at: nowIso, updated_at: nowIso })
       .in('id', part)
-      .not('status', 'in', '(done,completed,cancelled,canceled)');
+      .not('status', 'in', TASKS_DONE_STATUSES);
     if (error && /completed_at/.test(String(error.message || ''))) {
       ({ error } = await supabase
         .from('tasks')
         .update({ status: 'done', updated_at: nowIso })
         .in('id', part)
-        .not('status', 'in', '(done,completed,cancelled,canceled)'));
+        .not('status', 'in', TASKS_DONE_STATUSES));
     }
     if (error) {
       console.warn('[completeOpenWork] tasks complete:', error.message);
@@ -250,7 +268,7 @@ async function completeLinkedAssignments({ leadIds, crmTaskIds, moduleKey }) {
       .from('crm_assignments')
       .update(patch)
       .in('crm_task_id', part)
-      .not('status', 'in', '(completed,done,cancelled,canceled)')
+      .not('status', 'in', CRM_ASSIGNMENT_DONE_STATUSES)
       .select('id');
     if (error && /crm_task_id/.test(String(error.message || ''))) break;
     if (error) {
@@ -258,7 +276,7 @@ async function completeLinkedAssignments({ leadIds, crmTaskIds, moduleKey }) {
         .from('crm_assignments')
         .update(legacy)
         .in('crm_task_id', part)
-        .not('status', 'in', '(completed,done,cancelled,canceled)')
+        .not('status', 'in', CRM_ASSIGNMENT_DONE_STATUSES)
         .select('id'));
     }
     if (error) console.warn('[completeOpenWork] assignments task_id:', error.message);
@@ -272,7 +290,7 @@ async function completeLinkedAssignments({ leadIds, crmTaskIds, moduleKey }) {
         .update(patch)
         .in('lead_id', part)
         .eq('assignment_module', moduleKey)
-        .not('status', 'in', '(completed,done,cancelled,canceled)')
+        .not('status', 'in', CRM_ASSIGNMENT_DONE_STATUSES)
         .select('id');
       if (error && /assignment_module/.test(String(error.message || ''))) break;
       if (error) {
@@ -281,7 +299,7 @@ async function completeLinkedAssignments({ leadIds, crmTaskIds, moduleKey }) {
           .update(legacy)
           .in('lead_id', part)
           .eq('assignment_module', moduleKey)
-          .not('status', 'in', '(completed,done,cancelled,canceled)')
+          .not('status', 'in', CRM_ASSIGNMENT_DONE_STATUSES)
           .select('id'));
       }
       if (error && /assignment_module/.test(String(error.message || ''))) break;

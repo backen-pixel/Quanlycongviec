@@ -5,6 +5,7 @@
 const { Router } = require('express');
 const helpers = require('../shared/helpersBundle');
 const { getCompanyScopedAdminIds } = require('../../../helpers/notifications');
+const { completeAssignmentsForCrmTask } = require('../../../helpers/crmTaskAssignmentSync');
 
 const r = Router();
 
@@ -461,12 +462,16 @@ r.post('/quotations', async (req, res) => {
 
         if (quotationTask) {
           // Mark completed
+          const taskCompletedAt = new Date().toISOString();
           await supabase.from('crm_tasks').update({
             status: 'completed',
-            completed_at: new Date().toISOString(),
+            completed_at: taskCompletedAt,
             notes: `✅ Đã tạo báo giá ${quote.code} (${formatMoney(quote.total)})\n📎 Xem: /crm/quotations/${quote.id}`,
-            updated_at: new Date().toISOString(),
+            updated_at: taskCompletedAt,
           }).eq('id', quotationTask.id);
+          // Đóng luôn assignment gắn task này, nếu không màn Giao việc vẫn để "Lập báo giá"
+          // ở "Chưa làm" dù báo giá đã tạo xong (KPI đếm theo assignment.status).
+          await completeAssignmentsForCrmTask(quotationTask.id, { completedAt: taskCompletedAt });
 
           // Thêm attachment vào task (link tới báo giá)
           const { data: att } = await supabase.from('crm_task_attachments').insert({

@@ -4,6 +4,7 @@ const { auth } = require('../middleware/auth');
 const { notifyMultiple, getCompanyScopedAdminIds } = require('../helpers/notifications');
 const { isCrmSystemAdminUser } = require('../helpers/crmAccessRoles');
 const { isAdminLike, isCompanyScopedAdmin, isLogisticsAdmin, isProductionAdmin } = require('../helpers/adminRole');
+const { completeAssignmentsForCrmTask } = require('../helpers/crmTaskAssignmentSync');
 
 /** Admin chọn công ty qua query (admin tổng, platform_admin, admin tenant — khớp CRM Dashboard). */
 function canPickEventsCompanyScope(user) {
@@ -1876,12 +1877,17 @@ r.put('/:id', async (req, res) => {
           .neq('status', 'completed')
           .order('order_index').limit(1);
         if (tasks?.length) {
+          const completedAt = new Date().toISOString();
           await supabase.from('crm_tasks').update({
             status: 'completed',
-            completed_at: new Date().toISOString(),
+            completed_at: completedAt,
             notes: `✅ Hoàn thành qua sự kiện: ${data.title}\n📍 ${data.location || ''}\n${data.result || ''}`.trim(),
-            updated_at: new Date().toISOString(),
+            updated_at: completedAt,
           }).eq('id', tasks[0].id);
+          // Hoàn thành luôn assignment gắn với task này — thiếu bước này thì màn Giao việc
+          // vẫn để việc ở "Chưa làm" dù chi tiết deal đã "Hoàn thành", và KPI (đếm theo
+          // assignment.status) sai theo.
+          await completeAssignmentsForCrmTask(tasks[0].id, { completedAt });
           data.auto_task_completed = { taskId: tasks[0].id, taskTitle: tasks[0].title };
         }
       } catch (taskErr) { console.warn('[EVENT] Auto-complete task:', taskErr.message); }

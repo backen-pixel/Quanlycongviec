@@ -453,6 +453,65 @@ function alignAssignmentStatusFromCrmTask(list) {
 }
 
 /**
+ * Hoàn thành các crm_assignments gắn với MỘT crm_task vừa được hoàn thành trực tiếp.
+ *
+ * Dùng cho các chỗ tự hoàn thành crm_task mà không đi qua `updateCrmLeadTask` (vd hoàn
+ * thành việc qua sự kiện ở routes/events.js, tự đóng việc "Lập báo giá" khi tạo báo giá ở
+ * commercialDocs.js). Không gọi thì assignment kẹt "Chưa làm" trong khi task đã "Hoàn
+ * thành" — KPI đếm theo assignment.status nên sẽ sai, và board lệch với chi tiết deal.
+ *
+ * Chỉ đụng dòng còn đang mở (`status not in (completed,cancelled)`) để không ghi đè
+ * completed_at cũ, và đi qua `applyAssignmentStatusColumn` để status ↔ column_id ↔
+ * completed_at luôn khớp nhau.
+ *
+ * Lỗi được nuốt và log cảnh báo: đây là bước đồng bộ kèm, không được làm hỏng nghiệp vụ
+ * chính (đã hoàn thành task / đã tạo báo giá). Job crmAssignmentDriftHeal là lưới hứng.
+ *
+ * @param {string} taskId id của crm_task vừa hoàn thành
+ * @param {{ completedAt?: string }} [opts]
+ * @returns {Promise<number>} số assignment đã cập nhật
+ */
+async function completeAssignmentsForCrmTask(taskId, { completedAt } = {}) {
+  if (!taskId) return 0;
+  const nowIso = completedAt || new Date().toISOString();
+  try {
+    const patch = await applyAssignmentStatusColumn({
+      status: 'completed',
+      completed_at: nowIso,
+      updated_at: nowIso,
+    }, 'completed');
+    // CHỈ dùng nhãn có thật trong enum crm_assignment_status (pending, in_progress,
+    // completed, cancelled). PostgREST parse danh sách này thành giá trị enum, nên nhét
+    // thêm nhãn kiểu 'done'/'canceled' sẽ làm CẢ câu lệnh lỗi
+    // ("invalid input value for enum") chứ không phải bị bỏ qua.
+    const OPEN_ONLY = '(completed,cancelled)';
+    let { data, error } = await supabase
+      .from('crm_assignments')
+      .update(patch)
+      .eq('crm_task_id', taskId)
+      .not('status', 'in', OPEN_ONLY)
+      .select('id');
+    // Schema cũ chưa có column_id/completed_at → thử lại bản tối giản.
+    if (error) {
+      ({ data, error } = await supabase
+        .from('crm_assignments')
+        .update({ status: 'completed', completed_at: nowIso, updated_at: nowIso })
+        .eq('crm_task_id', taskId)
+        .not('status', 'in', OPEN_ONLY)
+        .select('id'));
+    }
+    if (error) {
+      console.warn('[crm_assignments] complete from task:', error.message);
+      return 0;
+    }
+    return (data || []).length;
+  } catch (e) {
+    console.warn('[crm_assignments] complete from task:', e?.message || e);
+    return 0;
+  }
+}
+
+/**
  * Ghi patch căn lệch xuống crm_assignments. CHỈ dùng từ job bảo trì —
  * KHÔNG gọi từ đường đọc (GET), để request đọc không sinh ghi.
  *
@@ -492,6 +551,7 @@ module.exports = {
   applyAssignmentStatusColumn,
   alignAssignmentColumnStatus,
   alignAssignmentStatusFromCrmTask,
+  completeAssignmentsForCrmTask,
   writeAssignmentAlignPatches,
   loadSharedColumns,
   columnIdForTaskStatus,

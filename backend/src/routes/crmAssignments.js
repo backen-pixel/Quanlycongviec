@@ -1108,12 +1108,15 @@ r.post('/:id/move', async (req, res) => {
       .single();
     if (error) throw error;
     await attachAssigneesToAssignments([data]);
-    await attachCrmTaskMetaToAssignments([data]);
     try {
       await syncCrmTaskFromAssignment(data);
     } catch (syncErr) {
       console.warn('[sync] assignment→crm_task move:', syncErr.message);
     }
+    // Gắn meta CRM SAU khi sync status để client không nhận crm_task.status cũ — giống
+    // đường PUT /:id. Trước đây bước này chạy trước sync nên kéo thẻ sang "Hoàn thành"
+    // xong, response vẫn trả crm_task.status của trạng thái cũ.
+    await attachCrmTaskMetaToAssignments([data]);
     if (data?.lead_id && data.status === 'completed' && data.crm_task_id) {
       try {
         await promoteNextAssignmentAfterComplete(req, data.lead_id);
