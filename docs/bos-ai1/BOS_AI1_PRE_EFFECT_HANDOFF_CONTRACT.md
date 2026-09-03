@@ -65,6 +65,8 @@ writes stop with zero effect; intent/ALLOW failures never call Domain/adapter.
 Every boundary attempt also has an owned hash-linked secondary audit. Reentrant
 in-flight calls use that secondary path to avoid invoking the failing writer
 recursively. Secondary evidence is in memory only, not production durability.
+Trusted ledger/effect exports copy each owned record separately; the untrusted
+request snapshot array/node limits do not truncate or hide accumulated evidence.
 
 Keys move ISSUING -> PERMITTED -> EXECUTING -> COMPLETE. In-flight duplicate
 returns IN_PROGRESS; a completed exact duplicate returns the stored receipt,

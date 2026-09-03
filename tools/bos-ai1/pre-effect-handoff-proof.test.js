@@ -434,3 +434,46 @@ test('H08 dependencies cannot be rebound to reset private idempotency or approva
   assert.throws(() => createPreEffectHandoffProof({ registry: f.registry, authority: f.authority,
     audit: f.audit, domain: f.domain, adapter: f.adapter }), TypeError);
 });
+
+test('H08 growing primary/secondary audit remains readable after failed terminal audit and 500 duplicates', () => {
+  const f = fixture({ failAt: ['RESULT'] });
+  let c;
+  for (let i = 0; i < 220; i++) {
+    c = f.allow();
+    assert.equal(c.decision, 'ALLOW');
+  }
+  const first = f.proof.applicationService.execute(c.permit, f.request);
+  assert.equal(first.status, 'COMPENSATION_REQUIRED');
+  for (let i = 0; i < 500; i++) assert.equal(f.proof.applicationService.execute(c.permit, f.request).status, 'COMPENSATION_REQUIRED');
+  const primary = f.audit.listRecords();
+  const secondary = f.proof.listSecondaryAudit();
+  assert.ok(primary.length > 200);
+  assert.ok(secondary.length > 500);
+  checkChain(primary);
+  checkChain(secondary);
+  assert.ok(secondary.some((r) => r.effect_id === first.effect_id && r.reason_code === 'POST_EFFECT_AUDIT_FAILED'));
+  secondary[0].reason_code = 'TAMPER';
+  assert.notEqual(f.proof.listSecondaryAudit()[0].reason_code, 'TAMPER');
+  assert.equal(f.adapter.callCount(), 1);
+  assert.equal(f.proof.listEffects().length, 1);
+});
+
+test('H08 both trusted effect views remain readable beyond 200 separately authorized deliveries', () => {
+  const f = fixture();
+  const originalApproval = { ...f.data.approvals['approval-1'] };
+  for (let i = 0; i < 201; i++) {
+    Object.assign(f.request, { action_id: `ACT-PUBLISH-${i}`, idempotency_key: `delivery-${i}`, approval_id: `approval-${i}` });
+    f.change((d) => {
+      d.approvals = { [f.request.approval_id]: { ...originalApproval,
+        ...Object.fromEntries([...BINDINGS, 'approval_id'].map((key) => [key, f.request[key]])) } };
+    });
+    assert.equal(f.run().status, 'EXECUTED');
+  }
+  assert.equal(f.adapter.callCount(), 201);
+  assert.equal(f.adapter.listEffects().length, 201);
+  assert.equal(f.proof.listEffects().length, 201);
+  const effects = f.adapter.listEffects(); effects[0].state = 'TAMPER';
+  assert.equal(f.proof.listEffects()[0].state, 'APPLIED');
+  checkChain(f.audit.listRecords());
+  checkChain(f.proof.listSecondaryAudit());
+});

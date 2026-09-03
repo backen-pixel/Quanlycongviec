@@ -194,7 +194,8 @@ function createFakeAuditWriter({ failAt = [], beforeWrite = () => {}, afterWrite
     state.failures = values;
   }
   setFailures(failAt);
-  const writer = Object.freeze({ setFailures, listRecords: () => copy(state.records) });
+  // Internal append-only ledgers can exceed the untrusted input array/node cap.
+  const writer = Object.freeze({ setFailures, listRecords: () => state.records.map((record) => copy(record)) });
   auditStates.set(writer, state);
   return writer;
 }
@@ -225,7 +226,7 @@ function createFakeEffectAdapter({ mode = 'SUCCESS', afterAccept = () => {} } = 
     throw new TypeError('invalid fake adapter configuration');
   }
   const state = { mode, afterAccept, calls: 0, effects: [], bound: false };
-  const adapter = Object.freeze({ listEffects: () => copy(state.effects), callCount: () => state.calls });
+  const adapter = Object.freeze({ listEffects: () => state.effects.map((effect) => copy(effect)), callCount: () => state.calls });
   adapterStates.set(adapter, state);
   return adapter;
 }
@@ -459,7 +460,8 @@ function createPreEffectHandoffProof({ registry, authority, audit, domain, adapt
 
   return Object.freeze({
     bos: Object.freeze({ evaluate }), applicationService: Object.freeze({ execute }),
-    listEffects: () => copy(fake.effects), listSecondaryAudit: () => copy(secondaryLedger),
+    listEffects: () => fake.effects.map((effect) => copy(effect)),
+    listSecondaryAudit: () => secondaryLedger.map((record) => copy(record)),
     applicationCallCount: () => applicationCalls,
   });
 }

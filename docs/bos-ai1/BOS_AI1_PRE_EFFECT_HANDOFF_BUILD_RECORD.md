@@ -29,7 +29,7 @@ that callback, four BLOCKED/RETIRED injections never reached their intended read
 
 Repair round 1: increment the fixture counter unconditionally, then invoke the
 optional callback. No production/proof source modification in this repair.
-No acceptance criterion was removed or weakened. Repairs consumed: **1/2**.
+No acceptance criterion was removed or weakened. This was repair **1/2**.
 
 Post-repair full repository suite: **381/381 PASS** = 186 new handoff tests +
 195 unchanged baseline regression tests (Controlled Publish 80; READ/DRAFT 40;
@@ -42,14 +42,33 @@ additional historical regression. The external test copy changes only ROOT to
 the current pinned test workspace; all fixtures/assertions remain unchanged.
 Formal evidence separately records this adaptation and its hash.
 
+## Independent finding and repair round 2
+
+Initial frozen candidate `3d2b647a5d106590b86a18408bf1d631f491dc04`, tree
+`b80e757929c5c976a7af4d08a4504bd273549592`, passed Formal **533/533**.
+Fresh independent review found IR-HANDOFF-001 (P2): whole-ledger copying applied
+the untrusted snapshot node/array budget to trusted accumulated records. Audit
+and effect view methods could throw once the ledgers grew; the private effect
+count remained correct but compensation evidence became difficult to retrieve.
+Independent tests: 169/173 PASS, four failures for this same finding; P0/P1=0.
+
+Repair round 2 changes all four audit/effect view methods to copy each private
+record separately. It preserves input limits, record isolation and execution
+semantics. Two additional regression cases cover more than 200 audit/effect
+records and 500 completed duplicates after failed terminal audit. The previous
+candidate and its evidence are preserved; no commit is amended or rewritten.
+
+Repairs consumed: **2/2**. Any further required source/test repair must STOP.
+
 ## Review and evidence plan
 
 Freeze the technical commit after these four paths; Formal Traceable Test and
 fresh independent reviewer each use their own clean detached worktree at that
 exact commit/tree. Portable evidence and reports are added later in documents
 only, with source/test equality verified. At most eight tracked paths anticipated,
-within the Founder limit of 12. No further source/test repair without counting
-the remaining second round and rerunning the exact-commit gates.
+within the Founder limit of 12. Formal and independent checks must rerun on the
+repaired candidate's full SHA/tree, in new worktrees. The initial 533-test PASS
+is historical evidence and does not certify the repaired candidate.
 
 The final verdict requires formal and independent PASS, P0/P1=0, no unresolved
 control issue, a clean worktree, exact file inventory, and non-force push only to
