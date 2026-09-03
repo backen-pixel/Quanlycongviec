@@ -535,14 +535,15 @@ function assignInitials(name) {
 
 /**
  * Cột trái: bộ lọc nhanh + thống kê khối lượng theo nhân viên.
- * Mọi ô lọc đều nối vào state lọc CÓ THẬT của trang (nhân viên / phòng ban / trạng thái /
- * ưu tiên) — không dựng ô trang trí không chạy. Thống kê đếm trực tiếp từ danh sách việc
- * đang hiển thị nên luôn khớp với board bên phải.
+ * Mọi ô lọc đều nối vào state lọc CÓ THẬT của trang (nhân viên / trạng thái / ưu tiên) —
+ * không dựng ô trang trí không chạy. Thống kê đếm trực tiếp từ danh sách việc đang hiển
+ * thị nên luôn khớp với board bên phải.
+ * Không có ô lọc theo nhóm/phòng ban — bỏ theo yêu cầu người dùng (dễ gây nhầm lẫn vì
+ * "Chọn nhân viên" ở đây liệt kê TOÀN BỘ nhân viên, không theo nhóm nào cả).
  */
 function AssignQuickFilterPanel({
-  tasks, users, departments, theme,
+  tasks, users, theme,
   filterAssignee, setFilterAssignee,
-  filterDepartmentId, setFilterDepartmentId,
   filterStatus, setFilterStatus,
   filterPriority, setFilterPriority,
   onSeeAllStaff,
@@ -590,11 +591,6 @@ function AssignQuickFilterPanel({
       key: 'assignee', icon: UserIcon, label: 'Chọn nhân viên',
       value: filterAssignee, onChange: setFilterAssignee,
       options: [{ v: '', t: 'Tất cả' }, ...users.map((u) => ({ v: String(u.id), t: u.full_name || u.email }))],
-    },
-    {
-      key: 'dept', icon: UsersIcon, label: 'Chọn nhóm',
-      value: filterDepartmentId, onChange: setFilterDepartmentId,
-      options: [{ v: '', t: 'Tất cả' }, ...departments.map((d) => ({ v: String(d.id), t: d.name }))],
     },
     {
       key: 'status', icon: CheckCircle2, label: 'Chọn trạng thái',
@@ -1591,11 +1587,18 @@ export default function CRMAssignmentsPage({
     return users;
   }, [isAdmin, users, filterDepartmentId, user?.id, user?.full_name, user?.email]);
 
+  // Kiểm tra hợp lệ theo `users` (danh sách ĐẦY ĐỦ, không lọc theo nhóm) — CHỨ KHÔNG phải
+  // `filteredAssigneeOptions` (đã thu hẹp theo `filterDepartmentId`). "Chọn nhân viên" ở
+  // Bộ lọc nhanh liệt kê TOÀN BỘ `users`, không lọc theo nhóm; `filteredAssigneeOptions` chỉ
+  // dùng cho select trong panel Bộ lọc nâng cao. Trước đây dùng nhầm danh sách đã thu hẹp:
+  // hễ có nhóm đang được lọc (kể cả set từ trước, phục hồi qua localStorage) mà nhân viên
+  // vừa chọn ở Bộ lọc nhanh không thuộc nhóm đó, effect này lập tức xoá lựa chọn về "Tất cả"
+  // ngay sau khi chọn — người dùng thấy như "chọn không được".
   useEffect(() => {
     if (!isAdmin || !filterAssignee) return;
-    const ok = filteredAssigneeOptions.some((u) => String(u.id) === String(filterAssignee));
+    const ok = users.some((u) => String(u.id) === String(filterAssignee));
     if (!ok) setFilterAssignee('');
-  }, [filterDepartmentId, filterCompanyId, filteredAssigneeOptions, filterAssignee, isAdmin]);
+  }, [users, filterAssignee, isAdmin]);
 
   useEffect(() => {
     if (!uid) return;
@@ -2666,12 +2669,9 @@ export default function CRMAssignmentsPage({
         <AssignQuickFilterPanel
           tasks={items}
           users={users}
-          departments={departments}
           theme={theme}
           filterAssignee={filterAssignee}
           setFilterAssignee={setFilterAssignee}
-          filterDepartmentId={filterDepartmentId}
-          setFilterDepartmentId={setFilterDepartmentId}
           filterStatus={filterStatus}
           setFilterStatus={setFilterStatus}
           filterPriority={filterPriority}
