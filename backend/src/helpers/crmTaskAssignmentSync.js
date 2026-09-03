@@ -295,8 +295,11 @@ async function attachCrmTaskMetaToAssignments(list) {
   let useLegacy = false;
   for (let i = 0; i < taskIds.length; i += CHUNK) {
     const slice = taskIds.slice(i, i + CHUNK);
-    const selectFull = 'id, notes, status, lead_id, title, stage_slug, production_pipeline_stage_id, show_fill_form, form_config, form_data';
-    const selectLegacy = 'id, notes, status, lead_id, title, stage_slug, production_pipeline_stage_id';
+    // `completed_at` cần cho alignAssignmentStatusFromCrmTask: thiếu nó thì hàm căn phải
+    // rơi về `new Date()`, nên một dòng đã hoàn thành từ tháng 6 lại hiện ngày hoàn thành
+    // là hôm nay — và lệch luôn với giá trị mà job crmAssignmentDriftHeal ghi xuống DB.
+    const selectFull = 'id, notes, status, completed_at, lead_id, title, stage_slug, production_pipeline_stage_id, show_fill_form, form_config, form_data';
+    const selectLegacy = 'id, notes, status, completed_at, lead_id, title, stage_slug, production_pipeline_stage_id';
     let { data, error } = await supabase
       .from('crm_tasks')
       .select(useLegacy ? selectLegacy : selectFull)
@@ -356,13 +359,21 @@ async function applyAssignmentStatusColumn(update, status) {
 }
 
 /**
- * Sửa lệch status ↔ column_id trên cột shared (KPI đếm theo status, Kanban theo cột).
- * Cập nhật in-memory ngay; ghi DB nền (không chặn response).
+ * Căn status ↔ column_id trên cột shared (KPI đếm theo status, Kanban theo cột) — CHỈ sửa
+ * trong bộ nhớ, KHÔNG ghi DB. Trả về danh sách patch để nơi gọi tự quyết định có ghi không.
+ *
+ * Tách khỏi phần ghi vì trước đây hàm này chạy ngay trong GET danh sách và bắn UPDATE nền:
+ * request đọc lại đi ghi dữ liệu, mà chỉ ghi được đúng những dòng người dùng tình cờ mở —
+ * dòng lệch nhưng không ai xem thì lệch mãi. Phần ghi giờ nằm ở jobs/crmAssignmentDriftHeal.
+ *
+ * @param {Array} list danh sách assignment (bị sửa tại chỗ)
+ * @param {Array|null} colsInput cột shared đã nạp sẵn — truyền vào để khỏi query lại mỗi trang
+ * @returns {Promise<Array<{id: any, column_id: any}>>} patch cần ghi để DB khớp bộ nhớ
  */
-async function healAssignmentColumnStatusAlignment(list) {
-  if (!Array.isArray(list) || !list.length) return list;
-  const cols = await loadSharedColumns();
-  if (!cols.length) return list;
+async function alignAssignmentColumnStatus(list, colsInput = null) {
+  if (!Array.isArray(list) || !list.length) return [];
+  const cols = colsInput || await loadSharedColumns();
+  if (!cols.length) return [];
   const sharedIds = new Set(cols.map((c) => String(c.id)));
   const patches = [];
   list.forEach((row) => {
@@ -374,24 +385,12 @@ async function healAssignmentColumnStatusAlignment(list) {
     if (!expected) return;
     const cur = row.column_id == null ? null : String(row.column_id);
     if (cur === String(expected)) return;
-    // Chỉ heal khi đang ở cột shared / chưa gán — không đụng cột custom cá nhân
+    // Chỉ căn khi đang ở cột shared / chưa gán — không đụng cột custom cá nhân
     if (cur && !sharedIds.has(cur)) return;
     row.column_id = expected;
     patches.push({ id: row.id, column_id: expected });
   });
-  if (patches.length) {
-    void (async () => {
-      const CHUNK = 80;
-      for (let i = 0; i < patches.length; i += CHUNK) {
-        const slice = patches.slice(i, i + CHUNK);
-        await Promise.all(slice.map((p) => supabase
-          .from('crm_assignments')
-          .update({ column_id: p.column_id, updated_at: new Date().toISOString() })
-          .eq('id', p.id)));
-      }
-    })().catch((e) => console.warn('[crm_assignments] heal column/status:', e?.message || e));
-  }
-  return list;
+  return patches;
 }
 
 async function attachAssignmentIdsToCrmTasks(list) {
@@ -422,11 +421,16 @@ async function attachAssignmentIdsToCrmTasks(list) {
 }
 
 /**
- * Sửa lệch status assignment ↔ crm_task (KPI/list đếm theo assignment.status,
- * còn chi tiết deal đọc crm_tasks.status). Cập nhật in-memory ngay; ghi DB nền.
+ * Căn status assignment ↔ crm_task (KPI/list đếm theo assignment.status, còn chi tiết deal
+ * đọc crm_tasks.status) — CHỈ sửa trong bộ nhớ, KHÔNG ghi DB. `crm_tasks` là nguồn đúng.
+ *
+ * Xem ghi chú tách phần ghi ở `alignAssignmentColumnStatus`.
+ *
+ * @param {Array} list danh sách assignment kèm `crm_task` (bị sửa tại chỗ)
+ * @returns {Array<{id: any, status: string, completed_at: string|null}>} patch cần ghi
  */
-async function healAssignmentStatusFromCrmTask(list) {
-  if (!Array.isArray(list) || !list.length) return list;
+function alignAssignmentStatusFromCrmTask(list) {
+  if (!Array.isArray(list) || !list.length) return [];
   const patches = [];
   list.forEach((row) => {
     if (!row?.id || !row.crm_task_id || !row.crm_task) return;
@@ -445,23 +449,29 @@ async function healAssignmentStatusFromCrmTask(list) {
       completed_at: row.completed_at,
     });
   });
-  if (patches.length) {
-    void (async () => {
-      const CHUNK = 80;
-      for (let i = 0; i < patches.length; i += CHUNK) {
-        const slice = patches.slice(i, i + CHUNK);
-        await Promise.all(slice.map((p) => supabase
-          .from('crm_assignments')
-          .update({
-            status: p.status,
-            completed_at: p.completed_at,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', p.id)));
-      }
-    })().catch((e) => console.warn('[crm_assignments] heal status from crm_task:', e?.message || e));
+  return patches;
+}
+
+/**
+ * Ghi patch căn lệch xuống crm_assignments. CHỈ dùng từ job bảo trì —
+ * KHÔNG gọi từ đường đọc (GET), để request đọc không sinh ghi.
+ *
+ * @param {Array<{id: any}>} patches mỗi patch: `id` + các cột cần ghi
+ * @returns {Promise<number>} số dòng đã ghi
+ */
+async function writeAssignmentAlignPatches(patches) {
+  if (!Array.isArray(patches) || !patches.length) return 0;
+  const CHUNK = 80;
+  let written = 0;
+  for (let i = 0; i < patches.length; i += CHUNK) {
+    const slice = patches.slice(i, i + CHUNK);
+    await Promise.all(slice.map(({ id, ...fields }) => supabase
+      .from('crm_assignments')
+      .update({ ...fields, updated_at: new Date().toISOString() })
+      .eq('id', id)));
+    written += slice.length;
   }
-  return list;
+  return written;
 }
 
 function normalizeAssignmentStatus(status) {
@@ -480,7 +490,9 @@ module.exports = {
   attachAssignmentIdsToCrmTasks,
   attachCrmTaskMetaToAssignments,
   applyAssignmentStatusColumn,
-  healAssignmentColumnStatusAlignment,
-  healAssignmentStatusFromCrmTask,
+  alignAssignmentColumnStatus,
+  alignAssignmentStatusFromCrmTask,
+  writeAssignmentAlignPatches,
+  loadSharedColumns,
   columnIdForTaskStatus,
 };

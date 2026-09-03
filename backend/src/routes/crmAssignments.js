@@ -22,8 +22,8 @@ const {
   syncCrmTaskFromAssignment,
   attachCrmTaskMetaToAssignments,
   applyAssignmentStatusColumn,
-  healAssignmentColumnStatusAlignment,
-  healAssignmentStatusFromCrmTask,
+  alignAssignmentColumnStatus,
+  alignAssignmentStatusFromCrmTask,
 } = require('../helpers/crmTaskAssignmentSync');
 const {
   syncAssignmentFileToTask,
@@ -829,8 +829,12 @@ r.get('/', responseCache({ ttl: 20, scope: 'user', tags: ['crm:assignments'] }),
     if (error) throw error;
     await attachAssigneesToAssignments(data || []);
     await attachCrmTaskMetaToAssignments(data || []);
-    await healAssignmentStatusFromCrmTask(data || []);
-    await healAssignmentColumnStatusAlignment(data || []);
+    // Căn status/cột cho ĐÚNG response này (crm_tasks là nguồn đúng) — không ghi DB.
+    // Việc ghi cho DB hội tụ là của jobs/crmAssignmentDriftHeal: request đọc không nên
+    // sinh ghi, và job quét toàn bảng nên sửa được cả dòng không ai mở — điều bản cũ
+    // (ghi ngay trong GET) không làm được.
+    alignAssignmentStatusFromCrmTask(data || []);
+    await alignAssignmentColumnStatus(data || [], await getSharedColumnsCached());
     const rows = data || [];
     res.json({
       assignments: rows,

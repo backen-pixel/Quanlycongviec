@@ -1304,6 +1304,15 @@ server.listen(config.port, () => {
     console.warn('[sx-schedule-slip] Failed to start:', e.message);
   }
 
+  // Sửa lệch status/cột crm_assignments ↔ crm_tasks. Trước đây việc này chạy ké trong GET
+  // danh sách giao việc (request đọc mà ghi DB, và chỉ sửa được dòng có người mở).
+  // Disable: CRM_ASSIGNMENT_DRIFT_HEAL_DISABLED=1
+  try {
+    require('./jobs/crmAssignmentDriftHeal').start();
+  } catch (e) {
+    console.warn('[crm-assignment-drift] Failed to start:', e.message);
+  }
+
   // Cron quá hạn → Zalo Bot sendMessage (cấu hình ở /management/project-deadlines)
   // Disable: PROJECT_DEADLINE_DISPATCH_DISABLED=1
   try {
