@@ -19,6 +19,7 @@ const {
 const { createCrmAssignmentSchedule } = require('../helpers/crmAssignmentSchedule');
 const { createTTLCache } = require('../helpers/ttlCache');
 const { fetchByIdChunks } = require('../helpers/chunkedIdQuery');
+const { packAssignmentsWithDict, wantsDictPayload } = require('../helpers/assignmentDictPayload');
 const {
   syncCrmTaskFromAssignment,
   attachCrmTaskMetaToAssignments,
@@ -360,6 +361,77 @@ const ASSIGNMENT_SELECT = `
   executor_company:companies!crm_assignments_executor_company_id_fkey(id, name, short_name),
   lead:crm_leads(id, code, title, type, project_id)
 `;
+
+/**
+ * Chế độ "bảng chỉ số" (`?view=index`): chỉ những cột đủ để ĐẾM và GOM NHÓM, không join gì.
+ *
+ * Dùng cho: số đếm trên đầu mỗi cột Kanban, thống kê theo nhân viên, dòng phụ KPI
+ * (`created_at`/`completed_at`), nhóm theo deadline. Trang không cần nạp trọn 8.000 dòng
+ * đầy đủ chỉ để biết mỗi cột có bao nhiêu việc — đo được: nạp gọn 2.765 dòng mất 456ms,
+ * còn nạp đầy đủ cùng số dòng đó mất 7,3s (bản cũ) / 2,3s (sau khi song song hoá).
+ *
+ * KHÔNG có: description, title, các object nhúng, meta crm_task đầy đủ, số đếm file.
+ * Những cái đó chỉ cần cho THẺ thật sự vẽ ra màn hình, và thẻ nạp riêng theo từng cột.
+ */
+const ASSIGNMENT_INDEX_SELECT = `
+  id, column_id, lead_id, crm_task_id, assignee_id,
+  priority, status, deadline, created_at, completed_at
+`;
+
+/** `?view=index` */
+function wantsIndexPayload(query) {
+  return String(query?.view || '').trim().toLowerCase() === 'index';
+}
+
+/**
+ * Gắn `assignee_ids` (CHỈ id) cho các dòng bảng chỉ số, và trả kèm TỪ ĐIỂN user.
+ *
+ * Lấy luôn object user nhúng trong chính truy vấn junction thay vì gom id rồi query
+ * `users` ở lượt sau: gom-rồi-query bắt buộc phải chờ junction về trước nên tốn thêm một
+ * lượt RTT (~250ms) nối tiếp, trong khi ở đây PostgREST join hộ trong cùng một lượt.
+ * Trùng lặp không thành vấn đề vì cuối cùng vẫn dồn về từ điển theo id.
+ */
+async function attachIndexAssigneeIds(rows) {
+  if (!rows.length) return {};
+  const withUser = 'assignment_id, user_id, user:users(id, full_name, email, avatar)';
+  let { rows: junction, error } = await fetchByIdChunks(rows.map((r) => r.id), (slice) => supabase
+    .from('crm_assignment_assignees').select(withUser).in('assignment_id', slice));
+  if (error) {
+    ({ rows: junction } = await fetchByIdChunks(rows.map((r) => r.id), (slice) => supabase
+      .from('crm_assignment_assignees').select('assignment_id, user_id').in('assignment_id', slice)));
+  }
+  const byId = new Map();
+  const users = {};
+  (junction || []).forEach((r) => {
+    if (!byId.has(r.assignment_id)) byId.set(r.assignment_id, []);
+    byId.get(r.assignment_id).push(String(r.user_id));
+    if (r.user?.id) users[String(r.user.id)] = r.user;
+  });
+  rows.forEach((r) => {
+    // Rơi về `assignee_id` khi chưa có bản ghi junction — y hệt attachAssigneesToAssignments.
+    r.assignee_ids = byId.get(r.id) || (r.assignee_id ? [String(r.assignee_id)] : []);
+  });
+  return users;
+}
+
+/**
+ * Gắn `crm_task` RÚT GỌN (chỉ status + completed_at) cho bảng chỉ số.
+ *
+ * Bắt buộc phải có, không được bỏ cho nhanh: `alignAssignmentStatusFromCrmTask` và
+ * `alignAssignmentColumnStatus` dùng đúng hai trường này để căn lại status và column_id
+ * (crm_tasks là nguồn đúng). Bỏ đi thì số đếm ở bảng chỉ số sẽ lệch với thẻ thật trên
+ * board — đúng loại lỗi âm thầm khó tìm nhất.
+ */
+async function attachIndexCrmTaskStatus(rows) {
+  const taskIds = [...new Set(rows.map((r) => r.crm_task_id).filter(Boolean))];
+  if (!taskIds.length) return;
+  const { rows: tasks } = await fetchByIdChunks(taskIds, (slice) => supabase
+    .from('crm_tasks').select('id, status, completed_at').in('id', slice));
+  const byId = new Map((tasks || []).map((t) => [String(t.id), t]));
+  rows.forEach((r) => {
+    if (r.crm_task_id) r.crm_task = byId.get(String(r.crm_task_id)) || null;
+  });
+}
 
 /** Sanitize + resolve lead_ids khớp mã TB / deal / tên / SĐT để tìm nhiệm vụ. */
 async function resolveAssignmentSearchFilter(rawQ) {
@@ -749,8 +821,12 @@ r.get('/', responseCache({ ttl: 20, scope: 'user', tags: ['crm:assignments'] }),
     const overdueFlag = String(req.query.overdue || '').trim().toLowerCase();
     const moduleFilter = String(req.query.assignment_module || '').trim().toLowerCase();
     const rawLimit = Number(req.query.limit);
+    // Trần 1.000 = trần `max-rows` của PostgREST: xin nhiều hơn cũng chỉ nhận 1.000 dòng
+    // (đo: .range(0, 4999) trả về đúng 1.000). Trần cũ 500 khiến client phải gọi gấp đôi
+    // số lượt cho cùng một khối dữ liệu, mà chi phí mỗi lượt gần như không đổi theo số
+    // dòng (500 dòng ~880ms, 1.000 dòng ~1.070ms) — tức là hoàn toàn RTT.
     const pageLimit = Number.isFinite(rawLimit) && rawLimit > 0
-      ? Math.min(Math.floor(rawLimit), 500)
+      ? Math.min(Math.floor(rawLimit), ASSIGN_LIST_PAGE)
       : null;
     const rawOffset = Number(req.query.offset);
     const pageOffset = Number.isFinite(rawOffset) && rawOffset > 0 ? Math.floor(rawOffset) : 0;
@@ -773,7 +849,11 @@ r.get('/', responseCache({ ttl: 20, scope: 'user', tags: ['crm:assignments'] }),
       }
       q = applyAssignmentStatusFilter(q, req.query);
       if (req.query.priority) q = q.eq('priority', req.query.priority);
-      if (req.query.column_id) q = q.eq('column_id', req.query.column_id);
+      // `__none__` = cột ảo "Chưa phân loại" trên board (column_id IS NULL). Board nạp thẻ
+      // theo từng cột nên nó phải lọc được cả cột này, không thì các dòng chưa gán cột sẽ
+      // không bao giờ có thẻ để vẽ.
+      if (String(req.query.column_id || '') === '__none__') q = q.is('column_id', null);
+      else if (req.query.column_id) q = q.eq('column_id', req.query.column_id);
       if (req.query.lead_id) q = q.eq('lead_id', String(req.query.lead_id).trim());
       if (overdueFlag === '1' || overdueFlag === 'true') {
         const startIso = vnStartOfTodayIso();
@@ -799,6 +879,42 @@ r.get('/', responseCache({ ttl: 20, scope: 'user', tags: ['crm:assignments'] }),
         .order('id', { ascending: true });
       // Không return builder trần từ async — PostgREST thenable, await sẽ chạy query.
       return { q };
+    }
+
+    // ─── Chế độ bảng chỉ số: trả sớm, không đi qua nhánh nạp đầy đủ bên dưới ──
+    if (wantsIndexPayload(req.query)) {
+      const makeIndex = async () => applyCommonFilters(
+        supabase.from('crm_assignments').select(ASSIGNMENT_INDEX_SELECT),
+      );
+      let { data: idxRows, error: idxErr } = await fetchAssignmentRowsPaged(makeIndex, pageOpts);
+      if (idxErr && /assignment_module/.test(idxErr.message || '') && moduleFilter) {
+        const makeNoMod = async () => applyCommonFilters(
+          supabase.from('crm_assignments').select(ASSIGNMENT_INDEX_SELECT),
+          { skipModule: true },
+        );
+        ({ data: idxRows, error: idxErr } = await fetchAssignmentRowsPaged(makeNoMod, pageOpts));
+      }
+      if (idxErr) throw idxErr;
+      const rows = idxRows || [];
+      // Từ điển user kèm theo để thống kê nhân viên có nhãn đúng, không phải tra sang danh
+      // sách `users` của trang (danh sách đó lọc theo công ty nên thiếu người liên công ty
+      // → sẽ hiện "Không rõ").
+      const [users] = await Promise.all([
+        attachIndexAssigneeIds(rows),
+        attachIndexCrmTaskStatus(rows),
+      ]);
+      alignAssignmentStatusFromCrmTask(rows);
+      await alignAssignmentColumnStatus(rows, await getSharedColumnsCached());
+      // `crm_task` chỉ là nguyên liệu để căn ở trên — client không dùng, bỏ cho nhẹ.
+      rows.forEach((r) => { delete r.crm_task; });
+      return res.json({
+        index: rows,
+        dict: { users },
+        offset: pageOffset,
+        limit: pageLimit,
+        total_returned: rows.length,
+        has_more: pageLimit != null ? rows.length >= pageLimit : false,
+      });
     }
 
     const makeFull = async () => applyCommonFilters(
@@ -832,22 +948,34 @@ r.get('/', responseCache({ ttl: 20, scope: 'user', tags: ['crm:assignments'] }),
       ({ data, error } = await fetchAssignmentRowsPaged(makeNoMod, pageOpts));
     }
     if (error) throw error;
-    await attachAssigneesToAssignments(data || []);
-    await attachCrmTaskMetaToAssignments(data || []);
+    const rows = data || [];
+    // Ba việc gắn dữ liệu kèm SONG SONG: cả ba chỉ cần `rows` (đã có), không ai dùng kết
+    // quả của ai. Chạy nối tiếp như bản cũ thì mỗi trang phải cộng dồn RTT của từng bước
+    // (đo ở 500 dòng: main 550ms + assignees 200ms + crm_tasks 410ms + đếm file 190ms =
+    // ~1.350ms). Song song hoá còn ~880ms/trang — và trang danh sách ở 8.000 việc phải
+    // gọi endpoint này 8–17 lượt nên khoản này nhân lên rất nhanh.
+    await Promise.all([
+      attachAssigneesToAssignments(rows),
+      attachCrmTaskMetaToAssignments(rows),
+    ]);
     // Căn status/cột cho ĐÚNG response này (crm_tasks là nguồn đúng) — không ghi DB.
     // Việc ghi cho DB hội tụ là của jobs/crmAssignmentDriftHeal: request đọc không nên
     // sinh ghi, và job quét toàn bảng nên sửa được cả dòng không ai mở — điều bản cũ
     // (ghi ngay trong GET) không làm được.
-    alignAssignmentStatusFromCrmTask(data || []);
-    await alignAssignmentColumnStatus(data || [], await getSharedColumnsCached());
-    const rows = data || [];
-    res.json({
-      assignments: rows,
+    // Phải chạy SAU attach: nó đọc `a.crm_task` do attachCrmTaskMeta gắn vào.
+    alignAssignmentStatusFromCrmTask(rows);
+    await alignAssignmentColumnStatus(rows, await getSharedColumnsCached());
+    const meta = {
       has_more: pageLimit != null ? rows.length >= pageLimit : false,
       offset: pageOffset,
       limit: pageLimit,
       total_returned: rows.length,
-    });
+    };
+    if (wantsDictPayload(req.query)) {
+      const packed = packAssignmentsWithDict(rows);
+      return res.json({ ...packed, ...meta });
+    }
+    res.json({ assignments: rows, ...meta });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi tải nhiệm vụ' }); }
 });
 

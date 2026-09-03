@@ -4,6 +4,8 @@ import { Link, useSearchParams, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { formatDate } from '../lib/utils';
+import { unpackAssignmentsDict } from '../lib/assignmentDictPayload';
+import { runWithConcurrency } from '../lib/runWithConcurrency';
 import {
   LayoutGrid, List as ListIcon, Users as UsersIcon, AlertTriangle, Search, Plus,
   Building2, X, CheckCircle2, Circle, Clock, Calendar, User as UserIcon, Trash2,
@@ -649,28 +651,31 @@ function AssignQuickFilterPanel({
   filterAssignee, setFilterAssignee,
   filterStatus, setFilterStatus,
   filterPriority, setFilterPriority,
-  onSeeAllStaff, loadingMore = false,
+  onSeeAllStaff, loadingMore = false, userDict = null,
 }) {
   // Trên mobile panel này nằm TRÊN bảng Kanban; để mở sẵn (cao ~455px) sẽ đẩy bảng xuống
   // quá sâu. Mặc định thu gọn ở màn hẹp, giống cách dải KPI đang làm.
   const [open, setOpen] = useState(defaultKpiPanelOpen);
   const [showAllStaff, setShowAllStaff] = useState(false);
 
+  // Đếm trên BẢNG CHỈ SỐ (`tasks` = indexRows: mọi dòng khớp bộ lọc, chỉ vài cột) chứ
+  // không trên các thẻ đã nạp — thẻ chỉ là ~150 dòng đầu mỗi cột nên đếm từ đó sẽ ra số
+  // nhỏ hơn thực tế rất nhiều. Tên người tra từ `userDict` do chính bảng chỉ số trả kèm.
   const staffStats = useMemo(() => {
     const list = Array.isArray(tasks) ? tasks : [];
+    const dict = userDict || {};
     const byId = new Map();
     for (const t of list) {
-      // `assignees` là danh sách nhiều người; rơi về `assignee` khi chỉ có một.
-      const people = Array.isArray(t?.assignees) && t.assignees.length
-        ? t.assignees
-        : (t?.assignee ? [t.assignee] : []);
-      for (const p of people) {
-        const id = String(p?.id || p?.user_id || '');
+      // `assignee_ids` đã gộp cả bảng junction và `assignee_id` đơn lẻ (xem backend).
+      const people = Array.isArray(t?.assignee_ids) && t.assignee_ids.length
+        ? t.assignee_ids
+        : (t?.assignee_id ? [String(t.assignee_id)] : []);
+      for (const id of people) {
         if (!id) continue;
-        const name = p?.full_name || p?.name || 'Không rõ';
-        const cur = byId.get(id) || { id, name, count: 0 };
+        const name = dict[String(id)]?.full_name || 'Không rõ';
+        const cur = byId.get(String(id)) || { id: String(id), name, count: 0 };
         cur.count += 1;
-        byId.set(id, cur);
+        byId.set(String(id), cur);
       }
     }
     const rows = [...byId.values()].sort((a, b) => b.count - a.count);
@@ -684,7 +689,7 @@ function AssignQuickFilterPanel({
       pct: total ? Math.round((r.count / total) * 100) : 0,
       ...ASSIGN_STAFF_COLORS[i % ASSIGN_STAFF_COLORS.length],
     }));
-  }, [tasks]);
+  }, [tasks, userDict]);
 
   const shownStaff = showAllStaff ? staffStats : staffStats.slice(0, 4);
 
@@ -1317,10 +1322,56 @@ const COLUMN_COLORS = ['#3B82F6', '#8B5CF6', '#F59E0B', '#10B981', '#EF4444', '#
 
 /**
  * Phân trang khi tải danh sách việc. Trang đầu nhỏ để trang vẽ được ngay, các trang sau
- * lớn hơn (500 là mức trần backend cho phép) để giảm số lượt gọi cho phần còn lại.
+ * lấy trọn 1.000 dòng — trần `max-rows` của PostgREST, cũng là trần backend cho phép.
+ *
+ * Vì sao trang sau to hẳn lên: chi phí một lượt gọi gần như KHÔNG đổi theo số dòng
+ * (đo trên dữ liệu thật: 500 dòng ~880ms, 1.000 dòng ~1.070ms) — nó là RTT tới Supabase
+ * ở ap-south-1 cộng vài lượt gắn dữ liệu kèm. Nên số lượt gọi mới là thứ quyết định thời
+ * gian, và trang 500 làm số lượt gọi tăng gấp đôi một cách vô ích.
  */
 const ASSIGN_PAGE_FIRST = 300;
-const ASSIGN_PAGE_NEXT = 500;
+const ASSIGN_PAGE_NEXT = 1000;
+
+/**
+ * Số trang chạy CÙNG LÚC khi nạp nền.
+ *
+ * Trước đây các trang nạp NỐI TIẾP nhau, nên tổng thời gian = số trang × ~1,25s. Đo trên
+ * 2.765 việc: 6 lượt nối tiếp mất 7,3s; ở 8.000 việc là 17 lượt ≈ 21s. Vì offset của mọi
+ * trang tính được ngay từ tổng số việc (có sẵn từ /stats) chứ không phải chờ trang trước
+ * trả về, các trang hoàn toàn độc lập và nạp song song được.
+ *
+ * Hai mức khác nhau, vì hai loại trang có giá khác nhau:
+ *  - Bảng chỉ số nằm trên đường tới đích (số đếm đầu cột chờ nó) và trang rất nhẹ
+ *    (~360 byte/dòng, không join) → cho chạy rộng hơn.
+ *  - Trang ĐẦY ĐỦ nặng ~1,3KB/dòng và sau Phần 1 chỉ còn dùng cho các view List / Planner /
+ *    Deadline, không phải view mặc định → giữ hẹp hơn. Đo được ở 8–9 trang: mức 4 mất
+ *    ~3,5s và đỉnh bộ nhớ +18MB, mức 8 mất ~2,5s nhưng +37MB. Đổi gấp đôi bộ nhớ backend
+ *    để lấy 1s trên một view ít dùng là không đáng.
+ *
+ * Đã đo là KHÔNG có chuyện tranh chấp pool: trong lúc một người nạp 8 trang song song,
+ * request nhỏ của người khác vẫn 167–172ms so với 170ms lúc rảnh (×1,0 ở cả mức 3 và 8).
+ * Nút thắt là RTT tới Supabase (ap-south-1), không phải số kết nối.
+ */
+const ASSIGN_FETCH_PARALLEL = 4;
+const ASSIGN_INDEX_PARALLEL = 6;
+
+/**
+ * Xin server trả payload kiểu TỪ ĐIỂN (xem lib/assignmentDictPayload.js): các object nhúng
+ * lặp lại (user / công ty / lead) rút ra một bảng tra dùng chung, mỗi dòng chỉ giữ id.
+ * Giảm 37% JSON thô — không phải để tiết kiệm băng thông (gzip đã nén 11,5×) mà để bớt
+ * CPU JSON.parse chạy trên main thread của trình duyệt: ở 8.000 dòng là 10,2MB xuống 6,4MB.
+ * `unpackAssignmentsDict` dựng lại đúng hình dạng cũ nên phần còn lại của trang không đổi.
+ */
+const ASSIGN_DICT_PARAM = { dict: 1 };
+
+/**
+ * Số THẺ ĐẦY ĐỦ nạp cho mỗi cột Kanban ở lượt đầu (cuộn thì xin thêm từng trang như vậy).
+ *
+ * 150 đủ sâu để gần như không ai cuộn tới đáy trong lần xem đầu, mà vẫn rẻ: đo được nạp
+ * 150 dòng đầy đủ cho cả 3 cột song song mất ~0,42s — so với 2,3s nếu nạp trọn 2.765 dòng.
+ * Số ĐẾM trên đầu cột không lấy từ đây mà từ bảng chỉ số, nên vẫn là số thật.
+ */
+const ASSIGN_COL_PAGE = 150;
 
 const RECURRENCE_OPTIONS = [
   { value: 'daily', label: 'Hàng ngày' },
@@ -1518,6 +1569,27 @@ export default function CRMAssignmentsPage({
   const [view, setView] = useState('kanban');
   const [columns, setColumns] = useState([]);
   const [items, setItems] = useState([]);
+  /**
+   * Bảng CHỈ SỐ: mọi dòng khớp bộ lọc, nhưng chỉ vài cột đủ để ĐẾM và GOM NHÓM
+   * (`?view=index`). Đây là nguồn cho số đếm đầu cột Kanban, thống kê theo nhân viên và
+   * dòng phụ KPI. Nhờ nó, board không phải nạp trọn 8.000 dòng ĐẦY ĐỦ chỉ để biết mỗi cột
+   * có bao nhiêu việc — trong khi thẻ thật vẽ ra màn hình chỉ là ~150 dòng đầu mỗi cột.
+   * Đo được: nạp chỉ số 2.765 dòng ~1,1s, nạp đầy đủ cùng số dòng đó 2,3s.
+   */
+  const [indexRows, setIndexRows] = useState([]);
+  /** Từ điển user do bảng chỉ số trả kèm — thống kê nhân viên tra tên ở đây. */
+  const [indexUsers, setIndexUsers] = useState({});
+  /**
+   * `items` đã chứa TOÀN BỘ dòng khớp bộ lọc hay chưa.
+   *
+   * Board Kanban chỉ cần vài trăm thẻ đầu mỗi cột, nhưng các view Trạng thái / Danh sách /
+   * Planner / Deadline gom nhóm theo chiều khác nên buộc phải có đủ dòng. Cờ này để nạp
+   * đủ MỘT LẦN, đúng lúc người dùng chuyển sang các view đó, chứ không nạp sẵn cho mọi ai
+   * mở trang.
+   */
+  const [fullLoaded, setFullLoaded] = useState(false);
+  /** { [columnId]: số thẻ đã nạp } — để biết còn phải xin server thêm hay không. */
+  const [colLoadedCount, setColLoadedCount] = useState({});
   const [serverStats, setServerStats] = useState(null);
   const [privateGroups, setPrivateGroups] = useState([]);
   const [privateLoading, setPrivateLoading] = useState(false);
@@ -1746,6 +1818,83 @@ export default function CRMAssignmentsPage({
   }, [isAdmin, companiesModule]);
 
   // ─── Load all data ──
+  /** Bộ tham số lọc hiện hành — dùng chung cho mọi lượt nạp (chỉ số / thẻ / nạp đủ). */
+  const buildListParams = useCallback(() => {
+    const params = {};
+    if (isAdmin && filterCompanyId) params.company_id = filterCompanyId;
+    if (isAdmin && filterDepartmentId) params.department_id = filterDepartmentId;
+    if (filterAssignee) params.assignee_id = filterAssignee;
+    else if (!isAdmin && uid) params.assignee_id = uid;
+    if (filterStatus) params.status = filterStatus;
+    if (filterPriority) params.priority = filterPriority;
+    if (searchDebounced) params.q = searchDebounced;
+    if (assignmentModule) params.assignment_module = assignmentModule;
+    return params;
+  }, [isAdmin, filterCompanyId, filterDepartmentId, filterAssignee, filterStatus, filterPriority, searchDebounced, assignmentModule, uid]);
+
+  /** Tham số của lượt load ĐANG hiệu lực — để nạp thêm thẻ theo cột lúc người dùng cuộn. */
+  const listParamsRef = useRef({});
+
+  /** Một trang THẺ ĐẦY ĐỦ của một cột. `columnKey` = id cột, hoặc '__none__' (chưa gán). */
+  const fetchColumnPage = useCallback(async (params, columnKey, offset) => {
+    try {
+      const { data } = await api.get(apiBase, {
+        params: {
+          ...params,
+          ...ASSIGN_DICT_PARAM,
+          column_id: columnKey,
+          limit: ASSIGN_COL_PAGE,
+          offset,
+        },
+      });
+      return unpackAssignmentsDict(data);
+    } catch { return null; }
+  }, [apiBase]);
+
+  /**
+   * Nạp BẢNG CHỈ SỐ (mọi dòng, ít cột) — các trang chạy song song trong một đợt.
+   * `total` lấy từ /stats nên biết trước mọi offset, không phải dò tuần tự.
+   */
+  const fetchIndexAll = useCallback(async (params, total) => {
+    const page = async (offset) => {
+      try {
+        const { data } = await api.get(apiBase, {
+          params: { ...params, view: 'index', limit: ASSIGN_PAGE_NEXT, offset },
+        });
+        return data || null;
+      } catch { return null; }
+    };
+    const first = await page(0);
+    if (!first) return null;
+    const rows = first.index || [];
+    const users = { ...(first.dict?.users || {}) };
+    const known = typeof total === 'number' && total > 0 ? total : null;
+
+    if (rows.length < ASSIGN_PAGE_NEXT) return { rows, users };
+
+    const offsets = [];
+    if (known) {
+      for (let o = ASSIGN_PAGE_NEXT; o < known; o += ASSIGN_PAGE_NEXT) offsets.push(o);
+    } else {
+      // Không có tổng (/stats lỗi) → xin thừa rồi dừng khi gặp trang non hơn limit.
+      // Cửa sổ trượt có thể đã bắn thừa vài trang rỗng trước khi kịp dừng — chấp nhận,
+      // đây là nhánh chỉ chạy khi /stats lỗi.
+      for (let o = ASSIGN_PAGE_NEXT; o < ASSIGN_PAGE_NEXT * 51; o += ASSIGN_PAGE_NEXT) offsets.push(o);
+    }
+    // Cửa sổ trượt: trang rỗng / non hơn limit ⇒ hết bảng, không mở thêm trang mới nữa.
+    const done = await runWithConcurrency(
+      offsets.map((o) => () => page(o)),
+      ASSIGN_INDEX_PARALLEL,
+      (res) => !res || (res.index || []).length < ASSIGN_PAGE_NEXT,
+    );
+    done.forEach((res) => {
+      if (!res) return;
+      rows.push(...(res.index || []));
+      Object.assign(users, res.dict?.users || {});
+    });
+    return { rows, users };
+  }, [apiBase]);
+
   const load = useCallback(async ({ soft = false } = {}) => {
     // Lượt gọi CỦA CHÍNH LẦN NÀY — nếu khi response về mà loadSeqRef đã nhảy sang số khác
     // (một lượt load() mới hơn đã bắt đầu), nghĩa là lượt này đã lỗi thời: bỏ qua toàn bộ
@@ -1755,26 +1904,19 @@ export default function CRMAssignmentsPage({
     if (soft) setRefreshing(true);
     else setLoading(true);
     try {
-      const params = {};
-      if (isAdmin && filterCompanyId) params.company_id = filterCompanyId;
-      if (isAdmin && filterDepartmentId) params.department_id = filterDepartmentId;
-      if (filterAssignee) params.assignee_id = filterAssignee;
-      else if (!isAdmin && uid) params.assignee_id = uid;
-      if (filterStatus) params.status = filterStatus;
-      if (filterPriority) params.priority = filterPriority;
-      if (searchDebounced) params.q = searchDebounced;
-      if (assignmentModule) params.assignment_module = assignmentModule;
+      const params = buildListParams();
+      listParamsRef.current = params;
 
-      const [colRes, itRes, schedRes, statsRes] = await Promise.all([
+      // ── Vòng 1: cột + KPI + lịch. Ba lượt nhẹ, phải có `columns` trước mới biết cần nạp
+      // thẻ cho những cột nào; `stats.total` cho biết bảng chỉ số có bao nhiêu trang.
+      const [colRes, schedRes, statsRes] = await Promise.all([
         api.get(`${apiBase}/columns`),
-        api.get(apiBase, { params: { ...params, limit: ASSIGN_PAGE_FIRST, offset: 0 } }),
         api.get(`${apiBase}/schedules`, { params: { assignment_module: assignmentModule, ...(isAdmin && filterCompanyId ? { company_id: filterCompanyId } : {}) } }).catch(() => ({ data: { schedules: [] } })),
         api.get(`${apiBase}/stats`, { params }).catch(() => ({ data: null })),
       ]);
       if (mySeq !== loadSeqRef.current) return;
-      setColumns(colRes.data?.columns || []);
-      const nextItems = itRes.data?.assignments || [];
-      setItems(nextItems);
+      const cols = colRes.data?.columns || [];
+      setColumns(cols);
       const s = statsRes?.data;
       setServerStats(s && typeof s.total === 'number' ? {
         total: s.total || 0,
@@ -1784,67 +1926,144 @@ export default function CRMAssignmentsPage({
         overdue: s.overdue || 0,
       } : null);
       setSchedules(schedRes.data?.schedules || []);
+
+      // ── Vòng 2: THẺ theo từng cột ‖ BẢNG CHỈ SỐ. Hai việc độc lập nên chạy cùng lúc, và
+      // chỉ chờ THẺ để mở khoá giao diện — bảng chỉ số về sau thì số đếm đầu cột hiện sau,
+      // chứ không giữ cả trang trắng. Đây là chỗ ăn nhiều nhất: bản cũ phải nạp ĐẦY ĐỦ
+      // toàn bộ 2.765 dòng (7,3s ban đầu, 2,3s sau khi song song hoá) chỉ để vẽ được vài
+      // trăm thẻ đầu mỗi cột; giờ nạp đúng phần vẽ ra (~150 dòng/cột, ~0,45s).
+      const columnKeys = [...cols.map((c) => String(c.id)), '__none__'];
+      const indexPromise = fetchIndexAll(params, s?.total);
+
+      const cardPages = await Promise.all(columnKeys.map((k) => fetchColumnPage(params, k, 0)));
+      if (mySeq !== loadSeqRef.current) return;
+      const nextItems = [];
+      const loadedCount = {};
+      columnKeys.forEach((k, i) => {
+        const batch = cardPages[i] || [];
+        loadedCount[k] = batch.length;
+        nextItems.push(...batch);
+      });
+      setItems(nextItems);
+      setColLoadedCount(loadedCount);
+      setFullLoaded(false);
       setViewingItem((prev) => {
         if (!prev) return prev;
         const fresh = nextItems.find((t) => String(t.id) === String(prev.id));
         return fresh ? { ...prev, ...fresh } : prev;
       });
-
-      // Trang đầu đã vẽ xong → mở khoá giao diện NGAY, phần còn lại nạp ở nền.
-      // Đo thực tế: thời gian của endpoint này tỉ lệ thuận số dòng (~2,4ms/dòng, chi phí
-      // cố định ~600ms), nên lấy trọn 2.681 việc trong một lượt mất ~7–9s và trang đứng
-      // trắng suốt thời gian đó. Chia trang: thấy việc sau ~1,2s, các trang sau nối tiếp
-      // vào `items` nên số đếm cuối cùng vẫn ĐẦY ĐỦ đúng như trước.
       setLoading(false);
       setRefreshing(false);
-      if (nextItems.length >= ASSIGN_PAGE_FIRST) {
-        setLoadingMore(true);
-        let loaded = nextItems.length;
-        let offset = nextItems.length;
-        for (;;) {
-          let batch = [];
-          try {
-            const { data } = await api.get(apiBase, {
-              params: { ...params, limit: ASSIGN_PAGE_NEXT, offset },
-            });
-            batch = data?.assignments || [];
-          } catch { break; }
-          // Lượt load mới hơn đã bắt đầu → dừng, không nối thêm vào danh sách đã lỗi thời.
-          if (mySeq !== loadSeqRef.current) return;
-          if (!batch.length) break;
-          setItems((prev) => {
-            const seen = new Set(prev.map((t) => String(t.id)));
-            const merged = [...prev, ...batch.filter((t) => !seen.has(String(t.id)))];
-            loaded = merged.length;
-            return merged;
-          });
-          offset += batch.length;
-          if (batch.length < ASSIGN_PAGE_NEXT) break;
-        }
 
-        // Lưới an toàn cho phân trang theo offset: danh sách sắp xếp `created_at` GIẢM DẦN
-        // nên việc mới tạo chen vào ĐẦU danh sách, đẩy lệch mọi trang sau — nếu có ai tạo
-        // việc trong lúc mình đang nạp nền (ở 8.000 việc thì khoảng này dài ~9s) thì một
-        // dòng sẽ bị nhảy qua, im lặng, không lỗi. Đối chiếu với tổng do server đếm
-        // (/stats, nguồn độc lập) để phát hiện; lệch thì nạp lại một lượt cho đủ.
-        const serverTotal = s && typeof s.total === 'number' ? s.total : null;
-        if (mySeq === loadSeqRef.current && serverTotal != null && loaded < serverTotal) {
-          try {
-            const { data } = await api.get(apiBase, { params });
-            const full = data?.assignments || [];
-            if (mySeq === loadSeqRef.current && full.length >= loaded) setItems(full);
-          } catch { /* giữ những gì đã nạp được */ }
-        }
-        if (mySeq === loadSeqRef.current) setLoadingMore(false);
+      setLoadingMore(true);
+      const idx = await indexPromise;
+      if (mySeq !== loadSeqRef.current) return;
+      if (idx) {
+        setIndexRows(idx.rows);
+        setIndexUsers(idx.users);
       }
+      setLoadingMore(false);
       return;
     } catch (e) { if (mySeq === loadSeqRef.current) console.error(e); }
     if (mySeq === loadSeqRef.current) {
       setLoading(false);
       setRefreshing(false);
+      setLoadingMore(false);
     }
-  }, [isAdmin, filterCompanyId, filterDepartmentId, filterAssignee, filterStatus, filterPriority, searchDebounced, apiBase, assignmentModule, uid]);
+  }, [isAdmin, filterCompanyId, apiBase, assignmentModule, buildListParams, fetchColumnPage, fetchIndexAll]);
 
+  /**
+   * Nạp THÊM một trang thẻ cho MỘT cột (người dùng cuộn tới đáy cột đó).
+   * Không làm gì khi `items` đã có đủ toàn bộ dòng (`fullLoaded`).
+   */
+  const colLoadingRef = useRef(new Set());
+  const loadMoreColumn = useCallback(async (columnKey) => {
+    const key = String(columnKey);
+    if (fullLoaded || colLoadingRef.current.has(key)) return;
+    colLoadingRef.current.add(key);
+    const mySeq = loadSeqRef.current;
+    try {
+      const offset = colLoadedCount[key] || 0;
+      const batch = await fetchColumnPage(listParamsRef.current, key, offset);
+      if (mySeq !== loadSeqRef.current || !batch?.length) return;
+      setItems((prev) => {
+        const seen = new Set(prev.map((t) => String(t.id)));
+        const fresh = batch.filter((t) => !seen.has(String(t.id)));
+        return fresh.length ? [...prev, ...fresh] : prev;
+      });
+      setColLoadedCount((prev) => ({ ...prev, [key]: (prev[key] || 0) + batch.length }));
+    } finally {
+      colLoadingRef.current.delete(key);
+    }
+  }, [fullLoaded, colLoadedCount, fetchColumnPage]);
+
+  /**
+   * Nạp ĐẦY ĐỦ mọi dòng vào `items` — cho các view gom nhóm theo chiều khác cột Kanban
+   * (Trạng thái / Danh sách / Planner / Deadline), những view buộc phải có đủ dòng mới
+   * đúng. Chạy MỘT LẦN cho mỗi bộ lọc, đúng lúc người dùng mở view đó.
+   */
+  const fullLoadSeqRef = useRef(0);
+  const loadFullList = useCallback(async () => {
+    const mySeq = ++fullLoadSeqRef.current;
+    const listSeq = loadSeqRef.current;
+    setLoadingMore(true);
+    const params = listParamsRef.current;
+    const stale = () => mySeq !== fullLoadSeqRef.current || listSeq !== loadSeqRef.current;
+    const page = async (offset) => {
+      try {
+        const { data } = await api.get(apiBase, {
+          params: { ...params, ...ASSIGN_DICT_PARAM, limit: ASSIGN_PAGE_NEXT, offset },
+        });
+        return unpackAssignmentsDict(data);
+      } catch { return null; }
+    };
+    try {
+      // Tổng lấy từ bảng chỉ số (đã nạp xong, chính xác) hoặc /stats — biết trước mọi
+      // offset nên các trang chạy song song, không phải nối tiếp nhau.
+      const total = indexRows.length || serverStats?.total || 0;
+      const collected = [];
+      const seen = new Set();
+      const push = (batch) => batch.forEach((t) => {
+        const k = String(t.id);
+        if (seen.has(k)) return;
+        seen.add(k);
+        collected.push(t);
+      });
+      const offsets = [];
+      for (let o = 0; o < Math.max(total, 1); o += ASSIGN_PAGE_NEXT) offsets.push(o);
+      const done = await runWithConcurrency(
+        offsets.map((o) => () => page(o)),
+        ASSIGN_FETCH_PARALLEL,
+        // Dừng luôn khi lượt load mới hơn đã bắt đầu — khỏi nạp nốt hàng nghìn dòng của
+        // bộ lọc vừa bị người dùng thay.
+        (b) => stale() || !b || b.length < ASSIGN_PAGE_NEXT,
+      );
+      if (stale()) return;
+      done.forEach((b) => { if (b) push(b); });
+      setItems(collected);
+      // Đã có đủ dòng ⇒ số thẻ đã nạp của mỗi cột = số dòng thật của cột đó.
+      const byCol = {};
+      collected.forEach((t) => {
+        const k = t.column_id ? String(t.column_id) : '__none__';
+        byCol[k] = (byCol[k] || 0) + 1;
+      });
+      setColLoadedCount(byCol);
+      setFullLoaded(true);
+    } finally {
+      if (mySeq === fullLoadSeqRef.current) setLoadingMore(false);
+    }
+  }, [apiBase, indexRows.length, serverStats]);
+
+  /**
+   * Đồng bộ MỘT dòng ở bảng chỉ số sau khi sửa / kéo thả.
+   *
+   * Bắt buộc: số đếm đầu cột và thống kê nhân viên đọc từ bảng chỉ số, nên nếu chỉ patch
+   * `items` như bản cũ thì kéo thẻ từ "Chưa làm" sang "Hoàn thành" sẽ thấy thẻ nhảy cột
+   * nhưng hai con số trên đầu cột đứng nguyên — trông như thao tác không có tác dụng.
+   */
+  const patchIndexRow = useCallback((id, patch) => {
+    setIndexRows((prev) => prev.map((r) => (String(r.id) === String(id) ? { ...r, ...patch } : r)));
+  }, []);
   const refreshStats = useCallback(async () => {
     try {
       const params = {};
@@ -1870,6 +2089,18 @@ export default function CRMAssignmentsPage({
   }, [isAdmin, filterCompanyId, filterDepartmentId, filterAssignee, filterStatus, filterPriority, searchDebounced, apiBase, assignmentModule, uid]);
 
   useEffect(() => { void load({ soft: true }); }, [load]);
+
+  /**
+   * Các view gom nhóm theo chiều KHÁC cột Kanban (Trạng thái / Danh sách / Planner /
+   * Deadline) không thể chạy trên thẻ nạp-theo-cột: chúng cần đủ mọi dòng mới đúng. Nạp
+   * đủ đúng lúc người dùng mở view đó, một lần cho mỗi bộ lọc — thay vì bắt tất cả mọi
+   * người phải chờ nạp đủ ngay khi mở trang, kể cả người chỉ xem Kanban.
+   */
+  const viewNeedsFullList = view === 'status' || view === 'list' || view === 'planner' || view === 'deadline';
+  useEffect(() => {
+    if (!viewNeedsFullList || fullLoaded || loading) return;
+    void loadFullList();
+  }, [viewNeedsFullList, fullLoaded, loading, loadFullList]);
 
   const loadPrivateTasks = useCallback(async () => {
     setPrivateLoading(true);
@@ -1987,7 +2218,10 @@ export default function CRMAssignmentsPage({
 
   // Dòng phụ dưới mỗi thẻ KPI — tính từ chính danh sách việc đang tải (created_at /
   // completed_at), không có số liệu nào được bịa ra.
-  const kpiSubs = useMemo(() => computeAssignKpiSubs(items, stats), [items, stats]);
+  // Dòng phụ KPI tính trên BẢNG CHỈ SỐ, không trên `items`: nó so tuần này với tuần
+  // trước theo `created_at`/`completed_at` nên cần đủ mọi dòng, còn `items` chỉ là các
+  // thẻ đã nạp. Bảng chỉ số có sẵn hai cột đó.
+  const kpiSubs = useMemo(() => computeAssignKpiSubs(indexRows, stats), [indexRows, stats]);
 
   const itemsByStatus = useMemo(() => groupTasksByStatus(items), [items]);
 
@@ -2004,6 +2238,29 @@ export default function CRMAssignmentsPage({
     map.forEach((arr) => arr.sort((a, b) => (a.position - b.position) || (a.id - b.id)));
     return map;
   }, [columns, items]);
+
+  /**
+   * SỐ THẬT của mỗi cột — đếm từ bảng chỉ số, không đếm từ `items`.
+   *
+   * `items` chỉ chứa những thẻ ĐÃ nạp (mặc định ~150 dòng đầu mỗi cột) nên đếm từ nó sẽ ra
+   * "Chưa làm 150" trong khi thực tế là 2.306. Bảng chỉ số có đủ mọi dòng, và đã đi qua
+   * đúng các bước căn status/cột như thẻ (xem nhánh `view=index` ở backend) nên hai bên
+   * luôn khớp nhau.
+   */
+  const countByColumn = useMemo(() => {
+    const map = new Map();
+    indexRows.forEach((r) => {
+      const key = r.column_id ? String(r.column_id) : '__none__';
+      map.set(key, (map.get(key) || 0) + 1);
+    });
+    return map;
+  }, [indexRows]);
+
+  /** Chưa có bảng chỉ số (đang nạp / lỗi) → tạm dùng số đếm từ thẻ đã nạp. */
+  const columnTotal = useCallback((columnKey, loadedLen) => {
+    const n = countByColumn.get(String(columnKey));
+    return typeof n === 'number' ? n : loadedLen;
+  }, [countByColumn]);
 
   const openItems = useMemo(() => {
     let list = items;
@@ -2169,6 +2426,7 @@ export default function CRMAssignmentsPage({
       const updated = data?.assignment;
       if (updated) {
         setItems((prev) => prev.map((t) => (String(t.id) === String(id) ? { ...t, ...updated } : t)));
+        patchIndexRow(id, updated);
         setViewingItem((prev) => (prev && String(prev.id) === String(id) ? { ...prev, ...updated } : prev));
         if (patch?.status != null) void refreshStats();
       } else {
@@ -2189,6 +2447,7 @@ export default function CRMAssignmentsPage({
       const updated = data?.assignment;
       if (updated) {
         setItems((prev) => prev.map((t) => (String(t.id) === String(id) ? { ...t, ...updated } : t)));
+        patchIndexRow(id, updated);
         setViewingItem((prev) => (prev && String(prev.id) === String(id) ? { ...prev, ...updated } : prev));
         void refreshStats();
       } else {
@@ -2296,16 +2555,17 @@ export default function CRMAssignmentsPage({
       ? theme.searchActive
       : theme.searchIdle;
 
+  // Số việc theo từng lead — đếm trên bảng chỉ số để không phụ thuộc thẻ nào đã nạp.
   const assignTaskCountByLead = useMemo(() => {
     const map = new Map();
-    items.forEach((t) => {
-      const id = t.lead?.id || t.lead_id;
+    indexRows.forEach((t) => {
+      const id = t.lead_id;
       if (!id) return;
       const key = String(id);
       map.set(key, (map.get(key) || 0) + 1);
     });
     return map;
-  }, [items]);
+  }, [indexRows]);
 
   const dealSuggestItems = useMemo(() => dealSuggestResults.slice(0, 10), [dealSuggestResults]);
   const dealSuggestOpen = pageTab === 'assignments'
@@ -2841,7 +3101,8 @@ export default function CRMAssignmentsPage({
       {view === 'kanban' && (
       <div className="flex flex-col lg:flex-row gap-3 items-start">
         <AssignQuickFilterPanel
-          tasks={items}
+          tasks={indexRows}
+          userDict={indexUsers}
           users={users}
           theme={theme}
           isAdmin={isAdmin}
@@ -2880,6 +3141,8 @@ export default function CRMAssignmentsPage({
           onUpdateCard={updateItem}
           canManageTask={canManageTask}
           canMoveTask={canMoveTask}
+          columnTotal={columnTotal}
+          onLoadMoreColumn={loadMoreColumn}
           onDragStart={onDragStart}
           onDropCol={onDropCol}
           allowDrop={allowDrop}
@@ -3022,25 +3285,48 @@ const KANBAN_COL_PAGE = 30;
  * một lần, nên nạp dần theo lúc cuộn vừa nhẹ vừa không mất dữ liệu gì: số đếm trên đầu cột
  * và thống kê bên trái vẫn tính trên TOÀN danh sách (`list.length`), không phải số đã render.
  */
+/**
+ * Thẻ của MỘT cột Kanban, hai tầng cửa sổ:
+ *  - Cửa sổ vẽ (`shown`): chỉ dựng DOM cho ~30 thẻ đầu, cuộn thì mở rộng dần.
+ *  - Cửa sổ dữ liệu (`onLoadMore`): khi cửa sổ vẽ chạm đáy phần ĐÃ nạp mà cột vẫn còn dòng
+ *    ở server (`total` > list.length), xin server trang tiếp của ĐÚNG cột này.
+ *
+ * Hai tầng vì `total` đến từ bảng chỉ số (số thật của cột) còn `list` chỉ là các thẻ đã
+ * nạp. Không có tầng thứ hai thì cột dừng ở 150 thẻ và người dùng không cuộn tiếp được,
+ * dù trên đầu cột ghi 2.306.
+ */
 function KanbanColumnCards({
-  list, canManageTask, canMoveTask,
+  list, total, canManageTask, canMoveTask,
   onDragStart, onOpenCard, onEditCard, onDeleteCard, onUpdateCard,
+  onLoadMore = null,
   footer = null,
 }) {
   const [shown, setShown] = useState(KANBAN_COL_PAGE);
   // Danh sách đổi (đổi bộ lọc / tải lại) → quay về cửa sổ đầu, khỏi giữ vị trí cũ vô nghĩa.
-  useEffect(() => { setShown(KANBAN_COL_PAGE); }, [list]);
+  // CHỈ reset khi danh sách NGẮN LẠI hoặc đổi hẳn: nối thêm trang mới thì phải giữ cửa sổ,
+  // không thì mỗi lần nạp thêm lại nhảy về 30 thẻ đầu và cuộn không bao giờ tới được đáy.
+  const prevLenRef = useRef(list.length);
+  useEffect(() => {
+    if (list.length < prevLenRef.current) setShown(KANBAN_COL_PAGE);
+    prevLenRef.current = list.length;
+  }, [list.length]);
 
+  const serverTotal = typeof total === 'number' ? total : list.length;
   const visible = shown >= list.length ? list : list.slice(0, shown);
-  const remaining = list.length - visible.length;
+  const remainingLoaded = list.length - visible.length;
+  const remainingAll = Math.max(serverTotal - visible.length, 0);
+
+  const grow = () => {
+    setShown((n) => n + KANBAN_COL_PAGE);
+    // Cửa sổ vẽ đã ăn hết phần đã nạp mà cột còn dòng ở server → xin trang tiếp.
+    if (shown + KANBAN_COL_PAGE >= list.length && list.length < serverTotal) onLoadMore?.();
+  };
 
   const handleScroll = (e) => {
-    if (remaining <= 0) return;
+    if (remainingAll <= 0) return;
     const el = e.currentTarget;
     // Nạp trước khi tới đáy để không thấy khoảng trống lúc cuộn nhanh.
-    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 320) {
-      setShown((n) => n + KANBAN_COL_PAGE);
-    }
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 320) grow();
   };
 
   return (
@@ -3061,13 +3347,16 @@ function KanbanColumnCards({
           onUpdate={onUpdateCard}
         />
       ))}
-      {remaining > 0 && (
+      {remainingAll > 0 && (
         <button
           type="button"
-          onClick={() => setShown((n) => n + KANBAN_COL_PAGE * 3)}
+          onClick={() => {
+            setShown((n) => n + KANBAN_COL_PAGE * 3);
+            if (remainingLoaded <= KANBAN_COL_PAGE * 3 && list.length < serverTotal) onLoadMore?.();
+          }}
           className="w-full h-8 rounded-lg text-[11px] text-slate-500 hover:bg-slate-50 hover:text-violet-700 cursor-pointer border border-dashed border-slate-200"
         >
-          Còn {remaining} việc — cuộn tiếp hoặc bấm để tải thêm
+          Còn {remainingAll} việc — cuộn tiếp hoặc bấm để tải thêm
         </button>
       )}
       {footer}
@@ -3078,7 +3367,7 @@ function KanbanColumnCards({
 function KanbanView({
   columns, itemsByColumn, users: _users, onAddColumn, onEditColumn, onDeleteColumn,
   onAddCard, onOpenCard, onEditCard, onDeleteCard, onUpdateCard, onDragStart, onDropCol, allowDrop,
-  canManageTask, canMoveTask,
+  canManageTask, canMoveTask, columnTotal, onLoadMoreColumn,
 }) {
   const noneList = itemsByColumn.get('__none__') || [];
   const boardRef = useRef(null);
@@ -3162,12 +3451,15 @@ function KanbanView({
                 {col.is_in_progress_column ? <Clock className="h-3 w-3 inline ml-0.5 text-blue-500" title="Cột đang làm" /> : null}
                 {col.is_done_column ? <CheckCircle2 className="h-3 w-3 inline ml-0.5 text-emerald-500" title="Cột hoàn thành" /> : null}
               </span>
-              <span className="text-[11px] text-slate-400 tabular-nums">{list.length}</span>
+              {/* Số THẬT của cột (bảng chỉ số), không phải số thẻ đã nạp. */}
+              <span className="text-[11px] text-slate-400 tabular-nums">{columnTotal(col.id, list.length)}</span>
               <button onClick={() => onEditColumn(col)} className="text-slate-400 hover:text-violet-600 cursor-pointer"><Pencil className="h-3.5 w-3.5" /></button>
               <button onClick={() => onDeleteColumn(col.id)} className="text-slate-400 hover:text-red-500 cursor-pointer"><Trash2 className="h-3.5 w-3.5" /></button>
             </div>
             <KanbanColumnCards
               list={list}
+              total={columnTotal(col.id, list.length)}
+              onLoadMore={() => onLoadMoreColumn(col.id)}
               canManageTask={canManageTask}
               canMoveTask={canMoveTask}
               onDragStart={onDragStart}
@@ -3188,7 +3480,7 @@ function KanbanView({
         );
       })}
 
-      {noneList.length > 0 && (
+      {columnTotal('__none__', noneList.length) > 0 && (
         <div
           className="w-72 shrink-0 bg-slate-50 rounded-xl border border-dashed border-slate-300 flex flex-col"
           style={{ maxHeight: 'var(--assign-col-max-h, 520px)' }}
@@ -3196,10 +3488,12 @@ function KanbanView({
           onDrop={onDropCol('__none__')}
         >
           <div className="px-3 py-2 border-b border-slate-200 text-sm font-semibold text-slate-500 shrink-0">
-            Chưa phân loại <span className="text-[11px] text-slate-400">{noneList.length}</span>
+            Chưa phân loại <span className="text-[11px] text-slate-400">{columnTotal('__none__', noneList.length)}</span>
           </div>
           <KanbanColumnCards
             list={noneList}
+            total={columnTotal('__none__', noneList.length)}
+            onLoadMore={() => onLoadMoreColumn('__none__')}
             canManageTask={canManageTask}
             canMoveTask={canMoveTask}
             onDragStart={onDragStart}

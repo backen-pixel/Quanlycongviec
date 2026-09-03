@@ -299,25 +299,35 @@ async function attachCrmTaskMetaToAssignments(list) {
 
   // Lô song song thay cho `for … await` lô 200: chi phí ở đây là SỐ LƯỢT GỌI × RTT
   // (~250ms/lượt tới Supabase), không phải khối lượng dữ liệu. Xem helpers/chunkedIdQuery.
+  //
+  // Đếm file/ghi chú chạy SONG SONG với việc lấy dòng crm_tasks: cả hai chỉ cần `taskIds`
+  // (đã có từ trước), không ai phụ thuộc kết quả của ai. Trước đây chạy nối tiếp nên mỗi
+  // trang danh sách phải trả thêm một lượt RTT (~190ms đo ở 500 dòng) một cách vô ích.
+  const countsPromise = loadAttachmentCountsSafe(taskIds);
   let { rows, error } = await fetchByIdChunks(taskIds, (slice) => supabase
     .from('crm_tasks').select(selectFull).in('id', slice));
   if (error && /show_fill_form|form_config|form_data/i.test(error.message || '')) {
     ({ rows, error } = await fetchByIdChunks(taskIds, (slice) => supabase
       .from('crm_tasks').select(selectLegacy).in('id', slice)));
   }
+  const countMap = await countsPromise;
   if (error) return list;
-  return attachCrmTaskMetaToAssignmentsWithRows(list, rows, taskIds);
+  return attachCrmTaskMetaToAssignmentsWithRows(list, rows, taskIds, countMap);
 }
 
-async function attachCrmTaskMetaToAssignmentsWithRows(list, taskRows, taskIds) {
-  const byId = new Map((taskRows || []).map((t) => [String(t.id), t]));
-  let countMap = {};
+/** Đếm file/ghi chú — không bao giờ ném, thiếu số đếm chỉ làm badge về 0 chứ không mất dòng. */
+async function loadAttachmentCountsSafe(taskIds) {
   try {
     const { loadCrmTaskAttachmentCountMap } = require('./crmTaskAttachmentCounts');
-    countMap = await loadCrmTaskAttachmentCountMap(supabase, taskIds) || {};
+    return (await loadCrmTaskAttachmentCountMap(supabase, taskIds)) || {};
   } catch {
-    countMap = {};
+    return {};
   }
+}
+
+async function attachCrmTaskMetaToAssignmentsWithRows(list, taskRows, taskIds, preCountMap = null) {
+  const byId = new Map((taskRows || []).map((t) => [String(t.id), t]));
+  const countMap = preCountMap || await loadAttachmentCountsSafe(taskIds);
   list.forEach((a) => {
     if (!a.crm_task_id) return;
     const task = byId.get(String(a.crm_task_id)) || null;
