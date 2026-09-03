@@ -10,7 +10,7 @@ import {
   Pencil, GripVertical, Flag, MoreVertical, MessageSquare, Send, Paperclip,
   FileText as FileIcon, Download, Upload, Repeat2, CalendarClock, ChevronDown,
   ChevronUp, ClipboardList, ChevronRight, ChevronLeft, Lock, ArrowLeft, RefreshCw, Filter, RotateCcw,
-  Eye, BookOpen, TrendingUp, TrendingDown, Minus, SlidersHorizontal, LayoutList,
+  Eye, BookOpen, TrendingUp, TrendingDown, Minus, SlidersHorizontal, LayoutList, Check,
 } from 'lucide-react';
 import ViewModeDropdownMenu from '../components/ViewModeDropdownMenu';
 import AnchoredDropdownMenu from '../components/AnchoredDropdownMenu';
@@ -534,15 +534,118 @@ function assignInitials(name) {
 }
 
 /**
+ * Dropdown tuỳ chỉnh thay cho `<select>` gốc trình duyệt trong Bộ lọc nhanh — trình duyệt
+ * tự vẽ popup của `<select>` theo giao diện hệ điều hành (chữ đen, nền trắng trơn, không
+ * theo được font/màu của app), không cách nào style được nhất quán giữa các trình duyệt.
+ * Component này tự vẽ toàn bộ menu nên trông giống phần còn lại của trang, và có thêm ô
+ * tìm khi danh sách dài (vd 100+ nhân viên) — điều `<select>` gốc không hỗ trợ được.
+ */
+function QuickFilterDropdown({ icon: Icon, label, value, onChange, options, placeholder = 'Tất cả' }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState('');
+  const triggerRef = useRef(null);
+  const searchRef = useRef(null);
+
+  const current = options.find((o) => String(o.v) === String(value));
+  const searchable = options.length > 8;
+  const filtered = useMemo(() => {
+    if (!searchable || !q.trim()) return options;
+    const s = q.trim().toLowerCase();
+    return options.filter((o) => o.t.toLowerCase().includes(s));
+  }, [options, q, searchable]);
+
+  useEffect(() => {
+    if (!open) { setQ(''); return undefined; }
+    if (!searchable) return undefined;
+    const id = setTimeout(() => searchRef.current?.focus(), 0);
+    return () => clearTimeout(id);
+  }, [open, searchable]);
+
+  const pick = (v) => { onChange(v); setOpen(false); };
+
+  return (
+    <div className="rounded-lg">
+      <button
+        type="button"
+        ref={triggerRef}
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex w-full items-center gap-2 rounded-lg px-1.5 py-1.5 text-left cursor-pointer hover:bg-slate-50"
+      >
+        <Icon className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+        <span className="flex-1 min-w-0 truncate text-[11px] text-slate-600">{label}</span>
+        <span className={`shrink-0 max-w-[6.5rem] truncate text-[11px] font-medium ${value ? 'text-violet-700' : 'text-slate-500'}`}>
+          {current?.t || placeholder}
+        </span>
+        <ChevronDown className={`h-3 w-3 shrink-0 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+
+      <AnchoredDropdownMenu
+        open={open}
+        onClose={() => setOpen(false)}
+        anchorRef={triggerRef}
+        align="right"
+        className="rounded-xl p-0 overflow-hidden w-[min(88vw,15rem)]"
+      >
+        {searchable && (
+          <div className="p-1.5 border-b border-slate-100">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-slate-400" />
+              <input
+                ref={searchRef}
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="Tìm..."
+                className="w-full h-7 pl-6 pr-2 rounded-md border border-slate-200 text-[11px] outline-none focus:border-violet-400"
+              />
+            </div>
+          </div>
+        )}
+        <div className="max-h-64 overflow-y-auto py-1 [scrollbar-width:thin]">
+          <button
+            type="button"
+            onClick={() => pick('')}
+            className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[11px] cursor-pointer hover:bg-violet-50 ${!value ? 'font-semibold text-violet-700' : 'text-slate-700'}`}
+          >
+            <span className="flex-1 truncate">{placeholder}</span>
+            {!value && <Check className="h-3 w-3 shrink-0" />}
+          </button>
+          {filtered.length === 0 ? (
+            <p className="px-2.5 py-2 text-[11px] text-slate-400">Không tìm thấy</p>
+          ) : filtered.map((o) => {
+            const active = String(value) === String(o.v);
+            return (
+              <button
+                key={o.v}
+                type="button"
+                onClick={() => pick(o.v)}
+                className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[11px] cursor-pointer hover:bg-violet-50 ${active ? 'font-semibold text-violet-700 bg-violet-50/60' : 'text-slate-700'}`}
+              >
+                <span className="flex-1 min-w-0 truncate">{o.t}</span>
+                {active && <Check className="h-3 w-3 shrink-0" />}
+              </button>
+            );
+          })}
+        </div>
+      </AnchoredDropdownMenu>
+    </div>
+  );
+}
+
+/**
  * Cột trái: bộ lọc nhanh + thống kê khối lượng theo nhân viên.
- * Mọi ô lọc đều nối vào state lọc CÓ THẬT của trang (nhân viên / trạng thái / ưu tiên) —
- * không dựng ô trang trí không chạy. Thống kê đếm trực tiếp từ danh sách việc đang hiển
- * thị nên luôn khớp với board bên phải.
+ * Mọi ô lọc đều nối vào state lọc CÓ THẬT của trang (công ty / nhân viên / trạng thái /
+ * ưu tiên) — không dựng ô trang trí không chạy. Thống kê đếm trực tiếp từ danh sách việc
+ * đang hiển thị nên luôn khớp với board bên phải.
+ * "Chọn công ty" đặt TRƯỚC "Chọn nhân viên" và có tác dụng thu hẹp nó: đổi công ty sẽ nạp
+ * lại `users` theo đúng công ty đó (xem effect load users ở component cha) — người vốn ở
+ * công ty khác sẽ không còn hiện trong danh sách nhân viên nữa.
  * Không có ô lọc theo nhóm/phòng ban — bỏ theo yêu cầu người dùng (dễ gây nhầm lẫn vì
  * "Chọn nhân viên" ở đây liệt kê TOÀN BỘ nhân viên, không theo nhóm nào cả).
  */
 function AssignQuickFilterPanel({
-  tasks, users, theme,
+  tasks, users, theme, isAdmin,
+  companies, filterCompanyId, setFilterCompanyId,
   filterAssignee, setFilterAssignee,
   filterStatus, setFilterStatus,
   filterPriority, setFilterPriority,
@@ -585,22 +688,31 @@ function AssignQuickFilterPanel({
 
   const shownStaff = showAllStaff ? staffStats : staffStats.slice(0, 4);
 
-  const selectCls = 'h-7 min-w-0 max-w-[9rem] shrink-0 rounded-md border-0 bg-transparent px-1 text-right text-[11px] font-medium text-slate-700 outline-none cursor-pointer focus:ring-0';
+  // QuickFilterDropdown tự vẽ dòng "Tất cả" riêng — options ở đây KHÔNG kèm nó (khác với
+  // <select> gốc trước đây phải tự thêm option rỗng).
   const rows = [
+    // Chỉ admin mới thấy — nhân viên thường (isAdmin=false) đã bị khoá vào đúng công ty
+    // của họ từ backend, hiện thêm ô này sẽ không lọc được gì (không có công ty khác để
+    // chọn) nên chỉ gây rối giao diện.
+    ...(isAdmin && companies?.length ? [{
+      key: 'company', icon: Building2, label: 'Chọn công ty',
+      value: filterCompanyId, onChange: setFilterCompanyId,
+      options: companies.map((co) => ({ v: String(co.id), t: co.short_name || co.name })),
+    }] : []),
     {
       key: 'assignee', icon: UserIcon, label: 'Chọn nhân viên',
       value: filterAssignee, onChange: setFilterAssignee,
-      options: [{ v: '', t: 'Tất cả' }, ...users.map((u) => ({ v: String(u.id), t: u.full_name || u.email }))],
+      options: users.map((u) => ({ v: String(u.id), t: u.full_name || u.email })),
     },
     {
       key: 'status', icon: CheckCircle2, label: 'Chọn trạng thái',
       value: filterStatus, onChange: setFilterStatus,
-      options: [{ v: '', t: 'Tất cả' }, ...STATUS_OPTIONS.map((s) => ({ v: s.value, t: s.label }))],
+      options: STATUS_OPTIONS.map((s) => ({ v: s.value, t: s.label })),
     },
     {
       key: 'priority', icon: Flag, label: 'Chọn mức ưu tiên',
       value: filterPriority, onChange: setFilterPriority,
-      options: [{ v: '', t: 'Tất cả' }, ...PRIORITY_OPTIONS.map((p) => ({ v: p.value, t: p.label }))],
+      options: PRIORITY_OPTIONS.map((p) => ({ v: p.value, t: p.label })),
     },
   ];
 
@@ -658,13 +770,14 @@ function AssignQuickFilterPanel({
       <>
           <div className="px-2 pb-2 space-y-0.5">
             {rows.map((r) => (
-              <div key={r.key} className="flex items-center gap-2 rounded-lg px-1.5 py-1.5 hover:bg-slate-50">
-                <r.icon className="h-3.5 w-3.5 shrink-0 text-slate-400" />
-                <span className="flex-1 min-w-0 truncate text-[11px] text-slate-600">{r.label}</span>
-                <select value={r.value} onChange={(e) => r.onChange(e.target.value)} className={selectCls}>
-                  {r.options.map((o) => <option key={o.v || 'all'} value={o.v}>{o.t}</option>)}
-                </select>
-              </div>
+              <QuickFilterDropdown
+                key={r.key}
+                icon={r.icon}
+                label={r.label}
+                value={r.value}
+                onChange={r.onChange}
+                options={r.options}
+              />
             ))}
           </div>
 
@@ -2670,6 +2783,10 @@ export default function CRMAssignmentsPage({
           tasks={items}
           users={users}
           theme={theme}
+          isAdmin={isAdmin}
+          companies={companies}
+          filterCompanyId={filterCompanyId}
+          setFilterCompanyId={setFilterCompanyId}
           filterAssignee={filterAssignee}
           setFilterAssignee={setFilterAssignee}
           filterStatus={filterStatus}
