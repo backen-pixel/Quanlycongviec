@@ -482,7 +482,7 @@ function InboxTab({ pageStats, fbCompanyQs = '', companyId = null, onScopeChange
   const [reply, setReply] = useState('');
   const [search, setSearch] = useState('');
   const [pageFilter, setPageFilter] = useState('');
-  const [timeFilter, setTimeFilter] = useState('all'); // all | today | yesterday | 7d | 30d | custom
+  const [timeFilter, setTimeFilter] = useState('today'); // all | today | yesterday | 7d | 30d | custom
   const [timeCustomFrom, setTimeCustomFrom] = useState('');
   const [timeCustomTo, setTimeCustomTo] = useState('');
   const [pages, setPages] = useState([]);
@@ -759,15 +759,22 @@ function InboxTab({ pageStats, fbCompanyQs = '', companyId = null, onScopeChange
 
   useEffect(() => {
     const contactId = searchParams.get('contact');
-    if (!contactId || !contacts.length) return;
+    if (!contactId || selected?.id === contactId) return;
     const found = contacts.find(c => c.id === contactId);
-    if (found && selected?.id !== found.id) {
+    if (found) {
       setSelected(found);
       fetch(`${API}/api/facebook/contacts/${found.id}`, { headers: hdr() })
         .then(r => r.ok ? r.json() : null)
         .then(fresh => { if (fresh) setSelected(fresh); })
         .catch(() => {});
+      return;
     }
+    // Không có trong danh sách đang lọc — bộ lọc mặc định là "Hôm nay" nên link trỏ tới hội
+    // thoại cũ sẽ không nằm trong danh sách. Tải thẳng theo id để link luôn mở được.
+    fetch(`${API}/api/facebook/contacts/${contactId}`, { headers: hdr() })
+      .then(r => r.ok ? r.json() : null)
+      .then(fresh => { if (fresh?.id) setSelected(fresh); })
+      .catch(() => {});
   }, [searchParams, contacts, selected]);
 
   // Realtime
