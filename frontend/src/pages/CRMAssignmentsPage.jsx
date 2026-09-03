@@ -2820,8 +2820,13 @@ function KanbanView({
   canManageTask, canMoveTask,
 }) {
   const noneList = itemsByColumn.get('__none__') || [];
+  // items-start: mặc định flex-row kéo giãn mọi item bằng chiều cao item cao nhất
+  // (align-items: stretch). Cột nào có hàng nghìn thẻ sẽ cực kỳ cao, và MỌI cột khác —
+  // kể cả ô "Thêm cột mới" (nội dung căn giữa theo chiều dọc) — bị kéo giãn theo, đẩy
+  // nội dung của chúng xuống lưng chừng khoảng trắng mênh mông đó. items-start cho mỗi
+  // cột cao theo đúng nội dung của chính nó, nằm ngay sát trên cùng như dự kiến.
   return (
-    <div className="flex gap-3 overflow-x-auto pb-3" style={{ minHeight: 400 }} data-tour="assign-kanban">
+    <div className="flex items-start gap-3 overflow-x-auto pb-3" style={{ minHeight: 400 }} data-tour="assign-kanban">
       {columns.map((col) => {
         const list = itemsByColumn.get(col.id) || [];
         return (
@@ -2874,7 +2879,7 @@ function KanbanView({
       )}
 
       <div
-        className="group/newcol w-72 shrink-0 self-stretch rounded-xl border-2 border-dashed border-slate-300 bg-white/60 hover:border-violet-400 hover:bg-violet-50/40 transition-colors flex flex-col items-center justify-center gap-2 px-4 py-6 text-center"
+        className="group/newcol w-72 shrink-0 rounded-xl border-2 border-dashed border-slate-300 bg-white/60 hover:border-violet-400 hover:bg-violet-50/40 transition-colors flex flex-col items-center justify-center gap-2 px-4 py-6 text-center"
       >
         <span className="grid h-12 w-12 place-items-center rounded-2xl bg-slate-100 text-slate-400 group-hover/newcol:bg-violet-100 group-hover/newcol:text-violet-600 transition-colors">
           <LayoutList className="h-6 w-6" />
