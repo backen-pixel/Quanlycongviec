@@ -441,22 +441,25 @@ function AssignKpiCard({
   }
 
   // Thẻ KPI chính: icon khối màu bên trái, nhãn nhỏ + số lớn bên phải, dòng phụ ở dưới.
+  // Kích thước thu nhỏ so với bản đầu — bản đó chỉ vừa mắt ở đúng 5 cột (xl:1280px+); ở các
+  // bề rộng phổ biến hơn (laptop ~1024-1279px) lưới rơi về 3 cột, mỗi thẻ giãn quá to so với
+  // nội dung bên trong (icon 40px, số cỡ 2xl) và lệch hẳn với hàng "Bộ lọc nhanh" bên dưới.
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={!onClick}
-      className={`group relative h-full min-w-0 flex flex-col items-start gap-2 rounded-2xl border bg-white px-3 py-3 shadow-sm outline-none transition-all duration-200 ${borderCls} ${
+      className={`group relative h-full min-w-0 flex flex-col items-start gap-1.5 rounded-xl border bg-white px-2.5 py-2 shadow-sm outline-none transition-all duration-200 ${borderCls} ${
         onClick ? 'cursor-pointer hover:shadow-md hover:-translate-y-px' : 'cursor-default'
       }`}
     >
-      <div className="flex w-full min-w-0 items-center gap-2.5">
-        <span className={`shrink-0 grid h-10 w-10 place-items-center rounded-xl ${iconBg} ${iconColor}`}>
-          <Icon className="h-5 w-5" />
+      <div className="flex w-full min-w-0 items-center gap-2">
+        <span className={`shrink-0 grid h-8 w-8 place-items-center rounded-lg ${iconBg} ${iconColor}`}>
+          <Icon className="h-4 w-4" />
         </span>
         <span className="min-w-0 flex-1 text-left">
-          <span className={`block truncate text-[10px] font-semibold uppercase tracking-wide ${labelCls}`}>{label}</span>
-          <span className="block text-2xl font-bold leading-tight tabular-nums text-slate-900">{value}</span>
+          <span className={`block truncate text-[9px] font-semibold uppercase tracking-wide ${labelCls}`}>{label}</span>
+          <span className="block text-lg font-bold leading-tight tabular-nums text-slate-900">{value}</span>
         </span>
       </div>
       {sub ? (
@@ -2424,7 +2427,7 @@ export default function CRMAssignmentsPage({
               </span>
             </button>
             {kpiPanelOpen && (
-              <div className={`border-b ${theme.kpiToggle} bg-white/40 px-2 sm:px-3 pb-2.5 pt-2.5 grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-2.5`}>
+              <div className={`border-b ${theme.kpiToggle} bg-white/40 px-2 sm:px-3 pb-2 pt-2 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2`}>
                 {[
                   { label: 'Tổng', value: stats.total, icon: ListIcon, iconBg: 'bg-violet-100', iconColor: 'text-violet-700', viewId: null, sub: kpiSubs.total },
                   { label: 'Chưa làm', value: stats.pending, icon: Circle, iconBg: 'bg-slate-100', iconColor: 'text-slate-600', viewId: 'status', sub: kpiSubs.pending },
