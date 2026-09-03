@@ -8,6 +8,7 @@ import {
   CheckCheck,
   CheckCircle2,
   Clock,
+  Copy,
   Download,
   ExternalLink,
   Eye,
@@ -39,6 +40,7 @@ import { contentHasMentionAll } from '../lib/crmCommentMentions';
 import { FilePreview, FileUploadButton, uploadFilesBatch } from './FileUpload';
 import UploadProgressBubble from './UploadProgressBubble';
 import UploadFileLightbox from './UploadFileLightbox';
+import CopyableImage, { CommentBubbleContextMenu, copyImageWithToast, copyImagesWithToast } from './ImageCopyContextMenu';
 import { downloadUploadFile, downloadUploadFilesAsZip, publicFileUrl as pubUrl } from '../lib/publicFileUrl';
 import { handleCommentFilePaste } from '../lib/chatClipboard';
 import { CommentNewNotice, useCommentThreadLive } from './commentThreadLiveUx';
@@ -181,6 +183,13 @@ function isCommentImage(att) {
   const mime = att.mime || '';
   const name = att.name || '';
   return mime.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp|bmp|svg|heic|heif)$/i.test(name);
+}
+
+function commentImageUrls(comment) {
+  return commentAttachmentList(comment?.attachments)
+    .filter(isCommentImage)
+    .map((img) => img.url)
+    .filter(Boolean);
 }
 
 function isCommentVideo(att) {
@@ -337,18 +346,17 @@ function CommentMediaDetailPanel({ mediaBundle, section, onSectionChange, onOpen
                         );
                       }
                       return (
-                        <button
+                        <CopyableImage
                           key={`${att.url}-${i}`}
-                          type="button"
-                          onClick={() => onOpenImage?.(u, { title: att.name || 'image', rawPath: att.url })}
+                          src={u}
+                          copyUrl={u}
+                          fileName={att.name || 'anh.jpg'}
+                          alt={att.name || 'ảnh'}
                           className="aspect-square rounded-lg overflow-hidden bg-slate-100 border border-slate-200 hover:ring-2 hover:ring-violet-300 transition"
-                        >
-                          <img
-                            src={u}
-                            alt={att.name || 'ảnh'}
-                            className="w-full h-full object-cover"
-                          />
-                        </button>
+                          imgClassName="w-full h-full object-cover"
+                          onDownload={(url, name) => downloadUploadFile(url, name || 'anh.jpg')}
+                          onClick={() => onOpenImage?.(u, { title: att.name || 'image', rawPath: att.url })}
+                        />
                       );
                     })}
                   </div>
@@ -487,6 +495,7 @@ export function CommentAttachmentsBlock({ attachments, onOpenImage }) {
   const [localIndex, setLocalIndex] = useState(0);
   const [dlBusy, setDlBusy] = useState(false);
   const [dlAllBusy, setDlAllBusy] = useState(false);
+  const [copyBusy, setCopyBusy] = useState(false);
 
   if (!items.length) return null;
 
@@ -520,6 +529,30 @@ export function CommentAttachmentsBlock({ attachments, onOpenImage }) {
     }
   };
 
+  const handleCopyFirstImage = async () => {
+    if (!images.length || copyBusy) return;
+    setCopyBusy(true);
+    try {
+      await copyImageWithToast(pubUrl(images[0].url) || images[0].url);
+    } catch (err) {
+      alert(err?.message || 'Không sao chép được ảnh');
+    } finally {
+      setCopyBusy(false);
+    }
+  };
+
+  const handleCopyAllImages = async () => {
+    if (!images.length || copyBusy) return;
+    setCopyBusy(true);
+    try {
+      await copyImagesWithToast(images.map((img) => pubUrl(img.url) || img.url));
+    } catch (err) {
+      alert(err?.message || 'Không sao chép được ảnh');
+    } finally {
+      setCopyBusy(false);
+    }
+  };
+
   return (
     <div className="mt-2 space-y-2">
       {localOpen && !onOpenImage && localLightboxItems.length > 0 && (
@@ -535,11 +568,18 @@ export function CommentAttachmentsBlock({ attachments, onOpenImage }) {
           <div className="flex flex-wrap gap-2">
             {images.map((img, ii) => {
               const href = pubUrl(img.url);
+              const allHrefs = images.map((x) => pubUrl(x.url) || x.url);
               return (
-                <button
+                <CopyableImage
                   key={ii}
-                  type="button"
+                  src={href}
+                  copyUrl={href}
+                  allUrls={allHrefs}
+                  fileName={img.name || 'anh.jpg'}
+                  alt={img.name || 'image'}
                   className="block"
+                  imgClassName="max-h-48 max-w-xs rounded-lg border border-[#e4e6eb] object-cover hover:opacity-90 transition-opacity"
+                  onDownload={(url, name) => downloadUploadFile(url, name || 'anh.jpg')}
                   onClick={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
@@ -547,29 +587,55 @@ export function CommentAttachmentsBlock({ attachments, onOpenImage }) {
                     setLocalIndex(ii);
                     setLocalOpen(true);
                   }}
-                >
-                  <img
-                    src={href}
-                    alt={img.name || 'image'}
-                    className="max-h-48 max-w-xs rounded-lg border border-[#e4e6eb] object-cover hover:opacity-90 transition-opacity"
-                  />
-                </button>
+                />
               );
             })}
           </div>
-          <button
-            type="button"
-            disabled={dlAllBusy}
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              void handleDownloadAllImages();
-            }}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-[#e4e6eb] bg-white px-2.5 py-1.5 text-[12px] font-semibold text-[#1877f2] hover:bg-[#f0f2f5] disabled:opacity-60"
-          >
-            {dlAllBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
-            {images.length > 1 ? `Tải hết ${images.length} ảnh` : 'Tải ảnh'}
-          </button>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <button
+              type="button"
+              disabled={copyBusy}
+              title="Sao chép ảnh để dán vào Word, Zalo, chat…"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                void handleCopyFirstImage();
+              }}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[#e4e6eb] bg-white px-2.5 py-1.5 text-[12px] font-semibold text-[#1877f2] hover:bg-[#f0f2f5] disabled:opacity-60"
+            >
+              {copyBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Copy className="h-3.5 w-3.5" />}
+              Sao chép ảnh
+            </button>
+            {images.length > 1 ? (
+              <button
+                type="button"
+                disabled={copyBusy}
+                title="Sao chép tất cả ảnh trong tin này để dán"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  void handleCopyAllImages();
+                }}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-[#e4e6eb] bg-white px-2.5 py-1.5 text-[12px] font-semibold text-[#1877f2] hover:bg-[#f0f2f5] disabled:opacity-60"
+              >
+                {copyBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Copy className="h-3.5 w-3.5" />}
+                Sao chép hết {images.length} ảnh
+              </button>
+            ) : null}
+            <button
+              type="button"
+              disabled={dlAllBusy}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                void handleDownloadAllImages();
+              }}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[#e4e6eb] bg-white px-2.5 py-1.5 text-[12px] font-semibold text-[#1877f2] hover:bg-[#f0f2f5] disabled:opacity-60"
+            >
+              {dlAllBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+              {images.length > 1 ? `Tải hết ${images.length} ảnh` : 'Tải ảnh'}
+            </button>
+          </div>
         </div>
       )}
       {otherFiles.length > 0 && (
@@ -2115,6 +2181,7 @@ function CommentThread({
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const [lightboxIndex, setLightboxIndex] = useState(0);
   const [lightboxItems, setLightboxItems] = useState([]);
+  const [commentCtxMenu, setCommentCtxMenu] = useState(null);
 
   const openLightboxByUrl = useCallback((url, meta) => {
     if (!url) return;
@@ -2218,21 +2285,20 @@ function CommentThread({
               )}
             </div>
             {hasImagePreview && (
-              <button
-                type="button"
+              <CopyableImage
+                src={pubUrl(fileLink.url)}
+                copyUrl={pubUrl(fileLink.url)}
+                fileName={fileLink.label}
+                alt={fileLink.label}
                 className="block mt-1"
+                imgClassName="max-h-40 max-w-[260px] rounded-lg border border-[#e4e6eb] object-cover hover:opacity-90 transition-opacity"
+                onDownload={(url, name) => downloadUploadFile(url, name || 'anh.jpg')}
                 onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
                   openLightboxByUrl(pubUrl(fileLink.url));
                 }}
-              >
-                <img
-                  src={pubUrl(fileLink.url)}
-                  alt={fileLink.label}
-                  className="max-h-40 max-w-[260px] rounded-lg border border-[#e4e6eb] object-cover hover:opacity-90 transition-opacity"
-                />
-              </button>
+              />
             )}
             {fileLink && !hasImagePreview && (
               <div className="inline-flex items-center gap-1.5 mt-0.5">
@@ -2309,13 +2375,37 @@ function CommentThread({
             <FbCrmAvatar user={c.user} className="h-8 w-8 shrink-0" />
             <div className="min-w-0 flex-1">
               <div className={`relative inline-block max-w-full ${showCornerRx ? 'mb-2.5' : ''}`}>
-                <div className={`max-w-full rounded-2xl border px-3 py-2 shadow-sm ${showCornerRx ? 'pb-2.5' : ''} ${
+                <div
+                  className={`max-w-full rounded-2xl border px-3 py-2 shadow-sm ${showCornerRx ? 'pb-2.5' : ''} ${
                   isPrivateComment
                     ? 'border-amber-300 bg-amber-50/70'
                     : contentHasMentionAll(getBody(c))
                       ? 'border-amber-500 bg-amber-200'
                       : 'border-[#e4e6eb]/90 bg-white'
-                }`}>
+                }`}
+                  onContextMenu={(e) => {
+                    if (editingId === c.id) return;
+                    if (e.target instanceof Element && e.target.closest('textarea, a, button, img')) return;
+                    const body = (getBody(c) || '').trim();
+                    const rawImages = commentImageUrls(c);
+                    const imageUrls = rawImages.map((u) => pubUrl(u) || u);
+                    const rawImage = rawImages[0] || null;
+                    const imageUrl = imageUrls[0] || null;
+                    if (!body && !imageUrl) return;
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setCommentCtxMenu({
+                      x: e.clientX,
+                      y: e.clientY,
+                      body,
+                      imageUrl,
+                      imageUrls,
+                      onDownloadImage: rawImage
+                        ? () => downloadUploadFile(rawImage, 'anh.jpg')
+                        : null,
+                    });
+                  }}
+                >
                   <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0">
                     <span className="text-[13px] font-semibold text-[#050505]">{c.user?.full_name || 'Thành viên'}</span>
                     {isPrivateComment && (
@@ -2424,6 +2514,7 @@ function CommentThread({
           onClose={() => setLightboxOpen(false)}
         />
       )}
+      <CommentBubbleContextMenu menu={commentCtxMenu} onClose={() => setCommentCtxMenu(null)} />
       <div className="flex items-center justify-end gap-2 border-b border-[#e4e6eb] bg-white px-2 py-1.5">
         <button
           type="button"

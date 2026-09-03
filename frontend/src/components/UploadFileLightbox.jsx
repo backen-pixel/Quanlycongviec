@@ -1,7 +1,8 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Download, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, ExternalLink, Printer, Loader2 } from 'lucide-react';
+import { X, Download, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, ExternalLink, Printer, Loader2, Copy } from 'lucide-react';
 import { getFileDownloadAnchorProps, publicFileUrl, downloadUploadFile, downloadUploadFilesAsZip, printUploadImage } from '../lib/publicFileUrl';
+import { copyImageWithToast, copyImagesWithToast } from './ImageCopyContextMenu';
 
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 4;
@@ -30,6 +31,7 @@ export default function UploadFileLightbox({
   const [dragging, setDragging] = useState(false);
   const [dlBusy, setDlBusy] = useState(false);
   const [dlAllBusy, setDlAllBusy] = useState(false);
+  const [copyBusy, setCopyBusy] = useState(false);
   const dragStartRef = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
   const draggingRef = useRef(false);
 
@@ -152,6 +154,29 @@ export default function UploadFileLightbox({
     });
   };
 
+  const handleCopyImage = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const src = downloadHref || cur.url;
+    if (!src || copyBusy) return;
+    setCopyBusy(true);
+    copyImageWithToast(src)
+      .catch((err) => alert(err?.message || 'Không sao chép được ảnh'))
+      .finally(() => setCopyBusy(false));
+  };
+
+  const handleCopyAllImages = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!multi || copyBusy) return;
+    const urls = items.map((it) => it.rawPath || it.url).filter(Boolean);
+    if (!urls.length) return;
+    setCopyBusy(true);
+    copyImagesWithToast(urls)
+      .catch((err) => alert(err?.message || 'Không sao chép được ảnh'))
+      .finally(() => setCopyBusy(false));
+  };
+
   return createPortal(
     <div
       className="fixed inset-0 z-[120] bg-black/90 flex flex-col items-center justify-center p-4"
@@ -192,6 +217,28 @@ export default function UploadFileLightbox({
           >
             <ZoomIn size={18} />
           </button>
+          {(downloadHref || cur.url) && (
+            <button
+              type="button"
+              onClick={handleCopyImage}
+              disabled={copyBusy}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-white text-sm disabled:opacity-50"
+              title="Sao chép ảnh để dán vào Word, Zalo, chat…"
+            >
+              {copyBusy ? <Loader2 size={16} className="animate-spin" /> : <Copy size={16} />} Sao chép ảnh
+            </button>
+          )}
+          {multi && (
+            <button
+              type="button"
+              onClick={handleCopyAllImages}
+              disabled={copyBusy}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-white text-sm disabled:opacity-50"
+              title="Sao chép tất cả ảnh trong tin/bình luận"
+            >
+              {copyBusy ? <Loader2 size={16} className="animate-spin" /> : <Copy size={16} />} Sao chép hết ({items.length})
+            </button>
+          )}
           {(downloadHref || cur.url) && (
             <button
               type="button"
@@ -285,6 +332,13 @@ export default function UploadFileLightbox({
             onPointerMove={onImagePointerMove}
             onPointerUp={endImageDrag}
             onPointerCancel={endImageDrag}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              const src = downloadHref || cur.url;
+              if (!src) return;
+              copyImageWithToast(src).catch((err) => alert(err?.message || 'Không sao chép được ảnh'));
+            }}
             onDoubleClick={(e) => {
               e.stopPropagation();
               setZoom((z) => {
