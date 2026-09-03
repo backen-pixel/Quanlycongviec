@@ -1408,6 +1408,13 @@ export default function CRMAssignmentsPage({
   const [departments, setDepartments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  // Chặn phản hồi lỗi thời: đổi liên tiếp 2 bộ lọc nhanh (vd Trạng thái rồi Mức ưu tiên)
+  // bắn 2 lượt load() chồng nhau; không có gì đảm bảo request GỬI SAU sẽ VỀ SAU. Nếu
+  // request cũ hơn về muộn hơn, nó ghi đè items/serverStats bằng dữ liệu sai — bộ lọc
+  // trên UI hiện đúng lựa chọn mới nhưng board hiện dữ liệu của lựa chọn cũ hơn. Đo được
+  // trực tiếp: chọn "Đã làm"+"Gấp" phải ra 17 việc, nhưng board giữ 27 (kết quả của lượt
+  // chỉ lọc "Gấp" trước đó).
+  const loadSeqRef = useRef(0);
 
   const [search, setSearch] = useState('');
   const [privateSearch, setPrivateSearch] = useState('');
@@ -1533,15 +1540,17 @@ export default function CRMAssignmentsPage({
       }
       return undefined;
     }
-    if (!filterCompanyId) {
-      setDepartments([]);
-      setUsers([]);
-      return undefined;
-    }
+    // Admin đang xem "Tất cả công ty" (filterCompanyId rỗng) → KHÔNG gửi company_id, để
+    // /users và /departments trả về danh sách TOÀN HỆ THỐNG (đã xác nhận backend hỗ trợ sẵn:
+    // gọi không kèm company_id trả đủ 103 nhân viên / 19 nhóm). Trước đây nhánh này ép rỗng
+    // ngay khi chưa chọn công ty cụ thể, khiến ô "Chọn nhân viên"/"Chọn nhóm" LUÔN chỉ có
+    // "Tất cả" — không phải lúc có lúc không, mà hoàn toàn vô dụng với mọi admin hệ thống
+    // (mặc định vào trang là xem tất cả công ty).
     let cancelled = false;
+    const scopeParams = filterCompanyId ? { company_id: filterCompanyId } : {};
     Promise.all([
-      api.get('/departments', { params: { company_id: filterCompanyId } }),
-      api.get('/users', { params: { company_id: filterCompanyId } }),
+      api.get('/departments', { params: scopeParams }),
+      api.get('/users', { params: scopeParams }),
     ])
       .then(([dRes, uRes]) => {
         if (cancelled) return;
@@ -1610,6 +1619,11 @@ export default function CRMAssignmentsPage({
 
   // ─── Load all data ──
   const load = useCallback(async ({ soft = false } = {}) => {
+    // Lượt gọi CỦA CHÍNH LẦN NÀY — nếu khi response về mà loadSeqRef đã nhảy sang số khác
+    // (một lượt load() mới hơn đã bắt đầu), nghĩa là lượt này đã lỗi thời: bỏ qua toàn bộ
+    // kết quả, không ghi đè state. Không có guard này thì 2 lượt load() chồng nhau (đổi
+    // liên tiếp 2 ô lọc nhanh) ai VỀ SAU thắng — kể cả khi đó là request GỬI TRƯỚC.
+    const mySeq = ++loadSeqRef.current;
     if (soft) setRefreshing(true);
     else setLoading(true);
     try {
@@ -1629,6 +1643,7 @@ export default function CRMAssignmentsPage({
         api.get(`${apiBase}/schedules`, { params: { assignment_module: assignmentModule, ...(isAdmin && filterCompanyId ? { company_id: filterCompanyId } : {}) } }).catch(() => ({ data: { schedules: [] } })),
         api.get(`${apiBase}/stats`, { params }).catch(() => ({ data: null })),
       ]);
+      if (mySeq !== loadSeqRef.current) return;
       setColumns(colRes.data?.columns || []);
       const nextItems = itRes.data?.assignments || [];
       setItems(nextItems);
@@ -1646,9 +1661,11 @@ export default function CRMAssignmentsPage({
         const fresh = nextItems.find((t) => String(t.id) === String(prev.id));
         return fresh ? { ...prev, ...fresh } : prev;
       });
-    } catch (e) { console.error(e); }
-    setLoading(false);
-    setRefreshing(false);
+    } catch (e) { if (mySeq === loadSeqRef.current) console.error(e); }
+    if (mySeq === loadSeqRef.current) {
+      setLoading(false);
+      setRefreshing(false);
+    }
   }, [isAdmin, filterCompanyId, filterDepartmentId, filterAssignee, filterStatus, filterPriority, searchDebounced, apiBase, assignmentModule, uid]);
 
   const refreshStats = useCallback(async () => {
