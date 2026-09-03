@@ -323,46 +323,120 @@ export default function FacebookPage() {
 // ═══════════════════════════════════════════════════════════════
 
 
+/**
+ * Chọn Page + số hội thoại MỚI đổ về của từng Page trong khoảng ngày đang chọn.
+ * - Số chính (đậm) = hội thoại mới; khách cũ nhắn lại (NV chăm lại) KHÔNG cộng vào đây.
+ * - Chấm hổ phách = trong số mới đó còn bao nhiêu chưa ai trả lời.
+ * rangeStats = /api/facebook/page-new-senders (theo bộ lọc ngày); lúc chưa có thì tạm
+ * dùng pageStats (hôm nay) để số không bị trống.
+ */
 function PageSelector({ value, onChange, pages, pageStats, rangeStats, rangeLabel }) {
   const [isOpen, setIsOpen] = useState(false);
-  const selectedPage = pages.find(p => p.page_id === value);
-  // Số hội thoại MỚI đổ về trong khoảng ngày ĐANG CHỌN cho riêng Page này.
-  // Không gồm khách cũ nhắn lại (NV "chăm lại") và không dùng last_message_at.
-  // rangeStats = /api/facebook/page-new-senders (theo bộ lọc ngày); thiếu thì fallback
-  // pageStats.senders_today (hôm nay) để badge không bị trống lúc đang tải.
-  const count = (ps, rs) => (rs ? (rs.new_contacts || 0) : (ps?.senders_today || 0));
-  const badgeTitle = (ps, rs) => {
-    const label = rangeStats ? (rangeLabel || 'khoảng đang chọn') : 'hôm nay';
-    const back = rs ? rs.returning_contacts : ps?.returning_today;
-    return `Hội thoại mới ${label}`
-      + (back ? ` · ${back} khách cũ nhắn lại (không tính vào số này)` : '');
+  const scopeLabel = rangeLabel || 'hôm nay';
+
+  const statOf = (pageId) => {
+    const rs = rangeStats?.find((x) => x.page_id === pageId);
+    if (rs) {
+      return {
+        fresh: rs.new_contacts || 0,
+        waiting: rs.new_unattended || 0,
+        back: rs.returning_contacts || 0,
+      };
+    }
+    const ps = pageStats?.find((x) => x.page_id === pageId);
+    return {
+      fresh: ps?.senders_today || 0,
+      waiting: ps?.unattended_new_today || 0,
+      back: ps?.returning_today || 0,
+    };
   };
+
+  const rows = pages
+    .map((p) => ({ page: p, ...statOf(p.page_id) }))
+    .sort((a, b) => b.fresh - a.fresh || a.page.page_name.localeCompare(b.page.page_name, 'vi'));
+  const totalFresh = rows.reduce((n, r) => n + r.fresh, 0);
+  const totalWaiting = rows.reduce((n, r) => n + r.waiting, 0);
+  const selectedPage = pages.find((p) => p.page_id === value);
+  const shown = value ? statOf(value) : { fresh: totalFresh, waiting: totalWaiting, back: 0 };
+
+  /** Ô 6px giữ chỗ cố định để tên Page các dòng luôn thẳng hàng, có chấm hay không. */
+  const WaitDot = ({ waiting }) => (
+    <span className="w-1.5 shrink-0" aria-hidden>
+      {waiting > 0 && <span className="block w-1.5 h-1.5 rounded-full bg-amber-500" />}
+    </span>
+  );
+  const Count = ({ n, muted }) => (
+    <span className={`shrink-0 text-[13px] font-bold tabular-nums ${muted ? 'text-gray-300' : n > 0 ? 'text-indigo-600' : 'text-gray-300'}`}>
+      {n}
+    </span>
+  );
 
   return (
     <div className="relative">
-      <button onClick={() => setIsOpen(!isOpen)} 
-        className="w-full text-left text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white text-gray-700 flex justify-between items-center hover:bg-gray-50">
-        <span className="truncate">{selectedPage ? selectedPage.page_name : 'Tất cả các Page'}</span>
-        <ChevronRight size={12} className={`transition-transform ${isOpen ? 'rotate-90' : ''}`} />
+      <button
+        type="button"
+        onClick={() => setIsOpen(!isOpen)}
+        className="w-full text-left border border-gray-200 rounded-lg px-2.5 py-1.5 bg-white hover:border-indigo-300 hover:bg-indigo-50/30 transition-colors flex items-center gap-2"
+        aria-expanded={isOpen}
+      >
+        <span className="flex-1 min-w-0">
+          <span className="block text-xs font-medium text-gray-800 truncate">
+            {selectedPage ? selectedPage.page_name : 'Tất cả các Page'}
+          </span>
+          <span className="block text-[10px] text-gray-400 truncate">
+            {shown.fresh} hội thoại mới · {scopeLabel}
+          </span>
+        </span>
+        <WaitDot waiting={shown.waiting} />
+        <Count n={shown.fresh} />
+        <ChevronRight size={12} className={`text-gray-400 shrink-0 transition-transform ${isOpen ? 'rotate-90' : ''}`} />
       </button>
+
       {isOpen && (
-        <div className="absolute top-full left-0 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-50 py-1 max-h-60 overflow-y-auto">
-          <button onClick={() => { onChange(''); setIsOpen(false); }} 
-            className={`w-full text-left px-3 py-2 text-xs hover:bg-gray-50 ${!value ? 'bg-blue-50 text-blue-600' : ''}`}>
-            Tất cả các Page
-          </button>
-          {pages.map(p => {
-            const ps = pageStats?.find(s => s.page_id === p.page_id);
-            const rs = rangeStats?.find(s => s.page_id === p.page_id);
-            const cnt = count(ps, rs);
-            return (
-              <button key={p.id} onClick={() => { onChange(p.page_id); setIsOpen(false); }}
-                className={`w-full flex items-center justify-between px-3 py-2 text-xs hover:bg-gray-50 ${value === p.page_id ? 'bg-blue-50' : ''}`}>
-                <span className="truncate">{p.page_name}</span>
-                {cnt > 0 && <span className="bg-red-500 text-white px-1.5 py-0.5 rounded-full text-[9px]" title={badgeTitle(ps, rs)}>{cnt}</span>}
+        <div className="absolute top-full left-0 w-full mt-1.5 bg-white border border-gray-200 rounded-lg shadow-xl z-50 overflow-hidden">
+          <div className="flex items-center justify-between px-3 py-1.5 bg-gray-50 border-b border-gray-100">
+            <span className="text-[9px] font-semibold uppercase tracking-wider text-gray-400">Page</span>
+            <span className="text-[9px] font-semibold uppercase tracking-wider text-gray-400">Mới</span>
+          </div>
+          <div className="max-h-64 overflow-y-auto">
+            <button
+              type="button"
+              onClick={() => { onChange(''); setIsOpen(false); }}
+              className={`w-full flex items-center gap-2 px-3 py-2 text-left border-l-2 hover:bg-gray-50 ${!value ? 'border-indigo-500 bg-indigo-50/60' : 'border-transparent'}`}
+              title={totalWaiting > 0 ? `${totalWaiting} hội thoại mới chưa ai trả lời` : undefined}
+            >
+              <WaitDot waiting={totalWaiting} />
+              <span className={`flex-1 text-xs truncate ${!value ? 'font-semibold text-indigo-700' : 'text-gray-700'}`}>
+                Tất cả các Page
+              </span>
+              <Count n={totalFresh} />
+            </button>
+            {rows.map(({ page, fresh, waiting, back }) => (
+              <button
+                key={page.id}
+                type="button"
+                onClick={() => { onChange(page.page_id); setIsOpen(false); }}
+                title={[
+                  waiting > 0 ? `${waiting} hội thoại mới chưa ai trả lời` : '',
+                  back > 0 ? `${back} khách cũ nhắn lại ${scopeLabel} — không tính vào số mới` : '',
+                ].filter(Boolean).join(' · ') || undefined}
+                className={`w-full flex items-center gap-2 px-3 py-2 text-left border-l-2 hover:bg-gray-50 ${value === page.page_id ? 'border-indigo-500 bg-indigo-50/60' : 'border-transparent'}`}
+              >
+                <WaitDot waiting={waiting} />
+                <span className={`flex-1 text-xs truncate ${value === page.page_id ? 'font-semibold text-indigo-700' : 'text-gray-700'}`}>
+                  {page.page_name}
+                </span>
+                <Count n={fresh} muted={fresh === 0} />
               </button>
-            );
-          })}
+            ))}
+          </div>
+          <p className="px-3 py-2 text-[10px] leading-snug text-gray-400 bg-gray-50 border-t border-gray-100">
+            Số hội thoại mới {scopeLabel} — khách cũ nhắn lại không đếm lại.
+            <span className="inline-flex items-center gap-1 ml-0.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-500" aria-hidden />
+              <span className="text-amber-600">chưa ai trả lời</span>
+            </span>
+          </p>
         </div>
       )}
     </div>
@@ -628,6 +702,16 @@ function InboxTab({ pageStats, fbCompanyQs = '', companyId = null }) {
 
   // Số hội thoại mới theo từng Page, theo ĐÚNG khoảng ngày đang chọn (badge trong dropdown Page).
   const [pageRangeStats, setPageRangeStats] = useState(null);
+  // Gộp lại cho thẻ số ở đầu danh sách — theo Page đang chọn, hoặc tất cả Page.
+  const rangeTotals = useMemo(() => {
+    if (!pageRangeStats) return null;
+    const rows = pageFilter ? pageRangeStats.filter((r) => r.page_id === pageFilter) : pageRangeStats;
+    return rows.reduce((a, r) => ({
+      fresh: a.fresh + (r.new_contacts || 0),
+      waiting: a.waiting + (r.new_unattended || 0),
+      back: a.back + (r.returning_contacts || 0),
+    }), { fresh: 0, waiting: 0, back: 0 });
+  }, [pageRangeStats, pageFilter]);
   useEffect(() => {
     const params = new URLSearchParams();
     const from = timeRange.activity_from || vnYmd(new Date());
@@ -969,28 +1053,44 @@ function InboxTab({ pageStats, fbCompanyQs = '', companyId = null }) {
             </div>
           )}
           {timeRange.label ? (
-            <div className="rounded-lg border border-blue-200 bg-gradient-to-r from-blue-50 to-indigo-50 px-3 py-2.5 flex items-center gap-3">
-              <div className="w-9 h-9 rounded-full bg-blue-100 flex items-center justify-center shrink-0 text-lg" aria-hidden>
-                👥
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-bold text-blue-900 leading-tight">
-                  <span className="text-lg tabular-nums">{timeFilterUserTotal}</span>
-                  {' '}user nhắn tin
-                </p>
-                <p className="text-[10px] text-blue-700 mt-0.5 truncate">
-                  {timeRange.label}
-                  {selectedPageLabel ? ` · ${selectedPageLabel}` : pages.length > 1 ? ' · Tất cả Page' : ''}
-                </p>
-                {contactFilterActive && filteredContacts.length !== timeFilterUserTotal && (
-                  <p className="text-[10px] text-blue-600/80 mt-0.5">
-                    Sau lọc thêm: <strong>{filteredContacts.length}</strong> user
+            <div className="rounded-lg border border-gray-200 bg-white overflow-hidden">
+              <p className="px-3 pt-2 pb-1.5 text-[10px] font-semibold uppercase tracking-wider text-gray-400 truncate">
+                {timeRange.label}
+                {selectedPageLabel ? ` · ${selectedPageLabel}` : pages.length > 1 ? ' · Tất cả Page' : ''}
+              </p>
+              <div className="grid grid-cols-3 border-t border-gray-100 divide-x divide-gray-100">
+                <div className="px-3 py-2" title="Hội thoại mới phát sinh trong khoảng này — khách cũ nhắn lại không tính vào đây">
+                  <p className="text-xl font-bold tabular-nums leading-none text-indigo-600">
+                    {rangeTotals ? rangeTotals.fresh : '—'}
                   </p>
+                  <p className="text-[10px] text-gray-500 mt-1 leading-tight">Hội thoại mới</p>
+                </div>
+                <div className="px-3 py-2" title="Khách đã nhắn từ trước, nay có tin lại — phần lớn là trả lời tin nhân viên chăm lại">
+                  <p className="text-xl font-bold tabular-nums leading-none text-gray-400">
+                    {rangeTotals ? rangeTotals.back : '—'}
+                  </p>
+                  <p className="text-[10px] text-gray-500 mt-1 leading-tight">Cũ nhắn lại</p>
+                </div>
+                <div className="px-3 py-2" title="Hội thoại mới mà chưa ai trả lời">
+                  <p className={`text-xl font-bold tabular-nums leading-none ${rangeTotals?.waiting ? 'text-amber-600' : 'text-gray-300'}`}>
+                    {rangeTotals ? rangeTotals.waiting : '—'}
+                  </p>
+                  <p className="text-[10px] text-gray-500 mt-1 leading-tight">Chưa trả lời</p>
+                </div>
+              </div>
+              <div className="px-3 py-1.5 bg-gray-50 border-t border-gray-100 flex flex-wrap gap-x-3 gap-y-0.5">
+                <span className="text-[10px] text-gray-500">
+                  Tổng <strong className="tabular-nums text-gray-700">{timeFilterUserTotal}</strong> khách có tin
+                </span>
+                {contactFilterActive && filteredContacts.length !== timeFilterUserTotal && (
+                  <span className="text-[10px] text-gray-500">
+                    Sau lọc thêm: <strong className="tabular-nums text-gray-700">{filteredContacts.length}</strong>
+                  </span>
                 )}
                 {contactMeta.hasMore && contacts.length < (contactMeta.total || 0) && (
-                  <p className="text-[10px] text-amber-700 mt-0.5">
+                  <span className="text-[10px] text-amber-700">
                     Đã tải {contacts.length}/{contactMeta.total} — bấm «Tải thêm» bên dưới
-                  </p>
+                  </span>
                 )}
               </div>
             </div>

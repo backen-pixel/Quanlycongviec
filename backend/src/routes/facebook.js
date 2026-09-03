@@ -5046,9 +5046,12 @@ async function loadFbNewSendersByPage({ pageIds, fromYmd, toYmd }) {
     const pid = String(row.page_id || '');
     if (!pid) continue;
     if (!byPage[pid]) {
-      byPage[pid] = { new_contacts: 0, returning_contacts: 0, senders: 0, inbound_msgs: 0 };
+      byPage[pid] = {
+        new_contacts: 0, new_unattended: 0, returning_contacts: 0, senders: 0, inbound_msgs: 0,
+      };
     }
     byPage[pid].new_contacts += Number(row.new_contacts) || 0;
+    byPage[pid].new_unattended += Number(row.new_unattended) || 0;
     byPage[pid].returning_contacts += Number(row.returning_contacts) || 0;
     byPage[pid].senders += Number(row.senders) || 0;
     byPage[pid].inbound_msgs += Number(row.inbound_msgs) || 0;
@@ -5103,6 +5106,8 @@ r.get('/page-new-senders', authMiddleware, async (req, res) => {
         page_id: p.page_id,
         page_name: p.page_name,
         new_contacts: st.new_contacts || 0,
+        // Trong số hội thoại mới, còn bao nhiêu chưa được trả lời (chưa chăm).
+        new_unattended: st.new_unattended || 0,
         returning_contacts: st.returning_contacts || 0,
         senders: st.senders || 0,
         inbound_msgs: st.inbound_msgs || 0,
@@ -5117,10 +5122,13 @@ r.get('/page-new-senders', authMiddleware, async (req, res) => {
       pages,
       totals: pages.reduce((acc, p) => ({
         new_contacts: acc.new_contacts + p.new_contacts,
+        new_unattended: acc.new_unattended + p.new_unattended,
         returning_contacts: acc.returning_contacts + p.returning_contacts,
         senders: acc.senders + p.senders,
         inbound_msgs: acc.inbound_msgs + p.inbound_msgs,
-      }), { new_contacts: 0, returning_contacts: 0, senders: 0, inbound_msgs: 0 }),
+      }), {
+        new_contacts: 0, new_unattended: 0, returning_contacts: 0, senders: 0, inbound_msgs: 0,
+      }),
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -5164,15 +5172,19 @@ r.get('/stats', authMiddleware, async (req, res) => {
         if (error) return { count: 0, senderCount: 0, senderCountByPage: {}, returningByPage: {} };
         const senderCountByPage = {};
         const returningByPage = {};
+        const unattendedNewByPage = {};
         let msgs = 0;
         let newTotal = 0;
         Object.entries(byPage).forEach(([pid, st]) => {
           senderCountByPage[pid] = st.new_contacts || 0;
           returningByPage[pid] = st.returning_contacts || 0;
+          unattendedNewByPage[pid] = st.new_unattended || 0;
           msgs += st.inbound_msgs || 0;
           newTotal += st.new_contacts || 0;
         });
-        return { count: msgs, senderCount: newTotal, senderCountByPage, returningByPage };
+        return {
+          count: msgs, senderCount: newTotal, senderCountByPage, returningByPage, unattendedNewByPage,
+        };
       })(),
       supabase.from('facebook_lead_ads').select('id', { count: 'exact', head: true }).gte('created_at', today),
       supabase.from('facebook_comments').select('id', { count: 'exact', head: true }).gte('created_at', today),
@@ -5216,6 +5228,8 @@ r.get('/stats', authMiddleware, async (req, res) => {
       senders_today: messages.senderCountByPage?.[p.page_id] || 0,
       // Khách cũ nhắn lại hôm nay (phần lớn là trả lời tin NV chăm lại) — chỉ để đối chiếu.
       returning_today: messages.returningByPage?.[p.page_id] || 0,
+      // Trong số hội thoại mới hôm nay, còn bao nhiêu chưa được trả lời.
+      unattended_new_today: messages.unattendedNewByPage?.[p.page_id] || 0,
     }));
 
     res.json({

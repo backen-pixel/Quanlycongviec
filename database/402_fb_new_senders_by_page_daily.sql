@@ -10,6 +10,8 @@
 -- Dinh nghia chot voi nguoi dung:
 --   new_contacts       = hoi thoai MOI phat sinh trong ngay do (tin inbound DAU TIEN cua khach
 --                        do roi vao ngay nay) => day la "tin nhan moi do ve".
+--   new_unattended     = trong so hoi thoai moi do, con bao nhieu CHUA duoc cham (chua co tin
+--                        NV gui sau tin cuoi cua khach) => hien bang cham ho phach tren UI.
 --   returning_contacts = khach cu nhan lai trong ngay (phan lon la tra loi tin NV cham lai)
 --                        => KHONG tinh vao so moi.
 --   senders            = tong khach co tin den trong ngay = new + returning.
@@ -33,6 +35,7 @@ RETURNS TABLE (
   page_id text,
   day date,
   new_contacts integer,
+  new_unattended integer,
   returning_contacts integer,
   senders integer,
   inbound_msgs integer
@@ -55,22 +58,30 @@ AS $$
     SELECT page_id, contact_id, d, count(*) AS n
     FROM msg GROUP BY page_id, contact_id, d
   ),
-  first_ever AS (
+  hist AS (
     SELECT x.contact_id,
            (SELECT min(m2.created_at) FROM facebook_messages m2
-             WHERE m2.contact_id = x.contact_id AND m2.direction = 'inbound') AS first_at
+              WHERE m2.contact_id = x.contact_id AND m2.direction = 'inbound')  AS first_in,
+           (SELECT max(m2.created_at) FROM facebook_messages m2
+              WHERE m2.contact_id = x.contact_id AND m2.direction = 'inbound')  AS last_in,
+           (SELECT max(m2.created_at) FROM facebook_messages m2
+              WHERE m2.contact_id = x.contact_id AND m2.direction = 'outbound') AS last_out
     FROM (SELECT DISTINCT contact_id FROM per_day) x
   )
   SELECT pd.page_id,
          pd.d AS day,
-         count(*) FILTER (WHERE (f.first_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date =  pd.d)::int AS new_contacts,
-         count(*) FILTER (WHERE (f.first_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date <> pd.d)::int AS returning_contacts,
-         count(*)::int                                                                          AS senders,
-         COALESCE(sum(pd.n), 0)::int                                                            AS inbound_msgs
+         count(*) FILTER (WHERE (h.first_in AT TIME ZONE 'Asia/Ho_Chi_Minh')::date = pd.d)::int AS new_contacts,
+         count(*) FILTER (
+           WHERE (h.first_in AT TIME ZONE 'Asia/Ho_Chi_Minh')::date = pd.d
+             AND (h.last_out IS NULL OR h.last_out < h.last_in)
+         )::int                                                                                  AS new_unattended,
+         count(*) FILTER (WHERE (h.first_in AT TIME ZONE 'Asia/Ho_Chi_Minh')::date <> pd.d)::int AS returning_contacts,
+         count(*)::int                                                                            AS senders,
+         COALESCE(sum(pd.n), 0)::int                                                              AS inbound_msgs
   FROM per_day pd
-  JOIN first_ever f ON f.contact_id = pd.contact_id
+  JOIN hist h ON h.contact_id = pd.contact_id
   GROUP BY pd.page_id, pd.d;
 $$;
 
 COMMENT ON FUNCTION public.fb_new_senders_by_page_daily IS
-  'Dem khach nhan tin theo (page, ngay gio VN). new_contacts = hoi thoai MOI trong ngay ("tin nhan moi do ve"); returning_contacts = khach cu nhan lai (tin cham lai), khong tinh vao so moi.';
+  'Dem khach nhan tin theo (page, ngay gio VN). new_contacts = hoi thoai MOI trong ngay ("tin nhan moi do ve"); new_unattended = trong so do con CHUA duoc cham; returning_contacts = khach cu nhan lai (tin cham lai), khong tinh vao so moi.';
