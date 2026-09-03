@@ -8,6 +8,7 @@ import { Upload, FileSpreadsheet, X, AlertTriangle, Loader2, Eye, ChevronDown, C
 import LeadDealPicker from './LeadDealPicker';
 import QuotationSourceExcelLink, { uploadQuotationSourceExcel } from './QuotationSourceExcelLink';
 import { fetchUploadArrayBuffer } from '../lib/publicFileUrl';
+import { discountPercentFromAmount } from '../lib/commercialItems';
 
 /** Dùng chung với QuotationForm (đọc draft khi from_excel=1) */
 export const QUOTATION_EXCEL_DRAFT_KEY = 'quotation_excel_draft_v1';
@@ -66,7 +67,8 @@ function resolveEffectiveDiscountPercent(item) {
   const price = item.unit_price || 0;
   const rowAmt = item.row_discount_amount || 0;
   if (rowAmt > 0 && qty > 0 && price > 0) {
-    return Math.round((rowAmt / (qty * price)) * 100000) / 1000;
+    // Số chữ số thập phân tự co giãn đủ khớp đúng số tiền CK của Excel (trước cắt cứng 3 số → lệch tiền).
+    return discountPercentFromAmount(rowAmt, qty * price);
   }
   const headerCK = item.group_discount_percent || 0;
   const amt = item.amount || 0;
@@ -126,7 +128,7 @@ export function buildQuotationDraftFromPreview(preview, file, user, leadId, sour
         } else if (rawRatio >= 0.995) {
           specFactor = 0;
         } else {
-          const impliedCK = Math.round((1 - rawRatio) * 100000) / 1000;
+          const impliedCK = discountPercentFromAmount(qty * price - excelAmount, qty * price);
           if (headerCK > 0 && Math.abs(impliedCK - headerCK) < 1) {
             itemDiscount = headerCK;
           } else {

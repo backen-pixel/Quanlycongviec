@@ -44,6 +44,52 @@ export const makeEmptyItem = () => ({ name: '', description: '', unit: 'bộ', q
 export const makeSectionRow = () => ({ row_type: 'section', name: 'Phần mới', notes: '__SECTION__' });
 
 /**
+ * Thành tiền GỐC (trước CK) + diện tích của 1 dòng — tách riêng để computeItemRows và
+ * restoreServerItems dùng CHUNG một công thức (trước đây restore bỏ quên công thức diện tích
+ * nên dòng tính theo m² bị coi là "lệch" sai).
+ */
+export function computeItemGeometry(item) {
+  const factor = parseFloat(item?.spec_factor) || 0;
+  const qty = item?.quantity || 0;
+  const price = item?.unit_price || 0;
+  const lengthVal = parseFloat(item?.length) || 0; // Ngang (mm)
+  const heightVal = parseFloat(item?.height) || 0; // Cao (mm)
+  const actualArea = (lengthVal > 0 && heightVal > 0) ? lengthVal * heightVal : 0;
+  const standardArea = parseFloat(item?.standard_area) || 0;
+  let grossAmount;
+  let areaRatio = 0;
+  if (standardArea > 0 && actualArea > 0) {
+    areaRatio = actualArea / standardArea;
+    grossAmount = areaRatio * qty * price;
+  } else if (factor > 0) {
+    grossAmount = factor * qty * price;
+  } else {
+    grossAmount = qty * price;
+  }
+  return { grossAmount, actualArea, areaRatio };
+}
+
+/**
+ * % CK suy ngược từ SỐ TIỀN CK — dùng đúng số chữ số thập phân TỐI THIỂU đủ để không làm
+ * lệch tiền (tối đa 6), thay vì cắt cứng 3 chữ số như trước.
+ * Vd. CK 1.508.000đ trên gốc 40.000.000đ: 3 chữ số → 3,770% → tính ngược ra 1.507.800đ (lệch 200đ);
+ * nay tự dùng thêm chữ số cho tới khi khớp đúng số tiền. CK tròn (35%) vẫn ra "35" đẹp như cũ.
+ * Số tiền gốc vẫn luôn được giữ nguyên ở imported_discount_amount — % chỉ để hiển thị/dự phòng.
+ */
+export function discountPercentFromAmount(amount, gross) {
+  const amt = Math.max(0, Number(amount) || 0);
+  const base = Number(gross) || 0;
+  if (!(base > 0)) return 0;
+  const raw = (amt / base) * 100;
+  for (let d = 0; d <= 6; d += 1) {
+    const f = 10 ** d;
+    const pct = Math.round(raw * f) / f;
+    if (Math.abs((base * pct) / 100 - amt) < 0.5) return Math.max(0, Math.min(100, pct));
+  }
+  return Math.max(0, Math.min(100, Math.round(raw * 1e6) / 1e6));
+}
+
+/**
  * Tính từng dòng: VAT theo dòng + hệ số quy cách (spec_factor) + công thức diện tích.
  * Công thức thành tiền:
  * 1. Có DT chuẩn > 0 và DT thực > 0 → (DT thực / DT chuẩn) × SL × Đơn giá
@@ -54,25 +100,8 @@ export const makeSectionRow = () => ({ row_type: 'section', name: 'Phần mới'
 export function computeItemRows(items) {
   return items.map(i => {
     if (i.row_type === 'section') return { ...i, amount: 0, gross_amount: 0, discount_amount: 0, vat_amount: 0, tax_amount: 0, total: 0, actual_area: 0, area_ratio: 0, notes: '__SECTION__' };
-    const factor = parseFloat(i.spec_factor) || 0;
-    const qty = i.quantity || 0;
     const price = i.unit_price || 0;
-
-    const lengthVal = parseFloat(i.length) || 0; // Ngang (mm)
-    const heightVal = parseFloat(i.height) || 0; // Cao (mm)
-    const actualArea = (lengthVal > 0 && heightVal > 0) ? lengthVal * heightVal : 0;
-    const standardArea = parseFloat(i.standard_area) || 0;
-
-    let grossAmount;
-    let areaRatio = 0;
-    if (standardArea > 0 && actualArea > 0) {
-      areaRatio = actualArea / standardArea;
-      grossAmount = areaRatio * qty * price;
-    } else if (factor > 0) {
-      grossAmount = factor * qty * price;
-    } else {
-      grossAmount = qty * price;
-    }
+    const { grossAmount, actualArea, areaRatio } = computeItemGeometry(i);
 
     const importedDiscountAmount = typeof i.imported_discount_amount === 'number' ? i.imported_discount_amount : null;
     let amount, discountAmount;
@@ -136,9 +165,15 @@ export function restoreServerItems(serverItems, { useTotalFallback = true } = {}
     if (i.notes === '__SECTION__') return { row_type: 'section', name: i.name, notes: '__SECTION__' };
     const qty = i.quantity || 1;
     const price = i.unit_price || 0;
-    const sf = parseFloat(i.spec_factor) || 0;
-    const gross = sf > 0 ? sf * qty * price : qty * price;
-    const recomputed = gross - gross * (i.discount_percent || 0) / 100;
+    const { grossAmount: gross } = computeItemGeometry({ ...i, quantity: qty });
+    // Số tiền CK lưu trong DB mới là bản gốc user/Excel nhập; discount_percent chỉ là % làm tròn
+    // để hiển thị. Lệch nhau → giữ nguyên số tiền, KHÔNG tính lại theo % (nguồn của lỗi lệch vài trăm đồng).
+    const storedDiscount = Number(i.discount_amount);
+    const pctDiscount = gross * (i.discount_percent || 0) / 100;
+    const keepDiscountAmount = Number.isFinite(storedDiscount)
+      && storedDiscount > 0
+      && Math.abs(storedDiscount - pctDiscount) > 0.5;
+    const recomputed = gross - (keepDiscountAmount ? storedDiscount : pctDiscount);
     const stored = useTotalFallback ? (i.amount || i.total || 0) : (i.amount || 0);
     const drift = Math.abs(stored - recomputed);
     const isLocked = stored > 0 && drift > 1;
@@ -154,6 +189,7 @@ export function restoreServerItems(serverItems, { useTotalFallback = true } = {}
       standard_area: i.standard_area || 0,
       lock_amount: isLocked,
       imported_amount: isLocked ? stored : undefined,
+      imported_discount_amount: keepDiscountAmount ? storedDiscount : undefined,
     };
   });
 }
@@ -289,9 +325,7 @@ export function updateGroupDiscountAmountItems(items, groupName, discountAmount,
       ? Math.max(0, Math.round(capped - allocated))
       : Math.round((entry.gross / totalGross) * capped);
     allocated += share;
-    const pct = entry.gross > 0
-      ? Math.max(0, Math.min(100, Math.round((share / entry.gross) * 100000) / 1000))
-      : 0;
+    const pct = discountPercentFromAmount(share, entry.gross);
     const it = next[entry.i];
     next[entry.i] = {
       ...it,
