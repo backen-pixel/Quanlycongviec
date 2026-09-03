@@ -298,6 +298,47 @@ Nghiệm thu theo vai trò thực tế, kiểm tra task gate, SLA, thông báo, 
 
 ## 8. Lịch sử quyết định
 
+### 2026-09-03 — Founder phê duyệt BOS-AI1 READ Pre-Effect Handoff Proof Baseline V1
+
+- Authority: direct Founder Approval; READ là quyết định BOS-AI1 hiện hành mới nhất,
+  không phải Codex tự công nhận baseline. Các quyết định trước giữ nguyên nghĩa lịch sử.
+- Technical Baseline: `b040d12a27ec0c99433a7c2abb988cc993cf337b`, tree `4190816ac113d2b6352eb7d242b1d35a9f58ca1e`.
+- Final Evidence Record: `f50a9ee689d9a442e3e9d150b7d4676705fb5d6c`, tree `a4f0ce71e95f3d1084016029604396270600e301`;
+  direct parent là technical baseline. Evidence/closure không thay phiên bản code chuẩn.
+- Xác minh chỉ đọc trước ghi hồ sơ: 82 artifact bytes/SHA-256, original manifests,
+  raw TAP và 17 source/test fingerprints khớp exact technical commit/tree.
+  Formal 1494/1494, Independent Adversarial 85/85, Independent Regression 1494/1494;
+  P0/P1/P2=0/0/0. Không chạy lại test; Formal/Independent clean detached trước/sau,
+  workspace evidence sạch trên proof branch. Technical đến evidence chỉ bốn tài liệu.
+- Proof footprint 9/10 file; conservative correction 1/2, reviewer-fixture correction=1,
+  implementation/Builder source-test repairs=0. Original Independent 83/85 và hai
+  thất bại được giữ nguyên với TAP, manifest và exact test bytes. Hai giả định fixture
+  được sửa: fractional numeric row bị từ chối ở snapshot; REG4 required permission/tool
+  arrays phải không rỗng. Final 85/85 không thay target source hoặc Builder test.
+- BOS ALLOW chỉ cấp control permit và metadata, zero read. Pre-effect audit thành công
+  mới có execution permit riêng; Application Service qua Domain trước Repository.
+  DENY/STOP zero read/release và không lộ existence; ALLOW qua filter/redact, RESULT
+  audit và revalidation trước một lần trả projection an toàn. Duplicate không đọc/trả
+  dữ liệu lần hai; lỗi audit/filter/redaction/dependency dừng việc trả dữ liệu.
+- Chỉ dữ liệu giả, synthetic Domain/Repository, fixed projection, audit/state trong bộ nhớ;
+  không công nhận Business Rules thật, database, durable/tamper-proof audit, distributed
+  exactly-once, real load, OpenClaw thật, Business AI Runtime hoặc Production readiness.
+- Cho phép đúng bốn file: MASTER_CONTEXT, PROJECT_DECISION_LOG, BOS_AI1_EVIDENCE_INDEX
+  và BOS_AI1_READ_PRE_EFFECT_HANDOFF_BASELINE. Đúng một documentation-only commit,
+  direct parent `f50a9ee689d9a442e3e9d150b7d4676705fb5d6c`; chỉ non-force fast-forward push tới
+  https://github.com/backen-pixel/Quanlycongviec.git trên `proof/bos-ai1-read-pre-effect-v1`.
+  Full closure SHA/tree và verified remote tip ghi ngoài commit sau khi tạo, không tự tham chiếu.
+- Giữ nguyên source/test, frozen evidence, historical decisions, REG4 và MG5; không
+  main update, force push, PR, merge, tag/release, reset hoặc rewrite lịch sử.
+- OC6 PAUSED tại G0 đến khi closure và GitHub được xác minh. Sau đó G0 phải dùng
+  READ technical identity trên, REG4 `3def40122e4072f266c943bc4eb84d3164501339` /
+  `aef6c623ce7f549b560af46e73a7ee6d0abd35ae` và MG5
+  `c0ba1b282422c68bd96478d7585f2c2381198420` / `02f6ed227a288009f449ef9de4e94ba98ceb6c33`.
+  PASS mới tiếp tục Fast Track đã duyệt (P01–P14, G0–G9, IR-OC6-1, tối đa 20 file/2 vòng sửa);
+  FAIL STOP và báo exact gap. Chưa tuyên bố G0 PASS; không đổi tiêu chí hoặc tự duyệt OC6 baseline.
+- Không OpenClaw/model/API/dữ liệu doanh nghiệp thật, Runtime, Production hoặc phase lớn mới.
+- Hồ sơ: [READ Pre-Effect Handoff Baseline](./bos-ai1/BOS_AI1_READ_PRE_EFFECT_HANDOFF_BASELINE.md).
+
 ### 2026-09-03 — Founder phê duyệt BOS-AI1 Draft Pre-Effect Handoff Proof Baseline V1
 
 - Authority: direct Founder Approval, không phải Codex tự công nhận baseline.

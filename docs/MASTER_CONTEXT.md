@@ -2,9 +2,9 @@
 
 > Cập nhật: 2026-09-03
 >
-> Authority: các Founder Approval trước đây và Founder Approval — BOS-AI1 Draft Pre-Effect Handoff Proof Baseline V1, 2026-09-03
+> Authority: các Founder Approval trước đây và direct Founder Approval — BOS-AI1 READ Pre-Effect Handoff Proof Baseline V1, 2026-09-03
 >
-> Trạng thái: **BOS-AI1 DRAFT PRE-EFFECT HANDOFF V1 FOUNDER-APPROVED / DOCUMENTATION CLOSURE / OC6 G0 CONDITIONAL**
+> Trạng thái: **BOS-AI1 READ PRE-EFFECT HANDOFF V1 FOUNDER-APPROVED / DOCUMENTATION CLOSURE / OC6 G0 CONDITIONAL**
 
 ## 1. Baseline có thẩm quyền
 
@@ -104,7 +104,7 @@ cho Application Service, Domain có quyền veto trước fake adapter, tái ki�
 authority/approval và chống lặp. Chỉ dữ liệu, approval, Domain, audit và effect
 giả trong bộ nhớ. Hồ sơ: [Pre-Effect Handoff Baseline](./bos-ai1/BOS_AI1_PRE_EFFECT_HANDOFF_BASELINE.md).
 
-### 1.3. BOS-AI1 Draft Pre-Effect Handoff Proof Technical Baseline V1 — quyết định hiện hành
+### 1.3. BOS-AI1 Draft Pre-Effect Handoff Proof Technical Baseline V1 — phê duyệt được bảo toàn
 
 - Founder verdict ngày 2026-09-03: **APPROVED — SYNTHETIC PROOF ONLY**.
 - Technical Baseline: `a0fbabb9e210b4fdf2ad2e7fc2b8e9f89200d0d0`.
@@ -116,7 +116,7 @@ giả trong bộ nhớ. Hồ sơ: [Pre-Effect Handoff Baseline](./bos-ai1/BOS_AI
 - Kiểm tra trước ghi hồ sơ đã đọc Git objects, 366 artifact bytes/hash, manifest,
   TAP gốc và source/test blobs. Cả năm worktree build/FTT/IR sạch; delta từ code
   đến evidence chỉ là bốn tài liệu. Các baseline và bằng chứng lịch sử giữ nguyên.
-- G0 phải dùng technical baseline DRAFT này cùng REG4
+- Quyết định DRAFT lịch sử yêu cầu G0 dùng technical baseline DRAFT này cùng REG4
   `3def40122e4072f266c943bc4eb84d3164501339` / `aef6c623ce7f549b560af46e73a7ee6d0abd35ae`
   và MG5 `c0ba1b282422c68bd96478d7585f2c2381198420` / `02f6ed227a288009f449ef9de4e94ba98ceb6c33`.
 
@@ -125,6 +125,32 @@ thành công; Application Service điều phối qua Domain ALLOW/DENY/STOP. Dom
 không tạo draft; ALLOW tạo đúng một draft; duplicate tuần tự, đồng thời trong một
 tiến trình và gọi lồng không tạo draft thứ hai. Mọi kết quả có correlation_id/audit.
 Hồ sơ: [Draft Pre-Effect Handoff Baseline](./bos-ai1/BOS_AI1_DRAFT_PRE_EFFECT_HANDOFF_BASELINE.md).
+
+### 1.4. BOS-AI1 READ Pre-Effect Handoff Proof Technical Baseline V1 — quyết định hiện hành
+
+- Authority: Founder trực tiếp phê duyệt ngày 2026-09-03: **APPROVED — SYNTHETIC PROOF ONLY**.
+- Technical Baseline: `b040d12a27ec0c99433a7c2abb988cc993cf337b`.
+- Technical tree: `4190816ac113d2b6352eb7d242b1d35a9f58ca1e`.
+- Final Evidence Record: `f50a9ee689d9a442e3e9d150b7d4676705fb5d6c`.
+- Evidence tree: `a4f0ce71e95f3d1084016029604396270600e301`; direct parent là technical baseline.
+- Formal 1494/1494, Independent Adversarial 85/85 và Independent Regression
+  1494/1494 cùng gắn chính xác technical commit/tree trên; P0/P1/P2=0/0/0.
+- Xác minh closure chỉ đọc Git objects và bằng chứng đã lưu: đủ 82 artifact
+  bytes/SHA-256, manifest, raw TAP và 17 source/test fingerprints khớp. Không chạy lại test.
+  Formal/Independent sạch, detached HEAD trước/sau; workspace bằng chứng sạch trên
+  nhánh proof. Technical đến evidence chỉ thêm đúng bốn tài liệu; source/test không đổi.
+- Proof footprint 9/10 file. Tính bảo thủ 1/2 vòng sửa fixture của reviewer;
+  implementation/Builder source-test repairs=0. Giữ nguyên lần đầu 83/85, hai
+  thất bại, manifest, raw TAP và exact test bytes trước/sau sửa fixture.
+- READ là technical authority BOS-AI1 mới nhất cho G0 sau khi closure và GitHub
+  được xác minh; REG4/MG5 cùng mọi baseline, quyết định và bằng chứng trước giữ nguyên.
+
+BOS ALLOW chỉ cấp control permit và metadata, chưa đọc dữ liệu. Pre-effect audit
+thành công mới cấp execution permit riêng; Application Service qua Domain trước
+repository. Domain DENY/STOP không đọc hoặc tiết lộ tồn tại tài nguyên; ALLOW
+được đọc có kiểm soát, filter/redact và audit trước một lần trả projection an toàn.
+Duplicate không đọc/trả dữ liệu lần hai; lỗi audit hoặc dependency dừng việc trả dữ liệu.
+Hồ sơ: [READ Pre-Effect Handoff Baseline](./bos-ai1/BOS_AI1_READ_PRE_EFFECT_HANDOFF_BASELINE.md).
 
 ## 2. Căn cứ phê duyệt
 
@@ -207,7 +233,7 @@ assurance; và export chưa được kiểm tra qua live delivery/storage. Các 
 - Kết quả chỉ phê duyệt BOS-AI1 Proof Baseline; không phải durable audit,
   Runtime, Production hoặc quyền mở phase tiếp theo.
 
-### 2.5. Controlled Publish Proof Baseline V1
+### 2.5. Controlled Publish Proof Baseline V1 — căn cứ lịch sử được bảo toàn
 
 - Founder verdict: **APPROVED**; Formal 195/195, Independent Adversarial 152/152.
 - P0=0, P1=0, P2=0; proof diff 8/12 file; implementation repair 0/2.
@@ -220,7 +246,7 @@ assurance; và export chưa được kiểm tra qua live delivery/storage. Các 
 - Sau đóng hồ sơ: chạy lại OC6 G0 với baseline mới. G0 PASS mới tiếp tục OC6
   Fast Track đã duyệt; G0 FAIL thì STOP và báo exact gap. Không tự duyệt OC6 baseline.
 
-### 2.6. Pre-Effect Handoff Proof Baseline
+### 2.6. Pre-Effect Handoff Proof Baseline — căn cứ lịch sử được bảo toàn
 
 - Formal: 188 handoff + 195 baseline regression + 152 historical adversarial = 535/535.
 - Independent: 173/173 adversarial; reviewer chạy lại 383 repository + 152 historical
@@ -236,7 +262,7 @@ assurance; và export chưa được kiểm tra qua live delivery/storage. Các 
 - Không sửa source/test hoặc hồ sơ bằng chứng đã kiểm định; không main, force push,
   PR, merge, tag, release; không OpenClaw/model thật, Business AI Runtime hoặc Production.
 
-### 2.7. Draft Pre-Effect Handoff Proof Baseline V1
+### 2.7. Draft Pre-Effect Handoff Proof Baseline V1 — căn cứ lịch sử được bảo toàn
 
 - Formal 884/884 = DRAFT 176 + hồi quy 708. Independent 223/223 và independent
   regression 884/884 trên cùng exact technical identity; không fail/skip/cancel/todo.
@@ -253,6 +279,33 @@ assurance; và export chưa được kiểm tra qua live delivery/storage. Các 
   tải thực tế hoặc Production readiness. Không OpenClaw/model/API/dữ liệu thật,
   Business AI Runtime, Production hoặc phase lớn mới.
 
+### 2.8. READ Pre-Effect Handoff Proof Baseline V1 — quyền hiện hành
+
+- Formal 1494/1494 = READ 387 + historical regression 1107. Independent 85/85
+  và Independent Regression 1494/1494 trên cùng exact technical identity;
+  các lần chạy cuối không fail/cancel/skip/todo. P0/P1/P2=0/0/0.
+- Original Independent 83/85 được giữ nguyên. Reviewer sửa hai giả định fixture
+  trong một vòng: numeric fractional row bị chặn ngay khi snapshot; real REG4
+  không nhận required permission/tool arrays rỗng. Final 85/85 không sửa source
+  hoặc Builder test; tổng bảo thủ 1/2 vòng sửa, source repairs=0.
+- Founder cho phép đúng bốn hồ sơ quản trị và đúng một documentation-only commit
+  có direct parent `f50a9ee689d9a442e3e9d150b7d4676705fb5d6c`; chỉ fast-forward push lên
+  `proof/bos-ai1-read-pre-effect-v1` tại https://github.com/backen-pixel/Quanlycongviec.git.
+  Không source/test/evidence change, main update, force push, PR, merge, tag hoặc release.
+  Full closure SHA/tree và verified GitHub tip chỉ ghi bên ngoài sau khi commit tồn tại.
+- OC6 vẫn PAUSED tại G0 trong bước closure. Chỉ sau closure và xác minh GitHub,
+  chạy lại G0 với READ `b040d12a27ec0c99433a7c2abb988cc993cf337b` / `4190816ac113d2b6352eb7d242b1d35a9f58ca1e`.
+  Giữ nguyên REG4 `3def40122e4072f266c943bc4eb84d3164501339` /
+  `aef6c623ce7f549b560af46e73a7ee6d0abd35ae` và MG5
+  `c0ba1b282422c68bd96478d7585f2c2381198420` / `02f6ed227a288009f449ef9de4e94ba98ceb6c33`.
+  G0 PASS mới tiếp tục Fast Track đã duyệt; G0 FAIL STOP và báo exact gap.
+  P01–P14, G0–G9, IR-OC6-1, giới hạn 20 file/2 vòng sửa và tiêu chí hiện hữu giữ nguyên.
+  Hồ sơ này chưa tuyên bố G0 PASS và không tự duyệt OC6 baseline.
+- Chỉ dữ liệu giả, Domain/Repository giả, projection cố định, audit/state trong bộ nhớ.
+  Không công nhận Business Rules thật, database, durable/tamper-proof audit,
+  distributed exactly-once, tải thực tế, Runtime hoặc Production readiness.
+  Không OpenClaw/model/API/dữ liệu thật, Business AI Runtime, Production hoặc phase lớn mới.
+
 ## 3. Trạng thái quyền hạn
 
 | Hạng mục | Trạng thái |
@@ -263,10 +316,10 @@ assurance; và export chưa được kiểm tra qua live delivery/storage. Các 
 | Merge vào main | `NOT_AUTHORIZED` |
 | Tag / release | `NOT_AUTHORIZED` |
 | AF3 Engineering Cell V1 Proof | `FOUNDER-APPROVED / COMPLETE` |
-| BOS-AI1 | `DRAFT PRE-EFFECT HANDOFF V1 FOUNDER-APPROVED; ALL PRIOR BASELINES PRESERVED` |
+| BOS-AI1 | `READ PRE-EFFECT HANDOFF V1 FOUNDER-APPROVED; ALL PRIOR BASELINES PRESERVED` |
 | REG4 | `FOUNDER-APPROVED V1 TECHNICAL BASELINE / COMPLETE` |
 | MG5 | `PINNED PROOF DEPENDENCY c0ba1b28; NO NEW MG5 WORK` |
-| OC6 | `G0 RE-RUN AFTER CLOSURE; CONTINUE EXISTING FAST TRACK ONLY IF PASS` |
+| OC6 | `PAUSED AT G0; RE-RUN AFTER CLOSURE AND GITHUB VERIFIED; CONTINUE EXISTING FAST TRACK ONLY IF PASS` |
 | Business AI Runtime | `NO_GO / NOT_AUTHORIZED` |
 | OpenClaw Production | `NO_GO / NOT_AUTHORIZED` |
 | Production Deployment | `NO_GO / NOT_AUTHORIZED` |
@@ -275,8 +328,8 @@ assurance; và export chưa được kiểm tra qua live delivery/storage. Các 
 Việc ghi nhận canonical baseline tự nó không cho phép push, merge, tag,
 release, migration, deploy hoặc thay đổi canonical main. Ngoại lệ hiện hành
 chỉ là đúng một documentation-only closure commit và fast-forward push được
-Founder phê duyệt riêng trên nhánh Draft Pre-Effect Handoff. Quyền OC6 tiếp tục có
-điều kiện theo Mục 2.7; không mở phase lớn mới.
+Founder phê duyệt riêng trên nhánh READ Pre-Effect Handoff. Quyền OC6 tiếp tục có
+điều kiện theo Mục 2.8; không mở phase lớn mới.
 
 Founder approval AF3 thay thế trạng thái `AF3 NOT_AUTHORIZED` trước đó chỉ để
 ghi nhận AF3 V1 Proof đã hoàn thành. Quyết định này không cho phép merge vào
@@ -288,7 +341,7 @@ ghi nhận REG4 Agent Registry V1 Technical Baseline đã hoàn thành. Quyết 
 REG4 tự nó không cấp quyền BOS-AI1; các Founder authorization và baseline
 approval BOS-AI1 ban hành sau chỉ thay thế giới hạn đó trong đúng phạm vi proof.
 Các giới hạn của quyết định cũ áp dụng tại thời điểm ban hành. Founder Decision
-mới chỉ thay thế chúng trong đúng hành lang proof được nêu ở Mục 2.7; merge
+mới chỉ thay thế chúng trong đúng hành lang proof được nêu ở Mục 2.8; merge
 main, tag/release, OpenClaw thật, Runtime và Production vẫn không được phép.
 
 Founder approval BOS-AI1 thay thế trạng thái `BOS-AI1 NOT_AUTHORIZED / PENDING
@@ -311,6 +364,7 @@ MG5, OC6, OpenClaw, Business AI Runtime, Production hoặc tự mở phase tiế
 - [REG4 Evidence Index](./reg4/REG4_EVIDENCE_INDEX.md)
 - [REG4 Final Evidence Package](./reg4/REG4_EVIDENCE_PACKAGE.md)
 - [REG4 to BOS-AI1 Design Alignment](./reg4/REG4_BOS_AI1_DESIGN_ALIGNMENT.md)
+- [READ Pre-Effect Handoff Proof Baseline V1](./bos-ai1/BOS_AI1_READ_PRE_EFFECT_HANDOFF_BASELINE.md)
 - [Draft Pre-Effect Handoff Proof Baseline V1](./bos-ai1/BOS_AI1_DRAFT_PRE_EFFECT_HANDOFF_BASELINE.md)
 - [Pre-Effect Handoff Proof Baseline](./bos-ai1/BOS_AI1_PRE_EFFECT_HANDOFF_BASELINE.md)
 - [Controlled Publish Proof Baseline V1](./bos-ai1/BOS_AI1_CONTROLLED_PUBLISH_BASELINE.md)
@@ -322,7 +376,7 @@ MG5, OC6, OpenClaw, Business AI Runtime, Production hoặc tự mở phase tiế
 
 Nếu tài liệu cũ mâu thuẫn với trạng thái này, các Founder approval và exact
 commit/tree trong Mục 1 là điểm đối chiếu hiện hành. Trạng thái điều hành sau
-khi ghi nhận theo quyết định mới nhất: **đóng hồ sơ baseline, rồi chạy OC6 G0**.
+khi ghi nhận theo quyết định READ mới nhất: **đóng hồ sơ baseline, xác minh GitHub, rồi chạy OC6 G0**.
 
 Sau Founder approval AF3, trạng thái điều hành vẫn là **STOP** để Founder chọn
 phase tiếp theo; không phase nào được tự động mở.
@@ -335,6 +389,12 @@ Founder Approval Pre-Effect Handoff ngày 2026-09-03 được giữ làm quyết
 G0 phải dùng bổ sung a4c80f30... / 7850bf02... sau khi closure được xác minh.
 Các tuyên bố STOP hoặc không cấp quyền OC6 trong quyết định cũ chỉ giữ nghĩa lịch sử.
 
-Founder Approval Draft Pre-Effect Handoff V1 là quyết định hiện hành tiếp nối:
+Founder Approval Draft Pre-Effect Handoff V1 được giữ làm quyết định lịch sử:
 đóng hồ sơ và xác minh GitHub xong mới chạy G0 trên a0fbabb9... / 6d0e3895...,
 giữ nguyên REG4/MG5. Chưa tuyên bố G0 PASS; kết quả G0 được ghi riêng sau closure.
+
+Founder Approval READ Pre-Effect Handoff V1 là quyết định tiếp nối hiện hành:
+closure và GitHub được xác minh xong mới chạy G0 trên `b040d12a27ec0c99433a7c2abb988cc993cf337b` /
+`4190816ac113d2b6352eb7d242b1d35a9f58ca1e`, giữ nguyên REG4/MG5. Chưa tuyên bố G0 PASS;
+kết quả G0 và full closure SHA/tree được ghi riêng sau closure. Các quyền tiếp tục
+trong quyết định cũ chỉ mô tả lịch sử; Mục 1.4 và 2.8 quy định authority hiện tại.

@@ -2,11 +2,63 @@
 
 > Record date: 2026-09-03
 >
-> Authority: Founder Approval — BOS-AI1 Draft Pre-Effect Handoff Proof Baseline V1; prior approved baselines and evidence preserved
+> Authority: direct Founder Approval — BOS-AI1 READ Pre-Effect Handoff Proof Baseline V1; prior approved baselines and evidence preserved
 >
-> Verdict: **DRAFT PRE-EFFECT HANDOFF V1 APPROVED / DOCUMENTATION CLOSURE / OC6 G0 CONDITIONAL**
+> Verdict: **READ PRE-EFFECT HANDOFF V1 APPROVED / DOCUMENTATION CLOSURE / OC6 G0 CONDITIONAL**
 
-## 0. Draft Pre-Effect Handoff Proof Baseline V1 — current approval
+## 0. READ Pre-Effect Handoff Proof Baseline V1 — current approval
+
+| Record | Exact commit | Exact tree |
+|---|---|---|
+| READ Pre-Effect Technical Baseline V1 | `b040d12a27ec0c99433a7c2abb988cc993cf337b` | `4190816ac113d2b6352eb7d242b1d35a9f58ca1e` |
+| Final Evidence Record | `f50a9ee689d9a442e3e9d150b7d4676705fb5d6c` | `a4f0ce71e95f3d1084016029604396270600e301` |
+
+Direct Founder approval recognizes this exact READ technical/evidence pair. Formal
+1494/1494, Independent Adversarial 85/85 and Independent Regression 1494/1494 bind
+to the same technical commit/tree; P0/P1/P2=0/0/0. Proof footprint is 9/10 files.
+Read-only closure verification checked all 82 artifact byte lengths/SHA-256, original
+manifests, raw TAP and 17 reviewed source/test fingerprints, without rerunning tests.
+Formal/Independent execution snapshots and workspaces are clean detached before/after;
+the evidence workspace is clean on its proof branch. Evidence adds exactly four
+documents to the technical commit; source/test and all historical files remain intact.
+
+Conservative corrections: 1/2, solely one reviewer-fixture correction round; source
+repairs: 0. The initial 83/85 run, its two failures, original tests, manifests and raw
+TAP are preserved beside the corrected 85/85 run. No failed run is replaced or hidden.
+
+| Evidence | Purpose |
+|---|---|
+| [READ Pre-Effect Baseline](./BOS_AI1_READ_PRE_EFFECT_HANDOFF_BASELINE.md) | Direct Founder approval, exact identities, limits and closure authority |
+| [Formal Test](./BOS_AI1_READ_PRE_EFFECT_FORMAL_TEST.md) | 1494/1494 execution at the exact technical baseline |
+| [Independent Review](./BOS_AI1_READ_PRE_EFFECT_INDEPENDENT_REVIEW.md) | 85 adversarial, 1494 regression and preserved reviewer-fixture correction |
+| [Decision Evidence](./BOS_AI1_READ_PRE_EFFECT_EVIDENCE.md) | Immutable pre-approval decision package |
+| [Portable Evidence](./BOS_AI1_READ_PRE_EFFECT_EVIDENCE.json) | 82 original artifacts and integrity metadata |
+
+Portable evidence: 1,826,107 bytes, Git blob `b8611cc6676fcef55d4e37121a471f88b580b116`,
+canonical SHA-256 `de6fec1673d5cd2ff0b3b7690fa726847dffb41a761d49ab0abc2fcce044234d`.
+Its historical PENDING Founder decision remains unchanged; this later closure records
+the direct Founder approval without rewriting the evidence package.
+
+Exactly one documentation-only closure commit may directly follow `f50a9ee689d9a442e3e9d150b7d4676705fb5d6c`.
+Only a non-force fast-forward push to `proof/bos-ai1-read-pre-effect-v1` at
+https://github.com/backen-pixel/Quanlycongviec.git is authorized. Full closure SHA/tree
+and verified GitHub tip are recorded externally after the commit exists. Closure is
+not a replacement technical baseline, and this record does not claim publication.
+
+OC6 remains PAUSED at G0 during closure. After closure and GitHub verification, G0
+must use the approved READ technical commit/tree above with unchanged REG4
+`3def40122e4072f266c943bc4eb84d3164501339` / `aef6c623ce7f549b560af46e73a7ee6d0abd35ae`
+and MG5 `c0ba1b282422c68bd96478d7585f2c2381198420` / `02f6ed227a288009f449ef9de4e94ba98ceb6c33`.
+PASS permits the existing Fast Track; FAIL requires STOP with the precise gap.
+P01–P14, G0–G9, IR-OC6-1 and the 20-file/two-repair limits remain unchanged. No G0
+PASS or OC6 baseline approval is claimed here. Only synthetic in-memory proof is
+recognized; real Domain rules, database, durable audit, Runtime and Production are outside it.
+
+All sections below preserve historical decisions, including their authority at the
+time. Section 0 READ is the latest authority for present continuation. No historical
+source, test, baseline, failed evidence or prior evidence file is changed.
+
+## 0.1. Draft Pre-Effect Handoff Proof Baseline V1 — preserved approval
 
 | Record | Exact commit | Exact tree |
 |---|---|---|
@@ -36,10 +88,11 @@ requires STOP with the precise gap. No self-approval of OC6 baseline or live sys
 This approval recognizes synthetic, in-memory proof only, not real Domain rules,
 database, durable/tamper-proof audit, operational load or Production readiness.
 
-All sections below retain historical decisions. Current continuation rights are
-governed by this Draft Pre-Effect approval; historical evidence files are not edited.
+The Draft section records its preserved historical approval and continuation rights.
+Current continuation rights are governed by the READ approval in section 0; historical
+evidence files are not edited.
 
-## 0.1. Pre-Effect Handoff Proof Baseline — preserved approval
+## 0.2. Pre-Effect Handoff Proof Baseline — preserved approval
 
 | Record | Exact commit | Exact tree |
 |---|---|---|
@@ -71,7 +124,7 @@ of OC6 baseline; no real OpenClaw/model, Business AI Runtime or Production.
 The following records retain their historical authority and evidence. The preceding
 Pre-Effect rights describe that historical decision; section 0 governs current continuation.
 
-## 0.2. Controlled Publish Proof Baseline V1 — preserved approval
+## 0.3. Controlled Publish Proof Baseline V1 — preserved approval
 
 | Record | Exact commit | Exact tree |
 |---|---|---|
@@ -87,7 +140,7 @@ implementation repairs 0/2. Evidence adds only documentation to the technical
 baseline; source/test blobs are identical. READ/DRAFT historical blobs remain
 unchanged, and its immutable commit is retained.
 
-| Current evidence | Purpose |
+| Historical evidence | Purpose |
 |---|---|
 | [Controlled Publish Baseline](./BOS_AI1_CONTROLLED_PUBLISH_BASELINE.md) | Founder approval, full identities, scope and closure authority |
 | [Formal Test](./BOS_AI1_CONTROLLED_PUBLISH_FORMAL_TEST.md) | Exact-commit 195/195 execution |
@@ -104,9 +157,9 @@ requires STOP. Real OpenClaw, Runtime and Production remain NO_GO.
 
 Sections 1–8 below preserve the earlier V1.2B READ/DRAFT evidence and its
 authority at that historical decision. Their old STOP/no-OC6 statements are
-superseded only by the narrowly authorized continuation in this section.
+superseded only by the narrowly authorized current READ continuation in section 0.
 
-## 1. Authoritative identities
+## 1. Historical V1.2B authoritative identities
 
 BOS-AI1 V1.2B historical READ/DRAFT has two approved records with different purposes. They must not be
 substituted for each other.
@@ -234,4 +287,4 @@ Business AI Runtime, autonomous Publish or Production eligibility.
 - Source/test changes: `NOT_AUTHORIZED`.
 - Force push / merge / tag / release: `NOT_AUTHORIZED`.
 - MG5, OC6, OpenClaw, Business AI Runtime and Production: `NOT_AUTHORIZED`.
-- Current state: **APPROVED / COMPLETE / STOP**.
+- State at that historical decision: **APPROVED / COMPLETE / STOP**.
