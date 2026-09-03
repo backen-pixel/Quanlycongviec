@@ -512,8 +512,18 @@ function computeAssignKpiSubs(tasks, stats) {
   };
 }
 
-/** Màu thanh tiến độ cho bảng «Thống kê theo nhân viên» — xoay vòng theo thứ hạng. */
-const ASSIGN_STAFF_BAR_COLORS = ['bg-violet-500', 'bg-sky-500', 'bg-emerald-500', 'bg-amber-500', 'bg-rose-500'];
+/**
+ * Bảng màu «Thống kê theo nhân viên» — xoay vòng theo thứ hạng, dùng chung cho avatar
+ * (nền nhạt + chữ đậm) và thanh tiến độ (nền đặc) để mắt nối được avatar với thanh của
+ * đúng người đó khi danh sách dài.
+ */
+const ASSIGN_STAFF_COLORS = [
+  { avatarBg: 'bg-violet-100', avatarText: 'text-violet-700', bar: 'bg-violet-500' },
+  { avatarBg: 'bg-sky-100', avatarText: 'text-sky-700', bar: 'bg-sky-500' },
+  { avatarBg: 'bg-emerald-100', avatarText: 'text-emerald-700', bar: 'bg-emerald-500' },
+  { avatarBg: 'bg-amber-100', avatarText: 'text-amber-700', bar: 'bg-amber-500' },
+  { avatarBg: 'bg-rose-100', avatarText: 'text-rose-700', bar: 'bg-rose-500' },
+];
 
 /** Viết tắt tên để làm avatar chữ khi người dùng chưa có ảnh. */
 function assignInitials(name) {
@@ -560,13 +570,15 @@ function AssignQuickFilterPanel({
       }
     }
     const rows = [...byId.values()].sort((a, b) => b.count - a.count);
-    const max = rows[0]?.count || 0;
     const total = list.length || 0;
+    // Thanh tiến độ = đúng % trên tổng số việc — KHÔNG co giãn theo người cao nhất.
+    // Bản trước lấy chiều rộng theo tỷ lệ với người nhiều việc nhất nên người đứng đầu
+    // luôn có thanh đầy 100%, dù số ghi bên cạnh là "30%" — nhìn thanh no đủ mà số nhỏ
+    // khiến người dùng khó hiểu. Giờ thanh và số luôn khớp nhau: 30% thì thanh dài 30%.
     return rows.map((r, i) => ({
       ...r,
       pct: total ? Math.round((r.count / total) * 100) : 0,
-      barPct: max ? Math.round((r.count / max) * 100) : 0,
-      color: ASSIGN_STAFF_BAR_COLORS[i % ASSIGN_STAFF_BAR_COLORS.length],
+      ...ASSIGN_STAFF_COLORS[i % ASSIGN_STAFF_COLORS.length],
     }));
   }, [tasks]);
 
@@ -661,8 +673,13 @@ function AssignQuickFilterPanel({
           </div>
 
           <div className="border-t border-slate-100 px-3 py-2.5">
-            <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-              Thống kê theo nhân viên
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+              Số việc theo nhân viên
+            </p>
+            {/* Nói rõ mẫu số của % bên dưới là gì — không có dòng này người xem dễ hiểu
+                nhầm % là so với tổng toàn hệ thống thay vì đúng danh sách đang lọc. */}
+            <p className="mb-2 text-[10px] text-slate-400">
+              Trên {tasks?.length || 0} việc đang hiển thị
             </p>
             {!shownStaff.length ? (
               <p className="py-2 text-[11px] text-slate-400">Chưa có việc nào được giao.</p>
@@ -671,15 +688,19 @@ function AssignQuickFilterPanel({
                 {shownStaff.map((s) => (
                   <li key={s.id}>
                     <div className="flex items-center gap-2">
-                      <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-slate-100 text-[9px] font-bold text-slate-600">
+                      <span className={`grid h-6 w-6 shrink-0 place-items-center rounded-full text-[9px] font-bold ${s.avatarBg} ${s.avatarText}`}>
                         {assignInitials(s.name)}
                       </span>
                       <span className="min-w-0 flex-1 truncate text-[11px] text-slate-700" title={s.name}>{s.name}</span>
-                      <span className="shrink-0 text-[11px] font-semibold tabular-nums text-slate-800">{s.count}</span>
-                      <span className="w-8 shrink-0 text-right text-[10px] tabular-nums text-slate-400">{s.pct}%</span>
+                      <span className="shrink-0 text-[11px] font-semibold tabular-nums text-slate-800">{s.count} việc</span>
                     </div>
-                    <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
-                      <div className={`h-full rounded-full ${s.color}`} style={{ width: `${s.barPct}%` }} />
+                    {/* Thanh dài đúng bằng %, không co theo người đứng đầu — nhìn thanh là
+                        biết ngay tỷ trọng thật, khỏi phải đọc số mới hiểu. */}
+                    <div className="mt-1 flex items-center gap-1.5">
+                      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-100">
+                        <div className={`h-full rounded-full ${s.bar}`} style={{ width: `${s.pct}%` }} />
+                      </div>
+                      <span className="w-8 shrink-0 text-right text-[10px] tabular-nums text-slate-400">{s.pct}%</span>
                     </div>
                   </li>
                 ))}
