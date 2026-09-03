@@ -1,12 +1,44 @@
 # BOS-AI1 — Founder-Approved Evidence Index
 
-> Record date: 2026-09-02
+> Record date: 2026-09-03
 >
-> Authority: Founder Approval — BOS-AI1 Controlled Publish Proof Baseline V1, with preserved V1.2B READ/DRAFT history
+> Authority: Founder Approval — BOS-AI1 Pre-Effect Handoff Proof Baseline; prior approved baselines and evidence preserved
 >
-> Verdict: **CONTROLLED PUBLISH V1 APPROVED / DOCUMENTATION CLOSURE / OC6 G0 CONDITIONAL**
+> Verdict: **PRE-EFFECT HANDOFF APPROVED / DOCUMENTATION CLOSURE / OC6 G0 CONDITIONAL**
 
-## 0. Controlled Publish Proof Baseline V1 — current approval
+## 0. Pre-Effect Handoff Proof Baseline — current approval
+
+| Record | Exact commit | Exact tree |
+|---|---|---|
+| Pre-Effect Handoff Technical Baseline | `a4c80f30e3afcf8d0c2fec43d8634368890b383d` | `7850bf028741e6319c62262cbd2b2f86c822134a` |
+| Pre-Effect Handoff Final Evidence Record | `18fd91bbc7e6ae8bfe10f4519219a4c53642d83e` | `104f8e9254d6e2fcec1faa033decc94fa6ede0ce` |
+
+Formal 535/535 (188 handoff + 195 baseline + 152 historical adversarial), independent
+173/173 and independent regression 383+152 bind to the same exact technical identity.
+P0/P1/P2=0/0/0. Closure verification checked all 123 embedded artifact hashes, original
+manifests, raw TAP counts and tested source/test blobs. Evidence changes only four
+documents after the technical commit. Five build/test/review worktrees were clean.
+Proof scope: 8/12 files; repairs: 2/2. Failed candidate and IR history remain intact.
+
+| Evidence | Purpose |
+|---|---|
+| [Pre-Effect Handoff Baseline](./BOS_AI1_PRE_EFFECT_HANDOFF_BASELINE.md) | Founder approval, exact identities, boundaries and closure authority |
+| [Formal Test](./BOS_AI1_PRE_EFFECT_HANDOFF_FORMAL_TEST.md) | 535/535 exact-commit formal execution |
+| [Independent Review](./BOS_AI1_PRE_EFFECT_HANDOFF_INDEPENDENT_REVIEW.md) | 173/173 adversarial, 535 regression and closed findings |
+| [Decision Evidence](./BOS_AI1_PRE_EFFECT_HANDOFF_EVIDENCE.md) | Preserved pre-approval package |
+| [Portable Evidence](./BOS_AI1_PRE_EFFECT_HANDOFF_EVIDENCE.json) | 123 original artifacts and integrity metadata |
+
+Exactly one documentation-only closure commit has direct parent `18fd91bbc7e6ae8bfe10f4519219a4c53642d83e`.
+Only fast-forward push to `proof/bos-ai1-pre-effect-domain-audit-v1` is authorized.
+Closure SHA/tree and remote verification are recorded externally after creation.
+After verified closure, OC6 G0 must use this technical supplement: PASS continues the
+previously approved OC6 Fast Track; FAIL stops with the precise gap. No self-approval
+of OC6 baseline; no real OpenClaw/model, Business AI Runtime or Production.
+
+The following records retain their historical authority and evidence. Current
+continuation rights are governed by this section and the 2026-09-03 decision.
+
+## 0.1. Controlled Publish Proof Baseline V1 — preserved approval
 
 | Record | Exact commit | Exact tree |
 |---|---|---|
