@@ -453,6 +453,7 @@ async function fetchAttendedStatusByContactIds(contactIds) {
         last_inbound_at: row.last_inbound_at || null,
         last_outbound_at: row.last_outbound_at || null,
         last_outbound_by: row.last_outbound_by || null,
+        first_inbound_at: row.first_inbound_at || null,
       });
     });
   }
@@ -475,12 +476,14 @@ async function attachAttendedStatus(contacts, precomputedMap = null) {
       c.last_inbound_at = info.last_inbound_at;
       c.last_outbound_at = info.last_outbound_at;
       c.last_outbound_by = info.last_outbound_by;
+      c.first_inbound_at = info.first_inbound_at || null;
       if (info.last_outbound_by) staffIds.add(info.last_outbound_by);
     } else {
       c.attended_status = 'no_message';
       c.last_inbound_at = null;
       c.last_outbound_at = null;
       c.last_outbound_by = null;
+      c.first_inbound_at = null;
     }
   });
   if (staffIds.size) {

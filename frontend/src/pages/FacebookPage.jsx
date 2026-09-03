@@ -91,6 +91,44 @@ function resolveInboxTimeRange(timeFilter, customFrom = '', customTo = '') {
   return { activity_from: '', activity_to: '', label: '' };
 }
 
+/** Tin inbound đầu tiên có nằm trong khoảng ngày (giờ VN) không → «hội thoại mới». */
+function contactIsNewInRange(c, fromYmd, toYmd) {
+  if (!fromYmd) return false;
+  const iso = c.first_inbound_at || c.created_at;
+  if (!iso) return false;
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return false;
+  const fromMs = new Date(`${fromYmd}T00:00:00+07:00`).getTime();
+  const toMs = new Date(`${toYmd || fromYmd}T23:59:59.999+07:00`).getTime();
+  return t >= fromMs && t <= toMs;
+}
+
+const INBOX_STAT_LABEL = {
+  all: 'tất cả khách có tin',
+  new: 'hội thoại mới',
+  back: 'khách cũ nhắn lại',
+  waiting: 'chưa trả lời',
+};
+
+function InboxStatCell({ active, onClick, title, value, valueClass, label }) {
+  return (
+    <button
+      type="button"
+      title={title}
+      aria-pressed={active}
+      onClick={onClick}
+      className={`px-3 py-2 text-left w-full transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 focus-visible:ring-inset ${
+        active ? 'bg-indigo-50' : 'hover:bg-gray-50'
+      }`}
+    >
+      <p className={`text-xl font-bold tabular-nums leading-none ${valueClass}`}>{value}</p>
+      <p className={`text-[10px] mt-1 leading-tight ${active ? 'font-semibold text-indigo-700' : 'text-gray-500'}`}>
+        {label}
+      </p>
+    </button>
+  );
+}
+
 function formatFbActivityTime(c) {
   const ts = fbActivityTs(c);
   if (!ts) return null;
@@ -969,6 +1007,12 @@ function InboxTab({ pageStats, fbCompanyQs = '', companyId = null, onScopeChange
   };
 
   const [contactFilter, setContactFilter] = useState('all'); // all | has_phone | no_phone | has_lead | unattended | attended
+  const [statFilter, setStatFilter] = useState('all'); // all | new | back | waiting
+
+  const toggleStatFilter = useCallback((key) => {
+    setStatFilter((cur) => (cur === key ? 'all' : key));
+    setContactFilter('all');
+  }, []);
 
   const contactFilterOptions = useMemo(() => {
     const hasPhone = (c) => !!(c.display_phone || c.phone || c.customer?.phone);
@@ -989,6 +1033,12 @@ function InboxTab({ pageStats, fbCompanyQs = '', companyId = null, onScopeChange
 
   const filteredContacts = contacts.filter(c => {
     const phone = c.display_phone || c.phone || c.customer?.phone;
+    if (statFilter === 'new' || statFilter === 'waiting' || statFilter === 'back') {
+      const isNew = contactIsNewInRange(c, timeRange.activity_from, timeRange.activity_to);
+      if (statFilter === 'new' && !isNew) return false;
+      if (statFilter === 'back' && isNew) return false;
+      if (statFilter === 'waiting' && !(isNew && c.attended_status === 'unattended')) return false;
+    }
     if (contactFilter === 'has_phone') return !!phone;
     if (contactFilter === 'no_phone') return !phone;
     if (contactFilter === 'has_lead') return !!c.lead;
@@ -1052,7 +1102,7 @@ function InboxTab({ pageStats, fbCompanyQs = '', companyId = null, onScopeChange
           <div className="flex items-center gap-2">
             <select
               value={timeFilter}
-              onChange={(e) => setTimeFilter(e.target.value)}
+              onChange={(e) => { setTimeFilter(e.target.value); setStatFilter('all'); }}
               className="flex-1 min-w-0 border border-gray-200 rounded-lg px-2 py-1.5 bg-white text-[11px] text-gray-700"
               aria-label="Lọc theo thời gian"
             >
@@ -1091,7 +1141,7 @@ function InboxTab({ pageStats, fbCompanyQs = '', companyId = null, onScopeChange
               <input
                 type="date"
                 value={timeCustomFrom}
-                onChange={(e) => setTimeCustomFrom(e.target.value)}
+                onChange={(e) => { setTimeCustomFrom(e.target.value); setStatFilter('all'); }}
                 className="flex-1 min-w-0 border border-gray-200 rounded-lg px-2 py-1.5 bg-white text-[11px] text-gray-700"
                 aria-label="Từ ngày"
               />
@@ -1099,7 +1149,7 @@ function InboxTab({ pageStats, fbCompanyQs = '', companyId = null, onScopeChange
               <input
                 type="date"
                 value={timeCustomTo}
-                onChange={(e) => setTimeCustomTo(e.target.value)}
+                onChange={(e) => { setTimeCustomTo(e.target.value); setStatFilter('all'); }}
                 className="flex-1 min-w-0 border border-gray-200 rounded-lg px-2 py-1.5 bg-white text-[11px] text-gray-700"
                 aria-label="Đến ngày"
               />
@@ -1112,29 +1162,48 @@ function InboxTab({ pageStats, fbCompanyQs = '', companyId = null, onScopeChange
                 {selectedPageLabel ? ` · ${selectedPageLabel}` : pages.length > 1 ? ' · Tất cả Page' : ''}
               </p>
               <div className="grid grid-cols-3 border-t border-gray-100 divide-x divide-gray-100">
-                <div className="px-3 py-2" title="Hội thoại mới phát sinh trong khoảng này — khách cũ nhắn lại không tính vào đây">
-                  <p className="text-xl font-bold tabular-nums leading-none text-indigo-600">
-                    {rangeTotals ? rangeTotals.fresh : '—'}
-                  </p>
-                  <p className="text-[10px] text-gray-500 mt-1 leading-tight">Hội thoại mới</p>
-                </div>
-                <div className="px-3 py-2" title="Khách đã nhắn từ trước, nay có tin lại — phần lớn là trả lời tin nhân viên chăm lại">
-                  <p className="text-xl font-bold tabular-nums leading-none text-gray-400">
-                    {rangeTotals ? rangeTotals.back : '—'}
-                  </p>
-                  <p className="text-[10px] text-gray-500 mt-1 leading-tight">Cũ nhắn lại</p>
-                </div>
-                <div className="px-3 py-2" title="Hội thoại mới mà chưa ai trả lời">
-                  <p className={`text-xl font-bold tabular-nums leading-none ${rangeTotals?.waiting ? 'text-amber-600' : 'text-gray-300'}`}>
-                    {rangeTotals ? rangeTotals.waiting : '—'}
-                  </p>
-                  <p className="text-[10px] text-gray-500 mt-1 leading-tight">Chưa trả lời</p>
-                </div>
+                <InboxStatCell
+                  active={statFilter === 'new'}
+                  onClick={() => toggleStatFilter('new')}
+                  title="Bấm để chỉ hiện hội thoại mới. Bấm lại để hiện tất cả."
+                  value={rangeTotals ? rangeTotals.fresh : '—'}
+                  valueClass="text-indigo-600"
+                  label="Hội thoại mới"
+                />
+                <InboxStatCell
+                  active={statFilter === 'back'}
+                  onClick={() => toggleStatFilter('back')}
+                  title="Bấm để chỉ hiện khách cũ nhắn lại. Bấm lại để hiện tất cả."
+                  value={rangeTotals ? rangeTotals.back : '—'}
+                  valueClass="text-gray-400"
+                  label="Cũ nhắn lại"
+                />
+                <InboxStatCell
+                  active={statFilter === 'waiting'}
+                  onClick={() => toggleStatFilter('waiting')}
+                  title="Bấm để chỉ hiện hội thoại mới chưa ai trả lời. Bấm lại để hiện tất cả."
+                  value={rangeTotals ? rangeTotals.waiting : '—'}
+                  valueClass={rangeTotals?.waiting ? 'text-amber-600' : 'text-gray-300'}
+                  label="Chưa trả lời"
+                />
               </div>
-              <div className="px-3 py-1.5 bg-gray-50 border-t border-gray-100 flex flex-wrap gap-x-3 gap-y-0.5">
-                <span className="text-[10px] text-gray-500">
+              <div className="px-3 py-1.5 bg-gray-50 border-t border-gray-100 flex flex-wrap items-center gap-x-3 gap-y-0.5">
+                <button
+                  type="button"
+                  aria-pressed={statFilter === 'all'}
+                  onClick={() => { setStatFilter('all'); setContactFilter('all'); }}
+                  title="Hiện tất cả khách có tin trong khoảng này"
+                  className={`text-[10px] text-left rounded px-1 -mx-1 cursor-pointer hover:text-gray-800 ${
+                    statFilter === 'all' ? 'text-gray-700 font-medium' : 'text-gray-500'
+                  }`}
+                >
                   Tổng <strong className="tabular-nums text-gray-700">{timeFilterUserTotal}</strong> khách có tin
-                </span>
+                </button>
+                {statFilter !== 'all' && (
+                  <span className="text-[10px] text-indigo-600">
+                    Đang xem {INBOX_STAT_LABEL[statFilter]} ({filteredContacts.length})
+                  </span>
+                )}
                 {contactFilterActive && filteredContacts.length !== timeFilterUserTotal && (
                   <span className="text-[10px] text-gray-500">
                     Sau lọc thêm: <strong className="tabular-nums text-gray-700">{filteredContacts.length}</strong>
@@ -1156,7 +1225,7 @@ function InboxTab({ pageStats, fbCompanyQs = '', companyId = null, onScopeChange
           {pages.length > 1 && (
             <PageSelector
               value={pageFilter}
-              onChange={setPageFilter}
+              onChange={(v) => { setPageFilter(v); setStatFilter('all'); }}
               pages={pages}
               pageStats={pageStats}
               rangeStats={pageRangeStats}
@@ -1223,7 +1292,9 @@ function InboxTab({ pageStats, fbCompanyQs = '', companyId = null, onScopeChange
               <MessageCircle size={40} className="mx-auto mb-2 text-gray-200" />
               <p className="text-sm text-gray-400">
                 {contacts.length
-                  ? 'Không có kết quả lọc'
+                  ? (statFilter !== 'all'
+                    ? `Không có ${INBOX_STAT_LABEL[statFilter]} trong danh sách đang tải`
+                    : 'Không có kết quả lọc')
                   : timeRange.label
                     ? `Không có hội thoại trong ${timeRange.label}`
                     : 'Chưa có cuộc hội thoại'}
