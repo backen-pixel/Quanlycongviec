@@ -9,7 +9,7 @@ import {
   Building2, X, CheckCircle2, Circle, Clock, Calendar, User as UserIcon, Trash2,
   Pencil, GripVertical, Flag, MoreVertical, MessageSquare, Send, Paperclip,
   FileText as FileIcon, Download, Upload, Repeat2, CalendarClock, ChevronDown,
-  ChevronUp, ClipboardList, ChevronRight, Lock, ArrowLeft, RefreshCw, Filter, RotateCcw,
+  ChevronUp, ClipboardList, ChevronRight, ChevronLeft, Lock, ArrowLeft, RefreshCw, Filter, RotateCcw,
   Eye, BookOpen, TrendingUp, TrendingDown, Minus, SlidersHorizontal, LayoutList,
 } from 'lucide-react';
 import ViewModeDropdownMenu from '../components/ViewModeDropdownMenu';
@@ -593,20 +593,58 @@ function AssignQuickFilterPanel({
     },
   ];
 
+  // Thu gọn trên desktop (lg+): dải hẹp thẳng đứng bên trái — không đẩy board sang phải
+  // thêm nữa và không "biến mất theo chiều cao" như accordion. Mobile vẫn thu gọn thành
+  // thanh ngang mỏng như trước (thu theo chiều cao mới hợp lý khi các cột xếp chồng).
+  if (!open) {
+    return (
+      <aside className="w-full lg:w-11 lg:shrink-0 self-start rounded-2xl border border-slate-200/90 bg-white shadow-sm overflow-hidden">
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          title="Mở bộ lọc nhanh"
+          aria-expanded={false}
+          className="flex lg:hidden w-full items-center gap-2 px-3 py-2.5 text-left cursor-pointer hover:bg-slate-50/80"
+        >
+          <SlidersHorizontal className={`h-4 w-4 shrink-0 ${theme.activeText}`} />
+          <span className="flex-1 text-sm font-semibold text-slate-800">Bộ lọc nhanh</span>
+          <ChevronDown className="h-4 w-4 text-slate-400" />
+        </button>
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          title="Mở bộ lọc nhanh"
+          aria-expanded={false}
+          className="hidden lg:flex w-11 flex-col items-center gap-2 py-3 cursor-pointer hover:bg-slate-50/80"
+        >
+          <SlidersHorizontal className={`h-4 w-4 shrink-0 ${theme.activeText}`} />
+          <ChevronRight className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+          <span
+            className="text-[11px] font-semibold tracking-wide text-slate-500"
+            style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}
+          >
+            Bộ lọc nhanh
+          </span>
+        </button>
+      </aside>
+    );
+  }
+
   return (
     <aside className="w-full lg:w-60 lg:shrink-0 rounded-2xl border border-slate-200/90 bg-white shadow-sm overflow-hidden self-start">
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => setOpen(false)}
+        aria-expanded={true}
         className="flex w-full items-center gap-2 px-3 py-2.5 text-left cursor-pointer hover:bg-slate-50/80"
       >
         <SlidersHorizontal className={`h-4 w-4 shrink-0 ${theme.activeText}`} />
         <span className="flex-1 text-sm font-semibold text-slate-800">Bộ lọc nhanh</span>
-        {open ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}
+        <ChevronLeft className="hidden lg:block h-4 w-4 text-slate-400" />
+        <ChevronUp className="lg:hidden h-4 w-4 text-slate-400" />
       </button>
 
-      {open && (
-        <>
+      <>
           <div className="px-2 pb-2 space-y-0.5">
             {rows.map((r) => (
               <div key={r.key} className="flex items-center gap-2 rounded-lg px-1.5 py-1.5 hover:bg-slate-50">
@@ -656,7 +694,6 @@ function AssignQuickFilterPanel({
             )}
           </div>
         </>
-      )}
     </aside>
   );
 }
