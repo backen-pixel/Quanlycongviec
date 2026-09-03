@@ -5148,26 +5148,46 @@ r.get('/stats', authMiddleware, async (req, res) => {
       });
     }
 
-    // Moc "hom nay" phai theo gio VN. Truoc day dung new Date().toISOString().split('T')[0]
+    // Moc ngay phai theo gio VN. Truoc day dung new Date().toISOString().split('T')[0]
     // => 00:00 UTC = 07:00 gio VN: mat tin tu 00:00-07:00 sang, va neu xem truoc 07:00 thi
     // gom ca ~17 tieng cua ngay hom truoc vao so "hom nay".
+    // Cac chi so o dau trang lay theo DUNG cong ty + Page + khoang ngay dang chon o hop thu:
+    // page_id + from/to do frontend truyen len; khong co thi mac dinh hom nay / tat ca Page.
+    const YMD_STATS = /^\d{4}-\d{2}-\d{2}$/;
     const todayYmd = vnTodayYmd();
-    const today = vnDateStartIso(todayYmd);
+    const rawFromStats = String(req.query.from || '').trim();
+    const rawToStats = String(req.query.to || '').trim();
+    let fromYmdStats = YMD_STATS.test(rawFromStats) ? rawFromStats : todayYmd;
+    let toYmdStats = YMD_STATS.test(rawToStats) ? rawToStats : fromYmdStats;
+    if (fromYmdStats > toYmdStats) { const t = fromYmdStats; fromYmdStats = toYmdStats; toYmdStats = t; }
+    const today = vnDateStartIso(fromYmdStats);
+    const rangeEndIso = new Date(new Date(vnDateStartIso(toYmdStats)).getTime() + 86400000).toISOString();
     const week = new Date(Date.now() - 7 * 86400000).toISOString();
 
-    const inPages = (col) => {
-      if (scope.mode !== 'filter') return col;
-      return col.in('page_id', scope.pageIds);
-    };
+    const statsPageId = String(req.query.page_id || '').trim();
+    if (statsPageId && scope.mode === 'filter' && !scope.pageIds.includes(statsPageId)) {
+      return res.status(403).json({ error: 'Không có quyền xem Page này' });
+    }
+
+    // Danh sach Page cho page_stats (LUON la toan bo Page trong pham vi cong ty, de dropdown
+    // van hien du so cua tung Page); rieng cac chi so tong o dau trang thi thu hep theo Page dang chon.
+    const scopePageIds = scope.mode === 'filter' ? scope.pageIds : null;
+    const aggPageIds = statsPageId ? [statsPageId] : scopePageIds;
+
+    /** Gioi han query theo pham vi cong ty + Page dang chon (dung cho chi so tong). */
+    const inAggPages = (col) => (aggPageIds ? col.in('page_id', aggPageIds) : col);
+    /** Gioi han theo pham vi cong ty (dung cho du lieu per-page). */
+    const inPages = (col) => (scopePageIds ? col.in('page_id', scopePageIds) : col);
 
     const [contacts, messages, leadAds, comments, unread, allContacts, pages, unattended] = await Promise.all([
-      inPages(supabase.from('facebook_contacts').select('id', { count: 'exact', head: true })),
-      // Khach nhan tin HOM NAY (gio VN) — tach hoi thoai MOI khoi khach cu nhan lai.
+      inAggPages(supabase.from('facebook_contacts').select('id', { count: 'exact', head: true })),
+      // Khach nhan tin trong khoang dang chon (gio VN) — tach hoi thoai MOI khoi khach cu nhan lai.
+      // Goi RPC cho TOAN BO Page trong pham vi de page_stats van du, roi moi cong tong theo Page dang chon.
       (async () => {
         const { byPage, error } = await loadFbNewSendersByPage({
-          pageIds: scope.mode === 'filter' ? scope.pageIds : null,
-          fromYmd: todayYmd,
-          toYmd: todayYmd,
+          pageIds: scopePageIds,
+          fromYmd: fromYmdStats,
+          toYmd: toYmdStats,
         });
         if (error) return { count: 0, senderCount: 0, senderCountByPage: {}, returningByPage: {} };
         const senderCountByPage = {};
@@ -5179,6 +5199,7 @@ r.get('/stats', authMiddleware, async (req, res) => {
           senderCountByPage[pid] = st.new_contacts || 0;
           returningByPage[pid] = st.returning_contacts || 0;
           unattendedNewByPage[pid] = st.new_unattended || 0;
+          if (statsPageId && pid !== statsPageId) return;
           msgs += st.inbound_msgs || 0;
           newTotal += st.new_contacts || 0;
         });
@@ -5186,9 +5207,11 @@ r.get('/stats', authMiddleware, async (req, res) => {
           count: msgs, senderCount: newTotal, senderCountByPage, returningByPage, unattendedNewByPage,
         };
       })(),
-      supabase.from('facebook_lead_ads').select('id', { count: 'exact', head: true }).gte('created_at', today),
-      supabase.from('facebook_comments').select('id', { count: 'exact', head: true }).gte('created_at', today),
-      inPages(supabase.from('facebook_contacts').select('unread_count, page_id').gt('unread_count', 0)),
+      inAggPages(supabase.from('facebook_lead_ads').select('id', { count: 'exact', head: true })
+        .gte('created_at', today).lt('created_at', rangeEndIso)),
+      inAggPages(supabase.from('facebook_comments').select('id', { count: 'exact', head: true })
+        .gte('created_at', today).lt('created_at', rangeEndIso)),
+      inAggPages(supabase.from('facebook_contacts').select('unread_count, page_id').gt('unread_count', 0)),
       inPages(supabase.from('facebook_contacts').select('id, page_id, created_at')),
       (async () => {
         let q = supabase.from('facebook_pages').select('page_id, page_name').eq('is_active', true);
@@ -5196,7 +5219,7 @@ r.get('/stats', authMiddleware, async (req, res) => {
         return await q;
       })(),
       // Số hội thoại "chưa chăm" (tin cuối là của khách, NV chưa trả lời sau đó) — tính bằng RPC gộp, không kéo dữ liệu về app.
-      supabase.rpc('fb_unattended_count', { p_page_ids: scope.mode === 'filter' ? scope.pageIds : null })
+      supabase.rpc('fb_unattended_count', { p_page_ids: aggPageIds })
         .then((r) => (r.error ? (console.warn('[FB] RPC fb_unattended_count:', r.error.message), 0) : Number(r.data) || 0))
         .catch(() => 0),
     ]);
@@ -5240,6 +5263,10 @@ r.get('/stats', authMiddleware, async (req, res) => {
       comments_today: comments.count || 0,
       total_unread: (unread.data || []).reduce((s, c) => s + c.unread_count, 0),
       unattended_total: unattended || 0,
+      // Pham vi thuc su cua cac chi so tong o tren — de UI ghi dung nhan thoi gian / Page.
+      scope_page_id: statsPageId || null,
+      from: fromYmdStats,
+      to: toYmdStats,
       page_stats: pageStats,
     });
   } catch (e) { res.status(500).json({ error: e.message }); }

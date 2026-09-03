@@ -188,11 +188,19 @@ export default function FacebookPage() {
     } catch { /* ignore */ }
   }, [isAdmin, filterFbCompany, lockToLoginCompany]);
 
+  // Pham vi dang chon ben trong hop thu (Page + khoang ngay) — de cac chi so o dau trang
+  // bam theo dung cong ty + Page + khoang ngay nguoi dung dang xem, thay vi luon la "hom nay".
+  const [inboxScope, setInboxScope] = useState({ pageId: '', pageName: '', from: '', to: '', label: '' });
+
   const loadStats = useCallback(() => {
-    const q = fbCompanyQs ? `?${fbCompanyQs}` : '';
+    const params = new URLSearchParams(fbCompanyQs || '');
+    if (inboxScope.pageId) params.set('page_id', inboxScope.pageId);
+    if (inboxScope.from) params.set('from', inboxScope.from);
+    if (inboxScope.to) params.set('to', inboxScope.to);
+    const q = params.toString() ? `?${params}` : '';
     fetch(`${API}/api/facebook/stats${q}`, { headers: hdr() })
       .then(r => r.ok ? r.json() : {}).then(setStats).catch(() => {});
-  }, [fbCompanyQs]);
+  }, [fbCompanyQs, inboxScope.pageId, inboxScope.from, inboxScope.to]);
 
   useEffect(() => { loadStats(); }, [tab, loadStats, fbCompanyQs]);
 
@@ -207,6 +215,14 @@ export default function FacebookPage() {
     socket.on('fb_message', h);
     return () => { socket.off('fb_message', h); };
   }, [socket, loadStats]);
+
+  // "Hôm nay" → "hôm nay", "7 ngày qua" → "7 ngày qua", khoảng tự chọn → "trong khoảng đã chọn".
+  const statsRangeWord = (() => {
+    const label = inboxScope.label || '';
+    if (!label) return 'hôm nay';
+    if (/^\d{4}-/.test(label)) return 'trong khoảng đã chọn';
+    return label.charAt(0).toLowerCase() + label.slice(1);
+  })();
 
   const tabs = [
     { id: 'inbox', label: 'Hộp thư', icon: MessageCircle, badge: stats?.total_unread },
@@ -268,10 +284,24 @@ export default function FacebookPage() {
           )}
         </div>
         {stats && (
-          <div className="flex gap-4 text-xs text-gray-500">
-            <span className="bg-blue-50 px-2.5 py-1 rounded-full">📨 {stats.messages_today} tin hôm nay</span>
-            <span className="bg-indigo-50 px-2.5 py-1 rounded-full">🗣 {stats.senders_today ?? 0} người nhắn hôm nay</span>
-            <span className="bg-green-50 px-2.5 py-1 rounded-full">👥 {stats.total_contacts} liên hệ</span>
+          <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
+            {inboxScope.pageName && (
+              <span
+                className="px-2.5 py-1 rounded-full bg-gray-100 text-gray-600 font-medium max-w-[15rem] truncate"
+                title={`Các chỉ số dưới đây chỉ tính cho Page: ${inboxScope.pageName}`}
+              >
+                {inboxScope.pageName}
+              </span>
+            )}
+            <span className="bg-blue-50 px-2.5 py-1 rounded-full" title={`Số tin khách gửi ${statsRangeWord}`}>
+              📨 {stats.messages_today} tin {statsRangeWord}
+            </span>
+            <span className="bg-indigo-50 px-2.5 py-1 rounded-full" title={`Hội thoại mới phát sinh ${statsRangeWord} — khách cũ nhắn lại không tính`}>
+              🗣 {stats.senders_today ?? 0} hội thoại mới
+            </span>
+            <span className="bg-green-50 px-2.5 py-1 rounded-full" title={inboxScope.pageName ? `Tổng liên hệ của Page ${inboxScope.pageName}` : 'Tổng liên hệ của tất cả Page'}>
+              👥 {stats.total_contacts} liên hệ
+            </span>
             {stats.unattended_total > 0 && (
               <span className="bg-amber-50 text-amber-700 px-2.5 py-1 rounded-full font-medium" title="Khách nhắn tin cuối, chưa có nhân viên trả lời">
                 ⏳ {stats.unattended_total} chưa chăm
@@ -305,7 +335,7 @@ export default function FacebookPage() {
       </div>
 
       <div className="flex-1 overflow-hidden">
-        {tab === 'inbox' && <InboxTab pageStats={stats?.page_stats} fbCompanyQs={fbCompanyQs} companyId={effectiveCompanyFilter || loginCompanyId || null} />}
+        {tab === 'inbox' && <InboxTab pageStats={stats?.page_stats} fbCompanyQs={fbCompanyQs} companyId={effectiveCompanyFilter || loginCompanyId || null} onScopeChange={setInboxScope} />}
         {tab === 'contacts' && <ContactsTab fbCompanyQs={fbCompanyQs} companyId={effectiveCompanyFilter} isAdmin={isAdmin} />}
         {tab === 'analytics' && <AnalyticsTab fbCompanyQs={fbCompanyQs} />}
         {tab === 'lead-ads' && <LeadAdsTab />}
@@ -443,7 +473,7 @@ function PageSelector({ value, onChange, pages, pageStats, rangeStats, rangeLabe
   );
 }
 
-function InboxTab({ pageStats, fbCompanyQs = '', companyId = null }) {
+function InboxTab({ pageStats, fbCompanyQs = '', companyId = null, onScopeChange }) {
   const { socket } = useAuth();
   const [searchParams] = useSearchParams();
   const [contacts, setContacts] = useState([]);
@@ -967,6 +997,22 @@ function InboxTab({ pageStats, fbCompanyQs = '', companyId = null }) {
     if (!pageFilter) return null;
     return pages.find((p) => p.page_id === pageFilter)?.page_name || null;
   }, [pageFilter, pages]);
+
+  // Báo phạm vi đang chọn lên trang cha để 4 chỉ số ở đầu trang (tin / hội thoại mới /
+  // liên hệ / chưa chăm) bám theo đúng công ty + Page + khoảng ngày đang xem.
+  useEffect(() => {
+    if (!onScopeChange) return;
+    onScopeChange({
+      pageId: pageFilter || '',
+      pageName: selectedPageLabel || '',
+      from: timeRange.activity_from || '',
+      to: timeRange.activity_to || timeRange.activity_from || '',
+      label: timeRange.label || '',
+    });
+  }, [
+    onScopeChange, pageFilter, selectedPageLabel,
+    timeRange.activity_from, timeRange.activity_to, timeRange.label,
+  ]);
 
   const timeFilterUserTotal = timeRange.label ? (contactMeta.total ?? contacts.length) : null;
   const contactFilterActive = contactFilter !== 'all';
