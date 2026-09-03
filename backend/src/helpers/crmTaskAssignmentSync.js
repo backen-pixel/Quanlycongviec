@@ -3,6 +3,7 @@
  */
 const { supabase } = require('../config/supabase');
 const { replaceCrmTaskAssignees } = require('./crmTaskAssignees');
+const { fetchByIdChunks } = require('./chunkedIdQuery');
 
 const SHARED_COLUMN_DEFAULTS = [
   { name: 'Chưa làm', color: '#94A3B8', position: 0, is_done_column: false, is_in_progress_column: false },
@@ -290,28 +291,22 @@ async function attachCrmTaskMetaToAssignments(list) {
   if (!Array.isArray(list) || !list.length) return list;
   const taskIds = [...new Set(list.map((a) => a.crm_task_id).filter(Boolean))];
   if (!taskIds.length) return list;
-  const CHUNK = 200;
-  const allRows = [];
-  let useLegacy = false;
-  for (let i = 0; i < taskIds.length; i += CHUNK) {
-    const slice = taskIds.slice(i, i + CHUNK);
-    // `completed_at` cần cho alignAssignmentStatusFromCrmTask: thiếu nó thì hàm căn phải
-    // rơi về `new Date()`, nên một dòng đã hoàn thành từ tháng 6 lại hiện ngày hoàn thành
-    // là hôm nay — và lệch luôn với giá trị mà job crmAssignmentDriftHeal ghi xuống DB.
-    const selectFull = 'id, notes, status, completed_at, lead_id, title, stage_slug, production_pipeline_stage_id, show_fill_form, form_config, form_data';
-    const selectLegacy = 'id, notes, status, completed_at, lead_id, title, stage_slug, production_pipeline_stage_id';
-    let { data, error } = await supabase
-      .from('crm_tasks')
-      .select(useLegacy ? selectLegacy : selectFull)
-      .in('id', slice);
-    if (error && !useLegacy && /show_fill_form|form_config|form_data/i.test(error.message || '')) {
-      useLegacy = true;
-      ({ data, error } = await supabase.from('crm_tasks').select(selectLegacy).in('id', slice));
-    }
-    if (error) return list;
-    allRows.push(...(data || []));
+  // `completed_at` cần cho alignAssignmentStatusFromCrmTask: thiếu nó thì hàm căn phải
+  // rơi về `new Date()`, nên một dòng đã hoàn thành từ tháng 6 lại hiện ngày hoàn thành
+  // là hôm nay — và lệch luôn với giá trị mà job crmAssignmentDriftHeal ghi xuống DB.
+  const selectFull = 'id, notes, status, completed_at, lead_id, title, stage_slug, production_pipeline_stage_id, show_fill_form, form_config, form_data';
+  const selectLegacy = 'id, notes, status, completed_at, lead_id, title, stage_slug, production_pipeline_stage_id';
+
+  // Lô song song thay cho `for … await` lô 200: chi phí ở đây là SỐ LƯỢT GỌI × RTT
+  // (~250ms/lượt tới Supabase), không phải khối lượng dữ liệu. Xem helpers/chunkedIdQuery.
+  let { rows, error } = await fetchByIdChunks(taskIds, (slice) => supabase
+    .from('crm_tasks').select(selectFull).in('id', slice));
+  if (error && /show_fill_form|form_config|form_data/i.test(error.message || '')) {
+    ({ rows, error } = await fetchByIdChunks(taskIds, (slice) => supabase
+      .from('crm_tasks').select(selectLegacy).in('id', slice)));
   }
-  return attachCrmTaskMetaToAssignmentsWithRows(list, allRows, taskIds);
+  if (error) return list;
+  return attachCrmTaskMetaToAssignmentsWithRows(list, rows, taskIds);
 }
 
 async function attachCrmTaskMetaToAssignmentsWithRows(list, taskRows, taskIds) {

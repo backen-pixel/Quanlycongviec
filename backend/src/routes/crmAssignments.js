@@ -18,6 +18,7 @@ const {
 } = require('../helpers/crmAssignmentMutations');
 const { createCrmAssignmentSchedule } = require('../helpers/crmAssignmentSchedule');
 const { createTTLCache } = require('../helpers/ttlCache');
+const { fetchByIdChunks } = require('../helpers/chunkedIdQuery');
 const {
   syncCrmTaskFromAssignment,
   attachCrmTaskMetaToAssignments,
@@ -448,25 +449,21 @@ async function attachAssigneesToAssignments(list) {
   if (!Array.isArray(list) || !list.length) return list;
   const ids = list.map((x) => x.id);
   const byId = new Map();
-  const CHUNK = 200;
   const { attachRoleToUser, isAssignRoleColumnError } = require('../helpers/assignmentAssigneeRoles');
-  for (let i = 0; i < ids.length; i += CHUNK) {
-    const slice = ids.slice(i, i + CHUNK);
-    let { data: rows, error } = await supabase
-      .from('crm_assignment_assignees')
-      .select('assignment_id, user_id, assign_role, user:users(id, full_name, email, avatar)')
-      .in('assignment_id', slice);
-    if (error && isAssignRoleColumnError(error)) {
-      ({ data: rows, error } = await supabase
-        .from('crm_assignment_assignees')
-        .select('assignment_id, user_id, user:users(id, full_name, email, avatar)')
-        .in('assignment_id', slice));
-    }
-    (rows || []).forEach((r) => {
-      if (!byId.has(r.assignment_id)) byId.set(r.assignment_id, []);
-      if (r.user) byId.get(r.assignment_id).push(attachRoleToUser(r.user, r.assign_role));
-    });
+  // Lô song song thay cho `for … await` lô 200 — chi phí là SỐ LƯỢT GỌI × RTT tới Supabase
+  // (~250ms/lượt), không phải khối lượng dữ liệu. Xem helpers/chunkedIdQuery.
+  const withRole = 'assignment_id, user_id, assign_role, user:users(id, full_name, email, avatar)';
+  const noRole = 'assignment_id, user_id, user:users(id, full_name, email, avatar)';
+  let { rows, error } = await fetchByIdChunks(ids, (slice) => supabase
+    .from('crm_assignment_assignees').select(withRole).in('assignment_id', slice));
+  if (error && isAssignRoleColumnError(error)) {
+    ({ rows } = await fetchByIdChunks(ids, (slice) => supabase
+      .from('crm_assignment_assignees').select(noRole).in('assignment_id', slice)));
   }
+  (rows || []).forEach((r) => {
+    if (!byId.has(r.assignment_id)) byId.set(r.assignment_id, []);
+    if (r.user) byId.get(r.assignment_id).push(attachRoleToUser(r.user, r.assign_role));
+  });
   list.forEach((a) => { a.assignees = byId.get(a.id) || (a.assignee ? [a.assignee] : []); });
   return list;
 }
@@ -791,7 +788,15 @@ r.get('/', responseCache({ ttl: 20, scope: 'user', tags: ['crm:assignments'] }),
       if (req.query.q) {
         ({ q } = await applyAssignmentSearchQuery(q, req.query.q));
       }
-      q = q.order('position', { ascending: true }).order('created_at', { ascending: false });
+      // `id` là khoá phá thế cuối cùng, BẮT BUỘC cho phân trang: `position` gần như vô dụng
+      // (đo được 2.748/2.758 dòng cùng một giá trị) nên thứ tự thực chất chỉ dựa vào
+      // `created_at`, mà cột này default `now()` — trong Postgres `now()` cố định theo
+      // transaction, nên chỉ cần một lần insert nhiều dòng trong CÙNG câu lệnh là có nhiều
+      // dòng trùng created_at. Khi khoá sắp xếp trùng, thứ tự giữa chúng KHÔNG xác định,
+      // và phân trang limit/offset sẽ bỏ sót hoặc lặp dòng một cách âm thầm.
+      q = q.order('position', { ascending: true })
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: true });
       // Không return builder trần từ async — PostgREST thenable, await sẽ chạy query.
       return { q };
     }

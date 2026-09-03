@@ -1799,6 +1799,7 @@ export default function CRMAssignmentsPage({
       setRefreshing(false);
       if (nextItems.length >= ASSIGN_PAGE_FIRST) {
         setLoadingMore(true);
+        let loaded = nextItems.length;
         let offset = nextItems.length;
         for (;;) {
           let batch = [];
@@ -1813,10 +1814,26 @@ export default function CRMAssignmentsPage({
           if (!batch.length) break;
           setItems((prev) => {
             const seen = new Set(prev.map((t) => String(t.id)));
-            return [...prev, ...batch.filter((t) => !seen.has(String(t.id)))];
+            const merged = [...prev, ...batch.filter((t) => !seen.has(String(t.id)))];
+            loaded = merged.length;
+            return merged;
           });
           offset += batch.length;
           if (batch.length < ASSIGN_PAGE_NEXT) break;
+        }
+
+        // Lưới an toàn cho phân trang theo offset: danh sách sắp xếp `created_at` GIẢM DẦN
+        // nên việc mới tạo chen vào ĐẦU danh sách, đẩy lệch mọi trang sau — nếu có ai tạo
+        // việc trong lúc mình đang nạp nền (ở 8.000 việc thì khoảng này dài ~9s) thì một
+        // dòng sẽ bị nhảy qua, im lặng, không lỗi. Đối chiếu với tổng do server đếm
+        // (/stats, nguồn độc lập) để phát hiện; lệch thì nạp lại một lượt cho đủ.
+        const serverTotal = s && typeof s.total === 'number' ? s.total : null;
+        if (mySeq === loadSeqRef.current && serverTotal != null && loaded < serverTotal) {
+          try {
+            const { data } = await api.get(apiBase, { params });
+            const full = data?.assignments || [];
+            if (mySeq === loadSeqRef.current && full.length >= loaded) setItems(full);
+          } catch { /* giữ những gì đã nạp được */ }
         }
         if (mySeq === loadSeqRef.current) setLoadingMore(false);
       }
