@@ -687,7 +687,13 @@ r.post('/columns/reorder', async (req, res) => {
 
 // ─── ASSIGNMENTS ──────────────────────────────────────────────────────────────
 // GET /api/crm/assignments?company_id=&assignee_id=&status=&priority=&q=
-r.get('/', async (req, res) => {
+//
+// Có cache 20s như /stats: endpoint này tốn ~2,4ms/dòng (đo được 7,3s cho 2.681 việc) vì
+// mỗi dòng kéo theo join assignee/company/lead cộng các lượt gắn assignee + meta crm_task
+// theo lô. Khoá cache gồm cả userId và query string (xem buildCacheKey) nên không lẫn phạm
+// vi xem giữa các người dùng hay giữa các bộ lọc; mọi POST/PUT/DELETE trong router này đã
+// tự xoá tag 'crm:assignments' nên dữ liệu vừa sửa hiện ra ngay, không bị cache che.
+r.get('/', responseCache({ ttl: 20, scope: 'user', tags: ['crm:assignments'] }), async (req, res) => {
   try {
     let scopeIds = null;
     /** Khi có filter assignee/phòng ban — giới hạn theo id (ưu tiên hơn scopeIds). */

@@ -649,7 +649,7 @@ function AssignQuickFilterPanel({
   filterAssignee, setFilterAssignee,
   filterStatus, setFilterStatus,
   filterPriority, setFilterPriority,
-  onSeeAllStaff,
+  onSeeAllStaff, loadingMore = false,
 }) {
   // Trên mobile panel này nằm TRÊN bảng Kanban; để mở sẵn (cao ~455px) sẽ đẩy bảng xuống
   // quá sâu. Mặc định thu gọn ở màn hẹp, giống cách dải KPI đang làm.
@@ -786,9 +786,12 @@ function AssignQuickFilterPanel({
               Số việc theo nhân viên
             </p>
             {/* Nói rõ mẫu số của % bên dưới là gì — không có dòng này người xem dễ hiểu
-                nhầm % là so với tổng toàn hệ thống thay vì đúng danh sách đang lọc. */}
+                nhầm % là so với tổng toàn hệ thống thay vì đúng danh sách đang lọc.
+                Lúc còn đang nạp nền thì nói luôn là con số chưa chốt, tránh người dùng
+                đọc phải số dở dang mà tưởng là số cuối. */}
             <p className="mb-2 text-[10px] text-slate-400">
               Trên {tasks?.length || 0} việc đang hiển thị
+              {loadingMore ? ' · đang tải thêm…' : ''}
             </p>
             {!shownStaff.length ? (
               <p className="py-2 text-[11px] text-slate-400">Chưa có việc nào được giao.</p>
@@ -1312,6 +1315,13 @@ function PrivateDealInbox({ groups, loading, assignmentModule, search, onSearchC
 
 const COLUMN_COLORS = ['#3B82F6', '#8B5CF6', '#F59E0B', '#10B981', '#EF4444', '#EC4899', '#6B7280', '#0EA5E9'];
 
+/**
+ * Phân trang khi tải danh sách việc. Trang đầu nhỏ để trang vẽ được ngay, các trang sau
+ * lớn hơn (500 là mức trần backend cho phép) để giảm số lượt gọi cho phần còn lại.
+ */
+const ASSIGN_PAGE_FIRST = 300;
+const ASSIGN_PAGE_NEXT = 500;
+
 const RECURRENCE_OPTIONS = [
   { value: 'daily', label: 'Hàng ngày' },
   { value: 'weekly', label: 'Hàng tuần' },
@@ -1517,6 +1527,8 @@ export default function CRMAssignmentsPage({
   const [departments, setDepartments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  /** Đang nối tiếp các trang việc còn lại ở nền (xem `load()`). */
+  const [loadingMore, setLoadingMore] = useState(false);
   // Chặn phản hồi lỗi thời: đổi liên tiếp 2 bộ lọc nhanh (vd Trạng thái rồi Mức ưu tiên)
   // bắn 2 lượt load() chồng nhau; không có gì đảm bảo request GỬI SAU sẽ VỀ SAU. Nếu
   // request cũ hơn về muộn hơn, nó ghi đè items/serverStats bằng dữ liệu sai — bộ lọc
@@ -1755,7 +1767,7 @@ export default function CRMAssignmentsPage({
 
       const [colRes, itRes, schedRes, statsRes] = await Promise.all([
         api.get(`${apiBase}/columns`),
-        api.get(apiBase, { params }),
+        api.get(apiBase, { params: { ...params, limit: ASSIGN_PAGE_FIRST, offset: 0 } }),
         api.get(`${apiBase}/schedules`, { params: { assignment_module: assignmentModule, ...(isAdmin && filterCompanyId ? { company_id: filterCompanyId } : {}) } }).catch(() => ({ data: { schedules: [] } })),
         api.get(`${apiBase}/stats`, { params }).catch(() => ({ data: null })),
       ]);
@@ -1777,6 +1789,38 @@ export default function CRMAssignmentsPage({
         const fresh = nextItems.find((t) => String(t.id) === String(prev.id));
         return fresh ? { ...prev, ...fresh } : prev;
       });
+
+      // Trang đầu đã vẽ xong → mở khoá giao diện NGAY, phần còn lại nạp ở nền.
+      // Đo thực tế: thời gian của endpoint này tỉ lệ thuận số dòng (~2,4ms/dòng, chi phí
+      // cố định ~600ms), nên lấy trọn 2.681 việc trong một lượt mất ~7–9s và trang đứng
+      // trắng suốt thời gian đó. Chia trang: thấy việc sau ~1,2s, các trang sau nối tiếp
+      // vào `items` nên số đếm cuối cùng vẫn ĐẦY ĐỦ đúng như trước.
+      setLoading(false);
+      setRefreshing(false);
+      if (nextItems.length >= ASSIGN_PAGE_FIRST) {
+        setLoadingMore(true);
+        let offset = nextItems.length;
+        for (;;) {
+          let batch = [];
+          try {
+            const { data } = await api.get(apiBase, {
+              params: { ...params, limit: ASSIGN_PAGE_NEXT, offset },
+            });
+            batch = data?.assignments || [];
+          } catch { break; }
+          // Lượt load mới hơn đã bắt đầu → dừng, không nối thêm vào danh sách đã lỗi thời.
+          if (mySeq !== loadSeqRef.current) return;
+          if (!batch.length) break;
+          setItems((prev) => {
+            const seen = new Set(prev.map((t) => String(t.id)));
+            return [...prev, ...batch.filter((t) => !seen.has(String(t.id)))];
+          });
+          offset += batch.length;
+          if (batch.length < ASSIGN_PAGE_NEXT) break;
+        }
+        if (mySeq === loadSeqRef.current) setLoadingMore(false);
+      }
+      return;
     } catch (e) { if (mySeq === loadSeqRef.current) console.error(e); }
     if (mySeq === loadSeqRef.current) {
       setLoading(false);
@@ -2793,6 +2837,7 @@ export default function CRMAssignmentsPage({
           setFilterStatus={setFilterStatus}
           filterPriority={filterPriority}
           setFilterPriority={setFilterPriority}
+          loadingMore={loadingMore}
         />
         <div className="min-w-0 flex-1 w-full">
         <KanbanView
@@ -2948,6 +2993,71 @@ export default function CRMAssignmentsPage({
 }
 
 // ─── KANBAN ───────────────────────────────────────────────────────────────────
+/** Số thẻ nạp thêm mỗi lần cuộn tới gần cuối cột. */
+const KANBAN_COL_PAGE = 30;
+
+/**
+ * Thân cột Kanban — chỉ render một cửa sổ thẻ đầu danh sách, cuộn gần cuối thì nạp thêm.
+ *
+ * Trước đây cột render THẲNG toàn bộ danh sách: cột "Chưa làm" 2200 việc một mình sinh
+ * 35.332 DOM node (80% cả trang, tổng 44.228), mỗi bước cuộn tốn ~30ms — vượt xa ngưỡng
+ * 16ms/frame nên nhìn thấy rõ giật. Người dùng cũng không bao giờ đọc hết 2200 thẻ trong
+ * một lần, nên nạp dần theo lúc cuộn vừa nhẹ vừa không mất dữ liệu gì: số đếm trên đầu cột
+ * và thống kê bên trái vẫn tính trên TOÀN danh sách (`list.length`), không phải số đã render.
+ */
+function KanbanColumnCards({
+  list, canManageTask, canMoveTask,
+  onDragStart, onOpenCard, onEditCard, onDeleteCard, onUpdateCard,
+  footer = null,
+}) {
+  const [shown, setShown] = useState(KANBAN_COL_PAGE);
+  // Danh sách đổi (đổi bộ lọc / tải lại) → quay về cửa sổ đầu, khỏi giữ vị trí cũ vô nghĩa.
+  useEffect(() => { setShown(KANBAN_COL_PAGE); }, [list]);
+
+  const visible = shown >= list.length ? list : list.slice(0, shown);
+  const remaining = list.length - visible.length;
+
+  const handleScroll = (e) => {
+    if (remaining <= 0) return;
+    const el = e.currentTarget;
+    // Nạp trước khi tới đáy để không thấy khoảng trống lúc cuộn nhanh.
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 320) {
+      setShown((n) => n + KANBAN_COL_PAGE);
+    }
+  };
+
+  return (
+    <div
+      onScroll={handleScroll}
+      className="flex-1 min-h-0 overflow-y-auto p-2 space-y-2 [scrollbar-width:thin]"
+    >
+      {visible.map((t) => (
+        <Card
+          key={t.id}
+          task={t}
+          canManage={canManageTask(t)}
+          canMove={canMoveTask(t)}
+          onDragStart={onDragStart}
+          onOpen={onOpenCard}
+          onEdit={onEditCard}
+          onDelete={onDeleteCard}
+          onUpdate={onUpdateCard}
+        />
+      ))}
+      {remaining > 0 && (
+        <button
+          type="button"
+          onClick={() => setShown((n) => n + KANBAN_COL_PAGE * 3)}
+          className="w-full h-8 rounded-lg text-[11px] text-slate-500 hover:bg-slate-50 hover:text-violet-700 cursor-pointer border border-dashed border-slate-200"
+        >
+          Còn {remaining} việc — cuộn tiếp hoặc bấm để tải thêm
+        </button>
+      )}
+      {footer}
+    </div>
+  );
+}
+
 function KanbanView({
   columns, itemsByColumn, users: _users, onAddColumn, onEditColumn, onDeleteColumn,
   onAddCard, onOpenCard, onEditCard, onDeleteCard, onUpdateCard, onDragStart, onDropCol, allowDrop,
@@ -2958,7 +3068,11 @@ function KanbanView({
   // Cột cuộn riêng (thay vì cả trang cuộn dọc) khi có cột chứa hàng nghìn thẻ: đo khoảng
   // cách từ mép trên board tới đáy viewport, cấp cho mỗi cột làm chiều cao tối đa — phần
   // dư trong cột tự cuộn, board không còn kéo cả trang dài ra theo cột nhiều việc nhất.
-  const [colMaxH, setColMaxH] = useState(520);
+  //
+  // Chiều cao ghi thẳng vào CSS variable trên thẻ board (cột đọc lại qua `var()`), KHÔNG
+  // qua React state: giá trị này đổi theo TỪNG FRAME khi cuộn trang, để trong state thì
+  // mỗi frame cuộn sẽ re-render lại toàn bộ thẻ của mọi cột — đo được 639ms cho một lượt
+  // reflow board, đúng cảm giác "lag" mà người dùng gặp.
   useEffect(() => {
     // Trang cuộn bằng thẻ <main overflow-y-auto>, không phải window — top của board đổi
     // theo vị trí cuộn CỦA main, nên phải nghe scroll của chính main đó (window resize/scroll
@@ -2981,7 +3095,8 @@ function KanbanView({
       const top = el.getBoundingClientRect().top;
       const scrollParent = findScrollParent(el);
       const bottom = scrollParent ? scrollParent.getBoundingClientRect().bottom : window.innerHeight;
-      setColMaxH(Math.max(320, Math.round(bottom - top - 16)));
+      const h = Math.max(320, Math.round(bottom - top - 16));
+      el.style.setProperty('--assign-col-max-h', `${h}px`);
     };
     const scheduleMeasure = () => {
       if (!raf2) raf2 = requestAnimationFrame(measure);
@@ -3016,7 +3131,7 @@ function KanbanView({
           <div
             key={col.id}
             className="w-72 shrink-0 rounded-xl border border-slate-200/90 bg-white flex flex-col shadow-sm"
-            style={{ maxHeight: colMaxH }}
+            style={{ maxHeight: 'var(--assign-col-max-h, 520px)' }}
             onDragOver={allowDrop}
             onDrop={onDropCol(col.id)}
           >
@@ -3034,17 +3149,24 @@ function KanbanView({
               <button onClick={() => onEditColumn(col)} className="text-slate-400 hover:text-violet-600 cursor-pointer"><Pencil className="h-3.5 w-3.5" /></button>
               <button onClick={() => onDeleteColumn(col.id)} className="text-slate-400 hover:text-red-500 cursor-pointer"><Trash2 className="h-3.5 w-3.5" /></button>
             </div>
-            <div className="flex-1 min-h-0 overflow-y-auto p-2 space-y-2 bg-white [scrollbar-width:thin]">
-              {list.map((t) => (
-                <Card key={t.id} task={t} canManage={canManageTask(t)} canMove={canMoveTask(t)} onDragStart={onDragStart} onOpen={onOpenCard} onEdit={onEditCard} onDelete={onDeleteCard} onUpdate={onUpdateCard} />
-              ))}
-              <button
-                onClick={() => onAddCard(col.id)}
-                className="w-full h-8 rounded-lg text-xs text-slate-500 hover:bg-slate-50 hover:text-violet-700 flex items-center justify-center gap-1 cursor-pointer border border-dashed border-transparent hover:border-slate-200"
-              >
-                <Plus className="h-3.5 w-3.5" />Thêm việc
-              </button>
-            </div>
+            <KanbanColumnCards
+              list={list}
+              canManageTask={canManageTask}
+              canMoveTask={canMoveTask}
+              onDragStart={onDragStart}
+              onOpenCard={onOpenCard}
+              onEditCard={onEditCard}
+              onDeleteCard={onDeleteCard}
+              onUpdateCard={onUpdateCard}
+              footer={(
+                <button
+                  onClick={() => onAddCard(col.id)}
+                  className="w-full h-8 rounded-lg text-xs text-slate-500 hover:bg-slate-50 hover:text-violet-700 flex items-center justify-center gap-1 cursor-pointer border border-dashed border-transparent hover:border-slate-200"
+                >
+                  <Plus className="h-3.5 w-3.5" />Thêm việc
+                </button>
+              )}
+            />
           </div>
         );
       })}
@@ -3052,18 +3174,23 @@ function KanbanView({
       {noneList.length > 0 && (
         <div
           className="w-72 shrink-0 bg-slate-50 rounded-xl border border-dashed border-slate-300 flex flex-col"
-          style={{ maxHeight: colMaxH }}
+          style={{ maxHeight: 'var(--assign-col-max-h, 520px)' }}
           onDragOver={allowDrop}
           onDrop={onDropCol('__none__')}
         >
           <div className="px-3 py-2 border-b border-slate-200 text-sm font-semibold text-slate-500 shrink-0">
             Chưa phân loại <span className="text-[11px] text-slate-400">{noneList.length}</span>
           </div>
-          <div className="flex-1 min-h-0 overflow-y-auto p-2 space-y-2 [scrollbar-width:thin]">
-            {noneList.map((t) => (
-              <Card key={t.id} task={t} canManage={canManageTask(t)} canMove={canMoveTask(t)} onDragStart={onDragStart} onOpen={onOpenCard} onEdit={onEditCard} onDelete={onDeleteCard} onUpdate={onUpdateCard} />
-            ))}
-          </div>
+          <KanbanColumnCards
+            list={noneList}
+            canManageTask={canManageTask}
+            canMoveTask={canMoveTask}
+            onDragStart={onDragStart}
+            onOpenCard={onOpenCard}
+            onEditCard={onEditCard}
+            onDeleteCard={onDeleteCard}
+            onUpdateCard={onUpdateCard}
+          />
         </div>
       )}
 
