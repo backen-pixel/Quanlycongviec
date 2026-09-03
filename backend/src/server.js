@@ -224,6 +224,13 @@ const externalLimiter = rateLimit({
   legacyHeaders: false,
   message: { error: 'Rate limit exceeded' },
 });
+const publicShareLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 90,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Quá nhiều yêu cầu xem link.' },
+});
 const {
   mcpIpBurstLimiter,
   mcpIpWindowLimiter,
@@ -380,6 +387,8 @@ const { invalidateProjectsListOnWrite } = require('./middleware/projectsCacheInv
 
 // Routes
 app.use('/api/auth', require('./routes/auth'));
+try { app.use('/api/public', publicShareLimiter, require('./routes/publicShare')); } catch (e) { console.warn('⚠️ Public share route failed:', e.message); }
+try { app.use('/api/share', require('./routes/shareLinks')); } catch (e) { console.warn('⚠️ Share links route failed:', e.message); }
 app.use('/api/heartbeat', require('./routes/heartbeat'));
 app.use('/api/users', require('./routes/users'));
 app.use('/api/projects', require('./routes/projects'));

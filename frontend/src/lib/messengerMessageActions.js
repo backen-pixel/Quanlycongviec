@@ -341,96 +341,104 @@ async function blobToPngBlob(blob) {
   }
 }
 
-async function fetchImageAsPngBlob(url) {
+async function fetchImageBlob(url) {
   const full = resolveMediaUrl(url);
   if (!full) throw new Error('URL ảnh không hợp lệ');
-  let blob;
   try {
     const { fetchUploadBlob } = await import('./publicFileUrl');
-    blob = await fetchUploadBlob(url);
+    return await fetchUploadBlob(url);
   } catch {
     try {
-      blob = await fetchMessengerImageBlob(full);
+      return await fetchMessengerImageBlob(full);
     } catch {
-      blob = await loadImageBlobViaCanvas(full);
+      return await loadImageBlobViaCanvas(full);
     }
   }
-  return blobToPngBlob(blob);
 }
 
-function canvasToPngBlob(canvas) {
+async function fetchImageAsPngBlob(url) {
+  return blobToPngBlob(await fetchImageBlob(url));
+}
+
+const pngPrefetch = new Map();
+
+export function prefetchImagePng(url) {
+  const key = resolveMediaUrl(url) || String(url || '');
+  if (!key) return fetchImageAsPngBlob(url);
+  if (!pngPrefetch.has(key)) pngPrefetch.set(key, fetchImageAsPngBlob(url));
+  return pngPrefetch.get(key);
+}
+
+function loadHtmlImage(src) {
   return new Promise((resolve, reject) => {
-    canvas.toBlob(
-      (blob) => (blob ? resolve(blob) : reject(new Error('Không tạo được ảnh'))),
-      'image/png',
-    );
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('Không tải được ảnh'));
+    img.src = src;
   });
 }
 
-/** Ghép nhiều ảnh thành 1 tấm (dọc) để dán clipboard. */
-async function stitchPngBlobs(pngBlobs) {
-  const MAX_W = 1600;
-  const MAX_H = 14000;
-  const GAP = 8;
-  const bitmaps = [];
-  for (const blob of pngBlobs) {
-    try {
-      bitmaps.push(await createImageBitmap(blob));
-    } catch {
-      const objUrl = URL.createObjectURL(blob);
-      try {
-        const imgBlob = await loadImageBlobViaCanvas(objUrl);
-        bitmaps.push(await createImageBitmap(imgBlob));
-      } finally {
-        URL.revokeObjectURL(objUrl);
-      }
+/** Một PNG dọc — 1 lần copy / 1 lần dán Zalo ra hết (không tách thành nhiều file). */
+async function stitchImagesToPngBlob(blobs) {
+  const objectUrls = blobs.map((b) => URL.createObjectURL(b));
+  try {
+    const images = [];
+    for (const src of objectUrls) images.push(await loadHtmlImage(src));
+    const gap = 8;
+    const maxW = Math.min(1600, Math.max(...images.map((i) => i.naturalWidth || 1), 1));
+    const rows = images.map((img) => {
+      const nw = img.naturalWidth || 1;
+      const nh = img.naturalHeight || 1;
+      const scale = Math.min(1, maxW / nw);
+      return { img, w: Math.round(nw * scale), h: Math.round(nh * scale) };
+    });
+    const maxPixels = 12_000_000;
+    const rawW = Math.max(...rows.map((r) => r.w), 1);
+    const rawH = rows.reduce((sum, r) => sum + r.h, 0) + gap * Math.max(0, rows.length - 1);
+    const k = rawW * rawH > maxPixels ? Math.sqrt(maxPixels / (rawW * rawH)) : 1;
+    if (k < 1) {
+      rows.forEach((r) => {
+        r.w = Math.max(1, Math.round(r.w * k));
+        r.h = Math.max(1, Math.round(r.h * k));
+      });
     }
+    const width = Math.max(...rows.map((r) => r.w), 1);
+    const height = rows.reduce((sum, r) => sum + r.h, 0) + gap * Math.max(0, rows.length - 1);
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Không tạo được ảnh');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, width, height);
+    let y = 0;
+    for (const row of rows) {
+      ctx.drawImage(row.img, 0, y, row.w, row.h);
+      y += row.h + gap;
+    }
+    return await new Promise((resolve, reject) => {
+      canvas.toBlob(
+        (blob) => (blob ? resolve(blob) : reject(new Error('Không tạo được ảnh'))),
+        'image/png',
+      );
+    });
+  } finally {
+    objectUrls.forEach((u) => URL.revokeObjectURL(u));
   }
-  if (!bitmaps.length) throw new Error('Không tạo được ảnh');
-
-  const maxW = Math.min(MAX_W, Math.max(...bitmaps.map((b) => b.width), 1));
-  const scaled = bitmaps.map((b) => {
-    const scale = Math.min(1, maxW / Math.max(b.width, 1));
-    return { bmp: b, w: Math.max(1, Math.round(b.width * scale)), h: Math.max(1, Math.round(b.height * scale)) };
-  });
-  let totalH = scaled.reduce((s, x) => s + x.h, 0) + GAP * Math.max(0, scaled.length - 1);
-  const extra = totalH > MAX_H ? MAX_H / totalH : 1;
-
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.max(1, Math.round(maxW * extra));
-  canvas.height = Math.max(1, Math.round(totalH * extra));
-  const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('Không tạo được ảnh');
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  let y = 0;
-  for (const s of scaled) {
-    const w = Math.max(1, Math.round(s.w * extra));
-    const h = Math.max(1, Math.round(s.h * extra));
-    ctx.drawImage(s.bmp, 0, y, w, h);
-    if (typeof s.bmp.close === 'function') s.bmp.close();
-    y += h + Math.round(GAP * extra);
-  }
-  return canvasToPngBlob(canvas);
-}
-
-function escapeHtmlAttr(s) {
-  return String(s || '')
-    .replace(/&/g, '&amp;')
-    .replace(/"/g, '&quot;')
-    .replace(/</g, '&lt;');
 }
 
 export async function copyImageToClipboard(url) {
   const full = resolveMediaUrl(url);
   if (!full) throw new Error('URL ảnh không hợp lệ');
-  const pngBlob = await fetchImageAsPngBlob(url);
   if (!navigator.clipboard?.write || !window.ClipboardItem) {
     await navigator.clipboard.writeText(full);
     return 'url';
   }
   try {
-    await navigator.clipboard.write([new ClipboardItem({ 'image/png': pngBlob })]);
+    await navigator.clipboard.write([
+      new ClipboardItem({ 'image/png': prefetchImagePng(url) }),
+    ]);
     return 'image';
   } catch {
     await navigator.clipboard.writeText(full);
@@ -438,49 +446,58 @@ export async function copyImageToClipboard(url) {
   }
 }
 
-/** Sao chép nhiều ảnh: PNG ghép 1 tấm (Zalo/chat) + HTML nhiều img (Word). */
+/**
+ * Copy hết ảnh trong 1 lần: ghép 1 PNG để dán Zalo (OS chỉ nhận 1 bitmap).
+ * Gọi clipboard.write ngay để không mất quyền copy khi đang tải ảnh.
+ */
 export async function copyImagesToClipboard(urls) {
   const list = [...new Set((urls || []).map((u) => String(u || '').trim()).filter(Boolean))];
   if (!list.length) throw new Error('Không có ảnh');
   if (list.length === 1) return copyImageToClipboard(list[0]);
 
-  const pngBlobs = [];
-  for (const url of list) {
-    try {
-      pngBlobs.push(await fetchImageAsPngBlob(url));
-    } catch {
-      /* bỏ ảnh lỗi, copy phần còn lại */
-    }
-  }
-  if (!pngBlobs.length) throw new Error('Không tải được ảnh để sao chép');
-
-  const collage = await stitchPngBlobs(pngBlobs);
-  const html = `<div>${list
-    .map((u) => `<img src="${escapeHtmlAttr(resolveMediaUrl(u) || u)}" />`)
-    .join('<br/>')}</div>`;
   const links = list.map((u) => resolveMediaUrl(u) || u).join('\n');
-
   if (!navigator.clipboard?.write || !window.ClipboardItem) {
     await navigator.clipboard.writeText(links);
     return 'url';
   }
+
+  let okCount = 0;
+  const pngPromise = (async () => {
+    const loaded = await Promise.all(list.map(async (url) => {
+      try {
+        return await prefetchImagePng(url);
+      } catch {
+        return null;
+      }
+    }));
+    const blobs = loaded.filter(Boolean);
+    okCount = blobs.length;
+    if (!blobs.length) throw new Error('Không tải được ảnh để sao chép');
+    if (blobs.length === 1) return blobs[0];
+    return stitchImagesToPngBlob(blobs);
+  })();
+
   try {
-    await navigator.clipboard.write([
-      new ClipboardItem({
-        'image/png': collage,
-        'text/html': new Blob([html], { type: 'text/html' }),
-      }),
-    ]);
-    return pngBlobs.length === list.length ? 'images' : 'images-partial';
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': pngPromise })]);
+    return okCount > 0 && okCount < list.length ? 'images-partial' : 'images';
   } catch {
-    try {
-      await navigator.clipboard.write([new ClipboardItem({ 'image/png': collage })]);
-      return pngBlobs.length === list.length ? 'images' : 'images-partial';
-    } catch {
-      await navigator.clipboard.writeText(links);
-      return 'url';
-    }
+    await navigator.clipboard.writeText(links);
+    return 'url';
   }
+}
+
+/** Copy lần lượt từng ảnh riêng — dùng khi cần nhiều tin Zalo. */
+export async function copyImagesSequentially(urls) {
+  const list = [...new Set((urls || []).map((u) => String(u || '').trim()).filter(Boolean))];
+  if (!list.length) throw new Error('Không có ảnh');
+  if (list.length === 1) return copyImageToClipboard(list[0]);
+  const first = await copyImageToClipboard(list[0]);
+  list.slice(1).forEach((u) => {
+    try { prefetchImagePng(u); } catch { /* ignore */ }
+  });
+  const { startZaloCopySession } = await import('./zaloCopySession');
+  startZaloCopySession(list, 1);
+  return first === 'url' ? 'url' : 'session';
 }
 
 export async function downloadMessengerFile(url, name) {

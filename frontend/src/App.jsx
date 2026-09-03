@@ -187,6 +187,7 @@ const KnowledgeCertificatesPage = lazyWithRetry(() => import('./pages/KnowledgeC
 const KnowledgeCertificateDetailPage = lazyWithRetry(() => import('./pages/KnowledgeCertificateDetailPage'));
 const CategoriesPage = lazyWithRetry(() => import('./pages/CategoriesPage'));
 const PrivacyPage = lazyWithRetry(() => import('./pages/PrivacyPage'));
+const PublicSharePage = lazyWithRetry(() => import('./pages/PublicSharePage'));
 const VoiceRecordingsPage = lazyWithRetry(() => import('./pages/VoiceRecordingsPage'));
 const MessengerHubPage = lazyWithRetry(() => import('./pages/MessengerHubPage'));
 const ActiveUsersPage = lazyWithRetry(() => import('./pages/ActiveUsersPage'));
@@ -238,6 +239,7 @@ import MessengerDock from './components/MessengerDock';
 import DriveTransferPanel from './components/drive/DriveTransferPanel';
 import SupabaseSyncBubble from './components/SupabaseSyncBubble';
 import CopyToastHost from './components/CopyToastHost';
+import ZaloMultiCopyHost from './components/ZaloMultiCopyHost';
 import { RequireCrmElevated, RequireCrmSocialInbox, RequireExecutive, RequirePlatformAdmin } from './components/RequireRole';
 import { useActivityRouteTracker } from './hooks/useActivityRouteTracker';
 import { isCrmSharedPath } from './lib/sidebarModuleContext';
@@ -250,6 +252,25 @@ function PageLoader() {
     <div className="flex items-center justify-center h-64">
       <div className="animate-spin h-8 w-8 border-3 border-blue-600 border-t-transparent rounded-full" />
     </div>
+  );
+}
+
+/** Toast copy vẫn hiện trên /s/:token; ẩn chat/drive khi xem link công khai. */
+function AppChromeHosts() {
+  const { pathname } = useLocation();
+  const isPublicShare = pathname.startsWith('/s/');
+  return (
+    <>
+      <CopyToastHost />
+      <ZaloMultiCopyHost />
+      {isPublicShare ? null : (
+        <>
+          <MessengerDock />
+          <DriveTransferPanel />
+          <SupabaseSyncBubble />
+        </>
+      )}
+    </>
   );
 }
 
@@ -433,6 +454,7 @@ export default function App() {
           <Route path="/modules/checkout/:purchaseId" element={<SaasCheckoutPage />} />
           <Route path="/modules/payment/return" element={<SaasPaymentReturnPage />} />
           <Route path="/privacy" element={<Suspense fallback={<PageLoader />}><PrivacyPage /></Suspense>} />
+          <Route path="/s/:token" element={<Suspense fallback={<PageLoader />}><PublicSharePage /></Suspense>} />
           <Route element={<ProtectedLayout />}>
             <Route path="/setup" element={<Outlet />} />
             <Route path="/" element={<DefaultRedirect />} />
@@ -658,11 +680,8 @@ export default function App() {
             } />
           </Route>
         </Routes>
-        
-        <CopyToastHost />
-        <MessengerDock />
-        <DriveTransferPanel />
-        <SupabaseSyncBubble />
+
+        <AppChromeHosts />
         </ThemeProvider>
         </CallProvider>
         </MessengerDockProvider>

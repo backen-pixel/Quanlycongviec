@@ -262,22 +262,122 @@ export async function printUploadImage(pathOrUrl, title = 'Ảnh') {
   };
 }
 
+const MIME_TO_EXT = {
+  'image/jpeg': '.jpg',
+  'image/jpg': '.jpg',
+  'image/pjpeg': '.jpg',
+  'image/png': '.png',
+  'image/gif': '.gif',
+  'image/webp': '.webp',
+  'image/bmp': '.bmp',
+  'image/x-ms-bmp': '.bmp',
+  'image/svg+xml': '.svg',
+  'image/heic': '.heic',
+  'image/heif': '.heic',
+  'image/avif': '.avif',
+  'application/pdf': '.pdf',
+};
+
+function extFromMime(mime) {
+  const t = String(mime || '').toLowerCase().split(';')[0].trim();
+  return MIME_TO_EXT[t] || '';
+}
+
+function extFromFileName(name) {
+  const m = String(name || '').trim().match(/(\.(jpe?g|png|gif|webp|bmp|svg|heic|heif|avif|pdf))$/i);
+  if (!m) return '';
+  const ext = m[1].toLowerCase();
+  if (ext === '.jpeg') return '.jpg';
+  if (ext === '.heif') return '.heic';
+  return ext;
+}
+
+function extFromSrc(src) {
+  const s = String(src || '').trim();
+  if (!s) return '';
+  try {
+    const u = new URL(s, typeof window !== 'undefined' ? window.location.origin : 'http://localhost');
+    const pathParam = u.searchParams.get('path');
+    if (pathParam) {
+      const e = extFromFileName(pathParam.split('/').pop() || '');
+      if (e) return e;
+    }
+    const e = extFromFileName(u.pathname.split('/').pop() || '');
+    if (e) return e;
+  } catch {
+    /* ignore */
+  }
+  return extFromFileName(s.split('?')[0].split('#')[0].split('/').pop() || '');
+}
+
+function sniffFileExt(bytes) {
+  if (!bytes || bytes.length < 12) return '';
+  if (bytes[0] === 0xFF && bytes[1] === 0xD8 && bytes[2] === 0xFF) return '.jpg';
+  if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4E && bytes[3] === 0x47) return '.png';
+  if (bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46) return '.gif';
+  if (bytes[0] === 0x42 && bytes[1] === 0x4D) return '.bmp';
+  if (bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46
+    && bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50) {
+    return '.webp';
+  }
+  if (bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46) return '.pdf';
+  if (bytes[4] === 0x66 && bytes[5] === 0x74 && bytes[6] === 0x79 && bytes[7] === 0x70) {
+    const brand = String.fromCharCode(bytes[8], bytes[9], bytes[10], bytes[11]).toLowerCase();
+    if (brand === 'avif' || brand === 'avis') return '.avif';
+    if (brand === 'heic' || brand === 'heix' || brand === 'heif' || brand === 'mif1' || brand === 'msf1') return '.heic';
+  }
+  return '';
+}
+
+function sanitizeDownloadBase(name, fallback = 'file') {
+  return String(name || fallback).trim().replace(/[\\/:*?"<>|]/g, '_').slice(0, 120) || fallback;
+}
+
+function withExt(name, ext) {
+  const e = ext && ext.startsWith('.') ? ext.toLowerCase() : ext ? `.${ext.toLowerCase()}` : '';
+  const base = sanitizeDownloadBase(name).replace(/\.[a-z0-9]{2,8}$/i, '') || 'file';
+  return e ? `${base}${e}` : base;
+}
+
+function uniqueZipName(used, name) {
+  let entry = name;
+  let n = 2;
+  while (used.has(entry.toLowerCase())) {
+    const dot = name.lastIndexOf('.');
+    entry = dot > 0 ? `${name.slice(0, dot)} (${n})${name.slice(dot)}` : `${name} (${n})`;
+    n += 1;
+  }
+  used.add(entry.toLowerCase());
+  return entry;
+}
+
+function fileNameForBytes(bytes, fileName, src, mime) {
+  const ext = sniffFileExt(bytes)
+    || extFromMime(mime)
+    || extFromFileName(fileName)
+    || extFromSrc(src)
+    || '.png';
+  return withExt(fileName || 'anh', ext);
+}
+
 /** Tải file về máy — blob + file-saver (ổn định hơn anchor thủ công trên Chrome). */
 export async function downloadUploadFile(pathOrUrl, fileName = 'tai-lieu') {
-  const safeName = String(fileName || 'tai-lieu').trim().replace(/[\\/:*?"<>|]/g, '_') || 'tai-lieu';
+  const fallbackName = sanitizeDownloadBase(fileName, 'tai-lieu');
   try {
     const blob = await fetchUploadBlob(pathOrUrl);
+    const bytes = new Uint8Array(await blob.slice(0, 16).arrayBuffer());
+    const safeName = fileNameForBytes(bytes, fallbackName, pathOrUrl, blob.type);
     const { saveAs } = await import('file-saver');
     saveAs(blob, safeName);
   } catch (err) {
-    const props = getFileDownloadAnchorProps(pathOrUrl, { fileName: safeName });
+    const props = getFileDownloadAnchorProps(pathOrUrl, { fileName: fallbackName });
     if (props?.href && /^https?:\/\//i.test(props.href)) {
       // Fallback: mở URL gốc (Supabase thường vẫn cho tải qua tab).
       const a = document.createElement('a');
       a.href = props.href;
       a.target = '_blank';
       a.rel = 'noopener noreferrer';
-      a.download = safeName;
+      a.download = fallbackName;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -289,7 +389,7 @@ export async function downloadUploadFile(pathOrUrl, fileName = 'tai-lieu') {
 
 /**
  * Tải nhiều ảnh/file thành 1 ZIP.
- * @param {Array<{ url?: string, rawPath?: string, name?: string, title?: string }>} items
+ * @param {Array<{ url?: string, rawPath?: string, name?: string, title?: string, mime?: string }>} items
  * @param {string} [zipName]
  */
 export async function downloadUploadFilesAsZip(items, zipName = 'anh-binh-luan.zip') {
@@ -307,23 +407,16 @@ export async function downloadUploadFilesAsZip(items, zipName = 'anh-binh-luan.z
     const it = list[i];
     const src = it.rawPath || it.url;
     const rawName = String(it.name || it.title || `anh-${i + 1}`).trim() || `anh-${i + 1}`;
-    let base = rawName.replace(/[\\/:*?"<>|]/g, '_').slice(0, 120);
-    if (!/\.[a-z0-9]{2,5}$/i.test(base)) {
-      const fromUrl = String(src || '').split('?')[0].split('/').pop() || '';
-      const ext = fromUrl.includes('.') ? fromUrl.slice(fromUrl.lastIndexOf('.')) : '.jpg';
-      base = `${base}${ext}`;
-    }
-    let entry = base;
-    let n = 2;
-    while (used.has(entry.toLowerCase())) {
-      const dot = base.lastIndexOf('.');
-      entry = dot > 0 ? `${base.slice(0, dot)} (${n})${base.slice(dot)}` : `${base} (${n})`;
-      n += 1;
-    }
-    used.add(entry.toLowerCase());
     try {
       const blob = await fetchUploadBlob(src);
-      zip.file(entry, blob);
+      const buf = await blob.arrayBuffer();
+      const extName = fileNameForBytes(
+        new Uint8Array(buf.slice(0, 16)),
+        rawName,
+        src,
+        it.mime || blob.type,
+      );
+      zip.file(uniqueZipName(used, extName), buf, { binary: true });
       ok += 1;
     } catch (e) {
       lastErr = e;
