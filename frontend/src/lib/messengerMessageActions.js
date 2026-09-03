@@ -341,26 +341,145 @@ async function blobToPngBlob(blob) {
   }
 }
 
-export async function copyImageToClipboard(url) {
+async function fetchImageAsPngBlob(url) {
   const full = resolveMediaUrl(url);
   if (!full) throw new Error('URL ảnh không hợp lệ');
   let blob;
   try {
-    blob = await fetchMessengerImageBlob(full);
+    const { fetchUploadBlob } = await import('./publicFileUrl');
+    blob = await fetchUploadBlob(url);
   } catch {
-    blob = await loadImageBlobViaCanvas(full);
+    try {
+      blob = await fetchMessengerImageBlob(full);
+    } catch {
+      blob = await loadImageBlobViaCanvas(full);
+    }
   }
+  return blobToPngBlob(blob);
+}
+
+function canvasToPngBlob(canvas) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => (blob ? resolve(blob) : reject(new Error('Không tạo được ảnh'))),
+      'image/png',
+    );
+  });
+}
+
+/** Ghép nhiều ảnh thành 1 tấm (dọc) để dán clipboard. */
+async function stitchPngBlobs(pngBlobs) {
+  const MAX_W = 1600;
+  const MAX_H = 14000;
+  const GAP = 8;
+  const bitmaps = [];
+  for (const blob of pngBlobs) {
+    try {
+      bitmaps.push(await createImageBitmap(blob));
+    } catch {
+      const objUrl = URL.createObjectURL(blob);
+      try {
+        const imgBlob = await loadImageBlobViaCanvas(objUrl);
+        bitmaps.push(await createImageBitmap(imgBlob));
+      } finally {
+        URL.revokeObjectURL(objUrl);
+      }
+    }
+  }
+  if (!bitmaps.length) throw new Error('Không tạo được ảnh');
+
+  const maxW = Math.min(MAX_W, Math.max(...bitmaps.map((b) => b.width), 1));
+  const scaled = bitmaps.map((b) => {
+    const scale = Math.min(1, maxW / Math.max(b.width, 1));
+    return { bmp: b, w: Math.max(1, Math.round(b.width * scale)), h: Math.max(1, Math.round(b.height * scale)) };
+  });
+  let totalH = scaled.reduce((s, x) => s + x.h, 0) + GAP * Math.max(0, scaled.length - 1);
+  const extra = totalH > MAX_H ? MAX_H / totalH : 1;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(maxW * extra));
+  canvas.height = Math.max(1, Math.round(totalH * extra));
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('Không tạo được ảnh');
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  let y = 0;
+  for (const s of scaled) {
+    const w = Math.max(1, Math.round(s.w * extra));
+    const h = Math.max(1, Math.round(s.h * extra));
+    ctx.drawImage(s.bmp, 0, y, w, h);
+    if (typeof s.bmp.close === 'function') s.bmp.close();
+    y += h + Math.round(GAP * extra);
+  }
+  return canvasToPngBlob(canvas);
+}
+
+function escapeHtmlAttr(s) {
+  return String(s || '')
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;');
+}
+
+export async function copyImageToClipboard(url) {
+  const full = resolveMediaUrl(url);
+  if (!full) throw new Error('URL ảnh không hợp lệ');
+  const pngBlob = await fetchImageAsPngBlob(url);
   if (!navigator.clipboard?.write || !window.ClipboardItem) {
     await navigator.clipboard.writeText(full);
     return 'url';
   }
   try {
-    const pngBlob = await blobToPngBlob(blob);
     await navigator.clipboard.write([new ClipboardItem({ 'image/png': pngBlob })]);
     return 'image';
   } catch {
     await navigator.clipboard.writeText(full);
     return 'url';
+  }
+}
+
+/** Sao chép nhiều ảnh: PNG ghép 1 tấm (Zalo/chat) + HTML nhiều img (Word). */
+export async function copyImagesToClipboard(urls) {
+  const list = [...new Set((urls || []).map((u) => String(u || '').trim()).filter(Boolean))];
+  if (!list.length) throw new Error('Không có ảnh');
+  if (list.length === 1) return copyImageToClipboard(list[0]);
+
+  const pngBlobs = [];
+  for (const url of list) {
+    try {
+      pngBlobs.push(await fetchImageAsPngBlob(url));
+    } catch {
+      /* bỏ ảnh lỗi, copy phần còn lại */
+    }
+  }
+  if (!pngBlobs.length) throw new Error('Không tải được ảnh để sao chép');
+
+  const collage = await stitchPngBlobs(pngBlobs);
+  const html = `<div>${list
+    .map((u) => `<img src="${escapeHtmlAttr(resolveMediaUrl(u) || u)}" />`)
+    .join('<br/>')}</div>`;
+  const links = list.map((u) => resolveMediaUrl(u) || u).join('\n');
+
+  if (!navigator.clipboard?.write || !window.ClipboardItem) {
+    await navigator.clipboard.writeText(links);
+    return 'url';
+  }
+  try {
+    await navigator.clipboard.write([
+      new ClipboardItem({
+        'image/png': collage,
+        'text/html': new Blob([html], { type: 'text/html' }),
+      }),
+    ]);
+    return pngBlobs.length === list.length ? 'images' : 'images-partial';
+  } catch {
+    try {
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': collage })]);
+      return pngBlobs.length === list.length ? 'images' : 'images-partial';
+    } catch {
+      await navigator.clipboard.writeText(links);
+      return 'url';
+    }
   }
 }
 

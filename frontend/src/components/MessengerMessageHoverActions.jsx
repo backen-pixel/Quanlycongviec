@@ -9,12 +9,14 @@ import {
   Undo2,
   Download,
   Image as ImageIcon,
+  Images,
   ListChecks,
 } from 'lucide-react';
 import { isMessengerMessageRecalled, MESSENGER_QUICK_REACTIONS } from '../lib/messengerReactions';
 import {
   buildMessengerCopyText,
   copyImageToClipboard,
+  copyImagesToClipboard,
   copyTextToClipboard,
   downloadAllMessengerImages,
   downloadMessengerFile,
@@ -52,6 +54,7 @@ export default function MessengerMessageHoverActions({
   const showRecallRow = isMe && !recalled && !message?.is_system;
   const [reactionHover, setReactionHover] = useState(false);
   const [menuAnchor, setMenuAnchor] = useState(null);
+  const [clickedImageUrl, setClickedImageUrl] = useState(null);
   const reactionLeaveTimer = useRef(null);
   const menuRef = useRef(null);
 
@@ -64,6 +67,7 @@ export default function MessengerMessageHoverActions({
   useEffect(() => {
     if (!moreMenuOpen) {
       setMenuAnchor(null);
+      setClickedImageUrl(null);
       return undefined;
     }
     const onDown = (e) => {
@@ -100,12 +104,16 @@ export default function MessengerMessageHoverActions({
     if (recalled) return;
     e.preventDefault();
     e.stopPropagation();
+    const imgEl = e.target instanceof Element ? e.target.closest('img') : null;
+    const src = imgEl?.currentSrc || imgEl?.src || null;
+    setClickedImageUrl(src && !src.startsWith('data:') ? src : null);
     setMenuAnchor({ x: e.clientX, y: e.clientY });
     onMoreMenuOpen?.(true);
   };
 
   const openMenuFromButton = () => {
     setMenuAnchor(null);
+    setClickedImageUrl(null);
     onMoreMenuOpen?.(!moreMenuOpen);
   };
 
@@ -134,7 +142,7 @@ export default function MessengerMessageHoverActions({
           : undefined
       }
       hasText={hasText}
-      img={img}
+      img={clickedImageUrl ? { url: clickedImageUrl, name: img?.name } : img}
       images={images}
       file={file}
       showRecallRow={showRecallRow}
@@ -321,7 +329,25 @@ function MoreMenuPanel({
               if (kind === 'url') {
                 showCopyToast('Đã sao chép link ảnh');
               } else {
-                showCopyToast('Đã sao chép');
+                showCopyToast('Đã sao chép ảnh');
+              }
+            })
+          }
+        />
+      ) : null}
+      {images.length > 1 ? (
+        <MenuRow
+          icon={Images}
+          label={`Sao chép hết ${images.length} ảnh`}
+          onClick={() =>
+            void runMenuAction(async () => {
+              const kind = await copyImagesToClipboard(images.map((x) => x.url));
+              if (kind === 'url') {
+                showCopyToast(`Đã sao chép ${images.length} link ảnh`);
+              } else if (kind === 'images-partial') {
+                showCopyToast(`Đã sao chép một phần ${images.length} ảnh`);
+              } else {
+                showCopyToast(`Đã sao chép ${images.length} ảnh`);
               }
             })
           }
