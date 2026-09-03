@@ -453,6 +453,7 @@ async function fetchAttendedStatusByContactIds(contactIds) {
         last_inbound_at: row.last_inbound_at || null,
         last_outbound_at: row.last_outbound_at || null,
         last_outbound_by: row.last_outbound_by || null,
+        first_inbound_at: row.first_inbound_at || null,
       });
     });
   }
@@ -475,12 +476,14 @@ async function attachAttendedStatus(contacts, precomputedMap = null) {
       c.last_inbound_at = info.last_inbound_at;
       c.last_outbound_at = info.last_outbound_at;
       c.last_outbound_by = info.last_outbound_by;
+      c.first_inbound_at = info.first_inbound_at || null;
       if (info.last_outbound_by) staffIds.add(info.last_outbound_by);
     } else {
       c.attended_status = 'no_message';
       c.last_inbound_at = null;
       c.last_outbound_at = null;
       c.last_outbound_by = null;
+      c.first_inbound_at = null;
     }
   });
   if (staffIds.size) {
@@ -5010,6 +5013,129 @@ r.post('/comments/:id/reply', authMiddleware, async (req, res) => {
 
 // ── Dashboard stats ──────────────────────────────────────────
 
+/** YYYY-MM-DD theo giờ VN (UTC+7) của thời điểm hiện tại. */
+function vnTodayYmd(offsetDays = 0) {
+  const ms = Date.now() + 7 * 3600 * 1000 + offsetDays * 86400000;
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
+/**
+ * Số khách nhắn tin theo từng Page trong khoảng ngày (giờ VN), tách:
+ *   new_contacts       — hội thoại MỚI phát sinh trong ngày ("tin nhắn mới đổ về")
+ *   returning_contacts — khách cũ nhắn lại (thường là trả lời tin NV chăm lại)
+ * Đọc qua RPC fb_new_senders_by_page_daily (database/402_...sql) — đếm bằng SQL theo
+ * ngày giờ VN, không kéo dữ liệu về app và không dùng last_message_at (cột này bị bump
+ * cả khi NV trả lời nên "hôm nay" trước đây bị đếm lẫn hội thoại cũ được chăm lại).
+ * @returns {Promise<{ byPage: Object, days: Array, error: string|null }>}
+ */
+async function loadFbNewSendersByPage({ pageIds, fromYmd, toYmd }) {
+  const fromIso = vnDateStartIso(fromYmd);
+  const toIso = vnDateStartIso(toYmd);
+  if (!fromIso || !toIso) return { byPage: {}, days: [], error: 'Khoảng ngày không hợp lệ' };
+  // p_to là mốc loại trừ → cộng thêm 1 ngày để bao trọn ngày `toYmd`.
+  const toExclusive = new Date(new Date(toIso).getTime() + 86400000).toISOString();
+  const { data, error } = await supabase.rpc('fb_new_senders_by_page_daily', {
+    p_page_ids: pageIds && pageIds.length ? pageIds : null,
+    p_from: fromIso,
+    p_to: toExclusive,
+  });
+  if (error) {
+    console.warn('[FB] RPC fb_new_senders_by_page_daily:', error.message,
+      '(chạy database/402_fb_new_senders_by_page_daily.sql)');
+    return { byPage: {}, days: [], error: error.message };
+  }
+  const byPage = {};
+  for (const row of data || []) {
+    const pid = String(row.page_id || '');
+    if (!pid) continue;
+    if (!byPage[pid]) {
+      byPage[pid] = {
+        new_contacts: 0, new_unattended: 0, returning_contacts: 0, senders: 0, inbound_msgs: 0,
+      };
+    }
+    byPage[pid].new_contacts += Number(row.new_contacts) || 0;
+    byPage[pid].new_unattended += Number(row.new_unattended) || 0;
+    byPage[pid].returning_contacts += Number(row.returning_contacts) || 0;
+    byPage[pid].senders += Number(row.senders) || 0;
+    byPage[pid].inbound_msgs += Number(row.inbound_msgs) || 0;
+  }
+  return { byPage, days: data || [], error: null };
+}
+
+/**
+ * GET /api/facebook/page-new-senders?from=YYYY-MM-DD&to=YYYY-MM-DD[&page_id=]
+ * Dùng cho badge số bên cạnh từng Page (theo ĐÚNG khoảng ngày đang chọn ở hộp thư)
+ * và cho tab Tổng quan. Không truyền from/to → mặc định hôm nay (giờ VN).
+ */
+r.get('/page-new-senders', authMiddleware, async (req, res) => {
+  try {
+    const scope = await resolveFacebookPageScope(req, res);
+    if (!scope) return;
+    if (scope.mode === 'filter' && !scope.pageIds.length) {
+      return res.json({ from: vnTodayYmd(), to: vnTodayYmd(), by_page: {}, days: [], pages: [] });
+    }
+    const YMD = /^\d{4}-\d{2}-\d{2}$/;
+    const rawFrom = String(req.query.from || '').trim();
+    const rawTo = String(req.query.to || '').trim();
+    let fromYmd = YMD.test(rawFrom) ? rawFrom : vnTodayYmd();
+    let toYmd = YMD.test(rawTo) ? rawTo : fromYmd;
+    if (fromYmd > toYmd) { const t = fromYmd; fromYmd = toYmd; toYmd = t; }
+    const spanDays = Math.round(
+      (new Date(vnDateStartIso(toYmd)).getTime() - new Date(vnDateStartIso(fromYmd)).getTime()) / 86400000,
+    ) + 1;
+    if (spanDays > 366) return res.status(400).json({ error: 'Khoảng thời gian tối đa 366 ngày.' });
+
+    const reqPageId = String(req.query.page_id || '').trim();
+    if (reqPageId && scope.mode === 'filter' && !scope.pageIds.includes(reqPageId)) {
+      return res.status(403).json({ error: 'Không có quyền xem Page này' });
+    }
+    const pageIds = reqPageId
+      ? [reqPageId]
+      : (scope.mode === 'filter' ? scope.pageIds : null);
+
+    let pagesQuery = supabase.from('facebook_pages').select('page_id, page_name').eq('is_active', true);
+    if (reqPageId) pagesQuery = pagesQuery.eq('page_id', reqPageId);
+    else if (scope.mode === 'filter') pagesQuery = pagesQuery.in('page_id', scope.pageIds);
+
+    const [{ byPage, days, error }, pagesRes] = await Promise.all([
+      loadFbNewSendersByPage({ pageIds, fromYmd, toYmd }),
+      pagesQuery,
+    ]);
+    if (error) return res.status(500).json({ error: 'Không đọc được số liệu (RPC chưa cài).' });
+
+    const pages = (pagesRes.data || []).map((p) => {
+      const st = byPage[String(p.page_id)] || {};
+      return {
+        page_id: p.page_id,
+        page_name: p.page_name,
+        new_contacts: st.new_contacts || 0,
+        // Trong số hội thoại mới, còn bao nhiêu chưa được trả lời (chưa chăm).
+        new_unattended: st.new_unattended || 0,
+        returning_contacts: st.returning_contacts || 0,
+        senders: st.senders || 0,
+        inbound_msgs: st.inbound_msgs || 0,
+      };
+    }).sort((a, b) => b.new_contacts - a.new_contacts);
+
+    res.json({
+      from: fromYmd,
+      to: toYmd,
+      days,
+      by_page: byPage,
+      pages,
+      totals: pages.reduce((acc, p) => ({
+        new_contacts: acc.new_contacts + p.new_contacts,
+        new_unattended: acc.new_unattended + p.new_unattended,
+        returning_contacts: acc.returning_contacts + p.returning_contacts,
+        senders: acc.senders + p.senders,
+        inbound_msgs: acc.inbound_msgs + p.inbound_msgs,
+      }), {
+        new_contacts: 0, new_unattended: 0, returning_contacts: 0, senders: 0, inbound_msgs: 0,
+      }),
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 r.get('/stats', authMiddleware, async (req, res) => {
   try {
     const scope = await resolveFacebookPageScope(req, res);
@@ -5025,51 +5151,70 @@ r.get('/stats', authMiddleware, async (req, res) => {
       });
     }
 
-    const today = new Date().toISOString().split('T')[0];
+    // Moc ngay phai theo gio VN. Truoc day dung new Date().toISOString().split('T')[0]
+    // => 00:00 UTC = 07:00 gio VN: mat tin tu 00:00-07:00 sang, va neu xem truoc 07:00 thi
+    // gom ca ~17 tieng cua ngay hom truoc vao so "hom nay".
+    // Cac chi so o dau trang lay theo DUNG cong ty + Page + khoang ngay dang chon o hop thu:
+    // page_id + from/to do frontend truyen len; khong co thi mac dinh hom nay / tat ca Page.
+    const YMD_STATS = /^\d{4}-\d{2}-\d{2}$/;
+    const todayYmd = vnTodayYmd();
+    const rawFromStats = String(req.query.from || '').trim();
+    const rawToStats = String(req.query.to || '').trim();
+    let fromYmdStats = YMD_STATS.test(rawFromStats) ? rawFromStats : todayYmd;
+    let toYmdStats = YMD_STATS.test(rawToStats) ? rawToStats : fromYmdStats;
+    if (fromYmdStats > toYmdStats) { const t = fromYmdStats; fromYmdStats = toYmdStats; toYmdStats = t; }
+    const today = vnDateStartIso(fromYmdStats);
+    const rangeEndIso = new Date(new Date(vnDateStartIso(toYmdStats)).getTime() + 86400000).toISOString();
     const week = new Date(Date.now() - 7 * 86400000).toISOString();
 
-    const inPages = (col) => {
-      if (scope.mode !== 'filter') return col;
-      return col.in('page_id', scope.pageIds);
-    };
+    const statsPageId = String(req.query.page_id || '').trim();
+    if (statsPageId && scope.mode === 'filter' && !scope.pageIds.includes(statsPageId)) {
+      return res.status(403).json({ error: 'Không có quyền xem Page này' });
+    }
+
+    // Danh sach Page cho page_stats (LUON la toan bo Page trong pham vi cong ty, de dropdown
+    // van hien du so cua tung Page); rieng cac chi so tong o dau trang thi thu hep theo Page dang chon.
+    const scopePageIds = scope.mode === 'filter' ? scope.pageIds : null;
+    const aggPageIds = statsPageId ? [statsPageId] : scopePageIds;
+
+    /** Gioi han query theo pham vi cong ty + Page dang chon (dung cho chi so tong). */
+    const inAggPages = (col) => (aggPageIds ? col.in('page_id', aggPageIds) : col);
+    /** Gioi han theo pham vi cong ty (dung cho du lieu per-page). */
+    const inPages = (col) => (scopePageIds ? col.in('page_id', scopePageIds) : col);
 
     const [contacts, messages, leadAds, comments, unread, allContacts, pages, unattended] = await Promise.all([
-      inPages(supabase.from('facebook_contacts').select('id', { count: 'exact', head: true })),
+      inAggPages(supabase.from('facebook_contacts').select('id', { count: 'exact', head: true })),
+      // Khach nhan tin trong khoang dang chon (gio VN) — tach hoi thoai MOI khoi khach cu nhan lai.
+      // Goi RPC cho TOAN BO Page trong pham vi de page_stats van du, roi moi cong tong theo Page dang chon.
       (async () => {
-        const { data: cidRows } = await inPages(supabase.from('facebook_contacts').select('id, page_id'));
-        const rows0 = cidRows || [];
-        const ids = rows0.map((c) => c.id);
-        if (!ids.length) return { count: 0, senderCount: 0, senderCountByPage: {} };
-        const pageOf = new Map(rows0.map((c) => [c.id, c.page_id]));
-        let total = 0;
-        const senderSet = new Set();
-        const senderSetByPage = new Map();
-        const CH = 500;
-        for (let i = 0; i < ids.length; i += CH) {
-          const slice = ids.slice(i, i + CH);
-          const { data: rows } = await supabase.from('facebook_messages')
-            .select('contact_id')
-            .eq('direction', 'inbound')
-            .gte('created_at', today)
-            .in('contact_id', slice);
-          (rows || []).forEach((row) => {
-            total += 1;
-            if (!row.contact_id) return;
-            senderSet.add(row.contact_id);
-            const pid = pageOf.get(row.contact_id);
-            if (pid) {
-              if (!senderSetByPage.has(pid)) senderSetByPage.set(pid, new Set());
-              senderSetByPage.get(pid).add(row.contact_id);
-            }
-          });
-        }
+        const { byPage, error } = await loadFbNewSendersByPage({
+          pageIds: scopePageIds,
+          fromYmd: fromYmdStats,
+          toYmd: toYmdStats,
+        });
+        if (error) return { count: 0, senderCount: 0, senderCountByPage: {}, returningByPage: {} };
         const senderCountByPage = {};
-        senderSetByPage.forEach((set, pid) => { senderCountByPage[pid] = set.size; });
-        return { count: total, senderCount: senderSet.size, senderCountByPage };
+        const returningByPage = {};
+        const unattendedNewByPage = {};
+        let msgs = 0;
+        let newTotal = 0;
+        Object.entries(byPage).forEach(([pid, st]) => {
+          senderCountByPage[pid] = st.new_contacts || 0;
+          returningByPage[pid] = st.returning_contacts || 0;
+          unattendedNewByPage[pid] = st.new_unattended || 0;
+          if (statsPageId && pid !== statsPageId) return;
+          msgs += st.inbound_msgs || 0;
+          newTotal += st.new_contacts || 0;
+        });
+        return {
+          count: msgs, senderCount: newTotal, senderCountByPage, returningByPage, unattendedNewByPage,
+        };
       })(),
-      supabase.from('facebook_lead_ads').select('id', { count: 'exact', head: true }).gte('created_at', today),
-      supabase.from('facebook_comments').select('id', { count: 'exact', head: true }).gte('created_at', today),
-      inPages(supabase.from('facebook_contacts').select('unread_count, page_id').gt('unread_count', 0)),
+      inAggPages(supabase.from('facebook_lead_ads').select('id', { count: 'exact', head: true })
+        .gte('created_at', today).lt('created_at', rangeEndIso)),
+      inAggPages(supabase.from('facebook_comments').select('id', { count: 'exact', head: true })
+        .gte('created_at', today).lt('created_at', rangeEndIso)),
+      inAggPages(supabase.from('facebook_contacts').select('unread_count, page_id').gt('unread_count', 0)),
       inPages(supabase.from('facebook_contacts').select('id, page_id, created_at')),
       (async () => {
         let q = supabase.from('facebook_pages').select('page_id, page_name').eq('is_active', true);
@@ -5077,7 +5222,7 @@ r.get('/stats', authMiddleware, async (req, res) => {
         return await q;
       })(),
       // Số hội thoại "chưa chăm" (tin cuối là của khách, NV chưa trả lời sau đó) — tính bằng RPC gộp, không kéo dữ liệu về app.
-      supabase.rpc('fb_unattended_count', { p_page_ids: scope.mode === 'filter' ? scope.pageIds : null })
+      supabase.rpc('fb_unattended_count', { p_page_ids: aggPageIds })
         .then((r) => (r.error ? (console.warn('[FB] RPC fb_unattended_count:', r.error.message), 0) : Number(r.data) || 0))
         .catch(() => 0),
     ]);
@@ -5105,8 +5250,12 @@ r.get('/stats', authMiddleware, async (req, res) => {
       total_contacts: totalByPage[p.page_id] || 0,
       new_contacts_7d: newContactsByPage[p.page_id] || 0,
       unread_count: unreadMap[p.page_id] || 0,
-      // Số người thực sự nhắn tin MỚI hôm nay cho riêng Page này (không lẫn hội thoại cũ được "chăm lại").
+      // Hội thoại MỚI hôm nay (giờ VN) của riêng Page này — KHÔNG gồm khách cũ nhắn lại.
       senders_today: messages.senderCountByPage?.[p.page_id] || 0,
+      // Khách cũ nhắn lại hôm nay (phần lớn là trả lời tin NV chăm lại) — chỉ để đối chiếu.
+      returning_today: messages.returningByPage?.[p.page_id] || 0,
+      // Trong số hội thoại mới hôm nay, còn bao nhiêu chưa được trả lời.
+      unattended_new_today: messages.unattendedNewByPage?.[p.page_id] || 0,
     }));
 
     res.json({
@@ -5117,6 +5266,10 @@ r.get('/stats', authMiddleware, async (req, res) => {
       comments_today: comments.count || 0,
       total_unread: (unread.data || []).reduce((s, c) => s + c.unread_count, 0),
       unattended_total: unattended || 0,
+      // Pham vi thuc su cua cac chi so tong o tren — de UI ghi dung nhan thoi gian / Page.
+      scope_page_id: statsPageId || null,
+      from: fromYmdStats,
+      to: toYmdStats,
       page_stats: pageStats,
     });
   } catch (e) { res.status(500).json({ error: e.message }); }

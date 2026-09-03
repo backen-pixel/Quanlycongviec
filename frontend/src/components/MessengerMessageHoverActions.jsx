@@ -345,9 +345,9 @@ function MoreMenuPanel({
               if (kind === 'url') {
                 showCopyToast(`Đã sao chép ${images.length} link ảnh`);
               } else if (kind === 'images-partial') {
-                showCopyToast(`Đã sao chép một phần ${images.length} ảnh`);
+                showCopyToast(`Đã sao chép một phần ${images.length} ảnh (1 tấm)`);
               } else {
-                showCopyToast(`Đã sao chép ${images.length} ảnh`);
+                showCopyToast(`Đã sao chép ${images.length} ảnh (1 tấm) — dán Zalo`);
               }
             })
           }

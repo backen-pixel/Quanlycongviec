@@ -8,6 +8,7 @@ import {
   applyItemFieldUpdate, makeEmptyItem, makeSectionRow,
   productPatchForItem, updateGroupDiscountItems, getGroupDiscountPercentOf,
   updateGroupDiscountAmountItems, updateGroupAfterDiscountItems,
+  discountPercentFromAmount,
 } from '../lib/commercialItems';
 
 // Component input số — hiển thị formatted khi blur, raw khi focus
@@ -282,8 +283,9 @@ export default function CommercialItemsTable({
                           const gross = row.gross_amount || 0;
                           const amt = parseFloat(v) || 0;
                           if (gross > 0) {
-                            // % CK theo số tiền CK, tối đa 3 chữ số thập phân (vd: 35,121%)
-                            const pct = Math.max(0, Math.min(100, Math.round((amt / gross) * 100000) / 1000));
+                            // % CK theo số tiền CK — số chữ số thập phân tự co giãn đủ để khớp
+                            // đúng số tiền (vd: 35% vẫn là 35%, 1.508.000đ không bị làm tròn thành 1.507.800đ)
+                            const pct = discountPercentFromAmount(amt, gross);
                             setItems((prev) => prev.map((it, i) => {
                               if (i !== idx) return it;
                               const next = applyItemFieldUpdate(it, 'discount_percent', pct);
@@ -302,7 +304,7 @@ export default function CommercialItemsTable({
                         }}
                         placeholder="0"
                         allowEmpty
-                        title="Số tiền CK (đ) — gõ vào sẽ tự tính lại % CK (tối đa 3 số thập phân) theo Thành tiền gốc"
+                        title="Số tiền CK (đ) — gõ vào sẽ giữ NGUYÊN số tiền này, % CK tự suy theo Thành tiền gốc"
                         className="w-full px-1.5 py-1 border border-gray-200 hover:border-orange-400 focus:border-orange-500 focus:ring-1 focus:ring-orange-300 rounded text-xs outline-none bg-transparent text-right text-orange-700 font-medium"
                       />
                     )}
@@ -356,7 +358,7 @@ export default function CommercialItemsTable({
                         Chiết khấu nhóm:
                         {gd.subtotal > 0 && (
                           <span className="ml-2 text-[11px] font-medium text-red-500/80">
-                            ({formatNum(Math.round(((gd.discountTotal || 0) / gd.subtotal) * 100000) / 1000)}%)
+                            ({formatNum(discountPercentFromAmount(gd.discountTotal || 0, gd.subtotal))}%)
                           </span>
                         )}
                       </td>

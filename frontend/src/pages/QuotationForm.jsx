@@ -16,7 +16,10 @@ import {
 } from '../lib/quotationTermsDisplay';
 import ProductSearchPicker from '../components/ProductSearchPicker';
 import CommercialItemsTable, { NumericInput } from '../components/CommercialItemsTable';
-import { formatVND, computeItemRows, computeGroupBreakdown, applyItemFieldUpdate, buildItemFromProduct } from '../lib/commercialItems';
+import {
+  formatVND, computeItemRows, computeGroupBreakdown, applyItemFieldUpdate, buildItemFromProduct,
+  restoreServerItems, mapExcelDraftItems,
+} from '../lib/commercialItems';
 import { computeQuotationDocumentDiscounts } from '../lib/quotationTotals';
 
 const EMPTY_DEPOSIT_ROW = () => ({ amount: null, received: null, label: '' });
@@ -136,32 +139,9 @@ export default function QuotationForm() {
           });
         }
         if (!isPreset && pt) { setIsCustomPayment(true); setCustomPaymentTerms(pt); }
-        if (d.items?.length) setItems(d.items.map(i => {
-          if (i.notes === '__SECTION__') return { row_type: 'section', name: i.name, notes: '__SECTION__' };
-          // ── Khôi phục lock_amount khi reload: nếu stored amount lệch với recompute (qty*price*spec_factor*(1-pct))
-          // → coi như đã khoá theo Excel, giữ nguyên amount.
-          const qty = i.quantity || 1;
-          const price = i.unit_price || 0;
-          const sf = parseFloat(i.spec_factor) || 0;
-          const gross = sf > 0 ? sf * qty * price : qty * price;
-          const recomputed = gross - gross * (i.discount_percent || 0) / 100;
-          const stored = i.amount || 0;
-          const drift = Math.abs(stored - recomputed);
-          const isLocked = stored > 0 && drift > 1;
-          return {
-            name: i.name, description: i.description || '', product_code: i.product_code || '',
-            unit: i.unit || 'bộ', quantity: qty,
-            unit_price: price, discount_percent: i.discount_percent || 0,
-            vat_rate: i.vat_rate || 0,
-            height: i.height || '', width: i.width || '', length: i.length || '', weight: i.weight || '',
-            dimensions: i.dimensions || '', material: i.material || '', color: i.color || '',
-            product_id: i.product_id, promo_code: i.promo_code || '', is_promo: i.is_promo || false,
-            spec_factor: i.spec_factor || 0, group_name: i.group_name || '',
-            standard_area: i.standard_area || 0,
-            lock_amount: isLocked,
-            imported_amount: isLocked ? stored : undefined,
-          };
-        }));
+        // Khôi phục dòng hàng bằng helper dùng chung (giữ nguyên Thành tiền + SỐ TIỀN CK đã lưu,
+        // không tính lại theo % làm tròn — xem restoreServerItems trong lib/commercialItems).
+        if (d.items?.length) setItems(restoreServerItems(d.items, { useTotalFallback: false }));
       });
     } else {
       const fromExcel = searchParams.get('from_excel') === '1';
@@ -198,35 +178,9 @@ export default function QuotationForm() {
               approved_by: dform.approved_by || f.approved_by || '',
               deposit_installments: depositInstallmentsForForm(dform),
             }));
-            if (parsed.items?.length) {
-              setItems(
-                parsed.items.map((i) => ({
-                  name: i.name || '',
-                  description: i.description || '',
-                  product_code: '',
-                  unit: i.unit || 'bộ',
-                  quantity: i.quantity ?? 1,
-                  unit_price: i.unit_price ?? 0,
-                  discount_percent: i.discount_percent ?? 0,
-                  vat_rate: i.vat_rate ?? 0,
-                  height: i.height ?? '',
-                  width: i.width ?? '',
-                  length: i.length ?? '',
-                  dimensions: i.dimensions || '',
-                  material: '',
-                  color: '',
-                  promo_code: '',
-                  is_promo: false,
-                  spec_factor: i.spec_factor ?? 0,
-                  group_name: i.group_name || '',
-                  standard_area: 0,
-                  notes: i.notes || '',
-                  is_freebie: !!i.is_freebie,
-                  lock_amount: !!i.lock_amount,
-                  imported_amount: typeof i.imported_amount === 'number' ? i.imported_amount : undefined,
-                })),
-              );
-            }
+            // Dùng helper chung — bản map tay cũ ở đây bỏ quên imported_discount_amount nên
+            // "SỐ TIỀN CHIẾT KHẤU" đọc từ Excel bị mất, form tính lại CK theo % làm tròn → sai tiền.
+            if (parsed.items?.length) setItems(mapExcelDraftItems(parsed.items));
             setExcelDraftHint(parsed.meta?.fileName ? `Đã nhập từ Excel: ${parsed.meta.fileName}` : 'Đã nhập từ Excel');
             const srcUrl = parsed.meta?.sourceFile?.file_url || dform.source_excel_file_url || '';
             const srcName = parsed.meta?.sourceFile?.file_name || dform.source_excel_file_name || parsed.meta?.fileName || '';

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Copy, Download, Image as ImageIcon, Images } from 'lucide-react';
-import { copyImageToClipboard, copyImagesToClipboard, copyTextToClipboard } from '../lib/messengerMessageActions';
+import { copyImageToClipboard, copyImagesSequentially, copyImagesToClipboard, copyTextToClipboard } from '../lib/messengerMessageActions';
 import { showCopyToast } from '../lib/copyToast';
 
 export async function copyImageWithToast(url) {
@@ -17,9 +17,21 @@ export async function copyImagesWithToast(urls) {
   if (kind === 'url') {
     showCopyToast(`Đã sao chép ${list.length} link ảnh`);
   } else if (kind === 'images-partial') {
-    showCopyToast(`Đã sao chép một phần ${list.length} ảnh`);
+    showCopyToast(`Đã sao chép một phần ${list.length} ảnh (1 tấm)`);
   } else {
-    showCopyToast(`Đã sao chép ${list.length} ảnh`);
+    showCopyToast(`Đã sao chép ${list.length} ảnh (1 tấm) — dán Zalo`);
+  }
+  return kind;
+}
+
+export async function copyImagesSequentiallyWithToast(urls) {
+  const list = (urls || []).filter(Boolean);
+  if (list.length <= 1) return copyImageWithToast(list[0]);
+  const kind = await copyImagesSequentially(list);
+  if (kind === 'url') {
+    showCopyToast(`Đã sao chép ${list.length} link ảnh`);
+  } else {
+    showCopyToast(`Đã copy ảnh 1/${list.length} — dán Zalo, rồi bấm «Ảnh tiếp»`);
   }
   return kind;
 }

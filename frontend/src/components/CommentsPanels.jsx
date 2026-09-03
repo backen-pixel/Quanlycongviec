@@ -21,7 +21,9 @@ import {
   FileText,
   FileVideo,
   Image as ImageIcon,
+  Images,
   Link2,
+  Ban,
   Loader2,
   Package,
   PanelRightClose,
@@ -40,8 +42,9 @@ import { contentHasMentionAll } from '../lib/crmCommentMentions';
 import { FilePreview, FileUploadButton, uploadFilesBatch } from './FileUpload';
 import UploadProgressBubble from './UploadProgressBubble';
 import UploadFileLightbox from './UploadFileLightbox';
-import CopyableImage, { CommentBubbleContextMenu, copyImageWithToast, copyImagesWithToast } from './ImageCopyContextMenu';
+import CopyableImage, { CommentBubbleContextMenu, copyImageWithToast, copyImagesSequentiallyWithToast, copyImagesWithToast } from './ImageCopyContextMenu';
 import { downloadUploadFile, downloadUploadFilesAsZip, publicFileUrl as pubUrl } from '../lib/publicFileUrl';
+import { showCopyToast } from '../lib/copyToast';
 import { handleCommentFilePaste } from '../lib/chatClipboard';
 import { CommentNewNotice, useCommentThreadLive } from './commentThreadLiveUx';
 import { isQuoteContractActivityComment, shouldHideQuoteContractComments } from '../lib/hideQuoteContractFromProduction';
@@ -482,6 +485,36 @@ function fileVisual(name, mime) {
   return { Icon: File, bg: 'bg-gray-50', fg: 'text-gray-700', ring: 'ring-gray-200', label: ext || 'file' };
 }
 
+function formatShareExpiry(iso) {
+  if (!iso) return 'Không giới hạn';
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return '';
+  return d.toLocaleString('vi-VN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  });
+}
+
+function shareStorageKey(images) {
+  const raw = (images || []).map((img) => String(img.url || '')).join('|');
+  let h = 2166136261;
+  for (let i = 0; i < raw.length; i += 1) h = Math.imul(h ^ raw.charCodeAt(i), 16777619);
+  return `qlcv_share_${(h >>> 0).toString(36)}`;
+}
+
+const SHARE_EXPIRE_OPTIONS = [
+  { id: '1h', label: '1 giờ' },
+  { id: '6h', label: '6 giờ' },
+  { id: '1d', label: '1 ngày' },
+  { id: '7d', label: '7 ngày' },
+  { id: '30d', label: '30 ngày' },
+  { id: 'unlimited', label: 'Không giới hạn' },
+  { id: 'custom', label: 'Tự chọn thời điểm' },
+];
+
 export function CommentAttachmentsBlock({ attachments, onOpenImage }) {
   const items = useMemo(() => commentAttachmentList(attachments), [attachments]);
   const images = useMemo(() => items.filter(isCommentImage), [items]);
@@ -496,6 +529,55 @@ export function CommentAttachmentsBlock({ attachments, onOpenImage }) {
   const [dlBusy, setDlBusy] = useState(false);
   const [dlAllBusy, setDlAllBusy] = useState(false);
   const [copyBusy, setCopyBusy] = useState(false);
+  const [shareBusy, setShareBusy] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [sharePreset, setSharePreset] = useState('30d');
+  const [shareCustomAt, setShareCustomAt] = useState('');
+  const [shareInfo, setShareInfo] = useState(null);
+
+  const shareKey = useMemo(() => shareStorageKey(images), [images]);
+
+  useEffect(() => {
+    if (!shareKey) return;
+    try {
+      const raw = sessionStorage.getItem(shareKey);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (parsed?.token) setShareInfo(parsed);
+    } catch {
+      /* ignore */
+    }
+  }, [shareKey]);
+
+  const persistShareInfo = (info) => {
+    setShareInfo(info);
+    try {
+      if (info?.token) sessionStorage.setItem(shareKey, JSON.stringify(info));
+      else sessionStorage.removeItem(shareKey);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const shareExpireBody = () => {
+    if (sharePreset === 'custom') {
+      if (!shareCustomAt) throw new Error('Chọn thời điểm hết hạn');
+      return { expire_preset: 'custom', expires_at: new Date(shareCustomAt).toISOString() };
+    }
+    return { expire_preset: sharePreset };
+  };
+
+  const copyShareUrl = async (info) => {
+    const path = info?.path || (info?.token ? `/s/${info.token}` : '');
+    if (!path) throw new Error('Không nhận được link');
+    const shareUrl = `${window.location.origin}${path}`;
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      showCopyToast('Đã copy link xem — gửi Zalo, ai có link xem được');
+    } catch {
+      window.prompt('Copy link xem (không cần đăng nhập):', shareUrl);
+    }
+  };
 
   if (!items.length) return null;
 
@@ -518,7 +600,11 @@ export function CommentAttachmentsBlock({ attachments, onOpenImage }) {
         await downloadUploadFile(images[0].url, images[0].name || 'anh.jpg');
       } else {
         await downloadUploadFilesAsZip(
-          images.map((img) => ({ url: img.url, name: img.name || 'anh' })),
+          images.map((img, i) => ({
+            url: img.url,
+            name: img.name || `anh-${i + 1}`,
+            mime: img.mime,
+          })),
           `anh-binh-luan-${images.length}.zip`,
         );
       }
@@ -550,6 +636,94 @@ export function CommentAttachmentsBlock({ attachments, onOpenImage }) {
       alert(err?.message || 'Không sao chép được ảnh');
     } finally {
       setCopyBusy(false);
+    }
+  };
+
+  const handleCopySequentialImages = async () => {
+    if (!images.length || copyBusy) return;
+    setCopyBusy(true);
+    try {
+      await copyImagesSequentiallyWithToast(images.map((img) => pubUrl(img.url) || img.url));
+    } catch (err) {
+      alert(err?.message || 'Không sao chép được ảnh');
+    } finally {
+      setCopyBusy(false);
+    }
+  };
+
+  const handleShareViewLink = async () => {
+    if (!images.length) return;
+    setShareOpen((open) => !open);
+  };
+
+  const handleCreateShare = async () => {
+    if (!images.length || shareBusy) return;
+    setShareBusy(true);
+    try {
+      const { data } = await api.post('/share/comment-images', {
+        images: images.map((img) => ({ url: img.url, name: img.name, mime: img.mime })),
+        title: images.length > 1 ? `Ảnh chia sẻ (${images.length} ảnh)` : 'Ảnh chia sẻ',
+        ...shareExpireBody(),
+      });
+      persistShareInfo(data);
+      await copyShareUrl(data);
+    } catch (err) {
+      alert(err?.response?.data?.error || err?.message || 'Không tạo được link xem');
+    } finally {
+      setShareBusy(false);
+    }
+  };
+
+  const handleUpdateShareExpiry = async (nextPreset, nextCustomAt = shareCustomAt) => {
+    if (!shareInfo?.token || shareBusy) return;
+    const preset = nextPreset || sharePreset;
+    setSharePreset(preset);
+    if (preset === 'custom' && !nextCustomAt) return;
+    setShareBusy(true);
+    try {
+      const body = preset === 'custom'
+        ? { expire_preset: 'custom', expires_at: new Date(nextCustomAt).toISOString() }
+        : { expire_preset: preset };
+      const { data } = await api.patch(`/share/${shareInfo.token}`, body);
+      persistShareInfo(data);
+      showCopyToast(data?.unlimited ? 'Link không giới hạn thời gian' : `Đã đặt hạn: ${formatShareExpiry(data?.expires_at)}`);
+    } catch (err) {
+      alert(err?.response?.data?.error || err?.message || 'Không đổi được hạn xem');
+    } finally {
+      setShareBusy(false);
+    }
+  };
+
+  const handleRevokeShare = async () => {
+    if (!shareInfo?.token || shareBusy) return;
+    if (!window.confirm('Vô hiệu hóa link này? Ai đang có link sẽ không xem được nữa.')) return;
+    setShareBusy(true);
+    try {
+      const { data } = await api.post(`/share/${shareInfo.token}/revoke`);
+      persistShareInfo(data);
+      showCopyToast('Đã vô hiệu hóa link');
+    } catch (err) {
+      alert(err?.response?.data?.error || err?.message || 'Không vô hiệu hóa được link');
+    } finally {
+      setShareBusy(false);
+    }
+  };
+
+  const handleRecreateShare = async () => {
+    persistShareInfo(null);
+    setShareBusy(true);
+    try {
+      const { data } = await api.post('/share/comment-images', {
+        images: images.map((img) => ({ url: img.url, name: img.name, mime: img.mime })),
+        title: images.length > 1 ? `Ảnh chia sẻ (${images.length} ảnh)` : 'Ảnh chia sẻ',
+        ...shareExpireBody(),
+      });
+      persistShareInfo(data);
+      await copyShareUrl(data);
+    } catch (err) {
+      alert(err?.response?.data?.error || err?.message || 'Không tạo được link xem');
+    } finally {
+      setShareBusy(false);
     }
   };
 
@@ -607,10 +781,11 @@ export function CommentAttachmentsBlock({ attachments, onOpenImage }) {
               Sao chép ảnh
             </button>
             {images.length > 1 ? (
+              <>
               <button
                 type="button"
                 disabled={copyBusy}
-                title="Sao chép tất cả ảnh trong tin này để dán"
+                title="Ghép thành 1 tấm — copy một lần, dán Zalo một lần ra hết"
                 onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
@@ -621,10 +796,26 @@ export function CommentAttachmentsBlock({ attachments, onOpenImage }) {
                 {copyBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Copy className="h-3.5 w-3.5" />}
                 Sao chép hết {images.length} ảnh
               </button>
+              <button
+                type="button"
+                disabled={copyBusy}
+                title="Copy lần lượt từng ảnh riêng để dán nhiều tin Zalo"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  void handleCopySequentialImages();
+                }}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-[#e4e6eb] bg-white px-2.5 py-1.5 text-[12px] font-semibold text-[#1877f2] hover:bg-[#f0f2f5] disabled:opacity-60"
+              >
+                {copyBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Images className="h-3.5 w-3.5" />}
+                Từng ảnh
+              </button>
+              </>
             ) : null}
             <button
               type="button"
               disabled={dlAllBusy}
+              title="Tải ZIP — mỗi ảnh đúng đuôi .png/.jpg để mở được"
               onClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
@@ -635,7 +826,125 @@ export function CommentAttachmentsBlock({ attachments, onOpenImage }) {
               {dlAllBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
               {images.length > 1 ? `Tải hết ${images.length} ảnh` : 'Tải ảnh'}
             </button>
+            <button
+              type="button"
+              disabled={shareBusy}
+              title="Tạo link xem — chọn hạn, copy, hoặc vô hiệu hóa"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                void handleShareViewLink();
+              }}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[#e4e6eb] bg-white px-2.5 py-1.5 text-[12px] font-semibold text-[#1877f2] hover:bg-[#f0f2f5] disabled:opacity-60"
+            >
+              {shareBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Link2 className="h-3.5 w-3.5" />}
+              Link xem
+            </button>
           </div>
+          {shareOpen ? (
+            <div className="rounded-xl border border-[#e4e6eb] bg-[#f7f8fa] px-3 py-2.5 space-y-2">
+              <div className="flex flex-wrap items-end gap-2">
+                <label className="min-w-[9.5rem] flex-1">
+                  <span className="mb-1 block text-[11px] font-semibold text-[#65676b]">Hạn xem</span>
+                  <select
+                    value={sharePreset}
+                    disabled={shareBusy}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      setSharePreset(next);
+                      if (shareInfo?.token && !shareInfo.revoked_at && next !== 'custom') {
+                        void handleUpdateShareExpiry(next);
+                      }
+                    }}
+                    className="w-full rounded-lg border border-[#e4e6eb] bg-white px-2 py-1.5 text-[12px] text-[#050505]"
+                  >
+                    {SHARE_EXPIRE_OPTIONS.map((opt) => (
+                      <option key={opt.id} value={opt.id}>{opt.label}</option>
+                    ))}
+                  </select>
+                </label>
+                {sharePreset === 'custom' ? (
+                  <label className="min-w-[11rem] flex-1">
+                    <span className="mb-1 block text-[11px] font-semibold text-[#65676b]">Hết hạn lúc</span>
+                    <input
+                      type="datetime-local"
+                      value={shareCustomAt}
+                      disabled={shareBusy}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setShareCustomAt(v);
+                        if (shareInfo?.token && !shareInfo.revoked_at && v) {
+                          void handleUpdateShareExpiry('custom', v);
+                        }
+                      }}
+                      className="w-full rounded-lg border border-[#e4e6eb] bg-white px-2 py-1.5 text-[12px] text-[#050505]"
+                    />
+                  </label>
+                ) : null}
+              </div>
+              {shareInfo?.token && !shareInfo.revoked_at ? (
+                <>
+                  <p className="text-[12px] text-[#65676b]">
+                    {shareInfo.unlimited || !shareInfo.expires_at
+                      ? 'Link đang không giới hạn thời gian.'
+                      : `Hết hạn: ${formatShareExpiry(shareInfo.expires_at)}`}
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    <button
+                      type="button"
+                      disabled={shareBusy}
+                      onClick={() => void copyShareUrl(shareInfo)}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-[#1877f2] px-2.5 py-1.5 text-[12px] font-semibold text-white hover:bg-[#166fe5] disabled:opacity-60"
+                    >
+                      <Copy className="h-3.5 w-3.5" />
+                      Copy link
+                    </button>
+                    <a
+                      href={shareInfo.path || `/s/${shareInfo.token}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-[#e4e6eb] bg-white px-2.5 py-1.5 text-[12px] font-semibold text-[#1877f2] hover:bg-white"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" />
+                      Mở
+                    </a>
+                    <button
+                      type="button"
+                      disabled={shareBusy}
+                      onClick={() => void handleRevokeShare()}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-white px-2.5 py-1.5 text-[12px] font-semibold text-red-600 hover:bg-red-50 disabled:opacity-60"
+                    >
+                      {shareBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Ban className="h-3.5 w-3.5" />}
+                      Vô hiệu hóa
+                    </button>
+                  </div>
+                </>
+              ) : shareInfo?.revoked_at ? (
+                <>
+                  <p className="text-[12px] text-red-600">Link đã bị vô hiệu hóa. Tạo link mới nếu cần gửi tiếp.</p>
+                  <button
+                    type="button"
+                    disabled={shareBusy}
+                    onClick={() => void handleRecreateShare()}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-[#1877f2] px-2.5 py-1.5 text-[12px] font-semibold text-white hover:bg-[#166fe5] disabled:opacity-60"
+                  >
+                    {shareBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Link2 className="h-3.5 w-3.5" />}
+                    Tạo link mới
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  disabled={shareBusy || (sharePreset === 'custom' && !shareCustomAt)}
+                  onClick={() => void handleCreateShare()}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-[#1877f2] px-2.5 py-1.5 text-[12px] font-semibold text-white hover:bg-[#166fe5] disabled:opacity-60"
+                >
+                  {shareBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Link2 className="h-3.5 w-3.5" />}
+                  Tạo & copy link
+                </button>
+              )}
+            </div>
+          ) : null}
         </div>
       )}
       {otherFiles.length > 0 && (
