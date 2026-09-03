@@ -298,6 +298,36 @@ Nghiệm thu theo vai trò thực tế, kiểm tra task gate, SLA, thông báo, 
 
 ## 8. Lịch sử quyết định
 
+### 2026-09-03 — Founder phê duyệt BOS-AI1 Draft Pre-Effect Handoff Proof Baseline V1
+
+- Authority: direct Founder Approval, không phải Codex tự công nhận baseline.
+- Technical Baseline: `a0fbabb9e210b4fdf2ad2e7fc2b8e9f89200d0d0`, tree `6d0e3895400599570aefffaa14430231c1dfa443`.
+- Final Evidence Record: `3f7092a3902a9050846ef497056793bf5d690b71`, tree `93b4021addb044d5e33097c4915a84ea4d6794f5`.
+  Evidence và closure tài liệu không thay phiên bản code chuẩn.
+- Trước ghi hồ sơ: xác minh Formal 884/884, Independent Test 223/223 và Independent
+  Regression 884/884 cùng gắn đúng technical commit/tree; 366 artifact hashes và
+  raw TAP khớp. P0/P1/P2=0/0/0; 8/10 file; 1/2 vòng sửa; cả năm worktree CLEAN.
+- Source/test tại evidence giống technical baseline; evidence delta là bốn tài liệu.
+  Giữ nguyên các baseline, failed candidate và toàn bộ bằng chứng lịch sử.
+- Công nhận BOS ALLOW chưa tạo draft; pre-effect audit thành công; Application
+  Service qua Domain; Domain DENY/STOP zero draft, ALLOW đúng một draft; duplicate
+  tuần tự/đồng thời/gọi lồng không tạo bản thứ hai; mọi kết quả correlation_id/audit.
+- Chỉ dữ liệu giả, Domain/Adapter giả và trạng thái/audit trong bộ nhớ. Không công
+  nhận database thật, canonical Business Rules thật, durable/tamper-proof audit,
+  tải thực tế, OpenClaw thật, Business AI Runtime hoặc Production readiness.
+- Cho phép MASTER_CONTEXT, PROJECT_DECISION_LOG, BOS_AI1_EVIDENCE_INDEX và
+  BOS_AI1_DRAFT_PRE_EFFECT_HANDOFF_BASELINE; đúng một documentation-only commit
+  có parent trực tiếp `3f7092a3902a9050846ef497056793bf5d690b71`. Chỉ fast-forward push tới
+  https://github.com/backen-pixel/Quanlycongviec.git trên `proof/bos-ai1-draft-pre-effect-v1`.
+- Không source/test/evidence edit, main update, force push, PR, merge, tag/release.
+- Sau đóng hồ sơ và xác minh GitHub: OC6 G0 dùng technical baseline DRAFT mới,
+  giữ nguyên REG4 `3def40122e4072f266c943bc4eb84d3164501339` và MG5
+  `c0ba1b282422c68bd96478d7585f2c2381198420`. G0 PASS tự tiếp tục Fast Track
+  đã duyệt (P01–P14, G0–G9, IR-OC6-1, tối đa 20 file/2 vòng sửa); G0 FAIL STOP
+  báo exact gap. Không xin duyệt lại toàn phase, hạ tiêu chí hoặc tự duyệt OC6 baseline.
+- Không OpenClaw/model/API/dữ liệu doanh nghiệp thật, Runtime, Production hoặc phase lớn mới.
+- Hồ sơ: [Draft Pre-Effect Handoff Baseline](./bos-ai1/BOS_AI1_DRAFT_PRE_EFFECT_HANDOFF_BASELINE.md).
+
 ### 2026-09-03 — Founder phê duyệt BOS-AI1 Pre-Effect Handoff Proof Baseline
 
 - Authority: thông điệp trực tiếp “FOUNDER APPROVES BOS-AI1 PRE-EFFECT HANDOFF PROOF BASELINE”.
