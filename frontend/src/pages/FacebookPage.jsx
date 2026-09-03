@@ -323,11 +323,20 @@ export default function FacebookPage() {
 // ═══════════════════════════════════════════════════════════════
 
 
-function PageSelector({ value, onChange, pages, pageStats }) {
+function PageSelector({ value, onChange, pages, pageStats, rangeStats, rangeLabel }) {
   const [isOpen, setIsOpen] = useState(false);
   const selectedPage = pages.find(p => p.page_id === value);
-  // Số người nhắn tin MỚI hôm nay cho riêng Page này (không lẫn hội thoại cũ được NV "chăm lại").
-  const count = (ps) => ps?.senders_today || 0;
+  // Số hội thoại MỚI đổ về trong khoảng ngày ĐANG CHỌN cho riêng Page này.
+  // Không gồm khách cũ nhắn lại (NV "chăm lại") và không dùng last_message_at.
+  // rangeStats = /api/facebook/page-new-senders (theo bộ lọc ngày); thiếu thì fallback
+  // pageStats.senders_today (hôm nay) để badge không bị trống lúc đang tải.
+  const count = (ps, rs) => (rs ? (rs.new_contacts || 0) : (ps?.senders_today || 0));
+  const badgeTitle = (ps, rs) => {
+    const label = rangeStats ? (rangeLabel || 'khoảng đang chọn') : 'hôm nay';
+    const back = rs ? rs.returning_contacts : ps?.returning_today;
+    return `Hội thoại mới ${label}`
+      + (back ? ` · ${back} khách cũ nhắn lại (không tính vào số này)` : '');
+  };
 
   return (
     <div className="relative">
@@ -344,12 +353,13 @@ function PageSelector({ value, onChange, pages, pageStats }) {
           </button>
           {pages.map(p => {
             const ps = pageStats?.find(s => s.page_id === p.page_id);
-            const cnt = count(ps);
+            const rs = rangeStats?.find(s => s.page_id === p.page_id);
+            const cnt = count(ps, rs);
             return (
               <button key={p.id} onClick={() => { onChange(p.page_id); setIsOpen(false); }}
                 className={`w-full flex items-center justify-between px-3 py-2 text-xs hover:bg-gray-50 ${value === p.page_id ? 'bg-blue-50' : ''}`}>
                 <span className="truncate">{p.page_name}</span>
-                {cnt > 0 && <span className="bg-red-500 text-white px-1.5 py-0.5 rounded-full text-[9px]" title="Số người nhắn tin mới hôm nay">{cnt}</span>}
+                {cnt > 0 && <span className="bg-red-500 text-white px-1.5 py-0.5 rounded-full text-[9px]" title={badgeTitle(ps, rs)}>{cnt}</span>}
               </button>
             );
           })}
@@ -615,6 +625,23 @@ function InboxTab({ pageStats, fbCompanyQs = '', companyId = null }) {
   }, [search, pageFilter, timeRange.activity_from, timeRange.activity_to, contactLimit, contactMeta.nextOffset, contacts, fbCompanyQs]);
 
   useEffect(() => { loadContacts(false); }, [loadContacts]);
+
+  // Số hội thoại mới theo từng Page, theo ĐÚNG khoảng ngày đang chọn (badge trong dropdown Page).
+  const [pageRangeStats, setPageRangeStats] = useState(null);
+  useEffect(() => {
+    const params = new URLSearchParams();
+    const from = timeRange.activity_from || vnYmd(new Date());
+    const to = timeRange.activity_to || from;
+    params.set('from', from);
+    params.set('to', to);
+    if (fbCompanyQs) new URLSearchParams(fbCompanyQs).forEach((v, k) => params.set(k, v));
+    let alive = true;
+    fetch(`${API}/api/facebook/page-new-senders?${params}`, { headers: hdr() })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (alive) setPageRangeStats(d?.pages || null); })
+      .catch(() => { if (alive) setPageRangeStats(null); });
+    return () => { alive = false; };
+  }, [timeRange.activity_from, timeRange.activity_to, fbCompanyQs]);
 
   useEffect(() => {
     const contactId = searchParams.get('contact');
@@ -979,6 +1006,8 @@ function InboxTab({ pageStats, fbCompanyQs = '', companyId = null }) {
               onChange={setPageFilter}
               pages={pages}
               pageStats={pageStats}
+              rangeStats={pageRangeStats}
+              rangeLabel={timeRange.label}
             />
           )}
         </div>
