@@ -488,3 +488,26 @@ test('D08 denied and stopped controls retain BOS component and safe correlation'
   assert.equal(f.proof.listSecondaryAudit().at(-1).component,'BOS_AI1');
   assert.equal(f.domain.callCount(),0); assert.equal(f.proof.listDrafts().length,0);
 });
+
+for (const hook of ['beforeAudit', 'afterAudit']) for (const event of ['ACTION_INTENT', 'BOS_DECISION']) {
+  test(`D04 re-evaluation cannot return an expired permit after ${hook} ${event}`, () => {
+    let armed = false;
+    const f = fixture({ [hook]: (x, e) => {
+      if (armed && e.event === event) x.change(d => { d.now = '2026-09-02T03:00:02.000Z'; });
+    } });
+    f.change(d => { d.task.expires_at = '2026-09-02T03:00:01.000Z'; });
+    const first = f.allow();
+    assert.equal(first.decision, 'ALLOW');
+    assert.equal(first.permit.expires_at, '2026-09-02T03:00:01.000Z');
+    f.change(d => { d.task.expires_at = FUTURE; });
+    armed = true;
+    const second = f.allow();
+    zero(f, second);
+    assert.equal(second.decision, 'DENY');
+    assert.equal(second.reason_code, 'PERMIT_EXPIRED');
+    assert.equal(Object.hasOwn(second, 'permit'), false);
+    assert.equal(f.domain.callCount(), 0);
+    assert.equal(f.proof.applicationCallCount(), 0);
+    zero(f, f.proof.applicationService.execute(first.permit, f.request));
+  });
+}

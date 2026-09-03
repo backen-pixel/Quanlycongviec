@@ -345,6 +345,7 @@ function createDraftPreEffectHandoffProof({ registry, authority, audit, domain, 
       // Auditing may change authority. Revalidate before issuing an ALLOW permit.
       const final = context(r);
       entry.contextDigest = hash(final);
+      if (entry.permit && Date.parse(entry.permit.expires_at) <= Date.parse(final.now)) deny('PERMIT_EXPIRED');
       if (!entry.permit) {
         const expires = Math.min(...[r.valid_until, final.task.expires_at, final.delegation.expires_at].map(Date.parse));
         const binding = Object.fromEntries(BINDINGS.map((k) => [k, r[k]]));
