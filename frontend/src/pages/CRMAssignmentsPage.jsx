@@ -2954,24 +2954,74 @@ function KanbanView({
   canManageTask, canMoveTask,
 }) {
   const noneList = itemsByColumn.get('__none__') || [];
+  const boardRef = useRef(null);
+  // Cột cuộn riêng (thay vì cả trang cuộn dọc) khi có cột chứa hàng nghìn thẻ: đo khoảng
+  // cách từ mép trên board tới đáy viewport, cấp cho mỗi cột làm chiều cao tối đa — phần
+  // dư trong cột tự cuộn, board không còn kéo cả trang dài ra theo cột nhiều việc nhất.
+  const [colMaxH, setColMaxH] = useState(520);
+  useEffect(() => {
+    // Trang cuộn bằng thẻ <main overflow-y-auto>, không phải window — top của board đổi
+    // theo vị trí cuộn CỦA main, nên phải nghe scroll của chính main đó (window resize/scroll
+    // không bắn khi chỉ cuộn bên trong nó) để tính lại chỗ trống còn cho cột mỗi khi board
+    // trôi lên gần đỉnh màn hình.
+    const findScrollParent = (node) => {
+      let n = node?.parentElement || null;
+      while (n && n !== document.body) {
+        const oy = getComputedStyle(n).overflowY;
+        if (oy === 'auto' || oy === 'scroll') return n;
+        n = n.parentElement;
+      }
+      return null;
+    };
+    let raf2 = 0;
+    const measure = () => {
+      raf2 = 0;
+      const el = boardRef.current;
+      if (!el) return;
+      const top = el.getBoundingClientRect().top;
+      const scrollParent = findScrollParent(el);
+      const bottom = scrollParent ? scrollParent.getBoundingClientRect().bottom : window.innerHeight;
+      setColMaxH(Math.max(320, Math.round(bottom - top - 16)));
+    };
+    const scheduleMeasure = () => {
+      if (!raf2) raf2 = requestAnimationFrame(measure);
+    };
+    measure();
+    const raf = requestAnimationFrame(measure);
+    const t = setTimeout(measure, 200);
+    window.addEventListener('resize', scheduleMeasure);
+    const scrollParent = findScrollParent(boardRef.current);
+    scrollParent?.addEventListener('scroll', scheduleMeasure, { passive: true });
+    const ro = new ResizeObserver(scheduleMeasure);
+    ro.observe(document.body);
+    return () => {
+      cancelAnimationFrame(raf);
+      cancelAnimationFrame(raf2);
+      clearTimeout(t);
+      window.removeEventListener('resize', scheduleMeasure);
+      scrollParent?.removeEventListener('scroll', scheduleMeasure);
+      ro.disconnect();
+    };
+  }, []);
   // items-start: mặc định flex-row kéo giãn mọi item bằng chiều cao item cao nhất
   // (align-items: stretch). Cột nào có hàng nghìn thẻ sẽ cực kỳ cao, và MỌI cột khác —
   // kể cả ô "Thêm cột mới" (nội dung căn giữa theo chiều dọc) — bị kéo giãn theo, đẩy
   // nội dung của chúng xuống lưng chừng khoảng trắng mênh mông đó. items-start cho mỗi
   // cột cao theo đúng nội dung của chính nó, nằm ngay sát trên cùng như dự kiến.
   return (
-    <div className="flex items-start gap-3 overflow-x-auto pb-3" style={{ minHeight: 400 }} data-tour="assign-kanban">
+    <div ref={boardRef} className="flex items-start gap-3 overflow-x-auto pb-3" style={{ minHeight: 400 }} data-tour="assign-kanban">
       {columns.map((col) => {
         const list = itemsByColumn.get(col.id) || [];
         return (
           <div
             key={col.id}
             className="w-72 shrink-0 rounded-xl border border-slate-200/90 bg-white flex flex-col shadow-sm"
+            style={{ maxHeight: colMaxH }}
             onDragOver={allowDrop}
             onDrop={onDropCol(col.id)}
           >
             <div
-              className="px-3 py-2 flex items-center gap-2 border-b border-slate-100 rounded-t-xl bg-slate-50/80"
+              className="px-3 py-2 flex items-center gap-2 border-b border-slate-100 rounded-t-xl bg-slate-50/80 shrink-0"
               style={{ borderTopColor: col.color, borderTopWidth: 3 }}
             >
               <GripVertical className="h-3.5 w-3.5 text-slate-300" />
@@ -2984,7 +3034,7 @@ function KanbanView({
               <button onClick={() => onEditColumn(col)} className="text-slate-400 hover:text-violet-600 cursor-pointer"><Pencil className="h-3.5 w-3.5" /></button>
               <button onClick={() => onDeleteColumn(col.id)} className="text-slate-400 hover:text-red-500 cursor-pointer"><Trash2 className="h-3.5 w-3.5" /></button>
             </div>
-            <div className="flex-1 p-2 space-y-2 min-h-[80px] bg-white">
+            <div className="flex-1 min-h-0 overflow-y-auto p-2 space-y-2 bg-white [scrollbar-width:thin]">
               {list.map((t) => (
                 <Card key={t.id} task={t} canManage={canManageTask(t)} canMove={canMoveTask(t)} onDragStart={onDragStart} onOpen={onOpenCard} onEdit={onEditCard} onDelete={onDeleteCard} onUpdate={onUpdateCard} />
               ))}
@@ -3000,11 +3050,16 @@ function KanbanView({
       })}
 
       {noneList.length > 0 && (
-        <div className="w-72 shrink-0 bg-slate-50 rounded-xl border border-dashed border-slate-300" onDragOver={allowDrop} onDrop={onDropCol('__none__')}>
-          <div className="px-3 py-2 border-b border-slate-200 text-sm font-semibold text-slate-500">
+        <div
+          className="w-72 shrink-0 bg-slate-50 rounded-xl border border-dashed border-slate-300 flex flex-col"
+          style={{ maxHeight: colMaxH }}
+          onDragOver={allowDrop}
+          onDrop={onDropCol('__none__')}
+        >
+          <div className="px-3 py-2 border-b border-slate-200 text-sm font-semibold text-slate-500 shrink-0">
             Chưa phân loại <span className="text-[11px] text-slate-400">{noneList.length}</span>
           </div>
-          <div className="p-2 space-y-2">
+          <div className="flex-1 min-h-0 overflow-y-auto p-2 space-y-2 [scrollbar-width:thin]">
             {noneList.map((t) => (
               <Card key={t.id} task={t} canManage={canManageTask(t)} canMove={canMoveTask(t)} onDragStart={onDragStart} onOpen={onOpenCard} onEdit={onEditCard} onDelete={onDeleteCard} onUpdate={onUpdateCard} />
             ))}
