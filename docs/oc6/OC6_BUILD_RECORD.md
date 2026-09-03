@@ -25,7 +25,7 @@ REG4 uses actual APPROVED-to-RETIRED mid-session plus a separately actual BLOCKE
 | Round0 | 66/68 | 1579/1579 | 1645/1647 | FAIL, retained |
 | Round1 | 68/68 | 1579/1579 | 1647/1647 | PASS |
 
-Round1 is conservatively counted as1/2 repairs even though it changed only two assertions/fixtures in the security test file. No source repair. S03 originally selected a nonexistent fixture session before calling the public interface, so the remaining mutation cases were not reached in round0. The corrected test constructs the valid fixture first and mutates each field before public submission. S27 originally expected a raw company_id field intentionally absent from native DRAFT audit; the corrected test verifies full intent/ticket digest and the native request digest/root remain unchanged after mutation, with sealed audit, one effect and no canary leakage. These corrections preserve the requirements. Original tests, failing TAP, input hashes, exact repair diff and rerun are retained externally for the final evidence package. One repair remains for later required gates.
+Round1 is conservatively counted as1/2 repairs even though it changed only two assertions/fixtures in the security test file. No source repair. S03 originally selected a nonexistent fixture session before calling the public interface, so the remaining mutation cases were not reached in round0. The corrected test constructs the valid fixture first and mutates each field before public submission. S27 originally expected a raw company_id field intentionally absent from native DRAFT audit; the corrected test verifies full intent/ticket digest and the native request digest/root remain unchanged after mutation, with sealed audit, one effect and no canary leakage. These corrections preserve the requirements. Original tests, failing TAP, input hashes, exact repair diff and rerun are retained externally for the final evidence package. At the end of round1, one repair remained for later required gates. Its use is recorded below.
 
 All38 functional cases F01–F38 cover P01–P14; all30 security groups S01–S30 cover bindings, lifecycle, MG5 drift/accounting, numeric/TTL/getter/Proxy input, pre/post-effect audit, failure/STOP, duplicate/reentry, isolation and native bridges. No skipped, cancelled or TODO tests. Both runs kept tested workspaces unchanged.
 
@@ -37,6 +37,24 @@ The1579 historical tests comprise READ387, DRAFT176, unchanged baseline383, Cont
 | Development round1 manifest | 9d08c505b0f9b049581a2f8948997e789e2296a07fbd6fe6fee54a9d8038704a |
 | Exact repair diff | 714f052747c20c590c4c40a27ada05f40af84abea7bf447ef4a280d95f5b340a |
 | Sealed G0 manifest | a03e3877e132bce4762b0da259834626e3d8beffbfb23f8cb65e47ba2d29847e |
+
+## Independent findings and final repair round2
+
+The first technical candidate 23c79a0b453d087d96ea0f897fbb821149385f3f / e05bb422df23ebe1f0cb068dcaa0daa088ea8b08 passed Formal1647/1647 and an independent full1647/1647 rerun, but failed fresh independent control-boundary verification:6/14 PASS,8 FAIL. Independent source review classified2 root causes as P1, with P0=0 and no additional P2. That candidate is not accepted and all original evidence remains retained.
+
+The first independent task ended with a service content-filter error after its regression rerun and before a completed review. A second fresh independent reviewer completed source/native/design review and independently authored the frozen14-case suite. The partial first dispatch is not counted as a completed IR verdict.
+
+Repair round2/2 fixes only OC6 integration guards: public work requires ACTIVE; the four private owner-admission checks alone may validate OPENING. Every guard now checks current global audit availability, including the last native callback before simulation, repository/effect and READ release. Named post-effect audit faults remain separate and preserve native charges, receipts and compensation. Two new Builder groups S31/S32 prevent these recurrences; the existing68 cases remain unchanged. No native baseline or dependency changed.
+
+Frozen Development round2: **1649/1649 PASS**, comprising70 OC6 cases (38functional+32security) and1579 unchanged historical tests. No skips/cancelled/TODO; source/test unchanged during the run. Independent14-suite is retained unchanged for exact-candidate rerun.
+
+Conservative repairs used: **2/2** (one test-fixture correction round, one source/targeted-regression round); remaining: **0**. Any required failure left after final Formal/IR requires STOP. Final Formal and independent verdict must bind the new exact technical commit/tree, not the superseded candidate.
+
+| Evidence | SHA-256 |
+|---|---|
+| Initial independent14-case manifest | 1842b4dc04d772088c57d419c0a581f4444d28f005da2020574ebc4a14691ae8 |
+| Exact round2 source/test repair diff | db86555dca34e82d369d6564d94b705478fc7c5594c93e6c6fff0cdfd1f0992d |
+| Final Development1649 manifest | 46702608ff8392d3971c1d52f27758627b18869ef742c782860e04e524a12ea3 |
 
 ## Next required gates
 

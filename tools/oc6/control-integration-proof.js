@@ -146,8 +146,13 @@ function createOC6Proof(options = {}) {
       r.approval_status !== 'APPROVED') fail('AGENT_INVALID');
     return r;
   }
-  function guard(s, e = null) {
-    if (!s || s.state === 'STOPPED' || s.stopped || control.globalStop || control.originStopped || control.delegationStatus !== 'ACTIVE') fail('AUTHORITY_STOPPED', 'STOPPED');
+  function guard(s, e = null, allowOpening = false) {
+    // Only the admission owner may validate OPENING. Public work and native
+    // callbacks require completed admission, including its SESSION_OPENED audit.
+    if (!s || (s.state !== 'ACTIVE' && !(allowOpening && s.state === 'OPENING')) || s.stopped || control.globalStop || control.originStopped || control.delegationStatus !== 'ACTIVE') fail('AUTHORITY_STOPPED', 'STOPPED');
+    // Recheck current availability at every callback-capable boundary. Named
+    // failure points stay in emit(), preserving genuine post-effect failures.
+    if (!control.auditAvailable || failures.has('*')) fail('AUDIT_UNAVAILABLE', 'STOPPED');
     const now = Date.parse(control.now);
     if (!iso(control.now) || now < control.observedTime) fail('CLOCK_INVALID', 'STOPPED');
     control.observedTime = now;
@@ -207,10 +212,10 @@ function createOC6Proof(options = {}) {
       s = { request: freeze(r), state: 'OPENING', stopped: false, config: { ...config }, model: null, modelState: 'NONE', gateway: null, registryBridges: new Set() };
       sessions.set(r.session_id, s);
       own = true;
-      hook('session.beforeVerify', s); guard(s);
-      emit('ROUTER_PROPOSED', s); guard(s);
-      emit('REG4_VERIFIED', s, null, { package_sha256: packageSha }); guard(s);
-      emit('SESSION_OPENED', s); guard(s); s.state = 'ACTIVE';
+      hook('session.beforeVerify', s); guard(s, null, true);
+      emit('ROUTER_PROPOSED', s); guard(s, null, true);
+      emit('REG4_VERIFIED', s, null, { package_sha256: packageSha }); guard(s, null, true);
+      emit('SESSION_OPENED', s); guard(s, null, true); s.state = 'ACTIVE';
       return result(s, null, 'ACTIVE', 'OK', {}, false);
     } catch (err) { if (own && s && s.state === 'OPENING') s.state = 'STOPPED'; return rejected(err, s); }
   }

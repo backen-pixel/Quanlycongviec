@@ -836,3 +836,155 @@ test('OC6-S30 budget drift after advisory is rechecked before BOS, approval and 
     assert.equal(costIsNative(f, { loweredCap: true }).charged, 2);
   }
 });
+
+test('OC6-S31 unfinished admission cannot dispatch work or poison a later valid admission', () => {
+  for (const failAdmission of [true, false]) {
+    for (const kind of ['READ', 'DRAFT', 'PUBLISH']) {
+      const f = fixture();
+      const request = f.h.sessionRequest();
+      const attempted = {};
+      let observedState;
+      if (failAdmission) f.h.setAuditFailure('SESSION_OPENED');
+      f.h.setHook('session.beforeVerify', () => {
+        observedState = f.o.inspect().sessions.find((s) => s.session_id === request.session_id).status;
+        attempted.model = f.o.runModel(request.session_id);
+        if (attempted.model.status === 'ADVISORY_ONLY') {
+          attempted.control = f.o.submitIntent(f.h.intent(kind));
+          if (attempted.control.status === 'PENDING_APPROVAL') {
+            attempted.control = f.o.receiveApproval(f.h.approval(attempted.control.approval_request_id));
+          }
+          if (attempted.control.status === 'PERMITTED') attempted.execution = f.o.execute(attempted.control.ticket);
+        }
+      });
+      const admission = f.o.openSession(request);
+      const label = `${kind}/${failAdmission ? 'failed' : 'healthy'}-admission`;
+      assert.equal(observedState, 'OPENING', label);
+      denied(attempted.model, label);
+      assert.equal(attempted.control, undefined, label);
+      assert.equal(attempted.execution, undefined, label);
+      const beforeActiveWork = f.o.inspect();
+      assert.equal(beforeActiveWork.counters.model_simulations, 0, label);
+      assert.equal(beforeActiveWork.counters.model_native_attempts, 0, label);
+      assert.equal(beforeActiveWork.counters.bos_evaluations, 0, label);
+      noApplication(f, label);
+      if (failAdmission) {
+        denied(admission, label);
+        denied(f.o.runModel(request.session_id), `${label}/retry`);
+        noApplication(f, label);
+      } else {
+        assert.equal(admission.status, 'ACTIVE', label);
+        assert.equal(f.o.runModel(request.session_id).status, 'ADVISORY_ONLY', label);
+        let control = f.o.submitIntent(f.h.intent(kind));
+        if (kind === 'PUBLISH') {
+          assert.equal(control.status, 'PENDING_APPROVAL', label);
+          control = f.o.receiveApproval(f.h.approval(control.approval_request_id));
+        }
+        assert.equal(control.status, 'PERMITTED', label);
+        assert.equal(f.o.execute(control.ticket).status, 'EXECUTED', label);
+        const completed = f.o.inspect().counters;
+        assert.equal(completed.application_calls, 1, label);
+        assert.equal(completed.data_releases, kind === 'READ' ? 1 : 0, label);
+        assert.equal(completed.effects, kind === 'READ' ? 0 : 1, label);
+      }
+    }
+  }
+});
+
+test('OC6-S32 known audit loss gates the next simulation, read, disclosure or effect', () => {
+  const model = fixture();
+  active(model);
+  let modelHookReached = false;
+  model.h.setHook('model.before', () => {
+    modelHookReached = true;
+    model.h.mutate('audit.available', false);
+  });
+  denied(model.o.runModel('session-1'), 'audit loss before simulation');
+  assert.equal(modelHookReached, true);
+  assert.equal(model.o.inspect().counters.model_simulations, 0);
+  assert.deepEqual(costIsNative(model), { attempts: 1, charged: 2 }, 'native charge survives suppressed simulation');
+  noApplication(model);
+
+  for (const boundary of ['repository', 'disclosure']) {
+    const f = fixture();
+    const { control } = permitted(f, 'READ');
+    let auditLossObserved = false;
+    if (boundary === 'repository') {
+      f.h.setHook('read.before', () => {
+        auditLossObserved = true;
+        f.h.mutate('audit.available', false);
+      });
+    } else {
+      f.h.setHook('bos.audit.after', (metadata) => {
+        if (metadata.event === 'BOS_RESULT') {
+          auditLossObserved = true;
+          f.h.mutate('audit.available', false);
+        }
+      });
+    }
+    const terminal = f.o.execute(control.ticket);
+    assert.equal(auditLossObserved, true, boundary);
+    denied(terminal, boundary);
+    assert.equal(terminal.data_released, false, boundary);
+    const snapshot = f.o.inspect();
+    assert.equal(snapshot.counters.repository_reads, boundary === 'repository' ? 0 : 1, boundary);
+    assert.equal(snapshot.counters.data_releases, 0, boundary);
+    assert.equal(snapshot.counters.effects, 0, boundary);
+    if (boundary === 'disclosure') {
+      assert.ok(snapshot.native.bos[0].records.some((r) => r.event === 'RESULT' && r.status === 'PREPARED'),
+        'native prepared audit exists before the final release guard');
+    }
+    const repeated = f.o.execute(control.ticket);
+    denied(repeated, `${boundary}/repeat`);
+    assert.equal(repeated.duplicate, true, boundary);
+    assert.equal(f.o.inspect().counters.repository_reads, snapshot.counters.repository_reads, boundary);
+    assert.equal(f.o.inspect().counters.data_releases, 0, boundary);
+    sealedChain(f.o.inspect().native.bos[0].records);
+  }
+
+  for (const kind of ['DRAFT', 'PUBLISH']) {
+    for (const boundary of ['final-registry', 'after-effect']) {
+      const f = fixture();
+      const { control } = permitted(f, kind);
+      let domainAuditComplete = false;
+      let auditLossObserved = false;
+      if (boundary === 'final-registry') {
+        f.h.setHook('bos.audit.after', (metadata) => {
+          if (metadata.event === 'BOS_DOMAIN_DECISION') domainAuditComplete = true;
+        });
+        f.h.setHook('registry.read', () => {
+          if (domainAuditComplete) {
+            auditLossObserved = true;
+            f.h.mutate('audit.available', false);
+          }
+        });
+      } else {
+        f.h.setHook('effect.after', () => {
+          auditLossObserved = true;
+          f.h.mutate('audit.available', false);
+        });
+      }
+      const terminal = f.o.execute(control.ticket);
+      const label = `${kind}/${boundary}`;
+      assert.equal(auditLossObserved, true, label);
+      const snapshot = f.o.inspect();
+      assert.equal(snapshot.counters.repository_reads, 0, label);
+      assert.equal(snapshot.counters.data_releases, 0, label);
+      if (boundary === 'final-registry') {
+        assert.equal(domainAuditComplete, true, label);
+        denied(terminal, label);
+        assert.equal(snapshot.counters.effects, 0, label);
+      } else {
+        assert.equal(terminal.status, 'COMPENSATION_REQUIRED', label);
+        assert.ok(terminal.compensation_reference, label);
+        assert.equal(snapshot.counters.effects, 1, label);
+        assert.equal(snapshot.native.bos[0].receipts.length, 1, label);
+      }
+      const repeated = f.o.execute(control.ticket);
+      assert.equal(repeated.status, terminal.status, label);
+      assert.equal(repeated.duplicate, true, label);
+      assert.equal(f.o.inspect().counters.effects, snapshot.counters.effects, label);
+      assert.equal(f.o.inspect().counters.application_calls, snapshot.counters.application_calls, label);
+      costIsNative(f);
+    }
+  }
+});
