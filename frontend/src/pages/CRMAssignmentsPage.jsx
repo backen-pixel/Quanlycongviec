@@ -10,7 +10,7 @@ import {
   Pencil, GripVertical, Flag, MoreVertical, MessageSquare, Send, Paperclip,
   FileText as FileIcon, Download, Upload, Repeat2, CalendarClock, ChevronDown,
   ChevronUp, ClipboardList, ChevronRight, Lock, ArrowLeft, RefreshCw, Filter, RotateCcw,
-  Eye, BookOpen,
+  Eye, BookOpen, TrendingUp, TrendingDown, Minus, SlidersHorizontal, LayoutList,
 } from 'lucide-react';
 import ViewModeDropdownMenu from '../components/ViewModeDropdownMenu';
 import AnchoredDropdownMenu from '../components/AnchoredDropdownMenu';
@@ -416,27 +416,248 @@ function AssignViewModeSwitcher({ view, onChange, theme }) {
 }
 
 function AssignKpiCard({
-  icon: Icon, label, value, iconBg, iconColor, borderCls, labelCls, onClick, compact = false,
+  icon: Icon, label, value, iconBg, iconColor, borderCls, labelCls, onClick, compact = false, sub = null,
 }) {
+  // compact: dải KPI nhỏ trong hộp thư cá nhân (InboxStatsBar) — giữ nguyên kiểu cũ.
+  if (compact) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={!onClick}
+        className={`group relative h-full min-w-0 flex flex-col items-center justify-center text-center gap-1 px-2 py-2 rounded-lg border bg-white shadow-sm outline-none transition-all duration-200 ${borderCls} ${
+          onClick ? 'cursor-pointer hover:shadow-md' : 'cursor-default'
+        }`}
+      >
+        <div className={`shrink-0 rounded-md p-1 ${iconBg} ${iconColor}`}>
+          <Icon className="h-3.5 w-3.5" />
+        </div>
+        <div className="min-w-0 w-full flex flex-col items-center gap-0.5">
+          <p className={`font-semibold uppercase tracking-wide leading-tight max-w-full truncate px-0.5 text-[9px] ${labelCls}`}>{label}</p>
+          <p className="text-sm font-bold tabular-nums leading-snug text-slate-900">{value}</p>
+        </div>
+      </button>
+    );
+  }
+
+  // Thẻ KPI chính: icon khối màu bên trái, nhãn nhỏ + số lớn bên phải, dòng phụ ở dưới.
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={!onClick}
-      className={`group relative h-full min-w-0 flex flex-col items-center justify-center text-center rounded-lg border bg-white shadow-sm outline-none transition-all duration-200 ${borderCls} ${
-        onClick ? 'cursor-pointer hover:shadow-md' : 'cursor-default'
-      } ${compact ? 'gap-1 px-2 py-2' : 'gap-1.5 px-2 py-2.5'}`}
+      className={`group relative h-full min-w-0 flex flex-col items-start gap-2 rounded-2xl border bg-white px-3 py-3 shadow-sm outline-none transition-all duration-200 ${borderCls} ${
+        onClick ? 'cursor-pointer hover:shadow-md hover:-translate-y-px' : 'cursor-default'
+      }`}
     >
-      <div className={`shrink-0 rounded-md p-1 ${iconBg} ${iconColor}`}>
-        <Icon className="h-3.5 w-3.5" />
+      <div className="flex w-full min-w-0 items-center gap-2.5">
+        <span className={`shrink-0 grid h-10 w-10 place-items-center rounded-xl ${iconBg} ${iconColor}`}>
+          <Icon className="h-5 w-5" />
+        </span>
+        <span className="min-w-0 flex-1 text-left">
+          <span className={`block truncate text-[10px] font-semibold uppercase tracking-wide ${labelCls}`}>{label}</span>
+          <span className="block text-2xl font-bold leading-tight tabular-nums text-slate-900">{value}</span>
+        </span>
       </div>
-      <div className="min-w-0 w-full flex flex-col items-center gap-0.5">
-        <p className={`font-semibold uppercase tracking-wide leading-tight max-w-full truncate px-0.5 text-[9px] ${labelCls}`}>
-          {label}
-        </p>
-        <p className="text-sm font-bold tabular-nums leading-snug text-slate-900">{value}</p>
-      </div>
+      {sub ? (
+        <span className={`flex w-full items-center gap-1 text-left text-[10px] leading-tight ${sub.tone || 'text-slate-400'}`}>
+          {sub.icon ? <sub.icon className="h-3 w-3 shrink-0" /> : null}
+          <span className="min-w-0 truncate">{sub.text}</span>
+        </span>
+      ) : null}
     </button>
+  );
+}
+
+/**
+ * Số liệu cho dòng phụ của thẻ KPI — CHỈ tính từ dữ liệu có thật.
+ * `created_at` và `completed_at` có trong payload nên so được tuần này với tuần trước cho
+ * «Tổng» và «Đã làm». Còn «Chưa làm»/«Đang làm»/«Quá hạn» là trạng thái tại thời điểm hiện
+ * tại, không có lịch sử để đối chiếu — nên hiển thị tỷ trọng trên tổng thay vì bịa xu hướng.
+ */
+function computeAssignKpiSubs(tasks, stats) {
+  const list = Array.isArray(tasks) ? tasks : [];
+  const now = Date.now();
+  const WEEK = 7 * 24 * 60 * 60 * 1000;
+  const countBetween = (field, from, to) => list.filter((t) => {
+    const v = t?.[field];
+    if (!v) return false;
+    const ms = new Date(v).getTime();
+    return Number.isFinite(ms) && ms >= from && ms < to;
+  }).length;
+
+  const trend = (field) => {
+    const thisWeek = countBetween(field, now - WEEK, now + 1);
+    const prevWeek = countBetween(field, now - 2 * WEEK, now - WEEK);
+    if (!thisWeek && !prevWeek) return null;
+    if (!prevWeek) return { text: `+${thisWeek} trong 7 ngày qua`, tone: 'text-emerald-600', icon: TrendingUp };
+    const pct = Math.round(((thisWeek - prevWeek) / prevWeek) * 100);
+    if (pct === 0) return { text: 'không đổi so với tuần trước', tone: 'text-slate-400', icon: Minus };
+    return pct > 0
+      ? { text: `${pct}% so với tuần trước`, tone: 'text-emerald-600', icon: TrendingUp }
+      : { text: `${Math.abs(pct)}% so với tuần trước`, tone: 'text-rose-600', icon: TrendingDown };
+  };
+
+  const share = (n) => (stats.total ? { text: `${Math.round((n / stats.total) * 100)}% tổng số`, tone: 'text-slate-400' } : null);
+
+  return {
+    total: trend('created_at'),
+    completed: trend('completed_at'),
+    pending: share(stats.pending),
+    inProgress: share(stats.inProgress),
+    overdue: share(stats.overdue),
+  };
+}
+
+/** Màu thanh tiến độ cho bảng «Thống kê theo nhân viên» — xoay vòng theo thứ hạng. */
+const ASSIGN_STAFF_BAR_COLORS = ['bg-violet-500', 'bg-sky-500', 'bg-emerald-500', 'bg-amber-500', 'bg-rose-500'];
+
+/** Viết tắt tên để làm avatar chữ khi người dùng chưa có ảnh. */
+function assignInitials(name) {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return '??';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[parts.length - 2][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+/**
+ * Cột trái: bộ lọc nhanh + thống kê khối lượng theo nhân viên.
+ * Mọi ô lọc đều nối vào state lọc CÓ THẬT của trang (nhân viên / phòng ban / trạng thái /
+ * ưu tiên) — không dựng ô trang trí không chạy. Thống kê đếm trực tiếp từ danh sách việc
+ * đang hiển thị nên luôn khớp với board bên phải.
+ */
+function AssignQuickFilterPanel({
+  tasks, users, departments, theme,
+  filterAssignee, setFilterAssignee,
+  filterDepartmentId, setFilterDepartmentId,
+  filterStatus, setFilterStatus,
+  filterPriority, setFilterPriority,
+  onSeeAllStaff,
+}) {
+  // Trên mobile panel này nằm TRÊN bảng Kanban; để mở sẵn (cao ~455px) sẽ đẩy bảng xuống
+  // quá sâu. Mặc định thu gọn ở màn hẹp, giống cách dải KPI đang làm.
+  const [open, setOpen] = useState(defaultKpiPanelOpen);
+  const [showAllStaff, setShowAllStaff] = useState(false);
+
+  const staffStats = useMemo(() => {
+    const list = Array.isArray(tasks) ? tasks : [];
+    const byId = new Map();
+    for (const t of list) {
+      // `assignees` là danh sách nhiều người; rơi về `assignee` khi chỉ có một.
+      const people = Array.isArray(t?.assignees) && t.assignees.length
+        ? t.assignees
+        : (t?.assignee ? [t.assignee] : []);
+      for (const p of people) {
+        const id = String(p?.id || p?.user_id || '');
+        if (!id) continue;
+        const name = p?.full_name || p?.name || 'Không rõ';
+        const cur = byId.get(id) || { id, name, count: 0 };
+        cur.count += 1;
+        byId.set(id, cur);
+      }
+    }
+    const rows = [...byId.values()].sort((a, b) => b.count - a.count);
+    const max = rows[0]?.count || 0;
+    const total = list.length || 0;
+    return rows.map((r, i) => ({
+      ...r,
+      pct: total ? Math.round((r.count / total) * 100) : 0,
+      barPct: max ? Math.round((r.count / max) * 100) : 0,
+      color: ASSIGN_STAFF_BAR_COLORS[i % ASSIGN_STAFF_BAR_COLORS.length],
+    }));
+  }, [tasks]);
+
+  const shownStaff = showAllStaff ? staffStats : staffStats.slice(0, 4);
+
+  const selectCls = 'h-7 min-w-0 max-w-[9rem] shrink-0 rounded-md border-0 bg-transparent px-1 text-right text-[11px] font-medium text-slate-700 outline-none cursor-pointer focus:ring-0';
+  const rows = [
+    {
+      key: 'assignee', icon: UserIcon, label: 'Chọn nhân viên',
+      value: filterAssignee, onChange: setFilterAssignee,
+      options: [{ v: '', t: 'Tất cả' }, ...users.map((u) => ({ v: String(u.id), t: u.full_name || u.email }))],
+    },
+    {
+      key: 'dept', icon: UsersIcon, label: 'Chọn nhóm',
+      value: filterDepartmentId, onChange: setFilterDepartmentId,
+      options: [{ v: '', t: 'Tất cả' }, ...departments.map((d) => ({ v: String(d.id), t: d.name }))],
+    },
+    {
+      key: 'status', icon: CheckCircle2, label: 'Chọn trạng thái',
+      value: filterStatus, onChange: setFilterStatus,
+      options: [{ v: '', t: 'Tất cả' }, ...STATUS_OPTIONS.map((s) => ({ v: s.value, t: s.label }))],
+    },
+    {
+      key: 'priority', icon: Flag, label: 'Chọn mức ưu tiên',
+      value: filterPriority, onChange: setFilterPriority,
+      options: [{ v: '', t: 'Tất cả' }, ...PRIORITY_OPTIONS.map((p) => ({ v: p.value, t: p.label }))],
+    },
+  ];
+
+  return (
+    <aside className="w-full lg:w-60 lg:shrink-0 rounded-2xl border border-slate-200/90 bg-white shadow-sm overflow-hidden self-start">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-2 px-3 py-2.5 text-left cursor-pointer hover:bg-slate-50/80"
+      >
+        <SlidersHorizontal className={`h-4 w-4 shrink-0 ${theme.activeText}`} />
+        <span className="flex-1 text-sm font-semibold text-slate-800">Bộ lọc nhanh</span>
+        {open ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}
+      </button>
+
+      {open && (
+        <>
+          <div className="px-2 pb-2 space-y-0.5">
+            {rows.map((r) => (
+              <div key={r.key} className="flex items-center gap-2 rounded-lg px-1.5 py-1.5 hover:bg-slate-50">
+                <r.icon className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                <span className="flex-1 min-w-0 truncate text-[11px] text-slate-600">{r.label}</span>
+                <select value={r.value} onChange={(e) => r.onChange(e.target.value)} className={selectCls}>
+                  {r.options.map((o) => <option key={o.v || 'all'} value={o.v}>{o.t}</option>)}
+                </select>
+              </div>
+            ))}
+          </div>
+
+          <div className="border-t border-slate-100 px-3 py-2.5">
+            <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+              Thống kê theo nhân viên
+            </p>
+            {!shownStaff.length ? (
+              <p className="py-2 text-[11px] text-slate-400">Chưa có việc nào được giao.</p>
+            ) : (
+              <ul className="space-y-2.5">
+                {shownStaff.map((s) => (
+                  <li key={s.id}>
+                    <div className="flex items-center gap-2">
+                      <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-slate-100 text-[9px] font-bold text-slate-600">
+                        {assignInitials(s.name)}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate text-[11px] text-slate-700" title={s.name}>{s.name}</span>
+                      <span className="shrink-0 text-[11px] font-semibold tabular-nums text-slate-800">{s.count}</span>
+                      <span className="w-8 shrink-0 text-right text-[10px] tabular-nums text-slate-400">{s.pct}%</span>
+                    </div>
+                    <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+                      <div className={`h-full rounded-full ${s.color}`} style={{ width: `${s.barPct}%` }} />
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {staffStats.length > 4 && (
+              <button
+                type="button"
+                onClick={() => { if (showAllStaff) setShowAllStaff(false); else if (onSeeAllStaff) onSeeAllStaff(); else setShowAllStaff(true); }}
+                className={`mt-2.5 inline-flex w-full items-center justify-center gap-1 text-[11px] font-medium cursor-pointer ${theme.activeText} hover:underline`}
+              >
+                {showAllStaff ? 'Thu gọn' : `Xem tất cả (${staffStats.length})`}
+                <ChevronRight className="h-3 w-3" />
+              </button>
+            )}
+          </div>
+        </>
+      )}
+    </aside>
   );
 }
 
@@ -1509,6 +1730,10 @@ export default function CRMAssignmentsPage({
     return computeTaskStats(items);
   }, [serverStats, items]);
 
+  // Dòng phụ dưới mỗi thẻ KPI — tính từ chính danh sách việc đang tải (created_at /
+  // completed_at), không có số liệu nào được bịa ra.
+  const kpiSubs = useMemo(() => computeAssignKpiSubs(items, stats), [items, stats]);
+
   const itemsByStatus = useMemo(() => groupTasksByStatus(items), [items]);
 
   // ─── Group items by column (kanban) ──
@@ -2162,13 +2387,13 @@ export default function CRMAssignmentsPage({
               </span>
             </button>
             {kpiPanelOpen && (
-              <div className={`border-b ${theme.kpiToggle} bg-white/40 px-2 sm:px-3 pb-2 pt-2 grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-2`}>
+              <div className={`border-b ${theme.kpiToggle} bg-white/40 px-2 sm:px-3 pb-2.5 pt-2.5 grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-2.5`}>
                 {[
-                  { label: 'Tổng', value: stats.total, icon: ListIcon, iconBg: 'bg-slate-100', iconColor: 'text-slate-600', viewId: null },
-                  { label: 'Chưa làm', value: stats.pending, icon: Circle, iconBg: 'bg-slate-100', iconColor: 'text-slate-600', viewId: 'status' },
-                  { label: 'Đang làm', value: stats.inProgress, icon: Clock, iconBg: 'bg-blue-100', iconColor: 'text-blue-700', viewId: 'status' },
-                  { label: 'Đã làm', value: stats.completed, icon: CheckCircle2, iconBg: 'bg-emerald-100', iconColor: 'text-emerald-700', viewId: 'status' },
-                  { label: 'Quá hạn', value: stats.overdue, icon: AlertTriangle, iconBg: 'bg-red-100', iconColor: 'text-red-700', viewId: 'deadline' },
+                  { label: 'Tổng', value: stats.total, icon: ListIcon, iconBg: 'bg-violet-100', iconColor: 'text-violet-700', viewId: null, sub: kpiSubs.total },
+                  { label: 'Chưa làm', value: stats.pending, icon: Circle, iconBg: 'bg-slate-100', iconColor: 'text-slate-600', viewId: 'status', sub: kpiSubs.pending },
+                  { label: 'Đang làm', value: stats.inProgress, icon: Clock, iconBg: 'bg-blue-100', iconColor: 'text-blue-700', viewId: 'status', sub: kpiSubs.inProgress },
+                  { label: 'Đã làm', value: stats.completed, icon: CheckCircle2, iconBg: 'bg-emerald-100', iconColor: 'text-emerald-700', viewId: 'status', sub: kpiSubs.completed },
+                  { label: 'Quá hạn', value: stats.overdue, icon: AlertTriangle, iconBg: 'bg-red-100', iconColor: 'text-red-700', viewId: 'deadline', sub: kpiSubs.overdue },
                 ].map((kpi) => (
                   <AssignKpiCard
                     key={kpi.label}
@@ -2180,7 +2405,7 @@ export default function CRMAssignmentsPage({
                     borderCls={theme.kpiBorder}
                     labelCls={theme.kpiLabel}
                     onClick={kpi.viewId ? () => setView(kpi.viewId) : undefined}
-                    compact
+                    sub={kpi.sub}
                   />
                 ))}
               </div>
@@ -2359,6 +2584,22 @@ export default function CRMAssignmentsPage({
       <>
       {/* VIEWS */}
       {view === 'kanban' && (
+      <div className="flex flex-col lg:flex-row gap-3 items-start">
+        <AssignQuickFilterPanel
+          tasks={items}
+          users={users}
+          departments={departments}
+          theme={theme}
+          filterAssignee={filterAssignee}
+          setFilterAssignee={setFilterAssignee}
+          filterDepartmentId={filterDepartmentId}
+          setFilterDepartmentId={setFilterDepartmentId}
+          filterStatus={filterStatus}
+          setFilterStatus={setFilterStatus}
+          filterPriority={filterPriority}
+          setFilterPriority={setFilterPriority}
+        />
+        <div className="min-w-0 flex-1 w-full">
         <KanbanView
           columns={columns}
           itemsByColumn={itemsByColumn}
@@ -2386,6 +2627,8 @@ export default function CRMAssignmentsPage({
           onDropCol={onDropCol}
           allowDrop={allowDrop}
         />
+        </div>
+      </div>
       )}
 
       {view === 'status' && (
@@ -2569,12 +2812,24 @@ function KanbanView({
         </div>
       )}
 
-      <button
-        onClick={onAddColumn}
-        className="w-72 shrink-0 rounded-xl border-2 border-dashed border-slate-300 hover:border-violet-400 hover:bg-violet-50/50 text-sm text-slate-500 hover:text-violet-700 flex items-center justify-center gap-2 cursor-pointer bg-white/60"
+      <div
+        className="group/newcol w-72 shrink-0 self-stretch rounded-xl border-2 border-dashed border-slate-300 bg-white/60 hover:border-violet-400 hover:bg-violet-50/40 transition-colors flex flex-col items-center justify-center gap-2 px-4 py-6 text-center"
       >
-        <Plus className="h-4 w-4" />Thêm cột
-      </button>
+        <span className="grid h-12 w-12 place-items-center rounded-2xl bg-slate-100 text-slate-400 group-hover/newcol:bg-violet-100 group-hover/newcol:text-violet-600 transition-colors">
+          <LayoutList className="h-6 w-6" />
+        </span>
+        <span className="text-sm font-semibold text-slate-600">Thêm cột mới</span>
+        <span className="text-[11px] leading-snug text-slate-400">
+          Kéo thả thẻ để đổi trạng thái công việc
+        </span>
+        <button
+          type="button"
+          onClick={onAddColumn}
+          className="mt-1 inline-flex items-center gap-1.5 rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-violet-700 cursor-pointer"
+        >
+          <Plus className="h-3.5 w-3.5" />Thêm cột
+        </button>
+      </div>
     </div>
   );
 }
