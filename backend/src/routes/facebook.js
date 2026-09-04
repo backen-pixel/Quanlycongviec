@@ -3479,15 +3479,14 @@ async function handleMessagingInner(pageId, event, io, partnerPsid) {
       console.log(`[FB] ⏭️  In-memory lock: duplicate mid ${msg.mid}`);
       return;
     }
-    // Layer 2: DB check
-    if (msg.mid) {
-      const { data: existing } = await supabase.from('facebook_messages')
-        .select('id').eq('fb_message_id', msg.mid).limit(1);
-      if (existing?.length) {
-        console.log(`[FB] ⏭️  Skip duplicate message: ${msg.mid}`);
-        return;
-      }
-    }
+    // Layer 2 (DB check) ĐÃ BỎ — trước đây là câu SELECT id FROM facebook_messages
+    // WHERE fb_message_id = ? LIMIT 1, bị gọi 11.518.907 lần (pg_stat_statements).
+    // Nó từng cần thiết vì upsert bên dưới LUÔN lỗi 42P10: unique index cũ trên
+    // fb_message_id là partial index (WHERE fb_message_id IS NOT NULL) nên
+    // ON CONFLICT("fb_message_id") không suy luận ra được. Sau khi database/581 đổi
+    // thành UNIQUE constraint đầy đủ, upsert ignoreDuplicates đã chặn trùng ngay trong
+    // 1 vòng đi–về và nguyên tử hơn: trùng thì không trả dòng nào → nhánh `!savedMsg`
+    // bên dưới xử lý y hệt. Giữ Layer 1 (in-memory lock) làm chốt rẻ cho race cùng tiến trình.
 
     console.log(`[FB] 💬 Message type: ${messageType}, content: ${content?.substring(0, 50)}${content?.length > 50 ? '...' : ''}`);
     console.log(`[FB] 📎 Attachment: ${attachmentUrl || 'None'}`);
