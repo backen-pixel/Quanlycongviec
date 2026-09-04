@@ -1234,6 +1234,11 @@ server.listen(config.port, () => {
   // Cron AI User Memory — ~02:30, học thói quen từ user_activity_log → ai_chat_bot_user_facts
   try { require('./jobs/aiUserMemoryNightly').start(); } catch (e) { console.warn('[ai-memory-cron] Failed to start:', e.message); }
 
+  // Cron dọn thông báo: ~03:10, ẩn thông báo chưa đọc cũ hơn 60 ngày khỏi badge (không xóa dữ liệu)
+  // — disable: NOTIFICATION_RETENTION_DISABLED=1, đổi số ngày: NOTIFICATION_RETENTION_DAYS
+  try { require('./jobs/notificationRetentionCron').start(); } catch (e) { console.warn('[notification-retention] Failed to start:', e.message); }
+  try { require('./jobs/logRetentionCron').start(); } catch (e) { console.warn('[log-retention] Failed to start:', e.message); }
+
   // Cron CSKH: nhắc chăm lại lead lúc 8h30 & 13h30 VN (disable bằng CSKH_CRON_DISABLED=1)
   try { require('./jobs/cskhReminder').start(io); } catch (e) { console.warn('[cskh-cron] Failed to start:', e.message); }
 

@@ -31,7 +31,7 @@ export function useAppHeartbeat({ enabled, user, onUpdate }) {
   enabledRef.current = enabled;
   onUpdateRef.current = onUpdate;
 
-  const tick = useCallback(async ({ fresh = false } = {}) => {
+  const tick = useCallback(async ({ fresh = false, badges = true } = {}) => {
     if (!enabledRef.current || !user) return;
     const expectedUserId = user?.id || user?.userId;
     try {
@@ -39,6 +39,7 @@ export function useAppHeartbeat({ enabled, user, onUpdate }) {
       const socialCid = buildSocialCompanyParam(user);
       if (socialCid) params.social_company_id = socialCid;
       if (fresh) params.fresh = '1';
+      if (!badges) params.badges = '0';
 
       const { data } = await api.get('/heartbeat', { params });
       if (!enabledRef.current) return;
@@ -78,7 +79,17 @@ export function useAppHeartbeat({ enabled, user, onUpdate }) {
     setAppHeartbeatActive(true);
 
     void tick();
-    const intervalId = setInterval(() => void tick(), HEARTBEAT_MS);
+    // Tab đang ẩn: VẪN ping để giữ trạng thái "đang online" (ngưỡng phía server là 90–120s),
+    // nhưng bỏ phần tính badge — không ai nhìn badge khi tab ẩn, mà nó chính là phần tốn kém:
+    // mỗi nhịp chạy ~6 câu tổng hợp (đếm việc, thông báo, giao việc, mạng nội bộ...).
+    // Đo trên pg_stat_statements: riêng heartbeat chiếm khoảng 48% tổng thời gian DB.
+    // Backend đã hỗ trợ sẵn ?badges=0 (routes/heartbeat.js) — trước giờ chưa ai dùng.
+    // Khi tab hiện lại, listener visibilitychange bên dưới gọi tick() đầy đủ nên badge
+    // được làm mới ngay, không bị trễ.
+    const intervalId = setInterval(() => {
+      const hidden = typeof document !== 'undefined' && document.visibilityState === 'hidden';
+      void tick(hidden ? { badges: false } : {});
+    }, HEARTBEAT_MS);
 
     const onVis = () => {
       if (document.visibilityState === 'visible') void tick();

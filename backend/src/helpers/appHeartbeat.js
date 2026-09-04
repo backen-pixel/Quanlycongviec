@@ -1,17 +1,24 @@
 /**
  * GET /api/heartbeat — gom ping + badge counts trong 1 request.
- * Badge aggregate cache 15s/user (L1 lookupCache) → giảm DB trên host.
+ * Badge aggregate cache 90s/user (L1 lookupCache) → giảm DB trên host.
  * Ping luôn ghi mỗi request (không cache).
  */
 
 const { supabase } = require('../config/supabase');
 const { recordUserPing } = require('./userPresence');
-const { pgDashboardNotificationStats } = require('./pgHotQueries');
+const { pgDashboardNotificationStats, pgUnifiedTaskBadgeCounts } = require('./pgHotQueries');
 const { isCrmSystemAdminUser } = require('./crmAccessRoles');
-const { countUnifiedOpenTasks, countUnifiedOverdueTasks } = require('./unifiedTasksQuery');
+const { countUnifiedOpenTasks, countUnifiedOverdueTasks, isManagerLike } = require('./unifiedTasksQuery');
+const { isSystemAdmin } = require('./adminRole');
 const { lookupCache } = require('./ttlCache');
 
-const BADGE_CACHE_MS = 15_000;
+// Frontend poll heartbeat mỗi 60s (useAppHeartbeat.js: HEARTBEAT_MS = 60_000). TTL cũ 15s
+// LUÔN hết hạn trước lần poll kế tiếp nên cache chưa từng có tác dụng: mỗi lần poll đều chạy
+// lại 2 câu đếm trên khung nhìn gộp unified_tasks_v (đo được ~57ms/câu, chiếm 37% thời gian DB).
+// Đặt 90s > 60s để một nửa số lần poll được phục vụ từ cache.
+// An toàn vì mọi thao tác cần cập nhật ngay đều gọi kèm ?fresh=1 (focus cửa sổ, sự kiện
+// badge:refresh:*) và nhánh fresh sẽ invalidate cache trước khi đọc.
+const BADGE_CACHE_MS = 90_000;
 const EMPTY_ASSIGN = { unread: 0, overdue: 0, dueSoon: 0, pending: 0 };
 
 function canModerateSocial(user) {
@@ -175,16 +182,39 @@ async function countReleaseNotesUnread(userId) {
   return { unread: pubIds.filter((id) => !readSet.has(id)).length };
 }
 
+/**
+ * Số việc mở / quá hạn cho badge.
+ * Ưu tiên 1 câu SQL trực tiếp trên bảng gốc (pgUnifiedTaskBadgeCounts): đếm ĐÚNG (khung nhìn
+ * unified_tasks_v nhân dòng khi dự án có nhiều deal — đo được thổi phồng 9,7%) và nhanh hơn
+ * 5 lần (193ms/câu → 38,7ms cho cả hai số). Pool tắt thì quay về 2 câu cũ qua khung nhìn.
+ */
+async function fetchUnifiedTaskBadge(req) {
+  const direct = await pgUnifiedTaskBadgeCounts(req.user, {
+    isManager: isManagerLike(req.user),
+    isSystemAdmin: isSystemAdmin(req.user),
+  }).catch((e) => {
+    console.warn('[heartbeat] pgUnifiedTaskBadgeCounts:', e.message);
+    return null;
+  });
+  if (direct) return direct;
+  const [open, overdue] = await Promise.all([
+    countUnifiedOpenTasks(req.user),
+    countUnifiedOverdueTasks(req.user),
+  ]);
+  return { open, overdue };
+}
+
 async function computeHeartbeatBadges(req, socialCompanyId) {
   const uid = req.user.userId || req.user.id;
-  const [assignments, social, releaseNotes, pgNotif, unifiedOpen, unifiedOverdue] = await Promise.all([
+  const [assignments, social, releaseNotes, pgNotif, unifiedTasks] = await Promise.all([
     countAssignmentsBothModules(uid),
     countSocialUnread(req, socialCompanyId),
     countReleaseNotesUnread(uid),
     pgDashboardNotificationStats(uid, req.user),
-    countUnifiedOpenTasks(req.user),
-    countUnifiedOverdueTasks(req.user),
+    fetchUnifiedTaskBadge(req),
   ]);
+  const unifiedOpen = unifiedTasks.open;
+  const unifiedOverdue = unifiedTasks.overdue;
 
   let notifications = null;
   if (pgNotif?.stats) {

@@ -524,8 +524,13 @@ function InboxTab({ pageStats, fbCompanyQs = '', companyId = null, onScopeChange
   const [timeCustomFrom, setTimeCustomFrom] = useState('');
   const [timeCustomTo, setTimeCustomTo] = useState('');
   const [pages, setPages] = useState([]);
-  const [contactLimit, setContactLimit] = useState(1000);
-  const [contactMeta, setContactMeta] = useState({ total: 0, hasMore: false, nextOffset: 0 });
+  // Phải khớp trần của backend (FB_CONTACTS_MAX_LIMIT, mặc định 1000 — xem
+  // backend/src/routes/facebook.js). Trước đây select cho chọn 1000/2000/5000
+  // nhưng backend kẹp cứng 400 nên chọn 5000 vẫn chỉ nhận 400 và nhãn nút
+  // "Tải thêm N contact" hiện sai số.
+  const CONTACT_LIMIT_OPTIONS = [400, 1000];
+  const [contactLimit, setContactLimit] = useState(400);
+  const [contactMeta, setContactMeta] = useState({ total: 0, hasMore: false, nextOffset: 0, limit: 400 });
   const [leadTitleDraft, setLeadTitleDraft] = useState('');
   const [leadTitleSaving, setLeadTitleSaving] = useState(false);
   const [sending, setSending] = useState(false);
@@ -762,7 +767,14 @@ function InboxTab({ pageStats, fbCompanyQs = '', companyId = null, onScopeChange
           return bp - ap;
         });
         setContacts(sorted);
-        setContactMeta({ total: payload?.total || 0, hasMore: !!payload?.hasMore, nextOffset: payload?.nextOffset || 0 });
+        setContactMeta({
+          total: payload?.total || 0,
+          hasMore: !!payload?.hasMore,
+          nextOffset: payload?.nextOffset || 0,
+          // Server có thể kẹp ?limit xuống trần của nó — dùng số THỰC nhận được
+          // cho nhãn nút "Tải thêm" thay vì con số người dùng đã chọn.
+          limit: payload?.limit || contactLimit,
+        });
       }).catch(() => {});
   }, [search, pageFilter, timeRange.activity_from, timeRange.activity_to, contactLimit, contactMeta.nextOffset, contacts, fbCompanyQs]);
 
@@ -1131,9 +1143,9 @@ function InboxTab({ pageStats, fbCompanyQs = '', companyId = null, onScopeChange
               className="shrink-0 w-[72px] border border-gray-200 rounded-lg px-2 py-1.5 bg-white text-[11px] text-gray-700"
               aria-label="Giới hạn tải contact"
             >
-              <option value={1000}>1000</option>
-              <option value={2000}>2000</option>
-              <option value={5000}>5000</option>
+              {CONTACT_LIMIT_OPTIONS.map((n) => (
+                <option key={n} value={n}>{n}</option>
+              ))}
             </select>
           </div>
           {timeFilter === 'custom' && (
@@ -1304,7 +1316,7 @@ function InboxTab({ pageStats, fbCompanyQs = '', companyId = null, onScopeChange
           {contactMeta.hasMore && (
             <div className="p-3 border-t bg-white sticky bottom-0">
               <button onClick={() => loadContacts(true)} className="w-full text-xs bg-blue-50 text-blue-700 py-2 rounded-lg hover:bg-blue-100 font-medium">
-                Tải thêm {Math.min(contactLimit, (contactMeta.total || 0) - contacts.length)} contact
+                Tải thêm {Math.min(contactMeta.limit || contactLimit, (contactMeta.total || 0) - contacts.length)} contact
               </button>
             </div>
           )}

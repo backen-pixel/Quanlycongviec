@@ -103,6 +103,70 @@ const AUTO_BATCH_SIZE = Math.min(500, Math.max(50, parseInt(process.env.FB_AUTO_
 const AUTO_SYNC_TIMEOUT_SEC = Math.min(300, Math.max(30, parseInt(process.env.FB_AUTO_SYNC_TIMEOUT_SEC || '90', 10) || 90));
 /** Pool tối đa khi load contact cho pipeline (mặc định 2000; tăng ENV FB_PIPELINE_POOL_LIMIT nếu cần quét sâu). */
 const FB_PIPELINE_POOL_LIMIT = Math.min(50_000, Math.max(500, parseInt(process.env.FB_PIPELINE_POOL_LIMIT || '2000', 10) || 2_000));
+/**
+ * Trần số contact trả về mỗi lần gọi GET /contacts.
+ *
+ * Trước đây hard-code 400 trong handler, trong khi giao diện cho chọn
+ * 1000/2000/5000 → người dùng chọn 5000 nhưng chỉ nhận 400, và nhãn nút
+ * "Tải thêm N contact" tính theo con số đã chọn nên hiện sai.
+ *
+ * Sau khi thêm chỉ mục idx_fb_contacts_last_message_created (database/586),
+ * chi phí của endpoint này tỉ lệ thuận với KÍCH THƯỚC TRANG chứ không còn
+ * với cả bảng: đo EXPLAIN ANALYZE 400 dòng = 6,58 ms / 1.121 buffer
+ * (trước khi có chỉ mục: 206,84 ms / 32.372 buffer cho cùng 400 dòng).
+ * Nên nâng trần lên 1000 là an toàn; đổi bằng ENV nếu cần.
+ */
+const FB_CONTACTS_MAX_LIMIT = Math.min(2000, Math.max(100, parseInt(process.env.FB_CONTACTS_MAX_LIMIT || '1000', 10) || 1000));
+/** Kích thước trang mặc định khi client không gửi ?limit. */
+const FB_CONTACTS_DEFAULT_LIMIT = Math.min(FB_CONTACTS_MAX_LIMIT, 400);
+/**
+ * Số id tối đa nhét vào MỘT `.in(col, ids)`.
+ *
+ * Supabase JS đưa cả danh sách vào query string, mỗi UUID ~40 ký tự kể cả dấu
+ * phẩy. Con số duy nhất ĐÃ ĐƯỢC KIỂM CHỨNG trong production là 800 id (~30 KB):
+ * nhánh lọc theo ngày ở dưới chạy như vậy từ lâu và không lỗi. Giới hạn thật
+ * của proxy thì chưa đo được từ đây, nên 500 (~19 KB) là mức nằm gọn bên trong
+ * vùng đã chứng minh chạy được, đồng thời đủ nhỏ để một trang 1000 dòng chỉ
+ * cần 2 round-trip.
+ *
+ * Điều chắc chắn: danh sách dài theo kích thước trang thì PHẢI chia lô, vì độ
+ * dài URL sẽ tăng theo dữ liệu chứ không theo một hằng số nào cả.
+ */
+const IN_CHUNK = 500;
+
+/**
+ * Chạy `.in(col, ids)` theo từng lô IN_CHUNK rồi gộp kết quả.
+ *
+ * CỐ Ý KHÔNG NÉM LỖI. Hai chỗ dùng hàm này (nhúng lead, đếm tin nhắn) là bước
+ * làm giàu thêm dữ liệu; code cũ bỏ qua lỗi (`const { data } = await ...`) nên
+ * khi truy vấn phụ lỗi thì hộp thư vẫn hiện, chỉ thiếu thông tin lead hoặc
+ * message_count = 0. Nếu ném lỗi ở đây thì handler trả 500 và hộp thư TRẮNG
+ * hoàn toàn — biến một lỗi phụ thành mất dịch vụ. Ghi log rồi bỏ lô lỗi.
+ *
+ * @param {string[]} ids
+ * @param {(chunk: string[]) => Promise<{ data: any[]|null, error: any }>} run
+ * @param {string} label để nhận ra trong log
+ * @returns {Promise<any[]>}
+ */
+async function selectInChunks(ids, run, label = 'selectInChunks') {
+  const out = [];
+  for (let i = 0; i < ids.length; i += IN_CHUNK) {
+    const { data, error } = await run(ids.slice(i, i + IN_CHUNK));
+    if (error) {
+      console.warn(`[FB] ${label}: lô ${i / IN_CHUNK + 1} lỗi —`, error.message);
+      continue;
+    }
+    if (data && data.length) out.push(...data);
+  }
+  return out;
+}
+
+/** @param {*} raw giá trị ?limit thô @returns {number} */
+function clampContactLimit(raw) {
+  const n = parseInt(raw, 10);
+  if (!Number.isFinite(n) || n <= 0) return FB_CONTACTS_DEFAULT_LIMIT;
+  return Math.min(FB_CONTACTS_MAX_LIMIT, n);
+}
 /** Ưu tiên contact chưa có lead (mặc định 500; ENV: FB_PIPELINE_NEEDY_NO_LEAD_CAP). */
 const FB_PIPELINE_NEEDY_NO_LEAD_CAP = Math.min(5_000, Math.max(0, parseInt(process.env.FB_PIPELINE_NEEDY_NO_LEAD_CAP || '500', 10) || 500));
 /**
@@ -3479,15 +3543,14 @@ async function handleMessagingInner(pageId, event, io, partnerPsid) {
       console.log(`[FB] ⏭️  In-memory lock: duplicate mid ${msg.mid}`);
       return;
     }
-    // Layer 2: DB check
-    if (msg.mid) {
-      const { data: existing } = await supabase.from('facebook_messages')
-        .select('id').eq('fb_message_id', msg.mid).limit(1);
-      if (existing?.length) {
-        console.log(`[FB] ⏭️  Skip duplicate message: ${msg.mid}`);
-        return;
-      }
-    }
+    // Layer 2 (DB check) ĐÃ BỎ — trước đây là câu SELECT id FROM facebook_messages
+    // WHERE fb_message_id = ? LIMIT 1, bị gọi 11.518.907 lần (pg_stat_statements).
+    // Nó từng cần thiết vì upsert bên dưới LUÔN lỗi 42P10: unique index cũ trên
+    // fb_message_id là partial index (WHERE fb_message_id IS NOT NULL) nên
+    // ON CONFLICT("fb_message_id") không suy luận ra được. Sau khi database/581 đổi
+    // thành UNIQUE constraint đầy đủ, upsert ignoreDuplicates đã chặn trùng ngay trong
+    // 1 vòng đi–về và nguyên tử hơn: trùng thì không trả dòng nào → nhánh `!savedMsg`
+    // bên dưới xử lý y hệt. Giữ Layer 1 (in-memory lock) làm chốt rẻ cho race cùng tiến trình.
 
     console.log(`[FB] 💬 Message type: ${messageType}, content: ${content?.substring(0, 50)}${content?.length > 50 ? '...' : ''}`);
     console.log(`[FB] 📎 Attachment: ${attachmentUrl || 'None'}`);
@@ -4248,7 +4311,7 @@ r.get('/contacts', authMiddleware, async (req, res) => {
     if (!scope) return;
     if (scope.mode === 'filter' && !scope.pageIds.length) {
       return res.json({
-        data: [], total: 0, offset: 0, limit: Math.min(parseInt(req.query.limit, 10) || 400, 400),
+        data: [], total: 0, offset: 0, limit: clampContactLimit(req.query.limit),
         hasMore: false, nextOffset: 0,
       });
     }
@@ -4256,14 +4319,53 @@ r.get('/contacts', authMiddleware, async (req, res) => {
     if (page_id && scope.mode === 'filter' && !scope.pageIds.includes(String(page_id))) {
       return res.status(403).json({ error: 'Không có quyền xem Page này' });
     }
-    const maxLimit = Math.min(parseInt(rawLimit, 10) || 400, 400);
+    const maxLimit = clampContactLimit(rawLimit);
     const offset = Math.max(parseInt(rawOffset) || 0, 0);
+    // Bộ lọc theo nguồn/phân loại nguồn: giải sẵn tập lead_id khớp bằng 1 câu trên 3 bảng
+    // danh mục nhỏ, rồi lọc bằng SQL. Trước đây lọc trong app trên dữ liệu lồng nên buộc
+    // phải nhúng cả 3 tầng lead → source → category cho TOÀN BỘ tập kết quả.
+    // Chốt an toàn: `.in('lead_id', [...])` đi qua query string nên danh sách quá dài sẽ làm
+    // URL vượt giới hạn. Hiện tại phân loại nguồn nhiều lead nhất chỉ có 114 lead nên đường
+    // nhanh luôn dùng được; nếu sau này vượt ngưỡng thì quay về cách cũ (nhúng lead cho cả
+    // tập rồi lọc trong app) để vẫn đúng, chỉ chậm hơn.
+    const SOURCE_FILTER_MAX_IDS = 800;
+    let leadIdsForSourceFilter = null;
+    let filterSourceInApp = false;
+    if (source_category_id || source_id) {
+      let lq = supabase.from('crm_leads').select('id, source_id, source:crm_sources!crm_leads_source_id_fkey(id, category_id)');
+      if (source_id) lq = lq.eq('source_id', String(source_id));
+      const { data: leadRows, error: leadErr } = await lq;
+      if (leadErr) throw leadErr;
+      const wantCat = source_category_id ? String(source_category_id) : null;
+      const matchedLeadIds = (leadRows || [])
+        .filter((l) => !wantCat || String(l?.source?.category_id || '') === wantCat)
+        .map((l) => l.id);
+      if (!matchedLeadIds.length) {
+        return res.json({
+          data: [], total: 0, offset, limit: maxLimit, hasMore: false, nextOffset: offset,
+          activity_from: activity_from || null, activity_to: activity_to || null,
+        });
+      }
+      if (matchedLeadIds.length > SOURCE_FILTER_MAX_IDS) filterSourceInApp = true;
+      else leadIdsForSourceFilter = matchedLeadIds;
+    }
+
+    const LEAD_EMBED = 'lead:crm_leads(id, title, code, type, source:crm_sources!crm_leads_source_id_fkey(id, name, category:crm_source_categories(id, name, icon, color)))';
+
+    // Chỉ lấy cột của contact + customer (cần cho display_phone và thứ tự sắp xếp).
+    // Tầng `lead` được nhúng RIÊNG cho đúng trang trả về ở cuối handler — trước đây nhúng
+    // cho cả tập (tới 6.000 dòng/lần gọi) trong khi chỉ ≤400 dòng được trả về:
+    // đo EXPLAIN ANALYZE trên 1 Page 4.650 dòng cho thấy 6ms → 65,7ms và 562 → 14.080 buffer,
+    // trong đó riêng nhánh lead chiếm 9.006 buffer.
     const base = () => {
       let q = supabase
         .from('facebook_contacts')
-        .select('*, lead:crm_leads(id, title, code, type, source:crm_sources!crm_leads_source_id_fkey(id, name, category:crm_source_categories(id, name, icon, color))), customer:customers(id, full_name, phone)');
+        .select(filterSourceInApp
+          ? `*, ${LEAD_EMBED}, customer:customers(id, full_name, phone)`
+          : '*, customer:customers(id, full_name, phone)');
       if (scope.mode === 'filter') q = q.in('page_id', scope.pageIds);
       if (page_id) q = q.eq('page_id', page_id);
+      if (leadIdsForSourceFilter) q = q.in('lead_id', leadIdsForSourceFilter);
       if (has_lead === 'true') q = q.not('lead_id', 'is', null);
       if (has_lead === 'false') q = q.is('lead_id', null);
       if (search) q = q.or(`fb_name.ilike.%${search}%,phone.ilike.%${search}%`);
@@ -4296,6 +4398,10 @@ r.get('/contacts', authMiddleware, async (req, res) => {
       if (idErr) console.warn('[FB] RPC fb_contact_ids_with_inbound_in_range:', idErr.message, '(chạy database/52_fb_contact_ids_inbound_range_rpc.sql)');
       const qualifyingIds = [...new Set((idRows || []).map((r) => r.contact_id).filter(Boolean))];
       merged = [];
+      // GIỮ 800: đây là con số đã chạy trong production và không lỗi, nên nó là
+      // bằng chứng tốt nhất về giới hạn thực tế. Tôi từng hạ xuống 200 vì lo URL
+      // quá dài, nhưng đó chỉ là suy đoán và đổi lấy 4x round-trip trên một
+      // đường đang lành — đã hoàn nguyên.
       const CH = 800;
       for (let i = 0; i < qualifyingIds.length; i += CH) {
         const slice = qualifyingIds.slice(i, i + CH);
@@ -4339,13 +4445,13 @@ r.get('/contacts', authMiddleware, async (req, res) => {
       return 0;
     });
 
-    // Lọc theo phân loại nguồn của lead liên kết — chỉ contact có lead, source và category trùng
-    if (source_category_id) {
+    // Đường nhanh đã lọc bằng SQL qua leadIdsForSourceFilter. Chỉ đường dự phòng
+    // (danh sách lead vượt ngưỡng) mới cần lọc trong app trên dữ liệu lồng.
+    if (filterSourceInApp && source_category_id) {
       const wantCat = String(source_category_id);
       result = result.filter((c) => String(c?.lead?.source?.category?.id || '') === wantCat);
     }
-    // Lọc theo nguồn CRM cụ thể (default_source_id của Page) — chỉ contact có lead, source trùng
-    if (source_id) {
+    if (filterSourceInApp && source_id) {
       const wantSrc = String(source_id);
       result = result.filter((c) => String(c?.lead?.source?.id || '') === wantSrc);
     }
@@ -4367,10 +4473,28 @@ r.get('/contacts', authMiddleware, async (req, res) => {
     
     if (page.length) {
       const contactIds = page.map(c => c.id);
-      const { data: counts } = await supabase.from('facebook_messages')
+      // Nhúng lead (kèm source → category) CHỈ cho các dòng thực sự trả về.
+      const pageLeadIds = filterSourceInApp
+        ? []
+        : [...new Set(page.map((c) => c.lead_id).filter(Boolean))];
+      if (pageLeadIds.length) {
+        // Chia lô: pageLeadIds dài theo kích thước trang (tới maxLimit = 1000) nên
+        // độ dài URL tăng theo dữ liệu. Xem selectInChunks/IN_CHUNK ở đầu file.
+        const leadRows = await selectInChunks(pageLeadIds, (chunk) => supabase
+          .from('crm_leads')
+          .select('id, title, code, type, source:crm_sources!crm_leads_source_id_fkey(id, name, category:crm_source_categories(id, name, icon, color))')
+          .in('id', chunk), 'nhúng lead');
+        const leadById = new Map((leadRows || []).map((l) => [String(l.id), l]));
+        page.forEach((c) => { c.lead = c.lead_id ? (leadById.get(String(c.lead_id)) || null) : null; });
+      } else if (!filterSourceInApp) {
+        page.forEach((c) => { c.lead = null; });
+      }
+      // Chia lô theo IN_CHUNK — contactIds dài tới maxLimit.
+      const counts = await selectInChunks(contactIds, (chunk) => supabase
+        .from('facebook_messages')
         .select('contact_id')
-        .in('contact_id', contactIds)
-        .eq('direction', 'inbound');
+        .in('contact_id', chunk)
+        .eq('direction', 'inbound'), 'đếm tin nhắn');
       const countMap = {};
       (counts || []).forEach(m => { countMap[m.contact_id] = (countMap[m.contact_id] || 0) + 1; });
       page.forEach((c) => {
@@ -5023,7 +5147,7 @@ function vnTodayYmd(offsetDays = 0) {
  * Số khách nhắn tin theo từng Page trong khoảng ngày (giờ VN), tách:
  *   new_contacts       — hội thoại MỚI phát sinh trong ngày ("tin nhắn mới đổ về")
  *   returning_contacts — khách cũ nhắn lại (thường là trả lời tin NV chăm lại)
- * Đọc qua RPC fb_new_senders_by_page_daily (database/402_...sql) — đếm bằng SQL theo
+ * Đọc qua RPC fb_new_senders_by_page_daily (database/582_...sql) — đếm bằng SQL theo
  * ngày giờ VN, không kéo dữ liệu về app và không dùng last_message_at (cột này bị bump
  * cả khi NV trả lời nên "hôm nay" trước đây bị đếm lẫn hội thoại cũ được chăm lại).
  * @returns {Promise<{ byPage: Object, days: Array, error: string|null }>}
@@ -5041,7 +5165,7 @@ async function loadFbNewSendersByPage({ pageIds, fromYmd, toYmd }) {
   });
   if (error) {
     console.warn('[FB] RPC fb_new_senders_by_page_daily:', error.message,
-      '(chạy database/402_fb_new_senders_by_page_daily.sql)');
+      '(chạy database/582_fb_new_senders_by_page_daily.sql)');
     return { byPage: {}, days: [], error: error.message };
   }
   const byPage = {};
