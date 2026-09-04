@@ -298,6 +298,33 @@ Nghiệm thu theo vai trò thực tế, kiểm tra task gate, SLA, thông báo, 
 
 ## 8. Lịch sử quyết định
 
+### 2026-09-04 — Founder phê duyệt OC6 Design Baseline V1 và OC6 Proof Baseline V1
+
+- OC6 Design Baseline V1: **FOUNDER APPROVED**.
+- OC6 Proof Baseline V1: **FOUNDER APPROVED**.
+- Technical Baseline: `69af9051379a8ed41f4ad737a44727ef4260ffa9`, Technical Tree:
+  `99bc8896b8543f521aac9278a42138ea3bf8853a`.
+- Final Evidence Record: `712b74a83c063c6a2318bc59065026eaa9594a00`, Evidence Tree:
+  `52ef7bcfcad17b1f22759087a2ebe52a3f514ae8`; direct parent là Technical Baseline.
+- Căn cứ quyết định: G0 `PASS`; Formal Traceable Test `1649/1649 PASS`;
+  Independent Test `14/14 PASS`; Independent Regression `1649/1649 PASS`;
+  P0=`0`, P1=`0`, P2=`0`.
+- Final Evidence Record không thay thế Technical Baseline. Bốn evidence files ở
+  Final Evidence Record được đóng băng và giữ nguyên; source/test không thay đổi.
+- Approval chỉ công nhận proof dùng hệ thống và dữ liệu giả lập. OpenClaw thật,
+  mô hình/API thật, dữ liệu doanh nghiệp thật, Business AI Runtime và Production
+  chưa được mở. Không có phase tiếp theo được tự động mở.
+- Founder cho phép đúng bốn closure records: `docs/MASTER_CONTEXT.md`,
+  `docs/PROJECT_DECISION_LOG.md`, `docs/oc6/OC6_EVIDENCE_INDEX.md` và
+  `docs/oc6/OC6_PROOF_BASELINE_V1.md`; đúng một documentation-only commit có
+  direct parent `712b74a83c063c6a2318bc59065026eaa9594a00`; chỉ non-force
+  fast-forward push tới https://github.com/backen-pixel/Quanlycongviec.git trên
+  `proof/oc6-v1`.
+- Không cập nhật main, force push, PR, merge, tag hoặc release. Sau khi đóng hồ sơ
+  và xác minh remote: **STOP**.
+- Hồ sơ: [OC6 Proof Baseline V1](./oc6/OC6_PROOF_BASELINE_V1.md) và
+  [OC6 Evidence Index](./oc6/OC6_EVIDENCE_INDEX.md).
+
 ### 2026-09-03 — Founder phê duyệt BOS-AI1 READ Pre-Effect Handoff Proof Baseline V1
 
 - Authority: direct Founder Approval; READ là quyết định BOS-AI1 hiện hành mới nhất,
