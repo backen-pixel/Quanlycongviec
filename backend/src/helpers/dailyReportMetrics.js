@@ -994,6 +994,10 @@ const OPEN_CARD_SELECT = `
  * cho toàn bảng tổng hợp. Bước gắn hạn tính theo từng thẻ nên chạy trên tập lớn
  * rồi lọc theo user cho kết quả y như chạy trên tập riêng của user.
  */
+// Thẻ đang mở đếm theo CẢ CÔNG TY (bản cũ đếm theo từng nhân viên), nên trần
+// 8000 mặc định không còn đủ rộng: hiện đã có công ty 4095 thẻ lead đang mở.
+const COMPANY_OPEN_CARDS_CAP = 60000;
+
 function companyOpenCardsWithTaskDeadline(cache, type, companyId) {
   return cachedOnce(cache, `open_cards|${type}|${companyId}`, async () => {
     const rows = await fetchAllPages((from, to) => supabase
@@ -1005,7 +1009,7 @@ function companyOpenCardsWithTaskDeadline(cache, type, companyId) {
       .eq('company_id', companyId)
       .is('deadline_disabled_at', null)
       .order('id', { ascending: true })
-      .range(from, to));
+      .range(from, to), COMPANY_OPEN_CARDS_CAP);
     return attachNextOpenTaskDeadline(rows);
   });
 }
