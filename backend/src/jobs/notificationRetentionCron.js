@@ -21,11 +21,19 @@
  */
 
 const { supabase } = require('../config/supabase');
+const { pgQuerySafe } = require('../config/db');
 const { runIfLeader } = require('../helpers/cronLeader');
 
 const HOUR_MS = 3600 * 1000;
 const DAY_MS = 24 * HOUR_MS;
-const BATCH = 5000;
+/** Lô cho đường SQL trực tiếp — id không đi qua URL nên lô lớn được. */
+const BATCH_SQL = 5000;
+/**
+ * Lô cho đường Supabase REST (fallback). PHẢI nhỏ: `.in('id', ids)` nhét cả danh
+ * sách UUID vào query string, mỗi UUID ~40 ký tự → 5000 id ≈ 200 KB URL, proxy
+ * sẽ trả 414 và job chết ngay lô đầu. 200 id ≈ 8 KB, đã sát giới hạn. Đừng nâng.
+ */
+const BATCH_REST = 200;
 
 function retentionDays() {
   const n = parseInt(process.env.NOTIFICATION_RETENTION_DAYS || '60', 10);
@@ -51,14 +59,36 @@ async function runOnce() {
   let hidden = 0;
   let batches = 0;
 
+  // ── Đường nhanh: SQL trực tiếp qua pg.Pool ────────────────────────────
+  // Một câu ngắn cho mỗi lô, không đưa danh sách id qua query string.
+  const SQL = `UPDATE public.notifications SET dismissed_at = now() WHERE id IN (
+    SELECT id FROM public.notifications
+    WHERE is_read = false AND dismissed_at IS NULL AND created_at < $1
+    LIMIT ${BATCH_SQL})`;
+  let viaSql = false;
   for (;;) {
+    const res = await pgQuerySafe(SQL, [cutoff]);
+    if (res == null) break; // pool không khả dụng → chuyển sang REST
+    viaSql = true;
+    const n = res.rowCount || 0;
+    hidden += n;
+    batches += 1;
+    if (n < BATCH_SQL) break;
+    if (batches > 200) {
+      console.warn('[notification-retention] Dừng ở 200 lô, phần còn lại để lần chạy sau');
+      break;
+    }
+  }
+
+  // ── Fallback: Supabase REST, lô nhỏ ───────────────────────────────────
+  while (!viaSql) {
     const { data: rows, error: selErr } = await supabase
       .from('notifications')
       .select('id')
       .eq('is_read', false)
       .is('dismissed_at', null)
       .lt('created_at', cutoff)
-      .limit(BATCH);
+      .limit(BATCH_REST);
     if (selErr) throw selErr;
     if (!rows || !rows.length) break;
 
@@ -71,7 +101,7 @@ async function runOnce() {
 
     hidden += ids.length;
     batches += 1;
-    if (ids.length < BATCH) break;
+    if (ids.length < BATCH_REST) break;
     if (batches > 200) {
       console.warn('[notification-retention] Dừng ở 200 lô, phần còn lại để lần chạy sau');
       break;

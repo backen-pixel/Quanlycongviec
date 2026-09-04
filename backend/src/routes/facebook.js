@@ -103,6 +103,56 @@ const AUTO_BATCH_SIZE = Math.min(500, Math.max(50, parseInt(process.env.FB_AUTO_
 const AUTO_SYNC_TIMEOUT_SEC = Math.min(300, Math.max(30, parseInt(process.env.FB_AUTO_SYNC_TIMEOUT_SEC || '90', 10) || 90));
 /** Pool tối đa khi load contact cho pipeline (mặc định 2000; tăng ENV FB_PIPELINE_POOL_LIMIT nếu cần quét sâu). */
 const FB_PIPELINE_POOL_LIMIT = Math.min(50_000, Math.max(500, parseInt(process.env.FB_PIPELINE_POOL_LIMIT || '2000', 10) || 2_000));
+/**
+ * Trần số contact trả về mỗi lần gọi GET /contacts.
+ *
+ * Trước đây hard-code 400 trong handler, trong khi giao diện cho chọn
+ * 1000/2000/5000 → người dùng chọn 5000 nhưng chỉ nhận 400, và nhãn nút
+ * "Tải thêm N contact" tính theo con số đã chọn nên hiện sai.
+ *
+ * Sau khi thêm chỉ mục idx_fb_contacts_last_message_created (database/586),
+ * chi phí của endpoint này tỉ lệ thuận với KÍCH THƯỚC TRANG chứ không còn
+ * với cả bảng: đo EXPLAIN ANALYZE 400 dòng = 6,58 ms / 1.121 buffer
+ * (trước khi có chỉ mục: 206,84 ms / 32.372 buffer cho cùng 400 dòng).
+ * Nên nâng trần lên 1000 là an toàn; đổi bằng ENV nếu cần.
+ */
+const FB_CONTACTS_MAX_LIMIT = Math.min(2000, Math.max(100, parseInt(process.env.FB_CONTACTS_MAX_LIMIT || '1000', 10) || 1000));
+/** Kích thước trang mặc định khi client không gửi ?limit. */
+const FB_CONTACTS_DEFAULT_LIMIT = Math.min(FB_CONTACTS_MAX_LIMIT, 400);
+/**
+ * Số id tối đa nhét vào MỘT `.in(col, ids)`.
+ *
+ * Supabase JS đưa cả danh sách vào query string, mỗi UUID ~40 ký tự kể cả dấu
+ * phẩy. 200 id ≈ 8 KB URL — đã sát giới hạn mặc định của proxy/Kong. Vượt qua
+ * thì được 414 URI Too Long chứ không phải lỗi dữ liệu, nên rất khó đoán.
+ */
+const IN_CHUNK = 200;
+
+/**
+ * Chạy `.in(col, ids)` theo từng lô IN_CHUNK rồi gộp kết quả.
+ * Dùng bất cứ khi nào số id phụ thuộc kích thước trang (có thể tới
+ * FB_CONTACTS_MAX_LIMIT = 1000) thay vì một hằng số nhỏ.
+ *
+ * @param {string[]} ids
+ * @param {(chunk: string[]) => Promise<{ data: any[]|null, error: any }>} run
+ * @returns {Promise<any[]>}
+ */
+async function selectInChunks(ids, run) {
+  const out = [];
+  for (let i = 0; i < ids.length; i += IN_CHUNK) {
+    const { data, error } = await run(ids.slice(i, i + IN_CHUNK));
+    if (error) throw error;
+    if (data && data.length) out.push(...data);
+  }
+  return out;
+}
+
+/** @param {*} raw giá trị ?limit thô @returns {number} */
+function clampContactLimit(raw) {
+  const n = parseInt(raw, 10);
+  if (!Number.isFinite(n) || n <= 0) return FB_CONTACTS_DEFAULT_LIMIT;
+  return Math.min(FB_CONTACTS_MAX_LIMIT, n);
+}
 /** Ưu tiên contact chưa có lead (mặc định 500; ENV: FB_PIPELINE_NEEDY_NO_LEAD_CAP). */
 const FB_PIPELINE_NEEDY_NO_LEAD_CAP = Math.min(5_000, Math.max(0, parseInt(process.env.FB_PIPELINE_NEEDY_NO_LEAD_CAP || '500', 10) || 500));
 /**
@@ -4247,7 +4297,7 @@ r.get('/contacts', authMiddleware, async (req, res) => {
     if (!scope) return;
     if (scope.mode === 'filter' && !scope.pageIds.length) {
       return res.json({
-        data: [], total: 0, offset: 0, limit: Math.min(parseInt(req.query.limit, 10) || 400, 400),
+        data: [], total: 0, offset: 0, limit: clampContactLimit(req.query.limit),
         hasMore: false, nextOffset: 0,
       });
     }
@@ -4255,7 +4305,7 @@ r.get('/contacts', authMiddleware, async (req, res) => {
     if (page_id && scope.mode === 'filter' && !scope.pageIds.includes(String(page_id))) {
       return res.status(403).json({ error: 'Không có quyền xem Page này' });
     }
-    const maxLimit = Math.min(parseInt(rawLimit, 10) || 400, 400);
+    const maxLimit = clampContactLimit(rawLimit);
     const offset = Math.max(parseInt(rawOffset) || 0, 0);
     // Bộ lọc theo nguồn/phân loại nguồn: giải sẵn tập lead_id khớp bằng 1 câu trên 3 bảng
     // danh mục nhỏ, rồi lọc bằng SQL. Trước đây lọc trong app trên dữ liệu lồng nên buộc
@@ -4334,7 +4384,9 @@ r.get('/contacts', authMiddleware, async (req, res) => {
       if (idErr) console.warn('[FB] RPC fb_contact_ids_with_inbound_in_range:', idErr.message, '(chạy database/52_fb_contact_ids_inbound_range_rpc.sql)');
       const qualifyingIds = [...new Set((idRows || []).map((r) => r.contact_id).filter(Boolean))];
       merged = [];
-      const CH = 800;
+      // 800 id/lô ≈ 32 KB query string — vượt giới hạn an toàn của proxy. Hạ về
+      // IN_CHUNK (200 ≈ 8 KB). Đổi lấy nhiều round-trip hơn nhưng không bị 414.
+      const CH = IN_CHUNK;
       for (let i = 0; i < qualifyingIds.length; i += CH) {
         const slice = qualifyingIds.slice(i, i + CH);
         const { data } = await base().in('id', slice)
@@ -4410,19 +4462,23 @@ r.get('/contacts', authMiddleware, async (req, res) => {
         ? []
         : [...new Set(page.map((c) => c.lead_id).filter(Boolean))];
       if (pageLeadIds.length) {
-        const { data: leadRows } = await supabase
+        // Chia lô: pageLeadIds dài tới maxLimit (có thể 1000) nên một `.in()` duy nhất
+        // sẽ làm URL vượt giới hạn → 414. Xem selectInChunks/IN_CHUNK ở đầu file.
+        const leadRows = await selectInChunks(pageLeadIds, (chunk) => supabase
           .from('crm_leads')
           .select('id, title, code, type, source:crm_sources!crm_leads_source_id_fkey(id, name, category:crm_source_categories(id, name, icon, color))')
-          .in('id', pageLeadIds);
+          .in('id', chunk));
         const leadById = new Map((leadRows || []).map((l) => [String(l.id), l]));
         page.forEach((c) => { c.lead = c.lead_id ? (leadById.get(String(c.lead_id)) || null) : null; });
       } else if (!filterSourceInApp) {
         page.forEach((c) => { c.lead = null; });
       }
-      const { data: counts } = await supabase.from('facebook_messages')
+      // Chia lô theo IN_CHUNK — contactIds dài tới maxLimit.
+      const counts = await selectInChunks(contactIds, (chunk) => supabase
+        .from('facebook_messages')
         .select('contact_id')
-        .in('contact_id', contactIds)
-        .eq('direction', 'inbound');
+        .in('contact_id', chunk)
+        .eq('direction', 'inbound'));
       const countMap = {};
       (counts || []).forEach(m => { countMap[m.contact_id] = (countMap[m.contact_id] || 0) + 1; });
       page.forEach((c) => {
