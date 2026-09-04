@@ -276,20 +276,39 @@ const MIME_TO_EXT = {
   'image/heif': '.heic',
   'image/avif': '.avif',
   'application/pdf': '.pdf',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '.xlsx',
+  'application/vnd.ms-excel': '.xls',
+  'application/vnd.ms-excel.sheet.macroenabled.12': '.xlsm',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
+  'application/msword': '.doc',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': '.pptx',
+  'application/vnd.ms-powerpoint': '.ppt',
+  'application/zip': '.zip',
+  'application/x-zip-compressed': '.zip',
+  'text/csv': '.csv',
+  'text/plain': '.txt',
 };
+
+const IMAGE_EXTS = new Set(['.jpg', '.png', '.gif', '.webp', '.bmp', '.svg', '.heic', '.avif']);
 
 function extFromMime(mime) {
   const t = String(mime || '').toLowerCase().split(';')[0].trim();
   return MIME_TO_EXT[t] || '';
 }
 
+function normalizeExt(ext) {
+  const e = String(ext || '').toLowerCase();
+  if (e === '.jpeg') return '.jpg';
+  if (e === '.heif') return '.heic';
+  return e;
+}
+
 function extFromFileName(name) {
-  const m = String(name || '').trim().match(/(\.(jpe?g|png|gif|webp|bmp|svg|heic|heif|avif|pdf))$/i);
+  const m = String(name || '').trim().match(
+    /(\.(jpe?g|png|gif|webp|bmp|svg|heic|heif|avif|pdf|xlsx|xlsm|xlsb|xls|csv|docx|docm|doc|pptx|pptm|ppt|odt|ods|odp|zip|rar|7z|txt|json|xml|dwg|dxf))$/i,
+  );
   if (!m) return '';
-  const ext = m[1].toLowerCase();
-  if (ext === '.jpeg') return '.jpg';
-  if (ext === '.heif') return '.heic';
-  return ext;
+  return normalizeExt(m[1]);
 }
 
 function extFromSrc(src) {
@@ -310,6 +329,31 @@ function extFromSrc(src) {
   return extFromFileName(s.split('?')[0].split('#')[0].split('/').pop() || '');
 }
 
+function isZipBytes(bytes) {
+  return !!bytes && bytes.length >= 4
+    && bytes[0] === 0x50 && bytes[1] === 0x4B
+    && (bytes[2] === 0x03 || bytes[2] === 0x05 || bytes[2] === 0x07);
+}
+
+function isOleBytes(bytes) {
+  return !!bytes && bytes.length >= 4
+    && bytes[0] === 0xD0 && bytes[1] === 0xCF && bytes[2] === 0x11 && bytes[3] === 0xE0;
+}
+
+/** Office Open XML (.xlsx/.docx/.pptx) là ZIP — đọc tên file đầu trong header ZIP. */
+function sniffOfficeZip(bytes) {
+  if (!isZipBytes(bytes) || bytes.length < 34) return '';
+  const nameLen = bytes[26] | (bytes[27] << 8);
+  if (nameLen < 1 || 30 + nameLen > bytes.length) return '';
+  let fname = '';
+  for (let i = 0; i < nameLen; i += 1) fname += String.fromCharCode(bytes[30 + i]);
+  const n = fname.replace(/\\/g, '/').toLowerCase();
+  if (n.startsWith('xl/') || n.includes('workbook')) return '.xlsx';
+  if (n.startsWith('word/') || n.includes('document.xml')) return '.docx';
+  if (n.startsWith('ppt/') || n.includes('presentation')) return '.pptx';
+  return '';
+}
+
 function sniffFileExt(bytes) {
   if (!bytes || bytes.length < 12) return '';
   if (bytes[0] === 0xFF && bytes[1] === 0xD8 && bytes[2] === 0xFF) return '.jpg';
@@ -326,6 +370,8 @@ function sniffFileExt(bytes) {
     if (brand === 'avif' || brand === 'avis') return '.avif';
     if (brand === 'heic' || brand === 'heix' || brand === 'heif' || brand === 'mif1' || brand === 'msf1') return '.heic';
   }
+  const office = sniffOfficeZip(bytes);
+  if (office) return office;
   return '';
 }
 
@@ -352,12 +398,25 @@ function uniqueZipName(used, name) {
 }
 
 function fileNameForBytes(bytes, fileName, src, mime) {
-  const ext = sniffFileExt(bytes)
-    || extFromMime(mime)
-    || extFromFileName(fileName)
-    || extFromSrc(src)
-    || '.png';
-  return withExt(fileName || 'anh', ext);
+  const sniffed = sniffFileExt(bytes);
+  const fromName = extFromFileName(fileName) || extFromSrc(src);
+  const fromMime = extFromMime(mime);
+  const zip = isZipBytes(bytes);
+  const ole = isOleBytes(bytes);
+
+  if (sniffed) return withExt(fileName || 'file', sniffed);
+
+  const fakeImageName = IMAGE_EXTS.has(fromName) && (zip || ole);
+  const fakeImageMime = IMAGE_EXTS.has(fromMime) && (zip || ole);
+  if (fromName && !fakeImageName) return withExt(fileName || 'file', fromName);
+  if (fromMime && !fakeImageMime) return withExt(fileName || 'file', fromMime);
+
+  if (zip) return withExt(fileName || 'file', '.zip');
+  if (ole) return withExt(fileName || 'file', fromName || '.xls');
+
+  const raw = sanitizeDownloadBase(fileName, 'tai-lieu');
+  if (/\.[a-z0-9]{2,8}$/i.test(raw)) return raw;
+  return raw;
 }
 
 /** Tải file về máy — blob + file-saver (ổn định hơn anchor thủ công trên Chrome). */
@@ -365,7 +424,7 @@ export async function downloadUploadFile(pathOrUrl, fileName = 'tai-lieu') {
   const fallbackName = sanitizeDownloadBase(fileName, 'tai-lieu');
   try {
     const blob = await fetchUploadBlob(pathOrUrl);
-    const bytes = new Uint8Array(await blob.slice(0, 16).arrayBuffer());
+    const bytes = new Uint8Array(await blob.slice(0, 512).arrayBuffer());
     const safeName = fileNameForBytes(bytes, fallbackName, pathOrUrl, blob.type);
     const { saveAs } = await import('file-saver');
     saveAs(blob, safeName);
@@ -411,7 +470,7 @@ export async function downloadUploadFilesAsZip(items, zipName = 'anh-binh-luan.z
       const blob = await fetchUploadBlob(src);
       const buf = await blob.arrayBuffer();
       const extName = fileNameForBytes(
-        new Uint8Array(buf.slice(0, 16)),
+        new Uint8Array(buf.slice(0, 512)),
         rawName,
         src,
         it.mime || blob.type,
