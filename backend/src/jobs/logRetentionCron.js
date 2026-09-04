@@ -46,11 +46,12 @@ const DAY_MS = 24 * HOUR_MS;
 /** Lô cho đường SQL trực tiếp — id không đi qua URL nên lô lớn được. */
 const BATCH_SQL = 5000;
 /**
- * Lô cho đường Supabase REST (fallback). PHẢI nhỏ: `.in('id', ids)` nhét cả
- * danh sách UUID vào query string, mỗi UUID ~40 ký tự → 200 id ≈ 8 KB URL,
- * đã sát giới hạn của proxy. Đừng nâng số này.
+ * Lô cho đường Supabase REST (fallback). PHẢI nhỏ hơn nhiều so với BATCH_SQL:
+ * `.in('id', ids)` nhét cả danh sách UUID vào query string (~40 ký tự mỗi id).
+ * Giới hạn URL thật của proxy chưa đo được từ đây; mức đã kiểm chứng trong
+ * production là 800 id (~30 KB) ở routes/facebook.js. 500 (~19 KB) an toàn.
  */
-const BATCH_REST = 200;
+const BATCH_REST = 500;
 const MAX_BATCHES = 400;
 /** Bảng được phép dọn — chặn truy vấn động ghép tên bảng tuỳ ý vào SQL. */
 const ALLOWED = Object.freeze({

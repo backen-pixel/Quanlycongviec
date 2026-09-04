@@ -29,11 +29,14 @@ const DAY_MS = 24 * HOUR_MS;
 /** Lô cho đường SQL trực tiếp — id không đi qua URL nên lô lớn được. */
 const BATCH_SQL = 5000;
 /**
- * Lô cho đường Supabase REST (fallback). PHẢI nhỏ: `.in('id', ids)` nhét cả danh
- * sách UUID vào query string, mỗi UUID ~40 ký tự → 5000 id ≈ 200 KB URL, proxy
- * sẽ trả 414 và job chết ngay lô đầu. 200 id ≈ 8 KB, đã sát giới hạn. Đừng nâng.
+ * Lô cho đường Supabase REST (fallback). PHẢI nhỏ hơn nhiều so với BATCH_SQL:
+ * `.in('id', ids)` nhét cả danh sách UUID vào query string, mỗi UUID ~40 ký tự,
+ * nên 5000 id thành URL ~200 KB. Tôi CHƯA đo được giới hạn URL thật của proxy
+ * từ môi trường này; điều đã kiểm chứng là routes/facebook.js chạy ổn định với
+ * 800 id (~30 KB). 500 (~19 KB) nằm gọn bên trong vùng đó.
+ * Đừng nâng lên gần BATCH_SQL — 200 KB là 6 lần lớn hơn mọi thứ từng chạy được.
  */
-const BATCH_REST = 200;
+const BATCH_REST = 500;
 
 function retentionDays() {
   const n = parseInt(process.env.NOTIFICATION_RETENTION_DAYS || '60', 10);
