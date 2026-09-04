@@ -4257,12 +4257,51 @@ r.get('/contacts', authMiddleware, async (req, res) => {
     }
     const maxLimit = Math.min(parseInt(rawLimit, 10) || 400, 400);
     const offset = Math.max(parseInt(rawOffset) || 0, 0);
+    // Bộ lọc theo nguồn/phân loại nguồn: giải sẵn tập lead_id khớp bằng 1 câu trên 3 bảng
+    // danh mục nhỏ, rồi lọc bằng SQL. Trước đây lọc trong app trên dữ liệu lồng nên buộc
+    // phải nhúng cả 3 tầng lead → source → category cho TOÀN BỘ tập kết quả.
+    // Chốt an toàn: `.in('lead_id', [...])` đi qua query string nên danh sách quá dài sẽ làm
+    // URL vượt giới hạn. Hiện tại phân loại nguồn nhiều lead nhất chỉ có 114 lead nên đường
+    // nhanh luôn dùng được; nếu sau này vượt ngưỡng thì quay về cách cũ (nhúng lead cho cả
+    // tập rồi lọc trong app) để vẫn đúng, chỉ chậm hơn.
+    const SOURCE_FILTER_MAX_IDS = 800;
+    let leadIdsForSourceFilter = null;
+    let filterSourceInApp = false;
+    if (source_category_id || source_id) {
+      let lq = supabase.from('crm_leads').select('id, source_id, source:crm_sources!crm_leads_source_id_fkey(id, category_id)');
+      if (source_id) lq = lq.eq('source_id', String(source_id));
+      const { data: leadRows, error: leadErr } = await lq;
+      if (leadErr) throw leadErr;
+      const wantCat = source_category_id ? String(source_category_id) : null;
+      const matchedLeadIds = (leadRows || [])
+        .filter((l) => !wantCat || String(l?.source?.category_id || '') === wantCat)
+        .map((l) => l.id);
+      if (!matchedLeadIds.length) {
+        return res.json({
+          data: [], total: 0, offset, limit: maxLimit, hasMore: false, nextOffset: offset,
+          activity_from: activity_from || null, activity_to: activity_to || null,
+        });
+      }
+      if (matchedLeadIds.length > SOURCE_FILTER_MAX_IDS) filterSourceInApp = true;
+      else leadIdsForSourceFilter = matchedLeadIds;
+    }
+
+    const LEAD_EMBED = 'lead:crm_leads(id, title, code, type, source:crm_sources!crm_leads_source_id_fkey(id, name, category:crm_source_categories(id, name, icon, color)))';
+
+    // Chỉ lấy cột của contact + customer (cần cho display_phone và thứ tự sắp xếp).
+    // Tầng `lead` được nhúng RIÊNG cho đúng trang trả về ở cuối handler — trước đây nhúng
+    // cho cả tập (tới 6.000 dòng/lần gọi) trong khi chỉ ≤400 dòng được trả về:
+    // đo EXPLAIN ANALYZE trên 1 Page 4.650 dòng cho thấy 6ms → 65,7ms và 562 → 14.080 buffer,
+    // trong đó riêng nhánh lead chiếm 9.006 buffer.
     const base = () => {
       let q = supabase
         .from('facebook_contacts')
-        .select('*, lead:crm_leads(id, title, code, type, source:crm_sources!crm_leads_source_id_fkey(id, name, category:crm_source_categories(id, name, icon, color))), customer:customers(id, full_name, phone)');
+        .select(filterSourceInApp
+          ? `*, ${LEAD_EMBED}, customer:customers(id, full_name, phone)`
+          : '*, customer:customers(id, full_name, phone)');
       if (scope.mode === 'filter') q = q.in('page_id', scope.pageIds);
       if (page_id) q = q.eq('page_id', page_id);
+      if (leadIdsForSourceFilter) q = q.in('lead_id', leadIdsForSourceFilter);
       if (has_lead === 'true') q = q.not('lead_id', 'is', null);
       if (has_lead === 'false') q = q.is('lead_id', null);
       if (search) q = q.or(`fb_name.ilike.%${search}%,phone.ilike.%${search}%`);
@@ -4338,13 +4377,13 @@ r.get('/contacts', authMiddleware, async (req, res) => {
       return 0;
     });
 
-    // Lọc theo phân loại nguồn của lead liên kết — chỉ contact có lead, source và category trùng
-    if (source_category_id) {
+    // Đường nhanh đã lọc bằng SQL qua leadIdsForSourceFilter. Chỉ đường dự phòng
+    // (danh sách lead vượt ngưỡng) mới cần lọc trong app trên dữ liệu lồng.
+    if (filterSourceInApp && source_category_id) {
       const wantCat = String(source_category_id);
       result = result.filter((c) => String(c?.lead?.source?.category?.id || '') === wantCat);
     }
-    // Lọc theo nguồn CRM cụ thể (default_source_id của Page) — chỉ contact có lead, source trùng
-    if (source_id) {
+    if (filterSourceInApp && source_id) {
       const wantSrc = String(source_id);
       result = result.filter((c) => String(c?.lead?.source?.id || '') === wantSrc);
     }
@@ -4366,6 +4405,20 @@ r.get('/contacts', authMiddleware, async (req, res) => {
     
     if (page.length) {
       const contactIds = page.map(c => c.id);
+      // Nhúng lead (kèm source → category) CHỈ cho các dòng thực sự trả về.
+      const pageLeadIds = filterSourceInApp
+        ? []
+        : [...new Set(page.map((c) => c.lead_id).filter(Boolean))];
+      if (pageLeadIds.length) {
+        const { data: leadRows } = await supabase
+          .from('crm_leads')
+          .select('id, title, code, type, source:crm_sources!crm_leads_source_id_fkey(id, name, category:crm_source_categories(id, name, icon, color))')
+          .in('id', pageLeadIds);
+        const leadById = new Map((leadRows || []).map((l) => [String(l.id), l]));
+        page.forEach((c) => { c.lead = c.lead_id ? (leadById.get(String(c.lead_id)) || null) : null; });
+      } else if (!filterSourceInApp) {
+        page.forEach((c) => { c.lead = null; });
+      }
       const { data: counts } = await supabase.from('facebook_messages')
         .select('contact_id')
         .in('contact_id', contactIds)
