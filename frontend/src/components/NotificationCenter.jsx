@@ -838,15 +838,27 @@ export default function NotificationCenter({ socket }) {
     // Dashboard badge trước; CSKH (query nặng) trì hoãn để ưu tiên load trang hiện tại.
     loadCount({ includeCskh: false });
     const cskhDelay = setTimeout(() => { loadCount({ includeCskh: true }); }, 3000);
-    const tick = () => { if (!document.hidden) loadCount({ includeCskh: true }); };
-    const interval = setInterval(tick, 120_000);
-    document.addEventListener('visibilitychange', tick);
+    // Chặn gọi dồn khi đổi tab: `visibilitychange` bắn mỗi lần người dùng rời/quay lại tab,
+    // và trước đây mỗi lần như vậy là một lượt `/crm/followup-care/notifications` — query
+    // nặng, đo được 1,4s phía server. Người hay Alt-Tab sẽ bắn liên tục. Giữ khoảng nghỉ
+    // tối thiểu 30s giữa hai lượt; `setInterval` 2 phút vẫn là nhịp làm mới chính.
+    const MIN_GAP_MS = 30_000;
+    let lastTickAt = Date.now();
+    const tick = ({ force = false } = {}) => {
+      if (document.hidden) return;
+      if (!force && Date.now() - lastTickAt < MIN_GAP_MS) return;
+      lastTickAt = Date.now();
+      loadCount({ includeCskh: true });
+    };
+    const interval = setInterval(() => tick({ force: true }), 120_000);
+    const onVisible = () => tick();
+    document.addEventListener('visibilitychange', onVisible);
     const onAssignBadge = () => loadCount({ includeCskh: false });
     window.addEventListener('badge:refresh:assignments', onAssignBadge);
     return () => {
       clearTimeout(cskhDelay);
       clearInterval(interval);
-      document.removeEventListener('visibilitychange', tick);
+      document.removeEventListener('visibilitychange', onVisible);
       window.removeEventListener('badge:refresh:assignments', onAssignBadge);
     };
   }, [moduleFilter]);

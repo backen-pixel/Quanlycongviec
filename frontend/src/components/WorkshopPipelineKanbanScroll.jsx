@@ -16,7 +16,13 @@ const NUDGE_PX = 280;
 const BOTTOM_RESERVE_PX = 4;
 /** Legend chân board (khi showLegend) — không đo DOM để tránh co vòng. */
 const LEGEND_RESERVE_PX = 40;
-const MIN_BOARD_H = 360;
+/**
+ * Sàn chiều cao board — mức thấp nhất còn chấp nhận để KHÔNG phải sinh thanh cuộn trang:
+ * thà board thấp mà tự cuộn dọc bên trong, hơn là để cả trang cuộn thêm một tầng nữa.
+ * Trước đây sàn là 360px, nhưng khi khối KPI/toolbar cao thì chính cái sàn đó đẩy nội dung
+ * vượt khung `main` — xem ghi chú trong `measure()`.
+ */
+const MIN_BOARD_H = 220;
 const MAX_BOARD_H = 1600;
 
 /** Vùng cuộn dọc gần nhất bọc ngoài board (thường là <main>). */
@@ -189,8 +195,15 @@ export default function WorkshopPipelineKanbanScroll({
           ? scrollParent.getBoundingClientRect().bottom
           : window.innerHeight;
         const fitInParent = parentBottom - rect.top - bottomInset;
-        const fallbackH = (scrollParent?.clientHeight || window.innerHeight) - bottomInset - 48;
-        target = fitInParent >= MIN_BOARD_H ? fitInParent : Math.max(MIN_BOARD_H, fallbackH);
+        // Ưu tiên KHÔNG để trang cuộn: dùng đúng chỗ còn lại dưới board, kể cả khi nó nhỏ
+        // hơn mức mong muốn. Board tự cuộn dọc bên trong nên không mất dữ liệu, chỉ thấp hơn.
+        //
+        // Bản cũ khi chỗ còn lại < 360px thì nhảy sang `fallbackH` (gần trọn chiều cao
+        // `main`), làm tổng nội dung VƯỢT khung và sinh thanh cuộn trang thứ hai — đo trên
+        // màn 900px: khối KPI/toolbar 393px + board 598px = 991px trong khung 650px, trang
+        // phải cuộn thêm 341px. Giờ board lấy 254px → 393+254 = 647px, vừa khung, trang
+        // không còn cuộn.
+        target = Math.max(MIN_BOARD_H, fitInParent);
       }
       const maxByViewport = Math.max(MIN_BOARD_H, Math.floor(target));
       setScrollMaxH(`${Math.min(MAX_BOARD_H, maxByViewport)}px`);
@@ -207,6 +220,23 @@ export default function WorkshopPipelineKanbanScroll({
     });
     if (scrollParent) ro.observe(scrollParent);
     if (kanbanWrapRef.current) ro.observe(kanbanWrapRef.current);
+    // Theo dõi MỌI khối nằm PHÍA TRÊN board (dải KPI, toolbar, chip lọc…). Chiều cao của
+    // chúng quyết định chỗ còn lại cho board, và chúng đổi độc lập (thu gọn KPI, hiện/ẩn
+    // chip lọc, đổi công ty làm toolbar cao/thấp) — trong khi `main` và wrapper board thì
+    // KHÔNG đổi, nên trước đây không có gì kích hoạt đo lại: board giữ nguyên số đo cũ.
+    // Đo thật: khối trên co từ 643px xuống 217px mà board vẫn kẹt 253px, để trống 430px.
+    //
+    // Không sinh vòng lặp: các khối này nằm trước board nên chiều cao của chúng không phụ
+    // thuộc chiều cao board.
+    let node = kanbanHScrollRef.current;
+    while (node && node !== scrollParent && node !== document.body) {
+      let sib = node.previousElementSibling;
+      while (sib) {
+        ro.observe(sib);
+        sib = sib.previousElementSibling;
+      }
+      node = node.parentElement;
+    }
     return () => {
       cancelAnimationFrame(raf);
       clearTimeout(t);

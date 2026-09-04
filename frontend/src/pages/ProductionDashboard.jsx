@@ -644,8 +644,16 @@ export default function ProductionDashboard() {
   /** Công ty đặt hàng theo xưởng — CRM + danh mục ngoài (giống modal Tạo deal). */
   const [clientCompaniesForDeal, setClientCompaniesForDeal] = useState([]);
   const [filterCompany, setFilterCompany] = useState(() => P0?.filterCompany ?? '');
-  /** Admin chọn «Tất cả xưởng» — chặn effect auto-pick ghi đè về 1 xưởng. */
-  const [filterAllWorkshops, setFilterAllWorkshops] = useState(() => !!P0?.filterAllWorkshops);
+  /**
+   * Trước đây: admin chọn «Tất cả xưởng» thì cờ này chặn effect auto-pick ghi đè về 1 xưởng.
+   * Mục đó đã bị bỏ, nên LUÔN khởi tạo `false` — KHÔNG đọc lại giá trị đã lưu: ai từng chọn
+   * «Tất cả xưởng» mà giữ cờ true sẽ bị kẹt ở trạng thái không xưởng nào (auto-pick bị chặn)
+   * và không còn mục nào trong dropdown để chọn lại.
+   *
+   * Vẫn giữ state vì `companyParam` và effect auto-pick đọc nó; để `false` thì hai chỗ đó
+   * chạy đúng nhánh "luôn có một xưởng".
+   */
+  const [filterAllWorkshops, setFilterAllWorkshops] = useState(false);
   const [filterDealCompany, setFilterDealCompany] = useState(() => P0?.filterDealCompany ?? '');
   const [filterSxWorkshopCompany, setFilterSxWorkshopCompany] = useState(() => P0?.filterSxWorkshopCompany ?? '');
   const [timePreset, setTimePreset] = useState(() => P0?.timePreset ?? '');
@@ -4190,7 +4198,10 @@ export default function ProductionDashboard() {
             panelTitle="Lọc NV phụ trách sản xuất (xưởng → khu vực → NV)"
             canPickCompany={canPickCompany}
             workshopCompanyPickerList={workshopCompanyPickerList}
-            showAllWorkshopOption={isAdmin && !isCompanyScopedAdmin}
+            /* Bỏ «Tất cả xưởng»: gộp nhiều xưởng thì API trả pipeline Global (không có cột
+               →VC Hucabi) nên thẻ shipping bị map nhầm sang cột «Tiếp nhận» — xem ghi chú ở
+               effect auto-pick xưởng. Luôn xem theo MỘT xưởng. */
+            showAllWorkshopOption={false}
             showDealCompanyFilter={showDealCompanyFilter}
             canPickDealCompany={canPickDealCompany}
             filterDealCompany={filterDealCompany}

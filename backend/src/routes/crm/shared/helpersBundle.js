@@ -1059,9 +1059,22 @@ async function sumCrmKpiLedgerNetByLeadIds(leadIds, periodStart, periodType = 'm
   if (!leadIds?.length || !periodStart) return sums;
   const userId = opts.userId && String(opts.userId).trim() ? String(opts.userId).trim() : null;
   const uniq = [...new Set(leadIds.map((x) => String(x)))];
-  const CHUNK = 150;
-  for (let i = 0; i < uniq.length; i += CHUNK) {
-    const part = uniq.slice(i, i + CHUNK);
+
+  // Lô 500 chạy SONG SONG thay vì lô 150 nối tiếp. Chi phí ở đây là SỐ LƯỢT GỌI × RTT tới
+  // Supabase (ap-south-1, ~180ms/lượt), không phải khối lượng dữ liệu — đo trên dữ liệu
+  // thật: 6.226 lead mất 42 lượt nối tiếp = 7,5s, còn 13 lượt song song chỉ 0,8s (9,1×).
+  // Endpoint /kpi-ledger-total gọi hàm này nên trước đây ô "Điểm KPI (tháng)" mất 13,8s.
+  //
+  // BẮT BUỘC giữ vòng phân trang `from += PAGE` bên trong MỖI lô: một lô 500 lead có thể
+  // sinh hơn 1.000 dòng sổ cái, mà PostgREST cắt ở 1.000 và KHÔNG báo lỗi. Bản song song
+  // đầu tiên bỏ vòng này đã cho tổng 198 → 323 điểm sai lệch một cách âm thầm.
+  const CHUNK = 500;
+  const MAX_PARALLEL = 6;
+  const parts = [];
+  for (let i = 0; i < uniq.length; i += CHUNK) parts.push(uniq.slice(i, i + CHUNK));
+
+  const fetchPart = async (part) => {
+    const acc = [];
     let from = 0;
     const PAGE = 1000;
     for (;;) {
@@ -1075,16 +1088,31 @@ async function sumCrmKpiLedgerNetByLeadIds(leadIds, periodStart, periodType = 'm
       const { data, error } = await q.range(from, from + PAGE - 1);
       if (error) throw error;
       const rows = data || [];
+      acc.push(...rows);
+      if (rows.length < PAGE) break;
+      from += PAGE;
+    }
+    return acc;
+  };
+
+  // Cửa sổ trượt: xong một lô là nhận lô kế tiếp, không chờ cả đợt — số lô phụ thuộc dữ
+  // liệu nên gần như không bao giờ chia chẵn cho MAX_PARALLEL.
+  let next = 0;
+  const worker = async () => {
+    while (next < parts.length) {
+      const rows = await fetchPart(parts[next++]);
       for (const r of rows) {
         const lid = r.lead_id;
         if (!lid) continue;
         const k = String(lid);
         sums[k] = (sums[k] || 0) + Number(r.points || 0);
       }
-      if (rows.length < PAGE) break;
-      from += PAGE;
     }
-  }
+  };
+  await Promise.all(
+    Array.from({ length: Math.max(1, Math.min(MAX_PARALLEL, parts.length)) }, worker),
+  );
+
   for (const k of Object.keys(sums)) {
     sums[k] = Math.round(sums[k] * 100) / 100;
   }
@@ -1143,9 +1171,19 @@ async function sumCrmKpiLedgerNetByUserForOrgReport(leadIds, dateFromYmd, dateTo
   const uniqLeadIds = [...new Set((leadIds || []).map((x) => String(x)))].filter(Boolean);
   if (!uniqLeadIds.length || !fromIso || !toIso) return sums;
 
-  const CHUNK = 150;
-  for (let i = 0; i < uniqLeadIds.length; i += CHUNK) {
-    const part = uniqLeadIds.slice(i, i + CHUNK);
+  // Lô 500 chạy SONG SONG, y như sumCrmKpiLedgerNetByLeadIds. Đo trên 8.681 lead/deal:
+  // lô 150 nối tiếp mất 10,7s (58 lượt gọi), lô 500 song song còn 1,3s (19 lượt) — nhanh
+  // 8,5×, 48 nhân viên và tổng 9.198 điểm giống hệt nhau, 0 người lệch.
+  //
+  // BẮT BUỘC giữ vòng phân trang `from += PAGE` bên trong MỖI lô: một lô 500 lead có thể
+  // sinh hơn 1.000 dòng sổ cái, mà PostgREST cắt ở 1.000 và KHÔNG báo lỗi.
+  const CHUNK = 500;
+  const MAX_PARALLEL = 6;
+  const parts = [];
+  for (let i = 0; i < uniqLeadIds.length; i += CHUNK) parts.push(uniqLeadIds.slice(i, i + CHUNK));
+
+  const fetchPart = async (part) => {
+    const acc = [];
     let from = 0;
     const PAGE = 1000;
     for (;;) {
@@ -1159,15 +1197,27 @@ async function sumCrmKpiLedgerNetByUserForOrgReport(leadIds, dateFromYmd, dateTo
       const { data, error } = await q.range(from, from + PAGE - 1);
       if (error) throw error;
       const rows = data || [];
+      acc.push(...rows);
+      if (rows.length < PAGE) break;
+      from += PAGE;
+    }
+    return acc;
+  };
+
+  let next = 0;
+  const worker = async () => {
+    while (next < parts.length) {
+      const rows = await fetchPart(parts[next++]);
       for (const r of rows) {
         if (!r.user_id) continue;
         const k = String(r.user_id);
         sums[k] = (sums[k] || 0) + Number(r.points || 0);
       }
-      if (rows.length < PAGE) break;
-      from += PAGE;
     }
-  }
+  };
+  await Promise.all(
+    Array.from({ length: Math.max(1, Math.min(MAX_PARALLEL, parts.length)) }, worker),
+  );
   for (const k of Object.keys(sums)) {
     sums[k] = Math.round(sums[k] * 100) / 100;
   }
@@ -1354,12 +1404,28 @@ async function fetchCrmSurveyVisitsForOrgReport(req, {
   if (explicitRegionId) {
     const regionLeadIds = await fetchLeadIdsForCrmRegion(effectiveCompanyId, explicitRegionId);
     if (!regionLeadIds.length) return [];
-    const CHUNK = 100;
-    for (let i = 0; i < regionLeadIds.length; i += CHUNK) {
-      const part = regionLeadIds.slice(i, i + CHUNK);
-      const chunkRows = await fetchCrmSurveyEventsChunk({ ...baseOpts, leadIdChunk: part });
-      raw.push(...chunkRows);
-    }
+    // Lô 300 chạy SONG SONG (cửa sổ trượt) thay vì lô 100 nối tiếp: chi phí là SỐ LƯỢT GỌI
+    // × RTT tới Supabase, không phải khối lượng dữ liệu — cùng lỗi đã đo ở
+    // sumCrmKpiLedgerNetByLeadIds (8.681 dòng: nối tiếp 10,7s → song song 1,3s).
+    // Một khu vực 8.000 lead trước đây là 80 lượt nối tiếp.
+    const CHUNK = 300;
+    const MAX_PARALLEL = 6;
+    const parts = [];
+    for (let i = 0; i < regionLeadIds.length; i += CHUNK) parts.push(regionLeadIds.slice(i, i + CHUNK));
+    // Giữ THỨ TỰ theo lô để kết quả không đổi so với bản nối tiếp (nơi gọi có thể xếp/cắt
+    // trang dựa trên thứ tự này).
+    const perPart = new Array(parts.length);
+    let next = 0;
+    const worker = async () => {
+      while (next < parts.length) {
+        const idx = next++;
+        perPart[idx] = await fetchCrmSurveyEventsChunk({ ...baseOpts, leadIdChunk: parts[idx] });
+      }
+    };
+    await Promise.all(
+      Array.from({ length: Math.max(1, Math.min(MAX_PARALLEL, parts.length)) }, worker),
+    );
+    for (const rows of perPart) raw.push(...(rows || []));
   } else {
     raw = await fetchCrmSurveyEventsChunk({ ...baseOpts, leadIdChunk: null });
   }
@@ -5239,10 +5305,23 @@ async function fetchCrmFilteredLeadIdsViaRpc(req, mergedQuery, type, maxRows = 2
  * Chỉ hydrate các trường cần để đếm Deadline. Đây là fallback khi migration
  * `crm_deadline_bucket_counts` chưa được cài.
  */
-async function fetchCrmDeadlineCountRowsViaRpc(req, mergedQuery, type, maxRows = 20000) {
+/**
+ * @param {{ idsOnly?: boolean }} [opts]
+ *   `idsOnly` — chỉ cần danh sách id, bỏ toàn bộ phần nạp dữ liệu kèm bên dưới.
+ *
+ *   Hàm này sinh ra cho tính năng Deadline nên nó nạp NGUYÊN dòng lead (kèm join
+ *   `customers`), rồi gắn cờ người dùng và deadline của task đang mở — quét cả bảng
+ *   `crm_tasks` (100.000+ dòng). Nhưng `/kpi-ledger-total` chỉ dùng đúng `row.id` rồi vứt
+ *   hết phần còn lại. Đo trên dữ liệu thật: với 5.314 lead, phần thừa đó tốn ~6s trong
+ *   tổng 7,2s của endpoint.
+ */
+async function fetchCrmDeadlineCountRowsViaRpc(req, mergedQuery, type, maxRows = 20000, opts = {}) {
   const filtered = await fetchCrmFilteredLeadIdsViaRpc(req, mergedQuery, type, maxRows);
   if (!filtered) return null;
   const { ids, total, complete } = filtered;
+  if (opts.idsOnly) {
+    return { rows: ids.map((id) => ({ id })), total, complete };
+  }
   const select = 'id, phone, stage_id, stage_entered_at, kanban_deadline_at, expected_close_date, deadline_disabled_at, customer:customers(phone)';
   const byId = new Map();
   const chunks = [];

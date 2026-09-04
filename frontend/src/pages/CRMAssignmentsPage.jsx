@@ -3364,26 +3364,22 @@ function KanbanColumnCards({
   );
 }
 
-function KanbanView({
-  columns, itemsByColumn, users: _users, onAddColumn, onEditColumn, onDeleteColumn,
-  onAddCard, onOpenCard, onEditCard, onDeleteCard, onUpdateCard, onDragStart, onDropCol, allowDrop,
-  canManageTask, canMoveTask, columnTotal, onLoadMoreColumn,
-}) {
-  const noneList = itemsByColumn.get('__none__') || [];
-  const boardRef = useRef(null);
-  // Cột cuộn riêng (thay vì cả trang cuộn dọc) khi có cột chứa hàng nghìn thẻ: đo khoảng
-  // cách từ mép trên board tới đáy viewport, cấp cho mỗi cột làm chiều cao tối đa — phần
-  // dư trong cột tự cuộn, board không còn kéo cả trang dài ra theo cột nhiều việc nhất.
-  //
-  // Chiều cao ghi thẳng vào CSS variable trên thẻ board (cột đọc lại qua `var()`), KHÔNG
-  // qua React state: giá trị này đổi theo TỪNG FRAME khi cuộn trang, để trong state thì
-  // mỗi frame cuộn sẽ re-render lại toàn bộ thẻ của mọi cột — đo được 639ms cho một lượt
-  // reflow board, đúng cảm giác "lag" mà người dùng gặp.
+/**
+ * Đo khoảng cách từ mép trên của `ref` tới đáy vùng cuộn cha, ghi kết quả thành biến CSS
+ * `cssVarName` NGAY TRÊN chính phần tử đó — để phần tử con tự giới hạn chiều cao qua
+ * `var()` và tự cuộn riêng, thay vì kéo dài cả trang theo nội dung nhiều việc nhất.
+ *
+ * Dùng chung cho Kanban (mỗi cột một biến qua CSS, đọc lại ở cấp cột) và List (một khối
+ * duy nhất). Rút ra thành hook vì cả hai đều cần đúng một thứ: trang này cuộn bằng thẻ
+ * <main overflow-y-auto>, không phải window, nên phải tìm đúng vùng cuộn cha rồi nghe
+ * scroll của NÓ (window resize/scroll không bắn khi chỉ cuộn bên trong main).
+ *
+ * Ghi thẳng vào CSS variable, KHÔNG qua React state: giá trị đổi theo TỪNG FRAME khi cuộn
+ * trang, để trong state thì mỗi frame cuộn sẽ re-render lại toàn bộ danh sách — đo được
+ * 639ms cho một lượt reflow board Kanban, đúng cảm giác "lag" mà người dùng gặp.
+ */
+function useScrollBoundedHeight(ref, cssVarName) {
   useEffect(() => {
-    // Trang cuộn bằng thẻ <main overflow-y-auto>, không phải window — top của board đổi
-    // theo vị trí cuộn CỦA main, nên phải nghe scroll của chính main đó (window resize/scroll
-    // không bắn khi chỉ cuộn bên trong nó) để tính lại chỗ trống còn cho cột mỗi khi board
-    // trôi lên gần đỉnh màn hình.
     const findScrollParent = (node) => {
       let n = node?.parentElement || null;
       while (n && n !== document.body) {
@@ -3396,13 +3392,13 @@ function KanbanView({
     let raf2 = 0;
     const measure = () => {
       raf2 = 0;
-      const el = boardRef.current;
+      const el = ref.current;
       if (!el) return;
       const top = el.getBoundingClientRect().top;
       const scrollParent = findScrollParent(el);
       const bottom = scrollParent ? scrollParent.getBoundingClientRect().bottom : window.innerHeight;
       const h = Math.max(320, Math.round(bottom - top - 16));
-      el.style.setProperty('--assign-col-max-h', `${h}px`);
+      el.style.setProperty(cssVarName, `${h}px`);
     };
     const scheduleMeasure = () => {
       if (!raf2) raf2 = requestAnimationFrame(measure);
@@ -3411,7 +3407,7 @@ function KanbanView({
     const raf = requestAnimationFrame(measure);
     const t = setTimeout(measure, 200);
     window.addEventListener('resize', scheduleMeasure);
-    const scrollParent = findScrollParent(boardRef.current);
+    const scrollParent = findScrollParent(ref.current);
     scrollParent?.addEventListener('scroll', scheduleMeasure, { passive: true });
     const ro = new ResizeObserver(scheduleMeasure);
     ro.observe(document.body);
@@ -3423,7 +3419,19 @@ function KanbanView({
       scrollParent?.removeEventListener('scroll', scheduleMeasure);
       ro.disconnect();
     };
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cssVarName]);
+}
+
+function KanbanView({
+  columns, itemsByColumn, users: _users, onAddColumn, onEditColumn, onDeleteColumn,
+  onAddCard, onOpenCard, onEditCard, onDeleteCard, onUpdateCard, onDragStart, onDropCol, allowDrop,
+  canManageTask, canMoveTask, columnTotal, onLoadMoreColumn,
+}) {
+  const noneList = itemsByColumn.get('__none__') || [];
+  const boardRef = useRef(null);
+  // Cột cuộn riêng (thay vì cả trang cuộn dọc) khi có cột chứa hàng nghìn thẻ.
+  useScrollBoundedHeight(boardRef, '--assign-col-max-h');
   // items-start: mặc định flex-row kéo giãn mọi item bằng chiều cao item cao nhất
   // (align-items: stretch). Cột nào có hàng nghìn thẻ sẽ cực kỳ cao, và MỌI cột khác —
   // kể cả ô "Thêm cột mới" (nội dung căn giữa theo chiều dọc) — bị kéo giãn theo, đẩy
@@ -3695,9 +3703,19 @@ function TaskRow({ task, canManage, canMove, onOpen, onEdit, onDelete, onUpdate,
 }
 
 function ListView({ items, columns, onOpen, onEdit, onDelete, onUpdate, canManageTask, canMoveTask }) {
+  const boxRef = useRef(null);
+  // List cuộn RIÊNG bên trong khối của nó, không kéo dài cả trang: cùng cách Kanban đã
+  // làm cho từng cột — ở hàng nghìn việc thì để cả trang cuộn theo là thứ người dùng báo
+  // là bất tiện (phải cuộn qua hết danh sách mới chạm được thanh lọc/KPI phía trên).
+  useScrollBoundedHeight(boxRef, '--assign-list-max-h');
+
   if (!items.length) return <p className="text-center text-sm text-slate-400 py-12">Chưa có nhiệm vụ nào</p>;
   return (
-    <div className="ui-solid-white bg-white rounded-xl border border-slate-200/90 shadow-sm divide-y divide-slate-100">
+    <div
+      ref={boxRef}
+      className="ui-solid-white bg-white rounded-xl border border-slate-200/90 shadow-sm divide-y divide-slate-100 overflow-y-auto [scrollbar-width:thin]"
+      style={{ maxHeight: 'var(--assign-list-max-h, 70vh)' }}
+    >
       {items.map((t) => <TaskRow key={t.id} task={t} canManage={canManageTask(t)} canMove={canMoveTask(t)} columns={columns} onOpen={onOpen} onEdit={onEdit} onDelete={onDelete} onUpdate={onUpdate} />)}
     </div>
   );
