@@ -3,7 +3,9 @@
  * và tab "Tổng hợp theo từng mục I–IV" trên /crm/daily-reports.
  */
 const { supabase } = require('../config/supabase');
-const { metricKeyFromLabel, computeForUser } = require('./dailyReportMetrics');
+const {
+  metricKeyFromLabel, computeForUser, createDailyMetricsCache, prewarmDailyMetricsCache,
+} = require('./dailyReportMetrics');
 const { guessRoleKey, isCrmSalesDept, looksLikeNonCrmUser } = require('./dailyReportStaffing');
 const { loadAssignedTemplateIds } = require('./dailyReportUserTemplates');
 const { crmReportAddDaysYmd } = require('./crmReportDateBounds');
@@ -127,6 +129,27 @@ async function loadTeamDailyReportMatrix({
   ]);
   if (dErr) throw dErr;
   if (crErr) throw crErr;
+
+  // Quyết định có tính số liệu live ngay tại đây (chỉ cần snapshotMap), rồi cho các
+  // nguồn dùng chung chạy nền trong lúc phần dưới còn đang dựng danh sách nhân viên —
+  // hai việc này không liên quan gì nhau nên chờ nối tiếp là chờ vô ích.
+  const live = resolveDailyReportLivePhases({
+    explicitPreview: !!preview,
+    date,
+    snapshotMap,
+  });
+  const metricsCache = createDailyMetricsCache();
+  if (live.plan || live.result) {
+    prewarmDailyMetricsCache(metricsCache, {
+      reportDate: date,
+      untilIso: resultUntilIso(date),
+      companyId,
+      wantResult: !!live.result,
+      // Kết quả chỉ soi thẻ deal (mục "deal quá hạn"); Kế hoạch soi cả lead lẫn deal.
+      cardTypes: live.plan ? ['lead', 'deal'] : ['deal'],
+    });
+  }
+
   const deptIds = (depts || []).map((d) => d.id);
   const deptNameById = new Map((depts || []).map((d) => [String(d.id), d.name]));
 
@@ -323,11 +346,6 @@ async function loadTeamDailyReportMatrix({
     ));
   }
 
-  const live = resolveDailyReportLivePhases({
-    explicitPreview: !!preview,
-    date,
-    snapshotMap,
-  });
   if (live.plan || live.result) {
     const untilIso = resultUntilIso(date);
     const empsToCompute = employees.filter((emp) => {
@@ -342,12 +360,12 @@ async function loadTeamDailyReportMatrix({
         const jobs = [];
         if (live.plan) {
           jobs.push(
-            computeForUser(emp.id, date, rk, 'plan', { companyId }).then((pack) => ({ phase: 'plan', pack })),
+            computeForUser(emp.id, date, rk, 'plan', { companyId, cache: metricsCache }).then((pack) => ({ phase: 'plan', pack })),
           );
         }
         if (live.result) {
           jobs.push(
-            computeForUser(emp.id, date, rk, 'result', { companyId, untilIso }).then((pack) => ({ phase: 'result', pack })),
+            computeForUser(emp.id, date, rk, 'result', { companyId, untilIso, cache: metricsCache }).then((pack) => ({ phase: 'result', pack })),
           );
         }
         const packs = await Promise.all(jobs);

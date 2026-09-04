@@ -254,15 +254,21 @@ async function overlaySnapshotOnLines(lines, userId, reportDate, companyId, opts
   if (live.plan || live.result) {
     const roleKey = opts.roleKey || 'sale_admin';
     try {
-      if (live.plan) {
-        planMetrics = (await computeForUser(userId, reportDate, roleKey, 'plan', { companyId }))?.metrics || {};
-      }
-      if (live.result) {
-        resultMetrics = (await computeForUser(userId, reportDate, roleKey, 'result', {
-          companyId,
-          untilIso: resultUntilIso(reportDate),
-        }))?.metrics || {};
-      }
+      // Hai pha không dùng kết quả của nhau — trước đây chờ nối tiếp nên phiếu cá
+      // nhân phải trả hai lượt truy vấn liền nhau.
+      const [planPack, resultPack] = await Promise.all([
+        live.plan
+          ? computeForUser(userId, reportDate, roleKey, 'plan', { companyId })
+          : null,
+        live.result
+          ? computeForUser(userId, reportDate, roleKey, 'result', {
+            companyId,
+            untilIso: resultUntilIso(reportDate),
+          })
+          : null,
+      ]);
+      if (live.plan) planMetrics = planPack?.metrics || {};
+      if (live.result) resultMetrics = resultPack?.metrics || {};
     } catch (e) {
       console.warn('[daily-reports] overlay live', userId, e.message || e);
     }

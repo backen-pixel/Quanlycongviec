@@ -111,6 +111,67 @@ const RESULT_STAGE_TO_METRIC = {
   },
 };
 
+/**
+ * Cache dùng chung trong PHẠM VI MỘT REQUEST.
+ *
+ * Vài truy vấn ở đây không lọc theo user trong SQL mà quét cả ngày rồi lọc bằng JS
+ * (listLastDestinations). Bảng tổng hợp gọi chúng một lần cho MỖI nhân viên, nên cùng
+ * một khối dữ liệu bị nạp lại 25+ lần. Cache lưu chính Promise (không phải kết quả) để
+ * 10 nhân viên chạy song song cùng chờ một lượt nạp duy nhất.
+ *
+ * Cache chỉ sống trong một request — không có chuyện đọc số liệu cũ.
+ */
+function createDailyMetricsCache() {
+  return new Map();
+}
+
+function cachedOnce(cache, key, load) {
+  if (!cache) return load();
+  if (!cache.has(key)) cache.set(key, load());
+  return cache.get(key);
+}
+
+/**
+ * Khởi động sớm các nguồn dùng chung.
+ *
+ * Bảng tổng hợp phải dựng xong danh sách nhân viên mới bắt đầu tính số liệu, nhưng
+ * mọi nguồn ở đây chỉ phụ thuộc (ngày, công ty) — chạy nền ngay từ đầu để hai việc
+ * chồng lên nhau. Không await: kết quả nằm trong cache, ai cần thì chờ.
+ *
+ * CHỈ gọi khi thật sự sẽ tính số liệu live; ngày đã chốt snapshot thì đừng gọi,
+ * kẻo nạp một loạt dữ liệu không ai dùng.
+ */
+function prewarmDailyMetricsCache(cache, {
+  reportDate, untilIso = null, companyId = null, wantResult = true, cardTypes = ['deal'],
+} = {}) {
+  if (!cache || !reportDate) return;
+  const jobs = [];
+
+  // Nguồn theo khoảng ngày chỉ phục vụ phần Kết quả; phần Kế hoạch chỉ đọc thẻ
+  // đang mở nên không cần khoảng nào. Nạp đúng một khoảng — đúng cái sẽ dùng.
+  if (wantResult) {
+    const { startISO, endISO } = dateRange(reportDate, untilIso);
+    jobs.push(
+      cachedOnce(cache, `stage_history|${startISO}|${endISO}`, () => fetchStageHistoryForDay(startISO, endISO)),
+      dayLeadsCreated(cache, startISO, endISO),
+      dayLeadConvertedLedger(cache, startISO, endISO),
+      daySurveyEventsLinked(cache, startISO, endISO),
+      dayCareLeadMeta(cache, startISO, endISO),
+      dayConvertMoves(cache, startISO, endISO),
+    );
+  }
+  if (companyId) {
+    for (const type of cardTypes) {
+      jobs.push(companyOpenCardsWithTaskDeadline(cache, type, companyId).then(
+        (cards) => companyOpenCardFlags(cache, type, companyId, cards.map((r) => r.id)),
+      ));
+    }
+  }
+  // Lỗi vẫn nổi lên ở nơi await thật (cache giữ promise gốc); chặn ở đây chỉ để
+  // Node không báo unhandled rejection khi chẳng ai dùng tới nguồn đó.
+  for (const j of jobs) Promise.resolve(j).catch(() => {});
+}
+
 async function ownedLeadIds(userId, type = null) {
   let q = supabase
     .from('crm_leads')
@@ -123,18 +184,12 @@ async function ownedLeadIds(userId, type = null) {
 }
 
 /** Lead/deal tạo mới trong ngày (owner/assignee). */
-async function listLeadsCreatedToday(userId, reportDate, type = 'lead', untilIso = null) {
+async function listLeadsCreatedToday(userId, reportDate, type = 'lead', untilIso = null, cache = null) {
   const { startISO, endISO } = dateRange(reportDate, untilIso);
-  let q = supabase
-    .from('crm_leads')
-    .select('id')
-    .or(`lead_owner_id.eq.${userId},assigned_to.eq.${userId}`)
-    .gte('created_at', startISO)
-    .lte('created_at', endISO);
-  if (type) q = q.eq('type', type);
-  const { data, error } = await q;
-  if (error) throw error;
-  const ids = (data || []).map((l) => String(l.id));
+  const rows = await dayLeadsCreated(cache, startISO, endISO);
+  const ids = rows
+    .filter((l) => isOwnedLead(l, userId) && (!type || l.type === type))
+    .map((l) => String(l.id));
   return { count: ids.length, ids };
 }
 
@@ -154,17 +209,15 @@ function isOwnedLead(lead, userId) {
 }
 
 /**
- * Điểm đến cuối trong ngày của từng thẻ NV phụ trách (không cộng hành trình).
- * @returns {Map<string, { slug: string, entered_at: string, id: string }>}
+ * Lịch sử chuyển cột của cả ngày — truy vấn KHÔNG phụ thuộc userId, chỉ (startISO, endISO).
+ * Tách riêng để nhiều nhân viên dùng chung một lượt nạp qua cache.
  */
-async function listLastDestinations(userId, reportDate, type = null, untilIso = null) {
-  const { startISO, endISO } = dateRange(reportDate, untilIso);
-  const byLead = new Map();
+async function fetchStageHistoryForDay(startISO, endISO) {
+  const rows = [];
   const page = 1000;
   let from = 0;
-
   for (;;) {
-    let q = supabase
+    const { data, error } = await supabase
       .from('crm_lead_stage_history')
       .select(`
         id, lead_id, to_canonical_slug, to_stage_id, entered_at,
@@ -175,10 +228,191 @@ async function listLastDestinations(userId, reportDate, type = null, untilIso = 
       .lte('entered_at', endISO)
       .order('entered_at', { ascending: true })
       .range(from, from + page - 1);
-    const { data, error } = await q;
     if (error) throw error;
     const chunk = data || [];
-    for (const h of chunk) {
+    rows.push(...chunk);
+    if (chunk.length < page) break;
+    from += page;
+    if (from >= 8000) break;
+  }
+  return rows;
+}
+
+/** Nạp phân trang một truy vấn đã dựng sẵn (buildPage nhận from/to). */
+async function fetchAllPages(buildPage, hardCap = 8000) {
+  const rows = [];
+  const page = 1000;
+  let from = 0;
+  for (;;) {
+    const { data, error } = await buildPage(from, from + page - 1);
+    if (error) throw error;
+    const chunk = data || [];
+    rows.push(...chunk);
+    if (chunk.length < page) break;
+    from += page;
+    if (from >= hardCap) break;
+  }
+  return rows;
+}
+
+/**
+ * ── Nguồn dữ liệu THEO NGÀY, dùng chung cho mọi nhân viên ──────────────────
+ *
+ * Các truy vấn dưới đây trước kia chạy riêng cho từng nhân viên (lọc user ngay
+ * trong SQL), nên bảng tổng hợp 25 người phải trả 25 lượt round-trip cho cùng
+ * một khoảng ngày. Nay bỏ điều kiện user khỏi SQL, nạp một lần rồi lọc theo
+ * user bằng JS — điều kiện lọc giữ nguyên từng chữ.
+ *
+ * Bản theo ngày có phân trang, trong khi bản cũ mỗi user không phân trang nên
+ * bị PostgREST cắt ở 1000 dòng; số liệu vì thế chỉ có thể ĐÚNG HƠN, không kém.
+ */
+function dayLeadsCreated(cache, startISO, endISO) {
+  return cachedOnce(cache, `leads_created|${startISO}|${endISO}`, () => fetchAllPages(
+    (from, to) => supabase
+      .from('crm_leads')
+      .select('id, type, lead_owner_id, assigned_to, created_at')
+      .gte('created_at', startISO)
+      .lte('created_at', endISO)
+      .order('created_at', { ascending: true })
+      .order('id', { ascending: true })
+      .range(from, to),
+  ));
+}
+
+function dayLeadConvertedLedger(cache, startISO, endISO) {
+  return cachedOnce(cache, `ledger_converted|${startISO}|${endISO}`, async () => {
+    try {
+      return await fetchAllPages((from, to) => supabase
+        .from('crm_kpi_ledger')
+        .select('lead_id, user_id, created_by, occurred_at, created_at')
+        .eq('event_type', 'lead_converted')
+        .gte('occurred_at', startISO)
+        .lte('occurred_at', endISO)
+        .order('occurred_at', { ascending: true })
+        .order('lead_id', { ascending: true })
+        .range(from, to));
+    } catch (e) {
+      // Giữ nguyên đường lùi của bản cũ: cột occurred_at có thể chưa tồn tại.
+      return fetchAllPages((from, to) => supabase
+        .from('crm_kpi_ledger')
+        .select('lead_id, user_id, created_by, created_at')
+        .eq('event_type', 'lead_converted')
+        .gte('created_at', startISO)
+        .lte('created_at', endISO)
+        .order('created_at', { ascending: true })
+        .order('lead_id', { ascending: true })
+        .range(from, to));
+    }
+  });
+}
+
+function daySurveyEventsLinked(cache, startISO, endISO) {
+  return cachedOnce(cache, `events_survey_linked|${startISO}|${endISO}`, async () => {
+    try {
+      return await fetchAllPages((from, to) => supabase
+        .from('crm_events')
+        .select('id, lead_id, created_by, assignee_id, start_time, created_at')
+        .in('event_type', ['site_visit', 'measurement'])
+        .not('lead_id', 'is', null)
+        .or(`and(start_time.gte.${startISO},start_time.lte.${endISO}),and(created_at.gte.${startISO},created_at.lte.${endISO})`)
+        .order('created_at', { ascending: true })
+        .order('id', { ascending: true })
+        .range(from, to));
+    } catch (e) {
+      return fetchAllPages((from, to) => supabase
+        .from('crm_events')
+        .select('id, lead_id, created_by, assignee_id, created_at')
+        .in('event_type', ['site_visit', 'measurement'])
+        .not('lead_id', 'is', null)
+        .gte('created_at', startISO)
+        .lte('created_at', endISO)
+        .order('created_at', { ascending: true })
+        .order('id', { ascending: true })
+        .range(from, to));
+    }
+  });
+}
+
+/** Hoạt động chăm + bình luận của cả ngày (mọi nhân viên). */
+function dayCareRows(cache, startISO, endISO) {
+  return cachedOnce(cache, `care_rows|${startISO}|${endISO}`, async () => {
+    const [acts, comments] = await Promise.all([
+      fetchAllPages((from, to) => supabase
+        .from('crm_activities')
+        .select('id, lead_id, created_at, activity_date, created_by')
+        .gte('created_at', startISO)
+        .lte('created_at', endISO)
+        .order('created_at', { ascending: true })
+        .order('id', { ascending: true })
+        .range(from, to)),
+      fetchAllPages((from, to) => supabase
+        .from('crm_lead_comments')
+        .select('id, lead_id, created_at, user_id')
+        .is('deleted_at', null)
+        .gte('created_at', startISO)
+        .lte('created_at', endISO)
+        .order('created_at', { ascending: true })
+        .order('id', { ascending: true })
+        .range(from, to)),
+    ]);
+    return { acts, comments };
+  });
+}
+
+/** Cột hiện tại + loại của mọi lead được chăm trong ngày — tra một lần cho cả bảng. */
+function dayCareLeadMeta(cache, startISO, endISO) {
+  return cachedOnce(cache, `care_lead_meta|${startISO}|${endISO}`, async () => {
+    const { acts, comments } = await dayCareRows(cache, startISO, endISO);
+    const leadIds = [...new Set([...acts, ...comments].map((a) => a.lead_id).filter(Boolean))];
+    const meta = new Map();
+    const chunks = [];
+    for (let i = 0; i < leadIds.length; i += 200) chunks.push(leadIds.slice(i, i + 200));
+    const parts = await Promise.all(chunks.map((chunk) => supabase
+      .from('crm_leads')
+      .select('id, type, stage:crm_pipeline_stages!stage_id(canonical_slug)')
+      .in('id', chunk)));
+    for (const { data, error } of parts) {
+      if (error) throw error;
+      for (const l of data || []) {
+        meta.set(String(l.id), { slug: l.stage?.canonical_slug || null, type: l.type || null });
+      }
+    }
+    return meta;
+  });
+}
+
+/** Chuyển cột cả ngày (bản gọn cho "lead vừa lên deal"). */
+function dayConvertMoves(cache, startISO, endISO) {
+  return cachedOnce(cache, `convert_moves|${startISO}|${endISO}`, () => fetchAllPages(
+    (from, to) => supabase
+      .from('crm_lead_stage_history')
+      .select(`
+        lead_id, pipeline_type, to_canonical_slug, changed_by,
+        lead:crm_leads!lead_id(id, lead_owner_id, assigned_to)
+      `)
+      .gte('entered_at', startISO)
+      .lte('entered_at', endISO)
+      .order('entered_at', { ascending: true })
+      .range(from, to),
+  ));
+}
+
+/**
+ * Điểm đến cuối trong ngày của từng thẻ NV phụ trách (không cộng hành trình).
+ * @returns {Map<string, { slug: string, entered_at: string, id: string }>}
+ */
+async function listLastDestinations(userId, reportDate, type = null, untilIso = null, cache = null) {
+  const { startISO, endISO } = dateRange(reportDate, untilIso);
+  const byLead = new Map();
+
+  const rows = await cachedOnce(
+    cache,
+    `stage_history|${startISO}|${endISO}`,
+    () => fetchStageHistoryForDay(startISO, endISO),
+  );
+
+  {
+    for (const h of rows) {
       const lead = h.lead;
       if (!h.lead_id || !isOwnedLead(lead, userId)) continue;
       if (type && lead?.type && lead.type !== type) continue;
@@ -195,9 +429,6 @@ async function listLastDestinations(userId, reportDate, type = null, untilIso = 
         });
       }
     }
-    if (chunk.length < page) break;
-    from += page;
-    if (from >= 8000) break;
   }
   return byLead;
 }
@@ -276,57 +507,25 @@ async function countStageFunnelBySlugs(userId, reportDate, slugs, type = null, u
   return { funnel, distinctCounts, distinctIds };
 }
 
-async function listCareActivities(userId, reportDate, untilIso = null) {
+async function listCareActivities(userId, reportDate, untilIso = null, cache = null) {
   const { startISO, endISO } = dateRange(reportDate, untilIso);
+  const uid = String(userId);
   const empty = {
     care_cold: 0, care_warm: 0, care_hot: 0, not_contacted: 0, survey: 0,
     ids: { care_cold: [], care_warm: [], care_hot: [], not_contacted: [], survey: [] },
   };
 
-  const [{ data: acts, error }, { data: comments, error: cErr }] = await Promise.all([
-    supabase
-      .from('crm_activities')
-      .select('id, lead_id, created_at, activity_date')
-      .eq('created_by', userId)
-      .gte('created_at', startISO)
-      .lte('created_at', endISO)
-      .limit(2000),
-    supabase
-      .from('crm_lead_comments')
-      .select('id, lead_id, created_at')
-      .eq('user_id', userId)
-      .is('deleted_at', null)
-      .gte('created_at', startISO)
-      .lte('created_at', endISO)
-      .limit(4000),
-  ]);
-  if (error) throw error;
-  if (cErr) throw cErr;
-
+  const { acts, comments } = await dayCareRows(cache, startISO, endISO);
   const rows = [
-    ...(acts || []),
-    ...(comments || []),
+    ...acts.filter((a) => String(a.created_by || '') === uid),
+    ...comments.filter((c) => String(c.user_id || '') === uid),
   ];
   if (!rows.length) return empty;
 
   const leadIds = [...new Set(rows.map((a) => a.lead_id).filter(Boolean))];
   if (!leadIds.length) return empty;
 
-  const leadSlug = new Map();
-  for (let i = 0; i < leadIds.length; i += 200) {
-    const chunk = leadIds.slice(i, i + 200);
-    const { data: leads, error: lErr } = await supabase
-      .from('crm_leads')
-      .select('id, type, stage:crm_pipeline_stages!stage_id(canonical_slug)')
-      .in('id', chunk);
-    if (lErr) throw lErr;
-    for (const l of leads || []) {
-      leadSlug.set(String(l.id), {
-        slug: l.stage?.canonical_slug || null,
-        type: l.type || null,
-      });
-    }
-  }
+  const leadSlug = await dayCareLeadMeta(cache, startISO, endISO);
 
   const seen = {
     care_cold: new Set(),
@@ -391,7 +590,7 @@ async function countSurveyEvents(userId, reportDate, untilIso = null) {
 }
 
 /** Sự kiện KS có liên kết lead/deal (tạo trong ngày). */
-async function listLinkedSurveyEvents(userId, reportDate, untilIso = null) {
+async function listLinkedSurveyEvents(userId, reportDate, untilIso = null, cache = null) {
   const { startISO, endISO } = dateRange(reportDate, untilIso);
   const uid = String(userId);
   const eventIds = new Set();
@@ -405,32 +604,13 @@ async function listLinkedSurveyEvents(userId, reportDate, untilIso = null) {
     }
   };
 
-  // Đếm theo start_time (ngày khảo sát THỰC TẾ diễn ra) HOẶC created_at (ngày ghi log) —
-  // trước đây chỉ lọc theo created_at nên lịch hẹn đặt trước ngày khảo sát bị bỏ sót
-  // (đây là nguyên nhân mục "Deal tương tác (Khảo sát)" hay ra 0).
-  const { data, error } = await supabase
-    .from('crm_events')
-    .select('id, lead_id, created_by, assignee_id, start_time, created_at')
-    .in('event_type', ['site_visit', 'measurement'])
-    .not('lead_id', 'is', null)
-    .or(`created_by.eq.${uid},assignee_id.eq.${uid}`)
-    .or(`and(start_time.gte.${startISO},start_time.lte.${endISO}),and(created_at.gte.${startISO},created_at.lte.${endISO})`)
-    .limit(1000);
-  if (!error) pick(data);
-  else {
-    const { data: d2 } = await supabase
-      .from('crm_events')
-      .select('id, lead_id')
-      .in('event_type', ['site_visit', 'measurement'])
-      .not('lead_id', 'is', null)
-      .or(`created_by.eq.${uid},assignee_id.eq.${uid}`)
-      .gte('created_at', startISO)
-      .lte('created_at', endISO)
-      .limit(1000);
-    pick(d2);
-  }
+  const dayRows = await daySurveyEventsLinked(cache, startISO, endISO);
+  pick(dayRows.filter((r) => (
+    String(r.created_by || '') === uid || String(r.assignee_id || '') === uid
+  )));
   return { count: eventIds.size, ids: [...leadIds] };
 }
+
 
 /**
  * Lead vừa chuyển sang Deal trong ngày — nguồn đúng cho "Deal mới tiếp nhận".
@@ -439,35 +619,15 @@ async function listLinkedSurveyEvents(userId, reportDate, untilIso = null) {
  * vì pipeline Deal không có cột nào mang canonical_slug lead_new/survey_scheduled/survey_done
  * (những slug đó chỉ tồn tại ở pipeline Lead) nên grouped.byMetric.deal_new luôn rỗng.
  */
-async function listDealConversionsToday(userId, reportDate, untilIso = null) {
+async function listDealConversionsToday(userId, reportDate, untilIso = null, cache = null) {
   const { startISO, endISO } = dateRange(reportDate, untilIso);
   const uid = String(userId);
   const seen = new Set();
 
-  const { data: ledger, error: ledgerErr } = await supabase
-    .from('crm_kpi_ledger')
-    .select('lead_id, user_id, created_by, occurred_at, created_at')
-    .eq('event_type', 'lead_converted')
-    .or(`user_id.eq.${uid},created_by.eq.${uid}`)
-    .gte('occurred_at', startISO)
-    .lte('occurred_at', endISO)
-    .limit(2000);
-  if (!ledgerErr) {
-    for (const row of ledger || []) {
-      if (row.lead_id) seen.add(String(row.lead_id));
-    }
-  } else {
-    const { data: ledger2 } = await supabase
-      .from('crm_kpi_ledger')
-      .select('lead_id, user_id, created_by, created_at')
-      .eq('event_type', 'lead_converted')
-      .or(`user_id.eq.${uid},created_by.eq.${uid}`)
-      .gte('created_at', startISO)
-      .lte('created_at', endISO)
-      .limit(2000);
-    for (const row of ledger2 || []) {
-      if (row.lead_id) seen.add(String(row.lead_id));
-    }
+  const ledger = await dayLeadConvertedLedger(cache, startISO, endISO);
+  for (const row of ledger) {
+    if (String(row.user_id || '') !== uid && String(row.created_by || '') !== uid) continue;
+    if (row.lead_id) seen.add(String(row.lead_id));
   }
   return { count: seen.size, ids: [...seen] };
 }
@@ -479,8 +639,8 @@ async function listDealConversionsToday(userId, reportDate, untilIso = null) {
  * bỏ sót deal quá hạn theo SLA cột (chưa ai gán deadline tay) hoặc theo task còn mở gần nhất —
  * hai nguồn này màn Deadline vẫn tính, khiến mục 8 báo cáo ngày ra số THẤP HƠN màn Deadline.
  */
-async function listDealsOverdueProper(userId, reportDate, companyId = null) {
-  let cards = await listOwnedOpenCards(userId, 'deal', companyId);
+async function listDealsOverdueProper(userId, reportDate, companyId = null, cache = null) {
+  let cards = await ownedOpenCardsReady(userId, 'deal', companyId, cache);
   cards = cards.filter((row) => {
     if (row.deadline_disabled_at) return false;
     if (!row.stage || row.stage.is_active === false) return false;
@@ -488,8 +648,6 @@ async function listDealsOverdueProper(userId, reportDate, companyId = null) {
     if (deadlineStageExcluded(row.stage)) return false;
     return crmLeadHasPhone(row);
   });
-  cards = await attachNextOpenTaskDeadline(cards);
-  cards = await attachLeadUserFlagsForList(cards, userId);
 
   const ids = [];
   for (const row of cards) {
@@ -537,47 +695,19 @@ async function countInstallFollow(userId, reportDate, untilIso = null) {
 }
 
 /** Số lead chuyển sang Deal trong ngày (KPI lead_converted + vào pipeline deal). */
-async function listLeadToDealConversions(userId, reportDate, untilIso = null) {
+async function listLeadToDealConversions(userId, reportDate, untilIso = null, cache = null) {
   const { startISO, endISO } = dateRange(reportDate, untilIso);
   const uid = String(userId);
   const seen = new Set();
 
-  const { data: ledger, error: ledgerErr } = await supabase
-    .from('crm_kpi_ledger')
-    .select('lead_id, user_id, created_by, occurred_at, created_at')
-    .eq('event_type', 'lead_converted')
-    .or(`user_id.eq.${uid},created_by.eq.${uid}`)
-    .gte('occurred_at', startISO)
-    .lte('occurred_at', endISO)
-    .limit(2000);
-  if (!ledgerErr) {
-    for (const row of ledger || []) {
-      if (row.lead_id) seen.add(String(row.lead_id));
-    }
-  } else {
-    const { data: ledger2 } = await supabase
-      .from('crm_kpi_ledger')
-      .select('lead_id, user_id, created_by, created_at')
-      .eq('event_type', 'lead_converted')
-      .or(`user_id.eq.${uid},created_by.eq.${uid}`)
-      .gte('created_at', startISO)
-      .lte('created_at', endISO)
-      .limit(2000);
-    for (const row of ledger2 || []) {
-      if (row.lead_id) seen.add(String(row.lead_id));
-    }
+  const ledger = await dayLeadConvertedLedger(cache, startISO, endISO);
+  for (const row of ledger) {
+    if (String(row.user_id || '') !== uid && String(row.created_by || '') !== uid) continue;
+    if (row.lead_id) seen.add(String(row.lead_id));
   }
 
-  const { data: moves } = await supabase
-    .from('crm_lead_stage_history')
-    .select(`
-      lead_id, pipeline_type, to_canonical_slug, changed_by,
-      lead:crm_leads!lead_id(id, lead_owner_id, assigned_to)
-    `)
-    .gte('entered_at', startISO)
-    .lte('entered_at', endISO)
-    .limit(5000);
-  for (const h of moves || []) {
+  const moves = await dayConvertMoves(cache, startISO, endISO);
+  for (const h of moves) {
     const lead = h.lead;
     const isActor = String(h.changed_by || '') === uid;
     const isOwner = lead
@@ -609,7 +739,7 @@ function unionIds(...lists) {
   return [...s];
 }
 
-async function computeAutoDailyResults(userId, reportDate, roleKey = 'sale_admin', untilIso = null, companyId = null) {
+async function computeAutoDailyResults(userId, reportDate, roleKey = 'sale_admin', untilIso = null, companyId = null, cache = null) {
   const results = {};
   const rk = roleKey === 'deal_admin' ? 'sale_deal' : roleKey;
   let lastMap = new Map();
@@ -619,10 +749,10 @@ async function computeAutoDailyResults(userId, reportDate, roleKey = 'sale_admin
     // 4 nguồn dưới đây độc lập nhau (chỉ cần userId + ngày), trước đây await tuần tự
     // nên mỗi nhân viên phải trả 4 lần round-trip Supabase. Gộp lại: tốn = lâu nhất.
     const [lastMapR, created, care, leadToDeal] = await Promise.all([
-      listLastDestinations(userId, reportDate, 'lead', untilIso),
-      listLeadsCreatedToday(userId, reportDate, 'lead', untilIso),
-      listCareActivities(userId, reportDate, untilIso),
-      listLeadToDealConversions(userId, reportDate, untilIso),
+      listLastDestinations(userId, reportDate, 'lead', untilIso, cache),
+      listLeadsCreatedToday(userId, reportDate, 'lead', untilIso, cache),
+      listCareActivities(userId, reportDate, untilIso, cache),
+      listLeadToDealConversions(userId, reportDate, untilIso, cache),
     ]);
     lastMap = lastMapR;
     grouped = groupLastDestByMetric(lastMap, 'sale_admin');
@@ -673,11 +803,11 @@ async function computeAutoDailyResults(userId, reportDate, roleKey = 'sale_admin
   if (rk === 'sale_deal') {
     // 5 nguồn độc lập (userId + ngày), trước đây await tuần tự = 5 round-trip/nhân viên.
     const [lastMapR, dealCreated, converted, linkedSurvey, overdue] = await Promise.all([
-      listLastDestinations(userId, reportDate, 'deal', untilIso),
-      listLeadsCreatedToday(userId, reportDate, 'deal', untilIso),
-      listDealConversionsToday(userId, reportDate, untilIso),
-      listLinkedSurveyEvents(userId, reportDate, untilIso),
-      listDealsOverdueProper(userId, reportDate, companyId),
+      listLastDestinations(userId, reportDate, 'deal', untilIso, cache),
+      listLeadsCreatedToday(userId, reportDate, 'deal', untilIso, cache),
+      listDealConversionsToday(userId, reportDate, untilIso, cache),
+      listLinkedSurveyEvents(userId, reportDate, untilIso, cache),
+      listDealsOverdueProper(userId, reportDate, companyId, cache),
     ]);
     lastMap = lastMapR;
     grouped = groupLastDestByMetric(lastMap, 'sale_deal');
@@ -725,7 +855,7 @@ async function computeAutoDailyResults(userId, reportDate, roleKey = 'sale_admin
   if (rk === 'design_survey') {
     const [surveyN, lastDeal] = await Promise.all([
       countSurveyEvents(userId, reportDate, untilIso),
-      listLastDestinations(userId, reportDate, 'deal', untilIso),
+      listLastDestinations(userId, reportDate, 'deal', untilIso, cache),
     ]);
     results.survey_event = metricPayload(
       surveyN,
@@ -803,14 +933,17 @@ async function attachNextOpenTaskDeadline(rows) {
   const stageByLead = new Map(list.map((r) => [String(r.id), r.stage_id == null ? null : String(r.stage_id)]));
   const byLead = new Map();
   const ids = list.map((r) => String(r.id));
-  for (let i = 0; i < ids.length; i += 200) {
-    const chunk = ids.slice(i, i + 200);
-    const { data, error } = await supabase
-      .from('crm_tasks')
-      .select('lead_id, pipeline_stage_id, deadline, order_index')
-      .in('lead_id', chunk)
-      .in('status', ['pending', 'in_progress'])
-      .not('deadline', 'is', null);
+  // Các lô độc lập nhau và phép chọn hạn sớm nhất không phụ thuộc thứ tự xử lý,
+  // nên chờ nối tiếp từng lô là chờ vô ích — trên tập cả công ty là 13 lượt liên tiếp.
+  const chunks = [];
+  for (let i = 0; i < ids.length; i += 200) chunks.push(ids.slice(i, i + 200));
+  const parts = await Promise.all(chunks.map((chunk) => supabase
+    .from('crm_tasks')
+    .select('lead_id, pipeline_stage_id, deadline, order_index')
+    .in('lead_id', chunk)
+    .in('status', ['pending', 'in_progress'])
+    .not('deadline', 'is', null)));
+  for (const { data, error } of parts) {
     if (error) {
       console.warn('[daily-reports] next open task deadline:', error.message || error);
       continue;
@@ -844,6 +977,101 @@ function deadlineBucketOnDate(deadlineTs, reportDate) {
   if (deadlineTs < startMs) return 'overdue';
   if (deadlineTs <= endMs) return 'today';
   return null;
+}
+
+const OPEN_CARD_SELECT = `
+        id, type, phone, stage_id, stage_entered_at, pipeline_id,
+        kanban_deadline_at, expected_close_date, deadline_disabled_at,
+        customer:customers(id, phone),
+        stage:crm_pipeline_stages!crm_leads_stage_id_fkey(
+          id, name, canonical_slug, is_won, is_lost, sla_days, is_active, pipeline_id,
+          counts_as_completed_revenue, deal_report_bucket
+        )
+      `;
+
+/**
+ * Thẻ đang mở của CẢ CÔNG TY theo loại, đã gắn hạn NV mở gần nhất — nạp một lần
+ * cho toàn bảng tổng hợp. Bước gắn hạn tính theo từng thẻ nên chạy trên tập lớn
+ * rồi lọc theo user cho kết quả y như chạy trên tập riêng của user.
+ */
+function companyOpenCardsWithTaskDeadline(cache, type, companyId) {
+  return cachedOnce(cache, `open_cards|${type}|${companyId}`, async () => {
+    const rows = await fetchAllPages((from, to) => supabase
+      .from('crm_leads')
+      // Hai cột chủ thẻ chỉ dùng để lọc trong bộ nhớ (bản cũ lọc bằng SQL);
+      // bỏ khỏi row trước khi trả để giữ đúng hình dạng dữ liệu cũ.
+      .select(`${OPEN_CARD_SELECT}, lead_owner_id, assigned_to`)
+      .eq('type', type)
+      .eq('company_id', companyId)
+      .is('deadline_disabled_at', null)
+      .order('id', { ascending: true })
+      .range(from, to));
+    return attachNextOpenTaskDeadline(rows);
+  });
+}
+
+/** Cờ per-user của mọi nhân viên trên tập thẻ đó — một lượt nạp thay cho mỗi user một lượt. */
+function companyOpenCardFlags(cache, type, companyId, leadIds) {
+  return cachedOnce(cache, `open_card_flags|${type}|${companyId}`, async () => {
+    const byUser = new Map();
+    const ids = [...new Set(leadIds.filter(Boolean).map(String))];
+    const chunks = [];
+    for (let i = 0; i < ids.length; i += 500) chunks.push(ids.slice(i, i + 500));
+    const parts = await Promise.all(chunks.map((slice) => supabase
+      .from('crm_lead_user_flags')
+      .select('user_id, lead_id, is_pinned, pinned_at, is_interacted, interacted_at')
+      .in('lead_id', slice)));
+    for (const { data, error } of parts) {
+      if (error) {
+        // Bảng chưa migrate → coi như không có cờ, giống fetchFlagsByLeadIds.
+        if (/crm_lead_user_flags/.test(error.message || '')) return byUser;
+        throw error;
+      }
+      for (const r of data || []) {
+        const uid = String(r.user_id);
+        if (!byUser.has(uid)) byUser.set(uid, new Map());
+        byUser.get(uid).set(String(r.lead_id), {
+          is_pinned: !!r.is_pinned,
+          pinned_at: r.pinned_at || null,
+          is_interacted: !!r.is_interacted,
+          interacted_at: r.interacted_at || null,
+        });
+      }
+    }
+    return byUser;
+  });
+}
+
+/**
+ * Thẻ đang mở của một nhân viên, đã gắn hạn NV + cờ per-user.
+ *
+ * Có cache và companyId (bảng tổng hợp) thì lấy từ tập dùng chung — không thêm
+ * truy vấn nào. Không có (phiếu cá nhân) thì vẫn đi đường cũ, lọc user trong SQL
+ * để khỏi quét rộng vô ích.
+ */
+async function ownedOpenCardsReady(userId, type, companyId, cache) {
+  if (cache && companyId) {
+    const all = await companyOpenCardsWithTaskDeadline(cache, type, companyId);
+    const flagsByUser = await companyOpenCardFlags(cache, type, companyId, all.map((r) => r.id));
+    const mine = flagsByUser.get(String(userId)) || new Map();
+    return all
+      .filter((r) => isOwnedLead(r, userId))
+      .map((r) => {
+        const f = mine.get(String(r.id));
+        const row = {
+          ...r,
+          is_pinned: f?.is_pinned ?? false,
+          pinned_at: f?.pinned_at ?? null,
+          is_interacted: f?.is_interacted ?? false,
+          interacted_at: f?.interacted_at ?? null,
+        };
+        delete row.lead_owner_id;
+        delete row.assigned_to;
+        return row;
+      });
+  }
+  const cards = await listOwnedOpenCards(userId, type, companyId);
+  return attachLeadUserFlagsForList(await attachNextOpenTaskDeadline(cards), userId);
 }
 
 async function listOwnedOpenCards(userId, type, companyId = null) {
@@ -882,7 +1110,7 @@ async function listOwnedOpenCards(userId, type, companyId = null) {
  * Kế hoạch ngày = thẻ Deadline Lead/Deal đang ở cột Quá hạn + Hôm nay,
  * gom theo cột Kanban hiện tại → hạng mục mẫu.
  */
-async function computeAutoDailyPlans(userId, reportDate, roleKey = 'sale_admin', companyId = null) {
+async function computeAutoDailyPlans(userId, reportDate, roleKey = 'sale_admin', companyId = null, cache = null) {
   const rk = roleKey === 'deal_admin' ? 'sale_deal' : roleKey;
   const empty = {
     metrics: {},
@@ -899,7 +1127,7 @@ async function computeAutoDailyPlans(userId, reportDate, roleKey = 'sale_admin',
     metricPayload(0, 'Tự động Deadline: 0 quá hạn + 0 hôm nay', 'deadline overdue+today', []),
   ]));
 
-  let cards = await listOwnedOpenCards(userId, type, companyId);
+  let cards = await ownedOpenCardsReady(userId, type, companyId, cache);
   // Bám bảng Deadline: chỉ cột đang hoạt động của đúng pipeline thẻ, có SĐT, chưa thắng/thua.
   cards = cards.filter((row) => {
     if (row.deadline_disabled_at) return false;
@@ -908,8 +1136,6 @@ async function computeAutoDailyPlans(userId, reportDate, roleKey = 'sale_admin',
     if (deadlineStageExcluded(row.stage)) return false;
     return crmLeadHasPhone(row);
   });
-  cards = await attachNextOpenTaskDeadline(cards);
-  cards = await attachLeadUserFlagsForList(cards, userId);
   const byMetric = new Map();
   const overdueIds = [];
   const todayIds = [];
@@ -1044,9 +1270,9 @@ function metricKeyFromLabel(label) {
 async function computeForUser(userId, reportDate, roleKey, phase, opts = {}) {
   const rk = roleKey === 'deal_admin' ? 'sale_deal' : (roleKey || 'sale_admin');
   if (phase === 'plan') {
-    return computeAutoDailyPlans(userId, reportDate, rk, opts.companyId || null);
+    return computeAutoDailyPlans(userId, reportDate, rk, opts.companyId || null, opts.cache || null);
   }
-  return computeAutoDailyResults(userId, reportDate, rk, opts.untilIso || null, opts.companyId || null);
+  return computeAutoDailyResults(userId, reportDate, rk, opts.untilIso || null, opts.companyId || null, opts.cache || null);
 }
 
 async function computeMetric(userId, reportDate, roleKey, metricKey, phase, opts = {}) {
@@ -1096,6 +1322,8 @@ const METRIC_CATALOG = Object.fromEntries(
 );
 
 module.exports = {
+  createDailyMetricsCache,
+  prewarmDailyMetricsCache,
   computeAutoDailyResults,
   computeAutoDailyPlans,
   computeForUser,
