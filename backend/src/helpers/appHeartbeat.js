@@ -6,9 +6,10 @@
 
 const { supabase } = require('../config/supabase');
 const { recordUserPing } = require('./userPresence');
-const { pgDashboardNotificationStats } = require('./pgHotQueries');
+const { pgDashboardNotificationStats, pgUnifiedTaskBadgeCounts } = require('./pgHotQueries');
 const { isCrmSystemAdminUser } = require('./crmAccessRoles');
-const { countUnifiedOpenTasks, countUnifiedOverdueTasks } = require('./unifiedTasksQuery');
+const { countUnifiedOpenTasks, countUnifiedOverdueTasks, isManagerLike } = require('./unifiedTasksQuery');
+const { isSystemAdmin } = require('./adminRole');
 const { lookupCache } = require('./ttlCache');
 
 // Frontend poll heartbeat mỗi 60s (useAppHeartbeat.js: HEARTBEAT_MS = 60_000). TTL cũ 15s
@@ -181,16 +182,39 @@ async function countReleaseNotesUnread(userId) {
   return { unread: pubIds.filter((id) => !readSet.has(id)).length };
 }
 
+/**
+ * Số việc mở / quá hạn cho badge.
+ * Ưu tiên 1 câu SQL trực tiếp trên bảng gốc (pgUnifiedTaskBadgeCounts): đếm ĐÚNG (khung nhìn
+ * unified_tasks_v nhân dòng khi dự án có nhiều deal — đo được thổi phồng 9,7%) và nhanh hơn
+ * 5 lần (193ms/câu → 38,7ms cho cả hai số). Pool tắt thì quay về 2 câu cũ qua khung nhìn.
+ */
+async function fetchUnifiedTaskBadge(req) {
+  const direct = await pgUnifiedTaskBadgeCounts(req.user, {
+    isManager: isManagerLike(req.user),
+    isSystemAdmin: isSystemAdmin(req.user),
+  }).catch((e) => {
+    console.warn('[heartbeat] pgUnifiedTaskBadgeCounts:', e.message);
+    return null;
+  });
+  if (direct) return direct;
+  const [open, overdue] = await Promise.all([
+    countUnifiedOpenTasks(req.user),
+    countUnifiedOverdueTasks(req.user),
+  ]);
+  return { open, overdue };
+}
+
 async function computeHeartbeatBadges(req, socialCompanyId) {
   const uid = req.user.userId || req.user.id;
-  const [assignments, social, releaseNotes, pgNotif, unifiedOpen, unifiedOverdue] = await Promise.all([
+  const [assignments, social, releaseNotes, pgNotif, unifiedTasks] = await Promise.all([
     countAssignmentsBothModules(uid),
     countSocialUnread(req, socialCompanyId),
     countReleaseNotesUnread(uid),
     pgDashboardNotificationStats(uid, req.user),
-    countUnifiedOpenTasks(req.user),
-    countUnifiedOverdueTasks(req.user),
+    fetchUnifiedTaskBadge(req),
   ]);
+  const unifiedOpen = unifiedTasks.open;
+  const unifiedOverdue = unifiedTasks.overdue;
 
   let notifications = null;
   if (pgNotif?.stats) {

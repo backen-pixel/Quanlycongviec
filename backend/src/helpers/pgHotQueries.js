@@ -772,7 +772,95 @@ async function pgDashboardNotificationsReadAll(userId, channel) {
   return { ok: true, updated: result.rowCount != null ? Number(result.rowCount) : undefined };
 }
 
+/**
+ * Badge số việc (mở / quá hạn) — đếm TRỰC TIẾP trên 3 bảng gốc thay vì qua khung nhìn
+ * unified_tasks_v. Trả null khi pool không khả dụng → caller fallback countUnifiedOpenTasks.
+ *
+ * Vì sao không dùng khung nhìn:
+ *   1. Đếm SAI. Nhánh `tasks` của khung nhìn có `LEFT JOIN crm_leads cl ON cl.project_id =
+ *      t.project_id`, nên dự án có nhiều deal làm task bị nhân dòng. Đo trên công ty lớn nhất:
+ *      khung nhìn trả 14.240 trong khi số đúng (COUNT DISTINCT) là 12.984 — thổi phồng 9,7%.
+ *   2. Không dùng được index. `company_id` trong khung nhìn là biểu thức
+ *      COALESCE(p.company_id, cl.company_id) nên Postgres phải ghép xong toàn bộ
+ *      tasks × crm_leads × projects rồi mới lọc.
+ *   3. PostgREST `count: 'exact'` chạy lại toàn bộ khung nhìn lần thứ hai chỉ để đếm.
+ *
+ * Đo được: 2 câu qua khung nhìn 193ms (118ms chạy + 75ms lập kế hoạch) mỗi câu
+ *          → 1 câu này 38,7ms (25,6ms + 13,1ms) cho CẢ hai con số.
+ *
+ * Giữ nguyên đúng ngữ nghĩa của countUnifiedOpenTasks/countUnifiedOverdueTasks khi gọi
+ * không tham số: lọc theo công ty của user (trừ system admin), và nếu không phải quản lý
+ * thì chỉ tính việc mình được giao hoặc mình tạo.
+ *
+ * @param {object} user req.user
+ * @param {{ company_id?: string|null, isManager?: boolean, isSystemAdmin?: boolean }} flags
+ * @returns {Promise<{ open: number, overdue: number }|null>}
+ */
+async function pgUnifiedTaskBadgeCounts(user, flags = {}) {
+  if (!isPgEnabled() || !user) return null;
+  const uid = user.userId || user.id;
+  if (!uid) return null;
+
+  const companyId = flags.isSystemAdmin ? null : (flags.company_id || user.company_id || null);
+  const scopeToSelf = !flags.isManager;
+  const done = ['done', 'completed', 'cancelled'];
+
+  // $1 = mảng status đã xong, $2 = user id, $3 = company id (có thể bỏ)
+  const params = [done, uid];
+  let pCompany = '';
+  if (companyId) {
+    params.push(companyId);
+    pCompany = '$3::uuid';
+  }
+
+  const self = (assignee, creator) => (scopeToSelf ? `AND (${assignee} = $2::uuid OR ${creator} = $2::uuid)` : '');
+
+  // Nhánh tasks: chốt trước tập project của công ty (bảng projects nhỏ) rồi mới lọc tasks
+  // theo project_id — dùng được idx_tasks_project, và EXISTS thay cho join nên không nhân dòng.
+  const taskBranch = companyId
+    ? `SELECT t.due_date AS deadline
+         FROM tasks t
+        WHERE NOT t.status::text = ANY($1::text[])
+          AND t.project_id IN (
+                SELECT id FROM projects WHERE company_id = ${pCompany}
+                UNION
+                SELECT p.id FROM projects p
+                 WHERE p.company_id IS NULL
+                   AND EXISTS (SELECT 1 FROM crm_leads cl
+                                WHERE cl.project_id = p.id AND cl.company_id = ${pCompany})
+              )
+          ${self('t.assignee_id', 't.created_by_id')}`
+    : `SELECT t.due_date AS deadline
+         FROM tasks t
+        WHERE NOT t.status::text = ANY($1::text[])
+          ${self('t.assignee_id', 't.created_by_id')}`;
+
+  const crmTaskBranch = `SELECT ct.deadline
+       FROM crm_tasks ct
+       JOIN crm_leads cl ON cl.id = ct.lead_id
+      WHERE NOT ct.status::text = ANY($1::text[])
+        ${companyId ? `AND cl.company_id = ${pCompany}` : ''}
+        ${self('ct.assignee_id', 'ct.created_by')}`;
+
+  const assignmentBranch = `SELECT ca.deadline
+       FROM crm_assignments ca
+      WHERE NOT ca.status::text = ANY($1::text[])
+        ${companyId ? `AND ca.company_id = ${pCompany}` : ''}
+        ${self('ca.assignee_id', 'ca.created_by_id')}`;
+
+  const result = await pgQuerySafe(
+    `SELECT count(*)::int AS open,
+            count(*) FILTER (WHERE deadline IS NOT NULL AND deadline < now())::int AS overdue
+       FROM ( ${taskBranch} UNION ALL ${crmTaskBranch} UNION ALL ${assignmentBranch} ) u`,
+    params,
+  );
+  if (!result) return null;
+  const row = result.rows?.[0] || {};
+  return { open: Number(row.open) || 0, overdue: Number(row.overdue) || 0 };
+}
+
 module.exports = {
+  pgUnifiedTaskBadgeCounts,
   pgDashboardNotificationStats,
   pgDashboardNotificationsList,
   pgDashboardNotificationsReadAll,
