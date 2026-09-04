@@ -640,17 +640,22 @@ r.get('/mine', async (req, res) => {
     if (!isValidDate(date)) return res.status(400).json({ error: 'Ngày không hợp lệ' });
 
     const userId = req.user.userId;
-    const me = await loadUserProfile(userId);
+    // Hồ sơ nhân viên và phiếu của ngày là hai truy vấn độc lập — nạp cùng lúc.
+    const [me, { data: existing }] = await Promise.all([
+      loadUserProfile(userId),
+      supabase
+        .from('crm_daily_reports')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('report_date', date)
+        .maybeSingle(),
+    ]);
     const deptName = me?.departments?.name || null;
 
-    const { data: existing } = await supabase
-      .from('crm_daily_reports')
-      .select('id')
-      .eq('user_id', userId)
-      .eq('report_date', date)
-      .maybeSingle();
-
     if (existing) {
+      // Danh mục mẫu chỉ cần company_id — cho chạy nền, chờ ở bước trả kết quả.
+      const templatesP = listTemplates(me?.company_id || req.user.company_id || null);
+      templatesP.catch(() => {});
       const { data: full } = await supabase
         .from('crm_daily_reports')
         .select(REPORT_FIELDS)
@@ -677,7 +682,7 @@ r.get('/mine', async (req, res) => {
         await loadReportBundle(existing.id),
         me?.company_id || req.user.company_id || null,
       );
-      return res.json({ report: bundle, templates: await listTemplates(me?.company_id || req.user.company_id || null) });
+      return res.json({ report: bundle, templates: await templatesP });
     }
 
     // Chưa có phiếu → trả skeleton theo template + dòng user tự thêm

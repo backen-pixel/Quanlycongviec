@@ -8,7 +8,7 @@ import {
   CalendarDays, ChevronLeft, ChevronRight, ClipboardCheck, Loader2,
   Save, Send, Users, X, AlertTriangle, CheckCircle2, Clock, History,
   Plus, Trash2, HelpCircle, Filter, Search, ExternalLink, FileDown, Copy, Sheet,
-  SlidersHorizontal,
+  SlidersHorizontal, BarChart3, FileText, UserCheck, AlertCircle, ChevronsUp,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
@@ -1506,11 +1506,39 @@ const SECTION_TAB_META = [
   { key: 'proposal', label: 'IV. Đề xuất', tone: 'emerald' },
 ];
 
+/**
+ * Thanh tiêu đề bảng — nền SÁNG, chữ đậm màu theo mục (thay vì nền đậm chữ trắng).
+ * Nền đậm làm hàng avatar + huy hiệu "Có số" bên dưới bị chìm; nền sáng cho bảng số liệu
+ * dễ đọc hơn và khớp phần còn lại của trang.
+ */
 const SECTION_HEADER_CLS = {
-  plan: 'bg-sky-700',
-  result: 'bg-violet-700',
-  sharpen: 'bg-amber-700',
-  proposal: 'bg-emerald-700',
+  plan: 'bg-sky-50 text-sky-950 border-b border-sky-200',
+  result: 'bg-violet-50 text-violet-950 border-b border-violet-200',
+  sharpen: 'bg-amber-50 text-amber-950 border-b border-amber-200',
+  proposal: 'bg-emerald-50 text-emerald-950 border-b border-emerald-200',
+};
+
+/** Ô tiêu đề bảng (thead) — cùng hệ màu nhưng đậm hơn một bậc để tách khỏi thân bảng. */
+const SECTION_THEAD_CLS = {
+  plan: 'bg-sky-100/70 text-sky-950',
+  result: 'bg-violet-100/70 text-violet-950',
+  sharpen: 'bg-amber-100/70 text-amber-950',
+  proposal: 'bg-emerald-100/70 text-emerald-950',
+};
+
+/** Màu nhấn cho icon + chữ tiêu đề của từng mục. */
+const SECTION_ACCENT_CLS = {
+  plan: 'bg-sky-600',
+  result: 'bg-violet-600',
+  sharpen: 'bg-amber-600',
+  proposal: 'bg-emerald-600',
+};
+
+/** Tông màu thẻ KPI đầu trang — icon, số và viền cùng một tông cho mỗi loại. */
+const DR_STAT_TONE = {
+  sky: { card: 'border-sky-200', chip: 'bg-sky-100 text-sky-700', num: 'text-sky-700' },
+  emerald: { card: 'border-emerald-200', chip: 'bg-emerald-100 text-emerald-700', num: 'text-emerald-700' },
+  rose: { card: 'border-rose-200', chip: 'bg-rose-100 text-rose-600', num: 'text-rose-600' },
 };
 
 function EmployeeHeaderCells({ employees, onOpenReport, hoveredColId, sectionKey, rows }) {
@@ -1520,15 +1548,15 @@ function EmployeeHeaderCells({ employees, onOpenReport, hoveredColId, sectionKey
     return (
       <th
         key={emp.id}
-        className={`px-2 py-2 text-center font-semibold min-w-[110px] max-w-[140px] align-bottom border-l border-white/10 transition-colors ${
-          colHot ? 'ring-2 ring-inset ring-amber-300 bg-black/20' : ''
+        className={`px-2 py-2.5 text-center font-semibold min-w-[110px] max-w-[140px] align-bottom border-l border-black/5 transition-colors ${
+          colHot ? 'ring-2 ring-inset ring-violet-400 bg-white/70' : ''
         }`}
       >
         <button
           type="button"
           disabled={!emp.report_id}
           onClick={() => emp.report_id && onOpenReport(emp.report_id)}
-          className={`w-full ${emp.report_id ? 'hover:text-amber-200 cursor-pointer' : 'cursor-default opacity-80'}`}
+          className={`w-full ${emp.report_id ? 'hover:opacity-70 cursor-pointer' : 'cursor-default opacity-80'}`}
           title={`${emp.department_name || emp.email || ''} · ${meta.label}`}
         >
           <div className="mx-auto mb-1 flex justify-center">
@@ -1549,7 +1577,9 @@ function MatrixSectionTable({
   section, employees, templateName, roleKey, reportDate, companyId, onOpenReport,
   templates, onAssignTemplate, assigningUserId,
 }) {
-  const headCls = SECTION_HEADER_CLS[section.key] || 'bg-slate-800';
+  const headCls = SECTION_HEADER_CLS[section.key] || 'bg-slate-50 text-slate-900 border-b border-slate-200';
+  const theadCls = SECTION_THEAD_CLS[section.key] || 'bg-slate-100/70 text-slate-900';
+  const accentCls = SECTION_ACCENT_CLS[section.key] || 'bg-slate-600';
   const rows = section.rows || [];
   const cols = (section.key === 'result' || section.key === 'plan')
     ? (employees || [])
@@ -1613,36 +1643,44 @@ function MatrixSectionTable({
   };
 
   return (
-    <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
-      <div className={`px-4 py-2.5 text-white ${headCls}`}>
+    <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
+      <div className={`px-4 py-3 ${headCls}`}>
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <div className="text-sm font-bold tracking-wide">{section.title}</div>
-            {templateName && (
-              <div className="mt-0.5 text-[11px] font-medium text-white/85">Mẫu: {templateName}</div>
-            )}
-            {hover.rowKey && hover.colId && !picked && (
-              <div className="mt-1 text-[11px] font-medium text-amber-100">
-                {rows.find((r) => r.key === hover.rowKey)?.label || '—'}
-                {' · '}
-                {showCols.find((e) => String(e.id) === String(hover.colId))?.full_name || '—'}
-                {': '}
-                <span className="font-bold text-white">
-                  {formatMatrixCell(matrixCellValue(rows.find((r) => r.key === hover.rowKey), hover.colId))}
-                </span>
-              </div>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="text-[11px] text-white/80">
-              {showCols.length} nhân viên{section.key === 'result' ? '' : ' có phiếu'}
+          <div className="flex min-w-0 items-start gap-2.5">
+            <span className={`mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-lg text-white ${accentCls}`}>
+              <BarChart3 className="h-4 w-4" />
+            </span>
+            <div className="min-w-0">
+              <div className="text-sm font-bold tracking-tight">{section.title}</div>
+              {templateName && (
+                <div className="mt-0.5 text-[11px] font-medium opacity-70">Mẫu: {templateName}</div>
+              )}
+              {hover.rowKey && hover.colId && !picked && (
+                <div className="mt-1 text-[11px] font-medium opacity-90">
+                  {rows.find((r) => r.key === hover.rowKey)?.label || '—'}
+                  {' · '}
+                  {showCols.find((e) => String(e.id) === String(hover.colId))?.full_name || '—'}
+                  {': '}
+                  <span className="font-bold">
+                    {formatMatrixCell(matrixCellValue(rows.find((r) => r.key === hover.rowKey), hover.colId))}
+                  </span>
+                </div>
+              )}
             </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <span className="inline-flex items-center gap-1 rounded-lg border border-current/20 bg-white/70 px-2 py-1 text-[11px] font-semibold">
+              <Users className="h-3.5 w-3.5" />
+              {showCols.length} nhân viên{section.key === 'result' ? '' : ' có phiếu'}
+            </span>
             {onAssignTemplate && (
               <button
                 type="button"
                 onClick={() => setShowAssign((v) => !v)}
-                className={`inline-flex items-center gap-1 rounded-md border border-white/25 px-2 py-1 text-[11px] font-semibold transition-colors ${
-                  showAssign ? 'bg-white text-violet-900' : 'bg-white/10 text-white hover:bg-white/20'
+                className={`inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] font-semibold transition-colors ${
+                  showAssign
+                    ? 'border-transparent bg-violet-600 text-white'
+                    : 'border-current/20 bg-white/70 hover:bg-white'
                 }`}
                 title="Gán mẫu báo cáo cho từng nhân viên trong nhóm này"
               >
@@ -1747,9 +1785,10 @@ function MatrixSectionTable({
       <div className="overflow-auto" onMouseLeave={clearHover}>
         <table className="min-w-max border-collapse text-sm">
           <thead className="sticky top-0 z-20">
-            <tr className={`${headCls} text-white`}>
-              <th className={`sticky left-0 z-30 px-3 py-2.5 text-left font-semibold min-w-[220px] border-r border-white/10 ${headCls}`}>
-                Nội dung
+            <tr className={theadCls}>
+              <th className={`sticky left-0 z-30 px-3 py-2.5 text-left font-semibold min-w-[220px] border-r border-black/5 ${theadCls}`}>
+                <span className="text-[11px] font-bold uppercase tracking-wide opacity-60">#</span>
+                <span className="ml-3">Nội dung</span>
               </th>
               <EmployeeHeaderCells
                 employees={showCols}
@@ -2730,6 +2769,8 @@ function TeamMatrixPanel({ date, onDateChange }) {
   const [templates, setTemplates] = useState([]);
   const [exportOpen, setExportOpen] = useState(false);
   const [assigningUserId, setAssigningUserId] = useState('');
+  /** Cột bộ lọc bên phải — cho thu gọn để nhường chiều rộng cho bảng khi cần. */
+  const [filterOpen, setFilterOpen] = useState(true);
 
   useEffect(() => {
     if (lockedCompany) return undefined;
@@ -2790,6 +2831,17 @@ function TeamMatrixPanel({ date, onDateChange }) {
     });
   };
 
+  // Ô "Tìm nhân viên" gõ tới đâu gọi lại cả bảng tới đó — mỗi lượt là một vòng
+  // tính số liệu live cho toàn bộ nhân viên. Chờ người dùng ngừng gõ 350ms.
+  const [qDebounced, setQDebounced] = useState(filter.q || '');
+  useEffect(() => {
+    const t = setTimeout(() => setQDebounced(filter.q || ''), 350);
+    return () => clearTimeout(t);
+  }, [filter.q]);
+
+  // Phản hồi về không đúng thứ tự gửi thì bỏ, tránh bảng nhảy về kết quả cũ.
+  const loadSeqRef = useRef(0);
+
   const load = useCallback(async () => {
     if (!companyId) {
       setData(null);
@@ -2797,6 +2849,8 @@ function TeamMatrixPanel({ date, onDateChange }) {
       setLoading(false);
       return;
     }
+    const seq = loadSeqRef.current + 1;
+    loadSeqRef.current = seq;
     setLoading(true);
     setError('');
     try {
@@ -2806,10 +2860,11 @@ function TeamMatrixPanel({ date, onDateChange }) {
           company_id: companyId,
           department_id: filter.departmentId || undefined,
           role_key: filter.roleKey || undefined,
-          q: filter.q || undefined,
+          q: qDebounced || undefined,
         },
         headers: { 'x-no-cache': '1' },
       });
+      if (loadSeqRef.current !== seq) return;
       setData(res.data);
       if (res.data?.templates) setTemplates(res.data.templates);
       if (res.data?.departments?.length) {
@@ -2817,12 +2872,13 @@ function TeamMatrixPanel({ date, onDateChange }) {
         setDepartments(list);
       }
     } catch (e) {
+      if (loadSeqRef.current !== seq) return;
       setError(e.response?.data?.error || e.message || 'Không tải được bảng tổng hợp');
       setData(null);
     } finally {
-      setLoading(false);
+      if (loadSeqRef.current === seq) setLoading(false);
     }
-  }, [date, companyId, filter.departmentId, filter.roleKey, filter.q]);
+  }, [date, companyId, filter.departmentId, filter.roleKey, qDebounced]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -2876,107 +2932,10 @@ function TeamMatrixPanel({ date, onDateChange }) {
   }, [groups, sectionTab]);
 
   return (
-    <div className="space-y-4">
-      {/* Bộ lọc — style CRM */}
-      <div className="overflow-hidden rounded-xl border border-violet-200 bg-white shadow-sm">
-        <div className="flex items-center gap-2 border-b border-violet-100 bg-violet-50/70 px-3 py-2">
-          <Filter className="h-4 w-4 shrink-0 text-violet-600" />
-          <p className="text-sm font-bold text-violet-950 tracking-tight">Bộ lọc</p>
-          <div className="ml-auto flex items-center gap-1">
-            <button type="button" onClick={() => onDateChange(addDaysISO(date, -1))} className="rounded-md border border-violet-200 bg-white p-1.5 text-violet-700 hover:bg-violet-50">
-              <ChevronLeft className="h-4 w-4" />
-            </button>
-            <input
-              type="date"
-              value={date}
-              onChange={(e) => onDateChange(e.target.value)}
-              className={`${CRM_FILTER_FIELD} w-auto`}
-            />
-            <button type="button" onClick={() => onDateChange(addDaysISO(date, 1))} className="rounded-md border border-violet-200 bg-white p-1.5 text-violet-700 hover:bg-violet-50">
-              <ChevronRight className="h-4 w-4" />
-            </button>
-            <button type="button" onClick={() => onDateChange(todayISO())} className="rounded-md border border-violet-200 bg-white px-2 py-1.5 text-[11px] font-semibold text-violet-800 hover:bg-violet-50">
-              Hôm nay
-            </button>
-          </div>
-        </div>
-        <div className="px-3 py-3 space-y-2.5">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
-            <div className="min-w-0">
-              <label className={CRM_FILTER_LABEL}>Công ty</label>
-              {lockedCompany ? (
-                <div className={`${CRM_FILTER_FIELD} flex items-center bg-indigo-50/80 border-indigo-200 text-indigo-900 cursor-default truncate`}>
-                  {companies.find((c) => String(c.id) === String(lockedCompany))?.short_name
-                    || companies.find((c) => String(c.id) === String(lockedCompany))?.name
-                    || 'Công ty của bạn'}
-                </div>
-              ) : (
-                <select
-                  value={filter.companyId}
-                  onChange={(e) => patchFilter({ companyId: e.target.value })}
-                  className={CRM_FILTER_SELECT}
-                >
-                  <option value="">— Chọn công ty —</option>
-                  {companies.map((c) => (
-                    <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
-                  ))}
-                </select>
-              )}
-            </div>
-            <div className="min-w-0">
-              <label className={CRM_FILTER_LABEL}>Phòng ban</label>
-              <select
-                value={filter.departmentId}
-                onChange={(e) => patchFilter({ departmentId: e.target.value })}
-                disabled={!companyId}
-                className={`${CRM_FILTER_SELECT} ${!companyId ? 'opacity-60 cursor-not-allowed' : ''}`}
-              >
-                <option value="">{companyId ? 'Tất cả phòng ban' : 'Chọn công ty trước'}</option>
-                {departments.map((d) => (
-                  <option key={d.id} value={d.id}>{d.name}</option>
-                ))}
-              </select>
-            </div>
-            <div className="min-w-0">
-              <label className={CRM_FILTER_LABEL}>Mẫu báo cáo</label>
-              <select
-                value={filter.roleKey}
-                onChange={(e) => patchFilter({ roleKey: e.target.value })}
-                disabled={!companyId}
-                className={`${CRM_FILTER_SELECT} ${!companyId ? 'opacity-60 cursor-not-allowed' : ''}`}
-              >
-                <option value="">Tất cả mẫu</option>
-                {tplOptions.map((t) => (
-                  <option key={t.id || t.role_key} value={t.role_key || t.id}>
-                    {t.name}{t.company_id ? ' · công ty' : ''}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="min-w-0">
-              <label className={CRM_FILTER_LABEL}>Tìm nhân viên</label>
-              <div className="relative">
-                <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-violet-400" />
-                <input
-                  type="search"
-                  value={filter.q}
-                  onChange={(e) => patchFilter({ q: e.target.value })}
-                  placeholder="Tên / email…"
-                  className={`${CRM_FILTER_FIELD} pl-7`}
-                />
-              </div>
-            </div>
-          </div>
-          <div className="text-[11px] text-violet-700/80">
-            Ngày đang chọn {fmtDMY(date)} · I = Deadline QH+hôm nay · II = điểm đến cuối (không hành trình)
-            {data?.plan_live || data?.result_live
-              ? ` · live${data?.preview_reason === 'future' ? ' (chưa snapshot 08:00)' : ''}`
-              : data?.snapshot ? ' · đã có snapshot' : ''}
-          </div>
-        </div>
-      </div>
-
-      {/* Tab theo từng mục I–IV + xuất Excel */}
+    <div className="flex flex-col gap-4 xl:flex-row xl:items-start">
+      {/* CỘT CHÍNH — bảng ma trận lên ngay đầu trang; bộ lọc dời sang cột phải. */}
+      <div className="min-w-0 flex-1 space-y-4">
+      {/* Tab theo từng mục I–IV */}
       <div className="flex flex-wrap items-center gap-2">
         {companyId ? (
           <div className="flex min-w-0 flex-1 flex-wrap gap-1.5 rounded-xl border border-violet-200 bg-white p-1.5 shadow-sm">
@@ -2998,15 +2957,8 @@ function TeamMatrixPanel({ date, onDateChange }) {
         ) : (
           <div className="min-w-0 flex-1" />
         )}
-        <button
-          type="button"
-          onClick={exportExcel}
-          className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-600 px-3 py-2 text-xs font-semibold text-white shadow-sm hover:bg-emerald-700"
-          title="Xuất Excel — chọn ngày, công ty, mẫu và mục I–IV"
-        >
-          <Sheet className="h-4 w-4" />
-          Xuất Excel
-        </button>
+        {/* Nút «Xuất Excel» đã chuyển xuống cuối cột bộ lọc bên phải — cùng chỗ với các
+            lựa chọn quyết định nội dung file (ngày / công ty / mẫu). */}
       </div>
 
       {!companyId && (
@@ -3042,23 +2994,28 @@ function TeamMatrixPanel({ date, onDateChange }) {
       )}
 
       {companyId && (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <div className="rounded-xl border border-violet-100 bg-white p-3 shadow-sm">
-            <div className="text-[10px] font-semibold uppercase tracking-wide text-violet-700/80">Nhân viên</div>
-            <div className="mt-1 text-2xl font-semibold text-gray-900">{s.total}</div>
-          </div>
-          <div className="rounded-xl border border-violet-100 bg-white p-3 shadow-sm">
-            <div className="text-[10px] font-semibold uppercase tracking-wide text-violet-700/80">Có phiếu</div>
-            <div className="mt-1 text-2xl font-semibold text-sky-700">{s.with_report}</div>
-          </div>
-          <div className="rounded-xl border border-violet-100 bg-white p-3 shadow-sm">
-            <div className="text-[10px] font-semibold uppercase tracking-wide text-violet-700/80">Đã chốt KQ</div>
-            <div className="mt-1 text-2xl font-semibold text-emerald-700">{s.result_ok}</div>
-          </div>
-          <div className="rounded-xl border border-violet-100 bg-white p-3 shadow-sm">
-            <div className="text-[10px] font-semibold uppercase tracking-wide text-violet-700/80">Thiếu / nháp</div>
-            <div className="mt-1 text-2xl font-semibold text-red-600">{s.missing}</div>
-          </div>
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          {/* Icon tròn màu + nhãn nhỏ + số lớn. Icon, số và viền cùng một tông để phân
+              biệt 4 thẻ mà không phải đọc nhãn. */}
+          {[
+            { label: 'Nhân viên', value: s.total, Icon: Users, tone: 'sky' },
+            { label: 'Có phiếu', value: s.with_report, Icon: FileText, tone: 'emerald' },
+            { label: 'Đã chốt KQ', value: s.result_ok, Icon: UserCheck, tone: 'emerald' },
+            { label: 'Thiếu / nháp', value: s.missing, Icon: AlertCircle, tone: 'rose' },
+          ].map(({ label, value, Icon, tone }) => (
+            <div
+              key={label}
+              className={`flex items-center gap-3 rounded-2xl border bg-white p-3 shadow-sm ${DR_STAT_TONE[tone].card}`}
+            >
+              <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl ${DR_STAT_TONE[tone].chip}`}>
+                <Icon className="h-5 w-5" />
+              </span>
+              <div className="min-w-0">
+                <div className="truncate text-[10px] font-bold uppercase tracking-wide text-gray-500">{label}</div>
+                <div className={`text-2xl font-bold leading-tight ${DR_STAT_TONE[tone].num}`}>{value}</div>
+              </div>
+            </div>
+          ))}
         </div>
       )}
 
@@ -3095,6 +3052,167 @@ function TeamMatrixPanel({ date, onDateChange }) {
           ))}
         </div>
       ) : null}
+
+      </div>
+
+      {/* ─── BỘ LỌC: cột phải, dính theo trang ───
+          Trước đây là dải ngang trên đầu, chiếm 4 hàng chiều cao trước khi thấy số liệu.
+          Đưa sang cột phải cho bảng ma trận (thứ người dùng thật sự đọc) lên ngay đầu trang,
+          và bộ lọc luôn ở trong tầm mắt khi cuộn. */}
+      <aside className="w-full shrink-0 space-y-3 xl:sticky xl:top-4 xl:w-[268px]">
+        <div className="overflow-hidden rounded-2xl border border-violet-200 bg-white shadow-sm">
+          <div className="flex items-center gap-2 border-b border-violet-100 bg-violet-50/70 px-3 py-2.5">
+            <Filter className="h-4 w-4 shrink-0 text-violet-600" />
+            <p className="text-sm font-bold tracking-tight text-violet-950">Bộ lọc</p>
+            <button
+              type="button"
+              onClick={() => setFilterOpen((v) => !v)}
+              className="ml-auto inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-semibold text-violet-700 hover:bg-violet-100"
+              title={filterOpen ? 'Thu gọn bộ lọc' : 'Mở bộ lọc'}
+            >
+              <ChevronsUp className={`h-3.5 w-3.5 transition-transform ${filterOpen ? '' : 'rotate-180'}`} />
+              {filterOpen ? 'Thu gọn' : 'Mở'}
+            </button>
+          </div>
+
+          {filterOpen && (
+            <div className="space-y-3 px-3 py-3">
+              <div>
+                <label className={CRM_FILTER_LABEL}>Ngày báo cáo</label>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => onDateChange(addDaysISO(date, -1))}
+                    className="shrink-0 rounded-md border border-violet-200 bg-white p-1.5 text-violet-700 hover:bg-violet-50"
+                    title="Ngày trước"
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </button>
+                  <input
+                    type="date"
+                    value={date}
+                    onChange={(e) => onDateChange(e.target.value)}
+                    className={`${CRM_FILTER_FIELD} min-w-0 flex-1`}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => onDateChange(addDaysISO(date, 1))}
+                    className="shrink-0 rounded-md border border-violet-200 bg-white p-1.5 text-violet-700 hover:bg-violet-50"
+                    title="Ngày sau"
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onDateChange(todayISO())}
+                    className="shrink-0 rounded-md border border-violet-200 bg-white px-2 py-1.5 text-[11px] font-semibold text-violet-800 hover:bg-violet-50"
+                  >
+                    Hôm nay
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className={CRM_FILTER_LABEL}>Công ty</label>
+                {lockedCompany ? (
+                  <div className={`${CRM_FILTER_FIELD} flex items-center truncate border-indigo-200 bg-indigo-50/80 text-indigo-900`}>
+                    {companies.find((c) => String(c.id) === String(lockedCompany))?.short_name
+                      || companies.find((c) => String(c.id) === String(lockedCompany))?.name
+                      || 'Công ty của bạn'}
+                  </div>
+                ) : (
+                  <select
+                    value={filter.companyId}
+                    onChange={(e) => patchFilter({ companyId: e.target.value })}
+                    className={CRM_FILTER_SELECT}
+                  >
+                    <option value="">— Chọn công ty —</option>
+                    {companies.map((c) => (
+                      <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
+                    ))}
+                  </select>
+                )}
+              </div>
+
+              <div>
+                <label className={CRM_FILTER_LABEL}>Phòng ban</label>
+                <select
+                  value={filter.departmentId}
+                  onChange={(e) => patchFilter({ departmentId: e.target.value })}
+                  disabled={!companyId}
+                  className={`${CRM_FILTER_SELECT} ${!companyId ? 'cursor-not-allowed opacity-60' : ''}`}
+                >
+                  <option value="">{companyId ? 'Tất cả phòng ban' : 'Chọn công ty trước'}</option>
+                  {departments.map((d) => (
+                    <option key={d.id} value={d.id}>{d.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className={CRM_FILTER_LABEL}>Mẫu báo cáo</label>
+                <select
+                  value={filter.roleKey}
+                  onChange={(e) => patchFilter({ roleKey: e.target.value })}
+                  disabled={!companyId}
+                  className={`${CRM_FILTER_SELECT} ${!companyId ? 'cursor-not-allowed opacity-60' : ''}`}
+                >
+                  <option value="">Tất cả mẫu</option>
+                  {tplOptions.map((t) => (
+                    <option key={t.id || t.role_key} value={t.role_key || t.id}>
+                      {t.name}{t.company_id ? ' · công ty' : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className={CRM_FILTER_LABEL}>Tìm nhân viên</label>
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-violet-400" />
+                  <input
+                    type="search"
+                    value={filter.q}
+                    onChange={(e) => patchFilter({ q: e.target.value })}
+                    placeholder="Tên / email…"
+                    className={`${CRM_FILTER_FIELD} pl-7`}
+                  />
+                </div>
+              </div>
+
+              {/* Bộ lọc vốn áp dụng ngay khi đổi ô; nút này để tải lại thủ công khi số CRM
+                  vừa đổi ở nơi khác (bảng đang hiện số live, chưa chốt snapshot). */}
+              <button
+                type="button"
+                onClick={() => load()}
+                disabled={loading}
+                className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-violet-600 px-3 py-2 text-xs font-bold text-white shadow-sm transition-colors hover:bg-violet-700 disabled:opacity-60"
+              >
+                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Filter className="h-4 w-4" />}
+                {loading ? 'Đang tải…' : 'Lọc dữ liệu'}
+              </button>
+
+              <p className="text-[11px] leading-snug text-violet-700/80">
+                Ngày đang chọn {fmtDMY(date)} · <span className="font-semibold">Deadline</span>
+                {' '}I = QH + hôm nay · II = điểm đến cuối (không hành trình)
+                {data?.plan_live || data?.result_live
+                  ? ` · live${data?.preview_reason === 'future' ? ' (chưa snapshot 08:00)' : ''}`
+                  : data?.snapshot ? ' · đã có snapshot' : ''}
+              </p>
+            </div>
+          )}
+        </div>
+
+        <button
+          type="button"
+          onClick={exportExcel}
+          className="inline-flex w-full items-center justify-center gap-1.5 rounded-2xl border border-emerald-700/20 bg-emerald-600 px-3 py-2.5 text-xs font-bold text-white shadow-sm transition-colors hover:bg-emerald-700"
+          title="Xuất Excel — chọn ngày, công ty, mẫu và mục I–IV"
+        >
+          <Sheet className="h-4 w-4" />
+          Xuất Excel
+        </button>
+      </aside>
 
       {detailId && <ReportDetailDrawer reportId={detailId} onClose={() => setDetailId(null)} />}
 

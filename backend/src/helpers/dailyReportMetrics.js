@@ -616,10 +616,17 @@ async function computeAutoDailyResults(userId, reportDate, roleKey = 'sale_admin
   let grouped = { byMetric: {}, skippedLost: [], unmapped: [] };
 
   if (rk === 'sale_admin') {
-    lastMap = await listLastDestinations(userId, reportDate, 'lead', untilIso);
+    // 4 nguồn dưới đây độc lập nhau (chỉ cần userId + ngày), trước đây await tuần tự
+    // nên mỗi nhân viên phải trả 4 lần round-trip Supabase. Gộp lại: tốn = lâu nhất.
+    const [lastMapR, created, care, leadToDeal] = await Promise.all([
+      listLastDestinations(userId, reportDate, 'lead', untilIso),
+      listLeadsCreatedToday(userId, reportDate, 'lead', untilIso),
+      listCareActivities(userId, reportDate, untilIso),
+      listLeadToDealConversions(userId, reportDate, untilIso),
+    ]);
+    lastMap = lastMapR;
     grouped = groupLastDestByMetric(lastMap, 'sale_admin');
     const movedIds = new Set(lastMap.keys());
-    const created = await listLeadsCreatedToday(userId, reportDate, 'lead', untilIso);
     const createdOnly = created.ids.filter((id) => !movedIds.has(id));
     const leadNewIds = unionIds(grouped.byMetric.lead_new, createdOnly);
 
@@ -632,7 +639,6 @@ async function computeAutoDailyResults(userId, reportDate, roleKey = 'sale_admin
       leadNewIds,
     );
 
-    const care = await listCareActivities(userId, reportDate, untilIso);
     const mergeCare = (metricKey, careKey, destIds) => {
       const extra = (care.ids?.[careKey] || []).filter((id) => !movedIds.has(id));
       const ids = unionIds(destIds, extra);
@@ -652,7 +658,6 @@ async function computeAutoDailyResults(userId, reportDate, roleKey = 'sale_admin
     results.care_warm = mergeCare('care_warm', 'care_warm', grouped.byMetric.care_warm || []);
     results.care_hot = mergeCare('care_hot', 'care_hot', grouped.byMetric.care_hot || []);
 
-    const leadToDeal = await listLeadToDealConversions(userId, reportDate, untilIso);
     const destSurvey = grouped.byMetric.survey_scheduled || [];
     const convertExtra = leadToDeal.ids.filter((id) => !movedIds.has(id) && !destSurvey.includes(id));
     const surveyIds = unionIds(destSurvey, convertExtra);
@@ -666,12 +671,18 @@ async function computeAutoDailyResults(userId, reportDate, roleKey = 'sale_admin
   }
 
   if (rk === 'sale_deal') {
-    lastMap = await listLastDestinations(userId, reportDate, 'deal', untilIso);
+    // 5 nguồn độc lập (userId + ngày), trước đây await tuần tự = 5 round-trip/nhân viên.
+    const [lastMapR, dealCreated, converted, linkedSurvey, overdue] = await Promise.all([
+      listLastDestinations(userId, reportDate, 'deal', untilIso),
+      listLeadsCreatedToday(userId, reportDate, 'deal', untilIso),
+      listDealConversionsToday(userId, reportDate, untilIso),
+      listLinkedSurveyEvents(userId, reportDate, untilIso),
+      listDealsOverdueProper(userId, reportDate, companyId),
+    ]);
+    lastMap = lastMapR;
     grouped = groupLastDestByMetric(lastMap, 'sale_deal');
     const movedIds = new Set(lastMap.keys());
-    const dealCreated = await listLeadsCreatedToday(userId, reportDate, 'deal', untilIso);
     const createdOnly = dealCreated.ids.filter((id) => !movedIds.has(id));
-    const converted = await listDealConversionsToday(userId, reportDate, untilIso);
     const destNew = grouped.byMetric.deal_new || [];
     const dealNewIds = unionIds(destNew, createdOnly, converted.ids);
     results.deal_new = metricPayload(
@@ -683,7 +694,6 @@ async function computeAutoDailyResults(userId, reportDate, roleKey = 'sale_admin
       dealNewIds,
     );
 
-    const linkedSurvey = await listLinkedSurveyEvents(userId, reportDate, untilIso);
     const destInteract = grouped.byMetric.deal_interact || [];
     const surveyExtra = (linkedSurvey.ids || []).filter((id) => !movedIds.has(id));
     const interactIds = unionIds(destInteract, surveyExtra);
@@ -704,7 +714,6 @@ async function computeAutoDailyResults(userId, reportDate, roleKey = 'sale_admin
     results.deal_installing = lastDestPayload(grouped.byMetric, 'deal_installing');
     results.deal_completed = lastDestPayload(grouped.byMetric, 'deal_completed');
 
-    const overdue = await listDealsOverdueProper(userId, reportDate, companyId);
     results.deal_overdue = metricPayload(
       overdue.count,
       `Tự động: ${overdue.count} deal quá hạn trong ngày (cùng logic màn Deadline: kanban/SLA/task mở)`,
@@ -714,14 +723,16 @@ async function computeAutoDailyResults(userId, reportDate, roleKey = 'sale_admin
   }
 
   if (rk === 'design_survey') {
-    const surveyN = await countSurveyEvents(userId, reportDate, untilIso);
+    const [surveyN, lastDeal] = await Promise.all([
+      countSurveyEvents(userId, reportDate, untilIso),
+      listLastDestinations(userId, reportDate, 'deal', untilIso),
+    ]);
     results.survey_event = metricPayload(
       surveyN,
       `Tự động: ${surveyN} sự kiện khảo sát / đo đạc trong ngày`,
       'crm_events:site_visit|measurement',
       [],
     );
-    const lastDeal = await listLastDestinations(userId, reportDate, 'deal', untilIso);
     const installIds = [];
     for (const [id, row] of lastDeal.entries()) {
       if (row.slug === 'installing') installIds.push(id);

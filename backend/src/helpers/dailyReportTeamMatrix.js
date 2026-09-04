@@ -14,6 +14,9 @@ const ITEM_FIELDS = 'id, template_id, section, label, order_index, unit_label, m
 const REPORT_FIELDS =
   'id, company_id, user_id, template_id, report_date, department_name, status, plan_submitted_at, result_submitted_at, manager_note, created_at, updated_at';
 
+// Số nhân viên tính số liệu live cùng lúc trong bảng ma trận.
+const DR_MATRIX_USER_PARALLEL = Number(process.env.DR_MATRIX_USER_PARALLEL || 10);
+
 function normalizeDailyRoleKey(roleKey) {
   const k = String(roleKey || '').trim();
   if (k === 'deal_admin') return 'sale_deal';
@@ -94,24 +97,40 @@ async function loadTeamDailyReportMatrix({
   const qSearch = String(q || '').trim().toLowerCase();
   const templateRoleFilter = String(roleKey || '').trim() || null;
 
-  const { data: depts, error: dErr } = await supabase
-    .from('departments')
-    .select('id, name, company_id')
-    .eq('company_id', companyId);
-  if (dErr) throw dErr;
-  const deptIds = (depts || []).map((d) => d.id);
-  const deptNameById = new Map((depts || []).map((d) => [String(d.id), d.name]));
-
-  let users = [];
-  {
-    const { data: byCompany } = await supabase
+  // 5 nguồn đầu vào chỉ phụ thuộc (date, companyId) — nạp cùng lúc thay vì 5 lượt
+  // round-trip nối tiếp như trước.
+  const [
+    { data: depts, error: dErr },
+    { data: byCompany },
+    { data: companyReports, error: crErr },
+    templatesCatalog,
+    snapshotMap,
+  ] = await Promise.all([
+    supabase
+      .from('departments')
+      .select('id, name, company_id')
+      .eq('company_id', companyId),
+    supabase
       .from('users')
       .select('id, full_name, email, avatar, role, department_id, company_id, is_active')
       .eq('company_id', companyId)
       .eq('is_active', true)
-      .limit(2000);
-    users = byCompany || [];
-  }
+      .limit(2000),
+    supabase
+      .from('crm_daily_reports')
+      .select(`${REPORT_FIELDS}, template:crm_daily_report_templates(id, name, role_key)`)
+      .eq('report_date', date)
+      .eq('company_id', companyId)
+      .limit(2000),
+    listTemplates(companyId),
+    loadSnapshotsMap(date, companyId),
+  ]);
+  if (dErr) throw dErr;
+  if (crErr) throw crErr;
+  const deptIds = (depts || []).map((d) => d.id);
+  const deptNameById = new Map((depts || []).map((d) => [String(d.id), d.name]));
+
+  let users = byCompany || [];
   if (deptIds.length) {
     let dq = supabase
       .from('users')
@@ -137,20 +156,11 @@ async function loadTeamDailyReportMatrix({
     });
   }
 
-  const { data: companyReports, error: crErr } = await supabase
-    .from('crm_daily_reports')
-    .select(`${REPORT_FIELDS}, template:crm_daily_report_templates(id, name, role_key)`)
-    .eq('report_date', date)
-    .eq('company_id', companyId)
-    .limit(2000);
-  if (crErr) throw crErr;
-
   const reportByUser = new Map();
   for (const rep of companyReports || []) {
     reportByUser.set(String(rep.user_id), rep);
   }
 
-  const templatesCatalog = await listTemplates(companyId);
   const templateById = new Map((templatesCatalog || []).map((t) => [String(t.id), t]));
   const templateByRole = new Map();
   for (const t of templatesCatalog || []) {
@@ -182,13 +192,12 @@ async function loadTeamDailyReportMatrix({
 
   users.sort((a, b) => String(a.full_name || '').localeCompare(String(b.full_name || ''), 'vi'));
 
-  const assignedByUser = await loadAssignedTemplateIds(users.map((u) => u.id));
-
-  const lastTemplateByUser = new Map();
-  {
-    const userIds = users.map((u) => u.id).filter(Boolean);
-    if (userIds.length) {
-      const { data: prevReps } = await supabase
+  // Mẫu gán cứng + mẫu dùng gần nhất: hai truy vấn độc lập trên cùng danh sách user.
+  const userIds = users.map((u) => u.id).filter(Boolean);
+  const [assignedByUser, prevRepsRes] = await Promise.all([
+    loadAssignedTemplateIds(users.map((u) => u.id)),
+    userIds.length
+      ? supabase
         .from('crm_daily_reports')
         .select('user_id, template_id, report_date')
         .eq('company_id', companyId)
@@ -196,7 +205,14 @@ async function loadTeamDailyReportMatrix({
         .not('template_id', 'is', null)
         .gte('report_date', crmReportAddDaysYmd(date, -21) || date)
         .order('report_date', { ascending: false })
-        .limit(4000);
+        .limit(4000)
+      : Promise.resolve({ data: [] }),
+  ]);
+
+  const lastTemplateByUser = new Map();
+  {
+    if (userIds.length) {
+      const prevReps = prevRepsRes?.data;
       for (const r of prevReps || []) {
         const uid = String(r.user_id);
         if (!lastTemplateByUser.has(uid) && r.template_id) lastTemplateByUser.set(uid, String(r.template_id));
@@ -307,7 +323,6 @@ async function loadTeamDailyReportMatrix({
     ));
   }
 
-  const snapshotMap = await loadSnapshotsMap(date, companyId);
   const live = resolveDailyReportLivePhases({
     explicitPreview: !!preview,
     date,
@@ -319,7 +334,9 @@ async function loadTeamDailyReportMatrix({
       const rk = emp.role_key === 'deal_admin' ? 'sale_deal' : emp.role_key;
       return rk && rk !== 'none' && rk !== 'unknown';
     });
-    await mapLimit(empsToCompute, 4, async (emp) => {
+    // Mỗi nhân viên tự gộp song song các truy vấn của mình; 10 nhân viên cùng lúc
+    // giữ tổng số kết nối Supabase ở mức vừa phải mà bỏ được phần lớn thời gian chờ.
+    await mapLimit(empsToCompute, DR_MATRIX_USER_PARALLEL, async (emp) => {
       const rk = emp.role_key === 'deal_admin' ? 'sale_deal' : emp.role_key;
       try {
         const jobs = [];
