@@ -5023,7 +5023,7 @@ function vnTodayYmd(offsetDays = 0) {
  * Số khách nhắn tin theo từng Page trong khoảng ngày (giờ VN), tách:
  *   new_contacts       — hội thoại MỚI phát sinh trong ngày ("tin nhắn mới đổ về")
  *   returning_contacts — khách cũ nhắn lại (thường là trả lời tin NV chăm lại)
- * Đọc qua RPC fb_new_senders_by_page_daily (database/402_...sql) — đếm bằng SQL theo
+ * Đọc qua RPC fb_new_senders_by_page_daily (database/582_...sql) — đếm bằng SQL theo
  * ngày giờ VN, không kéo dữ liệu về app và không dùng last_message_at (cột này bị bump
  * cả khi NV trả lời nên "hôm nay" trước đây bị đếm lẫn hội thoại cũ được chăm lại).
  * @returns {Promise<{ byPage: Object, days: Array, error: string|null }>}
@@ -5041,7 +5041,7 @@ async function loadFbNewSendersByPage({ pageIds, fromYmd, toYmd }) {
   });
   if (error) {
     console.warn('[FB] RPC fb_new_senders_by_page_daily:', error.message,
-      '(chạy database/402_fb_new_senders_by_page_daily.sql)');
+      '(chạy database/582_fb_new_senders_by_page_daily.sql)');
     return { byPage: {}, days: [], error: error.message };
   }
   const byPage = {};

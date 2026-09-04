@@ -4,6 +4,17 @@
 
 const { supabase } = require('../config/supabase');
 const { fetchAllByIdsParallel, fetchAllPagesParallel } = require('./supabaseFetchAll');
+const { lookupCache } = require('./ttlCache');
+
+/**
+ * TTL cache cho danh sách công ty tham gia dự án.
+ * Lý do: notificationCompanyRelevance gọi hàm này cho TỪNG thông báo, mỗi lần chạy ~6 truy vấn.
+ * Đo trên pg_stat_statements: riêng câu `crm_leads WHERE project_id = $1 AND type = 'deal'`
+ * đã bị gọi 6.965.204 lần (1ms/lần trong DB nhưng mỗi lần là một vòng đi–về qua PostgREST,
+ * chiếm chỗ trong hàng đợi kết nối). Danh sách này chỉ đổi khi dự án được gắn/bỏ công ty,
+ * nên 60s là an toàn; chỗ nào đổi liên kết thì gọi invalidateProjectParticipantCompanies().
+ */
+const PARTICIPANTS_CACHE_MS = 60_000;
 
 function pushCompany(map, row, role) {
   const id = row?.id ? String(row.id) : '';
@@ -30,7 +41,7 @@ async function hydrateCompanies(ids) {
   return data || [];
 }
 
-async function listProjectParticipantCompanies(projectId) {
+async function computeProjectParticipantCompanies(projectId) {
   if (!projectId) return [];
   const map = new Map();
 
@@ -135,6 +146,22 @@ async function listProjectParticipantCompanies(projectId) {
   }));
 }
 
+/** Bản có cache 60s — dùng cho mọi đường đọc. Ghi/đổi liên kết thì gọi invalidate bên dưới. */
+async function listProjectParticipantCompanies(projectId) {
+  if (!projectId) return [];
+  return lookupCache.getOrFetch(
+    `project:participants:${projectId}`,
+    () => computeProjectParticipantCompanies(projectId),
+    PARTICIPANTS_CACHE_MS,
+  );
+}
+
+/** Gọi khi dự án được gắn/bỏ công ty (SX, VC, deal CRM, workshop placement). */
+function invalidateProjectParticipantCompanies(projectId) {
+  if (!projectId) return;
+  lookupCache.invalidate(`project:participants:${projectId}`);
+}
+
 function isParticipantCompany(list, companyId) {
   if (!companyId) return false;
   return (list || []).some((c) => String(c.id) === String(companyId));
@@ -217,6 +244,8 @@ async function projectHasCrmDealInCompanies(projectId, companyIds) {
 
 module.exports = {
   listProjectParticipantCompanies,
+  computeProjectParticipantCompanies,
+  invalidateProjectParticipantCompanies,
   isParticipantCompany,
   listCrmLinkedProjectIds,
   projectHasCrmDealInCompanies,

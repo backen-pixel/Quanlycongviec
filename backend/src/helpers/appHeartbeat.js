@@ -1,6 +1,6 @@
 /**
  * GET /api/heartbeat — gom ping + badge counts trong 1 request.
- * Badge aggregate cache 15s/user (L1 lookupCache) → giảm DB trên host.
+ * Badge aggregate cache 90s/user (L1 lookupCache) → giảm DB trên host.
  * Ping luôn ghi mỗi request (không cache).
  */
 
@@ -11,7 +11,13 @@ const { isCrmSystemAdminUser } = require('./crmAccessRoles');
 const { countUnifiedOpenTasks, countUnifiedOverdueTasks } = require('./unifiedTasksQuery');
 const { lookupCache } = require('./ttlCache');
 
-const BADGE_CACHE_MS = 15_000;
+// Frontend poll heartbeat mỗi 60s (useAppHeartbeat.js: HEARTBEAT_MS = 60_000). TTL cũ 15s
+// LUÔN hết hạn trước lần poll kế tiếp nên cache chưa từng có tác dụng: mỗi lần poll đều chạy
+// lại 2 câu đếm trên khung nhìn gộp unified_tasks_v (đo được ~57ms/câu, chiếm 37% thời gian DB).
+// Đặt 90s > 60s để một nửa số lần poll được phục vụ từ cache.
+// An toàn vì mọi thao tác cần cập nhật ngay đều gọi kèm ?fresh=1 (focus cửa sổ, sự kiện
+// badge:refresh:*) và nhánh fresh sẽ invalidate cache trước khi đọc.
+const BADGE_CACHE_MS = 90_000;
 const EMPTY_ASSIGN = { unread: 0, overdue: 0, dueSoon: 0, pending: 0 };
 
 function canModerateSocial(user) {
