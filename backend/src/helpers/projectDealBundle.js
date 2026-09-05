@@ -631,7 +631,22 @@ const PROJECT_BUNDLE_SELECT_CORE = `
   customer:customers(id, full_name, phone)
 `;
 
-/** null = chưa biết, true/false sau lần probe đầu. */
+/**
+ * null = chưa biết, true/false sau lần probe đầu.
+ *
+ * LỖI ĐÃ SỬA: câu probe trước đây select cả `sx_intake`, mà cột đó CỐ Ý không
+ * tồn tại trong DB — nó là field enrich, suy ra lúc dựng kanban
+ * (xem helpers/sxKanbanSummary.js:151 và helpers/workshopKanban.js:784).
+ *
+ * Hậu quả không chỉ là ồn log (42703 mỗi lần một tiến trình khởi động): probe
+ * hỏng làm `_projectIntakeColsOk = false` VĨNH VIỄN, nên hai cột CÓ THẬT là
+ * `vc_temp_staged` và `vc_handover_status` cũng không bao giờ được nạp vào
+ * bundle. Một lỗi chức năng im lặng, không phải chỉ là rác log.
+ *
+ * Nay chỉ select hai cột có thật. Vẫn giữ cơ chế probe/cache để an toàn với
+ * môi trường chưa migrate (ví dụ project backup).
+ * `sx_intake` KHÔNG được thêm lại vào đây — muốn có thì lấy từ đường enrich.
+ */
 let _projectIntakeColsOk = null;
 
 async function fetchProjectForBundle(projectId, opts = {}) {
@@ -639,7 +654,7 @@ async function fetchProjectForBundle(projectId, opts = {}) {
   const extraSelect = _projectIntakeColsOk === false
     ? null
     : supabase.from('projects')
-      .select('sx_intake, vc_temp_staged, vc_handover_status')
+      .select('vc_temp_staged, vc_handover_status')
       .eq('id', projectId)
       .maybeSingle();
 
@@ -676,13 +691,12 @@ async function fetchProjectForBundle(projectId, opts = {}) {
   }
 
   if (project && extraRes) {
-    if (extraRes.error && /sx_intake|vc_temp_staged|vc_handover_status/i.test(String(extraRes.error.message || ''))) {
+    if (extraRes.error && /vc_temp_staged|vc_handover_status/i.test(String(extraRes.error.message || ''))) {
       _projectIntakeColsOk = false;
     } else if (!extraRes.error && extraRes.data) {
       _projectIntakeColsOk = true;
       project = {
         ...project,
-        sx_intake: extraRes.data.sx_intake,
         vc_temp_staged: extraRes.data.vc_temp_staged,
         vc_handover_status: extraRes.data.vc_handover_status,
       };
