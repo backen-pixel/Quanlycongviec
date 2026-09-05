@@ -30,13 +30,14 @@ const DAY_MS = 24 * HOUR_MS;
 const BATCH_SQL = 5000;
 /**
  * Lô cho đường Supabase REST (fallback). PHẢI nhỏ hơn nhiều so với BATCH_SQL:
- * `.in('id', ids)` nhét cả danh sách UUID vào query string, mỗi UUID ~40 ký tự,
- * nên 5000 id thành URL ~200 KB. Tôi CHƯA đo được giới hạn URL thật của proxy
- * từ môi trường này; điều đã kiểm chứng là routes/facebook.js chạy ổn định với
- * 800 id (~30 KB). 500 (~19 KB) nằm gọn bên trong vùng đó.
- * Đừng nâng lên gần BATCH_SQL — 200 KB là 6 lần lớn hơn mọi thứ từng chạy được.
+ * `.in('id', ids)` nhét cả danh sách UUID vào query string, nên 5000 id thành
+ * URL ~200 KB — gấp gần 10 lần ngưỡng gãy.
+ * GIỚI HẠN THẬT, ĐO TRÊN DB NÀY (helpers/supabaseQueryGuard.js):
+ *   `.in(...)` gãy khi vượt 643 id, chuỗi `or(...)` gãy khi vượt 556 id,
+ *   tương ứng URL ~22.000–24.000 ký tự; vượt nữa thì ĐỨT KẾT NỐI.
+ * 300 là ngưỡng cảnh báo của chính guard đó (SUPABASE_GUARD_IN_WARN).
  */
-const BATCH_REST = 500;
+const BATCH_REST = 300;
 
 function retentionDays() {
   const n = parseInt(process.env.NOTIFICATION_RETENTION_DAYS || '60', 10);

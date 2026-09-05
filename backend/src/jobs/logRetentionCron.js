@@ -48,10 +48,12 @@ const BATCH_SQL = 5000;
 /**
  * Lô cho đường Supabase REST (fallback). PHẢI nhỏ hơn nhiều so với BATCH_SQL:
  * `.in('id', ids)` nhét cả danh sách UUID vào query string (~40 ký tự mỗi id).
- * Giới hạn URL thật của proxy chưa đo được từ đây; mức đã kiểm chứng trong
- * production là 800 id (~30 KB) ở routes/facebook.js. 500 (~19 KB) an toàn.
+ * GIỚI HẠN THẬT, ĐO TRÊN DB NÀY (helpers/supabaseQueryGuard.js):
+ *   `.in(...)` gãy khi vượt 643 id, chuỗi `or(...)` gãy khi vượt 556 id,
+ *   tương ứng URL ~22.000–24.000 ký tự; vượt nữa thì ĐỨT KẾT NỐI.
+ * 300 là ngưỡng cảnh báo của chính guard đó (SUPABASE_GUARD_IN_WARN).
  */
-const BATCH_REST = 500;
+const BATCH_REST = 300;
 const MAX_BATCHES = 400;
 /** Bảng được phép dọn — chặn truy vấn động ghép tên bảng tuỳ ý vào SQL. */
 const ALLOWED = Object.freeze({

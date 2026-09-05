@@ -152,14 +152,14 @@ function servePages(pagesOfFull) {
     assert.strictEqual(sbCalls.length, 0, 'REST bị gọi ' + sbCalls.length + ' lần dù SQL đã xong');
   });
 
-  await t('Pool null → REST fallback, lô nằm trong vùng URL đã kiểm chứng', async () => {
+  await t('Pool null → REST fallback, lô dưới ngưỡng gãy 643 của .in()', async () => {
     pgImpl = () => null;
     resetSb(servePages(1));
     const r = await logCron.pruneTable('facebook_webhook_logs', 14);
     const sel = sbCalls.filter((c) => c.op === 'select');
     const del = sbCalls.filter((c) => c.op === 'delete');
     assert.ok(sel.length >= 1, 'không có SELECT');
-    assert.ok(sel[0].limit <= 800, 'lô REST = ' + sel[0].limit + ' → URL vượt mức từng chạy được (800)');
+    assert.ok(sel[0].limit <= 643, 'lô REST = ' + sel[0].limit + ' → vượt ngưỡng gãy đo được của .in() là 643');
     assert.ok(sel[0].limit >= 100, 'lô REST = ' + sel[0].limit + ' → quá nhỏ, thừa round-trip');
     assert.strictEqual(del[0].in[1], sel[0].limit, 'số id trong DELETE khác lô SELECT');
     assert.strictEqual(r.via, 'rest');
@@ -209,13 +209,13 @@ function servePages(pagesOfFull) {
     assert.strictEqual(sbCalls.length, 0, 'REST bị gọi ' + sbCalls.length + ' lần');
   });
 
-  await t('Pool null → REST, lô an toàn, đặt dismissed_at', async () => {
+  await t('Pool null → REST, lô dưới ngưỡng gãy, đặt dismissed_at', async () => {
     pgImpl = () => null;
     resetSb(servePages(1));
     const r = await notifCron.runOnce();
     const sel = sbCalls.filter((c) => c.op === 'select');
     const upd = sbCalls.filter((c) => c.op === 'update');
-    assert.ok(sel[0].limit <= 800, 'lô = ' + sel[0].limit);
+    assert.ok(sel[0].limit <= 643, 'lô = ' + sel[0].limit);
     assert.ok(upd.length >= 1, 'không có UPDATE');
     assert.ok(upd[0].val && upd[0].val.dismissed_at, 'UPDATE không đặt dismissed_at');
     assert.strictEqual(upd[0].in[1], sel[0].limit);

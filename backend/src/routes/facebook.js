@@ -122,17 +122,24 @@ const FB_CONTACTS_DEFAULT_LIMIT = Math.min(FB_CONTACTS_MAX_LIMIT, 400);
 /**
  * Số id tối đa nhét vào MỘT `.in(col, ids)`.
  *
- * Supabase JS đưa cả danh sách vào query string, mỗi UUID ~40 ký tự kể cả dấu
- * phẩy. Con số duy nhất ĐÃ ĐƯỢC KIỂM CHỨNG trong production là 800 id (~30 KB):
- * nhánh lọc theo ngày ở dưới chạy như vậy từ lâu và không lỗi. Giới hạn thật
- * của proxy thì chưa đo được từ đây, nên 500 (~19 KB) là mức nằm gọn bên trong
- * vùng đã chứng minh chạy được, đồng thời đủ nhỏ để một trang 1000 dòng chỉ
- * cần 2 round-trip.
+ * GIỚI HẠN THẬT, ĐO TRÊN DB NÀY (helpers/supabaseQueryGuard.js):
+ *   `.in(...)`        gãy khi vượt 643 id
+ *   chuỗi `or(...)`   gãy khi vượt 556 id
+ *   tương ứng URL     khoảng 22.000–24.000 ký tự
+ * Vượt nữa thì ĐỨT KẾT NỐI, không phải trả về lỗi tử tế.
  *
- * Điều chắc chắn: danh sách dài theo kích thước trang thì PHẢI chia lô, vì độ
- * dài URL sẽ tăng theo dữ liệu chứ không theo một hằng số nào cả.
+ * 300 là ngưỡng cảnh báo mà chính guard đó dùng (SUPABASE_GUARD_IN_WARN), nên
+ * lấy luôn 300 để không tự bật cảnh báo của mình. Một trang 1000 dòng thành 4
+ * round-trip — rẻ hơn nhiều so với rủi ro đứt kết nối.
+ *
+ * GHI LẠI MỘT LẦN TÔI SUY LUẬN SAI: trước đó tôi từng hạ số này xuống 200, rồi
+ * TỰ HOÀN NGUYÊN về 800 với lý do "800 đã chạy trong production nên là bằng
+ * chứng tốt nhất". Suy luận đó sai: tôi lấy số lượt quét của một chỉ mục dùng
+ * chung cho nhiều đường làm bằng chứng cho riêng đường này. Số đo thật cho thấy
+ * 800 nằm TRÊN ngưỡng gãy 643. Bài học: "chạy được lâu nay" không phải bằng
+ * chứng, chỉ số đo mới là.
  */
-const IN_CHUNK = 500;
+const IN_CHUNK = 300;
 
 /**
  * Chạy `.in(col, ids)` theo từng lô IN_CHUNK rồi gộp kết quả.
@@ -4398,11 +4405,9 @@ r.get('/contacts', authMiddleware, async (req, res) => {
       if (idErr) console.warn('[FB] RPC fb_contact_ids_with_inbound_in_range:', idErr.message, '(chạy database/52_fb_contact_ids_inbound_range_rpc.sql)');
       const qualifyingIds = [...new Set((idRows || []).map((r) => r.contact_id).filter(Boolean))];
       merged = [];
-      // GIỮ 800: đây là con số đã chạy trong production và không lỗi, nên nó là
-      // bằng chứng tốt nhất về giới hạn thực tế. Tôi từng hạ xuống 200 vì lo URL
-      // quá dài, nhưng đó chỉ là suy đoán và đổi lấy 4x round-trip trên một
-      // đường đang lành — đã hoàn nguyên.
-      const CH = 800;
+      // 800 id/lô nằm TRÊN ngưỡng gãy đã đo được của `.in(...)` là 643
+      // (helpers/supabaseQueryGuard.js). Dùng IN_CHUNK như mọi chỗ khác.
+      const CH = IN_CHUNK;
       for (let i = 0; i < qualifyingIds.length; i += CH) {
         const slice = qualifyingIds.slice(i, i + CH);
         const { data } = await base().in('id', slice)
