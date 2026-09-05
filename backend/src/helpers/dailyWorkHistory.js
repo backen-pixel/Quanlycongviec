@@ -127,7 +127,12 @@ async function buildDailyWorkHistory(userId, reportDate) {
   // ── Activity / ghi chú CRM ─────────────────────────────────────────────────
   const { data: acts } = await supabase
     .from('crm_activities')
-    .select('id, type, title, content, note, created_at, lead_id, lead:crm_leads(id, code, title, type)')
+    // Cột đúng là `description`. Trước đây select 'content, note' — KHÔNG cột nào
+    // trong hai cái đó tồn tại trên crm_activities, nên Postgres trả 42703 và CẢ
+    // câu hỏng: `acts` là undefined → summary.activities luôn = 0 và không dòng
+    // hoạt động CRM nào lọt vào nhật ký công việc. Lỗi im lặng, vì `const { data }`
+    // không kiểm tra error.
+    .select('id, type, title, description, created_at, lead_id, lead:crm_leads(id, code, title, type)')
     .eq('created_by', userId)
     .gte('created_at', startISO)
     .lte('created_at', endISO)
@@ -142,7 +147,7 @@ async function buildDailyWorkHistory(userId, reportDate) {
       kind: 'activity',
       occurred_at: a.created_at,
       title: a.title || a.type || 'Tương tác',
-      subtitle: `${a.type || 'note'}${a.lead ? ` · ${leadLabel(a.lead)}` : ''}${a.content || a.note ? ` — ${trunc(a.content || a.note, 60)}` : ''}`,
+      subtitle: `${a.type || 'note'}${a.lead ? ` · ${leadLabel(a.lead)}` : ''}${a.description ? ` — ${trunc(a.description, 60)}` : ''}`,
       meta: { activity_id: a.id, lead_id: a.lead_id, lead_type: a.lead?.type },
     });
   }
