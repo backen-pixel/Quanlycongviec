@@ -24,6 +24,17 @@
  *  3. clampContactLimit
  *     - Giao diện từng cho chọn 5000 trong khi backend kẹp cứng 400. Test khoá
  *       việc `?limit=5000` nay trả về trần thật (1000), không phải 400.
+ *
+ *  4. pgUnifiedTaskBadgeCounts — SỐ HIỆU THAM SỐ SQL
+ *     Bản đầu viết cứng '$2' cho user và '$3' cho company. Khi user là manager
+ *     thì mệnh đề dùng $2 biến mất khỏi SQL nhưng driver vẫn gửi 3 giá trị →
+ *     Postgres không suy được kiểu của $2:
+ *       42P18 could not determine data type of parameter $2      (114 lần/3h)
+ *       08P01 bind message supplies 2 parameters ... requires 1   (43 lần/3h)
+ *     Lỗi này ĐƯỢC .catch() nên không sập — badge âm thầm rơi về đường cũ.
+ *     Nghĩa là mọi MANAGER dùng đường 386 ms và đếm SAI, đúng nhóm nhiều việc
+ *     nhất. Lỗi im lặng kiểu này chỉ có test mới bắt được, nên test dưới kiểm
+ *     bất biến: mọi $n xuất hiện trong SQL, và dãy số không có lỗ.
  */
 
 const assert = require('assert');
@@ -43,7 +54,11 @@ function stub(relPath, exports) {
 }
 
 let pgImpl = () => null;
-stub('config/db', { pgQuerySafe: (...a) => pgImpl(...a) });
+const pgSeen = [];
+stub('config/db', {
+  pgQuerySafe: (sql, params) => { pgSeen.push({ sql, params }); return pgImpl(sql, params); },
+  isPgEnabled: () => true,
+});
 
 const sbCalls = [];
 let sbRespond = () => ({ data: [], error: null });
@@ -66,6 +81,7 @@ stub('config/supabase', {
 });
 stub('helpers/cronLeader', { runIfLeader: (_n, fn) => fn() });
 
+const { pgUnifiedTaskBadgeCounts } = require('../src/helpers/pgHotQueries');
 const logCron = require('../src/jobs/logRetentionCron');
 const notifCron = require('../src/jobs/notificationRetentionCron');
 
@@ -75,7 +91,12 @@ const notifCron = require('../src/jobs/notificationRetentionCron');
  * — vẫn test đúng mã đang chạy, không kéo theo side-effect của route.
  */
 function loadFbPureFns() {
-  const src = require('fs').readFileSync(path.join(SRC, 'routes', 'facebook.js'), 'utf8');
+  // Chuẩn hoá xuống dòng trước khi tìm mốc: repo được sửa từ máy Windows nên
+  // file có thể là CRLF, mà các mốc dưới đây viết theo LF. Không chuẩn hoá thì
+  // test đỏ vì lý do vô nghĩa (đã dính đúng lỗi này một lần).
+  const src = require('fs')
+    .readFileSync(path.join(SRC, 'routes', 'facebook.js'), 'utf8')
+    .replace(/\r\n/g, '\n');
   const pick = (from, to) => {
     const i = src.indexOf(from);
     assert.ok(i >= 0, `Không tìm thấy "${from}" trong routes/facebook.js — có thể đã đổi tên, cập nhật test này`);
@@ -285,6 +306,77 @@ function servePages(pagesOfFull) {
   await t('data = null mà không có error → bỏ qua an toàn', async () => {
     const out = await fb.selectInChunks(ids(600), () => Promise.resolve({ data: null, error: null }));
     assert.deepStrictEqual(out, []);
+  });
+
+  console.log('\n=== pgHotQueries: số hiệu tham số của pgUnifiedTaskBadgeCounts ===');
+
+  /**
+   * Bất biến phải giữ với MỌI tổ hợp user:
+   *   (a) mọi $n với n = 1..params.length đều xuất hiện trong SQL
+   *   (b) SQL không tham chiếu $n nào vượt quá params.length
+   * Vi phạm (a) chính là bug 42P18/08P01 đã xảy ra trên production.
+   */
+  function checkParamNumbering(sql, params, label) {
+    const refs = new Set((sql.match(/\$\d+/g) || []).map((m) => Number(m.slice(1))));
+    const missing = [];
+    for (let n = 1; n <= params.length; n += 1) if (!refs.has(n)) missing.push('$' + n);
+    assert.strictEqual(
+      missing.length, 0,
+      `${label}: truyền ${params.length} tham số nhưng SQL không dùng ${missing.join(', ')}`
+      + ' → Postgres sẽ báo 42P18/08P01',
+    );
+    const tooHigh = [...refs].filter((n) => n > params.length);
+    assert.strictEqual(
+      tooHigh.length, 0,
+      `${label}: SQL dùng ${tooHigh.map((n) => '$' + n).join(', ')} nhưng chỉ truyền ${params.length} tham số`,
+    );
+  }
+
+  const SHAPES = [
+    { label: 'A manager + công ty', user: { userId: 'u1', company_id: 'c1' }, flags: { isManager: true, isSystemAdmin: false }, soTham: 2 },
+    { label: 'B nhân viên + công ty', user: { userId: 'u1', company_id: 'c1' }, flags: { isManager: false, isSystemAdmin: false }, soTham: 3 },
+    { label: 'C sys-admin + manager', user: { userId: 'u1', company_id: 'c1' }, flags: { isManager: true, isSystemAdmin: true }, soTham: 1 },
+    { label: 'D sys-admin + nhân viên', user: { userId: 'u1', company_id: 'c1' }, flags: { isManager: false, isSystemAdmin: true }, soTham: 2 },
+  ];
+
+  for (const sh of SHAPES) {
+    // eslint-disable-next-line no-await-in-loop
+    await t(`${sh.label} → ${sh.soTham} tham số, không có lỗ trong dãy $n`, async () => {
+      pgSeen.length = 0;
+      pgImpl = () => ({ rows: [{ open: 1, overdue: 0 }] });
+      const r = await pgUnifiedTaskBadgeCounts(sh.user, sh.flags);
+      assert.ok(r, 'trả về null — hàm không chạy tới truy vấn');
+      assert.strictEqual(pgSeen.length, 1, 'gọi pgQuerySafe ' + pgSeen.length + ' lần');
+      const { sql, params } = pgSeen[0];
+      assert.strictEqual(params.length, sh.soTham,
+        `truyền ${params.length} tham số, mong ${sh.soTham}`);
+      checkParamNumbering(sql, params, sh.label);
+    });
+  }
+
+  await t('Manager KHÔNG lọc theo user (đúng phạm vi), nhân viên thì CÓ', async () => {
+    pgSeen.length = 0;
+    pgImpl = () => ({ rows: [{ open: 0, overdue: 0 }] });
+    await pgUnifiedTaskBadgeCounts({ userId: 'u1', company_id: 'c1' }, { isManager: true });
+    const sqlManager = pgSeen[0].sql;
+    pgSeen.length = 0;
+    await pgUnifiedTaskBadgeCounts({ userId: 'u1', company_id: 'c1' }, { isManager: false });
+    const sqlEmployee = pgSeen[0].sql;
+    assert.ok(!/assignee_id\s*=\s*\$/.test(sqlManager), 'manager lại bị lọc theo assignee_id');
+    assert.ok(/assignee_id\s*=\s*\$/.test(sqlEmployee), 'nhân viên KHÔNG bị lọc theo assignee_id');
+  });
+
+  await t('Mọi tham số uuid đều có ::uuid tường minh', async () => {
+    for (const sh of SHAPES) {
+      pgSeen.length = 0;
+      pgImpl = () => ({ rows: [{ open: 0, overdue: 0 }] });
+      // eslint-disable-next-line no-await-in-loop
+      await pgUnifiedTaskBadgeCounts(sh.user, sh.flags);
+      const { sql } = pgSeen[0];
+      const untyped = (sql.match(/\$\d+(?!::)/g) || []).filter((m) => m !== '$1');
+      assert.strictEqual(untyped.length, 0,
+        `${sh.label}: tham số thiếu ép kiểu: ${untyped.join(', ')}`);
+    }
   });
 
   console.log('');

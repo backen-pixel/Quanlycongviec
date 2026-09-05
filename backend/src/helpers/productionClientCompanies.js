@@ -60,6 +60,10 @@ async function syncExternalCatalogVptLinks(workshopCompanyId) {
     .eq('is_active', true)
     .is('linked_company_id', null);
 
+  // Ràng buộc UNIQUE(production_company_id, linked_company_id) nghĩa là mỗi
+  // xưởng chỉ link được MỘT dòng tới vptId. Vòng cũ thử link mọi dòng tên giống
+  // VPT nên từ dòng thứ hai là chắc chắn 23505 (chỉ dừng SAU khi đã kích lỗi).
+  // Link được một dòng là đủ với mục đích của hàm này → thoát ngay khi thành công.
   for (const row of rows || []) {
     if (!externalNameLooksLikeVpt(row.name)) continue;
     const { error } = await supabase
@@ -67,9 +71,8 @@ async function syncExternalCatalogVptLinks(workshopCompanyId) {
       .update({ linked_company_id: vptId })
       .eq('id', row.id)
       .is('linked_company_id', null);
-    if (error?.code === '23505') {
-      break;
-    }
+    if (!error) break;                 // đã link xong, dòng sau chỉ gây 23505
+    if (error.code === '23505') break; // tranh chấp: ai đó vừa link — cũng xong
   }
 
   await ensureWorkshopClientCompanyLink(coId, vptId);
@@ -149,20 +152,49 @@ async function listProductionClientCompanies(workshopCompanyId) {
     console.warn('[productionClientCompanies] external list:', e.message);
   }
 
+  /**
+   * Ràng buộc `production_ext_co_linked_uq` là UNIQUE(production_company_id,
+   * linked_company_id): mỗi xưởng chỉ được có MỘT dòng external trỏ tới một
+   * công ty CRM. Nhưng nhiều dòng external tên khác nhau ("VPT", "Vạn Phú
+   * Thành", …) đều giải ra cùng một công ty, nên dòng đầu link được và MỌI
+   * dòng sau chắc chắn vi phạm ràng buộc.
+   *
+   * Bản cũ cứ thử UPDATE rồi bắt 23505 và bỏ qua — chạy đúng, nhưng kích lỗi
+   * ở Postgres mỗi lần. Đo trên log 3 giờ ngày 04/09/2026: 164 lần, tức khoảng
+   * 1 lần/phút, và đây là ĐƯỜNG ĐỌC (dropdown "Công ty chủ deal").
+   *
+   * Nay chốt trước danh sách clientId đã có chủ — lấy ngay từ `extRows` đã tải,
+   * KHÔNG thêm truy vấn nào — rồi bỏ hẳn UPDATE chắc chắn thất bại. Hành vi
+   * không đổi: trước đây khi 23505 nổ, code cũng chỉ bỏ qua rồi addCrmId.
+   *
+   * VẪN GIỮ nhánh bắt 23505 bên dưới: giữa lúc đọc và lúc ghi, một tiến trình
+   * khác vẫn có thể chiếm cặp đó. Chốt trước để không kích lỗi ở trường hợp
+   * thường; bắt lỗi để an toàn với tranh chấp.
+   */
+  const linkedTaken = new Set(
+    (extRows || [])
+      .map((r) => (r?.linked_company_id ? String(r.linked_company_id) : null))
+      .filter(Boolean),
+  );
+
   for (const ext of extRows) {
     if (!ext?.id || !ext?.name) continue;
     let clientId = ext.linked_company_id ? String(ext.linked_company_id) : null;
     if (!clientId) {
       clientId = await resolveCrmCompanyIdFromExternalName(ext.name);
-      if (clientId) {
+      if (clientId && !linkedTaken.has(clientId)) {
         const { error: linkUpdErr } = await supabase
           .from('production_external_companies')
           .update({ linked_company_id: clientId })
           .eq('id', ext.id)
           .is('linked_company_id', null);
-        if (linkUpdErr?.code === '23505') {
-          // Đã có dòng khác cùng xưởng trỏ clientId — bỏ qua, vẫn addCrmId bên dưới.
-        } else if (linkUpdErr && !linkUpdErr.message?.includes('does not exist')) {
+        if (!linkUpdErr) {
+          linkedTaken.add(clientId);
+        } else if (linkUpdErr.code === '23505') {
+          // Tranh chấp: tiến trình khác vừa chiếm cặp này. Ghi nhớ để các dòng
+          // sau không thử lại, rồi bỏ qua — vẫn addCrmId bên dưới như cũ.
+          linkedTaken.add(clientId);
+        } else if (!linkUpdErr.message?.includes('does not exist')) {
           console.warn('[productionClientCompanies] link external:', linkUpdErr.message);
         }
       }
