@@ -8,6 +8,9 @@ const http = require('http');
 require('dotenv').config();
 const { installNetworkProcessGuard } = require('./config/networkProcessGuard');
 installNetworkProcessGuard();
+// Chỉ ghi log, không đổi hành vi truy vấn. Tắt bằng SUPABASE_QUERY_GUARD=0.
+const { installSupabaseQueryGuard } = require('./helpers/supabaseQueryGuard');
+installSupabaseQueryGuard();
 const { externalAxios } = require('./config/httpAgents');
 const config = require('./config');
 const jwt = require('jsonwebtoken');
