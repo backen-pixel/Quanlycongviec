@@ -805,15 +805,41 @@ async function pgUnifiedTaskBadgeCounts(user, flags = {}) {
   const scopeToSelf = !flags.isManager;
   const done = ['done', 'completed', 'cancelled'];
 
-  // $1 = mảng status đã xong, $2 = user id, $3 = company id (có thể bỏ)
-  const params = [done, uid];
-  let pCompany = '';
-  if (companyId) {
-    params.push(companyId);
-    pCompany = '$3::uuid';
+  // LỖI ĐÃ SỬA — số hiệu tham số phải sinh động, không được viết cứng.
+  //
+  // Bản đầu tiên làm: params = [done, uid] rồi hard-code '$2' cho user và '$3'
+  // cho company. Khi user là MANAGER thì scopeToSelf = false nên self() trả về
+  // chuỗi rỗng → '$2' KHÔNG hề xuất hiện trong SQL, nhưng driver vẫn gửi 3 giá
+  // trị. Postgres không suy được kiểu của một tham số không được dùng ở đâu cả:
+  //   42P18  could not determine data type of parameter $2
+  //   08P01  bind message supplies 2 parameters, but prepared statement requires 1
+  // (hai mã lỗi khác nhau tuỳ lỗi xảy ra ở bước PARSE hay BIND)
+  //
+  // Đo trên log Postgres 3 giờ ngày 04/09/2026: 114 lần 42P18 + 43 lần 08P01.
+  // Hậu quả không phải sập — fetchUnifiedTaskBadge có .catch() nên rơi về đường
+  // 2-truy-vấn cũ. Nhưng nghĩa là MỌI MANAGER đều dùng đường cũ (386 ms và đếm
+  // sai 14.240), tức phần tối ưu badge không có tác dụng với đúng nhóm nhiều
+  // việc nhất — một lỗi im lặng, tệ hơn là sập.
+  //
+  // Cách sửa: chỉ đẩy vào `params` những giá trị THẬT SỰ được dùng, và lấy số
+  // hiệu từ độ dài mảng ngay lúc đẩy. Bất biến: mọi $n đều xuất hiện trong SQL
+  // và không có lỗ trong dãy số. Có test khoá lại ở
+  // backend/tests/perf-retention-and-chunking.js
+  const params = [done]; // $1 = mảng status đã xong
+
+  let pUser = null;
+  if (scopeToSelf) {
+    params.push(uid);
+    pUser = `$${params.length}::uuid`;
   }
 
-  const self = (assignee, creator) => (scopeToSelf ? `AND (${assignee} = $2::uuid OR ${creator} = $2::uuid)` : '');
+  let pCompany = null;
+  if (companyId) {
+    params.push(companyId);
+    pCompany = `$${params.length}::uuid`;
+  }
+
+  const self = (assignee, creator) => (pUser ? `AND (${assignee} = ${pUser} OR ${creator} = ${pUser})` : '');
 
   // Nhánh tasks: chốt trước tập project của công ty (bảng projects nhỏ) rồi mới lọc tasks
   // theo project_id — dùng được idx_tasks_project, và EXISTS thay cho join nên không nhân dòng.
