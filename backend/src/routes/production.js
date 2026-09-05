@@ -33,6 +33,7 @@ const {
 const { attachCrmProductionTaskStatsToProjects } = require('../helpers/crmProductionTaskStats');
 const { attachLeadUserFlagsToProjects } = require('../helpers/crmLeadUserFlags');
 const { applyProductionCompanyScopeFilter, getExecutorProjectIdsForCompany } = require('../helpers/crossCompanyWorkspace');
+const { pickChunkTarget, fetchProjectIdPageChunked } = require('../helpers/sxChunkedIdPage');
 const {
   userNeedsParticipantOnlyProductionScopeForWorkshop,
   userNeedsParticipantOnlyProductionScope,
@@ -1723,18 +1724,25 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
      *  Tách 2 bước: (1) id+count nhẹ theo filter cột (2) hydrate đủ field theo id. */
     const columnScopedKanban = kanbanBoard && (wantsKanbanColumn || wantsNullKanbanColumn);
 
-    const applyProjectsListFilters = (q) => {
+    /**
+     * @param {object|null} idOverride — thay một mảng id bằng lô nhỏ hơn khi phải chia lô
+     *   (xem helpers/sxChunkedIdPage). Không truyền → giữ nguyên hành vi cũ.
+     */
+    const applyProjectsListFilters = (q, idOverride = null) => {
+      const wonIdsUse = idOverride?.wonIds ?? wonIds;
+      const restrictIdsUse = idOverride?.restrictIds ?? restrictIds;
+      const partnerIdsUse = idOverride?.partnerIds ?? partnerIdsForCompany;
       let query = applyProjectTenantScope(q, req);
       const scoped = applySxKanbanRowScope(query, {
         stageIds,
-        wonIds,
-        restrictIds,
+        wonIds: wonIdsUse,
+        restrictIds: restrictIdsUse,
         sxIntake: String(sx_intake) === '1',
       });
       if (scoped.empty) return { query: scoped.query, empty: true };
       query = scoped.query;
 
-      if (company_id) query = applyProductionCompanyScopeFilter(query, company_id, partnerIdsForCompany);
+      if (company_id) query = applyProductionCompanyScopeFilter(query, company_id, partnerIdsUse);
       if (wantsUnclassified) query = query.is('workshop_type_id', null);
       else if (workshop_type_id) query = query.eq('workshop_type_id', workshop_type_id);
 
@@ -1756,7 +1764,7 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
       else if (wantsKanbanColumn) query = query.eq('sx_kanban_column_id', sxKanbanColumnId);
       if (stage_slug && String(sx_intake) !== '1') {
         if (stage_slug === INTAKE_BUCKET) {
-          query = query.in('id', (restrictIds && restrictIds.length) ? restrictIds : wonIds);
+          query = query.in('id', (restrictIdsUse && restrictIdsUse.length) ? restrictIdsUse : wonIdsUse);
           if (stageIds.length) {
             query = query.or(`current_stage_id.is.null,current_stage_id.not.in.(${stageIds.join(',')})`);
           }
@@ -1825,6 +1833,33 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
             count = Number(page.total) || 0;
           }
         }
+      }
+
+      // Mảng id quá dài thì filter không lọt URL PostgREST (đo được: gãy từ ~556 id).
+      // Chia lô rồi hợp nhất — xem helpers/sxChunkedIdPage.
+      const chunkTarget = pageIds == null
+        ? pickChunkTarget({ wonIds, restrictIds, partnerIds: partnerIdsForCompany })
+        : null;
+      if (chunkTarget) {
+        const buildChunkQuery = async (override) => {
+          const applied = applyProjectsListFilters(
+            supabase.from('projects').select('id, deadline, created_at'),
+            override,
+          );
+          if (applied.empty) return { query: applied.query, empty: true };
+          const scoped = await applyParticipantOnlyProductionScope(
+            applied.query, req.user, company_id, sx_workshop_company_id, deal_company_id,
+          );
+          return { query: scoped.query, empty: false };
+        };
+        const paged = await fetchProjectIdPageChunked({
+          buildQuery: buildChunkQuery,
+          chunkTarget,
+          offset,
+          limit: parsedLimit,
+        });
+        pageIds = paged.ids;
+        count = paged.total;
       }
 
       if (pageIds == null) {
@@ -1923,21 +1958,61 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
         projects = pageIds.map((id) => byId.get(String(id))).filter(Boolean);
       }
     } else {
+    // Cùng lý do như nhánh Kanban theo cột: mảng id dài không lọt URL PostgREST.
+    // Chốt trước danh sách id của trang bằng cách chia lô, rồi truy vấn theo id đó.
+    let preFilteredIds = null;
+    const chunkTargetMain = pickChunkTarget({
+      wonIds, restrictIds, partnerIds: partnerIdsForCompany,
+    });
+    if (chunkTargetMain) {
+      const paged = await fetchProjectIdPageChunked({
+        buildQuery: async (override) => {
+          const app = applyProjectsListFilters(
+            supabase.from('projects').select('id, deadline, created_at'),
+            override,
+          );
+          if (app.empty) return { query: app.query, empty: true };
+          const sc = await applyParticipantOnlyProductionScope(
+            app.query, req.user, company_id, sx_workshop_company_id, deal_company_id,
+          );
+          return { query: sc.query, empty: false };
+        },
+        chunkTarget: chunkTargetMain,
+        offset,
+        limit: parsedLimit,
+      });
+      count = paged.total;
+      if (!paged.ids.length) {
+        return res.json({
+          projects: [], total: paged.total, page: parsedPage,
+          totalPages: Math.ceil(paged.total / parsedLimit),
+        });
+      }
+      preFilteredIds = paged.ids;
+    }
+    /** Đã chốt id ở trên thì chỉ cần lọc theo id — mọi điều kiện khác đã áp rồi. */
+    const applyListOrPreIds = (q) => (preFilteredIds
+      ? { query: q.in('id', preFilteredIds), empty: false }
+      : applyProjectsListFilters(q));
+
     let query = supabase
       .from('projects')
-      .select(projectListSelect, selectOpts);
+      .select(projectListSelect, preFilteredIds ? {} : selectOpts);
 
-    const applied = applyProjectsListFilters(query);
+    const applied = applyListOrPreIds(query);
     if (applied.empty) {
       return res.json({ projects: [], total: 0, page: parsedPage, totalPages: 0 });
     }
     query = applied.query;
 
     query = query.order('deadline', { ascending: true, nullsFirst: false })
-      .order('created_at', { ascending: false })
-      .range(offset, offset + parsedLimit - 1);
+      .order('created_at', { ascending: false });
+    // preFilteredIds ĐÃ là đúng trang rồi — cắt trang lần nữa là mất dòng.
+    if (!preFilteredIds) query = query.range(offset, offset + parsedLimit - 1);
 
+    const totalFromChunked = count;
     ({ data: projects, error, count } = await query);
+    if (preFilteredIds) count = totalFromChunked;
     const needsFallback = error && (
       error.message?.includes('production_deadline') ||
       error.message?.includes('vc_kanban_column_id') ||
@@ -1993,16 +2068,38 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
       }
       let fallbackQuery = supabase
         .from('projects')
-        .select(fallbackSelect, { count: 'exact' });
-      const appliedFb = applyProjectsListFilters(fallbackQuery);
+        .select(fallbackSelect, preFilteredIds ? {} : { count: 'exact' });
+      const appliedFb = applyListOrPreIds(fallbackQuery);
       if (appliedFb.empty) {
         return res.json({ projects: [], total: 0, page: parsedPage, totalPages: 0 });
       }
       fallbackQuery = appliedFb.query;
-      fallbackQuery = fallbackQuery.order('deadline', { ascending: true, nullsFirst: false }).order('created_at', { ascending: false }).range(offset, offset + parsedLimit - 1);
+      fallbackQuery = fallbackQuery.order('deadline', { ascending: true, nullsFirst: false }).order('created_at', { ascending: false });
+      if (!preFilteredIds) fallbackQuery = fallbackQuery.range(offset, offset + parsedLimit - 1);
+      const totalFb = count;
       ({ data: projects, error, count } = await fallbackQuery);
+      if (preFilteredIds) count = totalFb;
     }
     } // end else !columnScopedKanban
+
+    // Xin trang vượt quá số dòng hiện có: PostgREST trả PGRST103 và trước đây rơi thẳng
+    // xuống throw → client nhận HTTP 500 thay vì một trang rỗng. Gặp nhiều hơn khi dữ liệu
+    // vơi đi giữa lúc người dùng đang ở trang cuối.
+    if (error && error.code === 'PGRST103') {
+      let total = 0;
+      try {
+        const countRes = applyProjectsListFilters(
+          supabase.from('projects').select('id', { count: 'exact', head: true }),
+        );
+        if (!countRes.empty) total = Number((await countRes.query).count) || 0;
+      } catch (_) { /* không lấy được tổng thì trả 0 */ }
+      return res.json({
+        projects: [],
+        total,
+        page: parsedPage,
+        totalPages: Math.ceil(total / parsedLimit),
+      });
+    }
 
     if (error) {
       console.error('[production/projects] query failed', {
@@ -2090,8 +2187,9 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
       } catch (bfErr) {
         console.warn('[production/kanban] backfill staff:', bfErr.message);
       }
-      const enrichedWithStaff = await attachProductionStaffToProjects(enrichedSx);
-      const workflowProjects = enrichedWithStaff.map((project) => ({
+      // 4 bước dưới chỉ THÊM field, không đọc field của nhau — chạy song song rồi ghép
+      // theo id (đúng cách nhánh Kanban đang làm) thay vì chờ nối tiếp 4 lượt.
+      const workflowBase = enrichedSx.map((project) => ({
         ...project,
         progress: calcTaskProgress(project.tasks),
         task_total: project.tasks?.length || 0,
@@ -2100,11 +2198,37 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
         is_production_overdue: isSxProjectDateOverdue(project, 'production_deadline'),
         is_delivery_overdue: isSxProjectDateOverdue(project, 'delivery_date'),
       }));
-      const enhanced = await attachCrmProductionTaskStatsToProjects(workflowProjects);
-      const withUserFlags = await attachLeadUserFlagsToProjects(enhanced, req.user?.userId);
-      const listProjectIds = withUserFlags.map((p) => p.id).filter(Boolean);
-      const dealDepositMap = await loadDealDepositByProjectIds(listProjectIds);
-      projectsOut = attachSxFinanceToProjects(withUserFlags, dealDepositMap);
+      const listProjectIds = workflowBase.map((p) => p.id).filter(Boolean);
+      const [withStaff, withStats, withFlags, dealDepositMap] = await Promise.all([
+        attachProductionStaffToProjects(workflowBase),
+        attachCrmProductionTaskStatsToProjects(workflowBase),
+        attachLeadUserFlagsToProjects(workflowBase, req.user?.userId),
+        loadDealDepositByProjectIds(listProjectIds),
+      ]);
+      const staffById = new Map((withStaff || []).map((p) => [String(p.id), p]));
+      const statsById = new Map((withStats || []).map((p) => [String(p.id), p]));
+      const flagsById = new Map((withFlags || []).map((p) => [String(p.id), p]));
+      // Mỗi helper trả về CẢ object, nên nếu spread nguyên cả ba thì helper sau ghi đè lại
+      // field helper trước vừa sửa (task_total/progress bị trả về giá trị thô). Chỉ lấy
+      // đúng phần từng helper thay đổi, và giữ nguyên thứ tự áp như chuỗi tuần tự cũ.
+      const deltaOf = (base, enriched) => {
+        const out = {};
+        if (!enriched) return out;
+        for (const k of Object.keys(enriched)) {
+          if (enriched[k] !== base[k]) out[k] = enriched[k];
+        }
+        return out;
+      };
+      const merged = workflowBase.map((p) => {
+        const key = String(p.id);
+        return {
+          ...p,
+          ...deltaOf(p, staffById.get(key)),
+          ...deltaOf(p, statsById.get(key)),
+          ...deltaOf(p, flagsById.get(key)),
+        };
+      });
+      projectsOut = attachSxFinanceToProjects(merged, dealDepositMap);
     }
 
     const payload = {

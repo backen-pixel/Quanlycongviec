@@ -8,13 +8,72 @@ function externalNameLooksLikeVpt(name) {
   return VPT_NAME_PATTERN.test(String(name || '').trim());
 }
 
-/** Tên text «VPT» / Vạn Phú → id công ty CRM tương ứng. */
-async function resolveCrmCompanyIdFromExternalName(name) {
+/**
+ * Dịch pattern ILIKE của Postgres sang RegExp: `%` = chuỗi bất kỳ, `_` = một ký tự,
+ * `\` là ký tự thoát, so khớp toàn chuỗi và không phân biệt hoa thường.
+ */
+function ilikeToRegExp(pattern) {
+  const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  let out = '';
+  for (let i = 0; i < pattern.length; i += 1) {
+    const ch = pattern[i];
+    if (ch === '\\') {
+      const next = pattern[i + 1];
+      i += 1;
+      out += next === undefined ? '\\\\' : esc(next);
+    } else if (ch === '%') out += '.*';
+    else if (ch === '_') out += '.';
+    else out += esc(ch);
+  }
+  return new RegExp(`^${out}$`, 'iu');
+}
+
+/** Danh sách công ty đang hoạt động để khớp tên trong bộ nhớ. */
+async function loadActiveCompaniesForNameMatch() {
+  const rows = [];
+  const page = 1000;
+  let from = 0;
+  for (;;) {
+    const { data, error } = await supabase
+      .from('companies')
+      .select('id, name, short_name')
+      .eq('is_active', true)
+      .range(from, from + page - 1);
+    if (error) throw error;
+    const chunk = data || [];
+    rows.push(...chunk);
+    if (chunk.length < page) break;
+    from += page;
+    if (from >= 20000) break;
+  }
+  return rows;
+}
+
+/**
+ * Tên text «VPT» / Vạn Phú → id công ty CRM tương ứng.
+ *
+ * `companies` là danh sách công ty đã nạp sẵn: truyền vào thì khớp ngay trong bộ nhớ,
+ * không truyền thì vẫn đi truy vấn như cũ (giữ nguyên cho các nơi gọi lẻ).
+ * Vòng lặp trong listProductionClientCompanies gọi hàm này cho TỪNG công ty ngoài —
+ * mỗi lần 2 truy vấn nối tiếp — nên với 48 dòng chưa liên kết là 96 lượt round-trip
+ * cho một bảng chỉ vài dòng (đo được 15,1s mỗi lần mở trang xưởng).
+ */
+async function resolveCrmCompanyIdFromExternalName(name, companies = null) {
   const trimmed = String(name || '').trim();
   if (!trimmed) return null;
   if (externalNameLooksLikeVpt(trimmed)) {
     return resolveVptCompanyId();
   }
+
+  if (Array.isArray(companies)) {
+    const re = ilikeToRegExp(trimmed);
+    // Giữ đúng thứ tự ưu tiên của bản cũ: khớp `name` trước, hết mới tới `short_name`.
+    const byName = companies.find((c) => re.test(String(c.name ?? '')));
+    if (byName?.id) return byName.id;
+    const byShort = companies.find((c) => re.test(String(c.short_name ?? '')));
+    return byShort?.id || null;
+  }
+
   const { data: hit } = await supabase
     .from('companies')
     .select('id')
@@ -149,11 +208,21 @@ async function listProductionClientCompanies(workshopCompanyId) {
     console.warn('[productionClientCompanies] external list:', e.message);
   }
 
+  // Nạp một lần cho cả vòng lặp, và chỉ nạp khi thật sự có dòng cần tra tên.
+  let companiesForMatch = null;
+  if (extRows.some((e) => e?.id && e?.name && !e.linked_company_id)) {
+    try {
+      companiesForMatch = await loadActiveCompaniesForNameMatch();
+    } catch (e) {
+      console.warn('[productionClientCompanies] load companies:', e.message);
+    }
+  }
+
   for (const ext of extRows) {
     if (!ext?.id || !ext?.name) continue;
     let clientId = ext.linked_company_id ? String(ext.linked_company_id) : null;
     if (!clientId) {
-      clientId = await resolveCrmCompanyIdFromExternalName(ext.name);
+      clientId = await resolveCrmCompanyIdFromExternalName(ext.name, companiesForMatch);
       if (clientId) {
         const { error: linkUpdErr } = await supabase
           .from('production_external_companies')

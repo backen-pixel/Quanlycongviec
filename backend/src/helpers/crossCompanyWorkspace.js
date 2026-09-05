@@ -84,27 +84,62 @@ function filterCrmTasksByCompanyScope(tasks, {
 /**
  * project_id mà công ty có nhiệm vụ sx_* được giao thực hiện (không phải chủ dự án).
  */
+const EXEC_IDS_PAGE = 1000;
+const EXEC_IDS_HARD_CAP = 200000;
+/** Số id tối đa nhét vào một `.in(...)`: URL PostgREST hỏng từ khoảng 600 UUID. */
+const EXEC_IN_CHUNK = 300;
+
+/** Nạp hết các trang; ném lỗi ra ngoài như truy vấn đơn. */
+async function fetchAllPagesOrThrow(buildPage, hardCap = EXEC_IDS_HARD_CAP) {
+  const out = [];
+  let from = 0;
+  for (;;) {
+    const { data, error } = await buildPage(from, from + EXEC_IDS_PAGE - 1);
+    if (error) throw error;
+    const chunk = data || [];
+    out.push(...chunk);
+    if (chunk.length < EXEC_IDS_PAGE) break;
+    from += EXEC_IDS_PAGE;
+    if (from >= hardCap) break;
+  }
+  return out;
+}
+
 async function getExecutorProjectIdsForCompany(companyId) {
   if (!companyId) return [];
-  const { data: taskRows, error: taskErr } = await supabase
-    .from('crm_tasks')
-    .select('lead_id')
-    .eq('executor_company_id', companyId)
-    .like('stage_slug', 'sx_%');
-  if (taskErr) {
+  // Thiếu .range() thì PostgREST cắt im lặng ở 1000 dòng — xưởng nhiều việc sẽ mất
+  // dự án đối tác mà không có lỗi nào.
+  let taskRows;
+  try {
+    taskRows = await fetchAllPagesOrThrow((from, to) => supabase
+      .from('crm_tasks')
+      .select('lead_id')
+      .eq('executor_company_id', companyId)
+      .like('stage_slug', 'sx_%')
+      .order('lead_id', { ascending: true })
+      .range(from, to));
+  } catch (taskErr) {
     if (String(taskErr.message || '').includes('executor_company_id')) return [];
     throw taskErr;
   }
   const leadIds = [...new Set((taskRows || []).map((r) => r.lead_id).filter(Boolean))];
   if (!leadIds.length) return [];
 
-  const { data: leads, error: leadErr } = await supabase
+  // Chia lô: `.in()` với vài trăm UUID trở lên làm URL vượt giới hạn → HTTP 400.
+  const chunks = [];
+  for (let i = 0; i < leadIds.length; i += EXEC_IN_CHUNK) chunks.push(leadIds.slice(i, i + EXEC_IN_CHUNK));
+  const parts = await Promise.all(chunks.map((slice) => fetchAllPagesOrThrow((from, to) => supabase
     .from('crm_leads')
     .select('project_id')
-    .in('id', leadIds)
-    .not('project_id', 'is', null);
-  if (leadErr) throw leadErr;
-  return [...new Set((leads || []).map((l) => l.project_id).filter(Boolean))];
+    .in('id', slice)
+    .not('project_id', 'is', null)
+    .order('project_id', { ascending: true })
+    .range(from, to))));
+  const out = new Set();
+  for (const rows of parts) {
+    for (const l of rows) if (l.project_id) out.add(l.project_id);
+  }
+  return [...out];
 }
 
 /**

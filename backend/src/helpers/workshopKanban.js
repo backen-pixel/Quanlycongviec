@@ -131,6 +131,29 @@ async function projectLinkedToWonDealScope(projectId, wonSet = null) {
 }
 
 /** Truy vấn thực tế — dùng chung cho bản toàn cục và bản theo công ty. */
+const WON_IDS_PAGE = 1000;
+const WON_IDS_HARD_CAP = 200000;
+
+/**
+ * Nạp hết các trang của một truy vấn project_id.
+ * Trả về cùng dạng { data, error } như một truy vấn Supabase để chỗ gọi giữ nguyên
+ * cách xử lý lỗi (bảng junction chưa tồn tại → bỏ qua).
+ */
+async function fetchAllProjectIdPages(buildPage, hardCap = WON_IDS_HARD_CAP) {
+  const data = [];
+  let from = 0;
+  for (;;) {
+    const res = await buildPage(from, from + WON_IDS_PAGE - 1);
+    if (res.error) return { data, error: res.error };
+    const chunk = res.data || [];
+    data.push(...chunk);
+    if (chunk.length < WON_IDS_PAGE) break;
+    from += WON_IDS_PAGE;
+    if (from >= hardCap) break;
+  }
+  return { data, error: null };
+}
+
 async function fetchWonDealProjectIds(companyId) {
   // Lấy deals đang ở stage "Thắng" (is_won=true)
   const { data: wonStages } = await supabase
@@ -152,19 +175,23 @@ async function fetchWonDealProjectIds(companyId) {
   // thuộc công ty bán hàng khác (vd. Bếp Vạn Phú Thành đưa deal cho xưởng HCB gia công); lọc theo
   // company_id của deal sẽ làm rớt gần hết dự án hợp lệ của xưởng đó (đã phát hiện qua kiểm thử
   // trực tiếp — cột "Tiếp Nhận" của HCB thiếu 9/10 dự án do lỗi này).
-  const queries = [];
+  // KHÔNG bỏ .range(): PostgREST cắt im lặng ở 1000 dòng (kể cả khi đặt .limit lớn hơn),
+  // nên xưởng vượt 1000 deal sẽ mất dự án ở cột "Tiếp Nhận" mà không có lỗi nào báo ra.
+  const builders = [];
   if (wonStageIds.length) {
-    let q = supabase
-      .from('crm_leads')
-      .select(companyId ? 'project_id, projects!inner(company_id)' : 'project_id')
-      .eq('type', 'deal')
-      .not('project_id', 'is', null)
-      .in('stage_id', wonStageIds);
-    if (companyId) q = q.eq('projects.company_id', companyId);
-    queries.push(q);
+    builders.push((from, to) => {
+      let q = supabase
+        .from('crm_leads')
+        .select(companyId ? 'project_id, projects!inner(company_id)' : 'project_id')
+        .eq('type', 'deal')
+        .not('project_id', 'is', null)
+        .in('stage_id', wonStageIds);
+      if (companyId) q = q.eq('projects.company_id', companyId);
+      return q.order('project_id', { ascending: true }).range(from, to);
+    });
   }
   // Deals đã từng thắng (có actual_close_date) và được gắn project
-  {
+  builders.push((from, to) => {
     let q = supabase
       .from('crm_leads')
       .select(companyId ? 'project_id, projects!inner(company_id)' : 'project_id')
@@ -172,31 +199,31 @@ async function fetchWonDealProjectIds(companyId) {
       .not('project_id', 'is', null)
       .not('actual_close_date', 'is', null);
     if (companyId) q = q.eq('projects.company_id', companyId);
-    queries.push(q);
-  }
+    return q.order('project_id', { ascending: true }).range(from, to);
+  });
 
   // Fallback: chỉ cần có project_id (để intake không bị mất card ngay sau khi chuyển stage CRM)
-  {
+  builders.push((from, to) => {
     let q = supabase
       .from('crm_leads')
       .select(companyId ? 'project_id, projects!inner(company_id)' : 'project_id')
       .eq('type', 'deal')
       .not('project_id', 'is', null);
     if (companyId) q = q.eq('projects.company_id', companyId);
-    queries.push(q);
-  }
+    return q.order('project_id', { ascending: true }).range(from, to);
+  });
 
   // Multi-xưởng: dự án xưởng 2+ gắn qua junction, không có trên crm_leads.project_id
-  {
+  builders.push((from, to) => {
     let q = supabase
       .from('crm_deal_projects')
       .select(companyId ? 'project_id, projects!inner(company_id)' : 'project_id')
       .not('project_id', 'is', null);
     if (companyId) q = q.eq('projects.company_id', companyId);
-    queries.push(q);
-  }
+    return q.order('project_id', { ascending: true }).range(from, to);
+  });
 
-  const results = await Promise.all(queries);
+  const results = await Promise.all(builders.map((b) => fetchAllProjectIdPages(b)));
   const out = new Set();
   for (const { data, error } of results) {
     if (error) {

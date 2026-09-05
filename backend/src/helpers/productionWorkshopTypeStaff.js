@@ -827,11 +827,38 @@ async function backfillMissingProductionStaff(projects) {
   const ids = candidates.map((p) => p.id);
   let existing = new Set();
   try {
-    const { data } = await supabase
-      .from('project_production_staff')
-      .select('project_id')
-      .in('project_id', ids);
-    existing = new Set((data || []).map((r) => String(r.project_id)));
+    // Mỗi dự án có NHIỀU dòng staff (đo được 20 dòng/dự án), nên không phân trang là
+    // PostgREST cắt ở 1000 dòng — chỉ "nhìn thấy" khoảng 50 dự án đầu. Hệ quả: hàng trăm
+    // dự án ĐÃ có staff vẫn bị coi là thiếu và bị ghi lại ở mọi lần liệt kê
+    // (~290ms/dự án × 30 = 8–10s mỗi request, lặp vô hạn vì số "thiếu" không bao giờ giảm).
+    const PAGE = 1000;
+    // Chia lô id sao cho mỗi lô nằm gọn dưới trần 1000 dòng, rồi chạy song song —
+    // phân trang nối tiếp trên toàn danh sách tốn tới 6 lượt chờ liên tiếp.
+    const ID_CHUNK = 40;
+    const idChunks = [];
+    for (let i = 0; i < ids.length; i += ID_CHUNK) idChunks.push(ids.slice(i, i + ID_CHUNK));
+    const chunkResults = await Promise.all(idChunks.map(async (slice) => {
+      const found = [];
+      let from = 0;
+      for (;;) {
+        const { data, error } = await supabase
+          .from('project_production_staff')
+          .select('project_id')
+          .in('project_id', slice)
+          .order('project_id', { ascending: true })
+          .range(from, from + PAGE - 1);
+        if (error) throw error;
+        const chunk = data || [];
+        found.push(...chunk);
+        if (chunk.length < PAGE) break;
+        from += PAGE;
+        if (from >= 200000) break;
+      }
+      return found;
+    }));
+    for (const rows of chunkResults) {
+      for (const r of rows) existing.add(String(r.project_id));
+    }
   } catch (e) {
     if (String(e.message || '').includes('project_production_staff')) return 0;
     throw e;
@@ -840,10 +867,33 @@ async function backfillMissingProductionStaff(projects) {
   const missing = candidates.filter((p) => !existing.has(String(p.id))).slice(0, 30);
   if (!missing.length) return 0;
 
+  // Loại xưởng không có nhân sự mặc định thì applyWorkshopTypeDefaultStaffToProject chạy
+  // hết các bước nặng rồi vẫn trả null — không ghi được dòng staff nào. Dự án đó lần sau
+  // vẫn nằm trong danh sách "thiếu" nên bị thử lại mãi: đo được 30 dự án tốn 8–10s MỖI
+  // lần liệt kê, mà số dự án thiếu không hề giảm. Hỏi trước một lần cho mỗi cặp
+  // (công ty, loại xưởng) rồi chỉ chạy cho cặp thật sự có nhân sự.
+  const pairKey = (p) => `${p.company_id}|${p.workshop_type_id}`;
+  const pairs = new Map();
+  for (const p of missing) if (!pairs.has(pairKey(p))) pairs.set(pairKey(p), p);
+  const pairHasStaff = new Map();
+  await Promise.all([...pairs.entries()].map(async ([key, p]) => {
+    try {
+      const own = await getDefaultStaffForType(p.company_id, p.workshop_type_id, { allowFallback: false });
+      if ((own.userIds || []).length) { pairHasStaff.set(key, true); return; }
+      const fb = await resolveFallbackStaffForProductionCompany(p.company_id);
+      pairHasStaff.set(key, !!(fb.userIds || []).length);
+    } catch (_) {
+      pairHasStaff.set(key, false);
+    }
+  }));
+
+  const usable = missing.filter((p) => pairHasStaff.get(pairKey(p)));
+  if (!usable.length) return 0;
+
   await Promise.all(
-    missing.map((p) => applyWorkshopTypeDefaultStaffToProject(p.id, p.company_id, p.workshop_type_id)),
+    usable.map((p) => applyWorkshopTypeDefaultStaffToProject(p.id, p.company_id, p.workshop_type_id)),
   );
-  return missing.length;
+  return usable.length;
 }
 
 /** Gắn production_staff[] lên deal/lead (qua project_id). */
