@@ -1,15 +1,79 @@
 {
-  "schema_version": "1.0.0",
-  "release_id": "INTERNAL-LIVE-V1-RC1",
-  "environment": "INTERNAL_MANAGED",
-  "generated_at": "2026-09-06T00:16:41.797Z",
-  "frozen_version": {
-    "repository": "github.com/backen-pixel/Quanlycongviec",
-    "commit": "e8f1b92062d2b8d76a7def71702ac8212bc5ef1f",
-    "tree": "89f4f53a32c277126e19fd38d8f638f6dca8e91c",
-    "clean": true
+  "schema_version": "1.1.0",
+  "release_id": "INTERNAL-LIVE-V1-FOUNDER-LOCAL-RC1",
+  "environment": "FOUNDER_LOCAL_PRIVATE",
+  "environment_controls": {
+    "deployment_class": "FOUNDER_LOCAL_PRIVATE",
+    "bind_hosts": ["127.0.0.1", "localhost", "::1"],
+    "admin_only": true,
+    "allowed_roles": ["admin"],
+    "public_internet_exposed": false,
+    "background_write_jobs_default_enabled": false
   },
-  "overall_status": "FOUNDER DECISION REQUIRED",
+  "data_policy": {
+    "read_in_place": true,
+    "allowed_read_paths": ["APPLICATION_SERVICE", "APPROVED_READ_MODEL"],
+    "direct_database_write_allowed": false,
+    "silent_synthetic_fallback_allowed": false,
+    "secondary_writable_business_store_allowed": false
+  },
+  "capacity_policy": {
+    "mode": "PROVISIONAL_ADVISORY_ONLY",
+    "canonical_business_rule": false,
+    "warning_only": true,
+    "may_auto_change_operations": false,
+    "may_enable_operational_domain_writes": false
+  },
+  "controlled_write_policy": {
+    "operational_domain_writes_enabled": false,
+    "advisory_configuration": {
+      "status": "PENDING_VERIFICATION",
+      "storage": "FOUNDER_LOCAL_FILE",
+      "default_enabled": false,
+      "canonical_business_rule": false,
+      "operational_effect": false,
+      "automatic_actions_enabled": false,
+      "explicit_founder_confirmation_required": true,
+      "validation_required": true,
+      "idempotency_required": true,
+      "audit_and_versioning_required": true,
+      "rollback_required": true,
+      "checked_at": null,
+      "evidence": []
+    },
+    "required_six_gates": [
+      "existing_business_rule",
+      "permission",
+      "approval_and_validation",
+      "idempotency",
+      "audit",
+      "rollback_or_compensation"
+    ],
+    "direct_database_write_allowed": false,
+    "schema_change_allowed": false,
+    "permission_increase_allowed": false
+  },
+  "readiness_gates": {
+    "blocking": {
+      "runtime": { "status": "PENDING", "checked_at": null, "evidence": [] },
+      "health": { "status": "PENDING", "checked_at": null, "evidence": [] },
+      "reconciliation": { "status": "PENDING", "checked_at": null, "evidence": [] },
+      "configuration_rollback": { "status": "PENDING", "checked_at": null, "evidence": [] },
+      "no_write": { "status": "PENDING", "checked_at": null, "evidence": [] }
+    },
+    "informational": {
+      "backup_failover": { "status": "PENDING", "checked_at": null, "evidence": [] }
+    }
+  },
+  "ready_for_internal_daily_use": false,
+  "generated_at": "2026-09-06T03:41:54.104Z",
+  "verified_source_candidate": {
+    "repository": "github.com/backen-pixel/Quanlycongviec",
+    "commit": "UNSET",
+    "tree": "UNSET",
+    "clean": false
+  },
+  "overall_status": "UNDER RECONCILIATION",
   "modules": [
     {
       "module_key": "founder_cockpit",
@@ -33,13 +97,13 @@
       "gates": { "scope": true, "permission": true, "audit": true, "reconciliation": true, "drill_down": true },
       "controlled_actions": { "enabled": false, "application_services": [] },
       "evidence": ["Configuration Center reads the built-in route registry and existing app-module registry, then drills down to the canonical configuration screen."],
-      "gaps": ["The cockpit intentionally performs no configuration write; changes remain protected in existing application services."]
+      "gaps": ["The Founder-local file-backed advisory configuration path is implemented but remains PENDING VERIFICATION; it is disabled by default and cannot write canonical or operational state."]
     },
     {
       "module_key": "ecosystem_company_scope",
       "display_name": "Ecosystem and Company Scope",
       "status": "LIVE",
-      "source_type": "CANONICAL_MODULE",
+      "source_type": "APPROVED_READ_MODEL",
       "data_updated_at": "2026-09-06T00:16:41.797Z",
       "freshness_slo_minutes": 5,
       "gates": { "scope": true, "permission": true, "audit": true, "reconciliation": true, "drill_down": true },
@@ -153,7 +217,7 @@
       "gates": { "scope": true, "permission": true, "audit": true, "reconciliation": true, "drill_down": true },
       "controlled_actions": { "enabled": false, "application_services": [] },
       "evidence": ["Company-scoped production projects, open work, active people, and load per active person are connected."],
-      "gaps": ["No Founder-approved capacity target exists; target and gap remain null rather than synthetic."]
+      "gaps": ["Capacity targets and thresholds are provisional warning-only configuration, not canonical Business Rules; the local configuration path remains PENDING VERIFICATION and cannot change operations or enable domain writes."]
     },
     {
       "module_key": "manufacturing_capacity_view_b",
@@ -165,7 +229,7 @@
       "gates": { "scope": true, "permission": true, "audit": true, "reconciliation": true, "drill_down": true },
       "controlled_actions": { "enabled": false, "application_services": [] },
       "evidence": ["A second manufacturing-company view uses the same scoped canonical contracts without duplicating state."],
-      "gaps": ["No Founder-approved capacity target exists; target and gap remain null rather than synthetic."]
+      "gaps": ["Capacity targets and thresholds are provisional warning-only configuration, not canonical Business Rules; the local configuration path remains PENDING VERIFICATION and cannot change operations or enable domain writes."]
     },
     {
       "module_key": "logistics_delivery_installation",
@@ -219,7 +283,7 @@
       "module_key": "permission",
       "display_name": "Permission",
       "status": "LIVE",
-      "source_type": "CANONICAL_MODULE",
+      "source_type": "APPLICATION_SERVICE",
       "data_updated_at": "2026-09-06T00:16:41.797Z",
       "freshness_slo_minutes": 5,
       "gates": { "scope": true, "permission": true, "audit": true, "reconciliation": true, "drill_down": true },
@@ -264,7 +328,35 @@
       "gaps": ["Forecast exposes workload and due projects but cannot calculate capacity variance until an approved target contract exists."]
     }
   ],
+  "platform_capability_count": 19,
+  "platform_capabilities": [
+    { "key": "strategy_objective_center", "display_name": "Strategy & Objective Center", "mode": "INTERNAL_OPERATIONAL", "status": "LIVE WITH DATA GAPS", "evidence": ["Existing CRM/project signals are projected without creating canonical objectives."], "gaps": ["No canonical objective source is connected."] },
+    { "key": "founder_executive_cockpit", "display_name": "Founder Executive Cockpit", "mode": "INTERNAL_OPERATIONAL", "status": "LIVE WITH DATA GAPS", "evidence": ["Six-system real-data read model and scoped drill-down are present."], "gaps": ["Runtime acceptance evidence remains pending."] },
+    { "key": "portfolio_planning_forecasting", "display_name": "Portfolio Planning & Forecasting", "mode": "INTERNAL_OPERATIONAL", "status": "LIVE WITH DATA GAPS", "evidence": ["Week/month/quarter projections use Unified Tasks and Projects."], "gaps": ["Canonical capacity targets are intentionally absent."] },
+    { "key": "capacity_workload_balancing", "display_name": "Capacity & Workload Balancing", "mode": "INTERNAL_OPERATIONAL", "status": "LIVE WITH DATA GAPS", "evidence": ["Scoped workload, people, and project measures feed two manufacturing views."], "gaps": ["Thresholds are provisional advisory configuration only."] },
+    { "key": "founder_decision_exception_center", "display_name": "Founder Decision & Exception Center", "mode": "INTERNAL_OPERATIONAL", "status": "LIVE WITH DATA GAPS", "evidence": ["Exceptions are derived from existing domain read models with source drill-down."], "gaps": ["Some cross-domain tolerances remain non-canonical."] },
+    { "key": "management_reporting_profitability", "display_name": "Management Reporting & Profitability", "mode": "INTERNAL_OPERATIONAL", "status": "LIVE WITH DATA GAPS", "evidence": ["Accounting and reporting read models supply current observed signals."], "gaps": ["Full profitability policy is not inferred."] },
+    { "key": "correction_evolution", "display_name": "Correction & Evolution", "mode": "INTERNAL_OPERATIONAL", "status": "LIVE WITH DATA GAPS", "evidence": ["Decision and data-quality exceptions are projected read-only."], "gaps": ["Corrective writes remain in canonical modules."] },
+    { "key": "founder_configuration_center", "display_name": "Founder Configuration Center", "mode": "INTERNAL_OPERATIONAL", "status": "LIVE WITH DATA GAPS", "evidence": ["Registry reads are connected and the local advisory service is bounded."], "gaps": ["Advisory configuration rollback evidence remains pending."] },
+    { "key": "cross_domain_signal_hub", "display_name": "Cross-Domain Signal Hub", "mode": "INTERNAL_OPERATIONAL", "status": "LIVE WITH DATA GAPS", "evidence": ["Existing domain signals are composed without a duplicate source of truth."], "gaps": ["The canonical tolerance dictionary is partial."] },
+    { "key": "module_registry_feature_flags", "display_name": "Module Registry & Feature Flags", "mode": "INTERNAL_OPERATIONAL", "status": "LIVE", "evidence": ["The existing app module registry is read in place with company scope."], "gaps": [] },
+    { "key": "connector_center", "display_name": "Connector Center", "mode": "INTERNAL_OPERATIONAL", "status": "LIVE WITH DATA GAPS", "evidence": ["Activation/freshness states expose connected and missing sources."], "gaps": ["Warranty/Care is explicitly NOT CONNECTED and non-blocking."] },
+    { "key": "data_quality_reconciliation", "display_name": "Data Quality & Reconciliation Center", "mode": "INTERNAL_OPERATIONAL", "status": "UNDER RECONCILIATION", "evidence": ["Per-module reconciliation contracts and a real-data generator are present."], "gaps": ["Frozen-candidate reconciliation evidence is pending."] },
+    { "key": "customer_tenant_administration", "display_name": "Customer / Tenant Administration", "mode": "PRODUCTIZATION_INTERFACE", "status": "SANDBOX", "evidence": ["Interface status only; no external customer runtime or write authority."], "gaps": ["Productization is outside Founder-local V1."] },
+    { "key": "industry_pack_template_studio", "display_name": "Industry Pack & Template Studio", "mode": "PRODUCTIZATION_INTERFACE", "status": "SANDBOX", "evidence": ["Interface status only; no canonical template state is created."], "gaps": ["Productization is outside Founder-local V1."] },
+    { "key": "customer_onboarding_data_portability", "display_name": "Customer Onboarding & Data Portability", "mode": "PRODUCTIZATION_INTERFACE", "status": "SANDBOX", "evidence": ["Interface status only; onboarding/export actions are disabled."], "gaps": ["Productization is outside Founder-local V1."] },
+    { "key": "licensing_billing", "display_name": "Licensing & Billing", "mode": "PRODUCTIZATION_INTERFACE", "status": "SANDBOX", "evidence": ["Interface status only; no billing action or policy is activated."], "gaps": ["Productization is outside Founder-local V1."] },
+    { "key": "release_upgrade_rollback", "display_name": "Release / Upgrade / Rollback", "mode": "PRODUCTIZATION_INTERFACE", "status": "SANDBOX", "evidence": ["Interface status only; repository and deployment mutations are prohibited."], "gaps": ["Productization is outside Founder-local V1."] },
+    { "key": "monitoring_backup_support", "display_name": "Monitoring / Backup / Support", "mode": "INTERNAL_OPERATIONAL", "status": "LIVE WITH DATA GAPS", "evidence": ["Loopback health and runtime evidence contracts are present."], "gaps": ["Backup/failover is NOT VERIFIED and explicitly non-blocking for Founder-local V1."] },
+    { "key": "executive_domain_ai_interfaces", "display_name": "Executive AI & Domain AI Interfaces", "mode": "RUNTIME_DISABLED", "status": "SANDBOX", "evidence": ["Status interface only; OpenClaw and autonomous Business AI Runtime remain disabled."], "gaps": ["No autonomous runtime authority."] }
+  ],
+  "non_blocking_not_connected_modules": ["warranty_care"],
   "protected_capabilities": [
+    "Public internet exposure or non-loopback bind",
+    "Background write jobs in Founder-local mode",
+    "Capacity warning configuration changing operations",
+    "Operational or domain writes in Founder-local mode",
+    "Advisory configuration writes without explicit Founder confirmation and all six gates",
     "Direct database write",
     "Schema or migration execution",
     "Permission or RLS increase",
@@ -274,10 +366,11 @@
     "Autonomous Business AI Runtime"
   ],
   "critical_residual_risks": [
-    "The approved environment has no SUPABASE_DB_* and SUPABASE_BACKUP_DB_* pair, so backup verification and isolated restore evidence cannot be produced.",
-    "No approved internal managed runtime target and access boundary were supplied; the local acceptance slice is not a daily-use deployment.",
-    "Warranty/Customer Care has no approved read model in the authoritative source base.",
-    "Capacity targets, several cross-domain signal tolerances, and one production workshop-stage join remain explicit data-contract gaps."
+    "Founder-local runtime, loopback health, connected-module reconciliation, configuration rollback, and no-write evidence are still PENDING; the candidate is not READY for daily use.",
+    "Warranty/Customer Care has no approved read model and remains NOT CONNECTED; Founder authority makes this non-blocking when it is shown explicitly and no synthetic fallback is used.",
+    "Capacity targets and thresholds are provisional advisory warnings only; their file-backed configuration path remains PENDING VERIFICATION, is disabled by default, and cannot automatically change operations.",
+    "Several cross-domain signal tolerances and one production workshop-stage join remain explicit data-contract gaps.",
+    "Backup/failover is NOT VERIFIED and remains an informational, non-blocking Founder-local read-only limitation unless a V1-critical source is shown to be unstable."
   ],
-  "acceptance_decision": "FOUNDER_DECISION_REQUIRED"
+  "acceptance_decision": "HOLD"
 }

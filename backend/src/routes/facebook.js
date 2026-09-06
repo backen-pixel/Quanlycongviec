@@ -37,6 +37,7 @@ const {
   MAX_CONTACTS_LINK_CLEANUP_CAP,
 } = require('../helpers/facebookLinkOnlyPhoneTool');
 const { assertRegionBelongsToCompany } = require('../helpers/crmRegionScope');
+const { backgroundWritersAllowed } = require('../config/runtimeProfile');
 const {
   attachTokenReminderToPage,
   shouldBumpFacebookPageSettingsUpdatedAt,
@@ -7646,7 +7647,7 @@ loadFbPipelineConfigFromDb().then(async () => {
   console.log('[FB] ✅ Auto pipeline config loaded (per-company)');
   try {
     const masterOn = getFbMasterEnabledSync();
-    if (masterOn && fbToolsResumeOnBoot()) {
+    if (masterOn && backgroundWritersAllowed() && fbToolsResumeOnBoot()) {
       const enabledKeys = listFbPipelineCompanyKeys().filter((k) => getFbPipelineConfigSync(k).enabled);
       console.log(`[FB] ▶️ Auto-resume auto pipeline sau deploy (master=ON) cho ${enabledKeys.length} công ty`);
       for (const key of enabledKeys) void startAutoPipelineForCompany(key);
@@ -7749,7 +7750,7 @@ function stopScanTimer() {
 // Auto-start theo cấu hình đã lưu: nếu enabled=true thì bật timer sau khi boot.
 // (Nếu muốn tắt hẳn chạy nền, set enabled=false qua /facebook/lead-scan/config)
 loadScanConfig().then((cfg) => {
-  if (cfg?.enabled) startScanTimer();
+  if (backgroundWritersAllowed() && cfg?.enabled) startScanTimer();
 }).catch(() => {});
 
 // ═══════════════════════════════════════════════════════════════
@@ -7899,11 +7900,11 @@ function getRescanPhonesScheduleStatus() {
 }
 
 loadRescanPhonesScheduleConfig().then((cfg) => {
-  if (cfg?.enabled) startRescanPhonesSchedule(false);
+  if (backgroundWritersAllowed() && cfg?.enabled) startRescanPhonesSchedule(false);
 }).catch(() => {});
 
 loadFbMasterScheduleConfig().then((cfg) => {
-  if (cfg?.enabled) startFbMasterScheduleCycle().catch(() => {});
+  if (backgroundWritersAllowed() && cfg?.enabled) startFbMasterScheduleCycle().catch(() => {});
 }).catch(() => {});
 
 // GET /facebook/audit-phone-sync — đối soát contact/customer/lead
@@ -9314,18 +9315,20 @@ autoTool.injectCoreFunctions({
 
 // Inject socket.io khi _ioRef được set
 let _autoToolIoInjected = false;
-setInterval(() => {
-  if (!_autoToolIoInjected && r._ioRef) {
-    autoTool.setIO(r._ioRef);
-    _autoToolIoInjected = true;
-  }
-}, 500);
+if (backgroundWritersAllowed()) {
+  setInterval(() => {
+    if (!_autoToolIoInjected && r._ioRef) {
+      autoTool.setIO(r._ioRef);
+      _autoToolIoInjected = true;
+    }
+  }, 500);
+}
 
 // Load config + tự resume Auto Tool sau deploy nếu đã bật trước đó
 autoTool.loadConfigFromDb().then(async () => {
   console.log('[AutoTool] ✅ Config loaded');
   try {
-    if (!fbToolsResumeOnBoot()) return;
+    if (!backgroundWritersAllowed() || !fbToolsResumeOnBoot()) return;
     const wasEnabled = await autoTool.loadEnabledFlagFromDb();
     if (wasEnabled && !autoTool.getState().running) {
       console.log('[AutoTool] ▶️ Auto-resume sau deploy');

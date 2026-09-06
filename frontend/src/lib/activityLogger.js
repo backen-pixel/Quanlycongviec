@@ -14,6 +14,7 @@
 
 import api from './api';
 import { getCachedActivityContext } from './deviceHeartbeat';
+import { isFounderLocalReadOnlyActive } from '../business-os/founderLocalReadOnly';
 
 const BATCH_MS = 2000;
 const BATCH_MAX = 20;
@@ -38,6 +39,7 @@ function getSessionId() {
 }
 
 async function flush() {
+  if (isFounderLocalReadOnlyActive()) return;
   if (flushing || disabled) return;
   if (!queue.length) return;
   const batch = queue.splice(0, queue.length);
@@ -71,6 +73,7 @@ function schedule() {
 }
 
 function enqueue(entry) {
+  if (isFounderLocalReadOnlyActive()) return;
   if (disabled) return;
   const ctx = getCachedActivityContext();
   queue.push({
@@ -207,6 +210,7 @@ export function flushNow() {
 
 if (typeof window !== 'undefined') {
   window.addEventListener('beforeunload', () => {
+    if (isFounderLocalReadOnlyActive()) return;
     if (!queue.length) return;
     try {
       const url = (api.defaults.baseURL || '') + '/user-activity';

@@ -167,6 +167,8 @@ import SearchInlineFilterChips, { SearchClearButton } from '../components/Search
 import ViewModeDropdownMenu from '../components/ViewModeDropdownMenu';
 import { DashboardLoaderGate } from '../components/DashboardLoaderGate';
 import { isClickOutside } from '../lib/domUtils';
+import { isFounderLocalReadOnlyActive } from '../business-os/founderLocalReadOnly';
+import { presentCrmPostDerivedMetric } from '../business-os/crmReadOnlyTruth';
 
 const LEAD_PRIORITY_COLORS = { high: 'bg-red-100 text-red-700', medium: 'bg-amber-100 text-amber-700', low: 'bg-gray-100 text-gray-600' };
 
@@ -1155,6 +1157,7 @@ function dedupeCrmKanbanRows(rows) {
 export default function CRMDashboard() {
   const { user } = useAuth();
   const productTour = useProductTour();
+  const founderLocalReadOnly = isFounderLocalReadOnlyActive();
   const [showTourMissions, setShowTourMissions] = useState(false);
   const seesAllCrmDeals = userSeesAllCrmDealsScoped(user);
   const isAdmin = isAdminLike(user);
@@ -5684,10 +5687,19 @@ export default function CRMDashboard() {
     currentData?.kpis?.kpi_ledger_period_start,
   ]);
 
-  /** Ưu tiên tổng server (toàn bộ khớp bộ lọc); fallback về Σ ô góc thẻ đã tải khi chưa có. */
-  const kpiLedgerMonthNetDisplay = kpiLedgerTotalAccurate != null
-    ? kpiLedgerTotalAccurate
-    : kpiLedgerMonthNetSumVisible;
+  /**
+   * Founder-local chặn POST tổng hợp, nên tổng từ các thẻ đã tải chỉ là bằng chứng một phần.
+   * Giữ giá trị số riêng cho logic UI, nhưng presentation phải luôn nói rõ đây là cận dưới.
+   */
+  const kpiLedgerPresentation = presentCrmPostDerivedMetric({
+    founderLocal: founderLocalReadOnly,
+    exactValue: kpiLedgerTotalAccurate,
+    partialValue: kpiLedgerMonthNetSumVisible,
+    partialEvidenceCount: activeItems.length,
+    serverIncomplete: kpiLedgerTotalIncomplete,
+    formatValue: formatKpiLedgerNet,
+  });
+  const kpiLedgerMonthNetDisplay = kpiLedgerPresentation.value;
 
   /**
    * Danh sách ĐẦY ĐỦ trong popover "N deal quá hạn" — tái dùng `/crm/deadline-bucket-pages`
@@ -6064,9 +6076,24 @@ export default function CRMDashboard() {
     return out;
   }, [viewMode, pipelineType, activeItems, activeStages]);
 
-  /** Số hiện trên badge — ưu tiên tổng server (toàn bộ, không giới hạn thẻ đã tải), fallback
-   * về đếm trên `overdueItems` (client) khi chưa có kết quả server. */
-  const overdueBadgeCount = overdueCountAccurate != null ? overdueCountAccurate : overdueItems.length;
+  /** Tổng POST bị khóa trong Founder-local: số client chỉ là cận dưới của các thẻ đã tải. */
+  const overdueCountPresentation = presentCrmPostDerivedMetric({
+    founderLocal: founderLocalReadOnly,
+    exactValue: overdueCountAccurate,
+    partialValue: overdueItems.length,
+    partialEvidenceCount: activeItems.length,
+  });
+  const overdueBadgeCount = overdueCountPresentation.value ?? 0;
+  const showOverdueBadge = overdueCountPresentation.incomplete || overdueBadgeCount > 0;
+  const overdueBadgeDisplay = overdueCountPresentation.incomplete
+    ? overdueCountPresentation.displayValue.replace('≥ ', '≥')
+    : (overdueBadgeCount > 99 ? '99+' : String(overdueBadgeCount));
+  const overdueEntityLabel = crmPipelineTabEntityLabel(pipelineType);
+  const overdueBadgeSummary = overdueCountPresentation.incomplete
+    ? (overdueCountPresentation.hasEvidence
+      ? `Ít nhất ${overdueBadgeCount} ${overdueEntityLabel} quá hạn`
+      : `Chưa xác minh tổng ${overdueEntityLabel} quá hạn`)
+    : `${overdueBadgeCount} ${overdueEntityLabel} quá hạn`;
 
   const focusOverdueItem = useCallback((it) => {
     const el = document.querySelector(`.ui-kanban-fixed [data-crm-pipeline-card="${it.id}"]`)
@@ -6315,18 +6342,19 @@ export default function CRMDashboard() {
    * Dòng phụ của thẻ «Điểm KPI (tháng)». Khi server phải cắt ở trần 20.000 bản ghi, tổng
    * điểm chỉ cộng được một PHẦN — phải nói rõ ra thay vì hiện một con số trông như thật.
    */
-  const kpiLedgerSublabel = kpiLedgerTotalIncomplete
-    ? 'Chưa đủ — vượt trần 20.000 bản ghi'
-    : (kpis.kpi_ledger_period_start
-      ? `Sổ cái · ${String(kpis.kpi_ledger_period_start).slice(0, 7)}`
-      : 'Sổ cái CRM');
-  /** Dấu «≥» để chính CON SỐ cũng cho thấy nó là mức tối thiểu, không phải tổng thật. */
-  const kpiLedgerValueDisplay = kpiLedgerTotalIncomplete
-    ? `≥ ${formatKpiLedgerNet(kpiLedgerMonthNetDisplay)}`
-    : formatKpiLedgerNet(kpiLedgerMonthNetDisplay);
+  const kpiLedgerSublabel = kpiLedgerPresentation.founderFallback
+    ? (kpiLedgerPresentation.hasEvidence
+      ? 'Chưa đủ — chỉ cộng các thẻ đã tải; tổng Founder-local không khả dụng'
+      : 'Chưa xác minh — chưa có bằng chứng KPI đã tải')
+    : (kpiLedgerTotalIncomplete
+      ? 'Chưa đủ — vượt trần 20.000 bản ghi'
+      : (kpis.kpi_ledger_period_start
+        ? `Sổ cái · ${String(kpis.kpi_ledger_period_start).slice(0, 7)}`
+        : 'Sổ cái CRM'));
+  const kpiLedgerValueDisplay = kpiLedgerPresentation.displayValue;
 
   const kpiCollapsedSegments = useMemo(() => {
-    const kpiPts = formatKpiLedgerNet(kpiLedgerMonthNetDisplay);
+    const kpiPts = kpiLedgerValueDisplay;
     const kpiSeg = { key: 'kpi', label: 'KPI', value: kpiPts, tone: 'kpi' };
     if (pipelineType === 'lead') {
       return [
@@ -6359,7 +6387,7 @@ export default function CRMDashboard() {
       { key: 'expected', label: 'Doanh thu kỳ vọng', value: formatVND(dealSalesKpisForDisplay.expected_value), tone: 'expected' },
       kpiSeg,
     ];
-  }, [pipelineType, dealKhSplitEnabled, dealSalesKpisForDisplay, mergedDealKpisForDisplay, customerKpisForDisplay, leadKpiTotalCount, leadActiveCount, customerKpiTotalCount, kpiLedgerMonthNetDisplay]);
+  }, [pipelineType, dealKhSplitEnabled, dealSalesKpisForDisplay, mergedDealKpisForDisplay, customerKpisForDisplay, leadKpiTotalCount, leadActiveCount, customerKpiTotalCount, kpiLedgerValueDisplay]);
 
   const kpiCollapsedSummary = useMemo(
     () => kpiCollapsedSegments.map((s) => `${s.label} ${s.value}`).join(' · '),
@@ -7692,6 +7720,16 @@ export default function CRMDashboard() {
           </div>
         </div>
       )}
+      {founderLocalReadOnly && (
+        <div
+          data-testid="founder-local-crm-partial-totals-disclosure"
+          className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-950 shadow-sm"
+        >
+          Founder-local · DỮ LIỆU KHÔNG ĐẦY ĐỦ: tổng phụ thuộc đọc POST/batch chỉ hiển thị
+          cận dưới ≥ N khi có bằng chứng đã tải, hoặc — khi chưa có bằng chứng; không được hiểu
+          các giá trị này là tổng chính xác.
+        </div>
+      )}
       {/* Panel điều khiển CRM — pipeline, tìm kiếm, KPI */}
       <div className="ui-solid-white rounded-xl border border-slate-200/90 bg-white shadow-sm overflow-hidden">
       {/* Header — tab + hành động + tìm kiếm + chế độ xem */}
@@ -7754,15 +7792,15 @@ export default function CRMDashboard() {
           >
             <Pin className={`h-3.5 w-3.5 ${pinnedTab === pipelineType ? 'rotate-45 fill-amber-500' : ''}`} />
           </button>
-          {overdueBadgeCount > 0 && (
+          {showOverdueBadge && (
             <div className="relative shrink-0">
               <button
                 ref={overdueTriggerRef}
                 type="button"
                 onClick={() => setShowOverduePopover((v) => !v)}
-                aria-label={`${overdueBadgeCount} ${crmPipelineTabEntityLabel(pipelineType)} quá hạn`}
+                aria-label={overdueBadgeSummary}
                 aria-expanded={showOverduePopover}
-                title={`${overdueBadgeCount} ${crmPipelineTabEntityLabel(pipelineType)} quá hạn — bấm để xem danh sách`}
+                title={`${overdueBadgeSummary} — bấm để xem bằng chứng đã tải`}
                 className={`relative ${ctrlIcon} rounded-md flex items-center justify-center cursor-pointer border transition-colors ${
                   showOverduePopover
                     ? 'bg-red-600 border-red-700 text-white'
@@ -7770,8 +7808,8 @@ export default function CRMDashboard() {
                 }`}
               >
                 <AlertTriangle className="h-3.5 w-3.5" strokeWidth={2.5} />
-                <span className="absolute -top-1 -right-1 min-w-[15px] h-[15px] px-0.5 rounded-full bg-red-600 text-white text-[8px] font-bold flex items-center justify-center tabular-nums leading-none">
-                  {overdueBadgeCount > 99 ? '99+' : overdueBadgeCount}
+                <span className="absolute -top-1 -right-1 min-w-[17px] h-[15px] px-0.5 rounded-full bg-red-600 text-white text-[8px] font-bold flex items-center justify-center tabular-nums leading-none">
+                  {overdueBadgeDisplay}
                 </span>
               </button>
               <AnchoredDropdownMenu
@@ -7785,10 +7823,12 @@ export default function CRMDashboard() {
                   <AlertTriangle className="h-4 w-4 text-red-600 shrink-0" />
                   <div className="min-w-0 flex-1">
                     <p className="text-xs font-bold text-red-800">
-                      {overdueBadgeCount} {crmPipelineTabEntityLabel(pipelineType)} quá hạn
+                      {overdueBadgeSummary}
                     </p>
                     <p className="text-[10px] text-red-600/80">
-                      {overduePopoverState.error || 'NV CRM hoặc SLA cột · bấm mã để mở'}
+                      {overduePopoverState.error || (overdueCountPresentation.incomplete
+                        ? 'Chỉ phản ánh các thẻ đã tải; không phải tổng đầy đủ'
+                        : 'NV CRM hoặc SLA cột · bấm mã để mở')}
                     </p>
                   </div>
                   <button
@@ -9325,6 +9365,7 @@ export default function CRMDashboard() {
               deadlineConfig={deadlineConfig}
               bucketCounts={deadlineBucketCounts}
               bucketCountsLoading={deadlineBucketCountsLoading}
+              bucketCountsIncomplete={founderLocalReadOnly && deadlineBucketCounts == null}
               bucketPageState={deadlineBucketPageState}
               onLoadBuckets={handleLoadDeadlineBuckets}
               onOpenSettings={null}

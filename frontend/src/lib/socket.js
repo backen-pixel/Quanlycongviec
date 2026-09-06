@@ -1,5 +1,6 @@
 import { io } from 'socket.io-client';
 import { resolveApiOrigin } from './apiOrigin';
+import { isFounderLocalReadOnlyActive } from '../business-os/founderLocalReadOnly';
 
 const API_URL = resolveApiOrigin();
 
@@ -76,6 +77,10 @@ function attachSocketHandlers(sock) {
 }
 
 export function connectSocket() {
+  if (isFounderLocalReadOnlyActive()) {
+    disconnectSocket();
+    return null;
+  }
   const token = normalizeToken(localStorage.getItem('token'));
   if (!token) {
     disconnectSocket();
@@ -117,6 +122,7 @@ export function disconnectSocket() {
 }
 
 export function getSocket() {
+  if (isFounderLocalReadOnlyActive()) return null;
   if (!normalizeToken(localStorage.getItem('token'))) return null;
   return socket;
 }

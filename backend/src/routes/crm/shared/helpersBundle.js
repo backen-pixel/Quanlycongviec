@@ -100,6 +100,7 @@ const {
 } = require('../../../helpers/crmAccessRoles');
 const { isAdminLike, isSystemAdmin, isCrmModuleAdmin, isPlatformAdmin } = require('../../../helpers/adminRole');
 const { getTenantCompanyIds } = require('../../../helpers/tenantScope');
+const { assertFounderLocalCompanyScopeForUser } = require('../../../middleware/founderLocalReadOnly');
 const {
   getCrmLeadRegionConstraint,
   applyCrmLeadRegionFilterToQuery,
@@ -5063,18 +5064,46 @@ async function resolveCrmLeadsMergedQuery(req, res) {
   if (parseCrmRegionUnassignedQuery(mergedQuery)) {
     mergedQuery = { ...mergedQuery, region_unassigned: '1', region_id: undefined };
   }
-  const sacLeads = scopedAdminCompanyId(req);
-  if (sacLeads) {
-    mergedQuery = { ...mergedQuery, company_id: sacLeads };
-  } else if (!userIsAdmin(req.user?.role)) {
-    const cid = await requireUserCompanyIdResolved(req, res);
-    if (!cid) return null;
-    mergedQuery = { ...mergedQuery, company_id: cid };
-  } else if (!uuidQueryOrNull(mergedQuery.company_id) && req.user?.tenant_id && !isPlatformAdmin(req.user)) {
-    // Admin hệ thống thuộc 1 tenant (không phải platform_admin đa-tenant) xem "Tất cả công ty":
-    // giới hạn về đúng các công ty của TENANT mình, tránh lẫn dữ liệu tenant khác.
-    const tenantCompanyIds = await getTenantCompanyIds(req.user.tenant_id);
-    mergedQuery = { ...mergedQuery, company_ids_scope: tenantCompanyIds };
+  const founderScope = req.founderLocalScope;
+  if (founderScope) {
+    const companyId = String(founderScope.companyId || '').trim().toLowerCase();
+    const scopeKey = String(founderScope.key || '').trim().toLowerCase();
+    const requestedCompany = req.query?.company_id;
+    const verifiedUser = req.founderLocalVerifiedUser;
+    const verifiedTenantId = String(verifiedUser?.tenant_id || '').trim();
+    const attestedTenantId = String(founderScope.tenantId || '').trim();
+    if (founderScope.verified !== true
+      || !isUuidString(companyId)
+      || scopeKey !== companyId
+      || !verifiedUser
+      || !verifiedTenantId
+      || verifiedTenantId !== attestedTenantId
+      || Array.isArray(requestedCompany)
+      || typeof requestedCompany !== 'string'
+      || requestedCompany.trim().toLowerCase() !== companyId) {
+      const error = new Error('Phạm vi đọc CRM không khớp attestation Founder-local.');
+      error.status = 403;
+      error.code = 'FOUNDER_LOCAL_CRM_SCOPE_MISMATCH';
+      throw error;
+    }
+    assertFounderLocalCompanyScopeForUser(verifiedUser, companyId);
+    // In Founder-local, the CRM query derives from the verified middleware
+    // attestation, never from a potentially stale JWT company claim.
+    mergedQuery = { ...mergedQuery, company_id: companyId, company_ids_scope: undefined };
+  } else {
+    const sacLeads = scopedAdminCompanyId(req);
+    if (sacLeads) {
+      mergedQuery = { ...mergedQuery, company_id: sacLeads };
+    } else if (!userIsAdmin(req.user?.role)) {
+      const cid = await requireUserCompanyIdResolved(req, res);
+      if (!cid) return null;
+      mergedQuery = { ...mergedQuery, company_id: cid };
+    } else if (!uuidQueryOrNull(mergedQuery.company_id) && req.user?.tenant_id && !isPlatformAdmin(req.user)) {
+      // Admin hệ thống thuộc 1 tenant (không phải platform_admin đa-tenant) xem "Tất cả công ty":
+      // giới hạn về đúng các công ty của TENANT mình, tránh lẫn dữ liệu tenant khác.
+      const tenantCompanyIds = await getTenantCompanyIds(req.user.tenant_id);
+      mergedQuery = { ...mergedQuery, company_ids_scope: tenantCompanyIds };
+    }
   }
   const { assigned_to } = mergedQuery;
   const dealAssigneeStrict = type === 'deal' && (!!uuidQueryOrNull(assigned_to) || forcedDealSelf);

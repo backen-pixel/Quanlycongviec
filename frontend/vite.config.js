@@ -26,7 +26,57 @@ patchHttpCreateServer(https)
 const BUILD_VERSION = String(Date.now());
 
 const analyze = process.env.ANALYZE === '1';
+const founderLocalBuild = process.env.VITE_FOUNDER_LOCAL_READ_ONLY === '1';
 const plugins = [react(), tailwindcss()];
+
+const FOUNDER_LOCAL_DIST_MANIFEST = Object.freeze({
+  contract_version: 'business_ai_os_founder_local_dist_v1',
+  runtime_profile: 'founder-local-read-only',
+  read_only: true,
+  entry_path: '/business-os/login',
+  api_base_url: '/api',
+  api_origin_policy: 'same-origin-only',
+  credential_request_policy: 'single-slash-relative-api-path-only',
+});
+
+if (founderLocalBuild) {
+  plugins.push({
+    name: 'founder-local-dist-contract',
+    apply: 'build',
+    transformIndexHtml: {
+      order: 'pre',
+      handler(html) {
+        // Founder-local must remain usable without contacting any external
+        // origin. Remove optional web-font resources and use CSS fallbacks.
+        const sameOriginHtml = html
+          .replace(/<noscript>\s*<link\b[^>]*\bhref=["']https?:\/\/[^>]*>\s*<\/noscript>\s*/gi, '')
+          .replace(/<link\b[^>]*\bhref=["']https?:\/\/[^>]*>\s*/gi, '');
+        return {
+          html: sameOriginHtml,
+          tags: [
+            {
+              tag: 'meta',
+              attrs: { name: 'business-ai-os-runtime-profile', content: FOUNDER_LOCAL_DIST_MANIFEST.runtime_profile },
+              injectTo: 'head',
+            },
+            {
+              tag: 'meta',
+              attrs: { name: 'business-ai-os-api-base', content: FOUNDER_LOCAL_DIST_MANIFEST.api_base_url },
+              injectTo: 'head',
+            },
+          ],
+        };
+      },
+    },
+    generateBundle() {
+      this.emitFile({
+        type: 'asset',
+        fileName: 'founder-local-manifest.json',
+        source: `${JSON.stringify(FOUNDER_LOCAL_DIST_MANIFEST, null, 2)}\n`,
+      });
+    },
+  });
+}
 
 /**
  * Sinh `dist/version.json` lúc build để frontend poll phát hiện phiên bản mới
@@ -64,6 +114,7 @@ export default defineConfig({
   plugins,
   define: {
     __APP_VERSION__: JSON.stringify(BUILD_VERSION),
+    __FOUNDER_LOCAL_BUILD__: JSON.stringify(founderLocalBuild),
   },
   resolve: {
     dedupe: ['react', 'react-dom'],

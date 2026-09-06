@@ -5,18 +5,67 @@
  * Run from backend/ with the normal internal environment loaded:
  *   node tests/founder-cockpit-live-read.js
  */
-process.env.REDIS_DISABLED = '1';
-process.env.PG_POOL_DISABLED = '1';
-process.env.SUPABASE_FAILOVER_ENABLED = '0';
-process.env.SUPABASE_AUTO_FAILOVER = '0';
-process.env.SUPABASE_AUTO_FAILBACK = '0';
-process.env.NODE_ENV = 'production';
+const fs = require('node:fs');
+const path = require('node:path');
+
+const WRITE_EVIDENCE = process.env.BUSINESS_OS_WRITE_EVIDENCE === '1';
+const EVIDENCE_PATH = path.resolve(
+  __dirname,
+  '../../evidence/internal-live-operation-v1/runtime-safety/runtime/real-data-live-read.json',
+);
+
+function prepareEvidenceTarget() {
+  if (!WRITE_EVIDENCE) return;
+  fs.mkdirSync(path.dirname(EVIDENCE_PATH), { recursive: true });
+  fs.rmSync(EVIDENCE_PATH, { force: true });
+}
+
+function writeEvidenceAtomic(evidence) {
+  if (!WRITE_EVIDENCE) return;
+  const temporaryPath = `${EVIDENCE_PATH}.${process.pid}.tmp`;
+  try {
+    fs.writeFileSync(temporaryPath, `${JSON.stringify(evidence, null, 2)}\n`, 'utf8');
+    fs.renameSync(temporaryPath, EVIDENCE_PATH);
+  } catch (error) {
+    fs.rmSync(temporaryPath, { force: true });
+    throw error;
+  }
+}
+
+prepareEvidenceTarget();
+process.env.RUNTIME_PROFILE = 'founder-local-read-only';
+if (process.env.FOUNDER_ADVISORY_CONFIG_ENABLED == null) process.env.FOUNDER_ADVISORY_CONFIG_ENABLED = '0';
+const founderEnvFile = String(process.env.FOUNDER_LOCAL_ENV_FILE || '').trim();
+if (!founderEnvFile || !require('node:path').isAbsolute(founderEnvFile)) {
+  console.error(JSON.stringify({ result: 'FAIL', code: 'FOUNDER_LOCAL_ENV_FILE_REQUIRED' }));
+  process.exit(1);
+}
+try {
+  require('../src/config/founderLocalEnv').loadFounderLocalDataEnvironment(founderEnvFile);
+} catch {
+  console.error(JSON.stringify({ result: 'FAIL', code: 'FOUNDER_LOCAL_ENV_FILE_UNREADABLE' }));
+  process.exit(1);
+}
+const {
+  applyRuntimeProfile,
+  assertFounderLocalDataConfig,
+} = require('../src/config/runtimeProfile');
+applyRuntimeProfile();
+assertFounderLocalDataConfig();
+require('../src/helpers/founderLocalSupabaseGuard').installFounderLocalSupabaseGuard();
 
 const assert = require('node:assert/strict');
 const express = require('express');
 const { supabase } = require('../src/config/supabase');
-const { buildAuthSessionForUser } = require('../src/helpers/authSession');
+const {
+  FOUNDER_LOCAL_JWT_AUDIENCE,
+  buildAuthSessionForUser,
+} = require('../src/helpers/authSession');
+const { founderLocalReadOnlyMiddleware } = require('../src/middleware/founderLocalReadOnly');
 const businessOsRouter = require('../src/routes/businessOs');
+const {
+  readCandidateBinding,
+} = require('../../evidence/internal-live-operation-v1/runtime-safety/candidate-binding');
 
 const ALLOWED_STATUSES = new Set([
   'LIVE',
@@ -24,8 +73,15 @@ const ALLOWED_STATUSES = new Set([
   'UNDER RECONCILIATION',
   'NOT CONNECTED',
   'BLOCKED',
+  'SANDBOX',
   'FOUNDER DECISION REQUIRED',
 ]);
+const ALLOWED_FRESHNESS_STATES = new Set(['FRESH', 'STALE', 'UNKNOWN', 'NOT_CONNECTED']);
+
+function safeEvidenceCode(value, fallback = 'FOUNDER_COCKPIT_LIVE_READ_FAILED') {
+  const candidate = String(value || '').trim();
+  return /^[A-Za-z0-9_.-]{1,80}$/.test(candidate) ? candidate : fallback;
+}
 
 async function discoverAcceptanceIdentity() {
   const requestedUserId = String(process.env.FOUNDER_COCKPIT_ACCEPTANCE_USER_ID || '').trim();
@@ -66,20 +122,35 @@ async function discoverAcceptanceIdentity() {
   const user = requestedUserId
     ? rankedCandidates[0]
     : rankedCandidates.find((item) => tenantRank.has(String(item.tenant_id || '')) && !item.company_id)
-      || rankedCandidates.find((item) => tenantRank.has(String(item.tenant_id || '')))
-      || rankedCandidates.find((item) => !item.tenant_id && !item.company_id);
+      || rankedCandidates.find((item) => tenantRank.has(String(item.tenant_id || '')));
   assert.ok(user, 'Không tìm thấy tài khoản admin nội bộ đủ điều kiện cho acceptance smoke.');
+  assert.equal(String(user.role || '').trim().toLowerCase(), 'admin', 'Danh tính acceptance phải là admin đang hoạt động.');
+  const verifiedTenantId = String(user.tenant_id || '').trim();
+  assert.ok(verifiedTenantId && tenantRank.has(verifiedTenantId), 'Danh tính acceptance phải thuộc hệ sinh thái đang hoạt động.');
 
-  const ecosystemId = requestedEcosystemId
-    || (tenantRank.has(String(user.tenant_id || '')) ? String(user.tenant_id) : tenantIds[0]);
-  assert.ok(ecosystemId, 'Không tìm thấy ecosystem_id thật để kiểm tra.');
+  if (requestedEcosystemId) {
+    assert.equal(requestedEcosystemId, verifiedTenantId, 'Hệ sinh thái yêu cầu không khớp danh tính acceptance.');
+  }
+  if (user.company_id) {
+    assert.ok((companyRows || []).some((company) => (
+      String(company.id) === String(user.company_id)
+      && String(company.tenant_id) === verifiedTenantId
+      && company.is_active !== false
+    )), 'Công ty của danh tính acceptance không thuộc hệ sinh thái đang hoạt động.');
+  }
+  const ecosystemId = verifiedTenantId;
   return { user, ecosystemId, tenantIds, companyRows };
 }
 
 async function run() {
+  const candidate = readCandidateBinding();
   const { user, ecosystemId, tenantIds, companyRows } = await discoverAcceptanceIdentity();
-  const session = await buildAuthSessionForUser(user);
+  const session = await buildAuthSessionForUser(user, {
+    expiresInSeconds: 10 * 60,
+    audience: FOUNDER_LOCAL_JWT_AUDIENCE,
+  });
   const app = express();
+  app.use(founderLocalReadOnlyMiddleware);
   app.use('/api/business-os', businessOsRouter);
   const server = await new Promise((resolve) => {
     const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
@@ -96,12 +167,38 @@ async function run() {
       headers: { Authorization: `Bearer ${session.token}` },
     });
     const payload = await response.json();
-    assert.equal(response.status, 200, JSON.stringify({ code: payload.code, error: payload.error }));
+    assert.equal(response.status, 200, JSON.stringify({
+      code: safeEvidenceCode(payload.code, 'FOUNDER_COCKPIT_HTTP_STATUS_UNEXPECTED'),
+    }));
     assert.equal(payload.contract_version, 'founder_cockpit_v1');
     assert.equal(payload.mode, 'live_read_only');
     assert.equal(payload.systems.length, 6);
     assert.equal(payload.modules.length, 15);
+    assert.equal(payload.platform_capabilities.length, 19);
+    assert.equal(new Set(payload.platform_capabilities.map((item) => item.key)).size, 19);
+    assert.ok(payload.platform_capabilities.every((item) => (
+      ALLOWED_STATUSES.has(item.status)
+      && item.canonical === false
+      && item.automatic_operational_effect === false
+    )));
+    assert.equal(payload.signal_hub.contract_version, 'founder_signal_hub_v1');
+    assert.equal(payload.signal_hub.canonical, false);
+    assert.ok(payload.signal_hub.contracts.every((signal) => (
+      signal.write_capability === 'DISABLED'
+      && signal.company_scope.every((id) => payload.scope.company_ids.includes(id))
+    )));
+    assert.equal(payload.correction_center.rule_change_request.enabled, false);
     assert.ok(payload.modules.every((item) => ALLOWED_STATUSES.has(item.activation_status)));
+    assert.ok(payload.modules.every((item) => (
+      ALLOWED_FRESHNESS_STATES.has(item.freshness?.state)
+      && Number.isFinite(Number(item.freshness?.slo_minutes))
+      && Number(item.freshness.slo_minutes) > 0
+    )));
+    assert.ok(payload.signal_hub.contracts.every((signal) => (
+      ALLOWED_FRESHNESS_STATES.has(signal.freshness?.state)
+      && Number.isFinite(Number(signal.freshness?.slo_minutes))
+      && Number(signal.freshness.slo_minutes) > 0
+    )));
     assert.equal(payload.protections.write_enabled, false);
     assert.equal(payload.protections.direct_database_write_enabled, false);
     assert.equal(payload.protections.synthetic_fallback_enabled, false);
@@ -129,7 +226,10 @@ async function run() {
       ));
       if (scopedUser) {
         const deniedCompanyId = scopedCompanyIds.find((id) => id !== String(scopedUser.company_id));
-        const scopedSession = await buildAuthSessionForUser(scopedUser);
+        const scopedSession = await buildAuthSessionForUser(scopedUser, {
+          expiresInSeconds: 10 * 60,
+          audience: FOUNDER_LOCAL_JWT_AUDIENCE,
+        });
         const deniedUrl = new URL('/api/business-os', baseUrl);
         deniedUrl.searchParams.set('ecosystem_id', ecosystemId);
         deniedUrl.searchParams.set('company_id', deniedCompanyId);
@@ -168,7 +268,11 @@ async function run() {
       acc[item.activation_status] = (acc[item.activation_status] || 0) + 1;
       return acc;
     }, {});
-    console.log(JSON.stringify({
+    const evidence = {
+      schema_version: '1.0.0',
+      evidence_type: 'FOUNDER_COCKPIT_REAL_DATA_LIVE_READ',
+      result: 'PASS',
+      candidate,
       ok: true,
       contract_version: payload.contract_version,
       mode: payload.mode,
@@ -176,24 +280,38 @@ async function run() {
       company_count: payload.scope.company_ids.length,
       system_count: payload.systems.length,
       module_count: payload.modules.length,
+      platform_capability_count: payload.platform_capabilities.length,
+      signal_contract_count: payload.signal_hub.contracts.length,
       module_status_counts: statusCounts,
       module_activation: payload.modules.map((item) => ({
         key: item.key,
         status: item.activation_status,
-        as_of: item.freshness?.as_of || null,
+        freshness_state: item.freshness?.state || 'UNKNOWN',
+        freshness_slo_minutes: item.freshness?.slo_minutes ?? null,
+        observed_at: item.freshness?.observed_at || null,
+        source_updated_at: item.freshness?.source_updated_at || null,
         gap_count: Array.isArray(item.data_gaps) ? item.data_gaps.length : null,
+      })),
+      signal_freshness: payload.signal_hub.contracts.map((signal) => ({
+        signal_id: signal.signal_id,
+        freshness_state: signal.freshness?.state || 'UNKNOWN',
+        freshness_slo_minutes: signal.freshness?.slo_minutes ?? null,
       })),
       manufacturing_view_count: payload.manufacturing_companies.length,
       manufacturing_activation: payload.manufacturing_companies.map((item, index) => ({
         view: index + 1,
         status: item.status,
-        as_of: item.freshness?.as_of || null,
+        freshness_state: item.freshness?.state || 'UNKNOWN',
+        freshness_slo_minutes: item.freshness?.slo_minutes ?? null,
+        observed_at: item.freshness?.observed_at || null,
         gap_count: Array.isArray(item.data_gaps) ? item.data_gaps.length : null,
       })),
       planning_statuses: payload.planning.horizons.map((item) => ({
         period: item.key,
         status: item.status,
-        as_of: payload.workload.freshness?.as_of || null,
+        freshness_state: item.freshness?.state || 'UNKNOWN',
+        freshness_slo_minutes: item.freshness?.slo_minutes ?? null,
+        observed_at: item.freshness?.observed_at || null,
         gap_count: Array.isArray(item.data_gaps) ? item.data_gaps.length : null,
       })),
       configuration_gap_count: Array.isArray(payload.configuration_center.data_gaps)
@@ -202,7 +320,15 @@ async function run() {
       negative_scope_checks: negativeScopeChecks,
       generated_at: payload.generated_at,
       writes_enabled: payload.protections.write_enabled,
-    }, null, 2));
+      security: {
+        raw_business_values_recorded: false,
+        identities_recorded: false,
+        credentials_recorded: false,
+        synthetic_fallback_enabled: false,
+      },
+    };
+    writeEvidenceAtomic(evidence);
+    console.log(JSON.stringify(evidence, null, 2));
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
@@ -211,6 +337,9 @@ async function run() {
 run()
   .then(() => process.exit(0))
   .catch((error) => {
-    console.error(error?.stack || error?.message || error);
+    console.error(JSON.stringify({
+      result: 'FAIL',
+      code: safeEvidenceCode(error?.code || error?.name),
+    }));
     process.exit(1);
   });

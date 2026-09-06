@@ -1,3 +1,29 @@
+const path = require('node:path');
+const {
+  applyRuntimeProfile,
+  assertFounderLocalDataConfig,
+  backgroundWritersAllowed,
+  runtimeSafetySnapshot,
+  serverBinding,
+} = require('./config/runtimeProfile');
+const {
+  assertFounderLocalRuntimeFileBinding,
+} = require('./config/founderLocalRuntimeProvenance');
+let runtimeState = applyRuntimeProfile();
+if (!runtimeState.active) require('dotenv').config({ override: false });
+runtimeState = applyRuntimeProfile();
+if (runtimeState.active) {
+  if (typeof process.send !== 'function' || process.connected !== true) {
+    const error = new Error('Founder-local server requires its launcher IPC owner.');
+    error.code = 'FOUNDER_LOCAL_LAUNCHER_IPC_REQUIRED';
+    throw error;
+  }
+  process.once('disconnect', () => process.exit(1));
+  assertFounderLocalDataConfig();
+  assertFounderLocalRuntimeFileBinding(path.resolve(__dirname, '..', '..'));
+  require('./helpers/founderLocalSupabaseGuard').installFounderLocalSupabaseGuard();
+}
+
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -5,7 +31,6 @@ const morgan = require('morgan');
 const compression = require('compression');
 const rateLimit = require('express-rate-limit');
 const http = require('http');
-require('dotenv').config();
 const { installNetworkProcessGuard } = require('./config/networkProcessGuard');
 installNetworkProcessGuard();
 // Chỉ ghi log, không đổi hành vi truy vấn. Tắt bằng SUPABASE_QUERY_GUARD=0.
@@ -30,10 +55,30 @@ const {
 } = require('./helpers/apiRateLimit');
 
 const app = express();
-// Render / reverse proxy: 1 hop — cần để rate-limit lấy đúng IP client
-app.set('trust proxy', Number(process.env.TRUST_PROXY_HOPS) || 1);
+const founderRealtimeDisabled = runtimeState.active
+  && process.env.FOUNDER_LOCAL_REALTIME_DISABLED === '1';
+// Render / reverse proxy: 1 hop — cần để rate-limit lấy đúng IP client.
+// Founder-local has no proxy and must not trust spoofable forwarding headers.
+app.set('trust proxy', runtimeState.active ? false : (Number(process.env.TRUST_PROXY_HOPS) || 1));
 
 const server = http.createServer(app);
+if (runtimeState.active) {
+  let shutdownStarted = false;
+  const shutdownFounderLocal = (signal) => {
+    if (shutdownStarted) return;
+    shutdownStarted = true;
+    console.log(`[founder-local] ${signal}: closing localhost listener`);
+    if (!server.listening) {
+      process.exit(1);
+      return;
+    }
+    server.close(() => process.exit(0));
+    const forcedExit = setTimeout(() => process.exit(1), 5000);
+    forcedExit.unref?.();
+  };
+  process.once('SIGINT', () => shutdownFounderLocal('SIGINT'));
+  process.once('SIGTERM', () => shutdownFounderLocal('SIGTERM'));
+}
 // Chống slowloris / giữ connection chết quá lâu
 server.headersTimeout = Number(process.env.HTTP_HEADERS_TIMEOUT_MS) || 65_000;
 server.requestTimeout = Number(process.env.HTTP_REQUEST_TIMEOUT_MS) || 120_000;
@@ -43,14 +88,25 @@ server.timeout = Number(process.env.HTTP_SOCKET_TIMEOUT_MS) || 120_000;
 // RN / Postman thường không gửi Origin — whitelist cứng localhost sẽ chặn handshake → mất realtime chat.
 // Vẫn bắt buộc JWT trong `io.use`; CORS ở đây chỉ cho phép upgrade WebSocket.
 const io = new Server(server, {
-  cors: { origin: true, methods: ['GET', 'POST'], credentials: true },
+  cors: runtimeState.active
+    ? {
+        origin: [
+          `http://127.0.0.1:${runtimeState.port}`,
+          `http://localhost:${runtimeState.port}`,
+        ],
+        methods: ['GET'],
+        credentials: true,
+      }
+    : { origin: true, methods: ['GET', 'POST'], credentials: true },
   // Render / reverse proxy: polling trước rồi upgrade WS; tăng timeout tránh ngắt sớm khi cold start.
   pingTimeout: 60_000,
   pingInterval: 25_000,
   connectTimeout: 45_000,
   allowUpgrades: true,
   maxHttpBufferSize: Number(process.env.SOCKET_MAX_HTTP_BUFFER) || 1e6, // 1MB
-  allowRequest: createSocketAllowRequest(),
+  allowRequest: founderRealtimeDisabled
+    ? (_req, callback) => callback('founder_local_realtime_disabled', false)
+    : createSocketAllowRequest(),
 });
 io.engine.on('connection_error', (err) => {
   console.warn('[socket] engine:', err.code, err.message);
@@ -86,16 +142,22 @@ if (config.redisUrl) {
   console.warn('[redis] REDIS_URL set nhưng không parse được — Socket.IO in-memory');
 }
 
-setPresenceBroadcast((userId, last_ping_at, companyId) => {
-  emitScoped(io, { companyId }, 'presence:update', {
-    user_id: userId,
-    online: true,
-    last_ping_at: last_ping_at || new Date().toISOString(),
+if (!founderRealtimeDisabled) {
+  setPresenceBroadcast((userId, last_ping_at, companyId) => {
+    emitScoped(io, { companyId }, 'presence:update', {
+      user_id: userId,
+      online: true,
+      last_ping_at: last_ping_at || new Date().toISOString(),
+    });
   });
-});
+  startSocketMetrics();
+} else {
+  setPresenceBroadcast(null);
+}
 
-startSocketMetrics();
-
+if (runtimeState.active) {
+  app.use(require('./middleware/founderLocalReadOnly').founderLocalHostBoundary);
+}
 app.use(helmet());
 
 // Rate-limit toàn /api (burst + cửa sổ 1 phút) — bỏ qua /health, tắt ở dev trừ khi FORCE=1
@@ -122,6 +184,7 @@ const corsMainApp = cors({
     'X-Supabase-Monitor-Token',
     'X-Device-Id',
     'X-No-Cache',
+    'X-Founder-Local-Company-Scope',
   ],
   exposedHeaders: [
     'Content-Disposition',
@@ -131,6 +194,8 @@ const corsMainApp = cors({
     'X-Count-Pending',
     'X-Count-In-Progress',
     'X-Count-Done',
+    'X-Founder-Local-Profile',
+    'X-Founder-Local-Company-Scope',
   ],
   maxAge: CORS_PREFLIGHT_MAX_AGE,
 });
@@ -154,7 +219,7 @@ const corsExternalApi = cors({
   maxAge: CORS_PREFLIGHT_MAX_AGE,
 });
 app.use((req, res, next) => {
-  if (req.path.startsWith('/api/external') || req.path.startsWith('/api/mcp')) {
+  if (!runtimeState.active && (req.path.startsWith('/api/external') || req.path.startsWith('/api/mcp'))) {
     return corsExternalApi(req, res, next);
   }
   return corsMainApp(req, res, next);
@@ -169,7 +234,7 @@ app.use(compression({
 }));
 
 const isProd = process.env.NODE_ENV === 'production';
-app.use(morgan(isProd ? 'tiny' : 'dev'));
+if (!runtimeState.active) app.use(morgan(isProd ? 'tiny' : 'dev'));
 
 // Upload routes need large bodies; everything else stays small to bound memory.
 const UPLOAD_BODY_LIMIT = '256mb';
@@ -200,6 +265,16 @@ app.use((req, res, next) => {
     express.urlencoded({ extended: true, limit })(req, res, next);
   });
 });
+
+if (runtimeState.active) {
+  // Founder Cockpit does not need business uploads. Deny before static/fallback
+  // handlers so unauthenticated media can never be read in the local profile.
+  app.use('/uploads', (_req, res) => res.status(403).json({
+    error: 'Founder-local không phục vụ tệp nghiệp vụ.',
+    code: 'FOUNDER_LOCAL_UPLOADS_DISABLED',
+  }));
+  app.use(require('./middleware/founderLocalReadOnly').founderLocalReadOnlyMiddleware);
+}
 
 // Rate limiting — protect auth + external webhook endpoints from abuse.
 const skipRateLimitInDev = () => process.env.NODE_ENV !== 'production';
@@ -265,7 +340,6 @@ const { metricsMiddleware, getSnapshot, resetMetrics } = require('./helpers/requ
 app.use(metricsMiddleware);
 
 // Serve uploaded files (cho phép frontend khác origin tải audio/video)
-const path = require('path');
 app.use('/uploads', (req, res, next) => {
   res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -312,6 +386,7 @@ app.get('/api/health', async (_, res) => {
   } catch { /* ignore */ }
   const body = {
     status: ok ? 'ok' : 'degraded',
+    runtime: runtimeSafetySnapshot(),
     time: new Date().toISOString(),
     uptime: process.uptime(),
     redis: getRedisStatus(),
@@ -598,6 +673,7 @@ async function syncPendingIncomingCalls(userId, socket) {
 // ─── Socket.IO with Auth ──
 const { extractSocketToken, verifySocketToken } = require('./helpers/socketAuth');
 const { attachSocketTenantContext, guardedJoin } = require('./helpers/socketTenantGuard');
+if (!founderRealtimeDisabled) {
 io.use((socket, next) => {
   const token = extractSocketToken(socket);
   if (!token) {
@@ -1147,6 +1223,9 @@ io.on('connection', (socket) => {
     });
   });
 });
+} else {
+  console.log('[founder-local] Socket.IO/presence handlers disabled');
+}
 
 const { isExpiryDeadlineNotificationType: isExpiryNotifType } = require('./helpers/notificationOperationalFilter');
 const { preferenceKeyForNotificationType } = require('./helpers/notificationPrefTypes');
@@ -1208,9 +1287,30 @@ server.on('clientError', (err, socket) => {
   try { socket?.destroy(); } catch { /* ignore */ }
 });
 
-server.listen(config.port, () => {
-  console.log(`🚀 TuBep Pro Backend: http://localhost:${config.port}/api`);
+const binding = serverBinding();
+server.listen(binding.port, ...(binding.host ? [binding.host] : []), () => {
+  console.log(`🚀 TuBep Pro Backend: http://${binding.host || 'localhost'}:${binding.port}/api`);
   console.log(`⏱️ Server ready in ${process.uptime().toFixed(1)}s`);
+
+  if (!backgroundWritersAllowed()) {
+    const readyRuntime = runtimeSafetySnapshot();
+    if (typeof process.send !== 'function' || !process.connected) {
+      console.error('[founder-local] Refusing unowned listener without launcher IPC');
+      server.close(() => process.exit(1));
+      return;
+    }
+    process.send({
+      type: 'founder-local-ready-v1',
+      run_id: readyRuntime.instance_id,
+      runtime: readyRuntime,
+    }, (error) => {
+      if (!error) return;
+      console.error('[founder-local] Launcher readiness attestation failed');
+      server.close(() => process.exit(1));
+    });
+    console.log('[founder-local] Startup/background writers skipped');
+    return;
+  }
 
   // FCM cuộc gọi (app kill): cần bảng push_device_tokens
   try {

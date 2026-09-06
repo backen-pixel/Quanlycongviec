@@ -5,8 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "cross-env NODE_OPTIONS=--max-http-header-size=1048576 vite",
-    "test:business-os": "node --test src/business-os/businessOsContract.test.js",
+    "test:business-os": "node --test src/business-os/businessOsContract.test.js src/business-os/crmReadOnlyTruth.test.js",
     "build": "node ../scripts/knowledge/sync-screenshots-deploy.js && cross-env NODE_OPTIONS=--max-old-space-size=4096 vite build",
+    "build:founder-local": "cross-env VITE_FOUNDER_LOCAL_READ_ONLY=1 VITE_API_URL= NODE_OPTIONS=--max-old-space-size=4096 vite build --mode founder-local && node scripts/verify-founder-local-dist.mjs",
     "build:analyze": "cross-env ANALYZE=1 NODE_OPTIONS=--max-old-space-size=4096 vite build",
     "preview": "vite preview"
   },

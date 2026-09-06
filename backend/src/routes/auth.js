@@ -27,6 +27,8 @@ const {
   recordLoginFailure,
   clearLoginFailures,
 } = require('../helpers/loginLockout');
+const { isFounderLocalReadOnly } = require('../config/runtimeProfile');
+const { handleFounderLocalPasswordLogin } = require('../helpers/founderLocalAuth');
 
 const r = Router();
 
@@ -68,6 +70,7 @@ function emitQrLoginPayload(io, sessionId, payload) {
 
 // Đăng nhập
 r.post('/login', async (req, res) => {
+  if (isFounderLocalReadOnly()) return handleFounderLocalPasswordLogin(req, res);
   try {
     const emailTrim = String(req.body.email || '').trim();
     const { password } = req.body;
@@ -154,6 +157,14 @@ r.post('/login', async (req, res) => {
 
 /** Cấu hình Google Sign-In (client id công khai) */
 r.get('/google-config', (_req, res) => {
+  if (isFounderLocalReadOnly()) {
+    return res.json({
+      enabled: false,
+      clientId: null,
+      read_only: true,
+      runtime_profile: 'founder-local-read-only',
+    });
+  }
   const clientId = getGoogleLoginClientId();
   res.json({ enabled: isGoogleLoginEnabled(), clientId: clientId || null });
 });
@@ -490,6 +501,9 @@ r.post('/qr/confirm', auth, async (req, res) => {
 //   Body (optional): { reason: 'manual'|'midnight'|'idle'|'forced', session_id }
 //   Yêu cầu auth — nhưng nếu token đã hết hạn vẫn cho POST với body { email, reason } để log session_expired.
 r.post('/logout', auth, async (req, res) => {
+  if (isFounderLocalReadOnly()) {
+    return res.json({ ok: true, read_only: true, persisted: false });
+  }
   try {
     const reason = req.body?.reason ? String(req.body.reason).slice(0, 60) : 'manual';
     const event = reason === 'midnight' ? 'auto_logout_midnight'

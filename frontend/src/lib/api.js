@@ -4,10 +4,31 @@ import { disconnectSocket } from './socket';
 import { resetClientSessionState } from './sessionReset';
 import { getSupabaseMonitorToken, clearSupabaseMonitorToken } from './supabaseMonitorAuth';
 import { getCachedActivityContext } from './deviceHeartbeat';
+import {
+  FOUNDER_LOCAL_API_BASE_URL,
+  FOUNDER_LOCAL_LOGIN_PATH,
+  applyFounderLocalCompanyScopeLock,
+  assertFounderLocalRequestAllowed,
+  assertFounderLocalResponseAttested,
+  clearFounderLocalCompanyScopeLock,
+  isFounderLocalReadOnlyActive,
+} from '../business-os/founderLocalReadOnly';
 
 const API_URL = resolveApiOrigin();
+const API_BASE_URL = API_URL + '/api';
 
-const api = axios.create({ baseURL: API_URL + '/api' });
+const api = axios.create({ baseURL: API_BASE_URL });
+
+function currentAuthStorage() {
+  return isFounderLocalReadOnlyActive() ? window.sessionStorage : window.localStorage;
+}
+
+function clearFounderLocalBrowserCredentials() {
+  for (const storage of [window.sessionStorage, window.localStorage]) {
+    for (const key of ['token', 'user', 'session_id', 'login_ts']) storage.removeItem(key);
+  }
+  clearFounderLocalCompanyScopeLock({ storage: window.sessionStorage });
+}
 
 function attachActivityContext(config) {
   try {
@@ -55,7 +76,18 @@ function shouldAttachActivityContext(url, method) {
 }
 
 api.interceptors.request.use((c) => {
-  const t = localStorage.getItem('token');
+  let expectedBaseURL = API_BASE_URL;
+  if (isFounderLocalReadOnlyActive()) {
+    // Only rebase the Axios instance's immutable configured default. A
+    // caller-supplied baseURL remains untouched and is rejected by the guard.
+    if (String(c.baseURL || '') === API_BASE_URL) {
+      c.baseURL = FOUNDER_LOCAL_API_BASE_URL;
+    }
+    expectedBaseURL = FOUNDER_LOCAL_API_BASE_URL;
+    applyFounderLocalCompanyScopeLock(c);
+  }
+  assertFounderLocalRequestAllowed(c, { expectedBaseURL });
+  const t = currentAuthStorage().getItem('token');
   if (t) {
     const clean = String(t).trim().replace(/^Bearer\s+/i, '');
     if (clean) c.headers.Authorization = `Bearer ${clean}`;
@@ -76,7 +108,7 @@ api.interceptors.request.use((c) => {
   return c;
 });
 
-api.interceptors.response.use(r => r, (err) => {
+api.interceptors.response.use((response) => assertFounderLocalResponseAttested(response), (err) => {
   if (err.response?.status === 403 && err.response?.data?.code === 'MONITOR_LOCKED') {
     const sent = err.config?.headers?.['X-Supabase-Monitor-Token'];
     if (sent) clearSupabaseMonitorToken();
@@ -91,10 +123,19 @@ api.interceptors.response.use(r => r, (err) => {
       || localStorage.getItem('logoutReason') === 'midnight';
     disconnectSocket();
     resetClientSessionState();
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
-    localStorage.removeItem('logoutReason');
-    window.location.href = isMidnight ? '/login?reason=midnight' : '/login';
+    if (isFounderLocalReadOnlyActive()) {
+      clearFounderLocalBrowserCredentials();
+      localStorage.removeItem('logoutReason');
+      sessionStorage.removeItem('logoutReason');
+      window.location.href = isMidnight
+        ? `${FOUNDER_LOCAL_LOGIN_PATH}?reason=midnight`
+        : FOUNDER_LOCAL_LOGIN_PATH;
+    } else {
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      localStorage.removeItem('logoutReason');
+      window.location.href = isMidnight ? '/login?reason=midnight' : '/login';
+    }
   }
   return Promise.reject(err);
 });

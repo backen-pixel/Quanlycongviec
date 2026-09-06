@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   AlertTriangle,
-  ArrowLeft,
   BarChart3,
   Building2,
   CalendarRange,
@@ -13,6 +12,7 @@ import {
   Loader2,
   LockKeyhole,
   Menu,
+  Network,
   RefreshCcw,
   Settings2,
   ShieldCheck,
@@ -41,6 +41,7 @@ const NAV_ITEMS = [
   { href: '#capacity', label: 'Workload & năng lực', icon: Gauge },
   { href: '#manufacturing', label: 'Hai công ty sản xuất', icon: Factory },
   { href: '#decisions', label: 'Decision Center', icon: TriangleAlert },
+  { href: '#platform-capabilities', label: 'Full Platform V1', icon: Network },
   { href: '#modules', label: 'Kết nối module', icon: Database },
   { href: '#configuration', label: 'Configuration Center', icon: Settings2 },
 ];
@@ -151,9 +152,10 @@ function CockpitSidebar({ open, onClose, user }) {
         </nav>
 
         <div className="border-t border-white/[0.08] p-3">
-          <Link to="/management" className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-xs font-bold text-slate-400 hover:bg-white/[0.06] hover:text-white">
-            <ArrowLeft className="h-4 w-4" /> Trở lại hệ thống vận hành
-          </Link>
+          <div className="flex items-start gap-3 rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 py-2.5 text-[10px] leading-4 text-slate-400">
+            <LockKeyhole className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>Founder-local chỉ mở drill-down read-only đã được backend chứng thực.</span>
+          </div>
           <div className="mt-2 flex items-center gap-3 rounded-xl bg-white/[0.04] px-3 py-2.5">
             <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/10 text-[10px] font-black">
               {String(user?.full_name || user?.email || 'F').trim().slice(0, 2).toUpperCase()}
@@ -288,22 +290,19 @@ export default function BusinessOSPage() {
       setMetadataLoading(true);
       setMetadataError('');
       try {
-        const tasks = [api.get('/companies')];
-        if (platformAdmin) tasks.push(api.get('/platform/tenants'));
-        const results = await Promise.all(tasks);
+        const response = await api.get('/business-os/metadata', {
+          founderLocalControlPlane: true,
+        });
         if (!active) return;
-        const companyRows = Array.isArray(results[0].data?.companies)
-          ? results[0].data.companies
-          : Array.isArray(results[0].data) ? results[0].data : [];
+        const companyRows = Array.isArray(response.data?.companies) ? response.data.companies : null;
+        const verifiedEcosystem = response.data?.ecosystem;
+        if (!companyRows || !verifiedEcosystem?.id) {
+          throw new Error('Metadata Founder-local không mang phạm vi hệ sinh thái đã xác minh.');
+        }
         setCompanies(companyRows);
-        if (platformAdmin) {
-          const tenantRows = Array.isArray(results[1]?.data) ? results[1].data : [];
-          setEcosystems(tenantRows);
-        } else if (user?.tenant_id) {
-          setEcosystems([{
-            id: user.tenant_id,
-            name: user.tenant_name || user.ecosystem_name || 'Hệ sinh thái hiện tại',
-          }]);
+        setEcosystems([verifiedEcosystem]);
+        if (!ecosystemId || String(ecosystemId) !== String(verifiedEcosystem.id)) {
+          setEcosystemId(String(verifiedEcosystem.id));
         }
       } catch (metadataRequestError) {
         if (active) {
@@ -316,7 +315,7 @@ export default function BusinessOSPage() {
     };
     void loadMetadata();
     return () => { active = false; };
-  }, [platformAdmin, user?.ecosystem_name, user?.tenant_id, user?.tenant_name]);
+  }, [ecosystemId]);
 
   const scopedCompanies = useMemo(() => {
     if (!platformAdmin || !ecosystemId) return companies;
@@ -417,7 +416,7 @@ export default function BusinessOSPage() {
   const scopeReady = Boolean(ecosystemId && companyId && validIsoDate(periodAnchor));
 
   return (
-    <div className="min-h-screen bg-[#f5f7fb] text-slate-900">
+    <div data-testid="business-os-root" className="min-h-screen bg-[#f5f7fb] text-slate-900">
       <CockpitSidebar open={menuOpen} onClose={() => setMenuOpen(false)} user={user} />
       <div className="min-h-screen xl:pl-[278px]">
         <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur-xl">
@@ -495,7 +494,7 @@ export default function BusinessOSPage() {
                     <span className="rounded-full bg-white/10 px-2.5 py-1 text-slate-300">{snapshot.mode}</span>
                   </div>
                 </div>
-                <FounderCockpit snapshot={snapshot} />
+                <FounderCockpit snapshot={snapshot} onRefresh={loadSnapshot} />
               </>
             ) : null}
           </div>

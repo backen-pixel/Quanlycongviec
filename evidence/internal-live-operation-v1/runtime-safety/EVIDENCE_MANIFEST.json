@@ -1,0 +1,76 @@
+{
+  "schema_version": "1.1.0",
+  "release_id": "INTERNAL-LIVE-V1-FOUNDER-LOCAL-RC1",
+  "environment": "FOUNDER_LOCAL_PRIVATE",
+  "evidence_root": "evidence/internal-live-operation-v1/runtime-safety",
+  "generated_artifact_directory": "runtime",
+  "generated_artifacts_git_ignored": true,
+  "secrets_allowed": false,
+  "artifact_sha256": {},
+  "readiness_gates": {
+    "blocking": {
+      "runtime": {
+        "status": "PENDING",
+        "checked_at": null,
+        "artifacts": [
+          "evidence/internal-live-operation-v1/runtime-safety/runtime/candidate-attestation.json",
+          "evidence/internal-live-operation-v1/runtime-safety/runtime/static-verification.json",
+          "evidence/internal-live-operation-v1/runtime-safety/runtime/runtime-acceptance-summary.json",
+          "evidence/internal-live-operation-v1/runtime-safety/runtime/browser-runtime-verification.json"
+        ]
+      },
+      "health": {
+        "status": "PENDING",
+        "checked_at": null,
+        "artifacts": [
+          "evidence/internal-live-operation-v1/runtime-safety/runtime/runtime-acceptance-summary.json",
+          "evidence/internal-live-operation-v1/runtime-safety/runtime/real-data-live-read.json",
+          "evidence/internal-live-operation-v1/runtime-safety/runtime/browser-runtime-verification.json"
+        ]
+      },
+      "reconciliation": {
+        "status": "PENDING",
+        "checked_at": null,
+        "artifacts": [
+          "evidence/internal-live-operation-v1/runtime-safety/runtime/real-data-reconciliation.json"
+        ]
+      },
+      "configuration_rollback": {
+        "status": "PENDING",
+        "checked_at": null,
+        "artifacts": [
+          "evidence/internal-live-operation-v1/runtime-safety/runtime/configuration-rollback-verification.json"
+        ]
+      },
+      "no_write": {
+        "status": "PENDING",
+        "checked_at": null,
+        "artifacts": [
+          "evidence/internal-live-operation-v1/runtime-safety/runtime/founder-local-safety-verification.json",
+          "evidence/internal-live-operation-v1/runtime-safety/runtime/runtime-acceptance-summary.json"
+        ]
+      }
+    },
+    "informational": {
+      "backup_failover": {
+        "status": "PENDING",
+        "checked_at": null,
+        "blocking": false,
+        "artifacts": [
+          "evidence/internal-live-operation-v1/runtime-safety/runtime/backup-failover-verification.json"
+        ]
+      }
+    }
+  },
+  "advisory_configuration": {
+    "status": "PENDING_VERIFICATION",
+    "checked_at": null,
+    "default_enabled": false,
+    "canonical_business_rule": false,
+    "operational_effect": false,
+    "artifacts": [
+      "evidence/internal-live-operation-v1/runtime-safety/runtime/configuration-rollback-verification.json"
+    ]
+  },
+  "decision": "HOLD"
+}

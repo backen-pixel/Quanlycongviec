@@ -4,6 +4,8 @@
  */
 const { supabase, startHealthChecker } = require('./supabaseRouter');
 
-startHealthChecker();
+if (process.env.SUPABASE_HEALTH_CHECK_DISABLED !== '1') {
+  startHealthChecker();
+}
 
 module.exports = { supabase };

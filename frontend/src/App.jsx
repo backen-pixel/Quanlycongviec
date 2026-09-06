@@ -228,6 +228,7 @@ const PlatformModulesPage = lazyWithRetry(() => import('./pages/platform/Platfor
 const PlatformPlansPage = lazyWithRetry(() => import('./pages/platform/PlatformPlansPage'));
 const PlatformPurchasesPage = lazyWithRetry(() => import('./pages/platform/PlatformPurchasesPage'));
 const BusinessOSPage = lazyWithRetry(() => import('./pages/BusinessOSPage'));
+const BusinessOSLoginPage = lazyWithRetry(() => import('./pages/BusinessOSLoginPage'));
 
 import { Settings } from 'lucide-react';
 
@@ -242,12 +243,20 @@ import SupabaseSyncBubble from './components/SupabaseSyncBubble';
 import CopyToastHost from './components/CopyToastHost';
 import ZaloMultiCopyHost from './components/ZaloMultiCopyHost';
 import { RequireCrmElevated, RequireCrmSocialInbox, RequireExecutive, RequireFounder, RequirePlatformAdmin } from './components/RequireRole';
+import { isStrictAdmin } from './lib/adminRole';
 import { useActivityRouteTracker } from './hooks/useActivityRouteTracker';
 import { isCrmSharedPath } from './lib/sidebarModuleContext';
 import ReleaseNoteLoginModal from './components/ReleaseNoteLoginModal';
 import SharedProviders from './shared/SharedProviders';
 import SupabaseSwitchCountdownBanner from './components/SupabaseSwitchCountdownBanner';
 import { useModuleAccess } from './shared/context/ModuleAccessContext';
+import {
+  activateFounderLocalReadOnlyForPath,
+  FOUNDER_LOCAL_LOGIN_PATH,
+  founderLocalUiPathAllowed,
+  isFounderLocalReadOnlyActive,
+  readFounderLocalCompanyScopeLock,
+} from './business-os/founderLocalReadOnly';
 function PageLoader() {
   return (
     <div className="flex items-center justify-center h-64">
@@ -262,7 +271,7 @@ function AppChromeHosts() {
   const isPublicShare = pathname.startsWith('/s/');
   // Founder Cockpit owns its full-screen shell; floating operational panels
   // would obscure status, freshness and fail-closed notices.
-  if (pathname.startsWith('/business-os')) return <CopyToastHost />;
+  if (isFounderLocalReadOnlyActive() || pathname.startsWith('/business-os')) return <CopyToastHost />;
   return (
     <>
       <CopyToastHost />
@@ -278,7 +287,117 @@ function AppChromeHosts() {
   );
 }
 
+/** Founder-local never mounts providers that start presence, notification, chat or call traffic. */
+function ProfileAwareProviders({ children }) {
+  const { pathname } = useLocation();
+
+  // This must happen during render so imported request/socket helpers are
+  // fail-closed before any descendant layout/effect can run.
+  const founderLocal = activateFounderLocalReadOnlyForPath(pathname);
+
+  return (
+    <AuthProvider readOnlyMode={founderLocal}>
+      {/* ErrorBoundary trong AuthProvider: lỗi trang không unmount phiên đăng nhập */}
+      <ErrorBoundary>
+        {founderLocal ? children : (
+          <SharedProviders>
+            <MessengerDockProvider>
+              <CallProvider>
+                <ThemeProvider>
+                  {founderLocal ? null : <CallOverlay />}
+                  {children}
+                </ThemeProvider>
+              </CallProvider>
+            </MessengerDockProvider>
+          </SharedProviders>
+        )}
+      </ErrorBoundary>
+    </AuthProvider>
+  );
+}
+
+function FounderLocalProtectedLayout() {
+  const { user, loading, logout } = useAuth();
+  const location = useLocation();
+  const rejectedRole = Boolean(user && !isStrictAdmin(user));
+
+  useEffect(() => {
+    if (rejectedRole) void logout('founder_local_role_rejected');
+  }, [logout, rejectedRole]);
+
+  if (loading) return <PageLoader />;
+  if (!user || rejectedRole) {
+    return <Navigate to={FOUNDER_LOCAL_LOGIN_PATH} state={{ from: location }} replace />;
+  }
+  return <Suspense fallback={<PageLoader />}><Outlet /></Suspense>;
+}
+
+/** Keep the pre-existing standard Business OS route/provider behavior intact. */
+function BusinessOSProtectedLayout() {
+  if (isFounderLocalReadOnlyActive()) return <FounderLocalProtectedLayout />;
+  return <OperationalProtectedLayout />;
+}
+
+function BusinessOSLoginRoute() {
+  if (!isFounderLocalReadOnlyActive()) return <Navigate to="/business-os" replace />;
+  return <Suspense fallback={<PageLoader />}><BusinessOSLoginPage /></Suspense>;
+}
+
+function FounderLocalRouteBoundary({ children }) {
+  const { pathname } = useLocation();
+  if (isFounderLocalReadOnlyActive() && !founderLocalUiPathAllowed(pathname)) {
+    return <Navigate to="/business-os" replace />;
+  }
+  return children;
+}
+
+function FounderLocalDrilldownDisclosure({ scope }) {
+  const label = scope === 'all' ? 'toàn hệ sinh thái (all)' : `công ty ${scope}`;
+  const back = `/business-os?company_id=${encodeURIComponent(scope)}`;
+  return (
+    <aside
+      data-testid="founder-local-drilldown-disclosure"
+      data-company-scope={scope}
+      className="fixed right-3 top-3 z-[10000] max-w-sm rounded-xl border border-indigo-300 bg-white/95 px-3 py-2 text-xs font-semibold text-slate-700 shadow-lg backdrop-blur"
+    >
+      Founder-local chỉ đọc · phạm vi khóa: <strong>{label}</strong>. Các chỉ số phụ thuộc đọc POST/batch trong module nguồn có trạng thái KHÔNG ĐẦY ĐỦ; số đã đối soát nằm tại{' '}
+      <a className="font-extrabold text-indigo-700 underline" href={back}>Business AI OS</a>.
+    </aside>
+  );
+}
+
 function ProtectedLayout() {
+  const { user, loading, logout } = useAuth();
+  const location = useLocation();
+  const founderLocalReadOnly = isFounderLocalReadOnlyActive();
+  let founderLocalCompanyScope = '';
+  if (founderLocalReadOnly) founderLocalCompanyScope = readFounderLocalCompanyScopeLock();
+  const rejectedFounderRole = founderLocalReadOnly && Boolean(user && !isStrictAdmin(user));
+  useActivityRouteTracker(!!user && !founderLocalReadOnly);
+
+  useEffect(() => {
+    if (rejectedFounderRole) void logout('founder_local_role_rejected');
+  }, [logout, rejectedFounderRole]);
+
+  if (loading) return <PageLoader />;
+  if (founderLocalReadOnly) {
+    if (!user || rejectedFounderRole) {
+      return <Navigate to={FOUNDER_LOCAL_LOGIN_PATH} state={{ from: location }} replace />;
+    }
+    if (!founderLocalCompanyScope || founderLocalCompanyScope === 'all') {
+      return <Navigate to="/business-os" state={{ from: location, reason: 'founder_local_scope_required' }} replace />;
+    }
+    return (
+      <>
+        <FounderLocalDrilldownDisclosure scope={founderLocalCompanyScope} />
+        <Suspense fallback={<PageLoader />}><Outlet /></Suspense>
+      </>
+    );
+  }
+  return <OperationalProtectedLayout />;
+}
+
+function OperationalProtectedLayout() {
   const { user, loading } = useAuth();
   const location = useLocation();
   const { loading: moduleAccessLoading, crmOnly } = useModuleAccess();
@@ -448,18 +567,16 @@ function DefaultRedirect() {
 export default function App() {
   return (
     <ErrorBoundary>
-    <AuthProvider>
-      {/* ErrorBoundary trong AuthProvider: lỗi trang không unmount phiên đăng nhập */}
-      <ErrorBoundary>
       <BrowserRouter>
-        <SharedProviders>
-        <MessengerDockProvider>
-        <CallProvider>
-        <ThemeProvider>
-        <CallOverlay />
+        <ProfileAwareProviders>
         
+        <FounderLocalRouteBoundary>
         <Routes>
           <Route path="/login" element={<Login />} />
+          <Route path={FOUNDER_LOCAL_LOGIN_PATH} element={<BusinessOSLoginRoute />} />
+          <Route element={<BusinessOSProtectedLayout />}>
+            <Route path="/business-os/*" element={<RequireFounder><BusinessOSPage /></RequireFounder>} />
+          </Route>
           <Route path="/modules" element={<ModulesLandingPage />} />
           <Route path="/modules/checkout/:purchaseId" element={<SaasCheckoutPage />} />
           <Route path="/modules/payment/return" element={<SaasPaymentReturnPage />} />
@@ -522,7 +639,6 @@ export default function App() {
               <Route path="tier-features" element={<PlatformTierFeaturesPage />} />
               <Route path="stats" element={<PlatformStatsPage />} />
             </Route>
-            <Route path="/business-os/*" element={<RequireFounder><BusinessOSPage /></RequireFounder>} />
             <Route path="/ecosystem" element={<EcosystemPage />} />
             <Route path="/ecosystem/modules" element={<EcosystemModulesPage />} />
             <Route path="/ecosystem/app-modules" element={<AppModulesAdminPage />} />
@@ -691,15 +807,11 @@ export default function App() {
             } />
           </Route>
         </Routes>
+        </FounderLocalRouteBoundary>
 
         <AppChromeHosts />
-        </ThemeProvider>
-        </CallProvider>
-        </MessengerDockProvider>
-        </SharedProviders>
+        </ProfileAwareProviders>
       </BrowserRouter>
-      </ErrorBoundary>
-    </AuthProvider>
     </ErrorBoundary>
   );
 }

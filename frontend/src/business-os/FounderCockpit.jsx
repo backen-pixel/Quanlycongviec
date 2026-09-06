@@ -1,3 +1,4 @@
+import { createContext, useContext, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -18,7 +19,17 @@ import {
   Users,
   WifiOff,
 } from 'lucide-react';
-import { BUSINESS_OS_STATUSES, safeBusinessOsHref } from './businessOsContract';
+import api from '../lib/api';
+import {
+  commitFounderLocalCompanyScopeFromVerifiedDrilldown,
+  safeFounderLocalDrilldownHref,
+} from './founderLocalReadOnly';
+import {
+  BUSINESS_OS_PLATFORM_STATUSES,
+  BUSINESS_OS_STATUSES,
+  FOUNDER_ADVISORY_CONFIGURATION_KEYS,
+  safeBusinessOsHref,
+} from './businessOsContract';
 
 const STATUS_STYLES = {
   LIVE: 'border-emerald-200 bg-emerald-50 text-emerald-700',
@@ -27,6 +38,7 @@ const STATUS_STYLES = {
   'NOT CONNECTED': 'border-slate-200 bg-slate-100 text-slate-600',
   BLOCKED: 'border-rose-200 bg-rose-50 text-rose-700',
   'FOUNDER DECISION REQUIRED': 'border-violet-200 bg-violet-50 text-violet-700',
+  SANDBOX: 'border-fuchsia-200 bg-fuchsia-50 text-fuchsia-700',
 };
 
 const STATUS_LABELS = {
@@ -36,6 +48,7 @@ const STATUS_LABELS = {
   'NOT CONNECTED': 'CHƯA KẾT NỐI',
   BLOCKED: 'BỊ CHẶN',
   'FOUNDER DECISION REQUIRED': 'CẦN FOUNDER QUYẾT ĐỊNH',
+  SANDBOX: 'SANDBOX',
 };
 
 const SYSTEM_ACCENTS = [
@@ -48,6 +61,7 @@ const SYSTEM_ACCENTS = [
 ];
 
 const SYSTEM_ICONS = [Target, Layers3, Users, Factory, BarChart3, ShieldCheck];
+const FounderLocalDrilldownScopeContext = createContext('');
 
 const METRIC_LABELS = {
   active_people: 'Nhân sự hoạt động',
@@ -118,7 +132,7 @@ function pickMetrics(source, keys) {
 }
 
 function StatusBadge({ status, compact = false }) {
-  const safeStatus = BUSINESS_OS_STATUSES.includes(status) ? status : 'NOT CONNECTED';
+  const safeStatus = BUSINESS_OS_PLATFORM_STATUSES.includes(status) ? status : 'NOT CONNECTED';
   return (
     <span className={`inline-flex items-center rounded-full border font-black tracking-wide ${compact ? 'px-2 py-0.5 text-[9px]' : 'px-2.5 py-1 text-[10px]'} ${STATUS_STYLES[safeStatus]}`}>
       {STATUS_LABELS[safeStatus]}
@@ -162,18 +176,26 @@ function MetricGrid({ metrics, columns = 'grid-cols-2', dense = false }) {
   );
 }
 
-function resolveDrilldown(drilldown) {
-  if (typeof drilldown === 'string') return { href: safeBusinessOsHref(drilldown), label: 'Mở module', enabled: true };
+function isCockpitHref(href) {
+  return /^\/business-os(?:[/?#]|$)/.test(String(href || ''));
+}
+
+function resolveDrilldown(drilldown, expectedCompanyScope) {
   if (!drilldown || typeof drilldown !== 'object') return { href: '', label: '', enabled: false };
+  const internalHref = safeBusinessOsHref(drilldown.href || drilldown.to || drilldown.path);
+  const href = safeFounderLocalDrilldownHref(drilldown, { expectedCompanyScope })
+    || (isCockpitHref(internalHref) ? internalHref : '');
   return {
-    href: safeBusinessOsHref(drilldown.href || drilldown.to || drilldown.path),
+    href,
     label: drilldown.label || drilldown.title || 'Mở chi tiết',
     enabled: drilldown.enabled !== false,
   };
 }
 
-function DrilldownLink({ drilldown, label, className = '' }) {
-  const resolved = resolveDrilldown(drilldown);
+function DrilldownLink({ drilldown, expectedCompanyScope, label, className = '', children }) {
+  const snapshotCompanyScope = useContext(FounderLocalDrilldownScopeContext);
+  const effectiveCompanyScope = expectedCompanyScope || snapshotCompanyScope;
+  const resolved = resolveDrilldown(drilldown, effectiveCompanyScope);
   if (!resolved.enabled || !resolved.href) {
     return (
       <span className={`inline-flex items-center gap-1.5 text-xs font-bold text-slate-400 ${className}`} title="Backend chưa xác nhận đường dẫn vận hành">
@@ -181,9 +203,25 @@ function DrilldownLink({ drilldown, label, className = '' }) {
       </span>
     );
   }
+  const handleClick = (event) => {
+    if (isCockpitHref(resolved.href)) return;
+    try {
+      commitFounderLocalCompanyScopeFromVerifiedDrilldown(drilldown, {
+        expectedCompanyScope: effectiveCompanyScope,
+      });
+    } catch (error) {
+      event.preventDefault();
+      event.stopPropagation();
+      console.error('[Founder-local drill-down scope]', error);
+    }
+  };
   return (
-    <Link to={resolved.href} className={`inline-flex items-center gap-1.5 text-xs font-extrabold text-indigo-700 hover:text-indigo-900 ${className}`}>
-      {label || resolved.label} <ArrowRight className="h-3.5 w-3.5" />
+    <Link
+      to={resolved.href}
+      onClick={handleClick}
+      className={`inline-flex items-center gap-1.5 text-xs font-extrabold text-indigo-700 hover:text-indigo-900 ${className}`}
+    >
+      {children || <>{label || resolved.label} <ArrowRight className="h-3.5 w-3.5" /></>}
     </Link>
   );
 }
@@ -207,7 +245,7 @@ function SystemCard({ system, index }) {
   const Icon = SYSTEM_ICONS[index] || Layers3;
   const firstDrilldown = system.drilldowns?.find((item) => resolveDrilldown(item).enabled);
   return (
-    <article className={`relative overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br ${accent.panel} p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)]`}>
+    <article data-testid="business-os-system" className={`relative overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br ${accent.panel} p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)]`}>
       <span className={`absolute inset-x-0 top-0 h-1 ${accent.line}`} />
       <div className="flex items-start justify-between gap-3">
         <span className={`flex h-10 w-10 items-center justify-center rounded-xl text-white shadow-sm ${accent.icon}`}>
@@ -433,7 +471,13 @@ function ManufacturingSection({ companies }) {
                     </ul>
                   </div>
                 ) : null}
-                <div className="mt-4"><DrilldownLink drilldown={item.drilldown} label="Mở vận hành xưởng" /></div>
+                <div className="mt-4">
+                  <DrilldownLink
+                    drilldown={item.drilldown}
+                    expectedCompanyScope={item.company.id}
+                    label="Mở vận hành xưởng"
+                  />
+                </div>
               </div>
             </article>
           ))}
@@ -445,7 +489,7 @@ function ManufacturingSection({ companies }) {
   );
 }
 
-function DecisionCenter({ center }) {
+function DecisionCenter({ center, correctionCenter }) {
   const severityStyles = {
     critical: 'bg-rose-100 text-rose-800',
     high: 'bg-orange-100 text-orange-800',
@@ -467,7 +511,7 @@ function DecisionCenter({ center }) {
         {center.items.length ? (
           <div className="divide-y divide-slate-100">
             {center.items.map((item, index) => {
-              const href = safeBusinessOsHref(item.href);
+              const correction = correctionCenter.items.find((candidate) => candidate.issue_id === item.id);
               const severity = String(item.severity || 'info').toLowerCase();
               const evidenceEntries = Array.isArray(item.evidence) ? item.evidence : [item.evidence];
               const evidence = evidenceEntries.map((entry) => {
@@ -493,7 +537,7 @@ function DecisionCenter({ center }) {
                     {item.reason ? <p className="mt-1 text-xs leading-5 text-slate-600">{item.reason}</p> : null}
                     {evidence ? <p className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-[11px] leading-5 text-slate-500"><strong className="text-slate-700">Bằng chứng:</strong> {evidence}</p> : null}
                   </div>
-                  {href ? <Link to={href} className="inline-flex items-center gap-1 text-xs font-extrabold text-indigo-700">Xem hồ sơ <ArrowRight className="h-3.5 w-3.5" /></Link> : null}
+                  <DrilldownLink drilldown={correction?.drilldown} label="Xem hồ sơ" />
                 </article>
               );
             })}
@@ -502,8 +546,35 @@ function DecisionCenter({ center }) {
           <div className="p-5"><EmptyEvidence>Backend chưa công bố yêu cầu quyết định nào trong phạm vi và kỳ này.</EmptyEvidence></div>
         )}
       </div>
+
+      <div id="correction-center" data-testid="correction-center" className="mt-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <p className="text-sm font-black text-slate-950">Correction & Evolution</p>
+            <p className="mt-1 text-[10px] text-slate-500">Issue → root cause → corrective action; thay đổi Business Rule đang bị khóa.</p>
+          </div>
+          <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[9px] font-black text-slate-600">RULE CHANGE DISABLED</span>
+        </div>
+        <div className="mt-4 grid gap-3 lg:grid-cols-2">
+          {correctionCenter.items.length ? correctionCenter.items.map((item) => (
+            <article key={item.issue_id} className="rounded-xl border border-slate-200 p-4">
+              <p className="text-xs font-black text-slate-950">{item.issue}</p>
+              <p className="mt-2 text-[11px] leading-5 text-slate-600"><strong>Nguyên nhân:</strong> {item.root_cause}</p>
+              <p className="text-[11px] leading-5 text-slate-600"><strong>Hành động:</strong> {item.corrective_action}</p>
+              <p className="mt-2 text-[10px] text-slate-500">{item.owner_state} · {item.deadline_state} · {item.status}</p>
+              <div className="mt-3"><DrilldownLink drilldown={item.drilldown} /></div>
+            </article>
+          )) : <div className="lg:col-span-2"><EmptyEvidence>Chưa có correction signal trong snapshot hiện tại.</EmptyEvidence></div>}
+        </div>
+      </div>
     </section>
   );
+}
+
+function newIdempotencyKey() {
+  const key = globalThis.crypto?.randomUUID?.();
+  if (!key) throw new Error('Trình duyệt không hỗ trợ UUID an toàn; thay đổi đã bị khóa.');
+  return key;
 }
 
 function ModuleActivation({ modules }) {
@@ -545,13 +616,134 @@ function ModuleActivation({ modules }) {
   );
 }
 
-function ConfigurationCenter({ center, drilldowns }) {
+function PlatformCapabilities({ capabilities, signalHub }) {
   return (
-    <section id="configuration" className="scroll-mt-24">
+    <section id="platform-capabilities" className="scroll-mt-24">
+      <SectionHeading
+        eyebrow="Full Platform V1"
+        title="19 năng lực nền tảng"
+        description="Trạng thái là projection quản trị noncanonical. SANDBOX không đồng nghĩa đã kích hoạt Production."
+        icon={Network}
+      />
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+        {capabilities.map((capability) => (
+          <article key={capability.key} data-testid="business-os-capability" className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex items-start justify-between gap-3">
+              <h3 className="text-sm font-black leading-5 text-slate-950">{capability.label}</h3>
+              <StatusBadge status={capability.status} compact />
+            </div>
+            <p className="mt-2 text-[10px] text-slate-500">{capability.mode} · nguồn {humanizeKey(capability.source)}</p>
+            <p className="mt-2 text-[10px] font-bold text-slate-600">Đối soát: {formatValue(capability.reconciliation)}</p>
+            <Freshness value={capability.freshness} />
+            {capability.data_gaps.length ? (
+              <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-[10px] leading-4 text-amber-800">
+                {capability.data_gaps.map((gap) => gap?.message || gap?.label || String(gap)).filter(Boolean).join(' · ')}
+              </p>
+            ) : null}
+            <div className="mt-3 flex items-center justify-between gap-3 border-t border-slate-100 pt-3">
+              <span className="text-[9px] font-black uppercase text-slate-400">Noncanonical · {capability.write_capability}</span>
+              <DrilldownLink drilldown={capability.drilldown} />
+            </div>
+          </article>
+        ))}
+      </div>
+
+      <div id="signal-hub" data-testid="signal-hub" className="mt-4 rounded-2xl border border-slate-200 bg-slate-950 p-5 text-white shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <p className="text-sm font-black">Cross-Domain Signal Hub</p>
+            <p className="mt-1 text-[10px] text-slate-400">Read projection · noncanonical · write disabled</p>
+          </div>
+          <span className="rounded-full bg-white/10 px-2.5 py-1 text-[9px] font-black text-slate-300">{signalHub.contracts.length} SIGNALS</span>
+        </div>
+        <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+          {signalHub.contracts.slice(0, 12).map((signal) => (
+            <article key={signal.signal_id} className="rounded-xl border border-white/10 bg-white/[0.05] p-3">
+              <p className="text-xs font-black text-white">{signal.display_name}</p>
+              <p className="mt-1 text-[10px] text-slate-400">{signal.owner_domain} · {signal.quality_state}</p>
+              <p className="mt-2 text-sm font-black text-cyan-200">{formatValue(signal.current_value) ?? 'Chưa đủ dữ liệu'}</p>
+              <div className="mt-2"><Freshness value={signal.freshness} /></div>
+            </article>
+          ))}
+        </div>
+        {signalHub.contracts.length > 12 ? <p className="mt-3 text-[10px] text-slate-400">Hiển thị 12/{signalHub.contracts.length} tín hiệu; hợp đồng đầy đủ đã được xác minh.</p> : null}
+      </div>
+    </section>
+  );
+}
+
+function ConfigurationCenter({ center, drilldowns, scope, onRefresh }) {
+  const advisory = center.advisory_configuration;
+  const [values, setValues] = useState({});
+  const [reason, setReason] = useState('');
+  const [confirmed, setConfirmed] = useState(false);
+  const [rollbackVersion, setRollbackVersion] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [feedback, setFeedback] = useState('');
+  const gatesReady = Object.values(advisory.gates).length === 6
+    && Object.values(advisory.gates).every(Boolean);
+  const canChange = advisory.enabled && center.permissions.can_change && gatesReady;
+
+  useEffect(() => {
+    setValues(Object.fromEntries(FOUNDER_ADVISORY_CONFIGURATION_KEYS.map((key) => [
+      key,
+      advisory.configuration[key] == null ? '' : String(advisory.configuration[key]),
+    ])));
+    setRollbackVersion('');
+    setConfirmed(false);
+    setReason('');
+  }, [advisory.current_version, advisory.updated_at]);
+
+  const requestConfig = {
+    params: {
+      ecosystem_id: scope.ecosystem_id,
+      company_id: scope.company_id || 'all',
+    },
+    founderLocalControlledAction: true,
+  };
+
+  const approveAndRun = async (action) => {
+    if (!canChange || !confirmed || reason.trim().length < 3) {
+      setFeedback('Cần đủ 6 gate, quyền thay đổi, xác nhận và lý do tối thiểu 3 ký tự.');
+      return;
+    }
+    setBusy(true);
+    setFeedback('');
+    try {
+      const idempotencyKey = newIdempotencyKey();
+      const config = { ...requestConfig, headers: { 'Idempotency-Key': idempotencyKey } };
+      if (action === 'save') {
+        const configuration = Object.fromEntries(FOUNDER_ADVISORY_CONFIGURATION_KEYS.map((key) => [
+          key,
+          values[key] === '' ? null : Number(values[key]),
+        ]));
+        await api.put('/business-os/configuration', {
+          configuration,
+          expected_version: advisory.current_version,
+          approval: { confirmed: true, reason: reason.trim() },
+        }, config);
+      } else {
+        await api.post('/business-os/configuration/rollback', {
+          target_version: Number(rollbackVersion),
+          expected_version: advisory.current_version,
+          approval: { confirmed: true, reason: reason.trim() },
+        }, config);
+      }
+      setFeedback(action === 'save' ? 'Đã lưu cấu hình advisory tạm.' : 'Đã rollback cấu hình advisory tạm.');
+      await onRefresh({ background: true });
+    } catch (error) {
+      setFeedback(error?.response?.data?.error || error?.message || 'Thay đổi advisory đã bị khóa.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section id="configuration" data-testid="founder-configuration" className="scroll-mt-24">
       <SectionHeading
         eyebrow="Founder Configuration Center"
         title="Cấu hình đang có hiệu lực"
-        description="Cockpit chỉ đọc cấu hình canonical. Mọi thay đổi tiếp tục đi qua màn hình và quyền hiện hữu."
+        description="Cấu hình module canonical luôn chỉ đọc; chỉ ngưỡng cảnh báo advisory tạm mới có thể thay đổi khi đủ sáu gate."
         icon={Settings2}
         action={<DrilldownLink drilldown={center.drilldown} label="Mở cấu hình gốc" />}
       />
@@ -590,26 +782,54 @@ function ConfigurationCenter({ center, drilldowns }) {
             </div>
           </div>
           <div className="mt-4 space-y-2">
-            {drilldowns.length ? drilldowns.map((item, index) => {
-              const resolved = resolveDrilldown(item);
-              return resolved.enabled && resolved.href ? (
-                <Link key={item.key || index} to={resolved.href} className="flex items-center gap-3 rounded-xl border border-slate-200 px-3 py-3 hover:border-indigo-300 hover:bg-indigo-50/50">
-                  <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-100 text-slate-600"><Layers3 className="h-4 w-4" /></span>
-                  <span className="min-w-0 flex-1 truncate text-xs font-extrabold text-slate-800">{resolved.label}</span>
-                  <ArrowRight className="h-4 w-4 text-slate-400" />
-                </Link>
-              ) : (
-                <div key={item?.key || index} className="flex items-center gap-3 rounded-xl border border-dashed border-slate-200 px-3 py-3 text-xs text-slate-400">
-                  <LockKeyhole className="h-4 w-4" /> {item?.label || 'Drill-down chưa được backend cho phép'}
-                </div>
-              );
-            }) : <EmptyEvidence>Chưa có drill-down được backend cho phép.</EmptyEvidence>}
+            {drilldowns.length ? drilldowns.map((item, index) => (
+              <DrilldownLink
+                key={item.key || index}
+                drilldown={item}
+                className="flex items-center gap-3 rounded-xl border border-slate-200 px-3 py-3 hover:border-indigo-300 hover:bg-indigo-50/50"
+              >
+                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-100 text-slate-600"><Layers3 className="h-4 w-4" /></span>
+                <span className="min-w-0 flex-1 truncate text-xs font-extrabold text-slate-800">{item.label || item.title || 'Mở chi tiết'}</span>
+                <ArrowRight className="h-4 w-4 text-slate-400" />
+              </DrilldownLink>
+            )) : <EmptyEvidence>Chưa có drill-down được backend cho phép.</EmptyEvidence>}
           </div>
           <div className="mt-4 grid grid-cols-2 gap-2 text-[10px] font-bold">
             <span className={`rounded-lg px-3 py-2 ${center.permissions.can_view ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>Xem: {center.permissions.can_view ? 'Được phép' : 'Bị chặn'}</span>
             <span className={`rounded-lg px-3 py-2 ${center.permissions.can_change ? 'bg-amber-50 text-amber-800' : 'bg-slate-100 text-slate-600'}`}>Đổi: {center.permissions.can_change ? 'Qua màn hình gốc' : 'Không được phép'}</span>
           </div>
         </div>
+      </div>
+      <div className="mt-4 rounded-2xl border border-violet-200 bg-violet-50/60 p-5 shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-sm font-black text-violet-950">Advisory configuration · provisional</p>
+            <p className="mt-1 text-[11px] leading-5 text-violet-800">Noncanonical · không tự động ghi hoặc thay đổi vận hành · phiên bản {advisory.current_version}</p>
+          </div>
+          <span className={`rounded-full px-2.5 py-1 text-[9px] font-black ${canChange ? 'bg-violet-700 text-white' : 'bg-slate-200 text-slate-600'}`}>{canChange ? '6 GATES READY' : 'WRITE DISABLED'}</span>
+        </div>
+        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          {FOUNDER_ADVISORY_CONFIGURATION_KEYS.map((key) => (
+            <label key={key} className="text-[10px] font-bold text-slate-600">
+              {humanizeKey(key)}
+              <input type="number" min={key === 'capacity_load_warning_per_active_person' ? '0.1' : '1'} step={key === 'capacity_load_warning_per_active_person' ? '0.1' : '1'} disabled={!canChange || busy} value={values[key] ?? ''} onChange={(event) => setValues((current) => ({ ...current, [key]: event.target.value }))} className="mt-1 h-10 w-full rounded-xl border border-violet-200 bg-white px-3 text-xs outline-none disabled:bg-slate-100" placeholder="Không đặt" />
+            </label>
+          ))}
+        </div>
+        <textarea disabled={!canChange || busy} value={reason} onChange={(event) => setReason(event.target.value)} maxLength={500} placeholder="Lý do Founder phê duyệt (bắt buộc)" className="mt-3 min-h-20 w-full rounded-xl border border-violet-200 bg-white p-3 text-xs outline-none disabled:bg-slate-100" />
+        <label className="mt-3 flex items-start gap-2 text-xs font-bold text-violet-950">
+          <input type="checkbox" disabled={!canChange || busy} checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} className="mt-0.5" />
+          Tôi xác nhận đây chỉ là ngưỡng cảnh báo tạm, noncanonical và không có tác động vận hành tự động.
+        </label>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <button type="button" disabled={!canChange || busy || !confirmed || reason.trim().length < 3} onClick={() => void approveAndRun('save')} className="h-10 rounded-xl bg-violet-700 px-4 text-xs font-black text-white disabled:cursor-not-allowed disabled:opacity-50">Lưu advisory tạm</button>
+          <select disabled={!canChange || busy} value={rollbackVersion} onChange={(event) => setRollbackVersion(event.target.value)} className="h-10 rounded-xl border border-violet-200 bg-white px-3 text-xs font-bold disabled:bg-slate-100">
+            <option value="">Chọn phiên bản rollback</option>
+            {advisory.rollback_versions.filter((item) => item.version < advisory.current_version).map((item) => <option key={item.version} value={item.version}>Phiên bản {item.version} · {formatDate(item.created_at)}</option>)}
+          </select>
+          <button type="button" disabled={!canChange || busy || !rollbackVersion || !confirmed || reason.trim().length < 3} onClick={() => void approveAndRun('rollback')} className="h-10 rounded-xl border border-violet-300 bg-white px-4 text-xs font-black text-violet-800 disabled:cursor-not-allowed disabled:opacity-50">Rollback advisory</button>
+        </div>
+        {feedback ? <p role="status" className="mt-3 rounded-lg bg-white px-3 py-2 text-xs text-violet-900">{feedback}</p> : null}
       </div>
     </section>
   );
@@ -644,28 +864,40 @@ function ProtectionFooter({ protections }) {
   );
 }
 
-export default function FounderCockpit({ snapshot }) {
+export default function FounderCockpit({ snapshot, onRefresh }) {
+  const snapshotCompanyScope = snapshot.scope.company_id || 'all';
   return (
-    <div className="space-y-10 pb-10">
-      <section id="six-systems" className="scroll-mt-24">
-        <SectionHeading
-          eyebrow="Tổng quan 6 hệ"
-          title="Founder Executive Cockpit"
-          description="Mọi chỉ số bên dưới đến trực tiếp từ hợp đồng Business AI OS; ô thiếu luôn được giữ là chưa xác minh."
-          icon={Building2}
-        />
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
-          {snapshot.systems.map((system, index) => <SystemCard key={system.key} system={system} index={index} />)}
-        </div>
-      </section>
+    <FounderLocalDrilldownScopeContext.Provider value={snapshotCompanyScope}>
+      <div className="space-y-10 pb-10">
+        {snapshotCompanyScope === 'all' ? (
+          <div
+            data-testid="founder-local-exact-company-required"
+            className="rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-950 shadow-sm"
+          >
+            Drill-down nguồn đang khóa ở phạm vi toàn hệ sinh thái. Chọn một công ty cụ thể phía trên để mở CRM read-only đã được kiểm chứng.
+          </div>
+        ) : null}
+        <section id="six-systems" className="scroll-mt-24">
+          <SectionHeading
+            eyebrow="Tổng quan 6 hệ"
+            title="Founder Executive Cockpit"
+            description="Mọi chỉ số bên dưới đến trực tiếp từ hợp đồng Business AI OS; ô thiếu luôn được giữ là chưa xác minh."
+            icon={Building2}
+          />
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
+            {snapshot.systems.map((system, index) => <SystemCard key={system.key} system={system} index={index} />)}
+          </div>
+        </section>
 
-      <PlanningSection planning={snapshot.planning} />
-      <WorkloadCapacitySection workload={snapshot.workload} capacity={snapshot.capacity} />
-      <ManufacturingSection companies={snapshot.manufacturing_companies} />
-      <DecisionCenter center={snapshot.decision_center} />
-      <ModuleActivation modules={snapshot.modules} />
-      <ConfigurationCenter center={snapshot.configuration_center} drilldowns={snapshot.drilldowns} />
-      <ProtectionFooter protections={snapshot.protections} />
-    </div>
+        <PlanningSection planning={snapshot.planning} />
+        <WorkloadCapacitySection workload={snapshot.workload} capacity={snapshot.capacity} />
+        <ManufacturingSection companies={snapshot.manufacturing_companies} />
+        <DecisionCenter center={snapshot.decision_center} correctionCenter={snapshot.correction_center} />
+        <ModuleActivation modules={snapshot.modules} />
+        <PlatformCapabilities capabilities={snapshot.platform_capabilities} signalHub={snapshot.signal_hub} />
+        <ConfigurationCenter center={snapshot.configuration_center} drilldowns={snapshot.drilldowns} scope={snapshot.scope} onRefresh={onRefresh} />
+        <ProtectionFooter protections={snapshot.protections} />
+      </div>
+    </FounderLocalDrilldownScopeContext.Provider>
   );
 }

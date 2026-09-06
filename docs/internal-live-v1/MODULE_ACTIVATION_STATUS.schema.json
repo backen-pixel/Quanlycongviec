@@ -7,20 +7,143 @@
     "schema_version",
     "release_id",
     "environment",
+    "environment_controls",
+    "data_policy",
+    "capacity_policy",
+    "controlled_write_policy",
+    "readiness_gates",
+    "ready_for_internal_daily_use",
     "generated_at",
-    "frozen_version",
+    "verified_source_candidate",
     "overall_status",
     "modules",
+    "platform_capability_count",
+    "platform_capabilities",
+    "non_blocking_not_connected_modules",
     "protected_capabilities",
     "critical_residual_risks",
     "acceptance_decision"
   ],
   "properties": {
-    "schema_version": { "const": "1.0.0" },
+    "schema_version": { "const": "1.1.0" },
     "release_id": { "type": "string", "minLength": 1 },
-    "environment": { "const": "INTERNAL_MANAGED" },
+    "environment": { "const": "FOUNDER_LOCAL_PRIVATE" },
+    "environment_controls": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["deployment_class", "bind_hosts", "admin_only", "allowed_roles", "public_internet_exposed", "background_write_jobs_default_enabled"],
+      "properties": {
+        "deployment_class": { "const": "FOUNDER_LOCAL_PRIVATE" },
+        "bind_hosts": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "enum": ["127.0.0.1", "localhost", "::1"] } },
+        "admin_only": { "const": true },
+        "allowed_roles": { "type": "array", "minItems": 1, "maxItems": 1, "items": { "const": "admin" } },
+        "public_internet_exposed": { "const": false },
+        "background_write_jobs_default_enabled": { "const": false }
+      }
+    },
+    "data_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["read_in_place", "allowed_read_paths", "direct_database_write_allowed", "silent_synthetic_fallback_allowed", "secondary_writable_business_store_allowed"],
+      "properties": {
+        "read_in_place": { "const": true },
+        "allowed_read_paths": { "type": "array", "minItems": 2, "maxItems": 2, "uniqueItems": true, "items": { "enum": ["APPLICATION_SERVICE", "APPROVED_READ_MODEL"] } },
+        "direct_database_write_allowed": { "const": false },
+        "silent_synthetic_fallback_allowed": { "const": false },
+        "secondary_writable_business_store_allowed": { "const": false }
+      }
+    },
+    "capacity_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "canonical_business_rule", "warning_only", "may_auto_change_operations", "may_enable_operational_domain_writes"],
+      "properties": {
+        "mode": { "const": "PROVISIONAL_ADVISORY_ONLY" },
+        "canonical_business_rule": { "const": false },
+        "warning_only": { "const": true },
+        "may_auto_change_operations": { "const": false },
+        "may_enable_operational_domain_writes": { "const": false }
+      }
+    },
+    "controlled_write_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operational_domain_writes_enabled", "advisory_configuration", "required_six_gates", "direct_database_write_allowed", "schema_change_allowed", "permission_increase_allowed"],
+      "properties": {
+        "operational_domain_writes_enabled": { "const": false },
+        "advisory_configuration": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "storage",
+            "default_enabled",
+            "canonical_business_rule",
+            "operational_effect",
+            "automatic_actions_enabled",
+            "explicit_founder_confirmation_required",
+            "validation_required",
+            "idempotency_required",
+            "audit_and_versioning_required",
+            "rollback_required",
+            "checked_at",
+            "evidence"
+          ],
+          "properties": {
+            "status": { "enum": ["DISABLED", "PENDING_VERIFICATION", "ENABLED"] },
+            "storage": { "const": "FOUNDER_LOCAL_FILE" },
+            "default_enabled": { "const": false },
+            "canonical_business_rule": { "const": false },
+            "operational_effect": { "const": false },
+            "automatic_actions_enabled": { "const": false },
+            "explicit_founder_confirmation_required": { "const": true },
+            "validation_required": { "const": true },
+            "idempotency_required": { "const": true },
+            "audit_and_versioning_required": { "const": true },
+            "rollback_required": { "const": true },
+            "checked_at": { "type": ["string", "null"], "format": "date-time" },
+            "evidence": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true }
+          }
+        },
+        "required_six_gates": {
+          "type": "array", "minItems": 6, "maxItems": 6, "uniqueItems": true,
+          "items": { "enum": ["existing_business_rule", "permission", "approval_and_validation", "idempotency", "audit", "rollback_or_compensation"] }
+        },
+        "direct_database_write_allowed": { "const": false },
+        "schema_change_allowed": { "const": false },
+        "permission_increase_allowed": { "const": false }
+      }
+    },
+    "readiness_gates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["blocking", "informational"],
+      "properties": {
+        "blocking": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["runtime", "health", "reconciliation", "configuration_rollback", "no_write"],
+          "properties": {
+            "runtime": { "$ref": "#/$defs/evidenceGate" },
+            "health": { "$ref": "#/$defs/evidenceGate" },
+            "reconciliation": { "$ref": "#/$defs/evidenceGate" },
+            "configuration_rollback": { "$ref": "#/$defs/evidenceGate" },
+            "no_write": { "$ref": "#/$defs/evidenceGate" }
+          }
+        },
+        "informational": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["backup_failover"],
+          "properties": {
+            "backup_failover": { "$ref": "#/$defs/evidenceGate" }
+          }
+        }
+      }
+    },
+    "ready_for_internal_daily_use": { "type": "boolean" },
     "generated_at": { "type": "string", "format": "date-time" },
-    "frozen_version": {
+    "verified_source_candidate": {
       "type": "object",
       "additionalProperties": false,
       "required": ["repository", "commit", "tree", "clean"],
@@ -37,6 +160,20 @@
       "minItems": 1,
       "items": { "$ref": "#/$defs/module" }
     },
+    "platform_capability_count": { "const": 19 },
+    "platform_capabilities": {
+      "type": "array",
+      "minItems": 19,
+      "maxItems": 19,
+      "items": { "$ref": "#/$defs/platformCapability" }
+    },
+    "non_blocking_not_connected_modules": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "uniqueItems": true,
+      "items": { "const": "warranty_care" }
+    },
     "protected_capabilities": {
       "type": "array",
       "items": { "type": "string", "minLength": 1 },
@@ -51,6 +188,16 @@
     }
   },
   "$defs": {
+    "evidenceGate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "checked_at", "evidence"],
+      "properties": {
+        "status": { "enum": ["PASS", "PENDING", "FAIL"] },
+        "checked_at": { "type": ["string", "null"], "format": "date-time" },
+        "evidence": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true }
+      }
+    },
     "status": {
       "enum": [
         "LIVE",
@@ -58,8 +205,22 @@
         "UNDER RECONCILIATION",
         "NOT CONNECTED",
         "BLOCKED",
-        "FOUNDER DECISION REQUIRED"
+        "FOUNDER DECISION REQUIRED",
+        "SANDBOX"
       ]
+    },
+    "platformCapability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "display_name", "mode", "status", "evidence", "gaps"],
+      "properties": {
+        "key": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+        "display_name": { "type": "string", "minLength": 1 },
+        "mode": { "enum": ["INTERNAL_OPERATIONAL", "PRODUCTIZATION_INTERFACE", "RUNTIME_DISABLED"] },
+        "status": { "$ref": "#/$defs/status" },
+        "evidence": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+        "gaps": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
     },
     "module": {
       "type": "object",
@@ -81,7 +242,7 @@
         "display_name": { "type": "string", "minLength": 1 },
         "status": { "$ref": "#/$defs/status" },
         "source_type": {
-          "enum": ["APPLICATION_SERVICE", "APPROVED_READ_MODEL", "CANONICAL_MODULE", "NONE"]
+          "enum": ["APPLICATION_SERVICE", "APPROVED_READ_MODEL", "NONE"]
         },
         "data_updated_at": { "type": ["string", "null"], "format": "date-time" },
         "freshness_slo_minutes": { "type": ["integer", "null"], "minimum": 1 },

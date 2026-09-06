@@ -2,6 +2,10 @@ const jwt = require('jsonwebtoken');
 const { supabase } = require('../config/supabase');
 const config = require('../config');
 
+const FOUNDER_LOCAL_JWT_AUDIENCE = 'founder-local-read-only';
+const FOUNDER_LOCAL_JWT_PURPOSE = 'founder-local-read-only';
+const FOUNDER_LOCAL_MAX_SESSION_TTL_SECONDS = 60 * 60;
+
 async function resolveCompanyId(user) {
   let company_id = user.company_id || null;
   if (!company_id && user.department_id) {
@@ -46,9 +50,30 @@ function formatUserPayload(user, company_id, crm_region_ids) {
 async function buildAuthSessionForUser(user, opts = {}) {
   const sessionId = opts.sessionId
     || `s_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+  const expiresInSeconds = opts.expiresInSeconds;
+  if (expiresInSeconds !== undefined
+    && (!Number.isSafeInteger(expiresInSeconds) || expiresInSeconds < 60 || expiresInSeconds > 86_400)) {
+    const error = new Error('Thời hạn phiên đăng nhập phải từ 60 giây đến 24 giờ.');
+    error.code = 'AUTH_SESSION_TTL_INVALID';
+    throw error;
+  }
+  const audience = opts.audience;
+  if (audience !== undefined && audience !== FOUNDER_LOCAL_JWT_AUDIENCE) {
+    const error = new Error('Audience phiên đăng nhập không được hỗ trợ.');
+    error.code = 'AUTH_SESSION_AUDIENCE_INVALID';
+    throw error;
+  }
+  const founderLocalSession = audience === FOUNDER_LOCAL_JWT_AUDIENCE;
+  if (founderLocalSession
+    && (!Number.isSafeInteger(expiresInSeconds)
+      || expiresInSeconds > FOUNDER_LOCAL_MAX_SESSION_TTL_SECONDS)) {
+    const error = new Error('Phiên Founder-local phải có hạn tối đa một giờ.');
+    error.code = 'FOUNDER_LOCAL_SESSION_TTL_INVALID';
+    throw error;
+  }
   const company_id = await resolveCompanyId(user);
   const crm_region_ids = await resolveCrmRegionIds(user.id);
-  const token = jwt.sign({
+  const payload = {
     userId: user.id,
     email: user.email,
     role: user.role,
@@ -57,7 +82,12 @@ async function buildAuthSessionForUser(user, opts = {}) {
     tenant_id: user.tenant_id || null,
     department_id: user.department_id || null,
     crm_region_ids,
-  }, config.jwtSecret);
+    ...(founderLocalSession ? { session_purpose: FOUNDER_LOCAL_JWT_PURPOSE } : {}),
+  };
+  const signOptions = {};
+  if (expiresInSeconds !== undefined) signOptions.expiresIn = expiresInSeconds;
+  if (founderLocalSession) signOptions.audience = FOUNDER_LOCAL_JWT_AUDIENCE;
+  const token = jwt.sign(payload, config.jwtSecret, signOptions);
   return {
     token,
     session_id: sessionId,
@@ -66,6 +96,9 @@ async function buildAuthSessionForUser(user, opts = {}) {
 }
 
 module.exports = {
+  FOUNDER_LOCAL_JWT_AUDIENCE,
+  FOUNDER_LOCAL_JWT_PURPOSE,
+  FOUNDER_LOCAL_MAX_SESSION_TTL_SECONDS,
   buildAuthSessionForUser,
   formatUserPayload,
   resolveCompanyId,

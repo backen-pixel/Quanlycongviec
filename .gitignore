@@ -37,3 +37,6 @@ hs_err_*.log
 replay_*.log
 .jscpd-report/
 backend/supabase/.temp/
+
+# Founder-local runtime state (platform-owned advisory config and local logs)
+backend/.runtime/

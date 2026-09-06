@@ -1,5 +1,11 @@
-require('dotenv').config();
+// Founder-local is preloaded only from the explicit operator-selected file by
+// its launcher/verifiers. Never supplement that profile from a discovered
+// project .env; the standard runtime keeps its existing dotenv behaviour.
+if (String(process.env.RUNTIME_PROFILE || '').trim().toLowerCase() !== 'founder-local-read-only') {
+  require('dotenv').config();
+}
 const { resolveRedisUrl } = require('./redisUrl');
+const { isFounderLocalReadOnly } = require('./runtimeProfile');
 
 /** SPA production trên Render — dùng cho deep-link bot/push khi env còn trỏ domain cũ. */
 const DEFAULT_PRODUCTION_FRONTEND_URL = 'https://tubep-frontend-s30w.onrender.com';
@@ -47,8 +53,9 @@ function resolveCorsOrigins() {
     .split(',')
     .map((s) => normalizeOriginUrl(s.trim(), ''))
     .filter(Boolean);
-  // Luôn kèm SPA production mặc định + FRONTEND_URL (nếu có) — tránh quên env trên Render.
-  list.push(DEFAULT_PRODUCTION_FRONTEND_URL);
+  // Standard runtime luôn kèm SPA production để tránh quên env trên Render.
+  // Founder-local chỉ nhận Origin loopback đã được profile ép vào CORS_ORIGINS.
+  if (!isFounderLocalReadOnly()) list.push(DEFAULT_PRODUCTION_FRONTEND_URL);
   const frontend = resolveFrontendUrl();
   if (frontend) list.push(frontend);
   return list.filter((origin) => {
@@ -89,6 +96,7 @@ module.exports = {
   frontendUrl: resolveFrontendUrl(),
   /** Chuẩn hoá origin SPA; domain legacy (beppro.io.vn…) → frontend Render. */
   normalizeFrontendOrigin: (raw) => normalizeOriginUrl(raw, DEFAULT_PRODUCTION_FRONTEND_URL),
+  resolveCorsOrigins,
   defaultProductionFrontendUrl: DEFAULT_PRODUCTION_FRONTEND_URL,
   // ── Google Drive integration (module Drive) ──
   // Hỗ trợ 2 chế độ xác thực — đặt MỘT trong hai:

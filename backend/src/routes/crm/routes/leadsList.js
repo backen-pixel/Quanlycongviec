@@ -751,7 +751,10 @@ r.get('/web-dashboard-bootstrap', responseCache({ ttl: 15, scope: 'user', tags: 
       kanban: kanbanPage,
     });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(e.status || 500).json({
+      error: e.message,
+      ...(e.code ? { code: e.code } : {}),
+    });
   }
 });
 

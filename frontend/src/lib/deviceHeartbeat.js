@@ -3,6 +3,7 @@
  * Gửi POST /devices/ping định kỳ — server giữ bảng `user_devices`.
  */
 import api from './api';
+import { isFounderLocalReadOnlyActive } from '../business-os/founderLocalReadOnly';
 
 const DEVICE_ID_KEY = 'crm_device_id_v1';
 const GEO_CACHE_KEY = 'crm_geo_cache_v1';
@@ -219,6 +220,7 @@ export function getCachedActivityContext() {
 }
 
 export async function sendDevicePing(opts = {}) {
+  if (isFounderLocalReadOnlyActive()) return undefined;
   const { isLogin = false, forceGeo = false } = opts;
   const ua = window.navigator?.userAgent || '';
   let geoMeta = {};

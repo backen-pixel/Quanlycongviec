@@ -16,6 +16,7 @@ const { fetchAllPages } = require('./supabaseFetchAll');
 const { normalizeModuleRow } = require('./appModuleRegistry');
 const { buildAccountingSummary } = require('./accountingDeals');
 const { isAdminLike } = require('./adminRole');
+const { buildFounderPlatformCapabilities } = require('./founderPlatformCapabilities');
 
 const CONTRACT_VERSION = 'founder_cockpit_v1';
 const MODE = 'live_read_only';
@@ -26,6 +27,7 @@ const MODULE_STATUSES = Object.freeze([
   'UNDER RECONCILIATION',
   'NOT CONNECTED',
   'BLOCKED',
+  'SANDBOX',
   'FOUNDER DECISION REQUIRED',
 ]);
 
@@ -33,6 +35,46 @@ const PERIOD_KEYS = new Set(['week', 'month', 'quarter']);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DONE_PROJECT_STATUSES = new Set(['completed', 'done', 'cancelled']);
 const DONE_PROCUREMENT_STATUSES = new Set(['done', 'qc_pass', 'received']);
+const CONNECTOR_POLICY = Object.freeze({
+  timeout_ms: 15_000,
+  failure_threshold: 3,
+  circuit_open_ms: 30_000,
+});
+const CONNECTOR_TIMEOUT_MS = CONNECTOR_POLICY.timeout_ms;
+const CONNECTOR_FAILURE_THRESHOLD = CONNECTOR_POLICY.failure_threshold;
+const CONNECTOR_OPEN_MS = CONNECTOR_POLICY.circuit_open_ms;
+const connectorCircuitState = new Map();
+
+const FRESHNESS_STATES = Object.freeze(['FRESH', 'STALE', 'UNKNOWN', 'NOT_CONNECTED']);
+const SOURCE_FRESHNESS_SLO_MINUTES = Object.freeze({
+  crm_org_overview: 15,
+  work_unified: 60,
+  projects: 30,
+  people: 60,
+  procurement: 30,
+  accounting_summary: 1440,
+  project_approvals: 5,
+  app_module_registry: 5,
+  permissions: 5,
+  warranty_care: 30,
+});
+const MODULE_FRESHNESS_SLO_MINUTES = Object.freeze({
+  crm: 15,
+  sales: 15,
+  lead_deal: 15,
+  commercial_documents: 15,
+  projects: 30,
+  work_unified: 15,
+  procurement_purchasing: 30,
+  production: 30,
+  logistics: 30,
+  accounting: 1440,
+  warranty_care: 30,
+  people_kpi: 1440,
+  permissions: 5,
+  approvals: 5,
+  reporting: 60,
+});
 
 const DRILLDOWN_DEFINITIONS = Object.freeze([
   { key: 'crm', label: 'CRM / Lead / Deal', module_key: 'crm', href: '/crm/dashboard', contract_version: 'crm_live_v1' },
@@ -213,17 +255,39 @@ function maxTimestamp(rows, fields = ['updated_at', 'created_at']) {
   return latest == null ? null : new Date(latest).toISOString();
 }
 
-function freshness(observedAt, rows = null, fields = ['updated_at', 'created_at']) {
+function sourceFreshnessSloMinutes(source) {
+  const key = text(source);
+  if (key.startsWith('work_unified_')) return SOURCE_FRESHNESS_SLO_MINUTES.work_unified;
+  return SOURCE_FRESHNESS_SLO_MINUTES[key] || 60;
+}
+
+function freshness(
+  observedAt,
+  rows = null,
+  fields = ['source_updated_at', 'updated_at', 'decided_at', 'created_at'],
+  { source = 'unknown', state = 'FRESH', sloMinutes = sourceFreshnessSloMinutes(source) } = {},
+) {
   const sourceUpdatedAt = Array.isArray(rows) ? maxTimestamp(rows, fields) : null;
+  const observedMs = Date.parse(observedAt || '');
+  const normalizedState = FRESHNESS_STATES.includes(state) && Number.isFinite(observedMs)
+    ? state
+    : state === 'NOT_CONNECTED'
+      ? 'NOT_CONNECTED'
+      : 'UNKNOWN';
   return {
-    state: Array.isArray(rows) && rows.length === 0
-      ? 'NO RECORDS'
-      : sourceUpdatedAt
-        ? 'SOURCE TIMESTAMP AVAILABLE'
-        : 'OBSERVED',
-    as_of: sourceUpdatedAt || observedAt,
-    observed_at: observedAt,
+    dataset_id: text(source) || 'unknown',
+    source_module: text(source) || 'unknown',
+    state: normalizedState,
+    status: normalizedState,
+    as_of: Number.isFinite(observedMs) ? new Date(observedMs).toISOString() : null,
+    observed_at: Number.isFinite(observedMs) ? new Date(observedMs).toISOString() : null,
     source_updated_at: sourceUpdatedAt,
+    slo_minutes: Number.isFinite(Number(sloMinutes)) && Number(sloMinutes) > 0
+      ? Number(sloMinutes)
+      : null,
+    freshness_basis: normalizedState === 'FRESH'
+      ? 'DIRECT_READ_OBSERVED_AT'
+      : normalizedState,
   };
 }
 
@@ -249,7 +313,15 @@ function summarizeWorkRows(rows = [], now = new Date()) {
     const moduleKey = resolveModuleKey(row);
     byModule[moduleKey] = (byModule[moduleKey] || 0) + 1;
   }
-  return { total: rows.length, open, overdue, done, by_module: byModule, by_status: byStatus };
+  return {
+    total: rows.length,
+    open,
+    overdue,
+    done,
+    by_module: byModule,
+    by_status: byStatus,
+    source_updated_at: maxTimestamp(rows, ['updated_at', 'completed_at', 'created_at']),
+  };
 }
 
 function mergeWorkSummaries(entries = []) {
@@ -275,32 +347,92 @@ function mergeWorkSummaries(entries = []) {
 }
 
 function publicGap(source, companyId = null, code = 'SOURCE_UNAVAILABLE') {
+  const messages = {
+    SOURCE_SCOPE_MISMATCH: 'Nguồn trả dữ liệu ngoài phạm vi yêu cầu; dữ liệu đã bị chặn.',
+    CONNECTOR_TIMEOUT: `Nguồn ${source} quá thời gian đọc cho phép.`,
+    CONNECTOR_CIRCUIT_OPEN: `Nguồn ${source} đang tạm ngắt sau nhiều lần lỗi liên tiếp.`,
+  };
   return {
     source,
     company_id: companyId,
     code,
-    message: code === 'SOURCE_SCOPE_MISMATCH'
-      ? 'Nguồn trả dữ liệu ngoài phạm vi yêu cầu; dữ liệu đã bị chặn.'
-      : `Nguồn ${source} chưa khả dụng trong phạm vi này.`,
+    message: messages[code] || `Nguồn ${source} chưa khả dụng trong phạm vi này.`,
   };
 }
 
-async function readPerCompany(source, companyIds, reader, validate, observedAt) {
+function connectorFailureCode(error) {
+  return ['CONNECTOR_TIMEOUT', 'CONNECTOR_CIRCUIT_OPEN'].includes(error?.code)
+    ? error.code
+    : 'SOURCE_UNAVAILABLE';
+}
+
+async function protectedConnectorRead(key, reader) {
+  const now = Date.now();
+  const state = connectorCircuitState.get(key);
+  if (state?.opened_until > now) {
+    const error = new Error('Connector circuit is temporarily open.');
+    error.code = 'CONNECTOR_CIRCUIT_OPEN';
+    throw error;
+  }
+  let timer;
+  try {
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        const error = new Error('Connector read timed out.');
+        error.code = 'CONNECTOR_TIMEOUT';
+        reject(error);
+      }, CONNECTOR_TIMEOUT_MS);
+      timer.unref?.();
+    });
+    const value = await Promise.race([Promise.resolve().then(reader), timeout]);
+    connectorCircuitState.set(key, { failures: 0, opened_until: 0 });
+    return value;
+  } catch (error) {
+    const failures = (state?.failures || 0) + 1;
+    connectorCircuitState.set(key, {
+      failures,
+      opened_until: failures >= CONNECTOR_FAILURE_THRESHOLD ? now + CONNECTOR_OPEN_MS : 0,
+    });
+    throw error;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function readPerCompany(
+  source,
+  companyIds,
+  reader,
+  validate,
+  observedAt,
+  rowsForFreshness = (value) => value,
+) {
   const settled = await Promise.all(companyIds.map(async (companyId) => {
     try {
-      const value = await reader(companyId);
+      const value = await protectedConnectorRead(`${source}:${companyId}`, () => reader(companyId));
       if (validate && !validate(value, companyId)) {
         return { ok: false, company_id: companyId, scope_violation: true, gap: publicGap(source, companyId, 'SOURCE_SCOPE_MISMATCH') };
       }
       return { ok: true, company_id: companyId, value };
     } catch (error) {
-      console.warn(`[founder-cockpit/${source}] ${companyId}:`, error?.message || error);
-      return { ok: false, company_id: companyId, gap: publicGap(source, companyId) };
+      const code = connectorFailureCode(error);
+      console.warn(`[founder-cockpit/${source}/company-scope]`, code);
+      return { ok: false, company_id: companyId, gap: publicGap(source, companyId, code) };
     }
   }));
   const values = settled.filter((item) => item.ok);
   const gaps = settled.filter((item) => !item.ok).map((item) => item.gap);
   const scopeViolation = settled.some((item) => item.scope_violation);
+  const freshnessState = scopeViolation || (values.length > 0 && gaps.length > 0)
+    ? 'UNKNOWN'
+    : values.length > 0
+      ? 'FRESH'
+      : 'NOT_CONNECTED';
+  const freshnessRows = values.flatMap((item) => {
+    const rows = rowsForFreshness(item.value);
+    if (Array.isArray(rows)) return rows;
+    return rows && typeof rows === 'object' ? [rows] : [];
+  });
   return {
     source,
     ok: values.length > 0,
@@ -308,7 +440,7 @@ async function readPerCompany(source, companyIds, reader, validate, observedAt) 
     values,
     gaps,
     scope_violation: scopeViolation,
-    freshness: freshness(observedAt),
+    freshness: freshness(observedAt, freshnessRows, undefined, { source, state: freshnessState }),
     reconciliation: {
       state: scopeViolation ? 'MISMATCH' : gaps.length ? (values.length ? 'PARTIAL' : 'NOT CHECKED') : 'MATCHED',
       checked_at: observedAt,
@@ -320,7 +452,7 @@ async function readPerCompany(source, companyIds, reader, validate, observedAt) 
 
 async function safeRead(source, reader, validate, observedAt, rowsForFreshness = (value) => value) {
   try {
-    const value = await reader();
+    const value = await protectedConnectorRead(source, reader);
     const valid = !validate || validate(value);
     if (!valid) {
       return {
@@ -330,11 +462,16 @@ async function safeRead(source, reader, validate, observedAt, rowsForFreshness =
         value: null,
         gaps: [publicGap(source, null, 'SOURCE_SCOPE_MISMATCH')],
         scope_violation: true,
-        freshness: freshness(observedAt),
+        freshness: freshness(observedAt, null, undefined, { source, state: 'UNKNOWN' }),
         reconciliation: { state: 'MISMATCH', checked_at: observedAt },
       };
     }
     const rows = rowsForFreshness(value);
+    const freshnessRows = Array.isArray(rows)
+      ? rows
+      : rows && typeof rows === 'object'
+        ? [rows]
+        : null;
     return {
       source,
       ok: true,
@@ -342,19 +479,20 @@ async function safeRead(source, reader, validate, observedAt, rowsForFreshness =
       value,
       gaps: [],
       scope_violation: false,
-      freshness: freshness(observedAt, Array.isArray(rows) ? rows : null),
+      freshness: freshness(observedAt, freshnessRows, undefined, { source, state: 'FRESH' }),
       reconciliation: { state: 'MATCHED', checked_at: observedAt },
     };
   } catch (error) {
-    console.warn(`[founder-cockpit/${source}]`, error?.message || error);
+    const code = connectorFailureCode(error);
+    console.warn(`[founder-cockpit/${source}]`, code);
     return {
       source,
       ok: false,
       complete: false,
       value: null,
-      gaps: [publicGap(source)],
+      gaps: [publicGap(source, null, code)],
       scope_violation: false,
-      freshness: freshness(observedAt),
+      freshness: freshness(observedAt, null, undefined, { source, state: 'NOT_CONNECTED' }),
       reconciliation: { state: 'NOT CHECKED', checked_at: observedAt },
     };
   }
@@ -566,20 +704,51 @@ function approvalMetrics(rows = []) {
   };
 }
 
-function combineFreshness(packets, observedAt) {
+function combineFreshness(
+  packets,
+  observedAt,
+  { datasetId = 'aggregate', sloMinutes = null } = {},
+) {
+  const states = packets.map((packet) => (
+    FRESHNESS_STATES.includes(packet?.freshness?.state) ? packet.freshness.state : 'UNKNOWN'
+  ));
+  const statePriority = { FRESH: 0, STALE: 1, UNKNOWN: 2, NOT_CONNECTED: 3 };
+  const state = states.reduce((worst, current) => (
+    (statePriority[current] ?? statePriority.UNKNOWN) > (statePriority[worst] ?? statePriority.UNKNOWN)
+      ? current
+      : worst
+  ), 'FRESH');
   const sourceUpdatedAt = maxTimestamp(
     packets.map((packet) => ({ updated_at: packet?.freshness?.source_updated_at })).filter((row) => row.updated_at),
   );
+  const packetSlos = packets
+    .map((packet) => Number(packet?.freshness?.slo_minutes))
+    .filter((value) => Number.isFinite(value) && value > 0);
+  const resolvedSlo = Number.isFinite(Number(sloMinutes)) && Number(sloMinutes) > 0
+    ? Number(sloMinutes)
+    : packetSlos.length
+      ? Math.min(...packetSlos)
+      : null;
+  const normalizedObservedAt = Number.isFinite(Date.parse(observedAt || ''))
+    ? new Date(Date.parse(observedAt)).toISOString()
+    : null;
   return {
-    state: sourceUpdatedAt ? 'SOURCE TIMESTAMP AVAILABLE' : 'OBSERVED',
-    as_of: sourceUpdatedAt || observedAt,
-    observed_at: observedAt,
+    dataset_id: datasetId,
+    source_module: packets.map((packet) => packet?.source).filter(Boolean).join('+') || datasetId,
+    state,
+    status: state,
+    as_of: normalizedObservedAt,
+    observed_at: normalizedObservedAt,
     source_updated_at: sourceUpdatedAt,
+    slo_minutes: resolvedSlo,
+    freshness_basis: state === 'FRESH' ? 'DIRECT_READ_OBSERVED_AT' : state,
     sources: packets.map((packet) => ({
+      dataset_id: packet?.freshness?.dataset_id || packet.source,
       source: packet.source,
       state: packet.freshness?.state || 'UNKNOWN',
       observed_at: packet.freshness?.observed_at || observedAt,
       source_updated_at: packet.freshness?.source_updated_at || null,
+      slo_minutes: packet.freshness?.slo_minutes ?? null,
     })),
   };
 }
@@ -701,14 +870,32 @@ function moduleActivationCoverage(definition, registryPacket, scope) {
   };
 }
 
+function scopedFounderHref(href, companyScope) {
+  const raw = String(href || '').trim();
+  const scope = String(companyScope || '').trim().toLowerCase();
+  if (!raw.startsWith('/') || raw.startsWith('//') || (!isUuid(scope) && scope !== 'all')) return '';
+  const target = new URL(raw, 'http://founder-local.invalid');
+  const scopedParams = new URLSearchParams(
+    [...target.searchParams.entries()].filter(([key]) => key.toLowerCase() !== 'company_id'),
+  );
+  scopedParams.set('company_id', scope);
+  target.search = scopedParams.toString();
+  return `${target.pathname}${target.search}${target.hash}`;
+}
+
 function createDrilldowns(moduleByKey, scope) {
-  const suffix = scope.company_id ? `?company_id=${encodeURIComponent(scope.company_id)}` : '';
+  const companyScope = scope.company_id || 'all';
   return DRILLDOWN_DEFINITIONS.map((item) => {
     const related = [...moduleByKey.values()].filter((module) => module.drilldown?.key === item.key);
     return {
       ...item,
-      href: `${item.href}${suffix}`,
-      enabled: !related.length || related.some((module) => !['NOT CONNECTED', 'BLOCKED'].includes(module.status)),
+      href: scopedFounderHref(item.href, companyScope),
+      enabled: item.key === 'crm'
+        && Boolean(scope.company_id)
+        && (!related.length || related.some((module) => !['NOT CONNECTED', 'BLOCKED'].includes(module.status))),
+      read_only: true,
+      read_only_contract: 'founder_local_read_only_v1',
+      write_capability: 'DISABLED_IN_FOUNDER_LOCAL',
     };
   });
 }
@@ -744,6 +931,114 @@ function moduleMetrics(key, metrics) {
     },
   };
   return map[key] ?? null;
+}
+
+const SIGNAL_SOURCE_BY_MODULE = Object.freeze({
+  crm: ['CRM', 'orgOverviewReportAi', 'crm_org_overview.summary'],
+  sales: ['Sales', 'orgOverviewReportAi', 'crm_org_overview.summary'],
+  lead_deal: ['CRM', 'orgOverviewReportAi', 'crm_org_overview.summary'],
+  commercial_documents: ['Accounting', 'accountingDeals', 'accounting_summary'],
+  projects: ['Project', 'founderCockpitReadModel', 'projects'],
+  work_unified: ['Work', 'unifiedTasksQuery', 'unified_tasks_v'],
+  procurement_purchasing: ['Procurement', 'founderCockpitReadModel', 'purchase_requests'],
+  production: ['Production', 'founderCockpitReadModel', 'projects.production'],
+  logistics: ['Logistics', 'founderCockpitReadModel', 'projects.logistics'],
+  accounting: ['Accounting', 'accountingDeals', 'accounting_summary'],
+  warranty_care: ['Warranty / Care', 'not_connected', 'not_connected'],
+  people_kpi: ['People / KPI', 'founderCockpitReadModel', 'users+crm_kpi_ledger'],
+  permissions: ['Permission', 'auth+newPermission+tenantScope', 'authenticated_scope'],
+  approvals: ['Approval', 'founderCockpitReadModel', 'project_approvals'],
+  reporting: ['Reporting', 'founderCockpitReadModel', 'cross_domain_source_packets'],
+});
+
+function signalDisplayName(moduleLabel, metricKey) {
+  return `${moduleLabel} · ${String(metricKey).replaceAll('_', ' ')}`;
+}
+
+function buildSignalHub({ modules, scope, generatedAt }) {
+  const contracts = [];
+  for (const module of modules) {
+    const [ownerDomain, sourceService, sourceObject] = SIGNAL_SOURCE_BY_MODULE[module.key]
+      || [module.label, 'founderCockpitReadModel', 'aggregate'];
+    const metrics = module.metrics && typeof module.metrics === 'object' ? module.metrics : {};
+    for (const [metricKey, currentValue] of Object.entries(metrics)) {
+      if (currentValue && typeof currentValue === 'object') continue;
+      contracts.push({
+        signal_id: `${module.key}.${metricKey}`,
+        display_name: signalDisplayName(module.label, metricKey),
+        owner_domain: ownerDomain,
+        source_service_read_model: sourceService,
+        source_object_field: `${sourceObject}.${metricKey}`,
+        source_record_id: null,
+        source_record_id_semantics: 'SCOPED_AGGREGATE_NOT_SINGLE_RECORD',
+        ecosystem_scope: scope.ecosystem_id,
+        company_scope: [...scope.company_ids],
+        user_role_scope: ['admin'],
+        query_filter_rule: 'existing tenant/company scope plus selected planning period',
+        freshness_slo_minutes: module.freshness?.slo_minutes ?? null,
+        freshness_target_seconds: Number.isFinite(Number(module.freshness?.slo_minutes))
+          ? Number(module.freshness.slo_minutes) * 60
+          : null,
+        freshness: module.freshness,
+        reconciliation_rule: 'compare scoped aggregate with the existing source service/read model',
+        reconciliation: module.reconciliation,
+        quality_state: module.activation_status === 'LIVE'
+          ? 'VERIFIED'
+          : module.activation_status === 'NOT CONNECTED'
+            ? 'SOURCE UNAVAILABLE'
+            : 'VERIFIED WITH DISCLOSED GAP',
+        failure_state: module.activation_status === 'NOT CONNECTED'
+          ? 'CHƯA ĐỦ DỮ LIỆU'
+          : 'DEGRADE MODULE AND DISCLOSE FRESHNESS/GAP',
+        drilldown: module.drilldown,
+        write_capability: 'DISABLED',
+        canonical_status: 'NON_CANONICAL MANAGEMENT VIEW',
+        provisional: false,
+        current_value: currentValue,
+        as_of: module.freshness?.as_of || generatedAt,
+      });
+    }
+  }
+  return {
+    contract_version: 'founder_signal_hub_v1',
+    mode: 'read_projection',
+    canonical: false,
+    contracts,
+  };
+}
+
+function buildCorrectionCenter(decisions = []) {
+  return {
+    contract_version: 'founder_correction_evolution_v1',
+    mode: 'read_projection_and_drilldown',
+    canonical: false,
+    rule_change_request: {
+      enabled: false,
+      status: 'DISABLED',
+      reason: 'Canonical Business Rule changes remain outside Founder-local authority.',
+    },
+    items: decisions.map((decision) => ({
+      issue_id: decision.id,
+      issue: decision.title,
+      root_cause: 'CHƯA ĐỦ DỮ LIỆU — xác minh tại module nguồn',
+      corrective_action: 'REVIEW_IN_EXISTING_OPERATIONAL_MODULE',
+      owner: null,
+      owner_state: 'CHƯA ĐỦ DỮ LIỆU',
+      deadline: null,
+      deadline_state: 'CHƯA ĐỦ DỮ LIỆU',
+      status: 'OPEN SIGNAL',
+      drilldown: {
+        href: decision.href,
+        label: 'Mở bằng chứng nguồn',
+        enabled: false,
+        read_only: true,
+        read_only_contract: 'founder_local_read_only_v1',
+        write_capability: 'DISABLED_IN_FOUNDER_LOCAL',
+      },
+      protected_write_enabled: false,
+      provisional: decision.provisional_advisory === true,
+    })),
+  };
 }
 
 function buildDecisionItems({ sourcePackets, workload, projects, procurement, approvals }) {
@@ -795,6 +1090,69 @@ function buildDecisionItems({ sourcePackets, workload, projects, procurement, ap
   return items;
 }
 
+function advisoryNumber(contract, key) {
+  const value = contract?.configuration?.[key];
+  return Number.isFinite(Number(value)) && value !== null && value !== '' ? Number(value) : null;
+}
+
+function buildProvisionalAdvisories({ advisoryConfig, workload, projects, procurement, loadPerActivePerson }) {
+  if (!advisoryConfig?.enabled || advisoryConfig?.operational_effect !== false || advisoryConfig?.canonical !== false) {
+    return [];
+  }
+  const definitions = [
+    {
+      id: 'provisional-capacity-load',
+      key: 'capacity_load_warning_per_active_person',
+      value: loadPerActivePerson,
+      title: 'Tải công việc vượt ngưỡng advisory tạm',
+      href: '/management/work-unified',
+    },
+    {
+      id: 'provisional-overdue-work',
+      key: 'overdue_work_warning_count',
+      value: workload.overdue,
+      title: 'Công việc quá hạn chạm ngưỡng advisory tạm',
+      href: '/management/work-unified',
+    },
+    {
+      id: 'provisional-overdue-project',
+      key: 'overdue_project_warning_count',
+      value: projects.overdue_projects,
+      title: 'Project quá hạn chạm ngưỡng advisory tạm',
+      href: '/management/production-overview',
+    },
+    {
+      id: 'provisional-delayed-procurement',
+      key: 'delayed_procurement_warning_count',
+      value: procurement.delayed_requests,
+      title: 'Mua hàng trễ chạm ngưỡng advisory tạm',
+      href: '/management/purchasing-overview',
+    },
+  ];
+  return definitions.flatMap((definition) => {
+    const threshold = advisoryNumber(advisoryConfig, definition.key);
+    if (threshold == null || definition.value == null || Number(definition.value) < threshold) return [];
+    return [{
+      id: definition.id,
+      severity: 'medium',
+      title: definition.title,
+      reason: 'Tín hiệu chỉ phục vụ cảnh báo trực quan; không phải Business Rule chuẩn và không tự động thay đổi vận hành.',
+      evidence: [{
+        source: 'founder_advisory_configuration',
+        metric: definition.key,
+        value: definition.value,
+        threshold,
+        configuration_version: advisoryConfig.current_version,
+      }],
+      href: definition.href,
+      requires_founder_decision: false,
+      provisional_advisory: true,
+      canonical: false,
+      operational_effect: false,
+    }];
+  });
+}
+
 async function loadFounderCockpit({
   scope,
   user,
@@ -803,6 +1161,8 @@ async function loadFounderCockpit({
   now = new Date(),
   readers = defaultReaders,
   gateContext = {},
+  advisoryConfig = null,
+  companyAdvisoryConfigs = {},
 }) {
   const generatedAt = now.toISOString();
   const selectedPeriod = buildPeriodRange(period, periodAnchor, now);
@@ -864,7 +1224,7 @@ async function loadFounderCockpit({
   const projectIds = projectRows.map((row) => row.id).filter(Boolean).map(String);
   const projectIdSet = new Set(projectIds);
   const approvalsPacket = projectsPacket.scope_violation
-    ? { source: 'project_approvals', ok: false, complete: false, value: [], gaps: [publicGap('project_approvals')], scope_violation: true, freshness: freshness(generatedAt), reconciliation: { state: 'MISMATCH', checked_at: generatedAt } }
+    ? { source: 'project_approvals', ok: false, complete: false, value: [], gaps: [publicGap('project_approvals')], scope_violation: true, freshness: freshness(generatedAt, null, undefined, { source: 'project_approvals', state: 'UNKNOWN' }), reconciliation: { state: 'MISMATCH', checked_at: generatedAt } }
     : await safeRead(
       'project_approvals',
       () => readers.approvals({ projectIds, companyIds, user, now }),
@@ -884,12 +1244,12 @@ async function loadFounderCockpit({
     registry: registryPacket,
     permissions: {
       source: 'auth+reports.view+tenant_scope', ok: true, complete: true, value: true, gaps: [], scope_violation: false,
-      freshness: freshness(generatedAt), reconciliation: { state: 'MATCHED', checked_at: generatedAt },
+      freshness: freshness(generatedAt, null, undefined, { source: 'permissions', state: 'FRESH' }), reconciliation: { state: 'MATCHED', checked_at: generatedAt },
     },
     care: {
       source: 'warranty_care', ok: false, complete: false, value: null,
       gaps: [{ source: 'warranty_care', company_id: scope.company_id, code: 'NO_APPROVED_READ_MODEL', message: 'Chưa có read model tổng hợp Warranty / Care được phê duyệt.' }],
-      scope_violation: false, freshness: freshness(generatedAt), reconciliation: { state: 'NOT CHECKED', checked_at: generatedAt },
+      scope_violation: false, freshness: freshness(generatedAt, null, undefined, { source: 'warranty_care', state: 'NOT_CONNECTED' }), reconciliation: { state: 'NOT CHECKED', checked_at: generatedAt },
     },
   };
 
@@ -971,7 +1331,10 @@ async function loadFounderCockpit({
       status,
       activation_status: status,
       activation,
-      freshness: combineFreshness(packets, generatedAt),
+      freshness: combineFreshness(packets, generatedAt, {
+        datasetId: definition.key,
+        sloMinutes: MODULE_FRESHNESS_SLO_MINUTES[definition.key],
+      }),
       reconciliation: combineReconciliation(packets, generatedAt),
       gates,
       data_gaps: dataGaps,
@@ -986,7 +1349,26 @@ async function loadFounderCockpit({
     if (module.drilldown) module.drilldown = finalDrilldownByKey.get(module.drilldown.key) || module.drilldown;
   });
 
-  const decisions = buildDecisionItems({ sourcePackets, workload, projects, procurement, approvals });
+  const loadPerActivePerson = activePeople > 0 && workload.open != null
+    ? Number((workload.open / activePeople).toFixed(2))
+    : null;
+  const provisionalTarget = advisoryNumber(advisoryConfig, 'capacity_load_warning_per_active_person');
+  const provisionalCapacityGap = provisionalTarget != null && loadPerActivePerson != null
+    ? Number(Math.max(0, loadPerActivePerson - provisionalTarget).toFixed(2))
+    : null;
+  const decisions = [
+    ...buildDecisionItems({ sourcePackets, workload, projects, procurement, approvals }),
+    ...buildProvisionalAdvisories({
+      advisoryConfig,
+      workload,
+      projects,
+      procurement,
+      loadPerActivePerson,
+    }),
+  ].map((decision) => ({
+    ...decision,
+    href: scopedFounderHref(decision.href, scope.company_id || 'all'),
+  }));
   const systems = SYSTEM_DEFINITIONS.map((definition) => {
     const systemModules = definition.module_keys.map((key) => moduleByKey.get(key)).filter(Boolean);
     const systemDrilldowns = [...new Map(systemModules
@@ -1012,16 +1394,24 @@ async function loadFounderCockpit({
       metrics: packet.ok ? mergeWorkSummaries(packet.values) : {
         total: null, open: null, overdue: null, done: null, by_module: {}, by_status: {},
       },
+      freshness: combineFreshness([packet], generatedAt, {
+        datasetId: `planning_${key}`,
+        sloMinutes: SOURCE_FRESHNESS_SLO_MINUTES.work_unified,
+      }),
       data_gaps: packet.gaps || [],
     };
   });
 
-  const loadPerActivePerson = activePeople > 0 && workload.open != null
-    ? Number((workload.open / activePeople).toFixed(2))
-    : null;
   const capacityGaps = activePeople == null
     ? [publicGap('people')]
-    : [{ source: 'capacity_targets', company_id: scope.company_id, code: 'TARGET_NOT_CONFIGURED', message: 'Chưa có định mức năng lực được phê duyệt; không suy diễn công suất tối đa.' }];
+    : provisionalTarget == null
+      ? [{ source: 'capacity_targets', company_id: scope.company_id, code: 'TARGET_NOT_CONFIGURED', message: 'Chưa có định mức năng lực được phê duyệt; không suy diễn công suất tối đa.' }]
+      : [{
+        source: 'founder_advisory_configuration',
+        company_id: scope.company_id,
+        code: 'PROVISIONAL_ADVISORY_ONLY',
+        message: 'Đang dùng ngưỡng cảnh báo tạm, không canonical và không có tác động vận hành tự động.',
+      }];
 
   const projectsByCompany = new Map(companyIds.map((id) => [id, projectRows.filter((row) => text(row.company_id) === id)]));
   const peopleByCompany = new Map(companyIds.map((id) => [id, peoplePacket.ok ? peoplePacket.value.filter((row) => text(row.company_id) === id) : []]));
@@ -1049,11 +1439,19 @@ async function loadFounderCockpit({
     const load = companyPeople > 0 && companyWork?.open != null
       ? Number((companyWork.open / companyPeople).toFixed(2))
       : null;
+    const companyAdvisory = companyAdvisoryConfigs?.[companyId] || null;
+    const companyTarget = advisoryNumber(companyAdvisory, 'capacity_load_warning_per_active_person');
+    const companyGap = companyTarget != null && load != null
+      ? Number(Math.max(0, load - companyTarget).toFixed(2))
+      : null;
     const complete = projectsPacket.ok && peoplePacket.ok && selectedWorkloadPacket.complete;
     return {
       company: companyById.get(companyId),
       status: complete ? 'LIVE WITH DATA GAPS' : (projectsPacket.ok || peoplePacket.ok || companyWork ? 'LIVE WITH DATA GAPS' : 'NOT CONNECTED'),
-      freshness: combineFreshness([projectsPacket, peoplePacket, selectedWorkloadPacket], generatedAt),
+      freshness: combineFreshness([projectsPacket, peoplePacket, selectedWorkloadPacket], generatedAt, {
+        datasetId: `manufacturing_capacity_${companyId}`,
+        sloMinutes: 60,
+      }),
       reconciliation: { state: complete ? 'MATCHED' : 'PARTIAL', checked_at: generatedAt, company_id: companyId },
       capacity: {
         active_projects: companyProjects.active_projects,
@@ -1062,13 +1460,97 @@ async function loadFounderCockpit({
         open_work: companyWork?.open ?? null,
         active_people: companyPeople,
         load_per_active_person: load,
-        capacity_target: null,
-        capacity_gap: null,
+        capacity_target: companyTarget,
+        capacity_gap: companyGap,
+        target_contract: companyTarget == null ? null : {
+          status: 'PROVISIONAL ADVISORY CONFIGURATION',
+          version: companyAdvisory.current_version,
+          canonical: false,
+          operational_effect: false,
+        },
       },
-      data_gaps: [{ source: 'capacity_targets', company_id: companyId, code: 'TARGET_NOT_CONFIGURED', message: 'Chưa có định mức năng lực được phê duyệt.' }],
+      data_gaps: companyTarget == null
+        ? [{ source: 'capacity_targets', company_id: companyId, code: 'TARGET_NOT_CONFIGURED', message: 'Chưa có định mức năng lực được phê duyệt.' }]
+        : [{ source: 'founder_advisory_configuration', company_id: companyId, code: 'PROVISIONAL_ADVISORY_ONLY', message: 'Ngưỡng tạm chỉ tạo cảnh báo trực quan.' }],
       drilldown: { ...finalDrilldownByKey.get('production'), href: `/sx/dashboard?company_id=${encodeURIComponent(companyId)}` },
     };
   });
+
+  const planning = {
+    selected_period: selectedPeriod,
+    horizons: horizonItems,
+    forecast: {
+      active_projects: projects.active_projects,
+      projects_due: projects.projects_due,
+      open_work: workload.open,
+      overdue_work: workload.overdue,
+      capacity_gap: null,
+    },
+  };
+  const capacity = {
+    metric_contract: { version: 'founder_capacity_v1', unit: 'open task per active user', source: 'unified_tasks_v + users + projects' },
+    freshness: combineFreshness([projectsPacket, peoplePacket, selectedWorkloadPacket], generatedAt, {
+      datasetId: 'capacity_workload',
+      sloMinutes: 60,
+    }),
+    active_people: activePeople,
+    open_work: workload.open,
+    due_in_period: workload.total,
+    overdue_work: workload.overdue,
+    load_per_active_person: loadPerActivePerson,
+    utilization_status: provisionalTarget == null
+      ? 'MEASURED WITHOUT APPROVED TARGET'
+      : provisionalCapacityGap > 0
+        ? 'ABOVE PROVISIONAL ADVISORY THRESHOLD'
+        : 'WITHIN PROVISIONAL ADVISORY THRESHOLD',
+    capacity_target: provisionalTarget,
+    capacity_gap: provisionalCapacityGap,
+    target_contract: provisionalTarget == null ? null : {
+      status: 'PROVISIONAL ADVISORY CONFIGURATION',
+      version: advisoryConfig.current_version,
+      canonical: false,
+      operational_effect: false,
+    },
+    data_gaps: capacityGaps,
+    drilldown: finalDrilldownByKey.get('projects'),
+  };
+  const configurationCenter = {
+    read_only: true,
+    canonical_configuration_read_only: true,
+    source: 'builtin route registry + app_module_registry',
+    advisory_configuration: advisoryConfig,
+    modules: [
+      ...modules.map((module) => ({
+        key: module.key,
+        label: module.label,
+        enabled: module.activation.enabled,
+        company_ids: module.activation.company_ids,
+        status: module.status,
+        basis: module.activation.basis,
+      })),
+      ...registryEntries.filter((entry) => !modules.some((module) => module.key === entry.key)),
+    ],
+    permissions: {
+      can_view: true,
+      can_change: isAdminLike(user) && advisoryConfig?.enabled === true,
+      required_permissions: ['reports:view', 'settings:edit'],
+      changes_via: advisoryConfig?.enabled === true
+        ? 'founder_advisory_configuration_service'
+        : 'disabled',
+    },
+    data_gaps: registryPacket.gaps,
+    drilldown: finalDrilldownByKey.get('configuration'),
+  };
+  const platformCapabilities = buildFounderPlatformCapabilities({
+    modules,
+    planning,
+    capacity,
+    decisions,
+    configurationCenter,
+    generatedAt,
+  });
+  const signalHub = buildSignalHub({ modules, scope, generatedAt });
+  const correctionCenter = buildCorrectionCenter(decisions);
 
   return {
     contract_version: CONTRACT_VERSION,
@@ -1078,17 +1560,7 @@ async function loadFounderCockpit({
     period: selectedPeriod,
     modules,
     systems,
-    planning: {
-      selected_period: selectedPeriod,
-      horizons: horizonItems,
-      forecast: {
-        active_projects: projects.active_projects,
-        projects_due: projects.projects_due,
-        open_work: workload.open,
-        overdue_work: workload.overdue,
-        capacity_gap: null,
-      },
-    },
+    planning,
     workload: {
       metric_contract: { version: 'unified_workload_v1', unit: 'task', source: 'unified_tasks_v via unifiedTasksQuery' },
       ...workload,
@@ -1097,47 +1569,17 @@ async function loadFounderCockpit({
       data_gaps: selectedWorkloadPacket.gaps,
       drilldown: finalDrilldownByKey.get('projects'),
     },
-    capacity: {
-      metric_contract: { version: 'founder_capacity_v1', unit: 'open task per active user', source: 'unified_tasks_v + users + projects' },
-      active_people: activePeople,
-      open_work: workload.open,
-      due_in_period: workload.total,
-      overdue_work: workload.overdue,
-      load_per_active_person: loadPerActivePerson,
-      utilization_status: 'MEASURED WITHOUT APPROVED TARGET',
-      capacity_target: null,
-      capacity_gap: null,
-      data_gaps: capacityGaps,
-      drilldown: finalDrilldownByKey.get('projects'),
-    },
+    capacity,
     manufacturing_companies: manufacturingCompanies,
     decision_center: {
       contract: { version: 'founder_decision_read_v1', mode: 'read_recommend' },
       items: decisions,
       drilldown: finalDrilldownByKey.get('approvals'),
     },
-    configuration_center: {
-      read_only: true,
-      source: 'builtin route registry + app_module_registry',
-      modules: [
-        ...modules.map((module) => ({
-          key: module.key,
-          label: module.label,
-          enabled: module.activation.enabled,
-          company_ids: module.activation.company_ids,
-          status: module.status,
-          basis: module.activation.basis,
-        })),
-        ...registryEntries.filter((entry) => !modules.some((module) => module.key === entry.key)),
-      ],
-      permissions: {
-        can_view: true,
-        can_change: isAdminLike(user),
-        changes_via: 'existing_application_services_in_configuration_drilldown',
-      },
-      data_gaps: registryPacket.gaps,
-      drilldown: finalDrilldownByKey.get('configuration'),
-    },
+    configuration_center: configurationCenter,
+    platform_capabilities: platformCapabilities,
+    signal_hub: signalHub,
+    correction_center: correctionCenter,
     drilldowns,
     protections: {
       write_enabled: false,
@@ -1145,6 +1587,8 @@ async function loadFounderCockpit({
       synthetic_fallback_enabled: false,
       external_send_enabled: false,
       actions: [],
+      provisional_configuration_write_enabled: advisoryConfig?.enabled === true,
+      provisional_configuration_operational_effect: false,
     },
   };
 }
@@ -1153,15 +1597,24 @@ module.exports = {
   CONTRACT_VERSION,
   MODE,
   MODULE_STATUSES,
+  FRESHNESS_STATES,
+  SOURCE_FRESHNESS_SLO_MINUTES,
+  MODULE_FRESHNESS_SLO_MINUTES,
   PERIOD_KEYS,
   MODULE_DEFINITIONS,
   SYSTEM_DEFINITIONS,
   DRILLDOWN_DEFINITIONS,
+  CONNECTOR_POLICY,
   FounderCockpitError,
   buildPeriodRange,
   buildPlanningRanges,
   summarizeWorkRows,
   mergeWorkSummaries,
+  freshness,
+  combineFreshness,
+  buildSignalHub,
+  buildCorrectionCenter,
+  scopedFounderHref,
   resolveFounderCockpitScope,
   loadFounderCockpit,
   defaultReaders,

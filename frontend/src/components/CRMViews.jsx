@@ -33,6 +33,7 @@ import {
 } from 'lucide-react';
 import WorkshopPipelineKanbanScroll from './WorkshopPipelineKanbanScroll';
 import DashboardMonthCalendar, { toLocalDateKey, formatCalendarDeadlineTime } from './dashboard/DashboardMonthCalendar';
+import { presentCrmPostDerivedMetric } from '../business-os/crmReadOnlyTruth';
 
 function formatVND(v) {
   if (!v) return '0đ';
@@ -792,6 +793,7 @@ export function DeadlineView({
   deadlineConfig,
   bucketCounts,
   bucketCountsLoading = false,
+  bucketCountsIncomplete = false,
   bucketPageState,
   onLoadBuckets,
   onOpenSettings,
@@ -907,6 +909,11 @@ export function DeadlineView({
 
   return (
     <div className="space-y-3">
+      {bucketCountsIncomplete && !bucketCountsLoading ? (
+        <div role="status" className="mx-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-5 text-amber-900">
+          Founder-local chưa có tổng theo cột. Dấu “≥” chỉ số thẻ đã tải; “—” nghĩa là chưa có bằng chứng đã tải, không phải bằng 0.
+        </div>
+      ) : null}
       {onOpenSettings && (
         <div className="flex items-center justify-end px-2">
           <button
@@ -933,9 +940,17 @@ export function DeadlineView({
             ? Number(bucketCounts[key])
             : null;
           const loadedCount = list.length;
+          const partialCount = presentCrmPostDerivedMetric({
+            founderLocal: bucketCountsIncomplete,
+            exactValue: exactCount,
+            partialValue: loadedCount,
+            partialEvidenceCount: loadedCount,
+          });
           const displayCount = exactCount != null
             ? (loadedCount < exactCount ? `${loadedCount}/${exactCount}` : exactCount)
-            : (bucketCountsLoading ? '…' : (loadedCount || '—'));
+            : (bucketCountsLoading
+              ? '…'
+              : (bucketCountsIncomplete ? partialCount.displayValue : (loadedCount || '—')));
           const pageState = bucketPageState?.[key] || {};
           const columnItemIds = list.map((x) => x.id);
           const allInColumnSelected =
@@ -954,8 +969,16 @@ export function DeadlineView({
                 ? (loadedCount < exactCount
                   ? `Đã tải ${loadedCount}/${exactCount} — cuộn xuống hoặc bấm Tải thêm`
                   : `${exactCount} deal`)
-                : undefined}
-              subtitle={`Giá trị: ${formatVND(totalValue)}`}
+                : (bucketCountsIncomplete
+                  ? (partialCount.hasEvidence
+                    ? `Ít nhất ${loadedCount} thẻ đã tải; tổng đầy đủ chưa được xác minh`
+                    : 'Chưa có bằng chứng đã tải; không được hiểu là 0')
+                  : undefined)}
+              subtitle={bucketCountsIncomplete
+                ? (loadedCount > 0
+                  ? `Giá trị thẻ đã tải: ${formatVND(totalValue)} · chưa đủ`
+                  : 'Giá trị thẻ đã tải: —')
+                : `Giá trị: ${formatVND(totalValue)}`}
               headerExtras={
                 mergePick && onToggleSelectAllInColumn && list.length > 0 ? (
                   <button
