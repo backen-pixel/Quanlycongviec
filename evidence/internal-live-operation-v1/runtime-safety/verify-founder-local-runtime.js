@@ -10,9 +10,15 @@ const {
 const {
   assertFounderLocalProcessBinding,
 } = require('../../../backend/src/config/founderLocalProcessBinding');
+const {
+  awaitFounderCockpitReady,
+  closeBrowserResources,
+  confineProcessTempDirectory,
+  removeStaleAcceptanceProfiles,
+} = require('./browser-runtime-readiness');
 
 const repositoryDir = path.resolve(__dirname, '..', '..', '..');
-const outputDir = path.join(__dirname, 'runtime');
+const outputDir = path.join(__dirname, 'runtime', 'candidates', 'c3-r1');
 const outputFile = path.join(outputDir, 'runtime-acceptance-summary.json');
 const browserOutputFile = path.join(outputDir, 'browser-runtime-verification.json');
 const staticVerificationFile = path.join(outputDir, 'static-verification.json');
@@ -150,22 +156,6 @@ function readStaticDistBinding(candidate, frontendDist) {
   return { frontend_dist_sha256: frontendDist.sha256 };
 }
 
-function removeStaleAcceptanceProfiles(browserRoot) {
-  const root = path.resolve(browserRoot);
-  fs.mkdirSync(root, { recursive: true });
-  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
-    if (!/^acceptance-[A-Za-z0-9._-]+$/.test(entry.name)) continue;
-    const target = path.resolve(root, entry.name);
-    if (path.dirname(target) !== root || !target.startsWith(`${root}${path.sep}`)) {
-      const error = new Error('FOUNDER_LOCAL_BROWSER_PROFILE_PATH_INVALID');
-      error.code = 'FOUNDER_LOCAL_BROWSER_PROFILE_PATH_INVALID';
-      throw error;
-    }
-    fs.rmSync(target, { recursive: entry.isDirectory(), force: true });
-  }
-  return true;
-}
-
 function browserExecutable() {
   const explicit = String(process.env.FOUNDER_LOCAL_BROWSER_EXECUTABLE || '').trim();
   const candidates = explicit ? [explicit] : [
@@ -197,6 +187,7 @@ async function verifyBrowserRuntime({ token, user, candidate }) {
       crm_partial_totals_disclosed: false,
       ephemeral_browser_context: false,
       stale_acceptance_profiles_removed: false,
+      parent_temp_confined: false,
       unapproved_ui_route_denied: false,
       no_write_observed: false,
       secrets_recorded: false,
@@ -205,6 +196,8 @@ async function verifyBrowserRuntime({ token, user, candidate }) {
   const executablePath = browserExecutable();
   const browserRoot = path.join(repositoryDir, 'backend', '.runtime', 'founder-local-v1', 'browser');
   let staleProfilesRemoved = false;
+  let parentTempConfined = false;
+  let restoreProcessTemp = () => {};
   let browser;
   let context;
   const externalOrigins = new Set();
@@ -215,7 +208,13 @@ async function verifyBrowserRuntime({ token, user, candidate }) {
       error.code = 'FOUNDER_LOCAL_BROWSER_NOT_FOUND';
       throw error;
     }
-    staleProfilesRemoved = removeStaleAcceptanceProfiles(browserRoot);
+    restoreProcessTemp = confineProcessTempDirectory(browserRoot, {
+      allowedRoot: repositoryDir,
+    });
+    parentTempConfined = true;
+    staleProfilesRemoved = removeStaleAcceptanceProfiles(browserRoot, {
+      allowedRoot: repositoryDir,
+    });
     const { chromium } = require(path.join(repositoryDir, 'backend', 'node_modules', 'playwright'));
     let scopeCompanyId = String(user?.company_id || '').trim();
     if (!scopeCompanyId) {
@@ -287,22 +286,16 @@ async function verifyBrowserRuntime({ token, user, candidate }) {
     const cockpitUrl = new URL('/business-os', baseUrl);
     cockpitUrl.searchParams.set('ecosystem_id', String(user?.tenant_id || ''));
     cockpitUrl.searchParams.set('company_id', scopeCompanyId);
-    await page.goto(cockpitUrl.toString(), { waitUntil: 'domcontentloaded', timeout: 60_000 });
-    await page.locator('[data-testid="business-os-root"]').waitFor({ state: 'visible', timeout: 60_000 });
-    const [systemCount, capabilityCount, configurationCount, signalHubCount] = await Promise.all([
-      page.locator('[data-testid="business-os-system"]').count(),
-      page.locator('[data-testid="business-os-capability"]').count(),
-      page.locator('[data-testid="founder-configuration"]').count(),
-      page.locator('[data-testid="signal-hub"]').count(),
-    ]);
+    const cockpitReadiness = await awaitFounderCockpitReady({
+      page,
+      cockpitUrl: cockpitUrl.toString(),
+      baseUrl,
+      ecosystemId: String(user?.tenant_id || ''),
+      companyId: scopeCompanyId,
+    });
     if (externalOrigins.size || writeMethods.size) {
       const error = new Error('FOUNDER_LOCAL_BROWSER_NETWORK_BOUNDARY_FAILED');
       error.code = 'FOUNDER_LOCAL_BROWSER_NETWORK_BOUNDARY_FAILED';
-      throw error;
-    }
-    if (systemCount !== 6 || capabilityCount !== 19 || configurationCount !== 1 || signalHubCount !== 1) {
-      const error = new Error('FOUNDER_LOCAL_BROWSER_CONTRACT_NOT_RENDERED');
-      error.code = 'FOUNDER_LOCAL_BROWSER_CONTRACT_NOT_RENDERED';
       throw error;
     }
     const crmLink = page.locator(`a[href^="/crm/dashboard?company_id=${scopeCompanyId}"]`).first();
@@ -314,11 +307,15 @@ async function verifyBrowserRuntime({ token, user, candidate }) {
     const crmBootstrapPromise = page.waitForResponse((response) => {
       try {
         const url = new URL(response.url());
-        return url.origin === baseUrl && url.pathname === '/api/crm/web-dashboard-bootstrap';
+        return url.origin === baseUrl
+          && url.pathname === '/api/crm/web-dashboard-bootstrap'
+          && url.searchParams.get('company_id') === scopeCompanyId
+          && response.request().method().toUpperCase() === 'GET';
       } catch {
         return false;
       }
     }, { timeout: 60_000 });
+    void crmBootstrapPromise.catch(() => {});
     const [, crmBootstrap] = await Promise.all([
       crmLink.click(),
       crmBootstrapPromise,
@@ -328,13 +325,13 @@ async function verifyBrowserRuntime({ token, user, candidate }) {
       error.code = 'FOUNDER_LOCAL_CRM_DRILLDOWN_FAILED';
       throw error;
     }
-    const navigated = new URL(page.url());
     const disclosure = page.locator('[data-testid="founder-local-drilldown-disclosure"]');
     await disclosure.waitFor({ state: 'visible', timeout: 30_000 });
     const crmPartialTotalsDisclosure = page.locator(
       '[data-testid="founder-local-crm-partial-totals-disclosure"]',
     );
     await crmPartialTotalsDisclosure.waitFor({ state: 'visible', timeout: 30_000 });
+    const navigated = new URL(page.url());
     const disclosedScope = await disclosure.getAttribute('data-company-scope');
     const disclosureText = await disclosure.textContent();
     const crmPartialTotalsText = await crmPartialTotalsDisclosure.textContent();
@@ -375,6 +372,7 @@ async function verifyBrowserRuntime({ token, user, candidate }) {
       throw error;
     }
     evidence.result = 'PASS';
+    evidence.rendered_contract = cockpitReadiness;
     evidence.controls = {
       same_origin_only: true,
       loopback_only: true,
@@ -387,6 +385,7 @@ async function verifyBrowserRuntime({ token, user, candidate }) {
       crm_partial_totals_disclosed: true,
       ephemeral_browser_context: true,
       stale_acceptance_profiles_removed: staleProfilesRemoved,
+      parent_temp_confined: parentTempConfined,
       unapproved_ui_route_denied: true,
       no_write_observed: true,
       secrets_recorded: false,
@@ -394,8 +393,18 @@ async function verifyBrowserRuntime({ token, user, candidate }) {
   } catch (error) {
     evidence.failure_code = safeCode(error);
   } finally {
-    try { await context?.close(); } catch { /* ignore */ }
-    try { await browser?.close(); } catch { /* ignore */ }
+    try {
+      await closeBrowserResources({ context, browser });
+    } catch (error) {
+      evidence.controls.ephemeral_browser_context = false;
+      if (evidence.result === 'PASS') {
+        evidence.result = 'FAIL';
+        evidence.failure_code = safeCode(error);
+      } else {
+        evidence.cleanup_failure_code = safeCode(error);
+      }
+    }
+    restoreProcessTemp();
     writeEvidenceAtomically(browserOutputFile, evidence);
   }
   if (evidence.result !== 'PASS') {

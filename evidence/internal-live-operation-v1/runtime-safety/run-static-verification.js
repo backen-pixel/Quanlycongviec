@@ -9,7 +9,7 @@ const {
 } = require('../../../backend/src/config/founderLocalRuntimeProvenance');
 
 const repositoryDir = path.resolve(__dirname, '..', '..', '..');
-const runtimeDir = path.join(__dirname, 'runtime');
+const runtimeDir = path.join(__dirname, 'runtime', 'candidates', 'c3-r1');
 const outputFile = path.join(runtimeDir, 'static-verification.json');
 const configurationOutputFile = path.join(runtimeDir, 'configuration-rollback-verification.json');
 const safetyOutputFile = path.join(runtimeDir, 'founder-local-safety-verification.json');
@@ -42,6 +42,24 @@ const checks = [
     cwd: path.join(repositoryDir, 'backend'),
   },
   npmCheck('founder_local_safety', ['run', 'test:founder-local-safety'], path.join(repositoryDir, 'backend')),
+  {
+    id: 'founder_local_lifecycle_regression',
+    command: process.execPath,
+    args: ['--test', 'tests/founder-local-lifecycle-regression.test.js'],
+    cwd: path.join(repositoryDir, 'backend'),
+  },
+  {
+    id: 'browser_readiness_regression',
+    command: process.execPath,
+    args: ['--test', 'evidence/internal-live-operation-v1/runtime-safety/browser-runtime-readiness.test.js'],
+    cwd: repositoryDir,
+  },
+  {
+    id: 'candidate_evidence_isolation',
+    command: process.execPath,
+    args: ['--test', 'evidence/internal-live-operation-v1/runtime-safety/candidate-evidence-paths.test.js'],
+    cwd: repositoryDir,
+  },
   npmCheck('frontend_business_os', ['run', 'test:business-os'], path.join(repositoryDir, 'frontend')),
   npmCheck('frontend_founder_local_build', ['run', 'build:founder-local'], path.join(repositoryDir, 'frontend')),
 ];

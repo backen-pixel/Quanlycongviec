@@ -11,7 +11,7 @@ const path = require('node:path');
 const WRITE_EVIDENCE = process.env.BUSINESS_OS_WRITE_EVIDENCE === '1';
 const EVIDENCE_PATH = path.resolve(
   __dirname,
-  '../../evidence/internal-live-operation-v1/runtime-safety/runtime/real-data-live-read.json',
+  '../../evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r1/real-data-live-read.json',
 );
 
 function prepareEvidenceTarget() {

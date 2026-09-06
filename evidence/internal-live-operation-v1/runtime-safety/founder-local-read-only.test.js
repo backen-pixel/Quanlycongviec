@@ -254,8 +254,20 @@ test('Founder-local process binding requires matching records, health, and live 
     frontend_dist: TEST_FRONTEND_DIST,
   };
   const inspectProcess = (pid) => (pid === childPid
-    ? { pid, parent_pid: launcherPid, command_line: 'node src/server.js', alive: true }
-    : { pid, parent_pid: 10, command_line: 'node scripts/start-founder-local-read-only.js', alive: true });
+    ? {
+      pid,
+      parent_pid: launcherPid,
+      start_marker: 'child-start',
+      command_line: 'node src/server.js',
+      alive: true,
+    }
+    : {
+      pid,
+      parent_pid: 10,
+      start_marker: 'launcher-start',
+      command_line: 'node scripts/start-founder-local-read-only.js',
+      alive: true,
+    });
   const binding = assertFounderLocalProcessBinding({
     lock,
     record,
@@ -280,7 +292,13 @@ test('Founder-local process binding requires matching records, health, and live 
     candidate: TEST_CANDIDATE,
     frontendDist: TEST_FRONTEND_DIST,
     inspectProcess: (pid) => (pid === childPid
-      ? { pid, parent_pid: 999, command_line: 'node src/server.js', alive: true }
+      ? {
+        pid,
+        parent_pid: 999,
+        start_marker: 'child-start',
+        command_line: 'node src/server.js',
+        alive: true,
+      }
       : inspectProcess(pid)),
   }), { code: 'FOUNDER_LOCAL_RUNTIME_PROCESS_BINDING_INVALID' });
 });
@@ -795,9 +813,13 @@ test('static startup wiring skips known writers and denies business uploads', ()
   assert.match(launcher, /founder-local-ready-v1/);
   assert.match(launcher, /candidateBindingAfter/);
   assert.match(stopper, /assertFounderLocalProcessBinding/);
-  assert.match(stopper, /process\.kill\(record\.launcher_pid, 'SIGTERM'\)/);
+  assert.match(stopper, /expected:\s*owned\.child,[\s\S]*signal:\s*'SIGTERM'/);
+  assert.match(stopper, /processInstanceMatches/);
+  assert.match(stopper, /portIsClosed/);
+  assert.match(stopper, /cleanExactRuntimeRecords/);
+  assert.match(stopper, /status:\s*'already_stopped'/);
   assert.match(stopper, /waitForOwnedRuntimeStop/);
-  assert.doesNotMatch(stopper, /process\.kill\(record\.pid, 'SIGTERM'\)/);
+  assert.doesNotMatch(stopper, /taskkill|Stop-Process|wmic/i);
   assert.match(server, /assertFounderLocalRuntimeFileBinding/);
   assert.match(server, /typeof process\.send !== 'function'[\s\S]*process\.connected !== true/);
   assert.match(server, /process\.send\(\{/);

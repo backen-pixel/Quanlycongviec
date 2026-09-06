@@ -14,6 +14,12 @@ const {
   readFounderLocalCandidateBinding,
   readFounderLocalDistIdentity,
 } = require('../src/config/founderLocalRuntimeProvenance');
+const {
+  assertOpenWorkspaceRuntimeFile,
+  assertWorkspaceRuntimeDirectory,
+  assertWorkspaceRuntimeFilePath,
+  removeExactRuntimeRecord,
+} = require('./stop-founder-local-read-only');
 
 const backendDir = path.resolve(__dirname, '..');
 const repositoryDir = path.resolve(backendDir, '..');
@@ -89,8 +95,20 @@ applyFounderLocalProvenanceEnvironment(process.env, {
   frontendDist: frontendDistIdentity,
 });
 
-fs.mkdirSync(runtimeDir, { recursive: true });
-fs.mkdirSync(configDir, { recursive: true });
+try {
+  assertWorkspaceRuntimeDirectory(runtimeDir);
+  fs.mkdirSync(runtimeDir, { recursive: true });
+  assertWorkspaceRuntimeDirectory(runtimeDir);
+  assertWorkspaceRuntimeDirectory(configDir);
+  fs.mkdirSync(configDir, { recursive: true });
+  assertWorkspaceRuntimeDirectory(configDir);
+  for (const file of [processFile, processLockFile, logFile]) {
+    assertWorkspaceRuntimeFilePath(file);
+  }
+} catch (error) {
+  console.error(`Founder-local refused to start: ${error.code || 'FOUNDER_LOCAL_RUNTIME_PATH_INVALID'}.`);
+  process.exit(1);
+}
 
 if (process.argv.includes('--verify-only')) {
   console.log(JSON.stringify({
@@ -130,17 +148,18 @@ const claim = {
   acceptance_only_checkout: candidateBinding.acceptance_only_checkout,
   frontend_dist: frontendDistIdentity,
 };
+let runningClaim;
 
-function removeOwnedRecord(file) {
+function removeOwnedRecord(file, expected, kind) {
+  if (!expected) return;
   try {
-    const current = JSON.parse(fs.readFileSync(file, 'utf8'));
-    if (current?.run_id === runId) fs.unlinkSync(file);
+    removeExactRuntimeRecord(file, expected, kind);
   } catch { /* absent or no longer owned */ }
 }
 
 function clearOwnedRuntimeRecords() {
-  removeOwnedRecord(processFile);
-  removeOwnedRecord(processLockFile);
+  removeOwnedRecord(processFile, runningClaim, 'record');
+  removeOwnedRecord(processLockFile, claim, 'lock');
 }
 
 try {
@@ -158,7 +177,7 @@ try {
   const code = error?.code === 'EEXIST'
     ? 'FOUNDER_LOCAL_PROCESS_ALREADY_CLAIMED'
     : (error?.code || 'FOUNDER_LOCAL_PROCESS_CLAIM_FAILED');
-  removeOwnedRecord(processLockFile);
+  removeOwnedRecord(processLockFile, claim, 'lock');
   console.error(`Founder-local refused to start: ${code}.`);
   process.exit(1);
 }
@@ -181,6 +200,7 @@ let logFd;
 let child;
 try {
   logFd = fs.openSync(logFile, 'a');
+  assertOpenWorkspaceRuntimeFile(logFile, logFd);
   child = spawn(process.execPath, ['--use-system-ca', 'src/server.js'], {
     cwd: backendDir,
     env: childEnvironment,
@@ -272,11 +292,12 @@ child.once('message', async (message) => {
         code: 'FOUNDER_LOCAL_CANDIDATE_CHANGED_DURING_STARTUP',
       });
     }
-    fs.writeFileSync(processFile, `${JSON.stringify({
+    runningClaim = {
       ...claim,
       state: 'running',
       pid: child.pid,
-    }, null, 2)}\n`, {
+    };
+    fs.writeFileSync(processFile, `${JSON.stringify(runningClaim, null, 2)}\n`, {
       encoding: 'utf8',
       mode: 0o600,
       flag: 'wx',

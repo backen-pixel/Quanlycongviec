@@ -10,7 +10,7 @@
     "start": "node --use-system-ca src/server.js",
     "start:founder-local": "node scripts/start-founder-local-read-only.js",
     "stop:founder-local": "node scripts/stop-founder-local-read-only.js",
-    "test:founder-local-safety": "node --test ../evidence/internal-live-operation-v1/runtime-safety/founder-local-read-only.test.js",
+    "test:founder-local-safety": "node --test ../evidence/internal-live-operation-v1/runtime-safety/founder-local-read-only.test.js tests/founder-local-lifecycle-regression.test.js",
     "verify:founder-local-runtime": "node ../evidence/internal-live-operation-v1/runtime-safety/verify-founder-local-runtime.js",
     "dev": "node --use-system-ca --watch src/server.js",
     "fb:rescan-inbound-phones": "node scripts/rescan-fb-inbound-phones.js",
