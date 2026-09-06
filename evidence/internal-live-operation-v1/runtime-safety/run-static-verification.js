@@ -9,7 +9,7 @@ const {
 } = require('../../../backend/src/config/founderLocalRuntimeProvenance');
 
 const repositoryDir = path.resolve(__dirname, '..', '..', '..');
-const runtimeDir = path.join(__dirname, 'runtime', 'candidates', 'c3-r1');
+const runtimeDir = path.join(__dirname, 'runtime', 'candidates', 'c3-r2');
 const outputFile = path.join(runtimeDir, 'static-verification.json');
 const configurationOutputFile = path.join(runtimeDir, 'configuration-rollback-verification.json');
 const safetyOutputFile = path.join(runtimeDir, 'founder-local-safety-verification.json');
@@ -31,6 +31,12 @@ const checks = [
     id: 'structural_candidate_verifier',
     command: 'pwsh',
     args: ['-NoProfile', '-File', 'scripts/verify-internal-live-v1.ps1', '-RepoRoot', '.'],
+    cwd: repositoryDir,
+  },
+  {
+    id: 'timestamp_verifier_regression',
+    command: 'pwsh',
+    args: ['-NoProfile', '-File', 'evidence/internal-live-operation-v1/runtime-safety/timestamp-verifier-regression.test.ps1'],
     cwd: repositoryDir,
   },
   npmCheck('tenant_isolation', ['run', 'test:tenant'], path.join(repositoryDir, 'backend')),

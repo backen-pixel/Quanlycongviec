@@ -70,10 +70,10 @@ Incident Commander:
 
 1. The Release Owner selects one repository, exact implementation commit, and implementation tree.
 2. Create a separate clean checkout/worktree at that commit. Do not reset an active workspace.
-3. Confirm git status is empty and generate the ignored candidate attestation for that exact implementation HEAD/tree (C3-R1).
-4. Generate all static, runtime, browser, live-read, and reconciliation evidence on that same C3-R1. Every artifact must carry the C3-R1 commit/tree plus the current candidate-attestation hash and timestamp; at final verification, no timestamp may be in the future and every acceptance artifact must be no more than 24 hours old.
+3. Confirm git status is empty and generate the ignored candidate attestation for that exact implementation HEAD/tree (C3-R2).
+4. Generate all static, runtime, browser, live-read, and reconciliation evidence on that same C3-R2. Every artifact must carry the C3-R2 commit/tree plus the current candidate-attestation hash and timestamp; at final verification, no timestamp may be in the future and every acceptance artifact must be no more than 24 hours old.
 5. Keep all secrets outside Git and operator evidence.
-6. After runtime evidence is complete, a later docs-only acceptance commit (C4) may bind `verified_source_candidate` to C3-R1. C4 must not be a merge and may modify only the four tracked acceptance records in this directory and `evidence/internal-live-operation-v1/runtime-safety/EVIDENCE_MANIFEST.json`; the implementation commit must exist, remain an ancestor, and its recorded tree must match Git. The tracked report cannot self-reference its own future commit hash.
+6. After runtime evidence is complete, a later docs-only acceptance commit (C4) may bind `verified_source_candidate` to C3-R2. C4 must not be a merge and may modify only the four tracked acceptance records in this directory and `evidence/internal-live-operation-v1/runtime-safety/EVIDENCE_MANIFEST.json`; the implementation commit must exist, remain an ancestor, and its recorded tree must match Git. The tracked report cannot self-reference its own future commit hash.
 7. For each PASS gate, use the exact artifact inventory from the manifest and set `checked_at` to the latest timestamp among those artifacts.
 8. Run the credential-free verifier from the clean C4 acceptance checkout:
 
@@ -195,7 +195,7 @@ Failure of any gate keeps `FOUNDER_ADVISORY_CONFIG_ENABLED=0`. Passing this gate
 
 ### Evidence handling
 
-Sanitized automated technical evidence belongs only under `evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r1/`. That generated directory is Git-ignored except for its guard file; the tracked manifest in the parent directory inventories the exact artifact names and gate state. Each generated artifact must use the documented type/schema, bind to the exact C3-R1 candidate attestation, and be no more than 24 hours old. Never save tokens, passwords, `.env` paths, connection strings, raw personal data, or recovery secrets.
+Sanitized automated technical evidence for the current candidate belongs only under `evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r2/`. That generated directory is Git-ignored except for its guard file; the tracked manifest in the parent directory inventories the exact artifact names and gate state. Each generated artifact must use the documented type/schema, bind to the exact C3-R2 candidate attestation, and be no more than 24 hours old. Historical candidate directories remain immutable. Never save tokens, passwords, `.env` paths, connection strings, raw personal data, or recovery secrets.
 
 ## 4. Informational read-only backup/failover verification
 

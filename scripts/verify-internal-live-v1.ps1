@@ -55,7 +55,7 @@ function Test-RuntimeEvidencePath {
   param([string]$Reference)
   if ([string]::IsNullOrWhiteSpace($Reference)) { return $false }
   $normalized = $Reference.Replace('\', '/')
-  if (-not $normalized.StartsWith('evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r1/', [StringComparison]::OrdinalIgnoreCase)) {
+  if (-not $normalized.StartsWith('evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r2/', [StringComparison]::OrdinalIgnoreCase)) {
     return $false
   }
   if ($normalized.Split('/') -contains '..') { return $false }
@@ -97,11 +97,30 @@ function Test-EvidenceHashInventory {
   return $true
 }
 
+function ConvertFrom-VerifierJson {
+  param([string]$Json)
+  # Newer pwsh otherwise converts ISO timestamps to DateTime and loses the
+  # source offset when later coerced to text. Windows PowerShell keeps strings.
+  if ((Get-Command ConvertFrom-Json).Parameters.ContainsKey('DateKind')) {
+    return ConvertFrom-Json -InputObject $Json -DateKind String
+  }
+  return ConvertFrom-Json -InputObject $Json
+}
+
 function Get-CurrentTimestampValidation {
   param([object]$Value)
   try {
-    if ([string]::IsNullOrWhiteSpace([string]$Value)) { throw 'missing' }
-    $timestamp = [DateTimeOffset]::Parse([string]$Value)
+    if ($Value -is [DateTimeOffset]) {
+      $timestamp = $Value
+    } elseif ($Value -is [DateTime]) {
+      if ($Value.Kind -ne [DateTimeKind]::Utc) { throw 'not UTC' }
+      $timestamp = [DateTimeOffset]::new($Value)
+    } else {
+      if ($Value -isnot [string] -or $Value -cnotmatch '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,7})?(?:Z|\+00:00)$') {
+        throw 'missing_or_not_utc_iso_timestamp'
+      }
+      $timestamp = [DateTimeOffset]::Parse($Value, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None)
+    }
     $now = [DateTimeOffset]::UtcNow
     if ($timestamp.Offset -ne [TimeSpan]::Zero) { throw 'not UTC' }
     if ($timestamp -gt $now.AddMinutes($script:EvidenceFutureSkewMinutes)) { throw 'future' }
@@ -118,27 +137,27 @@ function Get-RuntimeEvidenceValidation {
     [string]$CandidateCommit,
     [string]$CandidateTree,
     [string]$AttestationSha256,
-    [string]$AttestedAt
+    [object]$AttestedAt
   )
   $normalized = $Reference.Replace('\', '/')
   $specifications = @{
-    'evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r1/candidate-attestation.json' = @{ Type = 'FOUNDER_LOCAL_CANDIDATE_ATTESTATION'; Kind = 'attestation'; Timestamp = 'checked_at' }
-    'evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r1/static-verification.json' = @{ Type = 'FOUNDER_LOCAL_STATIC_VERIFICATION'; Kind = 'static'; Timestamp = 'checked_at' }
-    'evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r1/configuration-rollback-verification.json' = @{ Type = 'FOUNDER_ADVISORY_CONFIGURATION_ROLLBACK_VERIFICATION'; Kind = 'configuration'; Timestamp = 'checked_at' }
-    'evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r1/founder-local-safety-verification.json' = @{ Type = 'FOUNDER_LOCAL_STATIC_SAFETY_VERIFICATION'; Kind = 'safety'; Timestamp = 'checked_at' }
-    'evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r1/runtime-acceptance-summary.json' = @{ Type = 'FOUNDER_LOCAL_RUNTIME_ACCEPTANCE'; Kind = 'runtime'; Timestamp = 'checked_at' }
-    'evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r1/browser-runtime-verification.json' = @{ Type = 'FOUNDER_LOCAL_BROWSER_RUNTIME_VERIFICATION'; Kind = 'browser'; Timestamp = 'checked_at' }
-    'evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r1/lifecycle-runtime-verification.json' = @{ Type = 'FOUNDER_LOCAL_LIFECYCLE_RUNTIME_VERIFICATION'; Kind = 'lifecycle'; Timestamp = 'checked_at' }
-    'evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r1/real-data-live-read.json' = @{ Type = 'FOUNDER_COCKPIT_REAL_DATA_LIVE_READ'; Kind = 'live_read'; Timestamp = 'generated_at' }
-    'evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r1/real-data-reconciliation.json' = @{ Type = 'FOUNDER_COCKPIT_REAL_DATA_RECONCILIATION'; Kind = 'reconciliation'; Timestamp = 'generated_at' }
-    'evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r1/backup-failover-verification.json' = @{ Type = 'FOUNDER_LOCAL_BACKUP_FAILOVER_VERIFICATION'; Kind = 'backup'; Timestamp = 'checked_at' }
+    'evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r2/candidate-attestation.json' = @{ Type = 'FOUNDER_LOCAL_CANDIDATE_ATTESTATION'; Kind = 'attestation'; Timestamp = 'checked_at' }
+    'evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r2/static-verification.json' = @{ Type = 'FOUNDER_LOCAL_STATIC_VERIFICATION'; Kind = 'static'; Timestamp = 'checked_at' }
+    'evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r2/configuration-rollback-verification.json' = @{ Type = 'FOUNDER_ADVISORY_CONFIGURATION_ROLLBACK_VERIFICATION'; Kind = 'configuration'; Timestamp = 'checked_at' }
+    'evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r2/founder-local-safety-verification.json' = @{ Type = 'FOUNDER_LOCAL_STATIC_SAFETY_VERIFICATION'; Kind = 'safety'; Timestamp = 'checked_at' }
+    'evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r2/runtime-acceptance-summary.json' = @{ Type = 'FOUNDER_LOCAL_RUNTIME_ACCEPTANCE'; Kind = 'runtime'; Timestamp = 'checked_at' }
+    'evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r2/browser-runtime-verification.json' = @{ Type = 'FOUNDER_LOCAL_BROWSER_RUNTIME_VERIFICATION'; Kind = 'browser'; Timestamp = 'checked_at' }
+    'evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r2/lifecycle-runtime-verification.json' = @{ Type = 'FOUNDER_LOCAL_LIFECYCLE_RUNTIME_VERIFICATION'; Kind = 'lifecycle'; Timestamp = 'checked_at' }
+    'evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r2/real-data-live-read.json' = @{ Type = 'FOUNDER_COCKPIT_REAL_DATA_LIVE_READ'; Kind = 'live_read'; Timestamp = 'generated_at' }
+    'evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r2/real-data-reconciliation.json' = @{ Type = 'FOUNDER_COCKPIT_REAL_DATA_RECONCILIATION'; Kind = 'reconciliation'; Timestamp = 'generated_at' }
+    'evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r2/backup-failover-verification.json' = @{ Type = 'FOUNDER_LOCAL_BACKUP_FAILOVER_VERIFICATION'; Kind = 'backup'; Timestamp = 'checked_at' }
   }
   $specification = $specifications[$normalized]
   if (-not $specification -or -not (Test-RuntimeEvidenceReference $normalized)) {
     return [PSCustomObject]@{ Valid = $false; Timestamp = $null; Reason = 'unknown_or_missing_artifact'; Artifact = $null }
   }
   try {
-    $artifact = Get-Content -Raw -LiteralPath (Join-Path $RepoRoot $normalized) | ConvertFrom-Json
+    $artifact = ConvertFrom-VerifierJson (Get-Content -Raw -LiteralPath (Join-Path $RepoRoot $normalized))
     $timestampValidation = Get-CurrentTimestampValidation $artifact.($specification.Timestamp)
     $valid = $artifact.schema_version -eq '1.0.0' -and
       $artifact.evidence_type -eq $specification.Type -and
@@ -161,13 +180,15 @@ function Get-RuntimeEvidenceValidation {
         $artifact.repository.user_level_codex_directory_modified_by_task -eq $false
     } else {
       $attestedAtValidation = Get-CurrentTimestampValidation $AttestedAt
+      $artifactAttestedAtValidation = Get-CurrentTimestampValidation $artifact.candidate.attested_at
       $valid = $valid -and
         $artifact.candidate.commit -eq $CandidateCommit -and
         $artifact.candidate.tree -eq $CandidateTree -and
         [string]$artifact.candidate.candidate_attestation_sha256 -match '^[0-9a-fA-F]{64}$' -and
         [string]$artifact.candidate.candidate_attestation_sha256 -eq $AttestationSha256 -and
-        [string]$artifact.candidate.attested_at -eq $AttestedAt -and
         $attestedAtValidation.Valid -and
+        $artifactAttestedAtValidation.Valid -and
+        $artifactAttestedAtValidation.Timestamp.UtcDateTime.Ticks -eq $attestedAtValidation.Timestamp.UtcDateTime.Ticks -and
         $timestampValidation.Timestamp.UtcDateTime.Ticks -ge $attestedAtValidation.Timestamp.UtcDateTime.Ticks
     }
 
@@ -180,7 +201,7 @@ function Get-RuntimeEvidenceValidation {
           $artifact.security.secret_values_included -eq $false
       }
       'static' {
-        $requiredChecks = @('structural_candidate_verifier', 'tenant_isolation', 'backend_business_os', 'advisory_configuration', 'founder_local_safety', 'browser_readiness_regression', 'candidate_evidence_isolation', 'founder_local_lifecycle_regression', 'frontend_business_os', 'frontend_founder_local_build')
+        $requiredChecks = @('structural_candidate_verifier', 'timestamp_verifier_regression', 'tenant_isolation', 'backend_business_os', 'advisory_configuration', 'founder_local_safety', 'browser_readiness_regression', 'candidate_evidence_isolation', 'founder_local_lifecycle_regression', 'frontend_business_os', 'frontend_founder_local_build')
         $passedChecks = @($artifact.checks | Where-Object { $_.status -eq 'PASS' } | ForEach-Object { [string]$_.id })
         $valid = $valid -and $artifact.candidate.clean_before -eq $true -and $artifact.candidate.clean_after -eq $true -and
           $artifact.candidate.head_and_tree_unchanged -eq $true -and $artifact.candidate.attestation_unchanged -eq $true -and
@@ -363,7 +384,7 @@ function Get-EvidenceSetValidation {
     [string]$CandidateCommit,
     [string]$CandidateTree,
     [string]$AttestationSha256,
-    [string]$AttestedAt
+    [object]$AttestedAt
   )
   $referencesArray = @($References | ForEach-Object { [string]$_ })
   if ($referencesArray.Count -eq 0) {
@@ -716,28 +737,28 @@ if ($paths['docs/internal-live-v1/MODULE_ACTIVATION_STATUS.schema.json']) {
 
 if ($paths['evidence/internal-live-operation-v1/runtime-safety/EVIDENCE_MANIFEST.json']) {
   try {
-    $evidenceManifest = Get-Content -Raw -LiteralPath $paths['evidence/internal-live-operation-v1/runtime-safety/EVIDENCE_MANIFEST.json'] | ConvertFrom-Json
+    $evidenceManifest = ConvertFrom-VerifierJson (Get-Content -Raw -LiteralPath $paths['evidence/internal-live-operation-v1/runtime-safety/EVIDENCE_MANIFEST.json'])
     $expectedManifestArtifacts = @{
       runtime = @(
-        'evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r1/candidate-attestation.json',
-        'evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r1/static-verification.json',
-        'evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r1/lifecycle-runtime-verification.json',
-        'evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r1/runtime-acceptance-summary.json',
-        'evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r1/browser-runtime-verification.json'
+        'evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r2/candidate-attestation.json',
+        'evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r2/static-verification.json',
+        'evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r2/lifecycle-runtime-verification.json',
+        'evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r2/runtime-acceptance-summary.json',
+        'evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r2/browser-runtime-verification.json'
       )
       health = @(
-        'evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r1/runtime-acceptance-summary.json',
-        'evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r1/real-data-live-read.json',
-        'evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r1/browser-runtime-verification.json'
+        'evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r2/runtime-acceptance-summary.json',
+        'evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r2/real-data-live-read.json',
+        'evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r2/browser-runtime-verification.json'
       )
-      reconciliation = @('evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r1/real-data-reconciliation.json')
-      configuration_rollback = @('evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r1/configuration-rollback-verification.json')
+      reconciliation = @('evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r2/real-data-reconciliation.json')
+      configuration_rollback = @('evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r2/configuration-rollback-verification.json')
       no_write = @(
-        'evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r1/founder-local-safety-verification.json',
-        'evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r1/runtime-acceptance-summary.json'
+        'evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r2/founder-local-safety-verification.json',
+        'evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r2/runtime-acceptance-summary.json'
       )
-      backup_failover = @('evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r1/backup-failover-verification.json')
-      advisory_configuration = @('evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r1/configuration-rollback-verification.json')
+      backup_failover = @('evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r2/backup-failover-verification.json')
+      advisory_configuration = @('evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r2/configuration-rollback-verification.json')
     }
     $manifestBlockingNames = @($evidenceManifest.readiness_gates.blocking.PSObject.Properties.Name)
     $expectedBlockingNames = @('runtime', 'health', 'reconciliation', 'configuration_rollback', 'no_write')
@@ -782,7 +803,7 @@ if ($paths['evidence/internal-live-operation-v1/runtime-safety/EVIDENCE_MANIFEST
     if ($evidenceManifest.schema_version -eq '1.1.0' -and
         $evidenceManifest.environment -eq 'FOUNDER_LOCAL_PRIVATE' -and
         $evidenceManifest.evidence_root -eq 'evidence/internal-live-operation-v1/runtime-safety' -and
-        $evidenceManifest.generated_artifact_directory -eq 'runtime/candidates/c3-r1' -and
+        $evidenceManifest.generated_artifact_directory -eq 'runtime/candidates/c3-r2' -and
         $evidenceManifest.generated_artifacts_git_ignored -eq $true -and
         $evidenceManifest.secrets_allowed -eq $false -and
         $manifestBlockingDiff.Count -eq 0 -and
@@ -809,7 +830,7 @@ if ($paths['evidence/internal-live-operation-v1/runtime-safety/EVIDENCE_MANIFEST
 
 if ($paths['docs/internal-live-v1/INTERNAL_LIVE_OPERATION_V1_MODULE_STATUS.json']) {
   try {
-    $report = Get-Content -Raw -LiteralPath $paths['docs/internal-live-v1/INTERNAL_LIVE_OPERATION_V1_MODULE_STATUS.json'] | ConvertFrom-Json
+    $report = ConvertFrom-VerifierJson (Get-Content -Raw -LiteralPath $paths['docs/internal-live-v1/INTERNAL_LIVE_OPERATION_V1_MODULE_STATUS.json'])
     Write-Check PASS 'activation report' 'valid JSON'
     $verifiedCandidate = $report.verified_source_candidate
     $candidateCommit = [string]$verifiedCandidate.commit
@@ -817,15 +838,15 @@ if ($paths['docs/internal-live-v1/INTERNAL_LIVE_OPERATION_V1_MODULE_STATUS.json'
     $candidateShapeValid = $candidateCommit -match '^[0-9a-f]{40}$' -and
       $candidateTree -match '^[0-9a-f]{40}$' -and
       $verifiedCandidate.clean -eq $true
-    $attestationReference = 'evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r1/candidate-attestation.json'
+    $attestationReference = 'evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r2/candidate-attestation.json'
     $attestationSha256 = ''
     $attestedAt = ''
     if (Test-RuntimeEvidenceReference $attestationReference) {
       try {
         $attestationPath = Join-Path $RepoRoot $attestationReference
-        $candidateAttestation = Get-Content -Raw -LiteralPath $attestationPath | ConvertFrom-Json
+        $candidateAttestation = ConvertFrom-VerifierJson (Get-Content -Raw -LiteralPath $attestationPath)
         $attestationSha256 = (Get-FileHash -LiteralPath $attestationPath -Algorithm SHA256).Hash.ToLowerInvariant()
-        $attestedAt = [string]$candidateAttestation.checked_at
+        $attestedAt = $candidateAttestation.checked_at
       } catch {
         $attestationSha256 = ''
         $attestedAt = ''
@@ -911,7 +932,7 @@ if ($paths['docs/internal-live-v1/INTERNAL_LIVE_OPERATION_V1_MODULE_STATUS.json'
       $advisoryEvidence = @($advisoryPolicy.evidence)
       $advisoryEvidenceSet = Get-EvidenceSetValidation $advisoryEvidence $advisoryPolicy.checked_at $candidateCommit $candidateTree $attestationSha256 $attestedAt
       if ($advisoryEvidenceSet.Valid -and
-          (Test-StringSetEqual @('evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r1/configuration-rollback-verification.json') $advisoryEvidence)) {
+          (Test-StringSetEqual @('evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r2/configuration-rollback-verification.json') $advisoryEvidence)) {
         Write-Check PASS 'advisory enablement evidence' 'current candidate-bound six-gate evidence is present under the dedicated root'
       } else {
         Write-Check FAIL 'advisory enablement evidence' ('ENABLED is forbidden without current local six-gate evidence: ' + $advisoryEvidenceSet.Reason)
@@ -1081,7 +1102,7 @@ if ($paths['docs/internal-live-v1/INTERNAL_LIVE_OPERATION_V1_MODULE_STATUS.json'
       $backupEvidence = @($backupGate.evidence)
       $backupEvidenceSet = Get-EvidenceSetValidation $backupEvidence $backupGate.checked_at $candidateCommit $candidateTree $attestationSha256 $attestedAt
       if ($backupEvidenceSet.Valid -and
-          (Test-StringSetEqual @('evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r1/backup-failover-verification.json') $backupEvidence)) {
+          (Test-StringSetEqual @('evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r2/backup-failover-verification.json') $backupEvidence)) {
         Write-Check PASS 'backup/failover evidence' 'informational PASS has current candidate-bound evidence'
       } else {
         Write-Check FAIL 'backup/failover evidence' ('PASS claim lacks valid current evidence: ' + $backupEvidenceSet.Reason)
@@ -1175,7 +1196,9 @@ if ($HealthUrl) {
     }
     $headers = @{ Authorization = ('Bearer ' + $HealthBearerToken) }
     $health = Invoke-RestMethod -Method Get -Uri $uri -Headers $headers -TimeoutSec 10 -MaximumRedirection 0
-    $age = [Math]::Abs(((Get-Date).ToUniversalTime() - ([DateTimeOffset]::Parse([string]$health.checked_at)).UtcDateTime).TotalMinutes)
+    $healthTimestamp = Get-CurrentTimestampValidation $health.checked_at
+    if (-not $healthTimestamp.Valid) { throw 'health timestamp_invalid_or_stale' }
+    $age = ([DateTimeOffset]::UtcNow - $healthTimestamp.Timestamp).TotalMinutes
     $healthSafe = $health.contract_version -eq 'founder_cockpit_health_v1' -and
       $health.ready -eq $true -and
       [string]$health.status -in @('PASS', 'DEGRADED') -and

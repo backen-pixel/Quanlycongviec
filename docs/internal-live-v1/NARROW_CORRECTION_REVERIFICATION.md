@@ -1,9 +1,11 @@
-# Internal Live V1 — approved narrow correction / C3-R1
+# Internal Live V1 — narrow corrections / C3-R1 history and C3-R2 current
 
-The Founder execution instruction approves only browser-verifier readiness and
-owned stop/PID/lock lifecycle corrections, their regressions, and directly related
-documentation/evidence. No domain/module implementation or security-policy change
-is authorized by this correction.
+The earlier Founder execution instruction approved only browser-verifier readiness
+and owned stop/PID/lock lifecycle corrections, their regressions, and directly
+related documentation/evidence. The current timestamp-correction authorization
+adds only the bounded timestamp correction, its regressions, the evidence-namespace
+rollover, and directly related documentation. No domain/module implementation or
+security-policy change is authorized by either correction.
 
 ## Candidate and evidence convention
 
@@ -13,17 +15,33 @@ JSON artifacts and `FOUNDER_VALIDATION_C3_RESULT.md` are immutable historical
 evidence: live read PASS, reconciliation MATCH 36/36, runtime FAIL, browser FAIL,
 Founder Acceptance HOLD. These results cannot satisfy a new candidate gate.
 
-`C3-R1` denotes the first corrected **implementation** refreeze of C3. It is not
-C4: C4 remains the later, explicitly approved docs-only acceptance step. All new
-generators, consumers and manifest references use the fixed ignored namespace
-`evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r1/`.
+`C3-R1` denotes the first corrected **implementation** refreeze of C3 at commit
+`eb10d926ae8d1752141bb5d5c615ea12305374c4`, tree
+`4a4ac25b8c7b54f682bff96f62f7f6516bac32ac`. It is now historical. Its generated
+artifacts under `runtime/candidates/c3-r1/` remain byte-preserved and cannot satisfy
+the current candidate gate.
+
+`C3-R2` denotes the current timestamp-corrected **implementation** refreeze. It is
+not C4: C4 remains the later, explicitly approved docs-only acceptance step. All
+current generators, consumers and manifest references use the fixed ignored
+namespace `evidence/internal-live-operation-v1/runtime-safety/runtime/candidates/c3-r2/`.
 The parent `runtime/.gitignore` continues to protect the entire generated tree.
 Exact commit/tree and the attestation-byte hash, not this human label, bind proof.
-If another code correction is required after freezing, preserve this generation,
-advance the fixed namespace to `c3-r2` before the next local commit, and rerun every
-affected acceptance check on the newly frozen clean candidate.
+If another code correction is required after freezing C3-R2, preserve every prior
+generation, advance the fixed namespace to `c3-r3` before the next local commit,
+and rerun every affected acceptance check on the newly frozen clean candidate.
 
 ## Correction verification sequence
+
+C3-R2 keeps UTC source text intact when parsing timestamp-bearing JSON. The
+timestamp validator accepts explicit UTC ISO text, UTC DateTime and zero-offset
+DateTimeOffset without a locale-dependent string conversion. Unknown/local kinds,
+nonzero offsets, missing timezone, stale and future values remain rejected.
+Attestation/order/latest-gate comparisons preserve full tick precision and the
+existing commit/tree/hash binding. Health uses the same UTC validation and keeps
+its five-minute maximum age. No timezone, execution policy or acceptance guard is
+relaxed. `timestamp-verifier-regression.test.ps1` loads production function ASTs
+and uses only isolated fixtures inside the worktree; it is a required static check.
 
 The existing 6/19/1/1 contract is unchanged: six entries from
 `founderCockpitReadModel.SYSTEM_DEFINITIONS`, nineteen keys from
@@ -38,10 +56,11 @@ hidden, missing or blank content is not. Only counts/booleans enter evidence.
 1. Verify the authorized worktree root/branch/HEAD/tree and inspect a clear diff.
    Run isolated browser slow/error/timeout and lifecycle ownership regressions.
    Obtain independent review of browser, stop and credential boundaries.
-2. Create the new local implementation commit; record exact HEAD/tree and clean
-   status. Do not amend historical C3 or generate acceptance evidence before freeze.
+2. Create the new local C3-R2 implementation commit; record exact HEAD/tree and
+   clean status. Do not amend historical C3/C3-R1 or generate acceptance evidence
+   before freeze.
 3. Generate a fresh attestation and run `run-static-verification.js`. Keep all
-   existing checks and include browser, lifecycle and evidence-isolation regressions.
+   existing checks and include browser, lifecycle, evidence-isolation and timestamp regressions.
    Confine TEMP, TMP, npm cache and any compile cache to the authorized workspace.
 4. Use the single currently Founder-approved credential path variable for both
    existence check and loading through the reviewed verification programs only.
@@ -61,9 +80,10 @@ hidden, missing or blank content is not. Only counts/booleans enter evidence.
    with the same protected source variable. It creates two fresh guarded sessions,
    attests each pair and listener, verifies stop/repeat-stop/restart without manual
    cleanup, then writes `lifecycle-runtime-verification.json` in this generation.
-7. Recheck clean HEAD/tree and historical evidence hashes. Produce a sanitized
-   consolidated report with fresh artifact hashes and separate outcomes. Keep
-   tracked acceptance/daily-use gates HOLD pending the existing acceptance process.
+7. Recheck clean HEAD/tree and historical C3/C3-R1 evidence hashes. Produce a
+   sanitized consolidated report with fresh C3-R2 artifact hashes and separate
+   outcomes. Keep tracked acceptance/daily-use gates HOLD pending the existing
+   acceptance process.
 
 ## Historical credential incident (not retroactively approved)
 

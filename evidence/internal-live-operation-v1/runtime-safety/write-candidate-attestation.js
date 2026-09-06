@@ -7,7 +7,7 @@ const SOURCE_CANDIDATE_COMMIT = 'f73b3e19ef01b866358d4cdb6307748ef72a559c';
 const EXPECTED_BRANCH = 'codex/business-ai-os-founder-local-live-v1';
 const EXPECTED_REMOTE = 'https://github.com/backen-pixel/Quanlycongviec.git';
 const repositoryDir = path.resolve(__dirname, '..', '..', '..');
-const outputDir = path.join(__dirname, 'runtime', 'candidates', 'c3-r1');
+const outputDir = path.join(__dirname, 'runtime', 'candidates', 'c3-r2');
 const outputFile = path.join(outputDir, 'candidate-attestation.json');
 
 function git(args, cwd = repositoryDir) {

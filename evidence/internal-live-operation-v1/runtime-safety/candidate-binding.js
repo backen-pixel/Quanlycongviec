@@ -4,7 +4,7 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
 const repositoryDir = path.resolve(__dirname, '..', '..', '..');
-const attestationFile = path.join(__dirname, 'runtime', 'candidates', 'c3-r1', 'candidate-attestation.json');
+const attestationFile = path.join(__dirname, 'runtime', 'candidates', 'c3-r2', 'candidate-attestation.json');
 
 function git(args) {
   return execFileSync('git', ['-C', repositoryDir, ...args], {

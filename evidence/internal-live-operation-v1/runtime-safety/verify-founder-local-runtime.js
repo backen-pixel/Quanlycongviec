@@ -18,7 +18,7 @@ const {
 } = require('./browser-runtime-readiness');
 
 const repositoryDir = path.resolve(__dirname, '..', '..', '..');
-const outputDir = path.join(__dirname, 'runtime', 'candidates', 'c3-r1');
+const outputDir = path.join(__dirname, 'runtime', 'candidates', 'c3-r2');
 const outputFile = path.join(outputDir, 'runtime-acceptance-summary.json');
 const browserOutputFile = path.join(outputDir, 'browser-runtime-verification.json');
 const staticVerificationFile = path.join(outputDir, 'static-verification.json');
