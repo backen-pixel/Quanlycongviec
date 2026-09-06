@@ -64,6 +64,7 @@ const MENU_GROUPS = [
     title: '1. Tổng quan',
     emoji: '📊',
     items: [
+      { to: '/business-os', icon: Sparkles, label: 'Founder Cockpit', founderOnly: true },
       { to: '/dashboard', icon: LayoutDashboard, label: 'Tổng hợp Quản lý' },
       { to: '/management/quotes-overview', icon: FileText, label: 'Dự toán & Báo giá' },
       { to: '/management/purchasing-overview', icon: ShoppingCart, label: 'Mua hàng' },
@@ -552,6 +553,7 @@ function filterVisibleMenuItems(items, {
   return (items || []).filter((item) => {
     if (item.tenantAdminOnly && !userTenantId) return false;
     if (item.socialInboxAccess && !canAccessSocialInbox) return false;
+    if (item.founderOnly && !isStrictAdminUser) return false;
     if (item.adminOnly && !moduleAdmin) return false;
     if (item.strictAdminOnly && !isStrictAdminUser) return false;
     if (item.executiveOnly && !isExecutive) return false;

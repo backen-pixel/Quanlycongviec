@@ -37,6 +37,8 @@
     "test:crm-upload": "node tests/crm-upload-integration.js",
     "test:crm-transfer": "node tests/crm-lead-company-transfer.js",
     "test:mcp-audit": "node tests/mcp-audit-reason-codes.js",
+    "test:business-os": "node --test tests/founder-cockpit-read-model.test.js",
+    "test:business-os:live-read": "node tests/founder-cockpit-live-read.js",
     "test:perf-retention": "node tests/perf-retention-and-chunking.js",
     "crm:route-inventory": "node scripts/crm-route-inventory.js --write",
     "cron:crm-missing-tasks": "node scripts/run-crm-missing-tasks-cron.js"

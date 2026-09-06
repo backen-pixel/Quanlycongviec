@@ -227,6 +227,7 @@ const PlatformBillingPage = lazyWithRetry(() => import('./pages/platform/Platfor
 const PlatformModulesPage = lazyWithRetry(() => import('./pages/platform/PlatformModulesPage'));
 const PlatformPlansPage = lazyWithRetry(() => import('./pages/platform/PlatformPlansPage'));
 const PlatformPurchasesPage = lazyWithRetry(() => import('./pages/platform/PlatformPurchasesPage'));
+const BusinessOSPage = lazyWithRetry(() => import('./pages/BusinessOSPage'));
 
 import { Settings } from 'lucide-react';
 
@@ -240,7 +241,7 @@ import DriveTransferPanel from './components/drive/DriveTransferPanel';
 import SupabaseSyncBubble from './components/SupabaseSyncBubble';
 import CopyToastHost from './components/CopyToastHost';
 import ZaloMultiCopyHost from './components/ZaloMultiCopyHost';
-import { RequireCrmElevated, RequireCrmSocialInbox, RequireExecutive, RequirePlatformAdmin } from './components/RequireRole';
+import { RequireCrmElevated, RequireCrmSocialInbox, RequireExecutive, RequireFounder, RequirePlatformAdmin } from './components/RequireRole';
 import { useActivityRouteTracker } from './hooks/useActivityRouteTracker';
 import { isCrmSharedPath } from './lib/sidebarModuleContext';
 import ReleaseNoteLoginModal from './components/ReleaseNoteLoginModal';
@@ -259,6 +260,9 @@ function PageLoader() {
 function AppChromeHosts() {
   const { pathname } = useLocation();
   const isPublicShare = pathname.startsWith('/s/');
+  // Founder Cockpit owns its full-screen shell; floating operational panels
+  // would obscure status, freshness and fail-closed notices.
+  if (pathname.startsWith('/business-os')) return <CopyToastHost />;
   return (
     <>
       <CopyToastHost />
@@ -338,6 +342,12 @@ function ProtectedLayout() {
     if (!allowed) {
       return <Navigate to="/crm/dashboard" replace />;
     }
+  }
+
+  // Business AI OS has a dedicated executive shell and reuses the existing
+  // authenticated router without nesting the operational sidebar.
+  if (location.pathname.startsWith('/business-os')) {
+    return <Suspense fallback={<PageLoader />}><Outlet /></Suspense>;
   }
 
   const fullscreenPages = ['/projects/create', '/crm/messenger', '/work/flows'];
@@ -512,6 +522,7 @@ export default function App() {
               <Route path="tier-features" element={<PlatformTierFeaturesPage />} />
               <Route path="stats" element={<PlatformStatsPage />} />
             </Route>
+            <Route path="/business-os/*" element={<RequireFounder><BusinessOSPage /></RequireFounder>} />
             <Route path="/ecosystem" element={<EcosystemPage />} />
             <Route path="/ecosystem/modules" element={<EcosystemModulesPage />} />
             <Route path="/ecosystem/app-modules" element={<AppModulesAdminPage />} />

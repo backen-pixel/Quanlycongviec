@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "BUSINESS AI OS Internal Module Activation Status",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "release_id",
+    "environment",
+    "generated_at",
+    "frozen_version",
+    "overall_status",
+    "modules",
+    "protected_capabilities",
+    "critical_residual_risks",
+    "acceptance_decision"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0.0" },
+    "release_id": { "type": "string", "minLength": 1 },
+    "environment": { "const": "INTERNAL_MANAGED" },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "frozen_version": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "commit", "tree", "clean"],
+      "properties": {
+        "repository": { "type": "string", "minLength": 1 },
+        "commit": { "type": "string", "pattern": "^(UNSET|[0-9a-f]{40})$" },
+        "tree": { "type": "string", "pattern": "^(UNSET|[0-9a-f]{40})$" },
+        "clean": { "type": "boolean" }
+      }
+    },
+    "overall_status": { "$ref": "#/$defs/status" },
+    "modules": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/module" }
+    },
+    "protected_capabilities": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "critical_residual_risks": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "acceptance_decision": {
+      "enum": ["APPROVE_INTERNAL", "HOLD", "REJECT", "FOUNDER_DECISION_REQUIRED"]
+    }
+  },
+  "$defs": {
+    "status": {
+      "enum": [
+        "LIVE",
+        "LIVE WITH DATA GAPS",
+        "UNDER RECONCILIATION",
+        "NOT CONNECTED",
+        "BLOCKED",
+        "FOUNDER DECISION REQUIRED"
+      ]
+    },
+    "module": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "module_key",
+        "display_name",
+        "status",
+        "source_type",
+        "data_updated_at",
+        "freshness_slo_minutes",
+        "gates",
+        "controlled_actions",
+        "evidence",
+        "gaps"
+      ],
+      "properties": {
+        "module_key": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+        "display_name": { "type": "string", "minLength": 1 },
+        "status": { "$ref": "#/$defs/status" },
+        "source_type": {
+          "enum": ["APPLICATION_SERVICE", "APPROVED_READ_MODEL", "CANONICAL_MODULE", "NONE"]
+        },
+        "data_updated_at": { "type": ["string", "null"], "format": "date-time" },
+        "freshness_slo_minutes": { "type": ["integer", "null"], "minimum": 1 },
+        "gates": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["scope", "permission", "audit", "reconciliation", "drill_down"],
+          "properties": {
+            "scope": { "type": "boolean" },
+            "permission": { "type": "boolean" },
+            "audit": { "type": "boolean" },
+            "reconciliation": { "type": "boolean" },
+            "drill_down": { "type": "boolean" }
+          }
+        },
+        "controlled_actions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled", "application_services"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "application_services": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 },
+              "uniqueItems": true
+            }
+          }
+        },
+        "evidence": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "gaps": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    }
+  }
+}
+

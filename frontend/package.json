@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "cross-env NODE_OPTIONS=--max-http-header-size=1048576 vite",
+    "test:business-os": "node --test src/business-os/businessOsContract.test.js",
     "build": "node ../scripts/knowledge/sync-screenshots-deploy.js && cross-env NODE_OPTIONS=--max-old-space-size=4096 vite build",
     "build:analyze": "cross-env ANALYZE=1 NODE_OPTIONS=--max-old-space-size=4096 vite build",
     "preview": "vite preview"
