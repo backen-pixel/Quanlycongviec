@@ -1,13 +1,13 @@
 {
   "schema_version": "1.0.0",
-  "release_id": "INTERNAL-LIVE-V1-CANDIDATE",
+  "release_id": "INTERNAL-LIVE-V1-RC1",
   "environment": "INTERNAL_MANAGED",
   "generated_at": "2026-09-06T00:16:41.797Z",
   "frozen_version": {
     "repository": "github.com/backen-pixel/Quanlycongviec",
-    "commit": "UNSET",
-    "tree": "UNSET",
-    "clean": false
+    "commit": "e8f1b92062d2b8d76a7def71702ac8212bc5ef1f",
+    "tree": "89f4f53a32c277126e19fd38d8f638f6dca8e91c",
+    "clean": true
   },
   "overall_status": "FOUNDER DECISION REQUIRED",
   "modules": [
