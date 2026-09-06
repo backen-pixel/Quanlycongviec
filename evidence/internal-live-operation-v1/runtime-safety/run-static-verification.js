@@ -13,7 +13,18 @@ const runtimeDir = path.join(__dirname, 'runtime');
 const outputFile = path.join(runtimeDir, 'static-verification.json');
 const configurationOutputFile = path.join(runtimeDir, 'configuration-rollback-verification.json');
 const safetyOutputFile = path.join(runtimeDir, 'founder-local-safety-verification.json');
-const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+
+function npmCheck(id, args, cwd) {
+  if (process.platform === 'win32') {
+    return {
+      id,
+      command: process.env.ComSpec || 'cmd.exe',
+      args: ['/d', '/s', '/c', 'npm', ...args],
+      cwd,
+    };
+  }
+  return { id, command: 'npm', args, cwd };
+}
 
 const checks = [
   {
@@ -22,22 +33,17 @@ const checks = [
     args: ['-NoProfile', '-File', 'scripts/verify-internal-live-v1.ps1', '-RepoRoot', '.'],
     cwd: repositoryDir,
   },
-  { id: 'tenant_isolation', command: npmCommand, args: ['run', 'test:tenant'], cwd: path.join(repositoryDir, 'backend') },
-  { id: 'backend_business_os', command: npmCommand, args: ['run', 'test:business-os'], cwd: path.join(repositoryDir, 'backend') },
+  npmCheck('tenant_isolation', ['run', 'test:tenant'], path.join(repositoryDir, 'backend')),
+  npmCheck('backend_business_os', ['run', 'test:business-os'], path.join(repositoryDir, 'backend')),
   {
     id: 'advisory_configuration',
     command: process.execPath,
     args: ['--test', 'tests/founder-advisory-config.test.js'],
     cwd: path.join(repositoryDir, 'backend'),
   },
-  {
-    id: 'founder_local_safety',
-    command: npmCommand,
-    args: ['run', 'test:founder-local-safety'],
-    cwd: path.join(repositoryDir, 'backend'),
-  },
-  { id: 'frontend_business_os', command: npmCommand, args: ['run', 'test:business-os'], cwd: path.join(repositoryDir, 'frontend') },
-  { id: 'frontend_founder_local_build', command: npmCommand, args: ['run', 'build:founder-local'], cwd: path.join(repositoryDir, 'frontend') },
+  npmCheck('founder_local_safety', ['run', 'test:founder-local-safety'], path.join(repositoryDir, 'backend')),
+  npmCheck('frontend_business_os', ['run', 'test:business-os'], path.join(repositoryDir, 'frontend')),
+  npmCheck('frontend_founder_local_build', ['run', 'build:founder-local'], path.join(repositoryDir, 'frontend')),
 ];
 
 function slash(value) {
