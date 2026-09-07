@@ -114,12 +114,28 @@ export function buildMentionPickerItems({ text, cursorPos, members, currentUserI
     items.push({ type: 'all', key: '__mention_all__' });
   }
 
-  (members || [])
-    .filter((mem) => String(mem.user_id) !== String(currentUserId))
-    .filter((mem) => memberMatchesQuery(mem, query))
-    .sort((a, b) => memberDisplayName(a).localeCompare(memberDisplayName(b), 'vi'))
-    .slice(0, 10)
-    .forEach((mem) => items.push({ type: 'member', key: String(mem.user_id), mem }));
+  const q = normalizeMentionSearch(query);
+  const candidates = (members || [])
+    .filter((mem) => String(mem.user_id || mem?.user?.id || '') !== String(currentUserId || ''))
+    .filter((mem) => memberMatchesQuery(mem, query));
+
+  // Có query: ưu tiên khớp tên. Không query: ưu tiên người vừa bình luận (recentCommenter).
+  candidates.sort((a, b) => {
+    if (!q) {
+      const ar = a?.recentCommenter ? 1 : 0;
+      const br = b?.recentCommenter ? 1 : 0;
+      if (br !== ar) return br - ar;
+    }
+    return memberDisplayName(a).localeCompare(memberDisplayName(b), 'vi');
+  });
+
+  candidates
+    .slice(0, q ? 15 : 20)
+    .forEach((mem) => {
+      const uid = String(mem.user_id || mem?.user?.id || '');
+      if (!uid) return;
+      items.push({ type: 'member', key: uid, mem: { ...mem, user_id: uid } });
+    });
 
   return { open: true, start, items, query };
 }

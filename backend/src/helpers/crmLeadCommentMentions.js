@@ -99,13 +99,16 @@ function resolveMentionIdsFromContent(content, members, { excludeUserId } = {}) 
 }
 
 /**
- * Danh sách người có thể @: lead_members + người phụ trách/chủ lead nếu chưa có trong nhóm.
+ * Danh sách người có thể @: lead_members + phụ trách/chủ lead + người đã bình luận trên deal.
  */
 async function fetchLeadMentionMembers(supabase, leadId) {
+  const lid = String(leadId || '').trim();
+  if (!lid) return [];
+
   const { data: rows } = await supabase
     .from('lead_members')
     .select('user_id, user:users!lead_members_user_id_fkey(id, full_name, email, avatar, role, company_id, drive_module)')
-    .eq('lead_id', leadId);
+    .eq('lead_id', lid);
 
   const map = new Map();
   for (const r of rows || []) {
@@ -114,13 +117,40 @@ async function fetchLeadMentionMembers(supabase, leadId) {
 
   const { data: lead } = await supabase
     .from('crm_leads')
-    .select('assigned_to, lead_owner_id')
-    .eq('id', leadId)
+    .select('id, assigned_to, lead_owner_id, parent_lead_id')
+    .eq('id', lid)
     .maybeSingle();
 
   const extraIds = [...new Set(
     [lead?.assigned_to, lead?.lead_owner_id].filter(Boolean).map(String),
   )];
+
+  // Deal gốc + deal con cùng thread bình luận — lấy cả người đã comment trên family.
+  let threadLeadIds = [lid];
+  try {
+    const rootId = lead?.parent_lead_id || lead?.id || lid;
+    const { data: family } = await supabase
+      .from('crm_leads')
+      .select('id')
+      .or(`id.eq.${rootId},parent_lead_id.eq.${rootId}`);
+    const ids = [...new Set((family || []).map((d) => d.id).filter(Boolean).map(String))];
+    if (ids.length) threadLeadIds = ids;
+  } catch { /* giữ lead hiện tại */ }
+
+  try {
+    const { data: commentAuthors } = await supabase
+      .from('crm_lead_comments')
+      .select('user_id')
+      .in('lead_id', threadLeadIds)
+      .not('user_id', 'is', null)
+      .limit(800);
+    for (const row of commentAuthors || []) {
+      const uid = row?.user_id ? String(row.user_id) : '';
+      if (uid && !map.has(uid) && !extraIds.includes(uid)) extraIds.push(uid);
+    }
+  } catch (e) {
+    console.warn('[fetchLeadMentionMembers] comment authors:', e?.message || e);
+  }
 
   const missing = extraIds.filter((id) => !map.has(id));
   if (missing.length) {
