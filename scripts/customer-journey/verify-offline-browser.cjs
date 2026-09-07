@@ -58,9 +58,14 @@ async function verifyBrowser({ root, directory, serve, candidate }) {
     const page = await context.newPage();
     page.on('pageerror', () => browserErrors.push('PAGE_ERROR'));
     page.setDefaultTimeout(12000);
-    const ready = () => page.getByTestId('journey-systems').waitFor({ state: 'visible' });
+    const ready = async () => {
+      await page.getByTestId('journey-systems').waitFor({ state: 'visible' });
+      // Baseline regression enumerates the complete catalog, including the
+      // real expandable source section. Normal product starts it collapsed.
+      for (const item of await page.locator('[data-testid="journey-more-groups"]:not([open]) > summary').all()) await item.click();
+    };
     const back = async () => { await page.getByTestId('journey-back-overview').click(); await ready(); };
-    await page.goto(preview.url, { waitUntil: 'load' });
+    await page.goto(`${preview.url}/?fixture=baseline-regression`, { waitUntil: 'load' });
     await ready();
     await check('offline_banner_six_names_scope', async () => {
       assert.match(await page.getByTestId('journey-offline-banner').innerText(), /DỮ LIỆU GIẢ/);
@@ -202,6 +207,8 @@ async function verifyBrowser({ root, directory, serve, candidate }) {
     });
     const { verifyFailureStates } = require('./verify-offline-failures.cjs');
     checks.push(...await verifyFailureStates({ context, url: preview.url }));
+    const { verifyFunctionalJourney } = require('./verify-offline-functional.cjs');
+    checks.push(...await verifyFunctionalJourney({ context, url: preview.url, directory }));
     await check('mock_server_denies_api_mutation_and_host_spoof', async () => {
       assert.equal((await fetch(preview.url + '/api/business-os')).status, 403);
       assert.equal((await fetch(preview.url + '/', { method: 'POST' })).status, 405);

@@ -51,8 +51,18 @@ test('offline application imports no live route, transport, loader or storage fa
   const helper = fs.readFileSync(path.join(root, 'backend/src/helpers/customerJourneyReadModel.js'), 'utf8');
   const entry = fs.readFileSync(path.join(root, 'frontend/offline/customer-journey/entry.jsx'), 'utf8');
   const ui = fs.readFileSync(path.join(root, 'frontend/src/business-os/customer-journey/CustomerJourneyExplorer.jsx'), 'utf8');
-  // Map.delete removes a local dedup/snapshot key; it is not a database delete.
-  assert.equal(/\brequire\s*\(|\bimport\s+|\.(?:insert|update|upsert|rpc)\s*\(/.test(helper), false);
+  // Only the four reviewed pure source projections may be imported. No
+  // transitive reader/config/legacy route is admitted by this change.
+  const pureNames = ['customerJourneyCrmContract', 'customerJourneyFeedbackContract',
+    'customerJourneyFinanceContract', 'customerJourneyLogisticsContract'];
+  const imports = [...helper.matchAll(/\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)/g)].map((match) => match[1]);
+  assert.deepEqual(imports.slice().sort(), pureNames.map((name) => `./${name}`).sort());
+  const helperWithoutImports = helper.replace(/\brequire\s*\(\s*['"][^'"]+['"]\s*\)/g, 'PURE_PROJECTION');
+  assert.doesNotMatch(helperWithoutImports, /\brequire\s*\(|\bimport\s+|\.(?:insert|update|upsert|rpc)\s*\(/);
+  for (const name of pureNames) {
+    const source = fs.readFileSync(path.join(root, `backend/src/helpers/${name}.js`), 'utf8');
+    assert.doesNotMatch(source, /\brequire\s*\(|\bimport\s+|\bfetch\s*\(|\.(?:insert|update|upsert|rpc)\s*\(/);
+  }
   assert.doesNotMatch(entry + ui, /\bfetch\s*\(|\baxios\b|localStorage\.|sessionStorage\.|\/api\//);
   assert.match(entry, /createFixtureAdapter\(\)/);
 });

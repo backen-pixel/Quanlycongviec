@@ -3,12 +3,16 @@ import { createRoot } from 'react-dom/client';
 import CustomerJourneyExplorer from '../../src/business-os/customer-journey/CustomerJourneyExplorer.jsx';
 import readModel from '../../../backend/src/helpers/customerJourneyReadModel.js';
 import synthetic from '../../../backend/tests/fixtures/customer-journey/syntheticJourney.js';
+import functional from '../../../backend/tests/fixtures/customer-journey/functionalJourney.js';
 
 // This entry has no API transport, authentication, live environment, storage or
 // production app import. Both browser and Node tests use the same pure service.
+// A fixed regression fixture preserves earlier test expectations; the normal
+// offline entry exercises the integrated product. Neither selection is live.
+const baseline = new URLSearchParams(window.location.search).get('fixture') === 'baseline-regression';
 const client = readModel.createCustomerJourneyService({
-  adapter: synthetic.createFixtureAdapter(),
-  actor: synthetic.fixtureActor(),
+  adapter: baseline ? synthetic.createFixtureAdapter() : functional.createFunctionalAdapter(),
+  actor: baseline ? synthetic.fixtureActor() : functional.createFunctionalActor(),
   now: () => new Date(synthetic.FIXTURE_TIME),
 });
 const initialContext = {

@@ -30,6 +30,29 @@ export const FIELD_LABELS = Object.freeze({
   stars: 'Sao khách hàng (1–5)', feedback: 'Phản hồi khách hàng', hours: 'Giờ ghi nhận — không phải tiền lương',
   event_type: 'Loại sự kiện', decision_required: 'Yêu cầu quyết định theo nguồn',
   decision_reason: 'Lý do cần quyết định', is_active: 'Đang hoạt động',
+  stage_slug: 'Mã công đoạn task nguồn', planned_end_at: 'Kết thúc dự kiến sự kiện',
+  crm_source_state: 'Trạng thái xử lý nguồn', crm_source_kind: 'Loại công việc nguồn',
+  crm_source_basis: 'Contract công đoạn nguồn',
+  total: 'Tổng hóa đơn nguồn', paid_amount: 'Đã thanh toán theo snapshot hóa đơn',
+  due_date: 'Ngày hạn thanh toán nguồn (DATE)', payment_status: 'Nhãn thanh toán nguồn',
+  collection_state: 'Phân loại còn thu theo hóa đơn', collection_remaining_amount: 'Còn thu theo snapshot hóa đơn — không cộng cơ sở khác',
+  collection_basis: 'Cơ sở còn thu nguồn', collection_as_of_date: 'Ngày đối chiếu còn thu — không phải ngày neo kỳ',
+  collection_clock_basis: 'Cơ sở đồng hồ — chưa đối soát timezone máy chủ nguồn',
+  delivery_date: 'Ngày kế hoạch nguồn (order: giao; project VC: hạn lắp legacy)',
+  install_date: 'Hạn lắp kế hoạch nguồn', pickup_at: 'Mốc lấy hàng kế hoạch nguồn',
+  shipped_at: 'Timestamp đổi trạng thái giao — không suy thực nhận',
+  delivered_at: 'Timestamp trạng thái nguồn — không phải bằng chứng nghiệm thu',
+  logistics_company_id: 'Công ty logistics được phép thấy', logistics_person_id: 'Người logistics nguồn',
+  installer_person_id: 'Người lắp nguồn', vc_stage_slug: 'Công đoạn VC/LĐ nguồn', vc_temp_staged: 'Công trình VC tạm theo nguồn',
+  logistics_state: 'Liên kết logistics', logistics_flags: 'Cảnh báo chồng lấn — vẫn một order ID',
+  shipping_state: 'Đang giao theo trạng thái nguồn', installing_state: 'Đang lắp theo trạng thái nguồn',
+  install_deadline_state: 'Trễ hạn lắp theo màn hình nguồn', incident_state: 'Có sự cố liên kết nguồn',
+  logistics_basis: 'Cơ sở cảnh báo logistics', crm_stage_name: 'Tên stage dùng eligibility đánh giá nguồn',
+  severity: 'Mức độ sự cố nguồn', reported_by: 'Người báo — không suy trách nhiệm sửa',
+  resolved_by: 'Người đóng — không suy khách nghiệm thu', resolved_at: 'Thời điểm đóng nguồn',
+  feedback_state: 'Trạng thái phản hồi — NOT_RATED khác UNKNOWN', feedback_coverage: 'Bao phủ đánh giá được phép',
+  feedback_count: 'Số đánh giá nguồn nhìn thấy — không phải số sao',
+  outcome_state: 'Kết quả kiểm tra sau sửa', outcome_basis: 'Giới hạn nguồn outcome',
 });
 
 function fail(code) {
@@ -145,6 +168,10 @@ function assertRecords(records) {
     if (Object.entries(record.fields).some(([key, value]) => !Object.hasOwn(FIELD_LABELS, key)
       || !(value === null || typeof value === 'string' || typeof value === 'boolean'
         || (typeof value === 'number' && Number.isFinite(value))))) fail('JOURNEY_VIEW_FIELD_INVALID');
+    if (record.functional_gaps !== undefined && (!Array.isArray(record.functional_gaps)
+      || record.functional_gaps.some((code) => typeof code !== 'string' || !/^[A-Z0-9_]{1,100}$/.test(code)))) {
+      fail('JOURNEY_VIEW_FUNCTIONAL_GAP_INVALID');
+    }
     refs.add(record.ref);
   });
 }
@@ -184,7 +211,7 @@ export function assertJourneyDetail(packet, context, groupId, recordRef) {
   ['customers', 'commitments', 'tasks', 'related'].forEach((key) => assertRecords(packet[key]));
   if (!Array.isArray(packet.gaps) || !Array.isArray(packet.edges)) fail('JOURNEY_VIEW_DETAIL_INVALID');
   if (!['AUTHORIZED_CUSTOMER_COMMITMENT_EDGES', 'SELECTED_PROJECT_EXPLICIT_TASK_PROJECT',
-    'SELECTED_ORDER_PROJECT_OR_FULFILLMENT', 'SELECTED_SOURCE_TASK'].includes(packet.task_scope?.basis)
+    'SELECTED_ORDER_PROJECT_OR_FULFILLMENT', 'SELECTED_SOURCE_TASK', 'SELECTED_SOURCE_SURVEY_EVENT'].includes(packet.task_scope?.basis)
     || packet.task_scope.source_ref !== recordRef || packet.task_scope.allocation_performed !== false) {
     fail('JOURNEY_VIEW_TASK_SCOPE_INVALID');
   }

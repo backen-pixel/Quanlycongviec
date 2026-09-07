@@ -59,7 +59,13 @@ function outputDirectory(candidate) {
 
 const testGroups = [
   { id: 'journey_backend', files: ['backend/tests/customer-journey-read-model.test.js'] },
+  { id: 'journey_crm_source', files: ['backend/tests/customer-journey-crm-contract.test.js'] },
+  { id: 'journey_finance_source', files: ['backend/tests/customer-journey-finance-contract.test.js'] },
+  { id: 'journey_logistics_source', files: ['backend/tests/customer-journey-logistics-contract.test.js'] },
+  { id: 'journey_feedback_source', files: ['backend/tests/customer-journey-feedback-contract.test.js'] },
+  { id: 'journey_functional_integration', files: ['backend/tests/customer-journey-functional-integration.test.js'] },
   { id: 'journey_frontend', files: ['frontend/src/business-os/customer-journey/journeyViewContract.test.js'] },
+  { id: 'journey_functional_view', files: ['frontend/src/business-os/customer-journey/journeyFunctionalView.test.js'] },
   { id: 'offline_isolation', files: ['scripts/customer-journey/isolation.test.cjs'] },
   { id: 'existing_frontend_guards', files: ['frontend/src/business-os/businessOsContract.test.js', 'frontend/src/business-os/crmReadOnlyTruth.test.js'] },
   { id: 'existing_backend_cockpit_scope', files: ['backend/tests/founder-cockpit-read-model.test.js'], skip: 'Founder advisory configuration route', excluded: ['Advisory write/configuration tests: unaffected; not in this read-only cycle', 'CRM company suite: legacy router import tries to create upload directory; guarded attempt blocked; NOT RUN in final cycle'] },
@@ -68,6 +74,8 @@ const testGroups = [
   { id: 'existing_no_write_guards', files: ['evidence/internal-live-operation-v1/runtime-safety/founder-local-read-only.test.js'], skip: 'explicit Founder-local data environment|runtime process inspector', excluded: ['Credential-file loader fixture', 'OS process inspector: native process access not needed for new offline UI'] },
 ];
 const expectedTestCounts = { journey_backend: 45, journey_frontend: 21, offline_isolation: 5,
+  journey_crm_source: 11, journey_finance_source: 13, journey_logistics_source: 16,
+  journey_feedback_source: 4, journey_functional_integration: 22, journey_functional_view: 5,
   existing_frontend_guards: 21, existing_backend_cockpit_scope: 12, existing_readiness: 8,
   existing_candidate_isolation: 2, existing_no_write_guards: 21 };
 function runTests(directory) {

@@ -230,7 +230,13 @@ if (globalThis.fetch) {
 
 const allowedTestFiles = new Set([
   'backend/tests/customer-journey-read-model.test.js',
+  'backend/tests/customer-journey-crm-contract.test.js',
+  'backend/tests/customer-journey-finance-contract.test.js',
+  'backend/tests/customer-journey-logistics-contract.test.js',
+  'backend/tests/customer-journey-feedback-contract.test.js',
+  'backend/tests/customer-journey-functional-integration.test.js',
   'frontend/src/business-os/customer-journey/journeyViewContract.test.js',
+  'frontend/src/business-os/customer-journey/journeyFunctionalView.test.js',
   'scripts/customer-journey/isolation.test.cjs',
   'frontend/src/business-os/businessOsContract.test.js',
   'frontend/src/business-os/crmReadOnlyTruth.test.js',

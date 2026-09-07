@@ -12,7 +12,7 @@ const ENTITY_LABELS = {
   task: 'Công việc', assignment: 'Giao việc', purchase_request: 'Hạng mục cần mua (PR)',
   purchase_order: 'Lệnh mua hàng (PO)', quotation: 'Báo giá', invoice: 'Hóa đơn', payment: 'Thu ghi nhận',
   expense: 'Chi phí ghi nhận', rating: 'Đánh giá khách hàng', incident: 'Sự cố',
-  time_log: 'Nhật ký giờ', event: 'Sự kiện nguồn', conversion_event: 'Sự kiện chuyển đổi',
+  time_log: 'Nhật ký giờ', event: 'Sự kiện nguồn', crm_event: 'Lịch khảo sát nguồn', conversion_event: 'Sự kiện chuyển đổi',
 };
 const COVERAGE_LABELS = { EXACT: 'Tập giả đầy đủ', PARTIAL: 'Dữ liệu một phần', UNKNOWN: 'Chưa xác định' };
 
@@ -39,12 +39,16 @@ function FieldGrid({ fields = {}, missingFields = [], restrictedFields = [] }) {
   </>;
 }
 
-function RecordCard({ record, className = '', testId = 'journey-commitment', onTasks }) {
+function RecordCard({ record, className = '', testId = 'journey-commitment', onTasks, edges = [] }) {
   return <article className={`cj-record-card ${className}`} data-testid={testId} data-record-ref={record.ref}>
     <div className="cj-record-heading"><span className="cj-entity">{ENTITY_LABELS[record.entity] || record.entity}</span>
       <h3>{record.label || 'Hồ sơ nguồn chưa có nhãn'}</h3></div>
     <p className="cj-ref">ID nguồn: <code>{record.ref}</code> · Công ty nguồn: {record.company_id || 'UNKNOWN'}</p>
+    {record.entity === 'rating' && <p className="cj-note" data-testid="journey-rating-attribution">Đánh giá của deal nguồn: {
+      edges.filter((edge) => edge.kind === 'rating_deal' && edge.from === record.ref).map((edge) => edge.to).join(', ') || 'UNKNOWN / cạnh chưa được phép thấy'
+    }. Không phải đánh giá của sự cố, công trình hay lần sửa đang xem.</p>}
     <FieldGrid fields={record.fields} missingFields={record.missing_fields || []} restrictedFields={record.restricted_fields || []} />
+    <GapList title="Giới hạn của chức năng nguồn" gaps={record.functional_gaps || []} />
     {onTasks && record.group_id && <button className="cj-button cj-button-secondary cj-commitment-button"
       data-testid="journey-commitment-tasks" data-record-ref={record.ref} onClick={() => onTasks(record)}>
       Công việc của cam kết này →
@@ -105,22 +109,39 @@ function CapacityAndDecisions({ overview, onSelectGroup }) {
   </div>;
 }
 
+const SECONDARY_CONTROL_GROUPS = new Set(['control_invoices', 'control_payments', 'control_quotes']);
+
+function GroupTile({ group, onSelectGroup }) {
+  return <div className="cj-group-wrap">
+    <button className={`cj-group ${group.locked ? 'cj-group-locked' : ''}`}
+      data-testid="journey-group" data-group-id={group.id} data-coverage={group.coverage}
+      onClick={() => onSelectGroup(group.id)} aria-label={`${group.name}: ${displayJourneyCount(group)} ${group.unit}${group.locked ? ', khóa' : ''}`}>
+      <span><strong>{group.name}</strong><small>{group.unit} · {group.locked ? 'KHÓA' : COVERAGE_LABELS[group.coverage]}</small></span>
+      <span className="cj-count">{displayJourneyCount(group)}<span aria-hidden="true">{group.locked ? ' ⊘' : ' →'}</span></span>
+    </button>
+    <p className="cj-basis">{displaySourceValue(group.basis)}</p>
+    <GapList gaps={group.gaps || []} />
+  </div>;
+}
+
 function Overview({ packet, onSelectGroup }) {
   return <>
     <div className="cj-system-grid" data-testid="journey-systems">
       {packet.systems.map((system, index) => <section className={`cj-system cj-system-${index + 1}`} key={system.id} data-testid="journey-system">
         <div className="cj-system-title"><span className="cj-system-number">{String(index + 1).padStart(2, '0')}</span>
           <div><p className="cj-eyebrow">{index >= 4 ? 'Xuyên suốt hành trình' : `Hệ ${index + 1}`}</p><h2>{system.name}</h2></div></div>
-        <div className="cj-groups">{system.groups.map((group) => <div key={group.id} className="cj-group-wrap">
-          <button className={`cj-group ${group.locked ? 'cj-group-locked' : ''}`}
-            data-testid="journey-group" data-group-id={group.id} data-coverage={group.coverage}
-            onClick={() => onSelectGroup(group.id)} aria-label={`${group.name}: ${displayJourneyCount(group)} ${group.unit}${group.locked ? ', khóa' : ''}`}>
-            <span><strong>{group.name}</strong><small>{group.unit} · {group.locked ? 'KHÓA' : COVERAGE_LABELS[group.coverage]}</small></span>
-            <span className="cj-count">{displayJourneyCount(group)}<span aria-hidden="true">{group.locked ? ' ⊘' : ' →'}</span></span>
-          </button>
-          <p className="cj-basis">{displaySourceValue(group.basis)}</p>
-          <GapList gaps={group.gaps || []} />
-        </div>)}</div>
+        <div className="cj-groups" data-testid="journey-primary-groups">{system.groups
+          .filter((group) => !SECONDARY_CONTROL_GROUPS.has(group.id))
+          .map((group) => <GroupTile key={group.id} group={group} onSelectGroup={onSelectGroup} />)}</div>
+        {system.groups.some((group) => SECONDARY_CONTROL_GROUPS.has(group.id)) && <>
+          <GapList title="Cảnh báo nguồn bổ sung (luôn hiển thị)" gaps={system.groups
+            .filter((group) => SECONDARY_CONTROL_GROUPS.has(group.id))
+            .flatMap((group) => (group.gaps || []).map((gap) => `${group.name}: ${gap}`))} />
+          <details className="cj-more-groups" data-testid="journey-more-groups"><summary>Hồ sơ hóa đơn / thu / báo giá nguồn — không cộng với còn thu</summary>
+            <div className="cj-groups">{system.groups.filter((group) => SECONDARY_CONTROL_GROUPS.has(group.id))
+              .map((group) => <GroupTile key={group.id} group={group} onSelectGroup={onSelectGroup} />)}</div>
+          </details>
+        </>}
       </section>)}
     </div>
     <GapList gaps={packet.gaps || []} />
@@ -144,8 +165,20 @@ function GroupRecords({ packet, group, page, pageSize, onPage, onPageSize, onSel
           <thead><tr><th>Hồ sơ đúng tập</th><th>Loại / trạng thái nguồn</th><th>Phụ trách / hạn</th><th>Mở hành trình</th></tr></thead>
           <tbody>{packet.records.map((record) => <tr key={record.ref} data-testid="journey-record" data-record-ref={record.ref}>
             <td><strong>{record.label || 'Chưa có nhãn nguồn'}</strong><code className="cj-ref">{record.ref}</code></td>
-            <td>{ENTITY_LABELS[record.entity] || record.entity}<small>{displaySourceValue(record.fields.status)}</small></td>
-            <td>{displaySourceValue(record.fields.owner)}<small>{displaySourceValue(record.fields.due_at)}</small></td>
+            <td>{ENTITY_LABELS[record.entity] || record.entity}<small>{displaySourceValue(record.fields.status)}</small>
+              <small data-testid="journey-functional-state">{[record.fields.crm_source_state, record.fields.collection_state,
+                record.fields.logistics_flags, record.fields.feedback_state].filter(Boolean).join(' · ')}</small>
+              <GapList gaps={record.functional_gaps || []} />
+            </td>
+            <td>{displaySourceValue(record.fields.owner)}
+              {record.entity === 'invoice' ? <>
+                <small>Hạn thanh toán DATE: {displaySourceValue(record.fields.due_date)}</small>
+                <small>Còn thu theo snapshot hóa đơn: {displaySourceValue(record.fields.collection_remaining_amount)}</small>
+              </> : record.entity === 'crm_event' ? <>
+                <small>Lịch bắt đầu dự kiến: {displaySourceValue(record.fields.planned_start_at)}</small>
+                <small>Lịch kết thúc dự kiến: {displaySourceValue(record.fields.planned_end_at)}</small>
+              </> : <small>Hạn nguồn: {displaySourceValue(record.fields.due_at)}</small>}
+            </td>
             <td><button className="cj-button cj-button-small" onClick={() => onSelectRecord(record.ref)} data-testid="journey-open-record">Khách + cam kết →</button></td>
           </tr>)}</tbody>
         </table></div>
@@ -171,6 +204,9 @@ function JourneyDetail({ packet, showTasks, onTasks, onCommitmentTasks }) {
     <p className="cj-selected-commitment" data-testid="journey-task-parent">Nguồn đang xem: <strong>{packet.record.label || packet.record.ref}</strong> · <code>{packet.record.ref}</code></p>
     <p className="cj-basis" data-testid="journey-task-scope">Phạm vi task: {packet.task_scope.basis} · Không phân bổ tải / tiền cho khách, hóa đơn hoặc cam kết. Phạm vi customer/deal là các cạnh cam kết liên quan, không phải định mức của riêng một đơn.</p>
     <p className="cj-note">Người tạo không mặc định là chủ trì. Ngày ghi nhận không mặc định là bắt đầu. Đóng / hủy / hoàn thành / khách chấp nhận / hiệu quả sau sửa là những ý nghĩa khác nhau.</p>
+    {!['task', 'assignment'].includes(packet.record.entity) && <RecordCard record={packet.record} edges={packet.edges}
+      testId={packet.record.entity === 'crm_event' ? 'journey-survey-source' : 'journey-fourth-source'} />}
+    {packet.record.entity === 'crm_event' && <p className="cj-note">Đây là lịch khảo sát có nguồn, không phải task giả. Mốc dự kiến không chứng minh khảo sát đã diễn ra; chưa có cạnh event → task.</p>}
     {!packet.tasks.length && <div className="cj-state" data-testid="journey-no-tasks">Chưa có task liên kết được phép thấy trong projection này. Không tạo việc hoặc owner/hạn thay thế.</div>}
     <div className="cj-record-grid">{packet.tasks.map((task) => <RecordCard key={task.ref} record={task} testId="journey-task" />)}</div>
     <GapList gaps={packet.gaps} />
@@ -190,10 +226,10 @@ function JourneyDetail({ packet, showTasks, onTasks, onCommitmentTasks }) {
     {!packet.commitments.length && <p className="cj-state">Chưa có cam kết liên kết được phép thấy. Hồ sơ lead không tự trở thành đơn chắc chắn.</p>}
     <div className="cj-record-grid">{packet.commitments.map((record) => <RecordCard key={record.ref} record={record} onTasks={onCommitmentTasks} />)}</div>
     <h3 className="cj-subheading">Hồ sơ đã chọn — dữ liệu theo nguồn</h3>
-    <RecordCard record={packet.record} testId="journey-selected-source" />
+    <RecordCard record={packet.record} testId="journey-selected-source" edges={packet.edges} />
     {Array.isArray(packet.related) && packet.related.length > 0 && <>
       <h3 className="cj-subheading">Nguồn liên quan được phép thấy</h3>
-      <div className="cj-record-grid">{packet.related.map((record) => <RecordCard key={record.ref} record={record} testId="journey-related" />)}</div>
+      <div className="cj-record-grid">{packet.related.map((record) => <RecordCard key={record.ref} record={record} testId="journey-related" edges={packet.edges} />)}</div>
     </>}
     <GapList gaps={packet.gaps} />
   </section>;
