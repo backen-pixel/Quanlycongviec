@@ -510,3 +510,179 @@ test('canonical work count and capacity are UNKNOWN when mirror permission is un
   }
   assert.equal(overview.capacity.open_work, null);
 });
+
+test('J01 every temperature bucket preserves exact source IDs, company and complete pagination independently of stage', async () => {
+  const snapshot = createFixtureSnapshot();
+  const base = snapshot.records.find((row) => row.entity === 'lead');
+  snapshot.records = snapshot.records.filter((row) => row.entity !== 'lead');
+  const buckets = ['cold', 'warm', 'hot', 'unknown'];
+  const companies = [[TRADING, 'trading'], [MANUFACTURING, 'manufacturing'], [DENIED, 'denied']];
+  for (const [company, suffix] of companies) for (const bucket of buckets) {
+    const id = `j01-${suffix}-${bucket}`;
+    snapshot.records.push({ ...base, ref: `crm_leads:${id}`, source_id: id, company_id: company,
+      label: 'Lead hoàn toàn giả lập cùng nhãn',
+      fields: { ...base.fields, temperature: bucket === 'unknown' ? null : bucket,
+        stage: bucket === 'cold' ? 'warm' : 'cold' } });
+  }
+  const existing = new Set(snapshot.records.map((row) => row.ref));
+  snapshot.edges = snapshot.edges.filter((edge) => existing.has(edge.from) && existing.has(edge.to));
+  const service = makeService(snapshot);
+  for (const company of ['all', TRADING, MANUFACTURING]) for (const bucket of buckets) {
+    const selected = { ...context, company_id: company, filters: { temperature: bucket } };
+    const overview = await service.overview(selected); const group = byGroup(overview, 'market_leads');
+    const expected = companies.filter(([id]) => id !== DENIED && (company === 'all' || id === company))
+      .map(([, suffix]) => `crm_leads:j01-${suffix}-${bucket}`).sort();
+    assert.equal(group.coverage, 'EXACT'); assert.equal(group.count, expected.length);
+    assert.equal(group.count_relation, 'eq'); assert.equal(group.basis, 'stock');
+    const refs = []; let page = 1; let hasMore = true;
+    while (hasMore) {
+      const list = await service.list(overview.context, 'market_leads', { page, pageSize: 1 });
+      assert.equal(list.context_key, overview.context_key);
+      assert.equal(list.pagination.total, expected.length); assert.equal(list.pagination.complete, true);
+      assert.equal(list.records.length, 1);
+      for (const row of list.records) {
+        refs.push(row.ref); assert.ok(row.company_id !== DENIED);
+        assert.equal(row.fields.temperature, bucket === 'unknown' ? null : bucket);
+        assert.notEqual(row.fields.stage, bucket);
+        if (company !== 'all') assert.equal(row.company_id, company);
+        const detail = await service.detail(overview.context, 'market_leads', row.ref);
+        assert.deepEqual(detail.record, row); assert.equal(detail.context_key, overview.context_key);
+      }
+      hasMore = list.pagination.has_more; page += 1;
+    }
+    assert.deepEqual(refs.sort(), expected); assert.equal(new Set(refs).size, expected.length);
+  }
+  await rejects(() => service.list({ ...context, company_id: DENIED }, 'market_leads'), 'COMPANY_DENIED');
+});
+
+test('J04 source owner and authorized executor stay distinct across typed purchase and production records', async () => {
+  const snapshot = createFixtureSnapshot();
+  const order = snapshot.records.find((row) => row.ref === 'orders:order-a');
+  order.fields.executor_company_id = MANUFACTURING;
+  snapshot.records.find((row) => row.ref === 'purchase_requests:pr-a').fields.executor_company_id = TRADING;
+  snapshot.records.find((row) => row.ref === 'purchase_orders:po-a').fields.executor_company_id = DENIED;
+  const service = makeService(snapshot);
+  const checks = [
+    ['capacity_pr', 'purchase_requests:pr-a', 'purchase_request', MANUFACTURING, TRADING],
+    ['capacity_po', 'purchase_orders:po-a', 'purchase_order', TRADING, undefined],
+    ['solution_orders', 'orders:order-a', 'order', TRADING, MANUFACTURING],
+    ['capacity_projects', 'projects:project-shared', 'project', MANUFACTURING, undefined],
+    ['operations_inventory', 'tasks:production-work', 'task', MANUFACTURING, undefined],
+  ];
+  for (const [group, ref, entity, ownerCompany, executorCompany] of checks) {
+    const result = await service.detail(context, group, ref);
+    assert.equal(result.record.ref, ref); assert.equal(result.record.entity, entity);
+    assert.equal(result.record.source_type, ref.split(':')[0]);
+    assert.equal(result.record.company_id, ownerCompany);
+    assert.equal(result.record.fields.executor_company_id, executorCompany);
+    for (const edge of result.edges) assert.ok(snapshot.edges.some((source) => source.kind === edge.kind
+      && source.from === edge.from && source.to === edge.to), 'NO_INVENTED_RELATIONSHIP');
+    assert.ok(!result.edges.some((edge) => edge.from === 'purchase_requests:pr-a'
+      && edge.to === 'purchase_orders:po-a'), 'NO_INFERRED_PR_PO_BRIDGE');
+  }
+  const purchased = await service.detail(context, 'capacity_pr', 'purchase_requests:pr-a');
+  for (const [kind, from, to] of [
+    ['pr_project', 'purchase_requests:pr-a', 'projects:project-shared'],
+    ['pr_order', 'purchase_requests:pr-a', 'orders:order-a'],
+    ['po_lead', 'purchase_orders:po-a', 'crm_leads:deal-a'],
+    ['order_project', 'orders:order-a', 'projects:project-shared'],
+    ['task_project', 'tasks:production-work', 'projects:project-shared'],
+  ]) assert.ok(purchased.edges.some((edge) => edge.kind === kind && edge.from === from && edge.to === to));
+  const bound = makeService(snapshot, fixtureActor({ company_id: TRADING }));
+  const bounded = await bound.detail({ ...context, company_id: TRADING }, 'solution_orders', 'orders:order-a');
+  assert.equal(bounded.record.company_id, TRADING);
+  assert.equal(bounded.record.fields.executor_company_id, undefined);
+  const fieldActor = fixtureActor();
+  fieldActor.field_permissions.order = fieldActor.field_permissions.order.filter((field) => field !== 'executor_company_id');
+  const restricted = await makeService(snapshot, fieldActor).detail(context, 'solution_orders', 'orders:order-a');
+  assert.equal(restricted.record.fields.executor_company_id, undefined);
+  assert.ok(restricted.record.restricted_fields.includes('executor_company_id'));
+});
+
+test('J08 week month quarter and authorized company matrix preserve exact due IDs through list and detail', async () => {
+  const snapshot = createFixtureSnapshot();
+  const base = snapshot.records.find((row) => row.ref === 'tasks:production-work');
+  snapshot.records = snapshot.records.filter((row) => !['task', 'assignment'].includes(row.entity));
+  const dates = { quarter_only: '2026-07-15T00:00:00+07:00', week_only: '2026-08-31T00:00:00+07:00',
+    week_and_month: '2026-09-06T00:00:00+07:00', month_only: '2026-09-20T00:00:00+07:00',
+    excluded_end: '2026-10-01T00:00:00+07:00', excluded_before: '2026-06-30T00:00:00+07:00', unknown: null };
+  const companies = [[TRADING, 'trading'], [MANUFACTURING, 'manufacturing'], [DENIED, 'denied']];
+  for (const [company, suffix] of companies) for (const [bucket, due] of Object.entries(dates)) {
+    const id = `j08-${suffix}-${bucket}`;
+    snapshot.records.push({ ...base, ref: `tasks:${id}`, source_id: id, company_id: company,
+      fields: { ...base.fields, due_at: due } });
+  }
+  const existing = new Set(snapshot.records.map((row) => row.ref));
+  snapshot.edges = snapshot.edges.filter((edge) => existing.has(edge.from) && existing.has(edge.to));
+  const buckets = { week: ['week_only', 'week_and_month'], month: ['week_and_month', 'month_only'],
+    quarter: ['quarter_only', 'week_only', 'week_and_month', 'month_only'] };
+  const service = makeService(snapshot);
+  for (const period of ['week', 'month', 'quarter']) for (const company of ['all', TRADING, MANUFACTURING]) {
+    const selected = { ...context, period, company_id: company };
+    const overview = await service.overview(selected); const group = byGroup(overview, 'operations_work');
+    const expected = companies.filter(([id]) => id !== DENIED && (company === 'all' || id === company))
+      .flatMap(([, suffix]) => buckets[period].map((bucket) => `tasks:j08-${suffix}-${bucket}`)).sort();
+    assert.equal(group.basis, 'due_at'); assert.equal(group.coverage, 'EXACT');
+    assert.equal(group.count, expected.length); assert.equal(overview.context.timezone, 'Asia/Ho_Chi_Minh');
+    const refs = []; let page = 1; let hasMore = true;
+    while (hasMore) {
+      const list = await service.list(overview.context, 'operations_work', { page, pageSize: 1 });
+      assert.equal(list.context_key, overview.context_key); assert.equal(list.pagination.total, expected.length);
+      for (const row of list.records) {
+        refs.push(row.ref); assert.ok(row.company_id !== DENIED);
+        if (company !== 'all') assert.equal(row.company_id, company);
+        const detail = await service.detail(overview.context, 'operations_work', row.ref);
+        assert.deepEqual(detail.record, row); assert.equal(detail.context_key, overview.context_key);
+      }
+      hasMore = list.pagination.has_more; page += 1;
+    }
+    assert.deepEqual(refs.sort(), expected); assert.equal(new Set(refs).size, expected.length);
+    await rejects(() => service.detail(overview.context, 'operations_work', 'tasks:j08-denied-week_and_month'), 'RESOURCE_DENIED');
+  }
+  await rejects(() => service.overview({ ...context, company_id: DENIED }), 'COMPANY_DENIED');
+});
+
+test('J08 logistics company follows only explicit order project task edges and denies its unauthorized counterpart', async () => {
+  const snapshot = createFixtureSnapshot();
+  const logistics = 'fixture-logistics'; const deniedLogistics = 'fixture-logistics-denied';
+  const project = snapshot.records.find((row) => row.ref === 'projects:project-shared');
+  const task = snapshot.records.find((row) => row.ref === 'tasks:production-work');
+  for (const [company, suffix] of [[logistics, 'visible'], [deniedLogistics, 'denied']]) {
+    snapshot.companies.push({ id: company, name: `Logistics giả lập ${suffix}`, kind: 'logistics', ecosystem_id: ECOSYSTEM, active: true });
+    const projectId = `j08-logistics-${suffix}`; const taskId = `j08-logistics-task-${suffix}`;
+    snapshot.records.push({ ...project, ref: `projects:${projectId}`, source_id: projectId, company_id: company },
+      { ...task, ref: `tasks:${taskId}`, source_id: taskId, company_id: company,
+        fields: { ...task.fields, due_at: '2026-09-05T00:00:00+07:00', executor_company_id: company } });
+    snapshot.edges.push({ kind: 'logistics_project', from: 'orders:order-a', to: `projects:${projectId}` },
+      { kind: 'task_project', from: `tasks:${taskId}`, to: `projects:${projectId}` });
+  }
+  const actor = fixtureActor({ company_ids: [TRADING, MANUFACTURING, logistics] });
+  const service = makeService(snapshot, actor); const overview = await service.overview(context);
+  assert.equal(overview.companies.find((company) => company.id === logistics).kind, 'logistics');
+  assert.ok(!overview.companies.some((company) => company.id === deniedLogistics));
+  const order = await service.detail(overview.context, 'solution_orders', 'orders:order-a');
+  assert.ok(order.edges.some((edge) => edge.kind === 'logistics_project' && edge.from === 'orders:order-a'
+    && edge.to === 'projects:j08-logistics-visible'));
+  assert.ok(order.tasks.some((row) => row.ref === 'tasks:j08-logistics-task-visible' && row.company_id === logistics));
+  assert.ok(!order.tasks.some((row) => row.ref === 'tasks:j08-logistics-task-denied'));
+  assert.ok(!order.commitments.some((row) => row.ref === 'projects:j08-logistics-denied'));
+  assert.ok(!order.edges.some((edge) => edge.to === 'projects:j08-logistics-denied'));
+  const selected = { ...context, company_id: logistics, period: 'week' };
+  const list = await service.list(selected, 'operations_work', { pageSize: 1 });
+  assert.equal(list.group.count, 1); assert.equal(list.group.coverage, 'EXACT');
+  assert.deepEqual(list.records.map((row) => row.ref), ['tasks:j08-logistics-task-visible']);
+  assert.equal(list.pagination.has_more, false);
+  const detail = await service.detail(list.context, 'operations_work', list.records[0].ref);
+  assert.deepEqual(detail.record, list.records[0]); assert.equal(detail.context_key, list.context_key);
+  assert.equal(detail.record.fields.executor_company_id, logistics);
+  await rejects(() => service.overview({ ...context, company_id: deniedLogistics }), 'COMPANY_DENIED');
+  await rejects(() => service.detail(context, 'capacity_projects', 'projects:j08-logistics-denied'), 'RESOURCE_DENIED');
+});
+
+test('inactive trusted actor is rejected before any synthetic adapter read', () => {
+  let reads = 0;
+  const adapter = { ...createFixtureAdapter(), readSnapshot: async () => { reads += 1; return createFixtureSnapshot(); } };
+  assert.throws(() => makeService(undefined, fixtureActor({ active: false }), { adapter }),
+    (error) => error.code === 'TRUSTED_ACTOR_REQUIRED');
+  assert.equal(reads, 0);
+});

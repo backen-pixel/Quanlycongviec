@@ -149,6 +149,59 @@ async function verifyBrowser({ root, directory, serve, candidate }) {
       await page.getByTestId('journey-company').selectOption('all'); await ready();
       await page.getByTestId('journey-temperature').selectOption(''); await ready();
     });
+    await check('J01_all_temperature_controls_exact_ids_and_back', async () => {
+      // The default browser fixture has cold + unclassified only. Populated
+      // warm/hot cohorts are asserted separately in the backend J01 test.
+      for (const temperature of ['cold', 'warm', 'hot', 'unknown']) {
+        await page.getByTestId('journey-temperature').selectOption(temperature); await ready();
+        const expected = temperature === 'cold' ? ['crm_leads:lead-cold']
+          : temperature === 'unknown' ? ['crm_leads:lead-unknown'] : [];
+        const group = page.locator('[data-testid="journey-group"][data-group-id="market_leads"]');
+        assert.equal((await group.locator('.cj-count').innerText()).replace(/[^0-9]/g, ''), String(expected.length));
+        await group.click(); await page.getByTestId('journey-records').waitFor();
+        assert.deepEqual(await page.getByTestId('journey-record').evaluateAll((items) => items.map((item) => item.dataset.recordRef)), expected);
+        if (expected.length) {
+          await page.getByTestId('journey-open-record').first().click();
+          await page.getByTestId('journey-customer-layer').waitFor();
+          assert.equal(await page.getByTestId('journey-selected-source').getAttribute('data-record-ref'), expected[0]);
+          if (temperature === 'unknown') assert.match(await page.getByTestId('journey-selected-source').innerText(), /UNKNOWN/);
+        } else assert.equal(await page.getByTestId('journey-empty').count(), 1);
+        await back();
+        assert.equal(await page.getByTestId('journey-temperature').inputValue(), temperature);
+      }
+      await page.getByTestId('journey-temperature').selectOption(''); await ready();
+    });
+    await check('J08_period_company_due_ids_detail_and_back_matrix', async () => {
+      const rows = [
+        { ref: 'crm_tasks:crm-work', company: 'fixture-trading', week: true },
+        { ref: 'tasks:production-work', company: 'fixture-manufacturing', week: false },
+        { ref: 'tasks:cancelled-work', company: 'fixture-manufacturing', week: true },
+      ];
+      for (const company of ['all', 'fixture-trading', 'fixture-manufacturing']) {
+        await page.getByTestId('journey-company').selectOption(company); await ready();
+        for (const period of ['week', 'month', 'quarter']) {
+          await page.getByTestId('journey-period').selectOption(period); await ready();
+          const expected = rows.filter((row) => (company === 'all' || row.company === company) && (period !== 'week' || row.week)).map((row) => row.ref).sort();
+          const group = page.locator('[data-testid="journey-group"][data-group-id="operations_work"]');
+          assert.equal((await group.locator('.cj-count').innerText()).replace(/[^0-9]/g, ''), String(expected.length));
+          await group.click(); await page.getByTestId('journey-records').waitFor();
+          await page.getByTestId('journey-page-size').selectOption('20');
+          await page.locator('[data-testid="journey-records"][data-page="1"][data-page-size="20"]').waitFor();
+          assert.deepEqual((await page.getByTestId('journey-record').evaluateAll((items) => items.map((item) => item.dataset.recordRef))).sort(), expected);
+          await page.getByTestId('journey-open-record').first().click();
+          await page.getByTestId('journey-customer-layer').waitFor();
+          assert.ok(expected.includes(await page.getByTestId('journey-selected-source').getAttribute('data-record-ref')));
+          await page.getByTestId('journey-open-tasks').click(); await page.getByTestId('journey-tasks-layer').waitFor();
+          await back();
+          assert.equal(await page.getByTestId('journey-company').inputValue(), company);
+          assert.equal(await page.getByTestId('journey-period').inputValue(), period);
+        }
+      }
+      await page.getByTestId('journey-company').selectOption('all'); await ready();
+      await page.getByTestId('journey-period').selectOption('month'); await ready();
+    });
+    const { verifyFailureStates } = require('./verify-offline-failures.cjs');
+    checks.push(...await verifyFailureStates({ context, url: preview.url }));
     await check('mock_server_denies_api_mutation_and_host_spoof', async () => {
       assert.equal((await fetch(preview.url + '/api/business-os')).status, 403);
       assert.equal((await fetch(preview.url + '/', { method: 'POST' })).status, 405);

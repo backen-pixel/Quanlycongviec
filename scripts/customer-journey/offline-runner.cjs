@@ -67,7 +67,7 @@ const testGroups = [
   { id: 'existing_candidate_isolation', files: ['evidence/internal-live-operation-v1/runtime-safety/candidate-evidence-paths.test.js'] },
   { id: 'existing_no_write_guards', files: ['evidence/internal-live-operation-v1/runtime-safety/founder-local-read-only.test.js'], skip: 'explicit Founder-local data environment|runtime process inspector', excluded: ['Credential-file loader fixture', 'OS process inspector: native process access not needed for new offline UI'] },
 ];
-const expectedTestCounts = { journey_backend: 40, journey_frontend: 21, offline_isolation: 5,
+const expectedTestCounts = { journey_backend: 45, journey_frontend: 21, offline_isolation: 5,
   existing_frontend_guards: 21, existing_backend_cockpit_scope: 12, existing_readiness: 8,
   existing_candidate_isolation: 2, existing_no_write_guards: 21 };
 function runTests(directory) {
@@ -87,10 +87,15 @@ function runTests(directory) {
     }
     const countContract = counts.tests === expectedTestCounts[group.id] && counts.pass === counts.tests && counts.pass > 0 && counts.fail === 0 && counts.cancelled === 0;
     const entry = { id: group.id, status: result.status === 0 && !result.error && countContract ? 'PASS' : 'FAIL', exit_code: result.status, counts, expected_tests: expectedTestCounts[group.id], count_contract: countContract, scope: 'OFFLINE_FIXTURES_OR_MOCKS_ONLY' };
+    // Record only declared test names, never raw assertion payloads or fixtures.
+    entry.passed_tap_names = String(result.stdout || '').split('\n')
+      .filter((line) => /^\s*ok \d+ - /.test(line))
+      .map((line) => line.replace(/^\s*ok \d+ - /, '').trim());
     if (group.excluded) entry.excluded = group.excluded;
     if (entry.status === 'FAIL') entry.failed_tests = String(result.stdout || '').split('\n').filter((line) => /^not ok |^\s+code: /.test(line));
     results.push(entry);
-    console.log(JSON.stringify(entry));
+    const { passed_tap_names, ...progressEntry } = entry;
+    console.log(JSON.stringify(progressEntry));
     if (entry.status === 'FAIL' && !entry.failed_tests.length) console.log(JSON.stringify({ id: group.id, failure_code: result.error?.code || 'TEST_PROCESS_FAILED_WITHOUT_TAP' }));
   }
   writeJson(directory, 'offline-tests.json', { mode: 'OFFLINE_FIXTURE_ONLY', candidate: identity(), results, recorded_at: new Date().toISOString(), live_verification: 'NOT RUN / NOT AUTHORIZED IN THIS CYCLE' });
@@ -106,8 +111,11 @@ async function build(directory) {
   fs.mkdirSync(assets, { recursive: true });
   const result = await esbuild.build({
     absWorkingDir: root,
-    entryPoints: ['frontend/offline/customer-journey/entry.jsx'],
-    outfile: path.join(assets, 'journey.js'),
+    entryPoints: {
+      journey: 'frontend/offline/customer-journey/entry.jsx',
+      'failure-probe': 'frontend/offline/customer-journey/failure-probe.jsx',
+    },
+    outdir: assets,
     bundle: true, platform: 'browser', format: 'esm', jsx: 'automatic',
     target: 'es2020', sourcemap: false, minify: false, metafile: true,
     define: { 'process.env.NODE_ENV': '"production"' },
@@ -143,6 +151,10 @@ async function build(directory) {
     .replace(/(?:\.\/|\/)entry\.jsx/g, './assets/journey.js');
   assert(!/https?:\/\//i.test(html), 'JOURNEY_BUILD_EXTERNAL_ASSET_DENIED');
   fs.writeFileSync(path.join(directory, 'preview/index.html'), html, 'utf8');
+  // A separate synthetic verification entry renders the unchanged component
+  // with controllable failures. It is never a production route or live adapter.
+  const failureHtml = html.replaceAll('./assets/journey.', './assets/failure-probe.');
+  fs.writeFileSync(path.join(directory, 'preview/failure-probe.html'), failureHtml, 'utf8');
   const entry = { status: 'PASS', mode: 'OFFLINE_FIXTURE_ONLY', candidate: identity(), input_count: inputs.length, input_paths: inputs, assets: inventory(path.join(directory, 'preview')), recorded_at: new Date().toISOString() };
   writeJson(directory, 'offline-build.json', entry);
   console.log(JSON.stringify({ id: 'offline_build', status: 'PASS', inputs: inputs.length }));
