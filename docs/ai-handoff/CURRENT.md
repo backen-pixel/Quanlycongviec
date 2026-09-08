@@ -1,6 +1,15 @@
 # Trạng thái công việc hiện tại
 
-Cập nhật: 2026-09-08 16:10 (UTC+7)
+Cập nhật: 2026-09-08 16:20 (UTC+7)
+
+## Đã commit + push phần WIP còn lại (16:20)
+
+Nhánh `feat/project-phat-sinh-report`. Gom phần chưa commit của hôm nay:
+đồng bộ deadline, sửa query-guard, tổng quan nhiệm vụ, tài liệu bàn giao.
+
+Không commit: `.idea`, upload, `_to_delete`, log/ảnh tạm, SQL trùng số trên
+`main` (`400`–`402`, `580_clear_all_project_deadlines_*`). Migration 596
+vẫn **chặn phát hành** — xem mục dưới.
 
 ## Không gian chung — admin hệ thống sửa/xóa việc người khác
 
@@ -75,6 +84,25 @@ lên Supabase production.
 - `node tests/module-deadline-policy.test.js` — đạt.
 - `git diff --check -- backend/src/routes/management.js database/596_unified_module_deadline_policy.sql` — đạt.
 - IDE không báo lỗi lint mới trên `backend/src/routes/management.js`.
+
+## Đã sửa 5 lỗi query-guard (Claude, 22:58) — chờ anh restart backend xác minh
+
+Nguồn: [`BAO-CAO-loi-query-guard-2026-09-08.md`](./BAO-CAO-loi-query-guard-2026-09-08.md) của Cursor.
+Số của Cursor kiểm chứng lại trên prod: **đúng hết**, hai chỗ nặng hơn (41 user >1.000 thông báo,
+cao nhất 9.503; wonIds thực tế 713+525 id).
+
+- P0 `GET /management/deals` trả HTTP 500 — `crm_leads.budget`/`deadline` không tồn tại. **Đã sửa.**
+- P1 `.in('id', wonIds)` vượt mốc gãy URL — **đã chia lô**, không đổi phạm vi «won».
+- P1 2.213 task active bị cắt ở 1.000 dòng — **đã phân trang**.
+- P2 badge thông báo (nhánh dự phòng) — **đã phân trang**.
+- P2 guard không có site cho `.rpc()` — **đã bọc**, nhãn thành `rpc:<tên hàm>`.
+- Bonus: `audit/audit.py` nay lần theo `.select(BIẾN)` — đúng lỗ đã để lọt lỗi P0.
+
+**Cần anh B.A**: restart backend local, mở lại tab tổng quan module Dự án. Kỳ vọng 200 thay vì
+500; sau 15 phút bảng query-guard không còn `COT-KHONG-TON-TAI crm_leads` và
+`FILTER-ID-QUA-DAI projects`.
+
+`routes/management.js` đã trả lại vùng dùng chung.
 
 ## Phân công hai bên: [`HANDOFF-2026-09-08-phan-cong.md`](./HANDOFF-2026-09-08-phan-cong.md)
 

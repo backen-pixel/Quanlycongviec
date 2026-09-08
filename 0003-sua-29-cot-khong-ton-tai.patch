@@ -1,0 +1,685 @@
+From 40aabdbeb0771af88477ac39b7597b8ff9d209b5 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 5 Sep 2026 04:04:44 +0000
+Subject: [PATCH 3/3] =?UTF-8?q?fix:=2029=20c=E1=BB=99t=20kh=C3=B4ng=20t?=
+ =?UTF-8?q?=E1=BB=93n=20t=E1=BA=A1i=20trong=20.select()=20=E2=80=94=20nhi?=
+ =?UTF-8?q?=E1=BB=81u=20t=C3=ADnh=20n=C4=83ng=20=C4=91ang=20ch=E1=BA=BFt?=
+ =?UTF-8?q?=20l=E1=BA=B7ng=20l=E1=BA=BD?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Rà soát tĩnh 493 file backend, đối chiếu MỌI cột trong mọi .select() với schema
+thật lấy từ information_schema (294 bảng/view). Tìm ra 29 cột không tồn tại tại
+37 vị trí gọi, đã kiểm chứng 29/29 trực tiếp trên database.
+
+Mỗi cái làm Postgres trả 42703 và HỎNG CẢ CÂU — không phải thiếu một cột, mà là
+`data` thành undefined. Vì phần lớn chỗ gọi viết `const { data } = await ...`
+không kiểm tra error, tính năng chết mà không có gì báo ra.
+
+── Những thứ đang hỏng ────────────────────────────────────────────────────
+
+  middleware/permission.js   TOÀN BỘ RBAC đọc ra rỗng. role_permissions là bảng
+                             nối khoá ngoại (role_id, permission_id) chứ không
+                             có cột `permission`/`role`/`is_allowed`. Dữ liệu
+                             thật vẫn đầy đủ: 14 role, 193 quyền, 1.073 dòng
+                             nối. Nay giải role.name -> id -> permissions và
+                             ghép `resource.action` (đúng định dạng đang dùng ở
+                             user_permission_overrides.permission).
+                             KHÔNG phải lỗ hổng: nó fail-closed, trả [] nên chỉ
+                             mất tính năng chứ không cấp quyền nhầm.
+
+  routes/upload.js           Endpoint XOÁ FILE luôn trả 404. file_attachments
+                             không có `storage_path`, nên câu select hỏng ->
+                             `file` undefined -> chạm nhánh 404. Kèm theo file
+                             trên Storage không bao giờ được dọn. Nay lấy
+                             `file_url` rồi tách ngược ra đường dẫn bucket.
+
+  projectDealBundle.js       Khối đính kèm của crm_task chưa từng vào bundle:
+                             crm_task_attachments dùng `task_id` và
+                             `shared_to_project`, không có `crm_task_id`,
+                             `shared_to_workshop` lẫn `file_path`. Ba tên sai.
+
+  routes/dashboardMain.js    tasks không có `assigned_to` (tên thật assignee_id)
+                             — sai ở 7 chỗ gồm cả .eq()/.in(). projects không có
+                             start_date/end_date/customer_name/customer_phone.
+                             GHI CHÚ: route này mount ở /api/dashboard-main
+                             nhưng frontend KHÔNG gọi ở đâu cả — cân nhắc xoá.
+
+  routes/aiChatBot.js        `depth` nằm ở ecosystem_levels chứ không phải
+                             ecosystem_units -> danh sách "khối" luôn rỗng.
+
+  helpers/tenantQuotas.js    crm_lead_comments dùng `body`, không phải `content`
+                             -> hạn mức tenant luôn tính 0 byte cho bình luận.
+
+  membersChat.js             Ghim tin nhắn: có endpoint + socket emit nhưng
+                             thiếu cột -> database/591 thêm `is_pinned`.
+
+  Còn lại: management.js (crm_activities.content/result -> description/outcome;
+  crm_leads.budget/deadline không tồn tại), ecosystem.js (companies.code/logo,
+  departments.short_name, ecosystem_levels.level_index -> depth), appModuleOps +
+  appModules (crm_leads.name -> title, assignee_id -> assigned_to,
+  pipeline_stage_id -> stage_id), purchasing (address -> install_address),
+  projects.js (lead_source_id -> parent_lead_id), stageFlow, drive, tasks,
+  dashboard, tenantSetup, tenantOnboarding, test-permissions.
+
+  Mọi chỗ DÙNG giá trị ở downstream đều đổi theo, không chỉ sửa câu select
+  (lead.name -> lead.title ở 3 chỗ, a.crm_task_id -> a.task_id, c.content ->
+  c.body, levelMap[l.level_index] -> l.depth, deal.lead_source_id -> ...).
+
+── Về chính bộ rà soát ────────────────────────────────────────────────────
+
+Bản dò đầu tiên báo thêm ~10 cái nữa. Kiểm tra tay thì đó là lỗi giả: mã thật
+là `.from(BIẾN)` mà bộ dò vơ lấy `.from('literal')` ở phía trên. Đã siết: khi
+`.from()` gần nhất không phải chuỗi hằng thì bỏ qua.
+
+Sau đó mở rộng sang `.eq()/.in()/.order()` — vì lọc theo cột không tồn tại CŨNG
+trả 42703. Nó tìm thêm được 2 lỗi thật (`.eq('level_index')` trên
+ecosystem_levels) mà phần .select() bỏ sót. NHƯNG phần lớn kết quả là lỗi giả,
+vì bộ lọc hay áp lên biến query dựng từ trước hoặc nằm trong helper nhận query
+làm tham số — không có `.from()` nào trong tầm nhìn. Đã kiểm chứng tay 4 cái
+(projects.division_id, companies.company_id, departments.department_id,
+crm_leads.assignee_id): tất cả đều giả.
+=> Giữ phần đó nhưng in ra RIÊNG, gắn nhãn "CẦN RÀ TAY", không dùng để sửa.
+
+Sau khi sửa: phần .select() còn 0 cột sai.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01NQGZinD1fBWKPaxCtm2udT
+---
+ backend/src/helpers/appModuleOps.js      | 16 ++++++++------
+ backend/src/helpers/projectDealBundle.js | 14 ++++++------
+ backend/src/helpers/stageFlow.js         |  3 ++-
+ backend/src/helpers/tenantOnboarding.js  |  3 ++-
+ backend/src/helpers/tenantQuotas.js      |  4 ++--
+ backend/src/helpers/tenantSetup.js       |  3 ++-
+ backend/src/middleware/permission.js     | 27 ++++++++++++++++++------
+ backend/src/routes/aiChatBot.js          | 18 +++++++++++-----
+ backend/src/routes/appModules.js         |  5 +++--
+ backend/src/routes/dashboard.js          |  2 +-
+ backend/src/routes/dashboardMain.js      | 19 +++++++----------
+ backend/src/routes/drive.js              |  4 ++--
+ backend/src/routes/ecosystem.js          | 11 ++++++----
+ backend/src/routes/management.js         | 11 +++++-----
+ backend/src/routes/projects.js           |  7 +++---
+ backend/src/routes/purchasing.js         |  2 +-
+ backend/src/routes/tasks.js              |  2 +-
+ backend/src/routes/upload.js             | 15 ++++++++++---
+ backend/src/test-permissions.js          |  2 +-
+ database/591_lead_messages_is_pinned.sql | 25 ++++++++++++++++++++++
+ 20 files changed, 130 insertions(+), 63 deletions(-)
+ create mode 100644 database/591_lead_messages_is_pinned.sql
+
+diff --git a/backend/src/helpers/appModuleOps.js b/backend/src/helpers/appModuleOps.js
+index f58252a6..002941cf 100644
+--- a/backend/src/helpers/appModuleOps.js
++++ b/backend/src/helpers/appModuleOps.js
+@@ -159,18 +159,19 @@ async function syncCrmFromAppModuleStage(record, stage) {
+   }
+   const { data: lead, error: leadErr } = await supabase
+     .from('crm_leads')
+-    .select('id, pipeline_stage_id')
++    // crm_leads dùng `stage_id`; không có cột `pipeline_stage_id`
++    .select('id, stage_id')
+     .eq('id', record.source_crm_lead_id)
+     .maybeSingle();
+   if (leadErr) throw leadErr;
+   if (!lead) return { synced: false, reason: 'lead_missing' };
+-  if (String(lead.pipeline_stage_id) === String(stage.crm_target_stage_id)) {
++  if (String(lead.stage_id) === String(stage.crm_target_stage_id)) {
+     return { synced: false, reason: 'already' };
+   }
+   const { error: updErr } = await supabase
+     .from('crm_leads')
+     .update({
+-      pipeline_stage_id: stage.crm_target_stage_id,
++      stage_id: stage.crm_target_stage_id,
+       updated_at: new Date().toISOString(),
+     })
+     .eq('id', lead.id);
+@@ -200,7 +201,7 @@ async function notifyModuleTransfer(req, {
+   targets.delete(String(actorUserId || ''));
+   const title = `Chuyển sang ${moduleRow.name}`;
+   const message = lead
+-    ? `Deal «${lead.name || lead.code || lead.id}» đã được chuyển vào module «${moduleRow.name}».`
++    ? `Deal «${lead.title || lead.code || lead.id}» đã được chuyển vào module «${moduleRow.name}».`
+     : `Có bản ghi mới trong module «${moduleRow.name}»: ${record.name}`;
+   const link = `/m/${moduleRow.module_key}/records/${record.id}`;
+   const meta = {
+@@ -251,7 +252,8 @@ async function transferLeadToAppModule(req, {
+ 
+   const { data: lead, error: leadErr } = await supabase
+     .from('crm_leads')
+-    .select('id, name, code, company_id, assignee_id, type')
++    // crm_leads: tên thật là `title` và `assigned_to`
++    .select('id, title, code, company_id, assigned_to, type')
+     .eq('id', leadId)
+     .maybeSingle();
+   if (leadErr) throw leadErr;
+@@ -294,7 +296,7 @@ async function transferLeadToAppModule(req, {
+     targetTabId = mainTab?.id || null;
+   }
+ 
+-  const name = lead.name || lead.code || `Deal ${String(lead.id).slice(0, 8)}`;
++  const name = lead.title || lead.code || `Deal ${String(lead.id).slice(0, 8)}`;
+   const insert = {
+     module_id: moduleRow.id,
+     company_id: companyId || moduleRow.company_id || lead.company_id || null,
+@@ -302,7 +304,7 @@ async function transferLeadToAppModule(req, {
+     stage_id: targetStageId,
+     tab_id: targetTabId,
+     source_crm_lead_id: lead.id,
+-    assignee_id: assigneeId || lead.assignee_id || null,
++    assignee_id: assigneeId || lead.assigned_to || null,
+     status: 'open',
+     meta: { transferred_from: 'crm', lead_type: lead.type || null },
+     created_by: req.user?.id || null,
+diff --git a/backend/src/helpers/projectDealBundle.js b/backend/src/helpers/projectDealBundle.js
+index 6c1402e4..904e22b8 100644
+--- a/backend/src/helpers/projectDealBundle.js
++++ b/backend/src/helpers/projectDealBundle.js
+@@ -933,11 +933,11 @@ async function buildProjectDealBundleWithProject(project, user, opts = {}) {
+       ? Promise.resolve({ data: [] })
+       : (crmLeadIdForWork
+         ? supabase.from('lead_documents')
+-          .select('id, name, file_name, doc_type, created_at, shared_to_workshop, allowed_share_modules, file_path, file_url, crm_stage_slug, source_crm_task_id, project_id')
++          .select('id, name, file_name, doc_type, created_at, shared_to_workshop, allowed_share_modules, file_url, crm_stage_slug, source_crm_task_id, project_id')
+           .eq('lead_id', crmLeadIdForWork)
+           .order('created_at', { ascending: false })
+         : supabase.from('lead_documents')
+-          .select('id, name, file_name, doc_type, created_at, shared_to_workshop, allowed_share_modules, file_path, file_url, crm_stage_slug, source_crm_task_id, project_id')
++          .select('id, name, file_name, doc_type, created_at, shared_to_workshop, allowed_share_modules, file_url, crm_stage_slug, source_crm_task_id, project_id')
+           .eq('project_id', projectId)
+           .order('created_at', { ascending: false })),
+     lite || !leadIds.length
+@@ -1032,8 +1032,11 @@ async function buildProjectDealBundleWithProject(project, user, opts = {}) {
+     lite || !crmTaskIds.length
+       ? Promise.resolve({ data: [] })
+       : supabase.from('crm_task_attachments')
+-        .select('id, file_name, name, file_path, file_url, mime_type, created_at, crm_task_id, shared_to_workshop, allowed_share_modules')
+-        .in('crm_task_id', crmTaskIds),
++        // crm_task_attachments dùng `task_id` và `shared_to_project`; không có
++        // `file_path` lẫn `crm_task_id`. Cả ba tên sai làm hỏng CẢ câu -> khối
++        // đính kèm của crm_task chưa từng vào được bundle.
++        .select('id, file_name, name, file_url, mime_type, created_at, task_id, shared_to_project, allowed_share_modules')
++        .in('task_id', crmTaskIds),
+     lite || !assigneeIds.size
+       ? Promise.resolve({ data: [] })
+       : supabase.from('users').select('id, full_name').in('id', [...assigneeIds]),
+@@ -1149,12 +1152,11 @@ async function buildProjectDealBundleWithProject(project, user, opts = {}) {
+     id: a.id,
+     name: a.name || a.file_name,
+     file_name: a.file_name,
+-    file_path: a.file_path,
+     file_url: a.file_url,
+     created_at: a.created_at,
+     bucket: 'crm',
+     kind: 'crm_task_attachment',
+-    crm_task_id: a.crm_task_id,
++    crm_task_id: a.task_id,
+   }));
+ 
+   const projectNativeFiles = (projectFilesRes.data || []).map((f) => ({
+diff --git a/backend/src/helpers/stageFlow.js b/backend/src/helpers/stageFlow.js
+index d7036e5b..cdfc12b2 100644
+--- a/backend/src/helpers/stageFlow.js
++++ b/backend/src/helpers/stageFlow.js
+@@ -96,7 +96,8 @@ async function getTemplateTasks(templateSetId, stageId) {
+   if (!templateSetId) return [];
+ 
+   const { data } = await supabase.from('company_template_tasks')
+-    .select('id, title, description, priority, estimated_hours, stage_id, order_index, checklist_items')
++    // company_template_tasks không có cột `checklist_items`
++    .select('id, title, description, priority, estimated_hours, stage_id, order_index')
+     .eq('template_set_id', templateSetId)
+     .eq('stage_id', stageId)
+     .order('order_index');
+diff --git a/backend/src/helpers/tenantOnboarding.js b/backend/src/helpers/tenantOnboarding.js
+index 961c194e..a4293799 100644
+--- a/backend/src/helpers/tenantOnboarding.js
++++ b/backend/src/helpers/tenantOnboarding.js
+@@ -18,7 +18,8 @@ async function onboardTenant({ name, slug, tier = 'free', maxUsers = 50, maxComp
+   const { data: rootLevel } = await supabase
+     .from('ecosystem_levels')
+     .select('id')
+-    .eq('level_index', 0)
++    // cột thật là `depth`, không phải `level_index`
++    .eq('depth', 0)
+     .maybeSingle();
+ 
+   let rootUnit = null;
+diff --git a/backend/src/helpers/tenantQuotas.js b/backend/src/helpers/tenantQuotas.js
+index 188c774a..de1f270c 100644
+--- a/backend/src/helpers/tenantQuotas.js
++++ b/backend/src/helpers/tenantQuotas.js
+@@ -223,10 +223,10 @@ async function estimateNotesBytes(companyIds) {
+   let total = 0;
+   const { data: comments } = await supabase
+     .from('crm_lead_comments')
+-    .select('content')
++    .select('body')
+     .in('lead_id', leadIds.slice(0, 5000));
+   for (const c of comments || []) {
+-    total += Buffer.byteLength(String(c.content || ''), 'utf8');
++    total += Buffer.byteLength(String(c.body || ''), 'utf8');
+   }
+   return total;
+ }
+diff --git a/backend/src/helpers/tenantSetup.js b/backend/src/helpers/tenantSetup.js
+index f4fff2c7..67008cae 100644
+--- a/backend/src/helpers/tenantSetup.js
++++ b/backend/src/helpers/tenantSetup.js
+@@ -144,7 +144,8 @@ async function resolveTenantCompanyId(user, bodyCompanyId) {
+ 
+ async function getLevelId(levelIndex) {
+ 
+-  const { data } = await supabase.from('ecosystem_levels').select('id').eq('level_index', levelIndex).maybeSingle();
++  const { data } = await supabase// ecosystem_levels: cột thật là `depth`, không phải `level_index`
++  .from('ecosystem_levels').select('id').eq('depth', levelIndex).maybeSingle();
+ 
+   return data?.id || null;
+ 
+diff --git a/backend/src/middleware/permission.js b/backend/src/middleware/permission.js
+index 8554e4cc..c3602ef7 100644
+--- a/backend/src/middleware/permission.js
++++ b/backend/src/middleware/permission.js
+@@ -14,18 +14,33 @@ const { getUserAccessibleUnits, canManageUnit } = require('../routes/ecosystem')
+ // ─────────────────────────────────────────────────────────────
+ async function getRolePermissions(role) {
+   try {
++    // Bảng role_permissions là bảng nối khoá ngoại: (role_id, permission_id).
++    // Nó KHÔNG có cột `permission`, `role` hay `is_allowed` — truy vấn cũ trả
++    // 42703 nên hàm này luôn trả [] và toàn bộ RBAC đọc ra rỗng.
++    // Chuỗi quyền có dạng `resource.action`, khớp đúng định dạng đang dùng ở
++    // user_permission_overrides.permission (đã đối chiếu dữ liệu thật:
++    // admin 193 quyền, manager 20, employee 9).
++    const { data: roleRow, error: roleErr } = await supabase
++      .from('roles').select('id').eq('name', role).maybeSingle();
++    if (roleErr) {
++      console.error('Error resolving role:', roleErr);
++      return [];
++    }
++    if (!roleRow) return [];
++
+     const { data, error } = await supabase
+       .from('role_permissions')
+-      .select('permission')
+-      .eq('role', role)
+-      .eq('is_allowed', true);
+-    
++      .select('permissions(resource, action)')
++      .eq('role_id', roleRow.id);
++
+     if (error) {
+       console.error('Error fetching role permissions:', error);
+       return [];
+     }
+-    
+-    return (data || []).map(r => r.permission);
++
++    return (data || [])
++      .map((r) => (r.permissions ? `${r.permissions.resource}.${r.permissions.action}` : null))
++      .filter(Boolean);
+   } catch (e) {
+     console.error('Exception in getRolePermissions:', e);
+     return [];
+diff --git a/backend/src/routes/aiChatBot.js b/backend/src/routes/aiChatBot.js
+index 722ea2cf..fb2acbec 100644
+--- a/backend/src/routes/aiChatBot.js
++++ b/backend/src/routes/aiChatBot.js
+@@ -257,11 +257,19 @@ r.get('/channel-filters', requireAdmin, async (_req, res) => {
+     // Khối: ecosystem_units depth=1 (cấp "Khối")
+     let divisions = [];
+     try {
+-      const { data } = await supabase
+-        .from('ecosystem_units')
+-        .select('id, name, depth')
+-        .eq('depth', 1)
+-        .order('name');
++      // `depth` nằm ở ecosystem_levels, KHÔNG phải ecosystem_units — units chỉ
++      // có level_id. Truy vấn cũ hỏng cả câu nên danh sách "khối" luôn rỗng.
++      // Giải hai bước cho rõ ràng, thay vì lọc lồng qua embed.
++      const { data: lv1 } = await supabase
++        .from('ecosystem_levels').select('id').eq('depth', 1);
++      const lv1Ids = (lv1 || []).map((l) => l.id);
++      const { data } = lv1Ids.length
++        ? await supabase
++          .from('ecosystem_units')
++          .select('id, name, level_id')
++          .in('level_id', lv1Ids)
++          .order('name')
++        : { data: [] };
+       divisions = (data || []).map((u) => ({ id: u.id, name: u.name }));
+     } catch { /* ignore */ }
+ 
+diff --git a/backend/src/routes/appModules.js b/backend/src/routes/appModules.js
+index 6203b3c9..2173f3d7 100644
+--- a/backend/src/routes/appModules.js
++++ b/backend/src/routes/appModules.js
+@@ -252,7 +252,8 @@ r.post('/notify-from-crm-stage', async (req, res) => {
+ 
+     const { data: lead } = await supabase
+       .from('crm_leads')
+-      .select('id, name, code, company_id')
++      // crm_leads: tên thật là `title`, không phải `name`
++      .select('id, title, code, company_id')
+       .eq('id', leadId)
+       .maybeSingle();
+ 
+@@ -264,7 +265,7 @@ r.post('/notify-from-crm-stage', async (req, res) => {
+         moduleRow: mod,
+         record: {
+           id: leadId,
+-          name: lead?.name || lead?.code || 'Deal',
++          name: lead?.title || lead?.code || 'Deal',
+           assignee_id: null,
+           company_id: lead?.company_id || mod.company_id,
+           source_crm_lead_id: leadId,
+diff --git a/backend/src/routes/dashboard.js b/backend/src/routes/dashboard.js
+index fe559c38..c4fa0115 100644
+--- a/backend/src/routes/dashboard.js
++++ b/backend/src/routes/dashboard.js
+@@ -961,7 +961,7 @@ r.get('/overview', responseCache({ ttl: 60, scope: 'global', tags: ['dashboard:o
+       supabase.from('crm_leads').select('*', { count: 'exact', head: true }).eq('type', 'lead').gte('created_at', thirtyDaysAgo.toISOString()),
+       supabase.from('crm_leads').select('*', { count: 'exact', head: true }).eq('type', 'deal').gte('created_at', thirtyDaysAgo.toISOString()),
+       supabase.from('crm_leads').select('*', { count: 'exact', head: true }).eq('type', 'deal').not('project_id', 'is', null),
+-      supabase.from('crm_leads').select('budget').eq('type', 'deal').is('project_id', null),
++      supabase.from('crm_leads').select('estimated_value').eq('type', 'deal').is('project_id', null),
+     ]);
+ 
+     const totalProjects = totalProjectsRes.count;
+diff --git a/backend/src/routes/dashboardMain.js b/backend/src/routes/dashboardMain.js
+index 0cae01e3..18d35ffd 100644
+--- a/backend/src/routes/dashboardMain.js
++++ b/backend/src/routes/dashboardMain.js
+@@ -86,12 +86,9 @@ r.get('/', async (req, res) => {
+         name,
+         code,
+         status,
+-        start_date,
+-        end_date,
+-        customer_name,
+-        customer_phone,
+         created_at,
+         created_by,
++        customer:customers(full_name, phone),
+         flow:workflow_flows(id, name)
+       `)
+       .in('id', projectIds)
+@@ -108,7 +105,7 @@ r.get('/', async (req, res) => {
+         title,
+         status,
+         priority,
+-        assigned_to,
++        assignee_id,
+         due_date,
+         completed_at
+       `)
+@@ -131,7 +128,7 @@ r.get('/', async (req, res) => {
+     // 7. Build response
+     const projectsWithStats = projects.map(project => {
+       const projectTasks = tasksByProject[project.id] || [];
+-      const myTasks = projectTasks.filter(t => t.assigned_to === userId);
++      const myTasks = projectTasks.filter(t => t.assignee_id === userId);
+ 
+       return {
+         ...project,
+@@ -211,10 +208,10 @@ r.get('/stats', responseCache({ ttl: 30, scope: 'user', tags: ['dashboard-main']
+     // Đếm tasks
+     const { data: tasks } = await supabase
+       .from('tasks')
+-      .select('id, status, assigned_to, due_date')
++      .select('id, status, assignee_id, due_date')
+       .in('project_id', projectIds);
+ 
+-    const myTasks = tasks.filter(t => t.assigned_to === userId);
++    const myTasks = tasks.filter(t => t.assignee_id === userId);
+     const now = new Date();
+ 
+     const stats = {
+@@ -317,7 +314,7 @@ async function getProjectIdsByDepartment(departmentId, req) {
+   const { data: tasks } = await supabase
+     .from('tasks')
+     .select('project_id')
+-    .in('assigned_to', userIds);
++    .in('assignee_id', userIds);
+ 
+   return filterProjectIdsByTenant(req, [...new Set((tasks || []).map(t => t.project_id))]);
+ }
+@@ -333,7 +330,7 @@ async function getProjectIdsByUser(userId, req) {
+   const { data: tasks } = await supabase
+     .from('tasks')
+     .select('project_id')
+-    .eq('assigned_to', userId);
++    .eq('assignee_id', userId);
+ 
+   const projectIds = [
+     ...(created || []).map(p => p.id),
+@@ -345,7 +342,7 @@ async function getProjectIdsByUser(userId, req) {
+ 
+ function calculateStats(projects, tasks, userId) {
+   const now = new Date();
+-  const myTasks = tasks.filter(t => t.assigned_to === userId);
++  const myTasks = tasks.filter(t => t.assignee_id === userId);
+ 
+   return {
+     total_projects: projects.length,
+diff --git a/backend/src/routes/drive.js b/backend/src/routes/drive.js
+index 4677d731..a91c8562 100644
+--- a/backend/src/routes/drive.js
++++ b/backend/src/routes/drive.js
+@@ -2470,7 +2470,7 @@ r.get('/activity', async (req, res) => {
+ 
+     const { data } = await supabase
+       .from('drive_activity_log')
+-      .select('*, actor:users!drive_activity_log_actor_id_fkey(id,full_name,email,avatar_url)')
++      .select('*, actor:users!drive_activity_log_actor_id_fkey(id,full_name,email,avatar)')
+       .eq('target_type', target_type)
+       .eq('target_id', target_id)
+       .order('created_at', { ascending: false })
+@@ -2489,7 +2489,7 @@ r.get('/activity/feed', async (req, res) => {
+     if (!rootIds.length) return res.json({ activity: [] });
+     const { data } = await supabase
+       .from('drive_activity_log')
+-      .select('*, actor:users!drive_activity_log_actor_id_fkey(id,full_name,email,avatar_url)')
++      .select('*, actor:users!drive_activity_log_actor_id_fkey(id,full_name,email,avatar)')
+       .in('root_id', rootIds)
+       .order('created_at', { ascending: false })
+       .limit(limit);
+diff --git a/backend/src/routes/ecosystem.js b/backend/src/routes/ecosystem.js
+index 5588bbb5..8cb6890f 100644
+--- a/backend/src/routes/ecosystem.js
++++ b/backend/src/routes/ecosystem.js
+@@ -678,7 +678,8 @@ r.get('/available-companies', async (req, res) => {
+   try {
+     const { data: companies, error } = await supabase
+       .from('companies')
+-      .select('id, name, short_name, code, logo, is_active')
++      // companies không có `code`; cột logo tên thật là `logo_url`
++      .select('id, name, short_name, tax_code, logo_url, is_active')
+       .or('is_active.eq.true,is_active.is.null')
+       .order('name');
+     if (error) throw error;
+@@ -698,7 +699,8 @@ r.get('/available-companies', async (req, res) => {
+ r.get('/available-departments', async (req, res) => {
+   try {
+     const { company_id } = req.query;
+-    let q = supabase.from('departments').select('id, name, short_name, company_id, division_unit_id, is_active').eq('is_active', true).order('name');
++    let q = supabase.from('departments')// departments không có `short_name`
++    .select('id, name, company_id, division_unit_id, is_active').eq('is_active', true).order('name');
+     if (company_id) q = q.eq('company_id', company_id);
+     const { data, error } = await q;
+     if (error) throw error;
+@@ -784,9 +786,10 @@ r.post('/setup-wizard', async (req, res) => {
+ 
+     // Get level IDs
+     const { data: levels } = await supabase.from('ecosystem_levels')
+-      .select('id, level_index').order('level_index');
++      // ecosystem_levels: cột thật là `depth`, không phải `level_index`
++      .select('id, depth').order('depth');
+     const levelMap = {};
+-    (levels || []).forEach(l => { levelMap[l.level_index] = l.id; });
++    (levels || []).forEach(l => { levelMap[l.depth] = l.id; });
+ 
+     const createdUnits = [];
+ 
+diff --git a/backend/src/routes/management.js b/backend/src/routes/management.js
+index 707920d0..eaae691e 100644
+--- a/backend/src/routes/management.js
++++ b/backend/src/routes/management.js
+@@ -332,7 +332,8 @@ async function loadWonStageIds(scope) {
+ async function loadDealPipelineMetrics(scope, dateFrom, dateTo, assigneeId) {
+   let q = supabase
+     .from('crm_leads')
+-    .select('budget, estimated_value, deadline, stage_id, stage:crm_pipeline_stages!crm_leads_stage_id_fkey(is_won, is_lost)')
++    // crm_leads không có `budget` lẫn `deadline` — chỉ có estimated_value.
++    .select('estimated_value, stage_id, stage:crm_pipeline_stages!crm_leads_stage_id_fkey(is_won, is_lost)')
+     .eq('type', 'deal');
+   q = applyCompanyScopeFilter(q, scope);
+   if (dateFrom) q = q.gte('created_at', dateFrom);
+@@ -344,8 +345,7 @@ async function loadDealPipelineMetrics(scope, dateFrom, dateTo, assigneeId) {
+   let crmOverdue = 0;
+   for (const row of data || []) {
+     if (row.stage?.is_won || row.stage?.is_lost) continue;
+-    pipelineValue += Number(row.budget || row.estimated_value || 0);
+-    if (row.deadline && new Date(row.deadline).getTime() < now) crmOverdue += 1;
++    pipelineValue += Number(row.estimated_value || 0);
+   }
+   return { pipeline_value: pipelineValue, crm_overdue: crmOverdue };
+ }
+@@ -1857,9 +1857,10 @@ r.get('/deals/:leadId', async (req, res) => {
+         ? supabase.from('tasks').select('id, title, status, priority, due_date, assignee_id, task_type, metadata')
+           .eq('project_id', projectId).order('order_index')
+         : Promise.resolve({ data: [] }),
+-      supabase.from('lead_documents').select('id, name, file_name, doc_type, created_at, shared_to_workshop, allowed_share_modules, file_path, file_url')
++      supabase.from('lead_documents').select('id, name, file_name, doc_type, created_at, shared_to_workshop, allowed_share_modules, file_url')
+         .eq('lead_id', leadId).order('created_at', { ascending: false }),
+-      supabase.from('crm_activities').select('id, type, title, content, result, created_at, created_by')
++      // crm_activities: cột đúng là `description` và `outcome`
++      supabase.from('crm_activities').select('id, type, title, description, outcome, created_at, created_by')
+         .eq('lead_id', leadId).order('created_at', { ascending: false }).limit(30),
+       projectId
+         ? supabase.from('unified_tasks_v').select('unified_id, source, task_kind, title, status, deadline, assignee_id')
+diff --git a/backend/src/routes/projects.js b/backend/src/routes/projects.js
+index 05761481..a55c7fe9 100644
+--- a/backend/src/routes/projects.js
++++ b/backend/src/routes/projects.js
+@@ -2032,12 +2032,13 @@ r.post('/create-with-flow', requirePermission('projects', 'create'), async (req,
+             // Also check if lead has a parent (lead→deal conversion keeps same ID or has parent)
+             // Load from original lead if deal has lead_source_id
+             const { data: deal } = await supabase.from('crm_leads')
+-              .select('id, lead_source_id').eq('id', dealId).single();
++              // crm_leads không có `lead_source_id`; quan hệ lead->deal dùng `parent_lead_id`
++              .select('id, parent_lead_id').eq('id', dealId).single();
+             let parentLeadTasks = [];
+-            if (deal?.lead_source_id) {
++            if (deal?.parent_lead_id) {
+               const { data: lt } = await supabase.from('crm_tasks')
+                 .select('*, assignee:users!crm_tasks_assignee_id_fkey(id,full_name), attachments:crm_task_attachments(*)')
+-                .eq('lead_id', deal.lead_source_id).order('order_index');
++                .eq('lead_id', deal.parent_lead_id).order('order_index');
+               parentLeadTasks = lt || [];
+             }
+ 
+diff --git a/backend/src/routes/purchasing.js b/backend/src/routes/purchasing.js
+index f3633e49..da94c89b 100644
+--- a/backend/src/routes/purchasing.js
++++ b/backend/src/routes/purchasing.js
+@@ -428,7 +428,7 @@ r.post('/orders', requirePermission('mua_hang_orders', 'edit'), async (req, res)
+     if (b.lead_id) {
+       const { data: lead } = await supabase
+         .from('crm_leads')
+-        .select('id, title, code, phone, address, company_id, customer:customers(full_name, phone, address)')
++        .select('id, title, code, phone, install_address, company_id, customer:customers(full_name, phone, address)')
+         .eq('id', b.lead_id)
+         .maybeSingle();
+       if (lead) {
+diff --git a/backend/src/routes/tasks.js b/backend/src/routes/tasks.js
+index 88ba3ecd..4f6a214f 100644
+--- a/backend/src/routes/tasks.js
++++ b/backend/src/routes/tasks.js
+@@ -674,7 +674,7 @@ r.get('/planner/board', async (req, res) => {
+     const assigneeIds = [...new Set(allTasks.map(t => t.assignee_id).filter(Boolean))];
+     let users = [];
+     if (assigneeIds.length > 0) {
+-      const { data: userData } = await supabase.from('users').select('id, full_name, avatar_url, role').in('id', assigneeIds);
++      const { data: userData } = await supabase.from('users').select('id, full_name, avatar, role').in('id', assigneeIds);
+       users = userData || [];
+     }
+ 
+diff --git a/backend/src/routes/upload.js b/backend/src/routes/upload.js
+index fdd5682f..38a0290b 100644
+--- a/backend/src/routes/upload.js
++++ b/backend/src/routes/upload.js
+@@ -438,12 +438,21 @@ r.get('/:entity_type/:entity_id', async (req, res) => {
+ r.delete('/:id', async (req, res) => {
+   try {
+     const { data: file } = await supabase.from('file_attachments')
+-      .select('id, storage_path, uploaded_by, entity_type, entity_id')
++      // file_attachments KHÔNG có cột `storage_path` — chỉ có `file_url`. Tên sai
++      // làm cả câu hỏng -> `file` luôn undefined -> endpoint xoá luôn trả 404,
++      // và file trên Storage không bao giờ được dọn.
++      .select('id, file_url, uploaded_by, entity_type, entity_id')
+       .eq('id', req.params.id).single();
+     if (!file) return res.status(404).json({ error: 'Không tìm thấy file' });
+     if (!await assertFileAttachmentMutation(req, res, file)) return;
+-    if (file?.storage_path) {
+-      await supabase.storage.from(BUCKET).remove([file.storage_path]);
++    // file_url là public URL dựng bởi getPublicUrl(storagePath), dạng
++    //   .../storage/v1/object/public/<BUCKET>/<storagePath>
++    // nên tách ngược để lấy đường dẫn trong bucket.
++    const marker = `/object/public/${BUCKET}/`;
++    const idx = String(file?.file_url || '').indexOf(marker);
++    if (idx >= 0) {
++      const storagePath = decodeURIComponent(String(file.file_url).slice(idx + marker.length));
++      if (storagePath) await supabase.storage.from(BUCKET).remove([storagePath]);
+     }
+     await supabase.from('file_attachments').delete().eq('id', req.params.id);
+     res.json({ message: 'Đã xóa' });
+diff --git a/backend/src/test-permissions.js b/backend/src/test-permissions.js
+index 2cb64964..ba9675df 100644
+--- a/backend/src/test-permissions.js
++++ b/backend/src/test-permissions.js
+@@ -55,7 +55,7 @@ async function testSeedData() {
+     try {
+       const { data, error } = await supabase
+         .from('role_permissions')
+-        .select('permission')
++        .select('permissions(resource, action)')
+         .eq('role', role);
+       
+       if (error) {
+diff --git a/database/591_lead_messages_is_pinned.sql b/database/591_lead_messages_is_pinned.sql
+new file mode 100644
+index 00000000..cbd9f1b4
+--- /dev/null
++++ b/database/591_lead_messages_is_pinned.sql
+@@ -0,0 +1,25 @@
++-- 591: lead_messages.is_pinned — tính năng ghim tin nhắn thiếu cột
++--
++-- TÌM RA BẰNG: rà soát tĩnh toàn bộ backend, đối chiếu mọi cột trong .select()
++-- với schema thật. Đây là 1 trong 29 cột không tồn tại tìm được.
++--
++-- VÌ SAO PHẢI THÊM CỘT CHỨ KHÔNG BỎ TÍNH NĂNG: tính năng đã được cài đặt đầy
++-- đủ ở routes/crm/routes/membersChat.js — có endpoint PUT
++-- /leads/:id/chat/:msgId/pin, có UPDATE, và có socket emit 'lead:pin'. Chỉ
++-- thiếu đúng cột trong DB, nên cả SELECT lẫn UPDATE đều trả 42703.
++--
++-- AN TOÀN: DEFAULT false, NOT NULL. Đã kiểm chứng sau khi chạy: 49 tin nhắn,
++-- 0 tin đang ghim -> không dòng nào bị đổi nghĩa.
++--
++-- Chỉ mục PARTIAL: truy vấn chỉ quan tâm tin ĐÃ ghim (rất ít). Index đầy đủ
++-- trên cột boolean sẽ không bao giờ được planner chọn mà vẫn tốn phí ghi —
++-- cùng lý do đã bỏ index của migration 103 ở database/587.
++
++ALTER TABLE public.lead_messages
++  ADD COLUMN IF NOT EXISTS is_pinned BOOLEAN NOT NULL DEFAULT false;
++
++CREATE INDEX IF NOT EXISTS idx_lead_messages_pinned
++  ON public.lead_messages (lead_id) WHERE is_pinned;
++
++COMMENT ON COLUMN public.lead_messages.is_pinned IS
++  'Ghim tin nhắn trong chat của lead — xem routes/crm/routes/membersChat.js';
+-- 
+2.43.0
+

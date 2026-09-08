@@ -5,6 +5,33 @@
  */
 const { Router } = require('express');
 const { supabase } = require('../config/supabase');
+
+/**
+ * projects KHÔNG có cột `division_id`. Khối gắn ở companies.division_unit_id.
+ * `.eq('division_id', …)` làm Postgres huỷ CẢ câu (42703) nên bảng VC/Lắp đặt
+ * trả rỗng mỗi khi người dùng lọc theo Khối — mà không báo lỗi gì.
+ */
+const KHONG_CO_UUID = '00000000-0000-0000-0000-000000000000';
+
+async function idCongTyTheoKhoi(divisionId) {
+  if (!divisionId) return null;
+  const { data, error } = await supabase
+    .from('companies').select('id').eq('division_unit_id', divisionId);
+  if (error) {
+    console.warn('[logistics] công ty theo khối:', error.message);
+    return null;
+  }
+  return (data || []).map((c) => c.id).filter(Boolean);
+}
+
+/** Dự án thuộc khối khi công ty CRM hoặc công ty VC/LĐ nằm trong khối. */
+function locTheoKhoi(q, ids) {
+  if (!ids) return q;
+  if (!ids.length) return q.eq('company_id', KHONG_CO_UUID);
+  const ds = ids.join(',');
+  return q.or(`company_id.in.(${ds}),logistics_company_id.in.(${ds})`);
+}
+
 const { auth } = require('../middleware/auth');
 const { requirePermission } = require('../middleware/newPermission');
 const { notifyMultiple: notifyMultipleShared, getCompanyScopedRoleUserIds } = require('../helpers/notifications');
@@ -688,6 +715,7 @@ r.put('/pipeline-stages-reorder', requirePermission('projects', 'edit'), async (
 r.get('/dashboard', requirePermission('projects', 'view'), async (req, res) => {
   try {
     const { division_id, company_id: companyIdQuery, workshop_type_id } = req.query;
+    const idCongTyKhoi = await idCongTyTheoKhoi(division_id);
     const company_id = effectiveWorkshopCompanyId(req, companyIdQuery);
     const { ids: stageIds } = await getLogisticsStageMap();
     const { stages: kanbanStages } = await getResolvedLogisticsStages(company_id);
@@ -712,7 +740,7 @@ r.get('/dashboard', requirePermission('projects', 'view'), async (req, res) => {
       .or(orFilter);
     query = applyVcNotDeletedFilter(query);
 
-    if (division_id) query = query.eq('division_id', division_id);
+    query = locTheoKhoi(query, idCongTyKhoi);
     if (company_id) query = query.or(`company_id.eq.${company_id},logistics_company_id.eq.${company_id}`);
     if (workshop_type_id) query = query.eq('workshop_type_id', workshop_type_id);
     ({ query } = await applyWorkshopProjectVisibilityScope(query, req.user, company_id, null));
@@ -731,7 +759,7 @@ r.get('/dashboard', requirePermission('projects', 'view'), async (req, res) => {
           workshop_type:workshop_project_types(id, name, applies_to),
           ${TASKS_EMBED}`)
         .or(orFilter);
-      if (division_id) qNoSoft = qNoSoft.eq('division_id', division_id);
+      qNoSoft = locTheoKhoi(qNoSoft, idCongTyKhoi);
       if (company_id) qNoSoft = qNoSoft.or(`company_id.eq.${company_id},logistics_company_id.eq.${company_id}`);
       if (workshop_type_id) qNoSoft = qNoSoft.eq('workshop_type_id', workshop_type_id);
       const rNoSoft = await qNoSoft.order('created_at', { ascending: false });
@@ -750,7 +778,7 @@ r.get('/dashboard', requirePermission('projects', 'view'), async (req, res) => {
           logistics_company:companies!projects_logistics_company_id_fkey(id, name, short_name),
           ${TASKS_EMBED}`)
         .or(orFilter);
-      if (division_id) q2 = q2.eq('division_id', division_id);
+      q2 = locTheoKhoi(q2, idCongTyKhoi);
       if (company_id) q2 = q2.or(`company_id.eq.${company_id},logistics_company_id.eq.${company_id}`);
       if (workshop_type_id) q2 = q2.eq('workshop_type_id', workshop_type_id);
       const { data: d0 } = await q2.order('created_at', { ascending: false });
@@ -766,7 +794,7 @@ r.get('/dashboard', requirePermission('projects', 'view'), async (req, res) => {
           logistics_company:companies!projects_logistics_company_id_fkey(id, name, short_name),
           ${TASKS_EMBED}`)
         .or(orFilter);
-      if (division_id) q2 = q2.eq('division_id', division_id);
+      q2 = locTheoKhoi(q2, idCongTyKhoi);
       if (company_id) q2 = q2.or(`company_id.eq.${company_id},logistics_company_id.eq.${company_id}`);
       if (workshop_type_id) q2 = q2.eq('workshop_type_id', workshop_type_id);
       const { data, error: e2 } = await q2.order('created_at', { ascending: false });
@@ -781,7 +809,7 @@ r.get('/dashboard', requirePermission('projects', 'view'), async (req, res) => {
             logistics_company:companies!projects_logistics_company_id_fkey(id, name, short_name),
             ${TASKS_EMBED}`)
           .or(orFilter);
-        if (division_id) q3 = q3.eq('division_id', division_id);
+        q3 = locTheoKhoi(q3, idCongTyKhoi);
         if (company_id) q3 = q3.or(`company_id.eq.${company_id},logistics_company_id.eq.${company_id}`);
         if (workshop_type_id) q3 = q3.eq('workshop_type_id', workshop_type_id);
         const d3 = await q3.order('created_at', { ascending: false });
@@ -825,9 +853,9 @@ r.get('/dashboard', requirePermission('projects', 'view'), async (req, res) => {
  * Select tối thiểu để đếm KPI: không embed tasks / customers / users / crm_deals.
  * Chỉ đủ field cho enrichOneLogisticsProject + isSxOnlyVcGhost + đếm quá hạn.
  */
-const KPI_SELECT = `id, status, deadline, vc_kanban_column_id, vc_temp_staged, company_id, logistics_company_id,
+const KPI_SELECT = `id, status, deadline, install_date, delivery_date, vc_kanban_column_id, vc_temp_staged, company_id, logistics_company_id,
         current_stage:workflow_stages(id, slug, name)`;
-const KPI_SELECT_NO_TEMP = `id, status, deadline, vc_kanban_column_id, company_id, logistics_company_id,
+const KPI_SELECT_NO_TEMP = `id, status, deadline, install_date, delivery_date, vc_kanban_column_id, company_id, logistics_company_id,
         current_stage:workflow_stages(id, slug, name)`;
 const KPI_PAGE = 1000;
 const KPI_MAX_ROWS = 20000;
@@ -839,6 +867,7 @@ const KPI_MAX_ROWS = 20000;
 r.get('/overview-kpis', requirePermission('projects', 'view'), async (req, res) => {
   try {
     const { division_id, company_id: companyIdQuery, workshop_type_id, priority } = req.query;
+    const idCongTyKhoi = await idCongTyTheoKhoi(division_id);
     const company_id = effectiveWorkshopCompanyId(req, companyIdQuery);
     const { ids: stageIds } = await getLogisticsStageMap();
     const orFilter = buildLogisticsScopeFilter(stageIds);
@@ -850,7 +879,7 @@ r.get('/overview-kpis', requirePermission('projects', 'view'), async (req, res) 
       let query = supabase.from('projects').select(selectClause).or(orFilter);
       query = applyProjectTenantScope(query, req);
       if (withSoftDelete) query = applyVcNotDeletedFilter(query);
-      if (division_id) query = query.eq('division_id', division_id);
+      query = locTheoKhoi(query, idCongTyKhoi);
       if (company_id) query = query.or(`company_id.eq.${company_id},logistics_company_id.eq.${company_id}`);
       if (workshop_type_id) query = query.eq('workshop_type_id', workshop_type_id);
       if (priority) query = query.eq('priority', priority);
@@ -935,6 +964,7 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
       search, priority, page = 1, limit = 100, division_id, company_id: companyIdQuery, workshop_type_id,
       view: viewQuery, lite: liteQuery,
     } = req.query;
+    const idCongTyKhoi = await idCongTyTheoKhoi(division_id);
     const viewNorm = String(viewQuery || '').toLowerCase();
     const mobileLite = viewNorm === 'mobile'
       || String(liteQuery || '') === '1'
@@ -984,7 +1014,7 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
 
     if (search) query = query.or(`name.ilike.%${search}%,code.ilike.%${search}%`);
     if (priority) query = query.eq('priority', priority);
-    if (division_id) query = query.eq('division_id', division_id);
+    query = locTheoKhoi(query, idCongTyKhoi);
     if (company_id) query = query.or(`company_id.eq.${company_id},logistics_company_id.eq.${company_id}`);
     if (workshop_type_id) query = query.eq('workshop_type_id', workshop_type_id);
     ({ query } = await applyWorkshopProjectVisibilityScope(query, req.user, company_id, null));
@@ -1001,7 +1031,7 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
         .or(orFilter);
       if (search) qNoSoft = qNoSoft.or(`name.ilike.%${search}%,code.ilike.%${search}%`);
       if (priority) qNoSoft = qNoSoft.eq('priority', priority);
-      if (division_id) qNoSoft = qNoSoft.eq('division_id', division_id);
+      qNoSoft = locTheoKhoi(qNoSoft, idCongTyKhoi);
       if (company_id) qNoSoft = qNoSoft.or(`company_id.eq.${company_id},logistics_company_id.eq.${company_id}`);
       if (workshop_type_id) qNoSoft = qNoSoft.eq('workshop_type_id', workshop_type_id);
       const r2 = await qNoSoft
@@ -1039,7 +1069,7 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
         .from('projects')
         .select(fbSelect, { count: 'exact' })
         .or(orFilter);
-      if (division_id) fb2q = fb2q.eq('division_id', division_id);
+      fb2q = locTheoKhoi(fb2q, idCongTyKhoi);
       if (company_id) fb2q = fb2q.or(`company_id.eq.${company_id},logistics_company_id.eq.${company_id}`);
       if (workshop_type_id) fb2q = fb2q.eq('workshop_type_id', workshop_type_id);
       const fb2 = await fb2q
@@ -1058,7 +1088,7 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
             current_stage:workflow_stages(id, slug, name, color, icon),
             customer:customers(id, full_name, phone)${mobileLite ? '' : `, ${TASKS_EMBED}`}`, { count: 'exact' })
           .or(orFilter);
-        if (division_id) fb3q = fb3q.eq('division_id', division_id);
+        fb3q = locTheoKhoi(fb3q, idCongTyKhoi);
         if (company_id) fb3q = fb3q.eq('company_id', company_id);
         if (workshop_type_id) fb3q = fb3q.eq('workshop_type_id', workshop_type_id);
         const fb3 = await fb3q
@@ -1677,6 +1707,9 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
     const fromVcCol = projectStatusFromLogisticsColumn(vcPipeStageRow);
     if (fromVcCol) {
       updatePayload.status = fromVcCol;
+      if (fromVcCol === 'completed' && String(project.status || '') !== 'completed') {
+        updatePayload.completed_date = new Date().toISOString();
+      }
     } else if (jumpedToInstall || isInstallLogisticsStageRow(vcPipeStageRow)) {
       updatePayload.status = 'installing';
     } else if (statusMap[targetStage?.slug]) {
@@ -1795,7 +1828,7 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
       if (targetCol && effectiveVcStageId && isLogisticsCompletedColumn(targetCol)) {
         try {
           await completeOpenWorkOnModuleDone({
-            module: 'logistics',
+            module: 'project_final',
             projectIds: [id],
           });
         } catch (doneErr) {

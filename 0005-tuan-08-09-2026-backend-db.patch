@@ -1,0 +1,3113 @@
+diff --git a/backend/package.json b/backend/package.json
+index 64bb5271..6cdf58ab 100644
+--- a/backend/package.json
++++ b/backend/package.json
+@@ -38,6 +38,8 @@
+     "test:crm-transfer": "node tests/crm-lead-company-transfer.js",
+     "test:mcp-audit": "node tests/mcp-audit-reason-codes.js",
+     "test:perf-retention": "node tests/perf-retention-and-chunking.js",
++    "test:role-enum": "node tests/role-enum-guard.js",
++    "test:query-guard": "node tests/query-guard-42703-smoke.js",
+     "crm:route-inventory": "node scripts/crm-route-inventory.js --write",
+     "cron:crm-missing-tasks": "node scripts/run-crm-missing-tasks-cron.js"
+   },
+diff --git a/backend/src/helpers/appModuleOps.js b/backend/src/helpers/appModuleOps.js
+index f58252a6..f7b3a45d 100644
+--- a/backend/src/helpers/appModuleOps.js
++++ b/backend/src/helpers/appModuleOps.js
+@@ -159,18 +159,19 @@ async function syncCrmFromAppModuleStage(record, stage) {
+   }
+   const { data: lead, error: leadErr } = await supabase
+     .from('crm_leads')
+-    .select('id, pipeline_stage_id')
++    // crm_leads dùng `stage_id`; không có cột `pipeline_stage_id`
++    .select('id, stage_id')
+     .eq('id', record.source_crm_lead_id)
+     .maybeSingle();
+   if (leadErr) throw leadErr;
+   if (!lead) return { synced: false, reason: 'lead_missing' };
+-  if (String(lead.pipeline_stage_id) === String(stage.crm_target_stage_id)) {
++  if (String(lead.stage_id) === String(stage.crm_target_stage_id)) {
+     return { synced: false, reason: 'already' };
+   }
+   const { error: updErr } = await supabase
+     .from('crm_leads')
+     .update({
+-      pipeline_stage_id: stage.crm_target_stage_id,
++      stage_id: stage.crm_target_stage_id,
+       updated_at: new Date().toISOString(),
+     })
+     .eq('id', lead.id);
+@@ -200,7 +201,7 @@ async function notifyModuleTransfer(req, {
+   targets.delete(String(actorUserId || ''));
+   const title = `Chuyển sang ${moduleRow.name}`;
+   const message = lead
+-    ? `Deal «${lead.name || lead.code || lead.id}» đã được chuyển vào module «${moduleRow.name}».`
++    ? `Deal «${lead.title || lead.code || lead.id}» đã được chuyển vào module «${moduleRow.name}».`
+     : `Có bản ghi mới trong module «${moduleRow.name}»: ${record.name}`;
+   const link = `/m/${moduleRow.module_key}/records/${record.id}`;
+   const meta = {
+@@ -251,7 +252,8 @@ async function transferLeadToAppModule(req, {
+ 
+   const { data: lead, error: leadErr } = await supabase
+     .from('crm_leads')
+-    .select('id, name, code, company_id, assignee_id, type')
++    // crm_leads: tên thật là `title` và `assigned_to`
++    .select('id, title, code, company_id, assigned_to, type')
+     .eq('id', leadId)
+     .maybeSingle();
+   if (leadErr) throw leadErr;
+@@ -294,7 +296,7 @@ async function transferLeadToAppModule(req, {
+     targetTabId = mainTab?.id || null;
+   }
+ 
+-  const name = lead.name || lead.code || `Deal ${String(lead.id).slice(0, 8)}`;
++  const name = lead.title || lead.code || `Deal ${String(lead.id).slice(0, 8)}`;
+   const insert = {
+     module_id: moduleRow.id,
+     company_id: companyId || moduleRow.company_id || lead.company_id || null,
+@@ -302,7 +304,7 @@ async function transferLeadToAppModule(req, {
+     stage_id: targetStageId,
+     tab_id: targetTabId,
+     source_crm_lead_id: lead.id,
+-    assignee_id: assigneeId || lead.assignee_id || null,
++    assignee_id: assigneeId || lead.assigned_to || null,
+     status: 'open',
+     meta: { transferred_from: 'crm', lead_type: lead.type || null },
+     created_by: req.user?.id || null,
+diff --git a/backend/src/helpers/assignmentAssigneeRoles.js b/backend/src/helpers/assignmentAssigneeRoles.js
+index 251472d3..abeb50e4 100644
+--- a/backend/src/helpers/assignmentAssigneeRoles.js
++++ b/backend/src/helpers/assignmentAssigneeRoles.js
+@@ -43,6 +43,9 @@ function pickPrimaryAssigneeId(userIds, rolesByUserId) {
+ }
+ 
+ function isAssignRoleColumnError(err) {
++  // Chi la "thieu cot" khi SQLSTATE = 42703. Neu khong, mot loi 23505 co ten
++  // rang buoc chua chu assign_role cung lot vao day va chay nham duong.
++  if (err?.code && err.code !== '42703') return false;
+   const m = String(err?.message || '').toLowerCase();
+   return m.includes('assign_role');
+ }
+@@ -56,13 +59,21 @@ async function replaceAssignmentAssigneesWithRoles(assignmentId, userIds, rolesB
+     user_id: uid,
+     assign_role: normalizeAssignRole(rolesByUserId?.[uid]),
+   }));
+-  let { error } = await supabase.from('crm_assignment_assignees').insert(rows);
++  // upsert thay cho insert: DELETE + INSERT o tren KHONG nguyen tu, hai request
++  // bam gan nhau (double-click Luu) dam nhau o pkey (assignment_id, user_id) -> 23505.
++  let { error } = await supabase
++    .from('crm_assignment_assignees')
++    .upsert(rows, { onConflict: 'assignment_id,user_id' });
+   if (error && isAssignRoleColumnError(error)) {
+-    ({ error } = await supabase.from('crm_assignment_assignees').insert(
++    ({ error } = await supabase.from('crm_assignment_assignees').upsert(
+       uniq.map((uid) => ({ assignment_id: assignmentId, user_id: uid })),
++      { onConflict: 'assignment_id,user_id', ignoreDuplicates: true },
+     ));
+   }
+-  if (error && !/crm_assignment_assignees/.test(error.message || '')) throw error;
++  if (error) {
++    if (!/crm_assignment_assignees/.test(error.message || '')) throw error;
++    console.warn('[assignment-assignees]', error.code || '', error.message);
++  }
+   return uniq;
+ }
+ 
+diff --git a/backend/src/helpers/crmTaskAssignees.js b/backend/src/helpers/crmTaskAssignees.js
+index 47804c0d..33f530da 100644
+--- a/backend/src/helpers/crmTaskAssignees.js
++++ b/backend/src/helpers/crmTaskAssignees.js
+@@ -31,10 +31,17 @@ async function replaceCrmTaskAssignees(taskId, userIds) {
+   const uniq = [...new Set((userIds || []).filter(Boolean).map(String))];
+   await supabase.from('crm_task_assignees').delete().eq('task_id', taskId);
+   if (!uniq.length) return uniq;
+-  const { error } = await supabase.from('crm_task_assignees').insert(
++  // DELETE + INSERT KHÔNG nguyên tử: hai luồng cùng lưu một task sẽ đâm nhau ở
++  // crm_task_assignees_pkey (task_id, user_id) — đo được 7 lần trong 1 giờ.
++  // upsert-ignore giữ nguyên hàng đã có thay vì ném 23505 rồi bị nuốt.
++  const { error } = await supabase.from('crm_task_assignees').upsert(
+     uniq.map((uid) => ({ task_id: taskId, user_id: uid })),
++    { onConflict: 'task_id,user_id', ignoreDuplicates: true },
+   );
+-  if (error && !/crm_task_assignees/.test(error.message || '')) throw error;
++  if (error) {
++    if (!/crm_task_assignees/.test(error.message || '')) throw error;
++    console.warn('[crm-task-assignees]', error.code || '', error.message);
++  }
+   return uniq;
+ }
+ 
+diff --git a/backend/src/helpers/crmTaskAssignmentSync.js b/backend/src/helpers/crmTaskAssignmentSync.js
+index babb29b2..139707cb 100644
+--- a/backend/src/helpers/crmTaskAssignmentSync.js
++++ b/backend/src/helpers/crmTaskAssignmentSync.js
+@@ -86,6 +86,20 @@ function isTaskSourceSyncColumnError(err) {
+     || m.includes('error_type_id');
+ }
+ 
++/**
++ * Chỉ coi là "thiếu cột" khi SQLSTATE = 42703.
++ *
++ * Trước đây các nhánh dự phòng chỉ so khớp CHUỖI. Lỗi 23505 trên unique index
++ * `idx_crm_assignments_crm_task_id` có chứa chữ "crm_task_id" nên lọt vào nhánh
++ * đó: code bẻ crm_task_id ra rồi INSERT lại -> sinh bản giao việc MỒ CÔI không
++ * gắn task nào. Đã tạo 122 hàng rác từ 30/07/2026 đến 07/09/2026.
++ */
++function isMissingColumn(err, name) {
++  if (!err) return false;
++  if (err.code && err.code !== '42703') return false;
++  return new RegExp(name).test(err.message || '');
++}
++
+ async function syncAssignmentFromCrmTask(req, task, assigneeIds, opts = {}) {
+   if (!task?.id) return { assignmentId: null };
+   const ids = [...new Set((assigneeIds || []).filter(Boolean).map(String))];
+@@ -99,7 +113,7 @@ async function syncAssignmentFromCrmTask(req, task, assigneeIds, opts = {}) {
+     .select('id')
+     .eq('crm_task_id', task.id)
+     .maybeSingle();
+-  if (findErr && /crm_task_id/.test(findErr.message || '')) {
++  if (isMissingColumn(findErr, 'crm_task_id')) {
+     return { assignmentId: null, skipped: true };
+   }
+   if (byTask) existing = byTask;
+@@ -172,19 +186,19 @@ async function syncAssignmentFromCrmTask(req, task, assigneeIds, opts = {}) {
+   let assignmentId = existing?.id || null;
+   if (assignmentId) {
+     let { error } = await supabase.from('crm_assignments').update(row).eq('id', assignmentId);
+-    if (error && /assignment_module/.test(error.message || '')) {
++    if (isMissingColumn(error, 'assignment_module')) {
+       const { assignment_module: _m, ...legacy } = row;
+       ({ error } = await supabase.from('crm_assignments').update(legacy).eq('id', assignmentId));
+     }
+-    if (error && /crm_task_id/.test(error.message || '')) {
++    if (isMissingColumn(error, 'crm_task_id')) {
+       const { crm_task_id: _t, assignment_module: _m, ...legacy } = row;
+       ({ error } = await supabase.from('crm_assignments').update(legacy).eq('id', assignmentId));
+     }
+-    if (error && /executor_company_id/.test(error.message || '')) {
++    if (isMissingColumn(error, 'executor_company_id')) {
+       const { executor_company_id: _e, ...legacy } = row;
+       ({ error } = await supabase.from('crm_assignments').update(legacy).eq('id', assignmentId));
+     }
+-    if (error && isTaskSourceSyncColumnError(error)) {
++    if (error?.code === '42703' && isTaskSourceSyncColumnError(error)) {
+       const { task_source_type: _ts, employee_error_module: _em, error_type_id: _et, ...legacy } = row;
+       ({ error } = await supabase.from('crm_assignments').update(legacy).eq('id', assignmentId));
+     }
+@@ -200,24 +214,37 @@ async function syncAssignmentFromCrmTask(req, task, assigneeIds, opts = {}) {
+       .insert(insertRow)
+       .select(ASSIGNMENT_SELECT)
+       .single();
+-    if (error && /assignment_module/.test(error.message || '')) {
++    if (isMissingColumn(error, 'assignment_module')) {
+       const { assignment_module: _m, ...legacy } = insertRow;
+       ({ data: created, error } = await supabase.from('crm_assignments').insert(legacy).select(ASSIGNMENT_SELECT).single());
+     }
+-    if (error && /crm_task_id/.test(error.message || '')) {
++    if (isMissingColumn(error, 'crm_task_id')) {
+       const { crm_task_id: _t, assignment_module: _m, ...legacy } = insertRow;
+       ({ data: created, error } = await supabase.from('crm_assignments').insert(legacy).select(ASSIGNMENT_SELECT).single());
+     }
+-    if (error && /executor_company_id/.test(error.message || '')) {
++    if (isMissingColumn(error, 'executor_company_id')) {
+       const { executor_company_id: _e, ...legacy } = insertRow;
+       ({ data: created, error } = await supabase.from('crm_assignments').insert(legacy).select(ASSIGNMENT_SELECT).single());
+     }
+-    if (error && isTaskSourceSyncColumnError(error)) {
++    if (error?.code === '42703' && isTaskSourceSyncColumnError(error)) {
+       const { task_source_type: _ts, employee_error_module: _em, error_type_id: _et, ...legacy } = insertRow;
+       ({ data: created, error } = await supabase.from('crm_assignments').insert(legacy).select(ASSIGNMENT_SELECT).single());
+     }
++    // 23505: hai luồng cùng sync một crm_task -> đâm unique idx_crm_assignments_crm_task_id.
++    // Lấy bản đã có rồi UPDATE. TUYỆT ĐỐI không INSERT lại — sẽ sinh bản mồ côi.
++    if (error?.code === '23505' && /crm_task_id/.test(error.message || '')) {
++      const { data: again } = await supabase
++        .from('crm_assignments').select('id').eq('crm_task_id', task.id).maybeSingle();
++      if (again?.id) {
++        assignmentId = again.id;
++        const { error: upErr } = await supabase
++          .from('crm_assignments').update(row).eq('id', assignmentId);
++        if (upErr) console.warn('[sync] crm_task -> assignment, update sau 23505:', upErr.message);
++        error = null;
++      }
++    }
+     if (error) throw error;
+-    assignmentId = created?.id || null;
++    assignmentId = assignmentId || created?.id || null;
+   }
+ 
+   if (assignmentId) {
+diff --git a/backend/src/helpers/ecosystemSync.js b/backend/src/helpers/ecosystemSync.js
+index e9ac9e65..9dd49c14 100644
+--- a/backend/src/helpers/ecosystemSync.js
++++ b/backend/src/helpers/ecosystemSync.js
+@@ -29,14 +29,19 @@ async function getCompanyDivisionIds(company) {
+ }
+ 
+ /** Đơn vị công ty con trong HST dưới một Khối cụ thể */
+-async function findSubsidiaryUnderDivision(companyId, divisionUnitId) {
++/**
++ * Unique index idx_ecosystem_units_company_parent_division la (company_id, parent_id)
++ * va KHONG loc is_active. Vi vay khi tim de GHI phai nhin ca hang da tat, neu khong
++ * se INSERT de len hang tat -> 23505 duplicate key va cong ty khong duoc bat lai.
++ */
++async function findSubsidiaryUnderDivision(companyId, divisionUnitId, opts = {}) {
+   if (!companyId || !divisionUnitId) return null;
+-  const { data } = await supabase.from('ecosystem_units')
++  let q = supabase.from('ecosystem_units')
+     .select('id')
+     .eq('company_id', companyId)
+-    .eq('parent_id', divisionUnitId)
+-    .eq('is_active', true)
+-    .maybeSingle();
++    .eq('parent_id', divisionUnitId);
++  if (!opts.includeInactive) q = q.eq('is_active', true);
++  const { data } = await q.maybeSingle();
+   return data?.id || null;
+ }
+ 
+@@ -67,7 +72,8 @@ async function syncCompanyToEcosystem(company) {
+     let firstId = null;
+ 
+     for (const divId of divisionIds) {
+-      const existingId = await findSubsidiaryUnderDivision(company.id, divId);
++      // includeInactive: hang da tat van chiem cho trong unique index.
++      const existingId = await findSubsidiaryUnderDivision(company.id, divId, { includeInactive: true });
+       if (existingId) {
+         await supabase.from('ecosystem_units').update({
+           name: company.name,
+diff --git a/backend/src/helpers/productionWorkshopTypeStaff.js b/backend/src/helpers/productionWorkshopTypeStaff.js
+index 440bf6e0..9397833b 100644
+--- a/backend/src/helpers/productionWorkshopTypeStaff.js
++++ b/backend/src/helpers/productionWorkshopTypeStaff.js
+@@ -1245,7 +1245,9 @@ async function mergeDealLeadMembers({ dealId, userIds, addedBy = null }) {
+     role: 'member',
+     ...(addedBy ? { added_by: addedBy } : {}),
+   }));
+-  const { error } = await supabase.from('lead_members').insert(rows);
++  // upsert-ignore: không ghi đè role thành viên đã có (đúng ý định của hàm này).
++  const { error } = await supabase.from('lead_members')
++    .upsert(rows, { onConflict: 'lead_id,user_id', ignoreDuplicates: true });
+   if (error) {
+     console.warn('[productionWorkshopTypeStaff] mergeDealLeadMembers:', error.message);
+     return { added: 0, error: error.message, added_user_ids: [] };
+diff --git a/backend/src/helpers/projectDealBundle.js b/backend/src/helpers/projectDealBundle.js
+index 6c1402e4..310e8675 100644
+--- a/backend/src/helpers/projectDealBundle.js
++++ b/backend/src/helpers/projectDealBundle.js
+@@ -3,6 +3,7 @@
+  * Kèm overview Tổng quan: KPI + luồng + công việc trọng yếu.
+  */
+ const { supabase } = require('../config/supabase');
++const { warnQ } = require('./queryErrorLog');
+ const {
+   leadDocVisibleForModuleAndUser,
+ } = require('./documentShareScope');
+@@ -933,13 +934,13 @@ async function buildProjectDealBundleWithProject(project, user, opts = {}) {
+       ? Promise.resolve({ data: [] })
+       : (crmLeadIdForWork
+         ? supabase.from('lead_documents')
+-          .select('id, name, file_name, doc_type, created_at, shared_to_workshop, allowed_share_modules, file_path, file_url, crm_stage_slug, source_crm_task_id, project_id')
++          .select('id, name, file_name, doc_type, created_at, shared_to_workshop, allowed_share_modules, file_url, crm_stage_slug, source_crm_task_id, project_id')
+           .eq('lead_id', crmLeadIdForWork)
+           .order('created_at', { ascending: false })
+         : supabase.from('lead_documents')
+-          .select('id, name, file_name, doc_type, created_at, shared_to_workshop, allowed_share_modules, file_path, file_url, crm_stage_slug, source_crm_task_id, project_id')
++          .select('id, name, file_name, doc_type, created_at, shared_to_workshop, allowed_share_modules, file_url, crm_stage_slug, source_crm_task_id, project_id')
+           .eq('project_id', projectId)
+-          .order('created_at', { ascending: false })),
++          .order('created_at', { ascending: false })).then(warnQ('bundle:lead_documents')),
+     lite || !leadIds.length
+       ? Promise.resolve({ data: [] })
+       : supabase.from('unified_tasks_v')
+@@ -1032,8 +1033,11 @@ async function buildProjectDealBundleWithProject(project, user, opts = {}) {
+     lite || !crmTaskIds.length
+       ? Promise.resolve({ data: [] })
+       : supabase.from('crm_task_attachments')
+-        .select('id, file_name, name, file_path, file_url, mime_type, created_at, crm_task_id, shared_to_workshop, allowed_share_modules')
+-        .in('crm_task_id', crmTaskIds),
++        // crm_task_attachments dùng `task_id` và `shared_to_project`; không có
++        // `file_path` lẫn `crm_task_id`. Cả ba tên sai làm hỏng CẢ câu -> khối
++        // đính kèm của crm_task chưa từng vào được bundle.
++        .select('id, file_name, name, file_url, mime_type, created_at, task_id, shared_to_project, allowed_share_modules')
++        .in('task_id', crmTaskIds).then(warnQ('bundle:crm_task_attachments')),
+     lite || !assigneeIds.size
+       ? Promise.resolve({ data: [] })
+       : supabase.from('users').select('id, full_name').in('id', [...assigneeIds]),
+@@ -1149,12 +1153,11 @@ async function buildProjectDealBundleWithProject(project, user, opts = {}) {
+     id: a.id,
+     name: a.name || a.file_name,
+     file_name: a.file_name,
+-    file_path: a.file_path,
+     file_url: a.file_url,
+     created_at: a.created_at,
+     bucket: 'crm',
+     kind: 'crm_task_attachment',
+-    crm_task_id: a.crm_task_id,
++    crm_task_id: a.task_id,
+   }));
+ 
+   const projectNativeFiles = (projectFilesRes.data || []).map((f) => ({
+diff --git a/backend/src/helpers/stageFlow.js b/backend/src/helpers/stageFlow.js
+index d7036e5b..e25764a6 100644
+--- a/backend/src/helpers/stageFlow.js
++++ b/backend/src/helpers/stageFlow.js
+@@ -10,6 +10,7 @@
+  */
+ 
+ const { supabase } = require('../config/supabase');
++const { warnQ } = require('./queryErrorLog');
+ 
+ // Stage slug → Division mapping (fallback if no flow)
+ const STAGE_DIVISION_MAP = {
+@@ -95,11 +96,12 @@ async function findDefaultTemplateSet(companyUnitId) {
+ async function getTemplateTasks(templateSetId, stageId) {
+   if (!templateSetId) return [];
+ 
+-  const { data } = await supabase.from('company_template_tasks')
+-    .select('id, title, description, priority, estimated_hours, stage_id, order_index, checklist_items')
++  const { data } = warnQ('stage-flow:template-tasks')(await supabase.from('company_template_tasks')
++    // company_template_tasks không có cột `checklist_items`
++    .select('id, title, description, priority, estimated_hours, stage_id, order_index')
+     .eq('template_set_id', templateSetId)
+     .eq('stage_id', stageId)
+-    .order('order_index');
++    .order('order_index'));
+ 
+   return data || [];
+ }
+diff --git a/backend/src/helpers/supabaseQueryGuard.js b/backend/src/helpers/supabaseQueryGuard.js
+index e780b7c3..9f5f46c1 100644
+--- a/backend/src/helpers/supabaseQueryGuard.js
++++ b/backend/src/helpers/supabaseQueryGuard.js
+@@ -13,6 +13,13 @@
+  *     URL. Đo trên DB thật: `in()` gãy trên 643 id, chuỗi OR gãy trên 556 id
+  *     (URL ~22–24KB); vượt nữa thì đứt kết nối.
+  *
++ *  3) TRUY VẤN BỊ TỪ CHỐI CẢ CÂU — cột/bảng/enum sai làm Postgres huỷ TOÀN BỘ câu.
++ *     Chỗ gọi viết `const { data } = await supabase...` (không đọc `error`) sẽ nhận
++ *     data === undefined và trả [] như không có gì. Đây là cách 29 cột sai sống
++ *     nhiều tháng, và cách `role = 'logistics'` làm trống danh sách user xưởng.
++ *     Bắt tại chỗ theo SQLSTATE nên hiện trên log Render trong vài phút, không
++ *     phải chờ quét log Postgres 24h bằng tay.
++ *
+  * Cách dùng: gọi installSupabaseQueryGuard() một lần lúc khởi động.
+  * Tắt bằng SUPABASE_QUERY_GUARD=0.
+  *
+@@ -33,6 +40,22 @@ const DEFAULTS = {
+   summaryMinutes: Number(process.env.SUPABASE_GUARD_SUMMARY_MIN || 15),
+ };
+ 
++/**
++ * Mã lỗi làm HỎNG CẢ CÂU truy vấn (không phải lỗi từng dòng).
++ * Mã Postgres 5 ký tự + mã PostgREST (PGRST…) khi lỗi chặn ngay ở tầng REST.
++ */
++const MA_LOI_GIET_CA_CAU = {
++  '42703': 'COT-KHONG-TON-TAI',
++  '42P01': 'BANG-KHONG-TON-TAI',
++  '42883': 'HAM-KHONG-TON-TAI',
++  '22P02': 'GIA-TRI-SAI-KIEU',
++  '42P18': 'THAM-SO-KHONG-RO-KIEU',
++  '42601': 'CU-PHAP-SAI',
++  PGRST200: 'THIEU-QUAN-HE-EMBED',
++  PGRST202: 'RPC-KHONG-TON-TAI',
++  PGRST204: 'COT-KHONG-TON-TAI-KHI-GHI',
++};
++
+ /** key -> { kind, table, site, count, detail, firstAt, lastAt } */
+ const findings = new Map();
+ let installed = false;
+@@ -128,6 +151,14 @@ function inspect(builder, res) {
+   } else if (url.length >= DEFAULTS.urlWarn) {
+     record('URL-QUA-DAI', table, `URL ${url.length} ký tự (gãy quanh 22.000) — nên chia lô hoặc chuyển sang RPC`, stackErr);
+   }
++
++  // ── 3) Truy vấn bị từ chối cả câu (cột/bảng/enum sai) ─────────────────────
++  const err = res && res.error;
++  const kind = err && err.code ? MA_LOI_GIET_CA_CAU[String(err.code)] : null;
++  if (kind) {
++    const phu = [err.details, err.hint].filter(Boolean).join(' · ');
++    record(kind, table, `${err.code} · ${err.message}${phu ? ` · ${phu}` : ''}`, stackErr);
++  }
+ }
+ 
+ function printSummary() {
+@@ -160,11 +191,15 @@ function installSupabaseQueryGuard() {
+   // Ghi lại nơi dựng truy vấn. Chỉ tạo Error (rẻ) — chuỗi stack chỉ được dựng khi
+   // thật sự có cảnh báo. Các hàm filter/transform của postgrest-js đều trả về `this`
+   // nên thuộc tính này theo được tới builder cuối cùng.
+-  if (PostgrestQueryBuilder && typeof PostgrestQueryBuilder.prototype.select === 'function') {
+-    const originalSelect = PostgrestQueryBuilder.prototype.select;
+-    PostgrestQueryBuilder.prototype.select = function guardedSelect(...args) {
+-      const out = originalSelect.apply(this, args);
+-      try { out.__guardStack = new Error(); } catch (_) { /* bỏ qua */ }
++  // Bọc cả các lệnh GHI: mã 42703 / PGRST204 hay xảy ra ở insert/update, mà nếu
++  // không bắt stack ở đây thì báo cáo chỉ ghi được «khong-xac-dinh».
++  for (const ten of ['select', 'insert', 'update', 'upsert', 'delete']) {
++    const proto0 = PostgrestQueryBuilder && PostgrestQueryBuilder.prototype;
++    if (!proto0 || typeof proto0[ten] !== 'function') continue;
++    const gocc = proto0[ten];
++    proto0[ten] = function guardedBuilder(...args) {
++      const out = gocc.apply(this, args);
++      try { if (out && !out.__guardStack) out.__guardStack = new Error(); } catch (_) { /* bỏ qua */ }
+       return out;
+     };
+   }
+@@ -187,7 +222,7 @@ function installSupabaseQueryGuard() {
+     const t = setInterval(printSummary, DEFAULTS.summaryMinutes * 60_000);
+     if (t.unref) t.unref();
+   }
+-  console.log(`[query-guard] đang theo dõi: cắt ${DEFAULTS.maxRows} dòng, filter ≥ ${DEFAULTS.inFilterWarn} id, URL ≥ ${DEFAULTS.urlWarn} ký tự`);
++  console.log(`[query-guard] đang theo dõi: cắt ${DEFAULTS.maxRows} dòng, filter ≥ ${DEFAULTS.inFilterWarn} id, URL ≥ ${DEFAULTS.urlWarn} ký tự, và ${Object.keys(MA_LOI_GIET_CA_CAU).length} mã lỗi giết cả câu (42703, 22P02, PGRST204…)`);
+   return true;
+ }
+ 
+diff --git a/backend/src/helpers/tenantOnboarding.js b/backend/src/helpers/tenantOnboarding.js
+index 961c194e..e150b684 100644
+--- a/backend/src/helpers/tenantOnboarding.js
++++ b/backend/src/helpers/tenantOnboarding.js
+@@ -18,7 +18,8 @@ async function onboardTenant({ name, slug, tier = 'free', maxUsers = 50, maxComp
+   const { data: rootLevel } = await supabase
+     .from('ecosystem_levels')
+     .select('id')
+-    .eq('level_index', 0)
++    // cột thật là `depth`, không phải `level_index`
++    .eq('depth', 0)
+     .maybeSingle();
+ 
+   let rootUnit = null;
+diff --git a/backend/src/helpers/tenantQuotas.js b/backend/src/helpers/tenantQuotas.js
+index 188c774a..9daf19c1 100644
+--- a/backend/src/helpers/tenantQuotas.js
++++ b/backend/src/helpers/tenantQuotas.js
+@@ -1,4 +1,5 @@
+ const { supabase } = require('../config/supabase');
++const { warnQ } = require('./queryErrorLog');
+ const { getTenantCompanyIds, invalidateTenantCache } = require('./tenantScope');
+ const { TIER_TO_PLAN } = require('./saasPlans');
+ 
+@@ -198,7 +199,9 @@ async function sumAttachmentBytes(companyIds) {
+         .from('drive_files')
+         .select('size_bytes')
+         .in('root_id', rootIds)
+-        .eq('is_trashed', false);
++        // drive_files không có `is_trashed` — cột đúng là `trashed_at`.
++        // Tên sai làm hỏng CẢ câu ⇒ hạn mức Drive của tenant luôn = 0.
++        .is('trashed_at', null);
+       for (const row of files || []) total += Number(row.size_bytes) || 0;
+     }
+   } catch (_) { /* drive chưa migrate */ }
+@@ -221,12 +224,12 @@ async function estimateNotesBytes(companyIds) {
+   if (!leadIds.length) return 0;
+ 
+   let total = 0;
+-  const { data: comments } = await supabase
++  const { data: comments } = warnQ('tenant-quota:crm_lead_comments')(await supabase
+     .from('crm_lead_comments')
+-    .select('content')
+-    .in('lead_id', leadIds.slice(0, 5000));
++    .select('body')
++    .in('lead_id', leadIds.slice(0, 5000)));
+   for (const c of comments || []) {
+-    total += Buffer.byteLength(String(c.content || ''), 'utf8');
++    total += Buffer.byteLength(String(c.body || ''), 'utf8');
+   }
+   return total;
+ }
+diff --git a/backend/src/helpers/tenantSetup.js b/backend/src/helpers/tenantSetup.js
+index f4fff2c7..fde3654e 100644
+--- a/backend/src/helpers/tenantSetup.js
++++ b/backend/src/helpers/tenantSetup.js
+@@ -144,7 +144,8 @@ async function resolveTenantCompanyId(user, bodyCompanyId) {
+ 
+ async function getLevelId(levelIndex) {
+ 
+-  const { data } = await supabase.from('ecosystem_levels').select('id').eq('level_index', levelIndex).maybeSingle();
++  const { data } = await supabase// ecosystem_levels: cột thật là `depth`, không phải `level_index`
++  .from('ecosystem_levels').select('id').eq('depth', levelIndex).maybeSingle();
+ 
+   return data?.id || null;
+ 
+diff --git a/backend/src/helpers/unifiedTasksQuery.js b/backend/src/helpers/unifiedTasksQuery.js
+index b4e3177d..1c3ac2a6 100644
+--- a/backend/src/helpers/unifiedTasksQuery.js
++++ b/backend/src/helpers/unifiedTasksQuery.js
+@@ -58,6 +58,25 @@ async function fetchLeadOptionsForAssignee(assigneeId, companyId, maxRows = 300)
+   }));
+ }
+ 
++/**
++ * unified_tasks_v nhân dòng khi một dự án có nhiều crm_leads (đo: 49 dự án,
++ * tối đa 4 lead/dự án, 2.338 dòng thừa trên 127.262). Cột is_primary_lead
++ * (migration 594) đánh dấu đúng MỘT dòng cho mỗi unified_id.
++ *
++ * CHỈ lọc khi truy vấn KHÔNG bám theo lead. Nếu đang lọc theo lead_id mà vẫn
++ * thêm is_primary_lead thì task của lead thứ 2 sẽ biến mất khỏi trang lead đó.
++ */
++function applyPrimaryLeadOnly(q, leadScoped) {
++  return leadScoped ? q : q.eq('is_primary_lead', true);
++}
++
++/** Truy vấn có bám theo lead không? (lead_id, hoặc assignee kèm danh sách lead) */
++function isLeadScoped({ lead_id: leadId, assignee_id: assigneeId, assignee_lead_ids: leadIds } = {}) {
++  if (leadId) return true;
++  if (assigneeId && (leadIds || []).filter(Boolean).length > 0) return true;
++  return false;
++}
++
+ function applyAssigneeFilter(q, assigneeId, leadIds = []) {
+   if (!assigneeId) return q;
+   const ids = (leadIds || []).filter(Boolean);
+@@ -92,6 +111,7 @@ function buildUnifiedTasksBaseQuery(user, {
+   } else if (assignee_id) {
+     q = applyAssigneeFilter(q, assignee_id, assignee_lead_ids);
+   }
++  q = applyPrimaryLeadOnly(q, isLeadScoped({ lead_id, assignee_id, assignee_lead_ids }));
+   if (status) q = q.eq('status', status);
+   if (task_kind) q = q.eq('task_kind', task_kind);
+   const search = String(searchQ || '').trim();
+@@ -118,6 +138,7 @@ async function countUnifiedOpenTasks(user, opts = {}) {
+   } else if (opts.assignee_id) {
+     q = applyAssigneeFilter(q, opts.assignee_id, opts.assignee_lead_ids);
+   }
++  q = applyPrimaryLeadOnly(q, isLeadScoped(opts));
+   if (opts.date_from) q = q.gte('deadline', opts.date_from);
+   if (opts.date_to) q = q.lte('deadline', opts.date_to);
+ 
+@@ -143,6 +164,7 @@ async function countUnifiedOverdueTasks(user, opts = {}) {
+   } else if (opts.assignee_id) {
+     q = applyAssigneeFilter(q, opts.assignee_id, opts.assignee_lead_ids);
+   }
++  q = applyPrimaryLeadOnly(q, isLeadScoped(opts));
+   if (opts.date_from) q = q.gte('deadline', opts.date_from);
+   if (opts.date_to) q = q.lte('deadline', opts.date_to);
+ 
+@@ -215,6 +237,8 @@ module.exports = {
+   applyEmployeeScope,
+   applyOpenOnlyFilter,
+   applyAssigneeFilter,
++  applyPrimaryLeadOnly,
++  isLeadScoped,
+   resolveModuleKey,
+   fetchLeadIdsForAssignee,
+   fetchLeadOptionsForAssignee,
+diff --git a/backend/src/helpers/workshopKanban.js b/backend/src/helpers/workshopKanban.js
+index 3e070a47..d5a7bdb8 100644
+--- a/backend/src/helpers/workshopKanban.js
++++ b/backend/src/helpers/workshopKanban.js
+@@ -1827,7 +1827,13 @@ async function repairCrmDealPipelineDisplay(leadId) {
+         .order('order_index', { ascending: true })
+         .limit(1);
+       if (lead.pipeline_id) sq = sq.eq('pipeline_id', lead.pipeline_id);
+-      else if (lead.company_id) sq = sq.eq('company_id', lead.company_id);
++      else if (lead.company_id) {
++        // crm_pipeline_stages KHÔNG có company_id — công ty nằm ở crm_pipelines.
++        const { data: pls } = await supabase
++          .from('crm_pipelines').select('id').eq('company_id', lead.company_id);
++        const plIds = (pls || []).map((x) => x.id).filter(Boolean);
++        if (plIds.length) sq = sq.in('pipeline_id', plIds);
++      }
+       const { data: won } = await sq.maybeSingle();
+       if (won?.id && String(won.id) !== String(lead.stage_id)) {
+         await supabase
+diff --git a/backend/src/middleware/permission.js b/backend/src/middleware/permission.js
+index 8554e4cc..a7da4438 100644
+--- a/backend/src/middleware/permission.js
++++ b/backend/src/middleware/permission.js
+@@ -14,18 +14,33 @@ const { getUserAccessibleUnits, canManageUnit } = require('../routes/ecosystem')
+ // ─────────────────────────────────────────────────────────────
+ async function getRolePermissions(role) {
+   try {
++    // Bảng role_permissions là bảng nối khoá ngoại: (role_id, permission_id).
++    // Nó KHÔNG có cột `permission`, `role` hay `is_allowed` — truy vấn cũ trả
++    // 42703 nên hàm này luôn trả [] và toàn bộ RBAC đọc ra rỗng.
++    // Chuỗi quyền có dạng `resource.action`, khớp đúng định dạng đang dùng ở
++    // user_permission_overrides.permission (đã đối chiếu dữ liệu thật:
++    // admin 193 quyền, manager 20, employee 9).
++    const { data: roleRow, error: roleErr } = await supabase
++      .from('roles').select('id').eq('name', role).maybeSingle();
++    if (roleErr) {
++      console.error('Error resolving role:', roleErr);
++      return [];
++    }
++    if (!roleRow) return [];
++
+     const { data, error } = await supabase
+       .from('role_permissions')
+-      .select('permission')
+-      .eq('role', role)
+-      .eq('is_allowed', true);
+-    
++      .select('permissions(resource, action)')
++      .eq('role_id', roleRow.id);
++
+     if (error) {
+       console.error('Error fetching role permissions:', error);
+       return [];
+     }
+-    
+-    return (data || []).map(r => r.permission);
++
++    return (data || [])
++      .map((r) => (r.permissions ? `${r.permissions.resource}.${r.permissions.action}` : null))
++      .filter(Boolean);
+   } catch (e) {
+     console.error('Exception in getRolePermissions:', e);
+     return [];
+diff --git a/backend/src/routes/aiChatBot.js b/backend/src/routes/aiChatBot.js
+index 722ea2cf..f599ef1d 100644
+--- a/backend/src/routes/aiChatBot.js
++++ b/backend/src/routes/aiChatBot.js
+@@ -257,11 +257,19 @@ r.get('/channel-filters', requireAdmin, async (_req, res) => {
+     // Khối: ecosystem_units depth=1 (cấp "Khối")
+     let divisions = [];
+     try {
+-      const { data } = await supabase
+-        .from('ecosystem_units')
+-        .select('id, name, depth')
+-        .eq('depth', 1)
+-        .order('name');
++      // `depth` nằm ở ecosystem_levels, KHÔNG phải ecosystem_units — units chỉ
++      // có level_id. Truy vấn cũ hỏng cả câu nên danh sách "khối" luôn rỗng.
++      // Giải hai bước cho rõ ràng, thay vì lọc lồng qua embed.
++      const { data: lv1 } = await supabase
++        .from('ecosystem_levels').select('id').eq('depth', 1);
++      const lv1Ids = (lv1 || []).map((l) => l.id);
++      const { data } = lv1Ids.length
++        ? await supabase
++          .from('ecosystem_units')
++          .select('id, name, level_id')
++          .in('level_id', lv1Ids)
++          .order('name')
++        : { data: [] };
+       divisions = (data || []).map((u) => ({ id: u.id, name: u.name }));
+     } catch { /* ignore */ }
+ 
+diff --git a/backend/src/routes/appModules.js b/backend/src/routes/appModules.js
+index 6203b3c9..e0f46e20 100644
+--- a/backend/src/routes/appModules.js
++++ b/backend/src/routes/appModules.js
+@@ -252,7 +252,8 @@ r.post('/notify-from-crm-stage', async (req, res) => {
+ 
+     const { data: lead } = await supabase
+       .from('crm_leads')
+-      .select('id, name, code, company_id')
++      // crm_leads: tên thật là `title`, không phải `name`
++      .select('id, title, code, company_id')
+       .eq('id', leadId)
+       .maybeSingle();
+ 
+@@ -264,7 +265,7 @@ r.post('/notify-from-crm-stage', async (req, res) => {
+         moduleRow: mod,
+         record: {
+           id: leadId,
+-          name: lead?.name || lead?.code || 'Deal',
++          name: lead?.title || lead?.code || 'Deal',
+           assignee_id: null,
+           company_id: lead?.company_id || mod.company_id,
+           source_crm_lead_id: leadId,
+diff --git a/backend/src/routes/crm/shared/helpersBundle.js b/backend/src/routes/crm/shared/helpersBundle.js
+index 7736f62c..4a983a36 100644
+--- a/backend/src/routes/crm/shared/helpersBundle.js
++++ b/backend/src/routes/crm/shared/helpersBundle.js
+@@ -4239,7 +4239,13 @@ async function resolveReopenTargetStageId(lead, requestedStageId) {
+     .order('order_index', { ascending: true })
+     .limit(1);
+   if (lead.pipeline_id) sq = sq.eq('pipeline_id', lead.pipeline_id);
+-  else if (lead.company_id) sq = sq.eq('company_id', lead.company_id);
++  else if (lead.company_id) {
++    // crm_pipeline_stages KHÔNG có company_id — công ty nằm ở crm_pipelines.
++    const { data: pls } = await supabase
++      .from('crm_pipelines').select('id').eq('company_id', lead.company_id);
++    const plIds = (pls || []).map((x) => x.id).filter(Boolean);
++    if (plIds.length) sq = sq.in('pipeline_id', plIds);
++  }
+   const { data: stages } = await sq;
+   if (stages?.[0]?.id) return String(stages[0].id);
+   throw new Error('Không tìm được giai đoạn để hồi lại.');
+diff --git a/backend/src/routes/dashboard.js b/backend/src/routes/dashboard.js
+index fe559c38..be2adde1 100644
+--- a/backend/src/routes/dashboard.js
++++ b/backend/src/routes/dashboard.js
+@@ -1,6 +1,7 @@
+ const { Router } = require('express');
+ const { auth } = require('../middleware/auth');
+ const { supabase } = require('../config/supabase');
++const { warnQ } = require('../helpers/queryErrorLog');
+ const { lookupCache } = require('../helpers/ttlCache');
+ const {
+   pgDashboardNotificationStats,
+@@ -945,7 +946,17 @@ r.get('/overview', responseCache({ ttl: 60, scope: 'global', tags: ['dashboard:o
+       supabase.from('projects').select('*', { count: 'exact', head: true }).in('status', ['consulting', 'designing', 'quoting', 'contract_signed', 'producing', 'shipping', 'installing']),
+       supabase.from('projects').select('*', { count: 'exact', head: true }).eq('status', 'warranty'),
+       supabase.from('projects').select('*', { count: 'exact', head: true }).gte('created_at', sevenDaysAgo.toISOString()),
+-      supabase.from('projects').select('*', { count: 'exact', head: true }).lt('due_date', now.toISOString()).neq('status', 'warranty'),
++      // projects không có `due_date` — cột đúng là `deadline`. Tên sai làm hỏng
++      // CẢ câu (42703): 45 lỗi/giờ, ô «dự án trễ hạn» không bao giờ có số.
++      //
++      // LƯU Ý DỮ LIỆU: `projects.deadline` hiện RỖNG ở cả 669 dự án, nên ô này
++      // vẫn hiện 0 cho tới khi cột được điền. Các cột ngày có dữ liệu thật:
++      // install_date (194), production_finish_date (94), production_deadline (91),
++      // delivery_date (82). CỐ TÌNH không đổi sang install_date: 155/194 dự án
++      // đã qua ngày lắp vì đã lắp xong — đếm chúng là «trễ hạn» thì sai nặng hơn
++      // là hiện 0. Muốn ô này có số thì điền `deadline`, hoặc chốt lại định
++      // nghĩa «trễ hạn» rồi đổi cả `isProjectOverdue` trong routes/management.js.
++      supabase.from('projects').select('*', { count: 'exact', head: true }).lt('deadline', now.toISOString()).neq('status', 'warranty'),
+       supabase.from('tasks').select('*', { count: 'exact', head: true }),
+       supabase.from('tasks').select('*', { count: 'exact', head: true }).eq('status', 'done'),
+       supabase.from('tasks').select('*', { count: 'exact', head: true }).lt('due_date', now.toISOString()).neq('status', 'done'),
+@@ -961,7 +972,8 @@ r.get('/overview', responseCache({ ttl: 60, scope: 'global', tags: ['dashboard:o
+       supabase.from('crm_leads').select('*', { count: 'exact', head: true }).eq('type', 'lead').gte('created_at', thirtyDaysAgo.toISOString()),
+       supabase.from('crm_leads').select('*', { count: 'exact', head: true }).eq('type', 'deal').gte('created_at', thirtyDaysAgo.toISOString()),
+       supabase.from('crm_leads').select('*', { count: 'exact', head: true }).eq('type', 'deal').not('project_id', 'is', null),
+-      supabase.from('crm_leads').select('budget').eq('type', 'deal').is('project_id', null),
++      supabase.from('crm_leads').select('estimated_value').eq('type', 'deal').is('project_id', null)
++        .then(warnQ('dashboard:deal-pipeline-value')),
+     ]);
+ 
+     const totalProjects = totalProjectsRes.count;
+@@ -1245,7 +1257,8 @@ r.get('/alerts', async (req, res) => {
+       allActiveTasks,
+     ] = await Promise.all([
+       supabase.from('projects').select('*', { count: 'exact', head: true })
+-        .lt('due_date', now.toISOString())
++        // projects: `deadline`, không phải `due_date`.
++        .lt('deadline', now.toISOString())
+         .neq('status', 'warranty'),
+       
+       supabase.from('tasks').select('*', { count: 'exact', head: true })
+@@ -1366,8 +1379,10 @@ r.get('/divisions', async (req, res) => {
+     let divisionUnits = [];
+ 
+     const levels = await lookupCache.getOrFetch('ecosystem_levels:active', async () => {
++      // ecosystem_levels KHÔNG có cột is_active — lọc theo nó làm hỏng cả câu
++      // (42703) ⇒ toàn bộ khối hệ sinh thái trên dashboard trả về rỗng.
+       const { data } = await supabase.from('ecosystem_levels')
+-        .select('id, name, depth').eq('is_active', true).order('depth');
++        .select('id, name, depth').order('depth');
+       return data || [];
+     });
+     
+diff --git a/backend/src/routes/dashboardMain.js b/backend/src/routes/dashboardMain.js
+index 0cae01e3..13970adf 100644
+--- a/backend/src/routes/dashboardMain.js
++++ b/backend/src/routes/dashboardMain.js
+@@ -86,12 +86,9 @@ r.get('/', async (req, res) => {
+         name,
+         code,
+         status,
+-        start_date,
+-        end_date,
+-        customer_name,
+-        customer_phone,
+         created_at,
+         created_by,
++        customer:customers(full_name, phone),
+         flow:workflow_flows(id, name)
+       `)
+       .in('id', projectIds)
+@@ -108,7 +105,7 @@ r.get('/', async (req, res) => {
+         title,
+         status,
+         priority,
+-        assigned_to,
++        assignee_id,
+         due_date,
+         completed_at
+       `)
+@@ -131,7 +128,7 @@ r.get('/', async (req, res) => {
+     // 7. Build response
+     const projectsWithStats = projects.map(project => {
+       const projectTasks = tasksByProject[project.id] || [];
+-      const myTasks = projectTasks.filter(t => t.assigned_to === userId);
++      const myTasks = projectTasks.filter(t => t.assignee_id === userId);
+ 
+       return {
+         ...project,
+@@ -211,10 +208,10 @@ r.get('/stats', responseCache({ ttl: 30, scope: 'user', tags: ['dashboard-main']
+     // Đếm tasks
+     const { data: tasks } = await supabase
+       .from('tasks')
+-      .select('id, status, assigned_to, due_date')
++      .select('id, status, assignee_id, due_date')
+       .in('project_id', projectIds);
+ 
+-    const myTasks = tasks.filter(t => t.assigned_to === userId);
++    const myTasks = tasks.filter(t => t.assignee_id === userId);
+     const now = new Date();
+ 
+     const stats = {
+@@ -317,7 +314,7 @@ async function getProjectIdsByDepartment(departmentId, req) {
+   const { data: tasks } = await supabase
+     .from('tasks')
+     .select('project_id')
+-    .in('assigned_to', userIds);
++    .in('assignee_id', userIds);
+ 
+   return filterProjectIdsByTenant(req, [...new Set((tasks || []).map(t => t.project_id))]);
+ }
+@@ -333,7 +330,7 @@ async function getProjectIdsByUser(userId, req) {
+   const { data: tasks } = await supabase
+     .from('tasks')
+     .select('project_id')
+-    .eq('assigned_to', userId);
++    .eq('assignee_id', userId);
+ 
+   const projectIds = [
+     ...(created || []).map(p => p.id),
+@@ -345,7 +342,7 @@ async function getProjectIdsByUser(userId, req) {
+ 
+ function calculateStats(projects, tasks, userId) {
+   const now = new Date();
+-  const myTasks = tasks.filter(t => t.assigned_to === userId);
++  const myTasks = tasks.filter(t => t.assignee_id === userId);
+ 
+   return {
+     total_projects: projects.length,
+diff --git a/backend/src/routes/drive.js b/backend/src/routes/drive.js
+index 4677d731..24eeff67 100644
+--- a/backend/src/routes/drive.js
++++ b/backend/src/routes/drive.js
+@@ -2470,7 +2470,7 @@ r.get('/activity', async (req, res) => {
+ 
+     const { data } = await supabase
+       .from('drive_activity_log')
+-      .select('*, actor:users!drive_activity_log_actor_id_fkey(id,full_name,email,avatar_url)')
++      .select('*, actor:users!drive_activity_log_actor_id_fkey(id,full_name,email,avatar)')
+       .eq('target_type', target_type)
+       .eq('target_id', target_id)
+       .order('created_at', { ascending: false })
+@@ -2489,7 +2489,7 @@ r.get('/activity/feed', async (req, res) => {
+     if (!rootIds.length) return res.json({ activity: [] });
+     const { data } = await supabase
+       .from('drive_activity_log')
+-      .select('*, actor:users!drive_activity_log_actor_id_fkey(id,full_name,email,avatar_url)')
++      .select('*, actor:users!drive_activity_log_actor_id_fkey(id,full_name,email,avatar)')
+       .in('root_id', rootIds)
+       .order('created_at', { ascending: false })
+       .limit(limit);
+diff --git a/backend/src/routes/ecosystem.js b/backend/src/routes/ecosystem.js
+index 5588bbb5..bc72ff9b 100644
+--- a/backend/src/routes/ecosystem.js
++++ b/backend/src/routes/ecosystem.js
+@@ -678,7 +678,8 @@ r.get('/available-companies', async (req, res) => {
+   try {
+     const { data: companies, error } = await supabase
+       .from('companies')
+-      .select('id, name, short_name, code, logo, is_active')
++      // companies không có `code`; cột logo tên thật là `logo_url`
++      .select('id, name, short_name, tax_code, logo_url, is_active')
+       .or('is_active.eq.true,is_active.is.null')
+       .order('name');
+     if (error) throw error;
+@@ -698,7 +699,8 @@ r.get('/available-companies', async (req, res) => {
+ r.get('/available-departments', async (req, res) => {
+   try {
+     const { company_id } = req.query;
+-    let q = supabase.from('departments').select('id, name, short_name, company_id, division_unit_id, is_active').eq('is_active', true).order('name');
++    let q = supabase.from('departments')// departments không có `short_name`
++    .select('id, name, company_id, division_unit_id, is_active').eq('is_active', true).order('name');
+     if (company_id) q = q.eq('company_id', company_id);
+     const { data, error } = await q;
+     if (error) throw error;
+@@ -784,9 +786,10 @@ r.post('/setup-wizard', async (req, res) => {
+ 
+     // Get level IDs
+     const { data: levels } = await supabase.from('ecosystem_levels')
+-      .select('id, level_index').order('level_index');
++      // ecosystem_levels: cột thật là `depth`, không phải `level_index`
++      .select('id, depth').order('depth');
+     const levelMap = {};
+-    (levels || []).forEach(l => { levelMap[l.level_index] = l.id; });
++    (levels || []).forEach(l => { levelMap[l.depth] = l.id; });
+ 
+     const createdUnits = [];
+ 
+diff --git a/backend/src/routes/logistics.js b/backend/src/routes/logistics.js
+index 66271104..724c4523 100644
+--- a/backend/src/routes/logistics.js
++++ b/backend/src/routes/logistics.js
+@@ -5,6 +5,33 @@
+  */
+ const { Router } = require('express');
+ const { supabase } = require('../config/supabase');
++
++/**
++ * projects KHÔNG có cột `division_id`. Khối gắn ở companies.division_unit_id.
++ * `.eq('division_id', …)` làm Postgres huỷ CẢ câu (42703) nên bảng VC/Lắp đặt
++ * trả rỗng mỗi khi người dùng lọc theo Khối — mà không báo lỗi gì.
++ */
++const KHONG_CO_UUID = '00000000-0000-0000-0000-000000000000';
++
++async function idCongTyTheoKhoi(divisionId) {
++  if (!divisionId) return null;
++  const { data, error } = await supabase
++    .from('companies').select('id').eq('division_unit_id', divisionId);
++  if (error) {
++    console.warn('[logistics] công ty theo khối:', error.message);
++    return null;
++  }
++  return (data || []).map((c) => c.id).filter(Boolean);
++}
++
++/** Dự án thuộc khối khi công ty CRM hoặc công ty VC/LĐ nằm trong khối. */
++function locTheoKhoi(q, ids) {
++  if (!ids) return q;
++  if (!ids.length) return q.eq('company_id', KHONG_CO_UUID);
++  const ds = ids.join(',');
++  return q.or(`company_id.in.(${ds}),logistics_company_id.in.(${ds})`);
++}
++
+ const { auth } = require('../middleware/auth');
+ const { requirePermission } = require('../middleware/newPermission');
+ const { notifyMultiple: notifyMultipleShared, getCompanyScopedRoleUserIds } = require('../helpers/notifications');
+@@ -688,6 +715,7 @@ r.put('/pipeline-stages-reorder', requirePermission('projects', 'edit'), async (
+ r.get('/dashboard', requirePermission('projects', 'view'), async (req, res) => {
+   try {
+     const { division_id, company_id: companyIdQuery, workshop_type_id } = req.query;
++    const idCongTyKhoi = await idCongTyTheoKhoi(division_id);
+     const company_id = effectiveWorkshopCompanyId(req, companyIdQuery);
+     const { ids: stageIds } = await getLogisticsStageMap();
+     const { stages: kanbanStages } = await getResolvedLogisticsStages(company_id);
+@@ -712,7 +740,7 @@ r.get('/dashboard', requirePermission('projects', 'view'), async (req, res) => {
+       .or(orFilter);
+     query = applyVcNotDeletedFilter(query);
+ 
+-    if (division_id) query = query.eq('division_id', division_id);
++    query = locTheoKhoi(query, idCongTyKhoi);
+     if (company_id) query = query.or(`company_id.eq.${company_id},logistics_company_id.eq.${company_id}`);
+     if (workshop_type_id) query = query.eq('workshop_type_id', workshop_type_id);
+     ({ query } = await applyWorkshopProjectVisibilityScope(query, req.user, company_id, null));
+@@ -731,7 +759,7 @@ r.get('/dashboard', requirePermission('projects', 'view'), async (req, res) => {
+           workshop_type:workshop_project_types(id, name, applies_to),
+           ${TASKS_EMBED}`)
+         .or(orFilter);
+-      if (division_id) qNoSoft = qNoSoft.eq('division_id', division_id);
++      qNoSoft = locTheoKhoi(qNoSoft, idCongTyKhoi);
+       if (company_id) qNoSoft = qNoSoft.or(`company_id.eq.${company_id},logistics_company_id.eq.${company_id}`);
+       if (workshop_type_id) qNoSoft = qNoSoft.eq('workshop_type_id', workshop_type_id);
+       const rNoSoft = await qNoSoft.order('created_at', { ascending: false });
+@@ -750,7 +778,7 @@ r.get('/dashboard', requirePermission('projects', 'view'), async (req, res) => {
+           logistics_company:companies!projects_logistics_company_id_fkey(id, name, short_name),
+           ${TASKS_EMBED}`)
+         .or(orFilter);
+-      if (division_id) q2 = q2.eq('division_id', division_id);
++      q2 = locTheoKhoi(q2, idCongTyKhoi);
+       if (company_id) q2 = q2.or(`company_id.eq.${company_id},logistics_company_id.eq.${company_id}`);
+       if (workshop_type_id) q2 = q2.eq('workshop_type_id', workshop_type_id);
+       const { data: d0 } = await q2.order('created_at', { ascending: false });
+@@ -766,7 +794,7 @@ r.get('/dashboard', requirePermission('projects', 'view'), async (req, res) => {
+           logistics_company:companies!projects_logistics_company_id_fkey(id, name, short_name),
+           ${TASKS_EMBED}`)
+         .or(orFilter);
+-      if (division_id) q2 = q2.eq('division_id', division_id);
++      q2 = locTheoKhoi(q2, idCongTyKhoi);
+       if (company_id) q2 = q2.or(`company_id.eq.${company_id},logistics_company_id.eq.${company_id}`);
+       if (workshop_type_id) q2 = q2.eq('workshop_type_id', workshop_type_id);
+       const { data, error: e2 } = await q2.order('created_at', { ascending: false });
+@@ -781,7 +809,7 @@ r.get('/dashboard', requirePermission('projects', 'view'), async (req, res) => {
+             logistics_company:companies!projects_logistics_company_id_fkey(id, name, short_name),
+             ${TASKS_EMBED}`)
+           .or(orFilter);
+-        if (division_id) q3 = q3.eq('division_id', division_id);
++        q3 = locTheoKhoi(q3, idCongTyKhoi);
+         if (company_id) q3 = q3.or(`company_id.eq.${company_id},logistics_company_id.eq.${company_id}`);
+         if (workshop_type_id) q3 = q3.eq('workshop_type_id', workshop_type_id);
+         const d3 = await q3.order('created_at', { ascending: false });
+@@ -839,6 +867,7 @@ const KPI_MAX_ROWS = 20000;
+ r.get('/overview-kpis', requirePermission('projects', 'view'), async (req, res) => {
+   try {
+     const { division_id, company_id: companyIdQuery, workshop_type_id, priority } = req.query;
++    const idCongTyKhoi = await idCongTyTheoKhoi(division_id);
+     const company_id = effectiveWorkshopCompanyId(req, companyIdQuery);
+     const { ids: stageIds } = await getLogisticsStageMap();
+     const orFilter = buildLogisticsScopeFilter(stageIds);
+@@ -850,7 +879,7 @@ r.get('/overview-kpis', requirePermission('projects', 'view'), async (req, res)
+       let query = supabase.from('projects').select(selectClause).or(orFilter);
+       query = applyProjectTenantScope(query, req);
+       if (withSoftDelete) query = applyVcNotDeletedFilter(query);
+-      if (division_id) query = query.eq('division_id', division_id);
++      query = locTheoKhoi(query, idCongTyKhoi);
+       if (company_id) query = query.or(`company_id.eq.${company_id},logistics_company_id.eq.${company_id}`);
+       if (workshop_type_id) query = query.eq('workshop_type_id', workshop_type_id);
+       if (priority) query = query.eq('priority', priority);
+@@ -935,6 +964,7 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
+       search, priority, page = 1, limit = 100, division_id, company_id: companyIdQuery, workshop_type_id,
+       view: viewQuery, lite: liteQuery,
+     } = req.query;
++    const idCongTyKhoi = await idCongTyTheoKhoi(division_id);
+     const viewNorm = String(viewQuery || '').toLowerCase();
+     const mobileLite = viewNorm === 'mobile'
+       || String(liteQuery || '') === '1'
+@@ -984,7 +1014,7 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
+ 
+     if (search) query = query.or(`name.ilike.%${search}%,code.ilike.%${search}%`);
+     if (priority) query = query.eq('priority', priority);
+-    if (division_id) query = query.eq('division_id', division_id);
++    query = locTheoKhoi(query, idCongTyKhoi);
+     if (company_id) query = query.or(`company_id.eq.${company_id},logistics_company_id.eq.${company_id}`);
+     if (workshop_type_id) query = query.eq('workshop_type_id', workshop_type_id);
+     ({ query } = await applyWorkshopProjectVisibilityScope(query, req.user, company_id, null));
+@@ -1001,7 +1031,7 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
+         .or(orFilter);
+       if (search) qNoSoft = qNoSoft.or(`name.ilike.%${search}%,code.ilike.%${search}%`);
+       if (priority) qNoSoft = qNoSoft.eq('priority', priority);
+-      if (division_id) qNoSoft = qNoSoft.eq('division_id', division_id);
++      qNoSoft = locTheoKhoi(qNoSoft, idCongTyKhoi);
+       if (company_id) qNoSoft = qNoSoft.or(`company_id.eq.${company_id},logistics_company_id.eq.${company_id}`);
+       if (workshop_type_id) qNoSoft = qNoSoft.eq('workshop_type_id', workshop_type_id);
+       const r2 = await qNoSoft
+@@ -1039,7 +1069,7 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
+         .from('projects')
+         .select(fbSelect, { count: 'exact' })
+         .or(orFilter);
+-      if (division_id) fb2q = fb2q.eq('division_id', division_id);
++      fb2q = locTheoKhoi(fb2q, idCongTyKhoi);
+       if (company_id) fb2q = fb2q.or(`company_id.eq.${company_id},logistics_company_id.eq.${company_id}`);
+       if (workshop_type_id) fb2q = fb2q.eq('workshop_type_id', workshop_type_id);
+       const fb2 = await fb2q
+@@ -1058,7 +1088,7 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
+             current_stage:workflow_stages(id, slug, name, color, icon),
+             customer:customers(id, full_name, phone)${mobileLite ? '' : `, ${TASKS_EMBED}`}`, { count: 'exact' })
+           .or(orFilter);
+-        if (division_id) fb3q = fb3q.eq('division_id', division_id);
++        fb3q = locTheoKhoi(fb3q, idCongTyKhoi);
+         if (company_id) fb3q = fb3q.eq('company_id', company_id);
+         if (workshop_type_id) fb3q = fb3q.eq('workshop_type_id', workshop_type_id);
+         const fb3 = await fb3q
+@@ -1677,6 +1707,9 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
+     const fromVcCol = projectStatusFromLogisticsColumn(vcPipeStageRow);
+     if (fromVcCol) {
+       updatePayload.status = fromVcCol;
++      if (fromVcCol === 'completed' && String(project.status || '') !== 'completed') {
++        updatePayload.completed_date = new Date().toISOString();
++      }
+     } else if (jumpedToInstall || isInstallLogisticsStageRow(vcPipeStageRow)) {
+       updatePayload.status = 'installing';
+     } else if (statusMap[targetStage?.slug]) {
+diff --git a/backend/src/routes/management.js b/backend/src/routes/management.js
+index 707920d0..de5ae9b1 100644
+--- a/backend/src/routes/management.js
++++ b/backend/src/routes/management.js
+@@ -24,7 +24,12 @@ const {
+   applyProjectScopeFilter,
+   TENANT_EMPTY_COMPANY_SENTINEL,
+ } = require('../helpers/tenantScope');
+-const { applyOpenOnlyFilter } = require('../helpers/unifiedTasksQuery');
++const { applyOpenOnlyFilter, applyPrimaryLeadOnly } = require('../helpers/unifiedTasksQuery');
++const { warnQ } = require('../helpers/queryErrorLog');
++const {
++  resolveWorkRegionScope,
++  countOverdueTasksForRegion,
++} = require('../helpers/workRegionFilter');
+ const { responseCache } = require('../middleware/responseCache');
+ const { PROJECTS_LIST_TAG } = require('../middleware/projectsCacheInvalidation');
+ 
+@@ -332,20 +337,20 @@ async function loadWonStageIds(scope) {
+ async function loadDealPipelineMetrics(scope, dateFrom, dateTo, assigneeId) {
+   let q = supabase
+     .from('crm_leads')
+-    .select('budget, estimated_value, deadline, stage_id, stage:crm_pipeline_stages!crm_leads_stage_id_fkey(is_won, is_lost)')
++    // crm_leads không có `budget` lẫn `deadline` — chỉ có estimated_value.
++    .select('estimated_value, stage_id, stage:crm_pipeline_stages!crm_leads_stage_id_fkey(is_won, is_lost)')
+     .eq('type', 'deal');
+   q = applyCompanyScopeFilter(q, scope);
+   if (dateFrom) q = q.gte('created_at', dateFrom);
+   if (dateTo) q = q.lte('created_at', dateTo);
+   if (assigneeId) q = q.or(`assigned_to.eq.${assigneeId},lead_owner_id.eq.${assigneeId}`);
+-  const { data } = await q;
++  const { data } = warnQ('management:deal-pipeline')(await q);
+   const now = Date.now();
+   let pipelineValue = 0;
+   let crmOverdue = 0;
+   for (const row of data || []) {
+     if (row.stage?.is_won || row.stage?.is_lost) continue;
+-    pipelineValue += Number(row.budget || row.estimated_value || 0);
+-    if (row.deadline && new Date(row.deadline).getTime() < now) crmOverdue += 1;
++    pipelineValue += Number(row.estimated_value || 0);
+   }
+   return { pipeline_value: pipelineValue, crm_overdue: crmOverdue };
+ }
+@@ -634,14 +639,17 @@ r.get('/overview', async (req, res) => {
+     const vc = vcInstall.vc;
+     const install = vcInstall.install;
+ 
++    // applyPrimaryLeadOnly: khử dòng nhân do dự án có nhiều deal (migration 594).
+     let taskQ = supabase.from('unified_tasks_v').select('unified_id', { count: 'exact', head: true })
+       .neq('status', 'completed').neq('status', 'done');
++    taskQ = applyPrimaryLeadOnly(taskQ, false);
+     taskQ = applyCompanyScopeFilter(taskQ, scope);
+     const { count: openTasks } = await taskQ;
+ 
+     let overdueQ = supabase.from('unified_tasks_v').select('unified_id', { count: 'exact', head: true })
+       .lt('deadline', new Date().toISOString())
+       .neq('status', 'completed').neq('status', 'done');
++    overdueQ = applyPrimaryLeadOnly(overdueQ, false);
+     overdueQ = applyCompanyScopeFilter(overdueQ, scope);
+     const { count: overdueTasks } = await overdueQ;
+ 
+@@ -711,23 +719,63 @@ r.get('/work-overview', async (req, res) => {
+     const now = new Date();
+     const firstDayThisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+     const sixMonthsAgoStart = new Date(now.getFullYear(), now.getMonth() - 5, 1);
++    const dateFrom = String(req.query.date_from || '').trim().slice(0, 10);
++    const dateTo = String(req.query.date_to || '').trim().slice(0, 10);
++    const hasDateRange = !!(dateFrom || dateTo);
++    const pad2 = (n) => String(n).padStart(2, '0');
++    const ymdLocal = (raw) => {
++      if (!raw) return '';
++      const d = new Date(raw);
++      if (Number.isNaN(d.getTime())) return String(raw).slice(0, 10);
++      return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
++    };
++    const ymdInRange = (ymd, from, to) => {
++      if (!ymd) return false;
++      if (from && ymd < from) return false;
++      if (to && ymd > to) return false;
++      return true;
++    };
++    const commitmentYmd = (p) => ymdLocal(p.install_date || p.delivery_date || p.production_deadline || p.deadline || '');
++
++    const regionScope = await resolveWorkRegionScope(req.query.region_id, scope);
++    const regionProjectIds = regionScope && !regionScope.none ? regionScope.projectIds : null;
++    const regionEmptyProjects = Array.isArray(regionProjectIds) && regionProjectIds.length === 0;
++
++    const applyRegionProjectIn = (q) => {
++      if (regionEmptyProjects) return q.eq('id', '00000000-0000-0000-0000-000000000000');
++      if (regionProjectIds) return q.in('id', regionProjectIds.slice(0, 500));
++      return q;
++    };
+ 
+     let activeQ = supabase.from('projects').select('*', { count: 'exact', head: true })
+       .in('status', WORK_OVERVIEW_ACTIVE_STATUSES);
+     activeQ = applyProjectScopeFilter(activeQ, scope);
++    activeQ = applyRegionProjectIn(activeQ);
+ 
+-    let trendQ = supabase.from('projects').select('estimated_value, created_at')
++    let trendQ = supabase.from('projects').select('id, estimated_value, created_at')
+       .gte('created_at', sixMonthsAgoStart.toISOString());
+     trendQ = applyProjectScopeFilter(trendQ, scope);
++    trendQ = applyRegionProjectIn(trendQ);
+ 
++    const customersFrom = dateFrom
++      ? `${dateFrom}T00:00:00+07:00`
++      : firstDayThisMonth.toISOString();
+     let newCustomersQ = supabase.from('crm_leads').select('*', { count: 'exact', head: true })
+-      .eq('type', 'lead').gte('created_at', firstDayThisMonth.toISOString());
++      .eq('type', 'lead').gte('created_at', customersFrom);
++    if (dateTo) newCustomersQ = newCustomersQ.lte('created_at', `${dateTo}T23:59:59+07:00`);
+     newCustomersQ = applyCompanyScopeFilter(newCustomersQ, scope);
++    if (regionScope?.none) newCustomersQ = newCustomersQ.is('region_id', null);
++    else if (regionScope?.regionId) newCustomersQ = newCustomersQ.eq('region_id', regionScope.regionId);
+ 
++    const dateFromIso = dateFrom ? `${dateFrom}T00:00:00+07:00` : '';
++    const dateToIso = dateTo ? `${dateTo}T23:59:59+07:00` : '';
+     let overdueTasksQ = supabase.from('unified_tasks_v').select('unified_id', { count: 'exact', head: true })
+       .lt('deadline', now.toISOString()).not('deadline', 'is', null);
++    overdueTasksQ = applyPrimaryLeadOnly(overdueTasksQ, false);
+     overdueTasksQ = applyOpenOnlyFilter(overdueTasksQ);
+     overdueTasksQ = applyCompanyScopeFilter(overdueTasksQ, scope);
++    if (dateFromIso) overdueTasksQ = overdueTasksQ.gte('deadline', dateFromIso);
++    if (dateToIso) overdueTasksQ = overdueTasksQ.lte('deadline', dateToIso);
+ 
+     const todayYmd = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' });
+     const plus3 = (() => {
+@@ -747,9 +795,17 @@ r.get('/work-overview', async (req, res) => {
+       .in('status', WORK_OVERVIEW_ACTIVE_STATUSES)
+       .or(`deadline.lte.${plus3},production_deadline.lte.${plus3},delivery_date.lte.${plus3},install_date.lte.${plus3}`);
+     atRiskQ = applyProjectScopeFilter(atRiskQ, scope);
++    atRiskQ = applyRegionProjectIn(atRiskQ);
++
++    const overdueRegionCountP = regionScope && !regionScope.none
++      ? countOverdueTasksForRegion(regionScope, {
++        scope, nowIso: now.toISOString(), applyOpenOnlyFilter,
++        dateFromIso, dateToIso,
++      })
++      : Promise.resolve(null);
+ 
+-    const [activeRes, trendRes, newCustomersRes, overdueTasksRes, atRiskRes] = await Promise.all([
+-      activeQ, trendQ, newCustomersQ, overdueTasksQ, atRiskQ,
++    const [activeRes, trendRes, newCustomersRes, overdueTasksRes, atRiskRes, overdueRegionCount] = await Promise.all([
++      activeQ, trendQ, newCustomersQ, overdueTasksQ, atRiskQ, overdueRegionCountP,
+     ]);
+     if (atRiskRes.error) console.warn('[work-overview] at-risk:', atRiskRes.error.message);
+ 
+@@ -766,7 +822,11 @@ r.get('/work-overview', async (req, res) => {
+         count: 0,
+       });
+     }
+-    for (const p of (trendRes.data || [])) {
++    const trendRows = (trendRes.data || []).filter((p) => {
++      if (!regionScope?.none) return true;
++      return !regionScope.projectIdSet.has(String(p.id));
++    });
++    for (const p of trendRows) {
+       const d = new Date(p.created_at);
+       const key = `${d.getFullYear()}-${d.getMonth()}`;
+       const bucket = trendBuckets.find((b) => b.key === key);
+@@ -779,6 +839,11 @@ r.get('/work-overview', async (req, res) => {
+ 
+     // Dự án cần chú ý — quá hạn (late) hoặc hạn trong 3 ngày (at_risk), cùng ngưỡng Work Unified.
+     const projectsAtRisk = (atRiskRes.data || [])
++      .filter((p) => {
++        if (regionScope?.none && regionScope.projectIdSet.has(String(p.id))) return false;
++        if (hasDateRange && !ymdInRange(commitmentYmd(p), dateFrom, dateTo)) return false;
++        return true;
++      })
+       .map((p) => {
+         const commitmentDate = p.install_date || p.delivery_date || p.production_deadline || p.deadline || null;
+         const { forecast, days_remaining, delay_days } = classifyProjectForecast(commitmentDate);
+@@ -801,12 +866,58 @@ r.get('/work-overview', async (req, res) => {
+       })
+       .slice(0, 50);
+ 
++    let projectsActive = activeRes.count || 0;
++    if (regionScope?.none || hasDateRange) {
++      const activeDated = await fetchAllPages(() => {
++        let q = supabase.from('projects')
++          .select('id, deadline, production_deadline, delivery_date, install_date')
++          .in('status', WORK_OVERVIEW_ACTIVE_STATUSES);
++        q = applyProjectScopeFilter(q, scope);
++        return applyRegionProjectIn(q);
++      });
++      projectsActive = (activeDated || []).filter((p) => {
++        if (regionScope?.none && regionScope.projectIdSet.has(String(p.id))) return false;
++        if (hasDateRange && !ymdInRange(commitmentYmd(p), dateFrom, dateTo)) return false;
++        return true;
++      }).length;
++    }
++
++    let revenuePeriod = trendBuckets[trendBuckets.length - 1].total;
++    if (hasDateRange) {
++      revenuePeriod = 0;
++      for (const p of trendRows) {
++        if (ymdInRange(ymdLocal(p.created_at), dateFrom, dateTo)) {
++          revenuePeriod += (p.estimated_value || 0);
++        }
++      }
++    }
++
++    let overdueTasks = overdueTasksRes.count || 0;
++    if (overdueRegionCount != null) overdueTasks = overdueRegionCount;
++    else if (regionScope?.none) {
++      const overdueRows = await fetchAllPages(() => {
++        let q = supabase.from('unified_tasks_v').select('unified_id, lead_id, project_id')
++          .lt('deadline', now.toISOString()).not('deadline', 'is', null);
++        q = applyOpenOnlyFilter(q);
++        if (dateFromIso) q = q.gte('deadline', dateFromIso);
++        if (dateToIso) q = q.lte('deadline', dateToIso);
++        return applyCompanyScopeFilter(q, scope);
++      });
++      overdueTasks = (overdueRows || []).filter((t) => {
++        const lid = t.lead_id != null ? String(t.lead_id) : '';
++        const pid = t.project_id != null ? String(t.project_id) : '';
++        const hit = (lid && regionScope.leadIdSet.has(lid))
++          || (pid && regionScope.projectIdSet.has(pid));
++        return !hit;
++      }).length;
++    }
++
+     res.json({
+       company_id: primaryCompanyIdFromScope(scope),
+-      projects_active: activeRes.count || 0,
++      projects_active: projectsActive,
+       new_customers_this_month: newCustomersRes.count || 0,
+-      overdue_tasks: overdueTasksRes.count || 0,
+-      revenue_this_month: trendBuckets[trendBuckets.length - 1].total,
++      overdue_tasks: overdueTasks,
++      revenue_this_month: revenuePeriod,
+       revenue_trend: trendBuckets.map((b, idx) => ({
+         label: b.label,
+         year: b.year,
+@@ -1590,14 +1701,44 @@ r.get('/production-overview', async (req, res) => {
+     if (error) throw error;
+ 
+     const projectCompanyIds = [...new Set((projects || []).map((p) => p.company_id).filter(Boolean))];
+-    const stagesByCompany = await loadStagesByCompany('production_pipeline_stages', projectCompanyIds);
+-
+     const projectIds = (projects || []).map((p) => p.id);
+     const openPrProjectIds = new Set();
+-    if (projectIds.length) {
+-      const { data: prs } = await supabase.from('purchase_requests')
+-        .select('project_id, status').in('project_id', projectIds).in('status', ['draft', 'requested']);
+-      (prs || []).forEach((r2) => { if (r2.project_id) openPrProjectIds.add(String(r2.project_id)); });
++    const [stagesByCompany, prsRes, productionTasks] = await Promise.all([
++      loadStagesByCompany('production_pipeline_stages', projectCompanyIds),
++      projectIds.length
++        ? supabase.from('purchase_requests')
++          .select('project_id, status').in('project_id', projectIds).in('status', ['draft', 'requested'])
++        : Promise.resolve({ data: [] }),
++      projectIds.length
++        ? fetchAllByIdsParallel({
++          table: 'unified_tasks_v',
++          columns: 'unified_id, source, source_id, project_id, title, status, priority, deadline, assignee_id, task_kind',
++          key: 'project_id',
++          ids: projectIds,
++          tune: (taskQ) => applyPrimaryLeadOnly(taskQ, false).in('task_kind', ['SX', 'Dự án']),
++        })
++        : Promise.resolve([]),
++    ]);
++    if (prsRes.error) throw prsRes.error;
++    (prsRes.data || []).forEach((r2) => { if (r2.project_id) openPrProjectIds.add(String(r2.project_id)); });
++
++    const taskAssigneeIds = [...new Set((productionTasks || []).map((t) => t.assignee_id).filter(Boolean))];
++    const { data: taskAssignees, error: taskAssigneesError } = taskAssigneeIds.length
++      ? await supabase.from('users').select('id, full_name').in('id', taskAssigneeIds)
++      : { data: [], error: null };
++    if (taskAssigneesError) throw taskAssigneesError;
++    const taskAssigneeNameById = new Map((taskAssignees || []).map((u) => [String(u.id), u.full_name]));
++    const productionTasksByProject = new Map();
++    const seenProductionTaskIds = new Set();
++    for (const task of productionTasks || []) {
++      if (!task?.project_id || !task?.unified_id || seenProductionTaskIds.has(String(task.unified_id))) continue;
++      seenProductionTaskIds.add(String(task.unified_id));
++      const pid = String(task.project_id);
++      if (!productionTasksByProject.has(pid)) productionTasksByProject.set(pid, []);
++      productionTasksByProject.get(pid).push({
++        ...task,
++        assignee_name: task.assignee_id ? (taskAssigneeNameById.get(String(task.assignee_id)) || null) : null,
++      });
+     }
+ 
+     const items = (projects || []).map((p) => {
+@@ -1609,6 +1750,22 @@ r.get('/production-overview', async (req, res) => {
+       const movedPastProduction = p.status !== 'producing';
+       const waitingMaterial = openPrProjectIds.has(String(p.id));
+       const overdue = !!(p.deadline && new Date(p.deadline) < now);
++      const projectTasks = productionTasksByProject.get(String(p.id)) || [];
++      const openTasks = projectTasks.filter((t) => !['done', 'completed', 'cancelled'].includes(String(t.status)));
++      const overdueTasks = openTasks.filter((t) => t.deadline && new Date(t.deadline) < now);
++      const taskItems = openTasks
++        .slice()
++        .sort((a, b) => {
++          const aOverdue = a.deadline && new Date(a.deadline) < now ? 0 : 1;
++          const bOverdue = b.deadline && new Date(b.deadline) < now ? 0 : 1;
++          if (aOverdue !== bOverdue) return aOverdue - bOverdue;
++          return new Date(a.deadline || '9999-12-31').getTime() - new Date(b.deadline || '9999-12-31').getTime();
++        })
++        .slice(0, 3)
++        .map((task) => ({
++          ...task,
++          effective_assignee_name: task.assignee_name || p.production_person?.full_name || null,
++        }));
+ 
+       let bucket;
+       if (movedPastProduction) bucket = 'done';
+@@ -1625,6 +1782,12 @@ r.get('/production-overview', async (req, res) => {
+         total_stages: totalStages,
+         progress_pct: movedPastProduction ? 100 : progressPct,
+         assignee_name: p.production_person?.full_name || null,
++        tasks: {
++          total: projectTasks.length,
++          open: openTasks.length,
++          overdue: overdueTasks.length,
++          items: taskItems,
++        },
+         bucket,
+         deadline: p.deadline,
+         updated_at: p.updated_at,
+@@ -1857,10 +2020,13 @@ r.get('/deals/:leadId', async (req, res) => {
+         ? supabase.from('tasks').select('id, title, status, priority, due_date, assignee_id, task_type, metadata')
+           .eq('project_id', projectId).order('order_index')
+         : Promise.resolve({ data: [] }),
+-      supabase.from('lead_documents').select('id, name, file_name, doc_type, created_at, shared_to_workshop, allowed_share_modules, file_path, file_url')
+-        .eq('lead_id', leadId).order('created_at', { ascending: false }),
+-      supabase.from('crm_activities').select('id, type, title, content, result, created_at, created_by')
+-        .eq('lead_id', leadId).order('created_at', { ascending: false }).limit(30),
++      supabase.from('lead_documents').select('id, name, file_name, doc_type, created_at, shared_to_workshop, allowed_share_modules, file_url')
++        .eq('lead_id', leadId).order('created_at', { ascending: false })
++        .then(warnQ('management:lead_documents')),
++      // crm_activities: cột đúng là `description` và `outcome`
++      supabase.from('crm_activities').select('id, type, title, description, outcome, created_at, created_by')
++        .eq('lead_id', leadId).order('created_at', { ascending: false }).limit(30)
++        .then(warnQ('management:crm_activities')),
+       projectId
+         ? supabase.from('unified_tasks_v').select('unified_id, source, task_kind, title, status, deadline, assignee_id')
+           .eq('project_id', projectId).order('updated_at', { ascending: false }).limit(100)
+diff --git a/backend/src/routes/projects.js b/backend/src/routes/projects.js
+index 05761481..91e8f7a7 100644
+--- a/backend/src/routes/projects.js
++++ b/backend/src/routes/projects.js
+@@ -2032,12 +2032,13 @@ r.post('/create-with-flow', requirePermission('projects', 'create'), async (req,
+             // Also check if lead has a parent (lead→deal conversion keeps same ID or has parent)
+             // Load from original lead if deal has lead_source_id
+             const { data: deal } = await supabase.from('crm_leads')
+-              .select('id, lead_source_id').eq('id', dealId).single();
++              // crm_leads không có `lead_source_id`; quan hệ lead->deal dùng `parent_lead_id`
++              .select('id, parent_lead_id').eq('id', dealId).single();
+             let parentLeadTasks = [];
+-            if (deal?.lead_source_id) {
++            if (deal?.parent_lead_id) {
+               const { data: lt } = await supabase.from('crm_tasks')
+                 .select('*, assignee:users!crm_tasks_assignee_id_fkey(id,full_name), attachments:crm_task_attachments(*)')
+-                .eq('lead_id', deal.lead_source_id).order('order_index');
++                .eq('lead_id', deal.parent_lead_id).order('order_index');
+               parentLeadTasks = lt || [];
+             }
+ 
+diff --git a/backend/src/routes/purchasing.js b/backend/src/routes/purchasing.js
+index f3633e49..1b30c35f 100644
+--- a/backend/src/routes/purchasing.js
++++ b/backend/src/routes/purchasing.js
+@@ -428,7 +428,7 @@ r.post('/orders', requirePermission('mua_hang_orders', 'edit'), async (req, res)
+     if (b.lead_id) {
+       const { data: lead } = await supabase
+         .from('crm_leads')
+-        .select('id, title, code, phone, address, company_id, customer:customers(full_name, phone, address)')
++        .select('id, title, code, phone, install_address, company_id, customer:customers(full_name, phone, address)')
+         .eq('id', b.lead_id)
+         .maybeSingle();
+       if (lead) {
+diff --git a/backend/src/routes/tasks.js b/backend/src/routes/tasks.js
+index 88ba3ecd..724f8413 100644
+--- a/backend/src/routes/tasks.js
++++ b/backend/src/routes/tasks.js
+@@ -674,7 +674,7 @@ r.get('/planner/board', async (req, res) => {
+     const assigneeIds = [...new Set(allTasks.map(t => t.assignee_id).filter(Boolean))];
+     let users = [];
+     if (assigneeIds.length > 0) {
+-      const { data: userData } = await supabase.from('users').select('id, full_name, avatar_url, role').in('id', assigneeIds);
++      const { data: userData } = await supabase.from('users').select('id, full_name, avatar, role').in('id', assigneeIds);
+       users = userData || [];
+     }
+ 
+diff --git a/backend/src/routes/upload.js b/backend/src/routes/upload.js
+index fdd5682f..d95994ab 100644
+--- a/backend/src/routes/upload.js
++++ b/backend/src/routes/upload.js
+@@ -438,12 +438,21 @@ r.get('/:entity_type/:entity_id', async (req, res) => {
+ r.delete('/:id', async (req, res) => {
+   try {
+     const { data: file } = await supabase.from('file_attachments')
+-      .select('id, storage_path, uploaded_by, entity_type, entity_id')
++      // file_attachments KHÔNG có cột `storage_path` — chỉ có `file_url`. Tên sai
++      // làm cả câu hỏng -> `file` luôn undefined -> endpoint xoá luôn trả 404,
++      // và file trên Storage không bao giờ được dọn.
++      .select('id, file_url, uploaded_by, entity_type, entity_id')
+       .eq('id', req.params.id).single();
+     if (!file) return res.status(404).json({ error: 'Không tìm thấy file' });
+     if (!await assertFileAttachmentMutation(req, res, file)) return;
+-    if (file?.storage_path) {
+-      await supabase.storage.from(BUCKET).remove([file.storage_path]);
++    // file_url là public URL dựng bởi getPublicUrl(storagePath), dạng
++    //   .../storage/v1/object/public/<BUCKET>/<storagePath>
++    // nên tách ngược để lấy đường dẫn trong bucket.
++    const marker = `/object/public/${BUCKET}/`;
++    const idx = String(file?.file_url || '').indexOf(marker);
++    if (idx >= 0) {
++      const storagePath = decodeURIComponent(String(file.file_url).slice(idx + marker.length));
++      if (storagePath) await supabase.storage.from(BUCKET).remove([storagePath]);
+     }
+     await supabase.from('file_attachments').delete().eq('id', req.params.id);
+     res.json({ message: 'Đã xóa' });
+diff --git a/backend/src/routes/vcHandover.js b/backend/src/routes/vcHandover.js
+index c305a9d4..8e3fd218 100644
+--- a/backend/src/routes/vcHandover.js
++++ b/backend/src/routes/vcHandover.js
+@@ -211,13 +211,16 @@ async function ensureSaleUsersAsLeadMembers(dealId, saleUserIds, addedBy) {
+   const have = new Set((existing || []).map((m) => String(m.user_id)));
+   const toAdd = ids.filter((id) => !have.has(id));
+   if (!toAdd.length) return;
+-  const { error } = await supabase.from('lead_members').insert(
++  // upsert-ignore: kiểm-rồi-ghi không nguyên tử, hai luồng song song đâm nhau
++  // ở lead_members_lead_id_user_id_key. DO NOTHING giữ nguyên role cũ.
++  const { error } = await supabase.from('lead_members').upsert(
+     toAdd.map((uid) => ({
+       lead_id: dealId,
+       user_id: uid,
+       role: 'member',
+       added_by: addedBy || null,
+     })),
++    { onConflict: 'lead_id,user_id', ignoreDuplicates: true },
+   );
+   if (error) console.warn('[vc-handover] ensure sale members:', error.message);
+ }
+@@ -309,12 +312,15 @@ async function addVcMembersWithCutoff(leadId, userIds, addedBy) {
+     added_by: addedBy,
+     history_cutoff_at: cutoff,
+   }));
+-  const { error } = await supabase.from('lead_members').insert(rows);
++  // upsert-ignore: giữ nguyên role/history_cutoff_at của thành viên đã có.
++  const { error } = await supabase.from('lead_members')
++    .upsert(rows, { onConflict: 'lead_id,user_id', ignoreDuplicates: true });
+   if (error) {
+     // history_cutoff_at chưa migrate — thêm không kèm cutoff.
+     if (String(error.message || '').includes('history_cutoff_at')) {
+-      await supabase.from('lead_members').insert(
++      await supabase.from('lead_members').upsert(
+         toAdd.map((uid) => ({ lead_id: leadId, user_id: uid, role: 'member', added_by: addedBy })),
++        { onConflict: 'lead_id,user_id', ignoreDuplicates: true },
+       );
+     } else {
+       console.warn('[vc-handover] addVcMembers:', error.message);
+diff --git a/backend/src/routes/workTasks.js b/backend/src/routes/workTasks.js
+index fc3229db..9d2804f6 100644
+--- a/backend/src/routes/workTasks.js
++++ b/backend/src/routes/workTasks.js
+@@ -36,10 +36,18 @@ const {
+   applyEmployeeScope,
+   applyOpenOnlyFilter,
+   applyAssigneeFilter,
++  applyPrimaryLeadOnly,
+   fetchLeadOptionsForAssignee,
+   resolveAssigneeLeadScope,
+   fetchUnifiedTasksSummary,
+ } = require('../helpers/unifiedTasksQuery');
++const { fetchAllByIds, fetchAllByIdsParallel, fetchAllPages } = require('../helpers/supabaseFetchAll');
++const { resolveWorkRegionScope, taskMatchesRegionScope } = require('../helpers/workRegionFilter');
++const { assertProjectAccessible } = require('../helpers/projectAccessScope');
++const {
++  isCrmCompletedStage,
++  isLogisticsCompletedColumn,
++} = require('../helpers/completeOpenWorkOnModuleDone');
+ 
+ const r = Router();
+ r.use(auth);
+@@ -109,6 +117,117 @@ function taskOwnerLane(task) {
+   return 'production';
+ }
+ 
++/**
++ * Bổ sung người phụ trách cấp module cho task theo lô.
++ * assignee_* luôn là người được giao thật; effective_assignee_* chỉ fallback khi task chưa gán.
++ */
++async function enrichTaskModuleOwners(rows) {
++  const tasks = rows || [];
++  if (!tasks.length) return tasks;
++
++  const projectIds = [...new Set(tasks.map((t) => t.project_id).filter(Boolean).map(String))];
++  const leadIds = [...new Set(tasks.map((t) => t.lead_id).filter(Boolean).map(String))];
++  const [projects, leads, productionStaff] = await Promise.all([
++    projectIds.length
++      ? fetchAllByIdsParallel({
++        table: 'projects',
++        columns: `
++          id, project_manager_id, sales_person_id, responsible_person_id,
++          production_person_id, logistics_person_id, installer_person_id, installation_person_id
++        `,
++        key: 'id',
++        ids: projectIds,
++      })
++      : Promise.resolve([]),
++    leadIds.length
++      ? fetchAllByIdsParallel({
++        table: 'crm_leads',
++        columns: 'id, assigned_to, lead_owner_id, project_id',
++        key: 'id',
++        ids: leadIds,
++      })
++      : Promise.resolve([]),
++    projectIds.length
++      ? fetchAllByIdsParallel({
++        table: 'project_production_staff',
++        columns: 'project_id, user_id, is_primary, order_index',
++        key: 'project_id',
++        ids: projectIds,
++      })
++      : Promise.resolve([]),
++  ]);
++
++  const projectById = new Map((projects || []).map((p) => [String(p.id), p]));
++  const leadById = new Map((leads || []).map((l) => [String(l.id), l]));
++  const productionStaffByProject = new Map();
++  (productionStaff || [])
++    .slice()
++    .sort((a, b) => Number(b.is_primary) - Number(a.is_primary) || (a.order_index || 0) - (b.order_index || 0))
++    .forEach((row) => {
++      const key = String(row.project_id);
++      if (!productionStaffByProject.has(key)) productionStaffByProject.set(key, row.user_id);
++    });
++  const firstId = (...ids) => ids.find(Boolean) || null;
++  const ownerIdFor = (task) => {
++    const lead = task.lead_id ? leadById.get(String(task.lead_id)) : null;
++    const project = projectById.get(String(task.project_id || lead?.project_id || '')) || null;
++    const lane = taskOwnerLane(task);
++    if (lane === 'production') {
++      return firstId(
++        project?.production_person_id,
++        productionStaffByProject.get(String(project?.id || '')),
++        project?.project_manager_id,
++        project?.responsible_person_id,
++      );
++    }
++    if (lane === 'logistics') {
++      return firstId(
++        project?.logistics_person_id,
++        project?.installer_person_id,
++        project?.installation_person_id,
++        project?.production_person_id,
++        productionStaffByProject.get(String(project?.id || '')),
++      );
++    }
++    return firstId(
++      project?.project_manager_id,
++      project?.sales_person_id,
++      project?.responsible_person_id,
++      lead?.assigned_to,
++      lead?.lead_owner_id,
++    );
++  };
++
++  const ownerByTask = new Map();
++  const userIds = new Set();
++  for (const task of tasks) {
++    const ownerId = ownerIdFor(task);
++    ownerByTask.set(String(task.unified_id), ownerId);
++    if (task.assignee_id) userIds.add(String(task.assignee_id));
++    if (ownerId) userIds.add(String(ownerId));
++  }
++  const users = userIds.size
++    ? await fetchAllByIdsParallel({
++      table: 'users',
++      columns: 'id, full_name',
++      key: 'id',
++      ids: [...userIds],
++    })
++    : [];
++  const nameById = new Map((users || []).map((u) => [String(u.id), u.full_name]));
++
++  for (const task of tasks) {
++    const ownerId = ownerByTask.get(String(task.unified_id)) || null;
++    const assigneeId = task.assignee_id || null;
++    task.assignee_name = assigneeId ? (nameById.get(String(assigneeId)) || null) : null;
++    task.module_owner_id = ownerId;
++    task.module_owner_name = ownerId ? (nameById.get(String(ownerId)) || null) : null;
++    task.effective_assignee_id = assigneeId || ownerId;
++    task.effective_assignee_name = task.assignee_name || task.module_owner_name || null;
++  }
++  return tasks;
++}
++
+ function laneToGroup(lane) {
+   if (lane === 'sales') return 'deal';
+   if (lane === 'logistics') return 'vc';
+@@ -211,6 +330,320 @@ r.get('/summary', async (req, res) => {
+   }
+ });
+ 
++function foldTaskStageName(value) {
++  return String(value || '')
++    .toLowerCase()
++    .normalize('NFD')
++    .replace(/[\u0300-\u036f]/g, '')
++    .replace(/đ/g, 'd')
++    .trim();
++}
++
++function isProductionTaskTerminalStage(stage) {
++  if (!stage) return false;
++  if (stage.is_handover_to_logistics || stage.counts_as_completed_revenue || stage.counts_as_collected_revenue) {
++    return true;
++  }
++  const slug = String(stage.bucket_slug || '').toLowerCase().trim();
++  if (['delivered', 'completed', 'done', 'collected'].includes(slug)) return true;
++  const name = foldTaskStageName(stage.name);
++  return name.includes('da giao hang') || name === 'da giao'
++    || name.startsWith('hoan thanh') || name.startsWith('da thu');
++}
++
++// GET /api/work-tasks/project-overview — toàn bộ NV mở của các dự án chưa kết thúc theo từng module
++r.get('/project-overview', async (req, res) => {
++  try {
++    const effectiveCompany = !isSystemAdmin(req.user) ? req.user?.company_id : null;
++    const requestedModule = ['crm', 'sx', 'vc'].includes(String(req.query.module || '').toLowerCase())
++      ? String(req.query.module).toLowerCase()
++      : '';
++    const projects = await fetchAllPages(() => {
++      let q = supabase.from('projects').select('id, status, company_id, sx_kanban_column_id, vc_kanban_column_id');
++      if (effectiveCompany) q = q.eq('company_id', effectiveCompany);
++      return q;
++    });
++    const activeProjects = (projects || []).filter((project) => (
++      !['completed', 'cancelled', 'canceled'].includes(String(project.status || '').toLowerCase())
++    ));
++    const projectIds = activeProjects.map((project) => project.id).filter(Boolean);
++
++    const [sxStagesRes, vcStagesRes, leads] = await Promise.all([
++      supabase.from('production_pipeline_stages').select(
++        'id, name, order_index, bucket_slug, is_handover_to_logistics, counts_as_completed_revenue, counts_as_collected_revenue',
++      ),
++      supabase.from('logistics_pipeline_stages').select('id, name, order_index, bucket_slug'),
++      projectIds.length
++        ? fetchAllByIdsParallel({
++          table: 'crm_leads',
++          columns: 'id, project_id, stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, canonical_slug, is_won, is_lost, counts_as_completed_revenue)',
++          key: 'project_id',
++          ids: projectIds,
++        })
++        : Promise.resolve([]),
++    ]);
++    if (sxStagesRes.error) throw sxStagesRes.error;
++    if (vcStagesRes.error) throw vcStagesRes.error;
++
++    const sxStageById = new Map((sxStagesRes.data || []).map((stage) => [String(stage.id), stage]));
++    const vcStageById = new Map((vcStagesRes.data || []).map((stage) => [String(stage.id), stage]));
++    const productionProjectIds = activeProjects
++      .filter((project) => !isProductionTaskTerminalStage(sxStageById.get(String(project.sx_kanban_column_id || ''))))
++      .map((project) => project.id);
++    const logisticsProjectIds = activeProjects
++      .filter((project) => !isLogisticsCompletedColumn(vcStageById.get(String(project.vc_kanban_column_id || ''))))
++      .map((project) => project.id);
++    const activeLeadIds = (leads || [])
++      .filter((lead) => !lead.stage?.is_won && !lead.stage?.is_lost && !isCrmCompletedStage(lead.stage))
++      .map((lead) => lead.id);
++
++    const tuneTaskQuery = (q, { kinds, leadScoped = false } = {}) => {
++      q = applyPrimaryLeadOnly(q, leadScoped);
++      if (kinds?.length) q = q.in('task_kind', kinds);
++      if (effectiveCompany) q = q.eq('company_id', effectiveCompany);
++      if (!isManagerLike(req.user)) q = applyEmployeeScope(q, req.user.userId);
++      return q;
++    };
++    const [crmTasks, productionTasks, logisticsTasks] = await Promise.all([
++      (!requestedModule || requestedModule === 'crm') && activeLeadIds.length
++        ? fetchAllByIdsParallel({
++          table: 'unified_tasks_v',
++          columns: TASK_SELECT,
++          key: 'lead_id',
++          ids: activeLeadIds,
++          tune: (q) => tuneTaskQuery(q.eq('source', 'crm_task'), { leadScoped: true }),
++        })
++        : Promise.resolve([]),
++      (!requestedModule || requestedModule === 'sx') && productionProjectIds.length
++        ? fetchAllByIdsParallel({
++          table: 'unified_tasks_v',
++          columns: TASK_SELECT,
++          key: 'project_id',
++          ids: productionProjectIds,
++          tune: (q) => tuneTaskQuery(q.eq('source', 'task'), { kinds: ['SX', 'Dự án'] }),
++        })
++        : Promise.resolve([]),
++      (!requestedModule || requestedModule === 'vc') && logisticsProjectIds.length
++        ? fetchAllByIdsParallel({
++          table: 'unified_tasks_v',
++          columns: TASK_SELECT,
++          key: 'project_id',
++          ids: logisticsProjectIds,
++          tune: (q) => tuneTaskQuery(q.eq('source', 'task'), { kinds: ['VC'] }),
++        })
++        : Promise.resolve([]),
++    ]);
++
++    const merged = new Map();
++    [...crmTasks, ...productionTasks, ...logisticsTasks].forEach((task) => {
++      if (task?.unified_id && !merged.has(String(task.unified_id))) merged.set(String(task.unified_id), task);
++    });
++    const childTasks = [...merged.values()];
++    await enrichTaskModuleOwners(childTasks);
++
++    const projectTaskIds = childTasks.filter((task) => task.source === 'task').map((task) => task.source_id);
++    const crmTaskIds = childTasks.filter((task) => task.source === 'crm_task').map((task) => task.source_id);
++    const [projectTaskDetails, crmTaskDetails] = await Promise.all([
++      projectTaskIds.length
++        ? fetchAllByIdsParallel({
++          table: 'tasks',
++          columns: 'id, metadata, production_stage_id, stage_id',
++          key: 'id',
++          ids: projectTaskIds,
++        })
++        : Promise.resolve([]),
++      crmTaskIds.length
++        ? fetchAllByIdsParallel({
++          table: 'crm_tasks',
++          columns: 'id, stage_slug, pipeline_stage_id, production_pipeline_stage_id',
++          key: 'id',
++          ids: crmTaskIds,
++        })
++        : Promise.resolve([]),
++    ]);
++    const projectDetailById = new Map(projectTaskDetails.map((row) => [String(row.id), row]));
++    const crmDetailById = new Map(crmTaskDetails.map((row) => [String(row.id), row]));
++    const workshopTemplateIds = [...new Set(projectTaskDetails
++      .map((row) => row.metadata?.workshop_template_id)
++      .filter(Boolean)
++      .map(String))];
++    const crmStageIds = [...new Set(crmTaskDetails
++      .map((row) => row.pipeline_stage_id)
++      .filter(Boolean)
++      .map(String))];
++    const [workshopTemplates, crmTaskStages] = await Promise.all([
++      workshopTemplateIds.length
++        ? fetchAllByIdsParallel({
++          table: 'workshop_task_templates',
++          columns: 'id, name, workshop_area, order_index',
++          key: 'id',
++          ids: workshopTemplateIds,
++        })
++        : Promise.resolve([]),
++      crmStageIds.length
++        ? fetchAllByIdsParallel({
++          table: 'crm_pipeline_stages',
++          columns: 'id, name, order_index',
++          key: 'id',
++          ids: crmStageIds,
++        })
++        : Promise.resolve([]),
++    ]);
++    const workshopTemplateById = new Map(workshopTemplates.map((row) => [String(row.id), row]));
++    const crmTaskStageById = new Map(crmTaskStages.map((row) => [String(row.id), row]));
++    const terminalStatuses = new Set(['done', 'completed', 'cancelled', 'canceled']);
++    const humanizeSlug = (value) => {
++      const text = String(value || '').replace(/^vc_ws_/, '').replace(/^sx_/, '').replace(/[-_]+/g, ' ').trim();
++      return text ? text.charAt(0).toUpperCase() + text.slice(1) : '';
++    };
++    const categoryFor = (task) => {
++      if (task.source === 'crm_task') {
++        const detail = crmDetailById.get(String(task.source_id)) || {};
++        const crmStage = crmTaskStageById.get(String(detail.pipeline_stage_id || ''));
++        const sxStage = sxStageById.get(String(detail.production_pipeline_stage_id || ''));
++        const categoryId = detail.pipeline_stage_id || detail.production_pipeline_stage_id || detail.stage_slug || 'crm-general';
++        return {
++          id: String(categoryId),
++          title: crmStage?.name || sxStage?.name || humanizeSlug(detail.stage_slug) || 'Nhiệm vụ CRM',
++          order: crmStage?.order_index ?? sxStage?.order_index ?? 999,
++        };
++      }
++      const detail = projectDetailById.get(String(task.source_id)) || {};
++      const meta = detail.metadata && typeof detail.metadata === 'object' ? detail.metadata : {};
++      const template = workshopTemplateById.get(String(meta.workshop_template_id || ''));
++      const productionStage = sxStageById.get(String(detail.production_stage_id || ''));
++      const logisticsStage = vcStageById.get(String(meta.logistics_pipeline_stage_id || ''));
++      const categoryId = meta.workshop_template_id
++        || detail.production_stage_id
++        || meta.logistics_pipeline_stage_id
++        || meta.guessed_stage_slug
++        || detail.stage_id
++        || 'project-general';
++      return {
++        id: String(categoryId),
++        title: template?.name || productionStage?.name || logisticsStage?.name
++          || humanizeSlug(meta.guessed_stage_slug) || 'Nhiệm vụ dự án',
++        order: template?.order_index ?? productionStage?.order_index ?? logisticsStage?.order_index ?? 999,
++      };
++    };
++
++    const groupMap = new Map();
++    childTasks.forEach((task) => {
++      const category = categoryFor(task);
++      const ownerKey = task.project_id || task.lead_id || 'none';
++      const lane = taskOwnerLane(task);
++      const groupKey = `${lane}:${ownerKey}:${category.id}`;
++      if (!groupMap.has(groupKey)) {
++        groupMap.set(groupKey, { key: groupKey, category, lane, children: [] });
++      }
++      groupMap.get(groupKey).children.push(task);
++    });
++
++    const tasks = [...groupMap.values()].map((group) => {
++      const completedChildren = group.children.filter((task) => terminalStatuses.has(String(task.status || '').toLowerCase()));
++      const openChildren = group.children.filter((task) => !terminalStatuses.has(String(task.status || '').toLowerCase()));
++      if (!openChildren.length) return null;
++      const first = openChildren[0] || group.children[0];
++      const assigned = openChildren.find((task) => task.assignee_id) || null;
++      const deadlines = openChildren
++        .map((task) => task.deadline)
++        .filter(Boolean)
++        .sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
++      return {
++        unified_id: `group:${group.key}`,
++        source: first.source,
++        source_id: first.source_id,
++        project_id: first.project_id,
++        lead_id: first.lead_id,
++        task_kind: first.task_kind,
++        title: group.category.title,
++        category_order: group.category.order,
++        project_code: first.project_code,
++        project_name: first.project_name,
++        lead_title: first.lead_title,
++        deadline: deadlines[0] || null,
++        child_completed: completedChildren.length,
++        child_total: group.children.length,
++        child_refs: openChildren.map((task) => ({ source: task.source, source_id: task.source_id })),
++        assignee_id: assigned?.assignee_id || null,
++        assignee_name: assigned?.assignee_name || null,
++        module_owner_id: first.module_owner_id || null,
++        module_owner_name: first.module_owner_name || null,
++        effective_assignee_id: assigned?.assignee_id || first.module_owner_id || null,
++        effective_assignee_name: assigned?.assignee_name || first.module_owner_name || null,
++      };
++    }).filter(Boolean);
++    tasks.sort((a, b) => (
++      String(a.deadline || '9999-12-31').localeCompare(String(b.deadline || '9999-12-31'))
++      || (a.category_order || 999) - (b.category_order || 999)
++    ));
++
++    const nowMs = Date.now();
++    const warningMs = nowMs + 3 * 24 * 60 * 60 * 1000;
++    const stats = {
++      total: tasks.length,
++      overdue: 0,
++      warning: 0,
++      by_module: { crm: 0, sx: 0, vc: 0 },
++    };
++    tasks.forEach((task) => {
++      const lane = taskOwnerLane(task);
++      if (lane === 'sales') stats.by_module.crm += 1;
++      else if (lane === 'logistics') stats.by_module.vc += 1;
++      else stats.by_module.sx += 1;
++      const deadlineMs = task.deadline ? new Date(task.deadline).getTime() : null;
++      if (deadlineMs != null && Number.isFinite(deadlineMs)) {
++        if (deadlineMs < nowMs) stats.overdue += 1;
++        else if (deadlineMs <= warningMs) stats.warning += 1;
++      }
++    });
++    res.json({ tasks, stats });
++  } catch (e) {
++    console.error('[work-tasks] project-overview:', e);
++    res.status(500).json({ error: e.message || 'Lỗi tải tổng quan nhiệm vụ dự án' });
++  }
++});
++
++// GET /api/work-tasks/project-overview-summary — số liệu chính xác cho trang tổng quan NV dự án
++r.get('/project-overview-summary', async (req, res) => {
++  try {
++    const now = new Date();
++    const warningTo = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
++    const moduleKinds = {
++      crm: ['CRM-Deal', 'CRM-Lead', 'Giao việc'],
++      sx: ['SX', 'Dự án'],
++      vc: ['VC'],
++    };
++    const allKinds = [...moduleKinds.crm, ...moduleKinds.sx, ...moduleKinds.vc];
++    const countTasks = async ({ kinds = allKinds, risk = '' } = {}) => {
++      let q = supabase.from('unified_tasks_v').select('unified_id', { count: 'exact', head: true });
++      q = applyPrimaryLeadOnly(q, false);
++      q = applyOpenOnlyFilter(q);
++      q = q.in('task_kind', kinds);
++      if (!isSystemAdmin(req.user) && req.user?.company_id) q = q.eq('company_id', req.user.company_id);
++      if (!isManagerLike(req.user)) q = applyEmployeeScope(q, req.user.userId);
++      if (risk === 'overdue') q = q.lt('deadline', now.toISOString());
++      if (risk === 'warning') q = q.gte('deadline', now.toISOString()).lte('deadline', warningTo.toISOString());
++      const { count, error } = await q;
++      if (error) throw error;
++      return count || 0;
++    };
++
++    const [total, warning, overdue, crm, sx, vc] = await Promise.all([
++      countTasks(),
++      countTasks({ risk: 'warning' }),
++      countTasks({ risk: 'overdue' }),
++      countTasks({ kinds: moduleKinds.crm }),
++      countTasks({ kinds: moduleKinds.sx }),
++      countTasks({ kinds: moduleKinds.vc }),
++    ]);
++    res.json({ total, open: total, warning, overdue, by_module: { crm, sx, vc } });
++  } catch (e) {
++    console.error('[work-tasks] project-overview-summary:', e);
++    res.status(500).json({ error: e.message || 'Lỗi tải thống kê nhiệm vụ dự án' });
++  }
++});
++
+ // GET /api/work-tasks/lead-options — lead/deal theo NV phụ trách (dropdown lọc)
+ r.get('/lead-options', async (req, res) => {
+   try {
+@@ -231,62 +664,125 @@ r.get('/', async (req, res) => {
+     const {
+       source, project_id, assignee_id, status, q: searchQ, task_kind,
+       date_from, date_to, company_id, open_only, module_key, lead_id,
++      region_id: regionIdRaw,
+     } = req.query;
+     const { page, pageSize, from, to } = parsePagination(req);
+ 
+-    let q = supabase.from('unified_tasks_v').select(TASK_SELECT, { count: 'exact' })
+-      .order('updated_at', { ascending: false });
++    const regionScope = await resolveWorkRegionScope(regionIdRaw, {
++      ok: true,
++      companyId: company_id || (!isSystemAdmin(req.user) ? req.user?.company_id : null) || null,
++      companyIds: company_id
++        ? [company_id]
++        : (!isSystemAdmin(req.user) && req.user?.company_id ? [req.user.company_id] : null),
++    });
+ 
+-    if (source) {
+-      const sources = String(source).split(',').map((s) => s.trim()).filter((s) => VALID_SOURCES.has(s));
+-      if (sources.length === 1) q = q.eq('source', sources[0]);
+-      else if (sources.length > 1) q = q.in('source', sources);
+-    }
+-    if (project_id) q = q.eq('project_id', project_id);
+-    const effectiveCompany = company_id || (!isSystemAdmin(req.user) ? req.user?.company_id : null);
+-    if (lead_id) {
+-      q = q.eq('lead_id', lead_id);
+-    } else if (assignee_id) {
+-      const assigneeLeadIds = await resolveAssigneeLeadScope(assignee_id, effectiveCompany || null);
+-      q = applyAssigneeFilter(q, assignee_id, assigneeLeadIds);
+-    }
+-    if (status) q = q.eq('status', status);
+-    if (task_kind) q = q.eq('task_kind', task_kind);
+-    if (searchQ) q = q.ilike('title', `%${searchQ}%`);
+-    if (date_from) q = q.gte('deadline', date_from);
+-    if (date_to) q = q.lte('deadline', date_to);
+-    if (open_only === '1' || open_only === 'true') q = applyOpenOnlyFilter(q);
+-
+-    const MODULE_KIND_FILTER = {
+-      crm: ['CRM-Deal', 'CRM-Lead'],
+-      production: ['SX', 'Dự án'],
+-      logistics: ['VC'],
+-      assignment: ['Giao việc'],
+-      personal: ['Cá nhân'],
+-    };
+-    if (module_key && MODULE_KIND_FILTER[module_key]) {
+-      q = q.in('task_kind', MODULE_KIND_FILTER[module_key]);
++    if (regionScope && !regionScope.none && !regionScope.leadIds.length && !regionScope.projectIds.length) {
++      return res.json({ tasks: [], total: 0, page, page_size: pageSize });
+     }
+ 
+-    if (effectiveCompany) q = q.eq('company_id', effectiveCompany);
++    // opts.leadScoped = true khi đường gọi đã bám theo lead (region lead ids) —
++    // khi đó KHÔNG lọc is_primary_lead, nếu không task của lead thứ 2 biến mất.
++    const applyListFilters = (q, opts = {}) => {
++      if (source) {
++        const sources = String(source).split(',').map((s) => s.trim()).filter((s) => VALID_SOURCES.has(s));
++        if (sources.length === 1) q = q.eq('source', sources[0]);
++        else if (sources.length > 1) q = q.in('source', sources);
++      }
++      if (project_id) q = q.eq('project_id', project_id);
++      const effectiveCompany = company_id || (!isSystemAdmin(req.user) ? req.user?.company_id : null);
++      let leadScoped = !!opts.leadScoped;
++      if (lead_id) {
++        q = q.eq('lead_id', lead_id);
++        leadScoped = true;
++      } else if (assignee_id) {
++        q = applyAssigneeFilter(q, assignee_id, assigneeLeadIds);
++        if (assigneeLeadIds.length) leadScoped = true;
++      }
++      q = applyPrimaryLeadOnly(q, leadScoped);
++      if (status) q = q.eq('status', status);
++      if (task_kind) q = q.eq('task_kind', task_kind);
++      if (searchQ) q = q.ilike('title', `%${searchQ}%`);
++      if (date_from) q = q.gte('deadline', date_from);
++      if (date_to) q = q.lte('deadline', date_to);
++      if (open_only === '1' || open_only === 'true') q = applyOpenOnlyFilter(q);
++
++      const MODULE_KIND_FILTER = {
++        crm: ['CRM-Deal', 'CRM-Lead'],
++        production: ['SX', 'Dự án'],
++        logistics: ['VC'],
++        assignment: ['Giao việc'],
++        personal: ['Cá nhân'],
++      };
++      if (module_key && MODULE_KIND_FILTER[module_key]) {
++        q = q.in('task_kind', MODULE_KIND_FILTER[module_key]);
++      }
+ 
+-    if (!isManagerLike(req.user)) {
+-      q = applyEmployeeScope(q, req.user.userId);
+-    }
++      if (effectiveCompany) q = q.eq('company_id', effectiveCompany);
+ 
+-    q = q.range(from, to);
+-    const { data, error, count } = await q;
+-    if (error) throw error;
++      if (!isManagerLike(req.user)) {
++        q = applyEmployeeScope(q, req.user.userId);
++      }
++      return q;
++    };
+ 
+-    const tasks = await enrichUnifiedCrmTasks(supabase, data || []);
+-    const assigneeIds = [...new Set(tasks.map((t) => t.assignee_id).filter(Boolean))];
+-    if (assigneeIds.length) {
+-      const { data: users } = await supabase.from('users').select('id, full_name').in('id', assigneeIds);
+-      const nameById = Object.fromEntries((users || []).map((u) => [String(u.id), u.full_name]));
+-      for (const t of tasks) {
+-        t.assignee_name = t.assignee_id ? (nameById[String(t.assignee_id)] || null) : null;
++    let assigneeLeadIds = [];
++    if (!lead_id && assignee_id) {
++      const effectiveCompany = company_id || (!isSystemAdmin(req.user) ? req.user?.company_id : null);
++      assigneeLeadIds = await resolveAssigneeLeadScope(assignee_id, effectiveCompany || null);
++    }
++
++    let data;
++    let count;
++    if (regionScope && !regionScope.none) {
++      const seen = new Map();
++      const merge = (rows) => {
++        for (const t of rows || []) {
++          if (t?.unified_id && !seen.has(String(t.unified_id))) seen.set(String(t.unified_id), t);
++        }
++      };
++      if (regionScope.leadIds.length) {
++        merge(await fetchAllByIds({
++          table: 'unified_tasks_v',
++          columns: TASK_SELECT,
++          key: 'lead_id',
++          ids: regionScope.leadIds,
++          tune: (q) => applyListFilters(q, { leadScoped: true }),
++        }));
++      }
++      if (regionScope.projectIds.length) {
++        merge(await fetchAllByIds({
++          table: 'unified_tasks_v',
++          columns: TASK_SELECT,
++          key: 'project_id',
++          ids: regionScope.projectIds,
++          tune: (q) => applyListFilters(q),
++        }));
+       }
++      const merged = [...seen.values()].sort((a, b) => String(b.updated_at || '').localeCompare(String(a.updated_at || '')));
++      count = merged.length;
++      data = merged.slice(from, to + 1);
++    } else if (regionScope?.none) {
++      const { data: rows, error: noneErr } = await applyListFilters(
++        supabase.from('unified_tasks_v').select(TASK_SELECT).order('updated_at', { ascending: false }),
++      ).range(0, 499);
++      if (noneErr) throw noneErr;
++      const filtered = (rows || []).filter((t) => taskMatchesRegionScope(t, regionScope));
++      count = filtered.length;
++      data = filtered.slice(from, to + 1);
++    } else {
++      let q = applyListFilters(
++        supabase.from('unified_tasks_v').select(TASK_SELECT, { count: 'exact' })
++          .order('updated_at', { ascending: false }),
++      );
++      q = q.range(from, to);
++      const result = await q;
++      if (result.error) throw result.error;
++      data = result.data;
++      count = result.count;
+     }
++
++    const tasks = await enrichUnifiedCrmTasks(supabase, data || []);
++    await enrichTaskModuleOwners(tasks);
+     res.json({ tasks, total: count ?? tasks.length ?? 0, page, page_size: pageSize });
+   } catch (e) {
+     console.error('[work-tasks] list:', e);
+@@ -298,6 +794,8 @@ r.get('/', async (req, res) => {
+ r.get('/by-project/:projectId', async (req, res) => {
+   try {
+     const projectId = req.params.projectId;
++    const access = await assertProjectAccessible(req, res, projectId, { operation: 'READ', mode: 'company' });
++    if (!access) return;
+     const leadIds = await getLeadIdsForProject(projectId);
+ 
+     let qProject = supabase.from('unified_tasks_v').select(TASK_SELECT).eq('project_id', projectId);
+@@ -320,6 +818,7 @@ r.get('/by-project/:projectId', async (req, res) => {
+       seen.add(t.unified_id);
+       return true;
+     }).sort((a, b) => String(a.task_kind).localeCompare(String(b.task_kind)));
++    await enrichTaskModuleOwners(data);
+ 
+     const groups = {
+       crm_deal: [],
+@@ -349,6 +848,11 @@ r.get('/by-project/:projectId', async (req, res) => {
+     res.json({
+       project_id: projectId,
+       groups,
++      module_owners: {
++        crm: data.find((t) => taskOwnerLane(t) === 'sales')?.module_owner_name || null,
++        production: data.find((t) => taskOwnerLane(t) === 'production')?.module_owner_name || null,
++        logistics: data.find((t) => taskOwnerLane(t) === 'logistics')?.module_owner_name || null,
++      },
+       progress: { completed, total: all.length },
+       tasks: all,
+     });
+@@ -644,6 +1148,111 @@ r.post('/by-project/:projectId/remind-complete', async (req, res) => {
+   }
+ });
+ 
++// POST /api/work-tasks/project-overview/remind-complete — nhắc một danh mục nhiệm vụ lớn
++r.post('/project-overview/remind-complete', async (req, res) => {
++  try {
++    if (!isManagerLike(req.user)) {
++      return res.status(403).json({ error: 'Chỉ quản lý mới gửi được nhắc hoàn thành' });
++    }
++    const projectId = String(req.body?.project_id || '').trim();
++    const refs = Array.isArray(req.body?.child_refs) ? req.body.child_refs.slice(0, 200) : [];
++    const categoryTitle = String(req.body?.title || 'Nhiệm vụ dự án').trim().slice(0, 160);
++    if (!projectId || !refs.length) {
++      return res.status(400).json({ error: 'Thiếu dự án hoặc danh sách nhiệm vụ cần nhắc' });
++    }
++    const access = await assertProjectAccessible(req, res, projectId, { operation: 'WRITE', mode: 'company' });
++    if (!access) return;
++
++    const refsBySource = new Map();
++    refs.forEach((ref) => {
++      const source = String(ref?.source || '');
++      const sourceId = String(ref?.source_id || '');
++      if (!['task', 'crm_task'].includes(source) || !sourceId) return;
++      if (!refsBySource.has(source)) refsBySource.set(source, new Set());
++      refsBySource.get(source).add(sourceId);
++    });
++    const batches = await Promise.all([...refsBySource.entries()].map(([source, ids]) => (
++      fetchAllByIdsParallel({
++        table: 'unified_tasks_v',
++        columns: TASK_SELECT,
++        key: 'source_id',
++        ids: [...ids],
++        tune: (q) => q.eq('source', source),
++      })
++    )));
++    const tasks = batches.flat().filter((task) => (
++      String(task.project_id || '') === projectId
++      && !DONE_REMIND_STATUSES.has(String(task.status || '').toLowerCase())
++    ));
++    if (!tasks.length) {
++      return res.status(400).json({ error: 'Danh mục này không còn nhiệm vụ mở để nhắc' });
++    }
++    const lane = taskOwnerLane(tasks[0]);
++    if (tasks.some((task) => taskOwnerLane(task) !== lane)) {
++      return res.status(400).json({ error: 'Danh mục chứa nhiệm vụ thuộc nhiều module khác nhau' });
++    }
++
++    await enrichTaskModuleOwners(tasks);
++    const targets = new Set();
++    const assignmentBatches = new Map();
++    tasks.forEach((task) => {
++      const targetId = task.assignee_id || task.module_owner_id;
++      if (!targetId) return;
++      targets.add(String(targetId));
++      if (!task.assignee_id) {
++        const key = `${task.source}:${targetId}`;
++        if (!assignmentBatches.has(key)) {
++          assignmentBatches.set(key, { source: task.source, targetId, ids: [] });
++        }
++        assignmentBatches.get(key).ids.push(task.source_id);
++      }
++    });
++    if (!targets.size) {
++      return res.status(400).json({
++        error: 'Dự án chưa có người chịu trách nhiệm. Vui lòng gán phụ trách dự án trước khi nhắc.',
++      });
++    }
++
++    await Promise.all([...assignmentBatches.values()].map(({ source, targetId, ids }) => (
++      supabase
++        .from(source === 'crm_task' ? 'crm_tasks' : 'tasks')
++        .update({ assignee_id: targetId })
++        .in('id', ids)
++        .then(({ error }) => {
++          if (error) throw error;
++        })
++    )));
++
++    const actorId = String(req.user.userId || req.user.id || '');
++    const actorName = req.user.full_name || req.user.email || 'Quản lý';
++    const laneLabel = lane === 'sales' ? 'CRM/Sales' : (lane === 'logistics' ? 'VC-LĐ' : 'Sản xuất');
++    const projectCode = tasks[0].project_code || 'dự án';
++    const result = await sendCompleteReminderToUsers(req, {
++      targets: [...targets],
++      actorId,
++      title: `Nhắc hoàn thành — ${categoryTitle}`,
++      message: `${actorName} nhắc hoàn thành ${categoryTitle} của ${projectCode}: ${tasks.length} nhiệm vụ còn mở.`,
++      entityType: remindEntityType(tasks[0].source),
++      entityId: tasks[0].source_id,
++      meta: {
++        ...buildCompleteReminderMeta(tasks[0]),
++        category_title: categoryTitle,
++        open_count: tasks.length,
++        module_label: laneLabel,
++      },
++    });
++    res.json({
++      ok: true,
++      sent: result.sent,
++      recipient_count: result.recipient_count,
++      assigned_count: [...assignmentBatches.values()].reduce((sum, batch) => sum + batch.ids.length, 0),
++    });
++  } catch (e) {
++    console.error('[work-tasks] project overview remind-complete:', e);
++    res.status(500).json({ error: e.message || 'Không gửi được nhắc danh mục nhiệm vụ' });
++  }
++});
++
+ // POST /api/work-tasks/:source/:id/remind-complete — quản lý nhắc NV hoàn thành việc
+ r.post('/:source/:id/remind-complete', async (req, res) => {
+   try {
+diff --git a/backend/src/routes/workshopTeams.js b/backend/src/routes/workshopTeams.js
+index d604d8aa..d60e53f9 100644
+--- a/backend/src/routes/workshopTeams.js
++++ b/backend/src/routes/workshopTeams.js
+@@ -72,11 +72,14 @@ async function addLogisticsPersonToDealMembers(projectId, userId, addedBy) {
+       added_by: addedBy || null,
+       history_cutoff_at: cutoff,
+     };
+-    const { error } = await supabase.from('lead_members').insert(row);
++    // upsert-ignore: maybeSingle ở trên là kiểm-rồi-ghi, không nguyên tử.
++    const { error } = await supabase.from('lead_members')
++      .upsert(row, { onConflict: 'lead_id,user_id', ignoreDuplicates: true });
+     if (error && String(error.message || '').includes('history_cutoff_at')) {
+       const { history_cutoff_at: _c, ...noCutoff } = row;
+       void _c;
+-      const retry = await supabase.from('lead_members').insert(noCutoff);
++      const retry = await supabase.from('lead_members')
++        .upsert(noCutoff, { onConflict: 'lead_id,user_id', ignoreDuplicates: true });
+       if (retry.error) {
+         console.warn('[workshop-teams] add lead_member:', retry.error.message);
+         continue;
+@@ -389,12 +392,17 @@ r.patch('/projects/:projectId/assign', async (req, res) => {
+ // ─── GET /workshop-teams/users — danh sách user có thể gán ───────────────────
+ r.get('/users', requirePermission('projects', 'view'), async (req, res) => {
+   try {
+-    const { data } = await supabase
++    // Moi gia tri phai co trong enum user_role, neu khong ca cau query hong (22P02).
++    const { data, error } = await supabase
+       .from('users')
+       .select('id, full_name, email, role, avatar')
+-      .in('role', ['logistics_admin', 'logistics', 'installer', 'driver', 'production', 'manager', 'admin', 'sales_admin'])
++      .in('role', ['logistics_admin', 'installer', 'driver', 'production', 'manager', 'admin', 'sales_admin'])
+       .eq('is_active', true)
+       .order('full_name');
++    if (error) {
++      console.error('[workshop-teams/users]', error.message);
++      return res.status(500).json({ error: error.message });
++    }
+     res.json(data || []);
+   } catch (e) {
+     res.status(500).json({ error: e.message });
+diff --git a/backend/src/test-permissions.js b/backend/src/test-permissions.js
+index 2cb64964..beb8686d 100644
+--- a/backend/src/test-permissions.js
++++ b/backend/src/test-permissions.js
+@@ -53,10 +53,15 @@ async function testSeedData() {
+   
+   for (const role of roles) {
+     try {
+-      const { data, error } = await supabase
+-        .from('role_permissions')
+-        .select('permission')
+-        .eq('role', role);
++      // role_permissions là bảng nối (role_id, permission_id) — không có cột `role`.
++      const { data: roleRow } = await supabase
++        .from('roles').select('id').eq('name', role).maybeSingle();
++      const { data, error } = roleRow?.id
++        ? await supabase
++          .from('role_permissions')
++          .select('permissions(resource, action)')
++          .eq('role_id', roleRow.id)
++        : { data: [], error: null };
+       
+       if (error) {
+         log(RED, `✗ Role ${role} ERROR: ${error.message}`);
+@@ -163,7 +168,7 @@ async function testHasPermissionRole() {
+     const { data: employeeUser } = await supabase
+       .from('users')
+       .select('id, role')
+-      .eq('role', 'employee')
++      .eq('role', 'staff')  // 'employee' co trong bang roles nhung KHONG co trong enum user_role -> 22P02
+       .limit(1)
+       .single();
+     
+@@ -200,7 +205,7 @@ async function testPermissionOverride() {
+     const { data: user } = await supabase
+       .from('users')
+       .select('id, role')
+-      .eq('role', 'employee')
++      .eq('role', 'staff')  // 'employee' co trong bang roles nhung KHONG co trong enum user_role -> 22P02
+       .limit(1)
+       .single();
+     
+diff --git a/backend/src/helpers/queryErrorLog.js b/backend/src/helpers/queryErrorLog.js
+new file mode 100755
+index 00000000..e5984251
+--- /dev/null
++++ b/backend/src/helpers/queryErrorLog.js
+@@ -0,0 +1,35 @@
++/**
++ * ============================================================================
++ * Không để một truy vấn hỏng chết câm
++ * ============================================================================
++ *
++ * PostgREST huỷ CẢ CÂU khi gặp cột/bảng/enum sai (42703, 22P02, PGRST204…).
++ * Chỗ gọi viết `const { data } = await supabase...` sẽ nhận data === undefined
++ * và trả [] y như «không có dữ liệu» — người dùng thấy trang trống, log sạch.
++ *
++ * Đây là đúng cách 29 cột sai sống nhiều tháng trong dự án này. Rà soát đếm
++ * được 2.282 chỗ nuốt `error`; CỐ TÌNH không sửa hết — chỉ bọc những chỗ ĐÃ
++ * CHỨNG MINH từng hỏng (xem audit/BAO-CAO-cot-thieu.md), để lần sau có sai
++ * lại thì log kêu ngay thay vì im.
++ *
++ * `helpers/supabaseQueryGuard.js` bắt cùng lớp lỗi ở tầng dưới cho TOÀN BỘ
++ * truy vấn; hai lớp bổ sung cho nhau: guard cho biết «ở đâu», nhãn ở đây cho
++ * biết «tính năng nào của người dùng đang mất dữ liệu».
++ */
++
++/** Dùng trong Promise.all: `supabase.from(...)....then(warnQ('nhan'))` */
++function warnQ(tag) {
++  return (res) => {
++    const e = res && res.error;
++    if (e) console.warn(`[cot-im-lang] ${tag} · ${e.code || '?'} · ${e.message}`);
++    return res;
++  };
++}
++
++/** Dùng sau await: `const rows = readQ('nhan', await supabase.from(...)...)` */
++function readQ(tag, res) {
++  warnQ(tag)(res);
++  return (res && res.data) || [];
++}
++
++module.exports = { warnQ, readQ };
+diff --git a/backend/tests/role-enum-guard.js b/backend/tests/role-enum-guard.js
+new file mode 100755
+index 00000000..34f80b43
+--- /dev/null
++++ b/backend/tests/role-enum-guard.js
+@@ -0,0 +1,128 @@
++/**
++ * ============================================================================
++ * CHOT: moi gia tri role ghi trong code phai ton tai trong enum user_role
++ * ============================================================================
++ *
++ * Vi sao can test nay?
++ *   users.role la kieu enum user_role. PostgREST dich .in('role', [...]) thanh
++ *       WHERE role = ANY ($1)
++ *   Neu MOT phan tu trong mang khong co trong enum, Postgres bao 22P02
++ *   "invalid input value for enum user_role" va HUY CA CAU QUERY.
++ *   Code goi kieu `const { data } = await supabase...` se nhan data = undefined,
++ *   tra ve [] va tinh nang chet IM LANG - khong ai biet.
++ *
++ *   Da xay ra that (08/09/2026): 'logistics' bi nham la role trong
++ *     - routes/workshopTeams.js  -> GET /workshop-teams/users luon tra ve []
++ *     - helpers/vcLogisticsNotify.js -> blast VC/LD mat het nguoi nhan theo role
++ *   'logistics' la MODULE KEY (crm | production | logistics | projects...),
++ *   khong phai role. Role tuong ung la 'logistics_admin'.
++ *
++ * Cap nhat danh sach enum khi them role moi:
++ *   SELECT string_agg(quote_literal(v), ', ' ORDER BY v)
++ *   FROM unnest(enum_range(NULL::user_role)::text[]) v;
++ *
++ * Chay:  npm run test:role-enum
++ */
++
++const fs = require('fs');
++const path = require('path');
++
++// Chup tu DB prod kdxypztstbeovyedmvem ngay 08/09/2026.
++const USER_ROLE_ENUM = new Set([
++  'accounting', 'admin', 'administrator',
++  'crm_production_admin', 'crm_production_staff', 'customer_care',
++  'designer', 'director', 'driver', 'installer', 'logistics_admin',
++  'manager', 'platform_admin', 'production', 'production_admin',
++  'production_staff', 'region_admin', 'sales', 'sales_admin',
++  'staff', 'super_admin', 'superadmin', 'supervisor',
++]);
++
++const SRC = path.join(__dirname, '..', 'src');
++
++function walk(dir, out = []) {
++  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
++    const p = path.join(dir, e.name);
++    if (e.isDirectory()) walk(p, out);
++    else if (e.isFile() && p.endsWith('.js')) out.push(p);
++  }
++  return out;
++}
++
++/** Tach cac chuoi 'abc' / "abc" trong mot doan text. */
++function literals(chunk) {
++  const out = [];
++  const re = /['"]([^'"\n]*)['"]/g;
++  let m;
++  while ((m = re.exec(chunk))) out.push(m[1]);
++  return out;
++}
++
++/** Tim `const TEN = [ ... ]` hoac `const TEN = new Set([ ... ])` trong 1 file. */
++function resolveConst(src, name) {
++  const re = new RegExp(
++    'const\\s+' + name + '\\s*=\\s*(?:new\\s+Set\\s*\\()?\\[([^\\]]*)\\]',
++    'm'
++  );
++  const m = src.match(re);
++  return m ? literals(m[1]) : null;
++}
++
++const problems = [];
++const checked = [];
++
++for (const file of walk(SRC)) {
++  const src = fs.readFileSync(file, 'utf8');
++  const rel = path.relative(path.join(__dirname, '..'), file).replace(/\\/g, '/');
++
++  // A) .in('role', [ ... ])  — mang viet thang
++  for (const m of src.matchAll(/\.in\(\s*['"]role['"]\s*,\s*\[([^\]]*)\]/g)) {
++    checked.push({ rel, nguon: "in('role', [...])", vals: literals(m[1]) });
++  }
++
++  // B) .in('role', TEN_HANG)  — hang so trong cung file
++  for (const m of src.matchAll(/\.in\(\s*['"]role['"]\s*,\s*([A-Za-z_$][\w$]*)\s*\)/g)) {
++    const vals = resolveConst(src, m[1]);
++    if (vals) checked.push({ rel, nguon: `in('role', ${m[1]})`, vals });
++  }
++
++  // C) getCompanyScopedRoleUserIds(x, [ ... ])
++  for (const m of src.matchAll(/getCompanyScopedRoleUserIds\s*\([^,]*,\s*\[([^\]]*)\]/g)) {
++    checked.push({ rel, nguon: 'getCompanyScopedRoleUserIds([...])', vals: literals(m[1]) });
++  }
++
++  // D) getCompanyScopedRoleUserIds(x, TEN_HANG)
++  for (const m of src.matchAll(/getCompanyScopedRoleUserIds\s*\([^,]*,\s*([A-Za-z_$][\w$]*)\s*[,)]/g)) {
++    const vals = resolveConst(src, m[1]);
++    if (vals) checked.push({ rel, nguon: `getCompanyScopedRoleUserIds(${m[1]})`, vals });
++  }
++
++  // E) .from('users') ... .eq('role', 'literal')  — chi xet khi cung 1 chuoi goi
++  for (const m of src.matchAll(/from\(\s*['"]users['"]\s*\)[\s\S]{0,400}?\.eq\(\s*['"]role['"]\s*,\s*['"]([^'"]+)['"]\s*\)/g)) {
++    checked.push({ rel, nguon: "from('users').eq('role', '...')", vals: [m[1]] });
++  }
++}
++
++for (const c of checked) {
++  const xau = c.vals.filter((v) => v && !USER_ROLE_ENUM.has(v));
++  if (xau.length) problems.push({ ...c, xau });
++}
++
++console.log(`Da quet ${checked.length} cho loc theo users.role trong backend/src`);
++
++if (problems.length) {
++  console.error('\nTHAT BAI — co gia tri KHONG nam trong enum user_role:\n');
++  for (const p of problems) {
++    console.error(`  ${p.rel}`);
++    console.error(`    ${p.nguon}`);
++    console.error(`    gia tri sai: ${p.xau.map((v) => `'${v}'`).join(', ')}`);
++    console.error('    -> Postgres tra 22P02 va HUY CA CAU QUERY, tinh nang chet im lang.\n');
++  }
++  process.exit(1);
++}
++
++if (!checked.length) {
++  console.error('THAT BAI — khong quet duoc cho nao, regex co the da hong.');
++  process.exit(1);
++}
++
++console.log('DAT — moi gia tri role trong code deu ton tai trong enum user_role.');
+diff --git a/backend/tests/query-guard-42703-smoke.js b/backend/tests/query-guard-42703-smoke.js
+new file mode 100755
+index 00000000..9c2009bb
+--- /dev/null
++++ b/backend/tests/query-guard-42703-smoke.js
+@@ -0,0 +1,107 @@
++/**
++ * ============================================================================
++ * Query guard phải kêu khi truy vấn bị TỪ CHỐI CẢ CÂU
++ * ============================================================================
++ *
++ * Không chạm mạng, không chạm DB: dựng client Supabase thật với `fetch` giả trả
++ * đúng thân lỗi PostgREST. Vẫn đi qua đường thật của guard (patch prototype
++ * `then`, đọc builder.url, dựng call site), nên vẫn bắt được nếu guard hỏng.
++ *
++ * Vì sao cần: `const { data } = await supabase...` (không đọc `error`) biến một
++ * câu bị huỷ thành `data === undefined` rồi trả [] — tính năng chết câm. Đó là
++ * cách 29 cột sai sống nhiều tháng, và cách role 'logistics' làm trống danh
++ * sách user xưởng. Guard bắt tại chỗ nên hiện trên log Render trong vài phút.
++ *
++ * Chạy:  npm run test:query-guard
++ */
++
++const {
++  installSupabaseQueryGuard,
++  getSupabaseQueryGuardReport,
++} = require('../src/helpers/supabaseQueryGuard');
++
++if (!installSupabaseQueryGuard()) {
++  console.error('THẤT BẠI — không cài được query guard (SUPABASE_QUERY_GUARD=0?)');
++  process.exit(1);
++}
++
++const { createClient } = require('@supabase/supabase-js');
++
++/** Trả về một `fetch` giả luôn đáp cùng một thân JSON. */
++function fetchGia(body, status = 200) {
++  return async () => new Response(JSON.stringify(body), {
++    status,
++    headers: { 'Content-Type': 'application/json' },
++  });
++}
++
++function clientVoi(body, status) {
++  return createClient('https://vi-du.supabase.co', 'khoa-gia', {
++    auth: { persistSession: false, autoRefreshToken: false },
++    global: { fetch: fetchGia(body, status) },
++  });
++}
++
++const loiPostgrest = (code, message) => ({ code, message, details: null, hint: null });
++
++let hong = 0;
++function kiemTra(nhan, dieuKien, chiTiet) {
++  if (dieuKien) { console.log(`  ĐẠT   ${nhan}`); return; }
++  console.error(`  HỎNG  ${nhan}${chiTiet ? ` — ${chiTiet}` : ''}`);
++  hong += 1;
++}
++
++(async () => {
++  console.log('Query guard — bắt lỗi giết cả câu (offline)\n');
++
++  // 1) Cột không tồn tại khi ĐỌC → 42703
++  await clientVoi(loiPostgrest('42703', 'column users.cot_xyz does not exist'), 400)
++    .from('users').select('cot_xyz').limit(1);
++
++  // 2) Sai kiểu enum → 22P02 (đúng lớp lỗi role 'logistics')
++  await clientVoi(loiPostgrest('22P02', 'invalid input value for enum user_role: "logistics"'), 400)
++    .from('users').select('id').in('role', ['logistics']);
++
++  // 3) Cột không tồn tại khi GHI → PGRST204 (đường insert/update)
++  await clientVoi(loiPostgrest('PGRST204', "Column 'cot_xyz' of relation 'users' does not exist"), 400)
++    .from('users').update({ cot_xyz: 1 }).eq('id', '0');
++
++  // 4) Thiếu quan hệ embed → PGRST200
++  await clientVoi(loiPostgrest('PGRST200', "Could not find a relationship between 'a' and 'b'"), 400)
++    .from('crm_leads').select('id, khong_co_quan_he(*)').limit(1);
++
++  // 5) Hồi quy: hai cảnh báo cũ vẫn phải chạy
++  await clientVoi(Array.from({ length: 1000 }, (_, i) => ({ id: i })), 200)
++    .from('notifications').select('id');
++  await clientVoi([], 200)
++    .from('facebook_contacts').select('id')
++    .in('id', Array.from({ length: 700 }, (_, i) => `id-${i}`));
++
++  const bc = getSupabaseQueryGuardReport();
++  const loai = new Set(bc.map((r) => r.kind));
++  console.log(`\nGuard ghi nhận ${bc.length} phát hiện:`);
++  for (const r of bc) {
++    console.log(`  ${r.kind.padEnd(28)} ${r.table.padEnd(20)} ${r.site}`);
++  }
++  console.log('');
++
++  kiemTra('42703 — cột không tồn tại khi ĐỌC', loai.has('COT-KHONG-TON-TAI'));
++  kiemTra('22P02 — giá trị sai kiểu enum', loai.has('GIA-TRI-SAI-KIEU'));
++  kiemTra('PGRST204 — cột không tồn tại khi GHI', loai.has('COT-KHONG-TON-TAI-KHI-GHI'));
++  kiemTra('PGRST200 — thiếu quan hệ embed', loai.has('THIEU-QUAN-HE-EMBED'));
++  kiemTra('hồi quy: vẫn bắt cắt 1000 dòng', loai.has('NGHI-BI-CAT-1000-DONG'));
++  kiemTra('hồi quy: vẫn bắt filter id quá dài', loai.has('FILTER-ID-QUA-DAI'));
++  kiemTra(
++    'chỉ đúng tên bảng, không phải "?"',
++    bc.every((r) => r.table && r.table !== '?'),
++    bc.map((r) => r.table).join(' | '),
++  );
++  kiemTra(
++    'chỉ đúng file gọi, không phải "khong-xac-dinh"',
++    bc.every((r) => r.site.includes('query-guard-42703-smoke')),
++    bc.map((r) => `${r.kind}=${r.site}`).join(' | '),
++  );
++
++  console.log(hong ? `\nTHẤT BẠI — ${hong} mục` : '\nĐẠT — guard kêu đúng, đúng bảng, đúng chỗ gọi');
++  process.exit(hong ? 1 : 0);
++})().catch((e) => { console.error('NGOẠI LỆ:', e); process.exit(1); });
+diff --git a/audit/quet-cot-trong-bo-loc.py b/audit/quet-cot-trong-bo-loc.py
+new file mode 100755
+index 00000000..182df115
+--- /dev/null
++++ b/audit/quet-cot-trong-bo-loc.py
+@@ -0,0 +1,54 @@
++# -*- coding: utf-8 -*-
++"""
++Gom mọi cặp (bảng, cột) dùng trong BỘ LỌC PostgREST — .eq/.in/.lt/.order/...
++
++Vì sao cần bản này bên cạnh audit.py:
++  audit.py chỉ đọc chuỗi trong `.select(...)`. Nhưng cột sai trong bộ lọc cũng
++  huỷ CẢ câu y hệt, mà `.select('*')` thì không có gì để đối chiếu. Đúng lỗ hổng
++  đó đã giấu `projects.due_date` (45 lỗi/giờ trên dashboard) suốt nhiều tháng.
++
++Cách dùng:
++  1) python3 quet-cot-trong-bo-loc.py        -> in ra danh sách VALUES
++  2) Dán danh sách vào câu SQL dưới đây để hỏi schema thật:
++
++     with can(bang, cot) as (values <DÁN VÀO ĐÂY>)
++     select can.* from can
++     where not exists (select 1 from information_schema.columns c
++                       where c.table_schema='public'
++                         and c.table_name=can.bang and c.column_name=can.cot);
++
++  3) MỖI cặp trả về phải RÀ TAY. Bộ quét gán cột cho `.from()` gần nhất trong
++     cửa sổ 800 ký tự, nên khi một hàm dựng nhiều truy vấn cùng lúc sẽ gán nhầm.
++     Lần chạy 08/09/2026: 20 cặp nghi ngờ -> 6 lỗi thật, 14 báo động giả.
++"""
++
++import os, re, json
++SRC = os.path.expanduser('~/mnt/Quanlycongviec/backend/src')
++FILTER = re.compile(r"\.(eq|neq|lt|lte|gt|gte|in|is|not|order|contains|overlaps|ilike|like)\(\s*['\"]([A-Za-z_][A-Za-z0-9_]*)['\"]")
++FROM   = re.compile(r"\.from\(\s*['\"]([A-Za-z_][A-Za-z0-9_]*)['\"]\s*\)")
++pairs = {}
++for root, dirs, files in os.walk(SRC):
++    dirs[:] = [d for d in dirs if d != 'node_modules']
++    for fn in files:
++        if not fn.endswith('.js'): continue
++        p = os.path.join(root, fn)
++        s = open(p, encoding='utf-8', errors='replace').read()
++        rel = os.path.relpath(p, SRC).replace('\\', '/')
++        for m in FROM.finditer(s):
++            table = m.group(1)
++            # cua so 800 ky tu sau .from(...) — du cho mot chuoi goi
++            win = s[m.end(): m.end() + 800]
++            # cat o .from(...) tiep theo de khong lan sang truy van khac
++            nxt = FROM.search(win)
++            if nxt: win = win[:nxt.start()]
++            for f in FILTER.finditer(win):
++                col = f.group(2)
++                line = s[:m.end()].count('\n') + 1
++                pairs.setdefault((table, col), set()).add(f'{rel}:{line}')
++out = [{'bang': t, 'cot': c, 'cho': sorted(v)[:3]} for (t, c), v in sorted(pairs.items())]
++open(os.path.expanduser('~/cap_loc.json'), 'w', encoding='utf-8').write(json.dumps(out, ensure_ascii=False))
++print('so cap (bang, cot):', len(out))
++print('so bang:', len({o['bang'] for o in out}))
++# in danh sach gon de doi chieu
++print('---VALUES---')
++print(','.join("('%s','%s')" % (o['bang'], o['cot']) for o in out))
+diff --git a/database/591_lead_messages_is_pinned.sql b/database/591_lead_messages_is_pinned.sql
+new file mode 100755
+index 00000000..95dfc665
+--- /dev/null
++++ b/database/591_lead_messages_is_pinned.sql
+@@ -0,0 +1,25 @@
++-- 591: lead_messages.is_pinned — tính năng ghim tin nhắn thiếu cột
++--
++-- TÌM RA BẰNG: rà soát tĩnh toàn bộ backend, đối chiếu mọi cột trong .select()
++-- với schema thật. Đây là 1 trong 29 cột không tồn tại tìm được.
++--
++-- VÌ SAO PHẢI THÊM CỘT CHỨ KHÔNG BỎ TÍNH NĂNG: tính năng đã được cài đặt đầy
++-- đủ ở routes/crm/routes/membersChat.js — có endpoint PUT
++-- /leads/:id/chat/:msgId/pin, có UPDATE, và có socket emit 'lead:pin'. Chỉ
++-- thiếu đúng cột trong DB, nên cả SELECT lẫn UPDATE đều trả 42703.
++--
++-- AN TOÀN: DEFAULT false, NOT NULL. Đã kiểm chứng sau khi chạy: 49 tin nhắn,
++-- 0 tin đang ghim -> không dòng nào bị đổi nghĩa.
++--
++-- Chỉ mục PARTIAL: truy vấn chỉ quan tâm tin ĐÃ ghim (rất ít). Index đầy đủ
++-- trên cột boolean sẽ không bao giờ được planner chọn mà vẫn tốn phí ghi —
++-- cùng lý do đã bỏ index của migration 103 ở database/587.
++
++ALTER TABLE public.lead_messages
++  ADD COLUMN IF NOT EXISTS is_pinned BOOLEAN NOT NULL DEFAULT false;
++
++CREATE INDEX IF NOT EXISTS idx_lead_messages_pinned
++  ON public.lead_messages (lead_id) WHERE is_pinned;
++
++COMMENT ON COLUMN public.lead_messages.is_pinned IS
++  'Ghim tin nhắn trong chat của lead — xem routes/crm/routes/membersChat.js';
+diff --git a/database/592_security_revoke_anon_rpc_and_fix_rls_mismatch.sql b/database/592_security_revoke_anon_rpc_and_fix_rls_mismatch.sql
+new file mode 100755
+index 00000000..22b14354
+--- /dev/null
++++ b/database/592_security_revoke_anon_rpc_and_fix_rls_mismatch.sql
+@@ -0,0 +1,46 @@
++-- ══════════════════════════════════════════════════════════════════════════
++-- 592 — Thu quyền RPC khỏi anon + vá lệch RLS/policy
++-- Ngày: 08/09/2026   (đã áp lên qlycv kdxypztstbeovyedmvem)
++--
++-- Căn cứ đo được trước khi sửa:
++--   • delete_user_hard / projects_recompute_has_crm_deal / increment_public_share_view
++--     đều SECURITY DEFINER và anon gọi được qua /rest/v1/rpc. Cả ba chỉ được gọi
++--     từ backend Express bằng service_role (đã grep toàn bộ backend/src + frontend/src).
++--   • product_code_parts: RLS TẮT nhưng có 2 policy USING(true) → policy chết,
++--     anon có đủ SELECT/INSERT/UPDATE/DELETE ⇒ ai cầm anon key đều sửa xoá được.
++--   • public_share_links: RLS BẬT, 0 policy ⇒ đã chặn sạch anon/authenticated.
++--     Đây là trạng thái ĐÚNG, không thêm policy đọc — thêm vào là mở cho anon
++--     liệt kê toàn bộ link chia sẻ. Trang share đi qua Express bằng service_role.
++--   • service_role có rolbypassrls = true ⇒ bật RLS không ảnh hưởng backend.
++-- ══════════════════════════════════════════════════════════════════════════
++
++BEGIN;
++
++-- ─── 1. RPC SECURITY DEFINER: chỉ service_role được gọi ───────────────────
++REVOKE ALL ON FUNCTION public.delete_user_hard(uuid) FROM PUBLIC, anon, authenticated;
++GRANT EXECUTE ON FUNCTION public.delete_user_hard(uuid) TO service_role;
++
++REVOKE ALL ON FUNCTION public.projects_recompute_has_crm_deal(uuid[]) FROM PUBLIC, anon, authenticated;
++GRANT EXECUTE ON FUNCTION public.projects_recompute_has_crm_deal(uuid[]) TO service_role;
++
++REVOKE ALL ON FUNCTION public.increment_public_share_view(uuid) FROM PUBLIC, anon, authenticated;
++GRANT EXECUTE ON FUNCTION public.increment_public_share_view(uuid) TO service_role;
++
++-- Hai hàm trigger trg_crm_deal_projects_sync_has_crm_deal / trg_crm_leads_sync_has_crm_deal
++-- CỐ TÌNH giữ nguyên: kiểu trả về `trigger` nên PostgREST không gọi được
++-- (lỗi 0A000), thu quyền chỉ thêm rủi ro cho trigger mà không đóng lỗ nào.
++
++-- ─── 2. product_code_parts: policy USING(true) là policy giả ──────────────
++DROP POLICY IF EXISTS product_code_parts_read  ON public.product_code_parts;
++DROP POLICY IF EXISTS product_code_parts_write ON public.product_code_parts;
++ALTER TABLE public.product_code_parts ENABLE ROW LEVEL SECURITY;
++REVOKE ALL ON TABLE public.product_code_parts FROM anon, authenticated;
++
++COMMENT ON TABLE public.product_code_parts IS
++  'Chỉ backend (service_role) đọc/ghi qua /api/products. RLS bật + 0 policy = chặn sạch anon/authenticated. Không thêm policy USING(true) — đó là policy giả.';
++
++-- ─── 3. public_share_links: ghi rõ vì sao 0 policy là đúng ────────────────
++COMMENT ON TABLE public.public_share_links IS
++  'RLS bật + 0 policy là CỐ Ý: trang chia sẻ công khai đi qua Express /api/public/share/:token bằng service_role. Thêm policy đọc cho anon = mở cho anon liệt kê toàn bộ link + payload.';
++
++COMMIT;
+diff --git a/database/593_unified_tasks_v_is_primary_lead.sql b/database/593_unified_tasks_v_is_primary_lead.sql
+new file mode 100755
+index 00000000..75554864
+--- /dev/null
++++ b/database/593_unified_tasks_v_is_primary_lead.sql
+@@ -0,0 +1,82 @@
++-- ══════════════════════════════════════════════════════════════════════════
++-- 593 — unified_tasks_v: thêm cột is_primary_lead ở CUỐI  (LẦN THỬ 1)
++-- Ngày: 08/09/2026
++--
++-- ⚠ ĐÃ BỊ 594 THAY THẾ TRONG CÙNG NGÀY. Giữ lại để chạy lại đúng thứ tự và để
++--   lưu số đo. Cách viết dưới đây khử trùng ĐÚNG nhưng làm hỏng kế hoạch:
++--     trước: 259 ms / 9.022 buffers
++--     sau  : 169 ms / 48.696 buffers  ← ước lượng tụt còn rows=2 nên planner
++--            đổi Hash Join thành Nested Loop trên projects_pkey, 13.139 vòng.
++--   Lý do: lọc trên một biểu thức boolean tính từ join thì planner không ước
++--   lượng được. 594 tách thành nhánh UNION riêng để tránh hẳn chuyện đó.
++--
++-- Vì sao nhân dòng: nhánh `tasks` nối LEFT JOIN crm_leads ON cl.project_id =
++-- t.project_id, mà crm_leads.project_id KHÔNG duy nhất.
++--   Đo được: 127.279 dòng / 124.941 unified_id  → 2.338 dòng thừa.
++--   703 lead có project_id, 49 dự án có >1 lead, nhiều nhất 4 lead/dự án.
++-- ══════════════════════════════════════════════════════════════════════════
++
++CREATE OR REPLACE VIEW public.unified_tasks_v AS
++ SELECT 'task:'::text || t.id::text AS unified_id,
++    'task'::unified_task_source AS source,
++    t.id::text AS source_id,
++    t.project_id,
++    cl.id AS lead_id,
++    COALESCE(p.company_id, cl.company_id) AS company_id,
++    t.title, t.description,
++    t.status::text AS status,
++    t.priority::text AS priority,
++    t.assignee_id,
++    t.due_date AS deadline,
++    t.completed_at, t.created_by_id, t.created_at, t.updated_at,
++        CASE
++            WHEN COALESCE(t.task_type, 'project'::character varying)::text = 'personal'::text OR t.project_id IS NULL THEN 'Cá nhân'::text
++            WHEN p.production_person_id IS NOT NULL OR t.production_stage_id IS NOT NULL THEN 'SX'::text
++            WHEN p.vc_kanban_column_id IS NOT NULL OR p.logistics_company_id IS NOT NULL THEN 'VC'::text
++            ELSE 'Dự án'::text
++        END AS task_kind,
++    p.code AS project_code, p.name AS project_name, cl.title AS lead_title,
++    (cl.id IS NULL OR cl.id = pl.primary_lead_id) AS is_primary_lead
++   FROM tasks t
++     LEFT JOIN projects p ON p.id = t.project_id
++     LEFT JOIN crm_leads cl ON cl.project_id = t.project_id
++     LEFT JOIN (
++       SELECT DISTINCT ON (c.project_id) c.project_id, c.id AS primary_lead_id
++         FROM crm_leads c WHERE c.project_id IS NOT NULL
++        ORDER BY c.project_id, c.created_at NULLS LAST, c.id
++     ) pl ON pl.project_id = t.project_id
++UNION ALL
++ SELECT 'crm_task:'::text || ct.id::text AS unified_id,
++    'crm_task'::unified_task_source AS source,
++    ct.id::text AS source_id,
++    cl.project_id, ct.lead_id, cl.company_id,
++    ct.title, ct.description, ct.status, ct.priority, ct.assignee_id,
++    ct.deadline, ct.completed_at,
++    ct.created_by AS created_by_id,
++    ct.created_at, ct.updated_at,
++        CASE
++            WHEN cl.project_id IS NOT NULL OR COALESCE(ps.is_won, false) THEN 'CRM-Deal'::text
++            WHEN COALESCE(ps.pipeline_type, 'lead'::text) = 'deal'::text THEN 'CRM-Deal'::text
++            ELSE 'CRM-Lead'::text
++        END AS task_kind,
++    p.code AS project_code, p.name AS project_name, cl.title AS lead_title,
++    true AS is_primary_lead
++   FROM crm_tasks ct
++     JOIN crm_leads cl ON cl.id = ct.lead_id
++     LEFT JOIN crm_pipeline_stages ps ON ps.id = cl.stage_id
++     LEFT JOIN projects p ON p.id = cl.project_id
++UNION ALL
++ SELECT 'crm_assignment:'::text || ca.id::text AS unified_id,
++    'crm_assignment'::unified_task_source AS source,
++    ca.id::text AS source_id,
++    NULL::uuid AS project_id, NULL::uuid AS lead_id, ca.company_id,
++    ca.title, ca.description,
++    ca.status::text AS status, ca.priority::text AS priority,
++    ca.assignee_id, ca.deadline, ca.completed_at, ca.created_by_id,
++    ca.created_at, ca.updated_at,
++    'Giao việc'::text AS task_kind,
++    NULL::character varying AS project_code,
++    NULL::character varying AS project_name,
++    NULL::text AS lead_title,
++    true AS is_primary_lead
++   FROM crm_assignments ca;
+diff --git a/database/594_unified_tasks_v_primary_lead_branch_split.sql b/database/594_unified_tasks_v_primary_lead_branch_split.sql
+new file mode 100755
+index 00000000..b7c3cb88
+--- /dev/null
++++ b/database/594_unified_tasks_v_primary_lead_branch_split.sql
+@@ -0,0 +1,116 @@
++-- ══════════════════════════════════════════════════════════════════════════
++-- 594 — unified_tasks_v: tách dòng phụ thành nhánh UNION riêng (THAY CHO 593)
++-- Ngày: 08/09/2026   (đã áp lên qlycv kdxypztstbeovyedmvem)
++--
++-- Số đo cùng một câu đếm (company_id = VPT, status chưa xong):
++--   trước 593 : 259 ms /  9.022 buffers  — nhưng dòng bị nhân
++--   sau  593  : 169 ms / 48.696 buffers  — hết trùng, kế hoạch xấu
++--   sau  594  : 161 ms /  5.688 buffers  — hết trùng, NHANH VÀ NHẸ HƠN CẢ BAN ĐẦU
++--
++-- Cách làm: nhánh «task» chia đôi.
++--   • 1a — nối với ĐÚNG một lead (DISTINCT ON) ⇒ mỗi task một dòng, is_primary_lead = true
++--   • 1b — chỉ các lead thứ 2..N của cùng dự án, is_primary_lead = false
++-- Lọc `is_primary_lead = true` biến nhánh 1b thành WHERE false ⇒ EXPLAIN cho
++-- «One-Time Filter: false», nhánh bị loại NGAY LÚC LẬP KẾ HOẠCH. Nhánh 1a giữ
++-- nguyên ước lượng nên planner vẫn chọn Hash Join như cũ.
++--
++-- Trang của lead thứ 2 (lọc theo lead_id) vẫn thấy đủ task nhờ nhánh 1b —
++-- ĐỪNG thêm is_primary_lead vào truy vấn có lọc lead_id.
++--
++-- Kiểm chứng sau khi áp:
++--   127.262 dòng · 124.924 unified_id · lọc primary = 124.924 · trùng còn lại = 0
++--   dòng phụ giữ nguyên 2.338.
++-- ══════════════════════════════════════════════════════════════════════════
++
++CREATE OR REPLACE VIEW public.unified_tasks_v AS
++-- ── 1a. task × lead chính ────────────────────────────────────────────────
++ SELECT 'task:'::text || t.id::text AS unified_id,
++    'task'::unified_task_source AS source,
++    t.id::text AS source_id,
++    t.project_id, cl.id AS lead_id,
++    COALESCE(p.company_id, cl.company_id) AS company_id,
++    t.title, t.description,
++    t.status::text AS status, t.priority::text AS priority,
++    t.assignee_id, t.due_date AS deadline, t.completed_at,
++    t.created_by_id, t.created_at, t.updated_at,
++        CASE
++            WHEN COALESCE(t.task_type, 'project'::character varying)::text = 'personal'::text OR t.project_id IS NULL THEN 'Cá nhân'::text
++            WHEN p.production_person_id IS NOT NULL OR t.production_stage_id IS NOT NULL THEN 'SX'::text
++            WHEN p.vc_kanban_column_id IS NOT NULL OR p.logistics_company_id IS NOT NULL THEN 'VC'::text
++            ELSE 'Dự án'::text
++        END AS task_kind,
++    p.code AS project_code, p.name AS project_name, cl.title AS lead_title,
++    true AS is_primary_lead
++   FROM tasks t
++     LEFT JOIN projects p ON p.id = t.project_id
++     LEFT JOIN (
++       SELECT DISTINCT ON (c.project_id) c.project_id, c.id, c.company_id, c.title
++         FROM crm_leads c WHERE c.project_id IS NOT NULL
++        ORDER BY c.project_id, c.created_at NULLS LAST, c.id
++     ) cl ON cl.project_id = t.project_id
++UNION ALL
++-- ── 1b. task × lead thứ 2..N (dòng phụ, chỉ dùng khi lọc theo lead) ──────
++ SELECT 'task:'::text || t.id::text AS unified_id,
++    'task'::unified_task_source AS source,
++    t.id::text AS source_id,
++    t.project_id, cl.id AS lead_id,
++    COALESCE(p.company_id, cl.company_id) AS company_id,
++    t.title, t.description,
++    t.status::text AS status, t.priority::text AS priority,
++    t.assignee_id, t.due_date AS deadline, t.completed_at,
++    t.created_by_id, t.created_at, t.updated_at,
++        CASE
++            WHEN COALESCE(t.task_type, 'project'::character varying)::text = 'personal'::text OR t.project_id IS NULL THEN 'Cá nhân'::text
++            WHEN p.production_person_id IS NOT NULL OR t.production_stage_id IS NOT NULL THEN 'SX'::text
++            WHEN p.vc_kanban_column_id IS NOT NULL OR p.logistics_company_id IS NOT NULL THEN 'VC'::text
++            ELSE 'Dự án'::text
++        END AS task_kind,
++    p.code AS project_code, p.name AS project_name, cl.title AS lead_title,
++    false AS is_primary_lead
++   FROM tasks t
++     LEFT JOIN projects p ON p.id = t.project_id
++     JOIN crm_leads cl ON cl.project_id = t.project_id
++     JOIN (
++       SELECT DISTINCT ON (c.project_id) c.project_id, c.id AS primary_lead_id
++         FROM crm_leads c WHERE c.project_id IS NOT NULL
++        ORDER BY c.project_id, c.created_at NULLS LAST, c.id
++     ) pl ON pl.project_id = t.project_id AND cl.id <> pl.primary_lead_id
++UNION ALL
++-- ── 2. crm_tasks ─────────────────────────────────────────────────────────
++ SELECT 'crm_task:'::text || ct.id::text AS unified_id,
++    'crm_task'::unified_task_source AS source,
++    ct.id::text AS source_id,
++    cl.project_id, ct.lead_id, cl.company_id,
++    ct.title, ct.description, ct.status, ct.priority, ct.assignee_id,
++    ct.deadline, ct.completed_at,
++    ct.created_by AS created_by_id, ct.created_at, ct.updated_at,
++        CASE
++            WHEN cl.project_id IS NOT NULL OR COALESCE(ps.is_won, false) THEN 'CRM-Deal'::text
++            WHEN COALESCE(ps.pipeline_type, 'lead'::text) = 'deal'::text THEN 'CRM-Deal'::text
++            ELSE 'CRM-Lead'::text
++        END AS task_kind,
++    p.code AS project_code, p.name AS project_name, cl.title AS lead_title,
++    true AS is_primary_lead
++   FROM crm_tasks ct
++     JOIN crm_leads cl ON cl.id = ct.lead_id
++     LEFT JOIN crm_pipeline_stages ps ON ps.id = cl.stage_id
++     LEFT JOIN projects p ON p.id = cl.project_id
++UNION ALL
++-- ── 3. crm_assignments ───────────────────────────────────────────────────
++ SELECT 'crm_assignment:'::text || ca.id::text AS unified_id,
++    'crm_assignment'::unified_task_source AS source,
++    ca.id::text AS source_id,
++    NULL::uuid AS project_id, NULL::uuid AS lead_id, ca.company_id,
++    ca.title, ca.description,
++    ca.status::text AS status, ca.priority::text AS priority,
++    ca.assignee_id, ca.deadline, ca.completed_at, ca.created_by_id,
++    ca.created_at, ca.updated_at,
++    'Giao việc'::text AS task_kind,
++    NULL::character varying AS project_code,
++    NULL::character varying AS project_name,
++    NULL::text AS lead_title,
++    true AS is_primary_lead
++   FROM crm_assignments ca;
++
++COMMENT ON VIEW public.unified_tasks_v IS
++  'Khung nhìn gộp task/crm_task/crm_assignment. is_primary_lead = đúng một dòng cho mỗi unified_id. Liệt kê/đếm KHÔNG bám theo lead ⇒ thêm is_primary_lead = true (nhánh dòng phụ bị loại ngay lúc lập kế hoạch). Lọc theo lead_id thì KHÔNG thêm, nếu không task của lead thứ 2 sẽ biến mất.';
+diff --git a/database/595_don_giao_viec_mo_coi_DA_CHAY.sql b/database/595_don_giao_viec_mo_coi_DA_CHAY.sql
+new file mode 100755
+index 00000000..4ac93ea0
+--- /dev/null
++++ b/database/595_don_giao_viec_mo_coi_DA_CHAY.sql
+@@ -0,0 +1,65 @@
++-- ══════════════════════════════════════════════════════════════════════════
++-- 595 — Dọn bản «Giao việc» MỒ CÔI do lỗi 23505 sinh ra
++-- ĐÃ CHẠY 08/09/2026 trên qlycv, anh B.A duyệt.
++--
++-- Nguồn gốc: helpers/crmTaskAssignmentSync.js có nhánh dự phòng so khớp CHUỖI:
++--     if (error && /crm_task_id/.test(error.message))  → bỏ crm_task_id, INSERT lại
++--   Lỗi 23505 trên unique index `idx_crm_assignments_crm_task_id` cũng chứa chữ
++--   "crm_task_id" nên lọt vào nhánh này ⇒ mỗi lần đâm unique lại đẻ thêm MỘT bản
++--   giao việc không gắn task nào. (Đã sửa ở patch 0005: chỉ nhận nhánh này khi
++--   SQLSTATE = 42703; gặp 23505 thì lấy bản đã có ra UPDATE.)
++--
++-- Số đo lúc chạy:
++--   • 142 crm_assignments có crm_task_id IS NULL
++--   • 124 trong đó có «bản thật» cùng lead + tiêu đề + người nhận, cách < 5 giây
++--     (sáng cùng ngày đếm được 122 — 2 bản mới sinh trong lúc chờ deploy)
++--   • 18 bản còn lại là giao việc tạo tay hợp lệ — KHÔNG đụng
++--   • 0 bản có bình luận
++--   • 3 bản có tổng 16 tệp đính kèm — ĐÃ KIỂM: cả 16 file_url đều đã có sẵn
++--     trên bản thật ⇒ xoá không mất tệp nào
++--
++-- Kết quả: crm_assignments 3.208 → 3.084 · mồ côi còn 18.
++-- ══════════════════════════════════════════════════════════════════════════
++
++-- ── Bước 1: sao lưu ──────────────────────────────────────────────────────
++CREATE TABLE IF NOT EXISTS backup_giao_viec_mo_coi_20260908 AS
++WITH orphan AS (SELECT * FROM crm_assignments WHERE crm_task_id IS NULL),
++matched AS (
++  SELECT o.*,
++    (SELECT b.id FROM crm_assignments b
++      WHERE b.crm_task_id IS NOT NULL AND b.id <> o.id
++        AND b.lead_id IS NOT DISTINCT FROM o.lead_id
++        AND b.title = o.title
++        AND b.assignee_id IS NOT DISTINCT FROM o.assignee_id
++        AND abs(extract(epoch FROM (b.created_at - o.created_at))) < 5
++      ORDER BY abs(extract(epoch FROM (b.created_at - o.created_at))) LIMIT 1) AS ban_that_id
++  FROM orphan o)
++SELECT * FROM matched WHERE ban_that_id IS NOT NULL;
++
++CREATE TABLE IF NOT EXISTS backup_giao_viec_mo_coi_files_20260908 AS
++  SELECT f.* FROM crm_assignment_files f
++   WHERE f.assignment_id IN (SELECT id FROM backup_giao_viec_mo_coi_20260908);
++
++CREATE TABLE IF NOT EXISTS backup_giao_viec_mo_coi_nguoi_20260908 AS
++  SELECT a.* FROM crm_assignment_assignees a
++   WHERE a.assignment_id IN (SELECT id FROM backup_giao_viec_mo_coi_20260908);
++
++-- ── Bước 2: kiểm tra tệp đính kèm không bị mất ───────────────────────────
++-- Đã chạy, kết quả 16/16 file trùng file_url với bản thật:
++--   with bm as (select id, ban_that_id from backup_giao_viec_mo_coi_20260908)
++--   select count(*) filter (where exists (
++--            select 1 from crm_assignment_files g
++--             where g.assignment_id = bm.ban_that_id and g.file_url = f.file_url))
++--     from crm_assignment_files f join bm on bm.id = f.assignment_id;
++
++-- ── Bước 3: xoá ──────────────────────────────────────────────────────────
++BEGIN;
++DELETE FROM crm_assignment_files     WHERE assignment_id IN (SELECT id FROM backup_giao_viec_mo_coi_20260908);
++DELETE FROM crm_assignment_assignees WHERE assignment_id IN (SELECT id FROM backup_giao_viec_mo_coi_20260908);
++DELETE FROM crm_assignments          WHERE id            IN (SELECT id FROM backup_giao_viec_mo_coi_20260908);
++COMMIT;
++
++-- ── Khôi phục nếu cần (3 bảng sao lưu, giữ ít nhất 1 tháng) ──────────────
++-- INSERT INTO crm_assignments SELECT <mọi cột trừ ban_that_id> FROM backup_giao_viec_mo_coi_20260908;
++-- INSERT INTO crm_assignment_assignees SELECT * FROM backup_giao_viec_mo_coi_nguoi_20260908;
++-- INSERT INTO crm_assignment_files     SELECT * FROM backup_giao_viec_mo_coi_files_20260908;

@@ -23,13 +23,14 @@ function validModule(value) {
   return ['crm', 'production', 'logistics'].includes(value) ? value : '';
 }
 
-function assignmentPath(row) {
-  const root = row.assignment_module === 'production'
-    ? '/sx/assignments'
-    : row.assignment_module === 'logistics'
-      ? '/vc/assignments'
-      : '/crm/assignments';
-  return `${root}?pageTab=private&open=${row.id}`;
+/** Mở tab Không gian chung của deal (không vào inbox giao việc). */
+function dealSharedWorkspacePath(row) {
+  const leadId = row.lead?.id || row.lead_id;
+  if (!leadId) return null;
+  const qs = new URLSearchParams();
+  qs.set('tab', 'shared-workspace');
+  if (row.crm_task_id) qs.set('crm_task', String(row.crm_task_id));
+  return `/crm/leads/${leadId}?${qs.toString()}`;
 }
 
 function formatDate(value) {
@@ -378,15 +379,32 @@ export default function SharedWorkspaceAssignmentsReportPage() {
                   <tr><td colSpan={11} className="py-16 text-center text-slate-500"><Loader2 className="mx-auto mb-2 h-6 w-6 animate-spin" />Đang tải báo cáo…</td></tr>
                 ) : rows.length === 0 ? (
                   <tr><td colSpan={11} className="py-16 text-center text-slate-500">Không có nhiệm vụ phát sinh phù hợp bộ lọc.</td></tr>
-                ) : rows.map((row) => (
+                ) : rows.map((row) => {
+                  const dealHref = dealSharedWorkspacePath(row);
+                  return (
                   <tr key={row.id} className="align-top hover:bg-slate-50">
                     <td className="whitespace-nowrap px-3 py-3 text-slate-500">{formatDate(row.created_at)}</td>
                     <td className="max-w-[260px] px-3 py-3">
-                      <p className="font-semibold text-slate-800">{row.lead?.code || '—'}</p>
-                      <p className="line-clamp-2 text-slate-500">{row.lead?.title || row.project?.name || '—'}</p>
+                      {dealHref ? (
+                        <Link to={dealHref} className="block hover:underline" title="Mở Không gian chung của deal">
+                          <p className="font-semibold text-blue-700">{row.lead?.code || '—'}</p>
+                          <p className="line-clamp-2 text-slate-500">{row.lead?.title || row.project?.name || '—'}</p>
+                        </Link>
+                      ) : (
+                        <>
+                          <p className="font-semibold text-slate-800">{row.lead?.code || '—'}</p>
+                          <p className="line-clamp-2 text-slate-500">{row.lead?.title || row.project?.name || '—'}</p>
+                        </>
+                      )}
                     </td>
                     <td className="max-w-[300px] px-3 py-3">
-                      <Link to={assignmentPath(row)} className="font-semibold text-blue-700 hover:underline">{row.title || 'Nhiệm vụ'}</Link>
+                      {dealHref ? (
+                        <Link to={dealHref} className="font-semibold text-blue-700 hover:underline" title="Mở Không gian chung của deal">
+                          {row.title || 'Nhiệm vụ'}
+                        </Link>
+                      ) : (
+                        <span className="font-semibold text-slate-800">{row.title || 'Nhiệm vụ'}</span>
+                      )}
                       {row.description && <p className="mt-1 line-clamp-2 text-slate-500">{row.description}</p>}
                     </td>
                     <td className="px-3 py-3">{SOURCE_LABELS[row.task_source_type] || row.task_source_type}</td>
@@ -402,7 +420,8 @@ export default function SharedWorkspaceAssignmentsReportPage() {
                     <td className="px-3 py-3"><span className="rounded-full bg-slate-100 px-2 py-1 font-semibold">{STATUS_LABELS[row.status] || row.status}</span></td>
                     <td className="whitespace-nowrap px-3 py-3">{formatDate(row.deadline)}</td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>

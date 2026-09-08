@@ -2994,8 +2994,7 @@ export default function ProductionDashboard() {
         sx_kanban_deadline_at: null,
         sx_kanban_deadline_reason: null,
         production_deadline: null,
-        delivery_date: null,
-        deadline: null,
+        production_finish_date: null,
       } : deadlineIso ? {
         sx_kanban_deadline_at: deadlineIso,
         sx_kanban_deadline_reason: reason || null,
@@ -3234,14 +3233,18 @@ export default function ProductionDashboard() {
     setDeadlineBusy(true);
     try {
       if (ctx.mode === 'edit_only') {
-        await api.patch(`/production/projects/${ctx.projectId}/kanban-deadline`, {
+        const { data } = await api.patch(`/production/projects/${ctx.projectId}/kanban-deadline`, {
           sx_kanban_deadline_at: deadlineIso,
           reason: reason || '',
         });
         const pid = String(ctx.projectId);
         const patch = {
-          sx_kanban_deadline_at: deadlineIso,
-          sx_kanban_deadline_reason: reason || null,
+          sx_kanban_deadline_at: data?.sx_kanban_deadline_at ?? deadlineIso,
+          sx_kanban_deadline_reason: data?.sx_kanban_deadline_reason ?? reason ?? null,
+          effective_deadline_module: data?.effective_deadline_module,
+          effective_deadline_at: data?.effective_deadline_at,
+          effective_deadline_source: data?.effective_deadline_source,
+          deadline_state: data?.deadline_state,
         };
         setProjects((prev) => prev.map((p) => (String(p.id) === pid ? { ...p, ...patch } : p)));
         setDeadlineCtx(null);

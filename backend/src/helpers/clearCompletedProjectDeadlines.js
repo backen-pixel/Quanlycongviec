@@ -6,9 +6,12 @@
 const { supabase } = require('../config/supabase');
 const {
   completeOpenWorkOnModuleDone,
+  clearAllProjectDeadlinesOnInstallationDone,
   isCrmCompletedStage,
   isLogisticsCompletedColumn,
 } = require('./completeOpenWorkOnModuleDone');
+const { isSxDeliveredStage } = require('./crmPipelineSla');
+const { projectDeadlinePatchOnModuleDone } = require('./moduleDeadlinePolicy');
 
 const PAGE = 800;
 const IN_CHUNK = 120;
@@ -38,23 +41,15 @@ async function fetchAllRows(table, select, apply) {
 
 /**
  * Kéo vào cột SX «Hoàn thành» / Đã công / Đã thu:
- * xóa deadline SX + hoàn thành NV SX còn mở + hủy lịch hẹn SX.
+ * chỉ xóa deadline SX + hoàn thành NV SX còn mở + hủy lịch hẹn SX.
+ * Không đụng deadline CRM, VC/LĐ và các ngày giao/lắp lịch sử.
  */
 async function clearSxSchedulesOnCompletedForProjects(projectIds, { completeWork = true } = {}) {
   const ids = uniqIds(projectIds);
   if (!ids.length) return { projects: 0 };
   const nowIso = new Date().toISOString();
 
-  const projectPatch = {
-    sx_kanban_deadline_at: null,
-    sx_kanban_deadline_reason: null,
-    production_deadline: null,
-    design_deadline: null,
-    delivery_date: null,
-    production_finish_date: null,
-    deadline: null,
-    updated_at: nowIso,
-  };
+  const projectPatch = projectDeadlinePatchOnModuleDone('production', nowIso);
 
   for (const part of chunk(ids)) {
     let { error: projErr } = await supabase.from('projects').update(projectPatch).in('id', part);
@@ -66,11 +61,9 @@ async function clearSxSchedulesOnCompletedForProjects(projectIds, { completeWork
         delete fallback.sx_kanban_deadline_reason;
       }
       if (/production_deadline/.test(m)) delete fallback.production_deadline;
-      if (/design_deadline/.test(m)) delete fallback.design_deadline;
-      if (/delivery_date/.test(m)) delete fallback.delivery_date;
       if (/production_finish_date/.test(m)) delete fallback.production_finish_date;
       ({ error: projErr } = await supabase.from('projects').update(fallback).in('id', part));
-      if (projErr && !/sx_kanban_deadline|production_deadline|design_deadline|delivery_date|production_finish_date|deadline/.test(String(projErr.message || ''))) {
+      if (projErr && !/sx_kanban_deadline|production_deadline|production_finish_date/.test(String(projErr.message || ''))) {
         throw projErr;
       }
     }
@@ -89,18 +82,6 @@ async function clearSxSchedulesOnCompletedForProjects(projectIds, { completeWork
   const leadIds = uniqIds(deals.map((d) => d.id));
 
   if (leadIds.length) {
-    for (const part of chunk(leadIds)) {
-      const { error: dealDlErr } = await supabase
-        .from('crm_leads')
-        .update({
-          kanban_deadline_at: null,
-          kanban_deadline_reason: null,
-          updated_at: nowIso,
-        })
-        .in('id', part);
-      if (dealDlErr && !/kanban_deadline/.test(dealDlErr.message || '')) throw dealDlErr;
-    }
-
     for (const part of chunk(leadIds)) {
       const { error: crmTaskErr } = await supabase
         .from('crm_tasks')
@@ -146,17 +127,6 @@ async function clearSxSchedulesOnCompletedForProjects(projectIds, { completeWork
     }
   }
 
-  for (const part of chunk(ids)) {
-    const { error: taskErr } = await supabase
-      .from('tasks')
-      .update({ due_date: null, updated_at: nowIso })
-      .in('project_id', part)
-      .not('due_date', 'is', null);
-    if (taskErr && !/due_date/.test(String(taskErr.message || ''))) {
-      console.warn('[clearCompletedDeadlines] clear workshop due_date:', taskErr.message);
-    }
-  }
-
   if (completeWork) {
     try {
       await completeOpenWorkOnModuleDone({
@@ -179,6 +149,20 @@ async function loadSxDoneColumnIds() {
   );
   return uniqIds(rows
     .filter((c) => c.counts_as_completed_revenue || c.counts_as_collected_revenue)
+    .map((c) => c.id));
+}
+
+async function loadSxDeadlineClearColumnIds() {
+  const rows = await fetchAllRows(
+    'production_pipeline_stages',
+    'id, name, bucket_slug, counts_as_completed_revenue, counts_as_collected_revenue',
+  );
+  return uniqIds(rows
+    .filter((c) => (
+      c.counts_as_completed_revenue
+      || c.counts_as_collected_revenue
+      || isSxDeliveredStage(c)
+    ))
     .map((c) => c.id));
 }
 
@@ -209,8 +193,9 @@ async function collectIdsByColumn(table, selectCol, column, colIds) {
   return uniqIds(ids);
 }
 
-async function findCompletedSxProjectIds() {
-  const colIds = await loadSxDoneColumnIds();
+/** Dự án ở cột Đã giao/Đã công/Đã thu phải không còn nguồn quá hạn SX. */
+async function findSxDeadlineClearProjectIds() {
+  const colIds = await loadSxDeadlineClearColumnIds();
   const fromStatus = await fetchAllRows('projects', 'id', (q) => q.eq('status', 'completed'));
   if (!colIds.length) return uniqIds(fromStatus.map((p) => p.id));
 
@@ -300,21 +285,35 @@ async function clearVcCompletedProjectDeadlines(projectIds) {
  * Quét lại mọi dự án / deal đang ở cột hoàn thành và tắt deadline còn sót.
  */
 async function rescanCompletedAndClearDeadlines() {
-  const sxIds = await findCompletedSxProjectIds();
+  const sxIds = await findSxDeadlineClearProjectIds();
   const crmLeadIds = await findCompletedCrmLeadIds();
   const vcIds = await findCompletedVcProjectIds();
+  const completedStatusRows = await fetchAllRows(
+    'projects',
+    'id',
+    (q) => q.eq('status', 'completed'),
+  );
+  const fullyCompletedProjectIds = uniqIds([
+    ...vcIds,
+    ...completedStatusRows.map((p) => p.id),
+  ]);
 
   const sx = await clearSxSchedulesOnCompletedForProjects(sxIds, { completeWork: false });
   const crm = await clearCrmCompletedLeadDeadlines(crmLeadIds);
   const vc = await clearVcCompletedProjectDeadlines(vcIds);
+  const allModules = await clearAllProjectDeadlinesOnInstallationDone({
+    projectIds: fullyCompletedProjectIds,
+  });
 
   const summary = {
     sx_projects: sxIds.length,
     crm_leads: crmLeadIds.length,
     vc_projects: vcIds.length,
+    fully_completed_projects: fullyCompletedProjectIds.length,
     sx,
     crm,
     vc,
+    all_modules: allModules,
   };
   console.info('[clearCompletedDeadlines] rescan', summary);
   return summary;

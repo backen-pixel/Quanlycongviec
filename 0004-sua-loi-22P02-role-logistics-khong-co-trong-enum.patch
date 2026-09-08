@@ -1,0 +1,221 @@
+diff --git a/backend/package.json b/backend/package.json
+index 64bb5271..2e0bcf7f 100644
+--- a/backend/package.json
++++ b/backend/package.json
+@@ -38,6 +38,7 @@
+     "test:crm-transfer": "node tests/crm-lead-company-transfer.js",
+     "test:mcp-audit": "node tests/mcp-audit-reason-codes.js",
+     "test:perf-retention": "node tests/perf-retention-and-chunking.js",
++    "test:role-enum": "node tests/role-enum-guard.js",
+     "crm:route-inventory": "node scripts/crm-route-inventory.js --write",
+     "cron:crm-missing-tasks": "node scripts/run-crm-missing-tasks-cron.js"
+   },
+diff --git a/backend/src/helpers/vcLogisticsNotify.js b/backend/src/helpers/vcLogisticsNotify.js
+index 00136f4d..91af749f 100644
+--- a/backend/src/helpers/vcLogisticsNotify.js
++++ b/backend/src/helpers/vcLogisticsNotify.js
+@@ -10,7 +10,8 @@ const {
+   resolveLogisticsHandoverInstallerUserId,
+ } = require('./logisticsHandoverSettings');
+ 
+-const VC_ROLE_BLAST = ['logistics_admin', 'logistics', 'installer', 'manager'];
++// 'logistics' KHONG ton tai trong enum user_role -> lam ca cau query hong (22P02).
++const VC_ROLE_BLAST = ['logistics_admin', 'installer', 'manager'];
+ 
+ async function getTeamMemberIds(teamId) {
+   if (!teamId) return [];
+@@ -121,12 +122,13 @@ async function collectVcProjectNotifyRecipientIds({
+     }
+ 
+     try {
+-      const { data: roleUsers } = await supabase
++      const { data: roleUsers, error: roleUsersErr } = await supabase
+         .from('users')
+         .select('id')
+         .in('role', VC_ROLE_BLAST)
+         .eq('is_active', true)
+         .eq('company_id', resolvedCompanyId);
++      if (roleUsersErr) console.warn('[vc-logistics-notify] role users:', roleUsersErr.message);
+       for (const u of roleUsers || []) {
+         if (u?.id) ids.add(String(u.id));
+       }
+diff --git a/backend/src/routes/workshopTeams.js b/backend/src/routes/workshopTeams.js
+index d604d8aa..0f73f02e 100644
+--- a/backend/src/routes/workshopTeams.js
++++ b/backend/src/routes/workshopTeams.js
+@@ -389,12 +389,17 @@ r.patch('/projects/:projectId/assign', async (req, res) => {
+ // ─── GET /workshop-teams/users — danh sách user có thể gán ───────────────────
+ r.get('/users', requirePermission('projects', 'view'), async (req, res) => {
+   try {
+-    const { data } = await supabase
++    // Moi gia tri phai co trong enum user_role, neu khong ca cau query hong (22P02).
++    const { data, error } = await supabase
+       .from('users')
+       .select('id, full_name, email, role, avatar')
+-      .in('role', ['logistics_admin', 'logistics', 'installer', 'driver', 'production', 'manager', 'admin', 'sales_admin'])
++      .in('role', ['logistics_admin', 'installer', 'driver', 'production', 'manager', 'admin', 'sales_admin'])
+       .eq('is_active', true)
+       .order('full_name');
++    if (error) {
++      console.error('[workshop-teams/users]', error.message);
++      return res.status(500).json({ error: error.message });
++    }
+     res.json(data || []);
+   } catch (e) {
+     res.status(500).json({ error: e.message });
+diff --git a/backend/src/test-permissions.js b/backend/src/test-permissions.js
+index 2cb64964..1bd07017 100644
+--- a/backend/src/test-permissions.js
++++ b/backend/src/test-permissions.js
+@@ -163,7 +163,7 @@ async function testHasPermissionRole() {
+     const { data: employeeUser } = await supabase
+       .from('users')
+       .select('id, role')
+-      .eq('role', 'employee')
++      .eq('role', 'staff')  // 'employee' co trong bang roles nhung KHONG co trong enum user_role -> 22P02
+       .limit(1)
+       .single();
+     
+@@ -200,7 +200,7 @@ async function testPermissionOverride() {
+     const { data: user } = await supabase
+       .from('users')
+       .select('id, role')
+-      .eq('role', 'employee')
++      .eq('role', 'staff')  // 'employee' co trong bang roles nhung KHONG co trong enum user_role -> 22P02
+       .limit(1)
+       .single();
+     
+diff --git a/backend/tests/role-enum-guard.js b/backend/tests/role-enum-guard.js
+new file mode 100755
+index 00000000..34f80b43
+--- /dev/null
++++ b/backend/tests/role-enum-guard.js
+@@ -0,0 +1,128 @@
++/**
++ * ============================================================================
++ * CHOT: moi gia tri role ghi trong code phai ton tai trong enum user_role
++ * ============================================================================
++ *
++ * Vi sao can test nay?
++ *   users.role la kieu enum user_role. PostgREST dich .in('role', [...]) thanh
++ *       WHERE role = ANY ($1)
++ *   Neu MOT phan tu trong mang khong co trong enum, Postgres bao 22P02
++ *   "invalid input value for enum user_role" va HUY CA CAU QUERY.
++ *   Code goi kieu `const { data } = await supabase...` se nhan data = undefined,
++ *   tra ve [] va tinh nang chet IM LANG - khong ai biet.
++ *
++ *   Da xay ra that (08/09/2026): 'logistics' bi nham la role trong
++ *     - routes/workshopTeams.js  -> GET /workshop-teams/users luon tra ve []
++ *     - helpers/vcLogisticsNotify.js -> blast VC/LD mat het nguoi nhan theo role
++ *   'logistics' la MODULE KEY (crm | production | logistics | projects...),
++ *   khong phai role. Role tuong ung la 'logistics_admin'.
++ *
++ * Cap nhat danh sach enum khi them role moi:
++ *   SELECT string_agg(quote_literal(v), ', ' ORDER BY v)
++ *   FROM unnest(enum_range(NULL::user_role)::text[]) v;
++ *
++ * Chay:  npm run test:role-enum
++ */
++
++const fs = require('fs');
++const path = require('path');
++
++// Chup tu DB prod kdxypztstbeovyedmvem ngay 08/09/2026.
++const USER_ROLE_ENUM = new Set([
++  'accounting', 'admin', 'administrator',
++  'crm_production_admin', 'crm_production_staff', 'customer_care',
++  'designer', 'director', 'driver', 'installer', 'logistics_admin',
++  'manager', 'platform_admin', 'production', 'production_admin',
++  'production_staff', 'region_admin', 'sales', 'sales_admin',
++  'staff', 'super_admin', 'superadmin', 'supervisor',
++]);
++
++const SRC = path.join(__dirname, '..', 'src');
++
++function walk(dir, out = []) {
++  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
++    const p = path.join(dir, e.name);
++    if (e.isDirectory()) walk(p, out);
++    else if (e.isFile() && p.endsWith('.js')) out.push(p);
++  }
++  return out;
++}
++
++/** Tach cac chuoi 'abc' / "abc" trong mot doan text. */
++function literals(chunk) {
++  const out = [];
++  const re = /['"]([^'"\n]*)['"]/g;
++  let m;
++  while ((m = re.exec(chunk))) out.push(m[1]);
++  return out;
++}
++
++/** Tim `const TEN = [ ... ]` hoac `const TEN = new Set([ ... ])` trong 1 file. */
++function resolveConst(src, name) {
++  const re = new RegExp(
++    'const\\s+' + name + '\\s*=\\s*(?:new\\s+Set\\s*\\()?\\[([^\\]]*)\\]',
++    'm'
++  );
++  const m = src.match(re);
++  return m ? literals(m[1]) : null;
++}
++
++const problems = [];
++const checked = [];
++
++for (const file of walk(SRC)) {
++  const src = fs.readFileSync(file, 'utf8');
++  const rel = path.relative(path.join(__dirname, '..'), file).replace(/\\/g, '/');
++
++  // A) .in('role', [ ... ])  — mang viet thang
++  for (const m of src.matchAll(/\.in\(\s*['"]role['"]\s*,\s*\[([^\]]*)\]/g)) {
++    checked.push({ rel, nguon: "in('role', [...])", vals: literals(m[1]) });
++  }
++
++  // B) .in('role', TEN_HANG)  — hang so trong cung file
++  for (const m of src.matchAll(/\.in\(\s*['"]role['"]\s*,\s*([A-Za-z_$][\w$]*)\s*\)/g)) {
++    const vals = resolveConst(src, m[1]);
++    if (vals) checked.push({ rel, nguon: `in('role', ${m[1]})`, vals });
++  }
++
++  // C) getCompanyScopedRoleUserIds(x, [ ... ])
++  for (const m of src.matchAll(/getCompanyScopedRoleUserIds\s*\([^,]*,\s*\[([^\]]*)\]/g)) {
++    checked.push({ rel, nguon: 'getCompanyScopedRoleUserIds([...])', vals: literals(m[1]) });
++  }
++
++  // D) getCompanyScopedRoleUserIds(x, TEN_HANG)
++  for (const m of src.matchAll(/getCompanyScopedRoleUserIds\s*\([^,]*,\s*([A-Za-z_$][\w$]*)\s*[,)]/g)) {
++    const vals = resolveConst(src, m[1]);
++    if (vals) checked.push({ rel, nguon: `getCompanyScopedRoleUserIds(${m[1]})`, vals });
++  }
++
++  // E) .from('users') ... .eq('role', 'literal')  — chi xet khi cung 1 chuoi goi
++  for (const m of src.matchAll(/from\(\s*['"]users['"]\s*\)[\s\S]{0,400}?\.eq\(\s*['"]role['"]\s*,\s*['"]([^'"]+)['"]\s*\)/g)) {
++    checked.push({ rel, nguon: "from('users').eq('role', '...')", vals: [m[1]] });
++  }
++}
++
++for (const c of checked) {
++  const xau = c.vals.filter((v) => v && !USER_ROLE_ENUM.has(v));
++  if (xau.length) problems.push({ ...c, xau });
++}
++
++console.log(`Da quet ${checked.length} cho loc theo users.role trong backend/src`);
++
++if (problems.length) {
++  console.error('\nTHAT BAI — co gia tri KHONG nam trong enum user_role:\n');
++  for (const p of problems) {
++    console.error(`  ${p.rel}`);
++    console.error(`    ${p.nguon}`);
++    console.error(`    gia tri sai: ${p.xau.map((v) => `'${v}'`).join(', ')}`);
++    console.error('    -> Postgres tra 22P02 va HUY CA CAU QUERY, tinh nang chet im lang.\n');
++  }
++  process.exit(1);
++}
++
++if (!checked.length) {
++  console.error('THAT BAI — khong quet duoc cho nao, regex co the da hong.');
++  process.exit(1);
++}
++
++console.log('DAT — moi gia tri role trong code deu ton tai trong enum user_role.');

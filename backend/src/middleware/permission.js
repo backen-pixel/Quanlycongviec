@@ -14,18 +14,33 @@ const { getUserAccessibleUnits, canManageUnit } = require('../routes/ecosystem')
 // ─────────────────────────────────────────────────────────────
 async function getRolePermissions(role) {
   try {
+    // Bảng role_permissions là bảng nối khoá ngoại: (role_id, permission_id).
+    // Nó KHÔNG có cột `permission`, `role` hay `is_allowed` — truy vấn cũ trả
+    // 42703 nên hàm này luôn trả [] và toàn bộ RBAC đọc ra rỗng.
+    // Chuỗi quyền có dạng `resource.action`, khớp đúng định dạng đang dùng ở
+    // user_permission_overrides.permission (đã đối chiếu dữ liệu thật:
+    // admin 193 quyền, manager 20, employee 9).
+    const { data: roleRow, error: roleErr } = await supabase
+      .from('roles').select('id').eq('name', role).maybeSingle();
+    if (roleErr) {
+      console.error('Error resolving role:', roleErr);
+      return [];
+    }
+    if (!roleRow) return [];
+
     const { data, error } = await supabase
       .from('role_permissions')
-      .select('permission')
-      .eq('role', role)
-      .eq('is_allowed', true);
-    
+      .select('permissions(resource, action)')
+      .eq('role_id', roleRow.id);
+
     if (error) {
       console.error('Error fetching role permissions:', error);
       return [];
     }
-    
-    return (data || []).map(r => r.permission);
+
+    return (data || [])
+      .map((r) => (r.permissions ? `${r.permissions.resource}.${r.permissions.action}` : null))
+      .filter(Boolean);
   } catch (e) {
     console.error('Exception in getRolePermissions:', e);
     return [];

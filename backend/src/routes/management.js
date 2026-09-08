@@ -24,9 +24,15 @@ const {
   applyProjectScopeFilter,
   TENANT_EMPTY_COMPANY_SENTINEL,
 } = require('../helpers/tenantScope');
-const { applyOpenOnlyFilter } = require('../helpers/unifiedTasksQuery');
+const { applyOpenOnlyFilter, applyPrimaryLeadOnly } = require('../helpers/unifiedTasksQuery');
+const { warnQ } = require('../helpers/queryErrorLog');
+const {
+  resolveWorkRegionScope,
+  countOverdueTasksForRegion,
+} = require('../helpers/workRegionFilter');
 const { responseCache } = require('../middleware/responseCache');
 const { PROJECTS_LIST_TAG } = require('../middleware/projectsCacheInvalidation');
+const { MODULE, resolveModuleDeadline } = require('../helpers/moduleDeadlinePolicy');
 
 const r = Router();
 r.use(auth);
@@ -332,28 +338,26 @@ async function loadWonStageIds(scope) {
 async function loadDealPipelineMetrics(scope, dateFrom, dateTo, assigneeId) {
   let q = supabase
     .from('crm_leads')
-    .select('budget, estimated_value, deadline, stage_id, stage:crm_pipeline_stages!crm_leads_stage_id_fkey(is_won, is_lost)')
+    // crm_leads không có `budget` lẫn `deadline` — chỉ có estimated_value.
+    .select('estimated_value, stage_id, stage:crm_pipeline_stages!crm_leads_stage_id_fkey(is_won, is_lost)')
     .eq('type', 'deal');
   q = applyCompanyScopeFilter(q, scope);
   if (dateFrom) q = q.gte('created_at', dateFrom);
   if (dateTo) q = q.lte('created_at', dateTo);
   if (assigneeId) q = q.or(`assigned_to.eq.${assigneeId},lead_owner_id.eq.${assigneeId}`);
-  const { data } = await q;
+  const { data } = warnQ('management:deal-pipeline')(await q);
   const now = Date.now();
   let pipelineValue = 0;
   let crmOverdue = 0;
   for (const row of data || []) {
     if (row.stage?.is_won || row.stage?.is_lost) continue;
-    pipelineValue += Number(row.budget || row.estimated_value || 0);
-    if (row.deadline && new Date(row.deadline).getTime() < now) crmOverdue += 1;
+    pipelineValue += Number(row.estimated_value || 0);
   }
   return { pipeline_value: pipelineValue, crm_overdue: crmOverdue };
 }
 
-function isProjectOverdue(project) {
-  if (!project?.deadline) return false;
-  if (project.status === 'completed') return false;
-  return new Date(project.deadline).getTime() < Date.now();
+function isProjectOverdue(project, moduleKey = MODULE.PRODUCTION, stage = null) {
+  return resolveModuleDeadline(moduleKey, project, { stage }).state === 'overdue';
 }
 
 function applyDealRowFilters(rows, { phase, focus, sxStageId, sxStageIds, vcStageId, vcStageIds, installStageIds }) {
@@ -383,9 +387,11 @@ function applyDealRowFilters(rows, { phase, focus, sxStageId, sxStageIds, vcStag
   } else if (focus === 'sx_intake') {
     out = out.filter((d) => d.project_id && !d.project?.sx_kanban_column_id);
   } else if (focus === 'sx_overdue') {
-    out = out.filter((d) => d.project_id && isProjectOverdue(d.project));
+    out = out.filter((d) => d.project_id
+      && isProjectOverdue(d.project, MODULE.PRODUCTION, d.project?.sx_stage));
   } else if (focus === 'vc_overdue') {
-    out = out.filter((d) => d.project?.vc_kanban_column_id && isProjectOverdue(d.project));
+    out = out.filter((d) => d.project?.vc_kanban_column_id
+      && isProjectOverdue(d.project, MODULE.LOGISTICS, d.project?.vc_stage));
   }
   if (sxStageId === '__intake__') {
     out = out.filter((d) => d.project_id && !d.project?.sx_kanban_column_id);
@@ -434,7 +440,10 @@ async function enrichRowsWithWorkshopStages(rows) {
   const sxMap = {};
   const vcMap = {};
   if (sxIds.length) {
-    const { data } = await supabase.from('production_pipeline_stages').select('id, name, color').in('id', sxIds);
+    const { data } = await supabase
+      .from('production_pipeline_stages')
+      .select('id, name, color, bucket_slug, sla_days, counts_as_completed_revenue, counts_as_collected_revenue')
+      .in('id', sxIds);
     for (const s of data || []) sxMap[String(s.id)] = s;
   }
   if (vcIds.length) {
@@ -480,15 +489,19 @@ async function attachTaskAndDocCounts(rows) {
     ...d,
     task_stats: taskCounts[String(d.id)] || { crm_total: 0, crm_done: 0 },
     document_count: docCounts[String(d.id)] || 0,
-    value: d.budget || d.estimated_value || d.project?.estimated_value || 0,
+    // Bỏ `d.budget`: crm_leads không có cột này, luôn undefined.
+    value: d.estimated_value || d.project?.estimated_value || 0,
   }));
 }
 
 async function loadWorkshopStages(table, scope) {
   const companyIds = getScopeCompanyIds(scope);
+  const deadlineFields = table === 'production_pipeline_stages'
+    ? ', sla_days, counts_as_completed_revenue, counts_as_collected_revenue'
+    : '';
   let stagesQuery = supabase
     .from(table)
-    .select('id, name, color, icon, order_index, bucket_slug, company_id')
+    .select(`id, name, color, icon, order_index, bucket_slug, company_id${deadlineFields}`)
     .eq('is_active', true)
     .order('order_index');
   if (companyIds?.length === 1) {
@@ -531,27 +544,45 @@ async function loadSxPipelineSummary(scope) {
   if (!wonIds.length) return { kpis: { active: 0, intake: 0, overdue: 0 }, pipeline: [] };
 
   if (scope?.ok && (scope.companyIds?.length || scope.companyId === TENANT_EMPTY_COMPANY_SENTINEL)) {
-    let pq = supabase.from('projects').select('id').in('id', wonIds);
-    pq = applyCompanyScopeFilter(pq, scope);
-    const { data: filtered } = await pq;
+    // wonIds đo được 713 (mọi deal có project_id) + 525 (crm_deal_projects) → vượt xa
+    // mốc gãy URL 556–643 id. fetchAllByIds tự chia lô. CỐ Ý không truyền companyId vào
+    // getWonDealProjectIds: sẽ thu hẹp ý nghĩa «won» khi chưa đo intake xưởng HCB.
+    const filtered = await fetchAllByIds({
+      table: 'projects',
+      columns: 'id',
+      key: 'id',
+      ids: wonIds,
+      tune: (q) => applyCompanyScopeFilter(q, scope),
+    });
     wonIds = (filtered || []).map((p) => p.id);
     if (!wonIds.length) return { kpis: { active: 0, intake: 0, overdue: 0 }, pipeline: [] };
   }
 
-  let q = supabase
-    .from('projects')
-    .select('id, sx_kanban_column_id, deadline, status, company_id')
-    .in('id', wonIds);
-  q = applyCompanyScopeFilter(q, scope);
-  const { data: projects } = await q;
+  const projects = await fetchAllByIds({
+    table: 'projects',
+    columns: `
+      id, sx_kanban_column_id, sx_kanban_deadline_at, production_finish_date,
+      production_deadline, delivery_date, deadline, status, company_id,
+      logistics_company_id, vc_kanban_column_id
+    `,
+    key: 'id',
+    ids: wonIds,
+    tune: (q) => applyCompanyScopeFilter(q, scope),
+  });
 
   const stages = await loadWorkshopStages('production_pipeline_stages', scope);
 
   const now = Date.now();
+  const stageById = new Map(stages.flatMap((s) => (
+    (s.stage_ids || [s.id]).map((id) => [String(id), s])
+  )));
   let overdue = 0;
   let intake = 0;
   for (const p of projects || []) {
-    if (p.deadline && new Date(p.deadline).getTime() < now && p.status !== 'completed') overdue += 1;
+    if (resolveModuleDeadline(MODULE.PRODUCTION, p, {
+      nowMs: now,
+      stage: stageById.get(String(p.sx_kanban_column_id || '')),
+    }).state === 'overdue') overdue += 1;
     if (!p.sx_kanban_column_id) intake += 1;
   }
 
@@ -569,7 +600,10 @@ async function loadSxPipelineSummary(scope) {
 async function loadVcInstallPipelines(scope) {
   let q = supabase
     .from('projects')
-    .select('id, vc_kanban_column_id, deadline, status, company_id, logistics_company_id')
+    .select(`
+      id, vc_kanban_column_id, deadline, install_date, delivery_date,
+      status, company_id, logistics_company_id
+    `)
     .not('vc_kanban_column_id', 'is', null);
   q = applyProjectScopeFilter(q, scope);
   let { data: projects, error } = await q;
@@ -587,12 +621,18 @@ async function loadVcInstallPipelines(scope) {
 
   const installProjects = [];
   const vcProjects = [];
+  const stageById = new Map(stages.flatMap((s) => (
+    (s.stage_ids || [s.id]).map((id) => [String(id), s])
+  )));
   const now = Date.now();
   let vcOverdue = 0;
   let installOverdue = 0;
   for (const p of projects || []) {
     const col = p.vc_kanban_column_id ? String(p.vc_kanban_column_id) : '';
-    const overdue = p.deadline && new Date(p.deadline).getTime() < now && p.status !== 'completed';
+    const overdue = resolveModuleDeadline(MODULE.LOGISTICS, p, {
+      nowMs: now,
+      stage: stageById.get(col),
+    }).state === 'overdue';
     if (col && installIds.has(col)) {
       installProjects.push(p);
       if (overdue) installOverdue += 1;
@@ -634,14 +674,17 @@ r.get('/overview', async (req, res) => {
     const vc = vcInstall.vc;
     const install = vcInstall.install;
 
+    // applyPrimaryLeadOnly: khử dòng nhân do dự án có nhiều deal (migration 594).
     let taskQ = supabase.from('unified_tasks_v').select('unified_id', { count: 'exact', head: true })
       .neq('status', 'completed').neq('status', 'done');
+    taskQ = applyPrimaryLeadOnly(taskQ, false);
     taskQ = applyCompanyScopeFilter(taskQ, scope);
     const { count: openTasks } = await taskQ;
 
     let overdueQ = supabase.from('unified_tasks_v').select('unified_id', { count: 'exact', head: true })
       .lt('deadline', new Date().toISOString())
       .neq('status', 'completed').neq('status', 'done');
+    overdueQ = applyPrimaryLeadOnly(overdueQ, false);
     overdueQ = applyCompanyScopeFilter(overdueQ, scope);
     const { count: overdueTasks } = await overdueQ;
 
@@ -711,23 +754,63 @@ r.get('/work-overview', async (req, res) => {
     const now = new Date();
     const firstDayThisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const sixMonthsAgoStart = new Date(now.getFullYear(), now.getMonth() - 5, 1);
+    const dateFrom = String(req.query.date_from || '').trim().slice(0, 10);
+    const dateTo = String(req.query.date_to || '').trim().slice(0, 10);
+    const hasDateRange = !!(dateFrom || dateTo);
+    const pad2 = (n) => String(n).padStart(2, '0');
+    const ymdLocal = (raw) => {
+      if (!raw) return '';
+      const d = new Date(raw);
+      if (Number.isNaN(d.getTime())) return String(raw).slice(0, 10);
+      return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+    };
+    const ymdInRange = (ymd, from, to) => {
+      if (!ymd) return false;
+      if (from && ymd < from) return false;
+      if (to && ymd > to) return false;
+      return true;
+    };
+    const commitmentYmd = (p) => ymdLocal(p.install_date || p.delivery_date || p.production_deadline || p.deadline || '');
+
+    const regionScope = await resolveWorkRegionScope(req.query.region_id, scope);
+    const regionProjectIds = regionScope && !regionScope.none ? regionScope.projectIds : null;
+    const regionEmptyProjects = Array.isArray(regionProjectIds) && regionProjectIds.length === 0;
+
+    const applyRegionProjectIn = (q) => {
+      if (regionEmptyProjects) return q.eq('id', '00000000-0000-0000-0000-000000000000');
+      if (regionProjectIds) return q.in('id', regionProjectIds.slice(0, 500));
+      return q;
+    };
 
     let activeQ = supabase.from('projects').select('*', { count: 'exact', head: true })
       .in('status', WORK_OVERVIEW_ACTIVE_STATUSES);
     activeQ = applyProjectScopeFilter(activeQ, scope);
+    activeQ = applyRegionProjectIn(activeQ);
 
-    let trendQ = supabase.from('projects').select('estimated_value, created_at')
+    let trendQ = supabase.from('projects').select('id, estimated_value, created_at')
       .gte('created_at', sixMonthsAgoStart.toISOString());
     trendQ = applyProjectScopeFilter(trendQ, scope);
+    trendQ = applyRegionProjectIn(trendQ);
 
+    const customersFrom = dateFrom
+      ? `${dateFrom}T00:00:00+07:00`
+      : firstDayThisMonth.toISOString();
     let newCustomersQ = supabase.from('crm_leads').select('*', { count: 'exact', head: true })
-      .eq('type', 'lead').gte('created_at', firstDayThisMonth.toISOString());
+      .eq('type', 'lead').gte('created_at', customersFrom);
+    if (dateTo) newCustomersQ = newCustomersQ.lte('created_at', `${dateTo}T23:59:59+07:00`);
     newCustomersQ = applyCompanyScopeFilter(newCustomersQ, scope);
+    if (regionScope?.none) newCustomersQ = newCustomersQ.is('region_id', null);
+    else if (regionScope?.regionId) newCustomersQ = newCustomersQ.eq('region_id', regionScope.regionId);
 
+    const dateFromIso = dateFrom ? `${dateFrom}T00:00:00+07:00` : '';
+    const dateToIso = dateTo ? `${dateTo}T23:59:59+07:00` : '';
     let overdueTasksQ = supabase.from('unified_tasks_v').select('unified_id', { count: 'exact', head: true })
       .lt('deadline', now.toISOString()).not('deadline', 'is', null);
+    overdueTasksQ = applyPrimaryLeadOnly(overdueTasksQ, false);
     overdueTasksQ = applyOpenOnlyFilter(overdueTasksQ);
     overdueTasksQ = applyCompanyScopeFilter(overdueTasksQ, scope);
+    if (dateFromIso) overdueTasksQ = overdueTasksQ.gte('deadline', dateFromIso);
+    if (dateToIso) overdueTasksQ = overdueTasksQ.lte('deadline', dateToIso);
 
     const todayYmd = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' });
     const plus3 = (() => {
@@ -747,9 +830,17 @@ r.get('/work-overview', async (req, res) => {
       .in('status', WORK_OVERVIEW_ACTIVE_STATUSES)
       .or(`deadline.lte.${plus3},production_deadline.lte.${plus3},delivery_date.lte.${plus3},install_date.lte.${plus3}`);
     atRiskQ = applyProjectScopeFilter(atRiskQ, scope);
+    atRiskQ = applyRegionProjectIn(atRiskQ);
 
-    const [activeRes, trendRes, newCustomersRes, overdueTasksRes, atRiskRes] = await Promise.all([
-      activeQ, trendQ, newCustomersQ, overdueTasksQ, atRiskQ,
+    const overdueRegionCountP = regionScope && !regionScope.none
+      ? countOverdueTasksForRegion(regionScope, {
+        scope, nowIso: now.toISOString(), applyOpenOnlyFilter,
+        dateFromIso, dateToIso,
+      })
+      : Promise.resolve(null);
+
+    const [activeRes, trendRes, newCustomersRes, overdueTasksRes, atRiskRes, overdueRegionCount] = await Promise.all([
+      activeQ, trendQ, newCustomersQ, overdueTasksQ, atRiskQ, overdueRegionCountP,
     ]);
     if (atRiskRes.error) console.warn('[work-overview] at-risk:', atRiskRes.error.message);
 
@@ -766,7 +857,11 @@ r.get('/work-overview', async (req, res) => {
         count: 0,
       });
     }
-    for (const p of (trendRes.data || [])) {
+    const trendRows = (trendRes.data || []).filter((p) => {
+      if (!regionScope?.none) return true;
+      return !regionScope.projectIdSet.has(String(p.id));
+    });
+    for (const p of trendRows) {
       const d = new Date(p.created_at);
       const key = `${d.getFullYear()}-${d.getMonth()}`;
       const bucket = trendBuckets.find((b) => b.key === key);
@@ -779,6 +874,11 @@ r.get('/work-overview', async (req, res) => {
 
     // Dự án cần chú ý — quá hạn (late) hoặc hạn trong 3 ngày (at_risk), cùng ngưỡng Work Unified.
     const projectsAtRisk = (atRiskRes.data || [])
+      .filter((p) => {
+        if (regionScope?.none && regionScope.projectIdSet.has(String(p.id))) return false;
+        if (hasDateRange && !ymdInRange(commitmentYmd(p), dateFrom, dateTo)) return false;
+        return true;
+      })
       .map((p) => {
         const commitmentDate = p.install_date || p.delivery_date || p.production_deadline || p.deadline || null;
         const { forecast, days_remaining, delay_days } = classifyProjectForecast(commitmentDate);
@@ -801,12 +901,58 @@ r.get('/work-overview', async (req, res) => {
       })
       .slice(0, 50);
 
+    let projectsActive = activeRes.count || 0;
+    if (regionScope?.none || hasDateRange) {
+      const activeDated = await fetchAllPages(() => {
+        let q = supabase.from('projects')
+          .select('id, deadline, production_deadline, delivery_date, install_date')
+          .in('status', WORK_OVERVIEW_ACTIVE_STATUSES);
+        q = applyProjectScopeFilter(q, scope);
+        return applyRegionProjectIn(q);
+      });
+      projectsActive = (activeDated || []).filter((p) => {
+        if (regionScope?.none && regionScope.projectIdSet.has(String(p.id))) return false;
+        if (hasDateRange && !ymdInRange(commitmentYmd(p), dateFrom, dateTo)) return false;
+        return true;
+      }).length;
+    }
+
+    let revenuePeriod = trendBuckets[trendBuckets.length - 1].total;
+    if (hasDateRange) {
+      revenuePeriod = 0;
+      for (const p of trendRows) {
+        if (ymdInRange(ymdLocal(p.created_at), dateFrom, dateTo)) {
+          revenuePeriod += (p.estimated_value || 0);
+        }
+      }
+    }
+
+    let overdueTasks = overdueTasksRes.count || 0;
+    if (overdueRegionCount != null) overdueTasks = overdueRegionCount;
+    else if (regionScope?.none) {
+      const overdueRows = await fetchAllPages(() => {
+        let q = supabase.from('unified_tasks_v').select('unified_id, lead_id, project_id')
+          .lt('deadline', now.toISOString()).not('deadline', 'is', null);
+        q = applyOpenOnlyFilter(q);
+        if (dateFromIso) q = q.gte('deadline', dateFromIso);
+        if (dateToIso) q = q.lte('deadline', dateToIso);
+        return applyCompanyScopeFilter(q, scope);
+      });
+      overdueTasks = (overdueRows || []).filter((t) => {
+        const lid = t.lead_id != null ? String(t.lead_id) : '';
+        const pid = t.project_id != null ? String(t.project_id) : '';
+        const hit = (lid && regionScope.leadIdSet.has(lid))
+          || (pid && regionScope.projectIdSet.has(pid));
+        return !hit;
+      }).length;
+    }
+
     res.json({
       company_id: primaryCompanyIdFromScope(scope),
-      projects_active: activeRes.count || 0,
+      projects_active: projectsActive,
       new_customers_this_month: newCustomersRes.count || 0,
-      overdue_tasks: overdueTasksRes.count || 0,
-      revenue_this_month: trendBuckets[trendBuckets.length - 1].total,
+      overdue_tasks: overdueTasks,
+      revenue_this_month: revenuePeriod,
       revenue_trend: trendBuckets.map((b, idx) => ({
         label: b.label,
         year: b.year,
@@ -1590,14 +1736,44 @@ r.get('/production-overview', async (req, res) => {
     if (error) throw error;
 
     const projectCompanyIds = [...new Set((projects || []).map((p) => p.company_id).filter(Boolean))];
-    const stagesByCompany = await loadStagesByCompany('production_pipeline_stages', projectCompanyIds);
-
     const projectIds = (projects || []).map((p) => p.id);
     const openPrProjectIds = new Set();
-    if (projectIds.length) {
-      const { data: prs } = await supabase.from('purchase_requests')
-        .select('project_id, status').in('project_id', projectIds).in('status', ['draft', 'requested']);
-      (prs || []).forEach((r2) => { if (r2.project_id) openPrProjectIds.add(String(r2.project_id)); });
+    const [stagesByCompany, prsRes, productionTasks] = await Promise.all([
+      loadStagesByCompany('production_pipeline_stages', projectCompanyIds),
+      projectIds.length
+        ? supabase.from('purchase_requests')
+          .select('project_id, status').in('project_id', projectIds).in('status', ['draft', 'requested'])
+        : Promise.resolve({ data: [] }),
+      projectIds.length
+        ? fetchAllByIdsParallel({
+          table: 'unified_tasks_v',
+          columns: 'unified_id, source, source_id, project_id, title, status, priority, deadline, assignee_id, task_kind',
+          key: 'project_id',
+          ids: projectIds,
+          tune: (taskQ) => applyPrimaryLeadOnly(taskQ, false).in('task_kind', ['SX', 'Dự án']),
+        })
+        : Promise.resolve([]),
+    ]);
+    if (prsRes.error) throw prsRes.error;
+    (prsRes.data || []).forEach((r2) => { if (r2.project_id) openPrProjectIds.add(String(r2.project_id)); });
+
+    const taskAssigneeIds = [...new Set((productionTasks || []).map((t) => t.assignee_id).filter(Boolean))];
+    const { data: taskAssignees, error: taskAssigneesError } = taskAssigneeIds.length
+      ? await supabase.from('users').select('id, full_name').in('id', taskAssigneeIds)
+      : { data: [], error: null };
+    if (taskAssigneesError) throw taskAssigneesError;
+    const taskAssigneeNameById = new Map((taskAssignees || []).map((u) => [String(u.id), u.full_name]));
+    const productionTasksByProject = new Map();
+    const seenProductionTaskIds = new Set();
+    for (const task of productionTasks || []) {
+      if (!task?.project_id || !task?.unified_id || seenProductionTaskIds.has(String(task.unified_id))) continue;
+      seenProductionTaskIds.add(String(task.unified_id));
+      const pid = String(task.project_id);
+      if (!productionTasksByProject.has(pid)) productionTasksByProject.set(pid, []);
+      productionTasksByProject.get(pid).push({
+        ...task,
+        assignee_name: task.assignee_id ? (taskAssigneeNameById.get(String(task.assignee_id)) || null) : null,
+      });
     }
 
     const items = (projects || []).map((p) => {
@@ -1609,6 +1785,22 @@ r.get('/production-overview', async (req, res) => {
       const movedPastProduction = p.status !== 'producing';
       const waitingMaterial = openPrProjectIds.has(String(p.id));
       const overdue = !!(p.deadline && new Date(p.deadline) < now);
+      const projectTasks = productionTasksByProject.get(String(p.id)) || [];
+      const openTasks = projectTasks.filter((t) => !['done', 'completed', 'cancelled'].includes(String(t.status)));
+      const overdueTasks = openTasks.filter((t) => t.deadline && new Date(t.deadline) < now);
+      const taskItems = openTasks
+        .slice()
+        .sort((a, b) => {
+          const aOverdue = a.deadline && new Date(a.deadline) < now ? 0 : 1;
+          const bOverdue = b.deadline && new Date(b.deadline) < now ? 0 : 1;
+          if (aOverdue !== bOverdue) return aOverdue - bOverdue;
+          return new Date(a.deadline || '9999-12-31').getTime() - new Date(b.deadline || '9999-12-31').getTime();
+        })
+        .slice(0, 3)
+        .map((task) => ({
+          ...task,
+          effective_assignee_name: task.assignee_name || p.production_person?.full_name || null,
+        }));
 
       let bucket;
       if (movedPastProduction) bucket = 'done';
@@ -1625,6 +1817,12 @@ r.get('/production-overview', async (req, res) => {
         total_stages: totalStages,
         progress_pct: movedPastProduction ? 100 : progressPct,
         assignee_name: p.production_person?.full_name || null,
+        tasks: {
+          total: projectTasks.length,
+          open: openTasks.length,
+          overdue: overdueTasks.length,
+          items: taskItems,
+        },
         bucket,
         deadline: p.deadline,
         updated_at: p.updated_at,
@@ -1693,15 +1891,26 @@ r.get('/deals', async (req, res) => {
       : [];
     const installStageIds = collectStageIds(vcStagesAll.filter(isInstallStageMeta), () => true);
 
+    // crm_leads KHÔNG có `budget` lẫn `deadline`. Hai tên sai này làm Postgres trả
+    // 42703 và huỷ CẢ câu ⇒ GET /management/deals trả HTTP 500, tab tổng quan trống.
+    // `deadline:` là ALIAS PostgREST về cột thật `kanban_deadline_at` — MỘT nguồn,
+    // không COALESCE rải rác (DECISIONS AI-002). Khi route này được nối vào
+    // `crm_effective_deadline_at` của migration 596 thì thay alias bằng lời gọi policy.
     const listSelect = `
-          id, code, title, type, budget, estimated_value, created_at, updated_at, deadline,
+          id, code, title, type, estimated_value, created_at, updated_at,
+          deadline:kanban_deadline_at, expected_close_date,
           project_id, company_id, assigned_to, lead_owner_id,
           stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon, is_won, is_lost),
           customer:customers(id, full_name, phone),
           assignee:users!crm_leads_assigned_to_fkey(id, full_name, avatar),
           lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name, avatar),
           company:companies!crm_leads_company_id_fkey(id, name, short_name),
-          project:projects(id, code, name, status, deadline, estimated_value, sx_kanban_column_id, vc_kanban_column_id, install_address)
+          project:projects(
+            id, code, name, status, deadline, sx_kanban_deadline_at,
+            production_finish_date, production_deadline, delivery_date, install_date,
+            company_id, logistics_company_id, estimated_value,
+            sx_kanban_column_id, vc_kanban_column_id, install_address
+          )
         `;
 
     function applyStageIdFilter(query, singleId, multiIds) {
@@ -1734,7 +1943,10 @@ r.get('/deals', async (req, res) => {
         query = query.not('project_id', 'is', null);
       }
       if (focus === 'overdue_crm') {
-        query = query.lt('deadline', new Date().toISOString()).not('deadline', 'is', null);
+        // Lọc phải dùng TÊN CỘT THẬT (`kanban_deadline_at`), alias chỉ đổi tên lúc trả về.
+        query = query
+          .lt('kanban_deadline_at', new Date().toISOString())
+          .not('kanban_deadline_at', 'is', null);
         if (wonStageIds.length) query = query.not('stage_id', 'in', `(${wonStageIds.join(',')})`);
       }
       if (searchQ) {
@@ -1857,10 +2069,13 @@ r.get('/deals/:leadId', async (req, res) => {
         ? supabase.from('tasks').select('id, title, status, priority, due_date, assignee_id, task_type, metadata')
           .eq('project_id', projectId).order('order_index')
         : Promise.resolve({ data: [] }),
-      supabase.from('lead_documents').select('id, name, file_name, doc_type, created_at, shared_to_workshop, allowed_share_modules, file_path, file_url')
-        .eq('lead_id', leadId).order('created_at', { ascending: false }),
-      supabase.from('crm_activities').select('id, type, title, content, result, created_at, created_by')
-        .eq('lead_id', leadId).order('created_at', { ascending: false }).limit(30),
+      supabase.from('lead_documents').select('id, name, file_name, doc_type, created_at, shared_to_workshop, allowed_share_modules, file_url')
+        .eq('lead_id', leadId).order('created_at', { ascending: false })
+        .then(warnQ('management:lead_documents')),
+      // crm_activities: cột đúng là `description` và `outcome`
+      supabase.from('crm_activities').select('id, type, title, description, outcome, created_at, created_by')
+        .eq('lead_id', leadId).order('created_at', { ascending: false }).limit(30)
+        .then(warnQ('management:crm_activities')),
       projectId
         ? supabase.from('unified_tasks_v').select('unified_id, source, task_kind, title, status, deadline, assignee_id')
           .eq('project_id', projectId).order('updated_at', { ascending: false }).limit(100)

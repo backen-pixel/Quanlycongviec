@@ -9,6 +9,7 @@
  */
 
 const { supabase } = require('../config/supabase');
+const { MODULE, resolveModuleDeadline } = require('./moduleDeadlinePolicy');
 
 async function hydrateCompany(id) {
   if (!id) return null;
@@ -201,7 +202,9 @@ async function enrichProjectsModulePresence(projects) {
 
   const dealCols =
     'id, project_id, company_id, type, code, title, assigned_to, lead_owner_id, created_by, '
-    + 'kanban_deadline_at, expected_close_date, updated_at';
+    + 'kanban_deadline_at, expected_close_date, deadline_disabled_at, stage_entered_at, phone, stage_id, updated_at, '
+    + 'stage:crm_pipeline_stages(id, is_won, is_lost, counts_as_completed_revenue, canonical_slug, deal_report_bucket, sla_days), '
+    + 'customer:customers(phone)';
 
   {
     const { data: byProject, error } = await supabase
@@ -247,12 +250,13 @@ async function enrichProjectsModulePresence(projects) {
 
   // Deadline NV CRM mở gần nhất theo deal
   const allDealIds = [...new Set([...crmByProject.values()].map((d) => d.id).filter(Boolean))];
+  const dealById = new Map([...crmByProject.values()].map((d) => [String(d.id), d]));
   const nextTaskDeadlineByDeal = new Map();
   if (allDealIds.length) {
     try {
       const { data: tasks } = await supabase
         .from('crm_tasks')
-        .select('lead_id, deadline, status, updated_at')
+        .select('lead_id, pipeline_stage_id, deadline, status, updated_at')
         .in('lead_id', allDealIds)
         .not('deadline', 'is', null)
         .order('deadline', { ascending: true })
@@ -261,6 +265,8 @@ async function enrichProjectsModulePresence(projects) {
       for (const t of tasks || []) {
         if (done.has(String(t.status || '').toLowerCase())) continue;
         const lid = String(t.lead_id);
+        const lead = dealById.get(lid);
+        if (t.pipeline_stage_id && String(t.pipeline_stage_id) !== String(lead?.stage_id || '')) continue;
         if (nextTaskDeadlineByDeal.has(lid)) continue;
         nextTaskDeadlineByDeal.set(lid, t.deadline);
       }
@@ -341,16 +347,6 @@ async function enrichProjectsModulePresence(projects) {
     return { id: String(u.id), full_name: u.full_name || null, avatar: u.avatar || null };
   };
 
-  const pickDeadline = (candidates) => {
-    for (const c of candidates) {
-      if (!c?.at) continue;
-      const ts = new Date(c.at).getTime();
-      if (!Number.isFinite(ts)) continue;
-      return { at: c.at, source: c.source, label: c.label, ts };
-    }
-    return null;
-  };
-
   return list.map((p) => {
     const crmLink = crmByProject.get(String(p.id)) || null;
     const hasCrm = !!crmLink?.id;
@@ -380,17 +376,29 @@ async function enrichProjectsModulePresence(projects) {
       ? nextTaskDeadlineByDeal.get(String(crmLink.id))
       : null;
 
-    const schedule = pickDeadline([
-      { at: p.deadline, source: 'project', label: 'Hạn DA' },
-      { at: p.sx_kanban_deadline_at, source: 'sx_kanban', label: 'Hạn SX' },
-      { at: p.production_deadline, source: 'production', label: 'Hạn SX' },
-      { at: p.design_deadline, source: 'design', label: 'Hạn TK' },
-      { at: p.delivery_date, source: 'delivery', label: 'Giao' },
-      { at: p.install_date, source: 'install', label: 'Lắp' },
-      { at: crmLink?.kanban_deadline_at, source: 'kanban', label: 'Hạn CRM' },
-      { at: dealTaskDeadline, source: 'task', label: 'Hạn NV' },
-      { at: crmLink?.expected_close_date, source: 'expected_close', label: 'Dự kiến chốt' },
-    ]);
+    const crmDeadline = hasCrm
+      ? resolveModuleDeadline(MODULE.CRM, {
+        ...crmLink,
+        crm_next_open_task_deadline: dealTaskDeadline,
+      }, { stage: crmLink.stage })
+      : null;
+    const sxDeadline = hasSx ? resolveModuleDeadline(MODULE.PRODUCTION, p) : null;
+    const vcDeadline = hasVc ? resolveModuleDeadline(MODULE.LOGISTICS, p) : null;
+    const scheduleLabels = {
+      crm: 'Hạn CRM',
+      production: 'Hạn SX',
+      logistics: 'Hạn VC/LĐ',
+    };
+    const schedule = [crmDeadline, sxDeadline, vcDeadline]
+      .filter((d) => d?.deadlineAt)
+      .sort((a, b) => a.deadlineTs - b.deadlineTs)
+      .map((d) => ({
+        at: d.deadlineAt,
+        source: d.source,
+        module: d.module,
+        label: scheduleLabels[d.module] || 'Deadline',
+        ts: d.deadlineTs,
+      }))[0] || null;
 
     const origin = hasCrm
       ? {

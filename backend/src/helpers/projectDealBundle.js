@@ -3,6 +3,7 @@
  * Kèm overview Tổng quan: KPI + luồng + công việc trọng yếu.
  */
 const { supabase } = require('../config/supabase');
+const { warnQ } = require('./queryErrorLog');
 const {
   leadDocVisibleForModuleAndUser,
 } = require('./documentShareScope');
@@ -933,13 +934,13 @@ async function buildProjectDealBundleWithProject(project, user, opts = {}) {
       ? Promise.resolve({ data: [] })
       : (crmLeadIdForWork
         ? supabase.from('lead_documents')
-          .select('id, name, file_name, doc_type, created_at, shared_to_workshop, allowed_share_modules, file_path, file_url, crm_stage_slug, source_crm_task_id, project_id')
+          .select('id, name, file_name, doc_type, created_at, shared_to_workshop, allowed_share_modules, file_url, crm_stage_slug, source_crm_task_id, project_id')
           .eq('lead_id', crmLeadIdForWork)
           .order('created_at', { ascending: false })
         : supabase.from('lead_documents')
-          .select('id, name, file_name, doc_type, created_at, shared_to_workshop, allowed_share_modules, file_path, file_url, crm_stage_slug, source_crm_task_id, project_id')
+          .select('id, name, file_name, doc_type, created_at, shared_to_workshop, allowed_share_modules, file_url, crm_stage_slug, source_crm_task_id, project_id')
           .eq('project_id', projectId)
-          .order('created_at', { ascending: false })),
+          .order('created_at', { ascending: false })).then(warnQ('bundle:lead_documents')),
     lite || !leadIds.length
       ? Promise.resolve({ data: [] })
       : supabase.from('unified_tasks_v')
@@ -1032,8 +1033,11 @@ async function buildProjectDealBundleWithProject(project, user, opts = {}) {
     lite || !crmTaskIds.length
       ? Promise.resolve({ data: [] })
       : supabase.from('crm_task_attachments')
-        .select('id, file_name, name, file_path, file_url, mime_type, created_at, crm_task_id, shared_to_workshop, allowed_share_modules')
-        .in('crm_task_id', crmTaskIds),
+        // crm_task_attachments dùng `task_id` và `shared_to_project`; không có
+        // `file_path` lẫn `crm_task_id`. Cả ba tên sai làm hỏng CẢ câu -> khối
+        // đính kèm của crm_task chưa từng vào được bundle.
+        .select('id, file_name, name, file_url, mime_type, created_at, task_id, shared_to_project, allowed_share_modules')
+        .in('task_id', crmTaskIds).then(warnQ('bundle:crm_task_attachments')),
     lite || !assigneeIds.size
       ? Promise.resolve({ data: [] })
       : supabase.from('users').select('id, full_name').in('id', [...assigneeIds]),
@@ -1149,12 +1153,11 @@ async function buildProjectDealBundleWithProject(project, user, opts = {}) {
     id: a.id,
     name: a.name || a.file_name,
     file_name: a.file_name,
-    file_path: a.file_path,
     file_url: a.file_url,
     created_at: a.created_at,
     bucket: 'crm',
     kind: 'crm_task_attachment',
-    crm_task_id: a.crm_task_id,
+    crm_task_id: a.task_id,
   }));
 
   const projectNativeFiles = (projectFilesRes.data || []).map((f) => ({

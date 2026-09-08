@@ -257,11 +257,19 @@ r.get('/channel-filters', requireAdmin, async (_req, res) => {
     // Khối: ecosystem_units depth=1 (cấp "Khối")
     let divisions = [];
     try {
-      const { data } = await supabase
-        .from('ecosystem_units')
-        .select('id, name, depth')
-        .eq('depth', 1)
-        .order('name');
+      // `depth` nằm ở ecosystem_levels, KHÔNG phải ecosystem_units — units chỉ
+      // có level_id. Truy vấn cũ hỏng cả câu nên danh sách "khối" luôn rỗng.
+      // Giải hai bước cho rõ ràng, thay vì lọc lồng qua embed.
+      const { data: lv1 } = await supabase
+        .from('ecosystem_levels').select('id').eq('depth', 1);
+      const lv1Ids = (lv1 || []).map((l) => l.id);
+      const { data } = lv1Ids.length
+        ? await supabase
+          .from('ecosystem_units')
+          .select('id, name, level_id')
+          .in('level_id', lv1Ids)
+          .order('name')
+        : { data: [] };
       divisions = (data || []).map((u) => ({ id: u.id, name: u.name }));
     } catch { /* ignore */ }
 

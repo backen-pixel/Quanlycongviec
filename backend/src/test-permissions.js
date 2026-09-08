@@ -53,10 +53,15 @@ async function testSeedData() {
   
   for (const role of roles) {
     try {
-      const { data, error } = await supabase
-        .from('role_permissions')
-        .select('permission')
-        .eq('role', role);
+      // role_permissions là bảng nối (role_id, permission_id) — không có cột `role`.
+      const { data: roleRow } = await supabase
+        .from('roles').select('id').eq('name', role).maybeSingle();
+      const { data, error } = roleRow?.id
+        ? await supabase
+          .from('role_permissions')
+          .select('permissions(resource, action)')
+          .eq('role_id', roleRow.id)
+        : { data: [], error: null };
       
       if (error) {
         log(RED, `✗ Role ${role} ERROR: ${error.message}`);
@@ -163,7 +168,7 @@ async function testHasPermissionRole() {
     const { data: employeeUser } = await supabase
       .from('users')
       .select('id, role')
-      .eq('role', 'employee')
+      .eq('role', 'staff')  // 'employee' co trong bang roles nhung KHONG co trong enum user_role -> 22P02
       .limit(1)
       .single();
     
@@ -200,7 +205,7 @@ async function testPermissionOverride() {
     const { data: user } = await supabase
       .from('users')
       .select('id, role')
-      .eq('role', 'employee')
+      .eq('role', 'staff')  // 'employee' co trong bang roles nhung KHONG co trong enum user_role -> 22P02
       .limit(1)
       .single();
     

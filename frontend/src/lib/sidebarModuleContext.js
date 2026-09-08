@@ -90,6 +90,8 @@ export function isCongViecOverviewPath(pathname) {
   return (
     p === '/management/work-overview'
     || p.startsWith('/management/work-overview/')
+    || p === '/management/project-tasks'
+    || p.startsWith('/management/project-tasks/')
     || p === '/management/crm-overview'
     || p.startsWith('/management/crm-overview/')
     || p === '/management/work-unified'

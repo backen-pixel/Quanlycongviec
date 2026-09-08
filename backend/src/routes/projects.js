@@ -2032,12 +2032,13 @@ r.post('/create-with-flow', requirePermission('projects', 'create'), async (req,
             // Also check if lead has a parent (lead→deal conversion keeps same ID or has parent)
             // Load from original lead if deal has lead_source_id
             const { data: deal } = await supabase.from('crm_leads')
-              .select('id, lead_source_id').eq('id', dealId).single();
+              // crm_leads không có `lead_source_id`; quan hệ lead->deal dùng `parent_lead_id`
+              .select('id, parent_lead_id').eq('id', dealId).single();
             let parentLeadTasks = [];
-            if (deal?.lead_source_id) {
+            if (deal?.parent_lead_id) {
               const { data: lt } = await supabase.from('crm_tasks')
                 .select('*, assignee:users!crm_tasks_assignee_id_fkey(id,full_name), attachments:crm_task_attachments(*)')
-                .eq('lead_id', deal.lead_source_id).order('order_index');
+                .eq('lead_id', deal.parent_lead_id).order('order_index');
               parentLeadTasks = lt || [];
             }
 

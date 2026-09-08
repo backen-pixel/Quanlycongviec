@@ -2470,7 +2470,7 @@ r.get('/activity', async (req, res) => {
 
     const { data } = await supabase
       .from('drive_activity_log')
-      .select('*, actor:users!drive_activity_log_actor_id_fkey(id,full_name,email,avatar_url)')
+      .select('*, actor:users!drive_activity_log_actor_id_fkey(id,full_name,email,avatar)')
       .eq('target_type', target_type)
       .eq('target_id', target_id)
       .order('created_at', { ascending: false })
@@ -2489,7 +2489,7 @@ r.get('/activity/feed', async (req, res) => {
     if (!rootIds.length) return res.json({ activity: [] });
     const { data } = await supabase
       .from('drive_activity_log')
-      .select('*, actor:users!drive_activity_log_actor_id_fkey(id,full_name,email,avatar_url)')
+      .select('*, actor:users!drive_activity_log_actor_id_fkey(id,full_name,email,avatar)')
       .in('root_id', rootIds)
       .order('created_at', { ascending: false })
       .limit(limit);

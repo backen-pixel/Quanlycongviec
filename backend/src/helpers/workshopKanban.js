@@ -1827,7 +1827,13 @@ async function repairCrmDealPipelineDisplay(leadId) {
         .order('order_index', { ascending: true })
         .limit(1);
       if (lead.pipeline_id) sq = sq.eq('pipeline_id', lead.pipeline_id);
-      else if (lead.company_id) sq = sq.eq('company_id', lead.company_id);
+      else if (lead.company_id) {
+        // crm_pipeline_stages KHÔNG có company_id — công ty nằm ở crm_pipelines.
+        const { data: pls } = await supabase
+          .from('crm_pipelines').select('id').eq('company_id', lead.company_id);
+        const plIds = (pls || []).map((x) => x.id).filter(Boolean);
+        if (plIds.length) sq = sq.in('pipeline_id', plIds);
+      }
       const { data: won } = await sq.maybeSingle();
       if (won?.id && String(won.id) !== String(lead.stage_id)) {
         await supabase

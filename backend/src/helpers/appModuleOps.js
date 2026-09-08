@@ -159,18 +159,19 @@ async function syncCrmFromAppModuleStage(record, stage) {
   }
   const { data: lead, error: leadErr } = await supabase
     .from('crm_leads')
-    .select('id, pipeline_stage_id')
+    // crm_leads dùng `stage_id`; không có cột `pipeline_stage_id`
+    .select('id, stage_id')
     .eq('id', record.source_crm_lead_id)
     .maybeSingle();
   if (leadErr) throw leadErr;
   if (!lead) return { synced: false, reason: 'lead_missing' };
-  if (String(lead.pipeline_stage_id) === String(stage.crm_target_stage_id)) {
+  if (String(lead.stage_id) === String(stage.crm_target_stage_id)) {
     return { synced: false, reason: 'already' };
   }
   const { error: updErr } = await supabase
     .from('crm_leads')
     .update({
-      pipeline_stage_id: stage.crm_target_stage_id,
+      stage_id: stage.crm_target_stage_id,
       updated_at: new Date().toISOString(),
     })
     .eq('id', lead.id);
@@ -200,7 +201,7 @@ async function notifyModuleTransfer(req, {
   targets.delete(String(actorUserId || ''));
   const title = `Chuyển sang ${moduleRow.name}`;
   const message = lead
-    ? `Deal «${lead.name || lead.code || lead.id}» đã được chuyển vào module «${moduleRow.name}».`
+    ? `Deal «${lead.title || lead.code || lead.id}» đã được chuyển vào module «${moduleRow.name}».`
     : `Có bản ghi mới trong module «${moduleRow.name}»: ${record.name}`;
   const link = `/m/${moduleRow.module_key}/records/${record.id}`;
   const meta = {
@@ -251,7 +252,8 @@ async function transferLeadToAppModule(req, {
 
   const { data: lead, error: leadErr } = await supabase
     .from('crm_leads')
-    .select('id, name, code, company_id, assignee_id, type')
+    // crm_leads: tên thật là `title` và `assigned_to`
+    .select('id, title, code, company_id, assigned_to, type')
     .eq('id', leadId)
     .maybeSingle();
   if (leadErr) throw leadErr;
@@ -294,7 +296,7 @@ async function transferLeadToAppModule(req, {
     targetTabId = mainTab?.id || null;
   }
 
-  const name = lead.name || lead.code || `Deal ${String(lead.id).slice(0, 8)}`;
+  const name = lead.title || lead.code || `Deal ${String(lead.id).slice(0, 8)}`;
   const insert = {
     module_id: moduleRow.id,
     company_id: companyId || moduleRow.company_id || lead.company_id || null,
@@ -302,7 +304,7 @@ async function transferLeadToAppModule(req, {
     stage_id: targetStageId,
     tab_id: targetTabId,
     source_crm_lead_id: lead.id,
-    assignee_id: assigneeId || lead.assignee_id || null,
+    assignee_id: assigneeId || lead.assigned_to || null,
     status: 'open',
     meta: { transferred_from: 'crm', lead_type: lead.type || null },
     created_by: req.user?.id || null,

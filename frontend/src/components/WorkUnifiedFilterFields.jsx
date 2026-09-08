@@ -131,6 +131,8 @@ export default function WorkUnifiedFilterPanel({
   onTimePresetChange,
   activeFilterCount = 0,
   onClear,
+  showUser = true,
+  showTime = true,
 }) {
   const staffOptions = filterWorkUnifiedStaff(users, { companyId, regionId: filterRegionId });
   const hideCompanySuffix = !!companyId;
@@ -138,12 +140,12 @@ export default function WorkUnifiedFilterPanel({
   const handleCompanyChange = (v) => {
     onCompanyChange(v);
     onRegionChange('');
-    onUserChange('');
+    if (typeof onUserChange === 'function') onUserChange('');
   };
 
   const handleRegionChange = (v) => {
     onRegionChange(v);
-    onUserChange('');
+    if (typeof onUserChange === 'function') onUserChange('');
   };
 
   return (
@@ -207,6 +209,7 @@ export default function WorkUnifiedFilterPanel({
             </div>
           </div>
 
+          {showUser && (
           <div className="min-w-0">
             <label className={FILTER_LABEL_CLS}>Nhân viên</label>
             <select
@@ -223,7 +226,9 @@ export default function WorkUnifiedFilterPanel({
               ))}
             </select>
           </div>
+          )}
 
+          {showTime && (
           <div className="min-w-0">
             <label className={FILTER_LABEL_CLS}>Khoảng thời gian</label>
             <div className="relative">
@@ -239,6 +244,7 @@ export default function WorkUnifiedFilterPanel({
               <Clock className={`absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 pointer-events-none ${timePreset ? 'text-violet-500' : 'text-slate-400'}`} />
             </div>
           </div>
+          )}
         </div>
       </div>
 

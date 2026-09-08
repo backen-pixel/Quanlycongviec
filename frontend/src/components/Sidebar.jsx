@@ -132,6 +132,7 @@ const CONGVIEC_MENU_GROUPS = [
     emoji: '📊',
     items: [
       { to: '/management/work-overview', icon: ListChecks, label: 'Tổng quan công việc' },
+      { to: '/management/project-tasks', icon: CheckSquare, label: 'Tổng quan nhiệm vụ' },
       { to: '/management/crm-overview', icon: Target, label: 'Tổng quan CRM' },
       { to: '/management/work-unified', icon: Layers, label: 'Work Unified' },
     ],
@@ -166,6 +167,7 @@ const CRM_MENU_TOP_GROUP = {
   emoji: '📊',
   items: [
     { to: '/crm/dashboard', icon: LayoutDashboard, label: 'Dashboard CRM', end: true },
+    { to: '/crm/project-tasks', icon: CheckSquare, label: 'Quản lý nhiệm vụ' },
     { to: '/crm/events', icon: Calendar, label: 'Sự kiện' },
     { to: '/crm/leaves', icon: UserMinus, label: 'Lịch nghỉ' },
     { to: '/crm/messenger', icon: MessageCircle, label: 'Nhóm chat' },
@@ -324,6 +326,7 @@ const SX_MENU_GROUPS = [
     emoji: '🏭',
     items: [
       { to: '/sx/dashboard', icon: LayoutDashboard, label: 'Dashboard xưởng', end: true },
+      { to: '/sx/project-tasks', icon: CheckSquare, label: 'Quản lý nhiệm vụ' },
       { to: '/sx/assignments', icon: ClipboardList, label: 'Giao việc Sản xuất' },
       { to: '/drive?module=sx', icon: HardDrive, label: 'Drive Sản xuất' },
     ]
@@ -341,7 +344,7 @@ const SX_MENU_GROUPS = [
     emoji: '📦',
     items: [
       { to: '/sx/dashboard', icon: FolderKanban, label: 'Deal vào xưởng' },
-      { to: '/crm/facebook', icon: MessageCircle, label: 'Facebook', adminOnly: true },
+      { to: '/crm/facebook', icon: MessageCircle, label: 'Facebook', socialInboxAccess: true },
       { to: '/sx/pipeline-settings', icon: Settings, label: 'Pipeline xưởng' },
       { to: '/sx/regions', icon: MapPin, label: 'Khu vực', adminOnly: true },
       { to: '/sx/task-templates', icon: ListChecks, label: 'Bộ mẫu nhiệm vụ xưởng' },
@@ -472,6 +475,7 @@ const VC_MENU_GROUPS = [
     emoji: '🔧',
     items: [
       { to: '/vc/dashboard', icon: LayoutDashboard, label: 'Dashboard Lắp đặt', end: true },
+      { to: '/vc/project-tasks', icon: CheckSquare, label: 'Quản lý nhiệm vụ' },
       { to: '/vc/assignments', icon: ClipboardList, label: 'Giao việc Lắp đặt' },
       { to: '/drive?module=vc', icon: HardDrive, label: 'Drive Lắp đặt' },
     ]

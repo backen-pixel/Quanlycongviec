@@ -29,14 +29,19 @@ async function getCompanyDivisionIds(company) {
 }
 
 /** Đơn vị công ty con trong HST dưới một Khối cụ thể */
-async function findSubsidiaryUnderDivision(companyId, divisionUnitId) {
+/**
+ * Unique index idx_ecosystem_units_company_parent_division la (company_id, parent_id)
+ * va KHONG loc is_active. Vi vay khi tim de GHI phai nhin ca hang da tat, neu khong
+ * se INSERT de len hang tat -> 23505 duplicate key va cong ty khong duoc bat lai.
+ */
+async function findSubsidiaryUnderDivision(companyId, divisionUnitId, opts = {}) {
   if (!companyId || !divisionUnitId) return null;
-  const { data } = await supabase.from('ecosystem_units')
+  let q = supabase.from('ecosystem_units')
     .select('id')
     .eq('company_id', companyId)
-    .eq('parent_id', divisionUnitId)
-    .eq('is_active', true)
-    .maybeSingle();
+    .eq('parent_id', divisionUnitId);
+  if (!opts.includeInactive) q = q.eq('is_active', true);
+  const { data } = await q.maybeSingle();
   return data?.id || null;
 }
 
@@ -67,7 +72,8 @@ async function syncCompanyToEcosystem(company) {
     let firstId = null;
 
     for (const divId of divisionIds) {
-      const existingId = await findSubsidiaryUnderDivision(company.id, divId);
+      // includeInactive: hang da tat van chiem cho trong unique index.
+      const existingId = await findSubsidiaryUnderDivision(company.id, divId, { includeInactive: true });
       if (existingId) {
         await supabase.from('ecosystem_units').update({
           name: company.name,

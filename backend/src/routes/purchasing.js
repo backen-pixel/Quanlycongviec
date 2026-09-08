@@ -428,7 +428,7 @@ r.post('/orders', requirePermission('mua_hang_orders', 'edit'), async (req, res)
     if (b.lead_id) {
       const { data: lead } = await supabase
         .from('crm_leads')
-        .select('id, title, code, phone, address, company_id, customer:customers(full_name, phone, address)')
+        .select('id, title, code, phone, install_address, company_id, customer:customers(full_name, phone, address)')
         .eq('id', b.lead_id)
         .maybeSingle();
       if (lead) {

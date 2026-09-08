@@ -86,6 +86,20 @@ function isTaskSourceSyncColumnError(err) {
     || m.includes('error_type_id');
 }
 
+/**
+ * Chỉ coi là "thiếu cột" khi SQLSTATE = 42703.
+ *
+ * Trước đây các nhánh dự phòng chỉ so khớp CHUỖI. Lỗi 23505 trên unique index
+ * `idx_crm_assignments_crm_task_id` có chứa chữ "crm_task_id" nên lọt vào nhánh
+ * đó: code bẻ crm_task_id ra rồi INSERT lại -> sinh bản giao việc MỒ CÔI không
+ * gắn task nào. Đã tạo 122 hàng rác từ 30/07/2026 đến 07/09/2026.
+ */
+function isMissingColumn(err, name) {
+  if (!err) return false;
+  if (err.code && err.code !== '42703') return false;
+  return new RegExp(name).test(err.message || '');
+}
+
 async function syncAssignmentFromCrmTask(req, task, assigneeIds, opts = {}) {
   if (!task?.id) return { assignmentId: null };
   const ids = [...new Set((assigneeIds || []).filter(Boolean).map(String))];
@@ -99,7 +113,7 @@ async function syncAssignmentFromCrmTask(req, task, assigneeIds, opts = {}) {
     .select('id')
     .eq('crm_task_id', task.id)
     .maybeSingle();
-  if (findErr && /crm_task_id/.test(findErr.message || '')) {
+  if (isMissingColumn(findErr, 'crm_task_id')) {
     return { assignmentId: null, skipped: true };
   }
   if (byTask) existing = byTask;
@@ -172,19 +186,19 @@ async function syncAssignmentFromCrmTask(req, task, assigneeIds, opts = {}) {
   let assignmentId = existing?.id || null;
   if (assignmentId) {
     let { error } = await supabase.from('crm_assignments').update(row).eq('id', assignmentId);
-    if (error && /assignment_module/.test(error.message || '')) {
+    if (isMissingColumn(error, 'assignment_module')) {
       const { assignment_module: _m, ...legacy } = row;
       ({ error } = await supabase.from('crm_assignments').update(legacy).eq('id', assignmentId));
     }
-    if (error && /crm_task_id/.test(error.message || '')) {
+    if (isMissingColumn(error, 'crm_task_id')) {
       const { crm_task_id: _t, assignment_module: _m, ...legacy } = row;
       ({ error } = await supabase.from('crm_assignments').update(legacy).eq('id', assignmentId));
     }
-    if (error && /executor_company_id/.test(error.message || '')) {
+    if (isMissingColumn(error, 'executor_company_id')) {
       const { executor_company_id: _e, ...legacy } = row;
       ({ error } = await supabase.from('crm_assignments').update(legacy).eq('id', assignmentId));
     }
-    if (error && isTaskSourceSyncColumnError(error)) {
+    if (error?.code === '42703' && isTaskSourceSyncColumnError(error)) {
       const { task_source_type: _ts, employee_error_module: _em, error_type_id: _et, ...legacy } = row;
       ({ error } = await supabase.from('crm_assignments').update(legacy).eq('id', assignmentId));
     }
@@ -200,24 +214,37 @@ async function syncAssignmentFromCrmTask(req, task, assigneeIds, opts = {}) {
       .insert(insertRow)
       .select(ASSIGNMENT_SELECT)
       .single();
-    if (error && /assignment_module/.test(error.message || '')) {
+    if (isMissingColumn(error, 'assignment_module')) {
       const { assignment_module: _m, ...legacy } = insertRow;
       ({ data: created, error } = await supabase.from('crm_assignments').insert(legacy).select(ASSIGNMENT_SELECT).single());
     }
-    if (error && /crm_task_id/.test(error.message || '')) {
+    if (isMissingColumn(error, 'crm_task_id')) {
       const { crm_task_id: _t, assignment_module: _m, ...legacy } = insertRow;
       ({ data: created, error } = await supabase.from('crm_assignments').insert(legacy).select(ASSIGNMENT_SELECT).single());
     }
-    if (error && /executor_company_id/.test(error.message || '')) {
+    if (isMissingColumn(error, 'executor_company_id')) {
       const { executor_company_id: _e, ...legacy } = insertRow;
       ({ data: created, error } = await supabase.from('crm_assignments').insert(legacy).select(ASSIGNMENT_SELECT).single());
     }
-    if (error && isTaskSourceSyncColumnError(error)) {
+    if (error?.code === '42703' && isTaskSourceSyncColumnError(error)) {
       const { task_source_type: _ts, employee_error_module: _em, error_type_id: _et, ...legacy } = insertRow;
       ({ data: created, error } = await supabase.from('crm_assignments').insert(legacy).select(ASSIGNMENT_SELECT).single());
     }
+    // 23505: hai luồng cùng sync một crm_task -> đâm unique idx_crm_assignments_crm_task_id.
+    // Lấy bản đã có rồi UPDATE. TUYỆT ĐỐI không INSERT lại — sẽ sinh bản mồ côi.
+    if (error?.code === '23505' && /crm_task_id/.test(error.message || '')) {
+      const { data: again } = await supabase
+        .from('crm_assignments').select('id').eq('crm_task_id', task.id).maybeSingle();
+      if (again?.id) {
+        assignmentId = again.id;
+        const { error: upErr } = await supabase
+          .from('crm_assignments').update(row).eq('id', assignmentId);
+        if (upErr) console.warn('[sync] crm_task -> assignment, update sau 23505:', upErr.message);
+        error = null;
+      }
+    }
     if (error) throw error;
-    assignmentId = created?.id || null;
+    assignmentId = assignmentId || created?.id || null;
   }
 
   if (assignmentId) {

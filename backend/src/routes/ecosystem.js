@@ -678,7 +678,8 @@ r.get('/available-companies', async (req, res) => {
   try {
     const { data: companies, error } = await supabase
       .from('companies')
-      .select('id, name, short_name, code, logo, is_active')
+      // companies không có `code`; cột logo tên thật là `logo_url`
+      .select('id, name, short_name, tax_code, logo_url, is_active')
       .or('is_active.eq.true,is_active.is.null')
       .order('name');
     if (error) throw error;
@@ -698,7 +699,8 @@ r.get('/available-companies', async (req, res) => {
 r.get('/available-departments', async (req, res) => {
   try {
     const { company_id } = req.query;
-    let q = supabase.from('departments').select('id, name, short_name, company_id, division_unit_id, is_active').eq('is_active', true).order('name');
+    let q = supabase.from('departments')// departments không có `short_name`
+    .select('id, name, company_id, division_unit_id, is_active').eq('is_active', true).order('name');
     if (company_id) q = q.eq('company_id', company_id);
     const { data, error } = await q;
     if (error) throw error;
@@ -784,9 +786,10 @@ r.post('/setup-wizard', async (req, res) => {
 
     // Get level IDs
     const { data: levels } = await supabase.from('ecosystem_levels')
-      .select('id, level_index').order('level_index');
+      // ecosystem_levels: cột thật là `depth`, không phải `level_index`
+      .select('id, depth').order('depth');
     const levelMap = {};
-    (levels || []).forEach(l => { levelMap[l.level_index] = l.id; });
+    (levels || []).forEach(l => { levelMap[l.depth] = l.id; });
 
     const createdUnits = [];
 

@@ -974,6 +974,9 @@ export default function LeadDetail() {
       return;
     }
     setActiveTab(t);
+    // Giữ ?tab=shared-workspace: nếu xóa tab mà còn crm_task, effect chạy lại
+    // và nhánh `!t && crmTask` đẩy sang tab Nhiệm vụ.
+    if (t === 'shared-workspace') return;
     const next = new URLSearchParams(searchParams);
     next.delete('tab');
     setSearchParams(next, { replace: true });
@@ -7021,11 +7024,23 @@ function LeadInfoPanel({
     if (!lead?.id) return;
     setDeadlineBusy(true);
     try {
-      await api.patch(`/crm/leads/${lead.id}/deadline`, {
+      const { data } = await api.patch(`/crm/leads/${lead.id}/deadline`, {
         kanban_deadline_at: deadlineIso,
         reason: reason || '',
         sync_open_tasks: true,
       });
+      setLead((prev) => prev ? {
+        ...prev,
+        kanban_deadline_at: data?.kanban_deadline_at ?? deadlineIso,
+        kanban_deadline_reason: data?.kanban_deadline_reason ?? reason ?? null,
+        ...(data?.crm_next_open_task_deadline !== undefined
+          ? { crm_next_open_task_deadline: data.crm_next_open_task_deadline }
+          : {}),
+        effective_deadline_module: data?.effective_deadline_module,
+        effective_deadline_at: data?.effective_deadline_at,
+        effective_deadline_source: data?.effective_deadline_source,
+        deadline_state: data?.deadline_state,
+      } : prev);
       setDeadlineModalOpen(false);
       onUpdate();
       if (deadlineHistoryOpen) loadDeadlineHistory();

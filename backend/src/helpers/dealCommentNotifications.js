@@ -514,6 +514,114 @@ async function postCrmStageDefaultAssigneeComment(req, notifyMultiple, {
   return row;
 }
 
+/**
+ * Ghi bình luận trên lead/deal khi tạo nhiệm vụ Không gian chung và gửi
+ * thông báo @mention tới đúng những người được giao.
+ */
+async function postSharedWorkspaceAssignmentMentionComment(req, notifyMultiple, {
+  leadId,
+  senderId,
+  assignment,
+  assigneeIds,
+  taskSourceType,
+  assignmentModule,
+}) {
+  const ids = [...new Set((assigneeIds || []).map(String).filter(Boolean))];
+  if (!leadId || !senderId || !assignment?.id || !ids.length) return null;
+
+  const { data: users, error: usersErr } = await supabase
+    .from('users')
+    .select('id, full_name, email')
+    .in('id', ids);
+  if (usersErr) {
+    console.warn('[postSharedWorkspaceAssignmentMentionComment] users:', usersErr.message);
+    return null;
+  }
+
+  const userMap = new Map((users || []).map((u) => [String(u.id), u]));
+  const mentionLabels = ids
+    .map((id) => {
+      const user = userMap.get(id);
+      const name = String(user?.full_name || user?.email || '').trim();
+      return name ? `@${name}` : null;
+    })
+    .filter(Boolean);
+  if (!mentionLabels.length) return null;
+
+  const moduleLabel = assignmentModule === 'production'
+    ? 'Sản xuất'
+    : assignmentModule === 'logistics'
+      ? 'VC/LĐ'
+      : 'CRM';
+  const sourceLabel = taskSourceType === 'employee_error'
+    ? 'lỗi từ nhân viên'
+    : 'phát sinh từ khách hàng';
+  const deadline = assignment.deadline
+    ? ` Hạn xử lý: ${new Date(assignment.deadline).toLocaleString('vi-VN')}.`
+    : '';
+  const body = `📋 Nhiệm vụ ${sourceLabel} mới (${moduleLabel}): «${assignment.title || 'Nhiệm vụ'}». `
+    + `${mentionLabels.join(' ')} — vui lòng chịu trách nhiệm tiếp nhận và xử lý.${deadline}`;
+
+  const insertRow = {
+    lead_id: leadId,
+    user_id: senderId,
+    body,
+    metadata: {
+      source: 'shared_workspace_assignment',
+      assignment_id: String(assignment.id),
+    },
+  };
+  let { data, error } = await supabase
+    .from('crm_lead_comments')
+    .insert(insertRow)
+    .select('id, lead_id, user_id, parent_id, body, attachments, comment_type, metadata, created_at, updated_at, user:users!crm_lead_comments_user_id_fkey(id,full_name,avatar)')
+    .single();
+  if (error && (String(error.message || '').includes('metadata') || String(error.message || '').includes('comment_type'))) {
+    delete insertRow.metadata;
+    ({ data, error } = await supabase
+      .from('crm_lead_comments')
+      .insert(insertRow)
+      .select('id, lead_id, user_id, parent_id, body, attachments, created_at, updated_at, user:users!crm_lead_comments_user_id_fkey(id,full_name,avatar)')
+      .single());
+  }
+  if (error) {
+    console.warn('[postSharedWorkspaceAssignmentMentionComment] insert:', error.message);
+    return null;
+  }
+
+  const row = {
+    ...data,
+    attachments: data.attachments || [],
+    reactions: { summary: [], mine: null },
+  };
+  const io = req.app?.get?.('io');
+  if (io) {
+    io.to(`lead:${leadId}`).emit('lead:comment', { lead_id: leadId, action: 'created', comment: row });
+  }
+
+  try {
+    const mentionIds = ids.filter((id) => id !== String(senderId) && userMap.has(id));
+    if (mentionIds.length) {
+      await notifyDealCommentMentions(req, notifyMultiple, leadId, senderId, row, mentionIds);
+      const leadMembers = await fetchLeadMentionMembers(supabase, leadId);
+      const activityRow = await logLeadCommentMentionActivity(supabase, {
+        leadId,
+        senderId,
+        commentRow: row,
+        mentionIds,
+        members: leadMembers,
+      });
+      if (io && activityRow) {
+        io.to(`lead:${leadId}`).emit('lead:activity', { lead_id: leadId, activity: activityRow });
+      }
+    }
+  } catch (notifyErr) {
+    console.warn('[postSharedWorkspaceAssignmentMentionComment] notify:', notifyErr?.message || notifyErr);
+  }
+
+  return row;
+}
+
 module.exports = {
   loadDealCommentContext,
   resolveDealByProjectId,
@@ -525,4 +633,5 @@ module.exports = {
   notifyProjectCommentParticipants,
   postSxTransferMentionComment,
   postCrmStageDefaultAssigneeComment,
+  postSharedWorkspaceAssignmentMentionComment,
 };

@@ -6,6 +6,7 @@
 const { supabase } = require('../config/supabase');
 const { isLogisticsWorkshopTask, isInstallLogisticsStageRow } = require('./logisticsTaskSplit');
 const { applyAssignmentStatusColumn } = require('./crmTaskAssignmentSync');
+const { projectDeadlinePatchOnModuleDone } = require('./moduleDeadlinePolicy');
 
 const TERMINAL_STATUSES = new Set(['completed', 'done', 'cancelled', 'canceled']);
 const CHUNK = 120;
@@ -166,7 +167,12 @@ async function completeCrmTaskRows(tasks) {
   for (const part of chunk(ids)) {
     const { error } = await supabase
       .from('crm_tasks')
-      .update({ status: 'completed', completed_at: nowIso, updated_at: nowIso })
+      .update({
+        status: 'completed',
+        completed_at: nowIso,
+        deadline: null,
+        updated_at: nowIso,
+      })
       .in('id', part)
       .not('status', 'in', CRM_TASKS_DONE_STATUSES);
     if (error) {
@@ -217,13 +223,18 @@ async function completeWorkshopTaskRows(tasks) {
   for (const part of chunk(ids)) {
     let { error } = await supabase
       .from('tasks')
-      .update({ status: 'done', completed_at: nowIso, updated_at: nowIso })
+      .update({
+        status: 'done',
+        completed_at: nowIso,
+        due_date: null,
+        updated_at: nowIso,
+      })
       .in('id', part)
       .not('status', 'in', TASKS_DONE_STATUSES);
     if (error && /completed_at/.test(String(error.message || ''))) {
       ({ error } = await supabase
         .from('tasks')
-        .update({ status: 'done', updated_at: nowIso })
+        .update({ status: 'done', due_date: null, updated_at: nowIso })
         .in('id', part)
         .not('status', 'in', TASKS_DONE_STATUSES));
     }
@@ -256,9 +267,15 @@ async function completeLinkedAssignments({ leadIds, crmTaskIds, moduleKey }) {
   const patch = await applyAssignmentStatusColumn({
     status: 'completed',
     completed_at: nowIso,
+    deadline: null,
     updated_at: nowIso,
   }, 'completed');
-  const legacy = { status: 'completed', completed_at: nowIso, updated_at: nowIso };
+  const legacy = {
+    status: 'completed',
+    completed_at: nowIso,
+    deadline: null,
+    updated_at: nowIso,
+  };
   const taskIds = uniqIds(crmTaskIds);
   const leads = uniqIds(leadIds);
   let count = 0;
@@ -374,33 +391,219 @@ async function cancelOpenEvents({ leadIds, projectIds, module, reason }) {
   }
 }
 
-async function clearLogisticsProjectDeadlines(projectIds) {
-  const ids = uniqIds(projectIds);
-  if (!ids.length) return 0;
-  const nowIso = new Date().toISOString();
-  let n = 0;
-  for (const part of chunk(ids)) {
-    const { data, error } = await supabase
-      .from('projects')
-      .update({ deadline: null, updated_at: nowIso })
-      .in('id', part)
-      .select('id');
-    if (error) {
-      console.warn('[completeOpenWork] logistics project deadline:', error.message);
-    } else {
-      n += (data || []).length;
+/**
+ * Lắp đặt hoàn tất là mốc kết thúc của toàn dự án, vì vậy phải tắt mọi nguồn
+ * deadline còn mở ở CRM, SX và VC/LĐ. Giữ delivery_date/install_date làm lịch sử
+ * vận hành; projects.status = completed khiến các mốc này không còn bị tính là hạn.
+ */
+async function clearAllProjectDeadlinesOnInstallationDone({ leadIds = [], projectIds = [] } = {}) {
+  const projects = uniqIds(projectIds);
+  let leads = uniqIds(leadIds);
+  if (!projects.length && !leads.length) {
+    return {
+      projects: 0,
+      leads: 0,
+      crm_tasks: 0,
+      assignments: 0,
+      workshop_tasks: 0,
+      app_module_tasks: 0,
+    };
+  }
+
+  if (projects.length) {
+    for (const part of chunk(projects)) {
+      const { data, error } = await supabase
+        .from('crm_leads')
+        .select('id')
+        .eq('type', 'deal')
+        .in('project_id', part);
+      if (error) {
+        console.warn('[completeOpenWork] deals for completed installation:', error.message);
+        continue;
+      }
+      leads = uniqIds([...leads, ...(data || []).map((d) => d.id)]);
     }
   }
-  return n;
+
+  const nowIso = new Date().toISOString();
+  let projectCount = 0;
+  for (const part of chunk(projects)) {
+    const patch = projectDeadlinePatchOnModuleDone('project_final', nowIso);
+    let { data, error } = await supabase
+      .from('projects')
+      .update(patch)
+      .in('id', part)
+      .select('id');
+    if (error && /production_deadline|design_deadline|sx_kanban_deadline/i.test(String(error.message || ''))) {
+      ({ data, error } = await supabase
+        .from('projects')
+        .update({ deadline: null, updated_at: nowIso })
+        .in('id', part)
+        .select('id'));
+    }
+    if (error) console.warn('[completeOpenWork] all project deadlines:', error.message);
+    else projectCount += (data || []).length;
+  }
+
+  let leadCount = 0;
+  for (const part of chunk(leads)) {
+    const patch = {
+      kanban_deadline_at: null,
+      kanban_deadline_reason: 'Tự tắt khi dự án đã lắp xong',
+      expected_close_date: null,
+      next_follow_up: null,
+      deadline_disabled_at: nowIso,
+      deadline_disabled_reason: 'Dự án đã lắp xong',
+      deadline_disabled_by: null,
+      updated_at: nowIso,
+    };
+    let { data, error } = await supabase
+      .from('crm_leads')
+      .update(patch)
+      .in('id', part)
+      .select('id');
+    if (error && /deadline_disabled|expected_close_date|next_follow_up/i.test(String(error.message || ''))) {
+      ({ data, error } = await supabase
+        .from('crm_leads')
+        .update({
+          kanban_deadline_at: null,
+          kanban_deadline_reason: 'Tự tắt khi dự án đã lắp xong',
+          updated_at: nowIso,
+        })
+        .in('id', part)
+        .select('id'));
+    }
+    if (error) console.warn('[completeOpenWork] all CRM lead deadlines:', error.message);
+    else leadCount += (data || []).length;
+  }
+
+  const crmTaskIds = [];
+  let crmTaskCount = 0;
+  for (const part of chunk(leads)) {
+    const { data: taskRows, error: readError } = await supabase
+      .from('crm_tasks')
+      .select('id')
+      .in('lead_id', part);
+    if (readError) {
+      console.warn('[completeOpenWork] read CRM tasks for deadline clear:', readError.message);
+      continue;
+    }
+    crmTaskIds.push(...(taskRows || []).map((t) => t.id));
+
+    const { data, error } = await supabase
+      .from('crm_tasks')
+      .update({ deadline: null, updated_at: nowIso })
+      .in('lead_id', part)
+      .not('deadline', 'is', null)
+      .select('id');
+    if (error) console.warn('[completeOpenWork] all CRM task deadlines:', error.message);
+    else crmTaskCount += (data || []).length;
+  }
+
+  let assignmentCount = 0;
+  for (const part of chunk(leads)) {
+    const { data, error } = await supabase
+      .from('crm_assignments')
+      .update({ deadline: null, updated_at: nowIso })
+      .in('lead_id', part)
+      .not('deadline', 'is', null)
+      .select('id');
+    if (error && !/lead_id/i.test(String(error.message || ''))) {
+      console.warn('[completeOpenWork] assignment deadlines by lead:', error.message);
+    } else if (!error) {
+      assignmentCount += (data || []).length;
+    }
+  }
+  for (const part of chunk(crmTaskIds)) {
+    const { data, error } = await supabase
+      .from('crm_assignments')
+      .update({ deadline: null, updated_at: nowIso })
+      .in('crm_task_id', part)
+      .not('deadline', 'is', null)
+      .select('id');
+    if (error && !/crm_task_id/i.test(String(error.message || ''))) {
+      console.warn('[completeOpenWork] assignment deadlines by CRM task:', error.message);
+    } else if (!error) {
+      assignmentCount += (data || []).length;
+    }
+  }
+
+  let workshopTaskCount = 0;
+  for (const part of chunk(projects)) {
+    const { data, error } = await supabase
+      .from('tasks')
+      .update({ due_date: null, updated_at: nowIso })
+      .in('project_id', part)
+      .not('due_date', 'is', null)
+      .select('id');
+    if (error) console.warn('[completeOpenWork] all workshop task deadlines:', error.message);
+    else workshopTaskCount += (data || []).length;
+  }
+
+  const appRecordIds = [];
+  for (const part of chunk(leads)) {
+    const { data, error } = await supabase
+      .from('app_module_records')
+      .select('id')
+      .in('source_crm_lead_id', part);
+    if (error) {
+      if (!/app_module_records/i.test(String(error.message || ''))) {
+        console.warn('[completeOpenWork] app module records for deadline clear:', error.message);
+      }
+      break;
+    }
+    appRecordIds.push(...(data || []).map((r) => r.id));
+  }
+
+  let appModuleTaskCount = 0;
+  for (const part of chunk(uniqIds(appRecordIds))) {
+    const { data, error } = await supabase
+      .from('app_module_tasks')
+      .update({ deadline: null, updated_at: nowIso })
+      .in('record_id', part)
+      .not('deadline', 'is', null)
+      .select('id');
+    if (error) {
+      if (!/app_module_tasks/i.test(String(error.message || ''))) {
+        console.warn('[completeOpenWork] app module task deadlines:', error.message);
+      }
+      break;
+    }
+    appModuleTaskCount += (data || []).length;
+  }
+
+  return {
+    projects: projectCount,
+    leads: leadCount,
+    crm_tasks: crmTaskCount,
+    assignments: assignmentCount,
+    workshop_tasks: workshopTaskCount,
+    app_module_tasks: appModuleTaskCount,
+  };
 }
 
 /**
- * @param {{ module: 'crm'|'production'|'logistics', leadIds?: string[], projectIds?: string[] }} opts
+ * `project_final` là mốc lắp đặt hoàn tất: đóng việc VC rồi tắt mọi nguồn hạn.
+ * Các module còn lại chỉ được phép đóng/xóa deadline thuộc chính module đó.
+ * @param {{ module: 'crm'|'production'|'logistics'|'project_final', leadIds?: string[], projectIds?: string[] }} opts
  */
 async function completeOpenWorkOnModuleDone({ module, leadIds = [], projectIds = [] } = {}) {
   const moduleKey = String(module || '').toLowerCase();
-  if (!['crm', 'production', 'logistics'].includes(moduleKey)) {
+  if (!['crm', 'production', 'logistics', 'project_final'].includes(moduleKey)) {
     return { crm_tasks: 0, workshop_tasks: 0, assignments: 0 };
+  }
+
+  if (moduleKey === 'project_final') {
+    const logisticsResult = await completeOpenWorkOnModuleDone({
+      module: 'logistics',
+      leadIds,
+      projectIds,
+    });
+    const cleared = await clearAllProjectDeadlinesOnInstallationDone({
+      leadIds,
+      projectIds,
+    });
+    return { ...logisticsResult, final_clear: cleared };
   }
 
   let leads = uniqIds(leadIds);
@@ -441,7 +644,6 @@ async function completeOpenWorkOnModuleDone({ module, leadIds = [], projectIds =
     await clearCrmLeadDeadlines(leads);
   }
   if (moduleKey === 'logistics') {
-    await clearLogisticsProjectDeadlines(projects);
     await cancelOpenEvents({
       leadIds: leads,
       projectIds: projects,
@@ -461,5 +663,8 @@ module.exports = {
   isCrmCompletedStage,
   isLogisticsCompletedColumn,
   projectStatusFromLogisticsColumn,
+  crmTaskMatchesModule,
+  workshopTaskMatchesModule,
   completeOpenWorkOnModuleDone,
+  clearAllProjectDeadlinesOnInstallationDone,
 };

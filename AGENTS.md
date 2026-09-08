@@ -20,6 +20,7 @@ Repo: **Quanlycongviec** (CRM–ERP tủ bếp). UI text tiếng Việt.
 | Migration | `/database/*.sql` (root) |
 | Coding | `docs/project/CODING_STANDARD.md` |
 | Workflow giao việc | `docs/project/workflow-claude-cursor-github.md` |
+| Bàn giao AI hiện tại | `docs/ai-handoff/CURRENT.md` |
 
 ## Quy tắc làm việc
 
@@ -29,6 +30,8 @@ Repo: **Quanlycongviec** (CRM–ERP tủ bếp). UI text tiếng Việt.
 - Không dùng / commit secret production (`.env`, token).
 - Backend là nguồn business rules.
 - Trước khi báo DONE: có PR (hoặc diff rõ), liệt kê file đổi, nêu cách test / rollback.
+- Trước khi tiếp tục công việc cũ: đọc `docs/ai-handoff/CURRENT.md` và `DECISIONS.md`.
+- Sau mỗi phiên sửa code: cập nhật `docs/ai-handoff/CURRENT.md` và thêm mục vào `WORKLOG.md`.
 
 ## Lệnh dev
 

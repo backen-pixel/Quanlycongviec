@@ -6,6 +6,7 @@
  */
 
 const INTAKE_BUCKET = 'delivery_pending';
+const { MODULE, resolveModuleDeadline } = require('./moduleDeadlinePolicy');
 
 function colName(stage) {
   return String(stage?.name || '').toLowerCase();
@@ -144,19 +145,11 @@ function kpiBucketForStage(stage) {
   return 'shipping';
 }
 
-function startOfLocalDay(d) {
-  const x = new Date(d);
-  x.setHours(0, 0, 0, 0);
-  return x;
-}
-
-function projectIsDeadlineOverdue(project, todayMs) {
-  if (String(project?.status || '') === 'completed') return false;
-  const raw = project?.deadline;
-  if (!raw) return false;
-  const t = new Date(raw);
-  if (Number.isNaN(t.getTime())) return false;
-  return startOfLocalDay(t).getTime() < startOfLocalDay(new Date(todayMs)).getTime();
+function projectIsDeadlineOverdue(project, todayMs, stage = null) {
+  return resolveModuleDeadline(MODULE.LOGISTICS, project, {
+    nowMs: todayMs,
+    stage,
+  }).state === 'overdue';
 }
 
 /**
@@ -182,10 +175,9 @@ function computeVcOverviewKpis(projects, stages = []) {
   const stageById = new Map(cols.map((s) => [String(s.id), s]));
 
   for (const p of list) {
-    if (projectIsDeadlineOverdue(p, nowMs)) overdue += 1;
-
     const colId = String(p.vc_kanban_column_id || '');
     const stage = colId && cols.length ? stageById.get(colId) : undefined;
+    if (projectIsDeadlineOverdue(p, nowMs, stage)) overdue += 1;
 
     if (!stage) {
       // Không map được cột → suy theo status (giống nhánh fallback của client).

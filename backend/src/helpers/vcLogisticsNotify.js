@@ -10,7 +10,8 @@ const {
   resolveLogisticsHandoverInstallerUserId,
 } = require('./logisticsHandoverSettings');
 
-const VC_ROLE_BLAST = ['logistics_admin', 'logistics', 'installer', 'manager'];
+// 'logistics' KHONG ton tai trong enum user_role -> lam ca cau query hong (22P02).
+const VC_ROLE_BLAST = ['logistics_admin', 'installer', 'manager'];
 
 async function getTeamMemberIds(teamId) {
   if (!teamId) return [];
@@ -121,12 +122,13 @@ async function collectVcProjectNotifyRecipientIds({
     }
 
     try {
-      const { data: roleUsers } = await supabase
+      const { data: roleUsers, error: roleUsersErr } = await supabase
         .from('users')
         .select('id')
         .in('role', VC_ROLE_BLAST)
         .eq('is_active', true)
         .eq('company_id', resolvedCompanyId);
+      if (roleUsersErr) console.warn('[vc-logistics-notify] role users:', roleUsersErr.message);
       for (const u of roleUsers || []) {
         if (u?.id) ids.add(String(u.id));
       }

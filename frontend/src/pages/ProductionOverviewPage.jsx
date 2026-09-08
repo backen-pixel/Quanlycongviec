@@ -215,14 +215,15 @@ export default function ProductionOverviewPage() {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[880px] text-sm table-fixed">
+          <table className="w-full min-w-[1120px] text-sm table-fixed">
             <colgroup>
-              <col className="w-[24%]" />
-              <col className="w-[22%]" />
-              <col className="w-[10%]" />
+              <col className="w-[17%]" />
               <col className="w-[16%]" />
-              <col className="w-[14%]" />
-              <col className="w-[14%]" />
+              <col className="w-[8%]" />
+              <col className="w-[13%]" />
+              <col className="w-[24%]" />
+              <col className="w-[11%]" />
+              <col className="w-[11%]" />
             </colgroup>
             <thead>
               <tr className="text-left text-[11px] uppercase tracking-wide text-gray-400 border-b border-gray-100">
@@ -230,15 +231,16 @@ export default function ProductionOverviewPage() {
                 <th className="px-4 py-2.5 font-semibold">Công đoạn hiện tại</th>
                 <th className="px-4 py-2.5 font-semibold">Tiến độ</th>
                 <th className="px-4 py-2.5 font-semibold">Người phụ trách</th>
+                <th className="px-4 py-2.5 font-semibold">Nhiệm vụ Sản xuất</th>
                 <th className="px-4 py-2.5 font-semibold">Trạng thái</th>
                 <th className="px-4 py-2.5 font-semibold">Dự kiến xong</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-gray-400">Đang tải...</td></tr>
+                <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-400">Đang tải...</td></tr>
               ) : pageItems.length === 0 ? (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-gray-400">Không có dự án phù hợp bộ lọc.</td></tr>
+                <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-400">Không có dự án phù hợp bộ lọc.</td></tr>
               ) : (
                 pageItems.map((it) => (
                   <tr key={it.id} className="border-b border-gray-50 last:border-0 hover:bg-gray-50/60">
@@ -264,6 +266,36 @@ export default function ProductionOverviewPage() {
                     </td>
                     <td className="px-4 py-3 align-top text-gray-700 font-medium">{it.progress_pct != null ? `${it.progress_pct}%` : '—'}</td>
                     <td className="px-4 py-3 align-top text-gray-600 truncate">{it.assignee_name || '—'}</td>
+                    <td className="px-4 py-3 align-top">
+                      {(it.tasks?.items || []).length > 0 ? (
+                        <div className="space-y-1.5">
+                          {(it.tasks?.items || []).map((task) => (
+                            <Link
+                              key={task.unified_id}
+                              to={`/management/work-unified/${it.id}?tab=tasks&group=sx`}
+                              className="block rounded-md bg-orange-50/70 px-2 py-1 hover:bg-orange-100"
+                              title={`${task.title}${task.effective_assignee_name ? ` · ${task.effective_assignee_name}` : ''}`}
+                            >
+                              <span className="block truncate text-[11px] font-medium text-gray-800">{task.title}</span>
+                              <span className="block truncate text-[10px] text-gray-500">
+                                {task.effective_assignee_name || 'Chưa gán'}
+                                {task.deadline ? ` · ${formatDate(task.deadline)}` : ''}
+                              </span>
+                            </Link>
+                          ))}
+                          {it.tasks.open > it.tasks.items.length && (
+                            <Link
+                              to={`/management/work-unified/${it.id}?tab=tasks&group=sx`}
+                              className="block text-[10px] font-medium text-orange-700 hover:underline"
+                            >
+                              +{it.tasks.open - it.tasks.items.length} nhiệm vụ đang mở
+                            </Link>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-xs text-gray-400">Không có nhiệm vụ mở</span>
+                      )}
+                    </td>
                     <td className="px-4 py-3 align-top">
                       <span className={`text-xs font-medium px-2 py-0.5 rounded-full whitespace-nowrap ${BUCKET_BADGE_CLS[it.bucket]}`}>
                         {BUCKET_LABEL[it.bucket]}

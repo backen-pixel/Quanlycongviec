@@ -1,6 +1,10 @@
 import { effectivePipelineStageSlaDays } from './crmPipelineSla';
 import { endOfVnCalendarDayAfterEntered } from './vnDate';
 import { companyWorkEndMsFromRaw } from './companyDeadlineClock';
+import {
+  DEADLINE_MODULE,
+  resolveEffectiveModuleDeadline,
+} from './moduleDeadlinePolicy';
 
 /** Cột pipeline Thắng — deal đã chốt, không tính/hiển thị deadline. */
 export function isCrmPipelineStageWon(stage) {
@@ -129,29 +133,12 @@ export function getPipelineStageSlaDeadlineTs(stageEnteredAt, stage, leadItem) {
  */
 export function resolveCrmLeadEffectiveDeadlineSource(item, stage) {
   const st = stage || item?.stage || item?._stage;
-  if (item?.deadline_disabled_at) {
-    return { source: null, deadlineTs: null, disabled: true };
-  }
-  if (shouldHideCrmKanbanDeadlineOnCard(item, st)) {
-    return { source: null, deadlineTs: null };
-  }
-
-  const taskIso = item?.crm_next_open_task_deadline;
-  if (taskIso != null && taskIso !== '') {
-    const ts = companyWorkEndMsFromRaw(taskIso, item) ?? new Date(taskIso).getTime();
-    if (!Number.isNaN(ts)) return { source: 'task', deadlineTs: ts };
-  }
-
-  const manual = item?.kanban_deadline_at;
-  if (manual != null && manual !== '') {
-    const ts = companyWorkEndMsFromRaw(manual, item) ?? new Date(manual).getTime();
-    if (!Number.isNaN(ts)) return { source: 'kanban', deadlineTs: ts };
-  }
-
-  const slaTs = getPipelineStageSlaDeadlineTs(item?.stage_entered_at, st, item);
-  if (slaTs != null) return { source: 'sla', deadlineTs: slaTs };
-
-  return { source: null, deadlineTs: null };
+  const resolved = resolveEffectiveModuleDeadline(DEADLINE_MODULE.CRM, item, st);
+  return {
+    source: resolved.source,
+    deadlineTs: resolved.deadlineTs,
+    disabled: !!item?.deadline_disabled_at,
+  };
 }
 
 /** @deprecated Dùng resolveCrmLeadEffectiveDeadlineSource — giữ alias tương thích. */
@@ -234,43 +221,8 @@ export function pickDeadlineConfigValueWithSource(item, primary, fallback) {
  * — nhiệm vụ → kanban → SLA → primary/fallback config (vd. expected_close_date).
  */
 export function resolveCrmLeadDeadlineViewSource(item, stage, config) {
-  const st = stage || item?._stage || item?.stage;
-  if (item?.deadline_disabled_at) {
-    return { deadlineTs: null, source: null, disabled: true };
-  }
-  if (shouldHideCrmKanbanDeadlineOnCard(item, st)) {
-    return { deadlineTs: null, source: null };
-  }
-
-  const taskIso = item?.crm_next_open_task_deadline;
-  if (taskIso != null && taskIso !== '') {
-    const ts = companyWorkEndMsFromRaw(taskIso, item) ?? new Date(taskIso).getTime();
-    if (!Number.isNaN(ts)) return { source: 'task', deadlineTs: ts };
-  }
-
-  const manual = item?.kanban_deadline_at;
-  if (manual != null && manual !== '') {
-    const ts = companyWorkEndMsFromRaw(manual, item) ?? new Date(manual).getTime();
-    if (!Number.isNaN(ts)) return { source: 'kanban', deadlineTs: ts };
-  }
-
-  const slaTs = getPipelineStageSlaDeadlineTs(item?.stage_entered_at, st, item);
-  if (slaTs != null) return { source: 'sla', deadlineTs: slaTs };
-
-  const cfg = config || {};
-  const primary = String(cfg.primary_field || 'crm_next_open_task_deadline');
-  const fallback = String(cfg.fallback_field || 'expected_close_date');
-  for (const field of [primary, fallback]) {
-    if (field === 'crm_next_open_task_deadline' || field === 'kanban_deadline_at') continue;
-    const raw = item?.[field];
-    if (!raw) continue;
-    const ts = new Date(raw).getTime();
-    if (!Number.isNaN(ts)) {
-      return { deadlineTs: ts, source: fieldToDeadlineSource(field) };
-    }
-  }
-
-  return { deadlineTs: null, source: null };
+  void config;
+  return resolveCrmLeadEffectiveDeadlineSource(item, stage);
 }
 
 /**
@@ -285,37 +237,13 @@ export function resolveCrmLeadDeadlineBucketSource(item, stage, config) {
   if (!hasPhone || item?.is_interacted || item?.deadline_disabled_at || isCrmPipelineStageNoDeadline(st)) {
     return { deadlineTs: null, source: null, forcedNoDeadline: true };
   }
-
-  for (const field of ['crm_next_open_task_deadline', 'kanban_deadline_at']) {
-    const raw = item?.[field];
-    if (!raw) continue;
-    const ts = companyWorkEndMsFromRaw(raw, item) ?? new Date(raw).getTime();
-    if (!Number.isNaN(ts)) {
-      return {
-        deadlineTs: ts,
-        source: field === 'crm_next_open_task_deadline' ? 'task' : 'kanban',
-        forcedNoDeadline: false,
-      };
-    }
-  }
-
-  const slaTs = getPipelineStageSlaDeadlineTs(item?.stage_entered_at, st, item);
-  if (slaTs != null) return { deadlineTs: slaTs, source: 'sla', forcedNoDeadline: false };
-
-  const cfg = config || {};
-  const primary = String(cfg.primary_field || 'crm_next_open_task_deadline');
-  const fallback = String(cfg.fallback_field || 'expected_close_date');
-  for (const field of [primary, fallback]) {
-    if (field === 'crm_next_open_task_deadline' || field === 'kanban_deadline_at') continue;
-    const raw = item?.[field];
-    if (!raw) continue;
-    const ts = new Date(raw).getTime();
-    if (!Number.isNaN(ts)) {
-      return { deadlineTs: ts, source: fieldToDeadlineSource(field), forcedNoDeadline: false };
-    }
-  }
-
-  return { deadlineTs: null, source: null, forcedNoDeadline: false };
+  void config;
+  const resolved = resolveEffectiveModuleDeadline(DEADLINE_MODULE.CRM, item, st);
+  return {
+    deadlineTs: resolved.deadlineTs,
+    source: resolved.source,
+    forcedNoDeadline: false,
+  };
 }
 
 /**

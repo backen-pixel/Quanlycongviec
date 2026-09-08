@@ -18,6 +18,7 @@ const {
 const { deleteExclusiveProjectsForLeads } = require('../../../helpers/deleteExclusiveProjectsForLeads');
 const { invalidateCrmDeadlineSnapshots } = require('../../../helpers/crmDeadlineSnapshotCache');
 const { syncOpenCrmTaskDeadlines } = require('../../../helpers/crmOpenTaskDeadlineSync');
+const { MODULE, resolveModuleDeadline } = require('../../../helpers/moduleDeadlinePolicy');
 
 const r = Router();
 
@@ -2886,7 +2887,15 @@ r.patch('/leads/:id/deadline', async (req, res) => {
     const leadId = String(req.params.id || '').trim();
     const { data: lead } = await supabase
       .from('crm_leads')
-      .select('id, type, company_id, stage_id, title, assigned_to, lead_owner_id, kanban_deadline_at')
+      .select(`
+        id, type, company_id, project_id, stage_id, stage_entered_at, title, phone,
+        assigned_to, lead_owner_id, kanban_deadline_at, expected_close_date, deadline_disabled_at,
+        customer:customers(phone),
+        stage:crm_pipeline_stages!crm_leads_stage_id_fkey(
+          id, is_won, is_lost, counts_as_completed_revenue,
+          canonical_slug, deal_report_bucket, sla_days
+        )
+      `)
       .eq('id', leadId)
       .maybeSingle();
     if (!lead) return res.status(404).json({ error: 'Không tìm thấy lead/deal' });
@@ -2996,8 +3005,21 @@ r.patch('/leads/:id/deadline', async (req, res) => {
       ok: true,
       kanban_deadline_at: newIso,
       kanban_deadline_reason: reason || null,
-      crm_next_open_task_deadline: syncOpenTasks ? (newIso || null) : undefined,
+      crm_next_open_task_deadline: syncedOpenTasks > 0 ? (newIso || null) : undefined,
       synced_open_tasks: syncedOpenTasks,
+      ...(() => {
+        const effective = resolveModuleDeadline(MODULE.CRM, {
+          ...lead,
+          kanban_deadline_at: newIso,
+          crm_next_open_task_deadline: syncOpenTasks && syncedOpenTasks ? newIso : null,
+        }, { stage: lead.stage || leadStage });
+        return {
+          effective_deadline_module: MODULE.CRM,
+          effective_deadline_at: effective.deadlineAt,
+          effective_deadline_source: effective.source,
+          deadline_state: effective.state,
+        };
+      })(),
     });
     try { require('../../../jobs/projectDeadlineDispatch').triggerAfterDeadlineChange(); } catch (_) { /* ignore */ }
   } catch (e) {

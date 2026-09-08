@@ -144,7 +144,8 @@ async function resolveTenantCompanyId(user, bodyCompanyId) {
 
 async function getLevelId(levelIndex) {
 
-  const { data } = await supabase.from('ecosystem_levels').select('id').eq('level_index', levelIndex).maybeSingle();
+  const { data } = await supabase// ecosystem_levels: cột thật là `depth`, không phải `level_index`
+  .from('ecosystem_levels').select('id').eq('depth', levelIndex).maybeSingle();
 
   return data?.id || null;
 

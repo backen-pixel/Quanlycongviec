@@ -674,7 +674,7 @@ r.get('/planner/board', async (req, res) => {
     const assigneeIds = [...new Set(allTasks.map(t => t.assignee_id).filter(Boolean))];
     let users = [];
     if (assigneeIds.length > 0) {
-      const { data: userData } = await supabase.from('users').select('id, full_name, avatar_url, role').in('id', assigneeIds);
+      const { data: userData } = await supabase.from('users').select('id, full_name, avatar, role').in('id', assigneeIds);
       users = userData || [];
     }
 

@@ -63,6 +63,7 @@ const Dashboard = lazyWithRetry(() => import('./pages/ManagementDashboard'));
 const ManagementDashboard = lazyWithRetry(() => import('./pages/ManagementDashboard'));
 const UnifiedDealPage = lazyWithRetry(() => import('./pages/UnifiedDealPage'));
 const WorkOverviewPage = lazyWithRetry(() => import('./pages/WorkOverviewPage'));
+const ProjectTasksOverviewPage = lazyWithRetry(() => import('./pages/ProjectTasksOverviewPage'));
 const CrmOverviewPage = lazyWithRetry(() => import('./pages/CrmOverviewPage'));
 const QuotesOverviewPage = lazyWithRetry(() => import('./pages/QuotesOverviewPage'));
 const WorkUnifiedOverviewPage = lazyWithRetry(() => import('./pages/WorkUnifiedOverviewPage'));
@@ -473,6 +474,7 @@ export default function App() {
             <Route path="/my-tasks" element={<Navigate to="/management/work-unified" replace state={{ moduleContext: 'congviec' }} />} />
             <Route path="/work" element={<Navigate to="/management/work-unified" replace state={{ moduleContext: 'congviec' }} />} />
             <Route path="/management/work-overview" element={<Suspense fallback={<PageLoader />}><WorkOverviewPage /></Suspense>} />
+            <Route path="/management/project-tasks" element={<Suspense fallback={<PageLoader />}><ProjectTasksOverviewPage /></Suspense>} />
             <Route path="/management/crm-overview" element={<Suspense fallback={<PageLoader />}><CrmOverviewPage /></Suspense>} />
             <Route path="/management/quotes-overview" element={<Suspense fallback={<PageLoader />}><QuotesOverviewPage /></Suspense>} />
             <Route path="/management/work-unified" element={<Suspense fallback={<PageLoader />}><WorkUnifiedOverviewPage /></Suspense>} />
@@ -606,12 +608,14 @@ export default function App() {
             <Route path="/crm/daily-reports/history" element={<CrmDailyWorkHistoryPage />} />
             <Route path="/production/assignments" element={<Navigate to="/sx/assignments" replace />} />
             <Route path="/crm/follow-up-care" element={<CrmFollowUpCarePage />} />
+            <Route path="/crm/project-tasks" element={<Suspense fallback={<PageLoader />}><ProjectTasksOverviewPage fixedModule="crm" /></Suspense>} />
             <Route path="/crm/task-templates" element={<RequireCrmElevated><CRMTemplatesPage /></RequireCrmElevated>} />
             <Route path="/crm/auto-project-config" element={<RequireCrmElevated><AutoProjectConfigPage /></RequireCrmElevated>} />
             <Route path="/crm/products" element={<ProductsPage />} />
             <Route path="/sx" element={<ProductionLayout />}>
               <Route index element={<Navigate to="dashboard" replace />} />
               <Route path="dashboard" element={<ProductionDashboard />} />
+              <Route path="project-tasks" element={<Suspense fallback={<PageLoader />}><ProjectTasksOverviewPage fixedModule="sx" /></Suspense>} />
               <Route path="pipeline" element={<ProductionDashboard variant="pipeline" />} />
               <Route path="approvals" element={<ProductionApprovalsPage />} />
               <Route path="pipeline-settings" element={<ProductionPipelineSettingsPage />} />
@@ -626,6 +630,7 @@ export default function App() {
             <Route path="/vc" element={<ProductionLayout />}>
               <Route index element={<Navigate to="dashboard" replace />} />
               <Route path="dashboard" element={<LogisticsDashboard />} />
+              <Route path="project-tasks" element={<Suspense fallback={<PageLoader />}><ProjectTasksOverviewPage fixedModule="vc" /></Suspense>} />
               <Route path="download-app" element={<DownloadAppPage />} />
               <Route path="pipeline-settings" element={<LogisticsPipelineSettingsPage />} />
               <Route path="task-templates" element={<LogisticsTaskTemplatesPage />} />

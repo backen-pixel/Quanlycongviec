@@ -123,7 +123,7 @@ const TASK_GROUPS = [
     key: 'sx',
     label: 'Sản xuất',
     icon: Package,
-    match: (k) => k === 'SX',
+    match: (k) => k === 'SX' || k === 'Dự án',
     accent: 'text-orange-700',
     header: 'bg-orange-50 hover:bg-orange-100',
   },
@@ -157,7 +157,12 @@ export function TasksTab({ projectId, initialGroup = '' }) {
   const [extrasTask, setExtrasTask] = useState(null);
   const [remindingGroup, setRemindingGroup] = useState('');
   const [remindedGroup, setRemindedGroup] = useState('');
-  const [openGroups, setOpenGroups] = useState(() => new Set(initialGroup ? [initialGroup] : []));
+  const [activeGroup, setActiveGroup] = useState(() => (
+    TASK_GROUPS.some((g) => g.key === initialGroup) ? initialGroup : 'all'
+  ));
+  const [openGroups, setOpenGroups] = useState(() => new Set(
+    initialGroup ? [initialGroup] : TASK_GROUPS.map((g) => g.key),
+  ));
   const canRemindGroup = isWorkProductionModuleAdmin(user);
   const toggleGroup = (key) => setOpenGroups((prev) => {
     const next = new Set(prev);
@@ -166,12 +171,15 @@ export function TasksTab({ projectId, initialGroup = '' }) {
   });
 
   useEffect(() => {
-    if (initialGroup) setOpenGroups((prev) => {
+    if (initialGroup && TASK_GROUPS.some((g) => g.key === initialGroup)) {
+      setActiveGroup(initialGroup);
+      setOpenGroups((prev) => {
       if (prev.has(initialGroup)) return prev;
       const next = new Set(prev);
       next.add(initialGroup);
       return next;
-    });
+      });
+    }
   }, [initialGroup]);
 
   const load = useCallback(() => {
@@ -230,7 +238,14 @@ export function TasksTab({ projectId, initialGroup = '' }) {
     const bucket = buckets.find((b) => b.match(t.task_kind));
     (bucket || other).tasks.push(t);
   }
-  const groups = (other.tasks.length ? [...buckets, other] : buckets).filter((g) => g.tasks.length > 0);
+  const allGroups = other.tasks.length ? [...buckets, other] : buckets;
+  const groups = allGroups
+    .filter((g) => activeGroup === 'all' || g.key === activeGroup)
+    .filter((g) => g.tasks.length > 0);
+  const groupCount = (key) => {
+    if (key === 'all') return tasks.length;
+    return allGroups.find((g) => g.key === key)?.tasks.length || 0;
+  };
 
   const renderTaskRow = (t) => {
     const isDone = DONE_TASK_STATUSES.includes(String(t.status));
@@ -266,8 +281,31 @@ export function TasksTab({ projectId, initialGroup = '' }) {
           Bản vẽ, render, bảng mô tả nộp tại <span className="font-semibold text-slate-700">Ghi chú &amp; file</span> của từng việc.
           Không đẩy vào Bình luận — file ở đó không giữ tiến trình Sales và dễ bị xóa.
         </p>
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-2 mb-2">
+          {[{ key: 'all', label: 'Tất cả' }, ...TASK_GROUPS.map(({ key, label }) => ({ key, label }))].map((tab) => (
+            <button
+              key={tab.key}
+              type="button"
+              onClick={() => {
+                setActiveGroup(tab.key);
+                if (tab.key !== 'all') {
+                  setOpenGroups((prev) => new Set([...prev, tab.key]));
+                }
+              }}
+              className={`shrink-0 h-8 px-3 rounded-full border text-xs font-semibold cursor-pointer transition-colors ${
+                activeGroup === tab.key
+                  ? 'bg-blue-600 text-white border-blue-600'
+                  : 'bg-white text-gray-600 border-gray-200 hover:border-blue-300 hover:text-blue-700'
+              }`}
+            >
+              {tab.label} · {groupCount(tab.key)}
+            </button>
+          ))}
+        </div>
         {tasks.length === 0 ? (
           <EmptyNote>Chưa có công việc nào gắn với dự án này.</EmptyNote>
+        ) : groups.length === 0 ? (
+          <EmptyNote>Chưa có công việc thuộc module này.</EmptyNote>
         ) : (
           <div className="space-y-2">
             {groups.map((g) => {

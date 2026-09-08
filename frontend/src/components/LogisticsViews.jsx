@@ -5,6 +5,10 @@ import { formatDate } from '../lib/utils';
 import { markWorkshopPipelineCardFocus } from '../lib/workshopPipelineStorage';
 import { KanbanBoardEdgeScrollChrome } from '../lib/kanbanEdgeScrollControls';
 import DashboardMonthCalendar, { toLocalDateKey, formatCalendarDeadlineTime } from './dashboard/DashboardMonthCalendar';
+import {
+  DEADLINE_MODULE,
+  resolveEffectiveModuleDeadline,
+} from '../lib/moduleDeadlinePolicy';
 
 // ─── List View ───────────────────────────────────────────────────────────────
 export function LogisticsListView({ pipeline, calculateDays }) {
@@ -189,9 +193,8 @@ function startOfDay(d) {
 
 /** Deadline VC/LĐ = ngày lắp (sự kiện lắp đặt / install_date), không dùng hạn SX. */
 export function resolveVcDeadlineRaw(item) {
-  if (item?.install_date) return { raw: item.install_date, source: 'install_date' };
-  if (item?.delivery_date) return { raw: item.delivery_date, source: 'delivery_date' };
-  return { raw: null, source: null };
+  const resolved = resolveEffectiveModuleDeadline(DEADLINE_MODULE.LOGISTICS, item);
+  return { raw: resolved.raw, source: resolved.source };
 }
 
 /** Ngày lắp trên lịch VC: sự kiện nhiều ngày → occurrence; không thì install_date. */
@@ -388,11 +391,10 @@ const VC_DEADLINE_BUCKETS = [
   { key: 'none', label: 'Chưa có deadline', color: '#9ca3af' },
 ];
 
-function resolveVcDeadlineBucket(item, todayMs = Date.now()) {
-  const { raw, source } = resolveVcDeadlineRaw(item);
-  if (!raw) return { bucket: 'none', ts: null, source: null };
-  const t = new Date(raw).getTime();
-  if (!Number.isFinite(t)) return { bucket: 'none', ts: null, source: null };
+function resolveVcDeadlineBucket(item, todayMs = Date.now(), stage = null) {
+  const resolved = resolveEffectiveModuleDeadline(DEADLINE_MODULE.LOGISTICS, item, stage);
+  const { raw, source, deadlineTs: t } = resolved;
+  if (!raw || t == null || !Number.isFinite(t)) return { bucket: 'none', ts: null, source: null };
   if (item?.status === 'completed') return { bucket: 'later', ts: t, source };
   const today = startOfDay(new Date(todayMs));
   const dayMs = 86400000;
@@ -632,7 +634,7 @@ export function LogisticsDeadlineView({ pipeline }) {
     (pipeline || []).forEach((s) => {
       (s.items || []).forEach((item) => {
         if (shouldHideVcDeadlineCard(item, s)) return;
-        let { bucket, ts, source } = resolveVcDeadlineBucket(item, todayMs);
+        let { bucket, ts, source } = resolveVcDeadlineBucket(item, todayMs, s);
         const ovr = localOverride[String(item.id)];
         if (ovr) {
           bucket = ovr.bucket;

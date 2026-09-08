@@ -7142,18 +7142,22 @@ export default function CRMDashboard() {
     setDeadlineBusy(true);
     try {
       if (ctx.mode === 'edit_only') {
-        await api.patch(`/crm/leads/${ctx.leadId}/deadline`, {
+        const { data } = await api.patch(`/crm/leads/${ctx.leadId}/deadline`, {
           kanban_deadline_at: deadlineIso,
           reason: reason || '',
           sync_open_tasks: true,
         });
         const lid = String(ctx.leadId);
         const patch = {
-          kanban_deadline_at: deadlineIso,
-          kanban_deadline_reason: reason || null,
-          crm_next_open_task_deadline: ctx.card?.crm_next_open_task_deadline
-            ? (deadlineIso || null)
+          kanban_deadline_at: data?.kanban_deadline_at ?? deadlineIso,
+          kanban_deadline_reason: data?.kanban_deadline_reason ?? reason ?? null,
+          crm_next_open_task_deadline: data?.crm_next_open_task_deadline !== undefined
+            ? data.crm_next_open_task_deadline
             : ctx.card?.crm_next_open_task_deadline,
+          effective_deadline_module: data?.effective_deadline_module,
+          effective_deadline_at: data?.effective_deadline_at,
+          effective_deadline_source: data?.effective_deadline_source,
+          deadline_state: data?.deadline_state,
           updated_at: new Date().toISOString(),
         };
         if (pipelineType === 'lead') {

@@ -64,6 +64,7 @@ const {
 } = require('../helpers/projectOrderFulfillment');
 const { assertSxKanbanAdvanceAllowed } = require('../helpers/workshopStageAdvanceGate');
 const { clearSxSchedulesOnCompletedForProjects } = require('../helpers/clearCompletedProjectDeadlines');
+const { MODULE, resolveModuleDeadline } = require('../helpers/moduleDeadlinePolicy');
 const { applyProjectTenantScope, assertRowCompanyInTenant, isTenantScopeEnforced } = require('../helpers/tenantScope');
 
 /** Kế toán / deal_company_id: lọc deal theo công ty CRM; company_id = xưởng SX. */
@@ -117,7 +118,12 @@ const {
   normalizePipelineStageApiRow,
   mapSwitchWorkshopTypeBodyToDb,
 } = require('../helpers/productionPipelineSchema');
-const { normalizePipelineStageSlaDaysForDb, isSxProjectDateOverdue, isSxProjectDeliveryDateOverdue } = require('../helpers/crmPipelineSla');
+const {
+  normalizePipelineStageSlaDaysForDb,
+  isSxDeliveredStage,
+  isSxProjectDateOverdue,
+  isSxProjectDeliveryDateOverdue,
+} = require('../helpers/crmPipelineSla');
 const { computeSxRevenueKpis, resolveSxProjectValue, resolveSxProjectDeposit, resolveSxProjectRemaining } = require('../helpers/sxPipelineRevenue');
 const {
   leadDocVisibleForModuleAndUser,
@@ -240,9 +246,13 @@ async function touchProjectSxPipelineStageEnteredAt(projectId, targetColId, curr
   }
 }
 
-/** Cột «Đã công» / «Đã thu» (Hoàn thành) — tắt hết deadline SX. */
+/** Cột «Đã giao» / «Đã công» / «Đã thu» — tắt hết deadline SX. */
 function isSxColumnClearsDeadlines(col) {
-  return !!(col?.counts_as_completed_revenue || col?.counts_as_collected_revenue);
+  return !!(
+    col?.counts_as_completed_revenue
+    || col?.counts_as_collected_revenue
+    || isSxDeliveredStage(col)
+  );
 }
 
 /** Alias cũ — dùng khi bật cờ hoàn thành trên cột. */
@@ -953,11 +963,11 @@ r.put('/pipeline-stages/:id', requirePermission('projects', 'edit'), async (req,
         console.warn('[production] auto_add_members_on_enter update:', flagErr.message);
       }
     }
-    if (enablingCompletedRevenue || enablingCollectedRevenue) {
+    if (enablingCompletedRevenue || enablingCollectedRevenue || isSxDeliveredStage(data)) {
       try {
         await clearSxKanbanDeadlinesForPipelineColumn(req.params.id);
       } catch (clearErr) {
-        console.warn('[production] clear deadlines on completed/collected column:', clearErr.message);
+        console.warn('[production] clear deadlines on delivered/completed column:', clearErr.message);
       }
     }
     await invalidateProductionPipelineCache();
@@ -3272,7 +3282,7 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
         });
       }
 
-      // Đã công (completed) hoặc Đã thu / Hoàn thành (collected) → tắt hết deadline SX
+      // Đã giao / Đã công / Đã thu / Hoàn thành → tắt hết deadline SX.
       const isCompletedCol = isSxColumnClearsDeadlines(colRow);
 
       // Gate deadline: cột bật requires_deadline → bắt buộc chọn deadline khi chuyển sang (cột mới).
@@ -3344,9 +3354,7 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
         projectUpd.sx_kanban_deadline_at = null;
         projectUpd.sx_kanban_deadline_reason = null;
         projectUpd.production_deadline = null;
-        projectUpd.delivery_date = null;
         projectUpd.production_finish_date = null;
-        projectUpd.deadline = null;
       } else if (hasDeadlineInput) {
         projectUpd.sx_kanban_deadline_at = new Date(parsedDeadlineTs).toISOString();
         const reason = (req.body?.deadline_reason || req.body?.sx_kanban_deadline_reason || '').toString().trim();
@@ -3424,7 +3432,7 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
         if (projUpdErr) throw projUpdErr;
       }
 
-      // Cột hoàn thành: xóa deadline deal CRM + deadline NV SX + hủy lịch hẹn SX còn mở
+      // Cột SX đã giao/hoàn thành: chỉ đóng và xóa deadline thuộc module SX.
       if (isColChange && isCompletedCol) {
         try {
           await clearSxSchedulesOnCompletedForProjects([id]);
@@ -3789,7 +3797,11 @@ r.patch('/projects/:id/kanban-deadline', requireProductionKanbanEdit(), async (r
     const { id } = req.params;
     const { data: project } = await supabase
       .from('projects')
-      .select('id, code, name, sx_kanban_deadline_at')
+      .select(`
+        id, code, name, status, company_id, logistics_company_id, vc_kanban_column_id,
+        sx_kanban_column_id, sx_kanban_deadline_at, production_finish_date,
+        production_deadline, delivery_date, deadline
+      `)
       .eq('id', id)
       .maybeSingle();
     if (!project) return res.status(404).json({ error: 'Không tìm thấy dự án' });
@@ -3843,7 +3855,28 @@ r.patch('/projects/:id/kanban-deadline', requireProductionKanbanEdit(), async (r
       void emitProductionKanbanChangedAsync(ioDl, id, 'kanban_deadline');
     }
 
-    res.json({ ok: true, sx_kanban_deadline_at: newIso, sx_kanban_deadline_reason: reason || null });
+    let deadlineStage = null;
+    if (project.sx_kanban_column_id) {
+      const { data } = await supabase
+        .from('production_pipeline_stages')
+        .select('id, name, bucket_slug, sla_days, counts_as_completed_revenue, counts_as_collected_revenue')
+        .eq('id', project.sx_kanban_column_id)
+        .maybeSingle();
+      deadlineStage = data || null;
+    }
+    const effective = resolveModuleDeadline(MODULE.PRODUCTION, {
+      ...project,
+      sx_kanban_deadline_at: newIso,
+    }, { stage: deadlineStage });
+    res.json({
+      ok: true,
+      sx_kanban_deadline_at: newIso,
+      sx_kanban_deadline_reason: reason || null,
+      effective_deadline_module: MODULE.PRODUCTION,
+      effective_deadline_at: effective.deadlineAt,
+      effective_deadline_source: effective.source,
+      deadline_state: effective.state,
+    });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
