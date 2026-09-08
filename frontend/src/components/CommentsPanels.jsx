@@ -3007,6 +3007,40 @@ export function CrmLeadCommentsPanel({
     currentUserId: selfUid,
   });
 
+  /** @mention: gộp thành viên deal + người đã bình luận (chưa có trong lead_members). */
+  const mentionMembers = useMemo(() => {
+    const byId = new Map();
+    for (const m of members || []) {
+      const id = String(m?.user_id || m?.user?.id || '').trim();
+      if (!id) continue;
+      byId.set(id, {
+        ...m,
+        user_id: id,
+        user: m.user || null,
+        role: m.role || 'member',
+      });
+    }
+    // Comments mới hơn → gần đầu danh sách khi mở @
+    const ordered = [...(comments || [])].reverse();
+    for (const c of ordered) {
+      const u = c?.user;
+      const id = String(u?.id || c?.user_id || '').trim();
+      if (!id || id === String(selfUid || '')) continue;
+      if (!byId.has(id)) {
+        byId.set(id, {
+          user_id: id,
+          user: u || { id, full_name: 'Thành viên' },
+          role: 'member',
+          recentCommenter: true,
+        });
+      } else {
+        const prev = byId.get(id);
+        byId.set(id, { ...prev, recentCommenter: true });
+      }
+    }
+    return [...byId.values()];
+  }, [members, comments, selfUid]);
+
   useEffect(() => {
     onUnreadCountChange?.(unreadCount);
   }, [unreadCount, onUnreadCountChange]);
@@ -3278,7 +3312,7 @@ export function CrmLeadCommentsPanel({
       onUnhideSystemDocument={unhideSystemDocument}
       onReply={(c) => { setReplyTo({ id: c.id, name: c.user?.full_name || 'Thành viên' }); setEditingId(null); }}
       onReaction={pickReaction}
-      members={members}
+      members={mentionMembers}
       enableMentions
       enableAttachments
       pendingFiles={pendingFiles}
@@ -3287,7 +3321,7 @@ export function CrmLeadCommentsPanel({
       pasteUploadProgress={pasteProgress}
       onRemovePendingFile={(i) => setPendingFiles((prev) => prev.filter((_, idx) => idx !== i))}
       canSubmit={Boolean(body.trim() || pendingFiles.length)}
-      renderBody={(text) => renderCrmCommentBody(text, members)}
+      renderBody={(text) => renderCrmCommentBody(text, mentionMembers)}
       threadScrollRef={scrollRef}
       onThreadScroll={onScroll}
       newCommentCount={unreadCount}
@@ -3295,7 +3329,7 @@ export function CrmLeadCommentsPanel({
       quickReplyTemplates={quickReplyTemplates}
       showReadStatus
       readReceipts={readReceipts}
-      commentMembers={members}
+      commentMembers={mentionMembers}
       readDetailId={readDetailId}
       onOpenReadDetail={setReadDetailId}
       onVcSelect={vcSelect}
