@@ -142,6 +142,7 @@ const CONGVIEC_MENU_GROUPS = [
     emoji: '✅',
     items: [
       { to: '/management/work-unified', icon: LayoutDashboard, label: 'Dashboard dự án', end: true },
+      { to: '/management/shared-workspace-report', icon: BarChart3, label: 'Báo cáo phát sinh' },
       { to: '/personal-tasks', icon: UserPlus, label: 'NV cá nhân' },
     ],
   },
@@ -152,6 +153,7 @@ const CONGVIEC_MENU_GROUPS = [
     adminOnly: true,
     items: [
       { to: '/work/flows', icon: GitBranch, label: 'Setup luồng', adminOnly: true },
+      { to: '/management/shared-workspace-settings', icon: UserCog, label: 'Setup phát sinh', adminOnly: true },
     ],
   },
 ];

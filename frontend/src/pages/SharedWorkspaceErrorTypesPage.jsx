@@ -2,7 +2,8 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
-import { AlertTriangle, Plus, Pencil, Trash2, Globe, Save, Loader2, Star, Search, Clock } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Plus, Pencil, Trash2, Globe, Save, Loader2, Star, Search, Clock } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { staffNameMatchesQuery } from '../lib/utils';
 
 const SOURCE_KIND_OPTIONS = [
@@ -269,11 +270,18 @@ export default function SharedWorkspaceErrorTypesPage() {
   return (
     <div className="p-4 sm:p-6 max-w-5xl mx-auto space-y-4">
       <div className="flex items-start gap-2.5">
+        <Link
+          to="/management/shared-workspace-report"
+          className="h-8 w-8 shrink-0 rounded-lg border border-slate-200 bg-white text-slate-600 inline-flex items-center justify-center hover:bg-slate-50"
+          title="Quay lại Báo cáo phát sinh"
+        >
+          <ArrowLeft className="h-4 w-4" />
+        </Link>
         <AlertTriangle className="h-6 w-6 text-rose-600 shrink-0 mt-0.5" />
         <div>
-          <h1 className="text-lg font-bold text-gray-900">Loại lỗi & hạn phát sinh</h1>
+          <h1 className="text-lg font-bold text-gray-900">Thiết lập phát sinh & người chịu trách nhiệm</h1>
           <p className="text-xs text-gray-600 mt-0.5 max-w-2xl leading-snug">
-            Dùng chung cả hệ sinh thái (mọi công ty). Đặt tên loại lỗi, gán nhân viên phụ trách,
+            Dùng chung cả hệ sinh thái (mọi công ty). Đặt tên loại lỗi, gán nhân viên chịu trách nhiệm cố định,
             và cấu hình loại việc kèm hạn — form giao việc sẽ tự điền.
           </p>
         </div>

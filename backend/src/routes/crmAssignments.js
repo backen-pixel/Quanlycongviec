@@ -35,6 +35,7 @@ const { promoteNextAssignmentAfterComplete } = require('../helpers/crmSequential
 const { emitCrmTaskChanged } = require('../helpers/crmTaskRealtime');
 const { responseCache, invalidateTags: rcInvalidateTags } = require('../middleware/responseCache');
 const { listSharedWorkspaceInboxTasks, listPrivateDealInboxTasks } = require('../helpers/sharedWorkspaceInbox');
+const { listSharedWorkspaceAssignmentsReport } = require('../helpers/sharedWorkspaceAssignmentsReport');
 const {
   crmReportTodayYmdVn,
   crmReportCreatedAtFromIso,
@@ -1817,6 +1818,23 @@ r.get('/shared-workspace-tasks', async (req, res) => {
   } catch (e) {
     console.error('[shared-workspace-tasks]', e);
     res.status(500).json({ error: e.message || 'Lỗi tải công việc chung' });
+  }
+});
+
+// GET /api/crm/assignments/shared-workspace-report
+r.get('/shared-workspace-report', async (req, res) => {
+  try {
+    const elevated = isAdmin(req);
+    const fixedCompanyId = elevated ? viewerCompanyId(req) : null;
+    const visibleIds = elevated ? null : await getVisibleAssignmentIdsForNonAdmin(req);
+    const result = await listSharedWorkspaceAssignmentsReport(req.query, {
+      visibleIds,
+      fixedCompanyId,
+    });
+    res.json(result);
+  } catch (e) {
+    console.error('[shared-workspace-report]', e);
+    res.status(500).json({ error: e.message || 'Lỗi tải báo cáo phát sinh' });
   }
 });
 

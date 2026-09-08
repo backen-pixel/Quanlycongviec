@@ -12,7 +12,7 @@ import {
   Pencil, GripVertical, Flag, MoreVertical, MessageSquare, Send, Paperclip,
   FileText as FileIcon, Download, Upload, Repeat2, CalendarClock, ChevronDown,
   ChevronUp, ClipboardList, ChevronRight, ChevronLeft, Lock, ArrowLeft, RefreshCw, Filter, RotateCcw,
-  Eye, BookOpen, TrendingUp, TrendingDown, Minus, SlidersHorizontal, LayoutList, Check,
+  Eye, BookOpen, TrendingUp, TrendingDown, Minus, SlidersHorizontal, LayoutList, Check, FileChartColumn,
 } from 'lucide-react';
 import ViewModeDropdownMenu from '../components/ViewModeDropdownMenu';
 import AnchoredDropdownMenu from '../components/AnchoredDropdownMenu';
@@ -2690,6 +2690,13 @@ export default function CRMAssignmentsPage({
               )}
               {pageTab === 'private' && (
                 <>
+                  <Link
+                    to={`/management/shared-workspace-report?module=${encodeURIComponent(assignmentModule)}`}
+                    className="h-8 px-3 rounded-md bg-white border border-emerald-200 text-emerald-800 text-xs font-semibold inline-flex items-center justify-center gap-1.5 cursor-pointer hover:bg-emerald-50 shadow-sm"
+                    title="Xem và xuất báo cáo nhiệm vụ phát sinh"
+                  >
+                    <FileChartColumn className="h-3.5 w-3.5" /> Báo cáo phát sinh
+                  </Link>
                   <button
                     type="button"
                     data-tour="assign-create-shared-btn"
